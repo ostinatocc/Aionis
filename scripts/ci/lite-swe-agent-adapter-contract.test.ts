@@ -32,3 +32,27 @@ test("SWE-agent eval preserves submitted staged patches as evidence", () => {
 test("SWE-agent eval enforces task call budgets", () => {
   assert.match(RUNNER, /--agent\.model\.per_instance_call_limit=\$\{Math\.floor\(Number\(args\.task\.max_steps\)\)\}/);
 });
+
+test("SWE-agent eval converts assisted negative transfer into scoped context downgrade", () => {
+  assert.match(RUNNER, /aionis_agent_context_feedback_v1/);
+  assert.match(RUNNER, /aionis_prior_negative_transfer_evidence_packet_v1/);
+  assert.match(RUNNER, /prior_assisted_negative_transfer_present/);
+  assert.match(RUNNER, /semantic_evidence_downgraded_by_counter_evidence/);
+  assert.match(RUNNER, /downgrade_future_aionis_context_for_scope/);
+  assert.match(RUNNER, /recommended_next_assistance_mode: "minimal_boundary"/);
+});
+
+test("SWE-agent eval reuses prior reports as evidence, not project-specific Runtime code", () => {
+  assert.match(RUNNER, /--prior-report/);
+  assert.match(RUNNER, /readPriorTaskReports/);
+  assert.match(RUNNER, /measurement_feedback_not_runtime_rule/);
+  assert.equal(RUNNER.includes("marked-pedantic-colon-strong"), false);
+  assert.equal(RUNNER.includes("markedjs"), false);
+});
+
+test("SWE-agent eval keeps downgraded negative-transfer context compact", () => {
+  assert.match(RUNNER, /negativeTransferControl\.suppress_surfaces = \[\]/);
+  assert.match(RUNNER, /contract\.forbidden_edit_files = \[\]/);
+  assert.match(RUNNER, /fitted\.compact_execution_contract = \{/);
+  assert.match(RUNNER, /prior_negative_transfer_count: negativeTransferControl\.prior_negative_transfer_count/);
+});

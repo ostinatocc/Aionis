@@ -189,6 +189,10 @@ function comparisonFromTaskReport(report: JsonObject): JsonObject | null {
   };
 }
 
+function contextFeedbackFromTaskReport(report: JsonObject): JsonObject | null {
+  return asObject(report.aionis_context_feedback);
+}
+
 function signalCounts(summaries: JsonObject[], key: "positive_signals" | "regression_signals"): JsonObject {
   const out: Record<string, number> = {};
   for (const summary of summaries) {
@@ -246,6 +250,11 @@ export function buildRuntimeEffectRollupFromTaskReports(taskReports: JsonObject[
   const comparisons = taskReports
     .map(comparisonFromTaskReport)
     .filter((comparison): comparison is JsonObject => !!comparison);
+  const contextFeedbacks = taskReports
+    .map(contextFeedbackFromTaskReport)
+    .filter((feedback): feedback is JsonObject => !!feedback);
+  const negativeTransferFeedbacks = contextFeedbacks
+    .filter((feedback) => feedback.negative_transfer === true);
   const comparisonSignalSummaries = comparisons.map(comparisonSignalSummary);
   const assistedEffectQualities = comparisonSignalSummaries
     .map((summary) => asString(summary.assisted_effect_quality));
@@ -356,6 +365,23 @@ export function buildRuntimeEffectRollupFromTaskReports(taskReports: JsonObject[
         .reduce((sum, comparison) => sum + numeric(comparison.assisted_repair_repeated_failure_count), 0),
       assisted_repair_stagnation_detected_count: comparisons
         .filter((comparison) => comparison.assisted_repair_stagnation_detected === true).length,
+    },
+    aionis_context_feedback: {
+      observed_task_count: contextFeedbacks.length,
+      negative_transfer_count: negativeTransferFeedbacks.length,
+      decision_counts: countByString(
+        contextFeedbacks.map((feedback) => asString(feedback.decision)),
+        ["observe_only", "downgrade_future_aionis_context_for_scope"],
+      ),
+      negative_transfer_kind_counts: countByString(
+        negativeTransferFeedbacks.map((feedback) => asString(feedback.negative_transfer_kind)),
+        ["outcome_regression", "efficiency_regression"],
+      ),
+      recommended_next_assistance_mode_counts: countByString(
+        contextFeedbacks.map((feedback) => asString(feedback.recommended_next_assistance_mode)),
+        ["minimal_boundary"],
+      ),
+      source_code_change_allowed: false,
     },
     runtime_effect_posture_counts: countByString(runtimeEffectPostures, [
       "insufficient_evidence",

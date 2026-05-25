@@ -20,6 +20,7 @@ function taskReport(args: {
   promotionLedgerCount: number;
   promotionAdmissionRate: number;
   promotionContestedRate: number;
+  contextFeedback?: JsonObject;
 }): JsonObject {
   return {
     task_id: args.id,
@@ -32,6 +33,7 @@ function taskReport(args: {
       metrics: { verifier_passed: args.assistedPassed },
     },
     comparison: args.comparison,
+    aionis_context_feedback: args.contextFeedback ?? null,
     runtime_maintenance: {
       after: {
         runtime_effect_summary: {
@@ -207,6 +209,15 @@ test("real eval runtime effect rollup aggregates generic Runtime evidence withou
       promotionLedgerCount: 1,
       promotionAdmissionRate: 0,
       promotionContestedRate: 1,
+      contextFeedback: {
+        schema_version: "aionis_agent_context_feedback_v1",
+        feedback_type: "baseline_comparison_negative_transfer_control",
+        negative_transfer: true,
+        negative_transfer_kind: "outcome_regression",
+        decision: "downgrade_future_aionis_context_for_scope",
+        recommended_next_assistance_mode: "minimal_boundary",
+        source_code_change_allowed: false,
+      },
     }),
   ]);
 
@@ -219,6 +230,7 @@ test("real eval runtime effect rollup aggregates generic Runtime evidence withou
   const semanticInvariantUptake = rollup.semantic_invariant_uptake as JsonObject;
   const assistanceGate = rollup.assistance_gate as JsonObject;
   const repairLoop = rollup.verifier_feedback_repair_loop as JsonObject;
+  const contextFeedback = rollup.aionis_context_feedback as JsonObject;
 
   assert.equal(rollup.baseline_comparison_required, true);
   assert.equal(rollup.effect_claim_status, "measurement_only_requires_effect_gate");
@@ -285,6 +297,20 @@ test("real eval runtime effect rollup aggregates generic Runtime evidence withou
   assert.equal(repairLoop.assisted_repair_failure_evidence_count, 3);
   assert.equal(repairLoop.assisted_repair_repeated_failure_count, 1);
   assert.equal(repairLoop.assisted_repair_stagnation_detected_count, 1);
+  assert.equal(contextFeedback.observed_task_count, 1);
+  assert.equal(contextFeedback.negative_transfer_count, 1);
+  assert.deepEqual(contextFeedback.decision_counts, {
+    observe_only: 0,
+    downgrade_future_aionis_context_for_scope: 1,
+  });
+  assert.deepEqual(contextFeedback.negative_transfer_kind_counts, {
+    outcome_regression: 1,
+    efficiency_regression: 0,
+  });
+  assert.deepEqual(contextFeedback.recommended_next_assistance_mode_counts, {
+    minimal_boundary: 1,
+  });
+  assert.equal(contextFeedback.source_code_change_allowed, false);
   assert.deepEqual(rollup.runtime_effect_posture_counts, {
     insufficient_evidence: 0,
     positive: 1,

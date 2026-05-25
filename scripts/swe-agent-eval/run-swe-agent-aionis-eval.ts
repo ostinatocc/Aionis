@@ -89,6 +89,7 @@ type CliArgs = {
   costLimit: number | null;
   armMode: "both" | "baseline" | "aionis";
   keepWorkspaces: boolean;
+  priorReportFiles: string[];
 };
 
 type CommandResult = {
@@ -202,6 +203,7 @@ function usage(): string {
     "  --model <name>          SWE-agent model name. Defaults to suite config or gpt-4o.",
     "  --cost-limit <number>   Per-instance SWE-agent cost limit.",
     "  --arm <both|baseline|aionis>",
+    "  --prior-report <file>   Previous SWE-agent/Aionis eval report for scoped feedback gating. May be repeated.",
     "  --keep-workspaces       Do not delete per-run workspaces.",
   ].join("\n");
 }
@@ -215,6 +217,7 @@ function parseArgs(argv: string[]): CliArgs {
     costLimit: null,
     armMode: "both",
     keepWorkspaces: false,
+    priorReportFiles: [],
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -230,6 +233,12 @@ function parseArgs(argv: string[]): CliArgs {
     else if (arg === "--sweagent-bin") args.sweagentBin = next();
     else if (arg === "--model") args.model = next();
     else if (arg === "--cost-limit") args.costLimit = Number(next());
+    else if (arg === "--prior-report") {
+      args.priorReportFiles = [
+        ...(args.priorReportFiles ?? []),
+        ...next().split(",").map((value) => value.trim()).filter(Boolean),
+      ];
+    }
     else if (arg === "--arm") {
       const value = next();
       if (value !== "both" && value !== "baseline" && value !== "aionis") throw new Error(`invalid --arm ${value}`);
@@ -422,6 +431,67 @@ function priorSuccessEvidencePacket(task: EvalTask, priorRuns: AgentRun[]): Json
   };
 }
 
+function finiteNumberOrNull(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function feedbackMatchesTaskScope(task: EvalTask, feedback: JsonObject): boolean {
+  const feedbackFamily = stringValue(feedback.task_family);
+  if (feedbackFamily) return feedbackFamily === (task.task_family ?? null);
+  const feedbackTaskId = stringValue(feedback.task_id);
+  return feedbackTaskId === task.id;
+}
+
+function contextFeedbackFromReport(report: JsonObject): JsonObject | null {
+  const existing = asObject(report.aionis_context_feedback);
+  if (existing) return existing;
+  const comparison = asObject(report.comparison);
+  if (!comparison) return null;
+  return aionisContextFeedbackFromComparison({
+    id: stringValue(report.task_id) ?? "unknown-task",
+    task_family: stringValue(report.task_family) ?? undefined,
+  }, comparison);
+}
+
+function priorNegativeTransferEvidencePacket(task: EvalTask, priorTaskReports: JsonObject[]): JsonObject | null {
+  const scopedFeedback = priorTaskReports
+    .map(contextFeedbackFromReport)
+    .filter((feedback): feedback is JsonObject => !!feedback)
+    .filter((feedback) => feedback.negative_transfer === true && feedbackMatchesTaskScope(task, feedback));
+  if (scopedFeedback.length === 0) return null;
+
+  const reasons = unique(scopedFeedback.flatMap((feedback) => stringList(feedback.reasons))).slice(0, 16);
+  const sourceTaskIds = unique(scopedFeedback
+    .map((feedback) => stringValue(feedback.task_id))
+    .filter((taskId): taskId is string => !!taskId))
+    .slice(0, 32);
+
+  return {
+    schema_version: "aionis_prior_negative_transfer_evidence_packet_v1",
+    authority: "advisory_scoped_counter_evidence_not_runtime_rule",
+    task_id: task.id,
+    task_family: task.task_family ?? null,
+    match_scope: task.task_family ? "same_task_family" : "same_task_id",
+    prior_negative_transfer_count: scopedFeedback.length,
+    source_task_ids: sourceTaskIds,
+    recommended_next_assistance_mode: "minimal_boundary",
+    suppress_surfaces: [
+      "semantic_invariants",
+      "prior_success_evidence_payload",
+      "strict_governance_action_hints",
+      "runtime_owned_repair_guidance",
+    ],
+    reasons,
+    usage_contract: [
+      "Treat this as evidence that previous Aionis context harmed this scoped task family.",
+      "Restore LLM/Agent semantic autonomy; Aionis should provide only task boundaries and verifier contracts.",
+      "Do not mutate Runtime source code from this evidence. It is eval feedback and scoped counter-evidence.",
+    ],
+    source_code_change_allowed: false,
+  };
+}
+
 function taskTargetFiles(task: EvalTask): string[] {
   return unique(task.expected?.allowed_edit_files ?? task.expected?.target_files ?? []);
 }
@@ -434,7 +504,12 @@ function learnablePriorRuns(priorRuns: AgentRun[]): AgentRun[] {
   return priorRuns.filter((run) => run.metrics.runtime_learning_quarantined !== true);
 }
 
-function assistanceGateDecision(task: EvalTask, priorRuns: AgentRun[], priorSuccessEvidence: JsonObject | null): JsonObject {
+function assistanceGateDecision(
+  task: EvalTask,
+  priorRuns: AgentRun[],
+  priorSuccessEvidence: JsonObject | null,
+  priorNegativeTransferEvidence: JsonObject | null,
+): JsonObject {
   const learnableRuns = learnablePriorRuns(priorRuns);
   const priorSuccessCount = learnableRuns.filter((run) => run.metrics.verifier_passed === true).length;
   const priorFailureCount = learnableRuns.filter((run) => run.metrics.verifier_passed !== true).length;
@@ -445,6 +520,9 @@ function assistanceGateDecision(task: EvalTask, priorRuns: AgentRun[], priorSucc
   const antiShortcutRuleCount = task.expected?.anti_shortcut_rules?.length ?? 0;
   const setupCommandCount = task.workspace.setup_commands?.length ?? 0;
   const hasSemanticEvidence = Number(priorSuccessEvidence?.invariant_count ?? 0) > 0;
+  const priorNegativeTransferCount = Math.max(0, Number(priorNegativeTransferEvidence?.prior_negative_transfer_count ?? 0));
+  const semanticEvidenceSuppressedByCounterEvidence = priorNegativeTransferCount > 0;
+  const effectiveHasSemanticEvidence = hasSemanticEvidence && !semanticEvidenceSuppressedByCounterEvidence;
   const complexityScore =
     (targetFileCount >= 8 ? 3 : targetFileCount >= 5 ? 2 : targetFileCount >= 3 ? 1 : 0)
     + (forbiddenFileCount > 0 ? 1 : 0)
@@ -455,8 +533,9 @@ function assistanceGateDecision(task: EvalTask, priorRuns: AgentRun[], priorSucc
     + (priorForbiddenWriteCount > 0 ? 2 : 0);
 
   let mode: AssistanceMode;
-  if (priorForbiddenWriteCount > 0 || priorFailureCount >= 2 || complexityScore >= 8) mode = "strict_governance";
-  else if (hasSemanticEvidence) mode = "semantic_evidence";
+  if (priorNegativeTransferCount > 0) mode = "minimal_boundary";
+  else if (priorForbiddenWriteCount > 0 || priorFailureCount >= 2 || complexityScore >= 8) mode = "strict_governance";
+  else if (effectiveHasSemanticEvidence) mode = "semantic_evidence";
   else if (complexityScore >= 4) mode = "compact_contract";
   else if (targetFileCount === 0 && antiShortcutRuleCount === 0 && priorRuns.length === 0) mode = "no_op";
   else mode = "minimal_boundary";
@@ -469,7 +548,10 @@ function assistanceGateDecision(task: EvalTask, priorRuns: AgentRun[], priorSucc
     strict_governance: 5200,
   };
   const reasons = [
-    hasSemanticEvidence ? "prior_verifier_success_semantic_evidence_available" : null,
+    effectiveHasSemanticEvidence ? "prior_verifier_success_semantic_evidence_available" : null,
+    priorNegativeTransferCount > 0 ? "prior_assisted_negative_transfer_present" : null,
+    semanticEvidenceSuppressedByCounterEvidence ? "semantic_evidence_downgraded_by_counter_evidence" : null,
+    priorNegativeTransferCount > 0 ? "llm_agent_autonomy_restored_after_negative_transfer" : null,
     priorFailureCount > 0 ? "prior_learnable_failure_present" : null,
     priorForbiddenWriteCount > 0 ? "prior_forbidden_write_present" : null,
     targetFileCount >= 3 ? "multi_file_task_surface" : null,
@@ -494,6 +576,8 @@ function assistanceGateDecision(task: EvalTask, priorRuns: AgentRun[], priorSucc
     prior_failure_count: priorFailureCount,
     prior_forbidden_write_count: priorForbiddenWriteCount,
     semantic_evidence_available: hasSemanticEvidence,
+    semantic_evidence_suppressed_by_counter_evidence: semanticEvidenceSuppressedByCounterEvidence,
+    prior_negative_transfer_count: priorNegativeTransferCount,
     reasons,
   };
 }
@@ -822,6 +906,7 @@ function buildCompactExecutionContract(args: {
   gate: JsonObject;
   priorRuns: AgentRun[];
   priorSuccessEvidence: JsonObject | null;
+  priorNegativeTransferEvidence?: JsonObject | null;
   experience?: JsonObject | null;
   planning?: JsonObject | null;
   assembly?: JsonObject | null;
@@ -833,7 +918,8 @@ function buildCompactExecutionContract(args: {
   const allPriorInvariants = Array.isArray(args.priorSuccessEvidence?.invariants)
     ? args.priorSuccessEvidence.invariants.filter((entry): entry is JsonObject => !!asObject(entry)).map((entry) => asObject(entry)!)
     : [];
-  const semanticInvariants = allPriorInvariants.slice(0, invariantLimitForMode(mode));
+  const semanticEvidenceSuppressed = args.gate.semantic_evidence_suppressed_by_counter_evidence === true;
+  const semanticInvariants = semanticEvidenceSuppressed ? [] : allPriorInvariants.slice(0, invariantLimitForMode(mode));
   const actionRetrieval = asObject(args.experience?.action_retrieval);
   const actionContract = asObject(args.experience?.action_intelligence_runtime_contract);
   const experienceTrace = asObject(args.experience?.experience_adaptation_trace)
@@ -857,6 +943,17 @@ function buildCompactExecutionContract(args: {
     forbidden_edit_files: args.task.expected?.forbidden_edit_files ?? [],
     verifier_commands: taskVerifierCommands(args.task),
     semantic_invariants: semanticInvariants,
+    negative_transfer_control: args.priorNegativeTransferEvidence
+      ? {
+          authority: "advisory_scoped_counter_evidence_not_runtime_rule",
+          prior_negative_transfer_count: args.priorNegativeTransferEvidence.prior_negative_transfer_count,
+          recommended_next_assistance_mode: args.priorNegativeTransferEvidence.recommended_next_assistance_mode,
+          suppress_surfaces: Array.isArray(args.priorNegativeTransferEvidence.suppress_surfaces)
+            ? args.priorNegativeTransferEvidence.suppress_surfaces.slice(0, 8)
+            : [],
+          reasons: stringList(args.priorNegativeTransferEvidence.reasons).slice(0, 6),
+        }
+      : null,
     known_failures_to_avoid: priorFailureSummaries(args.priorRuns, mode === "strict_governance" ? 3 : 1),
     first_action: compactFirstAction(firstAction),
     runtime_entropy_profile: mode === "strict_governance" ? entropyProfile : null,
@@ -871,6 +968,7 @@ function buildCompactExecutionContract(args: {
       "Use Runtime evidence only when current files and task contract match.",
       "Do not broaden edits beyond target_files unless current verifier output proves the boundary is wrong.",
       semanticInvariants.length > 0 ? "Prior success invariants are scoped verifier-passing evidence to consider, not commands." : null,
+      args.priorNegativeTransferEvidence ? "Prior Aionis context caused measurable negative transfer in this scope; use only boundaries and your own semantic analysis." : null,
       mode === "strict_governance" ? "Prior failures or high complexity require narrower verification before declaring success." : null,
     ].filter((rule): rule is string => !!rule),
   };
@@ -937,6 +1035,22 @@ async function ensureDir(dir: string): Promise<void> {
 
 async function readJsonFile<T>(file: string): Promise<T> {
   return JSON.parse(await fsp.readFile(file, "utf8")) as T;
+}
+
+async function readPriorTaskReports(files: string[]): Promise<JsonObject[]> {
+  const taskReports: JsonObject[] = [];
+  for (const file of files) {
+    const parsed = await readJsonFile<JsonObject>(file);
+    const tasks = Array.isArray(parsed.tasks)
+      ? parsed.tasks.filter((task): task is JsonObject => !!asObject(task)).map((task) => asObject(task)!)
+      : [];
+    if (tasks.length > 0) {
+      taskReports.push(...tasks);
+    } else if (asObject(parsed.baseline) || asObject(parsed.aionis) || asObject(parsed.comparison)) {
+      taskReports.push(parsed);
+    }
+  }
+  return taskReports;
 }
 
 async function writeJsonFile(file: string, value: unknown): Promise<void> {
@@ -1144,7 +1258,13 @@ function runtimePayloadBase(task: EvalTask, runId: string): AgentRuntimeIdentity
   };
 }
 
-async function buildAionisContext(baseUrl: string, task: EvalTask, runId: string, priorRuns: AgentRun[]): Promise<JsonObject> {
+async function buildAionisContext(
+  baseUrl: string,
+  task: EvalTask,
+  runId: string,
+  priorRuns: AgentRun[],
+  priorTaskReports: JsonObject[],
+): Promise<JsonObject> {
   const base = runtimePayloadBase(task, runId);
   const learnableRuns = learnablePriorRuns(priorRuns);
   const context = {
@@ -1160,7 +1280,8 @@ async function buildAionisContext(baseUrl: string, task: EvalTask, runId: string
     anti_shortcut_rules: task.expected?.anti_shortcut_rules ?? [],
   };
   const priorSuccessEvidence = priorSuccessEvidencePacket(task, learnableRuns);
-  const assistanceGate = assistanceGateDecision(task, priorRuns, priorSuccessEvidence);
+  const priorNegativeTransferEvidence = priorNegativeTransferEvidencePacket(task, priorTaskReports);
+  const assistanceGate = assistanceGateDecision(task, priorRuns, priorSuccessEvidence, priorNegativeTransferEvidence);
   const assistanceMode = stringValue(assistanceGate.mode) as AssistanceMode | null;
 
   if (assistanceMode === "no_op" || assistanceMode === "minimal_boundary" || assistanceMode === "semantic_evidence") {
@@ -1169,11 +1290,13 @@ async function buildAionisContext(baseUrl: string, task: EvalTask, runId: string
       role: "advisory_runtime_evidence_not_agent_execution",
       assistance_gate: assistanceGate,
       prior_success_evidence: priorSuccessEvidence,
+      prior_negative_transfer_evidence: priorNegativeTransferEvidence,
       compact_execution_contract: buildCompactExecutionContract({
         task,
         gate: assistanceGate,
         priorRuns,
         priorSuccessEvidence,
+        priorNegativeTransferEvidence,
       }),
     };
   }
@@ -1225,11 +1348,13 @@ async function buildAionisContext(baseUrl: string, task: EvalTask, runId: string
     runtime_routes: runtimeContext.runtime_routes,
     assistance_gate: assistanceGate,
     prior_success_evidence: priorSuccessEvidence,
+    prior_negative_transfer_evidence: priorNegativeTransferEvidence,
     compact_execution_contract: buildCompactExecutionContract({
       task,
       gate: assistanceGate,
       priorRuns,
       priorSuccessEvidence,
+      priorNegativeTransferEvidence,
       experience: runtimeContext.experience_intelligence,
       planning: runtimeContext.planning,
       assembly: runtimeContext.assembly,
@@ -1273,6 +1398,10 @@ function fitCompactContextToBudget(context: JsonObject): JsonObject {
   if (fittedGate && Array.isArray(fittedGate.reasons)) {
     fittedGate.reasons = fittedGate.reasons.slice(0, 3);
   }
+  const negativeTransferEvidence = asObject(fitted.prior_negative_transfer_evidence);
+  if (negativeTransferEvidence && Array.isArray(negativeTransferEvidence.reasons)) {
+    negativeTransferEvidence.reasons = negativeTransferEvidence.reasons.slice(0, 3);
+  }
   if (!contract) return fitted;
 
   contract.experience_adaptation_trace = null;
@@ -1280,6 +1409,10 @@ function fitCompactContextToBudget(context: JsonObject): JsonObject {
   contract.runtime_entropy_profile = null;
   contract.tool_hint = null;
   if (Array.isArray(contract.operating_rules)) contract.operating_rules = contract.operating_rules.slice(0, 2);
+  const negativeTransferControl = asObject(contract.negative_transfer_control);
+  if (negativeTransferControl && Array.isArray(negativeTransferControl.reasons)) {
+    negativeTransferControl.reasons = negativeTransferControl.reasons.slice(0, 3);
+  }
   const firstAction = asObject(contract.first_action);
   if (firstAction) {
     contract.first_action = {
@@ -1318,6 +1451,38 @@ function fitCompactContextToBudget(context: JsonObject): JsonObject {
 
   if (Array.isArray(contract.known_failures_to_avoid)) contract.known_failures_to_avoid = [];
   if (Array.isArray(contract.semantic_invariants)) contract.semantic_invariants = contract.semantic_invariants.slice(0, 3);
+  if (Array.isArray(contract.forbidden_edit_files)) contract.forbidden_edit_files = contract.forbidden_edit_files.slice(0, 4);
+  if (Array.isArray(contract.verifier_commands)) contract.verifier_commands = contract.verifier_commands.slice(0, 1);
+  if (negativeTransferControl) {
+    negativeTransferControl.suppress_surfaces = [];
+    negativeTransferControl.reasons = stringList(negativeTransferControl.reasons).slice(0, 2);
+  }
+  if (compactContextJsonLength(fitted) <= budget) return fitted;
+
+  if (Array.isArray(contract.forbidden_edit_files)) contract.forbidden_edit_files = [];
+  if (Array.isArray(contract.verifier_commands)) contract.verifier_commands = [];
+  contract.known_failures_to_avoid = [];
+  contract.action_retrieval = null;
+  contract.action_intelligence = null;
+  contract.experience_adaptation_trace = null;
+  contract.tool_hint = null;
+  if (Array.isArray(contract.operating_rules)) contract.operating_rules = contract.operating_rules.slice(0, 1);
+  if (compactContextJsonLength(fitted) <= budget) return fitted;
+
+  fitted.compact_execution_contract = {
+    schema_version: contract.schema_version,
+    mode: contract.mode,
+    authority: contract.authority,
+    target_files: Array.isArray(contract.target_files) ? contract.target_files : [],
+    semantic_invariants: Array.isArray(contract.semantic_invariants) ? contract.semantic_invariants : [],
+    negative_transfer_control: negativeTransferControl
+      ? {
+          authority: negativeTransferControl.authority,
+          prior_negative_transfer_count: negativeTransferControl.prior_negative_transfer_count,
+          recommended_next_assistance_mode: negativeTransferControl.recommended_next_assistance_mode,
+        }
+      : null,
+  };
   return fitted;
 }
 
@@ -2395,6 +2560,7 @@ async function runArm(args: {
   arm: "baseline" | "aionis";
   taskOutDir: string;
   priorRuns: AgentRun[];
+  priorTaskReports: JsonObject[];
 }): Promise<AgentRun> {
   const runId = crypto.randomUUID();
   const armOutDir = path.join(args.taskOutDir, args.arm);
@@ -2402,7 +2568,7 @@ async function runArm(args: {
   const workspaceDir = await cloneWorkspace(args.task, args.arm, args.taskOutDir);
   await runSetupCommands(args.task, workspaceDir);
   const aionisContext = args.arm === "aionis" && args.cli.runtimeUrl
-    ? await buildAionisContext(args.cli.runtimeUrl, args.task, runId, args.priorRuns)
+    ? await buildAionisContext(args.cli.runtimeUrl, args.task, runId, args.priorRuns, args.priorTaskReports)
     : null;
   const problemStatement = buildProblemStatement(args.task, aionisContext);
   const repairLoop = await runAgentRepairLoop({
@@ -2616,6 +2782,10 @@ function comparisonSignalSummary(comparison: JsonObject): JsonObject {
 
 function compareRuns(baseline: AgentRun | null, aionis: AgentRun | null): JsonObject | null {
   if (!baseline || !aionis) return null;
+  const baselineTotalTokens = Number(baseline.metrics.input_tokens ?? 0) + Number(baseline.metrics.output_tokens ?? 0);
+  const assistedTotalTokens = Number(aionis.metrics.input_tokens ?? 0) + Number(aionis.metrics.output_tokens ?? 0);
+  const baselineToolSteps = Number(baseline.metrics.tool_step_count ?? 0);
+  const assistedToolSteps = Number(aionis.metrics.tool_step_count ?? 0);
   const comparison: JsonObject = {
     baseline_verifier_passed: baseline.metrics.verifier_passed === true,
     assisted_verifier_passed: aionis.metrics.verifier_passed === true,
@@ -2626,8 +2796,13 @@ function compareRuns(baseline: AgentRun | null, aionis: AgentRun | null): JsonOb
     repeated_discovery_delta: nullableDelta(baseline.metrics.repeated_discovery_steps, aionis.metrics.repeated_discovery_steps),
     wrong_file_touch_delta: nullableDelta(baseline.metrics.wrong_file_touches, aionis.metrics.wrong_file_touches),
     tool_step_delta: nullableDelta(baseline.metrics.tool_step_count, aionis.metrics.tool_step_count),
-    token_delta: (Number(baseline.metrics.input_tokens ?? 0) + Number(baseline.metrics.output_tokens ?? 0))
-      - (Number(aionis.metrics.input_tokens ?? 0) + Number(aionis.metrics.output_tokens ?? 0)),
+    baseline_tool_step_count: baselineToolSteps,
+    assisted_tool_step_count: assistedToolSteps,
+    assisted_tool_step_ratio: baselineToolSteps > 0 ? Number((assistedToolSteps / baselineToolSteps).toFixed(6)) : null,
+    baseline_total_tokens: baselineTotalTokens,
+    assisted_total_tokens: assistedTotalTokens,
+    assisted_token_ratio: baselineTotalTokens > 0 ? Number((assistedTotalTokens / baselineTotalTokens).toFixed(6)) : null,
+    token_delta: baselineTotalTokens - assistedTotalTokens,
     time_delta_ms: nullableDelta(baseline.metrics.time_to_finish_ms, aionis.metrics.time_to_finish_ms),
     assisted_prior_success_invariant_count: aionis.metrics.prior_success_invariant_count ?? 0,
     assisted_prior_success_invariant_uptake_count: aionis.metrics.prior_success_invariant_uptake_count ?? 0,
@@ -2654,21 +2829,120 @@ function compareRuns(baseline: AgentRun | null, aionis: AgentRun | null): JsonOb
   };
 }
 
-async function runTask(suite: EvalSuite, task: EvalTask, cli: CliArgs): Promise<JsonObject> {
+function aionisContextFeedbackFromComparison(
+  task: Pick<EvalTask, "id" | "task_family">,
+  comparison: JsonObject | null,
+): JsonObject | null {
+  if (!comparison) return null;
+  const quality = stringValue(comparison.assisted_effect_quality) ?? "unknown";
+  const regressionSignals = stringList(comparison.assisted_effect_regression_signals);
+  const positiveSignals = stringList(comparison.assisted_effect_positive_signals);
+  const reasons: string[] = [];
+  const efficiencySignals: string[] = [];
+
+  const assistedFailedWhereBaselineSucceeded = comparison.baseline_verifier_passed === true
+    && comparison.assisted_verifier_passed !== true;
+  if (comparison.assisted_verifier_regressed === true) reasons.push("assisted_verifier_regressed_against_baseline");
+  if (assistedFailedWhereBaselineSucceeded) {
+    reasons.push("baseline_passed_assisted_failed");
+  }
+  if (quality === "regressed" || (quality === "failed" && assistedFailedWhereBaselineSucceeded)) {
+    reasons.push(`assisted_effect_quality_${quality}`);
+  }
+
+  const repeatedDiscoveryDelta = finiteNumberOrNull(comparison.repeated_discovery_delta);
+  if (repeatedDiscoveryDelta !== null && repeatedDiscoveryDelta <= -5) efficiencySignals.push("repeated_discovery_regression");
+
+  const wrongFileTouchDelta = finiteNumberOrNull(comparison.wrong_file_touch_delta);
+  if (wrongFileTouchDelta !== null && wrongFileTouchDelta < 0) efficiencySignals.push("wrong_file_touch_regression");
+
+  const toolStepDelta = finiteNumberOrNull(comparison.tool_step_delta);
+  const assistedToolStepRatio = finiteNumberOrNull(comparison.assisted_tool_step_ratio);
+  if (
+    (toolStepDelta !== null && toolStepDelta <= -20)
+    || (assistedToolStepRatio !== null && assistedToolStepRatio >= 1.8)
+  ) {
+    efficiencySignals.push("tool_step_regression");
+  }
+
+  const tokenDelta = finiteNumberOrNull(comparison.token_delta);
+  const assistedTokenRatio = finiteNumberOrNull(comparison.assisted_token_ratio);
+  if (
+    (tokenDelta !== null && tokenDelta <= -10000)
+    || (assistedTokenRatio !== null && assistedTokenRatio >= 1.8)
+  ) {
+    efficiencySignals.push("token_usage_regression");
+  }
+
+  const timeDelta = finiteNumberOrNull(comparison.time_delta_ms);
+  if (timeDelta !== null && timeDelta <= -60000) efficiencySignals.push("time_to_finish_regression");
+  if (comparison.assisted_context_budget_exceeded === true) efficiencySignals.push("context_budget_exceeded");
+
+  const outcomeRegression = reasons.length > 0;
+  const efficiencyRegression = comparison.baseline_verifier_passed === true
+    && comparison.assisted_verifier_passed === true
+    && efficiencySignals.length >= 2;
+  const negativeTransfer = outcomeRegression || efficiencyRegression;
+  const negativeTransferKind = outcomeRegression
+    ? "outcome_regression"
+    : efficiencyRegression ? "efficiency_regression" : "none";
+  const allReasons = unique([...reasons, ...efficiencySignals]);
+
+  return {
+    schema_version: "aionis_agent_context_feedback_v1",
+    feedback_type: "baseline_comparison_negative_transfer_control",
+    authority: "measurement_feedback_not_runtime_rule",
+    task_id: task.id,
+    task_family: task.task_family ?? null,
+    negative_transfer: negativeTransfer,
+    negative_transfer_kind: negativeTransferKind,
+    decision: negativeTransfer ? "downgrade_future_aionis_context_for_scope" : "observe_only",
+    recommended_next_assistance_mode: negativeTransfer ? "minimal_boundary" : null,
+    semantic_evidence_allowed_next: !negativeTransfer,
+    runtime_source_mutation_allowed: false,
+    source_code_change_allowed: false,
+    reasons: allReasons,
+    assisted_effect_quality: quality,
+    positive_signals: positiveSignals,
+    regression_signals: regressionSignals,
+    metrics: {
+      repeated_discovery_delta: comparison.repeated_discovery_delta,
+      wrong_file_touch_delta: comparison.wrong_file_touch_delta,
+      tool_step_delta: comparison.tool_step_delta,
+      assisted_tool_step_ratio: comparison.assisted_tool_step_ratio,
+      token_delta: comparison.token_delta,
+      assisted_token_ratio: comparison.assisted_token_ratio,
+      time_delta_ms: comparison.time_delta_ms,
+    },
+    usage_contract: [
+      "This feedback can suppress future Aionis context in the same task family.",
+      "It cannot create source-code rules, repository-specific repairs, or Runtime-owned semantic patches.",
+      "The LLM/Agent remains responsible for semantic diagnosis and final code edits.",
+    ],
+  };
+}
+
+async function runTask(
+  suite: EvalSuite,
+  task: EvalTask,
+  cli: CliArgs,
+  priorTaskReports: JsonObject[],
+): Promise<JsonObject> {
   const taskOutDir = path.join(cli.outDir, "tasks", task.id);
   await ensureDir(taskOutDir);
   const priorRuns: AgentRun[] = [];
   let baseline: AgentRun | null = null;
   let aionis: AgentRun | null = null;
   if (cli.armMode === "both" || cli.armMode === "baseline") {
-    baseline = await runArm({ suite, task, cli, arm: "baseline", taskOutDir, priorRuns });
+    baseline = await runArm({ suite, task, cli, arm: "baseline", taskOutDir, priorRuns, priorTaskReports });
     priorRuns.push(baseline);
   }
   if (cli.armMode === "both" || cli.armMode === "aionis") {
-    aionis = await runArm({ suite, task, cli, arm: "aionis", taskOutDir, priorRuns });
+    aionis = await runArm({ suite, task, cli, arm: "aionis", taskOutDir, priorRuns, priorTaskReports });
     priorRuns.push(aionis);
   }
   const runtimeMaintenance = asObject(aionis?.aionis_store)?.maintenance ?? asObject(baseline?.aionis_store)?.maintenance ?? null;
+  const comparison = compareRuns(baseline, aionis);
   const report: JsonObject = {
     report_version: "aionis_swe_agent_task_report_v1",
     task_id: task.id,
@@ -2676,7 +2950,8 @@ async function runTask(suite: EvalSuite, task: EvalTask, cli: CliArgs): Promise<
     task_family: task.task_family ?? null,
     baseline: baseline ? serializeRun(baseline) : null,
     aionis: aionis ? serializeRun(aionis) : null,
-    comparison: compareRuns(baseline, aionis),
+    comparison,
+    aionis_context_feedback: aionisContextFeedbackFromComparison(task, comparison),
     runtime_maintenance: runtimeMaintenance,
   };
   await writeJsonFile(path.join(taskOutDir, "task-report.json"), report);
@@ -2687,20 +2962,23 @@ async function main(): Promise<void> {
   const cli = parseArgs(process.argv.slice(2));
   cli.suiteFile = path.resolve(cli.suiteFile);
   cli.outDir = path.resolve(cli.outDir);
+  cli.priorReportFiles = cli.priorReportFiles.map((file) => path.resolve(file));
   const suite = await readJsonFile<EvalSuite>(cli.suiteFile);
+  const priorTaskReports = await readPriorTaskReports(cli.priorReportFiles);
   await ensureDir(cli.outDir);
   const tasks = suite.tasks.filter((task) => !cli.taskIds || cli.taskIds.has(task.id));
   if (tasks.length === 0) throw new Error("no tasks selected");
   const taskReports: JsonObject[] = [];
   for (const task of tasks) {
     process.stderr.write(`[swe-agent-eval] task=${task.id} arms=${cli.armMode}\n`);
-    taskReports.push(await runTask(suite, task, cli));
+    taskReports.push(await runTask(suite, task, cli, [...priorTaskReports, ...taskReports]));
   }
   const report = {
     report_version: "aionis_swe_agent_eval_report_v1",
     generated_at: new Date().toISOString(),
     suite_id: suite.suite_id,
     suite_file: cli.suiteFile,
+    prior_report_files: cli.priorReportFiles,
     description: suite.description ?? null,
     layer_boundary: {
       layer: "swe_agent_eval_harness",
@@ -2715,6 +2993,7 @@ async function main(): Promise<void> {
     },
     summary: {
       task_count: taskReports.length,
+      prior_task_report_count: priorTaskReports.length,
       baseline_success_count: taskReports.filter((report) => asObject(report.baseline)?.status === "success").length,
       assisted_success_count: taskReports.filter((report) => asObject(report.aionis)?.status === "success").length,
       runtime_effect_rollup: buildRuntimeEffectRollupFromTaskReports(taskReports),
