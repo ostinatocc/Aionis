@@ -1,0 +1,127 @@
+{
+  "suite_id": "github_real_issues_v1",
+  "description": "Real LLM benchmark tasks derived from real GitHub issues and merged PRs. Agents receive issue-level requirements, work from the pre-PR commit, and are verified through hidden behavior contracts plus real project regression tests.",
+  "effect_gate": {
+    "min_tasks": 1,
+    "require_assisted_success": true,
+    "require_assisted_first_action_target": true,
+    "require_native_kickoff_target_files": true,
+    "require_native_first_action": true,
+    "require_native_edit_boundary": true,
+    "min_assisted_success_rate": 1,
+    "min_improved_task_count": 1,
+    "min_average_repeated_discovery_delta": 0,
+    "min_average_wrong_file_touch_delta": 0,
+    "min_average_tool_step_delta": -1000000,
+    "fail_on_assisted_verifier_regression": true,
+    "fail_on_average_repeated_discovery_regression": true,
+    "fail_on_assisted_forbidden_file_write": true,
+    "max_llm_api_error_count": 0,
+    "max_assisted_llm_api_error_count": 0,
+    "max_assisted_llm_protocol_error_count": 3,
+    "max_assisted_llm_protocol_error_rate_per_run": 1,
+    "min_assisted_llm_protocol_repair_rate": 1
+  },
+  "tasks": [
+    {
+      "id": "got-upload-progress-json-form-issue-2435",
+      "title": "Got issue #2435: uploadProgress should be granular for json and form options",
+      "task_family": "github_got_upload_progress_json_form_issue_2435",
+      "issue_url": "https://github.com/sindresorhus/got/issues/2435",
+      "reference_pr_url": "https://github.com/sindresorhus/got/pull/2437",
+      "prompt": "Implement the real Got issue #2435. The issue reports that `uploadProgress` only emits 0% and 100% when callers use the `json` or `form` options, because Got serializes those payloads into a single string before writing. Users expect granular upload progress for `json` and `form` just like they can get when they manually serialize and chunk a `body`. Update Got so large non-stream request bodies created from `body`, `json`, and `form` are written in chunks and emit intermediate uploadProgress events. Preserve upload completion semantics, beforeRequest hook short-circuit behavior, and redirect behavior for buffered request bodies, especially early 307 redirects that replay the request body. Because runtime source imports the chunking helper, move `chunk-data` from devDependencies to dependencies. Update documentation and focused in-project tests for progress, hooks, and redirects. Keep the implementation scoped to source/core/index.ts, test/progress.ts, test/hooks.ts, test/redirects.ts, documentation/3-streams.md, and package.json only. Do not modify unrelated source files, examples, lockfiles, generated dist output, or README. Run the verifier before finishing, using the verifier command exactly as provided.",
+      "workspace": {
+        "source": "git",
+        "repo_url": "https://github.com/sindresorhus/got.git",
+        "ref": "3b90c761b5442a54e9212f87a3e3bb6f345196e0",
+        "checkout_depth": 1,
+        "setup_commands": [
+          {
+            "command": "npm install",
+            "timeout_ms": 180000
+          }
+        ],
+        "exclude": [".tmp", "coverage"],
+        "link_node_modules": true
+      },
+      "verifier": {
+        "command": "node {AIONIS_ROOT}/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs got-upload-progress-json-form-issue-2435",
+        "timeout_ms": 240000
+      },
+      "max_steps": 40,
+      "aionis_attempts": 3,
+      "expected": {
+        "target_files": [
+          "source/core/index.ts",
+          "test/progress.ts",
+          "test/hooks.ts",
+          "test/redirects.ts",
+          "documentation/3-streams.md",
+          "package.json"
+        ],
+        "allowed_read_files": [
+          "source/core/index.ts",
+          "source/core/options.ts",
+          "source/core/response.ts",
+          "source/types.ts",
+          "source/index.ts",
+          "test/progress.ts",
+          "test/hooks.ts",
+          "test/redirects.ts",
+          "test/helpers/with-server.ts",
+          "test/helpers/with-server.js",
+          "documentation/3-streams.md",
+          "documentation/2-options.md",
+          "package.json",
+          "tsconfig.json"
+        ],
+        "allowed_edit_files": [
+          "source/core/index.ts",
+          "test/progress.ts",
+          "test/hooks.ts",
+          "test/redirects.ts",
+          "documentation/3-streams.md",
+          "package.json"
+        ],
+        "forbidden_edit_files": [
+          "readme.md",
+          "package-lock.json",
+          "source/as-promise/index.ts",
+          "source/core/options.ts",
+          "source/create.ts",
+          "source/index.ts",
+          "source/types.ts",
+          "documentation/2-options.md",
+          "documentation/examples",
+          "dist/source/index.js"
+        ],
+        "first_action_keywords": [
+          "source/core/index.ts",
+          "uploadProgress",
+          "_finalizeBody",
+          "_writeRequest",
+          "json",
+          "form"
+        ],
+        "acceptance_checks": [
+          "node {AIONIS_ROOT}/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs got-upload-progress-json-form-issue-2435"
+        ],
+        "required_verifiers": [
+          "node {AIONIS_ROOT}/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs got-upload-progress-json-form-issue-2435"
+        ],
+        "anti_shortcut_rules": [
+          "Do not modify unrelated source files, examples, README, lockfiles, or generated dist output for this task.",
+          "Implement runtime behavior in source/core/index.ts, not only in tests or docs.",
+          "Large json, form, Buffer, and typed array bodies must emit intermediate uploadProgress events, not only 0% and 100%.",
+          "Preserve final upload-complete behavior and do not emit stale progress after request cancellation or stale redirected writes.",
+          "Early 307 redirects with buffered bodies must replay the body and preserve upload progress totals.",
+          "beforeRequest hooks that return a response must still short-circuit large json/body/typed-array requests.",
+          "Move chunk-data to dependencies because runtime source imports it.",
+          "Add verifier-visible tests named `upload progress - json option`, `upload progress - form option`, `upload progress - buffer body`, `returning HTTP response from a beforeRequest hook with large json body`, `early 307 redirect preserves upload progress totals`, and `early 307 redirect finalizes writable side for buffered body`.",
+          "Update documentation/3-streams.md to say granular upload progress is supported for non-stream body, json, and form options.",
+          "Do not claim success until the provided verifier passes."
+        ]
+      }
+    }
+  ]
+}

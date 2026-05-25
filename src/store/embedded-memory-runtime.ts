@@ -1,0 +1,1758 @@
+import { promises as fs } from "node:fs";
+import { dirname } from "node:path";
+import {
+  RECALL_STORE_ACCESS_CAPABILITY_VERSION,
+  type RecallCandidate,
+  type RecallDebugEmbeddingRow,
+  type RecallEdgeRow,
+  type RecallNodeRow,
+  type RecallRuleDefRow,
+  type RecallStage1Params,
+  type RecallStage2EdgesParams,
+  type RecallStage2NodesParams,
+  type RecallStoreCapabilities,
+  type RecallStoreAccess,
+} from "./recall-access.js";
+import { hasNodeWorkflowAnchorSurface } from "../memory/node-execution-surface.js";
+import { toVectorLiteral } from "../util/pgvector.js";
+
+type EmbeddedNodeInput = {
+  id: string;
+  scope: string;
+  client_id?: string | null;
+  type: string;
+  tier?: "hot" | "warm" | "cold" | "archive";
+  memory_lane: "private" | "shared";
+  producer_agent_id?: string;
+  owner_agent_id?: string;
+  owner_team_id?: string;
+  title?: string;
+  text_summary?: string;
+  slots: Record<string, unknown>;
+  raw_ref?: string;
+  evidence_ref?: string;
+  embedding?: number[];
+  embedding_model?: string;
+  salience?: number;
+  importance?: number;
+  confidence?: number;
+};
+
+type EmbeddedEdgeInput = {
+  id: string;
+  scope: string;
+  type: string;
+  src_id: string;
+  dst_id: string;
+  weight?: number;
+  confidence?: number;
+  decay_rate?: number;
+};
+
+type EmbeddedWritePrepared = {
+  scope: string;
+  auto_embed_effective: boolean;
+  nodes: EmbeddedNodeInput[];
+  edges: EmbeddedEdgeInput[];
+};
+
+type EmbeddedWriteResult = {
+  commit_id: string;
+  commit_hash: string;
+};
+
+type EmbeddedNodeRecord = {
+  id: string;
+  scope: string;
+  client_id: string | null;
+  type: string;
+  tier: "hot" | "warm" | "cold" | "archive";
+  memory_lane: "private" | "shared";
+  producer_agent_id: string | null;
+  owner_agent_id: string | null;
+  owner_team_id: string | null;
+  title: string | null;
+  text_summary: string | null;
+  slots: Record<string, unknown>;
+  raw_ref: string | null;
+  evidence_ref: string | null;
+  embedding: number[] | null;
+  embedding_model: string | null;
+  embedding_status: "pending" | "ready" | "failed";
+  salience: number;
+  importance: number;
+  confidence: number;
+  created_at: string;
+  updated_at: string;
+  commit_id: string | null;
+};
+
+type EmbeddedEdgeRecord = {
+  id: string;
+  scope: string;
+  type: string;
+  src_id: string;
+  dst_id: string;
+  weight: number;
+  confidence: number;
+  decay_rate: number;
+  created_at: string;
+  commit_id: string | null;
+};
+
+type EmbeddedRuleState = "draft" | "shadow" | "active" | "disabled";
+type EmbeddedRuleScope = "global" | "agent" | "team";
+
+type EmbeddedRuleDefRecord = {
+  scope: string;
+  rule_node_id: string;
+  state: EmbeddedRuleState;
+  rule_scope: EmbeddedRuleScope;
+  target_agent_id: string | null;
+  target_team_id: string | null;
+  if_json: any;
+  then_json: any;
+  exceptions_json: any;
+  positive_count: number;
+  negative_count: number;
+  commit_id: string | null;
+  updated_at: string;
+};
+
+type EmbeddedDecisionKind = "tools_select";
+
+type EmbeddedExecutionDecisionRecord = {
+  id: string;
+  scope: string;
+  decision_kind: EmbeddedDecisionKind;
+  run_id: string | null;
+  selected_tool: string | null;
+  candidates_json: string[];
+  context_sha256: string;
+  policy_sha256: string;
+  source_rule_ids: string[];
+  metadata_json: any;
+  created_at: string;
+  commit_id: string | null;
+};
+
+type EmbeddedRuleFeedbackRecord = {
+  id: string;
+  scope: string;
+  rule_node_id: string;
+  run_id: string | null;
+  outcome: "positive" | "negative" | "neutral";
+  note: string | null;
+  source: "rule_feedback" | "tools_feedback";
+  decision_id: string | null;
+  commit_id: string | null;
+  created_at: string;
+};
+
+type EmbeddedAuditRow = {
+  scope: string;
+  endpoint: "recall" | "recall_text" | "planning_context" | "context_assemble";
+  consumerAgentId: string | null;
+  consumerTeamId: string | null;
+  querySha256: string;
+  seedCount: number;
+  nodeCount: number;
+  edgeCount: number;
+  created_at: string;
+};
+
+type EmbeddedSnapshotV1 = {
+  version: 1;
+  nodes: EmbeddedNodeRecord[];
+  edges: EmbeddedEdgeRecord[];
+  rule_defs: EmbeddedRuleDefRecord[];
+  audit: EmbeddedAuditRow[];
+  execution_decisions?: EmbeddedExecutionDecisionRecord[];
+  rule_feedback?: EmbeddedRuleFeedbackRecord[];
+};
+
+type EmbeddedRuntimeOptions = {
+  snapshotPath?: string | null;
+  autoPersist?: boolean;
+  snapshotMaxBytes?: number;
+  snapshotMaxBackups?: number;
+  snapshotStrictMaxBytes?: boolean;
+  snapshotCompactionEnabled?: boolean;
+  snapshotCompactionMaxRounds?: number;
+  recallDebugEmbeddingsEnabled?: boolean;
+  recallAuditInsertEnabled?: boolean;
+};
+
+type EmbeddedSnapshotCompactionReport = {
+  applied: boolean;
+  rounds: number;
+  trimmed_payload_nodes: number;
+  dropped_audit: number;
+  dropped_nodes: number;
+  dropped_edges: number;
+  dropped_rule_defs: number;
+};
+
+export type EmbeddedSnapshotMetrics = {
+  persist_total: number;
+  persist_failures_total: number;
+  load_quarantined_total: number;
+  last_persist_at: string | null;
+  last_error: string | null;
+  last_bytes_before_compaction: number | null;
+  last_bytes_after_compaction: number | null;
+  last_over_limit_after_compaction: boolean;
+  last_compaction: EmbeddedSnapshotCompactionReport;
+  runtime_nodes: number;
+  runtime_edges: number;
+  runtime_rule_defs: number;
+  runtime_audit_rows: number;
+};
+
+type EmbeddedSnapshotMetricsState = Omit<
+  EmbeddedSnapshotMetrics,
+  "runtime_nodes" | "runtime_edges" | "runtime_rule_defs" | "runtime_audit_rows"
+>;
+
+export type EmbeddedSessionNodeView = {
+  id: string;
+  client_id: string | null;
+  title: string | null;
+  text_summary: string | null;
+  memory_lane: "private" | "shared";
+  owner_agent_id: string | null;
+  owner_team_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type EmbeddedSessionListView = EmbeddedSessionNodeView & {
+  last_event_at: string | null;
+  event_count: number;
+};
+
+export type EmbeddedSessionEventView = {
+  id: string;
+  client_id: string | null;
+  type: string;
+  title: string | null;
+  text_summary: string | null;
+  slots: Record<string, unknown>;
+  memory_lane: "private" | "shared";
+  producer_agent_id: string | null;
+  owner_agent_id: string | null;
+  owner_team_id: string | null;
+  embedding_status: "pending" | "ready" | "failed" | null;
+  embedding_model: string | null;
+  raw_ref: string | null;
+  evidence_ref: string | null;
+  salience: number;
+  importance: number;
+  confidence: number;
+  last_activated: string | null;
+  created_at: string;
+  updated_at: string;
+  commit_id: string | null;
+  edge_weight: number;
+  edge_confidence: number;
+};
+
+export type EmbeddedPackNodeView = {
+  id: string;
+  client_id: string | null;
+  type: string;
+  tier: string;
+  memory_lane: "private" | "shared";
+  producer_agent_id: string | null;
+  owner_agent_id: string | null;
+  owner_team_id: string | null;
+  title: string | null;
+  text_summary: string | null;
+  slots: Record<string, unknown>;
+  raw_ref: string | null;
+  evidence_ref: string | null;
+  salience: number;
+  importance: number;
+  confidence: number;
+  created_at: string;
+  updated_at: string;
+  commit_id: string | null;
+};
+
+export type EmbeddedPackEdgeView = {
+  id: string;
+  type: string;
+  src_id: string;
+  dst_id: string;
+  src_client_id: string | null;
+  dst_client_id: string | null;
+  weight: number;
+  confidence: number;
+  decay_rate: number;
+  created_at: string;
+  commit_id: string | null;
+};
+
+export type EmbeddedPackCommitView = {
+  id: string;
+  parent_id: string | null;
+  input_sha256: string;
+  actor: string;
+  model_version: string | null;
+  prompt_version: string | null;
+  created_at: string;
+  commit_hash: string;
+};
+
+export type EmbeddedPackDecisionView = {
+  id: string;
+  decision_kind: string;
+  run_id: string | null;
+  selected_tool: string | null;
+  candidates_json: any[];
+  context_sha256: string;
+  policy_sha256: string;
+  source_rule_ids: string[];
+  metadata_json: Record<string, unknown>;
+  created_at: string;
+  commit_id: string | null;
+};
+
+export type EmbeddedPackSnapshotView = {
+  nodes: EmbeddedPackNodeView[];
+  edges: EmbeddedPackEdgeView[];
+  commits: EmbeddedPackCommitView[];
+  decisions: EmbeddedPackDecisionView[];
+  truncated: {
+    nodes: boolean;
+    edges: boolean;
+    commits: boolean;
+    decisions: boolean;
+  };
+};
+
+export type EmbeddedRuleCandidateView = {
+  rule_node_id: string;
+  state: "shadow" | "active";
+  rule_scope: "global" | "team" | "agent";
+  target_agent_id: string | null;
+  target_team_id: string | null;
+  rule_memory_lane: "private" | "shared";
+  rule_owner_agent_id: string | null;
+  rule_owner_team_id: string | null;
+  if_json: any;
+  then_json: any;
+  exceptions_json: any;
+  positive_count: number;
+  negative_count: number;
+  rule_commit_id: string;
+  rule_summary: string | null;
+  rule_slots: any;
+  updated_at: string;
+};
+
+export type EmbeddedRuleDefSyncInput = {
+  scope: string;
+  rule_node_id: string;
+  state: EmbeddedRuleState;
+  rule_scope: EmbeddedRuleScope;
+  target_agent_id: string | null;
+  target_team_id: string | null;
+  if_json: any;
+  then_json: any;
+  exceptions_json: any;
+  positive_count: number;
+  negative_count: number;
+  commit_id: string | null;
+  updated_at: string;
+};
+
+export type EmbeddedExecutionDecisionView = {
+  id: string;
+  scope: string;
+  decision_kind: EmbeddedDecisionKind;
+  run_id: string | null;
+  selected_tool: string | null;
+  candidates_json: string[];
+  context_sha256: string;
+  policy_sha256: string;
+  source_rule_ids: string[];
+  metadata_json: any;
+  created_at: string;
+  commit_id: string | null;
+};
+
+export type EmbeddedExecutionDecisionSyncInput = {
+  id: string;
+  scope: string;
+  decision_kind: EmbeddedDecisionKind;
+  run_id: string | null;
+  selected_tool: string | null;
+  candidates_json: any;
+  context_sha256: string;
+  policy_sha256: string;
+  source_rule_ids?: string[] | null;
+  metadata_json?: any;
+  created_at: string;
+  commit_id?: string | null;
+};
+
+export type EmbeddedRuleFeedbackSyncInput = {
+  id: string;
+  scope: string;
+  rule_node_id: string;
+  run_id: string | null;
+  outcome: "positive" | "negative" | "neutral";
+  note: string | null;
+  source: "rule_feedback" | "tools_feedback";
+  decision_id: string | null;
+  commit_id?: string | null;
+  created_at?: string;
+};
+
+export type EmbeddedRuleFeedbackView = {
+  id: string;
+  scope: string;
+  rule_node_id: string;
+  run_id: string | null;
+  outcome: "positive" | "negative" | "neutral";
+  note: string | null;
+  source: "rule_feedback" | "tools_feedback";
+  decision_id: string | null;
+  commit_id: string | null;
+  created_at: string;
+};
+
+function nodeKey(scope: string, id: string): string {
+  return `${scope}::${id}`;
+}
+
+function decisionKey(scope: string, id: string): string {
+  return `${scope}::${id}`;
+}
+
+function edgeUpsertKey(scope: string, type: string, src: string, dst: string): string {
+  return `${scope}::${type}::${src}::${dst}`;
+}
+
+function cosineDistance(a: number[], b: number[]): number {
+  const n = Math.min(a.length, b.length);
+  if (n === 0) return 1;
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < n; i++) {
+    const av = a[i];
+    const bv = b[i];
+    dot += av * bv;
+    na += av * av;
+    nb += bv * bv;
+  }
+  if (na <= 0 || nb <= 0) return 1;
+  const sim = dot / (Math.sqrt(na) * Math.sqrt(nb));
+  return 1 - Math.max(-1, Math.min(1, sim));
+}
+
+function candidateVisible(n: EmbeddedNodeRecord, consumerAgentId: string | null, consumerTeamId: string | null): boolean {
+  if (n.memory_lane === "shared") return true;
+  if (consumerAgentId && n.owner_agent_id === consumerAgentId) return true;
+  if (consumerTeamId && n.owner_team_id === consumerTeamId) return true;
+  return false;
+}
+
+function edgeSortDesc(a: EmbeddedEdgeRecord, b: EmbeddedEdgeRecord): number {
+  if (b.weight !== a.weight) return b.weight - a.weight;
+  if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+  return a.id.localeCompare(b.id);
+}
+
+function edgeToRecallRow(e: EmbeddedEdgeRecord): RecallEdgeRow {
+  return {
+    id: e.id,
+    scope: e.scope,
+    type: e.type,
+    src_id: e.src_id,
+    dst_id: e.dst_id,
+    weight: e.weight,
+    confidence: e.confidence,
+    decay_rate: e.decay_rate,
+    last_activated: null,
+    created_at: e.created_at,
+    commit_id: e.commit_id,
+  };
+}
+
+function compactionTierWeight(tier: EmbeddedNodeRecord["tier"]): number {
+  if (tier === "hot") return 3;
+  if (tier === "warm") return 2;
+  if (tier === "cold") return 1;
+  return 0;
+}
+
+function nodeCompactionScore(node: EmbeddedNodeRecord): number {
+  const tier = compactionTierWeight(node.tier) * 10;
+  const typeBias = node.type === "rule" ? 8 : 0;
+  const quality = Number(node.salience ?? 0) + Number(node.importance ?? 0) + Number(node.confidence ?? 0);
+  const updated = Date.parse(node.updated_at);
+  const recency = Number.isFinite(updated) ? updated / 8.64e10 : 0; // days scale
+  return tier + typeBias + quality + recency;
+}
+
+function edgeCompactionScore(edge: EmbeddedEdgeRecord): number {
+  const quality = Number(edge.weight ?? 0) + Number(edge.confidence ?? 0);
+  const created = Date.parse(edge.created_at);
+  const recency = Number.isFinite(created) ? created / 8.64e10 : 0;
+  return quality + recency;
+}
+
+function compareCreatedAtAsc(a: string, b: string): number {
+  const ta = Date.parse(a);
+  const tb = Date.parse(b);
+  if (Number.isFinite(ta) && Number.isFinite(tb) && ta !== tb) return ta - tb;
+  return a.localeCompare(b);
+}
+
+function compareCreatedAtDesc(a: string, b: string): number {
+  const ta = Date.parse(a);
+  const tb = Date.parse(b);
+  if (Number.isFinite(ta) && Number.isFinite(tb) && ta !== tb) return tb - ta;
+  return b.localeCompare(a);
+}
+
+function normalizeRuleState(raw: unknown): EmbeddedRuleState {
+  const v = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (v === "shadow" || v === "active" || v === "disabled") return v;
+  return "draft";
+}
+
+function normalizeRuleScope(raw: unknown): EmbeddedRuleScope {
+  const v = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (v === "agent" || v === "team") return v;
+  return "global";
+}
+
+function normalizeIso(raw: unknown, fallback: string): string {
+  const v = typeof raw === "string" ? raw.trim() : "";
+  if (!v) return fallback;
+  return Number.isFinite(Date.parse(v)) ? v : fallback;
+}
+
+function normalizeDecisionKind(raw: unknown): EmbeddedDecisionKind {
+  const v = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (v === "tools_select") return "tools_select";
+  return "tools_select";
+}
+
+function normalizeToolName(raw: unknown): string | null {
+  const v = typeof raw === "string" ? raw.trim() : "";
+  return v.length > 0 ? v : null;
+}
+
+function normalizeCandidates(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    const v = typeof item === "string" ? item.trim() : "";
+    if (!v || seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+  }
+  return out;
+}
+
+function candidatesSignature(raw: unknown): string {
+  return JSON.stringify(normalizeCandidates(raw));
+}
+
+function normalizeRuleSource(raw: unknown): "rule_feedback" | "tools_feedback" {
+  const v = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (v === "tools_feedback") return "tools_feedback";
+  return "rule_feedback";
+}
+
+function normalizeRuleOutcome(raw: unknown): "positive" | "negative" | "neutral" {
+  const v = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (v === "positive" || v === "negative") return v;
+  return "neutral";
+}
+
+export class EmbeddedMemoryRuntime {
+  private readonly nodes = new Map<string, EmbeddedNodeRecord>();
+  private readonly edgesByUnique = new Map<string, EmbeddedEdgeRecord>();
+  private readonly ruleDefs = new Map<string, EmbeddedRuleDefRecord>();
+  private readonly executionDecisionsById = new Map<string, EmbeddedExecutionDecisionRecord>();
+  private readonly ruleFeedback: EmbeddedRuleFeedbackRecord[] = [];
+  private readonly audit: EmbeddedAuditRow[] = [];
+  private readonly recallAccess: RecallStoreAccess;
+  private readonly snapshotPath: string | null;
+  private readonly autoPersist: boolean;
+  private readonly snapshotMaxBytes: number;
+  private readonly snapshotMaxBackups: number;
+  private readonly snapshotStrictMaxBytes: boolean;
+  private readonly snapshotCompactionEnabled: boolean;
+  private readonly snapshotCompactionMaxRounds: number;
+  private readonly recallCapabilities: RecallStoreCapabilities;
+  private readonly snapshotMetrics: EmbeddedSnapshotMetricsState;
+
+  constructor(opts: EmbeddedRuntimeOptions = {}) {
+    this.snapshotPath = opts.snapshotPath?.trim() ? opts.snapshotPath.trim() : null;
+    this.autoPersist = opts.autoPersist ?? true;
+    this.snapshotMaxBytes = Number.isFinite(opts.snapshotMaxBytes as number) ? Math.max(1, Math.trunc(opts.snapshotMaxBytes as number)) : 50 * 1024 * 1024;
+    this.snapshotMaxBackups = Number.isFinite(opts.snapshotMaxBackups as number) ? Math.max(0, Math.trunc(opts.snapshotMaxBackups as number)) : 3;
+    this.snapshotStrictMaxBytes = opts.snapshotStrictMaxBytes ?? false;
+    this.snapshotCompactionEnabled = opts.snapshotCompactionEnabled ?? true;
+    this.snapshotCompactionMaxRounds = Number.isFinite(opts.snapshotCompactionMaxRounds as number)
+      ? Math.max(1, Math.trunc(opts.snapshotCompactionMaxRounds as number))
+      : 8;
+    this.recallCapabilities = {
+      debug_embeddings: opts.recallDebugEmbeddingsEnabled ?? false,
+      audit_insert: opts.recallAuditInsertEnabled ?? true,
+    };
+    this.snapshotMetrics = {
+      persist_total: 0,
+      persist_failures_total: 0,
+      load_quarantined_total: 0,
+      last_persist_at: null,
+      last_error: null,
+      last_bytes_before_compaction: null,
+      last_bytes_after_compaction: null,
+      last_over_limit_after_compaction: false,
+      last_compaction: {
+        applied: false,
+        rounds: 0,
+        trimmed_payload_nodes: 0,
+        dropped_audit: 0,
+        dropped_nodes: 0,
+        dropped_edges: 0,
+        dropped_rule_defs: 0,
+      },
+    };
+    this.recallAccess = {
+      capability_version: RECALL_STORE_ACCESS_CAPABILITY_VERSION,
+      capabilities: this.recallCapabilities,
+      stage1CandidatesAnn: async (params) => this.stage1Candidates(params),
+      stage1CandidatesExactFallback: async (params) => this.stage1Candidates(params),
+      stage2Edges: async (params) => this.stage2Edges(params),
+      stage2Nodes: async (params) => this.stage2Nodes(params),
+      ruleDefs: async (scope, ruleIds) => this.getRuleDefs(scope, ruleIds),
+      debugEmbeddings: async (scope, ids) => this.debugEmbeddings(scope, ids),
+      insertRecallAudit: async (params) => {
+        if (!this.recallCapabilities.audit_insert) {
+          throw new Error("recall capability unsupported: audit_insert");
+        }
+        this.audit.push({
+          ...params,
+          created_at: new Date().toISOString(),
+        });
+        if (this.audit.length > 5000) this.audit.splice(0, this.audit.length - 5000);
+      },
+    };
+  }
+
+  createRecallAccess(): RecallStoreAccess {
+    return this.recallAccess;
+  }
+
+  getSnapshotMetrics(): EmbeddedSnapshotMetrics {
+    return {
+      ...this.snapshotMetrics,
+      last_compaction: { ...this.snapshotMetrics.last_compaction },
+      runtime_nodes: this.nodes.size,
+      runtime_edges: this.edgesByUnique.size,
+      runtime_rule_defs: this.ruleDefs.size,
+      runtime_audit_rows: this.audit.length,
+    };
+  }
+
+  listSessionEvents(params: {
+    scope: string;
+    sessionClientId: string;
+    consumerAgentId: string | null;
+    consumerTeamId: string | null;
+    limit: number;
+    offset: number;
+  }): {
+    session: EmbeddedSessionNodeView | null;
+    events: EmbeddedSessionEventView[];
+    has_more: boolean;
+  } {
+    const session = Array.from(this.nodes.values())
+      .filter((n) => n.scope === params.scope && n.type === "topic" && n.client_id === params.sessionClientId)
+      .filter((n) => candidateVisible(n, params.consumerAgentId, params.consumerTeamId))
+      .sort((a, b) => compareCreatedAtDesc(a.created_at, b.created_at) || b.id.localeCompare(a.id))[0];
+
+    if (!session) {
+      return { session: null, events: [], has_more: false };
+    }
+
+    const eventPairs: Array<{ node: EmbeddedNodeRecord; edge: EmbeddedEdgeRecord }> = [];
+    for (const edge of this.edgesByUnique.values()) {
+      if (edge.scope !== params.scope) continue;
+      if (edge.type !== "part_of") continue;
+      if (edge.dst_id !== session.id) continue;
+      const src = this.nodes.get(nodeKey(params.scope, edge.src_id));
+      if (!src || src.type !== "event") continue;
+      if (!candidateVisible(src, params.consumerAgentId, params.consumerTeamId)) continue;
+      eventPairs.push({ node: src, edge });
+    }
+    eventPairs.sort((a, b) => compareCreatedAtDesc(a.node.created_at, b.node.created_at) || b.node.id.localeCompare(a.node.id));
+
+    const slice = eventPairs.slice(params.offset, params.offset + params.limit + 1);
+    const hasMore = slice.length > params.limit;
+    const chosen = hasMore ? slice.slice(0, params.limit) : slice;
+
+    return {
+      session: {
+        id: session.id,
+        client_id: session.client_id,
+        title: session.title,
+        text_summary: session.text_summary,
+        memory_lane: session.memory_lane,
+        owner_agent_id: session.owner_agent_id,
+        owner_team_id: session.owner_team_id,
+        created_at: session.created_at,
+        updated_at: session.updated_at,
+      },
+      events: chosen.map(({ node, edge }) => ({
+        id: node.id,
+        client_id: node.client_id,
+        type: node.type,
+        title: node.title,
+        text_summary: node.text_summary,
+        slots: node.slots,
+        memory_lane: node.memory_lane,
+        producer_agent_id: node.producer_agent_id,
+        owner_agent_id: node.owner_agent_id,
+        owner_team_id: node.owner_team_id,
+        embedding_status: node.embedding_status,
+        embedding_model: node.embedding_model,
+        raw_ref: node.raw_ref,
+        evidence_ref: node.evidence_ref,
+        salience: node.salience,
+        importance: node.importance,
+        confidence: node.confidence,
+        last_activated: null,
+        created_at: node.created_at,
+        updated_at: node.updated_at,
+        commit_id: node.commit_id,
+        edge_weight: edge.weight,
+        edge_confidence: edge.confidence,
+      })),
+      has_more: hasMore,
+    };
+  }
+
+  listSessions(params: {
+    scope: string;
+    consumerAgentId: string | null;
+    consumerTeamId: string | null;
+    ownerAgentId: string | null;
+    ownerTeamId: string | null;
+    limit: number;
+    offset: number;
+  }): {
+    sessions: EmbeddedSessionListView[];
+    has_more: boolean;
+  } {
+    const rows = Array.from(this.nodes.values())
+      .filter((n) => n.scope === params.scope && n.type === "topic" && (n.client_id ?? "").startsWith("session:"))
+      .filter((n) => candidateVisible(n, params.consumerAgentId, params.consumerTeamId))
+      .filter((n) => !params.ownerAgentId || n.owner_agent_id === params.ownerAgentId)
+      .filter((n) => !params.ownerTeamId || n.owner_team_id === params.ownerTeamId)
+      .map((session) => {
+        let eventCount = 0;
+        let lastEventAt: string | null = null;
+        for (const edge of this.edgesByUnique.values()) {
+          if (edge.scope !== params.scope || edge.type !== "part_of" || edge.dst_id !== session.id) continue;
+          const src = this.nodes.get(nodeKey(params.scope, edge.src_id));
+          if (!src || src.type !== "event") continue;
+          if (!candidateVisible(src, params.consumerAgentId, params.consumerTeamId)) continue;
+          eventCount += 1;
+          if (!lastEventAt || compareCreatedAtDesc(src.created_at, lastEventAt) < 0) {
+            lastEventAt = src.created_at;
+          }
+        }
+        return {
+          id: session.id,
+          client_id: session.client_id,
+          title: session.title,
+          text_summary: session.text_summary,
+          memory_lane: session.memory_lane,
+          owner_agent_id: session.owner_agent_id,
+          owner_team_id: session.owner_team_id,
+          created_at: session.created_at,
+          updated_at: session.updated_at,
+          last_event_at: lastEventAt,
+          event_count: eventCount,
+        };
+      })
+      .sort((a, b) => compareCreatedAtDesc(a.last_event_at ?? a.updated_at, b.last_event_at ?? b.updated_at) || b.id.localeCompare(a.id));
+    const slice = rows.slice(params.offset, params.offset + params.limit + 1);
+    const hasMore = slice.length > params.limit;
+    return {
+      sessions: hasMore ? slice.slice(0, params.limit) : slice,
+      has_more: hasMore,
+    };
+  }
+
+  exportPackSnapshot(params: {
+    scope: string;
+    includeNodes: boolean;
+    includeEdges: boolean;
+    includeCommits: boolean;
+    includeDecisions: boolean;
+    maxRows: number;
+  }): EmbeddedPackSnapshotView {
+    let nodes: EmbeddedPackNodeView[] = [];
+    let edges: EmbeddedPackEdgeView[] = [];
+    let commits: EmbeddedPackCommitView[] = [];
+    let decisions: EmbeddedPackDecisionView[] = [];
+    let nodesHasMore = false;
+    let edgesHasMore = false;
+    let commitsHasMore = false;
+    let decisionsHasMore = false;
+
+    if (params.includeNodes) {
+      const all = Array.from(this.nodes.values())
+        .filter((n) => n.scope === params.scope)
+        .sort((a, b) => compareCreatedAtAsc(a.created_at, b.created_at) || a.id.localeCompare(b.id));
+      nodesHasMore = all.length > params.maxRows;
+      const chosen = nodesHasMore ? all.slice(0, params.maxRows) : all;
+      nodes = chosen.map((n) => ({
+        id: n.id,
+        client_id: n.client_id,
+        type: n.type,
+        tier: n.tier,
+        memory_lane: n.memory_lane,
+        producer_agent_id: n.producer_agent_id,
+        owner_agent_id: n.owner_agent_id,
+        owner_team_id: n.owner_team_id,
+        title: n.title,
+        text_summary: n.text_summary,
+        slots: n.slots,
+        raw_ref: n.raw_ref,
+        evidence_ref: n.evidence_ref,
+        salience: n.salience,
+        importance: n.importance,
+        confidence: n.confidence,
+        created_at: n.created_at,
+        updated_at: n.updated_at,
+        commit_id: n.commit_id,
+      }));
+    }
+
+    if (params.includeEdges) {
+      const all = Array.from(this.edgesByUnique.values())
+        .filter((e) => e.scope === params.scope)
+        .sort((a, b) => compareCreatedAtAsc(a.created_at, b.created_at) || a.id.localeCompare(b.id));
+      edgesHasMore = all.length > params.maxRows;
+      const chosen = edgesHasMore ? all.slice(0, params.maxRows) : all;
+      edges = chosen.map((e) => ({
+        id: e.id,
+        type: e.type,
+        src_id: e.src_id,
+        dst_id: e.dst_id,
+        src_client_id: this.nodes.get(nodeKey(e.scope, e.src_id))?.client_id ?? null,
+        dst_client_id: this.nodes.get(nodeKey(e.scope, e.dst_id))?.client_id ?? null,
+        weight: e.weight,
+        confidence: e.confidence,
+        decay_rate: e.decay_rate,
+        created_at: e.created_at,
+        commit_id: e.commit_id,
+      }));
+    }
+
+    if (params.includeCommits) {
+      const commitMeta = new Map<string, { created_at: string }>();
+      for (const n of this.nodes.values()) {
+        if (n.scope !== params.scope) continue;
+        if (!n.commit_id) continue;
+        const cur = commitMeta.get(n.commit_id);
+        if (!cur || compareCreatedAtAsc(n.created_at, cur.created_at) < 0) {
+          commitMeta.set(n.commit_id, { created_at: n.created_at });
+        }
+      }
+      for (const e of this.edgesByUnique.values()) {
+        if (e.scope !== params.scope) continue;
+        if (!e.commit_id) continue;
+        const cur = commitMeta.get(e.commit_id);
+        if (!cur || compareCreatedAtAsc(e.created_at, cur.created_at) < 0) {
+          commitMeta.set(e.commit_id, { created_at: e.created_at });
+        }
+      }
+      const all = Array.from(commitMeta.entries())
+        .map(([id, meta]) => ({ id, created_at: meta.created_at }))
+        .sort((a, b) => compareCreatedAtAsc(a.created_at, b.created_at) || a.id.localeCompare(b.id));
+      commitsHasMore = all.length > params.maxRows;
+      const chosen = commitsHasMore ? all.slice(0, params.maxRows) : all;
+      commits = chosen.map((c) => ({
+        id: c.id,
+        parent_id: null,
+        input_sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+        actor: "embedded_runtime",
+        model_version: null,
+        prompt_version: null,
+        created_at: c.created_at,
+        commit_hash: c.id,
+      }));
+    }
+
+    if (params.includeDecisions) {
+      const all = Array.from(this.executionDecisionsById.values())
+        .filter((d) => d.scope === params.scope)
+        .sort((a, b) => compareCreatedAtAsc(a.created_at, b.created_at) || a.id.localeCompare(b.id));
+      decisionsHasMore = all.length > params.maxRows;
+      const chosen = decisionsHasMore ? all.slice(0, params.maxRows) : all;
+      decisions = chosen.map((d) => ({
+        id: d.id,
+        decision_kind: d.decision_kind,
+        run_id: d.run_id ?? null,
+        selected_tool: d.selected_tool ?? null,
+        candidates_json: Array.isArray(d.candidates_json) ? d.candidates_json : [],
+        context_sha256: d.context_sha256,
+        policy_sha256: d.policy_sha256,
+        source_rule_ids: Array.isArray(d.source_rule_ids) ? d.source_rule_ids : [],
+        metadata_json:
+          d.metadata_json && typeof d.metadata_json === "object" && !Array.isArray(d.metadata_json)
+            ? (d.metadata_json as Record<string, unknown>)
+            : {},
+        created_at: d.created_at,
+        commit_id: d.commit_id ?? null,
+      }));
+    }
+
+    return {
+      nodes,
+      edges,
+      commits,
+      decisions,
+      truncated: {
+        nodes: nodesHasMore,
+        edges: edgesHasMore,
+        commits: commitsHasMore,
+        decisions: decisionsHasMore,
+      },
+    };
+  }
+
+  listRuleCandidates(params: {
+    scope: string;
+    limit: number;
+    states?: Array<"shadow" | "active">;
+  }): EmbeddedRuleCandidateView[] {
+    const allowed = new Set<string>((params.states && params.states.length > 0 ? params.states : ["shadow", "active"]).map(String));
+    const all: EmbeddedRuleCandidateView[] = [];
+    for (const def of this.ruleDefs.values()) {
+      if (def.scope !== params.scope) continue;
+      if (!allowed.has(def.state)) continue;
+      if (def.state !== "shadow" && def.state !== "active") continue;
+      const node = this.nodes.get(nodeKey(def.scope, def.rule_node_id));
+      if (!node) continue;
+      all.push({
+        rule_node_id: def.rule_node_id,
+        state: def.state,
+        rule_scope: def.rule_scope,
+        target_agent_id: def.target_agent_id,
+        target_team_id: def.target_team_id,
+        rule_memory_lane: node.memory_lane,
+        rule_owner_agent_id: node.owner_agent_id,
+        rule_owner_team_id: node.owner_team_id,
+        if_json: def.if_json,
+        then_json: def.then_json,
+        exceptions_json: def.exceptions_json,
+        positive_count: def.positive_count,
+        negative_count: def.negative_count,
+        rule_commit_id: def.commit_id ?? node.commit_id ?? "",
+        rule_summary: node.text_summary ?? null,
+        rule_slots: node.slots ?? {},
+        updated_at: def.updated_at,
+      });
+    }
+    all.sort((a, b) => compareCreatedAtDesc(a.updated_at, b.updated_at) || a.rule_node_id.localeCompare(b.rule_node_id));
+    return all.slice(0, Math.max(0, params.limit));
+  }
+
+  getExecutionDecision(params: {
+    scope: string;
+    decision_id: string;
+  }): EmbeddedExecutionDecisionView | null {
+    const key = decisionKey(params.scope, params.decision_id);
+    const row = this.executionDecisionsById.get(key);
+    if (!row) return null;
+    return {
+      id: row.id,
+      scope: row.scope,
+      decision_kind: row.decision_kind,
+      run_id: row.run_id,
+      selected_tool: row.selected_tool,
+      candidates_json: row.candidates_json.slice(),
+      context_sha256: row.context_sha256,
+      policy_sha256: row.policy_sha256,
+      source_rule_ids: row.source_rule_ids.slice(),
+      metadata_json: row.metadata_json ?? {},
+      created_at: row.created_at,
+      commit_id: row.commit_id,
+    };
+  }
+
+  inferExecutionDecision(params: {
+    scope: string;
+    run_id: string | null;
+    selected_tool: string;
+    candidates_json: any;
+    context_sha256: string;
+    now_utc?: string;
+  }): EmbeddedExecutionDecisionView | null {
+    const selectedTool = normalizeToolName(params.selected_tool);
+    if (!selectedTool) return null;
+    const wantSig = candidatesSignature(params.candidates_json);
+
+    const all = Array.from(this.executionDecisionsById.values())
+      .filter((d) => d.scope === params.scope && d.decision_kind === "tools_select")
+      .sort((a, b) => compareCreatedAtDesc(a.created_at, b.created_at) || a.id.localeCompare(b.id));
+
+    if (params.run_id) {
+      const byRun = all.find(
+        (d) =>
+          d.run_id === params.run_id &&
+          d.selected_tool === selectedTool &&
+          d.context_sha256 === params.context_sha256 &&
+          candidatesSignature(d.candidates_json) === wantSig,
+      );
+      if (byRun) return this.getExecutionDecision({ scope: byRun.scope, decision_id: byRun.id });
+    }
+
+    const nowMs = Date.parse(params.now_utc ?? new Date().toISOString());
+    const minTs = Number.isFinite(nowMs) ? nowMs - 24 * 60 * 60 * 1000 : Number.NEGATIVE_INFINITY;
+    const fallback = all.find((d) => {
+      const createdMs = Date.parse(d.created_at);
+      if (Number.isFinite(minTs) && (!Number.isFinite(createdMs) || createdMs < minTs)) return false;
+      if (d.selected_tool !== selectedTool) return false;
+      if (d.context_sha256 !== params.context_sha256) return false;
+      if (candidatesSignature(d.candidates_json) !== wantSig) return false;
+      if (params.run_id && d.run_id !== null) return false;
+      return true;
+    });
+    if (!fallback) return null;
+    return this.getExecutionDecision({ scope: fallback.scope, decision_id: fallback.id });
+  }
+
+  async syncExecutionDecisions(rows: EmbeddedExecutionDecisionSyncInput[]): Promise<void> {
+    if (!Array.isArray(rows) || rows.length === 0) return;
+    const now = new Date().toISOString();
+    let changed = false;
+    for (const row of rows) {
+      const scope = typeof row.scope === "string" ? row.scope : "";
+      const id = typeof row.id === "string" ? row.id : "";
+      if (!scope || !id) continue;
+      const key = decisionKey(scope, id);
+      const existing = this.executionDecisionsById.get(key);
+      const next: EmbeddedExecutionDecisionRecord = {
+        id,
+        scope,
+        decision_kind: normalizeDecisionKind(row.decision_kind ?? existing?.decision_kind),
+        run_id: typeof row.run_id === "string" && row.run_id.trim().length > 0 ? row.run_id : null,
+        selected_tool: normalizeToolName(row.selected_tool),
+        candidates_json: normalizeCandidates(row.candidates_json ?? existing?.candidates_json ?? []),
+        context_sha256:
+          typeof row.context_sha256 === "string" && row.context_sha256.trim().length > 0
+            ? row.context_sha256
+            : (existing?.context_sha256 ?? ""),
+        policy_sha256:
+          typeof row.policy_sha256 === "string" && row.policy_sha256.trim().length > 0
+            ? row.policy_sha256
+            : (existing?.policy_sha256 ?? ""),
+        source_rule_ids: Array.isArray(row.source_rule_ids)
+          ? row.source_rule_ids
+              .map((x) => (typeof x === "string" ? x.trim() : ""))
+              .filter((x) => x.length > 0)
+          : (existing?.source_rule_ids ?? []),
+        metadata_json: row.metadata_json ?? existing?.metadata_json ?? {},
+        created_at: normalizeIso(row.created_at, existing?.created_at ?? now),
+        commit_id:
+          typeof row.commit_id === "string" && row.commit_id.trim().length > 0
+            ? row.commit_id
+            : (existing?.commit_id ?? null),
+      };
+      this.executionDecisionsById.set(key, next);
+      changed = true;
+    }
+
+    if (this.executionDecisionsById.size > 10000) {
+      const keep = Array.from(this.executionDecisionsById.values())
+        .sort((a, b) => compareCreatedAtDesc(a.created_at, b.created_at) || a.id.localeCompare(b.id))
+        .slice(0, 10000);
+      const keepKeys = new Set(keep.map((d) => decisionKey(d.scope, d.id)));
+      for (const k of Array.from(this.executionDecisionsById.keys())) {
+        if (!keepKeys.has(k)) this.executionDecisionsById.delete(k);
+      }
+      changed = true;
+    }
+
+    if (changed && this.autoPersist) await this.persistSnapshot();
+  }
+
+  async appendRuleFeedback(rows: EmbeddedRuleFeedbackSyncInput[]): Promise<void> {
+    if (!Array.isArray(rows) || rows.length === 0) return;
+    let changed = false;
+    for (const row of rows) {
+      const scope = typeof row.scope === "string" ? row.scope : "";
+      const id = typeof row.id === "string" ? row.id : "";
+      const ruleNodeId = typeof row.rule_node_id === "string" ? row.rule_node_id : "";
+      if (!scope || !id || !ruleNodeId) continue;
+      this.ruleFeedback.push({
+        id,
+        scope,
+        rule_node_id: ruleNodeId,
+        run_id: typeof row.run_id === "string" && row.run_id.trim().length > 0 ? row.run_id : null,
+        outcome: normalizeRuleOutcome(row.outcome),
+        note: typeof row.note === "string" && row.note.trim().length > 0 ? row.note : null,
+        source: normalizeRuleSource(row.source),
+        decision_id: typeof row.decision_id === "string" && row.decision_id.trim().length > 0 ? row.decision_id : null,
+        commit_id: typeof row.commit_id === "string" && row.commit_id.trim().length > 0 ? row.commit_id : null,
+        created_at: normalizeIso(row.created_at, new Date().toISOString()),
+      });
+      changed = true;
+    }
+
+    if (this.ruleFeedback.length > 20000) {
+      this.ruleFeedback.splice(0, this.ruleFeedback.length - 20000);
+      changed = true;
+    }
+
+    if (changed && this.autoPersist) await this.persistSnapshot();
+  }
+
+  listRuleFeedback(params: { scope: string; limit: number }): EmbeddedRuleFeedbackView[] {
+    return this.ruleFeedback
+      .filter((row) => row.scope === params.scope)
+      .sort((a, b) => compareCreatedAtDesc(a.created_at, b.created_at) || b.id.localeCompare(a.id))
+      .slice(0, Math.max(0, params.limit))
+      .map((row) => ({ ...row }));
+  }
+
+  async syncRuleDefs(rows: EmbeddedRuleDefSyncInput[], opts: { touchRuleNodes?: boolean } = {}): Promise<void> {
+    if (!Array.isArray(rows) || rows.length === 0) return;
+    const now = new Date().toISOString();
+    let changed = false;
+    for (const row of rows) {
+      const scope = typeof row.scope === "string" ? row.scope : "";
+      const ruleNodeId = typeof row.rule_node_id === "string" ? row.rule_node_id : "";
+      if (!scope || !ruleNodeId) continue;
+      const key = nodeKey(scope, ruleNodeId);
+      const updatedAt = normalizeIso(row.updated_at, now);
+      const record: EmbeddedRuleDefRecord = {
+        scope,
+        rule_node_id: ruleNodeId,
+        state: normalizeRuleState(row.state),
+        rule_scope: normalizeRuleScope(row.rule_scope),
+        target_agent_id: typeof row.target_agent_id === "string" ? row.target_agent_id : null,
+        target_team_id: typeof row.target_team_id === "string" ? row.target_team_id : null,
+        if_json: row.if_json ?? {},
+        then_json: row.then_json ?? {},
+        exceptions_json: Array.isArray(row.exceptions_json) ? row.exceptions_json : [],
+        positive_count: Number.isFinite(Number(row.positive_count)) ? Math.max(0, Number(row.positive_count)) : 0,
+        negative_count: Number.isFinite(Number(row.negative_count)) ? Math.max(0, Number(row.negative_count)) : 0,
+        commit_id: typeof row.commit_id === "string" && row.commit_id.trim().length > 0 ? row.commit_id : null,
+        updated_at: updatedAt,
+      };
+      this.ruleDefs.set(key, record);
+      changed = true;
+
+      if (opts.touchRuleNodes) {
+        const node = this.nodes.get(key);
+        if (node && node.type === "rule") {
+          node.updated_at = updatedAt;
+          changed = true;
+        }
+      }
+    }
+
+    if (changed && this.autoPersist) await this.persistSnapshot();
+  }
+
+  async applyWrite(prepared: EmbeddedWritePrepared, out: EmbeddedWriteResult): Promise<void> {
+    const now = new Date().toISOString();
+
+    for (const n of prepared.nodes) {
+      const key = nodeKey(n.scope, n.id);
+      if (this.nodes.has(key)) continue; // mirror INSERT ... ON CONFLICT DO NOTHING
+
+      const embedPlanned = prepared.auto_embed_effective && !n.embedding;
+      const embeddingStatus: "pending" | "ready" | "failed" = n.embedding ? "ready" : embedPlanned ? "pending" : "failed";
+      const embeddingModel = n.embedding ? (n.embedding_model?.trim() ? n.embedding_model.trim() : "client") : null;
+
+      const record: EmbeddedNodeRecord = {
+        id: n.id,
+        scope: n.scope,
+        client_id: n.client_id ?? null,
+        type: n.type,
+        tier: n.tier ?? "hot",
+        memory_lane: n.memory_lane,
+        producer_agent_id: n.producer_agent_id ?? null,
+        owner_agent_id: n.owner_agent_id ?? null,
+        owner_team_id: n.owner_team_id ?? null,
+        title: n.title ?? null,
+        text_summary: n.text_summary ?? null,
+        slots: (n.slots ?? {}) as Record<string, unknown>,
+        raw_ref: n.raw_ref ?? null,
+        evidence_ref: n.evidence_ref ?? null,
+        embedding: n.embedding ? n.embedding.slice() : null,
+        embedding_model: embeddingModel,
+        embedding_status: embeddingStatus,
+        salience: n.salience ?? 0.5,
+        importance: n.importance ?? 0.5,
+        confidence: n.confidence ?? 0.5,
+        created_at: now,
+        updated_at: now,
+        commit_id: out.commit_id,
+      };
+      this.nodes.set(key, record);
+
+      if (n.type === "rule") {
+        const slots = (n.slots ?? {}) as Record<string, unknown>;
+        const scopeRaw = typeof slots["rule_scope"] === "string" ? String(slots["rule_scope"]).trim().toLowerCase() : "";
+        const ruleScope: "global" | "agent" | "team" = scopeRaw === "agent" || scopeRaw === "team" ? scopeRaw : "global";
+        const ruleKey = nodeKey(n.scope, n.id);
+        if (!this.ruleDefs.has(ruleKey)) {
+          this.ruleDefs.set(ruleKey, {
+            scope: n.scope,
+            rule_node_id: n.id,
+            state: "draft",
+            rule_scope: ruleScope,
+            target_agent_id: typeof slots["target_agent_id"] === "string" ? String(slots["target_agent_id"]) : null,
+            target_team_id: typeof slots["target_team_id"] === "string" ? String(slots["target_team_id"]) : null,
+            if_json: slots["if"] ?? {},
+            then_json: slots["then"] ?? {},
+            exceptions_json: slots["exceptions"] ?? [],
+            positive_count: 0,
+            negative_count: 0,
+            commit_id: out.commit_id,
+            updated_at: now,
+          });
+        }
+      }
+    }
+
+    for (const e of prepared.edges) {
+      const upsertKey = edgeUpsertKey(e.scope, e.type, e.src_id, e.dst_id);
+      const existing = this.edgesByUnique.get(upsertKey);
+      const next: EmbeddedEdgeRecord = {
+        id: e.id,
+        scope: e.scope,
+        type: e.type,
+        src_id: e.src_id,
+        dst_id: e.dst_id,
+        weight: existing ? Math.max(existing.weight, e.weight ?? 0.5) : (e.weight ?? 0.5),
+        confidence: existing ? Math.max(existing.confidence, e.confidence ?? 0.5) : (e.confidence ?? 0.5),
+        decay_rate: e.decay_rate ?? 0.01,
+        created_at: existing?.created_at ?? now,
+        commit_id: out.commit_id,
+      };
+      this.edgesByUnique.set(upsertKey, next);
+    }
+    if (this.autoPersist) await this.persistSnapshot();
+  }
+
+  async loadSnapshot(): Promise<void> {
+    if (!this.snapshotPath) return;
+    let raw: string;
+    try {
+      raw = await fs.readFile(this.snapshotPath, "utf8");
+    } catch (err: any) {
+      if (err?.code === "ENOENT") return;
+      throw err;
+    }
+
+    let parsed: EmbeddedSnapshotV1;
+    try {
+      parsed = JSON.parse(raw) as EmbeddedSnapshotV1;
+    } catch {
+      await this.quarantineCorruptSnapshot();
+      return;
+    }
+    if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges) || !Array.isArray(parsed.rule_defs)) {
+      await this.quarantineCorruptSnapshot();
+      return;
+    }
+
+    this.nodes.clear();
+    this.edgesByUnique.clear();
+    this.ruleDefs.clear();
+    this.executionDecisionsById.clear();
+    this.ruleFeedback.splice(0, this.ruleFeedback.length);
+    this.audit.splice(0, this.audit.length);
+
+    for (const n of parsed.nodes) {
+      this.nodes.set(nodeKey(n.scope, n.id), {
+        ...n,
+        client_id: typeof (n as any).client_id === "string" ? String((n as any).client_id) : null,
+      });
+    }
+    for (const e of parsed.edges) this.edgesByUnique.set(edgeUpsertKey(e.scope, e.type, e.src_id, e.dst_id), e);
+    for (const r of parsed.rule_defs) {
+      const key = nodeKey(r.scope, r.rule_node_id);
+      const linkedNode = this.nodes.get(key);
+      const fallbackTs = linkedNode?.updated_at ?? new Date().toISOString();
+      this.ruleDefs.set(key, {
+        scope: r.scope,
+        rule_node_id: r.rule_node_id,
+        state: normalizeRuleState((r as any).state),
+        rule_scope: normalizeRuleScope((r as any).rule_scope),
+        target_agent_id: typeof r.target_agent_id === "string" ? r.target_agent_id : null,
+        target_team_id: typeof r.target_team_id === "string" ? r.target_team_id : null,
+        if_json: r.if_json ?? {},
+        then_json: r.then_json ?? {},
+        exceptions_json: Array.isArray(r.exceptions_json) ? r.exceptions_json : [],
+        positive_count: Number.isFinite(Number((r as any).positive_count)) ? Math.max(0, Number((r as any).positive_count)) : 0,
+        negative_count: Number.isFinite(Number((r as any).negative_count)) ? Math.max(0, Number((r as any).negative_count)) : 0,
+        commit_id:
+          typeof (r as any).commit_id === "string" && String((r as any).commit_id).trim().length > 0
+            ? String((r as any).commit_id)
+            : (linkedNode?.commit_id ?? null),
+        updated_at: normalizeIso((r as any).updated_at, fallbackTs),
+      });
+    }
+    if (Array.isArray(parsed.audit)) {
+      for (const a of parsed.audit.slice(-5000)) this.audit.push(a);
+    }
+    if (Array.isArray(parsed.execution_decisions)) {
+      for (const row of parsed.execution_decisions) {
+        const scope = typeof (row as any).scope === "string" ? String((row as any).scope) : "";
+        const id = typeof (row as any).id === "string" ? String((row as any).id) : "";
+        if (!scope || !id) continue;
+        const key = decisionKey(scope, id);
+        this.executionDecisionsById.set(key, {
+          id,
+          scope,
+          decision_kind: normalizeDecisionKind((row as any).decision_kind),
+          run_id: typeof (row as any).run_id === "string" ? String((row as any).run_id) : null,
+          selected_tool: normalizeToolName((row as any).selected_tool),
+          candidates_json: normalizeCandidates((row as any).candidates_json),
+          context_sha256: typeof (row as any).context_sha256 === "string" ? String((row as any).context_sha256) : "",
+          policy_sha256: typeof (row as any).policy_sha256 === "string" ? String((row as any).policy_sha256) : "",
+          source_rule_ids: Array.isArray((row as any).source_rule_ids)
+            ? (row as any).source_rule_ids
+                .map((x: unknown) => (typeof x === "string" ? x.trim() : ""))
+                .filter((x: string) => x.length > 0)
+            : [],
+          metadata_json: (row as any).metadata_json ?? {},
+          created_at: normalizeIso((row as any).created_at, new Date().toISOString()),
+          commit_id: typeof (row as any).commit_id === "string" ? String((row as any).commit_id) : null,
+        });
+      }
+    }
+    if (Array.isArray(parsed.rule_feedback)) {
+      for (const row of parsed.rule_feedback.slice(-20000)) {
+        const scope = typeof (row as any).scope === "string" ? String((row as any).scope) : "";
+        const id = typeof (row as any).id === "string" ? String((row as any).id) : "";
+        const ruleNodeId = typeof (row as any).rule_node_id === "string" ? String((row as any).rule_node_id) : "";
+        if (!scope || !id || !ruleNodeId) continue;
+        this.ruleFeedback.push({
+          id,
+          scope,
+          rule_node_id: ruleNodeId,
+          run_id: typeof (row as any).run_id === "string" ? String((row as any).run_id) : null,
+          outcome: normalizeRuleOutcome((row as any).outcome),
+          note: typeof (row as any).note === "string" ? String((row as any).note) : null,
+          source: normalizeRuleSource((row as any).source),
+          decision_id: typeof (row as any).decision_id === "string" ? String((row as any).decision_id) : null,
+          commit_id: typeof (row as any).commit_id === "string" ? String((row as any).commit_id) : null,
+          created_at: normalizeIso((row as any).created_at, new Date().toISOString()),
+        });
+      }
+    }
+  }
+
+  async persistSnapshot(): Promise<void> {
+    if (!this.snapshotPath) return;
+    this.snapshotMetrics.persist_total += 1;
+    let bytesBefore = 0;
+    let bytesAfter = 0;
+    let report: EmbeddedSnapshotCompactionReport = {
+      applied: false,
+      rounds: 0,
+      trimmed_payload_nodes: 0,
+      dropped_audit: 0,
+      dropped_nodes: 0,
+      dropped_edges: 0,
+      dropped_rule_defs: 0,
+    };
+
+    try {
+      const snapshot = this.buildSnapshot();
+      bytesBefore = this.snapshotByteSize(snapshot);
+      const compacted = this.compactSnapshot(snapshot, bytesBefore);
+      bytesAfter = compacted.bytes;
+      report = compacted.report;
+
+      this.snapshotMetrics.last_bytes_before_compaction = bytesBefore;
+      this.snapshotMetrics.last_bytes_after_compaction = bytesAfter;
+      this.snapshotMetrics.last_over_limit_after_compaction = bytesAfter > this.snapshotMaxBytes;
+      this.snapshotMetrics.last_compaction = { ...report };
+
+      if (bytesAfter > this.snapshotMaxBytes && this.snapshotStrictMaxBytes) {
+        throw new Error(`embedded snapshot exceeds max bytes: size=${bytesAfter} max=${this.snapshotMaxBytes}`);
+      }
+
+      const dir = dirname(this.snapshotPath);
+      await fs.mkdir(dir, { recursive: true });
+      await this.rotateSnapshotBackups();
+      const tmp = `${this.snapshotPath}.tmp`;
+      await fs.writeFile(tmp, compacted.body, "utf8");
+      await fs.rename(tmp, this.snapshotPath);
+      this.snapshotMetrics.last_persist_at = new Date().toISOString();
+      this.snapshotMetrics.last_error = null;
+    } catch (err: any) {
+      this.snapshotMetrics.persist_failures_total += 1;
+      this.snapshotMetrics.last_error = err?.message ? String(err.message) : String(err);
+      if (bytesBefore > 0) this.snapshotMetrics.last_bytes_before_compaction = bytesBefore;
+      if (bytesAfter > 0) this.snapshotMetrics.last_bytes_after_compaction = bytesAfter;
+      this.snapshotMetrics.last_compaction = { ...report };
+      throw err;
+    }
+  }
+
+  private async quarantineCorruptSnapshot(): Promise<void> {
+    if (!this.snapshotPath) return;
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const out = `${this.snapshotPath}.corrupt.${ts}`;
+    try {
+      await fs.rename(this.snapshotPath, out);
+      this.snapshotMetrics.load_quarantined_total += 1;
+    } catch {
+      // ignore quarantine failures; caller can still proceed with empty runtime state.
+    }
+  }
+
+  private buildSnapshot(): EmbeddedSnapshotV1 {
+    return {
+      version: 1,
+      nodes: Array.from(this.nodes.values()).map((n) => ({ ...n })),
+      edges: Array.from(this.edgesByUnique.values()).map((e) => ({ ...e })),
+      rule_defs: Array.from(this.ruleDefs.values()).map((r) => ({ ...r })),
+      audit: this.audit.slice(-5000),
+      execution_decisions: Array.from(this.executionDecisionsById.values())
+        .sort((a, b) => compareCreatedAtAsc(a.created_at, b.created_at) || a.id.localeCompare(b.id))
+        .slice(-10000)
+        .map((row) => ({
+          ...row,
+          candidates_json: row.candidates_json.slice(),
+          source_rule_ids: row.source_rule_ids.slice(),
+          metadata_json: row.metadata_json ?? {},
+        })),
+      rule_feedback: this.ruleFeedback
+        .slice(-20000)
+        .map((row) => ({ ...row })),
+    };
+  }
+
+  private snapshotByteSize(snapshot: EmbeddedSnapshotV1): number {
+    return Buffer.byteLength(JSON.stringify(snapshot), "utf8");
+  }
+
+  private compactSnapshot(
+    snapshot: EmbeddedSnapshotV1,
+    bytesBefore: number,
+  ): { body: string; bytes: number; report: EmbeddedSnapshotCompactionReport } {
+    const report: EmbeddedSnapshotCompactionReport = {
+      applied: false,
+      rounds: 0,
+      trimmed_payload_nodes: 0,
+      dropped_audit: 0,
+      dropped_nodes: 0,
+      dropped_edges: 0,
+      dropped_rule_defs: 0,
+    };
+
+    let bytes = bytesBefore;
+    if (bytes <= this.snapshotMaxBytes) {
+      return { body: JSON.stringify(snapshot), bytes, report };
+    }
+
+    report.applied = true;
+
+    if (snapshot.audit.length > 200) {
+      const nextAudit = snapshot.audit.slice(-200);
+      report.dropped_audit += snapshot.audit.length - nextAudit.length;
+      snapshot.audit = nextAudit;
+      bytes = this.snapshotByteSize(snapshot);
+    }
+    if (bytes <= this.snapshotMaxBytes || !this.snapshotCompactionEnabled) {
+      return { body: JSON.stringify(snapshot), bytes, report };
+    }
+
+    const payloadPasses: Array<Set<EmbeddedNodeRecord["tier"]>> = [new Set(["archive", "cold"]), new Set(["warm"]), new Set(["hot"])];
+    for (const tiers of payloadPasses) {
+      if (bytes <= this.snapshotMaxBytes) break;
+      const changed = this.trimNodePayload(snapshot, tiers);
+      if (changed > 0) {
+        report.trimmed_payload_nodes += changed;
+        bytes = this.snapshotByteSize(snapshot);
+      }
+    }
+    if (bytes <= this.snapshotMaxBytes || this.snapshotStrictMaxBytes) {
+      return { body: JSON.stringify(snapshot), bytes, report };
+    }
+
+    for (let i = 0; i < this.snapshotCompactionMaxRounds && bytes > this.snapshotMaxBytes; i++) {
+      report.rounds += 1;
+      const droppedEdges = this.pruneLowestValueEdges(snapshot, 0.2);
+      report.dropped_edges += droppedEdges;
+      bytes = this.snapshotByteSize(snapshot);
+      if (bytes <= this.snapshotMaxBytes) break;
+
+      const dropped = this.pruneLowestValueNodes(snapshot, 0.1);
+      report.dropped_nodes += dropped.nodes;
+      report.dropped_edges += dropped.edges;
+      report.dropped_rule_defs += dropped.rule_defs;
+      bytes = this.snapshotByteSize(snapshot);
+
+      if (droppedEdges === 0 && dropped.nodes === 0) break;
+    }
+
+    return { body: JSON.stringify(snapshot), bytes, report };
+  }
+
+  private trimNodePayload(snapshot: EmbeddedSnapshotV1, tiers: Set<EmbeddedNodeRecord["tier"]>): number {
+    let changed = 0;
+    snapshot.nodes = snapshot.nodes.map((node) => {
+      if (!tiers.has(node.tier)) return node;
+      if (node.type === "rule") return node;
+      const nextSummary =
+        typeof node.text_summary === "string" && node.text_summary.length > 384 ? `${node.text_summary.slice(0, 381)}...` : node.text_summary;
+      const hasSlots = node.slots && Object.keys(node.slots).length > 0;
+      const willChange = hasSlots || !!node.raw_ref || !!node.evidence_ref || nextSummary !== node.text_summary;
+      if (!willChange) return node;
+      changed += 1;
+      return {
+        ...node,
+        slots: {},
+        raw_ref: null,
+        evidence_ref: null,
+        text_summary: nextSummary ?? null,
+      };
+    });
+    return changed;
+  }
+
+  private pruneLowestValueEdges(snapshot: EmbeddedSnapshotV1, ratio: number): number {
+    if (snapshot.edges.length === 0) return 0;
+    const drop = Math.max(1, Math.ceil(snapshot.edges.length * ratio));
+    const ranked = [...snapshot.edges].sort((a, b) => edgeCompactionScore(a) - edgeCompactionScore(b) || a.id.localeCompare(b.id));
+    const dropKeys = new Set(
+      ranked.slice(0, drop).map((e) => edgeUpsertKey(e.scope, e.type, e.src_id, e.dst_id)),
+    );
+    const before = snapshot.edges.length;
+    snapshot.edges = snapshot.edges.filter((e) => !dropKeys.has(edgeUpsertKey(e.scope, e.type, e.src_id, e.dst_id)));
+    return before - snapshot.edges.length;
+  }
+
+  private pruneLowestValueNodes(snapshot: EmbeddedSnapshotV1, ratio: number): { nodes: number; edges: number; rule_defs: number } {
+    if (snapshot.nodes.length === 0) return { nodes: 0, edges: 0, rule_defs: 0 };
+    const drop = Math.max(1, Math.ceil(snapshot.nodes.length * ratio));
+    const ranked = [...snapshot.nodes].sort((a, b) => nodeCompactionScore(a) - nodeCompactionScore(b) || a.id.localeCompare(b.id));
+    const dropNodeKeys = new Set(ranked.slice(0, drop).map((n) => nodeKey(n.scope, n.id)));
+
+    const beforeNodes = snapshot.nodes.length;
+    const beforeEdges = snapshot.edges.length;
+    const beforeRuleDefs = snapshot.rule_defs.length;
+
+    snapshot.nodes = snapshot.nodes.filter((n) => !dropNodeKeys.has(nodeKey(n.scope, n.id)));
+    snapshot.edges = snapshot.edges.filter(
+      (e) => !dropNodeKeys.has(nodeKey(e.scope, e.src_id)) && !dropNodeKeys.has(nodeKey(e.scope, e.dst_id)),
+    );
+    snapshot.rule_defs = snapshot.rule_defs.filter((r) => !dropNodeKeys.has(nodeKey(r.scope, r.rule_node_id)));
+
+    return {
+      nodes: beforeNodes - snapshot.nodes.length,
+      edges: beforeEdges - snapshot.edges.length,
+      rule_defs: beforeRuleDefs - snapshot.rule_defs.length,
+    };
+  }
+
+  private async rotateSnapshotBackups(): Promise<void> {
+    if (!this.snapshotPath || this.snapshotMaxBackups <= 0) return;
+    for (let i = this.snapshotMaxBackups; i >= 1; i--) {
+      const src = i === 1 ? this.snapshotPath : `${this.snapshotPath}.${i - 1}`;
+      const dst = `${this.snapshotPath}.${i}`;
+      try {
+        await fs.access(src);
+      } catch {
+        continue;
+      }
+      try {
+        await fs.rm(dst, { force: true });
+      } catch {
+        // best effort
+      }
+      try {
+        await fs.rename(src, dst);
+      } catch {
+        // ignore rotation errors; persistence will still try to write latest snapshot.
+      }
+    }
+  }
+
+  private async stage1Candidates(params: RecallStage1Params): Promise<RecallCandidate[]> {
+    const pre: Array<{ n: EmbeddedNodeRecord; distance: number }> = [];
+    for (const n of this.nodes.values()) {
+      if (n.scope !== params.scope) continue;
+      if (n.tier !== "hot" && n.tier !== "warm") continue;
+      if (!n.embedding || n.embedding_status !== "ready") continue;
+      if (!candidateVisible(n, params.consumerAgentId, params.consumerTeamId)) continue;
+      pre.push({ n, distance: cosineDistance(n.embedding, params.queryEmbedding) });
+    }
+
+    pre.sort((a, b) => a.distance - b.distance || a.n.id.localeCompare(b.n.id));
+    const knn = pre.slice(0, Math.max(0, params.oversample));
+    const out: RecallCandidate[] = [];
+    for (const item of knn) {
+      const n = item.n;
+      const hasWorkflowAnchorSurface = hasNodeWorkflowAnchorSurface(n.slots);
+      if (!["event", "topic", "concept", "entity", "rule", "procedure"].includes(n.type)) continue;
+      if (n.type === "procedure" && !hasWorkflowAnchorSurface) continue;
+      if ((n.type === "event" || n.type === "evidence")
+        && String(n.slots?.["replay_learning_episode"] ?? "false") === "true"
+        && String(n.slots?.["lifecycle_state"] ?? "active") === "archived") {
+        continue;
+      }
+      if (n.type === "topic") {
+        const topicState = typeof n.slots?.["topic_state"] === "string" ? String(n.slots["topic_state"]) : "active";
+        if (topicState !== "active") continue;
+      }
+      if (n.type === "rule") {
+        const def = this.ruleDefs.get(nodeKey(n.scope, n.id));
+        if (!def || (def.state !== "shadow" && def.state !== "active")) continue;
+      }
+      out.push({
+        id: n.id,
+        type: n.type,
+        title: n.title,
+        text_summary: n.text_summary,
+        tier: n.tier,
+        salience: n.salience,
+        confidence: n.confidence,
+        similarity: 1 - item.distance,
+      });
+      if (out.length >= params.limit) break;
+    }
+    return out;
+  }
+
+  private async stage2Edges(params: RecallStage2EdgesParams): Promise<RecallEdgeRow[]> {
+    const allScopeEdges = Array.from(this.edgesByUnique.values()).filter(
+      (e) => e.scope === params.scope && e.weight >= params.minEdgeWeight && e.confidence >= params.minEdgeConfidence,
+    );
+
+    const selectHop = (ids: Set<string>, budget: number): EmbeddedEdgeRecord[] => {
+      const fromSrc = allScopeEdges.filter((e) => ids.has(e.src_id)).sort(edgeSortDesc).slice(0, budget);
+      const fromDst = allScopeEdges.filter((e) => ids.has(e.dst_id)).sort(edgeSortDesc).slice(0, budget);
+      const merged = new Map<string, EmbeddedEdgeRecord>();
+      for (const e of fromSrc.concat(fromDst)) merged.set(e.id, e);
+      return Array.from(merged.values()).sort(edgeSortDesc);
+    };
+
+    const seedSet = new Set(params.seedIds);
+    if (params.neighborhoodHops === 1) {
+      return selectHop(seedSet, params.hop1Budget).slice(0, params.edgeFetchBudget).map(edgeToRecallRow);
+    }
+
+    const hop1 = selectHop(seedSet, params.hop1Budget);
+    const hopNodes = new Set<string>(params.seedIds);
+    for (const e of hop1) {
+      hopNodes.add(e.src_id);
+      hopNodes.add(e.dst_id);
+    }
+    const hop2 = selectHop(hopNodes, params.hop2Budget).slice(0, params.edgeFetchBudget);
+    return hop2.map(edgeToRecallRow);
+  }
+
+  private async stage2Nodes(params: RecallStage2NodesParams): Promise<RecallNodeRow[]> {
+    const ids = new Set(params.nodeIds);
+    const out: RecallNodeRow[] = [];
+    for (const n of this.nodes.values()) {
+      if (n.scope !== params.scope) continue;
+      if (!ids.has(n.id)) continue;
+      if (!candidateVisible(n, params.consumerAgentId, params.consumerTeamId)) continue;
+
+      const topicState = n.type === "topic" ? (typeof n.slots?.["topic_state"] === "string" ? String(n.slots["topic_state"]) : "active") : null;
+      const memberCount =
+        n.type === "topic" && n.slots?.["member_count"] !== undefined && n.slots?.["member_count"] !== null
+          ? Number(n.slots["member_count"])
+          : null;
+      out.push({
+        id: n.id,
+        scope: n.scope,
+        type: n.type,
+        tier: n.tier,
+        memory_lane: n.memory_lane,
+        producer_agent_id: n.producer_agent_id,
+        owner_agent_id: n.owner_agent_id,
+        owner_team_id: n.owner_team_id,
+        title: n.title,
+        text_summary: n.text_summary,
+        slots: params.includeSlots ? n.slots : null,
+        embedding_status: n.embedding_status,
+        embedding_model: n.embedding_model,
+        topic_state: topicState,
+        member_count: Number.isFinite(memberCount as number) ? (memberCount as number) : null,
+        raw_ref: n.raw_ref,
+        evidence_ref: n.evidence_ref,
+        salience: n.salience,
+        importance: n.importance,
+        confidence: n.confidence,
+        last_activated: null,
+        created_at: n.created_at,
+        updated_at: n.updated_at,
+        commit_id: n.commit_id,
+      });
+    }
+    return out;
+  }
+
+  private async getRuleDefs(scope: string, ruleIds: string[]): Promise<RecallRuleDefRow[]> {
+    const ids = new Set(ruleIds);
+    const out: RecallRuleDefRow[] = [];
+    for (const def of this.ruleDefs.values()) {
+      if (def.scope !== scope) continue;
+      if (!ids.has(def.rule_node_id)) continue;
+      out.push({
+        rule_node_id: def.rule_node_id,
+        state: def.state,
+        rule_scope: def.rule_scope,
+        target_agent_id: def.target_agent_id,
+        target_team_id: def.target_team_id,
+        if_json: def.if_json,
+        then_json: def.then_json,
+        exceptions_json: def.exceptions_json,
+        positive_count: def.positive_count,
+        negative_count: def.negative_count,
+      });
+    }
+    return out;
+  }
+
+  private async debugEmbeddings(scope: string, ids: string[]): Promise<RecallDebugEmbeddingRow[]> {
+    if (!this.recallCapabilities.debug_embeddings) {
+      throw new Error("recall capability unsupported: debug_embeddings");
+    }
+    const idSet = new Set(ids);
+    const out: RecallDebugEmbeddingRow[] = [];
+    for (const n of this.nodes.values()) {
+      if (n.scope !== scope) continue;
+      if (!idSet.has(n.id)) continue;
+      if (!n.embedding) continue;
+      out.push({
+        id: n.id,
+        embedding_text: toVectorLiteral(n.embedding),
+      });
+    }
+    return out;
+  }
+}
+
+export function createEmbeddedMemoryRuntime(opts: EmbeddedRuntimeOptions = {}): EmbeddedMemoryRuntime {
+  return new EmbeddedMemoryRuntime(opts);
+}

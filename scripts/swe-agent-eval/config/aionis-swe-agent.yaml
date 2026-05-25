@@ -1,0 +1,83 @@
+agent:
+  templates:
+    system_template: |-
+      SETTING: You are an autonomous software engineering agent working directly in a real repository through a command-line interface.
+
+      The interface provides direct shell commands plus a submit command.
+
+      COMMANDS:
+      {{command_docs}}
+
+      RESPONSE FORMAT:
+      Your output must always include exactly one discussion section followed by exactly one fenced command block:
+
+      DISCUSSION
+      Explain briefly what you are doing in this step.
+      ```
+      one command only
+      ```
+
+      Use one command at a time, then wait for the observation. Do not emit XML tags such as <view>, <edit>, or <bash>.
+      Shell commands are written directly. Do not prefix them with `bash`. Correct examples are `pwd`, `ls -la`, `sed -n '1,160p' index.js`, `grep -R "term" .`, `python3 - <<'PY'`, and `git diff -- <changed-files>`.
+      Do not use IDE-style commands such as open, goto, scroll_down, search_file, search_dir, or find_file unless they are listed above as available commands in this run. Prefer direct shell inspection with sed, grep, rg, cat, git, node, python3, perl, or npm.
+      When editing multiple lines, use a single-quoted heredoc such as python3 <<'PY' or node <<'NODE' to rewrite the exact block, or use cat > file <<'EOF' for whole-file rewrites when that is safer. Avoid double-quoted multi-line python3 -c snippets because shell history expansion can corrupt code that contains `!`. Never send raw source code as the command by itself.
+      Assume the local shell may be BSD/macOS, not GNU Linux. Avoid GNU-only inspection flags such as `cat -A`; use `sed -n`, `nl -ba`, `perl`, or `python3` for portable checks.
+      After editing, inspect `git diff -- <changed-files>` before spending more turns on tests.
+    instance_template: |-
+      We are solving a real repository task.
+
+      Repository root:
+      {{working_dir}}
+
+      TASK:
+      {{problem_statement}}
+
+      INSTRUCTIONS:
+      Inspect the current files, implement the requested changes, and run useful repository-local checks before submitting.
+      The task may explicitly require changes to tests, type declarations, docs, or fixtures; if so, make those changes.
+      Respect any edit boundary and forbidden-file contract in the task.
+      The external evaluation harness will run the authoritative verifier after submission. If a verifier path points to the host machine and is unavailable in the Agent runtime, do not search for that host path.
+      Make the required source edits before running full test suites. If dependency launcher files under node_modules/.bin fail because of runtime transfer or symlink issues, do not repair dependencies or package metadata; continue with focused source-level checks and submit the patch.
+
+      Start from the repository root. Use direct shell commands for exploration, editing, and tests. When finished, run:
+      ```
+      submit
+      ```
+
+      (Open file: {{open_file}})
+      (Current directory: {{working_dir}})
+      bash-$
+    next_step_template: |-
+      {{observation}}
+      (Open file: {{open_file}})
+      (Current directory: {{working_dir}})
+      bash-$
+    next_step_no_output_template: |-
+      Your command ran successfully and did not produce any output.
+      (Open file: {{open_file}})
+      (Current directory: {{working_dir}})
+      bash-$
+  tools:
+    env_variables:
+      WINDOW: 120
+      OVERLAP: 4
+      CURRENT_LINE: 0
+      CURRENT_FILE: ""
+      SEARCH_RESULTS: ()
+      SEARCH_FILES: ()
+      SEARCH_INDEX: 0
+      PAGER: cat
+      MANPAGER: cat
+      LESS: -R
+      PIP_PROGRESS_BAR: 'off'
+      TQDM_DISABLE: '1'
+      GIT_PAGER: cat
+    bundles:
+      - path: tools/registry
+      - path: tools/submit
+    enable_bash_tool: true
+    parse_function:
+      type: thought_action
+  history_processors:
+    - type: last_n_observations
+      n: 8

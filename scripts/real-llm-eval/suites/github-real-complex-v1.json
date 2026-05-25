@@ -1,0 +1,129 @@
+{
+  "suite_id": "github_real_complex_v1",
+  "description": "Real LLM benchmark tasks against more complex external GitHub projects with non-trivial parser/runtime behavior. Workspaces are cloned from fixed commits and verified through hidden behavioral contracts plus real project tests.",
+  "effect_gate": {
+    "min_tasks": 1,
+    "require_assisted_success": true,
+    "require_assisted_first_action_target": true,
+    "require_native_kickoff_target_files": true,
+    "require_native_first_action": true,
+    "require_native_edit_boundary": true,
+    "min_assisted_success_rate": 1,
+    "min_improved_task_count": 1,
+    "min_average_repeated_discovery_delta": 0,
+    "min_average_wrong_file_touch_delta": 0,
+    "min_average_tool_step_delta": -1000000,
+    "fail_on_assisted_verifier_regression": true,
+    "fail_on_average_repeated_discovery_regression": true,
+    "fail_on_assisted_forbidden_file_write": true,
+    "max_llm_api_error_count": 0,
+    "max_assisted_llm_api_error_count": 0,
+    "max_assisted_llm_protocol_error_count": 3,
+    "max_assisted_llm_protocol_error_rate_per_run": 1,
+    "min_assisted_llm_protocol_repair_rate": 1
+  },
+  "tasks": [
+    {
+      "id": "picomatch-array-return-object",
+      "title": "picomatch array-pattern matchers should preserve returnObject diagnostics",
+      "task_family": "github_picomatch_glob_array_matcher_return_object_continuity",
+      "prompt": "In the real picomatch codebase, single-pattern matchers support a second argument `returnObject=true` that returns the full match result object, but array-pattern matchers currently collapse matched results to booleans. Update array-pattern matchers so `picomatch(['*.js', '*.md'])('readme.md', true)` returns the matched pattern's result object with `isMatch: true`, `glob: '*.md'`, `input`, and `output`, while the default call without `returnObject` still returns booleans. Preserve callbacks such as `onResult` as each candidate pattern is evaluated. Add focused in-project coverage in test/api.picomatch.js with verifier-visible wording around array patterns and returnObject, including a later-pattern match such as `*.md`. Keep the change scoped to lib/picomatch.js and test/api.picomatch.js only. Do not modify package metadata, dependency files, README, parser internals, or build output. Run the verifier before finishing, using the verifier command exactly as provided.",
+      "workspace": {
+        "source": "git",
+        "repo_url": "https://github.com/micromatch/picomatch.git",
+        "ref": "69a2d181b9c0c7bc5454eb2e188b4763427e9000",
+        "checkout_depth": 1,
+        "setup_commands": [
+          {
+            "command": "npm install",
+            "timeout_ms": 180000
+          }
+        ],
+        "exclude": [".tmp", "coverage"],
+        "link_node_modules": true
+      },
+      "verifier": {
+        "command": "node {AIONIS_ROOT}/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs picomatch-array-return-object",
+        "timeout_ms": 120000
+      },
+      "max_steps": 24,
+      "aionis_attempts": 3,
+      "expected": {
+        "target_files": ["lib/picomatch.js", "test/api.picomatch.js"],
+        "allowed_read_files": ["lib/picomatch.js", "test/api.picomatch.js", "index.js", "lib/utils.js", "lib/parse.js", "package.json"],
+        "allowed_edit_files": ["lib/picomatch.js", "test/api.picomatch.js"],
+        "forbidden_edit_files": ["package.json", "package-lock.json", "README.md", "lib/parse.js", "lib/scan.js", "lib/utils.js", "lib/constants.js"],
+        "first_action_keywords": ["lib/picomatch.js", "Array.isArray", "arrayMatcher", "returnObject"],
+        "acceptance_checks": [
+          "node {AIONIS_ROOT}/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs picomatch-array-return-object"
+        ],
+        "required_verifiers": [
+          "node {AIONIS_ROOT}/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs picomatch-array-return-object"
+        ],
+        "anti_shortcut_rules": [
+          "Do not modify package metadata, dependency files, README, parser internals, or build output for this task.",
+          "Implement the runtime behavior in lib/picomatch.js and add focused runtime coverage in test/api.picomatch.js.",
+          "Array-pattern matchers must accept the same `returnObject=true` second argument as single-pattern matchers.",
+          "When a later pattern matches, such as `*.md`, the returned object must identify that matched glob rather than only returning `true`.",
+          "The default array-pattern API without `returnObject` must keep returning booleans.",
+          "Preserve onResult callbacks while each candidate pattern is evaluated.",
+          "Name the new test with verifier-visible wording such as `array patterns returnObject`.",
+          "Do not claim success until the provided verifier passes."
+        ]
+      }
+    },
+    {
+      "id": "yargs-parser-array-narg-zero",
+      "title": "yargs-parser array options should honor narg:0 without consuming values",
+      "task_family": "github_yargs_parser_array_narg_zero_continuity",
+      "prompt": "In the real yargs-parser codebase, normal options with `narg: 0` do not consume the following argument and reject `--flag=value` with `Argument unexpected for: flag`. Array options should obey the same zero-argument contract. Update array option parsing so `parser(['--items', 'positional', '--other', 'value'], { array: ['items'], narg: { items: 0 } })` returns `items: []`, leaves `positional` in `argv._`, and still parses `other: 'value'`. Also ensure `parser.detailed(['--items=unexpected'], { array: ['items'], narg: { items: 0 } })` reports `Argument unexpected for: items`, and that aliases such as `-i` for `items` preserve the same empty-array result. Preserve existing array+narg behavior for positive counts such as `narg: { items: 1 }`. Add focused in-project coverage in test/yargs-parser.mjs with verifier-visible wording around array narg zero. Keep the change scoped to lib/yargs-parser.ts and test/yargs-parser.mjs only. Do not modify package metadata, build output, docs, or unrelated parser files. Run the verifier before finishing, using the verifier command exactly as provided.",
+      "workspace": {
+        "source": "git",
+        "repo_url": "https://github.com/yargs/yargs-parser.git",
+        "ref": "60f2db5dacde1e94f960ce0941a717f3f422f865",
+        "checkout_depth": 1,
+        "setup_commands": [
+          {
+            "command": "npm install --ignore-scripts",
+            "timeout_ms": 180000
+          },
+          {
+            "command": "npm run compile",
+            "timeout_ms": 120000
+          }
+        ],
+        "exclude": [".tmp", "coverage"],
+        "link_node_modules": true
+      },
+      "verifier": {
+        "command": "node {AIONIS_ROOT}/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs yargs-parser-array-narg-zero",
+        "timeout_ms": 120000
+      },
+      "max_steps": 24,
+      "aionis_attempts": 3,
+      "expected": {
+        "target_files": ["lib/yargs-parser.ts", "test/yargs-parser.mjs"],
+        "allowed_read_files": ["lib/yargs-parser.ts", "lib/yargs-parser-types.ts", "lib/index.ts", "test/yargs-parser.mjs", "package.json", "tsconfig.json", "tsconfig.test.json"],
+        "allowed_edit_files": ["lib/yargs-parser.ts", "test/yargs-parser.mjs"],
+        "forbidden_edit_files": ["package.json", "package-lock.json", "README.md", "docs", "build/lib/yargs-parser.js", "browser.js", "lib/string-utils.ts", "lib/tokenize-arg-string.ts"],
+        "first_action_keywords": ["lib/yargs-parser.ts", "eatArray", "nargsCount", "narg"],
+        "acceptance_checks": [
+          "node {AIONIS_ROOT}/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs yargs-parser-array-narg-zero"
+        ],
+        "required_verifiers": [
+          "node {AIONIS_ROOT}/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs yargs-parser-array-narg-zero"
+        ],
+        "anti_shortcut_rules": [
+          "Do not modify package metadata, generated build output, docs, or unrelated parser helper files for this task.",
+          "Implement the runtime behavior in lib/yargs-parser.ts and add focused runtime coverage in test/yargs-parser.mjs.",
+          "Array options with narg:0 must not consume the following positional value.",
+          "Array options with narg:0 must reject --items=value with the same `Argument unexpected for: items` contract used by normal narg:0 options.",
+          "Alias forms such as -i for items must preserve the same empty-array result.",
+          "Positive array+narg counts such as narg:1 must keep consuming the configured number of values.",
+          "Name the new test with verifier-visible wording such as `array narg zero`.",
+          "Do not claim success until the provided verifier passes."
+        ]
+      }
+    }
+  ]
+}

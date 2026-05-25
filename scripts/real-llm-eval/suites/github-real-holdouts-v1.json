@@ -1,0 +1,170 @@
+{
+  "suite_id": "github_real_holdouts_v1",
+  "description": "Frozen real LLM holdout tasks against external GitHub projects that were not used to tune the commander.js edit-boundary task.",
+  "effect_gate": {
+    "min_tasks": 1,
+    "require_assisted_success": true,
+    "require_assisted_first_action_target": true,
+    "require_native_kickoff_target_files": true,
+    "require_native_first_action": true,
+    "require_native_edit_boundary": true,
+    "min_assisted_success_rate": 1,
+    "min_improved_task_count": 1,
+    "min_average_repeated_discovery_delta": 0,
+    "min_average_wrong_file_touch_delta": 0,
+    "min_average_tool_step_delta": -1000000,
+    "fail_on_assisted_verifier_regression": true,
+    "fail_on_average_repeated_discovery_regression": true,
+    "fail_on_assisted_forbidden_file_write": true,
+    "max_llm_api_error_count": 0,
+    "max_assisted_llm_api_error_count": 0,
+    "max_assisted_llm_protocol_error_count": 3,
+    "max_assisted_llm_protocol_error_rate_per_run": 1,
+    "min_assisted_llm_protocol_repair_rate": 1
+  },
+  "tasks": [
+    {
+      "id": "p-limit-clear-queue-return-count",
+      "title": "p-limit clearQueue should return the number of pending jobs cleared",
+      "task_family": "github_p_limit_queue_edit_boundary_clear_queue_count",
+      "prompt": "In the real p-limit codebase, clearQueue() currently discards queued work but does not tell callers how many pending jobs were removed. Update clearQueue() so it returns the number of pending jobs cleared in both normal mode and rejectOnClear mode. Preserve the existing rejection behavior when rejectOnClear is true. Add focused runtime coverage in test.js and type coverage in index.test-d.ts, and update the public type in index.d.ts. Keep the change scoped to index.js, test.js, index.d.ts, and index.test-d.ts only. Do not modify package metadata or dependency files. Run the verifier before finishing, using the verifier command exactly as provided.",
+      "workspace": {
+        "source": "git",
+        "repo_url": "https://github.com/sindresorhus/p-limit.git",
+        "ref": "9f52583119f0cb0d85c6fec600c94a21fd89d060",
+        "checkout_depth": 1,
+        "setup_commands": [
+          {
+            "command": "npm install",
+            "timeout_ms": 180000
+          }
+        ],
+        "exclude": [".tmp", "coverage"],
+        "link_node_modules": true
+      },
+      "verifier": {
+        "command": "node {AIONIS_ROOT}/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs p-limit-clear-queue-return-count",
+        "timeout_ms": 120000
+      },
+      "max_steps": 22,
+      "aionis_attempts": 2,
+      "expected": {
+        "target_files": ["index.js", "test.js", "index.d.ts", "index.test-d.ts"],
+        "allowed_read_files": ["index.js", "test.js", "index.d.ts", "index.test-d.ts", "package.json", "readme.md"],
+        "allowed_edit_files": ["index.js", "test.js", "index.d.ts", "index.test-d.ts"],
+        "forbidden_edit_files": ["package.json", "package-lock.json", "readme.md"],
+        "first_action_keywords": ["index.js", "clearQueue", "pendingCount", "rejectOnClear"],
+        "acceptance_checks": [
+          "node {AIONIS_ROOT}/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs p-limit-clear-queue-return-count"
+        ],
+        "required_verifiers": [
+          "node {AIONIS_ROOT}/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs p-limit-clear-queue-return-count"
+        ],
+        "anti_shortcut_rules": [
+          "Do not modify package metadata, package-lock.json, dependency files, or documentation for this task.",
+          "Update runtime behavior in index.js, runtime tests in test.js, public type in index.d.ts, and type assertion in index.test-d.ts.",
+          "Name at least one runtime test with a verifier-visible phrase such as `clearQueue returns pending count`, `clearQueue returns cleared count`, or `clearQueue returns queue size`.",
+          "In test.js include direct assertions `t.is(limit.clearQueue(), 3)` and `t.is(limit.clearQueue(), 0)`; do not only store the clearQueue result in variables.",
+          "Do not claim success until npm test passes through the provided verifier."
+        ]
+      }
+    },
+    {
+      "id": "p-locate-abort-signal",
+      "title": "p-locate should support AbortSignal cancellation",
+      "task_family": "github_p_locate_abort_signal_continuity",
+      "prompt": "In the real p-locate codebase, add AbortSignal support to pLocate(). The function should reject with signal.reason when the signal is already aborted before work starts, when a normal iterable search is aborted while tester work is pending, and when an async iterable search is aborted between yielded values. It must not call tester if the signal is already aborted. Add focused runtime coverage in test.js and type coverage in index.test-d.ts, and update the public Options type in index.d.ts. Keep the change scoped to index.js, test.js, index.d.ts, and index.test-d.ts only. Do not modify package metadata, dependency files, readme, or docs. Run the verifier before finishing, using the verifier command exactly as provided.",
+      "workspace": {
+        "source": "git",
+        "repo_url": "https://github.com/sindresorhus/p-locate.git",
+        "ref": "b9ccdaaa83f8d2f53f8acf8ff3c97b7aa21f655b",
+        "checkout_depth": 1,
+        "setup_commands": [
+          {
+            "command": "npm install",
+            "timeout_ms": 180000
+          }
+        ],
+        "exclude": [".tmp", "coverage"],
+        "link_node_modules": true
+      },
+      "verifier": {
+        "command": "node {AIONIS_ROOT}/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs p-locate-abort-signal",
+        "timeout_ms": 120000
+      },
+      "max_steps": 26,
+      "aionis_attempts": 3,
+      "expected": {
+        "target_files": ["index.js", "test.js", "index.d.ts", "index.test-d.ts"],
+        "allowed_read_files": ["index.js", "test.js", "index.d.ts", "index.test-d.ts", "package.json", "readme.md"],
+        "allowed_edit_files": ["index.js", "test.js", "index.d.ts", "index.test-d.ts"],
+        "forbidden_edit_files": ["package.json", "package-lock.json", "readme.md"],
+        "first_action_keywords": ["index.js", "pLocate", "signal", "AbortSignal"],
+        "acceptance_checks": [
+          "node {AIONIS_ROOT}/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs p-locate-abort-signal"
+        ],
+        "required_verifiers": [
+          "node {AIONIS_ROOT}/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs p-locate-abort-signal"
+        ],
+        "anti_shortcut_rules": [
+          "Do not modify package metadata, package-lock.json, dependency files, readme, or documentation for this task.",
+          "Update runtime behavior in index.js, runtime tests in test.js, public Options type in index.d.ts, and type assertion in index.test-d.ts.",
+          "Reject with the exact signal.reason object for already-aborted and pending-abort cases.",
+          "Do not call tester when the signal is already aborted.",
+          "Async iterable searches must stop consuming values after abort.",
+          "Name runtime tests with verifier-visible AbortSignal wording such as `abort signal`, `already aborted signal`, or `aborted signal`.",
+          "Do not claim success until npm test passes through the provided verifier."
+        ]
+      }
+    },
+    {
+      "id": "p-map-iterable-abort-signal",
+      "title": "p-map pMapIterable should support AbortSignal cancellation",
+      "task_family": "github_p_map_iterable_abort_signal_continuity",
+      "prompt": "In the real p-map codebase, pMap() supports AbortSignal cancellation but pMapIterable() does not expose the same cancellation control. Add AbortSignal support to pMapIterable(). It should reject with the exact signal.reason when the signal is already aborted before iteration starts, when abort happens while mapper work is pending, and when an async source is aborted after the first yielded value. It must not call mapper when the signal is already aborted, and it must stop consuming an async iterable after abort. Add focused runtime coverage in test.js and type coverage in index.test-d.ts, and update the public IterableOptions type in index.d.ts. Keep the change scoped to index.js, test.js, index.d.ts, and index.test-d.ts only. Do not modify package metadata, dependency files, readme, or docs. Run the verifier before finishing, using the verifier command exactly as provided.",
+      "workspace": {
+        "source": "git",
+        "repo_url": "https://github.com/sindresorhus/p-map.git",
+        "ref": "100a217d3b1d28a3ba8ad726ea2986d7a696966e",
+        "checkout_depth": 1,
+        "setup_commands": [
+          {
+            "command": "npm install",
+            "timeout_ms": 180000
+          }
+        ],
+        "exclude": [".tmp", "coverage"],
+        "link_node_modules": true
+      },
+      "verifier": {
+        "command": "node {AIONIS_ROOT}/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs p-map-iterable-abort-signal",
+        "timeout_ms": 120000
+      },
+      "max_steps": 28,
+      "aionis_attempts": 3,
+      "expected": {
+        "target_files": ["index.js", "test.js", "index.d.ts", "index.test-d.ts"],
+        "allowed_read_files": ["index.js", "test.js", "index.d.ts", "index.test-d.ts", "package.json", "readme.md"],
+        "allowed_edit_files": ["index.js", "test.js", "index.d.ts", "index.test-d.ts"],
+        "forbidden_edit_files": ["package.json", "package-lock.json", "readme.md"],
+        "first_action_keywords": ["index.js", "pMapIterable", "signal", "AbortSignal"],
+        "acceptance_checks": [
+          "node {AIONIS_ROOT}/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs p-map-iterable-abort-signal"
+        ],
+        "required_verifiers": [
+          "node {AIONIS_ROOT}/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs p-map-iterable-abort-signal"
+        ],
+        "anti_shortcut_rules": [
+          "Do not modify package metadata, package-lock.json, dependency files, readme, or documentation for this task.",
+          "Update runtime behavior in index.js, runtime tests in test.js, public IterableOptions type in index.d.ts, and type assertion in index.test-d.ts.",
+          "pMapIterable() must reject with the exact signal.reason object for already-aborted and pending-abort cases.",
+          "Do not call mapper when the signal is already aborted.",
+          "Async iterable sources must stop consuming values after abort.",
+          "Name runtime tests with verifier-visible wording such as `pMapIterable abort signal`, `already aborted signal`, or `aborted signal`.",
+          "Do not remove pMap() AbortSignal support or change package metadata.",
+          "Do not claim success until npm test passes through the provided verifier."
+        ]
+      }
+    }
+  ]
+}

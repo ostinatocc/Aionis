@@ -1,0 +1,47 @@
+{
+  "name": "@ostinato/aionis-rtc",
+  "version": "0.1.0",
+  "description": "Shared runtime-core boundary for Aionis Core contracts and ownership metadata.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ostinatocc/AionisCore.git",
+    "directory": "packages/runtime-core"
+  },
+  "homepage": "https://github.com/ostinatocc/AionisCore/tree/main/packages/runtime-core",
+  "bugs": {
+    "url": "https://github.com/ostinatocc/AionisCore/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "pack:dry-run": "npm run build && npm pack --dry-run --cache /tmp/aionis-npm-cache",
+    "publish:dry-run": "npm run build && npm publish --dry-run"
+  },
+  "keywords": [
+    "aionis",
+    "runtime",
+    "kernel",
+    "continuity"
+  ],
+  "author": "Aionis Core",
+  "license": "Apache-2.0"
+}

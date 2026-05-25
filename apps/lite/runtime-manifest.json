@@ -1,0 +1,16 @@
+{
+  "manifest_version": 1,
+  "runtime_id": "aionis-core-lite-shell",
+  "display_name": "Aionis Core Lite Runtime Shell",
+  "runtime_root": "../..",
+  "dist_entry": "apps/lite/src/index.js",
+  "start_command": {
+    "command": "bash",
+    "args": [
+      "apps/lite/scripts/start-lite-app.sh"
+    ]
+  },
+  "release": {
+    "github_repo": "ostinatocc/AionisCore"
+  }
+}

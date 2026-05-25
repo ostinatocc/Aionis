@@ -1,0 +1,51 @@
+{
+  "name": "@ostinato/aionis",
+  "version": "0.4.0",
+  "description": "Focused Aionis Runtime SDK for execution continuity, learning-controlled self-learning, and controlled forgetting.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ostinatocc/AionisCore.git",
+    "directory": "packages/full-sdk"
+  },
+  "homepage": "https://github.com/ostinatocc/AionisCore/tree/main/packages/full-sdk",
+  "bugs": {
+    "url": "https://github.com/ostinatocc/AionisCore/issues"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "test": "node ../../node_modules/tsx/dist/cli.mjs --test test/*.test.ts",
+    "pack:dry-run": "npm run build && npm pack --dry-run --json --cache /tmp/aionis-npm-cache",
+    "publish:dry-run": "npm run build && npm publish --dry-run"
+  },
+  "keywords": [
+    "aionis",
+    "sdk",
+    "runtime",
+    "execution-memory",
+    "continuity",
+    "forgetting"
+  ],
+  "author": "Aionis Core",
+  "license": "Apache-2.0"
+}
