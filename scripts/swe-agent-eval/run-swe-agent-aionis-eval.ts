@@ -1469,6 +1469,15 @@ function fitCompactContextToBudget(context: JsonObject): JsonObject {
   if (Array.isArray(contract.operating_rules)) contract.operating_rules = contract.operating_rules.slice(0, 1);
   if (compactContextJsonLength(fitted) <= budget) return fitted;
 
+  fitted.assistance_gate = {
+    schema_version: fittedGate?.schema_version,
+    mode: fittedGate?.mode,
+    authority: fittedGate?.authority,
+    context_budget_chars: fittedGate?.context_budget_chars,
+    prior_negative_transfer_count: fittedGate?.prior_negative_transfer_count,
+    semantic_evidence_suppressed_by_counter_evidence:
+      fittedGate?.semantic_evidence_suppressed_by_counter_evidence === true,
+  };
   fitted.compact_execution_contract = {
     schema_version: contract.schema_version,
     mode: contract.mode,
