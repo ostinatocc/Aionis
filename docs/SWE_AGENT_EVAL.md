@@ -132,12 +132,12 @@ Aionis arm:
    - `compact_contract`
    - `semantic_evidence`
    - `strict_governance`
-4. call Aionis Runtime only when the gate needs Runtime-derived compact contract signals:
-   - `/v1/memory/kickoff/recommendation`
+4. call Aionis through the generic Agent Runtime adapter only when the gate needs Runtime-derived compact contract signals:
+   - `/v1/memory/experience/intelligence`
    - `/v1/memory/planning/context`
    - `/v1/memory/context/assemble`
    - `/v1/memory/tools/select`
-5. append only the compact Aionis execution contract selected by the gate
+5. append only the compact Aionis execution contract selected by the gate; the full Runtime packet stays diagnostic evidence, not Agent instructions
 6. append scoped prior-success semantic invariants when prior verifier-passing runs exist and the gate admits them
 7. run the same `sweagent run`
 8. run the same verifier, except when SWE-agent itself ends in a non-learning failure before producing changed files
@@ -157,7 +157,7 @@ Aionis must not always intervene with the same strength. The adapter renders one
 4. `semantic_evidence`: render scoped prior-success semantic invariants without dumping Runtime internals.
 5. `strict_governance`: render a larger but still bounded contract when prior failures, forbidden writes, or high complexity justify stronger control.
 
-The gate is a cost-control mechanism. It should protect simple tasks from Runtime overhead while still allowing stronger historical shaping when real evidence says it is useful.
+The gate is a cost-control mechanism. It should protect simple tasks from Runtime overhead while still allowing stronger historical shaping when real evidence says it is useful. SWE-agent is only one consumer of the generic adapter contract; Runtime learning must remain agent-agnostic and must not promote project-specific fixes into source code.
 
 ## Baseline Comparison Quality
 

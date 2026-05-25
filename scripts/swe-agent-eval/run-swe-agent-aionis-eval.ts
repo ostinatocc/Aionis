@@ -4,6 +4,10 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  buildAionisAgentRuntimeContext,
+  type AgentRuntimeIdentity,
+} from "../agent-runtime/aionis-agent-runtime-adapter.js";
 import { buildRuntimeEffectRollupFromTaskReports, type JsonObject } from "../real-llm-eval/report-runtime-effect-rollup.js";
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -493,13 +497,36 @@ function invariantLimitForMode(mode: AssistanceMode): number {
   return 0;
 }
 
-function firstActionFromRuntime(kickoff: JsonObject | null, planning: JsonObject | null): JsonObject | null {
-  const kickoffAction = asObject(asObject(kickoff?.kickoff_recommendation)?.first_action_v1);
-  if (kickoffAction && stringValue(kickoffAction.action) !== "request_operator_review") return kickoffAction;
+function firstActionFromPlanning(planning: JsonObject | null): JsonObject | null {
   const planningSummary = asObject(planning?.planning_summary);
   const planningAction = asObject(asObject(planningSummary?.first_step_recommendation)?.first_action_v1);
   if (planningAction && stringValue(planningAction.action) !== "request_operator_review") return planningAction;
   return null;
+}
+
+function firstActionFromExperience(experience: JsonObject | null): JsonObject | null {
+  const actionRetrieval = asObject(experience?.action_retrieval);
+  const actionContract = asObject(experience?.action_intelligence_runtime_contract);
+  const preActionGate = asObject(actionContract?.pre_action_gate);
+  const recommendedActions = stringList(preActionGate?.recommended_actions);
+  if (preActionGate?.authority_blocked === true || recommendedActions.includes("request_operator_review")) return null;
+
+  const recommendation = asObject(experience?.recommendation);
+  const selectedTool = stringValue(actionContract?.selected_tool) ?? stringValue(actionRetrieval?.selected_tool);
+  const recommendedFile = stringValue(actionRetrieval?.recommended_file_path);
+  const recommendedNextAction = stringValue(actionContract?.recommended_next_action)
+    ?? stringValue(actionRetrieval?.recommended_next_action)
+    ?? stringValue(recommendation?.combined_next_action);
+  const targetFiles = stringList(actionContract?.target_files);
+  if (!selectedTool && !recommendedFile && !recommendedNextAction && targetFiles.length === 0) return null;
+
+  return {
+    action: "proceed",
+    tool_name: selectedTool,
+    file_path: recommendedFile,
+    target_files: targetFiles,
+    instruction: recommendedNextAction,
+  };
 }
 
 function verifierFailureEvidence(result: CommandResult): JsonObject {
@@ -585,8 +612,200 @@ function compactEntropyProfile(profile: JsonObject | null): JsonObject | null {
     entropy_level: stringValue(profile.entropy_level),
     exploration_budget: typeof profile.exploration_budget === "number" ? profile.exploration_budget : null,
     control_strength: typeof profile.control_strength === "number" ? profile.control_strength : null,
+    plasticity_level: stringValue(profile.plasticity_level),
+    recall_breadth: stringValue(profile.recall_breadth),
     verification_depth: stringValue(profile.verification_depth),
+    promotion_threshold: stringValue(profile.promotion_threshold),
+    mutation_authority: stringValue(profile.mutation_authority),
+    runtime_signal_trend_posture: stringValue(profile.runtime_signal_trend_posture),
     reason_codes: stringList(profile.reason_codes).slice(0, 4),
+    source_signals: stringList(profile.source_signals).slice(0, 6),
+  };
+}
+
+function compactActionRetrievalUncertainty(uncertainty: JsonObject | null): JsonObject | null {
+  if (!uncertainty) return null;
+  return {
+    level: stringValue(uncertainty.level),
+    confidence: typeof uncertainty.confidence === "number" ? uncertainty.confidence : null,
+    evidence_gap_count: typeof uncertainty.evidence_gap_count === "number" ? uncertainty.evidence_gap_count : null,
+    reasons: stringList(uncertainty.reasons).slice(0, 4),
+    recommended_actions: stringList(uncertainty.recommended_actions).slice(0, 4),
+  };
+}
+
+function compactActionRetrieval(retrieval: JsonObject | null): JsonObject | null {
+  if (!retrieval) return null;
+  const evidence = asObject(retrieval.evidence);
+  const rationale = asObject(retrieval.rationale);
+  return {
+    summary_version: stringValue(retrieval.summary_version),
+    history_applied: retrieval.history_applied === true,
+    tool_source_kind: stringValue(retrieval.tool_source_kind),
+    selected_tool: stringValue(retrieval.selected_tool),
+    recommended_file_path: stringValue(retrieval.recommended_file_path),
+    recommended_next_action: stringValue(retrieval.recommended_next_action)
+      ? compactOneLine(stringValue(retrieval.recommended_next_action)!, 180)
+      : null,
+    evidence: evidence
+      ? {
+          stable_workflow_count: Number(evidence.stable_workflow_count ?? 0),
+          candidate_workflow_count: Number(evidence.candidate_workflow_count ?? 0),
+          trusted_pattern_count: Number(evidence.trusted_pattern_count ?? 0),
+          policy_memory_count: Number(evidence.policy_memory_count ?? 0),
+        }
+      : null,
+    uncertainty: compactActionRetrievalUncertainty(asObject(retrieval.uncertainty)),
+    rationale: stringValue(rationale?.summary) ? compactOneLine(stringValue(rationale?.summary)!, 180) : null,
+  };
+}
+
+function compactRuntimeEntropyControls(controls: JsonObject | null): JsonObject | null {
+  if (!controls) return null;
+  const recall = asObject(controls.recall);
+  const verifier = asObject(controls.verifier);
+  const promotion = asObject(controls.promotion);
+  const maintenance = asObject(controls.maintenance);
+  return {
+    recall: recall
+      ? {
+          breadth: stringValue(recall.breadth),
+          recommended_limit: typeof recall.recommended_limit === "number" ? recall.recommended_limit : null,
+          reason: stringValue(recall.reason) ? compactOneLine(stringValue(recall.reason)!, 120) : null,
+        }
+      : null,
+    verifier: verifier
+      ? {
+          schedule: stringValue(verifier.schedule),
+          runtime_verifier_required: verifier.runtime_verifier_required === true,
+          reason: stringValue(verifier.reason) ? compactOneLine(stringValue(verifier.reason)!, 120) : null,
+        }
+      : null,
+    promotion: promotion
+      ? {
+          promotion_threshold: stringValue(promotion.promotion_threshold),
+          mutation_authority: stringValue(promotion.mutation_authority),
+          stable_promotion_allowed: promotion.stable_promotion_allowed === true,
+          minimum_observations: typeof promotion.minimum_observations === "number" ? promotion.minimum_observations : null,
+        }
+      : null,
+    maintenance: maintenance
+      ? {
+          recommended_profile: stringValue(maintenance.recommended_profile),
+          run_after_task: maintenance.run_after_task === true,
+        }
+      : null,
+  };
+}
+
+function compactActionIntelligence(contract: JsonObject | null): JsonObject | null {
+  if (!contract) return null;
+  const preActionGate = asObject(contract.pre_action_gate);
+  const lifecycle = asObject(contract.lifecycle);
+  return {
+    contract_version: stringValue(contract.contract_version),
+    loop_version: stringValue(contract.loop_version),
+    selected_tool: stringValue(contract.selected_tool),
+    recommended_next_action: stringValue(contract.recommended_next_action)
+      ? compactOneLine(stringValue(contract.recommended_next_action)!, 180)
+      : null,
+    target_files: stringList(contract.target_files).slice(0, 8),
+    workflow_anchor_id: stringValue(contract.workflow_anchor_id),
+    policy_memory_id: stringValue(contract.policy_memory_id),
+    pre_action_gate: preActionGate
+      ? {
+          known_enough: preActionGate.known_enough === true,
+          requires_recall: preActionGate.requires_recall === true,
+          requires_rehydration: preActionGate.requires_rehydration === true,
+          requires_operator_review: preActionGate.requires_operator_review === true,
+          authority_blocked: preActionGate.authority_blocked === true,
+          uncertainty_level: stringValue(preActionGate.uncertainty_level),
+          confidence: typeof preActionGate.confidence === "number" ? preActionGate.confidence : null,
+          recommended_actions: stringList(preActionGate.recommended_actions).slice(0, 5),
+          primary_reason: stringValue(preActionGate.primary_reason)
+            ? compactOneLine(stringValue(preActionGate.primary_reason)!, 140)
+            : null,
+        }
+      : null,
+    runtime_entropy_profile: compactEntropyProfile(asObject(contract.runtime_entropy_profile)),
+    runtime_entropy_controls: compactRuntimeEntropyControls(asObject(contract.runtime_entropy_controls)),
+    lifecycle: lifecycle
+      ? {
+          history_applied: lifecycle.history_applied === true,
+          post_action_material_present: lifecycle.post_action_material_present === true,
+          workflow_candidate_available: lifecycle.workflow_candidate_available === true,
+          policy_candidate_available: lifecycle.policy_candidate_available === true,
+          mutation_candidate_available: lifecycle.mutation_candidate_available === true,
+          maintenance_ready: lifecycle.maintenance_ready === true,
+          recommended_maintenance_profile: stringValue(lifecycle.recommended_maintenance_profile),
+        }
+      : null,
+  };
+}
+
+function compactExperienceAdaptationTrace(trace: JsonObject | null): JsonObject | null {
+  if (!trace) return null;
+  const trajectory = asObject(trace.trajectory);
+  const sources = asObject(trace.experience_sources);
+  const retrieval = asObject(trace.retrieval);
+  const adaptation = asObject(trace.adaptation);
+  const stages = Array.isArray(trace.stages)
+    ? trace.stages
+        .map((stage) => asObject(stage))
+        .filter((stage): stage is JsonObject => !!stage)
+        .slice(0, 8)
+        .map((stage) => ({
+          stage: stringValue(stage.stage),
+          status: stringValue(stage.status),
+          summary: stringValue(stage.summary) ? compactOneLine(stringValue(stage.summary)!, 120) : null,
+        }))
+    : [];
+  return {
+    summary_version: stringValue(trace.summary_version),
+    activation_state: stringValue(trace.activation_state),
+    trajectory: trajectory
+      ? {
+          present: trajectory.present === true,
+          compiled: trajectory.compiled === true,
+          task_family: stringValue(trajectory.task_family),
+          target_file_count: Number(trajectory.target_file_count ?? 0),
+          acceptance_check_count: Number(trajectory.acceptance_check_count ?? 0),
+          likely_tool: stringValue(trajectory.likely_tool),
+        }
+      : null,
+    experience_sources: sources
+      ? {
+          stable_workflow_count: Number(sources.stable_workflow_count ?? 0),
+          candidate_workflow_count: Number(sources.candidate_workflow_count ?? 0),
+          trusted_pattern_count: Number(sources.trusted_pattern_count ?? 0),
+          rehydration_candidate_count: Number(sources.rehydration_candidate_count ?? 0),
+          adaptive_guidance_candidate_count: Number(sources.adaptive_guidance_candidate_count ?? 0),
+          delegation_recommendation_count: Number(sources.delegation_recommendation_count ?? 0),
+        }
+      : null,
+    retrieval: retrieval
+      ? {
+          selected_tool: stringValue(retrieval.selected_tool),
+          tool_source_kind: stringValue(retrieval.tool_source_kind),
+          path_source_kind: stringValue(retrieval.path_source_kind),
+          evidence_entry_count: Number(retrieval.evidence_entry_count ?? 0),
+          uncertainty_level: stringValue(retrieval.uncertainty_level),
+          confidence: typeof retrieval.confidence === "number" ? retrieval.confidence : null,
+        }
+      : null,
+    adaptation: adaptation
+      ? {
+          activation_state: stringValue(adaptation.activation_state),
+          selected_candidate_ids: stringList(adaptation.selected_candidate_ids).slice(0, 5),
+          adapted_instruction_count: Number(adaptation.adapted_instruction_count ?? 0),
+          primary_instruction: stringValue(adaptation.primary_instruction)
+            ? compactOneLine(stringValue(adaptation.primary_instruction)!, 180)
+            : null,
+          recommended_actions: stringList(adaptation.recommended_actions).slice(0, 5),
+          confidence_delta: typeof adaptation.confidence_delta === "number" ? adaptation.confidence_delta : null,
+        }
+      : null,
+    stages,
   };
 }
 
@@ -595,7 +814,7 @@ function buildCompactExecutionContract(args: {
   gate: JsonObject;
   priorRuns: AgentRun[];
   priorSuccessEvidence: JsonObject | null;
-  kickoff?: JsonObject | null;
+  experience?: JsonObject | null;
   planning?: JsonObject | null;
   assembly?: JsonObject | null;
   tools?: JsonObject | null;
@@ -607,13 +826,19 @@ function buildCompactExecutionContract(args: {
     ? args.priorSuccessEvidence.invariants.filter((entry): entry is JsonObject => !!asObject(entry)).map((entry) => asObject(entry)!)
     : [];
   const semanticInvariants = allPriorInvariants.slice(0, invariantLimitForMode(mode));
+  const actionRetrieval = asObject(args.experience?.action_retrieval);
+  const actionContract = asObject(args.experience?.action_intelligence_runtime_contract);
+  const experienceTrace = asObject(args.experience?.experience_adaptation_trace)
+    ?? asObject(actionRetrieval?.experience_adaptation_trace);
   const planningSummary = asObject(args.planning?.planning_summary);
   const assemblySummary = asObject(args.assembly?.assembly_summary);
   const firstAction = mode === "compact_contract" || mode === "strict_governance"
-    ? firstActionFromRuntime(args.kickoff ?? null, args.planning ?? null)
+    ? firstActionFromExperience(args.experience ?? null) ?? firstActionFromPlanning(args.planning ?? null)
     : null;
   const entropyProfile = compactEntropyProfile(
-    asObject(planningSummary?.runtime_entropy_profile) ?? asObject(assemblySummary?.runtime_entropy_profile),
+    asObject(actionContract?.runtime_entropy_profile)
+      ?? asObject(planningSummary?.runtime_entropy_profile)
+      ?? asObject(assemblySummary?.runtime_entropy_profile),
   );
 
   return {
@@ -627,6 +852,11 @@ function buildCompactExecutionContract(args: {
     known_failures_to_avoid: priorFailureSummaries(args.priorRuns, mode === "strict_governance" ? 3 : 1),
     first_action: compactFirstAction(firstAction),
     runtime_entropy_profile: mode === "strict_governance" ? entropyProfile : null,
+    action_retrieval: mode === "compact_contract" || mode === "strict_governance"
+      ? compactActionRetrieval(actionRetrieval)
+      : null,
+    action_intelligence: mode === "strict_governance" ? compactActionIntelligence(actionContract) : null,
+    experience_adaptation_trace: mode === "strict_governance" ? compactExperienceAdaptationTrace(experienceTrace) : null,
     tool_hint: mode === "strict_governance" ? asObject(args.tools?.selection_summary) : null,
     operating_rules: [
       "The LLM/Agent owns semantic repair and final code choices.",
@@ -887,7 +1117,7 @@ async function postRuntime(baseUrl: string, route: string, payload: JsonObject):
   return parsed;
 }
 
-function runtimePayloadBase(task: EvalTask, runId: string): JsonObject {
+function runtimePayloadBase(task: EvalTask, runId: string): AgentRuntimeIdentity {
   return {
     tenant_id: "swe-agent-eval",
     scope: `swe-agent-eval:${task.task_family ?? task.id}`,
@@ -948,40 +1178,37 @@ async function buildAionisContext(baseUrl: string, task: EvalTask, runId: string
     },
     semantic_invariants: extractPatchSemanticInvariants(task, run.patch, run).slice(0, 40),
   }));
-  const common = {
-    ...base,
-    query_text: task.prompt,
-    context,
-    execution_evidence: evidence,
-    execution_result_summary: {
-      prior_run_count: priorRuns.length,
-      learnable_prior_run_count: learnableRuns.length,
-      quarantined_prior_run_count: priorRuns.length - learnableRuns.length,
-      failed_prior_run_count: learnableRuns.filter((run) => run.metrics.verifier_passed !== true).length,
-    },
-    edit_boundary_context: editBoundaryContext,
-    candidates: ["bash", "read_file", "search", "edit", "submit"],
-    tool_candidates: ["bash", "read_file", "search", "edit", "submit"],
-    include_shadow: true,
-    return_debug: true,
-    include_slots: true,
-    context_char_budget: 16000,
-    context_optimization_profile: "aggressive",
+  const executionResultSummary = {
+    prior_run_count: priorRuns.length,
+    learnable_prior_run_count: learnableRuns.length,
+    quarantined_prior_run_count: priorRuns.length - learnableRuns.length,
+    failed_prior_run_count: learnableRuns.filter((run) => run.metrics.verifier_passed !== true).length,
   };
-  const [kickoff, planning, assembly, tools] = await Promise.all([
-    postRuntime(baseUrl, "/v1/memory/kickoff/recommendation", common),
-    postRuntime(baseUrl, "/v1/memory/planning/context", common),
-    postRuntime(baseUrl, "/v1/memory/context/assemble", common),
-    postRuntime(baseUrl, "/v1/memory/tools/select", {
-      ...base,
+  const runtimeContext = await buildAionisAgentRuntimeContext({
+    baseUrl,
+    identity: base,
+    host: {
+      host_kind: "agent_framework_eval",
+      agent_id: "swe-agent",
+      adapter_id: "swe-agent-eval-adapter-v1",
+    },
+    task: {
+      task_id: task.id,
+      task_family: task.task_family ?? null,
+      query_text: task.prompt,
       context,
+      edit_boundary_context: editBoundaryContext,
       candidates: ["bash", "read_file", "search", "edit", "submit"],
-      include_shadow: true,
-    }),
-  ]);
+      execution_evidence: evidence,
+      execution_result_summary: executionResultSummary,
+    },
+    contextCharBudget: 16000,
+  });
   return {
-    context_version: "aionis_swe_agent_context_packet_v1",
+    context_version: "aionis_swe_agent_context_packet_v2",
     role: "advisory_runtime_evidence_not_agent_execution",
+    agent_runtime_adapter: runtimeContext.adapter,
+    runtime_routes: runtimeContext.runtime_routes,
     assistance_gate: assistanceGate,
     prior_success_evidence: priorSuccessEvidence,
     compact_execution_contract: buildCompactExecutionContract({
@@ -989,15 +1216,15 @@ async function buildAionisContext(baseUrl: string, task: EvalTask, runId: string
       gate: assistanceGate,
       priorRuns,
       priorSuccessEvidence,
-      kickoff,
-      planning,
-      assembly,
-      tools,
+      experience: runtimeContext.experience_intelligence,
+      planning: runtimeContext.planning,
+      assembly: runtimeContext.assembly,
+      tools: runtimeContext.tools,
     }),
-    kickoff,
-    planning,
-    assembly,
-    tools,
+    experience_intelligence: runtimeContext.experience_intelligence,
+    planning: runtimeContext.planning,
+    assembly: runtimeContext.assembly,
+    tools: runtimeContext.tools,
   };
 }
 
@@ -1006,6 +1233,8 @@ function compactAionisContext(context: JsonObject | null): JsonObject | null {
   return {
     context_version: context.context_version,
     role: context.role,
+    agent_runtime_adapter: asObject(context.agent_runtime_adapter),
+    runtime_routes: asObject(context.runtime_routes),
     assistance_gate: asObject(context.assistance_gate),
     compact_execution_contract: asObject(context.compact_execution_contract),
   };
@@ -1032,6 +1261,8 @@ function fitCompactContextToBudget(context: JsonObject): JsonObject {
   }
   if (!contract) return fitted;
 
+  contract.experience_adaptation_trace = null;
+  contract.action_intelligence = null;
   contract.runtime_entropy_profile = null;
   contract.tool_hint = null;
   if (Array.isArray(contract.operating_rules)) contract.operating_rules = contract.operating_rules.slice(0, 2);
@@ -1041,6 +1272,20 @@ function fitCompactContextToBudget(context: JsonObject): JsonObject {
       action: stringValue(firstAction.action),
       tool_name: stringValue(firstAction.tool_name),
       file_path: stringValue(firstAction.file_path),
+    };
+  }
+  const actionRetrieval = asObject(contract.action_retrieval);
+  if (actionRetrieval) {
+    contract.action_retrieval = {
+      tool_source_kind: stringValue(actionRetrieval.tool_source_kind),
+      selected_tool: stringValue(actionRetrieval.selected_tool),
+      recommended_file_path: stringValue(actionRetrieval.recommended_file_path),
+      uncertainty: asObject(actionRetrieval.uncertainty)
+        ? {
+            level: stringValue(asObject(actionRetrieval.uncertainty)?.level),
+            recommended_actions: stringList(asObject(actionRetrieval.uncertainty)?.recommended_actions).slice(0, 2),
+          }
+        : null,
     };
   }
   if (Array.isArray(contract.known_failures_to_avoid)) {
@@ -1637,6 +1882,11 @@ function metricsForRun(args: {
   const compactContext = renderedCompactAionisContext(args.aionisContext);
   const assistanceGate = asObject(compactContext?.assistance_gate);
   const compactContract = asObject(compactContext?.compact_execution_contract);
+  const actionRetrieval = asObject(compactContract?.action_retrieval);
+  const actionIntelligence = asObject(compactContract?.action_intelligence);
+  const actionIntelligenceGate = asObject(actionIntelligence?.pre_action_gate);
+  const experienceTrace = asObject(compactContract?.experience_adaptation_trace);
+  const experienceSources = asObject(experienceTrace?.experience_sources);
   const assistanceMode = stringValue(assistanceGate?.mode);
   const renderedContextCharCount = compactContext && assistanceMode !== "no_op"
     ? JSON.stringify(compactContext).length
@@ -1649,6 +1899,16 @@ function metricsForRun(args: {
   const totalSweAgentDurationMs = sweAgentResults.reduce((sum, result) => sum + result.duration_ms, 0);
   const totalVerifierDurationMs = verifierResults.reduce((sum, result) => sum + result.duration_ms, 0);
   const modelStats = aggregateTrajectoryModelStats(args.trajectoryModelStats ?? []);
+  const aionisExperienceSourceCount = [
+    experienceSources?.stable_workflow_count,
+    experienceSources?.candidate_workflow_count,
+    experienceSources?.trusted_pattern_count,
+    experienceSources?.rehydration_candidate_count,
+    experienceSources?.adaptive_guidance_candidate_count,
+    experienceSources?.delegation_recommendation_count,
+  ]
+    .map((value) => Math.max(0, Number(value ?? 0)))
+    .reduce((sum, value) => sum + value, 0);
   return {
     verifier_passed: verifierPassed,
     swe_agent_exit_code: args.sweAgentResult.exit_code,
@@ -1687,6 +1947,14 @@ function metricsForRun(args: {
     aionis_compact_contract_char_count: compactContractCharCount,
     aionis_context_budget_chars: contextBudgetChars,
     aionis_context_budget_exceeded: contextBudgetChars > 0 && renderedContextCharCount > contextBudgetChars,
+    aionis_action_retrieval_present: actionRetrieval !== null,
+    aionis_action_retrieval_tool_source_kind: stringValue(actionRetrieval?.tool_source_kind),
+    aionis_action_intelligence_present: actionIntelligence !== null,
+    aionis_action_intelligence_known_enough: actionIntelligenceGate?.known_enough === true,
+    aionis_action_intelligence_authority_blocked: actionIntelligenceGate?.authority_blocked === true,
+    aionis_experience_trace_present: experienceTrace !== null,
+    aionis_experience_trace_activation_state: stringValue(experienceTrace?.activation_state),
+    aionis_experience_source_count: aionisExperienceSourceCount,
     ...invariantMetrics,
   };
 }
