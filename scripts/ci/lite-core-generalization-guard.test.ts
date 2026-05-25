@@ -16,6 +16,7 @@ const EVAL_RUNNER_SURFACES = [
   "scripts/real-llm-eval/run-real-agent-eval.ts",
   "scripts/real-llm-eval/report-runtime-effect-rollup.ts",
   "scripts/real-llm-eval/rollup-real-agent-eval.ts",
+  "scripts/aider-eval/run-aider-aionis-eval.ts",
 ] as const;
 
 const FORBIDDEN_PRODUCT_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
