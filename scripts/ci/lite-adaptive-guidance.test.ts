@@ -217,6 +217,7 @@ test("action retrieval surfaces native adaptive guidance as observational eviden
         execution_contract_v1: executionContract(),
       }],
     }),
+    delegationRecommendationCount: 2,
   });
 
   assert.equal(response.tool_source_kind, "adaptive_guidance");
@@ -233,6 +234,12 @@ test("action retrieval surfaces native adaptive guidance as observational eviden
     response.adaptive_guidance?.authority_visibility.required_promotion_path,
     "runtime_signal_attribution_and_learning_control_gate",
   );
+  assert.equal(response.experience_adaptation_trace.summary_version, "execution_experience_adaptation_trace_v1");
+  assert.equal(response.experience_adaptation_trace.activation_state, "active");
+  assert.equal(response.experience_adaptation_trace.task_decomposition.summary_version, "adaptive_guidance_decomposition_v1");
+  assert.equal(response.experience_adaptation_trace.retrieval.tool_source_kind, "adaptive_guidance");
+  assert.equal(response.experience_adaptation_trace.experience_sources.delegation_recommendation_count, 2);
+  assert.equal(response.experience_adaptation_trace.adaptation.promotion_requires_candidate_binding, true);
 });
 
 test("adaptive guidance does not override stable workflow authority", () => {

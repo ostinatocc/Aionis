@@ -13,6 +13,7 @@ import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-cont
 import { registerHandoffRoutes } from "../../src/routes/handoff.ts";
 import {
   ExecutionMemoryIntrospectionResponseSchema,
+  ExperienceIntelligenceResponseSchema,
   PlanningContextRouteContractSchema,
 } from "../../src/memory/schemas.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
@@ -163,6 +164,7 @@ function registerApp(args: {
     env,
     embedder: null,
     liteWriteStore: args.liteWriteStore,
+    liteRecallAccess: args.liteRecallStore.createRecallAccess(),
     writeAccessShadowMirrorV2: false,
     requireStoreFeatureCapability: () => {},
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
@@ -748,6 +750,38 @@ test("trajectory-backed handoff promotion preserves recovery compiler fields int
     assert.ok(projectedRows.rows[0]?.execution_native.workflow_steps?.some((step) => step.includes("python -m http.server 8080")));
     assert.ok(projectedRows.rows[0]?.execution_native.pattern_hints?.includes("revalidate_service_from_fresh_shell"));
     assert.equal(projectedRows.rows[0]?.execution_native.service_lifecycle_constraints?.[0]?.must_survive_agent_exit, true);
+
+    const experience = await app.inject({
+      method: "POST",
+      url: "/v1/memory/experience/intelligence",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "repair preview server and keep validation alive after agent exit",
+        context: {
+          goal: "repair preview server and keep validation alive after agent exit",
+        },
+        candidates: ["bash", "edit", "test"],
+        trajectory: payload.trajectory,
+        trajectory_hints: payload.trajectory_hints,
+      },
+    });
+    assert.equal(experience.statusCode, 200, experience.body);
+    const experienceBody = ExperienceIntelligenceResponseSchema.parse(JSON.parse(experience.body));
+    const trace = experienceBody.experience_adaptation_trace;
+    assert.equal(trace.summary_version, "execution_experience_adaptation_trace_v1");
+    assert.equal(trace.trajectory.present, true);
+    assert.equal(trace.trajectory.compiled, true);
+    assert.equal(trace.trajectory.task_family, "service_publish_validate");
+    assert.ok(trace.trajectory.workflow_signature);
+    assert.equal(trace.experience_sources.candidate_workflow_count, 1);
+    assert.equal(trace.task_decomposition.task_family, "service_publish_validate");
+    assert.equal(trace.retrieval.path_source_kind, "candidate_workflow");
+    assert.ok(trace.retrieval.evidence_entry_count >= 1);
+    assert.equal(trace.adaptation.activation_state, "active");
+    assert.ok(trace.adaptation.selected_candidate_ids.length >= 1);
+    assert.equal(trace.adaptation.promotion_requires_candidate_binding, true);
+    assert.ok(trace.stages.some((stage) => stage.stage === "feedback_attribution" && stage.status === "ready"));
 
     const secondStore = await app.inject({
       method: "POST",

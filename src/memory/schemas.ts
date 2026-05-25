@@ -1525,6 +1525,88 @@ export const AdaptiveGuidanceOverlayV1Schema = z.object({
 
 export type AdaptiveGuidanceOverlayV1 = z.infer<typeof AdaptiveGuidanceOverlayV1Schema>;
 
+export const ExecutionExperienceAdaptationStageNameSchema = z.enum([
+  "trajectory_compile",
+  "experience_intelligence",
+  "task_decomposition",
+  "action_retrieval",
+  "adaptive_guidance",
+  "feedback_attribution",
+]);
+
+export type ExecutionExperienceAdaptationStageName = z.infer<typeof ExecutionExperienceAdaptationStageNameSchema>;
+
+export const ExecutionExperienceAdaptationStageV1Schema = z.object({
+  stage: ExecutionExperienceAdaptationStageNameSchema,
+  status: z.enum(["active", "observed", "ready", "blocked", "empty"]),
+  summary: z.string().min(1).max(512),
+  source_refs: z.array(z.string().min(1).max(256)).max(32),
+  evidence_refs: z.array(z.string().min(1).max(256)).max(32),
+}).strict();
+
+export type ExecutionExperienceAdaptationStageV1 = z.infer<typeof ExecutionExperienceAdaptationStageV1Schema>;
+
+export const ExecutionExperienceAdaptationTraceV1Schema = z.object({
+  summary_version: z.literal("execution_experience_adaptation_trace_v1"),
+  activation_state: z.enum(["active", "empty", "blocked"]),
+  trajectory: z.object({
+    present: z.boolean(),
+    compiled: z.boolean(),
+    task_family: z.string().nullable(),
+    task_signature: z.string().nullable(),
+    workflow_signature: z.string().nullable(),
+    target_file_count: z.number().int().min(0),
+    acceptance_check_count: z.number().int().min(0),
+    service_constraint_count: z.number().int().min(0),
+    likely_tool: z.string().nullable(),
+  }).strict(),
+  experience_sources: z.object({
+    stable_workflow_count: z.number().int().min(0),
+    candidate_workflow_count: z.number().int().min(0),
+    trusted_pattern_count: z.number().int().min(0),
+    contested_pattern_count: z.number().int().min(0),
+    rehydration_candidate_count: z.number().int().min(0),
+    supporting_knowledge_count: z.number().int().min(0),
+    adaptive_guidance_candidate_count: z.number().int().min(0),
+    delegation_recommendation_count: z.number().int().min(0),
+  }).strict(),
+  task_decomposition: AdaptiveGuidanceDecompositionV1Schema,
+  retrieval: z.object({
+    selected_tool: z.string().nullable(),
+    tool_source_kind: z.enum(["tools_select", "trusted_pattern", "stable_workflow", "persisted_policy_memory", "adaptive_guidance", "blended"]),
+    path_source_kind: z.enum(["recommended_workflow", "candidate_workflow", "none"]),
+    selected_path_anchor_id: z.string().nullable(),
+    evidence_entry_count: z.number().int().min(0),
+    uncertainty_level: z.enum(["low", "moderate", "high"]),
+    confidence: z.number().min(0).max(1),
+  }).strict(),
+  adaptation: z.object({
+    activation_state: z.enum(["active", "empty", "blocked"]),
+    selected_candidate_ids: z.array(z.string().min(1).max(128)).max(16),
+    adapted_instruction_count: z.number().int().min(0),
+    primary_instruction: z.string().nullable(),
+    recommended_actions: z.array(z.enum([
+      "widen_recall",
+      "inspect_context",
+      "request_operator_review",
+    ])).max(8),
+    confidence_delta: z.number().min(-1).max(1),
+    feedback_slots: z.array(z.string().min(1).max(128)).max(16),
+    expected_signal_kind: z.literal("adaptive_guidance_outcome"),
+    promotion_requires_candidate_binding: z.literal(true),
+  }).strict(),
+  authority: z.object({
+    contract_trust: z.literal("observational"),
+    may_promote_directly: z.literal(false),
+    required_promotion_path: z.literal("runtime_signal_attribution_and_learning_control_gate"),
+    source_code_change_allowed: z.literal(false),
+  }).strict(),
+  stages: z.array(ExecutionExperienceAdaptationStageV1Schema).min(6).max(6),
+  source_code_change_allowed: z.literal(false),
+}).strict();
+
+export type ExecutionExperienceAdaptationTraceV1 = z.infer<typeof ExecutionExperienceAdaptationTraceV1Schema>;
+
 export const ActionRetrievalEvidenceEntrySchema = z.object({
   source_kind: z.enum([
     "persisted_policy_memory",
@@ -1635,6 +1717,7 @@ export const ActionRetrievalResponseSchema = z.object({
   path: ExperienceIntelligencePathRecommendationSchema,
   evidence: ActionRetrievalEvidenceSchema,
   adaptive_guidance: AdaptiveGuidanceOverlayV1Schema,
+  experience_adaptation_trace: ExecutionExperienceAdaptationTraceV1Schema,
   uncertainty: ActionRetrievalUncertaintySchema,
   rationale: z.object({
     summary: z.string(),
@@ -2285,6 +2368,7 @@ export const ExperienceIntelligenceResponseSchema = z.object({
   policy_contract: PolicyContractSchema.nullable().default(null),
   learning_summary: DelegationLearningSummarySchema,
   learning_recommendations: z.array(z.lazy(() => DelegationRecordsLearningRecommendationSchema)),
+  experience_adaptation_trace: ExecutionExperienceAdaptationTraceV1Schema,
   rationale: z.object({
     summary: z.string(),
   }).passthrough(),
@@ -3457,6 +3541,7 @@ export const ContextOperatorProjectionSchema = z.object({
   runtime_entropy_controls: RuntimeEntropyControlsV1Schema.optional(),
   action_retrieval_gate: ActionRetrievalGateSummarySchema.optional(),
   adaptive_guidance: AdaptiveGuidanceOverlayV1Schema.optional(),
+  experience_adaptation_trace: ExecutionExperienceAdaptationTraceV1Schema.optional(),
   first_action_v1: RuntimeFirstActionRecommendationSchema.optional(),
   edit_boundary_v1: RuntimeEditBoundaryRecommendationSchema.optional(),
   action_hints: z.array(z.object({

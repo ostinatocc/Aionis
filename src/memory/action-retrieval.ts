@@ -10,6 +10,7 @@ import {
   type ExperienceIntelligenceInput,
   type PolicyContract,
   type ToolsSelectRouteContract,
+  type TrajectoryCompileResponse,
 } from "./schemas.js";
 import {
   buildExecutionContractFromProjection,
@@ -33,6 +34,7 @@ import {
   applyAdaptiveGuidanceToUncertainty,
   buildAdaptiveGuidanceOverlay,
 } from "./adaptive-guidance.js";
+import { buildExecutionExperienceAdaptationTrace } from "./execution-experience-adaptation.js";
 import type { RuntimeAuthorityVisibilityV1 } from "./authority-visibility.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
 import {
@@ -1124,6 +1126,8 @@ export function buildActionRetrievalResponse(args: {
   parsed: ExperienceIntelligenceInput;
   tools: ToolsSelectRouteContract;
   introspection: ExecutionMemoryIntrospectionResponse;
+  trajectoryCompile?: TrajectoryCompileResponse | null;
+  delegationRecommendationCount?: number;
 }): ActionRetrievalResponse {
   const selectedTool = args.tools.selection.selected ?? null;
   const recommendedWorkflows = (Array.isArray(args.introspection.recommended_workflows) ? args.introspection.recommended_workflows : []) as WorkflowEntry[];
@@ -1402,6 +1406,31 @@ export function buildActionRetrievalResponse(args: {
     `tool_source=${toolSourceKind}`,
     `uncertainty=${uncertainty.level}:${uncertainty.confidence.toFixed(2)}`,
   ].filter((value): value is string => !!value).join(" | ");
+  const evidence = {
+    stable_workflow_count: recommendedWorkflows.length,
+    candidate_workflow_count: candidateWorkflows.length,
+    trusted_pattern_count: trustedPatterns.length,
+    contested_pattern_count: contestedPatterns.length,
+    rehydration_candidate_count: rehydrationCandidates.length,
+    adaptive_guidance_candidate_count: adaptiveGuidance.selected_candidate_count,
+    persisted_policy_memory_id: persistedPolicy?.node_id ?? null,
+    selected_path_anchor_id: path.anchor_id,
+    entries: evidenceEntries,
+  };
+  const experienceAdaptationTrace = buildExecutionExperienceAdaptationTrace({
+    parsed: args.parsed,
+    introspection: args.introspection,
+    trajectoryCompile: args.trajectoryCompile ?? null,
+    delegationRecommendationCount: args.delegationRecommendationCount,
+    retrieval: {
+      selected_tool: selectedTool,
+      tool_source_kind: toolSourceKind,
+      path,
+      evidence,
+      adaptive_guidance: adaptiveGuidance,
+      uncertainty,
+    },
+  });
 
   return ActionRetrievalResponseSchema.parse({
     summary_version: "action_retrieval_v1",
@@ -1463,18 +1492,9 @@ export function buildActionRetrievalResponse(args: {
       authority_blocked: path.authority_blocked,
       authority_primary_blocker: path.authority_primary_blocker,
     },
-    evidence: {
-      stable_workflow_count: recommendedWorkflows.length,
-      candidate_workflow_count: candidateWorkflows.length,
-      trusted_pattern_count: trustedPatterns.length,
-      contested_pattern_count: contestedPatterns.length,
-      rehydration_candidate_count: rehydrationCandidates.length,
-      adaptive_guidance_candidate_count: adaptiveGuidance.selected_candidate_count,
-      persisted_policy_memory_id: persistedPolicy?.node_id ?? null,
-      selected_path_anchor_id: path.anchor_id,
-      entries: evidenceEntries,
-    },
+    evidence,
     adaptive_guidance: adaptiveGuidance,
+    experience_adaptation_trace: experienceAdaptationTrace,
     uncertainty,
     rationale: {
       summary: rationaleSummary,
@@ -1491,12 +1511,13 @@ export async function buildActionRetrievalLite(args: {
   defaultTenantId: string;
   defaultActorId: string;
 }): Promise<ActionRetrievalResponse> {
-  const parsed = augmentTrajectoryAwareRequest({
+  const augmented = augmentTrajectoryAwareRequest({
     parsed: ActionRetrievalRequest.parse(args.body),
     parse: ActionRetrievalRequest.parse,
     defaultScope: args.defaultScope,
     defaultTenantId: args.defaultTenantId,
-  }).parsed;
+  });
+  const parsed = augmented.parsed;
   const introspection = await buildExecutionMemoryIntrospectionLite(
     args.liteWriteStore,
     {
@@ -1540,5 +1561,6 @@ export async function buildActionRetrievalLite(args: {
     parsed,
     tools,
     introspection,
+    trajectoryCompile: augmented.compiled,
   });
 }

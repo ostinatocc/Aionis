@@ -62,6 +62,71 @@ function emptyAdaptiveGuidance(queryText: string) {
   };
 }
 
+function emptyExperienceAdaptationTrace(queryText: string) {
+  const adaptiveGuidance = emptyAdaptiveGuidance(queryText);
+  return {
+    summary_version: "execution_experience_adaptation_trace_v1",
+    activation_state: "empty",
+    trajectory: {
+      present: false,
+      compiled: false,
+      task_family: null,
+      task_signature: null,
+      workflow_signature: null,
+      target_file_count: 0,
+      acceptance_check_count: 0,
+      service_constraint_count: 0,
+      likely_tool: null,
+    },
+    experience_sources: {
+      stable_workflow_count: 0,
+      candidate_workflow_count: 0,
+      trusted_pattern_count: 0,
+      contested_pattern_count: 0,
+      rehydration_candidate_count: 0,
+      supporting_knowledge_count: 0,
+      adaptive_guidance_candidate_count: 0,
+      delegation_recommendation_count: 0,
+    },
+    task_decomposition: adaptiveGuidance.decomposition,
+    retrieval: {
+      selected_tool: null,
+      tool_source_kind: "tools_select",
+      path_source_kind: "none",
+      selected_path_anchor_id: null,
+      evidence_entry_count: 0,
+      uncertainty_level: "high",
+      confidence: 0.22,
+    },
+    adaptation: {
+      activation_state: "empty",
+      selected_candidate_ids: [],
+      adapted_instruction_count: 0,
+      primary_instruction: null,
+      recommended_actions: [],
+      confidence_delta: 0,
+      feedback_slots: ["adaptive_guidance_outcome_v1"],
+      expected_signal_kind: "adaptive_guidance_outcome",
+      promotion_requires_candidate_binding: true,
+    },
+    authority: {
+      contract_trust: "observational",
+      may_promote_directly: false,
+      required_promotion_path: "runtime_signal_attribution_and_learning_control_gate",
+      source_code_change_allowed: false,
+    },
+    stages: [
+      { stage: "trajectory_compile", status: "empty", summary: "no trajectory input present", source_refs: [], evidence_refs: [] },
+      { stage: "experience_intelligence", status: "empty", summary: "no execution experience sources matched", source_refs: [], evidence_refs: [] },
+      { stage: "task_decomposition", status: "ready", summary: "task decomposition produced 1 subtasks", source_refs: ["test-empty-guidance"], evidence_refs: [] },
+      { stage: "action_retrieval", status: "empty", summary: "action retrieval selected tools_select", source_refs: [], evidence_refs: [] },
+      { stage: "adaptive_guidance", status: "empty", summary: "adaptive guidance selected 0 candidates", source_refs: [], evidence_refs: [] },
+      { stage: "feedback_attribution", status: "empty", summary: "feedback attribution requires selected candidate binding before promotion", source_refs: ["adaptive_guidance_outcome_v1"], evidence_refs: [] },
+    ],
+    source_code_change_allowed: false,
+  };
+}
+
 function introspectionSlice(args?: {
   authoritativeBlocked?: number;
   stablePromotionBlocked?: number;
@@ -362,6 +427,7 @@ test("action intelligence runtime contract records the full loop from action ret
       ],
     },
     adaptive_guidance: emptyAdaptiveGuidance("repair the runtime contract"),
+    experience_adaptation_trace: emptyExperienceAdaptationTrace("repair the runtime contract"),
     uncertainty: {
       summary_version: "action_retrieval_uncertainty_v1",
       level: "low",
@@ -493,6 +559,7 @@ test("action intelligence runtime contract blocks action when recall or authorit
       ],
     },
     adaptive_guidance: emptyAdaptiveGuidance("unknown repair task"),
+    experience_adaptation_trace: emptyExperienceAdaptationTrace("unknown repair task"),
     uncertainty: {
       summary_version: "action_retrieval_uncertainty_v1",
       level: "high",
@@ -591,6 +658,7 @@ test("action intelligence carries promotion quality summary into mutation and ma
       entries: [],
     },
     adaptive_guidance: emptyAdaptiveGuidance("review promotion quality before new learning"),
+    experience_adaptation_trace: emptyExperienceAdaptationTrace("review promotion quality before new learning"),
     uncertainty: {
       summary_version: "action_retrieval_uncertainty_v1",
       level: "low",
@@ -679,6 +747,7 @@ test("action intelligence carries runtime effect summary into maintenance postur
       entries: [],
     },
     adaptive_guidance: emptyAdaptiveGuidance("measure runtime effect after maintenance"),
+    experience_adaptation_trace: emptyExperienceAdaptationTrace("measure runtime effect after maintenance"),
     uncertainty: {
       summary_version: "action_retrieval_uncertainty_v1",
       level: "low",
@@ -781,6 +850,7 @@ test("action intelligence carries runtime signal trends into entropy and learnin
       entries: [],
     },
     adaptive_guidance: emptyAdaptiveGuidance("repair the runtime contract"),
+    experience_adaptation_trace: emptyExperienceAdaptationTrace("repair the runtime contract"),
     uncertainty: {
       summary_version: "action_retrieval_uncertainty_v1",
       level: "low",

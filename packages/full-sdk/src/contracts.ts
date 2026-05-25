@@ -471,6 +471,79 @@ export type AionisAdaptiveGuidanceOverlay = {
   source_code_change_allowed: false;
 };
 
+export type AionisExecutionExperienceAdaptationTrace = {
+  summary_version: "execution_experience_adaptation_trace_v1";
+  activation_state: "active" | "empty" | "blocked";
+  trajectory: {
+    present: boolean;
+    compiled: boolean;
+    task_family: string | null;
+    task_signature: string | null;
+    workflow_signature: string | null;
+    target_file_count: number;
+    acceptance_check_count: number;
+    service_constraint_count: number;
+    likely_tool: string | null;
+  };
+  experience_sources: {
+    stable_workflow_count: number;
+    candidate_workflow_count: number;
+    trusted_pattern_count: number;
+    contested_pattern_count: number;
+    rehydration_candidate_count: number;
+    supporting_knowledge_count: number;
+    adaptive_guidance_candidate_count: number;
+    delegation_recommendation_count: number;
+  };
+  task_decomposition: AionisAdaptiveGuidanceDecomposition;
+  retrieval: {
+    selected_tool: string | null;
+    tool_source_kind:
+      | "tools_select"
+      | "trusted_pattern"
+      | "stable_workflow"
+      | "persisted_policy_memory"
+      | "adaptive_guidance"
+      | "blended";
+    path_source_kind: "recommended_workflow" | "candidate_workflow" | "none";
+    selected_path_anchor_id: string | null;
+    evidence_entry_count: number;
+    uncertainty_level: "low" | "moderate" | "high";
+    confidence: number;
+  };
+  adaptation: {
+    activation_state: "active" | "empty" | "blocked";
+    selected_candidate_ids: string[];
+    adapted_instruction_count: number;
+    primary_instruction: string | null;
+    recommended_actions: Array<"widen_recall" | "inspect_context" | "request_operator_review">;
+    confidence_delta: number;
+    feedback_slots: string[];
+    expected_signal_kind: "adaptive_guidance_outcome";
+    promotion_requires_candidate_binding: true;
+  };
+  authority: {
+    contract_trust: "observational";
+    may_promote_directly: false;
+    required_promotion_path: "runtime_signal_attribution_and_learning_control_gate";
+    source_code_change_allowed: false;
+  };
+  stages: Array<{
+    stage:
+      | "trajectory_compile"
+      | "experience_intelligence"
+      | "task_decomposition"
+      | "action_retrieval"
+      | "adaptive_guidance"
+      | "feedback_attribution";
+    status: "active" | "observed" | "ready" | "blocked" | "empty";
+    summary: string;
+    source_refs: string[];
+    evidence_refs: string[];
+  }>;
+  source_code_change_allowed: false;
+};
+
 export type AionisActionRetrievalUncertainty = {
   summary_version: "action_retrieval_uncertainty_v1";
   level: "low" | "moderate" | "high";
@@ -864,6 +937,7 @@ export type AionisContextOperatorProjection = {
   delegation_learning?: AionisDelegationLearningProjection;
   action_retrieval_gate?: AionisPassthroughObject;
   adaptive_guidance?: AionisAdaptiveGuidanceOverlay;
+  experience_adaptation_trace?: AionisExecutionExperienceAdaptationTrace;
   action_hints?: Array<{
     summary_version: "context_operator_action_hint_v1";
     action: "inspect_context" | "widen_recall" | "rehydrate_payload" | "request_operator_review";
@@ -897,6 +971,7 @@ export type AionisExperienceIntelligenceResponse = {
   policy_contract: AionisPolicyContract | null;
   learning_summary: AionisDelegationLearningSummary;
   learning_recommendations: AionisDelegationRecordsLearningRecommendation[];
+  experience_adaptation_trace: AionisExecutionExperienceAdaptationTrace;
   rationale: {
     summary: string;
   } & AionisPassthroughObject;
@@ -923,6 +998,7 @@ export type AionisActionRetrievalResponse = {
   path: AionisActionRecommendationPath;
   evidence: AionisActionRetrievalEvidence;
   adaptive_guidance: AionisAdaptiveGuidanceOverlay;
+  experience_adaptation_trace: AionisExecutionExperienceAdaptationTrace;
   uncertainty: AionisActionRetrievalUncertainty;
   rationale: {
     summary: string;

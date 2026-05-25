@@ -15,6 +15,7 @@ import {
   type KickoffRecommendationResponse,
   type RuntimeEditBoundaryContextInput,
   type ToolsSelectRouteContract,
+  type TrajectoryCompileResponse,
 } from "./schemas.js";
 import { parseExecutionContract } from "./execution-contract.js";
 import { buildPolicyMaterializationSurface } from "./policy-materialization-surface.js";
@@ -40,11 +41,23 @@ export function buildExperienceIntelligenceResponse(args: {
     recommendation_count: number;
     learning_recommendations: Array<Record<string, unknown>>;
   };
+  trajectoryCompile?: TrajectoryCompileResponse | null;
 }): ExperienceIntelligenceResponse {
+  const delegationLearning = args.delegationLearning ?? {
+    task_family: null,
+    matched_records: 0,
+    truncated: false,
+    route_role_counts: {},
+    record_outcome_counts: {},
+    recommendation_count: 0,
+    learning_recommendations: [],
+  };
   const materialization = buildPolicyMaterializationSurface({
     parsed: args.parsed,
     tools: args.tools,
     introspection: args.introspection,
+    trajectoryCompile: args.trajectoryCompile ?? null,
+    delegationRecommendationCount: delegationLearning.recommendation_count,
   });
   const actionRetrieval = materialization.actionRetrieval;
   const executionContract = parseExecutionContract(actionRetrieval.execution_contract_v1);
@@ -68,15 +81,6 @@ export function buildExperienceIntelligenceResponse(args: {
   const derivedPolicy = materialization.derivedPolicy;
   const policyContractWithEvidence = materialization.policyContract;
   const persistedPolicy = materialization.persistedPolicyMemory;
-  const delegationLearning = args.delegationLearning ?? {
-    task_family: null,
-    matched_records: 0,
-    truncated: false,
-    route_role_counts: {},
-    record_outcome_counts: {},
-    recommendation_count: 0,
-    learning_recommendations: [],
-  };
   const actionIntelligenceRuntimeContract = buildActionIntelligenceRuntimeContractV1({
     parsed: args.parsed,
     actionRetrieval,
@@ -112,6 +116,7 @@ export function buildExperienceIntelligenceResponse(args: {
       recommendation_count: delegationLearning.recommendation_count,
     },
     learning_recommendations: delegationLearning.learning_recommendations,
+    experience_adaptation_trace: actionRetrieval.experience_adaptation_trace,
     rationale: {
       summary: [
         actionRetrieval.rationale.summary,
@@ -133,12 +138,13 @@ export async function buildExperienceIntelligenceLite(args: {
   defaultTenantId: string;
   defaultActorId: string;
 }): Promise<ExperienceIntelligenceResponse> {
-  const parsed = augmentTrajectoryAwareRequest({
+  const augmented = augmentTrajectoryAwareRequest({
     parsed: ExperienceIntelligenceRequest.parse(args.body),
     parse: ExperienceIntelligenceRequest.parse,
     defaultScope: args.defaultScope,
     defaultTenantId: args.defaultTenantId,
-  }).parsed;
+  });
+  const parsed = augmented.parsed;
   const introspection = await buildExecutionMemoryIntrospectionLite(
     args.liteWriteStore,
     {
@@ -206,6 +212,7 @@ export async function buildExperienceIntelligenceLite(args: {
     tools,
     introspection,
     delegationLearning,
+    trajectoryCompile: augmented.compiled,
   });
 }
 

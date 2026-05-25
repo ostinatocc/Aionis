@@ -942,6 +942,10 @@ export function registerMemoryContextRuntimeRoutes(args: {
     if (adaptiveGuidance) {
       layered.adaptive_guidance = adaptiveGuidance;
     }
+    const experienceAdaptationTrace = args.experienceIntelligence.experience_adaptation_trace;
+    if (experienceAdaptationTrace) {
+      layered.experience_adaptation_trace = experienceAdaptationTrace;
+    }
   };
   const buildContextOperatorProjection = (args: {
     returnLayeredContext: boolean;
@@ -1012,6 +1016,12 @@ export function registerMemoryContextRuntimeRoutes(args: {
       && typeof args.experienceIntelligence.action_retrieval.adaptive_guidance === "object"
       && !Array.isArray(args.experienceIntelligence.action_retrieval.adaptive_guidance)
         ? args.experienceIntelligence.action_retrieval.adaptive_guidance
+        : null;
+    const experienceAdaptationTrace =
+      args.experienceIntelligence?.experience_adaptation_trace
+      && typeof args.experienceIntelligence.experience_adaptation_trace === "object"
+      && !Array.isArray(args.experienceIntelligence.experience_adaptation_trace)
+        ? args.experienceIntelligence.experience_adaptation_trace
         : null;
     const runtimeContract =
       args.experienceIntelligence?.action_intelligence_runtime_contract
@@ -1160,7 +1170,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
           ? preferredRehydration.anchor_id
           : null,
     }));
-    if (!delegationLearning && !actionIntelligencePreActionGate && !runtimeEntropyProfile && !runtimeEntropyControls && !gate && !adaptiveGuidance && !firstAction && !editBoundary && !verificationRepair && actionHints.length === 0) return undefined;
+    if (!delegationLearning && !actionIntelligencePreActionGate && !runtimeEntropyProfile && !runtimeEntropyControls && !gate && !adaptiveGuidance && !experienceAdaptationTrace && !firstAction && !editBoundary && !verificationRepair && actionHints.length === 0) return undefined;
     return {
       ...(delegationLearning ? { delegation_learning: delegationLearning } : {}),
       ...(actionIntelligencePreActionGate ? { action_intelligence_pre_action_gate: actionIntelligencePreActionGate } : {}),
@@ -1168,6 +1178,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
       ...(runtimeEntropyControls ? { runtime_entropy_controls: runtimeEntropyControls } : {}),
       ...(gate ? { action_retrieval_gate: gate } : {}),
       ...(adaptiveGuidance ? { adaptive_guidance: adaptiveGuidance } : {}),
+      ...(experienceAdaptationTrace ? { experience_adaptation_trace: experienceAdaptationTrace } : {}),
       ...(firstAction ? { first_action_v1: firstAction } : {}),
       ...(editBoundary ? { edit_boundary_v1: editBoundary } : {}),
       ...(verificationRepair ? { verification_repair_v1: verificationRepair } : {}),

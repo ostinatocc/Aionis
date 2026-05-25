@@ -26,6 +26,7 @@ import {
   type PolicyHintEntry,
   type PolicyHintPack,
   type ToolsSelectRouteContract,
+  type TrajectoryCompileResponse,
 } from "./schemas.js";
 import {
   parseExecutionContract,
@@ -531,11 +532,15 @@ export function buildPolicyMaterializationSurface(args: {
   tools: ToolsSelectRouteContract;
   introspection: ExecutionMemoryIntrospectionResponse;
   includePersistedPolicy?: boolean;
+  trajectoryCompile?: TrajectoryCompileResponse | null;
+  delegationRecommendationCount?: number;
 }): PolicyMaterializationSurface {
   const actionRetrieval = buildActionRetrievalResponse({
     parsed: args.parsed,
     tools: args.tools,
     introspection: args.introspection,
+    trajectoryCompile: args.trajectoryCompile ?? null,
+    delegationRecommendationCount: args.delegationRecommendationCount,
   });
   const executionContract = parseExecutionContract(actionRetrieval.execution_contract_v1);
   const path = actionRetrieval.path;
