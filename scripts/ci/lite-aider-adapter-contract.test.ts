@@ -40,11 +40,25 @@ test("Aider eval cleans tracked setup side effects before measuring Agent edits"
 
 test("Aider eval persists real verifier evidence and quarantines external failures", () => {
   assert.match(RUNNER, /aider_verifier_evidence_v1/);
+  assert.match(RUNNER, /aider_verifier_failure_phase_v1/);
+  assert.match(RUNNER, /classifyVerifierFailure/);
+  assert.match(RUNNER, /agentHardFailureReason/);
   assert.match(RUNNER, /runtime_learning_quarantined/);
   assert.match(RUNNER, /provider_failure/);
   assert.match(RUNNER, /provider_warning_present/);
   assert.match(RUNNER, /non_target_file_writes/);
   assert.match(RUNNER, /\/v1\/memory\/runtime-maintenance\/run/);
+});
+
+test("Aider eval repair prompt uses phase-classified verifier evidence", () => {
+  assert.match(RUNNER, /## Verifier Failure Phase/);
+  assert.match(RUNNER, /extractVerifierLineAnchor\(args\.verifier, args\.changedFiles\)/);
+  assert.match(RUNNER, /changed_file_verifier_anchor/);
+  assert.match(RUNNER, /source_line_anchor/);
+  assert.match(RUNNER, /lint_type_build_failure/);
+  assert.match(RUNNER, /hidden_contract_failure/);
+  assert.match(RUNNER, /self_authored_test_failure/);
+  assert.match(RUNNER, /Current verifier failure is stronger evidence than prior Runtime guidance/);
 });
 
 test("Aider eval runner does not contain project-specific task fixes", () => {

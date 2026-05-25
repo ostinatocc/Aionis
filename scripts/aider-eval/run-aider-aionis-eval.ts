@@ -85,6 +85,7 @@ type AiderPass = {
   patch: string;
   changed_files: string[];
   verifier_failure_evidence: JsonObject | null;
+  verifier_failure_phase: JsonObject | null;
 };
 type AgentRun = {
   arm: "baseline" | "aionis";
@@ -109,6 +110,15 @@ type NonLearningFailureReason =
   | "agent_process_signal_failure"
   | "agent_timeout_failure"
   | "provider_failure";
+
+type VerifierFailurePhase =
+  | "provider_failure"
+  | "agent_failure"
+  | "verifier_timeout"
+  | "lint_type_build_failure"
+  | "self_authored_test_failure"
+  | "hidden_contract_failure"
+  | "unknown_verifier_failure";
 
 const AIONIS_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const DEFAULT_AIDER_TIMEOUT_MS = 60 * 60 * 1000;
@@ -451,6 +461,87 @@ function verifierFailureEvidence(result: CommandResult): JsonObject {
   };
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractVerifierLineAnchor(result: CommandResult, changedFiles: string[] = []): JsonObject | null {
+  const text = `${result.stderr}\n${result.stdout}`;
+  for (const file of changedFiles) {
+    const sourceMatch = text.match(new RegExp(`(?:^|\\s|\\()(${escapeRegExp(file)}):(\\d+):(\\d+)`, "m"));
+    if (sourceMatch) {
+      return {
+        file: sourceMatch[1],
+        line: Number(sourceMatch[2]),
+        column: Number(sourceMatch[3]),
+        source: "changed_file_verifier_anchor",
+      };
+    }
+  }
+  const match = text.match(/\b((?:file:\/\/)?\/[^\s:]+|(?:\.\/)?[\w./-]+\.(?:mjs|cjs|js|ts|tsx)):(\d+):(\d+)/);
+  if (!match) return null;
+  return {
+    file: match[1],
+    line: Number(match[2]),
+    column: Number(match[3]),
+    source: "verifier_text_anchor",
+  };
+}
+
+function classifyVerifierFailure(args: {
+  verifier: CommandResult;
+  aider: CommandResult;
+  changedFiles: string[];
+}): JsonObject | null {
+  if (args.verifier.exit_code === 0 && !args.verifier.timed_out) return null;
+  const text = `${args.verifier.stderr}\n${args.verifier.stdout}`;
+  const lower = text.toLowerCase();
+  const hardAgentFailure = agentHardFailureReason(args.aider, args.changedFiles);
+  let phase: VerifierFailurePhase;
+  if (hardAgentFailure === "provider_failure") phase = "provider_failure";
+  else if (hardAgentFailure) phase = "agent_failure";
+  else if (args.verifier.timed_out) phase = "verifier_timeout";
+  else if (/\b(?:syntaxerror|ts\d{4}|typeerror|referenceerror|build failed|command failed: npm run build|eslint|xo|prettier|lint)\b/i.test(text)) {
+    phase = "lint_type_build_failure";
+  } else if (/scripts\/real-llm-eval\/verifiers\/github-real-project-contracts\.mjs|hidden verifier|contract/i.test(text)) {
+    phase = "hidden_contract_failure";
+  } else if (/\b(?:vitest|jest|mocha|tap|node:test|assert\.strictEqual|AssertionError)\b/i.test(text)) {
+    phase = "self_authored_test_failure";
+  } else {
+    phase = "unknown_verifier_failure";
+  }
+
+  const lineAnchor = extractVerifierLineAnchor(args.verifier, args.changedFiles);
+  const directiveByPhase: Record<VerifierFailurePhase, string> = {
+    provider_failure: "Treat this as external provider failure. Do not infer a code repair from provider errors.",
+    agent_failure: "Repair is blocked by Agent execution failure. Do not learn a project rule from this pass.",
+    verifier_timeout: "Reduce the failing verifier scope if possible and inspect the latest diff before changing semantics.",
+    lint_type_build_failure: "Fix the exact build/lint/type error first, starting at the reported file and line when present. Do not widen semantic changes until the code builds.",
+    self_authored_test_failure: "Use the failing in-project test as evidence, but do not weaken coverage or rewrite assertions away from the task contract.",
+    hidden_contract_failure: "Treat the hidden verifier assertion as stronger than the prior hypothesis. Repair behavior against the verifier contract and rerun it.",
+    unknown_verifier_failure: "Inspect the failure excerpt and current diff before making another change. Do not repeat the same failed patch.",
+  };
+  const evidenceLines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /AssertionError|ERR_ASSERTION|Expected|actual|SyntaxError|TypeError|ReferenceError|build failed|command failed|error:|\.mjs:\d+:\d+|\.js:\d+:\d+|\.ts:\d+:\d+/i.test(line))
+    .slice(0, 8);
+
+  return {
+    schema_version: "aider_verifier_failure_phase_v1",
+    phase,
+    authority: "observed_verifier_evidence_not_runtime_rule",
+    line_anchor: lineAnchor,
+    source_line_anchor: lineAnchor?.source === "changed_file_verifier_anchor" ? lineAnchor : null,
+    changed_files: args.changedFiles,
+    evidence_lines: evidenceLines,
+    repair_directive: directiveByPhase[phase],
+    verifier_exit_code: args.verifier.exit_code,
+    verifier_timed_out: args.verifier.timed_out,
+    lower_excerpt_hash: crypto.createHash("sha256").update(lower.slice(0, 4000)).digest("hex").slice(0, 16),
+  };
+}
+
 function compactRuntimeSurface(surface: JsonObject | null): JsonObject | null {
   if (!surface) return null;
   const actionRetrieval = asObject(surface.action_retrieval);
@@ -629,6 +720,15 @@ function buildRepairProblemStatement(args: { task: EvalTask; aionisContext: Json
     "## Changed Files So Far",
     ...(args.previousPass.changed_files.length > 0 ? args.previousPass.changed_files.map((file) => `- ${file}`) : ["- none"]),
     "",
+    "## Verifier Failure Phase",
+    "```json",
+    JSON.stringify(args.previousPass.verifier_failure_phase ?? {
+      schema_version: "aider_verifier_failure_phase_v1",
+      phase: "unknown_verifier_failure",
+      repair_directive: "Inspect the failure excerpt and current diff before making another change. Do not repeat the same failed patch.",
+    }, null, 2),
+    "```",
+    "",
     "## Verifier Failure Evidence",
     "```text",
     truncate((args.previousPass.verifier.stderr || args.previousPass.verifier.stdout || "").trim(), 6000),
@@ -727,6 +827,13 @@ function nonLearningFailureReason(result: CommandResult): NonLearningFailureReas
   return null;
 }
 
+function agentHardFailureReason(result: CommandResult, changedFiles: string[]): NonLearningFailureReason | null {
+  const reason = nonLearningFailureReason(result);
+  if (!reason) return null;
+  if (result.exit_code === 0 && !result.timed_out && !result.signal && changedFiles.length > 0) return null;
+  return reason;
+}
+
 function skippedVerifierResult(task: EvalTask, workspaceDir: string, outDir: string, reason: NonLearningFailureReason): CommandResult {
   return {
     command: `${expandPlaceholders(task.verifier.command, placeholders(task, workspaceDir, outDir))} (skipped: ${reason})`,
@@ -753,10 +860,11 @@ async function runAiderPass(args: {
   await ensureDir(args.passOutDir);
   const aiderCommand = await runAider(args);
   const [patch, changedFiles] = await Promise.all([gitDiff(args.workspaceDir), gitChangedFiles(args.workspaceDir)]);
-  const skipReason = nonLearningFailureReason(aiderCommand);
+  const skipReason = agentHardFailureReason(aiderCommand, changedFiles);
   const verifier = skipReason && changedFiles.length === 0
     ? skippedVerifierResult(args.task, args.workspaceDir, args.passOutDir, skipReason)
     : await runVerifier(args.task, args.workspaceDir, args.passOutDir);
+  const verifierFailurePhase = classifyVerifierFailure({ verifier, aider: aiderCommand, changedFiles });
   const pass: AiderPass = {
     pass_index: args.passIndex,
     kind: args.kind,
@@ -767,6 +875,7 @@ async function runAiderPass(args: {
     patch,
     changed_files: changedFiles,
     verifier_failure_evidence: verifier.exit_code === 0 && !verifier.timed_out ? null : verifierFailureEvidence(verifier),
+    verifier_failure_phase: verifierFailurePhase,
   };
   await fsp.writeFile(path.join(args.passOutDir, "patch.diff"), patch);
   await writeJsonFile(path.join(args.passOutDir, "pass.json"), serializePass(pass));
@@ -808,7 +917,11 @@ async function runRepairLoop(args: {
       passOutDir: path.join(args.armOutDir, passIndex === 0 ? "initial" : `repair-${passIndex}`),
     });
     passes.push(pass);
-    if ((pass.verifier.exit_code === 0 && !pass.verifier.timed_out) || passIndex + 1 >= maxAgentPassCount(args.task, args.arm) || nonLearningFailureReason(pass.aider_command)) {
+    if (
+      (pass.verifier.exit_code === 0 && !pass.verifier.timed_out)
+      || passIndex + 1 >= maxAgentPassCount(args.task, args.arm)
+      || agentHardFailureReason(pass.aider_command, pass.changed_files)
+    ) {
       break;
     }
     problemFile = path.join(args.armOutDir, `repair-${passIndex + 1}.problem.md`);
@@ -847,6 +960,21 @@ function metricsForRun(args: {
   const inputTokens = Number(tokenText.match(/input tokens:\s*([0-9,]+)/i)?.[1]?.replace(/,/g, "") ?? NaN);
   const outputTokens = Number(tokenText.match(/output tokens:\s*([0-9,]+)/i)?.[1]?.replace(/,/g, "") ?? NaN);
   const contextText = args.aionisContext ? JSON.stringify(compactAionisContext(args.aionisContext)) : "";
+  const lastAiderResult = args.aiderResults[args.aiderResults.length - 1] ?? {
+    command: "aider did not run",
+    cwd: AIONIS_ROOT,
+    exit_code: null,
+    signal: null,
+    timed_out: false,
+    duration_ms: 0,
+    stdout: "",
+    stderr: "",
+  };
+  const verifierFailurePhase = classifyVerifierFailure({
+    verifier: args.verifier,
+    aider: lastAiderResult,
+    changedFiles: args.changedFiles,
+  });
   const providerWarningPresent = args.aiderResults.some((result) => nonLearningFailureReason(result) === "provider_failure");
   const nonLearningReason = args.aiderResults
     .map((result) => {
@@ -868,6 +996,8 @@ function metricsForRun(args: {
     forbidden_file_writes: forbiddenFileWriteCount(args.task, args.changedFiles),
     patch_char_count: args.patch.length,
     repair_attempt_count: args.repairAttemptCount,
+    verifier_failure_phase: verifierFailurePhase ? stringValue(verifierFailurePhase.phase) : null,
+    verifier_failure_phase_packet: verifierFailurePhase,
     non_learning_failure_reason: nonLearningReason,
     provider_warning_present: providerWarningPresent,
     runtime_learning_quarantined: nonLearningReason !== null,
@@ -1171,6 +1301,7 @@ function serializePass(pass: AiderPass): JsonObject {
     patch_file: path.join(pass.output_dir, "patch.diff"),
     changed_files: pass.changed_files,
     verifier_failure_evidence: pass.verifier_failure_evidence,
+    verifier_failure_phase: pass.verifier_failure_phase,
   };
 }
 
