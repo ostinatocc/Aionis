@@ -120,10 +120,16 @@ type VerifierFailurePhase =
   | "hidden_contract_failure"
   | "unknown_verifier_failure";
 
+type AiderAssistanceMode =
+  | "no_op"
+  | "minimal_boundary"
+  | "thin_cognitive_signal";
+
 const AIONIS_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const DEFAULT_AIDER_TIMEOUT_MS = 60 * 60 * 1000;
 const DEFAULT_VERIFIER_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_MODEL = "gpt-4o";
+const AIDER_THIN_CONTEXT_BUDGET_CHARS = 3600;
 
 function usage(): string {
   return [
@@ -586,11 +592,137 @@ function compactAionisContext(context: JsonObject | null): JsonObject | null {
   return {
     context_version: context.context_version,
     role: context.role,
+    agent_facing_context: asObject(context.agent_facing_context),
+    positive_impact_gate: asObject(context.positive_impact_gate),
     agent_runtime_adapter: asObject(context.agent_runtime_adapter),
     runtime_routes: asObject(context.runtime_routes),
-    compact_execution_contract: asObject(context.compact_execution_contract),
-    runtime_surface: asObject(context.runtime_surface),
+    background_runtime_snapshot: asObject(context.background_runtime_snapshot),
   };
+}
+
+function buildAiderPositiveImpactGate(task: EvalTask, priorRuns: AgentRun[]): JsonObject {
+  const learnableRuns = priorRuns.filter((run) => run.metrics?.runtime_learning_quarantined !== true);
+  const priorAionisRuns = learnableRuns.filter((run) => run.arm === "aionis");
+  const priorBaselineRuns = learnableRuns.filter((run) => run.arm === "baseline");
+  const priorAionisSuccessCount = priorAionisRuns.filter((run) => run.metrics?.verifier_passed === true).length;
+  const priorAionisFailureCount = priorAionisRuns.filter((run) => run.metrics?.verifier_passed !== true).length;
+  const priorBaselineSuccessCount = priorBaselineRuns.filter((run) => run.metrics?.verifier_passed === true).length;
+  const priorBaselineFailureCount = priorBaselineRuns.filter((run) => run.metrics?.verifier_passed !== true).length;
+  const priorForbiddenWriteCount = learnableRuns.reduce((sum, run) => sum + Number(run.metrics?.forbidden_file_writes ?? 0), 0);
+  const targetFileCount = taskTargetFiles(task).length;
+  const antiShortcutRuleCount = task.expected?.anti_shortcut_rules?.length ?? 0;
+  const setupCommandCount = task.workspace.setup_commands?.length ?? 0;
+  const negativeTransferRisk = priorBaselineSuccessCount > 0 && priorAionisSuccessCount === 0;
+  const provenPositiveImpact = priorAionisSuccessCount > 0 && !negativeTransferRisk;
+
+  let mode: AiderAssistanceMode;
+  if (negativeTransferRisk) mode = "no_op";
+  else if (provenPositiveImpact) mode = "thin_cognitive_signal";
+  else if (priorAionisFailureCount > 0 || priorBaselineFailureCount > 0 || priorForbiddenWriteCount > 0) mode = "minimal_boundary";
+  else mode = "no_op";
+
+  const reasons = [
+    mode === "no_op" ? "default_low_interference_without_proven_positive_impact" : null,
+    negativeTransferRisk ? "baseline_success_without_aionis_success_counter_evidence" : null,
+    provenPositiveImpact ? "prior_aionis_verifier_success_available" : null,
+    priorAionisFailureCount > 0 ? "prior_aionis_failure_present" : null,
+    priorBaselineFailureCount > 0 ? "prior_baseline_failure_present" : null,
+    priorForbiddenWriteCount > 0 ? "prior_forbidden_write_present" : null,
+    targetFileCount >= 4 ? "multi_file_task_surface" : null,
+    antiShortcutRuleCount >= 4 ? "explicit_contract_rules_present" : null,
+    setupCommandCount > 0 ? "real_project_setup_required" : null,
+  ].filter((reason): reason is string => !!reason);
+
+  return {
+    schema_version: "aionis_positive_impact_gate_v1",
+    authority: "runtime_cost_gate_not_semantic_repair",
+    mode,
+    agent_prompt_budget_chars: mode === "no_op" ? 0 : mode === "minimal_boundary" ? 1200 : AIDER_THIN_CONTEXT_BUDGET_CHARS,
+    default_posture: "no_intervention_until_positive_impact_evidence",
+    proven_positive_impact: provenPositiveImpact,
+    negative_transfer_risk: negativeTransferRisk,
+    prior_run_count: priorRuns.length,
+    learnable_prior_run_count: learnableRuns.length,
+    prior_aionis_success_count: priorAionisSuccessCount,
+    prior_aionis_failure_count: priorAionisFailureCount,
+    prior_baseline_success_count: priorBaselineSuccessCount,
+    prior_baseline_failure_count: priorBaselineFailureCount,
+    prior_forbidden_write_count: priorForbiddenWriteCount,
+    suppressed_surfaces: [
+      "full_runtime_surface",
+      "raw_prior_verifier_stdout_stderr",
+      "large_runtime_json",
+      "project_specific_runtime_rules",
+    ],
+    reasons,
+  };
+}
+
+function buildAiderThinCognitiveSignal(args: {
+  task: EvalTask;
+  gate: JsonObject;
+  runtimeContext: JsonObject;
+}): JsonObject {
+  const mode = stringValue(args.gate.mode) as AiderAssistanceMode | null;
+  const signals: JsonObject[] = [];
+  if (mode === "minimal_boundary" || mode === "thin_cognitive_signal") {
+    signals.push({
+      kind: "agent_autonomy",
+      message: "The LLM/Agent owns semantic repair and final code choices. Aionis is not a patch generator.",
+    });
+    signals.push({
+      kind: "source_of_truth",
+      message: "Current source code and current verifier output override Runtime memory.",
+    });
+    signals.push({
+      kind: "learning_control",
+      message: "Do not promote this task's observations into Runtime source rules; persist them only as scoped evidence.",
+    });
+  }
+  if (mode === "thin_cognitive_signal") {
+    const runtimeSurface = asObject(args.runtimeContext.runtime_surface);
+    const experience = asObject(runtimeSurface?.experience_intelligence);
+    const action = asObject(asObject(experience?.action_retrieval));
+    const recommendedAction = stringValue(action?.recommended_next_action);
+    const recommendedFile = stringValue(action?.recommended_file_path);
+    if (recommendedAction || recommendedFile) {
+      signals.push({
+        kind: "continuity_hint",
+        file: recommendedFile,
+        message: recommendedAction ? compactOneLine(recommendedAction, 220) : "Aionis has a scoped continuity hint for the next inspection target.",
+      });
+    }
+  }
+
+  return {
+    schema_version: "aionis_thin_cognitive_signal_v1",
+    role: "low_interference_runtime_signal",
+    positive_impact_gate: args.gate,
+    max_signal_count: 8,
+    signals: signals.slice(0, 8),
+    limits: {
+      max_agent_prompt_chars: args.gate.agent_prompt_budget_chars,
+      full_runtime_surface_suppressed_from_prompt: true,
+      raw_prior_verifier_logs_suppressed_from_prompt: true,
+      project_specific_runtime_source_rules_allowed: false,
+    },
+  };
+}
+
+function agentFacingAionisContext(context: JsonObject | null): JsonObject | null {
+  if (!context) return null;
+  const agentFacing = asObject(context.agent_facing_context);
+  const gate = asObject(context.positive_impact_gate) ?? asObject(agentFacing?.positive_impact_gate);
+  if (stringValue(gate?.mode) === "no_op") return null;
+  return agentFacing;
+}
+
+function agentFacingAionisContextText(context: JsonObject | null): string {
+  const agentFacing = agentFacingAionisContext(context);
+  if (!agentFacing) return "";
+  const gate = asObject(agentFacing.positive_impact_gate);
+  const budget = Number(gate?.agent_prompt_budget_chars ?? AIDER_THIN_CONTEXT_BUDGET_CHARS);
+  return truncate(JSON.stringify(agentFacing, null, 2), Number.isFinite(budget) && budget > 0 ? budget : AIDER_THIN_CONTEXT_BUDGET_CHARS);
 }
 
 async function buildAionisContext(baseUrl: string, task: EvalTask, runId: string, priorRuns: AgentRun[]): Promise<JsonObject> {
@@ -635,11 +767,14 @@ async function buildAionisContext(baseUrl: string, task: EvalTask, runId: string
     },
     contextCharBudget: 12000,
   });
-  return {
-    context_version: "aionis_aider_context_packet_v1",
-    role: "advisory_runtime_evidence_not_agent_execution",
-    agent_runtime_adapter: runtimeContext.adapter,
-    runtime_routes: runtimeContext.runtime_routes,
+  const gate = buildAiderPositiveImpactGate(task, priorRuns);
+  const runtimeSurface = {
+    experience_intelligence: compactRuntimeSurface(runtimeContext.experience_intelligence),
+    planning: compactRuntimeSurface(runtimeContext.planning),
+    assembly: compactRuntimeSurface(runtimeContext.assembly),
+    tools: compactRuntimeSurface(runtimeContext.tools),
+  };
+  const runtimeEnvelope = {
     compact_execution_contract: {
       schema_version: "aionis_aider_compact_execution_contract_v1",
       authority: "advisory_runtime_evidence_not_agent_execution",
@@ -658,11 +793,20 @@ async function buildAionisContext(baseUrl: string, task: EvalTask, runId: string
         "Explore outside target files only when current source evidence or verifier output proves the declared boundary is incomplete.",
       ],
     },
-    runtime_surface: {
-      experience_intelligence: compactRuntimeSurface(runtimeContext.experience_intelligence),
-      planning: compactRuntimeSurface(runtimeContext.planning),
-      assembly: compactRuntimeSurface(runtimeContext.assembly),
-      tools: compactRuntimeSurface(runtimeContext.tools),
+    runtime_surface: runtimeSurface,
+  };
+  return {
+    context_version: "aionis_aider_context_packet_v1",
+    role: "advisory_runtime_evidence_not_agent_execution",
+    positive_impact_gate: gate,
+    agent_facing_context: buildAiderThinCognitiveSignal({ task, gate, runtimeContext: runtimeEnvelope }),
+    agent_runtime_adapter: runtimeContext.adapter,
+    runtime_routes: runtimeContext.runtime_routes,
+    background_runtime_snapshot: {
+      schema_version: "aionis_aider_background_runtime_snapshot_v1",
+      prompt_injection_allowed: false,
+      compact_execution_contract: runtimeEnvelope.compact_execution_contract,
+      runtime_surface: runtimeEnvelope.runtime_surface,
     },
   };
 }
@@ -692,15 +836,14 @@ function buildProblemStatement(task: EvalTask, aionisContext: JsonObject | null)
     expandPlaceholders(task.verifier.command, { AIONIS_ROOT, WORKSPACE: "<workspace>", TASK_ID: task.id, OUT_DIR: "<out>" }),
     "",
   ];
-  if (aionisContext) {
+  const agentFacingContext = agentFacingAionisContextText(aionisContext);
+  if (agentFacingContext) {
     lines.push(
-      "## Aionis Runtime Context",
-      "This context is advisory runtime evidence only. It must not replace your own semantic analysis.",
-      "Use it for continuity, scoped prior evidence, dynamic governance, and forgetting/negative-transfer awareness.",
-      "If it conflicts with current source code or verifier output, trust current evidence.",
+      "## Aionis Thin Runtime Signal",
+      "Low-interference advisory signal only. Use it only when it helps the current source and verifier evidence.",
       "",
       "```json",
-      JSON.stringify(compactAionisContext(aionisContext), null, 2),
+      agentFacingContext,
       "```",
       "",
     );
@@ -734,12 +877,12 @@ function buildRepairProblemStatement(args: { task: EvalTask; aionisContext: Json
     truncate((args.previousPass.verifier.stderr || args.previousPass.verifier.stdout || "").trim(), 6000),
     "```",
     "",
-    args.aionisContext
+    agentFacingAionisContextText(args.aionisContext)
       ? [
-          "## Aionis Runtime Context",
+          "## Aionis Thin Runtime Signal",
           "Advisory only. Current verifier failure is stronger evidence than prior Runtime guidance.",
           "```json",
-          JSON.stringify(compactAionisContext(args.aionisContext), null, 2),
+          agentFacingAionisContextText(args.aionisContext),
           "```",
           "",
         ].join("\n")
@@ -959,7 +1102,8 @@ function metricsForRun(args: {
   const tokenText = args.aiderResults.map((result) => `${result.stdout}\n${result.stderr}`).join("\n");
   const inputTokens = Number(tokenText.match(/input tokens:\s*([0-9,]+)/i)?.[1]?.replace(/,/g, "") ?? NaN);
   const outputTokens = Number(tokenText.match(/output tokens:\s*([0-9,]+)/i)?.[1]?.replace(/,/g, "") ?? NaN);
-  const contextText = args.aionisContext ? JSON.stringify(compactAionisContext(args.aionisContext)) : "";
+  const contextText = agentFacingAionisContextText(args.aionisContext);
+  const positiveImpactGate = asObject(args.aionisContext?.positive_impact_gate);
   const lastAiderResult = args.aiderResults[args.aiderResults.length - 1] ?? {
     command: "aider did not run",
     cwd: AIONIS_ROOT,
@@ -1007,6 +1151,12 @@ function metricsForRun(args: {
     problem_statement_char_count: args.problemStatement.length,
     aionis_context_present: args.aionisContext !== null,
     aionis_context_char_count: contextText.length,
+    aionis_agent_facing_context_char_count: contextText.length,
+    aionis_positive_impact_gate: positiveImpactGate,
+    aionis_assistance_mode: stringValue(positiveImpactGate?.mode),
+    aionis_context_budget_chars: Number(positiveImpactGate?.agent_prompt_budget_chars ?? 0),
+    aionis_context_budget_exceeded: Number(positiveImpactGate?.agent_prompt_budget_chars ?? 0) > 0
+      && contextText.length > Number(positiveImpactGate?.agent_prompt_budget_chars ?? 0),
     token_usage_input_estimate: Number.isFinite(inputTokens) ? inputTokens : null,
     token_usage_output_estimate: Number.isFinite(outputTokens) ? outputTokens : null,
   };

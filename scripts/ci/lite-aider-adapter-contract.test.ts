@@ -23,6 +23,24 @@ test("Aider eval keeps LLM semantic repair outside Runtime authority", () => {
   assert.match(RUNNER, /project_specific_runtime_source_rules/);
 });
 
+test("Aider eval uses a positive-impact gate before injecting Runtime context", () => {
+  assert.match(RUNNER, /aionis_positive_impact_gate_v1/);
+  assert.match(RUNNER, /aionis_thin_cognitive_signal_v1/);
+  assert.match(RUNNER, /default_low_interference_without_proven_positive_impact/);
+  assert.match(RUNNER, /no_intervention_until_positive_impact_evidence/);
+  assert.match(RUNNER, /baseline_success_without_aionis_success_counter_evidence/);
+  assert.match(RUNNER, /agentFacingAionisContextText/);
+  assert.match(RUNNER, /Aionis Thin Runtime Signal/);
+});
+
+test("Aider eval keeps full Runtime surfaces out of the Agent prompt", () => {
+  assert.match(RUNNER, /background_runtime_snapshot/);
+  assert.match(RUNNER, /full_runtime_surface_suppressed_from_prompt: true/);
+  assert.match(RUNNER, /raw_prior_verifier_logs_suppressed_from_prompt: true/);
+  assert.equal(RUNNER.includes("JSON.stringify(compactAionisContext(aionisContext), null, 2)"), false);
+  assert.equal(RUNNER.includes("## Aionis Runtime Context"), false);
+});
+
 test("Aider eval uses scriptable non-interactive Aider without auto-commits", () => {
   assert.match(RUNNER, /"--message-file"/);
   assert.match(RUNNER, /"--yes"/);
