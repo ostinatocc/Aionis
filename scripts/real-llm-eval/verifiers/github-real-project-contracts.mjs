@@ -917,6 +917,79 @@ async function verifyMarkedPedanticColonStrong() {
   });
 }
 
+async function verifyDateFnsParseXTokenRejectsZ() {
+  const behaviorScript = `
+    import assert from "node:assert/strict";
+    import { isValid, parse } from "./pkgs/core/src/index.ts";
+
+    const referenceDate = new Date(Date.UTC(2000, 0, 1, 0, 0, 0, 0));
+    const baseInput = "2016-11-25T16:38:38.123";
+    const baseFormat = "yyyy-MM-dd'T'HH:mm:ss.SSS";
+
+    for (const token of ["x", "xx", "xxx", "xxxx", "xxxxx"]) {
+      const result = parse(\`\${baseInput}Z\`, \`\${baseFormat}\${token}\`, referenceDate);
+      assert.equal(
+        isValid(result),
+        false,
+        \`timezone token \${token} must reject the Z UTC designator because lowercase x tokens are ISO-8601 without Z\`,
+      );
+    }
+
+    for (const token of ["X", "XX", "XXX", "XXXX", "XXXXX"]) {
+      const result = parse(\`\${baseInput}Z\`, \`\${baseFormat}\${token}\`, referenceDate);
+      assert.equal(
+        isValid(result),
+        true,
+        \`timezone token \${token} must keep accepting the Z UTC designator\`,
+      );
+    }
+
+    const numericOffsetExamples = [
+      ["x", "+00"],
+      ["x", "+0000"],
+      ["xx", "+0000"],
+      ["xxx", "+00:00"],
+      ["xxxx", "+000000"],
+      ["xxxxx", "+00:00:00"],
+    ];
+    for (const [token, offset] of numericOffsetExamples) {
+      const result = parse(\`\${baseInput}\${offset}\`, \`\${baseFormat}\${token}\`, referenceDate);
+      assert.equal(
+        isValid(result),
+        true,
+        \`timezone token \${token} must still accept numeric ISO-8601 offsets such as \${offset}\`,
+      );
+    }
+  `;
+
+  run("node", ["--experimental-strip-types", "--input-type=module", "-e", behaviorScript], {
+    env: {
+      ...process.env,
+      CI: "1",
+    },
+  });
+
+  const tests = fs.readFileSync(path.join(workspaceDir, "pkgs/core/src/parse/test.ts"), "utf8");
+  assert.match(
+    tests,
+    /x{1,5}[\s\S]{0,260}(Z|UTC designator|Invalid Date|isValid)|(?:Z|UTC designator|Invalid Date|isValid)[\s\S]{0,260}x{1,5}/i,
+    "pkgs/core/src/parse/test.ts must include verifier-visible coverage that lowercase x timezone tokens reject Z.",
+  );
+  assert.match(
+    tests,
+    /X{1,5}[\s\S]{0,260}(Z|UTC designator|isValid)|(?:Z|UTC designator|isValid)[\s\S]{0,260}X{1,5}/,
+    "pkgs/core/src/parse/test.ts must include coverage that uppercase X timezone tokens still accept Z.",
+  );
+
+  run("corepack", ["pnpm", "--filter", "date-fns", "exec", "vitest", "run", "src/parse/test.ts"], {
+    env: {
+      ...process.env,
+      CI: "1",
+    },
+    timeout: 180000,
+  });
+}
+
 if (taskId === "commander-short-option-suggestions") {
   await verifyCommanderShortOptionSuggestions();
 } else if (taskId === "axios-set-cookie-to-string") {
@@ -937,6 +1010,8 @@ if (taskId === "commander-short-option-suggestions") {
   await verifyPTimeoutClearReturnState();
 } else if (taskId === "marked-pedantic-colon-strong") {
   await verifyMarkedPedanticColonStrong();
+} else if (taskId === "date-fns-parse-x-token-rejects-z") {
+  await verifyDateFnsParseXTokenRejectsZ();
 } else {
   throw new Error(`unknown GitHub real project verifier task: ${taskId ?? ""}`);
 }
