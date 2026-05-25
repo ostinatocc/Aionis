@@ -850,6 +850,73 @@ async function verifyPTimeoutClearReturnState() {
   });
 }
 
+async function verifyMarkedPedanticColonStrong() {
+  run("npm", ["run", "build:esbuild"], {
+    env: {
+      ...process.env,
+      CI: "1",
+    },
+  });
+
+  const markedModule = await requireWorkspaceModule("lib/marked.esm.js");
+  const marked = markedModule.marked ?? markedModule.default?.marked ?? markedModule.default;
+  assert.equal(typeof marked, "function");
+
+  assert.equal(
+    marked("**foo:**bar", { pedantic: true }),
+    "<p><strong>foo:</strong>bar</p>\n",
+    "pedantic mode must parse colon-terminated strong text before an adjacent word.",
+  );
+  assert.equal(
+    marked("before **label:**value after", { pedantic: true }),
+    "<p>before <strong>label:</strong>value after</p>\n",
+    "pedantic mode must keep following text outside the strong span when no space follows the closing delimiter.",
+  );
+  assert.equal(
+    marked("**foo:**bar"),
+    "<p>**foo:**bar</p>\n",
+    "default CommonMark/GFM behavior must not be changed by the pedantic compatibility fix.",
+  );
+  assert.equal(
+    marked("**foo:** bar", { pedantic: true }),
+    "<p><strong>foo:</strong> bar</p>\n",
+    "existing pedantic strong parsing with a space after the delimiter must keep working.",
+  );
+
+  const tokenizerSource = fs.readFileSync(path.join(workspaceDir, "src/Tokenizer.ts"), "utf8");
+  const rulesSource = fs.readFileSync(path.join(workspaceDir, "src/rules.ts"), "utf8");
+  assert.match(
+    `${tokenizerSource}\n${rulesSource}`,
+    /pedantic|inlinePedantic|this\.options\.pedantic/,
+    "the fix must be scoped to Marked's pedantic parsing path rather than weakening default CommonMark delimiter rules.",
+  );
+  assert.match(
+    `${tokenizerSource}\n${rulesSource}`,
+    /emStrong|emStrongRDelimAst|emStrongLDelim/,
+    "the fix must touch Marked's emphasis/strong delimiter handling rather than post-processing rendered HTML.",
+  );
+
+  const unitTests = fs.readFileSync(path.join(workspaceDir, "test/unit/marked.test.js"), "utf8");
+  assert.match(
+    unitTests,
+    /pedantic[\s\S]{0,220}(colon|:)[\s\S]{0,220}(strong|bold)|(?:colon|:)[\s\S]{0,220}(strong|bold)[\s\S]{0,220}pedantic/i,
+    "test/unit/marked.test.js must include verifier-visible coverage for pedantic colon-terminated strong text.",
+  );
+  assert.match(
+    unitTests,
+    /\*\*foo:\*\*bar|label:\*\*value|\*\*label:\*\*value/,
+    "the Marked unit test must cover an adjacent word after `**foo:**bar` style input.",
+  );
+
+  run("node", ["--test", "--test-reporter=spec", "test/unit/marked.test.js"], {
+    env: {
+      ...process.env,
+      CI: "1",
+    },
+    timeout: 120000,
+  });
+}
+
 if (taskId === "commander-short-option-suggestions") {
   await verifyCommanderShortOptionSuggestions();
 } else if (taskId === "axios-set-cookie-to-string") {
@@ -868,6 +935,8 @@ if (taskId === "commander-short-option-suggestions") {
   await verifyPMapIterableAbortSignal();
 } else if (taskId === "p-timeout-clear-return-state") {
   await verifyPTimeoutClearReturnState();
+} else if (taskId === "marked-pedantic-colon-strong") {
+  await verifyMarkedPedanticColonStrong();
 } else {
   throw new Error(`unknown GitHub real project verifier task: ${taskId ?? ""}`);
 }

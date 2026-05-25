@@ -1,0 +1,82 @@
+{
+  "suite_id": "github_swe_agent_new_complex_v1",
+  "description": "Fresh real GitHub issue tasks for SWE-agent A/B validation of the generic Aionis Agent Runtime adapter. These tasks are external repositories, fixed commits, real setup commands, and verifier-backed issue contracts.",
+  "swe_agent": {
+    "deployment": "local",
+    "config_files": ["scripts/swe-agent-eval/config/aionis-swe-agent.yaml"],
+    "cost_limit": 2,
+    "timeout_ms": 3600000
+  },
+  "tasks": [
+    {
+      "id": "marked-pedantic-colon-strong",
+      "title": "Marked pedantic mode should parse colon-terminated strong text before adjacent words",
+      "task_family": "github_marked_pedantic_colon_strong_issue_3938",
+      "source_issue_url": "https://github.com/markedjs/marked/issues/3938",
+      "prompt": "In the real marked codebase, issue https://github.com/markedjs/marked/issues/3938 reports that `**foo:**bar` is rendered as literal asterisks even when pedantic mode is enabled. Implement the pedantic compatibility behavior so `marked('**foo:**bar', { pedantic: true })` returns `<p><strong>foo:</strong>bar</p>\\n`, and `marked('before **label:**value after', { pedantic: true })` returns `<p>before <strong>label:</strong>value after</p>\\n`. Do not weaken the default CommonMark/GFM behavior: `marked('**foo:**bar')` must keep returning `<p>**foo:**bar</p>\\n`. Add focused in-project coverage in `test/unit/marked.test.js` with verifier-visible wording around pedantic, colon, and strong/bold. Keep the implementation scoped to Marked's inline emphasis/strong delimiter logic. Do not post-process rendered HTML, do not modify package metadata, generated `lib/` output, docs, changelog, or broad spec fixtures. Run the verifier before finishing, using the verifier command exactly as provided.",
+      "workspace": {
+        "source": "git",
+        "repo_url": "https://github.com/markedjs/marked.git",
+        "ref": "0a2cd54cbe91911890e4460ae4fd7b9966e05654",
+        "checkout_depth": 1,
+        "setup_commands": [
+          {
+            "command": "npm install",
+            "timeout_ms": 180000
+          }
+        ],
+        "exclude": [".tmp", "coverage", "lib"]
+      },
+      "verifier": {
+        "command": "node {AIONIS_ROOT}/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs marked-pedantic-colon-strong",
+        "timeout_ms": 180000
+      },
+      "max_steps": 120,
+      "baseline_attempts": 1,
+      "aionis_attempts": 2,
+      "max_repair_attempts": 1,
+      "expected": {
+        "target_files": ["src/rules.ts", "src/Tokenizer.ts", "test/unit/marked.test.js"],
+        "allowed_read_files": [
+          "src/rules.ts",
+          "src/Tokenizer.ts",
+          "src/Lexer.ts",
+          "src/Parser.ts",
+          "src/Renderer.ts",
+          "src/marked.ts",
+          "test/unit/marked.test.js",
+          "test/run-spec-tests.js",
+          "package.json"
+        ],
+        "allowed_edit_files": ["src/rules.ts", "src/Tokenizer.ts", "test/unit/marked.test.js"],
+        "forbidden_edit_files": [
+          "package.json",
+          "package-lock.json",
+          "README.md",
+          "CHANGELOG.md",
+          "lib/marked.esm.js",
+          "lib/marked.umd.js",
+          "lib/marked.d.ts",
+          "docs",
+          "test/specs/commonmark",
+          "test/specs/gfm"
+        ],
+        "first_action_keywords": ["src/rules.ts", "src/Tokenizer.ts", "emStrong", "pedantic", "colon"],
+        "acceptance_checks": [
+          "node {AIONIS_ROOT}/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs marked-pedantic-colon-strong"
+        ],
+        "required_verifiers": [
+          "node {AIONIS_ROOT}/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs marked-pedantic-colon-strong"
+        ],
+        "anti_shortcut_rules": [
+          "Do not modify package metadata, generated lib output, docs, changelog, or broad CommonMark/GFM fixtures.",
+          "Do not post-process rendered HTML; fix Marked's inline emphasis/strong delimiter behavior.",
+          "The pedantic mode input `**foo:**bar` must render as strong text followed by adjacent text.",
+          "The default non-pedantic/CommonMark behavior for `**foo:**bar` must remain literal.",
+          "Add focused unit coverage in test/unit/marked.test.js with wording around pedantic, colon, and strong/bold.",
+          "Run the provided verifier before claiming success."
+        ]
+      }
+    }
+  ]
+}

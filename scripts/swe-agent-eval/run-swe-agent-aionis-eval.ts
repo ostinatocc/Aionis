@@ -314,6 +314,7 @@ function collectAddedPatchLines(patch: string): Array<{ file: string; line: stri
 function semanticInvariant(args: {
   task: EvalTask;
   run?: AgentRun;
+  verifierPassed?: boolean;
   kind: string;
   file: string;
   normalizedValue: string;
@@ -325,6 +326,8 @@ function semanticInvariant(args: {
     args.file,
     args.normalizedValue,
   ].join("\n");
+  const runVerifierPassed = args.run?.metrics.verifier_passed === true;
+  const verifierPassed = runVerifierPassed || args.verifierPassed === true;
   return {
     schema_version: "swe_agent_patch_semantic_invariant_v1",
     invariant_id: `patch-invariant:${stableShortHash(scopeKey)}`,
@@ -332,24 +335,29 @@ function semanticInvariant(args: {
     file: args.file,
     normalized_value: truncate(args.normalizedValue, 240),
     evidence_line: truncate(args.evidenceLine, 240),
-    authority: args.run?.metrics.verifier_passed === true
+    authority: runVerifierPassed
       ? "scoped_prior_success_evidence"
-      : "current_run_observation",
+      : verifierPassed ? "current_verified_run_observation" : "current_run_observation",
     task_family: args.task.task_family ?? null,
-    verifier_passed: args.run?.metrics.verifier_passed === true,
+    verifier_passed: verifierPassed,
     source_run_id: args.run?.run_id ?? null,
     source_arm: args.run?.arm ?? null,
   };
 }
 
-function extractPatchSemanticInvariants(task: EvalTask, patch: string, run?: AgentRun): JsonObject[] {
+function extractPatchSemanticInvariants(
+  task: EvalTask,
+  patch: string,
+  run?: AgentRun,
+  verifierPassed?: boolean,
+): JsonObject[] {
   const seen = new Set<string>();
   const invariants: JsonObject[] = [];
   const add = (kind: string, file: string, normalizedValue: string, evidenceLine: string) => {
     const key = `${kind}\n${file}\n${normalizedValue}`;
     if (seen.has(key)) return;
     seen.add(key);
-    invariants.push(semanticInvariant({ task, run, kind, file, normalizedValue, evidenceLine }));
+    invariants.push(semanticInvariant({ task, run, verifierPassed, kind, file, normalizedValue, evidenceLine }));
   };
 
   for (const entry of collectAddedPatchLines(patch)) {
@@ -875,7 +883,13 @@ function normalizedInvariantKey(invariant: JsonObject): string | null {
   return kind && file && value ? `${kind}\n${file}\n${value}` : null;
 }
 
-function semanticInvariantUptakeMetrics(task: EvalTask, patch: string, priorRuns: AgentRun[], aionisContext: JsonObject | null): JsonObject {
+function semanticInvariantUptakeMetrics(
+  task: EvalTask,
+  patch: string,
+  priorRuns: AgentRun[],
+  aionisContext: JsonObject | null,
+  verifierPassed: boolean,
+): JsonObject {
   const priorPacket = priorSuccessEvidencePacket(task, priorRuns);
   const contract = asObject(aionisContext?.compact_execution_contract);
   const sentInvariants = Array.isArray(contract?.semantic_invariants)
@@ -885,7 +899,7 @@ function semanticInvariantUptakeMetrics(task: EvalTask, patch: string, priorRuns
     ? priorPacket.invariants.filter((entry): entry is JsonObject => !!asObject(entry)).map((entry) => asObject(entry)!)
     : [];
   const priorInvariants = sentInvariants.length > 0 ? sentInvariants : availablePriorInvariants;
-  const currentInvariants = extractPatchSemanticInvariants(task, patch);
+  const currentInvariants = extractPatchSemanticInvariants(task, patch, undefined, verifierPassed);
   const currentKeys = new Set(currentInvariants.map(normalizedInvariantKey).filter((key): key is string => !!key));
   const matched = priorInvariants.filter((invariant) => {
     const key = normalizedInvariantKey(invariant);
@@ -1564,6 +1578,9 @@ async function runSweAgent(args: {
   if (config.cost_limit !== undefined) {
     runArgs.push(`--agent.model.per_instance_cost_limit=${config.cost_limit}`);
   }
+  if (Number.isFinite(Number(args.task.max_steps)) && Number(args.task.max_steps) > 0) {
+    runArgs.push(`--agent.model.per_instance_call_limit=${Math.floor(Number(args.task.max_steps))}`);
+  }
   if (deployment === "local") {
     runArgs.push("--env.deployment.type=local");
     runArgs.push("--env.repo.type=preexisting");
@@ -1592,7 +1609,7 @@ async function runVerifier(task: EvalTask, workspaceDir: string, outDir: string)
 }
 
 async function gitDiff(workspaceDir: string): Promise<string> {
-  const result = await runCommand("git", ["-C", workspaceDir, "diff", "--binary"], {
+  const result = await runCommand("git", ["-C", workspaceDir, "diff", "--binary", "HEAD"], {
     cwd: AIONIS_ROOT,
     timeoutMs: 2 * 60 * 1000,
   });
@@ -1600,7 +1617,7 @@ async function gitDiff(workspaceDir: string): Promise<string> {
 }
 
 async function gitChangedFiles(workspaceDir: string): Promise<string[]> {
-  const diff = await runCommand("git", ["-C", workspaceDir, "diff", "--name-only"], {
+  const diff = await runCommand("git", ["-C", workspaceDir, "diff", "--name-only", "HEAD"], {
     cwd: AIONIS_ROOT,
     timeoutMs: 2 * 60 * 1000,
   });
@@ -1878,7 +1895,13 @@ function metricsForRun(args: {
   const quarantineReason = verifierPassed || (rawQuarantineReason === "agent_action_format_failure" && producedTaskEvidence)
     ? null
     : rawQuarantineReason;
-  const invariantMetrics = semanticInvariantUptakeMetrics(args.task, args.patch, args.priorRuns, args.aionisContext);
+  const invariantMetrics = semanticInvariantUptakeMetrics(
+    args.task,
+    args.patch,
+    args.priorRuns,
+    args.aionisContext,
+    verifierPassed,
+  );
   const compactContext = renderedCompactAionisContext(args.aionisContext);
   const assistanceGate = asObject(compactContext?.assistance_gate);
   const compactContract = asObject(compactContext?.compact_execution_contract);
