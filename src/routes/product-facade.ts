@@ -9,6 +9,10 @@ import { buildAionisEffectReport } from "../memory/product-output-assembler.js";
 import { AionisEffectReportSchema } from "../memory/product-output-contract.js";
 import type { AuthPrincipal } from "../util/auth.js";
 import type { InflightGateToken } from "../util/inflight_gate.js";
+import {
+  structureProductObserveMemoryInput,
+  type ProductObserveStructuringSummary,
+} from "./product-observe-structuring.js";
 
 type ProductFacadeRequest = FastifyRequest<{ Body: unknown }>;
 
@@ -212,15 +216,20 @@ function mergeProductScope(parsed: {
   });
 }
 
-function observeWritePayload(parsed: z.infer<typeof ProductObserveRequest>): Record<string, unknown> | null {
+function observeWritePayload(parsed: z.infer<typeof ProductObserveRequest>): {
+  payload: Record<string, unknown>;
+  structuring: ProductObserveStructuringSummary;
+} | null {
   const hasInlineWrite =
     !!parsed.input_text
     || !!parsed.input_sha256
     || (Array.isArray(parsed.nodes) && parsed.nodes.length > 0)
     || (Array.isArray(parsed.edges) && parsed.edges.length > 0);
   if (!parsed.memory && !hasInlineWrite) return null;
-  return mergeProductScope(parsed, {
-    input_text: parsed.input_text,
+  const structured = structureProductObserveMemoryInput(parsed);
+  const payload = mergeProductScope(parsed, {
+    ...(parsed.memory ?? {}),
+    input_text: structured.input_text,
     input_sha256: parsed.input_sha256,
     model_version: parsed.model_version,
     prompt_version: parsed.prompt_version,
@@ -233,10 +242,13 @@ function observeWritePayload(parsed: z.infer<typeof ProductObserveRequest>): Rec
     trigger_topic_cluster: parsed.trigger_topic_cluster,
     topic_cluster_async: parsed.topic_cluster_async,
     distill: parsed.distill,
-    nodes: parsed.nodes,
     edges: parsed.edges,
-    ...(parsed.memory ?? {}),
+    nodes: structured.nodes,
   });
+  return {
+    payload,
+    structuring: structured.summary,
+  };
 }
 
 function forgetRouteFor(operation: z.infer<typeof ProductForgetRequest>["operation"]): string {
@@ -265,7 +277,8 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
 
   app.post("/v1/observe", async (req: ProductFacadeRequest, reply: FastifyReply) => {
     const parsed = ProductObserveRequest.parse(req.body);
-    const writePayload = observeWritePayload(parsed);
+    const writeBundle = observeWritePayload(parsed);
+    const writePayload = writeBundle?.payload ?? null;
     const handoffPayload = parsed.handoff ? mergeProductScope(parsed, parsed.handoff) : null;
     if (!writePayload && !handoffPayload) {
       return reply.code(400).send({
@@ -295,6 +308,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
         memory_written: !!write,
         handoff_stored: !!handoff,
       },
+      structured_memory: writeBundle?.structuring ?? null,
       memory_write: write?.body ?? null,
       handoff: handoff?.body ?? null,
       source_map: {
