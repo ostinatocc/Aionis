@@ -71,15 +71,15 @@ async function seedDraftPlaybook(args: {
         {
           client_id: sourceClientId,
           type: "procedure",
-          title: "Fix export failure",
+          title: "Recover workflow validation failure",
           text_summary: "Replay playbook compiled from failing export repair",
           slots: {
             replay_kind: "playbook",
             playbook_id: args.playbookId,
-            name: "Fix export failure",
+            name: "Recover workflow validation failure",
             version: 1,
             status,
-            matchers: { task: "fix-export-failure" },
+            matchers: { task: "workflow-validation-failure" },
             success_criteria: { status: "success" },
             risk_profile: "medium",
             created_from_run_ids: [args.runId],
@@ -554,7 +554,7 @@ test("advisory replay playbook recall surfaces persisted contract trust without 
         summary_kind: "handoff",
         compression_layer: "L0",
         contract_trust: "advisory",
-        task_family: "git_deploy_webserver",
+        task_family: "external_content_visibility",
         target_files: ["/app/bin/install.sh"],
         next_action: "Review the deploy hook and rerun the smoke test from a fresh shell.",
       },
@@ -643,7 +643,7 @@ test("replayPlaybookPromote preserves richer recovery contract fields while advi
         "pip install --index-url http://localhost:8080/simple vectorops==0.1.0",
       ],
       pattern_hints: [
-        "publish_then_install_from_clean_client_path",
+        "validate_from_clean_consumer_path",
         "revalidate_service_from_fresh_shell",
       ],
       service_lifecycle_constraints: [
@@ -677,7 +677,7 @@ test("replayPlaybookPromote preserves richer recovery contract fields while advi
           "curl http://localhost:8080/simple/vectorops/",
         ],
         pattern_hints: [
-          "publish_then_install_from_clean_client_path",
+          "validate_from_clean_consumer_path",
           "revalidate_service_from_fresh_shell",
         ],
         service_lifecycle_constraints: [
@@ -760,7 +760,7 @@ test("replayPlaybookPromote preserves richer recovery contract fields while advi
     assert.equal(promoted.slots.execution_native_v1.task_family, "service_publish_validate");
     assert.deepEqual(promoted.slots.execution_native_v1.target_files, ["scripts/build_and_serve.py", "pyproject.toml"]);
     assert.ok(promoted.slots.execution_native_v1.workflow_steps.includes("python scripts/build_and_serve.py --port 8080"));
-    assert.ok(promoted.slots.execution_native_v1.pattern_hints.includes("publish_then_install_from_clean_client_path"));
+    assert.ok(promoted.slots.execution_native_v1.pattern_hints.includes("validate_from_clean_consumer_path"));
     assert.equal(promoted.slots.execution_native_v1.service_lifecycle_constraints[0]?.revalidate_from_fresh_shell, true);
     assert.equal(promoted.slots.execution_contract_v1.contract_trust, "advisory");
     assert.equal(promoted.slots.execution_contract_v1.task_family, "service_publish_validate");
@@ -892,7 +892,7 @@ test("planning recall treats execution_native_v1 workflow procedures as action m
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
   try {
-    const workflowText = "Execution-native workflow only\nRepair export by inspect patch rerun\nrepair-export-node-tests";
+    const workflowText = "Execution-native workflow only\nRecover workflow validation by inspect patch rerun\nworkflow-validation-recovery-node-tests";
     const conceptText = "Generic recall concept\nSupporting knowledge for export repair";
     const [workflowEmbedding, conceptEmbedding] = await DeterministicEmbeddingProvider.embed([workflowText, conceptText]);
 
@@ -908,7 +908,7 @@ test("planning recall treats execution_native_v1 workflow procedures as action m
           {
             type: "procedure",
             title: "Execution-native workflow only",
-            text_summary: "Repair export by inspect patch rerun",
+            text_summary: "Recover workflow validation by inspect patch rerun",
             embedding: workflowEmbedding,
             embedding_model: "deterministic-test",
             slots: {
@@ -917,8 +917,8 @@ test("planning recall treats execution_native_v1 workflow procedures as action m
                 execution_kind: "workflow_anchor",
                 summary_kind: "workflow_anchor",
                 compression_layer: "L2",
-                task_signature: "repair-export-node-tests",
-                error_signature: "node-export-mismatch",
+                task_signature: "workflow-validation-recovery-node-tests",
+                error_signature: "workflow-validation-mismatch",
                 workflow_signature: "inspect-patch-rerun",
                 anchor_kind: "workflow",
                 anchor_level: "L2",
@@ -993,7 +993,7 @@ test("planning recall surfaces execution_native_v1 workflow candidates separatel
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
   try {
-    const workflowText = "Replay Episode: Fix export failure\nReplay repair learning episode for export failure";
+    const workflowText = "Replay Episode: Recover workflow validation failure\nReplay repair learning episode for validation failure";
     const conceptText = "Generic recall concept\nSupporting knowledge for export repair";
     const [workflowEmbedding, conceptEmbedding] = await DeterministicEmbeddingProvider.embed([workflowText, conceptText]);
 
@@ -1008,8 +1008,8 @@ test("planning recall surfaces execution_native_v1 workflow candidates separatel
         nodes: [
           {
             type: "event",
-            title: "Replay Episode: Fix export failure",
-            text_summary: "Replay repair learning episode for export failure",
+            title: "Replay Episode: Recover workflow validation failure",
+            text_summary: "Replay repair learning episode for validation failure",
             embedding: workflowEmbedding,
             embedding_model: "deterministic-test",
             slots: {
@@ -1020,7 +1020,7 @@ test("planning recall surfaces execution_native_v1 workflow candidates separatel
                 execution_kind: "workflow_candidate",
                 summary_kind: "workflow_candidate",
                 compression_layer: "L1",
-                task_signature: "repair-export-node-tests",
+                task_signature: "workflow-validation-recovery-node-tests",
                 workflow_signature: "replay-learning-candidate-export-fix",
                 anchor_kind: "workflow",
                 anchor_level: "L1",
@@ -1117,7 +1117,7 @@ test("planning recall prioritizes promotion-ready workflow candidates ahead of n
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
   try {
-    const workflowText = "Replay Episode: Fix export failure\nReplay repair learning episode for export failure";
+    const workflowText = "Replay Episode: Recover workflow validation failure\nReplay repair learning episode for validation failure";
     const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed([workflowText]);
 
     const prepared = await prepareMemoryWrite(
@@ -1132,8 +1132,8 @@ test("planning recall prioritizes promotion-ready workflow candidates ahead of n
           {
             client_id: "event:workflow-candidate-not-ready",
             type: "event",
-            title: "Replay Episode: Fix export failure",
-            text_summary: "Replay repair learning episode for export failure",
+            title: "Replay Episode: Recover workflow validation failure",
+            text_summary: "Replay repair learning episode for validation failure",
             embedding: sharedEmbedding,
             embedding_model: "deterministic-test",
             slots: {
@@ -1144,7 +1144,7 @@ test("planning recall prioritizes promotion-ready workflow candidates ahead of n
                 execution_kind: "workflow_candidate",
                 summary_kind: "workflow_candidate",
                 compression_layer: "L1",
-                task_signature: "repair-export-node-tests",
+                task_signature: "workflow-validation-recovery-node-tests",
                 workflow_signature: "replay-learning-candidate-export-fix:not-ready",
                 anchor_kind: "workflow",
                 anchor_level: "L1",
@@ -1170,8 +1170,8 @@ test("planning recall prioritizes promotion-ready workflow candidates ahead of n
           {
             client_id: "event:workflow-candidate-ready",
             type: "event",
-            title: "Replay Episode: Fix export failure",
-            text_summary: "Replay repair learning episode for export failure",
+            title: "Replay Episode: Recover workflow validation failure",
+            text_summary: "Replay repair learning episode for validation failure",
             embedding: sharedEmbedding,
             embedding_model: "deterministic-test",
             slots: {
@@ -1182,7 +1182,7 @@ test("planning recall prioritizes promotion-ready workflow candidates ahead of n
                 execution_kind: "workflow_candidate",
                 summary_kind: "workflow_candidate",
                 compression_layer: "L1",
-                task_signature: "repair-export-node-tests",
+                task_signature: "workflow-validation-recovery-node-tests",
                 workflow_signature: "replay-learning-candidate-export-fix:ready",
                 anchor_kind: "workflow",
                 anchor_level: "L1",
@@ -1266,7 +1266,7 @@ test("planning recall suppresses candidate workflows when a stable workflow with
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
   try {
-    const workflowText = "Replay learned workflow\nReplay repair learning episode for export failure";
+    const workflowText = "Replay learned workflow\nReplay repair learning episode for validation failure";
     const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed([workflowText]);
 
     const prepared = await prepareMemoryWrite(
@@ -1281,8 +1281,8 @@ test("planning recall suppresses candidate workflows when a stable workflow with
           {
             client_id: "procedure:workflow-stable",
             type: "procedure",
-            title: "Replay Learned Workflow: Fix export failure",
-            text_summary: "Replay repair learning episode for export failure",
+            title: "Replay Learned Workflow: Recover workflow validation failure",
+            text_summary: "Replay repair learning episode for validation failure",
             embedding: sharedEmbedding,
             embedding_model: "deterministic-test",
             slots: {
@@ -1293,7 +1293,7 @@ test("planning recall suppresses candidate workflows when a stable workflow with
                 execution_kind: "workflow_anchor",
                 summary_kind: "workflow_anchor",
                 compression_layer: "L2",
-                task_signature: "repair-export-node-tests",
+                task_signature: "workflow-validation-recovery-node-tests",
                 workflow_signature: "replay-learning-candidate-export-fix",
                 anchor_kind: "workflow",
                 anchor_level: "L2",
@@ -1324,8 +1324,8 @@ test("planning recall suppresses candidate workflows when a stable workflow with
           {
             client_id: "event:workflow-candidate-duplicate",
             type: "event",
-            title: "Replay Episode: Fix export failure",
-            text_summary: "Replay repair learning episode for export failure",
+            title: "Replay Episode: Recover workflow validation failure",
+            text_summary: "Replay repair learning episode for validation failure",
             embedding: sharedEmbedding,
             embedding_model: "deterministic-test",
             slots: {
@@ -1336,7 +1336,7 @@ test("planning recall suppresses candidate workflows when a stable workflow with
                 execution_kind: "workflow_candidate",
                 summary_kind: "workflow_candidate",
                 compression_layer: "L1",
-                task_signature: "repair-export-node-tests",
+                task_signature: "workflow-validation-recovery-node-tests",
                 workflow_signature: "replay-learning-candidate-export-fix",
                 anchor_kind: "workflow",
                 anchor_level: "L1",

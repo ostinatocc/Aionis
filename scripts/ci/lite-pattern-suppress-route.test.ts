@@ -54,18 +54,18 @@ function buildRequestGuards() {
 async function seedStablePattern(dbPath: string) {
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
-  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed(["repair export failure in node tests"]);
+  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed(["recover durable workflow from failed validation"]);
   const stablePattern = MemoryAnchorV1Schema.parse({
     anchor_kind: "pattern",
     anchor_level: "L3",
     pattern_state: "stable",
     credibility_state: "trusted",
-    task_signature: "tools_select:repair-export",
+    task_signature: "tools_select:workflow-validation-recovery",
     task_class: "tools_select_pattern",
-    task_family: "task:repair_export",
-    error_family: "error:node-export-mismatch",
+    task_family: "task:workflow_validation_recovery",
+    error_family: "error:workflow-validation-mismatch",
     pattern_signature: "stable-edit-pattern",
-    summary: "Stable pattern: prefer edit for repair_export after repeated successful runs.",
+    summary: "Stable pattern: prefer edit for workflow_validation_recovery after repeated successful runs.",
     tool_set: ["bash", "edit", "test"],
     selected_tool: "bash",
     outcome: {
@@ -135,8 +135,8 @@ async function seedStablePattern(dbPath: string) {
             anchor_v1: stablePattern,
             execution_contract_v1: buildExecutionContractFromProjection({
               contract_trust: "authoritative",
-              task_family: "task:repair_export",
-              task_signature: "tools_select:repair-export",
+              task_family: "task:workflow_validation_recovery",
+              task_signature: "tools_select:workflow-validation-recovery",
               workflow_signature: "workflow:stable-edit-pattern",
               selected_tool: "edit",
               target_files: ["src/export.ts"],

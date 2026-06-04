@@ -34,13 +34,13 @@ test("computeFeedbackUpdatedNodeState recomputes node priority from merged slots
       id: "node-1",
       type: "procedure",
       tier: "warm",
-      title: "Repair export route",
+      title: "Recover workflow validation route",
       text_summary: "Prefer edit when the export route response mismatches",
       slots: {
         summary_kind: "workflow_anchor",
         compression_layer: "L2",
         execution_contract_v1: {
-          task_signature: "task:repair-export-route",
+          task_signature: "task:workflow-validation-recovery-route",
         },
       },
     },
@@ -57,7 +57,7 @@ test("computeFeedbackUpdatedNodeState recomputes node priority from merged slots
   assert.equal(next.slots.summary_kind, "workflow_anchor");
   assert.equal(next.slots.compression_layer, "L2");
   assert.deepEqual(next.slots.execution_contract_v1, {
-    task_signature: "task:repair-export-route",
+    task_signature: "task:workflow-validation-recovery-route",
   });
   assert.ok(next.salience > 0);
   assert.ok(next.importance > 0);

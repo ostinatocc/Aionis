@@ -117,6 +117,22 @@ function corpusHasDetachSignal(corpus: string): boolean {
   return /\bnohup\b|\bsetsid\b|\bdisown\b|\bdaemon\b|\bdetach(?:ed)?\b|\bbackground\s+(?:process|service|server)\b/i.test(corpus);
 }
 
+function corpusHasExternalArtifactConsumerValidation(corpus: string): boolean {
+  return /\b(?:clean client|clean-client|clean consumer|artifact index|simple\/|wheel|pip\s+install)\b/i.test(corpus);
+}
+
+function corpusHasExplicitDurableServiceIntent(corpus: string): boolean {
+  return /\b(?:service|server|daemon|endpoint|webhook)\b.{0,80}\b(?:must|should|needs? to|required to)?\s*(?:survive|stay up|keep running|remain reachable|continue serving)\b/i.test(corpus)
+    || /\b(?:launchctl|systemd|supervisor|pm2|daemonize)\b/i.test(corpus)
+    || /\b(?:long[-\s]?running|persistent|durable)\s+(?:service|server|process|endpoint)\b/i.test(corpus);
+}
+
+function isValidationTransportCommand(command: string, corpus: string): boolean {
+  return /\bpython(?:3)?\s+-m\s+http\.server\b/i.test(command)
+    && corpusHasExternalArtifactConsumerValidation(corpus)
+    && !corpusHasExplicitDurableServiceIntent(corpus);
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -234,8 +250,12 @@ function inferTaskFamily(queryText: string, steps: NormalizedStep[], explicitTas
     /\b(ai[- ]generated|almost[- ]right|ci failure|failing test|test failure|red test|patch review|unit test failure|targeted ci)\b/.test(corpus)
     && /\b(repair|fix|debug|verify|test|pass)\b/.test(corpus)
   ) return "ai_code_ci_repair";
-  if ((/\bgit\b/.test(corpus) && /\b(webserver|hook|deploy|nginx|publish)\b/.test(corpus))) return "git_deploy_webserver";
-  if ((/\b(pypi|pip install|package index|wheel|simple\/)\b/.test(corpus))) return "package_publish_validate";
+  if (/\b(pip install|clean client|clean-client|clean consumer|wheel|artifact index|simple\/)\b/.test(corpus)) {
+    return "external_artifact_visibility";
+  }
+  if (/\b(external|visible|served|publish|deploy|endpoint|curl|wget)\b/.test(corpus) && /\b(content|revision|artifact|api|payload|result)\b/.test(corpus)) {
+    return "external_content_visibility";
+  }
   if ((/\b(sqlite|database|db|wal|integrity_check|truncate)\b/.test(corpus))) return "database_recovery";
   if ((/\b(server|service|localhost|127\.0\.0\.1|http:\/\/|https:\/\/)\b/.test(corpus) && /\b(validate|verify|publish|serve|install)\b/.test(corpus))) {
     return "service_publish_validate";
@@ -305,13 +325,7 @@ function extractServiceLifecycleConstraints(
   const urls = uniqueStrings(steps.flatMap((step) => step.urls), 16);
   const serviceCommands = commands.filter((command) => {
     if (!SERVICE_COMMAND_PATTERNS.some((pattern) => pattern.test(command))) return false;
-    if (
-      taskFamily === "package_publish_validate"
-      && /\bpython(?:3)?\s+-m\s+http\.server\b/i.test(command)
-      && /\b(?:pip\s+install|package index|simple\/|wheel|clean client|clean-client)\b/i.test(corpus)
-    ) {
-      return false;
-    }
+    if (isValidationTransportCommand(command, corpus)) return false;
     return true;
   });
   const hasLaunchEvidence = serviceCommands.length > 0;
@@ -364,19 +378,16 @@ function extractDependencyRequirements(args: {
 }): string[] {
   const corpus = compileCorpus(args.queryText, args.steps);
   const out: Array<string | null> = [...(args.hintRequirements ?? [])];
-  if (/\b(pip\s+install|pypi|package index|simple\/|wheel|pyproject\.toml)\b/i.test(corpus)) {
-    out.push("package artifacts and index metadata must exist before clean-client install validation");
-    out.push("install validation must use the intended package index, not ambient cached packages");
+  if (/\b(pip\s+install|artifact index|simple\/|wheel|pyproject\.toml|clean client|clean-client|clean consumer)\b/i.test(corpus)) {
+    out.push("artifacts and index metadata must exist before clean-consumer validation");
+    out.push("install or consumer validation must use the intended artifact source, not ambient cached state");
   }
-  if (
-    args.taskFamily === "package_publish_validate"
-    && /\b(installed api|installed package behavior|package payload|vector_norm|clean-client api)\b/i.test(corpus)
-  ) {
-    out.push("installed package API behavior must match the clean-client contract");
+  if (/\b(installed api|installed behavior|public api|payload|clean-client api|clean consumer api)\b/i.test(corpus)) {
+    out.push("public API behavior must match the clean-consumer contract");
   }
-  if (/\b(git)\b/i.test(corpus) && /\b(webserver|hook|deploy|receive\.denycurrentbranch|post-receive|updateinstead|document root|\/var\/www)\b/i.test(corpus)) {
-    out.push("git deploy or hook path must publish into the externally served document root");
-    out.push("webserver content must come from the deployed revision under validation");
+  if (/\b(publish|deploy|external|served|visible)\b/i.test(corpus) && /\b(content|revision|document root|artifact|payload)\b/i.test(corpus)) {
+    out.push("publication path must update the externally visible target");
+    out.push("visible content must come from the intended revision or artifact under validation");
   }
   if (/\b(sqlite|database|db|wal|integrity_check)\b/i.test(corpus)) {
     out.push("database files and journal state must be consistent before declaring recovery complete");
@@ -392,7 +403,7 @@ function extractDependencyRequirements(args: {
   if (args.serviceConstraints.length > 0) {
     out.push("service launch must not depend on the agent shell remaining attached");
   }
-  if (args.taskFamily === "service_publish_validate") {
+  if (args.serviceConstraints.length > 0 && /\b(validate|verify|reachable|health|endpoint)\b/i.test(corpus)) {
     out.push("service must be reachable through its published validation endpoint");
   }
   return uniqueStrings(out, 24);
@@ -439,15 +450,14 @@ function extractSuccessInvariants(args: {
   if (args.targetFiles.length > 0) out.push("target_files_reflect_the_intended_change_surface");
   if (args.acceptanceChecks.length > 0) out.push("all_acceptance_checks_pass");
   if (hasFreshShellSignal(corpus, args.acceptanceChecks, args.serviceConstraints)) out.push("fresh_shell_revalidation_passes");
-  if (/\bpip\s+install\b/i.test(corpus)) out.push("clean_client_install_succeeds");
-  if (
-    args.taskFamily === "package_publish_validate"
-    && /\b(installed api|installed package behavior|package payload|vector_norm|clean-client api)\b/i.test(corpus)
-  ) {
-    out.push("clean_client_import_contract_succeeds");
-    out.push("wheel_payload_matches_source_api");
+  if (/\bpip\s+install\b/i.test(corpus)) out.push("clean_consumer_install_succeeds");
+  if (/\b(installed api|installed behavior|public api|payload|clean-client api|clean consumer api)\b/i.test(corpus)) {
+    out.push("clean_consumer_api_contract_succeeds");
+    out.push("visible_payload_matches_source_contract");
   }
-  if (args.taskFamily === "git_deploy_webserver") out.push("deployed_web_content_visible_from_served_endpoint");
+  if (/\b(external|visible|served|publish|deploy)\b/i.test(corpus) && /\b(content|revision|artifact|payload)\b/i.test(corpus)) {
+    out.push("declared_external_visibility_probe_passes");
+  }
   if (args.taskFamily === "ai_code_ci_repair") out.push("targeted_ci_repair_passes");
   if (/\bintegrity_check\b|\bsqlite\b|\bdatabase\b|\bwal\b/i.test(corpus)) out.push("database_integrity_check_passes");
   for (const constraint of args.serviceConstraints) {
@@ -466,19 +476,18 @@ function extractMustHoldAfterExit(args: {
 }): string[] {
   const corpus = compileCorpus(args.queryText, args.steps);
   const out: Array<string | null> = [...(args.hintMustHold ?? [])];
-  if (args.taskFamily !== "service_publish_validate") {
-    return uniqueStrings(out, 24);
-  }
   const afterExitRequired = hasAfterExitSignal(corpus, args.serviceConstraints);
+  const durableResultRequired = args.serviceConstraints.some((constraint) => constraint.must_survive_agent_exit)
+    || corpusHasExplicitDurableServiceIntent(corpus);
   for (const constraint of args.serviceConstraints) {
     if (!constraint.must_survive_agent_exit) continue;
     out.push(`service_survives_agent_exit:${constraint.label}`);
     if (constraint.endpoint) out.push(`service_endpoint_still_serves_after_exit:${constraint.endpoint}`);
   }
-  if (afterExitRequired) {
+  if (afterExitRequired && durableResultRequired) {
     out.push("task_result_remains_valid_after_agent_exit");
   }
-  if (afterExitRequired && hasFreshShellSignal(corpus, args.acceptanceChecks, args.serviceConstraints)) {
+  if (afterExitRequired && durableResultRequired && hasFreshShellSignal(corpus, args.acceptanceChecks, args.serviceConstraints)) {
     out.push("fresh_shell_revalidation_still_passes_after_agent_exit");
   }
   return uniqueStrings(out, 24);
@@ -498,14 +507,15 @@ function extractExternalVisibilityRequirements(args: {
     if (constraint.endpoint) out.push(`endpoint_reachable:${constraint.endpoint}`);
     out.push(...constraint.health_checks.map((check) => `health_check:${check}`));
   }
-  if (/\bpip\s+install\b/i.test(corpus)) out.push("package_install_visible_to_clean_client");
-  if (
-    args.taskFamily === "package_publish_validate"
-    && /\b(installed api|installed package behavior|package payload|vector_norm|clean-client api)\b/i.test(corpus)
-  ) {
-    out.push("installed_api_visible_to_clean_client");
+  if (/\bpip\s+install\b|\bclean client\b|\bclean-client\b|\bclean consumer\b/i.test(corpus)) {
+    out.push("artifact_visible_to_clean_consumer");
   }
-  if (args.taskFamily === "git_deploy_webserver") out.push("served_web_content_matches_deployed_revision");
+  if (/\b(installed api|installed behavior|public api|payload|clean-client api|clean consumer api)\b/i.test(corpus)) {
+    out.push("public_api_visible_to_clean_consumer");
+  }
+  if (/\b(external|visible|served|publish|deploy)\b/i.test(corpus) && /\b(content|revision|artifact|payload)\b/i.test(corpus)) {
+    out.push("visible_content_matches_expected_revision");
+  }
   for (const check of args.acceptanceChecks) {
     if (/\bcurl\b|\bwget\b|\bnc\b/i.test(check)) out.push(`external_probe:${check}`);
   }
@@ -532,8 +542,12 @@ function extractPatternHints(args: {
     out.push("keep_tests_read_only_unless_task_explicitly_requests_test_changes");
     out.push("rerun_targeted_test_before_success");
   }
-  if (args.taskFamily === "git_deploy_webserver") out.push("validate_hook_or_publish_path_before_declaring_success");
-  if (args.taskFamily === "package_publish_validate") out.push("publish_then_install_from_clean_client_path");
+  if (args.acceptanceChecks.some((check) => /\bcurl\b|\bwget\b|\bnc\b/i.test(check))) {
+    out.push("validate_declared_external_visibility_before_success");
+  }
+  if (args.acceptanceChecks.some((check) => /\bpip\s+install\b/i.test(check))) {
+    out.push("validate_from_clean_consumer_path");
+  }
   if (args.likelyTool) out.push(`prefer_tool:${args.likelyTool}`);
   return uniqueStrings(out, 12);
 }
@@ -545,14 +559,6 @@ function synthesizeNextAction(args: {
   acceptanceChecks: string[];
   serviceConstraints: ServiceLifecycleConstraintV1[];
 }): string | null {
-  if (args.taskFamily === "package_publish_validate") {
-    const target = args.targetFiles.slice(0, 2).join(" and ") || "the package index and package payload";
-    const includesApiContract = args.acceptanceChecks.some((check) => /\bpython(?:3)?\s+-c\b.*\bassert\b|\bvector_norm\b|\bping\(\)/i.test(check));
-    const validation = includesApiContract
-      ? "index visibility, clean-client install, and installed package API behavior"
-      : "index visibility and clean-client install";
-    return `Update ${target}, rebuild the package artifacts and simple index, then validate ${validation} from a fresh shell.`;
-  }
   for (const step of [...args.steps].reverse()) {
     for (const text of step.texts) {
       const lowered = text.toLowerCase();

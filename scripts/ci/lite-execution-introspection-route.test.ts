@@ -56,8 +56,8 @@ async function seedExecutionIntrospectionFixture(dbPath: string) {
   const workflowAnchor = MemoryAnchorV1Schema.parse({
     anchor_kind: "workflow",
     anchor_level: "L2",
-    task_signature: "repair-export-node-tests",
-    error_signature: "node-export-mismatch",
+    task_signature: "workflow-validation-recovery-node-tests",
+    error_signature: "workflow-validation-mismatch",
     workflow_signature: "execution_workflow:d693c6beba272a6e135b54be",
     summary: "Inspect failing test and patch export",
     tool_set: ["edit", "test"],
@@ -107,10 +107,10 @@ async function seedExecutionIntrospectionFixture(dbPath: string) {
     anchor_level: "L3",
     pattern_state: "stable",
     credibility_state: "trusted",
-    task_signature: "tools_select:repair-export",
-    task_family: "task:repair_export",
-    error_signature: "node-export-mismatch",
-    error_family: "error:node-export-mismatch",
+    task_signature: "tools_select:workflow-validation-recovery",
+    task_family: "task:workflow_validation_recovery",
+    error_signature: "workflow-validation-mismatch",
+    error_family: "error:workflow-validation-mismatch",
     pattern_signature: "trusted-edit-pattern",
     summary: "Prefer edit for export repair after repeated successful runs.",
     tool_set: ["bash", "edit", "test"],
@@ -153,10 +153,10 @@ async function seedExecutionIntrospectionFixture(dbPath: string) {
       last_counter_evidence_at: null,
     },
     trust_hardening: {
-      task_family: "task:repair_export",
-      error_family: "error:node-export-mismatch",
-      observed_task_families: ["task:repair_export"],
-      observed_error_families: ["error:node-export-mismatch"],
+      task_family: "task:workflow_validation_recovery",
+      error_family: "error:workflow-validation-mismatch",
+      observed_task_families: ["task:workflow_validation_recovery"],
+      observed_error_families: ["error:workflow-validation-mismatch"],
       distinct_task_family_count: 1,
       distinct_error_family_count: 1,
       post_contest_observed_run_ids: [],
@@ -174,8 +174,8 @@ async function seedExecutionIntrospectionFixture(dbPath: string) {
     anchor_level: "L3",
     pattern_state: "provisional",
     credibility_state: "contested",
-    task_signature: "tools_select:repair-export",
-    error_signature: "node-export-mismatch",
+    task_signature: "tools_select:workflow-validation-recovery",
+    error_signature: "workflow-validation-mismatch",
     pattern_signature: "contested-bash-pattern",
     summary: "Older bash-first pattern now has counter-evidence.",
     tool_set: ["bash", "edit", "test"],
@@ -218,10 +218,10 @@ async function seedExecutionIntrospectionFixture(dbPath: string) {
       last_counter_evidence_at: "2026-03-20T00:00:00Z",
     },
     trust_hardening: {
-      task_family: "task:repair_export",
-      error_family: "error:node-export-mismatch",
-      observed_task_families: ["task:repair_export"],
-      observed_error_families: ["error:node-export-mismatch"],
+      task_family: "task:workflow_validation_recovery",
+      error_family: "error:workflow-validation-mismatch",
+      observed_task_families: ["task:workflow_validation_recovery"],
+      observed_error_families: ["error:workflow-validation-mismatch"],
       distinct_task_family_count: 1,
       distinct_error_family_count: 1,
       post_contest_observed_run_ids: [randomUUID(), randomUUID()],
@@ -243,8 +243,8 @@ async function seedExecutionIntrospectionFixture(dbPath: string) {
       producer_agent_id: "local-user",
       owner_agent_id: "local-user",
       input_text: [
-        "Task Signature: repair-export-node-tests",
-        "Error Signature: node-export-mismatch",
+        "Task Signature: workflow-validation-recovery-node-tests",
+        "Error Signature: workflow-validation-mismatch",
         "Workflow Signature: inspect-patch-rerun",
         "Export repair requires inspect, patch, and rerun.",
       ].join("\n"),
@@ -261,7 +261,7 @@ async function seedExecutionIntrospectionFixture(dbPath: string) {
         {
           id: randomUUID(),
           type: "procedure",
-          title: "Fix export failure",
+          title: "Recover workflow validation failure",
           text_summary: workflowAnchor.summary,
           slots: {
             summary_kind: "workflow_anchor",
@@ -294,8 +294,8 @@ async function seedExecutionIntrospectionFixture(dbPath: string) {
               execution_kind: "workflow_candidate",
               summary_kind: "workflow_candidate",
               compression_layer: "L1",
-              task_signature: "repair-export-node-tests",
-              error_signature: "node-export-mismatch",
+              task_signature: "workflow-validation-recovery-node-tests",
+              error_signature: "workflow-validation-mismatch",
               workflow_signature: "execution_workflow:d693c6beba272a6e135b54be",
               anchor_kind: "workflow",
               anchor_level: "L1",
@@ -421,7 +421,7 @@ async function seedExecutionIntrospectionFixture(dbPath: string) {
               state_id: "state-ready",
               current_stage: "patch",
               active_role: "patch",
-              task_brief: "Fix import failure in node tests",
+              task_brief: "Recover durable workflow from import validation failure",
               target_files: ["src/routes/import.ts"],
               next_action: "Patch src/routes/import.ts and rerun import tests",
               hard_constraints: [],
@@ -453,7 +453,7 @@ async function seedExecutionIntrospectionFixture(dbPath: string) {
               state_id: "state-observing",
               current_stage: "patch",
               active_role: "patch",
-              task_brief: "Fix import failure in node tests",
+              task_brief: "Recover durable workflow from import validation failure",
               target_files: ["src/routes/import.ts"],
               next_action: "Patch src/routes/import.ts and rerun import tests",
               hard_constraints: [],
@@ -586,8 +586,8 @@ async function seedExecutionNativeOnlyWorkflowIntrospectionFixture(dbPath: strin
         {
           id: randomUUID(),
           type: "procedure",
-          title: "Fix export failure",
-          text_summary: "Reusable repair workflow for export failure",
+          title: "Recover workflow validation failure",
+          text_summary: "Reusable repair workflow for validation failure",
           slots: {
             summary_kind: "workflow_anchor",
             compression_layer: "L2",
@@ -596,7 +596,7 @@ async function seedExecutionNativeOnlyWorkflowIntrospectionFixture(dbPath: strin
               execution_kind: "workflow_anchor",
               summary_kind: "workflow_anchor",
               compression_layer: "L2",
-              task_signature: "repair-export-node-tests",
+              task_signature: "workflow-validation-recovery-node-tests",
               workflow_signature: "execution-native-only-export-fix",
               anchor_kind: "workflow",
               anchor_level: "L2",
@@ -664,7 +664,7 @@ async function seedCanonicalContractPrecedenceIntrospectionFixture(dbPath: strin
     file_path: "src/routes/canonical-export.ts",
     target_files: ["src/routes/canonical-export.ts"],
     next_action: "Follow the canonical execution contract next action.",
-    workflow_steps: ["inspect canonical export failure", "patch canonical export route", "rerun canonical export checks"],
+    workflow_steps: ["inspect canonical validation failure", "patch canonical export route", "rerun canonical export checks"],
     pattern_hints: ["canonical pattern hint"],
     service_lifecycle_constraints: [
       {
@@ -904,7 +904,7 @@ test("execution introspection route exposes operator-facing workflow and pattern
     assert.equal(body.execution_summary.strategy_summary.strategy_profile, "rehydration_first");
     assert.equal(body.execution_summary.strategy_summary.validation_style, "validate_before_expansion");
     assert.ok(body.execution_summary.strategy_summary.family_candidate_count >= 1);
-    assert.ok(body.execution_summary.strategy_summary.selected_working_set.includes("workflow:Fix export failure"));
+    assert.ok(body.execution_summary.strategy_summary.selected_working_set.includes("workflow:Recover workflow validation failure"));
     assert.ok(body.execution_summary.strategy_summary.selected_pattern_summaries.some((line) => line.includes("Prefer edit")));
     assert.ok(body.execution_summary.strategy_summary.preferred_artifact_refs.length > 0);
     assert.match(body.execution_summary.strategy_summary.explanation, /Selected because/);
@@ -1109,7 +1109,7 @@ test("execution introspection route exposes operator-facing workflow and pattern
     assert.match(body.operator_surface.headline, /promotion-ready workflows=1/);
     assert.match(body.operator_surface.headline, /trusted patterns=1/);
     assert.match(body.operator_surface.headline, /contested patterns=1/);
-    assert.ok(body.operator_surface.sections.workflows.some((line) => line.includes("stable workflow: Fix export failure")));
+    assert.ok(body.operator_surface.sections.workflows.some((line) => line.includes("stable workflow: Recover workflow validation failure")));
     assert.ok(body.operator_surface.sections.workflows.some((line) => line.includes("promotion=ready")));
     assert.ok(body.operator_surface.sections.workflows.some((line) => line.includes("projection=execution_write_projection_v1")));
     assert.ok(body.operator_surface.sections.patterns.some((line) => line.includes("trusted pattern: prefer edit")));
@@ -1180,7 +1180,7 @@ test("execution introspection prefers recent persisted delegation records over d
               preferred_artifact_refs: ["artifact://patch/export.diff"],
               inherited_evidence: ["evidence://tests/export.log"],
               routing_reason: "Recent persisted review packet for execution introspection.",
-              task_family: "task:repair_export",
+              task_family: "task:workflow_validation_recovery",
               family_scope: "default",
               source_mode: "packet_backed",
             },
@@ -1205,7 +1205,7 @@ test("execution introspection prefers recent persisted delegation records over d
               route_role: "review",
               route_intent: "review",
               route_mode: "packet_backed",
-              task_family: "task:repair_export",
+              task_family: "task:workflow_validation_recovery",
               family_scope: "default",
               routing_reason: "Recent patch artifact for reviewer context.",
               source: "execution_packet",
@@ -1217,7 +1217,7 @@ test("execution introspection prefers recent persisted delegation records over d
               route_role: "review",
               route_intent: "review",
               route_mode: "packet_backed",
-              task_family: "task:repair_export",
+              task_family: "task:workflow_validation_recovery",
               family_scope: "default",
               routing_reason: "Recent test evidence for reviewer context.",
               source: "execution_packet",
@@ -1371,7 +1371,7 @@ test("execution introspection derives workflow fields through canonical executio
     assert.equal(workflow?.file_path, "src/routes/canonical-export.ts");
     assert.deepEqual(workflow?.target_files, ["src/routes/canonical-export.ts"]);
     assert.equal(workflow?.next_action, "Follow the canonical execution contract next action.");
-    assert.deepEqual(workflow?.workflow_steps, ["inspect canonical export failure", "patch canonical export route", "rerun canonical export checks"]);
+    assert.deepEqual(workflow?.workflow_steps, ["inspect canonical validation failure", "patch canonical export route", "rerun canonical export checks"]);
     assert.deepEqual(workflow?.pattern_hints, ["canonical pattern hint"]);
     assert.deepEqual(
       workflow?.service_lifecycle_constraints.map((constraint) => constraint.label),

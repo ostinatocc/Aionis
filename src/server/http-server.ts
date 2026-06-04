@@ -15,6 +15,7 @@ import { registerMemoryRecallRoutes } from "../routes/memory-recall.js";
 import { registerMemoryReplayCoreRoutes } from "../routes/memory-replay-core.js";
 import { registerMemoryReplayLearningControlRoutes } from "../routes/memory-replay-learning-control.js";
 import { registerMemoryWriteRoutes } from "../routes/memory-write.js";
+import { registerProductFacadeRoutes } from "../routes/product-facade.js";
 import { registerRuntimeBoundaryInventoryRoutes } from "../routes/runtime-boundary-inventory.js";
 import type { ExecutionStateStore } from "../execution/state-store.js";
 import { buildLiteRouteMatrix, registerLiteServerOnlyRoutes } from "./lite-runtime-boundary.js";
@@ -324,6 +325,17 @@ export type RegisterApplicationRoutesArgs = {
 
 type RuntimeBoundaryRouteRegistrationArgs = Pick<RegisterApplicationRoutesArgs, "app" | "env">;
 type RuntimeAdminRouteRegistrationArgs = Pick<RegisterApplicationRoutesArgs, "app">;
+type ProductFacadeRouteRegistrationArgs = Pick<
+  RegisterApplicationRoutesArgs,
+  | "app"
+  | "env"
+  | "requireMemoryPrincipal"
+  | "withIdentityFromRequest"
+  | "enforceRateLimit"
+  | "enforceTenantQuota"
+  | "tenantFromBody"
+  | "acquireInflightSlot"
+>;
 
 type RuntimeWriteRouteRegistrationArgs = Pick<
   RegisterApplicationRoutesArgs,
@@ -649,9 +661,23 @@ function registerRuntimeKernelRoutes(args: RuntimeKernelRouteRegistrationArgs) {
   registerRuntimeReplayRoutes(args);
 }
 
+function registerProductRoutes(args: ProductFacadeRouteRegistrationArgs) {
+  registerProductFacadeRoutes({
+    app: args.app,
+    env: args.env,
+    requireMemoryPrincipal: args.requireMemoryPrincipal,
+    withIdentityFromRequest: args.withIdentityFromRequest,
+    enforceRateLimit: args.enforceRateLimit,
+    enforceTenantQuota: args.enforceTenantQuota,
+    tenantFromBody: args.tenantFromBody,
+    acquireInflightSlot: args.acquireInflightSlot,
+  });
+}
+
 export function registerApplicationRoutes(args: RegisterApplicationRoutesArgs) {
   assertLiteOnlySourceTree(args.env);
   registerRuntimeBoundaryRoutes(args);
   registerAdminRoutes(args);
   registerRuntimeKernelRoutes(args);
+  registerProductRoutes(args);
 }

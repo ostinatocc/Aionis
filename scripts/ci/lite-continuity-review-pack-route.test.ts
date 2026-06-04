@@ -109,7 +109,7 @@ test("memory continuity review-pack route wraps recovered handoff into reviewer-
         repo_root: "/repo",
         handoff_kind: "patch_handoff",
         title: "Fix export route",
-        summary: "Repair export failure and keep tests green",
+        summary: "Repair validation failure and keep tests green",
         handoff_text: "Fix export route and rerun targeted tests",
         target_files: ["src/routes/export.ts"],
         next_action: "Patch src/routes/export.ts and rerun export tests",

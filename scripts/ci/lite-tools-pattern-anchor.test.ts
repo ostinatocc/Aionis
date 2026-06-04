@@ -32,7 +32,7 @@ async function seedActiveRule(
   preferredTool = "edit",
 ): Promise<{ liteWriteStore: ReturnType<typeof createLiteWriteStore>; ruleNodeId: string }> {
   const liteWriteStore = createLiteWriteStore(writeStorePath);
-  const ruleNodeId = await insertAndActivateRule(liteWriteStore, preferredTool, `repair-export-${preferredTool}`);
+  const ruleNodeId = await insertAndActivateRule(liteWriteStore, preferredTool, `workflow-validation-recovery-${preferredTool}`);
   return { liteWriteStore, ruleNodeId };
 }
 
@@ -54,10 +54,10 @@ async function insertAndActivateRule(
           client_id: `rule:prefer-${preferredTool}:${ruleSuffix}`,
           type: "rule",
           title: `Prefer ${preferredTool} for export repair`,
-          text_summary: `For repair_export tasks, prefer ${preferredTool} over the other tools.`,
+          text_summary: `For workflow_validation_recovery tasks, prefer ${preferredTool} over the other tools.`,
           slots: {
             if: {
-              task_kind: { $eq: "repair_export" },
+              task_kind: { $eq: "workflow_validation_recovery" },
             },
             then: {
               tool: {
@@ -115,7 +115,7 @@ async function seedActiveRules(
   const liteWriteStore = createLiteWriteStore(writeStorePath);
   const ruleNodeIds: string[] = [];
   for (const [index, preferredTool] of preferredTools.entries()) {
-    ruleNodeIds.push(await insertAndActivateRule(liteWriteStore, preferredTool, `repair-export-${preferredTool}-${index + 1}`));
+    ruleNodeIds.push(await insertAndActivateRule(liteWriteStore, preferredTool, `workflow-validation-recovery-${preferredTool}-${index + 1}`));
   }
   return { liteWriteStore, ruleNodeIds };
 }
@@ -202,12 +202,12 @@ test("selectTools resolves trusted pattern identity from canonical execution con
   const dbPath = tmpDbPath("pattern-canonical-identity-selector");
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
-  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed(["repair export failure pattern"]);
+  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed(["recover workflow validation failure pattern"]);
   const canonicalContract = buildExecutionContractFromProjection({
     contract_trust: "authoritative",
-    task_family: "task:repair_export",
-    task_signature: "tools_select:repair-export-canonical",
-    workflow_signature: "execution_workflow:repair-export-canonical",
+    task_family: "task:workflow_validation_recovery",
+    task_signature: "tools_select:workflow-validation-recovery-canonical",
+    workflow_signature: "execution_workflow:workflow-validation-recovery-canonical",
     selected_tool: "edit",
     file_path: "src/routes/export.ts",
     target_files: ["src/routes/export.ts"],
@@ -227,7 +227,7 @@ test("selectTools resolves trusted pattern identity from canonical execution con
     task_signature: "tools_select:stale-bash",
     task_class: "tools_select_pattern",
     task_family: "task:stale_repair",
-    error_family: "error:node-export-mismatch",
+    error_family: "error:workflow-validation-mismatch",
     pattern_signature: "stale-bash-canonical-edit-pattern",
     summary: "Stable stale pattern whose canonical contract now points to edit.",
     tool_set: ["bash", "edit", "test"],
@@ -306,7 +306,7 @@ test("selectTools resolves trusted pattern identity from canonical execution con
                 compression_layer: "L3",
                 task_signature: "tools_select:stale-bash",
                 task_family: "task:stale_repair",
-                error_family: "error:node-export-mismatch",
+                error_family: "error:workflow-validation-mismatch",
                 pattern_signature: stalePattern.pattern_signature,
                 anchor_kind: "pattern",
                 anchor_level: "L3",
@@ -351,10 +351,10 @@ test("selectTools resolves trusted pattern identity from canonical execution con
       scope: "default",
       run_id: randomUUID(),
       context: {
-        task_kind: "repair_export",
-        goal: "repair export failure in node tests",
+        task_kind: "workflow_validation_recovery",
+        goal: "recover durable workflow from failed validation",
         error: {
-          signature: "node-export-mismatch",
+          signature: "workflow-validation-mismatch",
         },
       },
       candidates: ["bash", "edit", "test"],
@@ -372,7 +372,7 @@ test("selectTools resolves trusted pattern identity from canonical execution con
     assert.equal(recalled.selection.selected, "edit");
     assert.equal(recalled.pattern_matches.trusted, 1);
     assert.equal(recalled.pattern_matches.anchors[0]?.selected_tool, "edit");
-    assert.equal(recalled.pattern_matches.anchors[0]?.task_family, "task:repair_export");
+    assert.equal(recalled.pattern_matches.anchors[0]?.task_family, "task:workflow_validation_recovery");
     assert.equal(recalled.pattern_matches.anchors[0]?.affinity_level, "same_task_family");
     assert.deepEqual(recalled.decision.pattern_summary.used_trusted_pattern_tools, ["edit"]);
     assert.deepEqual(recalled.selection_summary.used_trusted_pattern_tools, ["edit"]);
@@ -386,16 +386,16 @@ test("recall ranking prefers stable pattern anchors over counter-evidence-open c
   const dbPath = tmpDbPath("pattern-recall-ranking");
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
-  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed(["repair export failure pattern"]);
+  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed(["recover workflow validation failure pattern"]);
   const stableAnchor = MemoryAnchorV1Schema.parse({
     anchor_kind: "pattern",
     anchor_level: "L3",
     pattern_state: "stable",
     credibility_state: "trusted",
-    task_signature: "tools_select:repair-export",
+    task_signature: "tools_select:workflow-validation-recovery",
     task_class: "tools_select_pattern",
-    task_family: "task:repair_export",
-    error_family: "error:node-export-mismatch",
+    task_family: "task:workflow_validation_recovery",
+    error_family: "error:workflow-validation-mismatch",
     pattern_signature: "stable-edit-pattern",
     summary: "Stable pattern: prefer edit for export repair after repeated successful rule-backed tool selections.",
     tool_set: ["bash", "edit", "test"],
@@ -425,7 +425,7 @@ test("recall ranking prefers stable pattern anchors over counter-evidence-open c
     anchor_level: "L3",
     pattern_state: "provisional",
     credibility_state: "contested",
-    task_signature: "tools_select:repair-export",
+    task_signature: "tools_select:workflow-validation-recovery",
     task_class: "tools_select_pattern",
     pattern_signature: "contested-bash-pattern",
     summary: "Candidate pattern: prefer bash for export repair; counter-evidence observed.",
@@ -540,10 +540,10 @@ test("positive tools feedback writes a provisional recallable pattern anchor", a
   const liteRecallStore = createLiteRecallStore(dbPath);
   const runId = randomUUID();
   const context = {
-    task_kind: "repair_export",
-    goal: "repair export failure in node tests",
+    task_kind: "workflow_validation_recovery",
+    goal: "recover durable workflow from failed validation",
     error: {
-      signature: "node-export-mismatch",
+      signature: "workflow-validation-mismatch",
     },
   };
   try {
@@ -576,7 +576,7 @@ test("positive tools feedback writes a provisional recallable pattern anchor", a
         selected_tool: "edit",
         target: "tool",
         note: "Edit-based repair succeeded",
-        input_text: "repair export failure in node tests",
+        input_text: "recover durable workflow from failed validation",
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,
@@ -613,8 +613,8 @@ test("positive tools feedback writes a provisional recallable pattern anchor", a
     assert.equal(anchorNode.slots.execution_native_v1.anchor_kind, "pattern");
     assert.equal(anchorNode.slots.execution_native_v1.anchor_level, "L3");
     assert.equal(anchorNode.slots.execution_native_v1.contract_trust, "observational");
-    assert.equal(anchorNode.slots.execution_native_v1.task_family, "task:repair_export");
-    assert.equal(anchorNode.slots.execution_native_v1.error_family, "error:node-export-mismatch");
+    assert.equal(anchorNode.slots.execution_native_v1.task_family, "task:workflow_validation_recovery");
+    assert.equal(anchorNode.slots.execution_native_v1.error_family, "error:workflow-validation-mismatch");
     assert.equal(anchorNode.slots.execution_native_v1.pattern_state, "provisional");
     assert.equal(anchorNode.slots.execution_native_v1.credibility_state, "candidate");
     assert.equal(anchorNode.slots.execution_native_v1.selected_tool, "edit");
@@ -623,8 +623,8 @@ test("positive tools feedback writes a provisional recallable pattern anchor", a
     assert.equal(anchorNode.slots.anchor_v1.contract_trust, "observational");
     assert.equal(anchorNode.slots.anchor_v1.pattern_state, "provisional");
     assert.equal(anchorNode.slots.anchor_v1.credibility_state, "candidate");
-    assert.equal(anchorNode.slots.anchor_v1.task_family, "task:repair_export");
-    assert.equal(anchorNode.slots.anchor_v1.error_family, "error:node-export-mismatch");
+    assert.equal(anchorNode.slots.anchor_v1.task_family, "task:workflow_validation_recovery");
+    assert.equal(anchorNode.slots.anchor_v1.error_family, "error:workflow-validation-mismatch");
     assert.equal(anchorNode.slots.anchor_v1.maintenance.maintenance_state, "observe");
     assert.equal(anchorNode.slots.anchor_v1.maintenance.offline_priority, "none");
     assert.equal(anchorNode.slots.anchor_v1.selected_tool, "edit");
@@ -637,10 +637,10 @@ test("positive tools feedback writes a provisional recallable pattern anchor", a
     assert.equal(anchorNode.slots.anchor_v1.promotion.credibility_state, "candidate");
     assert.equal(anchorNode.slots.anchor_v1.promotion.last_transition, "candidate_observed");
     assert.deepEqual(anchorNode.slots.anchor_v1.promotion.observed_run_ids, [runId]);
-    assert.equal(anchorNode.slots.anchor_v1.trust_hardening.task_family, "task:repair_export");
-    assert.equal(anchorNode.slots.anchor_v1.trust_hardening.error_family, "error:node-export-mismatch");
-    assert.deepEqual(anchorNode.slots.anchor_v1.trust_hardening.observed_task_families, ["task:repair_export"]);
-    assert.deepEqual(anchorNode.slots.anchor_v1.trust_hardening.observed_error_families, ["error:node-export-mismatch"]);
+    assert.equal(anchorNode.slots.anchor_v1.trust_hardening.task_family, "task:workflow_validation_recovery");
+    assert.equal(anchorNode.slots.anchor_v1.trust_hardening.error_family, "error:workflow-validation-mismatch");
+    assert.deepEqual(anchorNode.slots.anchor_v1.trust_hardening.observed_task_families, ["task:workflow_validation_recovery"]);
+    assert.deepEqual(anchorNode.slots.anchor_v1.trust_hardening.observed_error_families, ["error:workflow-validation-mismatch"]);
     assert.equal(anchorNode.slots.anchor_v1.trust_hardening.distinct_task_family_count, 1);
     assert.equal(anchorNode.slots.anchor_v1.trust_hardening.distinct_error_family_count, 1);
     assert.equal(anchorNode.slots.anchor_v1.trust_hardening.post_contest_distinct_run_count, 0);
@@ -651,17 +651,17 @@ test("positive tools feedback writes a provisional recallable pattern anchor", a
     assert.equal(anchorNode.slots.anchor_v1.trust_hardening.task_affinity_weighting_enabled, false);
     assert.equal(anchorNode.slots.execution_native_v1.promotion.credibility_state, "candidate");
     assert.equal(anchorNode.slots.execution_native_v1.promotion.last_transition, "candidate_observed");
-    assert.equal(anchorNode.slots.execution_native_v1.trust_hardening.task_family, "task:repair_export");
-    assert.equal(anchorNode.slots.execution_native_v1.trust_hardening.error_family, "error:node-export-mismatch");
+    assert.equal(anchorNode.slots.execution_native_v1.trust_hardening.task_family, "task:workflow_validation_recovery");
+    assert.equal(anchorNode.slots.execution_native_v1.trust_hardening.error_family, "error:workflow-validation-mismatch");
     assert.equal(anchorNode.slots.execution_native_v1.maintenance.maintenance_state, "observe");
     const executionContract = parseExecutionContract(anchorNode.slots.execution_contract_v1);
     assert.equal(executionContract?.schema_version, "execution_contract_v1");
     assert.equal(executionContract?.contract_trust, "observational");
-    assert.equal(executionContract?.task_family, "task:repair_export");
+    assert.equal(executionContract?.task_family, "task:workflow_validation_recovery");
     assert.equal(executionContract?.selected_tool, "edit");
     assert.equal(
       executionContract?.next_action,
-      "Prefer edit first for repair export failure in node tests before widening tool search.",
+      "Prefer edit first for recover durable workflow from failed validation before widening tool search.",
     );
     assert.ok(executionContract?.workflow_steps?.includes("evaluate active tool rules"));
     assert.ok(executionContract?.pattern_hints?.includes("rule_backed_selection_pattern"));
@@ -705,10 +705,10 @@ test("positive tools feedback without matched rule sources still writes a provis
   const liteRecallStore = createLiteRecallStore(dbPath);
   const runId = randomUUID();
   const context = {
-    task_kind: "repair_export",
-    goal: "repair export failure in node tests",
+    task_kind: "workflow_validation_recovery",
+    goal: "recover durable workflow from failed validation",
     error: {
-      signature: "node-export-mismatch",
+      signature: "workflow-validation-mismatch",
     },
   };
   try {
@@ -724,7 +724,7 @@ test("positive tools feedback without matched rule sources still writes a provis
         selected_tool: "edit",
         target: "tool",
         note: "Edit-based repair succeeded without an active tool rule",
-        input_text: "repair export failure in node tests",
+        input_text: "recover durable workflow from failed validation",
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,
@@ -872,10 +872,10 @@ test("positive tools feedback with multiple matched rule sources exposes form_pa
   const { liteWriteStore, ruleNodeIds } = await seedActiveRules(dbPath, ["edit", "edit"]);
   const runId = randomUUID();
   const context = {
-    task_kind: "repair_export",
-    goal: "repair export failure in node tests",
+    task_kind: "workflow_validation_recovery",
+    goal: "recover durable workflow from failed validation",
     error: {
-      signature: "node-export-mismatch",
+      signature: "workflow-validation-mismatch",
     },
   };
   try {
@@ -906,7 +906,7 @@ test("positive tools feedback with multiple matched rule sources exposes form_pa
         selected_tool: "edit",
         target: "tool",
         note: "Edit-based repair succeeded with two matched rule sources",
-        input_text: "repair export failure in node tests",
+        input_text: "recover durable workflow from failed validation",
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,
@@ -923,9 +923,9 @@ test("positive tools feedback with multiple matched rule sources exposes form_pa
     assert.equal(parsed.learning_control_preview?.form_pattern.review_packet.deterministic_gate.gate_satisfied, true);
     assert.equal(
       parsed.learning_control_preview?.form_pattern.review_packet.signatures.task_signature,
-      "tools_select:repair-export-failure-in-node-tests",
+      "tools_select:recover-durable-workflow-from-failed-validation",
     );
-    assert.equal(parsed.learning_control_preview?.form_pattern.review_packet.signatures.error_signature, "node-export-mismatch");
+    assert.equal(parsed.learning_control_preview?.form_pattern.review_packet.signatures.error_signature, "workflow-validation-mismatch");
     assert.equal(parsed.learning_control_preview?.form_pattern.review_packet.source_examples.length, 2);
     assert.deepEqual(
       uniqueStrings(parsed.learning_control_preview?.form_pattern.review_packet.source_examples.map((entry) => entry.node_id)),
@@ -958,10 +958,10 @@ test("tools feedback form_pattern learning_control preview evaluates admitted re
   const { liteWriteStore } = await seedActiveRules(dbPath, ["edit", "edit"]);
   const runId = randomUUID();
   const context = {
-    task_kind: "repair_export",
-    goal: "repair export failure in node tests",
+    task_kind: "workflow_validation_recovery",
+    goal: "recover durable workflow from failed validation",
     error: {
-      signature: "node-export-mismatch",
+      signature: "workflow-validation-mismatch",
     },
   };
   try {
@@ -992,7 +992,7 @@ test("tools feedback form_pattern learning_control preview evaluates admitted re
         selected_tool: "edit",
         target: "tool",
         note: "Edit-based repair succeeded with high-confidence grouped evidence",
-        input_text: "repair export failure in node tests",
+        input_text: "recover durable workflow from failed validation",
         learning_control_review: {
           form_pattern: {
             review_result: {
@@ -1068,10 +1068,10 @@ test("tools feedback form_pattern learning_control preview rejects low-confidenc
   const { liteWriteStore } = await seedActiveRules(dbPath, ["edit", "edit"]);
   const runId = randomUUID();
   const context = {
-    task_kind: "repair_export",
-    goal: "repair export failure in node tests",
+    task_kind: "workflow_validation_recovery",
+    goal: "recover durable workflow from failed validation",
     error: {
-      signature: "node-export-mismatch",
+      signature: "workflow-validation-mismatch",
     },
   };
   try {
@@ -1102,7 +1102,7 @@ test("tools feedback form_pattern learning_control preview rejects low-confidenc
         selected_tool: "edit",
         target: "tool",
         note: "Edit-based repair produced uncertain grouped evidence",
-        input_text: "repair export failure in node tests",
+        input_text: "recover durable workflow from failed validation",
         learning_control_review: {
           form_pattern: {
             review_result: {
@@ -1161,10 +1161,10 @@ test("tools feedback form_pattern learning_control can use internal evidence pro
   const { liteWriteStore } = await seedActiveRules(dbPath, ["edit", "edit"]);
   const runId = randomUUID();
   const context = {
-    task_kind: "repair_export",
-    goal: "repair export failure in node tests",
+    task_kind: "workflow_validation_recovery",
+    goal: "recover durable workflow from failed validation",
     error: {
-      signature: "node-export-mismatch",
+      signature: "workflow-validation-mismatch",
     },
   };
   try {
@@ -1195,7 +1195,7 @@ test("tools feedback form_pattern learning_control can use internal evidence pro
         selected_tool: "edit",
         target: "tool",
         note: "Edit-based repair succeeded with grouped provider-backed evidence",
-        input_text: "repair export failure in node tests",
+        input_text: "recover durable workflow from failed validation",
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,
@@ -1229,10 +1229,10 @@ test("selectTools does not trust provisional pattern anchors after the source ru
   const liteRecallStore = createLiteRecallStore(dbPath);
   const runId = randomUUID();
   const context = {
-    task_kind: "repair_export",
-    goal: "repair export failure in node tests",
+    task_kind: "workflow_validation_recovery",
+    goal: "recover durable workflow from failed validation",
     error: {
-      signature: "node-export-mismatch",
+      signature: "workflow-validation-mismatch",
     },
   };
   try {
@@ -1266,7 +1266,7 @@ test("selectTools does not trust provisional pattern anchors after the source ru
         selected_tool: "edit",
         target: "tool",
         note: "Edit-based repair succeeded",
-        input_text: "repair export failure in node tests",
+        input_text: "recover durable workflow from failed validation",
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,
@@ -1342,10 +1342,10 @@ test("selectTools reuses stable pattern anchors after distinct successful runs",
   const { liteWriteStore, ruleNodeId } = await seedActiveRule(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
   const baseContext = {
-    task_kind: "repair_export",
-    goal: "repair export failure in node tests",
+    task_kind: "workflow_validation_recovery",
+    goal: "recover durable workflow from failed validation",
     error: {
-      signature: "node-export-mismatch",
+      signature: "workflow-validation-mismatch",
     },
   };
   try {
@@ -1382,7 +1382,7 @@ test("selectTools reuses stable pattern anchors after distinct successful runs",
           selected_tool: "edit",
           target: "tool",
           note: "Edit-based repair succeeded",
-          input_text: "repair export failure in node tests",
+          input_text: "recover durable workflow from failed validation",
         }, "default", "default", {
           maxTextLen: 10_000,
           piiRedaction: false,
@@ -1518,19 +1518,19 @@ test("selectTools keeps explicit tool.prefer ahead of trusted pattern preference
   const dbPath = tmpDbPath("pattern-explicit-prefer-order");
   const { liteWriteStore } = await seedActiveRule(dbPath, "bash");
   const liteRecallStore = createLiteRecallStore(dbPath);
-  const sharedEmbedding = (await DeterministicEmbeddingProvider.embed(["repair export failure pattern"]))[0];
+  const sharedEmbedding = (await DeterministicEmbeddingProvider.embed(["recover workflow validation failure pattern"]))[0];
   const patternNodeId = randomUUID();
   const stablePattern = MemoryAnchorV1Schema.parse({
     anchor_kind: "pattern",
     anchor_level: "L3",
     pattern_state: "stable",
     credibility_state: "trusted",
-    task_signature: "tools_select:repair-export",
+    task_signature: "tools_select:workflow-validation-recovery",
     task_class: "tools_select_pattern",
-    task_family: "task:repair_export",
-    error_family: "error:node-export-mismatch",
+    task_family: "task:workflow_validation_recovery",
+    error_family: "error:workflow-validation-mismatch",
     pattern_signature: "stable-edit-pattern",
-    summary: "Stable pattern: prefer edit for repair_export after repeated successful runs.",
+    summary: "Stable pattern: prefer edit for workflow_validation_recovery after repeated successful runs.",
     tool_set: ["bash", "edit", "test"],
     selected_tool: "edit",
     outcome: {
@@ -1625,10 +1625,10 @@ test("selectTools keeps explicit tool.prefer ahead of trusted pattern preference
       scope: "default",
       run_id: randomUUID(),
       context: {
-        task_kind: "repair_export",
-        goal: "repair export failure in node tests",
+        task_kind: "workflow_validation_recovery",
+        goal: "recover durable workflow from failed validation",
         error: {
-          signature: "node-export-mismatch",
+          signature: "workflow-validation-mismatch",
         },
       },
       candidates: ["bash", "edit", "test"],
@@ -1674,10 +1674,10 @@ test("selectTools excludes suppressed trusted patterns from trusted reuse withou
   const { liteWriteStore, ruleNodeId } = await seedActiveRule(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
   const baseContext = {
-    task_kind: "repair_export",
-    goal: "repair export failure in node tests",
+    task_kind: "workflow_validation_recovery",
+    goal: "recover durable workflow from failed validation",
     error: {
-      signature: "node-export-mismatch",
+      signature: "workflow-validation-mismatch",
     },
   };
   try {
@@ -1711,7 +1711,7 @@ test("selectTools excludes suppressed trusted patterns from trusted reuse withou
           selected_tool: "edit",
           target: "tool",
           note: "Edit-based repair succeeded",
-          input_text: "repair export failure in node tests",
+          input_text: "recover durable workflow from failed validation",
         }, "default", "default", {
           maxTextLen: 10_000,
           piiRedaction: false,
@@ -1804,10 +1804,10 @@ test("negative tools feedback demotes a stable pattern back to provisional", asy
   const { liteWriteStore, ruleNodeId } = await seedActiveRule(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
   const context = {
-    task_kind: "repair_export",
-    goal: "repair export failure in node tests",
+    task_kind: "workflow_validation_recovery",
+    goal: "recover durable workflow from failed validation",
     error: {
-      signature: "node-export-mismatch",
+      signature: "workflow-validation-mismatch",
     },
   };
   try {
@@ -1841,7 +1841,7 @@ test("negative tools feedback demotes a stable pattern back to provisional", asy
           selected_tool: "edit",
           target: "tool",
           note: "Edit-based repair succeeded",
-          input_text: "repair export failure in node tests",
+          input_text: "recover durable workflow from failed validation",
         }, "default", "default", {
           maxTextLen: 10_000,
           piiRedaction: false,
@@ -1882,7 +1882,7 @@ test("negative tools feedback demotes a stable pattern back to provisional", asy
         selected_tool: "edit",
         target: "tool",
         note: "Edit-based repair failed on rerun",
-        input_text: "repair export failure in node tests",
+        input_text: "recover durable workflow from failed validation",
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,
@@ -1987,10 +1987,10 @@ test("contested pattern requires two fresh positive runs before revalidation to 
   const { liteWriteStore } = await seedActiveRule(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
   const context = {
-    task_kind: "repair_export",
-    goal: "repair export failure in node tests",
+    task_kind: "workflow_validation_recovery",
+    goal: "recover durable workflow from failed validation",
     error: {
-      signature: "node-export-mismatch",
+      signature: "workflow-validation-mismatch",
     },
   };
   try {
@@ -2025,7 +2025,7 @@ test("contested pattern requires two fresh positive runs before revalidation to 
           selected_tool: "edit",
           target: "tool",
           note: "Edit-based repair succeeded",
-          input_text: "repair export failure in node tests",
+          input_text: "recover durable workflow from failed validation",
         }, "default", "default", {
           maxTextLen: 10_000,
           piiRedaction: false,
@@ -2065,7 +2065,7 @@ test("contested pattern requires two fresh positive runs before revalidation to 
         selected_tool: "edit",
         target: "tool",
         note: "Edit-based repair failed on rerun",
-        input_text: "repair export failure in node tests",
+        input_text: "recover durable workflow from failed validation",
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,
@@ -2103,7 +2103,7 @@ test("contested pattern requires two fresh positive runs before revalidation to 
         selected_tool: "edit",
         target: "tool",
         note: "Edit-based repair succeeded after revalidation",
-        input_text: "repair export failure in node tests",
+        input_text: "recover durable workflow from failed validation",
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,
@@ -2144,7 +2144,7 @@ test("contested pattern requires two fresh positive runs before revalidation to 
         selected_tool: "edit",
         target: "tool",
         note: "Edit-based repair succeeded after second fresh revalidation",
-        input_text: "repair export failure in node tests",
+        input_text: "recover durable workflow from failed validation",
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,

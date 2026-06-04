@@ -90,7 +90,7 @@ test("hard invariants stay small and evidence-centered", () => {
 });
 
 test("Lite route capability matrix maps public routes to focused product capabilities", () => {
-  assert.equal(LITE_ROUTE_CAPABILITY_MATRIX_VERSION, "lite_route_capability_matrix_v2");
+  assert.equal(LITE_ROUTE_CAPABILITY_MATRIX_VERSION, "lite_route_capability_matrix_v3");
 
   const capabilityIds = new Set(aionisKernelCapabilityIds());
   const matrix = buildLiteRouteMatrix().route_capability_matrix;
@@ -98,8 +98,11 @@ test("Lite route capability matrix maps public routes to focused product capabil
 
   assert.deepEqual(routeKeys, [
     "GET /v1/runtime/boundary-inventory",
+    "POST /v1/forget",
+    "POST /v1/guide",
     "POST /v1/handoff/recover",
     "POST /v1/handoff/store",
+    "POST /v1/measure",
     "POST /v1/memory/action/retrieval",
     "POST /v1/memory/agent/handoff-pack",
     "POST /v1/memory/agent/inspect",
@@ -154,6 +157,7 @@ test("Lite route capability matrix maps public routes to focused product capabil
     "POST /v1/memory/tools/select",
     "POST /v1/memory/trajectory/compile",
     "POST /v1/memory/write",
+    "POST /v1/observe",
   ]);
 
   assert.equal(new Set(routeKeys).size, routeKeys.length, "route capability matrix must not duplicate routes");
@@ -178,16 +182,20 @@ test("Lite route capability matrix separates product entries from internal surfa
   const exposureByRoute = new Map(matrix.map((entry) => [`${entry.method} ${entry.path}`, entry.product_exposure]));
 
   for (const route of [
-    "POST /v1/memory/write",
-    "POST /v1/memory/context/assemble",
-    "POST /v1/memory/experience/intelligence",
-    "POST /v1/memory/kickoff/recommendation",
-    "POST /v1/handoff/recover",
+    "POST /v1/observe",
+    "POST /v1/guide",
+    "POST /v1/forget",
+    "POST /v1/measure",
   ]) {
     assert.equal(exposureByRoute.get(route), "product_entry", `${route} must stay product-facing`);
   }
 
   for (const route of [
+    "POST /v1/memory/write",
+    "POST /v1/memory/context/assemble",
+    "POST /v1/memory/experience/intelligence",
+    "POST /v1/memory/kickoff/recommendation",
+    "POST /v1/handoff/recover",
     "POST /v1/memory/find",
     "POST /v1/memory/resolve",
     "POST /v1/memory/rules/state",
@@ -223,15 +231,15 @@ test("Lite route capability matrix makes history-shaped behavior explicit", () =
 
   assert.ok(historyRoutes.length > matrix.length * 0.7, "most focused routes should expose history-shaped product effect");
   assert.ok(
-    historyRoutes.some((entry) => entry.path === "/v1/memory/experience/intelligence"),
-    "experience intelligence must expose history-shaped future behavior",
+    historyRoutes.some((entry) => entry.path === "/v1/measure"),
+    "measure facade must expose history-shaped future behavior",
   );
   assert.ok(
-    historyRoutes.some((entry) => entry.path === "/v1/memory/context/assemble"),
-    "context assembly must expose history-shaped future behavior",
+    historyRoutes.some((entry) => entry.path === "/v1/guide"),
+    "guide facade must expose history-shaped future behavior",
   );
   assert.ok(
-    historyRoutes.some((entry) => entry.path === "/v1/memory/kickoff/recommendation"),
-    "kickoff recommendation must expose history-shaped future behavior",
+    historyRoutes.some((entry) => entry.path === "/v1/forget"),
+    "forget facade must expose history-shaped future behavior",
   );
 });

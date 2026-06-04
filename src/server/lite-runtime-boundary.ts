@@ -22,26 +22,13 @@ export type LiteRouteProductExposure =
   | "internal_control"
   | "operator_support";
 
-export const LITE_ROUTE_CAPABILITY_MATRIX_VERSION = "lite_route_capability_matrix_v2";
+export const LITE_ROUTE_CAPABILITY_MATRIX_VERSION = "lite_route_capability_matrix_v3";
 
 const LITE_PRODUCT_ENTRY_ROUTES = new Set([
-  "POST /v1/memory/write",
-  "POST /v1/handoff/store",
-  "POST /v1/handoff/recover",
-  "POST /v1/memory/archive/rehydrate",
-  "POST /v1/memory/nodes/activate",
-  "POST /v1/memory/recall",
-  "POST /v1/memory/recall_text",
-  "POST /v1/memory/planning/context",
-  "POST /v1/memory/context/assemble",
-  "POST /v1/memory/delegation/records",
-  "POST /v1/memory/agent/resume-pack",
-  "POST /v1/memory/agent/handoff-pack",
-  "POST /v1/memory/experience/intelligence",
-  "POST /v1/memory/kickoff/recommendation",
-  "POST /v1/memory/anchors/rehydrate_payload",
-  "POST /v1/memory/patterns/suppress",
-  "POST /v1/memory/patterns/unsuppress",
+  "POST /v1/observe",
+  "POST /v1/guide",
+  "POST /v1/forget",
+  "POST /v1/measure",
 ]);
 
 const LITE_INTERNAL_GUIDANCE_ROUTES = new Set([
@@ -120,6 +107,42 @@ export const LITE_PRODUCT_BOUNDARY = {
 } as const;
 
 export const LITE_ROUTE_CAPABILITY_MATRIX = [
+  {
+    method: "POST",
+    path: "/v1/observe",
+    route_group: "product-facade",
+    capabilities: ["continuity", "learning"],
+    product_effects: ["history_shaped_future_behavior"],
+    surface_kind: "core_runtime",
+    product_role: "product facade for writing memory, execution evidence, and resumable handoff state",
+  },
+  {
+    method: "POST",
+    path: "/v1/guide",
+    route_group: "product-facade",
+    capabilities: ["continuity", "learning", "forgetting", "learning_control"],
+    product_effects: ["history_shaped_future_behavior"],
+    surface_kind: "core_runtime",
+    product_role: "product facade for compact MemoryPacket, GuidePacket, and LearningPacket output",
+  },
+  {
+    method: "POST",
+    path: "/v1/forget",
+    route_group: "product-facade",
+    capabilities: ["forgetting", "learning_control"],
+    product_effects: ["history_shaped_future_behavior"],
+    surface_kind: "core_runtime",
+    product_role: "product facade for suppression, activation, archive rehydration, and payload rehydration",
+  },
+  {
+    method: "POST",
+    path: "/v1/measure",
+    route_group: "product-facade",
+    capabilities: ["continuity", "learning", "forgetting", "learning_control"],
+    product_effects: ["history_shaped_future_behavior"],
+    surface_kind: "core_runtime",
+    product_role: "product facade for measuring whether history positively shaped future behavior",
+  },
   {
     method: "GET",
     path: "/v1/runtime/boundary-inventory",
@@ -654,6 +677,7 @@ export function buildLiteRouteMatrix() {
       product_exposure: classifyLiteRouteProductExposure(entry),
     })),
     kernel_required_routes: [
+      "product-facade",
       "memory-write",
       "memory-handoff",
       "memory-recall",

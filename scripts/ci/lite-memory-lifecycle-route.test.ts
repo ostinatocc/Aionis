@@ -48,7 +48,7 @@ async function seedLifecycleFixture(store: ReturnType<typeof createLiteWriteStor
         text_summary: "Apply this workflow when the export route fails",
         slots: {
           continuity_marker_v1: {
-            workflow_signature: "workflow:export-route-repair",
+            workflow_signature: "workflow:durable-validation-recovery",
             source: "lifecycle-route-fixture",
           },
           summary_kind: "workflow_anchor",
@@ -217,7 +217,7 @@ test("lite memory lifecycle routes can record activation feedback on nodes", asy
     assert.equal(rows[0]?.slots.last_feedback_outcome, "positive");
     assert.equal(rows[0]?.slots.last_feedback_run_id, "run-lifecycle-activate-1");
     assert.deepEqual(rows[0]?.slots.continuity_marker_v1, {
-      workflow_signature: "workflow:export-route-repair",
+      workflow_signature: "workflow:durable-validation-recovery",
       source: "lifecycle-route-fixture",
     });
     assert.equal(rows[0]?.slots.summary_kind, "workflow_anchor");

@@ -385,8 +385,8 @@ test("authority consumption helper demotes blocked authority to inspect-first gu
 
   const contract = buildExecutionContractFromProjection({
     contract_trust: "authoritative",
-    task_family: "task:repair_export",
-    workflow_signature: "execution_workflow:repair-export",
+    task_family: "task:workflow_validation_recovery",
+    workflow_signature: "execution_workflow:workflow-validation-recovery",
     selected_tool: "edit",
     file_path: "src/routes/export.ts",
     target_files: ["src/routes/export.ts"],

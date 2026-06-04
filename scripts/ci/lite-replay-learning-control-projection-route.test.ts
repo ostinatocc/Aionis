@@ -128,15 +128,15 @@ async function seedPendingReviewPlaybook(args: {
         {
           client_id: sourceClientId,
           type: "procedure",
-          title: "Fix export failure",
+          title: "Recover workflow validation failure",
           text_summary: "Replay playbook pending review",
           slots: {
             replay_kind: "playbook",
             playbook_id: args.playbookId,
-            name: "Fix export failure",
+            name: "Recover workflow validation failure",
             version: 1,
             status: "draft",
-            matchers: { task_kind: "repair_export" },
+            matchers: { task_kind: "workflow_validation_recovery" },
             success_criteria: { status: "success" },
             risk_profile: "medium",
             source_run_id: randomUUID(),
@@ -768,12 +768,12 @@ test("lite replay repair review writes workflow memory that planning_context con
       payload: {
         tenant_id: "default",
         scope: "default",
-        query_text: "repair export failure",
+        query_text: "recover workflow validation failure",
         context: {
-          task_kind: "repair_export",
-          goal: "repair export failure in node tests",
+          task_kind: "workflow_validation_recovery",
+          goal: "recover durable workflow from failed validation",
           error: {
-            signature: "node-export-mismatch",
+            signature: "workflow-validation-mismatch",
           },
         },
         tool_candidates: ["bash", "edit", "test"],
@@ -787,9 +787,9 @@ test("lite replay repair review writes workflow memory that planning_context con
     assert.equal(planningBody.planner_packet.sections.recommended_workflows.length, 0);
     assert.equal(planningBody.planner_packet.sections.candidate_workflows.length, 1);
     assert.equal(planningBody.workflow_signals.length, 1);
-    assert.equal(planningBody.workflow_signals[0]?.title, "Fix export failure");
+    assert.equal(planningBody.workflow_signals[0]?.title, "Recover workflow validation failure");
     assert.equal(planningBody.workflow_signals[0]?.promotion_state, "candidate");
-    assert.match(planningBody.planning_summary.planner_explanation, /candidate workflows visible but not yet promoted: Fix export failure/);
+    assert.match(planningBody.planning_summary.planner_explanation, /candidate workflows visible but not yet promoted: Recover workflow validation failure/);
   } finally {
     await app.close();
     await liteRecallStore.close();

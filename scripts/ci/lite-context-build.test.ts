@@ -19,7 +19,7 @@ test("buildContext prioritizes execution-native workflow procedures in topic tex
         id: workflowId,
         type: "procedure",
         tier: "warm",
-        title: "Fix export failure",
+        title: "Recover workflow validation failure",
         text_summary: "Inspect failing test and patch export",
         slots: {
           execution_native_v1: {
@@ -27,7 +27,7 @@ test("buildContext prioritizes execution-native workflow procedures in topic tex
             execution_kind: "workflow_anchor",
             summary_kind: "workflow_anchor",
             compression_layer: "L2",
-            task_signature: "repair-export-node-tests",
+            task_signature: "workflow-validation-recovery-node-tests",
             anchor_kind: "workflow",
             anchor_level: "L2",
           },
@@ -80,7 +80,7 @@ test("buildContext prioritizes execution-native workflow procedures in topic tex
   assert.equal(workflowItem?.anchor_kind, "workflow");
   assert.equal(workflowCitation?.execution_kind, "workflow_anchor");
   assert.equal(workflowCitation?.compression_layer, "L2");
-  assert.match(out.text, /workflow_anchor, level=L2, task=repair-export-node-tests/);
+  assert.match(out.text, /workflow_anchor, level=L2, task=workflow-validation-recovery-node-tests/);
   assert.equal(firstEvent?.execution_kind, "distilled_evidence");
   assert.equal(firstEvent?.summary_kind, "write_distillation_evidence");
   assert.equal(firstEvent?.compression_layer, "L1");

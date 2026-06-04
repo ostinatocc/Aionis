@@ -41,7 +41,7 @@ const layeredContextFixture = {
         anchor_id: "wf_123",
         uri: "aionis://default/default/procedure/wf_123",
         type: "procedure",
-        title: "Fix export failure",
+        title: "Recover workflow validation failure",
         summary: "Inspect failing test and patch export",
         anchor_level: "L2",
         source_kind: "playbook",
@@ -63,8 +63,8 @@ const layeredContextFixture = {
         anchor_id: "wf_candidate_1",
         uri: "aionis://default/default/event/wf_candidate_1",
         type: "event",
-        title: "Replay Episode: Fix export failure",
-        summary: "Replay repair learning episode for export failure",
+        title: "Replay Episode: Recover workflow validation failure",
+        summary: "Replay repair learning episode for validation failure",
         anchor_level: "L1",
         promotion_state: "candidate",
         source_kind: "playbook",
@@ -125,7 +125,7 @@ const layeredContextFixture = {
         anchor_uri: "aionis://default/default/procedure/wf_123",
         anchor_kind: "workflow",
         anchor_level: "L2",
-        title: "Fix export failure",
+        title: "Recover workflow validation failure",
         summary: "Inspect failing test and patch export",
         mode: "partial",
         payload_cost_hint: "medium",
@@ -184,7 +184,7 @@ const layeredContextFixture = {
     {
       anchor_id: "wf_123",
       anchor_level: "L2",
-      title: "Fix export failure",
+      title: "Recover workflow validation failure",
       summary: "Inspect failing test and patch export",
       promotion_state: "stable",
       promotion_ready: false,
@@ -200,8 +200,8 @@ const layeredContextFixture = {
     {
       anchor_id: "wf_candidate_1",
       anchor_level: "L1",
-      title: "Replay Episode: Fix export failure",
-      summary: "Replay repair learning episode for export failure",
+      title: "Replay Episode: Recover workflow validation failure",
+      summary: "Replay repair learning episode for validation failure",
       promotion_state: "candidate",
       promotion_ready: false,
       observed_count: 1,
@@ -275,7 +275,7 @@ test("contract trust steering requires explicit authoritative trust and outcome 
         teardown_notes: [],
       },
     ],
-    success_invariants: ["clean_client_install_succeeds"],
+    success_invariants: ["clean_consumer_install_succeeds"],
     must_hold_after_exit: ["service_survives_agent_exit:local package index"],
     external_visibility_requirements: ["endpoint_reachable:http://localhost:8080/simple/"],
     provenance: {
@@ -438,9 +438,9 @@ test("workflow signal summary separates stable, promotion-ready, and observing w
     stable_workflow_count: 1,
     promotion_ready_workflow_count: 0,
     observing_workflow_count: 1,
-    stable_workflow_titles: ["Fix export failure"],
+    stable_workflow_titles: ["Recover workflow validation failure"],
     promotion_ready_workflow_titles: [],
-    observing_workflow_titles: ["Replay Episode: Fix export failure"],
+    observing_workflow_titles: ["Replay Episode: Recover workflow validation failure"],
   });
 });
 
@@ -451,7 +451,7 @@ test("authority visibility summary exposes blocked authoritative workflow eviden
     surface_version: "runtime_authority_visibility_v1",
     node_id: "wf_candidate_1",
     node_kind: "workflow",
-    title: "Replay Episode: Fix export failure",
+    title: "Replay Episode: Recover workflow validation failure",
     requested_trust: "authoritative",
     effective_trust: "advisory",
     status: "insufficient",
@@ -627,9 +627,9 @@ test("buildPlanningSummary includes pattern trust totals and tool lists", () => 
     stable_workflow_count: 1,
     promotion_ready_workflow_count: 0,
     observing_workflow_count: 1,
-    stable_workflow_titles: ["Fix export failure"],
+    stable_workflow_titles: ["Recover workflow validation failure"],
     promotion_ready_workflow_titles: [],
-    observing_workflow_titles: ["Replay Episode: Fix export failure"],
+    observing_workflow_titles: ["Replay Episode: Recover workflow validation failure"],
   });
   assert.equal(summary.pattern_lifecycle_summary.candidate_count, 0);
   assert.equal(summary.pattern_lifecycle_summary.trusted_count, 1);
@@ -739,7 +739,7 @@ test("buildPlanningSummary includes pattern trust totals and tool lists", () => 
   });
   assert.equal(
     summary.planner_explanation,
-    "workflow guidance: Fix export failure; candidate workflows visible but not yet promoted: Replay Episode: Fix export failure; selected tool: edit; trusted pattern support: edit; contested patterns visible but not trusted: bash; rehydration available: Fix export failure; supporting knowledge appended: 1",
+    "workflow guidance: Recover workflow validation failure; candidate workflows visible but not yet promoted: Replay Episode: Recover workflow validation failure; selected tool: edit; trusted pattern support: edit; contested patterns visible but not trusted: bash; rehydration available: Recover workflow validation failure; supporting knowledge appended: 1",
   );
 });
 
@@ -850,7 +850,7 @@ test("buildPlanningSummary makes first-step and planner explanation uncertainty-
   });
   assert.equal(
     summary.planner_explanation,
-    "workflow guidance: Fix export failure; candidate workflows visible but not yet promoted: Replay Episode: Fix export failure; selected tool: edit; trusted pattern support: edit; contested patterns visible but not trusted: bash; rehydration available: Fix export failure; supporting knowledge appended: 1; action retrieval uncertainty: moderate; workflow guidance is still candidate-grade and has not stabilized yet; recommended follow-up: inspect_context",
+    "workflow guidance: Recover workflow validation failure; candidate workflows visible but not yet promoted: Replay Episode: Recover workflow validation failure; selected tool: edit; trusted pattern support: edit; contested patterns visible but not trusted: bash; rehydration available: Recover workflow validation failure; supporting knowledge appended: 1; action retrieval uncertainty: moderate; workflow guidance is still candidate-grade and has not stabilized yet; recommended follow-up: inspect_context",
   );
 });
 
@@ -1142,7 +1142,7 @@ test("buildPlanningSummary respects explicit advisory trust from persisted polic
         },
         path: {
           source_kind: "recommended_workflow",
-          workflow_signature: "fix-export-failure-workflow",
+          workflow_signature: "workflow-validation-recovery-workflow",
           file_path: "src/routes/export.ts",
           contract_trust: "advisory",
         },
@@ -1159,8 +1159,8 @@ test("buildPlanningSummary respects explicit advisory trust from persisted polic
         history_applied: true,
         selected_tool: "edit",
         avoid_tools: [],
-        task_family: "task:repair_export",
-        workflow_signature: "fix-export-failure-workflow",
+        task_family: "task:workflow_validation_recovery",
+        workflow_signature: "workflow-validation-recovery-workflow",
         file_path: "src/routes/export.ts",
         target_files: ["src/routes/export.ts"],
         next_action: "Patch src/routes/export.ts and rerun export tests.",
@@ -1213,8 +1213,8 @@ test("buildPlanningSummary respects explicit advisory trust from persisted polic
     },
     verification_repair_v1: null,
     selected_tool: "edit",
-    task_family: "task:repair_export",
-    workflow_signature: "fix-export-failure-workflow",
+    task_family: "task:workflow_validation_recovery",
+    workflow_signature: "workflow-validation-recovery-workflow",
     policy_memory_id: null,
     file_path: "src/routes/export.ts",
     next_action: "Patch src/routes/export.ts and rerun export tests.",
@@ -1224,8 +1224,8 @@ test("buildPlanningSummary respects explicit advisory trust from persisted polic
 test("buildPlanningSummary demotes blocked authoritative workflow to inspect-first first step", () => {
   const executionContract = buildExecutionContractFromProjection({
     contract_trust: "authoritative",
-    task_family: "task:repair_export",
-    workflow_signature: "fix-export-failure-workflow",
+    task_family: "task:workflow_validation_recovery",
+    workflow_signature: "workflow-validation-recovery-workflow",
     selected_tool: "edit",
     file_path: "src/routes/export.ts",
     target_files: ["src/routes/export.ts"],
@@ -1263,7 +1263,7 @@ test("buildPlanningSummary demotes blocked authoritative workflow to inspect-fir
         },
         path: {
           source_kind: "recommended_workflow",
-          workflow_signature: "fix-export-failure-workflow",
+          workflow_signature: "workflow-validation-recovery-workflow",
           file_path: "src/routes/export.ts",
           contract_trust: "authoritative",
           authority_blocked: true,
@@ -2159,7 +2159,7 @@ test("buildAssemblySummary carries pattern trust summary through from planning s
   assert.deepEqual(summary.action_packet_summary.rehydration_anchor_ids, ["wf_123"]);
   assert.equal(
     summary.planner_explanation,
-    "workflow guidance: Fix export failure; candidate workflows visible but not yet promoted: Replay Episode: Fix export failure; selected tool: edit; trusted pattern support: edit; contested patterns visible but not trusted: bash; rehydration available: Fix export failure; supporting knowledge appended: 1",
+    "workflow guidance: Recover workflow validation failure; candidate workflows visible but not yet promoted: Replay Episode: Recover workflow validation failure; selected tool: edit; trusted pattern support: edit; contested patterns visible but not trusted: bash; rehydration available: Recover workflow validation failure; supporting knowledge appended: 1",
   );
 });
 
@@ -2181,7 +2181,7 @@ test("buildPlanningSummary explains packet state even when no trusted pattern wa
   });
   assert.equal(
     summary.planner_explanation,
-    "workflow guidance: Fix export failure; candidate workflows visible but not yet promoted: Replay Episode: Fix export failure; selected tool: bash; trusted patterns available but not used: edit; contested patterns visible but not trusted: bash; rehydration available: Fix export failure; supporting knowledge appended: 1",
+    "workflow guidance: Recover workflow validation failure; candidate workflows visible but not yet promoted: Replay Episode: Recover workflow validation failure; selected tool: bash; trusted patterns available but not used: edit; contested patterns visible but not trusted: bash; rehydration available: Recover workflow validation failure; supporting knowledge appended: 1",
   );
 });
 
@@ -2213,13 +2213,13 @@ test("buildPlanningSummary surfaces promotion-ready workflow candidates ahead of
     stable_workflow_count: 1,
     promotion_ready_workflow_count: 1,
     observing_workflow_count: 0,
-    stable_workflow_titles: ["Fix export failure"],
-    promotion_ready_workflow_titles: ["Replay Episode: Fix export failure"],
+    stable_workflow_titles: ["Recover workflow validation failure"],
+    promotion_ready_workflow_titles: ["Replay Episode: Recover workflow validation failure"],
     observing_workflow_titles: [],
   });
   assert.equal(
     summary.planner_explanation,
-    "workflow guidance: Fix export failure; promotion-ready workflow candidates: Replay Episode: Fix export failure; selected tool: edit; trusted pattern support: edit; contested patterns visible but not trusted: bash; rehydration available: Fix export failure; supporting knowledge appended: 1",
+    "workflow guidance: Recover workflow validation failure; promotion-ready workflow candidates: Replay Episode: Recover workflow validation failure; selected tool: edit; trusted pattern support: edit; contested patterns visible but not trusted: bash; rehydration available: Recover workflow validation failure; supporting knowledge appended: 1",
   );
 });
 
@@ -2232,7 +2232,7 @@ test("buildPlanningSummary does not count failed-authority candidates as promoti
     surface_version: "runtime_authority_visibility_v1",
     node_id: "wf_candidate_1",
     node_kind: "workflow",
-    title: "Replay Episode: Fix export failure",
+    title: "Replay Episode: Recover workflow validation failure",
     requested_trust: "advisory",
     effective_trust: "advisory",
     status: "insufficient",
@@ -2278,12 +2278,12 @@ test("buildPlanningSummary does not count failed-authority candidates as promoti
     stable_workflow_count: 1,
     promotion_ready_workflow_count: 0,
     observing_workflow_count: 1,
-    stable_workflow_titles: ["Fix export failure"],
+    stable_workflow_titles: ["Recover workflow validation failure"],
     promotion_ready_workflow_titles: [],
-    observing_workflow_titles: ["Replay Episode: Fix export failure"],
+    observing_workflow_titles: ["Replay Episode: Recover workflow validation failure"],
   });
   assert.equal(
     summary.planner_explanation,
-    "workflow guidance: Fix export failure; candidate workflows visible but not yet promoted: Replay Episode: Fix export failure; selected tool: edit; trusted pattern support: edit; contested patterns visible but not trusted: bash; rehydration available: Fix export failure; supporting knowledge appended: 1; execution evidence failed: 1",
+    "workflow guidance: Recover workflow validation failure; candidate workflows visible but not yet promoted: Replay Episode: Recover workflow validation failure; selected tool: edit; trusted pattern support: edit; contested patterns visible but not trusted: bash; rehydration available: Recover workflow validation failure; supporting knowledge appended: 1; execution evidence failed: 1",
   );
 });

@@ -200,20 +200,19 @@ test("execution agent contract packet marks acceptance evidence read-only under 
   assert.ok(packet.action_discipline.allowed_work_surface.includes("validation:npm test -- tests/pricing/discount.test.mjs"));
 });
 
-test("execution agent contract packet separates package validation transport from service lifecycle", () => {
+test("execution agent contract packet separates external visibility checks from service lifecycle", () => {
   const contract = buildExecutionContractFromProjection({
     contract_trust: "authoritative",
-    task_family: "package_publish_validate",
-    target_files: ["scripts/build_index.py", "src/vectorops/__init__.py"],
-    next_action: "Fix the package artifact, payload, and simple-index outputs.",
+    task_family: "external_artifact_visibility",
+    target_files: ["scripts/build_artifact.mjs", "src/public-api.mjs"],
+    next_action: "Repair the artifact and API payload so declared external visibility checks pass.",
     acceptance_checks: [
-      "curl -fsS <fresh-shell-endpoint>/simple/vectorops/",
-      "pip install --index-url <fresh-shell-endpoint>/simple vectorops==0.1.0",
-      "python -c \"import vectorops; assert vectorops.ping() == 'vectorops-live'\"",
+      "curl -fsS <fresh-shell-endpoint>/artifact/index.json",
+      "node scripts/validate-external-artifact.mjs <fresh-shell-endpoint>",
     ],
     external_visibility_requirements: [
-      "package_install_visible_to_clean_client",
-      "installed_api_visible_to_clean_client",
+      "artifact_visible_to_clean_consumer",
+      "public_api_visible_to_clean_consumer",
     ],
     provenance: {
       source_kind: "trajectory_compile",
@@ -229,26 +228,29 @@ test("execution agent contract packet separates package validation transport fro
 
   assert.equal(packet.action_discipline.execution_mode, "contract_locked");
   assert.deepEqual(packet.contract.lifecycle_constraints, [
-    "package_install_visible_to_clean_client",
-    "installed_api_visible_to_clean_client",
+    "artifact_visible_to_clean_consumer",
+    "public_api_visible_to_clean_consumer",
   ]);
   assert.ok(packet.contract.validation_boundary.includes(
     "fresh_shell_endpoint_placeholder_is_verifier_owned_not_an_agent_discovery_target",
   ));
   assert.ok(packet.contract.validation_boundary.includes(
-    "package_index_http_server_is_validation_transport_not_product_service",
+    "external_visibility_probe_is_validation_boundary_not_runtime_authority",
   ));
   assert.ok(packet.contract.validation_boundary.includes(
-    "final_clean_client_fresh_shell_install_is_owned_by_external_verifier",
+    "do_not_manage_external_service_lifecycle_without_declared_constraint",
   ));
   assert.ok(packet.contract.authority_boundary.includes(
     "fresh_shell_endpoint_placeholder_must_not_trigger_endpoint_discovery",
+  ));
+  assert.ok(packet.contract.authority_boundary.includes(
+    "external_visibility_claim_requires_declared_probe_evidence",
   ));
   assert.ok(packet.action_discipline.prohibited_actions.includes(
     "do_not_discover_or_probe_random_fresh_shell_endpoints",
   ));
   assert.ok(packet.action_discipline.prohibited_actions.includes(
-    "do_not_treat_package_index_http_transport_as_service_lifecycle",
+    "do_not_claim_external_visibility_without_declared_probe_evidence",
   ));
   assert.ok(packet.action_discipline.stop_conditions.includes(
     "do_not_search_for_placeholder_fresh_shell_endpoint; external_verifier_owns_final_fresh_shell_probe",
@@ -257,15 +259,15 @@ test("execution agent contract packet separates package validation transport fro
   assert.match(markdown, /fresh_shell_endpoint_placeholder_is_verifier_owned_not_an_agent_discovery_target/);
 });
 
-test("execution agent contract packet separates deploy visibility from webserver lifecycle", () => {
+test("execution agent contract packet uses the same external visibility boundary for other task families", () => {
   const contract = buildExecutionContractFromProjection({
     contract_trust: "authoritative",
-    task_family: "git_deploy_webserver",
-    target_files: ["hooks/post-receive", "www/main/index.html", "site/index.html"],
-    next_action: "Repair hooks/post-receive so it publishes the deployed revision into www/main/index.html.",
+    task_family: "published_content_visibility",
+    target_files: ["src/publish-content.mjs", "public/index.html"],
+    next_action: "Repair the publication step so declared visible content matches the expected revision.",
     acceptance_checks: ["curl -fsS <fresh-shell-endpoint>/index.html"],
     external_visibility_requirements: [
-      "served_web_content_matches_deployed_revision",
+      "visible_content_matches_expected_revision",
     ],
     provenance: {
       source_kind: "trajectory_compile",
@@ -281,29 +283,29 @@ test("execution agent contract packet separates deploy visibility from webserver
 
   assert.equal(packet.action_discipline.execution_mode, "contract_locked");
   assert.deepEqual(packet.contract.lifecycle_constraints, [
-    "served_web_content_matches_deployed_revision",
+    "visible_content_matches_expected_revision",
   ]);
   assert.ok(packet.contract.validation_boundary.includes(
-    "served_web_endpoint_is_external_visibility_boundary",
+    "external_visibility_probe_is_validation_boundary_not_runtime_authority",
   ));
   assert.ok(packet.contract.validation_boundary.includes(
-    "git_or_hook_success_is_not_served_content_proof",
+    "internal_success_claim_is_not_external_visibility_proof",
   ));
   assert.ok(packet.contract.validation_boundary.includes(
-    "do_not_manage_webserver_lifecycle_without_declared_service_constraint",
+    "do_not_manage_external_service_lifecycle_without_declared_constraint",
   ));
   assert.ok(packet.contract.authority_boundary.includes(
-    "deploy_claim_requires_served_endpoint_content_match",
+    "external_visibility_claim_requires_declared_probe_evidence",
   ));
   assert.ok(packet.action_discipline.prohibited_actions.includes(
-    "do_not_claim_success_from_git_or_hook_exit_without_served_endpoint_probe",
+    "do_not_claim_external_visibility_without_declared_probe_evidence",
   ));
   assert.ok(packet.action_discipline.prohibited_actions.includes(
-    "do_not_restart_or_reconfigure_webserver_without_declared_lifecycle_target",
+    "do_not_start_or_reconfigure_external_service_without_declared_lifecycle_target",
   ));
   assert.ok(packet.action_discipline.stop_conditions.includes(
-    "after_served_endpoint_matches_deployed_revision_do_not_keep_reworking_hook_or_webserver",
+    "after_declared_external_visibility_probe_passes_do_not_keep_reworking_internal_surfaces",
   ));
   assert.match(markdown, /validation_boundary:/);
-  assert.match(markdown, /git_or_hook_success_is_not_served_content_proof/);
+  assert.match(markdown, /internal_success_claim_is_not_external_visibility_proof/);
 });

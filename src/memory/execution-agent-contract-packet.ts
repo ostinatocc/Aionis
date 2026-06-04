@@ -107,16 +107,12 @@ function lifecycleConstraints(contract: ExecutionContractV1): string[] {
   ], 32);
 }
 
-function isPackagePublishValidate(contract: ExecutionContractV1): boolean {
-  return contract.task_family === "package_publish_validate";
-}
-
-function isGitDeployWebserver(contract: ExecutionContractV1): boolean {
-  return contract.task_family === "git_deploy_webserver";
-}
-
 function acceptanceMentionsFreshShellPlaceholder(contract: ExecutionContractV1): boolean {
   return contract.outcome.acceptance_checks.some((check) => /<fresh-shell-endpoint>/i.test(check));
+}
+
+function requiresExternalVisibility(contract: ExecutionContractV1): boolean {
+  return contract.outcome.external_visibility_requirements.length > 0;
 }
 
 function hasServiceLifecycleConstraint(contract: ExecutionContractV1): boolean {
@@ -129,33 +125,19 @@ function hasServiceLifecycleConstraint(contract: ExecutionContractV1): boolean {
 }
 
 function validationBoundary(contract: ExecutionContractV1): string[] {
+  const externalVisibility = requiresExternalVisibility(contract);
   return uniqueStrings([
     acceptanceMentionsFreshShellPlaceholder(contract)
       ? "fresh_shell_endpoint_placeholder_is_verifier_owned_not_an_agent_discovery_target"
       : null,
-    isPackagePublishValidate(contract)
-      ? "package_index_http_server_is_validation_transport_not_product_service"
+    externalVisibility
+      ? "external_visibility_probe_is_validation_boundary_not_runtime_authority"
       : null,
-    isPackagePublishValidate(contract)
-      ? "agent_may_use_a_single_scoped_local_server_for_local_install_checks_when_needed"
+    externalVisibility && !hasServiceLifecycleConstraint(contract)
+      ? "do_not_manage_external_service_lifecycle_without_declared_constraint"
       : null,
-    isPackagePublishValidate(contract)
-      ? "do_not_require_package_index_transport_to_survive_agent_exit_without_service_lifecycle_constraint"
-      : null,
-    isPackagePublishValidate(contract)
-      ? "final_clean_client_fresh_shell_install_is_owned_by_external_verifier"
-      : null,
-    isGitDeployWebserver(contract)
-      ? "served_web_endpoint_is_external_visibility_boundary"
-      : null,
-    isGitDeployWebserver(contract)
-      ? "git_or_hook_success_is_not_served_content_proof"
-      : null,
-    isGitDeployWebserver(contract)
-      ? "publish_root_file_presence_is_not_served_content_proof"
-      : null,
-    isGitDeployWebserver(contract) && !hasServiceLifecycleConstraint(contract)
-      ? "do_not_manage_webserver_lifecycle_without_declared_service_constraint"
+    externalVisibility
+      ? "internal_success_claim_is_not_external_visibility_proof"
       : null,
   ], 16);
 }
@@ -177,8 +159,8 @@ function authorityBoundary(contract: ExecutionContractV1): string[] {
     acceptanceMentionsFreshShellPlaceholder(contract)
       ? "fresh_shell_endpoint_placeholder_must_not_trigger_endpoint_discovery"
       : null,
-    isGitDeployWebserver(contract)
-      ? "deploy_claim_requires_served_endpoint_content_match"
+    requiresExternalVisibility(contract)
+      ? "external_visibility_claim_requires_declared_probe_evidence"
       : null,
   ], 16);
 }
@@ -215,6 +197,7 @@ function buildActionDiscipline(contract: ExecutionContractV1): ExecutionAgentCon
     && Boolean(contract.next_action)
     && contract.outcome.acceptance_checks.length > 0;
   const contractLocked = contract.contract_trust === "authoritative" && compactComplete;
+  const externalVisibility = requiresExternalVisibility(contract);
   const acceptanceEvidenceFiles = contract.target_files.filter((file) =>
     /(^|\/)(tests?|spec|__tests__)\//i.test(file) || /\.(test|spec)\.[cm]?[jt]sx?$/i.test(file)
   );
@@ -238,17 +221,11 @@ function buildActionDiscipline(contract: ExecutionContractV1): ExecutionAgentCon
       acceptanceMentionsFreshShellPlaceholder(contract)
         ? "do_not_discover_or_probe_random_fresh_shell_endpoints"
         : null,
-      isPackagePublishValidate(contract)
-        ? "do_not_treat_package_index_http_transport_as_service_lifecycle"
+      externalVisibility
+        ? "do_not_claim_external_visibility_without_declared_probe_evidence"
         : null,
-      isPackagePublishValidate(contract)
-        ? "do_not_retry_background_package_index_servers_without_new_bind_or_log_evidence"
-        : null,
-      isGitDeployWebserver(contract)
-        ? "do_not_claim_success_from_git_or_hook_exit_without_served_endpoint_probe"
-        : null,
-      isGitDeployWebserver(contract) && !hasServiceLifecycleConstraint(contract)
-        ? "do_not_restart_or_reconfigure_webserver_without_declared_lifecycle_target"
+      externalVisibility && !hasServiceLifecycleConstraint(contract)
+        ? "do_not_start_or_reconfigure_external_service_without_declared_lifecycle_target"
         : null,
       acceptanceEvidenceFiles.length > 0 ? `do_not_edit_acceptance_evidence:${acceptanceEvidenceFiles.join(",")}` : null,
     ], 16),
@@ -259,11 +236,8 @@ function buildActionDiscipline(contract: ExecutionContractV1): ExecutionAgentCon
       acceptanceMentionsFreshShellPlaceholder(contract)
         ? "do_not_search_for_placeholder_fresh_shell_endpoint; external_verifier_owns_final_fresh_shell_probe"
         : null,
-      isPackagePublishValidate(contract)
-        ? "after_package_artifact_index_and_installed_api_are_correct_do_not_keep_validation_transport_alive"
-        : null,
-      isGitDeployWebserver(contract)
-        ? "after_served_endpoint_matches_deployed_revision_do_not_keep_reworking_hook_or_webserver"
+      externalVisibility
+        ? "after_declared_external_visibility_probe_passes_do_not_keep_reworking_internal_surfaces"
         : null,
       "do_not_run_external_verifier_runner_from_inside_agent_attempt",
     ], 8),

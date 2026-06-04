@@ -68,7 +68,7 @@ test("workflow write projection accepts packet-only continuity and derives deter
         state_id: "state-1",
         current_stage: "patch",
         active_role: "patch",
-        task_brief: "Fix export failure in node tests",
+        task_brief: "Recover durable workflow from failed validation",
         target_files: ["src/routes/export.ts"],
         next_action: "Patch src/routes/export.ts and rerun export tests",
         hard_constraints: [],
@@ -92,7 +92,7 @@ test("workflow write projection accepts packet-only continuity and derives deter
 
   assert.equal(assessed.eligible, true);
   if (!assessed.eligible) return;
-  assert.equal(assessed.packet?.task_brief, "Fix export failure in node tests");
+  assert.equal(assessed.packet?.task_brief, "Recover durable workflow from failed validation");
   assert.equal(assessed.state, null);
   assert.match(assessed.workflowSignature, /^execution_workflow:/);
   assert.equal(
@@ -110,7 +110,7 @@ test("workflow write projection accepts lightweight handoff-style continuity whe
     memory_lane: "private",
     owner_agent_id: "local-user",
     title: "Export repair handoff",
-    text_summary: "Fix export failure in node tests",
+    text_summary: "Recover durable workflow from failed validation",
     slots: {
       summary_kind: "handoff",
       handoff_kind: "patch_handoff",
@@ -126,7 +126,7 @@ test("workflow write projection accepts lightweight handoff-style continuity whe
   assert.equal(assessed.eligible, true);
   if (!assessed.eligible) return;
   assert.equal(assessed.state, null);
-  assert.equal(assessed.packet?.task_brief, "Fix export failure in node tests");
+  assert.equal(assessed.packet?.task_brief, "Recover durable workflow from failed validation");
   assert.deepEqual(assessed.packet?.target_files, ["src/routes/export.ts"]);
   assert.match(assessed.workflowSignature, /^execution_workflow:/);
   assert.equal(
@@ -147,7 +147,7 @@ test("workflow write projection keeps equivalent packet and lightweight handoff 
         state_id: "state-1",
         current_stage: "patch",
         active_role: "patch",
-        task_brief: "Fix export failure in node tests",
+        task_brief: "Recover durable workflow from failed validation",
         target_files: ["src/routes/export.ts"],
         next_action: "Patch src/routes/export.ts and rerun export tests",
         hard_constraints: [],
@@ -174,7 +174,7 @@ test("workflow write projection keeps equivalent packet and lightweight handoff 
     type: "event",
     memory_lane: "private",
     title: "Export repair handoff",
-    text_summary: "Fix export failure in node tests",
+    text_summary: "Recover durable workflow from failed validation",
     slots: {
       summary_kind: "handoff",
       handoff_kind: "patch_handoff",
@@ -200,7 +200,7 @@ test("workflow write projection rejects lightweight handoff-style continuity whe
     type: "event",
     memory_lane: "private",
     title: "Task-only handoff",
-    text_summary: "Fix export failure in node tests",
+    text_summary: "Recover durable workflow from failed validation",
     slots: {
       summary_kind: "handoff",
       handoff_kind: "patch_handoff",
@@ -265,7 +265,7 @@ test("workflow write projection explain treats linked source provenance as alrea
           state_id: "state-1",
           current_stage: "patch",
           active_role: "patch",
-          task_brief: "Fix export failure in node tests",
+          task_brief: "Recover durable workflow from failed validation",
           target_files: ["src/routes/export.ts"],
           next_action: "Patch src/routes/export.ts and rerun export tests",
           hard_constraints: [],

@@ -1215,13 +1215,13 @@ function buildRequestGuards() {
 async function seedContextRuntimeFixture(dbPath: string) {
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
-  const queryText = "repair export failure in node tests";
+  const queryText = "recover durable workflow from failed validation";
   const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed([queryText]);
   const workflowAnchor = MemoryAnchorV1Schema.parse({
     anchor_kind: "workflow",
     anchor_level: "L2",
-    task_signature: "repair-export-node-tests",
-    workflow_signature: "fix-export-failure-workflow",
+    task_signature: "workflow-validation-recovery-node-tests",
+    workflow_signature: "workflow-validation-recovery-workflow",
     summary: "Inspect failing test and patch export",
     tool_set: ["edit", "test"],
     outcome: {
@@ -1267,10 +1267,10 @@ async function seedContextRuntimeFixture(dbPath: string) {
     anchor_kind: "pattern",
     anchor_level: "L3",
     pattern_state: "stable",
-    task_signature: "tools_select:repair-export",
+    task_signature: "tools_select:workflow-validation-recovery",
     task_class: "tools_select_pattern",
-    task_family: "task:repair_export",
-    error_family: "error:node-export-mismatch",
+    task_family: "task:workflow_validation_recovery",
+    error_family: "error:workflow-validation-mismatch",
     pattern_signature: "stable-edit-pattern",
     summary: "Stable pattern: prefer edit for export repair after repeated successful runs.",
     tool_set: ["bash", "edit", "test"],
@@ -1323,7 +1323,7 @@ async function seedContextRuntimeFixture(dbPath: string) {
         {
           id: randomUUID(),
           type: "procedure",
-          title: "Fix export failure",
+          title: "Recover workflow validation failure",
           text_summary: workflowAnchor.summary,
           slots: {
             summary_kind: "workflow_anchor",
@@ -1339,8 +1339,8 @@ async function seedContextRuntimeFixture(dbPath: string) {
         {
           id: randomUUID(),
           type: "event",
-          title: "Replay Episode: Fix export failure",
-          text_summary: "Replay repair learning episode for export failure",
+          title: "Replay Episode: Recover workflow validation failure",
+          text_summary: "Replay repair learning episode for validation failure",
           slots: {
             summary_kind: "workflow_candidate",
             compression_layer: "L1",
@@ -1349,7 +1349,7 @@ async function seedContextRuntimeFixture(dbPath: string) {
               execution_kind: "workflow_candidate",
               summary_kind: "workflow_candidate",
               compression_layer: "L1",
-              task_signature: "repair-export-node-tests",
+              task_signature: "workflow-validation-recovery-node-tests",
               workflow_signature: "replay-learning-candidate-export-fix",
               anchor_kind: "workflow",
               anchor_level: "L1",
@@ -1380,8 +1380,8 @@ async function seedContextRuntimeFixture(dbPath: string) {
         {
           id: randomUUID(),
           type: "event",
-          title: "Replay Episode: Fix export failure",
-          text_summary: "Replay repair learning episode for export failure",
+          title: "Replay Episode: Recover workflow validation failure",
+          text_summary: "Replay repair learning episode for validation failure",
           slots: {
             summary_kind: "workflow_candidate",
             compression_layer: "L1",
@@ -1390,7 +1390,7 @@ async function seedContextRuntimeFixture(dbPath: string) {
               execution_kind: "workflow_candidate",
               summary_kind: "workflow_candidate",
               compression_layer: "L1",
-              task_signature: "repair-export-node-tests",
+              task_signature: "workflow-validation-recovery-node-tests",
               workflow_signature: "replay-learning-candidate-export-fix",
               anchor_kind: "workflow",
               anchor_level: "L1",
@@ -1435,13 +1435,13 @@ async function seedContextRuntimeFixture(dbPath: string) {
           confidence: 0.88,
         },
         {
-          client_id: "rule:prefer-edit:repair-export",
+          client_id: "rule:prefer-edit:workflow-validation-recovery",
           type: "rule",
           title: "Prefer edit for export repair",
-          text_summary: "For repair_export tasks, prefer edit over the other tools.",
+          text_summary: "For workflow_validation_recovery tasks, prefer edit over the other tools.",
           slots: {
             if: {
-              task_kind: { $eq: "repair_export" },
+              task_kind: { $eq: "workflow_validation_recovery" },
             },
             then: {
               tool: {
@@ -1507,13 +1507,13 @@ async function seedContextRuntimeFixture(dbPath: string) {
 async function seedPrivateWorkflowFixture(dbPath: string) {
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
-  const queryText = "repair export failure in node tests";
+  const queryText = "recover durable workflow from failed validation";
   const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed([queryText]);
   const workflowAnchor = MemoryAnchorV1Schema.parse({
     anchor_kind: "workflow",
     anchor_level: "L2",
-    task_signature: "repair-export-node-tests",
-    error_signature: "node-export-mismatch",
+    task_signature: "workflow-validation-recovery-node-tests",
+    error_signature: "workflow-validation-mismatch",
     workflow_signature: "private-export-fix-workflow",
     summary: "Inspect failing export test, patch the export, rerun the focused test.",
     tool_set: ["edit", "test"],
@@ -1573,7 +1573,7 @@ async function seedPrivateWorkflowFixture(dbPath: string) {
         {
           id: randomUUID(),
           type: "procedure",
-          title: "Fix export failure",
+          title: "Recover workflow validation failure",
           text_summary: workflowAnchor.summary,
           text: queryText,
           slots: {
@@ -1616,7 +1616,7 @@ async function seedPrivateWorkflowFixture(dbPath: string) {
 async function seedExecutionNativeOnlyPrivateWorkflowFixture(dbPath: string) {
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
-  const queryText = "repair export failure in node tests";
+  const queryText = "recover durable workflow from failed validation";
   const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed([queryText]);
 
   const prepared = await prepareMemoryWrite(
@@ -1633,8 +1633,8 @@ async function seedExecutionNativeOnlyPrivateWorkflowFixture(dbPath: string) {
         {
           id: randomUUID(),
           type: "procedure",
-          title: "Fix export failure",
-          text_summary: "Reusable repair workflow for export failure",
+          title: "Recover workflow validation failure",
+          text_summary: "Reusable repair workflow for validation failure",
           text: queryText,
           slots: {
             summary_kind: "workflow_anchor",
@@ -1644,7 +1644,7 @@ async function seedExecutionNativeOnlyPrivateWorkflowFixture(dbPath: string) {
               execution_kind: "workflow_anchor",
               summary_kind: "workflow_anchor",
               compression_layer: "L2",
-              task_signature: "repair-export-node-tests",
+              task_signature: "workflow-validation-recovery-node-tests",
               workflow_signature: "execution-native-only-export-fix",
               anchor_kind: "workflow",
               anchor_level: "L2",
@@ -1827,7 +1827,7 @@ test("recall_text returns product MemoryPacket on the public route", async () =>
       payload: {
         tenant_id: "default",
         scope: "default",
-        query_text: "repair export failure in node tests",
+        query_text: "recover durable workflow from failed validation",
         limit: 5,
         max_nodes: 10,
         max_edges: 10,
@@ -1864,12 +1864,12 @@ test("planning_context returns aligned planner packet, action packet summary, an
       payload: {
         tenant_id: "default",
         scope: "default",
-        query_text: "repair export failure in node tests",
+        query_text: "recover durable workflow from failed validation",
         context: {
-          task_kind: "repair_export",
-          goal: "repair export failure in node tests",
+          task_kind: "workflow_validation_recovery",
+          goal: "recover durable workflow from failed validation",
           error: {
-            signature: "node-export-mismatch",
+            signature: "workflow-validation-mismatch",
           },
         },
         tool_candidates: ["bash", "edit", "test"],
@@ -1888,13 +1888,13 @@ test("planning_context returns aligned planner packet, action packet summary, an
     assert.equal(planningFirstStep?.contract_trust, "advisory");
     assert.equal(planningFirstStep?.selected_tool, body.planning_summary.selected_tool);
     assert.equal(planningFirstStep?.task_family ?? null, null);
-    assert.equal(planningFirstStep?.workflow_signature, "fix-export-failure-workflow");
+    assert.equal(planningFirstStep?.workflow_signature, "workflow-validation-recovery-workflow");
     assert.equal(planningFirstStep?.policy_memory_id ?? null, null);
     assert.equal(planningFirstStep?.file_path ?? null, null);
     assert.equal(planningFirstStep?.next_action, "Inspect the current context before starting with edit.");
     assert.equal(planningFirstStep?.execution_contract_v1?.schema_version, "execution_contract_v1");
     assert.equal(planningFirstStep?.execution_contract_v1?.selected_tool, body.planning_summary.selected_tool);
-    assert.equal(planningFirstStep?.execution_contract_v1?.workflow_signature, "fix-export-failure-workflow");
+    assert.equal(planningFirstStep?.execution_contract_v1?.workflow_signature, "workflow-validation-recovery-workflow");
     assert.equal(body.planning_summary.action_retrieval_uncertainty?.summary_version, "action_retrieval_uncertainty_v1");
     assert.ok(body.planning_summary.action_retrieval_uncertainty?.recommended_actions.includes("inspect_context"));
     const planningActionRetrievalGate = body.planning_summary.action_retrieval_gate;
@@ -2038,11 +2038,11 @@ test("planning_context returns aligned planner packet, action packet summary, an
     assert.equal(body.execution_kernel.pattern_maintenance_summary.retain_count, body.planner_packet.sections.trusted_patterns.length);
     assert.equal(body.execution_kernel.pattern_maintenance_summary.observe_count, body.planner_packet.sections.candidate_patterns.length);
     assert.equal(body.execution_kernel.pattern_maintenance_summary.review_count, body.planner_packet.sections.contested_patterns.length);
-    assert.match(body.planning_summary.planner_explanation, /workflow guidance: Fix export failure/);
-    assert.match(body.planning_summary.planner_explanation, /promotion-ready workflow candidates: Replay Episode: Fix export failure/);
+    assert.match(body.planning_summary.planner_explanation, /workflow guidance: Recover workflow validation failure/);
+    assert.match(body.planning_summary.planner_explanation, /promotion-ready workflow candidates: Replay Episode: Recover workflow validation failure/);
     assert.match(body.planning_summary.planner_explanation, /selected tool: edit/);
     assert.match(body.planning_summary.planner_explanation, /trusted patterns available but not used: edit/);
-    assert.match(body.planning_summary.planner_explanation, /rehydration available: Fix export failure/);
+    assert.match(body.planning_summary.planner_explanation, /rehydration available: Recover workflow validation failure/);
     assert.match(body.planning_summary.planner_explanation, new RegExp(`supporting knowledge appended: ${body.planner_packet.sections.supporting_knowledge.length}`));
     assert.equal(body.tools.selection_summary.provenance_explanation, "selected tool: edit; candidate patterns visible but not yet trusted: edit");
   } finally {
@@ -2064,10 +2064,10 @@ test("planning_context applies runtime entropy recall defaults when recall knobs
       payload: {
         tenant_id: "default",
         scope: "default",
-        query_text: "repair export failure in node tests",
+        query_text: "recover durable workflow from failed validation",
         context: {
-          task_kind: "repair_export",
-          goal: "repair export failure in node tests",
+          task_kind: "workflow_validation_recovery",
+          goal: "recover durable workflow from failed validation",
         },
         tool_candidates: ["bash", "edit", "test"],
         runtime_entropy_controls: runtimeEntropyControlsFixture(),
@@ -2106,7 +2106,7 @@ test("planning_context prefers persisted delegation records matched by run_id", 
         actor: "review-worker",
         run_id: runId,
         route_role: "review",
-        task_family: "task:repair_export",
+        task_family: "task:workflow_validation_recovery",
         delegation_records_v1: {
           summary_version: "execution_delegation_records_v1",
           record_mode: "packet_backed",
@@ -2126,7 +2126,7 @@ test("planning_context prefers persisted delegation records matched by run_id", 
               preferred_artifact_refs: ["artifact://patch/export.diff"],
               inherited_evidence: ["evidence://tests/export.log"],
               routing_reason: "Persisted from the review handoff for the same run.",
-              task_family: "task:repair_export",
+              task_family: "task:workflow_validation_recovery",
               family_scope: "default",
               source_mode: "packet_backed",
             },
@@ -2151,7 +2151,7 @@ test("planning_context prefers persisted delegation records matched by run_id", 
               route_role: "review",
               route_intent: "review",
               route_mode: "packet_backed",
-              task_family: "task:repair_export",
+              task_family: "task:workflow_validation_recovery",
               family_scope: "default",
               routing_reason: "Carry the patch diff into the review step.",
               source: "execution_packet",
@@ -2163,7 +2163,7 @@ test("planning_context prefers persisted delegation records matched by run_id", 
               route_role: "review",
               route_intent: "review",
               route_mode: "packet_backed",
-              task_family: "task:repair_export",
+              task_family: "task:workflow_validation_recovery",
               family_scope: "default",
               routing_reason: "Carry the validation evidence into the review step.",
               source: "execution_packet",
@@ -2183,12 +2183,12 @@ test("planning_context prefers persisted delegation records matched by run_id", 
         tenant_id: "default",
         scope: "default",
         run_id: runId,
-        query_text: "repair export failure in node tests",
+        query_text: "recover durable workflow from failed validation",
         context: {
-          task_kind: "repair_export",
-          goal: "repair export failure in node tests",
+          task_kind: "workflow_validation_recovery",
+          goal: "recover durable workflow from failed validation",
           error: {
-            signature: "node-export-mismatch",
+            signature: "workflow-validation-mismatch",
           },
         },
         tool_candidates: ["bash", "edit", "test"],
@@ -2236,7 +2236,7 @@ test("planning_context debug layered_context projects delegation learning withou
         scope: "default",
         run_id: "run:context-export-001",
         route_role: "patch",
-        task_family: "task:repair_export",
+        task_family: "task:workflow_validation_recovery",
         delegation_records_v1: {
           summary_version: "execution_delegation_records_v1",
           record_mode: "packet_backed",
@@ -2248,15 +2248,15 @@ test("planning_context debug layered_context projects delegation learning withou
           delegation_packets: [{
             version: 1,
             role: "patch",
-            mission: "Apply the export repair patch and rerun node tests.",
+            mission: "Apply the validated workflow change and rerun required checks.",
             working_set: ["src/routes/export.ts"],
             acceptance_checks: ["npm run -s test:lite -- export"],
             output_contract: "Return patch result and final node test status.",
-            preferred_artifact_refs: ["artifact://repair-export/patch"],
-            inherited_evidence: ["evidence://repair-export/failure"],
+            preferred_artifact_refs: ["artifact://workflow-validation-recovery/patch"],
+            inherited_evidence: ["evidence://workflow-validation-recovery/failure"],
             routing_reason: "repair patch route",
-            task_family: "task:repair_export",
-            family_scope: "aionis://runtime/repair-export",
+            task_family: "task:workflow_validation_recovery",
+            family_scope: "aionis://runtime/workflow-validation-recovery",
             source_mode: "packet_backed",
           }],
           delegation_returns: [{
@@ -2264,31 +2264,31 @@ test("planning_context debug layered_context projects delegation learning withou
             role: "patch",
             status: "passed",
             summary: "Patch applied and export tests passed.",
-            evidence: ["evidence://repair-export/test"],
+            evidence: ["evidence://workflow-validation-recovery/test"],
             working_set: ["src/routes/export.ts"],
             acceptance_checks: ["npm run -s test:lite -- export"],
             source_mode: "packet_backed",
           }],
           artifact_routing_records: [{
             version: 1,
-            ref: "artifact://repair-export/patch",
+            ref: "artifact://workflow-validation-recovery/patch",
             ref_kind: "artifact",
             route_role: "patch",
             route_intent: "patch",
             route_mode: "packet_backed",
-            task_family: "task:repair_export",
-            family_scope: "aionis://runtime/repair-export",
+            task_family: "task:workflow_validation_recovery",
+            family_scope: "aionis://runtime/workflow-validation-recovery",
             routing_reason: "patch artifact route",
             source: "execution_packet",
           }, {
             version: 1,
-            ref: "evidence://repair-export/test",
+            ref: "evidence://workflow-validation-recovery/test",
             ref_kind: "evidence",
             route_role: "patch",
             route_intent: "patch",
             route_mode: "packet_backed",
-            task_family: "task:repair_export",
-            family_scope: "aionis://runtime/repair-export",
+            task_family: "task:workflow_validation_recovery",
+            family_scope: "aionis://runtime/workflow-validation-recovery",
             routing_reason: "patch evidence route",
             source: "execution_packet",
           }],
@@ -2297,8 +2297,8 @@ test("planning_context debug layered_context projects delegation learning withou
           status: "passed",
           summary: "Patch applied and export tests passed.",
         },
-        execution_artifacts: [{ ref: "artifact://repair-export/patch" }],
-        execution_evidence: [{ ref: "evidence://repair-export/test" }],
+        execution_artifacts: [{ ref: "artifact://workflow-validation-recovery/patch" }],
+        execution_evidence: [{ ref: "evidence://workflow-validation-recovery/test" }],
       },
       {
         tenant_id: "default",
@@ -2306,7 +2306,7 @@ test("planning_context debug layered_context projects delegation learning withou
         memory_lane: "private",
         run_id: "run:context-export-002",
         route_role: "patch",
-        task_family: "task:repair_export",
+        task_family: "task:workflow_validation_recovery",
         delegation_records_v1: {
           summary_version: "execution_delegation_records_v1",
           record_mode: "memory_only",
@@ -2322,23 +2322,23 @@ test("planning_context debug layered_context projects delegation learning withou
             working_set: ["src/routes/export.ts"],
             acceptance_checks: ["npm run -s test:lite -- export"],
             output_contract: "Return applied patch metadata.",
-            preferred_artifact_refs: ["artifact://repair-export/recovery-patch"],
+            preferred_artifact_refs: ["artifact://workflow-validation-recovery/recovery-patch"],
             inherited_evidence: [],
             routing_reason: "recovery memory patch route",
-            task_family: "task:repair_export",
-            family_scope: "aionis://runtime/repair-export",
+            task_family: "task:workflow_validation_recovery",
+            family_scope: "aionis://runtime/workflow-validation-recovery",
             source_mode: "memory_only",
           }],
           delegation_returns: [],
           artifact_routing_records: [{
             version: 1,
-            ref: "artifact://repair-export/recovery-patch",
+            ref: "artifact://workflow-validation-recovery/recovery-patch",
             ref_kind: "artifact",
             route_role: "patch",
             route_intent: "memory_guided",
             route_mode: "memory_only",
-            task_family: "task:repair_export",
-            family_scope: "aionis://runtime/repair-export",
+            task_family: "task:workflow_validation_recovery",
+            family_scope: "aionis://runtime/workflow-validation-recovery",
             routing_reason: "memory-guided patch route",
             source: "strategy_summary",
           }],
@@ -2359,12 +2359,12 @@ test("planning_context debug layered_context projects delegation learning withou
       payload: {
         tenant_id: "default",
         scope: "default",
-        query_text: "repair export failure in node tests",
+        query_text: "recover durable workflow from failed validation",
         context: {
-          task_kind: "repair_export",
-          goal: "repair export failure in node tests",
+          task_kind: "workflow_validation_recovery",
+          goal: "recover durable workflow from failed validation",
           error: {
-            signature: "node-export-mismatch",
+            signature: "workflow-validation-mismatch",
           },
         },
         tool_candidates: ["bash", "edit", "test"],
@@ -2379,7 +2379,7 @@ test("planning_context debug layered_context projects delegation learning withou
     assert.ok("operator_projection" in body);
     assert.ok(!("first_step_recommendation" in body), "debug planning_context should still avoid the stale top-level first_step_recommendation mirror");
     assertDelegationLearningProjection(body, {
-      task_family: "task:repair_export",
+      task_family: "task:workflow_validation_recovery",
       matched_records: 2,
       truncated: false,
       route_role_counts: {
@@ -2393,7 +2393,7 @@ test("planning_context debug layered_context projects delegation learning withou
       recommendation_kinds: ["capture_missing_returns", "increase_artifact_capture", "promote_reusable_pattern"],
     });
     assertOperatorDelegationLearningProjection(body, {
-      task_family: "task:repair_export",
+      task_family: "task:workflow_validation_recovery",
       matched_records: 2,
       truncated: false,
       route_role_counts: {
@@ -2415,7 +2415,7 @@ test("planning_context debug layered_context projects delegation learning withou
       selected_tool: "edit",
       file_path: null,
       task_family: null,
-      workflow_signature: "fix-export-failure-workflow",
+      workflow_signature: "workflow-validation-recovery-workflow",
       policy_memory_id: null,
     });
   } finally {
@@ -2437,12 +2437,12 @@ test("planning_context surfaces collaboration summary from execution packet and 
       payload: {
         tenant_id: "default",
         scope: "default",
-        query_text: "repair export failure in node tests",
+        query_text: "recover durable workflow from failed validation",
         context: {
-          task_kind: "repair_export",
-          goal: "repair export failure in node tests",
+          task_kind: "workflow_validation_recovery",
+          goal: "recover durable workflow from failed validation",
           error: {
-            signature: "node-export-mismatch",
+            signature: "workflow-validation-mismatch",
           },
         },
         tool_candidates: ["bash", "edit", "test"],
@@ -2684,12 +2684,12 @@ test("planning_context defaults the local consumer identity so private workflow 
       payload: {
         tenant_id: "default",
         scope: "default",
-        query_text: "repair export failure in node tests",
+        query_text: "recover durable workflow from failed validation",
         context: {
-          task_kind: "repair_export",
-          goal: "repair export failure in node tests",
+          task_kind: "workflow_validation_recovery",
+          goal: "recover durable workflow from failed validation",
           error: {
-            signature: "node-export-mismatch",
+            signature: "workflow-validation-mismatch",
           },
         },
         tool_candidates: ["bash", "edit", "test"],
@@ -2702,7 +2702,7 @@ test("planning_context defaults the local consumer identity so private workflow 
     assert.equal(body.planner_packet.sections.recommended_workflows.length, 1);
     assert.equal(body.workflow_signals.length, 1);
     assert.equal(body.workflow_signals[0]?.promotion_state, "stable");
-    assert.match(body.planning_summary.planner_explanation, /workflow guidance: Fix export failure/);
+    assert.match(body.planning_summary.planner_explanation, /workflow guidance: Recover workflow validation failure/);
   } finally {
     await app.close();
     await liteRecallStore.close();
@@ -2722,12 +2722,12 @@ test("planning_context recommended workflow lines keep source and tools for exec
       payload: {
         tenant_id: "default",
         scope: "default",
-        query_text: "repair export failure in node tests",
+        query_text: "recover durable workflow from failed validation",
         context: {
-          task_kind: "repair_export",
-          goal: "repair export failure in node tests",
+          task_kind: "workflow_validation_recovery",
+          goal: "recover durable workflow from failed validation",
           error: {
-            signature: "node-export-mismatch",
+            signature: "workflow-validation-mismatch",
           },
         },
         tool_candidates: ["bash", "edit", "test"],
@@ -2759,12 +2759,12 @@ test("context_assemble returns aligned planner packet, assembly summary, and exe
       payload: {
         tenant_id: "default",
         scope: "default",
-        query_text: "repair export failure in node tests",
+        query_text: "recover durable workflow from failed validation",
         context: {
-          task_kind: "repair_export",
-          goal: "repair export failure in node tests",
+          task_kind: "workflow_validation_recovery",
+          goal: "recover durable workflow from failed validation",
           error: {
-            signature: "node-export-mismatch",
+            signature: "workflow-validation-mismatch",
           },
         },
         include_rules: true,
@@ -2784,13 +2784,13 @@ test("context_assemble returns aligned planner packet, assembly summary, and exe
     assert.equal(assemblyFirstStep?.contract_trust, "advisory");
     assert.equal(assemblyFirstStep?.selected_tool, body.assembly_summary.selected_tool);
     assert.equal(assemblyFirstStep?.task_family ?? null, null);
-    assert.equal(assemblyFirstStep?.workflow_signature, "fix-export-failure-workflow");
+    assert.equal(assemblyFirstStep?.workflow_signature, "workflow-validation-recovery-workflow");
     assert.equal(assemblyFirstStep?.policy_memory_id ?? null, null);
     assert.equal(assemblyFirstStep?.file_path ?? null, null);
     assert.equal(assemblyFirstStep?.next_action, "Inspect the current context before starting with edit.");
     assert.equal(assemblyFirstStep?.execution_contract_v1?.schema_version, "execution_contract_v1");
     assert.equal(assemblyFirstStep?.execution_contract_v1?.selected_tool, body.assembly_summary.selected_tool);
-    assert.equal(assemblyFirstStep?.execution_contract_v1?.workflow_signature, "fix-export-failure-workflow");
+    assert.equal(assemblyFirstStep?.execution_contract_v1?.workflow_signature, "workflow-validation-recovery-workflow");
     assert.equal(body.assembly_summary.action_retrieval_uncertainty?.summary_version, "action_retrieval_uncertainty_v1");
     assert.ok(body.assembly_summary.action_retrieval_uncertainty?.recommended_actions.includes("inspect_context"));
     const assemblyActionRetrievalGate = body.assembly_summary.action_retrieval_gate;
@@ -2919,8 +2919,8 @@ test("context_assemble returns aligned planner packet, assembly summary, and exe
     assert.equal(body.execution_kernel.pattern_maintenance_summary.retain_count, body.planner_packet.sections.trusted_patterns.length);
     assert.equal(body.execution_kernel.pattern_maintenance_summary.observe_count, body.planner_packet.sections.candidate_patterns.length);
     assert.equal(body.execution_kernel.pattern_maintenance_summary.review_count, body.planner_packet.sections.contested_patterns.length);
-    assert.match(body.assembly_summary.planner_explanation, /workflow guidance: Fix export failure/);
-    assert.match(body.assembly_summary.planner_explanation, /promotion-ready workflow candidates: Replay Episode: Fix export failure/);
+    assert.match(body.assembly_summary.planner_explanation, /workflow guidance: Recover workflow validation failure/);
+    assert.match(body.assembly_summary.planner_explanation, /promotion-ready workflow candidates: Replay Episode: Recover workflow validation failure/);
     assert.match(body.assembly_summary.planner_explanation, /trusted patterns available but not used: edit/);
     assert.match(body.assembly_summary.planner_explanation, new RegExp(`supporting knowledge appended: ${body.planner_packet.sections.supporting_knowledge.length}`));
     assert.equal(body.tools.selection_summary.provenance_explanation, "selected tool: edit; candidate patterns visible but not yet trusted: edit");
@@ -2943,12 +2943,12 @@ test("context_assemble can still return layered_context when explicitly requeste
       payload: {
         tenant_id: "default",
         scope: "default",
-        query_text: "repair export failure in node tests",
+        query_text: "recover durable workflow from failed validation",
         context: {
-          task_kind: "repair_export",
-          goal: "repair export failure in node tests",
+          task_kind: "workflow_validation_recovery",
+          goal: "recover durable workflow from failed validation",
           error: {
-            signature: "node-export-mismatch",
+            signature: "workflow-validation-mismatch",
           },
         },
         include_rules: true,
@@ -2965,7 +2965,7 @@ test("context_assemble can still return layered_context when explicitly requeste
     assert.equal(body.workflow_signals.length, (body.layered_context as Record<string, unknown>).workflow_signals.length);
     assert.equal(body.pattern_signals.length, (body.layered_context as Record<string, unknown>).pattern_signals.length);
     assertDelegationLearningProjection(body, {
-      task_family: "task:repair_export",
+      task_family: "task:workflow_validation_recovery",
       matched_records: 0,
       truncated: false,
       route_role_counts: {},
@@ -2974,7 +2974,7 @@ test("context_assemble can still return layered_context when explicitly requeste
       recommendation_kinds: [],
     });
     assertOperatorDelegationLearningProjection(body, {
-      task_family: "task:repair_export",
+      task_family: "task:workflow_validation_recovery",
       matched_records: 0,
       truncated: false,
       route_role_counts: {},
@@ -2991,7 +2991,7 @@ test("context_assemble can still return layered_context when explicitly requeste
       selected_tool: "edit",
       file_path: null,
       task_family: null,
-      workflow_signature: "fix-export-failure-workflow",
+      workflow_signature: "workflow-validation-recovery-workflow",
       policy_memory_id: null,
     });
     assertExecutionKernelBundle(body as {

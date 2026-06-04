@@ -13,7 +13,7 @@ test("buildRuntimeToolHintsFromAnchorNodes derives rehydrate hints from anchor_v
       {
         id: anchorId,
         type: "procedure",
-        title: "Fix export failure",
+        title: "Recover workflow validation failure",
         text_summary: "Inspect failing test and patch export",
         confidence: 0.72,
         slots: {
@@ -185,7 +185,7 @@ test("assembleLayeredContext adds runtime tool hints to the tools layer", () => 
             anchor_id: "a_123",
             uri: "aionis://default/default/procedure/a_123",
             type: "procedure",
-            title: "Fix export failure",
+            title: "Recover workflow validation failure",
             summary: "Inspect failing test and patch export",
             anchor_level: "L2",
             tool_set: ["edit", "test"],
@@ -201,7 +201,7 @@ test("assembleLayeredContext adds runtime tool hints to the tools layer", () => 
             anchor_uri: "aionis://default/default/procedure/a_123",
             anchor_kind: "workflow",
             anchor_level: "L2",
-            title: "Fix export failure",
+            title: "Recover workflow validation failure",
             summary: "Inspect failing test and patch export",
             mode: "partial",
             payload_cost_hint: "medium",
@@ -280,7 +280,7 @@ test("assembleLayeredContext surfaces validated pattern anchors as tool guidance
     },
     rules: null,
     tools: null,
-    query_text: "repair export failure",
+    query_text: "recover workflow validation failure",
   });
 
   const toolItems = Array.isArray(layered.layers?.tools?.items) ? layered.layers.tools.items : [];

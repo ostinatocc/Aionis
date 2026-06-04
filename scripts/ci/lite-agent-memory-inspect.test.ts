@@ -90,17 +90,17 @@ function registerApp(args: {
 }
 
 async function seedEvolutionFixture(store: ReturnType<typeof createLiteWriteStore>) {
-  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed(["repair export failure in node tests"]);
+  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed(["recover durable workflow from failed validation"]);
 
   const trustedPattern = MemoryAnchorV1Schema.parse({
     anchor_kind: "pattern",
     anchor_level: "L3",
     pattern_state: "stable",
     credibility_state: "trusted",
-    task_signature: "tools_select:repair-export",
-    task_family: "task:repair_export",
-    error_family: "error:node-export-mismatch",
-    pattern_signature: "repair-export-stable-edit",
+    task_signature: "tools_select:workflow-validation-recovery",
+    task_family: "task:workflow_validation_recovery",
+    error_family: "error:workflow-validation-mismatch",
+    pattern_signature: "workflow-validation-recovery-stable-edit",
     summary: "Stable pattern: prefer edit for export repair.",
     tool_set: ["bash", "edit", "test"],
     selected_tool: "edit",
@@ -126,10 +126,10 @@ async function seedEvolutionFixture(store: ReturnType<typeof createLiteWriteStor
       last_counter_evidence_at: null,
     },
     trust_hardening: {
-      task_family: "task:repair_export",
-      error_family: "error:node-export-mismatch",
-      observed_task_families: ["task:repair_export"],
-      observed_error_families: ["error:node-export-mismatch"],
+      task_family: "task:workflow_validation_recovery",
+      error_family: "error:workflow-validation-mismatch",
+      observed_task_families: ["task:workflow_validation_recovery"],
+      observed_error_families: ["error:workflow-validation-mismatch"],
       distinct_task_family_count: 1,
       distinct_error_family_count: 1,
       post_contest_observed_run_ids: [],
@@ -153,10 +153,10 @@ async function seedEvolutionFixture(store: ReturnType<typeof createLiteWriteStor
   const workflowAnchor = MemoryAnchorV1Schema.parse({
     anchor_kind: "workflow",
     anchor_level: "L2",
-    task_signature: "execution_task:repair-export",
+    task_signature: "execution_task:workflow-validation-recovery",
     task_class: "execution_write_projection",
-    workflow_signature: "execution_workflow:repair-export",
-    summary: "Stable workflow for repairing export failures.",
+    workflow_signature: "execution_workflow:workflow-validation-recovery",
+    summary: "Stable workflow for repairing validation failures.",
     tool_set: ["edit", "test"],
     file_path: "src/routes/export.ts",
     target_files: ["src/routes/export.ts"],
@@ -194,8 +194,8 @@ async function seedEvolutionFixture(store: ReturnType<typeof createLiteWriteStor
     scope: "default",
     actor: "local-user",
     input_text: [
-      "Task Signature: repair-export-node-tests",
-      "Error Signature: node-export-mismatch",
+      "Task Signature: workflow-validation-recovery-node-tests",
+      "Error Signature: workflow-validation-mismatch",
       "Workflow Signature: inspect-patch-rerun",
       "Export repair requires inspect, patch, and rerun.",
     ].join("\n"),
@@ -251,7 +251,7 @@ async function seedEvolutionFixture(store: ReturnType<typeof createLiteWriteStor
       {
         id: randomUUID(),
         type: "procedure",
-        title: "Fix export failure",
+        title: "Recover workflow validation failure",
         text_summary: workflowAnchor.summary,
         slots: {
           summary_kind: "workflow_anchor",
@@ -306,7 +306,7 @@ async function seedHandoffFixture(store: ReturnType<typeof createLiteWriteStore>
     repo_root: "/repo",
     handoff_kind: "patch_handoff",
     title: "Fix export route",
-    summary: "Repair export failure and keep tests green",
+    summary: "Repair validation failure and keep tests green",
     handoff_text: "Fix export route and rerun targeted tests",
     target_files: ["src/routes/export.ts"],
     next_action: "Patch src/routes/export.ts and rerun export tests",
@@ -415,7 +415,7 @@ test("agent memory inspect facade composes continuity and evolution into review/
     body: {
       tenant_id: "default",
       scope: "default",
-      query_text: "repair export failure in src/routes/export.ts",
+      query_text: "recover workflow validation failure in src/routes/export.ts",
       context: {
         repo_root: "/repo",
         file_path: "src/routes/export.ts",
@@ -452,7 +452,7 @@ test("agent memory inspect facade composes continuity and evolution into review/
   );
   assert.equal(
     inspect.evolution_inspect.execution_introspection.recommended_workflows[0]?.execution_contract_v1?.workflow_signature,
-    "execution_workflow:repair-export",
+    "execution_workflow:workflow-validation-recovery",
   );
 
   assert.equal(reviewPack.agent_memory_review_pack.rollback_required, true);
@@ -472,7 +472,7 @@ test("agent memory inspect facade composes continuity and evolution into review/
   );
   assert.equal(
     reviewPack.agent_memory_review_pack.execution_contract_v1?.workflow_signature,
-    "execution_workflow:repair-export",
+    "execution_workflow:workflow-validation-recovery",
   );
 
   assert.equal(resumePack.agent_memory_resume_pack.resume_file_path, "src/routes/export.ts");
@@ -565,7 +565,7 @@ test("agent memory resume pack treats missing implicit repo handoff as optional 
     body: {
       tenant_id: "default",
       scope: "default",
-      query_text: "repair export failure in src/routes/export.ts",
+      query_text: "recover workflow validation failure in src/routes/export.ts",
       context: {
         repo_root: "/repo-without-handoff",
       },
@@ -660,7 +660,7 @@ test("agent memory routes expose inspect, review, resume, and handoff packs", as
     const payload = {
       tenant_id: "default",
       scope: "default",
-      query_text: "repair export failure in src/routes/export.ts",
+      query_text: "recover workflow validation failure in src/routes/export.ts",
       context: {
         repo_root: "/repo",
         file_path: "src/routes/export.ts",

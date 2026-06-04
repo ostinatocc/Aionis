@@ -12,11 +12,11 @@ function baseSource(playbookSlotOverrides: Record<string, unknown> = {}) {
     playbook_id: randomUUID(),
     playbook_version: 2,
     playbook_node_id: randomUUID(),
-    playbook_title: "Fix export failure",
-    playbook_summary: "Replay repair learning episode for export failure",
+    playbook_title: "Recover workflow validation failure",
+    playbook_summary: "Replay repair learning episode for validation failure",
     playbook_slots: {
       matchers: {
-        task_kind: "repair_export",
+        task_kind: "workflow_validation_recovery",
       },
       source_run_id: randomUUID(),
       created_from_run_ids: [randomUUID()],
@@ -94,7 +94,7 @@ test("replay-learning projection artifacts produce candidate workflow before pro
 test("replay-learning projection artifacts auto-promote to stable workflow when observation threshold, outcome gate, and explicit evidence are met", () => {
   const source = baseSource({
     contract_trust: "authoritative",
-    task_family: "task:repair_export",
+    task_family: "task:workflow_validation_recovery",
     target_files: ["src/routes/export.ts"],
     next_action: "Patch src/routes/export.ts and rerun export tests.",
     acceptance_checks: ["npm run -s test:lite -- export"],
@@ -146,7 +146,7 @@ test("replay-learning projection artifacts auto-promote to stable workflow when 
 test("replay-learning projection artifacts do not auto-promote stable workflow from metrics-only evidence", () => {
   const source = baseSource({
     contract_trust: "authoritative",
-    task_family: "task:repair_export",
+    task_family: "task:workflow_validation_recovery",
     target_files: ["src/routes/export.ts"],
     next_action: "Patch src/routes/export.ts and rerun export tests.",
     acceptance_checks: ["npm run -s test:lite -- export"],
@@ -256,7 +256,7 @@ test("replay-learning projection artifacts preserve richer recovery contract fie
       "curl http://localhost:8080/simple/vectorops/",
     ],
     pattern_hints: [
-      "publish_then_install_from_clean_client_path",
+      "validate_from_clean_consumer_path",
       "revalidate_service_from_fresh_shell",
     ],
     service_lifecycle_constraints: [
@@ -287,7 +287,7 @@ test("replay-learning projection artifacts preserve richer recovery contract fie
         "pip install --index-url http://localhost:8080/simple vectorops==0.1.0",
       ],
       pattern_hints: [
-        "publish_then_install_from_clean_client_path",
+        "validate_from_clean_consumer_path",
         "revalidate_service_from_fresh_shell",
       ],
       service_lifecycle_constraints: [
@@ -353,7 +353,7 @@ test("replay-learning projection artifacts preserve richer recovery contract fie
   assert.equal(workflow?.slots?.execution_native_v1?.task_family, "service_publish_validate");
   assert.deepEqual(workflow?.slots?.execution_native_v1?.target_files, ["scripts/build_and_serve.py", "pyproject.toml"]);
   assert.ok(workflow?.slots?.execution_native_v1?.workflow_steps?.includes("python scripts/build_and_serve.py --port 8080"));
-  assert.ok(workflow?.slots?.execution_native_v1?.pattern_hints?.includes("publish_then_install_from_clean_client_path"));
+  assert.ok(workflow?.slots?.execution_native_v1?.pattern_hints?.includes("validate_from_clean_consumer_path"));
   assert.equal(workflow?.slots?.execution_native_v1?.service_lifecycle_constraints?.[0]?.revalidate_from_fresh_shell, true);
   assert.equal(workflow?.slots?.execution_evidence_assessment?.allows_stable_promotion, true);
 });

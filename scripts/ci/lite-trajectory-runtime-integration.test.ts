@@ -148,10 +148,10 @@ async function buildApp() {
   return app;
 }
 
-function packagePublishTrajectory() {
+function externalArtifactVisibilityTrajectory() {
   return {
-    title: "Recover local package publish service",
-    task_family: "package_publish_validate",
+    title: "Recover external artifact visibility",
+    task_family: "external_artifact_visibility",
     steps: [
       {
         role: "assistant",
@@ -291,7 +291,7 @@ test("trajectory-aware augmentation upgrades thin placeholders and refreshes sta
       },
     },
     tool_candidates: ["bash", "grep", "python"],
-    trajectory: packagePublishTrajectory(),
+    trajectory: externalArtifactVisibilityTrajectory(),
     trajectory_hints: {
       repo_root: "/app",
     },
@@ -311,9 +311,9 @@ test("trajectory-aware augmentation upgrades thin placeholders and refreshes sta
   const summary = (augmented.execution_result_summary as Record<string, unknown>).trajectory_compile_v1 as Record<string, unknown>;
   const contractSummary = (augmented.execution_result_summary as Record<string, unknown>).execution_contract_v1 as Record<string, unknown>;
 
-  assert.equal(context.task_family, "package_publish_validate");
+  assert.equal(context.task_family, "external_artifact_visibility");
   assert.equal(executionContract.schema_version, "execution_contract_v1");
-  assert.equal(executionContract.task_family, "package_publish_validate");
+  assert.equal(executionContract.task_family, "external_artifact_visibility");
   assert.ok(Array.isArray(context.target_files));
   assert.ok((context.target_files as string[]).includes("scripts/build_and_serve.py"));
   assert.ok(Array.isArray(recoveryBody.target_files));
@@ -326,14 +326,14 @@ test("trajectory-aware augmentation upgrades thin placeholders and refreshes sta
   );
   assert.ok(
     ((executionContract.outcome as Record<string, unknown>).dependency_requirements as string[])
-      .some((entry) => entry.includes("package artifacts and index metadata")),
+      .some((entry) => entry.includes("artifacts and index metadata")),
   );
   assert.ok(
     ((executionContract.outcome as Record<string, unknown>).environment_assumptions as string[])
       .includes("validation_can_run_from_fresh_shell"),
   );
-  assert.equal(summary.task_family, "package_publish_validate");
-  assert.equal(contractSummary.task_family, "package_publish_validate");
+  assert.equal(summary.task_family, "external_artifact_visibility");
+  assert.equal(contractSummary.task_family, "external_artifact_visibility");
   assert.ok(Number(contractSummary.dependency_requirement_count) > 0);
   assert.ok(Number(contractSummary.environment_assumption_count) > 0);
   assert.notEqual(summary.workflow_signature, "stale-workflow");
@@ -342,7 +342,7 @@ test("trajectory-aware augmentation upgrades thin placeholders and refreshes sta
 test("trajectory-aware execution kernel keeps completed validations out of pending state", () => {
   const compiled = buildTrajectoryCompileLite({
     query_text: "Recover the local package index so clean clients can install vectorops again.",
-    trajectory: packagePublishTrajectory(),
+    trajectory: externalArtifactVisibilityTrajectory(),
   }, {
     defaultScope: "default",
     defaultTenantId: "default",
@@ -401,7 +401,7 @@ test("planning/context compiles trajectory into execution kernel inputs", async 
         query_text: "Recover the local package index so clean clients can install vectorops again.",
         context: {},
         tool_candidates: ["bash", "grep", "python"],
-        trajectory: packagePublishTrajectory(),
+        trajectory: externalArtifactVisibilityTrajectory(),
         trajectory_hints: {
           repo_root: "/app",
         },
@@ -594,10 +594,10 @@ test("handoff/store compiles trajectory into effective contract and lifecycle co
         file_path: "/app/scripts/build_and_serve.py",
         repo_root: "/app",
         handoff_kind: "patch_handoff",
-        title: "Fix package publish handoff",
+        title: "Recover external artifact handoff",
         summary: "Recover the local package index so clean clients can install vectorops again.",
-        handoff_text: "Patch the narrow publish path and validate it from a fresh shell.",
-        trajectory: packagePublishTrajectory(),
+        handoff_text: "Patch the narrow artifact path and validate it from a fresh shell.",
+        trajectory: externalArtifactVisibilityTrajectory(),
         trajectory_hints: {
           repo_root: "/app",
         },
@@ -613,10 +613,10 @@ test("handoff/store compiles trajectory into effective contract and lifecycle co
     assert.ok(body.handoff.acceptance_checks.some((entry: string) => entry.includes("curl -fsS http://localhost:8080/simple/vectorops/")));
     assert.ok(body.handoff.acceptance_checks.some((entry: string) => entry.includes("pip install --index-url http://localhost:8080/simple vectorops==0.1.0")));
     assert.equal(body.execution_contract_v1.schema_version, "execution_contract_v1");
-    assert.equal(body.execution_contract_v1.task_family, "package_publish_validate");
+    assert.equal(body.execution_contract_v1.task_family, "external_artifact_visibility");
     assert.ok(Array.isArray(body.execution_contract_v1.outcome.acceptance_checks));
-    assert.ok(body.execution_contract_v1.outcome.success_invariants.includes("clean_client_install_succeeds"));
-    assert.ok(body.execution_contract_v1.outcome.dependency_requirements.some((entry: string) => entry.includes("package artifacts and index metadata")));
+    assert.ok(body.execution_contract_v1.outcome.success_invariants.includes("clean_consumer_install_succeeds"));
+    assert.ok(body.execution_contract_v1.outcome.dependency_requirements.some((entry: string) => entry.includes("artifacts and index metadata")));
     assert.ok(body.execution_contract_v1.outcome.environment_assumptions.includes("validation_can_run_from_fresh_shell"));
     assert.ok(body.execution_contract_v1.outcome.must_hold_after_exit.some((entry: string) => entry.includes("service_survives_agent_exit")));
     assert.equal(body.execution_packet_v1.service_lifecycle_constraints.length, 1);

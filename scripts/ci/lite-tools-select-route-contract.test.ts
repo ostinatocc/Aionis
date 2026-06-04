@@ -250,10 +250,10 @@ test("feedback materialization upgrades thin recovery contract placeholders", ()
       },
     },
     workflowFeedbackTarget: {
-      taskSignature: "repair-export-route",
+      taskSignature: "workflow-validation-recovery-route",
       errorSignature: null,
-      workflowSignature: "execution_workflow:repair-export",
-      taskFamily: "task:repair_export",
+      workflowSignature: "execution_workflow:workflow-validation-recovery",
+      taskFamily: "task:workflow_validation_recovery",
       filePath: "src/routes/export.ts",
       targetFiles: ["src/routes/export.ts"],
       nextAction: "Patch src/routes/export.ts and rerun export tests.",
@@ -282,12 +282,12 @@ test("feedback materialization upgrades thin recovery contract placeholders", ()
   const recoveryContract = merged.recovery_contract_v1 as Record<string, unknown>;
   const recoveryBody = recoveryContract.contract as Record<string, unknown>;
   assert.equal(merged.contract_trust, "authoritative");
-  assert.equal(merged.task_family, "task:repair_export");
-  assert.equal(merged.workflow_signature, "execution_workflow:repair-export");
+  assert.equal(merged.task_family, "task:workflow_validation_recovery");
+  assert.equal(merged.workflow_signature, "execution_workflow:workflow-validation-recovery");
   assert.deepEqual(merged.target_files, ["src/routes/export.ts"]);
   assert.equal(merged.next_action, "Patch src/routes/export.ts and rerun export tests.");
-  assert.equal(recoveryContract.task_signature, "repair-export-route");
-  assert.equal(recoveryContract.workflow_signature, "execution_workflow:repair-export");
+  assert.equal(recoveryContract.task_signature, "workflow-validation-recovery-route");
+  assert.equal(recoveryContract.workflow_signature, "execution_workflow:workflow-validation-recovery");
   assert.equal(recoveryContract.contract_trust, "authoritative");
   assert.deepEqual(recoveryBody.target_files, ["src/routes/export.ts"]);
   assert.equal(recoveryBody.next_action, "Patch src/routes/export.ts and rerun export tests.");
@@ -325,10 +325,10 @@ test("feedback materialization keeps observational trust from hardening into rec
       },
     },
     workflowFeedbackTarget: {
-      taskSignature: "repair-export-route",
+      taskSignature: "workflow-validation-recovery-route",
       errorSignature: null,
-      workflowSignature: "execution_workflow:repair-export",
-      taskFamily: "task:repair_export",
+      workflowSignature: "execution_workflow:workflow-validation-recovery",
+      taskFamily: "task:workflow_validation_recovery",
       filePath: "src/routes/export.ts",
       targetFiles: ["src/routes/export.ts"],
       nextAction: "Patch src/routes/export.ts and rerun export tests.",
@@ -368,10 +368,10 @@ async function insertAndActivateRule(
           client_id: `rule:prefer-${preferredTool}:${ruleSuffix}`,
           type: "rule",
           title: `Prefer ${preferredTool} for export repair`,
-          text_summary: `For repair_export tasks, prefer ${preferredTool} over the other tools.`,
+          text_summary: `For workflow_validation_recovery tasks, prefer ${preferredTool} over the other tools.`,
           slots: {
             if: {
-              task_kind: { $eq: "repair_export" },
+              task_kind: { $eq: "workflow_validation_recovery" },
             },
             then: {
               tool: {
@@ -438,18 +438,18 @@ async function seedActiveRules(
 async function seedToolsSelectFixture(dbPath: string) {
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
-  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed(["repair export failure in node tests"]);
+  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed(["recover durable workflow from failed validation"]);
   const stablePattern = MemoryAnchorV1Schema.parse({
     anchor_kind: "pattern",
     anchor_level: "L3",
     pattern_state: "stable",
     credibility_state: "trusted",
-    task_signature: "tools_select:repair-export",
+    task_signature: "tools_select:workflow-validation-recovery",
     task_class: "tools_select_pattern",
-    task_family: "task:repair_export",
-    error_family: "error:node-export-mismatch",
+    task_family: "task:workflow_validation_recovery",
+    error_family: "error:workflow-validation-mismatch",
     pattern_signature: "stable-edit-pattern",
-    summary: "Stable pattern: prefer edit for repair_export after repeated successful runs.",
+    summary: "Stable pattern: prefer edit for workflow_validation_recovery after repeated successful runs.",
     tool_set: ["bash", "edit", "test"],
     selected_tool: "edit",
     outcome: {
@@ -490,10 +490,10 @@ async function seedToolsSelectFixture(dbPath: string) {
       last_counter_evidence_at: null,
     },
     trust_hardening: {
-      task_family: "task:repair_export",
-      error_family: "error:node-export-mismatch",
-      observed_task_families: ["task:repair_export"],
-      observed_error_families: ["error:node-export-mismatch"],
+      task_family: "task:workflow_validation_recovery",
+      error_family: "error:workflow-validation-mismatch",
+      observed_task_families: ["task:workflow_validation_recovery"],
+      observed_error_families: ["error:workflow-validation-mismatch"],
       distinct_task_family_count: 1,
       distinct_error_family_count: 1,
       post_contest_observed_run_ids: [],
@@ -524,13 +524,13 @@ async function seedToolsSelectFixture(dbPath: string) {
       memory_lane: "shared",
       nodes: [
         {
-          client_id: "rule:prefer-bash:repair-export",
+          client_id: "rule:prefer-bash:workflow-validation-recovery",
           type: "rule",
           title: "Prefer bash for export repair",
-          text_summary: "For repair_export tasks, prefer bash over the other tools.",
+          text_summary: "For workflow_validation_recovery tasks, prefer bash over the other tools.",
           slots: {
             if: {
-              task_kind: { $eq: "repair_export" },
+              task_kind: { $eq: "workflow_validation_recovery" },
             },
             then: {
               tool: {
@@ -602,18 +602,18 @@ async function seedToolsSelectFixture(dbPath: string) {
 async function seedPolicyMemoryLearningControlFixture(dbPath: string) {
   const { liteWriteStore, ruleNodeIds } = await seedActiveRules(dbPath, ["edit", "edit"]);
   const liteRecallStore = createLiteRecallStore(dbPath);
-  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed(["repair export failure in node tests"]);
+  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed(["recover durable workflow from failed validation"]);
   const stablePattern = MemoryAnchorV1Schema.parse({
     anchor_kind: "pattern",
     anchor_level: "L3",
     pattern_state: "stable",
     credibility_state: "trusted",
-    task_signature: "tools_select:repair-export",
+    task_signature: "tools_select:workflow-validation-recovery",
     task_class: "tools_select_pattern",
-    task_family: "task:repair_export",
-    error_family: "error:node-export-mismatch",
+    task_family: "task:workflow_validation_recovery",
+    error_family: "error:workflow-validation-mismatch",
     pattern_signature: "policy-learning-control-edit-pattern",
-    summary: "Stable pattern: prefer edit for repair_export after repeated successful runs.",
+    summary: "Stable pattern: prefer edit for workflow_validation_recovery after repeated successful runs.",
     tool_set: ["bash", "edit", "test"],
     selected_tool: "edit",
     file_path: "src/routes/export.ts",
@@ -657,10 +657,10 @@ async function seedPolicyMemoryLearningControlFixture(dbPath: string) {
       last_counter_evidence_at: null,
     },
     trust_hardening: {
-      task_family: "task:repair_export",
-      error_family: "error:node-export-mismatch",
-      observed_task_families: ["task:repair_export"],
-      observed_error_families: ["error:node-export-mismatch"],
+      task_family: "task:workflow_validation_recovery",
+      error_family: "error:workflow-validation-mismatch",
+      observed_task_families: ["task:workflow_validation_recovery"],
+      observed_error_families: ["error:workflow-validation-mismatch"],
       distinct_task_family_count: 1,
       distinct_error_family_count: 1,
       post_contest_observed_run_ids: [],
@@ -789,10 +789,10 @@ test("tools_select route returns the stable execution-memory contract surface", 
         scope: "default",
         run_id: randomUUID(),
         context: {
-          task_kind: "repair_export",
-          goal: "repair export failure in node tests",
+          task_kind: "workflow_validation_recovery",
+          goal: "recover durable workflow from failed validation",
           error: {
-            signature: "node-export-mismatch",
+            signature: "workflow-validation-mismatch",
           },
         },
         candidates: ["bash", "edit", "test"],
@@ -925,10 +925,10 @@ test("tools_select keeps suppressed trusted patterns visible but excludes them f
         scope: "default",
         run_id: randomUUID(),
         context: {
-          task_kind: "repair_export",
-          goal: "repair export failure in node tests",
+          task_kind: "workflow_validation_recovery",
+          goal: "recover durable workflow from failed validation",
           error: {
-            signature: "node-export-mismatch",
+            signature: "workflow-validation-mismatch",
           },
         },
         candidates: ["bash", "edit", "test"],
@@ -993,17 +993,17 @@ test("tools feedback route can use internal evidence form_pattern provider witho
     const runId = randomUUID();
     const context = {
       contract_trust: "authoritative",
-      task_kind: "repair_export",
-      task_family: "task:repair_export",
-      workflow_signature: "execution_workflow:repair-export",
-      goal: "repair export failure in node tests",
+      task_kind: "workflow_validation_recovery",
+      task_family: "task:workflow_validation_recovery",
+      workflow_signature: "execution_workflow:workflow-validation-recovery",
+      goal: "recover durable workflow from failed validation",
       target_files: ["src/routes/export.ts"],
       next_action: "Patch src/routes/export.ts and rerun export tests.",
       recovery_contract_v1: {
         contract_trust: "authoritative",
-        task_family: "task:repair_export",
-        task_signature: "repair-export-route",
-        workflow_signature: "execution_workflow:repair-export",
+        task_family: "task:workflow_validation_recovery",
+        task_signature: "workflow-validation-recovery-route",
+        workflow_signature: "execution_workflow:workflow-validation-recovery",
         contract: {
           target_files: ["src/routes/export.ts"],
           acceptance_checks: ["npm run -s test:lite -- export"],
@@ -1037,7 +1037,7 @@ test("tools feedback route can use internal evidence form_pattern provider witho
         },
       },
       error: {
-        signature: "node-export-mismatch",
+        signature: "workflow-validation-mismatch",
       },
     };
 
@@ -1074,7 +1074,7 @@ test("tools feedback route can use internal evidence form_pattern provider witho
         selected_tool: "edit",
         target: "tool",
         note: "Edit-based repair succeeded with grouped provider-backed evidence",
-        input_text: "repair export failure in node tests",
+        input_text: "recover durable workflow from failed validation",
       },
     });
     assert.equal(feedbackResponse.statusCode, 200);
@@ -1125,10 +1125,10 @@ test("policy learning_control apply route can retire and reactivate persisted po
     const runId = randomUUID();
     const context = {
       contract_trust: "authoritative",
-      task_kind: "repair_export",
-      task_family: "task:repair_export",
-      workflow_signature: "execution_workflow:repair-export",
-      goal: "repair export failure in node tests",
+      task_kind: "workflow_validation_recovery",
+      task_family: "task:workflow_validation_recovery",
+      workflow_signature: "execution_workflow:workflow-validation-recovery",
+      goal: "recover durable workflow from failed validation",
       target_files: ["src/routes/export.ts"],
       next_action: "Patch src/routes/export.ts and rerun export tests.",
       execution_evidence_v1: {
@@ -1139,16 +1139,16 @@ test("policy learning_control apply route can retire and reactivate persisted po
         validation_boundary: "external_verifier",
         failure_reason: null,
         false_confidence_detected: false,
-        evidence_refs: ["tools_feedback_policy_learning_control:fresh_shell_export_test"],
+        evidence_refs: ["tools_feedback_policy_learning_control:fresh_shell_validation_test"],
       },
       error: {
-        signature: "node-export-mismatch",
+        signature: "workflow-validation-mismatch",
       },
       recovery_contract_v1: {
         contract_trust: "authoritative",
-        task_family: "task:repair_export",
-        task_signature: "repair-export-route",
-        workflow_signature: "execution_workflow:repair-export",
+        task_family: "task:workflow_validation_recovery",
+        task_signature: "workflow-validation-recovery-route",
+        workflow_signature: "execution_workflow:workflow-validation-recovery",
         contract: {
           target_files: ["src/routes/export.ts"],
           acceptance_checks: ["npm run -s test:lite -- export"],
@@ -1216,7 +1216,7 @@ test("policy learning_control apply route can retire and reactivate persisted po
         selected_tool: "edit",
         target: "tool",
         note: "Edit produced the successful repair path and should become persisted policy memory.",
-        input_text: "repair export failure in node tests",
+        input_text: "recover durable workflow from failed validation",
       },
     });
     assert.equal(feedbackResponse.statusCode, 200, feedbackResponse.body);
@@ -1311,7 +1311,7 @@ test("policy learning_control apply route can retire and reactivate persisted po
         policy_memory_id: policyMemoryId,
         action: "reactivate",
         reason: "fresh live evidence supports reactivating the retired policy memory",
-        query_text: "repair export failure in node tests",
+        query_text: "recover durable workflow from failed validation",
         context,
         candidates: ["bash", "edit", "test"],
       },
@@ -1383,20 +1383,20 @@ test("tools feedback does not materialize policy memory from observational trust
     const runId = randomUUID();
     const context = {
       contract_trust: "observational",
-      task_kind: "repair_export",
-      task_family: "task:repair_export",
-      workflow_signature: "execution_workflow:repair-export",
-      goal: "repair export failure in node tests",
+      task_kind: "workflow_validation_recovery",
+      task_family: "task:workflow_validation_recovery",
+      workflow_signature: "execution_workflow:workflow-validation-recovery",
+      goal: "recover durable workflow from failed validation",
       target_files: ["src/routes/export.ts"],
       next_action: "Patch src/routes/export.ts and rerun export tests.",
       error: {
-        signature: "node-export-mismatch",
+        signature: "workflow-validation-mismatch",
       },
       recovery_contract_v1: {
         contract_trust: "observational",
-        task_family: "task:repair_export",
-        task_signature: "repair-export-route",
-        workflow_signature: "execution_workflow:repair-export",
+        task_family: "task:workflow_validation_recovery",
+        task_signature: "workflow-validation-recovery-route",
+        workflow_signature: "execution_workflow:workflow-validation-recovery",
         contract: {
           target_files: ["src/routes/export.ts"],
           next_action: "Patch src/routes/export.ts and rerun export tests.",
@@ -1437,7 +1437,7 @@ test("tools feedback does not materialize policy memory from observational trust
         selected_tool: "edit",
         target: "tool",
         note: "Observational continuity should not harden into persisted policy memory.",
-        input_text: "repair export failure in node tests",
+        input_text: "recover durable workflow from failed validation",
       },
     });
     assert.equal(feedbackResponse.statusCode, 200, feedbackResponse.body);
@@ -1474,20 +1474,20 @@ test("tools feedback materializes advisory trust as hint-only candidate policy m
     const runId = randomUUID();
     const context = {
       contract_trust: "advisory",
-      task_kind: "repair_export",
-      task_family: "task:repair_export",
-      workflow_signature: "execution_workflow:repair-export",
-      goal: "repair export failure in node tests",
+      task_kind: "workflow_validation_recovery",
+      task_family: "task:workflow_validation_recovery",
+      workflow_signature: "execution_workflow:workflow-validation-recovery",
+      goal: "recover durable workflow from failed validation",
       target_files: ["src/routes/export.ts"],
       next_action: "Patch src/routes/export.ts and rerun export tests.",
       error: {
-        signature: "node-export-mismatch",
+        signature: "workflow-validation-mismatch",
       },
       recovery_contract_v1: {
         contract_trust: "advisory",
-        task_family: "task:repair_export",
-        task_signature: "repair-export-route",
-        workflow_signature: "execution_workflow:repair-export",
+        task_family: "task:workflow_validation_recovery",
+        task_signature: "workflow-validation-recovery-route",
+        workflow_signature: "execution_workflow:workflow-validation-recovery",
         contract: {
           target_files: ["src/routes/export.ts"],
           next_action: "Patch src/routes/export.ts and rerun export tests.",
@@ -1532,7 +1532,7 @@ test("tools feedback materializes advisory trust as hint-only candidate policy m
         selected_tool: "edit",
         target: "tool",
         note: "Advisory continuity may persist, but only as hint-level candidate policy memory.",
-        input_text: "repair export failure in node tests",
+        input_text: "recover durable workflow from failed validation",
       },
     });
     assert.equal(feedbackResponse.statusCode, 200, feedbackResponse.body);
@@ -1587,20 +1587,20 @@ test("tools feedback downgrades authoritative trust without sufficient outcome c
     const runId = randomUUID();
     const context = {
       contract_trust: "authoritative",
-      task_kind: "repair_export",
-      task_family: "task:repair_export",
-      workflow_signature: "execution_workflow:repair-export",
-      goal: "repair export failure in node tests",
+      task_kind: "workflow_validation_recovery",
+      task_family: "task:workflow_validation_recovery",
+      workflow_signature: "execution_workflow:workflow-validation-recovery",
+      goal: "recover durable workflow from failed validation",
       target_files: ["src/routes/export.ts"],
       next_action: "Patch src/routes/export.ts and rerun export tests.",
       error: {
-        signature: "node-export-mismatch",
+        signature: "workflow-validation-mismatch",
       },
       recovery_contract_v1: {
         contract_trust: "authoritative",
-        task_family: "task:repair_export",
-        task_signature: "repair-export-route",
-        workflow_signature: "execution_workflow:repair-export",
+        task_family: "task:workflow_validation_recovery",
+        task_signature: "workflow-validation-recovery-route",
+        workflow_signature: "execution_workflow:workflow-validation-recovery",
         contract: {
           target_files: ["src/routes/export.ts"],
           next_action: "Patch src/routes/export.ts and rerun export tests.",
@@ -1645,7 +1645,7 @@ test("tools feedback downgrades authoritative trust without sufficient outcome c
         selected_tool: "edit",
         target: "tool",
         note: "Thin authoritative continuity may persist only as hint-level policy memory.",
-        input_text: "repair export failure in node tests",
+        input_text: "recover durable workflow from failed validation",
       },
     });
     assert.equal(feedbackResponse.statusCode, 200, feedbackResponse.body);
@@ -1697,20 +1697,20 @@ test("policy learning_control core keeps advisory policy memory contested until 
     const runId = randomUUID();
     const context = {
       contract_trust: "advisory",
-      task_kind: "repair_export",
-      task_family: "task:repair_export",
-      workflow_signature: "execution_workflow:repair-export",
-      goal: "repair export failure in node tests",
+      task_kind: "workflow_validation_recovery",
+      task_family: "task:workflow_validation_recovery",
+      workflow_signature: "execution_workflow:workflow-validation-recovery",
+      goal: "recover durable workflow from failed validation",
       target_files: ["src/routes/export.ts"],
       next_action: "Patch src/routes/export.ts and rerun export tests.",
       error: {
-        signature: "node-export-mismatch",
+        signature: "workflow-validation-mismatch",
       },
       recovery_contract_v1: {
         contract_trust: "advisory",
-        task_family: "task:repair_export",
-        task_signature: "repair-export-route",
-        workflow_signature: "execution_workflow:repair-export",
+        task_family: "task:workflow_validation_recovery",
+        task_signature: "workflow-validation-recovery-route",
+        workflow_signature: "execution_workflow:workflow-validation-recovery",
         contract: {
           target_files: ["src/routes/export.ts"],
           next_action: "Patch src/routes/export.ts and rerun export tests.",
@@ -1755,7 +1755,7 @@ test("policy learning_control core keeps advisory policy memory contested until 
         selected_tool: "edit",
         target: "tool",
         note: "Advisory continuity should persist for learning_control, but not reactivate as active policy memory.",
-        input_text: "repair export failure in node tests",
+        input_text: "recover durable workflow from failed validation",
       },
     });
     assert.equal(feedbackResponse.statusCode, 200, feedbackResponse.body);

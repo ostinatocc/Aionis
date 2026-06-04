@@ -91,9 +91,9 @@ test("semantic forgetting treats low-trust canonical policy memory as contested 
       execution_contract_v1: {
         schema_version: "execution_contract_v1",
         contract_trust: "advisory",
-        task_family: "task:repair_export",
-        task_signature: "repair-export-route",
-        workflow_signature: "execution_workflow:repair-export",
+        task_family: "task:workflow_validation_recovery",
+        task_signature: "workflow-validation-recovery-route",
+        workflow_signature: "execution_workflow:workflow-validation-recovery",
         policy_memory_id: "pm_advisory",
         selected_tool: "edit",
         file_path: "src/routes/export.ts",

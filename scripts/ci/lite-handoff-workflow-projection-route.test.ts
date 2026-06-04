@@ -450,7 +450,7 @@ test("handoff/store projects workflow memory into planner guidance through the g
       payload: buildHandoffPayload({
         stateId: `state:${randomUUID()}`,
         title: "Export repair handoff",
-        summary: "Fix export failure in node tests",
+        summary: "Recover durable workflow from failed validation",
         filePath: "src/routes/export.ts",
       }),
     });
@@ -476,9 +476,9 @@ test("handoff/store projects workflow memory into planner guidance through the g
       payload: {
         tenant_id: "default",
         scope: "default",
-        query_text: "fix export failure in node tests",
+        query_text: "recover durable workflow from failed validation",
         context: {
-          goal: "fix export failure in node tests",
+          goal: "recover durable workflow from failed validation",
         },
         tool_candidates: ["bash", "edit", "test"],
       },
@@ -510,7 +510,7 @@ test("handoff/store projects workflow memory into planner guidance through the g
       payload: buildHandoffPayload({
         stateId: `state:${randomUUID()}`,
         title: "Export repair handoff second run",
-        summary: "Fix export failure in node tests",
+        summary: "Recover durable workflow from failed validation",
         filePath: "src/routes/export.ts",
       }),
     });
@@ -522,9 +522,9 @@ test("handoff/store projects workflow memory into planner guidance through the g
       payload: {
         tenant_id: "default",
         scope: "default",
-        query_text: "fix export failure in node tests",
+        query_text: "recover durable workflow from failed validation",
         context: {
-          goal: "fix export failure in node tests",
+          goal: "recover durable workflow from failed validation",
         },
         tool_candidates: ["bash", "edit", "test"],
       },
@@ -554,7 +554,7 @@ test("handoff/store projects workflow memory into planner guidance through the g
     assert.equal(introspectBody.continuity_carrier_summary.session_event_count, 0);
     assert.equal(introspectBody.distillation_signal_summary.origin_counts.handoff_continuity_carrier, 1);
     assert.ok(introspectBody.operator_surface.sections.workflows.some((line) => line.includes("distillation=handoff_continuity_carrier")));
-    assert.match(introspectBody.operator_surface.merged_text, /Fix export failure/i);
+    assert.match(introspectBody.operator_surface.merged_text, /Recover durable workflow from failed validation/i);
   } finally {
     await app.close();
     await liteWriteStore.close();

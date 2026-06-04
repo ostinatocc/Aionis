@@ -16,7 +16,7 @@ function tmpDbPath(name: string): string {
 function buildContinuityPayload(filePath: string) {
   return {
     execution_state_v1: {
-      task_brief: "Fix export failure in node tests",
+      task_brief: "Recover durable workflow from failed validation",
       owned_files: [],
       modified_files: [filePath],
       resume_anchor: {
@@ -45,8 +45,8 @@ test("prepare/apply write normalizes execution-native metadata for anchors and d
   const workflowAnchor = MemoryAnchorV1Schema.parse({
     anchor_kind: "workflow",
     anchor_level: "L2",
-    task_signature: "repair-export-node-tests",
-    error_signature: "node-export-mismatch",
+    task_signature: "workflow-validation-recovery-node-tests",
+    error_signature: "workflow-validation-mismatch",
     workflow_signature: "inspect-patch-rerun",
     summary: "Inspect failing test and patch export",
     tool_set: ["edit", "test"],
@@ -79,10 +79,10 @@ test("prepare/apply write normalizes execution-native metadata for anchors and d
     anchor_kind: "pattern",
     anchor_level: "L3",
     pattern_state: "stable",
-    task_signature: "tools_select:repair-export",
-    task_family: "task:repair_export",
-    error_signature: "node-export-mismatch",
-    error_family: "error:node-export-mismatch",
+    task_signature: "tools_select:workflow-validation-recovery",
+    task_family: "task:workflow_validation_recovery",
+    error_signature: "workflow-validation-mismatch",
+    error_family: "error:workflow-validation-mismatch",
     pattern_signature: "stable-edit-pattern",
     summary: "Stable pattern: prefer edit for export repair after repeated successful runs.",
     tool_set: ["bash", "edit", "test"],
@@ -124,8 +124,8 @@ test("prepare/apply write normalizes execution-native metadata for anchors and d
         producer_agent_id: "local-user",
         owner_agent_id: "local-user",
         input_text: [
-          "Task Signature: repair-export-node-tests",
-          "Error Signature: node-export-mismatch",
+          "Task Signature: workflow-validation-recovery-node-tests",
+          "Error Signature: workflow-validation-mismatch",
           "Workflow Signature: inspect-patch-rerun",
           "Export repair requires inspect, patch, and rerun.",
         ].join("\n"),
@@ -141,7 +141,7 @@ test("prepare/apply write normalizes execution-native metadata for anchors and d
         nodes: [
           {
             type: "procedure",
-            title: "Fix export failure",
+            title: "Recover workflow validation failure",
             text_summary: workflowAnchor.summary,
             slots: {
               summary_kind: "workflow_anchor",
@@ -195,10 +195,10 @@ test("prepare/apply write normalizes execution-native metadata for anchors and d
     assert.ok(errorSignatureFactPrepared);
     assert.ok(workflowSignatureFactPrepared);
     assert.equal(workflowPrepared?.slots.execution_native_v1.execution_kind, "workflow_anchor");
-    assert.equal(workflowPrepared?.slots.execution_native_v1.task_signature, "repair-export-node-tests");
-    assert.equal(workflowPrepared?.slots.execution_native_v1.error_signature, "node-export-mismatch");
+    assert.equal(workflowPrepared?.slots.execution_native_v1.task_signature, "workflow-validation-recovery-node-tests");
+    assert.equal(workflowPrepared?.slots.execution_native_v1.error_signature, "workflow-validation-mismatch");
     assert.equal(workflowPrepared?.slots.execution_contract_v1?.schema_version, "execution_contract_v1");
-    assert.equal(workflowPrepared?.slots.execution_contract_v1?.task_signature, "repair-export-node-tests");
+    assert.equal(workflowPrepared?.slots.execution_contract_v1?.task_signature, "workflow-validation-recovery-node-tests");
     assert.equal(workflowPrepared?.slots.execution_contract_v1?.workflow_signature, "inspect-patch-rerun");
     assert.equal(workflowPrepared?.slots.execution_contract_v1?.provenance?.source_kind, "slot_projection");
     assert.equal(workflowPrepared?.slots.semantic_forgetting_v1?.action, "retain");
@@ -209,7 +209,7 @@ test("prepare/apply write normalizes execution-native metadata for anchors and d
     assert.equal(patternPrepared?.slots.execution_native_v1.selected_tool, "edit");
     assert.equal(patternPrepared?.slots.execution_contract_v1?.schema_version, "execution_contract_v1");
     assert.equal(patternPrepared?.slots.execution_contract_v1?.selected_tool, "edit");
-    assert.equal(patternPrepared?.slots.execution_contract_v1?.task_family, "task:repair_export");
+    assert.equal(patternPrepared?.slots.execution_contract_v1?.task_family, "task:workflow_validation_recovery");
     assert.equal(distilledEvidencePrepared?.slots.execution_native_v1.execution_kind, "distilled_evidence");
     assert.equal(distilledEvidencePrepared?.slots.execution_native_v1.distillation?.preferred_promotion_target, "workflow");
     assert.equal(distilledEvidencePrepared?.slots.execution_native_v1.maintenance?.offline_priority, "promote_to_workflow");
@@ -220,13 +220,13 @@ test("prepare/apply write normalizes execution-native metadata for anchors and d
     assert.equal(distilledFactPrepared?.slots.execution_native_v1.distillation?.extraction_pattern, "colon");
     assert.equal(distilledFactPrepared?.slots.execution_native_v1.maintenance?.offline_priority, "promote_to_workflow");
     assert.equal(taskSignatureFactPrepared?.slots.execution_contract_v1?.schema_version, "execution_contract_v1");
-    assert.equal(taskSignatureFactPrepared?.slots.execution_contract_v1?.task_signature, "repair-export-node-tests");
+    assert.equal(taskSignatureFactPrepared?.slots.execution_contract_v1?.task_signature, "workflow-validation-recovery-node-tests");
     assert.equal(taskSignatureFactPrepared?.slots.execution_contract_v1?.provenance?.source_kind, "write_distillation");
     assert.equal(errorSignatureFactPrepared?.slots.execution_contract_v1?.schema_version, "execution_contract_v1");
     assert.equal(workflowSignatureFactPrepared?.slots.execution_contract_v1?.schema_version, "execution_contract_v1");
     assert.equal(workflowSignatureFactPrepared?.slots.execution_contract_v1?.workflow_signature, "inspect-patch-rerun");
-    assert.equal(taskSignatureFactPrepared?.slots.execution_native_v1.task_signature, "repair-export-node-tests");
-    assert.equal(errorSignatureFactPrepared?.slots.execution_native_v1.error_signature, "node-export-mismatch");
+    assert.equal(taskSignatureFactPrepared?.slots.execution_native_v1.task_signature, "workflow-validation-recovery-node-tests");
+    assert.equal(errorSignatureFactPrepared?.slots.execution_native_v1.error_signature, "workflow-validation-mismatch");
     assert.equal(workflowSignatureFactPrepared?.slots.execution_native_v1.workflow_signature, "inspect-patch-rerun");
 
     await store.withTx(() =>
@@ -272,14 +272,14 @@ test("prepare/apply write normalizes execution-native metadata for anchors and d
     assert.equal(storedDistilledFact?.slots.execution_native_v1.distillation?.preferred_promotion_target, "workflow");
     assert.equal(storedDistilledFact?.slots.execution_native_v1.maintenance?.offline_priority, "promote_to_workflow");
     assert.equal(storedTaskSignatureFact?.slots.execution_contract_v1?.schema_version, "execution_contract_v1");
-    assert.equal(storedTaskSignatureFact?.slots.execution_contract_v1?.task_signature, "repair-export-node-tests");
+    assert.equal(storedTaskSignatureFact?.slots.execution_contract_v1?.task_signature, "workflow-validation-recovery-node-tests");
     assert.equal(storedTaskSignatureFact?.slots.execution_contract_v1?.provenance?.source_kind, "write_distillation");
     assert.equal(storedWorkflowSignatureFact?.slots.execution_contract_v1?.schema_version, "execution_contract_v1");
     assert.equal(storedWorkflowSignatureFact?.slots.execution_contract_v1?.workflow_signature, "inspect-patch-rerun");
     assert.equal(storedWorkflow?.slots.semantic_forgetting_v1?.action, "retain");
     assert.equal(storedWorkflow?.slots.archive_relocation_v1?.relocation_state, "none");
-    assert.equal(storedTaskSignatureFact?.slots.execution_native_v1.task_signature, "repair-export-node-tests");
-    assert.equal(storedErrorSignatureFact?.slots.execution_native_v1.error_signature, "node-export-mismatch");
+    assert.equal(storedTaskSignatureFact?.slots.execution_native_v1.task_signature, "workflow-validation-recovery-node-tests");
+    assert.equal(storedErrorSignatureFact?.slots.execution_native_v1.error_signature, "workflow-validation-mismatch");
     assert.equal(storedWorkflowSignatureFact?.slots.execution_native_v1.workflow_signature, "inspect-patch-rerun");
   } finally {
     await store.close();
@@ -292,8 +292,8 @@ test("lite write store exposes execution-first query filters over execution_nati
   const workflowAnchor = MemoryAnchorV1Schema.parse({
     anchor_kind: "workflow",
     anchor_level: "L2",
-    task_signature: "repair-export-node-tests",
-    error_signature: "node-export-mismatch",
+    task_signature: "workflow-validation-recovery-node-tests",
+    error_signature: "workflow-validation-mismatch",
     workflow_signature: "inspect-patch-rerun",
     summary: "Inspect failing test and patch export",
     tool_set: ["edit", "test"],
@@ -321,10 +321,10 @@ test("lite write store exposes execution-first query filters over execution_nati
     anchor_kind: "pattern",
     anchor_level: "L3",
     pattern_state: "stable",
-    task_signature: "tools_select:repair-export",
-    task_family: "task:repair_export",
-    error_signature: "node-export-mismatch",
-    error_family: "error:node-export-mismatch",
+    task_signature: "tools_select:workflow-validation-recovery",
+    task_family: "task:workflow_validation_recovery",
+    error_signature: "workflow-validation-mismatch",
+    error_family: "error:workflow-validation-mismatch",
     pattern_signature: "stable-edit-pattern",
     summary: "Stable pattern: prefer edit for export repair after repeated successful runs.",
     tool_set: ["bash", "edit", "test"],
@@ -366,8 +366,8 @@ test("lite write store exposes execution-first query filters over execution_nati
         producer_agent_id: "local-user",
         owner_agent_id: "local-user",
         input_text: [
-          "Task Signature: repair-export-node-tests",
-          "Error Signature: node-export-mismatch",
+          "Task Signature: workflow-validation-recovery-node-tests",
+          "Error Signature: workflow-validation-mismatch",
           "Workflow Signature: inspect-patch-rerun",
           "Execution-native query contract should keep signature facts addressable.",
         ].join("\n"),
@@ -383,7 +383,7 @@ test("lite write store exposes execution-first query filters over execution_nati
         nodes: [
           {
             type: "procedure",
-            title: "Fix export failure",
+            title: "Recover workflow validation failure",
             text_summary: workflowAnchor.summary,
             slots: {
               summary_kind: "workflow_anchor",
@@ -427,7 +427,7 @@ test("lite write store exposes execution-first query filters over execution_nati
       scope: "default",
       consumerAgentId: "local-user",
       executionKind: "workflow_anchor",
-      taskSignature: "repair-export-node-tests",
+      taskSignature: "workflow-validation-recovery-node-tests",
       compressionLayer: "L2",
       limit: 10,
       offset: 0,
@@ -452,7 +452,7 @@ test("lite write store exposes execution-first query filters over execution_nati
       scope: "default",
       consumerAgentId: "local-user",
       executionKind: "distilled_fact",
-      taskSignature: "repair-export-node-tests",
+      taskSignature: "workflow-validation-recovery-node-tests",
       limit: 10,
       offset: 0,
     });
@@ -482,7 +482,7 @@ test("prepare/apply write normalizes execution-native metadata for handoff and s
           {
             type: "event",
             title: "Export repair handoff",
-            text_summary: "Fix export failure in node tests",
+            text_summary: "Recover durable workflow from failed validation",
             slots: {
               summary_kind: "handoff",
               handoff_kind: "patch_handoff",
@@ -497,7 +497,7 @@ test("prepare/apply write normalizes execution-native metadata for handoff and s
           {
             type: "event",
             title: "Export session event",
-            text_summary: "Fix export failure in node tests",
+            text_summary: "Recover durable workflow from failed validation",
             slots: {
               system_kind: "session_event",
               session_id: "session-export",

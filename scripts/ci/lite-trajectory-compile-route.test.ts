@@ -58,7 +58,7 @@ async function buildApp() {
   return app;
 }
 
-test("trajectory compile route keeps package validation transport out of service lifecycle", async () => {
+test("trajectory compile route keeps validation transport out of service lifecycle", async () => {
   const app = await buildApp();
   const response = await app.inject({
     method: "POST",
@@ -79,20 +79,20 @@ test("trajectory compile route keeps package validation transport out of service
 
   assert.equal(response.statusCode, 200);
   const parsed = TrajectoryCompileResponseSchema.parse(JSON.parse(response.body));
-  assert.equal(parsed.task_family, "package_publish_validate");
+  assert.equal(parsed.task_family, "external_artifact_visibility");
   assert.ok(parsed.contract.target_files.includes("scripts/build_index.py"));
   assert.ok(parsed.contract.target_files.includes("src/vectorops/__init__.py"));
   assert.ok(parsed.contract.acceptance_checks.some((entry) => entry.includes("curl -fsS http://localhost:8080/simple/vectorops/")));
   assert.ok(parsed.contract.acceptance_checks.some((entry) => entry.includes("pip install --index-url http://localhost:8080/simple vectorops==0.1.0")));
-  assert.ok(parsed.contract.success_invariants.includes("clean_client_install_succeeds"));
-  assert.ok(parsed.contract.dependency_requirements.some((entry) => entry.includes("package artifacts and index metadata")));
+  assert.ok(parsed.contract.success_invariants.includes("clean_consumer_install_succeeds"));
+  assert.ok(parsed.contract.dependency_requirements.some((entry) => entry.includes("artifacts and index metadata")));
   assert.ok(parsed.contract.environment_assumptions.includes("validation_can_run_from_fresh_shell"));
   assert.ok(!parsed.contract.must_hold_after_exit.includes("task_result_remains_valid_after_agent_exit"));
-  assert.ok(parsed.contract.external_visibility_requirements.includes("package_install_visible_to_clean_client"));
+  assert.ok(parsed.contract.external_visibility_requirements.includes("artifact_visible_to_clean_consumer"));
   assert.equal(parsed.contract.service_lifecycle_constraints.length, 0);
   assert.ok(!parsed.contract.pattern_hints.includes("detach_long_running_service_before_validation"));
   assert.ok(!parsed.contract.pattern_hints.includes("revalidate_service_from_fresh_shell"));
-  assert.ok(parsed.contract.pattern_hints.includes("publish_then_install_from_clean_client_path"));
+  assert.ok(parsed.contract.pattern_hints.includes("validate_from_clean_consumer_path"));
   assert.ok(parsed.contract.workflow_steps.length > 0);
   await app.close();
 });

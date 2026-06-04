@@ -84,16 +84,16 @@ function registerApp(args: {
 
 async function seedEvolutionFixture(dbPath: string) {
   const liteWriteStore = createLiteWriteStore(dbPath);
-  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed(["repair export failure in node tests"]);
+  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed(["recover durable workflow from failed validation"]);
   const trustedPattern = MemoryAnchorV1Schema.parse({
     anchor_kind: "pattern",
     anchor_level: "L3",
     pattern_state: "stable",
     credibility_state: "trusted",
-    task_signature: "tools_select:repair-export",
-    task_family: "task:repair_export",
-    error_family: "error:node-export-mismatch",
-    pattern_signature: "repair-export-stable-edit",
+    task_signature: "tools_select:workflow-validation-recovery",
+    task_family: "task:workflow_validation_recovery",
+    error_family: "error:workflow-validation-mismatch",
+    pattern_signature: "workflow-validation-recovery-stable-edit",
     summary: "Stable pattern: prefer edit for export repair.",
     tool_set: ["bash", "edit", "test"],
     selected_tool: "edit",
@@ -119,10 +119,10 @@ async function seedEvolutionFixture(dbPath: string) {
       last_counter_evidence_at: null,
     },
     trust_hardening: {
-      task_family: "task:repair_export",
-      error_family: "error:node-export-mismatch",
-      observed_task_families: ["task:repair_export"],
-      observed_error_families: ["error:node-export-mismatch"],
+      task_family: "task:workflow_validation_recovery",
+      error_family: "error:workflow-validation-mismatch",
+      observed_task_families: ["task:workflow_validation_recovery"],
+      observed_error_families: ["error:workflow-validation-mismatch"],
       distinct_task_family_count: 1,
       distinct_error_family_count: 1,
       post_contest_observed_run_ids: [],
@@ -146,10 +146,10 @@ async function seedEvolutionFixture(dbPath: string) {
   const workflowAnchor = MemoryAnchorV1Schema.parse({
     anchor_kind: "workflow",
     anchor_level: "L2",
-    task_signature: "execution_task:repair-export",
+    task_signature: "execution_task:workflow-validation-recovery",
     task_class: "execution_write_projection",
-    workflow_signature: "execution_workflow:repair-export",
-    summary: "Stable workflow for repairing export failures.",
+    workflow_signature: "execution_workflow:workflow-validation-recovery",
+    summary: "Stable workflow for repairing validation failures.",
     tool_set: ["edit", "test"],
     file_path: "src/routes/export.ts",
     target_files: ["src/routes/export.ts"],
@@ -232,7 +232,7 @@ async function seedEvolutionFixture(dbPath: string) {
         {
           id: randomUUID(),
           type: "procedure",
-          title: "Fix export failure",
+          title: "Recover workflow validation failure",
           text_summary: workflowAnchor.summary,
           slots: {
             summary_kind: "workflow_anchor",
@@ -274,8 +274,8 @@ async function seedEvolutionFixture(dbPath: string) {
               execution_kind: "workflow_candidate",
               summary_kind: "workflow_candidate",
               compression_layer: "L1",
-              task_signature: "execution_task:repair-export",
-              workflow_signature: "execution_workflow:repair-export-service-check",
+              task_signature: "execution_task:workflow-validation-recovery",
+              workflow_signature: "execution_workflow:workflow-validation-recovery-service-check",
               anchor_kind: "workflow",
               anchor_level: "L1",
               tool_set: ["edit", "test"],
@@ -479,7 +479,7 @@ test("memory evolution review-pack route exposes stable workflow and reviewer-fr
         scope: "default",
         run_id: "run:evolution-repair-001",
         route_role: "patch",
-        task_family: "task:repair_export",
+        task_family: "task:workflow_validation_recovery",
         delegation_records_v1: {
           summary_version: "execution_delegation_records_v1",
           record_mode: "packet_backed",
@@ -491,15 +491,15 @@ test("memory evolution review-pack route exposes stable workflow and reviewer-fr
           delegation_packets: [{
             version: 1,
             role: "patch",
-            mission: "Apply the export repair patch and rerun node tests.",
+            mission: "Apply the validated workflow change and rerun required checks.",
             working_set: ["src/routes/export.ts"],
             acceptance_checks: ["npm run -s test:lite -- export"],
             output_contract: "Return patch result and final node test status.",
-            preferred_artifact_refs: ["artifact://repair-export/patch"],
-            inherited_evidence: ["evidence://repair-export/failure"],
+            preferred_artifact_refs: ["artifact://workflow-validation-recovery/patch"],
+            inherited_evidence: ["evidence://workflow-validation-recovery/failure"],
             routing_reason: "repair patch route",
-            task_family: "task:repair_export",
-            family_scope: "aionis://runtime/repair-export",
+            task_family: "task:workflow_validation_recovery",
+            family_scope: "aionis://runtime/workflow-validation-recovery",
             source_mode: "packet_backed",
           }],
           delegation_returns: [{
@@ -507,31 +507,31 @@ test("memory evolution review-pack route exposes stable workflow and reviewer-fr
             role: "patch",
             status: "passed",
             summary: "Patch applied and export tests passed.",
-            evidence: ["evidence://repair-export/test"],
+            evidence: ["evidence://workflow-validation-recovery/test"],
             working_set: ["src/routes/export.ts"],
             acceptance_checks: ["npm run -s test:lite -- export"],
             source_mode: "packet_backed",
           }],
           artifact_routing_records: [{
             version: 1,
-            ref: "artifact://repair-export/patch",
+            ref: "artifact://workflow-validation-recovery/patch",
             ref_kind: "artifact",
             route_role: "patch",
             route_intent: "patch",
             route_mode: "packet_backed",
-            task_family: "task:repair_export",
-            family_scope: "aionis://runtime/repair-export",
+            task_family: "task:workflow_validation_recovery",
+            family_scope: "aionis://runtime/workflow-validation-recovery",
             routing_reason: "patch artifact route",
             source: "execution_packet",
           }, {
             version: 1,
-            ref: "evidence://repair-export/test",
+            ref: "evidence://workflow-validation-recovery/test",
             ref_kind: "evidence",
             route_role: "patch",
             route_intent: "patch",
             route_mode: "packet_backed",
-            task_family: "task:repair_export",
-            family_scope: "aionis://runtime/repair-export",
+            task_family: "task:workflow_validation_recovery",
+            family_scope: "aionis://runtime/workflow-validation-recovery",
             routing_reason: "patch evidence route",
             source: "execution_packet",
           }],
@@ -540,8 +540,8 @@ test("memory evolution review-pack route exposes stable workflow and reviewer-fr
           status: "passed",
           summary: "Patch applied and export tests passed.",
         },
-        execution_artifacts: [{ ref: "artifact://repair-export/patch" }],
-        execution_evidence: [{ ref: "evidence://repair-export/test" }],
+        execution_artifacts: [{ ref: "artifact://workflow-validation-recovery/patch" }],
+        execution_evidence: [{ ref: "evidence://workflow-validation-recovery/test" }],
       },
       {
         tenant_id: "default",
@@ -549,7 +549,7 @@ test("memory evolution review-pack route exposes stable workflow and reviewer-fr
         memory_lane: "private",
         run_id: "run:evolution-repair-002",
         route_role: "patch",
-        task_family: "task:repair_export",
+        task_family: "task:workflow_validation_recovery",
         delegation_records_v1: {
           summary_version: "execution_delegation_records_v1",
           record_mode: "memory_only",
@@ -565,23 +565,23 @@ test("memory evolution review-pack route exposes stable workflow and reviewer-fr
             working_set: ["src/routes/export.ts"],
             acceptance_checks: ["npm run -s test:lite -- export"],
             output_contract: "Return applied patch metadata.",
-            preferred_artifact_refs: ["artifact://repair-export/recovery-patch"],
+            preferred_artifact_refs: ["artifact://workflow-validation-recovery/recovery-patch"],
             inherited_evidence: [],
             routing_reason: "recovery memory patch route",
-            task_family: "task:repair_export",
-            family_scope: "aionis://runtime/repair-export",
+            task_family: "task:workflow_validation_recovery",
+            family_scope: "aionis://runtime/workflow-validation-recovery",
             source_mode: "memory_only",
           }],
           delegation_returns: [],
           artifact_routing_records: [{
             version: 1,
-            ref: "artifact://repair-export/recovery-patch",
+            ref: "artifact://workflow-validation-recovery/recovery-patch",
             ref_kind: "artifact",
             route_role: "patch",
             route_intent: "memory_guided",
             route_mode: "memory_only",
-            task_family: "task:repair_export",
-            family_scope: "aionis://runtime/repair-export",
+            task_family: "task:workflow_validation_recovery",
+            family_scope: "aionis://runtime/workflow-validation-recovery",
             routing_reason: "memory-guided patch route",
             source: "strategy_summary",
           }],
@@ -602,9 +602,13 @@ test("memory evolution review-pack route exposes stable workflow and reviewer-fr
       payload: {
         tenant_id: "default",
         scope: "default",
-        query_text: "repair export failure in node tests",
+        query_text: "recover durable workflow from failed validation",
         context: {
-          task: { id: "task-1", brief: "repair export route" },
+          task_kind: "workflow_validation_recovery",
+          error: {
+            signature: "workflow-validation-mismatch",
+          },
+          task: { id: "task-1", brief: "workflow validation recovery route" },
         },
         candidates: ["edit", "bash", "test"],
       },
@@ -628,7 +632,7 @@ test("memory evolution review-pack route exposes stable workflow and reviewer-fr
     );
     assert.equal(
       parsed.evolution_review_pack.review_contract.execution_contract_v1?.workflow_signature,
-      "execution_workflow:repair-export",
+      "execution_workflow:workflow-validation-recovery",
     );
     assert.ok(parsed.evolution_review_pack.stable_workflow);
     assert.equal(parsed.evolution_review_pack.promotion_ready_workflow, null);
@@ -660,7 +664,7 @@ test("memory evolution review-pack route exposes stable workflow and reviewer-fr
     assert.equal((parsed.evolution_review_pack.review_contract as any).authority_blockers[0]?.execution_evidence_status, "failed");
     assert.deepEqual(parsed.evolution_review_pack.review_contract.promotion_ready_anchor_ids, []);
     assert.deepEqual(parsed.evolution_review_pack.learning_summary, {
-      task_family: "task:repair_export",
+      task_family: "task:workflow_validation_recovery",
       matched_records: 2,
       truncated: false,
       route_role_counts: {
@@ -678,11 +682,11 @@ test("memory evolution review-pack route exposes stable workflow and reviewer-fr
     );
     assert.equal(
       parsed.evolution_review_pack.learning_recommendations[0]?.recommended_action,
-      "Capture delegation returns consistently for patch / task:repair_export.",
+      "Capture delegation returns consistently for patch / task:workflow_validation_recovery.",
     );
     assert.equal(
       parsed.evolution_review_pack.learning_recommendations[2]?.sample_mission,
-      "Apply the export repair patch and rerun node tests.",
+      "Apply the validated workflow change and rerun required checks.",
     );
   } finally {
     await app.close();
