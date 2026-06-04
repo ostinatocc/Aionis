@@ -22,7 +22,6 @@ export const CognitiveEvidenceGradeSchema = z.enum([
   "real_integration_pass",
   "real_provider_runtime_pass",
   "deterministic_contract_pass",
-  "synthetic_fixture_pass",
   "failed_verifier",
   "provider_failure",
   "protocol_failure",

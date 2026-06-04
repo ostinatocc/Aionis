@@ -128,12 +128,10 @@ test("memory write persists runtime signal ledger on execution-native nodes", as
     assert.ok(preparedLedger.entries.some((entry) => entry.signal_kind === "tool_selection_outcome"));
 
     await store.withTx(() =>
-      applyMemoryWrite({} as any, prepared, {
+      applyMemoryWrite(prepared, {
         maxTextLen: 10_000,
         piiRedaction: false,
         allowCrossScopeEdges: false,
-        shadowDualWriteEnabled: false,
-        shadowDualWriteStrict: false,
         associativeLinkOrigin: "memory_write",
         write_access: store,
       }),
@@ -245,12 +243,10 @@ test("runtime signal trends aggregate persisted ledgers across sqlite memory row
     );
 
     await store.withTx(() =>
-      applyMemoryWrite({} as any, prepared, {
+      applyMemoryWrite(prepared, {
         maxTextLen: 10_000,
         piiRedaction: false,
         allowCrossScopeEdges: false,
-        shadowDualWriteEnabled: false,
-        shadowDualWriteStrict: false,
         associativeLinkOrigin: "memory_write",
         write_access: store,
       }),

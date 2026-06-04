@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import Fastify from "fastify";
-import { registerHostErrorHandler } from "../../src/host/http-host.ts";
-import { buildLiteRouteMatrix } from "../../src/host/lite-edition.ts";
+import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
+import { buildLiteRouteMatrix } from "../../src/server/lite-runtime-boundary.ts";
 import {
   RuntimeBoundaryInventoryResponseSchema,
   runtimeBoundaryInventoryFiles,
@@ -18,7 +18,7 @@ function buildEnv() {
 
 test("runtime boundary inventory route exposes a read-only source-owned surface", async () => {
   const app = Fastify();
-  registerHostErrorHandler(app);
+  registerRuntimeErrorHandler(app);
   registerRuntimeBoundaryInventoryRoutes({
     app,
     env: buildEnv(),

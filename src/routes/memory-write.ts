@@ -7,7 +7,6 @@ import {
   buildLiteLearningControlRuntimeProviders,
   type LiteLearningControlRuntimeProviderBuilderOptions,
 } from "../app/learning-control-runtime-providers.js";
-import { mirrorPreparedWriteToEmbeddedRuntime, type EmbeddedWriteMirrorRuntime } from "../memory/embedded-write-bridge.js";
 import { collectExecutionWriteOverlaySlots } from "../memory/execution-slot-surface.js";
 import {
   computeEffectiveWritePolicy,
@@ -52,7 +51,6 @@ export function registerMemoryWriteRoutes(args: {
   env: Env;
   embedder: EmbeddingProvider | null;
   embeddingSurfacePolicy?: EmbeddingSurfacePolicy;
-  embeddedRuntime: EmbeddedWriteMirrorRuntime | null;
   liteWriteStore: LiteWriteStore;
   requireMemoryPrincipal: (req: FastifyRequest) => Promise<AuthPrincipal | null>;
   withIdentityFromRequest: (
@@ -73,7 +71,6 @@ export function registerMemoryWriteRoutes(args: {
     env,
     embedder,
     embeddingSurfacePolicy: embeddingSurfacePolicyArg,
-    embeddedRuntime,
     liteWriteStore,
     requireMemoryPrincipal,
     withIdentityFromRequest,
@@ -120,8 +117,6 @@ export function registerMemoryWriteRoutes(args: {
         maxTextLen: env.MAX_TEXT_LEN,
         piiRedaction: env.PII_REDACTION,
         allowCrossScopeEdges: env.ALLOW_CROSS_SCOPE_EDGES,
-        shadowDualWriteEnabled: env.MEMORY_SHADOW_DUAL_WRITE_ENABLED,
-        shadowDualWriteStrict: env.MEMORY_SHADOW_DUAL_WRITE_STRICT,
       },
     });
     return {
@@ -216,11 +211,6 @@ export function registerMemoryWriteRoutes(args: {
         executionStateStore.applyTransition(transition);
       }
     }
-    await mirrorPreparedWriteToEmbeddedRuntime({
-      embeddedRuntime,
-      prepared: args.prepared,
-      out: args.out,
-    });
   };
   const buildWriteLogPayload = (args: {
     out: WriteResult;

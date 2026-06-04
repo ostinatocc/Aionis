@@ -15,6 +15,7 @@ import {
 } from "../execution/verification.js";
 import { ContractTrustSchema, OutcomeContractGateSchema } from "./contract-trust.js";
 import { ExecutionContractV1Schema } from "./execution-contract.js";
+import { AionisGuidePacketSchema, AionisLearningPacketSchema, AionisMemoryPacketSchema } from "./product-output-contract.js";
 
 export const UUID = z.string().uuid();
 
@@ -392,6 +393,54 @@ export const PromotionEvidenceEntryV1Schema = z.object({
   confidence: z.number().min(0).max(1),
 }).strict();
 
+export const PromotionEvidenceScopeSchema = z.enum([
+  "exact_task",
+  "task_family",
+  "repository",
+  "ecosystem",
+  "global",
+]);
+
+export const PromotionEvidenceCandidateProducerSchema = z.enum([
+  "runtime_history",
+  "agent_trace",
+  "llm_candidate",
+  "operator_feedback",
+  "eval_report",
+]);
+
+export const PromotionEvidenceProtocolGateStateSchema = z.enum([
+  "passed",
+  "pending",
+  "failed",
+  "not_applicable",
+]);
+
+export const PromotionEvidenceProtocolV1Schema = z.object({
+  protocol_version: z.literal("promotion_evidence_protocol_v1").default("promotion_evidence_protocol_v1"),
+  candidate_producer: PromotionEvidenceCandidateProducerSchema.default("runtime_history"),
+  source_scope: PromotionEvidenceScopeSchema.default("exact_task"),
+  authority_scope: PromotionEvidenceScopeSchema.default("exact_task"),
+  local_reuse_allowed: z.boolean().default(false),
+  wider_generalization_allowed: z.boolean().default(false),
+  source_code_change_allowed: z.literal(false).default(false),
+  distinct_run_count: z.number().int().min(0).default(0),
+  distinct_task_count: z.number().int().min(0).default(0),
+  holdout_evidence_count: z.number().int().min(0).default(0),
+  regression_evidence_count: z.number().int().min(0).default(0),
+  negative_transfer_count: z.number().int().min(0).default(0),
+  provider_protocol_contamination_count: z.number().int().min(0).default(0),
+  task_specific_signal_count: z.number().int().min(0).default(0),
+  promoted_item_count: z.number().int().min(0).default(0),
+  covered_task_count: z.number().int().min(0).default(0),
+  promotion_growth_ratio: z.number().min(0).nullable().default(null),
+  leakage_gate: PromotionEvidenceProtocolGateStateSchema.default("pending"),
+  holdout_gate: PromotionEvidenceProtocolGateStateSchema.default("pending"),
+  interference_gate: PromotionEvidenceProtocolGateStateSchema.default("pending"),
+  growth_gate: PromotionEvidenceProtocolGateStateSchema.default("not_applicable"),
+  reason_codes: z.array(z.string().min(1).max(128)).max(32).default([]),
+}).strict();
+
 export const PromotionEvidenceLedgerV1Schema = z.object({
   ledger_version: z.literal("promotion_evidence_ledger_v1"),
   ledger_id: z.string().min(1).max(128),
@@ -416,6 +465,7 @@ export const PromotionEvidenceLedgerV1Schema = z.object({
   source_run_ids: z.array(z.string().min(1).max(256)).max(64),
   source_commit_ids: z.array(z.string().min(1).max(256)).max(64),
   reason_codes: z.array(z.string().min(1).max(128)).max(32),
+  promotion_protocol: PromotionEvidenceProtocolV1Schema.default({}),
   source_code_change_allowed: z.literal(false),
 }).strict();
 
@@ -447,6 +497,30 @@ export const PromotionQualityContractTrustCountsV1Schema = z.object({
   advisory: z.number().int().min(0),
   observational: z.number().int().min(0),
   missing: z.number().int().min(0),
+}).strict();
+
+export const PromotionQualityProtocolGateCountsV1Schema = z.object({
+  passed: z.number().int().min(0).default(0),
+  pending: z.number().int().min(0).default(0),
+  failed: z.number().int().min(0).default(0),
+  not_applicable: z.number().int().min(0).default(0),
+}).strict();
+
+export const PromotionQualityProtocolSummaryV1Schema = z.object({
+  local_reuse_allowed_count: z.number().int().min(0).default(0),
+  wider_generalization_allowed_count: z.number().int().min(0).default(0),
+  source_code_change_allowed_count: z.number().int().min(0).default(0),
+  provider_protocol_contamination_count: z.number().int().min(0).default(0),
+  task_specific_signal_count: z.number().int().min(0).default(0),
+  regression_evidence_count: z.number().int().min(0).default(0),
+  negative_transfer_count: z.number().int().min(0).default(0),
+  holdout_evidence_count: z.number().int().min(0).default(0),
+  promoted_item_count: z.number().int().min(0).default(0),
+  covered_task_count: z.number().int().min(0).default(0),
+  leakage_gate_counts: PromotionQualityProtocolGateCountsV1Schema.default({}),
+  holdout_gate_counts: PromotionQualityProtocolGateCountsV1Schema.default({}),
+  interference_gate_counts: PromotionQualityProtocolGateCountsV1Schema.default({}),
+  growth_gate_counts: PromotionQualityProtocolGateCountsV1Schema.default({}),
 }).strict();
 
 export const PromotionQualityTransitionCountV1Schema = z.object({
@@ -497,6 +571,7 @@ export const PromotionQualitySummaryV1Schema = z.object({
     "constrain",
     "invalidate",
   ]),
+  promotion_protocol_summary: PromotionQualityProtocolSummaryV1Schema.default({}),
   findings: z.array(z.string().min(1).max(256)).max(12),
   source_node_ids: z.array(z.string().min(1).max(128)).max(64),
   source_code_change_allowed: z.literal(false),
@@ -2476,7 +2551,7 @@ export const RuntimeEditFailurePhaseSchema = z.object({
   summary_version: z.literal("edit_failure_phase_v1"),
   phase: z.enum([
     "stale_line_anchor",
-    "noop_edit",
+    "unchanged_edit",
     "apply_patch_payload_failure",
     "replace_text_anchor_failure",
     "replace_lines_payload_failure",
@@ -2754,8 +2829,8 @@ export const PlannerPacketTextSurfaceSchema = z.object({
 
 export type PlannerPacketTextSurface = z.infer<typeof PlannerPacketTextSurfaceSchema>;
 
-export const ExecutionMemoryDemoSurfaceSchema = z.object({
-  surface_version: z.literal("execution_memory_demo_v1"),
+export const ExecutionMemoryOperatorSurfaceSchema = z.object({
+  surface_version: z.literal("execution_memory_operator_v1"),
   headline: z.string(),
   sections: z.object({
     workflows: z.array(z.string()),
@@ -2765,7 +2840,7 @@ export const ExecutionMemoryDemoSurfaceSchema = z.object({
   merged_text: z.string(),
 });
 
-export type ExecutionMemoryDemoSurface = z.infer<typeof ExecutionMemoryDemoSurfaceSchema>;
+export type ExecutionMemoryOperatorSurface = z.infer<typeof ExecutionMemoryOperatorSurfaceSchema>;
 
 export const ExecutionKernelPacketSummarySchema = z.object({
   packet_source_mode: z.string(),
@@ -3087,7 +3162,7 @@ export const ExecutionMemoryIntrospectionResponseSchema = z.object({
       projection_client_id: z.string().nullable(),
     })),
   }),
-  demo_surface: ExecutionMemoryDemoSurfaceSchema,
+  operator_surface: ExecutionMemoryOperatorSurfaceSchema,
   execution_summary: ExecutionSummaryV1Schema,
   cognitive_structure_v1: z.object({
     structure_version: z.literal("cognitive_structure_v1"),
@@ -3476,6 +3551,83 @@ export const PolicyLearningControlApplyResponseSchema = z.object({
 
 export type PolicyLearningControlApplyResponse = z.infer<typeof PolicyLearningControlApplyResponseSchema>;
 
+export const HistoryImpactCapabilitySchema = z.enum([
+  "continuity",
+  "learning",
+  "forgetting",
+  "learning_control",
+]);
+
+export const HistoryImpactLevelSchema = z.enum([
+  "none",
+  "context_shaping",
+  "action_shaping",
+  "learning_controlled",
+]);
+
+export const HistoryImpactNextRunChangeSchema = z.enum([
+  "continuity_state_available",
+  "trusted_evidence_available",
+  "workflow_reuse_available",
+  "candidate_learning_visible",
+  "contested_memory_visible",
+  "memory_suppressed_or_forgotten",
+  "rehydration_available",
+  "learning_control_limited_authority",
+  "first_action_shaped_by_history",
+  "runtime_entropy_visible",
+]);
+
+export const HistoryImpactSummarySchema = z.object({
+  summary_version: z.literal("history_impact_summary_v1"),
+  history_applied: z.boolean(),
+  changed_next_run: z.boolean(),
+  impact_level: HistoryImpactLevelSchema,
+  affected_capabilities: z.array(HistoryImpactCapabilitySchema),
+  continuity: z.object({
+    continuity_carrier_count: z.number().int().min(0),
+    static_blocks_selected: z.number().int().min(0),
+    selected_memory_layer_count: z.number().int().min(0),
+  }).strict(),
+  learning: z.object({
+    stable_workflow_count: z.number().int().min(0),
+    candidate_workflow_count: z.number().int().min(0),
+    promotion_ready_workflow_count: z.number().int().min(0),
+    trusted_pattern_count: z.number().int().min(0),
+    contested_pattern_count: z.number().int().min(0),
+    active_policy_count: z.number().int().min(0),
+    contested_policy_count: z.number().int().min(0),
+  }).strict(),
+  forgetting: z.object({
+    substrate_mode: z.enum(["stable", "suppression_present", "forgetting_active"]),
+    forgotten_items: z.number().int().min(0),
+    suppressed_pattern_count: z.number().int().min(0),
+    differential_rehydration_candidate_count: z.number().int().min(0),
+    stale_signal_count: z.number().int().min(0),
+  }).strict(),
+  learning_control: z.object({
+    contract_trust: ContractTrustSchema.nullable(),
+    action_start_blocked: z.boolean(),
+    authoritative_allowed_count: z.number().int().min(0),
+    authoritative_blocked_count: z.number().int().min(0),
+    stable_promotion_allowed_count: z.number().int().min(0),
+    stable_promotion_blocked_count: z.number().int().min(0),
+    primary_blockers: z.array(z.string()),
+  }).strict(),
+  runtime_entropy: z.object({
+    profile_present: z.boolean(),
+    controls_present: z.boolean(),
+    entropy_level: RuntimeEntropyLevelSchema.nullable(),
+    plasticity_level: RuntimePlasticityLevelSchema.nullable(),
+    exploration_budget: z.number().min(0).max(1).nullable(),
+    control_strength: z.number().min(0).max(1).nullable(),
+  }).strict(),
+  next_run_changes: z.array(HistoryImpactNextRunChangeSchema),
+  primary_reason: z.string(),
+}).strict();
+
+export type HistoryImpactSummary = z.infer<typeof HistoryImpactSummarySchema>;
+
 export const PlanningSummaryContractSchema = z.object({
   summary_version: z.literal("planning_summary_v1"),
   planner_explanation: z.string().nullable(),
@@ -3485,6 +3637,7 @@ export const PlanningSummaryContractSchema = z.object({
   runtime_entropy_controls: RuntimeEntropyControlsV1Schema.nullable().optional(),
   action_retrieval_uncertainty: ActionRetrievalUncertaintySchema.nullable().optional(),
   action_retrieval_gate: ActionRetrievalGateSummarySchema.nullable().optional(),
+  history_impact_summary: HistoryImpactSummarySchema,
   workflow_signal_summary: WorkflowSignalSummarySchema,
   action_packet_summary: ActionPacketSummarySchema,
   workflow_lifecycle_summary: WorkflowLifecycleSummarySchema,
@@ -3514,6 +3667,7 @@ export const AssemblySummaryContractSchema = z.object({
   runtime_entropy_controls: RuntimeEntropyControlsV1Schema.nullable().optional(),
   action_retrieval_uncertainty: ActionRetrievalUncertaintySchema.nullable().optional(),
   action_retrieval_gate: ActionRetrievalGateSummarySchema.nullable().optional(),
+  history_impact_summary: HistoryImpactSummarySchema,
   workflow_signal_summary: WorkflowSignalSummarySchema,
   action_packet_summary: ActionPacketSummarySchema,
   workflow_lifecycle_summary: WorkflowLifecycleSummarySchema,
@@ -3565,12 +3719,29 @@ export const ContextOperatorProjectionSchema = z.object({
 
 export type ContextOperatorProjection = z.infer<typeof ContextOperatorProjectionSchema>;
 
+export const RuntimeContextPacketContractSchema = z.object({
+  packet_version: z.literal("runtime_context_packet_v1"),
+  surface: z.enum(["planning_context", "context_assemble"]),
+  selected_tool: z.string().nullable(),
+  context_est_tokens: z.number().min(0),
+  kickoff_recommendation: KickoffRecommendationSchema.nullable().optional(),
+  history_impact_summary: HistoryImpactSummarySchema,
+}).strict();
+
+export type RuntimeContextPacketContract = z.infer<typeof RuntimeContextPacketContractSchema>;
+
 const PlannerPacketRouteContractBaseSchema = z.object({
+  recall: z.object({
+    aionis_memory_packet: AionisMemoryPacketSchema,
+  }).passthrough(),
   planner_packet: PlannerPacketTextSurfaceSchema,
   pattern_signals: z.array(PlannerPacketEntrySchema),
   workflow_signals: z.array(PlannerPacketEntrySchema),
   execution_kernel: ExecutionKernelPacketSummarySchema,
   execution_summary: ExecutionSummaryV1Schema,
+  runtime_context_packet: RuntimeContextPacketContractSchema,
+  aionis_guide_packet: AionisGuidePacketSchema,
+  aionis_learning_packet: AionisLearningPacketSchema,
 }).passthrough();
 
 export const PlanningContextRouteContractSchema = PlannerPacketRouteContractBaseSchema.extend({
@@ -3638,7 +3809,7 @@ export const ToolsSelectionDeniedEntryContractSchema = z.object({
   reason: z.enum(["deny_list", "not_in_allow_list", "control_profile"]),
 }).strict();
 
-export const ToolsSelectionFallbackContractSchema = z.object({
+export const ToolsSelectionPolicyRelaxationContractSchema = z.object({
   applied: z.boolean(),
   reason: z.enum(["none", "allowlist_filtered_all", "deny_filtered_all"]),
   note: z.string(),
@@ -3652,7 +3823,7 @@ export const ToolsSelectionContractSchema = z.object({
   preferred: z.array(z.string()),
   ordered: z.array(z.string()),
   selected: z.string().nullable(),
-  fallback: ToolsSelectionFallbackContractSchema.optional(),
+  policy_relaxation: ToolsSelectionPolicyRelaxationContractSchema.optional(),
 }).strict();
 
 export const ToolsCandidateFamilyContractSchema = z.object({
@@ -3731,8 +3902,8 @@ export const ToolsSelectionSummaryContractSchema = z.object({
   skipped_contested_pattern_affinity_levels: z.array(z.string()).optional(),
   skipped_suppressed_pattern_tools: z.array(z.string()),
   skipped_suppressed_pattern_affinity_levels: z.array(z.string()).optional(),
-  fallback_applied: z.boolean(),
-  fallback_reason: z.string().nullable(),
+  policy_relaxation_applied: z.boolean(),
+  policy_relaxation_reason: z.string().nullable(),
   provenance_explanation: z.string().nullable(),
   pattern_lifecycle_summary: PatternLifecycleSummarySchema,
   pattern_maintenance_summary: PatternMaintenanceSummarySchema,
@@ -4433,155 +4604,6 @@ export const MemorySessionsListRequest = z.object({
 
 export type MemorySessionsListInput = z.infer<typeof MemorySessionsListRequest>;
 
-export const MemoryEventWriteRequest = z
-  .object({
-    tenant_id: z.string().min(1).optional(),
-    scope: z.string().min(1).optional(),
-    actor: z.string().min(1).optional(),
-    session_id: z.string().min(1).max(128),
-    event_id: z.string().min(1).max(128).optional(),
-    title: z.string().min(1).max(512).optional(),
-    text_summary: z.string().min(1).max(4000).optional(),
-    input_text: z.string().min(1).optional(),
-    metadata: z.record(z.any()).optional(),
-    execution_result_summary: z.record(z.unknown()).optional(),
-    execution_evidence: z.array(z.record(z.unknown())).optional(),
-    execution_state_v1: ExecutionStateV1Schema.optional(),
-    execution_packet_v1: ExecutionPacketV1Schema.optional(),
-    execution_transitions_v1: z.array(ExecutionStateTransitionV1Schema).optional(),
-    auto_embed: z.boolean().optional(),
-    memory_lane: z.enum(["private", "shared"]).optional(),
-    producer_agent_id: z.string().min(1).optional(),
-    owner_agent_id: z.string().min(1).optional(),
-    owner_team_id: z.string().min(1).optional(),
-    edge_weight: z.number().min(0).max(1).optional(),
-    edge_confidence: z.number().min(0).max(1).optional(),
-  })
-  .refine((v) => !!v.text_summary || !!v.title || !!v.input_text, {
-    message: "must set text_summary, title, or input_text",
-  });
-
-export type MemoryEventWriteInput = z.infer<typeof MemoryEventWriteRequest>;
-
-export const MemorySessionEventsListRequest = z.object({
-  tenant_id: z.string().min(1).optional(),
-  scope: z.string().min(1).optional(),
-  session_id: z.string().min(1).max(128),
-  consumer_agent_id: z.string().min(1).optional(),
-  consumer_team_id: z.string().min(1).optional(),
-  include_meta: QueryBoolean.default(false),
-  include_slots: QueryBoolean.default(false),
-  include_slots_preview: QueryBoolean.default(false),
-  slots_preview_keys: z.coerce.number().int().positive().max(50).default(10),
-  limit: z.coerce.number().int().positive().max(200).default(20),
-  offset: z.coerce.number().int().min(0).max(200000).default(0),
-});
-
-export type MemorySessionEventsListInput = z.infer<typeof MemorySessionEventsListRequest>;
-
-export const MemoryPackExportRequest = z.object({
-  tenant_id: z.string().min(1).optional(),
-  scope: z.string().min(1).optional(),
-  include_nodes: z.boolean().default(true),
-  include_edges: z.boolean().default(true),
-  include_commits: z.boolean().default(true),
-  include_decisions: z.boolean().default(false),
-  include_meta: z.boolean().default(true),
-  max_rows: z.number().int().positive().max(50000).default(5000),
-});
-
-export type MemoryPackExportInput = z.infer<typeof MemoryPackExportRequest>;
-
-export const MemoryPackImportRequest = z.object({
-  tenant_id: z.string().min(1).optional(),
-  scope: z.string().min(1).optional(),
-  actor: z.string().min(1).optional(),
-  verify_only: z.boolean().default(false),
-  auto_embed: z.boolean().default(false),
-  manifest_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-  pack: z.object({
-    version: z.literal("aionis_pack_v1"),
-    tenant_id: z.string().min(1),
-    scope: z.string().min(1),
-    nodes: z
-      .array(
-        z.object({
-          id: UUID,
-          client_id: z.string().min(1).nullish(),
-          type: NodeType,
-          tier: z.enum(["hot", "warm", "cold", "archive"]).optional(),
-          memory_lane: z.enum(["private", "shared"]).optional(),
-          producer_agent_id: z.string().min(1).nullish(),
-          owner_agent_id: z.string().min(1).nullish(),
-          owner_team_id: z.string().min(1).nullish(),
-          title: z.string().nullish(),
-          text_summary: z.string().nullish(),
-          slots: z.record(z.any()).optional(),
-          raw_ref: z.string().nullish(),
-          evidence_ref: z.string().nullish(),
-          salience: z.number().min(0).max(1).optional(),
-          importance: z.number().min(0).max(1).optional(),
-          confidence: z.number().min(0).max(1).optional(),
-        }).passthrough(),
-      )
-      .default([]),
-    edges: z
-      .array(
-        z.object({
-          id: UUID,
-          type: EdgeType,
-          src_id: UUID,
-          dst_id: UUID,
-          src_client_id: z.string().min(1).nullish(),
-          dst_client_id: z.string().min(1).nullish(),
-          weight: z.number().min(0).max(1).optional(),
-          confidence: z.number().min(0).max(1).optional(),
-          decay_rate: z.number().min(0).max(1).optional(),
-        }).passthrough(),
-      )
-      .default([]),
-    commits: z
-      .array(
-        z.object({
-          id: UUID,
-          parent_id: UUID.nullable().optional(),
-          input_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-          actor: z.string().optional(),
-          model_version: z.string().nullable().optional(),
-          prompt_version: z.string().nullable().optional(),
-          created_at: z.string().optional(),
-          commit_hash: z.string().optional(),
-        }).passthrough(),
-      )
-      .default([]),
-    decisions: z
-      .array(
-        z
-          .object({
-            id: UUID.optional(),
-            decision_id: UUID.optional(),
-            decision_uri: z.string().min(1).optional(),
-            decision_kind: z.string().min(1).optional(),
-            run_id: z.string().nullish(),
-            selected_tool: z.string().nullish(),
-            candidates_json: z.array(z.any()).optional(),
-            context_sha256: z.string().optional(),
-            policy_sha256: z.string().optional(),
-            source_rule_ids: z.array(UUID).optional(),
-            metadata_json: z.record(z.any()).optional(),
-            metadata: z.record(z.any()).optional(),
-            created_at: z.string().optional(),
-            commit_id: UUID.nullish(),
-            commit_uri: z.string().nullish(),
-          })
-          .passthrough(),
-      )
-      .default([]),
-  }).passthrough(),
-});
-
-export type MemoryPackImportInput = z.infer<typeof MemoryPackImportRequest>;
-
 export const MemoryArchiveRehydrateRequest = z
   .object({
     tenant_id: z.string().min(1).optional(),
@@ -4677,7 +4699,7 @@ export const ToolsSelectRequest = z.object({
   include_shadow: z.boolean().default(false),
   // Hard cap: don't scan unbounded rules.
   rules_limit: z.number().int().positive().max(200).default(50),
-  // If true and allow/deny filters eliminate all candidates, return 400 instead of falling back.
+  // If true and allow/deny filters eliminate all candidates, return 400 instead of relaxing policy.
   strict: z.boolean().default(true),
   // Experimental: if true, Aionis may reorder candidates before final selection.
   reorder_candidates: z.boolean().default(false),
@@ -4940,7 +4962,7 @@ export const ReplayPlaybookCandidateRequest = z.object({
   deterministic_gate: z.object({
     enabled: z.boolean().default(true),
     prefer_deterministic_execution: z.boolean().default(true),
-    on_mismatch: z.enum(["fallback", "reject"]).default("fallback"),
+    on_mismatch: z.enum(["candidate_only", "reject"]).default("candidate_only"),
     required_statuses: z.array(ReplayPlaybookStatus).min(1).max(4).default(["shadow", "active"]),
     matchers: z.record(z.any()).optional(),
     policy_constraints: z.record(z.any()).optional(),
@@ -4977,7 +4999,7 @@ export const ReplayPlaybookRunRequest = z.object({
   deterministic_gate: z.object({
     enabled: z.boolean().default(true),
     prefer_deterministic_execution: z.boolean().default(true),
-    on_mismatch: z.enum(["fallback", "reject"]).default("fallback"),
+    on_mismatch: z.enum(["candidate_only", "reject"]).default("candidate_only"),
     required_statuses: z.array(ReplayPlaybookStatus).min(1).max(4).default(["shadow", "active"]),
     matchers: z.record(z.any()).optional(),
     policy_constraints: z.record(z.any()).optional(),
@@ -5000,13 +5022,11 @@ export const ReplayPlaybookDispatchRequest = z.object({
   deterministic_gate: z.object({
     enabled: z.boolean().default(true),
     prefer_deterministic_execution: z.boolean().default(true),
-    on_mismatch: z.enum(["fallback", "reject"]).default("fallback"),
+    on_mismatch: z.enum(["candidate_only", "reject"]).default("candidate_only"),
     required_statuses: z.array(ReplayPlaybookStatus).min(1).max(4).default(["shadow", "active"]),
     matchers: z.record(z.any()).optional(),
     policy_constraints: z.record(z.any()).optional(),
   }).optional(),
-  fallback_mode: ReplayRunMode.default("simulate"),
-  execute_fallback: z.boolean().default(true),
   params: z.record(z.any()).optional(),
   max_steps: z.number().int().positive().max(500).default(200),
 });

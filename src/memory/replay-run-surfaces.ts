@@ -82,7 +82,7 @@ export function buildReplayExecutionSummary(args: {
     replay_readiness:
       args.failedSteps > 0
         ? "failed"
-        : args.pendingSteps > 0 || args.repairedSteps > 0 || args.skippedSteps > 0
+        : args.pendingSteps > 0 || args.blockedSteps > 0 || args.repairedSteps > 0 || args.skippedSteps > 0
           ? "partial"
           : "success",
     next_action:
@@ -90,8 +90,8 @@ export function buildReplayExecutionSummary(args: {
         ? "Inspect failed step outputs and fix playbook/tool constraints."
         : args.pendingSteps > 0
           ? "Wait for queued sandbox runs and then replay run_get for completion evidence."
-          : args.repairedSteps > 0 || args.skippedSteps > 0
-            ? "Review guided repair patches and promote a new playbook version if accepted."
+          : args.blockedSteps > 0 || args.repairedSteps > 0 || args.skippedSteps > 0
+            ? "Send structured repair requests to the Agent or external LLM candidate producer before promoting a new playbook version."
             : "Replay run passed with no repair.",
   };
 }
@@ -114,8 +114,6 @@ export function buildReplayExecutionSurface(args: {
   allowSensitiveExec: boolean;
   guidedRepairStrategy: string;
   guidedRepairMaxErrorChars: number;
-  guidedRepairHttpConfigured: boolean;
-  guidedRepairBuiltinLlmConfigured: boolean;
 }) {
   return {
     inference_skipped: args.inferenceSkipped,
@@ -135,8 +133,7 @@ export function buildReplayExecutionSurface(args: {
     allow_sensitive_exec: args.allowSensitiveExec,
     guided_repair_strategy: args.guidedRepairStrategy,
     guided_repair_max_error_chars: args.guidedRepairMaxErrorChars,
-    guided_repair_http_configured: args.guidedRepairHttpConfigured,
-    guided_repair_builtin_llm_configured: args.guidedRepairBuiltinLlmConfigured,
+    guided_repair_semantic_repair_runtime_owned: false,
   };
 }
 
@@ -197,6 +194,7 @@ export function buildReplayGuidedPartialStepReport(args: {
   toolName: string | null;
   readiness: "blocked" | "unknown" | "partial";
   repair: unknown;
+  repairApplied?: boolean;
   command?: string;
   argv?: string[];
   preconditions?: unknown[];
@@ -223,7 +221,7 @@ export function buildReplayGuidedPartialStepReport(args: {
     ...(args.resultSummary ? { result_summary: args.resultSummary } : {}),
     ...(args.signature ? { signature: args.signature } : {}),
     ...(args.postconditions ? { postconditions: args.postconditions } : {}),
-    repair_applied: true,
+    repair_applied: args.repairApplied === true,
     repair: args.repair,
   };
 }

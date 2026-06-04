@@ -101,7 +101,7 @@ test("execution agent contract packet can render a short agent-facing contract",
     task_prompt: "Keep the service alive after worker exit.",
   });
   const operatorMarkdown = renderExecutionAgentContractPacketMarkdown(packet);
-  const agentMarkdown = renderExecutionAgentContractPacketMarkdown(packet, { audience: "agent_minimal" });
+  const agentMarkdown = renderExecutionAgentContractPacketMarkdown(packet, { audience: "agent_compact" });
   const rendered = agentMarkdown.join("\n");
 
   assert.ok(agentMarkdown.length < operatorMarkdown.length);

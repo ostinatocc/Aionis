@@ -5,18 +5,21 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
-import { FakeEmbeddingProvider } from "../../src/embeddings/fake.ts";
+import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
-import { registerHostErrorHandler } from "../../src/host/http-host.ts";
+import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
 import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
 import {
   ActionRetrievalGateSummarySchema,
   ContextAssembleRouteContractSchema,
   DelegationRecordsWriteResponseSchema,
+  HistoryImpactSummarySchema,
   MemoryAnchorV1Schema,
   PlanningContextRouteContractSchema,
+  RuntimeContextPacketContractSchema,
 } from "../../src/memory/schemas.ts";
+import { AionisGuidePacketSchema, AionisLearningPacketSchema, AionisMemoryPacketSchema } from "../../src/memory/product-output-contract.ts";
 import { buildExecutionMemorySummaryBundle, summarizePatternSignals } from "../../src/app/planning-summary.ts";
 import { updateRuleState } from "../../src/memory/rules.ts";
 import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
@@ -1199,12 +1202,10 @@ function buildRequestGuards() {
       WRITE_RATE_LIMIT_MAX_WAIT_MS: 0,
       RECALL_TEXT_EMBED_RATE_LIMIT_MAX_WAIT_MS: 0,
     } as any,
-    embedder: FakeEmbeddingProvider,
+    embedder: DeterministicEmbeddingProvider,
     recallLimiter: null,
     debugEmbedLimiter: null,
     writeLimiter: null,
-    sandboxWriteLimiter: null,
-    sandboxReadLimiter: null,
     recallTextEmbedLimiter: null,
     recallInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
     writeInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
@@ -1215,7 +1216,7 @@ async function seedContextRuntimeFixture(dbPath: string) {
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
   const queryText = "repair export failure in node tests";
-  const [sharedEmbedding] = await FakeEmbeddingProvider.embed([queryText]);
+  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed([queryText]);
   const workflowAnchor = MemoryAnchorV1Schema.parse({
     anchor_kind: "workflow",
     anchor_level: "L2",
@@ -1330,7 +1331,7 @@ async function seedContextRuntimeFixture(dbPath: string) {
             anchor_v1: workflowAnchor,
           },
           embedding: sharedEmbedding,
-          embedding_model: FakeEmbeddingProvider.name,
+          embedding_model: DeterministicEmbeddingProvider.name,
           salience: 0.9,
           importance: 0.9,
           confidence: 0.9,
@@ -1371,7 +1372,7 @@ async function seedContextRuntimeFixture(dbPath: string) {
             },
           },
           embedding: sharedEmbedding,
-          embedding_model: FakeEmbeddingProvider.name,
+          embedding_model: DeterministicEmbeddingProvider.name,
           salience: 0.82,
           importance: 0.81,
           confidence: 0.78,
@@ -1412,7 +1413,7 @@ async function seedContextRuntimeFixture(dbPath: string) {
             },
           },
           embedding: sharedEmbedding,
-          embedding_model: FakeEmbeddingProvider.name,
+          embedding_model: DeterministicEmbeddingProvider.name,
           salience: 0.83,
           importance: 0.82,
           confidence: 0.79,
@@ -1428,7 +1429,7 @@ async function seedContextRuntimeFixture(dbPath: string) {
             anchor_v1: patternAnchor,
           },
           embedding: sharedEmbedding,
-          embedding_model: FakeEmbeddingProvider.name,
+          embedding_model: DeterministicEmbeddingProvider.name,
           salience: 0.85,
           importance: 0.88,
           confidence: 0.88,
@@ -1457,7 +1458,7 @@ async function seedContextRuntimeFixture(dbPath: string) {
           title: "Exports often break on stale default export wiring",
           text_summary: "Generic export debugging note",
           embedding: sharedEmbedding,
-          embedding_model: FakeEmbeddingProvider.name,
+          embedding_model: DeterministicEmbeddingProvider.name,
           salience: 0.4,
           importance: 0.35,
           confidence: 0.42,
@@ -1476,12 +1477,10 @@ async function seedContextRuntimeFixture(dbPath: string) {
   );
 
   const out = await liteWriteStore.withTx(() =>
-    applyMemoryWrite({} as any, prepared, {
+    applyMemoryWrite(prepared, {
       maxTextLen: 10_000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
       associativeLinkOrigin: "memory_write",
       write_access: liteWriteStore,
     }),
@@ -1490,7 +1489,7 @@ async function seedContextRuntimeFixture(dbPath: string) {
   assert.ok(ruleNodeId);
 
   await liteWriteStore.withTx(() =>
-    updateRuleState({} as any, {
+    updateRuleState({
       tenant_id: "default",
       scope: "default",
       actor: "local-user",
@@ -1509,7 +1508,7 @@ async function seedPrivateWorkflowFixture(dbPath: string) {
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
   const queryText = "repair export failure in node tests";
-  const [sharedEmbedding] = await FakeEmbeddingProvider.embed([queryText]);
+  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed([queryText]);
   const workflowAnchor = MemoryAnchorV1Schema.parse({
     anchor_kind: "workflow",
     anchor_level: "L2",
@@ -1583,7 +1582,7 @@ async function seedPrivateWorkflowFixture(dbPath: string) {
             anchor_v1: workflowAnchor,
           },
           embedding: sharedEmbedding,
-          embedding_model: FakeEmbeddingProvider.name,
+          embedding_model: DeterministicEmbeddingProvider.name,
           salience: 0.9,
           importance: 0.9,
           confidence: 0.93,
@@ -1602,12 +1601,10 @@ async function seedPrivateWorkflowFixture(dbPath: string) {
   );
 
   await liteWriteStore.withTx(() =>
-    applyMemoryWrite({} as any, prepared, {
+    applyMemoryWrite(prepared, {
       maxTextLen: 10_000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
       associativeLinkOrigin: "memory_write",
       write_access: liteWriteStore,
     }),
@@ -1620,7 +1617,7 @@ async function seedExecutionNativeOnlyPrivateWorkflowFixture(dbPath: string) {
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
   const queryText = "repair export failure in node tests";
-  const [sharedEmbedding] = await FakeEmbeddingProvider.embed([queryText]);
+  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed([queryText]);
 
   const prepared = await prepareMemoryWrite(
     {
@@ -1671,7 +1668,7 @@ async function seedExecutionNativeOnlyPrivateWorkflowFixture(dbPath: string) {
             },
           },
           embedding: sharedEmbedding,
-          embedding_model: FakeEmbeddingProvider.name,
+          embedding_model: DeterministicEmbeddingProvider.name,
           salience: 0.9,
           importance: 0.9,
           confidence: 0.93,
@@ -1690,12 +1687,10 @@ async function seedExecutionNativeOnlyPrivateWorkflowFixture(dbPath: string) {
   );
 
   await liteWriteStore.withTx(() =>
-    applyMemoryWrite({} as any, prepared, {
+    applyMemoryWrite(prepared, {
       maxTextLen: 10_000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
       associativeLinkOrigin: "memory_write",
       write_access: liteWriteStore,
     }),
@@ -1710,7 +1705,7 @@ function registerContextRuntimeApp(args: {
   liteRecallStore: ReturnType<typeof createLiteRecallStore>;
 }) {
   const guards = buildRequestGuards();
-  registerHostErrorHandler(args.app);
+  registerRuntimeErrorHandler(args.app);
   registerMemoryAccessRoutes({
     app: args.app,
     env: {
@@ -1722,14 +1717,10 @@ function registerContextRuntimeApp(args: {
       MAX_TEXT_LEN: 10_000,
       PII_REDACTION: false,
       ALLOW_CROSS_SCOPE_EDGES: false,
-      MEMORY_SHADOW_DUAL_WRITE_ENABLED: false,
-      MEMORY_SHADOW_DUAL_WRITE_STRICT: false,
     } as any,
     embedder: null,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
-    writeAccessShadowMirrorV2: false,
-    requireStoreFeatureCapability: () => {},
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
     enforceRateLimit: guards.enforceRateLimit,
@@ -1748,13 +1739,12 @@ function registerContextRuntimeApp(args: {
       MAX_TEXT_LEN: 10_000,
       PII_REDACTION: false,
       MEMORY_RECALL_TEXT_CONTEXT_TOKEN_BUDGET_DEFAULT: 4096,
-      MEMORY_RECALL_STAGE1_EXACT_FALLBACK_ON_EMPTY: true,
+      MEMORY_RECALL_STAGE1_EXACT_RECOVERY_ON_EMPTY: true,
       MEMORY_RECALL_ADAPTIVE_HARD_CAP_WAIT_MS: 0,
       MEMORY_PLANNING_CONTEXT_OPTIMIZATION_PROFILE_DEFAULT: "balanced",
       MEMORY_CONTEXT_ASSEMBLE_OPTIMIZATION_PROFILE_DEFAULT: "balanced",
     } as any,
-    embedder: FakeEmbeddingProvider,
-    embeddedRuntime: null,
+    embedder: DeterministicEmbeddingProvider,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
     recallTextEmbedBatcher: { stats: () => null },
@@ -1825,6 +1815,43 @@ function registerContextRuntimeApp(args: {
   });
 }
 
+test("recall_text returns product MemoryPacket on the public route", async () => {
+  const dbPath = tmpDbPath("recall-text-memory-packet");
+  const app = Fastify();
+  const { liteWriteStore, liteRecallStore } = await seedContextRuntimeFixture(dbPath);
+  try {
+    registerContextRuntimeApp({ app, liteWriteStore, liteRecallStore });
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/memory/recall_text",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "repair export failure in node tests",
+        limit: 5,
+        max_nodes: 10,
+        max_edges: 10,
+        ranked_limit: 10,
+      },
+    });
+    assert.equal(response.statusCode, 200);
+    const body = response.json();
+    const memoryPacket = AionisMemoryPacketSchema.parse(body.aionis_memory_packet);
+    assert.equal(memoryPacket.contract_version, "aionis_memory_packet_v1");
+    assert.equal(memoryPacket.tenant_id, "default");
+    assert.equal(memoryPacket.scope, "default");
+    assert.equal(memoryPacket.query.source, "text");
+    assert.ok(memoryPacket.source_map.routes_used.includes("/v1/memory/recall_text"));
+    assert.ok(memoryPacket.relevant_memories.length > 0);
+    assert.ok(!("raw_slots" in memoryPacket));
+  } finally {
+    await app.close();
+    await liteRecallStore.close();
+    await liteWriteStore.close();
+    fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+  }
+});
+
 test("planning_context returns aligned planner packet, action packet summary, and planner explanation", async () => {
   const dbPath = tmpDbPath("planning-context");
   const app = Fastify();
@@ -1893,6 +1920,56 @@ test("planning_context returns aligned planner packet, action packet summary, an
         debug_passthrough: true,
       }),
     );
+    const planningHistoryImpact = body.planning_summary.history_impact_summary;
+    assert.deepEqual(HistoryImpactSummarySchema.parse(planningHistoryImpact), planningHistoryImpact);
+    assert.equal(planningHistoryImpact.summary_version, "history_impact_summary_v1");
+    assert.equal(planningHistoryImpact.history_applied, true);
+    assert.equal(planningHistoryImpact.changed_next_run, true);
+    assert.ok(
+      planningHistoryImpact.impact_level === "action_shaping"
+        || planningHistoryImpact.impact_level === "learning_controlled",
+    );
+    assert.ok(planningHistoryImpact.affected_capabilities.includes("learning"));
+    assert.ok(planningHistoryImpact.affected_capabilities.includes("learning_control"));
+    assert.ok(planningHistoryImpact.next_run_changes.includes("first_action_shaped_by_history"));
+    assert.ok(planningHistoryImpact.next_run_changes.includes("learning_control_limited_authority"));
+    assert.equal(planningHistoryImpact.learning.stable_workflow_count, body.planning_summary.workflow_signal_summary.stable_workflow_count);
+    assert.equal(
+      planningHistoryImpact.forgetting.differential_rehydration_candidate_count,
+      body.planning_summary.forgetting_summary.differential_rehydration_candidate_count,
+    );
+    assert.deepEqual(RuntimeContextPacketContractSchema.parse(body.runtime_context_packet), body.runtime_context_packet);
+    assert.equal(body.runtime_context_packet.packet_version, "runtime_context_packet_v1");
+    assert.equal(body.runtime_context_packet.surface, "planning_context");
+    assert.equal(body.runtime_context_packet.selected_tool, body.planning_summary.selected_tool);
+    assert.equal(body.runtime_context_packet.context_est_tokens, body.planning_summary.context_est_tokens);
+    assert.deepEqual(body.runtime_context_packet.kickoff_recommendation, body.kickoff_recommendation);
+    assert.deepEqual(body.runtime_context_packet.history_impact_summary, planningHistoryImpact);
+    const planningMemoryPacket = AionisMemoryPacketSchema.parse((body as any).recall.aionis_memory_packet);
+    assert.equal(planningMemoryPacket.contract_version, "aionis_memory_packet_v1");
+    assert.equal(planningMemoryPacket.query.source, "text");
+    assert.ok(planningMemoryPacket.source_map.routes_used.includes("/v1/memory/planning/context"));
+    assert.ok(planningMemoryPacket.relevant_memories.length > 0);
+    assert.deepEqual(AionisGuidePacketSchema.parse(body.aionis_guide_packet), body.aionis_guide_packet);
+    assert.equal(body.aionis_guide_packet.contract_version, "aionis_guide_packet_v1");
+    assert.equal(body.aionis_guide_packet.tenant_id, body.tenant_id);
+    assert.equal(body.aionis_guide_packet.scope, body.scope);
+    assert.equal(body.aionis_guide_packet.guidance.first_action.action, planningFirstStep?.first_action_v1?.instruction ?? planningFirstStep?.next_action ?? null);
+    assert.equal(body.aionis_guide_packet.guidance.first_action.authority, "advisory");
+    assert.equal(body.aionis_guide_packet.task.run_id ?? null, null);
+    assert.equal(body.aionis_guide_packet.task.task_signature, planningFirstStep?.workflow_signature ?? null);
+    assert.ok(body.aionis_guide_packet.source_map.routes_used.includes("/v1/memory/planning/context"));
+    assert.ok(body.aionis_guide_packet.source_map.omitted_internal_surfaces.includes("raw_find_resolve"));
+    assert.deepEqual(AionisLearningPacketSchema.parse(body.aionis_learning_packet), body.aionis_learning_packet);
+    assert.equal(body.aionis_learning_packet.contract_version, "aionis_learning_packet_v1");
+    assert.equal(body.aionis_learning_packet.tenant_id, body.tenant_id);
+    assert.equal(body.aionis_learning_packet.scope, body.scope);
+    assert.equal(body.aionis_learning_packet.task.task_signature, planningFirstStep?.workflow_signature ?? null);
+    assert.equal(body.aionis_learning_packet.posture.source_code_change_allowed, false);
+    assert.equal(body.aionis_learning_packet.export_readiness.training_export_ready, false);
+    assert.ok(body.aionis_learning_packet.export_readiness.positive_transfer_required);
+    assert.ok(body.aionis_learning_packet.source_map.routes_used.includes("/v1/memory/planning/context"));
+    assert.ok(body.aionis_learning_packet.candidates.some((candidate: any) => candidate.kind === "workflow"));
     assert.ok(!("first_step_recommendation" in body), "default planning_context should not expose the stale top-level first_step_recommendation mirror");
     assert.deepEqual(body.kickoff_recommendation, body.planning_summary.first_step_recommendation);
     assertActionPacketSummaryMatchesPacket(body.planning_summary.action_packet_summary, body);
@@ -2241,13 +2318,13 @@ test("planning_context debug layered_context projects delegation learning withou
           delegation_packets: [{
             version: 1,
             role: "patch",
-            mission: "Apply the export fallback patch before retrying tests.",
+            mission: "Apply the export recovery patch before retrying tests.",
             working_set: ["src/routes/export.ts"],
             acceptance_checks: ["npm run -s test:lite -- export"],
             output_contract: "Return applied patch metadata.",
-            preferred_artifact_refs: ["artifact://repair-export/fallback-patch"],
+            preferred_artifact_refs: ["artifact://repair-export/recovery-patch"],
             inherited_evidence: [],
-            routing_reason: "fallback memory patch route",
+            routing_reason: "recovery memory patch route",
             task_family: "task:repair_export",
             family_scope: "aionis://runtime/repair-export",
             source_mode: "memory_only",
@@ -2255,7 +2332,7 @@ test("planning_context debug layered_context projects delegation learning withou
           delegation_returns: [],
           artifact_routing_records: [{
             version: 1,
-            ref: "artifact://repair-export/fallback-patch",
+            ref: "artifact://repair-export/recovery-patch",
             ref_kind: "artifact",
             route_role: "patch",
             route_intent: "memory_guided",
@@ -2739,6 +2816,51 @@ test("context_assemble returns aligned planner packet, assembly summary, and exe
         debug_passthrough: true,
       }),
     );
+    const assemblyHistoryImpact = body.assembly_summary.history_impact_summary;
+    assert.deepEqual(HistoryImpactSummarySchema.parse(assemblyHistoryImpact), assemblyHistoryImpact);
+    assert.equal(assemblyHistoryImpact.summary_version, "history_impact_summary_v1");
+    assert.equal(assemblyHistoryImpact.history_applied, true);
+    assert.equal(assemblyHistoryImpact.changed_next_run, true);
+    assert.ok(
+      assemblyHistoryImpact.impact_level === "action_shaping"
+        || assemblyHistoryImpact.impact_level === "learning_controlled",
+    );
+    assert.ok(assemblyHistoryImpact.affected_capabilities.includes("learning"));
+    assert.ok(assemblyHistoryImpact.affected_capabilities.includes("learning_control"));
+    assert.ok(assemblyHistoryImpact.next_run_changes.includes("first_action_shaped_by_history"));
+    assert.ok(assemblyHistoryImpact.next_run_changes.includes("learning_control_limited_authority"));
+    assert.equal(assemblyHistoryImpact.learning.stable_workflow_count, body.assembly_summary.workflow_signal_summary.stable_workflow_count);
+    assert.equal(
+      assemblyHistoryImpact.forgetting.differential_rehydration_candidate_count,
+      body.assembly_summary.forgetting_summary.differential_rehydration_candidate_count,
+    );
+    assert.deepEqual(RuntimeContextPacketContractSchema.parse(body.runtime_context_packet), body.runtime_context_packet);
+    assert.equal(body.runtime_context_packet.packet_version, "runtime_context_packet_v1");
+    assert.equal(body.runtime_context_packet.surface, "context_assemble");
+    assert.equal(body.runtime_context_packet.selected_tool, body.assembly_summary.selected_tool);
+    assert.equal(body.runtime_context_packet.context_est_tokens, body.assembly_summary.context_est_tokens);
+    assert.deepEqual(body.runtime_context_packet.kickoff_recommendation, body.kickoff_recommendation);
+    assert.deepEqual(body.runtime_context_packet.history_impact_summary, assemblyHistoryImpact);
+    assert.deepEqual(AionisGuidePacketSchema.parse(body.aionis_guide_packet), body.aionis_guide_packet);
+    assert.equal(body.aionis_guide_packet.contract_version, "aionis_guide_packet_v1");
+    assert.equal(body.aionis_guide_packet.tenant_id, body.tenant_id);
+    assert.equal(body.aionis_guide_packet.scope, body.scope);
+    assert.equal(body.aionis_guide_packet.guidance.first_action.action, assemblyFirstStep?.first_action_v1?.instruction ?? assemblyFirstStep?.next_action ?? null);
+    assert.equal(body.aionis_guide_packet.guidance.first_action.authority, "advisory");
+    assert.equal(body.aionis_guide_packet.task.run_id ?? null, null);
+    assert.equal(body.aionis_guide_packet.task.task_signature, assemblyFirstStep?.workflow_signature ?? null);
+    assert.ok(body.aionis_guide_packet.source_map.routes_used.includes("/v1/memory/context/assemble"));
+    assert.ok(body.aionis_guide_packet.source_map.omitted_internal_surfaces.includes("raw_find_resolve"));
+    assert.deepEqual(AionisLearningPacketSchema.parse(body.aionis_learning_packet), body.aionis_learning_packet);
+    assert.equal(body.aionis_learning_packet.contract_version, "aionis_learning_packet_v1");
+    assert.equal(body.aionis_learning_packet.tenant_id, body.tenant_id);
+    assert.equal(body.aionis_learning_packet.scope, body.scope);
+    assert.equal(body.aionis_learning_packet.task.task_signature, assemblyFirstStep?.workflow_signature ?? null);
+    assert.equal(body.aionis_learning_packet.posture.source_code_change_allowed, false);
+    assert.equal(body.aionis_learning_packet.export_readiness.training_export_ready, false);
+    assert.ok(body.aionis_learning_packet.export_readiness.positive_transfer_required);
+    assert.ok(body.aionis_learning_packet.source_map.routes_used.includes("/v1/memory/context/assemble"));
+    assert.ok(body.aionis_learning_packet.candidates.some((candidate: any) => candidate.kind === "workflow"));
     assert.ok(!("first_step_recommendation" in body), "default context_assemble should not expose the stale top-level first_step_recommendation mirror");
     assert.deepEqual(body.kickoff_recommendation, body.assembly_summary.first_step_recommendation);
     assertActionPacketSummaryMatchesPacket(body.assembly_summary.action_packet_summary, body);

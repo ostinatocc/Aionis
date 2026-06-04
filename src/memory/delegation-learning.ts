@@ -33,14 +33,14 @@ function expandTaskFamilyCandidates(values: unknown[]) {
   return out;
 }
 
-function firstPositiveInt(values: unknown[], fallback: number, max: number) {
+function firstPositiveInt(values: unknown[], defaultValue: number, max: number) {
   for (const value of values) {
     if (typeof value !== "number" || !Number.isFinite(value)) continue;
     const normalized = Math.trunc(value);
     if (normalized <= 0) continue;
     return Math.min(normalized, max);
   }
-  return fallback;
+  return defaultValue;
 }
 
 export type DelegationLearningSliceLite = {

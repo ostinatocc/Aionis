@@ -1,16 +1,10 @@
 # Aionis Architecture Boundary
 
-This focused copy keeps Aionis narrow: a local Runtime for execution continuity, evidence-gated self-learning, controlled forgetting, and learning control.
-
-The product-level architecture contract is [FOCUSED_RUNTIME_ARCHITECTURE_CONTRACT.md](FOCUSED_RUNTIME_ARCHITECTURE_CONTRACT.md). This boundary document defines what must stay separated; the architecture contract defines the focused Runtime loop and implementation map.
-
-The project has three layers. They must not be merged back together.
+This focused copy keeps Aionis narrow: a local continuity memory Runtime for execution continuity, evidence-gated self-learning, controlled forgetting, dynamic learning control, and history-shaped future behavior.
 
 Project execution experience is data, not source code. Aionis may evolve its source when improving general mechanisms, but a project run must evolve memory, scoped rules, workflows, evidence, and forgetting state first.
 
-## 1. Core Runtime
-
-Core Runtime is the product.
+## Core Runtime
 
 It owns:
 
@@ -21,6 +15,7 @@ It owns:
 5. workflow promotion
 6. controlled forgetting
 7. learning-control decisions
+8. history impact reporting
 
 It may produce:
 
@@ -29,6 +24,7 @@ It may produce:
 3. learning candidates
 4. workflow lifecycle decisions
 5. forgetting decisions
+6. history impact summaries
 
 It must not own:
 
@@ -47,60 +43,6 @@ Core hard invariants stay small:
 3. require real outcome evidence for workflow promotion
 4. make blocked or suppressed authority visible
 
-## 2. Real Eval Harness
-
-Real Eval Harness is the proof system, not the product.
-
-It owns:
-
-1. real LLM provider calls
-2. isolated workspace setup
-3. baseline-vs-Aionis comparisons
-4. external project verifier execution
-5. effect gate reporting
-
-It may produce:
-
-1. real eval reports
-2. effect gate results
-3. provider health results
-4. holdout/regression evidence
-
-It must not own:
-
-1. runtime memory promotion
-2. core context packet contracts
-3. product default policy
-4. persistent user task rules
-
-Real eval can support promotion, but the harness itself cannot become Core Runtime policy.
-
-During a validation run, the Runtime version is fixed so the report measures Aionis behavior rather than a live source patch. After the run, source changes are allowed only for general mechanism defects; project-specific lessons remain scoped memory or experimental candidates.
-
-## 3. Experimental Policies
-
-Experimental Policies are candidates. They are not product truth by default.
-
-They may include:
-
-1. verifier phase classifiers
-2. edit boundary experiments
-3. tool recovery hints
-4. repair plan candidates
-5. task-family hypotheses
-
-Their default authority is `soft_guidance` or `candidate_workflow`, never `hard_invariant`.
-
-They must not:
-
-1. become global hard rules from a single task
-2. promote failed-run behavior into stable workflow authority
-3. override Core evidence grading
-4. turn project-specific paths or package quirks into cross-project rules
-5. hide LLM exploration without evidence
-
-Promotion requires scoped real success plus holdout or regression evidence.
-
 ## Evidence Grading
 
 Aionis should not turn any testing style preference into product behavior. It grades evidence by how directly it proves real agent effectiveness.
@@ -111,9 +53,9 @@ Use this ordering when evaluating Aionis effectiveness:
 2. real integration or end-to-end pass
 3. real provider/runtime interaction pass
 4. deterministic local contract pass
-5. synthetic or fixture-only pass
+5. local-only pass
 
-Synthetic or fixture-only evidence can support local development, but it cannot prove Aionis product effectiveness or promote a workflow by itself.
+Local-only evidence can support development, but it cannot prove Aionis product effectiveness or promote a workflow by itself.
 
 ## Runtime Output Shape
 
@@ -128,14 +70,29 @@ The packet should include:
 5. scoped workflow candidates
 6. suppressed, stale, or contested memory
 7. evidence grade and promotion state
+8. history impact: what prior execution changed in this packet
 
 LLM reasoning remains responsible for semantic code plans. Runtime constrains authority, evidence, lifecycle, and recall quality.
+
+## Promotion Authority Boundary
+
+Aionis promotion evidence separates two claims:
+
+1. local reuse is allowed inside the current evidence scope
+2. wider generalization is allowed beyond that scope
+
+The first claim can be useful product memory. The second claim requires clean leakage posture, distinct-task or holdout
+evidence, no regression or negative-transfer evidence, and sublinear growth when a learned structure claims to cover
+multiple tasks.
+
+Missing wider-generalization evidence must keep the behavior scoped. It must not become source code, a global Runtime rule,
+host-specific policy, provider-specific policy, or architecture vocabulary.
 
 ## Rule For New Work
 
 Before adding a new hard rule, answer all questions:
 
-1. Is it a Core hard invariant, or only an eval/experimental policy?
+1. Is it one of the small Core hard invariants?
 2. What evidence promoted it?
 3. What is its scope?
 4. What is its escape condition?

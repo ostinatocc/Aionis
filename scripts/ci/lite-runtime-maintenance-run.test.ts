@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import Fastify from "fastify";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
-import { registerHostErrorHandler } from "../../src/host/http-host.ts";
+import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { runRuntimeMaintenanceLite } from "../../src/memory/runtime-maintenance.ts";
 import { applyPreparedMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
 import { registerMemoryFeedbackToolRoutes } from "../../src/routes/memory-feedback-tools.ts";
@@ -25,8 +25,6 @@ const writeOpts = {
   maxTextLen: 10_000,
   piiRedaction: false,
   allowCrossScopeEdges: false,
-  shadowDualWriteEnabled: false,
-  shadowDualWriteStrict: false,
 };
 
 function dailyRuntimeEntropyControls() {
@@ -83,8 +81,6 @@ function buildRequestGuards() {
     recallLimiter: null,
     debugEmbedLimiter: null,
     writeLimiter: null,
-    sandboxWriteLimiter: null,
-    sandboxReadLimiter: null,
     recallTextEmbedLimiter: null,
     recallInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
     writeInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
@@ -234,8 +230,6 @@ test("runtime maintenance reports before and after learning, reuse, and forgetti
       maxTextLen: writeOpts.maxTextLen,
       piiRedaction: writeOpts.piiRedaction,
       allowCrossScopeEdges: writeOpts.allowCrossScopeEdges,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
     });
     const directDb = createSqliteDatabase(dbPath);
     try {
@@ -365,8 +359,6 @@ test("runtime maintenance profiles apply different low-level forgetting horizons
       maxTextLen: writeOpts.maxTextLen,
       piiRedaction: writeOpts.piiRedaction,
       allowCrossScopeEdges: writeOpts.allowCrossScopeEdges,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
     });
     const twoDaysOld = new Date(Date.now() - (48 * 60 * 60 * 1000)).toISOString();
     const directDb = createSqliteDatabase(dbPath);
@@ -425,7 +417,7 @@ test("runtime maintenance profile endpoints expose scheduler-ready entrypoints",
   const store = createLiteWriteStore(tmpDbPath("profile-routes"));
   try {
     const guards = buildRequestGuards();
-    registerHostErrorHandler(app);
+    registerRuntimeErrorHandler(app);
     registerMemoryFeedbackToolRoutes({
       app,
       env: {
@@ -436,11 +428,8 @@ test("runtime maintenance profile endpoints expose scheduler-ready entrypoints",
         MAX_TEXT_LEN: 10000,
         PII_REDACTION: false,
         ALLOW_CROSS_SCOPE_EDGES: false,
-        MEMORY_SHADOW_DUAL_WRITE_ENABLED: false,
-        MEMORY_SHADOW_DUAL_WRITE_STRICT: false,
       } as any,
       embedder: null,
-      embeddedRuntime: null,
       liteWriteStore: store,
       requireMemoryPrincipal: guards.requireMemoryPrincipal,
       withIdentityFromRequest: guards.withIdentityFromRequest,

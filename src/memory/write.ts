@@ -1,13 +1,10 @@
 import stableStringify from "fast-json-stable-stringify";
-import type pg from "pg";
 import { sha256Hex } from "../util/crypto.js";
-import { assertDim, toVectorLiteral } from "../util/pgvector.js";
+import { assertDim, toVectorLiteral } from "../util/vector-literal.js";
 import { normalizeText } from "../util/normalize.js";
 import { badRequest } from "../util/http.js";
-import { type CapabilityFailureMode } from "../capability-contract.js";
 import {
   assertWriteStoreAccessContract,
-  createPostgresWriteStoreAccess,
   writeNodeFingerprint,
   type WriteNodeInsertArgs,
   type WriteStoreAccess,
@@ -28,7 +25,6 @@ import {
 import { enqueuePostCommitWriteArtifacts } from "./write-post-commit.js";
 import { prepareWriteBatch } from "./write-prepare-batch.js";
 import { buildWriteDiff, buildWriteResult } from "./write-serialization.js";
-import { applyShadowDualWrite } from "./write-shadow-dual.js";
 
 export type WriteResult = {
   tenant_id?: string;
@@ -39,17 +35,6 @@ export type WriteResult = {
   nodes: Array<{ id: string; uri?: string; client_id?: string; type: string }>;
   edges: Array<{ id: string; uri?: string; type: string; src_id: string; dst_id: string }>;
   embedding_backfill?: { enqueued: true; pending_nodes: number };
-  shadow_dual_write?: {
-    enabled: boolean;
-    strict: boolean;
-    mirrored: boolean;
-    copied?: { commits: number; nodes: number; edges: number; outbox: number };
-    capability?: "shadow_mirror_v2";
-    failure_mode?: CapabilityFailureMode;
-    degraded_mode?: "capability_unsupported" | "mirror_failed";
-    fallback_applied?: boolean;
-    error?: string;
-  };
   topic_cluster?:
     | {
         topic_commit_id: string | null;
@@ -58,8 +43,8 @@ export type WriteResult = {
         assigned: number;
         created_topics: number;
         promoted: number;
-        strategy_requested: "online_knn" | "offline_hdbscan";
-        strategy_executed: "online_knn" | "offline_hdbscan";
+        strategy_requested: "online_knn";
+        strategy_executed: "online_knn";
         strategy_note: string | null;
         quality: { cohesion: number; coverage: number; orphan_rate_after: number; merge_rate_30d: number };
       }
@@ -75,8 +60,6 @@ type PrepareWriteOptions = {
 };
 
 export type ApplyPreparedWriteOptions = PrepareWriteOptions & {
-  shadowDualWriteEnabled: boolean;
-  shadowDualWriteStrict: boolean;
   associativeLinkOrigin?: AssociativeLinkTriggerOrigin;
 };
 
@@ -197,10 +180,10 @@ export async function prepareMemoryWrite(
       input_text: inputText ?? null,
       nodes,
       config: parsed.distill,
-      fallback_memory_lane: defaultLane,
-      fallback_producer_agent_id: defaultProducerAgentId,
-      fallback_owner_agent_id: defaultOwnerAgentId,
-      fallback_owner_team_id: defaultOwnerTeamId,
+      default_memory_lane: defaultLane,
+      default_producer_agent_id: defaultProducerAgentId,
+      default_owner_agent_id: defaultOwnerAgentId,
+      default_owner_team_id: defaultOwnerTeamId,
     });
     for (const node of distilled.nodes) {
       node.slots = normalizeExecutionNativeSlots(node.type, node.slots ?? {}, node.title ?? null, node.text_summary ?? null);
@@ -263,11 +246,13 @@ export async function prepareMemoryWrite(
 }
 
 export async function applyMemoryWrite(
-  client: pg.PoolClient,
   prepared: PreparedWrite,
   opts: ApplyWriteOptions,
 ): Promise<WriteResult> {
-  const writeAccess = opts.write_access ?? createPostgresWriteStoreAccess(client);
+  if (!opts.write_access) {
+    throw new Error("applyMemoryWrite requires explicit write_access");
+  }
+  const writeAccess = opts.write_access;
   return applyPreparedMemoryWrite(writeAccess, prepared, opts);
 }
 
@@ -462,10 +447,6 @@ export async function applyPreparedMemoryWrite(
   const result: WriteResult = buildWriteResult(prepared, commit_id, commitHash);
   await enqueuePostCommitWriteArtifacts(writeAccess, prepared, commit_id, result, {
     associativeLinkOrigin: opts.associativeLinkOrigin,
-  });
-  await applyShadowDualWrite(writeAccess, scope, commit_id, result, {
-    enabled: opts.shadowDualWriteEnabled,
-    strict: opts.shadowDualWriteStrict,
   });
 
   return result;

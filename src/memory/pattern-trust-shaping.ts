@@ -39,17 +39,17 @@ function truncate(value: string, limit: number): string {
   return `${value.slice(0, Math.max(0, limit - 3)).trimEnd()}...`;
 }
 
-function normalizeFamilyLabel(value: string | null | undefined, fallbackPrefix: string): string | null {
+function normalizeFamilyLabel(value: string | null | undefined, familyPrefix: string): string | null {
   if (!value) return null;
   const trimmed = value.trim().toLowerCase();
-  if (trimmed.startsWith(`${fallbackPrefix}:`)) {
+  if (trimmed.startsWith(`${familyPrefix}:`)) {
     return truncate(trimmed, 128);
   }
   const tokens = words(value.toLowerCase(), 6)
     .map((part) => part.replace(/[^a-z0-9_-]/g, ""))
     .filter(Boolean);
   if (tokens.length === 0) return null;
-  return truncate(`${fallbackPrefix}:${tokens.join("-")}`, 128);
+  return truncate(`${familyPrefix}:${tokens.join("-")}`, 128);
 }
 
 export function extractTaskCue(

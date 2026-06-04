@@ -598,7 +598,7 @@ export function buildExecutionContractFromProjection(args: {
   });
 }
 
-export function guardExecutionContractForHost(args: {
+export function guardExecutionContractForConsumer(args: {
   contract: ExecutionContractV1 | null;
   trust: ContractTrust;
 }): ExecutionContractV1 | null {
@@ -828,42 +828,42 @@ export function mergeExecutionContractsWithActionSurface(args: {
     preference,
   });
   const primary = preference === "incoming" ? args.incoming : existing;
-  const fallback = preference === "incoming" ? existing : args.incoming;
+  const secondary = preference === "incoming" ? existing : args.incoming;
   return ExecutionContractV1Schema.parse({
     ...merged,
-    target_files: primary.target_files.length > 0 ? primary.target_files : fallback.target_files,
-    workflow_steps: primary.workflow_steps.length > 0 ? primary.workflow_steps : fallback.workflow_steps,
-    pattern_hints: primary.pattern_hints.length > 0 ? primary.pattern_hints : fallback.pattern_hints,
+    target_files: primary.target_files.length > 0 ? primary.target_files : secondary.target_files,
+    workflow_steps: primary.workflow_steps.length > 0 ? primary.workflow_steps : secondary.workflow_steps,
+    pattern_hints: primary.pattern_hints.length > 0 ? primary.pattern_hints : secondary.pattern_hints,
     service_lifecycle_constraints:
       primary.service_lifecycle_constraints.length > 0
         ? primary.service_lifecycle_constraints
-        : fallback.service_lifecycle_constraints,
+        : secondary.service_lifecycle_constraints,
     outcome: {
       ...merged.outcome,
       acceptance_checks:
         primary.outcome.acceptance_checks.length > 0
           ? primary.outcome.acceptance_checks
-          : fallback.outcome.acceptance_checks,
+          : secondary.outcome.acceptance_checks,
       success_invariants:
         primary.outcome.success_invariants.length > 0
           ? primary.outcome.success_invariants
-          : fallback.outcome.success_invariants,
+          : secondary.outcome.success_invariants,
       dependency_requirements:
         primary.outcome.dependency_requirements.length > 0
           ? primary.outcome.dependency_requirements
-          : fallback.outcome.dependency_requirements,
+          : secondary.outcome.dependency_requirements,
       environment_assumptions:
         primary.outcome.environment_assumptions.length > 0
           ? primary.outcome.environment_assumptions
-          : fallback.outcome.environment_assumptions,
+          : secondary.outcome.environment_assumptions,
       must_hold_after_exit:
         primary.outcome.must_hold_after_exit.length > 0
           ? primary.outcome.must_hold_after_exit
-          : fallback.outcome.must_hold_after_exit,
+          : secondary.outcome.must_hold_after_exit,
       external_visibility_requirements:
         primary.outcome.external_visibility_requirements.length > 0
           ? primary.outcome.external_visibility_requirements
-          : fallback.outcome.external_visibility_requirements,
+          : secondary.outcome.external_visibility_requirements,
     },
   });
 }

@@ -1,24 +1,15 @@
-import type pg from "pg";
 import type { Env } from "../config.js";
-import { createNoopDb } from "../db.js";
 import { createEmbeddingProviderFromEnv } from "../embeddings/index.js";
 import { createEmbeddingSurfacePolicy } from "../embeddings/surface-policy.js";
 import {
   SandboxExecutor,
   parseAllowedSandboxCommands,
 } from "../memory/sandbox.js";
-import {
-  type RecallStoreAccess,
-  type RecallStoreCapabilities,
-} from "../store/recall-access.js";
+import { type RecallStoreCapabilities } from "../store/recall-access.js";
 import { createLiteRecallStore } from "../store/lite-recall-store.js";
 import { createLiteReplayStore } from "../store/lite-replay-store.js";
-import { createLiteHostStore } from "../store/lite-host-store.js";
-import {
-  type WriteStoreAccess,
-  type WriteStoreCapabilities,
-} from "../store/write-access.js";
-import type { ReplayStoreAccess } from "../store/replay-access.js";
+import { createLiteRuntimeStore } from "../store/lite-runtime-store.js";
+import { createSandboxStore } from "../store/sandbox-access.js";
 import { createLiteWriteStore } from "../store/lite-write-store.js";
 import { createLiteExecutionStateStore } from "../execution/state-store.js";
 import { EmbedQueryBatcher } from "../util/embed_query_batcher.js";
@@ -110,22 +101,21 @@ export async function createRuntimeServices(env: Env) {
   const sandboxRemoteAllowedHosts = parseSandboxRemoteAllowedHosts(env.SANDBOX_REMOTE_EXECUTOR_ALLOWED_HOSTS_JSON);
   const sandboxRemoteAllowedCidrs = parseSandboxRemoteAllowedCidrs(env.SANDBOX_REMOTE_EXECUTOR_EGRESS_ALLOWED_CIDRS_JSON);
   const sandboxAllowedCommands = parseAllowedSandboxCommands(env.SANDBOX_ALLOWED_COMMANDS_JSON);
-  const store = createLiteHostStore(env.LITE_WRITE_SQLITE_PATH);
-  const db = createNoopDb();
-  const embeddedRuntime = null;
+  const store = createLiteRuntimeStore(env.LITE_WRITE_SQLITE_PATH);
   const liteReplayStore = createLiteReplayStore(env.LITE_REPLAY_SQLITE_PATH);
   const liteReplayAccess = liteReplayStore?.createReplayAccess() ?? null;
   const liteWriteStore = createLiteWriteStore(env.LITE_WRITE_SQLITE_PATH);
   const executionStateStore = createLiteExecutionStateStore(env.LITE_WRITE_SQLITE_PATH);
   const liteRecallStore = createLiteRecallStore(env.LITE_WRITE_SQLITE_PATH);
   const liteRecallAccess = liteRecallStore?.createRecallAccess() ?? null;
+  const sandboxStore = createSandboxStore(store);
 
   const embedder = createEmbeddingProviderFromEnv(process.env);
   const embeddingSurfacePolicy = createEmbeddingSurfacePolicy({
     providerConfigured: !!embedder,
     enabledSurfaces: env.EMBEDDING_ENABLED_SURFACES_JSON,
   });
-  const sandboxExecutor = new SandboxExecutor(store, {
+  const sandboxExecutor = new SandboxExecutor(sandboxStore, {
     enabled: env.SANDBOX_ENABLED,
     mode: env.SANDBOX_EXECUTOR_MODE,
     maxConcurrency: env.SANDBOX_EXECUTOR_MAX_CONCURRENCY,
@@ -156,19 +146,6 @@ export async function createRuntimeServices(env: Env) {
     debug_embeddings: true,
     audit_insert: true,
   };
-  const writeStoreCapabilities: WriteStoreCapabilities = {
-    shadow_mirror_v2: false,
-  };
-  const storeFeatureCapabilities = {
-    sessions_graph: true,
-    packs_export: true,
-    packs_import: true,
-  } as const;
-
-  const recallAccessForClient = (_client: pg.PoolClient): RecallStoreAccess | null => liteRecallAccess;
-  const writeAccessForClient = (_client: pg.PoolClient): WriteStoreAccess => liteWriteStore;
-  const replayAccessForClient = (_client: pg.PoolClient): ReplayStoreAccess | null => liteReplayAccess;
-  const requireStoreFeatureCapability = (_capability: keyof typeof storeFeatureCapabilities): void => {};
 
   const recallLimiter = env.RATE_LIMIT_ENABLED
     ? new TokenBucketLimiter({
@@ -190,22 +167,6 @@ export async function createRuntimeServices(env: Env) {
     ? new TokenBucketLimiter({
         rate_per_sec: env.WRITE_RATE_LIMIT_RPS,
         burst: env.WRITE_RATE_LIMIT_BURST,
-        ttl_ms: env.RATE_LIMIT_TTL_MS,
-        sweep_every_n: 500,
-      })
-    : null;
-  const sandboxWriteLimiter = env.RATE_LIMIT_ENABLED
-    ? new TokenBucketLimiter({
-        rate_per_sec: env.SANDBOX_WRITE_RATE_LIMIT_RPS,
-        burst: env.SANDBOX_WRITE_RATE_LIMIT_BURST,
-        ttl_ms: env.RATE_LIMIT_TTL_MS,
-        sweep_every_n: 500,
-      })
-    : null;
-  const sandboxReadLimiter = env.RATE_LIMIT_ENABLED
-    ? new TokenBucketLimiter({
-        rate_per_sec: env.SANDBOX_READ_RATE_LIMIT_RPS,
-        burst: env.SANDBOX_READ_RATE_LIMIT_BURST,
         ttl_ms: env.RATE_LIMIT_TTL_MS,
         sweep_every_n: 500,
       })
@@ -258,8 +219,7 @@ export async function createRuntimeServices(env: Env) {
     sandboxRemoteAllowedCidrs,
     sandboxAllowedCommands,
     store,
-    db,
-    embeddedRuntime,
+    sandboxStore,
     liteRecallStore,
     liteRecallAccess,
     liteReplayStore,
@@ -268,19 +228,10 @@ export async function createRuntimeServices(env: Env) {
     executionStateStore,
     embedder,
     sandboxExecutor,
-    healthDatabaseTargetHash: null,
     recallStoreCapabilities,
-    writeStoreCapabilities,
-    storeFeatureCapabilities,
-    recallAccessForClient,
-    replayAccessForClient,
-    writeAccessForClient,
-    requireStoreFeatureCapability,
     recallLimiter,
     debugEmbedLimiter,
     writeLimiter,
-    sandboxWriteLimiter,
-    sandboxReadLimiter,
     recallTextEmbedLimiter,
     sandboxTenantBudgetPolicy,
     recallTextEmbedCache,

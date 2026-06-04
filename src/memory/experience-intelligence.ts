@@ -159,9 +159,7 @@ export async function buildExperienceIntelligenceLite(args: {
     args.defaultActorId,
   );
 
-  const tools = await selectTools(
-    null,
-    {
+  const tools = await selectTools({
       tenant_id: parsed.tenant_id,
       scope: parsed.scope,
       run_id: parsed.run_id,

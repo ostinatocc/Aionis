@@ -5,9 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
-import { FakeEmbeddingProvider } from "../../src/embeddings/fake.ts";
+import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
-import { registerHostErrorHandler } from "../../src/host/http-host.ts";
+import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import {
   PolicyMutationAdjudicationV1Schema,
   PolicyMutationV1Schema,
@@ -48,17 +48,15 @@ function buildEnv(overrides: Record<string, unknown> = {}) {
     MAX_TEXT_LEN: 10_000,
     PII_REDACTION: false,
     ALLOW_CROSS_SCOPE_EDGES: false,
-    MEMORY_SHADOW_DUAL_WRITE_ENABLED: false,
-    MEMORY_SHADOW_DUAL_WRITE_STRICT: false,
     AUTO_TOPIC_CLUSTER_ON_WRITE: false,
     TOPIC_CLUSTER_ASYNC_ON_WRITE: true,
     MEMORY_WRITE_REQUIRE_NODES: false,
     MEMORY_RECALL_TEXT_CONTEXT_TOKEN_BUDGET_DEFAULT: 4096,
-    MEMORY_RECALL_STAGE1_EXACT_FALLBACK_ON_EMPTY: true,
+    MEMORY_RECALL_STAGE1_EXACT_RECOVERY_ON_EMPTY: true,
     MEMORY_RECALL_ADAPTIVE_HARD_CAP_WAIT_MS: 0,
     MEMORY_PLANNING_CONTEXT_OPTIMIZATION_PROFILE_DEFAULT: "balanced",
     MEMORY_CONTEXT_ASSEMBLE_OPTIMIZATION_PROFILE_DEFAULT: "balanced",
-    WORKFLOW_LEARNING_CONTROL_STATIC_PROMOTE_MEMORY_PROVIDER_ENABLED: false,
+    WORKFLOW_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: false,
     ...overrides,
   } as any;
 }
@@ -72,23 +70,20 @@ function registerApp(args: {
   const env = buildEnv(args.envOverrides);
   const guards = createRequestGuards({
     env,
-    embedder: FakeEmbeddingProvider,
+    embedder: DeterministicEmbeddingProvider,
     recallLimiter: null,
     debugEmbedLimiter: null,
     writeLimiter: null,
-    sandboxWriteLimiter: null,
-    sandboxReadLimiter: null,
     recallTextEmbedLimiter: null,
     recallInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
     writeInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
   });
 
-  registerHostErrorHandler(args.app);
+  registerRuntimeErrorHandler(args.app);
   registerMemoryWriteRoutes({
     app: args.app,
     env,
-    embedder: FakeEmbeddingProvider,
-    embeddedRuntime: null,
+    embedder: DeterministicEmbeddingProvider,
     liteWriteStore: args.liteWriteStore,
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
@@ -102,8 +97,7 @@ function registerApp(args: {
   registerMemoryContextRuntimeRoutes({
     app: args.app,
     env,
-    embedder: FakeEmbeddingProvider,
-    embeddedRuntime: null,
+    embedder: DeterministicEmbeddingProvider,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
     recallTextEmbedBatcher: { stats: () => null },
@@ -165,8 +159,6 @@ function registerApp(args: {
     env,
     embedder: null,
     liteWriteStore: args.liteWriteStore,
-    writeAccessShadowMirrorV2: false,
-    requireStoreFeatureCapability: () => {},
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
     enforceRateLimit: guards.enforceRateLimit,
@@ -1146,7 +1138,7 @@ test("memory/write stable workflow learning_control blocks promotion when execut
   }
 });
 
-test("memory/write stable workflow learning_control can use internal static provider without explicit review", async () => {
+test("memory/write stable workflow learning_control can use internal evidence provider without explicit review", async () => {
   const dbPath = tmpDbPath("projection-learning_control-provider");
   const app = Fastify();
   const liteWriteStore = createLiteWriteStore(dbPath);
@@ -1157,7 +1149,7 @@ test("memory/write stable workflow learning_control can use internal static prov
       liteWriteStore,
       liteRecallStore,
       envOverrides: {
-        WORKFLOW_LEARNING_CONTROL_STATIC_PROMOTE_MEMORY_PROVIDER_ENABLED: true,
+        WORKFLOW_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: true,
       },
     });
 
@@ -1173,7 +1165,7 @@ test("memory/write stable workflow learning_control can use internal static prov
         filePath: "src/routes/export.ts",
         modifiedFiles: ["src/routes/export.ts"],
         contractTrust: "authoritative",
-        ...passedExecutionEvidence("evidence://export/static-provider/run-1"),
+        ...passedExecutionEvidence("evidence://export/evidence-provider/run-1"),
       }),
     });
     assert.equal(firstWrite.statusCode, 200);
@@ -1190,7 +1182,7 @@ test("memory/write stable workflow learning_control can use internal static prov
         filePath: "src/routes/export.ts",
         modifiedFiles: ["src/routes/export.ts"],
         contractTrust: "authoritative",
-        ...passedExecutionEvidence("evidence://export/static-provider/run-2"),
+        ...passedExecutionEvidence("evidence://export/evidence-provider/run-2"),
       }),
     });
     assert.equal(secondWrite.statusCode, 200);
@@ -1219,7 +1211,7 @@ test("memory/write stable workflow learning_control can use internal static prov
     const decisionTrace = (promotePreview.decision_trace ?? {}) as Record<string, unknown>;
 
     assert.equal(reviewResult.review_version, "promote_memory_semantic_review_v1");
-    assert.equal(reviewResult.adjudication?.reason, "static provider found workflow-signature evidence");
+    assert.equal(reviewResult.adjudication?.reason, "evidence provider found workflow-signature evidence");
     assert.equal(promotePreview.admissibility?.admissible, true);
     assert.equal(promotePreview.policy_effect?.applies, true);
     assert.equal(promotePreview.policy_effect?.effective_promotion_state, "stable");
@@ -1243,7 +1235,7 @@ test("memory/write does not auto-promote advisory workflow projections to stable
       liteWriteStore,
       liteRecallStore,
       envOverrides: {
-        WORKFLOW_LEARNING_CONTROL_STATIC_PROMOTE_MEMORY_PROVIDER_ENABLED: true,
+        WORKFLOW_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: true,
       },
     });
 
@@ -1632,8 +1624,8 @@ test("memory/write also projects packet-only execution continuity writes into wo
     const introspectBody = ExecutionMemoryIntrospectionResponseSchema.parse(introspect.json());
     assert.equal(introspectBody.recommended_workflows.length, 0);
     assert.equal(introspectBody.candidate_workflows.length, 1);
-    assert.match(introspectBody.demo_surface.merged_text, /promotion-ready workflows=1/i);
-    assert.match(introspectBody.demo_surface.merged_text, /candidate workflow:/i);
+    assert.match(introspectBody.operator_surface.merged_text, /promotion-ready workflows=1/i);
+    assert.match(introspectBody.operator_surface.merged_text, /candidate workflow:/i);
   } finally {
     await app.close();
     await liteWriteStore.close();

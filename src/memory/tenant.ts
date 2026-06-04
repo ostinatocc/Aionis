@@ -8,8 +8,8 @@ export type TenantScope = {
   scope_key: string;
 };
 
-export function normalizeTenantId(raw: string | undefined, fallback: string): string {
-  const v = (raw ?? fallback).trim();
+export function normalizeTenantId(raw: string | undefined, defaultValue: string): string {
+  const v = (raw ?? defaultValue).trim();
   if (!v) badRequest("invalid_tenant_id", "tenant_id must be non-empty");
   if (!TENANT_ID_RE.test(v)) {
     badRequest(
@@ -21,8 +21,8 @@ export function normalizeTenantId(raw: string | undefined, fallback: string): st
   return v;
 }
 
-export function normalizeScope(raw: string | undefined, fallback: string): string {
-  const v = (raw ?? fallback).trim();
+export function normalizeScope(raw: string | undefined, defaultValue: string): string {
+  const v = (raw ?? defaultValue).trim();
   if (!v) badRequest("invalid_scope", "scope must be non-empty");
   // Reserve the internal namespace used by tenant-derived scope keys.
   if (v.startsWith("tenant:")) {

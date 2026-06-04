@@ -121,12 +121,10 @@ async function seedAnchorFixture() {
     allowCrossScopeEdges: false,
   }, null);
 
-  await store.withTx(() => applyMemoryWrite({} as any, prepared, {
+  await store.withTx(() => applyMemoryWrite(prepared, {
     maxTextLen: 10000,
     piiRedaction: false,
     allowCrossScopeEdges: false,
-    shadowDualWriteEnabled: false,
-    shadowDualWriteStrict: false,
     write_access: store,
   }));
 
@@ -205,7 +203,7 @@ test("rehydrateAnchorPayloadLite returns linked node and decision summaries in p
   }
 });
 
-test("rehydrateAnchorPayloadLite falls back to the Lite local actor when actor is omitted", async () => {
+test("rehydrateAnchorPayloadLite uses the Lite local actor when actor is omitted", async () => {
   const { store, anchorNodeId, payloadNodeId, decisionId } = await seedAnchorFixture();
   try {
     const out = await rehydrateAnchorPayloadLite(store, {

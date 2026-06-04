@@ -139,11 +139,11 @@ test("runtime boundary inventory keeps authority capabilities visible", () => {
     assert.equal(executionIntrospection.role, "authority_consumer");
     assert.ok(
       executionIntrospection.authority_rules.includes("execution_introspection_reports_authority_decisions_read_only"),
-      "execution introspection must expose authority decisions as read-only host diagnostics",
+      "execution introspection must expose authority decisions as read-only runtime diagnostics",
     );
     assert.ok(
       executionIntrospection.required_source_markers.includes("authority_decision_report"),
-      "execution introspection must publish the host-facing authority decision report marker",
+      "execution introspection must publish the runtime-facing authority decision report marker",
     );
   }
 });

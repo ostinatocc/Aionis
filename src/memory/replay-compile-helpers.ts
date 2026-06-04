@@ -4,7 +4,7 @@ import { sha256Hex } from "../util/crypto.js";
 export type ReplayDeterministicGateResolved = {
   enabled: boolean;
   preferDeterministicExecution: boolean;
-  onMismatch: "fallback" | "reject";
+  onMismatch: "candidate_only" | "reject";
   requiredStatuses: string[];
   requestMatchers: Record<string, unknown> | null;
   requestPolicyConstraints: Record<string, unknown> | null;
@@ -14,7 +14,7 @@ export type ReplayDeterministicGateEvaluation = {
   enabled: boolean;
   requested_mode: "simulate" | "strict" | "guided";
   effective_mode: "simulate" | "strict" | "guided";
-  decision: "disabled" | "matched" | "promoted_to_strict" | "fallback_to_requested_mode" | "rejected";
+  decision: "disabled" | "matched" | "promoted_to_strict" | "candidate_only" | "rejected";
   mismatch_reasons: string[];
   inference_skipped: boolean;
   playbook_status: string;
@@ -85,7 +85,7 @@ function resolveReplayDeterministicGate(input: unknown): ReplayDeterministicGate
     return {
       enabled: false,
       preferDeterministicExecution: false,
-      onMismatch: "fallback",
+      onMismatch: "candidate_only",
       requiredStatuses: ["shadow", "active"],
       requestMatchers: null,
       requestPolicyConstraints: null,
@@ -98,7 +98,7 @@ function resolveReplayDeterministicGate(input: unknown): ReplayDeterministicGate
   return {
     enabled: obj.enabled !== false,
     preferDeterministicExecution: obj.prefer_deterministic_execution !== false,
-    onMismatch: obj.on_mismatch === "reject" ? "reject" : "fallback",
+    onMismatch: obj.on_mismatch === "reject" ? "reject" : "candidate_only",
     requiredStatuses: requiredStatuses.length > 0 ? requiredStatuses : ["shadow", "active"],
     requestMatchers: asObject(obj.matchers),
     requestPolicyConstraints: asObject(obj.policy_constraints),
@@ -148,7 +148,7 @@ export function evaluateReplayDeterministicGate(args: {
             : "matched"
           : gate.onMismatch === "reject"
             ? "rejected"
-            : "fallback_to_requested_mode",
+            : "candidate_only",
     mismatch_reasons: mismatchReasons,
     inference_skipped: matched && effectiveMode === "strict",
     playbook_status: playbookStatus,
@@ -171,7 +171,7 @@ export function nextActionForReplayDeterministicGate(evaluation: ReplayDetermini
   if (evaluation.mismatch_reasons.includes("status_not_allowed_for_deterministic_replay")) {
     return "promote_or_select_a_replayable_playbook_version";
   }
-  return "fallback_to_normal_planner_or_simulate";
+  return "run_agent_with_candidate_evidence";
 }
 
 export function dedupeReplayCompileSteps(

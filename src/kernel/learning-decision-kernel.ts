@@ -27,7 +27,7 @@ export type WorkflowFeedbackTarget = {
 export type ToolsFeedbackLearningDecision = {
   workflowFeedbackTarget: WorkflowFeedbackTarget;
   contractTrustForMaterialization: ContractTrust | null;
-  automaticHostToolFeedback: boolean;
+  automaticAgentToolFeedback: boolean;
   shouldWritePatternAnchor: boolean;
   shouldMaterializePolicyMemory: boolean;
 };
@@ -209,12 +209,12 @@ export function extractFeedbackTelemetrySource(context: unknown): string | null 
     ?? null;
 }
 
-export function isAutomaticHostToolFeedback(context: unknown): boolean {
+export function isAutomaticAgentToolFeedback(context: unknown): boolean {
   const source = extractFeedbackTelemetrySource(context);
   return !!source && (
-    source === "host_post_tool_use"
-    || source === "host_post_tool_use_soak"
-    || source.startsWith("host_post_tool_use:")
+    source === "agent_post_tool_use"
+    || source === "agent_post_tool_use_soak"
+    || source.startsWith("agent_post_tool_use:")
   );
 }
 
@@ -238,7 +238,7 @@ export function shouldWriteToolsFeedbackPatternAnchor(args: {
   workflowFeedbackTarget: WorkflowFeedbackTarget;
 }): boolean {
   if (args.outcome !== "positive" && args.outcome !== "negative") return false;
-  if (!isAutomaticHostToolFeedback(args.context)) return true;
+  if (!isAutomaticAgentToolFeedback(args.context)) return true;
   if (args.sourceRuleIds.length > 0) return true;
   return hasConcreteWorkflowFeedbackTarget(args.workflowFeedbackTarget);
 }
@@ -258,7 +258,7 @@ export function decideToolsFeedbackLearning(args: {
   return {
     workflowFeedbackTarget,
     contractTrustForMaterialization,
-    automaticHostToolFeedback: isAutomaticHostToolFeedback(args.context),
+    automaticAgentToolFeedback: isAutomaticAgentToolFeedback(args.context),
     shouldWritePatternAnchor: shouldWriteToolsFeedbackPatternAnchor({
       context: args.context,
       outcome: args.outcome,

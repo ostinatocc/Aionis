@@ -1,0 +1,750 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import type { PlanningSummary } from "../../src/app/planning-summary.ts";
+import { evaluateAionisEffect } from "../../src/kernel/effect-evaluator.ts";
+import {
+  buildAionisEffectReport,
+  buildAionisGuidePacket,
+  buildAionisLearningPacket,
+  buildAionisMemoryPacket,
+} from "../../src/memory/product-output-assembler.ts";
+
+function planningSummaryFixture(): PlanningSummary {
+  return {
+    summary_version: "planning_summary_v1",
+    planner_explanation: "History points to a resumable verifier-backed path.",
+    first_step_recommendation: {
+      source_kind: "experience_intelligence",
+      history_applied: true,
+      contract_trust: "advisory",
+      execution_contract_v1: null,
+      first_action_v1: {
+        summary_version: "kickoff_first_action_v1",
+        action: "read_file",
+        priority: "recommended",
+        contract_trust: "advisory",
+        tool_name: "shell",
+        learned_tool: "shell",
+        file_path: "src/runtime.ts",
+        target_files: ["src/runtime.ts"],
+        reason: "Recovered handoff points to this file.",
+        instruction: "Inspect src/runtime.ts before editing.",
+      },
+      edit_boundary_v1: {
+        summary_version: "kickoff_edit_boundary_v1",
+        contract_trust: "advisory",
+        allowed_edit_files: ["src/runtime.ts"],
+        forbidden_edit_files: ["src/other.ts"],
+        required_verifiers: ["npm test"],
+        anti_shortcut_rules: ["do not persist learning from failed verifier evidence"],
+        reason: "Keep the continuation local to recovered evidence.",
+      },
+      verification_repair_v1: null,
+      selected_tool: "shell",
+      task_family: "coding",
+      workflow_signature: "runtime-continuation",
+      policy_memory_id: "policy-1",
+      file_path: "src/runtime.ts",
+      next_action: "Inspect recovered file.",
+    },
+    action_intelligence_pre_action_gate: {
+      gate_version: "action_intelligence_pre_action_gate_v1",
+      known_enough: true,
+      requires_recall: false,
+      requires_rehydration: true,
+      requires_operator_review: false,
+      authority_blocked: false,
+      uncertainty_level: "moderate",
+      confidence: 0.72,
+      recommended_actions: ["rehydrate_payload"],
+      primary_reason: "Payload may be needed before mutation.",
+    },
+    runtime_entropy_profile: null,
+    runtime_entropy_controls: null,
+    action_retrieval_uncertainty: {
+      summary_version: "action_retrieval_uncertainty_v1",
+      level: "moderate",
+      confidence: 0.69,
+      evidence_gap_count: 1,
+      reasons: ["candidate memory needs payload check"],
+      recommended_actions: ["rehydrate_payload"],
+    },
+    action_retrieval_gate: {
+      summary_version: "action_retrieval_gate_v1",
+      gate_action: "rehydrate_payload",
+      escalates_task_start: false,
+      confidence: 0.7,
+      primary_reason: "Need a compact payload before action.",
+      recommended_actions: ["rehydrate_payload"],
+      instruction: "Rehydrate only the relevant payload.",
+      rehydration_candidate_count: 1,
+      preferred_rehydration: null,
+    },
+    history_impact_summary: {
+      summary_version: "history_impact_summary_v1",
+      history_applied: true,
+      changed_next_run: true,
+      impact_level: "action_shaping",
+      affected_capabilities: ["continuity", "learning", "forgetting", "learning_control"],
+      continuity: {
+        continuity_carrier_count: 1,
+        static_blocks_selected: 2,
+        selected_memory_layer_count: 2,
+      },
+      learning: {
+        stable_workflow_count: 1,
+        candidate_workflow_count: 1,
+        promotion_ready_workflow_count: 1,
+        trusted_pattern_count: 1,
+        contested_pattern_count: 1,
+        active_policy_count: 1,
+        contested_policy_count: 0,
+      },
+      forgetting: {
+        substrate_mode: "suppression_present",
+        forgotten_items: 1,
+        suppressed_pattern_count: 1,
+        differential_rehydration_candidate_count: 1,
+        stale_signal_count: 1,
+      },
+      learning_control: {
+        contract_trust: "advisory",
+        action_start_blocked: false,
+        authoritative_allowed_count: 1,
+        authoritative_blocked_count: 1,
+        stable_promotion_allowed_count: 0,
+        stable_promotion_blocked_count: 1,
+        primary_blockers: ["promotion lacks holdout evidence"],
+      },
+      runtime_entropy: {
+        profile_present: false,
+        controls_present: false,
+        entropy_level: null,
+        plasticity_level: null,
+        exploration_budget: null,
+        control_strength: null,
+      },
+      next_run_changes: ["continuity_state_available", "first_action_shaped_by_history"],
+      primary_reason: "History shaped the next action.",
+    },
+    selected_tool: "shell",
+    decision_id: "decision-1",
+    rules_considered: 0,
+    rules_matched: 0,
+    context_est_tokens: 1200,
+    layered_output: false,
+    forgotten_items: 1,
+    static_blocks_selected: 2,
+    selected_memory_layers: ["continuity", "workflow"],
+    optimization_profile: "balanced",
+    context_compaction_profile: "balanced",
+    recall_mode: "execution_memory",
+    trusted_pattern_count: 1,
+    contested_pattern_count: 1,
+    trusted_pattern_tools: ["shell"],
+    contested_pattern_tools: ["search"],
+    workflow_signal_summary: {
+      stable_workflow_count: 1,
+      promotion_ready_workflow_count: 1,
+      observing_workflow_count: 0,
+      stable_workflow_titles: ["resume verifier-backed file inspection"],
+      promotion_ready_workflow_titles: ["candidate local repair"],
+      observing_workflow_titles: [],
+    },
+    action_packet_summary: {
+      recommended_workflow_count: 1,
+      candidate_workflow_count: 1,
+      candidate_pattern_count: 0,
+      trusted_pattern_count: 1,
+      contested_pattern_count: 1,
+      rehydration_candidate_count: 1,
+      supporting_knowledge_count: 0,
+      workflow_anchor_ids: ["wf-stable-1"],
+      candidate_workflow_anchor_ids: ["wf-candidate-1"],
+      candidate_pattern_anchor_ids: [],
+      trusted_pattern_anchor_ids: ["pat-trusted-1"],
+      contested_pattern_anchor_ids: ["pat-contested-1"],
+      rehydration_anchor_ids: ["mem-rehydrate-1"],
+    },
+    workflow_lifecycle_summary: {
+      candidate_count: 1,
+      stable_count: 1,
+      replay_source_count: 1,
+      rehydration_ready_count: 1,
+      promotion_ready_count: 1,
+      transition_counts: {
+        candidate_observed: 1,
+        promoted_to_stable: 1,
+        normalized_latest_stable: 0,
+      },
+    },
+    workflow_maintenance_summary: {
+      model: "lazy_online_v1",
+      observe_count: 1,
+      retain_count: 1,
+      promote_candidate_count: 1,
+      retain_workflow_count: 1,
+    },
+    authority_visibility_summary: {
+      summary_version: "runtime_authority_visibility_summary_v1",
+      surface_count: 2,
+      sufficient_count: 1,
+      insufficient_count: 1,
+      authoritative_allowed_count: 1,
+      authoritative_blocked_count: 1,
+      stable_promotion_allowed_count: 0,
+      stable_promotion_blocked_count: 1,
+      execution_evidence_failed_count: 0,
+      execution_evidence_incomplete_count: 1,
+      false_confidence_count: 0,
+      reason_counts: { holdout_required: 1 },
+      top_blockers: ["promotion lacks holdout evidence"],
+    },
+    distillation_signal_summary: {
+      distilled_evidence_count: 1,
+      distilled_fact_count: 1,
+      projected_workflow_candidate_count: 1,
+      origin_counts: {
+        write_distillation_input_text: 0,
+        write_distillation_event_node: 0,
+        write_distillation_evidence_node: 1,
+        execution_write_projection: 0,
+        handoff_continuity_carrier: 1,
+        session_event_continuity_carrier: 0,
+        session_continuity_carrier: 0,
+        replay_learning_episode: 1,
+      },
+      promotion_target_counts: {
+        workflow: 1,
+        pattern: 0,
+        policy: 0,
+      },
+    },
+    pattern_lifecycle_summary: {
+      candidate_count: 0,
+      trusted_count: 1,
+      contested_count: 1,
+      near_promotion_count: 0,
+      counter_evidence_open_count: 1,
+      transition_counts: {
+        candidate_observed: 0,
+        promoted_to_trusted: 1,
+        counter_evidence_opened: 1,
+        revalidated_to_trusted: 0,
+      },
+    },
+    pattern_maintenance_summary: {
+      model: "lazy_online_v1",
+      observe_count: 0,
+      retain_count: 1,
+      review_count: 1,
+      promote_candidate_count: 0,
+      review_counter_evidence_count: 1,
+      retain_trusted_count: 1,
+    },
+    policy_lifecycle_summary: {
+      persisted_count: 1,
+      active_count: 1,
+      contested_count: 0,
+      retired_count: 0,
+      default_mode_count: 0,
+      hint_mode_count: 1,
+      stable_policy_count: 0,
+      transition_counts: {
+        materialized: 1,
+        refreshed: 0,
+        contested_by_feedback: 0,
+        retired_by_feedback: 0,
+        retired_by_learning_control: 0,
+        reactivated_by_learning_control: 0,
+      },
+    },
+    policy_maintenance_summary: {
+      model: "lazy_online_v1",
+      observe_count: 1,
+      retain_count: 1,
+      review_count: 0,
+      promote_to_default_count: 0,
+      retain_active_policy_count: 1,
+      review_contested_policy_count: 0,
+      retire_policy_count: 0,
+      reactivate_policy_count: 0,
+    },
+    continuity_carrier_summary: {
+      total_count: 1,
+      handoff_count: 1,
+      session_event_count: 0,
+      session_count: 0,
+    },
+    forgetting_summary: {
+      summary_version: "execution_forgetting_summary_v1",
+      substrate_mode: "suppression_present",
+      forgotten_items: 1,
+      forgotten_by_reason: { stale: 1 },
+      primary_forgetting_reason: "stale memory suppressed",
+      suppressed_pattern_count: 1,
+      suppressed_pattern_anchor_ids: ["mem-suppressed-1"],
+      suppressed_pattern_sources: ["pattern"],
+      selected_memory_layers: ["continuity", "workflow"],
+      semantic_action_counts: {
+        retain: 2,
+        demote: 0,
+        archive: 0,
+        review: 1,
+      },
+      lifecycle_state_counts: {
+        active: 2,
+        contested: 1,
+        retired: 0,
+        archived: 0,
+      },
+      archive_relocation_state_counts: {
+        none: 3,
+        candidate: 0,
+        cold_archive: 0,
+      },
+      archive_relocation_target_counts: {
+        none: 3,
+        local_cold_store: 0,
+        external_object_store: 0,
+      },
+      archive_payload_scope_counts: {
+        none: 3,
+        anchor_payload: 0,
+        node: 0,
+      },
+      rehydration_mode_counts: {
+        summary_only: 0,
+        partial: 0,
+        full: 0,
+        differential: 1,
+      },
+      differential_rehydration_candidate_count: 1,
+      primary_savings_levers: ["suppression"],
+      stale_signal_count: 1,
+      recommended_action: "rehydrate only if needed",
+    },
+    primary_savings_levers: ["suppression"],
+  };
+}
+
+test("product guide assembler converts planning summary into stable GuidePacket", () => {
+  const packet = buildAionisGuidePacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    task: {
+      task_id: "task-1",
+      run_id: "run-1",
+      task_signature: "runtime-continuation",
+      task_family: "coding",
+    },
+    planning: planningSummaryFixture(),
+    source_map: {
+      routes_used: ["/v1/memory/context/assemble"],
+      internal_surfaces_used: ["planning_summary"],
+    },
+  });
+
+  assert.equal(packet.contract_version, "aionis_guide_packet_v1");
+  assert.equal(packet.guidance.first_action.authority, "advisory");
+  assert.equal(packet.guidance.first_action.uncertainty, "medium");
+  assert.deepEqual(packet.recovered_state.target_files, ["src/runtime.ts"]);
+  assert.deepEqual(packet.recovered_state.acceptance_checks, ["npm test"]);
+  assert.equal(packet.guidance.workflow_candidates[0]?.workflow_id, "wf-stable-1");
+  assert.equal(packet.guidance.workflow_candidates[0]?.authority, "trusted");
+  assert.equal(packet.history_contributions.handoff.used, true);
+  assert.equal(packet.history_contributions.handoff.source_count, 2);
+  assert.equal(packet.history_contributions.replay.used, true);
+  assert.equal(packet.history_contributions.replay.source_count, 2);
+  assert.ok(packet.history_contributions.replay.source_ids.includes("wf-stable-1"));
+  assert.ok(packet.memory_lifecycle.suppressed_memory_ids.includes("mem-suppressed-1"));
+  assert.equal(packet.memory_lifecycle.rehydration_hints[0]?.required, true);
+  assert.equal(packet.risk.negative_transfer_risk, "high");
+  assert.ok(packet.source_map.omitted_internal_surfaces.includes("raw_find_resolve"));
+});
+
+test("product memory assembler converts recall output into evidence-scoped MemoryPacket", () => {
+  const packet = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    actor: {
+      consumer_agent_id: "agent-b",
+      consumer_team_id: "team-a",
+      producer_agent_ids: ["agent-a"],
+    },
+    query: {
+      source: "text",
+      intent: "recover user preference and project context",
+      embedding_dims: 1536,
+    },
+    nodes: [
+      {
+        id: "mem-pref-1",
+        type: "rule",
+        title: "Direct answers",
+        text_summary: "The user prefers direct answers before long explanation.",
+        tier: "warm",
+        slots: {
+          compression_layer: "L2",
+        },
+        confidence: 0.86,
+        salience: 0.72,
+        commit_id: "commit-pref-1",
+        raw_ref: "turn-1",
+        evidence_ref: "evidence-pref-1",
+      },
+      {
+        id: "mem-fact-1",
+        type: "concept",
+        title: "Product positioning",
+        text_summary: "Aionis is positioned as an evidence-gated cognitive memory Runtime.",
+        tier: "hot",
+        slots: {
+          summary_kind: "write_distillation_fact",
+        },
+        confidence: 0.55,
+        salience: 0.66,
+        commit_id: "commit-fact-1",
+      },
+      {
+        id: "wf-1",
+        type: "procedure",
+        title: "Replay-backed workflow",
+        text_summary: "Use replay evidence only as candidate workflow guidance.",
+        tier: "cold",
+        slots: {
+          execution_native_v1: {
+            execution_kind: "workflow_candidate",
+            compression_layer: "L3",
+            rehydration_default_mode: "differential",
+          },
+        },
+        confidence: 0.74,
+        salience: 0.6,
+        commit_id: "commit-wf-1",
+      },
+    ],
+    context_items: [
+      {
+        kind: "rule",
+        node_id: "mem-pref-1",
+        summary: "The user prefers direct answers before long explanation.",
+        compression_layer: "L2",
+        commit_id: "commit-pref-1",
+      },
+      {
+        kind: "concept",
+        node_id: "mem-fact-1",
+        summary: "Aionis is positioned as an evidence-gated cognitive memory Runtime.",
+        compression_layer: "L1",
+        commit_id: "commit-fact-1",
+      },
+      {
+        kind: "procedure",
+        node_id: "wf-1",
+        summary: "Use replay evidence only as candidate workflow guidance.",
+        compression_layer: "L3",
+        execution_kind: "workflow_candidate",
+        commit_id: "commit-wf-1",
+      },
+    ],
+    ranked: [
+      { id: "mem-pref-1", score: 0.82 },
+      { id: "mem-fact-1", score: 0.7 },
+      { id: "wf-1", score: 0.64 },
+    ],
+    source_map: {
+      routes_used: ["/v1/memory/recall_text"],
+    },
+  });
+
+  assert.equal(packet.contract_version, "aionis_memory_packet_v1");
+  assert.equal(packet.memory_family, "mixed");
+  assert.equal(packet.relevant_memories[0]?.memory_type, "preference");
+  assert.equal(packet.relevant_memories[0]?.authority, "advisory");
+  assert.equal(packet.relevant_memories[1]?.source_layer, "L1");
+  assert.equal(packet.relevant_memories[1]?.authority, "candidate");
+  assert.equal(packet.relevant_memories[2]?.domain, "execution");
+  assert.ok(packet.lifecycle.candidate_memory_ids.includes("mem-fact-1"));
+  assert.ok(packet.behavior_impact.expected_effects.includes("answer_style"));
+  assert.ok(packet.behavior_impact.expected_effects.includes("fact_recall"));
+  assert.ok(packet.behavior_impact.expected_effects.includes("tool_or_workflow_guidance"));
+  assert.equal(packet.risk.low_confidence_count, 1);
+  assert.equal(packet.risk.negative_transfer_risk, "medium");
+  assert.ok(packet.source_map.omitted_internal_surfaces.includes("raw_embedding_vectors"));
+});
+
+test("product memory assembler only marks execution memory trusted through authoritative contract trust", () => {
+  const packet = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "embedding",
+      embedding_dims: 1536,
+    },
+    nodes: [
+      {
+        id: "wf-high-confidence-without-contract",
+        type: "procedure",
+        title: "High confidence workflow without authority",
+        text_summary: "High confidence execution memory can guide but is not authoritative without contract trust.",
+        tier: "warm",
+        slots: {
+          execution_native_v1: {
+            execution_kind: "workflow_anchor",
+            compression_layer: "L3",
+          },
+        },
+        confidence: 0.95,
+        salience: 0.8,
+      },
+      {
+        id: "wf-authoritative-contract",
+        type: "procedure",
+        title: "Authoritative workflow",
+        text_summary: "Authoritative execution contract can become trusted product memory.",
+        tier: "warm",
+        slots: {
+          execution_contract_v1: {
+            schema_version: "execution_contract_v1",
+            contract_trust: "authoritative",
+            task_signature: "repo-a:verified-workflow",
+            workflow_signature: "repo-a:verified-workflow",
+            selected_tool: "test",
+            outcome: {
+              acceptance_checks: ["npm test"],
+              success_invariants: ["all_acceptance_checks_pass"],
+              dependency_requirements: [],
+              environment_assumptions: [],
+              must_hold_after_exit: [],
+              external_visibility_requirements: [],
+            },
+            provenance: {
+              source_kind: "manual_context",
+              source_summary_version: null,
+              source_anchor: "wf-authoritative-contract",
+              evidence_refs: ["evidence-authoritative"],
+              notes: [],
+            },
+          },
+          execution_native_v1: {
+            execution_kind: "workflow_anchor",
+            compression_layer: "L3",
+          },
+        },
+        confidence: 0.92,
+        salience: 0.86,
+      },
+      {
+        id: "wf-observational-contract",
+        type: "procedure",
+        title: "Observational workflow",
+        text_summary: "Observational execution memory stays candidate-level.",
+        tier: "warm",
+        slots: {
+          execution_contract_v1: {
+            schema_version: "execution_contract_v1",
+            contract_trust: "observational",
+            task_signature: "repo-a:observed-workflow",
+            workflow_signature: "repo-a:observed-workflow",
+            selected_tool: "test",
+            outcome: {
+              acceptance_checks: ["npm test"],
+              success_invariants: ["all_acceptance_checks_pass"],
+              dependency_requirements: [],
+              environment_assumptions: [],
+              must_hold_after_exit: [],
+              external_visibility_requirements: [],
+            },
+            provenance: {
+              source_kind: "manual_context",
+              source_summary_version: null,
+              source_anchor: "wf-observational-contract",
+              evidence_refs: ["evidence-observational"],
+              notes: [],
+            },
+          },
+          execution_native_v1: {
+            execution_kind: "workflow_anchor",
+            compression_layer: "L3",
+          },
+        },
+        confidence: 0.93,
+        salience: 0.81,
+      },
+    ],
+  });
+
+  const noContract = packet.relevant_memories.find((entry) => entry.memory_id === "wf-high-confidence-without-contract");
+  const authoritative = packet.relevant_memories.find((entry) => entry.memory_id === "wf-authoritative-contract");
+  const observational = packet.relevant_memories.find((entry) => entry.memory_id === "wf-observational-contract");
+
+  assert.equal(noContract?.authority, "advisory");
+  assert.equal(authoritative?.authority, "trusted");
+  assert.equal(observational?.authority, "candidate");
+});
+
+test("product learning assembler exposes scoped learning state without export authority", () => {
+  const packet = buildAionisLearningPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    task: {
+      task_id: "task-1",
+      run_id: "run-1",
+      task_signature: "runtime-continuation",
+      task_family: "coding",
+    },
+    planning: planningSummaryFixture(),
+    source_map: {
+      routes_used: ["/v1/memory/context/assemble"],
+    },
+  });
+
+  assert.equal(packet.contract_version, "aionis_learning_packet_v1");
+  assert.equal(packet.posture.source_code_change_allowed, false);
+  assert.equal(packet.posture.recommended_learning_posture, "constrain");
+  assert.equal(packet.posture.authority, "blocked");
+  assert.equal(packet.learning_control.stable_promotion_blocked_count, 1);
+  assert.equal(packet.export_readiness.training_export_ready, false);
+  assert.equal(packet.export_readiness.positive_transfer_required, true);
+  assert.ok(packet.candidates.some((candidate) => candidate.candidate_id === "wf-stable-1"));
+  assert.ok(packet.candidates.some((candidate) => candidate.candidate_id === "wf-candidate-1"));
+  assert.ok(packet.evidence.promotion_denied_reasons.includes("promotion lacks holdout evidence"));
+  assert.ok(packet.lifecycle_effect.suppressed_memory_ids.includes("mem-suppressed-1"));
+  assert.ok(packet.source_map.omitted_internal_surfaces.includes("task_specific_repair_content"));
+});
+
+test("product effect assembler converts evaluator proof into measurable EffectReport", () => {
+  const evaluatorReport = evaluateAionisEffect({
+    baseline: {
+      continuity: {
+        repeatedDiscoverySteps: 4,
+        firstActionCorrect: false,
+        recoveredStateFacts: 1,
+        expectedStateFacts: 4,
+      },
+      learning: {
+        workflowReused: false,
+        provisionalMemoriesWritten: 0,
+      },
+      forgetting: {
+        contextItems: 8,
+        usefulContextItems: 3,
+        staleMemorySurfaced: 2,
+      },
+      learning_control: {
+        weakEvidenceBlocked: 0,
+        authorityRequiresEvidence: false,
+        blockedAuthorityVisible: false,
+        unverifiedAuthorityApplied: 1,
+      },
+    },
+    aionis: {
+      continuity: {
+        repeatedDiscoverySteps: 1,
+        firstActionCorrect: true,
+        recoveredStateFacts: 4,
+        expectedStateFacts: 4,
+        verifiedFactsCarried: 2,
+        verifiedFactsExpected: 2,
+      },
+      learning: {
+        workflowReused: true,
+        stableWorkflowReused: true,
+        trustedPromotions: 1,
+        counterEvidenceDemotions: 1,
+      },
+      forgetting: {
+        contextItems: 4,
+        usefulContextItems: 4,
+        staleMemorySurfaced: 0,
+        staleMemorySuppressed: 2,
+        archivedMemoryRehydratedOnDemand: 1,
+      },
+      learning_control: {
+        weakEvidenceBlocked: 1,
+        authorityRequiresEvidence: true,
+        blockedAuthorityVisible: true,
+        unverifiedAuthorityApplied: 0,
+      },
+    },
+  });
+
+  const productReport = buildAionisEffectReport({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    task: {
+      task_id: "task-1",
+      run_id: "run-aionis",
+      task_signature: "runtime-continuation",
+      task_family: "coding",
+    },
+    report: evaluatorReport,
+    comparison: {
+      mode: "baseline_vs_aionis",
+      baseline_run_id: "run-base",
+      aionis_run_id: "run-aionis",
+    },
+  });
+
+  assert.equal(productReport.contract_version, "aionis_effect_report_v1");
+  assert.equal(productReport.history_impact.impact_direction, "positive");
+  assert.equal(productReport.history_impact.changed_future_behavior, true);
+  assert.equal(productReport.efficiency.repeated_discovery_delta, -3);
+  assert.equal(productReport.quality.negative_transfer_detected, false);
+  assert.equal(productReport.history_contributions.handoff.used, true);
+  assert.equal(productReport.history_contributions.replay.used, true);
+  assert.ok(productReport.training_candidates.some((candidate) => candidate.label === "positive"));
+  assert.ok(productReport.evidence.evidence_ids.includes("effect_kernel:continuity"));
+});
+
+test("product effect assembler refuses to overclaim single-run evidence", () => {
+  const evaluatorReport = evaluateAionisEffect({
+    baseline: {},
+    aionis: {
+      continuity: {
+        repeatedDiscoverySteps: 1,
+        firstActionCorrect: true,
+      },
+    },
+  });
+
+  const productReport = buildAionisEffectReport({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    report: evaluatorReport,
+    comparison: {
+      mode: "single_run_history_impact",
+    },
+  });
+
+  assert.equal(productReport.comparison.sufficient_evidence, false);
+  assert.equal(productReport.history_impact.impact_direction, "insufficient_evidence");
+  assert.equal(productReport.history_impact.changed_future_behavior, false);
+  assert.ok(productReport.training_candidates.every((candidate) => candidate.export_ready === false));
+});
+
+test("product effect assembler honors explicit insufficient-evidence comparison", () => {
+  const evaluatorReport = evaluateAionisEffect({
+    baseline: {},
+    aionis: {
+      continuity: {
+        repeatedDiscoverySteps: 0,
+        firstActionCorrect: true,
+      },
+    },
+  });
+
+  const productReport = buildAionisEffectReport({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    report: evaluatorReport,
+    comparison: {
+      mode: "baseline_vs_aionis",
+      sufficient_evidence: false,
+    },
+  });
+
+  assert.equal(productReport.comparison.sufficient_evidence, false);
+  assert.equal(productReport.history_impact.impact_direction, "insufficient_evidence");
+});

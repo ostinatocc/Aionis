@@ -1,9 +1,7 @@
 import stableStringify from "fast-json-stable-stringify";
-import type pg from "pg";
 import type { EmbeddingProvider } from "../embeddings/types.js";
-import type { EmbeddedMemoryRuntime } from "../store/embedded-memory-runtime.js";
 import type { LiteFindNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
-import { createPostgresWriteStoreAccess, type WriteStoreAccess } from "../store/write-access.js";
+import type { WriteStoreAccess } from "../store/write-access.js";
 import { sha256Hex } from "../util/crypto.js";
 import {
   buildPatternMaintenanceMetadata,
@@ -23,7 +21,6 @@ import {
   extractTaskCue,
   extractTaskFamily,
 } from "./pattern-trust-shaping.js";
-import { mirrorPreparedWriteToEmbeddedRuntime } from "./embedded-write-bridge.js";
 import type { ContractTrust } from "./contract-trust.js";
 
 const STABLE_PATTERN_MIN_DISTINCT_RUNS = 3;
@@ -65,7 +62,6 @@ type WriteToolsDecisionPatternAnchorOptions = {
   piiRedaction: boolean;
   allowCrossScopeEdges?: boolean;
   embedder: EmbeddingProvider | null;
-  embeddedRuntime?: EmbeddedMemoryRuntime | null;
   writeAccess?: WriteStoreAccess | null;
   liteWriteStore?: Pick<LiteWriteStore, "findNodes" | "updateNodeAnchorState"> | null;
 };
@@ -507,7 +503,7 @@ function buildPatternAnchor(args: {
       last_counter_evidence_at: args.feedbackOutcome === "negative"
         ? args.decision.created_at
         : existing?.promotion?.last_counter_evidence_at ?? null,
-      fallback_transition: existingCredibilityState === "trusted"
+      default_transition: existingCredibilityState === "trusted"
         ? (existing?.promotion?.last_transition as PatternTransitionKind | null) ?? "promoted_to_trusted"
         : null,
     }),
@@ -705,41 +701,6 @@ async function findExistingPatternAnchorLite(
   };
 }
 
-async function findExistingPatternAnchorPg(
-  client: pg.PoolClient,
-  scope: string,
-  clientId: string,
-): Promise<ExistingPatternAnchorNode | null> {
-  const result = await client.query<{
-    id: string;
-    title: string | null;
-    text_summary: string | null;
-    slots: Record<string, unknown>;
-    salience: number;
-    importance: number;
-    confidence: number;
-  }>(
-    `
-    SELECT
-      id::text AS id,
-      title,
-      text_summary,
-      slots,
-      salience,
-      importance,
-      confidence
-    FROM memory_nodes
-    WHERE scope = $1
-      AND type = 'concept'
-      AND client_id = $2
-    ORDER BY created_at DESC, id DESC
-    LIMIT 1
-    `,
-    [scope, clientId],
-  );
-  return result.rows[0] ?? null;
-}
-
 async function updateExistingPatternAnchorLite(
   liteWriteStore: Pick<LiteWriteStore, "updateNodeAnchorState">,
   args: {
@@ -765,51 +726,11 @@ async function updateExistingPatternAnchorLite(
   });
 }
 
-async function updateExistingPatternAnchorPg(
-  client: pg.PoolClient,
-  args: {
-    scope: string;
-    id: string;
-    slots: Record<string, unknown>;
-    textSummary: string;
-    salience: number;
-    importance: number;
-    confidence: number;
-    commitId: string;
-  },
-): Promise<void> {
-  await client.query(
-    `
-    UPDATE memory_nodes
-    SET slots = $1::jsonb,
-        text_summary = $2,
-        salience = $3,
-        importance = $4,
-        confidence = $5,
-        updated_at = now(),
-        commit_id = COALESCE($6, commit_id)
-    WHERE scope = $7
-      AND id = $8
-    `,
-    [
-      JSON.stringify(args.slots),
-      args.textSummary,
-      args.salience,
-      args.importance,
-      args.confidence,
-      args.commitId,
-      args.scope,
-      args.id,
-    ],
-  );
-}
-
 export async function writeToolsDecisionPatternAnchor(
-  client: pg.PoolClient | null,
   args: WriteToolsDecisionPatternAnchorArgs,
   opts: WriteToolsDecisionPatternAnchorOptions,
 ): Promise<PatternAnchorWriteResult | null> {
-  const writeAccess = opts.writeAccess ?? (client ? createPostgresWriteStoreAccess(client) : null);
+  const writeAccess = opts.writeAccess ?? null;
   if (!writeAccess) {
     throw new Error("write_access_required_for_tools_pattern_anchor");
   }
@@ -831,11 +752,10 @@ export async function writeToolsDecisionPatternAnchor(
     180,
   );
 
-  const existingNode = opts.liteWriteStore
-    ? await findExistingPatternAnchorLite(opts.liteWriteStore, args.scope, clientId)
-    : client
-      ? await findExistingPatternAnchorPg(client, args.scope, clientId)
-      : null;
+  if (!opts.liteWriteStore) {
+    throw new Error("writeToolsDecisionPatternAnchor requires liteWriteStore");
+  }
+  const existingNode = await findExistingPatternAnchorLite(opts.liteWriteStore, args.scope, clientId);
   if (!existingNode && args.feedback_outcome === "negative") {
     return null;
   }
@@ -875,29 +795,16 @@ export async function writeToolsDecisionPatternAnchor(
   });
 
   if (existingNode) {
-    if (opts.liteWriteStore) {
-      await updateExistingPatternAnchorLite(opts.liteWriteStore, {
-        scope: args.scope,
-        id: existingNode.id,
-        slots,
-        textSummary: summary,
-        salience: trustProfile.salience,
-        importance: trustProfile.importance,
-        confidence: trustProfile.confidence,
-        commitId: args.feedback_commit_id,
-      });
-    } else if (client) {
-      await updateExistingPatternAnchorPg(client, {
-        scope: args.scope,
-        id: existingNode.id,
-        slots,
-        textSummary: summary,
-        salience: trustProfile.salience,
-        importance: trustProfile.importance,
-        confidence: trustProfile.confidence,
-        commitId: args.feedback_commit_id,
-      });
-    }
+    await updateExistingPatternAnchorLite(opts.liteWriteStore, {
+      scope: args.scope,
+      id: existingNode.id,
+      slots,
+      textSummary: summary,
+      salience: trustProfile.salience,
+      importance: trustProfile.importance,
+      confidence: trustProfile.confidence,
+      commitId: args.feedback_commit_id,
+    });
     return {
       node_id: existingNode.id,
       client_id: clientId,
@@ -952,11 +859,8 @@ export async function writeToolsDecisionPatternAnchor(
     maxTextLen: opts.maxTextLen,
     piiRedaction: opts.piiRedaction,
     allowCrossScopeEdges: opts.allowCrossScopeEdges ?? false,
-    shadowDualWriteEnabled: false,
-    shadowDualWriteStrict: false,
     associativeLinkOrigin: "memory_write",
   });
-  await mirrorPreparedWriteToEmbeddedRuntime({ embeddedRuntime: opts.embeddedRuntime, prepared, out });
   return {
     node_id: out.nodes[0]!.id,
     client_id: clientId,

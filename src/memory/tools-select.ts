@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import type pg from "pg";
 import type { EmbeddingProvider } from "../embeddings/types.js";
 import {
   hashExecutionContext,
@@ -15,7 +14,6 @@ import {
 import { evaluateRulesAppliedOnly } from "./rules-evaluate.js";
 import { resolveTenantScope } from "./tenant.js";
 import { applyToolPolicy } from "./tool-selector.js";
-import type { EmbeddedMemoryRuntime } from "../store/embedded-memory-runtime.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
 import { buildToolsSelectionSummary } from "./tools-lifecycle-summary.js";
 import { buildAionisUri } from "./uri.js";
@@ -221,7 +219,7 @@ async function recallToolSelectionPatterns(args: {
   });
   const seeds = ann.length > 0
     ? ann
-    : await args.recallAccess.stage1CandidatesExactFallback({
+    : await args.recallAccess.stage1CandidatesExactRecovery({
         queryEmbedding,
         scope: args.scope,
         oversample: 24,
@@ -398,12 +396,10 @@ function summarizeToolConflicts(explain: any): string[] {
 }
 
 export async function selectTools(
-  client: pg.PoolClient | null,
   body: unknown,
   defaultScope: string,
   defaultTenantId: string,
   opts: {
-    embeddedRuntime?: EmbeddedMemoryRuntime | null;
     liteWriteStore?: Pick<LiteWriteStore, "insertExecutionDecision" | "listRuleCandidates"> | null;
     recallAccess?: RecallStoreAccess | null;
     embedder?: EmbeddingProvider | null;
@@ -428,7 +424,7 @@ export async function selectTools(
   );
   const candidateFamilies = mapCandidatesToFamilies(DEFAULT_TOOL_REGISTRY_INDEX, filteredCandidates);
 
-  const rules = await evaluateRulesAppliedOnly(client ?? null, {
+  const rules = await evaluateRulesAppliedOnly({
     scope: tenancy.scope,
     tenant_id: tenancy.tenant_id,
     default_tenant_id: defaultTenantId,
@@ -436,7 +432,6 @@ export async function selectTools(
     include_shadow: parsed.include_shadow,
     limit: parsed.rules_limit,
   }, {
-    embeddedRuntime: opts.embeddedRuntime ?? null,
     liteWriteStore: opts.liteWriteStore ?? null,
   });
 
@@ -537,66 +532,11 @@ export async function selectTools(
         metadataJson: decisionMetadata,
         commitId: null,
       })
-      : await client!.query<{ id: string; created_at: string }>(
-        `
-        INSERT INTO memory_execution_decisions
-          (id, scope, decision_kind, run_id, selected_tool, candidates_json, context_sha256, policy_sha256, source_rule_ids, metadata_json)
-        VALUES
-          ($1, $2, 'tools_select', $3, $4, $5::jsonb, $6, $7, $8::uuid[], $9::jsonb)
-        RETURNING id, created_at::text AS created_at
-        `,
-        [
-          decision_id,
-          tenancy.scope_key,
-          parsed.run_id ?? null,
-          selection.selected ?? null,
-          JSON.stringify(selection.candidates),
-          context_sha256,
-          policy_sha256,
-          source_rule_ids,
-          JSON.stringify(decisionMetadata),
-        ],
-      ).then((res) => res.rows[0]!);
+      : (() => {
+        throw new Error("selectTools decision persistence requires liteWriteStore");
+      })();
   const decision_created_at = decisionRes.created_at ?? null;
 
-  if (opts.embeddedRuntime && decision_created_at) {
-    await opts.embeddedRuntime.syncExecutionDecisions([
-      {
-        id: decision_id,
-        scope: tenancy.scope_key,
-        decision_kind: "tools_select",
-        run_id: parsed.run_id ?? null,
-        selected_tool: selection.selected ?? null,
-        candidates_json: selection.candidates,
-        context_sha256,
-        policy_sha256,
-        source_rule_ids,
-        metadata_json: {
-          strict: parsed.strict,
-          include_shadow: parsed.include_shadow,
-          rules_limit: parsed.rules_limit,
-          reorder_candidates: parsed.reorder_candidates,
-          matched_rules: rules.matched,
-          tool_conflicts_summary,
-          pattern_preferred_tools: patternPreferred,
-          matched_pattern_anchor_ids: recalledPatterns.map((pattern) => pattern.node_id),
-          matched_stable_pattern_anchor_ids: trustedPatterns.map((pattern) => pattern.node_id),
-          used_trusted_pattern_anchor_ids: usedTrustedPatterns.map((pattern) => pattern.node_id),
-          used_trusted_pattern_tools: uniqueSelectedTools(usedTrustedPatterns),
-          used_trusted_pattern_affinity_levels: uniqueStrings(usedTrustedPatterns.map((pattern) => pattern.affinity_level), 8),
-          skipped_contested_pattern_anchor_ids: contestedPatterns.map((pattern) => pattern.node_id),
-          skipped_contested_pattern_tools: uniqueSelectedTools(contestedPatterns),
-          skipped_contested_pattern_affinity_levels: uniqueStrings(contestedPatterns.map((pattern) => pattern.affinity_level), 8),
-          skipped_suppressed_pattern_anchor_ids: suppressedPatterns.map((pattern) => pattern.node_id),
-          skipped_suppressed_pattern_tools: uniqueSelectedTools(suppressedPatterns),
-          skipped_suppressed_pattern_affinity_levels: uniqueStrings(suppressedPatterns.map((pattern) => pattern.affinity_level), 8),
-          ...(parsed.include_shadow ? { shadow_tool_conflicts_summary } : {}),
-        },
-        created_at: decision_created_at,
-        commit_id: null,
-      },
-    ]);
-  }
 
   const response = {
     scope: rules.scope,

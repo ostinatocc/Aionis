@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import Fastify from "fastify";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
-import { registerHostErrorHandler } from "../../src/host/http-host.ts";
+import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { buildExecutionContractFromProjection } from "../../src/memory/execution-contract.ts";
 import { buildHandoffWriteBody } from "../../src/memory/handoff.ts";
 import { registerHandoffRoutes } from "../../src/routes/handoff.ts";
@@ -40,8 +40,6 @@ function buildEnv() {
     MAX_TEXT_LEN: 10000,
     PII_REDACTION: false,
     ALLOW_CROSS_SCOPE_EDGES: false,
-    MEMORY_SHADOW_DUAL_WRITE_ENABLED: false,
-    MEMORY_SHADOW_DUAL_WRITE_STRICT: false,
   } as any;
 }
 
@@ -57,19 +55,16 @@ function registerApp(args: {
     recallLimiter: null,
     debugEmbedLimiter: null,
     writeLimiter: null,
-    sandboxWriteLimiter: null,
-    sandboxReadLimiter: null,
     recallTextEmbedLimiter: null,
     recallInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
     writeInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
   });
 
-  registerHostErrorHandler(args.app);
+  registerRuntimeErrorHandler(args.app);
   registerHandoffRoutes({
     app: args.app,
     env,
     embedder: null,
-    embeddedRuntime: null,
     liteWriteStore: args.liteWriteStore,
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest as any,
@@ -85,8 +80,6 @@ function registerApp(args: {
     embedder: null,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
-    writeAccessShadowMirrorV2: false,
-    requireStoreFeatureCapability: () => {},
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
     enforceRateLimit: guards.enforceRateLimit,
@@ -121,7 +114,7 @@ test("memory continuity review-pack route wraps recovered handoff into reviewer-
         target_files: ["src/routes/export.ts"],
         next_action: "Patch src/routes/export.ts and rerun export tests",
         must_change: ["src/routes/export.ts"],
-        must_remove: ["stale export fallback"],
+        must_remove: ["stale export recovery"],
         must_keep: ["existing success path"],
         acceptance_checks: ["npm run -s test:lite -- export"],
         execution_result_summary: {
@@ -184,7 +177,7 @@ test("memory continuity review-pack route wraps recovered handoff into reviewer-
     const parsed = ContinuityReviewPackResponseSchema.parse(JSON.parse(reviewResp.body));
     assert.equal(parsed.continuity_review_pack.pack_version, "continuity_review_pack_v1");
     assert.equal(parsed.continuity_review_pack.review_contract?.rollback_required, true);
-    assert.deepEqual(parsed.continuity_review_pack.review_contract?.must_remove, ["stale export fallback"]);
+    assert.deepEqual(parsed.continuity_review_pack.review_contract?.must_remove, ["stale export recovery"]);
     assert.deepEqual(parsed.continuity_review_pack.review_contract?.must_keep, ["existing success path"]);
     assert.deepEqual(parsed.continuity_review_pack.review_contract?.acceptance_checks, ["npm run -s test:lite -- export"]);
     assert.equal(parsed.continuity_review_pack.latest_handoff?.anchor, "resume:src/routes/export.ts");
@@ -246,12 +239,10 @@ test("memory continuity review-pack route prefers canonical contract over stale 
       },
       null,
     );
-    await liteWriteStore.withTx(() => applyMemoryWrite({} as any, prepared, {
+    await liteWriteStore.withTx(() => applyMemoryWrite(prepared, {
       maxTextLen: 10000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
       write_access: liteWriteStore,
     }));
 

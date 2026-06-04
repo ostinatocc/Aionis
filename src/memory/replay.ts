@@ -1,10 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type pg from "pg";
 import type { EmbeddingProvider } from "../embeddings/types.js";
-import type { EmbeddedMemoryRuntime } from "../store/embedded-memory-runtime.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
 import {
-  createPostgresReplayStoreAccess,
   type ReplayNodeRow,
   type ReplayVisibilityArgs,
   type ReplayStoreAccess,
@@ -81,7 +78,6 @@ import {
 } from "./replay-execution-helpers.js";
 import {
   asStringArray,
-  asStringRecord,
   isReplayCommandTool,
   mergeReplayUsage,
   parseStepArgv,
@@ -105,7 +101,7 @@ import {
 } from "./replay-repair-shadow-helpers.js";
 import {
   buildReplayAutoPromotedSlots,
-  buildReplayPlaybookNoopPromoteResult,
+  buildReplayPlaybookUnchangedPromoteResult,
   buildReplayPlaybookProcedureWriteRequest,
   buildReplayPlaybookVersionResult,
   buildReplayPromotedSlots,
@@ -193,11 +189,7 @@ type ReplayWriteOptions = {
   maxTextLen: number;
   piiRedaction: boolean;
   allowCrossScopeEdges: boolean;
-  shadowDualWriteEnabled: boolean;
-  shadowDualWriteStrict: boolean;
-  writeAccessShadowMirrorV2: boolean;
   embedder: EmbeddingProvider | null;
-  embeddedRuntime?: EmbeddedMemoryRuntime | null;
   replayAccess?: ReplayStoreAccess | null;
   replayMirror?: import("./replay-write.js").ReplayWriteMirror | null;
   writeAccess?: WriteStoreAccess | null;
@@ -206,7 +198,6 @@ type ReplayWriteOptions = {
 type ReplayReadOptions = {
   defaultScope: string;
   defaultTenantId: string;
-  embeddedRuntime?: EmbeddedMemoryRuntime | null;
   replayAccess?: ReplayStoreAccess | null;
 };
 
@@ -221,17 +212,7 @@ type ReplayLocalExecutorOptions = {
 
 type ReplayGuidedRepairOptions = {
   strategy: ReplayGuidedRepairStrategy;
-  allowRequestBuiltinLlm: boolean;
   maxErrorChars: number;
-  httpEndpoint?: string | null;
-  httpTimeoutMs?: number;
-  httpAuthToken?: string | null;
-  llmBaseUrl?: string | null;
-  llmApiKey?: string | null;
-  llmModel?: string | null;
-  llmTimeoutMs?: number;
-  llmMaxTokens?: number;
-  llmTemperature?: number;
 };
 
 type ReplayShadowValidationPolicyOptions = {
@@ -378,17 +359,17 @@ function replayWriteIdentityFromInput(
     owner_agent_id?: string | null;
     owner_team_id?: string | null;
   },
-  fallback?: ReplayWriteIdentity,
+  baseIdentity?: ReplayWriteIdentity,
 ): ReplayWriteIdentity {
   const memoryLane = toStringOrNull(input.memory_lane);
   const producerAgentId = toStringOrNull(input.producer_agent_id);
   const ownerAgentId = toStringOrNull(input.owner_agent_id);
   const ownerTeamId = toStringOrNull(input.owner_team_id);
   return {
-    memory_lane: memoryLane === "shared" || memoryLane === "private" ? memoryLane : fallback?.memory_lane,
-    producer_agent_id: producerAgentId ?? fallback?.producer_agent_id,
-    owner_agent_id: ownerAgentId ?? fallback?.owner_agent_id,
-    owner_team_id: ownerTeamId ?? fallback?.owner_team_id,
+    memory_lane: memoryLane === "shared" || memoryLane === "private" ? memoryLane : baseIdentity?.memory_lane,
+    producer_agent_id: producerAgentId ?? baseIdentity?.producer_agent_id,
+    owner_agent_id: ownerAgentId ?? baseIdentity?.owner_agent_id,
+    owner_team_id: ownerTeamId ?? baseIdentity?.owner_team_id,
   };
 }
 
@@ -597,19 +578,12 @@ function replayKindOf(row: ReplayNodeRow): string {
 }
 
 function requireReplayReadAccess(opts: ReplayReadOptions | ReplayWriteOptions) {
-  if (opts.embeddedRuntime && !opts.replayAccess) {
-    throw new HttpError(
-      501,
-      "replay_read_not_supported_in_embedded",
-      "Replay read/compile endpoints currently require postgres backend.",
-    );
-  }
 }
 
-function replayAccessForClient(client: pg.PoolClient | null, opts?: ReplayReadOptions | ReplayWriteOptions): ReplayStoreAccess {
-  const replayAccess = opts?.replayAccess ?? (client ? createPostgresReplayStoreAccess(client) : null);
+function requireReplayAccess(opts?: ReplayReadOptions | ReplayWriteOptions): ReplayStoreAccess {
+  const replayAccess = opts?.replayAccess ?? null;
   if (!replayAccess) {
-    throw new Error("replay access is required when no postgres client is provided");
+    throw new Error("replay access is required");
   }
   return replayAccess;
 }
@@ -626,7 +600,7 @@ function asLiteReplayWriteStore(writeAccess?: WriteStoreAccess | null): LiteWrit
   return writeAccess as LiteWriteStore;
 }
 
-export async function replayRunStart(client: pg.PoolClient | null, body: unknown, opts: ReplayWriteOptions) {
+export async function replayRunStart(body: unknown, opts: ReplayWriteOptions) {
   const parsed = parseRunStartInput(body);
   const tenancy = resolveTenantScope(
     { tenant_id: parsed.tenant_id, scope: parsed.scope },
@@ -648,7 +622,7 @@ export async function replayRunStart(client: pg.PoolClient | null, body: unknown
     contextSnapshotRef: parsed.context_snapshot_ref ?? null,
     contextSnapshotHash: parsed.context_snapshot_hash ?? null,
   });
-  const { out } = await applyReplayMemoryWrite(client, writeReq, opts);
+  const { out } = await applyReplayMemoryWrite(writeReq, opts);
   const node = out.nodes.find((n) => n.client_id === cid) ?? out.nodes[0] ?? null;
   return buildReplayRunStartResult({
     tenantId: tenancy.tenant_id,
@@ -661,7 +635,7 @@ export async function replayRunStart(client: pg.PoolClient | null, body: unknown
   });
 }
 
-export async function replayStepBefore(client: pg.PoolClient | null, body: unknown, opts: ReplayWriteOptions) {
+export async function replayStepBefore(body: unknown, opts: ReplayWriteOptions) {
   const parsed = parseStepBeforeInput(body);
   const tenancy = resolveTenantScope(
     { tenant_id: parsed.tenant_id, scope: parsed.scope },
@@ -669,7 +643,7 @@ export async function replayStepBefore(client: pg.PoolClient | null, body: unkno
   );
   const visibility = replayVisibilityFromInput(parsed);
   const writeIdentity = replayWriteIdentityFromInput(parsed);
-  const replayAccess = replayAccessForClient(client, opts);
+  const replayAccess = requireReplayAccess(opts);
   const runNode = await replayAccess.findRunNodeByRunId(tenancy.scope_key, parsed.run_id, visibility);
   if (!runNode) {
     throw new HttpError(404, "replay_run_not_found", "run_id was not found in this scope", {
@@ -698,7 +672,7 @@ export async function replayStepBefore(client: pg.PoolClient | null, body: unkno
     runNodeId: runNode.id,
     writeIdentity: writeIdentity as Record<string, unknown>,
   });
-  const { out } = await applyReplayMemoryWrite(client, writeReq, opts);
+  const { out } = await applyReplayMemoryWrite(writeReq, opts);
   const stepNode = out.nodes.find((n) => n.client_id === stepCid) ?? out.nodes[0] ?? null;
   return buildReplayStepBeforeResult({
     tenantId: tenancy.tenant_id,
@@ -713,7 +687,7 @@ export async function replayStepBefore(client: pg.PoolClient | null, body: unkno
   });
 }
 
-export async function replayStepAfter(client: pg.PoolClient | null, body: unknown, opts: ReplayWriteOptions) {
+export async function replayStepAfter(body: unknown, opts: ReplayWriteOptions) {
   const parsed = parseStepAfterInput(body);
   const tenancy = resolveTenantScope(
     { tenant_id: parsed.tenant_id, scope: parsed.scope },
@@ -721,7 +695,7 @@ export async function replayStepAfter(client: pg.PoolClient | null, body: unknow
   );
   const visibility = replayVisibilityFromInput(parsed);
   const writeIdentity = replayWriteIdentityFromInput(parsed);
-  const replayAccess = replayAccessForClient(client, opts);
+  const replayAccess = requireReplayAccess(opts);
   const runNode = await replayAccess.findRunNodeByRunId(tenancy.scope_key, parsed.run_id, visibility);
   if (!runNode) {
     throw new HttpError(404, "replay_run_not_found", "run_id was not found in this scope", {
@@ -768,7 +742,7 @@ export async function replayStepAfter(client: pg.PoolClient | null, body: unknow
     stepNodeId: stepNode?.id ?? null,
     writeIdentity: writeIdentity as Record<string, unknown>,
   });
-  const { out } = await applyReplayMemoryWrite(client, writeReq, opts);
+  const { out } = await applyReplayMemoryWrite(writeReq, opts);
   const resultNode = out.nodes.find((n) => n.client_id === resultCid) ?? out.nodes[0] ?? null;
   return buildReplayStepAfterResult({
     tenantId: tenancy.tenant_id,
@@ -784,7 +758,7 @@ export async function replayStepAfter(client: pg.PoolClient | null, body: unknow
   });
 }
 
-export async function replayRunEnd(client: pg.PoolClient | null, body: unknown, opts: ReplayWriteOptions) {
+export async function replayRunEnd(body: unknown, opts: ReplayWriteOptions) {
   const parsed = parseRunEndInput(body);
   const tenancy = resolveTenantScope(
     { tenant_id: parsed.tenant_id, scope: parsed.scope },
@@ -792,7 +766,7 @@ export async function replayRunEnd(client: pg.PoolClient | null, body: unknown, 
   );
   const visibility = replayVisibilityFromInput(parsed);
   const writeIdentity = replayWriteIdentityFromInput(parsed);
-  const replayAccess = replayAccessForClient(client, opts);
+  const replayAccess = requireReplayAccess(opts);
   const runNode = await replayAccess.findRunNodeByRunId(tenancy.scope_key, parsed.run_id, visibility);
   if (!runNode) {
     throw new HttpError(404, "replay_run_not_found", "run_id was not found in this scope", {
@@ -816,7 +790,7 @@ export async function replayRunEnd(client: pg.PoolClient | null, body: unknown, 
     runNodeId: runNode.id,
     writeIdentity: writeIdentity as Record<string, unknown>,
   });
-  const { out } = await applyReplayMemoryWrite(client, writeReq, opts);
+  const { out } = await applyReplayMemoryWrite(writeReq, opts);
   const endNode = out.nodes.find((n) => n.client_id === endCid) ?? out.nodes[0] ?? null;
   return buildReplayRunEndResult({
     tenantId: tenancy.tenant_id,
@@ -830,7 +804,7 @@ export async function replayRunEnd(client: pg.PoolClient | null, body: unknown, 
   });
 }
 
-export async function replayRunGet(client: pg.PoolClient | null, body: unknown, opts: ReplayReadOptions) {
+export async function replayRunGet(body: unknown, opts: ReplayReadOptions) {
   requireReplayReadAccess(opts);
   const parsed = parseRunGetInput(body);
   const tenancy = resolveTenantScope(
@@ -838,7 +812,7 @@ export async function replayRunGet(client: pg.PoolClient | null, body: unknown, 
     { defaultScope: opts.defaultScope, defaultTenantId: opts.defaultTenantId },
   );
   const visibility = replayVisibilityFromInput(parsed);
-  const replayAccess = replayAccessForClient(client, opts);
+  const replayAccess = requireReplayAccess(opts);
   const rows = await replayAccess.listReplayNodesByRunId(tenancy.scope_key, parsed.run_id, visibility);
   if (rows.length === 0) {
     throw new HttpError(404, "replay_run_not_found", "run_id was not found in this scope", {
@@ -909,7 +883,7 @@ export async function replayRunGet(client: pg.PoolClient | null, body: unknown, 
   };
 }
 
-export async function replayPlaybookCompileFromRun(client: pg.PoolClient | null, body: unknown, opts: ReplayWriteOptions) {
+export async function replayPlaybookCompileFromRun(body: unknown, opts: ReplayWriteOptions) {
   const parsed = parsePlaybookCompileInput(body);
   const tenancy = resolveTenantScope(
     { tenant_id: parsed.tenant_id, scope: parsed.scope },
@@ -917,7 +891,7 @@ export async function replayPlaybookCompileFromRun(client: pg.PoolClient | null,
   );
   const visibility = replayVisibilityFromInput(parsed);
   requireReplayReadAccess(opts);
-  const replayAccess = replayAccessForClient(client, opts);
+  const replayAccess = requireReplayAccess(opts);
   const rows = await replayAccess.listReplayNodesByRunId(tenancy.scope_key, parsed.run_id, visibility);
   if (rows.length === 0) {
     throw new HttpError(404, "replay_run_not_found", "run_id was not found in this scope", {
@@ -1105,7 +1079,7 @@ export async function replayPlaybookCompileFromRun(client: pg.PoolClient | null,
     runNode,
     stepRows,
   });
-  const { out } = await applyReplayMemoryWrite(client, writeReq, opts);
+  const { out } = await applyReplayMemoryWrite(writeReq, opts);
   const playbookNode = out.nodes.find((n) => n.client_id === playbookCid) ?? out.nodes[0] ?? null;
   return buildReplayCompileResult({
     tenantId: tenancy.tenant_id,
@@ -1122,7 +1096,7 @@ export async function replayPlaybookCompileFromRun(client: pg.PoolClient | null,
   });
 }
 
-export async function replayPlaybookGet(client: pg.PoolClient | null, body: unknown, opts: ReplayReadOptions) {
+export async function replayPlaybookGet(body: unknown, opts: ReplayReadOptions) {
   requireReplayReadAccess(opts);
   const parsed = parsePlaybookGetInput(body);
   const tenancy = resolveTenantScope(
@@ -1130,7 +1104,7 @@ export async function replayPlaybookGet(client: pg.PoolClient | null, body: unkn
     { defaultScope: opts.defaultScope, defaultTenantId: opts.defaultTenantId },
   );
   const visibility = replayVisibilityFromInput(parsed);
-  const replayAccess = replayAccessForClient(client, opts);
+  const replayAccess = requireReplayAccess(opts);
   const versions = await replayAccess.listReplayPlaybookVersions(tenancy.scope_key, parsed.playbook_id, visibility);
   const row = versions[0] ?? null;
   if (!row) {
@@ -1153,7 +1127,7 @@ export async function replayPlaybookGet(client: pg.PoolClient | null, body: unkn
   };
 }
 
-export async function replayPlaybookCandidate(client: pg.PoolClient | null, body: unknown, opts: ReplayReadOptions) {
+export async function replayPlaybookCandidate(body: unknown, opts: ReplayReadOptions) {
   requireReplayReadAccess(opts);
   const parsed = parsePlaybookCandidateInput(body);
   const tenancy = resolveTenantScope(
@@ -1161,7 +1135,7 @@ export async function replayPlaybookCandidate(client: pg.PoolClient | null, body
     { defaultScope: opts.defaultScope, defaultTenantId: opts.defaultTenantId },
   );
   const visibility = replayVisibilityFromInput(parsed);
-  const replayAccess = replayAccessForClient(client, opts);
+  const replayAccess = requireReplayAccess(opts);
   const row =
     parsed.version != null
       ? await replayAccess.getReplayPlaybookVersion(tenancy.scope_key, parsed.playbook_id, parsed.version, visibility)
@@ -1191,11 +1165,10 @@ export async function replayPlaybookCandidate(client: pg.PoolClient | null, body
   });
 }
 
-export async function replayPlaybookDispatch(client: pg.PoolClient | null, body: unknown, opts: ReplayPlaybookRunOptions) {
+export async function replayPlaybookDispatch(body: unknown, opts: ReplayPlaybookRunOptions) {
   requireReplayReadAccess(opts);
   const parsed = parsePlaybookDispatchInput(body);
   const candidate = await replayPlaybookCandidate(
-    client,
     {
       tenant_id: parsed.tenant_id,
       scope: parsed.scope,
@@ -1210,7 +1183,6 @@ export async function replayPlaybookDispatch(client: pg.PoolClient | null, body:
   const eligible = Boolean((candidate as any).candidate?.eligible_for_deterministic_replay);
   if (eligible) {
     const replay = await replayPlaybookRun(
-      client,
       {
         tenant_id: parsed.tenant_id,
         scope: parsed.scope,
@@ -1236,58 +1208,23 @@ export async function replayPlaybookDispatch(client: pg.PoolClient | null, body:
       scope: (candidate as any).scope,
       decision: "deterministic_replay_executed",
       primaryInferenceSkipped: true,
-      fallbackExecuted: false,
       candidate,
       replay,
       deterministicGate: ((replay as any)?.deterministic_gate ?? null) as Record<string, unknown> | null,
     });
   }
-  if (parsed.execute_fallback === false) {
-    return buildReplayDispatchSurface({
-      tenantId: (candidate as any).tenant_id,
-      scope: (candidate as any).scope,
-      decision: "candidate_only",
-      primaryInferenceSkipped: false,
-      fallbackExecuted: false,
-      candidate,
-      replay: null,
-      deterministicGate: ((candidate as any)?.deterministic_gate ?? null) as Record<string, unknown> | null,
-    });
-  }
-  const replay = await replayPlaybookRun(
-    client,
-    {
-      tenant_id: parsed.tenant_id,
-      scope: parsed.scope,
-      project_id: parsed.project_id,
-      actor: parsed.actor,
-      consumer_agent_id: parsed.consumer_agent_id,
-      consumer_team_id: parsed.consumer_team_id,
-      memory_lane: parsed.memory_lane,
-      producer_agent_id: parsed.producer_agent_id,
-      owner_agent_id: parsed.owner_agent_id,
-      owner_team_id: parsed.owner_team_id,
-      playbook_id: parsed.playbook_id,
-      version: parsed.version,
-      mode: parsed.fallback_mode,
-      params: parsed.params,
-      max_steps: parsed.max_steps,
-    },
-    opts,
-  );
   return buildReplayDispatchSurface({
     tenantId: (candidate as any).tenant_id,
     scope: (candidate as any).scope,
-    decision: "fallback_replay_executed",
+    decision: "candidate_only",
     primaryInferenceSkipped: false,
-    fallbackExecuted: true,
     candidate,
-    replay,
-    deterministicGate: ((replay as any)?.deterministic_gate ?? null) as Record<string, unknown> | null,
+    replay: null,
+    deterministicGate: ((candidate as any)?.deterministic_gate ?? null) as Record<string, unknown> | null,
   });
 }
 
-export async function replayPlaybookPromote(client: pg.PoolClient | null, body: unknown, opts: ReplayWriteOptions) {
+export async function replayPlaybookPromote(body: unknown, opts: ReplayWriteOptions) {
   requireReplayReadAccess(opts);
   const parsed = parsePlaybookPromoteInput(body);
   const tenancy = resolveTenantScope(
@@ -1295,7 +1232,7 @@ export async function replayPlaybookPromote(client: pg.PoolClient | null, body: 
     { defaultScope: opts.defaultScope, defaultTenantId: opts.defaultTenantId },
   );
   const visibility = replayVisibilityFromInput(parsed);
-  const replayAccess = replayAccessForClient(client, opts);
+  const replayAccess = requireReplayAccess(opts);
   const versions = await replayAccess.listReplayPlaybookVersions(tenancy.scope_key, parsed.playbook_id, visibility);
   const latest = versions[0] ?? null;
   if (!latest) {
@@ -1334,7 +1271,7 @@ export async function replayPlaybookPromote(client: pg.PoolClient | null, body: 
       playbookId: parsed.playbook_id,
       latest,
     });
-    return buildReplayPlaybookNoopPromoteResult({
+    return buildReplayPlaybookUnchangedPromoteResult({
       tenantId: tenancy.tenant_id,
       scope: tenancy.scope,
       playbookId: parsed.playbook_id,
@@ -1391,7 +1328,7 @@ export async function replayPlaybookPromote(client: pg.PoolClient | null, body: 
     embeddingModel: promotedNodeFields.embedding_model,
     sourceNodeId: source.id,
   });
-  const { out } = await applyReplayMemoryWrite(client, writeReq, opts);
+  const { out } = await applyReplayMemoryWrite(writeReq, opts);
   const promoted = out.nodes.find((n) => n.client_id === promoteCid) ?? out.nodes[0] ?? null;
   return buildReplayPlaybookVersionResult({
     tenantId: tenancy.tenant_id,
@@ -1407,7 +1344,7 @@ export async function replayPlaybookPromote(client: pg.PoolClient | null, body: 
   });
 }
 
-export async function replayPlaybookRepair(client: pg.PoolClient | null, body: unknown, opts: ReplayWriteOptions) {
+export async function replayPlaybookRepair(body: unknown, opts: ReplayWriteOptions) {
   requireReplayReadAccess(opts);
   const parsed = parsePlaybookRepairInput(body);
   const tenancy = resolveTenantScope(
@@ -1415,7 +1352,7 @@ export async function replayPlaybookRepair(client: pg.PoolClient | null, body: u
     { defaultScope: opts.defaultScope, defaultTenantId: opts.defaultTenantId },
   );
   const visibility = replayVisibilityFromInput(parsed);
-  const replayAccess = replayAccessForClient(client, opts);
+  const replayAccess = requireReplayAccess(opts);
   const versions = await replayAccess.listReplayPlaybookVersions(tenancy.scope_key, parsed.playbook_id, visibility);
   const latest = versions[0] ?? null;
   if (!latest) {
@@ -1479,7 +1416,7 @@ export async function replayPlaybookRepair(client: pg.PoolClient | null, body: u
     slots: repairedSlots,
     sourceNodeId: source.id,
   });
-  const { out } = await applyReplayMemoryWrite(client, writeReq, opts);
+  const { out } = await applyReplayMemoryWrite(writeReq, opts);
   const repaired = out.nodes.find((n) => n.client_id === repairCid) ?? out.nodes[0] ?? null;
   return buildReplayPlaybookVersionResult({
     tenantId: tenancy.tenant_id,
@@ -1500,7 +1437,7 @@ export async function replayPlaybookRepair(client: pg.PoolClient | null, body: u
   });
 }
 
-export async function replayPlaybookRepairReview(client: pg.PoolClient | null, body: unknown, opts: ReplayPlaybookReviewOptions) {
+export async function replayPlaybookRepairReview(body: unknown, opts: ReplayPlaybookReviewOptions) {
   requireReplayReadAccess(opts);
   const parsed = parsePlaybookRepairReviewInput(body);
   const tenancy = resolveTenantScope(
@@ -1508,7 +1445,7 @@ export async function replayPlaybookRepairReview(client: pg.PoolClient | null, b
     { defaultScope: opts.defaultScope, defaultTenantId: opts.defaultTenantId },
   );
   const visibility = replayVisibilityFromInput(parsed);
-  const replayAccess = replayAccessForClient(client, opts);
+  const replayAccess = requireReplayAccess(opts);
   const versions = await replayAccess.listReplayPlaybookVersions(tenancy.scope_key, parsed.playbook_id, visibility);
   const latest = versions[0] ?? null;
   if (!latest) {
@@ -1588,7 +1525,6 @@ export async function replayPlaybookRepairReview(client: pg.PoolClient | null, b
             : paramsObj.stop_on_failure !== false;
         try {
           const runOut = await replayPlaybookRun(
-            client,
             {
               tenant_id: tenancy.tenant_id,
               scope: tenancy.scope,
@@ -1608,7 +1544,6 @@ export async function replayPlaybookRepairReview(client: pg.PoolClient | null, b
             {
               defaultScope: opts.defaultScope,
               defaultTenantId: opts.defaultTenantId,
-              embeddedRuntime: opts.embeddedRuntime,
               writeOptions: opts,
               localExecutor: opts.localExecutor,
             },
@@ -1915,7 +1850,7 @@ export async function replayPlaybookRepairReview(client: pg.PoolClient | null, b
     embeddingModel: reviewedNodeFields.embedding_model,
     sourceNodeId: source.id,
   });
-  const { out } = await applyReplayMemoryWrite(client, writeReq, opts);
+  const { out } = await applyReplayMemoryWrite(writeReq, opts);
   const reviewed = out.nodes.find((n) => n.client_id === reviewCid) ?? out.nodes[0] ?? null;
   let finalStatus: "draft" | "shadow" | "active" | "disabled" = nextStatus;
   let finalVersion = nextVersion;
@@ -2012,7 +1947,7 @@ export async function replayPlaybookRepairReview(client: pg.PoolClient | null, b
         embeddingModel: promotedNodeFields.embedding_model,
         sourceNodeId: reviewed?.id ?? source.id,
       });
-      const { out: outPromote } = await applyReplayMemoryWrite(client, promoteReq, opts);
+      const { out: outPromote } = await applyReplayMemoryWrite(promoteReq, opts);
       const promotedNode = outPromote.nodes.find((n) => n.client_id === promoteCid) ?? outPromote.nodes[0] ?? null;
       finalStatus = parsed.auto_promote_target_status;
       finalVersion = promoteVersion;
@@ -2166,7 +2101,7 @@ export async function replayPlaybookRepairReview(client: pg.PoolClient | null, b
     };
     if (effectiveLearningProjectionConfig.delivery === "sync_inline") {
       try {
-        learningProjectionResult = await applyReplayLearningProjection(client, projectionSource, effectiveLearningProjectionConfig, opts);
+        learningProjectionResult = await applyReplayLearningProjection(projectionSource, effectiveLearningProjectionConfig, opts);
       } catch (err: any) {
         learningProjectionResult = {
           triggered: true,
@@ -2187,7 +2122,7 @@ export async function replayPlaybookRepairReview(client: pg.PoolClient | null, b
           source_commit_id: finalCommitId ?? null,
           config: effectiveLearningProjectionConfig,
         };
-        const enq = await enqueueReplayLearningProjectionOutbox(client, {
+        const enq = await enqueueReplayLearningProjectionOutbox({
           scopeKey: tenancy.scope_key,
           commitId: finalCommitId,
           payload,
@@ -2248,7 +2183,7 @@ export async function replayPlaybookRepairReview(client: pg.PoolClient | null, b
   };
 }
 
-export async function replayPlaybookRun(client: pg.PoolClient | null, body: unknown, opts: ReplayPlaybookRunOptions) {
+export async function replayPlaybookRun(body: unknown, opts: ReplayPlaybookRunOptions) {
   requireReplayReadAccess(opts);
   const parsed = parsePlaybookRunInput(body);
   const tenancy = resolveTenantScope(
@@ -2256,7 +2191,7 @@ export async function replayPlaybookRun(client: pg.PoolClient | null, body: unkn
     { defaultScope: opts.defaultScope, defaultTenantId: opts.defaultTenantId },
   );
   const visibility = replayVisibilityFromInput(parsed);
-  const replayAccess = replayAccessForClient(client, opts);
+  const replayAccess = requireReplayAccess(opts);
   const row =
     parsed.version != null
       ? await replayAccess.getReplayPlaybookVersion(tenancy.scope_key, parsed.playbook_id, parsed.version, visibility)
@@ -2318,7 +2253,6 @@ export async function replayPlaybookRun(client: pg.PoolClient | null, body: unkn
     let runStartOut: Record<string, unknown> | null = null;
     if (recordRun) {
       runStartOut = await replayRunStart(
-        client,
         buildReplayPlaybookRunStartBody({
           tenantId: tenancy.tenant_id,
           scope: tenancy.scope,
@@ -2343,7 +2277,6 @@ export async function replayPlaybookRun(client: pg.PoolClient | null, body: unkn
       persistStep: recordRun
         ? async (stepInput) => {
             const before = await replayStepBefore(
-              client,
               {
                 tenant_id: tenancy.tenant_id,
                 scope: tenancy.scope,
@@ -2367,7 +2300,6 @@ export async function replayPlaybookRun(client: pg.PoolClient | null, body: unkn
             ) as Record<string, unknown>;
             const persistedStepId = toStringOrNull(before.step_id);
             await replayStepAfter(
-              client,
               {
                 tenant_id: tenancy.tenant_id,
                 scope: tenancy.scope,
@@ -2402,7 +2334,6 @@ export async function replayPlaybookRun(client: pg.PoolClient | null, body: unkn
     let runEndOut: Record<string, unknown> | null = null;
     if (recordRun) {
       runEndOut = await replayRunEnd(
-        client,
         buildReplayPlaybookRunEndBody({
           tenantId: tenancy.tenant_id,
           scope: tenancy.scope,
@@ -2526,18 +2457,13 @@ export async function replayPlaybookRun(client: pg.PoolClient | null, body: unkn
       },
     );
   }
-  const defaultGuidedRepairStrategy = opts.guidedRepair?.strategy ?? "deterministic_skip";
-  const allowRequestBuiltinLlm = opts.guidedRepair?.allowRequestBuiltinLlm === true;
+  const defaultGuidedRepairStrategy = opts.guidedRepair?.strategy ?? "agent_repair_request";
   const requestedGuidedRepairStrategy = toStringOrNull(paramsObj.guided_repair_strategy);
-  if (
-    requestedGuidedRepairStrategy === "builtin_llm"
-    && defaultGuidedRepairStrategy !== "builtin_llm"
-    && !allowRequestBuiltinLlm
-  ) {
+  if (requestedGuidedRepairStrategy && requestedGuidedRepairStrategy !== "agent_repair_request") {
     throw new HttpError(
       400,
       "replay_guided_repair_strategy_not_allowed",
-      "params.guided_repair_strategy=builtin_llm is not allowed by server policy",
+      "Runtime guided repair only emits agent_repair_request evidence; semantic repair belongs to the Agent or external candidate producer.",
       {
         requested_strategy: requestedGuidedRepairStrategy,
         default_strategy: defaultGuidedRepairStrategy,
@@ -2545,18 +2471,12 @@ export async function replayPlaybookRun(client: pg.PoolClient | null, body: unkn
     );
   }
   const guidedRepairStrategy: ReplayGuidedRepairStrategy =
-    requestedGuidedRepairStrategy === "deterministic_skip"
-      || requestedGuidedRepairStrategy === "heuristic_patch"
-      || requestedGuidedRepairStrategy === "http_synth"
-      || requestedGuidedRepairStrategy === "builtin_llm"
-      ? requestedGuidedRepairStrategy
-      : defaultGuidedRepairStrategy;
+    requestedGuidedRepairStrategy === "agent_repair_request" ? requestedGuidedRepairStrategy : defaultGuidedRepairStrategy;
   const guidedRepairMaxErrorChars = clampInt(
     Number(paramsObj.guided_repair_max_error_chars ?? opts.guidedRepair?.maxErrorChars ?? 1200),
     64,
     20000,
   );
-  const commandAliasMap = asStringRecord(paramsObj.command_alias_map);
 
   const timeoutMs = clampInt(Number(paramsObj.timeout_ms ?? localExecutor?.timeoutMs ?? 15000), 100, 600000);
   const stdioMaxBytes = clampInt(Number(paramsObj.stdio_max_bytes ?? localExecutor?.stdioMaxBytes ?? 65536), 1024, 1024 * 1024);
@@ -2574,7 +2494,6 @@ export async function replayPlaybookRun(client: pg.PoolClient | null, body: unkn
   let runStartOut: Record<string, unknown> | null = null;
   if (recordRun) {
     runStartOut = await replayRunStart(
-      client,
       buildReplayPlaybookRunStartBody({
         tenantId: tenancy.tenant_id,
         scope: tenancy.scope,
@@ -2618,17 +2537,7 @@ export async function replayPlaybookRun(client: pg.PoolClient | null, body: unkn
   const guidedRepairConfig = {
     strategy: guidedRepairStrategy,
     allowedCommands,
-    commandAliasMap,
     maxErrorChars: guidedRepairMaxErrorChars,
-    httpEndpoint: opts.guidedRepair?.httpEndpoint,
-    httpTimeoutMs: opts.guidedRepair?.httpTimeoutMs,
-    httpAuthToken: opts.guidedRepair?.httpAuthToken,
-    llmBaseUrl: opts.guidedRepair?.llmBaseUrl,
-    llmApiKey: opts.guidedRepair?.llmApiKey,
-    llmModel: opts.guidedRepair?.llmModel,
-    llmTimeoutMs: opts.guidedRepair?.llmTimeoutMs,
-    llmMaxTokens: opts.guidedRepair?.llmMaxTokens,
-    llmTemperature: opts.guidedRepair?.llmTemperature,
   };
 
   const writeStepAfter = recordRun
@@ -2644,7 +2553,6 @@ export async function replayPlaybookRun(client: pg.PoolClient | null, body: unkn
         error?: string;
       }) => {
         await replayStepAfter(
-          client,
           {
             tenant_id: tenancy.tenant_id,
             scope: tenancy.scope,
@@ -2678,7 +2586,6 @@ export async function replayPlaybookRun(client: pg.PoolClient | null, body: unkn
     let persistedStepId: string | null = null;
     if (recordRun && stepIndex != null && toolName) {
       const before = await replayStepBefore(
-        client,
         {
           tenant_id: tenancy.tenant_id,
           scope: tenancy.scope,
@@ -3014,7 +2921,6 @@ export async function replayPlaybookRun(client: pg.PoolClient | null, body: unkn
   let runEndOut: Record<string, unknown> | null = null;
   if (recordRun) {
     runEndOut = await replayRunEnd(
-      client,
       buildReplayPlaybookRunEndBody({
         tenantId: tenancy.tenant_id,
         scope: tenancy.scope,
@@ -3095,10 +3001,6 @@ export async function replayPlaybookRun(client: pg.PoolClient | null, body: unkn
       allowSensitiveExec,
       guidedRepairStrategy,
       guidedRepairMaxErrorChars,
-      guidedRepairHttpConfigured: Boolean(opts.guidedRepair?.httpEndpoint),
-      guidedRepairBuiltinLlmConfigured: Boolean(
-        opts.guidedRepair?.llmBaseUrl && opts.guidedRepair?.llmApiKey && opts.guidedRepair?.llmModel,
-      ),
     }),
     params_echo: parsed.params ?? {},
     usage: usageOut,

@@ -17,7 +17,7 @@ export type ResolveMemoryLayerPolicyOptions = {
 export type MemoryLayerPolicy = {
   name: MemoryLayerPolicyName;
   preferred_layers: MemoryLayerId[];
-  fallback_layers: MemoryLayerId[];
+  secondary_layers: MemoryLayerId[];
   trust_anchor_layers: MemoryLayerId[];
   source: MemoryLayerPolicySource;
   requested_allowed_layers?: MemoryLayerId[];
@@ -36,7 +36,7 @@ function defaultPolicyForEndpoint(
     return {
       name: "planning_context",
       preferred_layers: dedupeLayers(internalAllowL4Selection ? ["L4", "L3", "L0", "L1", "L2"] : ["L3", "L0", "L1", "L2"]),
-      fallback_layers: dedupeLayers(["L1", "L2"]),
+      secondary_layers: dedupeLayers(["L1", "L2"]),
       trust_anchor_layers: dedupeLayers(internalAllowL4Selection ? ["L4", "L3", "L0"] : ["L3", "L0"]),
       source: "endpoint_default",
     };
@@ -44,7 +44,7 @@ function defaultPolicyForEndpoint(
   return {
     name: "factual_recall",
     preferred_layers: dedupeLayers(internalAllowL4Selection ? ["L4", "L3", "L0", "L1", "L2"] : ["L3", "L0", "L1", "L2"]),
-    fallback_layers: dedupeLayers(["L0", "L1"]),
+    secondary_layers: dedupeLayers(["L0", "L1"]),
     trust_anchor_layers: dedupeLayers(internalAllowL4Selection ? ["L4", "L3", "L0"] : ["L3", "L0"]),
     source: "endpoint_default",
   };
@@ -66,11 +66,11 @@ export function resolveMemoryLayerPolicy(
     unsafeAllowDropTrustAnchors ? requestedAllowedLayers : [...requestedAllowedLayers, ...base.trust_anchor_layers],
   );
   const preferredLayers = base.preferred_layers.filter((layer) => effectiveAllowed.has(layer));
-  const fallbackLayers = base.fallback_layers.filter((layer) => effectiveAllowed.has(layer));
+  const secondaryLayers = base.secondary_layers.filter((layer) => effectiveAllowed.has(layer));
   return {
     ...base,
     preferred_layers: preferredLayers,
-    fallback_layers: fallbackLayers,
+    secondary_layers: secondaryLayers,
     trust_anchor_layers: unsafeAllowDropTrustAnchors
       ? base.trust_anchor_layers.filter((layer) => effectiveAllowed.has(layer))
       : base.trust_anchor_layers,

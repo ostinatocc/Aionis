@@ -6,7 +6,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
-import { registerHostErrorHandler } from "../../src/host/http-host.ts";
+import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { prepareMemoryWrite, applyMemoryWrite } from "../../src/memory/write.ts";
 import { registerLiteMemoryLifecycleRoutes } from "../../src/routes/memory-lifecycle-lite.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
@@ -62,12 +62,10 @@ async function seedLifecycleFixture(store: ReturnType<typeof createLiteWriteStor
     allowCrossScopeEdges: false,
   }, null);
 
-  await store.withTx(() => applyMemoryWrite({} as any, prepared, {
+  await store.withTx(() => applyMemoryWrite(prepared, {
     maxTextLen: 10000,
     piiRedaction: false,
     allowCrossScopeEdges: false,
-    shadowDualWriteEnabled: false,
-    shadowDualWriteStrict: false,
     write_access: store,
   }));
 
@@ -95,8 +93,6 @@ function buildRequestGuards() {
     recallLimiter: null,
     debugEmbedLimiter: null,
     writeLimiter: null,
-    sandboxWriteLimiter: null,
-    sandboxReadLimiter: null,
     recallTextEmbedLimiter: null,
     recallInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
     writeInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
@@ -109,7 +105,7 @@ test("lite memory lifecycle routes can rehydrate archived nodes into active tier
   try {
     const fixture = await seedLifecycleFixture(store);
     const guards = buildRequestGuards();
-    registerHostErrorHandler(app);
+    registerRuntimeErrorHandler(app);
     registerLiteMemoryLifecycleRoutes({
       app,
       env: {
@@ -170,7 +166,7 @@ test("lite memory lifecycle routes can record activation feedback on nodes", asy
   try {
     const fixture = await seedLifecycleFixture(store);
     const guards = buildRequestGuards();
-    registerHostErrorHandler(app);
+    registerRuntimeErrorHandler(app);
     registerLiteMemoryLifecycleRoutes({
       app,
       env: {

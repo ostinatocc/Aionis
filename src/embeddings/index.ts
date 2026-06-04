@@ -1,12 +1,11 @@
 import { z } from "zod";
-import { FakeEmbeddingProvider } from "./fake.js";
 import { createMinimaxEmbeddingProvider } from "./minimax.js";
 import { createOpenAIEmbeddingProvider } from "./openai.js";
 import type { EmbeddingProvider } from "./types.js";
 import type { EmbedHttpConfig } from "./http.js";
 
 const ProviderEnvSchema = z.object({
-  EMBEDDING_PROVIDER: z.enum(["none", "fake", "openai", "minimax"]).default("fake"),
+  EMBEDDING_PROVIDER: z.enum(["none", "openai", "minimax"]).default("none"),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_EMBED_BASE_URL: z.string().default("https://api.openai.com/v1"),
   OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
@@ -35,7 +34,6 @@ export function createEmbeddingProviderFromEnv(env: Record<string, string | unde
   }
 
   if (parsed.EMBEDDING_PROVIDER === "none") return null;
-  if (parsed.EMBEDDING_PROVIDER === "fake") return FakeEmbeddingProvider;
 
   const httpCfg: EmbedHttpConfig = {
     timeoutMs: parsed.EMBED_HTTP_TIMEOUT_MS,

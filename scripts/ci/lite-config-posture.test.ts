@@ -40,7 +40,21 @@ test("lite plus prod fails with an explicit posture error", async () => {
     () => {
       assert.throws(
         () => loadEnv(),
-        /Lite runtime does not currently support APP_ENV=prod; use APP_ENV=dev\/ci or a future server runtime\./i,
+        /Lite runtime does not currently support APP_ENV=prod; use APP_ENV=dev\/ci\./i,
+      );
+    },
+  );
+});
+
+test("focused runtime rejects non-lite edition config", async () => {
+  await withIsolatedEnv(
+    {
+      AIONIS_EDITION: "server",
+    },
+    () => {
+      assert.throws(
+        () => loadEnv(),
+        /AIONIS_EDITION: Invalid literal value, expected "lite"/i,
       );
     },
   );

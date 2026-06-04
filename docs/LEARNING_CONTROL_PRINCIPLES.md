@@ -94,7 +94,7 @@ Use hard constraints only for invariants that should never be violated:
 
 1. do not edit forbidden files
 2. run required verifiers before claiming success
-3. do not use synthetic pass results as effectiveness proof
+3. do not use non-live pass results as effectiveness proof
 4. do not claim success from memory alone
 5. do not turn provider/API failures into code-learning signals
 6. do not promote failed execution evidence into stable authority
@@ -193,6 +193,32 @@ Successful replay evidence is continuity evidence first. It can prove that Aioni
 verifier-passing trace, reduced rediscovery, or avoided a known failed path. It should stay scoped to `exact_task`,
 `task_family`, or `repository` until a fresh holdout proves that the same guidance helps a distinct task without replaying
 the exact prior patch.
+
+## Evidence Promotion Protocol
+
+Aionis separates local reuse from wider generalization.
+
+A memory, workflow, pattern, or policy can be useful inside its current scope without being allowed to become a broader
+Runtime behavior. Promotion evidence therefore records two independent outcomes:
+
+1. `local_reuse_allowed`: the evidence is strong enough to reuse inside the current scope.
+2. `wider_generalization_allowed`: the evidence is strong enough to widen beyond the current scope.
+
+Wider generalization requires more than a successful current task. It needs:
+
+1. clean leakage posture
+2. holdout or distinct-task evidence
+3. no regression or negative-transfer evidence
+4. provider/protocol contamination quarantined away from learning authority
+5. task-specific details kept out of Runtime source behavior
+6. sublinear growth when a learned structure claims to cover multiple tasks
+
+If these gates are missing, the learning can remain useful local memory, but it must not become a global rule, source-code
+mechanism, host policy, provider policy, or architecture vocabulary.
+
+This protocol is inspired by evidence-gated research discipline, but Aionis does not import external research harnesses,
+symbolic primitives, basis catalogs, repository tasks, or task solutions. The product mechanism is only the generic
+promotion discipline.
 
 ## Regression Discipline
 

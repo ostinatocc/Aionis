@@ -270,10 +270,10 @@ export function distillWriteArtifacts(args: {
   input_text?: string | null;
   nodes: DistillablePreparedNode[];
   config: WriteDistillationConfig;
-  fallback_memory_lane: "private" | "shared";
-  fallback_producer_agent_id?: string;
-  fallback_owner_agent_id?: string;
-  fallback_owner_team_id?: string;
+  default_memory_lane: "private" | "shared";
+  default_producer_agent_id?: string;
+  default_owner_agent_id?: string;
+  default_owner_team_id?: string;
 }): {
   nodes: DistilledPreparedNode[];
   edges: DistilledPreparedEdge[];
@@ -336,10 +336,10 @@ export function distillWriteArtifacts(args: {
         scope: args.scope,
         type: "evidence",
         tier: baseNode?.tier ?? "hot",
-        memory_lane: baseNode?.memory_lane ?? args.fallback_memory_lane,
-        producer_agent_id: baseNode?.producer_agent_id ?? args.fallback_producer_agent_id,
-        owner_agent_id: baseNode?.owner_agent_id ?? args.fallback_owner_agent_id,
-        owner_team_id: baseNode?.owner_team_id ?? args.fallback_owner_team_id,
+        memory_lane: baseNode?.memory_lane ?? args.default_memory_lane,
+        producer_agent_id: baseNode?.producer_agent_id ?? args.default_producer_agent_id,
+        owner_agent_id: baseNode?.owner_agent_id ?? args.default_owner_agent_id,
+        owner_team_id: baseNode?.owner_team_id ?? args.default_owner_team_id,
         title: source.title ? `Distilled: ${normalizeSnippet(source.title, 72)}` : "Distilled evidence",
         text_summary: evidenceSummary,
         slots: {
@@ -413,10 +413,10 @@ export function distillWriteArtifacts(args: {
         scope: args.scope,
         type: "concept",
         tier: "warm",
-        memory_lane: baseNode?.memory_lane ?? args.fallback_memory_lane,
-        producer_agent_id: baseNode?.producer_agent_id ?? args.fallback_producer_agent_id,
-        owner_agent_id: baseNode?.owner_agent_id ?? args.fallback_owner_agent_id,
-        owner_team_id: baseNode?.owner_team_id ?? args.fallback_owner_team_id,
+        memory_lane: baseNode?.memory_lane ?? args.default_memory_lane,
+        producer_agent_id: baseNode?.producer_agent_id ?? args.default_producer_agent_id,
+        owner_agent_id: baseNode?.owner_agent_id ?? args.default_owner_agent_id,
+        owner_team_id: baseNode?.owner_team_id ?? args.default_owner_team_id,
         title: fact.title,
         text_summary: fact.summary,
         slots: {

@@ -6,11 +6,7 @@ import {
 } from "./learning-control-runtime-providers.js";
 import { buildReplayLearningProjectionDefaults } from "../memory/replay-learning.js";
 import { createSandboxSession, enqueueSandboxRun, getSandboxRun } from "../memory/sandbox.js";
-
-type StoreLike = {
-  withTx: <T>(fn: (client: any) => Promise<T>) => Promise<T>;
-  withClient: <T>(fn: (client: any) => Promise<T>) => Promise<T>;
-};
+import type { SandboxStore } from "../store/sandbox-access.js";
 
 type SandboxExecutorLike = {
   enqueue: (runId: string) => void;
@@ -19,11 +15,11 @@ type SandboxExecutorLike = {
 
 function createSandboxRunExecutor(args: {
   env: Env;
-  store: StoreLike;
+  sandboxStore: SandboxStore;
   sandboxExecutor: SandboxExecutorLike;
   source: string;
 }) {
-  const { env, store, sandboxExecutor, source } = args;
+  const { env, sandboxStore, sandboxExecutor, source } = args;
   return async (input: {
     tenant_id: string;
     scope: string;
@@ -45,9 +41,9 @@ function createSandboxRunExecutor(args: {
       };
     }
     const sandboxMode = input.mode === "async" ? "async" : "sync";
-    const sessionOut = await store.withTx((client) =>
+    const sessionOut = await sandboxStore.withTx((access) =>
       createSandboxSession(
-        client,
+        access,
         {
           tenant_id: input.tenant_id,
           scope: input.scope,
@@ -65,9 +61,9 @@ function createSandboxRunExecutor(args: {
         },
       ),
     );
-    const queued = await store.withTx((client) =>
+    const queued = await sandboxStore.withTx((access) =>
       enqueueSandboxRun(
-        client,
+        access,
         {
           tenant_id: input.tenant_id,
           scope: input.scope,
@@ -106,9 +102,9 @@ function createSandboxRunExecutor(args: {
     }
 
     await sandboxExecutor.executeSync(queued.run.run_id);
-    const final = await store.withClient((client) =>
+    const final = await sandboxStore.withClient((access) =>
       getSandboxRun(
-        client,
+        access,
         {
           tenant_id: input.tenant_id,
           scope: input.scope,
@@ -134,31 +130,27 @@ function createSandboxRunExecutor(args: {
 
 export function createReplayRuntimeOptionBuilders(args: {
   env: Env;
-  store: StoreLike;
+  sandboxStore: SandboxStore;
   embedder: any;
   embeddingSurfacePolicy?: EmbeddingSurfacePolicy;
-  embeddedRuntime: any;
   liteWriteStore?: any;
   liteReplayAccess?: any;
   liteReplayStore?: any;
   sandboxAllowedCommands: any;
   sandboxExecutor: SandboxExecutorLike;
-  writeAccessShadowMirrorV2: boolean;
   enforceSandboxTenantBudget: (reply: any, tenantId: string, scope: string, projectId: string | null) => Promise<void>;
   learningControlRuntimeProviderBuilderOptions?: LiteLearningControlRuntimeProviderBuilderOptions;
 }) {
   const {
     env,
-    store,
+    sandboxStore,
     embedder,
     embeddingSurfacePolicy,
-    embeddedRuntime,
     liteWriteStore,
     liteReplayAccess,
     liteReplayStore,
     sandboxAllowedCommands,
     sandboxExecutor,
-    writeAccessShadowMirrorV2,
     enforceSandboxTenantBudget,
   } = args;
   const writeEmbedder = embeddingSurfacePolicy?.providerFor("write_auto_embed", embedder) ?? embedder;
@@ -179,11 +171,7 @@ export function createReplayRuntimeOptionBuilders(args: {
       maxTextLen: env.MAX_TEXT_LEN,
       piiRedaction: env.PII_REDACTION,
       allowCrossScopeEdges: env.ALLOW_CROSS_SCOPE_EDGES,
-      shadowDualWriteEnabled: env.MEMORY_SHADOW_DUAL_WRITE_ENABLED,
-      shadowDualWriteStrict: env.MEMORY_SHADOW_DUAL_WRITE_STRICT,
-      writeAccessShadowMirrorV2,
       embedder: writeEmbedder,
-      embeddedRuntime,
       writeAccess: liteWriteStore ?? undefined,
       replayAccess: liteReplayAccess,
       replayMirror: liteReplayStore,
@@ -215,7 +203,7 @@ export function createReplayRuntimeOptionBuilders(args: {
       learningControlReviewProviders: learningControlProviders.replayRepairReview,
       sandboxValidationExecutor: createSandboxRunExecutor({
         env,
-        store,
+        sandboxStore,
         sandboxExecutor,
         source: "replay_shadow_validation",
       }),
@@ -229,7 +217,6 @@ export function createReplayRuntimeOptionBuilders(args: {
     return {
       defaultScope: env.MEMORY_SCOPE,
       defaultTenantId: env.MEMORY_TENANT_ID,
-      embeddedRuntime,
       replayAccess: liteReplayAccess,
       writeOptions: {
         defaultScope: env.MEMORY_SCOPE,
@@ -237,11 +224,7 @@ export function createReplayRuntimeOptionBuilders(args: {
         maxTextLen: env.MAX_TEXT_LEN,
         piiRedaction: env.PII_REDACTION,
         allowCrossScopeEdges: env.ALLOW_CROSS_SCOPE_EDGES,
-        shadowDualWriteEnabled: env.MEMORY_SHADOW_DUAL_WRITE_ENABLED,
-        shadowDualWriteStrict: env.MEMORY_SHADOW_DUAL_WRITE_STRICT,
-        writeAccessShadowMirrorV2,
         embedder: writeEmbedder,
-        embeddedRuntime,
         writeAccess: liteWriteStore ?? undefined,
         replayAccess: liteReplayAccess,
         replayMirror: liteReplayStore,
@@ -256,24 +239,14 @@ export function createReplayRuntimeOptionBuilders(args: {
       },
       guidedRepair: {
         strategy: env.REPLAY_GUIDED_REPAIR_STRATEGY,
-        allowRequestBuiltinLlm: env.REPLAY_GUIDED_REPAIR_ALLOW_REQUEST_BUILTIN_LLM,
         maxErrorChars: env.REPLAY_GUIDED_REPAIR_MAX_ERROR_CHARS,
-        httpEndpoint: env.REPLAY_GUIDED_REPAIR_HTTP_ENDPOINT,
-        httpTimeoutMs: env.REPLAY_GUIDED_REPAIR_HTTP_TIMEOUT_MS,
-        httpAuthToken: env.REPLAY_GUIDED_REPAIR_HTTP_AUTH_TOKEN,
-        llmBaseUrl: env.REPLAY_GUIDED_REPAIR_LLM_BASE_URL,
-        llmApiKey: env.REPLAY_GUIDED_REPAIR_LLM_API_KEY,
-        llmModel: env.REPLAY_GUIDED_REPAIR_LLM_MODEL,
-        llmTimeoutMs: env.REPLAY_GUIDED_REPAIR_LLM_TIMEOUT_MS,
-        llmMaxTokens: env.REPLAY_GUIDED_REPAIR_LLM_MAX_TOKENS,
-        llmTemperature: env.REPLAY_GUIDED_REPAIR_LLM_TEMPERATURE,
       },
       sandboxBudgetGuard: async (input: { tenant_id: string; scope: string; project_id: string | null }) => {
         await enforceSandboxTenantBudget(reply, input.tenant_id, input.scope, input.project_id);
       },
       sandboxExecutor: createSandboxRunExecutor({
         env,
-        store,
+        sandboxStore,
         sandboxExecutor,
         source,
       }),

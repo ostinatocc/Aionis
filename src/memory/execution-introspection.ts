@@ -660,7 +660,7 @@ function toContinuityEntry(
   };
 }
 
-function buildDemoSurface(args: {
+function buildOperatorSurface(args: {
   workflowSignalSummary: ReturnType<typeof summarizeWorkflowSignalSurface>;
   patternSignalSummary: ReturnType<typeof summarizePatternSignalSurface>;
   workflowMaintenanceSummary: ReturnType<typeof summarizeWorkflowMaintenanceSurface>;
@@ -718,14 +718,14 @@ function buildDemoSurface(args: {
     `contested patterns=${args.patternSignalSummary.contested_pattern_count}`,
   ].join("; ");
   const mergedText = [
-    `# Execution Memory Demo`,
+    `# Execution Memory Operator Surface`,
     headline,
     workflowLines.length > 0 ? `# Workflows\n${workflowLines.map((line) => `- ${line}`).join("\n")}` : "",
     patternLines.length > 0 ? `# Patterns\n${patternLines.map((line) => `- ${line}`).join("\n")}` : "",
     `# Maintenance\n${maintenanceLines.map((line) => `- ${line}`).join("\n")}`,
   ].filter(Boolean).join("\n");
   return {
-    surface_version: "execution_memory_demo_v1" as const,
+    surface_version: "execution_memory_operator_v1" as const,
     headline,
     sections: {
       workflows: workflowLines,
@@ -990,7 +990,7 @@ export async function buildExecutionMemoryIntrospectionLite(
     skipped_stable_exists: continuityProjectionSamples.filter((sample) => sample.decision === "skipped_stable_exists").length,
     eligible_without_projection: continuityProjectionSamples.filter((sample) => sample.decision === "eligible_without_projection").length,
   };
-  const demoSurface = buildDemoSurface({
+  const operatorSurface = buildOperatorSurface({
     workflowSignalSummary: summaryBundle.workflow_signal_summary,
     patternSignalSummary: summaryBundle.pattern_signal_summary,
     workflowMaintenanceSummary: summaryBundle.workflow_maintenance_summary,
@@ -1041,7 +1041,7 @@ export async function buildExecutionMemoryIntrospectionLite(
       decision_counts: continuityDecisionCounts,
       samples: continuityProjectionSamples.slice(0, Math.max(Math.min(limit, 8), 4)),
     },
-    demo_surface: demoSurface,
+    operator_surface: operatorSurface,
     execution_summary: executionSummary,
     cognitive_structure_v1: cognitiveStructure,
     recommended_workflows: recommendedWorkflows,

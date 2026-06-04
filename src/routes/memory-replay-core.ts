@@ -1,5 +1,4 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type pg from "pg";
 import type { Env } from "../config.js";
 import { createEmbeddingSurfacePolicy, type EmbeddingSurfacePolicy } from "../embeddings/surface-policy.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
@@ -19,15 +18,10 @@ import type { AuthPrincipal } from "../util/auth.js";
 import type { InflightGateToken } from "../util/inflight_gate.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
 
-type StoreLike = {
-  withTx: <T>(fn: (client: pg.PoolClient) => Promise<T>) => Promise<T>;
-  withClient: <T>(fn: (client: pg.PoolClient) => Promise<T>) => Promise<T>;
-};
-
 type ReplayCoreRequest = FastifyRequest<{ Body: unknown }>;
 
-type ReplayWriteOptionsLike = Parameters<typeof replayRunStart>[2];
-type ReplayReadOptionsLike = Parameters<typeof replayRunGet>[2];
+type ReplayWriteOptionsLike = Parameters<typeof replayRunStart>[1];
+type ReplayReadOptionsLike = Parameters<typeof replayRunGet>[1];
 
 type ReplayCoreRequestKind =
   | "replay_run_start"
@@ -47,14 +41,11 @@ type ReplayCoreExecutor<TResult> = (body: unknown) => Promise<TResult>;
 export function registerMemoryReplayCoreRoutes(args: {
   app: FastifyInstance;
   env: Env;
-  store: StoreLike;
   embedder: EmbeddingProvider | null;
   embeddingSurfacePolicy?: EmbeddingSurfacePolicy;
-  embeddedRuntime: ReplayWriteOptionsLike["embeddedRuntime"];
   liteReplayAccess?: ReplayWriteOptionsLike["replayAccess"];
   liteReplayStore?: ReplayWriteOptionsLike["replayMirror"];
   liteWriteStore?: LiteWriteStore | null;
-  writeAccessShadowMirrorV2: boolean;
   requireMemoryPrincipal: (req: FastifyRequest) => Promise<AuthPrincipal | null>;
   withIdentityFromRequest: (
     req: FastifyRequest,
@@ -70,14 +61,11 @@ export function registerMemoryReplayCoreRoutes(args: {
   const {
     app,
     env,
-    store,
     embedder,
     embeddingSurfacePolicy: embeddingSurfacePolicyArg,
-    embeddedRuntime,
     liteReplayAccess,
     liteReplayStore,
     liteWriteStore,
-    writeAccessShadowMirrorV2,
     requireMemoryPrincipal,
     withIdentityFromRequest,
     enforceRateLimit,
@@ -88,6 +76,15 @@ export function registerMemoryReplayCoreRoutes(args: {
   const embeddingSurfacePolicy =
     embeddingSurfacePolicyArg ?? createEmbeddingSurfacePolicy({ providerConfigured: !!embedder });
   const writeEmbedder = embeddingSurfacePolicy.providerFor("write_auto_embed", embedder);
+  if (env.AIONIS_EDITION !== "lite") {
+    throw new Error("aionis-lite replay core routes only support AIONIS_EDITION=lite");
+  }
+  if (!liteReplayAccess) {
+    throw new Error("aionis-lite replay core routes require liteReplayAccess");
+  }
+  if (!liteWriteStore) {
+    throw new Error("aionis-lite replay core routes require liteWriteStore");
+  }
 
   const writeDefaults = {
     defaultScope: env.MEMORY_SCOPE,
@@ -95,11 +92,7 @@ export function registerMemoryReplayCoreRoutes(args: {
     maxTextLen: env.MAX_TEXT_LEN,
     piiRedaction: env.PII_REDACTION,
     allowCrossScopeEdges: env.ALLOW_CROSS_SCOPE_EDGES,
-    shadowDualWriteEnabled: env.MEMORY_SHADOW_DUAL_WRITE_ENABLED,
-    shadowDualWriteStrict: env.MEMORY_SHADOW_DUAL_WRITE_STRICT,
-    writeAccessShadowMirrorV2,
     embedder: writeEmbedder,
-    embeddedRuntime,
     replayAccess: liteReplayAccess ?? null,
     replayMirror: liteReplayStore ?? null,
     writeAccess: liteWriteStore ?? null,
@@ -108,27 +101,18 @@ export function registerMemoryReplayCoreRoutes(args: {
   const readDefaults = {
     defaultScope: env.MEMORY_SCOPE,
     defaultTenantId: env.MEMORY_TENANT_ID,
-    embeddedRuntime,
     replayAccess: liteReplayAccess ?? null,
   } satisfies ReplayReadOptionsLike;
 
-  const liteModeActive = env.AIONIS_EDITION === "lite" && !!liteWriteStore;
-  const liteReplayReadActive = env.AIONIS_EDITION === "lite" && !!liteReplayAccess;
   const executeReplayWrite = <TResult>(
     body: unknown,
-    operation: (client: pg.PoolClient | null, requestBody: unknown) => Promise<TResult>,
-  ) =>
-    liteModeActive
-      ? liteWriteStore.withTx(() => operation(null, body))
-      : store.withTx((client) => operation(client, body));
+    operation: (requestBody: unknown) => Promise<TResult>,
+  ) => liteWriteStore.withTx(() => operation(body));
 
   const executeReplayRead = <TResult>(
     body: unknown,
-    operation: (client: pg.PoolClient | null, requestBody: unknown) => Promise<TResult>,
-  ) =>
-    liteReplayReadActive
-      ? operation(null, body)
-      : store.withClient((client) => operation(client, body));
+    operation: (requestBody: unknown) => Promise<TResult>,
+  ) => operation(body);
 
   const runReplayRoute = async <TResult>(args: {
     req: ReplayCoreRequest;
@@ -163,23 +147,23 @@ export function registerMemoryReplayCoreRoutes(args: {
   };
 
   registerReplayPostRoute("/v1/memory/replay/run/start", "replay_run_start", "write", (body) =>
-    executeReplayWrite(body, (client, requestBody) => replayRunStart(client, requestBody, writeDefaults)),
+    executeReplayWrite(body, (requestBody) => replayRunStart(requestBody, writeDefaults)),
   );
 
   registerReplayPostRoute("/v1/memory/replay/step/before", "replay_step_before", "write", (body) =>
-    executeReplayWrite(body, (client, requestBody) => replayStepBefore(client, requestBody, writeDefaults)),
+    executeReplayWrite(body, (requestBody) => replayStepBefore(requestBody, writeDefaults)),
   );
 
   registerReplayPostRoute("/v1/memory/replay/step/after", "replay_step_after", "write", (body) =>
-    executeReplayWrite(body, (client, requestBody) => replayStepAfter(client, requestBody, writeDefaults)),
+    executeReplayWrite(body, (requestBody) => replayStepAfter(requestBody, writeDefaults)),
   );
 
   registerReplayPostRoute("/v1/memory/replay/run/end", "replay_run_end", "write", (body) =>
-    executeReplayWrite(body, (client, requestBody) => replayRunEnd(client, requestBody, writeDefaults)),
+    executeReplayWrite(body, (requestBody) => replayRunEnd(requestBody, writeDefaults)),
   );
 
   registerReplayPostRoute("/v1/memory/replay/runs/get", "replay_run_get", "recall", (body) =>
-    executeReplayRead(body, (client, requestBody) => replayRunGet(client, requestBody, readDefaults)),
+    executeReplayRead(body, (requestBody) => replayRunGet(requestBody, readDefaults)),
   );
 
   registerReplayPostRoute(
@@ -187,22 +171,22 @@ export function registerMemoryReplayCoreRoutes(args: {
     "replay_playbook_compile",
     "write",
     (body) =>
-      executeReplayWrite(body, (client, requestBody) => replayPlaybookCompileFromRun(client, requestBody, writeDefaults)),
+      executeReplayWrite(body, (requestBody) => replayPlaybookCompileFromRun(requestBody, writeDefaults)),
   );
 
   registerReplayPostRoute("/v1/memory/replay/playbooks/get", "replay_playbook_get", "recall", (body) =>
-    executeReplayRead(body, (client, requestBody) => replayPlaybookGet(client, requestBody, readDefaults)),
+    executeReplayRead(body, (requestBody) => replayPlaybookGet(requestBody, readDefaults)),
   );
 
   registerReplayPostRoute("/v1/memory/replay/playbooks/candidate", "replay_playbook_candidate", "recall", (body) =>
-    executeReplayRead(body, (client, requestBody) => replayPlaybookCandidate(client, requestBody, readDefaults)),
+    executeReplayRead(body, (requestBody) => replayPlaybookCandidate(requestBody, readDefaults)),
   );
 
   registerReplayPostRoute("/v1/memory/replay/playbooks/promote", "replay_playbook_promote", "write", (body) =>
-    executeReplayWrite(body, (client, requestBody) => replayPlaybookPromote(client, requestBody, writeDefaults)),
+    executeReplayWrite(body, (requestBody) => replayPlaybookPromote(requestBody, writeDefaults)),
   );
 
   registerReplayPostRoute("/v1/memory/replay/playbooks/repair", "replay_playbook_repair", "write", (body) =>
-    executeReplayWrite(body, (client, requestBody) => replayPlaybookRepair(client, requestBody, writeDefaults)),
+    executeReplayWrite(body, (requestBody) => replayPlaybookRepair(requestBody, writeDefaults)),
   );
 }

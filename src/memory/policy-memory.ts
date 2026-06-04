@@ -36,10 +36,8 @@ import {
   resolveNodeTaskSignature,
   resolveNodeWorkflowSignature,
 } from "./node-execution-surface.js";
-import { mirrorPreparedWriteToEmbeddedRuntime } from "./embedded-write-bridge.js";
 import { applyPreparedMemoryWrite, prepareMemoryWrite } from "./write.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
-import type { EmbeddedMemoryRuntime } from "../store/embedded-memory-runtime.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
 import type { WriteStoreAccess } from "../store/write-access.js";
 
@@ -78,7 +76,6 @@ type WritePolicyMemorySnapshotOptions = {
   piiRedaction: boolean;
   allowCrossScopeEdges?: boolean;
   embedder: EmbeddingProvider | null;
-  embeddedRuntime?: EmbeddedMemoryRuntime | null;
   writeAccess: WriteStoreAccess;
   liteWriteStore?: Pick<LiteWriteStore, "findNodes" | "updateNodeAnchorState"> | null;
 };
@@ -1452,11 +1449,8 @@ export async function writePolicyMemorySnapshot(
     maxTextLen: opts.maxTextLen,
     piiRedaction: opts.piiRedaction,
     allowCrossScopeEdges: opts.allowCrossScopeEdges ?? false,
-    shadowDualWriteEnabled: false,
-    shadowDualWriteStrict: false,
     associativeLinkOrigin: "memory_write",
   });
-  await mirrorPreparedWriteToEmbeddedRuntime({ embeddedRuntime: opts.embeddedRuntime, prepared, out });
   const nodeId = out.nodes[0]!.id;
   return {
     node_id: nodeId,

@@ -30,7 +30,7 @@ export type ReplayCostSignals = {
   deterministic_replay_eligible: boolean;
   primary_inference_skipped: boolean;
   estimated_primary_model_calls_avoided: number;
-  fallback_executed: boolean;
+  candidate_only: boolean;
   requested_mode: "simulate" | "strict" | "guided";
   effective_mode: "simulate" | "strict" | "guided";
   mismatch_reasons: string[];
@@ -174,7 +174,7 @@ export function buildLayeredContextCostSignals(args: {
 
 export function buildReplayCostSignals(args: {
   deterministic_gate?: any;
-  dispatch?: { fallback_executed?: boolean } | null;
+  dispatch?: { candidate_only?: boolean } | null;
 }): ReplayCostSignals {
   const requestedMode =
     args.deterministic_gate?.requested_mode === "strict" || args.deterministic_gate?.requested_mode === "guided"
@@ -186,14 +186,13 @@ export function buildReplayCostSignals(args: {
       : "simulate";
   const primaryInferenceSkipped = args.deterministic_gate?.inference_skipped === true;
   const deterministicReplayEligible = args.deterministic_gate?.matched === true;
-  const fallbackExecuted = args.dispatch?.fallback_executed === true;
+  const candidateOnly = args.dispatch?.candidate_only === true;
   const mismatchReasons = Array.isArray(args.deterministic_gate?.mismatch_reasons)
     ? args.deterministic_gate.mismatch_reasons.map((entry: unknown) => String(entry))
     : [];
   const levers: string[] = [];
   if (deterministicReplayEligible) levers.push("deterministic_replay_match");
   if (primaryInferenceSkipped) levers.push("primary_inference_skipped");
-  if (fallbackExecuted) levers.push("fallback_replay");
   if (mismatchReasons.length > 0) levers.push("deterministic_gate_mismatch");
 
   return {
@@ -201,7 +200,7 @@ export function buildReplayCostSignals(args: {
     deterministic_replay_eligible: deterministicReplayEligible,
     primary_inference_skipped: primaryInferenceSkipped,
     estimated_primary_model_calls_avoided: primaryInferenceSkipped ? 1 : 0,
-    fallback_executed: fallbackExecuted,
+    candidate_only: candidateOnly,
     requested_mode: requestedMode,
     effective_mode: effectiveMode,
     mismatch_reasons: mismatchReasons,

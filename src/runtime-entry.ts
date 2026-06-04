@@ -4,7 +4,7 @@ import {
   createHttpApp,
   listenHttpApp,
   registerBootstrapLifecycle,
-} from "./host/bootstrap.js";
+} from "./server/bootstrap.js";
 import { createRequestGuards } from "./app/request-guards.js";
 import { createHttpObservabilityHelpers } from "./app/http-observability.js";
 import {
@@ -12,9 +12,9 @@ import {
   registerApplicationRoutes,
   type RegisterApplicationRoutesArgs,
   registerHealthRoute,
-  registerHostErrorHandler,
-  registerHostRequestHooks,
-} from "./host/http-host.js";
+  registerRuntimeErrorHandler,
+  registerRuntimeRequestHooks,
+} from "./server/http-server.js";
 import { createRecallPolicy } from "./app/recall-policy.js";
 import { createRecallTextEmbedRuntime } from "./app/recall-text-embed.js";
 import { createReplayRepairReviewPolicy } from "./app/replay-repair-review-policy.js";
@@ -22,9 +22,6 @@ import { createReplayRuntimeOptionBuilders } from "./app/replay-runtime-options.
 import { createSandboxBudgetService } from "./app/sandbox-budget.js";
 import { createRuntimeServices } from "./app/runtime-services.js";
 import { loadEnv } from "./config.js";
-import {
-  recordMemoryContextAssemblyTelemetry,
-} from "./app/runtime-telemetry.js";
 
 export async function startAionisRuntime(): Promise<void> {
   const env = loadEnv();
@@ -33,8 +30,7 @@ export async function startAionisRuntime(): Promise<void> {
     sandboxRemoteAllowedCidrs,
     sandboxAllowedCommands,
     store,
-    db,
-    embeddedRuntime,
+    sandboxStore,
     liteRecallStore,
     liteRecallAccess,
     liteReplayStore,
@@ -43,19 +39,10 @@ export async function startAionisRuntime(): Promise<void> {
     executionStateStore,
     embedder,
     sandboxExecutor,
-    healthDatabaseTargetHash,
     recallStoreCapabilities,
-    writeStoreCapabilities,
-    storeFeatureCapabilities,
-    recallAccessForClient,
-    replayAccessForClient,
-    writeAccessForClient,
-    requireStoreFeatureCapability,
     recallLimiter,
     debugEmbedLimiter,
     writeLimiter,
-    sandboxWriteLimiter,
-    sandboxReadLimiter,
     recallTextEmbedLimiter,
     sandboxTenantBudgetPolicy,
     recallTextEmbedCache,
@@ -70,12 +57,10 @@ export async function startAionisRuntime(): Promise<void> {
     acquireInflightSlot,
     enforceRateLimit,
     enforceRecallTextEmbedQuota,
-    requireAdminToken,
     requireMemoryPrincipal,
     withIdentityFromRequest,
     tenantFromBody,
     scopeFromBody,
-    projectFromBody,
     enforceTenantQuota,
   } = createRequestGuards({
     env,
@@ -83,8 +68,6 @@ export async function startAionisRuntime(): Promise<void> {
     recallLimiter,
     debugEmbedLimiter,
     writeLimiter,
-    sandboxWriteLimiter,
-    sandboxReadLimiter,
     recallTextEmbedLimiter,
     recallInflightGate,
     writeInflightGate,
@@ -93,9 +76,8 @@ export async function startAionisRuntime(): Promise<void> {
     enforceSandboxTenantBudget,
   } = createSandboxBudgetService({
     env,
-    db,
     sandboxTenantBudgetPolicy,
-    usageStore: store,
+    usageStore: sandboxStore,
   });
   const {
     globalRecallProfileDefaults,
@@ -124,30 +106,25 @@ export async function startAionisRuntime(): Promise<void> {
     buildReplayPlaybookRunOptions,
   } = createReplayRuntimeOptionBuilders({
     env,
-    store,
+    sandboxStore,
     embedder,
     embeddingSurfacePolicy,
-    embeddedRuntime,
     liteWriteStore,
     liteReplayAccess,
     liteReplayStore,
     sandboxAllowedCommands,
     sandboxExecutor,
-    writeAccessShadowMirrorV2: writeStoreCapabilities.shadow_mirror_v2,
     enforceSandboxTenantBudget,
   });
   const {
     resolveCorsAllowOrigin,
     resolveCorsPolicy,
-    telemetryEndpointFromRequest,
     resolveRequestScopeForTelemetry,
     resolveRequestTenantForTelemetry,
     resolveRequestApiKeyPrefixForTelemetry,
     recordContextAssemblyTelemetryBestEffort,
   } = createHttpObservabilityHelpers({
     env,
-    db,
-    recordMemoryContextAssemblyTelemetry,
   });
   const {
     withReplayRepairReviewDefaults,
@@ -199,7 +176,7 @@ export async function startAionisRuntime(): Promise<void> {
 
   const app = createHttpApp(env);
 
-  registerHostErrorHandler(app);
+  registerRuntimeErrorHandler(app);
   logMemoryApiConfig({
     app,
     env,
@@ -212,15 +189,10 @@ export async function startAionisRuntime(): Promise<void> {
     recallProfilePolicy,
     recallTextEmbedBatcher,
   });
-  registerHostRequestHooks({
+  registerRuntimeRequestHooks({
     app,
-    db,
     resolveCorsPolicy,
     resolveCorsAllowOrigin,
-    telemetryEndpointFromRequest,
-    resolveRequestTenantForTelemetry,
-    resolveRequestScopeForTelemetry,
-    resolveRequestApiKeyPrefixForTelemetry,
   });
   registerHealthRoute({
     app,
@@ -236,19 +208,14 @@ export async function startAionisRuntime(): Promise<void> {
   const applicationRouteArgs: RegisterApplicationRoutesArgs = {
     app,
     env,
-    store,
     embedder,
     embeddingSurfacePolicy,
-    embeddedRuntime,
     liteRecallAccess,
     liteReplayAccess,
     liteReplayStore,
     liteWriteStore,
     executionStateStore,
     recallTextEmbedBatcher,
-    writeStoreCapabilities,
-    requireAdminToken,
-    requireStoreFeatureCapability,
     requireMemoryPrincipal,
     withIdentityFromRequest,
     enforceRateLimit,
@@ -256,8 +223,6 @@ export async function startAionisRuntime(): Promise<void> {
     enforceRecallTextEmbedQuota,
     buildRecallAuth,
     tenantFromBody,
-    scopeFromBody,
-    projectFromBody,
     acquireInflightSlot,
     hasExplicitRecallKnobs,
     resolveRecallProfile,
@@ -275,8 +240,6 @@ export async function startAionisRuntime(): Promise<void> {
     withReplayRepairReviewDefaults,
     buildReplayRepairReviewOptions,
     buildReplayPlaybookRunOptions,
-    sandboxExecutor,
-    enforceSandboxTenantBudget,
   };
   registerApplicationRoutes(applicationRouteArgs);
 
@@ -291,10 +254,8 @@ export async function startAionisRuntime(): Promise<void> {
   });
 
   await assertBootstrapStoreContracts({
-    store,
-    recallAccessForClient,
-    replayAccessForClient,
-    writeAccessForClient,
+    liteRecallAccess,
+    liteReplayAccess,
     liteWriteStore,
   });
 

@@ -21,8 +21,6 @@ const writeOpts = {
   maxTextLen: 10_000,
   piiRedaction: false,
   allowCrossScopeEdges: false,
-  shadowDualWriteEnabled: false,
-  shadowDualWriteStrict: false,
 };
 
 test("promotion quality summary aggregates persisted promotion ledgers across sqlite memory rows", async () => {
@@ -47,6 +45,20 @@ test("promotion quality summary aggregates persisted promotion ledgers across sq
       sourceRunIds: ["run:workflow-1", "run:workflow-2"],
       sourceCommitIds: ["commit:workflow-1"],
       promotionEvidenceRefs: ["run:workflow-1", "run:workflow-2"],
+      promotionProtocol: {
+        candidate_producer: "runtime_history",
+        source_scope: "task_family",
+        authority_scope: "task_family",
+        distinct_run_count: 2,
+        distinct_task_count: 2,
+        holdout_evidence_count: 1,
+        promoted_item_count: 1,
+        covered_task_count: 3,
+        leakage_gate: "passed",
+        holdout_gate: "passed",
+        interference_gate: "passed",
+        wider_generalization_allowed: true,
+      },
       evidence: [{
         evidence_id: "evidence:workflow-admitted",
         evidence_kind: "learning_control",
@@ -129,6 +141,10 @@ test("promotion quality summary aggregates persisted promotion ledgers across sq
       sourceRunIds: ["run:policy"],
       sourceCommitIds: ["commit:policy"],
       promotionEvidenceRefs: ["run:policy"],
+      promotionProtocol: {
+        provider_protocol_contamination_count: 1,
+        leakage_gate: "failed",
+      },
       evidence: [{
         evidence_id: "evidence:policy-blocked",
         evidence_kind: "runtime_verifier",
@@ -214,12 +230,10 @@ test("promotion quality summary aggregates persisted promotion ledgers across sq
     );
 
     await store.withTx(() =>
-      applyMemoryWrite({} as any, prepared, {
+      applyMemoryWrite(prepared, {
         maxTextLen: writeOpts.maxTextLen,
         piiRedaction: writeOpts.piiRedaction,
         allowCrossScopeEdges: writeOpts.allowCrossScopeEdges,
-        shadowDualWriteEnabled: writeOpts.shadowDualWriteEnabled,
-        shadowDualWriteStrict: writeOpts.shadowDualWriteStrict,
         associativeLinkOrigin: "memory_write",
         write_access: store,
       }),
@@ -251,6 +265,19 @@ test("promotion quality summary aggregates persisted promotion ledgers across sq
     assert.equal(summary.distinct_source_run_count, 5);
     assert.equal(summary.promotion_admission_rate, 0.25);
     assert.equal(summary.contested_rate, 0.25);
+    assert.equal(summary.promotion_protocol_summary.local_reuse_allowed_count, 1);
+    assert.equal(summary.promotion_protocol_summary.wider_generalization_allowed_count, 1);
+    assert.equal(summary.promotion_protocol_summary.source_code_change_allowed_count, 0);
+    assert.equal(summary.promotion_protocol_summary.provider_protocol_contamination_count, 1);
+    assert.equal(summary.promotion_protocol_summary.holdout_evidence_count, 1);
+    assert.equal(summary.promotion_protocol_summary.promoted_item_count, 1);
+    assert.equal(summary.promotion_protocol_summary.covered_task_count, 3);
+    assert.equal(summary.promotion_protocol_summary.leakage_gate_counts.passed, 1);
+    assert.equal(summary.promotion_protocol_summary.leakage_gate_counts.failed, 1);
+    assert.equal(summary.promotion_protocol_summary.holdout_gate_counts.passed, 1);
+    assert.equal(summary.promotion_protocol_summary.holdout_gate_counts.pending, 3);
+    assert.equal(summary.promotion_protocol_summary.growth_gate_counts.passed, 1);
+    assert.equal(summary.promotion_protocol_summary.growth_gate_counts.not_applicable, 3);
     assert.equal(summary.invalidation_pressure, "high");
     assert.equal(summary.recommended_learning_posture, "invalidate");
     assert.equal(summary.transition_counts.find((count) => count.transition === "L1_to_L2")?.total, 2);

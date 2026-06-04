@@ -9,7 +9,6 @@ import {
   createLearningKernel,
   type LiteLearningKernelStore,
 } from "../kernel/learning-kernel.js";
-import type { EmbeddedMemoryRuntime } from "../store/embedded-memory-runtime.js";
 import type { RecallStoreAccess } from "../store/recall-access.js";
 import type { AuthPrincipal } from "../util/auth.js";
 import type { InflightGateToken } from "../util/inflight_gate.js";
@@ -36,7 +35,6 @@ type RegisterMemoryFeedbackToolRoutesArgs = {
   app: FastifyInstance;
   env: Env;
   embedder: EmbeddingProvider | null;
-  embeddedRuntime: EmbeddedMemoryRuntime | null;
   liteRecallAccess: RecallStoreAccess;
   liteWriteStore: LiteLearningKernelStore;
   requireMemoryPrincipal: (req: FastifyRequest) => Promise<AuthPrincipal | null>;
@@ -58,7 +56,6 @@ export function registerMemoryFeedbackToolRoutes(args: RegisterMemoryFeedbackToo
     app,
     env,
     embedder,
-    embeddedRuntime,
     liteRecallAccess,
     liteWriteStore,
     requireMemoryPrincipal,
@@ -78,7 +75,6 @@ export function registerMemoryFeedbackToolRoutes(args: RegisterMemoryFeedbackToo
   const learningKernel = createLearningKernel({
     env,
     embedder,
-    embeddedRuntime,
     liteRecallAccess,
     liteWriteStore,
     learningControlProviders: {

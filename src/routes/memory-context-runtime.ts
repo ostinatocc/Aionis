@@ -1,5 +1,4 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type pg from "pg";
 import { buildRecallObservability, collectRecallTrajectoryUriLinks } from "../app/recall-observability.js";
 import { applyContextOptimizationProfile } from "../app/context-optimization-profile.js";
 import {
@@ -19,6 +18,7 @@ import {
 import { createEmbeddingSurfacePolicy, type EmbeddingSurfacePolicy } from "../embeddings/surface-policy.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
 import { buildLayeredContextCostSignals } from "../memory/cost-signals.js";
+import { buildAionisGuidePacket, buildAionisLearningPacket } from "../memory/product-output-assembler.js";
 import {
   buildDelegationRecordLookup,
   findDelegationRecordNodeRowsLite,
@@ -64,7 +64,6 @@ import { assembleLayeredContext, extractPlannerPacketSurface } from "../memory/c
 import {
   augmentTrajectoryAwareRequest,
 } from "../memory/trajectory-compile-runtime.js";
-import type { EmbeddedMemoryRuntime } from "../store/embedded-memory-runtime.js";
 import type { RecallStoreAccess } from "../store/recall-access.js";
 import type { LiteFindNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
 import { HttpError } from "../util/http.js";
@@ -163,7 +162,7 @@ type ContextAssembleRouteOutput = {
 };
 type ContextRuntimeLiteStoreLike =
   LiteWriteStore;
-type MemoryRecallRuntimeOptions = NonNullable<Parameters<typeof memoryRecallParsed>[7]>;
+type MemoryRecallRuntimeOptions = NonNullable<Parameters<typeof memoryRecallParsed>[6]>;
 type RecallEmbedResult = Awaited<
   ReturnType<
     (provider: EmbeddingProvider, queryText: string) => Promise<{
@@ -275,6 +274,89 @@ function buildPlannerPacketResponseSurface(
       delegation_records: extras?.delegation_records,
     }),
   };
+}
+
+function buildRuntimeContextPacket(
+  surface: "planning_context" | "context_assemble",
+  summary: {
+    selected_tool: string | null;
+    context_est_tokens: number;
+    first_step_recommendation: Parameters<typeof buildKickoffRecommendation>[0];
+    history_impact_summary: unknown;
+  },
+) {
+  return {
+    packet_version: "runtime_context_packet_v1",
+    surface,
+    selected_tool: summary.selected_tool,
+    context_est_tokens: summary.context_est_tokens,
+    kickoff_recommendation: buildKickoffRecommendation(summary.first_step_recommendation),
+    history_impact_summary: summary.history_impact_summary,
+  };
+}
+
+function buildAionisGuidePacketForContextRoute(args: {
+  tenantId: string;
+  scope: string;
+  surface: "planning_context" | "context_assemble";
+  parsed: ParsedPlanningContext | ParsedContextAssemble;
+  summary: Parameters<typeof buildAionisGuidePacket>[0]["planning"];
+}) {
+  return buildAionisGuidePacket({
+    tenant_id: args.tenantId,
+    scope: args.scope,
+    actor: {
+      consumer_agent_id: args.parsed.consumer_agent_id ?? null,
+      consumer_team_id: args.parsed.consumer_team_id ?? null,
+      producer_agent_ids: [],
+    },
+    task: {
+      task_id: null,
+      run_id: args.parsed.run_id ?? null,
+      task_signature: args.summary.first_step_recommendation?.workflow_signature ?? null,
+      task_family: args.summary.first_step_recommendation?.task_family ?? null,
+    },
+    planning: args.summary,
+    source_map: {
+      routes_used: [
+        args.surface === "planning_context"
+          ? "/v1/memory/planning/context"
+          : "/v1/memory/context/assemble",
+      ],
+    },
+  });
+}
+
+function buildAionisLearningPacketForContextRoute(args: {
+  tenantId: string;
+  scope: string;
+  surface: "planning_context" | "context_assemble";
+  parsed: ParsedPlanningContext | ParsedContextAssemble;
+  summary: Parameters<typeof buildAionisLearningPacket>[0]["planning"];
+}) {
+  return buildAionisLearningPacket({
+    tenant_id: args.tenantId,
+    scope: args.scope,
+    actor: {
+      consumer_agent_id: args.parsed.consumer_agent_id ?? null,
+      consumer_team_id: args.parsed.consumer_team_id ?? null,
+      producer_agent_ids: [],
+    },
+    task: {
+      task_id: null,
+      run_id: args.parsed.run_id ?? null,
+      task_signature: args.summary.first_step_recommendation?.workflow_signature ?? null,
+      task_family: args.summary.first_step_recommendation?.task_family ?? null,
+    },
+    planning: args.summary,
+    source_map: {
+      routes_used: [
+        args.surface === "planning_context"
+          ? "/v1/memory/planning/context"
+          : "/v1/memory/context/assemble",
+      ],
+    },
+  });
 }
 
 function attachRecallRules(base: MemoryRecallOutput, rulesRes: RulesEvaluationLike): RecallTextRouteOutput {
@@ -417,7 +499,6 @@ export function registerMemoryContextRuntimeRoutes(args: {
   env: Env;
   embedder: EmbeddingProvider | null;
   embeddingSurfacePolicy?: EmbeddingSurfacePolicy;
-  embeddedRuntime: EmbeddedMemoryRuntime | null;
   liteWriteStore: ContextRuntimeLiteStoreLike;
   liteRecallAccess: RecallStoreAccess;
   recallTextEmbedBatcher: unknown;
@@ -490,7 +571,6 @@ export function registerMemoryContextRuntimeRoutes(args: {
     env,
     embedder,
     embeddingSurfacePolicy: embeddingSurfacePolicyArg,
-    embeddedRuntime,
     liteWriteStore,
     liteRecallAccess,
     recallTextEmbedBatcher,
@@ -689,9 +769,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
     buildRuntimeOptions: () => MemoryRecallRuntimeOptions;
     finalize: (recall: MemoryRecallOutput) => Promise<T>;
   }): Promise<T> => {
-    const recall = await memoryRecallParsed(
-      null,
-      args.recallParsed,
+    const recall = await memoryRecallParsed(args.recallParsed,
       env.MEMORY_SCOPE,
       env.MEMORY_TENANT_ID,
       args.auth,
@@ -706,7 +784,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
     unsafeDropTrustAnchors?: boolean;
     applyLayerPolicyToRetrieval?: boolean;
   }): MemoryRecallRuntimeOptions => ({
-    stage1_exact_fallback_on_empty: env.MEMORY_RECALL_STAGE1_EXACT_FALLBACK_ON_EMPTY,
+    stage1_exact_recovery_on_empty: env.MEMORY_RECALL_STAGE1_EXACT_RECOVERY_ON_EMPTY,
     recall_access: liteRecallAccess,
     internal_allow_l4_selection: args.internalAllowL4Selection,
     ...(args.unsafeDropTrustAnchors !== undefined
@@ -800,7 +878,6 @@ export function registerMemoryContextRuntimeRoutes(args: {
   }): Promise<RulesEvaluationLike | null> => {
     if (args.includeRules === false) return null;
     return evaluateRules(
-      null,
       buildContextRulesRequest({
         recallParsed: args.recallParsed,
         context: args.context,
@@ -810,7 +887,6 @@ export function registerMemoryContextRuntimeRoutes(args: {
       env.MEMORY_SCOPE,
       env.MEMORY_TENANT_ID,
       {
-        embeddedRuntime,
         liteWriteStore,
       },
     );
@@ -838,9 +914,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
     if (!Array.isArray(args.parsed.tool_candidates) || args.parsed.tool_candidates.length === 0) {
       return null;
     }
-    return selectTools(
-      null,
-      buildContextToolsRequest({
+    return selectTools(buildContextToolsRequest({
         recallParsed: args.recallParsed,
         parsed: args.parsed,
         context: args.context,
@@ -848,7 +922,6 @@ export function registerMemoryContextRuntimeRoutes(args: {
       env.MEMORY_SCOPE,
       env.MEMORY_TENANT_ID,
       {
-        embeddedRuntime,
         recallAccess: liteRecallAccess,
         embedder,
         liteWriteStore,
@@ -1111,7 +1184,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
     const preferredRehydration = gate?.preferred_rehydration && typeof gate.preferred_rehydration === "object"
       ? (gate.preferred_rehydration as Record<string, unknown>)
       : null;
-    const buildFallbackInstruction = (
+    const buildDefaultInstruction = (
       action: "inspect_context" | "widen_recall" | "rehydrate_payload" | "request_operator_review",
     ) => {
       if (action === "request_operator_review") {
@@ -1153,7 +1226,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
       instruction:
         index === 0 && typeof gate?.instruction === "string"
           ? gate.instruction
-          : buildFallbackInstruction(action),
+          : buildDefaultInstruction(action),
       selected_tool: selectedTool,
       file_path: filePath,
       task_family: taskFamily,
@@ -1491,7 +1564,6 @@ export function registerMemoryContextRuntimeRoutes(args: {
             return base;
           }
           const rulesRes = await evaluateRules(
-            null,
             {
               scope: recallParsed.scope ?? env.MEMORY_SCOPE,
               tenant_id: recallParsed.tenant_id ?? env.MEMORY_TENANT_ID,
@@ -1501,7 +1573,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
             },
             env.MEMORY_SCOPE,
             env.MEMORY_TENANT_ID,
-            { embeddedRuntime, liteWriteStore },
+            { liteWriteStore },
           );
           return attachRecallRules(base, rulesRes);
         },
@@ -1562,11 +1634,11 @@ export function registerMemoryContextRuntimeRoutes(args: {
           context_char_budget: recallParsed.context_char_budget ?? null,
           context_compaction_profile: recallParsed.context_compaction_profile ?? "balanced",
           context_budget_default_applied: contextBudgetDefaultApplied,
-          stage1_exact_fallback_enabled: env.MEMORY_RECALL_STAGE1_EXACT_FALLBACK_ON_EMPTY,
-          stage1_exact_fallback_used: Number.isFinite(timings["stage1_candidates_exact_fallback"]),
+          stage1_exact_recovery_enabled: env.MEMORY_RECALL_STAGE1_EXACT_RECOVERY_ON_EMPTY,
+          stage1_exact_recovery_used: Number.isFinite(timings["stage1_candidates_exact_recovery"]),
           stage1_ann_seed_count: out.debug?.stage1?.ann_seed_count ?? null,
           stage1_ann_ms: timings["stage1_candidates_ann"] ?? null,
-          stage1_exact_fallback_ms: timings["stage1_candidates_exact_fallback"] ?? null,
+          stage1_exact_recovery_ms: timings["stage1_candidates_exact_recovery"] ?? null,
           profile: adaptiveProfile.profile,
           profile_source: baseProfile.source,
           recall_mode: explicitMode.mode,
@@ -1913,6 +1985,21 @@ export function registerMemoryContextRuntimeRoutes(args: {
       }),
       planning_summary: planningSummary,
       kickoff_recommendation: buildKickoffRecommendation(planningSummary.first_step_recommendation),
+      runtime_context_packet: buildRuntimeContextPacket("planning_context", planningSummary),
+      aionis_guide_packet: buildAionisGuidePacketForContextRoute({
+        tenantId: tenantIdOut,
+        scope: recallOut.scope,
+        surface: "planning_context",
+        parsed,
+        summary: planningSummary,
+      }),
+      aionis_learning_packet: buildAionisLearningPacketForContextRoute({
+        tenantId: tenantIdOut,
+        scope: recallOut.scope,
+        surface: "planning_context",
+        parsed,
+        summary: planningSummary,
+      }),
       operator_projection: operatorProjection,
       layered_context: layeredContext,
       cost_signals: costSignals,
@@ -2230,6 +2317,21 @@ export function registerMemoryContextRuntimeRoutes(args: {
       }),
       assembly_summary: assemblySummary,
       kickoff_recommendation: buildKickoffRecommendation(assemblySummary.first_step_recommendation),
+      runtime_context_packet: buildRuntimeContextPacket("context_assemble", assemblySummary),
+      aionis_guide_packet: buildAionisGuidePacketForContextRoute({
+        tenantId: tenantIdOut,
+        scope: recallOut.scope,
+        surface: "context_assemble",
+        parsed,
+        summary: assemblySummary,
+      }),
+      aionis_learning_packet: buildAionisLearningPacketForContextRoute({
+        tenantId: tenantIdOut,
+        scope: recallOut.scope,
+        surface: "context_assemble",
+        parsed,
+        summary: assemblySummary,
+      }),
       operator_projection: operatorProjection,
       layered_context: layeredContext,
       cost_signals: costSignals,

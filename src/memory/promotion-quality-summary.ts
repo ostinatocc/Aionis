@@ -25,6 +25,8 @@ type VerdictCounts = PromotionQualitySummaryV1["verdict_counts"];
 type GateCounts = PromotionQualitySummaryV1["authority_gate_counts"];
 type VerifierStatusCounts = PromotionQualitySummaryV1["verifier_status_counts"];
 type ContractTrustCounts = PromotionQualitySummaryV1["contract_trust_counts"];
+type ProtocolSummary = PromotionQualitySummaryV1["promotion_protocol_summary"];
+type ProtocolGateCounts = ProtocolSummary["leakage_gate_counts"];
 type TransitionCount = PromotionQualitySummaryV1["transition_counts"][number];
 type TargetKindCount = PromotionQualitySummaryV1["target_kind_counts"][number];
 
@@ -68,6 +70,34 @@ function zeroContractTrustCounts(): ContractTrustCounts {
   };
 }
 
+function zeroProtocolGateCounts(): ProtocolGateCounts {
+  return {
+    passed: 0,
+    pending: 0,
+    failed: 0,
+    not_applicable: 0,
+  };
+}
+
+function zeroProtocolSummary(): ProtocolSummary {
+  return {
+    local_reuse_allowed_count: 0,
+    wider_generalization_allowed_count: 0,
+    source_code_change_allowed_count: 0,
+    provider_protocol_contamination_count: 0,
+    task_specific_signal_count: 0,
+    regression_evidence_count: 0,
+    negative_transfer_count: 0,
+    holdout_evidence_count: 0,
+    promoted_item_count: 0,
+    covered_task_count: 0,
+    leakage_gate_counts: zeroProtocolGateCounts(),
+    holdout_gate_counts: zeroProtocolGateCounts(),
+    interference_gate_counts: zeroProtocolGateCounts(),
+    growth_gate_counts: zeroProtocolGateCounts(),
+  };
+}
+
 function zeroTransitionCount(transition: PromotionEvidenceLedgerV1["transition"]): TransitionCount {
   return {
     transition,
@@ -104,6 +134,28 @@ function addGate(counts: GateCounts, value: boolean | null) {
   } else {
     counts.unknown += 1;
   }
+}
+
+function addProtocolGate(counts: ProtocolGateCounts, value: keyof ProtocolGateCounts) {
+  counts[value] += 1;
+}
+
+function addPromotionProtocol(summary: ProtocolSummary, ledger: PromotionEvidenceLedgerV1) {
+  const protocol = ledger.promotion_protocol;
+  if (protocol.local_reuse_allowed) summary.local_reuse_allowed_count += 1;
+  if (protocol.wider_generalization_allowed) summary.wider_generalization_allowed_count += 1;
+  if (protocol.source_code_change_allowed) summary.source_code_change_allowed_count += 1;
+  summary.provider_protocol_contamination_count += protocol.provider_protocol_contamination_count;
+  summary.task_specific_signal_count += protocol.task_specific_signal_count;
+  summary.regression_evidence_count += protocol.regression_evidence_count;
+  summary.negative_transfer_count += protocol.negative_transfer_count;
+  summary.holdout_evidence_count += protocol.holdout_evidence_count;
+  summary.promoted_item_count += protocol.promoted_item_count;
+  summary.covered_task_count += protocol.covered_task_count;
+  addProtocolGate(summary.leakage_gate_counts, protocol.leakage_gate);
+  addProtocolGate(summary.holdout_gate_counts, protocol.holdout_gate);
+  addProtocolGate(summary.interference_gate_counts, protocol.interference_gate);
+  addProtocolGate(summary.growth_gate_counts, protocol.growth_gate);
 }
 
 function sourceNodeIds(rows: LiteFindNodeRow[]): string[] {
@@ -185,6 +237,7 @@ function findings(args: {
   authorityGateCounts: GateCounts;
   learningControlCounts: GateCounts;
   verifierStatusCounts: VerifierStatusCounts;
+  promotionProtocolSummary: ProtocolSummary;
 }): string[] {
   const out: string[] = [];
   if (args.includedLedgerCount === 0) {
@@ -211,6 +264,15 @@ function findings(args: {
   if (args.verifierStatusCounts.failed > 0) {
     out.push("Verifier-failed promotion ledgers should not become stable authority.");
   }
+  if (args.promotionProtocolSummary.local_reuse_allowed_count > args.promotionProtocolSummary.wider_generalization_allowed_count) {
+    out.push("Some local reuse promotions do not have wider generalization evidence; keep them scoped.");
+  }
+  if (args.promotionProtocolSummary.provider_protocol_contamination_count > 0 || args.promotionProtocolSummary.task_specific_signal_count > 0) {
+    out.push("Contaminated or task-specific promotion evidence must remain out of wider Runtime authority.");
+  }
+  if (args.promotionProtocolSummary.regression_evidence_count > 0 || args.promotionProtocolSummary.negative_transfer_count > 0) {
+    out.push("Regression or negative-transfer evidence should feed demotion, archive, or invalidation review.");
+  }
   if (args.pressure === "none" && args.posture === "promotion_ready") {
     out.push("Promotion quality is clean in this scan window; reuse posture is admissible.");
   }
@@ -233,6 +295,7 @@ export function buildPromotionQualitySummaryFromRows(args: {
   const targetIds = new Set<string>();
   const sourceRunIds = new Set<string>();
   const sourceCommitIds = new Set<string>();
+  const promotionProtocolSummary = zeroProtocolSummary();
   let evidenceEntryCount = 0;
   let promotionEvidenceRefCount = 0;
   let counterEvidenceRefCount = 0;
@@ -270,6 +333,7 @@ export function buildPromotionQualitySummaryFromRows(args: {
       targetKindCounts.set(ledger.target_kind, targetKindCount);
 
       evidenceEntryCount += ledger.evidence.length;
+      addPromotionProtocol(promotionProtocolSummary, ledger);
       promotionEvidenceRefCount += ledger.promotion_evidence_refs.length;
       counterEvidenceRefCount += ledger.counter_evidence_refs.length;
       if (ledger.target_id) targetIds.add(ledger.target_id);
@@ -324,6 +388,7 @@ export function buildPromotionQualitySummaryFromRows(args: {
       : 0,
     invalidation_pressure: pressure,
     recommended_learning_posture: posture,
+    promotion_protocol_summary: promotionProtocolSummary,
     findings: findings({
       includedLedgerCount,
       verdictCounts,
@@ -333,6 +398,7 @@ export function buildPromotionQualitySummaryFromRows(args: {
       authorityGateCounts,
       learningControlCounts,
       verifierStatusCounts,
+      promotionProtocolSummary,
     }),
     source_node_ids: sourceNodeIds(includedRows),
     source_code_change_allowed: false,

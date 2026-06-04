@@ -1,9 +1,7 @@
-import type pg from "pg";
 import stableStringify from "fast-json-stable-stringify";
 import type { EmbeddingProvider } from "../embeddings/types.js";
-import type { EmbeddedMemoryRuntime } from "../store/embedded-memory-runtime.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
-import { createPostgresWriteStoreAccess, type WriteStoreAccess } from "../store/write-access.js";
+import type { WriteStoreAccess } from "../store/write-access.js";
 import { sha256Hex } from "../util/crypto.js";
 import { HttpError } from "../util/http.js";
 import {
@@ -16,7 +14,6 @@ import {
 } from "./replay-learning-artifacts.js";
 import { resolveNodeLifecycleSignals } from "./lifecycle-signals.js";
 import { resolveNodeWorkflowSignature } from "./node-execution-surface.js";
-import { mirrorPreparedWriteToEmbeddedRuntime } from "./embedded-write-bridge.js";
 import { updateRuleState } from "./rules.js";
 import { buildAionisUri } from "./uri.js";
 import { applyPreparedMemoryWrite, prepareMemoryWrite } from "./write.js";
@@ -75,11 +72,7 @@ type ReplayLearningWriteOptions = {
   maxTextLen: number;
   piiRedaction: boolean;
   allowCrossScopeEdges: boolean;
-  shadowDualWriteEnabled: boolean;
-  shadowDualWriteStrict: boolean;
-  writeAccessShadowMirrorV2: boolean;
   embedder: EmbeddingProvider | null;
-  embeddedRuntime?: EmbeddedMemoryRuntime | null;
   writeAccess?: WriteStoreAccess | null;
 };
 
@@ -119,26 +112,12 @@ function asLiteReplayLearningStore(writeAccess?: WriteStoreAccess | null): LiteW
   return writeAccess as LiteWriteStore;
 }
 
-function requirePostgresClient(client: pg.PoolClient | null, context: string): pg.PoolClient {
-  if (!client) {
-    throw new Error(`${context} requires a postgres client when no lite write access is provided`);
-  }
-  return client;
-}
-
 function projectionWriteAccessForClient(
-  client: pg.PoolClient | null,
   writeOpts: ReplayLearningWriteOptions,
 ): WriteStoreAccess {
-  const writeAccess = writeOpts.writeAccess ?? (
-    client
-      ? createPostgresWriteStoreAccess(client, {
-          capabilities: { shadow_mirror_v2: writeOpts.writeAccessShadowMirrorV2 },
-        })
-      : null
-  );
+  const writeAccess = writeOpts.writeAccess ?? null;
   if (!writeAccess) {
-    throw new Error("replay learning projection requires writeAccess when no postgres client is provided");
+    throw new Error("replay learning projection requires explicit writeAccess");
   }
   return writeAccess;
 }
@@ -181,7 +160,6 @@ function fingerprintJson(v: unknown): string {
 }
 
 async function listExistingReplayLearningRules(
-  client: pg.PoolClient | null,
   scope: string,
   playbookId: string,
   writeAccess?: WriteStoreAccess | null,
@@ -189,70 +167,37 @@ async function listExistingReplayLearningRules(
   consumerTeamId?: string | null,
 ): Promise<ExistingReplayLearningRule[]> {
   const liteWriteStore = asLiteReplayLearningStore(writeAccess);
-  if (liteWriteStore) {
-    const { rows } = await liteWriteStore.findNodes({
-      scope,
-      type: "rule",
-      slotsContains: {
-        replay_learning: {
-          generated_by: "replay_learning_v1",
-          source_playbook_id: playbookId,
-        },
+  if (!liteWriteStore) throw new Error("listExistingReplayLearningRules requires lite write store");
+  const { rows } = await liteWriteStore.findNodes({
+    scope,
+    type: "rule",
+    slotsContains: {
+      replay_learning: {
+        generated_by: "replay_learning_v1",
+        source_playbook_id: playbookId,
       },
-      consumerAgentId: consumerAgentId ?? null,
-      consumerTeamId: consumerTeamId ?? null,
-      limit: 200,
-      offset: 0,
+    },
+    consumerAgentId: consumerAgentId ?? null,
+    consumerTeamId: consumerTeamId ?? null,
+    limit: 200,
+    offset: 0,
+  });
+  const out: ExistingReplayLearningRule[] = [];
+  for (const row of rows) {
+    const slots = asObject(row.slots) ?? {};
+    const replayLearning = asObject(slots.replay_learning) ?? {};
+    const ruleDef = await liteWriteStore.getRuleDef(scope, row.id);
+    out.push({
+      rule_node_id: row.id,
+      matcher_fingerprint: toStringOrNull(replayLearning.matcher_fingerprint),
+      policy_fingerprint: toStringOrNull(replayLearning.policy_fingerprint),
+      state: ruleDef?.state ?? null,
     });
-    const out: ExistingReplayLearningRule[] = [];
-    for (const row of rows) {
-      const slots = asObject(row.slots) ?? {};
-      const replayLearning = asObject(slots.replay_learning) ?? {};
-      const ruleDef = await liteWriteStore.getRuleDef(scope, row.id);
-      out.push({
-        rule_node_id: row.id,
-        matcher_fingerprint: toStringOrNull(replayLearning.matcher_fingerprint),
-        policy_fingerprint: toStringOrNull(replayLearning.policy_fingerprint),
-        state: ruleDef?.state ?? null,
-      });
-    }
-    return out;
   }
-  const out = await requirePostgresClient(client, "list existing replay learning rules").query<{
-    rule_node_id: string;
-    matcher_fingerprint: string | null;
-    policy_fingerprint: string | null;
-    state: string | null;
-  }>(
-    `
-    SELECT
-      n.id::text AS rule_node_id,
-      nullif(trim(coalesce(n.slots->'replay_learning'->>'matcher_fingerprint', '')), '') AS matcher_fingerprint,
-      nullif(trim(coalesce(n.slots->'replay_learning'->>'policy_fingerprint', '')), '') AS policy_fingerprint,
-      d.state::text AS state
-    FROM memory_nodes n
-    LEFT JOIN memory_rule_defs d
-      ON d.scope = n.scope
-     AND d.rule_node_id = n.id
-    WHERE n.scope = $1
-      AND n.type = 'rule'::memory_node_type
-      AND coalesce(n.slots->'replay_learning'->>'generated_by', '') = 'replay_learning_v1'
-      AND coalesce(n.slots->'replay_learning'->>'source_playbook_id', '') = $2
-    ORDER BY n.created_at DESC
-    LIMIT 200
-    `,
-    [scope, playbookId],
-  );
-  return out.rows.map((row) => ({
-    rule_node_id: row.rule_node_id,
-    matcher_fingerprint: row.matcher_fingerprint,
-    policy_fingerprint: row.policy_fingerprint,
-    state: row.state,
-  }));
+  return out;
 }
 
 async function findExistingReplayLearningEpisode(
-  client: pg.PoolClient | null,
   scope: string,
   playbookId: string,
   playbookVersion: number,
@@ -261,45 +206,27 @@ async function findExistingReplayLearningEpisode(
   consumerTeamId?: string | null,
 ): Promise<ExistingReplayLearningEpisode | null> {
   const liteWriteStore = asLiteReplayLearningStore(writeAccess);
-  if (liteWriteStore) {
-    const { rows } = await liteWriteStore.findNodes({
-      scope,
-      type: "event",
-      slotsContains: {
-        replay_learning_episode: true,
-        replay_learning: {
-          source_playbook_id: playbookId,
-          source_playbook_version: playbookVersion,
-        },
+  if (!liteWriteStore) throw new Error("findExistingReplayLearningEpisode requires lite write store");
+  const { rows } = await liteWriteStore.findNodes({
+    scope,
+    type: "event",
+    slotsContains: {
+      replay_learning_episode: true,
+      replay_learning: {
+        source_playbook_id: playbookId,
+        source_playbook_version: playbookVersion,
       },
-      consumerAgentId: consumerAgentId ?? null,
-      consumerTeamId: consumerTeamId ?? null,
-      limit: 1,
-      offset: 0,
-    });
-    const row = rows[0];
-    return row ? { node_id: row.id } : null;
-  }
-  const out = await requirePostgresClient(client, "find existing replay learning episode").query<{ node_id: string }>(
-    `
-    SELECT n.id::text AS node_id
-    FROM memory_nodes n
-    WHERE n.scope = $1
-      AND n.type = 'event'::memory_node_type
-      AND coalesce(n.slots->>'replay_learning_episode', '') = 'true'
-      AND coalesce(n.slots->'replay_learning'->>'source_playbook_id', '') = $2
-      AND coalesce(n.slots->'replay_learning'->>'source_playbook_version', '') = $3
-    ORDER BY n.created_at DESC
-    LIMIT 1
-    `,
-    [scope, playbookId, String(playbookVersion)],
-  );
-  if ((out.rowCount ?? 0) < 1) return null;
-  return { node_id: out.rows[0].node_id };
+    },
+    consumerAgentId: consumerAgentId ?? null,
+    consumerTeamId: consumerTeamId ?? null,
+    limit: 1,
+    offset: 0,
+  });
+  const row = rows[0];
+  return row ? { node_id: row.id } : null;
 }
 
 async function countReplayLearningWorkflowObservations(
-  client: pg.PoolClient | null,
   scope: string,
   playbookId: string,
   workflowSignature: string,
@@ -308,49 +235,33 @@ async function countReplayLearningWorkflowObservations(
   consumerTeamId?: string | null,
 ): Promise<number> {
   const liteWriteStore = asLiteReplayLearningStore(writeAccess);
-  if (liteWriteStore) {
-    const { rows } = await liteWriteStore.findNodes({
-      scope,
-      type: "event",
-      slotsContains: {
-        replay_learning_episode: true,
-        replay_learning: {
-          source_playbook_id: playbookId,
-        },
+  if (!liteWriteStore) throw new Error("countReplayLearningWorkflowObservations requires lite write store");
+  const { rows } = await liteWriteStore.findNodes({
+    scope,
+    type: "event",
+    slotsContains: {
+      replay_learning_episode: true,
+      replay_learning: {
+        source_playbook_id: playbookId,
       },
-      consumerAgentId: consumerAgentId ?? null,
-      consumerTeamId: consumerTeamId ?? null,
-      limit: 200,
-      offset: 0,
-    });
-    const observedVersions = new Set<string>();
-    for (const row of rows) {
-      const slots = asObject(row.slots) ?? {};
-      const replayLearning = asObject(slots.replay_learning) ?? {};
-      if (resolveNodeWorkflowSignature({ slots }) !== workflowSignature) continue;
-      const versionValue = replayLearning.source_playbook_version;
-      const versionKey = typeof versionValue === "number"
-        ? String(Math.trunc(versionValue))
-        : toStringOrNull(versionValue);
-      if (versionKey) observedVersions.add(versionKey);
-    }
-    return observedVersions.size;
+    },
+    consumerAgentId: consumerAgentId ?? null,
+    consumerTeamId: consumerTeamId ?? null,
+    limit: 200,
+    offset: 0,
+  });
+  const observedVersions = new Set<string>();
+  for (const row of rows) {
+    const slots = asObject(row.slots) ?? {};
+    const replayLearning = asObject(slots.replay_learning) ?? {};
+    if (resolveNodeWorkflowSignature({ slots }) !== workflowSignature) continue;
+    const versionValue = replayLearning.source_playbook_version;
+    const versionKey = typeof versionValue === "number"
+      ? String(Math.trunc(versionValue))
+      : toStringOrNull(versionValue);
+    if (versionKey) observedVersions.add(versionKey);
   }
-  const out = await requirePostgresClient(client, "count replay learning workflow observations").query<{ observed_count: string | number | null }>(
-    `
-    SELECT COUNT(DISTINCT nullif(trim(coalesce(n.slots->'replay_learning'->>'source_playbook_version', '')), ''))::text AS observed_count
-    FROM memory_nodes n
-    WHERE n.scope = $1
-      AND n.type = 'event'::memory_node_type
-      AND coalesce(n.slots->>'replay_learning_episode', '') = 'true'
-      AND coalesce(n.slots->'replay_learning'->>'source_playbook_id', '') = $2
-      AND coalesce(n.slots->'execution_contract_v1'->>'workflow_signature', '') = $3
-    `,
-    [scope, playbookId, workflowSignature],
-  );
-  const raw = Number(out.rows[0]?.observed_count ?? 0);
-  if (!Number.isFinite(raw)) return 0;
-  return Math.max(0, Math.trunc(raw));
+  return observedVersions.size;
 }
 
 export function classifyReplayLearningProjectionError(err: unknown): {
@@ -381,7 +292,6 @@ export function classifyReplayLearningProjectionError(err: unknown): {
 }
 
 export async function enqueueReplayLearningProjectionOutbox(
-  client: pg.PoolClient | null,
   input: {
     scopeKey: string;
     commitId: string;
@@ -402,28 +312,19 @@ export async function enqueueReplayLearningProjectionOutbox(
       payload_sha256: payloadSha,
     }),
   );
-  if (input.writeAccess) {
-    await input.writeAccess.insertOutboxEvent({
-      scope: input.scopeKey,
-      commitId: input.commitId,
-      eventType: "replay_learning_projection",
-      jobKey,
-      payloadSha256: payloadSha,
-      payloadJson,
-    });
-  } else {
-    await requirePostgresClient(client, "enqueue replay learning projection outbox").query(
-      `INSERT INTO memory_outbox (scope, commit_id, event_type, job_key, payload_sha256, payload)
-       VALUES ($1, $2, 'replay_learning_projection', $3, $4, $5::jsonb)
-       ON CONFLICT (scope, event_type, job_key) DO NOTHING`,
-      [input.scopeKey, input.commitId, jobKey, payloadSha, payloadJson],
-    );
-  }
+  if (!input.writeAccess) throw new Error("enqueueReplayLearningProjectionOutbox requires writeAccess");
+  await input.writeAccess.insertOutboxEvent({
+    scope: input.scopeKey,
+    commitId: input.commitId,
+    eventType: "replay_learning_projection",
+    jobKey,
+    payloadSha256: payloadSha,
+    payloadJson,
+  });
   return { job_key: jobKey };
 }
 
 async function loadReplayPlaybookNode(
-  client: pg.PoolClient | null,
   scopeKey: string,
   playbookId: string,
   version: number,
@@ -437,60 +338,24 @@ async function loadReplayPlaybookNode(
   slots: Record<string, unknown>;
 } | null> {
   const liteWriteStore = asLiteReplayLearningStore(writeAccess);
-  if (liteWriteStore) {
-    const { rows } = await liteWriteStore.findNodes({
-      scope: scopeKey,
-      type: "procedure",
-      slotsContains: {
-        replay_kind: "playbook",
-        playbook_id: playbookId,
-        version,
-      },
-      consumerAgentId: consumerAgentId ?? null,
-      consumerTeamId: consumerTeamId ?? null,
-      limit: 1,
-      offset: 0,
-    });
-    const row = rows[0];
-    if (!row) return null;
-    return {
-      playbook_node_id: row.id,
-      title: row.title,
-      text_summary: row.text_summary,
-      slots: asObject(row.slots) ?? {},
-    };
-  }
-  const out = await requirePostgresClient(client, "load replay playbook node").query<{
-    playbook_node_id: string;
-    title: string | null;
-    text_summary: string | null;
-    slots: unknown;
-  }>(
-    `
-    SELECT
-      id::text AS playbook_node_id,
-      title,
-      text_summary,
-      slots
-    FROM memory_nodes
-    WHERE scope = $1
-      AND slots->>'replay_kind' = 'playbook'
-      AND slots->>'playbook_id' = $2
-      AND (
-        CASE
-          WHEN coalesce(slots->>'version', '') ~ '^[0-9]+$' THEN (slots->>'version')::int
-          ELSE 1
-        END
-      ) = $3
-    ORDER BY created_at DESC
-    LIMIT 1
-    `,
-    [scopeKey, playbookId, version],
-  );
-  if ((out.rowCount ?? 0) < 1) return null;
-  const row = out.rows[0];
+  if (!liteWriteStore) throw new Error("loadReplayPlaybookNode requires lite write store");
+  const { rows } = await liteWriteStore.findNodes({
+    scope: scopeKey,
+    type: "procedure",
+    slotsContains: {
+      replay_kind: "playbook",
+      playbook_id: playbookId,
+      version,
+    },
+    consumerAgentId: consumerAgentId ?? null,
+    consumerTeamId: consumerTeamId ?? null,
+    limit: 1,
+    offset: 0,
+  });
+  const row = rows[0];
+  if (!row) return null;
   return {
-    playbook_node_id: row.playbook_node_id,
+    playbook_node_id: row.id,
     title: row.title,
     text_summary: row.text_summary,
     slots: asObject(row.slots) ?? {},
@@ -498,7 +363,6 @@ async function loadReplayPlaybookNode(
 }
 
 export async function applyReplayLearningProjectionFromPayload(
-  client: pg.PoolClient | null,
   payload: ReplayLearningProjectionPayload,
   writeOpts: ReplayLearningWriteOptions,
 ): Promise<ReplayLearningProjectionResult> {
@@ -515,7 +379,6 @@ export async function applyReplayLearningProjectionFromPayload(
     }
   }
   const loaded = await loadReplayPlaybookNode(
-    client,
     payload.scope_key,
     payload.playbook_id,
     payload.playbook_version,
@@ -536,7 +399,6 @@ export async function applyReplayLearningProjectionFromPayload(
     );
   }
   return await applyReplayLearningProjection(
-    client,
     {
       tenant_id: payload.tenant_id,
       scope: payload.scope,
@@ -556,7 +418,6 @@ export async function applyReplayLearningProjectionFromPayload(
 }
 
 export async function applyReplayLearningProjection(
-  client: pg.PoolClient | null,
   source: ReplayLearningProjectionSource,
   config: ReplayLearningProjectionResolvedConfig,
   writeOpts: ReplayLearningWriteOptions,
@@ -617,7 +478,6 @@ export async function applyReplayLearningProjection(
   const policyFingerprint = fingerprintJson(thenPatch);
   const liteWriteStore = asLiteReplayLearningStore(writeOpts.writeAccess);
   const existingRulesByScope = await listExistingReplayLearningRules(
-    client,
     source.scope_key,
     source.playbook_id,
     writeOpts.writeAccess,
@@ -647,7 +507,6 @@ export async function applyReplayLearningProjection(
   }
 
   const existingEpisode = await findExistingReplayLearningEpisode(
-    client,
     source.scope_key,
     source.playbook_id,
     source.playbook_version,
@@ -671,7 +530,6 @@ export async function applyReplayLearningProjection(
   let commitId: string | undefined;
   let commitUri: string | undefined;
   const observedWorkflowCountBeforeWrite = await countReplayLearningWorkflowObservations(
-    client,
     source.scope_key,
     source.playbook_id,
     workflowSignature,
@@ -728,14 +586,11 @@ export async function applyReplayLearningProjection(
       },
       writeOpts.embedder,
     );
-    const out = await applyPreparedMemoryWrite(projectionWriteAccessForClient(client, writeOpts), prepared, {
+    const out = await applyPreparedMemoryWrite(projectionWriteAccessForClient(writeOpts), prepared, {
       maxTextLen: writeOpts.maxTextLen,
       piiRedaction: writeOpts.piiRedaction,
       allowCrossScopeEdges: writeOpts.allowCrossScopeEdges,
-      shadowDualWriteEnabled: writeOpts.shadowDualWriteEnabled,
-      shadowDualWriteStrict: writeOpts.shadowDualWriteStrict,
     });
-    await mirrorPreparedWriteToEmbeddedRuntime({ embeddedRuntime: writeOpts.embeddedRuntime, prepared, out });
     const createdRule = out.nodes.find((n) => n.client_id === ruleClientId);
     const createdEpisode = out.nodes.find((n) => n.client_id === episodeClientId);
     const createdWorkflow = out.nodes.find((n) => n.client_id === workflowClientId);
@@ -749,7 +604,6 @@ export async function applyReplayLearningProjection(
   let finalRuleState: "draft" | "shadow" = "draft";
   if (generatedRuleNodeId && config.target_rule_state === "shadow") {
     const stateOut = await updateRuleState(
-      client,
       {
         tenant_id: source.tenant_id,
         scope: source.scope,
@@ -760,7 +614,7 @@ export async function applyReplayLearningProjection(
       },
       writeOpts.defaultScope,
       writeOpts.defaultTenantId,
-      { embeddedRuntime: writeOpts.embeddedRuntime, liteWriteStore },
+      { liteWriteStore },
     );
     finalRuleState = "shadow";
     commitId = stateOut.commit_id;
@@ -768,65 +622,44 @@ export async function applyReplayLearningProjection(
   }
 
   if (generatedRuleNodeId && generatedEpisodeNodeId) {
-    if (liteWriteStore) {
-      const episodeNode = await liteWriteStore.resolveNode({
+    if (!liteWriteStore) throw new Error("replay learning source-rule attachment requires lite write store");
+    const episodeNode = await liteWriteStore.resolveNode({
+      scope: source.scope_key,
+      id: generatedEpisodeNodeId,
+      type: "event",
+      consumerAgentId: source.actor,
+      consumerTeamId: null,
+    });
+    if (episodeNode) {
+      const lifecycle = resolveNodeLifecycleSignals({
+        type: episodeNode.type,
+        tier: episodeNode.tier,
+        title: episodeNode.title,
+        text_summary: episodeNode.text_summary,
+        slots: {
+          ...(asObject(episodeNode.slots) ?? {}),
+          source_rule_node_id: generatedRuleNodeId,
+          replay_learning: {
+            ...(asObject(asObject(episodeNode.slots)?.replay_learning) ?? {}),
+            source_rule_node_id: generatedRuleNodeId,
+          },
+        },
+        salience: episodeNode.salience,
+        importance: episodeNode.importance,
+        confidence: episodeNode.confidence,
+        raw_ref: episodeNode.raw_ref ?? null,
+        evidence_ref: episodeNode.evidence_ref ?? null,
+      });
+      await liteWriteStore.updateNodeAnchorState({
         scope: source.scope_key,
         id: generatedEpisodeNodeId,
-        type: "event",
-        consumerAgentId: source.actor,
-        consumerTeamId: null,
+        slots: lifecycle.slots,
+        textSummary: episodeNode.text_summary,
+        salience: lifecycle.salience,
+        importance: lifecycle.importance,
+        confidence: lifecycle.confidence,
+        commitId: commitId ?? null,
       });
-      if (episodeNode) {
-        const lifecycle = resolveNodeLifecycleSignals({
-          type: episodeNode.type,
-          tier: episodeNode.tier,
-          title: episodeNode.title,
-          text_summary: episodeNode.text_summary,
-          slots: {
-            ...(asObject(episodeNode.slots) ?? {}),
-            source_rule_node_id: generatedRuleNodeId,
-            replay_learning: {
-              ...(asObject(asObject(episodeNode.slots)?.replay_learning) ?? {}),
-              source_rule_node_id: generatedRuleNodeId,
-            },
-          },
-          salience: episodeNode.salience,
-          importance: episodeNode.importance,
-          confidence: episodeNode.confidence,
-          raw_ref: episodeNode.raw_ref ?? null,
-          evidence_ref: episodeNode.evidence_ref ?? null,
-        });
-        await liteWriteStore.updateNodeAnchorState({
-          scope: source.scope_key,
-          id: generatedEpisodeNodeId,
-          slots: lifecycle.slots,
-          textSummary: episodeNode.text_summary,
-          salience: lifecycle.salience,
-          importance: lifecycle.importance,
-          confidence: lifecycle.confidence,
-          commitId: commitId ?? null,
-        });
-      }
-    } else {
-      await requirePostgresClient(client, "attach replay learning source rule").query(
-        `
-        UPDATE memory_nodes n
-        SET slots =
-          jsonb_set(
-            jsonb_set(
-              coalesce(n.slots, '{}'::jsonb),
-              '{source_rule_node_id}',
-              to_jsonb($2::text),
-              true
-            ),
-            '{replay_learning,source_rule_node_id}',
-            to_jsonb($2::text),
-            true
-          )
-        WHERE n.id = $1::uuid
-        `,
-        [generatedEpisodeNodeId, generatedRuleNodeId],
-      );
     }
   }
 

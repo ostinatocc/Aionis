@@ -25,16 +25,16 @@ test("replay run gate step outcome helpers preserve guided blocked metadata", ()
     readiness: "blocked",
     reason: "sensitive_command_requires_override",
     command: "rm",
-    argv: ["rm", "-rf", "/tmp/demo"],
+    argv: ["rm", "-rf", "/tmp/aionis-sandbox-delete-target"],
     sensitiveReview: {
       command: "rm",
-      argv: ["rm", "-rf", "/tmp/demo"],
+      argv: ["rm", "-rf", "/tmp/aionis-sandbox-delete-target"],
       reason: "destructive rm -rf",
       risk_level: "high",
       required_param: "params.allow_sensitive_exec=true",
     },
-    repair: { summary_version: "repair_patch_v1" },
+    repair: { kind: "agent_repair_request" },
   });
   assert.equal(guided.writeOutputSignature.reason, "sensitive_command_requires_override");
-  assert.equal((guided.writeOutputSignature.repair as { summary_version: string }).summary_version, "repair_patch_v1");
+  assert.equal((guided.writeOutputSignature.repair as { kind: string }).kind, "agent_repair_request");
 });

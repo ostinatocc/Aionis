@@ -162,8 +162,6 @@ export async function commitLitePreparedWriteWithProjection(args: {
     maxTextLen: number;
     piiRedaction: boolean;
     allowCrossScopeEdges: boolean;
-    shadowDualWriteEnabled: boolean;
-    shadowDualWriteStrict: boolean;
     associativeLinkOrigin?: AssociativeLinkTriggerOrigin;
   };
 }) {
@@ -177,8 +175,6 @@ export async function commitLitePreparedWriteWithProjection(args: {
       maxTextLen: args.writeOptions.maxTextLen,
       piiRedaction: args.writeOptions.piiRedaction,
       allowCrossScopeEdges: args.writeOptions.allowCrossScopeEdges,
-      shadowDualWriteEnabled: args.writeOptions.shadowDualWriteEnabled,
-      shadowDualWriteStrict: args.writeOptions.shadowDualWriteStrict,
       ...(args.writeOptions.associativeLinkOrigin
         ? { associativeLinkOrigin: args.writeOptions.associativeLinkOrigin }
         : {}),

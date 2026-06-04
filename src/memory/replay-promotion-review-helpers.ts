@@ -227,7 +227,7 @@ export function buildReplayPlaybookVersionResult(args: ReplayPlaybookVersionResu
   };
 }
 
-export function buildReplayPlaybookNoopPromoteResult(args: {
+export function buildReplayPlaybookUnchangedPromoteResult(args: {
   tenantId: string;
   scope: string;
   playbookId: string;

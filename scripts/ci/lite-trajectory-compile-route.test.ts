@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import Fastify from "fastify";
-import { registerHostErrorHandler } from "../../src/host/http-host.ts";
+import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { TrajectoryCompileResponseSchema } from "../../src/memory/schemas.ts";
 import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
@@ -33,8 +33,6 @@ const TEST_ENV = {
   MAX_TEXT_LEN: 10000,
   PII_REDACTION: false,
   ALLOW_CROSS_SCOPE_EDGES: false,
-  MEMORY_SHADOW_DUAL_WRITE_ENABLED: false,
-  MEMORY_SHADOW_DUAL_WRITE_STRICT: false,
 } as any;
 
 async function buildApp() {
@@ -42,15 +40,13 @@ async function buildApp() {
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallAccess = createLiteRecallStore(dbPath);
   const app = Fastify();
-  registerHostErrorHandler(app);
+  registerRuntimeErrorHandler(app);
   registerMemoryAccessRoutes({
     app,
     env: TEST_ENV,
     embedder: null,
     liteWriteStore,
     liteRecallAccess,
-    writeAccessShadowMirrorV2: false,
-    requireStoreFeatureCapability: () => {},
     requireMemoryPrincipal: async () => null,
     withIdentityFromRequest: (_req, body) => body,
     enforceRateLimit: async () => {},

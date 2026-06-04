@@ -1,6 +1,6 @@
 import type { Env } from "../config.js";
 import type { RecallAuth } from "../memory/recall.js";
-import { requireAdminTokenHeader, secretTokensEqual } from "../util/admin_auth.js";
+import { secretTokensEqual } from "../util/admin_auth.js";
 import type { AuthPrincipal } from "../util/auth.js";
 import { sha256Hex } from "../util/crypto.js";
 import { HttpError } from "../util/http.js";
@@ -15,7 +15,7 @@ type Limiter = {
   check: (key: string, cost?: number) => RateLimitResult;
 };
 
-export type RateLimitKind = "recall" | "debug_embeddings" | "write" | "sandbox_read" | "sandbox_write";
+export type RateLimitKind = "recall" | "debug_embeddings" | "write";
 export type TenantQuotaKind = "recall" | "debug_embeddings" | "write";
 export type InflightKind = "recall" | "write";
 
@@ -70,13 +70,7 @@ export type IdentityRequestKind =
   | "replay_playbook_repair"
   | "replay_playbook_repair_review"
   | "replay_playbook_run"
-  | "replay_playbook_dispatch"
-  | "sandbox_session_create"
-  | "sandbox_execute"
-  | "sandbox_run_get"
-  | "sandbox_run_logs"
-  | "sandbox_run_artifact"
-  | "sandbox_run_cancel";
+  | "replay_playbook_dispatch";
 
 type CreateRequestGuardsArgs = {
   env: Env;
@@ -84,8 +78,6 @@ type CreateRequestGuardsArgs = {
   recallLimiter: Limiter | null;
   debugEmbedLimiter: Limiter | null;
   writeLimiter: Limiter | null;
-  sandboxWriteLimiter: Limiter | null;
-  sandboxReadLimiter: Limiter | null;
   recallTextEmbedLimiter: Limiter | null;
   recallInflightGate: InflightGate;
   writeInflightGate: InflightGate;
@@ -142,8 +134,6 @@ export function createRequestGuards({
   recallLimiter,
   debugEmbedLimiter,
   writeLimiter,
-  sandboxWriteLimiter,
-  sandboxReadLimiter,
   recallTextEmbedLimiter,
   recallInflightGate,
   writeInflightGate,
@@ -214,11 +204,7 @@ export function createRequestGuards({
         ? debugEmbedLimiter
         : kind === "write"
           ? writeLimiter
-          : kind === "sandbox_write"
-            ? sandboxWriteLimiter
-            : kind === "sandbox_read"
-              ? sandboxReadLimiter
-              : recallLimiter;
+          : recallLimiter;
     if (!limiter) return;
 
     const ip = requestClientIp(req);
@@ -227,7 +213,7 @@ export function createRequestGuards({
     const key = rateLimitKey(req, kind);
     let waitedMs = 0;
     let res = limiter.check(key, 1);
-    if (!res.allowed && (kind === "write" || kind === "sandbox_write") && env.WRITE_RATE_LIMIT_MAX_WAIT_MS > 0) {
+    if (!res.allowed && kind === "write" && env.WRITE_RATE_LIMIT_MAX_WAIT_MS > 0) {
       waitedMs = Math.min(env.WRITE_RATE_LIMIT_MAX_WAIT_MS, Math.max(1, res.retry_after_ms));
       await sleep(waitedMs);
       res = limiter.check(key, 1);
@@ -240,11 +226,7 @@ export function createRequestGuards({
         ? "rate_limited_debug_embeddings"
         : kind === "write"
           ? "rate_limited_write"
-          : kind === "sandbox_write"
-            ? "rate_limited_sandbox_write"
-            : kind === "sandbox_read"
-              ? "rate_limited_sandbox_read"
-              : "rate_limited_recall";
+          : "rate_limited_recall";
     throw new HttpError(429, code, `rate limited (${kind}); retry later`, {
       retry_after_ms: res.retry_after_ms,
       waited_ms: waitedMs,
@@ -271,10 +253,6 @@ export function createRequestGuards({
       retry_after_ms: res.retry_after_ms,
       waited_ms: waitedMs,
     });
-  };
-
-  const requireAdminToken = (req: any) => {
-    requireAdminTokenHeader(req?.headers ?? {}, env.ADMIN_TOKEN);
   };
 
   const requireMemoryPrincipal = async (_req: any): Promise<AuthPrincipal | null> => null;
@@ -381,7 +359,6 @@ export function createRequestGuards({
     acquireInflightSlot,
     enforceRateLimit,
     enforceRecallTextEmbedQuota,
-    requireAdminToken,
     requireMemoryPrincipal,
     withIdentityFromRequest,
     tenantFromBody,

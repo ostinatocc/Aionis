@@ -45,7 +45,7 @@ function sampleState(): ExecutionStateV1 {
       rollback_required: false,
     },
     resume_anchor: {
-      anchor: "Task 2 minimal extraction",
+      anchor: "Task 2 compact extraction",
       file_path: "src/kernel/execution-continuity-kernel.ts",
       symbol: "executionContinuityKernel",
       repo_root: "/Volumes/ziel/AionisRuntime-focused",

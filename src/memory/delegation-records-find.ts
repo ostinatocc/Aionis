@@ -838,7 +838,7 @@ function buildDelegationLearningRecommendations(args: {
       priority: completedCount >= pattern.record_count / 2 ? "medium" : "low",
       route_role: pattern.route_role,
       task_family: pattern.task_family,
-      recommended_action: `Promote the ${patternScope} delegation pattern into a reusable host recipe.`,
+      recommended_action: `Promote the ${patternScope} delegation pattern into a reusable runtime recipe.`,
       rationale: `${completedCount} successful captures already include reusable checks, working-set files, and artifact refs for this pattern.`,
       sample_mission: pattern.sample_mission,
       sample_acceptance_checks: pattern.sample_acceptance_checks,

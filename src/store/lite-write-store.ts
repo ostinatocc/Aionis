@@ -20,108 +20,21 @@ import type {
   UpsertAssociationCandidateArgs,
 } from "../memory/associative-candidate-store.js";
 import { stableUuid } from "../util/uuid.js";
-import { assertDim } from "../util/pgvector.js";
+import { assertDim } from "../util/vector-literal.js";
 import type {
   WriteCommitInsertArgs,
   WriteEdgeUpsertArgs,
   WriteNodeInsertArgs,
   WriteOutboxInsertArgs,
   WriteRuleDefInsertArgs,
-  WriteShadowMirrorCopied,
   WriteStoreAccess,
   WriteExistingNodeFingerprint,
 } from "./write-access.js";
 import { WRITE_STORE_ACCESS_CAPABILITY_VERSION, writeNodeFingerprint } from "./write-access.js";
 import { createSqliteDatabase, type SqliteDatabase } from "./sqlite.js";
 
-type LiteSessionNodeView = {
+type LiteLatestNodeView = {
   id: string;
-  client_id: string | null;
-  title: string | null;
-  text_summary: string | null;
-  memory_lane: "private" | "shared";
-  owner_agent_id: string | null;
-  owner_team_id: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type LiteSessionListView = LiteSessionNodeView & {
-  last_event_at: string | null;
-  event_count: number;
-};
-
-type LiteSessionEventView = {
-  id: string;
-  client_id: string | null;
-  type: string;
-  title: string | null;
-  text_summary: string | null;
-  slots: Record<string, unknown>;
-  memory_lane: "private" | "shared";
-  producer_agent_id: string | null;
-  owner_agent_id: string | null;
-  owner_team_id: string | null;
-  embedding_status: string;
-  embedding_model: string | null;
-  raw_ref: string | null;
-  evidence_ref: string | null;
-  salience: number;
-  importance: number;
-  confidence: number;
-  last_activated: null;
-  created_at: string;
-  updated_at: string;
-  commit_id: string | null;
-  edge_weight: number;
-  edge_confidence: number;
-};
-
-type LitePackSnapshotNodeView = {
-  id: string;
-  client_id: string | null;
-  type: string;
-  tier: string;
-  memory_lane: "private" | "shared";
-  producer_agent_id: string | null;
-  owner_agent_id: string | null;
-  owner_team_id: string | null;
-  title: string | null;
-  text_summary: string | null;
-  slots: Record<string, unknown>;
-  raw_ref: string | null;
-  evidence_ref: string | null;
-  salience: number;
-  importance: number;
-  confidence: number;
-  created_at: string;
-  updated_at: string;
-  commit_id: string | null;
-};
-
-type LitePackSnapshotEdgeView = {
-  id: string;
-  type: string;
-  src_id: string;
-  dst_id: string;
-  src_client_id: string | null;
-  dst_client_id: string | null;
-  weight: number;
-  confidence: number;
-  decay_rate: number;
-  created_at: string;
-  commit_id: string | null;
-};
-
-type LitePackSnapshotCommitView = {
-  id: string;
-  parent_id: string | null;
-  input_sha256: string;
-  actor: string;
-  model_version: string | null;
-  prompt_version: string | null;
-  created_at: string;
-  commit_hash: string;
 };
 
 export type LiteFindNodeRow = {
@@ -293,7 +206,7 @@ export type LiteWriteStore = WriteStoreAccess & {
     scope: string,
     type: string,
     clientId: string,
-  ): Promise<LiteSessionNodeView | null>;
+  ): Promise<LiteLatestNodeView | null>;
   resolveNode(args: {
     scope: string;
     id: string;
@@ -444,49 +357,6 @@ export type LiteWriteStore = WriteStoreAccess & {
     id: string;
     error: string;
   }): Promise<void>;
-  listSessionEvents(args: {
-    scope: string;
-    sessionClientId: string;
-    consumerAgentId: string | null;
-    consumerTeamId: string | null;
-    limit: number;
-    offset: number;
-  }): Promise<{
-    session: LiteSessionNodeView | null;
-    events: LiteSessionEventView[];
-    has_more: boolean;
-  }>;
-  listSessions(args: {
-    scope: string;
-    consumerAgentId: string | null;
-    consumerTeamId: string | null;
-    ownerAgentId: string | null;
-    ownerTeamId: string | null;
-    limit: number;
-    offset: number;
-  }): Promise<{
-    sessions: LiteSessionListView[];
-    has_more: boolean;
-  }>;
-  exportPackSnapshot(args: {
-    scope: string;
-    includeNodes: boolean;
-    includeEdges: boolean;
-    includeCommits: boolean;
-    includeDecisions: boolean;
-    maxRows: number;
-  }): Promise<{
-    nodes: LitePackSnapshotNodeView[];
-    edges: LitePackSnapshotEdgeView[];
-    commits: LitePackSnapshotCommitView[];
-    decisions: never[];
-    truncated: {
-      nodes: boolean;
-      edges: boolean;
-      commits: boolean;
-      decisions: boolean;
-    };
-  }>;
   close(): Promise<void>;
   healthSnapshot(): { path: string; mode: "sqlite_write_v1" };
 };
@@ -563,140 +433,6 @@ function decodeExecutionDecisionRow(row: LiteExecutionDecisionDbRow): LiteExecut
     metadata_json: parseJsonObject(row.metadata_json),
     commit_id: row.commit_id,
     created_at: row.created_at,
-  };
-}
-
-type LiteSessionEventDbRow = {
-  id: string;
-  client_id: string | null;
-  type: string;
-  title: string | null;
-  text_summary: string | null;
-  slots_json: string;
-  memory_lane: "private" | "shared";
-  producer_agent_id: string | null;
-  owner_agent_id: string | null;
-  owner_team_id: string | null;
-  embedding_status: string;
-  embedding_model: string | null;
-  raw_ref: string | null;
-  evidence_ref: string | null;
-  salience: number;
-  importance: number;
-  confidence: number;
-  created_at: string;
-  commit_id: string | null;
-  edge_weight: number;
-  edge_confidence: number;
-};
-
-function decodeSessionEventRow(row: LiteSessionEventDbRow): LiteSessionEventView {
-  return {
-    id: row.id,
-    client_id: row.client_id,
-    type: row.type,
-    title: row.title,
-    text_summary: row.text_summary,
-    slots: parseJsonObject(row.slots_json),
-    memory_lane: row.memory_lane,
-    producer_agent_id: row.producer_agent_id,
-    owner_agent_id: row.owner_agent_id,
-    owner_team_id: row.owner_team_id,
-    embedding_status: row.embedding_status,
-    embedding_model: row.embedding_model,
-    raw_ref: row.raw_ref,
-    evidence_ref: row.evidence_ref,
-    salience: row.salience,
-    importance: row.importance,
-    confidence: row.confidence,
-    last_activated: null,
-    created_at: row.created_at,
-    updated_at: row.created_at,
-    commit_id: row.commit_id,
-    edge_weight: row.edge_weight,
-    edge_confidence: row.edge_confidence,
-  };
-}
-
-type LiteSessionListDbRow = {
-  id: string;
-  client_id: string | null;
-  title: string | null;
-  text_summary: string | null;
-  memory_lane: "private" | "shared";
-  owner_agent_id: string | null;
-  owner_team_id: string | null;
-  created_at: string;
-  last_event_at: string | null;
-  event_count: number;
-};
-
-function decodeSessionListRow(row: LiteSessionListDbRow): LiteSessionListView {
-  return {
-    id: row.id,
-    client_id: row.client_id,
-    title: row.title,
-    text_summary: row.text_summary,
-    memory_lane: row.memory_lane,
-    owner_agent_id: row.owner_agent_id,
-    owner_team_id: row.owner_team_id,
-    created_at: row.created_at,
-    updated_at: row.created_at,
-    last_event_at: row.last_event_at,
-    event_count: Number(row.event_count ?? 0),
-  };
-}
-
-type LitePackSnapshotNodeDbRow = {
-  id: string;
-  client_id: string | null;
-  type: string;
-  tier: string;
-  memory_lane: "private" | "shared";
-  producer_agent_id: string | null;
-  owner_agent_id: string | null;
-  owner_team_id: string | null;
-  title: string | null;
-  text_summary: string | null;
-  slots_json: string;
-  raw_ref: string | null;
-  evidence_ref: string | null;
-  salience: number;
-  importance: number;
-  confidence: number;
-  created_at: string;
-  commit_id: string | null;
-};
-
-function decodePackSnapshotNodeRow(row: LitePackSnapshotNodeDbRow): LitePackSnapshotNodeView {
-  return {
-    id: row.id,
-    client_id: row.client_id,
-    type: row.type,
-    tier: row.tier,
-    memory_lane: row.memory_lane,
-    producer_agent_id: row.producer_agent_id,
-    owner_agent_id: row.owner_agent_id,
-    owner_team_id: row.owner_team_id,
-    title: row.title,
-    text_summary: row.text_summary,
-    slots: parseJsonObject(row.slots_json),
-    raw_ref: row.raw_ref,
-    evidence_ref: row.evidence_ref,
-    salience: row.salience,
-    importance: row.importance,
-    confidence: row.confidence,
-    created_at: row.created_at,
-    updated_at: row.created_at,
-    commit_id: row.commit_id,
-  };
-}
-
-function takeWithHasMore<T>(rows: T[], maxRows: number): { rows: T[]; hasMore: boolean } {
-  const hasMore = rows.length > maxRows;
-  return {
-    rows: hasMore ? rows.slice(0, maxRows) : rows,
-    hasMore,
   };
 }
 
@@ -987,7 +723,6 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
 
   return {
     capability_version: WRITE_STORE_ACCESS_CAPABILITY_VERSION,
-    capabilities: { shadow_mirror_v2: false },
 
     async withTx<T>(fn: () => Promise<T>): Promise<T> {
       if (txDepth > 0) {
@@ -1178,15 +913,15 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
       };
     },
 
-    async findLatestNodeByClientId(scope: string, type: string, clientId: string): Promise<LiteSessionNodeView | null> {
+    async findLatestNodeByClientId(scope: string, type: string, clientId: string): Promise<LiteLatestNodeView | null> {
       const row = db.prepare(
-        `SELECT id, client_id, title, text_summary, memory_lane, owner_agent_id, owner_team_id, created_at
+        `SELECT id
          FROM lite_memory_nodes
          WHERE scope = ? AND type = ? AND client_id = ?
          ORDER BY created_at DESC
          LIMIT 1`,
-      ).get(scope, type, clientId) as LiteSessionNodeView | undefined;
-      return row ? { ...row, updated_at: row.created_at } : null;
+      ).get(scope, type, clientId) as LiteLatestNodeView | undefined;
+      return row ?? null;
     },
 
     async resolveNode(args): Promise<LiteResolveNodeRow | null> {
@@ -1809,173 +1544,6 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
       }).then((rows) => rows.filter((row) => args.ruleNodeIds.includes(row.rule_node_id)));
     },
 
-    async listSessionEvents(args): Promise<{ session: LiteSessionNodeView | null; events: LiteSessionEventView[]; has_more: boolean }> {
-      const session = await this.findLatestNodeByClientId(args.scope, "topic", args.sessionClientId);
-      if (!session || !nodeVisible(session, args.consumerAgentId, args.consumerTeamId)) {
-        return { session: null, events: [], has_more: false };
-      }
-
-      const rows = db.prepare(
-        `SELECT
-           n.id,
-           n.client_id,
-           n.type,
-           n.title,
-           n.text_summary,
-           n.slots_json,
-           n.memory_lane,
-           n.producer_agent_id,
-           n.owner_agent_id,
-           n.owner_team_id,
-           n.embedding_status,
-           n.embedding_model,
-           n.raw_ref,
-           n.evidence_ref,
-           n.salience,
-           n.importance,
-           n.confidence,
-           n.created_at,
-           n.commit_id,
-           e.weight AS edge_weight,
-           e.confidence AS edge_confidence
-         FROM lite_memory_edges e
-         JOIN lite_memory_nodes n ON n.id = e.src_id AND n.scope = e.scope
-         WHERE e.scope = ?
-           AND e.type = 'part_of'
-           AND e.dst_id = ?
-         ORDER BY n.created_at DESC, n.id DESC`,
-      ).all(args.scope, session.id) as LiteSessionEventDbRow[];
-      const visible = rows.filter((row) => nodeVisible(row, args.consumerAgentId, args.consumerTeamId));
-      const slice = visible.slice(args.offset, args.offset + args.limit + 1);
-      const hasMore = slice.length > args.limit;
-      const chosen = hasMore ? slice.slice(0, args.limit) : slice;
-      return {
-        session,
-        events: chosen.map(decodeSessionEventRow),
-        has_more: hasMore,
-      };
-    },
-
-    async listSessions(args): Promise<{ sessions: LiteSessionListView[]; has_more: boolean }> {
-      const rows = db.prepare(
-        `SELECT
-           s.id,
-           s.client_id,
-           s.title,
-           s.text_summary,
-           s.memory_lane,
-           s.owner_agent_id,
-           s.owner_team_id,
-           s.created_at,
-           MAX(e.created_at) AS last_event_at,
-           COUNT(e.id) AS event_count
-         FROM lite_memory_nodes s
-         LEFT JOIN lite_memory_edges me
-           ON me.scope = s.scope
-          AND me.type = 'part_of'
-          AND me.dst_id = s.id
-         LEFT JOIN lite_memory_nodes e
-           ON e.id = me.src_id
-          AND e.scope = s.scope
-          AND e.type = 'event'
-         WHERE s.scope = ?
-           AND s.type = 'topic'
-           AND s.client_id LIKE 'session:%'
-         GROUP BY
-           s.id,
-           s.client_id,
-           s.title,
-           s.text_summary,
-           s.memory_lane,
-           s.owner_agent_id,
-           s.owner_team_id,
-           s.created_at
-         ORDER BY COALESCE(MAX(e.created_at), s.created_at) DESC, s.id DESC`,
-      ).all(args.scope) as LiteSessionListDbRow[];
-      const visible = rows.filter((row) => {
-        if (!nodeVisible(row, args.consumerAgentId, args.consumerTeamId)) return false;
-        if (args.ownerAgentId && row.owner_agent_id !== args.ownerAgentId) return false;
-        if (args.ownerTeamId && row.owner_team_id !== args.ownerTeamId) return false;
-        return true;
-      });
-      const slice = visible.slice(args.offset, args.offset + args.limit + 1);
-      const hasMore = slice.length > args.limit;
-      const chosen = hasMore ? slice.slice(0, args.limit) : slice;
-      return {
-        sessions: chosen.map(decodeSessionListRow),
-        has_more: hasMore,
-      };
-    },
-
-    async exportPackSnapshot(args) {
-      let nodes: LitePackSnapshotNodeView[] = [];
-      let edges: LitePackSnapshotEdgeView[] = [];
-      let commits: LitePackSnapshotCommitView[] = [];
-      let nodesHasMore = false;
-      let edgesHasMore = false;
-      let commitsHasMore = false;
-
-      if (args.includeNodes) {
-        const rows = db.prepare(
-          `SELECT
-             id, client_id, type, tier, memory_lane, producer_agent_id, owner_agent_id, owner_team_id,
-             title, text_summary, slots_json, raw_ref, evidence_ref, salience, importance, confidence,
-             created_at, commit_id
-           FROM lite_memory_nodes
-           WHERE scope = ?
-           ORDER BY created_at ASC, id ASC
-           LIMIT ?`,
-        ).all(args.scope, args.maxRows + 1) as LitePackSnapshotNodeDbRow[];
-        const limited = takeWithHasMore(rows, args.maxRows);
-        nodesHasMore = limited.hasMore;
-        nodes = limited.rows.map(decodePackSnapshotNodeRow);
-      }
-
-      if (args.includeEdges) {
-        const rows = db.prepare(
-          `SELECT
-             e.id, e.type, e.src_id, e.dst_id, s.client_id AS src_client_id, d.client_id AS dst_client_id,
-             e.weight, e.confidence, e.decay_rate, e.created_at, e.commit_id
-           FROM lite_memory_edges e
-           LEFT JOIN lite_memory_nodes s ON s.id = e.src_id AND s.scope = e.scope
-           LEFT JOIN lite_memory_nodes d ON d.id = e.dst_id AND d.scope = e.scope
-           WHERE e.scope = ?
-           ORDER BY e.created_at ASC, e.id ASC
-           LIMIT ?`,
-        ).all(args.scope, args.maxRows + 1) as LitePackSnapshotEdgeView[];
-        const limited = takeWithHasMore(rows, args.maxRows);
-        edgesHasMore = limited.hasMore;
-        edges = limited.rows;
-      }
-
-      if (args.includeCommits) {
-        const rows = db.prepare(
-          `SELECT
-             id, parent_commit_id AS parent_id, input_sha256, actor, model_version, prompt_version, created_at, commit_hash
-           FROM lite_memory_commits
-           WHERE scope = ?
-           ORDER BY created_at ASC, id ASC
-           LIMIT ?`,
-        ).all(args.scope, args.maxRows + 1) as LitePackSnapshotCommitView[];
-        const limited = takeWithHasMore(rows, args.maxRows);
-        commitsHasMore = limited.hasMore;
-        commits = limited.rows;
-      }
-
-      return {
-        nodes,
-        edges,
-        commits,
-        decisions: [],
-        truncated: {
-          nodes: nodesHasMore,
-          edges: edgesHasMore,
-          commits: commitsHasMore,
-          decisions: false,
-        },
-      };
-    },
-
     async nodeScopesByIds(ids: string[]): Promise<Map<string, string>> {
       if (ids.length === 0) return new Map();
       const sql = `SELECT id, scope FROM lite_memory_nodes WHERE id IN (${ids.map(() => "?").join(",")})`;
@@ -2449,10 +2017,6 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
         args.scope,
         args.id,
       );
-    },
-
-    async mirrorCommitArtifactsToShadowV2(_scope: string, _commitId: string): Promise<WriteShadowMirrorCopied> {
-      throw new Error("write capability unsupported: shadow_mirror_v2");
     },
 
     async close(): Promise<void> {

@@ -493,10 +493,10 @@ test("authority consumption keeps candidate readiness separate from action reuse
 
   assert.equal(authorityVisibilityRequiresInspection(failedVisibility), true);
   assert.equal(authorityVisibilityBlocksPromotionReadiness(failedVisibility), true);
-  const staleFallbackState = authorityConsumptionStateFromValue({
+  const staleAuthorityState = authorityConsumptionStateFromValue({
     authority_blocked: true,
     authority_primary_blocker: "stale:blocker",
   });
-  assert.equal(staleFallbackState.requires_inspection, true);
-  assert.equal(staleFallbackState.primary_blocker, "stale:blocker");
+  assert.equal(staleAuthorityState.requires_inspection, true);
+  assert.equal(staleAuthorityState.primary_blocker, "stale:blocker");
 });

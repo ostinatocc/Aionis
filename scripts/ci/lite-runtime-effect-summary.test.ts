@@ -21,8 +21,6 @@ const writeOpts = {
   maxTextLen: 10_000,
   piiRedaction: false,
   allowCrossScopeEdges: false,
-  shadowDualWriteEnabled: false,
-  shadowDualWriteStrict: false,
 };
 
 test("runtime effect summary measures persisted Runtime evidence without claiming baseline proof", async () => {
@@ -142,12 +140,10 @@ test("runtime effect summary measures persisted Runtime evidence without claimin
     );
 
     await store.withTx(() =>
-      applyMemoryWrite({} as any, prepared, {
+      applyMemoryWrite(prepared, {
         maxTextLen: writeOpts.maxTextLen,
         piiRedaction: writeOpts.piiRedaction,
         allowCrossScopeEdges: writeOpts.allowCrossScopeEdges,
-        shadowDualWriteEnabled: writeOpts.shadowDualWriteEnabled,
-        shadowDualWriteStrict: writeOpts.shadowDualWriteStrict,
         associativeLinkOrigin: "memory_write",
         write_access: store,
       }),

@@ -27,8 +27,6 @@ const writeOpts = {
   maxTextLen: 10_000,
   piiRedaction: false,
   allowCrossScopeEdges: false,
-  shadowDualWriteEnabled: false,
-  shadowDualWriteStrict: false,
 };
 
 test("learning loop promotes evidence-gated workflow candidates into stable workflow memory", async () => {
@@ -161,8 +159,6 @@ test("learning loop promotes evidence-gated workflow candidates into stable work
       maxTextLen: writeOpts.maxTextLen,
       piiRedaction: writeOpts.piiRedaction,
       allowCrossScopeEdges: writeOpts.allowCrossScopeEdges,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
     });
 
     const dryRun = await runLearningLoopLite(store, {
@@ -296,8 +292,6 @@ test("learning loop applies controlled forgetting tier transitions without delet
       maxTextLen: writeOpts.maxTextLen,
       piiRedaction: writeOpts.piiRedaction,
       allowCrossScopeEdges: writeOpts.allowCrossScopeEdges,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
     });
 
     const dryRun = await runLearningLoopLite(store, {

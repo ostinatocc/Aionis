@@ -4,9 +4,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import Fastify from "fastify";
-import { FakeEmbeddingProvider } from "../../src/embeddings/fake.ts";
+import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
-import { registerHostErrorHandler } from "../../src/host/http-host.ts";
+import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { PlanningContextRequest, PlanningContextRouteContractSchema } from "../../src/memory/schemas.ts";
 import { buildTrajectoryCompileLite } from "../../src/memory/trajectory-compile.ts";
 import { applyTrajectoryCompileExecutionKernel, augmentTrajectoryAwareRequest } from "../../src/memory/trajectory-compile-runtime.ts";
@@ -40,10 +40,8 @@ function buildEnv() {
     MAX_TEXT_LEN: 10_000,
     PII_REDACTION: false,
     ALLOW_CROSS_SCOPE_EDGES: false,
-    MEMORY_SHADOW_DUAL_WRITE_ENABLED: false,
-    MEMORY_SHADOW_DUAL_WRITE_STRICT: false,
     MEMORY_RECALL_TEXT_CONTEXT_TOKEN_BUDGET_DEFAULT: 4096,
-    MEMORY_RECALL_STAGE1_EXACT_FALLBACK_ON_EMPTY: true,
+    MEMORY_RECALL_STAGE1_EXACT_RECOVERY_ON_EMPTY: true,
     MEMORY_RECALL_ADAPTIVE_HARD_CAP_WAIT_MS: 0,
     MEMORY_PLANNING_CONTEXT_OPTIMIZATION_PROFILE_DEFAULT: "balanced",
     MEMORY_CONTEXT_ASSEMBLE_OPTIMIZATION_PROFILE_DEFAULT: "balanced",
@@ -60,25 +58,22 @@ async function buildApp() {
   const env = buildEnv();
   const guards = createRequestGuards({
     env,
-    embedder: FakeEmbeddingProvider,
+    embedder: DeterministicEmbeddingProvider,
     recallLimiter: null,
     debugEmbedLimiter: null,
     writeLimiter: null,
-    sandboxWriteLimiter: null,
-    sandboxReadLimiter: null,
     recallTextEmbedLimiter: null,
     recallInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
     writeInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
   });
 
   const app = Fastify();
-  registerHostErrorHandler(app);
+  registerRuntimeErrorHandler(app);
 
   registerMemoryContextRuntimeRoutes({
     app,
     env,
-    embedder: FakeEmbeddingProvider,
-    embeddedRuntime: null,
+    embedder: DeterministicEmbeddingProvider,
     liteWriteStore,
     liteRecallAccess: liteRecallStore.createRecallAccess(),
     recallTextEmbedBatcher: { stats: () => null },
@@ -138,8 +133,7 @@ async function buildApp() {
   registerHandoffRoutes({
     app,
     env,
-    embedder: FakeEmbeddingProvider,
-    embeddedRuntime: null,
+    embedder: DeterministicEmbeddingProvider,
     liteWriteStore,
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest as any,

@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { toVectorLiteral } from "../util/pgvector.js";
+import { toVectorLiteral } from "../util/vector-literal.js";
 import { hasNodeWorkflowAnchorSurface } from "../memory/node-execution-surface.js";
 import { RECALL_STORE_ACCESS_CAPABILITY_VERSION, adjustRecallCandidateSimilarityForTrust } from "./recall-access.js";
 import type {
@@ -323,7 +323,7 @@ export function createLiteRecallStore(
         capability_version: RECALL_STORE_ACCESS_CAPABILITY_VERSION,
         capabilities,
         stage1CandidatesAnn: stage1Candidates,
-        stage1CandidatesExactFallback: stage1Candidates,
+        stage1CandidatesExactRecovery: stage1Candidates,
         async stage2Edges(params: RecallStage2EdgesParams): Promise<RecallEdgeRow[]> {
           const rows = db.prepare(`
             SELECT id, scope, type, src_id, dst_id, weight, confidence, decay_rate, created_at, commit_id

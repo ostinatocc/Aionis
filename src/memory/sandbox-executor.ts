@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { lookup } from "node:dns/promises";
 import { mkdir } from "node:fs/promises";
 import { isIP } from "node:net";
-import { recordSandboxRunTelemetryRow, sandboxStoreAccessForClient } from "../store/sandbox-access.js";
+import { recordSandboxRunTelemetryRow, type SandboxStore } from "../store/sandbox-access.js";
 import { HttpError, badRequest } from "../util/http.js";
 import {
   ipInCidrs,
@@ -17,7 +17,6 @@ import {
   TERMINAL_SANDBOX_STATUSES,
   SandboxRunRow,
   SandboxRunStatus,
-  SandboxStore,
   asFiniteIntOrNull,
   clampOutputAppend,
   jsonObject,
@@ -248,8 +247,8 @@ export class SandboxExecutor {
     const prev = this.heartbeatTimers.get(id);
     if (prev) clearInterval(prev);
     const timer = setInterval(() => {
-      void this.store.withClient(async (client) => {
-        await sandboxStoreAccessForClient(client).touchRunningRun({ id });
+      void this.store.withClient(async (access) => {
+        await access.touchRunningRun({ id });
       }).catch(() => {
         // heartbeat failures are best-effort and should not crash executor loop
       });
@@ -266,8 +265,8 @@ export class SandboxExecutor {
     if (!this.config.enabled || this.shuttingDown || this.recoveryInFlight || this.config.recoveryPollIntervalMs <= 0) return;
     this.recoveryInFlight = true;
     try {
-      const staleRows = await this.store.withClient(async (client) => {
-        return await sandboxStoreAccessForClient(client).listStaleRunningRuns({
+      const staleRows = await this.store.withClient(async (access) => {
+        return await access.listStaleRunningRuns({
           staleAfterSeconds: Math.max(1, Math.trunc(this.config.staleAfterMs / 1000)),
           limit: this.config.recoveryBatchSize,
         });
@@ -746,14 +745,14 @@ export class SandboxExecutor {
   }
 
   private async claimQueuedRun(runId: string): Promise<SandboxRunRow | null> {
-    return await this.store.withTx(async (client) => {
-      return await sandboxStoreAccessForClient(client).claimQueuedRun({ id: runId });
+    return await this.store.withTx(async (access) => {
+      return await access.claimQueuedRun({ id: runId });
     });
   }
 
   private async loadRunningRun(runId: string): Promise<SandboxRunRow | null> {
-    return await this.store.withClient(async (client) => {
-      return await sandboxStoreAccessForClient(client).getRunningRun({ id: runId });
+    return await this.store.withClient(async (access) => {
+      return await access.getRunningRun({ id: runId });
     });
   }
 
@@ -769,8 +768,8 @@ export class SandboxExecutor {
       result: Record<string, unknown>;
     },
   ): Promise<void> {
-    await this.store.withClient(async (client) => {
-      const row = await sandboxStoreAccessForClient(client).finalizeRun({
+    await this.store.withClient(async (access) => {
+      const row = await access.finalizeRun({
         id: runId,
         status: args.status,
         stdoutText: args.stdout,
@@ -781,7 +780,7 @@ export class SandboxExecutor {
         resultJson: JSON.stringify(args.result),
       });
       if (row) {
-        await recordSandboxRunTelemetryRow(client, row);
+        await recordSandboxRunTelemetryRow(access, row);
       }
     });
   }
@@ -798,8 +797,8 @@ export class SandboxExecutor {
       result: Record<string, unknown>;
     },
   ): Promise<void> {
-    await this.store.withClient(async (client) => {
-      const row = await sandboxStoreAccessForClient(client).finalizeRunningRun({
+    await this.store.withClient(async (access) => {
+      const row = await access.finalizeRunningRun({
         id: runId,
         status: args.status,
         stdoutText: args.stdout,
@@ -810,7 +809,7 @@ export class SandboxExecutor {
         resultJson: JSON.stringify(args.result),
       });
       if (row) {
-        await recordSandboxRunTelemetryRow(client, row);
+        await recordSandboxRunTelemetryRow(access, row);
       }
     });
   }

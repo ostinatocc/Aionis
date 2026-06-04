@@ -83,9 +83,8 @@ export function buildReplayPlaybookCandidateSurface(args: {
 export function buildReplayDispatchSurface(args: {
   tenantId: string;
   scope: string;
-  decision: "deterministic_replay_executed" | "candidate_only" | "fallback_replay_executed";
+  decision: "deterministic_replay_executed" | "candidate_only";
   primaryInferenceSkipped: boolean;
-  fallbackExecuted: boolean;
   candidate: unknown;
   replay: unknown;
   deterministicGate: Record<string, unknown> | null;
@@ -96,13 +95,13 @@ export function buildReplayDispatchSurface(args: {
     dispatch: {
       decision: args.decision,
       primary_inference_skipped: args.primaryInferenceSkipped,
-      fallback_executed: args.fallbackExecuted,
+      candidate_only: args.decision === "candidate_only",
     },
     candidate: args.candidate,
     replay: args.replay,
     cost_signals: buildReplayCostSignals({
       deterministic_gate: args.deterministicGate,
-      dispatch: { fallback_executed: args.fallbackExecuted },
+      dispatch: { candidate_only: args.decision === "candidate_only" },
     }),
   };
 }

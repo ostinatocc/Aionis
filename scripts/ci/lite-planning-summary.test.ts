@@ -29,6 +29,7 @@ import {
   ExecutionRoutingSignalSummarySchema,
   ExecutionStrategySummarySchema,
   ExecutionSummaryV1Schema,
+  HistoryImpactSummarySchema,
   RuntimeVerificationRepairRecommendationSchema,
 } from "../../src/memory/schemas.ts";
 
@@ -658,6 +659,61 @@ test("buildPlanningSummary includes pattern trust totals and tool lists", () => 
   assert.deepEqual(summary.action_packet_summary.trusted_pattern_anchor_ids, ["p_stable"]);
   assert.deepEqual(summary.selected_memory_layers, ["L2", "L3"]);
   assert.deepEqual(summary.primary_savings_levers, ["anchor_first_recall"]);
+  assert.deepEqual(HistoryImpactSummarySchema.parse(summary.history_impact_summary), summary.history_impact_summary);
+  assert.deepEqual(summary.history_impact_summary, {
+    summary_version: "history_impact_summary_v1",
+    history_applied: true,
+    changed_next_run: true,
+    impact_level: "context_shaping",
+    affected_capabilities: ["continuity", "learning", "forgetting"],
+    continuity: {
+      continuity_carrier_count: 0,
+      static_blocks_selected: 2,
+      selected_memory_layer_count: 2,
+    },
+    learning: {
+      stable_workflow_count: 1,
+      candidate_workflow_count: 1,
+      promotion_ready_workflow_count: 0,
+      trusted_pattern_count: 1,
+      contested_pattern_count: 1,
+      active_policy_count: 0,
+      contested_policy_count: 0,
+    },
+    forgetting: {
+      substrate_mode: "stable",
+      forgotten_items: 0,
+      suppressed_pattern_count: 0,
+      differential_rehydration_candidate_count: 1,
+      stale_signal_count: 0,
+    },
+    learning_control: {
+      contract_trust: "advisory",
+      action_start_blocked: false,
+      authoritative_allowed_count: 0,
+      authoritative_blocked_count: 0,
+      stable_promotion_allowed_count: 0,
+      stable_promotion_blocked_count: 0,
+      primary_blockers: [],
+    },
+    runtime_entropy: {
+      profile_present: false,
+      controls_present: false,
+      entropy_level: null,
+      plasticity_level: null,
+      exploration_budget: null,
+      control_strength: null,
+    },
+    next_run_changes: [
+      "continuity_state_available",
+      "trusted_evidence_available",
+      "workflow_reuse_available",
+      "candidate_learning_visible",
+      "contested_memory_visible",
+      "rehydration_available",
+    ],
+    primary_reason: "prior memory changed the runtime context packet",
+  });
   assert.deepEqual(summary.continuity_carrier_summary, {
     total_count: 0,
     handoff_count: 0,
@@ -795,6 +851,61 @@ test("buildPlanningSummary makes first-step and planner explanation uncertainty-
   assert.equal(
     summary.planner_explanation,
     "workflow guidance: Fix export failure; candidate workflows visible but not yet promoted: Replay Episode: Fix export failure; selected tool: edit; trusted pattern support: edit; contested patterns visible but not trusted: bash; rehydration available: Fix export failure; supporting knowledge appended: 1; action retrieval uncertainty: moderate; workflow guidance is still candidate-grade and has not stabilized yet; recommended follow-up: inspect_context",
+  );
+});
+
+test("buildPlanningSummary does not count entropy visibility as history impact", () => {
+  const summary = buildPlanningSummary({
+    rules: { considered: 0, matched: 0 },
+    tools: {
+      selection: { selected: "inspect" },
+    },
+    layered_context: {
+      action_recall_packet: {
+        recommended_workflows: [],
+        candidate_workflows: [],
+        candidate_patterns: [],
+        trusted_patterns: [],
+        contested_patterns: [],
+        rehydration_candidates: [],
+        supporting_knowledge: [],
+      },
+    },
+    cost_signals: null,
+    context_est_tokens: 128,
+    context_compaction_profile: "balanced",
+    optimization_profile: "balanced",
+    recall_mode: "balanced",
+    experience_intelligence: {
+      action_intelligence_runtime_contract: {
+        runtime_entropy_profile: {
+          profile_version: "runtime_entropy_profile_v1",
+          entropy_level: "high",
+          exploration_budget: 1,
+          control_strength: 0.63,
+          plasticity_level: "high",
+          recall_breadth: "wide",
+          verification_depth: "normal",
+          promotion_threshold: "normal",
+          mutation_authority: "candidate_only",
+          runtime_signal_trend_posture: "none",
+          reason_codes: ["empty_history_requires_exploration"],
+          source_signals: [],
+          source_code_change_allowed: false,
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(HistoryImpactSummarySchema.parse(summary.history_impact_summary), summary.history_impact_summary);
+  assert.equal(summary.history_impact_summary.history_applied, false);
+  assert.equal(summary.history_impact_summary.changed_next_run, false);
+  assert.equal(summary.history_impact_summary.impact_level, "none");
+  assert.deepEqual(summary.history_impact_summary.affected_capabilities, []);
+  assert.deepEqual(summary.history_impact_summary.next_run_changes, ["runtime_entropy_visible"]);
+  assert.equal(
+    summary.history_impact_summary.primary_reason,
+    "no prior execution history changed this packet",
   );
 });
 
@@ -1209,7 +1320,7 @@ test("buildPlanningSummary classifies verifier lint/type phase and forces line-l
         passed: false,
         exit_code: 1,
         stderr_tail: [
-          "> p-map@7.0.4 test",
+          "> async-tools@1.0.0 test",
           "> xo && ava && tsd",
           "",
           "  index.js:210:8",
@@ -1298,17 +1409,17 @@ test("buildPlanningSummary classifies hidden contract phase separately from self
     edit_boundary_context: {
       allowed_edit_files: ["index.js", "test.js", "index.d.ts", "index.test-d.ts"],
       forbidden_edit_files: ["package.json", "readme.md"],
-      required_verifiers: ["node verifier.mjs p-locate-abort-signal"],
+      required_verifiers: ["node verifier.mjs async-helper-abort-signal"],
     },
     execution_evidence: [{
       verifier: {
-        command: "node verifier.mjs p-locate-abort-signal",
+        command: "node verifier.mjs async-helper-abort-signal",
         passed: false,
         exit_code: 1,
         stderr_tail: [
           "AssertionError [ERR_ASSERTION]: pLocate must reject with signal.reason when aborted during pending work: expected promise to reject",
-          "    at expectRejectsWithExactReason (file:///repo/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs:178:10)",
-          "    at async verifyPLocateAbortSignal (file:///repo/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs:211:3)",
+          "    at expectRejectsWithExactReason (file:///repo/external-verifiers/execution-contracts.mjs:178:10)",
+          "    at async verifyAsyncHelperAbortSignal (file:///repo/external-verifiers/execution-contracts.mjs:211:3)",
         ].join("\n"),
       },
     }],
@@ -1343,17 +1454,17 @@ test("buildPlanningSummary keeps TypeScript diagnostics ahead of hidden verifier
         "documentation/3-streams.md",
       ],
       forbidden_edit_files: ["readme.md", "package-lock.json"],
-      required_verifiers: ["node verifier.mjs got-upload-progress-json-form-issue-2435"],
+      required_verifiers: ["node verifier.mjs stream-client-contract-failure"],
     },
     execution_evidence: [{
       verifier: {
-        command: "node verifier.mjs got-upload-progress-json-form-issue-2435",
+        command: "node verifier.mjs stream-client-contract-failure",
         passed: false,
         exit_code: 1,
         stderr_tail: [
           "Error: command failed: npm run build",
-          "source/core/index.ts(7,8): error TS1192: Module 'node_modules/chunk-data/index' has no default export.",
-          "    at verifyGotUploadProgressJsonFormIssue (file:///repo/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs:320:3)",
+          "source/core/index.ts(7,8): error TS1192: Module 'node_modules/stream-parts/index' has no default export.",
+          "    at verifyStreamClientContractFailure (file:///repo/external-verifiers/execution-contracts.mjs:320:3)",
         ].join("\n"),
       },
     }],
@@ -1381,19 +1492,19 @@ test("buildPlanningSummary keeps hidden verifier assertion repair guidance gener
     optimization_profile: "balanced",
     recall_mode: "balanced",
     edit_boundary_context: {
-      allowed_edit_files: ["lib/picomatch.js", "test/api.picomatch.js"],
+      allowed_edit_files: ["lib/matcher.js", "test/api.matcher.js"],
       forbidden_edit_files: ["package.json", "README.md", "lib/parse.js"],
-      required_verifiers: ["node verifier.mjs picomatch-array-return-object"],
+      required_verifiers: ["node verifier.mjs matcher-object-contract"],
     },
     execution_evidence: [{
       verifier: {
-        command: "node verifier.mjs picomatch-array-return-object",
+        command: "node verifier.mjs matcher-object-contract",
         passed: false,
         exit_code: 1,
         stderr_tail: [
           "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:",
           "false !== true",
-          "    at verifyPicomatchArrayReturnObject (file:///repo/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs:182:10)",
+          "    at verifyMatcherObjectContract (file:///repo/external-verifiers/execution-contracts.mjs:182:10)",
           "operator: 'strictEqual'",
         ].join("\n"),
       },
@@ -1404,7 +1515,7 @@ test("buildPlanningSummary keeps hidden verifier assertion repair guidance gener
   assert.ok(repair);
   assert.deepEqual(RuntimeVerificationRepairRecommendationSchema.parse(repair), repair);
   assert.equal(repair.verifier_failure_phase_v1.phase, "hidden_contract_failure");
-  assert.equal(repair.verifier_failure_phase_v1.primary_files[0], "lib/picomatch.js");
+  assert.equal(repair.verifier_failure_phase_v1.primary_files[0], "lib/matcher.js");
   assert.ok(repair.verifier_failure_phase_v1.forbidden_next_actions.includes("write_tests_only"));
   assert.ok(repair.next_actions.some((action) => /Verifier assertion evidence/.test(action)));
   assert.match(repair.instruction, /scoped acceptance evidence/);
@@ -1424,12 +1535,12 @@ test("buildPlanningSummary lets latest test-contract evidence supersede older li
     edit_boundary_context: {
       allowed_edit_files: ["index.js", "test.js", "index.d.ts", "index.test-d.ts"],
       forbidden_edit_files: ["package.json", "readme.md"],
-      required_verifiers: ["node verifier.mjs p-locate-abort-signal"],
+      required_verifiers: ["node verifier.mjs async-helper-abort-signal"],
     },
     execution_evidence: [
       {
         verifier: {
-          command: "node verifier.mjs p-locate-abort-signal",
+          command: "node verifier.mjs async-helper-abort-signal",
           passed: false,
           exit_code: 1,
           stderr_tail: [
@@ -1440,7 +1551,7 @@ test("buildPlanningSummary lets latest test-contract evidence supersede older li
       },
       {
         verifier: {
-          command: "node verifier.mjs p-locate-abort-signal",
+          command: "node verifier.mjs async-helper-abort-signal",
           passed: false,
           exit_code: 1,
           stderr_tail: [
@@ -1472,18 +1583,18 @@ test("buildPlanningSummary keeps verifier test coverage evidence generic", () =>
     optimization_profile: "balanced",
     recall_mode: "balanced",
     edit_boundary_context: {
-      allowed_edit_files: ["lib/core/AxiosHeaders.js", "tests/unit/axiosHeaders.test.js"],
+      allowed_edit_files: ["lib/core/HeaderBag.js", "tests/unit/headerBag.test.js"],
       forbidden_edit_files: ["package.json", "README.md"],
-      required_verifiers: ["node verifier.mjs axios-set-cookie-to-string"],
+      required_verifiers: ["node verifier.mjs header-bag-array-serialization"],
     },
     execution_evidence: [{
       verifier: {
-        command: "node verifier.mjs axios-set-cookie-to-string",
+        command: "node verifier.mjs header-bag-array-serialization",
         passed: false,
         exit_code: 1,
         stderr_tail: [
-          "AssertionError [ERR_ASSERTION]: AxiosHeaders tests must preserve normal array header serialization coverage.",
-          "    at verifyAxiosSetCookieToString (file:///repo/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs:141:10)",
+          "AssertionError [ERR_ASSERTION]: HeaderBag tests must preserve normal array header serialization coverage.",
+          "    at verifyHeaderBagArraySerialization (file:///repo/external-verifiers/execution-contracts.mjs:141:10)",
         ].join("\n"),
       },
     }],
@@ -1493,8 +1604,8 @@ test("buildPlanningSummary keeps verifier test coverage evidence generic", () =>
   assert.ok(repair);
   assert.deepEqual(RuntimeVerificationRepairRecommendationSchema.parse(repair), repair);
   assert.equal(repair.verifier_failure_phase_v1.phase, "authored_test_failure");
-  assert.equal(repair.verifier_failure_phase_v1.primary_files[0], "lib/core/AxiosHeaders.js");
-  assert.match(repair.verifier_failure_phase_v1.recommended_focus, /lib\/core\/AxiosHeaders\.js/);
+  assert.equal(repair.verifier_failure_phase_v1.primary_files[0], "lib/core/HeaderBag.js");
+  assert.match(repair.verifier_failure_phase_v1.recommended_focus, /lib\/core\/HeaderBag\.js/);
   assert.ok(!repair.verifier_failure_phase_v1.forbidden_next_actions.includes("write_tests_only"));
   assert.ok(repair.next_actions.some((action) => /Verifier assertion evidence/.test(action)));
   assert.match(repair.instruction, /do not promote this as a project-specific rule/);
@@ -1515,17 +1626,17 @@ test("buildPlanningSummary keeps async assertion repair guidance generic", () =>
     edit_boundary_context: {
       allowed_edit_files: ["index.js", "test.js", "index.d.ts", "index.test-d.ts"],
       forbidden_edit_files: ["package.json", "readme.md"],
-      required_verifiers: ["node verifier.mjs p-map-iterable-abort-signal"],
+      required_verifiers: ["node verifier.mjs async-iterable-abort-signal"],
     },
     execution_evidence: [{
       verifier: {
-        command: "node verifier.mjs p-map-iterable-abort-signal",
+        command: "node verifier.mjs async-iterable-abort-signal",
         passed: false,
         exit_code: 1,
         stderr_tail: [
           "AssertionError [ERR_ASSERTION]: pMapIterable must reject with signal.reason when aborted while mapper work is pending: expected promise to reject",
-          "    at expectRejectsWithExactReason (file:///repo/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs:178:10)",
-          "    at async verifyPMapIterableAbortSignal (file:///repo/scripts/real-llm-eval/verifiers/github-real-project-contracts.mjs:323:3)",
+          "    at expectRejectsWithExactReason (file:///repo/external-verifiers/execution-contracts.mjs:178:10)",
+          "    at async verifyAsyncIterableAbortSignal (file:///repo/external-verifiers/execution-contracts.mjs:323:3)",
         ].join("\n"),
       },
     }],
@@ -1569,7 +1680,7 @@ test("buildPlanningSummary classifies provider failures without turning them int
       failed_tool_calls: [{
         tool_name: "read_file",
         output_signature: {
-          llm_api_error: "DeepSeek provider returned 429",
+          llm_api_error: "LLM provider returned 429",
         },
       }],
     }],
@@ -1687,7 +1798,7 @@ test("buildPlanningSummary classifies stale replace_lines anchors as edit failur
   assert.ok(repair.next_actions[0]?.startsWith("Use edit_failure_phase_v1 as evidence focus"));
 });
 
-test("buildPlanningSummary classifies no-op edit failures as non-repeatable edit phase", () => {
+test("buildPlanningSummary classifies unchanged edit failures as non-repeatable edit phase", () => {
   const summary = buildPlanningSummary({
     rules: { considered: 1, matched: 0 },
     tools: { selection: { selected: "edit" } },
@@ -1714,8 +1825,8 @@ test("buildPlanningSummary classifies no-op edit failures as non-repeatable edit
           path: "index.js",
         },
         output_signature: {
-          edit_noop: true,
-          error: "replacement produced no changes; non_noop_required",
+          edit_unchanged: true,
+          error: "replacement produced no changes",
         },
       }],
     }],
@@ -1724,10 +1835,10 @@ test("buildPlanningSummary classifies no-op edit failures as non-repeatable edit
   const repair = summary.first_step_recommendation?.verification_repair_v1;
   assert.ok(repair);
   assert.deepEqual(RuntimeVerificationRepairRecommendationSchema.parse(repair), repair);
-  assert.equal(repair.edit_failure_phase_v1?.phase, "noop_edit");
+  assert.equal(repair.edit_failure_phase_v1?.phase, "unchanged_edit");
   assert.equal(repair.edit_failure_phase_v1?.source_tool, "replace_text");
   assert.ok(repair.edit_failure_phase_v1?.forbidden_next_actions.includes("repeat_same_edit"));
-  assert.match(repair.edit_failure_phase_v1?.recommended_focus ?? "", /non-noop semantic edit/);
+  assert.match(repair.edit_failure_phase_v1?.recommended_focus ?? "", /meaningful semantic edit/);
   assert.match(repair.edit_failure_phase_v1?.recommended_focus ?? "", /Do not repeat the identical replacement/);
 });
 
@@ -1774,7 +1885,7 @@ test("buildPlanningSummary classifies apply_patch payload failures without proje
   assert.equal(repair.edit_failure_phase_v1?.line_hints[0]?.line, 45);
   assert.ok(repair.edit_failure_phase_v1?.forbidden_next_actions.includes("repeat_same_patch"));
   assert.match(repair.edit_failure_phase_v1?.recommended_focus ?? "", /compact replace_lines|small apply_patch hunk/);
-  assert.doesNotMatch(repair.edit_failure_phase_v1?.recommended_focus ?? "", /array matcher|returnObject|upload progress/);
+  assert.doesNotMatch(repair.edit_failure_phase_v1?.recommended_focus ?? "", /project-specific recipe|literal verifier answer/);
 });
 
 test("buildAssemblySummary surfaces semantic forgetting, relocation, and rehydration counts", () => {

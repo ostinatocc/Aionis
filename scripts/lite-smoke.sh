@@ -46,12 +46,6 @@ fi
 PORT="${PORT:-$(pick_free_port)}"
 BASE_URL="http://127.0.0.1:${PORT}"
 LOG_FILE="${TMP_DIR}/lite-smoke.log"
-DEFAULT_SANDBOX_MODE="local_process"
-if [[ "${LITE_SANDBOX_PROFILE:-}" == "local_process_echo" ]]; then
-  DEFAULT_SANDBOX_MODE="local_process"
-fi
-EXPECTED_SANDBOX_MODE="${SMOKE_SANDBOX_EXPECTED_MODE:-${SANDBOX_EXECUTOR_MODE:-${DEFAULT_SANDBOX_MODE}}}"
-EXPECTED_SANDBOX_EXECUTOR="${SMOKE_SANDBOX_EXPECTED_EXECUTOR:-${EXPECTED_SANDBOX_MODE}}"
 
 cleanup() {
   if [[ -n "${PID:-}" ]]; then
@@ -66,9 +60,8 @@ trap cleanup EXIT
 
 LITE_WRITE_SQLITE_PATH="${TMP_DIR}/write.sqlite" \
 LITE_REPLAY_SQLITE_PATH="${TMP_DIR}/replay.sqlite" \
-LITE_SANDBOX_PROFILE="${LITE_SANDBOX_PROFILE:-local_process_echo}" \
 PORT="${PORT}" \
-bash apps/lite/scripts/start-lite-app.sh >"${LOG_FILE}" 2>&1 &
+bash scripts/start-lite.sh >"${LOG_FILE}" 2>&1 &
 PID=$!
 
 ok=0
@@ -86,7 +79,7 @@ if [[ "${ok}" != "1" ]]; then
   exit 1
 fi
 
-node - <<'JS' "${TMP_DIR}/health.json" "${EXPECTED_SANDBOX_MODE}"
+node - <<'JS' "${TMP_DIR}/health.json"
 const fs = require("fs");
 const health = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 if (health?.runtime?.edition !== "lite") {
@@ -98,10 +91,6 @@ if (health?.storage?.backend !== "lite_sqlite") {
   process.exit(1);
 }
 const expectedMode = process.argv[3];
-if (health?.sandbox?.enabled !== true || health?.sandbox?.mode !== expectedMode) {
-  console.error(`expected enabled ${expectedMode} sandbox, got ${JSON.stringify(health?.sandbox ?? null)}`);
-  process.exit(1);
-}
 if (!health?.lite?.stores?.write || !health?.lite?.stores?.recall) {
   console.error("expected lite health stores for write and recall");
   process.exit(1);
@@ -110,70 +99,6 @@ console.log(JSON.stringify({
   ok: true,
   runtime: health.runtime,
   storage: { backend: health.storage.backend },
-  sandbox: { enabled: health.sandbox.enabled, mode: health.sandbox.mode },
-}, null, 2));
-JS
-
-curl -fsS -X POST "${BASE_URL}/v1/memory/sandbox/sessions" \
-  -H 'content-type: application/json' \
-  -d '{"actor":"lite-smoke"}' \
-  > "${TMP_DIR}/sandbox-session.json"
-
-SANDBOX_SESSION_ID="$(node - <<'JS' "${TMP_DIR}/sandbox-session.json"
-const fs = require("fs");
-const created = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-const sessionId = created?.session?.session_id;
-if (!sessionId) {
-  console.error(JSON.stringify(created, null, 2));
-  process.exit(1);
-}
-process.stdout.write(String(sessionId));
-JS
-)"
-
-curl -fsS -X POST "${BASE_URL}/v1/memory/sandbox/execute" \
-  -H 'content-type: application/json' \
-  -d "{\"session_id\":\"${SANDBOX_SESSION_ID}\",\"actor\":\"lite-smoke\",\"mode\":\"sync\",\"action\":{\"kind\":\"command\",\"argv\":[\"echo\",\"lite-sandbox-smoke\"]}}" \
-  > "${TMP_DIR}/sandbox-execute.json"
-
-SANDBOX_RUN_ID="$(node - <<'JS' "${TMP_DIR}/sandbox-execute.json" "${EXPECTED_SANDBOX_EXECUTOR}"
-const fs = require("fs");
-const run = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-const expectedExecutor = process.argv[3];
-if (run?.run?.status !== "succeeded" || run?.run?.result?.executor !== expectedExecutor) {
-  console.error(JSON.stringify(run, null, 2));
-  process.exit(1);
-}
-process.stdout.write(String(run.run.run_id));
-JS
-)"
-
-curl -fsS -X POST "${BASE_URL}/v1/memory/sandbox/runs/logs" \
-  -H 'content-type: application/json' \
-  -d "{\"run_id\":\"${SANDBOX_RUN_ID}\"}" \
-  > "${TMP_DIR}/sandbox-logs.json"
-
-node - <<'JS' "${TMP_DIR}/sandbox-execute.json" "${TMP_DIR}/sandbox-logs.json" "${EXPECTED_SANDBOX_EXECUTOR}"
-const fs = require("fs");
-const executed = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-const logs = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
-const expectedExecutor = process.argv[4];
-const stdout = String(executed?.run?.output?.stdout ?? "");
-const logsStdout = String(logs?.logs?.stdout ?? "");
-if (!stdout.includes("lite-sandbox-smoke")) {
-  console.error(JSON.stringify(executed, null, 2));
-  process.exit(1);
-}
-if (!logsStdout.includes("lite-sandbox-smoke")) {
-  console.error(JSON.stringify(logs, null, 2));
-  process.exit(1);
-}
-console.log(JSON.stringify({
-  sandbox_kernel_ok: true,
-  session_id: executed.run.session_id,
-  run_id: executed.run.run_id,
-  status: executed.run.status,
-  executor: expectedExecutor,
 }, null, 2));
 JS
 

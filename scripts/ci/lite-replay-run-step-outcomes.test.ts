@@ -44,7 +44,7 @@ test("replay run step outcome helpers build pending and success envelopes", () =
     reason: "sandbox_async_execution_pending",
   });
   assert.equal(pending.writeStatus, "partial");
-  assert.equal(pending.repairApplied, true);
+  assert.equal(pending.repairApplied, false);
 
   const success = buildReplaySuccessStepArtifacts({
     stepIndex: 1,
@@ -93,7 +93,8 @@ test("replay run step outcome helpers build failure and guided partial envelopes
     resultSummary: { summary: "partial" },
     signature,
     postconditions,
-    repair: { summary_version: "repair_patch_v1" },
+    repair: { kind: "agent_repair_request" },
   });
-  assert.equal((guided.writeOutputSignature.repair as { summary_version: string }).summary_version, "repair_patch_v1");
+  assert.equal((guided.writeOutputSignature.repair as { kind: string }).kind, "agent_repair_request");
+  assert.equal((guided.report as { repair_applied?: boolean }).repair_applied, false);
 });

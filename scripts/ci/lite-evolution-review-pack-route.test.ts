@@ -5,9 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
-import { FakeEmbeddingProvider } from "../../src/embeddings/fake.ts";
+import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
-import { registerHostErrorHandler } from "../../src/host/http-host.ts";
+import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { buildPolicyLearningControlContract } from "../../src/memory/evolution-inspect.ts";
 import { buildExecutionContractFromProjection } from "../../src/memory/execution-contract.ts";
 import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
@@ -57,26 +57,22 @@ function registerApp(args: {
   const env = buildEnv();
   const guards = createRequestGuards({
     env,
-    embedder: FakeEmbeddingProvider,
+    embedder: DeterministicEmbeddingProvider,
     recallLimiter: null,
     debugEmbedLimiter: null,
     writeLimiter: null,
-    sandboxWriteLimiter: null,
-    sandboxReadLimiter: null,
     recallTextEmbedLimiter: null,
     recallInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
     writeInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
   });
 
-  registerHostErrorHandler(args.app);
+  registerRuntimeErrorHandler(args.app);
   registerMemoryAccessRoutes({
     app: args.app,
     env,
-    embedder: FakeEmbeddingProvider,
+    embedder: DeterministicEmbeddingProvider,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
-    writeAccessShadowMirrorV2: false,
-    requireStoreFeatureCapability: () => {},
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
     enforceRateLimit: guards.enforceRateLimit,
@@ -88,7 +84,7 @@ function registerApp(args: {
 
 async function seedEvolutionFixture(dbPath: string) {
   const liteWriteStore = createLiteWriteStore(dbPath);
-  const [sharedEmbedding] = await FakeEmbeddingProvider.embed(["repair export failure in node tests"]);
+  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed(["repair export failure in node tests"]);
   const trustedPattern = MemoryAnchorV1Schema.parse({
     anchor_kind: "pattern",
     anchor_level: "L3",
@@ -228,7 +224,7 @@ async function seedEvolutionFixture(dbPath: string) {
             },
           },
           embedding: sharedEmbedding,
-          embedding_model: FakeEmbeddingProvider.name,
+          embedding_model: DeterministicEmbeddingProvider.name,
           salience: 0.8,
           importance: 0.9,
           confidence: 0.9,
@@ -260,7 +256,7 @@ async function seedEvolutionFixture(dbPath: string) {
             },
           },
           embedding: sharedEmbedding,
-          embedding_model: FakeEmbeddingProvider.name,
+          embedding_model: DeterministicEmbeddingProvider.name,
           salience: 0.8,
           importance: 0.9,
           confidence: 0.88,
@@ -344,7 +340,7 @@ async function seedEvolutionFixture(dbPath: string) {
             },
           },
           embedding: sharedEmbedding,
-          embedding_model: FakeEmbeddingProvider.name,
+          embedding_model: DeterministicEmbeddingProvider.name,
           salience: 0.72,
           importance: 0.82,
           confidence: 0.74,
@@ -362,12 +358,10 @@ async function seedEvolutionFixture(dbPath: string) {
     null,
   );
   await liteWriteStore.withTx(() =>
-    applyMemoryWrite({} as any, prepared, {
+    applyMemoryWrite(prepared, {
       maxTextLen: 10000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
       associativeLinkOrigin: "memory_write",
       write_access: liteWriteStore,
     }),
@@ -567,13 +561,13 @@ test("memory evolution review-pack route exposes stable workflow and reviewer-fr
           delegation_packets: [{
             version: 1,
             role: "patch",
-            mission: "Apply the export fallback patch before retrying tests.",
+            mission: "Apply the export recovery patch before retrying tests.",
             working_set: ["src/routes/export.ts"],
             acceptance_checks: ["npm run -s test:lite -- export"],
             output_contract: "Return applied patch metadata.",
-            preferred_artifact_refs: ["artifact://repair-export/fallback-patch"],
+            preferred_artifact_refs: ["artifact://repair-export/recovery-patch"],
             inherited_evidence: [],
-            routing_reason: "fallback memory patch route",
+            routing_reason: "recovery memory patch route",
             task_family: "task:repair_export",
             family_scope: "aionis://runtime/repair-export",
             source_mode: "memory_only",
@@ -581,7 +575,7 @@ test("memory evolution review-pack route exposes stable workflow and reviewer-fr
           delegation_returns: [],
           artifact_routing_records: [{
             version: 1,
-            ref: "artifact://repair-export/fallback-patch",
+            ref: "artifact://repair-export/recovery-patch",
             ref_kind: "artifact",
             route_role: "patch",
             route_intent: "memory_guided",

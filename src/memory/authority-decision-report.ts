@@ -100,9 +100,9 @@ function authorityRules(...sourceIds: string[]): string[] {
   return [...rules];
 }
 
-function nonEmptyReasons(reasons: readonly string[], fallback: string): string[] {
+function nonEmptyReasons(reasons: readonly string[], defaultValue: string): string[] {
   const normalized = reasons.map((reason) => reason.trim()).filter(Boolean);
-  return normalized.length > 0 ? normalized : [fallback];
+  return normalized.length > 0 ? normalized : [defaultValue];
 }
 
 function decision(args: Omit<RuntimeAuthorityDecisionV1, "decision_version">): RuntimeAuthorityDecisionV1 {

@@ -23,8 +23,8 @@ function normalizeSelectionPolicy(input: unknown) {
   const preferredLayers = Array.isArray(raw.preferred_layers)
     ? raw.preferred_layers.map((entry) => String(entry ?? "").trim()).filter(Boolean)
     : [];
-  const fallbackLayers = Array.isArray(raw.fallback_layers)
-    ? raw.fallback_layers.map((entry) => String(entry ?? "").trim()).filter(Boolean)
+  const secondaryLayers = Array.isArray(raw.secondary_layers)
+    ? raw.secondary_layers.map((entry) => String(entry ?? "").trim()).filter(Boolean)
     : [];
   const trustAnchorLayers = Array.isArray(raw.trust_anchor_layers)
     ? raw.trust_anchor_layers.map((entry) => String(entry ?? "").trim()).filter(Boolean)
@@ -35,7 +35,7 @@ function normalizeSelectionPolicy(input: unknown) {
   return {
     name: typeof raw.name === "string" ? raw.name : null,
     preferred_layers: preferredLayers,
-    fallback_layers: fallbackLayers,
+    secondary_layers: secondaryLayers,
     trust_anchor_layers: trustAnchorLayers,
     source: typeof raw.source === "string" ? raw.source : "unknown",
     requested_allowed_layers: requestedAllowedLayers,
@@ -217,17 +217,17 @@ export function buildRecallObservability(args: {
     source?: string;
   } | null;
   stage1?: {
-    mode?: "ann" | "exact_fallback";
+    mode?: "ann" | "exact_recovery";
     ann_seed_count?: number;
     final_seed_count?: number;
-    exact_fallback_enabled?: boolean;
-    exact_fallback_attempted?: boolean;
+    exact_recovery_enabled?: boolean;
+    exact_recovery_attempted?: boolean;
   } | null;
   neighborhood_counts?: { nodes?: number; edges?: number } | null;
 }) {
   const stageTimings = {
     stage1_candidates_ann_ms: args.timings["stage1_candidates_ann"] ?? 0,
-    stage1_candidates_exact_fallback_ms: args.timings["stage1_candidates_exact_fallback"] ?? 0,
+    stage1_candidates_exact_recovery_ms: args.timings["stage1_candidates_exact_recovery"] ?? 0,
     stage2_edges_ms: args.timings["stage2_edges"] ?? 0,
     stage2_nodes_ms: args.timings["stage2_nodes"] ?? 0,
     stage2_spread_ms: args.timings["stage2_spread"] ?? 0,

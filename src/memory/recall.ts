@@ -1,10 +1,7 @@
-import type pg from "pg";
 import { performance } from "node:perf_hooks";
-import { assertDim, toVectorLiteral } from "../util/pgvector.js";
-import { capabilityContract } from "../capability-contract.js";
+import { assertDim, toVectorLiteral } from "../util/vector-literal.js";
 import {
   assertRecallStoreAccessContract,
-  createPostgresRecallStoreAccess,
   type RecallCandidate,
   type RecallEdgeRow,
   type RecallNodeRow,
@@ -33,6 +30,7 @@ import {
   toRecallNodeDto,
 } from "./recall-serialization.js";
 import { buildRuntimeToolHintsFromAnchorNodes } from "./runtime-tool-hints.js";
+import { buildAionisMemoryPacket } from "./product-output-assembler.js";
 
 export type RecallAuth = {
   allow_debug_embeddings: boolean;
@@ -43,7 +41,7 @@ export type RecallTelemetry = {
 };
 
 export type MemoryRecallOptions = {
-  stage1_exact_fallback_on_empty?: boolean;
+  stage1_exact_recovery_on_empty?: boolean;
   recall_access?: RecallStoreAccess;
   unsafe_allow_drop_trust_anchors?: boolean;
   unsafe_apply_layer_policy_to_retrieval?: boolean;
@@ -55,6 +53,25 @@ type EdgeRow = RecallEdgeRow;
 
 function isActionRecallEndpoint(endpoint: "recall" | "recall_text" | "planning_context" | "context_assemble"): boolean {
   return endpoint === "planning_context" || endpoint === "context_assemble";
+}
+
+function routeForRecallEndpoint(endpoint: "recall" | "recall_text" | "planning_context" | "context_assemble"): string {
+  if (endpoint === "recall_text") return "/v1/memory/recall_text";
+  if (endpoint === "planning_context") return "/v1/memory/planning/context";
+  if (endpoint === "context_assemble") return "/v1/memory/context/assemble";
+  return "/v1/memory/recall";
+}
+
+function compactProducerIds(nodes: Array<{ producer_agent_id?: string | null }>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const node of nodes) {
+    const id = typeof node.producer_agent_id === "string" ? node.producer_agent_id.trim() : "";
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out.slice(0, 24);
 }
 
 function enforceHardContract(parsed: MemoryRecallInput, auth: RecallAuth) {
@@ -69,7 +86,6 @@ function enforceHardContract(parsed: MemoryRecallInput, auth: RecallAuth) {
 }
 
 export async function memoryRecallParsed(
-  client: pg.PoolClient | null,
   parsed: MemoryRecallInput,
   defaultScope: string,
   defaultTenantId: string,
@@ -93,7 +109,7 @@ export async function memoryRecallParsed(
     unsafe_allow_drop_trust_anchors: options?.unsafe_allow_drop_trust_anchors === true,
     internal_allow_l4_selection: options?.internal_allow_l4_selection === true,
   });
-  const stage1ExactFallbackOnEmpty = options?.stage1_exact_fallback_on_empty ?? true;
+  const stage1ExactRecoveryOnEmpty = options?.stage1_exact_recovery_on_empty ?? true;
   assertDim(parsed.query_embedding, 1536);
 
   enforceHardContract(parsed, auth);
@@ -109,9 +125,9 @@ export async function memoryRecallParsed(
   }
 
   const oversample = Math.max(parsed.limit, Math.min(1000, parsed.limit * 5));
-  const recallAccess = options?.recall_access ?? (client ? createPostgresRecallStoreAccess(client) : null);
+  const recallAccess = options?.recall_access ?? null;
   if (!recallAccess) {
-    throw new Error("memoryRecallParsed requires recall_access when no postgres client is provided");
+    throw new Error("memoryRecallParsed requires explicit recall_access");
   }
   assertRecallStoreAccessContract(recallAccess);
 
@@ -129,12 +145,12 @@ export async function memoryRecallParsed(
 
   let seeds = stage1Ann;
   const stage1AnnSeedCount = seeds.length;
-  const stage1ExactFallbackAttempted = stage1AnnSeedCount === 0 && stage1ExactFallbackOnEmpty;
-  let stage1Mode: "ann" | "exact_fallback" = "ann";
+  const stage1ExactRecoveryAttempted = stage1AnnSeedCount === 0 && stage1ExactRecoveryOnEmpty;
+  let stage1Mode: "ann" | "exact_recovery" = "ann";
 
-  if (stage1ExactFallbackAttempted) {
-    const stage1Exact = await timed("stage1_candidates_exact_fallback", () =>
-      recallAccess.stage1CandidatesExactFallback({
+  if (stage1ExactRecoveryAttempted) {
+    const stage1Exact = await timed("stage1_candidates_exact_recovery", () =>
+      recallAccess.stage1CandidatesExactRecovery({
         queryEmbedding: parsed.query_embedding,
         scope,
         oversample,
@@ -144,7 +160,7 @@ export async function memoryRecallParsed(
       }),
     );
     seeds = stage1Exact;
-    stage1Mode = "exact_fallback";
+    stage1Mode = "exact_recovery";
   }
 
   const outSeeds = seeds.map((s) => {
@@ -156,6 +172,25 @@ export async function memoryRecallParsed(
   const seedIds = seeds.map((s) => s.id);
 
   if (seedIds.length === 0) {
+    const aionisMemoryPacket = buildAionisMemoryPacket({
+      tenant_id: tenancy.tenant_id,
+      scope: tenancy.scope,
+      actor: {
+        consumer_agent_id: consumerAgentId,
+        consumer_team_id: consumerTeamId,
+        producer_agent_ids: [],
+      },
+      query: {
+        source: endpoint === "recall" ? "embedding" : "text",
+        embedding_dims: parsed.query_embedding.length,
+      },
+      nodes: [],
+      context_items: [],
+      ranked: [],
+      source_map: {
+        routes_used: [routeForRecallEndpoint(endpoint)],
+      },
+    });
     return {
       scope: tenancy.scope,
       tenant_id: tenancy.tenant_id,
@@ -189,6 +224,7 @@ export async function memoryRecallParsed(
         rehydration_candidates: [],
         supporting_knowledge: [],
       },
+      aionis_memory_packet: aionisMemoryPacket,
       ...(parsed.return_debug
         ? {
             debug: {
@@ -198,8 +234,8 @@ export async function memoryRecallParsed(
                 mode: stage1Mode,
                 ann_seed_count: stage1AnnSeedCount,
                 final_seed_count: 0,
-                exact_fallback_enabled: stage1ExactFallbackOnEmpty,
-                exact_fallback_attempted: stage1ExactFallbackAttempted,
+                exact_recovery_enabled: stage1ExactRecoveryOnEmpty,
+                exact_recovery_attempted: stage1ExactRecoveryAttempted,
               },
             },
           }
@@ -436,8 +472,27 @@ export async function memoryRecallParsed(
     runtimeToolHints: runtimeToolHints as unknown as Array<Record<string, unknown>>,
     contextItems: context_items as unknown as Array<Record<string, unknown>>,
   });
+  const aionisMemoryPacket = buildAionisMemoryPacket({
+    tenant_id: tenancy.tenant_id,
+    scope: tenancy.scope,
+    actor: {
+      consumer_agent_id: consumerAgentId,
+      consumer_team_id: consumerTeamId,
+      producer_agent_ids: compactProducerIds(outNodeRows),
+    },
+    query: {
+      source: endpoint === "recall" ? "embedding" : "text",
+      embedding_dims: parsed.query_embedding.length,
+    },
+    nodes: outNodeRows,
+    context_items,
+    ranked,
+    source_map: {
+      routes_used: [routeForRecallEndpoint(endpoint)],
+    },
+  });
 
-  // DTO serialization (B): stable, minimal by default.
+  // DTO serialization (B): stable and compact by default.
   const outNodes = outNodeRows.map((node) => toRecallNodeDto(node, parsed, buildNodeUri));
   const outEdges = outEdgeRows.map((edge) =>
     toRecallEdgeDto(edge, parsed.include_meta, buildEdgeUri, buildCommitUri),
@@ -451,15 +506,12 @@ export async function memoryRecallParsed(
   let embedding_debug: any = undefined;
   if (parsed.return_debug && parsed.include_embeddings) {
     if (!recallAccess.capabilities.debug_embeddings) {
-      const spec = capabilityContract("debug_embeddings");
       badRequest(
         "debug_embeddings_backend_unsupported",
         "include_embeddings is not supported by current backend capability (debug_embeddings=false)",
         {
           capability: "debug_embeddings",
-          failure_mode: spec.failure_mode,
           degraded_mode: "feature_disabled",
-          fallback_applied: false,
         },
       );
     }
@@ -526,6 +578,7 @@ export async function memoryRecallParsed(
       },
       runtime_tool_hints: runtimeToolHints,
       action_recall_packet: actionRecallPacket,
+      aionis_memory_packet: aionisMemoryPacket,
     ...(parsed.return_debug
       ? {
           debug: {
@@ -536,8 +589,8 @@ export async function memoryRecallParsed(
               mode: stage1Mode,
               ann_seed_count: stage1AnnSeedCount,
               final_seed_count: seeds.length,
-              exact_fallback_enabled: stage1ExactFallbackOnEmpty,
-              exact_fallback_attempted: stage1ExactFallbackAttempted,
+              exact_recovery_enabled: stage1ExactRecoveryOnEmpty,
+              exact_recovery_attempted: stage1ExactRecoveryAttempted,
             },
           },
         }
@@ -546,12 +599,11 @@ export async function memoryRecallParsed(
 }
 
 export async function memoryRecall(
-  client: pg.PoolClient,
   body: unknown,
   defaultScope: string,
   defaultTenantId: string,
   auth: RecallAuth,
 ) {
   const parsed = MemoryRecallRequest.parse(body);
-  return memoryRecallParsed(client, parsed, defaultScope, defaultTenantId, auth);
+  return memoryRecallParsed(parsed, defaultScope, defaultTenantId, auth);
 }

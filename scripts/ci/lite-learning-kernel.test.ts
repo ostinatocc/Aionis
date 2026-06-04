@@ -145,17 +145,17 @@ test("learning kernel declares the narrow lifecycle vocabulary", () => {
 test("learning decision kernel blocks generic automatic feedback but admits concrete learning evidence", () => {
   const genericAutomatic = decideToolsFeedbackLearning({
     context: {
-      telemetry_source: "host_post_tool_use",
+      telemetry_source: "agent_post_tool_use",
     },
     outcome: "positive",
     sourceRuleIds: [],
   });
-  assert.equal(genericAutomatic.automaticHostToolFeedback, true);
+  assert.equal(genericAutomatic.automaticAgentToolFeedback, true);
   assert.equal(genericAutomatic.shouldWritePatternAnchor, false);
 
   const targetedAutomatic = decideToolsFeedbackLearning({
     context: {
-      telemetry_source: "host_post_tool_use",
+      telemetry_source: "agent_post_tool_use",
       execution: {
         target_files: ["src/routes/export.ts"],
         workflow_steps: ["inspect export mismatch", "patch targeted file"],
@@ -169,7 +169,7 @@ test("learning decision kernel blocks generic automatic feedback but admits conc
 
   const ruleBackedAutomatic = decideToolsFeedbackLearning({
     context: {
-      telemetry_source: "host_post_tool_use",
+      telemetry_source: "agent_post_tool_use",
     },
     outcome: "negative",
     sourceRuleIds: ["rule-1"],
@@ -341,7 +341,6 @@ test("learning kernel facade suppresses and unsuppresses a learned pattern witho
       PII_REDACTION: false,
     } as any,
     embedder: null,
-    embeddedRuntime: null,
     liteRecallAccess: {} as any,
     liteWriteStore: store,
   });

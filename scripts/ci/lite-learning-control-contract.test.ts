@@ -16,9 +16,9 @@ import {
   buildPromoteMemoryLearningControlReviewProvider,
 } from "../../src/memory/learning-control-provider-factory.ts";
 import {
-  createStaticFormPatternLearningControlReviewProvider,
-  createStaticPromoteMemoryLearningControlReviewProvider,
-} from "../../src/memory/learning-control-provider-static.ts";
+  createEvidenceFormPatternLearningControlReviewProvider,
+  createEvidencePromoteMemoryLearningControlReviewProvider,
+} from "../../src/memory/learning-control-provider-evidence.ts";
 import {
   createModelBackedFormPatternLearningControlReviewProvider,
   createModelBackedPromoteMemoryLearningControlReviewProvider,
@@ -88,7 +88,6 @@ test("focused runtime source has no stale learning-control boundary names", () =
   const staleControlledToken = "govern" + "ed";
   const files = [
     ...walkFiles(path.join(repoRoot, "src")),
-    ...walkFiles(path.join(repoRoot, "packages/full-sdk/src")),
   ].filter((file) => file.endsWith(".ts") || file.endsWith(".js") || file.endsWith(".mjs"));
 
   for (const file of files) {
@@ -137,7 +136,7 @@ test("learning control model client and provider factories are canonical", async
 
   const promoteProvider = buildPromoteMemoryLearningControlReviewProvider({
     modelClientMode: "off",
-    staticEnabled: true,
+    evidenceEnabled: true,
   });
   assert.ok(promoteProvider);
   const promoteReview = await promoteProvider.resolveReviewResult({
@@ -153,10 +152,10 @@ test("learning control model client and provider factories are canonical", async
 });
 
 test("learning control concrete providers and model clients are canonical", async () => {
-  const staticFormProvider = createStaticFormPatternLearningControlReviewProvider();
-  const staticPromoteProvider = createStaticPromoteMemoryLearningControlReviewProvider();
-  assert.equal(typeof staticFormProvider.resolveReviewResult, "function");
-  assert.equal(typeof staticPromoteProvider.resolveReviewResult, "function");
+  const evidenceFormProvider = createEvidenceFormPatternLearningControlReviewProvider();
+  const evidencePromoteProvider = createEvidencePromoteMemoryLearningControlReviewProvider();
+  assert.equal(typeof evidenceFormProvider.resolveReviewResult, "function");
+  assert.equal(typeof evidencePromoteProvider.resolveReviewResult, "function");
 
   const modelBackedFormProvider = createModelBackedFormPatternLearningControlReviewProvider({
     modelClient: {

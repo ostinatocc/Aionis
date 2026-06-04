@@ -15,7 +15,6 @@ import {
   type PolicyLearningControlContract,
 } from "../memory/schemas.js";
 import { selectTools } from "../memory/tools-select.js";
-import type { EmbeddedMemoryRuntime } from "../store/embedded-memory-runtime.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
 import type { RecallStoreAccess } from "../store/recall-access.js";
 
@@ -61,7 +60,6 @@ export async function buildLivePolicyLearningControlRouteContext(args: {
   body: unknown;
   env: Env;
   embedder: EmbeddingProvider | null;
-  embeddedRuntime: EmbeddedMemoryRuntime | null;
   liteRecallAccess: RecallStoreAccess;
   liteWriteStore: LiteWriteStore;
 }): Promise<PolicyLearningControlRouteContext> {
@@ -93,9 +91,7 @@ export async function buildLivePolicyLearningControlRouteContext(args: {
     args.env.MEMORY_TENANT_ID,
     args.env.LITE_LOCAL_ACTOR_ID,
   );
-  const tools = await selectTools(
-    null,
-    {
+  const tools = await selectTools({
       tenant_id: parsed.tenant_id,
       scope: parsed.scope,
       run_id: parsed.run_id,
@@ -113,7 +109,6 @@ export async function buildLivePolicyLearningControlRouteContext(args: {
     args.env.MEMORY_SCOPE,
     args.env.MEMORY_TENANT_ID,
     {
-      embeddedRuntime: args.embeddedRuntime,
       liteWriteStore: args.liteWriteStore,
       recallAccess: args.liteRecallAccess,
       embedder: args.embedder,

@@ -8,7 +8,7 @@ export type ToolDecision = {
   preferred: string[];
   ordered: string[];
   selected: string | null;
-  fallback?: {
+  policy_relaxation?: {
     applied: boolean;
     reason: "none" | "allowlist_filtered_all" | "deny_filtered_all";
     note: string;
@@ -57,24 +57,24 @@ export function applyToolPolicy(candidatesIn: string[], patch: PolicyPatch, opts
 
   // Primary mode: apply allowlist (if present) + denylist.
   let { allowed, denied: deniedOut } = applyAllowDeny(true);
-  let fallback: ToolDecision["fallback"] = {
+  let policyRelaxation: ToolDecision["policy_relaxation"] = {
     applied: false,
     reason: "none",
-    note: "no fallback applied",
+    note: "no policy relaxation applied",
     effective_mode: allowSet ? "allow_and_deny" : "deny_only",
   };
 
-  // If strict=false and allow+deny filtered out everything, fall back to deny-only.
-  // This preserves safety (deny is hard), but avoids "no tools selected" when allowlist is too strict.
+  // If strict=false and allow+deny filtered out everything, relax to deny-only.
+  // This preserves safety because deny rules remain hard.
   if (!opts.strict && allowed.length === 0 && allowSet) {
     const fb = applyAllowDeny(false);
     allowed = fb.allowed;
-    // Keep the primary denied list for transparency, but annotate fallback.
+    // Keep the primary denied list for transparency, but annotate the explicit relaxation.
     deniedOut = fb.denied;
-    fallback = {
+    policyRelaxation = {
       applied: true,
       reason: "allowlist_filtered_all",
-      note: "allowlist eliminated all candidates; falling back to deny-only (ignore tool.allow) because strict=false",
+      note: "allowlist eliminated all candidates; strict=false permits deny-only policy relaxation",
       effective_mode: "deny_only",
     };
   }
@@ -89,7 +89,7 @@ export function applyToolPolicy(candidatesIn: string[], patch: PolicyPatch, opts
 
   // If denylist still eliminates all tools, we keep it empty even in strict=false and explain.
   if (!opts.strict && allowed.length === 0) {
-    fallback = {
+    policyRelaxation = {
       applied: true,
       reason: "deny_filtered_all",
       note: "denylist eliminated all candidates; no tool can be selected",
@@ -109,6 +109,6 @@ export function applyToolPolicy(candidatesIn: string[], patch: PolicyPatch, opts
     preferred,
     ordered,
     selected: ordered.length > 0 ? ordered[0] : null,
-    fallback,
+    policy_relaxation: policyRelaxation,
   };
 }

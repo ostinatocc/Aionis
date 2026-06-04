@@ -13,8 +13,6 @@ type DelegationRecordsWriteOptions = {
   maxTextLen: number;
   piiRedaction: boolean;
   allowCrossScopeEdges: boolean;
-  shadowDualWriteEnabled: boolean;
-  shadowDualWriteStrict: boolean;
   embedder: EmbeddingProvider | null;
   liteWriteStore: LiteProjectedWriteStore;
   learningControlReviewProviders?: LiteLearningControlRuntimeProviders["workflowProjection"];
@@ -156,8 +154,6 @@ export async function writeDelegationRecords(
         maxTextLen: opts.maxTextLen,
         piiRedaction: opts.piiRedaction,
         allowCrossScopeEdges: opts.allowCrossScopeEdges,
-        shadowDualWriteEnabled: opts.shadowDualWriteEnabled,
-        shadowDualWriteStrict: opts.shadowDualWriteStrict,
       },
     })
   ).out;

@@ -125,8 +125,6 @@ export type LearningLoopLiteOptions = {
   maxTextLen: number;
   piiRedaction: boolean;
   allowCrossScopeEdges: boolean;
-  shadowDualWriteEnabled: boolean;
-  shadowDualWriteStrict: boolean;
 };
 
 type LearningLoopLiteStore = Pick<
@@ -775,8 +773,6 @@ async function processWorkflowCandidate(args: {
       maxTextLen: args.opts.maxTextLen,
       piiRedaction: args.opts.piiRedaction,
       allowCrossScopeEdges: args.opts.allowCrossScopeEdges,
-      shadowDualWriteEnabled: args.opts.shadowDualWriteEnabled,
-      shadowDualWriteStrict: args.opts.shadowDualWriteStrict,
     }),
   );
   await markNodeLearningLoopDecision({

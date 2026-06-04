@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-// Minimal, strict "then_json" schema for execution injection.
+// Strict "then_json" schema for execution injection.
 // Anything outside this shape must be carried in `extensions` (namespaced) to avoid accidental contract drift.
 const ToolPolicy = z
   .object({

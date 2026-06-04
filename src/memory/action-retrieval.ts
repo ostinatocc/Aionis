@@ -297,8 +297,8 @@ function buildCueTokens(queryText: string, context: unknown): Set<string> {
     queryText,
     firstString(ctx?.task_kind),
     firstString(ctx?.task_family, executionContract?.task_family),
-    firstString(ctx?.host_tool_profile),
-    firstString(ctx?.host_preferred_tool),
+    firstString(ctx?.runtime_tool_profile),
+    firstString(ctx?.runtime_preferred_tool),
     firstString(ctx?.goal),
     firstString(ctx?.objective),
     firstString(task?.signature),
@@ -1531,9 +1531,7 @@ export async function buildActionRetrievalLite(args: {
     args.defaultTenantId,
     args.defaultActorId,
   );
-  const tools = await selectTools(
-    null,
-    {
+  const tools = await selectTools({
       tenant_id: parsed.tenant_id,
       scope: parsed.scope,
       run_id: parsed.run_id,

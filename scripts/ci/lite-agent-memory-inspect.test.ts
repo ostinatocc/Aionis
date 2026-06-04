@@ -6,8 +6,8 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
-import { FakeEmbeddingProvider } from "../../src/embeddings/fake.ts";
-import { registerHostErrorHandler } from "../../src/host/http-host.ts";
+import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
+import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import {
   buildAgentMemoryHandoffPackLite,
   buildAgentMemoryInspectLite,
@@ -32,8 +32,6 @@ const writeOptions = {
   maxTextLen: 10000,
   piiRedaction: false,
   allowCrossScopeEdges: false,
-  shadowDualWriteEnabled: false,
-  shadowDualWriteStrict: false,
 };
 
 function buildEnv() {
@@ -55,8 +53,6 @@ function buildEnv() {
     MAX_TEXT_LEN: 10000,
     PII_REDACTION: false,
     ALLOW_CROSS_SCOPE_EDGES: false,
-    MEMORY_SHADOW_DUAL_WRITE_ENABLED: false,
-    MEMORY_SHADOW_DUAL_WRITE_STRICT: false,
   } as any;
 }
 
@@ -68,26 +64,22 @@ function registerApp(args: {
   const env = buildEnv();
   const guards = createRequestGuards({
     env,
-    embedder: FakeEmbeddingProvider,
+    embedder: DeterministicEmbeddingProvider,
     recallLimiter: null,
     debugEmbedLimiter: null,
     writeLimiter: null,
-    sandboxWriteLimiter: null,
-    sandboxReadLimiter: null,
     recallTextEmbedLimiter: null,
     recallInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
     writeInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
   });
 
-  registerHostErrorHandler(args.app);
+  registerRuntimeErrorHandler(args.app);
   registerMemoryAccessRoutes({
     app: args.app,
     env,
-    embedder: FakeEmbeddingProvider,
+    embedder: DeterministicEmbeddingProvider,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
-    writeAccessShadowMirrorV2: false,
-    requireStoreFeatureCapability: () => {},
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
     enforceRateLimit: guards.enforceRateLimit,
@@ -98,7 +90,7 @@ function registerApp(args: {
 }
 
 async function seedEvolutionFixture(store: ReturnType<typeof createLiteWriteStore>) {
-  const [sharedEmbedding] = await FakeEmbeddingProvider.embed(["repair export failure in node tests"]);
+  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed(["repair export failure in node tests"]);
 
   const trustedPattern = MemoryAnchorV1Schema.parse({
     anchor_kind: "pattern",
@@ -251,7 +243,7 @@ async function seedEvolutionFixture(store: ReturnType<typeof createLiteWriteStor
           },
         },
         embedding: sharedEmbedding,
-        embedding_model: FakeEmbeddingProvider.name,
+        embedding_model: DeterministicEmbeddingProvider.name,
         salience: 0.8,
         importance: 0.9,
         confidence: 0.9,
@@ -284,7 +276,7 @@ async function seedEvolutionFixture(store: ReturnType<typeof createLiteWriteStor
           },
         },
         embedding: sharedEmbedding,
-        embedding_model: FakeEmbeddingProvider.name,
+        embedding_model: DeterministicEmbeddingProvider.name,
         salience: 0.78,
         importance: 0.88,
         confidence: 0.86,
@@ -297,7 +289,7 @@ async function seedEvolutionFixture(store: ReturnType<typeof createLiteWriteStor
     allowCrossScopeEdges: false,
   }, null);
 
-  await store.withTx(() => applyMemoryWrite({} as any, prepared, {
+  await store.withTx(() => applyMemoryWrite(prepared, {
     ...writeOptions,
     write_access: store,
   }));
@@ -319,7 +311,7 @@ async function seedHandoffFixture(store: ReturnType<typeof createLiteWriteStore>
     target_files: ["src/routes/export.ts"],
     next_action: "Patch src/routes/export.ts and rerun export tests",
     must_change: ["src/routes/export.ts"],
-    must_remove: ["stale export fallback"],
+    must_remove: ["stale export recovery"],
     must_keep: ["existing success path"],
     acceptance_checks: ["npm run -s test:lite -- export"],
     execution_result_summary: {
@@ -342,7 +334,7 @@ async function seedHandoffFixture(store: ReturnType<typeof createLiteWriteStore>
     null,
   );
 
-  await store.withTx(() => applyMemoryWrite({} as any, prepared, {
+  await store.withTx(() => applyMemoryWrite(prepared, {
     ...writeOptions,
     write_access: store,
   }));
@@ -399,7 +391,7 @@ async function seedConflictingCanonicalHandoffFixture(store: ReturnType<typeof c
     null,
   );
 
-  await store.withTx(() => applyMemoryWrite({} as any, prepared, {
+  await store.withTx(() => applyMemoryWrite(prepared, {
     ...writeOptions,
     write_access: store,
   }));
@@ -416,7 +408,7 @@ test("agent memory inspect facade composes continuity and evolution into review/
   const args = {
     liteWriteStore,
     liteRecallAccess: liteRecallStore.createRecallAccess(),
-    embedder: FakeEmbeddingProvider,
+    embedder: DeterministicEmbeddingProvider,
     defaultScope: "default",
     defaultTenantId: "default",
     defaultActorId: "local-user",
@@ -464,7 +456,7 @@ test("agent memory inspect facade composes continuity and evolution into review/
   );
 
   assert.equal(reviewPack.agent_memory_review_pack.rollback_required, true);
-  assert.deepEqual(reviewPack.agent_memory_review_pack.must_remove, ["stale export fallback"]);
+  assert.deepEqual(reviewPack.agent_memory_review_pack.must_remove, ["stale export recovery"]);
   assert.equal(reviewPack.agent_memory_review_pack.selected_tool, "edit");
   assert.equal(
     reviewPack.agent_memory_review_pack.execution_contract_v1?.schema_version,
@@ -519,7 +511,7 @@ test("agent memory inspect facade composes continuity and evolution into review/
   );
 });
 
-test("agent memory resume pack can recover latest handoff from repo_root without a fake cwd anchor", async () => {
+test("agent memory resume pack can recover latest handoff from repo_root without a constructed cwd anchor", async () => {
   const dbPath = tmpDbPath("agent-memory-repo-root-handoff");
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
@@ -530,7 +522,7 @@ test("agent memory resume pack can recover latest handoff from repo_root without
   const resumePack = await buildAgentMemoryResumePackLite({
     liteWriteStore,
     liteRecallAccess: liteRecallStore.createRecallAccess(),
-    embedder: FakeEmbeddingProvider,
+    embedder: DeterministicEmbeddingProvider,
     defaultScope: "default",
     defaultTenantId: "default",
     defaultActorId: "local-user",
@@ -566,7 +558,7 @@ test("agent memory resume pack treats missing implicit repo handoff as optional 
   const resumePack = await buildAgentMemoryResumePackLite({
     liteWriteStore,
     liteRecallAccess: liteRecallStore.createRecallAccess(),
-    embedder: FakeEmbeddingProvider,
+    embedder: DeterministicEmbeddingProvider,
     defaultScope: "default",
     defaultTenantId: "default",
     defaultActorId: "local-user",
@@ -600,7 +592,7 @@ test("agent memory resume and handoff packs prefer canonical contract over stale
   const args = {
     liteWriteStore,
     liteRecallAccess: liteRecallStore.createRecallAccess(),
-    embedder: FakeEmbeddingProvider,
+    embedder: DeterministicEmbeddingProvider,
     defaultScope: "default",
     defaultTenantId: "default",
     defaultActorId: "local-user",

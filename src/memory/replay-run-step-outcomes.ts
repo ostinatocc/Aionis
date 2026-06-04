@@ -67,9 +67,9 @@ export function buildReplayPendingStepArtifacts(input: {
       sandboxRunId: input.sandboxRunId,
       sandboxStatus: input.sandboxStatus,
     }),
-    repairApplied: guided,
-    repairNote: guided ? input.reason : undefined,
-    error: guided ? undefined : input.reason,
+    repairApplied: false,
+    repairNote: guided ? "agent_repair_request_pending_async_execution" : undefined,
+    error: input.reason,
   };
 }
 

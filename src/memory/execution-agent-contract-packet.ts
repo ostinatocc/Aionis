@@ -11,7 +11,7 @@ const StringList = z.array(z.string().trim().min(1)).default([]);
 export const ExecutionAgentContractPacketModeSchema = z.enum(["contract_only", "workflow_expanded"]);
 export type ExecutionAgentContractPacketMode = z.infer<typeof ExecutionAgentContractPacketModeSchema>;
 
-export const ExecutionAgentContractPacketRenderAudienceSchema = z.enum(["operator_diagnostic", "agent_minimal"]);
+export const ExecutionAgentContractPacketRenderAudienceSchema = z.enum(["operator_diagnostic", "agent_compact"]);
 export type ExecutionAgentContractPacketRenderAudience = z.infer<
   typeof ExecutionAgentContractPacketRenderAudienceSchema
 >;
@@ -265,7 +265,7 @@ function buildActionDiscipline(contract: ExecutionContractV1): ExecutionAgentCon
       isGitDeployWebserver(contract)
         ? "after_served_endpoint_matches_deployed_revision_do_not_keep_reworking_hook_or_webserver"
         : null,
-      "do_not_run_external_harness_verifier_from_inside_agent_attempt",
+      "do_not_run_external_verifier_runner_from_inside_agent_attempt",
     ], 8),
   };
 }
@@ -333,7 +333,7 @@ function formatList(values: string[]): string {
   return values.length > 0 ? values.join(" | ") : "<none>";
 }
 
-function renderAgentMinimalContractPacketMarkdown(packet: ExecutionAgentContractPacketV1): string[] {
+function renderAgentCompactContractPacketMarkdown(packet: ExecutionAgentContractPacketV1): string[] {
   const lines = [
     "Runtime contract:",
     `- task_family: ${packet.contract.task_family ?? "<unknown>"}`,
@@ -373,8 +373,8 @@ export function renderExecutionAgentContractPacketMarkdown(
 ): string[] {
   const packet = ExecutionAgentContractPacketV1Schema.parse(packetInput);
   const audience = ExecutionAgentContractPacketRenderAudienceSchema.parse(options.audience ?? "operator_diagnostic");
-  if (audience === "agent_minimal") {
-    return renderAgentMinimalContractPacketMarkdown(packet);
+  if (audience === "agent_compact") {
+    return renderAgentCompactContractPacketMarkdown(packet);
   }
   const lines = [
     "Runtime contract:",

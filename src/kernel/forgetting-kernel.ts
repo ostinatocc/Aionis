@@ -287,13 +287,13 @@ function pickIds(
   tokens: string[],
   preferredIds: Set<string>,
   deniedTokens: Set<string>,
-  fallbackLimit: number,
+  selectionLimit: number,
 ): string[] {
   if (preferredIds.size > 0) {
     return candidates
       .filter((candidate) => preferredIds.has(candidate.id))
       .map((candidate) => candidate.id)
-      .slice(0, fallbackLimit);
+      .slice(0, selectionLimit);
   }
   const ranked = candidates
     .map((candidate) => ({
@@ -302,8 +302,8 @@ function pickIds(
     }))
     .sort((left, right) => right.score - left.score);
   const selected = ranked.filter((entry) => entry.score > 0).map((entry) => entry.id);
-  if (selected.length > 0) return selected.slice(0, fallbackLimit);
-  return ranked.slice(0, fallbackLimit).map((entry) => entry.id);
+  if (selected.length > 0) return selected.slice(0, selectionLimit);
+  return ranked.slice(0, selectionLimit).map((entry) => entry.id);
 }
 
 export function buildDifferentialRehydrationPlan(args: DifferentialPlanArgs): DifferentialRehydrationPlan {
@@ -318,13 +318,13 @@ export function buildDifferentialRehydrationPlan(args: DifferentialPlanArgs): Di
     preferredNodeIds.size > 0 || preferredDecisionIds.size > 0 ? "explicit_related_ids" : null,
     tokens.length > 0 ? "reason_and_keep_details_match" : null,
     deniedTokens.size > 0 ? "drop_details_penalty" : null,
-    nodeIds.length === 0 && decisionIds.length === 0 ? "fallback_to_first_payload" : null,
+    nodeIds.length === 0 && decisionIds.length === 0 ? "select_first_payload" : null,
   ].filter((value): value is string => !!value);
 
   return {
     node_ids: nodeIds,
     decision_ids: decisionIds,
-    rationale: rationale.length > 0 ? rationale : ["fallback_to_ranked_payload"],
+    rationale: rationale.length > 0 ? rationale : ["ranked_payload_selected"],
   };
 }
 

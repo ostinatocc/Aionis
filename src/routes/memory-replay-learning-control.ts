@@ -6,8 +6,8 @@ import type { AuthPrincipal } from "../util/auth.js";
 import type { InflightGateToken } from "../util/inflight_gate.js";
 
 type ReplayLearningControlRequest = FastifyRequest<{ Body: unknown }>;
-type ReplayPlaybookReviewOptionsLike = Parameters<typeof replayPlaybookRepairReview>[2];
-type ReplayPlaybookRunOptionsLike = Parameters<typeof replayPlaybookRun>[2];
+type ReplayPlaybookReviewOptionsLike = Parameters<typeof replayPlaybookRepairReview>[1];
+type ReplayPlaybookRunOptionsLike = Parameters<typeof replayPlaybookRun>[1];
 type ReplayLearningControlRequestKind =
   | "replay_playbook_repair_review"
   | "replay_playbook_run"
@@ -77,8 +77,7 @@ export function registerMemoryReplayLearningControlRoutes(args: {
       parsed.success
       && parsed.data.deterministic_gate?.enabled !== false
       && parsed.data.deterministic_gate?.prefer_deterministic_execution !== false;
-    const executeFallback = parsed.success ? parsed.data.execute_fallback !== false : true;
-    return deterministicPossible || executeFallback ? "write" : "recall";
+    return deterministicPossible ? "write" : "recall";
   };
 
   const runLearningControlRoute = async <TResult>(args: {
@@ -128,7 +127,7 @@ export function registerMemoryReplayLearningControlRoutes(args: {
         const reviewOptions = buildReplayRepairReviewOptions();
         reviewOptions.writeAccess = liteWriteStore;
         return executeLearningControlWrite(body, (requestBody) =>
-          replayPlaybookRepairReview(null, requestBody, reviewOptions),
+          replayPlaybookRepairReview(requestBody, reviewOptions),
         );
       },
     });
@@ -152,7 +151,7 @@ export function registerMemoryReplayLearningControlRoutes(args: {
         if (runOptions.writeOptions) {
           runOptions.writeOptions.writeAccess = liteWriteStore;
         }
-        return executeLearningControlRead(requestBody, (resolvedBody) => replayPlaybookRun(null, resolvedBody, runOptions));
+        return executeLearningControlRead(requestBody, (resolvedBody) => replayPlaybookRun(resolvedBody, runOptions));
       },
     });
     return reply.code(200).send(out);
@@ -173,7 +172,7 @@ export function registerMemoryReplayLearningControlRoutes(args: {
           runOptions.writeOptions.writeAccess = liteWriteStore;
         }
         return executeLearningControlRead(requestBody, (resolvedBody) =>
-          replayPlaybookDispatch(null, resolvedBody, runOptions),
+          replayPlaybookDispatch(resolvedBody, runOptions),
         );
       },
     });

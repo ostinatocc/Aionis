@@ -90,7 +90,7 @@ test("forgetting kernel keeps contested memory in demote-before-archive mode", (
   assert.equal(relocation.should_relocate, false);
 });
 
-test("forgetting kernel uses explicit rehydration adjudication before token fallback", () => {
+test("forgetting kernel uses explicit rehydration adjudication before token-based selection", () => {
   const plan = buildDifferentialRehydrationPlan({
     reason: "recover deploy workflow but avoid obsolete test detail",
     adjudication: {

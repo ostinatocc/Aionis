@@ -89,7 +89,7 @@ test("replay run gate helpers classify blocked sensitive commands", () => {
   assert.equal(
     resolveReplaySensitiveCommandGate({
       command: "rm",
-      argv: ["rm", "-rf", "/tmp/demo"],
+      argv: ["rm", "-rf", "/tmp/aionis-sandbox-delete-target"],
       sensitive: true,
       sensitiveReason: "destructive rm -rf",
       riskLevel: "high",
@@ -101,7 +101,7 @@ test("replay run gate helpers classify blocked sensitive commands", () => {
   assert.equal(
     resolveReplaySensitiveCommandGate({
       command: "rm",
-      argv: ["rm", "-rf", "/tmp/demo"],
+      argv: ["rm", "-rf", "/tmp/aionis-sandbox-delete-target"],
       sensitive: true,
       sensitiveReason: "destructive rm -rf",
       riskLevel: "high",

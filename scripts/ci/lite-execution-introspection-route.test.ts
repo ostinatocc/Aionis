@@ -6,7 +6,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
-import { registerHostErrorHandler } from "../../src/host/http-host.ts";
+import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { CognitiveStructureV1Schema } from "../../src/kernel/cognitive-structure.ts";
 import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
 import { buildExecutionContractFromProjection } from "../../src/memory/execution-contract.ts";
@@ -45,8 +45,6 @@ function buildRequestGuards() {
     recallLimiter: null,
     debugEmbedLimiter: null,
     writeLimiter: null,
-    sandboxWriteLimiter: null,
-    sandboxReadLimiter: null,
     recallTextEmbedLimiter: null,
     recallInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
     writeInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
@@ -561,12 +559,10 @@ async function seedExecutionIntrospectionFixture(dbPath: string) {
   );
 
   await liteWriteStore.withTx(() =>
-    applyMemoryWrite({} as any, prepared, {
+    applyMemoryWrite(prepared, {
       maxTextLen: 10_000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
       associativeLinkOrigin: "memory_write",
       write_access: liteWriteStore,
     }),
@@ -645,12 +641,10 @@ async function seedExecutionNativeOnlyWorkflowIntrospectionFixture(dbPath: strin
   );
 
   await liteWriteStore.withTx(() =>
-    applyMemoryWrite({} as any, prepared, {
+    applyMemoryWrite(prepared, {
       maxTextLen: 10_000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
       associativeLinkOrigin: "memory_write",
       write_access: liteWriteStore,
     }),
@@ -777,12 +771,10 @@ async function seedCanonicalContractPrecedenceIntrospectionFixture(dbPath: strin
   );
 
   await liteWriteStore.withTx(() =>
-    applyMemoryWrite({} as any, prepared, {
+    applyMemoryWrite(prepared, {
       maxTextLen: 10_000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
       associativeLinkOrigin: "memory_write",
       write_access: liteWriteStore,
     }),
@@ -791,13 +783,13 @@ async function seedCanonicalContractPrecedenceIntrospectionFixture(dbPath: strin
   return { liteWriteStore };
 }
 
-test("execution introspection route exposes demo-friendly workflow and pattern surfaces", async () => {
+test("execution introspection route exposes operator-facing workflow and pattern surfaces", async () => {
   const dbPath = tmpDbPath("execution-introspect");
   const app = Fastify();
   const { liteWriteStore } = await seedExecutionIntrospectionFixture(dbPath);
   try {
     const guards = buildRequestGuards();
-    registerHostErrorHandler(app);
+    registerRuntimeErrorHandler(app);
     registerMemoryAccessRoutes({
       app,
       env: {
@@ -809,13 +801,9 @@ test("execution introspection route exposes demo-friendly workflow and pattern s
         MAX_TEXT_LEN: 10_000,
         PII_REDACTION: false,
         ALLOW_CROSS_SCOPE_EDGES: false,
-        MEMORY_SHADOW_DUAL_WRITE_ENABLED: false,
-        MEMORY_SHADOW_DUAL_WRITE_STRICT: false,
       } as any,
       embedder: null,
       liteWriteStore,
-      writeAccessShadowMirrorV2: false,
-      requireStoreFeatureCapability: () => {},
       requireMemoryPrincipal: guards.requireMemoryPrincipal,
       withIdentityFromRequest: guards.withIdentityFromRequest,
       enforceRateLimit: guards.enforceRateLimit,
@@ -1117,19 +1105,19 @@ test("execution introspection route exposes demo-friendly workflow and pattern s
     assert.ok(body.pattern_signals.some((entry) => entry.anchor_id === body.trusted_patterns[0]?.anchor_id && entry.suppressed === true));
     assert.equal(body.candidate_workflows[0]?.projection_generated_by, "execution_write_projection_v1");
     assert.equal(body.candidate_workflows[0]?.projection_source_client_id, "execution-event:ready");
-    assert.match(body.demo_surface.headline, /stable workflows=1/);
-    assert.match(body.demo_surface.headline, /promotion-ready workflows=1/);
-    assert.match(body.demo_surface.headline, /trusted patterns=1/);
-    assert.match(body.demo_surface.headline, /contested patterns=1/);
-    assert.ok(body.demo_surface.sections.workflows.some((line) => line.includes("stable workflow: Fix export failure")));
-    assert.ok(body.demo_surface.sections.workflows.some((line) => line.includes("promotion=ready")));
-    assert.ok(body.demo_surface.sections.workflows.some((line) => line.includes("projection=execution_write_projection_v1")));
-    assert.ok(body.demo_surface.sections.patterns.some((line) => line.includes("trusted pattern: prefer edit")));
-    assert.ok(body.demo_surface.sections.patterns.some((line) => line.includes("suppressed=shadow_learn")));
-    assert.ok(body.demo_surface.sections.patterns.some((line) => line.includes("contested pattern: prefer bash")));
-    assert.ok(body.demo_surface.sections.maintenance.some((line) => line.includes("workflow maintenance:")));
-    assert.ok(body.demo_surface.sections.maintenance.some((line) => line.includes("pattern maintenance:")));
-    assert.match(body.demo_surface.merged_text, /# Execution Memory Demo/);
+    assert.match(body.operator_surface.headline, /stable workflows=1/);
+    assert.match(body.operator_surface.headline, /promotion-ready workflows=1/);
+    assert.match(body.operator_surface.headline, /trusted patterns=1/);
+    assert.match(body.operator_surface.headline, /contested patterns=1/);
+    assert.ok(body.operator_surface.sections.workflows.some((line) => line.includes("stable workflow: Fix export failure")));
+    assert.ok(body.operator_surface.sections.workflows.some((line) => line.includes("promotion=ready")));
+    assert.ok(body.operator_surface.sections.workflows.some((line) => line.includes("projection=execution_write_projection_v1")));
+    assert.ok(body.operator_surface.sections.patterns.some((line) => line.includes("trusted pattern: prefer edit")));
+    assert.ok(body.operator_surface.sections.patterns.some((line) => line.includes("suppressed=shadow_learn")));
+    assert.ok(body.operator_surface.sections.patterns.some((line) => line.includes("contested pattern: prefer bash")));
+    assert.ok(body.operator_surface.sections.maintenance.some((line) => line.includes("workflow maintenance:")));
+    assert.ok(body.operator_surface.sections.maintenance.some((line) => line.includes("pattern maintenance:")));
+    assert.match(body.operator_surface.merged_text, /# Execution Memory Operator Surface/);
   } finally {
     await app.close();
     await liteWriteStore.close();
@@ -1142,7 +1130,7 @@ test("execution introspection prefers recent persisted delegation records over d
   const { liteWriteStore } = await seedExecutionIntrospectionFixture(dbPath);
   try {
     const guards = buildRequestGuards();
-    registerHostErrorHandler(app);
+    registerRuntimeErrorHandler(app);
     registerMemoryAccessRoutes({
       app,
       env: {
@@ -1154,13 +1142,9 @@ test("execution introspection prefers recent persisted delegation records over d
         MAX_TEXT_LEN: 10_000,
         PII_REDACTION: false,
         ALLOW_CROSS_SCOPE_EDGES: false,
-        MEMORY_SHADOW_DUAL_WRITE_ENABLED: false,
-        MEMORY_SHADOW_DUAL_WRITE_STRICT: false,
       } as any,
       embedder: null,
       liteWriteStore,
-      writeAccessShadowMirrorV2: false,
-      requireStoreFeatureCapability: () => {},
       requireMemoryPrincipal: guards.requireMemoryPrincipal,
       withIdentityFromRequest: guards.withIdentityFromRequest,
       enforceRateLimit: guards.enforceRateLimit,
@@ -1277,13 +1261,13 @@ test("execution introspection prefers recent persisted delegation records over d
   }
 });
 
-test("execution introspection demo workflow lines keep source and tools for execution-native-only stable workflows", async () => {
+test("execution introspection operator workflow lines keep source and tools for execution-native-only stable workflows", async () => {
   const dbPath = tmpDbPath("execution-introspect-execution-native-only");
   const app = Fastify();
   const { liteWriteStore } = await seedExecutionNativeOnlyWorkflowIntrospectionFixture(dbPath);
   try {
     const guards = buildRequestGuards();
-    registerHostErrorHandler(app);
+    registerRuntimeErrorHandler(app);
     registerMemoryAccessRoutes({
       app,
       env: {
@@ -1295,13 +1279,9 @@ test("execution introspection demo workflow lines keep source and tools for exec
         MAX_TEXT_LEN: 10_000,
         PII_REDACTION: false,
         ALLOW_CROSS_SCOPE_EDGES: false,
-        MEMORY_SHADOW_DUAL_WRITE_ENABLED: false,
-        MEMORY_SHADOW_DUAL_WRITE_STRICT: false,
       } as any,
       embedder: null,
       liteWriteStore,
-      writeAccessShadowMirrorV2: false,
-      requireStoreFeatureCapability: () => {},
       requireMemoryPrincipal: guards.requireMemoryPrincipal,
       withIdentityFromRequest: guards.withIdentityFromRequest,
       enforceRateLimit: guards.enforceRateLimit,
@@ -1330,9 +1310,9 @@ test("execution introspection demo workflow lines keep source and tools for exec
     assert.equal(body.execution_summary.continuity_snapshot_summary.summary_version, "execution_continuity_snapshot_v1");
     assert.equal(body.execution_summary.routing_signal_summary.summary_version, "execution_routing_summary_v1");
     assert.deepEqual(body.execution_summary.action_packet_summary, body.action_packet_summary);
-    assert.ok(body.demo_surface.sections.workflows.some((line) => line.includes("source=playbook")));
-    assert.ok(body.demo_surface.sections.workflows.some((line) => line.includes("tools=edit, test")));
-    assert.ok(body.demo_surface.sections.workflows.some((line) => line.includes("projection=execution_write_projection_v1")));
+    assert.ok(body.operator_surface.sections.workflows.some((line) => line.includes("source=playbook")));
+    assert.ok(body.operator_surface.sections.workflows.some((line) => line.includes("tools=edit, test")));
+    assert.ok(body.operator_surface.sections.workflows.some((line) => line.includes("projection=execution_write_projection_v1")));
   } finally {
     await app.close();
     await liteWriteStore.close();
@@ -1345,7 +1325,7 @@ test("execution introspection derives workflow fields through canonical executio
   const { liteWriteStore } = await seedCanonicalContractPrecedenceIntrospectionFixture(dbPath);
   try {
     const guards = buildRequestGuards();
-    registerHostErrorHandler(app);
+    registerRuntimeErrorHandler(app);
     registerMemoryAccessRoutes({
       app,
       env: {
@@ -1357,13 +1337,9 @@ test("execution introspection derives workflow fields through canonical executio
         MAX_TEXT_LEN: 10_000,
         PII_REDACTION: false,
         ALLOW_CROSS_SCOPE_EDGES: false,
-        MEMORY_SHADOW_DUAL_WRITE_ENABLED: false,
-        MEMORY_SHADOW_DUAL_WRITE_STRICT: false,
       } as any,
       embedder: null,
       liteWriteStore,
-      writeAccessShadowMirrorV2: false,
-      requireStoreFeatureCapability: () => {},
       requireMemoryPrincipal: guards.requireMemoryPrincipal,
       withIdentityFromRequest: guards.withIdentityFromRequest,
       enforceRateLimit: guards.enforceRateLimit,

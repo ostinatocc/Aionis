@@ -25,8 +25,8 @@ export function summarizePacketEntryLabels(entries: Array<Record<string, unknown
   return uniqueStrings(
     entries.map((entry) => {
       const primary = typeof entry[field] === "string" ? entry[field] : "";
-      const fallback = typeof entry.title === "string" ? entry.title : typeof entry.summary === "string" ? entry.summary : "";
-      return (primary || fallback).trim();
+      const secondary = typeof entry.title === "string" ? entry.title : typeof entry.summary === "string" ? entry.summary : "";
+      return (primary || secondary).trim();
     }),
     limit,
   );

@@ -121,12 +121,12 @@ export async function rehydrateArchiveNodesLite(
   }
 
   const movableRows: LiteFindNodeRow[] = [];
-  const noopIds: string[] = [];
+  const unchangedIds: string[] = [];
   for (const row of foundRows) {
     const fromRank = MEMORY_TIER_RANK[(row.tier as MemoryTierName) ?? "archive"] ?? MEMORY_TIER_RANK.archive;
     const toRank = MEMORY_TIER_RANK[parsed.target_tier];
     if (fromRank < toRank) movableRows.push(row);
-    else noopIds.push(row.id);
+    else unchangedIds.push(row.id);
   }
 
   if (movableRows.length === 0) {
@@ -142,11 +142,11 @@ export async function rehydrateArchiveNodesLite(
         resolved_node_ids: resolvedNodeIds.length,
         found_nodes: foundRows.length,
         moved_nodes: 0,
-        noop_nodes: noopIds.length,
+        unchanged_nodes: unchangedIds.length,
         missing_node_ids: missingNodeIds,
         missing_client_ids: missingClientIds,
         moved_ids: [] as string[],
-        noop_ids: noopIds,
+        unchanged_ids: unchangedIds,
       },
     };
   }
@@ -165,7 +165,7 @@ export async function rehydrateArchiveNodesLite(
     },
     resolved_by_client: resolvedByClient,
     moved_ids: movableRows.map((row) => row.id),
-    noop_ids: noopIds,
+    unchanged_ids: unchangedIds,
     missing_node_ids: missingNodeIds,
     missing_client_ids: missingClientIds,
   };
@@ -237,11 +237,11 @@ export async function rehydrateArchiveNodesLite(
       resolved_node_ids: resolvedNodeIds.length,
       found_nodes: foundRows.length,
       moved_nodes: movableRows.length,
-      noop_nodes: noopIds.length,
+      unchanged_nodes: unchangedIds.length,
       missing_node_ids: missingNodeIds,
       missing_client_ids: missingClientIds,
       moved_ids: movableRows.map((row) => row.id),
-      noop_ids: noopIds,
+      unchanged_ids: unchangedIds,
     },
   };
 }

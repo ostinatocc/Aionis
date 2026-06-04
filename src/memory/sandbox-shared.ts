@@ -1,4 +1,3 @@
-import type pg from "pg";
 import { summarizeToolResult } from "./tool-result-summary.js";
 
 export type SandboxDefaults = {
@@ -47,11 +46,6 @@ export type SandboxSessionRow = {
   expires_at: string | null;
   created_at: string;
   updated_at: string;
-};
-
-export type SandboxStore = {
-  withTx<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T>;
-  withClient<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T>;
 };
 
 export function trimOrNull(v: unknown): string | null {

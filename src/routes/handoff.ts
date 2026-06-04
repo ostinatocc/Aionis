@@ -1,5 +1,4 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type pg from "pg";
 import type { Env } from "../config.js";
 import { createEmbeddingSurfacePolicy, type EmbeddingSurfacePolicy } from "../embeddings/surface-policy.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
@@ -14,12 +13,10 @@ import {
   resolveNodeNextAction,
   resolveNodeTargetFiles,
 } from "../memory/node-execution-surface.js";
-import { mirrorPreparedWriteToEmbeddedRuntime } from "../memory/embedded-write-bridge.js";
 import { buildHandoffWriteBody, recoverHandoff } from "../memory/handoff.js";
 import type { HandoffRecoverInput, HandoffStoreInput } from "../memory/schemas.js";
 import { applyMemoryWrite, prepareMemoryWrite } from "../memory/write.js";
 import { HandoffRecoverRequest, HandoffStoreRequest } from "../memory/schemas.js";
-import type { EmbeddedMemoryRuntime } from "../store/embedded-memory-runtime.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
 import type { AuthPrincipal } from "../util/auth.js";
 import type { InflightGateToken } from "../util/inflight_gate.js";
@@ -49,7 +46,6 @@ type RegisterHandoffRoutesArgs = {
   env: Env;
   embedder: EmbeddingProvider | null;
   embeddingSurfacePolicy?: EmbeddingSurfacePolicy;
-  embeddedRuntime: EmbeddedMemoryRuntime | null;
   liteWriteStore: LiteWriteStore;
   requireMemoryPrincipal: (req: FastifyRequest) => Promise<AuthPrincipal | null>;
   withIdentityFromRequest: (
@@ -79,7 +75,6 @@ export function registerHandoffRoutes(args: RegisterHandoffRoutesArgs) {
     env,
     embedder,
     embeddingSurfacePolicy: embeddingSurfacePolicyArg,
-    embeddedRuntime,
     liteWriteStore,
     requireMemoryPrincipal,
     withIdentityFromRequest,
@@ -116,8 +111,6 @@ export function registerHandoffRoutes(args: RegisterHandoffRoutesArgs) {
           maxTextLen: env.MAX_TEXT_LEN,
           piiRedaction: env.PII_REDACTION,
           allowCrossScopeEdges: env.ALLOW_CROSS_SCOPE_EDGES,
-          shadowDualWriteEnabled: env.MEMORY_SHADOW_DUAL_WRITE_ENABLED,
-          shadowDualWriteStrict: env.MEMORY_SHADOW_DUAL_WRITE_STRICT,
           associativeLinkOrigin: "handoff_store",
         },
       })
@@ -242,7 +235,6 @@ export function registerHandoffRoutes(args: RegisterHandoffRoutesArgs) {
       );
       const out = await runCommittedHandoffWrite(prepared);
 
-      await mirrorPreparedWriteToEmbeddedRuntime({ embeddedRuntime, prepared, out });
       const writeNode = firstNode<HandoffWriteBodyNodeLike>(writeBody.nodes);
       const writeSlots = asSlots(writeNode?.slots);
       const appliedExecutionTransitions = applyExecutionContinuityTransitionsFromSlots({

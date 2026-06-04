@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type pg from "pg";
 import {
   recordSandboxRunTelemetryRow,
-  sandboxStoreAccessForClient,
+  type SandboxStoreAccess,
 } from "../store/sandbox-access.js";
 import { HttpError } from "../util/http.js";
 import { sha256Text, trimTrailingSlash } from "./sandbox-network.js";
@@ -43,7 +42,7 @@ function sandboxRunNotFound(runId: string, tenantId: string, scope: string): nev
 }
 
 export async function createSandboxSession(
-  client: pg.PoolClient,
+  access: SandboxStoreAccess,
   body: unknown,
   defaults: Omit<SandboxDefaults, "defaultTimeoutMs">,
 ) {
@@ -56,7 +55,7 @@ export async function createSandboxSession(
     parsed.ttl_seconds && Number.isFinite(parsed.ttl_seconds)
       ? new Date(Date.now() + parsed.ttl_seconds * 1000).toISOString()
       : null;
-  const session = await sandboxStoreAccessForClient(client).createSession({
+  const session = await access.createSession({
     tenantId: tenancy.tenant_id,
     scope: tenancy.scope,
     profile: parsed.profile,
@@ -78,7 +77,7 @@ export async function createSandboxSession(
 }
 
 export async function enqueueSandboxRun(
-  client: pg.PoolClient,
+  access: SandboxStoreAccess,
   body: unknown,
   defaults: SandboxDefaults,
 ) {
@@ -87,8 +86,6 @@ export async function enqueueSandboxRun(
     { scope: parsed.scope, tenant_id: parsed.tenant_id },
     { defaultScope: defaults.defaultScope, defaultTenantId: defaults.defaultTenantId },
   );
-  const access = sandboxStoreAccessForClient(client);
-
   const session = await access.getSessionRef({
     id: parsed.session_id,
     tenantId: tenancy.tenant_id,
@@ -130,13 +127,13 @@ export async function enqueueSandboxRun(
   };
 }
 
-export async function getSandboxRun(client: pg.PoolClient, body: unknown, defaults: Omit<SandboxDefaults, "defaultTimeoutMs">) {
+export async function getSandboxRun(access: SandboxStoreAccess, body: unknown, defaults: Omit<SandboxDefaults, "defaultTimeoutMs">) {
   const parsed = SandboxRunGetRequest.parse(body);
   const tenancy = resolveTenantScope(
     { scope: parsed.scope, tenant_id: parsed.tenant_id },
     { defaultScope: defaults.defaultScope, defaultTenantId: defaults.defaultTenantId },
   );
-  const row = await sandboxStoreAccessForClient(client).getRun({
+  const row = await access.getRun({
     id: parsed.run_id,
     tenantId: tenancy.tenant_id,
     scope: tenancy.scope,
@@ -151,13 +148,13 @@ export async function getSandboxRun(client: pg.PoolClient, body: unknown, defaul
   };
 }
 
-export async function getSandboxRunLogs(client: pg.PoolClient, body: unknown, defaults: Omit<SandboxDefaults, "defaultTimeoutMs">) {
+export async function getSandboxRunLogs(access: SandboxStoreAccess, body: unknown, defaults: Omit<SandboxDefaults, "defaultTimeoutMs">) {
   const parsed = SandboxRunLogsRequest.parse(body);
   const tenancy = resolveTenantScope(
     { scope: parsed.scope, tenant_id: parsed.tenant_id },
     { defaultScope: defaults.defaultScope, defaultTenantId: defaults.defaultTenantId },
   );
-  const row = await sandboxStoreAccessForClient(client).getRunLogs({
+  const row = await access.getRunLogs({
     id: parsed.run_id,
     tenantId: tenancy.tenant_id,
     scope: tenancy.scope,
@@ -187,7 +184,7 @@ export async function getSandboxRunLogs(client: pg.PoolClient, body: unknown, de
 }
 
 export async function getSandboxRunArtifact(
-  client: pg.PoolClient,
+  access: SandboxStoreAccess,
   body: unknown,
   defaults: Omit<SandboxDefaults, "defaultTimeoutMs"> & { artifactObjectStoreBaseUri?: string | null },
 ) {
@@ -196,7 +193,7 @@ export async function getSandboxRunArtifact(
     { scope: parsed.scope, tenant_id: parsed.tenant_id },
     { defaultScope: defaults.defaultScope, defaultTenantId: defaults.defaultTenantId },
   );
-  const row = await sandboxStoreAccessForClient(client).getRun({
+  const row = await access.getRun({
     id: parsed.run_id,
     tenantId: tenancy.tenant_id,
     scope: tenancy.scope,
@@ -343,14 +340,13 @@ export async function getSandboxRunArtifact(
   };
 }
 
-export async function cancelSandboxRun(client: pg.PoolClient, body: unknown, defaults: Omit<SandboxDefaults, "defaultTimeoutMs">) {
+export async function cancelSandboxRun(access: SandboxStoreAccess, body: unknown, defaults: Omit<SandboxDefaults, "defaultTimeoutMs">) {
   const parsed = SandboxRunCancelRequest.parse(body);
   const tenancy = resolveTenantScope(
     { scope: parsed.scope, tenant_id: parsed.tenant_id },
     { defaultScope: defaults.defaultScope, defaultTenantId: defaults.defaultTenantId },
   );
   const reason = trimOrNull(parsed.reason);
-  const access = sandboxStoreAccessForClient(client);
   const row = await access.requestCancel({
     id: parsed.run_id,
     tenantId: tenancy.tenant_id,
@@ -365,7 +361,7 @@ export async function cancelSandboxRun(client: pg.PoolClient, body: unknown, def
     const canceledRow = await access.cancelQueuedRun({ id: parsed.run_id });
     if (canceledRow) {
       row.status = "canceled";
-      await recordSandboxRunTelemetryRow(client, canceledRow);
+      await recordSandboxRunTelemetryRow(access, canceledRow);
     }
   }
 

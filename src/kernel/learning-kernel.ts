@@ -30,7 +30,6 @@ import { getToolsDecisionById } from "../memory/tools-decision.js";
 import { toolSelectionFeedback } from "../memory/tools-feedback.js";
 import { getToolsRunLifecycle, listToolsRuns } from "../memory/tools-run.js";
 import { selectTools } from "../memory/tools-select.js";
-import type { EmbeddedMemoryRuntime } from "../store/embedded-memory-runtime.js";
 import type { RecallStoreAccess } from "../store/recall-access.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
 
@@ -47,12 +46,12 @@ export type LearningLifecycleState = typeof LEARNING_LIFECYCLE_STATES[number];
 
 export type LiteLearningKernelStore =
   LiteWriteStore
-  & NonNullable<NonNullable<Parameters<typeof updateRuleState>[4]>["liteWriteStore"]>
-  & NonNullable<NonNullable<Parameters<typeof evaluateRules>[4]>["liteWriteStore"]>
-  & NonNullable<NonNullable<Parameters<typeof selectTools>[4]>["liteWriteStore"]>
-  & NonNullable<NonNullable<Parameters<typeof getToolsDecisionById>[4]>["liteWriteStore"]>
-  & NonNullable<NonNullable<Parameters<typeof getToolsRunLifecycle>[4]>["liteWriteStore"]>
-  & NonNullable<NonNullable<Parameters<typeof listToolsRuns>[4]>["liteWriteStore"]>
+  & NonNullable<NonNullable<Parameters<typeof updateRuleState>[3]>["liteWriteStore"]>
+  & NonNullable<NonNullable<Parameters<typeof evaluateRules>[3]>["liteWriteStore"]>
+  & NonNullable<NonNullable<Parameters<typeof selectTools>[3]>["liteWriteStore"]>
+  & NonNullable<NonNullable<Parameters<typeof getToolsDecisionById>[3]>["liteWriteStore"]>
+  & NonNullable<NonNullable<Parameters<typeof getToolsRunLifecycle>[3]>["liteWriteStore"]>
+  & NonNullable<NonNullable<Parameters<typeof listToolsRuns>[3]>["liteWriteStore"]>
   & NonNullable<NonNullable<Parameters<typeof toolSelectionFeedback>[4]>["liteWriteStore"]>
   & Pick<LiteWriteStore, "findNodes" | "updateNodeAnchorState">
   & Parameters<typeof rehydrateAnchorPayloadLite>[0]
@@ -67,7 +66,6 @@ export type LearningKernelControlProviders = {
 export type LearningKernelArgs = {
   env: Env;
   embedder: EmbeddingProvider | null;
-  embeddedRuntime: EmbeddedMemoryRuntime | null;
   liteRecallAccess: RecallStoreAccess;
   liteWriteStore: LiteLearningKernelStore;
   learningControlProviders?: LearningKernelControlProviders;
@@ -105,7 +103,6 @@ export function createLearningKernel(args: LearningKernelArgs): LearningKernel {
   const {
     env,
     embedder,
-    embeddedRuntime,
     liteRecallAccess,
     liteWriteStore,
     learningControlProviders,
@@ -114,48 +111,44 @@ export function createLearningKernel(args: LearningKernelArgs): LearningKernel {
   return {
     recordRuleFeedback: (body) =>
       liteWriteStore.withTx(() =>
-        ruleFeedback(null, body, env.MEMORY_SCOPE, env.MEMORY_TENANT_ID, {
+        ruleFeedback(body, env.MEMORY_SCOPE, env.MEMORY_TENANT_ID, {
           maxTextLen: env.MAX_TEXT_LEN,
           piiRedaction: env.PII_REDACTION,
-          embeddedRuntime,
           liteWriteStore,
         }),
       ),
 
     applyRuleState: (body) =>
       liteWriteStore.withTx(() =>
-        updateRuleState(null, body, env.MEMORY_SCOPE, env.MEMORY_TENANT_ID, {
-          embeddedRuntime,
+        updateRuleState(body, env.MEMORY_SCOPE, env.MEMORY_TENANT_ID, {
           liteWriteStore,
         }),
       ),
 
     evaluateRulePolicy: (body) =>
-      evaluateRules(null, body, env.MEMORY_SCOPE, env.MEMORY_TENANT_ID, {
-        embeddedRuntime,
+      evaluateRules(body, env.MEMORY_SCOPE, env.MEMORY_TENANT_ID, {
         liteWriteStore,
       }),
 
     selectToolWithLearnedMemory: (body) =>
-      selectTools(null, body, env.MEMORY_SCOPE, env.MEMORY_TENANT_ID, {
-        embeddedRuntime,
+      selectTools(body, env.MEMORY_SCOPE, env.MEMORY_TENANT_ID, {
         recallAccess: liteRecallAccess,
         embedder,
         liteWriteStore,
       }),
 
     readToolDecision: (body) =>
-      getToolsDecisionById(null, body, env.MEMORY_SCOPE, env.MEMORY_TENANT_ID, {
+      getToolsDecisionById(body, env.MEMORY_SCOPE, env.MEMORY_TENANT_ID, {
         liteWriteStore,
       }),
 
     readToolRun: (body) =>
-      getToolsRunLifecycle(null, body, env.MEMORY_SCOPE, env.MEMORY_TENANT_ID, {
+      getToolsRunLifecycle(body, env.MEMORY_SCOPE, env.MEMORY_TENANT_ID, {
         liteWriteStore,
       }),
 
     listToolRuns: (body) =>
-      listToolsRuns(null, body, env.MEMORY_SCOPE, env.MEMORY_TENANT_ID, {
+      listToolsRuns(body, env.MEMORY_SCOPE, env.MEMORY_TENANT_ID, {
         liteWriteStore,
       }),
 
@@ -164,7 +157,6 @@ export function createLearningKernel(args: LearningKernelArgs): LearningKernel {
         maxTextLen: env.MAX_TEXT_LEN,
         piiRedaction: env.PII_REDACTION,
         embedder,
-        embeddedRuntime,
         learningControlReviewProviders: learningControlProviders?.toolsFeedback,
         liteWriteStore,
       }),
@@ -176,8 +168,6 @@ export function createLearningKernel(args: LearningKernelArgs): LearningKernel {
         maxTextLen: env.MAX_TEXT_LEN,
         piiRedaction: env.PII_REDACTION,
         allowCrossScopeEdges: env.ALLOW_CROSS_SCOPE_EDGES,
-        shadowDualWriteEnabled: env.MEMORY_SHADOW_DUAL_WRITE_ENABLED,
-        shadowDualWriteStrict: env.MEMORY_SHADOW_DUAL_WRITE_STRICT,
       }),
 
     runRuntimeMaintenance: (body) =>
@@ -187,8 +177,6 @@ export function createLearningKernel(args: LearningKernelArgs): LearningKernel {
         maxTextLen: env.MAX_TEXT_LEN,
         piiRedaction: env.PII_REDACTION,
         allowCrossScopeEdges: env.ALLOW_CROSS_SCOPE_EDGES,
-        shadowDualWriteEnabled: env.MEMORY_SHADOW_DUAL_WRITE_ENABLED,
-        shadowDualWriteStrict: env.MEMORY_SHADOW_DUAL_WRITE_STRICT,
       }),
 
     runRuntimeMaintenanceImmediate: (body) =>
@@ -198,8 +186,6 @@ export function createLearningKernel(args: LearningKernelArgs): LearningKernel {
         maxTextLen: env.MAX_TEXT_LEN,
         piiRedaction: env.PII_REDACTION,
         allowCrossScopeEdges: env.ALLOW_CROSS_SCOPE_EDGES,
-        shadowDualWriteEnabled: env.MEMORY_SHADOW_DUAL_WRITE_ENABLED,
-        shadowDualWriteStrict: env.MEMORY_SHADOW_DUAL_WRITE_STRICT,
       }),
 
     runRuntimeMaintenanceDaily: (body) =>
@@ -209,8 +195,6 @@ export function createLearningKernel(args: LearningKernelArgs): LearningKernel {
         maxTextLen: env.MAX_TEXT_LEN,
         piiRedaction: env.PII_REDACTION,
         allowCrossScopeEdges: env.ALLOW_CROSS_SCOPE_EDGES,
-        shadowDualWriteEnabled: env.MEMORY_SHADOW_DUAL_WRITE_ENABLED,
-        shadowDualWriteStrict: env.MEMORY_SHADOW_DUAL_WRITE_STRICT,
       }),
 
     runRuntimeMaintenanceLongHorizon: (body) =>
@@ -220,8 +204,6 @@ export function createLearningKernel(args: LearningKernelArgs): LearningKernel {
         maxTextLen: env.MAX_TEXT_LEN,
         piiRedaction: env.PII_REDACTION,
         allowCrossScopeEdges: env.ALLOW_CROSS_SCOPE_EDGES,
-        shadowDualWriteEnabled: env.MEMORY_SHADOW_DUAL_WRITE_ENABLED,
-        shadowDualWriteStrict: env.MEMORY_SHADOW_DUAL_WRITE_STRICT,
       }),
 
     applyPolicyLearningControl: async (body) => {
@@ -229,7 +211,6 @@ export function createLearningKernel(args: LearningKernelArgs): LearningKernel {
         body,
         env,
         embedder,
-        embeddedRuntime,
         liteRecallAccess,
         liteWriteStore,
       });

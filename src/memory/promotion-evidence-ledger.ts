@@ -8,6 +8,10 @@ import {
 
 type EvidenceKind = PromotionEvidenceLedgerV1["evidence"][number]["evidence_kind"];
 type EvidencePolarity = PromotionEvidenceLedgerV1["evidence"][number]["polarity"];
+type PromotionProtocol = PromotionEvidenceLedgerV1["promotion_protocol"];
+type PromotionScope = PromotionProtocol["source_scope"];
+type PromotionCandidateProducer = PromotionProtocol["candidate_producer"];
+type PromotionGateState = PromotionProtocol["leakage_gate"];
 
 function uniqueStrings(values: Array<string | null | undefined>, limit = 64): string[] {
   const out: string[] = [];
@@ -26,6 +30,11 @@ function intCount(value: number | null | undefined): number {
   return Number.isFinite(Number(value)) ? Math.max(0, Math.trunc(Number(value))) : 0;
 }
 
+function ratio(numerator: number, denominator: number): number | null {
+  if (denominator <= 0) return null;
+  return Number((numerator / denominator).toFixed(6));
+}
+
 function ledgerId(args: {
   targetKind: string;
   targetId: string | null;
@@ -38,6 +47,107 @@ function ledgerId(args: {
   counterEvidenceRefs: string[];
 }): string {
   return `pel:${sha256Hex(stableStringify(args)).slice(0, 24)}`;
+}
+
+function resolveGateState(args: {
+  supplied?: PromotionGateState | null;
+  positiveCount?: number;
+  negativeCount?: number;
+  defaultState?: PromotionGateState;
+}): PromotionGateState {
+  if (args.supplied) return args.supplied;
+  if (intCount(args.negativeCount) > 0) return "failed";
+  if (intCount(args.positiveCount) > 0) return "passed";
+  return args.defaultState ?? "pending";
+}
+
+function buildPromotionProtocol(args: {
+  verdict: PromotionEvidenceLedgerV1["verdict"];
+  sourceRunIds: string[];
+  observedCount: number;
+  promotionProtocol?: Partial<PromotionProtocol> | null;
+}): PromotionProtocol {
+  const supplied = args.promotionProtocol ?? {};
+  const providerProtocolContaminationCount = intCount(supplied.provider_protocol_contamination_count);
+  const taskSpecificSignalCount = intCount(supplied.task_specific_signal_count);
+  const regressionEvidenceCount = intCount(supplied.regression_evidence_count);
+  const negativeTransferCount = intCount(supplied.negative_transfer_count);
+  const holdoutEvidenceCount = intCount(supplied.holdout_evidence_count);
+  const promotedItemCount = intCount(supplied.promoted_item_count);
+  const coveredTaskCount = intCount(supplied.covered_task_count);
+  const promotionGrowthRatio = supplied.promotion_growth_ratio ?? ratio(promotedItemCount, coveredTaskCount);
+  const leakageGate = resolveGateState({
+    supplied: supplied.leakage_gate,
+    negativeCount: providerProtocolContaminationCount + taskSpecificSignalCount,
+    defaultState: "pending",
+  });
+  const holdoutGate = resolveGateState({
+    supplied: supplied.holdout_gate,
+    positiveCount: holdoutEvidenceCount,
+    defaultState: "pending",
+  });
+  const interferenceGate = resolveGateState({
+    supplied: supplied.interference_gate,
+    negativeCount: regressionEvidenceCount + negativeTransferCount,
+    defaultState: "pending",
+  });
+  const growthGate: PromotionGateState = supplied.growth_gate
+    ?? (promotionGrowthRatio === null
+      ? "not_applicable"
+      : promotionGrowthRatio < 1
+        ? "passed"
+        : "failed");
+  const localReuseAllowed = supplied.local_reuse_allowed ?? args.verdict === "promotion_admitted";
+  const requestedWider = supplied.wider_generalization_allowed === true;
+  const widerGeneralizationAllowed =
+    requestedWider
+    && localReuseAllowed
+    && leakageGate === "passed"
+    && holdoutGate === "passed"
+    && interferenceGate === "passed"
+    && (growthGate === "passed" || growthGate === "not_applicable");
+  const sourceScope = supplied.source_scope ?? "exact_task";
+  const authorityScope = widerGeneralizationAllowed
+    ? supplied.authority_scope ?? sourceScope
+    : sourceScope;
+  const reasonCodes = uniqueStrings([
+    ...(supplied.reason_codes ?? []),
+    localReuseAllowed ? "local_reuse_allowed" : "local_reuse_blocked",
+    widerGeneralizationAllowed ? "wider_generalization_allowed" : "wider_generalization_not_proven",
+    `leakage_gate_${leakageGate}`,
+    `holdout_gate_${holdoutGate}`,
+    `interference_gate_${interferenceGate}`,
+    `growth_gate_${growthGate}`,
+    providerProtocolContaminationCount > 0 ? "provider_protocol_contamination_present" : null,
+    taskSpecificSignalCount > 0 ? "task_specific_signal_present" : null,
+    regressionEvidenceCount > 0 ? "regression_evidence_present" : null,
+    negativeTransferCount > 0 ? "negative_transfer_present" : null,
+  ], 32);
+
+  return {
+    protocol_version: "promotion_evidence_protocol_v1",
+    candidate_producer: (supplied.candidate_producer ?? "runtime_history") as PromotionCandidateProducer,
+    source_scope: sourceScope as PromotionScope,
+    authority_scope: authorityScope as PromotionScope,
+    local_reuse_allowed: localReuseAllowed,
+    wider_generalization_allowed: widerGeneralizationAllowed,
+    source_code_change_allowed: false,
+    distinct_run_count: intCount(supplied.distinct_run_count ?? args.sourceRunIds.length),
+    distinct_task_count: intCount(supplied.distinct_task_count),
+    holdout_evidence_count: holdoutEvidenceCount,
+    regression_evidence_count: regressionEvidenceCount,
+    negative_transfer_count: negativeTransferCount,
+    provider_protocol_contamination_count: providerProtocolContaminationCount,
+    task_specific_signal_count: taskSpecificSignalCount,
+    promoted_item_count: promotedItemCount,
+    covered_task_count: coveredTaskCount,
+    promotion_growth_ratio: promotionGrowthRatio,
+    leakage_gate: leakageGate,
+    holdout_gate: holdoutGate,
+    interference_gate: interferenceGate,
+    growth_gate: growthGate,
+    reason_codes: reasonCodes,
+  };
 }
 
 export function buildPromotionEvidenceLedgerV1(args: {
@@ -60,6 +170,7 @@ export function buildPromotionEvidenceLedgerV1(args: {
   promotionEvidenceRefs?: Array<string | null | undefined>;
   counterEvidenceRefs?: Array<string | null | undefined>;
   reasonCodes?: Array<string | null | undefined>;
+  promotionProtocol?: Partial<PromotionProtocol> | null;
   evidence?: Array<{
     evidence_id: string;
     evidence_kind: EvidenceKind;
@@ -94,8 +205,15 @@ export function buildPromotionEvidenceLedgerV1(args: {
         : authorityBlocked || verifierBlocked
           ? "promotion_blocked"
           : "promotion_admitted";
+  const promotionProtocol = buildPromotionProtocol({
+    verdict,
+    sourceRunIds,
+    observedCount,
+    promotionProtocol: args.promotionProtocol,
+  });
   const reasonCodes = uniqueStrings([
     ...(args.reasonCodes ?? []),
+    ...promotionProtocol.reason_codes,
     enoughObservations ? "observation_gate_satisfied" : "observation_gate_pending",
     args.authorityGateAdmitted === true ? "authority_gate_admitted" : args.authorityGateAdmitted === false ? "authority_gate_blocked" : null,
     args.learningControlAdmitted === true ? "learning_control_admitted" : args.learningControlAdmitted === false ? "learning_control_blocked" : null,
@@ -137,6 +255,7 @@ export function buildPromotionEvidenceLedgerV1(args: {
     source_run_ids: sourceRunIds,
     source_commit_ids: sourceCommitIds,
     reason_codes: reasonCodes,
+    promotion_protocol: promotionProtocol,
     source_code_change_allowed: false,
   });
 }

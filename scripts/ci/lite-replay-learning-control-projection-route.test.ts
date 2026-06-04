@@ -5,11 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
-import { FakeEmbeddingProvider } from "../../src/embeddings/fake.ts";
+import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
 import { createReplayRepairReviewPolicy } from "../../src/app/replay-repair-review-policy.ts";
 import { createReplayRuntimeOptionBuilders } from "../../src/app/replay-runtime-options.ts";
-import { registerHostErrorHandler } from "../../src/host/http-host.ts";
+import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import {
   PolicyMutationAdjudicationV1Schema,
   PolicyMutationV1Schema,
@@ -20,12 +20,22 @@ import { registerMemoryReplayLearningControlRoutes } from "../../src/routes/memo
 import { applyReplayMemoryWrite } from "../../src/memory/replay-write.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteReplayStore } from "../../src/store/lite-replay-store.ts";
+import { createLiteRuntimeStore } from "../../src/store/lite-runtime-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
+import { createSandboxStore } from "../../src/store/sandbox-access.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-replay-learning_control-"));
   return path.join(dir, `${name}.sqlite`);
+}
+
+function createTestSandboxStore() {
+  const runtimeStore = createLiteRuntimeStore(tmpDbPath("sandbox-runtime"));
+  return {
+    sandboxStore: createSandboxStore(runtimeStore),
+    close: () => runtimeStore.close(),
+  };
 }
 
 function buildEnv(overrides: Record<string, unknown> = {}) {
@@ -47,8 +57,6 @@ function buildEnv(overrides: Record<string, unknown> = {}) {
     MAX_TEXT_LEN: 10000,
     PII_REDACTION: false,
     ALLOW_CROSS_SCOPE_EDGES: false,
-    MEMORY_SHADOW_DUAL_WRITE_ENABLED: false,
-    MEMORY_SHADOW_DUAL_WRITE_STRICT: false,
     SANDBOX_ENABLED: false,
     SANDBOX_EXECUTOR_MODE: "disabled",
     SANDBOX_EXECUTOR_TIMEOUT_MS: 15000,
@@ -76,33 +84,21 @@ function buildEnv(overrides: Record<string, unknown> = {}) {
     REPLAY_LEARNING_MIN_SUCCESS_RATIO: 1,
     REPLAY_LEARNING_MAX_MATCHER_BYTES: 16384,
     REPLAY_LEARNING_MAX_TOOL_PREFER: 8,
-    REPLAY_LEARNING_CONTROL_STATIC_PROMOTE_MEMORY_PROVIDER_ENABLED: false,
+    REPLAY_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: false,
     EPISODE_GC_TTL_DAYS: 30,
-    REPLAY_GUIDED_REPAIR_STRATEGY: "off",
-    REPLAY_GUIDED_REPAIR_ALLOW_REQUEST_BUILTIN_LLM: false,
+    REPLAY_GUIDED_REPAIR_STRATEGY: "agent_repair_request",
     REPLAY_GUIDED_REPAIR_MAX_ERROR_CHARS: 4000,
-    REPLAY_GUIDED_REPAIR_HTTP_ENDPOINT: "",
-    REPLAY_GUIDED_REPAIR_HTTP_TIMEOUT_MS: 1000,
-    REPLAY_GUIDED_REPAIR_HTTP_AUTH_TOKEN: "",
-    REPLAY_GUIDED_REPAIR_LLM_BASE_URL: "",
-    REPLAY_GUIDED_REPAIR_LLM_API_KEY: "",
-    REPLAY_GUIDED_REPAIR_LLM_MODEL: "",
-    REPLAY_GUIDED_REPAIR_LLM_TIMEOUT_MS: 1000,
-    REPLAY_GUIDED_REPAIR_LLM_MAX_TOKENS: 256,
-    REPLAY_GUIDED_REPAIR_LLM_TEMPERATURE: 0,
     ...overrides,
   } as any;
 }
 
-function buildRequestGuards(embedder: typeof FakeEmbeddingProvider | null = null) {
+function buildRequestGuards(embedder: typeof DeterministicEmbeddingProvider | null = null) {
   return createRequestGuards({
     env: buildEnv(),
     embedder,
     recallLimiter: null,
     debugEmbedLimiter: null,
     writeLimiter: null,
-    sandboxWriteLimiter: null,
-    sandboxReadLimiter: null,
     recallTextEmbedLimiter: null,
     recallInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
     writeInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
@@ -119,7 +115,6 @@ async function seedPendingReviewPlaybook(args: {
   const liteReplayStore = createLiteReplayStore(args.replayDbPath);
   const sourceClientId = `replay:playbook:${args.playbookId}:v1`;
   const out = await applyReplayMemoryWrite(
-    {} as any,
     {
       tenant_id: "default",
       scope: "default",
@@ -188,9 +183,6 @@ async function seedPendingReviewPlaybook(args: {
       maxTextLen: 10000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
-      writeAccessShadowMirrorV2: false,
       embedder: null,
       replayMirror: liteReplayStore,
       writeAccess: liteWriteStore,
@@ -208,28 +200,26 @@ function registerReplayReviewRoute(args: {
 }) {
   const env = buildEnv(args.envOverrides);
   const app = Fastify();
-  registerHostErrorHandler(app);
+  registerRuntimeErrorHandler(app);
   const guards = createRequestGuards({
     env,
-    embedder: FakeEmbeddingProvider,
+    embedder: DeterministicEmbeddingProvider,
     recallLimiter: null,
     debugEmbedLimiter: null,
     writeLimiter: null,
-    sandboxWriteLimiter: null,
-    sandboxReadLimiter: null,
     recallTextEmbedLimiter: null,
     recallInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
     writeInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
   });
+  const testSandbox = createTestSandboxStore();
+  app.addHook("onClose", async () => {
+    await testSandbox.close();
+  });
   const runtimeOptions = createReplayRuntimeOptionBuilders({
     env,
-    store: {
-      withTx: async <T>(fn: (client: any) => Promise<T>) => await fn({} as any),
-      withClient: async <T>(fn: (client: any) => Promise<T>) => await fn({} as any),
-    },
-    embedder: FakeEmbeddingProvider,
+    sandboxStore: testSandbox.sandboxStore,
+    embedder: DeterministicEmbeddingProvider,
     embeddingSurfacePolicy: undefined,
-    embeddedRuntime: null,
     liteWriteStore: args.liteWriteStore,
     liteReplayAccess: args.liteReplayStore.createReplayAccess(),
     liteReplayStore: args.liteReplayStore,
@@ -238,7 +228,6 @@ function registerReplayReviewRoute(args: {
       enqueue: () => {},
       executeSync: async () => {},
     },
-    writeAccessShadowMirrorV2: false,
     enforceSandboxTenantBudget: async () => {},
   });
   const { withReplayRepairReviewDefaults } = createReplayRepairReviewPolicy({
@@ -274,13 +263,12 @@ function registerReplayReviewRoute(args: {
         MAX_TEXT_LEN: 10_000,
         PII_REDACTION: false,
         MEMORY_RECALL_TEXT_CONTEXT_TOKEN_BUDGET_DEFAULT: 4096,
-        MEMORY_RECALL_STAGE1_EXACT_FALLBACK_ON_EMPTY: true,
+        MEMORY_RECALL_STAGE1_EXACT_RECOVERY_ON_EMPTY: true,
         MEMORY_RECALL_ADAPTIVE_HARD_CAP_WAIT_MS: 0,
         MEMORY_PLANNING_CONTEXT_OPTIMIZATION_PROFILE_DEFAULT: "balanced",
         MEMORY_CONTEXT_ASSEMBLE_OPTIMIZATION_PROFILE_DEFAULT: "balanced",
       } as any,
-      embedder: FakeEmbeddingProvider,
-      embeddedRuntime: null,
+      embedder: DeterministicEmbeddingProvider,
       liteWriteStore: args.liteWriteStore,
       liteRecallAccess: args.liteRecallStore.createRecallAccess(),
       recallTextEmbedBatcher: { stats: () => null },
@@ -354,30 +342,30 @@ function registerReplayReviewRoute(args: {
   return { app, runtimeOptions };
 }
 
-test("lite replay runtime defaults force sync_inline learning projection delivery", () => {
+test("lite replay runtime defaults force sync_inline learning projection delivery", async () => {
   const env = buildEnv({ REPLAY_LEARNING_PROJECTION_DELIVERY: "async_outbox" });
-  const runtimeOptions = createReplayRuntimeOptionBuilders({
-    env,
-    store: {
-      withTx: async <T>(fn: (client: any) => Promise<T>) => await fn({} as any),
-      withClient: async <T>(fn: (client: any) => Promise<T>) => await fn({} as any),
-    },
-    embedder: null,
-    embeddingSurfacePolicy: undefined,
-    embeddedRuntime: null,
-    liteWriteStore: null,
-    liteReplayAccess: null,
-    liteReplayStore: null,
-    sandboxAllowedCommands: [],
-    sandboxExecutor: {
-      enqueue: () => {},
-      executeSync: async () => {},
-    },
-    writeAccessShadowMirrorV2: false,
-    enforceSandboxTenantBudget: async () => {},
-  });
+  const testSandbox = createTestSandboxStore();
+  try {
+    const runtimeOptions = createReplayRuntimeOptionBuilders({
+      env,
+      sandboxStore: testSandbox.sandboxStore,
+      embedder: null,
+      embeddingSurfacePolicy: undefined,
+      liteWriteStore: null,
+      liteReplayAccess: null,
+      liteReplayStore: null,
+      sandboxAllowedCommands: [],
+      sandboxExecutor: {
+        enqueue: () => {},
+        executeSync: async () => {},
+      },
+      enforceSandboxTenantBudget: async () => {},
+    });
 
-  assert.equal(runtimeOptions.buildReplayRepairReviewOptions().learningProjectionDefaults?.delivery, "sync_inline");
+    assert.equal(runtimeOptions.buildReplayRepairReviewOptions().learningProjectionDefaults?.delivery, "sync_inline");
+  } finally {
+    await testSandbox.close();
+  }
 });
 
 test("lite replay repair review applies learning projection inline by default", async () => {
@@ -526,12 +514,12 @@ test("lite replay repair review applies learning projection inline by default", 
   }
 });
 
-test("lite replay repair review can use internal static learning_control provider without explicit review", async () => {
-  const dbPath = tmpDbPath("repair-review-inline-static-provider");
+test("lite replay repair review can use internal evidence learning_control provider without explicit review", async () => {
+  const dbPath = tmpDbPath("repair-review-inline-evidence-provider");
   const playbookId = randomUUID();
   const { liteWriteStore, liteReplayStore } = await seedPendingReviewPlaybook({
     writeDbPath: dbPath,
-    replayDbPath: tmpDbPath("repair-review-inline-static-provider-replay"),
+    replayDbPath: tmpDbPath("repair-review-inline-evidence-provider-replay"),
     playbookId,
     workflowSignature: "wf:replay:export-fix",
   });
@@ -539,7 +527,7 @@ test("lite replay repair review can use internal static learning_control provide
     liteWriteStore,
     liteReplayStore,
     envOverrides: {
-      REPLAY_LEARNING_CONTROL_STATIC_PROMOTE_MEMORY_PROVIDER_ENABLED: true,
+      REPLAY_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: true,
     },
   });
   try {
@@ -565,7 +553,7 @@ test("lite replay repair review can use internal static learning_control provide
     assert.equal(body.learning_projection_result.rule_state, "shadow");
     assert.equal(
       body.learning_control_preview?.promote_memory.review_result?.adjudication.reason,
-      "static provider found workflow-signature evidence",
+      "evidence provider found workflow-signature evidence",
     );
     assert.equal(body.learning_control_preview?.promote_memory.review_result?.adjudication.confidence, 0.84);
     assert.equal(body.learning_control_preview?.promote_memory.admissibility?.admissible, true);

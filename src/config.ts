@@ -4,7 +4,7 @@ import { parseEmbeddingEnabledSurfacesJson } from "./embeddings/surface-policy.j
 import { parseTrustedProxyCidrs } from "./util/ip-guard.js";
 
 const RuntimeModeSchema = z.enum(["local", "service", "cloud"]);
-const EditionSchema = z.enum(["server", "lite"]);
+const EditionSchema = z.literal("lite");
 const AbstractionPolicyProfileSchema = z.enum(["conservative", "balanced", "aggressive"]);
 
 function sandboxRemoteHostAllowed(hostname: string, allowlist: string[]): boolean {
@@ -128,72 +128,6 @@ const EnvSchema = z.object({
     .pipe(z.enum(["true", "false"]))
     .transform((v) => v === "true"),
   TRUSTED_PROXY_CIDRS: z.string().default(""),
-  DATABASE_URL: z.string().default(""),
-  MEMORY_STORE_BACKEND: z.enum(["postgres", "embedded"]).default("postgres"),
-  MEMORY_STORE_EMBEDDED_EXPERIMENTAL_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "false").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  MEMORY_STORE_EMBEDDED_SNAPSHOT_PATH: z.string().default(".tmp/embedded-memory-runtime.snapshot.json"),
-  MEMORY_STORE_EMBEDDED_AUTOSAVE: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "true").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  MEMORY_STORE_EMBEDDED_SNAPSHOT_MAX_BYTES: z.coerce.number().int().positive().max(1024 * 1024 * 1024).default(50 * 1024 * 1024),
-  MEMORY_STORE_EMBEDDED_SNAPSHOT_MAX_BACKUPS: z.coerce.number().int().min(0).max(20).default(3),
-  MEMORY_STORE_EMBEDDED_SNAPSHOT_STRICT_MAX_BYTES: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "false").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  MEMORY_STORE_EMBEDDED_SNAPSHOT_COMPACTION_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "true").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  MEMORY_STORE_EMBEDDED_SNAPSHOT_COMPACTION_MAX_ROUNDS: z.coerce.number().int().min(1).max(32).default(8),
-  MEMORY_STORE_EMBEDDED_SHADOW_MIRROR_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "false").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  MEMORY_STORE_EMBEDDED_RECALL_DEBUG_EMBEDDINGS_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "false").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  MEMORY_STORE_EMBEDDED_RECALL_AUDIT_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "true").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  MEMORY_STORE_EMBEDDED_SESSION_GRAPH_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "true").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  MEMORY_STORE_EMBEDDED_PACK_EXPORT_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "true").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  MEMORY_STORE_EMBEDDED_PACK_IMPORT_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "true").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
   LITE_REPLAY_SQLITE_PATH: z.string().default(".tmp/aionis-lite-replay.sqlite"),
   LITE_WRITE_SQLITE_PATH: z.string().default(".tmp/aionis-lite-write.sqlite"),
   LITE_LOCAL_ACTOR_ID: z.string().min(1).default("local-user"),
@@ -252,10 +186,6 @@ const EnvSchema = z.object({
   DEBUG_EMBED_RATE_LIMIT_BURST: z.coerce.number().int().positive().default(2),
   WRITE_RATE_LIMIT_RPS: z.coerce.number().positive().default(5),
   WRITE_RATE_LIMIT_BURST: z.coerce.number().int().positive().default(10),
-  SANDBOX_WRITE_RATE_LIMIT_RPS: z.coerce.number().positive().default(5),
-  SANDBOX_WRITE_RATE_LIMIT_BURST: z.coerce.number().int().positive().default(10),
-  SANDBOX_READ_RATE_LIMIT_RPS: z.coerce.number().positive().default(20),
-  SANDBOX_READ_RATE_LIMIT_BURST: z.coerce.number().int().positive().default(40),
   // Optional write-side smoothing: when a write is just over the limit, wait briefly then retry once.
   WRITE_RATE_LIMIT_MAX_WAIT_MS: z.coerce.number().int().min(0).max(5000).default(200),
   TENANT_QUOTA_ENABLED: z
@@ -340,7 +270,7 @@ const EnvSchema = z.object({
   MEMORY_RECALL_ADAPTIVE_HARD_CAP_MIN_EDGE_WEIGHT: z.coerce.number().min(0).max(1).default(0.25),
   MEMORY_RECALL_ADAPTIVE_HARD_CAP_MIN_EDGE_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.25),
   // Stage-1 safety net: if ANN recall returns zero seeds, run one exact KNN pass to avoid false-empty recall.
-  MEMORY_RECALL_STAGE1_EXACT_FALLBACK_ON_EMPTY: z
+  MEMORY_RECALL_STAGE1_EXACT_RECOVERY_ON_EMPTY: z
     .string()
     .optional()
     .transform((v) => (v ?? "true").toLowerCase())
@@ -412,26 +342,11 @@ const EnvSchema = z.object({
   SANDBOX_RETENTION_BATCH_SIZE: z.coerce.number().int().positive().max(200000).default(10000),
   SANDBOX_TENANT_BUDGET_WINDOW_HOURS: z.coerce.number().int().positive().max(168).default(24),
   SANDBOX_TENANT_BUDGET_POLICY_JSON: z.string().default("{}"),
-  // Guided replay repair synthesis defaults (per-request params can still override).
+  // Guided replay emits structured repair requests; semantic patch synthesis stays outside Runtime.
   REPLAY_GUIDED_REPAIR_STRATEGY: z
-    .enum(["deterministic_skip", "heuristic_patch", "http_synth", "builtin_llm"])
-    .default("deterministic_skip"),
-  REPLAY_GUIDED_REPAIR_ALLOW_REQUEST_BUILTIN_LLM: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "false").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
+    .enum(["agent_repair_request"])
+    .default("agent_repair_request"),
   REPLAY_GUIDED_REPAIR_MAX_ERROR_CHARS: z.coerce.number().int().min(64).max(20000).default(1200),
-  REPLAY_GUIDED_REPAIR_HTTP_ENDPOINT: z.string().default(""),
-  REPLAY_GUIDED_REPAIR_HTTP_TIMEOUT_MS: z.coerce.number().int().positive().max(60000).default(6000),
-  REPLAY_GUIDED_REPAIR_HTTP_AUTH_TOKEN: z.string().default(""),
-  REPLAY_GUIDED_REPAIR_LLM_BASE_URL: z.string().default("https://api.openai.com/v1"),
-  REPLAY_GUIDED_REPAIR_LLM_API_KEY: z.string().default(""),
-  REPLAY_GUIDED_REPAIR_LLM_MODEL: z.string().default("gpt-4.1-mini"),
-  REPLAY_GUIDED_REPAIR_LLM_TIMEOUT_MS: z.coerce.number().int().positive().max(60000).default(7000),
-  REPLAY_GUIDED_REPAIR_LLM_MAX_TOKENS: z.coerce.number().int().positive().max(4000).default(500),
-  REPLAY_GUIDED_REPAIR_LLM_TEMPERATURE: z.coerce.number().min(0).max(1).default(0.1),
   // Replay closed-loop learning projection defaults.
   REPLAY_LEARNING_PROJECTION_ENABLED: z
     .string()
@@ -452,7 +367,7 @@ const EnvSchema = z.object({
     .transform((v) => (v ?? "false").toLowerCase())
     .pipe(z.enum(["true", "false"]))
     .transform((v) => v === "true"),
-  REPLAY_LEARNING_CONTROL_STATIC_PROMOTE_MEMORY_PROVIDER_ENABLED: z
+  REPLAY_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: z
     .string()
     .optional()
     .transform((v) => (v ?? "false").toLowerCase())
@@ -464,7 +379,7 @@ const EnvSchema = z.object({
     .transform((v) => (v ?? "false").toLowerCase())
     .pipe(z.enum(["true", "false"]))
     .transform((v) => v === "true"),
-  WORKFLOW_LEARNING_CONTROL_STATIC_PROMOTE_MEMORY_PROVIDER_ENABLED: z
+  WORKFLOW_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: z
     .string()
     .optional()
     .transform((v) => (v ?? "false").toLowerCase())
@@ -476,7 +391,7 @@ const EnvSchema = z.object({
     .transform((v) => (v ?? "false").toLowerCase())
     .pipe(z.enum(["true", "false"]))
     .transform((v) => v === "true"),
-  TOOLS_LEARNING_CONTROL_STATIC_FORM_PATTERN_PROVIDER_ENABLED: z
+  TOOLS_LEARNING_CONTROL_EVIDENCE_FORM_PATTERN_PROVIDER_ENABLED: z
     .string()
     .optional()
     .transform((v) => (v ?? "false").toLowerCase())
@@ -546,7 +461,7 @@ const EnvSchema = z.object({
   TOPIC_MIN_EVENTS_PER_TOPIC: z.coerce.number().int().positive().default(5),
   TOPIC_CLUSTER_BATCH_SIZE: z.coerce.number().int().positive().max(1000).default(200),
   TOPIC_MAX_CANDIDATES_PER_EVENT: z.coerce.number().int().positive().max(50).default(5),
-  TOPIC_CLUSTER_STRATEGY: z.enum(["online_knn", "offline_hdbscan"]).default("online_knn"),
+  TOPIC_CLUSTER_STRATEGY: z.enum(["online_knn"]).default("online_knn"),
 
   AUTO_TOPIC_CLUSTER_ON_WRITE: z
     .string()
@@ -565,20 +480,6 @@ const EnvSchema = z.object({
   OUTBOX_BATCH_SIZE: z.coerce.number().int().positive().max(200).default(20),
   OUTBOX_CLAIM_TIMEOUT_MS: z.coerce.number().int().positive().default(5 * 60 * 1000),
   OUTBOX_MAX_ATTEMPTS: z.coerce.number().int().positive().default(25),
-  // Shadow dual-write for partition-table migration.
-  MEMORY_SHADOW_DUAL_WRITE_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "false").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  MEMORY_SHADOW_DUAL_WRITE_STRICT: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "false").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-
   // Long-term memory tiering policy (Phase 1).
   MEMORY_TIER_WARM_BELOW: z.coerce.number().min(0).max(1).default(0.35),
   MEMORY_TIER_COLD_BELOW: z.coerce.number().min(0).max(1).default(0.12),
@@ -754,32 +655,13 @@ export function loadEnv(): Env {
   const trustedProxyCidrs = parseTrustedProxyCidrs(parsed.data.TRUSTED_PROXY_CIDRS);
   parsed.data.TRUSTED_PROXY_CIDRS = trustedProxyCidrs.join(",");
   if (parsed.data.AIONIS_EDITION === "lite" && parsed.data.APP_ENV === "prod") {
-    throw new Error("Lite runtime does not currently support APP_ENV=prod; use APP_ENV=dev/ci or a future server runtime.");
-  }
-  if (parsed.data.AIONIS_EDITION !== "lite" && parsed.data.DATABASE_URL.trim().length === 0) {
-    throw new Error("DATABASE_URL is required unless AIONIS_EDITION=lite");
+    throw new Error("Lite runtime does not currently support APP_ENV=prod; use APP_ENV=dev/ci.");
   }
   if (parsed.data.EMBEDDING_DIM !== 1536) {
     throw new Error(`EMBEDDING_DIM must be 1536 for text-embedding-3-small; got ${parsed.data.EMBEDDING_DIM}`);
   }
   if ((parsed.data.MEMORY_AUTH_MODE === "jwt" || parsed.data.MEMORY_AUTH_MODE === "api_key_or_jwt") && !parsed.data.MEMORY_JWT_HS256_SECRET) {
     throw new Error("MEMORY_JWT_HS256_SECRET is required when MEMORY_AUTH_MODE includes jwt");
-  }
-  if (parsed.data.MEMORY_SHADOW_DUAL_WRITE_STRICT && !parsed.data.MEMORY_SHADOW_DUAL_WRITE_ENABLED) {
-    throw new Error("MEMORY_SHADOW_DUAL_WRITE_STRICT=true requires MEMORY_SHADOW_DUAL_WRITE_ENABLED=true");
-  }
-  if (parsed.data.MEMORY_STORE_BACKEND === "embedded" && !parsed.data.MEMORY_STORE_EMBEDDED_EXPERIMENTAL_ENABLED) {
-    throw new Error("MEMORY_STORE_BACKEND=embedded requires MEMORY_STORE_EMBEDDED_EXPERIMENTAL_ENABLED=true");
-  }
-  if (
-    parsed.data.MEMORY_STORE_BACKEND === "embedded" &&
-    parsed.data.MEMORY_SHADOW_DUAL_WRITE_ENABLED &&
-    parsed.data.MEMORY_SHADOW_DUAL_WRITE_STRICT &&
-    !parsed.data.MEMORY_STORE_EMBEDDED_SHADOW_MIRROR_ENABLED
-  ) {
-    throw new Error(
-      "MEMORY_SHADOW_DUAL_WRITE_STRICT=true requires MEMORY_STORE_EMBEDDED_SHADOW_MIRROR_ENABLED=true when MEMORY_STORE_BACKEND=embedded",
-    );
   }
   {
     let policy: unknown;

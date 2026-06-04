@@ -47,24 +47,20 @@ test("memory/write allows exact client_id replay but rejects changed duplicate n
   try {
     const firstPrepared = await prepareSingleNodeWrite("Original procedure", "Inspect, patch, and rerun targeted tests.");
     const first = await store.withTx(() =>
-      applyMemoryWrite({} as any, firstPrepared, {
+      applyMemoryWrite(firstPrepared, {
         maxTextLen: 10_000,
         piiRedaction: false,
         allowCrossScopeEdges: false,
-        shadowDualWriteEnabled: false,
-        shadowDualWriteStrict: false,
         write_access: store,
       }),
     );
 
     const replayPrepared = await prepareSingleNodeWrite("Original procedure", "Inspect, patch, and rerun targeted tests.");
     const replay = await store.withTx(() =>
-      applyMemoryWrite({} as any, replayPrepared, {
+      applyMemoryWrite(replayPrepared, {
         maxTextLen: 10_000,
         piiRedaction: false,
         allowCrossScopeEdges: false,
-        shadowDualWriteEnabled: false,
-        shadowDualWriteStrict: false,
         write_access: store,
       }),
     );
@@ -76,12 +72,10 @@ test("memory/write allows exact client_id replay but rejects changed duplicate n
     await assert.rejects(
       () =>
         store.withTx(() =>
-          applyMemoryWrite({} as any, changedPrepared, {
+          applyMemoryWrite(changedPrepared, {
             maxTextLen: 10_000,
             piiRedaction: false,
             allowCrossScopeEdges: false,
-            shadowDualWriteEnabled: false,
-            shadowDualWriteStrict: false,
             write_access: store,
           }),
         ),
@@ -154,12 +148,10 @@ test("lite findNodes preserves literal text and slotsContains filtering", async 
       null,
     );
     await store.withTx(() =>
-      applyMemoryWrite({} as any, prepared, {
+      applyMemoryWrite(prepared, {
         maxTextLen: 10_000,
         piiRedaction: false,
         allowCrossScopeEdges: false,
-        shadowDualWriteEnabled: false,
-        shadowDualWriteStrict: false,
         write_access: store,
       }),
     );

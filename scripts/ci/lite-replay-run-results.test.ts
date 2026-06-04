@@ -115,7 +115,7 @@ test("replay run result helpers build stable output signature envelopes", () => 
     resultSummary: { summary: "partial" },
     signature,
     postconditions,
-    repair: { summary_version: "repair_patch_v1" },
+    repair: { kind: "agent_repair_request" },
   });
-  assert.equal((partial.repair as { summary_version: string }).summary_version, "repair_patch_v1");
+  assert.equal((partial.repair as { kind: string }).kind, "agent_repair_request");
 });

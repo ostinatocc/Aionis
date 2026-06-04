@@ -107,7 +107,7 @@ export function buildLiteLearningControlRuntimeProviders(
           ? "http"
           : "off"
       ),
-    staticEnabled: env.REPLAY_LEARNING_CONTROL_STATIC_PROMOTE_MEMORY_PROVIDER_ENABLED,
+    evidenceEnabled: env.REPLAY_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED,
     modelClientFactory: options?.modelClientFactory,
     httpClientConfig,
   });
@@ -119,13 +119,13 @@ export function buildLiteLearningControlRuntimeProviders(
           ? "http"
           : "off"
       ),
-    staticEnabled: env.WORKFLOW_LEARNING_CONTROL_STATIC_PROMOTE_MEMORY_PROVIDER_ENABLED,
+    evidenceEnabled: env.WORKFLOW_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED,
     modelClientFactory: options?.modelClientFactory,
     httpClientConfig,
     builtin: {
       confidence: 0.85,
     },
-    static: {
+    evidence: {
       confidence: 0.85,
     },
   });
@@ -137,7 +137,7 @@ export function buildLiteLearningControlRuntimeProviders(
           ? "http"
           : "off"
       ),
-    staticEnabled: env.TOOLS_LEARNING_CONTROL_STATIC_FORM_PATTERN_PROVIDER_ENABLED,
+    evidenceEnabled: env.TOOLS_LEARNING_CONTROL_EVIDENCE_FORM_PATTERN_PROVIDER_ENABLED,
     modelClientFactory: options?.modelClientFactory,
     httpClientConfig,
   });

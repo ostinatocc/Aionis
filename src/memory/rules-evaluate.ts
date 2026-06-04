@@ -1,10 +1,8 @@
-import type pg from "pg";
 import { RulesEvaluateRequest } from "./schemas.js";
 import { ruleMatchesContext } from "./rule-engine.js";
 import { buildAppliedPolicy, parsePolicyPatch, type PolicyPatch } from "./rule-policy.js";
 import { computeEffectiveToolPolicy } from "./tool-policy.js";
 import { resolveTenantScope } from "./tenant.js";
-import type { EmbeddedMemoryRuntime } from "../store/embedded-memory-runtime.js";
 import type { LiteRuleCandidateRow, LiteWriteStore } from "../store/lite-write-store.js";
 import { buildRulesEvaluationSummary } from "./tools-lifecycle-summary.js";
 
@@ -38,7 +36,6 @@ type RuleRankMeta = {
 };
 
 type EvaluateRulesOptions = {
-  embeddedRuntime?: EmbeddedMemoryRuntime | null;
   liteWriteStore?: Pick<LiteWriteStore, "listRuleCandidates"> | null;
 };
 
@@ -46,14 +43,14 @@ function isPlainObject(v: any): v is Record<string, any> {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 
-function clampInt(v: number, lo: number, hi: number, fallback: number): number {
-  if (!Number.isFinite(v)) return fallback;
+function clampInt(v: number, lo: number, hi: number, defaultValue: number): number {
+  if (!Number.isFinite(v)) return defaultValue;
   const n = Math.trunc(v);
   return Math.max(lo, Math.min(hi, n));
 }
 
-function clampNum(v: number, lo: number, hi: number, fallback: number): number {
-  if (!Number.isFinite(v)) return fallback;
+function clampNum(v: number, lo: number, hi: number, defaultValue: number): number {
+  if (!Number.isFinite(v)) return defaultValue;
   return Math.max(lo, Math.min(hi, v));
 }
 
@@ -189,7 +186,7 @@ function laneRuleMatchesContext(
     return { visible: true, unowned_private_detected: false };
   }
 
-  // Legacy rows without owner info are treated as non-visible under strict lane enforcement.
+  // Ownerless private rows are non-visible under strict lane enforcement.
   if (!ownerAgent && !ownerTeam) {
     return { visible: false, unowned_private_detected: true };
   }
@@ -246,44 +243,9 @@ function buildConflictExplain(
   return out;
 }
 
-async function queryRuleRows(client: pg.PoolClient, scope: string, limit: number): Promise<RuleRow[]> {
-  const rr = await client.query<RuleRow>(
-    `
-    SELECT
-      d.rule_node_id,
-      d.state::text AS state,
-      d.rule_scope::text AS rule_scope,
-      d.target_agent_id,
-      d.target_team_id,
-      n.memory_lane::text AS rule_memory_lane,
-      n.owner_agent_id AS rule_owner_agent_id,
-      n.owner_team_id AS rule_owner_team_id,
-      d.if_json,
-      d.then_json,
-      d.exceptions_json,
-      d.positive_count,
-      d.negative_count,
-      d.commit_id::text AS rule_commit_id,
-      n.text_summary AS rule_summary,
-      n.slots AS rule_slots,
-      d.updated_at::text AS updated_at
-    FROM memory_rule_defs d
-    JOIN memory_nodes n ON n.id = d.rule_node_id AND n.scope = d.scope
-    WHERE d.scope = $1
-      AND d.state IN ('shadow', 'active')
-    ORDER BY d.updated_at DESC
-    LIMIT $2
-    `,
-    [scope, limit],
-  );
-  return rr.rows;
-}
-
 async function loadRuleRows(
-  client: pg.PoolClient | null,
   scope: string,
   limit: number,
-  embeddedRuntime: EmbeddedMemoryRuntime | null | undefined,
   liteWriteStore: Pick<LiteWriteStore, "listRuleCandidates"> | null | undefined,
 ): Promise<RuleRow[]> {
   if (liteWriteStore) {
@@ -311,41 +273,10 @@ async function loadRuleRows(
       updated_at: r.updated_at,
     }));
   }
-  if (embeddedRuntime) {
-    return embeddedRuntime
-      .listRuleCandidates({
-        scope,
-        limit,
-        states: ["shadow", "active"],
-      })
-      .map((r) => ({
-        rule_node_id: r.rule_node_id,
-        state: r.state,
-        rule_scope: r.rule_scope,
-        target_agent_id: r.target_agent_id,
-        target_team_id: r.target_team_id,
-        rule_memory_lane: r.rule_memory_lane,
-        rule_owner_agent_id: r.rule_owner_agent_id,
-        rule_owner_team_id: r.rule_owner_team_id,
-        if_json: r.if_json,
-        then_json: r.then_json,
-        exceptions_json: r.exceptions_json,
-        positive_count: r.positive_count,
-        negative_count: r.negative_count,
-        rule_commit_id: r.rule_commit_id,
-        rule_summary: r.rule_summary,
-        rule_slots: r.rule_slots,
-        updated_at: r.updated_at,
-      }));
-  }
-  if (!client) {
-    throw new Error("rules evaluation requires liteWriteStore or embeddedRuntime when no postgres client is provided");
-  }
-  return await queryRuleRows(client, scope, limit);
+  throw new Error("rules evaluation requires liteWriteStore");
 }
 
 export async function evaluateRules(
-  client: pg.PoolClient | null,
   body: unknown,
   defaultScope: string,
   defaultTenantId: string,
@@ -358,7 +289,7 @@ export async function evaluateRules(
   );
   const scope = tenancy.scope_key;
 
-  const rows = await loadRuleRows(client, scope, parsed.limit, opts.embeddedRuntime, opts.liteWriteStore);
+  const rows = await loadRuleRows(scope, parsed.limit, opts.liteWriteStore);
 
   const ctx = parsed.context;
   const ctxAgentId = contextAgentId(ctx);
@@ -568,7 +499,6 @@ export async function evaluateRules(
 
 // Applied-only variant for tool selector / planner injection: avoids returning full match DTOs.
 export async function evaluateRulesAppliedOnly(
-  client: pg.PoolClient | null,
   params: { scope: string; tenant_id?: string; context: any; include_shadow: boolean; limit: number; default_tenant_id?: string },
   opts: EvaluateRulesOptions = {},
 ) {
@@ -580,7 +510,7 @@ export async function evaluateRulesAppliedOnly(
   const ctxAgentId = contextAgentId(params.context);
   const ctxTeamId = contextTeamId(params.context);
   const laneStatus = laneEnforcementStatus(ctxAgentId, ctxTeamId);
-  const rows = await loadRuleRows(client, scope, params.limit, opts.embeddedRuntime, opts.liteWriteStore);
+  const rows = await loadRuleRows(scope, params.limit, opts.liteWriteStore);
 
   const activeForMerge: Array<{ rule_node_id: string; commit_id: string; rank: RuleRankMeta; then_patch: PolicyPatch }> = [];
   const shadowForMerge: Array<{ rule_node_id: string; commit_id: string; rank: RuleRankMeta; then_patch: PolicyPatch }> = [];

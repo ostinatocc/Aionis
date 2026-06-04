@@ -10,7 +10,7 @@ import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { prepareMemoryWrite, applyMemoryWrite } from "../../src/memory/write.ts";
 import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
 import { registerMemoryFeedbackToolRoutes } from "../../src/routes/memory-feedback-tools.ts";
-import { registerHostErrorHandler } from "../../src/host/http-host.ts";
+import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { buildAionisUri } from "../../src/memory/uri.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
 
@@ -89,12 +89,10 @@ async function seedAnchorFixture(store: ReturnType<typeof createLiteWriteStore>)
     allowCrossScopeEdges: false,
   }, null);
 
-  await store.withTx(() => applyMemoryWrite({} as any, prepared, {
+  await store.withTx(() => applyMemoryWrite(prepared, {
     maxTextLen: 10000,
     piiRedaction: false,
     allowCrossScopeEdges: false,
-    shadowDualWriteEnabled: false,
-    shadowDualWriteStrict: false,
     write_access: store,
   }));
 
@@ -136,8 +134,6 @@ function buildRequestGuards() {
     recallLimiter: null,
     debugEmbedLimiter: null,
     writeLimiter: null,
-    sandboxWriteLimiter: null,
-    sandboxReadLimiter: null,
     recallTextEmbedLimiter: null,
     recallInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
     writeInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
@@ -150,7 +146,7 @@ test("lite memory-access route exposes anchor payload rehydration", async () => 
   try {
     const fixture = await seedAnchorFixture(store);
     const guards = buildRequestGuards();
-    registerHostErrorHandler(app);
+    registerRuntimeErrorHandler(app);
     registerMemoryAccessRoutes({
       app,
       env: {
@@ -161,13 +157,9 @@ test("lite memory-access route exposes anchor payload rehydration", async () => 
         MAX_TEXT_LEN: 10000,
         PII_REDACTION: false,
         ALLOW_CROSS_SCOPE_EDGES: false,
-        MEMORY_SHADOW_DUAL_WRITE_ENABLED: false,
-        MEMORY_SHADOW_DUAL_WRITE_STRICT: false,
       } as any,
       embedder: null,
       liteWriteStore: store,
-      writeAccessShadowMirrorV2: false,
-      requireStoreFeatureCapability: () => {},
       requireMemoryPrincipal: guards.requireMemoryPrincipal,
       withIdentityFromRequest: guards.withIdentityFromRequest,
       enforceRateLimit: guards.enforceRateLimit,
@@ -208,7 +200,7 @@ test("lite memory-feedback-tools routes expose rehydrate_payload as a runtime to
   try {
     const fixture = await seedAnchorFixture(store);
     const guards = buildRequestGuards();
-    registerHostErrorHandler(app);
+    registerRuntimeErrorHandler(app);
     registerMemoryAccessRoutes({
       app,
       env: {
@@ -219,13 +211,9 @@ test("lite memory-feedback-tools routes expose rehydrate_payload as a runtime to
         MAX_TEXT_LEN: 10000,
         PII_REDACTION: false,
         ALLOW_CROSS_SCOPE_EDGES: false,
-        MEMORY_SHADOW_DUAL_WRITE_ENABLED: false,
-        MEMORY_SHADOW_DUAL_WRITE_STRICT: false,
       } as any,
       embedder: null,
       liteWriteStore: store,
-      writeAccessShadowMirrorV2: false,
-      requireStoreFeatureCapability: () => {},
       requireMemoryPrincipal: guards.requireMemoryPrincipal,
       withIdentityFromRequest: guards.withIdentityFromRequest,
       enforceRateLimit: guards.enforceRateLimit,
@@ -243,7 +231,6 @@ test("lite memory-feedback-tools routes expose rehydrate_payload as a runtime to
         MAX_TEXT_LEN: 10000,
         PII_REDACTION: false,
       } as any,
-      embeddedRuntime: null,
       liteWriteStore: store,
       requireMemoryPrincipal: guards.requireMemoryPrincipal,
       withIdentityFromRequest: guards.withIdentityFromRequest,

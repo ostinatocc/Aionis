@@ -6,7 +6,7 @@ import type {
 import type { ReplayRunGateDecision } from "./replay-run-gates.js";
 import {
   mergeReplayUsage,
-  makeGuidedRepairPatch,
+  buildAgentRepairRequest,
   type ReplayGuidedRepairStrategy,
 } from "./replay-guided-repair.js";
 import {
@@ -36,17 +36,7 @@ type ReplayResultSummaryRecord = Record<string, unknown>;
 type ReplayGuidedRepairConfig = {
   strategy: ReplayGuidedRepairStrategy;
   allowedCommands: Set<string>;
-  commandAliasMap: Record<string, string>;
   maxErrorChars: number;
-  httpEndpoint?: string | null;
-  httpTimeoutMs?: number;
-  httpAuthToken?: string | null;
-  llmBaseUrl?: string | null;
-  llmApiKey?: string | null;
-  llmModel?: string | null;
-  llmTimeoutMs?: number;
-  llmMaxTokens?: number;
-  llmTemperature?: number;
 };
 
 export type ReplayRunStepCounterDelta = {
@@ -168,7 +158,7 @@ export async function handleReplayGuidedGateStep(input: {
   guidedRepair: ReplayGuidedRepairConfig;
   countBlocked?: boolean;
 }): Promise<ReplayHandledStepResult> {
-  const repair = await makeGuidedRepairPatch({
+  const repair = await buildAgentRepairRequest({
     strategy: input.guidedRepair.strategy,
     stepIndex: input.stepIndex,
     toolName: input.toolName,
@@ -178,17 +168,7 @@ export async function handleReplayGuidedGateStep(input: {
     command: input.gate.command ?? undefined,
     argv: input.gate.sensitiveReview?.argv,
     allowedCommands: input.guidedRepair.allowedCommands,
-    commandAliasMap: input.guidedRepair.commandAliasMap,
     maxErrorChars: input.guidedRepair.maxErrorChars,
-    httpEndpoint: input.guidedRepair.httpEndpoint,
-    httpTimeoutMs: input.guidedRepair.httpTimeoutMs,
-    httpAuthToken: input.guidedRepair.httpAuthToken,
-    llmBaseUrl: input.guidedRepair.llmBaseUrl,
-    llmApiKey: input.guidedRepair.llmApiKey,
-    llmModel: input.guidedRepair.llmModel,
-    llmTimeoutMs: input.guidedRepair.llmTimeoutMs,
-    llmMaxTokens: input.guidedRepair.llmMaxTokens,
-    llmTemperature: input.guidedRepair.llmTemperature,
     mode: "guided",
   });
   const repairRecord = asObject(repair);
@@ -210,13 +190,12 @@ export async function handleReplayGuidedGateStep(input: {
     outputSignature: artifacts.writeOutputSignature,
     postconditions: [],
     artifactRefs: [],
-    repairApplied: true,
-    repairNote: input.gate.reason,
+    repairApplied: false,
+    repairNote: "agent_repair_request_created",
   });
   return {
     report: artifacts.report,
     delta: {
-      repairedSteps: 1,
       skippedSteps: 1,
       blockedSteps: input.countBlocked ? 1 : 0,
     },
@@ -265,7 +244,6 @@ export async function handleReplayPendingStep(input: {
     delta: {
       executedSteps: 1,
       pendingSteps: 1,
-      repairedSteps: input.mode === "guided" ? 1 : 0,
       failedSteps: input.mode === "strict" ? 1 : 0,
     },
     stop: input.mode === "strict" && input.stopOnFailure,
@@ -390,7 +368,7 @@ export async function handleReplayGuidedFailureStep(input: {
   writeStepAfter?: ReplayStepAfterWriter | null;
   guidedRepair: ReplayGuidedRepairConfig;
 }): Promise<ReplayHandledStepResult> {
-  const repair = await makeGuidedRepairPatch({
+  const repair = await buildAgentRepairRequest({
     strategy: input.guidedRepair.strategy,
     stepIndex: input.stepIndex,
     toolName: input.toolName,
@@ -400,17 +378,7 @@ export async function handleReplayGuidedFailureStep(input: {
     command: input.command,
     argv: input.argv,
     allowedCommands: input.guidedRepair.allowedCommands,
-    commandAliasMap: input.guidedRepair.commandAliasMap,
     maxErrorChars: input.guidedRepair.maxErrorChars,
-    httpEndpoint: input.guidedRepair.httpEndpoint,
-    httpTimeoutMs: input.guidedRepair.httpTimeoutMs,
-    httpAuthToken: input.guidedRepair.httpAuthToken,
-    llmBaseUrl: input.guidedRepair.llmBaseUrl,
-    llmApiKey: input.guidedRepair.llmApiKey,
-    llmModel: input.guidedRepair.llmModel,
-    llmTimeoutMs: input.guidedRepair.llmTimeoutMs,
-    llmMaxTokens: input.guidedRepair.llmMaxTokens,
-    llmTemperature: input.guidedRepair.llmTemperature,
     mode: "guided",
   });
   const repairRecord = asObject(repair);
@@ -435,15 +403,15 @@ export async function handleReplayGuidedFailureStep(input: {
     outputSignature: artifacts.writeOutputSignature,
     postconditions: input.postconditions,
     artifactRefs: [],
-    repairApplied: true,
-    repairNote: input.error,
+    repairApplied: false,
+    repairNote: "agent_repair_request_created",
     error: input.error,
   });
   return {
     report: artifacts.report,
     delta: {
       executedSteps: 1,
-      repairedSteps: 1,
+      failedSteps: 1,
     },
     stop: false,
     usage: guidedRepairUsage(repair),

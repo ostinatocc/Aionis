@@ -212,7 +212,7 @@ test("workflow write projection rejects lightweight handoff-style continuity whe
   assert.deepEqual(assessed, { eligible: false, reason: "missing_execution_continuity" });
 });
 
-test("workflow write projection counts distinct observations by source provenance before projection client id fallback", () => {
+test("workflow write projection counts distinct observations by source provenance before projection client id grouping", () => {
   const count = countDistinctWorkflowObservations([
     {
       id: "node-1",

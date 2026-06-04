@@ -300,7 +300,7 @@ function pickTop(
 ): NodeRow[] {
   const allowedLayers =
     layerPolicy?.source === "request_override"
-      ? new Set<MemoryLayerId>([...layerPolicy.preferred_layers, ...layerPolicy.fallback_layers, ...layerPolicy.trust_anchor_layers])
+      ? new Set<MemoryLayerId>([...layerPolicy.preferred_layers, ...layerPolicy.secondary_layers, ...layerPolicy.trust_anchor_layers])
       : null;
   const out: Array<{ node: NodeRow; rank_index: number }> = [];
   let rankIndex = 0;
@@ -327,14 +327,14 @@ function pickTop(
   }
   if (layerPolicy && out.length > 1) {
     const preferredOrder = new Map(layerPolicy.preferred_layers.map((layer, idx) => [layer, idx]));
-    const fallbackOffset = layerPolicy.preferred_layers.length;
-    const fallbackOrder = new Map(layerPolicy.fallback_layers.map((layer, idx) => [layer, fallbackOffset + idx]));
-    const unknownLayerRank = fallbackOffset + layerPolicy.fallback_layers.length + 32;
+    const secondaryOffset = layerPolicy.preferred_layers.length;
+    const secondaryOrder = new Map(layerPolicy.secondary_layers.map((layer, idx) => [layer, secondaryOffset + idx]));
+    const unknownLayerRank = secondaryOffset + layerPolicy.secondary_layers.length + 32;
     out.sort((a, b) => {
       const aLayer = resolveCompressionLayer(a.node);
       const bLayer = resolveCompressionLayer(b.node);
-      const aPref = aLayer ? (preferredOrder.get(aLayer) ?? fallbackOrder.get(aLayer) ?? unknownLayerRank) : unknownLayerRank + 16;
-      const bPref = bLayer ? (preferredOrder.get(bLayer) ?? fallbackOrder.get(bLayer) ?? unknownLayerRank) : unknownLayerRank + 16;
+      const aPref = aLayer ? (preferredOrder.get(aLayer) ?? secondaryOrder.get(aLayer) ?? unknownLayerRank) : unknownLayerRank + 16;
+      const bPref = bLayer ? (preferredOrder.get(bLayer) ?? secondaryOrder.get(bLayer) ?? unknownLayerRank) : unknownLayerRank + 16;
       if (aPref !== bPref) return aPref - bPref;
       return a.rank_index - b.rank_index;
     });

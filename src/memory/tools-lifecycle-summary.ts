@@ -38,8 +38,8 @@ export type ToolsSelectionSummary = {
   skipped_contested_pattern_affinity_levels: string[];
   skipped_suppressed_pattern_tools: string[];
   skipped_suppressed_pattern_affinity_levels: string[];
-  fallback_applied: boolean;
-  fallback_reason: string | null;
+  policy_relaxation_applied: boolean;
+  policy_relaxation_reason: string | null;
   provenance_explanation: string | null;
   pattern_lifecycle_summary: {
     candidate_count: number;
@@ -162,8 +162,8 @@ function buildSelectionProvenanceExplanation(args: {
   candidatePatternTools: string[];
   contestedPatternTools: string[];
   suppressedPatternTools: string[];
-  fallbackApplied: boolean;
-  fallbackReason: string | null;
+  policyRelaxationApplied: boolean;
+  policyRelaxationReason: string | null;
 }): string | null {
   const parts: string[] = [];
   if (args.selectedTool) {
@@ -183,8 +183,8 @@ function buildSelectionProvenanceExplanation(args: {
   if (args.suppressedPatternTools.length > 0) {
     parts.push(`suppressed patterns visible but operator-blocked: ${args.suppressedPatternTools.join(", ")}`);
   }
-  if (args.fallbackApplied) {
-    parts.push(`fallback applied${args.fallbackReason ? `: ${args.fallbackReason}` : ""}`);
+  if (args.policyRelaxationApplied) {
+    parts.push(`policy relaxation applied${args.policyRelaxationReason ? `: ${args.policyRelaxationReason}` : ""}`);
   }
   return parts.length > 0 ? parts.join("; ") : null;
 }
@@ -251,7 +251,7 @@ export function buildToolsSelectionSummary(args: {
     allowed?: unknown;
     denied?: unknown;
     preferred?: unknown;
-    fallback?: { applied?: boolean; reason?: string | null } | null;
+    policy_relaxation?: { applied?: boolean; reason?: string | null } | null;
   };
   rules: {
     matched?: number;
@@ -324,8 +324,8 @@ export function buildToolsSelectionSummary(args: {
   const suppressedPatternCount = patternAnchors
     .filter((anchor) => anchor?.suppressed === true)
     .length;
-  const fallbackApplied = Boolean(selection.fallback?.applied);
-  const fallbackReason = selection.fallback?.reason ?? null;
+  const policyRelaxationApplied = Boolean(selection.policy_relaxation?.applied);
+  const policyRelaxationReason = selection.policy_relaxation?.reason ?? null;
   const transitionCounts = {
     candidate_observed: 0,
     promoted_to_trusted: 0,
@@ -403,8 +403,8 @@ export function buildToolsSelectionSummary(args: {
     skipped_contested_pattern_affinity_levels: contestedPatternAffinityLevels,
     skipped_suppressed_pattern_tools: suppressedPatternTools,
     skipped_suppressed_pattern_affinity_levels: suppressedPatternAffinityLevels,
-    fallback_applied: fallbackApplied,
-    fallback_reason: fallbackReason,
+    policy_relaxation_applied: policyRelaxationApplied,
+    policy_relaxation_reason: policyRelaxationReason,
     provenance_explanation: buildSelectionProvenanceExplanation({
       selectedTool,
       trustedPatternLabels,
@@ -412,8 +412,8 @@ export function buildToolsSelectionSummary(args: {
       candidatePatternTools,
       contestedPatternTools,
       suppressedPatternTools,
-      fallbackApplied,
-      fallbackReason,
+      policyRelaxationApplied,
+      policyRelaxationReason,
     }),
     pattern_lifecycle_summary: {
       candidate_count: candidatePatternCount,

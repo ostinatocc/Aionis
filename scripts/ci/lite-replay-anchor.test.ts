@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { FakeEmbeddingProvider } from "../../src/embeddings/fake.ts";
+import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 import {
   replayPlaybookCompileFromRun,
   replayPlaybookPromote,
@@ -21,6 +21,7 @@ import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts"
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteReplayStore } from "../../src/store/lite-replay-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
+import { AionisMemoryPacketSchema } from "../../src/memory/product-output-contract.ts";
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-replay-anchor-"));
@@ -59,7 +60,7 @@ async function seedDraftPlaybook(args: {
   const sourceClientId = `replay:playbook:${args.playbookId}:v1`;
   const status = args.status ?? "draft";
   try {
-    const result = await applyReplayMemoryWrite({} as any, {
+    const result = await applyReplayMemoryWrite({
       tenant_id: "default",
       scope: "default",
       actor: "local-user",
@@ -116,9 +117,6 @@ async function seedDraftPlaybook(args: {
       maxTextLen: 10000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
-      writeAccessShadowMirrorV2: false,
       embedder: null,
       replayMirror: liteReplayStore,
       writeAccess: liteWriteStore,
@@ -146,16 +144,13 @@ test("compile_from_run turns a successful real replay run into a workflow candid
       maxTextLen: 10000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
-      writeAccessShadowMirrorV2: false,
       embedder: null,
       replayAccess,
       replayMirror: liteReplayStore,
       writeAccess: liteWriteStore,
     };
     const runId = randomUUID();
-    await replayRunStart({} as any, {
+    await replayRunStart({
       tenant_id: "default",
       scope: "default",
       actor: "local-user",
@@ -168,7 +163,7 @@ test("compile_from_run turns a successful real replay run into a workflow candid
       },
     }, writeOpts);
 
-    const firstStep = await replayStepBefore({} as any, {
+    const firstStep = await replayStepBefore({
       tenant_id: "default",
       scope: "default",
       actor: "local-user",
@@ -184,7 +179,7 @@ test("compile_from_run turns a successful real replay run into a workflow candid
       ],
       safety_level: "auto_ok",
     }, writeOpts);
-    await replayStepAfter({} as any, {
+    await replayStepAfter({
       tenant_id: "default",
       scope: "default",
       actor: "local-user",
@@ -202,7 +197,7 @@ test("compile_from_run turns a successful real replay run into a workflow candid
       },
     }, writeOpts);
 
-    const secondStep = await replayStepBefore({} as any, {
+    const secondStep = await replayStepBefore({
       tenant_id: "default",
       scope: "default",
       actor: "local-user",
@@ -219,7 +214,7 @@ test("compile_from_run turns a successful real replay run into a workflow candid
       ],
       safety_level: "needs_confirm",
     }, writeOpts);
-    await replayStepAfter({} as any, {
+    await replayStepAfter({
       tenant_id: "default",
       scope: "default",
       actor: "local-user",
@@ -241,7 +236,7 @@ test("compile_from_run turns a successful real replay run into a workflow candid
       },
     }, writeOpts);
 
-    const thirdStep = await replayStepBefore({} as any, {
+    const thirdStep = await replayStepBefore({
       tenant_id: "default",
       scope: "default",
       actor: "local-user",
@@ -254,7 +249,7 @@ test("compile_from_run turns a successful real replay run into a workflow candid
       },
       safety_level: "auto_ok",
     }, writeOpts);
-    await replayStepAfter({} as any, {
+    await replayStepAfter({
       tenant_id: "default",
       scope: "default",
       actor: "local-user",
@@ -280,7 +275,7 @@ test("compile_from_run turns a successful real replay run into a workflow candid
       ],
       target_files: ["index.js", "lib/utils.js"],
     };
-    await replayRunEnd({} as any, {
+    await replayRunEnd({
       tenant_id: "default",
       scope: "default",
       actor: "local-user",
@@ -297,7 +292,7 @@ test("compile_from_run turns a successful real replay run into a workflow candid
       },
     }, writeOpts);
 
-    const compiled = await replayPlaybookCompileFromRun({} as any, {
+    const compiled = await replayPlaybookCompileFromRun({
       tenant_id: "default",
       scope: "default",
       actor: "local-user",
@@ -394,7 +389,7 @@ test("replayPlaybookPromote writes workflow anchor payload onto stable playbook 
   });
   try {
     const replayAccess = liteReplayStore.createReplayAccess();
-    const out = await replayPlaybookPromote({} as any, {
+    const out = await replayPlaybookPromote({
       tenant_id: "default",
       scope: "default",
       actor: "local-user",
@@ -406,10 +401,7 @@ test("replayPlaybookPromote writes workflow anchor payload onto stable playbook 
       maxTextLen: 10000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
-      writeAccessShadowMirrorV2: false,
-      embedder: FakeEmbeddingProvider,
+      embedder: DeterministicEmbeddingProvider,
       replayAccess,
       replayMirror: liteReplayStore,
       writeAccess: liteWriteStore,
@@ -469,7 +461,7 @@ test("stable replay playbook anchors are recallable through the procedure recall
   const liteRecallStore = createLiteRecallStore(dbPath);
   try {
     const replayAccess = liteReplayStore.createReplayAccess();
-    const promoted = await replayPlaybookPromote({} as any, {
+    const promoted = await replayPlaybookPromote({
       tenant_id: "default",
       scope: "default",
       actor: "local-user",
@@ -481,10 +473,7 @@ test("stable replay playbook anchors are recallable through the procedure recall
       maxTextLen: 10000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
-      writeAccessShadowMirrorV2: false,
-      embedder: FakeEmbeddingProvider,
+      embedder: DeterministicEmbeddingProvider,
       replayAccess,
       replayMirror: liteReplayStore,
       writeAccess: liteWriteStore,
@@ -501,10 +490,8 @@ test("stable replay playbook anchors are recallable through the procedure recall
     assert.ok(promotedNode);
     const anchor = promotedNode.slots.anchor_v1;
     const embedText = `${promotedNode.title}\n${anchor.summary}\n${anchor.tool_set.join(" ")}\n${anchor.task_signature}`;
-    const queryEmbedding = (await FakeEmbeddingProvider.embed([embedText]))[0];
-    const recall = await memoryRecallParsed(
-      {} as any,
-      MemoryRecallRequest.parse({
+    const queryEmbedding = (await DeterministicEmbeddingProvider.embed([embedText]))[0];
+    const recall = await memoryRecallParsed(MemoryRecallRequest.parse({
         tenant_id: "default",
         scope: "default",
         query_embedding: queryEmbedding,
@@ -537,6 +524,13 @@ test("stable replay playbook anchors are recallable through the procedure recall
     assert.equal((recall as any).action_recall_packet.packet_version, "action_recall_v1");
     assert.ok((recall as any).action_recall_packet.recommended_workflows.some((entry: any) => entry.anchor_id === promoted.playbook_node_id));
     assert.ok((recall as any).action_recall_packet.rehydration_candidates.some((entry: any) => entry.anchor_id === promoted.playbook_node_id));
+    const memoryPacket = AionisMemoryPacketSchema.parse((recall as any).aionis_memory_packet);
+    assert.equal(memoryPacket.contract_version, "aionis_memory_packet_v1");
+    assert.equal(memoryPacket.memory_family, "execution");
+    assert.ok(memoryPacket.relevant_memories.some((entry) =>
+      entry.memory_id === promoted.playbook_node_id && entry.domain === "execution"
+    ));
+    assert.ok(memoryPacket.behavior_impact.expected_effects.includes("tool_or_workflow_guidance"));
   } finally {
     await liteRecallStore.close();
     await liteReplayStore.close();
@@ -569,7 +563,7 @@ test("advisory replay playbook recall surfaces persisted contract trust without 
   const liteRecallStore = createLiteRecallStore(dbPath);
   try {
     const replayAccess = liteReplayStore.createReplayAccess();
-    const promoted = await replayPlaybookPromote({} as any, {
+    const promoted = await replayPlaybookPromote({
       tenant_id: "default",
       scope: "default",
       actor: "local-user",
@@ -581,10 +575,7 @@ test("advisory replay playbook recall surfaces persisted contract trust without 
       maxTextLen: 10000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
-      writeAccessShadowMirrorV2: false,
-      embedder: FakeEmbeddingProvider,
+      embedder: DeterministicEmbeddingProvider,
       replayAccess,
       replayMirror: liteReplayStore,
       writeAccess: liteWriteStore,
@@ -600,13 +591,11 @@ test("advisory replay playbook recall surfaces persisted contract trust without 
     const promotedNode = rows[0];
     assert.ok(promotedNode);
     const anchor = promotedNode.slots.anchor_v1;
-    const [queryEmbedding] = await FakeEmbeddingProvider.embed([
+    const [queryEmbedding] = await DeterministicEmbeddingProvider.embed([
       `${promotedNode.title}\n${anchor.summary}\n${anchor.tool_set.join(" ")}\n${anchor.task_signature}`,
     ]);
 
-    const recall = await memoryRecallParsed(
-      {} as any,
-      MemoryRecallRequest.parse({
+    const recall = await memoryRecallParsed(MemoryRecallRequest.parse({
         tenant_id: "default",
         scope: "default",
         query_embedding: queryEmbedding,
@@ -727,7 +716,7 @@ test("replayPlaybookPromote preserves richer recovery contract fields while advi
   });
   try {
     const replayAccess = liteReplayStore.createReplayAccess();
-    const out = await replayPlaybookPromote({} as any, {
+    const out = await replayPlaybookPromote({
       tenant_id: "default",
       scope: "default",
       actor: "local-user",
@@ -739,10 +728,7 @@ test("replayPlaybookPromote preserves richer recovery contract fields while advi
       maxTextLen: 10000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
-      writeAccessShadowMirrorV2: false,
-      embedder: FakeEmbeddingProvider,
+      embedder: DeterministicEmbeddingProvider,
       replayAccess,
       replayMirror: liteReplayStore,
       writeAccess: liteWriteStore,
@@ -802,7 +788,7 @@ test("planning recall prioritizes workflow anchors ahead of generic supporting c
   const liteRecallStore = createLiteRecallStore(dbPath);
   try {
     const replayAccess = liteReplayStore.createReplayAccess();
-    const promoted = await replayPlaybookPromote({} as any, {
+    const promoted = await replayPlaybookPromote({
       tenant_id: "default",
       scope: "default",
       actor: "local-user",
@@ -814,10 +800,7 @@ test("planning recall prioritizes workflow anchors ahead of generic supporting c
       maxTextLen: 10000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
-      writeAccessShadowMirrorV2: false,
-      embedder: FakeEmbeddingProvider,
+      embedder: DeterministicEmbeddingProvider,
       replayAccess,
       replayMirror: liteReplayStore,
       writeAccess: liteWriteStore,
@@ -834,7 +817,7 @@ test("planning recall prioritizes workflow anchors ahead of generic supporting c
     assert.ok(promotedNode);
     const anchor = promotedNode.slots.anchor_v1;
     const embedText = `${promotedNode.title}\n${anchor.summary}\n${anchor.tool_set.join(" ")}\n${anchor.task_signature}`;
-    const [queryEmbedding] = await FakeEmbeddingProvider.embed([embedText]);
+    const [queryEmbedding] = await DeterministicEmbeddingProvider.embed([embedText]);
 
     const prepared = await prepareMemoryWrite({
       tenant_id: "default",
@@ -854,7 +837,7 @@ test("planning recall prioritizes workflow anchors ahead of generic supporting c
             compression_layer: "L1",
           },
           embedding: queryEmbedding,
-          embedding_model: FakeEmbeddingProvider.name,
+          embedding_model: DeterministicEmbeddingProvider.name,
           salience: 0.95,
           importance: 0.95,
           confidence: 0.95,
@@ -867,20 +850,16 @@ test("planning recall prioritizes workflow anchors ahead of generic supporting c
       allowCrossScopeEdges: false,
     }, null);
     await liteWriteStore.withTx(() =>
-      applyMemoryWrite({} as any, prepared, {
+      applyMemoryWrite(prepared, {
         maxTextLen: 10000,
         piiRedaction: false,
         allowCrossScopeEdges: false,
-        shadowDualWriteEnabled: false,
-        shadowDualWriteStrict: false,
         associativeLinkOrigin: "memory_write",
         write_access: liteWriteStore,
       }),
     );
 
-    const recall = await memoryRecallParsed(
-      {} as any,
-      MemoryRecallRequest.parse({
+    const recall = await memoryRecallParsed(MemoryRecallRequest.parse({
         tenant_id: "default",
         scope: "default",
         query_embedding: queryEmbedding,
@@ -915,7 +894,7 @@ test("planning recall treats execution_native_v1 workflow procedures as action m
   try {
     const workflowText = "Execution-native workflow only\nRepair export by inspect patch rerun\nrepair-export-node-tests";
     const conceptText = "Generic recall concept\nSupporting knowledge for export repair";
-    const [workflowEmbedding, conceptEmbedding] = await FakeEmbeddingProvider.embed([workflowText, conceptText]);
+    const [workflowEmbedding, conceptEmbedding] = await DeterministicEmbeddingProvider.embed([workflowText, conceptText]);
 
     const prepared = await prepareMemoryWrite(
       {
@@ -931,7 +910,7 @@ test("planning recall treats execution_native_v1 workflow procedures as action m
             title: "Execution-native workflow only",
             text_summary: "Repair export by inspect patch rerun",
             embedding: workflowEmbedding,
-            embedding_model: "fake",
+            embedding_model: "deterministic-test",
             slots: {
               execution_native_v1: {
                 schema_version: "execution_native_v1",
@@ -951,7 +930,7 @@ test("planning recall treats execution_native_v1 workflow procedures as action m
             title: "Generic recall concept",
             text_summary: "Supporting knowledge for export repair",
             embedding: conceptEmbedding,
-            embedding_model: "fake",
+            embedding_model: "deterministic-test",
             slots: {
               summary_kind: "note",
             },
@@ -970,12 +949,10 @@ test("planning recall treats execution_native_v1 workflow procedures as action m
     );
 
     const writeOut = await liteWriteStore.withTx(() =>
-      applyMemoryWrite({} as any, prepared, {
+      applyMemoryWrite(prepared, {
         maxTextLen: 10000,
         piiRedaction: false,
         allowCrossScopeEdges: false,
-        shadowDualWriteEnabled: false,
-        shadowDualWriteStrict: false,
         associativeLinkOrigin: "memory_write",
         write_access: liteWriteStore,
       }),
@@ -983,10 +960,8 @@ test("planning recall treats execution_native_v1 workflow procedures as action m
     const workflowNodeId = writeOut.nodes.find((node) => node.type === "procedure")?.id ?? null;
     assert.ok(workflowNodeId);
 
-    const [queryEmbedding] = await FakeEmbeddingProvider.embed([workflowText]);
-    const recall = await memoryRecallParsed(
-      {} as any,
-      MemoryRecallRequest.parse({
+    const [queryEmbedding] = await DeterministicEmbeddingProvider.embed([workflowText]);
+    const recall = await memoryRecallParsed(MemoryRecallRequest.parse({
         tenant_id: "default",
         scope: "default",
         query_embedding: queryEmbedding,
@@ -1020,7 +995,7 @@ test("planning recall surfaces execution_native_v1 workflow candidates separatel
   try {
     const workflowText = "Replay Episode: Fix export failure\nReplay repair learning episode for export failure";
     const conceptText = "Generic recall concept\nSupporting knowledge for export repair";
-    const [workflowEmbedding, conceptEmbedding] = await FakeEmbeddingProvider.embed([workflowText, conceptText]);
+    const [workflowEmbedding, conceptEmbedding] = await DeterministicEmbeddingProvider.embed([workflowText, conceptText]);
 
     const prepared = await prepareMemoryWrite(
       {
@@ -1036,7 +1011,7 @@ test("planning recall surfaces execution_native_v1 workflow candidates separatel
             title: "Replay Episode: Fix export failure",
             text_summary: "Replay repair learning episode for export failure",
             embedding: workflowEmbedding,
-            embedding_model: "fake",
+            embedding_model: "deterministic-test",
             slots: {
               summary_kind: "workflow_candidate",
               compression_layer: "L1",
@@ -1073,7 +1048,7 @@ test("planning recall surfaces execution_native_v1 workflow candidates separatel
             title: "Generic recall concept",
             text_summary: "Supporting knowledge for export repair",
             embedding: conceptEmbedding,
-            embedding_model: "fake",
+            embedding_model: "deterministic-test",
             slots: {
               summary_kind: "note",
             },
@@ -1092,12 +1067,10 @@ test("planning recall surfaces execution_native_v1 workflow candidates separatel
     );
 
     const writeOut = await liteWriteStore.withTx(() =>
-      applyMemoryWrite({} as any, prepared, {
+      applyMemoryWrite(prepared, {
         maxTextLen: 10000,
         piiRedaction: false,
         allowCrossScopeEdges: false,
-        shadowDualWriteEnabled: false,
-        shadowDualWriteStrict: false,
         associativeLinkOrigin: "memory_write",
         write_access: liteWriteStore,
       }),
@@ -1105,10 +1078,8 @@ test("planning recall surfaces execution_native_v1 workflow candidates separatel
     const workflowNodeId = writeOut.nodes.find((node) => node.type === "event")?.id ?? null;
     assert.ok(workflowNodeId);
 
-    const [queryEmbedding] = await FakeEmbeddingProvider.embed([workflowText]);
-    const recall = await memoryRecallParsed(
-      {} as any,
-      MemoryRecallRequest.parse({
+    const [queryEmbedding] = await DeterministicEmbeddingProvider.embed([workflowText]);
+    const recall = await memoryRecallParsed(MemoryRecallRequest.parse({
         tenant_id: "default",
         scope: "default",
         query_embedding: queryEmbedding,
@@ -1147,7 +1118,7 @@ test("planning recall prioritizes promotion-ready workflow candidates ahead of n
   const liteRecallStore = createLiteRecallStore(dbPath);
   try {
     const workflowText = "Replay Episode: Fix export failure\nReplay repair learning episode for export failure";
-    const [sharedEmbedding] = await FakeEmbeddingProvider.embed([workflowText]);
+    const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed([workflowText]);
 
     const prepared = await prepareMemoryWrite(
       {
@@ -1164,7 +1135,7 @@ test("planning recall prioritizes promotion-ready workflow candidates ahead of n
             title: "Replay Episode: Fix export failure",
             text_summary: "Replay repair learning episode for export failure",
             embedding: sharedEmbedding,
-            embedding_model: "fake",
+            embedding_model: "deterministic-test",
             slots: {
               summary_kind: "workflow_candidate",
               compression_layer: "L1",
@@ -1202,7 +1173,7 @@ test("planning recall prioritizes promotion-ready workflow candidates ahead of n
             title: "Replay Episode: Fix export failure",
             text_summary: "Replay repair learning episode for export failure",
             embedding: sharedEmbedding,
-            embedding_model: "fake",
+            embedding_model: "deterministic-test",
             slots: {
               summary_kind: "workflow_candidate",
               compression_layer: "L1",
@@ -1248,12 +1219,10 @@ test("planning recall prioritizes promotion-ready workflow candidates ahead of n
     );
 
     const writeOut = await liteWriteStore.withTx(() =>
-      applyMemoryWrite({} as any, prepared, {
+      applyMemoryWrite(prepared, {
         maxTextLen: 10000,
         piiRedaction: false,
         allowCrossScopeEdges: false,
-        shadowDualWriteEnabled: false,
-        shadowDualWriteStrict: false,
         associativeLinkOrigin: "memory_write",
         write_access: liteWriteStore,
       }),
@@ -1263,9 +1232,7 @@ test("planning recall prioritizes promotion-ready workflow candidates ahead of n
     assert.ok(readyNodeId);
     assert.ok(notReadyNodeId);
 
-    const recall = await memoryRecallParsed(
-      {} as any,
-      MemoryRecallRequest.parse({
+    const recall = await memoryRecallParsed(MemoryRecallRequest.parse({
         tenant_id: "default",
         scope: "default",
         query_embedding: sharedEmbedding,
@@ -1300,7 +1267,7 @@ test("planning recall suppresses candidate workflows when a stable workflow with
   const liteRecallStore = createLiteRecallStore(dbPath);
   try {
     const workflowText = "Replay learned workflow\nReplay repair learning episode for export failure";
-    const [sharedEmbedding] = await FakeEmbeddingProvider.embed([workflowText]);
+    const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed([workflowText]);
 
     const prepared = await prepareMemoryWrite(
       {
@@ -1317,7 +1284,7 @@ test("planning recall suppresses candidate workflows when a stable workflow with
             title: "Replay Learned Workflow: Fix export failure",
             text_summary: "Replay repair learning episode for export failure",
             embedding: sharedEmbedding,
-            embedding_model: "fake",
+            embedding_model: "deterministic-test",
             slots: {
               summary_kind: "workflow_anchor",
               compression_layer: "L2",
@@ -1360,7 +1327,7 @@ test("planning recall suppresses candidate workflows when a stable workflow with
             title: "Replay Episode: Fix export failure",
             text_summary: "Replay repair learning episode for export failure",
             embedding: sharedEmbedding,
-            embedding_model: "fake",
+            embedding_model: "deterministic-test",
             slots: {
               summary_kind: "workflow_candidate",
               compression_layer: "L1",
@@ -1406,12 +1373,10 @@ test("planning recall suppresses candidate workflows when a stable workflow with
     );
 
     const writeOut = await liteWriteStore.withTx(() =>
-      applyMemoryWrite({} as any, prepared, {
+      applyMemoryWrite(prepared, {
         maxTextLen: 10000,
         piiRedaction: false,
         allowCrossScopeEdges: false,
-        shadowDualWriteEnabled: false,
-        shadowDualWriteStrict: false,
         associativeLinkOrigin: "memory_write",
         write_access: liteWriteStore,
       }),
@@ -1419,9 +1384,7 @@ test("planning recall suppresses candidate workflows when a stable workflow with
     const stableNodeId = writeOut.nodes.find((node) => node.client_id === "procedure:workflow-stable")?.id ?? null;
     assert.ok(stableNodeId);
 
-    const recall = await memoryRecallParsed(
-      {} as any,
-      MemoryRecallRequest.parse({
+    const recall = await memoryRecallParsed(MemoryRecallRequest.parse({
         tenant_id: "default",
         scope: "default",
         query_embedding: sharedEmbedding,
@@ -1534,7 +1497,7 @@ test("replayPlaybookPromote normalizes latest stable playbooks onto workflow anc
     });
     assert.ok(updatedSeed);
 
-    const out = await replayPlaybookPromote({} as any, {
+    const out = await replayPlaybookPromote({
       tenant_id: "default",
       scope: "default",
       actor: "local-user",
@@ -1546,10 +1509,7 @@ test("replayPlaybookPromote normalizes latest stable playbooks onto workflow anc
       maxTextLen: 10000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
-      writeAccessShadowMirrorV2: false,
-      embedder: FakeEmbeddingProvider,
+      embedder: DeterministicEmbeddingProvider,
       replayAccess,
       replayMirror: liteReplayStore,
       writeAccess: liteWriteStore,

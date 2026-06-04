@@ -7,7 +7,6 @@ type CorsPolicy = {
   expose_headers: string;
 };
 
-type TelemetryEndpoint = "write" | "recall" | "recall_text" | "planning_context" | "context_assemble";
 type ContextAssemblyEndpoint = "planning_context" | "context_assemble";
 
 type ContextAssemblyLayerTelemetryRow = {
@@ -69,10 +68,8 @@ function collectLayeredContextTelemetryRows(layeredContext: any): ContextAssembl
 
 export function createHttpObservabilityHelpers(args: {
   env: Env;
-  db: any;
-  recordMemoryContextAssemblyTelemetry: (db: any, row: any) => Promise<void>;
 }) {
-  const { env, db, recordMemoryContextAssemblyTelemetry } = args;
+  const { env } = args;
 
   const corsMemoryAllowOrigins = parseCorsOrigins(process.env.CORS_ALLOW_ORIGINS ?? (env.APP_ENV === "prod" ? "" : "*"));
   const corsAdminAllowOrigins = parseCorsOrigins(process.env.CORS_ADMIN_ALLOW_ORIGINS ?? "");
@@ -81,35 +78,6 @@ export function createHttpObservabilityHelpers(args: {
   const corsAdminAllowHeaders = "content-type,authorization,x-admin-token,x-request-id";
   const corsAdminAllowMethods = "GET,POST,PUT,DELETE,OPTIONS";
   const corsAdminRouteMethods = new Set(["GET", "POST", "PUT", "DELETE"]);
-
-  const telemetryMemoryRouteToEndpoint = new Map<string, TelemetryEndpoint>([
-    ["/v1/memory/write", "write"],
-    ["/v1/memory/sessions", "write"],
-    ["/v1/memory/events", "write"],
-    ["/v1/memory/packs/import", "write"],
-    ["/v1/handoff/store", "write"],
-    ["/v1/memory/find", "recall"],
-    ["/v1/memory/packs/export", "recall"],
-    ["/v1/memory/recall", "recall"],
-    ["/v1/memory/recall_text", "recall_text"],
-    ["/v1/handoff/recover", "recall"],
-    ["/v1/memory/planning/context", "planning_context"],
-    ["/v1/memory/context/assemble", "context_assemble"],
-    ["/v1/memory/tools/decision", "recall"],
-    ["/v1/memory/replay/run/start", "write"],
-    ["/v1/memory/replay/step/before", "write"],
-    ["/v1/memory/replay/step/after", "write"],
-    ["/v1/memory/replay/run/end", "write"],
-    ["/v1/memory/replay/runs/get", "recall"],
-    ["/v1/memory/replay/playbooks/compile_from_run", "write"],
-    ["/v1/memory/replay/playbooks/get", "recall"],
-    ["/v1/memory/replay/playbooks/candidate", "recall"],
-    ["/v1/memory/replay/playbooks/promote", "write"],
-    ["/v1/memory/replay/playbooks/repair", "write"],
-    ["/v1/memory/replay/playbooks/repair/review", "write"],
-    ["/v1/memory/replay/playbooks/run", "recall"],
-    ["/v1/memory/replay/playbooks/dispatch", "write"],
-  ]);
 
   function resolveCorsAllowOrigin(origin: string | null, allowOrigins: string[]): string | null {
     if (allowOrigins.includes("*")) return "*";
@@ -147,12 +115,6 @@ export function createHttpObservabilityHelpers(args: {
     }
 
     return null;
-  }
-
-  function telemetryEndpointFromRequest(req: any): TelemetryEndpoint | null {
-    if (String(req?.method ?? "").toUpperCase() !== "POST") return null;
-    const p = routePath(req);
-    return telemetryMemoryRouteToEndpoint.get(p) ?? null;
   }
 
   function resolveRequestScopeForTelemetry(req: any): string {
@@ -199,10 +161,9 @@ export function createHttpObservabilityHelpers(args: {
       requested_allowed_layers?: string[];
     } | null;
   }) {
-    if (!db) return;
     const isLayeredOutput = args.layered_output === true;
     const layerRows = isLayeredOutput ? collectLayeredContextTelemetryRows(args.layered_context) : [];
-    await recordMemoryContextAssemblyTelemetry(db, {
+    const event = {
       tenant_id: args.tenant_id,
       scope: args.scope,
       endpoint: args.endpoint,
@@ -233,7 +194,11 @@ export function createHttpObservabilityHelpers(args: {
           ? args.selection_policy.requested_allowed_layers.map((entry) => String(entry ?? "").trim()).filter(Boolean)
           : [],
       layers: layerRows,
-    });
+    };
+    const logger = args.req?.log;
+    if (logger && typeof logger.debug === "function") {
+      logger.debug({ context_assembly: event }, "context assembly telemetry");
+    }
   }
 
   return {
@@ -241,7 +206,6 @@ export function createHttpObservabilityHelpers(args: {
     corsAdminAllowOrigins,
     resolveCorsAllowOrigin,
     resolveCorsPolicy,
-    telemetryEndpointFromRequest,
     resolveRequestScopeForTelemetry,
     resolveRequestTenantForTelemetry,
     resolveRequestApiKeyPrefixForTelemetry,

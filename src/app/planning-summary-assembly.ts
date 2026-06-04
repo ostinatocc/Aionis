@@ -4,8 +4,14 @@ import type {
   ActionRetrievalUncertaintySummary,
   AssemblySummary,
   ContractTrust,
+  ExecutionForgettingSummary,
+  ExecutionMemorySummaryBundle,
   ExecutionPacketAssemblySummary,
   ExecutionSummary,
+  FirstStepRecommendation,
+  HistoryImpactCapability,
+  HistoryImpactNextRunChange,
+  HistoryImpactSummary,
   PlannerPacketSummarySurface,
   PlanningSummary,
   RuntimeEditBoundaryContext,
@@ -189,6 +195,165 @@ function buildExecutionPacketAssemblySummary(
       packetAssembly && typeof packetAssembly.execution_state_v1_present === "boolean"
         ? packetAssembly.execution_state_v1_present
         : null,
+  };
+}
+
+function pushUnique<T extends string>(target: T[], value: T): void {
+  if (!target.includes(value)) target.push(value);
+}
+
+function buildHistoryImpactSummary(args: {
+  firstStepRecommendation: FirstStepRecommendation | null;
+  actionIntelligencePreActionGate: ActionIntelligencePreActionGateSummary | null;
+  runtimeEntropyProfile: RuntimeEntropyProfileV1 | null;
+  runtimeEntropyControls: RuntimeEntropyControlsV1 | null;
+  summaryBundle: ExecutionMemorySummaryBundle;
+  forgettingSummary: ExecutionForgettingSummary;
+  staticBlocksSelected: number;
+  selectedMemoryLayers: string[];
+}): HistoryImpactSummary {
+  const affectedCapabilities: HistoryImpactCapability[] = [];
+  const nextRunChanges: HistoryImpactNextRunChange[] = [];
+  const continuityCarrierCount = args.summaryBundle.continuity_carrier_summary.total_count;
+  const selectedMemoryLayerCount = args.selectedMemoryLayers.length;
+  const stableWorkflowCount = args.summaryBundle.workflow_signal_summary.stable_workflow_count;
+  const candidateWorkflowCount = args.summaryBundle.action_packet_summary.candidate_workflow_count;
+  const promotionReadyWorkflowCount = args.summaryBundle.workflow_signal_summary.promotion_ready_workflow_count;
+  const trustedPatternCount = args.summaryBundle.pattern_signal_summary.trusted_pattern_count;
+  const contestedPatternCount = args.summaryBundle.pattern_signal_summary.contested_pattern_count;
+  const activePolicyCount = args.summaryBundle.policy_lifecycle_summary.active_count;
+  const contestedPolicyCount = args.summaryBundle.policy_lifecycle_summary.contested_count;
+  const actionStartBlocked = args.actionIntelligencePreActionGate?.authority_blocked === true;
+  const contractTrust = args.firstStepRecommendation?.contract_trust ?? null;
+  const firstStepHistoryApplied = args.firstStepRecommendation?.history_applied === true;
+  const historyBackedLimitedAuthority =
+    firstStepHistoryApplied && (contractTrust === "advisory" || contractTrust === "authoritative");
+  const primaryBlockers = [
+    ...args.summaryBundle.authority_visibility_summary.top_blockers,
+    ...(args.actionIntelligencePreActionGate?.primary_reason ? [args.actionIntelligencePreActionGate.primary_reason] : []),
+  ].slice(0, 8);
+
+  if (continuityCarrierCount > 0 || args.staticBlocksSelected > 0 || selectedMemoryLayerCount > 0) {
+    pushUnique(affectedCapabilities, "continuity");
+    pushUnique(nextRunChanges, "continuity_state_available");
+  }
+  if (trustedPatternCount > 0) {
+    pushUnique(nextRunChanges, "trusted_evidence_available");
+  }
+  if (stableWorkflowCount > 0) {
+    pushUnique(nextRunChanges, "workflow_reuse_available");
+  }
+  if (candidateWorkflowCount > 0 || promotionReadyWorkflowCount > 0) {
+    pushUnique(nextRunChanges, "candidate_learning_visible");
+  }
+  if (
+    stableWorkflowCount > 0
+    || candidateWorkflowCount > 0
+    || promotionReadyWorkflowCount > 0
+    || trustedPatternCount > 0
+    || contestedPatternCount > 0
+    || activePolicyCount > 0
+    || contestedPolicyCount > 0
+  ) {
+    pushUnique(affectedCapabilities, "learning");
+  }
+  if (contestedPatternCount > 0 || contestedPolicyCount > 0) {
+    pushUnique(nextRunChanges, "contested_memory_visible");
+  }
+  if (
+    args.forgettingSummary.forgotten_items > 0
+    || args.forgettingSummary.suppressed_pattern_count > 0
+    || args.forgettingSummary.stale_signal_count > 0
+    || args.forgettingSummary.substrate_mode !== "stable"
+  ) {
+    pushUnique(affectedCapabilities, "forgetting");
+    pushUnique(nextRunChanges, "memory_suppressed_or_forgotten");
+  }
+  if (args.forgettingSummary.differential_rehydration_candidate_count > 0) {
+    pushUnique(affectedCapabilities, "forgetting");
+    pushUnique(nextRunChanges, "rehydration_available");
+  }
+  if (
+    actionStartBlocked
+    || args.summaryBundle.authority_visibility_summary.authoritative_blocked_count > 0
+    || args.summaryBundle.authority_visibility_summary.stable_promotion_blocked_count > 0
+    || historyBackedLimitedAuthority
+  ) {
+    pushUnique(affectedCapabilities, "learning_control");
+    pushUnique(nextRunChanges, "learning_control_limited_authority");
+  }
+  if (firstStepHistoryApplied) {
+    pushUnique(nextRunChanges, "first_action_shaped_by_history");
+  }
+  if (args.runtimeEntropyProfile || args.runtimeEntropyControls) {
+    pushUnique(nextRunChanges, "runtime_entropy_visible");
+  }
+
+  const historyDrivenNextRunChanges = nextRunChanges.filter((change) => change !== "runtime_entropy_visible");
+  const changedNextRun = historyDrivenNextRunChanges.length > 0;
+  const impactLevel =
+    !changedNextRun
+      ? "none"
+      : actionStartBlocked || args.summaryBundle.authority_visibility_summary.authoritative_blocked_count > 0
+        ? "learning_controlled"
+        : firstStepHistoryApplied
+          ? "action_shaping"
+          : "context_shaping";
+  const primaryReason =
+    impactLevel === "none"
+      ? "no prior execution history changed this packet"
+      : impactLevel === "learning_controlled"
+        ? "prior evidence limited learned authority before action"
+        : impactLevel === "action_shaping"
+          ? "prior execution shaped the kickoff recommendation"
+          : "prior memory changed the runtime context packet";
+
+  return {
+    summary_version: "history_impact_summary_v1",
+    history_applied: changedNextRun,
+    changed_next_run: changedNextRun,
+    impact_level: impactLevel,
+    affected_capabilities: affectedCapabilities,
+    continuity: {
+      continuity_carrier_count: continuityCarrierCount,
+      static_blocks_selected: args.staticBlocksSelected,
+      selected_memory_layer_count: selectedMemoryLayerCount,
+    },
+    learning: {
+      stable_workflow_count: stableWorkflowCount,
+      candidate_workflow_count: candidateWorkflowCount,
+      promotion_ready_workflow_count: promotionReadyWorkflowCount,
+      trusted_pattern_count: trustedPatternCount,
+      contested_pattern_count: contestedPatternCount,
+      active_policy_count: activePolicyCount,
+      contested_policy_count: contestedPolicyCount,
+    },
+    forgetting: {
+      substrate_mode: args.forgettingSummary.substrate_mode,
+      forgotten_items: args.forgettingSummary.forgotten_items,
+      suppressed_pattern_count: args.forgettingSummary.suppressed_pattern_count,
+      differential_rehydration_candidate_count: args.forgettingSummary.differential_rehydration_candidate_count,
+      stale_signal_count: args.forgettingSummary.stale_signal_count,
+    },
+    learning_control: {
+      contract_trust: contractTrust,
+      action_start_blocked: actionStartBlocked,
+      authoritative_allowed_count: args.summaryBundle.authority_visibility_summary.authoritative_allowed_count,
+      authoritative_blocked_count: args.summaryBundle.authority_visibility_summary.authoritative_blocked_count,
+      stable_promotion_allowed_count: args.summaryBundle.authority_visibility_summary.stable_promotion_allowed_count,
+      stable_promotion_blocked_count: args.summaryBundle.authority_visibility_summary.stable_promotion_blocked_count,
+      primary_blockers: primaryBlockers,
+    },
+    runtime_entropy: {
+      profile_present: !!args.runtimeEntropyProfile,
+      controls_present: !!args.runtimeEntropyControls,
+      entropy_level: args.runtimeEntropyProfile?.entropy_level ?? null,
+      plasticity_level: args.runtimeEntropyProfile?.plasticity_level ?? null,
+      exploration_budget: args.runtimeEntropyProfile?.exploration_budget ?? null,
+      control_strength: args.runtimeEntropyProfile?.control_strength ?? null,
+    },
+    next_run_changes: nextRunChanges,
+    primary_reason: primaryReason,
   };
 }
 
@@ -447,6 +612,24 @@ export function buildPlanningSummary(args: {
     preActionGate: actionIntelligencePreActionGate,
     uncertainty: actionRetrievalUncertainty,
   });
+  const forgottenItems = Number(costSignals.forgotten_items ?? layeredStats.forgotten_items ?? 0);
+  const staticBlocksSelected = Number(costSignals.static_blocks_selected ?? staticInjection.selected_blocks ?? 0);
+  const selectedMemoryLayers = Array.isArray(costSignals.selected_memory_layers)
+    ? costSignals.selected_memory_layers.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  const primarySavingsLevers = Array.isArray(costSignals.primary_savings_levers)
+    ? costSignals.primary_savings_levers.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  const historyImpactSummary = buildHistoryImpactSummary({
+    firstStepRecommendation,
+    actionIntelligencePreActionGate,
+    runtimeEntropyProfile,
+    runtimeEntropyControls,
+    summaryBundle,
+    forgettingSummary,
+    staticBlocksSelected,
+    selectedMemoryLayers,
+  });
 
   return {
     summary_version: "planning_summary_v1",
@@ -456,6 +639,7 @@ export function buildPlanningSummary(args: {
     runtime_entropy_controls: runtimeEntropyControls,
     action_retrieval_uncertainty: actionRetrievalUncertainty,
     action_retrieval_gate: actionRetrievalGate,
+    history_impact_summary: historyImpactSummary,
     planner_explanation: buildPlannerExplanation({
       selectedTool,
       decision,
@@ -473,11 +657,9 @@ export function buildPlanningSummary(args: {
     rules_matched: Number(rules.matched ?? 0),
     context_est_tokens: args.context_est_tokens,
     layered_output: Boolean(args.layered_context),
-    forgotten_items: Number(costSignals.forgotten_items ?? layeredStats.forgotten_items ?? 0),
-    static_blocks_selected: Number(costSignals.static_blocks_selected ?? staticInjection.selected_blocks ?? 0),
-    selected_memory_layers: Array.isArray(costSignals.selected_memory_layers)
-      ? costSignals.selected_memory_layers.filter((entry): entry is string => typeof entry === "string")
-      : [],
+    forgotten_items: forgottenItems,
+    static_blocks_selected: staticBlocksSelected,
+    selected_memory_layers: selectedMemoryLayers,
     optimization_profile: args.optimization_profile,
     context_compaction_profile: args.context_compaction_profile,
     recall_mode: args.recall_mode ?? null,
@@ -497,9 +679,7 @@ export function buildPlanningSummary(args: {
     policy_maintenance_summary: policyMaintenanceSummary,
     continuity_carrier_summary: continuityCarrierSummary,
     forgetting_summary: forgettingSummary,
-    primary_savings_levers: Array.isArray(costSignals.primary_savings_levers)
-      ? costSignals.primary_savings_levers.filter((entry): entry is string => typeof entry === "string")
-      : [],
+    primary_savings_levers: primarySavingsLevers,
   };
 }
 
@@ -541,6 +721,7 @@ export function buildAssemblySummary(args: {
     runtime_entropy_controls: planning.runtime_entropy_controls,
     action_retrieval_uncertainty: planning.action_retrieval_uncertainty,
     action_retrieval_gate: planning.action_retrieval_gate,
+    history_impact_summary: planning.history_impact_summary,
     selected_tool: planning.selected_tool,
     decision_id: planning.decision_id,
     rules_considered: planning.rules_considered,

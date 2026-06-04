@@ -137,7 +137,7 @@ export function computeEffectiveToolPolicy(
     if (allowOut.length === 0) {
       conflicts.push({
         code: "allow_intersection_empty",
-        message: "allowlist intersection is empty; tool selection may require strict=false fallback or rule changes",
+        message: "allowlist intersection is empty; tool selection may require strict=false policy relaxation or rule changes",
         details: allowSets.map((x) => ({ rule_node_id: x.rule_node_id, score: x.score, allow_n: x.set.size })),
         winner_rule_node_id: null,
       });

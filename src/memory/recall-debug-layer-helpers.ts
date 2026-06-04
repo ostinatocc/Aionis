@@ -32,7 +32,7 @@ export function allowedLayersForPolicy(layerPolicy: MemoryLayerPolicy | null): S
   if (!layerPolicy || layerPolicy.source !== "request_override") return null;
   return new Set<MemoryLayerId>([
     ...layerPolicy.preferred_layers,
-    ...layerPolicy.fallback_layers,
+    ...layerPolicy.secondary_layers,
     ...layerPolicy.trust_anchor_layers,
   ]);
 }

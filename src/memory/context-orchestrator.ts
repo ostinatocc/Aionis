@@ -724,9 +724,9 @@ function buildLayerHeader(layer: ContextLayerName): string {
   return "# Citations";
 }
 
-function parseBoundedInt(input: unknown, fallback: number, min: number, max: number): number {
+function parseBoundedInt(input: unknown, defaultValue: number, min: number, max: number): number {
   const n = Number(input);
-  if (!Number.isFinite(n)) return fallback;
+  if (!Number.isFinite(n)) return defaultValue;
   return Math.max(min, Math.min(max, Math.trunc(n)));
 }
 

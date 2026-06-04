@@ -412,7 +412,7 @@ export function buildActionIntelligenceRuntimeContractV1(args: {
         status: postActionMaterialPresent ? "observed" : actionBlocked ? "blocked" : "pending",
         summary: postActionMaterialPresent
           ? "Execution side outputs are present for evaluation and distillation."
-          : "Host agent action has not been observed by this contract yet.",
+          : "Agent action has not been observed by this contract yet.",
         source_refs: ["execution_result_summary", "execution_artifacts", "execution_evidence"],
         evidence_refs: executionRefs,
         required_next: postActionMaterialPresent ? null : args.actionRetrieval.recommended_next_action,

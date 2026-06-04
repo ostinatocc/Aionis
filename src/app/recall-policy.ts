@@ -581,11 +581,11 @@ export function createRecallPolicy(env: Env) {
     timings: Record<string, number>;
     neighborhood_counts?: { nodes?: number; edges?: number } | null;
     stage1?: {
-      mode?: "ann" | "exact_fallback";
+      mode?: "ann" | "exact_recovery";
       ann_seed_count?: number;
       final_seed_count?: number;
-      exact_fallback_enabled?: boolean;
-      exact_fallback_attempted?: boolean;
+      exact_recovery_enabled?: boolean;
+      exact_recovery_attempted?: boolean;
     } | null;
     uri_links?: {
       nodes: string[];
@@ -606,7 +606,7 @@ export function createRecallPolicy(env: Env) {
       };
     } | null;
   }) => {
-    const stage1Ms = (args.timings["stage1_candidates_ann"] ?? 0) + (args.timings["stage1_candidates_exact_fallback"] ?? 0);
+    const stage1Ms = (args.timings["stage1_candidates_ann"] ?? 0) + (args.timings["stage1_candidates_exact_recovery"] ?? 0);
     const stage2Ms = (args.timings["stage2_edges"] ?? 0) + (args.timings["stage2_nodes"] ?? 0) + (args.timings["stage2_spread"] ?? 0);
     const stage3Ms = args.timings["stage3_context"] ?? 0;
     const stage1AnnSeeds = Number.isFinite(args.stage1?.ann_seed_count) ? Number(args.stage1?.ann_seed_count) : args.seeds;
@@ -622,9 +622,9 @@ export function createRecallPolicy(env: Env) {
 
     const stage0Reasons: string[] = [];
     if (stage1FinalSeeds === 0) stage0Reasons.push("seed_empty");
-    if (args.stage1?.exact_fallback_attempted && stage1FinalSeeds === 0) stage0Reasons.push("exact_fallback_empty");
-    if (args.stage1?.mode === "exact_fallback" && stage1AnnSeeds === 0 && stage1FinalSeeds > 0) {
-      stage0Reasons.push("ann_empty_recovered_by_exact_fallback");
+    if (args.stage1?.exact_recovery_attempted && stage1FinalSeeds === 0) stage0Reasons.push("exact_recovery_empty");
+    if (args.stage1?.mode === "exact_recovery" && stage1AnnSeeds === 0 && stage1FinalSeeds > 0) {
+      stage0Reasons.push("ann_empty_recovered_by_exact_recovery");
     }
 
     const stage1Reasons: string[] = [];
@@ -648,7 +648,7 @@ export function createRecallPolicy(env: Env) {
           hits: stage1FinalSeeds,
           ann_seed_candidates: stage1AnnSeeds,
           mode: args.stage1?.mode ?? "ann",
-          exact_fallback_attempted: args.stage1?.exact_fallback_attempted ?? false,
+          exact_recovery_attempted: args.stage1?.exact_recovery_attempted ?? false,
           duration_ms: stage1Ms,
           pruned_reasons: stage0Reasons,
         },

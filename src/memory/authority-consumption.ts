@@ -66,22 +66,22 @@ export function authorityVisibilityPrimaryBlocker(
 export function authorityConsumptionStateFromValue(value: unknown): AuthorityConsumptionStateV1 {
   const visibility = authorityVisibilityFromValue(value);
   const record = asRecord(value);
-  const fallbackExecutionEvidenceStatus = firstString(record?.execution_evidence_status);
-  const fallbackFalseConfidence = record?.false_confidence_detected === true;
+  const recordExecutionEvidenceStatus = firstString(record?.execution_evidence_status);
+  const recordFalseConfidence = record?.false_confidence_detected === true;
   const requiresInspection = visibility
     ? authorityVisibilityRequiresInspection(visibility)
     : record?.authority_blocked === true
       || record?.stable_promotion_blocked === true
-      || fallbackExecutionEvidenceStatus === "failed";
+      || recordExecutionEvidenceStatus === "failed";
   const blocksPromotionReadiness = visibility
     ? authorityVisibilityBlocksPromotionReadiness(visibility)
-    : fallbackExecutionEvidenceStatus === "failed" || fallbackFalseConfidence;
+    : recordExecutionEvidenceStatus === "failed" || recordFalseConfidence;
   const primaryBlocker = visibility
     ? authorityVisibilityPrimaryBlocker(visibility)
     : firstString(
         record?.authority_primary_blocker,
         record?.primary_blocker,
-        fallbackExecutionEvidenceStatus === "failed" ? "execution_evidence:failed" : null,
+        recordExecutionEvidenceStatus === "failed" ? "execution_evidence:failed" : null,
         record?.stable_promotion_blocked === true ? "stable_promotion_blocked" : null,
         record?.authority_blocked === true ? "authority_blocked" : null,
       );

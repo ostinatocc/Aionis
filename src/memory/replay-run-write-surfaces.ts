@@ -268,7 +268,7 @@ export function buildReplayStepAfterResult(args: {
     run_id: args.runId,
     step_id: args.stepId,
     status: args.status,
-    replay_fallback_triggered: args.repairApplied,
+    replay_repair_triggered: args.repairApplied,
     step_result_node_id: args.resultNodeId,
     step_result_uri:
       args.resultNodeId != null

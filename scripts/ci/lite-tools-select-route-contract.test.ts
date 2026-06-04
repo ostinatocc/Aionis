@@ -5,9 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
-import { FakeEmbeddingProvider } from "../../src/embeddings/fake.ts";
+import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
-import { registerHostErrorHandler } from "../../src/host/http-host.ts";
+import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import {
   PolicyMutationAdjudicationV1Schema,
   PolicyMutationV1Schema,
@@ -45,13 +45,13 @@ const TOOLS_SELECT_SELECTION_KEYS = [
   "allowed",
   "candidates",
   "denied",
-  "fallback",
   "ordered",
+  "policy_relaxation",
   "preferred",
   "selected",
 ].sort();
 
-const TOOLS_SELECT_FALLBACK_KEYS = ["applied", "effective_mode", "note", "reason"].sort();
+const TOOLS_SELECT_POLICY_RELAXATION_KEYS = ["applied", "effective_mode", "note", "reason"].sort();
 
 const TOOLS_SELECT_EXECUTION_KERNEL_KEYS = [
   "active_role",
@@ -106,11 +106,11 @@ const TOOLS_SELECT_SELECTION_SUMMARY_KEYS = [
   "candidate_count",
   "contested_pattern_count",
   "denied_count",
-  "fallback_applied",
-  "fallback_reason",
   "matched_rules",
   "pattern_lifecycle_summary",
   "pattern_maintenance_summary",
+  "policy_relaxation_applied",
+  "policy_relaxation_reason",
   "preferred_count",
   "provenance_explanation",
   "selected_tool",
@@ -129,7 +129,7 @@ const TOOLS_SELECT_SELECTION_SUMMARY_KEYS = [
 ].sort();
 
 function assertToolsSelectExactKeySurface(body: {
-  selection: { fallback?: unknown };
+  selection: { policy_relaxation?: unknown };
   execution_kernel: unknown;
   rules: unknown;
   pattern_matches: unknown;
@@ -139,8 +139,8 @@ function assertToolsSelectExactKeySurface(body: {
   assert.deepEqual(Object.keys(body as Record<string, unknown>).sort(), TOOLS_SELECT_ROUTE_KEYS);
   assert.deepEqual(Object.keys(body.selection as Record<string, unknown>).sort(), TOOLS_SELECT_SELECTION_KEYS);
   assert.deepEqual(
-    Object.keys(body.selection.fallback as Record<string, unknown>).sort(),
-    TOOLS_SELECT_FALLBACK_KEYS,
+    Object.keys(body.selection.policy_relaxation as Record<string, unknown>).sort(),
+    TOOLS_SELECT_POLICY_RELAXATION_KEYS,
   );
   assert.deepEqual(
     Object.keys(body.execution_kernel as Record<string, unknown>).sort(),
@@ -188,12 +188,10 @@ function buildRequestGuards() {
       PII_REDACTION: false,
       ALLOW_CROSS_SCOPE_EDGES: false,
     } as any,
-    embedder: FakeEmbeddingProvider,
+    embedder: DeterministicEmbeddingProvider,
     recallLimiter: null,
     debugEmbedLimiter: null,
     writeLimiter: null,
-    sandboxWriteLimiter: null,
-    sandboxReadLimiter: null,
     recallTextEmbedLimiter: null,
     recallInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
     writeInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
@@ -219,7 +217,7 @@ function buildLiteEnv(overrides: Record<string, unknown> = {}) {
     MAX_TEXT_LEN: 10000,
     PII_REDACTION: false,
     ALLOW_CROSS_SCOPE_EDGES: false,
-    TOOLS_LEARNING_CONTROL_STATIC_FORM_PATTERN_PROVIDER_ENABLED: false,
+    TOOLS_LEARNING_CONTROL_EVIDENCE_FORM_PATTERN_PROVIDER_ENABLED: false,
     ...overrides,
   } as any;
 }
@@ -398,12 +396,10 @@ async function insertAndActivateRule(
   );
 
   const out = await liteWriteStore.withTx(() =>
-    applyMemoryWrite({} as any, prepared, {
+    applyMemoryWrite(prepared, {
       maxTextLen: 10_000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
       associativeLinkOrigin: "memory_write",
       write_access: liteWriteStore,
     }),
@@ -412,7 +408,7 @@ async function insertAndActivateRule(
   assert.ok(ruleNodeId);
 
   await liteWriteStore.withTx(() =>
-    updateRuleState({} as any, {
+    updateRuleState({
       tenant_id: "default",
       scope: "default",
       actor: "local-user",
@@ -442,7 +438,7 @@ async function seedActiveRules(
 async function seedToolsSelectFixture(dbPath: string) {
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
-  const [sharedEmbedding] = await FakeEmbeddingProvider.embed(["repair export failure in node tests"]);
+  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed(["repair export failure in node tests"]);
   const stablePattern = MemoryAnchorV1Schema.parse({
     anchor_kind: "pattern",
     anchor_level: "L3",
@@ -556,7 +552,7 @@ async function seedToolsSelectFixture(dbPath: string) {
             anchor_v1: stablePattern,
           },
           embedding: sharedEmbedding,
-          embedding_model: FakeEmbeddingProvider.name,
+          embedding_model: DeterministicEmbeddingProvider.name,
           salience: 0.8,
           importance: 0.9,
           confidence: 0.9,
@@ -575,12 +571,10 @@ async function seedToolsSelectFixture(dbPath: string) {
   );
 
   const out = await liteWriteStore.withTx(() =>
-    applyMemoryWrite({} as any, prepared, {
+    applyMemoryWrite(prepared, {
       maxTextLen: 10_000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
       associativeLinkOrigin: "memory_write",
       write_access: liteWriteStore,
     }),
@@ -590,7 +584,7 @@ async function seedToolsSelectFixture(dbPath: string) {
   assert.ok(ruleNodeId);
 
   await liteWriteStore.withTx(() =>
-    updateRuleState({} as any, {
+    updateRuleState({
       tenant_id: "default",
       scope: "default",
       actor: "local-user",
@@ -608,7 +602,7 @@ async function seedToolsSelectFixture(dbPath: string) {
 async function seedPolicyMemoryLearningControlFixture(dbPath: string) {
   const { liteWriteStore, ruleNodeIds } = await seedActiveRules(dbPath, ["edit", "edit"]);
   const liteRecallStore = createLiteRecallStore(dbPath);
-  const [sharedEmbedding] = await FakeEmbeddingProvider.embed(["repair export failure in node tests"]);
+  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed(["repair export failure in node tests"]);
   const stablePattern = MemoryAnchorV1Schema.parse({
     anchor_kind: "pattern",
     anchor_level: "L3",
@@ -729,7 +723,7 @@ async function seedPolicyMemoryLearningControlFixture(dbPath: string) {
             },
           },
           embedding: sharedEmbedding,
-          embedding_model: FakeEmbeddingProvider.name,
+          embedding_model: DeterministicEmbeddingProvider.name,
           salience: 0.8,
           importance: 0.9,
           confidence: 0.9,
@@ -748,12 +742,10 @@ async function seedPolicyMemoryLearningControlFixture(dbPath: string) {
   );
 
   await liteWriteStore.withTx(() =>
-    applyMemoryWrite({} as any, prepared, {
+    applyMemoryWrite(prepared, {
       maxTextLen: 10_000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
       associativeLinkOrigin: "memory_write",
       write_access: liteWriteStore,
     }),
@@ -767,7 +759,7 @@ test("tools_select route returns the stable execution-memory contract surface", 
   const { liteWriteStore, liteRecallStore } = await seedToolsSelectFixture(tmpDbPath("route"));
   try {
     const guards = buildRequestGuards();
-    registerHostErrorHandler(app);
+    registerRuntimeErrorHandler(app);
     registerMemoryFeedbackToolRoutes({
       app,
       env: {
@@ -778,8 +770,7 @@ test("tools_select route returns the stable execution-memory contract surface", 
         MAX_TEXT_LEN: 10000,
         PII_REDACTION: false,
       } as any,
-      embedder: FakeEmbeddingProvider,
-      embeddedRuntime: null,
+      embedder: DeterministicEmbeddingProvider,
       liteRecallAccess: liteRecallStore.createRecallAccess(),
       liteWriteStore,
       requireMemoryPrincipal: guards.requireMemoryPrincipal,
@@ -880,7 +871,7 @@ test("tools_select keeps suppressed trusted patterns visible but excludes them f
   const { liteWriteStore, liteRecallStore } = await seedToolsSelectFixture(tmpDbPath("suppressed"));
   try {
     const guards = buildRequestGuards();
-    registerHostErrorHandler(app);
+    registerRuntimeErrorHandler(app);
     registerMemoryFeedbackToolRoutes({
       app,
       env: {
@@ -891,8 +882,7 @@ test("tools_select keeps suppressed trusted patterns visible but excludes them f
         MAX_TEXT_LEN: 10000,
         PII_REDACTION: false,
       } as any,
-      embedder: FakeEmbeddingProvider,
-      embeddedRuntime: null,
+      embedder: DeterministicEmbeddingProvider,
       liteRecallAccess: liteRecallStore.createRecallAccess(),
       liteWriteStore,
       requireMemoryPrincipal: guards.requireMemoryPrincipal,
@@ -976,21 +966,20 @@ test("tools_select keeps suppressed trusted patterns visible but excludes them f
   }
 });
 
-test("tools feedback route can use internal static form_pattern provider without explicit review", async () => {
+test("tools feedback route can use internal evidence form_pattern provider without explicit review", async () => {
   const app = Fastify();
   const dbPath = tmpDbPath("tools-feedback-provider-route");
   const { liteWriteStore } = await seedActiveRules(dbPath, ["edit", "edit"]);
   const liteRecallStore = createLiteRecallStore(dbPath);
   try {
     const guards = buildRequestGuards();
-    registerHostErrorHandler(app);
+    registerRuntimeErrorHandler(app);
     registerMemoryFeedbackToolRoutes({
       app,
       env: buildLiteEnv({
-        TOOLS_LEARNING_CONTROL_STATIC_FORM_PATTERN_PROVIDER_ENABLED: true,
+        TOOLS_LEARNING_CONTROL_EVIDENCE_FORM_PATTERN_PROVIDER_ENABLED: true,
       }),
-      embedder: FakeEmbeddingProvider,
-      embeddedRuntime: null,
+      embedder: DeterministicEmbeddingProvider,
       liteRecallAccess: liteRecallStore.createRecallAccess(),
       liteWriteStore,
       requireMemoryPrincipal: guards.requireMemoryPrincipal,
@@ -1100,7 +1089,7 @@ test("tools feedback route can use internal static form_pattern provider without
     assert.equal(patternPromotionLedger.verdict, "promotion_admitted");
     assert.equal(patternPromotionLedger.source_code_change_allowed, false);
     assert.equal(parsed.learning_control_preview?.form_pattern.review_result?.review_version, "form_pattern_semantic_review_v1");
-    assert.equal(parsed.learning_control_preview?.form_pattern.review_result?.adjudication.reason, "static provider found grouped signature evidence");
+    assert.equal(parsed.learning_control_preview?.form_pattern.review_result?.adjudication.reason, "evidence provider found grouped signature evidence");
     assert.equal(parsed.learning_control_preview?.form_pattern.review_result?.adjudication.confidence, 0.85);
     assert.equal(parsed.learning_control_preview?.form_pattern.admissibility?.admissible, true);
     assert.equal(parsed.learning_control_preview?.form_pattern.policy_effect?.applies, true);
@@ -1118,12 +1107,11 @@ test("policy learning_control apply route can retire and reactivate persisted po
   const { liteWriteStore, liteRecallStore } = await seedPolicyMemoryLearningControlFixture(dbPath);
   try {
     const guards = buildRequestGuards();
-    registerHostErrorHandler(app);
+    registerRuntimeErrorHandler(app);
     registerMemoryFeedbackToolRoutes({
       app,
       env: buildLiteEnv(),
-      embedder: FakeEmbeddingProvider,
-      embeddedRuntime: null,
+      embedder: DeterministicEmbeddingProvider,
       liteRecallAccess: liteRecallStore.createRecallAccess(),
       liteWriteStore,
       requireMemoryPrincipal: guards.requireMemoryPrincipal,
@@ -1377,12 +1365,11 @@ test("tools feedback does not materialize policy memory from observational trust
   const { liteWriteStore, liteRecallStore } = await seedPolicyMemoryLearningControlFixture(dbPath);
   try {
     const guards = buildRequestGuards();
-    registerHostErrorHandler(app);
+    registerRuntimeErrorHandler(app);
     registerMemoryFeedbackToolRoutes({
       app,
       env: buildLiteEnv(),
-      embedder: FakeEmbeddingProvider,
-      embeddedRuntime: null,
+      embedder: DeterministicEmbeddingProvider,
       liteRecallAccess: liteRecallStore.createRecallAccess(),
       liteWriteStore,
       requireMemoryPrincipal: guards.requireMemoryPrincipal,
@@ -1469,12 +1456,11 @@ test("tools feedback materializes advisory trust as hint-only candidate policy m
   const { liteWriteStore, liteRecallStore } = await seedPolicyMemoryLearningControlFixture(dbPath);
   try {
     const guards = buildRequestGuards();
-    registerHostErrorHandler(app);
+    registerRuntimeErrorHandler(app);
     registerMemoryFeedbackToolRoutes({
       app,
       env: buildLiteEnv(),
-      embedder: FakeEmbeddingProvider,
-      embeddedRuntime: null,
+      embedder: DeterministicEmbeddingProvider,
       liteRecallAccess: liteRecallStore.createRecallAccess(),
       liteWriteStore,
       requireMemoryPrincipal: guards.requireMemoryPrincipal,
@@ -1583,12 +1569,11 @@ test("tools feedback downgrades authoritative trust without sufficient outcome c
   const { liteWriteStore, liteRecallStore } = await seedPolicyMemoryLearningControlFixture(dbPath);
   try {
     const guards = buildRequestGuards();
-    registerHostErrorHandler(app);
+    registerRuntimeErrorHandler(app);
     registerMemoryFeedbackToolRoutes({
       app,
       env: buildLiteEnv(),
-      embedder: FakeEmbeddingProvider,
-      embeddedRuntime: null,
+      embedder: DeterministicEmbeddingProvider,
       liteRecallAccess: liteRecallStore.createRecallAccess(),
       liteWriteStore,
       requireMemoryPrincipal: guards.requireMemoryPrincipal,
@@ -1694,12 +1679,11 @@ test("policy learning_control core keeps advisory policy memory contested until 
   const { liteWriteStore, liteRecallStore } = await seedPolicyMemoryLearningControlFixture(dbPath);
   try {
     const guards = buildRequestGuards();
-    registerHostErrorHandler(app);
+    registerRuntimeErrorHandler(app);
     registerMemoryFeedbackToolRoutes({
       app,
       env: buildLiteEnv(),
-      embedder: FakeEmbeddingProvider,
-      embeddedRuntime: null,
+      embedder: DeterministicEmbeddingProvider,
       liteRecallAccess: liteRecallStore.createRecallAccess(),
       liteWriteStore,
       requireMemoryPrincipal: guards.requireMemoryPrincipal,

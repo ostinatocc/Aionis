@@ -5,9 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
-import { FakeEmbeddingProvider } from "../../src/embeddings/fake.ts";
+import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
-import { registerHostErrorHandler } from "../../src/host/http-host.ts";
+import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import {
   MemoryAnchorV1Schema,
   PatternSuppressResponseSchema,
@@ -41,12 +41,10 @@ function buildRequestGuards() {
       WRITE_RATE_LIMIT_MAX_WAIT_MS: 0,
       RECALL_TEXT_EMBED_RATE_LIMIT_MAX_WAIT_MS: 0,
     } as any,
-    embedder: FakeEmbeddingProvider,
+    embedder: DeterministicEmbeddingProvider,
     recallLimiter: null,
     debugEmbedLimiter: null,
     writeLimiter: null,
-    sandboxWriteLimiter: null,
-    sandboxReadLimiter: null,
     recallTextEmbedLimiter: null,
     recallInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
     writeInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
@@ -56,7 +54,7 @@ function buildRequestGuards() {
 async function seedStablePattern(dbPath: string) {
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
-  const [sharedEmbedding] = await FakeEmbeddingProvider.embed(["repair export failure in node tests"]);
+  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed(["repair export failure in node tests"]);
   const stablePattern = MemoryAnchorV1Schema.parse({
     anchor_kind: "pattern",
     anchor_level: "L3",
@@ -153,7 +151,7 @@ async function seedStablePattern(dbPath: string) {
             }),
           },
           embedding: sharedEmbedding,
-          embedding_model: FakeEmbeddingProvider.name,
+          embedding_model: DeterministicEmbeddingProvider.name,
           salience: 0.8,
           importance: 0.9,
           confidence: 0.9,
@@ -172,12 +170,10 @@ async function seedStablePattern(dbPath: string) {
   );
 
   const out = await liteWriteStore.withTx(() =>
-    applyMemoryWrite({} as any, prepared, {
+    applyMemoryWrite(prepared, {
       maxTextLen: 10_000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
       associativeLinkOrigin: "memory_write",
       write_access: liteWriteStore,
     }),
@@ -195,7 +191,7 @@ test("pattern suppress and unsuppress routes preserve learned credibility while 
   assert.ok(patternNodeId);
   try {
     const guards = buildRequestGuards();
-    registerHostErrorHandler(app);
+    registerRuntimeErrorHandler(app);
     registerMemoryFeedbackToolRoutes({
       app,
       env: {
@@ -206,8 +202,7 @@ test("pattern suppress and unsuppress routes preserve learned credibility while 
         MAX_TEXT_LEN: 10000,
         PII_REDACTION: false,
       } as any,
-      embedder: FakeEmbeddingProvider,
-      embeddedRuntime: null,
+      embedder: DeterministicEmbeddingProvider,
       liteRecallAccess: liteRecallStore.createRecallAccess(),
       liteWriteStore,
       requireMemoryPrincipal: guards.requireMemoryPrincipal,

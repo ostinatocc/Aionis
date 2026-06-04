@@ -1,9 +1,8 @@
 import { createHash } from "node:crypto";
-import type pg from "pg";
 import { assertEmbeddingSurfaceForbidden } from "../embeddings/surface-policy.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
-import { memoryFind, memoryFindLite } from "./find.js";
-import { memoryResolve, memoryResolveLite } from "./resolve.js";
+import { memoryFindLite } from "./find.js";
+import { memoryResolveLite } from "./resolve.js";
 import {
   ExecutionDelegationRecordsSummarySchema,
   HandoffRecoverRequest,
@@ -463,7 +462,7 @@ function buildStoredDelegationRecords(args: {
 
 function readStoredDelegationRecords(
   slots: Record<string, unknown>,
-  fallback: () => ExecutionDelegationRecordsSummary,
+  deriveRecords: () => ExecutionDelegationRecordsSummary,
 ): ExecutionDelegationRecordsSummary {
   try {
     if ("delegation_records_v1" in slots) {
@@ -472,7 +471,7 @@ function readStoredDelegationRecords(
   } catch {
     // Fall through to derived delegation records.
   }
-  return fallback();
+  return deriveRecords();
 }
 
 export function buildHandoffWriteBody(input: unknown): MemoryWriteInput {
@@ -993,8 +992,7 @@ function pickLatestHandoffCandidate(nodes: unknown[]): HandoffFindCandidate | nu
 }
 
 export async function recoverHandoff(args: {
-  client?: pg.PoolClient;
-  liteWriteStore?: LiteWriteStore | null;
+  liteWriteStore: LiteWriteStore;
   executionStateStore?: ExecutionStateStore | null;
   input: unknown;
   defaultScope: string;
@@ -1043,9 +1041,7 @@ export async function recoverHandoff(args: {
           }),
     };
 
-    const findResult = args.liteWriteStore
-      ? await memoryFindLite(args.liteWriteStore, findInput, args.defaultScope, args.defaultTenantId)
-      : await memoryFind(args.client!, findInput, args.defaultScope, args.defaultTenantId);
+    const findResult = await memoryFindLite(args.liteWriteStore, findInput, args.defaultScope, args.defaultTenantId);
 
     const matchedNodeList = Array.isArray(findResult.nodes) ? findResult.nodes : [];
     matchedNodes = matchedNodeList.length;
@@ -1082,9 +1078,7 @@ export async function recoverHandoff(args: {
     slots_preview_keys: 10,
   };
 
-  const resolved = args.liteWriteStore
-    ? await memoryResolveLite(args.liteWriteStore, resolveInput, args.defaultScope, args.defaultTenantId)
-    : await memoryResolve(args.client!, resolveInput, args.defaultScope, args.defaultTenantId);
+  const resolved = await memoryResolveLite(args.liteWriteStore, resolveInput, args.defaultScope, args.defaultTenantId);
 
   if (!resolved || typeof resolved !== "object" || !("node" in resolved) || !resolved.node) {
     throw new HttpError(500, "handoff_resolve_invalid", "handoff resolve did not return a node payload", {

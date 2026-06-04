@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { FakeEmbeddingProvider } from "../../src/embeddings/fake.ts";
+import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 import { updateRuleState } from "../../src/memory/rules.ts";
 import { MemoryAnchorV1Schema, MemoryRecallRequest, ToolsFeedbackResponseSchema } from "../../src/memory/schemas.ts";
 import { suppressPatternAnchorLite } from "../../src/memory/pattern-operator-override.ts";
@@ -13,7 +13,7 @@ import { buildExecutionContractFromProjection, parseExecutionContract } from "..
 import { memoryRecallParsed } from "../../src/memory/recall.ts";
 import { selectTools } from "../../src/memory/tools-select.ts";
 import { toolSelectionFeedback } from "../../src/memory/tools-feedback.ts";
-import { createStaticFormPatternLearningControlReviewProvider } from "../../src/memory/learning-control-provider-static.ts";
+import { createEvidenceFormPatternLearningControlReviewProvider } from "../../src/memory/learning-control-provider-evidence.ts";
 import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
@@ -81,12 +81,10 @@ async function insertAndActivateRule(
     null,
   );
   const out = await liteWriteStore.withTx(() =>
-    applyMemoryWrite({} as any, prepared, {
+    applyMemoryWrite(prepared, {
       maxTextLen: 10_000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      shadowDualWriteEnabled: false,
-      shadowDualWriteStrict: false,
       associativeLinkOrigin: "memory_write",
       write_access: liteWriteStore,
       }),
@@ -95,7 +93,7 @@ async function insertAndActivateRule(
   assert.ok(ruleNodeId);
 
   await liteWriteStore.withTx(() =>
-      updateRuleState({} as any, {
+      updateRuleState({
         tenant_id: "default",
         scope: "default",
         actor: "local-user",
@@ -204,7 +202,7 @@ test("selectTools resolves trusted pattern identity from canonical execution con
   const dbPath = tmpDbPath("pattern-canonical-identity-selector");
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
-  const [sharedEmbedding] = await FakeEmbeddingProvider.embed(["repair export failure pattern"]);
+  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed(["repair export failure pattern"]);
   const canonicalContract = buildExecutionContractFromProjection({
     contract_trust: "authoritative",
     task_family: "task:repair_export",
@@ -321,7 +319,7 @@ test("selectTools resolves trusted pattern identity from canonical execution con
               },
             },
             embedding: sharedEmbedding,
-            embedding_model: FakeEmbeddingProvider.name,
+            embedding_model: DeterministicEmbeddingProvider.name,
             salience: 0.8,
             importance: 0.9,
             confidence: 0.9,
@@ -339,18 +337,16 @@ test("selectTools resolves trusted pattern identity from canonical execution con
       null,
     );
     await liteWriteStore.withTx(() =>
-      applyMemoryWrite({} as any, prepared, {
+      applyMemoryWrite(prepared, {
         maxTextLen: 10_000,
         piiRedaction: false,
         allowCrossScopeEdges: false,
-        shadowDualWriteEnabled: false,
-        shadowDualWriteStrict: false,
         associativeLinkOrigin: "memory_write",
         write_access: liteWriteStore,
       }),
     );
 
-    const recalled = await selectTools(null, {
+    const recalled = await selectTools({
       tenant_id: "default",
       scope: "default",
       run_id: randomUUID(),
@@ -367,7 +363,7 @@ test("selectTools resolves trusted pattern identity from canonical execution con
       strict: true,
       reorder_candidates: true,
     }, "default", "default", {
-      embedder: FakeEmbeddingProvider,
+      embedder: DeterministicEmbeddingProvider,
       recallAccess: liteRecallStore.createRecallAccess(),
       liteWriteStore,
     });
@@ -390,7 +386,7 @@ test("recall ranking prefers stable pattern anchors over counter-evidence-open c
   const dbPath = tmpDbPath("pattern-recall-ranking");
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
-  const [sharedEmbedding] = await FakeEmbeddingProvider.embed(["repair export failure pattern"]);
+  const [sharedEmbedding] = await DeterministicEmbeddingProvider.embed(["repair export failure pattern"]);
   const stableAnchor = MemoryAnchorV1Schema.parse({
     anchor_kind: "pattern",
     anchor_level: "L3",
@@ -476,7 +472,7 @@ test("recall ranking prefers stable pattern anchors over counter-evidence-open c
               anchor_v1: stableAnchor,
             },
             embedding: sharedEmbedding,
-            embedding_model: FakeEmbeddingProvider.name,
+            embedding_model: DeterministicEmbeddingProvider.name,
             salience: 0.8,
             importance: 0.9,
             confidence: 0.9,
@@ -492,7 +488,7 @@ test("recall ranking prefers stable pattern anchors over counter-evidence-open c
               anchor_v1: contestedAnchor,
             },
             embedding: sharedEmbedding,
-            embedding_model: FakeEmbeddingProvider.name,
+            embedding_model: DeterministicEmbeddingProvider.name,
             salience: 0.8,
             importance: 0.9,
             confidence: 0.9,
@@ -510,12 +506,10 @@ test("recall ranking prefers stable pattern anchors over counter-evidence-open c
       null,
     );
     const out = await liteWriteStore.withTx(() =>
-      applyMemoryWrite({} as any, prepared, {
+      applyMemoryWrite(prepared, {
         maxTextLen: 10_000,
         piiRedaction: false,
         allowCrossScopeEdges: false,
-        shadowDualWriteEnabled: false,
-        shadowDualWriteStrict: false,
         associativeLinkOrigin: "memory_write",
         write_access: liteWriteStore,
       }),
@@ -553,7 +547,7 @@ test("positive tools feedback writes a provisional recallable pattern anchor", a
     },
   };
   try {
-    const selection = await selectTools(null, {
+    const selection = await selectTools({
       tenant_id: "default",
       scope: "default",
       run_id: runId,
@@ -586,7 +580,7 @@ test("positive tools feedback writes a provisional recallable pattern anchor", a
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,
-        embedder: FakeEmbeddingProvider,
+        embedder: DeterministicEmbeddingProvider,
         liteWriteStore,
       }),
     );
@@ -673,10 +667,8 @@ test("positive tools feedback writes a provisional recallable pattern anchor", a
     assert.ok(executionContract?.pattern_hints?.includes("rule_backed_selection_pattern"));
     assert.ok(executionContract?.pattern_hints?.includes("provisional_tool_selection_pattern"));
 
-    const queryEmbedding = (await FakeEmbeddingProvider.embed([anchorNode.title ?? ""]))[0];
-    const recall = await memoryRecallParsed(
-      {} as any,
-      MemoryRecallRequest.parse({
+    const queryEmbedding = (await DeterministicEmbeddingProvider.embed([anchorNode.title ?? ""]))[0];
+    const recall = await memoryRecallParsed(MemoryRecallRequest.parse({
         tenant_id: "default",
         scope: "default",
         query_embedding: queryEmbedding,
@@ -736,7 +728,7 @@ test("positive tools feedback without matched rule sources still writes a provis
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,
-        embedder: FakeEmbeddingProvider,
+        embedder: DeterministicEmbeddingProvider,
         liteWriteStore,
       }),
     );
@@ -761,10 +753,8 @@ test("positive tools feedback without matched rule sources still writes a provis
     assert.match(anchor.summary ?? "", /after one successful tool selection/i);
     assert.equal(anchor.selected_tool, "edit");
 
-    const queryEmbedding = (await FakeEmbeddingProvider.embed([rows[0]?.title ?? ""]))[0];
-    const recall = await memoryRecallParsed(
-      {} as any,
-      MemoryRecallRequest.parse({
+    const queryEmbedding = (await DeterministicEmbeddingProvider.embed([rows[0]?.title ?? ""]))[0];
+    const recall = await memoryRecallParsed(MemoryRecallRequest.parse({
         tenant_id: "default",
         scope: "default",
         query_embedding: queryEmbedding,
@@ -788,13 +778,13 @@ test("positive tools feedback without matched rule sources still writes a provis
   }
 });
 
-test("automatic host tools feedback without concrete target does not write a generic pattern anchor", async () => {
+test("automatic agent tools feedback without concrete target does not write a generic pattern anchor", async () => {
   const dbPath = tmpDbPath("pattern-anchor-automatic-generic-feedback");
   const liteWriteStore = createLiteWriteStore(dbPath);
   const runId = randomUUID();
   const context = {
-    host: "local-agent-host",
-    telemetry_source: "host_post_tool_use",
+    runtime_consumer: "local-agent-runtime",
+    telemetry_source: "agent_post_tool_use",
     prompt: "continue",
     tool_name: "functions.exec_command",
     tool_status: "success",
@@ -804,19 +794,19 @@ test("automatic host tools feedback without concrete target does not write a gen
       toolSelectionFeedback(null, {
         tenant_id: "default",
         scope: "default",
-        actor: "local-agent-host",
+        actor: "local-agent-runtime",
         run_id: runId,
         outcome: "positive",
         context,
         candidates: ["functions.exec_command", "functions.apply_patch", "functions.update_plan"],
         selected_tool: "functions.exec_command",
         target: "tool",
-        note: "host functions.exec_command completed with success",
+        note: "agent runtime functions.exec_command completed with success",
         input_text: JSON.stringify({ cmd: "git status --short" }),
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,
-        embedder: FakeEmbeddingProvider,
+        embedder: DeterministicEmbeddingProvider,
         liteWriteStore,
       }),
     );
@@ -831,13 +821,13 @@ test("automatic host tools feedback without concrete target does not write a gen
   }
 });
 
-test("automatic host tools feedback with concrete target can still write a pattern anchor", async () => {
+test("automatic agent tools feedback with concrete target can still write a pattern anchor", async () => {
   const dbPath = tmpDbPath("pattern-anchor-automatic-concrete-feedback");
   const liteWriteStore = createLiteWriteStore(dbPath);
   const runId = randomUUID();
   const context = {
-    host: "local-agent-host",
-    telemetry_source: "host_post_tool_use",
+    runtime_consumer: "local-agent-runtime",
+    telemetry_source: "agent_post_tool_use",
     task_signature: "fix-runtime-tools-feedback-timeout",
     goal: "fix Runtime tools feedback timeout",
     target_files: ["src/memory/tools-feedback.ts"],
@@ -849,19 +839,19 @@ test("automatic host tools feedback with concrete target can still write a patte
       toolSelectionFeedback(null, {
         tenant_id: "default",
         scope: "default",
-        actor: "local-agent-host",
+        actor: "local-agent-runtime",
         run_id: runId,
         outcome: "positive",
         context,
         candidates: ["functions.exec_command", "functions.apply_patch", "functions.update_plan"],
         selected_tool: "functions.apply_patch",
         target: "tool",
-        note: "host functions.apply_patch completed with success",
+        note: "agent runtime functions.apply_patch completed with success",
         input_text: "patch tools-feedback timeout handling",
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,
-        embedder: FakeEmbeddingProvider,
+        embedder: DeterministicEmbeddingProvider,
         liteWriteStore,
       }),
     );
@@ -889,7 +879,7 @@ test("positive tools feedback with multiple matched rule sources exposes form_pa
     },
   };
   try {
-    const selection = await selectTools(null, {
+    const selection = await selectTools({
       tenant_id: "default",
       scope: "default",
       run_id: runId,
@@ -920,7 +910,7 @@ test("positive tools feedback with multiple matched rule sources exposes form_pa
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,
-        embedder: FakeEmbeddingProvider,
+        embedder: DeterministicEmbeddingProvider,
         liteWriteStore,
       }),
     );
@@ -975,7 +965,7 @@ test("tools feedback form_pattern learning_control preview evaluates admitted re
     },
   };
   try {
-    const selection = await selectTools(null, {
+    const selection = await selectTools({
       tenant_id: "default",
       scope: "default",
       run_id: runId,
@@ -1021,7 +1011,7 @@ test("tools feedback form_pattern learning_control preview evaluates admitted re
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,
-        embedder: FakeEmbeddingProvider,
+        embedder: DeterministicEmbeddingProvider,
         liteWriteStore,
       }),
     );
@@ -1085,7 +1075,7 @@ test("tools feedback form_pattern learning_control preview rejects low-confidenc
     },
   };
   try {
-    const selection = await selectTools(null, {
+    const selection = await selectTools({
       tenant_id: "default",
       scope: "default",
       run_id: runId,
@@ -1131,7 +1121,7 @@ test("tools feedback form_pattern learning_control preview rejects low-confidenc
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,
-        embedder: FakeEmbeddingProvider,
+        embedder: DeterministicEmbeddingProvider,
         liteWriteStore,
       }),
     );
@@ -1166,7 +1156,7 @@ test("tools feedback form_pattern learning_control preview rejects low-confidenc
   }
 });
 
-test("tools feedback form_pattern learning_control can use internal static provider without explicit review", async () => {
+test("tools feedback form_pattern learning_control can use internal evidence provider without explicit review", async () => {
   const dbPath = tmpDbPath("pattern-anchor-learning_control-provider");
   const { liteWriteStore } = await seedActiveRules(dbPath, ["edit", "edit"]);
   const runId = randomUUID();
@@ -1178,7 +1168,7 @@ test("tools feedback form_pattern learning_control can use internal static provi
     },
   };
   try {
-    const selection = await selectTools(null, {
+    const selection = await selectTools({
       tenant_id: "default",
       scope: "default",
       run_id: runId,
@@ -1209,9 +1199,9 @@ test("tools feedback form_pattern learning_control can use internal static provi
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,
-        embedder: FakeEmbeddingProvider,
+        embedder: DeterministicEmbeddingProvider,
         learningControlReviewProviders: {
-          form_pattern: createStaticFormPatternLearningControlReviewProvider(),
+          form_pattern: createEvidenceFormPatternLearningControlReviewProvider(),
         },
         liteWriteStore,
       }),
@@ -1221,7 +1211,7 @@ test("tools feedback form_pattern learning_control can use internal static provi
     assert.equal(parsed.pattern_anchor?.pattern_state, "stable");
     assert.equal(parsed.pattern_anchor?.credibility_state, "trusted");
     assert.equal(parsed.learning_control_preview?.form_pattern.review_result?.review_version, "form_pattern_semantic_review_v1");
-    assert.equal(parsed.learning_control_preview?.form_pattern.review_result?.adjudication.reason, "static provider found grouped signature evidence");
+    assert.equal(parsed.learning_control_preview?.form_pattern.review_result?.adjudication.reason, "evidence provider found grouped signature evidence");
     assert.equal(parsed.learning_control_preview?.form_pattern.review_result?.adjudication.confidence, 0.85);
     assert.equal(parsed.learning_control_preview?.form_pattern.admissibility?.admissible, true);
     assert.equal(parsed.learning_control_preview?.form_pattern.policy_effect?.applies, true);
@@ -1246,7 +1236,7 @@ test("selectTools does not trust provisional pattern anchors after the source ru
     },
   };
   try {
-    const initial = await selectTools(null, {
+    const initial = await selectTools({
       tenant_id: "default",
       scope: "default",
       run_id: runId,
@@ -1257,7 +1247,7 @@ test("selectTools does not trust provisional pattern anchors after the source ru
       strict: true,
       reorder_candidates: false,
     }, "default", "default", {
-      embedder: FakeEmbeddingProvider,
+      embedder: DeterministicEmbeddingProvider,
       recallAccess: liteRecallStore.createRecallAccess(),
       liteWriteStore,
     });
@@ -1280,14 +1270,14 @@ test("selectTools does not trust provisional pattern anchors after the source ru
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,
-        embedder: FakeEmbeddingProvider,
+        embedder: DeterministicEmbeddingProvider,
         liteWriteStore,
       }),
     );
     assert.equal(firstFeedback.pattern_anchor?.pattern_state, "provisional");
 
     await liteWriteStore.withTx(() =>
-      updateRuleState({} as any, {
+      updateRuleState({
         tenant_id: "default",
         scope: "default",
         actor: "local-user",
@@ -1299,7 +1289,7 @@ test("selectTools does not trust provisional pattern anchors after the source ru
       }),
     );
 
-    const recalled = await selectTools(null, {
+    const recalled = await selectTools({
       tenant_id: "default",
       scope: "default",
       run_id: randomUUID(),
@@ -1310,7 +1300,7 @@ test("selectTools does not trust provisional pattern anchors after the source ru
       strict: true,
       reorder_candidates: true,
     }, "default", "default", {
-      embedder: FakeEmbeddingProvider,
+      embedder: DeterministicEmbeddingProvider,
       recallAccess: liteRecallStore.createRecallAccess(),
       liteWriteStore,
     });
@@ -1362,7 +1352,7 @@ test("selectTools reuses stable pattern anchors after distinct successful runs",
     const promotionStates: string[] = [];
     let stableAnchorId: string | null = null;
     for (const runId of [randomUUID(), randomUUID(), randomUUID()]) {
-      const selection = await selectTools(null, {
+      const selection = await selectTools({
         tenant_id: "default",
         scope: "default",
         run_id: runId,
@@ -1373,7 +1363,7 @@ test("selectTools reuses stable pattern anchors after distinct successful runs",
         strict: true,
         reorder_candidates: false,
       }, "default", "default", {
-        embedder: FakeEmbeddingProvider,
+        embedder: DeterministicEmbeddingProvider,
         recallAccess: liteRecallStore.createRecallAccess(),
         liteWriteStore,
       });
@@ -1396,7 +1386,7 @@ test("selectTools reuses stable pattern anchors after distinct successful runs",
         }, "default", "default", {
           maxTextLen: 10_000,
           piiRedaction: false,
-          embedder: FakeEmbeddingProvider,
+          embedder: DeterministicEmbeddingProvider,
           liteWriteStore,
         }),
       );
@@ -1423,7 +1413,7 @@ test("selectTools reuses stable pattern anchors after distinct successful runs",
     assert.equal(rows[0]?.slots.anchor_v1.payload_refs.run_ids.length, 3);
 
     await liteWriteStore.withTx(() =>
-      updateRuleState({} as any, {
+      updateRuleState({
         tenant_id: "default",
         scope: "default",
         actor: "local-user",
@@ -1435,7 +1425,7 @@ test("selectTools reuses stable pattern anchors after distinct successful runs",
       }),
     );
 
-    const recalled = await selectTools(null, {
+    const recalled = await selectTools({
       tenant_id: "default",
       scope: "default",
       run_id: randomUUID(),
@@ -1446,7 +1436,7 @@ test("selectTools reuses stable pattern anchors after distinct successful runs",
       strict: true,
       reorder_candidates: true,
     }, "default", "default", {
-      embedder: FakeEmbeddingProvider,
+      embedder: DeterministicEmbeddingProvider,
       recallAccess: liteRecallStore.createRecallAccess(),
       liteWriteStore,
     });
@@ -1528,7 +1518,7 @@ test("selectTools keeps explicit tool.prefer ahead of trusted pattern preference
   const dbPath = tmpDbPath("pattern-explicit-prefer-order");
   const { liteWriteStore } = await seedActiveRule(dbPath, "bash");
   const liteRecallStore = createLiteRecallStore(dbPath);
-  const sharedEmbedding = (await FakeEmbeddingProvider.embed(["repair export failure pattern"]))[0];
+  const sharedEmbedding = (await DeterministicEmbeddingProvider.embed(["repair export failure pattern"]))[0];
   const patternNodeId = randomUUID();
   const stablePattern = MemoryAnchorV1Schema.parse({
     anchor_kind: "pattern",
@@ -1603,7 +1593,7 @@ test("selectTools keeps explicit tool.prefer ahead of trusted pattern preference
               anchor_v1: stablePattern,
             },
             embedding: sharedEmbedding,
-            embedding_model: FakeEmbeddingProvider.name,
+            embedding_model: DeterministicEmbeddingProvider.name,
             salience: 0.8,
             importance: 0.9,
             confidence: 0.9,
@@ -1621,18 +1611,16 @@ test("selectTools keeps explicit tool.prefer ahead of trusted pattern preference
       null,
     );
     await liteWriteStore.withTx(() =>
-      applyMemoryWrite({} as any, prepared, {
+      applyMemoryWrite(prepared, {
         maxTextLen: 10_000,
         piiRedaction: false,
         allowCrossScopeEdges: false,
-        shadowDualWriteEnabled: false,
-        shadowDualWriteStrict: false,
         associativeLinkOrigin: "memory_write",
         write_access: liteWriteStore,
       }),
     );
 
-    const recalled = await selectTools(null, {
+    const recalled = await selectTools({
       tenant_id: "default",
       scope: "default",
       run_id: randomUUID(),
@@ -1649,7 +1637,7 @@ test("selectTools keeps explicit tool.prefer ahead of trusted pattern preference
       strict: true,
       reorder_candidates: true,
     }, "default", "default", {
-      embedder: FakeEmbeddingProvider,
+      embedder: DeterministicEmbeddingProvider,
       recallAccess: liteRecallStore.createRecallAccess(),
       liteWriteStore,
     });
@@ -1695,7 +1683,7 @@ test("selectTools excludes suppressed trusted patterns from trusted reuse withou
   try {
     let stableAnchorId: string | null = null;
     for (const runId of [randomUUID(), randomUUID(), randomUUID()]) {
-      const selection = await selectTools(null, {
+      const selection = await selectTools({
         tenant_id: "default",
         scope: "default",
         run_id: runId,
@@ -1706,7 +1694,7 @@ test("selectTools excludes suppressed trusted patterns from trusted reuse withou
         strict: true,
         reorder_candidates: false,
       }, "default", "default", {
-        embedder: FakeEmbeddingProvider,
+        embedder: DeterministicEmbeddingProvider,
         recallAccess: liteRecallStore.createRecallAccess(),
         liteWriteStore,
       });
@@ -1727,7 +1715,7 @@ test("selectTools excludes suppressed trusted patterns from trusted reuse withou
         }, "default", "default", {
           maxTextLen: 10_000,
           piiRedaction: false,
-          embedder: FakeEmbeddingProvider,
+          embedder: DeterministicEmbeddingProvider,
           liteWriteStore,
         }),
       );
@@ -1736,7 +1724,7 @@ test("selectTools excludes suppressed trusted patterns from trusted reuse withou
     assert.ok(stableAnchorId);
 
     await liteWriteStore.withTx(() =>
-      updateRuleState({} as any, {
+      updateRuleState({
         tenant_id: "default",
         scope: "default",
         actor: "local-user",
@@ -1763,7 +1751,7 @@ test("selectTools excludes suppressed trusted patterns from trusted reuse withou
       }),
     );
 
-    const recalled = await selectTools(null, {
+    const recalled = await selectTools({
       tenant_id: "default",
       scope: "default",
       run_id: randomUUID(),
@@ -1774,7 +1762,7 @@ test("selectTools excludes suppressed trusted patterns from trusted reuse withou
       strict: true,
       reorder_candidates: true,
     }, "default", "default", {
-      embedder: FakeEmbeddingProvider,
+      embedder: DeterministicEmbeddingProvider,
       recallAccess: liteRecallStore.createRecallAccess(),
       liteWriteStore,
     });
@@ -1825,7 +1813,7 @@ test("negative tools feedback demotes a stable pattern back to provisional", asy
   try {
     let anchorId: string | null = null;
     for (const runId of [randomUUID(), randomUUID()]) {
-      const selection = await selectTools(null, {
+      const selection = await selectTools({
         tenant_id: "default",
         scope: "default",
         run_id: runId,
@@ -1836,7 +1824,7 @@ test("negative tools feedback demotes a stable pattern back to provisional", asy
         strict: true,
         reorder_candidates: false,
       }, "default", "default", {
-        embedder: FakeEmbeddingProvider,
+        embedder: DeterministicEmbeddingProvider,
         recallAccess: liteRecallStore.createRecallAccess(),
         liteWriteStore,
       });
@@ -1857,7 +1845,7 @@ test("negative tools feedback demotes a stable pattern back to provisional", asy
         }, "default", "default", {
           maxTextLen: 10_000,
           piiRedaction: false,
-          embedder: FakeEmbeddingProvider,
+          embedder: DeterministicEmbeddingProvider,
           liteWriteStore,
         }),
       );
@@ -1866,7 +1854,7 @@ test("negative tools feedback demotes a stable pattern back to provisional", asy
 
     assert.ok(anchorId);
     const negativeRunId = randomUUID();
-    const negativeSelection = await selectTools(null, {
+    const negativeSelection = await selectTools({
       tenant_id: "default",
       scope: "default",
       run_id: negativeRunId,
@@ -1877,7 +1865,7 @@ test("negative tools feedback demotes a stable pattern back to provisional", asy
       strict: true,
       reorder_candidates: false,
     }, "default", "default", {
-      embedder: FakeEmbeddingProvider,
+      embedder: DeterministicEmbeddingProvider,
       recallAccess: liteRecallStore.createRecallAccess(),
       liteWriteStore,
     });
@@ -1898,7 +1886,7 @@ test("negative tools feedback demotes a stable pattern back to provisional", asy
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,
-        embedder: FakeEmbeddingProvider,
+        embedder: DeterministicEmbeddingProvider,
         liteWriteStore,
       }),
     );
@@ -1928,7 +1916,7 @@ test("negative tools feedback demotes a stable pattern back to provisional", asy
     assert.equal(rows[0]?.slots.anchor_v1.trust_hardening.post_contest_distinct_run_count, 0);
 
     await liteWriteStore.withTx(() =>
-      updateRuleState({} as any, {
+      updateRuleState({
         tenant_id: "default",
         scope: "default",
         actor: "local-user",
@@ -1940,7 +1928,7 @@ test("negative tools feedback demotes a stable pattern back to provisional", asy
       }),
     );
 
-    const recalled = await selectTools(null, {
+    const recalled = await selectTools({
       tenant_id: "default",
       scope: "default",
       run_id: randomUUID(),
@@ -1951,7 +1939,7 @@ test("negative tools feedback demotes a stable pattern back to provisional", asy
       strict: true,
       reorder_candidates: true,
     }, "default", "default", {
-      embedder: FakeEmbeddingProvider,
+      embedder: DeterministicEmbeddingProvider,
       recallAccess: liteRecallStore.createRecallAccess(),
       liteWriteStore,
     });
@@ -2009,7 +1997,7 @@ test("contested pattern requires two fresh positive runs before revalidation to 
     const stableRunIds = [randomUUID(), randomUUID(), randomUUID()];
     let anchorId: string | null = null;
     for (const runId of stableRunIds) {
-      const selection = await selectTools(null, {
+      const selection = await selectTools({
         tenant_id: "default",
         scope: "default",
         run_id: runId,
@@ -2020,7 +2008,7 @@ test("contested pattern requires two fresh positive runs before revalidation to 
         strict: true,
         reorder_candidates: false,
       }, "default", "default", {
-        embedder: FakeEmbeddingProvider,
+        embedder: DeterministicEmbeddingProvider,
         recallAccess: liteRecallStore.createRecallAccess(),
         liteWriteStore,
       });
@@ -2041,7 +2029,7 @@ test("contested pattern requires two fresh positive runs before revalidation to 
         }, "default", "default", {
           maxTextLen: 10_000,
           piiRedaction: false,
-          embedder: FakeEmbeddingProvider,
+          embedder: DeterministicEmbeddingProvider,
           liteWriteStore,
         }),
       );
@@ -2049,7 +2037,7 @@ test("contested pattern requires two fresh positive runs before revalidation to 
     }
     assert.ok(anchorId);
 
-    const negativeSelection = await selectTools(null, {
+    const negativeSelection = await selectTools({
       tenant_id: "default",
       scope: "default",
       run_id: randomUUID(),
@@ -2060,7 +2048,7 @@ test("contested pattern requires two fresh positive runs before revalidation to 
       strict: true,
       reorder_candidates: false,
     }, "default", "default", {
-      embedder: FakeEmbeddingProvider,
+      embedder: DeterministicEmbeddingProvider,
       recallAccess: liteRecallStore.createRecallAccess(),
       liteWriteStore,
     });
@@ -2081,13 +2069,13 @@ test("contested pattern requires two fresh positive runs before revalidation to 
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,
-        embedder: FakeEmbeddingProvider,
+        embedder: DeterministicEmbeddingProvider,
         liteWriteStore,
       }),
     );
 
     const firstRevalidationRunId = randomUUID();
-    const firstRevalidationSelection = await selectTools(null, {
+    const firstRevalidationSelection = await selectTools({
       tenant_id: "default",
       scope: "default",
       run_id: firstRevalidationRunId,
@@ -2098,7 +2086,7 @@ test("contested pattern requires two fresh positive runs before revalidation to 
       strict: true,
       reorder_candidates: false,
     }, "default", "default", {
-      embedder: FakeEmbeddingProvider,
+      embedder: DeterministicEmbeddingProvider,
       recallAccess: liteRecallStore.createRecallAccess(),
       liteWriteStore,
     });
@@ -2119,7 +2107,7 @@ test("contested pattern requires two fresh positive runs before revalidation to 
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,
-        embedder: FakeEmbeddingProvider,
+        embedder: DeterministicEmbeddingProvider,
         liteWriteStore,
       }),
     );
@@ -2128,7 +2116,7 @@ test("contested pattern requires two fresh positive runs before revalidation to 
     assert.equal(firstRevalidation.pattern_anchor?.credibility_state, "contested");
 
     const secondRevalidationRunId = randomUUID();
-    const secondRevalidationSelection = await selectTools(null, {
+    const secondRevalidationSelection = await selectTools({
       tenant_id: "default",
       scope: "default",
       run_id: secondRevalidationRunId,
@@ -2139,7 +2127,7 @@ test("contested pattern requires two fresh positive runs before revalidation to 
       strict: true,
       reorder_candidates: false,
     }, "default", "default", {
-      embedder: FakeEmbeddingProvider,
+      embedder: DeterministicEmbeddingProvider,
       recallAccess: liteRecallStore.createRecallAccess(),
       liteWriteStore,
     });
@@ -2160,7 +2148,7 @@ test("contested pattern requires two fresh positive runs before revalidation to 
       }, "default", "default", {
         maxTextLen: 10_000,
         piiRedaction: false,
-        embedder: FakeEmbeddingProvider,
+        embedder: DeterministicEmbeddingProvider,
         liteWriteStore,
       }),
     );

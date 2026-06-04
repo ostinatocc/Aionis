@@ -5,9 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
-import { FakeEmbeddingProvider } from "../../src/embeddings/fake.ts";
+import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
-import { registerHostErrorHandler } from "../../src/host/http-host.ts";
+import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
 import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
 import { registerHandoffRoutes } from "../../src/routes/handoff.ts";
@@ -45,17 +45,15 @@ function buildEnv(overrides: Record<string, unknown> = {}) {
     MAX_TEXT_LEN: 10_000,
     PII_REDACTION: false,
     ALLOW_CROSS_SCOPE_EDGES: false,
-    MEMORY_SHADOW_DUAL_WRITE_ENABLED: false,
-    MEMORY_SHADOW_DUAL_WRITE_STRICT: false,
     AUTO_TOPIC_CLUSTER_ON_WRITE: false,
     TOPIC_CLUSTER_ASYNC_ON_WRITE: true,
     MEMORY_WRITE_REQUIRE_NODES: false,
     MEMORY_RECALL_TEXT_CONTEXT_TOKEN_BUDGET_DEFAULT: 4096,
-    MEMORY_RECALL_STAGE1_EXACT_FALLBACK_ON_EMPTY: true,
+    MEMORY_RECALL_STAGE1_EXACT_RECOVERY_ON_EMPTY: true,
     MEMORY_RECALL_ADAPTIVE_HARD_CAP_WAIT_MS: 0,
     MEMORY_PLANNING_CONTEXT_OPTIMIZATION_PROFILE_DEFAULT: "balanced",
     MEMORY_CONTEXT_ASSEMBLE_OPTIMIZATION_PROFILE_DEFAULT: "balanced",
-    WORKFLOW_LEARNING_CONTROL_STATIC_PROMOTE_MEMORY_PROVIDER_ENABLED: false,
+    WORKFLOW_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: false,
     ...overrides,
   } as any;
 }
@@ -70,24 +68,21 @@ function registerApp(args: {
   const env = buildEnv(args.envOverrides);
   const guards = createRequestGuards({
     env,
-    embedder: FakeEmbeddingProvider,
+    embedder: DeterministicEmbeddingProvider,
     recallLimiter: null,
     debugEmbedLimiter: null,
     writeLimiter: null,
-    sandboxWriteLimiter: null,
-    sandboxReadLimiter: null,
     recallTextEmbedLimiter: null,
     recallInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
     writeInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
   });
 
-  registerHostErrorHandler(args.app);
+  registerRuntimeErrorHandler(args.app);
 
   registerHandoffRoutes({
     app: args.app,
     env,
-    embedder: FakeEmbeddingProvider,
-    embeddedRuntime: null,
+    embedder: DeterministicEmbeddingProvider,
     liteWriteStore: args.liteWriteStore,
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest as any,
@@ -101,8 +96,7 @@ function registerApp(args: {
   registerMemoryContextRuntimeRoutes({
     app: args.app,
     env,
-    embedder: FakeEmbeddingProvider,
-    embeddedRuntime: null,
+    embedder: DeterministicEmbeddingProvider,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
     recallTextEmbedBatcher: { stats: () => null },
@@ -165,8 +159,6 @@ function registerApp(args: {
     embedder: null,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
-    writeAccessShadowMirrorV2: false,
-    requireStoreFeatureCapability: () => {},
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
     enforceRateLimit: guards.enforceRateLimit,
@@ -448,7 +440,7 @@ test("handoff/store projects workflow memory into planner guidance through the g
       liteWriteStore,
       liteRecallStore,
       envOverrides: {
-        WORKFLOW_LEARNING_CONTROL_STATIC_PROMOTE_MEMORY_PROVIDER_ENABLED: true,
+        WORKFLOW_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: true,
       },
     });
 
@@ -561,8 +553,8 @@ test("handoff/store projects workflow memory into planner guidance through the g
     assert.equal(introspectBody.continuity_carrier_summary.handoff_count, 2);
     assert.equal(introspectBody.continuity_carrier_summary.session_event_count, 0);
     assert.equal(introspectBody.distillation_signal_summary.origin_counts.handoff_continuity_carrier, 1);
-    assert.ok(introspectBody.demo_surface.sections.workflows.some((line) => line.includes("distillation=handoff_continuity_carrier")));
-    assert.match(introspectBody.demo_surface.merged_text, /Fix export failure/i);
+    assert.ok(introspectBody.operator_surface.sections.workflows.some((line) => line.includes("distillation=handoff_continuity_carrier")));
+    assert.match(introspectBody.operator_surface.merged_text, /Fix export failure/i);
   } finally {
     await app.close();
     await liteWriteStore.close();
@@ -580,12 +572,12 @@ test("handoff/store keeps long workflow candidate titles inside learning-control
       liteWriteStore,
       liteRecallStore,
       envOverrides: {
-        WORKFLOW_LEARNING_CONTROL_STATIC_PROMOTE_MEMORY_PROVIDER_ENABLED: true,
+        WORKFLOW_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: true,
       },
     });
 
     const longSummary = [
-      "Repair the real LLM evaluator persistence path after a provider-interrupted assisted run writes a detailed handoff",
+      "Repair the real Agent evaluator persistence path after a provider-interrupted assisted run writes a detailed handoff",
       "with verifier evidence, target files, protocol diagnostics, execution state, execution packet, and next action text",
       "long enough to overflow candidate_examples title validation during workflow promotion review.",
     ].join(" ");
@@ -597,7 +589,7 @@ test("handoff/store keeps long workflow candidate titles inside learning-control
         stateId: `state:${randomUUID()}`,
         title: "Long workflow candidate title",
         summary: longSummary,
-        filePath: "scripts/real-llm-eval/run-real-agent-eval.ts",
+        filePath: "src/memory/product-output-assembler.ts",
       }),
     });
     assert.equal(firstStore.statusCode, 200);
@@ -609,7 +601,7 @@ test("handoff/store keeps long workflow candidate titles inside learning-control
         stateId: `state:${randomUUID()}`,
         title: "Long workflow candidate title",
         summary: longSummary,
-        filePath: "scripts/real-llm-eval/run-real-agent-eval.ts",
+        filePath: "src/memory/product-output-assembler.ts",
       }),
     });
     assert.equal(secondStore.statusCode, 200, secondStore.body);
@@ -640,7 +632,7 @@ test("trajectory-backed handoff promotion preserves recovery compiler fields int
       liteWriteStore,
       liteRecallStore,
       envOverrides: {
-        WORKFLOW_LEARNING_CONTROL_STATIC_PROMOTE_MEMORY_PROVIDER_ENABLED: true,
+        WORKFLOW_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: true,
       },
     });
 

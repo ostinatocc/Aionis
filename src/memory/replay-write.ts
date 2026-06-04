@@ -1,8 +1,5 @@
-import type pg from "pg";
 import type { EmbeddingProvider } from "../embeddings/types.js";
-import type { EmbeddedMemoryRuntime } from "../store/embedded-memory-runtime.js";
-import { createPostgresWriteStoreAccess, type WriteStoreAccess } from "../store/write-access.js";
-import { mirrorPreparedWriteToEmbeddedRuntime } from "./embedded-write-bridge.js";
+import type { WriteStoreAccess } from "../store/write-access.js";
 import { toTenantScopeKey } from "./tenant.js";
 import { applyPreparedMemoryWrite, prepareMemoryWrite, type WriteResult } from "./write.js";
 
@@ -39,11 +36,7 @@ export type ReplayMemoryWriteOptions = {
   maxTextLen: number;
   piiRedaction: boolean;
   allowCrossScopeEdges: boolean;
-  shadowDualWriteEnabled: boolean;
-  shadowDualWriteStrict: boolean;
-  writeAccessShadowMirrorV2: boolean;
   embedder: EmbeddingProvider | null;
-  embeddedRuntime?: EmbeddedMemoryRuntime | null;
   replayMirror?: ReplayWriteMirror | null;
   writeAccess?: WriteStoreAccess | null;
 };
@@ -68,16 +61,10 @@ function toIntOrNull(value: unknown): number | null {
   return null;
 }
 
-function replayWriteAccessForClient(client: pg.PoolClient | null, opts: ReplayMemoryWriteOptions): WriteStoreAccess {
-  const writeAccess = opts.writeAccess ?? (
-    client
-      ? createPostgresWriteStoreAccess(client, {
-          capabilities: { shadow_mirror_v2: opts.writeAccessShadowMirrorV2 },
-        })
-      : null
-  );
+function replayWriteAccessForOptions(opts: ReplayMemoryWriteOptions): WriteStoreAccess {
+  const writeAccess = opts.writeAccess ?? null;
   if (!writeAccess) {
-    throw new Error("replay memory write requires writeAccess when no postgres client is provided");
+    throw new Error("replay memory write requires explicit writeAccess");
   }
   return writeAccess;
 }
@@ -143,7 +130,6 @@ function extractReplayMirrorNodes(
 }
 
 export async function applyReplayMemoryWrite(
-  client: pg.PoolClient | null,
   writeReq: unknown,
   opts: ReplayMemoryWriteOptions,
 ): Promise<{
@@ -161,15 +147,12 @@ export async function applyReplayMemoryWrite(
     },
     opts.embedder,
   );
-  const out = await applyPreparedMemoryWrite(replayWriteAccessForClient(client, opts), prepared, {
+  const out = await applyPreparedMemoryWrite(replayWriteAccessForOptions(opts), prepared, {
     maxTextLen: opts.maxTextLen,
     piiRedaction: opts.piiRedaction,
     allowCrossScopeEdges: opts.allowCrossScopeEdges,
-    shadowDualWriteEnabled: opts.shadowDualWriteEnabled,
-    shadowDualWriteStrict: opts.shadowDualWriteStrict,
     associativeLinkOrigin: "replay_write",
   });
-  await mirrorPreparedWriteToEmbeddedRuntime({ embeddedRuntime: opts.embeddedRuntime, prepared, out });
   if (opts.replayMirror) {
     const replayNodes = extractReplayMirrorNodes(writeReq, prepared, out, opts);
     if (replayNodes.length > 0) {

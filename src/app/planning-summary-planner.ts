@@ -22,7 +22,7 @@ import type {
   RuntimeEntropyControlsV1,
   RuntimeEntropyProfileV1,
 } from "../memory/schemas.js";
-import { guardExecutionContractForHost, type ExecutionContractV1 } from "../memory/execution-contract.js";
+import { guardExecutionContractForConsumer, type ExecutionContractV1 } from "../memory/execution-contract.js";
 import { resolveContractTrustForSteering } from "../memory/contract-trust.js";
 import {
   buildAuthorityInspectionNextAction,
@@ -147,7 +147,7 @@ function pickPreferredRehydrationCandidate(
   return null;
 }
 
-function buildFallbackGateInstruction(args: {
+function buildDefaultGateInstruction(args: {
   gateAction: ActionRetrievalGateAction;
   firstStepRecommendation: FirstStepRecommendation | null;
   preferredRehydration: RehydrationCandidateLike | null;
@@ -679,8 +679,8 @@ function classifyEditFailureEvent(args: {
   ) {
     return "stale_line_anchor";
   }
-  if (args.output?.edit_noop === true || /no-?op|non_noop_required|no changes|identical replacement/.test(lower)) {
-    return "noop_edit";
+  if (args.output?.edit_unchanged === true || /unchanged|no changes|identical replacement/.test(lower)) {
+    return "unchanged_edit";
   }
   if (
     args.tool === "replace_text"
@@ -739,7 +739,7 @@ function collectEditOperationFailureEvents(record: Record<string, unknown>): Run
       nextReason,
       categoryText,
       output?.expected_old_lines_match === false ? "expected_old_lines_match=false" : null,
-      output?.edit_noop === true ? "edit_noop=true" : null,
+      output?.edit_unchanged === true ? "edit_unchanged=true" : null,
     ].filter((value): value is string => !!value).join("\n");
     const textHint = firstFileHintFromText(evidenceText);
     const rawPath = firstNonEmptyString(
@@ -1030,7 +1030,7 @@ function editFailureForbiddenActions(phase: RuntimeEditFailurePhase["phase"]): R
     "run_unrelated_command",
     "persist_learning",
     phase === "stale_line_anchor" || phase === "replace_text_anchor_failure" ? "reuse_stale_anchor" : null,
-    phase === "stale_line_anchor" || phase === "noop_edit" || phase === "replace_text_anchor_failure" || phase === "replace_lines_payload_failure"
+    phase === "stale_line_anchor" || phase === "unchanged_edit" || phase === "replace_text_anchor_failure" || phase === "replace_lines_payload_failure"
       ? "repeat_same_edit"
       : null,
     phase === "apply_patch_payload_failure" ? "repeat_same_patch" : null,
@@ -1047,8 +1047,8 @@ function buildEditFailureRecommendedFocus(args: {
   if (args.phase === "stale_line_anchor") {
     return `Read ${target} from current file state, copy expected_old_lines from the latest read_file output, then make one compact replace_lines edit on the same span.`;
   }
-  if (args.phase === "noop_edit") {
-    return `Do not repeat the identical replacement on ${target}; make one localized non-noop semantic edit or stop editing until current evidence proves a required change.`;
+  if (args.phase === "unchanged_edit") {
+    return `Do not repeat the identical replacement on ${target}; make one localized meaningful semantic edit or stop editing until current evidence proves a required change.`;
   }
   if (args.phase === "apply_patch_payload_failure") {
     return `Read the current span around ${target}, then use compact replace_lines or one small apply_patch hunk that matches current context exactly.`;
@@ -1666,7 +1666,7 @@ function buildRuntimeFirstActionRecommendation(args: {
       file_path: null,
       target_files: [],
       reason:
-        "Action intelligence pre-action gate asks the host to inspect current context before reusing memory.",
+        "Action intelligence pre-action gate asks the agent runtime to inspect current context before reusing memory.",
       instruction: "Inspect the current context before taking the next execution step.",
     };
   }
@@ -1727,7 +1727,7 @@ function applyContractTrustGuard(args: {
     uncertainty: args.uncertainty,
     authorityBlocked,
   });
-  const guardedContract = guardExecutionContractForHost({
+  const guardedContract = guardExecutionContractForConsumer({
     contract: args.executionContract,
     trust: contractTrust,
   });
@@ -1970,7 +1970,7 @@ export function buildActionRetrievalGate(args: {
     recommended_actions: recommendedActions,
     instruction:
       args.firstStepRecommendation?.next_action
-      ?? buildFallbackGateInstruction({
+      ?? buildDefaultGateInstruction({
         gateAction,
         firstStepRecommendation: args.firstStepRecommendation,
         preferredRehydration,

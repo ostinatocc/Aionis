@@ -46,10 +46,10 @@ export function selectAssociativeLinkSourceNodeIds(nodes: WriteScopedNode[]): st
   return ids;
 }
 
-export function nodeEmbedText(node: WriteScopedNode, fallbackEventText: string | undefined): string | null {
+export function nodeEmbedText(node: WriteScopedNode, defaultEventText: string | undefined): string | null {
   const title = node.title?.trim();
   const summary = node.text_summary?.trim();
-  if (node.type === "event" || node.type === "evidence") return summary ?? title ?? fallbackEventText ?? null;
+  if (node.type === "event" || node.type === "evidence") return summary ?? title ?? defaultEventText ?? null;
   if (node.type === "entity" || node.type === "topic" || node.type === "concept") return title ?? summary ?? null;
   if (node.type === "rule") return summary ?? title ?? null;
   return summary ?? title ?? null;

@@ -43,6 +43,7 @@ export type PlanningSummary = {
   runtime_entropy_controls: RuntimeEntropyControlsV1 | null;
   action_retrieval_uncertainty: ActionRetrievalUncertaintySummary | null;
   action_retrieval_gate: ActionRetrievalGateSummary | null;
+  history_impact_summary: HistoryImpactSummary;
   selected_tool: string | null;
   decision_id: string | null;
   rules_considered: number;
@@ -83,6 +84,7 @@ export type AssemblySummary = {
   runtime_entropy_controls: RuntimeEntropyControlsV1 | null;
   action_retrieval_uncertainty: ActionRetrievalUncertaintySummary | null;
   action_retrieval_gate: ActionRetrievalGateSummary | null;
+  history_impact_summary: HistoryImpactSummary;
   selected_tool: string | null;
   decision_id: string | null;
   rules_considered: number;
@@ -148,6 +150,78 @@ export type KickoffRecommendation = {
 };
 
 export type ContractTrust = "authoritative" | "advisory" | "observational";
+
+export type HistoryImpactCapability =
+  | "continuity"
+  | "learning"
+  | "forgetting"
+  | "learning_control";
+
+export type HistoryImpactLevel =
+  | "none"
+  | "context_shaping"
+  | "action_shaping"
+  | "learning_controlled";
+
+export type HistoryImpactNextRunChange =
+  | "continuity_state_available"
+  | "trusted_evidence_available"
+  | "workflow_reuse_available"
+  | "candidate_learning_visible"
+  | "contested_memory_visible"
+  | "memory_suppressed_or_forgotten"
+  | "rehydration_available"
+  | "learning_control_limited_authority"
+  | "first_action_shaped_by_history"
+  | "runtime_entropy_visible";
+
+export type HistoryImpactSummary = {
+  summary_version: "history_impact_summary_v1";
+  history_applied: boolean;
+  changed_next_run: boolean;
+  impact_level: HistoryImpactLevel;
+  affected_capabilities: HistoryImpactCapability[];
+  continuity: {
+    continuity_carrier_count: number;
+    static_blocks_selected: number;
+    selected_memory_layer_count: number;
+  };
+  learning: {
+    stable_workflow_count: number;
+    candidate_workflow_count: number;
+    promotion_ready_workflow_count: number;
+    trusted_pattern_count: number;
+    contested_pattern_count: number;
+    active_policy_count: number;
+    contested_policy_count: number;
+  };
+  forgetting: {
+    substrate_mode: ExecutionForgettingSummary["substrate_mode"];
+    forgotten_items: number;
+    suppressed_pattern_count: number;
+    differential_rehydration_candidate_count: number;
+    stale_signal_count: number;
+  };
+  learning_control: {
+    contract_trust: ContractTrust | null;
+    action_start_blocked: boolean;
+    authoritative_allowed_count: number;
+    authoritative_blocked_count: number;
+    stable_promotion_allowed_count: number;
+    stable_promotion_blocked_count: number;
+    primary_blockers: string[];
+  };
+  runtime_entropy: {
+    profile_present: boolean;
+    controls_present: boolean;
+    entropy_level: RuntimeEntropyProfileV1["entropy_level"] | null;
+    plasticity_level: RuntimeEntropyProfileV1["plasticity_level"] | null;
+    exploration_budget: number | null;
+    control_strength: number | null;
+  };
+  next_run_changes: HistoryImpactNextRunChange[];
+  primary_reason: string;
+};
 
 export type RuntimeFirstActionKind =
   | "read_file"
@@ -235,7 +309,7 @@ export type RuntimeVerifierFailurePhase = {
 
 export type RuntimeEditFailurePhaseKind =
   | "stale_line_anchor"
-  | "noop_edit"
+  | "unchanged_edit"
   | "apply_patch_payload_failure"
   | "replace_text_anchor_failure"
   | "replace_lines_payload_failure"

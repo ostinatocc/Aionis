@@ -230,12 +230,10 @@ test("prepare/apply write normalizes execution-native metadata for anchors and d
     assert.equal(workflowSignatureFactPrepared?.slots.execution_native_v1.workflow_signature, "inspect-patch-rerun");
 
     await store.withTx(() =>
-      applyMemoryWrite({} as any, prepared, {
+      applyMemoryWrite(prepared, {
         maxTextLen: 10_000,
         piiRedaction: false,
         allowCrossScopeEdges: false,
-        shadowDualWriteEnabled: false,
-        shadowDualWriteStrict: false,
         associativeLinkOrigin: "memory_write",
         write_access: store,
       }),
@@ -416,12 +414,10 @@ test("lite write store exposes execution-first query filters over execution_nati
       null,
     );
     await store.withTx(() =>
-      applyMemoryWrite({} as any, prepared, {
+      applyMemoryWrite(prepared, {
         maxTextLen: 10_000,
         piiRedaction: false,
         allowCrossScopeEdges: false,
-        shadowDualWriteEnabled: false,
-        shadowDualWriteStrict: false,
         associativeLinkOrigin: "memory_write",
         write_access: store,
       }),
@@ -558,12 +554,10 @@ test("prepare/apply write normalizes execution-native metadata for handoff and s
     assert.equal(preparedSession?.slots.execution_native_v1.compression_layer, "L0");
 
     await store.withTx(() =>
-      applyMemoryWrite({} as any, prepared, {
+      applyMemoryWrite(prepared, {
         maxTextLen: 10_000,
         piiRedaction: false,
         allowCrossScopeEdges: false,
-        shadowDualWriteEnabled: false,
-        shadowDualWriteStrict: false,
         associativeLinkOrigin: "memory_write",
         write_access: store,
       }),

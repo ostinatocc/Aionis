@@ -9,9 +9,9 @@ import {
   createModelBackedPromoteMemoryLearningControlReviewProvider,
 } from "./learning-control-provider-model.js";
 import {
-  createStaticFormPatternLearningControlReviewProvider,
-  createStaticPromoteMemoryLearningControlReviewProvider,
-} from "./learning-control-provider-static.js";
+  createEvidenceFormPatternLearningControlReviewProvider,
+  createEvidencePromoteMemoryLearningControlReviewProvider,
+} from "./learning-control-provider-evidence.js";
 import type {
   FormPatternLearningControlReviewProvider,
   PromoteMemoryLearningControlReviewProvider,
@@ -19,14 +19,14 @@ import type {
 
 export function buildPromoteMemoryLearningControlReviewProvider(args: {
   modelClientMode?: LearningControlModelClientMode;
-  staticEnabled?: boolean;
+  evidenceEnabled?: boolean;
   modelClientFactory?: LearningControlModelClientFactory;
   httpClientConfig?: LearningControlHttpModelClientConfig;
   builtin?: {
     confidence?: number;
     reason?: string;
   };
-  static?: {
+  evidence?: {
     confidence?: number;
     reason?: string;
   };
@@ -46,10 +46,10 @@ export function buildPromoteMemoryLearningControlReviewProvider(args: {
           }),
         })
       : undefined)
-    ?? (args.staticEnabled
-      ? createStaticPromoteMemoryLearningControlReviewProvider({
-          confidence: args.static?.confidence,
-          reason: args.static?.reason,
+    ?? (args.evidenceEnabled
+      ? createEvidencePromoteMemoryLearningControlReviewProvider({
+          confidence: args.evidence?.confidence,
+          reason: args.evidence?.reason,
         })
       : undefined)
   );
@@ -57,14 +57,14 @@ export function buildPromoteMemoryLearningControlReviewProvider(args: {
 
 export function buildFormPatternLearningControlReviewProvider(args: {
   modelClientMode?: LearningControlModelClientMode;
-  staticEnabled?: boolean;
+  evidenceEnabled?: boolean;
   modelClientFactory?: LearningControlModelClientFactory;
   httpClientConfig?: LearningControlHttpModelClientConfig;
   builtin?: {
     confidence?: number;
     reason?: string;
   };
-  static?: {
+  evidence?: {
     confidence?: number;
     reason?: string;
   };
@@ -84,10 +84,10 @@ export function buildFormPatternLearningControlReviewProvider(args: {
           }),
         })
       : undefined)
-    ?? (args.staticEnabled
-      ? createStaticFormPatternLearningControlReviewProvider({
-          confidence: args.static?.confidence,
-          reason: args.static?.reason,
+    ?? (args.evidenceEnabled
+      ? createEvidenceFormPatternLearningControlReviewProvider({
+          confidence: args.evidence?.confidence,
+          reason: args.evidence?.reason,
         })
       : undefined)
   );

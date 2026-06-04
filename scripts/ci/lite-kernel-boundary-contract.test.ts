@@ -6,13 +6,14 @@ import {
   AIONIS_KERNEL_FORBIDDEN_SURFACES,
   AIONIS_KERNEL_PRODUCT_CLAIM,
   AIONIS_CORE_HARD_INVARIANTS,
-  AIONIS_EXPERIMENTAL_POLICY_SURFACES,
-  AIONIS_RUNTIME_LAYER_BOUNDARIES,
-  AIONIS_RUNTIME_LAYER_BOUNDARY_VERSION,
   aionisKernelCapability,
   aionisKernelCapabilityIds,
-  aionisRuntimeLayerIds,
 } from "../../src/kernel/boundary.ts";
+import {
+  LITE_ROUTE_CAPABILITY_MATRIX,
+  LITE_ROUTE_CAPABILITY_MATRIX_VERSION,
+  buildLiteRouteMatrix,
+} from "../../src/server/lite-runtime-boundary.ts";
 
 test("focused kernel boundary exposes the four product capabilities", () => {
   assert.equal(AIONIS_KERNEL_BOUNDARY_VERSION, "aionis_focused_kernel_boundary_v1");
@@ -70,37 +71,12 @@ test("learning and forgetting stay separated", () => {
 
   assert.ok(learning.owns.includes("workflow_promotion"));
   assert.ok(learning.must_not_own.includes("one_success_equals_truth"));
+  assert.ok(learning.must_not_own.includes("runtime_semantic_patch_generation"));
   assert.ok(forgetting.owns.includes("semantic_forgetting"));
   assert.ok(forgetting.owns.includes("archive_relocation"));
   assert.ok(forgetting.must_not_own.includes("blind_deletion"));
   assert.equal(learning.owns.includes("semantic_forgetting"), false);
   assert.equal(forgetting.owns.includes("workflow_promotion"), false);
-});
-
-test("runtime boundary separates product core from eval and experimental policy", () => {
-  assert.equal(AIONIS_RUNTIME_LAYER_BOUNDARY_VERSION, "aionis_runtime_layer_boundary_v1");
-  assert.deepEqual(aionisRuntimeLayerIds(), [
-    "core_runtime",
-    "real_eval_harness",
-    "experimental_policy",
-  ]);
-
-  const core = AIONIS_RUNTIME_LAYER_BOUNDARIES.find((layer) => layer.id === "core_runtime");
-  const evalHarness = AIONIS_RUNTIME_LAYER_BOUNDARIES.find((layer) => layer.id === "real_eval_harness");
-  const experimental = AIONIS_RUNTIME_LAYER_BOUNDARIES.find((layer) => layer.id === "experimental_policy");
-
-  assert.ok(core);
-  assert.ok(evalHarness);
-  assert.ok(experimental);
-  assert.ok(core.owns.includes("context_packet_assembly"));
-  assert.ok(core.owns.includes("persistent_cognitive_structure"));
-  assert.ok(core.may_produce.includes("cognitive_structure"));
-  assert.ok(core.must_not_own.includes("external_project_verifier_logic"));
-  assert.ok(core.must_not_own.includes("testing_method_preference"));
-  assert.ok(evalHarness.owns.includes("baseline_vs_aionis_comparison"));
-  assert.ok(evalHarness.must_not_own.includes("runtime_memory_promotion"));
-  assert.ok(experimental.owns.includes("verifier_phase_classification"));
-  assert.ok(experimental.must_not_own.includes("global_hard_rule"));
 });
 
 test("hard invariants stay small and evidence-centered", () => {
@@ -110,18 +86,152 @@ test("hard invariants stay small and evidence-centered", () => {
     "workflow_promotion_requires_real_outcome_evidence",
     "make_blocked_or_suppressed_authority_visible",
   ]);
-  assert.equal(AIONIS_CORE_HARD_INVARIANTS.some((rule) => rule.includes("mock")), false);
+  assert.equal(AIONIS_CORE_HARD_INVARIANTS.every((rule) => rule.length > 0), true);
 });
 
-test("experimental policies cannot masquerade as core hard rules", () => {
-  assert.equal(AIONIS_EXPERIMENTAL_POLICY_SURFACES.length >= 3, true);
+test("Lite route capability matrix maps public routes to focused product capabilities", () => {
+  assert.equal(LITE_ROUTE_CAPABILITY_MATRIX_VERSION, "lite_route_capability_matrix_v2");
 
-  for (const surface of AIONIS_EXPERIMENTAL_POLICY_SURFACES) {
-    assert.equal(surface.layer, "experimental_policy");
-    assert.notEqual(surface.default_authority, "hard_invariant");
-    assert.ok(surface.must_not_do.includes("promote_without_verifier_success")
-      || surface.must_not_do.includes("turn_project_specific_paths_into_global_rules")
-      || surface.must_not_do.includes("persist_as_authority_from_failed_runs"));
-    assert.match(surface.promotion_rule, /real|holdout|verifier/i);
+  const capabilityIds = new Set(aionisKernelCapabilityIds());
+  const matrix = buildLiteRouteMatrix().route_capability_matrix;
+  const routeKeys = matrix.map((entry) => `${entry.method} ${entry.path}`).sort();
+
+  assert.deepEqual(routeKeys, [
+    "GET /v1/runtime/boundary-inventory",
+    "POST /v1/handoff/recover",
+    "POST /v1/handoff/store",
+    "POST /v1/memory/action/retrieval",
+    "POST /v1/memory/agent/handoff-pack",
+    "POST /v1/memory/agent/inspect",
+    "POST /v1/memory/agent/resume-pack",
+    "POST /v1/memory/agent/review-pack",
+    "POST /v1/memory/anchors/rehydrate_payload",
+    "POST /v1/memory/archive/rehydrate",
+    "POST /v1/memory/context/assemble",
+    "POST /v1/memory/continuity/review-pack",
+    "POST /v1/memory/delegation/records",
+    "POST /v1/memory/delegation/records/aggregate",
+    "POST /v1/memory/delegation/records/find",
+    "POST /v1/memory/evolution/review-pack",
+    "POST /v1/memory/execution/introspect",
+    "POST /v1/memory/experience/intelligence",
+    "POST /v1/memory/feedback",
+    "POST /v1/memory/find",
+    "POST /v1/memory/kickoff/recommendation",
+    "POST /v1/memory/learning-loop/run",
+    "POST /v1/memory/nodes/activate",
+    "POST /v1/memory/patterns/suppress",
+    "POST /v1/memory/patterns/unsuppress",
+    "POST /v1/memory/planning/context",
+    "POST /v1/memory/policies/learning-control/apply",
+    "POST /v1/memory/recall",
+    "POST /v1/memory/recall_text",
+    "POST /v1/memory/replay/playbooks/candidate",
+    "POST /v1/memory/replay/playbooks/compile_from_run",
+    "POST /v1/memory/replay/playbooks/dispatch",
+    "POST /v1/memory/replay/playbooks/get",
+    "POST /v1/memory/replay/playbooks/promote",
+    "POST /v1/memory/replay/playbooks/repair",
+    "POST /v1/memory/replay/playbooks/repair/review",
+    "POST /v1/memory/replay/playbooks/run",
+    "POST /v1/memory/replay/run/end",
+    "POST /v1/memory/replay/run/start",
+    "POST /v1/memory/replay/runs/get",
+    "POST /v1/memory/replay/step/after",
+    "POST /v1/memory/replay/step/before",
+    "POST /v1/memory/resolve",
+    "POST /v1/memory/rules/evaluate",
+    "POST /v1/memory/rules/state",
+    "POST /v1/memory/runtime-maintenance/daily",
+    "POST /v1/memory/runtime-maintenance/immediate",
+    "POST /v1/memory/runtime-maintenance/long-horizon",
+    "POST /v1/memory/runtime-maintenance/run",
+    "POST /v1/memory/tools/decision",
+    "POST /v1/memory/tools/feedback",
+    "POST /v1/memory/tools/rehydrate_payload",
+    "POST /v1/memory/tools/run",
+    "POST /v1/memory/tools/runs/list",
+    "POST /v1/memory/tools/select",
+    "POST /v1/memory/trajectory/compile",
+    "POST /v1/memory/write",
+  ]);
+
+  assert.equal(new Set(routeKeys).size, routeKeys.length, "route capability matrix must not duplicate routes");
+  assert.equal(matrix.length, LITE_ROUTE_CAPABILITY_MATRIX.length);
+
+  for (const entry of matrix) {
+    assert.ok(entry.capabilities.length > 0, `${entry.path} must map to at least one focused capability`);
+    for (const capability of entry.capabilities) {
+      assert.ok(capabilityIds.has(capability), `${entry.path} maps to unknown capability ${capability}`);
+    }
+    assert.ok(entry.product_role.length > 20, `${entry.path} must explain its focused product role`);
+    assert.match(
+      entry.product_exposure,
+      /^(product_entry|product_support|internal_evidence|internal_guidance|internal_control|operator_support)$/,
+      `${entry.path} must declare product exposure`,
+    );
   }
+});
+
+test("Lite route capability matrix separates product entries from internal surfaces", () => {
+  const matrix = buildLiteRouteMatrix().route_capability_matrix;
+  const exposureByRoute = new Map(matrix.map((entry) => [`${entry.method} ${entry.path}`, entry.product_exposure]));
+
+  for (const route of [
+    "POST /v1/memory/write",
+    "POST /v1/memory/context/assemble",
+    "POST /v1/memory/experience/intelligence",
+    "POST /v1/memory/kickoff/recommendation",
+    "POST /v1/handoff/recover",
+  ]) {
+    assert.equal(exposureByRoute.get(route), "product_entry", `${route} must stay product-facing`);
+  }
+
+  for (const route of [
+    "POST /v1/memory/find",
+    "POST /v1/memory/resolve",
+    "POST /v1/memory/rules/state",
+    "POST /v1/memory/rules/evaluate",
+    "POST /v1/memory/replay/playbooks/repair",
+    "POST /v1/memory/replay/playbooks/repair/review",
+    "POST /v1/memory/replay/playbooks/run",
+    "POST /v1/memory/replay/playbooks/dispatch",
+  ]) {
+    assert.notEqual(exposureByRoute.get(route), "product_entry", `${route} must not be presented as a product entry`);
+  }
+
+  assert.equal(exposureByRoute.get("POST /v1/memory/action/retrieval"), "internal_guidance");
+  assert.equal(exposureByRoute.get("POST /v1/memory/replay/playbooks/repair"), "internal_evidence");
+  assert.equal(exposureByRoute.get("POST /v1/memory/policies/learning-control/apply"), "internal_control");
+});
+
+test("Lite route capability matrix keeps removed product surfaces out", () => {
+  const serialized = JSON.stringify(buildLiteRouteMatrix().route_capability_matrix);
+  for (const removed of [
+    "/v1/memory/sandbox",
+    "/v1/memory/packs",
+    "/v1/memory/sessions",
+    "/v1/memory/events",
+  ]) {
+    assert.equal(serialized.includes(removed), false, `${removed} must not return to the focused route matrix`);
+  }
+});
+
+test("Lite route capability matrix makes history-shaped behavior explicit", () => {
+  const matrix = buildLiteRouteMatrix().route_capability_matrix;
+  const historyRoutes = matrix.filter((entry) => entry.product_effects.includes("history_shaped_future_behavior"));
+
+  assert.ok(historyRoutes.length > matrix.length * 0.7, "most focused routes should expose history-shaped product effect");
+  assert.ok(
+    historyRoutes.some((entry) => entry.path === "/v1/memory/experience/intelligence"),
+    "experience intelligence must expose history-shaped future behavior",
+  );
+  assert.ok(
+    historyRoutes.some((entry) => entry.path === "/v1/memory/context/assemble"),
+    "context assembly must expose history-shaped future behavior",
+  );
+  assert.ok(
+    historyRoutes.some((entry) => entry.path === "/v1/memory/kickoff/recommendation"),
+    "kickoff recommendation must expose history-shaped future behavior",
+  );
 });

@@ -20,8 +20,8 @@ export function isMemoryTierName(value: unknown): value is MemoryTierName {
   return typeof value === "string" && (MEMORY_TIER_ORDER as readonly string[]).includes(value);
 }
 
-export function normalizeMemoryTier(value: unknown, fallback: MemoryTierName = "archive"): MemoryTierName {
-  return isMemoryTierName(value) ? value : fallback;
+export function normalizeMemoryTier(value: unknown, defaultValue: MemoryTierName = "archive"): MemoryTierName {
+  return isMemoryTierName(value) ? value : defaultValue;
 }
 
 export function compareMemoryTierRank(left: unknown, right: unknown): number {
@@ -292,13 +292,13 @@ export function buildPatternMaintenanceMetadata(args: {
 export function resolvePatternTransition(args: {
   credibility_state: PatternCredibilityState;
   previous_credibility_state: PatternCredibilityState | null;
-  fallback_transition?: PatternTransitionKind | null;
+  default_transition?: PatternTransitionKind | null;
 }): PatternTransitionKind {
   if (args.credibility_state === "contested") return "counter_evidence_opened";
   if (args.credibility_state === "trusted") {
     if (args.previous_credibility_state === "contested") return "revalidated_to_trusted";
     if (args.previous_credibility_state === "trusted") {
-      return args.fallback_transition ?? "promoted_to_trusted";
+      return args.default_transition ?? "promoted_to_trusted";
     }
     return "promoted_to_trusted";
   }
@@ -317,7 +317,7 @@ export function buildPatternPromotionMetadata(args: {
   stable_at?: string | null;
   last_validated_at?: string | null;
   last_counter_evidence_at?: string | null;
-  fallback_transition?: PatternTransitionKind | null;
+  default_transition?: PatternTransitionKind | null;
 }): PatternPromotionMetadata {
   return {
     required_distinct_runs: Math.max(1, Math.trunc(args.required_distinct_runs)),
@@ -330,7 +330,7 @@ export function buildPatternPromotionMetadata(args: {
     last_transition: resolvePatternTransition({
       credibility_state: args.credibility_state,
       previous_credibility_state: args.previous_credibility_state,
-      fallback_transition: args.fallback_transition ?? null,
+      default_transition: args.default_transition ?? null,
     }),
     last_transition_at: args.at,
     stable_at: args.stable_at ?? null,

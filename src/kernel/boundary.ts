@@ -4,11 +4,6 @@ export type AionisKernelCapabilityId =
   | "forgetting"
   | "learning_control";
 
-export type AionisRuntimeLayerId =
-  | "core_runtime"
-  | "real_eval_harness"
-  | "experimental_policy";
-
 export type AionisPolicyAuthorityLevel =
   | "hard_invariant"
   | "soft_guidance"
@@ -26,31 +21,13 @@ export type AionisKernelCapability = {
   success_signals: readonly string[];
 };
 
-export type AionisRuntimeLayerBoundary = {
-  id: AionisRuntimeLayerId;
-  display_name: string;
-  owns: readonly string[];
-  may_produce: readonly string[];
-  must_not_own: readonly string[];
-  promotion_rule: string;
-};
-
-export type AionisExperimentalPolicySurface = {
-  id: string;
-  layer: "experimental_policy";
-  default_authority: Exclude<AionisPolicyAuthorityLevel, "hard_invariant">;
-  owns: readonly string[];
-  must_not_do: readonly string[];
-  promotion_rule: string;
-};
-
 export const AIONIS_KERNEL_BOUNDARY_VERSION = "aionis_focused_kernel_boundary_v1";
 
 export const AIONIS_KERNEL_PRODUCT_CLAIM =
   "local_execution_memory_runtime_for_agent_continuity_learning_forgetting_and_learning_control";
 
 export const AIONIS_KERNEL_FORBIDDEN_SURFACES = [
-  "host-specific-agent-adapter",
+  "external-agent-framework-product",
   "aionis-doc",
   "docs-site",
   "inspector-product-ui",
@@ -62,154 +39,12 @@ export const AIONIS_KERNEL_FORBIDDEN_SURFACES = [
   "multi-tenant-platform-control",
 ] as const;
 
-export const AIONIS_RUNTIME_LAYER_BOUNDARY_VERSION = "aionis_runtime_layer_boundary_v1";
-
-export const AIONIS_RUNTIME_LAYER_BOUNDARIES = [
-  {
-    id: "core_runtime",
-    display_name: "Core Runtime",
-    owns: [
-      "execution_continuity",
-      "evidence_grading",
-      "persistent_cognitive_structure",
-      "context_packet_assembly",
-      "learning_candidate_lifecycle",
-      "workflow_promotion",
-      "controlled_forgetting",
-    ],
-    may_produce: [
-      "runtime_context_packet",
-      "cognitive_structure",
-      "evidence_report",
-      "learning_candidate",
-      "workflow_lifecycle_decision",
-      "forgetting_decision",
-    ],
-    must_not_own: [
-      "external_project_verifier_logic",
-      "llm_provider_benchmarking",
-      "task_specific_repair_rules",
-      "eval_runner_tool_policy",
-      "testing_method_preference",
-    ],
-    promotion_rule:
-      "Core Runtime may promote memory only from scoped execution evidence and learning-control gates, never from a single eval heuristic.",
-  },
-  {
-    id: "real_eval_harness",
-    display_name: "Real Eval Harness",
-    owns: [
-      "real_llm_provider_calls",
-      "isolated_workspace_setup",
-      "baseline_vs_aionis_comparison",
-      "external_project_verifier_execution",
-      "effect_gate_reporting",
-    ],
-    may_produce: [
-      "real_eval_report",
-      "effect_gate_result",
-      "provider_health_result",
-      "holdout_regression_evidence",
-    ],
-    must_not_own: [
-      "runtime_memory_promotion",
-      "core_context_packet_contract",
-      "product_default_policy",
-      "persistent_user_task_rule",
-    ],
-    promotion_rule:
-      "Real eval evidence can support promotion, but the harness itself cannot become Core Runtime policy.",
-  },
-  {
-    id: "experimental_policy",
-    display_name: "Experimental Policy",
-    owns: [
-      "verifier_phase_classification",
-      "edit_boundary_experiments",
-      "tool_recovery_hints",
-      "repair_plan_candidates",
-      "task_family_hypotheses",
-    ],
-    may_produce: [
-      "soft_guidance",
-      "repair_candidate",
-      "counter_evidence",
-      "promotion_candidate",
-    ],
-    must_not_own: [
-      "global_hard_rule",
-      "unscoped_workflow_promotion",
-      "cross_project_authority",
-      "core_runtime_identity",
-    ],
-    promotion_rule:
-      "Experimental policy must stay scoped and advisory until repeated real runs plus holdout/regression evidence promote it.",
-  },
-] as const satisfies readonly AionisRuntimeLayerBoundary[];
-
 export const AIONIS_CORE_HARD_INVARIANTS = [
   "do_not_apply_unverified_authority",
   "quarantine_provider_or_protocol_failures_from_learning_promotion",
   "workflow_promotion_requires_real_outcome_evidence",
   "make_blocked_or_suppressed_authority_visible",
 ] as const;
-
-export const AIONIS_EXPERIMENTAL_POLICY_SURFACES = [
-  {
-    id: "verifier_phase_classifier",
-    layer: "experimental_policy",
-    default_authority: "soft_guidance",
-    owns: [
-      "failure_phase_summary",
-      "primary_file_hint",
-      "line_hint",
-      "next_action_candidate",
-    ],
-    must_not_do: [
-      "promote_without_verifier_success",
-      "override_core_evidence_grade",
-      "become_global_without_holdout",
-    ],
-    promotion_rule:
-      "May become candidate_workflow only after the scoped task passes a real verifier and a holdout run shows no regression.",
-  },
-  {
-    id: "edit_boundary_and_tool_recovery",
-    layer: "experimental_policy",
-    default_authority: "soft_guidance",
-    owns: [
-      "allowed_file_hint",
-      "stale_anchor_recovery",
-      "tool_payload_shape_hint",
-      "repeated_edit_failure_counter_evidence",
-    ],
-    must_not_do: [
-      "block_core_runtime_memory",
-      "turn_project_specific_paths_into_global_rules",
-      "hide_llm_exploration_without_evidence",
-    ],
-    promotion_rule:
-      "May stay hard only inside a real eval task sandbox; product Runtime should receive it as scoped guidance unless promoted by real verifier success plus holdout evidence.",
-  },
-  {
-    id: "repair_plan_classifier",
-    layer: "experimental_policy",
-    default_authority: "candidate_workflow",
-    owns: [
-      "semantic_repair_hypothesis",
-      "typed_repair_plan_candidate",
-      "escape_condition",
-      "counter_evidence_capture",
-    ],
-    must_not_do: [
-      "claim_success_without_verifier",
-      "persist_as_authority_from_failed_runs",
-      "replace_llm_semantic_reasoning_with_unscoped_rules",
-    ],
-    promotion_rule:
-      "Only successful real verifier evidence can promote a repair plan; failed runs produce candidates or counter-evidence only.",
-  },
-] as const satisfies readonly AionisExperimentalPolicySurface[];
 
 export const AIONIS_KERNEL_CAPABILITIES = [
   {
@@ -226,7 +61,7 @@ export const AIONIS_KERNEL_CAPABILITIES = [
       "workflow_continuity",
     ],
     must_not_own: [
-      "adapter_installation",
+      "agent_framework_integration",
       "chat_transcript_storage_as_primary_value",
       "product_ui_state",
     ],
@@ -260,6 +95,7 @@ export const AIONIS_KERNEL_CAPABILITIES = [
     must_not_own: [
       "metrics_only_promotion",
       "one_success_equals_truth",
+      "runtime_semantic_patch_generation",
       "unverified_authoritative_reuse",
     ],
     primary_runtime_surfaces: [
@@ -346,8 +182,4 @@ export function aionisKernelCapability(id: AionisKernelCapabilityId): AionisKern
   const capability = AIONIS_KERNEL_CAPABILITIES.find((entry) => entry.id === id);
   if (!capability) throw new Error(`Unknown Aionis kernel capability: ${id}`);
   return capability;
-}
-
-export function aionisRuntimeLayerIds(): AionisRuntimeLayerId[] {
-  return AIONIS_RUNTIME_LAYER_BOUNDARIES.map((layer) => layer.id);
 }

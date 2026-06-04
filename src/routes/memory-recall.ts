@@ -175,9 +175,7 @@ export function registerMemoryRecallRoutes(args: RegisterMemoryRecallRoutesArgs)
     auth: RecallAuth,
     timings: Record<string, number>,
   ): Promise<RecallRouteOutput> => {
-    const base = await memoryRecallParsed(
-      null,
-      parsed,
+    const base = await memoryRecallParsed(parsed,
       env.MEMORY_SCOPE,
       env.MEMORY_TENANT_ID,
       auth,
@@ -188,7 +186,7 @@ export function registerMemoryRecallRoutes(args: RegisterMemoryRecallRoutesArgs)
       },
       "recall",
       {
-        stage1_exact_fallback_on_empty: env.MEMORY_RECALL_STAGE1_EXACT_FALLBACK_ON_EMPTY,
+        stage1_exact_recovery_on_empty: env.MEMORY_RECALL_STAGE1_EXACT_RECOVERY_ON_EMPTY,
         recall_access: liteRecallAccess,
       },
     );
@@ -198,7 +196,6 @@ export function registerMemoryRecallRoutes(args: RegisterMemoryRecallRoutesArgs)
     }
 
     const rulesRes = await evaluateRules(
-      null,
       {
         scope: parsed.scope ?? env.MEMORY_SCOPE,
         tenant_id: parsed.tenant_id ?? env.MEMORY_TENANT_ID,
@@ -303,11 +300,11 @@ export function registerMemoryRecallRoutes(args: RegisterMemoryRecallRoutesArgs)
           context_token_budget: parsed.context_token_budget ?? null,
           context_char_budget: parsed.context_char_budget ?? null,
           context_compaction_profile: parsed.context_compaction_profile ?? "balanced",
-          stage1_exact_fallback_enabled: env.MEMORY_RECALL_STAGE1_EXACT_FALLBACK_ON_EMPTY,
-          stage1_exact_fallback_used: Number.isFinite(timings["stage1_candidates_exact_fallback"]),
+          stage1_exact_recovery_enabled: env.MEMORY_RECALL_STAGE1_EXACT_RECOVERY_ON_EMPTY,
+          stage1_exact_recovery_used: Number.isFinite(timings["stage1_candidates_exact_recovery"]),
           stage1_ann_seed_count: out.debug?.stage1?.ann_seed_count ?? null,
           stage1_ann_ms: timings["stage1_candidates_ann"] ?? null,
-          stage1_exact_fallback_ms: timings["stage1_candidates_exact_fallback"] ?? null,
+          stage1_exact_recovery_ms: timings["stage1_candidates_exact_recovery"] ?? null,
           profile: adaptiveProfile.profile,
           profile_source: baseProfile.source,
           recall_mode: explicitMode.mode,
