@@ -144,6 +144,7 @@ type RankedWorkflow = {
   tool_aligned: boolean;
   family_match: boolean;
   relevant: boolean;
+  surface_risk_reasons: string[];
 };
 
 type PathRecommendationLike = ActionRetrievalResponse["path"];
@@ -277,6 +278,46 @@ function normalizeTokens(value: string): string[] {
     .split(/[^a-z0-9_./-]+/)
     .map((part) => part.trim())
     .filter((part) => part.length >= 2 && !ACTION_RETRIEVAL_STOPWORDS.has(part));
+}
+
+function workflowActionSurfaceRisk(workflow: WorkflowEntry): {
+  penalty: number;
+  reasons: string[];
+} {
+  const title = firstString(workflow.title) ?? "";
+  const summary = firstString(workflow.summary) ?? "";
+  const nextAction = firstString(workflow.next_action) ?? "";
+  const joined = `${title}\n${summary}\n${nextAction}`.toLowerCase();
+  const summaryText = `${title}\n${summary}`.toLowerCase();
+  const nextActionText = nextAction.toLowerCase();
+  const reasons: string[] = [];
+  let penalty = 0;
+
+  if (/\b(stale|obsolete|superseded|deprecated)\b/.test(joined)) {
+    reasons.push("stale_or_obsolete_surface");
+    penalty += 90;
+  }
+  if (/\b(older|previous|prior)\b.+\b(should not|do not|must not|no longer)\b/.test(joined)) {
+    reasons.push("self_disclaimed_prior_surface");
+    penalty += 70;
+  }
+  if (/\b(does not|doesn't|cannot|can't)\s+(name|identify|provide|contain)\b.+\b(target|file|path)\b/.test(summaryText)) {
+    reasons.push("target_surface_disclaimed");
+    penalty += 80;
+  }
+  if (/\b(no|missing|unknown)\s+(current\s+)?(target|file|path)\b/.test(summaryText)) {
+    reasons.push("target_surface_absent");
+    penalty += 60;
+  }
+  if (/\bonly if\b|\bunless\b|\bfallback\b|\bif\b.+\b(absent|missing|unavailable|fails|failed)\b/.test(nextActionText)) {
+    reasons.push("conditional_fallback_next_action");
+    penalty += 75;
+  }
+
+  return {
+    penalty,
+    reasons,
+  };
 }
 
 function buildCueTokens(queryText: string, context: unknown): Set<string> {
@@ -733,6 +774,7 @@ function scoreWorkflow(args: {
     : 0;
   const contractTrust = firstContractTrust(args.workflow.contract_trust);
   const authorityState = authorityConsumptionStateFromValue(args.workflow);
+  const surfaceRisk = workflowActionSurfaceRisk(args.workflow);
   let score = args.kind === "recommended_workflow" ? 200 : 120;
   if (toolAligned) score += 60;
   if (familyMatch) score += 55;
@@ -750,6 +792,7 @@ function scoreWorkflow(args: {
   else score -= 24;
   if (authorityState.requires_inspection) score -= 95;
   score += overlap * 12;
+  score -= surfaceRisk.penalty;
   return {
     kind: args.kind,
     workflow: args.workflow,
@@ -758,6 +801,7 @@ function scoreWorkflow(args: {
     tool_aligned: toolAligned,
     family_match: familyMatch,
     relevant: overlap > 0 || familyMatch,
+    surface_risk_reasons: surfaceRisk.reasons,
   };
 }
 
@@ -870,6 +914,7 @@ export function choosePathRecommendation(args: {
       top.family_match && currentTaskFamily ? `task_family=${currentTaskFamily}` : null,
       top.overlap > 0 ? `token_overlap=${top.overlap}` : null,
       ...workflowEvidenceParts(top.workflow),
+      ...top.surface_risk_reasons.map((reason) => `surface_risk=${reason}`),
       authorityState.requires_inspection ? "requires_inspection_before_reuse" : null,
       targetFiles.length > 0 ? `targets=${targetFiles.join(", ")}` : null,
       summary ? `summary=${summary}` : null,
