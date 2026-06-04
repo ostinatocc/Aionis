@@ -182,12 +182,10 @@ export function extractWorkflowFeedbackTarget(context: unknown): WorkflowFeedbac
 export function extractFeedbackContractTrust(context: unknown): ContractTrust | null {
   const ctx = asRecord(context);
   const executionContract = resolveFeedbackExecutionContract(context);
-  const firstStep = asRecord(ctx?.first_step_recommendation);
-  const kickoff = asRecord(ctx?.kickoff_recommendation);
+  const firstStep = asRecord(ctx?.continuity_guidance);
   return normalizeContractTrust(ctx?.contract_trust)
     ?? normalizeContractTrust(executionContract?.contract_trust)
     ?? normalizeContractTrust(firstStep?.contract_trust)
-    ?? normalizeContractTrust(kickoff?.contract_trust)
     ?? null;
 }
 

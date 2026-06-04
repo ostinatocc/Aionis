@@ -34,7 +34,7 @@ export const ExecutionAgentContractPacketV1Schema = z.object({
   mode: ExecutionAgentContractPacketModeSchema,
   action_discipline: z.object({
     execution_mode: z.enum(["contract_locked", "exploratory_allowed"]),
-    first_action: z.string().trim().min(1),
+    initial_evidence_signal: z.string().trim().min(1),
     max_pre_edit_confirmation_steps: z.number().int().nonnegative().nullable(),
     allowed_work_surface: StringList,
     required_validation: StringList,
@@ -204,9 +204,9 @@ function buildActionDiscipline(contract: ExecutionContractV1): ExecutionAgentCon
 
   return {
     execution_mode: contractLocked ? "contract_locked" : "exploratory_allowed",
-    first_action: contractLocked
-      ? "inspect_declared_target_files_before_broad_discovery"
-      : "fill_missing_contract_fields_before_claiming_authority",
+    initial_evidence_signal: contractLocked
+      ? "declared_targets_have_evidence_priority"
+      : "contract_evidence_is_incomplete",
     max_pre_edit_confirmation_steps: contractLocked ? maxPreEditConfirmationSteps(contract) : null,
     allowed_work_surface: uniqueStrings([
       ...contract.target_files,
@@ -363,7 +363,7 @@ export function renderExecutionAgentContractPacketMarkdown(
     "",
     "Action discipline:",
     `- execution_mode: ${packet.action_discipline.execution_mode}`,
-    `- first_action: ${packet.action_discipline.first_action}`,
+    `- initial_evidence_signal: ${packet.action_discipline.initial_evidence_signal}`,
     `- max_pre_edit_confirmation_steps: ${packet.action_discipline.max_pre_edit_confirmation_steps ?? "<none>"}`,
     `- allowed_work_surface: ${formatList(packet.action_discipline.allowed_work_surface)}`,
     `- prohibited_actions: ${formatList(packet.action_discipline.prohibited_actions)}`,

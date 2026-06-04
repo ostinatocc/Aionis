@@ -15,7 +15,7 @@ test("mergeNodeFeedbackSlots increments counters and records metadata", () => {
     },
     outcome: "negative",
     run_id: "run-123",
-    reason: "pattern produced wrong first action",
+    reason: "pattern produced wrong continuity signal",
     input_sha256: "abc123",
     source: "nodes_activate",
     timestamp: "2026-04-18T00:00:00.000Z",

@@ -13,13 +13,13 @@ function planningSummaryFixture(): PlanningSummary {
   return {
     summary_version: "planning_summary_v1",
     planner_explanation: "History points to a resumable verifier-backed path.",
-    first_step_recommendation: {
+    continuity_guidance: {
       source_kind: "experience_intelligence",
       history_applied: true,
       contract_trust: "advisory",
       execution_contract_v1: null,
-      first_action_v1: {
-        summary_version: "kickoff_first_action_v1",
+      continuity_signal_v1: {
+        summary_version: "runtime_continuity_signal_v1",
         action: "read_file",
         priority: "recommended",
         contract_trust: "advisory",
@@ -31,7 +31,7 @@ function planningSummaryFixture(): PlanningSummary {
         instruction: "Inspect src/runtime.ts before editing.",
       },
       edit_boundary_v1: {
-        summary_version: "kickoff_edit_boundary_v1",
+        summary_version: "runtime_edit_boundary_v1",
         contract_trust: "advisory",
         allowed_edit_files: ["src/runtime.ts"],
         forbidden_edit_files: ["src/other.ts"],
@@ -124,7 +124,7 @@ function planningSummaryFixture(): PlanningSummary {
         exploration_budget: null,
         control_strength: null,
       },
-      next_run_changes: ["continuity_state_available", "first_action_shaped_by_history"],
+      next_run_changes: ["continuity_state_available", "continuity_signal_shaped_by_history"],
       primary_reason: "History shaped the next action.",
     },
     selected_tool: "shell",
@@ -346,8 +346,6 @@ test("product guide assembler converts planning summary into stable GuidePacket"
   });
 
   assert.equal(packet.contract_version, "aionis_guide_packet_v1");
-  assert.equal(packet.guidance.first_action.authority, "advisory");
-  assert.equal(packet.guidance.first_action.uncertainty, "medium");
   assert.deepEqual(packet.recovered_state.target_files, ["src/runtime.ts"]);
   assert.deepEqual(packet.recovered_state.acceptance_checks, ["npm test"]);
   assert.equal(packet.guidance.workflow_candidates[0]?.workflow_id, "wf-stable-1");
@@ -607,8 +605,9 @@ test("product learning assembler exposes scoped learning state without export au
   assert.equal(packet.learning_control.stable_promotion_blocked_count, 1);
   assert.equal(packet.export_readiness.training_export_ready, false);
   assert.equal(packet.export_readiness.positive_transfer_required, true);
-  assert.ok(packet.candidates.some((candidate) => candidate.candidate_id === "wf-stable-1"));
+  assert.equal(packet.candidates.some((candidate) => candidate.candidate_id === "wf-stable-1"), false);
   assert.ok(packet.candidates.some((candidate) => candidate.candidate_id === "wf-candidate-1"));
+  assert.ok(packet.evidence.workflow_anchor_ids.includes("wf-stable-1"));
   assert.ok(packet.evidence.promotion_denied_reasons.includes("promotion lacks holdout evidence"));
   assert.ok(packet.lifecycle_effect.suppressed_memory_ids.includes("mem-suppressed-1"));
   assert.ok(packet.source_map.omitted_internal_surfaces.includes("task_specific_repair_content"));
@@ -619,7 +618,7 @@ test("product effect assembler converts evaluator proof into measurable EffectRe
     baseline: {
       continuity: {
         repeatedDiscoverySteps: 4,
-        firstActionCorrect: false,
+        continuityGuidanceCorrect: false,
         recoveredStateFacts: 1,
         expectedStateFacts: 4,
       },
@@ -642,7 +641,7 @@ test("product effect assembler converts evaluator proof into measurable EffectRe
     aionis: {
       continuity: {
         repeatedDiscoverySteps: 1,
-        firstActionCorrect: true,
+        continuityGuidanceCorrect: true,
         recoveredStateFacts: 4,
         expectedStateFacts: 4,
         verifiedFactsCarried: 2,
@@ -704,7 +703,7 @@ test("product effect assembler refuses to overclaim single-run evidence", () => 
     aionis: {
       continuity: {
         repeatedDiscoverySteps: 1,
-        firstActionCorrect: true,
+        continuityGuidanceCorrect: true,
       },
     },
   });
@@ -730,7 +729,7 @@ test("product effect assembler honors explicit insufficient-evidence comparison"
     aionis: {
       continuity: {
         repeatedDiscoverySteps: 0,
-        firstActionCorrect: true,
+        continuityGuidanceCorrect: true,
       },
     },
   });

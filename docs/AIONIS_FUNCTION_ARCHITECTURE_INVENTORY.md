@@ -27,7 +27,7 @@ flowchart TB
     Context["/v1/memory/planning/context + context/assemble"]
     Handoff["/v1/handoff/store + recover"]
     AgentPack["/v1/memory/agent inspect/review/resume/handoff pack"]
-    Action["/v1/memory/action/retrieval + experience/intelligence + kickoff"]
+    Action["/v1/memory/action/retrieval + experience/intelligence"]
     Lifecycle["/v1/memory/archive/rehydrate + nodes/activate"]
     Feedback["feedback + tools + rules + patterns + maintenance"]
     Replay["replay runs + playbooks + learning-control review"]
@@ -125,11 +125,11 @@ flowchart TB
 | 8 | Execution packet assembly | Builds compact execution packets with active role, stage, constraints, evidence, artifacts. | `src/execution/assemble.ts`, `src/execution/packet.ts`, `src/execution/profiles.ts` | Implemented. | Keep. Should feed external product packet. |
 | 9 | Memory write and projection | Writes nodes, edges, commits, workflow projections, execution-native surfaces, idempotency. | `src/routes/memory-write.ts`, `src/memory/write*.ts`, `src/memory/lite-projected-write-commit.ts` | Implemented. | Keep as internal foundation. |
 | 10 | Recall with lifecycle/trust | Retrieves scoped memory while filtering by lane, tier, lifecycle, and recall policy. | `src/routes/memory-recall.ts`, `src/memory/recall.ts`, `src/app/recall-policy.ts`, `src/store/lite-recall-store.ts` | Implemented. | Keep. Product should expose simpler guide API. |
-| 11 | Planning/context assembly | Builds `planning_summary`, `assembly_summary`, and compact `runtime_context_packet`. | `src/routes/memory-context-runtime.ts`, `src/app/planning-summary*.ts` | Implemented. | Keep. This is current main agent-facing packet. |
-| 12 | History-shaped future behavior | Shows whether history changed next run: first action, workflow reuse, learning-control, forgetting impact. | `src/app/planning-summary.ts`, `src/memory/experience-intelligence.ts`, `src/memory/product-output-assembler.ts` | Implemented in Runtime packets and product output assembly. | Core differentiator. Needs focused validation outside product tree. |
-| 13 | Action retrieval | Ranks workflows, patterns, continuity carriers, policies; emits recommended tool/path/next action with uncertainty. | `src/memory/action-retrieval.ts` | Implemented. | Keep but avoid making it a semantic repair engine. |
+| 11 | Planning/context assembly | Builds internal `planning_summary` and `assembly_summary`; product entry exposes only compact guide output. | `src/routes/memory-context-runtime.ts`, `src/app/planning-summary*.ts` | Implemented. | Keep as internal assembly, not product face. |
+| 12 | History-shaped future behavior | Shows whether history changed next run: workflow reuse, learning-control, forgetting impact, and recovered evidence. | `src/app/planning-summary.ts`, `src/memory/experience-intelligence.ts`, `src/memory/product-output-assembler.ts` | Implemented in Runtime packets and product output assembly. | Core differentiator. Needs focused validation outside product tree. |
+| 13 | Action retrieval | Ranks workflows, patterns, continuity carriers, and policies with uncertainty. | `src/memory/action-retrieval.ts` | Implemented. | Keep but avoid making it a semantic repair engine. |
 | 14 | Experience intelligence | Combines action retrieval, tool selection, introspection, delegation learning, policy materialization into recommendation. | `src/memory/experience-intelligence.ts` | Implemented. | Keep as internal intelligence layer; expose as `guide`. |
-| 15 | Kickoff recommendation | Converts experience intelligence into first-action recommendation with edit-boundary and verifier hints. | `src/memory/experience-intelligence.ts`, `src/app/planning-summary.ts` | Implemented. | Keep. Needs positive-transfer intensity control. |
+| 15 | Internal continuity signal summary | Converts experience intelligence into internal continuity and boundary signals. | `src/memory/experience-intelligence.ts`, `src/app/planning-summary.ts` | Implemented. | Keep internal; do not expose as product route or GuidePacket field. |
 | 16 | Execution contract and outcome gate | Represents selected tool, file/path, workflow steps, target files, acceptance checks, trust, provenance. | `src/memory/execution-contract.ts`, `src/memory/contract-trust.ts` | Implemented. | Keep. This is key to avoid vague memory. |
 | 17 | Trajectory compile | Compiles step traces into continuity/evidence/promotion seed surfaces. | `src/memory/trajectory-compile.ts`, `src/memory/trajectory-compile-runtime.ts` | Implemented and route-backed. | Keep as internal observe/learn input. |
 | 18 | Delegation records | Writes, finds, aggregates delegation records for cross-agent collaboration learning. | `src/memory/delegation-records.ts`, `src/memory/delegation-records-find.ts`, `src/memory/delegation-learning.ts` | Implemented; product value underexposed. | Keep and reposition under cross-agent continuity. |
@@ -196,7 +196,7 @@ The executable route matrix now also emits `product_exposure` so retained intern
 | `POST /v1/memory/recall` | Structured recall over scoped memory. | `guide` core |
 | `POST /v1/memory/recall_text` | Text query recall with embedding/ranking/context layers. | `guide` core |
 | `POST /v1/memory/planning/context` | Planning-time memory context and summary. | `guide` core |
-| `POST /v1/memory/context/assemble` | Full runtime context packet assembly. | `guide` core |
+| `POST /v1/memory/context/assemble` | Internal context assembly. | `guide` internal |
 | `POST /v1/handoff/store` | Store handoff/resume execution state. | `observe` core |
 | `POST /v1/handoff/recover` | Recover handoff/resume packet for another run/thread/agent. | `guide` core |
 | `POST /v1/memory/trajectory/compile` | Compile execution trajectory into evidence/workflow surfaces. | `observe` internal |
@@ -213,7 +213,6 @@ The executable route matrix now also emits `product_exposure` so retained intern
 | `POST /v1/memory/evolution/review-pack` | Evolution/learning review pack. | Review support |
 | `POST /v1/memory/action/retrieval` | Retrieve action/workflow/policy candidates. | `guide` core |
 | `POST /v1/memory/experience/intelligence` | Compose experience intelligence. | `guide` core |
-| `POST /v1/memory/kickoff/recommendation` | First useful action / kickoff recommendation. | `guide` core |
 | `POST /v1/memory/resolve` | Resolve raw memory ids/anchors. | Internal/operator, not product entry |
 | `POST /v1/memory/anchors/rehydrate_payload` | Rehydrate anchor payload. | `forget`/`guide` support |
 | `POST /v1/memory/archive/rehydrate` | Rehydrate archived memory. | `forget` core |
@@ -281,7 +280,7 @@ The executable route matrix now also emits `product_exposure` so retained intern
 | Area | Reality From Code | Gap |
 |---|---|---|
 | Cross-thread continuity | Strong. Handoff store/recover, execution state transitions, resume pack exist. | Not positioned as the primary product value. |
-| Cross-agent continuity | Medium-strong substrate. Producer/owner/consumer/team/lane and delegation records exist. | No strong external Agent A -> Agent B validation yet. |
+| Cross-agent continuity | Medium-strong substrate. Producer/owner/consumer/team/lane and delegation records exist. | No strong cross-host validation yet. |
 | Cross-LLM continuity | Medium substrate. Structured packets are provider-neutral. | No cross-provider eval proving transfer quality. |
 | Self-learning | Strong mechanisms. Workflow/pattern/policy promotion and evidence protocol exist. | Positive transfer not yet stable enough to claim broad success lift. |
 | Controlled forgetting | Strong mechanisms. Demotion/archive/rehydrate/activation exist. | Needs user-visible proof that stale memory is suppressed and useful archive rehydrates. |
@@ -305,10 +304,10 @@ The executable route matrix now also emits `product_exposure` so retained intern
 
 | Decision | Items | Reason |
 |---|---|---|
-| Keep as product core | handoff/resume packs, execution state, context assemble, action/experience/kickoff, learning loop, forgetting/rehydration, effect/risk summaries | These directly support continuity, learning, controlled forgetting, and history-shaped future behavior. |
+| Keep as product core | handoff/resume packs, execution state, guide assembly, action/experience evidence, learning loop, forgetting/rehydration, effect/risk summaries | These directly support continuity, learning, controlled forgetting, and history-shaped future behavior. |
 | Keep as internal mechanisms | replay playbooks, policy mutation loop, entropy controls, authority reports, runtime maintenance, cognitive structure | Valuable, but too detailed for product surface. |
 | Reframe | rules, tools select, adaptive guidance | Present as learned preferences and advisory guidance, not hard rules or task solvers. |
-| Separate from product tree | GitHub issue eval, LLM A/B matrix | They are validation carriers. They should not define Aionis product architecture. |
+| Separate from product tree | external validation matrices | They are validation carriers. They should not define Aionis product architecture. |
 | Review for deletion | unused debug/operator routes, route groups not mapped to observe/guide/forget/measure | Keep only if a focused product capability uses them. |
 
 ## Proposed Product Facade
@@ -318,7 +317,7 @@ The internal Runtime can remain rich, but the product should present four verbs:
 | Facade Verb | Backing Capabilities | Current Routes To Collapse Behind It |
 |---|---|---|
 | `observe` | write execution evidence, trajectory compile, replay step evidence, delegation records, tool runs | `/v1/memory/write`, `/v1/memory/trajectory/compile`, replay run/step routes, tool decision/run routes |
-| `guide` | context assemble, action retrieval, experience intelligence, kickoff, resume/handoff pack | `/v1/memory/context/assemble`, `/v1/memory/planning/context`, `/v1/memory/action/retrieval`, `/v1/memory/experience/intelligence`, `/v1/memory/kickoff/recommendation`, agent packs |
+| `guide` | context assemble, action retrieval, experience intelligence, resume/handoff pack | `/v1/memory/context/assemble`, `/v1/memory/planning/context`, `/v1/memory/action/retrieval`, `/v1/memory/experience/intelligence`, agent packs |
 | `forget` | semantic forgetting, suppress/unsuppress, archive relocation, rehydrate, node activation | `/v1/memory/archive/rehydrate`, `/v1/memory/nodes/activate`, `/v1/memory/patterns/*`, `/v1/memory/tools/rehydrate_payload` |
 | `measure` | runtime effect, promotion quality, runtime signal trends, negative-transfer evidence | effect summaries and runtime maintenance reports |
 
@@ -330,7 +329,7 @@ The next decisive eval should not be generic issue success rate. It should direc
 2. Thread/Agent/LLM B starts without prior chat history.
 3. B receives only Aionis `guide` packet.
 4. Measure whether B resumes faster than baseline:
-   - first useful action
+   - continuity signal
    - recovered state facts
    - repeated discovery steps
    - target file first touch

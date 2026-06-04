@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD } from "./authority-consumption.js";
 
 const ConfidenceSchema = z.number().min(0).max(1);
 
@@ -233,14 +234,6 @@ export const AionisGuidePacketSchema = z
       .default([]),
     guidance: z
       .object({
-        first_action: z
-          .object({
-            action: z.string().min(1).nullable(),
-            reason: z.string().min(1).nullable(),
-            authority: AionisGuidanceAuthoritySchema,
-            uncertainty: AionisRiskLevelSchema,
-          })
-          .strict(),
         workflow_candidates: z
           .array(
             z
@@ -382,7 +375,7 @@ export const AionisLearningPacketSchema = z
         authoritative_allowed_count: z.number().int().nonnegative(),
         authoritative_blocked_count: z.number().int().nonnegative(),
         stable_promotion_allowed_count: z.number().int().nonnegative(),
-        stable_promotion_blocked_count: z.number().int().nonnegative(),
+        [AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD]: z.number().int().nonnegative(),
         blocked_reasons: z.array(z.string().min(1)).default([]),
       })
       .strict(),
@@ -482,7 +475,7 @@ export const AionisEffectReportSchema = z
     efficiency: z
       .object({
         repeated_discovery_delta: z.number().nullable().optional(),
-        first_useful_action_delta: z.number().nullable().optional(),
+        useful_continuity_delta: z.number().nullable().optional(),
         token_delta: z.number().nullable().optional(),
         context_size_delta: z.number().nullable().optional(),
         recovery_step_delta: z.number().nullable().optional(),

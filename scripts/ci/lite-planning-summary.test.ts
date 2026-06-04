@@ -712,7 +712,7 @@ test("buildPlanningSummary includes pattern trust totals and tool lists", () => 
       "contested_memory_visible",
       "rehydration_available",
     ],
-    primary_reason: "prior memory changed the runtime context packet",
+    primary_reason: "prior memory changed the guide packet",
   });
   assert.deepEqual(summary.continuity_carrier_summary, {
     total_count: 0,
@@ -743,7 +743,7 @@ test("buildPlanningSummary includes pattern trust totals and tool lists", () => 
   );
 });
 
-test("buildPlanningSummary makes first-step and planner explanation uncertainty-aware", () => {
+test("buildPlanningSummary makes continuity-guidance and planner explanation uncertainty-aware", () => {
   const summary = buildPlanningSummary({
     rules: { considered: 4, matched: 1 },
     tools: {
@@ -810,13 +810,13 @@ test("buildPlanningSummary makes first-step and planner explanation uncertainty-
     rehydration_candidate_count: 1,
     preferred_rehydration: null,
   });
-  assert.deepEqual(summary.first_step_recommendation, {
+  assert.deepEqual(summary.continuity_guidance, {
     source_kind: "experience_intelligence",
     history_applied: true,
     contract_trust: "advisory",
     execution_contract_v1: null,
-    first_action_v1: {
-      summary_version: "kickoff_first_action_v1",
+    continuity_signal_v1: {
+      summary_version: "runtime_continuity_signal_v1",
       action: "read_file",
       priority: "required",
       contract_trust: "advisory",
@@ -828,7 +828,7 @@ test("buildPlanningSummary makes first-step and planner explanation uncertainty-
       instruction: "Read src/routes/export.ts before list/search discovery, then apply the learned path only if the file matches the task.",
     },
     edit_boundary_v1: {
-      summary_version: "kickoff_edit_boundary_v1",
+      summary_version: "runtime_edit_boundary_v1",
       contract_trust: "advisory",
       allowed_edit_files: ["src/routes/export.ts"],
       forbidden_edit_files: [],
@@ -1037,14 +1037,14 @@ test("buildPlanningSummary enforces action intelligence pre-action gate before l
     rehydration_candidate_count: 1,
     preferred_rehydration: null,
   });
-  assert.equal(summary.first_step_recommendation?.first_action_v1?.action, "widen_recall");
-  assert.equal(summary.first_step_recommendation?.first_action_v1?.priority, "required");
+  assert.equal(summary.continuity_guidance?.continuity_signal_v1?.action, "widen_recall");
+  assert.equal(summary.continuity_guidance?.continuity_signal_v1?.priority, "required");
   assert.equal(
-    summary.first_step_recommendation?.first_action_v1?.reason,
+    summary.continuity_guidance?.continuity_signal_v1?.reason,
     "Action intelligence pre-action gate does not have enough evidence to commit to one execution path.",
   );
   assert.equal(
-    summary.first_step_recommendation?.next_action,
+    summary.continuity_guidance?.next_action,
     "Widen recall before committing to edit on src/routes/export.ts.",
   );
 });
@@ -1091,13 +1091,13 @@ test("buildPlanningSummary downgrades high-uncertainty identity-poor guidance to
     },
   });
 
-  assert.deepEqual(summary.first_step_recommendation, {
+  assert.deepEqual(summary.continuity_guidance, {
     source_kind: "experience_intelligence",
     history_applied: true,
     contract_trust: "observational",
     execution_contract_v1: null,
-    first_action_v1: {
-      summary_version: "kickoff_first_action_v1",
+    continuity_signal_v1: {
+      summary_version: "runtime_continuity_signal_v1",
       action: "widen_recall",
       priority: "required",
       contract_trust: "observational",
@@ -1166,7 +1166,7 @@ test("buildPlanningSummary respects explicit advisory trust from persisted polic
         next_action: "Patch src/routes/export.ts and rerun export tests.",
         confidence: 0.72,
         source_anchor_ids: ["wf_123"],
-        reason: "Advisory persisted policy memory suggests edit but should not strongly steer kickoff.",
+        reason: "Advisory persisted policy memory suggests edit but should not strongly steer continuity guidance.",
       },
       action_retrieval: {
         uncertainty: {
@@ -1181,13 +1181,13 @@ test("buildPlanningSummary respects explicit advisory trust from persisted polic
     },
   });
 
-  assert.deepEqual(summary.first_step_recommendation, {
+  assert.deepEqual(summary.continuity_guidance, {
     source_kind: "experience_intelligence",
     history_applied: true,
     contract_trust: "advisory",
     execution_contract_v1: null,
-    first_action_v1: {
-      summary_version: "kickoff_first_action_v1",
+    continuity_signal_v1: {
+      summary_version: "runtime_continuity_signal_v1",
       action: "read_file",
       priority: "required",
       contract_trust: "advisory",
@@ -1199,7 +1199,7 @@ test("buildPlanningSummary respects explicit advisory trust from persisted polic
       instruction: "Read src/routes/export.ts before list/search discovery, then apply the learned path only if the file matches the task.",
     },
     edit_boundary_v1: {
-      summary_version: "kickoff_edit_boundary_v1",
+      summary_version: "runtime_edit_boundary_v1",
       contract_trust: "advisory",
       allowed_edit_files: ["src/routes/export.ts"],
       forbidden_edit_files: [],
@@ -1221,7 +1221,7 @@ test("buildPlanningSummary respects explicit advisory trust from persisted polic
   });
 });
 
-test("buildPlanningSummary demotes blocked authoritative workflow to inspect-first first step", () => {
+test("buildPlanningSummary demotes blocked authoritative workflow to inspect-first continuity guidance", () => {
   const executionContract = buildExecutionContractFromProjection({
     contract_trust: "authoritative",
     task_family: "task:workflow_validation_recovery",
@@ -1286,16 +1286,16 @@ test("buildPlanningSummary demotes blocked authoritative workflow to inspect-fir
     },
   });
 
-  assert.equal(summary.first_step_recommendation?.contract_trust, "advisory");
-  assert.equal(summary.first_step_recommendation?.execution_contract_v1?.contract_trust, "advisory");
-  assert.equal(summary.first_step_recommendation?.file_path, "src/routes/export.ts");
+  assert.equal(summary.continuity_guidance?.contract_trust, "advisory");
+  assert.equal(summary.continuity_guidance?.execution_contract_v1?.contract_trust, "advisory");
+  assert.equal(summary.continuity_guidance?.file_path, "src/routes/export.ts");
   assert.equal(
-    summary.first_step_recommendation?.next_action,
+    summary.continuity_guidance?.next_action,
     "Inspect src/routes/export.ts and revalidate current context before reusing edit; authority blocked by execution_evidence:after_exit_revalidation_failed.",
   );
   assert.equal(
-    summary.first_step_recommendation?.execution_contract_v1?.next_action,
-    summary.first_step_recommendation?.next_action,
+    summary.continuity_guidance?.execution_contract_v1?.next_action,
+    summary.continuity_guidance?.next_action,
   );
 });
 
@@ -1332,7 +1332,7 @@ test("buildPlanningSummary classifies verifier lint/type phase and forces line-l
     }],
   });
 
-  const repair = summary.first_step_recommendation?.verification_repair_v1;
+  const repair = summary.continuity_guidance?.verification_repair_v1;
   assert.ok(repair);
   assert.deepEqual(RuntimeVerificationRepairRecommendationSchema.parse(repair), repair);
   assert.equal(repair.verifier_failure_phase_v1.phase, "lint_type_failure");
@@ -1380,7 +1380,7 @@ test("buildPlanningSummary parses XO block diagnostics without crossing file-hea
     }],
   });
 
-  const repair = summary.first_step_recommendation?.verification_repair_v1;
+  const repair = summary.continuity_guidance?.verification_repair_v1;
   assert.ok(repair);
   assert.deepEqual(RuntimeVerificationRepairRecommendationSchema.parse(repair), repair);
   assert.equal(repair.verifier_failure_phase_v1.phase, "lint_type_failure");
@@ -1425,7 +1425,7 @@ test("buildPlanningSummary classifies hidden contract phase separately from self
     }],
   });
 
-  const repair = summary.first_step_recommendation?.verification_repair_v1;
+  const repair = summary.continuity_guidance?.verification_repair_v1;
   assert.ok(repair);
   assert.deepEqual(RuntimeVerificationRepairRecommendationSchema.parse(repair), repair);
   assert.equal(repair.verifier_failure_phase_v1.phase, "hidden_contract_failure");
@@ -1470,7 +1470,7 @@ test("buildPlanningSummary keeps TypeScript diagnostics ahead of hidden verifier
     }],
   });
 
-  const repair = summary.first_step_recommendation?.verification_repair_v1;
+  const repair = summary.continuity_guidance?.verification_repair_v1;
   assert.ok(repair);
   assert.deepEqual(RuntimeVerificationRepairRecommendationSchema.parse(repair), repair);
   assert.equal(repair.verifier_failure_phase_v1.phase, "lint_type_failure");
@@ -1511,7 +1511,7 @@ test("buildPlanningSummary keeps hidden verifier assertion repair guidance gener
     }],
   });
 
-  const repair = summary.first_step_recommendation?.verification_repair_v1;
+  const repair = summary.continuity_guidance?.verification_repair_v1;
   assert.ok(repair);
   assert.deepEqual(RuntimeVerificationRepairRecommendationSchema.parse(repair), repair);
   assert.equal(repair.verifier_failure_phase_v1.phase, "hidden_contract_failure");
@@ -1563,7 +1563,7 @@ test("buildPlanningSummary lets latest test-contract evidence supersede older li
     ],
   });
 
-  const repair = summary.first_step_recommendation?.verification_repair_v1;
+  const repair = summary.continuity_guidance?.verification_repair_v1;
   assert.ok(repair);
   assert.deepEqual(RuntimeVerificationRepairRecommendationSchema.parse(repair), repair);
   assert.equal(repair.verifier_failure_phase_v1.phase, "authored_test_failure");
@@ -1600,7 +1600,7 @@ test("buildPlanningSummary keeps verifier test coverage evidence generic", () =>
     }],
   });
 
-  const repair = summary.first_step_recommendation?.verification_repair_v1;
+  const repair = summary.continuity_guidance?.verification_repair_v1;
   assert.ok(repair);
   assert.deepEqual(RuntimeVerificationRepairRecommendationSchema.parse(repair), repair);
   assert.equal(repair.verifier_failure_phase_v1.phase, "authored_test_failure");
@@ -1642,7 +1642,7 @@ test("buildPlanningSummary keeps async assertion repair guidance generic", () =>
     }],
   });
 
-  const repair = summary.first_step_recommendation?.verification_repair_v1;
+  const repair = summary.continuity_guidance?.verification_repair_v1;
   assert.ok(repair);
   assert.deepEqual(RuntimeVerificationRepairRecommendationSchema.parse(repair), repair);
   assert.equal(repair.verifier_failure_phase_v1.phase, "hidden_contract_failure");
@@ -1686,7 +1686,7 @@ test("buildPlanningSummary classifies provider failures without turning them int
     }],
   });
 
-  const repair = summary.first_step_recommendation?.verification_repair_v1;
+  const repair = summary.continuity_guidance?.verification_repair_v1;
   assert.ok(repair);
   assert.deepEqual(RuntimeVerificationRepairRecommendationSchema.parse(repair), repair);
   assert.equal(repair.verifier_failure_phase_v1.phase, "provider_failure");
@@ -1731,7 +1731,7 @@ test("buildPlanningSummary classifies LLM tool protocol failures without code re
     }],
   });
 
-  const repair = summary.first_step_recommendation?.verification_repair_v1;
+  const repair = summary.continuity_guidance?.verification_repair_v1;
   assert.ok(repair);
   assert.deepEqual(RuntimeVerificationRepairRecommendationSchema.parse(repair), repair);
   assert.equal(repair.verifier_failure_phase_v1.phase, "tool_protocol_failure");
@@ -1782,7 +1782,7 @@ test("buildPlanningSummary classifies stale replace_lines anchors as edit failur
     }],
   });
 
-  const repair = summary.first_step_recommendation?.verification_repair_v1;
+  const repair = summary.continuity_guidance?.verification_repair_v1;
   assert.ok(repair);
   assert.deepEqual(RuntimeVerificationRepairRecommendationSchema.parse(repair), repair);
   assert.equal(repair.edit_failure_phase_v1?.phase, "stale_line_anchor");
@@ -1832,7 +1832,7 @@ test("buildPlanningSummary classifies unchanged edit failures as non-repeatable 
     }],
   });
 
-  const repair = summary.first_step_recommendation?.verification_repair_v1;
+  const repair = summary.continuity_guidance?.verification_repair_v1;
   assert.ok(repair);
   assert.deepEqual(RuntimeVerificationRepairRecommendationSchema.parse(repair), repair);
   assert.equal(repair.edit_failure_phase_v1?.phase, "unchanged_edit");
@@ -1876,7 +1876,7 @@ test("buildPlanningSummary classifies apply_patch payload failures without proje
     }],
   });
 
-  const repair = summary.first_step_recommendation?.verification_repair_v1;
+  const repair = summary.continuity_guidance?.verification_repair_v1;
   assert.ok(repair);
   assert.deepEqual(RuntimeVerificationRepairRecommendationSchema.parse(repair), repair);
   assert.equal(repair.edit_failure_phase_v1?.phase, "apply_patch_payload_failure");

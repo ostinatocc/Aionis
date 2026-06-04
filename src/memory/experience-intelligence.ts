@@ -8,12 +8,9 @@ import { buildActionIntelligenceRuntimeContractV1 } from "./action-intelligence-
 import {
   ExperienceIntelligenceRequest,
   ExperienceIntelligenceResponseSchema,
-  KickoffRecommendationResponseSchema,
   type ExperienceIntelligenceResponse,
   type ExperienceIntelligenceInput,
   type ExecutionMemoryIntrospectionResponse,
-  type KickoffRecommendationResponse,
-  type RuntimeEditBoundaryContextInput,
   type ToolsSelectRouteContract,
   type TrajectoryCompileResponse,
 } from "./schemas.js";
@@ -23,7 +20,6 @@ import { selectTools } from "./tools-select.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
 import type { RecallStoreAccess } from "../store/recall-access.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
-import { buildKickoffRecommendationFromExperience } from "../app/planning-summary.js";
 import { augmentTrajectoryAwareRequest } from "./trajectory-compile-runtime.js";
 
 type ExperienceLiteStore = LiteWriteStore;
@@ -211,89 +207,5 @@ export async function buildExperienceIntelligenceLite(args: {
     introspection,
     delegationLearning,
     trajectoryCompile: augmented.compiled,
-  });
-}
-
-export function buildKickoffRecommendationResponseFromExperience(
-  experience: ExperienceIntelligenceResponse,
-  options?: {
-    editBoundaryContext?: RuntimeEditBoundaryContextInput | null;
-    executionEvidence?: unknown;
-  },
-): KickoffRecommendationResponse {
-  const actionRetrieval = asRecord(experience.action_retrieval);
-  const executionContract = parseExecutionContract(
-    asRecord(experience)?.execution_contract_v1 ?? actionRetrieval?.execution_contract_v1,
-  );
-  const tool = asRecord(actionRetrieval?.tool ?? experience.recommendation?.tool);
-  const path = asRecord(actionRetrieval?.path ?? experience.recommendation?.path);
-  const policyContract = asRecord(experience.policy_contract);
-  const pathTargetFiles = Array.isArray(path?.target_files) ? path.target_files : [];
-  const policyTargetFiles = Array.isArray(policyContract?.target_files) ? policyContract.target_files : [];
-  const kickoffRecommendation = buildKickoffRecommendationFromExperience({
-    historyApplied: (
-      (typeof actionRetrieval?.history_applied === "boolean" ? actionRetrieval.history_applied : undefined)
-      ?? experience.recommendation?.history_applied
-    ) === true,
-    contractTrustHint:
-      actionRetrieval?.contract_trust === "authoritative"
-      || actionRetrieval?.contract_trust === "advisory"
-      || actionRetrieval?.contract_trust === "observational"
-        ? actionRetrieval.contract_trust
-        : executionContract?.contract_trust
-          ? executionContract.contract_trust
-        : path?.contract_trust === "authoritative"
-          || path?.contract_trust === "advisory"
-          || path?.contract_trust === "observational"
-          ? path.contract_trust
-          : policyContract?.contract_trust === "authoritative"
-            || policyContract?.contract_trust === "advisory"
-            || policyContract?.contract_trust === "observational"
-            ? policyContract.contract_trust
-            : null,
-    selectedTool: firstString(executionContract?.selected_tool, actionRetrieval?.selected_tool, tool?.selected_tool),
-    taskFamily: firstString(executionContract?.task_family, path?.task_family, policyContract?.task_family),
-    workflowSignature: firstString(executionContract?.workflow_signature, path?.workflow_signature, policyContract?.workflow_signature),
-    policyMemoryId: firstString(executionContract?.policy_memory_id, policyContract?.policy_memory_id),
-    filePath: firstString(
-      executionContract?.file_path,
-      actionRetrieval?.recommended_file_path,
-      path?.file_path,
-      policyContract?.file_path,
-      typeof pathTargetFiles[0] === "string" ? pathTargetFiles[0] : null,
-      typeof policyTargetFiles[0] === "string" ? policyTargetFiles[0] : null,
-    ),
-    nextAction: firstString(
-      executionContract?.next_action,
-      actionRetrieval?.recommended_next_action,
-      experience.recommendation?.combined_next_action,
-      policyContract?.next_action,
-    ),
-    executionContract,
-    uncertainty:
-      actionRetrieval?.uncertainty && typeof actionRetrieval.uncertainty === "object"
-        ? (actionRetrieval.uncertainty as any)
-        : null,
-    editBoundaryContext: options?.editBoundaryContext ?? null,
-    executionEvidence: options?.executionEvidence,
-  });
-
-  return KickoffRecommendationResponseSchema.parse({
-    summary_version: "kickoff_recommendation_v1",
-    tenant_id: experience.tenant_id,
-    scope: experience.scope,
-    query_text: experience.query_text,
-    kickoff_recommendation: kickoffRecommendation,
-    action_retrieval_uncertainty:
-      actionRetrieval?.uncertainty && typeof actionRetrieval.uncertainty === "object"
-        ? actionRetrieval.uncertainty
-        : null,
-    policy_contract: experience.policy_contract ?? null,
-    rationale: {
-      summary:
-        typeof experience.rationale?.summary === "string"
-          ? experience.rationale.summary
-          : "",
-    },
   });
 }

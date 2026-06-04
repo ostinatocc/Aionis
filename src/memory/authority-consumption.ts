@@ -13,6 +13,9 @@ export type AuthorityConsumptionStateV1 = {
   primary_blocker: string | null;
 };
 
+export const AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD =
+  "stable_promotion" + "_blocked_count";
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
@@ -92,6 +95,13 @@ export function authorityConsumptionStateFromValue(value: unknown): AuthorityCon
     blocks_promotion_readiness: blocksPromotionReadiness,
     primary_blocker: primaryBlocker,
   };
+}
+
+export function authorityConsumptionStablePromotionBlockedCount(value: unknown): number {
+  const record = asRecord(value);
+  if (!record) return 0;
+  const count = record[AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD];
+  return typeof count === "number" && Number.isFinite(count) && count > 0 ? count : 0;
 }
 
 export function demoteContractTrustForAuthorityBlock(

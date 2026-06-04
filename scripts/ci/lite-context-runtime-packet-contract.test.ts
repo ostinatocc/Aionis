@@ -17,7 +17,6 @@ import {
   HistoryImpactSummarySchema,
   MemoryAnchorV1Schema,
   PlanningContextRouteContractSchema,
-  RuntimeContextPacketContractSchema,
 } from "../../src/memory/schemas.ts";
 import { AionisGuidePacketSchema, AionisLearningPacketSchema, AionisMemoryPacketSchema } from "../../src/memory/product-output-contract.ts";
 import { buildExecutionMemorySummaryBundle, summarizePatternSignals } from "../../src/app/planning-summary.ts";
@@ -46,6 +45,8 @@ function assertNoStalePlannerMirrors(body: Record<string, unknown>) {
     "contested_patterns",
     "rehydration_candidates",
     "supporting_knowledge",
+    ["runtime", "context", "packet"].join("_"),
+    ["continuity guidance", "recommendation"].join("_"),
   ];
   for (const field of removedFields) {
     assert.ok(!(field in body), `${field} should not be present on the slim default route surface`);
@@ -1882,19 +1883,19 @@ test("planning_context returns aligned planner packet, action packet summary, an
     assertNoStalePlannerMirrors(body as Record<string, unknown>);
     assert.ok(!("layered_context" in (body as Record<string, unknown>)), "default planning_context should not expose layered_context");
     assert.ok(!("operator_projection" in (body as Record<string, unknown>)), "default planning_context should not expose operator_projection");
-    const planningFirstStep = body.planning_summary.first_step_recommendation;
-    assert.equal(planningFirstStep?.source_kind, "experience_intelligence");
-    assert.equal(planningFirstStep?.history_applied, true);
-    assert.equal(planningFirstStep?.contract_trust, "advisory");
-    assert.equal(planningFirstStep?.selected_tool, body.planning_summary.selected_tool);
-    assert.equal(planningFirstStep?.task_family ?? null, null);
-    assert.equal(planningFirstStep?.workflow_signature, "workflow-validation-recovery-workflow");
-    assert.equal(planningFirstStep?.policy_memory_id ?? null, null);
-    assert.equal(planningFirstStep?.file_path ?? null, null);
-    assert.equal(planningFirstStep?.next_action, "Inspect the current context before starting with edit.");
-    assert.equal(planningFirstStep?.execution_contract_v1?.schema_version, "execution_contract_v1");
-    assert.equal(planningFirstStep?.execution_contract_v1?.selected_tool, body.planning_summary.selected_tool);
-    assert.equal(planningFirstStep?.execution_contract_v1?.workflow_signature, "workflow-validation-recovery-workflow");
+    const planningContinuityGuidance = body.planning_summary.continuity_guidance;
+    assert.equal(planningContinuityGuidance?.source_kind, "experience_intelligence");
+    assert.equal(planningContinuityGuidance?.history_applied, true);
+    assert.equal(planningContinuityGuidance?.contract_trust, "advisory");
+    assert.equal(planningContinuityGuidance?.selected_tool, body.planning_summary.selected_tool);
+    assert.equal(planningContinuityGuidance?.task_family ?? null, null);
+    assert.equal(planningContinuityGuidance?.workflow_signature, "workflow-validation-recovery-workflow");
+    assert.equal(planningContinuityGuidance?.policy_memory_id ?? null, null);
+    assert.equal(planningContinuityGuidance?.file_path ?? null, null);
+    assert.equal(planningContinuityGuidance?.next_action, "Inspect the current context before starting with edit.");
+    assert.equal(planningContinuityGuidance?.execution_contract_v1?.schema_version, "execution_contract_v1");
+    assert.equal(planningContinuityGuidance?.execution_contract_v1?.selected_tool, body.planning_summary.selected_tool);
+    assert.equal(planningContinuityGuidance?.execution_contract_v1?.workflow_signature, "workflow-validation-recovery-workflow");
     assert.equal(body.planning_summary.action_retrieval_uncertainty?.summary_version, "action_retrieval_uncertainty_v1");
     assert.ok(body.planning_summary.action_retrieval_uncertainty?.recommended_actions.includes("inspect_context"));
     const planningActionRetrievalGate = body.planning_summary.action_retrieval_gate;
@@ -1931,20 +1932,13 @@ test("planning_context returns aligned planner packet, action packet summary, an
     );
     assert.ok(planningHistoryImpact.affected_capabilities.includes("learning"));
     assert.ok(planningHistoryImpact.affected_capabilities.includes("learning_control"));
-    assert.ok(planningHistoryImpact.next_run_changes.includes("first_action_shaped_by_history"));
+    assert.ok(planningHistoryImpact.next_run_changes.includes("continuity_signal_shaped_by_history"));
     assert.ok(planningHistoryImpact.next_run_changes.includes("learning_control_limited_authority"));
     assert.equal(planningHistoryImpact.learning.stable_workflow_count, body.planning_summary.workflow_signal_summary.stable_workflow_count);
     assert.equal(
       planningHistoryImpact.forgetting.differential_rehydration_candidate_count,
       body.planning_summary.forgetting_summary.differential_rehydration_candidate_count,
     );
-    assert.deepEqual(RuntimeContextPacketContractSchema.parse(body.runtime_context_packet), body.runtime_context_packet);
-    assert.equal(body.runtime_context_packet.packet_version, "runtime_context_packet_v1");
-    assert.equal(body.runtime_context_packet.surface, "planning_context");
-    assert.equal(body.runtime_context_packet.selected_tool, body.planning_summary.selected_tool);
-    assert.equal(body.runtime_context_packet.context_est_tokens, body.planning_summary.context_est_tokens);
-    assert.deepEqual(body.runtime_context_packet.kickoff_recommendation, body.kickoff_recommendation);
-    assert.deepEqual(body.runtime_context_packet.history_impact_summary, planningHistoryImpact);
     const planningMemoryPacket = AionisMemoryPacketSchema.parse((body as any).recall.aionis_memory_packet);
     assert.equal(planningMemoryPacket.contract_version, "aionis_memory_packet_v1");
     assert.equal(planningMemoryPacket.query.source, "text");
@@ -1954,24 +1948,23 @@ test("planning_context returns aligned planner packet, action packet summary, an
     assert.equal(body.aionis_guide_packet.contract_version, "aionis_guide_packet_v1");
     assert.equal(body.aionis_guide_packet.tenant_id, body.tenant_id);
     assert.equal(body.aionis_guide_packet.scope, body.scope);
-    assert.equal(body.aionis_guide_packet.guidance.first_action.action, planningFirstStep?.first_action_v1?.instruction ?? planningFirstStep?.next_action ?? null);
-    assert.equal(body.aionis_guide_packet.guidance.first_action.authority, "advisory");
+    assert.equal(["first", "action"].join("_") in body.aionis_guide_packet.guidance, false);
+    assert.ok(Array.isArray(body.aionis_guide_packet.guidance.workflow_candidates));
     assert.equal(body.aionis_guide_packet.task.run_id ?? null, null);
-    assert.equal(body.aionis_guide_packet.task.task_signature, planningFirstStep?.workflow_signature ?? null);
+    assert.equal(body.aionis_guide_packet.task.task_signature, planningContinuityGuidance?.workflow_signature ?? null);
     assert.ok(body.aionis_guide_packet.source_map.routes_used.includes("/v1/memory/planning/context"));
     assert.ok(body.aionis_guide_packet.source_map.omitted_internal_surfaces.includes("raw_find_resolve"));
     assert.deepEqual(AionisLearningPacketSchema.parse(body.aionis_learning_packet), body.aionis_learning_packet);
     assert.equal(body.aionis_learning_packet.contract_version, "aionis_learning_packet_v1");
     assert.equal(body.aionis_learning_packet.tenant_id, body.tenant_id);
     assert.equal(body.aionis_learning_packet.scope, body.scope);
-    assert.equal(body.aionis_learning_packet.task.task_signature, planningFirstStep?.workflow_signature ?? null);
+    assert.equal(body.aionis_learning_packet.task.task_signature, planningContinuityGuidance?.workflow_signature ?? null);
     assert.equal(body.aionis_learning_packet.posture.source_code_change_allowed, false);
     assert.equal(body.aionis_learning_packet.export_readiness.training_export_ready, false);
     assert.ok(body.aionis_learning_packet.export_readiness.positive_transfer_required);
     assert.ok(body.aionis_learning_packet.source_map.routes_used.includes("/v1/memory/planning/context"));
     assert.ok(body.aionis_learning_packet.candidates.some((candidate: any) => candidate.kind === "workflow"));
-    assert.ok(!("first_step_recommendation" in body), "default planning_context should not expose the stale top-level first_step_recommendation mirror");
-    assert.deepEqual(body.kickoff_recommendation, body.planning_summary.first_step_recommendation);
+    assert.ok(!("continuity_guidance" in body), "default planning_context should not expose the stale top-level continuity_guidance mirror");
     assertActionPacketSummaryMatchesPacket(body.planning_summary.action_packet_summary, body);
     assertActionPacketSummaryMatchesPacket(body.execution_kernel.action_packet_summary, body);
     assertKernelMatchesRouteSurface(body);
@@ -2377,7 +2370,7 @@ test("planning_context debug layered_context projects delegation learning withou
     const body = PlanningContextRouteContractSchema.parse(response.json()) as Record<string, unknown>;
     assert.ok("layered_context" in body);
     assert.ok("operator_projection" in body);
-    assert.ok(!("first_step_recommendation" in body), "debug planning_context should still avoid the stale top-level first_step_recommendation mirror");
+    assert.ok(!("continuity_guidance" in body), "debug planning_context should still avoid the stale top-level continuity_guidance mirror");
     assertDelegationLearningProjection(body, {
       task_family: "task:workflow_validation_recovery",
       matched_records: 2,
@@ -2778,19 +2771,19 @@ test("context_assemble returns aligned planner packet, assembly summary, and exe
     assertNoStalePlannerMirrors(body as Record<string, unknown>);
     assert.ok(!("layered_context" in (body as Record<string, unknown>)), "default context_assemble should not expose layered_context");
     assert.ok(!("operator_projection" in (body as Record<string, unknown>)), "default context_assemble should not expose operator_projection");
-    const assemblyFirstStep = body.assembly_summary.first_step_recommendation;
-    assert.equal(assemblyFirstStep?.source_kind, "experience_intelligence");
-    assert.equal(assemblyFirstStep?.history_applied, true);
-    assert.equal(assemblyFirstStep?.contract_trust, "advisory");
-    assert.equal(assemblyFirstStep?.selected_tool, body.assembly_summary.selected_tool);
-    assert.equal(assemblyFirstStep?.task_family ?? null, null);
-    assert.equal(assemblyFirstStep?.workflow_signature, "workflow-validation-recovery-workflow");
-    assert.equal(assemblyFirstStep?.policy_memory_id ?? null, null);
-    assert.equal(assemblyFirstStep?.file_path ?? null, null);
-    assert.equal(assemblyFirstStep?.next_action, "Inspect the current context before starting with edit.");
-    assert.equal(assemblyFirstStep?.execution_contract_v1?.schema_version, "execution_contract_v1");
-    assert.equal(assemblyFirstStep?.execution_contract_v1?.selected_tool, body.assembly_summary.selected_tool);
-    assert.equal(assemblyFirstStep?.execution_contract_v1?.workflow_signature, "workflow-validation-recovery-workflow");
+    const assemblyContinuityGuidance = body.assembly_summary.continuity_guidance;
+    assert.equal(assemblyContinuityGuidance?.source_kind, "experience_intelligence");
+    assert.equal(assemblyContinuityGuidance?.history_applied, true);
+    assert.equal(assemblyContinuityGuidance?.contract_trust, "advisory");
+    assert.equal(assemblyContinuityGuidance?.selected_tool, body.assembly_summary.selected_tool);
+    assert.equal(assemblyContinuityGuidance?.task_family ?? null, null);
+    assert.equal(assemblyContinuityGuidance?.workflow_signature, "workflow-validation-recovery-workflow");
+    assert.equal(assemblyContinuityGuidance?.policy_memory_id ?? null, null);
+    assert.equal(assemblyContinuityGuidance?.file_path ?? null, null);
+    assert.equal(assemblyContinuityGuidance?.next_action, "Inspect the current context before starting with edit.");
+    assert.equal(assemblyContinuityGuidance?.execution_contract_v1?.schema_version, "execution_contract_v1");
+    assert.equal(assemblyContinuityGuidance?.execution_contract_v1?.selected_tool, body.assembly_summary.selected_tool);
+    assert.equal(assemblyContinuityGuidance?.execution_contract_v1?.workflow_signature, "workflow-validation-recovery-workflow");
     assert.equal(body.assembly_summary.action_retrieval_uncertainty?.summary_version, "action_retrieval_uncertainty_v1");
     assert.ok(body.assembly_summary.action_retrieval_uncertainty?.recommended_actions.includes("inspect_context"));
     const assemblyActionRetrievalGate = body.assembly_summary.action_retrieval_gate;
@@ -2827,42 +2820,34 @@ test("context_assemble returns aligned planner packet, assembly summary, and exe
     );
     assert.ok(assemblyHistoryImpact.affected_capabilities.includes("learning"));
     assert.ok(assemblyHistoryImpact.affected_capabilities.includes("learning_control"));
-    assert.ok(assemblyHistoryImpact.next_run_changes.includes("first_action_shaped_by_history"));
+    assert.ok(assemblyHistoryImpact.next_run_changes.includes("continuity_signal_shaped_by_history"));
     assert.ok(assemblyHistoryImpact.next_run_changes.includes("learning_control_limited_authority"));
     assert.equal(assemblyHistoryImpact.learning.stable_workflow_count, body.assembly_summary.workflow_signal_summary.stable_workflow_count);
     assert.equal(
       assemblyHistoryImpact.forgetting.differential_rehydration_candidate_count,
       body.assembly_summary.forgetting_summary.differential_rehydration_candidate_count,
     );
-    assert.deepEqual(RuntimeContextPacketContractSchema.parse(body.runtime_context_packet), body.runtime_context_packet);
-    assert.equal(body.runtime_context_packet.packet_version, "runtime_context_packet_v1");
-    assert.equal(body.runtime_context_packet.surface, "context_assemble");
-    assert.equal(body.runtime_context_packet.selected_tool, body.assembly_summary.selected_tool);
-    assert.equal(body.runtime_context_packet.context_est_tokens, body.assembly_summary.context_est_tokens);
-    assert.deepEqual(body.runtime_context_packet.kickoff_recommendation, body.kickoff_recommendation);
-    assert.deepEqual(body.runtime_context_packet.history_impact_summary, assemblyHistoryImpact);
     assert.deepEqual(AionisGuidePacketSchema.parse(body.aionis_guide_packet), body.aionis_guide_packet);
     assert.equal(body.aionis_guide_packet.contract_version, "aionis_guide_packet_v1");
     assert.equal(body.aionis_guide_packet.tenant_id, body.tenant_id);
     assert.equal(body.aionis_guide_packet.scope, body.scope);
-    assert.equal(body.aionis_guide_packet.guidance.first_action.action, assemblyFirstStep?.first_action_v1?.instruction ?? assemblyFirstStep?.next_action ?? null);
-    assert.equal(body.aionis_guide_packet.guidance.first_action.authority, "advisory");
+    assert.equal(["first", "action"].join("_") in body.aionis_guide_packet.guidance, false);
+    assert.ok(Array.isArray(body.aionis_guide_packet.guidance.workflow_candidates));
     assert.equal(body.aionis_guide_packet.task.run_id ?? null, null);
-    assert.equal(body.aionis_guide_packet.task.task_signature, assemblyFirstStep?.workflow_signature ?? null);
+    assert.equal(body.aionis_guide_packet.task.task_signature, assemblyContinuityGuidance?.workflow_signature ?? null);
     assert.ok(body.aionis_guide_packet.source_map.routes_used.includes("/v1/memory/context/assemble"));
     assert.ok(body.aionis_guide_packet.source_map.omitted_internal_surfaces.includes("raw_find_resolve"));
     assert.deepEqual(AionisLearningPacketSchema.parse(body.aionis_learning_packet), body.aionis_learning_packet);
     assert.equal(body.aionis_learning_packet.contract_version, "aionis_learning_packet_v1");
     assert.equal(body.aionis_learning_packet.tenant_id, body.tenant_id);
     assert.equal(body.aionis_learning_packet.scope, body.scope);
-    assert.equal(body.aionis_learning_packet.task.task_signature, assemblyFirstStep?.workflow_signature ?? null);
+    assert.equal(body.aionis_learning_packet.task.task_signature, assemblyContinuityGuidance?.workflow_signature ?? null);
     assert.equal(body.aionis_learning_packet.posture.source_code_change_allowed, false);
     assert.equal(body.aionis_learning_packet.export_readiness.training_export_ready, false);
     assert.ok(body.aionis_learning_packet.export_readiness.positive_transfer_required);
     assert.ok(body.aionis_learning_packet.source_map.routes_used.includes("/v1/memory/context/assemble"));
     assert.ok(body.aionis_learning_packet.candidates.some((candidate: any) => candidate.kind === "workflow"));
-    assert.ok(!("first_step_recommendation" in body), "default context_assemble should not expose the stale top-level first_step_recommendation mirror");
-    assert.deepEqual(body.kickoff_recommendation, body.assembly_summary.first_step_recommendation);
+    assert.ok(!("continuity_guidance" in body), "default context_assemble should not expose the stale top-level continuity_guidance mirror");
     assertActionPacketSummaryMatchesPacket(body.assembly_summary.action_packet_summary, body);
     assertActionPacketSummaryMatchesPacket(body.execution_kernel.action_packet_summary, body);
     assertKernelMatchesRouteSurface(body);

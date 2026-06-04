@@ -75,7 +75,7 @@ export const AIONIS_KERNEL_CAPABILITIES = [
     success_signals: [
       "resume packet names the current state",
       "verified facts survive process boundaries",
-      "first action avoids repeated discovery",
+      "continuity signal avoids repeated discovery",
     ],
   },
   {

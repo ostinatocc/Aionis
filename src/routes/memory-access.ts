@@ -12,9 +12,7 @@ import {
 } from "../memory/agent-memory-inspect-core.js";
 import {
   buildExperienceIntelligenceLite,
-  buildKickoffRecommendationResponseFromExperience,
 } from "../memory/experience-intelligence.js";
-import { ExperienceIntelligenceRequest } from "../memory/schemas.js";
 import { buildActionRetrievalLite } from "../memory/action-retrieval.js";
 import { buildExecutionMemoryIntrospectionLite } from "../memory/execution-introspection.js";
 import { aggregateDelegationRecordsLite, findDelegationRecordsLite } from "../memory/delegation-records-find.js";
@@ -46,8 +44,7 @@ type MemoryAccessRequestKind =
   | "delegation_records_write"
   | "delegation_records_find"
   | "delegation_records_aggregate"
-  | "trajectory_compile"
-  | "kickoff_recommendation";
+  | "trajectory_compile";
 type MemoryAccessInflightKind = "write" | "recall";
 
 type MemoryAccessRequest = FastifyRequest<{ Body: unknown; Querystring: Record<string, unknown>; Params: Record<string, unknown> }>;
@@ -368,31 +365,6 @@ export function registerMemoryAccessRoutes(args: RegisterMemoryAccessRoutesArgs)
         defaultTenantId: env.MEMORY_TENANT_ID,
         defaultActorId: env.LITE_LOCAL_ACTOR_ID,
       }),
-  });
-
-  registerMemoryAccessRoute({
-    method: "post",
-    path: "/v1/memory/kickoff/recommendation",
-    requestKind: "kickoff_recommendation",
-    inflightKind: "recall",
-    execute: async (body) => {
-      const parsed = ExperienceIntelligenceRequest.parse(body);
-      return buildKickoffRecommendationResponseFromExperience(
-        await buildExperienceIntelligenceLite({
-          liteWriteStore,
-          liteRecallAccess,
-          embedder,
-          body,
-          defaultScope: env.MEMORY_SCOPE,
-          defaultTenantId: env.MEMORY_TENANT_ID,
-          defaultActorId: env.LITE_LOCAL_ACTOR_ID,
-        }),
-        {
-          editBoundaryContext: parsed.edit_boundary_context ?? null,
-          executionEvidence: parsed.execution_evidence,
-        },
-      );
-    },
   });
 
   registerMemoryAccessRoute({

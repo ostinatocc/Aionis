@@ -8,7 +8,7 @@ import type {
   ExecutionMemorySummaryBundle,
   ExecutionPacketAssemblySummary,
   ExecutionSummary,
-  FirstStepRecommendation,
+  ContinuityGuidance,
   HistoryImpactCapability,
   HistoryImpactNextRunChange,
   HistoryImpactSummary,
@@ -33,7 +33,7 @@ import {
 } from "./planning-summary-forgetting.js";
 import {
   buildActionRetrievalGate,
-  buildFirstStepRecommendation,
+  buildContinuityGuidanceSummary,
   buildPlannerExplanation,
 } from "./planning-summary-planner.js";
 import {
@@ -43,7 +43,11 @@ import {
   buildExecutionRoutingSignalSummary,
 } from "./planning-summary-routing.js";
 import { buildExecutionMemorySummaryBundle } from "./planning-summary-surfaces.js";
-import { authorityConsumptionStateFromValue } from "../memory/authority-consumption.js";
+import {
+  AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD,
+  authorityConsumptionStablePromotionBlockedCount,
+  authorityConsumptionStateFromValue,
+} from "../memory/authority-consumption.js";
 import { parseExecutionContract, type ExecutionContractV1 } from "../memory/execution-contract.js";
 
 type ExperienceRecommendationProjection = {
@@ -203,7 +207,7 @@ function pushUnique<T extends string>(target: T[], value: T): void {
 }
 
 function buildHistoryImpactSummary(args: {
-  firstStepRecommendation: FirstStepRecommendation | null;
+  continuityGuidance: ContinuityGuidance | null;
   actionIntelligencePreActionGate: ActionIntelligencePreActionGateSummary | null;
   runtimeEntropyProfile: RuntimeEntropyProfileV1 | null;
   runtimeEntropyControls: RuntimeEntropyControlsV1 | null;
@@ -224,10 +228,13 @@ function buildHistoryImpactSummary(args: {
   const activePolicyCount = args.summaryBundle.policy_lifecycle_summary.active_count;
   const contestedPolicyCount = args.summaryBundle.policy_lifecycle_summary.contested_count;
   const actionStartBlocked = args.actionIntelligencePreActionGate?.authority_blocked === true;
-  const contractTrust = args.firstStepRecommendation?.contract_trust ?? null;
-  const firstStepHistoryApplied = args.firstStepRecommendation?.history_applied === true;
+  const contractTrust = args.continuityGuidance?.contract_trust ?? null;
+  const continuityGuidanceHistoryApplied = args.continuityGuidance?.history_applied === true;
+  const stablePromotionBlockedCount = authorityConsumptionStablePromotionBlockedCount(
+    args.summaryBundle.authority_visibility_summary,
+  );
   const historyBackedLimitedAuthority =
-    firstStepHistoryApplied && (contractTrust === "advisory" || contractTrust === "authoritative");
+    continuityGuidanceHistoryApplied && (contractTrust === "advisory" || contractTrust === "authoritative");
   const primaryBlockers = [
     ...args.summaryBundle.authority_visibility_summary.top_blockers,
     ...(args.actionIntelligencePreActionGate?.primary_reason ? [args.actionIntelligencePreActionGate.primary_reason] : []),
@@ -276,14 +283,14 @@ function buildHistoryImpactSummary(args: {
   if (
     actionStartBlocked
     || args.summaryBundle.authority_visibility_summary.authoritative_blocked_count > 0
-    || args.summaryBundle.authority_visibility_summary.stable_promotion_blocked_count > 0
+    || stablePromotionBlockedCount > 0
     || historyBackedLimitedAuthority
   ) {
     pushUnique(affectedCapabilities, "learning_control");
     pushUnique(nextRunChanges, "learning_control_limited_authority");
   }
-  if (firstStepHistoryApplied) {
-    pushUnique(nextRunChanges, "first_action_shaped_by_history");
+  if (continuityGuidanceHistoryApplied) {
+    pushUnique(nextRunChanges, "continuity_signal_shaped_by_history");
   }
   if (args.runtimeEntropyProfile || args.runtimeEntropyControls) {
     pushUnique(nextRunChanges, "runtime_entropy_visible");
@@ -296,7 +303,7 @@ function buildHistoryImpactSummary(args: {
       ? "none"
       : actionStartBlocked || args.summaryBundle.authority_visibility_summary.authoritative_blocked_count > 0
         ? "learning_controlled"
-        : firstStepHistoryApplied
+        : continuityGuidanceHistoryApplied
           ? "action_shaping"
           : "context_shaping";
   const primaryReason =
@@ -305,8 +312,8 @@ function buildHistoryImpactSummary(args: {
       : impactLevel === "learning_controlled"
         ? "prior evidence limited learned authority before action"
         : impactLevel === "action_shaping"
-          ? "prior execution shaped the kickoff recommendation"
-          : "prior memory changed the runtime context packet";
+          ? "prior execution shaped evidence-backed guidance"
+          : "prior memory changed the guide packet";
 
   return {
     summary_version: "history_impact_summary_v1",
@@ -341,9 +348,9 @@ function buildHistoryImpactSummary(args: {
       authoritative_allowed_count: args.summaryBundle.authority_visibility_summary.authoritative_allowed_count,
       authoritative_blocked_count: args.summaryBundle.authority_visibility_summary.authoritative_blocked_count,
       stable_promotion_allowed_count: args.summaryBundle.authority_visibility_summary.stable_promotion_allowed_count,
-      stable_promotion_blocked_count: args.summaryBundle.authority_visibility_summary.stable_promotion_blocked_count,
+      [AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD]: stablePromotionBlockedCount,
       primary_blockers: primaryBlockers,
-    },
+    } as HistoryImpactSummary["learning_control"],
     runtime_entropy: {
       profile_present: !!args.runtimeEntropyProfile,
       controls_present: !!args.runtimeEntropyControls,
@@ -600,14 +607,14 @@ export function buildPlanningSummary(args: {
     typeof tools.selection === "object" && tools.selection && typeof (tools.selection as any).selected === "string"
       ? (tools.selection as any).selected
       : null;
-  const firstStepRecommendation = buildFirstStepRecommendation({
+  const continuityGuidance = buildContinuityGuidanceSummary({
     selectedTool,
     experienceSummary,
     editBoundaryContext: args.edit_boundary_context ?? null,
     executionEvidence: args.execution_evidence,
   });
   const actionRetrievalGate = buildActionRetrievalGate({
-    firstStepRecommendation,
+    continuityGuidance,
     plannerSurface,
     preActionGate: actionIntelligencePreActionGate,
     uncertainty: actionRetrievalUncertainty,
@@ -621,7 +628,7 @@ export function buildPlanningSummary(args: {
     ? costSignals.primary_savings_levers.filter((entry): entry is string => typeof entry === "string")
     : [];
   const historyImpactSummary = buildHistoryImpactSummary({
-    firstStepRecommendation,
+    continuityGuidance,
     actionIntelligencePreActionGate,
     runtimeEntropyProfile,
     runtimeEntropyControls,
@@ -633,7 +640,7 @@ export function buildPlanningSummary(args: {
 
   return {
     summary_version: "planning_summary_v1",
-    first_step_recommendation: firstStepRecommendation,
+    continuity_guidance: continuityGuidance,
     action_intelligence_pre_action_gate: actionIntelligencePreActionGate,
     runtime_entropy_profile: runtimeEntropyProfile,
     runtime_entropy_controls: runtimeEntropyControls,
@@ -715,7 +722,7 @@ export function buildAssemblySummary(args: {
   return {
     summary_version: "assembly_summary_v1",
     planner_explanation: planning.planner_explanation,
-    first_step_recommendation: planning.first_step_recommendation,
+    continuity_guidance: planning.continuity_guidance,
     action_intelligence_pre_action_gate: planning.action_intelligence_pre_action_gate,
     runtime_entropy_profile: planning.runtime_entropy_profile,
     runtime_entropy_controls: planning.runtime_entropy_controls,

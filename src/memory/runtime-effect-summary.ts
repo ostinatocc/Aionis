@@ -15,7 +15,7 @@ type SignalStats = {
   includedLedgerCount: number;
   repeatedDiscoveryCount: number;
   repeatedFailedActionCount: number;
-  firstActionReadySignalCount: number;
+  continuityReadySignalCount: number;
   verifierSuccessCount: number;
   verifierFailureCount: number;
   retryCountTotal: number;
@@ -110,7 +110,7 @@ function collectSignalStats(rows: LiteFindNodeRow[]): { stats: SignalStats; incl
     includedLedgerCount: 0,
     repeatedDiscoveryCount: 0,
     repeatedFailedActionCount: 0,
-    firstActionReadySignalCount: 0,
+    continuityReadySignalCount: 0,
     verifierSuccessCount: 0,
     verifierFailureCount: 0,
     retryCountTotal: 0,
@@ -145,7 +145,7 @@ function collectSignalStats(rows: LiteFindNodeRow[]): { stats: SignalStats; incl
     const actionContract = asRecord(row.slots.action_intelligence_runtime_contract)
       ?? asRecord(row.slots.action_intelligence_runtime_contract_v1);
     const preActionGate = asRecord(actionContract?.pre_action_gate);
-    if (preActionGate?.known_enough === true) stats.firstActionReadySignalCount += 1;
+    if (preActionGate?.known_enough === true) stats.continuityReadySignalCount += 1;
   }
   return { stats, includedRows };
 }
@@ -341,7 +341,7 @@ export function buildRuntimeEffectSummaryFromRows(args: {
     continuity: {
       repeated_discovery_count: signal.stats.repeatedDiscoveryCount,
       repeated_failed_action_count: signal.stats.repeatedFailedActionCount,
-      first_action_ready_signal_count: signal.stats.firstActionReadySignalCount,
+      continuity_ready_signal_count: signal.stats.continuityReadySignalCount,
     },
     verification: {
       verifier_success_count: signal.stats.verifierSuccessCount,

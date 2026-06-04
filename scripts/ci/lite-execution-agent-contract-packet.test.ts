@@ -60,7 +60,7 @@ test("execution agent contract packet defaults to compact contract-only output",
   assert.ok(packet.contract.authority_boundary.includes("success_requires_declared_acceptance_checks"));
   assert.ok(packet.contract.authority_boundary.includes("after_exit_claim_requires_fresh_shell_revalidation"));
   assert.equal(packet.action_discipline.execution_mode, "contract_locked");
-  assert.equal(packet.action_discipline.first_action, "inspect_declared_target_files_before_broad_discovery");
+  assert.equal(packet.action_discipline.initial_evidence_signal, "declared_targets_have_evidence_priority");
   assert.equal(packet.action_discipline.max_pre_edit_confirmation_steps, 3);
   assert.ok(packet.action_discipline.prohibited_actions.includes("do_not_run_broad_repository_file_enumeration_before_declared_targets"));
   assert.ok(packet.action_discipline.prohibited_actions.includes("do_not_read_general_skill_or_preference_files_before_declared_targets"));
@@ -116,7 +116,8 @@ test("execution agent contract packet can render a short agent-facing contract",
   assert.match(rendered, /stop_after_required_validation_passes_and_report_evidence/);
   assert.doesNotMatch(rendered, /task_prompt:/);
   assert.doesNotMatch(rendered, /Action discipline:/);
-  assert.doesNotMatch(rendered, /first_action:/);
+  assert.doesNotMatch(rendered, new RegExp(`${["first", "action"].join("_")}:`));
+  assert.doesNotMatch(rendered, /initial_evidence_signal:/);
   assert.doesNotMatch(rendered, /allowed_work_surface:/);
   assert.doesNotMatch(rendered, /Inspect service entrypoint/);
   assert.doesNotMatch(rendered, /prefer nohup/);

@@ -2,7 +2,7 @@ import type {
   AssemblySummary,
   ContractTrust,
   ExecutionSummary,
-  FirstStepRecommendation,
+  ContinuityGuidance,
   PlanningSummary,
 } from "../app/planning-summary.js";
 import type {
@@ -22,6 +22,10 @@ import {
   type AionisMemoryPacket,
 } from "./product-output-contract.js";
 import {
+  AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD,
+  authorityConsumptionStablePromotionBlockedCount,
+} from "./authority-consumption.js";
+import {
   resolveNodeAnchorKind,
   resolveNodeArchiveRelocationSurface,
   resolveNodeCompressionLayer,
@@ -34,9 +38,8 @@ import {
 
 type ProductTask = AionisGuidePacket["task"];
 type ProductActor = NonNullable<AionisGuidePacket["actor"]>;
-type GuideAuthority = AionisGuidePacket["guidance"]["first_action"]["authority"];
+type GuideAuthority = AionisGuidanceAuthority;
 type WorkflowAuthority = AionisGuidePacket["guidance"]["workflow_candidates"][number]["authority"];
-type ProductUncertainty = AionisGuidePacket["guidance"]["first_action"]["uncertainty"];
 type ProductImpactDirection = AionisEffectReport["history_impact"]["impact_direction"];
 type TrainingCandidateType = AionisEffectReport["training_candidates"][number]["candidate_type"];
 type TrainingCandidateLabel = AionisEffectReport["training_candidates"][number]["label"];
@@ -500,47 +503,13 @@ function workflowAuthority(trust: ContractTrust | null | undefined, fallback: Wo
   return fallback;
 }
 
-function mapUncertainty(planning: PlanningSummary | AssemblySummary): ProductUncertainty {
-  const levels = compactStrings([
-    planning.action_intelligence_pre_action_gate?.uncertainty_level ?? null,
-    planning.action_retrieval_uncertainty?.level ?? null,
-  ]);
-  if (levels.includes("high")) return "high";
-  if (levels.includes("moderate")) return "medium";
-  if (planning.runtime_entropy_profile?.entropy_level === "high") return "medium";
-  return "low";
-}
-
-function firstActionText(firstStep: FirstStepRecommendation | null): string | null {
-  return (
-    firstStep?.first_action_v1?.instruction
-    ?? firstStep?.first_action_v1?.reason
-    ?? firstStep?.next_action
-    ?? null
-  );
-}
-
-function firstActionReason(
-  planning: PlanningSummary | AssemblySummary,
-  firstStep: FirstStepRecommendation | null,
-): string | null {
-  return (
-    firstStep?.first_action_v1?.reason
-    ?? planning.action_intelligence_pre_action_gate?.primary_reason
-    ?? planning.action_retrieval_gate?.primary_reason
-    ?? planning.history_impact_summary.primary_reason
-    ?? planning.planner_explanation
-    ?? null
-  );
-}
-
 function recoverTargetFiles(args: {
-  firstStep: FirstStepRecommendation | null;
+  firstStep: ContinuityGuidance | null;
   executionSummary: ExecutionSummary | null | undefined;
 }): string[] {
   return compactStrings([
-    ...(args.firstStep?.first_action_v1?.target_files ?? []),
-    args.firstStep?.first_action_v1?.file_path ?? null,
+    ...(args.firstStep?.continuity_signal_v1?.target_files ?? []),
+    args.firstStep?.continuity_signal_v1?.file_path ?? null,
     args.firstStep?.file_path ?? null,
     ...(args.firstStep?.edit_boundary_v1?.allowed_edit_files ?? []),
     ...(args.executionSummary?.collaboration_routing_summary.target_files ?? []),
@@ -549,7 +518,7 @@ function recoverTargetFiles(args: {
 }
 
 function recoverAcceptanceChecks(args: {
-  firstStep: FirstStepRecommendation | null;
+  firstStep: ContinuityGuidance | null;
   executionSummary: ExecutionSummary | null | undefined;
 }): string[] {
   return compactStrings([
@@ -590,7 +559,7 @@ function buildWorkflowCandidates(
     candidates.push({
       workflow_id: workflowId,
       title: candidateTitles[index] ?? workflowId,
-      authority: workflowAuthority(planning.first_step_recommendation?.contract_trust, "candidate"),
+      authority: workflowAuthority(planning.continuity_guidance?.contract_trust, "candidate"),
       evidence_count: Math.max(1, planning.workflow_lifecycle_summary.candidate_count),
       last_outcome: "unknown",
       reuse_reason: "Candidate workflow evidence is visible but not product-authoritative.",
@@ -602,17 +571,17 @@ function buildWorkflowCandidates(
 
 function buildToolPreferences(
   planning: PlanningSummary | AssemblySummary,
-  firstActionAuthority: GuideAuthority,
+  continuitySignalAuthority: GuideAuthority,
 ): AionisGuidePacket["guidance"]["tool_preferences"] {
   const preferences: AionisGuidePacket["guidance"]["tool_preferences"] = [];
-  const selectedTool = planning.selected_tool ?? planning.first_step_recommendation?.selected_tool ?? null;
+  const selectedTool = planning.selected_tool ?? planning.continuity_guidance?.selected_tool ?? null;
   if (selectedTool) {
     preferences.push({
       tool: selectedTool,
-      preference: firstActionAuthority === "blocked" || firstActionAuthority === "candidate"
+      preference: continuitySignalAuthority === "blocked" || continuitySignalAuthority === "candidate"
         ? "inspect_first"
         : "prefer",
-      authority: firstActionAuthority === "none" ? "candidate" : firstActionAuthority,
+      authority: continuitySignalAuthority === "none" ? "candidate" : continuitySignalAuthority,
       reason: "Selected by the current execution-memory planning summary.",
     });
   }
@@ -698,7 +667,7 @@ function buildGuideHistoryContributions(
       source_count: handoffSourceCount,
       source_ids: [],
       changed_fields: handoffSourceCount > 0
-        ? compactStrings(["recovered_state", "history_impact.continuity", "guidance.first_action"])
+        ? compactStrings(["recovered_state", "history_impact.continuity"])
         : [],
       reason: handoffSourceCount > 0
         ? "Handoff continuity carriers contributed to recovered state or next-run continuity."
@@ -719,10 +688,13 @@ function buildGuideHistoryContributions(
 }
 
 export function buildAionisGuidePacket(args: BuildAionisGuidePacketArgs): AionisGuidePacket {
-  const firstStep = args.planning.first_step_recommendation;
+  const firstStep = args.planning.continuity_guidance;
   const authority = mapAuthority(
     firstStep?.contract_trust ?? args.planning.history_impact_summary.learning_control.contract_trust,
     args.planning.action_intelligence_pre_action_gate?.authority_blocked === true,
+  );
+  const authorityVisibilityStableBlockedCount = authorityConsumptionStablePromotionBlockedCount(
+    args.planning.authority_visibility_summary,
   );
   const targetFiles = recoverTargetFiles({
     firstStep,
@@ -762,12 +734,6 @@ export function buildAionisGuidePacket(args: BuildAionisGuidePacketArgs): Aionis
     },
     proven_facts: [],
     guidance: {
-      first_action: {
-        action: firstActionText(firstStep),
-        reason: firstActionReason(args.planning, firstStep),
-        authority,
-        uncertainty: mapUncertainty(args.planning),
-      },
       workflow_candidates: buildWorkflowCandidates(args.planning),
       tool_preferences: buildToolPreferences(args.planning, authority),
     },
@@ -786,7 +752,7 @@ export function buildAionisGuidePacket(args: BuildAionisGuidePacketArgs): Aionis
       negative_transfer_risk: negativeTransferRisk(args.planning),
       blocked_authority_count:
         args.planning.authority_visibility_summary.authoritative_blocked_count
-        + args.planning.authority_visibility_summary.stable_promotion_blocked_count,
+        + authorityVisibilityStableBlockedCount,
       stale_memory_count: args.planning.forgetting_summary.stale_signal_count,
       provider_or_protocol_quarantine: false,
       reasons: buildRiskReasons(args.planning, args.execution_summary),
@@ -812,10 +778,11 @@ export function buildAionisGuidePacket(args: BuildAionisGuidePacketArgs): Aionis
 function learningPosture(planning: PlanningSummary | AssemblySummary): LearningPosture {
   const control = planning.history_impact_summary.learning_control;
   const forgetting = planning.forgetting_summary.semantic_action_counts;
+  const stablePromotionBlockedCount = authorityConsumptionStablePromotionBlockedCount(control);
   if (
     control.action_start_blocked
     || control.authoritative_blocked_count > 0
-    || control.stable_promotion_blocked_count > 0
+    || stablePromotionBlockedCount > 0
     || planning.authority_visibility_summary.false_confidence_count > 0
   ) {
     return "constrain";
@@ -849,9 +816,12 @@ function learningAuthority(args: {
   posture: LearningPosture;
   planning: PlanningSummary | AssemblySummary;
 }): LearningAuthority {
+  const stablePromotionBlockedCount = authorityConsumptionStablePromotionBlockedCount(
+    args.planning.history_impact_summary.learning_control,
+  );
   if (
     args.planning.history_impact_summary.learning_control.action_start_blocked
-    || args.planning.history_impact_summary.learning_control.stable_promotion_blocked_count > 0
+    || stablePromotionBlockedCount > 0
     || args.planning.history_impact_summary.learning_control.authoritative_blocked_count > 0
   ) {
     return "blocked";
@@ -881,37 +851,18 @@ function learningPostureReason(args: {
 
 function buildLearningCandidates(planning: PlanningSummary | AssemblySummary): LearningCandidate[] {
   const candidates: LearningCandidate[] = [];
-  for (const workflowId of planning.action_packet_summary.workflow_anchor_ids) {
-    candidates.push({
-      candidate_id: workflowId,
-      kind: "workflow",
-      authority: "advisory",
-      evidence_count: Math.max(1, planning.workflow_lifecycle_summary.stable_count),
-      promotion_state: "stable",
-      source_ids: [workflowId],
-      reason: "Stable workflow evidence is visible for scoped reuse.",
-    });
-  }
+  const stablePromotionBlockedCount = authorityConsumptionStablePromotionBlockedCount(
+    planning.history_impact_summary.learning_control,
+  );
   for (const workflowId of planning.action_packet_summary.candidate_workflow_anchor_ids) {
     candidates.push({
       candidate_id: workflowId,
       kind: "workflow",
-      authority: planning.history_impact_summary.learning_control.stable_promotion_blocked_count > 0 ? "blocked" : "candidate",
+      authority: stablePromotionBlockedCount > 0 ? "blocked" : "candidate",
       evidence_count: Math.max(1, planning.workflow_lifecycle_summary.candidate_count),
       promotion_state: planning.workflow_lifecycle_summary.promotion_ready_count > 0 ? "promotion_ready" : "candidate",
       source_ids: [workflowId],
       reason: "Workflow candidate is visible but must remain scoped until evidence gates admit promotion.",
-    });
-  }
-  for (const patternId of planning.action_packet_summary.trusted_pattern_anchor_ids) {
-    candidates.push({
-      candidate_id: patternId,
-      kind: "pattern",
-      authority: "advisory",
-      evidence_count: Math.max(1, planning.pattern_lifecycle_summary.trusted_count),
-      promotion_state: "stable",
-      source_ids: [patternId],
-      reason: "Trusted pattern evidence is available as advisory learning context.",
     });
   }
   for (const patternId of planning.action_packet_summary.candidate_pattern_anchor_ids) {
@@ -943,7 +894,8 @@ export function buildAionisLearningPacket(args: BuildAionisLearningPacketArgs): 
   const posture = learningPosture(args.planning);
   const authority = learningAuthority({ posture, planning: args.planning });
   const control = args.planning.history_impact_summary.learning_control;
-  const stablePromotionAllowed = control.stable_promotion_allowed_count > 0 && control.stable_promotion_blocked_count === 0;
+  const stablePromotionBlockedCount = authorityConsumptionStablePromotionBlockedCount(control);
+  const stablePromotionAllowed = control.stable_promotion_allowed_count > 0 && stablePromotionBlockedCount === 0;
   const promotionDeniedReasons = compactStrings([
     ...control.primary_blockers,
     ...args.planning.authority_visibility_summary.top_blockers,
@@ -969,9 +921,9 @@ export function buildAionisLearningPacket(args: BuildAionisLearningPacketArgs): 
       authoritative_allowed_count: control.authoritative_allowed_count,
       authoritative_blocked_count: control.authoritative_blocked_count,
       stable_promotion_allowed_count: control.stable_promotion_allowed_count,
-      stable_promotion_blocked_count: control.stable_promotion_blocked_count,
+      [AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD]: stablePromotionBlockedCount,
       blocked_reasons: promotionDeniedReasons,
-    },
+    } as AionisLearningPacket["learning_control"],
     lifecycle_effect: {
       promoted_workflow_count: args.planning.workflow_lifecycle_summary.transition_counts.promoted_to_stable,
       candidate_workflow_count: args.planning.workflow_lifecycle_summary.candidate_count,
@@ -1029,7 +981,7 @@ function impactDirection(args: {
 function changedFields(report: KernelEffectReport): string[] {
   return compactStrings([
     report.proof_summary.repeated_discovery_delta !== 0 ? "efficiency.repeated_discovery_delta" : null,
-    report.proof_summary.first_action_improved ? "guidance.first_action" : null,
+    report.proof_summary.continuity_guidance_improved ? "execution_experience_guidance" : null,
     report.proof_summary.workflow_reuse_improved ? "learning_effect.workflow_reuse" : null,
     report.proof_summary.context_precision_delta !== 0 ? "forgetting_effect.context_precision" : null,
     report.proof_summary.stale_memory_delta !== 0 ? "forgetting_effect.stale_memory_suppression" : null,
@@ -1143,7 +1095,7 @@ export function buildAionisEffectReport(args: BuildAionisEffectReportArgs): Aion
     },
     efficiency: {
       repeated_discovery_delta: -args.report.proof_summary.repeated_discovery_delta,
-      first_useful_action_delta: args.report.proof_summary.first_action_improved ? -1 : 0,
+      useful_continuity_delta: args.report.proof_summary.continuity_guidance_improved ? -1 : 0,
       token_delta: null,
       context_size_delta: null,
       recovery_step_delta: null,

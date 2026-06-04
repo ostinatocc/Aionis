@@ -99,7 +99,7 @@ const EffectObservationSchema = z.object({
   label: z.string().trim().min(1).optional(),
   continuity: z.object({
     repeatedDiscoverySteps: z.number().nonnegative().optional(),
-    firstActionCorrect: z.boolean().optional(),
+    continuityGuidanceCorrect: z.boolean().optional(),
     recoveredStateFacts: z.number().nonnegative().optional(),
     expectedStateFacts: z.number().nonnegative().optional(),
     verifiedFactsCarried: z.number().nonnegative().optional(),
@@ -344,13 +344,15 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       scope: body.scope ?? parsed.scope ?? env.MEMORY_SCOPE,
       memory_packet: recall.aionis_memory_packet ?? null,
       guide_packet: body.aionis_guide_packet ?? null,
-      learning_packet: body.aionis_learning_packet ?? null,
-      runtime_context_packet: body.runtime_context_packet ?? null,
-      kickoff_recommendation: body.kickoff_recommendation ?? null,
-      cost_signals: body.cost_signals ?? null,
       source_map: {
         routes_used: ["/v1/memory/planning/context"],
-        internal_surfaces_used: ["recall", "planning_summary", "product_packets"],
+        internal_surfaces_used: ["recall", "product_packets"],
+        omitted_internal_surfaces: [
+          "internal_planning_details",
+          "internal_learning_diagnostics",
+          "internal_execution_recommendation_details",
+          "internal_cost_diagnostics",
+        ],
       },
     });
   });

@@ -5,7 +5,7 @@ export type EffectStatus = "pass" | "warn" | "fail";
 
 export type ContinuityEffectObservation = {
   repeatedDiscoverySteps?: number;
-  firstActionCorrect?: boolean;
+  continuityGuidanceCorrect?: boolean;
   recoveredStateFacts?: number;
   expectedStateFacts?: number;
   verifiedFactsCarried?: number;
@@ -78,7 +78,7 @@ export type AionisEffectReport = {
     regressed_kernel_count: number;
     failed_kernel_count: number;
     repeated_discovery_delta: number;
-    first_action_improved: boolean;
+    continuity_guidance_improved: boolean;
     workflow_reuse_improved: boolean;
     context_precision_delta: number;
     stale_memory_delta: number;
@@ -139,13 +139,13 @@ function scoreContinuity(observation: ContinuityEffectObservation | undefined): 
   const verifiedFactRatio = ratio(input.verifiedFactsCarried, input.verifiedFactsExpected, input.verifiedFactsCarried ? 1 : 0);
   const repeatedDiscoveryAvoidance = 1 - clamp01(repeatedDiscoverySteps / 5);
   const score = roundScore(average([
-    boolScore(input.firstActionCorrect),
+    boolScore(input.continuityGuidanceCorrect),
     recoveredStateRatio,
     verifiedFactRatio,
     repeatedDiscoveryAvoidance,
   ]));
   const regressions = [
-    ...(input.firstActionCorrect === false ? ["first_action_wrong"] : []),
+    ...(input.continuityGuidanceCorrect === false ? ["continuity_guidance_wrong"] : []),
     ...(repeatedDiscoverySteps > 2 ? ["repeated_discovery_too_high"] : []),
     ...(recoveredStateRatio < 0.7 ? ["recovered_state_fact_gap"] : []),
   ];
@@ -154,13 +154,13 @@ function scoreContinuity(observation: ContinuityEffectObservation | undefined): 
     score,
     status: statusFromScore(score),
     metrics: {
-      first_action_correct: input.firstActionCorrect === true,
+      continuity_guidance_correct: input.continuityGuidanceCorrect === true,
       repeated_discovery_steps: repeatedDiscoverySteps,
       recovered_state_fact_ratio: roundScore(recoveredStateRatio),
       verified_fact_ratio: roundScore(verifiedFactRatio),
     },
     signals: [
-      ...(input.firstActionCorrect ? ["first_action_matches_expected"] : []),
+      ...(input.continuityGuidanceCorrect ? ["continuity_guidance_matches_expected"] : []),
       ...(recoveredStateRatio >= 0.7 ? ["execution_state_recovered"] : []),
       ...(verifiedFactRatio >= 0.7 ? ["verified_facts_carried"] : []),
     ],
@@ -414,9 +414,9 @@ export function evaluateAionisEffect(args: AionisEffectEvaluationInput): AionisE
       regressed_kernel_count: kernelScores.filter((score) => score.delta < -0.05).length,
       failed_kernel_count: kernelScores.filter((score) => score.status === "fail").length,
       repeated_discovery_delta: roundDelta(repeatedDiscoveryDelta),
-      first_action_improved:
-        args.baseline.continuity?.firstActionCorrect !== true
-        && args.aionis.continuity?.firstActionCorrect === true,
+      continuity_guidance_improved:
+        args.baseline.continuity?.continuityGuidanceCorrect !== true
+        && args.aionis.continuity?.continuityGuidanceCorrect === true,
       workflow_reuse_improved:
         args.baseline.learning?.workflowReused !== true
         && args.aionis.learning?.workflowReused === true,

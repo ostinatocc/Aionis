@@ -11,11 +11,6 @@ export {
 } from "./planning-summary-assembly.js";
 
 export {
-  buildKickoffRecommendation,
-  buildKickoffRecommendationFromExperience,
-} from "./planning-summary-planner.js";
-
-export {
   buildExecutionMemorySummaryBundle,
   isPromotionReadyWorkflowSignal,
   summarizeActionRecallPacket,
@@ -37,7 +32,7 @@ export {
 export type PlanningSummary = {
   summary_version: "planning_summary_v1";
   planner_explanation: string | null;
-  first_step_recommendation: FirstStepRecommendation | null;
+  continuity_guidance: ContinuityGuidance | null;
   action_intelligence_pre_action_gate: ActionIntelligencePreActionGateSummary | null;
   runtime_entropy_profile: RuntimeEntropyProfileV1 | null;
   runtime_entropy_controls: RuntimeEntropyControlsV1 | null;
@@ -78,7 +73,7 @@ export type PlanningSummary = {
 export type AssemblySummary = {
   summary_version: "assembly_summary_v1";
   planner_explanation: string | null;
-  first_step_recommendation: FirstStepRecommendation | null;
+  continuity_guidance: ContinuityGuidance | null;
   action_intelligence_pre_action_gate: ActionIntelligencePreActionGateSummary | null;
   runtime_entropy_profile: RuntimeEntropyProfileV1 | null;
   runtime_entropy_controls: RuntimeEntropyControlsV1 | null;
@@ -117,28 +112,12 @@ export type AssemblySummary = {
   primary_savings_levers: string[];
 };
 
-export type FirstStepRecommendation = {
+export type ContinuityGuidance = {
   source_kind: "experience_intelligence" | "tool_selection";
   history_applied: boolean;
   contract_trust: ContractTrust;
   execution_contract_v1: ExecutionContractV1 | null;
-  first_action_v1: RuntimeFirstActionRecommendation | null;
-  edit_boundary_v1: RuntimeEditBoundaryRecommendation | null;
-  verification_repair_v1: RuntimeVerificationRepairRecommendation | null;
-  selected_tool: string | null;
-  task_family: string | null;
-  workflow_signature: string | null;
-  policy_memory_id: string | null;
-  file_path: string | null;
-  next_action: string | null;
-};
-
-export type KickoffRecommendation = {
-  source_kind: "experience_intelligence" | "tool_selection";
-  history_applied: boolean;
-  contract_trust: ContractTrust;
-  execution_contract_v1: ExecutionContractV1 | null;
-  first_action_v1: RuntimeFirstActionRecommendation | null;
+  continuity_signal_v1: RuntimeContinuitySignal | null;
   edit_boundary_v1: RuntimeEditBoundaryRecommendation | null;
   verification_repair_v1: RuntimeVerificationRepairRecommendation | null;
   selected_tool: string | null;
@@ -172,7 +151,7 @@ export type HistoryImpactNextRunChange =
   | "memory_suppressed_or_forgotten"
   | "rehydration_available"
   | "learning_control_limited_authority"
-  | "first_action_shaped_by_history"
+  | "continuity_signal_shaped_by_history"
   | "runtime_entropy_visible";
 
 export type HistoryImpactSummary = {
@@ -223,16 +202,16 @@ export type HistoryImpactSummary = {
   primary_reason: string;
 };
 
-export type RuntimeFirstActionKind =
+export type RuntimeContinuitySignalKind =
   | "read_file"
   | "inspect_context"
   | "widen_recall"
   | "rehydrate_payload"
   | "request_operator_review";
 
-export type RuntimeFirstActionRecommendation = {
-  summary_version: "kickoff_first_action_v1";
-  action: RuntimeFirstActionKind;
+export type RuntimeContinuitySignal = {
+  summary_version: "runtime_continuity_signal_v1";
+  action: RuntimeContinuitySignalKind;
   priority: "required" | "recommended";
   contract_trust: ContractTrust;
   tool_name: string | null;
@@ -251,7 +230,7 @@ export type RuntimeEditBoundaryContext = {
 };
 
 export type RuntimeEditBoundaryRecommendation = {
-  summary_version: "kickoff_edit_boundary_v1";
+  summary_version: "runtime_edit_boundary_v1";
   contract_trust: ContractTrust;
   allowed_edit_files: string[];
   forbidden_edit_files: string[];
@@ -347,7 +326,7 @@ export type RuntimeEditFailurePhase = {
 };
 
 export type RuntimeVerificationRepairRecommendation = {
-  summary_version: "kickoff_verification_repair_v1";
+  summary_version: "runtime_verification_repair_v1";
   priority: "required" | "recommended";
   contract_trust: ContractTrust;
   failed_verifier_count: number;

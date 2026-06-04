@@ -34,7 +34,7 @@ The product surface should collapse around four verbs.
 | Product Action | User Meaning | Current Runtime Capabilities |
 |---|---|---|
 | `observe` | Record what actually happened during execution. | memory write, handoff store, trajectory compile, replay step evidence, delegation records, tool feedback |
-| `guide` | Produce the next compact cognitive and execution context from history. | recall, recall_text, context assemble, planning context, action retrieval, experience intelligence, kickoff, resume/handoff packs |
+| `guide` | Produce the next compact cognitive and execution context from history. | recall, recall_text, context assemble, planning context, action retrieval, experience intelligence, resume/handoff packs |
 | `forget` | Control what should cool down, retire, archive, or rehydrate. | semantic forgetting, suppression, archive relocation, anchor rehydration, node activation |
 | `measure` | Prove whether history changed the run positively or negatively. | runtime effect summary, promotion quality, runtime signal trends, maintenance reports, paired eval reports |
 
@@ -49,7 +49,7 @@ Internal mechanisms may remain richer than these verbs, but product docs, demos,
 | Evidence-gated self-learning | Successful traces can become reusable workflows/patterns/policies without single-run promotion. | replay evidence, promotion ledger, learning loop, policy memory |
 | Controlled forgetting | Stale or harmful memory demotes, archives, or rehydrates on demand instead of polluting context forever. | forgetting kernel, archive relocation, node activation, rehydration |
 | Dynamic learning control | Aionis adjusts authority and intervention strength based on evidence, uncertainty, and risk. | authority gates, learning-control providers, runtime entropy profile |
-| History-shaped future behavior | Prior execution changes future context, first action, workflow reuse, verification posture, and memory lifecycle. | planning summaries, action retrieval, experience intelligence, effect evaluator |
+| History-shaped future behavior | Prior execution changes future context, workflow reuse, verification posture, and memory lifecycle. | planning summaries, action retrieval, experience intelligence, effect evaluator |
 | Execution data asset | Real traces can become evidence-labeled training candidates. | execution evidence, handoff/resume packets, replay runs, promotion/demotion records |
 
 ## What Aionis Owns
@@ -70,7 +70,7 @@ Aionis owns:
 
 Aionis must not own:
 
-1. external Agent framework product behavior
+1. external host framework product behavior
 2. semantic patch generation for a specific task
 3. repository-specific repair procedures
 4. benchmark-specific action semantics
@@ -78,7 +78,7 @@ Aionis must not own:
 6. model fine-tuning execution as part of the core Runtime
 7. cloud control plane, admin console, playground, or docs product
 
-External Agents and LLMs propose actions. Aionis remembers, guides, gates, forgets, and measures.
+External hosts and LLMs propose actions. Aionis remembers, guides, gates, forgets, and measures.
 
 ## History Shaping Contract
 
@@ -87,8 +87,7 @@ Historical execution may shape future behavior only through these controlled sur
 | Surface | Allowed Effect |
 |---|---|
 | memory packet | Recall ordinary memories with evidence, lifecycle, confidence, contradiction warnings, and expected behavior impact. |
-| context packet | Include proven state, useful memories, suppression notes, and uncertainty. |
-| first action recommendation | Bias the Agent toward a lower-waste starting point. |
+| guide packet | Include proven state, useful memories, workflow candidates, suppression notes, and uncertainty. |
 | workflow candidate | Recommend a reusable path with evidence and authority level. |
 | tool preference | Prefer tools that repeatedly worked in scoped contexts. |
 | verification posture | Suggest deeper or lighter verification based on evidence and risk. |
@@ -143,7 +142,7 @@ The first product proof should measure Aionis-owned effects:
 | Metric | Positive Signal |
 |---|---|
 | repeated discovery | fewer repeated `list/search/read` style steps |
-| first useful action | reaches relevant state/action faster |
+| continuity signal | reaches relevant state/action faster |
 | recovered facts | new run recovers prior verified facts without full chat |
 | token/context cost | less irrelevant context and lower provider token use |
 | workflow reuse | proven workflow reused only when evidence supports it |

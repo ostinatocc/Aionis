@@ -39,7 +39,6 @@ export type IdentityRequestKind =
   | "delegation_records_find"
   | "delegation_records_aggregate"
   | "trajectory_compile"
-  | "kickoff_recommendation"
   | "resolve"
   | "rehydrate_payload"
   | "recall"
@@ -307,7 +306,6 @@ export function createRequestGuards({
       kind === "planning_context"
       || kind === "context_assemble"
       || kind === "experience_intelligence"
-      || kind === "kickoff_recommendation"
       || kind === "evolution_review_pack"
       || kind === "continuity_review_pack"
       || kind === "delegation_records_find"
@@ -316,7 +314,7 @@ export function createRequestGuards({
       if (!obj.consumer_agent_id) obj.consumer_agent_id = env.LITE_LOCAL_ACTOR_ID;
     }
 
-    if (kind === "rules_evaluate" || kind === "tools_select" || kind === "tools_feedback" || kind === "planning_context" || kind === "context_assemble" || kind === "experience_intelligence" || kind === "kickoff_recommendation") {
+    if (kind === "rules_evaluate" || kind === "tools_select" || kind === "tools_feedback" || kind === "planning_context" || kind === "context_assemble" || kind === "experience_intelligence") {
       const ctx = obj.context && typeof obj.context === "object" && !Array.isArray(obj.context) ? { ...obj.context } : {};
       const agent = ctx.agent && typeof ctx.agent === "object" && !Array.isArray(ctx.agent) ? { ...ctx.agent } : {};
       if (!agent.id) agent.id = env.LITE_LOCAL_ACTOR_ID;

@@ -319,7 +319,7 @@ function constrainedRuntimeEffectSummary() {
     continuity: {
       repeated_discovery_count: 2,
       repeated_failed_action_count: 0,
-      first_action_ready_signal_count: 0,
+      continuity_ready_signal_count: 0,
     },
     verification: {
       verifier_success_count: 0,

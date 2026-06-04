@@ -123,7 +123,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
     capabilities: ["continuity", "learning", "forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
     surface_kind: "core_runtime",
-    product_role: "product facade for compact MemoryPacket, GuidePacket, and LearningPacket output",
+    product_role: "product facade for compact MemoryPacket and GuidePacket output",
   },
   {
     method: "POST",
@@ -231,7 +231,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
     capabilities: ["continuity", "learning", "forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
     surface_kind: "core_runtime",
-    product_role: "assemble a compact runtime context packet for agent execution",
+    product_role: "assemble internal context evidence behind the product guide facade",
   },
   {
     method: "POST",
@@ -358,15 +358,6 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
     product_effects: ["history_shaped_future_behavior"],
     surface_kind: "core_runtime",
     product_role: "summarize how prior experience should shape the next run",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/kickoff/recommendation",
-    route_group: "memory-access-partial",
-    capabilities: ["continuity", "learning", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "turn experience intelligence into a first-action recommendation",
   },
   {
     method: "POST",

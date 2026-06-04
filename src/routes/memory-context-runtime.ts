@@ -5,7 +5,6 @@ import {
   buildAssemblySummary,
   buildExecutionMemorySummaryBundle,
   buildExecutionSummarySurface,
-  buildKickoffRecommendation,
   buildPlanningSummary,
   summarizeActionRecallPacketSurface,
   summarizeWorkflowSignalSurface,
@@ -276,25 +275,6 @@ function buildPlannerPacketResponseSurface(
   };
 }
 
-function buildRuntimeContextPacket(
-  surface: "planning_context" | "context_assemble",
-  summary: {
-    selected_tool: string | null;
-    context_est_tokens: number;
-    first_step_recommendation: Parameters<typeof buildKickoffRecommendation>[0];
-    history_impact_summary: unknown;
-  },
-) {
-  return {
-    packet_version: "runtime_context_packet_v1",
-    surface,
-    selected_tool: summary.selected_tool,
-    context_est_tokens: summary.context_est_tokens,
-    kickoff_recommendation: buildKickoffRecommendation(summary.first_step_recommendation),
-    history_impact_summary: summary.history_impact_summary,
-  };
-}
-
 function buildAionisGuidePacketForContextRoute(args: {
   tenantId: string;
   scope: string;
@@ -313,8 +293,8 @@ function buildAionisGuidePacketForContextRoute(args: {
     task: {
       task_id: null,
       run_id: args.parsed.run_id ?? null,
-      task_signature: args.summary.first_step_recommendation?.workflow_signature ?? null,
-      task_family: args.summary.first_step_recommendation?.task_family ?? null,
+      task_signature: args.summary.continuity_guidance?.workflow_signature ?? null,
+      task_family: args.summary.continuity_guidance?.task_family ?? null,
     },
     planning: args.summary,
     source_map: {
@@ -345,8 +325,8 @@ function buildAionisLearningPacketForContextRoute(args: {
     task: {
       task_id: null,
       run_id: args.parsed.run_id ?? null,
-      task_signature: args.summary.first_step_recommendation?.workflow_signature ?? null,
-      task_family: args.summary.first_step_recommendation?.task_family ?? null,
+      task_signature: args.summary.continuity_guidance?.workflow_signature ?? null,
+      task_family: args.summary.continuity_guidance?.task_family ?? null,
     },
     planning: args.summary,
     source_map: {
@@ -1024,7 +1004,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
     returnLayeredContext: boolean;
     experienceIntelligence: ExperienceIntelligenceResponse | null;
     actionRetrievalGate?: Record<string, unknown> | null;
-    firstStepRecommendation?: Record<string, unknown> | null;
+    continuityGuidance?: Record<string, unknown> | null;
   }) => {
     if (!args.returnLayeredContext) return undefined;
     const delegationLearning = args.experienceIntelligence
@@ -1034,14 +1014,14 @@ export function registerMemoryContextRuntimeRoutes(args: {
           learning_recommendations: args.experienceIntelligence.learning_recommendations,
         }
       : undefined;
-    const firstStep = args.firstStepRecommendation && typeof args.firstStepRecommendation === "object"
-      ? args.firstStepRecommendation
+    const firstStep = args.continuityGuidance && typeof args.continuityGuidance === "object"
+      ? args.continuityGuidance
       : null;
-    const firstAction =
-      firstStep?.first_action_v1
-      && typeof firstStep.first_action_v1 === "object"
-      && !Array.isArray(firstStep.first_action_v1)
-        ? firstStep.first_action_v1 as Record<string, unknown>
+    const continuitySignal =
+      firstStep?.continuity_signal_v1
+      && typeof firstStep.continuity_signal_v1 === "object"
+      && !Array.isArray(firstStep.continuity_signal_v1)
+        ? firstStep.continuity_signal_v1 as Record<string, unknown>
         : null;
     const editBoundary =
       firstStep?.edit_boundary_v1
@@ -1243,7 +1223,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
           ? preferredRehydration.anchor_id
           : null,
     }));
-    if (!delegationLearning && !actionIntelligencePreActionGate && !runtimeEntropyProfile && !runtimeEntropyControls && !gate && !adaptiveGuidance && !experienceAdaptationTrace && !firstAction && !editBoundary && !verificationRepair && actionHints.length === 0) return undefined;
+    if (!delegationLearning && !actionIntelligencePreActionGate && !runtimeEntropyProfile && !runtimeEntropyControls && !gate && !adaptiveGuidance && !experienceAdaptationTrace && !continuitySignal && !editBoundary && !verificationRepair && actionHints.length === 0) return undefined;
     return {
       ...(delegationLearning ? { delegation_learning: delegationLearning } : {}),
       ...(actionIntelligencePreActionGate ? { action_intelligence_pre_action_gate: actionIntelligencePreActionGate } : {}),
@@ -1252,7 +1232,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
       ...(gate ? { action_retrieval_gate: gate } : {}),
       ...(adaptiveGuidance ? { adaptive_guidance: adaptiveGuidance } : {}),
       ...(experienceAdaptationTrace ? { experience_adaptation_trace: experienceAdaptationTrace } : {}),
-      ...(firstAction ? { first_action_v1: firstAction } : {}),
+      ...(continuitySignal ? { continuity_signal_v1: continuitySignal } : {}),
       ...(editBoundary ? { edit_boundary_v1: editBoundary } : {}),
       ...(verificationRepair ? { verification_repair_v1: verificationRepair } : {}),
       ...(actionHints.length > 0 ? { action_hints: actionHints } : {}),
@@ -1940,9 +1920,9 @@ export function registerMemoryContextRuntimeRoutes(args: {
         planningSummary.action_retrieval_gate && typeof planningSummary.action_retrieval_gate === "object"
           ? (planningSummary.action_retrieval_gate as Record<string, unknown>)
           : null,
-      firstStepRecommendation:
-        planningSummary.first_step_recommendation && typeof planningSummary.first_step_recommendation === "object"
-          ? (planningSummary.first_step_recommendation as Record<string, unknown>)
+      continuityGuidance:
+        planningSummary.continuity_guidance && typeof planningSummary.continuity_guidance === "object"
+          ? (planningSummary.continuity_guidance as Record<string, unknown>)
           : null,
     });
     const tenantIdOut = recallOut.tenant_id ?? recallParsed.tenant_id ?? env.MEMORY_TENANT_ID;
@@ -1984,8 +1964,6 @@ export function registerMemoryContextRuntimeRoutes(args: {
         delegation_records: persistedDelegationRecords,
       }),
       planning_summary: planningSummary,
-      kickoff_recommendation: buildKickoffRecommendation(planningSummary.first_step_recommendation),
-      runtime_context_packet: buildRuntimeContextPacket("planning_context", planningSummary),
       aionis_guide_packet: buildAionisGuidePacketForContextRoute({
         tenantId: tenantIdOut,
         scope: recallOut.scope,
@@ -2215,9 +2193,9 @@ export function registerMemoryContextRuntimeRoutes(args: {
         assemblySummary.action_retrieval_gate && typeof assemblySummary.action_retrieval_gate === "object"
           ? (assemblySummary.action_retrieval_gate as Record<string, unknown>)
           : null,
-      firstStepRecommendation:
-        assemblySummary.first_step_recommendation && typeof assemblySummary.first_step_recommendation === "object"
-          ? (assemblySummary.first_step_recommendation as Record<string, unknown>)
+      continuityGuidance:
+        assemblySummary.continuity_guidance && typeof assemblySummary.continuity_guidance === "object"
+          ? (assemblySummary.continuity_guidance as Record<string, unknown>)
           : null,
     });
     const tenantIdOut = recallOut.tenant_id ?? recallParsed.tenant_id ?? env.MEMORY_TENANT_ID;
@@ -2316,8 +2294,6 @@ export function registerMemoryContextRuntimeRoutes(args: {
         delegation_records: persistedDelegationRecords,
       }),
       assembly_summary: assemblySummary,
-      kickoff_recommendation: buildKickoffRecommendation(assemblySummary.first_step_recommendation),
-      runtime_context_packet: buildRuntimeContextPacket("context_assemble", assemblySummary),
       aionis_guide_packet: buildAionisGuidePacketForContextRoute({
         tenantId: tenantIdOut,
         scope: recallOut.scope,

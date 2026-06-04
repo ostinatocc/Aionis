@@ -14,14 +14,12 @@ import { normalizeContractTrust } from "./contract-trust.js";
 import {
   EvolutionInspectRequest,
   EvolutionInspectResponseSchema,
-  KickoffRecommendationResponseSchema,
   PolicyLearningControlApplyPayloadSchema,
   PolicyLearningControlApplyResultSchema,
   PolicyLearningControlContractSchema,
   PolicyReviewSummarySchema,
   type EvolutionInspectInput,
   type EvolutionInspectResponse,
-  type KickoffRecommendationResponse,
   type PolicyContract,
   type PolicyLearningControlApplyPayload,
   type PolicyLearningControlApplyResult,
@@ -30,7 +28,6 @@ import {
 } from "./schemas.js";
 import {
   buildExperienceIntelligenceResponse,
-  buildKickoffRecommendationResponseFromExperience,
 } from "./experience-intelligence.js";
 import { selectTools } from "./tools-select.js";
 
@@ -39,7 +36,6 @@ type EvolutionInspectArtifacts = {
   introspection: Awaited<ReturnType<typeof buildExecutionMemoryIntrospectionLite>>;
   tools: Awaited<ReturnType<typeof selectTools>>;
   experience: ReturnType<typeof buildExperienceIntelligenceResponse>;
-  kickoff: KickoffRecommendationResponse;
 };
 
 type EvolutionInspectComputed = {
@@ -490,8 +486,7 @@ async function buildEvolutionInspectArtifacts(args: {
       limitCandidates: [parsed.workflow_limit],
     }),
   });
-  const kickoff = buildKickoffRecommendationResponseFromExperience(experience);
-  return { parsed, introspection, tools, experience, kickoff };
+  return { parsed, introspection, tools, experience };
 }
 
 async function rebuildEvolutionInspectArtifactsLite(args: {
@@ -539,13 +534,11 @@ async function rebuildEvolutionInspectArtifactsLite(args: {
       limitCandidates: [args.parsed.workflow_limit],
     }),
   });
-  const kickoff = buildKickoffRecommendationResponseFromExperience(experience);
   return {
     parsed: args.parsed,
     introspection,
     tools: args.tools,
     experience,
-    kickoff,
   };
 }
 
@@ -637,7 +630,7 @@ function buildEvolutionInspectResponse(
   artifacts: EvolutionInspectArtifacts,
   computed: EvolutionInspectComputed = buildEvolutionInspectComputed(artifacts),
 ): EvolutionInspectResponse {
-  const { parsed, introspection, experience, kickoff } = artifacts;
+  const { parsed, introspection, experience } = artifacts;
   return EvolutionInspectResponseSchema.parse({
     summary_version: "evolution_inspect_v1",
     tenant_id: experience.tenant_id,
@@ -651,7 +644,6 @@ function buildEvolutionInspectResponse(
     policy_learning_control_contract: computed.policyLearningControlContract,
     policy_learning_control_apply_payload: computed.policyLearningControlApplyPayload,
     policy_learning_control_apply_result: computed.policyLearningControlApplyResult,
-    kickoff_recommendation: kickoff,
     execution_introspection: introspection,
     evolution_summary: {
       summary_version: "evolution_inspect_summary_v1",

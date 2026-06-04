@@ -6,12 +6,11 @@ import type {
   ActionPacketSummary,
   AuthorityVisibilitySummary,
   ContractTrust,
-  FirstStepRecommendation,
-  KickoffRecommendation,
+  ContinuityGuidance,
   PlannerPacketSummarySurface,
   RuntimeEditBoundaryRecommendation,
   RuntimeEditFailurePhase,
-  RuntimeFirstActionRecommendation,
+  RuntimeContinuitySignal,
   RuntimeEditBoundaryContext,
   RuntimeVerificationRepairFileHint,
   RuntimeVerificationRepairRecommendation,
@@ -149,11 +148,11 @@ function pickPreferredRehydrationCandidate(
 
 function buildDefaultGateInstruction(args: {
   gateAction: ActionRetrievalGateAction;
-  firstStepRecommendation: FirstStepRecommendation | null;
+  continuityGuidance: ContinuityGuidance | null;
   preferredRehydration: RehydrationCandidateLike | null;
 }): string | null {
-  const selectedTool = args.firstStepRecommendation?.selected_tool ?? null;
-  const filePath = args.firstStepRecommendation?.file_path ?? null;
+  const selectedTool = args.continuityGuidance?.selected_tool ?? null;
+  const filePath = args.continuityGuidance?.file_path ?? null;
   const rehydrationLabel =
     args.preferredRehydration?.title
     ?? args.preferredRehydration?.summary
@@ -186,13 +185,13 @@ function buildDefaultGateInstruction(args: {
 
 function shouldEscalateTaskStartFromGate(args: {
   gateAction: ActionRetrievalGateAction;
-  firstStepRecommendation: FirstStepRecommendation | null;
+  continuityGuidance: ContinuityGuidance | null;
 }): boolean {
-  if (!args.firstStepRecommendation?.selected_tool) return true;
+  if (!args.continuityGuidance?.selected_tool) return true;
   if (args.gateAction !== "inspect_context") return true;
   return (
-    args.firstStepRecommendation.source_kind === "experience_intelligence"
-    && !args.firstStepRecommendation.file_path
+    args.continuityGuidance.source_kind === "experience_intelligence"
+    && !args.continuityGuidance.file_path
   );
 }
 
@@ -355,7 +354,7 @@ function firstNonEmptyString(...values: Array<string | null | undefined>): strin
   return null;
 }
 
-function collectRuntimeFirstActionTargetFiles(args: {
+function collectRuntimeContinuitySignalTargetFiles(args: {
   executionContract: ExecutionContractV1 | null;
   filePath: string | null;
 }): string[] {
@@ -1420,7 +1419,7 @@ function buildRuntimeVerificationRepairRecommendation(args: {
   ].filter((value): value is string => !!value), 32, 800);
   const instruction = truncateContractText(nextActions.join(" "), 2000);
   return {
-    summary_version: "kickoff_verification_repair_v1",
+    summary_version: "runtime_verification_repair_v1",
     priority: "required",
     contract_trust: args.contractTrust,
     failed_verifier_count: signals.length,
@@ -1461,7 +1460,7 @@ function buildRuntimeEditBoundaryRecommendation(args: {
   const contractTargetFiles =
     args.contractTrust === "observational"
       ? []
-      : collectRuntimeFirstActionTargetFiles({
+      : collectRuntimeContinuitySignalTargetFiles({
           executionContract: args.executionContract,
           filePath: args.filePath,
         });
@@ -1532,7 +1531,7 @@ function buildRuntimeEditBoundaryRecommendation(args: {
   ].filter((value): value is string => !!value);
 
   return {
-    summary_version: "kickoff_edit_boundary_v1",
+    summary_version: "runtime_edit_boundary_v1",
     contract_trust: args.contractTrust,
     allowed_edit_files: allowedEditFiles,
     forbidden_edit_files: forbiddenEditFiles,
@@ -1551,7 +1550,7 @@ function buildRuntimeEditBoundaryRecommendation(args: {
   };
 }
 
-function buildRuntimeFirstActionRecommendation(args: {
+function buildRuntimeContinuitySignal(args: {
   sourceKind: "experience_intelligence" | "tool_selection";
   historyApplied: boolean;
   contractTrust: ContractTrust;
@@ -1562,8 +1561,8 @@ function buildRuntimeFirstActionRecommendation(args: {
   preActionGate?: ActionIntelligencePreActionGateSummary | null;
   authorityBlocked: boolean;
   authorityPrimaryBlocker: string | null;
-}): RuntimeFirstActionRecommendation | null {
-  const targetFiles = collectRuntimeFirstActionTargetFiles({
+}): RuntimeContinuitySignal | null {
+  const targetFiles = collectRuntimeContinuitySignalTargetFiles({
     executionContract: args.executionContract,
     filePath: args.filePath,
   });
@@ -1578,7 +1577,7 @@ function buildRuntimeFirstActionRecommendation(args: {
   if (args.authorityBlocked || preActionGate?.authority_blocked === true) {
     const blocker = args.authorityPrimaryBlocker ?? "authority evidence is insufficient";
     return {
-      summary_version: "kickoff_first_action_v1",
+      summary_version: "runtime_continuity_signal_v1",
       action: "request_operator_review",
       priority: "required",
       contract_trust: args.contractTrust,
@@ -1595,7 +1594,7 @@ function buildRuntimeFirstActionRecommendation(args: {
 
   if (gateAction === "request_operator_review" || gateAction === "rehydrate_payload") {
     return {
-      summary_version: "kickoff_first_action_v1",
+      summary_version: "runtime_continuity_signal_v1",
       action: gateAction,
       priority: "required",
       contract_trust: args.contractTrust,
@@ -1620,7 +1619,7 @@ function buildRuntimeFirstActionRecommendation(args: {
 
   if (gateAction === "widen_recall") {
     return {
-      summary_version: "kickoff_first_action_v1",
+      summary_version: "runtime_continuity_signal_v1",
       action: "widen_recall",
       priority: "required",
       contract_trust: args.contractTrust,
@@ -1640,7 +1639,7 @@ function buildRuntimeFirstActionRecommendation(args: {
       args.sourceKind === "experience_intelligence"
       && args.historyApplied;
     return {
-      summary_version: "kickoff_first_action_v1",
+      summary_version: "runtime_continuity_signal_v1",
       action: "read_file",
       priority: required ? "required" : "recommended",
       contract_trust: args.contractTrust,
@@ -1657,7 +1656,7 @@ function buildRuntimeFirstActionRecommendation(args: {
 
   if (gateAction === "inspect_context") {
     return {
-      summary_version: "kickoff_first_action_v1",
+      summary_version: "runtime_continuity_signal_v1",
       action: gateAction,
       priority: "recommended",
       contract_trust: args.contractTrust,
@@ -1673,7 +1672,7 @@ function buildRuntimeFirstActionRecommendation(args: {
 
   if (learnedTool) {
     return {
-      summary_version: "kickoff_first_action_v1",
+      summary_version: "runtime_continuity_signal_v1",
       action: "inspect_context",
       priority: "recommended",
       contract_trust: args.contractTrust,
@@ -1706,7 +1705,7 @@ function applyContractTrustGuard(args: {
   authorityPrimaryBlocker?: string | null;
   editBoundaryContext?: RuntimeEditBoundaryContext | null;
   executionEvidence?: unknown;
-}): FirstStepRecommendation {
+}): ContinuityGuidance {
   const authorityBlocked = args.authorityBlocked === true;
   const effectiveNextAction = authorityBlocked
     ? buildAuthorityInspectionNextAction({
@@ -1743,7 +1742,7 @@ function applyContractTrustGuard(args: {
         next_action: effectiveNextAction,
       }
     : trustGuardedContract;
-  const firstAction = buildRuntimeFirstActionRecommendation({
+  const continuitySignal = buildRuntimeContinuitySignal({
     sourceKind: args.sourceKind,
     historyApplied: args.historyApplied,
     contractTrust,
@@ -1773,7 +1772,7 @@ function applyContractTrustGuard(args: {
       history_applied: args.historyApplied,
       contract_trust: contractTrust,
       execution_contract_v1: effectiveExecutionContract,
-      first_action_v1: firstAction,
+      continuity_signal_v1: continuitySignal,
       edit_boundary_v1: editBoundary,
       verification_repair_v1: verificationRepair,
       selected_tool: args.selectedTool,
@@ -1790,7 +1789,7 @@ function applyContractTrustGuard(args: {
     history_applied: args.historyApplied,
     contract_trust: contractTrust,
     execution_contract_v1: effectiveExecutionContract,
-    first_action_v1: firstAction,
+    continuity_signal_v1: continuitySignal,
     edit_boundary_v1: editBoundary,
     verification_repair_v1: verificationRepair,
     selected_tool: args.selectedTool,
@@ -1936,7 +1935,7 @@ export function buildPlannerExplanation(args: {
 }
 
 export function buildActionRetrievalGate(args: {
-  firstStepRecommendation: FirstStepRecommendation | null;
+  continuityGuidance: ContinuityGuidance | null;
   plannerSurface: PlannerPacketSummarySurface;
   preActionGate?: ActionIntelligencePreActionGateSummary | null;
   uncertainty: ActionRetrievalUncertaintySummary | null;
@@ -1963,16 +1962,16 @@ export function buildActionRetrievalGate(args: {
     gate_action: gateAction,
     escalates_task_start: shouldEscalateTaskStartFromGate({
       gateAction,
-      firstStepRecommendation: args.firstStepRecommendation,
+      continuityGuidance: args.continuityGuidance,
     }),
     confidence,
     primary_reason: primaryReason,
     recommended_actions: recommendedActions,
     instruction:
-      args.firstStepRecommendation?.next_action
+      args.continuityGuidance?.next_action
       ?? buildDefaultGateInstruction({
         gateAction,
-        firstStepRecommendation: args.firstStepRecommendation,
+        continuityGuidance: args.continuityGuidance,
         preferredRehydration,
       }),
     rehydration_candidate_count: safeRecordArray(args.plannerSurface.rehydration_candidates).length,
@@ -1980,12 +1979,12 @@ export function buildActionRetrievalGate(args: {
   };
 }
 
-export function buildFirstStepRecommendation(args: {
+export function buildContinuityGuidanceSummary(args: {
   selectedTool: string | null;
   experienceSummary: ExperienceRecommendationProjectionLike | null;
   editBoundaryContext?: RuntimeEditBoundaryContext | null;
   executionEvidence?: unknown;
-}): FirstStepRecommendation | null {
+}): ContinuityGuidance | null {
   const experience = args.experienceSummary;
   if (
     experience
@@ -2050,84 +2049,4 @@ export function buildFirstStepRecommendation(args: {
     editBoundaryContext: args.editBoundaryContext ?? null,
     executionEvidence: args.executionEvidence,
   });
-}
-
-export function buildKickoffRecommendation(
-  firstStepRecommendation: FirstStepRecommendation | null | undefined,
-): KickoffRecommendation | null {
-  if (!firstStepRecommendation) return null;
-  return {
-    source_kind: firstStepRecommendation.source_kind,
-    history_applied: firstStepRecommendation.history_applied,
-    contract_trust: firstStepRecommendation.contract_trust,
-    execution_contract_v1: firstStepRecommendation.execution_contract_v1,
-    first_action_v1: firstStepRecommendation.first_action_v1,
-    edit_boundary_v1: firstStepRecommendation.edit_boundary_v1,
-    verification_repair_v1: firstStepRecommendation.verification_repair_v1,
-    selected_tool: firstStepRecommendation.selected_tool,
-    task_family: firstStepRecommendation.task_family,
-    workflow_signature: firstStepRecommendation.workflow_signature,
-    policy_memory_id: firstStepRecommendation.policy_memory_id,
-    file_path: firstStepRecommendation.file_path,
-    next_action: firstStepRecommendation.next_action,
-  };
-}
-
-export function buildKickoffRecommendationFromExperience(args: {
-  historyApplied: boolean;
-  contractTrustHint: ContractTrust | null;
-  selectedTool: string | null;
-  taskFamily: string | null;
-  workflowSignature: string | null;
-  policyMemoryId: string | null;
-  filePath: string | null;
-  nextAction: string | null;
-  executionContract: ExecutionContractV1 | null;
-  uncertainty?: ActionRetrievalUncertaintySummary | null;
-  editBoundaryContext?: RuntimeEditBoundaryContext | null;
-  executionEvidence?: unknown;
-}): KickoffRecommendation | null {
-  if (
-    !args.selectedTool
-    && !args.filePath
-    && !args.nextAction
-    && !args.uncertainty
-    && !hasVerificationFailureEvidence(args.executionEvidence)
-  ) return null;
-  const firstStep = applyContractTrustGuard({
-    sourceKind: args.historyApplied ? "experience_intelligence" : "tool_selection",
-    historyApplied: args.historyApplied,
-    explicitTrust: args.contractTrustHint,
-    selectedTool: args.selectedTool,
-    taskFamily: args.taskFamily,
-    workflowSignature: args.workflowSignature,
-    policyMemoryId: args.policyMemoryId,
-    filePath: args.filePath,
-    executionContract: args.executionContract,
-    nextAction: buildUncertaintyAwareNextAction({
-      sourceKind: args.historyApplied ? "experience_intelligence" : "tool_selection",
-      selectedTool: args.selectedTool,
-      filePath: args.filePath,
-      nextAction: args.nextAction,
-      uncertainty: args.uncertainty ?? null,
-    }),
-    uncertainty: args.uncertainty ?? null,
-    editBoundaryContext: args.editBoundaryContext ?? null,
-    executionEvidence: args.executionEvidence,
-  });
-  return {
-    source_kind: firstStep.source_kind,
-    history_applied: firstStep.history_applied,
-    contract_trust: firstStep.contract_trust,
-    execution_contract_v1: firstStep.execution_contract_v1,
-    first_action_v1: firstStep.first_action_v1,
-    edit_boundary_v1: firstStep.edit_boundary_v1,
-    verification_repair_v1: firstStep.verification_repair_v1,
-    selected_tool: firstStep.selected_tool,
-    task_family: firstStep.task_family,
-    workflow_signature: firstStep.workflow_signature,
-    policy_memory_id: firstStep.policy_memory_id,
-    file_path: firstStep.file_path,
-    next_action: firstStep.next_action,
-  };
 }

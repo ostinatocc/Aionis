@@ -16,11 +16,11 @@ The formal product contract is [AIONIS_PRODUCT_CONTRACT.md](AIONIS_PRODUCT_CONTR
 6. learning-controlled promotion, suppression, and counter-evidence
 7. semantic forgetting and archive rehydration
 8. local Lite store-port decoupling
-9. compact runtime context packets that show how prior history changed the next run
+9. compact guide packets that show how prior history changed memory selection, workflow reuse, risk, and forgetting
 
 ## Out of Scope
 
-1. external agent framework products
+1. external host framework products
 2. hosted docs site
 3. inspector/playground/product UI
 4. Aionis Doc
@@ -31,7 +31,7 @@ The formal product contract is [AIONIS_PRODUCT_CONTRACT.md](AIONIS_PRODUCT_CONTR
 9. examples and sample surfaces
 10. removed real-agent runners tied to external frameworks
 11. release/dogfood flows tied to external frameworks
-12. ARC/benchmark-specific tracks
+12. benchmark-specific tracks
 
 ## Decision Rule
 
@@ -54,7 +54,7 @@ The focused Runtime has exactly four primary kernel capabilities:
 3. forgetting
 4. learning control
 
-The product-level effect of these four capabilities is history-shaped future behavior: future context packets, workflow reuse, verification posture, suppression, and forgetting decisions must be measurably different because of prior real execution evidence.
+The product-level effect of these four capabilities is history-shaped future behavior: future guide packets, workflow reuse, verification posture, suppression, and forgetting decisions must be measurably different because of prior real execution evidence.
 
 The capability id is `learning_control`. Routes, payloads, traces, env vars, and Runtime contracts use the learning-control vocabulary directly.
 
@@ -72,7 +72,7 @@ Focused Aionis must prove agent-visible improvement, not just store more memory.
 
 The executable effect evaluator lives in `src/kernel/effect-evaluator.ts`. It compares a baseline run with an Aionis-backed run across the four kernel capabilities:
 
-1. continuity: fewer repeated discovery steps, correct first action, recovered state facts, carried verified facts
+1. continuity: fewer repeated discovery steps, recovered state facts, carried verified facts, and earlier useful evidence recovery
 2. learning: workflow reuse, stable promotion, weak-evidence rejection, counter-evidence demotion
 3. forgetting: context precision, stale-memory suppression, archive rehydration only when needed
 4. learning control: evidence-gated authority, visible blocked authority, no unverified authority application

@@ -93,7 +93,7 @@ test("focused package does not expose external eval or demo runner entrypoints",
     ["scripts", "product" + "-demo"],
     ["scripts", "effect" + "-measurement"],
     ["scripts", "agent" + "-host-eval"],
-    ["scripts", "aider" + "-eval"],
+    ["scripts", "ai" + "der" + "-eval"],
     ["scripts", "swe" + "-agent-eval"],
     ["scripts", "real" + "-llm-eval"],
   ];

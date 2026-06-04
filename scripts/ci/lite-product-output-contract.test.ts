@@ -39,12 +39,6 @@ function validGuidePacket() {
       },
     ],
     guidance: {
-      first_action: {
-        action: "inspect src/index.ts around the failing branch",
-        reason: "Recovered execution state points to the failing branch.",
-        authority: "advisory",
-        uncertainty: "medium",
-      },
       workflow_candidates: [
         {
           workflow_id: "wf-1",
@@ -127,12 +121,12 @@ function validEffectReport() {
     history_impact: {
       changed_future_behavior: true,
       impact_direction: "positive",
-      changed_fields: ["guidance.first_action", "memory_lifecycle.suppressed_memory_ids"],
+      changed_fields: ["guidance.workflow_candidates", "memory_lifecycle.suppressed_memory_ids"],
       explanation: "Aionis skipped repeated discovery and suppressed stale memory.",
     },
     efficiency: {
       repeated_discovery_delta: -3,
-      first_useful_action_delta: -2,
+      useful_continuity_delta: -2,
       token_delta: -850,
       context_size_delta: -1200,
       recovery_step_delta: -1,
@@ -375,7 +369,6 @@ test("AionisMemoryPacket rejects raw memory leakage and loose fields", () => {
 test("AionisGuidePacket accepts compact authority-aware product output", () => {
   const parsed = AionisGuidePacketSchema.parse(validGuidePacket());
   assert.equal(parsed.contract_version, "aionis_guide_packet_v1");
-  assert.equal(parsed.guidance.first_action.authority, "advisory");
   assert.equal(parsed.memory_lifecycle.suppressed_memory_ids.length, 1);
   assert.equal(parsed.history_contributions.handoff.used, true);
   assert.equal(parsed.history_contributions.replay.source_count, 1);

@@ -19,7 +19,7 @@ It owns:
 
 It may produce:
 
-1. runtime context packets
+1. compact guide packets
 2. evidence reports
 3. learning candidates
 4. workflow lifecycle decisions
@@ -59,7 +59,7 @@ Local-only evidence can support development, but it cannot prove Aionis product 
 
 ## Runtime Output Shape
 
-Aionis should output a compact `runtime_context_packet`, not a large rule wall.
+Aionis should output a compact guide packet, not a large rule wall.
 
 The packet should include:
 

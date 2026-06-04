@@ -10,7 +10,7 @@ test("effect evaluator scores every focused kernel capability", () => {
   const scores = scoreAionisEffectObservation({
     continuity: {
       repeatedDiscoverySteps: 0,
-      firstActionCorrect: true,
+      continuityGuidanceCorrect: true,
       recoveredStateFacts: 3,
       expectedStateFacts: 3,
       verifiedFactsCarried: 2,
@@ -46,7 +46,7 @@ test("effect evaluator proves Aionis improves execution behavior over a baseline
     baseline: {
       continuity: {
         repeatedDiscoverySteps: 4,
-        firstActionCorrect: false,
+        continuityGuidanceCorrect: false,
         recoveredStateFacts: 1,
         expectedStateFacts: 4,
         verifiedFactsCarried: 0,
@@ -76,7 +76,7 @@ test("effect evaluator proves Aionis improves execution behavior over a baseline
     aionis: {
       continuity: {
         repeatedDiscoverySteps: 0,
-        firstActionCorrect: true,
+        continuityGuidanceCorrect: true,
         recoveredStateFacts: 4,
         expectedStateFacts: 4,
         verifiedFactsCarried: 2,
@@ -115,7 +115,7 @@ test("effect evaluator proves Aionis improves execution behavior over a baseline
   assert.equal(report.kernel_scores.every((score) => score.delta > 0), true);
   assert.equal(report.kernel_scores.every((score) => score.baseline_score < score.score), true);
   assert.equal(report.proof_summary.repeated_discovery_delta, 4);
-  assert.equal(report.proof_summary.first_action_improved, true);
+  assert.equal(report.proof_summary.continuity_guidance_improved, true);
   assert.equal(report.proof_summary.workflow_reuse_improved, true);
   assert.ok(report.proof_summary.context_precision_delta > 0.4);
   assert.equal(report.proof_summary.stale_memory_delta, 3);
@@ -126,7 +126,7 @@ test("effect evaluator warns when the run is safe but not measurably better", ()
   const safeRun = {
     continuity: {
       repeatedDiscoverySteps: 0,
-      firstActionCorrect: true,
+      continuityGuidanceCorrect: true,
       recoveredStateFacts: 3,
       expectedStateFacts: 3,
       verifiedFactsCarried: 2,
@@ -178,7 +178,7 @@ test("effect evaluator fails when weak evidence becomes authority", () => {
     aionis: {
       continuity: {
         repeatedDiscoverySteps: 0,
-        firstActionCorrect: true,
+        continuityGuidanceCorrect: true,
         recoveredStateFacts: 2,
         expectedStateFacts: 2,
         verifiedFactsCarried: 1,
@@ -223,7 +223,7 @@ test("effect evaluator fails when forgetting allows stale context bloat", () => 
     aionis: {
       continuity: {
         repeatedDiscoverySteps: 0,
-        firstActionCorrect: true,
+        continuityGuidanceCorrect: true,
         recoveredStateFacts: 3,
         expectedStateFacts: 3,
         verifiedFactsCarried: 1,

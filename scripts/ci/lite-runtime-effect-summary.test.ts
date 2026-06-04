@@ -169,7 +169,7 @@ test("runtime effect summary measures persisted Runtime evidence without claimin
     assert.equal(summary.token_context.average_token_budget, 8000);
     assert.equal(summary.token_context.context_items_reduced_count, 7);
     assert.ok(summary.token_context.primary_savings_levers.includes("forgetting"));
-    assert.equal(summary.continuity.first_action_ready_signal_count, 1);
+    assert.equal(summary.continuity.continuity_ready_signal_count, 1);
     assert.equal(summary.verification.verifier_success_count, 1);
     assert.equal(summary.verification.verifier_failure_count, 0);
     assert.equal(summary.learning.workflow_reuse_success_count, 1);

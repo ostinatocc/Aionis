@@ -1274,9 +1274,9 @@ export const ActionRetrievalRequest = ExperienceIntelligenceRequest;
 
 export type ActionRetrievalInput = z.infer<typeof ActionRetrievalRequest>;
 
-export const KickoffRecommendationRequest = ExperienceIntelligenceRequest;
+export const ContinuityGuidanceRequest = ExperienceIntelligenceRequest;
 
-export type KickoffRecommendationInput = z.infer<typeof KickoffRecommendationRequest>;
+export type ContinuityGuidanceInput = z.infer<typeof ContinuityGuidanceRequest>;
 
 export const ContinuityFocusItemSchema = z.object({
   source_kind: z.string(),
@@ -1979,7 +1979,7 @@ export const RuntimeEffectSummaryV1Schema = z.object({
   continuity: z.object({
     repeated_discovery_count: z.number().int().min(0),
     repeated_failed_action_count: z.number().int().min(0),
-    first_action_ready_signal_count: z.number().int().min(0),
+    continuity_ready_signal_count: z.number().int().min(0),
   }).strict(),
   verification: z.object({
     verifier_success_count: z.number().int().min(0),
@@ -2451,22 +2451,7 @@ export const ExperienceIntelligenceResponseSchema = z.object({
 
 export type ExperienceIntelligenceResponse = z.infer<typeof ExperienceIntelligenceResponseSchema>;
 
-export const KickoffRecommendationResponseSchema = z.object({
-  summary_version: z.literal("kickoff_recommendation_v1"),
-  tenant_id: z.string(),
-  scope: z.string(),
-  query_text: z.string(),
-  kickoff_recommendation: z.lazy(() => KickoffRecommendationSchema).nullable(),
-  action_retrieval_uncertainty: ActionRetrievalUncertaintySchema.nullable().optional(),
-  policy_contract: PolicyContractSchema.nullable().default(null),
-  rationale: z.object({
-    summary: z.string(),
-  }).passthrough(),
-}).passthrough();
-
-export type KickoffRecommendationResponse = z.infer<typeof KickoffRecommendationResponseSchema>;
-
-export const RuntimeFirstActionKindSchema = z.enum([
+export const RuntimeContinuitySignalKindSchema = z.enum([
   "read_file",
   "inspect_context",
   "widen_recall",
@@ -2474,11 +2459,11 @@ export const RuntimeFirstActionKindSchema = z.enum([
   "request_operator_review",
 ]);
 
-export type RuntimeFirstActionKind = z.infer<typeof RuntimeFirstActionKindSchema>;
+export type RuntimeContinuitySignalKind = z.infer<typeof RuntimeContinuitySignalKindSchema>;
 
-export const RuntimeFirstActionRecommendationSchema = z.object({
-  summary_version: z.literal("kickoff_first_action_v1"),
-  action: RuntimeFirstActionKindSchema,
+export const RuntimeContinuitySignalSchema = z.object({
+  summary_version: z.literal("runtime_continuity_signal_v1"),
+  action: RuntimeContinuitySignalKindSchema,
   priority: z.enum(["required", "recommended"]),
   contract_trust: ContractTrustSchema,
   tool_name: z.string().nullable(),
@@ -2489,10 +2474,10 @@ export const RuntimeFirstActionRecommendationSchema = z.object({
   instruction: z.string(),
 }).strict();
 
-export type RuntimeFirstActionRecommendation = z.infer<typeof RuntimeFirstActionRecommendationSchema>;
+export type RuntimeContinuitySignal = z.infer<typeof RuntimeContinuitySignalSchema>;
 
 export const RuntimeEditBoundaryRecommendationSchema = z.object({
-  summary_version: z.literal("kickoff_edit_boundary_v1"),
+  summary_version: z.literal("runtime_edit_boundary_v1"),
   contract_trust: ContractTrustSchema,
   allowed_edit_files: z.array(z.string()),
   forbidden_edit_files: z.array(z.string()),
@@ -2587,7 +2572,7 @@ export const RuntimeEditFailurePhaseSchema = z.object({
 }).strict();
 
 export const RuntimeVerificationRepairRecommendationSchema = z.object({
-  summary_version: z.literal("kickoff_verification_repair_v1"),
+  summary_version: z.literal("runtime_verification_repair_v1"),
   priority: z.enum(["required", "recommended"]),
   contract_trust: ContractTrustSchema,
   failed_verifier_count: z.number().int().min(0),
@@ -2604,28 +2589,12 @@ export const RuntimeVerificationRepairRecommendationSchema = z.object({
 
 export type RuntimeVerificationRepairRecommendation = z.infer<typeof RuntimeVerificationRepairRecommendationSchema>;
 
-export const FirstStepRecommendationSchema = z.object({
+export const ContinuityGuidanceSchema = z.object({
   source_kind: z.enum(["experience_intelligence", "tool_selection"]),
   history_applied: z.boolean(),
   contract_trust: ContractTrustSchema,
   execution_contract_v1: ExecutionContractV1Schema.nullable().default(null),
-  first_action_v1: RuntimeFirstActionRecommendationSchema.nullable().default(null),
-  edit_boundary_v1: RuntimeEditBoundaryRecommendationSchema.nullable().default(null),
-  verification_repair_v1: RuntimeVerificationRepairRecommendationSchema.nullable().default(null),
-  selected_tool: z.string().nullable(),
-  task_family: z.string().nullable(),
-  workflow_signature: z.string().nullable(),
-  policy_memory_id: z.string().nullable(),
-  file_path: z.string().nullable(),
-  next_action: z.string().nullable(),
-});
-
-export const KickoffRecommendationSchema = z.object({
-  source_kind: z.enum(["experience_intelligence", "tool_selection"]),
-  history_applied: z.boolean(),
-  contract_trust: ContractTrustSchema,
-  execution_contract_v1: ExecutionContractV1Schema.nullable().default(null),
-  first_action_v1: RuntimeFirstActionRecommendationSchema.nullable().default(null),
+  continuity_signal_v1: RuntimeContinuitySignalSchema.nullable().default(null),
   edit_boundary_v1: RuntimeEditBoundaryRecommendationSchema.nullable().default(null),
   verification_repair_v1: RuntimeVerificationRepairRecommendationSchema.nullable().default(null),
   selected_tool: z.string().nullable(),
@@ -3245,7 +3214,6 @@ export const EvolutionInspectResponseSchema = z.object({
   policy_learning_control_contract: PolicyLearningControlContractSchema,
   policy_learning_control_apply_payload: PolicyLearningControlApplyPayloadSchema.nullable().default(null),
   policy_learning_control_apply_result: PolicyLearningControlApplyResultSchema.nullable().default(null),
-  kickoff_recommendation: KickoffRecommendationResponseSchema,
   execution_introspection: ExecutionMemoryIntrospectionResponseSchema,
   evolution_summary: EvolutionInspectSummarySchema,
 }).passthrough();
@@ -3574,7 +3542,7 @@ export const HistoryImpactNextRunChangeSchema = z.enum([
   "memory_suppressed_or_forgotten",
   "rehydration_available",
   "learning_control_limited_authority",
-  "first_action_shaped_by_history",
+  "continuity_signal_shaped_by_history",
   "runtime_entropy_visible",
 ]);
 
@@ -3631,7 +3599,7 @@ export type HistoryImpactSummary = z.infer<typeof HistoryImpactSummarySchema>;
 export const PlanningSummaryContractSchema = z.object({
   summary_version: z.literal("planning_summary_v1"),
   planner_explanation: z.string().nullable(),
-  first_step_recommendation: FirstStepRecommendationSchema.nullable().optional(),
+  continuity_guidance: ContinuityGuidanceSchema.nullable().optional(),
   action_intelligence_pre_action_gate: ActionIntelligenceRuntimeGateSchema.nullable().optional(),
   runtime_entropy_profile: RuntimeEntropyProfileV1Schema.nullable().optional(),
   runtime_entropy_controls: RuntimeEntropyControlsV1Schema.nullable().optional(),
@@ -3661,7 +3629,7 @@ export type PlanningSummaryContract = z.infer<typeof PlanningSummaryContractSche
 export const AssemblySummaryContractSchema = z.object({
   summary_version: z.literal("assembly_summary_v1"),
   planner_explanation: z.string().nullable(),
-  first_step_recommendation: FirstStepRecommendationSchema.nullable().optional(),
+  continuity_guidance: ContinuityGuidanceSchema.nullable().optional(),
   action_intelligence_pre_action_gate: ActionIntelligenceRuntimeGateSchema.nullable().optional(),
   runtime_entropy_profile: RuntimeEntropyProfileV1Schema.nullable().optional(),
   runtime_entropy_controls: RuntimeEntropyControlsV1Schema.nullable().optional(),
@@ -3696,7 +3664,7 @@ export const ContextOperatorProjectionSchema = z.object({
   action_retrieval_gate: ActionRetrievalGateSummarySchema.optional(),
   adaptive_guidance: AdaptiveGuidanceOverlayV1Schema.optional(),
   experience_adaptation_trace: ExecutionExperienceAdaptationTraceV1Schema.optional(),
-  first_action_v1: RuntimeFirstActionRecommendationSchema.optional(),
+  continuity_signal_v1: RuntimeContinuitySignalSchema.optional(),
   edit_boundary_v1: RuntimeEditBoundaryRecommendationSchema.optional(),
   action_hints: z.array(z.object({
     summary_version: z.literal("context_operator_action_hint_v1"),
@@ -3719,17 +3687,6 @@ export const ContextOperatorProjectionSchema = z.object({
 
 export type ContextOperatorProjection = z.infer<typeof ContextOperatorProjectionSchema>;
 
-export const RuntimeContextPacketContractSchema = z.object({
-  packet_version: z.literal("runtime_context_packet_v1"),
-  surface: z.enum(["planning_context", "context_assemble"]),
-  selected_tool: z.string().nullable(),
-  context_est_tokens: z.number().min(0),
-  kickoff_recommendation: KickoffRecommendationSchema.nullable().optional(),
-  history_impact_summary: HistoryImpactSummarySchema,
-}).strict();
-
-export type RuntimeContextPacketContract = z.infer<typeof RuntimeContextPacketContractSchema>;
-
 const PlannerPacketRouteContractBaseSchema = z.object({
   recall: z.object({
     aionis_memory_packet: AionisMemoryPacketSchema,
@@ -3739,14 +3696,12 @@ const PlannerPacketRouteContractBaseSchema = z.object({
   workflow_signals: z.array(PlannerPacketEntrySchema),
   execution_kernel: ExecutionKernelPacketSummarySchema,
   execution_summary: ExecutionSummaryV1Schema,
-  runtime_context_packet: RuntimeContextPacketContractSchema,
   aionis_guide_packet: AionisGuidePacketSchema,
   aionis_learning_packet: AionisLearningPacketSchema,
 }).passthrough();
 
 export const PlanningContextRouteContractSchema = PlannerPacketRouteContractBaseSchema.extend({
   planning_summary: PlanningSummaryContractSchema,
-  kickoff_recommendation: KickoffRecommendationSchema.nullable().optional(),
   operator_projection: ContextOperatorProjectionSchema.optional(),
 });
 
@@ -3754,7 +3709,6 @@ export type PlanningContextRouteContract = z.infer<typeof PlanningContextRouteCo
 
 export const ContextAssembleRouteContractSchema = PlannerPacketRouteContractBaseSchema.extend({
   assembly_summary: AssemblySummaryContractSchema,
-  kickoff_recommendation: KickoffRecommendationSchema.nullable().optional(),
   operator_projection: ContextOperatorProjectionSchema.optional(),
 });
 

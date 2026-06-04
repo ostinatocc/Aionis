@@ -3,7 +3,7 @@
 Status: focused Runtime product inventory
 
 This document inventories product capabilities that are implemented inside `src/`.
-It is not an eval runner plan and it must not introduce external Agent, repository,
+It is not an eval runner plan and it must not introduce external host, repository,
 benchmark, or task-specific behavior.
 
 ## Product Position
@@ -37,8 +37,8 @@ forget or suppress stale memory, and show how history changed future behavior.
 
 ## Non-Product Surfaces
 
-The focused Runtime product tree must not contain external Agent framework runners,
-GitHub issue runners, benchmark-specific tracks, or task-specific validation hosts.
+The focused Runtime product tree must not contain external validation runners,
+benchmark-specific tracks, or task-specific validation hosts.
 Those can exist in a separate evaluation workspace, but not as package scripts,
 product docs, or Runtime source behavior.
 

@@ -178,7 +178,7 @@ test("product measure facade returns a product effect report without external ev
         baseline: {
           continuity: {
             repeatedDiscoverySteps: 4,
-            firstActionCorrect: false,
+            continuityGuidanceCorrect: false,
             recoveredStateFacts: 1,
             expectedStateFacts: 4,
           },
@@ -200,7 +200,7 @@ test("product measure facade returns a product effect report without external ev
         aionis: {
           continuity: {
             repeatedDiscoverySteps: 1,
-            firstActionCorrect: true,
+            continuityGuidanceCorrect: true,
             recoveredStateFacts: 4,
             expectedStateFacts: 4,
           },
@@ -302,6 +302,10 @@ test("product observe auto-structures user-level workflow input into execution m
     assert.equal(guide.statusCode, 200);
     const guideBody = guide.json();
     assert.equal(guideBody.memory_packet.memory_family, "execution");
+    assert.equal("learning_packet" in guideBody, false);
+    assert.equal(["runtime", "context", "packet"].join("_") in guideBody, false);
+    assert.equal(["continuity guidance", "recommendation"].join("_") in guideBody, false);
+    assert.equal("cost_signals" in guideBody, false);
     assert.ok(
       guideBody.memory_packet.relevant_memories.some((entry: Record<string, unknown>) =>
         entry.domain === "execution"

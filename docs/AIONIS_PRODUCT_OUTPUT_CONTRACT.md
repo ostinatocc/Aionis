@@ -38,7 +38,7 @@ The goal is to stop exposing dozens of internal Runtime routes as product concep
 
 | Output | Product Action | Purpose |
 |---|---|---|
-| `AionisGuidePacket` | `guide` | Convert execution memory into a compact, actionable, authority-aware context packet. |
+| `AionisGuidePacket` | `guide` | Convert execution memory into a compact, evidence-backed, authority-aware guide packet. |
 | `AionisMemoryPacket` | `recall` | Convert ordinary and execution recall into an evidence-scoped cognitive memory packet. |
 | `AionisLearningPacket` | `learn` | Convert learning, promotion, demotion, forgetting, and learning-control signals into a scoped learning state packet. |
 | `AionisEffectReport` | `measure` | Prove whether historical memory changed the run and whether that change was positive. |
@@ -249,12 +249,6 @@ type AionisGuidePacket = {
     confidence: number;
   }>;
   guidance: {
-    first_action: {
-      action: string | null;
-      reason: string | null;
-      authority: "trusted" | "advisory" | "candidate" | "blocked" | "none";
-      uncertainty: "low" | "medium" | "high";
-    };
     workflow_candidates: Array<{
       workflow_id: string;
       title: string;
@@ -319,7 +313,6 @@ type AionisGuidePacket = {
 | `task` | execution packet, handoff, trajectory compile | `src/execution/*`, `src/memory/handoff.ts`, `src/memory/trajectory-compile*.ts` |
 | `recovered_state` | handoff recover, execution state transitions, resume pack | `src/routes/handoff.ts`, `src/execution/state-store.ts`, `src/memory/agent-memory-inspect-core.ts` |
 | `proven_facts` | execution evidence, provenance, verifier surface | `src/memory/execution-evidence.ts`, `src/memory/execution-provenance.ts`, `src/execution/verification.ts` |
-| `first_action` | kickoff recommendation, planning summary, experience intelligence | `src/app/planning-summary*.ts`, `src/memory/experience-intelligence.ts` |
 | `workflow_candidates` | workflow write projection, replay learning, promotion evidence | `src/memory/workflow-write-projection.ts`, `src/memory/replay*.ts`, `src/memory/promotion-evidence-ledger.ts` |
 | `tool_preferences` | tool selection memory, pattern trust, policy memory | `src/memory/tools-*.ts`, `src/memory/pattern-trust-shaping.ts`, `src/memory/policy-memory.ts` |
 | `memory_lifecycle` | semantic forgetting, suppression, archive relocation, rehydration | `src/kernel/forgetting-kernel.ts`, `src/memory/lifecycle-lite.ts`, `src/memory/rehydrate-anchor.ts` |
@@ -333,7 +326,6 @@ type AionisGuidePacket = {
 |---|---|
 | proven facts and their sources | raw chat transcript |
 | resumable state and target files | full memory graph dump |
-| first action with authority and uncertainty | semantic patch content |
 | trusted/advisory/candidate/blocked status | hard task-specific rules |
 | suppressed/archive/rehydration state | replay repair as product promise |
 | negative-transfer risk | benchmark-specific action semantics |
@@ -493,7 +485,7 @@ type AionisEffectReport = {
   };
   efficiency: {
     repeated_discovery_delta?: number | null;
-    first_useful_action_delta?: number | null;
+    useful_continuity_delta?: number | null;
     token_delta?: number | null;
     context_size_delta?: number | null;
     recovery_step_delta?: number | null;
