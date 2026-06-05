@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  AionisAgentContextSchema,
   AionisEffectReportSchema,
   AionisGuidePacketSchema,
   AionisLearningPacketSchema,
@@ -21,6 +22,35 @@ function validGuidePacket() {
       run_id: "run-2",
       task_signature: "fix-build",
       task_family: "coding",
+    },
+    guide_brief: {
+      summary: "Relevant history exists, but authority, stale-memory, or contradiction risk requires inspection before reuse.",
+      history_used: true,
+      recommended_posture: "inspect_before_use",
+      authority: "advisory",
+      use_now: [
+        "Recovered state: Previous run found the failing file and verifier command.",
+      ],
+      inspect_before_use: [
+        "Candidate workflow: line-local verifier repair",
+        "workflow candidate is not promoted",
+      ],
+      do_not_use: [
+        "Suppressed memory: mem-2",
+      ],
+      rehydrate: [
+        {
+          memory_id: "mem-3",
+          reason: "Archived payload may contain the old verifier output.",
+          required: false,
+        },
+      ],
+      expected_product_effects: {
+        reduces_repeated_discovery: true,
+        reduces_context_replay: true,
+        controls_negative_transfer: true,
+        reason: "Guide includes recovered targets or workflow evidence that can reduce repeated discovery.",
+      },
     },
     recovered_state: {
       state_summary: "Previous run found the failing file and verifier command.",
@@ -180,6 +210,40 @@ function validEffectReport() {
       replay_run_ids: ["replay-1"],
       signal_summary_ids: ["sig-1"],
       promotion_quality_summary_ids: ["pqs-1"],
+    },
+  };
+}
+
+function validAgentContext() {
+  return {
+    contract_version: "aionis_agent_context_v1",
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    prompt_text: "AIONIS_AGENT_CONTEXT v1\nsummary: Use recovered execution context.\nauthority: advisory",
+    summary: "Use recovered execution context.",
+    history_used: true,
+    recommended_posture: "inspect_before_use",
+    authority: "advisory",
+    target_files: ["src/index.ts"],
+    use_now: ["Relevant target files: src/index.ts"],
+    inspect_before_use: ["Candidate workflow: line-local verifier repair"],
+    do_not_use: ["Suppressed memory: mem-2"],
+    memory_ids: ["mem-1", "mem-3"],
+    rehydrate_hints: [{
+      memory_id: "mem-3",
+      reason: "Archived payload may contain the old verifier output.",
+      required: false,
+    }],
+    risk: {
+      negative_transfer_risk: "medium",
+      blocked_authority_count: 1,
+      stale_memory_count: 1,
+      reasons: ["workflow candidate is not promoted"],
+    },
+    evidence_refs: {
+      memory_ids: ["mem-1", "mem-3"],
+      workflow_ids: ["wf-1"],
+      evidence_count: 3,
     },
   };
 }
@@ -370,6 +434,8 @@ test("AionisGuidePacket accepts compact authority-aware product output", () => {
   const parsed = AionisGuidePacketSchema.parse(validGuidePacket());
   assert.equal(parsed.contract_version, "aionis_guide_packet_v1");
   assert.equal(parsed.memory_lifecycle.suppressed_memory_ids.length, 1);
+  assert.equal(parsed.guide_brief.recommended_posture, "inspect_before_use");
+  assert.equal(parsed.guide_brief.expected_product_effects.controls_negative_transfer, true);
   assert.equal(parsed.history_contributions.handoff.used, true);
   assert.equal(parsed.history_contributions.replay.source_count, 1);
   assert.ok(parsed.source_map.omitted_internal_surfaces.includes("replay_repair"));
@@ -394,6 +460,35 @@ test("AionisGuidePacket rejects raw product leakage and loose fields", () => {
           ...guide.guidance,
           semantic_patch: "do not put task patches in guide packet",
         },
+      }),
+    /Unrecognized key/,
+  );
+});
+
+test("AionisAgentContext accepts compact agent-facing output", () => {
+  const parsed = AionisAgentContextSchema.parse(validAgentContext());
+  assert.equal(parsed.contract_version, "aionis_agent_context_v1");
+  assert.equal(parsed.history_used, true);
+  assert.equal(parsed.authority, "advisory");
+  assert.deepEqual(parsed.target_files, ["src/index.ts"]);
+  assert.equal(parsed.risk.negative_transfer_risk, "medium");
+});
+
+test("AionisAgentContext rejects packet leakage and loose fields", () => {
+  assert.throws(
+    () =>
+      AionisAgentContextSchema.parse({
+        ...validAgentContext(),
+        memory_packet: validMemoryPacket(),
+      }),
+    /Unrecognized key/,
+  );
+
+  assert.throws(
+    () =>
+      AionisAgentContextSchema.parse({
+        ...validAgentContext(),
+        guide_packet: validGuidePacket(),
       }),
     /Unrecognized key/,
   );

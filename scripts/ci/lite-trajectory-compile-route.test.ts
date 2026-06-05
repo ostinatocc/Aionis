@@ -154,3 +154,49 @@ test("trajectory compile route does not infer service lifecycle from passive loc
   assert.ok(!parsed.contract.pattern_hints.includes("revalidate_service_from_fresh_shell"));
   await app.close();
 });
+
+test("trajectory compile route does not infer service lifecycle from passive serve path reads", async () => {
+  const app = await buildApp();
+  const response = await app.inject({
+    method: "POST",
+    url: "/v1/memory/trajectory/compile",
+    payload: {
+      query_text: "[serve.llm][release test] Bump LLM serve startup timeout 600s -> 900s",
+      trajectory: {
+        task_family: "github_pr_target_file_recovery:ray-project_ray",
+        steps: [
+          { role: "assistant", text: "Recover known target files before broad discovery." },
+          {
+            role: "tool",
+            tool_name: "read",
+            command: "sed -n '1,120p' ./release/llm_tests/serve/run_llm_serve_test_and_bms.py",
+          },
+          { role: "tool", tool_name: "test", command: "npm test -- ray-project-ray-pr-63859" },
+          {
+            role: "assistant",
+            text: "Inspect release/llm_tests/serve/test_utils.py, apply the scoped timeout change, then run the focused verifier.",
+          },
+        ],
+      },
+      hints: {
+        target_files: [
+          "./release/llm_tests/serve/run_llm_serve_test_and_bms.py",
+          "./release/llm_tests/serve/test_utils.py",
+        ],
+        acceptance_checks: [
+          "focused verifier passed for ray-project-ray-pr-63859",
+          "target files confirmed from real GitHub PR changed-files evidence",
+        ],
+      },
+    },
+  });
+
+  assert.equal(response.statusCode, 200);
+  const parsed = TrajectoryCompileResponseSchema.parse(JSON.parse(response.body));
+  assert.equal(parsed.contract.service_lifecycle_constraints.length, 0);
+  assert.ok(!parsed.contract.pattern_hints.includes("detach_long_running_service_before_validation"));
+  assert.ok(!parsed.contract.pattern_hints.includes("revalidate_service_from_fresh_shell"));
+  assert.ok(parsed.contract.target_files.includes("./release/llm_tests/serve/run_llm_serve_test_and_bms.py"));
+  assert.ok(parsed.contract.target_files.includes("./release/llm_tests/serve/test_utils.py"));
+  await app.close();
+});

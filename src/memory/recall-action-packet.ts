@@ -2,6 +2,10 @@ import type { RecallNodeRow } from "../store/recall-access.js";
 import { AIONIS_URI_NODE_TYPES, buildAionisUri } from "./uri.js";
 import { dedupeWorkflowCandidatesBySignature } from "./workflow-candidate-aggregation.js";
 import {
+  isAnchorSuppressed,
+  readAnchorOperatorOverride,
+} from "./pattern-operator-override.js";
+import {
   parseExecutionContract,
   type ExecutionContractV1,
 } from "./execution-contract.js";
@@ -275,6 +279,8 @@ export function buildActionRecallPacket(args: {
     const anchorKind = meta.anchorKind;
     const anchorLevel = meta.anchorLevel;
     if (!anchorKind || !anchorLevel) continue;
+    const operatorOverride = meta.slots ? readAnchorOperatorOverride(meta.slots) : null;
+    if (isAnchorSuppressed(operatorOverride)) continue;
     const uri = URI_NODE_TYPES.has(node.type)
       ? buildAionisUri({ tenant_id: args.tenant_id, scope: args.scope, type: node.type, id: node.id })
       : null;

@@ -4760,6 +4760,12 @@ export const PatternUnsuppressRequest = z.object({
 
 export type PatternUnsuppressInput = z.infer<typeof PatternUnsuppressRequest>;
 
+export const AnchorSuppressRequest = PatternSuppressRequest;
+export type AnchorSuppressInput = z.infer<typeof AnchorSuppressRequest>;
+
+export const AnchorUnsuppressRequest = PatternUnsuppressRequest;
+export type AnchorUnsuppressInput = z.infer<typeof AnchorUnsuppressRequest>;
+
 export const PatternSuppressResponseSchema = z.object({
   tenant_id: z.string(),
   scope: z.string(),
@@ -4772,6 +4778,21 @@ export const PatternSuppressResponseSchema = z.object({
 });
 
 export type PatternSuppressResponse = z.infer<typeof PatternSuppressResponseSchema>;
+
+export const AnchorSuppressResponseSchema = z.object({
+  tenant_id: z.string(),
+  scope: z.string(),
+  anchor_id: z.string(),
+  anchor_uri: z.string(),
+  anchor_kind: z.string().nullable(),
+  node_type: z.string(),
+  selected_tool: z.string().nullable(),
+  pattern_state: z.string().nullable(),
+  credibility_state: z.string().nullable(),
+  operator_override: PatternOperatorOverrideSchema,
+});
+
+export type AnchorSuppressResponse = z.infer<typeof AnchorSuppressResponseSchema>;
 
 export const ReplaySafetyLevel = z.enum(["auto_ok", "needs_confirm", "manual_only"]);
 export type ReplaySafetyLevelInput = z.infer<typeof ReplaySafetyLevel>;

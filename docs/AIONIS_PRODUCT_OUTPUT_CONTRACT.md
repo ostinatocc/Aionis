@@ -29,19 +29,23 @@ this focused Runtime product tree.
 
 The goal is to stop exposing dozens of internal Runtime routes as product concepts. Aionis should produce clear outputs that users and Agents can understand:
 
-1. `AionisGuidePacket`: what history says the Agent should know or do next
-2. `AionisMemoryPacket`: which general or execution memories are relevant, trusted, stale, contested, or behavior-shaping
-3. `AionisLearningPacket`: which learning candidates are visible, constrained, promotion-ready, or blocked
-4. `AionisEffectReport`: whether history helped, hurt, or did nothing
+1. `AionisAgentContext`: the compact default context an Agent should consume
+2. `AionisGuidePacket`: the auditable structured guide behind the compact context
+3. `AionisMemoryPacket`: which general or execution memories are relevant, trusted, stale, contested, or behavior-shaping
+4. `AionisLearningPacket`: which learning candidates are visible, constrained, promotion-ready, or blocked
+5. `AionisEffectReport`: whether history helped, hurt, or did nothing
 
 ## Output Boundary
 
 | Output | Product Action | Purpose |
 |---|---|---|
-| `AionisGuidePacket` | `guide` | Convert execution memory into a compact, evidence-backed, authority-aware guide packet. |
+| `AionisAgentContext` | `guide` | Give the Agent a short, directly consumable context with authority, risk, memory IDs, and rehydration hints. |
+| `AionisGuidePacket` | `guide` | Preserve the structured, auditable guide behind the compact Agent context. |
 | `AionisMemoryPacket` | `recall` | Convert ordinary and execution recall into an evidence-scoped cognitive memory packet. |
 | `AionisLearningPacket` | `learn` | Convert learning, promotion, demotion, forgetting, and learning-control signals into a scoped learning state packet. |
 | `AionisEffectReport` | `measure` | Prove whether historical memory changed the run and whether that change was positive. |
+
+`POST /v1/guide` defaults to `AionisAgentContext` only. Callers that need audit or measurement data must set `include_packets: true` to include `memory_packet` and `guide_packet`. Full packets are not the default Agent prompt surface.
 
 `observe` and `forget` remain product actions, but their first product-visible value should flow into these outputs:
 
@@ -59,6 +63,67 @@ These outputs must not become:
 5. a replay repair product
 6. a raw memory browser
 7. a LoRA training runner
+
+## AionisAgentContext
+
+The agent context is the default product-facing output for `POST /v1/guide`. It should answer:
+
+1. What should the Agent use now?
+2. What should be inspected before use?
+3. What should not be used?
+4. Which target files and memory IDs were recovered?
+5. What is the authority and negative-transfer risk?
+6. Which memory can be rehydrated if more detail is needed?
+
+### Shape
+
+The route field name is `agent_context`.
+
+```ts
+type AionisAgentContext = {
+  contract_version: "aionis_agent_context_v1";
+  tenant_id: string;
+  scope: string;
+  prompt_text: string;
+  summary: string;
+  history_used: boolean;
+  recommended_posture:
+    | "reuse_supported_history"
+    | "use_as_context"
+    | "inspect_before_use"
+    | "rehydrate_before_use"
+    | "ignore_history";
+  authority: "trusted" | "advisory" | "candidate" | "blocked" | "none";
+  target_files: string[];
+  use_now: string[];
+  inspect_before_use: string[];
+  do_not_use: string[];
+  memory_ids: string[];
+  rehydrate_hints: Array<{
+    memory_id: string;
+    reason: string;
+    required: boolean;
+  }>;
+  risk: {
+    negative_transfer_risk: "low" | "medium" | "high";
+    blocked_authority_count: number;
+    stale_memory_count: number;
+    reasons: string[];
+  };
+  evidence_refs: {
+    memory_ids: string[];
+    workflow_ids: string[];
+    evidence_count: number;
+  };
+};
+```
+
+`prompt_text` is the direct Agent prompt surface. It uses a compact line format:
+header, one `state:` line, one short `summary:`, then optional inline
+`target_files:`, `use_now:`, `inspect_before_use:`, `do_not_use:`,
+`rehydrate_if_needed:`, and `memory_ids:` lines. The structured fields remain
+available so hosts can render, filter, or audit the context without parsing
+the prompt text.
 
 ## AionisMemoryPacket
 
@@ -205,14 +270,14 @@ type AionisMemoryPacket = {
 
 ## AionisGuidePacket
 
-The guide packet is the main Agent-facing output. It should answer:
+The guide packet is the auditable structured output behind `AionisAgentContext`. It should answer:
 
 1. What state can be resumed?
 2. Which facts are proven?
 3. What memory changed the next action?
 4. What is trusted, advisory, candidate, blocked, suppressed, or archived?
-5. What should the Agent do first?
-6. What should the Agent avoid because of negative transfer risk?
+5. Which history can be used now, inspected first, rehydrated, or ignored?
+6. What product effect should this packet create: less repeated discovery, less context replay, or lower negative-transfer risk?
 
 ### Shape
 
@@ -233,6 +298,31 @@ type AionisGuidePacket = {
     run_id?: string | null;
     task_signature?: string | null;
     task_family?: string | null;
+  };
+  guide_brief: {
+    summary: string;
+    history_used: boolean;
+    recommended_posture:
+      | "reuse_supported_history"
+      | "use_as_context"
+      | "inspect_before_use"
+      | "rehydrate_before_use"
+      | "ignore_history";
+    authority: "trusted" | "advisory" | "candidate" | "blocked" | "none";
+    use_now: string[];
+    inspect_before_use: string[];
+    do_not_use: string[];
+    rehydrate: Array<{
+      memory_id: string;
+      reason: string;
+      required: boolean;
+    }>;
+    expected_product_effects: {
+      reduces_repeated_discovery: boolean;
+      reduces_context_replay: boolean;
+      controls_negative_transfer: boolean;
+      reason: string;
+    };
   };
   recovered_state: {
     state_summary: string | null;
@@ -457,6 +547,15 @@ The effect report is the main product proof output. It should answer:
 4. What was reused?
 5. What was suppressed or forgotten?
 6. What should be learned, demoted, archived, or exported as training data?
+
+`/v1/measure` accepts two input styles:
+
+| Input Style | Meaning |
+|---|---|
+| `baseline` + `aionis` | Advanced measurement where the caller supplies direct continuity, learning, forgetting, and learning-control observations. |
+| `product_trace` | Product measurement where the caller supplies `before_guide`, `after_guide`, and optional `forget_result` outputs from the facade. |
+
+`product_trace` is projected into the same effect evaluator. The projection uses only product packets and product forget effects: relevant memories, workflow candidates, proven facts, rehydration hints, stale/suppressed counts, and authority visibility. It is a packet-level product measurement, not a claim that an external Agent solved a task.
 
 ### Shape
 

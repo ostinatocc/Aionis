@@ -9,6 +9,10 @@ import {
   resolveNodeRehydrationSurface,
   resolveNodeToolSet,
 } from "./node-execution-surface.js";
+import {
+  isAnchorSuppressed,
+  readAnchorOperatorOverride,
+} from "./pattern-operator-override.js";
 
 type AnchorNodeLike = {
   id: string;
@@ -92,6 +96,8 @@ export function buildRuntimeToolHintsFromAnchorNodes(args: {
   const ranked = args.nodes
     .map<RuntimeToolHint | null>((node) => {
       const slots = asRecord(node.slots);
+      const operatorOverride = slots ? readAnchorOperatorOverride(slots) : null;
+      if (isAnchorSuppressed(operatorOverride)) return null;
       const patternSurface = resolveNodePatternExecutionSurface({ slots });
       const anchorKind = patternSurface.anchor_kind;
       const anchorLevel = patternSurface.anchor_level;

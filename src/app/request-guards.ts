@@ -55,6 +55,8 @@ export type IdentityRequestKind =
   | "learning_loop_run"
   | "runtime_maintenance_run"
   | "policy_learning_control_apply"
+  | "anchors_suppress"
+  | "anchors_unsuppress"
   | "patterns_suppress"
   | "patterns_unsuppress"
   | "replay_run_start"
@@ -284,7 +286,16 @@ export function createRequestGuards({
       obj.consumer_agent_id = env.LITE_LOCAL_ACTOR_ID;
     }
 
-    if ((kind === "rehydrate_payload" || kind === "patterns_suppress" || kind === "patterns_unsuppress") && !obj.actor) {
+    if (
+      (
+        kind === "rehydrate_payload"
+        || kind === "anchors_suppress"
+        || kind === "anchors_unsuppress"
+        || kind === "patterns_suppress"
+        || kind === "patterns_unsuppress"
+      )
+      && !obj.actor
+    ) {
       obj.actor = env.LITE_LOCAL_ACTOR_ID;
     }
 

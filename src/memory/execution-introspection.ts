@@ -20,7 +20,12 @@ import {
 import type { LiteExecutionNativeNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
 import { dedupeWorkflowCandidatesBySignature } from "./workflow-candidate-aggregation.js";
 import { explainWorkflowProjectionForSourceNode } from "./workflow-write-projection.js";
-import { isPatternSuppressed, readPatternOperatorOverride } from "./pattern-operator-override.js";
+import {
+  isAnchorSuppressed,
+  isPatternSuppressed,
+  readAnchorOperatorOverride,
+  readPatternOperatorOverride,
+} from "./pattern-operator-override.js";
 import { buildOutcomeContractGate, type OutcomeContractGate } from "./contract-trust.js";
 import { buildRuntimeAuthorityVisibilityFromSlots } from "./authority-visibility.js";
 import { authorityConsumptionStateFromValue } from "./authority-consumption.js";
@@ -333,6 +338,8 @@ function toWorkflowEntry(row: LiteExecutionNativeNodeRow, tenantId: string, scop
   const workflowSteps = resolveNodeWorkflowSteps({ slots });
   const patternHints = resolveNodePatternHints({ slots });
   const serviceLifecycleConstraints = resolveNodeServiceLifecycleConstraints({ slots });
+  const operatorOverride = readAnchorOperatorOverride(slots);
+  const suppressed = isAnchorSuppressed(operatorOverride);
   const observedCount = Number(workflowPromotion.observed_count ?? Number.NaN);
   const requiredObservations = Number(workflowPromotion.required_observations ?? Number.NaN);
   const promotionState = firstString(workflowPromotion.promotion_state);
@@ -393,6 +400,13 @@ function toWorkflowEntry(row: LiteExecutionNativeNodeRow, tenantId: string, scop
     workflow_steps: workflowSteps,
     pattern_hints: patternHints,
     service_lifecycle_constraints: serviceLifecycleConstraints,
+    operator_override_present: operatorOverride !== null,
+    suppressed,
+    suppression_mode: operatorOverride?.mode ?? null,
+    suppression_reason: operatorOverride?.reason ?? null,
+    suppressed_until: operatorOverride?.until ?? null,
+    suppressed_by: operatorOverride?.updated_by ?? null,
+    suppressed_at: operatorOverride?.updated_at ?? null,
     projection_generated_by: projectionMeta?.generated_by ?? null,
     projection_source_node_id: projectionMeta?.source_node_id ?? null,
     projection_source_client_id: projectionMeta?.source_client_id ?? null,
@@ -848,21 +862,25 @@ export async function buildExecutionMemoryIntrospectionLite(
     }),
   ]);
 
-  const recommendedWorkflows = dedupeByAnchorId(
+  const rawRecommendedWorkflows = dedupeByAnchorId(
     workflowAnchors.rows.map((row) => toWorkflowEntry(row, tenantId, scope)),
   );
+  const recommendedWorkflows = rawRecommendedWorkflows.filter((entry) => !entry.suppressed);
   const stableWorkflowSignatures = new Set(
     recommendedWorkflows
       .map((entry) => entry.workflow_signature)
       .filter((value): value is string => typeof value === "string" && value.length > 0),
   );
-  const rawCandidateWorkflows = dedupeByAnchorId(
+  const rawCandidateWorkflowsAll = dedupeByAnchorId(
     workflowCandidates.rows.map((row) => toWorkflowEntry(row, tenantId, scope)),
   );
+  const rawCandidateWorkflows = rawCandidateWorkflowsAll.filter((entry) => !entry.suppressed);
   const candidateWorkflows = dedupeWorkflowCandidatesBySignature(
     rawCandidateWorkflows.filter((entry) => !entry.workflow_signature || !stableWorkflowSignatures.has(entry.workflow_signature)),
   );
-  const suppressedCandidateWorkflowCount = rawCandidateWorkflows.length - candidateWorkflows.length;
+  const suppressedCandidateWorkflowCount =
+    (rawRecommendedWorkflows.length - recommendedWorkflows.length)
+    + (rawCandidateWorkflowsAll.length - candidateWorkflows.length);
   const continuityProjectedCandidateCount = rawCandidateWorkflows.filter(
     (entry) => entry.projection_generated_by === "execution_write_projection_v1",
   ).length;

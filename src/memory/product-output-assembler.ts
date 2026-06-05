@@ -10,16 +10,19 @@ import type {
   EffectKernelComparison,
 } from "../kernel/effect-evaluator.js";
 import {
+  parseAionisAgentContext,
   parseAionisEffectReport,
   parseAionisGuidePacket,
   parseAionisLearningPacket,
   parseAionisMemoryPacket,
+  type AionisAgentContext,
   type AionisEffectReport,
   type AionisGuidePacket,
   type AionisGuidanceAuthority,
   type AionisLearningPacket,
   type AionisMemoryDomain,
   type AionisMemoryPacket,
+  type AionisRiskLevel,
 } from "./product-output-contract.js";
 import {
   AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD,
@@ -49,6 +52,13 @@ type MemoryPacketMemoryType = MemoryPacketEntry["memory_type"];
 type LearningCandidate = AionisLearningPacket["candidates"][number];
 type LearningPosture = AionisLearningPacket["posture"]["recommended_learning_posture"];
 type LearningAuthority = AionisLearningPacket["posture"]["authority"];
+
+export type BuildAionisAgentContextArgs = {
+  tenant_id: string;
+  scope: string;
+  memory_packet?: AionisMemoryPacket | null;
+  guide_packet?: AionisGuidePacket | null;
+};
 
 export type BuildAionisGuidePacketArgs = {
   tenant_id: string;
@@ -687,6 +697,626 @@ function buildGuideHistoryContributions(
   };
 }
 
+function guideBriefAuthority(args: {
+  historyUsed: boolean;
+  workflowCandidates: AionisGuidePacket["guidance"]["workflow_candidates"];
+  toolPreferences: AionisGuidePacket["guidance"]["tool_preferences"];
+  blockedAuthorityCount: number;
+}): GuideAuthority {
+  if (!args.historyUsed) return "none";
+  const authorities = [
+    ...args.workflowCandidates.map((entry) => entry.authority),
+    ...args.toolPreferences.map((entry) => entry.authority),
+  ];
+  if (authorities.includes("trusted")) return "trusted";
+  if (authorities.includes("advisory")) return "advisory";
+  if (authorities.includes("candidate")) return "candidate";
+  if (args.blockedAuthorityCount > 0 || authorities.includes("blocked")) return "blocked";
+  return "candidate";
+}
+
+function guideBriefPosture(args: {
+  historyUsed: boolean;
+  requiredRehydrationCount: number;
+  negativeTransferRisk: AionisGuidePacket["risk"]["negative_transfer_risk"];
+  blockedAuthorityCount: number;
+  authority: GuideAuthority;
+}): AionisGuidePacket["guide_brief"]["recommended_posture"] {
+  if (!args.historyUsed) return "ignore_history";
+  if (args.requiredRehydrationCount > 0) return "rehydrate_before_use";
+  if (args.negativeTransferRisk === "high" || args.blockedAuthorityCount > 0) return "inspect_before_use";
+  if (args.authority === "trusted" || args.authority === "advisory") return "reuse_supported_history";
+  return "use_as_context";
+}
+
+function guideBriefSummary(args: {
+  posture: AionisGuidePacket["guide_brief"]["recommended_posture"];
+  authority: GuideAuthority;
+}): string {
+  if (args.posture === "ignore_history") {
+    return "No usable history was recovered for this query.";
+  }
+  if (args.posture === "rehydrate_before_use") {
+    return "Relevant history exists, but compact payload rehydration is required before reuse.";
+  }
+  if (args.posture === "inspect_before_use") {
+    return "Relevant history exists, but authority, stale-memory, or contradiction risk requires inspection before reuse.";
+  }
+  if (args.posture === "reuse_supported_history") {
+    return args.authority === "trusted"
+      ? "Trusted history can be reused to reduce repeated discovery and context replay."
+      : "Advisory history can guide the run while leaving final reasoning to the Agent.";
+  }
+  return "History is available as context, but it is not strong enough to drive behavior directly.";
+}
+
+function buildAionisGuideBrief(args: {
+  stateSummary: string | null;
+  resumable: boolean;
+  targetFiles: string[];
+  acceptanceChecks: string[];
+  workflowCandidates: AionisGuidePacket["guidance"]["workflow_candidates"];
+  toolPreferences: AionisGuidePacket["guidance"]["tool_preferences"];
+  historyContributions: AionisGuidePacket["history_contributions"];
+  memoryLifecycle: AionisGuidePacket["memory_lifecycle"];
+  negativeTransferRisk: AionisGuidePacket["risk"]["negative_transfer_risk"];
+  blockedAuthorityCount: number;
+  staleMemoryCount: number;
+  riskReasons: string[];
+}): AionisGuidePacket["guide_brief"] {
+  const trustedOrAdvisoryWorkflows = args.workflowCandidates
+    .filter((entry) => entry.authority === "trusted" || entry.authority === "advisory")
+    .map((entry) => `Workflow ${entry.authority}: ${entry.title}`);
+  const trustedOrAdvisoryTools = args.toolPreferences
+    .filter((entry) => entry.authority === "trusted" || entry.authority === "advisory")
+    .map((entry) => `Tool ${entry.preference}: ${entry.tool}`);
+  const candidateSurfaces = [
+    ...args.workflowCandidates
+      .filter((entry) => entry.authority === "candidate")
+      .map((entry) => `Candidate workflow: ${entry.title}`),
+    ...args.toolPreferences
+      .filter((entry) => entry.authority === "candidate")
+      .map((entry) => `Candidate tool preference: ${entry.tool}`),
+    ...args.acceptanceChecks.map((entry) => `Verify before relying on history: ${entry}`),
+  ];
+  const blockedSurfaces = [
+    ...args.workflowCandidates
+      .filter((entry) => entry.authority === "blocked")
+      .map((entry) => `Blocked workflow authority: ${entry.title}`),
+    ...args.toolPreferences
+      .filter((entry) => entry.authority === "blocked")
+      .map((entry) => `Blocked tool preference: ${entry.tool}`),
+    ...args.memoryLifecycle.suppressed_memory_ids.map((memoryId) => `Suppressed memory: ${memoryId}`),
+  ];
+  const historyUsed =
+    args.resumable
+    || args.historyContributions.handoff.used
+    || args.historyContributions.replay.used
+    || args.workflowCandidates.length > 0
+    || args.toolPreferences.length > 0
+    || args.targetFiles.length > 0;
+  const requiredRehydrationCount = args.memoryLifecycle.rehydration_hints
+    .filter((entry) => entry.required).length;
+  const authority = guideBriefAuthority({
+    historyUsed,
+    workflowCandidates: args.workflowCandidates,
+    toolPreferences: args.toolPreferences,
+    blockedAuthorityCount: args.blockedAuthorityCount,
+  });
+  const posture = guideBriefPosture({
+    historyUsed,
+    requiredRehydrationCount,
+    negativeTransferRisk: args.negativeTransferRisk,
+    blockedAuthorityCount: args.blockedAuthorityCount,
+    authority,
+  });
+  const reducesRepeatedDiscovery =
+    args.targetFiles.length > 0
+    || args.workflowCandidates.length > 0
+    || args.historyContributions.replay.used;
+  const reducesContextReplay =
+    args.resumable
+    || args.historyContributions.handoff.used
+    || args.memoryLifecycle.rehydration_hints.length > 0;
+  const controlsNegativeTransfer =
+    args.negativeTransferRisk !== "low"
+    || args.blockedAuthorityCount > 0
+    || args.staleMemoryCount > 0
+    || blockedSurfaces.length > 0;
+
+  return {
+    summary: guideBriefSummary({ posture, authority }),
+    history_used: historyUsed,
+    recommended_posture: posture,
+    authority,
+    use_now: compactStrings([
+      args.stateSummary ? `Recovered state: ${args.stateSummary}` : null,
+      args.targetFiles.length > 0 ? `Relevant target files: ${args.targetFiles.slice(0, 6).join(", ")}` : null,
+      ...trustedOrAdvisoryWorkflows,
+      ...trustedOrAdvisoryTools,
+    ]).slice(0, 8),
+    inspect_before_use: compactStrings([
+      ...candidateSurfaces,
+      ...args.riskReasons,
+    ]).slice(0, 8),
+    do_not_use: compactStrings(blockedSurfaces).slice(0, 8),
+    rehydrate: args.memoryLifecycle.rehydration_hints.slice(0, 8),
+    expected_product_effects: {
+      reduces_repeated_discovery: reducesRepeatedDiscovery,
+      reduces_context_replay: reducesContextReplay,
+      controls_negative_transfer: controlsNegativeTransfer,
+      reason: compactStrings([
+        reducesRepeatedDiscovery ? "Guide includes recovered targets or workflow evidence that can reduce repeated discovery." : null,
+        reducesContextReplay ? "Guide includes resumable continuity or differential rehydration instead of full history replay." : null,
+        controlsNegativeTransfer ? "Guide exposes stale, blocked, or candidate history instead of silently applying it." : null,
+        !reducesRepeatedDiscovery && !reducesContextReplay && !controlsNegativeTransfer
+          ? "No measurable product effect is visible in this guide packet."
+          : null,
+      ]).join(" "),
+    },
+  };
+}
+
+function buildAgentContextPrompt(args: {
+  summary: string;
+  historyUsed: boolean;
+  recommendedPosture: AionisAgentContext["recommended_posture"];
+  authority: AionisAgentContext["authority"];
+  negativeTransferRisk: AionisAgentContext["risk"]["negative_transfer_risk"];
+  targetFiles: string[];
+  useNow: string[];
+  inspectBeforeUse: string[];
+  doNotUse: string[];
+  memoryIds: string[];
+  rehydrateHints: AionisAgentContext["rehydrate_hints"];
+}): string {
+  const inline = (label: string, values: string[], maxItems: number, maxChars: number): string | null => {
+    const entries = values
+      .slice(0, maxItems)
+      .map((entry) => shortenPromptText(entry, maxChars));
+    return entries.length > 0 ? `${label}: ${entries.join(" | ")}` : null;
+  };
+  const sections = compactStrings([
+    `AIONIS_AGENT_CONTEXT v1`,
+    `state: history=${args.historyUsed ? "yes" : "no"} posture=${args.recommendedPosture} authority=${args.authority} risk=${args.negativeTransferRisk}`,
+    `summary: ${shortenPromptText(args.summary, 140)}`,
+    inline("target_files", args.targetFiles, 6, 120),
+    inline("use_now", args.useNow, 4, 220),
+    inline("inspect_before_use", args.inspectBeforeUse, 3, 140),
+    inline("do_not_use", args.doNotUse, 3, 140),
+    args.rehydrateHints.length > 0
+      ? `rehydrate_if_needed: ${args.rehydrateHints
+        .slice(0, 3)
+        .map((entry) => `${entry.memory_id}${entry.required ? "!" : ""}:${shortenPromptText(entry.reason, 100)}`)
+        .join(" | ")}`
+      : null,
+    args.memoryIds.length > 0 ? `memory_ids: ${args.memoryIds.slice(0, 6).join(",")}` : null,
+  ]);
+  return sections.join("\n");
+}
+
+function shortenPromptText(value: string, maxChars: number): string {
+  const compacted = value.replace(/\s+/g, " ").trim();
+  if (compacted.length <= maxChars) return compacted;
+  return `${compacted.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
+}
+
+function memoryEntryBlocked(entry: MemoryPacketEntry): boolean {
+  return entry.authority === "blocked"
+    || entry.lifecycle_state === "suppressed"
+    || entry.lifecycle_state === "archived";
+}
+
+function memoryEntryInspectBeforeUse(entry: MemoryPacketEntry): boolean {
+  return entry.authority === "candidate"
+    || entry.lifecycle_state === "candidate"
+    || entry.lifecycle_state === "contested"
+    || entry.lifecycle_state === "demoted"
+    || entry.lifecycle_state === "rehydration_candidate";
+}
+
+function memoryEntryUsable(entry: MemoryPacketEntry): boolean {
+  return (entry.authority === "trusted" || entry.authority === "advisory")
+    && entry.lifecycle_state === "active";
+}
+
+function memoryEntryLabel(entry: MemoryPacketEntry): string {
+  return compactStrings([entry.title, entry.memory_id])[0] ?? entry.memory_id;
+}
+
+function memoryEntryUseNowLine(entry: MemoryPacketEntry): string {
+  const prefix = entry.memory_type === "preference"
+    ? "Preference"
+    : entry.memory_type === "project_context"
+      ? "Project memory"
+      : entry.domain === "execution"
+        ? "Execution memory"
+        : "Memory";
+  const summary = entry.summary.replace(/\s+/g, " ").trim();
+  return `${prefix}: ${summary}`.slice(0, 520);
+}
+
+function memoryEntryMatchTerms(entry: MemoryPacketEntry): string[] {
+  return compactStrings([
+    entry.title,
+    entry.memory_id,
+  ]).filter((term) => term.length >= 4);
+}
+
+function textMatchesMemoryEntry(text: string, entry: MemoryPacketEntry): boolean {
+  const lower = text.toLowerCase();
+  return memoryEntryMatchTerms(entry).some((term) => lower.includes(term.toLowerCase()));
+}
+
+function workflowUseNowLine(text: string): boolean {
+  return /^\s*Workflow\s+(trusted|advisory):/i.test(text);
+}
+
+const TRUSTED_WORKFLOW_CONFLICT_WORDS = [
+  "conflict",
+  "conflicting",
+  "contradict",
+  "contradiction",
+  "inconsistent",
+  "incompatible",
+  "stale",
+  "outdated",
+  "obsolete",
+  "wrong",
+  "invalid",
+  "known-bad",
+  "known bad",
+  "false hypothesis",
+  "false positive",
+];
+
+function workflowConflictSignals(entry: MemoryPacketEntry): string[] {
+  const text = compactStrings([entry.title, entry.summary]).join("\n").toLowerCase();
+  return TRUSTED_WORKFLOW_CONFLICT_WORDS.filter((word) => text.includes(word));
+}
+
+function extractPathTargets(text: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const pathPattern = /(?:^|[\s"'`([])([A-Za-z0-9_.@+-]+\/[A-Za-z0-9_./@+-]*(?:\.[A-Za-z0-9]+)?)/g;
+  for (const match of text.matchAll(pathPattern)) {
+    const value = match[1]?.replace(/[),.;:]+$/g, "");
+    if (!value || value.startsWith("http") || value.length < 5 || seen.has(value)) continue;
+    if (looksLikeRepositoryName(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out.slice(0, 16);
+}
+
+const COMMON_CODE_PATH_ROOTS = new Set([
+  "app",
+  "apps",
+  "bin",
+  "cmd",
+  "crates",
+  "docs",
+  "examples",
+  "lib",
+  "libs",
+  "package",
+  "packages",
+  "pkg",
+  "script",
+  "scripts",
+  "src",
+  "test",
+  "tests",
+]);
+
+function looksLikeRepositoryName(value: string): boolean {
+  if (value.startsWith("./") || value.startsWith("/") || value.includes("../")) return false;
+  const parts = value.split("/");
+  if (parts.length !== 2) return false;
+  return !COMMON_CODE_PATH_ROOTS.has(parts[0] ?? "");
+}
+
+function sameTargetSet(left: string[], right: string[]): boolean {
+  if (left.length === 0 || right.length === 0) return true;
+  const rightSet = new Set(right);
+  return left.some((entry) => rightSet.has(entry));
+}
+
+function trustedWorkflowConflictAudit(entries: MemoryPacketEntry[]): {
+  hasConflict: boolean;
+  moveAllWorkflowUseNow: boolean;
+  conflictedEntries: MemoryPacketEntry[];
+  reasons: string[];
+} {
+  const workflowEntries = entries.filter((entry) =>
+    memoryEntryUsable(entry)
+    && entry.domain === "execution"
+    && (entry.memory_type === "execution_memory" || entry.memory_type === "procedure")
+    && entry.authority === "trusted",
+  );
+  if (workflowEntries.length < 2) {
+    return { hasConflict: false, moveAllWorkflowUseNow: false, conflictedEntries: [], reasons: [] };
+  }
+
+  const selfDisclaimed = workflowEntries.filter((entry) => workflowConflictSignals(entry).length > 0);
+  const entriesWithTargets = workflowEntries
+    .map((entry) => ({ entry, targets: extractPathTargets(`${entry.title ?? ""}\n${entry.summary}`) }))
+    .filter((item) => item.targets.length > 0);
+  const targetConflictEntries = new Set<MemoryPacketEntry>();
+  for (let index = 0; index < entriesWithTargets.length; index += 1) {
+    for (let next = index + 1; next < entriesWithTargets.length; next += 1) {
+      const left = entriesWithTargets[index];
+      const right = entriesWithTargets[next];
+      if (left && right && !sameTargetSet(left.targets, right.targets)) {
+        targetConflictEntries.add(left.entry);
+        targetConflictEntries.add(right.entry);
+      }
+    }
+  }
+
+  const conflictedEntries = [...new Set([...selfDisclaimed, ...targetConflictEntries])];
+  const hasTargetConflict = targetConflictEntries.size > 0;
+  return {
+    hasConflict: conflictedEntries.length > 0,
+    moveAllWorkflowUseNow: hasTargetConflict,
+    conflictedEntries,
+    reasons: compactStrings([
+      selfDisclaimed.length > 0 ? "trusted_workflow_self_disclaimed_conflict" : null,
+      hasTargetConflict ? "trusted_workflow_target_conflict" : null,
+    ]),
+  };
+}
+
+function riskAtLeast(current: AionisRiskLevel, minimum: AionisRiskLevel): AionisRiskLevel {
+  const rank: Record<AionisRiskLevel, number> = { low: 0, medium: 1, high: 2 };
+  return rank[current] >= rank[minimum] ? current : minimum;
+}
+
+function compileAgentContextSurfaces(args: {
+  rawUseNow: string[];
+  rawInspectBeforeUse: string[];
+  rawDoNotUse: string[];
+  rawTargetFiles: string[];
+  memoryEntries: MemoryPacketEntry[];
+  rawHistoryUsed: boolean;
+  rawRecommendedPosture: AionisAgentContext["recommended_posture"];
+  rawAuthority: AionisAgentContext["authority"];
+  rawRisk: AionisAgentContext["risk"];
+  rehydrateHints: AionisAgentContext["rehydrate_hints"];
+}): {
+  historyUsed: boolean;
+  recommendedPosture: AionisAgentContext["recommended_posture"];
+  authority: AionisAgentContext["authority"];
+  targetFiles: string[];
+  useNow: string[];
+  inspectBeforeUse: string[];
+  doNotUse: string[];
+  risk: AionisAgentContext["risk"];
+} {
+  const blockedEntries = args.memoryEntries.filter(memoryEntryBlocked);
+  const inspectEntries = args.memoryEntries.filter((entry) => !memoryEntryBlocked(entry) && memoryEntryInspectBeforeUse(entry));
+  const usableEntries = args.memoryEntries.filter(memoryEntryUsable);
+  const hasUsableMemory = usableEntries.length > 0;
+  const hasRawGuideSurface =
+    args.rawTargetFiles.length > 0
+    || args.rawUseNow.length > 0
+    || args.rawInspectBeforeUse.length > 0
+    || args.rawDoNotUse.length > 0
+    || args.rehydrateHints.length > 0;
+  const trustedConflict = trustedWorkflowConflictAudit(args.memoryEntries);
+  const memoryUseNow = usableEntries.map(memoryEntryUseNowLine);
+
+  const movedToInspect: string[] = [];
+  const movedToDoNotUse: string[] = [];
+  const filteredUseNow = args.rawUseNow.filter((entry) => {
+    const blocked = blockedEntries.find((memory) => textMatchesMemoryEntry(entry, memory));
+    if (blocked) {
+      movedToDoNotUse.push(`Blocked memory: ${memoryEntryLabel(blocked)}`);
+      return false;
+    }
+    const inspect = inspectEntries.find((memory) => textMatchesMemoryEntry(entry, memory));
+    if (inspect) {
+      movedToInspect.push(`Inspect memory before use: ${memoryEntryLabel(inspect)}`);
+      return false;
+    }
+    const conflicted = trustedConflict.conflictedEntries.find((memory) => textMatchesMemoryEntry(entry, memory));
+    if (
+      trustedConflict.hasConflict
+      && workflowUseNowLine(entry)
+      && (trustedConflict.moveAllWorkflowUseNow || conflicted)
+    ) {
+      movedToInspect.push(conflicted
+        ? `Inspect conflicting trusted workflow: ${memoryEntryLabel(conflicted)}`
+        : "Inspect trusted workflow conflict before reuse");
+      return false;
+    }
+    return hasUsableMemory || args.memoryEntries.length === 0;
+  });
+
+  const targetFiles = hasUsableMemory || args.rawTargetFiles.length > 0
+    ? compactStrings([
+        ...args.rawTargetFiles,
+        ...usableEntries.flatMap((entry) => extractPathTargets(`${entry.title ?? ""}\n${entry.summary}`)),
+      ]).slice(0, 8)
+    : [];
+  const inspectBeforeUse = compactStrings([
+    ...args.rawInspectBeforeUse,
+    ...movedToInspect,
+    ...inspectEntries.map((entry) => `Inspect memory before use: ${memoryEntryLabel(entry)}`),
+  ]).slice(0, 5);
+  const doNotUse = compactStrings([
+    ...args.rawDoNotUse,
+    ...movedToDoNotUse,
+    ...blockedEntries.map((entry) => `Blocked memory: ${memoryEntryLabel(entry)}`),
+  ]).slice(0, 5);
+
+  const hasRiskSurface = inspectBeforeUse.length > args.rawInspectBeforeUse.length
+    || doNotUse.length > args.rawDoNotUse.length
+    || inspectEntries.length > 0
+    || blockedEntries.length > 0
+    || trustedConflict.hasConflict;
+  const historyUsed = (args.rawHistoryUsed || hasUsableMemory || inspectEntries.length > 0 || blockedEntries.length > 0 || hasRawGuideSurface) && (
+    hasUsableMemory
+    || inspectEntries.length > 0
+    || blockedEntries.length > 0
+    || hasRawGuideSurface
+  );
+  let negativeTransferRisk = args.rawRisk.negative_transfer_risk;
+  if (blockedEntries.length > 0) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "high");
+  else if (inspectEntries.length > 0) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "medium");
+  if (trustedConflict.hasConflict) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "medium");
+
+  const recommendedPosture: AionisAgentContext["recommended_posture"] = !historyUsed
+    ? "ignore_history"
+    : hasRiskSurface
+      ? "inspect_before_use"
+      : args.rawRecommendedPosture === "ignore_history"
+        ? "use_as_context"
+        : args.rawRecommendedPosture;
+
+  const usableAuthority: AionisAgentContext["authority"] = args.rawAuthority === "trusted"
+    ? "trusted"
+    : args.rawAuthority === "advisory"
+      ? "advisory"
+      : usableEntries.some((entry) => entry.authority === "trusted")
+    ? "trusted"
+    : usableEntries.some((entry) => entry.authority === "advisory")
+      ? "advisory"
+      : args.rawAuthority;
+
+  const authority: AionisAgentContext["authority"] = !historyUsed
+    ? "none"
+    : trustedConflict.hasConflict && hasUsableMemory
+      ? "advisory"
+      : hasUsableMemory
+      ? usableAuthority === "none" ? "advisory" : usableAuthority
+      : blockedEntries.length > 0
+        ? "blocked"
+        : inspectEntries.length > 0
+          ? "candidate"
+          : args.rawAuthority;
+
+  return {
+    historyUsed,
+    recommendedPosture,
+    authority,
+    targetFiles,
+    useNow: compactStrings([...filteredUseNow, ...memoryUseNow]).slice(0, 6),
+    inspectBeforeUse,
+    doNotUse,
+    risk: {
+      negative_transfer_risk: negativeTransferRisk,
+      blocked_authority_count: args.rawRisk.blocked_authority_count + blockedEntries.length,
+      stale_memory_count: args.rawRisk.stale_memory_count,
+      reasons: compactStrings([
+        ...args.rawRisk.reasons,
+        inspectEntries.length > 0 ? "candidate_or_contested_memory_kept_out_of_use_now" : null,
+        blockedEntries.length > 0 ? "blocked_or_suppressed_memory_kept_out_of_use_now" : null,
+        trustedConflict.hasConflict ? "trusted_workflow_conflict_requires_inspection" : null,
+        ...trustedConflict.reasons,
+      ]).slice(0, 5),
+    },
+  };
+}
+
+export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): AionisAgentContext {
+  const guide = args.guide_packet ?? null;
+  const memory = args.memory_packet ?? null;
+  const guideBrief = guide?.guide_brief ?? null;
+  const memoryEntryCount = memory?.relevant_memories.length ?? 0;
+  const rawHistoryUsed = guideBrief?.history_used === true || memoryEntryCount > 0;
+  const rawTargetFiles = compactStrings([
+    ...(guide?.recovered_state.target_files ?? []),
+  ]).slice(0, 8);
+  const rehydrateHints = (guide?.memory_lifecycle.rehydration_hints ?? guideBrief?.rehydrate ?? []).slice(0, 6);
+  const memoryIds = compactStrings([
+    ...(guide?.memory_lifecycle.used_memory_ids ?? []),
+    ...(memory?.lifecycle.used_memory_ids ?? []),
+    ...rehydrateHints.map((entry) => entry.memory_id),
+  ]).slice(0, 10);
+  const workflowIds = compactStrings(
+    guide?.guidance.workflow_candidates.map((entry) => entry.workflow_id) ?? [],
+  ).slice(0, 10);
+  const evidenceCount =
+    (memory?.evidence_trail.length ?? 0)
+    + (guide?.proven_facts.length ?? 0)
+    + (guide?.guidance.workflow_candidates.reduce((sum, entry) => sum + entry.evidence_count, 0) ?? 0);
+  const risk = {
+    negative_transfer_risk:
+      guide?.risk.negative_transfer_risk
+      ?? memory?.risk.negative_transfer_risk
+      ?? "low",
+    blocked_authority_count: guide?.risk.blocked_authority_count ?? 0,
+    stale_memory_count:
+      guide?.risk.stale_memory_count
+      ?? memory?.forgetting_state.stale_memory_count
+      ?? memory?.risk.stale_memory_count
+      ?? 0,
+    reasons: compactStrings(guide?.risk.reasons ?? []).slice(0, 5),
+  };
+  const rawSummary =
+    guideBrief?.history_used === true
+      ? guideBrief.summary
+      : memoryEntryCount > 0
+        ? "Relevant Aionis memory is available as compact context."
+        : "No usable Aionis history was recovered.";
+  const rawRecommendedPosture =
+    guideBrief?.recommended_posture
+    ?? (rawHistoryUsed ? "use_as_context" : "ignore_history");
+  const rawAuthority = guideBrief?.authority ?? "candidate";
+  const surfaces = compileAgentContextSurfaces({
+    rawUseNow: compactStrings(guideBrief?.use_now ?? []).slice(0, 8),
+    rawInspectBeforeUse: compactStrings(guideBrief?.inspect_before_use ?? []).slice(0, 8),
+    rawDoNotUse: compactStrings(guideBrief?.do_not_use ?? []).slice(0, 8),
+    rawTargetFiles,
+    memoryEntries: memory?.relevant_memories ?? [],
+    rawHistoryUsed,
+    rawRecommendedPosture,
+    rawAuthority,
+    rawRisk: risk,
+    rehydrateHints,
+  });
+  const summary = surfaces.historyUsed
+    ? rawSummary
+    : "No usable Aionis history was recovered for the Agent context.";
+  const promptText = buildAgentContextPrompt({
+    summary,
+    historyUsed: surfaces.historyUsed,
+    recommendedPosture: surfaces.recommendedPosture,
+    authority: surfaces.authority,
+    negativeTransferRisk: surfaces.risk.negative_transfer_risk,
+    targetFiles: surfaces.targetFiles,
+    useNow: surfaces.useNow,
+    inspectBeforeUse: surfaces.inspectBeforeUse,
+    doNotUse: surfaces.doNotUse,
+    memoryIds,
+    rehydrateHints,
+  });
+
+  return parseAionisAgentContext({
+    contract_version: "aionis_agent_context_v1",
+    tenant_id: guide?.tenant_id ?? memory?.tenant_id ?? args.tenant_id,
+    scope: guide?.scope ?? memory?.scope ?? args.scope,
+    prompt_text: promptText,
+    summary,
+    history_used: surfaces.historyUsed,
+    recommended_posture: surfaces.recommendedPosture,
+    authority: surfaces.authority,
+    target_files: surfaces.targetFiles,
+    use_now: surfaces.useNow,
+    inspect_before_use: surfaces.inspectBeforeUse,
+    do_not_use: surfaces.doNotUse,
+    memory_ids: memoryIds,
+    rehydrate_hints: rehydrateHints,
+    risk: surfaces.risk,
+    evidence_refs: {
+      memory_ids: memoryIds,
+      workflow_ids: workflowIds,
+      evidence_count: evidenceCount,
+    },
+  });
+}
+
 export function buildAionisGuidePacket(args: BuildAionisGuidePacketArgs): AionisGuidePacket {
   const firstStep = args.planning.continuity_guidance;
   const authority = mapAuthority(
@@ -711,6 +1341,33 @@ export function buildAionisGuidePacket(args: BuildAionisGuidePacketArgs): Aionis
     ...args.planning.action_packet_summary.candidate_pattern_anchor_ids,
   ]);
   const rehydrationIds = compactStrings(args.planning.action_packet_summary.rehydration_anchor_ids);
+  const stateSummary =
+    args.execution_summary?.continuity_snapshot_summary.recommended_action
+    ?? args.execution_summary?.collaboration_summary.next_action
+    ?? args.planning.history_impact_summary.primary_reason
+    ?? null;
+  const resumable =
+    args.planning.continuity_carrier_summary.total_count > 0
+    || args.execution_summary?.continuity_snapshot_summary.snapshot_mode === "packet_backed";
+  const workflowCandidates = buildWorkflowCandidates(args.planning);
+  const toolPreferences = buildToolPreferences(args.planning, authority);
+  const historyContributions = buildGuideHistoryContributions(args.planning);
+  const memoryLifecycle: AionisGuidePacket["memory_lifecycle"] = {
+    used_memory_ids: usedMemoryIds,
+    suppressed_memory_ids: args.planning.forgetting_summary.suppressed_pattern_anchor_ids,
+    archived_memory_ids: [],
+    rehydration_hints: rehydrationIds.map((memoryId) => ({
+      memory_id: memoryId,
+      reason: "Differential rehydration candidate from the planning summary.",
+      required: args.planning.action_intelligence_pre_action_gate?.requires_rehydration === true,
+    })),
+  };
+  const negativeTransferRiskValue = negativeTransferRisk(args.planning);
+  const blockedAuthorityCount =
+    args.planning.authority_visibility_summary.authoritative_blocked_count
+    + authorityVisibilityStableBlockedCount;
+  const staleMemoryCount = args.planning.forgetting_summary.stale_signal_count;
+  const riskReasons = buildRiskReasons(args.planning, args.execution_summary);
 
   return parseAionisGuidePacket({
     contract_version: "aionis_guide_packet_v1",
@@ -718,15 +1375,23 @@ export function buildAionisGuidePacket(args: BuildAionisGuidePacketArgs): Aionis
     scope: args.scope,
     actor: args.actor,
     task: asTask(args.task),
+    guide_brief: buildAionisGuideBrief({
+      stateSummary,
+      resumable,
+      targetFiles,
+      acceptanceChecks,
+      workflowCandidates,
+      toolPreferences,
+      historyContributions,
+      memoryLifecycle,
+      negativeTransferRisk: negativeTransferRiskValue,
+      blockedAuthorityCount,
+      staleMemoryCount,
+      riskReasons,
+    }),
     recovered_state: {
-      state_summary:
-        args.execution_summary?.continuity_snapshot_summary.recommended_action
-        ?? args.execution_summary?.collaboration_summary.next_action
-        ?? args.planning.history_impact_summary.primary_reason
-        ?? null,
-      resumable:
-        args.planning.continuity_carrier_summary.total_count > 0
-        || args.execution_summary?.continuity_snapshot_summary.snapshot_mode === "packet_backed",
+      state_summary: stateSummary,
+      resumable,
       handoff_ids: [],
       execution_state_revision: null,
       target_files: targetFiles,
@@ -734,28 +1399,17 @@ export function buildAionisGuidePacket(args: BuildAionisGuidePacketArgs): Aionis
     },
     proven_facts: [],
     guidance: {
-      workflow_candidates: buildWorkflowCandidates(args.planning),
-      tool_preferences: buildToolPreferences(args.planning, authority),
+      workflow_candidates: workflowCandidates,
+      tool_preferences: toolPreferences,
     },
-    history_contributions: buildGuideHistoryContributions(args.planning),
-    memory_lifecycle: {
-      used_memory_ids: usedMemoryIds,
-      suppressed_memory_ids: args.planning.forgetting_summary.suppressed_pattern_anchor_ids,
-      archived_memory_ids: [],
-      rehydration_hints: rehydrationIds.map((memoryId) => ({
-        memory_id: memoryId,
-        reason: "Differential rehydration candidate from the planning summary.",
-        required: args.planning.action_intelligence_pre_action_gate?.requires_rehydration === true,
-      })),
-    },
+    history_contributions: historyContributions,
+    memory_lifecycle: memoryLifecycle,
     risk: {
-      negative_transfer_risk: negativeTransferRisk(args.planning),
-      blocked_authority_count:
-        args.planning.authority_visibility_summary.authoritative_blocked_count
-        + authorityVisibilityStableBlockedCount,
-      stale_memory_count: args.planning.forgetting_summary.stale_signal_count,
+      negative_transfer_risk: negativeTransferRiskValue,
+      blocked_authority_count: blockedAuthorityCount,
+      stale_memory_count: staleMemoryCount,
       provider_or_protocol_quarantine: false,
-      reasons: buildRiskReasons(args.planning, args.execution_summary),
+      reasons: riskReasons,
     },
     source_map: {
       routes_used: args.source_map?.routes_used ?? [],

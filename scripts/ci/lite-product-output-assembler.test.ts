@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { PlanningSummary } from "../../src/app/planning-summary.ts";
 import { evaluateAionisEffect } from "../../src/kernel/effect-evaluator.ts";
 import {
+  buildAionisAgentContext,
   buildAionisEffectReport,
   buildAionisGuidePacket,
   buildAionisLearningPacket,
@@ -346,6 +347,15 @@ test("product guide assembler converts planning summary into stable GuidePacket"
   });
 
   assert.equal(packet.contract_version, "aionis_guide_packet_v1");
+  assert.equal(packet.guide_brief.history_used, true);
+  assert.equal(packet.guide_brief.recommended_posture, "rehydrate_before_use");
+  assert.equal(packet.guide_brief.authority, "trusted");
+  assert.ok(packet.guide_brief.use_now.some((entry) => entry.includes("src/runtime.ts")));
+  assert.ok(packet.guide_brief.inspect_before_use.some((entry) => entry.includes("Verify before relying on history")));
+  assert.ok(packet.guide_brief.do_not_use.includes("Suppressed memory: mem-suppressed-1"));
+  assert.equal(packet.guide_brief.expected_product_effects.reduces_repeated_discovery, true);
+  assert.equal(packet.guide_brief.expected_product_effects.reduces_context_replay, true);
+  assert.equal(packet.guide_brief.expected_product_effects.controls_negative_transfer, true);
   assert.deepEqual(packet.recovered_state.target_files, ["src/runtime.ts"]);
   assert.deepEqual(packet.recovered_state.acceptance_checks, ["npm test"]);
   assert.equal(packet.guidance.workflow_candidates[0]?.workflow_id, "wf-stable-1");
@@ -359,6 +369,449 @@ test("product guide assembler converts planning summary into stable GuidePacket"
   assert.equal(packet.memory_lifecycle.rehydration_hints[0]?.required, true);
   assert.equal(packet.risk.negative_transfer_risk, "high");
   assert.ok(packet.source_map.omitted_internal_surfaces.includes("raw_find_resolve"));
+});
+
+test("product agent context assembler compacts GuidePacket for direct Agent use", () => {
+  const guidePacket = buildAionisGuidePacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    task: {
+      task_id: "task-1",
+      run_id: "run-1",
+      task_signature: "runtime-continuation",
+      task_family: "coding",
+    },
+    planning: planningSummaryFixture(),
+    source_map: {
+      routes_used: ["/v1/memory/context/assemble"],
+      internal_surfaces_used: ["planning_summary"],
+    },
+  });
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    actor: {
+      consumer_agent_id: "agent-b",
+      consumer_team_id: "team-a",
+      producer_agent_ids: ["agent-a"],
+    },
+    query: {
+      text: "Recover runtime continuation",
+      intent: "planning",
+    },
+    nodes: [{
+      id: "mem-1",
+      type: "procedure",
+      title: "Runtime continuation memory",
+      text_summary: "Inspect src/runtime.ts before editing.",
+      compression_layer: "L2",
+      memory_kind: "execution_memory",
+      authority: "advisory",
+      confidence: 0.82,
+      salience: 0.9,
+      tier: "warm",
+      evidence_ids: ["ev-1"],
+    }],
+    source_map: {
+      routes_used: ["/v1/memory/recall_text"],
+      internal_surfaces_used: ["recall"],
+    },
+  });
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    guide_packet: guidePacket,
+  });
+
+  assert.equal(context.contract_version, "aionis_agent_context_v1");
+  assert.equal(context.history_used, true);
+  assert.equal(context.recommended_posture, "rehydrate_before_use");
+  assert.equal(context.authority, "trusted");
+  assert.deepEqual(context.target_files, ["src/runtime.ts"]);
+  assert.ok(context.memory_ids.includes("wf-stable-1"));
+  assert.ok(context.prompt_text.includes("AIONIS_AGENT_CONTEXT v1"));
+  assert.ok(context.prompt_text.length < JSON.stringify({ memoryPacket, guidePacket }).length);
+  assert.equal("guide_packet" in context, false);
+  assert.equal("memory_packet" in context, false);
+});
+
+test("product agent context preserves guide-only recovered target files", () => {
+  const guidePacket = buildAionisGuidePacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    task: {
+      task_id: "task-guide-only",
+      run_id: "run-guide-only",
+      task_signature: "runtime-continuation",
+      task_family: "coding",
+    },
+    planning: planningSummaryFixture(),
+    source_map: {
+      routes_used: ["/v1/memory/context/assemble"],
+      internal_surfaces_used: ["planning_summary"],
+    },
+  });
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    guide_packet: guidePacket,
+  });
+
+  assert.equal(context.history_used, true);
+  assert.deepEqual(context.target_files, ["src/runtime.ts"]);
+  assert.ok(context.prompt_text.includes("target_files: src/runtime.ts"));
+  assert.ok(context.memory_ids.includes("wf-stable-1"));
+});
+
+test("product agent context surfaces active general memory without execution guidance", () => {
+  const guidePacket = buildAionisGuidePacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    task: {
+      task_id: "task-general-memory",
+      run_id: "run-general-memory",
+      task_signature: "ordinary-memory",
+      task_family: "memory",
+    },
+    planning: planningSummaryFixture(),
+    source_map: {
+      routes_used: ["/v1/memory/context/assemble"],
+      internal_surfaces_used: ["planning_summary"],
+    },
+  });
+  const noExecutionGuidePacket = {
+    ...guidePacket,
+    guide_brief: {
+      ...guidePacket.guide_brief,
+      summary: "No execution workflow history was recovered.",
+      history_used: false,
+      recommended_posture: "ignore_history" as const,
+      authority: "none" as const,
+      use_now: [],
+      inspect_before_use: [],
+      do_not_use: [],
+    },
+    recovered_state: {
+      ...guidePacket.recovered_state,
+      state_summary: null,
+      resumable: false,
+      target_files: [],
+      acceptance_checks: [],
+    },
+    guidance: {
+      workflow_candidates: [],
+      tool_preferences: [],
+    },
+    risk: {
+      ...guidePacket.risk,
+      negative_transfer_risk: "low" as const,
+      blocked_authority_count: 0,
+      reasons: [],
+    },
+  };
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      text: "Recover ordinary memory",
+      intent: "ordinary_memory",
+    },
+    nodes: [
+      {
+        id: "mem-general-active",
+        type: "concept",
+        title: "Current project memory",
+        text_summary: "ACTIVE_GENERAL_MARKER: Current project fact says inspect src/context.ts before broad search.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          lifecycle_state: "active",
+          compression_layer: "L2",
+        },
+        confidence: 0.86,
+        salience: 0.9,
+        evidence_ref: "ev-general-active",
+      },
+      {
+        id: "mem-preference-active",
+        type: "rule",
+        title: "Current response preference",
+        text_summary: "PREFERENCE_MARKER: Keep the guidance concise and cite evidence.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          lifecycle_state: "active",
+          compression_layer: "L2",
+        },
+        confidence: 0.82,
+        salience: 0.85,
+        evidence_ref: "ev-preference-active",
+      },
+      {
+        id: "mem-general-suppressed",
+        type: "concept",
+        title: "Suppressed ordinary memory",
+        text_summary: "STALE_GENERAL_MARKER: Old ordinary memory points at src/stale.ts.",
+        tier: "warm",
+        slots: {
+          memory_kind: "general_memory",
+          lifecycle_state: "suppressed",
+          compression_layer: "L2",
+        },
+        confidence: 0.91,
+        salience: 0.8,
+        evidence_ref: "ev-general-suppressed",
+      },
+    ],
+    source_map: {
+      routes_used: ["/v1/memory/recall_text"],
+      internal_surfaces_used: ["recall"],
+    },
+  });
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    guide_packet: noExecutionGuidePacket,
+  });
+
+  assert.equal(context.history_used, true);
+  assert.equal(context.recommended_posture, "inspect_before_use");
+  assert.equal(context.authority, "advisory");
+  assert.ok(context.target_files.includes("src/context.ts"));
+  assert.ok(context.use_now.some((entry) => entry.includes("ACTIVE_GENERAL_MARKER")));
+  assert.ok(context.use_now.some((entry) => entry.includes("PREFERENCE_MARKER")));
+  assert.equal(context.use_now.some((entry) => entry.includes("STALE_GENERAL_MARKER")), false);
+  assert.ok(context.do_not_use.some((entry) => entry.includes("Suppressed ordinary memory")));
+  assert.ok(context.prompt_text.includes("ACTIVE_GENERAL_MARKER"));
+  assert.ok(context.prompt_text.includes("PREFERENCE_MARKER"));
+  assert.ok(context.prompt_text.includes("do_not_use"));
+});
+
+test("product agent context keeps candidate and suppressed memory out of use_now", () => {
+  const guidePacket = buildAionisGuidePacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    task: {
+      task_id: "task-1",
+      run_id: "run-1",
+      task_signature: "runtime-continuation",
+      task_family: "coding",
+    },
+    planning: planningSummaryFixture(),
+    source_map: {
+      routes_used: ["/v1/memory/context/assemble"],
+      internal_surfaces_used: ["planning_summary"],
+    },
+  });
+  const unsafeGuidePacket = {
+    ...guidePacket,
+    guide_brief: {
+      ...guidePacket.guide_brief,
+      use_now: [
+        ...guidePacket.guide_brief.use_now,
+        "Workflow trusted: Candidate wrong workflow",
+        "Workflow trusted: Suppressed wrong workflow",
+      ],
+      inspect_before_use: [],
+      do_not_use: [],
+    },
+  };
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    actor: {
+      consumer_agent_id: "agent-b",
+      consumer_team_id: "team-a",
+      producer_agent_ids: ["agent-a"],
+    },
+    query: {
+      text: "Recover runtime continuation",
+      intent: "planning",
+    },
+    nodes: [
+      {
+        id: "mem-good",
+        type: "procedure",
+        title: "Runtime continuation memory",
+        text_summary: "Inspect src/runtime.ts before editing.",
+        tier: "warm",
+        slots: {
+          execution_native_v1: {
+            execution_kind: "workflow_anchor",
+            compression_layer: "L2",
+            contract_trust: "authoritative",
+          },
+        },
+        confidence: 0.86,
+        salience: 0.9,
+        evidence_ref: "ev-good",
+      },
+      {
+        id: "mem-candidate",
+        type: "procedure",
+        title: "Candidate wrong workflow",
+        text_summary: "This candidate workflow is not validated.",
+        tier: "warm",
+        slots: {
+          lifecycle_state: "candidate",
+          execution_native_v1: {
+            execution_kind: "workflow_anchor",
+            compression_layer: "L2",
+            contract_trust: "observational",
+          },
+        },
+        confidence: 0.42,
+        salience: 0.8,
+        evidence_ref: "ev-candidate",
+      },
+      {
+        id: "mem-suppressed",
+        type: "procedure",
+        title: "Suppressed wrong workflow",
+        text_summary: "This suppressed workflow must not drive Agent action.",
+        tier: "warm",
+        slots: {
+          lifecycle_state: "suppressed",
+          execution_native_v1: {
+            execution_kind: "workflow_anchor",
+            compression_layer: "L2",
+            contract_trust: "authoritative",
+          },
+        },
+        confidence: 0.9,
+        salience: 0.8,
+        evidence_ref: "ev-suppressed",
+      },
+    ],
+    source_map: {
+      routes_used: ["/v1/memory/recall_text"],
+      internal_surfaces_used: ["recall"],
+    },
+  });
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    guide_packet: unsafeGuidePacket,
+  });
+
+  assert.equal(context.history_used, true);
+  assert.equal(context.recommended_posture, "inspect_before_use");
+  assert.equal(context.risk.negative_transfer_risk, "high");
+  assert.equal(context.use_now.some((entry) => entry.includes("Candidate wrong workflow")), false);
+  assert.equal(context.use_now.some((entry) => entry.includes("Suppressed wrong workflow")), false);
+  assert.ok(context.inspect_before_use.some((entry) => entry.includes("Candidate wrong workflow")));
+  assert.ok(context.do_not_use.some((entry) => entry.includes("Suppressed wrong workflow")));
+  assert.equal(context.prompt_text.includes("Workflow trusted: Candidate wrong workflow"), false);
+  assert.equal(context.prompt_text.includes("Workflow trusted: Suppressed wrong workflow"), false);
+});
+
+test("product agent context downgrades conflicting trusted workflows to inspect-first", () => {
+  const guidePacket = buildAionisGuidePacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    task: {
+      task_id: "task-1",
+      run_id: "run-1",
+      task_signature: "runtime-continuation",
+      task_family: "coding",
+    },
+    planning: planningSummaryFixture(),
+    source_map: {
+      routes_used: ["/v1/memory/context/assemble"],
+      internal_surfaces_used: ["planning_summary"],
+    },
+  });
+  const unsafeGuidePacket = {
+    ...guidePacket,
+    guide_brief: {
+      ...guidePacket.guide_brief,
+      recommended_posture: "reuse_supported_history" as const,
+      authority: "trusted" as const,
+      use_now: [
+        "Recovered state: prior execution shaped evidence-backed guidance",
+        "Workflow trusted: Trusted workflow A: connection runtime path",
+        "Workflow trusted: Trusted workflow B: conflicting legacy adapter path",
+      ],
+      inspect_before_use: [],
+      do_not_use: [],
+    },
+  };
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    actor: {
+      consumer_agent_id: "agent-b",
+      consumer_team_id: "team-a",
+      producer_agent_ids: ["agent-a"],
+    },
+    query: {
+      text: "Recover runtime continuation",
+      intent: "planning",
+    },
+    nodes: [
+      {
+        id: "mem-trusted-a",
+        type: "procedure",
+        title: "Trusted workflow A: connection runtime path",
+        text_summary: "Trusted workflow A says to inspect src/client/connection.ts and its retry test.",
+        tier: "warm",
+        slots: {
+          execution_native_v1: {
+            execution_kind: "workflow_anchor",
+            compression_layer: "L2",
+            contract_trust: "authoritative",
+          },
+        },
+        confidence: 0.9,
+        salience: 0.9,
+        evidence_ref: "ev-trusted-a",
+      },
+      {
+        id: "mem-trusted-b",
+        type: "procedure",
+        title: "Trusted workflow B: conflicting legacy adapter path",
+        text_summary: "Trusted workflow B is a conflicting old path and should be inspected before reuse.",
+        tier: "warm",
+        slots: {
+          execution_native_v1: {
+            execution_kind: "workflow_anchor",
+            compression_layer: "L2",
+            contract_trust: "authoritative",
+          },
+        },
+        confidence: 0.88,
+        salience: 0.88,
+        evidence_ref: "ev-trusted-b",
+      },
+    ],
+    source_map: {
+      routes_used: ["/v1/memory/recall_text"],
+      internal_surfaces_used: ["recall"],
+    },
+  });
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    guide_packet: unsafeGuidePacket,
+  });
+
+  assert.equal(context.history_used, true);
+  assert.equal(context.recommended_posture, "inspect_before_use");
+  assert.equal(context.authority, "advisory");
+  assert.equal(context.risk.negative_transfer_risk, "high");
+  assert.ok(context.risk.reasons.includes("trusted_workflow_conflict_requires_inspection"));
+  assert.equal(context.use_now.some((entry) => entry.includes("conflicting legacy adapter")), false);
+  assert.ok(context.inspect_before_use.some((entry) => entry.includes("conflicting legacy adapter")));
+  assert.equal(context.prompt_text.includes("Workflow trusted: Trusted workflow B: conflicting legacy adapter path"), false);
 });
 
 test("product memory assembler converts recall output into evidence-scoped MemoryPacket", () => {

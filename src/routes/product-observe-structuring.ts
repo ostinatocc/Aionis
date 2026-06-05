@@ -4,23 +4,27 @@ export type ProductObserveStructuringSummary = {
   schema_version: "aionis_observe_structuring_v1";
   mode: "auto";
   input_node_count: number;
+  auto_text_node_count: number;
   passthrough_node_count: number;
   already_structured_node_count: number;
   execution_workflow_count: number;
+  execution_observation_count: number;
   general_memory_count: number;
   structured_nodes: Array<{
     client_id: string | null;
     type: string;
     classification: "already_structured" | "execution_workflow" | "general_memory" | "passthrough";
     execution_kind: string | null;
-    source: "node" | "memory" | "memory.nodes";
+    source: "node" | "memory" | "memory.nodes" | "input_text" | "execution";
   }>;
 };
 
 export type ProductObserveMemoryInput = {
   input_text?: string;
+  memory_kind?: string;
   nodes?: Record<string, unknown>[];
   memory?: Record<string, unknown>;
+  execution?: Record<string, unknown>;
 };
 
 export type StructuredProductObserveMemoryInput = {
@@ -63,6 +67,18 @@ function productStringList(value: unknown, limit = 64): string[] {
   return out;
 }
 
+function productRecordList(value: unknown, limit = 64): Record<string, unknown>[] {
+  const input = Array.isArray(value) ? value : [];
+  const out: Record<string, unknown>[] = [];
+  for (const item of input) {
+    const record = productRecord(item);
+    if (!record) continue;
+    out.push(record);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 function productSlug(value: string): string {
   const slug = value
     .toLowerCase()
@@ -71,6 +87,12 @@ function productSlug(value: string): string {
     .slice(0, 96);
   if (slug) return slug;
   return createHash("sha256").update(value).digest("hex").slice(0, 16);
+}
+
+function productTitleFromText(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= 96) return normalized;
+  return `${normalized.slice(0, 93)}...`;
 }
 
 function hasProductExecutionSurface(slots: Record<string, unknown> | null): boolean {
@@ -142,6 +164,131 @@ function memoryObjectAsNode(memory: Record<string, unknown>): Record<string, unk
   };
 }
 
+function inputTextAsNode(parsed: ProductObserveMemoryInput): Record<string, unknown> | null {
+  const text = productString(parsed.input_text);
+  if (!text) return null;
+  const memory = productRecord(parsed.memory);
+  const slots = productRecord(memory?.slots);
+  const kind = productFirstString(parsed.memory_kind, memory?.memory_kind, memory?.kind, slots?.memory_kind)
+    ?.toLowerCase();
+  const executionLike = kind === "execution_workflow" || kind === "workflow";
+  const title = productFirstString(memory?.title, memory?.name, productTitleFromText(text)) ?? "Observed memory";
+  return {
+    client_id: productFirstString(memory?.client_id, `observe:text:${productSlug(text)}`),
+    type: executionLike ? "procedure" : "concept",
+    memory_kind: executionLike ? "execution_workflow" : "general_memory",
+    title,
+    text_summary: productFirstString(memory?.text_summary, memory?.summary, memory?.content, text) ?? text,
+    confidence: typeof memory?.confidence === "number" ? memory.confidence : 0.6,
+    slots: {
+      ...(slots ?? {}),
+      memory_kind: executionLike ? "execution_workflow" : "general_memory",
+      product_observe_v1: {
+        ...(productRecord(slots?.product_observe_v1) ?? {}),
+        schema_version: "product_observe_v1",
+        input_surface: "input_text",
+        memory_kind: executionLike ? "execution_workflow" : "general_memory",
+        auto_structured: true,
+      },
+    },
+  };
+}
+
+function executionObservationAsNode(parsed: ProductObserveMemoryInput): Record<string, unknown> | null {
+  const execution = productRecord(parsed.execution);
+  if (!execution) return null;
+  const slots = { ...(productRecord(execution.slots) ?? {}) };
+  const summary = productFirstString(execution.summary, parsed.input_text, execution.title, "Observed execution")
+    ?? "Observed execution";
+  const title = productFirstString(execution.title, summary, "Observed execution") ?? "Observed execution";
+  const targetFiles = productStringList([
+    ...productStringList(execution.target_files),
+    ...productStringList(execution.files),
+    ...productStringList(slots.target_files),
+  ]);
+  const toolSet = productStringList([
+    ...productStringList(execution.tool_set),
+    ...productStringList(execution.tools),
+    ...productStringList(slots.tool_set),
+  ]);
+  const workflowSteps = productStringList([
+    ...productStringList(execution.workflow_steps),
+    ...productStringList(execution.steps),
+    ...productStringList(slots.workflow_steps),
+  ]);
+  const acceptanceChecks = productStringList([
+    ...productStringList(execution.acceptance_checks),
+    ...productStringList(execution.verifier),
+    ...productStringList(slots.acceptance_checks),
+  ]);
+  const evidence = productRecordList(execution.evidence, 32);
+  const artifacts = productRecordList(execution.artifacts, 32);
+  const signatureBase = [
+    productFirstString(execution.task_signature),
+    productFirstString(execution.workflow_signature),
+    title,
+    summary,
+    targetFiles.join(","),
+    workflowSteps.join("|"),
+  ].filter(Boolean).join("\n");
+  const taskSignature = productFirstString(
+    execution.task_signature,
+    slots.task_signature,
+    `observed_task:${productSlug(signatureBase)}`,
+  );
+  const workflowSignature = productFirstString(
+    execution.workflow_signature,
+    slots.workflow_signature,
+    `observed_workflow:${productSlug(signatureBase)}`,
+  );
+  const continuationHint = productFirstString(
+    execution.continuation_hint,
+    execution.resume_hint,
+    execution.reuse_hint,
+    slots.continuation_hint,
+    summary,
+  );
+
+  slots.memory_kind = "execution_workflow";
+  slots.product_observe_v1 = {
+    ...(productRecord(slots.product_observe_v1) ?? {}),
+    schema_version: "product_observe_v1",
+    input_surface: "execution",
+    memory_kind: "execution_workflow",
+    auto_structured: true,
+  };
+  slots.execution_observation_v1 = stripUndefined({
+    ...(productRecord(slots.execution_observation_v1) ?? {}),
+    schema_version: "execution_observation_v1",
+    run_id: productFirstString(execution.run_id, slots.run_id),
+    task_id: productFirstString(execution.task_id, slots.task_id),
+    outcome: productFirstString(execution.outcome, slots.outcome),
+    evidence,
+    artifacts,
+    acceptance_checks: acceptanceChecks,
+    verification: productRecord(execution.verification) ?? productRecord(slots.verification),
+  });
+
+  return stripUndefined({
+    client_id: productFirstString(execution.client_id, `execution:${productSlug(signatureBase)}`),
+    type: "procedure",
+    memory_kind: "execution_workflow",
+    title,
+    text_summary: summary,
+    task_family: productFirstString(execution.task_family, slots.task_family),
+    task_signature: taskSignature,
+    workflow_signature: workflowSignature,
+    target_files: targetFiles,
+    tool_set: toolSet,
+    workflow_steps: workflowSteps,
+    next_action: continuationHint,
+    confidence: typeof execution.confidence === "number" ? execution.confidence : 0.7,
+    slots,
+    evidence_ref: productFirstString(execution.evidence_ref) ?? undefined,
+    raw_ref: productFirstString(execution.raw_ref) ?? undefined,
+  });
+}
+
 function shouldStructureExecutionWorkflow(node: Record<string, unknown>, slots: Record<string, unknown> | null): boolean {
   const kind = productMemoryKind(node, slots);
   if (kind === "execution_workflow" || kind === "workflow") return true;
@@ -187,6 +334,7 @@ function structureExecutionWorkflowNode(node: Record<string, unknown>): Record<s
   slots.summary_kind = productFirstString(slots.summary_kind, "workflow_anchor");
   slots.compression_layer = productFirstString(slots.compression_layer, "L2");
   slots.product_observe_v1 = {
+    ...(productRecord(slots.product_observe_v1) ?? {}),
     schema_version: "product_observe_v1",
     memory_kind: productMemoryKind(node, slots) ?? "execution_workflow",
     auto_structured: true,
@@ -238,6 +386,19 @@ function structureExecutionWorkflowNode(node: Record<string, unknown>): Record<s
 }
 
 function passthroughWriteNode(node: Record<string, unknown>): Record<string, unknown> {
+  const sourceSlots = productRecord(node.slots);
+  const slots = sourceSlots ? { ...sourceSlots } : {};
+  const kind = productMemoryKind(node, sourceSlots);
+  if (isGeneralMemoryKind(kind)) {
+    slots.memory_kind = kind;
+    slots.product_observe_v1 = {
+      ...(productRecord(slots.product_observe_v1) ?? {}),
+      schema_version: "product_observe_v1",
+      memory_kind: kind,
+      auto_structured: productRecord(slots.product_observe_v1)?.auto_structured === true,
+      original_type: productFirstString(node.type),
+    };
+  }
   return stripUndefined({
     id: node.id,
     client_id: node.client_id,
@@ -250,7 +411,7 @@ function passthroughWriteNode(node: Record<string, unknown>): Record<string, unk
     owner_team_id: node.owner_team_id,
     title: node.title,
     text_summary: node.text_summary,
-    slots: node.slots,
+    slots: Object.keys(slots).length > 0 ? slots : node.slots,
     raw_ref: node.raw_ref,
     evidence_ref: node.evidence_ref,
     embedding: node.embedding,
@@ -261,43 +422,67 @@ function passthroughWriteNode(node: Record<string, unknown>): Record<string, unk
   });
 }
 
-function observeNodeInput(parsed: ProductObserveMemoryInput): {
-  input: unknown[] | undefined;
-  source: "node" | "memory" | "memory.nodes";
-} {
+function observeNodeInputs(parsed: ProductObserveMemoryInput): Array<{
+  input: Record<string, unknown>;
+  source: "node" | "memory" | "memory.nodes" | "input_text" | "execution";
+}> {
+  const out: Array<{
+    input: Record<string, unknown>;
+    source: "node" | "memory" | "memory.nodes" | "input_text" | "execution";
+  }> = [];
+  if (parsed.nodes) {
+    for (const item of parsed.nodes) {
+      const node = productRecord(item);
+      if (node) out.push({ input: node, source: "node" });
+    }
+  }
   const memory = productRecord(parsed.memory);
   const memoryNodes = Array.isArray(memory?.nodes) ? memory.nodes : undefined;
   const memoryNode = memory && !memoryNodes && hasMemoryObjectSignal(memory) ? memoryObjectAsNode(memory) : null;
-  if (parsed.nodes) return { input: parsed.nodes, source: "node" };
-  if (memoryNodes) return { input: memoryNodes, source: "memory.nodes" };
-  if (memoryNode) return { input: [memoryNode], source: "memory" };
-  return { input: undefined, source: "node" };
+  if (memoryNodes) {
+    for (const item of memoryNodes) {
+      const node = productRecord(item);
+      if (node) out.push({ input: node, source: "memory.nodes" });
+    }
+  }
+  if (memoryNode) out.push({ input: memoryNode, source: "memory" });
+  const executionNode = executionObservationAsNode(parsed);
+  if (executionNode) out.push({ input: executionNode, source: "execution" });
+  if (out.length === 0) {
+    const inputTextNode = inputTextAsNode(parsed);
+    if (inputTextNode) out.push({ input: inputTextNode, source: "input_text" });
+  }
+  return out;
 }
 
 function structureObserveNodes(parsed: ProductObserveMemoryInput): {
   nodes: Record<string, unknown>[] | undefined;
   summary: ProductObserveStructuringSummary;
 } {
-  const { input, source } = observeNodeInput(parsed);
+  const inputs = observeNodeInputs(parsed);
   const summary: ProductObserveStructuringSummary = {
     schema_version: "aionis_observe_structuring_v1",
     mode: "auto",
-    input_node_count: Array.isArray(input) ? input.length : 0,
+    input_node_count: inputs.length,
+    auto_text_node_count: 0,
     passthrough_node_count: 0,
     already_structured_node_count: 0,
     execution_workflow_count: 0,
+    execution_observation_count: 0,
     general_memory_count: 0,
     structured_nodes: [],
   };
-  if (!Array.isArray(input)) return { nodes: parsed.nodes, summary };
+  if (inputs.length === 0) return { nodes: parsed.nodes, summary };
 
   const nodes: Record<string, unknown>[] = [];
-  for (const item of input) {
-    const node = productRecord(item);
-    if (!node) continue;
+  for (const item of inputs) {
+    const node = item.input;
+    const source = item.source;
     const slots = productRecord(node.slots);
     const clientId = productString(node.client_id);
     const type = productFirstString(node.type, "unknown") ?? "unknown";
+    if (source === "input_text") summary.auto_text_node_count += 1;
+    if (source === "execution") summary.execution_observation_count += 1;
     if (hasProductExecutionSurface(slots)) {
       nodes.push(passthroughWriteNode(node));
       summary.already_structured_node_count += 1;

@@ -30,8 +30,9 @@ forget or suppress stale memory, and show how history changed future behavior.
 
 | Output | Backing Code | Purpose |
 |---|---|---|
+| `aionis_agent_context` | `src/memory/product-output-contract.ts`, `src/memory/product-output-assembler.ts`, `/v1/guide` facade | Give Agents the compact default context with authority, risk, target files, memory IDs, and rehydration hints. |
 | `aionis_memory_packet` | `src/memory/product-output-contract.ts`, `src/memory/product-output-assembler.ts`, recall routes | Show relevant memories, lifecycle, authority, trust, and shaping effect. |
-| `aionis_guide_packet` | `src/app/planning-summary*.ts`, `src/memory/experience-intelligence.ts`, product assembler | Give the Agent compact, evidence-aware guidance for the next run. |
+| `aionis_guide_packet` | `src/app/planning-summary*.ts`, `src/memory/experience-intelligence.ts`, product assembler | Preserve the structured audit packet behind the compact Agent context. |
 | `aionis_learning_packet` | learning loop, promotion ledger, forgetting and authority state | Show learning candidates, promotion state, blocked authority, and counter-evidence. |
 | `aionis_effect_report` | `src/kernel/effect-evaluator.ts`, product assembler | Report whether history helped, hurt, or lacked sufficient evidence. |
 

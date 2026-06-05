@@ -10,7 +10,9 @@ import {
 } from "./policy-mutation-loop.js";
 import { ruleFeedback } from "../memory/feedback.js";
 import {
+  suppressAnchorLite,
   suppressPatternAnchorLite,
+  unsuppressAnchorLite,
   unsuppressPatternAnchorLite,
 } from "../memory/pattern-operator-override.js";
 import { applyPolicyMemoryLearningControlLite } from "../memory/policy-memory.js";
@@ -86,6 +88,8 @@ export type LearningKernel = {
   runRuntimeMaintenanceDaily(body: unknown): Promise<unknown>;
   runRuntimeMaintenanceLongHorizon(body: unknown): Promise<unknown>;
   applyPolicyLearningControl(body: unknown): Promise<unknown>;
+  suppressLearnedAnchor(body: unknown): Promise<unknown>;
+  unsuppressLearnedAnchor(body: unknown): Promise<unknown>;
   suppressLearnedPattern(body: unknown): Promise<unknown>;
   unsuppressLearnedPattern(body: unknown): Promise<unknown>;
   rehydrateLearnedAnchorPayload(body: unknown): Promise<unknown>;
@@ -282,6 +286,26 @@ export function createLearningKernel(args: LearningKernelArgs): LearningKernel {
         policy_mutation_adjudication_v1: policyMutationAdjudication,
       });
     },
+
+    suppressLearnedAnchor: (body) =>
+      liteWriteStore.withTx(() =>
+        suppressAnchorLite({
+          body,
+          defaultScope: env.MEMORY_SCOPE,
+          defaultTenantId: env.MEMORY_TENANT_ID,
+          liteWriteStore,
+        }),
+      ),
+
+    unsuppressLearnedAnchor: (body) =>
+      liteWriteStore.withTx(() =>
+        unsuppressAnchorLite({
+          body,
+          defaultScope: env.MEMORY_SCOPE,
+          defaultTenantId: env.MEMORY_TENANT_ID,
+          liteWriteStore,
+        }),
+      ),
 
     suppressLearnedPattern: (body) =>
       liteWriteStore.withTx(() =>

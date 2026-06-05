@@ -210,6 +210,42 @@ export const AionisGuidePacketSchema = z
         task_family: z.string().min(1).nullable().optional(),
       })
       .strict(),
+    guide_brief: z
+      .object({
+        summary: z.string().min(1),
+        history_used: z.boolean(),
+        recommended_posture: z.enum([
+          "reuse_supported_history",
+          "use_as_context",
+          "inspect_before_use",
+          "rehydrate_before_use",
+          "ignore_history",
+        ]),
+        authority: AionisGuidanceAuthoritySchema,
+        use_now: z.array(z.string().min(1)).default([]),
+        inspect_before_use: z.array(z.string().min(1)).default([]),
+        do_not_use: z.array(z.string().min(1)).default([]),
+        rehydrate: z
+          .array(
+            z
+              .object({
+                memory_id: z.string().min(1),
+                reason: z.string().min(1),
+                required: z.boolean(),
+              })
+              .strict(),
+          )
+          .default([]),
+        expected_product_effects: z
+          .object({
+            reduces_repeated_discovery: z.boolean(),
+            reduces_context_replay: z.boolean(),
+            controls_negative_transfer: z.boolean(),
+            reason: z.string().min(1),
+          })
+          .strict(),
+      })
+      .strict(),
     recovered_state: z
       .object({
         state_summary: z.string().min(1).nullable(),
@@ -304,6 +340,62 @@ export type AionisGuidePacket = z.infer<typeof AionisGuidePacketSchema>;
 
 export function parseAionisGuidePacket(value: unknown): AionisGuidePacket {
   return AionisGuidePacketSchema.parse(value);
+}
+
+export const AionisAgentContextSchema = z
+  .object({
+    contract_version: z.literal("aionis_agent_context_v1"),
+    tenant_id: z.string().min(1),
+    scope: z.string().min(1),
+    prompt_text: z.string().min(1),
+    summary: z.string().min(1),
+    history_used: z.boolean(),
+    recommended_posture: z.enum([
+      "reuse_supported_history",
+      "use_as_context",
+      "inspect_before_use",
+      "rehydrate_before_use",
+      "ignore_history",
+    ]),
+    authority: AionisGuidanceAuthoritySchema,
+    target_files: z.array(z.string().min(1)).default([]),
+    use_now: z.array(z.string().min(1)).default([]),
+    inspect_before_use: z.array(z.string().min(1)).default([]),
+    do_not_use: z.array(z.string().min(1)).default([]),
+    memory_ids: z.array(z.string().min(1)).default([]),
+    rehydrate_hints: z
+      .array(
+        z
+          .object({
+            memory_id: z.string().min(1),
+            reason: z.string().min(1),
+            required: z.boolean(),
+          })
+          .strict(),
+      )
+      .default([]),
+    risk: z
+      .object({
+        negative_transfer_risk: AionisRiskLevelSchema,
+        blocked_authority_count: z.number().int().nonnegative(),
+        stale_memory_count: z.number().int().nonnegative(),
+        reasons: z.array(z.string().min(1)).default([]),
+      })
+      .strict(),
+    evidence_refs: z
+      .object({
+        memory_ids: z.array(z.string().min(1)).default([]),
+        workflow_ids: z.array(z.string().min(1)).default([]),
+        evidence_count: z.number().int().nonnegative(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type AionisAgentContext = z.infer<typeof AionisAgentContextSchema>;
+
+export function parseAionisAgentContext(value: unknown): AionisAgentContext {
+  return AionisAgentContextSchema.parse(value);
 }
 
 export const AionisLearningPostureSchema = z.enum([

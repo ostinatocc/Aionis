@@ -24,6 +24,8 @@ type MemoryFeedbackToolKind =
   | "learning_loop_run"
   | "runtime_maintenance_run"
   | "policy_learning_control_apply"
+  | "anchors_suppress"
+  | "anchors_unsuppress"
   | "patterns_suppress"
   | "patterns_unsuppress"
   | "rehydrate_payload";
@@ -211,6 +213,20 @@ export function registerMemoryFeedbackToolRoutes(args: RegisterMemoryFeedbackToo
     inflightKind: "write",
     withGate: false,
     execute: (body) => learningKernel.applyPolicyLearningControl(body),
+  });
+  registerFeedbackPostRoute({
+    path: "/v1/memory/anchors/suppress",
+    requestKind: "anchors_suppress",
+    inflightKind: "write",
+    withGate: false,
+    execute: (body) => learningKernel.suppressLearnedAnchor(body),
+  });
+  registerFeedbackPostRoute({
+    path: "/v1/memory/anchors/unsuppress",
+    requestKind: "anchors_unsuppress",
+    inflightKind: "write",
+    withGate: false,
+    execute: (body) => learningKernel.unsuppressLearnedAnchor(body),
   });
   registerFeedbackPostRoute({
     path: "/v1/memory/patterns/suppress",

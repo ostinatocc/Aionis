@@ -51,6 +51,7 @@ export type WriteExistingNodeFingerprint = {
 export type WriteRuleDefInsertArgs = {
   scope: string;
   ruleNodeId: string;
+  state: "draft" | "shadow" | "active" | "disabled";
   ifJson: string;
   thenJson: string;
   exceptionsJson: string;

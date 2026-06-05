@@ -402,6 +402,12 @@ export async function applyPreparedMemoryWrite(
     // If this is a rule node, also create a rule def row (draft by default).
     if (n.type === "rule") {
       const slots = (n.slots ?? {}) as Record<string, unknown>;
+      const stateRaw = typeof slots["rule_state"] === "string"
+        ? String(slots["rule_state"]).trim().toLowerCase()
+        : typeof slots["state"] === "string"
+          ? String(slots["state"]).trim().toLowerCase()
+          : "";
+      const state = stateRaw === "shadow" || stateRaw === "active" || stateRaw === "disabled" ? stateRaw : "draft";
       const if_json = slots["if"] ?? {};
       const then_json = slots["then"] ?? {};
       const exceptions_json = slots["exceptions"] ?? [];
@@ -418,6 +424,7 @@ export async function applyPreparedMemoryWrite(
       await writeAccess.insertRuleDef({
         scope: n.scope,
         ruleNodeId: n.id,
+        state,
         ifJson: JSON.stringify(if_json),
         thenJson: JSON.stringify(then_json),
         exceptionsJson: JSON.stringify(exceptions_json),

@@ -3,10 +3,17 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
+import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
+import { buildAionisUri } from "../../src/memory/uri.ts";
+import { registerHandoffRoutes } from "../../src/routes/handoff.ts";
 import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
+import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
+import { registerMemoryFeedbackToolRoutes } from "../../src/routes/memory-feedback-tools.ts";
+import { registerLiteMemoryLifecycleRoutes } from "../../src/routes/memory-lifecycle-lite.ts";
 import { registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
@@ -17,6 +24,46 @@ import { InflightGate } from "../../src/util/inflight_gate.ts";
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-product-facade-"));
   return path.join(dir, `${name}.sqlite`);
+}
+
+function sortedKeys(value: unknown): string[] {
+  assert.ok(value && typeof value === "object" && !Array.isArray(value));
+  return Object.keys(value as Record<string, unknown>).sort();
+}
+
+function assertExactKeys(value: unknown, expected: string[]) {
+  assert.deepEqual(sortedKeys(value), [...expected].sort());
+}
+
+function assertNoForbiddenProductFields(value: unknown) {
+  const forbidden = new Set([
+    ["first", "action"].join("_"),
+    ["first", "step"].join("_"),
+    ["kick", "off"].join(""),
+    ["runtime", "context", "packet"].join("_"),
+    "learning_packet",
+    "cost_signals",
+    "raw_memory_rows",
+    "raw_slots",
+    "internal_route",
+    "internal_route_schema",
+  ]);
+  const visit = (entry: unknown) => {
+    if (!entry || typeof entry !== "object") return;
+    if (Array.isArray(entry)) {
+      for (const item of entry) visit(item);
+      return;
+    }
+    for (const [key, child] of Object.entries(entry as Record<string, unknown>)) {
+      assert.equal(forbidden.has(key), false, `forbidden product field leaked: ${key}`);
+      visit(child);
+    }
+  };
+  visit(value);
+}
+
+function assertProductSourceMap(value: unknown, expectedKeys = ["internal_surfaces_used", "routes_used"]) {
+  assertExactKeys(value, expectedKeys);
 }
 
 function liteEnv() {
@@ -80,6 +127,147 @@ function registerProductFacade(args: {
   });
 }
 
+async function seedProductFacadeMemory(args: {
+  liteWriteStore: ReturnType<typeof createLiteWriteStore>;
+  input_text: string;
+  nodes: Record<string, unknown>[];
+}) {
+  const prepared = await prepareMemoryWrite({
+    tenant_id: "default",
+    scope: "default",
+    actor: "local-user",
+    input_text: args.input_text,
+    nodes: args.nodes,
+    edges: [],
+  }, "default", "default", {
+    maxTextLen: 10000,
+    piiRedaction: false,
+    allowCrossScopeEdges: false,
+  }, null);
+
+  await args.liteWriteStore.withTx(() => applyMemoryWrite(prepared, {
+    maxTextLen: 10000,
+    piiRedaction: false,
+    allowCrossScopeEdges: false,
+    write_access: args.liteWriteStore,
+  }));
+}
+
+async function seedProductPatternAnchor(liteWriteStore: ReturnType<typeof createLiteWriteStore>) {
+  const anchorId = randomUUID();
+  await seedProductFacadeMemory({
+    liteWriteStore,
+    input_text: "seed product facade pattern anchor",
+    nodes: [{
+      id: anchorId,
+      type: "concept",
+      tier: "hot",
+      memory_lane: "private",
+      owner_agent_id: "local-user",
+      title: "Product facade suppression pattern",
+      text_summary: "Prefer read before edit when a trusted scoped workflow exists.",
+      slots: {
+        anchor_v1: {
+          schema_version: "anchor_v1",
+          anchor_kind: "pattern",
+          anchor_level: "L3",
+          selected_tool: "read",
+          task_signature: "product-facade-pattern-suppression",
+          task_family: "product_facade",
+          summary: "Prefer read before edit when a trusted scoped workflow exists.",
+          tool_set: ["read", "edit", "test"],
+          pattern_state: "stable",
+          credibility_state: "trusted",
+          promotion: {
+            credibility_state: "trusted",
+            distinct_run_count: 3,
+            required_distinct_runs: 2,
+            counter_evidence_count: 0,
+          },
+        },
+      },
+    }],
+  });
+  return { anchorId };
+}
+
+async function seedProductPayloadAnchor(liteWriteStore: ReturnType<typeof createLiteWriteStore>) {
+  const payloadNodeId = randomUUID();
+  const anchorNodeId = randomUUID();
+  const decisionId = randomUUID();
+  const runId = "run-product-payload-rehydrate";
+  await seedProductFacadeMemory({
+    liteWriteStore,
+    input_text: "seed product facade payload anchor",
+    nodes: [
+      {
+        id: payloadNodeId,
+        type: "procedure",
+        tier: "warm",
+        memory_lane: "private",
+        owner_agent_id: "local-user",
+        title: "Payload workflow step",
+        text_summary: "Read the prior verified state, apply the scoped edit, and verify the result.",
+        slots: {
+          replay_kind: "step",
+          status: "succeeded",
+          tool_name: "edit",
+        },
+      },
+      {
+        id: anchorNodeId,
+        type: "procedure",
+        tier: "warm",
+        memory_lane: "private",
+        owner_agent_id: "local-user",
+        title: "Payload rehydration anchor",
+        text_summary: "Anchor for a resumable workflow payload.",
+        slots: {
+          anchor_v1: {
+            schema_version: "anchor_v1",
+            anchor_kind: "workflow",
+            anchor_level: "L2",
+            task_signature: "product-payload-rehydrate",
+            summary: "Read the prior verified state, apply the scoped edit, and verify the result.",
+            tool_set: ["read", "edit", "test"],
+            outcome: { status: "success" },
+            source: {
+              source_kind: "playbook",
+              node_id: payloadNodeId,
+              decision_id: decisionId,
+              run_id: runId,
+              step_id: null,
+              playbook_id: "product_payload_anchor",
+              commit_id: null,
+            },
+            payload_refs: {
+              node_ids: [payloadNodeId],
+              decision_ids: [decisionId],
+              run_ids: [runId],
+              step_ids: [],
+              commit_ids: [],
+            },
+          },
+        },
+      },
+    ],
+  });
+  await liteWriteStore.insertExecutionDecision({
+    id: decisionId,
+    scope: "default",
+    decisionKind: "tools_select",
+    runId,
+    selectedTool: "edit",
+    candidatesJson: ["read", "edit", "test"],
+    contextSha256: "a".repeat(64),
+    policySha256: "b".repeat(64),
+    sourceRuleIds: [],
+    metadataJson: { product_facade_fixture: true },
+    commitId: null,
+  });
+  return { anchorNodeId, payloadNodeId, decisionId };
+}
+
 function registerFullProductMemoryApp(args: {
   app: ReturnType<typeof Fastify>;
   env: ReturnType<typeof liteEnv>;
@@ -100,6 +288,33 @@ function registerFullProductMemoryApp(args: {
     tenantFromBody: args.guards.tenantFromBody,
     acquireInflightSlot: args.guards.acquireInflightSlot,
     executionStateStore: null,
+  });
+  registerHandoffRoutes({
+    app: args.app,
+    env: args.env,
+    embedder: DeterministicEmbeddingProvider,
+    liteWriteStore: args.liteWriteStore,
+    requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
+    withIdentityFromRequest: args.guards.withIdentityFromRequest as any,
+    enforceRateLimit: args.guards.enforceRateLimit,
+    enforceTenantQuota: args.guards.enforceTenantQuota,
+    tenantFromBody: args.guards.tenantFromBody,
+    acquireInflightSlot: args.guards.acquireInflightSlot,
+    executionStateStore: null,
+  });
+  registerMemoryAccessRoutes({
+    app: args.app,
+    env: args.env,
+    embedder: DeterministicEmbeddingProvider,
+    liteWriteStore: args.liteWriteStore,
+    liteRecallAccess: args.liteRecallStore.createRecallAccess(),
+    executionStateStore: null,
+    requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
+    withIdentityFromRequest: args.guards.withIdentityFromRequest as any,
+    enforceRateLimit: args.guards.enforceRateLimit,
+    enforceTenantQuota: args.guards.enforceTenantQuota,
+    tenantFromBody: args.guards.tenantFromBody,
+    acquireInflightSlot: args.guards.acquireInflightSlot,
   });
   registerMemoryContextRuntimeRoutes({
     app: args.app,
@@ -159,6 +374,30 @@ function registerFullProductMemoryApp(args: {
       message: "embedding failed",
     }),
     recordContextAssemblyTelemetryBestEffort: async () => {},
+  });
+  registerLiteMemoryLifecycleRoutes({
+    app: args.app,
+    env: args.env,
+    liteWriteStore: args.liteWriteStore,
+    requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
+    withIdentityFromRequest: args.guards.withIdentityFromRequest as any,
+    enforceRateLimit: args.guards.enforceRateLimit,
+    enforceTenantQuota: args.guards.enforceTenantQuota,
+    tenantFromBody: args.guards.tenantFromBody,
+    acquireInflightSlot: args.guards.acquireInflightSlot,
+  });
+  registerMemoryFeedbackToolRoutes({
+    app: args.app,
+    env: args.env,
+    embedder: DeterministicEmbeddingProvider,
+    liteWriteStore: args.liteWriteStore,
+    liteRecallAccess: args.liteRecallStore.createRecallAccess(),
+    requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
+    withIdentityFromRequest: args.guards.withIdentityFromRequest as any,
+    enforceRateLimit: args.guards.enforceRateLimit,
+    enforceTenantQuota: args.guards.enforceTenantQuota,
+    tenantFromBody: args.guards.tenantFromBody,
+    acquireInflightSlot: args.guards.acquireInflightSlot,
   });
   registerProductFacade(args);
 }
@@ -234,12 +473,533 @@ test("product measure facade returns a product effect report without external ev
 
     assert.equal(response.statusCode, 200);
     const body = response.json();
+    assertNoForbiddenProductFields(body);
+    assertExactKeys(body, [
+      "contract_version",
+      "tenant_id",
+      "scope",
+      "measurement_input",
+      "effect_report",
+      "kernel_report",
+      "source_map",
+    ]);
+    assertExactKeys(body.measurement_input, ["source", "baseline", "aionis"]);
+    assertProductSourceMap(body.source_map);
+    assertExactKeys(body.effect_report, [
+      "contract_version",
+      "tenant_id",
+      "scope",
+      "task",
+      "comparison",
+      "history_impact",
+      "efficiency",
+      "quality",
+      "history_contributions",
+      "learning_effect",
+      "forgetting_effect",
+      "training_candidates",
+      "evidence",
+    ]);
     assert.equal(body.contract_version, "aionis_measure_result_v1");
     assert.equal(body.effect_report.contract_version, "aionis_effect_report_v1");
     assert.equal(body.effect_report.history_impact.impact_direction, "positive");
     assert.equal(body.effect_report.history_impact.changed_future_behavior, true);
     assert.equal(body.effect_report.quality.negative_transfer_detected, false);
     assert.deepEqual(body.source_map.routes_used, ["/v1/measure"]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("product observe turns plain input_text into recallable general memory", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("observe-plain-text");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const memoryText = "The workspace owner prefers concise product-facing status reports with direct next steps.";
+    const observe = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        input_text: memoryText,
+        auto_embed: true,
+      },
+    });
+
+    assert.equal(observe.statusCode, 200);
+    const observeBody = observe.json();
+    assertNoForbiddenProductFields(observeBody);
+    assertExactKeys(observeBody, [
+      "contract_version",
+      "tenant_id",
+      "scope",
+      "observed",
+      "structured_memory",
+      "memory_write",
+      "handoff",
+      "source_map",
+    ]);
+    assertExactKeys(observeBody.observed, [
+      "memory_written",
+      "handoff_stored",
+      "general_memory_count",
+      "execution_memory_count",
+      "auto_text_memory_count",
+      "execution_observation_count",
+    ]);
+    assertExactKeys(observeBody.structured_memory, [
+      "schema_version",
+      "mode",
+      "input_node_count",
+      "auto_text_node_count",
+      "passthrough_node_count",
+      "already_structured_node_count",
+      "execution_workflow_count",
+      "execution_observation_count",
+      "general_memory_count",
+      "structured_nodes",
+    ]);
+    assertProductSourceMap(observeBody.source_map);
+    assert.equal(observeBody.observed.memory_written, true);
+    assert.equal(observeBody.observed.auto_text_memory_count, 1);
+    assert.equal(observeBody.observed.general_memory_count, 1);
+    assert.equal(observeBody.structured_memory.structured_nodes[0].source, "input_text");
+    assert.equal(observeBody.structured_memory.structured_nodes[0].classification, "general_memory");
+    assert.equal(observeBody.memory_write.nodes.length, 1);
+
+    const guide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "How should status reports be written?",
+        consumer_agent_id: "local-user",
+        limit: 8,
+        include_packets: true,
+      },
+    });
+
+    assert.equal(guide.statusCode, 200);
+    const guideBody = guide.json();
+    assert.equal(guideBody.memory_packet.memory_family, "general_cognitive");
+    assert.ok(
+      guideBody.memory_packet.relevant_memories.some((entry: Record<string, unknown>) =>
+        entry.domain === "general"
+        && entry.summary === memoryText,
+      ),
+    );
+  } finally {
+    await app.close();
+  }
+});
+
+test("product observe keeps active preference rules recallable in agent context", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("observe-active-preference-rule");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const preferenceText = "ACTIVE_PREF_MARKER: The user prefers concise memory guidance with concrete evidence references.";
+    const observe = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        memory_lane: "private",
+        nodes: [{
+          client_id: "active-preference-rule",
+          type: "rule",
+          title: "Active response preference",
+          text_summary: preferenceText,
+          confidence: 0.86,
+          slots: {
+            memory_kind: "general_memory",
+            lifecycle_state: "active",
+            state: "active",
+            compression_layer: "L2",
+          },
+        }],
+      },
+    });
+
+    assert.equal(observe.statusCode, 200);
+
+    const guide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "What response preference should I follow for memory guidance?",
+        consumer_agent_id: "local-user",
+        limit: 8,
+        include_packets: true,
+      },
+    });
+
+    assert.equal(guide.statusCode, 200);
+    const guideBody = guide.json();
+    assert.equal(guideBody.agent_context.history_used, true);
+    assert.equal(guideBody.agent_context.authority, "advisory");
+    assert.ok(
+      guideBody.memory_packet.relevant_memories.some((entry: Record<string, unknown>) =>
+        entry.memory_type === "preference"
+        && entry.summary === preferenceText,
+      ),
+    );
+    assert.ok(
+      guideBody.agent_context.use_now.some((entry: string) => entry.includes("ACTIVE_PREF_MARKER")),
+    );
+  } finally {
+    await app.close();
+  }
+});
+
+test("product observe turns execution input into recallable execution memory", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("observe-execution-input");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const executionSummary = "Recovered the known target file, applied the scoped change, and verified the focused test before broad search.";
+    const observe = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        memory_lane: "private",
+        execution: {
+          run_id: "run:product-observe-execution",
+          task_id: "task:continuity-product-loop",
+          task_family: "continuity_recovery",
+          task_signature: "continuity-product-loop",
+          workflow_signature: "recover-target-file-before-broad-search",
+          title: "Recover target file before broad discovery",
+          summary: executionSummary,
+          outcome: "succeeded",
+          target_files: ["src/current-target.ts"],
+          workflow_steps: [
+            "Read the known target file",
+            "Apply the scoped change",
+            "Run the focused verifier",
+          ],
+          tool_set: ["read", "edit", "test"],
+          acceptance_checks: ["focused verifier passed"],
+          continuation_hint: "Recover and verify the known target before broad discovery.",
+          confidence: 0.88,
+          evidence: [{
+            ref: "run:product-observe-execution#verifier",
+            summary: "Focused verifier passed after the scoped edit.",
+          }],
+        },
+      },
+    });
+
+    assert.equal(observe.statusCode, 200);
+    const observeBody = observe.json();
+    assert.equal(observeBody.observed.execution_observation_count, 1);
+    assert.equal(observeBody.observed.execution_memory_count, 1);
+    assert.equal(observeBody.structured_memory.structured_nodes[0].source, "execution");
+    assert.equal(observeBody.structured_memory.structured_nodes[0].execution_kind, "workflow_anchor");
+
+    const guide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "Recover target file before broad discovery",
+        consumer_agent_id: "local-user",
+        tool_candidates: ["read", "edit", "test"],
+        limit: 8,
+        include_packets: true,
+      },
+    });
+
+    assert.equal(guide.statusCode, 200);
+    const guideBody = guide.json();
+    assertNoForbiddenProductFields(guideBody);
+    assertExactKeys(guideBody, [
+      "contract_version",
+      "tenant_id",
+      "scope",
+      "agent_context",
+      "memory_packet",
+      "guide_packet",
+      "source_map",
+    ]);
+    assertProductSourceMap(guideBody.source_map, [
+      "internal_surfaces_used",
+      "omitted_internal_surfaces",
+      "routes_used",
+    ]);
+    assertExactKeys(guideBody.guide_packet.guide_brief, [
+      "summary",
+      "history_used",
+      "recommended_posture",
+      "authority",
+      "use_now",
+      "inspect_before_use",
+      "do_not_use",
+      "rehydrate",
+      "expected_product_effects",
+    ]);
+    assertExactKeys(guideBody.guide_packet.guide_brief.expected_product_effects, [
+      "reduces_repeated_discovery",
+      "reduces_context_replay",
+      "controls_negative_transfer",
+      "reason",
+    ]);
+    assertExactKeys(guideBody.agent_context, [
+      "contract_version",
+      "tenant_id",
+      "scope",
+      "prompt_text",
+      "summary",
+      "history_used",
+      "recommended_posture",
+      "authority",
+      "target_files",
+      "use_now",
+      "inspect_before_use",
+      "do_not_use",
+      "memory_ids",
+      "rehydrate_hints",
+      "risk",
+      "evidence_refs",
+    ]);
+    assert.equal(guideBody.agent_context.contract_version, "aionis_agent_context_v1");
+    assert.equal(guideBody.agent_context.history_used, true);
+    assert.ok(guideBody.agent_context.prompt_text.includes("AIONIS_AGENT_CONTEXT v1"));
+    assert.ok(guideBody.agent_context.prompt_text.length < JSON.stringify({
+      memory_packet: guideBody.memory_packet,
+      guide_packet: guideBody.guide_packet,
+    }).length);
+    assert.equal(guideBody.memory_packet.memory_family, "execution");
+    assert.equal(guideBody.guide_packet.guide_brief.history_used, true);
+    assert.ok(
+      ["reuse_supported_history", "use_as_context", "inspect_before_use", "rehydrate_before_use"].includes(
+        guideBody.guide_packet.guide_brief.recommended_posture,
+      ),
+    );
+    assert.ok(
+      guideBody.memory_packet.relevant_memories.some((entry: Record<string, unknown>) =>
+        entry.domain === "execution"
+        && entry.memory_type === "execution_memory"
+        && entry.summary === executionSummary,
+      ),
+    );
+
+    const compactGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "Recover target file before broad discovery",
+        consumer_agent_id: "local-user",
+        tool_candidates: ["read", "edit", "test"],
+        limit: 8,
+      },
+    });
+    assert.equal(compactGuide.statusCode, 200);
+    const compactBody = compactGuide.json();
+    assertNoForbiddenProductFields(compactBody);
+    assertExactKeys(compactBody, [
+      "contract_version",
+      "tenant_id",
+      "scope",
+      "agent_context",
+      "source_map",
+    ]);
+    assert.equal("memory_packet" in compactBody, false);
+    assert.equal("guide_packet" in compactBody, false);
+    assert.equal(compactBody.agent_context.contract_version, "aionis_agent_context_v1");
+    assert.equal(compactBody.agent_context.history_used, true);
+    assert.deepEqual(compactBody.agent_context.target_files, ["src/current-target.ts"]);
+    assert.ok(compactBody.source_map.omitted_internal_surfaces.includes("memory_packet"));
+    assert.ok(compactBody.source_map.omitted_internal_surfaces.includes("guide_packet"));
+  } finally {
+    await app.close();
+  }
+});
+
+test("product measure derives closed-loop effect from guide packets", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("measure-product-trace");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const query = "Recover target file before broad discovery";
+    const beforeGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: query,
+        consumer_agent_id: "local-user",
+        tool_candidates: ["read", "edit", "test"],
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(beforeGuide.statusCode, 200);
+
+    const observe = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        memory_lane: "private",
+        execution: {
+          run_id: "run:product-measure-trace",
+          task_id: "task:product-measure-trace",
+          task_family: "continuity_recovery",
+          task_signature: "measure-product-trace",
+          workflow_signature: "recover-target-file-before-broad-search",
+          title: "Recover target file before broad discovery",
+          summary: "Recovered the known target file, applied the scoped change, and verified before broad search.",
+          outcome: "succeeded",
+          target_files: ["src/current-target.ts"],
+          workflow_steps: [
+            "Read the known target file",
+            "Apply the scoped change",
+            "Run the focused verifier",
+          ],
+          tool_set: ["read", "edit", "test"],
+          acceptance_checks: ["focused verifier passed"],
+          continuation_hint: "Reuse the known target-file recovery workflow before broad discovery.",
+          confidence: 0.9,
+          evidence: [{
+            ref: "run:product-measure-trace#verifier",
+            summary: "Focused verifier passed after the scoped edit.",
+          }],
+        },
+      },
+    });
+    assert.equal(observe.statusCode, 200);
+
+    const afterGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: query,
+        consumer_agent_id: "local-user",
+        tool_candidates: ["read", "edit", "test"],
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(afterGuide.statusCode, 200);
+    assert.equal(afterGuide.json().guide_packet.guide_brief.history_used, true);
+
+    const measure = await app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        task: {
+          task_id: "task:product-measure-trace",
+          run_id: "run:product-measure-trace",
+          task_signature: "measure-product-trace",
+          task_family: "continuity_recovery",
+        },
+        product_trace: {
+          before_guide: beforeGuide.json(),
+          after_guide: afterGuide.json(),
+          sufficient_evidence: true,
+          evidence_ids: ["product_trace:observe-guide-measure"],
+        },
+      },
+    });
+
+    assert.equal(measure.statusCode, 200);
+    const body = measure.json();
+    assert.equal(body.contract_version, "aionis_measure_result_v1");
+    assert.equal(body.measurement_input.source, "product_trace");
+    assert.equal(body.measurement_input.baseline.continuity.continuityGuidanceCorrect, false);
+    assert.equal(body.measurement_input.aionis.continuity.continuityGuidanceCorrect, true);
+    assert.ok(
+      body.measurement_input.baseline.continuity.repeatedDiscoverySteps
+      > body.measurement_input.aionis.continuity.repeatedDiscoverySteps,
+    );
+    assert.ok(body.kernel_report.proof_summary.repeated_discovery_delta > 0);
+    assert.equal(body.effect_report.history_impact.impact_direction, "positive");
+    assert.equal(body.effect_report.history_impact.changed_future_behavior, true);
+    assert.ok(body.source_map.internal_surfaces_used.includes("product_trace_projection"));
+  } finally {
+    await app.close();
+  }
+});
+
+test("product observe stores explicit handoff through the product facade", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("observe-handoff");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const observe = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        handoff: {
+          handoff_kind: "task_handoff",
+          anchor: "product-observe-handoff",
+          title: "Resume focused product check",
+          summary: "Resume the focused product check without replaying the full prior conversation.",
+          handoff_text: "Continue from the product observe facade validation point.",
+          target_files: ["src/routes/product-facade.ts"],
+          next_action: "Inspect product observe facade behavior and run the product facade test.",
+          acceptance_checks: ["product facade test passes"],
+          tags: ["product", "continuity"],
+        },
+      },
+    });
+
+    assert.equal(observe.statusCode, 200);
+    const body = observe.json();
+    assert.equal(body.observed.memory_written, false);
+    assert.equal(body.observed.handoff_stored, true);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/handoff/store"]);
+    assert.deepEqual(body.source_map.internal_surfaces_used, ["handoff_store"]);
+    assert.equal(body.handoff.handoff.anchor, "product-observe-handoff");
+    assert.equal(body.handoff.handoff.handoff_kind, "task_handoff");
   } finally {
     await app.close();
   }
@@ -296,12 +1056,15 @@ test("product observe auto-structures user-level workflow input into execution m
         consumer_agent_id: "local-user",
         tool_candidates: ["read", "edit", "test"],
         limit: 8,
+        include_packets: true,
       },
     });
 
     assert.equal(guide.statusCode, 200);
     const guideBody = guide.json();
     assert.equal(guideBody.memory_packet.memory_family, "execution");
+    assert.equal(guideBody.guide_packet.guide_brief.history_used, true);
+    assert.equal(["first", "action"].join("_") in guideBody.guide_packet.guide_brief, false);
     assert.equal("learning_packet" in guideBody, false);
     assert.equal(["runtime", "context", "packet"].join("_") in guideBody, false);
     assert.equal(["continuity guidance", "recommendation"].join("_") in guideBody, false);
@@ -353,6 +1116,516 @@ test("product observe does not auto-promote general memory into execution workfl
     assert.equal(body.structured_memory.execution_workflow_count, 0);
     assert.equal(body.structured_memory.general_memory_count, 1);
     assert.equal(body.structured_memory.structured_nodes[0].execution_kind, null);
+  } finally {
+    await app.close();
+  }
+});
+
+test("product forget rehydrates archived memory through the product facade", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("forget-rehydrate-archive");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const observe = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        input_text: "Archive this proven workflow until a related task needs it again.",
+        memory: {
+          client_id: "archive:product-forget-rehydrate",
+          type: "procedure",
+          tier: "archive",
+          memory_kind: "execution_workflow",
+          title: "Archived workflow for product forget",
+          text_summary: "Rehydrate this archived workflow only when the same continuation need returns.",
+          confidence: 0.82,
+        },
+      },
+    });
+    assert.equal(observe.statusCode, 200);
+    const nodeId = observe.json().memory_write.nodes[0].id;
+    const query = "Rehydrate this archived workflow only when the same continuation need returns.";
+    const beforeGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: query,
+        consumer_agent_id: "local-user",
+        tool_candidates: ["read", "edit", "test"],
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(beforeGuide.statusCode, 200);
+
+    const forget = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        operation: "rehydrate",
+        target: "archive",
+        memory_ids: [nodeId],
+        target_tier: "hot",
+        reason: "The related task returned and needs this archived workflow.",
+      },
+    });
+
+    assert.equal(forget.statusCode, 200);
+    const body = forget.json();
+    assertNoForbiddenProductFields(body);
+    assertExactKeys(body, [
+      "contract_version",
+      "tenant_id",
+      "scope",
+      "operation",
+      "target",
+      "forget_effect",
+      "result",
+      "source_map",
+    ]);
+    assertExactKeys(body.forget_effect, [
+      "action",
+      "target",
+      "reason",
+      "changed_count",
+      "reversible",
+      "affected_memory_ids",
+      "affected_client_ids",
+      "anchor_id",
+      "anchor_uri",
+    ]);
+    assertProductSourceMap(body.source_map, [
+      "internal_surfaces_used",
+      "omitted_internal_surfaces",
+      "routes_used",
+    ]);
+    assert.equal(body.contract_version, "aionis_forget_result_v1");
+    assert.equal(body.operation, "rehydrate");
+    assert.equal(body.target, "archive");
+    assert.equal(body.forget_effect.changed_count, 1);
+    assert.equal(body.forget_effect.reversible, true);
+    assert.deepEqual(body.forget_effect.affected_memory_ids, [nodeId]);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/memory/archive/rehydrate"]);
+    assert.equal(body.result.rehydrated.moved_nodes, 1);
+
+    const { rows } = await liteWriteStore.findNodes({
+      scope: "default",
+      id: nodeId,
+      consumerAgentId: "local-user",
+      consumerTeamId: null,
+      limit: 1,
+      offset: 0,
+    });
+    assert.equal(rows[0]?.tier, "hot");
+    assert.equal(rows[0]?.slots.last_rehydrated_job, "archive_rehydrate");
+
+    const afterGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: query,
+        consumer_agent_id: "local-user",
+        tool_candidates: ["read", "edit", "test"],
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(afterGuide.statusCode, 200);
+
+    const measure = await app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        product_trace: {
+          before_guide: beforeGuide.json(),
+          after_guide: afterGuide.json(),
+          forget_result: body,
+          sufficient_evidence: true,
+          evidence_ids: ["product_trace:forget-rehydrate-guide"],
+        },
+      },
+    });
+    assert.equal(measure.statusCode, 200);
+    const measureBody = measure.json();
+    assert.equal(measureBody.measurement_input.source, "product_trace");
+    assert.equal(measureBody.measurement_input.aionis.forgetting.archivedMemoryRehydratedOnDemand, 1);
+    assert.ok(measureBody.effect_report.evidence.evidence_ids.includes(`forget:${nodeId}`));
+  } finally {
+    await app.close();
+  }
+});
+
+test("product forget rehydrates anchor payload through the product facade", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("forget-rehydrate-payload");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+    const fixture = await seedProductPayloadAnchor(liteWriteStore);
+    const anchorUri = buildAionisUri({
+      tenant_id: "default",
+      scope: "default",
+      type: "procedure",
+      id: fixture.anchorNodeId,
+    });
+
+    const forget = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        operation: "rehydrate",
+        target: "payload",
+        anchor_uri: anchorUri,
+        mode: "partial",
+        include_linked_decisions: true,
+        reason: "Need the compact payload behind this workflow anchor.",
+      },
+    });
+
+    assert.equal(forget.statusCode, 200);
+    const body = forget.json();
+    assert.equal(body.contract_version, "aionis_forget_result_v1");
+    assert.equal(body.operation, "rehydrate");
+    assert.equal(body.target, "payload");
+    assert.equal(body.forget_effect.anchor_uri, anchorUri);
+    assert.equal(body.forget_effect.changed_count, 2);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/memory/anchors/rehydrate_payload"]);
+    assert.equal(body.result.anchor.id, fixture.anchorNodeId);
+    assert.equal(body.result.rehydrated.summary.resolved_nodes, 1);
+    assert.equal(body.result.rehydrated.summary.resolved_decisions, 1);
+    assert.equal(body.result.rehydrated.nodes[0]?.id, fixture.payloadNodeId);
+    assert.equal(body.result.rehydrated.decisions[0]?.decision_id, fixture.decisionId);
+  } finally {
+    await app.close();
+  }
+});
+
+test("product forget suppresses and unsuppresses pattern anchors through the product facade", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("forget-pattern-suppress");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+    const fixture = await seedProductPatternAnchor(liteWriteStore);
+    const until = new Date(Date.now() + 60_000).toISOString();
+
+    const suppress = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        operation: "suppress",
+        target: "pattern",
+        anchor_id: fixture.anchorId,
+        mode: "shadow_learn",
+        until,
+        reason: "The pattern should be inspected before reuse.",
+      },
+    });
+
+    assert.equal(suppress.statusCode, 200, suppress.payload);
+    const suppressBody = suppress.json();
+    assert.equal(suppressBody.contract_version, "aionis_forget_result_v1");
+    assert.equal(suppressBody.operation, "suppress");
+    assert.equal(suppressBody.target, "pattern");
+    assert.equal(suppressBody.forget_effect.changed_count, 1);
+    assert.equal(suppressBody.forget_effect.anchor_kind, "pattern");
+    assert.equal(suppressBody.forget_effect.anchor_id, fixture.anchorId);
+    assert.deepEqual(suppressBody.source_map.routes_used, ["/v1/memory/anchors/suppress"]);
+    assert.equal(suppressBody.result.anchor_kind, "pattern");
+    assert.equal(suppressBody.result.node_type, "concept");
+    assert.equal(suppressBody.result.operator_override.suppressed, true);
+    assert.equal(suppressBody.result.operator_override.mode, "shadow_learn");
+
+    const suppressedRows = await liteWriteStore.findNodes({
+      scope: "default",
+      id: fixture.anchorId,
+      consumerAgentId: "local-user",
+      consumerTeamId: null,
+      limit: 1,
+      offset: 0,
+    });
+    assert.equal(suppressedRows.rows[0]?.slots.operator_override_v1.suppressed, true);
+
+    const unsuppress = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        operation: "unsuppress",
+        target: "pattern",
+        anchor_id: fixture.anchorId,
+        reason: "The pattern was reviewed and can return to normal guidance.",
+      },
+    });
+
+    assert.equal(unsuppress.statusCode, 200);
+    const unsuppressBody = unsuppress.json();
+    assert.equal(unsuppressBody.contract_version, "aionis_forget_result_v1");
+    assert.equal(unsuppressBody.operation, "unsuppress");
+    assert.equal(unsuppressBody.target, "pattern");
+    assert.equal(unsuppressBody.forget_effect.changed_count, 1);
+    assert.equal(unsuppressBody.forget_effect.anchor_kind, "pattern");
+    assert.deepEqual(unsuppressBody.source_map.routes_used, ["/v1/memory/anchors/unsuppress"]);
+    assert.equal(unsuppressBody.result.anchor_kind, "pattern");
+    assert.equal(unsuppressBody.result.node_type, "concept");
+    assert.equal(unsuppressBody.result.operator_override.suppressed, false);
+    assert.equal(unsuppressBody.result.operator_override.last_action, "unsuppress");
+
+    const unsuppressedRows = await liteWriteStore.findNodes({
+      scope: "default",
+      id: fixture.anchorId,
+      consumerAgentId: "local-user",
+      consumerTeamId: null,
+      limit: 1,
+      offset: 0,
+    });
+    assert.equal(unsuppressedRows.rows[0]?.slots.operator_override_v1.suppressed, false);
+  } finally {
+    await app.close();
+  }
+});
+
+test("product forget suppresses workflow anchors from product guidance", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("forget-workflow-suppress");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const observe = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        memory_lane: "private",
+        memory: {
+          client_id: "workflow:forget-suppression",
+          type: "procedure",
+          memory_kind: "execution_workflow",
+          title: "Recover target file before broad discovery",
+          text_summary: "Read the known target file first, verify it still matches the task, then avoid repeated broad search.",
+          task_signature: "continuity-product-loop",
+          workflow_signature: "recover-target-file-first",
+          target_files: ["src/current-target.ts"],
+          next_action: "Read src/current-target.ts before broad discovery.",
+          tool_set: ["read", "edit", "test"],
+          confidence: 0.9,
+        },
+      },
+    });
+    assert.equal(observe.statusCode, 200);
+    const observeBody = observe.json();
+    const workflowId = observeBody.memory_write.nodes[0].id;
+    assert.ok(workflowId);
+
+    const beforeGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "Recover target file before broad discovery",
+        consumer_agent_id: "local-user",
+        tool_candidates: ["read", "edit", "test"],
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(beforeGuide.statusCode, 200);
+    assert.ok(
+      beforeGuide.json().guide_packet.guidance.workflow_candidates.some(
+        (entry: Record<string, unknown>) => entry.workflow_id === workflowId,
+      ),
+    );
+
+    const suppress = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        operation: "suppress",
+        anchor_id: workflowId,
+        mode: "shadow_learn",
+        reason: "This workflow is contested and must not be reused until reviewed.",
+      },
+    });
+    assert.equal(suppress.statusCode, 200, suppress.payload);
+    const suppressBody = suppress.json();
+    assert.equal(suppressBody.result.anchor_kind, "workflow");
+    assert.equal(suppressBody.result.node_type, "procedure");
+    assert.equal(suppressBody.result.operator_override.suppressed, true);
+    assert.equal(suppressBody.forget_effect.anchor_kind, "workflow");
+    assert.deepEqual(suppressBody.source_map.routes_used, ["/v1/memory/anchors/suppress"]);
+
+    const suppressedGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "Recover target file before broad discovery",
+        consumer_agent_id: "local-user",
+        tool_candidates: ["read", "edit", "test"],
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(suppressedGuide.statusCode, 200);
+    const suppressedGuideBody = suppressedGuide.json();
+    assert.equal(
+      suppressedGuideBody.guide_packet.guidance.workflow_candidates.some(
+        (entry: Record<string, unknown>) => entry.workflow_id === workflowId,
+      ),
+      false,
+      JSON.stringify(suppressedGuideBody.guide_packet.guidance.workflow_candidates),
+    );
+    assert.equal(
+      suppressedGuideBody.agent_context.evidence_refs.workflow_ids.includes(workflowId),
+      false,
+    );
+
+    const unsuppress = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        operation: "unsuppress",
+        anchor_id: workflowId,
+        reason: "The contested workflow was reviewed and can be considered again.",
+      },
+    });
+    assert.equal(unsuppress.statusCode, 200);
+    const unsuppressBody = unsuppress.json();
+    assert.equal(unsuppressBody.result.anchor_kind, "workflow");
+    assert.equal(unsuppressBody.result.operator_override.suppressed, false);
+    assert.deepEqual(unsuppressBody.source_map.routes_used, ["/v1/memory/anchors/unsuppress"]);
+
+    const restoredGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "Recover target file before broad discovery",
+        consumer_agent_id: "local-user",
+        tool_candidates: ["read", "edit", "test"],
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(restoredGuide.statusCode, 200);
+    assert.ok(
+      restoredGuide.json().guide_packet.guidance.workflow_candidates.some(
+        (entry: Record<string, unknown>) => entry.workflow_id === workflowId,
+      ),
+    );
+  } finally {
+    await app.close();
+  }
+});
+
+test("product forget records activation feedback through the product facade", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("forget-activate-memory");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const observe = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        input_text: "Use compact product status reports when the user asks for progress.",
+        memory: {
+          client_id: "memory:product-forget-activate",
+          type: "concept",
+          tier: "warm",
+          memory_kind: "general_memory",
+          title: "Product status style",
+          text_summary: "Use compact product status reports when the user asks for progress.",
+          confidence: 0.8,
+        },
+      },
+    });
+    assert.equal(observe.statusCode, 200);
+    const nodeId = observe.json().memory_write.nodes[0].id;
+
+    const forget = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        operation: "activate",
+        target: "memory",
+        memory_ids: [nodeId],
+        run_id: "run:product-forget-activate",
+        outcome: "positive",
+        activate: true,
+        reason: "The recalled style memory was reused correctly in the current run.",
+      },
+    });
+
+    assert.equal(forget.statusCode, 200);
+    const body = forget.json();
+    assert.equal(body.contract_version, "aionis_forget_result_v1");
+    assert.equal(body.operation, "activate");
+    assert.equal(body.target, "memory");
+    assert.equal(body.forget_effect.changed_count, 1);
+    assert.equal(body.forget_effect.reversible, false);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/memory/nodes/activate"]);
+    assert.equal(body.result.activated.updated_nodes, 1);
+    assert.equal(body.result.activated.outcome, "positive");
+    assert.equal(body.result.activated.activate, true);
+
+    const { rows } = await liteWriteStore.findNodes({
+      scope: "default",
+      id: nodeId,
+      consumerAgentId: "local-user",
+      consumerTeamId: null,
+      limit: 1,
+      offset: 0,
+    });
+    assert.equal(typeof rows[0]?.slots.last_activated_at, "string");
   } finally {
     await app.close();
   }

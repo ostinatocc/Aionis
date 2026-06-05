@@ -40,6 +40,78 @@ The product surface should collapse around four verbs.
 
 Internal mechanisms may remain richer than these verbs, but product docs, demos, and user-facing integrations should not expose every internal route as a product concept. Capability routing and deletion decisions are tracked in [AIONIS_CAPABILITY_DECISION_MATRIX.md](AIONIS_CAPABILITY_DECISION_MATRIX.md), and stable user-facing outputs are defined in [AIONIS_PRODUCT_OUTPUT_CONTRACT.md](AIONIS_PRODUCT_OUTPUT_CONTRACT.md).
 
+## Observe Input Contract
+
+`POST /v1/observe` is the product entry for writing history. Users should not need to know the internal node and slot schema for common writes.
+
+Supported product inputs:
+
+| Input | Product Meaning | Runtime Projection |
+|---|---|---|
+| `input_text` | Plain ordinary memory, preference, fact, or project context. | Auto-structured into a recallable general memory node when no lower-level node is supplied. |
+| `memory` / `nodes` | Explicit advanced memory write. | Passed through existing memory write structuring, with execution surfaces normalized when present. |
+| `execution` | One observed execution experience, with task/run identity, outcome, workflow steps, tools, evidence, and continuation hint. | Auto-structured into an execution workflow memory candidate with evidence and advisory authority. |
+| `handoff` | Resumable state for future continuation. | Stored through the handoff continuity engine. |
+
+This facade is a product input adapter only. It must not add host-specific behavior, benchmark-specific actions, or single-task repair rules. Internal routes may still use richer schemas after the facade has normalized user input.
+
+## Guide Output Contract
+
+`POST /v1/guide` is the product entry for giving an Agent usable historical context.
+
+Default output:
+
+| Field | Product Meaning |
+|---|---|
+| `agent_context` | Short Agent-facing context with summary, authority, risk, target files, use/inspect/do-not-use lists, memory IDs, and rehydration hints. |
+
+Optional audit output:
+
+| Request Flag | Additional Fields |
+|---|---|
+| `include_packets: true` | Adds `memory_packet` and `guide_packet` for measurement, debugging, or advanced integrations. |
+
+The default Agent surface must not be the full `memory_packet + guide_packet`. Full packets remain available for audit and `measure`, but they are not the default prompt surface.
+
+## Forget Input Contract
+
+`POST /v1/forget` is the product entry for controlled forgetting, suppression, rehydration, and reuse feedback. Users should not need to know the internal lifecycle route names.
+
+Supported product operations:
+
+| Operation | Product Meaning | Runtime Projection |
+|---|---|---|
+| `suppress` | Temporarily or strongly suppress a learned pattern from future guidance. | Pattern suppression with `shadow_learn` or `hard_freeze` mode. |
+| `unsuppress` | Restore a previously suppressed pattern when it becomes valid again. | Pattern unsuppression. |
+| `rehydrate` | Bring archived memory or anchor payload back into usable context on demand. | Archive rehydration for memory IDs, or anchor payload rehydration for anchors. |
+| `activate` | Record that a recalled memory was actually useful in a run. | Node activation feedback with outcome and run evidence. |
+
+Supported targets:
+
+| Target | Product Meaning |
+|---|---|
+| `memory` | A remembered node selected by `memory_ids`, `node_ids`, or `client_ids`. |
+| `archive` | Archived memory that should move back to `warm` or `hot`. |
+| `payload` | The payload behind an anchor, rehydrated by `anchor_id` or `anchor_uri` only when requested. |
+| `pattern` | A learned pattern controlled by suppression or unsuppression through `anchor_id`. |
+
+This facade may return an internal `source_map` for auditability, but user integrations should consume `forget_effect`: action, target, reason, changed count, reversibility, affected IDs, and anchor identity. Forget operations must control memory lifecycle and authority; they must not delete source evidence silently or add task-specific behavior.
+
+## Measure Input Contract
+
+`POST /v1/measure` is the product entry for proving whether history changed future behavior positively or negatively.
+
+Supported measurement inputs:
+
+| Input | Product Meaning | Runtime Projection |
+|---|---|---|
+| `baseline` + `aionis` | Advanced caller supplies direct effect observations. | Evaluated by the focused effect evaluator. |
+| `product_trace.before_guide` + `product_trace.after_guide` | Caller supplies two product guide outputs, usually before and after `observe` or `forget`. | Projected into continuity, learning, forgetting, and learning-control observations. |
+| `product_trace.baseline` + `product_trace.after_guide` | Caller supplies a direct baseline plus one active Aionis guide output. | Uses the direct baseline and packet-derived Aionis observation. |
+| `product_trace.forget_result` | Caller supplies the product forget result used between guide snapshots. | Counts suppression or rehydration effect without exposing internal lifecycle route schemas. |
+
+Product trace measurement proves packet-level Aionis effects: history used, repeated-discovery reduction signal, useful context ratio, stale-memory suppression, rehydration, workflow candidate reuse, and authority blocking. It must not be described as proof that an external Agent completed a task unless an external validation layer supplies that outcome as separate evidence.
+
 ## Core Capabilities
 
 | Capability | Product Value | Current Implementation |

@@ -1710,10 +1710,11 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
       db.prepare(
         `INSERT OR IGNORE INTO lite_memory_rule_defs
           (rule_node_id, scope, state, if_json, then_json, exceptions_json, rule_scope, target_agent_id, target_team_id, positive_count, negative_count, commit_id, created_at, updated_at)
-         VALUES (?, ?, 'draft', ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
       ).run(
         args.ruleNodeId,
         args.scope,
+        args.state,
         args.ifJson,
         args.thenJson,
         args.exceptionsJson,

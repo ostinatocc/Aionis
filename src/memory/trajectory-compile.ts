@@ -57,6 +57,11 @@ const SERVICE_COMMAND_PATTERNS = [
   /\bdocker\s+run\b/i,
 ];
 
+const PASSIVE_INSPECTION_COMMAND_PATTERNS = [
+  /^\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*(?:sed|cat|less|more|head|tail|rg|grep|find|ls|awk|wc|nl)\b/i,
+  /^\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*git\s+(?:diff|show|grep|ls-files|status)\b/i,
+];
+
 const DETACH_PATTERNS = [
   /\bnohup\b/i,
   /\bsetsid\b/i,
@@ -131,6 +136,14 @@ function isValidationTransportCommand(command: string, corpus: string): boolean 
   return /\bpython(?:3)?\s+-m\s+http\.server\b/i.test(command)
     && corpusHasExternalArtifactConsumerValidation(corpus)
     && !corpusHasExplicitDurableServiceIntent(corpus);
+}
+
+function isPassiveInspectionCommand(command: string): boolean {
+  return PASSIVE_INSPECTION_COMMAND_PATTERNS.some((pattern) => pattern.test(command));
+}
+
+function isValidationCommand(command: string): boolean {
+  return VALIDATION_COMMAND_PATTERNS.some((pattern) => pattern.test(command));
 }
 
 function escapeRegExp(value: string): string {
@@ -324,6 +337,8 @@ function extractServiceLifecycleConstraints(
   const corpus = compileCorpus(queryText, steps);
   const urls = uniqueStrings(steps.flatMap((step) => step.urls), 16);
   const serviceCommands = commands.filter((command) => {
+    if (isPassiveInspectionCommand(command)) return false;
+    if (isValidationCommand(command)) return false;
     if (!SERVICE_COMMAND_PATTERNS.some((pattern) => pattern.test(command))) return false;
     if (isValidationTransportCommand(command, corpus)) return false;
     return true;
