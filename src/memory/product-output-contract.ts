@@ -513,6 +513,20 @@ const AionisUnusedExposureObservationSchema = z
   })
   .strict();
 
+const AionisCandidateLearningControlSummarySchema = z
+  .object({
+    present: z.boolean(),
+    contract_version: z.literal("aionis_candidate_learning_control_summary_v1").nullable(),
+    mode: z.literal("candidate_only").nullable(),
+    authority_mutation: z.literal(false),
+    candidate_inspect_before_use_memory_ids: z.array(z.string().min(1)).default([]),
+    candidate_from_threshold_met_memory_ids: z.array(z.string().min(1)).default([]),
+    candidate_from_repeated_unused_without_positive_memory_ids: z.array(z.string().min(1)).default([]),
+    blocked_by_positive_attribution_memory_ids: z.array(z.string().min(1)).default([]),
+    reason: z.string().min(1),
+  })
+  .strict();
+
 const AionisSparseFeedbackSignalSummarySchema = z
   .object({
     present: z.boolean(),
@@ -526,6 +540,17 @@ const AionisSparseFeedbackSignalSummarySchema = z
     repeated_unattributed_memory_ids: z.array(z.string().min(1)).default([]),
     repeated_unattributed_without_positive_memory_ids: z.array(z.string().min(1)).default([]),
     read_only_signal_memory_ids: z.array(z.string().min(1)).default([]),
+    candidate_learning_control_summary: AionisCandidateLearningControlSummarySchema.default({
+      present: false,
+      contract_version: null,
+      mode: null,
+      authority_mutation: false,
+      candidate_inspect_before_use_memory_ids: [],
+      candidate_from_threshold_met_memory_ids: [],
+      candidate_from_repeated_unused_without_positive_memory_ids: [],
+      blocked_by_positive_attribution_memory_ids: [],
+      reason: "No sparse feedback signal crossed the candidate learning-control gate.",
+    }),
     reason: z.string().min(1),
   })
   .strict();
@@ -800,6 +825,17 @@ export const AionisMemoryDecisionTraceSchema = z
           repeated_unattributed_memory_ids: [],
           repeated_unattributed_without_positive_memory_ids: [],
           read_only_signal_memory_ids: [],
+          candidate_learning_control_summary: {
+            present: false,
+            contract_version: null,
+            mode: null,
+            authority_mutation: false,
+            candidate_inspect_before_use_memory_ids: [],
+            candidate_from_threshold_met_memory_ids: [],
+            candidate_from_repeated_unused_without_positive_memory_ids: [],
+            blocked_by_positive_attribution_memory_ids: [],
+            reason: "No sparse feedback signal crossed the candidate learning-control gate.",
+          },
           reason: "No activate feedback or unused exposure signal was supplied for this trace.",
         }),
         weak_counter_signal_memory_ids: z.array(z.string().min(1)).default([]),
@@ -919,6 +955,17 @@ export const AionisMemoryDecisionAuditReportSchema = z
         repeated_unattributed_memories: z.array(AionisAuditFeedbackSignalMemorySchema).default([]),
         repeated_unattributed_without_positive_memories: z.array(AionisAuditFeedbackSignalMemorySchema).default([]),
         read_only_signal_memory_ids: z.array(z.string().min(1)).default([]),
+        candidate_learning_control_summary: AionisCandidateLearningControlSummarySchema.default({
+          present: false,
+          contract_version: null,
+          mode: null,
+          authority_mutation: false,
+          candidate_inspect_before_use_memory_ids: [],
+          candidate_from_threshold_met_memory_ids: [],
+          candidate_from_repeated_unused_without_positive_memory_ids: [],
+          blocked_by_positive_attribution_memory_ids: [],
+          reason: "No sparse feedback signal crossed the candidate learning-control gate.",
+        }),
         reason: z.string().min(1),
       })
       .strict(),

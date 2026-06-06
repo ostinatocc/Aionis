@@ -130,6 +130,7 @@ function assertTraceReviewsMirrorDecisions(
     sparseSummary.repeated_unattributed_without_positive_memory_ids,
   );
   assert.deepEqual(audit.feedback_signal_review.read_only_signal_memory_ids, sparseSummary.read_only_signal_memory_ids);
+  assert.deepEqual(audit.feedback_signal_review.candidate_learning_control_summary, sparseSummary.candidate_learning_control_summary);
 }
 
 function buildTraceFixture(): {
@@ -367,5 +368,10 @@ test("memory decision trace separates absent feedback attribution from relation 
   assert.deepEqual(trace.feedback_attribution.sparse_feedback_signal_summary.relation_counter_signal_memory_ids, ["mem-old"]);
   assert.deepEqual(trace.feedback_attribution.sparse_feedback_signal_summary.contradiction_warning_memory_ids, ["mem-old"]);
   assert.deepEqual(trace.feedback_attribution.sparse_feedback_signal_summary.read_only_signal_memory_ids, ["mem-old"]);
+  assert.equal(trace.feedback_attribution.sparse_feedback_signal_summary.candidate_learning_control_summary.present, false);
+  assert.deepEqual(
+    trace.feedback_attribution.sparse_feedback_signal_summary.candidate_learning_control_summary.candidate_inspect_before_use_memory_ids,
+    [],
+  );
   assert.equal(trace.memory_decisions.every((entry) => entry.feedback_detail === null), true);
 });

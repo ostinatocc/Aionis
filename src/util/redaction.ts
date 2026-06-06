@@ -37,8 +37,8 @@ export function redactPII(input: string): RedactionResult {
     return tag("IP", m);
   });
 
-  // Phone (US-ish; intentionally conservative)
-  text = text.replace(/(?:\+?1[\s-]?)?(?:\(\s*\d{3}\s*\)|\d{3})[\s-]?\d{3}[\s-]?\d{4}\b/g, (m) => {
+  // Phone (US-ish; bounded so UUID/hash suffixes are not corrupted).
+  text = text.replace(/(?<![A-Za-z0-9])(?:\+?1[\s-]?)?(?:\(\s*\d{3}\s*\)|\d{3})[\s-]?\d{3}[\s-]?\d{4}(?![A-Za-z0-9])/g, (m) => {
     bump("phone");
     return tag("PHONE", m);
   });
@@ -70,4 +70,3 @@ export function redactJsonStrings(value: unknown): { value: unknown; counts: Rec
 
   return { value: walk(value), counts };
 }
-

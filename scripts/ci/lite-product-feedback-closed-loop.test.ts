@@ -447,6 +447,10 @@ test("product feedback closed loop keeps single weak negative below downgrade th
     assert.deepEqual(measure.memory_decision_trace.feedback_attribution.threshold_met_memory_ids, []);
     assert.deepEqual(measure.effect_report.feedback_signal_summary.weak_counter_signal_memory_ids, [memoryId]);
     assert.equal(measure.effect_report.feedback_signal_summary.authority_mutation, false);
+    assert.equal(
+      measure.memory_decision_trace.feedback_attribution.sparse_feedback_signal_summary.candidate_learning_control_summary.present,
+      false,
+    );
   } finally {
     await app.close();
   }
@@ -500,6 +504,21 @@ test("product feedback closed loop moves single aligned failure to inspect-befor
     assert.equal(decision.feedback_detail.threshold_met, true);
     assert.deepEqual(measure.memory_decision_trace.feedback_attribution.strong_counter_signal_memory_ids, [memoryId]);
     assert.deepEqual(measure.memory_decision_trace.feedback_attribution.threshold_met_memory_ids, [memoryId]);
+    assert.deepEqual(
+      measure.memory_decision_trace.feedback_attribution.sparse_feedback_signal_summary.candidate_learning_control_summary
+        .candidate_from_threshold_met_memory_ids,
+      [memoryId],
+    );
+    assert.deepEqual(
+      measure.memory_decision_trace.feedback_attribution.sparse_feedback_signal_summary.candidate_learning_control_summary
+        .candidate_inspect_before_use_memory_ids,
+      [memoryId],
+    );
+    assert.equal(
+      measure.memory_decision_trace.feedback_attribution.sparse_feedback_signal_summary.candidate_learning_control_summary
+        .authority_mutation,
+      false,
+    );
     assert.deepEqual(measure.effect_report.feedback_signal_summary.strong_counter_signal_memory_ids, [memoryId]);
     assert.equal(measure.effect_report.feedback_signal_summary.authority_mutation, false);
   } finally {
@@ -614,6 +633,16 @@ test("product feedback closed loop moves repeated weak negative to inspect-befor
     assert.equal(decision.feedback_detail.threshold_state, "repeated_weak_threshold_met");
     assert.equal(decision.feedback_detail.threshold_met, true);
     assert.deepEqual(measure.memory_decision_trace.feedback_attribution.threshold_met_memory_ids, [memoryId]);
+    assert.deepEqual(
+      measure.memory_decision_trace.feedback_attribution.sparse_feedback_signal_summary.candidate_learning_control_summary
+        .candidate_from_threshold_met_memory_ids,
+      [memoryId],
+    );
+    assert.deepEqual(
+      measure.memory_decision_trace.feedback_attribution.sparse_feedback_signal_summary.candidate_learning_control_summary
+        .candidate_inspect_before_use_memory_ids,
+      [memoryId],
+    );
     assert.deepEqual(measure.effect_report.feedback_signal_summary.weak_counter_signal_memory_ids, [memoryId]);
     assert.equal(measure.effect_report.feedback_signal_summary.authority_mutation, false);
   } finally {
@@ -699,6 +728,19 @@ test("product feedback closed loop reports repeated unused exposure without down
       measure.effect_report.feedback_signal_summary.repeated_unattributed_without_positive_memory_ids.includes(unusedMemoryId),
     );
     assert.equal(measure.effect_report.feedback_signal_summary.authority_mutation, false);
+    assert.ok(
+      measure.memory_decision_trace.feedback_attribution.sparse_feedback_signal_summary.candidate_learning_control_summary
+        .candidate_from_repeated_unused_without_positive_memory_ids.includes(unusedMemoryId),
+    );
+    assert.ok(
+      measure.memory_decision_trace.feedback_attribution.sparse_feedback_signal_summary.candidate_learning_control_summary
+        .candidate_inspect_before_use_memory_ids.includes(unusedMemoryId),
+    );
+    assert.equal(
+      measure.memory_decision_trace.feedback_attribution.sparse_feedback_signal_summary.candidate_learning_control_summary
+        .authority_mutation,
+      false,
+    );
     const unusedDecision = measure.memory_decision_trace.memory_decisions.find((entry: Record<string, any>) =>
       entry.memory_id === unusedMemoryId
     );

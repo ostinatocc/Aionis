@@ -731,7 +731,8 @@ async function buildUnusedExposureObservation(args: {
 
   const currentMemoryIds = ledger.memory_ids;
   const currentUnattributed = new Set(args.guideExposure.unattributedRecalledMemoryIds);
-  const stats = await Promise.all(currentMemoryIds.map(async (memoryId) => {
+  const stats: ProductUnusedExposureObservation["memory_stats"] = [];
+  for (const memoryId of currentMemoryIds) {
     const slots = await findMemoryNodeSlots({
       app: args.app,
       req: args.req,
@@ -755,7 +756,7 @@ async function buildUnusedExposureObservation(args: {
     }
     const positiveAttributedUseCount = nonNegativeInt(slots.positive_attributed_use_count);
     const isCurrentUnattributed = currentUnattributed.has(memoryId);
-    return {
+    stats.push({
       memory_id: memoryId,
       current_unattributed: isCurrentUnattributed,
       exposure_count: exposureCount,
@@ -768,8 +769,8 @@ async function buildUnusedExposureObservation(args: {
       feedback_negative_count: nonNegativeInt(slots.feedback_negative),
       repeated_without_positive_attribution:
         isCurrentUnattributed && exposureCount >= exposureThreshold && positiveAttributedUseCount === 0,
-    };
-  }));
+    });
+  }
   const repeatedUnattributed = stats
     .filter((entry) => entry.current_unattributed && entry.exposure_count >= exposureThreshold)
     .map((entry) => entry.memory_id);

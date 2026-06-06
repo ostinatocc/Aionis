@@ -71,6 +71,7 @@ type FeedbackAttributionDetail = NonNullable<AionisMemoryDecisionTrace["memory_d
 type FeedbackAttributionSummary = AionisMemoryDecisionTrace["feedback_attribution"];
 type UnusedExposureObservationSummary = FeedbackAttributionSummary["unused_exposure_observation"];
 type SparseFeedbackSignalSummary = FeedbackAttributionSummary["sparse_feedback_signal_summary"];
+type CandidateLearningControlSummary = SparseFeedbackSignalSummary["candidate_learning_control_summary"];
 type NeighborhoodDriftObservation = AionisMemoryDecisionTrace["neighborhood_drift_observation"];
 type NeighborhoodDriftCandidate = NeighborhoodDriftObservation["candidates"][number];
 
@@ -1731,7 +1732,64 @@ function emptySparseFeedbackSignalSummary(
     repeated_unattributed_memory_ids: [],
     repeated_unattributed_without_positive_memory_ids: [],
     read_only_signal_memory_ids: [],
+    candidate_learning_control_summary: emptyCandidateLearningControlSummary(),
     reason,
+  };
+}
+
+function emptyCandidateLearningControlSummary(
+  reason = "No sparse feedback signal crossed the candidate learning-control gate.",
+): CandidateLearningControlSummary {
+  return {
+    present: false,
+    contract_version: null,
+    mode: null,
+    authority_mutation: false,
+    candidate_inspect_before_use_memory_ids: [],
+    candidate_from_threshold_met_memory_ids: [],
+    candidate_from_repeated_unused_without_positive_memory_ids: [],
+    blocked_by_positive_attribution_memory_ids: [],
+    reason,
+  };
+}
+
+function buildCandidateLearningControlSummary(args: {
+  thresholdMetMemoryIds: string[];
+  unusedExposureObservation: UnusedExposureObservationSummary;
+}): CandidateLearningControlSummary {
+  const positiveAttributedUseMemoryIds = new Set(
+    args.unusedExposureObservation.memory_stats
+      .filter((entry) => entry.positive_attributed_use_count > 0)
+      .map((entry) => entry.memory_id),
+  );
+  const repeatedWithoutPositive = args.unusedExposureObservation.repeated_unattributed_without_positive_memory_ids
+    .filter((memoryId) => !positiveAttributedUseMemoryIds.has(memoryId));
+  const blockedByPositiveAttribution = args.unusedExposureObservation.repeated_unattributed_memory_ids
+    .filter((memoryId) => positiveAttributedUseMemoryIds.has(memoryId));
+  const candidateFromThresholdMet = compactStrings(args.thresholdMetMemoryIds);
+  const candidateFromUnusedExposure = compactStrings(repeatedWithoutPositive);
+  const candidateInspect = compactStrings([
+    ...candidateFromThresholdMet,
+    ...candidateFromUnusedExposure,
+  ]);
+  const blockedByPositive = compactStrings(blockedByPositiveAttribution);
+
+  if (candidateInspect.length === 0 && blockedByPositive.length === 0) {
+    return emptyCandidateLearningControlSummary();
+  }
+
+  return {
+    present: true,
+    contract_version: "aionis_candidate_learning_control_summary_v1",
+    mode: "candidate_only",
+    authority_mutation: false,
+    candidate_inspect_before_use_memory_ids: candidateInspect,
+    candidate_from_threshold_met_memory_ids: candidateFromThresholdMet,
+    candidate_from_repeated_unused_without_positive_memory_ids: candidateFromUnusedExposure,
+    blocked_by_positive_attribution_memory_ids: blockedByPositive,
+    reason: candidateInspect.length > 0
+      ? "Threshold-met feedback and repeated unused exposure without positive attribution are candidate-only inspect-before-use signals; this summary does not mutate authority."
+      : "Repeated unused exposure was observed, but positive attributed use blocks candidate learning-control.",
   };
 }
 
@@ -1778,6 +1836,7 @@ function buildSparseFeedbackSignalSummary(args: {
   positiveAttributedMemoryIds: string[];
   weakCounterSignalMemoryIds: string[];
   strongCounterSignalMemoryIds: string[];
+  thresholdMetMemoryIds: string[];
   relationCounterSignalMemoryIds: string[];
   contradictionWarningMemoryIds: string[];
   unusedExposureObservation: UnusedExposureObservationSummary;
@@ -1793,6 +1852,10 @@ function buildSparseFeedbackSignalSummary(args: {
     ...repeatedUnattributed,
     ...repeatedWithoutPositive,
   ]);
+  const candidateLearningControlSummary = buildCandidateLearningControlSummary({
+    thresholdMetMemoryIds: args.thresholdMetMemoryIds,
+    unusedExposureObservation: args.unusedExposureObservation,
+  });
   if (readOnlySignalMemoryIds.length === 0) {
     return emptySparseFeedbackSignalSummary();
   }
@@ -1808,6 +1871,7 @@ function buildSparseFeedbackSignalSummary(args: {
     repeated_unattributed_memory_ids: repeatedUnattributed,
     repeated_unattributed_without_positive_memory_ids: repeatedWithoutPositive,
     read_only_signal_memory_ids: readOnlySignalMemoryIds,
+    candidate_learning_control_summary: candidateLearningControlSummary,
     reason: "Sparse feedback, repeated exposure, and relation-derived counter signals are summarized for measure/debug/audit only; this summary does not lower authority or suppress memory.",
   };
 }
@@ -1981,6 +2045,7 @@ function buildTraceFeedbackAttribution(args: {
       positiveAttributedMemoryIds: [],
       weakCounterSignalMemoryIds: [],
       strongCounterSignalMemoryIds: [],
+      thresholdMetMemoryIds: [],
       relationCounterSignalMemoryIds,
       contradictionWarningMemoryIds,
       unusedExposureObservation: emptyUnusedExposureObservation(),
@@ -2033,11 +2098,15 @@ function buildTraceFeedbackAttribution(args: {
   const strongCounterSignalMemoryIds = details
     .filter((entry) => entry.detail.attribution_strength === "strong_counter_signal")
     .map((entry) => entry.memory_id);
+  const thresholdMetMemoryIds = details
+    .filter((entry) => entry.detail.threshold_met)
+    .map((entry) => entry.memory_id);
   const sparseFeedbackSignalSummary = buildSparseFeedbackSignalSummary({
     present: args.feedbackInput.present,
     positiveAttributedMemoryIds,
     weakCounterSignalMemoryIds,
     strongCounterSignalMemoryIds,
+    thresholdMetMemoryIds,
     relationCounterSignalMemoryIds,
     contradictionWarningMemoryIds,
     unusedExposureObservation: args.feedbackInput.unused_exposure_observation,
@@ -2067,9 +2136,7 @@ function buildTraceFeedbackAttribution(args: {
     sparse_feedback_signal_summary: sparseFeedbackSignalSummary,
     weak_counter_signal_memory_ids: weakCounterSignalMemoryIds,
     strong_counter_signal_memory_ids: strongCounterSignalMemoryIds,
-    threshold_met_memory_ids: details
-      .filter((entry) => entry.detail.threshold_met)
-      .map((entry) => entry.memory_id),
+    threshold_met_memory_ids: thresholdMetMemoryIds,
     reason: "Activate feedback is attributed only to host-reported used memory ids; recalled but unreported memories remain unattributed.",
   };
 }
@@ -2546,6 +2613,7 @@ function buildAuditFeedbackSignalReview(
       reason: "Memory was repeatedly shown without any recorded positive attributed use.",
     }),
     read_only_signal_memory_ids: summary.read_only_signal_memory_ids,
+    candidate_learning_control_summary: summary.candidate_learning_control_summary,
     reason: summary.reason,
   };
 }
