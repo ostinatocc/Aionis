@@ -1221,6 +1221,9 @@ function compileAgentContextSurfaces(args: {
   useNow: string[];
   inspectBeforeUse: string[];
   doNotUse: string[];
+  useNowMemoryIds: string[];
+  inspectBeforeUseMemoryIds: string[];
+  doNotUseMemoryIds: string[];
   risk: AionisAgentContext["risk"];
 } {
   const blockedEntries = args.memoryEntries.filter(memoryEntryBlocked);
@@ -1235,7 +1238,25 @@ function compileAgentContextSurfaces(args: {
     || args.rawDoNotUse.length > 0
     || args.rehydrateHints.length > 0;
   const trustedConflict = trustedWorkflowConflictAudit(args.memoryEntries);
-  const memoryUseNow = compactStrings(usableEntries.map((entry) => memoryEntryUseNowLine(entry, deniedPathTargets)));
+  const trustedConflictIds = new Set(trustedConflict.conflictedEntries.map((entry) => entry.memory_id));
+  const trustedWorkflowConflictInspectIds = new Set<string>();
+  if (trustedConflict.hasConflict) {
+    for (const entry of usableEntries) {
+      const trustedWorkflow =
+        entry.domain === "execution"
+        && (entry.memory_type === "execution_memory" || entry.memory_type === "procedure")
+        && entry.authority === "trusted";
+      if (
+        (trustedConflict.moveAllWorkflowUseNow && trustedWorkflow)
+        || trustedConflictIds.has(entry.memory_id)
+      ) {
+        trustedWorkflowConflictInspectIds.add(entry.memory_id);
+      }
+    }
+  }
+  const directUseMemoryEntries = usableEntries.filter((entry) => !trustedWorkflowConflictInspectIds.has(entry.memory_id));
+  const conflictInspectMemoryEntries = usableEntries.filter((entry) => trustedWorkflowConflictInspectIds.has(entry.memory_id));
+  const memoryUseNow = compactStrings(directUseMemoryEntries.map((entry) => memoryEntryUseNowLine(entry, deniedPathTargets)));
   const memoryUseNowPathTargets = compactStrings(memoryUseNow.flatMap(extractPathTargets));
   const memoryUseNowPathTargetSet = new Set(memoryUseNowPathTargets);
 
@@ -1279,6 +1300,7 @@ function compileAgentContextSurfaces(args: {
     ...args.rawInspectBeforeUse,
     ...movedToInspect,
     ...inspectEntries.map(memoryEntryInspectLine),
+    ...conflictInspectMemoryEntries.map((entry) => `Inspect conflicting trusted workflow: ${memoryEntryLabel(entry)}`),
   ]).slice(0, 5);
   const doNotUse = compactStrings([
     ...args.rawDoNotUse,
@@ -1337,9 +1359,18 @@ function compileAgentContextSurfaces(args: {
     recommendedPosture,
     authority,
     targetFiles,
-    useNow: compactStrings([...filteredUseNow, ...memoryUseNow]).slice(0, 6),
+    useNow: compactStrings([
+      ...filteredUseNow,
+      ...directUseMemoryEntries.map((entry) => memoryEntryUseNowLine(entry, deniedPathTargets)),
+    ]).slice(0, 6),
     inspectBeforeUse,
     doNotUse,
+    useNowMemoryIds: compactStrings(directUseMemoryEntries.map((entry) => entry.memory_id)).slice(0, 10),
+    inspectBeforeUseMemoryIds: compactStrings([
+      ...inspectEntries.map((entry) => entry.memory_id),
+      ...conflictInspectMemoryEntries.map((entry) => entry.memory_id),
+    ]).slice(0, 10),
+    doNotUseMemoryIds: compactStrings(blockedEntries.map((entry) => entry.memory_id)).slice(0, 10),
     risk: {
       negative_transfer_risk: negativeTransferRisk,
       blocked_authority_count: args.rawRisk.blocked_authority_count + blockedEntries.length,
@@ -1443,6 +1474,9 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     inspect_before_use: surfaces.inspectBeforeUse,
     do_not_use: surfaces.doNotUse,
     memory_ids: memoryIds,
+    use_now_memory_ids: surfaces.useNowMemoryIds,
+    inspect_before_use_memory_ids: surfaces.inspectBeforeUseMemoryIds,
+    do_not_use_memory_ids: surfaces.doNotUseMemoryIds,
     rehydrate_hints: rehydrateHints,
     risk: surfaces.risk,
     evidence_refs: {

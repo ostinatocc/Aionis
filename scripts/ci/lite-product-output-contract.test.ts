@@ -231,6 +231,9 @@ function validAgentContext() {
     inspect_before_use: ["Candidate workflow: line-local verifier repair"],
     do_not_use: ["Suppressed memory: mem-2"],
     memory_ids: ["mem-1", "mem-3"],
+    use_now_memory_ids: ["mem-1"],
+    inspect_before_use_memory_ids: ["mem-3"],
+    do_not_use_memory_ids: ["mem-2"],
     rehydrate_hints: [{
       memory_id: "mem-3",
       reason: "Archived payload may contain the old verifier output.",
@@ -605,6 +608,9 @@ test("AionisAgentContext accepts compact agent-facing output", () => {
   assert.equal(parsed.history_used, true);
   assert.equal(parsed.authority, "advisory");
   assert.deepEqual(parsed.target_files, ["src/index.ts"]);
+  assert.deepEqual(parsed.use_now_memory_ids, ["mem-1"]);
+  assert.deepEqual(parsed.inspect_before_use_memory_ids, ["mem-3"]);
+  assert.deepEqual(parsed.do_not_use_memory_ids, ["mem-2"]);
   assert.equal(parsed.risk.negative_transfer_risk, "medium");
 });
 

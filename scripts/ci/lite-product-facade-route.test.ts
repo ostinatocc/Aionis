@@ -1093,6 +1093,9 @@ test("product observe turns execution input into recallable execution memory", a
       "inspect_before_use",
       "do_not_use",
       "memory_ids",
+      "use_now_memory_ids",
+      "inspect_before_use_memory_ids",
+      "do_not_use_memory_ids",
       "rehydrate_hints",
       "risk",
       "evidence_refs",
@@ -2034,6 +2037,28 @@ test("product guide feedback loop requires repeated weak negative attribution be
     assert.equal(observe.statusCode, 200, observe.body);
     const nodeId = observe.json().memory_write.nodes[0].id;
 
+    const unusedObserve = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        input_text: "AIONIS_SPARSE_FEEDBACK_MARKER Related but unused memory for status updates.",
+        memory: {
+          client_id: "memory:guide-feedback-unused-attribution",
+          type: "concept",
+          tier: "warm",
+          memory_kind: "general_memory",
+          title: "Unused sparse feedback memory",
+          text_summary: "AIONIS_SPARSE_FEEDBACK_MARKER Related but unused memory for status updates.",
+          confidence: 0.81,
+        },
+      },
+    });
+    assert.equal(unusedObserve.statusCode, 200, unusedObserve.body);
+    const unusedNodeId = unusedObserve.json().memory_write.nodes[0].id;
+
     const beforeGuide = await app.inject({
       method: "POST",
       url: "/v1/guide",
@@ -2060,6 +2085,10 @@ test("product guide feedback loop requires repeated weak negative attribution be
       ),
     );
     assert.equal(beforeGuideBody.agent_context.memory_ids.includes(nodeId), true);
+    assert.equal(beforeGuideBody.agent_context.use_now_memory_ids.includes(nodeId), true);
+    assert.equal(beforeGuideBody.agent_context.inspect_before_use_memory_ids.includes(nodeId), false);
+    assert.equal(beforeGuideBody.agent_context.memory_ids.includes(unusedNodeId), true);
+    assert.equal(beforeGuideBody.agent_context.use_now_memory_ids.includes(unusedNodeId), true);
 
     const feedback = await app.inject({
       method: "POST",
@@ -2100,6 +2129,17 @@ test("product guide feedback loop requires repeated weak negative attribution be
     assert.equal(rows[0]?.slots.last_feedback_run_id, "run:guide-feedback-negative-attribution-1");
     assert.equal(rows[0]?.slots.last_feedback_used_surface, "use_now");
 
+    const unusedAfterFeedback = await liteWriteStore.findNodes({
+      scope: "default",
+      id: unusedNodeId,
+      consumerAgentId: "local-user",
+      consumerTeamId: null,
+      limit: 1,
+      offset: 0,
+    });
+    assert.equal(unusedAfterFeedback.rows[0]?.slots.feedback_negative, undefined);
+    assert.equal(unusedAfterFeedback.rows[0]?.slots.weak_counter_signal_count, undefined);
+
     const afterFirstWeakGuide = await app.inject({
       method: "POST",
       url: "/v1/guide",
@@ -2125,6 +2165,8 @@ test("product guide feedback loop requires repeated weak negative attribution be
         entry.includes("AIONIS_SPARSE_FEEDBACK_MARKER")
       ),
     );
+    assert.equal(afterFirstWeakGuideBody.agent_context.use_now_memory_ids.includes(nodeId), true);
+    assert.equal(afterFirstWeakGuideBody.agent_context.inspect_before_use_memory_ids.includes(nodeId), false);
 
     const secondFeedback = await app.inject({
       method: "POST",
@@ -2166,19 +2208,17 @@ test("product guide feedback loop requires repeated weak negative attribution be
     assert.ok(afterMemory);
     assert.equal(afterMemory.lifecycle_state, "contested");
     assert.equal(afterMemory.authority, "candidate");
-    assert.equal(
-      afterGuideBody.agent_context.use_now.some((entry: string) =>
-        entry.includes("AIONIS_SPARSE_FEEDBACK_MARKER")
-      ),
-      false,
-    );
     assert.ok(
       afterGuideBody.agent_context.inspect_before_use.some((entry: string) =>
         entry.includes("Sparse feedback status style") || entry.includes(nodeId)
       ),
     );
+    assert.equal(afterGuideBody.agent_context.use_now_memory_ids.includes(nodeId), false);
+    assert.equal(afterGuideBody.agent_context.inspect_before_use_memory_ids.includes(nodeId), true);
+    assert.equal(afterGuideBody.agent_context.use_now_memory_ids.includes(unusedNodeId), true);
+    assert.equal(afterGuideBody.agent_context.inspect_before_use_memory_ids.includes(unusedNodeId), false);
     assert.equal(afterGuideBody.agent_context.recommended_posture, "inspect_before_use");
-    assert.equal(afterGuideBody.agent_context.authority, "candidate");
+    assert.equal(afterGuideBody.agent_context.authority, "advisory");
     assert.equal(
       afterGuideBody.agent_context.risk.reasons.includes("candidate_or_contested_memory_kept_out_of_use_now"),
       true,
@@ -2305,6 +2345,8 @@ test("product guide feedback loop downgrades after aligned verifier failure attr
         entry.includes("Strong feedback status style") || entry.includes(nodeId)
       ),
     );
+    assert.equal(guideBody.agent_context.use_now_memory_ids.includes(nodeId), false);
+    assert.equal(guideBody.agent_context.inspect_before_use_memory_ids.includes(nodeId), true);
   } finally {
     await app.close();
   }

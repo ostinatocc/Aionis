@@ -122,7 +122,10 @@ fields:
 7. `do_not_use`
 8. `rehydrate_hints`
 9. `memory_ids`
-10. `risk`
+10. `use_now_memory_ids`
+11. `inspect_before_use_memory_ids`
+12. `do_not_use_memory_ids`
+13. `risk`
 
 Do not pass `memory_packet`, `guide_packet`, `memory_decision_trace`,
 `memory_decision_audit`, raw rows, or raw slots to the Agent by default.
@@ -176,11 +179,11 @@ The host should consume `forget_effect`. It should not ask the Agent to reason
 over internal lifecycle rows or raw slots.
 
 For sparse-feedback attribution, use `operation: "activate"` after a run when
-the host knows which `agent_context.memory_ids` were actually used. `run_id`,
-`outcome`, and `used_surface` are required. Non-neutral feedback must use
-`used_surface: "use_now"` or `used_surface: "explicit_host_assertion"`; this is
-the attribution gate that prevents Aionis from blaming every recalled memory for
-a run outcome.
+the host knows which `agent_context.use_now_memory_ids` were actually used.
+`run_id`, `outcome`, and `used_surface` are required. Non-neutral feedback must
+use `used_surface: "use_now"` or `used_surface: "explicit_host_assertion"`; this
+is the attribution gate that prevents Aionis from blaming every recalled memory
+for a run outcome.
 
 A single negative outcome without aligned verifier/tool/runtime evidence is
 stored as a weak counter-signal. It does not immediately lower authority. Aionis

@@ -567,6 +567,21 @@ test("product agent context surfaces active general memory without execution gui
         salience: 0.8,
         evidence_ref: "ev-general-suppressed",
       },
+      {
+        id: "mem-general-candidate",
+        type: "concept",
+        title: "Candidate ordinary memory",
+        text_summary: "CANDIDATE_GENERAL_MARKER: Candidate ordinary memory should be inspected before use.",
+        tier: "warm",
+        slots: {
+          memory_kind: "general_memory",
+          lifecycle_state: "candidate",
+          compression_layer: "L2",
+        },
+        confidence: 0.55,
+        salience: 0.79,
+        evidence_ref: "ev-general-candidate",
+      },
     ],
     source_map: {
       routes_used: ["/v1/memory/recall_text"],
@@ -588,10 +603,19 @@ test("product agent context surfaces active general memory without execution gui
   assert.ok(context.use_now.some((entry) => entry.includes("ACTIVE_GENERAL_MARKER")));
   assert.ok(context.use_now.some((entry) => entry.includes("PREFERENCE_MARKER")));
   assert.equal(context.use_now.some((entry) => entry.includes("STALE_GENERAL_MARKER")), false);
+  assert.equal(context.use_now.some((entry) => entry.includes("CANDIDATE_GENERAL_MARKER")), false);
+  assert.ok(context.inspect_before_use.some((entry) => entry.includes("Candidate ordinary memory")));
   assert.ok(context.do_not_use.some((entry) => entry.includes("Suppressed ordinary memory")));
+  assert.ok(context.use_now_memory_ids.includes("mem-general-active"));
+  assert.ok(context.use_now_memory_ids.includes("mem-preference-active"));
+  assert.equal(context.use_now_memory_ids.includes("mem-general-candidate"), false);
+  assert.ok(context.inspect_before_use_memory_ids.includes("mem-general-candidate"));
+  assert.ok(context.do_not_use_memory_ids.includes("mem-general-suppressed"));
   assert.ok(context.prompt_text.includes("ACTIVE_GENERAL_MARKER"));
   assert.ok(context.prompt_text.includes("PREFERENCE_MARKER"));
   assert.ok(context.prompt_text.includes("do_not_use"));
+  assert.equal(context.prompt_text.includes("use_now_memory_ids"), false);
+  assert.equal(context.prompt_text.includes("inspect_before_use_memory_ids"), false);
 });
 
 test("product memory lifecycle adjudication demotes corrected prior memory without explicit labels", () => {
@@ -1227,6 +1251,10 @@ test("product agent context downgrades conflicting trusted workflows to inspect-
   assert.ok(context.risk.reasons.includes("trusted_workflow_conflict_requires_inspection"));
   assert.equal(context.use_now.some((entry) => entry.includes("conflicting legacy adapter")), false);
   assert.ok(context.inspect_before_use.some((entry) => entry.includes("conflicting legacy adapter")));
+  assert.equal(context.use_now_memory_ids.includes("mem-trusted-a"), true);
+  assert.equal(context.use_now_memory_ids.includes("mem-trusted-b"), false);
+  assert.equal(context.inspect_before_use_memory_ids.includes("mem-trusted-a"), false);
+  assert.ok(context.inspect_before_use_memory_ids.includes("mem-trusted-b"));
   assert.equal(context.prompt_text.includes("Workflow trusted: Trusted workflow B: conflicting legacy adapter path"), false);
 });
 

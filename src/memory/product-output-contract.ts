@@ -404,6 +404,9 @@ export const AionisAgentContextSchema = z
     inspect_before_use: z.array(z.string().min(1)).default([]),
     do_not_use: z.array(z.string().min(1)).default([]),
     memory_ids: z.array(z.string().min(1)).default([]),
+    use_now_memory_ids: z.array(z.string().min(1)).default([]),
+    inspect_before_use_memory_ids: z.array(z.string().min(1)).default([]),
+    do_not_use_memory_ids: z.array(z.string().min(1)).default([]),
     rehydrate_hints: z
       .array(
         z
