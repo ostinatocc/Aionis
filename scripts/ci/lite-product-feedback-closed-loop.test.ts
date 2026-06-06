@@ -1,0 +1,594 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import Fastify from "fastify";
+import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
+import { createRequestGuards } from "../../src/app/request-guards.ts";
+import { registerHandoffRoutes } from "../../src/routes/handoff.ts";
+import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
+import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
+import { registerMemoryFeedbackToolRoutes } from "../../src/routes/memory-feedback-tools.ts";
+import { registerLiteMemoryLifecycleRoutes } from "../../src/routes/memory-lifecycle-lite.ts";
+import { registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
+import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
+import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
+import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
+import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
+import { InflightGate } from "../../src/util/inflight_gate.ts";
+
+function tmpDbPath(name: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-feedback-closed-loop-"));
+  return path.join(dir, `${name}.sqlite`);
+}
+
+function liteEnv() {
+  return {
+    AIONIS_EDITION: "lite",
+    MEMORY_AUTH_MODE: "off",
+    TENANT_QUOTA_ENABLED: false,
+    LITE_LOCAL_ACTOR_ID: "local-user",
+    MEMORY_TENANT_ID: "default",
+    MEMORY_SCOPE: "default",
+    APP_ENV: "test",
+    ADMIN_TOKEN: "",
+    TRUST_PROXY: false,
+    TRUSTED_PROXY_CIDRS: [],
+    RATE_LIMIT_ENABLED: false,
+    RATE_LIMIT_BYPASS_LOOPBACK: false,
+    WRITE_RATE_LIMIT_MAX_WAIT_MS: 0,
+    RECALL_TEXT_EMBED_RATE_LIMIT_MAX_WAIT_MS: 0,
+    MAX_TEXT_LEN: 10_000,
+    PII_REDACTION: false,
+    ALLOW_CROSS_SCOPE_EDGES: false,
+    AUTO_TOPIC_CLUSTER_ON_WRITE: false,
+    TOPIC_CLUSTER_ASYNC_ON_WRITE: true,
+    MEMORY_WRITE_REQUIRE_NODES: false,
+    MEMORY_RECALL_TEXT_CONTEXT_TOKEN_BUDGET_DEFAULT: 4096,
+    MEMORY_RECALL_STAGE1_EXACT_RECOVERY_ON_EMPTY: true,
+    MEMORY_RECALL_ADAPTIVE_HARD_CAP_WAIT_MS: 0,
+    MEMORY_PLANNING_CONTEXT_OPTIMIZATION_PROFILE_DEFAULT: "balanced",
+    MEMORY_CONTEXT_ASSEMBLE_OPTIMIZATION_PROFILE_DEFAULT: "balanced",
+    WORKFLOW_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: false,
+  } as any;
+}
+
+function requestGuards(env: ReturnType<typeof liteEnv>) {
+  return createRequestGuards({
+    env,
+    embedder: DeterministicEmbeddingProvider,
+    recallLimiter: null,
+    debugEmbedLimiter: null,
+    writeLimiter: null,
+    recallTextEmbedLimiter: null,
+    recallInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
+    writeInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
+  });
+}
+
+function registerProductFacade(args: {
+  app: ReturnType<typeof Fastify>;
+  env: ReturnType<typeof liteEnv>;
+  guards: ReturnType<typeof requestGuards>;
+}) {
+  registerProductFacadeRoutes({
+    app: args.app,
+    env: args.env,
+    requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
+    withIdentityFromRequest: args.guards.withIdentityFromRequest,
+    enforceRateLimit: args.guards.enforceRateLimit,
+    enforceTenantQuota: args.guards.enforceTenantQuota,
+    tenantFromBody: args.guards.tenantFromBody,
+    acquireInflightSlot: args.guards.acquireInflightSlot,
+  });
+}
+
+function registerProductMemoryApp(args: {
+  app: ReturnType<typeof Fastify>;
+  env: ReturnType<typeof liteEnv>;
+  guards: ReturnType<typeof requestGuards>;
+  liteWriteStore: ReturnType<typeof createLiteWriteStore>;
+  liteRecallStore: ReturnType<typeof createLiteRecallStore>;
+}) {
+  registerRuntimeErrorHandler(args.app);
+  registerMemoryWriteRoutes({
+    app: args.app,
+    env: args.env,
+    embedder: DeterministicEmbeddingProvider,
+    liteWriteStore: args.liteWriteStore,
+    requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
+    withIdentityFromRequest: args.guards.withIdentityFromRequest,
+    enforceRateLimit: args.guards.enforceRateLimit,
+    enforceTenantQuota: args.guards.enforceTenantQuota,
+    tenantFromBody: args.guards.tenantFromBody,
+    acquireInflightSlot: args.guards.acquireInflightSlot,
+    executionStateStore: null,
+  });
+  registerHandoffRoutes({
+    app: args.app,
+    env: args.env,
+    embedder: DeterministicEmbeddingProvider,
+    liteWriteStore: args.liteWriteStore,
+    requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
+    withIdentityFromRequest: args.guards.withIdentityFromRequest as any,
+    enforceRateLimit: args.guards.enforceRateLimit,
+    enforceTenantQuota: args.guards.enforceTenantQuota,
+    tenantFromBody: args.guards.tenantFromBody,
+    acquireInflightSlot: args.guards.acquireInflightSlot,
+    executionStateStore: null,
+  });
+  registerMemoryAccessRoutes({
+    app: args.app,
+    env: args.env,
+    embedder: DeterministicEmbeddingProvider,
+    liteWriteStore: args.liteWriteStore,
+    liteRecallAccess: args.liteRecallStore.createRecallAccess(),
+    executionStateStore: null,
+    requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
+    withIdentityFromRequest: args.guards.withIdentityFromRequest as any,
+    enforceRateLimit: args.guards.enforceRateLimit,
+    enforceTenantQuota: args.guards.enforceTenantQuota,
+    tenantFromBody: args.guards.tenantFromBody,
+    acquireInflightSlot: args.guards.acquireInflightSlot,
+  });
+  registerMemoryContextRuntimeRoutes({
+    app: args.app,
+    env: args.env,
+    embedder: DeterministicEmbeddingProvider,
+    liteWriteStore: args.liteWriteStore,
+    liteRecallAccess: args.liteRecallStore.createRecallAccess(),
+    recallTextEmbedBatcher: { stats: () => null },
+    requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
+    withIdentityFromRequest: args.guards.withIdentityFromRequest,
+    enforceRateLimit: args.guards.enforceRateLimit,
+    enforceTenantQuota: args.guards.enforceTenantQuota,
+    enforceRecallTextEmbedQuota: args.guards.enforceRecallTextEmbedQuota,
+    buildRecallAuth: args.guards.buildRecallAuth,
+    tenantFromBody: args.guards.tenantFromBody,
+    acquireInflightSlot: args.guards.acquireInflightSlot,
+    hasExplicitRecallKnobs: () => false,
+    resolveRecallProfile: () => ({ profile: "balanced", source: "test" }),
+    resolveExplicitRecallMode: () => ({
+      mode: null,
+      profile: "balanced",
+      defaults: {},
+      applied: false,
+      reason: "test_default",
+      source: "test",
+    }),
+    resolveClassAwareRecallProfile: (_endpoint, _body, baseProfile) => ({
+      profile: baseProfile,
+      defaults: {},
+      enabled: false,
+      applied: false,
+      reason: "test_default",
+      source: "test",
+      workload_class: null,
+      signals: [],
+    }),
+    withRecallProfileDefaults: (body) => ({ ...(body as Record<string, unknown>) }),
+    resolveRecallStrategy: () => ({ strategy: "local", defaults: {}, applied: false }),
+    resolveAdaptiveRecallProfile: (profile) => ({ profile, defaults: {}, applied: false, reason: "test_default" }),
+    resolveAdaptiveRecallHardCap: () => ({ defaults: {}, applied: false, reason: "test_default" }),
+    inferRecallStrategyFromKnobs: () => "local",
+    buildRecallTrajectory: () => ({ strategy: "local" }),
+    embedRecallTextQuery: async (provider, queryText) => {
+      const [vec] = await provider.embed([queryText]);
+      return {
+        vec,
+        ms: 0,
+        cache_hit: false,
+        singleflight_join: false,
+        queue_wait_ms: 0,
+        batch_size: 1,
+      };
+    },
+    mapRecallTextEmbeddingError: () => ({
+      statusCode: 500,
+      code: "embed_failed",
+      message: "embedding failed",
+    }),
+    recordContextAssemblyTelemetryBestEffort: async () => {},
+  });
+  registerLiteMemoryLifecycleRoutes({
+    app: args.app,
+    env: args.env,
+    liteWriteStore: args.liteWriteStore,
+    requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
+    withIdentityFromRequest: args.guards.withIdentityFromRequest as any,
+    enforceRateLimit: args.guards.enforceRateLimit,
+    enforceTenantQuota: args.guards.enforceTenantQuota,
+    tenantFromBody: args.guards.tenantFromBody,
+    acquireInflightSlot: args.guards.acquireInflightSlot,
+  });
+  registerMemoryFeedbackToolRoutes({
+    app: args.app,
+    env: args.env,
+    embedder: DeterministicEmbeddingProvider,
+    liteWriteStore: args.liteWriteStore,
+    liteRecallAccess: args.liteRecallStore.createRecallAccess(),
+    requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
+    withIdentityFromRequest: args.guards.withIdentityFromRequest as any,
+    enforceRateLimit: args.guards.enforceRateLimit,
+    enforceTenantQuota: args.guards.enforceTenantQuota,
+    tenantFromBody: args.guards.tenantFromBody,
+    acquireInflightSlot: args.guards.acquireInflightSlot,
+  });
+  registerProductFacade(args);
+}
+
+function setupProductApp(name: string) {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env);
+  const dbPath = tmpDbPath(name);
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  registerProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+  return { app, liteWriteStore };
+}
+
+async function observeMemory(args: {
+  app: ReturnType<typeof Fastify>;
+  clientId: string;
+  title: string;
+  text: string;
+  confidence?: number;
+}): Promise<string> {
+  const response = await args.app.inject({
+    method: "POST",
+    url: "/v1/observe",
+    payload: {
+      tenant_id: "default",
+      scope: "default",
+      auto_embed: true,
+      input_text: args.text,
+      memory: {
+        client_id: args.clientId,
+        type: "concept",
+        tier: "warm",
+        memory_kind: "general_memory",
+        title: args.title,
+        text_summary: args.text,
+        confidence: args.confidence ?? 0.84,
+      },
+    },
+  });
+  assert.equal(response.statusCode, 200, response.body);
+  return response.json().memory_write.nodes[0].id;
+}
+
+async function guideForMarker(args: {
+  app: ReturnType<typeof Fastify>;
+  marker: string;
+}) {
+  const response = await args.app.inject({
+    method: "POST",
+    url: "/v1/guide",
+    payload: {
+      tenant_id: "default",
+      scope: "default",
+      query_text: `${args.marker} status update memory`,
+      consumer_agent_id: "local-user",
+      limit: 8,
+      include_packets: true,
+    },
+  });
+  assert.equal(response.statusCode, 200, response.body);
+  return response.json();
+}
+
+async function activateFromGuide(args: {
+  app: ReturnType<typeof Fastify>;
+  guide: Record<string, any>;
+  memoryId: string;
+  runId: string;
+  outcome: "positive" | "negative";
+  verifierStatus?: "passed" | "failed" | "not_run" | "unknown";
+  toolStatus?: "succeeded" | "failed" | "not_run" | "unknown";
+}) {
+  const response = await args.app.inject({
+    method: "POST",
+    url: "/v1/forget",
+    payload: {
+      tenant_id: "default",
+      scope: "default",
+      operation: "activate",
+      target: "memory",
+      guide_trace_id: args.guide.guide_trace_id,
+      used_memory_ids: [args.memoryId],
+      run_id: args.runId,
+      outcome: args.outcome,
+      used_surface: "use_now",
+      verifier_status: args.verifierStatus ?? (args.outcome === "positive" ? "passed" : "not_run"),
+      tool_status: args.toolStatus ?? (args.outcome === "positive" ? "succeeded" : "unknown"),
+      activate: true,
+      reason: `Host attributed ${args.outcome} outcome to the memory used from this guide.`,
+    },
+  });
+  assert.equal(response.statusCode, 200, response.body);
+  return response.json();
+}
+
+async function measureTrace(args: {
+  app: ReturnType<typeof Fastify>;
+  beforeGuide: Record<string, any>;
+  afterGuide: Record<string, any>;
+  forgetResult: Record<string, any>;
+  evidenceId: string;
+}) {
+  const response = await args.app.inject({
+    method: "POST",
+    url: "/v1/measure",
+    payload: {
+      tenant_id: "default",
+      scope: "default",
+      product_trace: {
+        before_guide: args.beforeGuide,
+        after_guide: args.afterGuide,
+        forget_result: args.forgetResult,
+        sufficient_evidence: true,
+        evidence_ids: [args.evidenceId],
+      },
+    },
+  });
+  assert.equal(response.statusCode, 200, response.body);
+  return response.json();
+}
+
+async function slotsForMemory(args: {
+  liteWriteStore: ReturnType<typeof createLiteWriteStore>;
+  memoryId: string;
+}) {
+  const { rows } = await args.liteWriteStore.findNodes({
+    scope: "default",
+    id: args.memoryId,
+    consumerAgentId: "local-user",
+    consumerTeamId: null,
+    limit: 1,
+    offset: 0,
+  });
+  assert.ok(rows[0], `missing memory ${args.memoryId}`);
+  return rows[0].slots;
+}
+
+test("product feedback closed loop surfaces positive attribution in effect report", async () => {
+  const { app, liteWriteStore } = setupProductApp("positive-feedback");
+  try {
+    const marker = "AIONIS_CLOSED_LOOP_POSITIVE";
+    const memoryId = await observeMemory({
+      app,
+      clientId: "memory:closed-loop-positive",
+      title: "Closed loop positive memory",
+      text: `${marker} use concise operator summaries for status updates.`,
+    });
+    const beforeGuide = await guideForMarker({ app, marker });
+    assert.equal(beforeGuide.agent_context.use_now_memory_ids.includes(memoryId), true);
+
+    const feedback = await activateFromGuide({
+      app,
+      guide: beforeGuide,
+      memoryId,
+      runId: "run:closed-loop-positive",
+      outcome: "positive",
+    });
+    const slots = await slotsForMemory({ liteWriteStore, memoryId });
+    assert.equal(slots.feedback_positive, 1);
+    assert.equal(slots.last_feedback_outcome, "positive");
+
+    const afterGuide = await guideForMarker({ app, marker });
+    const measure = await measureTrace({
+      app,
+      beforeGuide,
+      afterGuide,
+      forgetResult: feedback,
+      evidenceId: "product_trace:closed-loop-positive",
+    });
+
+    assert.deepEqual(measure.memory_decision_trace.feedback_attribution.attributed_memory_ids, [memoryId]);
+    assert.deepEqual(
+      measure.memory_decision_trace.feedback_attribution.sparse_feedback_signal_summary.positive_attributed_memory_ids,
+      [memoryId],
+    );
+    assert.deepEqual(measure.effect_report.feedback_signal_summary.positive_attributed_memory_ids, [memoryId]);
+    assert.equal(measure.effect_report.feedback_signal_summary.source, "memory_decision_audit");
+    assert.equal(measure.effect_report.feedback_signal_summary.authority_mutation, false);
+    assert.ok(measure.effect_report.feedback_signal_summary.read_only_signal_memory_ids.includes(memoryId));
+  } finally {
+    await app.close();
+  }
+});
+
+test("product feedback closed loop keeps single weak negative below downgrade threshold", async () => {
+  const { app, liteWriteStore } = setupProductApp("single-weak-negative");
+  try {
+    const marker = "AIONIS_CLOSED_LOOP_SINGLE_WEAK";
+    const memoryId = await observeMemory({
+      app,
+      clientId: "memory:closed-loop-single-weak",
+      title: "Closed loop single weak memory",
+      text: `${marker} prefer compact release-note style status updates.`,
+    });
+    const beforeGuide = await guideForMarker({ app, marker });
+    assert.equal(beforeGuide.agent_context.use_now_memory_ids.includes(memoryId), true);
+
+    const feedback = await activateFromGuide({
+      app,
+      guide: beforeGuide,
+      memoryId,
+      runId: "run:closed-loop-single-weak",
+      outcome: "negative",
+      verifierStatus: "not_run",
+      toolStatus: "unknown",
+    });
+    const slots = await slotsForMemory({ liteWriteStore, memoryId });
+    assert.equal(slots.feedback_negative, 1);
+    assert.equal(slots.weak_counter_signal_count, 1);
+    assert.equal(slots.strong_counter_signal_count, 0);
+
+    const afterGuide = await guideForMarker({ app, marker });
+    assert.equal(afterGuide.agent_context.use_now_memory_ids.includes(memoryId), true);
+    assert.equal(afterGuide.agent_context.inspect_before_use_memory_ids.includes(memoryId), false);
+
+    const measure = await measureTrace({
+      app,
+      beforeGuide,
+      afterGuide,
+      forgetResult: feedback,
+      evidenceId: "product_trace:closed-loop-single-weak",
+    });
+    const decision = measure.memory_decision_trace.memory_decisions.find((entry: Record<string, any>) =>
+      entry.memory_id === memoryId
+    );
+    assert.equal(decision.agent_surface, "use_now");
+    assert.equal(decision.feedback_detail.threshold_state, "weak_below_threshold");
+    assert.equal(decision.feedback_detail.threshold_met, false);
+    assert.deepEqual(measure.memory_decision_trace.feedback_attribution.threshold_met_memory_ids, []);
+    assert.deepEqual(measure.effect_report.feedback_signal_summary.weak_counter_signal_memory_ids, [memoryId]);
+    assert.equal(measure.effect_report.feedback_signal_summary.authority_mutation, false);
+  } finally {
+    await app.close();
+  }
+});
+
+test("product feedback closed loop moves repeated weak negative to inspect-before-use", async () => {
+  const { app, liteWriteStore } = setupProductApp("repeated-weak-negative");
+  try {
+    const marker = "AIONIS_CLOSED_LOOP_REPEATED_WEAK";
+    const memoryId = await observeMemory({
+      app,
+      clientId: "memory:closed-loop-repeated-weak",
+      title: "Closed loop repeated weak memory",
+      text: `${marker} prefer compact release-note style status updates.`,
+    });
+    const beforeGuide = await guideForMarker({ app, marker });
+    assert.equal(beforeGuide.agent_context.use_now_memory_ids.includes(memoryId), true);
+
+    const firstFeedback = await activateFromGuide({
+      app,
+      guide: beforeGuide,
+      memoryId,
+      runId: "run:closed-loop-repeated-weak-1",
+      outcome: "negative",
+      verifierStatus: "not_run",
+      toolStatus: "unknown",
+    });
+    const afterFirstGuide = await guideForMarker({ app, marker });
+    assert.equal(afterFirstGuide.agent_context.use_now_memory_ids.includes(memoryId), true);
+
+    const secondFeedback = await activateFromGuide({
+      app,
+      guide: afterFirstGuide,
+      memoryId,
+      runId: "run:closed-loop-repeated-weak-2",
+      outcome: "negative",
+      verifierStatus: "not_run",
+      toolStatus: "unknown",
+    });
+    assert.equal(firstFeedback.forget_effect.affected_memory_ids.includes(memoryId), true);
+    const slots = await slotsForMemory({ liteWriteStore, memoryId });
+    assert.equal(slots.feedback_negative, 2);
+    assert.equal(slots.weak_counter_signal_count, 2);
+
+    const afterSecondGuide = await guideForMarker({ app, marker });
+    assert.equal(afterSecondGuide.agent_context.use_now_memory_ids.includes(memoryId), false);
+    assert.equal(afterSecondGuide.agent_context.inspect_before_use_memory_ids.includes(memoryId), true);
+
+    const measure = await measureTrace({
+      app,
+      beforeGuide,
+      afterGuide: afterSecondGuide,
+      forgetResult: secondFeedback,
+      evidenceId: "product_trace:closed-loop-repeated-weak",
+    });
+    const decision = measure.memory_decision_trace.memory_decisions.find((entry: Record<string, any>) =>
+      entry.memory_id === memoryId
+    );
+    assert.equal(decision.agent_surface, "inspect_before_use");
+    assert.equal(decision.feedback_detail.threshold_state, "repeated_weak_threshold_met");
+    assert.equal(decision.feedback_detail.threshold_met, true);
+    assert.deepEqual(measure.memory_decision_trace.feedback_attribution.threshold_met_memory_ids, [memoryId]);
+    assert.deepEqual(measure.effect_report.feedback_signal_summary.weak_counter_signal_memory_ids, [memoryId]);
+    assert.equal(measure.effect_report.feedback_signal_summary.authority_mutation, false);
+  } finally {
+    await app.close();
+  }
+});
+
+test("product feedback closed loop reports repeated unused exposure without downgrading memory", async () => {
+  const { app, liteWriteStore } = setupProductApp("repeated-unused-exposure");
+  try {
+    const marker = "AIONIS_CLOSED_LOOP_UNUSED";
+    const usedMemoryId = await observeMemory({
+      app,
+      clientId: "memory:closed-loop-used",
+      title: "Closed loop used memory",
+      text: `${marker} use customer-facing severity labels in status updates.`,
+      confidence: 0.88,
+    });
+    const unusedMemoryId = await observeMemory({
+      app,
+      clientId: "memory:closed-loop-unused",
+      title: "Closed loop repeated unused memory",
+      text: `${marker} include obsolete escalation owner names in status updates.`,
+      confidence: 0.87,
+    });
+
+    const firstGuide = await guideForMarker({ app, marker });
+    assert.equal(firstGuide.agent_context.memory_ids.includes(usedMemoryId), true);
+    assert.equal(firstGuide.agent_context.memory_ids.includes(unusedMemoryId), true);
+
+    const secondGuide = await guideForMarker({ app, marker });
+    assert.equal(secondGuide.agent_context.memory_ids.includes(usedMemoryId), true);
+    assert.equal(secondGuide.agent_context.memory_ids.includes(unusedMemoryId), true);
+
+    const feedback = await activateFromGuide({
+      app,
+      guide: secondGuide,
+      memoryId: usedMemoryId,
+      runId: "run:closed-loop-unused-exposure",
+      outcome: "positive",
+    });
+    assert.ok(feedback.forget_effect.guide_trace.unused_exposure_observation.repeated_unattributed_memory_ids.includes(unusedMemoryId));
+    assert.ok(
+      feedback.forget_effect.guide_trace.unused_exposure_observation.repeated_unattributed_without_positive_memory_ids.includes(
+        unusedMemoryId,
+      ),
+    );
+
+    const unusedSlots = await slotsForMemory({ liteWriteStore, memoryId: unusedMemoryId });
+    assert.equal(unusedSlots.feedback_negative, undefined);
+    assert.equal(unusedSlots.weak_counter_signal_count, undefined);
+
+    const afterGuide = await guideForMarker({ app, marker });
+    assert.equal(afterGuide.agent_context.use_now_memory_ids.includes(unusedMemoryId), true);
+    assert.equal(afterGuide.agent_context.inspect_before_use_memory_ids.includes(unusedMemoryId), false);
+
+    const measure = await measureTrace({
+      app,
+      beforeGuide: firstGuide,
+      afterGuide,
+      forgetResult: feedback,
+      evidenceId: "product_trace:closed-loop-unused-exposure",
+    });
+    assert.ok(measure.memory_decision_trace.feedback_attribution.unattributed_recalled_memory_ids.includes(unusedMemoryId));
+    assert.ok(
+      measure.memory_decision_trace.feedback_attribution.sparse_feedback_signal_summary.repeated_unattributed_memory_ids.includes(
+        unusedMemoryId,
+      ),
+    );
+    assert.ok(measure.effect_report.feedback_signal_summary.repeated_unattributed_memory_ids.includes(unusedMemoryId));
+    assert.ok(
+      measure.effect_report.feedback_signal_summary.repeated_unattributed_without_positive_memory_ids.includes(unusedMemoryId),
+    );
+    assert.equal(measure.effect_report.feedback_signal_summary.authority_mutation, false);
+    const unusedDecision = measure.memory_decision_trace.memory_decisions.find((entry: Record<string, any>) =>
+      entry.memory_id === unusedMemoryId
+    );
+    assert.equal(unusedDecision.agent_surface, "use_now");
+    assert.equal(unusedDecision.feedback_detail, null);
+  } finally {
+    await app.close();
+  }
+});
