@@ -596,6 +596,23 @@ test("product observe turns plain input_text into recallable general memory", as
         && entry.summary === memoryText,
       ),
     );
+    const auditReport = await app.inject({
+      method: "POST",
+      url: "/v1/audit/memory-decision-report",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        product_trace: {
+          after_guide: guideBody,
+        },
+      },
+    });
+    assert.equal(auditReport.statusCode, 200);
+    const auditBody = auditReport.json();
+    assert.equal(auditBody.memory_decision_audit.contract_version, "aionis_memory_decision_audit_report_v1");
+    assert.equal(auditBody.memory_decision_audit.agent_prompt_included, false);
+    assert.equal(guideBody.agent_context.prompt_text.includes("memory_decision_audit"), false);
+    assert.equal(guideBody.agent_context.prompt_text.includes("decision_reviews"), false);
   } finally {
     await app.close();
   }
@@ -696,6 +713,29 @@ test("product observe persists lifecycle relation graph and guide suppresses sup
       ),
     );
     assert.equal(guideBody.agent_context.prompt_text.includes("legacy/payments/old-checkout.ts"), false);
+    assert.equal(guideBody.agent_context.prompt_text.includes("decision_reviews"), false);
+
+    const auditReport = await app.inject({
+      method: "POST",
+      url: "/v1/audit/memory-decision-report",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        product_trace: {
+          after_guide: guideBody,
+        },
+      },
+    });
+    assert.equal(auditReport.statusCode, 200);
+    const auditBody = auditReport.json();
+    const downgraded = auditBody.memory_decision_audit.decision_reviews.downgraded_memories[0];
+    assert.equal(downgraded.memory_id, oldNodeId);
+    assert.equal(downgraded.by_memory_id, currentNodeId);
+    assert.equal(downgraded.lifecycle_relation, "contradicts");
+    assert.equal(downgraded.producer, "rule_cue");
+    assert.equal(downgraded.gate.accepted, true);
+    assert.ok(downgraded.signals.source_newer);
+    assert.deepEqual(auditBody.source_map.routes_used, ["/v1/audit/memory-decision-report"]);
   } finally {
     await app.close();
   }
@@ -1103,6 +1143,8 @@ test("product measure derives closed-loop effect from guide packets", async () =
     assert.equal(auditBody.contract_version, "aionis_memory_decision_audit_result_v1");
     assert.equal(auditBody.memory_decision_audit.contract_version, "aionis_memory_decision_audit_report_v1");
     assert.equal(auditBody.memory_decision_audit.agent_prompt_included, false);
+    assert.equal(afterGuide.json().agent_context.prompt_text.includes("memory_decision_audit"), false);
+    assert.equal(afterGuide.json().agent_context.prompt_text.includes("decision_reviews"), false);
     assert.deepEqual(auditBody.source_map.routes_used, ["/v1/audit/memory-decision-report"]);
   } finally {
     await app.close();
