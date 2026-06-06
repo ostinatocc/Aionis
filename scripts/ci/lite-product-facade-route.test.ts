@@ -66,6 +66,153 @@ function assertProductSourceMap(value: unknown, expectedKeys = ["internal_surfac
   assertExactKeys(value, expectedKeys);
 }
 
+function objectValue(value: unknown, label: string): Record<string, any> {
+  assert.ok(value && typeof value === "object" && !Array.isArray(value), `${label} must be an object`);
+  return value as Record<string, any>;
+}
+
+function arrayValue(value: unknown, label: string): Array<Record<string, any>> {
+  assert.ok(Array.isArray(value), `${label} must be an array`);
+  return value as Array<Record<string, any>>;
+}
+
+function countTraceSurface(trace: Record<string, any>, surface: string): number {
+  return arrayValue(trace.memory_decisions, "trace.memory_decisions")
+    .filter((entry) => entry.agent_surface === surface).length;
+}
+
+function assertDecisionTraceMatchesGuide(traceRaw: unknown, guideRaw: unknown) {
+  const trace = objectValue(traceRaw, "memory_decision_trace");
+  const guide = objectValue(guideRaw, "guide");
+  const memoryPacket = objectValue(guide.memory_packet, "guide.memory_packet");
+  const agentContext = objectValue(guide.agent_context, "guide.agent_context");
+  const memories = arrayValue(memoryPacket.relevant_memories, "memory_packet.relevant_memories");
+  const evidenceTrail = arrayValue(memoryPacket.evidence_trail, "memory_packet.evidence_trail");
+  const decisions = arrayValue(trace.memory_decisions, "trace.memory_decisions");
+  const relationDecisions = arrayValue(trace.relation_decisions, "trace.relation_decisions");
+  const summary = objectValue(trace.summary, "trace.summary");
+  const contextDecision = objectValue(trace.context_decision, "trace.context_decision");
+
+  assert.equal(trace.contract_version, "aionis_memory_decision_trace_v1");
+  assert.equal(trace.agent_prompt_included, false);
+  assert.equal(trace.runtime_mutation, false);
+  assert.equal(summary.total_memory_count, memories.length);
+  assert.equal(summary.direct_use_count, countTraceSurface(trace, "use_now"));
+  assert.equal(summary.inspect_before_use_count, countTraceSurface(trace, "inspect_before_use"));
+  assert.equal(summary.do_not_use_count, countTraceSurface(trace, "do_not_use"));
+  assert.equal(summary.rehydrate_count, countTraceSurface(trace, "rehydrate"));
+  assert.equal(summary.relation_count, relationDecisions.length);
+  assert.equal(summary.prompt_char_count, String(agentContext.prompt_text ?? "").length);
+  assert.equal(summary.history_used, agentContext.history_used);
+  assert.equal(summary.recommended_posture, agentContext.recommended_posture);
+  assert.equal(summary.authority, agentContext.authority);
+  assert.equal(summary.negative_transfer_risk, objectValue(agentContext.risk, "agent_context.risk").negative_transfer_risk);
+
+  assert.equal(contextDecision.prompt_char_count, String(agentContext.prompt_text ?? "").length);
+  assert.equal(contextDecision.use_now_count, arrayValue(agentContext.use_now, "agent_context.use_now").length);
+  assert.equal(contextDecision.inspect_before_use_count, arrayValue(agentContext.inspect_before_use, "agent_context.inspect_before_use").length);
+  assert.equal(contextDecision.do_not_use_count, arrayValue(agentContext.do_not_use, "agent_context.do_not_use").length);
+  assert.equal(contextDecision.rehydrate_hint_count, arrayValue(agentContext.rehydrate_hints, "agent_context.rehydrate_hints").length);
+  assert.deepEqual(contextDecision.memory_ids, agentContext.memory_ids);
+
+  const promptText = String(agentContext.prompt_text ?? "");
+  assert.equal(promptText.includes("memory_decision_trace"), false);
+  assert.equal(promptText.includes("memory_decision_audit"), false);
+  assert.equal(promptText.includes("decision_reviews"), false);
+
+  const memoriesById = new Map(memories.map((entry) => [entry.memory_id, entry]));
+  const relationByTarget = new Map(relationDecisions.map((entry) => [entry.target_memory_id, entry]));
+  const lifecycleHintsById = new Map(arrayValue(objectValue(memoryPacket.lifecycle, "memory_packet.lifecycle").rehydration_hints, "memory_packet.lifecycle.rehydration_hints")
+    .map((entry) => [entry.memory_id, entry]));
+  for (const decision of decisions) {
+    const memory = memoriesById.get(decision.memory_id);
+    assert.ok(memory, `trace decision points at missing memory: ${decision.memory_id}`);
+    assert.equal(decision.title, memory.title);
+    assert.equal(decision.lifecycle_state, memory.lifecycle_state);
+    assert.equal(decision.authority, memory.authority);
+    if (decision.agent_surface === "use_now") {
+      const used = objectValue(decision.used_detail, `used_detail:${decision.memory_id}`);
+      assert.equal(used.confidence, memory.confidence);
+      assert.equal(used.salience, memory.salience);
+      assert.equal(used.source_layer, memory.source_layer);
+      assert.equal(used.not_superseded, !relationByTarget.has(decision.memory_id));
+    }
+    if (decision.agent_surface === "inspect_before_use" && relationByTarget.has(decision.memory_id)) {
+      const relation = relationByTarget.get(decision.memory_id)!;
+      const downgraded = objectValue(decision.downgraded_detail, `downgraded_detail:${decision.memory_id}`);
+      assert.equal(downgraded.by_memory_id, relation.source_memory_id);
+      assert.equal(downgraded.evidence_id, relation.evidence_id);
+      assert.deepEqual(objectValue(downgraded.relation, `downgraded_relation:${decision.memory_id}`).gate, relation.gate);
+    }
+    if (decision.agent_surface === "do_not_use") {
+      const blocked = objectValue(decision.blocked_detail, `blocked_detail:${decision.memory_id}`);
+      assert.equal(blocked.lifecycle_state, memory.lifecycle_state);
+      assert.equal(blocked.authority, memory.authority);
+    }
+    if (decision.agent_surface === "rehydrate") {
+      const rehydrate = objectValue(decision.rehydrate_detail, `rehydrate_detail:${decision.memory_id}`);
+      const hint = lifecycleHintsById.get(decision.memory_id);
+      if (hint) {
+        assert.equal(rehydrate.mode, hint.mode);
+        assert.equal(rehydrate.required, hint.required);
+        assert.equal(rehydrate.reason, hint.reason);
+      }
+    }
+  }
+
+  const lifecycleEvidence = evidenceTrail.filter((entry) => entry.source === "edge" && entry.lifecycle_relation);
+  assert.equal(relationDecisions.length, lifecycleEvidence.length);
+  for (const evidence of lifecycleEvidence) {
+    const relation = relationDecisions.find((entry) => entry.evidence_id === evidence.evidence_id);
+    assert.ok(relation, `missing relation decision for evidence ${evidence.evidence_id}`);
+    const lifecycleRelation = objectValue(evidence.lifecycle_relation, `lifecycle_relation:${evidence.evidence_id}`);
+    assert.equal(relation.memory_id, evidence.memory_id);
+    assert.equal(relation.source_memory_id, lifecycleRelation.source_memory_id);
+    assert.equal(relation.target_memory_id, lifecycleRelation.target_memory_id);
+    assert.equal(relation.lifecycle_relation, lifecycleRelation.lifecycle_relation);
+    assert.equal(relation.confidence, lifecycleRelation.confidence);
+    assert.deepEqual(relation.gate, lifecycleRelation.gate);
+    assert.deepEqual(relation.signals, lifecycleRelation.signals);
+  }
+}
+
+function assertTraceCoreEqual(leftRaw: unknown, rightRaw: unknown) {
+  const left = objectValue(leftRaw, "left trace");
+  const right = objectValue(rightRaw, "right trace");
+  for (const key of [
+    "tenant_id",
+    "scope",
+    "input",
+    "summary",
+    "memory_decisions",
+    "relation_decisions",
+    "context_decision",
+    "forget_decisions",
+  ]) {
+    assert.deepEqual(left[key], right[key], `trace core mismatch: ${key}`);
+  }
+}
+
+function assertAuditReportMatchesTrace(auditRaw: unknown, traceRaw: unknown) {
+  const audit = objectValue(auditRaw, "memory_decision_audit");
+  const trace = objectValue(traceRaw, "memory_decision_trace");
+  const decisions = arrayValue(trace.memory_decisions, "trace.memory_decisions");
+  const reviews = objectValue(audit.decision_reviews, "audit.decision_reviews");
+  const used = decisions.filter((entry) => entry.decision_kind === "used" && entry.used_detail);
+  const downgraded = decisions.filter((entry) => entry.decision_kind === "downgraded" && entry.downgraded_detail);
+  const blocked = decisions.filter((entry) => entry.decision_kind === "blocked" && entry.blocked_detail);
+  const rehydrate = decisions.filter((entry) => entry.decision_kind === "rehydrate" && entry.rehydrate_detail);
+
+  assert.equal(audit.contract_version, "aionis_memory_decision_audit_report_v1");
+  assert.equal(audit.agent_prompt_included, false);
+  assert.equal(audit.runtime_mutation, false);
+  assert.equal(objectValue(audit.counters, "audit.counters").total_memory_count, objectValue(trace.summary, "trace.summary").total_memory_count);
+  assert.deepEqual(arrayValue(reviews.used_memories, "reviews.used_memories").map((entry) => entry.memory_id), used.map((entry) => entry.memory_id));
+  assert.deepEqual(arrayValue(reviews.downgraded_memories, "reviews.downgraded_memories").map((entry) => entry.memory_id), downgraded.map((entry) => entry.memory_id));
+  assert.deepEqual(arrayValue(reviews.blocked_memories, "reviews.blocked_memories").map((entry) => entry.memory_id), blocked.map((entry) => entry.memory_id));
+  assert.deepEqual(arrayValue(reviews.rehydrate_memories, "reviews.rehydrate_memories").map((entry) => entry.memory_id), rehydrate.map((entry) => entry.memory_id));
+}
+
 function liteEnv() {
   return {
     AIONIS_EDITION: "lite",
@@ -715,6 +862,27 @@ test("product observe persists lifecycle relation graph and guide suppresses sup
     assert.equal(guideBody.agent_context.prompt_text.includes("legacy/payments/old-checkout.ts"), false);
     assert.equal(guideBody.agent_context.prompt_text.includes("decision_reviews"), false);
 
+    const debugTrace = await app.inject({
+      method: "POST",
+      url: "/v1/debug/memory-decision-trace",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        product_trace: {
+          after_guide: guideBody,
+        },
+      },
+    });
+    assert.equal(debugTrace.statusCode, 200);
+    const debugBody = debugTrace.json();
+    assert.deepEqual(debugBody.source_map.routes_used, ["/v1/debug/memory-decision-trace"]);
+    assertDecisionTraceMatchesGuide(debugBody.memory_decision_trace, guideBody);
+    const oldDecision = debugBody.memory_decision_trace.memory_decisions.find((entry: Record<string, unknown>) =>
+      entry.memory_id === oldNodeId,
+    );
+    assert.equal(oldDecision?.decision_kind, "downgraded");
+    assert.equal(objectValue(oldDecision?.downgraded_detail, "old decision downgraded detail").by_memory_id, currentNodeId);
+
     const auditReport = await app.inject({
       method: "POST",
       url: "/v1/audit/memory-decision-report",
@@ -736,6 +904,7 @@ test("product observe persists lifecycle relation graph and guide suppresses sup
     assert.equal(downgraded.gate.accepted, true);
     assert.ok(downgraded.signals.source_newer);
     assert.deepEqual(auditBody.source_map.routes_used, ["/v1/audit/memory-decision-report"]);
+    assertAuditReportMatchesTrace(auditBody.memory_decision_audit, debugBody.memory_decision_trace);
   } finally {
     await app.close();
   }
@@ -1060,7 +1229,8 @@ test("product measure derives closed-loop effect from guide packets", async () =
       },
     });
     assert.equal(afterGuide.statusCode, 200);
-    assert.equal(afterGuide.json().guide_packet.guide_brief.history_used, true);
+    const afterGuideBody = afterGuide.json();
+    assert.equal(afterGuideBody.guide_packet.guide_brief.history_used, true);
 
     const measure = await app.inject({
       method: "POST",
@@ -1076,7 +1246,7 @@ test("product measure derives closed-loop effect from guide packets", async () =
         },
         product_trace: {
           before_guide: beforeGuide.json(),
-          after_guide: afterGuide.json(),
+          after_guide: afterGuideBody,
           sufficient_evidence: true,
           evidence_ids: ["product_trace:observe-guide-measure"],
         },
@@ -1106,6 +1276,8 @@ test("product measure derives closed-loop effect from guide packets", async () =
     assert.equal(body.memory_decision_audit.contract_version, "aionis_memory_decision_audit_report_v1");
     assert.equal(body.memory_decision_audit.agent_prompt_included, false);
     assert.equal(body.memory_decision_audit.runtime_mutation, false);
+    assertDecisionTraceMatchesGuide(body.memory_decision_trace, afterGuideBody);
+    assertAuditReportMatchesTrace(body.memory_decision_audit, body.memory_decision_trace);
 
     const debugTrace = await app.inject({
       method: "POST",
@@ -1115,7 +1287,7 @@ test("product measure derives closed-loop effect from guide packets", async () =
         scope: "default",
         product_trace: {
           before_guide: beforeGuide.json(),
-          after_guide: afterGuide.json(),
+          after_guide: afterGuideBody,
         },
       },
     });
@@ -1125,6 +1297,8 @@ test("product measure derives closed-loop effect from guide packets", async () =
     assert.equal(debugBody.memory_decision_trace.contract_version, "aionis_memory_decision_trace_v1");
     assert.equal(debugBody.memory_decision_trace.agent_prompt_included, false);
     assert.deepEqual(debugBody.source_map.routes_used, ["/v1/debug/memory-decision-trace"]);
+    assertDecisionTraceMatchesGuide(debugBody.memory_decision_trace, afterGuideBody);
+    assertTraceCoreEqual(debugBody.memory_decision_trace, body.memory_decision_trace);
 
     const auditReport = await app.inject({
       method: "POST",
@@ -1134,7 +1308,7 @@ test("product measure derives closed-loop effect from guide packets", async () =
         scope: "default",
         product_trace: {
           before_guide: beforeGuide.json(),
-          after_guide: afterGuide.json(),
+          after_guide: afterGuideBody,
         },
       },
     });
@@ -1143,9 +1317,14 @@ test("product measure derives closed-loop effect from guide packets", async () =
     assert.equal(auditBody.contract_version, "aionis_memory_decision_audit_result_v1");
     assert.equal(auditBody.memory_decision_audit.contract_version, "aionis_memory_decision_audit_report_v1");
     assert.equal(auditBody.memory_decision_audit.agent_prompt_included, false);
-    assert.equal(afterGuide.json().agent_context.prompt_text.includes("memory_decision_audit"), false);
-    assert.equal(afterGuide.json().agent_context.prompt_text.includes("decision_reviews"), false);
+    assert.equal(afterGuideBody.agent_context.prompt_text.includes("memory_decision_audit"), false);
+    assert.equal(afterGuideBody.agent_context.prompt_text.includes("decision_reviews"), false);
     assert.deepEqual(auditBody.source_map.routes_used, ["/v1/audit/memory-decision-report"]);
+    assertAuditReportMatchesTrace(auditBody.memory_decision_audit, debugBody.memory_decision_trace);
+    assert.deepEqual(
+      auditBody.memory_decision_audit.decision_reviews,
+      body.memory_decision_audit.decision_reviews,
+    );
   } finally {
     await app.close();
   }
