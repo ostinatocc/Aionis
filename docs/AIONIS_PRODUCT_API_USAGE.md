@@ -286,8 +286,10 @@ It also keeps `authority_mutation: false`; authority changes remain governed by
 the underlying feedback/forgetting mechanisms, not by this report field.
 `confidence_decay_candidate_summary` is the Direction 2 shadow view: it lists
 memories that may deserve lower future reliance, memories protected by positive
-attribution, and drift-only observations. It is still measure/debug/audit only;
-it does not demote, suppress, archive, or rewrite guide authority.
+attribution, drift-only observations, and temporal staleness candidates. Time
+decay is based on old active trusted/advisory memory still exposed to the Agent,
+relative to the freshest scoped observed memory. It is still measure/debug/audit
+only; it does not demote, suppress, archive, or rewrite guide authority.
 
 ### Example
 

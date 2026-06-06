@@ -58,6 +58,8 @@ Sparse feedback candidate learning-control boundaries are defined in
 [SPARSE_FEEDBACK_LEARNING_CONTROL_GATE.md](SPARSE_FEEDBACK_LEARNING_CONTROL_GATE.md).
 Sparse feedback confidence decay boundaries are defined in
 [SPARSE_FEEDBACK_CONFIDENCE_DECAY_GATE.md](SPARSE_FEEDBACK_CONFIDENCE_DECAY_GATE.md).
+That surface can expose read-only temporal staleness candidates, but it never
+changes guide authority or memory lifecycle by itself.
 
 `observe` and `forget` remain product actions, but their first product-visible value should flow into these outputs:
 

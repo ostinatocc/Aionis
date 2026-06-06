@@ -22,7 +22,8 @@ It is a measure/debug/audit surface. It is not an Agent prompt surface.
 6. Cross-scope and cross-consumer exposure does not accumulate.
 7. Neighborhood drift can support decay candidacy but cannot trigger it alone.
 8. A single weak negative signal cannot trigger decay candidacy.
-9. Candidate evidence must remain explainable through memory ids and reason codes.
+9. Temporal staleness can trigger shadow candidacy only when the memory is still exposed to the Agent and lacks positive attributed use.
+10. Candidate evidence must remain explainable through memory ids and reason codes.
 
 ## Candidate Inputs
 
@@ -32,18 +33,23 @@ Direction 2 may consider these existing read-side signals:
 - strong negative counter-signal
 - repeated exposed-but-unused memory with no positive attributed use
 - neighborhood drift observation, only as supporting context
+- temporal staleness, only for old active trusted/advisory memory still exposed on `use_now` or `inspect_before_use`
 - positive attributed use, as a blocker
 
 ## Candidate Rule
 
 A memory may enter `confidence_decay_candidate_memory_ids` only when:
 
-1. it already appears in Direction 1 candidate learning-control evidence, and
-2. it has no positive attributed use, and
-3. it is not recently validated, and
-4. it is either repeatedly unused without positive attribution or has threshold-met counter-signal evidence.
+1. it has no positive attributed use, and
+2. it is not recently validated, and
+3. it satisfies at least one shadow-candidate source:
+   - it already appears in Direction 1 candidate learning-control evidence, or
+   - it is active trusted/advisory memory still exposed on `use_now` or `inspect_before_use`, with `observed_at` at least the configured threshold older than the freshest observed memory in the same scoped packet.
 
 Neighborhood drift may add `supported_by_neighborhood_drift_memory_ids`, but drift alone must remain observation-only.
+Temporal staleness must include `time_decay_candidate_details` with memory id,
+observed time, reference observed time, age, threshold, surface, authority, and
+whether positive attribution blocked candidacy.
 
 ## Holdout Gate
 
@@ -56,10 +62,11 @@ The gate is considered stable only when a real Runtime holdout report shows:
 5. `confidence_decay_false_positive_count` is `0`
 6. positive attribution blocks all decay candidates for recently validated memories
 7. drift-only negative controls do not become decay candidates
+8. recent memory below the temporal threshold does not become a decay candidate
 
 ## Non-Goals
 
-- no time-based automatic demotion
+- no time-based automatic demotion; temporal age is only a shadow signal
 - no automatic archive or suppression
 - no active verification
 - no Agent-facing instruction

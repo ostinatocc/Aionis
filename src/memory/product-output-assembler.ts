@@ -79,6 +79,8 @@ type ConfidenceDecayCandidateSummary = AionisMemoryDecisionTrace["confidence_dec
 const NEIGHBORHOOD_DRIFT_GROWTH_THRESHOLD = 2;
 const NEIGHBORHOOD_DRIFT_DIRECTIONAL_THRESHOLD = 2;
 const NEIGHBORHOOD_DRIFT_ISOLATION_THRESHOLD = 1;
+const CONFIDENCE_DECAY_TIME_THRESHOLD_DAYS = 90;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const NEIGHBORHOOD_DRIFT_STOPWORDS = new Set([
   "about",
   "after",
@@ -1804,36 +1806,96 @@ function emptyConfidenceDecayCandidateSummary(
     mode: null,
     authority_mutation: false,
     agent_prompt_included: false,
+    time_decay_age_threshold_days: CONFIDENCE_DECAY_TIME_THRESHOLD_DAYS,
     decay_candidate_memory_ids: [],
     candidate_from_learning_control_memory_ids: [],
+    candidate_from_time_decay_memory_ids: [],
     supported_by_neighborhood_drift_memory_ids: [],
     drift_only_observation_memory_ids: [],
     blocked_by_positive_attribution_memory_ids: [],
     blocked_by_recent_validation_memory_ids: [],
+    time_decay_candidate_details: [],
     reason,
   };
 }
 
 function buildConfidenceDecayCandidateSummary(args: {
   feedbackAttribution: FeedbackAttributionSummary;
+  memory: AionisMemoryPacket | null;
+  memoryDecisions: AionisMemoryDecisionTrace["memory_decisions"];
   neighborhoodDriftObservation: NeighborhoodDriftObservation;
 }): ConfidenceDecayCandidateSummary {
   const sparse = args.feedbackAttribution.sparse_feedback_signal_summary;
   const learningControl = sparse.candidate_learning_control_summary;
   const positiveMemoryIds = new Set(compactStrings(sparse.positive_attributed_memory_ids));
   const learningControlCandidates = compactStrings(learningControl.candidate_inspect_before_use_memory_ids);
+  const memoryEntriesById = new Map((args.memory?.relevant_memories ?? []).map((entry) => [entry.memory_id, entry]));
+  const decisionsById = new Map(args.memoryDecisions.map((entry) => [entry.memory_id, entry]));
+  const observedTimes = (args.memory?.relevant_memories ?? [])
+    .map((entry) => parseObservedTime(entry.observed_at))
+    .filter((value): value is number => value !== null);
+  const referenceObservedTime = observedTimes.length > 0 ? Math.max(...observedTimes) : null;
+  const referenceObservedAt = referenceObservedTime === null ? null : new Date(referenceObservedTime).toISOString();
+  const timeDecayDetails: ConfidenceDecayCandidateSummary["time_decay_candidate_details"] = [];
+  const timeDecayBlockedByPositive: string[] = [];
+
+  if (referenceObservedTime !== null && referenceObservedAt !== null) {
+    for (const [memoryId, decision] of decisionsById) {
+      if (decision.agent_surface !== "use_now" && decision.agent_surface !== "inspect_before_use") continue;
+      if (decision.authority !== "trusted" && decision.authority !== "advisory") continue;
+      if (decision.lifecycle_state !== "active") continue;
+      const entry = memoryEntriesById.get(memoryId);
+      const observedTime = parseObservedTime(entry?.observed_at);
+      if (observedTime === null || observedTime >= referenceObservedTime) continue;
+      const ageDays = Math.floor((referenceObservedTime - observedTime) / DAY_MS);
+      if (ageDays < CONFIDENCE_DECAY_TIME_THRESHOLD_DAYS) continue;
+      const blockedByPositiveAttribution = positiveMemoryIds.has(memoryId) || hasPositiveAttribution(decision);
+      if (blockedByPositiveAttribution) {
+        timeDecayBlockedByPositive.push(memoryId);
+      }
+      timeDecayDetails.push({
+        memory_id: memoryId,
+        observed_at: new Date(observedTime).toISOString(),
+        reference_observed_at: referenceObservedAt,
+        age_days: ageDays,
+        threshold_days: CONFIDENCE_DECAY_TIME_THRESHOLD_DAYS,
+        agent_surface: decision.agent_surface,
+        authority: decision.authority,
+        blocked_by_positive_attribution: blockedByPositiveAttribution,
+        reason: blockedByPositiveAttribution
+          ? "Temporal staleness was observed, but positive attribution in the current feedback window blocks confidence-decay candidacy."
+          : "Memory is substantially older than the freshest scoped evidence while still exposed to the agent; this is a read-only confidence-decay candidate and does not mutate authority.",
+      });
+    }
+  }
+
+  const candidateFromLearningControl = learningControlCandidates.filter((memoryId) => !positiveMemoryIds.has(memoryId));
+  const candidateFromTimeDecay = compactStrings(
+    timeDecayDetails
+      .filter((entry) => !entry.blocked_by_positive_attribution)
+      .map((entry) => entry.memory_id),
+  );
   const blockedByPositive = compactStrings([
     ...learningControl.blocked_by_positive_attribution_memory_ids,
     ...learningControlCandidates.filter((memoryId) => positiveMemoryIds.has(memoryId)),
+    ...timeDecayBlockedByPositive,
   ]);
-  const candidateFromLearningControl = learningControlCandidates.filter((memoryId) => !positiveMemoryIds.has(memoryId));
   const driftSignalMemoryIds = new Set(args.neighborhoodDriftObservation.signal_memory_ids);
-  const supportedByDrift = candidateFromLearningControl.filter((memoryId) => driftSignalMemoryIds.has(memoryId));
+  const candidateMemoryIds = compactStrings([
+    ...candidateFromLearningControl,
+    ...candidateFromTimeDecay,
+  ]);
+  const supportedByDrift = candidateMemoryIds.filter((memoryId) => driftSignalMemoryIds.has(memoryId));
   const driftOnlyObservation = args.neighborhoodDriftObservation.signal_memory_ids
-    .filter((memoryId) => !candidateFromLearningControl.includes(memoryId) && !blockedByPositive.includes(memoryId));
-  const decayCandidates = compactStrings(candidateFromLearningControl);
+    .filter((memoryId) => !candidateMemoryIds.includes(memoryId) && !blockedByPositive.includes(memoryId));
+  const decayCandidates = compactStrings(candidateMemoryIds);
 
-  if (decayCandidates.length === 0 && blockedByPositive.length === 0 && driftOnlyObservation.length === 0) {
+  if (
+    decayCandidates.length === 0
+    && blockedByPositive.length === 0
+    && driftOnlyObservation.length === 0
+    && timeDecayDetails.length === 0
+  ) {
     return emptyConfidenceDecayCandidateSummary();
   }
 
@@ -1843,15 +1905,18 @@ function buildConfidenceDecayCandidateSummary(args: {
     mode: "shadow_candidate",
     authority_mutation: false,
     agent_prompt_included: false,
+    time_decay_age_threshold_days: CONFIDENCE_DECAY_TIME_THRESHOLD_DAYS,
     decay_candidate_memory_ids: decayCandidates,
     candidate_from_learning_control_memory_ids: candidateFromLearningControl,
+    candidate_from_time_decay_memory_ids: candidateFromTimeDecay,
     supported_by_neighborhood_drift_memory_ids: supportedByDrift,
     drift_only_observation_memory_ids: compactStrings(driftOnlyObservation),
     blocked_by_positive_attribution_memory_ids: blockedByPositive,
     blocked_by_recent_validation_memory_ids: blockedByPositive,
+    time_decay_candidate_details: timeDecayDetails.slice(0, 24),
     reason: decayCandidates.length > 0
-      ? "Direction 1 candidate evidence may become a confidence-decay shadow candidate, but this summary does not mutate authority."
-      : "Positive attribution or drift-only evidence blocked confidence-decay candidacy.",
+      ? "Direction 1 candidate evidence or temporal staleness may become a confidence-decay shadow candidate, but this summary does not mutate authority."
+      : "Positive attribution, recent validation, or drift-only evidence blocked confidence-decay candidacy.",
   };
 }
 
@@ -2508,6 +2573,8 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
   });
   const confidenceDecayCandidateSummary = buildConfidenceDecayCandidateSummary({
     feedbackAttribution,
+    memory,
+    memoryDecisions,
     neighborhoodDriftObservation,
   });
   const contextDecision = {
@@ -3323,7 +3390,9 @@ function buildEffectConfidenceDecaySummary(
       present: false,
       source: "not_supplied",
       authority_mutation: false,
+      time_decay_age_threshold_days: 0,
       decay_candidate_memory_ids: [],
+      candidate_from_time_decay_memory_ids: [],
       blocked_by_positive_attribution_memory_ids: [],
       supported_by_neighborhood_drift_memory_ids: [],
       explanation: "No memory decision audit confidence decay review was supplied for this effect report.",
@@ -3333,7 +3402,9 @@ function buildEffectConfidenceDecaySummary(
     present: review.present,
     source: "memory_decision_audit",
     authority_mutation: false,
+    time_decay_age_threshold_days: review.time_decay_age_threshold_days,
     decay_candidate_memory_ids: review.decay_candidate_memory_ids,
+    candidate_from_time_decay_memory_ids: review.candidate_from_time_decay_memory_ids,
     blocked_by_positive_attribution_memory_ids: review.blocked_by_positive_attribution_memory_ids,
     supported_by_neighborhood_drift_memory_ids: review.supported_by_neighborhood_drift_memory_ids,
     explanation: review.present

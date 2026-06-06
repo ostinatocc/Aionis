@@ -761,6 +761,8 @@ test("AionisEffectReport accepts measured positive impact and training candidate
   assert.deepEqual(parsed.feedback_signal_summary.read_only_signal_memory_ids, ["mem-1", "mem-2", "mem-3"]);
   assert.equal(parsed.confidence_decay_summary.present, false);
   assert.equal(parsed.confidence_decay_summary.authority_mutation, false);
+  assert.equal(parsed.confidence_decay_summary.time_decay_age_threshold_days, 0);
+  assert.deepEqual(parsed.confidence_decay_summary.candidate_from_time_decay_memory_ids, []);
   assert.equal(parsed.training_candidates[0]?.candidate_type, "handoff_distillation");
 });
 
@@ -822,6 +824,9 @@ test("AionisMemoryDecisionTrace accepts read-only measure/debug/audit output", (
   assert.equal(parsed.confidence_decay_candidate_summary.present, false);
   assert.equal(parsed.confidence_decay_candidate_summary.authority_mutation, false);
   assert.equal(parsed.confidence_decay_candidate_summary.agent_prompt_included, false);
+  assert.equal(parsed.confidence_decay_candidate_summary.time_decay_age_threshold_days, 0);
+  assert.deepEqual(parsed.confidence_decay_candidate_summary.candidate_from_time_decay_memory_ids, []);
+  assert.deepEqual(parsed.confidence_decay_candidate_summary.time_decay_candidate_details, []);
 });
 
 test("AionisMemoryDecisionTrace rejects prompt injection and runtime mutation claims", () => {
@@ -851,12 +856,15 @@ test("AionisMemoryDecisionTrace rejects prompt injection and runtime mutation cl
           mode: "shadow_candidate",
           authority_mutation: true,
           agent_prompt_included: false,
+          time_decay_age_threshold_days: 90,
           decay_candidate_memory_ids: ["mem-1"],
           candidate_from_learning_control_memory_ids: ["mem-1"],
+          candidate_from_time_decay_memory_ids: [],
           supported_by_neighborhood_drift_memory_ids: [],
           drift_only_observation_memory_ids: [],
           blocked_by_positive_attribution_memory_ids: [],
           blocked_by_recent_validation_memory_ids: [],
+          time_decay_candidate_details: [],
           reason: "Invalid mutation claim.",
         },
       }),
@@ -879,4 +887,5 @@ test("AionisMemoryDecisionAuditReport accepts compact operator audit output", ()
   assert.equal(parsed.confidence_decay_candidate_review.present, false);
   assert.equal(parsed.confidence_decay_candidate_review.authority_mutation, false);
   assert.equal(parsed.confidence_decay_candidate_review.agent_prompt_included, false);
+  assert.equal(parsed.confidence_decay_candidate_review.time_decay_age_threshold_days, 0);
 });

@@ -700,6 +700,7 @@ test("product measure facade returns a product effect report without external ev
     assert.equal(body.contract_version, "aionis_measure_result_v1");
     assert.equal(body.effect_report.contract_version, "aionis_effect_report_v1");
     assert.equal(body.effect_report.confidence_decay_summary.authority_mutation, false);
+    assert.equal(body.effect_report.confidence_decay_summary.time_decay_age_threshold_days, 0);
     assert.equal(body.effect_report.history_impact.impact_direction, "positive");
     assert.equal(body.effect_report.history_impact.changed_future_behavior, true);
     assert.equal(body.effect_report.quality.negative_transfer_detected, false);

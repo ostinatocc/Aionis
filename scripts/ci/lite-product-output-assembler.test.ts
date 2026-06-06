@@ -1192,6 +1192,269 @@ test("product confidence decay shadow candidate admits threshold-met negative fe
   assert.equal(trace.confidence_decay_candidate_summary.authority_mutation, false);
 });
 
+test("product confidence decay shadow candidate observes temporal staleness without authority mutation", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "measure temporal confidence decay candidate",
+    },
+    nodes: [
+      {
+        id: "mem-old-runtime-note",
+        type: "concept",
+        title: "Runtime parser old convention",
+        text_summary: "Runtime parser convention in src/runtime/parser.ts used legacy tuple decoding.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+          target_files: ["src/runtime/parser.ts"],
+        },
+        confidence: 0.88,
+        salience: 0.86,
+        created_at: "2025-01-01T00:00:00.000Z",
+      },
+      {
+        id: "mem-current-runtime-note",
+        type: "concept",
+        title: "Runtime parser current context",
+        text_summary: "Runtime parser context in src/runtime/parser.ts now uses object payload decoding.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+          target_files: ["src/runtime/parser.ts"],
+        },
+        confidence: 0.9,
+        salience: 0.88,
+        created_at: "2026-06-01T00:00:00.000Z",
+      },
+    ],
+  });
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+  const trace = buildAionisMemoryDecisionTrace({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    before_guide: null,
+    after_guide: {
+      memory_packet: memoryPacket,
+      agent_context: agentContext,
+    },
+  });
+
+  const oldDecision = trace.memory_decisions.find((entry) => entry.memory_id === "mem-old-runtime-note");
+  assert.equal(oldDecision?.lifecycle_state, "active");
+  assert.equal(oldDecision?.agent_surface, "use_now");
+  assert.equal(trace.confidence_decay_candidate_summary.present, true);
+  assert.equal(trace.confidence_decay_candidate_summary.authority_mutation, false);
+  assert.equal(trace.confidence_decay_candidate_summary.agent_prompt_included, false);
+  assert.equal(trace.confidence_decay_candidate_summary.time_decay_age_threshold_days, 90);
+  assert.deepEqual(trace.confidence_decay_candidate_summary.candidate_from_time_decay_memory_ids, [
+    "mem-old-runtime-note",
+  ]);
+  assert.deepEqual(trace.confidence_decay_candidate_summary.decay_candidate_memory_ids, [
+    "mem-old-runtime-note",
+  ]);
+  assert.equal(
+    trace.confidence_decay_candidate_summary.time_decay_candidate_details[0]?.blocked_by_positive_attribution,
+    false,
+  );
+  assert.equal(
+    trace.confidence_decay_candidate_summary.time_decay_candidate_details[0]?.reference_observed_at,
+    "2026-06-01T00:00:00.000Z",
+  );
+  assert.equal(agentContext.prompt_text.includes("confidence_decay"), false);
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-old-runtime-note"), true);
+
+  const audit = buildAionisMemoryDecisionAuditReport({ trace });
+  assert.deepEqual(audit.confidence_decay_candidate_review.candidate_from_time_decay_memory_ids, [
+    "mem-old-runtime-note",
+  ]);
+
+  const effect = buildAionisEffectReport({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    report: evaluateAionisEffect({
+      baseline: { continuity: { repeatedDiscoverySteps: 1, recoveredStateFacts: 0, expectedStateFacts: 1 } },
+      aionis: {
+        continuity: {
+          repeatedDiscoverySteps: 1,
+          recoveredStateFacts: 1,
+          expectedStateFacts: 1,
+          continuityGuidanceCorrect: true,
+        },
+      },
+    }),
+    confidence_decay_review: audit.confidence_decay_candidate_review,
+  });
+  assert.equal(effect.confidence_decay_summary.authority_mutation, false);
+  assert.deepEqual(effect.confidence_decay_summary.candidate_from_time_decay_memory_ids, [
+    "mem-old-runtime-note",
+  ]);
+});
+
+test("product confidence decay temporal staleness is blocked by positive attribution", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "measure temporal confidence decay positive boundary",
+    },
+    nodes: [
+      {
+        id: "mem-old-validated-runtime-note",
+        type: "concept",
+        title: "Runtime parser validated convention",
+        text_summary: "Runtime parser convention in src/runtime/parser.ts still applies after validation.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+          target_files: ["src/runtime/parser.ts"],
+        },
+        confidence: 0.88,
+        salience: 0.86,
+        created_at: "2025-01-01T00:00:00.000Z",
+      },
+      {
+        id: "mem-current-validator-note",
+        type: "concept",
+        title: "Runtime parser current validator context",
+        text_summary: "Runtime parser validation in src/runtime/parser.ts was checked during the current run.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+          target_files: ["src/runtime/parser.ts"],
+        },
+        confidence: 0.9,
+        salience: 0.88,
+        created_at: "2026-06-01T00:00:00.000Z",
+      },
+    ],
+  });
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+  const trace = buildAionisMemoryDecisionTrace({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    before_guide: null,
+    after_guide: {
+      memory_packet: memoryPacket,
+      agent_context: agentContext,
+    },
+    forget_result: {
+      forget_effect: {
+        action: "activate",
+        affected_memory_ids: ["mem-old-validated-runtime-note"],
+        attribution: {
+          run_id: "run:temporal-positive-boundary",
+          outcome: "positive",
+          used_surface: "use_now",
+        },
+      },
+      result: {
+        activated: {
+          feedback_attributions: [{
+            memory_id: "mem-old-validated-runtime-note",
+            run_id: "run:temporal-positive-boundary",
+            outcome: "positive",
+            used_surface: "use_now",
+            attribution_strength: "positive_attribution",
+          }],
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(trace.confidence_decay_candidate_summary.candidate_from_time_decay_memory_ids, []);
+  assert.deepEqual(trace.confidence_decay_candidate_summary.decay_candidate_memory_ids, []);
+  assert.deepEqual(trace.confidence_decay_candidate_summary.blocked_by_positive_attribution_memory_ids, [
+    "mem-old-validated-runtime-note",
+  ]);
+  assert.deepEqual(trace.confidence_decay_candidate_summary.blocked_by_recent_validation_memory_ids, [
+    "mem-old-validated-runtime-note",
+  ]);
+  assert.equal(
+    trace.confidence_decay_candidate_summary.time_decay_candidate_details[0]?.blocked_by_positive_attribution,
+    true,
+  );
+  assert.equal(trace.confidence_decay_candidate_summary.authority_mutation, false);
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-old-validated-runtime-note"), true);
+});
+
+test("product confidence decay temporal staleness ignores recent memory", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "measure temporal confidence decay recent boundary",
+    },
+    nodes: [
+      {
+        id: "mem-recent-runtime-note",
+        type: "concept",
+        title: "Runtime parser recent convention",
+        text_summary: "Runtime parser convention in src/runtime/parser.ts was recently validated.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+          target_files: ["src/runtime/parser.ts"],
+        },
+        confidence: 0.88,
+        salience: 0.86,
+        created_at: "2026-05-01T00:00:00.000Z",
+      },
+      {
+        id: "mem-current-runtime-validator",
+        type: "concept",
+        title: "Runtime parser current note",
+        text_summary: "Runtime parser context in src/runtime/parser.ts remains aligned.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+          target_files: ["src/runtime/parser.ts"],
+        },
+        confidence: 0.9,
+        salience: 0.88,
+        created_at: "2026-06-01T00:00:00.000Z",
+      },
+    ],
+  });
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+  const trace = buildAionisMemoryDecisionTrace({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    before_guide: null,
+    after_guide: {
+      memory_packet: memoryPacket,
+      agent_context: agentContext,
+    },
+  });
+
+  assert.deepEqual(trace.confidence_decay_candidate_summary.candidate_from_time_decay_memory_ids, []);
+  assert.deepEqual(trace.confidence_decay_candidate_summary.decay_candidate_memory_ids, []);
+  assert.deepEqual(trace.confidence_decay_candidate_summary.time_decay_candidate_details, []);
+  assert.equal(trace.confidence_decay_candidate_summary.authority_mutation, false);
+});
+
 test("product confidence decay shadow candidate is blocked by positive attribution", () => {
   const memoryPacket = buildAionisMemoryPacket({
     tenant_id: "tenant-local",
