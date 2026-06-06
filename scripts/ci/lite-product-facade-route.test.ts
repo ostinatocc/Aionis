@@ -2005,6 +2005,7 @@ test("product forget records activation feedback through the product facade", as
     assert.equal(body.result.activated.updated_nodes, 1);
     assert.equal(body.result.activated.outcome, "positive");
     assert.equal(body.result.activated.activate, true);
+    assert.equal(body.forget_effect.guide_trace, undefined);
 
     const { rows } = await liteWriteStore.findNodes({
       scope: "default",
@@ -2015,6 +2016,41 @@ test("product forget records activation feedback through the product facade", as
       offset: 0,
     });
     assert.equal(typeof rows[0]?.slots.last_activated_at, "string");
+
+    const afterGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "compact product status reports",
+        consumer_agent_id: "local-user",
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(afterGuide.statusCode, 200, afterGuide.body);
+
+    const measure = await app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        product_trace: {
+          before_guide: afterGuide.json(),
+          after_guide: afterGuide.json(),
+          forget_result: body,
+          sufficient_evidence: true,
+          evidence_ids: ["product_trace:no-guide-trace-activation"],
+        },
+      },
+    });
+    assert.equal(measure.statusCode, 200, measure.body);
+    const trace = measure.json().memory_decision_trace;
+    assert.equal(trace.feedback_attribution.present, true);
+    assert.equal(trace.feedback_attribution.guide_trace_id, null);
+    assert.equal(trace.feedback_attribution.unused_exposure_observation.present, false);
   } finally {
     await app.close();
   }
@@ -2499,6 +2535,8 @@ test("product guide trace attribution resolves used memories from persisted expo
       offset: 0,
     });
     assert.equal(unusedAfterFeedback.rows[0]?.slots.feedback_negative, undefined);
+    assert.equal(unusedAfterFeedback.rows[0]?.slots.unused_exposure_observation, undefined);
+    assert.equal(unusedAfterFeedback.rows[0]?.slots.repeated_unattributed_memory_ids, undefined);
 
     const afterGuide = await app.inject({
       method: "POST",
@@ -2552,6 +2590,217 @@ test("product guide trace attribution resolves used memories from persisted expo
     assert.equal(usedDecision.feedback_detail.threshold_state, "weak_below_threshold");
     const unusedDecision = trace.memory_decisions.find((entry: Record<string, unknown>) => entry.memory_id === unusedNodeId);
     assert.equal(unusedDecision.feedback_detail, null);
+  } finally {
+    await app.close();
+  }
+});
+
+test("product unused exposure observation respects scope, consumer, and positive attribution boundaries", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("unused-exposure-boundaries");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const positiveObserve = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        memory_lane: "shared",
+        input_text: "AIONIS_UNUSED_BOUNDARY_MARKER Keep escalation summaries short and evidence-backed.",
+        memory: {
+          client_id: "memory:unused-boundary-positive",
+          type: "concept",
+          tier: "warm",
+          memory_kind: "general_memory",
+          title: "Positive attributed memory",
+          text_summary: "AIONIS_UNUSED_BOUNDARY_MARKER Keep escalation summaries short and evidence-backed.",
+          confidence: 0.87,
+        },
+      },
+    });
+    assert.equal(positiveObserve.statusCode, 200, positiveObserve.body);
+    const positiveNodeId = positiveObserve.json().memory_write.nodes[0].id;
+
+    const usedObserve = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        memory_lane: "shared",
+        input_text: "AIONIS_UNUSED_BOUNDARY_MARKER Use customer-facing severity labels.",
+        memory: {
+          client_id: "memory:unused-boundary-used",
+          type: "concept",
+          tier: "warm",
+          memory_kind: "general_memory",
+          title: "Current used memory",
+          text_summary: "AIONIS_UNUSED_BOUNDARY_MARKER Use customer-facing severity labels.",
+          confidence: 0.85,
+        },
+      },
+    });
+    assert.equal(usedObserve.statusCode, 200, usedObserve.body);
+    const usedNodeId = usedObserve.json().memory_write.nodes[0].id;
+
+    const otherScopeObserve = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "other-scope",
+        auto_embed: true,
+        memory_lane: "shared",
+        input_text: "AIONIS_UNUSED_BOUNDARY_MARKER Other scope memory should not affect default scope.",
+        memory: {
+          client_id: "memory:unused-boundary-other-scope",
+          type: "concept",
+          tier: "warm",
+          memory_kind: "general_memory",
+          title: "Other scope memory",
+          text_summary: "AIONIS_UNUSED_BOUNDARY_MARKER Other scope memory should not affect default scope.",
+          confidence: 0.86,
+        },
+      },
+    });
+    assert.equal(otherScopeObserve.statusCode, 200, otherScopeObserve.body);
+
+    const otherScopeGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "other-scope",
+        query_text: "AIONIS_UNUSED_BOUNDARY_MARKER escalation summary",
+        consumer_agent_id: "local-user",
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(otherScopeGuide.statusCode, 200, otherScopeGuide.body);
+
+    const otherConsumerGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "AIONIS_UNUSED_BOUNDARY_MARKER escalation summary",
+        consumer_agent_id: "other-agent",
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(otherConsumerGuide.statusCode, 200, otherConsumerGuide.body);
+    assert.ok(otherConsumerGuide.json().agent_context.memory_ids.includes(positiveNodeId));
+
+    const positiveGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "AIONIS_UNUSED_BOUNDARY_MARKER escalation summary",
+        consumer_agent_id: "local-user",
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(positiveGuide.statusCode, 200, positiveGuide.body);
+    const positiveGuideBody = positiveGuide.json();
+    assert.ok(positiveGuideBody.agent_context.memory_ids.includes(positiveNodeId));
+    assert.ok(positiveGuideBody.agent_context.memory_ids.includes(usedNodeId));
+
+    const positiveFeedback = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        operation: "activate",
+        target: "memory",
+        guide_trace_id: positiveGuideBody.guide_trace_id,
+        used_memory_ids: [positiveNodeId],
+        run_id: "run:unused-boundary-positive",
+        outcome: "positive",
+        used_surface: "use_now",
+        verifier_status: "passed",
+        tool_status: "succeeded",
+        activate: true,
+        reason: "The host used this exposed memory successfully.",
+      },
+    });
+    assert.equal(positiveFeedback.statusCode, 200, positiveFeedback.body);
+
+    const currentGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "AIONIS_UNUSED_BOUNDARY_MARKER escalation summary",
+        consumer_agent_id: "local-user",
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(currentGuide.statusCode, 200, currentGuide.body);
+    const currentGuideBody = currentGuide.json();
+    assert.ok(currentGuideBody.agent_context.memory_ids.includes(positiveNodeId));
+    assert.ok(currentGuideBody.agent_context.memory_ids.includes(usedNodeId));
+
+    const currentFeedback = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        operation: "activate",
+        target: "memory",
+        guide_trace_id: currentGuideBody.guide_trace_id,
+        used_memory_ids: [usedNodeId],
+        run_id: "run:unused-boundary-current",
+        outcome: "negative",
+        used_surface: "use_now",
+        verifier_status: "not_run",
+        tool_status: "unknown",
+        activate: true,
+        reason: "The host used a different exposed memory in this run.",
+      },
+    });
+    assert.equal(currentFeedback.statusCode, 200, currentFeedback.body);
+    const observation = currentFeedback.json().forget_effect.guide_trace.unused_exposure_observation;
+    assert.equal(observation.mode, "read_only_measure");
+    assert.equal(observation.guide_trace_count, 2);
+    assert.ok(observation.repeated_unattributed_memory_ids.includes(positiveNodeId));
+    assert.equal(observation.repeated_unattributed_memory_ids.includes(usedNodeId), false);
+    assert.equal(observation.repeated_unattributed_without_positive_memory_ids.includes(positiveNodeId), false);
+    const positiveStat = observation.memory_stats.find((entry: Record<string, unknown>) => entry.memory_id === positiveNodeId);
+    assert.ok(positiveStat);
+    assert.equal(positiveStat.current_unattributed, true);
+    assert.equal(positiveStat.exposure_count, 2);
+    assert.equal(positiveStat.positive_attributed_use_count, 1);
+    assert.equal(positiveStat.repeated_without_positive_attribution, false);
+
+    const positiveAfterCurrent = await liteWriteStore.findNodes({
+      scope: "default",
+      id: positiveNodeId,
+      consumerAgentId: "local-user",
+      consumerTeamId: null,
+      limit: 1,
+      offset: 0,
+    });
+    assert.equal(positiveAfterCurrent.rows[0]?.slots.positive_attributed_use_count, 1);
+    assert.equal(positiveAfterCurrent.rows[0]?.slots.feedback_negative, 0);
+    assert.equal(positiveAfterCurrent.rows[0]?.slots.unused_exposure_observation, undefined);
   } finally {
     await app.close();
   }
