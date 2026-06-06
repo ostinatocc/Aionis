@@ -683,6 +683,7 @@ test("product measure facade returns a product effect report without external ev
       "history_contributions",
       "learning_effect",
       "forgetting_effect",
+      "feedback_signal_summary",
       "training_candidates",
       "evidence",
     ]);
@@ -691,6 +692,9 @@ test("product measure facade returns a product effect report without external ev
     assert.equal(body.effect_report.history_impact.impact_direction, "positive");
     assert.equal(body.effect_report.history_impact.changed_future_behavior, true);
     assert.equal(body.effect_report.quality.negative_transfer_detected, false);
+    assert.equal(body.effect_report.feedback_signal_summary.present, false);
+    assert.equal(body.effect_report.feedback_signal_summary.source, "not_supplied");
+    assert.equal(body.effect_report.feedback_signal_summary.authority_mutation, false);
     assert.deepEqual(body.source_map.routes_used, ["/v1/measure"]);
   } finally {
     await app.close();
@@ -1314,6 +1318,9 @@ test("product measure derives closed-loop effect from guide packets", async () =
     assert.ok(body.kernel_report.proof_summary.repeated_discovery_delta > 0);
     assert.equal(body.effect_report.history_impact.impact_direction, "positive");
     assert.equal(body.effect_report.history_impact.changed_future_behavior, true);
+    assert.equal(body.effect_report.feedback_signal_summary.present, false);
+    assert.equal(body.effect_report.feedback_signal_summary.source, "memory_decision_audit");
+    assert.equal(body.effect_report.feedback_signal_summary.authority_mutation, false);
     assert.ok(body.source_map.internal_surfaces_used.includes("product_trace_projection"));
     assert.ok(body.source_map.internal_surfaces_used.includes("memory_decision_trace"));
     assert.ok(body.source_map.internal_surfaces_used.includes("memory_decision_audit_report"));
@@ -2389,6 +2396,11 @@ test("product guide feedback loop requires repeated weak negative attribution be
       [nodeId],
     );
     assert.deepEqual(measureBody.memory_decision_audit.feedback_signal_review.read_only_signal_memory_ids, [nodeId]);
+    assert.equal(measureBody.effect_report.feedback_signal_summary.present, true);
+    assert.equal(measureBody.effect_report.feedback_signal_summary.source, "memory_decision_audit");
+    assert.equal(measureBody.effect_report.feedback_signal_summary.authority_mutation, false);
+    assert.deepEqual(measureBody.effect_report.feedback_signal_summary.weak_counter_signal_memory_ids, [nodeId]);
+    assert.deepEqual(measureBody.effect_report.feedback_signal_summary.read_only_signal_memory_ids, [nodeId]);
     assert.equal(
       measureBody.memory_decision_audit.claims.some((claim: Record<string, unknown>) =>
         claim.claim === "feedback_attribution_visible" && claim.status === "pass"

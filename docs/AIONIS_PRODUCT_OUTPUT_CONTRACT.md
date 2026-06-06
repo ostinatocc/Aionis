@@ -554,7 +554,8 @@ The effect report is the main product proof output. It should answer:
 3. What was saved?
 4. What was reused?
 5. What was suppressed or forgotten?
-6. What should be learned, demoted, archived, or exported as training data?
+6. Which feedback signals were observed?
+7. What should be learned, demoted, archived, or exported as training data?
 
 `/v1/measure` accepts two input styles:
 
@@ -632,6 +633,18 @@ type AionisEffectReport = {
     rehydrated_memory_ids: string[];
     stale_memory_filtered_count: number;
   };
+  feedback_signal_summary: {
+    present: boolean;
+    source: "memory_decision_audit" | "not_supplied";
+    authority_mutation: false;
+    positive_attributed_memory_ids: string[];
+    weak_counter_signal_memory_ids: string[];
+    strong_counter_signal_memory_ids: string[];
+    repeated_unattributed_memory_ids: string[];
+    repeated_unattributed_without_positive_memory_ids: string[];
+    read_only_signal_memory_ids: string[];
+    explanation: string;
+  };
   training_candidates: Array<{
     candidate_type:
       | "handoff_distillation"
@@ -664,6 +677,7 @@ type AionisEffectReport = {
 | `history_contributions` | visible handoff/replay contribution attribution | `src/memory/product-output-assembler.ts` |
 | `learning_effect` | learning loop, promotion evidence, authority gates | `src/memory/learning-loop.ts`, `src/memory/promotion-evidence-ledger.ts`, `src/memory/authority-*.ts` |
 | `forgetting_effect` | semantic forgetting, archive, rehydrate, activation | `src/kernel/forgetting-kernel.ts`, `src/memory/lifecycle-lite.ts`, `src/memory/archive-relocation.ts` |
+| `feedback_signal_summary` | product-level read-only feedback signal summary | `src/memory/product-output-assembler.ts`, `memory_decision_audit.feedback_signal_review` |
 | `training_candidates` | execution evidence, handoff, replay, promotion/demotion, forgetting | `src/memory/execution-evidence.ts`, `src/memory/handoff.ts`, `src/memory/replay*.ts`, `src/memory/promotion-quality-summary.ts` |
 | `evidence` | replay, runtime signals, promotion quality | `src/memory/replay*.ts`, `src/memory/runtime-signal-*.ts`, `src/memory/promotion-quality-summary.ts` |
 
@@ -675,6 +689,7 @@ type AionisEffectReport = {
 | positive/negative/neutral transfer | single-run broad generalization |
 | blocked authority and demotion reasons | model/provider marketing claims |
 | forgetting and rehydration effects | raw tool logs unless referenced by evidence id |
+| feedback signal ids with `authority_mutation: false` | treating a report summary as a downgrade or promotion trigger |
 | training candidate labels | actual LoRA training execution |
 
 ## Internal Surfaces Not Product Outputs

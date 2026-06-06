@@ -279,6 +279,11 @@ It sets `authority_mutation: false` to make the boundary explicit.
 `memory_decision_audit.feedback_signal_review` exposes the same buckets in a
 more operator-readable shape, with memory ids, titles, and reasons. It is for
 measure/debug/audit surfaces only and must not be appended to the Agent prompt.
+`effect_report.feedback_signal_summary` gives the same signal ids in product
+summary form, so product dashboards can show positive attribution, weak/strong
+counter-signals, and repeated unused exposure without parsing the full trace.
+It also keeps `authority_mutation: false`; authority changes remain governed by
+the underlying feedback/forgetting mechanisms, not by this report field.
 
 ### Example
 

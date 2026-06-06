@@ -1590,8 +1590,80 @@ test("product effect assembler converts evaluator proof into measurable EffectRe
   assert.equal(productReport.quality.negative_transfer_detected, false);
   assert.equal(productReport.history_contributions.handoff.used, true);
   assert.equal(productReport.history_contributions.replay.used, true);
+  assert.equal(productReport.feedback_signal_summary.present, false);
+  assert.equal(productReport.feedback_signal_summary.source, "not_supplied");
+  assert.equal(productReport.feedback_signal_summary.authority_mutation, false);
   assert.ok(productReport.training_candidates.some((candidate) => candidate.label === "positive"));
   assert.ok(productReport.evidence.evidence_ids.includes("effect_kernel:continuity"));
+});
+
+test("product effect assembler projects audit feedback signals into product summary without mutation authority", () => {
+  const evaluatorReport = evaluateAionisEffect({
+    baseline: {
+      continuity: {
+        repeatedDiscoverySteps: 4,
+        recoveredStateFacts: 0,
+        expectedStateFacts: 2,
+      },
+    },
+    aionis: {
+      continuity: {
+        repeatedDiscoverySteps: 1,
+        recoveredStateFacts: 2,
+        expectedStateFacts: 2,
+        continuityGuidanceCorrect: true,
+      },
+    },
+  });
+
+  const productReport = buildAionisEffectReport({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    report: evaluatorReport,
+    feedback_signal_review: {
+      present: true,
+      mode: "read_only_measure",
+      authority_mutation: false,
+      positive_attributed_memories: [
+        {
+          memory_id: "mem-positive",
+          title: "Positive memory",
+          reason: "Host outcome positively attributed this memory as used evidence.",
+        },
+      ],
+      weak_counter_signal_memories: [
+        {
+          memory_id: "mem-weak",
+          title: "Weak counter signal",
+          reason: "Host outcome produced a weak counter-signal.",
+        },
+      ],
+      strong_counter_signal_memories: [],
+      repeated_unattributed_memories: [
+        {
+          memory_id: "mem-unused",
+          title: "Repeated unused memory",
+          reason: "Memory was repeatedly shown but not used.",
+        },
+      ],
+      repeated_unattributed_without_positive_memories: ["mem-unused"].map((memoryId) => ({
+        memory_id: memoryId,
+        title: "Repeated unused memory",
+        reason: "Memory was repeatedly shown without positive attributed use.",
+      })),
+      read_only_signal_memory_ids: ["mem-positive", "mem-weak", "mem-unused"],
+      reason: "Sparse feedback signals are summarized for measure/debug/audit only.",
+    },
+  });
+
+  assert.equal(productReport.feedback_signal_summary.present, true);
+  assert.equal(productReport.feedback_signal_summary.source, "memory_decision_audit");
+  assert.equal(productReport.feedback_signal_summary.authority_mutation, false);
+  assert.deepEqual(productReport.feedback_signal_summary.positive_attributed_memory_ids, ["mem-positive"]);
+  assert.deepEqual(productReport.feedback_signal_summary.weak_counter_signal_memory_ids, ["mem-weak"]);
+  assert.deepEqual(productReport.feedback_signal_summary.repeated_unattributed_memory_ids, ["mem-unused"]);
+  assert.deepEqual(productReport.feedback_signal_summary.repeated_unattributed_without_positive_memory_ids, ["mem-unused"]);
+  assert.deepEqual(productReport.feedback_signal_summary.read_only_signal_memory_ids, ["mem-positive", "mem-weak", "mem-unused"]);
 });
 
 test("product effect assembler refuses to overclaim single-run evidence", () => {

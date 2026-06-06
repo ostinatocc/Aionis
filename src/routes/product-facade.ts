@@ -1661,14 +1661,6 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
         minEffectDelta: parsed.minEffectDelta,
         minAionisScore: parsed.minAionisScore,
       });
-      const effectReport = buildAionisEffectReport({
-        tenant_id: parsed.tenant_id ?? env.MEMORY_TENANT_ID,
-        scope: parsed.scope ?? env.MEMORY_SCOPE,
-        task: parsed.task,
-        report: kernelReport,
-        comparison: measureInput.comparison,
-        evidence_ids: measureInput.evidenceIds,
-      });
       const decisionOutputs = parsed.product_trace
         ? productMemoryDecisionOutputs({
             tenant_id: parsed.tenant_id ?? env.MEMORY_TENANT_ID,
@@ -1677,6 +1669,15 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
             routes_used: ["/v1/measure"],
           })
         : null;
+      const effectReport = buildAionisEffectReport({
+        tenant_id: parsed.tenant_id ?? env.MEMORY_TENANT_ID,
+        scope: parsed.scope ?? env.MEMORY_SCOPE,
+        task: parsed.task,
+        report: kernelReport,
+        comparison: measureInput.comparison,
+        evidence_ids: measureInput.evidenceIds,
+        feedback_signal_review: decisionOutputs?.memoryDecisionAudit.feedback_signal_review ?? null,
+      });
       return reply.code(200).send({
         contract_version: "aionis_measure_result_v1",
         tenant_id: parsed.tenant_id ?? env.MEMORY_TENANT_ID,

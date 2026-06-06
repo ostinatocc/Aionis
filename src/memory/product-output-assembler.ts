@@ -95,6 +95,7 @@ export type BuildAionisEffectReportArgs = {
   report: KernelEffectReport;
   comparison?: Partial<AionisEffectReport["comparison"]>;
   evidence_ids?: string[];
+  feedback_signal_review?: AionisMemoryDecisionAuditReport["feedback_signal_review"] | null;
 };
 
 export type BuildAionisMemoryPacketArgs = {
@@ -2876,6 +2877,45 @@ function buildKernelEffectHistoryContributions(report: KernelEffectReport): Aion
   };
 }
 
+function feedbackReviewMemoryIds(
+  entries: AionisMemoryDecisionAuditReport["feedback_signal_review"]["positive_attributed_memories"],
+): string[] {
+  return entries.map((entry) => entry.memory_id);
+}
+
+function buildEffectFeedbackSignalSummary(
+  review: AionisMemoryDecisionAuditReport["feedback_signal_review"] | null | undefined,
+): AionisEffectReport["feedback_signal_summary"] {
+  if (!review) {
+    return {
+      present: false,
+      source: "not_supplied",
+      authority_mutation: false,
+      positive_attributed_memory_ids: [],
+      weak_counter_signal_memory_ids: [],
+      strong_counter_signal_memory_ids: [],
+      repeated_unattributed_memory_ids: [],
+      repeated_unattributed_without_positive_memory_ids: [],
+      read_only_signal_memory_ids: [],
+      explanation: "No memory decision audit feedback signal review was supplied for this effect report.",
+    };
+  }
+  return {
+    present: review.present,
+    source: "memory_decision_audit",
+    authority_mutation: false,
+    positive_attributed_memory_ids: feedbackReviewMemoryIds(review.positive_attributed_memories),
+    weak_counter_signal_memory_ids: feedbackReviewMemoryIds(review.weak_counter_signal_memories),
+    strong_counter_signal_memory_ids: feedbackReviewMemoryIds(review.strong_counter_signal_memories),
+    repeated_unattributed_memory_ids: feedbackReviewMemoryIds(review.repeated_unattributed_memories),
+    repeated_unattributed_without_positive_memory_ids: feedbackReviewMemoryIds(review.repeated_unattributed_without_positive_memories),
+    read_only_signal_memory_ids: review.read_only_signal_memory_ids,
+    explanation: review.present
+      ? "Feedback signals were summarized from the memory decision audit for product measurement only; they do not mutate authority in the effect report."
+      : review.reason,
+  };
+}
+
 function effectExplanation(report: KernelEffectReport, direction: ProductImpactDirection): string {
   if (direction === "insufficient_evidence") {
     return "The effect evaluator does not have enough comparison evidence to claim product impact.";
@@ -2949,6 +2989,7 @@ export function buildAionisEffectReport(args: BuildAionisEffectReportArgs): Aion
       rehydrated_memory_ids: [],
       stale_memory_filtered_count: Math.max(0, args.report.proof_summary.stale_memory_delta),
     },
+    feedback_signal_summary: buildEffectFeedbackSignalSummary(args.feedback_signal_review),
     training_candidates: trainingCandidates,
     evidence: {
       evidence_ids: compactStrings([

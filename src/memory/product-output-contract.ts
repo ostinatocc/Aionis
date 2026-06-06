@@ -1094,6 +1094,21 @@ export const AionisTrainingCandidateTypeSchema = z.enum([
 ]);
 export type AionisTrainingCandidateType = z.infer<typeof AionisTrainingCandidateTypeSchema>;
 
+const AionisEffectFeedbackSignalSummarySchema = z
+  .object({
+    present: z.boolean(),
+    source: z.enum(["memory_decision_audit", "not_supplied"]),
+    authority_mutation: z.literal(false),
+    positive_attributed_memory_ids: z.array(z.string().min(1)).default([]),
+    weak_counter_signal_memory_ids: z.array(z.string().min(1)).default([]),
+    strong_counter_signal_memory_ids: z.array(z.string().min(1)).default([]),
+    repeated_unattributed_memory_ids: z.array(z.string().min(1)).default([]),
+    repeated_unattributed_without_positive_memory_ids: z.array(z.string().min(1)).default([]),
+    read_only_signal_memory_ids: z.array(z.string().min(1)).default([]),
+    explanation: z.string().min(1),
+  })
+  .strict();
+
 export const AionisEffectReportSchema = z
   .object({
     contract_version: z.literal("aionis_effect_report_v1"),
@@ -1158,6 +1173,7 @@ export const AionisEffectReportSchema = z
         stale_memory_filtered_count: z.number().int().nonnegative(),
       })
       .strict(),
+    feedback_signal_summary: AionisEffectFeedbackSignalSummarySchema,
     training_candidates: z
       .array(
         z

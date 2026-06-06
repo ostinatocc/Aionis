@@ -198,6 +198,18 @@ function validEffectReport() {
       rehydrated_memory_ids: ["mem-3"],
       stale_memory_filtered_count: 2,
     },
+    feedback_signal_summary: {
+      present: true,
+      source: "memory_decision_audit",
+      authority_mutation: false,
+      positive_attributed_memory_ids: ["mem-1"],
+      weak_counter_signal_memory_ids: ["mem-2"],
+      strong_counter_signal_memory_ids: [],
+      repeated_unattributed_memory_ids: ["mem-3"],
+      repeated_unattributed_without_positive_memory_ids: ["mem-3"],
+      read_only_signal_memory_ids: ["mem-1", "mem-2", "mem-3"],
+      explanation: "Feedback signals were summarized from the memory decision audit.",
+    },
     training_candidates: [
       {
         candidate_type: "handoff_distillation",
@@ -744,6 +756,9 @@ test("AionisEffectReport accepts measured positive impact and training candidate
   assert.equal(parsed.history_impact.impact_direction, "positive");
   assert.equal(parsed.history_contributions.handoff.used, true);
   assert.equal(parsed.history_contributions.replay.used, true);
+  assert.equal(parsed.feedback_signal_summary.present, true);
+  assert.equal(parsed.feedback_signal_summary.authority_mutation, false);
+  assert.deepEqual(parsed.feedback_signal_summary.read_only_signal_memory_ids, ["mem-1", "mem-2", "mem-3"]);
   assert.equal(parsed.training_candidates[0]?.candidate_type, "handoff_distillation");
 });
 
