@@ -747,12 +747,24 @@ test("product memory decision trace explains lifecycle and agent-context surface
   assert.equal(trace.summary.relation_count, 1);
   assert.equal(trace.context_decision.prompt_char_count, agentContext.prompt_text.length);
   assert.equal(trace.relation_decisions[0]?.memory_id, "mem-old-route");
+  assert.equal(trace.relation_decisions[0]?.source_memory_id, "mem-current-route");
+  assert.equal(trace.relation_decisions[0]?.target_memory_id, "mem-old-route");
+  assert.equal(trace.relation_decisions[0]?.lifecycle_relation, "contradicts");
+  assert.equal(trace.relation_decisions[0]?.producer, "persisted_relation");
+  assert.equal(trace.relation_decisions[0]?.gate.accepted, true);
+  const currentDecision = trace.memory_decisions.find((entry) => entry.memory_id === "mem-current-route");
   assert.equal(
-    trace.memory_decisions.find((entry) => entry.memory_id === "mem-current-route")?.agent_surface,
+    currentDecision?.agent_surface,
     "use_now",
   );
+  assert.equal(currentDecision?.decision_kind, "used");
+  assert.equal(currentDecision?.used_detail?.not_superseded, true);
   const oldDecision = trace.memory_decisions.find((entry) => entry.memory_id === "mem-old-route");
   assert.equal(oldDecision?.agent_surface, "inspect_before_use");
+  assert.equal(oldDecision?.decision_kind, "downgraded");
+  assert.equal(oldDecision?.downgraded_detail?.by_memory_id, "mem-current-route");
+  assert.equal(oldDecision?.downgraded_detail?.relation.lifecycle_relation, "contradicts");
+  assert.equal(oldDecision?.downgraded_detail?.relation.producer, "persisted_relation");
   assert.ok(oldDecision?.reason_codes.includes("lifecycle_contested"));
   assert.ok(oldDecision?.reason_codes.includes("lifecycle_relation_evidence"));
   assert.equal(agentContext.prompt_text.includes("legacy/payments/old-checkout.ts"), false);
@@ -762,6 +774,92 @@ test("product memory decision trace explains lifecycle and agent-context surface
   assert.equal(audit.verdict, "learning_control_visible");
   assert.equal(audit.counters.controlled_memory_count, 1);
   assert.equal(audit.claims.some((claim) => claim.claim === "agent_prompt_excluded" && claim.status === "pass"), true);
+});
+
+test("product memory decision trace distinguishes blocked and rehydrate causes", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "debug memory lifecycle trace",
+    },
+    nodes: [
+      {
+        id: "mem-active-note",
+        type: "concept",
+        title: "Active project note",
+        text_summary: "Active note for src/current.ts.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          lifecycle_state: "active",
+          compression_layer: "L2",
+        },
+        confidence: 0.86,
+        salience: 0.82,
+      },
+      {
+        id: "mem-suppressed-note",
+        type: "concept",
+        title: "Suppressed project note",
+        text_summary: "Suppressed old note for src/old.ts.",
+        tier: "warm",
+        slots: {
+          memory_kind: "general_memory",
+          lifecycle_state: "suppressed",
+          compression_layer: "L2",
+        },
+        confidence: 0.9,
+        salience: 0.75,
+      },
+      {
+        id: "mem-archive-note",
+        type: "concept",
+        title: "Archived payload note",
+        text_summary: "Archived payload may contain full historical context for src/archive.ts.",
+        tier: "cold",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+          execution_native_v1: {
+            rehydration_default_mode: "differential",
+          },
+        },
+        confidence: 0.8,
+        salience: 0.79,
+      },
+    ],
+    source_map: {
+      routes_used: ["/v1/memory/recall_text"],
+    },
+  });
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+  const trace = buildAionisMemoryDecisionTrace({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    before_guide: null,
+    after_guide: {
+      memory_packet: memoryPacket,
+      agent_context: agentContext,
+    },
+  });
+
+  const suppressed = trace.memory_decisions.find((entry) => entry.memory_id === "mem-suppressed-note");
+  assert.equal(suppressed?.decision_kind, "blocked");
+  assert.equal(suppressed?.blocked_detail?.blocked_by, "suppressed_lifecycle");
+  assert.equal(suppressed?.blocked_detail?.lifecycle_state, "suppressed");
+  assert.equal(suppressed?.downgraded_detail, null);
+
+  const archived = trace.memory_decisions.find((entry) => entry.memory_id === "mem-archive-note");
+  assert.equal(archived?.decision_kind, "rehydrate");
+  assert.equal(archived?.rehydrate_detail?.mode, "differential");
+  assert.equal(archived?.rehydrate_detail?.payload_status, "cold_payload");
+  assert.equal(archived?.blocked_detail, null);
 });
 
 test("product agent context strips contested target paths from active counter-evidence summaries", () => {

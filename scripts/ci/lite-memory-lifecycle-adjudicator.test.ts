@@ -9,6 +9,7 @@ import {
   type MemoryLifecycleRelationCandidateProducer,
 } from "../../src/memory/memory-lifecycle-adjudicator.ts";
 import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
+import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 
 function tmpDbPath(name: string): string {
@@ -61,6 +62,11 @@ test("lifecycle adjudicator accepts semantic relation candidates only after runt
   assert.equal(adjudicated.relations.length, 1);
   assert.equal(adjudicated.relations[0]?.relation, "supersedes");
   assert.ok(adjudicated.relations[0]?.reasons.some((reason) => reason === "candidate_producer=test_llm_semantic"));
+  assert.equal(adjudicated.relations[0]?.evidence.producer, "test_llm_semantic");
+  assert.equal(adjudicated.relations[0]?.evidence.candidate_confidence, 0.86);
+  assert.equal(adjudicated.relations[0]?.evidence.gate.accepted, true);
+  assert.equal(adjudicated.relations[0]?.evidence.gate.relation_supported, true);
+  assert.ok((adjudicated.relations[0]?.evidence.signals.topic_overlap ?? 0) > 0);
   const old = adjudicated.entries.find((entry) => entry.memory_id === oldEntry.memory_id);
   assert.equal(old?.lifecycle_state, "contested");
   assert.equal(old?.authority, "candidate");
@@ -164,6 +170,31 @@ test("memory write persists only runtime-admitted lifecycle relation candidates"
       && edge.src_id === currentEntry.memory_id
       && edge.dst_id === oldEntry.memory_id
     ));
+    const recallStore = createLiteRecallStore(dbPath);
+    try {
+      const access = recallStore.createRecallAccess();
+      const edges = await access.stage2Edges({
+        seedIds: [currentEntry.memory_id],
+        scope: "default",
+        neighborhoodHops: 1,
+        minEdgeWeight: 0,
+        minEdgeConfidence: 0,
+        hop1Budget: 10,
+        hop2Budget: 10,
+        edgeFetchBudget: 10,
+      });
+      const relationEdge = edges.find((edge) =>
+        edge.type === "supersedes"
+        && edge.src_id === currentEntry.memory_id
+        && edge.dst_id === oldEntry.memory_id
+      );
+      const evidence = relationEdge?.metadata.memory_lifecycle_relation_evidence as Record<string, unknown> | undefined;
+      assert.equal(evidence?.producer, "test_llm_semantic");
+      assert.equal((evidence?.gate as Record<string, unknown> | undefined)?.accepted, true);
+      assert.equal((evidence?.signals as Record<string, unknown> | undefined)?.source_newer, true);
+    } finally {
+      await recallStore.close();
+    }
   } finally {
     store.close();
   }

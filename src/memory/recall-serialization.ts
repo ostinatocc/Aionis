@@ -46,6 +46,7 @@ export type RecallEdgeDTO = {
   weight: number;
   commit_id?: string | null;
   commit_uri?: string | null;
+  metadata?: Record<string, unknown>;
 };
 
 export function createRecallUriBuilders(tenancy: RecallTenancy) {
@@ -144,6 +145,7 @@ export function toRecallEdgeDto(
   if (includeMeta) {
     dto.commit_id = edge.commit_id;
     dto.commit_uri = buildCommitUri(edge.commit_id);
+    dto.metadata = edge.metadata;
   }
   return dto;
 }

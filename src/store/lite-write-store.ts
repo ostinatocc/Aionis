@@ -627,6 +627,7 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
       weight REAL NOT NULL,
       confidence REAL NOT NULL,
       decay_rate REAL NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
       commit_id TEXT NOT NULL,
       created_at TEXT NOT NULL,
       UNIQUE(scope, type, src_id, dst_id)
@@ -718,6 +719,11 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
   }
   try {
     db.exec(`ALTER TABLE lite_memory_rule_defs ADD COLUMN updated_at TEXT NOT NULL DEFAULT '${nowIso()}'`);
+  } catch {
+    // Column already exists in initialized databases.
+  }
+  try {
+    db.exec("ALTER TABLE lite_memory_edges ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'");
   } catch {
     // Column already exists in initialized databases.
   }
@@ -1782,11 +1788,12 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
     async upsertEdge(args: WriteEdgeUpsertArgs): Promise<void> {
       db.prepare(
         `INSERT INTO lite_memory_edges
-          (id, scope, type, src_id, dst_id, weight, confidence, decay_rate, commit_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (id, scope, type, src_id, dst_id, weight, confidence, decay_rate, metadata_json, commit_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(scope, type, src_id, dst_id) DO UPDATE SET
            weight = MAX(lite_memory_edges.weight, excluded.weight),
            confidence = MAX(lite_memory_edges.confidence, excluded.confidence),
+           metadata_json = excluded.metadata_json,
            commit_id = excluded.commit_id`,
       ).run(
         args.id,
@@ -1797,6 +1804,7 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
         args.weight,
         args.confidence,
         args.decayRate,
+        stringifyJson(args.metadataJson),
         args.commitId,
         nowIso(),
       );

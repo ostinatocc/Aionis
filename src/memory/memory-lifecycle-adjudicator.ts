@@ -1,3 +1,5 @@
+import { stableUuid } from "../util/uuid.js";
+
 export type AdjudicableMemoryEntry = {
   memory_id: string;
   title: string | null;
@@ -17,6 +19,35 @@ export type MemoryLifecycleRelation = {
   target_memory_id: string;
   relation: "supersedes" | "contradicts" | "invalidates";
   confidence: number;
+  reasons: string[];
+  evidence: MemoryLifecycleRelationEvidence;
+};
+
+export type MemoryLifecycleRelationSignals = {
+  source_cues: string[];
+  prior_cues: string[];
+  topic_overlap: number;
+  shared_target_paths: number;
+  target_path_conflict: boolean;
+  same_domain: boolean;
+  source_newer: boolean;
+};
+
+export type MemoryLifecycleRelationGate = {
+  source_admissible: boolean;
+  target_admissible: boolean;
+  source_newer: boolean;
+  candidate_confidence_passed: boolean | null;
+  relation_supported: boolean;
+  confidence_threshold_passed: boolean;
+  accepted: boolean;
+};
+
+export type MemoryLifecycleRelationEvidence = {
+  producer: string;
+  candidate_confidence: number | null;
+  signals: MemoryLifecycleRelationSignals;
+  gate: MemoryLifecycleRelationGate;
   reasons: string[];
 };
 
@@ -47,6 +78,7 @@ export type MemoryLifecycleEdgeInput = {
   src_id: string;
   dst_id: string;
   confidence?: number | null;
+  metadata?: Record<string, unknown> | null;
 };
 
 const MEMORY_LIFECYCLE_RELATION_TYPES = new Set<MemoryLifecycleRelation["relation"]>([
@@ -54,6 +86,8 @@ const MEMORY_LIFECYCLE_RELATION_TYPES = new Set<MemoryLifecycleRelation["relatio
   "contradicts",
   "invalidates",
 ]);
+
+export const MEMORY_LIFECYCLE_RELATION_EVIDENCE_METADATA_KEY = "memory_lifecycle_relation_evidence";
 
 export function isMemoryLifecycleRelationType(value: string): value is MemoryLifecycleRelation["relation"] {
   return MEMORY_LIFECYCLE_RELATION_TYPES.has(value as MemoryLifecycleRelation["relation"]);
@@ -63,21 +97,131 @@ export function memoryLifecycleRelationEdgeId(scope: string, relation: Pick<Memo
   return stableUuid(`${scope}:memory_lifecycle_relation:${relation.relation}:${relation.source_memory_id}:${relation.target_memory_id}`);
 }
 
+function stringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+    : [];
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function finiteNumber(value: unknown): number | null {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function booleanValue(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function emptyRelationSignals(args?: { sourceNewer?: boolean }): MemoryLifecycleRelationSignals {
+  return {
+    source_cues: [],
+    prior_cues: [],
+    topic_overlap: 0,
+    shared_target_paths: 0,
+    target_path_conflict: false,
+    same_domain: false,
+    source_newer: args?.sourceNewer ?? false,
+  };
+}
+
+function memoryLifecycleRelationEvidence(args: {
+  producer: string;
+  candidateConfidence: number | null;
+  signals: MemoryLifecycleRelationSignals;
+  sourceAdmissible: boolean;
+  targetAdmissible: boolean;
+  sourceNewer: boolean;
+  relationSupported: boolean;
+  confidenceThresholdPassed: boolean;
+  accepted: boolean;
+  reasons: string[];
+}): MemoryLifecycleRelationEvidence {
+  return {
+    producer: args.producer || "unknown",
+    candidate_confidence: args.candidateConfidence === null
+      ? null
+      : Math.max(0, Math.min(1, Number(args.candidateConfidence.toFixed(6)))),
+    signals: args.signals,
+    gate: {
+      source_admissible: args.sourceAdmissible,
+      target_admissible: args.targetAdmissible,
+      source_newer: args.sourceNewer,
+      candidate_confidence_passed: args.candidateConfidence === null ? null : args.candidateConfidence >= 0.72,
+      relation_supported: args.relationSupported,
+      confidence_threshold_passed: args.confidenceThresholdPassed,
+      accepted: args.accepted,
+    },
+    reasons: args.reasons,
+  };
+}
+
+function memoryLifecycleRelationEvidenceFromMetadata(metadata: Record<string, unknown> | null | undefined): MemoryLifecycleRelationEvidence | null {
+  const root = asRecord(metadata);
+  const raw = asRecord(root?.[MEMORY_LIFECYCLE_RELATION_EVIDENCE_METADATA_KEY]);
+  if (!raw) return null;
+  const signalsRaw = asRecord(raw.signals);
+  const gateRaw = asRecord(raw.gate);
+  const candidateConfidence = raw.candidate_confidence === null ? null : finiteNumber(raw.candidate_confidence);
+  return {
+    producer: typeof raw.producer === "string" && raw.producer.length > 0 ? raw.producer : "persisted_relation",
+    candidate_confidence: candidateConfidence === null ? null : Math.max(0, Math.min(1, Number(candidateConfidence.toFixed(6)))),
+    signals: {
+      source_cues: stringList(signalsRaw?.source_cues),
+      prior_cues: stringList(signalsRaw?.prior_cues),
+      topic_overlap: Math.max(0, finiteNumber(signalsRaw?.topic_overlap) ?? 0),
+      shared_target_paths: Math.max(0, finiteNumber(signalsRaw?.shared_target_paths) ?? 0),
+      target_path_conflict: booleanValue(signalsRaw?.target_path_conflict, false),
+      same_domain: booleanValue(signalsRaw?.same_domain, false),
+      source_newer: booleanValue(signalsRaw?.source_newer, true),
+    },
+    gate: {
+      source_admissible: booleanValue(gateRaw?.source_admissible, true),
+      target_admissible: booleanValue(gateRaw?.target_admissible, true),
+      source_newer: booleanValue(gateRaw?.source_newer, true),
+      candidate_confidence_passed:
+        typeof gateRaw?.candidate_confidence_passed === "boolean" ? gateRaw.candidate_confidence_passed : null,
+      relation_supported: booleanValue(gateRaw?.relation_supported, true),
+      confidence_threshold_passed: booleanValue(gateRaw?.confidence_threshold_passed, true),
+      accepted: booleanValue(gateRaw?.accepted, true),
+    },
+    reasons: stringList(raw.reasons),
+  };
+}
+
 export function memoryLifecycleRelationsFromEdges(edges: MemoryLifecycleEdgeInput[]): MemoryLifecycleRelation[] {
   const out: MemoryLifecycleRelation[] = [];
   for (const edge of edges) {
     if (!isMemoryLifecycleRelationType(edge.type)) continue;
     const confidence = Number(edge.confidence ?? 0);
     if (!Number.isFinite(confidence) || confidence < 0.7) continue;
+    const evidence = memoryLifecycleRelationEvidenceFromMetadata(edge.metadata);
+    const reasons = [
+      "persisted_lifecycle_relation",
+      edge.id ? `edge_id=${edge.id}` : null,
+      ...(evidence?.reasons ?? []),
+    ].filter((value): value is string => typeof value === "string" && value.length > 0);
     out.push({
       source_memory_id: edge.src_id,
       target_memory_id: edge.dst_id,
       relation: edge.type,
       confidence: Math.max(0, Math.min(1, Number(confidence.toFixed(6)))),
-      reasons: [
-        "persisted_lifecycle_relation",
-        edge.id ? `edge_id=${edge.id}` : null,
-      ].filter((value): value is string => typeof value === "string" && value.length > 0),
+      reasons,
+      evidence: evidence ?? memoryLifecycleRelationEvidence({
+        producer: "persisted_relation",
+        candidateConfidence: null,
+        sourceAdmissible: true,
+        targetAdmissible: true,
+        sourceNewer: true,
+        relationSupported: true,
+        confidenceThresholdPassed: true,
+        accepted: true,
+        signals: emptyRelationSignals({ sourceNewer: true }),
+        reasons,
+      }),
     });
   }
   return out;
@@ -387,6 +531,23 @@ function relationSurface(source: AdjudicableMemoryEntry, target: AdjudicableMemo
   };
 }
 
+function relationSignals(args: {
+  sourceCues: string[];
+  surface: ReturnType<typeof relationSurface>;
+  sameDomain: boolean;
+  sourceNewer: boolean;
+}): MemoryLifecycleRelationSignals {
+  return {
+    source_cues: args.sourceCues,
+    prior_cues: args.surface.priorCues,
+    topic_overlap: args.surface.tokenOverlap,
+    shared_target_paths: args.surface.sharedPathCount,
+    target_path_conflict: args.surface.hasPathConflict,
+    same_domain: args.sameDomain,
+    source_newer: args.sourceNewer,
+  };
+}
+
 function candidateRelationConfidence(args: {
   candidateConfidence: number;
   tokenOverlap: number;
@@ -416,34 +577,52 @@ function inferCandidateRelation(
   if (!source || !target) return null;
   if (!canAdjudicateSource(source) || !canAdjudicateTarget(target)) return null;
   const sourceText = textOf(source);
+  const sourceAdmissible = canAdjudicateSource(source);
+  const targetAdmissible = canAdjudicateTarget(target);
   const sourceNewer = sourceIsNewer(source, target, sourceText);
   if (!sourceNewer) return null;
   const candidateConfidence = Math.max(0, Math.min(1, Number(candidate.confidence)));
   if (!Number.isFinite(candidateConfidence) || candidateConfidence < 0.72) return null;
   const surface = relationSurface(source, target);
-  if (!surface.relatedByText && !surface.relatedByPath && !surface.relatedByPriorCue) return null;
+  const relationSupported = surface.relatedByText || surface.relatedByPath || surface.relatedByPriorCue;
+  if (!relationSupported) return null;
+  const sameDomain = source.domain === target.domain;
   const confidence = candidateRelationConfidence({
     candidateConfidence,
     tokenOverlap: surface.tokenOverlap,
     sharedPathCount: surface.sharedPathCount,
     hasPathConflict: surface.hasPathConflict,
-    sameDomain: source.domain === target.domain,
+    sameDomain,
     sourceNewer,
   });
-  if (confidence < 0.7) return null;
+  const confidenceThresholdPassed = confidence >= 0.7;
+  if (!confidenceThresholdPassed) return null;
+  const reasons = [
+    `candidate_producer=${candidate.producer || "unknown"}`,
+    `candidate_confidence=${Number(candidateConfidence.toFixed(3))}`,
+    ...candidate.reasons.slice(0, 3).map((reason) => `candidate_reason=${reason}`),
+    surface.tokenOverlap > 0 ? `topic_overlap=${surface.tokenOverlap}` : null,
+    surface.sharedPathCount > 0 ? `shared_target_paths=${surface.sharedPathCount}` : null,
+    surface.hasPathConflict ? "candidate_target_path_conflict" : null,
+  ].filter((value): value is string => typeof value === "string" && value.length > 0);
   return {
     source_memory_id: candidate.source_memory_id,
     target_memory_id: candidate.target_memory_id,
     relation: candidate.relation,
     confidence,
-    reasons: [
-      `candidate_producer=${candidate.producer || "unknown"}`,
-      `candidate_confidence=${Number(candidateConfidence.toFixed(3))}`,
-      ...candidate.reasons.slice(0, 3).map((reason) => `candidate_reason=${reason}`),
-      surface.tokenOverlap > 0 ? `topic_overlap=${surface.tokenOverlap}` : null,
-      surface.sharedPathCount > 0 ? `shared_target_paths=${surface.sharedPathCount}` : null,
-      surface.hasPathConflict ? "candidate_target_path_conflict" : null,
-    ].filter((value): value is string => typeof value === "string" && value.length > 0),
+    reasons,
+    evidence: memoryLifecycleRelationEvidence({
+      producer: candidate.producer || "unknown",
+      candidateConfidence,
+      signals: relationSignals({ sourceCues: [], surface, sameDomain, sourceNewer }),
+      sourceAdmissible,
+      targetAdmissible,
+      sourceNewer,
+      relationSupported,
+      confidenceThresholdPassed,
+      accepted: true,
+      reasons,
+    }),
   };
 }
 
@@ -451,6 +630,8 @@ function inferRelation(source: AdjudicableMemoryEntry, target: AdjudicableMemory
   if (source.memory_id === target.memory_id) return null;
   if (!canAdjudicateSource(source) || !canAdjudicateTarget(target)) return null;
   const sourceText = textOf(source);
+  const sourceAdmissible = canAdjudicateSource(source);
+  const targetAdmissible = canAdjudicateTarget(target);
   const sourceNewer = sourceIsNewer(source, target, sourceText);
   if (!sourceNewer) return null;
 
@@ -458,7 +639,9 @@ function inferRelation(source: AdjudicableMemoryEntry, target: AdjudicableMemory
   if (correctionCues.length === 0) return null;
 
   const surface = relationSurface(source, target);
-  if (!surface.relatedByText && !surface.relatedByPath && !surface.relatedByPriorCue) return null;
+  const relationSupported = surface.relatedByText || surface.relatedByPath || surface.relatedByPriorCue;
+  if (!relationSupported) return null;
+  const sameDomain = source.domain === target.domain;
 
   const confidence = relationConfidence({
     correctionCueCount: correctionCues.length,
@@ -466,10 +649,11 @@ function inferRelation(source: AdjudicableMemoryEntry, target: AdjudicableMemory
     tokenOverlap: surface.tokenOverlap,
     sharedPathCount: surface.sharedPathCount,
     hasPathConflict: surface.hasPathConflict,
-    sameDomain: source.domain === target.domain,
+    sameDomain,
     sourceNewer,
   });
-  if (confidence < 0.7) return null;
+  const confidenceThresholdPassed = confidence >= 0.7;
+  if (!confidenceThresholdPassed) return null;
 
   const relation: MemoryLifecycleRelation["relation"] =
     correctionCues.some((cue) => cue.includes("contradict") || cue.includes("counter"))
@@ -477,18 +661,31 @@ function inferRelation(source: AdjudicableMemoryEntry, target: AdjudicableMemory
       : correctionCues.some((cue) => cue.includes("invalid") || cue.includes("wrong") || cue.includes("do not use"))
         ? "invalidates"
         : "supersedes";
+  const reasons = [
+    `source_cues=${correctionCues.slice(0, 4).join(",")}`,
+    surface.priorCues.length > 0 ? `prior_cues=${surface.priorCues.slice(0, 3).join(",")}` : null,
+    surface.tokenOverlap > 0 ? `topic_overlap=${surface.tokenOverlap}` : null,
+    surface.sharedPathCount > 0 ? `shared_target_paths=${surface.sharedPathCount}` : null,
+    surface.hasPathConflict ? "corrective_target_path_conflict" : null,
+  ].filter((value): value is string => typeof value === "string" && value.length > 0);
   return {
     source_memory_id: source.memory_id,
     target_memory_id: target.memory_id,
     relation,
     confidence,
-    reasons: [
-      `source_cues=${correctionCues.slice(0, 4).join(",")}`,
-      surface.priorCues.length > 0 ? `prior_cues=${surface.priorCues.slice(0, 3).join(",")}` : null,
-      surface.tokenOverlap > 0 ? `topic_overlap=${surface.tokenOverlap}` : null,
-      surface.sharedPathCount > 0 ? `shared_target_paths=${surface.sharedPathCount}` : null,
-      surface.hasPathConflict ? "corrective_target_path_conflict" : null,
-    ].filter((value): value is string => typeof value === "string" && value.length > 0),
+    reasons,
+    evidence: memoryLifecycleRelationEvidence({
+      producer: "rule_cue",
+      candidateConfidence: null,
+      signals: relationSignals({ sourceCues: correctionCues, surface, sameDomain, sourceNewer }),
+      sourceAdmissible,
+      targetAdmissible,
+      sourceNewer,
+      relationSupported,
+      confidenceThresholdPassed,
+      accepted: true,
+      reasons,
+    }),
   };
 }
 
@@ -550,4 +747,3 @@ export function adjudicateMemoryLifecycle(
     }),
   };
 }
-import { stableUuid } from "../util/uuid.js";

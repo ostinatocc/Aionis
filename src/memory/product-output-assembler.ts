@@ -61,6 +61,8 @@ type TrainingCandidateLabel = AionisEffectReport["training_candidates"][number][
 type MemoryPacketEntry = AionisMemoryPacket["relevant_memories"][number];
 type MemoryPacketLifecycleState = MemoryPacketEntry["lifecycle_state"];
 type MemoryPacketMemoryType = MemoryPacketEntry["memory_type"];
+type MemoryPacketEvidenceTrailEntry = AionisMemoryPacket["evidence_trail"][number];
+type MemoryLifecycleRelationTraceEvidence = NonNullable<MemoryPacketEvidenceTrailEntry["lifecycle_relation"]>;
 type LearningCandidate = AionisLearningPacket["candidates"][number];
 type LearningPosture = AionisLearningPacket["posture"]["recommended_learning_posture"];
 type LearningAuthority = AionisLearningPacket["posture"]["authority"];
@@ -423,8 +425,23 @@ function buildMemoryEvidenceTrail(
     source: "edge" as const,
     relation: "contradicts" as const,
     reason: `Newer related memory ${relation.source_memory_id} ${relation.relation} this memory; ${relation.reasons.join("; ")}.`,
+    lifecycle_relation: lifecycleRelationTraceEvidence(relation),
   }));
   return [...directEvidence, ...relationEvidence].slice(0, 96);
+}
+
+function lifecycleRelationTraceEvidence(relation: MemoryLifecycleRelation): MemoryLifecycleRelationTraceEvidence {
+  return {
+    source_memory_id: relation.source_memory_id,
+    target_memory_id: relation.target_memory_id,
+    lifecycle_relation: relation.relation,
+    confidence: relation.confidence,
+    producer: relation.evidence.producer,
+    candidate_confidence: relation.evidence.candidate_confidence,
+    signals: relation.evidence.signals,
+    gate: relation.evidence.gate,
+    reasons: relation.evidence.reasons.length > 0 ? relation.evidence.reasons : relation.reasons,
+  };
 }
 
 function buildMemoryContradictionWarnings(entries: MemoryPacketEntry[]): AionisMemoryPacket["contradiction_warnings"] {
@@ -1525,14 +1542,117 @@ function traceForgetDecisions(forgetResult: unknown): AionisMemoryDecisionTrace[
 
 function traceRelationDecisions(memory: AionisMemoryPacket | null): AionisMemoryDecisionTrace["relation_decisions"] {
   return (memory?.evidence_trail ?? [])
-    .filter((entry) => entry.source === "edge")
+    .filter((entry) => entry.source === "edge" && !!entry.lifecycle_relation)
     .slice(0, 96)
     .map((entry) => ({
       evidence_id: entry.evidence_id,
       memory_id: entry.memory_id,
       relation: entry.relation,
+      source_memory_id: entry.lifecycle_relation!.source_memory_id,
+      target_memory_id: entry.lifecycle_relation!.target_memory_id,
+      lifecycle_relation: entry.lifecycle_relation!.lifecycle_relation,
+      confidence: entry.lifecycle_relation!.confidence,
+      producer: entry.lifecycle_relation!.producer,
+      candidate_confidence: entry.lifecycle_relation!.candidate_confidence,
+      signals: entry.lifecycle_relation!.signals,
+      gate: entry.lifecycle_relation!.gate,
       reason: entry.reason,
+      reasons: entry.lifecycle_relation!.reasons,
     }));
+}
+
+function relationDecisionByTarget(
+  relationDecisions: AionisMemoryDecisionTrace["relation_decisions"],
+): Map<string, AionisMemoryDecisionTrace["relation_decisions"][number]> {
+  return new Map(relationDecisions.map((entry) => [entry.target_memory_id, entry]));
+}
+
+function traceDecisionKind(args: {
+  surface: AionisMemoryDecisionSurface;
+}): AionisMemoryDecisionTrace["memory_decisions"][number]["decision_kind"] {
+  if (args.surface === "use_now") return "used";
+  if (args.surface === "inspect_before_use") return "downgraded";
+  if (args.surface === "do_not_use") return "blocked";
+  if (args.surface === "rehydrate") return "rehydrate";
+  return "not_agent_facing";
+}
+
+function traceUsedDetail(args: {
+  entry: MemoryPacketEntry;
+  surface: AionisMemoryDecisionSurface;
+  relationDecision: AionisMemoryDecisionTrace["relation_decisions"][number] | undefined;
+}): AionisMemoryDecisionTrace["memory_decisions"][number]["used_detail"] {
+  if (args.surface !== "use_now") return null;
+  return {
+    authority: args.entry.authority,
+    confidence: args.entry.confidence,
+    salience: args.entry.salience,
+    source_layer: args.entry.source_layer,
+    not_superseded: !args.relationDecision,
+  };
+}
+
+function traceDowngradedDetail(args: {
+  surface: AionisMemoryDecisionSurface;
+  relationDecision: AionisMemoryDecisionTrace["relation_decisions"][number] | undefined;
+}): AionisMemoryDecisionTrace["memory_decisions"][number]["downgraded_detail"] {
+  if (args.surface !== "inspect_before_use" || !args.relationDecision) return null;
+  return {
+    by_memory_id: args.relationDecision.source_memory_id,
+    evidence_id: args.relationDecision.evidence_id,
+    relation: {
+      source_memory_id: args.relationDecision.source_memory_id,
+      target_memory_id: args.relationDecision.target_memory_id,
+      lifecycle_relation: args.relationDecision.lifecycle_relation,
+      confidence: args.relationDecision.confidence,
+      producer: args.relationDecision.producer,
+      candidate_confidence: args.relationDecision.candidate_confidence,
+      signals: args.relationDecision.signals,
+      gate: args.relationDecision.gate,
+      reasons: args.relationDecision.reasons,
+    },
+  };
+}
+
+function traceBlockedBy(entry: MemoryPacketEntry): NonNullable<AionisMemoryDecisionTrace["memory_decisions"][number]["blocked_detail"]>["blocked_by"] {
+  if (entry.lifecycle_state === "suppressed" || entry.lifecycle_state === "demoted") return "suppressed_lifecycle";
+  if (entry.lifecycle_state === "archived") return "archived_lifecycle";
+  if (entry.authority === "blocked") return "blocked_authority";
+  if (entry.authority === "candidate" || entry.authority === "none") return "low_authority";
+  return "agent_surface_projection";
+}
+
+function traceBlockedDetail(args: {
+  entry: MemoryPacketEntry;
+  surface: AionisMemoryDecisionSurface;
+}): AionisMemoryDecisionTrace["memory_decisions"][number]["blocked_detail"] {
+  if (args.surface !== "do_not_use") return null;
+  const blockedBy = traceBlockedBy(args.entry);
+  return {
+    blocked_by: blockedBy,
+    lifecycle_state: args.entry.lifecycle_state,
+    authority: args.entry.authority,
+    reason: `Memory is not exposed for direct agent use because ${blockedBy}.`,
+  };
+}
+
+function traceRehydrateDetail(args: {
+  entry: MemoryPacketEntry;
+  surface: AionisMemoryDecisionSurface;
+  memory: AionisMemoryPacket | null;
+  guide: AionisGuidePacket | null;
+  agentContext: AionisAgentContext | null;
+}): AionisMemoryDecisionTrace["memory_decisions"][number]["rehydrate_detail"] {
+  if (args.surface !== "rehydrate") return null;
+  const memoryHint = args.memory?.lifecycle.rehydration_hints.find((hint) => hint.memory_id === args.entry.memory_id);
+  const agentHint = args.agentContext?.rehydrate_hints.find((hint) => hint.memory_id === args.entry.memory_id);
+  const guideHint = args.guide?.guide_brief.rehydrate.find((hint) => hint.memory_id === args.entry.memory_id);
+  return {
+    mode: memoryHint?.mode ?? "differential",
+    reason: memoryHint?.reason ?? agentHint?.reason ?? guideHint?.reason ?? "Memory requires payload rehydration before use.",
+    required: memoryHint?.required ?? agentHint?.required ?? guideHint?.required ?? false,
+    payload_status: memoryHint ? "cold_payload" : "unknown",
+  };
 }
 
 export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTraceArgs): AionisMemoryDecisionTrace {
@@ -1540,11 +1660,13 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
   const guide = args.after_guide.guide_packet ?? null;
   const agentContext = args.after_guide.agent_context ?? null;
   const relationDecisions = traceRelationDecisions(memory);
+  const relationByTarget = relationDecisionByTarget(relationDecisions);
   const forgetDecisions = traceForgetDecisions(args.forget_result);
   const memoryDecisions: AionisMemoryDecisionTrace["memory_decisions"] = (memory?.relevant_memories ?? [])
     .slice(0, 96)
     .map((entry) => {
       const surface = traceSurfaceForMemory({ entry, guide, agentContext });
+      const relationDecision = relationByTarget.get(entry.memory_id);
       return {
         memory_id: entry.memory_id,
         title: entry.title,
@@ -1553,8 +1675,13 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
         lifecycle_state: entry.lifecycle_state,
         authority: entry.authority,
         agent_surface: surface,
+        decision_kind: traceDecisionKind({ surface }),
         reason_codes: traceReasonCodes({ entry, surface, memory, guide, agentContext }),
         evidence_ids: entry.evidence_ids,
+        used_detail: traceUsedDetail({ entry, surface, relationDecision }),
+        downgraded_detail: traceDowngradedDetail({ surface, relationDecision }),
+        blocked_detail: traceBlockedDetail({ entry, surface }),
+        rehydrate_detail: traceRehydrateDetail({ entry, surface, memory, guide, agentContext }),
       };
     });
   const contextDecision = {

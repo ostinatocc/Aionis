@@ -34,6 +34,46 @@ export type AionisMemoryFamily = z.infer<typeof AionisMemoryFamilySchema>;
 
 const AionisMemoryLayerSchema = z.enum(["L0", "L1", "L2", "L3", "L4", "L5"]);
 
+const AionisMemoryLifecycleRelationKindSchema = z.enum(["supersedes", "contradicts", "invalidates"]);
+
+const AionisMemoryLifecycleRelationSignalsSchema = z
+  .object({
+    source_cues: z.array(z.string().min(1)).default([]),
+    prior_cues: z.array(z.string().min(1)).default([]),
+    topic_overlap: z.number().nonnegative(),
+    shared_target_paths: z.number().nonnegative(),
+    target_path_conflict: z.boolean(),
+    same_domain: z.boolean(),
+    source_newer: z.boolean(),
+  })
+  .strict();
+
+const AionisMemoryLifecycleRelationGateSchema = z
+  .object({
+    source_admissible: z.boolean(),
+    target_admissible: z.boolean(),
+    source_newer: z.boolean(),
+    candidate_confidence_passed: z.boolean().nullable(),
+    relation_supported: z.boolean(),
+    confidence_threshold_passed: z.boolean(),
+    accepted: z.boolean(),
+  })
+  .strict();
+
+const AionisMemoryLifecycleRelationEvidenceSchema = z
+  .object({
+    source_memory_id: z.string().min(1),
+    target_memory_id: z.string().min(1),
+    lifecycle_relation: AionisMemoryLifecycleRelationKindSchema,
+    confidence: ConfidenceSchema,
+    producer: z.string().min(1),
+    candidate_confidence: ConfidenceSchema.nullable(),
+    signals: AionisMemoryLifecycleRelationSignalsSchema,
+    gate: AionisMemoryLifecycleRelationGateSchema,
+    reasons: z.array(z.string().min(1)).default([]),
+  })
+  .strict();
+
 export const AionisMemoryPacketSchema = z
   .object({
     contract_version: z.literal("aionis_memory_packet_v1"),
@@ -103,6 +143,7 @@ export const AionisMemoryPacketSchema = z
             source: z.enum(["node", "edge", "citation", "context_item", "action_packet"]),
             relation: z.enum(["direct_match", "derived_from", "supports", "contradicts", "rehydrates"]),
             reason: z.string().min(1),
+            lifecycle_relation: AionisMemoryLifecycleRelationEvidenceSchema.optional(),
           })
           .strict(),
       )
@@ -407,6 +448,14 @@ export const AionisMemoryDecisionSurfaceSchema = z.enum([
 ]);
 export type AionisMemoryDecisionSurface = z.infer<typeof AionisMemoryDecisionSurfaceSchema>;
 
+const AionisMemoryDecisionKindSchema = z.enum([
+  "used",
+  "downgraded",
+  "blocked",
+  "rehydrate",
+  "not_agent_facing",
+]);
+
 export const AionisMemoryDecisionTraceSchema = z
   .object({
     contract_version: z.literal("aionis_memory_decision_trace_v1"),
@@ -478,8 +527,62 @@ export const AionisMemoryDecisionTraceSchema = z
             ]),
             authority: AionisGuidanceAuthoritySchema,
             agent_surface: AionisMemoryDecisionSurfaceSchema,
+            decision_kind: AionisMemoryDecisionKindSchema,
             reason_codes: z.array(z.string().min(1)).default([]),
             evidence_ids: z.array(z.string().min(1)).default([]),
+            used_detail: z
+              .object({
+                authority: AionisGuidanceAuthoritySchema,
+                confidence: ConfidenceSchema,
+                salience: ConfidenceSchema,
+                source_layer: AionisMemoryLayerSchema.nullable(),
+                not_superseded: z.boolean(),
+              })
+              .strict()
+              .nullable(),
+            downgraded_detail: z
+              .object({
+                by_memory_id: z.string().min(1),
+                evidence_id: z.string().min(1),
+                relation: AionisMemoryLifecycleRelationEvidenceSchema,
+              })
+              .strict()
+              .nullable(),
+            blocked_detail: z
+              .object({
+                blocked_by: z.enum([
+                  "scope_mismatch",
+                  "suppressed_lifecycle",
+                  "archived_lifecycle",
+                  "blocked_authority",
+                  "low_authority",
+                  "agent_surface_projection",
+                  "unknown",
+                ]),
+                lifecycle_state: z.enum([
+                  "active",
+                  "candidate",
+                  "contested",
+                  "suppressed",
+                  "demoted",
+                  "archived",
+                  "rehydration_candidate",
+                  "unknown",
+                ]),
+                authority: AionisGuidanceAuthoritySchema,
+                reason: z.string().min(1),
+              })
+              .strict()
+              .nullable(),
+            rehydrate_detail: z
+              .object({
+                mode: z.enum(["summary_only", "partial", "full", "differential"]),
+                reason: z.string().min(1),
+                required: z.boolean(),
+                payload_status: z.enum(["cold_payload", "summary_only", "unknown"]),
+              })
+              .strict()
+              .nullable(),
           })
           .strict(),
       )
@@ -491,7 +594,16 @@ export const AionisMemoryDecisionTraceSchema = z
             evidence_id: z.string().min(1),
             memory_id: z.string().min(1),
             relation: z.enum(["direct_match", "derived_from", "supports", "contradicts", "rehydrates"]),
+            source_memory_id: z.string().min(1),
+            target_memory_id: z.string().min(1),
+            lifecycle_relation: AionisMemoryLifecycleRelationKindSchema,
+            confidence: ConfidenceSchema,
+            producer: z.string().min(1),
+            candidate_confidence: ConfidenceSchema.nullable(),
+            signals: AionisMemoryLifecycleRelationSignalsSchema,
+            gate: AionisMemoryLifecycleRelationGateSchema,
             reason: z.string().min(1),
+            reasons: z.array(z.string().min(1)).default([]),
           })
           .strict(),
       )

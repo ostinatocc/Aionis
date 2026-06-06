@@ -27,6 +27,7 @@ import {
 } from "./node-execution-surface.js";
 import {
   adjudicateMemoryLifecycle,
+  MEMORY_LIFECYCLE_RELATION_EVIDENCE_METADATA_KEY,
   memoryLifecycleRelationEdgeId,
   type AdjudicableMemoryEntry,
   type MemoryLifecycleRelationCandidateProducer,
@@ -243,6 +244,9 @@ async function appendLifecycleRelationEdges(
       weight: 0.95,
       confidence: relation.confidence,
       decay_rate: 0,
+      metadata: {
+        [MEMORY_LIFECYCLE_RELATION_EVIDENCE_METADATA_KEY]: relation.evidence,
+      },
     };
     const key = edgeKey(edge);
     if (existingEdgeKeys.has(key)) continue;
@@ -283,6 +287,7 @@ export type PreparedEdge = {
   weight?: number;
   confidence?: number;
   decay_rate?: number;
+  metadata?: Record<string, unknown>;
 };
 
 export type PreparedWrite = {
@@ -626,6 +631,7 @@ export async function applyPreparedMemoryWrite(
       weight: e.weight ?? 0.5,
       confidence: e.confidence ?? 0.5,
       decayRate: e.decay_rate ?? 0.01,
+      metadataJson: e.metadata ?? {},
       commitId: commit_id,
     });
   }

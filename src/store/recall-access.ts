@@ -31,6 +31,7 @@ export type RecallEdgeRow = {
   weight: number;
   confidence: number;
   decay_rate: number;
+  metadata: Record<string, unknown>;
   last_activated: string | null;
   created_at: string;
   commit_id: string | null;

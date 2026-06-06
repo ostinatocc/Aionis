@@ -86,6 +86,7 @@ export type WriteEdgeUpsertArgs = {
   weight: number;
   confidence: number;
   decayRate: number;
+  metadataJson: Record<string, unknown>;
   commitId: string;
 };
 

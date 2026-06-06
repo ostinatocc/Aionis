@@ -51,6 +51,7 @@ type LiteRecallEdgeSourceRow = {
   weight: number;
   confidence: number;
   decay_rate: number;
+  metadata_json: string | null;
   created_at: string;
   commit_id: string | null;
 };
@@ -162,6 +163,7 @@ function edgeToRecallRow(e: LiteRecallEdgeSourceRow): RecallEdgeRow {
     weight: e.weight,
     confidence: e.confidence,
     decay_rate: e.decay_rate,
+    metadata: parseJsonObject(e.metadata_json),
     last_activated: null,
     created_at: e.created_at,
     commit_id: e.commit_id,
@@ -326,7 +328,7 @@ export function createLiteRecallStore(
         stage1CandidatesExactRecovery: stage1Candidates,
         async stage2Edges(params: RecallStage2EdgesParams): Promise<RecallEdgeRow[]> {
           const rows = db.prepare(`
-            SELECT id, scope, type, src_id, dst_id, weight, confidence, decay_rate, created_at, commit_id
+            SELECT id, scope, type, src_id, dst_id, weight, confidence, decay_rate, metadata_json, created_at, commit_id
             FROM lite_memory_edges
             WHERE scope = ?
               AND weight >= ?

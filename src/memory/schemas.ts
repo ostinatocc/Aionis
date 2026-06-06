@@ -92,6 +92,7 @@ export const WriteEdge = z.object({
   weight: z.number().min(0).max(1).optional(),
   confidence: z.number().min(0).max(1).optional(),
   decay_rate: z.number().min(0).max(1).optional(),
+  metadata: z.record(z.any()).optional(),
 });
 
 export const MemoryWriteRequest = z
