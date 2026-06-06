@@ -1783,10 +1783,71 @@ function auditClaim(args: {
   return args;
 }
 
+function buildAuditDecisionReviews(
+  trace: AionisMemoryDecisionTrace,
+): AionisMemoryDecisionAuditReport["decision_reviews"] {
+  return {
+    used_memories: trace.memory_decisions
+      .filter((entry) => entry.decision_kind === "used" && !!entry.used_detail)
+      .slice(0, 48)
+      .map((entry) => ({
+        memory_id: entry.memory_id,
+        title: entry.title,
+        authority: entry.used_detail!.authority,
+        confidence: entry.used_detail!.confidence,
+        salience: entry.used_detail!.salience,
+        source_layer: entry.used_detail!.source_layer,
+        evidence_ids: entry.evidence_ids,
+        reason: entry.used_detail!.not_superseded
+          ? "Memory entered direct use because it has usable authority and no accepted lifecycle relation superseded it."
+          : "Memory entered direct use, but an accepted lifecycle relation was also present in the trace.",
+      })),
+    downgraded_memories: trace.memory_decisions
+      .filter((entry) => entry.decision_kind === "downgraded" && !!entry.downgraded_detail)
+      .slice(0, 48)
+      .map((entry) => ({
+        memory_id: entry.memory_id,
+        title: entry.title,
+        by_memory_id: entry.downgraded_detail!.by_memory_id,
+        evidence_id: entry.downgraded_detail!.evidence_id,
+        lifecycle_relation: entry.downgraded_detail!.relation.lifecycle_relation,
+        relation_confidence: entry.downgraded_detail!.relation.confidence,
+        producer: entry.downgraded_detail!.relation.producer,
+        candidate_confidence: entry.downgraded_detail!.relation.candidate_confidence,
+        signals: entry.downgraded_detail!.relation.signals,
+        gate: entry.downgraded_detail!.relation.gate,
+        reasons: entry.downgraded_detail!.relation.reasons,
+      })),
+    blocked_memories: trace.memory_decisions
+      .filter((entry) => entry.decision_kind === "blocked" && !!entry.blocked_detail)
+      .slice(0, 48)
+      .map((entry) => ({
+        memory_id: entry.memory_id,
+        title: entry.title,
+        blocked_by: entry.blocked_detail!.blocked_by,
+        lifecycle_state: entry.blocked_detail!.lifecycle_state,
+        authority: entry.blocked_detail!.authority,
+        reason: entry.blocked_detail!.reason,
+      })),
+    rehydrate_memories: trace.memory_decisions
+      .filter((entry) => entry.decision_kind === "rehydrate" && !!entry.rehydrate_detail)
+      .slice(0, 48)
+      .map((entry) => ({
+        memory_id: entry.memory_id,
+        title: entry.title,
+        mode: entry.rehydrate_detail!.mode,
+        required: entry.rehydrate_detail!.required,
+        payload_status: entry.rehydrate_detail!.payload_status,
+        reason: entry.rehydrate_detail!.reason,
+      })),
+  };
+}
+
 export function buildAionisMemoryDecisionAuditReport(
   args: BuildAionisMemoryDecisionAuditReportArgs,
 ): AionisMemoryDecisionAuditReport {
   const trace = args.trace;
+  const decisionReviews = buildAuditDecisionReviews(trace);
   const controlledMemoryCount =
     trace.summary.inspect_before_use_count
     + trace.summary.do_not_use_count
@@ -1860,6 +1921,7 @@ export function buildAionisMemoryDecisionAuditReport(
         ...trace.relation_decisions.map((entry) => entry.reason),
       ]).slice(0, 12),
     },
+    decision_reviews: decisionReviews,
     source_map: {
       routes_used: args.source_map?.routes_used ?? trace.source_map.routes_used,
       internal_surfaces_used: args.source_map?.internal_surfaces_used ?? compactStrings([

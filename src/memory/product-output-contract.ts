@@ -690,6 +690,90 @@ export const AionisMemoryDecisionAuditReportSchema = z
         reasons: z.array(z.string().min(1)).default([]),
       })
       .strict(),
+    decision_reviews: z
+      .object({
+        used_memories: z
+          .array(
+            z
+              .object({
+                memory_id: z.string().min(1),
+                title: z.string().min(1).nullable(),
+                authority: AionisGuidanceAuthoritySchema,
+                confidence: ConfidenceSchema,
+                salience: ConfidenceSchema,
+                source_layer: AionisMemoryLayerSchema.nullable(),
+                evidence_ids: z.array(z.string().min(1)).default([]),
+                reason: z.string().min(1),
+              })
+              .strict(),
+          )
+          .default([]),
+        downgraded_memories: z
+          .array(
+            z
+              .object({
+                memory_id: z.string().min(1),
+                title: z.string().min(1).nullable(),
+                by_memory_id: z.string().min(1),
+                evidence_id: z.string().min(1),
+                lifecycle_relation: AionisMemoryLifecycleRelationKindSchema,
+                relation_confidence: ConfidenceSchema,
+                producer: z.string().min(1),
+                candidate_confidence: ConfidenceSchema.nullable(),
+                signals: AionisMemoryLifecycleRelationSignalsSchema,
+                gate: AionisMemoryLifecycleRelationGateSchema,
+                reasons: z.array(z.string().min(1)).default([]),
+              })
+              .strict(),
+          )
+          .default([]),
+        blocked_memories: z
+          .array(
+            z
+              .object({
+                memory_id: z.string().min(1),
+                title: z.string().min(1).nullable(),
+                blocked_by: z.enum([
+                  "scope_mismatch",
+                  "suppressed_lifecycle",
+                  "archived_lifecycle",
+                  "blocked_authority",
+                  "low_authority",
+                  "agent_surface_projection",
+                  "unknown",
+                ]),
+                lifecycle_state: z.enum([
+                  "active",
+                  "candidate",
+                  "contested",
+                  "suppressed",
+                  "demoted",
+                  "archived",
+                  "rehydration_candidate",
+                  "unknown",
+                ]),
+                authority: AionisGuidanceAuthoritySchema,
+                reason: z.string().min(1),
+              })
+              .strict(),
+          )
+          .default([]),
+        rehydrate_memories: z
+          .array(
+            z
+              .object({
+                memory_id: z.string().min(1),
+                title: z.string().min(1).nullable(),
+                mode: z.enum(["summary_only", "partial", "full", "differential"]),
+                required: z.boolean(),
+                payload_status: z.enum(["cold_payload", "summary_only", "unknown"]),
+                reason: z.string().min(1),
+              })
+              .strict(),
+          )
+          .default([]),
+      })
+      .strict(),
     source_map: z
       .object({
         routes_used: z.array(z.string().min(1)).default([]),

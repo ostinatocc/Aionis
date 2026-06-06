@@ -509,6 +509,23 @@ function validMemoryDecisionAuditReport() {
       blocked_or_suppressed_count: 0,
       reasons: ["candidate memory requires inspection"],
     },
+    decision_reviews: {
+      used_memories: [
+        {
+          memory_id: "mem-pref-1",
+          title: "User prefers direct answers",
+          authority: "advisory",
+          confidence: 0.86,
+          salience: 0.77,
+          source_layer: "L2",
+          evidence_ids: ["commit-1"],
+          reason: "Memory entered direct use because it has usable authority and no accepted lifecycle relation superseded it.",
+        },
+      ],
+      downgraded_memories: [],
+      blocked_memories: [],
+      rehydrate_memories: [],
+    },
     source_map: {
       routes_used: ["/v1/audit/memory-decision-report"],
       internal_surfaces_used: ["memory_decision_audit_report"],

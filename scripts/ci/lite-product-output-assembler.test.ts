@@ -773,6 +773,11 @@ test("product memory decision trace explains lifecycle and agent-context surface
   assert.equal(audit.contract_version, "aionis_memory_decision_audit_report_v1");
   assert.equal(audit.verdict, "learning_control_visible");
   assert.equal(audit.counters.controlled_memory_count, 1);
+  assert.equal(audit.decision_reviews.used_memories.some((entry) => entry.memory_id === "mem-current-route"), true);
+  assert.equal(audit.decision_reviews.downgraded_memories[0]?.memory_id, "mem-old-route");
+  assert.equal(audit.decision_reviews.downgraded_memories[0]?.by_memory_id, "mem-current-route");
+  assert.equal(audit.decision_reviews.downgraded_memories[0]?.lifecycle_relation, "contradicts");
+  assert.equal(audit.decision_reviews.downgraded_memories[0]?.gate.accepted, true);
   assert.equal(audit.claims.some((claim) => claim.claim === "agent_prompt_excluded" && claim.status === "pass"), true);
 });
 
@@ -860,6 +865,12 @@ test("product memory decision trace distinguishes blocked and rehydrate causes",
   assert.equal(archived?.rehydrate_detail?.mode, "differential");
   assert.equal(archived?.rehydrate_detail?.payload_status, "cold_payload");
   assert.equal(archived?.blocked_detail, null);
+
+  const audit = buildAionisMemoryDecisionAuditReport({ trace });
+  assert.equal(audit.decision_reviews.blocked_memories[0]?.memory_id, "mem-suppressed-note");
+  assert.equal(audit.decision_reviews.blocked_memories[0]?.blocked_by, "suppressed_lifecycle");
+  assert.equal(audit.decision_reviews.rehydrate_memories[0]?.memory_id, "mem-archive-note");
+  assert.equal(audit.decision_reviews.rehydrate_memories[0]?.mode, "differential");
 });
 
 test("product agent context strips contested target paths from active counter-evidence summaries", () => {
