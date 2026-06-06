@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { PlanningSummary } from "../../src/app/planning-summary.ts";
 import { evaluateAionisEffect } from "../../src/kernel/effect-evaluator.ts";
 import {
+  applyAionisInspectBeforeUseActiveProjection,
   buildAionisAgentContext,
   buildAionisEffectReport,
   buildAionisGuidePacket,
@@ -1325,6 +1326,66 @@ test("product confidence decay shadow candidate observes temporal staleness with
   assert.deepEqual(effect.confidence_decay_summary.candidate_from_time_decay_memory_ids, [
     "mem-old-runtime-note",
   ]);
+});
+
+test("active inspect-before-use projection moves only selected direct-use memories", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    nodes: [
+      {
+        id: "mem-active-projection-old",
+        type: "concept",
+        title: "Active projection old note",
+        text_summary: "AIONIS_ACTIVE_PROJECTION keep using the old operator summary format.",
+        tier: "warm",
+        slots: {
+          memory_kind: "general_memory",
+        },
+        confidence: 0.92,
+        salience: 0.88,
+        created_at: "2025-01-01T00:00:00.000Z",
+      },
+      {
+        id: "mem-active-projection-current",
+        type: "concept",
+        title: "Active projection current note",
+        text_summary: "AIONIS_ACTIVE_PROJECTION current summaries must keep customer severity labels.",
+        tier: "warm",
+        slots: {
+          memory_kind: "general_memory",
+        },
+        confidence: 0.9,
+        salience: 0.86,
+        created_at: "2026-06-01T00:00:00.000Z",
+      },
+    ],
+  });
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-active-projection-old"), true);
+  assert.equal(agentContext.inspect_before_use_memory_ids.includes("mem-active-projection-old"), false);
+
+  const projected = applyAionisInspectBeforeUseActiveProjection({
+    agent_context: agentContext,
+    memory_packet: memoryPacket,
+    candidate_memory_ids: ["mem-active-projection-old", "mem-not-present"],
+    reason: "inspect_before_use_active_projection",
+  });
+
+  assert.equal(projected.use_now_memory_ids.includes("mem-active-projection-old"), false);
+  assert.equal(projected.inspect_before_use_memory_ids.includes("mem-active-projection-old"), true);
+  assert.equal(projected.use_now_memory_ids.includes("mem-active-projection-current"), true);
+  assert.equal(projected.recommended_posture, "inspect_before_use");
+  assert.equal(projected.authority, "advisory");
+  assert.equal(projected.risk.negative_transfer_risk, "medium");
+  assert.ok(projected.risk.reasons.includes("inspect_before_use_active_projection"));
+  assert.equal(projected.prompt_text.includes("Inspect memory before use: Active projection old note"), true);
+  assert.equal(projected.prompt_text.includes("confidence_decay"), false);
+  assert.equal(projected.prompt_text.includes("inspect_before_use_shadow_delta"), false);
 });
 
 test("product confidence decay temporal staleness is blocked by positive attribution", () => {

@@ -26,9 +26,22 @@ test("shipped source tree defaults to lite posture", async () => {
     const env = loadEnv();
     assert.equal(env.AIONIS_EDITION, "lite");
     assert.equal(env.AIONIS_MODE, "local");
+    assert.equal(env.AIONIS_INSPECT_BEFORE_USE_MODE, "shadow");
     assert.equal(env.MEMORY_AUTH_MODE, "off");
     assert.equal(env.TENANT_QUOTA_ENABLED, false);
   });
+});
+
+test("inspect-before-use active projection is explicit opt-in", async () => {
+  await withIsolatedEnv(
+    {
+      AIONIS_INSPECT_BEFORE_USE_MODE: "active",
+    },
+    () => {
+      const env = loadEnv();
+      assert.equal(env.AIONIS_INSPECT_BEFORE_USE_MODE, "active");
+    },
+  );
 });
 
 test("lite plus prod fails with an explicit posture error", async () => {

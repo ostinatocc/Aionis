@@ -9,6 +9,8 @@ import {
 } from "../kernel/effect-evaluator.js";
 import { sha256Hex } from "../util/crypto.js";
 import {
+  AIONIS_CONFIDENCE_DECAY_TIME_THRESHOLD_DAYS,
+  applyAionisInspectBeforeUseActiveProjection,
   buildAionisAgentContext,
   buildAionisEffectReport,
   buildAionisMemoryDecisionAuditReport,
@@ -640,6 +642,13 @@ function nonNegativeInt(value: unknown): number {
   return Math.max(0, Math.trunc(parsed));
 }
 
+function hasAnyAttributedUse(slots: Record<string, unknown>): boolean {
+  return nonNegativeInt(slots.attributed_use_count) > 0
+    || nonNegativeInt(slots.positive_attributed_use_count) > 0
+    || nonNegativeInt(slots.feedback_positive) > 0
+    || nonNegativeInt(slots.feedback_negative) > 0;
+}
+
 function guideExposureSurfaceIds(ledger: ProductGuideExposureLedger, surface: keyof Pick<
   ProductGuideExposureLedger,
   "use_now_memory_ids" | "inspect_before_use_memory_ids" | "do_not_use_memory_ids" | "rehydrate_memory_ids"
@@ -676,16 +685,13 @@ async function findMemoryNodeSlots(args: {
   return objectValue(node?.slots) ?? {};
 }
 
-async function buildUnusedExposureObservation(args: {
+async function findHistoricalGuideExposureLedgers(args: {
   app: FastifyInstance;
   req: FastifyRequest;
-  env: Env;
-  parsed: ProductForgetInput;
-  guideExposure: Extract<ProductGuideExposureResolution, { ok: true }>;
-}): Promise<ProductUnusedExposureObservation> {
-  const ledger = args.guideExposure.ledger;
-  const actor = args.parsed.actor ?? args.env.LITE_LOCAL_ACTOR_ID;
-  const exposureThreshold = 2;
+  tenant_id: string;
+  scope: string;
+  actor: string;
+}): Promise<ProductGuideExposureLedger[]> {
   const ledgerRows: unknown[] = [];
   for (let offset = 0; offset < 1000; offset += 200) {
     const ledgersResult = await dispatchProductInternalRoute({
@@ -693,11 +699,11 @@ async function buildUnusedExposureObservation(args: {
       req: args.req,
       path: "/v1/memory/find",
       payload: {
-        tenant_id: ledger.tenant_id,
-        scope: ledger.scope,
+        tenant_id: args.tenant_id,
+        scope: args.scope,
         type: "evidence",
         memory_lane: "shared",
-        consumer_agent_id: actor,
+        consumer_agent_id: args.actor,
         include_slots: true,
         slots_contains: {
           guide_exposure_v1: {
@@ -709,22 +715,169 @@ async function buildUnusedExposureObservation(args: {
       },
     });
     if (!ledgersResult.ok) {
-      throw new Error("unused exposure guide ledger lookup failed");
+      throw new Error("guide exposure ledger lookup failed");
     }
     const body = objectValue(ledgersResult.body);
     if (Array.isArray(body?.nodes)) ledgerRows.push(...body.nodes);
     const page = objectValue(body?.page);
     if (page?.has_more !== true) break;
   }
+  return ledgerRows
+    .map((row) => parseGuideExposureLedger(objectValue(objectValue(row)?.slots)?.guide_exposure_v1))
+    .filter((entry): entry is ProductGuideExposureLedger => !!entry)
+    .filter((entry) => entry.tenant_id === args.tenant_id && entry.scope === args.scope);
+}
+
+function parseAgentContextObservedTime(value: unknown): number | null {
+  if (typeof value !== "string" || value.trim().length === 0) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function resolveRepeatedUnusedActiveProjectionIds(args: {
+  app: FastifyInstance;
+  req: FastifyRequest;
+  tenant_id: string;
+  scope: string;
+  actor: string;
+  currentLedger: ProductGuideExposureLedger;
+  historicalLedgers: ProductGuideExposureLedger[];
+}): Promise<string[]> {
+  const exposureThreshold = 2;
+  const useNowIds = uniqueStrings(args.currentLedger.use_now_memory_ids);
+  const candidates: string[] = [];
+  for (const memoryId of useNowIds) {
+    let useNowExposureCount = 0;
+    for (const ledger of args.historicalLedgers) {
+      if (ledger.guide_trace_id === args.currentLedger.guide_trace_id) continue;
+      if (!sameGuideExposureConsumer(ledger, args.currentLedger)) continue;
+      if (guideExposureSurfaceIds(ledger, "use_now_memory_ids").has(memoryId)) {
+        useNowExposureCount += 1;
+      }
+    }
+    if (useNowExposureCount < exposureThreshold) continue;
+    const slots = await findMemoryNodeSlots({
+      app: args.app,
+      req: args.req,
+      tenant_id: args.tenant_id,
+      scope: args.scope,
+      memory_id: memoryId,
+      actor: args.actor,
+    });
+    if (hasAnyAttributedUse(slots)) continue;
+    candidates.push(memoryId);
+  }
+  return uniqueStrings(candidates);
+}
+
+async function resolveTimeDecayActiveProjectionIds(args: {
+  app: FastifyInstance;
+  req: FastifyRequest;
+  tenant_id: string;
+  scope: string;
+  actor: string;
+  memoryPacket: AionisMemoryPacket | null;
+  agentContext: AionisAgentContext;
+}): Promise<string[]> {
+  const memoryEntries = args.memoryPacket?.relevant_memories ?? [];
+  const observedTimes = memoryEntries
+    .map((entry) => parseAgentContextObservedTime(entry.observed_at))
+    .filter((entry): entry is number => entry !== null);
+  if (observedTimes.length === 0) return [];
+  const referenceObservedTime = Math.max(...observedTimes);
+  const currentUseNowIds = new Set(args.agentContext.use_now_memory_ids);
+  const candidates: string[] = [];
+  for (const entry of memoryEntries) {
+    if (!currentUseNowIds.has(entry.memory_id)) continue;
+    if (entry.lifecycle_state !== "active") continue;
+    if (entry.authority !== "trusted" && entry.authority !== "advisory") continue;
+    const observedTime = parseAgentContextObservedTime(entry.observed_at);
+    if (observedTime === null || observedTime >= referenceObservedTime) continue;
+    const ageDays = Math.floor((referenceObservedTime - observedTime) / (24 * 60 * 60 * 1000));
+    if (ageDays < AIONIS_CONFIDENCE_DECAY_TIME_THRESHOLD_DAYS) continue;
+    const slots = await findMemoryNodeSlots({
+      app: args.app,
+      req: args.req,
+      tenant_id: args.tenant_id,
+      scope: args.scope,
+      memory_id: entry.memory_id,
+      actor: args.actor,
+    });
+    if (nonNegativeInt(slots.positive_attributed_use_count) > 0) continue;
+    candidates.push(entry.memory_id);
+  }
+  return uniqueStrings(candidates);
+}
+
+async function resolveInspectBeforeUseActiveProjectionIds(args: {
+  app: FastifyInstance;
+  req: FastifyRequest;
+  env: Env;
+  parsed: z.infer<typeof ProductGuideRequest>;
+  tenant_id: string;
+  scope: string;
+  memoryPacket: AionisMemoryPacket | null;
+  agentContext: AionisAgentContext;
+  guideTraceId: string;
+}): Promise<string[]> {
+  const actor = args.parsed.consumer_agent_id ?? args.env.LITE_LOCAL_ACTOR_ID;
+  const currentLedger = buildGuideExposureLedger({
+    parsed: args.parsed,
+    tenant_id: args.tenant_id,
+    scope: args.scope,
+    agentContext: args.agentContext,
+    guideTraceId: args.guideTraceId,
+  });
+  const historicalLedgers = await findHistoricalGuideExposureLedgers({
+    app: args.app,
+    req: args.req,
+    tenant_id: args.tenant_id,
+    scope: args.scope,
+    actor,
+  });
+  const repeatedUnusedIds = await resolveRepeatedUnusedActiveProjectionIds({
+    app: args.app,
+    req: args.req,
+    tenant_id: args.tenant_id,
+    scope: args.scope,
+    actor,
+    currentLedger,
+    historicalLedgers,
+  });
+  const timeDecayIds = await resolveTimeDecayActiveProjectionIds({
+    app: args.app,
+    req: args.req,
+    tenant_id: args.tenant_id,
+    scope: args.scope,
+    actor,
+    memoryPacket: args.memoryPacket,
+    agentContext: args.agentContext,
+  });
+  return uniqueStrings([...repeatedUnusedIds, ...timeDecayIds]);
+}
+
+async function buildUnusedExposureObservation(args: {
+  app: FastifyInstance;
+  req: FastifyRequest;
+  env: Env;
+  parsed: ProductForgetInput;
+  guideExposure: Extract<ProductGuideExposureResolution, { ok: true }>;
+}): Promise<ProductUnusedExposureObservation> {
+  const ledger = args.guideExposure.ledger;
+  const actor = args.parsed.actor ?? args.env.LITE_LOCAL_ACTOR_ID;
+  const exposureThreshold = 2;
+  const historicalLedgers = await findHistoricalGuideExposureLedgers({
+    app: args.app,
+    req: args.req,
+    tenant_id: ledger.tenant_id,
+    scope: ledger.scope,
+    actor,
+  });
   const ledgers = [
     ledger,
-    ...ledgerRows
-      .map((row) => parseGuideExposureLedger(objectValue(objectValue(row)?.slots)?.guide_exposure_v1))
-      .filter((entry): entry is ProductGuideExposureLedger => !!entry)
+    ...historicalLedgers
       .filter((entry) =>
         entry.guide_trace_id !== ledger.guide_trace_id
-        && entry.tenant_id === ledger.tenant_id
-        && entry.scope === ledger.scope
         && sameGuideExposureConsumer(entry, ledger)
       ),
   ];
@@ -1476,7 +1629,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     const guidePacket: AionisGuidePacket | null = body.aionis_guide_packet
       ? AionisGuidePacketSchema.parse(body.aionis_guide_packet)
       : null;
-    const agentContext: AionisAgentContext = buildAionisAgentContext({
+    let agentContext: AionisAgentContext = buildAionisAgentContext({
       tenant_id: String(body.tenant_id ?? parsed.tenant_id ?? env.MEMORY_TENANT_ID),
       scope: String(body.scope ?? parsed.scope ?? env.MEMORY_SCOPE),
       memory_packet: memoryPacket,
@@ -1485,6 +1638,28 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     const tenantId = String(body.tenant_id ?? parsed.tenant_id ?? env.MEMORY_TENANT_ID);
     const scope = String(body.scope ?? parsed.scope ?? env.MEMORY_SCOPE);
     const guideTraceId = buildGuideTraceId();
+    let activeProjectionApplied = false;
+    if (env.AIONIS_INSPECT_BEFORE_USE_MODE === "active") {
+      const activeProjectionMemoryIds = await resolveInspectBeforeUseActiveProjectionIds({
+        app,
+        req,
+        env,
+        parsed,
+        tenant_id: tenantId,
+        scope,
+        memoryPacket,
+        agentContext,
+        guideTraceId,
+      });
+      const projectedContext = applyAionisInspectBeforeUseActiveProjection({
+        agent_context: agentContext,
+        memory_packet: memoryPacket,
+        candidate_memory_ids: activeProjectionMemoryIds,
+        reason: "inspect_before_use_active_projection",
+      });
+      activeProjectionApplied = projectedContext !== agentContext;
+      agentContext = projectedContext;
+    }
     const exposureWrite = await writeGuideExposureLedger({
       app,
       req,
@@ -1514,6 +1689,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
           "recall",
           "product_packets",
           "agent_context_compiler",
+          ...(activeProjectionApplied ? ["inspect_before_use_active_projection"] : []),
           "guide_exposure_ledger",
         ],
         omitted_internal_surfaces: [

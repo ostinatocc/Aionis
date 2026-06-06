@@ -6,6 +6,7 @@ import { parseTrustedProxyCidrs } from "./util/ip-guard.js";
 const RuntimeModeSchema = z.enum(["local", "service", "cloud"]);
 const EditionSchema = z.literal("lite");
 const AbstractionPolicyProfileSchema = z.enum(["conservative", "balanced", "aggressive"]);
+const InspectBeforeUseModeSchema = z.enum(["shadow", "active"]);
 
 function sandboxRemoteHostAllowed(hostname: string, allowlist: string[]): boolean {
   const host = hostname.trim().toLowerCase();
@@ -119,6 +120,7 @@ const EnvSchema = z.object({
   AIONIS_RUNTIME_PACKAGE_NAME: z.string().default(""),
   AIONIS_RUNTIME_PACKAGE_VERSION: z.string().default(""),
   AIONIS_RUNTIME_STARTED_AT: z.string().default(""),
+  AIONIS_INSPECT_BEFORE_USE_MODE: InspectBeforeUseModeSchema.default("shadow"),
   APP_ENV: z.enum(["dev", "ci", "prod"]).default("dev"),
   AIONIS_LISTEN_HOST: z.string().default(""),
   TRUST_PROXY: z

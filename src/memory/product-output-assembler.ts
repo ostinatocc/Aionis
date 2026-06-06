@@ -80,7 +80,7 @@ type InspectBeforeUseShadowDelta = AionisMemoryDecisionTrace["inspect_before_use
 const NEIGHBORHOOD_DRIFT_GROWTH_THRESHOLD = 2;
 const NEIGHBORHOOD_DRIFT_DIRECTIONAL_THRESHOLD = 2;
 const NEIGHBORHOOD_DRIFT_ISOLATION_THRESHOLD = 1;
-const CONFIDENCE_DECAY_TIME_THRESHOLD_DAYS = 90;
+export const AIONIS_CONFIDENCE_DECAY_TIME_THRESHOLD_DAYS = 90;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NEIGHBORHOOD_DRIFT_STOPWORDS = new Set([
   "about",
@@ -115,6 +115,13 @@ export type BuildAionisAgentContextArgs = {
   scope: string;
   memory_packet?: AionisMemoryPacket | null;
   guide_packet?: AionisGuidePacket | null;
+};
+
+export type ApplyAionisInspectBeforeUseActiveProjectionArgs = {
+  agent_context: AionisAgentContext;
+  memory_packet?: AionisMemoryPacket | null;
+  candidate_memory_ids: string[];
+  reason: string;
 };
 
 export type BuildAionisGuidePacketArgs = {
@@ -1543,6 +1550,81 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
   });
 }
 
+export function applyAionisInspectBeforeUseActiveProjection(
+  args: ApplyAionisInspectBeforeUseActiveProjectionArgs,
+): AionisAgentContext {
+  const memory = args.memory_packet ?? null;
+  const currentUseNowIds = new Set(args.agent_context.use_now_memory_ids);
+  const candidateIds = new Set(compactStrings(args.candidate_memory_ids));
+  const memoryEntries = memory?.relevant_memories ?? [];
+  const entriesToMove = memoryEntries.filter((entry) =>
+    candidateIds.has(entry.memory_id)
+    && currentUseNowIds.has(entry.memory_id)
+  );
+  if (entriesToMove.length === 0) return args.agent_context;
+
+  const movingIds = new Set(entriesToMove.map((entry) => entry.memory_id));
+  const deniedPathTargets = deniedAgentActionPathTargets(memoryEntries);
+  const generatedUseNowLines = new Set(compactStrings(
+    entriesToMove.map((entry) => memoryEntryUseNowLine(entry, deniedPathTargets)),
+  ));
+  const movedInspectLines = compactStrings(entriesToMove.map(memoryEntryInspectLine));
+  const useNow = compactStrings(args.agent_context.use_now.filter((entry) =>
+    !generatedUseNowLines.has(entry)
+  )).slice(0, 6);
+  const inspectBeforeUse = compactStrings([
+    ...args.agent_context.inspect_before_use,
+    ...movedInspectLines,
+  ]).slice(0, 5);
+  const useNowMemoryIds = compactStrings(args.agent_context.use_now_memory_ids.filter((memoryId) =>
+    !movingIds.has(memoryId)
+  )).slice(0, 10);
+  const inspectBeforeUseMemoryIds = compactStrings([
+    ...args.agent_context.inspect_before_use_memory_ids,
+    ...entriesToMove.map((entry) => entry.memory_id),
+  ]).slice(0, 10);
+  const negativeTransferRisk = riskAtLeast(args.agent_context.risk.negative_transfer_risk, "medium");
+  const risk = {
+    ...args.agent_context.risk,
+    negative_transfer_risk: negativeTransferRisk,
+    reasons: compactStrings([
+      ...args.agent_context.risk.reasons,
+      args.reason,
+    ]).slice(0, 5),
+  };
+  const authority: AionisAgentContext["authority"] = args.agent_context.authority === "trusted"
+    ? "advisory"
+    : args.agent_context.authority;
+  const recommendedPosture: AionisAgentContext["recommended_posture"] = args.agent_context.history_used
+    ? "inspect_before_use"
+    : args.agent_context.recommended_posture;
+  const promptText = buildAgentContextPrompt({
+    summary: args.agent_context.summary,
+    historyUsed: args.agent_context.history_used,
+    recommendedPosture,
+    authority,
+    negativeTransferRisk: risk.negative_transfer_risk,
+    targetFiles: args.agent_context.target_files,
+    useNow,
+    inspectBeforeUse,
+    doNotUse: args.agent_context.do_not_use,
+    memoryIds: args.agent_context.memory_ids,
+    rehydrateHints: args.agent_context.rehydrate_hints,
+  });
+
+  return parseAionisAgentContext({
+    ...args.agent_context,
+    prompt_text: promptText,
+    recommended_posture: recommendedPosture,
+    authority,
+    use_now: useNow,
+    inspect_before_use: inspectBeforeUse,
+    use_now_memory_ids: useNowMemoryIds,
+    inspect_before_use_memory_ids: inspectBeforeUseMemoryIds,
+    risk,
+  });
+}
+
 function traceTextMatchesEntry(values: string[], entry: MemoryPacketEntry): boolean {
   return values.some((value) => textMatchesMemoryEntry(value, entry));
 }
@@ -1807,7 +1889,7 @@ function emptyConfidenceDecayCandidateSummary(
     mode: null,
     authority_mutation: false,
     agent_prompt_included: false,
-    time_decay_age_threshold_days: CONFIDENCE_DECAY_TIME_THRESHOLD_DAYS,
+    time_decay_age_threshold_days: AIONIS_CONFIDENCE_DECAY_TIME_THRESHOLD_DAYS,
     decay_candidate_memory_ids: [],
     candidate_from_learning_control_memory_ids: [],
     candidate_from_time_decay_memory_ids: [],
@@ -1849,7 +1931,7 @@ function buildConfidenceDecayCandidateSummary(args: {
       const observedTime = parseObservedTime(entry?.observed_at);
       if (observedTime === null || observedTime >= referenceObservedTime) continue;
       const ageDays = Math.floor((referenceObservedTime - observedTime) / DAY_MS);
-      if (ageDays < CONFIDENCE_DECAY_TIME_THRESHOLD_DAYS) continue;
+      if (ageDays < AIONIS_CONFIDENCE_DECAY_TIME_THRESHOLD_DAYS) continue;
       const blockedByPositiveAttribution = positiveMemoryIds.has(memoryId) || hasPositiveAttribution(decision);
       if (blockedByPositiveAttribution) {
         timeDecayBlockedByPositive.push(memoryId);
@@ -1859,7 +1941,7 @@ function buildConfidenceDecayCandidateSummary(args: {
         observed_at: new Date(observedTime).toISOString(),
         reference_observed_at: referenceObservedAt,
         age_days: ageDays,
-        threshold_days: CONFIDENCE_DECAY_TIME_THRESHOLD_DAYS,
+        threshold_days: AIONIS_CONFIDENCE_DECAY_TIME_THRESHOLD_DAYS,
         agent_surface: decision.agent_surface,
         authority: decision.authority,
         blocked_by_positive_attribution: blockedByPositiveAttribution,
@@ -1906,7 +1988,7 @@ function buildConfidenceDecayCandidateSummary(args: {
     mode: "shadow_candidate",
     authority_mutation: false,
     agent_prompt_included: false,
-    time_decay_age_threshold_days: CONFIDENCE_DECAY_TIME_THRESHOLD_DAYS,
+    time_decay_age_threshold_days: AIONIS_CONFIDENCE_DECAY_TIME_THRESHOLD_DAYS,
     decay_candidate_memory_ids: decayCandidates,
     candidate_from_learning_control_memory_ids: candidateFromLearningControl,
     candidate_from_time_decay_memory_ids: candidateFromTimeDecay,
