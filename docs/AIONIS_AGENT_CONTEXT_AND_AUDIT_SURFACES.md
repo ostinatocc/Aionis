@@ -7,6 +7,8 @@ new Runtime mechanism.
 
 For a runnable local product flow, see
 [AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md](AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md).
+For the full product API usage boundary, see
+[AIONIS_PRODUCT_API_USAGE.md](AIONIS_PRODUCT_API_USAGE.md).
 
 ## Rule
 
