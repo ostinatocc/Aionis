@@ -34,6 +34,7 @@ The goal is to stop exposing dozens of internal Runtime routes as product concep
 3. `AionisMemoryPacket`: which general or execution memories are relevant, trusted, stale, contested, or behavior-shaping
 4. `AionisLearningPacket`: which learning candidates are visible, constrained, promotion-ready, or blocked
 5. `AionisEffectReport`: whether history helped, hurt, or did nothing
+6. `AionisMemoryDecisionTrace` and `AionisMemoryDecisionAuditReport`: operator/debug outputs explaining memory decisions without entering the Agent prompt
 
 ## Output Boundary
 
@@ -44,8 +45,12 @@ The goal is to stop exposing dozens of internal Runtime routes as product concep
 | `AionisMemoryPacket` | `recall` | Convert ordinary and execution recall into an evidence-scoped cognitive memory packet. |
 | `AionisLearningPacket` | `learn` | Convert learning, promotion, demotion, forgetting, and learning-control signals into a scoped learning state packet. |
 | `AionisEffectReport` | `measure` | Prove whether historical memory changed the run and whether that change was positive. |
+| `AionisMemoryDecisionTrace` | `debug` / `measure` | Explain per-memory use, downgrade, block, and rehydrate decisions. |
+| `AionisMemoryDecisionAuditReport` | `audit` / `measure` | Provide a compact operator review of memory decisions, risks, and claims. |
 
 `POST /v1/guide` defaults to `AionisAgentContext` only. Callers that need audit or measurement data must set `include_packets: true` to include `memory_packet` and `guide_packet`. Full packets are not the default Agent prompt surface.
+
+The prompt/debug boundary is defined in [AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md](AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md). `memory_decision_trace` and `memory_decision_audit` are never Agent prompt surfaces.
 
 `observe` and `forget` remain product actions, but their first product-visible value should flow into these outputs:
 

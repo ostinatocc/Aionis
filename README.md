@@ -13,7 +13,7 @@ The product scope is intentionally narrow:
 5. history-shaped future behavior
 6. evidence-scoped ordinary memory recall
 
-Cross-thread, cross-Agent, and cross-LLM continuity are important proof surfaces, but they are not the whole product. The broader product contract is [docs/AIONIS_PRODUCT_CONTRACT.md](docs/AIONIS_PRODUCT_CONTRACT.md): observe real execution, guide future work, forget stale or harmful memory, and measure whether history helped. Capability routing and delete-review decisions live in [docs/AIONIS_CAPABILITY_DECISION_MATRIX.md](docs/AIONIS_CAPABILITY_DECISION_MATRIX.md), and product outputs are defined in [docs/AIONIS_PRODUCT_OUTPUT_CONTRACT.md](docs/AIONIS_PRODUCT_OUTPUT_CONTRACT.md).
+Cross-thread, cross-Agent, and cross-LLM continuity are important proof surfaces, but they are not the whole product. The broader product contract is [docs/AIONIS_PRODUCT_CONTRACT.md](docs/AIONIS_PRODUCT_CONTRACT.md): observe real execution, guide future work, forget stale or harmful memory, and measure whether history helped. Capability routing and delete-review decisions live in [docs/AIONIS_CAPABILITY_DECISION_MATRIX.md](docs/AIONIS_CAPABILITY_DECISION_MATRIX.md), product outputs are defined in [docs/AIONIS_PRODUCT_OUTPUT_CONTRACT.md](docs/AIONIS_PRODUCT_OUTPUT_CONTRACT.md), and the prompt/debug boundary is defined in [docs/AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md](docs/AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md).
 
 It is not an external host framework product, a docs product, a playground, a cloud control plane, or a benchmark runner. External project evaluation must live outside this focused product tree and must not define Runtime behavior.
 

@@ -73,6 +73,8 @@ Optional audit output:
 
 The default Agent surface must not be the full `memory_packet + guide_packet`. Full packets remain available for audit and `measure`, but they are not the default prompt surface.
 
+Decision trace and audit surfaces are separate operator/debug outputs. The usage boundary is defined in [AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md](AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md): Agents consume `agent_context`; developers inspect `memory_decision_trace` and `memory_decision_audit`.
+
 ## Forget Input Contract
 
 `POST /v1/forget` is the product entry for controlled forgetting, suppression, rehydration, and reuse feedback. Users should not need to know the internal lifecycle route names.
