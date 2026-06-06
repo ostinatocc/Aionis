@@ -143,6 +143,10 @@ const ProductForgetRequest = z.object({
   outcome: z.enum(["positive", "negative", "neutral"]).optional(),
   activate: z.boolean().optional(),
   run_id: z.string().trim().min(1).optional(),
+  used_surface: z.enum(["use_now", "inspect_before_use", "do_not_use", "explicit_host_assertion"]).optional(),
+  verifier_status: z.enum(["passed", "failed", "not_run", "unknown"]).optional(),
+  tool_status: z.enum(["succeeded", "failed", "not_run", "unknown"]).optional(),
+  runtime_signal_refs: z.array(z.string().trim().min(1)).max(32).optional(),
   mode: z.enum(["shadow_learn", "hard_freeze", "summary_only", "partial", "full", "differential"]).optional(),
   until: z.string().datetime().optional(),
   include_linked_decisions: z.boolean().optional(),
@@ -178,6 +182,27 @@ const ProductForgetRequest = z.object({
       code: z.ZodIssueCode.custom,
       path: ["outcome"],
       message: "activate requires outcome so memory feedback is not lost as neutral default",
+    });
+  }
+  if (value.operation === "activate" && !value.used_surface) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["used_surface"],
+      message: "activate requires used_surface so feedback is attributed only to memory actually used by the host",
+    });
+  }
+  if (
+    value.operation === "activate"
+    && value.outcome
+    && value.outcome !== "neutral"
+    && value.used_surface
+    && value.used_surface !== "use_now"
+    && value.used_surface !== "explicit_host_assertion"
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["used_surface"],
+      message: "non-neutral activation feedback requires use_now or explicit_host_assertion attribution",
     });
   }
   if (value.operation === "rehydrate" && memoryIdCount === 0 && !anchorPresent) {
@@ -506,6 +531,10 @@ function productForgetPayload(parsed: ProductForgetInput, target: ProductForgetT
       reason: parsed.reason,
       input_text: typeof payload.input_text === "string" ? payload.input_text : parsed.reason,
       input_sha256: payload.input_sha256,
+      used_surface: parsed.used_surface ?? payload.used_surface,
+      verifier_status: parsed.verifier_status ?? payload.verifier_status,
+      tool_status: parsed.tool_status ?? payload.tool_status,
+      runtime_signal_refs: parsed.runtime_signal_refs ?? payload.runtime_signal_refs,
     });
   }
   if (target === "payload") {
@@ -582,6 +611,14 @@ function productForgetEffect(args: {
     reversible: args.parsed.operation !== "activate",
     affected_memory_ids: nodeIds,
     affected_client_ids: uniqueStrings(args.parsed.client_ids ?? []),
+    attribution: args.parsed.operation === "activate" ? stripUndefined({
+      run_id: args.parsed.run_id,
+      outcome: args.parsed.outcome,
+      used_surface: args.parsed.used_surface,
+      verifier_status: args.parsed.verifier_status,
+      tool_status: args.parsed.tool_status,
+      runtime_signal_refs: args.parsed.runtime_signal_refs,
+    }) : undefined,
     anchor_id: args.parsed.anchor_id ?? (typeof args.parsed.payload?.anchor_id === "string" ? args.parsed.payload.anchor_id : null),
     anchor_uri: args.parsed.anchor_uri ?? (typeof args.parsed.payload?.anchor_uri === "string" ? args.parsed.payload.anchor_uri : null),
   };

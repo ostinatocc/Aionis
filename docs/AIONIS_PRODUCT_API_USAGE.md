@@ -158,6 +158,10 @@ evidence silently.
 | `anchor_id` / `anchor_uri` | Conditional | Required for pattern suppression or payload rehydration. |
 | `run_id` | Conditional | Required for `activate` so feedback can be attributed to a real run. |
 | `outcome` | Conditional | Required for `activate`; `positive`, `negative`, or `neutral`. |
+| `used_surface` | Conditional | Required for `activate`; `use_now` or `explicit_host_assertion` is required for non-neutral feedback. |
+| `verifier_status` | No | Optional run evidence: `passed`, `failed`, `not_run`, or `unknown`. |
+| `tool_status` | No | Optional run evidence: `succeeded`, `failed`, `not_run`, or `unknown`. |
+| `runtime_signal_refs` | No | Optional ids for concrete runtime/verifier/tool failure signals supporting the attribution. |
 | `mode` | No | Suppression or rehydration mode. |
 
 ### Main Response Fields
@@ -172,11 +176,21 @@ The host should consume `forget_effect`. It should not ask the Agent to reason
 over internal lifecycle rows or raw slots.
 
 For sparse-feedback attribution, use `operation: "activate"` after a run when
-the host knows which `agent_context.memory_ids` were actually used. A positive
-outcome supports future direct use; a negative outcome records counter-signal so
-the next `guide` can lower authority or move that memory to
-`inspect_before_use`. Aionis should not infer that every recalled memory caused
-a run outcome unless the host reports it as used.
+the host knows which `agent_context.memory_ids` were actually used. `run_id`,
+`outcome`, and `used_surface` are required. Non-neutral feedback must use
+`used_surface: "use_now"` or `used_surface: "explicit_host_assertion"`; this is
+the attribution gate that prevents Aionis from blaming every recalled memory for
+a run outcome.
+
+A single negative outcome without aligned verifier/tool/runtime evidence is
+stored as a weak counter-signal. It does not immediately lower authority. Aionis
+lowers authority or moves a memory to `inspect_before_use` only after repeated
+weak counter-signals, or after one negative outcome backed by aligned evidence
+such as `verifier_status: "failed"`, `tool_status: "failed"`, or concrete
+`runtime_signal_refs`.
+
+Aionis does not infer that every recalled memory caused a run outcome unless the
+host reports it as used.
 
 ### Example
 
@@ -189,7 +203,10 @@ a run outcome unless the host reports it as used.
   "reason": "Agent used this memory successfully during the checkout continuation.",
   "memory_ids": ["mem_checkout_current"],
   "outcome": "positive",
-  "run_id": "run-2026-06-06-001"
+  "run_id": "run-2026-06-06-001",
+  "used_surface": "use_now",
+  "verifier_status": "passed",
+  "tool_status": "succeeded"
 }
 ```
 

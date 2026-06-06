@@ -4591,6 +4591,10 @@ export const MemoryNodesActivateRequest = z
     reason: z.string().min(1).optional(),
     input_text: z.string().min(1).optional(),
     input_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    used_surface: z.enum(["use_now", "inspect_before_use", "do_not_use", "explicit_host_assertion"]).optional(),
+    verifier_status: z.enum(["passed", "failed", "not_run", "unknown"]).optional(),
+    tool_status: z.enum(["succeeded", "failed", "not_run", "unknown"]).optional(),
+    runtime_signal_refs: z.array(z.string().min(1)).max(32).optional(),
   })
   .refine((v) => (v.node_ids?.length ?? 0) > 0 || (v.client_ids?.length ?? 0) > 0, {
     message: "must set node_ids or client_ids",

@@ -1968,6 +1968,9 @@ test("product forget records activation feedback through the product facade", as
         memory_ids: [nodeId],
         run_id: "run:product-forget-activate",
         outcome: "positive",
+        used_surface: "use_now",
+        verifier_status: "passed",
+        tool_status: "succeeded",
         activate: true,
         reason: "The recalled style memory was reused correctly in the current run.",
       },
@@ -1999,11 +2002,11 @@ test("product forget records activation feedback through the product facade", as
   }
 });
 
-test("product guide feedback loop downgrades negatively used memory on the next guide", async () => {
+test("product guide feedback loop requires repeated weak negative attribution before downgrade", async () => {
   const app = Fastify();
   const env = liteEnv();
   const guards = requestGuards(env, DeterministicEmbeddingProvider);
-  const dbPath = tmpDbPath("guide-feedback-negative-attribution");
+  const dbPath = tmpDbPath("guide-feedback-repeated-negative-attribution");
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
   try {
@@ -2067,8 +2070,11 @@ test("product guide feedback loop downgrades negatively used memory on the next 
         operation: "activate",
         target: "memory",
         memory_ids: [nodeId],
-        run_id: "run:guide-feedback-negative-attribution",
+        run_id: "run:guide-feedback-negative-attribution-1",
         outcome: "negative",
+        used_surface: "use_now",
+        verifier_status: "not_run",
+        tool_status: "unknown",
         activate: true,
         reason: "The Agent used this recalled memory, but the resulting status update was rejected.",
       },
@@ -2088,8 +2094,57 @@ test("product guide feedback loop downgrades negatively used memory on the next 
       offset: 0,
     });
     assert.equal(rows[0]?.slots.feedback_negative, 1);
+    assert.equal(rows[0]?.slots.weak_counter_signal_count, 1);
+    assert.equal(rows[0]?.slots.strong_counter_signal_count, 0);
     assert.equal(rows[0]?.slots.last_feedback_outcome, "negative");
-    assert.equal(rows[0]?.slots.last_feedback_run_id, "run:guide-feedback-negative-attribution");
+    assert.equal(rows[0]?.slots.last_feedback_run_id, "run:guide-feedback-negative-attribution-1");
+    assert.equal(rows[0]?.slots.last_feedback_used_surface, "use_now");
+
+    const afterFirstWeakGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "AIONIS_SPARSE_FEEDBACK_MARKER status update style",
+        consumer_agent_id: "local-user",
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(afterFirstWeakGuide.statusCode, 200, afterFirstWeakGuide.body);
+    const afterFirstWeakGuideBody = afterFirstWeakGuide.json();
+    const afterFirstWeakMemory = afterFirstWeakGuideBody.memory_packet.relevant_memories.find((entry: Record<string, unknown>) =>
+      entry.memory_id === nodeId,
+    );
+    assert.ok(afterFirstWeakMemory);
+    assert.equal(afterFirstWeakMemory.lifecycle_state, "active");
+    assert.equal(afterFirstWeakMemory.authority, "advisory");
+    assert.ok(
+      afterFirstWeakGuideBody.agent_context.use_now.some((entry: string) =>
+        entry.includes("AIONIS_SPARSE_FEEDBACK_MARKER")
+      ),
+    );
+
+    const secondFeedback = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        operation: "activate",
+        target: "memory",
+        memory_ids: [nodeId],
+        run_id: "run:guide-feedback-negative-attribution-2",
+        outcome: "negative",
+        used_surface: "use_now",
+        verifier_status: "not_run",
+        tool_status: "unknown",
+        activate: true,
+        reason: "The Agent used the same memory again and the run failed again.",
+      },
+    });
+    assert.equal(secondFeedback.statusCode, 200, secondFeedback.body);
 
     const afterGuide = await app.inject({
       method: "POST",
@@ -2109,7 +2164,7 @@ test("product guide feedback loop downgrades negatively used memory on the next 
       entry.memory_id === nodeId,
     );
     assert.ok(afterMemory);
-    assert.equal(afterMemory.lifecycle_state, "candidate");
+    assert.equal(afterMemory.lifecycle_state, "contested");
     assert.equal(afterMemory.authority, "candidate");
     assert.equal(
       afterGuideBody.agent_context.use_now.some((entry: string) =>
@@ -2138,9 +2193,9 @@ test("product guide feedback loop downgrades negatively used memory on the next 
         product_trace: {
           before_guide: beforeGuideBody,
           after_guide: afterGuideBody,
-          forget_result: feedbackBody,
+          forget_result: secondFeedback.json(),
           sufficient_evidence: true,
-          evidence_ids: ["product_trace:guide-feedback-negative-attribution"],
+          evidence_ids: ["product_trace:guide-feedback-repeated-negative-attribution"],
         },
       },
     });
@@ -2148,6 +2203,108 @@ test("product guide feedback loop downgrades negatively used memory on the next 
     const measureBody = measure.json();
     assert.equal(measureBody.measurement_input.source, "product_trace");
     assert.equal(measureBody.memory_decision_trace.summary.inspect_before_use_count > 0, true);
+  } finally {
+    await app.close();
+  }
+});
+
+test("product guide feedback loop downgrades after aligned verifier failure attribution", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("guide-feedback-strong-negative-attribution");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const observe = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        input_text: "AIONIS_STRONG_FEEDBACK_MARKER Prefer release-note format for status updates.",
+        memory: {
+          client_id: "memory:guide-feedback-strong-negative-attribution",
+          type: "concept",
+          tier: "warm",
+          memory_kind: "general_memory",
+          title: "Strong feedback status style",
+          text_summary: "AIONIS_STRONG_FEEDBACK_MARKER Prefer release-note format for status updates.",
+          confidence: 0.82,
+        },
+      },
+    });
+    assert.equal(observe.statusCode, 200, observe.body);
+    const nodeId = observe.json().memory_write.nodes[0].id;
+
+    const feedback = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        operation: "activate",
+        target: "memory",
+        memory_ids: [nodeId],
+        run_id: "run:guide-feedback-strong-negative-attribution",
+        outcome: "negative",
+        used_surface: "use_now",
+        verifier_status: "failed",
+        tool_status: "unknown",
+        runtime_signal_refs: ["verifier:status-format-failed"],
+        activate: true,
+        reason: "The Agent used this memory and the verifier failed on the resulting output.",
+      },
+    });
+    assert.equal(feedback.statusCode, 200, feedback.body);
+
+    const { rows } = await liteWriteStore.findNodes({
+      scope: "default",
+      id: nodeId,
+      consumerAgentId: "local-user",
+      consumerTeamId: null,
+      limit: 1,
+      offset: 0,
+    });
+    assert.equal(rows[0]?.slots.feedback_negative, 1);
+    assert.equal(rows[0]?.slots.weak_counter_signal_count, 0);
+    assert.equal(rows[0]?.slots.strong_counter_signal_count, 1);
+    assert.equal(rows[0]?.slots.last_feedback_verifier_status, "failed");
+
+    const guide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "AIONIS_STRONG_FEEDBACK_MARKER status update style",
+        consumer_agent_id: "local-user",
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(guide.statusCode, 200, guide.body);
+    const guideBody = guide.json();
+    const memory = guideBody.memory_packet.relevant_memories.find((entry: Record<string, unknown>) =>
+      entry.memory_id === nodeId,
+    );
+    assert.ok(memory);
+    assert.equal(memory.lifecycle_state, "contested");
+    assert.equal(memory.authority, "candidate");
+    assert.equal(
+      guideBody.agent_context.use_now.some((entry: string) =>
+        entry.includes("AIONIS_STRONG_FEEDBACK_MARKER")
+      ),
+      false,
+    );
+    assert.ok(
+      guideBody.agent_context.inspect_before_use.some((entry: string) =>
+        entry.includes("Strong feedback status style") || entry.includes(nodeId)
+      ),
+    );
   } finally {
     await app.close();
   }
@@ -2179,6 +2336,26 @@ test("product forget activate requires run outcome attribution", async () => {
     assert.equal(missing.statusCode, 400);
     assert.ok(missing.body.includes("activate requires run_id"));
     assert.ok(missing.body.includes("activate requires outcome"));
+    assert.ok(missing.body.includes("activate requires used_surface"));
+
+    const ambiguous = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        operation: "activate",
+        target: "memory",
+        memory_ids: [randomUUID()],
+        run_id: "run:ambiguous-feedback",
+        outcome: "negative",
+        used_surface: "inspect_before_use",
+        reason: "This activation feedback is not directly attributable to used history.",
+      },
+    });
+
+    assert.equal(ambiguous.statusCode, 400);
+    assert.ok(ambiguous.body.includes("non-neutral activation feedback requires use_now or explicit_host_assertion"));
   } finally {
     await app.close();
   }

@@ -173,6 +173,12 @@ function numberValue(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function nonNegativeIntegerValue(value: unknown): number {
+  const parsed = numberValue(value);
+  if (parsed === null) return 0;
+  return Math.max(0, Math.trunc(parsed));
+}
+
 function contractTrustValue(value: unknown): ContractTrust | null {
   return value === "authoritative" || value === "advisory" || value === "observational" ? value : null;
 }
@@ -232,6 +238,8 @@ function memoryLifecycleState(args: {
   const semanticForgetting = resolveNodeSemanticForgettingSurface(args.slots);
   const archiveRelocation = resolveNodeArchiveRelocationSurface(args.slots);
   const lifecycle = stringValue(args.contextItem?.lifecycle_state) ?? stringValue(args.slots?.lifecycle_state);
+  const weakCounterSignals = nonNegativeIntegerValue(args.slots?.weak_counter_signal_count);
+  const strongCounterSignals = nonNegativeIntegerValue(args.slots?.strong_counter_signal_count);
   const tier = args.tier ?? "";
   if (archiveRelocation.relocation_state === "cold_archive" || semanticForgetting.action === "archive" || tier === "archive") {
     return "archived";
@@ -239,6 +247,7 @@ function memoryLifecycleState(args: {
   if (semanticForgetting.action === "demote") return "demoted";
   if (semanticForgetting.action === "review") return "contested";
   if (lifecycle === "suppressed" || lifecycle === "disabled") return "suppressed";
+  if (strongCounterSignals > 0 || weakCounterSignals >= 2) return "contested";
   if (lifecycle === "contested") return "contested";
   if (lifecycle === "candidate" || args.confidence < 0.6) return "candidate";
   if (tier === "cold" && resolveNodeRehydrationDefaultMode(args.slots)) return "rehydration_candidate";

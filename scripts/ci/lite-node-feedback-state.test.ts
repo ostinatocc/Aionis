@@ -19,13 +19,19 @@ test("mergeNodeFeedbackSlots increments counters and records metadata", () => {
     input_sha256: "abc123",
     source: "nodes_activate",
     timestamp: "2026-04-18T00:00:00.000Z",
+    used_surface: "use_now",
+    verifier_status: "not_run",
+    tool_status: "unknown",
   });
 
   assert.equal(merged.feedback_positive, 1);
   assert.equal(merged.feedback_negative, 1);
+  assert.equal(merged.weak_counter_signal_count, 1);
+  assert.equal(merged.strong_counter_signal_count, 0);
   assert.equal(merged.last_feedback_outcome, "negative");
   assert.equal(merged.last_feedback_run_id, "run-123");
   assert.equal(merged.last_feedback_source, "nodes_activate");
+  assert.equal(merged.last_feedback_used_surface, "use_now");
 });
 
 test("computeFeedbackUpdatedNodeState recomputes node priority from merged slots", () => {
@@ -64,4 +70,34 @@ test("computeFeedbackUpdatedNodeState recomputes node priority from merged slots
   assert.ok(next.confidence > 0);
   assert.equal(shouldActivateNodeOnFeedback("positive"), true);
   assert.equal(shouldActivateNodeOnFeedback("neutral"), false);
+});
+
+test("computeFeedbackUpdatedNodeState keeps base confidence for a single weak negative attribution", () => {
+  const next = computeFeedbackUpdatedNodeState({
+    node: {
+      id: "node-2",
+      type: "concept",
+      tier: "warm",
+      title: "Status style",
+      text_summary: "Prefer concise status updates",
+      salience: 0.77,
+      importance: 0.78,
+      confidence: 0.82,
+      slots: {},
+    },
+    feedback: {
+      outcome: "negative",
+      run_id: "run-weak-negative",
+      input_sha256: "sha-weak-negative",
+      source: "nodes_activate",
+      timestamp: "2026-04-18T00:00:00.000Z",
+      used_surface: "use_now",
+      verifier_status: "not_run",
+      tool_status: "unknown",
+    },
+  });
+
+  assert.equal(next.slots.weak_counter_signal_count, 1);
+  assert.equal(next.slots.strong_counter_signal_count, 0);
+  assert.equal(next.confidence, 0.82);
 });

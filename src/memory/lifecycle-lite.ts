@@ -348,6 +348,10 @@ export async function activateMemoryNodesLite(
         input_sha256: inputSha,
         source: "nodes_activate",
         timestamp: startedAt,
+        used_surface: parsed.used_surface ?? null,
+        verifier_status: parsed.verifier_status ?? null,
+        tool_status: parsed.tool_status ?? null,
+        runtime_signal_refs: parsed.runtime_signal_refs ?? null,
       },
     });
     const nextSlots: Record<string, unknown> = {
