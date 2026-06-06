@@ -498,6 +498,30 @@ type ProductGuideExposureLedger = {
   authority: AionisAgentContext["authority"];
 };
 
+type ProductUnusedExposureObservation = {
+  contract_version: "aionis_unused_exposure_observation_v1";
+  mode: "read_only_measure";
+  exposure_threshold: number;
+  guide_trace_count: number;
+  tracked_memory_count: number;
+  repeated_unattributed_memory_ids: string[];
+  repeated_unattributed_without_positive_memory_ids: string[];
+  memory_stats: Array<{
+    memory_id: string;
+    current_unattributed: boolean;
+    exposure_count: number;
+    use_now_exposure_count: number;
+    inspect_before_use_exposure_count: number;
+    do_not_use_exposure_count: number;
+    rehydrate_exposure_count: number;
+    positive_attributed_use_count: number;
+    feedback_positive_count: number;
+    feedback_negative_count: number;
+    repeated_without_positive_attribution: boolean;
+  }>;
+  reason: string;
+};
+
 type ProductGuideExposureResolution =
   | {
     ok: true;
@@ -603,6 +627,165 @@ function parseGuideExposureLedger(value: unknown): ProductGuideExposureLedger | 
     history_used: record.history_used === true,
     recommended_posture: recommendedPosture,
     authority,
+  };
+}
+
+function sameGuideExposureConsumer(left: ProductGuideExposureLedger, right: ProductGuideExposureLedger): boolean {
+  return left.consumer_agent_id === right.consumer_agent_id && left.consumer_team_id === right.consumer_team_id;
+}
+
+function nonNegativeInt(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.trunc(parsed));
+}
+
+function guideExposureSurfaceIds(ledger: ProductGuideExposureLedger, surface: keyof Pick<
+  ProductGuideExposureLedger,
+  "use_now_memory_ids" | "inspect_before_use_memory_ids" | "do_not_use_memory_ids" | "rehydrate_memory_ids"
+>): Set<string> {
+  return new Set(ledger[surface]);
+}
+
+async function findMemoryNodeSlots(args: {
+  app: FastifyInstance;
+  req: FastifyRequest;
+  tenant_id: string;
+  scope: string;
+  memory_id: string;
+  actor: string;
+}): Promise<Record<string, unknown>> {
+  const found = await dispatchProductInternalRoute({
+    app: args.app,
+    req: args.req,
+    path: "/v1/memory/find",
+    payload: {
+      tenant_id: args.tenant_id,
+      scope: args.scope,
+      id: args.memory_id,
+      consumer_agent_id: args.actor,
+      include_slots: true,
+      limit: 1,
+    },
+  });
+  if (!found.ok) {
+    throw new Error(`unused exposure memory lookup failed for ${args.memory_id}`);
+  }
+  const body = objectValue(found.body);
+  const node = Array.isArray(body?.nodes) ? objectValue(body.nodes[0]) : null;
+  return objectValue(node?.slots) ?? {};
+}
+
+async function buildUnusedExposureObservation(args: {
+  app: FastifyInstance;
+  req: FastifyRequest;
+  env: Env;
+  parsed: ProductForgetInput;
+  guideExposure: Extract<ProductGuideExposureResolution, { ok: true }>;
+}): Promise<ProductUnusedExposureObservation> {
+  const ledger = args.guideExposure.ledger;
+  const actor = args.parsed.actor ?? args.env.LITE_LOCAL_ACTOR_ID;
+  const exposureThreshold = 2;
+  const ledgerRows: unknown[] = [];
+  for (let offset = 0; offset < 1000; offset += 200) {
+    const ledgersResult = await dispatchProductInternalRoute({
+      app: args.app,
+      req: args.req,
+      path: "/v1/memory/find",
+      payload: {
+        tenant_id: ledger.tenant_id,
+        scope: ledger.scope,
+        type: "evidence",
+        memory_lane: "shared",
+        consumer_agent_id: actor,
+        include_slots: true,
+        slots_contains: {
+          guide_exposure_v1: {
+            contract_version: "aionis_guide_exposure_v1",
+          },
+        },
+        limit: 200,
+        offset,
+      },
+    });
+    if (!ledgersResult.ok) {
+      throw new Error("unused exposure guide ledger lookup failed");
+    }
+    const body = objectValue(ledgersResult.body);
+    if (Array.isArray(body?.nodes)) ledgerRows.push(...body.nodes);
+    const page = objectValue(body?.page);
+    if (page?.has_more !== true) break;
+  }
+  const ledgers = [
+    ledger,
+    ...ledgerRows
+      .map((row) => parseGuideExposureLedger(objectValue(objectValue(row)?.slots)?.guide_exposure_v1))
+      .filter((entry): entry is ProductGuideExposureLedger => !!entry)
+      .filter((entry) =>
+        entry.guide_trace_id !== ledger.guide_trace_id
+        && entry.tenant_id === ledger.tenant_id
+        && entry.scope === ledger.scope
+        && sameGuideExposureConsumer(entry, ledger)
+      ),
+  ];
+
+  const currentMemoryIds = ledger.memory_ids;
+  const currentUnattributed = new Set(args.guideExposure.unattributedRecalledMemoryIds);
+  const stats = await Promise.all(currentMemoryIds.map(async (memoryId) => {
+    const slots = await findMemoryNodeSlots({
+      app: args.app,
+      req: args.req,
+      tenant_id: ledger.tenant_id,
+      scope: ledger.scope,
+      memory_id: memoryId,
+      actor,
+    });
+    let exposureCount = 0;
+    let useNowExposureCount = 0;
+    let inspectExposureCount = 0;
+    let doNotUseExposureCount = 0;
+    let rehydrateExposureCount = 0;
+    for (const exposure of ledgers) {
+      if (!exposure.memory_ids.includes(memoryId)) continue;
+      exposureCount += 1;
+      if (guideExposureSurfaceIds(exposure, "use_now_memory_ids").has(memoryId)) useNowExposureCount += 1;
+      if (guideExposureSurfaceIds(exposure, "inspect_before_use_memory_ids").has(memoryId)) inspectExposureCount += 1;
+      if (guideExposureSurfaceIds(exposure, "do_not_use_memory_ids").has(memoryId)) doNotUseExposureCount += 1;
+      if (guideExposureSurfaceIds(exposure, "rehydrate_memory_ids").has(memoryId)) rehydrateExposureCount += 1;
+    }
+    const positiveAttributedUseCount = nonNegativeInt(slots.positive_attributed_use_count);
+    const isCurrentUnattributed = currentUnattributed.has(memoryId);
+    return {
+      memory_id: memoryId,
+      current_unattributed: isCurrentUnattributed,
+      exposure_count: exposureCount,
+      use_now_exposure_count: useNowExposureCount,
+      inspect_before_use_exposure_count: inspectExposureCount,
+      do_not_use_exposure_count: doNotUseExposureCount,
+      rehydrate_exposure_count: rehydrateExposureCount,
+      positive_attributed_use_count: positiveAttributedUseCount,
+      feedback_positive_count: nonNegativeInt(slots.feedback_positive),
+      feedback_negative_count: nonNegativeInt(slots.feedback_negative),
+      repeated_without_positive_attribution:
+        isCurrentUnattributed && exposureCount >= exposureThreshold && positiveAttributedUseCount === 0,
+    };
+  }));
+  const repeatedUnattributed = stats
+    .filter((entry) => entry.current_unattributed && entry.exposure_count >= exposureThreshold)
+    .map((entry) => entry.memory_id);
+  const repeatedWithoutPositive = stats
+    .filter((entry) => entry.repeated_without_positive_attribution)
+    .map((entry) => entry.memory_id);
+  return {
+    contract_version: "aionis_unused_exposure_observation_v1",
+    mode: "read_only_measure",
+    exposure_threshold: exposureThreshold,
+    guide_trace_count: ledgers.length,
+    tracked_memory_count: currentMemoryIds.length,
+    repeated_unattributed_memory_ids: repeatedUnattributed,
+    repeated_unattributed_without_positive_memory_ids: repeatedWithoutPositive,
+    memory_stats: stats,
+    reason: "Repeated exposure without host positive attribution is reported as read-only evidence; it does not lower authority or suppress memory.",
   };
 }
 
@@ -885,6 +1068,7 @@ function productForgetEffect(args: {
   route: string;
   resultBody: unknown;
   guideExposure?: ProductGuideExposureResolution | null;
+  unusedExposureObservation?: ProductUnusedExposureObservation | null;
 }) {
   const nodeIds = productForgetNodeIds(args.parsed, args.guideExposure);
   const changedCount = productForgetChangedCount(args.resultBody, args.parsed.operation, args.target);
@@ -913,6 +1097,7 @@ function productForgetEffect(args: {
       unattributed_inspect_before_use_memory_ids: args.guideExposure.unattributedInspectBeforeUseMemoryIds,
       unattributed_do_not_use_memory_ids: args.guideExposure.unattributedDoNotUseMemoryIds,
       unattributed_rehydrate_memory_ids: args.guideExposure.unattributedRehydrateMemoryIds,
+      unused_exposure_observation: args.unusedExposureObservation ?? undefined,
     } : undefined,
     attribution: args.parsed.operation === "activate" ? stripUndefined({
       run_id: args.parsed.run_id,
@@ -1357,6 +1542,9 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       payload: forgetPayload,
     });
     if (!result.ok) return sendInternalFailure(reply, result);
+    const unusedExposureObservation = guideExposure?.ok
+      ? await buildUnusedExposureObservation({ app, req, env, parsed, guideExposure })
+      : null;
 
     return reply.code(200).send({
       contract_version: "aionis_forget_result_v1",
@@ -1370,6 +1558,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
         route,
         resultBody: result.body,
         guideExposure,
+        unusedExposureObservation,
       }),
       result: result.body,
       source_map: {
@@ -1379,6 +1568,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
         ],
         internal_surfaces_used: [
           ...(guideExposure ? ["guide_exposure_ledger"] : []),
+          ...(unusedExposureObservation ? ["unused_exposure_observation"] : []),
           target === "payload" ? "anchor_payload_rehydration" : "memory_lifecycle",
           parsed.operation === "suppress" || parsed.operation === "unsuppress" ? "learning_control" : "controlled_forgetting",
         ],

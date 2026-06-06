@@ -2405,6 +2405,23 @@ test("product guide trace attribution resolves used memories from persisted expo
     assert.ok(ledger.memory_ids.includes(unusedNodeId));
     assert.equal(ledgerRows.rows[0]?.embedding_status, "failed");
 
+    const repeatedGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "AIONIS_GUIDE_TRACE_MARKER customer update style",
+        consumer_agent_id: "local-user",
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(repeatedGuide.statusCode, 200, repeatedGuide.body);
+    const repeatedGuideBody = repeatedGuide.json();
+    assert.notEqual(repeatedGuideBody.guide_trace_id, guideBody.guide_trace_id);
+    assert.ok(repeatedGuideBody.agent_context.memory_ids.includes(unusedNodeId));
+
     const feedback = await app.inject({
       method: "POST",
       url: "/v1/forget",
@@ -2447,6 +2464,20 @@ test("product guide trace attribution resolves used memories from persisted expo
     ];
     assert.ok(unattributedSurfaceIds.includes(unusedNodeId));
     assert.equal(unattributedSurfaceIds.includes(usedNodeId), false);
+    const unusedExposure = feedbackBody.forget_effect.guide_trace.unused_exposure_observation;
+    assert.equal(unusedExposure.contract_version, "aionis_unused_exposure_observation_v1");
+    assert.equal(unusedExposure.mode, "read_only_measure");
+    assert.equal(unusedExposure.exposure_threshold, 2);
+    assert.equal(unusedExposure.guide_trace_count, 2);
+    assert.ok(unusedExposure.repeated_unattributed_memory_ids.includes(unusedNodeId));
+    assert.ok(unusedExposure.repeated_unattributed_without_positive_memory_ids.includes(unusedNodeId));
+    assert.equal(unusedExposure.repeated_unattributed_memory_ids.includes(usedNodeId), false);
+    const unusedExposureStat = unusedExposure.memory_stats.find((entry: Record<string, unknown>) => entry.memory_id === unusedNodeId);
+    assert.ok(unusedExposureStat);
+    assert.equal(unusedExposureStat.current_unattributed, true);
+    assert.equal(unusedExposureStat.exposure_count, 2);
+    assert.equal(unusedExposureStat.positive_attributed_use_count, 0);
+    assert.equal(unusedExposureStat.repeated_without_positive_attribution, true);
 
     const usedAfterFeedback = await liteWriteStore.findNodes({
       scope: "default",
@@ -2512,6 +2543,11 @@ test("product guide trace attribution resolves used memories from persisted expo
       || trace.feedback_attribution.unattributed_inspect_before_use_memory_ids.includes(unusedNodeId)
       || trace.feedback_attribution.unattributed_do_not_use_memory_ids.includes(unusedNodeId)
       || trace.feedback_attribution.unattributed_rehydrate_memory_ids.includes(unusedNodeId));
+    assert.equal(trace.feedback_attribution.unused_exposure_observation.present, true);
+    assert.ok(trace.feedback_attribution.unused_exposure_observation.repeated_unattributed_memory_ids.includes(unusedNodeId));
+    assert.ok(
+      trace.feedback_attribution.unused_exposure_observation.repeated_unattributed_without_positive_memory_ids.includes(unusedNodeId),
+    );
     const usedDecision = trace.memory_decisions.find((entry: Record<string, unknown>) => entry.memory_id === usedNodeId);
     assert.equal(usedDecision.feedback_detail.threshold_state, "weak_below_threshold");
     const unusedDecision = trace.memory_decisions.find((entry: Record<string, unknown>) => entry.memory_id === unusedNodeId);

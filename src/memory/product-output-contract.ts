@@ -478,6 +478,39 @@ const AionisFeedbackThresholdStateSchema = z.enum([
   "strong_signal_threshold_met",
 ]);
 
+const AionisUnusedExposureObservationSchema = z
+  .object({
+    present: z.boolean(),
+    contract_version: z.literal("aionis_unused_exposure_observation_v1").nullable(),
+    mode: z.literal("read_only_measure").nullable(),
+    exposure_threshold: z.number().int().nonnegative(),
+    guide_trace_count: z.number().int().nonnegative(),
+    tracked_memory_count: z.number().int().nonnegative(),
+    repeated_unattributed_memory_ids: z.array(z.string().min(1)).default([]),
+    repeated_unattributed_without_positive_memory_ids: z.array(z.string().min(1)).default([]),
+    memory_stats: z
+      .array(
+        z
+          .object({
+            memory_id: z.string().min(1),
+            current_unattributed: z.boolean(),
+            exposure_count: z.number().int().nonnegative(),
+            use_now_exposure_count: z.number().int().nonnegative(),
+            inspect_before_use_exposure_count: z.number().int().nonnegative(),
+            do_not_use_exposure_count: z.number().int().nonnegative(),
+            rehydrate_exposure_count: z.number().int().nonnegative(),
+            positive_attributed_use_count: z.number().int().nonnegative(),
+            feedback_positive_count: z.number().int().nonnegative(),
+            feedback_negative_count: z.number().int().nonnegative(),
+            repeated_without_positive_attribution: z.boolean(),
+          })
+          .strict(),
+      )
+      .default([]),
+    reason: z.string().min(1),
+  })
+  .strict();
+
 const AionisFeedbackAttributionDetailSchema = z
   .object({
     run_id: z.string().min(1).nullable(),
@@ -672,6 +705,18 @@ export const AionisMemoryDecisionTraceSchema = z
         unattributed_inspect_before_use_memory_ids: z.array(z.string().min(1)).default([]),
         unattributed_do_not_use_memory_ids: z.array(z.string().min(1)).default([]),
         unattributed_rehydrate_memory_ids: z.array(z.string().min(1)).default([]),
+        unused_exposure_observation: AionisUnusedExposureObservationSchema.default({
+          present: false,
+          contract_version: null,
+          mode: null,
+          exposure_threshold: 0,
+          guide_trace_count: 0,
+          tracked_memory_count: 0,
+          repeated_unattributed_memory_ids: [],
+          repeated_unattributed_without_positive_memory_ids: [],
+          memory_stats: [],
+          reason: "No guide exposure observation was supplied for this trace.",
+        }),
         weak_counter_signal_memory_ids: z.array(z.string().min(1)).default([]),
         strong_counter_signal_memory_ids: z.array(z.string().min(1)).default([]),
         threshold_met_memory_ids: z.array(z.string().min(1)).default([]),

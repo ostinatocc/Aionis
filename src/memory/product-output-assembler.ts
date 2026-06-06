@@ -68,6 +68,7 @@ type LearningPosture = AionisLearningPacket["posture"]["recommended_learning_pos
 type LearningAuthority = AionisLearningPacket["posture"]["authority"];
 type FeedbackAttributionDetail = NonNullable<AionisMemoryDecisionTrace["memory_decisions"][number]["feedback_detail"]>;
 type FeedbackAttributionSummary = AionisMemoryDecisionTrace["feedback_attribution"];
+type UnusedExposureObservationSummary = FeedbackAttributionSummary["unused_exposure_observation"];
 
 export type BuildAionisAgentContextArgs = {
   tenant_id: string;
@@ -1624,6 +1625,7 @@ type TraceFeedbackAttributionInput = {
   unattributed_inspect_before_use_memory_ids: string[];
   unattributed_do_not_use_memory_ids: string[];
   unattributed_rehydrate_memory_ids: string[];
+  unused_exposure_observation: UnusedExposureObservationSummary;
   summaries: Map<string, TraceFeedbackActivationSummary>;
 };
 
@@ -1657,6 +1659,59 @@ function feedbackAttributionStrengthValue(value: unknown): FeedbackAttributionDe
     : null;
 }
 
+function emptyUnusedExposureObservation(reason = "No guide exposure observation was supplied for this trace."): UnusedExposureObservationSummary {
+  return {
+    present: false,
+    contract_version: null,
+    mode: null,
+    exposure_threshold: 0,
+    guide_trace_count: 0,
+    tracked_memory_count: 0,
+    repeated_unattributed_memory_ids: [],
+    repeated_unattributed_without_positive_memory_ids: [],
+    memory_stats: [],
+    reason,
+  };
+}
+
+function unusedExposureObservationValue(value: unknown): UnusedExposureObservationSummary {
+  const record = asRecord(value);
+  if (!record || record.contract_version !== "aionis_unused_exposure_observation_v1") {
+    return emptyUnusedExposureObservation();
+  }
+  const memoryStats = Array.isArray(record.memory_stats)
+    ? record.memory_stats
+      .map((entry) => asRecord(entry))
+      .filter((entry): entry is Record<string, unknown> => !!entry)
+      .map((entry) => ({
+        memory_id: stringValue(entry.memory_id) ?? "unknown",
+        current_unattributed: entry.current_unattributed === true,
+        exposure_count: nonNegativeIntegerValue(entry.exposure_count),
+        use_now_exposure_count: nonNegativeIntegerValue(entry.use_now_exposure_count),
+        inspect_before_use_exposure_count: nonNegativeIntegerValue(entry.inspect_before_use_exposure_count),
+        do_not_use_exposure_count: nonNegativeIntegerValue(entry.do_not_use_exposure_count),
+        rehydrate_exposure_count: nonNegativeIntegerValue(entry.rehydrate_exposure_count),
+        positive_attributed_use_count: nonNegativeIntegerValue(entry.positive_attributed_use_count),
+        feedback_positive_count: nonNegativeIntegerValue(entry.feedback_positive_count),
+        feedback_negative_count: nonNegativeIntegerValue(entry.feedback_negative_count),
+        repeated_without_positive_attribution: entry.repeated_without_positive_attribution === true,
+      }))
+      .filter((entry) => entry.memory_id !== "unknown")
+    : [];
+  return {
+    present: true,
+    contract_version: "aionis_unused_exposure_observation_v1",
+    mode: "read_only_measure",
+    exposure_threshold: nonNegativeIntegerValue(record.exposure_threshold),
+    guide_trace_count: nonNegativeIntegerValue(record.guide_trace_count),
+    tracked_memory_count: nonNegativeIntegerValue(record.tracked_memory_count),
+    repeated_unattributed_memory_ids: stringArrayValue(record.repeated_unattributed_memory_ids),
+    repeated_unattributed_without_positive_memory_ids: stringArrayValue(record.repeated_unattributed_without_positive_memory_ids),
+    memory_stats: memoryStats,
+    reason: stringValue(record.reason) ?? "Repeated unused exposure is reported as read-only evidence.",
+  };
+}
+
 function traceFeedbackAttributionInput(forgetResult: unknown): TraceFeedbackAttributionInput {
   const root = asRecord(forgetResult);
   const effect = asRecord(root?.forget_effect);
@@ -1683,6 +1738,7 @@ function traceFeedbackAttributionInput(forgetResult: unknown): TraceFeedbackAttr
       unattributed_inspect_before_use_memory_ids: [],
       unattributed_do_not_use_memory_ids: [],
       unattributed_rehydrate_memory_ids: [],
+      unused_exposure_observation: emptyUnusedExposureObservation(),
       summaries: new Map(),
     };
   }
@@ -1744,6 +1800,7 @@ function traceFeedbackAttributionInput(forgetResult: unknown): TraceFeedbackAttr
     unattributed_inspect_before_use_memory_ids: stringArrayValue(guideTrace?.unattributed_inspect_before_use_memory_ids),
     unattributed_do_not_use_memory_ids: stringArrayValue(guideTrace?.unattributed_do_not_use_memory_ids),
     unattributed_rehydrate_memory_ids: stringArrayValue(guideTrace?.unattributed_rehydrate_memory_ids),
+    unused_exposure_observation: unusedExposureObservationValue(guideTrace?.unused_exposure_observation),
     summaries,
   };
 }
@@ -1832,6 +1889,7 @@ function buildTraceFeedbackAttribution(args: {
       unattributed_inspect_before_use_memory_ids: [],
       unattributed_do_not_use_memory_ids: [],
       unattributed_rehydrate_memory_ids: [],
+      unused_exposure_observation: emptyUnusedExposureObservation(),
       weak_counter_signal_memory_ids: [],
       strong_counter_signal_memory_ids: [],
       threshold_met_memory_ids: [],
@@ -1871,6 +1929,7 @@ function buildTraceFeedbackAttribution(args: {
     unattributed_inspect_before_use_memory_ids: args.feedbackInput.unattributed_inspect_before_use_memory_ids,
     unattributed_do_not_use_memory_ids: args.feedbackInput.unattributed_do_not_use_memory_ids,
     unattributed_rehydrate_memory_ids: args.feedbackInput.unattributed_rehydrate_memory_ids,
+    unused_exposure_observation: args.feedbackInput.unused_exposure_observation,
     weak_counter_signal_memory_ids: details
       .filter((entry) => entry.detail.attribution_strength === "weak_counter_signal")
       .map((entry) => entry.memory_id),
