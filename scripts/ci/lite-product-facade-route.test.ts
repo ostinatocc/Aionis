@@ -2500,6 +2500,116 @@ test("product guide trace attribution resolves used memories from persisted expo
   }
 });
 
+test("product guide trace attribution rejects memories not exposed by that guide", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("guide-trace-rejects-unexposed-feedback");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const exposedObserve = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        input_text: "AIONIS_GUIDE_TRACE_REJECT_MARKER Use brief support summaries.",
+        memory: {
+          client_id: "memory:guide-trace-exposed-before-reject",
+          type: "concept",
+          tier: "warm",
+          memory_kind: "general_memory",
+          title: "Guide trace exposed memory",
+          text_summary: "AIONIS_GUIDE_TRACE_REJECT_MARKER Use brief support summaries.",
+          confidence: 0.84,
+        },
+      },
+    });
+    assert.equal(exposedObserve.statusCode, 200, exposedObserve.body);
+
+    const guide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "AIONIS_GUIDE_TRACE_REJECT_MARKER support summary style",
+        consumer_agent_id: "local-user",
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(guide.statusCode, 200, guide.body);
+    const guideBody = guide.json();
+    assert.equal(typeof guideBody.guide_trace_id, "string");
+
+    const lateObserve = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        input_text: "AIONIS_GUIDE_TRACE_REJECT_MARKER This memory was written after the guide exposure.",
+        memory: {
+          client_id: "memory:guide-trace-unexposed-feedback-target",
+          type: "concept",
+          tier: "warm",
+          memory_kind: "general_memory",
+          title: "Guide trace unexposed memory",
+          text_summary: "AIONIS_GUIDE_TRACE_REJECT_MARKER This memory was written after the guide exposure.",
+          confidence: 0.9,
+        },
+      },
+    });
+    assert.equal(lateObserve.statusCode, 200, lateObserve.body);
+    const lateNodeId = lateObserve.json().memory_write.nodes[0].id;
+    assert.equal(guideBody.agent_context.memory_ids.includes(lateNodeId), false);
+
+    const rejectedFeedback = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        operation: "activate",
+        target: "memory",
+        guide_trace_id: guideBody.guide_trace_id,
+        used_memory_ids: [lateNodeId],
+        run_id: "run:guide-trace-rejects-unexposed-feedback",
+        outcome: "negative",
+        used_surface: "use_now",
+        verifier_status: "failed",
+        tool_status: "unknown",
+        activate: true,
+        reason: "This feedback tries to blame a memory that was not exposed by the referenced guide.",
+      },
+    });
+    assert.equal(rejectedFeedback.statusCode, 400, rejectedFeedback.body);
+    const rejectedBody = rejectedFeedback.json();
+    assert.equal(rejectedBody.error, "guide_trace_used_memory_not_exposed");
+    assert.equal(rejectedBody.guide_trace_id, guideBody.guide_trace_id);
+    assert.deepEqual(rejectedBody.not_exposed_memory_ids, [lateNodeId]);
+
+    const lateAfterRejectedFeedback = await liteWriteStore.findNodes({
+      scope: "default",
+      id: lateNodeId,
+      consumerAgentId: "local-user",
+      consumerTeamId: null,
+      limit: 1,
+      offset: 0,
+    });
+    assert.equal(lateAfterRejectedFeedback.rows[0]?.slots.feedback_negative, undefined);
+    assert.equal(lateAfterRejectedFeedback.rows[0]?.slots.strong_counter_signal_count, undefined);
+  } finally {
+    await app.close();
+  }
+});
+
 test("product guide feedback loop downgrades after aligned verifier failure attribution", async () => {
   const app = Fastify();
   const env = liteEnv();
