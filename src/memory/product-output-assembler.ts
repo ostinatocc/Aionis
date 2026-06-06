@@ -1686,6 +1686,8 @@ function emptySparseFeedbackSignalSummary(
     positive_attributed_memory_ids: [],
     weak_counter_signal_memory_ids: [],
     strong_counter_signal_memory_ids: [],
+    relation_counter_signal_memory_ids: [],
+    contradiction_warning_memory_ids: [],
     repeated_unattributed_memory_ids: [],
     repeated_unattributed_without_positive_memory_ids: [],
     read_only_signal_memory_ids: [],
@@ -1736,31 +1738,37 @@ function buildSparseFeedbackSignalSummary(args: {
   positiveAttributedMemoryIds: string[];
   weakCounterSignalMemoryIds: string[];
   strongCounterSignalMemoryIds: string[];
+  relationCounterSignalMemoryIds: string[];
+  contradictionWarningMemoryIds: string[];
   unusedExposureObservation: UnusedExposureObservationSummary;
 }): SparseFeedbackSignalSummary {
-  if (!args.present && !args.unusedExposureObservation.present) {
-    return emptySparseFeedbackSignalSummary();
-  }
   const repeatedUnattributed = args.unusedExposureObservation.repeated_unattributed_memory_ids;
   const repeatedWithoutPositive = args.unusedExposureObservation.repeated_unattributed_without_positive_memory_ids;
   const readOnlySignalMemoryIds = compactStrings([
     ...args.positiveAttributedMemoryIds,
     ...args.weakCounterSignalMemoryIds,
     ...args.strongCounterSignalMemoryIds,
+    ...args.relationCounterSignalMemoryIds,
+    ...args.contradictionWarningMemoryIds,
     ...repeatedUnattributed,
     ...repeatedWithoutPositive,
   ]);
+  if (readOnlySignalMemoryIds.length === 0) {
+    return emptySparseFeedbackSignalSummary();
+  }
   return {
-    present: readOnlySignalMemoryIds.length > 0,
+    present: true,
     mode: "read_only_measure",
     authority_mutation: false,
     positive_attributed_memory_ids: args.positiveAttributedMemoryIds,
     weak_counter_signal_memory_ids: args.weakCounterSignalMemoryIds,
     strong_counter_signal_memory_ids: args.strongCounterSignalMemoryIds,
+    relation_counter_signal_memory_ids: args.relationCounterSignalMemoryIds,
+    contradiction_warning_memory_ids: args.contradictionWarningMemoryIds,
     repeated_unattributed_memory_ids: repeatedUnattributed,
     repeated_unattributed_without_positive_memory_ids: repeatedWithoutPositive,
     read_only_signal_memory_ids: readOnlySignalMemoryIds,
-    reason: "Sparse feedback signals are summarized for measure/debug/audit only; this summary does not lower authority or suppress memory.",
+    reason: "Sparse feedback, repeated exposure, and relation-derived counter signals are summarized for measure/debug/audit only; this summary does not lower authority or suppress memory.",
   };
 }
 
@@ -1921,7 +1929,22 @@ function buildTraceFeedbackAttribution(args: {
   memoryDecisions: AionisMemoryDecisionTrace["memory_decisions"];
   agentContext: AionisAgentContext | null;
 }): FeedbackAttributionSummary {
+  const relationCounterSignalMemoryIds = args.memoryDecisions
+    .filter((entry) => !!entry.downgraded_detail?.relation)
+    .map((entry) => entry.memory_id);
+  const contradictionWarningMemoryIds = args.memoryDecisions
+    .filter((entry) => entry.reason_codes.includes("contradiction_warning"))
+    .map((entry) => entry.memory_id);
   if (!args.feedbackInput.present) {
+    const sparseFeedbackSignalSummary = buildSparseFeedbackSignalSummary({
+      present: false,
+      positiveAttributedMemoryIds: [],
+      weakCounterSignalMemoryIds: [],
+      strongCounterSignalMemoryIds: [],
+      relationCounterSignalMemoryIds,
+      contradictionWarningMemoryIds,
+      unusedExposureObservation: emptyUnusedExposureObservation(),
+    });
     return {
       present: false,
       guide_trace_id: null,
@@ -1942,7 +1965,7 @@ function buildTraceFeedbackAttribution(args: {
       unattributed_do_not_use_memory_ids: [],
       unattributed_rehydrate_memory_ids: [],
       unused_exposure_observation: emptyUnusedExposureObservation(),
-      sparse_feedback_signal_summary: emptySparseFeedbackSignalSummary(),
+      sparse_feedback_signal_summary: sparseFeedbackSignalSummary,
       weak_counter_signal_memory_ids: [],
       strong_counter_signal_memory_ids: [],
       threshold_met_memory_ids: [],
@@ -1975,6 +1998,8 @@ function buildTraceFeedbackAttribution(args: {
     positiveAttributedMemoryIds,
     weakCounterSignalMemoryIds,
     strongCounterSignalMemoryIds,
+    relationCounterSignalMemoryIds,
+    contradictionWarningMemoryIds,
     unusedExposureObservation: args.feedbackInput.unused_exposure_observation,
   });
   return {
@@ -2305,6 +2330,16 @@ function buildAuditFeedbackSignalReview(
       trace,
       memoryIds: summary.strong_counter_signal_memory_ids,
       reason: "Host outcome produced verifier/tool/runtime-aligned counter-signal evidence.",
+    }),
+    relation_counter_signal_memories: auditFeedbackSignalMemories({
+      trace,
+      memoryIds: summary.relation_counter_signal_memory_ids,
+      reason: "Accepted lifecycle relation evidence points to newer related memory that supersedes, contradicts, or invalidates this memory.",
+    }),
+    contradiction_warning_memories: auditFeedbackSignalMemories({
+      trace,
+      memoryIds: summary.contradiction_warning_memory_ids,
+      reason: "Memory carried contradiction or contested-lifecycle warning evidence and should remain inspect-first.",
     }),
     repeated_unattributed_memories: auditFeedbackSignalMemories({
       trace,
@@ -2894,6 +2929,8 @@ function buildEffectFeedbackSignalSummary(
       positive_attributed_memory_ids: [],
       weak_counter_signal_memory_ids: [],
       strong_counter_signal_memory_ids: [],
+      relation_counter_signal_memory_ids: [],
+      contradiction_warning_memory_ids: [],
       repeated_unattributed_memory_ids: [],
       repeated_unattributed_without_positive_memory_ids: [],
       read_only_signal_memory_ids: [],
@@ -2907,6 +2944,8 @@ function buildEffectFeedbackSignalSummary(
     positive_attributed_memory_ids: feedbackReviewMemoryIds(review.positive_attributed_memories),
     weak_counter_signal_memory_ids: feedbackReviewMemoryIds(review.weak_counter_signal_memories),
     strong_counter_signal_memory_ids: feedbackReviewMemoryIds(review.strong_counter_signal_memories),
+    relation_counter_signal_memory_ids: feedbackReviewMemoryIds(review.relation_counter_signal_memories),
+    contradiction_warning_memory_ids: feedbackReviewMemoryIds(review.contradiction_warning_memories),
     repeated_unattributed_memory_ids: feedbackReviewMemoryIds(review.repeated_unattributed_memories),
     repeated_unattributed_without_positive_memory_ids: feedbackReviewMemoryIds(review.repeated_unattributed_without_positive_memories),
     read_only_signal_memory_ids: review.read_only_signal_memory_ids,

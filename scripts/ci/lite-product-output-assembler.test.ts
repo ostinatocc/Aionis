@@ -792,6 +792,10 @@ test("product memory decision trace explains lifecycle and agent-context surface
   assert.ok(oldDecision?.reason_codes.includes("lifecycle_contested"));
   assert.ok(oldDecision?.reason_codes.includes("lifecycle_relation_evidence"));
   assert.equal(agentContext.prompt_text.includes("legacy/payments/old-checkout.ts"), false);
+  assert.equal(trace.feedback_attribution.sparse_feedback_signal_summary.present, true);
+  assert.deepEqual(trace.feedback_attribution.sparse_feedback_signal_summary.relation_counter_signal_memory_ids, ["mem-old-route"]);
+  assert.deepEqual(trace.feedback_attribution.sparse_feedback_signal_summary.contradiction_warning_memory_ids, ["mem-old-route"]);
+  assert.ok(trace.feedback_attribution.sparse_feedback_signal_summary.read_only_signal_memory_ids.includes("mem-old-route"));
 
   const audit = buildAionisMemoryDecisionAuditReport({ trace });
   assert.equal(audit.contract_version, "aionis_memory_decision_audit_report_v1");
@@ -802,6 +806,8 @@ test("product memory decision trace explains lifecycle and agent-context surface
   assert.equal(audit.decision_reviews.downgraded_memories[0]?.by_memory_id, "mem-current-route");
   assert.equal(audit.decision_reviews.downgraded_memories[0]?.lifecycle_relation, "contradicts");
   assert.equal(audit.decision_reviews.downgraded_memories[0]?.gate.accepted, true);
+  assert.deepEqual(audit.feedback_signal_review.relation_counter_signal_memories.map((entry) => entry.memory_id), ["mem-old-route"]);
+  assert.deepEqual(audit.feedback_signal_review.contradiction_warning_memories.map((entry) => entry.memory_id), ["mem-old-route"]);
   assert.equal(audit.claims.some((claim) => claim.claim === "agent_prompt_excluded" && claim.status === "pass"), true);
 });
 
@@ -1639,6 +1645,20 @@ test("product effect assembler projects audit feedback signals into product summ
         },
       ],
       strong_counter_signal_memories: [],
+      relation_counter_signal_memories: [
+        {
+          memory_id: "mem-relation",
+          title: "Relation counter signal",
+          reason: "Newer relation evidence contradicted this memory.",
+        },
+      ],
+      contradiction_warning_memories: [
+        {
+          memory_id: "mem-contradiction",
+          title: "Contradiction warning",
+          reason: "Memory carried contradiction warning evidence.",
+        },
+      ],
       repeated_unattributed_memories: [
         {
           memory_id: "mem-unused",
@@ -1651,7 +1671,7 @@ test("product effect assembler projects audit feedback signals into product summ
         title: "Repeated unused memory",
         reason: "Memory was repeatedly shown without positive attributed use.",
       })),
-      read_only_signal_memory_ids: ["mem-positive", "mem-weak", "mem-unused"],
+      read_only_signal_memory_ids: ["mem-positive", "mem-weak", "mem-relation", "mem-contradiction", "mem-unused"],
       reason: "Sparse feedback signals are summarized for measure/debug/audit only.",
     },
   });
@@ -1661,9 +1681,11 @@ test("product effect assembler projects audit feedback signals into product summ
   assert.equal(productReport.feedback_signal_summary.authority_mutation, false);
   assert.deepEqual(productReport.feedback_signal_summary.positive_attributed_memory_ids, ["mem-positive"]);
   assert.deepEqual(productReport.feedback_signal_summary.weak_counter_signal_memory_ids, ["mem-weak"]);
+  assert.deepEqual(productReport.feedback_signal_summary.relation_counter_signal_memory_ids, ["mem-relation"]);
+  assert.deepEqual(productReport.feedback_signal_summary.contradiction_warning_memory_ids, ["mem-contradiction"]);
   assert.deepEqual(productReport.feedback_signal_summary.repeated_unattributed_memory_ids, ["mem-unused"]);
   assert.deepEqual(productReport.feedback_signal_summary.repeated_unattributed_without_positive_memory_ids, ["mem-unused"]);
-  assert.deepEqual(productReport.feedback_signal_summary.read_only_signal_memory_ids, ["mem-positive", "mem-weak", "mem-unused"]);
+  assert.deepEqual(productReport.feedback_signal_summary.read_only_signal_memory_ids, ["mem-positive", "mem-weak", "mem-relation", "mem-contradiction", "mem-unused"]);
 });
 
 test("product effect assembler refuses to overclaim single-run evidence", () => {

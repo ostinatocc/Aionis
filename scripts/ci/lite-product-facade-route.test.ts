@@ -239,6 +239,14 @@ function assertAuditReportMatchesTrace(auditRaw: unknown, traceRaw: unknown) {
     arrayValue(sparseSummary.strong_counter_signal_memory_ids, "sparse_feedback_signal_summary.strong_counter_signal_memory_ids"),
   );
   assert.deepEqual(
+    arrayValue(feedbackReview.relation_counter_signal_memories, "feedback_signal_review.relation_counter_signal_memories").map((entry) => entry.memory_id),
+    arrayValue(sparseSummary.relation_counter_signal_memory_ids, "sparse_feedback_signal_summary.relation_counter_signal_memory_ids"),
+  );
+  assert.deepEqual(
+    arrayValue(feedbackReview.contradiction_warning_memories, "feedback_signal_review.contradiction_warning_memories").map((entry) => entry.memory_id),
+    arrayValue(sparseSummary.contradiction_warning_memory_ids, "sparse_feedback_signal_summary.contradiction_warning_memory_ids"),
+  );
+  assert.deepEqual(
     arrayValue(feedbackReview.repeated_unattributed_memories, "feedback_signal_review.repeated_unattributed_memories").map((entry) => entry.memory_id),
     arrayValue(sparseSummary.repeated_unattributed_memory_ids, "sparse_feedback_signal_summary.repeated_unattributed_memory_ids"),
   );
