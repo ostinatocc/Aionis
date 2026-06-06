@@ -5,6 +5,9 @@ Status: product usage boundary for the current focused Runtime
 This document defines who should consume each product output. It does not add a
 new Runtime mechanism.
 
+For a runnable local product flow, see
+[AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md](AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md).
+
 ## Rule
 
 Agents consume `agent_context`.
@@ -110,4 +113,3 @@ The focused Runtime verifies this boundary with:
 3. route-level tests proving debug/audit outputs match the actual guide output
 4. prompt-exclusion tests proving audit/debug fields do not enter
    `agent_context.prompt_text`
-
