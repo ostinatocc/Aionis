@@ -544,6 +544,14 @@ const AionisFeedbackAttributionDetailSchema = z
   })
   .strict();
 
+const AionisAuditFeedbackSignalMemorySchema = z
+  .object({
+    memory_id: z.string().min(1),
+    title: z.string().min(1).nullable(),
+    reason: z.string().min(1),
+  })
+  .strict();
+
 export const AionisMemoryDecisionTraceSchema = z
   .object({
     contract_version: z.literal("aionis_memory_decision_trace_v1"),
@@ -833,6 +841,20 @@ export const AionisMemoryDecisionAuditReportSchema = z
         unresolved_inspection_count: z.number().int().nonnegative(),
         blocked_or_suppressed_count: z.number().int().nonnegative(),
         reasons: z.array(z.string().min(1)).default([]),
+      })
+      .strict(),
+    feedback_signal_review: z
+      .object({
+        present: z.boolean(),
+        mode: z.literal("read_only_measure").nullable(),
+        authority_mutation: z.literal(false),
+        positive_attributed_memories: z.array(AionisAuditFeedbackSignalMemorySchema).default([]),
+        weak_counter_signal_memories: z.array(AionisAuditFeedbackSignalMemorySchema).default([]),
+        strong_counter_signal_memories: z.array(AionisAuditFeedbackSignalMemorySchema).default([]),
+        repeated_unattributed_memories: z.array(AionisAuditFeedbackSignalMemorySchema).default([]),
+        repeated_unattributed_without_positive_memories: z.array(AionisAuditFeedbackSignalMemorySchema).default([]),
+        read_only_signal_memory_ids: z.array(z.string().min(1)).default([]),
+        reason: z.string().min(1),
       })
       .strict(),
     decision_reviews: z

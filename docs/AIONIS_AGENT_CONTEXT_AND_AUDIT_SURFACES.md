@@ -64,7 +64,8 @@ Use `memory_decision_audit` when the product needs a compact review:
 2. `downgraded_memories`
 3. `blocked_memories`
 4. `rehydrate_memories`
-5. counters, claims, risks, and source map
+5. `feedback_signal_review`
+6. counters, claims, risks, and source map
 
 The audit report is intentionally operator-facing. It is not a better prompt.
 

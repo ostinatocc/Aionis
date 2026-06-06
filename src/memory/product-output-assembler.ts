@@ -2266,6 +2266,60 @@ function auditClaim(args: {
   return args;
 }
 
+function auditFeedbackSignalMemories(args: {
+  trace: AionisMemoryDecisionTrace;
+  memoryIds: string[];
+  reason: string;
+}): AionisMemoryDecisionAuditReport["feedback_signal_review"]["positive_attributed_memories"] {
+  const decisionById = new Map(args.trace.memory_decisions.map((entry) => [entry.memory_id, entry]));
+  return args.memoryIds.slice(0, 48).map((memoryId) => {
+    const decision = decisionById.get(memoryId);
+    return {
+      memory_id: memoryId,
+      title: decision?.title ?? null,
+      reason: args.reason,
+    };
+  });
+}
+
+function buildAuditFeedbackSignalReview(
+  trace: AionisMemoryDecisionTrace,
+): AionisMemoryDecisionAuditReport["feedback_signal_review"] {
+  const summary = trace.feedback_attribution.sparse_feedback_signal_summary;
+  return {
+    present: summary.present,
+    mode: summary.mode,
+    authority_mutation: false,
+    positive_attributed_memories: auditFeedbackSignalMemories({
+      trace,
+      memoryIds: summary.positive_attributed_memory_ids,
+      reason: "Host outcome positively attributed this memory as used evidence.",
+    }),
+    weak_counter_signal_memories: auditFeedbackSignalMemories({
+      trace,
+      memoryIds: summary.weak_counter_signal_memory_ids,
+      reason: "Host outcome produced a weak counter-signal; this remains read-only unless attribution thresholds are met elsewhere.",
+    }),
+    strong_counter_signal_memories: auditFeedbackSignalMemories({
+      trace,
+      memoryIds: summary.strong_counter_signal_memory_ids,
+      reason: "Host outcome produced verifier/tool/runtime-aligned counter-signal evidence.",
+    }),
+    repeated_unattributed_memories: auditFeedbackSignalMemories({
+      trace,
+      memoryIds: summary.repeated_unattributed_memory_ids,
+      reason: "Memory was repeatedly shown in guide traces without being host-marked as used in the current activation.",
+    }),
+    repeated_unattributed_without_positive_memories: auditFeedbackSignalMemories({
+      trace,
+      memoryIds: summary.repeated_unattributed_without_positive_memory_ids,
+      reason: "Memory was repeatedly shown without any recorded positive attributed use.",
+    }),
+    read_only_signal_memory_ids: summary.read_only_signal_memory_ids,
+    reason: summary.reason,
+  };
+}
+
 function buildAuditDecisionReviews(
   trace: AionisMemoryDecisionTrace,
 ): AionisMemoryDecisionAuditReport["decision_reviews"] {
@@ -2351,6 +2405,7 @@ export function buildAionisMemoryDecisionAuditReport(
     : trace.context_decision.prompt_char_count <= 4096
       ? "pass" as const
       : "fail" as const;
+  const feedbackSignalReview = buildAuditFeedbackSignalReview(trace);
 
   return parseAionisMemoryDecisionAuditReport({
     contract_version: "aionis_memory_decision_audit_report_v1",
@@ -2413,11 +2468,13 @@ export function buildAionisMemoryDecisionAuditReport(
         ...trace.relation_decisions.map((entry) => entry.reason),
       ]).slice(0, 12),
     },
+    feedback_signal_review: feedbackSignalReview,
     decision_reviews: decisionReviews,
     source_map: {
       routes_used: args.source_map?.routes_used ?? trace.source_map.routes_used,
       internal_surfaces_used: args.source_map?.internal_surfaces_used ?? compactStrings([
         ...trace.source_map.internal_surfaces_used,
+        feedbackSignalReview.present ? "sparse_feedback_signal_summary" : null,
         "memory_decision_audit_report",
       ]),
       omitted_internal_surfaces: args.source_map?.omitted_internal_surfaces ?? [

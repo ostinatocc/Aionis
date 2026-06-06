@@ -203,6 +203,9 @@ function assertAuditReportMatchesTrace(auditRaw: unknown, traceRaw: unknown) {
   const trace = objectValue(traceRaw, "memory_decision_trace");
   const decisions = arrayValue(trace.memory_decisions, "trace.memory_decisions");
   const reviews = objectValue(audit.decision_reviews, "audit.decision_reviews");
+  const feedbackReview = objectValue(audit.feedback_signal_review, "audit.feedback_signal_review");
+  const feedbackAttribution = objectValue(trace.feedback_attribution, "trace.feedback_attribution");
+  const sparseSummary = objectValue(feedbackAttribution.sparse_feedback_signal_summary, "trace.feedback_attribution.sparse_feedback_signal_summary");
   const used = decisions.filter((entry) => entry.decision_kind === "used" && entry.used_detail);
   const downgraded = decisions.filter((entry) => entry.decision_kind === "downgraded" && entry.downgraded_detail);
   const blocked = decisions.filter((entry) => entry.decision_kind === "blocked" && entry.blocked_detail);
@@ -220,6 +223,33 @@ function assertAuditReportMatchesTrace(auditRaw: unknown, traceRaw: unknown) {
   assert.deepEqual(arrayValue(reviews.downgraded_memories, "reviews.downgraded_memories").map((entry) => entry.memory_id), downgraded.map((entry) => entry.memory_id));
   assert.deepEqual(arrayValue(reviews.blocked_memories, "reviews.blocked_memories").map((entry) => entry.memory_id), blocked.map((entry) => entry.memory_id));
   assert.deepEqual(arrayValue(reviews.rehydrate_memories, "reviews.rehydrate_memories").map((entry) => entry.memory_id), rehydrate.map((entry) => entry.memory_id));
+  assert.equal(feedbackReview.present, sparseSummary.present);
+  assert.equal(feedbackReview.mode, sparseSummary.mode);
+  assert.equal(feedbackReview.authority_mutation, false);
+  assert.deepEqual(
+    arrayValue(feedbackReview.positive_attributed_memories, "feedback_signal_review.positive_attributed_memories").map((entry) => entry.memory_id),
+    arrayValue(sparseSummary.positive_attributed_memory_ids, "sparse_feedback_signal_summary.positive_attributed_memory_ids"),
+  );
+  assert.deepEqual(
+    arrayValue(feedbackReview.weak_counter_signal_memories, "feedback_signal_review.weak_counter_signal_memories").map((entry) => entry.memory_id),
+    arrayValue(sparseSummary.weak_counter_signal_memory_ids, "sparse_feedback_signal_summary.weak_counter_signal_memory_ids"),
+  );
+  assert.deepEqual(
+    arrayValue(feedbackReview.strong_counter_signal_memories, "feedback_signal_review.strong_counter_signal_memories").map((entry) => entry.memory_id),
+    arrayValue(sparseSummary.strong_counter_signal_memory_ids, "sparse_feedback_signal_summary.strong_counter_signal_memory_ids"),
+  );
+  assert.deepEqual(
+    arrayValue(feedbackReview.repeated_unattributed_memories, "feedback_signal_review.repeated_unattributed_memories").map((entry) => entry.memory_id),
+    arrayValue(sparseSummary.repeated_unattributed_memory_ids, "sparse_feedback_signal_summary.repeated_unattributed_memory_ids"),
+  );
+  assert.deepEqual(
+    arrayValue(feedbackReview.repeated_unattributed_without_positive_memories, "feedback_signal_review.repeated_unattributed_without_positive_memories").map((entry) => entry.memory_id),
+    arrayValue(sparseSummary.repeated_unattributed_without_positive_memory_ids, "sparse_feedback_signal_summary.repeated_unattributed_without_positive_memory_ids"),
+  );
+  assert.deepEqual(
+    arrayValue(feedbackReview.read_only_signal_memory_ids, "feedback_signal_review.read_only_signal_memory_ids"),
+    arrayValue(sparseSummary.read_only_signal_memory_ids, "sparse_feedback_signal_summary.read_only_signal_memory_ids"),
+  );
 }
 
 function liteEnv() {
@@ -2352,6 +2382,13 @@ test("product guide feedback loop requires repeated weak negative attribution be
     assert.equal(unusedDecision.feedback_detail, null);
     assert.equal(measureBody.memory_decision_audit.counters.feedback_attribution_count, 1);
     assert.equal(measureBody.memory_decision_audit.counters.feedback_threshold_met_count, 1);
+    assert.equal(measureBody.memory_decision_audit.feedback_signal_review.present, true);
+    assert.equal(measureBody.memory_decision_audit.feedback_signal_review.authority_mutation, false);
+    assert.deepEqual(
+      measureBody.memory_decision_audit.feedback_signal_review.weak_counter_signal_memories.map((entry: Record<string, unknown>) => entry.memory_id),
+      [nodeId],
+    );
+    assert.deepEqual(measureBody.memory_decision_audit.feedback_signal_review.read_only_signal_memory_ids, [nodeId]);
     assert.equal(
       measureBody.memory_decision_audit.claims.some((claim: Record<string, unknown>) =>
         claim.claim === "feedback_attribution_visible" && claim.status === "pass"

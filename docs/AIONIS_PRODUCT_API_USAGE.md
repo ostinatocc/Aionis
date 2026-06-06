@@ -276,6 +276,9 @@ it is not a forgetting or downgrade trigger.
 `sparse_feedback_signal_summary` rolls positive attribution, weak/strong
 counter-signals, and repeated unused exposure into one read-only debug summary.
 It sets `authority_mutation: false` to make the boundary explicit.
+`memory_decision_audit.feedback_signal_review` exposes the same buckets in a
+more operator-readable shape, with memory ids, titles, and reasons. It is for
+measure/debug/audit surfaces only and must not be appended to the Agent prompt.
 
 ### Example
 

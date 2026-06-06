@@ -571,6 +571,18 @@ function validMemoryDecisionAuditReport() {
       blocked_or_suppressed_count: 0,
       reasons: ["candidate memory requires inspection"],
     },
+    feedback_signal_review: {
+      present: false,
+      mode: null,
+      authority_mutation: false,
+      positive_attributed_memories: [],
+      weak_counter_signal_memories: [],
+      strong_counter_signal_memories: [],
+      repeated_unattributed_memories: [],
+      repeated_unattributed_without_positive_memories: [],
+      read_only_signal_memory_ids: [],
+      reason: "No activate feedback or unused exposure signal was supplied for this trace.",
+    },
     decision_reviews: {
       used_memories: [
         {
@@ -820,4 +832,7 @@ test("AionisMemoryDecisionAuditReport accepts compact operator audit output", ()
   assert.equal(parsed.counters.feedback_attribution_count, 0);
   assert.equal(parsed.counters.feedback_threshold_met_count, 0);
   assert.equal(parsed.claims.some((claim) => claim.claim === "feedback_attribution_visible"), true);
+  assert.equal(parsed.feedback_signal_review.present, false);
+  assert.equal(parsed.feedback_signal_review.authority_mutation, false);
+  assert.deepEqual(parsed.feedback_signal_review.read_only_signal_memory_ids, []);
 });

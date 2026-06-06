@@ -96,6 +96,32 @@ function assertTraceReviewsMirrorDecisions(
     assert.equal(review.required, decision.rehydrate_detail.required);
     assert.equal(review.payload_status, decision.rehydrate_detail.payload_status);
   }
+
+  const sparseSummary = trace.feedback_attribution.sparse_feedback_signal_summary;
+  assert.equal(audit.feedback_signal_review.present, sparseSummary.present);
+  assert.equal(audit.feedback_signal_review.mode, sparseSummary.mode);
+  assert.equal(audit.feedback_signal_review.authority_mutation, false);
+  assert.deepEqual(
+    audit.feedback_signal_review.positive_attributed_memories.map((entry) => entry.memory_id),
+    sparseSummary.positive_attributed_memory_ids,
+  );
+  assert.deepEqual(
+    audit.feedback_signal_review.weak_counter_signal_memories.map((entry) => entry.memory_id),
+    sparseSummary.weak_counter_signal_memory_ids,
+  );
+  assert.deepEqual(
+    audit.feedback_signal_review.strong_counter_signal_memories.map((entry) => entry.memory_id),
+    sparseSummary.strong_counter_signal_memory_ids,
+  );
+  assert.deepEqual(
+    audit.feedback_signal_review.repeated_unattributed_memories.map((entry) => entry.memory_id),
+    sparseSummary.repeated_unattributed_memory_ids,
+  );
+  assert.deepEqual(
+    audit.feedback_signal_review.repeated_unattributed_without_positive_memories.map((entry) => entry.memory_id),
+    sparseSummary.repeated_unattributed_without_positive_memory_ids,
+  );
+  assert.deepEqual(audit.feedback_signal_review.read_only_signal_memory_ids, sparseSummary.read_only_signal_memory_ids);
 }
 
 function buildTraceFixture(): {
