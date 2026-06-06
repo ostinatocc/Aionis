@@ -1,10 +1,13 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { randomUUID } from "node:crypto";
+import stableStringify from "fast-json-stable-stringify";
 import { z } from "zod";
 import type { Env } from "../config.js";
 import {
   evaluateAionisEffect,
   type AionisEffectObservation,
 } from "../kernel/effect-evaluator.js";
+import { sha256Hex } from "../util/crypto.js";
 import {
   buildAionisAgentContext,
   buildAionisEffectReport,
@@ -137,6 +140,8 @@ const ProductForgetRequest = z.object({
   memory_ids: z.array(z.string().trim().min(1)).max(200).optional(),
   node_ids: z.array(z.string().trim().min(1)).max(200).optional(),
   client_ids: z.array(z.string().trim().min(1)).max(200).optional(),
+  guide_trace_id: z.string().trim().min(1).optional(),
+  used_memory_ids: z.array(z.string().trim().min(1)).max(200).optional(),
   anchor_id: z.string().trim().min(1).optional(),
   anchor_uri: z.string().trim().min(1).optional(),
   target_tier: z.enum(["warm", "hot"]).optional(),
@@ -152,7 +157,11 @@ const ProductForgetRequest = z.object({
   include_linked_decisions: z.boolean().optional(),
   payload: LooseObject.optional(),
 }).strict().superRefine((value, ctx) => {
-  const memoryIdCount = (value.memory_ids?.length ?? 0) + (value.node_ids?.length ?? 0) + (value.client_ids?.length ?? 0);
+  const memoryIdCount =
+    (value.memory_ids?.length ?? 0)
+    + (value.node_ids?.length ?? 0)
+    + (value.client_ids?.length ?? 0)
+    + (value.used_memory_ids?.length ?? 0);
   const payloadAnchorId = typeof value.payload?.anchor_id === "string" && value.payload.anchor_id.trim().length > 0;
   const payloadAnchorUri = typeof value.payload?.anchor_uri === "string" && value.payload.anchor_uri.trim().length > 0;
   const anchorPresent = !!value.anchor_id || !!value.anchor_uri || payloadAnchorId || payloadAnchorUri;
@@ -167,7 +176,21 @@ const ProductForgetRequest = z.object({
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["memory_ids"],
-      message: "activate requires memory_ids, node_ids, or client_ids",
+      message: "activate requires memory_ids, node_ids, client_ids, or guide_trace_id with used_memory_ids",
+    });
+  }
+  if (value.operation === "activate" && value.guide_trace_id && (value.client_ids?.length ?? 0) > 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["client_ids"],
+      message: "guide_trace_id attribution uses memory node ids; client_ids are not accepted in the same activation",
+    });
+  }
+  if (value.operation === "activate" && value.guide_trace_id && (value.used_memory_ids?.length ?? 0) === 0 && (value.memory_ids?.length ?? 0) === 0 && (value.node_ids?.length ?? 0) === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["used_memory_ids"],
+      message: "guide_trace_id activation requires used_memory_ids or memory_ids so feedback is attributed to exposed memory only",
     });
   }
   if (value.operation === "activate" && !value.run_id) {
@@ -454,8 +477,260 @@ function uniqueStrings(values: Array<string | null | undefined>): string[] {
   return out;
 }
 
-function productForgetNodeIds(parsed: ProductForgetInput): string[] {
+type ProductGuideExposureLedger = {
+  contract_version: "aionis_guide_exposure_v1";
+  guide_trace_id: string;
+  tenant_id: string;
+  scope: string;
+  run_id: string | null;
+  consumer_agent_id: string | null;
+  consumer_team_id: string | null;
+  query_sha256: string;
+  context_sha256: string;
+  memory_ids: string[];
+  use_now_memory_ids: string[];
+  inspect_before_use_memory_ids: string[];
+  do_not_use_memory_ids: string[];
+  rehydrate_memory_ids: string[];
+  prompt_char_count: number;
+  history_used: boolean;
+  recommended_posture: AionisAgentContext["recommended_posture"];
+  authority: AionisAgentContext["authority"];
+};
+
+type ProductGuideExposureResolution =
+  | {
+    ok: true;
+    ledger: ProductGuideExposureLedger;
+    usedMemoryIds: string[];
+    unattributedRecalledMemoryIds: string[];
+  }
+  | {
+    ok: false;
+    statusCode: number;
+    body: Record<string, unknown>;
+  };
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function stringArrayField(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return uniqueStrings(value.map((entry) => typeof entry === "string" ? entry : null));
+}
+
+function buildGuideTraceId(): string {
+  return `guide_trace:${randomUUID()}`;
+}
+
+function buildGuideExposureLedger(args: {
+  parsed: z.infer<typeof ProductGuideRequest>;
+  tenant_id: string;
+  scope: string;
+  agentContext: AionisAgentContext;
+  guideTraceId: string;
+}): ProductGuideExposureLedger {
+  return {
+    contract_version: "aionis_guide_exposure_v1",
+    guide_trace_id: args.guideTraceId,
+    tenant_id: args.tenant_id,
+    scope: args.scope,
+    run_id: args.parsed.run_id ?? null,
+    consumer_agent_id: args.parsed.consumer_agent_id ?? null,
+    consumer_team_id: args.parsed.consumer_team_id ?? null,
+    query_sha256: sha256Hex(args.parsed.query_text),
+    context_sha256: sha256Hex(stableStringify(args.parsed.context ?? {})),
+    memory_ids: args.agentContext.memory_ids,
+    use_now_memory_ids: args.agentContext.use_now_memory_ids,
+    inspect_before_use_memory_ids: args.agentContext.inspect_before_use_memory_ids,
+    do_not_use_memory_ids: args.agentContext.do_not_use_memory_ids,
+    rehydrate_memory_ids: args.agentContext.rehydrate_hints.map((hint) => hint.memory_id),
+    prompt_char_count: args.agentContext.prompt_text.length,
+    history_used: args.agentContext.history_used,
+    recommended_posture: args.agentContext.recommended_posture,
+    authority: args.agentContext.authority,
+  };
+}
+
+function parseGuideExposureLedger(value: unknown): ProductGuideExposureLedger | null {
+  const record = objectValue(value);
+  if (!record || record.contract_version !== "aionis_guide_exposure_v1") return null;
+  const guideTraceId = typeof record.guide_trace_id === "string" && record.guide_trace_id.trim()
+    ? record.guide_trace_id.trim()
+    : null;
+  const tenantId = typeof record.tenant_id === "string" && record.tenant_id.trim() ? record.tenant_id.trim() : null;
+  const scope = typeof record.scope === "string" && record.scope.trim() ? record.scope.trim() : null;
+  const querySha = typeof record.query_sha256 === "string" && record.query_sha256.trim() ? record.query_sha256.trim() : null;
+  const contextSha = typeof record.context_sha256 === "string" && record.context_sha256.trim() ? record.context_sha256.trim() : null;
+  const recommendedPosture = record.recommended_posture;
+  const authority = record.authority;
+  if (!guideTraceId || !tenantId || !scope || !querySha || !contextSha) return null;
+  if (
+    recommendedPosture !== "reuse_supported_history"
+    && recommendedPosture !== "use_as_context"
+    && recommendedPosture !== "inspect_before_use"
+    && recommendedPosture !== "rehydrate_before_use"
+    && recommendedPosture !== "ignore_history"
+  ) return null;
+  if (
+    authority !== "trusted"
+    && authority !== "advisory"
+    && authority !== "candidate"
+    && authority !== "blocked"
+    && authority !== "none"
+  ) return null;
+  return {
+    contract_version: "aionis_guide_exposure_v1",
+    guide_trace_id: guideTraceId,
+    tenant_id: tenantId,
+    scope,
+    run_id: typeof record.run_id === "string" && record.run_id.trim() ? record.run_id.trim() : null,
+    consumer_agent_id: typeof record.consumer_agent_id === "string" && record.consumer_agent_id.trim() ? record.consumer_agent_id.trim() : null,
+    consumer_team_id: typeof record.consumer_team_id === "string" && record.consumer_team_id.trim() ? record.consumer_team_id.trim() : null,
+    query_sha256: querySha,
+    context_sha256: contextSha,
+    memory_ids: stringArrayField(record.memory_ids),
+    use_now_memory_ids: stringArrayField(record.use_now_memory_ids),
+    inspect_before_use_memory_ids: stringArrayField(record.inspect_before_use_memory_ids),
+    do_not_use_memory_ids: stringArrayField(record.do_not_use_memory_ids),
+    rehydrate_memory_ids: stringArrayField(record.rehydrate_memory_ids),
+    prompt_char_count: Math.max(0, Math.trunc(Number(record.prompt_char_count) || 0)),
+    history_used: record.history_used === true,
+    recommended_posture: recommendedPosture,
+    authority,
+  };
+}
+
+async function writeGuideExposureLedger(args: {
+  app: FastifyInstance;
+  req: FastifyRequest;
+  parsed: z.infer<typeof ProductGuideRequest>;
+  tenant_id: string;
+  scope: string;
+  env: Env;
+  agentContext: AionisAgentContext;
+  guideTraceId: string;
+}): Promise<InternalDispatchResult> {
+  const ledger = buildGuideExposureLedger({
+    parsed: args.parsed,
+    tenant_id: args.tenant_id,
+    scope: args.scope,
+    agentContext: args.agentContext,
+    guideTraceId: args.guideTraceId,
+  });
+  const ledgerSha = sha256Hex(stableStringify(ledger));
+  return dispatchProductInternalRoute({
+    app: args.app,
+    req: args.req,
+    path: "/v1/memory/write",
+    payload: {
+      tenant_id: args.tenant_id,
+      scope: args.scope,
+      actor: args.parsed.consumer_agent_id ?? args.env.LITE_LOCAL_ACTOR_ID,
+      input_text: `Aionis guide exposure ledger ${args.guideTraceId}`,
+      input_sha256: ledgerSha,
+      auto_embed: false,
+      distill: { enabled: false },
+      nodes: [stripUndefined({
+        client_id: args.guideTraceId,
+        type: "evidence",
+        tier: "archive",
+        memory_lane: "shared",
+        producer_agent_id: "aionis-runtime",
+        owner_agent_id: args.parsed.consumer_agent_id ?? args.env.LITE_LOCAL_ACTOR_ID,
+        owner_team_id: args.parsed.consumer_team_id,
+        title: "Guide exposure ledger",
+        text_summary: `Guide exposure ledger ${args.guideTraceId}`,
+        salience: 0,
+        importance: 0,
+        confidence: 1,
+        slots: {
+          guide_exposure_v1: ledger,
+          not_agent_facing: true,
+        },
+      })],
+      edges: [],
+    },
+  });
+}
+
+async function resolveGuideExposureForActivation(args: {
+  app: FastifyInstance;
+  req: FastifyRequest;
+  parsed: ProductForgetInput;
+  env: Env;
+}): Promise<ProductGuideExposureResolution | null> {
+  if (args.parsed.operation !== "activate" || !args.parsed.guide_trace_id) return null;
+  const tenantId = args.parsed.tenant_id ?? args.env.MEMORY_TENANT_ID;
+  const scope = args.parsed.scope ?? args.env.MEMORY_SCOPE;
+  const actor = args.parsed.actor ?? args.env.LITE_LOCAL_ACTOR_ID;
+  const found = await dispatchProductInternalRoute({
+    app: args.app,
+    req: args.req,
+    path: "/v1/memory/find",
+    payload: {
+      tenant_id: tenantId,
+      scope,
+      client_id: args.parsed.guide_trace_id,
+      consumer_agent_id: actor,
+      include_slots: true,
+      limit: 1,
+    },
+  });
+  if (!found.ok) {
+    return {
+      ok: false,
+      statusCode: found.statusCode,
+      body: objectValue(found.body) ?? { error: "guide_trace_lookup_failed" },
+    };
+  }
+  const body = objectValue(found.body);
+  const node = Array.isArray(body?.nodes) ? objectValue(body.nodes[0]) : null;
+  const slots = objectValue(node?.slots);
+  const ledger = parseGuideExposureLedger(slots?.guide_exposure_v1);
+  if (!ledger) {
+    return {
+      ok: false,
+      statusCode: 400,
+      body: {
+        error: "guide_trace_not_found",
+        message: "guide_trace_id does not resolve to a valid Aionis guide exposure ledger",
+        guide_trace_id: args.parsed.guide_trace_id,
+      },
+    };
+  }
+  const requestedUsedMemoryIds = uniqueStrings([
+    ...(args.parsed.used_memory_ids ?? []),
+    ...(args.parsed.memory_ids ?? []),
+    ...(args.parsed.node_ids ?? []),
+  ]);
+  const exposed = new Set(ledger.memory_ids);
+  const notExposed = requestedUsedMemoryIds.filter((id) => !exposed.has(id));
+  if (notExposed.length > 0) {
+    return {
+      ok: false,
+      statusCode: 400,
+      body: {
+        error: "guide_trace_used_memory_not_exposed",
+        message: "activate feedback can only be attributed to memory ids exposed by the referenced guide_trace_id",
+        guide_trace_id: ledger.guide_trace_id,
+        not_exposed_memory_ids: notExposed,
+      },
+    };
+  }
+  return {
+    ok: true,
+    ledger,
+    usedMemoryIds: requestedUsedMemoryIds,
+    unattributedRecalledMemoryIds: ledger.memory_ids.filter((id) => !requestedUsedMemoryIds.includes(id)),
+  };
+}
+
+function productForgetNodeIds(parsed: ProductForgetInput, guideExposure?: ProductGuideExposureResolution | null): string[] {
+  if (guideExposure?.ok) return guideExposure.usedMemoryIds;
   return uniqueStrings([
+    ...(parsed.used_memory_ids ?? []),
     ...(parsed.node_ids ?? []),
     ...(parsed.memory_ids ?? []),
   ]);
@@ -491,9 +766,13 @@ function productForgetRoute(parsed: ProductForgetInput, target: ProductForgetTar
   return "/v1/memory/archive/rehydrate";
 }
 
-function productForgetPayload(parsed: ProductForgetInput, target: ProductForgetTarget): Record<string, unknown> {
+function productForgetPayload(
+  parsed: ProductForgetInput,
+  target: ProductForgetTarget,
+  guideExposure?: ProductGuideExposureResolution | null,
+): Record<string, unknown> {
   const payload = parsed.payload ?? {};
-  const nodeIds = productForgetNodeIds(parsed);
+  const nodeIds = productForgetNodeIds(parsed, guideExposure);
   const clientIds = uniqueStrings(parsed.client_ids ?? []);
   const scope = stripUndefined({
     tenant_id: parsed.tenant_id,
@@ -595,8 +874,9 @@ function productForgetEffect(args: {
   target: ProductForgetTarget;
   route: string;
   resultBody: unknown;
+  guideExposure?: ProductGuideExposureResolution | null;
 }) {
-  const nodeIds = productForgetNodeIds(args.parsed);
+  const nodeIds = productForgetNodeIds(args.parsed, args.guideExposure);
   const changedCount = productForgetChangedCount(args.resultBody, args.parsed.operation, args.target);
   const result = args.resultBody && typeof args.resultBody === "object" && !Array.isArray(args.resultBody)
     ? args.resultBody as Record<string, unknown>
@@ -611,6 +891,12 @@ function productForgetEffect(args: {
     reversible: args.parsed.operation !== "activate",
     affected_memory_ids: nodeIds,
     affected_client_ids: uniqueStrings(args.parsed.client_ids ?? []),
+    guide_trace: args.parsed.operation === "activate" && args.guideExposure?.ok ? {
+      guide_trace_id: args.guideExposure.ledger.guide_trace_id,
+      exposed_memory_ids: args.guideExposure.ledger.memory_ids,
+      attributed_memory_ids: args.guideExposure.usedMemoryIds,
+      unattributed_recalled_memory_ids: args.guideExposure.unattributedRecalledMemoryIds,
+    } : undefined,
     attribution: args.parsed.operation === "activate" ? stripUndefined({
       run_id: args.parsed.run_id,
       outcome: args.parsed.outcome,
@@ -993,23 +1279,39 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       memory_packet: memoryPacket,
       guide_packet: guidePacket,
     });
+    const tenantId = String(body.tenant_id ?? parsed.tenant_id ?? env.MEMORY_TENANT_ID);
+    const scope = String(body.scope ?? parsed.scope ?? env.MEMORY_SCOPE);
+    const guideTraceId = buildGuideTraceId();
+    const exposureWrite = await writeGuideExposureLedger({
+      app,
+      req,
+      parsed,
+      tenant_id: tenantId,
+      scope,
+      env,
+      agentContext,
+      guideTraceId,
+    });
+    if (!exposureWrite.ok) return sendInternalFailure(reply, exposureWrite);
     const includePackets = parsed.include_packets === true;
 
     return reply.code(200).send({
       contract_version: "aionis_guide_result_v1",
-      tenant_id: body.tenant_id ?? parsed.tenant_id ?? env.MEMORY_TENANT_ID,
-      scope: body.scope ?? parsed.scope ?? env.MEMORY_SCOPE,
+      tenant_id: tenantId,
+      scope,
+      guide_trace_id: guideTraceId,
       agent_context: agentContext,
       ...(includePackets ? {
         memory_packet: memoryPacket,
         guide_packet: guidePacket,
       } : {}),
       source_map: {
-        routes_used: ["/v1/memory/planning/context"],
+        routes_used: ["/v1/memory/planning/context", "/v1/memory/write"],
         internal_surfaces_used: [
           "recall",
           "product_packets",
           "agent_context_compiler",
+          "guide_exposure_ledger",
         ],
         omitted_internal_surfaces: [
           "internal_planning_details",
@@ -1024,9 +1326,13 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
 
   app.post("/v1/forget", async (req: ProductFacadeRequest, reply: FastifyReply) => {
     const parsed = ProductForgetRequest.parse(req.body);
+    const guideExposure = await resolveGuideExposureForActivation({ app, req, parsed, env });
+    if (guideExposure && !guideExposure.ok) {
+      return reply.code(guideExposure.statusCode).send(guideExposure.body);
+    }
     const target = productForgetTarget(parsed);
     const route = productForgetRoute(parsed, target);
-    const forgetPayload = productForgetPayload(parsed, target);
+    const forgetPayload = productForgetPayload(parsed, target, guideExposure);
     const result = await dispatchProductInternalRoute({
       app,
       req,
@@ -1046,11 +1352,16 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
         target,
         route,
         resultBody: result.body,
+        guideExposure,
       }),
       result: result.body,
       source_map: {
-        routes_used: [route],
+        routes_used: [
+          ...(guideExposure ? ["/v1/memory/find"] : []),
+          route,
+        ],
         internal_surfaces_used: [
+          ...(guideExposure ? ["guide_exposure_ledger"] : []),
           target === "payload" ? "anchor_payload_rehydration" : "memory_lifecycle",
           parsed.operation === "suppress" || parsed.operation === "unsuppress" ? "learning_control" : "controlled_forgetting",
         ],

@@ -1608,6 +1608,7 @@ type TraceFeedbackActivationSummary = {
 
 type TraceFeedbackAttributionInput = {
   present: boolean;
+  guide_trace_id: string | null;
   run_id: string | null;
   outcome: FeedbackAttributionDetail["outcome"];
   used_surface: FeedbackAttributionDetail["used_surface"];
@@ -1615,6 +1616,7 @@ type TraceFeedbackAttributionInput = {
   tool_status: FeedbackAttributionDetail["tool_status"];
   runtime_signal_refs: string[];
   affected_memory_ids: string[];
+  unattributed_recalled_memory_ids: string[];
   summaries: Map<string, TraceFeedbackActivationSummary>;
 };
 
@@ -1658,6 +1660,7 @@ function traceFeedbackAttributionInput(forgetResult: unknown): TraceFeedbackAttr
   if (action !== "activate") {
     return {
       present: false,
+      guide_trace_id: null,
       run_id: null,
       outcome: null,
       used_surface: null,
@@ -1665,11 +1668,13 @@ function traceFeedbackAttributionInput(forgetResult: unknown): TraceFeedbackAttr
       tool_status: null,
       runtime_signal_refs: [],
       affected_memory_ids: [],
+      unattributed_recalled_memory_ids: [],
       summaries: new Map(),
     };
   }
 
   const attribution = asRecord(effect?.attribution);
+  const guideTrace = asRecord(effect?.guide_trace);
   const result = asRecord(root?.result);
   const activated = asRecord(result?.activated);
   const rawSummaries = Array.isArray(activated?.feedback_attributions) ? activated.feedback_attributions : [];
@@ -1714,8 +1719,10 @@ function traceFeedbackAttributionInput(forgetResult: unknown): TraceFeedbackAttr
 
   return {
     present: true,
+    guide_trace_id: stringValue(guideTrace?.guide_trace_id),
     ...fallback,
     affected_memory_ids: affectedMemoryIds,
+    unattributed_recalled_memory_ids: stringArrayValue(guideTrace?.unattributed_recalled_memory_ids),
     summaries,
   };
 }
@@ -1787,6 +1794,7 @@ function buildTraceFeedbackAttribution(args: {
   if (!args.feedbackInput.present) {
     return {
       present: false,
+      guide_trace_id: null,
       run_id: null,
       outcome: null,
       used_surface: null,
@@ -1809,6 +1817,7 @@ function buildTraceFeedbackAttribution(args: {
   const recalled = args.agentContext?.memory_ids ?? args.memoryDecisions.map((entry) => entry.memory_id);
   return {
     present: true,
+    guide_trace_id: args.feedbackInput.guide_trace_id,
     run_id: args.feedbackInput.run_id,
     outcome: args.feedbackInput.outcome,
     used_surface: args.feedbackInput.used_surface,
@@ -1819,7 +1828,9 @@ function buildTraceFeedbackAttribution(args: {
     attributed_memory_ids: details
       .filter((entry) => entry.detail.host_marked_used)
       .map((entry) => entry.memory_id),
-    unattributed_recalled_memory_ids: recalled.filter((memoryId) => !affected.has(memoryId)),
+    unattributed_recalled_memory_ids: args.feedbackInput.unattributed_recalled_memory_ids.length > 0
+      ? args.feedbackInput.unattributed_recalled_memory_ids
+      : recalled.filter((memoryId) => !affected.has(memoryId)),
     weak_counter_signal_memory_ids: details
       .filter((entry) => entry.detail.attribution_strength === "weak_counter_signal")
       .map((entry) => entry.memory_id),

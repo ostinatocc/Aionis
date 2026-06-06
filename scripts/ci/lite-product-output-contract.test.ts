@@ -467,6 +467,7 @@ function validMemoryDecisionTrace() {
     relation_decisions: [],
     feedback_attribution: {
       present: false,
+      guide_trace_id: null,
       run_id: null,
       outcome: null,
       used_surface: null,

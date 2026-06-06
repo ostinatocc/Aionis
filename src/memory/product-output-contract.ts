@@ -655,6 +655,7 @@ export const AionisMemoryDecisionTraceSchema = z
     feedback_attribution: z
       .object({
         present: z.boolean(),
+        guide_trace_id: z.string().min(1).nullable(),
         run_id: z.string().min(1).nullable(),
         outcome: AionisFeedbackOutcomeSchema.nullable(),
         used_surface: AionisFeedbackUsedSurfaceSchema.nullable(),

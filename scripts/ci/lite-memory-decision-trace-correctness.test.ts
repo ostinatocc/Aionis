@@ -311,6 +311,7 @@ test("memory decision trace forget decisions mirror forget-result effect fields"
 test("memory decision trace makes absent feedback attribution explicit", () => {
   const { agentContext, trace } = buildTraceFixture();
   assert.equal(trace.feedback_attribution.present, false);
+  assert.equal(trace.feedback_attribution.guide_trace_id, null);
   assert.deepEqual(trace.feedback_attribution.affected_memory_ids, []);
   assert.deepEqual(trace.feedback_attribution.attributed_memory_ids, []);
   assert.deepEqual(trace.feedback_attribution.threshold_met_memory_ids, []);

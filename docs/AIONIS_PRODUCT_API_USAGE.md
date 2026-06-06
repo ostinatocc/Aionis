@@ -103,6 +103,7 @@ required for normal product use.
 
 | Field | Consumer | Meaning |
 |---|---|---|
+| `guide_trace_id` | Host / measure / audit | Stable id for the persisted guide exposure ledger. Pass it back during feedback attribution. |
 | `agent_context` | Agent / host prompt builder | Default product output. |
 | `memory_packet` | Host / measure / audit | Returned only with `include_packets: true`. |
 | `guide_packet` | Host / measure / audit | Returned only with `include_packets: true`. |
@@ -129,6 +130,8 @@ fields:
 
 Do not pass `memory_packet`, `guide_packet`, `memory_decision_trace`,
 `memory_decision_audit`, raw rows, or raw slots to the Agent by default.
+Keep `guide_trace_id` in the host run record. It is not agent-facing; it lets
+Aionis later know exactly which memories were exposed by that guide call.
 
 ### Example
 
@@ -158,6 +161,7 @@ evidence silently.
 | `reason` | Yes | Why this lifecycle action is being taken. |
 | `target` | No | `memory`, `archive`, `payload`, or `pattern`. |
 | `memory_ids` / `node_ids` / `client_ids` | Conditional | Required for memory activation and many rehydrate operations. |
+| `guide_trace_id` + `used_memory_ids` | Conditional | Preferred for feedback attribution after `/v1/guide`; Aionis verifies the used ids were exposed by that guide. |
 | `anchor_id` / `anchor_uri` | Conditional | Required for pattern suppression or payload rehydration. |
 | `run_id` | Conditional | Required for `activate` so feedback can be attributed to a real run. |
 | `outcome` | Conditional | Required for `activate`; `positive`, `negative`, or `neutral`. |
@@ -184,6 +188,13 @@ the host knows which `agent_context.use_now_memory_ids` were actually used.
 use `used_surface: "use_now"` or `used_surface: "explicit_host_assertion"`; this
 is the attribution gate that prevents Aionis from blaming every recalled memory
 for a run outcome.
+
+Prefer passing `guide_trace_id` from `/v1/guide` plus `used_memory_ids`. Aionis
+will load the persisted guide exposure ledger, reject ids that were not exposed
+by that guide, and record exposed-but-unused ids as unattributed rather than
+blaming them for the run outcome. Direct `memory_ids` remain accepted when the
+host already has a precise attribution source, but `guide_trace_id` is the
+product path for normal guide-to-feedback loops.
 
 A single negative outcome without aligned verifier/tool/runtime evidence is
 stored as a weak counter-signal. It does not immediately lower authority. Aionis

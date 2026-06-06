@@ -1061,6 +1061,7 @@ test("product observe turns execution input into recallable execution memory", a
       "contract_version",
       "tenant_id",
       "scope",
+      "guide_trace_id",
       "agent_context",
       "memory_packet",
       "guide_packet",
@@ -1110,6 +1111,8 @@ test("product observe turns execution input into recallable execution memory", a
       "evidence_refs",
     ]);
     assert.equal(guideBody.agent_context.contract_version, "aionis_agent_context_v1");
+    assert.equal(typeof guideBody.guide_trace_id, "string");
+    assert.ok(guideBody.guide_trace_id.startsWith("guide_trace:"));
     assert.equal(guideBody.agent_context.history_used, true);
     assert.ok(guideBody.agent_context.prompt_text.includes("AIONIS_AGENT_CONTEXT v1"));
     assert.ok(guideBody.agent_context.prompt_text.length < JSON.stringify({
@@ -1150,11 +1153,14 @@ test("product observe turns execution input into recallable execution memory", a
       "contract_version",
       "tenant_id",
       "scope",
+      "guide_trace_id",
       "agent_context",
       "source_map",
     ]);
     assert.equal("memory_packet" in compactBody, false);
     assert.equal("guide_packet" in compactBody, false);
+    assert.equal(typeof compactBody.guide_trace_id, "string");
+    assert.ok(compactBody.guide_trace_id.startsWith("guide_trace:"));
     assert.equal(compactBody.agent_context.contract_version, "aionis_agent_context_v1");
     assert.equal(compactBody.agent_context.history_used, true);
     assert.deepEqual(compactBody.agent_context.target_files, ["src/current-target.ts"]);
@@ -2306,6 +2312,189 @@ test("product guide feedback loop requires repeated weak negative attribution be
       ),
       true,
     );
+  } finally {
+    await app.close();
+  }
+});
+
+test("product guide trace attribution resolves used memories from persisted exposure ledger", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("guide-trace-exposure-feedback-attribution");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const usedObserve = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        input_text: "AIONIS_GUIDE_TRACE_MARKER Use concise incident summaries for customer updates.",
+        memory: {
+          client_id: "memory:guide-trace-used-feedback",
+          type: "concept",
+          tier: "warm",
+          memory_kind: "general_memory",
+          title: "Guide trace used memory",
+          text_summary: "AIONIS_GUIDE_TRACE_MARKER Use concise incident summaries for customer updates.",
+          confidence: 0.84,
+        },
+      },
+    });
+    assert.equal(usedObserve.statusCode, 200, usedObserve.body);
+    const usedNodeId = usedObserve.json().memory_write.nodes[0].id;
+
+    const unusedObserve = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        input_text: "AIONIS_GUIDE_TRACE_MARKER Related historical style note that was not used.",
+        memory: {
+          client_id: "memory:guide-trace-unused-feedback",
+          type: "concept",
+          tier: "warm",
+          memory_kind: "general_memory",
+          title: "Guide trace unused memory",
+          text_summary: "AIONIS_GUIDE_TRACE_MARKER Related historical style note that was not used.",
+          confidence: 0.82,
+        },
+      },
+    });
+    assert.equal(unusedObserve.statusCode, 200, unusedObserve.body);
+    const unusedNodeId = unusedObserve.json().memory_write.nodes[0].id;
+
+    const guide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "AIONIS_GUIDE_TRACE_MARKER customer update style",
+        consumer_agent_id: "local-user",
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(guide.statusCode, 200, guide.body);
+    const guideBody = guide.json();
+    assert.equal(typeof guideBody.guide_trace_id, "string");
+    assert.ok(guideBody.agent_context.memory_ids.includes(usedNodeId));
+    assert.ok(guideBody.agent_context.memory_ids.includes(unusedNodeId));
+
+    const ledgerRows = await liteWriteStore.findNodes({
+      scope: "default",
+      clientId: guideBody.guide_trace_id,
+      consumerAgentId: "local-user",
+      consumerTeamId: null,
+      limit: 1,
+      offset: 0,
+    });
+    assert.equal(ledgerRows.rows.length, 1);
+    const ledger = ledgerRows.rows[0]?.slots.guide_exposure_v1;
+    assert.equal(ledger.contract_version, "aionis_guide_exposure_v1");
+    assert.equal(ledger.guide_trace_id, guideBody.guide_trace_id);
+    assert.ok(ledger.memory_ids.includes(usedNodeId));
+    assert.ok(ledger.memory_ids.includes(unusedNodeId));
+    assert.equal(ledgerRows.rows[0]?.embedding_status, "failed");
+
+    const feedback = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        operation: "activate",
+        target: "memory",
+        guide_trace_id: guideBody.guide_trace_id,
+        used_memory_ids: [usedNodeId],
+        run_id: "run:guide-trace-feedback-attribution",
+        outcome: "negative",
+        used_surface: "use_now",
+        verifier_status: "not_run",
+        tool_status: "unknown",
+        activate: true,
+        reason: "The Agent used one exposed memory, but the resulting customer update was rejected.",
+      },
+    });
+    assert.equal(feedback.statusCode, 200, feedback.body);
+    const feedbackBody = feedback.json();
+    assert.deepEqual(feedbackBody.source_map.routes_used, ["/v1/memory/find", "/v1/memory/nodes/activate"]);
+    assert.ok(feedbackBody.source_map.internal_surfaces_used.includes("guide_exposure_ledger"));
+    assert.deepEqual(feedbackBody.forget_effect.affected_memory_ids, [usedNodeId]);
+    assert.equal(feedbackBody.forget_effect.guide_trace.guide_trace_id, guideBody.guide_trace_id);
+    assert.deepEqual(feedbackBody.forget_effect.guide_trace.attributed_memory_ids, [usedNodeId]);
+    assert.ok(feedbackBody.forget_effect.guide_trace.exposed_memory_ids.includes(unusedNodeId));
+    assert.ok(feedbackBody.forget_effect.guide_trace.unattributed_recalled_memory_ids.includes(unusedNodeId));
+
+    const usedAfterFeedback = await liteWriteStore.findNodes({
+      scope: "default",
+      id: usedNodeId,
+      consumerAgentId: "local-user",
+      consumerTeamId: null,
+      limit: 1,
+      offset: 0,
+    });
+    assert.equal(usedAfterFeedback.rows[0]?.slots.feedback_negative, 1);
+    assert.equal(usedAfterFeedback.rows[0]?.slots.weak_counter_signal_count, 1);
+
+    const unusedAfterFeedback = await liteWriteStore.findNodes({
+      scope: "default",
+      id: unusedNodeId,
+      consumerAgentId: "local-user",
+      consumerTeamId: null,
+      limit: 1,
+      offset: 0,
+    });
+    assert.equal(unusedAfterFeedback.rows[0]?.slots.feedback_negative, undefined);
+
+    const afterGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "AIONIS_GUIDE_TRACE_MARKER customer update style",
+        consumer_agent_id: "local-user",
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(afterGuide.statusCode, 200, afterGuide.body);
+    const afterGuideBody = afterGuide.json();
+
+    const measure = await app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        product_trace: {
+          before_guide: guideBody,
+          after_guide: afterGuideBody,
+          forget_result: feedbackBody,
+          sufficient_evidence: true,
+          evidence_ids: ["product_trace:guide-trace-feedback-attribution"],
+        },
+      },
+    });
+    assert.equal(measure.statusCode, 200, measure.body);
+    const trace = measure.json().memory_decision_trace;
+    assert.equal(trace.feedback_attribution.present, true);
+    assert.equal(trace.feedback_attribution.guide_trace_id, guideBody.guide_trace_id);
+    assert.deepEqual(trace.feedback_attribution.attributed_memory_ids, [usedNodeId]);
+    assert.ok(trace.feedback_attribution.unattributed_recalled_memory_ids.includes(unusedNodeId));
+    const usedDecision = trace.memory_decisions.find((entry: Record<string, unknown>) => entry.memory_id === usedNodeId);
+    assert.equal(usedDecision.feedback_detail.threshold_state, "weak_below_threshold");
+    const unusedDecision = trace.memory_decisions.find((entry: Record<string, unknown>) => entry.memory_id === unusedNodeId);
+    assert.equal(unusedDecision.feedback_detail, null);
   } finally {
     await app.close();
   }
