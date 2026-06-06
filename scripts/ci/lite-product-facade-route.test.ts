@@ -2778,6 +2778,22 @@ test("product unused exposure observation respects scope, consumer, and positive
     assert.equal(otherConsumerGuide.statusCode, 200, otherConsumerGuide.body);
     assert.ok(otherConsumerGuide.json().agent_context.memory_ids.includes(positiveNodeId));
 
+    const otherTeamGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "AIONIS_UNUSED_BOUNDARY_MARKER escalation summary",
+        consumer_agent_id: "local-user",
+        consumer_team_id: "other-team",
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(otherTeamGuide.statusCode, 200, otherTeamGuide.body);
+    assert.ok(otherTeamGuide.json().agent_context.memory_ids.includes(positiveNodeId));
+
     const positiveGuide = await app.inject({
       method: "POST",
       url: "/v1/guide",
