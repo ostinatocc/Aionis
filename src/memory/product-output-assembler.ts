@@ -75,6 +75,7 @@ type CandidateLearningControlSummary = SparseFeedbackSignalSummary["candidate_le
 type NeighborhoodDriftObservation = AionisMemoryDecisionTrace["neighborhood_drift_observation"];
 type NeighborhoodDriftCandidate = NeighborhoodDriftObservation["candidates"][number];
 type ConfidenceDecayCandidateSummary = AionisMemoryDecisionTrace["confidence_decay_candidate_summary"];
+type InspectBeforeUseShadowDelta = AionisMemoryDecisionTrace["inspect_before_use_shadow_delta"];
 
 const NEIGHBORHOOD_DRIFT_GROWTH_THRESHOLD = 2;
 const NEIGHBORHOOD_DRIFT_DIRECTIONAL_THRESHOLD = 2;
@@ -1920,6 +1921,102 @@ function buildConfidenceDecayCandidateSummary(args: {
   };
 }
 
+function emptyInspectBeforeUseShadowDelta(
+  reason = "Inspect-before-use shadow delta is disabled and no confidence-decay candidates were supplied.",
+): InspectBeforeUseShadowDelta {
+  return {
+    present: false,
+    contract_version: null,
+    mode: null,
+    enabled: false,
+    authority_mutation: false,
+    agent_prompt_included: false,
+    simulated_surface: "inspect_before_use",
+    candidate_memory_ids: [],
+    would_move_to_inspect_before_use_memory_ids: [],
+    already_inspect_before_use_memory_ids: [],
+    blocked_by_positive_attribution_memory_ids: [],
+    blocked_by_recent_validation_memory_ids: [],
+    drift_only_observation_memory_ids: [],
+    entries: [],
+    reason,
+  };
+}
+
+function buildInspectBeforeUseShadowDelta(args: {
+  confidenceDecayCandidateSummary: ConfidenceDecayCandidateSummary;
+  memoryDecisions: AionisMemoryDecisionTrace["memory_decisions"];
+}): InspectBeforeUseShadowDelta {
+  const summary = args.confidenceDecayCandidateSummary;
+  const candidateMemoryIds = compactStrings(summary.decay_candidate_memory_ids);
+  const blockedByPositive = compactStrings(summary.blocked_by_positive_attribution_memory_ids);
+  const blockedByRecentValidation = compactStrings(summary.blocked_by_recent_validation_memory_ids);
+  const driftOnlyObservation = compactStrings(summary.drift_only_observation_memory_ids);
+  if (
+    candidateMemoryIds.length === 0
+    && blockedByPositive.length === 0
+    && blockedByRecentValidation.length === 0
+    && driftOnlyObservation.length === 0
+  ) {
+    return emptyInspectBeforeUseShadowDelta();
+  }
+
+  const learningControlIds = new Set(summary.candidate_from_learning_control_memory_ids);
+  const timeDecayIds = new Set(summary.candidate_from_time_decay_memory_ids);
+  const decisionById = new Map(args.memoryDecisions.map((entry) => [entry.memory_id, entry]));
+  const entries: InspectBeforeUseShadowDelta["entries"] = [];
+  const wouldMove: string[] = [];
+  const alreadyInspect: string[] = [];
+
+  for (const memoryId of candidateMemoryIds) {
+    const decision = decisionById.get(memoryId);
+    if (!decision) continue;
+    const sources = compactStrings([
+      learningControlIds.has(memoryId) ? "learning_control" : null,
+      timeDecayIds.has(memoryId) ? "time_decay" : null,
+    ]) as InspectBeforeUseShadowDelta["entries"][number]["sources"];
+    const wouldChangeSurface = decision.agent_surface !== "inspect_before_use";
+    if (wouldChangeSurface) {
+      wouldMove.push(memoryId);
+    } else {
+      alreadyInspect.push(memoryId);
+    }
+    entries.push({
+      memory_id: memoryId,
+      title: decision.title,
+      current_surface: decision.agent_surface,
+      proposed_surface: "inspect_before_use",
+      would_change_surface: wouldChangeSurface,
+      authority: decision.authority,
+      lifecycle_state: decision.lifecycle_state,
+      sources,
+      reason: wouldChangeSurface
+        ? "If the disabled product flag were enabled, this confidence-decay candidate would move from direct reuse to inspect-before-use."
+        : "This confidence-decay candidate is already inspect-before-use under existing runtime evidence; the disabled preview would not change its surface.",
+    });
+  }
+
+  return {
+    present: true,
+    contract_version: "aionis_inspect_before_use_shadow_delta_v1",
+    mode: "disabled_preview",
+    enabled: false,
+    authority_mutation: false,
+    agent_prompt_included: false,
+    simulated_surface: "inspect_before_use",
+    candidate_memory_ids: candidateMemoryIds,
+    would_move_to_inspect_before_use_memory_ids: compactStrings(wouldMove),
+    already_inspect_before_use_memory_ids: compactStrings(alreadyInspect),
+    blocked_by_positive_attribution_memory_ids: blockedByPositive,
+    blocked_by_recent_validation_memory_ids: blockedByRecentValidation,
+    drift_only_observation_memory_ids: driftOnlyObservation,
+    entries: entries.slice(0, 48),
+    reason: candidateMemoryIds.length > 0
+      ? "Disabled preview only: candidate memories are reported as an inspect-before-use delta without mutating authority or entering the Agent prompt."
+      : "Disabled preview only: no memories would move; existing positive, recent-validation, or drift-only boundaries blocked the delta.",
+  };
+}
+
 function unusedExposureObservationValue(value: unknown): UnusedExposureObservationSummary {
   const record = asRecord(value);
   if (!record || record.contract_version !== "aionis_unused_exposure_observation_v1") {
@@ -2577,6 +2674,10 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
     memoryDecisions,
     neighborhoodDriftObservation,
   });
+  const inspectBeforeUseShadowDelta = buildInspectBeforeUseShadowDelta({
+    confidenceDecayCandidateSummary,
+    memoryDecisions,
+  });
   const contextDecision = {
     prompt_char_count: agentContext?.prompt_text.length ?? 0,
     target_files: agentContext?.target_files ?? [],
@@ -2615,6 +2716,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
     || contradictionWarningCount > 0
     || feedbackAttribution.present
     || confidenceDecayCandidateSummary.present
+    || inspectBeforeUseShadowDelta.present
     || forgetDecisions.length > 0
     || negativeTransferRisk !== "low";
 
@@ -2656,6 +2758,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
     feedback_attribution: feedbackAttribution,
     neighborhood_drift_observation: neighborhoodDriftObservation,
     confidence_decay_candidate_summary: confidenceDecayCandidateSummary,
+    inspect_before_use_shadow_delta: inspectBeforeUseShadowDelta,
     context_decision: contextDecision,
     forget_decisions: forgetDecisions,
     source_map: {
@@ -2668,6 +2771,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
         feedbackAttribution.present ? "feedback_attribution_trace" : null,
         neighborhoodDriftObservation.present ? "neighborhood_drift_observation" : null,
         confidenceDecayCandidateSummary.present ? "confidence_decay_candidate_summary" : null,
+        inspectBeforeUseShadowDelta.present ? "inspect_before_use_shadow_delta" : null,
         forgetDecisions.length > 0 ? "forget_result_projection" : null,
         "memory_decision_trace",
       ]),
@@ -2905,6 +3009,7 @@ export function buildAionisMemoryDecisionAuditReport(
     feedback_signal_review: feedbackSignalReview,
     neighborhood_drift_review: trace.neighborhood_drift_observation,
     confidence_decay_candidate_review: trace.confidence_decay_candidate_summary,
+    inspect_before_use_shadow_delta_review: trace.inspect_before_use_shadow_delta,
     decision_reviews: decisionReviews,
     source_map: {
       routes_used: args.source_map?.routes_used ?? trace.source_map.routes_used,
@@ -2913,6 +3018,7 @@ export function buildAionisMemoryDecisionAuditReport(
         feedbackSignalReview.present ? "sparse_feedback_signal_summary" : null,
         trace.neighborhood_drift_observation.present ? "neighborhood_drift_observation" : null,
         trace.confidence_decay_candidate_summary.present ? "confidence_decay_candidate_summary" : null,
+        trace.inspect_before_use_shadow_delta.present ? "inspect_before_use_shadow_delta" : null,
         "memory_decision_audit_report",
       ]),
       omitted_internal_surfaces: args.source_map?.omitted_internal_surfaces ?? [

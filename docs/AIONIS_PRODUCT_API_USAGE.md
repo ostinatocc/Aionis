@@ -290,6 +290,12 @@ attribution, drift-only observations, and temporal staleness candidates. Time
 decay is based on old active trusted/advisory memory still exposed to the Agent,
 relative to the freshest scoped observed memory. It is still measure/debug/audit
 only; it does not demote, suppress, archive, or rewrite guide authority.
+`inspect_before_use_shadow_delta` is the disabled product-flag preview for the
+same candidate set. It reports which memories would move to
+`inspect_before_use` if the flag were enabled, which memories are already on
+that surface, and which memories were blocked by positive attribution or recent
+validation. It always reports `enabled: false`, `authority_mutation: false`, and
+`agent_prompt_included: false`.
 
 ### Example
 

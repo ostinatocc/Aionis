@@ -827,6 +827,11 @@ test("AionisMemoryDecisionTrace accepts read-only measure/debug/audit output", (
   assert.equal(parsed.confidence_decay_candidate_summary.time_decay_age_threshold_days, 0);
   assert.deepEqual(parsed.confidence_decay_candidate_summary.candidate_from_time_decay_memory_ids, []);
   assert.deepEqual(parsed.confidence_decay_candidate_summary.time_decay_candidate_details, []);
+  assert.equal(parsed.inspect_before_use_shadow_delta.present, false);
+  assert.equal(parsed.inspect_before_use_shadow_delta.enabled, false);
+  assert.equal(parsed.inspect_before_use_shadow_delta.authority_mutation, false);
+  assert.equal(parsed.inspect_before_use_shadow_delta.agent_prompt_included, false);
+  assert.deepEqual(parsed.inspect_before_use_shadow_delta.would_move_to_inspect_before_use_memory_ids, []);
 });
 
 test("AionisMemoryDecisionTrace rejects prompt injection and runtime mutation claims", () => {
@@ -869,6 +874,54 @@ test("AionisMemoryDecisionTrace rejects prompt injection and runtime mutation cl
         },
       }),
   );
+
+  assert.throws(
+    () =>
+      AionisMemoryDecisionTraceSchema.parse({
+        ...validMemoryDecisionTrace(),
+        inspect_before_use_shadow_delta: {
+          present: true,
+          contract_version: "aionis_inspect_before_use_shadow_delta_v1",
+          mode: "disabled_preview",
+          enabled: true,
+          authority_mutation: false,
+          agent_prompt_included: false,
+          simulated_surface: "inspect_before_use",
+          candidate_memory_ids: ["mem-1"],
+          would_move_to_inspect_before_use_memory_ids: ["mem-1"],
+          already_inspect_before_use_memory_ids: [],
+          blocked_by_positive_attribution_memory_ids: [],
+          blocked_by_recent_validation_memory_ids: [],
+          drift_only_observation_memory_ids: [],
+          entries: [],
+          reason: "Invalid enabled claim.",
+        },
+      }),
+  );
+
+  assert.throws(
+    () =>
+      AionisMemoryDecisionTraceSchema.parse({
+        ...validMemoryDecisionTrace(),
+        inspect_before_use_shadow_delta: {
+          present: true,
+          contract_version: "aionis_inspect_before_use_shadow_delta_v1",
+          mode: "disabled_preview",
+          enabled: false,
+          authority_mutation: true,
+          agent_prompt_included: false,
+          simulated_surface: "inspect_before_use",
+          candidate_memory_ids: ["mem-1"],
+          would_move_to_inspect_before_use_memory_ids: ["mem-1"],
+          already_inspect_before_use_memory_ids: [],
+          blocked_by_positive_attribution_memory_ids: [],
+          blocked_by_recent_validation_memory_ids: [],
+          drift_only_observation_memory_ids: [],
+          entries: [],
+          reason: "Invalid mutation claim.",
+        },
+      }),
+  );
 });
 
 test("AionisMemoryDecisionAuditReport accepts compact operator audit output", () => {
@@ -888,4 +941,8 @@ test("AionisMemoryDecisionAuditReport accepts compact operator audit output", ()
   assert.equal(parsed.confidence_decay_candidate_review.authority_mutation, false);
   assert.equal(parsed.confidence_decay_candidate_review.agent_prompt_included, false);
   assert.equal(parsed.confidence_decay_candidate_review.time_decay_age_threshold_days, 0);
+  assert.equal(parsed.inspect_before_use_shadow_delta_review.present, false);
+  assert.equal(parsed.inspect_before_use_shadow_delta_review.enabled, false);
+  assert.equal(parsed.inspect_before_use_shadow_delta_review.authority_mutation, false);
+  assert.equal(parsed.inspect_before_use_shadow_delta_review.agent_prompt_included, false);
 });

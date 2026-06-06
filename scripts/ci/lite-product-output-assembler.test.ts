@@ -1063,10 +1063,23 @@ test("product memory decision trace surfaces repeated unused memory as confidenc
   assert.equal(trace.confidence_decay_candidate_summary.agent_prompt_included, false);
   assert.deepEqual(trace.confidence_decay_candidate_summary.decay_candidate_memory_ids, ["mem-unused-owner"]);
   assert.deepEqual(trace.confidence_decay_candidate_summary.candidate_from_learning_control_memory_ids, ["mem-unused-owner"]);
+  assert.equal(trace.inspect_before_use_shadow_delta.present, true);
+  assert.equal(trace.inspect_before_use_shadow_delta.enabled, false);
+  assert.equal(trace.inspect_before_use_shadow_delta.authority_mutation, false);
+  assert.equal(trace.inspect_before_use_shadow_delta.agent_prompt_included, false);
+  assert.deepEqual(trace.inspect_before_use_shadow_delta.candidate_memory_ids, ["mem-unused-owner"]);
+  assert.deepEqual(trace.inspect_before_use_shadow_delta.would_move_to_inspect_before_use_memory_ids, ["mem-unused-owner"]);
+  assert.deepEqual(trace.inspect_before_use_shadow_delta.already_inspect_before_use_memory_ids, []);
+  assert.equal(trace.inspect_before_use_shadow_delta.entries[0]?.current_surface, "use_now");
+  assert.deepEqual(trace.inspect_before_use_shadow_delta.entries[0]?.sources, ["learning_control"]);
   assert.equal(agentContext.prompt_text.includes("confidence_decay"), false);
+  assert.equal(agentContext.prompt_text.includes("inspect_before_use_shadow_delta"), false);
 
   const audit = buildAionisMemoryDecisionAuditReport({ trace });
   assert.deepEqual(audit.confidence_decay_candidate_review.decay_candidate_memory_ids, ["mem-unused-owner"]);
+  assert.deepEqual(audit.inspect_before_use_shadow_delta_review.would_move_to_inspect_before_use_memory_ids, [
+    "mem-unused-owner",
+  ]);
 
   const effect = buildAionisEffectReport({
     tenant_id: "tenant-local",
@@ -1190,6 +1203,10 @@ test("product confidence decay shadow candidate admits threshold-met negative fe
   assert.deepEqual(trace.confidence_decay_candidate_summary.decay_candidate_memory_ids, ["mem-threshold-negative"]);
   assert.deepEqual(trace.confidence_decay_candidate_summary.blocked_by_positive_attribution_memory_ids, []);
   assert.equal(trace.confidence_decay_candidate_summary.authority_mutation, false);
+  assert.deepEqual(trace.inspect_before_use_shadow_delta.would_move_to_inspect_before_use_memory_ids, [
+    "mem-threshold-negative",
+  ]);
+  assert.deepEqual(trace.inspect_before_use_shadow_delta.entries[0]?.sources, ["learning_control"]);
 });
 
 test("product confidence decay shadow candidate observes temporal staleness without authority mutation", () => {
@@ -1261,6 +1278,14 @@ test("product confidence decay shadow candidate observes temporal staleness with
   assert.deepEqual(trace.confidence_decay_candidate_summary.decay_candidate_memory_ids, [
     "mem-old-runtime-note",
   ]);
+  assert.deepEqual(trace.inspect_before_use_shadow_delta.candidate_memory_ids, [
+    "mem-old-runtime-note",
+  ]);
+  assert.deepEqual(trace.inspect_before_use_shadow_delta.would_move_to_inspect_before_use_memory_ids, [
+    "mem-old-runtime-note",
+  ]);
+  assert.deepEqual(trace.inspect_before_use_shadow_delta.entries[0]?.sources, ["time_decay"]);
+  assert.equal(trace.inspect_before_use_shadow_delta.enabled, false);
   assert.equal(
     trace.confidence_decay_candidate_summary.time_decay_candidate_details[0]?.blocked_by_positive_attribution,
     false,
@@ -1274,6 +1299,9 @@ test("product confidence decay shadow candidate observes temporal staleness with
 
   const audit = buildAionisMemoryDecisionAuditReport({ trace });
   assert.deepEqual(audit.confidence_decay_candidate_review.candidate_from_time_decay_memory_ids, [
+    "mem-old-runtime-note",
+  ]);
+  assert.deepEqual(audit.inspect_before_use_shadow_delta_review.would_move_to_inspect_before_use_memory_ids, [
     "mem-old-runtime-note",
   ]);
 
@@ -1385,6 +1413,13 @@ test("product confidence decay temporal staleness is blocked by positive attribu
   assert.deepEqual(trace.confidence_decay_candidate_summary.blocked_by_recent_validation_memory_ids, [
     "mem-old-validated-runtime-note",
   ]);
+  assert.equal(trace.inspect_before_use_shadow_delta.present, true);
+  assert.equal(trace.inspect_before_use_shadow_delta.enabled, false);
+  assert.deepEqual(trace.inspect_before_use_shadow_delta.candidate_memory_ids, []);
+  assert.deepEqual(trace.inspect_before_use_shadow_delta.would_move_to_inspect_before_use_memory_ids, []);
+  assert.deepEqual(trace.inspect_before_use_shadow_delta.blocked_by_positive_attribution_memory_ids, [
+    "mem-old-validated-runtime-note",
+  ]);
   assert.equal(
     trace.confidence_decay_candidate_summary.time_decay_candidate_details[0]?.blocked_by_positive_attribution,
     true,
@@ -1452,6 +1487,8 @@ test("product confidence decay temporal staleness ignores recent memory", () => 
   assert.deepEqual(trace.confidence_decay_candidate_summary.candidate_from_time_decay_memory_ids, []);
   assert.deepEqual(trace.confidence_decay_candidate_summary.decay_candidate_memory_ids, []);
   assert.deepEqual(trace.confidence_decay_candidate_summary.time_decay_candidate_details, []);
+  assert.equal(trace.inspect_before_use_shadow_delta.present, false);
+  assert.deepEqual(trace.inspect_before_use_shadow_delta.would_move_to_inspect_before_use_memory_ids, []);
   assert.equal(trace.confidence_decay_candidate_summary.authority_mutation, false);
 });
 

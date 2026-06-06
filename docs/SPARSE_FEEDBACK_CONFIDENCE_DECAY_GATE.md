@@ -25,6 +25,16 @@ It is a measure/debug/audit surface. It is not an Agent prompt surface.
 9. Temporal staleness can trigger shadow candidacy only when the memory is still exposed to the Agent and lacks positive attributed use.
 10. Candidate evidence must remain explainable through memory ids and reason codes.
 
+`inspect_before_use_shadow_delta` is the disabled-by-default preview of the same candidate set:
+
+1. `mode` is `disabled_preview`.
+2. `enabled` is always `false`.
+3. `authority_mutation` is always `false`.
+4. `agent_prompt_included` remains `false`.
+5. It may say which candidate memories would move to `inspect_before_use` if a future product flag were enabled.
+6. It must separately list memories already on `inspect_before_use` so the preview cannot overclaim new behavior.
+7. It must preserve positive-attribution, recent-validation, and drift-only blockers.
+
 ## Candidate Inputs
 
 Direction 2 may consider these existing read-side signals:
@@ -70,6 +80,7 @@ The gate is considered stable only when a real Runtime holdout report shows:
 - no automatic archive or suppression
 - no active verification
 - no Agent-facing instruction
+- no enabled product flag; inspect-before-use deltas are disabled previews only
 - no external Agent patch-success claim
 
 Direction 2 proves only this product claim:

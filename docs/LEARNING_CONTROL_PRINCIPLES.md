@@ -144,6 +144,10 @@ for memory that should be trusted less, including threshold-met feedback, repeat
 staleness. Positive attribution and recent validation block decay candidacy. The summary remains measure/debug/audit
 only and must not demote, suppress, archive, or rewrite guide authority.
 
+The inspect-before-use shadow delta is only a disabled preview of those candidates. It may show the operator what would
+move if a future product flag were enabled, but it must keep `enabled: false`, must not mutate authority, and must not
+enter the Agent prompt.
+
 ### 3. Soft Strategies
 
 Use soft strategies for reusable engineering heuristics:

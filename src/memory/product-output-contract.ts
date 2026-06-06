@@ -563,6 +563,53 @@ const AionisConfidenceDecayCandidateSummarySchema = z
   })
   .strict();
 
+const AionisInspectBeforeUseShadowDeltaSourceSchema = z.enum(["learning_control", "time_decay"]);
+
+const AionisInspectBeforeUseShadowDeltaSchema = z
+  .object({
+    present: z.boolean(),
+    contract_version: z.literal("aionis_inspect_before_use_shadow_delta_v1").nullable(),
+    mode: z.literal("disabled_preview").nullable(),
+    enabled: z.literal(false),
+    authority_mutation: z.literal(false),
+    agent_prompt_included: z.literal(false),
+    simulated_surface: z.literal("inspect_before_use"),
+    candidate_memory_ids: z.array(z.string().min(1)).default([]),
+    would_move_to_inspect_before_use_memory_ids: z.array(z.string().min(1)).default([]),
+    already_inspect_before_use_memory_ids: z.array(z.string().min(1)).default([]),
+    blocked_by_positive_attribution_memory_ids: z.array(z.string().min(1)).default([]),
+    blocked_by_recent_validation_memory_ids: z.array(z.string().min(1)).default([]),
+    drift_only_observation_memory_ids: z.array(z.string().min(1)).default([]),
+    entries: z
+      .array(
+        z
+          .object({
+            memory_id: z.string().min(1),
+            title: z.string().min(1).nullable(),
+            current_surface: AionisMemoryDecisionSurfaceSchema,
+            proposed_surface: z.literal("inspect_before_use"),
+            would_change_surface: z.boolean(),
+            authority: AionisGuidanceAuthoritySchema,
+            lifecycle_state: z.enum([
+              "active",
+              "candidate",
+              "contested",
+              "suppressed",
+              "demoted",
+              "archived",
+              "rehydration_candidate",
+              "unknown",
+            ]),
+            sources: z.array(AionisInspectBeforeUseShadowDeltaSourceSchema).default([]),
+            reason: z.string().min(1),
+          })
+          .strict(),
+      )
+      .default([]),
+    reason: z.string().min(1),
+  })
+  .strict();
+
 const AionisSparseFeedbackSignalSummarySchema = z
   .object({
     present: z.boolean(),
@@ -924,6 +971,23 @@ export const AionisMemoryDecisionTraceSchema = z
       time_decay_candidate_details: [],
       reason: "No confidence decay shadow candidate crossed the read-only gate.",
     }),
+    inspect_before_use_shadow_delta: AionisInspectBeforeUseShadowDeltaSchema.default({
+      present: false,
+      contract_version: null,
+      mode: null,
+      enabled: false,
+      authority_mutation: false,
+      agent_prompt_included: false,
+      simulated_surface: "inspect_before_use",
+      candidate_memory_ids: [],
+      would_move_to_inspect_before_use_memory_ids: [],
+      already_inspect_before_use_memory_ids: [],
+      blocked_by_positive_attribution_memory_ids: [],
+      blocked_by_recent_validation_memory_ids: [],
+      drift_only_observation_memory_ids: [],
+      entries: [],
+      reason: "Inspect-before-use shadow delta is disabled and no confidence-decay candidates were supplied.",
+    }),
     context_decision: z
       .object({
         prompt_char_count: z.number().int().nonnegative(),
@@ -1065,6 +1129,23 @@ export const AionisMemoryDecisionAuditReportSchema = z
       blocked_by_recent_validation_memory_ids: [],
       time_decay_candidate_details: [],
       reason: "No confidence decay shadow candidate crossed the read-only gate.",
+    }),
+    inspect_before_use_shadow_delta_review: AionisInspectBeforeUseShadowDeltaSchema.default({
+      present: false,
+      contract_version: null,
+      mode: null,
+      enabled: false,
+      authority_mutation: false,
+      agent_prompt_included: false,
+      simulated_surface: "inspect_before_use",
+      candidate_memory_ids: [],
+      would_move_to_inspect_before_use_memory_ids: [],
+      already_inspect_before_use_memory_ids: [],
+      blocked_by_positive_attribution_memory_ids: [],
+      blocked_by_recent_validation_memory_ids: [],
+      drift_only_observation_memory_ids: [],
+      entries: [],
+      reason: "Inspect-before-use shadow delta is disabled and no confidence-decay candidates were supplied.",
     }),
     decision_reviews: z
       .object({
