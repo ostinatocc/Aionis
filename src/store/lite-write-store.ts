@@ -29,6 +29,7 @@ import type {
   WriteRuleDefInsertArgs,
   WriteStoreAccess,
   WriteExistingNodeFingerprint,
+  WriteLifecycleCandidateNodeRow,
 } from "./write-access.js";
 import { WRITE_STORE_ACCESS_CAPABILITY_VERSION, writeNodeFingerprint } from "./write-access.js";
 import { createSqliteDatabase, type SqliteDatabase } from "./sqlite.js";
@@ -1636,6 +1637,57 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
           },
         ]),
       );
+    },
+
+    async lifecycleCandidateNodes(scope: string, limit: number): Promise<WriteLifecycleCandidateNodeRow[]> {
+      const boundedLimit = Math.max(1, Math.min(2000, Math.floor(limit)));
+      const rows = db.prepare(`
+        SELECT
+          id,
+          type,
+          title,
+          text_summary,
+          slots_json,
+          tier,
+          memory_lane,
+          owner_agent_id,
+          owner_team_id,
+          salience,
+          confidence,
+          created_at
+        FROM lite_memory_nodes
+        WHERE scope = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?
+      `).all(scope, boundedLimit) as Array<{
+        id: string;
+        type: string;
+        title: string | null;
+        text_summary: string | null;
+        slots_json: string;
+        tier: string;
+        memory_lane: "private" | "shared";
+        owner_agent_id: string | null;
+        owner_team_id: string | null;
+        salience: number;
+        confidence: number;
+        created_at: string;
+      }>;
+      return rows.map((row) => ({
+        id: row.id,
+        type: row.type,
+        title: row.title,
+        text_summary: row.text_summary,
+        slots: parseJsonObject(row.slots_json),
+        tier: row.tier,
+        memory_lane: row.memory_lane,
+        owner_agent_id: row.owner_agent_id,
+        owner_team_id: row.owner_team_id,
+        salience: row.salience,
+        confidence: row.confidence,
+        created_at: row.created_at,
+        updated_at: row.created_at,
+      }));
     },
 
     async parentCommitHash(scope: string, parentCommitId: string): Promise<string | null> {

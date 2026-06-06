@@ -42,7 +42,7 @@ export type LiteLearningControlRuntimeProviderBuilderOptions = {
   };
 };
 
-function buildLearningControlHttpClientConfig(
+export function buildLearningControlHttpClientConfig(
   env: Env,
   options?: LiteLearningControlRuntimeProviderBuilderOptions,
 ): LearningControlHttpModelClientConfig | undefined {

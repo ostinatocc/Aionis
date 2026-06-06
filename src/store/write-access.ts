@@ -2,7 +2,7 @@ import stableStringify from "fast-json-stable-stringify";
 import { sha256Hex } from "../util/crypto.js";
 import type { AssociativeCandidateStoreAccess } from "../memory/associative-candidate-store.js";
 
-export const WRITE_STORE_ACCESS_CAPABILITY_VERSION = 5 as const;
+export const WRITE_STORE_ACCESS_CAPABILITY_VERSION = 6 as const;
 
 export type WriteCommitInsertArgs = {
   scope: string;
@@ -46,6 +46,22 @@ export type WriteNodeFingerprintInput = Omit<WriteNodeInsertArgs, "commitId">;
 export type WriteExistingNodeFingerprint = {
   scope: string;
   fingerprint: string;
+};
+
+export type WriteLifecycleCandidateNodeRow = {
+  id: string;
+  type: string;
+  title: string | null;
+  text_summary: string | null;
+  slots: Record<string, unknown>;
+  tier: string;
+  memory_lane: "private" | "shared";
+  owner_agent_id: string | null;
+  owner_team_id: string | null;
+  salience: number;
+  confidence: number;
+  created_at: string;
+  updated_at: string;
 };
 
 export type WriteRuleDefInsertArgs = {
@@ -92,6 +108,7 @@ export interface WriteStoreAccess extends AssociativeCandidateStoreAccess {
   readonly capability_version: typeof WRITE_STORE_ACCESS_CAPABILITY_VERSION;
   nodeScopesByIds(ids: string[]): Promise<Map<string, string>>;
   nodeFingerprintsByIds(ids: string[]): Promise<Map<string, WriteExistingNodeFingerprint>>;
+  lifecycleCandidateNodes(scope: string, limit: number): Promise<WriteLifecycleCandidateNodeRow[]>;
   parentCommitHash(scope: string, parentCommitId: string): Promise<string | null>;
   insertCommit(args: WriteCommitInsertArgs): Promise<string>;
   insertNode(args: WriteNodeInsertArgs): Promise<void>;
@@ -147,6 +164,7 @@ export function assertWriteStoreAccessContract(access: WriteStoreAccess): void {
   const requiredMethods = [
     "nodeScopesByIds",
     "nodeFingerprintsByIds",
+    "lifecycleCandidateNodes",
     "parentCommitHash",
     "insertCommit",
     "insertNode",

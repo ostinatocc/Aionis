@@ -8,12 +8,17 @@ import {
 import {
   buildAionisAgentContext,
   buildAionisEffectReport,
+  buildAionisMemoryDecisionAuditReport,
+  buildAionisMemoryDecisionTrace,
 } from "../memory/product-output-assembler.js";
 import {
+  AionisAgentContextSchema,
   AionisEffectReportSchema,
   AionisGuidePacketSchema,
   AionisMemoryPacketSchema,
   type AionisAgentContext,
+  type AionisMemoryDecisionAuditReport,
+  type AionisMemoryDecisionTrace,
   type AionisGuidePacket,
   type AionisMemoryPacket,
 } from "../memory/product-output-contract.js";
@@ -207,6 +212,7 @@ const EffectObservationSchema = z.object({
 const ProductMeasureGuideSnapshotSchema = z.object({
   memory_packet: AionisMemoryPacketSchema.nullable().optional(),
   guide_packet: AionisGuidePacketSchema.nullable().optional(),
+  agent_context: AionisAgentContextSchema.nullable().optional(),
   repeated_discovery_steps: z.number().nonnegative().optional(),
   context_items: z.number().nonnegative().optional(),
   useful_context_items: z.number().nonnegative().optional(),
@@ -228,13 +234,16 @@ const ProductMeasureForgetSnapshotSchema = z.object({
   }).passthrough().optional(),
 }).passthrough();
 
-const ProductMeasureTraceSchema = z.object({
-  baseline: EffectObservationSchema.optional(),
+const ProductDecisionTraceBaseSchema = z.object({
   before_guide: ProductMeasureGuideSnapshotSchema.optional(),
   after_guide: ProductMeasureGuideSnapshotSchema,
   forget_result: ProductMeasureForgetSnapshotSchema.optional(),
   evidence_ids: StringList.optional(),
   sufficient_evidence: z.boolean().optional(),
+}).strict();
+
+const ProductMeasureTraceSchema = ProductDecisionTraceBaseSchema.extend({
+  baseline: EffectObservationSchema.optional(),
 }).strict().superRefine((value, ctx) => {
   if (!value.baseline && !value.before_guide) {
     ctx.addIssue({
@@ -244,6 +253,12 @@ const ProductMeasureTraceSchema = z.object({
     });
   }
 });
+
+const ProductDecisionTraceRequest = z.object({
+  tenant_id: z.string().trim().min(1).optional(),
+  scope: z.string().trim().min(1).optional(),
+  product_trace: ProductDecisionTraceBaseSchema,
+}).strict();
 
 const ProductMeasureRequest = z.object({
   tenant_id: z.string().trim().min(1).optional(),
@@ -560,6 +575,7 @@ function productForgetEffect(args: {
 
 type ProductMeasureInput = z.infer<typeof ProductMeasureRequest>;
 type ProductMeasureTraceInput = z.infer<typeof ProductMeasureTraceSchema>;
+type ProductDecisionTraceInput = z.infer<typeof ProductDecisionTraceBaseSchema>;
 type ProductMeasureGuideSnapshot = z.infer<typeof ProductMeasureGuideSnapshotSchema>;
 
 function productMeasureContextItems(snapshot: ProductMeasureGuideSnapshot): number {
@@ -801,6 +817,34 @@ function compactProductMeasureEvidenceIds(parsed: ProductMeasureInput, trace: Pr
   ]);
 }
 
+function productMemoryDecisionOutputs(args: {
+  tenant_id: string;
+  scope: string;
+  trace: ProductDecisionTraceInput;
+  routes_used: string[];
+}): {
+  memoryDecisionTrace: AionisMemoryDecisionTrace;
+  memoryDecisionAudit: AionisMemoryDecisionAuditReport;
+} {
+  const memoryDecisionTrace = buildAionisMemoryDecisionTrace({
+    tenant_id: args.tenant_id,
+    scope: args.scope,
+    before_guide: args.trace.before_guide ?? null,
+    after_guide: args.trace.after_guide,
+    forget_result: args.trace.forget_result ?? null,
+    source_map: {
+      routes_used: args.routes_used,
+    },
+  });
+  const memoryDecisionAudit = buildAionisMemoryDecisionAuditReport({
+    trace: memoryDecisionTrace,
+    source_map: {
+      routes_used: args.routes_used,
+    },
+  });
+  return { memoryDecisionTrace, memoryDecisionAudit };
+}
+
 export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
   const {
     app,
@@ -968,6 +1012,71 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     });
   });
 
+  app.post("/v1/debug/memory-decision-trace", async (req: ProductFacadeRequest, reply: FastifyReply) => {
+    const principal = await requireMemoryPrincipal(req);
+    const body = withIdentityFromRequest(req, req.body, principal, "recall");
+    const parsed = ProductDecisionTraceRequest.parse(body);
+    await enforceRateLimit(req, reply, "recall");
+    await enforceTenantQuota(req, reply, "recall", tenantFromBody(parsed));
+    const gate = await acquireInflightSlot("recall");
+    try {
+      const decisionOutputs = productMemoryDecisionOutputs({
+        tenant_id: parsed.tenant_id ?? env.MEMORY_TENANT_ID,
+        scope: parsed.scope ?? env.MEMORY_SCOPE,
+        trace: parsed.product_trace,
+        routes_used: ["/v1/debug/memory-decision-trace"],
+      });
+      return reply.code(200).send({
+        contract_version: "aionis_memory_decision_trace_result_v1",
+        tenant_id: parsed.tenant_id ?? env.MEMORY_TENANT_ID,
+        scope: parsed.scope ?? env.MEMORY_SCOPE,
+        memory_decision_trace: decisionOutputs.memoryDecisionTrace,
+        source_map: {
+          routes_used: ["/v1/debug/memory-decision-trace"],
+          internal_surfaces_used: [
+            "product_trace_projection",
+            "memory_decision_trace",
+          ],
+        },
+      });
+    } finally {
+      gate.release();
+    }
+  });
+
+  app.post("/v1/audit/memory-decision-report", async (req: ProductFacadeRequest, reply: FastifyReply) => {
+    const principal = await requireMemoryPrincipal(req);
+    const body = withIdentityFromRequest(req, req.body, principal, "recall");
+    const parsed = ProductDecisionTraceRequest.parse(body);
+    await enforceRateLimit(req, reply, "recall");
+    await enforceTenantQuota(req, reply, "recall", tenantFromBody(parsed));
+    const gate = await acquireInflightSlot("recall");
+    try {
+      const decisionOutputs = productMemoryDecisionOutputs({
+        tenant_id: parsed.tenant_id ?? env.MEMORY_TENANT_ID,
+        scope: parsed.scope ?? env.MEMORY_SCOPE,
+        trace: parsed.product_trace,
+        routes_used: ["/v1/audit/memory-decision-report"],
+      });
+      return reply.code(200).send({
+        contract_version: "aionis_memory_decision_audit_result_v1",
+        tenant_id: parsed.tenant_id ?? env.MEMORY_TENANT_ID,
+        scope: parsed.scope ?? env.MEMORY_SCOPE,
+        memory_decision_audit: decisionOutputs.memoryDecisionAudit,
+        source_map: {
+          routes_used: ["/v1/audit/memory-decision-report"],
+          internal_surfaces_used: [
+            "product_trace_projection",
+            "memory_decision_trace",
+            "memory_decision_audit_report",
+          ],
+        },
+      });
+    } finally {
+      gate.release();
+    }
+  });
+
   app.post("/v1/measure", async (req: ProductFacadeRequest, reply: FastifyReply) => {
     const principal = await requireMemoryPrincipal(req);
     const body = withIdentityFromRequest(req, req.body, principal, "recall");
@@ -991,6 +1100,14 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
         comparison: measureInput.comparison,
         evidence_ids: measureInput.evidenceIds,
       });
+      const decisionOutputs = parsed.product_trace
+        ? productMemoryDecisionOutputs({
+            tenant_id: parsed.tenant_id ?? env.MEMORY_TENANT_ID,
+            scope: parsed.scope ?? env.MEMORY_SCOPE,
+            trace: parsed.product_trace,
+            routes_used: ["/v1/measure"],
+          })
+        : null;
       return reply.code(200).send({
         contract_version: "aionis_measure_result_v1",
         tenant_id: parsed.tenant_id ?? env.MEMORY_TENANT_ID,
@@ -1001,11 +1118,16 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
           aionis: measureInput.aionis,
         },
         effect_report: AionisEffectReportSchema.parse(effectReport),
+        ...(decisionOutputs ? {
+          memory_decision_trace: decisionOutputs.memoryDecisionTrace,
+          memory_decision_audit: decisionOutputs.memoryDecisionAudit,
+        } : {}),
         kernel_report: kernelReport,
         source_map: {
           routes_used: ["/v1/measure"],
           internal_surfaces_used: [
             ...(measureInput.source === "product_trace" ? ["product_trace_projection"] : []),
+            ...(decisionOutputs ? ["memory_decision_trace", "memory_decision_audit_report"] : []),
             "effect_evaluator",
             "product_effect_report",
           ],

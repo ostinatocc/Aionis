@@ -20,7 +20,7 @@ import { AionisGuidePacketSchema, AionisLearningPacketSchema, AionisMemoryPacket
 export const UUID = z.string().uuid();
 
 export const NodeType = z.enum(["event", "entity", "topic", "rule", "evidence", "concept", "procedure", "self_model"]);
-export const EdgeType = z.enum(["part_of", "related_to", "derived_from"]);
+export const EdgeType = z.enum(["part_of", "related_to", "derived_from", "supersedes", "contradicts", "invalidates"]);
 export const MemoryLayerId = z.enum(["L0", "L1", "L2", "L3", "L4", "L5"]);
 export const MemoryLayerPreference = z
   .object({

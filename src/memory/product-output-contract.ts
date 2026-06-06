@@ -398,6 +398,202 @@ export function parseAionisAgentContext(value: unknown): AionisAgentContext {
   return AionisAgentContextSchema.parse(value);
 }
 
+export const AionisMemoryDecisionSurfaceSchema = z.enum([
+  "use_now",
+  "inspect_before_use",
+  "do_not_use",
+  "rehydrate",
+  "not_agent_facing",
+]);
+export type AionisMemoryDecisionSurface = z.infer<typeof AionisMemoryDecisionSurfaceSchema>;
+
+export const AionisMemoryDecisionTraceSchema = z
+  .object({
+    contract_version: z.literal("aionis_memory_decision_trace_v1"),
+    tenant_id: z.string().min(1),
+    scope: z.string().min(1),
+    intended_use: z.literal("measure_debug_audit"),
+    agent_prompt_included: z.literal(false),
+    runtime_mutation: z.literal(false),
+    input: z
+      .object({
+        before_guide_present: z.boolean(),
+        after_guide_present: z.boolean(),
+        memory_packet_present: z.boolean(),
+        guide_packet_present: z.boolean(),
+        agent_context_present: z.boolean(),
+        forget_result_present: z.boolean(),
+      })
+      .strict(),
+    summary: z
+      .object({
+        total_memory_count: z.number().int().nonnegative(),
+        direct_use_count: z.number().int().nonnegative(),
+        inspect_before_use_count: z.number().int().nonnegative(),
+        do_not_use_count: z.number().int().nonnegative(),
+        rehydrate_count: z.number().int().nonnegative(),
+        relation_count: z.number().int().nonnegative(),
+        contradiction_warning_count: z.number().int().nonnegative(),
+        prompt_char_count: z.number().int().nonnegative(),
+        history_used: z.boolean(),
+        recommended_posture: z.enum([
+          "reuse_supported_history",
+          "use_as_context",
+          "inspect_before_use",
+          "rehydrate_before_use",
+          "ignore_history",
+        ]),
+        authority: AionisGuidanceAuthoritySchema,
+        negative_transfer_risk: AionisRiskLevelSchema,
+        learning_control_visible: z.boolean(),
+      })
+      .strict(),
+    memory_decisions: z
+      .array(
+        z
+          .object({
+            memory_id: z.string().min(1),
+            title: z.string().min(1).nullable(),
+            domain: AionisMemoryDomainSchema,
+            memory_type: z.enum([
+              "fact",
+              "preference",
+              "project_context",
+              "procedure",
+              "event",
+              "evidence",
+              "rule",
+              "execution_memory",
+              "unknown",
+            ]),
+            lifecycle_state: z.enum([
+              "active",
+              "candidate",
+              "contested",
+              "suppressed",
+              "demoted",
+              "archived",
+              "rehydration_candidate",
+              "unknown",
+            ]),
+            authority: AionisGuidanceAuthoritySchema,
+            agent_surface: AionisMemoryDecisionSurfaceSchema,
+            reason_codes: z.array(z.string().min(1)).default([]),
+            evidence_ids: z.array(z.string().min(1)).default([]),
+          })
+          .strict(),
+      )
+      .default([]),
+    relation_decisions: z
+      .array(
+        z
+          .object({
+            evidence_id: z.string().min(1),
+            memory_id: z.string().min(1),
+            relation: z.enum(["direct_match", "derived_from", "supports", "contradicts", "rehydrates"]),
+            reason: z.string().min(1),
+          })
+          .strict(),
+      )
+      .default([]),
+    context_decision: z
+      .object({
+        prompt_char_count: z.number().int().nonnegative(),
+        target_files: z.array(z.string().min(1)).default([]),
+        use_now_count: z.number().int().nonnegative(),
+        inspect_before_use_count: z.number().int().nonnegative(),
+        do_not_use_count: z.number().int().nonnegative(),
+        rehydrate_hint_count: z.number().int().nonnegative(),
+        memory_ids: z.array(z.string().min(1)).default([]),
+      })
+      .strict(),
+    forget_decisions: z
+      .array(
+        z
+          .object({
+            action: z.enum(["suppress", "unsuppress", "rehydrate", "activate"]),
+            target: z.enum(["pattern", "archive", "payload", "memory"]).nullable(),
+            changed_count: z.number().nonnegative(),
+            affected_memory_ids: z.array(z.string().min(1)).default([]),
+            reason: z.string().min(1).nullable(),
+          })
+          .strict(),
+      )
+      .default([]),
+    source_map: z
+      .object({
+        routes_used: z.array(z.string().min(1)).default([]),
+        internal_surfaces_used: z.array(z.string().min(1)).default([]),
+        omitted_internal_surfaces: z.array(z.string().min(1)).default([]),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type AionisMemoryDecisionTrace = z.infer<typeof AionisMemoryDecisionTraceSchema>;
+
+export function parseAionisMemoryDecisionTrace(value: unknown): AionisMemoryDecisionTrace {
+  return AionisMemoryDecisionTraceSchema.parse(value);
+}
+
+export const AionisMemoryDecisionAuditReportSchema = z
+  .object({
+    contract_version: z.literal("aionis_memory_decision_audit_report_v1"),
+    tenant_id: z.string().min(1),
+    scope: z.string().min(1),
+    intended_use: z.literal("operator_audit"),
+    agent_prompt_included: z.literal(false),
+    runtime_mutation: z.literal(false),
+    verdict: z.enum(["learning_control_visible", "no_history", "insufficient_trace"]),
+    claims: z
+      .array(
+        z
+          .object({
+            claim: z.enum([
+              "agent_prompt_excluded",
+              "runtime_state_unchanged",
+              "memory_lifecycle_visible",
+              "negative_transfer_control_visible",
+              "history_surface_compact",
+            ]),
+            status: z.enum(["pass", "fail", "not_applicable"]),
+            evidence: z.string().min(1),
+          })
+          .strict(),
+      )
+      .default([]),
+    counters: z
+      .object({
+        total_memory_count: z.number().int().nonnegative(),
+        controlled_memory_count: z.number().int().nonnegative(),
+        relation_count: z.number().int().nonnegative(),
+        prompt_char_count: z.number().int().nonnegative(),
+      })
+      .strict(),
+    risks: z
+      .object({
+        negative_transfer_risk: AionisRiskLevelSchema,
+        unresolved_inspection_count: z.number().int().nonnegative(),
+        blocked_or_suppressed_count: z.number().int().nonnegative(),
+        reasons: z.array(z.string().min(1)).default([]),
+      })
+      .strict(),
+    source_map: z
+      .object({
+        routes_used: z.array(z.string().min(1)).default([]),
+        internal_surfaces_used: z.array(z.string().min(1)).default([]),
+        omitted_internal_surfaces: z.array(z.string().min(1)).default([]),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type AionisMemoryDecisionAuditReport = z.infer<typeof AionisMemoryDecisionAuditReportSchema>;
+
+export function parseAionisMemoryDecisionAuditReport(value: unknown): AionisMemoryDecisionAuditReport {
+  return AionisMemoryDecisionAuditReportSchema.parse(value);
+}
+
 export const AionisLearningPostureSchema = z.enum([
   "promotion_ready",
   "candidate_only",

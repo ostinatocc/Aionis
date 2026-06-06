@@ -5,6 +5,8 @@ import {
   AionisEffectReportSchema,
   AionisGuidePacketSchema,
   AionisLearningPacketSchema,
+  AionisMemoryDecisionAuditReportSchema,
+  AionisMemoryDecisionTraceSchema,
   AionisMemoryPacketSchema,
 } from "../../src/memory/product-output-contract.ts";
 
@@ -400,6 +402,110 @@ function validLearningPacket() {
   };
 }
 
+function validMemoryDecisionTrace() {
+  return {
+    contract_version: "aionis_memory_decision_trace_v1",
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    intended_use: "measure_debug_audit",
+    agent_prompt_included: false,
+    runtime_mutation: false,
+    input: {
+      before_guide_present: true,
+      after_guide_present: true,
+      memory_packet_present: true,
+      guide_packet_present: true,
+      agent_context_present: true,
+      forget_result_present: false,
+    },
+    summary: {
+      total_memory_count: 1,
+      direct_use_count: 1,
+      inspect_before_use_count: 0,
+      do_not_use_count: 0,
+      rehydrate_count: 0,
+      relation_count: 0,
+      contradiction_warning_count: 0,
+      prompt_char_count: 81,
+      history_used: true,
+      recommended_posture: "inspect_before_use",
+      authority: "advisory",
+      negative_transfer_risk: "medium",
+      learning_control_visible: true,
+    },
+    memory_decisions: [
+      {
+        memory_id: "mem-pref-1",
+        title: "User prefers direct answers",
+        domain: "general",
+        memory_type: "preference",
+        lifecycle_state: "active",
+        authority: "advisory",
+        agent_surface: "use_now",
+        reason_codes: ["lifecycle_active", "authority_advisory", "available_for_agent_use"],
+        evidence_ids: ["commit-1"],
+      },
+    ],
+    relation_decisions: [],
+    context_decision: {
+      prompt_char_count: 81,
+      target_files: ["src/index.ts"],
+      use_now_count: 1,
+      inspect_before_use_count: 1,
+      do_not_use_count: 1,
+      rehydrate_hint_count: 1,
+      memory_ids: ["mem-1", "mem-3"],
+    },
+    forget_decisions: [],
+    source_map: {
+      routes_used: ["/v1/measure"],
+      internal_surfaces_used: ["memory_decision_trace"],
+      omitted_internal_surfaces: ["raw_memory_rows", "raw_slots"],
+    },
+  };
+}
+
+function validMemoryDecisionAuditReport() {
+  return {
+    contract_version: "aionis_memory_decision_audit_report_v1",
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    intended_use: "operator_audit",
+    agent_prompt_included: false,
+    runtime_mutation: false,
+    verdict: "learning_control_visible",
+    claims: [
+      {
+        claim: "agent_prompt_excluded",
+        status: "pass",
+        evidence: "Trace is returned on audit surfaces, not embedded in prompt.",
+      },
+      {
+        claim: "runtime_state_unchanged",
+        status: "pass",
+        evidence: "Trace is read-only.",
+      },
+    ],
+    counters: {
+      total_memory_count: 1,
+      controlled_memory_count: 1,
+      relation_count: 0,
+      prompt_char_count: 81,
+    },
+    risks: {
+      negative_transfer_risk: "medium",
+      unresolved_inspection_count: 1,
+      blocked_or_suppressed_count: 0,
+      reasons: ["candidate memory requires inspection"],
+    },
+    source_map: {
+      routes_used: ["/v1/audit/memory-decision-report"],
+      internal_surfaces_used: ["memory_decision_audit_report"],
+      omitted_internal_surfaces: ["raw_memory_rows", "raw_slots"],
+    },
+  };
+}
+
 test("AionisMemoryPacket accepts evidence-scoped general cognitive memory output", () => {
   const parsed = AionisMemoryPacketSchema.parse(validMemoryPacket());
   assert.equal(parsed.contract_version, "aionis_memory_packet_v1");
@@ -579,4 +685,40 @@ test("AionisEffectReport rejects unverified broad claims", () => {
       }),
     /Unrecognized key/,
   );
+});
+
+test("AionisMemoryDecisionTrace accepts read-only measure/debug/audit output", () => {
+  const parsed = AionisMemoryDecisionTraceSchema.parse(validMemoryDecisionTrace());
+  assert.equal(parsed.contract_version, "aionis_memory_decision_trace_v1");
+  assert.equal(parsed.intended_use, "measure_debug_audit");
+  assert.equal(parsed.agent_prompt_included, false);
+  assert.equal(parsed.runtime_mutation, false);
+  assert.equal(parsed.memory_decisions[0]?.agent_surface, "use_now");
+});
+
+test("AionisMemoryDecisionTrace rejects prompt injection and runtime mutation claims", () => {
+  assert.throws(
+    () =>
+      AionisMemoryDecisionTraceSchema.parse({
+        ...validMemoryDecisionTrace(),
+        agent_prompt_included: true,
+      }),
+  );
+
+  assert.throws(
+    () =>
+      AionisMemoryDecisionTraceSchema.parse({
+        ...validMemoryDecisionTrace(),
+        runtime_mutation: true,
+      }),
+  );
+});
+
+test("AionisMemoryDecisionAuditReport accepts compact operator audit output", () => {
+  const parsed = AionisMemoryDecisionAuditReportSchema.parse(validMemoryDecisionAuditReport());
+  assert.equal(parsed.contract_version, "aionis_memory_decision_audit_report_v1");
+  assert.equal(parsed.intended_use, "operator_audit");
+  assert.equal(parsed.agent_prompt_included, false);
+  assert.equal(parsed.runtime_mutation, false);
+  assert.equal(parsed.verdict, "learning_control_visible");
 });

@@ -1,6 +1,7 @@
 import type { EmbeddingProvider } from "../embeddings/types.js";
 import type { WriteStoreAccess } from "../store/write-access.js";
 import type { AssociativeLinkTriggerOrigin } from "./associative-linking-types.js";
+import type { MemoryLifecycleRelationCandidateProducer } from "./memory-lifecycle-adjudicator.js";
 import { applyPreparedMemoryWrite, type PreparedWrite } from "./write.js";
 import { projectWorkflowCandidatesFromPreparedWrite } from "./workflow-write-projection.js";
 
@@ -163,6 +164,7 @@ export async function commitLitePreparedWriteWithProjection(args: {
     piiRedaction: boolean;
     allowCrossScopeEdges: boolean;
     associativeLinkOrigin?: AssociativeLinkTriggerOrigin;
+    lifecycleRelationCandidateProducer?: MemoryLifecycleRelationCandidateProducer;
   };
 }) {
   await appendLiteWorkflowProjection({
@@ -177,6 +179,9 @@ export async function commitLitePreparedWriteWithProjection(args: {
       allowCrossScopeEdges: args.writeOptions.allowCrossScopeEdges,
       ...(args.writeOptions.associativeLinkOrigin
         ? { associativeLinkOrigin: args.writeOptions.associativeLinkOrigin }
+        : {}),
+      ...(args.writeOptions.lifecycleRelationCandidateProducer
+        ? { lifecycleRelationCandidateProducer: args.writeOptions.lifecycleRelationCandidateProducer }
         : {}),
     }),
   );

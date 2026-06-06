@@ -14,12 +14,17 @@ import {
   parseAionisEffectReport,
   parseAionisGuidePacket,
   parseAionisLearningPacket,
+  parseAionisMemoryDecisionAuditReport,
+  parseAionisMemoryDecisionTrace,
   parseAionisMemoryPacket,
   type AionisAgentContext,
   type AionisEffectReport,
   type AionisGuidePacket,
   type AionisGuidanceAuthority,
   type AionisLearningPacket,
+  type AionisMemoryDecisionAuditReport,
+  type AionisMemoryDecisionSurface,
+  type AionisMemoryDecisionTrace,
   type AionisMemoryDomain,
   type AionisMemoryPacket,
   type AionisRiskLevel,
@@ -38,6 +43,13 @@ import {
   resolveNodeSemanticForgettingSurface,
   resolveNodeSummaryKind,
 } from "./node-execution-surface.js";
+import {
+  adjudicateMemoryLifecycle,
+  memoryLifecycleRelationsFromEdges,
+  type AdjudicableMemoryEntry,
+  type MemoryLifecycleEdgeInput,
+  type MemoryLifecycleRelation,
+} from "./memory-lifecycle-adjudicator.js";
 
 type ProductTask = AionisGuidePacket["task"];
 type ProductActor = NonNullable<AionisGuidePacket["actor"]>;
@@ -96,9 +108,12 @@ export type BuildAionisMemoryPacketArgs = {
     commit_id?: string | null;
     confidence?: number | null;
     salience?: number | null;
+    created_at?: string | null;
+    updated_at?: string | null;
   }>;
   context_items?: unknown[];
   ranked?: Array<{ id: string; score?: number | null; activation?: number | null }>;
+  lifecycle_edges?: MemoryLifecycleEdgeInput[];
   source_map?: Partial<AionisMemoryPacket["source_map"]>;
 };
 
@@ -109,6 +124,26 @@ export type BuildAionisLearningPacketArgs = {
   task?: ProductTask;
   planning: PlanningSummary | AssemblySummary;
   source_map?: Partial<AionisLearningPacket["source_map"]>;
+};
+
+type AionisDecisionTraceGuideSnapshot = {
+  memory_packet?: AionisMemoryPacket | null;
+  guide_packet?: AionisGuidePacket | null;
+  agent_context?: AionisAgentContext | null;
+};
+
+export type BuildAionisMemoryDecisionTraceArgs = {
+  tenant_id: string;
+  scope: string;
+  before_guide?: AionisDecisionTraceGuideSnapshot | null;
+  after_guide: AionisDecisionTraceGuideSnapshot;
+  forget_result?: unknown;
+  source_map?: Partial<AionisMemoryDecisionTrace["source_map"]>;
+};
+
+export type BuildAionisMemoryDecisionAuditReportArgs = {
+  trace: AionisMemoryDecisionTrace;
+  source_map?: Partial<AionisMemoryDecisionAuditReport["source_map"]>;
 };
 
 function compactStrings(values: Array<string | null | undefined>): string[] {
@@ -293,7 +328,11 @@ function memoryScopeHint(args: {
   return "general cognitive memory; apply inside the current tenant and scope";
 }
 
-function buildMemoryPacketEntries(args: BuildAionisMemoryPacketArgs): MemoryPacketEntry[] {
+function buildMemoryPacketEntries(args: BuildAionisMemoryPacketArgs): {
+  entries: MemoryPacketEntry[];
+  lifecycleRelations: MemoryLifecycleRelation[];
+  persistedLifecycleRelationCount: number;
+} {
   const contextItems = new Map<string, Record<string, unknown>>();
   for (const item of args.context_items ?? []) {
     const id = contextItemId(item);
@@ -305,7 +344,7 @@ function buildMemoryPacketEntries(args: BuildAionisMemoryPacketArgs): MemoryPack
     const score = numberValue(item.score) ?? numberValue(item.activation);
     if (score !== null) rankedScore.set(item.id, score);
   }
-  return args.nodes.slice(0, 32).map((node) => {
+  const baseEntries: AdjudicableMemoryEntry[] = args.nodes.slice(0, 32).map((node, sourceIndex) => {
     const slots = asRecord(node.slots);
     const contextItem = contextItems.get(node.id) ?? null;
     const layer = sourceLayer({ type: node.type, slots, contextItem });
@@ -332,8 +371,22 @@ function buildMemoryPacketEntries(args: BuildAionisMemoryPacketArgs): MemoryPack
       lifecycle_state: lifecycleState,
       evidence_ids: memoryEvidenceIds({ node, contextItem }),
       scope_hint: memoryScopeHint({ domain, sourceLayer: layer }),
+      observed_at: stringValue(node.updated_at)
+        ?? stringValue(node.created_at)
+        ?? stringValue(contextItem?.updated_at)
+        ?? stringValue(contextItem?.created_at),
+      source_index: sourceIndex,
     };
   });
+  const persistedRelations = memoryLifecycleRelationsFromEdges(args.lifecycle_edges ?? []);
+  const adjudicated = adjudicateMemoryLifecycle(baseEntries, {
+    persisted_relations: persistedRelations,
+  });
+  return {
+    lifecycleRelations: adjudicated.relations,
+    persistedLifecycleRelationCount: persistedRelations.length,
+    entries: adjudicated.entries.map(({ observed_at: _observedAt, source_index: _sourceIndex, ...entry }) => entry as MemoryPacketEntry),
+  };
 }
 
 function memoryFamily(entries: MemoryPacketEntry[]): AionisMemoryPacket["memory_family"] {
@@ -343,8 +396,11 @@ function memoryFamily(entries: MemoryPacketEntry[]): AionisMemoryPacket["memory_
   return domains.has("execution") ? "execution" : "general_cognitive";
 }
 
-function buildMemoryEvidenceTrail(entries: MemoryPacketEntry[]): AionisMemoryPacket["evidence_trail"] {
-  return entries.flatMap((entry) => {
+function buildMemoryEvidenceTrail(
+  entries: MemoryPacketEntry[],
+  lifecycleRelations: MemoryLifecycleRelation[] = [],
+): AionisMemoryPacket["evidence_trail"] {
+  const directEvidence = entries.flatMap((entry) => {
     const direct = {
       evidence_id: `memory_node:${entry.memory_id}`,
       memory_id: entry.memory_id,
@@ -360,7 +416,15 @@ function buildMemoryEvidenceTrail(entries: MemoryPacketEntry[]): AionisMemoryPac
       reason: "Stored reference supports this memory entry.",
     }));
     return [direct, ...refs];
-  }).slice(0, 96);
+  });
+  const relationEvidence = lifecycleRelations.map((relation) => ({
+    evidence_id: `memory_relation:${relation.source_memory_id}:${relation.target_memory_id}`,
+    memory_id: relation.target_memory_id,
+    source: "edge" as const,
+    relation: "contradicts" as const,
+    reason: `Newer related memory ${relation.source_memory_id} ${relation.relation} this memory; ${relation.reasons.join("; ")}.`,
+  }));
+  return [...directEvidence, ...relationEvidence].slice(0, 96);
 }
 
 function buildMemoryContradictionWarnings(entries: MemoryPacketEntry[]): AionisMemoryPacket["contradiction_warnings"] {
@@ -418,7 +482,7 @@ function buildMemoryLifecycle(entries: MemoryPacketEntry[]): AionisMemoryPacket[
 }
 
 export function buildAionisMemoryPacket(args: BuildAionisMemoryPacketArgs): AionisMemoryPacket {
-  const entries = buildMemoryPacketEntries(args);
+  const { entries, lifecycleRelations, persistedLifecycleRelationCount } = buildMemoryPacketEntries(args);
   const lifecycle = buildMemoryLifecycle(entries);
   const contradictionWarnings = buildMemoryContradictionWarnings(entries);
   const expectedEffects = expectedMemoryEffects(entries);
@@ -446,7 +510,7 @@ export function buildAionisMemoryPacket(args: BuildAionisMemoryPacketArgs): Aion
     },
     memory_family: memoryFamily(entries),
     relevant_memories: entries,
-    evidence_trail: buildMemoryEvidenceTrail(entries),
+    evidence_trail: buildMemoryEvidenceTrail(entries, lifecycleRelations),
     lifecycle,
     contradiction_warnings: contradictionWarnings,
     forgetting_state: {
@@ -488,6 +552,8 @@ export function buildAionisMemoryPacket(args: BuildAionisMemoryPacketArgs): Aion
         "context_items",
         "memory_layer_policy",
         "semantic_forgetting_surface",
+        ...(persistedLifecycleRelationCount > 0 ? ["memory_lifecycle_relation_graph"] : []),
+        ...(lifecycleRelations.length > 0 ? ["memory_lifecycle_adjudicator"] : []),
       ],
       omitted_internal_surfaces: args.source_map?.omitted_internal_surfaces ?? [
         "raw_embedding_vectors",
@@ -924,7 +990,7 @@ function memoryEntryLabel(entry: MemoryPacketEntry): string {
   return compactStrings([entry.title, entry.memory_id])[0] ?? entry.memory_id;
 }
 
-function memoryEntryUseNowLine(entry: MemoryPacketEntry): string {
+function memoryEntryUseNowLine(entry: MemoryPacketEntry, deniedPathTargets: Set<string> = new Set()): string | null {
   const prefix = entry.memory_type === "preference"
     ? "Preference"
     : entry.memory_type === "project_context"
@@ -932,8 +998,13 @@ function memoryEntryUseNowLine(entry: MemoryPacketEntry): string {
       : entry.domain === "execution"
         ? "Execution memory"
         : "Memory";
-  const summary = entry.summary.replace(/\s+/g, " ").trim();
+  const summary = sanitizeAgentFacingSummary(entry.summary, deniedPathTargets);
+  if (!summary) return null;
   return `${prefix}: ${summary}`.slice(0, 520);
+}
+
+function memoryEntryInspectLine(entry: MemoryPacketEntry): string {
+  return `Inspect memory before use: ${memoryEntryLabel(entry)}`.slice(0, 220);
 }
 
 function memoryEntryMatchTerms(entry: MemoryPacketEntry): string[] {
@@ -987,6 +1058,39 @@ function extractPathTargets(text: string): string[] {
     out.push(value);
   }
   return out.slice(0, 16);
+}
+
+function sentenceChunks(text: string): string[] {
+  return text
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?;])\s+/)
+    .map((chunk) => chunk.trim())
+    .filter((chunk) => chunk.length > 0);
+}
+
+function containsDeniedPathTarget(text: string, deniedPathTargets: Set<string>): boolean {
+  if (deniedPathTargets.size === 0) return false;
+  return extractPathTargets(text).some((target) => deniedPathTargets.has(target));
+}
+
+function sanitizeAgentFacingSummary(summary: string, deniedPathTargets: Set<string>): string {
+  const compacted = summary.replace(/\s+/g, " ").trim();
+  if (!compacted || deniedPathTargets.size === 0) return compacted;
+  const kept = sentenceChunks(compacted).filter((chunk) =>
+    !containsDeniedPathTarget(chunk, deniedPathTargets)
+  );
+  return kept.join(" ").replace(/\s+/g, " ").trim();
+}
+
+function deniedAgentActionPathTargets(entries: MemoryPacketEntry[]): Set<string> {
+  const out = new Set<string>();
+  for (const entry of entries) {
+    if (!memoryEntryBlocked(entry) && !memoryEntryInspectBeforeUse(entry)) continue;
+    for (const target of extractPathTargets(`${entry.title ?? ""}\n${entry.summary}`)) {
+      out.add(target);
+    }
+  }
+  return out;
 }
 
 const COMMON_CODE_PATH_ROOTS = new Set([
@@ -1096,6 +1200,7 @@ function compileAgentContextSurfaces(args: {
   const blockedEntries = args.memoryEntries.filter(memoryEntryBlocked);
   const inspectEntries = args.memoryEntries.filter((entry) => !memoryEntryBlocked(entry) && memoryEntryInspectBeforeUse(entry));
   const usableEntries = args.memoryEntries.filter(memoryEntryUsable);
+  const deniedPathTargets = deniedAgentActionPathTargets(args.memoryEntries);
   const hasUsableMemory = usableEntries.length > 0;
   const hasRawGuideSurface =
     args.rawTargetFiles.length > 0
@@ -1104,7 +1209,9 @@ function compileAgentContextSurfaces(args: {
     || args.rawDoNotUse.length > 0
     || args.rehydrateHints.length > 0;
   const trustedConflict = trustedWorkflowConflictAudit(args.memoryEntries);
-  const memoryUseNow = usableEntries.map(memoryEntryUseNowLine);
+  const memoryUseNow = compactStrings(usableEntries.map((entry) => memoryEntryUseNowLine(entry, deniedPathTargets)));
+  const memoryUseNowPathTargets = compactStrings(memoryUseNow.flatMap(extractPathTargets));
+  const memoryUseNowPathTargetSet = new Set(memoryUseNowPathTargets);
 
   const movedToInspect: string[] = [];
   const movedToDoNotUse: string[] = [];
@@ -1133,16 +1240,19 @@ function compileAgentContextSurfaces(args: {
     return hasUsableMemory || args.memoryEntries.length === 0;
   });
 
-  const targetFiles = hasUsableMemory || args.rawTargetFiles.length > 0
+  const rawTargetFiles = args.rawTargetFiles.filter((target) =>
+    !deniedPathTargets.has(target) || memoryUseNowPathTargetSet.has(target)
+  );
+  const targetFiles = hasUsableMemory || rawTargetFiles.length > 0
     ? compactStrings([
-        ...args.rawTargetFiles,
-        ...usableEntries.flatMap((entry) => extractPathTargets(`${entry.title ?? ""}\n${entry.summary}`)),
+        ...rawTargetFiles,
+        ...memoryUseNowPathTargets,
       ]).slice(0, 8)
     : [];
   const inspectBeforeUse = compactStrings([
     ...args.rawInspectBeforeUse,
     ...movedToInspect,
-    ...inspectEntries.map((entry) => `Inspect memory before use: ${memoryEntryLabel(entry)}`),
+    ...inspectEntries.map(memoryEntryInspectLine),
   ]).slice(0, 5);
   const doNotUse = compactStrings([
     ...args.rawDoNotUse,
@@ -1313,6 +1423,327 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
       memory_ids: memoryIds,
       workflow_ids: workflowIds,
       evidence_count: evidenceCount,
+    },
+  });
+}
+
+function traceTextMatchesEntry(values: string[], entry: MemoryPacketEntry): boolean {
+  return values.some((value) => textMatchesMemoryEntry(value, entry));
+}
+
+function traceSurfaceForMemory(args: {
+  entry: MemoryPacketEntry;
+  guide: AionisGuidePacket | null;
+  agentContext: AionisAgentContext | null;
+}): AionisMemoryDecisionSurface {
+  const guideBrief = args.guide?.guide_brief ?? null;
+  const rehydrateIds = new Set([
+    ...(args.agentContext?.rehydrate_hints ?? []).map((hint) => hint.memory_id),
+    ...(guideBrief?.rehydrate ?? []).map((hint) => hint.memory_id),
+  ]);
+  if (
+    traceTextMatchesEntry(args.agentContext?.do_not_use ?? [], args.entry)
+    || traceTextMatchesEntry(guideBrief?.do_not_use ?? [], args.entry)
+    || memoryEntryBlocked(args.entry)
+  ) {
+    return "do_not_use";
+  }
+  if (rehydrateIds.has(args.entry.memory_id) || args.entry.lifecycle_state === "rehydration_candidate") {
+    return "rehydrate";
+  }
+  if (
+    traceTextMatchesEntry(args.agentContext?.inspect_before_use ?? [], args.entry)
+    || traceTextMatchesEntry(guideBrief?.inspect_before_use ?? [], args.entry)
+    || memoryEntryInspectBeforeUse(args.entry)
+  ) {
+    return "inspect_before_use";
+  }
+  if (
+    traceTextMatchesEntry(args.agentContext?.use_now ?? [], args.entry)
+    || traceTextMatchesEntry(guideBrief?.use_now ?? [], args.entry)
+    || memoryEntryUsable(args.entry)
+  ) {
+    return "use_now";
+  }
+  return "not_agent_facing";
+}
+
+function traceReasonCodes(args: {
+  entry: MemoryPacketEntry;
+  surface: AionisMemoryDecisionSurface;
+  memory: AionisMemoryPacket | null;
+  guide: AionisGuidePacket | null;
+  agentContext: AionisAgentContext | null;
+}): string[] {
+  const hasRelationEvidence = args.memory?.evidence_trail.some((evidence) =>
+    evidence.source === "edge" && evidence.memory_id === args.entry.memory_id
+  ) === true;
+  const hasWarning = args.memory?.contradiction_warnings.some((warning) =>
+    warning.memory_id === args.entry.memory_id
+  ) === true;
+  return compactStrings([
+    args.entry.lifecycle_state === "active" ? "lifecycle_active" : `lifecycle_${args.entry.lifecycle_state}`,
+    args.entry.authority === "trusted" || args.entry.authority === "advisory" ? `authority_${args.entry.authority}` : null,
+    args.entry.authority === "candidate" ? "candidate_authority" : null,
+    args.entry.authority === "blocked" ? "blocked_authority" : null,
+    hasRelationEvidence ? "lifecycle_relation_evidence" : null,
+    hasWarning ? "contradiction_warning" : null,
+    args.surface === "use_now" ? "available_for_agent_use" : null,
+    args.surface === "inspect_before_use" ? "kept_out_of_direct_use" : null,
+    args.surface === "do_not_use" ? "blocked_from_agent_use" : null,
+    args.surface === "rehydrate" ? "requires_differential_rehydration" : null,
+    args.agentContext ? "agent_context_projection_checked" : null,
+    args.guide?.guide_brief.history_used ? "guide_history_used" : null,
+  ]);
+}
+
+function isForgetAction(value: string | null): value is AionisMemoryDecisionTrace["forget_decisions"][number]["action"] {
+  return value === "suppress" || value === "unsuppress" || value === "rehydrate" || value === "activate";
+}
+
+function isForgetTarget(value: string | null): value is NonNullable<AionisMemoryDecisionTrace["forget_decisions"][number]["target"]> {
+  return value === "pattern" || value === "archive" || value === "payload" || value === "memory";
+}
+
+function traceForgetDecisions(forgetResult: unknown): AionisMemoryDecisionTrace["forget_decisions"] {
+  const root = asRecord(forgetResult);
+  const effect = asRecord(root?.forget_effect);
+  const action = stringValue(effect?.action) ?? stringValue(root?.operation);
+  if (!isForgetAction(action)) return [];
+  const target = stringValue(effect?.target) ?? stringValue(root?.target);
+  const affected = Array.isArray(effect?.affected_memory_ids)
+    ? compactStrings(effect.affected_memory_ids.map((entry) => typeof entry === "string" ? entry : null))
+    : [];
+  return [{
+    action,
+    target: isForgetTarget(target) ? target : null,
+    changed_count: Math.max(0, numberValue(effect?.changed_count) ?? 0),
+    affected_memory_ids: affected,
+    reason: stringValue(root?.reason) ?? stringValue(effect?.reason),
+  }];
+}
+
+function traceRelationDecisions(memory: AionisMemoryPacket | null): AionisMemoryDecisionTrace["relation_decisions"] {
+  return (memory?.evidence_trail ?? [])
+    .filter((entry) => entry.source === "edge")
+    .slice(0, 96)
+    .map((entry) => ({
+      evidence_id: entry.evidence_id,
+      memory_id: entry.memory_id,
+      relation: entry.relation,
+      reason: entry.reason,
+    }));
+}
+
+export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTraceArgs): AionisMemoryDecisionTrace {
+  const memory = args.after_guide.memory_packet ?? null;
+  const guide = args.after_guide.guide_packet ?? null;
+  const agentContext = args.after_guide.agent_context ?? null;
+  const relationDecisions = traceRelationDecisions(memory);
+  const forgetDecisions = traceForgetDecisions(args.forget_result);
+  const memoryDecisions: AionisMemoryDecisionTrace["memory_decisions"] = (memory?.relevant_memories ?? [])
+    .slice(0, 96)
+    .map((entry) => {
+      const surface = traceSurfaceForMemory({ entry, guide, agentContext });
+      return {
+        memory_id: entry.memory_id,
+        title: entry.title,
+        domain: entry.domain,
+        memory_type: entry.memory_type,
+        lifecycle_state: entry.lifecycle_state,
+        authority: entry.authority,
+        agent_surface: surface,
+        reason_codes: traceReasonCodes({ entry, surface, memory, guide, agentContext }),
+        evidence_ids: entry.evidence_ids,
+      };
+    });
+  const contextDecision = {
+    prompt_char_count: agentContext?.prompt_text.length ?? 0,
+    target_files: agentContext?.target_files ?? [],
+    use_now_count: agentContext?.use_now.length ?? guide?.guide_brief.use_now.length ?? 0,
+    inspect_before_use_count: agentContext?.inspect_before_use.length ?? guide?.guide_brief.inspect_before_use.length ?? 0,
+    do_not_use_count: agentContext?.do_not_use.length ?? guide?.guide_brief.do_not_use.length ?? 0,
+    rehydrate_hint_count: agentContext?.rehydrate_hints.length ?? guide?.guide_brief.rehydrate.length ?? 0,
+    memory_ids: agentContext?.memory_ids ?? guide?.memory_lifecycle.used_memory_ids ?? [],
+  };
+  const directUseCount = memoryDecisions.filter((entry) => entry.agent_surface === "use_now").length;
+  const inspectCount = memoryDecisions.filter((entry) => entry.agent_surface === "inspect_before_use").length;
+  const doNotUseCount = memoryDecisions.filter((entry) => entry.agent_surface === "do_not_use").length;
+  const rehydrateCount = memoryDecisions.filter((entry) => entry.agent_surface === "rehydrate").length;
+  const historyUsed = agentContext?.history_used ?? guide?.guide_brief.history_used ?? memoryDecisions.length > 0;
+  const recommendedPosture =
+    agentContext?.recommended_posture
+    ?? guide?.guide_brief.recommended_posture
+    ?? (historyUsed ? "use_as_context" : "ignore_history");
+  const authority =
+    agentContext?.authority
+    ?? guide?.guide_brief.authority
+    ?? (memory?.behavior_impact.will_shape_behavior ? "advisory" : "none");
+  const negativeTransferRisk =
+    agentContext?.risk.negative_transfer_risk
+    ?? guide?.risk.negative_transfer_risk
+    ?? memory?.risk.negative_transfer_risk
+    ?? "low";
+  const contradictionWarningCount = memory?.contradiction_warnings.length ?? 0;
+  const controlVisible =
+    inspectCount > 0
+    || doNotUseCount > 0
+    || rehydrateCount > 0
+    || relationDecisions.length > 0
+    || contradictionWarningCount > 0
+    || forgetDecisions.length > 0
+    || negativeTransferRisk !== "low";
+
+  return parseAionisMemoryDecisionTrace({
+    contract_version: "aionis_memory_decision_trace_v1",
+    tenant_id: args.tenant_id,
+    scope: args.scope,
+    intended_use: "measure_debug_audit",
+    agent_prompt_included: false,
+    runtime_mutation: false,
+    input: {
+      before_guide_present: !!args.before_guide,
+      after_guide_present: true,
+      memory_packet_present: !!memory,
+      guide_packet_present: !!guide,
+      agent_context_present: !!agentContext,
+      forget_result_present: !!args.forget_result,
+    },
+    summary: {
+      total_memory_count: memoryDecisions.length,
+      direct_use_count: directUseCount,
+      inspect_before_use_count: inspectCount,
+      do_not_use_count: doNotUseCount,
+      rehydrate_count: rehydrateCount,
+      relation_count: relationDecisions.length,
+      contradiction_warning_count: contradictionWarningCount,
+      prompt_char_count: contextDecision.prompt_char_count,
+      history_used: historyUsed,
+      recommended_posture: recommendedPosture,
+      authority,
+      negative_transfer_risk: negativeTransferRisk,
+      learning_control_visible: controlVisible,
+    },
+    memory_decisions: memoryDecisions,
+    relation_decisions: relationDecisions,
+    context_decision: contextDecision,
+    forget_decisions: forgetDecisions,
+    source_map: {
+      routes_used: args.source_map?.routes_used ?? [],
+      internal_surfaces_used: args.source_map?.internal_surfaces_used ?? compactStrings([
+        "memory_packet_lifecycle",
+        "guide_packet_posture",
+        agentContext ? "agent_context_surface_projection" : null,
+        relationDecisions.length > 0 ? "memory_lifecycle_relation_graph" : null,
+        forgetDecisions.length > 0 ? "forget_result_projection" : null,
+        "memory_decision_trace",
+      ]),
+      omitted_internal_surfaces: args.source_map?.omitted_internal_surfaces ?? [
+        "raw_memory_rows",
+        "raw_slots",
+        "raw_embedding_vectors",
+        "agent_prompt_injection",
+      ],
+    },
+  });
+}
+
+function auditClaim(args: {
+  claim: AionisMemoryDecisionAuditReport["claims"][number]["claim"];
+  status: AionisMemoryDecisionAuditReport["claims"][number]["status"];
+  evidence: string;
+}): AionisMemoryDecisionAuditReport["claims"][number] {
+  return args;
+}
+
+export function buildAionisMemoryDecisionAuditReport(
+  args: BuildAionisMemoryDecisionAuditReportArgs,
+): AionisMemoryDecisionAuditReport {
+  const trace = args.trace;
+  const controlledMemoryCount =
+    trace.summary.inspect_before_use_count
+    + trace.summary.do_not_use_count
+    + trace.summary.rehydrate_count;
+  const blockedOrSuppressedCount = trace.memory_decisions.filter((entry) =>
+    entry.agent_surface === "do_not_use"
+    || entry.lifecycle_state === "suppressed"
+    || entry.lifecycle_state === "archived"
+    || entry.authority === "blocked"
+  ).length;
+  const verdict = trace.summary.total_memory_count === 0
+    ? "no_history" as const
+    : trace.summary.learning_control_visible
+      ? "learning_control_visible" as const
+      : "insufficient_trace" as const;
+  const promptCompactStatus = trace.context_decision.prompt_char_count === 0
+    ? "not_applicable" as const
+    : trace.context_decision.prompt_char_count <= 4096
+      ? "pass" as const
+      : "fail" as const;
+
+  return parseAionisMemoryDecisionAuditReport({
+    contract_version: "aionis_memory_decision_audit_report_v1",
+    tenant_id: trace.tenant_id,
+    scope: trace.scope,
+    intended_use: "operator_audit",
+    agent_prompt_included: false,
+    runtime_mutation: false,
+    verdict,
+    claims: [
+      auditClaim({
+        claim: "agent_prompt_excluded",
+        status: trace.agent_prompt_included === false ? "pass" : "fail",
+        evidence: "Decision trace is returned on measure/debug/audit surfaces, not embedded in agent_context.prompt_text.",
+      }),
+      auditClaim({
+        claim: "runtime_state_unchanged",
+        status: trace.runtime_mutation === false ? "pass" : "fail",
+        evidence: "Decision trace is a read-only projection over existing product packets and forget effects.",
+      }),
+      auditClaim({
+        claim: "memory_lifecycle_visible",
+        status: trace.summary.total_memory_count === 0 ? "not_applicable" : "pass",
+        evidence: `${trace.summary.total_memory_count} memory decisions exposed with lifecycle and authority.`,
+      }),
+      auditClaim({
+        claim: "negative_transfer_control_visible",
+        status: trace.summary.learning_control_visible ? "pass" : "not_applicable",
+        evidence: `${controlledMemoryCount} memories were placed on inspect/do-not-use/rehydrate surfaces.`,
+      }),
+      auditClaim({
+        claim: "history_surface_compact",
+        status: promptCompactStatus,
+        evidence: `Agent context prompt length is ${trace.context_decision.prompt_char_count} characters.`,
+      }),
+    ],
+    counters: {
+      total_memory_count: trace.summary.total_memory_count,
+      controlled_memory_count: controlledMemoryCount,
+      relation_count: trace.summary.relation_count,
+      prompt_char_count: trace.context_decision.prompt_char_count,
+    },
+    risks: {
+      negative_transfer_risk: trace.summary.negative_transfer_risk,
+      unresolved_inspection_count: trace.summary.inspect_before_use_count,
+      blocked_or_suppressed_count: blockedOrSuppressedCount,
+      reasons: compactStrings([
+        ...trace.memory_decisions
+          .filter((entry) => entry.agent_surface !== "use_now")
+          .flatMap((entry) => entry.reason_codes),
+        ...trace.relation_decisions.map((entry) => entry.reason),
+      ]).slice(0, 12),
+    },
+    source_map: {
+      routes_used: args.source_map?.routes_used ?? trace.source_map.routes_used,
+      internal_surfaces_used: args.source_map?.internal_surfaces_used ?? compactStrings([
+        ...trace.source_map.internal_surfaces_used,
+        "memory_decision_audit_report",
+      ]),
+      omitted_internal_surfaces: args.source_map?.omitted_internal_surfaces ?? [
+        "raw_memory_rows",
+        "raw_slots",
+        "raw_embedding_vectors",
+      ],
     },
   });
 }

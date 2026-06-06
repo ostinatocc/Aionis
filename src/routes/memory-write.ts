@@ -4,6 +4,7 @@ import type { ExecutionStateStore } from "../execution/state-store.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
 import { createEmbeddingSurfacePolicy, type EmbeddingSurfacePolicy } from "../embeddings/surface-policy.js";
 import {
+  buildLearningControlHttpClientConfig,
   buildLiteLearningControlRuntimeProviders,
   type LiteLearningControlRuntimeProviderBuilderOptions,
 } from "../app/learning-control-runtime-providers.js";
@@ -16,6 +17,7 @@ import {
   type WriteResult,
 } from "../memory/write.js";
 import { commitLitePreparedWriteWithProjection } from "../memory/lite-projected-write-commit.js";
+import { createHttpMemoryLifecycleRelationCandidateProducer } from "../memory/memory-lifecycle-relation-model-producer.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
 import type { AuthPrincipal } from "../util/auth.js";
 import { HttpError } from "../util/http.js";
@@ -90,6 +92,18 @@ export function registerMemoryWriteRoutes(args: {
     env,
     args.learningControlRuntimeProviderBuilderOptions,
   );
+  const lifecycleRelationCandidateProducer =
+    env.MEMORY_LIFECYCLE_RELATION_HTTP_MODEL_PROVIDER_ENABLED
+      ? (() => {
+          const httpClientConfig = buildLearningControlHttpClientConfig(env, args.learningControlRuntimeProviderBuilderOptions);
+          return httpClientConfig
+            ? createHttpMemoryLifecycleRelationCandidateProducer({
+                config: httpClientConfig,
+                maxPairs: env.MEMORY_LIFECYCLE_RELATION_MODEL_MAX_PAIRS,
+              })
+            : undefined;
+        })()
+      : undefined;
   const topicClusterSurfaceEnabled = embeddingSurfacePolicy.isEnabled("topic_cluster");
   const resolveWritePolicy = (computedPolicy: EffectiveWritePolicy): EffectiveWritePolicy => ({
     ...computedPolicy,
@@ -117,6 +131,9 @@ export function registerMemoryWriteRoutes(args: {
         maxTextLen: env.MAX_TEXT_LEN,
         piiRedaction: env.PII_REDACTION,
         allowCrossScopeEdges: env.ALLOW_CROSS_SCOPE_EDGES,
+        ...(lifecycleRelationCandidateProducer
+          ? { lifecycleRelationCandidateProducer }
+          : {}),
       },
     });
     return {

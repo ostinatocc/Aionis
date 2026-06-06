@@ -403,6 +403,13 @@ const EnvSchema = z.object({
     .transform((v) => (v ?? "false").toLowerCase())
     .pipe(z.enum(["true", "false"]))
     .transform((v) => v === "true"),
+  MEMORY_LIFECYCLE_RELATION_HTTP_MODEL_PROVIDER_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => (v ?? "false").toLowerCase())
+    .pipe(z.enum(["true", "false"]))
+    .transform((v) => v === "true"),
+  MEMORY_LIFECYCLE_RELATION_MODEL_MAX_PAIRS: z.coerce.number().int().positive().max(200).default(60),
   LEARNING_CONTROL_MODEL_CLIENT_TRANSPORT: z
     .enum(["auto", "openai_chat_completions_v1", "anthropic_messages_v1"])
     .default("auto"),

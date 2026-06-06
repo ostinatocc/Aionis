@@ -487,6 +487,7 @@ export async function memoryRecallParsed(
     nodes: outNodeRows,
     context_items,
     ranked,
+    lifecycle_edges: edgesAll,
     source_map: {
       routes_used: [routeForRecallEndpoint(endpoint)],
     },

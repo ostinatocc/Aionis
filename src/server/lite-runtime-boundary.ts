@@ -22,7 +22,7 @@ export type LiteRouteProductExposure =
   | "internal_control"
   | "operator_support";
 
-export const LITE_ROUTE_CAPABILITY_MATRIX_VERSION = "lite_route_capability_matrix_v3";
+export const LITE_ROUTE_CAPABILITY_MATRIX_VERSION = "lite_route_capability_matrix_v4";
 
 const LITE_PRODUCT_ENTRY_ROUTES = new Set([
   "POST /v1/observe",
@@ -142,6 +142,24 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
     product_effects: ["history_shaped_future_behavior"],
     surface_kind: "core_runtime",
     product_role: "product facade for measuring whether history positively shaped future behavior",
+  },
+  {
+    method: "POST",
+    path: "/v1/debug/memory-decision-trace",
+    route_group: "product-facade",
+    capabilities: ["learning_control"],
+    product_effects: [],
+    surface_kind: "operator_debug",
+    product_role: "read-only debug trace explaining memory lifecycle, authority, and agent-context surface decisions",
+  },
+  {
+    method: "POST",
+    path: "/v1/audit/memory-decision-report",
+    route_group: "product-facade",
+    capabilities: ["learning_control"],
+    product_effects: [],
+    surface_kind: "operator_debug",
+    product_role: "read-only audit report summarizing why memory was used, inspected, blocked, or rehydrated",
   },
   {
     method: "GET",

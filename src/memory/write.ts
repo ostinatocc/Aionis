@@ -8,16 +8,29 @@ import {
   writeNodeFingerprint,
   type WriteNodeInsertArgs,
   type WriteStoreAccess,
+  type WriteLifecycleCandidateNodeRow,
 } from "../store/write-access.js";
 import { type AssociativeLinkTriggerOrigin } from "./associative-linking-types.js";
 import { MemoryWriteRequest } from "./schemas.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
-import { resolveTenantScope, toTenantScopeKey } from "./tenant.js";
+import { resolveTenantScope } from "./tenant.js";
 import { distillWriteArtifacts, type WriteDistillationSummary } from "./write-distillation.js";
 import {
   enrichPreparedNodeLifecycle,
   normalizeExecutionNativeSlots,
 } from "./write-execution-native.js";
+import {
+  resolveNodeAnchorKind,
+  resolveNodeArchiveRelocationSurface,
+  resolveNodeExecutionKind,
+  resolveNodeSemanticForgettingSurface,
+} from "./node-execution-surface.js";
+import {
+  adjudicateMemoryLifecycle,
+  memoryLifecycleRelationEdgeId,
+  type AdjudicableMemoryEntry,
+  type MemoryLifecycleRelationCandidateProducer,
+} from "./memory-lifecycle-adjudicator.js";
 import {
   assertSingleScopeWrite,
   nodeEmbedText,
@@ -61,6 +74,7 @@ type PrepareWriteOptions = {
 
 export type ApplyPreparedWriteOptions = PrepareWriteOptions & {
   associativeLinkOrigin?: AssociativeLinkTriggerOrigin;
+  lifecycleRelationCandidateProducer?: MemoryLifecycleRelationCandidateProducer;
 };
 
 type ApplyWriteOptions = ApplyPreparedWriteOptions & {
@@ -72,6 +86,169 @@ type PlannedWriteNodeInsert = Omit<WriteNodeInsertArgs, "commitId">;
 function allowsExistingNodeContentReuse(node: PreparedNode): boolean {
   if (typeof node.client_id !== "string") return false;
   return node.client_id.startsWith("workflow_projection:") || node.client_id.startsWith("session:");
+}
+
+type LifecycleCandidateNode = {
+  id: string;
+  type: string;
+  title?: string | null;
+  text_summary?: string | null;
+  slots: Record<string, unknown>;
+  tier?: string | null;
+  memory_lane?: "private" | "shared";
+  owner_agent_id?: string | null;
+  owner_team_id?: string | null;
+  confidence?: number | null;
+  salience?: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+function lifecycleCandidateFromPrepared(node: PreparedNode, observedAt: string): LifecycleCandidateNode {
+  return {
+    id: node.id,
+    type: node.type,
+    title: node.title ?? null,
+    text_summary: node.text_summary ?? null,
+    slots: node.slots ?? {},
+    tier: node.tier ?? "hot",
+    memory_lane: node.memory_lane,
+    owner_agent_id: node.owner_agent_id ?? null,
+    owner_team_id: node.owner_team_id ?? null,
+    confidence: node.confidence ?? 0.5,
+    salience: node.salience ?? 0.5,
+    created_at: observedAt,
+    updated_at: observedAt,
+  };
+}
+
+function lifecycleCandidateFromStore(row: WriteLifecycleCandidateNodeRow): LifecycleCandidateNode {
+  return {
+    id: row.id,
+    type: row.type,
+    title: row.title,
+    text_summary: row.text_summary,
+    slots: row.slots,
+    tier: row.tier,
+    memory_lane: row.memory_lane,
+    owner_agent_id: row.owner_agent_id,
+    owner_team_id: row.owner_team_id,
+    confidence: row.confidence,
+    salience: row.salience,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+function lifecycleStateFromCandidate(node: LifecycleCandidateNode): AdjudicableMemoryEntry["lifecycle_state"] {
+  const semanticForgetting = resolveNodeSemanticForgettingSurface(node.slots);
+  const archiveRelocation = resolveNodeArchiveRelocationSurface(node.slots);
+  const lifecycle = typeof node.slots.lifecycle_state === "string" ? node.slots.lifecycle_state : null;
+  const tier = node.tier ?? "";
+  if (archiveRelocation.relocation_state === "cold_archive" || semanticForgetting.action === "archive" || tier === "archive") {
+    return "archived";
+  }
+  if (semanticForgetting.action === "demote") return "demoted";
+  if (semanticForgetting.action === "review") return "contested";
+  if (lifecycle === "suppressed" || lifecycle === "disabled") return "suppressed";
+  if (lifecycle === "contested") return "contested";
+  if (lifecycle === "candidate" || Number(node.confidence ?? 0.5) < 0.6) return "candidate";
+  if (tier === "cold" && node.slots.rehydration_default_mode) return "rehydration_candidate";
+  return "active";
+}
+
+function lifecycleEntryFromCandidate(node: LifecycleCandidateNode, sourceIndex: number): AdjudicableMemoryEntry {
+  const executionKind = resolveNodeExecutionKind(node.slots);
+  const anchorKind = resolveNodeAnchorKind(node.slots);
+  const confidence = Math.max(0, Math.min(1, Number(node.confidence ?? 0.5)));
+  const lifecycleState = lifecycleStateFromCandidate(node);
+  const domain: AdjudicableMemoryEntry["domain"] = executionKind || anchorKind ? "execution" : "general";
+  const authority: AdjudicableMemoryEntry["authority"] =
+    lifecycleState === "suppressed" || lifecycleState === "archived"
+      ? "blocked"
+      : lifecycleState === "active" && confidence >= 0.7
+        ? "advisory"
+        : "candidate";
+  return {
+    memory_id: node.id,
+    title: node.title ?? null,
+    summary: node.text_summary ?? node.title ?? node.id,
+    domain,
+    authority,
+    confidence,
+    salience: Math.max(0, Math.min(1, Number(node.salience ?? 0.5))),
+    lifecycle_state: lifecycleState,
+    scope_hint: domain === "execution"
+      ? "execution memory; apply only within matching task or workflow scope"
+      : "general cognitive memory; apply inside the current tenant and scope",
+    observed_at: node.updated_at ?? node.created_at ?? null,
+    source_index: sourceIndex,
+  };
+}
+
+function candidateCanSeeTarget(source: LifecycleCandidateNode, target: LifecycleCandidateNode): boolean {
+  if (target.memory_lane === "shared") return true;
+  if (source.owner_agent_id && source.owner_agent_id === target.owner_agent_id) return true;
+  if (source.owner_team_id && source.owner_team_id === target.owner_team_id) return true;
+  return !source.owner_agent_id && !source.owner_team_id && !target.owner_agent_id && !target.owner_team_id;
+}
+
+function edgeKey(edge: Pick<PreparedEdge, "scope" | "type" | "src_id" | "dst_id">): string {
+  return `${edge.scope}\0${edge.type}\0${edge.src_id}\0${edge.dst_id}`;
+}
+
+async function appendLifecycleRelationEdges(
+  writeAccess: WriteStoreAccess,
+  prepared: PreparedWrite,
+  producer?: MemoryLifecycleRelationCandidateProducer,
+): Promise<void> {
+  const sourceIds = new Set(prepared.nodes.map((node) => node.id));
+  if (sourceIds.size === 0) return;
+
+  const existing = await writeAccess.lifecycleCandidateNodes(prepared.scope, 2000);
+  const byId = new Map<string, LifecycleCandidateNode>();
+  for (const row of existing) byId.set(row.id, lifecycleCandidateFromStore(row));
+  const observedAt = new Date().toISOString();
+  for (const node of prepared.nodes) byId.set(node.id, lifecycleCandidateFromPrepared(node, observedAt));
+
+  const candidates = Array.from(byId.values());
+  const entries = candidates.map((node, index) => lifecycleEntryFromCandidate(node, index));
+  const deterministicAdjudicated = adjudicateMemoryLifecycle(entries);
+  const candidateRelations = producer
+    ? await producer({
+        scope: prepared.scope,
+        entries,
+        source_memory_ids: Array.from(sourceIds),
+        deterministic_relations: deterministicAdjudicated.relations,
+      })
+    : [];
+  const adjudicated = candidateRelations.length > 0
+    ? adjudicateMemoryLifecycle(entries, { candidate_relations: candidateRelations })
+    : deterministicAdjudicated;
+  if (adjudicated.relations.length === 0) return;
+
+  const candidateById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
+  const existingEdgeKeys = new Set(prepared.edges.map(edgeKey));
+  for (const relation of adjudicated.relations) {
+    if (!sourceIds.has(relation.source_memory_id)) continue;
+    const source = candidateById.get(relation.source_memory_id);
+    const target = candidateById.get(relation.target_memory_id);
+    if (!source || !target || !candidateCanSeeTarget(source, target)) continue;
+    const edge: PreparedEdge = {
+      id: memoryLifecycleRelationEdgeId(prepared.scope, relation),
+      scope: prepared.scope,
+      type: relation.relation,
+      src_id: relation.source_memory_id,
+      dst_id: relation.target_memory_id,
+      weight: 0.95,
+      confidence: relation.confidence,
+      decay_rate: 0,
+    };
+    const key = edgeKey(edge);
+    if (existingEdgeKeys.has(key)) continue;
+    existingEdgeKeys.add(key);
+    prepared.edges.push(edge);
+  }
 }
 
 export type PreparedNode = {
@@ -279,6 +456,8 @@ export async function applyPreparedMemoryWrite(
       throw new Error(`node id collision across scopes: id=${n.id} existing.scope=${existing.scope} requested.scope=${n.scope}`);
     }
   }
+
+  await appendLifecycleRelationEdges(writeAccess, prepared, opts.lifecycleRelationCandidateProducer);
 
   const referencedExistingIds = Array.from(
     new Set(edges.flatMap((e) => [e.src_id, e.dst_id]).filter((id) => !localNodeScope.has(id))),

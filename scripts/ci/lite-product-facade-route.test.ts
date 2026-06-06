@@ -601,6 +601,106 @@ test("product observe turns plain input_text into recallable general memory", as
   }
 });
 
+test("product observe persists lifecycle relation graph and guide suppresses superseded memory", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("observe-lifecycle-relation-graph");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const oldSummary = "AIONIS_RELATION_OLD_MARKER Initial checkout validation investigation. At that time the likely change surface looked like: legacy/payments/old-checkout.ts and obsolete/tests/old-checkout.test.ts. This note was written before later repository evidence was examined.";
+    const currentSummary = "AIONIS_RELATION_CURRENT_MARKER Later corrected checkout validation project memory. Subsequent evidence contradicted the earlier initial working note; the earlier change surface should be treated as an unverified prior, not direct action context. Current change surface: src/payments/checkout.ts and tests/checkout.test.ts.";
+
+    const oldObserve = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        memory: {
+          client_id: "lifecycle-relation-old-checkout",
+          type: "concept",
+          memory_kind: "general_memory",
+          title: "Initial checkout validation investigation",
+          text_summary: oldSummary,
+          confidence: 0.91,
+        },
+      },
+    });
+    assert.equal(oldObserve.statusCode, 200);
+    const oldNodeId = oldObserve.json().memory_write.nodes[0].id;
+
+    const currentObserve = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        memory: {
+          client_id: "lifecycle-relation-current-checkout",
+          type: "concept",
+          memory_kind: "general_memory",
+          title: "Corrected checkout validation investigation",
+          text_summary: currentSummary,
+          confidence: 0.94,
+        },
+      },
+    });
+    assert.equal(currentObserve.statusCode, 200);
+    const currentBody = currentObserve.json();
+    const currentNodeId = currentBody.memory_write.nodes[0].id;
+    assert.ok(currentBody.memory_write.edges.some((edge: Record<string, unknown>) =>
+      edge.type === "contradicts"
+      && edge.src_id === currentNodeId
+      && edge.dst_id === oldNodeId,
+    ));
+
+    const guide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "AIONIS_RELATION_OLD_MARKER legacy/payments/old-checkout.ts checkout validation",
+        consumer_agent_id: "local-user",
+        limit: 1,
+        include_packets: true,
+      },
+    });
+    assert.equal(guide.statusCode, 200);
+    const guideBody = guide.json();
+    const oldMemory = guideBody.memory_packet.relevant_memories.find((entry: Record<string, unknown>) =>
+      entry.memory_id === oldNodeId,
+    );
+    assert.ok(oldMemory);
+    assert.equal(oldMemory.lifecycle_state, "contested");
+    assert.equal(oldMemory.authority, "candidate");
+    assert.ok(guideBody.memory_packet.evidence_trail.some((entry: Record<string, unknown>) =>
+      entry.source === "edge"
+      && entry.relation === "contradicts"
+      && entry.memory_id === oldNodeId,
+    ));
+    assert.ok(guideBody.memory_packet.source_map.internal_surfaces_used.includes("memory_lifecycle_relation_graph"));
+    assert.equal(
+      guideBody.agent_context.use_now.some((entry: string) => entry.includes("AIONIS_RELATION_OLD_MARKER")),
+      false,
+    );
+    assert.ok(
+      guideBody.agent_context.inspect_before_use.some((entry: string) =>
+        entry.includes(oldNodeId) || entry.includes("Initial checkout validation investigation")
+      ),
+    );
+    assert.equal(guideBody.agent_context.prompt_text.includes("legacy/payments/old-checkout.ts"), false);
+  } finally {
+    await app.close();
+  }
+});
+
 test("product observe keeps active preference rules recallable in agent context", async () => {
   const app = Fastify();
   const env = liteEnv();
@@ -957,6 +1057,53 @@ test("product measure derives closed-loop effect from guide packets", async () =
     assert.equal(body.effect_report.history_impact.impact_direction, "positive");
     assert.equal(body.effect_report.history_impact.changed_future_behavior, true);
     assert.ok(body.source_map.internal_surfaces_used.includes("product_trace_projection"));
+    assert.ok(body.source_map.internal_surfaces_used.includes("memory_decision_trace"));
+    assert.ok(body.source_map.internal_surfaces_used.includes("memory_decision_audit_report"));
+    assert.equal(body.memory_decision_trace.contract_version, "aionis_memory_decision_trace_v1");
+    assert.equal(body.memory_decision_trace.agent_prompt_included, false);
+    assert.equal(body.memory_decision_trace.runtime_mutation, false);
+    assert.equal(body.memory_decision_trace.input.agent_context_present, true);
+    assert.equal(body.memory_decision_audit.contract_version, "aionis_memory_decision_audit_report_v1");
+    assert.equal(body.memory_decision_audit.agent_prompt_included, false);
+    assert.equal(body.memory_decision_audit.runtime_mutation, false);
+
+    const debugTrace = await app.inject({
+      method: "POST",
+      url: "/v1/debug/memory-decision-trace",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        product_trace: {
+          before_guide: beforeGuide.json(),
+          after_guide: afterGuide.json(),
+        },
+      },
+    });
+    assert.equal(debugTrace.statusCode, 200);
+    const debugBody = debugTrace.json();
+    assert.equal(debugBody.contract_version, "aionis_memory_decision_trace_result_v1");
+    assert.equal(debugBody.memory_decision_trace.contract_version, "aionis_memory_decision_trace_v1");
+    assert.equal(debugBody.memory_decision_trace.agent_prompt_included, false);
+    assert.deepEqual(debugBody.source_map.routes_used, ["/v1/debug/memory-decision-trace"]);
+
+    const auditReport = await app.inject({
+      method: "POST",
+      url: "/v1/audit/memory-decision-report",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        product_trace: {
+          before_guide: beforeGuide.json(),
+          after_guide: afterGuide.json(),
+        },
+      },
+    });
+    assert.equal(auditReport.statusCode, 200);
+    const auditBody = auditReport.json();
+    assert.equal(auditBody.contract_version, "aionis_memory_decision_audit_result_v1");
+    assert.equal(auditBody.memory_decision_audit.contract_version, "aionis_memory_decision_audit_report_v1");
+    assert.equal(auditBody.memory_decision_audit.agent_prompt_included, false);
+    assert.deepEqual(auditBody.source_map.routes_used, ["/v1/audit/memory-decision-report"]);
   } finally {
     await app.close();
   }

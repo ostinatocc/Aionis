@@ -7,6 +7,8 @@ import {
   buildAionisEffectReport,
   buildAionisGuidePacket,
   buildAionisLearningPacket,
+  buildAionisMemoryDecisionAuditReport,
+  buildAionisMemoryDecisionTrace,
   buildAionisMemoryPacket,
 } from "../../src/memory/product-output-assembler.ts";
 
@@ -590,6 +592,311 @@ test("product agent context surfaces active general memory without execution gui
   assert.ok(context.prompt_text.includes("ACTIVE_GENERAL_MARKER"));
   assert.ok(context.prompt_text.includes("PREFERENCE_MARKER"));
   assert.ok(context.prompt_text.includes("do_not_use"));
+});
+
+test("product memory lifecycle adjudication demotes corrected prior memory without explicit labels", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "recover project memory",
+    },
+    nodes: [
+      {
+        id: "mem-revised-checkout",
+        type: "concept",
+        title: "Revised checkout investigation",
+        text_summary: "Later corrected project memory for the checkout validation issue. Subsequent evidence contradicted the earlier initial working note; the earlier change surface should be treated as an unverified prior, not direct action context. Current change surface: src/payments/checkout.ts, tests/checkout.test.ts.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+        },
+        confidence: 0.91,
+        salience: 0.9,
+        evidence_ref: "ev-revised-checkout",
+        created_at: "2026-01-02T00:00:00.000Z",
+      },
+      {
+        id: "mem-initial-checkout",
+        type: "concept",
+        title: "Initial checkout investigation",
+        text_summary: "Initial working note for the checkout validation issue. At that time the likely change surface looked like: legacy/payments/old-checkout.ts, obsolete/tests/old-checkout.test.ts. This note was written before later repository evidence was examined.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+        },
+        confidence: 0.9,
+        salience: 0.86,
+        evidence_ref: "ev-initial-checkout",
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+    source_map: {
+      routes_used: ["/v1/memory/recall_text"],
+    },
+  });
+
+  const revised = memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-revised-checkout");
+  const initial = memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-initial-checkout");
+  assert.equal(revised?.lifecycle_state, "active");
+  assert.equal(revised?.authority, "advisory");
+  assert.equal(initial?.lifecycle_state, "contested");
+  assert.equal(initial?.authority, "candidate");
+  assert.ok(memoryPacket.lifecycle.candidate_memory_ids.includes("mem-initial-checkout"));
+  assert.ok(memoryPacket.contradiction_warnings.some((warning) => warning.memory_id === "mem-initial-checkout"));
+  assert.ok(memoryPacket.evidence_trail.some((entry) =>
+    entry.source === "edge"
+    && entry.relation === "contradicts"
+    && entry.memory_id === "mem-initial-checkout"
+  ));
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+
+  assert.equal(context.history_used, true);
+  assert.equal(context.recommended_posture, "inspect_before_use");
+  assert.equal(context.authority, "advisory");
+  assert.equal(context.risk.negative_transfer_risk, "high");
+  assert.ok(context.use_now.some((entry) => entry.includes("Later corrected project memory")));
+  assert.equal(context.use_now.some((entry) => entry.includes("Initial checkout investigation")), false);
+  assert.ok(context.inspect_before_use.some((entry) => entry.includes("Initial checkout investigation")));
+  assert.ok(context.target_files.includes("src/payments/checkout.ts"));
+  assert.ok(context.target_files.includes("tests/checkout.test.ts"));
+  assert.equal(context.target_files.includes("legacy/payments/old-checkout.ts"), false);
+  assert.equal(context.prompt_text.includes("legacy/payments/old-checkout.ts"), false);
+});
+
+test("product memory decision trace explains lifecycle and agent-context surface decisions", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "recover project memory",
+    },
+    nodes: [
+      {
+        id: "mem-current-route",
+        type: "concept",
+        title: "Current checkout route",
+        text_summary: "Follow-up project memory. The route through legacy/payments/old-checkout.ts became a dead end. Current work sits in: src/payments/checkout.ts.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+        },
+        confidence: 0.92,
+        salience: 0.91,
+        created_at: "2026-01-02T00:00:00.000Z",
+      },
+      {
+        id: "mem-old-route",
+        type: "concept",
+        title: "Old checkout route",
+        text_summary: "First-pass checkout memory. The suspected work area was: legacy/payments/old-checkout.ts.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+        },
+        confidence: 0.9,
+        salience: 0.87,
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+    lifecycle_edges: [{
+      id: "edge-current-contradicts-old",
+      type: "contradicts",
+      src_id: "mem-current-route",
+      dst_id: "mem-old-route",
+      confidence: 0.86,
+    }],
+    source_map: {
+      routes_used: ["/v1/memory/recall_text"],
+    },
+  });
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+
+  const trace = buildAionisMemoryDecisionTrace({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    before_guide: null,
+    after_guide: {
+      memory_packet: memoryPacket,
+      agent_context: agentContext,
+    },
+    source_map: {
+      routes_used: ["/v1/debug/memory-decision-trace"],
+    },
+  });
+
+  assert.equal(trace.contract_version, "aionis_memory_decision_trace_v1");
+  assert.equal(trace.agent_prompt_included, false);
+  assert.equal(trace.runtime_mutation, false);
+  assert.equal(trace.summary.learning_control_visible, true);
+  assert.equal(trace.summary.relation_count, 1);
+  assert.equal(trace.context_decision.prompt_char_count, agentContext.prompt_text.length);
+  assert.equal(trace.relation_decisions[0]?.memory_id, "mem-old-route");
+  assert.equal(
+    trace.memory_decisions.find((entry) => entry.memory_id === "mem-current-route")?.agent_surface,
+    "use_now",
+  );
+  const oldDecision = trace.memory_decisions.find((entry) => entry.memory_id === "mem-old-route");
+  assert.equal(oldDecision?.agent_surface, "inspect_before_use");
+  assert.ok(oldDecision?.reason_codes.includes("lifecycle_contested"));
+  assert.ok(oldDecision?.reason_codes.includes("lifecycle_relation_evidence"));
+  assert.equal(agentContext.prompt_text.includes("legacy/payments/old-checkout.ts"), false);
+
+  const audit = buildAionisMemoryDecisionAuditReport({ trace });
+  assert.equal(audit.contract_version, "aionis_memory_decision_audit_report_v1");
+  assert.equal(audit.verdict, "learning_control_visible");
+  assert.equal(audit.counters.controlled_memory_count, 1);
+  assert.equal(audit.claims.some((claim) => claim.claim === "agent_prompt_excluded" && claim.status === "pass"), true);
+});
+
+test("product agent context strips contested target paths from active counter-evidence summaries", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "recover project memory",
+    },
+    nodes: [
+      {
+        id: "mem-current-route",
+        type: "concept",
+        title: "Current checkout route",
+        text_summary: "Follow-up project memory. The route through legacy/payments/old-checkout.ts and obsolete/tests/old-checkout.test.ts became a dead end. The next useful work sits in: src/payments/checkout.ts and tests/checkout.test.ts.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+        },
+        confidence: 0.92,
+        salience: 0.91,
+        created_at: "2026-01-02T00:00:00.000Z",
+      },
+      {
+        id: "mem-old-route",
+        type: "concept",
+        title: "Old checkout route",
+        text_summary: "First-pass checkout memory. The suspected work area was: legacy/payments/old-checkout.ts and obsolete/tests/old-checkout.test.ts.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+        },
+        confidence: 0.9,
+        salience: 0.87,
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+    lifecycle_edges: [{
+      id: "edge-current-contradicts-old",
+      type: "contradicts",
+      src_id: "mem-current-route",
+      dst_id: "mem-old-route",
+      confidence: 0.86,
+    }],
+    source_map: {
+      routes_used: ["/v1/memory/recall_text"],
+    },
+  });
+
+  const current = memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-current-route");
+  const old = memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-old-route");
+  assert.equal(current?.lifecycle_state, "active");
+  assert.equal(old?.lifecycle_state, "contested");
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+
+  assert.ok(context.use_now.some((entry) => entry.includes("src/payments/checkout.ts")));
+  assert.equal(context.use_now.some((entry) => entry.includes("legacy/payments/old-checkout.ts")), false);
+  assert.equal(context.use_now.some((entry) => entry.includes("obsolete/tests/old-checkout.test.ts")), false);
+  assert.deepEqual(context.target_files, ["src/payments/checkout.ts", "tests/checkout.test.ts"]);
+  assert.equal(context.prompt_text.includes("legacy/payments/old-checkout.ts"), false);
+  assert.equal(context.prompt_text.includes("obsolete/tests/old-checkout.test.ts"), false);
+});
+
+test("product memory lifecycle adjudication ignores task-domain fault words without correction context", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "recover project memory",
+    },
+    nodes: [
+      {
+        id: "mem-current-invalid-title",
+        type: "concept",
+        title: "current memory for redux toolkit",
+        text_summary: "AIONIS_INVALID_TITLE_CURRENT: Valid test-side note for reduxjs/redux-toolkit, issue \"Skill name is invalid with slash\". This note adds another still-valid working surface: packages/toolkit/src/query/createApi.ts and packages/toolkit/vitest.config.mts. It should coexist with the other note because both describe active context for the same task.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+        },
+        confidence: 0.91,
+        salience: 0.9,
+        evidence_ref: "ev-current-invalid-title",
+        created_at: "2026-01-02T00:00:00.000Z",
+      },
+      {
+        id: "mem-old-invalid-title",
+        type: "concept",
+        title: "old memory for redux toolkit",
+        text_summary: "AIONIS_INVALID_TITLE_OLD: Valid source-side note for reduxjs/redux-toolkit, issue \"Skill name is invalid with slash\". This note remains useful for the next session and points at: yarn.lock and packages/toolkit/tsup.config.mts. It is a complementary working memory, not a deprecated or failed route.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+        },
+        confidence: 0.9,
+        salience: 0.86,
+        evidence_ref: "ev-old-invalid-title",
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+    source_map: {
+      routes_used: ["/v1/memory/recall_text"],
+    },
+  });
+
+  const current = memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-current-invalid-title");
+  const old = memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-old-invalid-title");
+  assert.equal(current?.lifecycle_state, "active");
+  assert.equal(current?.authority, "advisory");
+  assert.equal(old?.lifecycle_state, "active");
+  assert.equal(old?.authority, "advisory");
+  assert.equal(memoryPacket.contradiction_warnings.length, 0);
+  assert.equal(memoryPacket.evidence_trail.some((entry) => entry.source === "edge"), false);
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+
+  assert.equal(context.recommended_posture, "use_as_context");
+  assert.ok(context.use_now.some((entry) => entry.includes("AIONIS_INVALID_TITLE_CURRENT")));
+  assert.ok(context.use_now.some((entry) => entry.includes("AIONIS_INVALID_TITLE_OLD")));
+  assert.equal(context.inspect_before_use.length, 0);
 });
 
 test("product agent context keeps candidate and suppressed memory out of use_now", () => {

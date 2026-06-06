@@ -1,0 +1,170 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  adjudicateMemoryLifecycle,
+  type AdjudicableMemoryEntry,
+  type MemoryLifecycleRelationCandidateProducer,
+} from "../../src/memory/memory-lifecycle-adjudicator.ts";
+import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
+import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
+
+function tmpDbPath(name: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-lifecycle-adjudicator-"));
+  return path.join(dir, `${name}.sqlite`);
+}
+
+const oldEntry: AdjudicableMemoryEntry = {
+  memory_id: "00000000-0000-4000-8000-000000000001",
+  title: "old route",
+  summary: "AIONIS_PARAPHRASE_OLD: First-pass project memory. The suspected work area was: ./first_pass/entrypoint.ts, ./first_pass/verification.test.ts. This was recorded before deeper inspection.",
+  domain: "general",
+  authority: "advisory",
+  confidence: 0.9,
+  salience: 0.8,
+  lifecycle_state: "active",
+  observed_at: "2026-01-01T00:00:00.000Z",
+  source_index: 1,
+};
+
+const currentEntry: AdjudicableMemoryEntry = {
+  memory_id: "00000000-0000-4000-8000-000000000002",
+  title: "current route",
+  summary: "AIONIS_PARAPHRASE_CURRENT: Follow-up project memory. That approach around ./first_pass/entrypoint.ts and ./first_pass/verification.test.ts did not pan out in the end. Useful next-session context is: ./src/runtime.ts, ./test/runtime.test.ts.",
+  domain: "general",
+  authority: "advisory",
+  confidence: 0.92,
+  salience: 0.9,
+  lifecycle_state: "active",
+  observed_at: "2026-01-02T00:00:00.000Z",
+  source_index: 0,
+};
+
+test("lifecycle adjudicator accepts semantic relation candidates only after runtime gating", () => {
+  const deterministic = adjudicateMemoryLifecycle([currentEntry, oldEntry]);
+  assert.equal(deterministic.relations.length, 0);
+  assert.equal(deterministic.entries.find((entry) => entry.memory_id === oldEntry.memory_id)?.lifecycle_state, "active");
+
+  const adjudicated = adjudicateMemoryLifecycle([currentEntry, oldEntry], {
+    candidate_relations: [{
+      source_memory_id: currentEntry.memory_id,
+      target_memory_id: oldEntry.memory_id,
+      relation: "supersedes",
+      confidence: 0.86,
+      producer: "test_llm_semantic",
+      reasons: ["follow-up memory says the first-pass route did not pan out"],
+    }],
+  });
+
+  assert.equal(adjudicated.relations.length, 1);
+  assert.equal(adjudicated.relations[0]?.relation, "supersedes");
+  assert.ok(adjudicated.relations[0]?.reasons.some((reason) => reason === "candidate_producer=test_llm_semantic"));
+  const old = adjudicated.entries.find((entry) => entry.memory_id === oldEntry.memory_id);
+  assert.equal(old?.lifecycle_state, "contested");
+  assert.equal(old?.authority, "candidate");
+});
+
+test("lifecycle adjudicator rejects unrelated high-confidence semantic candidates", () => {
+  const unrelated: AdjudicableMemoryEntry = {
+    ...oldEntry,
+    memory_id: "00000000-0000-4000-8000-000000000003",
+    title: "unrelated",
+    summary: "Independent valid note about docs/sidebar.md and package metadata. This remains active for a separate documentation task.",
+  };
+  const adjudicated = adjudicateMemoryLifecycle([currentEntry, unrelated], {
+    candidate_relations: [{
+      source_memory_id: currentEntry.memory_id,
+      target_memory_id: unrelated.memory_id,
+      relation: "supersedes",
+      confidence: 0.96,
+      producer: "test_llm_semantic",
+      reasons: ["model guessed a relation"],
+    }],
+  });
+
+  assert.equal(adjudicated.relations.length, 0);
+  assert.equal(adjudicated.entries.find((entry) => entry.memory_id === unrelated.memory_id)?.lifecycle_state, "active");
+});
+
+test("memory write persists only runtime-admitted lifecycle relation candidates", async () => {
+  const dbPath = tmpDbPath("candidate-relation");
+  const store = createLiteWriteStore(dbPath);
+  try {
+    const oldPrepared = await prepareMemoryWrite({
+      tenant_id: "default",
+      scope: "default",
+      actor: "local-user",
+      input_text: "old paraphrase memory",
+      nodes: [{
+        id: oldEntry.memory_id,
+        type: "concept",
+        title: oldEntry.title,
+        text_summary: oldEntry.summary,
+        confidence: oldEntry.confidence,
+        salience: oldEntry.salience,
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+        },
+      }],
+    }, "default", "default", {
+      maxTextLen: 10000,
+      piiRedaction: false,
+      allowCrossScopeEdges: false,
+    }, null);
+    await store.withTx(() => applyMemoryWrite(oldPrepared, {
+      maxTextLen: 10000,
+      piiRedaction: false,
+      allowCrossScopeEdges: false,
+      write_access: store,
+    }));
+
+    const producer: MemoryLifecycleRelationCandidateProducer = async ({ source_memory_ids }) => [{
+      source_memory_id: source_memory_ids[0] ?? currentEntry.memory_id,
+      target_memory_id: oldEntry.memory_id,
+      relation: "supersedes",
+      confidence: 0.86,
+      producer: "test_llm_semantic",
+      reasons: ["follow-up memory says the first-pass route did not pan out"],
+    }];
+    const currentPrepared = await prepareMemoryWrite({
+      tenant_id: "default",
+      scope: "default",
+      actor: "local-user",
+      input_text: "current paraphrase memory",
+      nodes: [{
+        id: currentEntry.memory_id,
+        type: "concept",
+        title: currentEntry.title,
+        text_summary: currentEntry.summary,
+        confidence: currentEntry.confidence,
+        salience: currentEntry.salience,
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+        },
+      }],
+    }, "default", "default", {
+      maxTextLen: 10000,
+      piiRedaction: false,
+      allowCrossScopeEdges: false,
+    }, null);
+    const result = await store.withTx(() => applyMemoryWrite(currentPrepared, {
+      maxTextLen: 10000,
+      piiRedaction: false,
+      allowCrossScopeEdges: false,
+      lifecycleRelationCandidateProducer: producer,
+      write_access: store,
+    }));
+
+    assert.ok(result.edges.some((edge) =>
+      edge.type === "supersedes"
+      && edge.src_id === currentEntry.memory_id
+      && edge.dst_id === oldEntry.memory_id
+    ));
+  } finally {
+    store.close();
+  }
+});
