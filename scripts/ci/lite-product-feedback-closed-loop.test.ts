@@ -452,6 +452,111 @@ test("product feedback closed loop keeps single weak negative below downgrade th
   }
 });
 
+test("product feedback closed loop moves single aligned failure to inspect-before-use", async () => {
+  const { app, liteWriteStore } = setupProductApp("single-strong-negative");
+  try {
+    const marker = "AIONIS_CLOSED_LOOP_SINGLE_STRONG";
+    const memoryId = await observeMemory({
+      app,
+      clientId: "memory:closed-loop-single-strong",
+      title: "Closed loop single strong memory",
+      text: `${marker} prefer compact release-note style status updates.`,
+    });
+    const beforeGuide = await guideForMarker({ app, marker });
+    assert.equal(beforeGuide.agent_context.use_now_memory_ids.includes(memoryId), true);
+
+    const feedback = await activateFromGuide({
+      app,
+      guide: beforeGuide,
+      memoryId,
+      runId: "run:closed-loop-single-strong",
+      outcome: "negative",
+      verifierStatus: "failed",
+      toolStatus: "failed",
+    });
+    const slots = await slotsForMemory({ liteWriteStore, memoryId });
+    assert.equal(slots.feedback_negative, 1);
+    assert.equal(slots.weak_counter_signal_count, 0);
+    assert.equal(slots.strong_counter_signal_count, 1);
+    assert.equal(slots.last_feedback_attribution_strength, "strong_counter_signal");
+
+    const afterGuide = await guideForMarker({ app, marker });
+    assert.equal(afterGuide.agent_context.use_now_memory_ids.includes(memoryId), false);
+    assert.equal(afterGuide.agent_context.inspect_before_use_memory_ids.includes(memoryId), true);
+
+    const measure = await measureTrace({
+      app,
+      beforeGuide,
+      afterGuide,
+      forgetResult: feedback,
+      evidenceId: "product_trace:closed-loop-single-strong",
+    });
+    const decision = measure.memory_decision_trace.memory_decisions.find((entry: Record<string, any>) =>
+      entry.memory_id === memoryId
+    );
+    assert.equal(decision.agent_surface, "inspect_before_use");
+    assert.equal(decision.feedback_detail.attribution_strength, "strong_counter_signal");
+    assert.equal(decision.feedback_detail.threshold_state, "strong_signal_threshold_met");
+    assert.equal(decision.feedback_detail.threshold_met, true);
+    assert.deepEqual(measure.memory_decision_trace.feedback_attribution.strong_counter_signal_memory_ids, [memoryId]);
+    assert.deepEqual(measure.memory_decision_trace.feedback_attribution.threshold_met_memory_ids, [memoryId]);
+    assert.deepEqual(measure.effect_report.feedback_signal_summary.strong_counter_signal_memory_ids, [memoryId]);
+    assert.equal(measure.effect_report.feedback_signal_summary.authority_mutation, false);
+  } finally {
+    await app.close();
+  }
+});
+
+test("product feedback closed loop rejects attribution to memory not exposed by the guide", async () => {
+  const { app, liteWriteStore } = setupProductApp("reject-unexposed-attribution");
+  try {
+    const exposedMarker = "AIONIS_CLOSED_LOOP_EXPOSED";
+    const unexposedMarker = "AIONIS_CLOSED_LOOP_UNEXPOSED";
+    await observeMemory({
+      app,
+      clientId: "memory:closed-loop-exposed",
+      title: "Closed loop exposed memory",
+      text: `${exposedMarker} use concise operator summaries for status updates.`,
+    });
+    const guide = await guideForMarker({ app, marker: exposedMarker });
+    const unexposedMemoryId = await observeMemory({
+      app,
+      clientId: "memory:closed-loop-unexposed",
+      title: "Closed loop unexposed memory",
+      text: `${unexposedMarker} use obsolete escalation owner names in status updates.`,
+    });
+    assert.equal(guide.agent_context.memory_ids.includes(unexposedMemoryId), false);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        operation: "activate",
+        target: "memory",
+        guide_trace_id: guide.guide_trace_id,
+        used_memory_ids: [unexposedMemoryId],
+        run_id: "run:closed-loop-unexposed-attribution",
+        outcome: "negative",
+        used_surface: "use_now",
+        verifier_status: "failed",
+        tool_status: "failed",
+        activate: true,
+        reason: "Host attempted to attribute guide outcome to memory that was not exposed.",
+      },
+    });
+    assert.equal(response.statusCode, 400, response.body);
+    assert.equal(response.json().error, "guide_trace_used_memory_not_exposed");
+
+    const slots = await slotsForMemory({ liteWriteStore, memoryId: unexposedMemoryId });
+    assert.equal(slots.feedback_negative, undefined);
+    assert.equal(slots.strong_counter_signal_count, undefined);
+  } finally {
+    await app.close();
+  }
+});
+
 test("product feedback closed loop moves repeated weak negative to inspect-before-use", async () => {
   const { app, liteWriteStore } = setupProductApp("repeated-weak-negative");
   try {
@@ -550,12 +655,23 @@ test("product feedback closed loop reports repeated unused exposure without down
       runId: "run:closed-loop-unused-exposure",
       outcome: "positive",
     });
-    assert.ok(feedback.forget_effect.guide_trace.unused_exposure_observation.repeated_unattributed_memory_ids.includes(unusedMemoryId));
+    const unusedObservation = feedback.forget_effect.guide_trace.unused_exposure_observation;
+    assert.equal(unusedObservation.mode, "read_only_measure");
+    assert.equal(unusedObservation.exposure_threshold, 2);
+    assert.equal(unusedObservation.guide_trace_count, 2);
+    assert.equal(unusedObservation.tracked_memory_count, 2);
+    assert.ok(unusedObservation.repeated_unattributed_memory_ids.includes(unusedMemoryId));
     assert.ok(
-      feedback.forget_effect.guide_trace.unused_exposure_observation.repeated_unattributed_without_positive_memory_ids.includes(
-        unusedMemoryId,
-      ),
+      unusedObservation.repeated_unattributed_without_positive_memory_ids.includes(unusedMemoryId),
     );
+    const unusedStats = unusedObservation.memory_stats.find((entry: Record<string, any>) =>
+      entry.memory_id === unusedMemoryId
+    );
+    assert.equal(unusedStats.current_unattributed, true);
+    assert.equal(unusedStats.exposure_count, 2);
+    assert.equal(unusedStats.use_now_exposure_count, 2);
+    assert.equal(unusedStats.positive_attributed_use_count, 0);
+    assert.equal(unusedStats.repeated_without_positive_attribution, true);
 
     const unusedSlots = await slotsForMemory({ liteWriteStore, memoryId: unusedMemoryId });
     assert.equal(unusedSlots.feedback_negative, undefined);
