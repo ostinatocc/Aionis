@@ -27,6 +27,8 @@ function assertTraceSummaryMatchesDecisions(trace: AionisMemoryDecisionTrace, ag
   assert.equal(trace.summary.feedback_attribution_count, trace.feedback_attribution.attributed_memory_ids.length);
   assert.equal(trace.summary.feedback_threshold_met_count, trace.feedback_attribution.threshold_met_memory_ids.length);
   assert.equal(trace.summary.unattributed_recalled_memory_count, trace.feedback_attribution.unattributed_recalled_memory_ids.length);
+  assert.equal(trace.feedback_attribution.attributed_memory_count, trace.feedback_attribution.attributed_memory_ids.length);
+  assert.equal(trace.feedback_attribution.unattributed_recalled_memory_count, trace.feedback_attribution.unattributed_recalled_memory_ids.length);
   assert.equal(trace.summary.prompt_char_count, agentContext.prompt_text.length);
   assert.equal(trace.context_decision.prompt_char_count, agentContext.prompt_text.length);
   assert.equal(trace.context_decision.use_now_count, agentContext.use_now.length);
@@ -312,9 +314,16 @@ test("memory decision trace makes absent feedback attribution explicit", () => {
   const { agentContext, trace } = buildTraceFixture();
   assert.equal(trace.feedback_attribution.present, false);
   assert.equal(trace.feedback_attribution.guide_trace_id, null);
+  assert.equal(trace.feedback_attribution.exposed_memory_count, 0);
+  assert.equal(trace.feedback_attribution.attributed_memory_count, 0);
+  assert.equal(trace.feedback_attribution.unattributed_recalled_memory_count, agentContext.memory_ids.length);
   assert.deepEqual(trace.feedback_attribution.affected_memory_ids, []);
   assert.deepEqual(trace.feedback_attribution.attributed_memory_ids, []);
   assert.deepEqual(trace.feedback_attribution.threshold_met_memory_ids, []);
   assert.deepEqual(trace.feedback_attribution.unattributed_recalled_memory_ids, agentContext.memory_ids);
+  assert.deepEqual(trace.feedback_attribution.unattributed_use_now_memory_ids, []);
+  assert.deepEqual(trace.feedback_attribution.unattributed_inspect_before_use_memory_ids, []);
+  assert.deepEqual(trace.feedback_attribution.unattributed_do_not_use_memory_ids, []);
+  assert.deepEqual(trace.feedback_attribution.unattributed_rehydrate_memory_ids, []);
   assert.equal(trace.memory_decisions.every((entry) => entry.feedback_detail === null), true);
 });

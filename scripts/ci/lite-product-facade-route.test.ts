@@ -2430,9 +2430,23 @@ test("product guide trace attribution resolves used memories from persisted expo
     assert.ok(feedbackBody.source_map.internal_surfaces_used.includes("guide_exposure_ledger"));
     assert.deepEqual(feedbackBody.forget_effect.affected_memory_ids, [usedNodeId]);
     assert.equal(feedbackBody.forget_effect.guide_trace.guide_trace_id, guideBody.guide_trace_id);
+    assert.equal(feedbackBody.forget_effect.guide_trace.exposed_memory_count, guideBody.agent_context.memory_ids.length);
+    assert.equal(feedbackBody.forget_effect.guide_trace.attributed_memory_count, 1);
+    assert.equal(
+      feedbackBody.forget_effect.guide_trace.unattributed_recalled_memory_count,
+      guideBody.agent_context.memory_ids.length - 1,
+    );
     assert.deepEqual(feedbackBody.forget_effect.guide_trace.attributed_memory_ids, [usedNodeId]);
     assert.ok(feedbackBody.forget_effect.guide_trace.exposed_memory_ids.includes(unusedNodeId));
     assert.ok(feedbackBody.forget_effect.guide_trace.unattributed_recalled_memory_ids.includes(unusedNodeId));
+    const unattributedSurfaceIds = [
+      ...feedbackBody.forget_effect.guide_trace.unattributed_use_now_memory_ids,
+      ...feedbackBody.forget_effect.guide_trace.unattributed_inspect_before_use_memory_ids,
+      ...feedbackBody.forget_effect.guide_trace.unattributed_do_not_use_memory_ids,
+      ...feedbackBody.forget_effect.guide_trace.unattributed_rehydrate_memory_ids,
+    ];
+    assert.ok(unattributedSurfaceIds.includes(unusedNodeId));
+    assert.equal(unattributedSurfaceIds.includes(usedNodeId), false);
 
     const usedAfterFeedback = await liteWriteStore.findNodes({
       scope: "default",
@@ -2489,8 +2503,15 @@ test("product guide trace attribution resolves used memories from persisted expo
     const trace = measure.json().memory_decision_trace;
     assert.equal(trace.feedback_attribution.present, true);
     assert.equal(trace.feedback_attribution.guide_trace_id, guideBody.guide_trace_id);
+    assert.equal(trace.feedback_attribution.exposed_memory_count, guideBody.agent_context.memory_ids.length);
+    assert.equal(trace.feedback_attribution.attributed_memory_count, 1);
+    assert.equal(trace.feedback_attribution.unattributed_recalled_memory_count, guideBody.agent_context.memory_ids.length - 1);
     assert.deepEqual(trace.feedback_attribution.attributed_memory_ids, [usedNodeId]);
     assert.ok(trace.feedback_attribution.unattributed_recalled_memory_ids.includes(unusedNodeId));
+    assert.ok(trace.feedback_attribution.unattributed_use_now_memory_ids.includes(unusedNodeId)
+      || trace.feedback_attribution.unattributed_inspect_before_use_memory_ids.includes(unusedNodeId)
+      || trace.feedback_attribution.unattributed_do_not_use_memory_ids.includes(unusedNodeId)
+      || trace.feedback_attribution.unattributed_rehydrate_memory_ids.includes(unusedNodeId));
     const usedDecision = trace.memory_decisions.find((entry: Record<string, unknown>) => entry.memory_id === usedNodeId);
     assert.equal(usedDecision.feedback_detail.threshold_state, "weak_below_threshold");
     const unusedDecision = trace.memory_decisions.find((entry: Record<string, unknown>) => entry.memory_id === unusedNodeId);

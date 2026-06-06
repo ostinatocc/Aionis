@@ -1616,7 +1616,14 @@ type TraceFeedbackAttributionInput = {
   tool_status: FeedbackAttributionDetail["tool_status"];
   runtime_signal_refs: string[];
   affected_memory_ids: string[];
+  exposed_memory_count: number;
+  attributed_memory_count: number;
+  unattributed_recalled_memory_count: number;
   unattributed_recalled_memory_ids: string[];
+  unattributed_use_now_memory_ids: string[];
+  unattributed_inspect_before_use_memory_ids: string[];
+  unattributed_do_not_use_memory_ids: string[];
+  unattributed_rehydrate_memory_ids: string[];
   summaries: Map<string, TraceFeedbackActivationSummary>;
 };
 
@@ -1668,7 +1675,14 @@ function traceFeedbackAttributionInput(forgetResult: unknown): TraceFeedbackAttr
       tool_status: null,
       runtime_signal_refs: [],
       affected_memory_ids: [],
+      exposed_memory_count: 0,
+      attributed_memory_count: 0,
+      unattributed_recalled_memory_count: 0,
       unattributed_recalled_memory_ids: [],
+      unattributed_use_now_memory_ids: [],
+      unattributed_inspect_before_use_memory_ids: [],
+      unattributed_do_not_use_memory_ids: [],
+      unattributed_rehydrate_memory_ids: [],
       summaries: new Map(),
     };
   }
@@ -1722,7 +1736,14 @@ function traceFeedbackAttributionInput(forgetResult: unknown): TraceFeedbackAttr
     guide_trace_id: stringValue(guideTrace?.guide_trace_id),
     ...fallback,
     affected_memory_ids: affectedMemoryIds,
+    exposed_memory_count: nonNegativeIntegerValue(guideTrace?.exposed_memory_count),
+    attributed_memory_count: nonNegativeIntegerValue(guideTrace?.attributed_memory_count),
+    unattributed_recalled_memory_count: nonNegativeIntegerValue(guideTrace?.unattributed_recalled_memory_count),
     unattributed_recalled_memory_ids: stringArrayValue(guideTrace?.unattributed_recalled_memory_ids),
+    unattributed_use_now_memory_ids: stringArrayValue(guideTrace?.unattributed_use_now_memory_ids),
+    unattributed_inspect_before_use_memory_ids: stringArrayValue(guideTrace?.unattributed_inspect_before_use_memory_ids),
+    unattributed_do_not_use_memory_ids: stringArrayValue(guideTrace?.unattributed_do_not_use_memory_ids),
+    unattributed_rehydrate_memory_ids: stringArrayValue(guideTrace?.unattributed_rehydrate_memory_ids),
     summaries,
   };
 }
@@ -1802,8 +1823,15 @@ function buildTraceFeedbackAttribution(args: {
       tool_status: null,
       runtime_signal_refs: [],
       affected_memory_ids: [],
+      exposed_memory_count: 0,
+      attributed_memory_count: 0,
+      unattributed_recalled_memory_count: args.agentContext?.memory_ids.length ?? 0,
       attributed_memory_ids: [],
       unattributed_recalled_memory_ids: args.agentContext?.memory_ids ?? [],
+      unattributed_use_now_memory_ids: [],
+      unattributed_inspect_before_use_memory_ids: [],
+      unattributed_do_not_use_memory_ids: [],
+      unattributed_rehydrate_memory_ids: [],
       weak_counter_signal_memory_ids: [],
       strong_counter_signal_memory_ids: [],
       threshold_met_memory_ids: [],
@@ -1815,6 +1843,13 @@ function buildTraceFeedbackAttribution(args: {
     .filter((entry): entry is { memory_id: string; detail: FeedbackAttributionDetail } => !!entry.detail);
   const affected = new Set(args.feedbackInput.affected_memory_ids);
   const recalled = args.agentContext?.memory_ids ?? args.memoryDecisions.map((entry) => entry.memory_id);
+  const attributedMemoryIds = details
+    .filter((entry) => entry.detail.host_marked_used)
+    .map((entry) => entry.memory_id);
+  const unattributedRecalledMemoryIds = args.feedbackInput.unattributed_recalled_memory_ids.length > 0
+    ? args.feedbackInput.unattributed_recalled_memory_ids
+    : recalled.filter((memoryId) => !affected.has(memoryId));
+  const hasGuideTrace = !!args.feedbackInput.guide_trace_id;
   return {
     present: true,
     guide_trace_id: args.feedbackInput.guide_trace_id,
@@ -1825,12 +1860,17 @@ function buildTraceFeedbackAttribution(args: {
     tool_status: args.feedbackInput.tool_status,
     runtime_signal_refs: args.feedbackInput.runtime_signal_refs,
     affected_memory_ids: args.feedbackInput.affected_memory_ids,
-    attributed_memory_ids: details
-      .filter((entry) => entry.detail.host_marked_used)
-      .map((entry) => entry.memory_id),
-    unattributed_recalled_memory_ids: args.feedbackInput.unattributed_recalled_memory_ids.length > 0
-      ? args.feedbackInput.unattributed_recalled_memory_ids
-      : recalled.filter((memoryId) => !affected.has(memoryId)),
+    exposed_memory_count: hasGuideTrace ? args.feedbackInput.exposed_memory_count : 0,
+    attributed_memory_count: hasGuideTrace ? args.feedbackInput.attributed_memory_count : attributedMemoryIds.length,
+    unattributed_recalled_memory_count: hasGuideTrace
+      ? args.feedbackInput.unattributed_recalled_memory_count
+      : unattributedRecalledMemoryIds.length,
+    attributed_memory_ids: attributedMemoryIds,
+    unattributed_recalled_memory_ids: unattributedRecalledMemoryIds,
+    unattributed_use_now_memory_ids: args.feedbackInput.unattributed_use_now_memory_ids,
+    unattributed_inspect_before_use_memory_ids: args.feedbackInput.unattributed_inspect_before_use_memory_ids,
+    unattributed_do_not_use_memory_ids: args.feedbackInput.unattributed_do_not_use_memory_ids,
+    unattributed_rehydrate_memory_ids: args.feedbackInput.unattributed_rehydrate_memory_ids,
     weak_counter_signal_memory_ids: details
       .filter((entry) => entry.detail.attribution_strength === "weak_counter_signal")
       .map((entry) => entry.memory_id),

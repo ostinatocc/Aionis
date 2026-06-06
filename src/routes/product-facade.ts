@@ -504,6 +504,10 @@ type ProductGuideExposureResolution =
     ledger: ProductGuideExposureLedger;
     usedMemoryIds: string[];
     unattributedRecalledMemoryIds: string[];
+    unattributedUseNowMemoryIds: string[];
+    unattributedInspectBeforeUseMemoryIds: string[];
+    unattributedDoNotUseMemoryIds: string[];
+    unattributedRehydrateMemoryIds: string[];
   }
   | {
     ok: false;
@@ -719,11 +723,17 @@ async function resolveGuideExposureForActivation(args: {
       },
     };
   }
+  const used = new Set(requestedUsedMemoryIds);
+  const unattributed = (ids: string[]) => ids.filter((id) => !used.has(id));
   return {
     ok: true,
     ledger,
     usedMemoryIds: requestedUsedMemoryIds,
-    unattributedRecalledMemoryIds: ledger.memory_ids.filter((id) => !requestedUsedMemoryIds.includes(id)),
+    unattributedRecalledMemoryIds: unattributed(ledger.memory_ids),
+    unattributedUseNowMemoryIds: unattributed(ledger.use_now_memory_ids),
+    unattributedInspectBeforeUseMemoryIds: unattributed(ledger.inspect_before_use_memory_ids),
+    unattributedDoNotUseMemoryIds: unattributed(ledger.do_not_use_memory_ids),
+    unattributedRehydrateMemoryIds: unattributed(ledger.rehydrate_memory_ids),
   };
 }
 
@@ -894,8 +904,15 @@ function productForgetEffect(args: {
     guide_trace: args.parsed.operation === "activate" && args.guideExposure?.ok ? {
       guide_trace_id: args.guideExposure.ledger.guide_trace_id,
       exposed_memory_ids: args.guideExposure.ledger.memory_ids,
+      exposed_memory_count: args.guideExposure.ledger.memory_ids.length,
       attributed_memory_ids: args.guideExposure.usedMemoryIds,
+      attributed_memory_count: args.guideExposure.usedMemoryIds.length,
       unattributed_recalled_memory_ids: args.guideExposure.unattributedRecalledMemoryIds,
+      unattributed_recalled_memory_count: args.guideExposure.unattributedRecalledMemoryIds.length,
+      unattributed_use_now_memory_ids: args.guideExposure.unattributedUseNowMemoryIds,
+      unattributed_inspect_before_use_memory_ids: args.guideExposure.unattributedInspectBeforeUseMemoryIds,
+      unattributed_do_not_use_memory_ids: args.guideExposure.unattributedDoNotUseMemoryIds,
+      unattributed_rehydrate_memory_ids: args.guideExposure.unattributedRehydrateMemoryIds,
     } : undefined,
     attribution: args.parsed.operation === "activate" ? stripUndefined({
       run_id: args.parsed.run_id,

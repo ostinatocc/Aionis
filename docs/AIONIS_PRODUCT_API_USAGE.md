@@ -263,6 +263,11 @@ strong, whether the threshold was met, and which recalled memory ids stayed
 unattributed. Per-memory `feedback_detail` explains why a single weak negative
 does not lower authority, and why repeated weak or verifier/tool/runtime-aligned
 negative feedback moves memory to `inspect_before_use`.
+When feedback is tied to a `guide_trace_id`, the trace also reports exposure
+counts and surface-level `unattributed_*_memory_ids` so developers can audit
+which shown memories were not used. These fields are read-only observability:
+they do not lower authority, suppress memories, or write feedback slots by
+themselves.
 
 ### Example
 
