@@ -166,6 +166,20 @@ const ProductForgetRequest = z.object({
       message: "activate requires memory_ids, node_ids, or client_ids",
     });
   }
+  if (value.operation === "activate" && !value.run_id) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["run_id"],
+      message: "activate requires run_id so feedback can be attributed to a real run",
+    });
+  }
+  if (value.operation === "activate" && !value.outcome) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["outcome"],
+      message: "activate requires outcome so memory feedback is not lost as neutral default",
+    });
+  }
   if (value.operation === "rehydrate" && memoryIdCount === 0 && !anchorPresent) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,

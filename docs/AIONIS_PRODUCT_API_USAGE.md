@@ -156,6 +156,8 @@ evidence silently.
 | `target` | No | `memory`, `archive`, `payload`, or `pattern`. |
 | `memory_ids` / `node_ids` / `client_ids` | Conditional | Required for memory activation and many rehydrate operations. |
 | `anchor_id` / `anchor_uri` | Conditional | Required for pattern suppression or payload rehydration. |
+| `run_id` | Conditional | Required for `activate` so feedback can be attributed to a real run. |
+| `outcome` | Conditional | Required for `activate`; `positive`, `negative`, or `neutral`. |
 | `mode` | No | Suppression or rehydration mode. |
 
 ### Main Response Fields
@@ -168,6 +170,13 @@ evidence silently.
 
 The host should consume `forget_effect`. It should not ask the Agent to reason
 over internal lifecycle rows or raw slots.
+
+For sparse-feedback attribution, use `operation: "activate"` after a run when
+the host knows which `agent_context.memory_ids` were actually used. A positive
+outcome supports future direct use; a negative outcome records counter-signal so
+the next `guide` can lower authority or move that memory to
+`inspect_before_use`. Aionis should not infer that every recalled memory caused
+a run outcome unless the host reports it as used.
 
 ### Example
 

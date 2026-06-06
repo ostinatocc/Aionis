@@ -1998,3 +1998,188 @@ test("product forget records activation feedback through the product facade", as
     await app.close();
   }
 });
+
+test("product guide feedback loop downgrades negatively used memory on the next guide", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("guide-feedback-negative-attribution");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const observe = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        input_text: "AIONIS_SPARSE_FEEDBACK_MARKER Prefer concise release notes for status updates.",
+        memory: {
+          client_id: "memory:guide-feedback-negative-attribution",
+          type: "concept",
+          tier: "warm",
+          memory_kind: "general_memory",
+          title: "Sparse feedback status style",
+          text_summary: "AIONIS_SPARSE_FEEDBACK_MARKER Prefer concise release notes for status updates.",
+          confidence: 0.82,
+        },
+      },
+    });
+    assert.equal(observe.statusCode, 200, observe.body);
+    const nodeId = observe.json().memory_write.nodes[0].id;
+
+    const beforeGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "AIONIS_SPARSE_FEEDBACK_MARKER status update style",
+        consumer_agent_id: "local-user",
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(beforeGuide.statusCode, 200, beforeGuide.body);
+    const beforeGuideBody = beforeGuide.json();
+    const beforeMemory = beforeGuideBody.memory_packet.relevant_memories.find((entry: Record<string, unknown>) =>
+      entry.memory_id === nodeId,
+    );
+    assert.ok(beforeMemory);
+    assert.equal(beforeMemory.lifecycle_state, "active");
+    assert.equal(beforeMemory.authority, "advisory");
+    assert.ok(
+      beforeGuideBody.agent_context.use_now.some((entry: string) =>
+        entry.includes("AIONIS_SPARSE_FEEDBACK_MARKER")
+      ),
+    );
+    assert.equal(beforeGuideBody.agent_context.memory_ids.includes(nodeId), true);
+
+    const feedback = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        operation: "activate",
+        target: "memory",
+        memory_ids: [nodeId],
+        run_id: "run:guide-feedback-negative-attribution",
+        outcome: "negative",
+        activate: true,
+        reason: "The Agent used this recalled memory, but the resulting status update was rejected.",
+      },
+    });
+    assert.equal(feedback.statusCode, 200, feedback.body);
+    const feedbackBody = feedback.json();
+    assert.equal(feedbackBody.result.activated.outcome, "negative");
+    assert.equal(feedbackBody.forget_effect.changed_count, 1);
+    assert.deepEqual(feedbackBody.forget_effect.affected_memory_ids, [nodeId]);
+
+    const { rows } = await liteWriteStore.findNodes({
+      scope: "default",
+      id: nodeId,
+      consumerAgentId: "local-user",
+      consumerTeamId: null,
+      limit: 1,
+      offset: 0,
+    });
+    assert.equal(rows[0]?.slots.feedback_negative, 1);
+    assert.equal(rows[0]?.slots.last_feedback_outcome, "negative");
+    assert.equal(rows[0]?.slots.last_feedback_run_id, "run:guide-feedback-negative-attribution");
+
+    const afterGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "AIONIS_SPARSE_FEEDBACK_MARKER status update style",
+        consumer_agent_id: "local-user",
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(afterGuide.statusCode, 200, afterGuide.body);
+    const afterGuideBody = afterGuide.json();
+    const afterMemory = afterGuideBody.memory_packet.relevant_memories.find((entry: Record<string, unknown>) =>
+      entry.memory_id === nodeId,
+    );
+    assert.ok(afterMemory);
+    assert.equal(afterMemory.lifecycle_state, "candidate");
+    assert.equal(afterMemory.authority, "candidate");
+    assert.equal(
+      afterGuideBody.agent_context.use_now.some((entry: string) =>
+        entry.includes("AIONIS_SPARSE_FEEDBACK_MARKER")
+      ),
+      false,
+    );
+    assert.ok(
+      afterGuideBody.agent_context.inspect_before_use.some((entry: string) =>
+        entry.includes("Sparse feedback status style") || entry.includes(nodeId)
+      ),
+    );
+    assert.equal(afterGuideBody.agent_context.recommended_posture, "inspect_before_use");
+    assert.equal(afterGuideBody.agent_context.authority, "candidate");
+    assert.equal(
+      afterGuideBody.agent_context.risk.reasons.includes("candidate_or_contested_memory_kept_out_of_use_now"),
+      true,
+    );
+
+    const measure = await app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        product_trace: {
+          before_guide: beforeGuideBody,
+          after_guide: afterGuideBody,
+          forget_result: feedbackBody,
+          sufficient_evidence: true,
+          evidence_ids: ["product_trace:guide-feedback-negative-attribution"],
+        },
+      },
+    });
+    assert.equal(measure.statusCode, 200, measure.body);
+    const measureBody = measure.json();
+    assert.equal(measureBody.measurement_input.source, "product_trace");
+    assert.equal(measureBody.memory_decision_trace.summary.inspect_before_use_count > 0, true);
+  } finally {
+    await app.close();
+  }
+});
+
+test("product forget activate requires run outcome attribution", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("guide-feedback-attribution-required");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const missing = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        operation: "activate",
+        target: "memory",
+        memory_ids: [randomUUID()],
+        reason: "This activation feedback lacks attribution and outcome.",
+      },
+    });
+
+    assert.equal(missing.statusCode, 400);
+    assert.ok(missing.body.includes("activate requires run_id"));
+    assert.ok(missing.body.includes("activate requires outcome"));
+  } finally {
+    await app.close();
+  }
+});
