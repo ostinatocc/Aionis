@@ -129,6 +129,8 @@ export const AionisMemoryPacketSchema = z
               "unknown",
             ]),
             evidence_ids: z.array(z.string().min(1)).default([]),
+            observed_at: z.string().min(1).nullable().default(null),
+            target_files: z.array(z.string().min(1)).default([]),
             scope_hint: z.string().min(1).nullable().optional(),
           })
           .strict(),
@@ -554,6 +556,50 @@ const AionisAuditFeedbackSignalMemorySchema = z
   })
   .strict();
 
+const AionisNeighborhoodDriftCandidateSchema = z
+  .object({
+    memory_id: z.string().min(1),
+    title: z.string().min(1).nullable(),
+    signal_present: z.boolean(),
+    neighborhood_growth_count: z.number().int().nonnegative(),
+    newer_related_memory_count: z.number().int().nonnegative(),
+    directional_drift_count: z.number().int().nonnegative(),
+    same_direction_growth_count: z.number().int().nonnegative(),
+    isolation_score: z.number().int().nonnegative(),
+    related_memory_ids: z.array(z.string().min(1)).default([]),
+    directional_drift_memory_ids: z.array(z.string().min(1)).default([]),
+    same_direction_memory_ids: z.array(z.string().min(1)).default([]),
+    reason: z.string().min(1),
+  })
+  .strict();
+
+const AionisNeighborhoodDriftObservationSchema = z
+  .object({
+    present: z.boolean(),
+    contract_version: z.literal("aionis_neighborhood_drift_observation_v1").nullable(),
+    mode: z.literal("read_only_measure").nullable(),
+    authority_mutation: z.literal(false),
+    growth_threshold: z.number().int().nonnegative(),
+    directional_drift_threshold: z.number().int().nonnegative(),
+    isolation_threshold: z.number().int().nonnegative(),
+    signal_memory_ids: z.array(z.string().min(1)).default([]),
+    candidate_count: z.number().int().nonnegative(),
+    candidates: z.array(AionisNeighborhoodDriftCandidateSchema).default([]),
+    reason: z.string().min(1),
+  })
+  .strict();
+
+const AionisEffectNeighborhoodDriftSummarySchema = z
+  .object({
+    present: z.boolean(),
+    source: z.enum(["memory_decision_audit", "not_supplied"]),
+    authority_mutation: z.literal(false),
+    signal_memory_ids: z.array(z.string().min(1)).default([]),
+    candidate_count: z.number().int().nonnegative(),
+    explanation: z.string().min(1),
+  })
+  .strict();
+
 export const AionisMemoryDecisionTraceSchema = z
   .object({
     contract_version: z.literal("aionis_memory_decision_trace_v1"),
@@ -762,6 +808,19 @@ export const AionisMemoryDecisionTraceSchema = z
         reason: z.string().min(1),
       })
       .strict(),
+    neighborhood_drift_observation: AionisNeighborhoodDriftObservationSchema.default({
+      present: false,
+      contract_version: null,
+      mode: null,
+      authority_mutation: false,
+      growth_threshold: 0,
+      directional_drift_threshold: 0,
+      isolation_threshold: 0,
+      signal_memory_ids: [],
+      candidate_count: 0,
+      candidates: [],
+      reason: "No neighborhood drift observation was supplied for this trace.",
+    }),
     context_decision: z
       .object({
         prompt_char_count: z.number().int().nonnegative(),
@@ -863,6 +922,19 @@ export const AionisMemoryDecisionAuditReportSchema = z
         reason: z.string().min(1),
       })
       .strict(),
+    neighborhood_drift_review: AionisNeighborhoodDriftObservationSchema.default({
+      present: false,
+      contract_version: null,
+      mode: null,
+      authority_mutation: false,
+      growth_threshold: 0,
+      directional_drift_threshold: 0,
+      isolation_threshold: 0,
+      signal_memory_ids: [],
+      candidate_count: 0,
+      candidates: [],
+      reason: "No neighborhood drift observation was supplied for this audit report.",
+    }),
     decision_reviews: z
       .object({
         used_memories: z
@@ -1182,6 +1254,14 @@ export const AionisEffectReportSchema = z
       })
       .strict(),
     feedback_signal_summary: AionisEffectFeedbackSignalSummarySchema,
+    neighborhood_drift_summary: AionisEffectNeighborhoodDriftSummarySchema.default({
+      present: false,
+      source: "not_supplied",
+      authority_mutation: false,
+      signal_memory_ids: [],
+      candidate_count: 0,
+      explanation: "No memory decision audit neighborhood drift review was supplied for this effect report.",
+    }),
     training_candidates: z
       .array(
         z

@@ -42,6 +42,7 @@ import {
   resolveNodeRehydrationDefaultMode,
   resolveNodeSemanticForgettingSurface,
   resolveNodeSummaryKind,
+  resolveNodeTargetFiles,
 } from "./node-execution-surface.js";
 import {
   adjudicateMemoryLifecycle,
@@ -70,6 +71,39 @@ type FeedbackAttributionDetail = NonNullable<AionisMemoryDecisionTrace["memory_d
 type FeedbackAttributionSummary = AionisMemoryDecisionTrace["feedback_attribution"];
 type UnusedExposureObservationSummary = FeedbackAttributionSummary["unused_exposure_observation"];
 type SparseFeedbackSignalSummary = FeedbackAttributionSummary["sparse_feedback_signal_summary"];
+type NeighborhoodDriftObservation = AionisMemoryDecisionTrace["neighborhood_drift_observation"];
+type NeighborhoodDriftCandidate = NeighborhoodDriftObservation["candidates"][number];
+
+const NEIGHBORHOOD_DRIFT_GROWTH_THRESHOLD = 2;
+const NEIGHBORHOOD_DRIFT_DIRECTIONAL_THRESHOLD = 2;
+const NEIGHBORHOOD_DRIFT_ISOLATION_THRESHOLD = 1;
+const NEIGHBORHOOD_DRIFT_STOPWORDS = new Set([
+  "about",
+  "after",
+  "again",
+  "also",
+  "before",
+  "current",
+  "during",
+  "early",
+  "later",
+  "memory",
+  "notes",
+  "project",
+  "should",
+  "source",
+  "still",
+  "that",
+  "their",
+  "there",
+  "these",
+  "this",
+  "through",
+  "using",
+  "where",
+  "with",
+  "work",
+]);
 
 export type BuildAionisAgentContextArgs = {
   tenant_id: string;
@@ -96,6 +130,7 @@ export type BuildAionisEffectReportArgs = {
   comparison?: Partial<AionisEffectReport["comparison"]>;
   evidence_ids?: string[];
   feedback_signal_review?: AionisMemoryDecisionAuditReport["feedback_signal_review"] | null;
+  neighborhood_drift_review?: AionisMemoryDecisionAuditReport["neighborhood_drift_review"] | null;
 };
 
 export type BuildAionisMemoryPacketArgs = {
@@ -373,6 +408,10 @@ function buildMemoryPacketEntries(args: BuildAionisMemoryPacketArgs): {
     const confidence = clampConfidence(node.confidence, 0.5);
     const salience = clampConfidence(rankedScore.get(node.id) ?? node.salience, 0.5);
     const contractTrust = resolveNodeExecutionContractTrust({ slots }) ?? contractTrustValue(contextItem?.contract_trust);
+    const targetFiles = compactStrings([
+      ...resolveNodeTargetFiles({ slots }),
+      ...stringArrayValue(contextItem?.target_files),
+    ]).slice(0, 16);
     const lifecycleState = memoryLifecycleState({
       slots,
       contextItem,
@@ -391,11 +430,12 @@ function buildMemoryPacketEntries(args: BuildAionisMemoryPacketArgs): {
       salience,
       lifecycle_state: lifecycleState,
       evidence_ids: memoryEvidenceIds({ node, contextItem }),
-      scope_hint: memoryScopeHint({ domain, sourceLayer: layer }),
       observed_at: stringValue(node.updated_at)
         ?? stringValue(node.created_at)
         ?? stringValue(contextItem?.updated_at)
         ?? stringValue(contextItem?.created_at),
+      target_files: targetFiles,
+      scope_hint: memoryScopeHint({ domain, sourceLayer: layer }),
       source_index: sourceIndex,
     };
   });
@@ -406,7 +446,7 @@ function buildMemoryPacketEntries(args: BuildAionisMemoryPacketArgs): {
   return {
     lifecycleRelations: adjudicated.relations,
     persistedLifecycleRelationCount: persistedRelations.length,
-    entries: adjudicated.entries.map(({ observed_at: _observedAt, source_index: _sourceIndex, ...entry }) => entry as MemoryPacketEntry),
+    entries: adjudicated.entries.map(({ source_index: _sourceIndex, ...entry }) => entry as MemoryPacketEntry),
   };
 }
 
@@ -2034,6 +2074,154 @@ function buildTraceFeedbackAttribution(args: {
   };
 }
 
+function emptyNeighborhoodDriftObservation(
+  reason = "No neighborhood drift signal was observed for this trace.",
+): NeighborhoodDriftObservation {
+  return {
+    present: false,
+    contract_version: null,
+    mode: null,
+    authority_mutation: false,
+    growth_threshold: NEIGHBORHOOD_DRIFT_GROWTH_THRESHOLD,
+    directional_drift_threshold: NEIGHBORHOOD_DRIFT_DIRECTIONAL_THRESHOLD,
+    isolation_threshold: NEIGHBORHOOD_DRIFT_ISOLATION_THRESHOLD,
+    signal_memory_ids: [],
+    candidate_count: 0,
+    candidates: [],
+    reason,
+  };
+}
+
+function parseObservedTime(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizedDriftTokens(entry: MemoryPacketEntry): Set<string> {
+  const text = compactStrings([entry.title, entry.summary]).join(" ").toLowerCase();
+  const tokens = text
+    .replace(/[/_.:-]+/g, " ")
+    .match(/[a-z0-9]{4,}/g) ?? [];
+  const out = new Set<string>();
+  for (const token of tokens) {
+    if (NEIGHBORHOOD_DRIFT_STOPWORDS.has(token)) continue;
+    out.add(token);
+  }
+  return out;
+}
+
+function intersectionSize(left: Set<string>, right: Set<string>): number {
+  let count = 0;
+  for (const value of left) {
+    if (right.has(value)) count += 1;
+  }
+  return count;
+}
+
+function memoryTargetFiles(entry: MemoryPacketEntry): string[] {
+  return compactStrings([
+    ...(entry.target_files ?? []),
+    ...extractPathTargets(`${entry.title ?? ""}\n${entry.summary}`),
+  ]).slice(0, 16);
+}
+
+function sharedPathCount(left: string[], right: string[]): number {
+  if (left.length === 0 || right.length === 0) return 0;
+  const leftSet = new Set(left);
+  let count = 0;
+  for (const value of right) {
+    if (leftSet.has(value)) count += 1;
+  }
+  return count;
+}
+
+function hasPositiveAttribution(
+  decision: AionisMemoryDecisionTrace["memory_decisions"][number] | undefined,
+): boolean {
+  return decision?.feedback_detail?.attribution_strength === "positive_attribution";
+}
+
+function buildNeighborhoodDriftObservation(args: {
+  memory: AionisMemoryPacket | null;
+  memoryDecisions: AionisMemoryDecisionTrace["memory_decisions"];
+}): NeighborhoodDriftObservation {
+  const entries = (args.memory?.relevant_memories ?? []).slice(0, 96);
+  if (entries.length < 3) {
+    return emptyNeighborhoodDriftObservation("Neighborhood drift observation needs at least one older memory and two newer related memories.");
+  }
+  const decisionsById = new Map(args.memoryDecisions.map((entry) => [entry.memory_id, entry]));
+  const metadata = entries.map((entry) => ({
+    entry,
+    observedTime: parseObservedTime(entry.observed_at),
+    targetFiles: memoryTargetFiles(entry),
+    tokens: normalizedDriftTokens(entry),
+  }));
+  const candidates: NeighborhoodDriftCandidate[] = [];
+
+  for (const target of metadata) {
+    if (target.observedTime === null) continue;
+    const related: string[] = [];
+    const directionalDrift: string[] = [];
+    const sameDirection: string[] = [];
+
+    for (const source of metadata) {
+      if (source.entry.memory_id === target.entry.memory_id) continue;
+      if (source.observedTime === null || source.observedTime <= target.observedTime) continue;
+      const sharedPaths = sharedPathCount(target.targetFiles, source.targetFiles);
+      const topicOverlap = intersectionSize(target.tokens, source.tokens);
+      const isRelated = (sharedPaths > 0 && topicOverlap >= 2) || topicOverlap >= 5;
+      if (!isRelated) continue;
+      related.push(source.entry.memory_id);
+      if (topicOverlap >= 6) {
+        sameDirection.push(source.entry.memory_id);
+      } else if (sharedPaths > 0 && topicOverlap >= 2) {
+        directionalDrift.push(source.entry.memory_id);
+      }
+    }
+
+    const isolationScore = hasPositiveAttribution(decisionsById.get(target.entry.memory_id)) ? 0 : 1;
+    const signalPresent =
+      related.length >= NEIGHBORHOOD_DRIFT_GROWTH_THRESHOLD
+      && directionalDrift.length >= NEIGHBORHOOD_DRIFT_DIRECTIONAL_THRESHOLD
+      && isolationScore >= NEIGHBORHOOD_DRIFT_ISOLATION_THRESHOLD;
+
+    if (!signalPresent) continue;
+    candidates.push({
+      memory_id: target.entry.memory_id,
+      title: target.entry.title,
+      signal_present: true,
+      neighborhood_growth_count: related.length,
+      newer_related_memory_count: related.length,
+      directional_drift_count: directionalDrift.length,
+      same_direction_growth_count: sameDirection.length,
+      isolation_score: isolationScore,
+      related_memory_ids: related.slice(0, 12),
+      directional_drift_memory_ids: directionalDrift.slice(0, 12),
+      same_direction_memory_ids: sameDirection.slice(0, 12),
+      reason: "Older memory has multiple newer related memories on the same target surface with directional drift and no positive attribution in this trace; this is read-only evidence for audit/measure, not authority mutation.",
+    });
+  }
+
+  if (candidates.length === 0) {
+    return emptyNeighborhoodDriftObservation("No isolated memory met the conservative growth, directional-drift, and isolation thresholds.");
+  }
+  const signalMemoryIds = candidates.map((entry) => entry.memory_id);
+  return {
+    present: true,
+    contract_version: "aionis_neighborhood_drift_observation_v1",
+    mode: "read_only_measure",
+    authority_mutation: false,
+    growth_threshold: NEIGHBORHOOD_DRIFT_GROWTH_THRESHOLD,
+    directional_drift_threshold: NEIGHBORHOOD_DRIFT_DIRECTIONAL_THRESHOLD,
+    isolation_threshold: NEIGHBORHOOD_DRIFT_ISOLATION_THRESHOLD,
+    signal_memory_ids: signalMemoryIds,
+    candidate_count: candidates.length,
+    candidates: candidates.slice(0, 24),
+    reason: "Neighborhood drift is reported as a read-only sparse feedback observation; it does not lower authority, change guide placement, suppress, archive, or delete memory.",
+  };
+}
+
 function traceRelationDecisions(memory: AionisMemoryPacket | null): AionisMemoryDecisionTrace["relation_decisions"] {
   return (memory?.evidence_trail ?? [])
     .filter((entry) => entry.source === "edge" && !!entry.lifecycle_relation)
@@ -2185,6 +2373,10 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
     memoryDecisions,
     agentContext,
   });
+  const neighborhoodDriftObservation = buildNeighborhoodDriftObservation({
+    memory,
+    memoryDecisions,
+  });
   const contextDecision = {
     prompt_char_count: agentContext?.prompt_text.length ?? 0,
     target_files: agentContext?.target_files ?? [],
@@ -2261,6 +2453,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
     memory_decisions: memoryDecisions,
     relation_decisions: relationDecisions,
     feedback_attribution: feedbackAttribution,
+    neighborhood_drift_observation: neighborhoodDriftObservation,
     context_decision: contextDecision,
     forget_decisions: forgetDecisions,
     source_map: {
@@ -2271,6 +2464,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
         agentContext ? "agent_context_surface_projection" : null,
         relationDecisions.length > 0 ? "memory_lifecycle_relation_graph" : null,
         feedbackAttribution.present ? "feedback_attribution_trace" : null,
+        neighborhoodDriftObservation.present ? "neighborhood_drift_observation" : null,
         forgetDecisions.length > 0 ? "forget_result_projection" : null,
         "memory_decision_trace",
       ]),
@@ -2505,12 +2699,14 @@ export function buildAionisMemoryDecisionAuditReport(
       ]).slice(0, 12),
     },
     feedback_signal_review: feedbackSignalReview,
+    neighborhood_drift_review: trace.neighborhood_drift_observation,
     decision_reviews: decisionReviews,
     source_map: {
       routes_used: args.source_map?.routes_used ?? trace.source_map.routes_used,
       internal_surfaces_used: args.source_map?.internal_surfaces_used ?? compactStrings([
         ...trace.source_map.internal_surfaces_used,
         feedbackSignalReview.present ? "sparse_feedback_signal_summary" : null,
+        trace.neighborhood_drift_observation.present ? "neighborhood_drift_observation" : null,
         "memory_decision_audit_report",
       ]),
       omitted_internal_surfaces: args.source_map?.omitted_internal_surfaces ?? [
@@ -2955,6 +3151,31 @@ function buildEffectFeedbackSignalSummary(
   };
 }
 
+function buildEffectNeighborhoodDriftSummary(
+  review: AionisMemoryDecisionAuditReport["neighborhood_drift_review"] | null | undefined,
+): AionisEffectReport["neighborhood_drift_summary"] {
+  if (!review) {
+    return {
+      present: false,
+      source: "not_supplied",
+      authority_mutation: false,
+      signal_memory_ids: [],
+      candidate_count: 0,
+      explanation: "No memory decision audit neighborhood drift review was supplied for this effect report.",
+    };
+  }
+  return {
+    present: review.present,
+    source: "memory_decision_audit",
+    authority_mutation: false,
+    signal_memory_ids: review.signal_memory_ids,
+    candidate_count: review.candidate_count,
+    explanation: review.present
+      ? "Neighborhood drift was summarized from memory decision audit for product measurement only; it does not mutate memory authority in the effect report."
+      : review.reason,
+  };
+}
+
 function effectExplanation(report: KernelEffectReport, direction: ProductImpactDirection): string {
   if (direction === "insufficient_evidence") {
     return "The effect evaluator does not have enough comparison evidence to claim product impact.";
@@ -3029,6 +3250,7 @@ export function buildAionisEffectReport(args: BuildAionisEffectReportArgs): Aion
       stale_memory_filtered_count: Math.max(0, args.report.proof_summary.stale_memory_delta),
     },
     feedback_signal_summary: buildEffectFeedbackSignalSummary(args.feedback_signal_review),
+    neighborhood_drift_summary: buildEffectNeighborhoodDriftSummary(args.neighborhood_drift_review),
     training_candidates: trainingCandidates,
     evidence: {
       evidence_ids: compactStrings([

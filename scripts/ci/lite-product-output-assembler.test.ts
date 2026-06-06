@@ -811,6 +811,219 @@ test("product memory decision trace explains lifecycle and agent-context surface
   assert.equal(audit.claims.some((claim) => claim.claim === "agent_prompt_excluded" && claim.status === "pass"), true);
 });
 
+test("product memory decision trace observes neighborhood drift without changing guide authority", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "observe sparse feedback drift",
+    },
+    nodes: [
+      {
+        id: "mem-old-checkout-parser",
+        type: "concept",
+        title: "Checkout validation parser baseline",
+        text_summary: "Checkout validation in src/payments/checkout.ts uses callback parser totals tax flow.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+          target_files: ["src/payments/checkout.ts"],
+        },
+        confidence: 0.88,
+        salience: 0.86,
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        id: "mem-new-checkout-schema",
+        type: "concept",
+        title: "Checkout validation schema path",
+        text_summary: "Checkout validation in src/payments/checkout.ts centers schema normalization payment totals flow.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+          target_files: ["src/payments/checkout.ts"],
+        },
+        confidence: 0.87,
+        salience: 0.84,
+        created_at: "2026-01-03T00:00:00.000Z",
+      },
+      {
+        id: "mem-new-checkout-idempotency",
+        type: "concept",
+        title: "Checkout validation idempotency path",
+        text_summary: "Checkout validation in src/payments/checkout.ts centers idempotency guard payment totals flow.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+          target_files: ["src/payments/checkout.ts"],
+        },
+        confidence: 0.86,
+        salience: 0.83,
+        created_at: "2026-01-04T00:00:00.000Z",
+      },
+    ],
+  });
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+  const trace = buildAionisMemoryDecisionTrace({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    before_guide: null,
+    after_guide: {
+      memory_packet: memoryPacket,
+      agent_context: agentContext,
+    },
+  });
+
+  const oldDecision = trace.memory_decisions.find((entry) => entry.memory_id === "mem-old-checkout-parser");
+  assert.equal(oldDecision?.lifecycle_state, "active");
+  assert.equal(oldDecision?.authority, "advisory");
+  assert.equal(oldDecision?.agent_surface, "use_now");
+  assert.equal(trace.neighborhood_drift_observation.present, true);
+  assert.equal(trace.neighborhood_drift_observation.mode, "read_only_measure");
+  assert.equal(trace.neighborhood_drift_observation.authority_mutation, false);
+  assert.deepEqual(trace.neighborhood_drift_observation.signal_memory_ids, ["mem-old-checkout-parser"]);
+  assert.equal(trace.neighborhood_drift_observation.candidates[0]?.directional_drift_count, 2);
+  assert.deepEqual(trace.neighborhood_drift_observation.candidates[0]?.directional_drift_memory_ids, [
+    "mem-new-checkout-schema",
+    "mem-new-checkout-idempotency",
+  ]);
+  assert.equal(agentContext.prompt_text.includes("neighborhood_drift"), false);
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-old-checkout-parser"), true);
+
+  const audit = buildAionisMemoryDecisionAuditReport({ trace });
+  assert.equal(audit.neighborhood_drift_review.present, true);
+  assert.deepEqual(audit.neighborhood_drift_review.signal_memory_ids, ["mem-old-checkout-parser"]);
+
+  const evaluatorReport = evaluateAionisEffect({
+    baseline: {
+      continuity: {
+        repeatedDiscoverySteps: 1,
+        recoveredStateFacts: 0,
+        expectedStateFacts: 1,
+      },
+    },
+    aionis: {
+      continuity: {
+        repeatedDiscoverySteps: 1,
+        recoveredStateFacts: 1,
+        expectedStateFacts: 1,
+        continuityGuidanceCorrect: true,
+      },
+    },
+  });
+  const effect = buildAionisEffectReport({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    report: evaluatorReport,
+    neighborhood_drift_review: audit.neighborhood_drift_review,
+  });
+  assert.equal(effect.neighborhood_drift_summary.present, true);
+  assert.equal(effect.neighborhood_drift_summary.authority_mutation, false);
+  assert.deepEqual(effect.neighborhood_drift_summary.signal_memory_ids, ["mem-old-checkout-parser"]);
+});
+
+test("product neighborhood drift observation keeps same-direction and unrelated growth negative controls quiet", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "observe drift negative controls",
+    },
+    nodes: [
+      {
+        id: "mem-old-checkout-schema",
+        type: "concept",
+        title: "Checkout schema validation baseline",
+        text_summary: "Checkout schema validation in src/payments/checkout.ts uses normalization payment totals flow.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+          target_files: ["src/payments/checkout.ts"],
+        },
+        confidence: 0.88,
+        salience: 0.86,
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        id: "mem-new-checkout-schema-a",
+        type: "concept",
+        title: "Checkout schema validation extension",
+        text_summary: "Checkout schema validation in src/payments/checkout.ts keeps normalization payment totals flow with typed coverage.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+          target_files: ["src/payments/checkout.ts"],
+        },
+        confidence: 0.87,
+        salience: 0.84,
+        created_at: "2026-01-03T00:00:00.000Z",
+      },
+      {
+        id: "mem-new-checkout-schema-b",
+        type: "concept",
+        title: "Checkout schema validation regression",
+        text_summary: "Checkout schema validation in src/payments/checkout.ts keeps normalization payment totals flow with regression coverage.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+          target_files: ["src/payments/checkout.ts"],
+        },
+        confidence: 0.86,
+        salience: 0.83,
+        created_at: "2026-01-04T00:00:00.000Z",
+      },
+      {
+        id: "mem-new-checkout-theme",
+        type: "concept",
+        title: "Checkout visual theme",
+        text_summary: "Checkout button spacing theme in src/payments/checkout.ts adjusts color padding layout.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+          target_files: ["src/payments/checkout.ts"],
+        },
+        confidence: 0.86,
+        salience: 0.82,
+        created_at: "2026-01-05T00:00:00.000Z",
+      },
+    ],
+  });
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+  const trace = buildAionisMemoryDecisionTrace({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    before_guide: null,
+    after_guide: {
+      memory_packet: memoryPacket,
+      agent_context: agentContext,
+    },
+  });
+
+  assert.equal(trace.neighborhood_drift_observation.present, false);
+  assert.equal(trace.neighborhood_drift_observation.authority_mutation, false);
+  assert.deepEqual(trace.neighborhood_drift_observation.signal_memory_ids, []);
+  assert.equal(trace.memory_decisions.every((entry) => entry.lifecycle_state === "active"), true);
+  assert.equal(trace.memory_decisions.every((entry) => entry.authority === "advisory"), true);
+  assert.equal(agentContext.prompt_text.includes("neighborhood_drift"), false);
+});
+
 test("product memory decision trace distinguishes blocked and rehydrate causes", () => {
   const memoryPacket = buildAionisMemoryPacket({
     tenant_id: "tenant-local",

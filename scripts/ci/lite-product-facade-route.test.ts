@@ -692,6 +692,7 @@ test("product measure facade returns a product effect report without external ev
       "learning_effect",
       "forgetting_effect",
       "feedback_signal_summary",
+      "neighborhood_drift_summary",
       "training_candidates",
       "evidence",
     ]);
@@ -703,6 +704,9 @@ test("product measure facade returns a product effect report without external ev
     assert.equal(body.effect_report.feedback_signal_summary.present, false);
     assert.equal(body.effect_report.feedback_signal_summary.source, "not_supplied");
     assert.equal(body.effect_report.feedback_signal_summary.authority_mutation, false);
+    assert.equal(body.effect_report.neighborhood_drift_summary.present, false);
+    assert.equal(body.effect_report.neighborhood_drift_summary.source, "not_supplied");
+    assert.equal(body.effect_report.neighborhood_drift_summary.authority_mutation, false);
     assert.deepEqual(body.source_map.routes_used, ["/v1/measure"]);
   } finally {
     await app.close();

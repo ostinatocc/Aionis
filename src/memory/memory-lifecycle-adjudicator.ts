@@ -11,6 +11,7 @@ export type AdjudicableMemoryEntry = {
   lifecycle_state: "active" | "candidate" | "contested" | "suppressed" | "demoted" | "archived" | "rehydration_candidate" | "unknown";
   scope_hint?: string | null;
   observed_at?: string | null;
+  target_files?: string[];
   source_index: number;
 };
 
