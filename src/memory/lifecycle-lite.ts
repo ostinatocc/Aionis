@@ -29,6 +29,15 @@ function normalizeMaybeRedact(input: string | undefined, opts: LifecycleOptions)
   return redactPII(normalized).text;
 }
 
+function nonNegativeInt(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
+}
+
+function stringList(values: string[] | null | undefined): string[] {
+  return uniqStrings((values ?? []).map((value) => value.trim()).filter((value) => value.length > 0)).slice(0, 32);
+}
+
 async function resolveLifecycleNodes(args: {
   liteWriteStore: LifecycleLiteStore;
   scope: string;
@@ -338,6 +347,7 @@ export async function activateMemoryNodesLite(
     commitHash,
   });
 
+  const feedbackAttributions: Array<Record<string, unknown>> = [];
   for (const row of foundRows) {
     const nextState = computeFeedbackUpdatedNodeState({
       node: row,
@@ -360,6 +370,22 @@ export async function activateMemoryNodesLite(
     if (parsed.activate) {
       nextSlots.last_activated_at = startedAt;
     }
+    feedbackAttributions.push({
+      memory_id: row.id,
+      run_id: parsed.run_id ?? null,
+      outcome: parsed.outcome,
+      used_surface: parsed.used_surface ?? null,
+      verifier_status: parsed.verifier_status ?? null,
+      tool_status: parsed.tool_status ?? null,
+      runtime_signal_refs: stringList(parsed.runtime_signal_refs ?? null),
+      attribution_strength: typeof nextSlots.last_feedback_attribution_strength === "string"
+        ? nextSlots.last_feedback_attribution_strength
+        : null,
+      feedback_positive: nonNegativeInt(nextSlots.feedback_positive),
+      feedback_negative: nonNegativeInt(nextSlots.feedback_negative),
+      weak_counter_signal_count: nonNegativeInt(nextSlots.weak_counter_signal_count),
+      strong_counter_signal_count: nonNegativeInt(nextSlots.strong_counter_signal_count),
+    });
     const lifecycle = resolveNodeLifecycleSignals({
       type: row.type,
       tier: row.tier,
@@ -401,6 +427,7 @@ export async function activateMemoryNodesLite(
       updated_ids: foundRows.map((row) => row.id),
       outcome: parsed.outcome,
       activate: parsed.activate,
+      feedback_attributions: feedbackAttributions,
     },
   };
 }

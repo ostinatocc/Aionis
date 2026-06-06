@@ -66,6 +66,8 @@ type MemoryLifecycleRelationTraceEvidence = NonNullable<MemoryPacketEvidenceTrai
 type LearningCandidate = AionisLearningPacket["candidates"][number];
 type LearningPosture = AionisLearningPacket["posture"]["recommended_learning_posture"];
 type LearningAuthority = AionisLearningPacket["posture"]["authority"];
+type FeedbackAttributionDetail = NonNullable<AionisMemoryDecisionTrace["memory_decisions"][number]["feedback_detail"]>;
+type FeedbackAttributionSummary = AionisMemoryDecisionTrace["feedback_attribution"];
 
 export type BuildAionisAgentContextArgs = {
   tenant_id: string;
@@ -177,6 +179,11 @@ function nonNegativeIntegerValue(value: unknown): number {
   const parsed = numberValue(value);
   if (parsed === null) return 0;
   return Math.max(0, Math.trunc(parsed));
+}
+
+function stringArrayValue(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return compactStrings(value.map((entry) => typeof entry === "string" ? entry : null));
 }
 
 function contractTrustValue(value: unknown): ContractTrust | null {
@@ -1497,19 +1504,22 @@ function traceSurfaceForMemory(args: {
   agentContext: AionisAgentContext | null;
 }): AionisMemoryDecisionSurface {
   const guideBrief = args.guide?.guide_brief ?? null;
+  if (args.agentContext?.do_not_use_memory_ids.includes(args.entry.memory_id)) return "do_not_use";
   const rehydrateIds = new Set([
     ...(args.agentContext?.rehydrate_hints ?? []).map((hint) => hint.memory_id),
     ...(guideBrief?.rehydrate ?? []).map((hint) => hint.memory_id),
   ]);
+  if (rehydrateIds.has(args.entry.memory_id) || args.entry.lifecycle_state === "rehydration_candidate") {
+    return "rehydrate";
+  }
+  if (args.agentContext?.inspect_before_use_memory_ids.includes(args.entry.memory_id)) return "inspect_before_use";
+  if (args.agentContext?.use_now_memory_ids.includes(args.entry.memory_id)) return "use_now";
   if (
     traceTextMatchesEntry(args.agentContext?.do_not_use ?? [], args.entry)
     || traceTextMatchesEntry(guideBrief?.do_not_use ?? [], args.entry)
     || memoryEntryBlocked(args.entry)
   ) {
     return "do_not_use";
-  }
-  if (rehydrateIds.has(args.entry.memory_id) || args.entry.lifecycle_state === "rehydration_candidate") {
-    return "rehydrate";
   }
   if (
     traceTextMatchesEntry(args.agentContext?.inspect_before_use ?? [], args.entry)
@@ -1581,6 +1591,246 @@ function traceForgetDecisions(forgetResult: unknown): AionisMemoryDecisionTrace[
     affected_memory_ids: affected,
     reason: stringValue(root?.reason) ?? stringValue(effect?.reason),
   }];
+}
+
+type TraceFeedbackActivationSummary = {
+  memory_id: string;
+  run_id: string | null;
+  outcome: FeedbackAttributionDetail["outcome"];
+  used_surface: FeedbackAttributionDetail["used_surface"];
+  verifier_status: FeedbackAttributionDetail["verifier_status"];
+  tool_status: FeedbackAttributionDetail["tool_status"];
+  runtime_signal_refs: string[];
+  attribution_strength: FeedbackAttributionDetail["attribution_strength"];
+  weak_counter_signal_count: number;
+  strong_counter_signal_count: number;
+};
+
+type TraceFeedbackAttributionInput = {
+  present: boolean;
+  run_id: string | null;
+  outcome: FeedbackAttributionDetail["outcome"];
+  used_surface: FeedbackAttributionDetail["used_surface"];
+  verifier_status: FeedbackAttributionDetail["verifier_status"];
+  tool_status: FeedbackAttributionDetail["tool_status"];
+  runtime_signal_refs: string[];
+  affected_memory_ids: string[];
+  summaries: Map<string, TraceFeedbackActivationSummary>;
+};
+
+function feedbackOutcomeValue(value: unknown): FeedbackAttributionDetail["outcome"] {
+  return value === "positive" || value === "negative" || value === "neutral" ? value : null;
+}
+
+function feedbackUsedSurfaceValue(value: unknown): FeedbackAttributionDetail["used_surface"] {
+  return value === "use_now"
+    || value === "inspect_before_use"
+    || value === "do_not_use"
+    || value === "explicit_host_assertion"
+    ? value
+    : null;
+}
+
+function feedbackVerifierStatusValue(value: unknown): FeedbackAttributionDetail["verifier_status"] {
+  return value === "passed" || value === "failed" || value === "not_run" || value === "unknown" ? value : null;
+}
+
+function feedbackToolStatusValue(value: unknown): FeedbackAttributionDetail["tool_status"] {
+  return value === "succeeded" || value === "failed" || value === "not_run" || value === "unknown" ? value : null;
+}
+
+function feedbackAttributionStrengthValue(value: unknown): FeedbackAttributionDetail["attribution_strength"] {
+  return value === "observed_feedback"
+    || value === "positive_attribution"
+    || value === "weak_counter_signal"
+    || value === "strong_counter_signal"
+    ? value
+    : null;
+}
+
+function traceFeedbackAttributionInput(forgetResult: unknown): TraceFeedbackAttributionInput {
+  const root = asRecord(forgetResult);
+  const effect = asRecord(root?.forget_effect);
+  const action = stringValue(effect?.action) ?? stringValue(root?.operation);
+  const affectedMemoryIds = Array.isArray(effect?.affected_memory_ids)
+    ? compactStrings(effect.affected_memory_ids.map((entry) => typeof entry === "string" ? entry : null))
+    : [];
+  if (action !== "activate") {
+    return {
+      present: false,
+      run_id: null,
+      outcome: null,
+      used_surface: null,
+      verifier_status: null,
+      tool_status: null,
+      runtime_signal_refs: [],
+      affected_memory_ids: [],
+      summaries: new Map(),
+    };
+  }
+
+  const attribution = asRecord(effect?.attribution);
+  const result = asRecord(root?.result);
+  const activated = asRecord(result?.activated);
+  const rawSummaries = Array.isArray(activated?.feedback_attributions) ? activated.feedback_attributions : [];
+  const fallback = {
+    run_id: stringValue(attribution?.run_id),
+    outcome: feedbackOutcomeValue(attribution?.outcome),
+    used_surface: feedbackUsedSurfaceValue(attribution?.used_surface),
+    verifier_status: feedbackVerifierStatusValue(attribution?.verifier_status),
+    tool_status: feedbackToolStatusValue(attribution?.tool_status),
+    runtime_signal_refs: stringArrayValue(attribution?.runtime_signal_refs),
+  };
+  const summaries = new Map<string, TraceFeedbackActivationSummary>();
+  for (const item of rawSummaries) {
+    const record = asRecord(item);
+    const memoryId = stringValue(record?.memory_id);
+    if (!memoryId) continue;
+    summaries.set(memoryId, {
+      memory_id: memoryId,
+      run_id: stringValue(record?.run_id) ?? fallback.run_id,
+      outcome: feedbackOutcomeValue(record?.outcome) ?? fallback.outcome,
+      used_surface: feedbackUsedSurfaceValue(record?.used_surface) ?? fallback.used_surface,
+      verifier_status: feedbackVerifierStatusValue(record?.verifier_status) ?? fallback.verifier_status,
+      tool_status: feedbackToolStatusValue(record?.tool_status) ?? fallback.tool_status,
+      runtime_signal_refs: stringArrayValue(record?.runtime_signal_refs).length > 0
+        ? stringArrayValue(record?.runtime_signal_refs)
+        : fallback.runtime_signal_refs,
+      attribution_strength: feedbackAttributionStrengthValue(record?.attribution_strength),
+      weak_counter_signal_count: nonNegativeIntegerValue(record?.weak_counter_signal_count),
+      strong_counter_signal_count: nonNegativeIntegerValue(record?.strong_counter_signal_count),
+    });
+  }
+  for (const memoryId of affectedMemoryIds) {
+    if (summaries.has(memoryId)) continue;
+    summaries.set(memoryId, {
+      memory_id: memoryId,
+      ...fallback,
+      attribution_strength: null,
+      weak_counter_signal_count: 0,
+      strong_counter_signal_count: 0,
+    });
+  }
+
+  return {
+    present: true,
+    ...fallback,
+    affected_memory_ids: affectedMemoryIds,
+    summaries,
+  };
+}
+
+function feedbackThresholdState(summary: TraceFeedbackActivationSummary): FeedbackAttributionDetail["threshold_state"] {
+  if (summary.outcome === "positive") return "positive_attribution";
+  if (summary.attribution_strength === "strong_counter_signal" || summary.strong_counter_signal_count > 0) {
+    return "strong_signal_threshold_met";
+  }
+  if (summary.attribution_strength === "weak_counter_signal" || summary.weak_counter_signal_count > 0) {
+    return summary.weak_counter_signal_count >= 2 ? "repeated_weak_threshold_met" : "weak_below_threshold";
+  }
+  if (summary.attribution_strength === "observed_feedback") return "observed_feedback_only";
+  return "none";
+}
+
+function feedbackTraceReason(args: {
+  summary: TraceFeedbackActivationSummary;
+  thresholdState: FeedbackAttributionDetail["threshold_state"];
+}): string {
+  if (args.thresholdState === "strong_signal_threshold_met") {
+    return "Negative feedback is aligned with verifier, tool, or runtime failure evidence, so the memory is kept out of direct use.";
+  }
+  if (args.thresholdState === "repeated_weak_threshold_met") {
+    return "Repeated weak negative feedback reached the attribution threshold, so the memory is kept out of direct use.";
+  }
+  if (args.thresholdState === "weak_below_threshold") {
+    return "A single weak negative feedback signal was recorded; authority remains direct-use until repeated or aligned evidence appears.";
+  }
+  if (args.thresholdState === "positive_attribution") {
+    return "Positive host attribution supports continued direct use for this memory.";
+  }
+  return args.summary.used_surface
+    ? "Host feedback was recorded, but it does not meet a counter-signal threshold."
+    : "Feedback result did not include a direct host-used attribution surface.";
+}
+
+function traceFeedbackDetail(args: {
+  entry: MemoryPacketEntry;
+  feedbackInput: TraceFeedbackAttributionInput;
+}): FeedbackAttributionDetail | null {
+  const summary = args.feedbackInput.summaries.get(args.entry.memory_id);
+  if (!summary) return null;
+  const thresholdState = feedbackThresholdState(summary);
+  const thresholdMet = thresholdState === "repeated_weak_threshold_met" || thresholdState === "strong_signal_threshold_met";
+  const hostMarkedUsed = summary.used_surface === "use_now" || summary.used_surface === "explicit_host_assertion";
+  return {
+    run_id: summary.run_id,
+    outcome: summary.outcome,
+    used_surface: summary.used_surface,
+    verifier_status: summary.verifier_status,
+    tool_status: summary.tool_status,
+    runtime_signal_refs: summary.runtime_signal_refs,
+    attribution_strength: summary.attribution_strength,
+    weak_counter_signal_count: summary.weak_counter_signal_count,
+    strong_counter_signal_count: summary.strong_counter_signal_count,
+    threshold_state: thresholdState,
+    threshold_met: thresholdMet,
+    host_marked_used: hostMarkedUsed,
+    reason: feedbackTraceReason({ summary, thresholdState }),
+  };
+}
+
+function buildTraceFeedbackAttribution(args: {
+  feedbackInput: TraceFeedbackAttributionInput;
+  memoryDecisions: AionisMemoryDecisionTrace["memory_decisions"];
+  agentContext: AionisAgentContext | null;
+}): FeedbackAttributionSummary {
+  if (!args.feedbackInput.present) {
+    return {
+      present: false,
+      run_id: null,
+      outcome: null,
+      used_surface: null,
+      verifier_status: null,
+      tool_status: null,
+      runtime_signal_refs: [],
+      affected_memory_ids: [],
+      attributed_memory_ids: [],
+      unattributed_recalled_memory_ids: args.agentContext?.memory_ids ?? [],
+      weak_counter_signal_memory_ids: [],
+      strong_counter_signal_memory_ids: [],
+      threshold_met_memory_ids: [],
+      reason: "No activate feedback attribution was supplied for this trace.",
+    };
+  }
+  const details = args.memoryDecisions
+    .map((entry) => ({ memory_id: entry.memory_id, detail: entry.feedback_detail }))
+    .filter((entry): entry is { memory_id: string; detail: FeedbackAttributionDetail } => !!entry.detail);
+  const affected = new Set(args.feedbackInput.affected_memory_ids);
+  const recalled = args.agentContext?.memory_ids ?? args.memoryDecisions.map((entry) => entry.memory_id);
+  return {
+    present: true,
+    run_id: args.feedbackInput.run_id,
+    outcome: args.feedbackInput.outcome,
+    used_surface: args.feedbackInput.used_surface,
+    verifier_status: args.feedbackInput.verifier_status,
+    tool_status: args.feedbackInput.tool_status,
+    runtime_signal_refs: args.feedbackInput.runtime_signal_refs,
+    affected_memory_ids: args.feedbackInput.affected_memory_ids,
+    attributed_memory_ids: details
+      .filter((entry) => entry.detail.host_marked_used)
+      .map((entry) => entry.memory_id),
+    unattributed_recalled_memory_ids: recalled.filter((memoryId) => !affected.has(memoryId)),
+    weak_counter_signal_memory_ids: details
+      .filter((entry) => entry.detail.attribution_strength === "weak_counter_signal")
+      .map((entry) => entry.memory_id),
+    strong_counter_signal_memory_ids: details
+      .filter((entry) => entry.detail.attribution_strength === "strong_counter_signal")
+      .map((entry) => entry.memory_id),
+    threshold_met_memory_ids: details
+      .filter((entry) => entry.detail.threshold_met)
+      .map((entry) => entry.memory_id),
+    reason: "Activate feedback is attributed only to host-reported used memory ids; recalled but unreported memories remain unattributed.",
+  };
 }
 
 function traceRelationDecisions(memory: AionisMemoryPacket | null): AionisMemoryDecisionTrace["relation_decisions"] {
@@ -1705,6 +1955,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
   const relationDecisions = traceRelationDecisions(memory);
   const relationByTarget = relationDecisionByTarget(relationDecisions);
   const forgetDecisions = traceForgetDecisions(args.forget_result);
+  const feedbackInput = traceFeedbackAttributionInput(args.forget_result);
   const memoryDecisions: AionisMemoryDecisionTrace["memory_decisions"] = (memory?.relevant_memories ?? [])
     .slice(0, 96)
     .map((entry) => {
@@ -1724,9 +1975,15 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
         used_detail: traceUsedDetail({ entry, surface, relationDecision }),
         downgraded_detail: traceDowngradedDetail({ surface, relationDecision }),
         blocked_detail: traceBlockedDetail({ entry, surface }),
+        feedback_detail: traceFeedbackDetail({ entry, feedbackInput }),
         rehydrate_detail: traceRehydrateDetail({ entry, surface, memory, guide, agentContext }),
       };
     });
+  const feedbackAttribution = buildTraceFeedbackAttribution({
+    feedbackInput,
+    memoryDecisions,
+    agentContext,
+  });
   const contextDecision = {
     prompt_char_count: agentContext?.prompt_text.length ?? 0,
     target_files: agentContext?.target_files ?? [],
@@ -1740,6 +1997,8 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
   const inspectCount = memoryDecisions.filter((entry) => entry.agent_surface === "inspect_before_use").length;
   const doNotUseCount = memoryDecisions.filter((entry) => entry.agent_surface === "do_not_use").length;
   const rehydrateCount = memoryDecisions.filter((entry) => entry.agent_surface === "rehydrate").length;
+  const feedbackAttributionCount = feedbackAttribution.attributed_memory_ids.length;
+  const feedbackThresholdMetCount = feedbackAttribution.threshold_met_memory_ids.length;
   const historyUsed = agentContext?.history_used ?? guide?.guide_brief.history_used ?? memoryDecisions.length > 0;
   const recommendedPosture =
     agentContext?.recommended_posture
@@ -1761,6 +2020,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
     || rehydrateCount > 0
     || relationDecisions.length > 0
     || contradictionWarningCount > 0
+    || feedbackAttribution.present
     || forgetDecisions.length > 0
     || negativeTransferRisk !== "low";
 
@@ -1787,6 +2047,9 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
       rehydrate_count: rehydrateCount,
       relation_count: relationDecisions.length,
       contradiction_warning_count: contradictionWarningCount,
+      feedback_attribution_count: feedbackAttributionCount,
+      feedback_threshold_met_count: feedbackThresholdMetCount,
+      unattributed_recalled_memory_count: feedbackAttribution.unattributed_recalled_memory_ids.length,
       prompt_char_count: contextDecision.prompt_char_count,
       history_used: historyUsed,
       recommended_posture: recommendedPosture,
@@ -1796,6 +2059,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
     },
     memory_decisions: memoryDecisions,
     relation_decisions: relationDecisions,
+    feedback_attribution: feedbackAttribution,
     context_decision: contextDecision,
     forget_decisions: forgetDecisions,
     source_map: {
@@ -1805,6 +2069,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
         "guide_packet_posture",
         agentContext ? "agent_context_surface_projection" : null,
         relationDecisions.length > 0 ? "memory_lifecycle_relation_graph" : null,
+        feedbackAttribution.present ? "feedback_attribution_trace" : null,
         forgetDecisions.length > 0 ? "forget_result_projection" : null,
         "memory_decision_trace",
       ]),
@@ -1942,6 +2207,13 @@ export function buildAionisMemoryDecisionAuditReport(
         evidence: `${controlledMemoryCount} memories were placed on inspect/do-not-use/rehydrate surfaces.`,
       }),
       auditClaim({
+        claim: "feedback_attribution_visible",
+        status: trace.feedback_attribution.present ? "pass" : "not_applicable",
+        evidence: trace.feedback_attribution.present
+          ? `${trace.feedback_attribution.attributed_memory_ids.length} memories received host-used feedback attribution; ${trace.feedback_attribution.unattributed_recalled_memory_ids.length} recalled memories stayed unattributed.`
+          : "No activate feedback attribution was supplied for this trace.",
+      }),
+      auditClaim({
         claim: "history_surface_compact",
         status: promptCompactStatus,
         evidence: `Agent context prompt length is ${trace.context_decision.prompt_char_count} characters.`,
@@ -1951,6 +2223,8 @@ export function buildAionisMemoryDecisionAuditReport(
       total_memory_count: trace.summary.total_memory_count,
       controlled_memory_count: controlledMemoryCount,
       relation_count: trace.summary.relation_count,
+      feedback_attribution_count: trace.summary.feedback_attribution_count,
+      feedback_threshold_met_count: trace.summary.feedback_threshold_met_count,
       prompt_char_count: trace.context_decision.prompt_char_count,
     },
     risks: {

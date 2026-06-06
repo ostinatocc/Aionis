@@ -102,6 +102,10 @@ function assertDecisionTraceMatchesGuide(traceRaw: unknown, guideRaw: unknown) {
   assert.equal(summary.do_not_use_count, countTraceSurface(trace, "do_not_use"));
   assert.equal(summary.rehydrate_count, countTraceSurface(trace, "rehydrate"));
   assert.equal(summary.relation_count, relationDecisions.length);
+  const feedbackAttribution = objectValue(trace.feedback_attribution, "trace.feedback_attribution");
+  assert.equal(summary.feedback_attribution_count, arrayValue(feedbackAttribution.attributed_memory_ids, "feedback_attribution.attributed_memory_ids").length);
+  assert.equal(summary.feedback_threshold_met_count, arrayValue(feedbackAttribution.threshold_met_memory_ids, "feedback_attribution.threshold_met_memory_ids").length);
+  assert.equal(summary.unattributed_recalled_memory_count, arrayValue(feedbackAttribution.unattributed_recalled_memory_ids, "feedback_attribution.unattributed_recalled_memory_ids").length);
   assert.equal(summary.prompt_char_count, String(agentContext.prompt_text ?? "").length);
   assert.equal(summary.history_used, agentContext.history_used);
   assert.equal(summary.recommended_posture, agentContext.recommended_posture);
@@ -186,6 +190,7 @@ function assertTraceCoreEqual(leftRaw: unknown, rightRaw: unknown) {
     "summary",
     "memory_decisions",
     "relation_decisions",
+    "feedback_attribution",
     "context_decision",
     "forget_decisions",
   ]) {
@@ -206,7 +211,11 @@ function assertAuditReportMatchesTrace(auditRaw: unknown, traceRaw: unknown) {
   assert.equal(audit.contract_version, "aionis_memory_decision_audit_report_v1");
   assert.equal(audit.agent_prompt_included, false);
   assert.equal(audit.runtime_mutation, false);
-  assert.equal(objectValue(audit.counters, "audit.counters").total_memory_count, objectValue(trace.summary, "trace.summary").total_memory_count);
+  const counters = objectValue(audit.counters, "audit.counters");
+  const summary = objectValue(trace.summary, "trace.summary");
+  assert.equal(counters.total_memory_count, summary.total_memory_count);
+  assert.equal(counters.feedback_attribution_count, summary.feedback_attribution_count);
+  assert.equal(counters.feedback_threshold_met_count, summary.feedback_threshold_met_count);
   assert.deepEqual(arrayValue(reviews.used_memories, "reviews.used_memories").map((entry) => entry.memory_id), used.map((entry) => entry.memory_id));
   assert.deepEqual(arrayValue(reviews.downgraded_memories, "reviews.downgraded_memories").map((entry) => entry.memory_id), downgraded.map((entry) => entry.memory_id));
   assert.deepEqual(arrayValue(reviews.blocked_memories, "reviews.blocked_memories").map((entry) => entry.memory_id), blocked.map((entry) => entry.memory_id));
@@ -2168,6 +2177,34 @@ test("product guide feedback loop requires repeated weak negative attribution be
     assert.equal(afterFirstWeakGuideBody.agent_context.use_now_memory_ids.includes(nodeId), true);
     assert.equal(afterFirstWeakGuideBody.agent_context.inspect_before_use_memory_ids.includes(nodeId), false);
 
+    const firstWeakMeasure = await app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        product_trace: {
+          before_guide: beforeGuideBody,
+          after_guide: afterFirstWeakGuideBody,
+          forget_result: feedbackBody,
+          sufficient_evidence: true,
+          evidence_ids: ["product_trace:guide-feedback-first-weak-negative-attribution"],
+        },
+      },
+    });
+    assert.equal(firstWeakMeasure.statusCode, 200, firstWeakMeasure.body);
+    const firstWeakTrace = firstWeakMeasure.json().memory_decision_trace;
+    assert.equal(firstWeakTrace.feedback_attribution.present, true);
+    assert.equal(firstWeakTrace.feedback_attribution.run_id, "run:guide-feedback-negative-attribution-1");
+    assert.deepEqual(firstWeakTrace.feedback_attribution.affected_memory_ids, [nodeId]);
+    assert.deepEqual(firstWeakTrace.feedback_attribution.attributed_memory_ids, [nodeId]);
+    assert.ok(firstWeakTrace.feedback_attribution.unattributed_recalled_memory_ids.includes(unusedNodeId));
+    assert.deepEqual(firstWeakTrace.feedback_attribution.threshold_met_memory_ids, []);
+    const firstWeakDecision = firstWeakTrace.memory_decisions.find((entry: Record<string, unknown>) => entry.memory_id === nodeId);
+    assert.equal(firstWeakDecision.feedback_detail.threshold_state, "weak_below_threshold");
+    assert.equal(firstWeakDecision.feedback_detail.threshold_met, false);
+    assert.equal(firstWeakDecision.agent_surface, "use_now");
+
     const secondFeedback = await app.inject({
       method: "POST",
       url: "/v1/forget",
@@ -2243,6 +2280,32 @@ test("product guide feedback loop requires repeated weak negative attribution be
     const measureBody = measure.json();
     assert.equal(measureBody.measurement_input.source, "product_trace");
     assert.equal(measureBody.memory_decision_trace.summary.inspect_before_use_count > 0, true);
+    assert.equal(measureBody.memory_decision_trace.feedback_attribution.present, true);
+    assert.equal(measureBody.memory_decision_trace.feedback_attribution.run_id, "run:guide-feedback-negative-attribution-2");
+    assert.deepEqual(measureBody.memory_decision_trace.feedback_attribution.affected_memory_ids, [nodeId]);
+    assert.deepEqual(measureBody.memory_decision_trace.feedback_attribution.attributed_memory_ids, [nodeId]);
+    assert.ok(measureBody.memory_decision_trace.feedback_attribution.unattributed_recalled_memory_ids.includes(unusedNodeId));
+    assert.deepEqual(measureBody.memory_decision_trace.feedback_attribution.weak_counter_signal_memory_ids, [nodeId]);
+    assert.deepEqual(measureBody.memory_decision_trace.feedback_attribution.threshold_met_memory_ids, [nodeId]);
+    const repeatedWeakDecision = measureBody.memory_decision_trace.memory_decisions.find((entry: Record<string, unknown>) =>
+      entry.memory_id === nodeId
+    );
+    assert.equal(repeatedWeakDecision.feedback_detail.threshold_state, "repeated_weak_threshold_met");
+    assert.equal(repeatedWeakDecision.feedback_detail.weak_counter_signal_count, 2);
+    assert.equal(repeatedWeakDecision.feedback_detail.threshold_met, true);
+    assert.equal(repeatedWeakDecision.agent_surface, "inspect_before_use");
+    const unusedDecision = measureBody.memory_decision_trace.memory_decisions.find((entry: Record<string, unknown>) =>
+      entry.memory_id === unusedNodeId
+    );
+    assert.equal(unusedDecision.feedback_detail, null);
+    assert.equal(measureBody.memory_decision_audit.counters.feedback_attribution_count, 1);
+    assert.equal(measureBody.memory_decision_audit.counters.feedback_threshold_met_count, 1);
+    assert.equal(
+      measureBody.memory_decision_audit.claims.some((claim: Record<string, unknown>) =>
+        claim.claim === "feedback_attribution_visible" && claim.status === "pass"
+      ),
+      true,
+    );
   } finally {
     await app.close();
   }
@@ -2347,6 +2410,31 @@ test("product guide feedback loop downgrades after aligned verifier failure attr
     );
     assert.equal(guideBody.agent_context.use_now_memory_ids.includes(nodeId), false);
     assert.equal(guideBody.agent_context.inspect_before_use_memory_ids.includes(nodeId), true);
+
+    const measure = await app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        product_trace: {
+          before_guide: guideBody,
+          after_guide: guideBody,
+          forget_result: feedback.json(),
+          sufficient_evidence: true,
+          evidence_ids: ["product_trace:guide-feedback-strong-negative-attribution"],
+        },
+      },
+    });
+    assert.equal(measure.statusCode, 200, measure.body);
+    const trace = measure.json().memory_decision_trace;
+    assert.deepEqual(trace.feedback_attribution.strong_counter_signal_memory_ids, [nodeId]);
+    assert.deepEqual(trace.feedback_attribution.threshold_met_memory_ids, [nodeId]);
+    const decision = trace.memory_decisions.find((entry: Record<string, unknown>) => entry.memory_id === nodeId);
+    assert.equal(decision.feedback_detail.threshold_state, "strong_signal_threshold_met");
+    assert.equal(decision.feedback_detail.strong_counter_signal_count, 1);
+    assert.equal(decision.feedback_detail.verifier_status, "failed");
+    assert.deepEqual(decision.feedback_detail.runtime_signal_refs, ["verifier:status-format-failed"]);
   } finally {
     await app.close();
   }

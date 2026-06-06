@@ -459,6 +459,43 @@ const AionisMemoryDecisionKindSchema = z.enum([
   "not_agent_facing",
 ]);
 
+const AionisFeedbackOutcomeSchema = z.enum(["positive", "negative", "neutral"]);
+const AionisFeedbackUsedSurfaceSchema = z.enum(["use_now", "inspect_before_use", "do_not_use", "explicit_host_assertion"]);
+const AionisFeedbackVerifierStatusSchema = z.enum(["passed", "failed", "not_run", "unknown"]);
+const AionisFeedbackToolStatusSchema = z.enum(["succeeded", "failed", "not_run", "unknown"]);
+const AionisFeedbackAttributionStrengthSchema = z.enum([
+  "observed_feedback",
+  "positive_attribution",
+  "weak_counter_signal",
+  "strong_counter_signal",
+]);
+const AionisFeedbackThresholdStateSchema = z.enum([
+  "none",
+  "observed_feedback_only",
+  "positive_attribution",
+  "weak_below_threshold",
+  "repeated_weak_threshold_met",
+  "strong_signal_threshold_met",
+]);
+
+const AionisFeedbackAttributionDetailSchema = z
+  .object({
+    run_id: z.string().min(1).nullable(),
+    outcome: AionisFeedbackOutcomeSchema.nullable(),
+    used_surface: AionisFeedbackUsedSurfaceSchema.nullable(),
+    verifier_status: AionisFeedbackVerifierStatusSchema.nullable(),
+    tool_status: AionisFeedbackToolStatusSchema.nullable(),
+    runtime_signal_refs: z.array(z.string().min(1)).default([]),
+    attribution_strength: AionisFeedbackAttributionStrengthSchema.nullable(),
+    weak_counter_signal_count: z.number().int().nonnegative(),
+    strong_counter_signal_count: z.number().int().nonnegative(),
+    threshold_state: AionisFeedbackThresholdStateSchema,
+    threshold_met: z.boolean(),
+    host_marked_used: z.boolean(),
+    reason: z.string().min(1),
+  })
+  .strict();
+
 export const AionisMemoryDecisionTraceSchema = z
   .object({
     contract_version: z.literal("aionis_memory_decision_trace_v1"),
@@ -486,6 +523,9 @@ export const AionisMemoryDecisionTraceSchema = z
         rehydrate_count: z.number().int().nonnegative(),
         relation_count: z.number().int().nonnegative(),
         contradiction_warning_count: z.number().int().nonnegative(),
+        feedback_attribution_count: z.number().int().nonnegative(),
+        feedback_threshold_met_count: z.number().int().nonnegative(),
+        unattributed_recalled_memory_count: z.number().int().nonnegative(),
         prompt_char_count: z.number().int().nonnegative(),
         history_used: z.boolean(),
         recommended_posture: z.enum([
@@ -577,6 +617,7 @@ export const AionisMemoryDecisionTraceSchema = z
               })
               .strict()
               .nullable(),
+            feedback_detail: AionisFeedbackAttributionDetailSchema.nullable(),
             rehydrate_detail: z
               .object({
                 mode: z.enum(["summary_only", "partial", "full", "differential"]),
@@ -611,6 +652,24 @@ export const AionisMemoryDecisionTraceSchema = z
           .strict(),
       )
       .default([]),
+    feedback_attribution: z
+      .object({
+        present: z.boolean(),
+        run_id: z.string().min(1).nullable(),
+        outcome: AionisFeedbackOutcomeSchema.nullable(),
+        used_surface: AionisFeedbackUsedSurfaceSchema.nullable(),
+        verifier_status: AionisFeedbackVerifierStatusSchema.nullable(),
+        tool_status: AionisFeedbackToolStatusSchema.nullable(),
+        runtime_signal_refs: z.array(z.string().min(1)).default([]),
+        affected_memory_ids: z.array(z.string().min(1)).default([]),
+        attributed_memory_ids: z.array(z.string().min(1)).default([]),
+        unattributed_recalled_memory_ids: z.array(z.string().min(1)).default([]),
+        weak_counter_signal_memory_ids: z.array(z.string().min(1)).default([]),
+        strong_counter_signal_memory_ids: z.array(z.string().min(1)).default([]),
+        threshold_met_memory_ids: z.array(z.string().min(1)).default([]),
+        reason: z.string().min(1),
+      })
+      .strict(),
     context_decision: z
       .object({
         prompt_char_count: z.number().int().nonnegative(),
@@ -669,6 +728,7 @@ export const AionisMemoryDecisionAuditReportSchema = z
               "runtime_state_unchanged",
               "memory_lifecycle_visible",
               "negative_transfer_control_visible",
+              "feedback_attribution_visible",
               "history_surface_compact",
             ]),
             status: z.enum(["pass", "fail", "not_applicable"]),
@@ -682,6 +742,8 @@ export const AionisMemoryDecisionAuditReportSchema = z
         total_memory_count: z.number().int().nonnegative(),
         controlled_memory_count: z.number().int().nonnegative(),
         relation_count: z.number().int().nonnegative(),
+        feedback_attribution_count: z.number().int().nonnegative(),
+        feedback_threshold_met_count: z.number().int().nonnegative(),
         prompt_char_count: z.number().int().nonnegative(),
       })
       .strict(),

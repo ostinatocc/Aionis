@@ -429,6 +429,9 @@ function validMemoryDecisionTrace() {
       rehydrate_count: 0,
       relation_count: 0,
       contradiction_warning_count: 0,
+      feedback_attribution_count: 0,
+      feedback_threshold_met_count: 0,
+      unattributed_recalled_memory_count: 2,
       prompt_char_count: 81,
       history_used: true,
       recommended_posture: "inspect_before_use",
@@ -457,10 +460,27 @@ function validMemoryDecisionTrace() {
         },
         downgraded_detail: null,
         blocked_detail: null,
+        feedback_detail: null,
         rehydrate_detail: null,
       },
     ],
     relation_decisions: [],
+    feedback_attribution: {
+      present: false,
+      run_id: null,
+      outcome: null,
+      used_surface: null,
+      verifier_status: null,
+      tool_status: null,
+      runtime_signal_refs: [],
+      affected_memory_ids: [],
+      attributed_memory_ids: [],
+      unattributed_recalled_memory_ids: ["mem-1", "mem-3"],
+      weak_counter_signal_memory_ids: [],
+      strong_counter_signal_memory_ids: [],
+      threshold_met_memory_ids: [],
+      reason: "No activate feedback attribution was supplied for this trace.",
+    },
     context_decision: {
       prompt_char_count: 81,
       target_files: ["src/index.ts"],
@@ -499,11 +519,18 @@ function validMemoryDecisionAuditReport() {
         status: "pass",
         evidence: "Trace is read-only.",
       },
+      {
+        claim: "feedback_attribution_visible",
+        status: "not_applicable",
+        evidence: "No activate feedback attribution was supplied for this trace.",
+      },
     ],
     counters: {
       total_memory_count: 1,
       controlled_memory_count: 1,
       relation_count: 0,
+      feedback_attribution_count: 0,
+      feedback_threshold_met_count: 0,
       prompt_char_count: 81,
     },
     risks: {
@@ -728,6 +755,9 @@ test("AionisMemoryDecisionTrace accepts read-only measure/debug/audit output", (
   assert.equal(parsed.agent_prompt_included, false);
   assert.equal(parsed.runtime_mutation, false);
   assert.equal(parsed.memory_decisions[0]?.agent_surface, "use_now");
+  assert.equal(parsed.memory_decisions[0]?.feedback_detail, null);
+  assert.equal(parsed.feedback_attribution.present, false);
+  assert.equal(parsed.summary.feedback_attribution_count, 0);
 });
 
 test("AionisMemoryDecisionTrace rejects prompt injection and runtime mutation claims", () => {
@@ -755,4 +785,7 @@ test("AionisMemoryDecisionAuditReport accepts compact operator audit output", ()
   assert.equal(parsed.agent_prompt_included, false);
   assert.equal(parsed.runtime_mutation, false);
   assert.equal(parsed.verdict, "learning_control_visible");
+  assert.equal(parsed.counters.feedback_attribution_count, 0);
+  assert.equal(parsed.counters.feedback_threshold_met_count, 0);
+  assert.equal(parsed.claims.some((claim) => claim.claim === "feedback_attribution_visible"), true);
 });

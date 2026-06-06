@@ -24,6 +24,9 @@ function assertTraceSummaryMatchesDecisions(trace: AionisMemoryDecisionTrace, ag
   assert.equal(trace.summary.do_not_use_count, countBySurface(trace, "do_not_use"));
   assert.equal(trace.summary.rehydrate_count, countBySurface(trace, "rehydrate"));
   assert.equal(trace.summary.relation_count, trace.relation_decisions.length);
+  assert.equal(trace.summary.feedback_attribution_count, trace.feedback_attribution.attributed_memory_ids.length);
+  assert.equal(trace.summary.feedback_threshold_met_count, trace.feedback_attribution.threshold_met_memory_ids.length);
+  assert.equal(trace.summary.unattributed_recalled_memory_count, trace.feedback_attribution.unattributed_recalled_memory_ids.length);
   assert.equal(trace.summary.prompt_char_count, agentContext.prompt_text.length);
   assert.equal(trace.context_decision.prompt_char_count, agentContext.prompt_text.length);
   assert.equal(trace.context_decision.use_now_count, agentContext.use_now.length);
@@ -285,6 +288,8 @@ test("memory decision audit reviews are a lossless compact projection of trace d
   assert.equal(audit.counters.total_memory_count, trace.summary.total_memory_count);
   assert.equal(audit.counters.controlled_memory_count, trace.summary.inspect_before_use_count + trace.summary.do_not_use_count + trace.summary.rehydrate_count);
   assert.equal(audit.counters.relation_count, trace.summary.relation_count);
+  assert.equal(audit.counters.feedback_attribution_count, trace.summary.feedback_attribution_count);
+  assert.equal(audit.counters.feedback_threshold_met_count, trace.summary.feedback_threshold_met_count);
   assert.equal(audit.counters.prompt_char_count, trace.summary.prompt_char_count);
   assert.equal(audit.claims.some((claim) => claim.claim === "agent_prompt_excluded" && claim.status === "pass"), true);
   assert.equal(audit.claims.some((claim) => claim.claim === "runtime_state_unchanged" && claim.status === "pass"), true);
@@ -301,4 +306,14 @@ test("memory decision trace forget decisions mirror forget-result effect fields"
       reason: "operator blocked an obsolete memory",
     },
   ]);
+});
+
+test("memory decision trace makes absent feedback attribution explicit", () => {
+  const { agentContext, trace } = buildTraceFixture();
+  assert.equal(trace.feedback_attribution.present, false);
+  assert.deepEqual(trace.feedback_attribution.affected_memory_ids, []);
+  assert.deepEqual(trace.feedback_attribution.attributed_memory_ids, []);
+  assert.deepEqual(trace.feedback_attribution.threshold_met_memory_ids, []);
+  assert.deepEqual(trace.feedback_attribution.unattributed_recalled_memory_ids, agentContext.memory_ids);
+  assert.equal(trace.memory_decisions.every((entry) => entry.feedback_detail === null), true);
 });

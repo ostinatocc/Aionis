@@ -245,6 +245,14 @@ Use one of these forms:
 | `memory_decision_audit` | Operator | Present when `product_trace` is supplied. |
 | `kernel_report` | Advanced developer | Internal effect evaluator output. |
 
+When `product_trace.forget_result` contains `operation: "activate"` feedback,
+`memory_decision_trace.feedback_attribution` explains the attribution path:
+which memory ids were host-marked as used, whether the signal was weak or
+strong, whether the threshold was met, and which recalled memory ids stayed
+unattributed. Per-memory `feedback_detail` explains why a single weak negative
+does not lower authority, and why repeated weak or verifier/tool/runtime-aligned
+negative feedback moves memory to `inspect_before_use`.
+
 ### Example
 
 ```json
