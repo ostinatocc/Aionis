@@ -527,6 +527,23 @@ const AionisCandidateLearningControlSummarySchema = z
   })
   .strict();
 
+const AionisConfidenceDecayCandidateSummarySchema = z
+  .object({
+    present: z.boolean(),
+    contract_version: z.literal("aionis_confidence_decay_candidate_summary_v1").nullable(),
+    mode: z.literal("shadow_candidate").nullable(),
+    authority_mutation: z.literal(false),
+    agent_prompt_included: z.literal(false),
+    decay_candidate_memory_ids: z.array(z.string().min(1)).default([]),
+    candidate_from_learning_control_memory_ids: z.array(z.string().min(1)).default([]),
+    supported_by_neighborhood_drift_memory_ids: z.array(z.string().min(1)).default([]),
+    drift_only_observation_memory_ids: z.array(z.string().min(1)).default([]),
+    blocked_by_positive_attribution_memory_ids: z.array(z.string().min(1)).default([]),
+    blocked_by_recent_validation_memory_ids: z.array(z.string().min(1)).default([]),
+    reason: z.string().min(1),
+  })
+  .strict();
+
 const AionisSparseFeedbackSignalSummarySchema = z
   .object({
     present: z.boolean(),
@@ -621,6 +638,18 @@ const AionisEffectNeighborhoodDriftSummarySchema = z
     authority_mutation: z.literal(false),
     signal_memory_ids: z.array(z.string().min(1)).default([]),
     candidate_count: z.number().int().nonnegative(),
+    explanation: z.string().min(1),
+  })
+  .strict();
+
+const AionisEffectConfidenceDecaySummarySchema = z
+  .object({
+    present: z.boolean(),
+    source: z.enum(["memory_decision_audit", "not_supplied"]),
+    authority_mutation: z.literal(false),
+    decay_candidate_memory_ids: z.array(z.string().min(1)).default([]),
+    blocked_by_positive_attribution_memory_ids: z.array(z.string().min(1)).default([]),
+    supported_by_neighborhood_drift_memory_ids: z.array(z.string().min(1)).default([]),
     explanation: z.string().min(1),
   })
   .strict();
@@ -857,6 +886,20 @@ export const AionisMemoryDecisionTraceSchema = z
       candidates: [],
       reason: "No neighborhood drift observation was supplied for this trace.",
     }),
+    confidence_decay_candidate_summary: AionisConfidenceDecayCandidateSummarySchema.default({
+      present: false,
+      contract_version: null,
+      mode: null,
+      authority_mutation: false,
+      agent_prompt_included: false,
+      decay_candidate_memory_ids: [],
+      candidate_from_learning_control_memory_ids: [],
+      supported_by_neighborhood_drift_memory_ids: [],
+      drift_only_observation_memory_ids: [],
+      blocked_by_positive_attribution_memory_ids: [],
+      blocked_by_recent_validation_memory_ids: [],
+      reason: "No confidence decay shadow candidate crossed the read-only gate.",
+    }),
     context_decision: z
       .object({
         prompt_char_count: z.number().int().nonnegative(),
@@ -981,6 +1024,20 @@ export const AionisMemoryDecisionAuditReportSchema = z
       candidate_count: 0,
       candidates: [],
       reason: "No neighborhood drift observation was supplied for this audit report.",
+    }),
+    confidence_decay_candidate_review: AionisConfidenceDecayCandidateSummarySchema.default({
+      present: false,
+      contract_version: null,
+      mode: null,
+      authority_mutation: false,
+      agent_prompt_included: false,
+      decay_candidate_memory_ids: [],
+      candidate_from_learning_control_memory_ids: [],
+      supported_by_neighborhood_drift_memory_ids: [],
+      drift_only_observation_memory_ids: [],
+      blocked_by_positive_attribution_memory_ids: [],
+      blocked_by_recent_validation_memory_ids: [],
+      reason: "No confidence decay shadow candidate crossed the read-only gate.",
     }),
     decision_reviews: z
       .object({
@@ -1308,6 +1365,15 @@ export const AionisEffectReportSchema = z
       signal_memory_ids: [],
       candidate_count: 0,
       explanation: "No memory decision audit neighborhood drift review was supplied for this effect report.",
+    }),
+    confidence_decay_summary: AionisEffectConfidenceDecaySummarySchema.default({
+      present: false,
+      source: "not_supplied",
+      authority_mutation: false,
+      decay_candidate_memory_ids: [],
+      blocked_by_positive_attribution_memory_ids: [],
+      supported_by_neighborhood_drift_memory_ids: [],
+      explanation: "No memory decision audit confidence decay review was supplied for this effect report.",
     }),
     training_candidates: z
       .array(

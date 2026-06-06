@@ -74,6 +74,7 @@ type SparseFeedbackSignalSummary = FeedbackAttributionSummary["sparse_feedback_s
 type CandidateLearningControlSummary = SparseFeedbackSignalSummary["candidate_learning_control_summary"];
 type NeighborhoodDriftObservation = AionisMemoryDecisionTrace["neighborhood_drift_observation"];
 type NeighborhoodDriftCandidate = NeighborhoodDriftObservation["candidates"][number];
+type ConfidenceDecayCandidateSummary = AionisMemoryDecisionTrace["confidence_decay_candidate_summary"];
 
 const NEIGHBORHOOD_DRIFT_GROWTH_THRESHOLD = 2;
 const NEIGHBORHOOD_DRIFT_DIRECTIONAL_THRESHOLD = 2;
@@ -132,6 +133,7 @@ export type BuildAionisEffectReportArgs = {
   evidence_ids?: string[];
   feedback_signal_review?: AionisMemoryDecisionAuditReport["feedback_signal_review"] | null;
   neighborhood_drift_review?: AionisMemoryDecisionAuditReport["neighborhood_drift_review"] | null;
+  confidence_decay_review?: AionisMemoryDecisionAuditReport["confidence_decay_candidate_review"] | null;
 };
 
 export type BuildAionisMemoryPacketArgs = {
@@ -1793,6 +1795,66 @@ function buildCandidateLearningControlSummary(args: {
   };
 }
 
+function emptyConfidenceDecayCandidateSummary(
+  reason = "No confidence decay shadow candidate crossed the read-only gate.",
+): ConfidenceDecayCandidateSummary {
+  return {
+    present: false,
+    contract_version: null,
+    mode: null,
+    authority_mutation: false,
+    agent_prompt_included: false,
+    decay_candidate_memory_ids: [],
+    candidate_from_learning_control_memory_ids: [],
+    supported_by_neighborhood_drift_memory_ids: [],
+    drift_only_observation_memory_ids: [],
+    blocked_by_positive_attribution_memory_ids: [],
+    blocked_by_recent_validation_memory_ids: [],
+    reason,
+  };
+}
+
+function buildConfidenceDecayCandidateSummary(args: {
+  feedbackAttribution: FeedbackAttributionSummary;
+  neighborhoodDriftObservation: NeighborhoodDriftObservation;
+}): ConfidenceDecayCandidateSummary {
+  const sparse = args.feedbackAttribution.sparse_feedback_signal_summary;
+  const learningControl = sparse.candidate_learning_control_summary;
+  const positiveMemoryIds = new Set(compactStrings(sparse.positive_attributed_memory_ids));
+  const learningControlCandidates = compactStrings(learningControl.candidate_inspect_before_use_memory_ids);
+  const blockedByPositive = compactStrings([
+    ...learningControl.blocked_by_positive_attribution_memory_ids,
+    ...learningControlCandidates.filter((memoryId) => positiveMemoryIds.has(memoryId)),
+  ]);
+  const candidateFromLearningControl = learningControlCandidates.filter((memoryId) => !positiveMemoryIds.has(memoryId));
+  const driftSignalMemoryIds = new Set(args.neighborhoodDriftObservation.signal_memory_ids);
+  const supportedByDrift = candidateFromLearningControl.filter((memoryId) => driftSignalMemoryIds.has(memoryId));
+  const driftOnlyObservation = args.neighborhoodDriftObservation.signal_memory_ids
+    .filter((memoryId) => !candidateFromLearningControl.includes(memoryId) && !blockedByPositive.includes(memoryId));
+  const decayCandidates = compactStrings(candidateFromLearningControl);
+
+  if (decayCandidates.length === 0 && blockedByPositive.length === 0 && driftOnlyObservation.length === 0) {
+    return emptyConfidenceDecayCandidateSummary();
+  }
+
+  return {
+    present: true,
+    contract_version: "aionis_confidence_decay_candidate_summary_v1",
+    mode: "shadow_candidate",
+    authority_mutation: false,
+    agent_prompt_included: false,
+    decay_candidate_memory_ids: decayCandidates,
+    candidate_from_learning_control_memory_ids: candidateFromLearningControl,
+    supported_by_neighborhood_drift_memory_ids: supportedByDrift,
+    drift_only_observation_memory_ids: compactStrings(driftOnlyObservation),
+    blocked_by_positive_attribution_memory_ids: blockedByPositive,
+    blocked_by_recent_validation_memory_ids: blockedByPositive,
+    reason: decayCandidates.length > 0
+      ? "Direction 1 candidate evidence may become a confidence-decay shadow candidate, but this summary does not mutate authority."
+      : "Positive attribution or drift-only evidence blocked confidence-decay candidacy.",
+  };
+}
+
 function unusedExposureObservationValue(value: unknown): UnusedExposureObservationSummary {
   const record = asRecord(value);
   if (!record || record.contract_version !== "aionis_unused_exposure_observation_v1") {
@@ -2444,6 +2506,10 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
     memory,
     memoryDecisions,
   });
+  const confidenceDecayCandidateSummary = buildConfidenceDecayCandidateSummary({
+    feedbackAttribution,
+    neighborhoodDriftObservation,
+  });
   const contextDecision = {
     prompt_char_count: agentContext?.prompt_text.length ?? 0,
     target_files: agentContext?.target_files ?? [],
@@ -2481,6 +2547,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
     || relationDecisions.length > 0
     || contradictionWarningCount > 0
     || feedbackAttribution.present
+    || confidenceDecayCandidateSummary.present
     || forgetDecisions.length > 0
     || negativeTransferRisk !== "low";
 
@@ -2521,6 +2588,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
     relation_decisions: relationDecisions,
     feedback_attribution: feedbackAttribution,
     neighborhood_drift_observation: neighborhoodDriftObservation,
+    confidence_decay_candidate_summary: confidenceDecayCandidateSummary,
     context_decision: contextDecision,
     forget_decisions: forgetDecisions,
     source_map: {
@@ -2532,6 +2600,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
         relationDecisions.length > 0 ? "memory_lifecycle_relation_graph" : null,
         feedbackAttribution.present ? "feedback_attribution_trace" : null,
         neighborhoodDriftObservation.present ? "neighborhood_drift_observation" : null,
+        confidenceDecayCandidateSummary.present ? "confidence_decay_candidate_summary" : null,
         forgetDecisions.length > 0 ? "forget_result_projection" : null,
         "memory_decision_trace",
       ]),
@@ -2768,6 +2837,7 @@ export function buildAionisMemoryDecisionAuditReport(
     },
     feedback_signal_review: feedbackSignalReview,
     neighborhood_drift_review: trace.neighborhood_drift_observation,
+    confidence_decay_candidate_review: trace.confidence_decay_candidate_summary,
     decision_reviews: decisionReviews,
     source_map: {
       routes_used: args.source_map?.routes_used ?? trace.source_map.routes_used,
@@ -2775,6 +2845,7 @@ export function buildAionisMemoryDecisionAuditReport(
         ...trace.source_map.internal_surfaces_used,
         feedbackSignalReview.present ? "sparse_feedback_signal_summary" : null,
         trace.neighborhood_drift_observation.present ? "neighborhood_drift_observation" : null,
+        trace.confidence_decay_candidate_summary.present ? "confidence_decay_candidate_summary" : null,
         "memory_decision_audit_report",
       ]),
       omitted_internal_surfaces: args.source_map?.omitted_internal_surfaces ?? [
@@ -3244,6 +3315,33 @@ function buildEffectNeighborhoodDriftSummary(
   };
 }
 
+function buildEffectConfidenceDecaySummary(
+  review: AionisMemoryDecisionAuditReport["confidence_decay_candidate_review"] | null | undefined,
+): AionisEffectReport["confidence_decay_summary"] {
+  if (!review) {
+    return {
+      present: false,
+      source: "not_supplied",
+      authority_mutation: false,
+      decay_candidate_memory_ids: [],
+      blocked_by_positive_attribution_memory_ids: [],
+      supported_by_neighborhood_drift_memory_ids: [],
+      explanation: "No memory decision audit confidence decay review was supplied for this effect report.",
+    };
+  }
+  return {
+    present: review.present,
+    source: "memory_decision_audit",
+    authority_mutation: false,
+    decay_candidate_memory_ids: review.decay_candidate_memory_ids,
+    blocked_by_positive_attribution_memory_ids: review.blocked_by_positive_attribution_memory_ids,
+    supported_by_neighborhood_drift_memory_ids: review.supported_by_neighborhood_drift_memory_ids,
+    explanation: review.present
+      ? "Confidence decay shadow candidates were summarized from memory decision audit for product measurement only; this does not mutate memory authority."
+      : review.reason,
+  };
+}
+
 function effectExplanation(report: KernelEffectReport, direction: ProductImpactDirection): string {
   if (direction === "insufficient_evidence") {
     return "The effect evaluator does not have enough comparison evidence to claim product impact.";
@@ -3319,6 +3417,7 @@ export function buildAionisEffectReport(args: BuildAionisEffectReportArgs): Aion
     },
     feedback_signal_summary: buildEffectFeedbackSignalSummary(args.feedback_signal_review),
     neighborhood_drift_summary: buildEffectNeighborhoodDriftSummary(args.neighborhood_drift_review),
+    confidence_decay_summary: buildEffectConfidenceDecaySummary(args.confidence_decay_review),
     training_candidates: trainingCandidates,
     evidence: {
       evidence_ids: compactStrings([

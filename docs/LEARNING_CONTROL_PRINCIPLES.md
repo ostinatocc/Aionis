@@ -138,6 +138,11 @@ Sparse feedback attribution follows the product gate in
 repeated unused exposure without positive attribution may become candidate-only learning-control evidence, but the
 summary itself must not mutate authority or enter the Agent prompt.
 
+Sparse feedback confidence decay follows
+[SPARSE_FEEDBACK_CONFIDENCE_DECAY_GATE.md](SPARSE_FEEDBACK_CONFIDENCE_DECAY_GATE.md). It may surface shadow candidates
+for memory that should be trusted less, but positive attribution and recent validation block decay candidacy. The
+summary remains measure/debug/audit only and must not demote, suppress, archive, or rewrite guide authority.
+
 ### 3. Soft Strategies
 
 Use soft strategies for reusable engineering heuristics:

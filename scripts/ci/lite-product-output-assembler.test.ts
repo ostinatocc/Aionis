@@ -890,6 +890,12 @@ test("product memory decision trace observes neighborhood drift without changing
   assert.equal(trace.neighborhood_drift_observation.mode, "read_only_measure");
   assert.equal(trace.neighborhood_drift_observation.authority_mutation, false);
   assert.deepEqual(trace.neighborhood_drift_observation.signal_memory_ids, ["mem-old-checkout-parser"]);
+  assert.equal(trace.confidence_decay_candidate_summary.present, true);
+  assert.equal(trace.confidence_decay_candidate_summary.authority_mutation, false);
+  assert.deepEqual(trace.confidence_decay_candidate_summary.decay_candidate_memory_ids, []);
+  assert.deepEqual(trace.confidence_decay_candidate_summary.drift_only_observation_memory_ids, [
+    "mem-old-checkout-parser",
+  ]);
   assert.equal(trace.neighborhood_drift_observation.candidates[0]?.directional_drift_count, 2);
   assert.deepEqual(trace.neighborhood_drift_observation.candidates[0]?.directional_drift_memory_ids, [
     "mem-new-checkout-schema",
@@ -901,6 +907,10 @@ test("product memory decision trace observes neighborhood drift without changing
   const audit = buildAionisMemoryDecisionAuditReport({ trace });
   assert.equal(audit.neighborhood_drift_review.present, true);
   assert.deepEqual(audit.neighborhood_drift_review.signal_memory_ids, ["mem-old-checkout-parser"]);
+  assert.deepEqual(audit.confidence_decay_candidate_review.decay_candidate_memory_ids, []);
+  assert.deepEqual(audit.confidence_decay_candidate_review.drift_only_observation_memory_ids, [
+    "mem-old-checkout-parser",
+  ]);
 
   const evaluatorReport = evaluateAionisEffect({
     baseline: {
@@ -924,10 +934,365 @@ test("product memory decision trace observes neighborhood drift without changing
     scope: "repo-a",
     report: evaluatorReport,
     neighborhood_drift_review: audit.neighborhood_drift_review,
+    confidence_decay_review: audit.confidence_decay_candidate_review,
   });
   assert.equal(effect.neighborhood_drift_summary.present, true);
   assert.equal(effect.neighborhood_drift_summary.authority_mutation, false);
   assert.deepEqual(effect.neighborhood_drift_summary.signal_memory_ids, ["mem-old-checkout-parser"]);
+  assert.equal(effect.confidence_decay_summary.present, true);
+  assert.equal(effect.confidence_decay_summary.authority_mutation, false);
+  assert.deepEqual(effect.confidence_decay_summary.decay_candidate_memory_ids, []);
+});
+
+test("product memory decision trace surfaces repeated unused memory as confidence-decay shadow candidate", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "measure repeated unused sparse feedback",
+    },
+    nodes: [
+      {
+        id: "mem-used-status",
+        type: "concept",
+        title: "Status update severity labels",
+        text_summary: "Status updates should use customer-facing severity labels.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+        },
+        confidence: 0.88,
+        salience: 0.86,
+      },
+      {
+        id: "mem-unused-owner",
+        type: "concept",
+        title: "Obsolete owner names",
+        text_summary: "Status updates should include obsolete escalation owner names.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+        },
+        confidence: 0.84,
+        salience: 0.8,
+      },
+    ],
+  });
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+  const trace = buildAionisMemoryDecisionTrace({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    before_guide: null,
+    after_guide: {
+      memory_packet: memoryPacket,
+      agent_context: agentContext,
+    },
+    forget_result: {
+      forget_effect: {
+        action: "activate",
+        affected_memory_ids: ["mem-used-status"],
+        attribution: {
+          run_id: "run:repeated-unused-shadow",
+          outcome: "positive",
+          used_surface: "use_now",
+        },
+        guide_trace: {
+          guide_trace_id: "guide:repeated-unused-shadow",
+          exposed_memory_count: 2,
+          attributed_memory_count: 1,
+          unattributed_recalled_memory_count: 1,
+          unattributed_recalled_memory_ids: ["mem-unused-owner"],
+          unattributed_use_now_memory_ids: ["mem-unused-owner"],
+          unattributed_inspect_before_use_memory_ids: [],
+          unattributed_do_not_use_memory_ids: [],
+          unattributed_rehydrate_memory_ids: [],
+          unused_exposure_observation: {
+            contract_version: "aionis_unused_exposure_observation_v1",
+            exposure_threshold: 2,
+            guide_trace_count: 2,
+            tracked_memory_count: 2,
+            repeated_unattributed_memory_ids: ["mem-unused-owner"],
+            repeated_unattributed_without_positive_memory_ids: ["mem-unused-owner"],
+            memory_stats: [{
+              memory_id: "mem-unused-owner",
+              current_unattributed: true,
+              exposure_count: 2,
+              use_now_exposure_count: 2,
+              inspect_before_use_exposure_count: 0,
+              do_not_use_exposure_count: 0,
+              rehydrate_exposure_count: 0,
+              positive_attributed_use_count: 0,
+              feedback_positive_count: 0,
+              feedback_negative_count: 0,
+              repeated_without_positive_attribution: true,
+            }],
+            reason: "Repeated guide exposure without positive attribution.",
+          },
+        },
+      },
+      result: {
+        activated: {
+          feedback_attributions: [{
+            memory_id: "mem-used-status",
+            run_id: "run:repeated-unused-shadow",
+            outcome: "positive",
+            used_surface: "use_now",
+            attribution_strength: "positive_attribution",
+          }],
+        },
+      },
+    },
+  });
+
+  assert.equal(trace.feedback_attribution.sparse_feedback_signal_summary.candidate_learning_control_summary.authority_mutation, false);
+  assert.deepEqual(
+    trace.feedback_attribution.sparse_feedback_signal_summary.candidate_learning_control_summary
+      .candidate_from_repeated_unused_without_positive_memory_ids,
+    ["mem-unused-owner"],
+  );
+  assert.equal(trace.confidence_decay_candidate_summary.present, true);
+  assert.equal(trace.confidence_decay_candidate_summary.mode, "shadow_candidate");
+  assert.equal(trace.confidence_decay_candidate_summary.authority_mutation, false);
+  assert.equal(trace.confidence_decay_candidate_summary.agent_prompt_included, false);
+  assert.deepEqual(trace.confidence_decay_candidate_summary.decay_candidate_memory_ids, ["mem-unused-owner"]);
+  assert.deepEqual(trace.confidence_decay_candidate_summary.candidate_from_learning_control_memory_ids, ["mem-unused-owner"]);
+  assert.equal(agentContext.prompt_text.includes("confidence_decay"), false);
+
+  const audit = buildAionisMemoryDecisionAuditReport({ trace });
+  assert.deepEqual(audit.confidence_decay_candidate_review.decay_candidate_memory_ids, ["mem-unused-owner"]);
+
+  const effect = buildAionisEffectReport({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    report: evaluateAionisEffect({
+      baseline: { continuity: { repeatedDiscoverySteps: 1, recoveredStateFacts: 0, expectedStateFacts: 1 } },
+      aionis: {
+        continuity: {
+          repeatedDiscoverySteps: 1,
+          recoveredStateFacts: 1,
+          expectedStateFacts: 1,
+          continuityGuidanceCorrect: true,
+        },
+      },
+    }),
+    confidence_decay_review: audit.confidence_decay_candidate_review,
+  });
+  assert.deepEqual(effect.confidence_decay_summary.decay_candidate_memory_ids, ["mem-unused-owner"]);
+  assert.equal(effect.confidence_decay_summary.authority_mutation, false);
+});
+
+test("product confidence decay shadow candidate admits threshold-met negative feedback", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "measure threshold-met negative sparse feedback",
+    },
+    nodes: [{
+      id: "mem-threshold-negative",
+      type: "procedure",
+      title: "Verifier-sensitive workflow",
+      text_summary: "Use the prior verifier-sensitive workflow only when the current run confirms it.",
+      tier: "hot",
+      slots: {
+        memory_kind: "execution_workflow",
+        compression_layer: "L2",
+        contract_trust: "authoritative",
+        execution_native_v1: {
+          schema_version: "execution_native_v1",
+          execution_kind: "workflow_anchor",
+          summary_kind: "workflow_anchor",
+          compression_layer: "L2",
+          contract_trust: "authoritative",
+          task_family: "feedback_threshold",
+          task_signature: "feedback_threshold:current",
+          workflow_signature: "feedback_threshold:workflow",
+          anchor_kind: "workflow",
+          anchor_level: "L2",
+          selected_tool: "read",
+          target_files: ["src/runtime.ts"],
+          workflow_steps: ["Read src/runtime.ts before changing behavior."],
+        },
+      },
+      confidence: 0.9,
+      salience: 0.86,
+    }],
+  });
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+  const trace = buildAionisMemoryDecisionTrace({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    before_guide: null,
+    after_guide: {
+      memory_packet: memoryPacket,
+      agent_context: agentContext,
+    },
+    forget_result: {
+      forget_effect: {
+        action: "activate",
+        affected_memory_ids: ["mem-threshold-negative"],
+        attribution: {
+          run_id: "run:threshold-negative",
+          outcome: "negative",
+          used_surface: "use_now",
+          verifier_status: "failed",
+          tool_status: "failed",
+          runtime_signal_refs: ["verifier:failed"],
+        },
+        guide_trace: {
+          guide_trace_id: "guide:threshold-negative",
+          exposed_memory_count: 1,
+          attributed_memory_count: 1,
+          unattributed_recalled_memory_count: 0,
+          unattributed_recalled_memory_ids: [],
+          unattributed_use_now_memory_ids: [],
+          unattributed_inspect_before_use_memory_ids: [],
+          unattributed_do_not_use_memory_ids: [],
+          unattributed_rehydrate_memory_ids: [],
+        },
+      },
+      result: {
+        activated: {
+          feedback_attributions: [{
+            memory_id: "mem-threshold-negative",
+            run_id: "run:threshold-negative",
+            outcome: "negative",
+            used_surface: "use_now",
+            verifier_status: "failed",
+            tool_status: "failed",
+            runtime_signal_refs: ["verifier:failed"],
+            attribution_strength: "strong_counter_signal",
+            strong_counter_signal_count: 1,
+          }],
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(trace.feedback_attribution.threshold_met_memory_ids, ["mem-threshold-negative"]);
+  assert.deepEqual(
+    trace.feedback_attribution.sparse_feedback_signal_summary.candidate_learning_control_summary
+      .candidate_from_threshold_met_memory_ids,
+    ["mem-threshold-negative"],
+  );
+  assert.deepEqual(trace.confidence_decay_candidate_summary.decay_candidate_memory_ids, ["mem-threshold-negative"]);
+  assert.deepEqual(trace.confidence_decay_candidate_summary.blocked_by_positive_attribution_memory_ids, []);
+  assert.equal(trace.confidence_decay_candidate_summary.authority_mutation, false);
+});
+
+test("product confidence decay shadow candidate is blocked by positive attribution", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "measure positive attribution boundary",
+    },
+    nodes: [{
+      id: "mem-recently-used",
+      type: "concept",
+      title: "Recently validated status memory",
+      text_summary: "Status updates should use customer-facing severity labels.",
+      tier: "hot",
+      slots: {
+        memory_kind: "general_memory",
+        compression_layer: "L2",
+      },
+      confidence: 0.9,
+      salience: 0.86,
+    }],
+  });
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+  const trace = buildAionisMemoryDecisionTrace({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    before_guide: null,
+    after_guide: {
+      memory_packet: memoryPacket,
+      agent_context: agentContext,
+    },
+    forget_result: {
+      forget_effect: {
+        action: "activate",
+        affected_memory_ids: ["mem-recently-used"],
+        attribution: {
+          run_id: "run:positive-boundary",
+          outcome: "positive",
+          used_surface: "use_now",
+        },
+        guide_trace: {
+          guide_trace_id: "guide:positive-boundary",
+          exposed_memory_count: 1,
+          attributed_memory_count: 1,
+          unattributed_recalled_memory_count: 0,
+          unattributed_recalled_memory_ids: [],
+          unattributed_use_now_memory_ids: [],
+          unattributed_inspect_before_use_memory_ids: [],
+          unattributed_do_not_use_memory_ids: [],
+          unattributed_rehydrate_memory_ids: [],
+          unused_exposure_observation: {
+            contract_version: "aionis_unused_exposure_observation_v1",
+            exposure_threshold: 2,
+            guide_trace_count: 2,
+            tracked_memory_count: 1,
+            repeated_unattributed_memory_ids: ["mem-recently-used"],
+            repeated_unattributed_without_positive_memory_ids: [],
+            memory_stats: [{
+              memory_id: "mem-recently-used",
+              current_unattributed: false,
+              exposure_count: 2,
+              use_now_exposure_count: 2,
+              inspect_before_use_exposure_count: 0,
+              do_not_use_exposure_count: 0,
+              rehydrate_exposure_count: 0,
+              positive_attributed_use_count: 1,
+              feedback_positive_count: 1,
+              feedback_negative_count: 0,
+              repeated_without_positive_attribution: false,
+            }],
+            reason: "Repeated exposure has positive attribution.",
+          },
+        },
+      },
+      result: {
+        activated: {
+          feedback_attributions: [{
+            memory_id: "mem-recently-used",
+            run_id: "run:positive-boundary",
+            outcome: "positive",
+            used_surface: "use_now",
+            attribution_strength: "positive_attribution",
+          }],
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(trace.confidence_decay_candidate_summary.decay_candidate_memory_ids, []);
+  assert.deepEqual(trace.confidence_decay_candidate_summary.blocked_by_positive_attribution_memory_ids, [
+    "mem-recently-used",
+  ]);
+  assert.deepEqual(trace.confidence_decay_candidate_summary.blocked_by_recent_validation_memory_ids, [
+    "mem-recently-used",
+  ]);
+  assert.equal(trace.confidence_decay_candidate_summary.authority_mutation, false);
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-recently-used"), true);
 });
 
 test("product neighborhood drift observation keeps same-direction and unrelated growth negative controls quiet", () => {

@@ -56,6 +56,8 @@ Concrete product API usage for `observe`, `guide`, `forget`, and `measure` is
 defined in [AIONIS_PRODUCT_API_USAGE.md](AIONIS_PRODUCT_API_USAGE.md).
 Sparse feedback candidate learning-control boundaries are defined in
 [SPARSE_FEEDBACK_LEARNING_CONTROL_GATE.md](SPARSE_FEEDBACK_LEARNING_CONTROL_GATE.md).
+Sparse feedback confidence decay boundaries are defined in
+[SPARSE_FEEDBACK_CONFIDENCE_DECAY_GATE.md](SPARSE_FEEDBACK_CONFIDENCE_DECAY_GATE.md).
 
 `observe` and `forget` remain product actions, but their first product-visible value should flow into these outputs:
 

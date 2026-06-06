@@ -759,6 +759,8 @@ test("AionisEffectReport accepts measured positive impact and training candidate
   assert.equal(parsed.feedback_signal_summary.present, true);
   assert.equal(parsed.feedback_signal_summary.authority_mutation, false);
   assert.deepEqual(parsed.feedback_signal_summary.read_only_signal_memory_ids, ["mem-1", "mem-2", "mem-3"]);
+  assert.equal(parsed.confidence_decay_summary.present, false);
+  assert.equal(parsed.confidence_decay_summary.authority_mutation, false);
   assert.equal(parsed.training_candidates[0]?.candidate_type, "handoff_distillation");
 });
 
@@ -817,6 +819,9 @@ test("AionisMemoryDecisionTrace accepts read-only measure/debug/audit output", (
   assert.equal(parsed.memory_decisions[0]?.feedback_detail, null);
   assert.equal(parsed.feedback_attribution.present, false);
   assert.equal(parsed.summary.feedback_attribution_count, 0);
+  assert.equal(parsed.confidence_decay_candidate_summary.present, false);
+  assert.equal(parsed.confidence_decay_candidate_summary.authority_mutation, false);
+  assert.equal(parsed.confidence_decay_candidate_summary.agent_prompt_included, false);
 });
 
 test("AionisMemoryDecisionTrace rejects prompt injection and runtime mutation claims", () => {
@@ -835,6 +840,27 @@ test("AionisMemoryDecisionTrace rejects prompt injection and runtime mutation cl
         runtime_mutation: true,
       }),
   );
+
+  assert.throws(
+    () =>
+      AionisMemoryDecisionTraceSchema.parse({
+        ...validMemoryDecisionTrace(),
+        confidence_decay_candidate_summary: {
+          present: true,
+          contract_version: "aionis_confidence_decay_candidate_summary_v1",
+          mode: "shadow_candidate",
+          authority_mutation: true,
+          agent_prompt_included: false,
+          decay_candidate_memory_ids: ["mem-1"],
+          candidate_from_learning_control_memory_ids: ["mem-1"],
+          supported_by_neighborhood_drift_memory_ids: [],
+          drift_only_observation_memory_ids: [],
+          blocked_by_positive_attribution_memory_ids: [],
+          blocked_by_recent_validation_memory_ids: [],
+          reason: "Invalid mutation claim.",
+        },
+      }),
+  );
 });
 
 test("AionisMemoryDecisionAuditReport accepts compact operator audit output", () => {
@@ -850,4 +876,7 @@ test("AionisMemoryDecisionAuditReport accepts compact operator audit output", ()
   assert.equal(parsed.feedback_signal_review.present, false);
   assert.equal(parsed.feedback_signal_review.authority_mutation, false);
   assert.deepEqual(parsed.feedback_signal_review.read_only_signal_memory_ids, []);
+  assert.equal(parsed.confidence_decay_candidate_review.present, false);
+  assert.equal(parsed.confidence_decay_candidate_review.authority_mutation, false);
+  assert.equal(parsed.confidence_decay_candidate_review.agent_prompt_included, false);
 });
