@@ -133,6 +133,11 @@ that evidence with authority, uncertainty, consequence, and boundary metadata. T
 the repair path. If repeated guidance fails to improve the run, Aionis should treat that as an entropy signal: widen
 exploration, surface counter-evidence, or lower confidence instead of adding another fixed action constraint.
 
+Sparse feedback attribution follows the product gate in
+[SPARSE_FEEDBACK_LEARNING_CONTROL_GATE.md](SPARSE_FEEDBACK_LEARNING_CONTROL_GATE.md). Threshold-met negative feedback and
+repeated unused exposure without positive attribution may become candidate-only learning-control evidence, but the
+summary itself must not mutate authority or enter the Agent prompt.
+
 ### 3. Soft Strategies
 
 Use soft strategies for reusable engineering heuristics:

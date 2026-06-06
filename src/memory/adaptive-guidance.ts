@@ -29,8 +29,16 @@ type ScoredCandidate = AdaptiveGuidanceCandidateV1 & {
   internal_family_aligned: boolean;
 };
 
+const GUIDANCE_TERM_MAX_LENGTH = 128;
+const GUIDANCE_FILE_HINT_MAX_LENGTH = 512;
+const GUIDANCE_SUBTASK_QUERY_TEXT_MAX_LENGTH = 2048;
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function boundedString(value: string, maxLength: number): string {
+  return value.trim().slice(0, maxLength);
 }
 
 function firstString(...values: unknown[]): string | null {
@@ -54,7 +62,7 @@ function clamp01(value: number): number {
   return Number(value.toFixed(4));
 }
 
-function uniqueStrings(values: unknown[], limit = 64): string[] {
+function uniqueStrings(values: unknown[], limit = 64, maxLength = GUIDANCE_TERM_MAX_LENGTH): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   const visit = (value: unknown) => {
@@ -73,7 +81,7 @@ function uniqueStrings(values: unknown[], limit = 64): string[] {
       visit(record.uri);
       return;
     }
-    const next = typeof value === "string" ? value.trim() : "";
+    const next = typeof value === "string" ? boundedString(value, maxLength) : "";
     if (!next || seen.has(next)) return;
     seen.add(next);
     out.push(next);
@@ -82,8 +90,8 @@ function uniqueStrings(values: unknown[], limit = 64): string[] {
   return out;
 }
 
-function stringList(value: unknown, limit = 64): string[] {
-  return Array.isArray(value) ? uniqueStrings(value, limit) : [];
+function stringList(value: unknown, limit = 64, maxLength = GUIDANCE_TERM_MAX_LENGTH): string[] {
+  return Array.isArray(value) ? uniqueStrings(value, limit, maxLength) : [];
 }
 
 function normalizeLifecycleConstraints(value: unknown, limit = 16): ServiceLifecycleConstraintV1[] {
@@ -144,7 +152,7 @@ function tokenize(value: unknown, limit = 96): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const token of text.toLowerCase().split(/[^a-z0-9_./:-]+/)) {
-    const normalized = token.trim();
+    const normalized = boundedString(token, GUIDANCE_TERM_MAX_LENGTH);
     if (normalized.length < 2 || GUIDANCE_STOPWORDS.has(normalized) || seen.has(normalized)) continue;
     seen.add(normalized);
     out.push(normalized);
@@ -167,7 +175,7 @@ function collectContextFileHints(context: unknown): string[] {
     state.target_files,
     asRecord(state.resume_anchor)?.file_path,
     packet.target_files,
-  ], 32);
+  ], 32, GUIDANCE_FILE_HINT_MAX_LENGTH);
 }
 
 function collectContextToolHints(context: unknown, candidates: string[]): string[] {
@@ -178,7 +186,7 @@ function collectContextToolHints(context: unknown, candidates: string[]): string
     record.likely_tool,
     contract?.selected_tool,
     candidates,
-  ], 32);
+  ], 32, GUIDANCE_TERM_MAX_LENGTH);
 }
 
 function hashId(prefix: string, value: unknown): string {
@@ -187,6 +195,10 @@ function hashId(prefix: string, value: unknown): string {
 
 function subtaskId(role: string, queryText: string, terms: string[]): string {
   return hashId(`adaptive-subtask-${role}`, { queryText, terms });
+}
+
+function matchTermsFromHints(values: string[], limit = 32): string[] {
+  return uniqueStrings(values, limit, GUIDANCE_TERM_MAX_LENGTH);
 }
 
 export function buildAdaptiveGuidanceDecomposition(args: {
@@ -205,20 +217,20 @@ export function buildAdaptiveGuidanceDecomposition(args: {
     {
       subtask_id: subtaskId("task_intent", args.parsed.query_text, queryTerms),
       role: "task_intent" as const,
-      query_text: args.parsed.query_text,
+      query_text: boundedString(args.parsed.query_text, GUIDANCE_SUBTASK_QUERY_TEXT_MAX_LENGTH),
       match_terms: queryTerms.slice(0, 32),
     },
     ...(toolHints.length > 0 ? [{
       subtask_id: subtaskId("tool_selection", args.parsed.query_text, toolHints),
       role: "tool_selection" as const,
-      query_text: `Select execution route for ${toolHints.join(" ")}`,
+      query_text: boundedString(`Select execution route for ${toolHints.join(" ")}`, GUIDANCE_SUBTASK_QUERY_TEXT_MAX_LENGTH),
       match_terms: toolHints.slice(0, 32),
     }] : []),
     ...(fileHints.length > 0 ? [{
       subtask_id: subtaskId("file_focus", args.parsed.query_text, fileHints),
       role: "file_focus" as const,
-      query_text: `Focus on ${fileHints.join(" ")}`,
-      match_terms: fileHints.slice(0, 32),
+      query_text: boundedString(`Focus on ${fileHints.join(" ")}`, GUIDANCE_SUBTASK_QUERY_TEXT_MAX_LENGTH),
+      match_terms: matchTermsFromHints(fileHints),
     }] : []),
     ...(/[._-]?(test|verify|validation|lint|typecheck|build|acceptance)[._-]?/i.test(args.parsed.query_text)
       || stringList(context.acceptance_checks, 24).length > 0

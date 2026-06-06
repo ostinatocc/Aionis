@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildActionRetrievalResponse } from "../../src/memory/action-retrieval.ts";
+import { buildAdaptiveGuidanceDecomposition } from "../../src/memory/adaptive-guidance.ts";
 import { buildRuntimeSignalLedgerFromSlots } from "../../src/memory/runtime-signal-ledger.ts";
 import { buildRuntimeSignalTrendSummaryFromRows } from "../../src/memory/runtime-signal-trends.ts";
-import { ExperienceIntelligenceRequest } from "../../src/memory/schemas.ts";
+import { AdaptiveGuidanceDecompositionV1Schema, ExperienceIntelligenceRequest } from "../../src/memory/schemas.ts";
 
 function executionContract(overrides: Record<string, unknown> = {}) {
   return {
@@ -91,6 +92,33 @@ function introspection(overrides: Record<string, unknown> = {}) {
     ...overrides,
   } as any;
 }
+
+test("adaptive guidance decomposition normalizes generated fields to its schema contract", () => {
+  const longToken = "x".repeat(260);
+  const longTool = `tool-${"y".repeat(260)}`;
+  const longFile = `src/${"z".repeat(700)}.ts`;
+  const longCheck = `verify ${"q".repeat(260)}`;
+  const parsed = ExperienceIntelligenceRequest.parse({
+    tenant_id: "tenant-a",
+    scope: "scope-a",
+    query_text: `Fix ${longToken} and preserve verification behavior`,
+    context: {
+      task_family: "task:adaptive_guidance",
+      file_path: longFile,
+      acceptance_checks: [longCheck],
+    },
+    candidates: [longTool],
+  });
+
+  const decomposition = buildAdaptiveGuidanceDecomposition({ parsed });
+  AdaptiveGuidanceDecompositionV1Schema.parse(decomposition);
+
+  assert.ok(decomposition.query_terms.every((term) => term.length <= 128));
+  assert.ok(decomposition.tool_hints.every((term) => term.length <= 128));
+  assert.ok(decomposition.file_hints.every((term) => term.length <= 512));
+  assert.ok(decomposition.subtasks.every((subtask) => subtask.query_text.length <= 2048));
+  assert.ok(decomposition.subtasks.every((subtask) => subtask.match_terms.every((term) => term.length <= 128)));
+});
 
 function selectedAdaptiveGuidance(candidateId: string) {
   return {
