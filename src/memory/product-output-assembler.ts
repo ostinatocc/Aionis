@@ -69,6 +69,7 @@ type LearningAuthority = AionisLearningPacket["posture"]["authority"];
 type FeedbackAttributionDetail = NonNullable<AionisMemoryDecisionTrace["memory_decisions"][number]["feedback_detail"]>;
 type FeedbackAttributionSummary = AionisMemoryDecisionTrace["feedback_attribution"];
 type UnusedExposureObservationSummary = FeedbackAttributionSummary["unused_exposure_observation"];
+type SparseFeedbackSignalSummary = FeedbackAttributionSummary["sparse_feedback_signal_summary"];
 
 export type BuildAionisAgentContextArgs = {
   tenant_id: string;
@@ -1674,6 +1675,23 @@ function emptyUnusedExposureObservation(reason = "No guide exposure observation 
   };
 }
 
+function emptySparseFeedbackSignalSummary(
+  reason = "No activate feedback or unused exposure signal was supplied for this trace.",
+): SparseFeedbackSignalSummary {
+  return {
+    present: false,
+    mode: null,
+    authority_mutation: false,
+    positive_attributed_memory_ids: [],
+    weak_counter_signal_memory_ids: [],
+    strong_counter_signal_memory_ids: [],
+    repeated_unattributed_memory_ids: [],
+    repeated_unattributed_without_positive_memory_ids: [],
+    read_only_signal_memory_ids: [],
+    reason,
+  };
+}
+
 function unusedExposureObservationValue(value: unknown): UnusedExposureObservationSummary {
   const record = asRecord(value);
   if (!record || record.contract_version !== "aionis_unused_exposure_observation_v1") {
@@ -1709,6 +1727,39 @@ function unusedExposureObservationValue(value: unknown): UnusedExposureObservati
     repeated_unattributed_without_positive_memory_ids: stringArrayValue(record.repeated_unattributed_without_positive_memory_ids),
     memory_stats: memoryStats,
     reason: stringValue(record.reason) ?? "Repeated unused exposure is reported as read-only evidence.",
+  };
+}
+
+function buildSparseFeedbackSignalSummary(args: {
+  present: boolean;
+  positiveAttributedMemoryIds: string[];
+  weakCounterSignalMemoryIds: string[];
+  strongCounterSignalMemoryIds: string[];
+  unusedExposureObservation: UnusedExposureObservationSummary;
+}): SparseFeedbackSignalSummary {
+  if (!args.present && !args.unusedExposureObservation.present) {
+    return emptySparseFeedbackSignalSummary();
+  }
+  const repeatedUnattributed = args.unusedExposureObservation.repeated_unattributed_memory_ids;
+  const repeatedWithoutPositive = args.unusedExposureObservation.repeated_unattributed_without_positive_memory_ids;
+  const readOnlySignalMemoryIds = compactStrings([
+    ...args.positiveAttributedMemoryIds,
+    ...args.weakCounterSignalMemoryIds,
+    ...args.strongCounterSignalMemoryIds,
+    ...repeatedUnattributed,
+    ...repeatedWithoutPositive,
+  ]);
+  return {
+    present: readOnlySignalMemoryIds.length > 0,
+    mode: "read_only_measure",
+    authority_mutation: false,
+    positive_attributed_memory_ids: args.positiveAttributedMemoryIds,
+    weak_counter_signal_memory_ids: args.weakCounterSignalMemoryIds,
+    strong_counter_signal_memory_ids: args.strongCounterSignalMemoryIds,
+    repeated_unattributed_memory_ids: repeatedUnattributed,
+    repeated_unattributed_without_positive_memory_ids: repeatedWithoutPositive,
+    read_only_signal_memory_ids: readOnlySignalMemoryIds,
+    reason: "Sparse feedback signals are summarized for measure/debug/audit only; this summary does not lower authority or suppress memory.",
   };
 }
 
@@ -1890,6 +1941,7 @@ function buildTraceFeedbackAttribution(args: {
       unattributed_do_not_use_memory_ids: [],
       unattributed_rehydrate_memory_ids: [],
       unused_exposure_observation: emptyUnusedExposureObservation(),
+      sparse_feedback_signal_summary: emptySparseFeedbackSignalSummary(),
       weak_counter_signal_memory_ids: [],
       strong_counter_signal_memory_ids: [],
       threshold_met_memory_ids: [],
@@ -1904,10 +1956,26 @@ function buildTraceFeedbackAttribution(args: {
   const attributedMemoryIds = details
     .filter((entry) => entry.detail.host_marked_used)
     .map((entry) => entry.memory_id);
+  const positiveAttributedMemoryIds = details
+    .filter((entry) => entry.detail.attribution_strength === "positive_attribution")
+    .map((entry) => entry.memory_id);
   const unattributedRecalledMemoryIds = args.feedbackInput.unattributed_recalled_memory_ids.length > 0
     ? args.feedbackInput.unattributed_recalled_memory_ids
     : recalled.filter((memoryId) => !affected.has(memoryId));
   const hasGuideTrace = !!args.feedbackInput.guide_trace_id;
+  const weakCounterSignalMemoryIds = details
+    .filter((entry) => entry.detail.attribution_strength === "weak_counter_signal")
+    .map((entry) => entry.memory_id);
+  const strongCounterSignalMemoryIds = details
+    .filter((entry) => entry.detail.attribution_strength === "strong_counter_signal")
+    .map((entry) => entry.memory_id);
+  const sparseFeedbackSignalSummary = buildSparseFeedbackSignalSummary({
+    present: args.feedbackInput.present,
+    positiveAttributedMemoryIds,
+    weakCounterSignalMemoryIds,
+    strongCounterSignalMemoryIds,
+    unusedExposureObservation: args.feedbackInput.unused_exposure_observation,
+  });
   return {
     present: true,
     guide_trace_id: args.feedbackInput.guide_trace_id,
@@ -1930,12 +1998,9 @@ function buildTraceFeedbackAttribution(args: {
     unattributed_do_not_use_memory_ids: args.feedbackInput.unattributed_do_not_use_memory_ids,
     unattributed_rehydrate_memory_ids: args.feedbackInput.unattributed_rehydrate_memory_ids,
     unused_exposure_observation: args.feedbackInput.unused_exposure_observation,
-    weak_counter_signal_memory_ids: details
-      .filter((entry) => entry.detail.attribution_strength === "weak_counter_signal")
-      .map((entry) => entry.memory_id),
-    strong_counter_signal_memory_ids: details
-      .filter((entry) => entry.detail.attribution_strength === "strong_counter_signal")
-      .map((entry) => entry.memory_id),
+    sparse_feedback_signal_summary: sparseFeedbackSignalSummary,
+    weak_counter_signal_memory_ids: weakCounterSignalMemoryIds,
+    strong_counter_signal_memory_ids: strongCounterSignalMemoryIds,
     threshold_met_memory_ids: details
       .filter((entry) => entry.detail.threshold_met)
       .map((entry) => entry.memory_id),

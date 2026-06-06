@@ -273,6 +273,9 @@ memories that were shown across multiple guide traces but not host-marked as
 used in the current activation, and separately lists the subset with no positive
 attributed use recorded. This is still read-only evidence for product debugging;
 it is not a forgetting or downgrade trigger.
+`sparse_feedback_signal_summary` rolls positive attribution, weak/strong
+counter-signals, and repeated unused exposure into one read-only debug summary.
+It sets `authority_mutation: false` to make the boundary explicit.
 
 ### Example
 

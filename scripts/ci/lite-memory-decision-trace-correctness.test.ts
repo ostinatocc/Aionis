@@ -328,5 +328,8 @@ test("memory decision trace makes absent feedback attribution explicit", () => {
   assert.equal(trace.feedback_attribution.unused_exposure_observation.present, false);
   assert.deepEqual(trace.feedback_attribution.unused_exposure_observation.repeated_unattributed_memory_ids, []);
   assert.deepEqual(trace.feedback_attribution.unused_exposure_observation.repeated_unattributed_without_positive_memory_ids, []);
+  assert.equal(trace.feedback_attribution.sparse_feedback_signal_summary.present, false);
+  assert.equal(trace.feedback_attribution.sparse_feedback_signal_summary.authority_mutation, false);
+  assert.deepEqual(trace.feedback_attribution.sparse_feedback_signal_summary.read_only_signal_memory_ids, []);
   assert.equal(trace.memory_decisions.every((entry) => entry.feedback_detail === null), true);
 });

@@ -511,6 +511,21 @@ const AionisUnusedExposureObservationSchema = z
   })
   .strict();
 
+const AionisSparseFeedbackSignalSummarySchema = z
+  .object({
+    present: z.boolean(),
+    mode: z.literal("read_only_measure").nullable(),
+    authority_mutation: z.literal(false),
+    positive_attributed_memory_ids: z.array(z.string().min(1)).default([]),
+    weak_counter_signal_memory_ids: z.array(z.string().min(1)).default([]),
+    strong_counter_signal_memory_ids: z.array(z.string().min(1)).default([]),
+    repeated_unattributed_memory_ids: z.array(z.string().min(1)).default([]),
+    repeated_unattributed_without_positive_memory_ids: z.array(z.string().min(1)).default([]),
+    read_only_signal_memory_ids: z.array(z.string().min(1)).default([]),
+    reason: z.string().min(1),
+  })
+  .strict();
+
 const AionisFeedbackAttributionDetailSchema = z
   .object({
     run_id: z.string().min(1).nullable(),
@@ -716,6 +731,18 @@ export const AionisMemoryDecisionTraceSchema = z
           repeated_unattributed_without_positive_memory_ids: [],
           memory_stats: [],
           reason: "No guide exposure observation was supplied for this trace.",
+        }),
+        sparse_feedback_signal_summary: AionisSparseFeedbackSignalSummarySchema.default({
+          present: false,
+          mode: null,
+          authority_mutation: false,
+          positive_attributed_memory_ids: [],
+          weak_counter_signal_memory_ids: [],
+          strong_counter_signal_memory_ids: [],
+          repeated_unattributed_memory_ids: [],
+          repeated_unattributed_without_positive_memory_ids: [],
+          read_only_signal_memory_ids: [],
+          reason: "No activate feedback or unused exposure signal was supplied for this trace.",
         }),
         weak_counter_signal_memory_ids: z.array(z.string().min(1)).default([]),
         strong_counter_signal_memory_ids: z.array(z.string().min(1)).default([]),

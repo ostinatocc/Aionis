@@ -2051,6 +2051,12 @@ test("product forget records activation feedback through the product facade", as
     assert.equal(trace.feedback_attribution.present, true);
     assert.equal(trace.feedback_attribution.guide_trace_id, null);
     assert.equal(trace.feedback_attribution.unused_exposure_observation.present, false);
+    assert.equal(trace.feedback_attribution.sparse_feedback_signal_summary.present, true);
+    assert.equal(trace.feedback_attribution.sparse_feedback_signal_summary.mode, "read_only_measure");
+    assert.equal(trace.feedback_attribution.sparse_feedback_signal_summary.authority_mutation, false);
+    assert.deepEqual(trace.feedback_attribution.sparse_feedback_signal_summary.positive_attributed_memory_ids, [nodeId]);
+    assert.deepEqual(trace.feedback_attribution.sparse_feedback_signal_summary.weak_counter_signal_memory_ids, []);
+    assert.ok(trace.feedback_attribution.sparse_feedback_signal_summary.read_only_signal_memory_ids.includes(nodeId));
   } finally {
     await app.close();
   }
@@ -2242,6 +2248,8 @@ test("product guide feedback loop requires repeated weak negative attribution be
     assert.deepEqual(firstWeakTrace.feedback_attribution.attributed_memory_ids, [nodeId]);
     assert.ok(firstWeakTrace.feedback_attribution.unattributed_recalled_memory_ids.includes(unusedNodeId));
     assert.deepEqual(firstWeakTrace.feedback_attribution.threshold_met_memory_ids, []);
+    assert.deepEqual(firstWeakTrace.feedback_attribution.sparse_feedback_signal_summary.weak_counter_signal_memory_ids, [nodeId]);
+    assert.equal(firstWeakTrace.feedback_attribution.sparse_feedback_signal_summary.authority_mutation, false);
     const firstWeakDecision = firstWeakTrace.memory_decisions.find((entry: Record<string, unknown>) => entry.memory_id === nodeId);
     assert.equal(firstWeakDecision.feedback_detail.threshold_state, "weak_below_threshold");
     assert.equal(firstWeakDecision.feedback_detail.threshold_met, false);
@@ -2329,6 +2337,8 @@ test("product guide feedback loop requires repeated weak negative attribution be
     assert.ok(measureBody.memory_decision_trace.feedback_attribution.unattributed_recalled_memory_ids.includes(unusedNodeId));
     assert.deepEqual(measureBody.memory_decision_trace.feedback_attribution.weak_counter_signal_memory_ids, [nodeId]);
     assert.deepEqual(measureBody.memory_decision_trace.feedback_attribution.threshold_met_memory_ids, [nodeId]);
+    assert.deepEqual(measureBody.memory_decision_trace.feedback_attribution.sparse_feedback_signal_summary.weak_counter_signal_memory_ids, [nodeId]);
+    assert.equal(measureBody.memory_decision_trace.feedback_attribution.sparse_feedback_signal_summary.authority_mutation, false);
     const repeatedWeakDecision = measureBody.memory_decision_trace.memory_decisions.find((entry: Record<string, unknown>) =>
       entry.memory_id === nodeId
     );
@@ -2586,6 +2596,15 @@ test("product guide trace attribution resolves used memories from persisted expo
     assert.ok(
       trace.feedback_attribution.unused_exposure_observation.repeated_unattributed_without_positive_memory_ids.includes(unusedNodeId),
     );
+    assert.equal(trace.feedback_attribution.sparse_feedback_signal_summary.present, true);
+    assert.equal(trace.feedback_attribution.sparse_feedback_signal_summary.authority_mutation, false);
+    assert.deepEqual(trace.feedback_attribution.sparse_feedback_signal_summary.weak_counter_signal_memory_ids, [usedNodeId]);
+    assert.ok(trace.feedback_attribution.sparse_feedback_signal_summary.repeated_unattributed_memory_ids.includes(unusedNodeId));
+    assert.ok(
+      trace.feedback_attribution.sparse_feedback_signal_summary.repeated_unattributed_without_positive_memory_ids.includes(unusedNodeId),
+    );
+    assert.ok(trace.feedback_attribution.sparse_feedback_signal_summary.read_only_signal_memory_ids.includes(usedNodeId));
+    assert.ok(trace.feedback_attribution.sparse_feedback_signal_summary.read_only_signal_memory_ids.includes(unusedNodeId));
     const usedDecision = trace.memory_decisions.find((entry: Record<string, unknown>) => entry.memory_id === usedNodeId);
     assert.equal(usedDecision.feedback_detail.threshold_state, "weak_below_threshold");
     const unusedDecision = trace.memory_decisions.find((entry: Record<string, unknown>) => entry.memory_id === unusedNodeId);
@@ -2789,6 +2808,8 @@ test("product unused exposure observation respects scope, consumer, and positive
     assert.equal(positiveStat.exposure_count, 2);
     assert.equal(positiveStat.positive_attributed_use_count, 1);
     assert.equal(positiveStat.repeated_without_positive_attribution, false);
+    const boundaryObservation = currentFeedback.json().forget_effect.guide_trace.unused_exposure_observation;
+    assert.equal(boundaryObservation.repeated_unattributed_without_positive_memory_ids.includes(positiveNodeId), false);
 
     const positiveAfterCurrent = await liteWriteStore.findNodes({
       scope: "default",
