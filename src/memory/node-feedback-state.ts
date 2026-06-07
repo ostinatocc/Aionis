@@ -5,6 +5,8 @@ export type NodeFeedbackSource = "rule_feedback" | "tools_feedback" | "nodes_act
 export type NodeFeedbackUsedSurface = "use_now" | "inspect_before_use" | "do_not_use" | "explicit_host_assertion";
 export type NodeFeedbackVerifierStatus = "passed" | "failed" | "not_run" | "unknown";
 export type NodeFeedbackToolStatus = "succeeded" | "failed" | "not_run" | "unknown";
+export type NodeFeedbackLearningControlPosture = "inspect_before_use";
+export type NodeFeedbackLearningControlSource = "repeated_unused_without_positive_attribution";
 
 export type FeedbackNodeSnapshot = {
   id: string;
@@ -35,6 +37,19 @@ type MergeNodeFeedbackSlotsArgs = {
 type ComputeFeedbackUpdatedNodeStateArgs = {
   node: FeedbackNodeSnapshot;
   feedback: MergeNodeFeedbackSlotsArgs;
+};
+
+export type MergeNodeFeedbackLearningControlSlotsArgs = {
+  slots?: Record<string, unknown> | null;
+  posture: NodeFeedbackLearningControlPosture;
+  source: NodeFeedbackLearningControlSource;
+  timestamp: string;
+  run_id?: string | null;
+  guide_trace_id?: string | null;
+  reason?: string | null;
+  input_sha256: string;
+  exposure_count?: number | null;
+  positive_attributed_use_count?: number | null;
 };
 
 function asNonNegativeInt(v: unknown): number {
@@ -142,6 +157,39 @@ export function mergeNodeFeedbackSlots(args: MergeNodeFeedbackSlotsArgs): Record
       : args.outcome === "positive" && directlyAttributed
         ? "positive_attribution"
         : "observed_feedback";
+  if (args.outcome === "positive" && directlyAttributed) {
+    delete slots.feedback_learning_control_posture;
+    delete slots.feedback_learning_control_source;
+    delete slots.feedback_learning_control_reason;
+    slots.feedback_learning_control_cleared_at = args.timestamp;
+    slots.feedback_learning_control_cleared_reason = "positive_attribution";
+    slots.feedback_learning_control_cleared_run_id = args.run_id ?? null;
+  }
+  return slots;
+}
+
+export function mergeNodeFeedbackLearningControlSlots(args: MergeNodeFeedbackLearningControlSlotsArgs): Record<string, unknown> {
+  const slots = { ...(args.slots ?? {}) };
+  const exposureCount = asNonNegativeInt(args.exposure_count);
+  const positiveAttributedUseCount = asNonNegativeInt(args.positive_attributed_use_count);
+  slots.feedback_learning_control_posture = args.posture;
+  slots.feedback_learning_control_source = args.source;
+  slots.feedback_learning_control_at = args.timestamp;
+  slots.feedback_learning_control_run_id = args.run_id ?? null;
+  slots.feedback_learning_control_guide_trace_id = args.guide_trace_id ?? null;
+  slots.feedback_learning_control_reason = normalizeReason(args.reason);
+  slots.feedback_learning_control_input_sha256 = args.input_sha256;
+  slots.feedback_learning_control_evidence_count = Math.max(
+    asNonNegativeInt(slots.feedback_learning_control_evidence_count),
+    exposureCount,
+  );
+  slots.repeated_unused_without_positive_observation_count =
+    Math.max(asNonNegativeInt(slots.repeated_unused_without_positive_observation_count), exposureCount);
+  slots.last_repeated_unused_without_positive_at = args.timestamp;
+  slots.last_repeated_unused_without_positive_guide_trace_id = args.guide_trace_id ?? null;
+  slots.last_repeated_unused_without_positive_run_id = args.run_id ?? null;
+  slots.last_repeated_unused_without_positive_count = exposureCount;
+  slots.last_repeated_unused_without_positive_positive_attributed_use_count = positiveAttributedUseCount;
   return slots;
 }
 

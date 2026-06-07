@@ -308,10 +308,12 @@ function registerProductFacade(args: {
   app: ReturnType<typeof Fastify>;
   env: ReturnType<typeof liteEnv>;
   guards: ReturnType<typeof requestGuards>;
+  liteWriteStore: ReturnType<typeof createLiteWriteStore>;
 }) {
   registerProductFacadeRoutes({
     app: args.app,
     env: args.env,
+    liteWriteStore: args.liteWriteStore,
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,
@@ -2588,6 +2590,9 @@ test("product guide trace attribution resolves used memories from persisted expo
     assert.equal(unusedExposureStat.exposure_count, 2);
     assert.equal(unusedExposureStat.positive_attributed_use_count, 0);
     assert.equal(unusedExposureStat.repeated_without_positive_attribution, true);
+    assert.equal(feedbackBody.forget_effect.guide_trace.feedback_learning_control.contract_version, "aionis_feedback_learning_control_persistence_v1");
+    assert.equal(feedbackBody.forget_effect.guide_trace.feedback_learning_control.mode, "inspect_before_use_persistence");
+    assert.deepEqual(feedbackBody.forget_effect.guide_trace.feedback_learning_control.changed_memory_ids, [unusedNodeId]);
 
     const usedAfterFeedback = await liteWriteStore.findNodes({
       scope: "default",
@@ -2611,6 +2616,8 @@ test("product guide trace attribution resolves used memories from persisted expo
     assert.equal(unusedAfterFeedback.rows[0]?.slots.feedback_negative, undefined);
     assert.equal(unusedAfterFeedback.rows[0]?.slots.unused_exposure_observation, undefined);
     assert.equal(unusedAfterFeedback.rows[0]?.slots.repeated_unattributed_memory_ids, undefined);
+    assert.equal(unusedAfterFeedback.rows[0]?.slots.feedback_learning_control_posture, "inspect_before_use");
+    assert.equal(unusedAfterFeedback.rows[0]?.slots.feedback_learning_control_source, "repeated_unused_without_positive_attribution");
 
     const afterGuide = await app.inject({
       method: "POST",
@@ -2672,6 +2679,7 @@ test("product guide trace attribution resolves used memories from persisted expo
     const usedDecision = trace.memory_decisions.find((entry: Record<string, unknown>) => entry.memory_id === usedNodeId);
     assert.equal(usedDecision.feedback_detail.threshold_state, "weak_below_threshold");
     const unusedDecision = trace.memory_decisions.find((entry: Record<string, unknown>) => entry.memory_id === unusedNodeId);
+    assert.equal(unusedDecision.agent_surface, "inspect_before_use");
     assert.equal(unusedDecision.feedback_detail, null);
   } finally {
     await app.close();

@@ -2,9 +2,9 @@
 
 Status: product gate contract
 
-This document closes Direction 1 sparse feedback attribution. It defines which sparse feedback signals may become candidate learning-control evidence, which signals remain observation-only, and which evidence blocks a candidate.
+This document closes Direction 1 sparse feedback attribution. It defines which sparse feedback signals may become learning-control evidence, which signals remain observation-only, and which evidence blocks a candidate.
 
-It does not add Runtime behavior by itself. The executable product schema lives in `src/memory/product-output-contract.ts`, and the assembler lives in `src/memory/product-output-assembler.ts`.
+The measure/debug/audit summaries remain read-only. The product facade may persist one bounded behavior from this gate: repeated exposure without positive host attribution can set a memory-level `inspect_before_use` posture. That posture lowers direct reuse only; it does not suppress, archive, delete, or convert the memory into a task rule.
 
 ## Purpose
 
@@ -23,7 +23,7 @@ The output belongs to `AionisMemoryDecisionTrace` and `AionisMemoryDecisionAudit
 | strong negative counter-signal | host marks exposed memory as used and verifier/tool/runtime failure aligns | `candidate_inspect_before_use_memory_ids` | never from this summary |
 | repeated weak negative counter-signal | repeated weak negative attributed use crosses threshold | `candidate_inspect_before_use_memory_ids` | never from this summary |
 | repeated exposed but unused | memory is repeatedly exposed but not host-marked used | observation only unless there is no positive attributed use | never |
-| repeated unused without positive attribution | memory is repeatedly exposed and has no positive attributed use | `candidate_inspect_before_use_memory_ids` | never from this summary |
+| repeated unused without positive attribution | memory is repeatedly exposed and has no positive attributed use | `candidate_inspect_before_use_memory_ids`; `/v1/forget activate` may persist `feedback_learning_control_posture=inspect_before_use` | no authority slot mutation; memory surface changes to inspect-before-use |
 | repeated unused with positive attribution | memory is repeatedly exposed but has prior positive attributed use | `blocked_by_positive_attribution_memory_ids` | never |
 | neighborhood drift | related newer memories indicate directional drift | observation only | never |
 
@@ -39,6 +39,26 @@ The output belongs to `AionisMemoryDecisionTrace` and `AionisMemoryDecisionAudit
 6. Relation and contradiction decisions do not enter this summary; they already have their own lifecycle relation evidence path.
 7. The summary must never suppress, archive, demote, promote, or directly alter the Agent-facing guide.
 
+## Persistent Inspect-Before-Use Contract
+
+`/v1/forget` with `operation: "activate"` may persist repeated-unused evidence only when all of these conditions hold:
+
+1. the feedback is tied to a valid `guide_trace_id`
+2. the memory was exposed in the same tenant and scope
+3. the same consumer agent/team exposure history crosses the exposure threshold
+4. the current activation did not mark that memory as used
+5. the memory has no positive attributed use
+6. the memory row is still visible to that consumer
+
+The persisted slot is:
+
+```text
+feedback_learning_control_posture=inspect_before_use
+feedback_learning_control_source=repeated_unused_without_positive_attribution
+```
+
+This is reversible. A later positive attributed use clears the feedback-learning control posture. The posture is weaker than contested lifecycle evidence: it maps the memory to `candidate`/`inspect_before_use`, not to suppression, archive, or deletion.
+
 ## Holdout Gate
 
 An external holdout may mark Direction 1 candidate learning-control as passed only when all of the following are true:
@@ -53,13 +73,11 @@ An external holdout may mark Direction 1 candidate learning-control as passed on
 8. positive-attribution boundary cases produce `candidate_blocked_by_positive_attribution_count`
 9. single weak negative, cross-consumer boundary, no-guide-trace activation, positive attributed use, and neighborhood drift negative-control cases produce no candidate inspect output
 
-Passing this gate proves that sparse feedback is correctly observed and converted into candidate-only learning-control evidence. It does not prove that Aionis should automatically mutate memory authority.
+Passing this gate proves that sparse feedback is correctly observed, converted into learning-control evidence, and can be persisted as inspect-before-use posture without mutating authority or suppressing memory.
 
 ## Upgrade Boundary
 
-After this gate passes, the only allowed next product step is a separate shadow gate that asks whether a candidate would move a future guide item to inspect-before-use.
-
-That shadow gate must still keep authority unchanged until a distinct holdout proves:
+After this gate passes, the next product step is to prove the persisted inspect-before-use posture on fresh holdout scenarios:
 
 1. candidate suggestions reduce blind trust in bad history
 2. candidate suggestions do not suppress useful history

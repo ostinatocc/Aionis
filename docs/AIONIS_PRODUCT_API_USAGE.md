@@ -271,8 +271,13 @@ themselves.
 `unused_exposure_observation` adds the repeated-exposure view: it identifies
 memories that were shown across multiple guide traces but not host-marked as
 used in the current activation, and separately lists the subset with no positive
-attributed use recorded. This is still read-only evidence for product debugging;
-it is not a forgetting or downgrade trigger.
+attributed use recorded. The observation object is still read-only evidence for
+product debugging. When the repeated-unused-without-positive gate passes,
+`forget_effect.guide_trace.feedback_learning_control` records the separate persistence
+action that set `feedback_learning_control_posture=inspect_before_use` on the affected
+memory ids. This is not suppression, archive, deletion, or task-rule learning; it
+only prevents direct reuse until the Agent or host inspects/revalidates the
+memory. A later positive attributed use clears this feedback-learning control posture.
 `sparse_feedback_signal_summary` rolls positive attribution, weak/strong
 counter-signals, and repeated unused exposure into one read-only debug summary.
 It sets `authority_mutation: false` to make the boundary explicit.

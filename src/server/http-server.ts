@@ -329,6 +329,7 @@ type ProductFacadeRouteRegistrationArgs = Pick<
   RegisterApplicationRoutesArgs,
   | "app"
   | "env"
+  | "liteWriteStore"
   | "requireMemoryPrincipal"
   | "withIdentityFromRequest"
   | "enforceRateLimit"
@@ -665,6 +666,7 @@ function registerProductRoutes(args: ProductFacadeRouteRegistrationArgs) {
   registerProductFacadeRoutes({
     app: args.app,
     env: args.env,
+    liteWriteStore: args.liteWriteStore,
     requireMemoryPrincipal: args.requireMemoryPrincipal,
     withIdentityFromRequest: args.withIdentityFromRequest,
     enforceRateLimit: args.enforceRateLimit,

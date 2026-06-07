@@ -3,7 +3,7 @@ import { sha256Hex } from "../util/crypto.js";
 import { normalizeText } from "../util/normalize.js";
 import { redactPII } from "../util/redaction.js";
 import { badRequest } from "../util/http.js";
-import { computeFeedbackUpdatedNodeState } from "./node-feedback-state.js";
+import { computeFeedbackUpdatedNodeState, mergeNodeFeedbackLearningControlSlots } from "./node-feedback-state.js";
 import { MEMORY_TIER_RANK, type MemoryTierName } from "./evolution-operators.js";
 import { resolveNodeLifecycleSignals } from "./lifecycle-signals.js";
 import { MemoryArchiveRehydrateRequest, MemoryNodesActivateRequest } from "./schemas.js";
@@ -37,6 +37,24 @@ function nonNegativeInt(value: unknown): number {
 function stringList(values: string[] | null | undefined): string[] {
   return uniqStrings((values ?? []).map((value) => value.trim()).filter((value) => value.length > 0)).slice(0, 32);
 }
+
+type UnusedExposureLearningControlStat = {
+  memory_id: string;
+  repeated_without_positive_attribution: boolean;
+  exposure_count: number;
+  positive_attributed_use_count: number;
+};
+
+export type ApplyUnusedExposureLearningControlLiteArgs = {
+  tenant_id?: string | null;
+  scope?: string | null;
+  actor?: string | null;
+  run_id?: string | null;
+  guide_trace_id?: string | null;
+  reason?: string | null;
+  input_sha256?: string | null;
+  memory_stats: UnusedExposureLearningControlStat[];
+};
 
 async function resolveLifecycleNodes(args: {
   liteWriteStore: LifecycleLiteStore;
@@ -252,6 +270,192 @@ export async function rehydrateArchiveNodesLite(
       moved_ids: movableRows.map((row) => row.id),
       unchanged_ids: unchangedIds,
     },
+  };
+}
+
+export async function applyUnusedExposureLearningControlLite(
+  liteWriteStore: LifecycleLiteStore,
+  input: ApplyUnusedExposureLearningControlLiteArgs,
+  defaultScope: string,
+  defaultTenantId: string,
+  opts: LifecycleOptions,
+) {
+  const tenancy = resolveTenantScope(
+    { scope: input.scope ?? undefined, tenant_id: input.tenant_id ?? undefined },
+    { defaultScope, defaultTenantId },
+  );
+  const scope = tenancy.scope_key;
+  const actor = input.actor ?? opts.defaultActor;
+  const startedAt = new Date().toISOString();
+  const reason =
+    normalizeMaybeRedact(input.reason ?? undefined, opts)
+    ?? "Repeated guide exposure without positive host attribution crossed the inspect-before-use learning control gate.";
+  const inputSha = input.input_sha256 ?? sha256Hex(stableStringify({
+    job: "unused_exposure_feedback_learning_control",
+    scope,
+    actor,
+    guide_trace_id: input.guide_trace_id ?? null,
+    run_id: input.run_id ?? null,
+    reason,
+    memory_stats: input.memory_stats,
+  }));
+  const candidateStats = input.memory_stats.filter((entry) =>
+    entry.repeated_without_positive_attribution
+    && entry.memory_id
+    && nonNegativeInt(entry.exposure_count) >= 2
+    && nonNegativeInt(entry.positive_attributed_use_count) === 0
+  );
+  const requestedNodeIds = uniqStrings(candidateStats.map((entry) => entry.memory_id.toLowerCase()));
+  if (requestedNodeIds.length === 0) {
+    return {
+      contract_version: "aionis_feedback_learning_control_persistence_v1",
+      mode: "inspect_before_use_persistence",
+      posture: "inspect_before_use",
+      memory_state_mutation: false,
+      authority_mutation: false,
+      changed_count: 0,
+      changed_memory_ids: [] as string[],
+      skipped_positive_attribution_memory_ids: [] as string[],
+      missing_node_ids: [] as string[],
+      commit_id: null as string | null,
+      commit_hash: null as string | null,
+      reason: "No repeated-unused-without-positive memory crossed the persistence gate.",
+    };
+  }
+
+  const statById = new Map(candidateStats.map((entry) => [entry.memory_id.toLowerCase(), entry]));
+  const { resolvedNodeIds, foundRows, missingNodeIds } = await resolveLifecycleNodes({
+    liteWriteStore,
+    scope,
+    actor,
+    requestedNodeIds,
+    requestedClientIds: [],
+  });
+  const skippedPositive: string[] = [];
+  const rowsToUpdate: LiteFindNodeRow[] = [];
+  for (const row of foundRows) {
+    const stat = statById.get(row.id);
+    if (!stat) continue;
+    const slots = row.slots ?? {};
+    if (
+      nonNegativeInt(slots.positive_attributed_use_count) > 0
+      || nonNegativeInt(slots.feedback_positive) > 0
+      || nonNegativeInt(stat.positive_attributed_use_count) > 0
+    ) {
+      skippedPositive.push(row.id);
+      continue;
+    }
+    rowsToUpdate.push(row);
+  }
+
+  if (rowsToUpdate.length === 0) {
+    return {
+      contract_version: "aionis_feedback_learning_control_persistence_v1",
+      mode: "inspect_before_use_persistence",
+      posture: "inspect_before_use",
+      memory_state_mutation: false,
+      authority_mutation: false,
+      changed_count: 0,
+      changed_memory_ids: [] as string[],
+      skipped_positive_attribution_memory_ids: skippedPositive,
+      missing_node_ids: missingNodeIds,
+      commit_id: null as string | null,
+      commit_hash: null as string | null,
+      reason: skippedPositive.length > 0
+        ? "Positive host attribution blocked repeated-unused learning control persistence."
+        : "No candidate memory rows were available for learning control persistence.",
+    };
+  }
+
+  const parent = await liteWriteStore.latestCommit(scope);
+  const diff = {
+    job: "feedback_learning_control_inspect_before_use",
+    started_at: startedAt,
+    scope,
+    actor,
+    run_id: input.run_id ?? null,
+    guide_trace_id: input.guide_trace_id ?? null,
+    reason,
+    requested_node_ids: requestedNodeIds,
+    resolved_node_ids: resolvedNodeIds,
+    applied_node_ids: rowsToUpdate.map((row) => row.id),
+    skipped_positive_attribution_memory_ids: skippedPositive,
+    missing_node_ids: missingNodeIds,
+    evidence_source: "repeated_unused_without_positive_attribution",
+  };
+  const diffJson = stableStringify(diff);
+  const diffSha = sha256Hex(diffJson);
+  const commitHash = sha256Hex(stableStringify({
+    parentHash: parent?.commit_hash ?? "",
+    inputSha,
+    diffSha,
+    scope,
+    actor,
+    kind: "feedback_learning_control_inspect_before_use",
+  }));
+  const commitId = await liteWriteStore.insertCommit({
+    scope,
+    parentCommitId: parent?.id ?? null,
+    inputSha256: inputSha,
+    diffJson,
+    actor,
+    modelVersion: null,
+    promptVersion: null,
+    commitHash,
+  });
+
+  for (const row of rowsToUpdate) {
+    const stat = statById.get(row.id);
+    const nextSlots = mergeNodeFeedbackLearningControlSlots({
+      slots: row.slots ?? {},
+      posture: "inspect_before_use",
+      source: "repeated_unused_without_positive_attribution",
+      timestamp: startedAt,
+      run_id: input.run_id ?? null,
+      guide_trace_id: input.guide_trace_id ?? null,
+      reason,
+      input_sha256: inputSha,
+      exposure_count: stat?.exposure_count ?? null,
+      positive_attributed_use_count: stat?.positive_attributed_use_count ?? null,
+    });
+    const lifecycle = resolveNodeLifecycleSignals({
+      type: row.type,
+      tier: row.tier,
+      title: row.title,
+      text_summary: row.text_summary,
+      slots: nextSlots,
+      salience: row.salience,
+      importance: row.importance,
+      confidence: row.confidence,
+      raw_ref: row.raw_ref ?? null,
+      evidence_ref: row.evidence_ref ?? null,
+      reference_time: startedAt,
+    });
+    await liteWriteStore.updateNodeAnchorState({
+      scope,
+      id: row.id,
+      slots: lifecycle.slots,
+      textSummary: row.text_summary,
+      salience: lifecycle.salience,
+      importance: lifecycle.importance,
+      confidence: lifecycle.confidence,
+      commitId,
+    });
+  }
+
+  return {
+    contract_version: "aionis_feedback_learning_control_persistence_v1",
+    mode: "inspect_before_use_persistence",
+    posture: "inspect_before_use",
+    memory_state_mutation: true,
+    authority_mutation: false,
+    changed_count: rowsToUpdate.length,
+    changed_memory_ids: rowsToUpdate.map((row) => row.id),
+    skipped_positive_attribution_memory_ids: skippedPositive,
+    missing_node_ids: missingNodeIds,
+    commit_id: commitId,
+    commit_hash: commitHash,
+    reason: "Repeated exposure without positive host attribution persisted an inspect-before-use memory posture.",
   };
 }
 

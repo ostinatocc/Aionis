@@ -72,10 +72,12 @@ function registerProductFacade(args: {
   app: ReturnType<typeof Fastify>;
   env: ReturnType<typeof liteEnv>;
   guards: ReturnType<typeof requestGuards>;
+  liteWriteStore: ReturnType<typeof createLiteWriteStore>;
 }) {
   registerProductFacadeRoutes({
     app: args.app,
     env: args.env,
+    liteWriteStore: args.liteWriteStore,
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,
@@ -289,6 +291,7 @@ async function activateFromGuide(args: {
   memoryId: string;
   runId: string;
   outcome: "positive" | "negative";
+  usedSurface?: "use_now" | "explicit_host_assertion";
   verifierStatus?: "passed" | "failed" | "not_run" | "unknown";
   toolStatus?: "succeeded" | "failed" | "not_run" | "unknown";
 }) {
@@ -304,7 +307,7 @@ async function activateFromGuide(args: {
       used_memory_ids: [args.memoryId],
       run_id: args.runId,
       outcome: args.outcome,
-      used_surface: "use_now",
+      used_surface: args.usedSurface ?? "use_now",
       verifier_status: args.verifierStatus ?? (args.outcome === "positive" ? "passed" : "not_run"),
       tool_status: args.toolStatus ?? (args.outcome === "positive" ? "succeeded" : "unknown"),
       activate: true,
@@ -654,7 +657,7 @@ test("product feedback closed loop moves repeated weak negative to inspect-befor
   }
 });
 
-test("product feedback closed loop reports repeated unused exposure without downgrading memory", async () => {
+test("product feedback closed loop persists repeated unused exposure as inspect-before-use posture", async () => {
   const { app, liteWriteStore } = setupProductApp("repeated-unused-exposure");
   try {
     const marker = "AIONIS_CLOSED_LOOP_UNUSED";
@@ -697,6 +700,9 @@ test("product feedback closed loop reports repeated unused exposure without down
     assert.ok(
       unusedObservation.repeated_unattributed_without_positive_memory_ids.includes(unusedMemoryId),
     );
+    assert.equal(feedback.forget_effect.guide_trace.feedback_learning_control.contract_version, "aionis_feedback_learning_control_persistence_v1");
+    assert.equal(feedback.forget_effect.guide_trace.feedback_learning_control.mode, "inspect_before_use_persistence");
+    assert.deepEqual(feedback.forget_effect.guide_trace.feedback_learning_control.changed_memory_ids, [unusedMemoryId]);
     const unusedStats = unusedObservation.memory_stats.find((entry: Record<string, any>) =>
       entry.memory_id === unusedMemoryId
     );
@@ -709,10 +715,18 @@ test("product feedback closed loop reports repeated unused exposure without down
     const unusedSlots = await slotsForMemory({ liteWriteStore, memoryId: unusedMemoryId });
     assert.equal(unusedSlots.feedback_negative, undefined);
     assert.equal(unusedSlots.weak_counter_signal_count, undefined);
+    assert.equal(unusedSlots.feedback_learning_control_posture, "inspect_before_use");
+    assert.equal(unusedSlots.feedback_learning_control_source, "repeated_unused_without_positive_attribution");
+    assert.equal(unusedSlots.repeated_unused_without_positive_observation_count, 2);
 
     const afterGuide = await guideForMarker({ app, marker });
-    assert.equal(afterGuide.agent_context.use_now_memory_ids.includes(unusedMemoryId), true);
-    assert.equal(afterGuide.agent_context.inspect_before_use_memory_ids.includes(unusedMemoryId), false);
+    assert.equal(afterGuide.agent_context.use_now_memory_ids.includes(unusedMemoryId), false);
+    assert.equal(afterGuide.agent_context.inspect_before_use_memory_ids.includes(unusedMemoryId), true);
+    const unusedAfterMemory = afterGuide.memory_packet.relevant_memories.find((entry: Record<string, any>) =>
+      entry.memory_id === unusedMemoryId
+    );
+    assert.equal(unusedAfterMemory.lifecycle_state, "candidate");
+    assert.equal(unusedAfterMemory.authority, "candidate");
 
     const measure = await measureTrace({
       app,
@@ -748,17 +762,32 @@ test("product feedback closed loop reports repeated unused exposure without down
     const unusedDecision = measure.memory_decision_trace.memory_decisions.find((entry: Record<string, any>) =>
       entry.memory_id === unusedMemoryId
     );
-    assert.equal(unusedDecision.agent_surface, "use_now");
+    assert.equal(unusedDecision.agent_surface, "inspect_before_use");
     assert.equal(unusedDecision.feedback_detail, null);
+
+    await activateFromGuide({
+      app,
+      guide: afterGuide,
+      memoryId: unusedMemoryId,
+      runId: "run:closed-loop-unused-exposure-revalidated",
+      outcome: "positive",
+      usedSurface: "explicit_host_assertion",
+    });
+    const revalidatedSlots = await slotsForMemory({ liteWriteStore, memoryId: unusedMemoryId });
+    assert.equal(revalidatedSlots.positive_attributed_use_count, 1);
+    assert.equal(revalidatedSlots.feedback_learning_control_posture, undefined);
+    assert.equal(revalidatedSlots.feedback_learning_control_cleared_reason, "positive_attribution");
+
+    const revalidatedGuide = await guideForMarker({ app, marker });
+    assert.equal(revalidatedGuide.agent_context.use_now_memory_ids.includes(unusedMemoryId), true);
+    assert.equal(revalidatedGuide.agent_context.inspect_before_use_memory_ids.includes(unusedMemoryId), false);
   } finally {
     await app.close();
   }
 });
 
-test("product guide active inspect-before-use projection uses repeated unused evidence without mutating memory", async () => {
-  const { app, liteWriteStore } = setupProductApp("active-repeated-unused-exposure", {
-    AIONIS_INSPECT_BEFORE_USE_MODE: "active",
-  });
+test("product guide honors persisted repeated-unused inspect posture without active projection flag", async () => {
+  const { app, liteWriteStore } = setupProductApp("persisted-repeated-unused-exposure");
   try {
     const marker = "AIONIS_ACTIVE_REPEATED_UNUSED";
     const usedMemoryId = await observeMemory({
@@ -798,7 +827,7 @@ test("product guide active inspect-before-use projection uses repeated unused ev
     assert.equal(thirdGuide.agent_context.recommended_posture, "inspect_before_use");
     assert.equal(
       thirdGuide.source_map.internal_surfaces_used.includes("inspect_before_use_active_projection"),
-      true,
+      false,
     );
     assert.equal(thirdGuide.agent_context.prompt_text.includes("inspect_before_use_shadow_delta"), false);
     assert.equal(thirdGuide.agent_context.prompt_text.includes("confidence_decay"), false);
@@ -808,15 +837,14 @@ test("product guide active inspect-before-use projection uses repeated unused ev
     assert.equal(unusedSlots.weak_counter_signal_count, undefined);
     assert.equal(unusedSlots.strong_counter_signal_count, undefined);
     assert.equal(unusedSlots.positive_attributed_use_count, undefined);
+    assert.equal(unusedSlots.feedback_learning_control_posture, "inspect_before_use");
   } finally {
     await app.close();
   }
 });
 
-test("product guide active repeated-unused projection ignores negative attributed use", async () => {
-  const { app, liteWriteStore } = setupProductApp("active-repeated-unused-negative-used-boundary", {
-    AIONIS_INSPECT_BEFORE_USE_MODE: "active",
-  });
+test("product guide persisted repeated-unused posture ignores negative attributed use", async () => {
+  const { app, liteWriteStore } = setupProductApp("persisted-repeated-unused-negative-used-boundary");
   try {
     const marker = "AIONIS_ACTIVE_REPEATED_UNUSED_NEGATIVE_USED";
     const usedMemoryId = await observeMemory({
@@ -856,7 +884,7 @@ test("product guide active repeated-unused projection ignores negative attribute
     assert.equal(thirdGuide.agent_context.inspect_before_use_memory_ids.includes(unusedMemoryId), true);
     assert.equal(
       thirdGuide.source_map.internal_surfaces_used.includes("inspect_before_use_active_projection"),
-      true,
+      false,
     );
 
     const usedSlots = await slotsForMemory({ liteWriteStore, memoryId: usedMemoryId });
@@ -867,6 +895,7 @@ test("product guide active repeated-unused projection ignores negative attribute
     const unusedSlots = await slotsForMemory({ liteWriteStore, memoryId: unusedMemoryId });
     assert.equal(unusedSlots.feedback_negative, undefined);
     assert.equal(unusedSlots.attributed_use_count, undefined);
+    assert.equal(unusedSlots.feedback_learning_control_posture, "inspect_before_use");
   } finally {
     await app.close();
   }

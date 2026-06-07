@@ -302,6 +302,7 @@ function memoryLifecycleState(args: {
   const lifecycle = stringValue(args.contextItem?.lifecycle_state) ?? stringValue(args.slots?.lifecycle_state);
   const weakCounterSignals = nonNegativeIntegerValue(args.slots?.weak_counter_signal_count);
   const strongCounterSignals = nonNegativeIntegerValue(args.slots?.strong_counter_signal_count);
+  const feedbackLearningControlPosture = stringValue(args.slots?.feedback_learning_control_posture);
   const tier = args.tier ?? "";
   if (archiveRelocation.relocation_state === "cold_archive" || semanticForgetting.action === "archive" || tier === "archive") {
     return "archived";
@@ -310,6 +311,7 @@ function memoryLifecycleState(args: {
   if (semanticForgetting.action === "review") return "contested";
   if (lifecycle === "suppressed" || lifecycle === "disabled") return "suppressed";
   if (strongCounterSignals > 0 || weakCounterSignals >= 2) return "contested";
+  if (feedbackLearningControlPosture === "inspect_before_use") return "candidate";
   if (lifecycle === "contested") return "contested";
   if (lifecycle === "candidate" || args.confidence < 0.6) return "candidate";
   if (tier === "cold" && resolveNodeRehydrationDefaultMode(args.slots)) return "rehydration_candidate";

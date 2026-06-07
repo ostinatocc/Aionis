@@ -27,6 +27,8 @@ import {
   type AionisGuidePacket,
   type AionisMemoryPacket,
 } from "../memory/product-output-contract.js";
+import { applyUnusedExposureLearningControlLite } from "../memory/lifecycle-lite.js";
+import type { LiteWriteStore } from "../store/lite-write-store.js";
 import type { AuthPrincipal } from "../util/auth.js";
 import type { InflightGateToken } from "../util/inflight_gate.js";
 import {
@@ -39,6 +41,7 @@ type ProductFacadeRequest = FastifyRequest<{ Body: unknown }>;
 type ProductFacadeArgs = {
   app: FastifyInstance;
   env: Env;
+  liteWriteStore: LiteWriteStore;
   requireMemoryPrincipal: (req: FastifyRequest) => Promise<AuthPrincipal | null>;
   withIdentityFromRequest: (
     req: FastifyRequest,
@@ -541,6 +544,8 @@ type ProductGuideExposureResolution =
     body: Record<string, unknown>;
   };
 
+type ProductFeedbackLearningControlPersistence = Awaited<ReturnType<typeof applyUnusedExposureLearningControlLite>>;
+
 function objectValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
@@ -943,6 +948,43 @@ async function buildUnusedExposureObservation(args: {
   };
 }
 
+async function persistUnusedExposureLearningControl(args: {
+  liteWriteStore: LiteWriteStore;
+  env: Env;
+  parsed: ProductForgetInput;
+  guideExposure: Extract<ProductGuideExposureResolution, { ok: true }>;
+  unusedExposureObservation: ProductUnusedExposureObservation;
+}): Promise<ProductFeedbackLearningControlPersistence | null> {
+  const candidates = args.unusedExposureObservation.memory_stats.filter((entry) =>
+    entry.repeated_without_positive_attribution
+    && entry.positive_attributed_use_count === 0
+  );
+  if (candidates.length === 0) return null;
+
+  const result = await args.liteWriteStore.withTx(() =>
+    applyUnusedExposureLearningControlLite(
+      args.liteWriteStore,
+      {
+        tenant_id: args.guideExposure.ledger.tenant_id,
+        scope: args.guideExposure.ledger.scope,
+        actor: args.parsed.actor ?? args.env.LITE_LOCAL_ACTOR_ID,
+        run_id: args.parsed.run_id ?? null,
+        guide_trace_id: args.guideExposure.ledger.guide_trace_id,
+        reason: "Repeated guide exposure without positive host attribution should be inspected before direct reuse.",
+        memory_stats: candidates,
+      },
+      args.env.MEMORY_SCOPE,
+      args.env.MEMORY_TENANT_ID,
+      {
+        maxTextLen: args.env.MAX_TEXT_LEN,
+        piiRedaction: args.env.PII_REDACTION,
+        defaultActor: args.env.LITE_LOCAL_ACTOR_ID,
+      },
+    )
+  );
+  return result.changed_count > 0 ? result : null;
+}
+
 async function writeGuideExposureLedger(args: {
   app: FastifyInstance;
   req: FastifyRequest;
@@ -1223,6 +1265,7 @@ function productForgetEffect(args: {
   resultBody: unknown;
   guideExposure?: ProductGuideExposureResolution | null;
   unusedExposureObservation?: ProductUnusedExposureObservation | null;
+  feedbackLearningControlPersistence?: ProductFeedbackLearningControlPersistence | null;
 }) {
   const nodeIds = productForgetNodeIds(args.parsed, args.guideExposure);
   const changedCount = productForgetChangedCount(args.resultBody, args.parsed.operation, args.target);
@@ -1252,6 +1295,7 @@ function productForgetEffect(args: {
       unattributed_do_not_use_memory_ids: args.guideExposure.unattributedDoNotUseMemoryIds,
       unattributed_rehydrate_memory_ids: args.guideExposure.unattributedRehydrateMemoryIds,
       unused_exposure_observation: args.unusedExposureObservation ?? undefined,
+      feedback_learning_control: args.feedbackLearningControlPersistence ?? undefined,
     } : undefined,
     attribution: args.parsed.operation === "activate" ? stripUndefined({
       run_id: args.parsed.run_id,
@@ -1542,6 +1586,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
   const {
     app,
     env,
+    liteWriteStore,
     requireMemoryPrincipal,
     withIdentityFromRequest,
     enforceRateLimit,
@@ -1726,6 +1771,15 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     const unusedExposureObservation = guideExposure?.ok
       ? await buildUnusedExposureObservation({ app, req, env, parsed, guideExposure })
       : null;
+    const feedbackLearningControlPersistence = guideExposure?.ok && unusedExposureObservation
+      ? await persistUnusedExposureLearningControl({
+          liteWriteStore,
+          env,
+          parsed,
+          guideExposure,
+          unusedExposureObservation,
+        })
+      : null;
 
     return reply.code(200).send({
       contract_version: "aionis_forget_result_v1",
@@ -1740,6 +1794,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
         resultBody: result.body,
         guideExposure,
         unusedExposureObservation,
+        feedbackLearningControlPersistence,
       }),
       result: result.body,
       source_map: {
@@ -1750,6 +1805,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
         internal_surfaces_used: [
           ...(guideExposure ? ["guide_exposure_ledger"] : []),
           ...(unusedExposureObservation ? ["unused_exposure_observation"] : []),
+          ...(feedbackLearningControlPersistence ? ["feedback_learning_control_persistence"] : []),
           target === "payload" ? "anchor_payload_rehydration" : "memory_lifecycle",
           parsed.operation === "suppress" || parsed.operation === "unsuppress" ? "learning_control" : "controlled_forgetting",
         ],
