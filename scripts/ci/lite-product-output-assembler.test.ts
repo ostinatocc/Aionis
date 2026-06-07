@@ -440,6 +440,60 @@ test("product agent context assembler compacts GuidePacket for direct Agent use"
   assert.equal("memory_packet" in context, false);
 });
 
+test("product agent context assembler enforces explicit prompt character budget", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      text: "Recover compact budget memories",
+      intent: "planning",
+    },
+    nodes: Array.from({ length: 6 }, (_, index) => ({
+      id: `mem-budget-${index}`,
+      type: "concept",
+      title: `Budget memory ${index}`,
+      text_summary: [
+        `Budget memory ${index} carries a long reusable context line for src/budget-${index}.ts.`,
+        "The host needs the memory id and compact guidance, not the full repeated narrative.",
+        "This sentence intentionally repeats product context so the unbudgeted prompt exceeds a small budget.",
+        "This sentence intentionally repeats product context so the unbudgeted prompt exceeds a small budget.",
+      ].join(" "),
+      tier: "hot",
+      slots: {
+        memory_kind: "general_memory",
+        compression_layer: "L2",
+        target_files: [`src/budget-${index}.ts`],
+      },
+      confidence: 0.91,
+      salience: 0.9,
+      created_at: "2026-06-01T00:00:00.000Z",
+    })),
+    source_map: {
+      routes_used: ["/v1/memory/recall_text"],
+      internal_surfaces_used: ["recall"],
+    },
+  });
+
+  const fullContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+  const budgetedContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    context_char_budget: 420,
+    context_compaction_profile: "aggressive",
+  });
+
+  assert.ok(fullContext.prompt_text.length > 420);
+  assert.ok(budgetedContext.prompt_text.length <= 420);
+  assert.equal(budgetedContext.history_used, true);
+  assert.ok(budgetedContext.memory_ids.includes("mem-budget-0"));
+  assert.ok(budgetedContext.use_now_memory_ids.length > 0);
+});
+
 test("product agent context preserves guide-only recovered target files", () => {
   const guidePacket = buildAionisGuidePacket({
     tenant_id: "tenant-local",
@@ -1388,6 +1442,65 @@ test("active inspect-before-use projection moves only selected direct-use memori
   assert.equal(projected.prompt_text.includes("inspect_before_use_shadow_delta"), false);
 });
 
+test("inspect-before-use active projection preserves explicit prompt character budget", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "measure active projection budget",
+    },
+    nodes: [
+      {
+        id: "mem-active-budget-old",
+        type: "concept",
+        title: "Active budget old note",
+        text_summary: "AIONIS_ACTIVE_BUDGET old guidance is long and should move to inspect before use after projection.",
+        tier: "warm",
+        slots: {
+          memory_kind: "general_memory",
+        },
+        confidence: 0.92,
+        salience: 0.88,
+        created_at: "2025-01-01T00:00:00.000Z",
+      },
+      {
+        id: "mem-active-budget-current",
+        type: "concept",
+        title: "Active budget current note",
+        text_summary: "AIONIS_ACTIVE_BUDGET current guidance remains directly usable and includes compact customer severity context.",
+        tier: "warm",
+        slots: {
+          memory_kind: "general_memory",
+        },
+        confidence: 0.9,
+        salience: 0.86,
+        created_at: "2026-06-01T00:00:00.000Z",
+      },
+    ],
+  });
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    context_char_budget: 520,
+    context_compaction_profile: "aggressive",
+  });
+
+  const projected = applyAionisInspectBeforeUseActiveProjection({
+    agent_context: agentContext,
+    memory_packet: memoryPacket,
+    candidate_memory_ids: ["mem-active-budget-old"],
+    reason: "inspect_before_use_active_projection",
+    context_char_budget: 520,
+    context_compaction_profile: "aggressive",
+  });
+
+  assert.ok(projected.prompt_text.length <= 520);
+  assert.equal(projected.use_now_memory_ids.includes("mem-active-budget-old"), false);
+  assert.equal(projected.inspect_before_use_memory_ids.includes("mem-active-budget-old"), true);
+});
+
 test("product confidence decay temporal staleness is blocked by positive attribution", () => {
   const memoryPacket = buildAionisMemoryPacket({
     tenant_id: "tenant-local",
@@ -1977,6 +2090,85 @@ test("product memory lifecycle adjudication ignores task-domain fault words with
   assert.equal(context.inspect_before_use.length, 0);
 });
 
+test("product memory lifecycle adjudication ignores task-domain corrected and fix words in workflow titles", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "recover execution workflow",
+    },
+    nodes: [
+      {
+        id: "mem-current-pr-fix-title",
+        type: "procedure",
+        title: "Current workflow: manual Backport of Stub updates and fix plugin stub",
+        text_summary: "AIONIS_PR_TITLE_CURRENT: Current reusable execution workflow for a repo PR. Current changed target files: vault/extended_system_view.go, vault/logical_system.go, vault/logical_system_stubs_oss.go. Reusable procedure: inspect the current target files before patching.",
+        tier: "hot",
+        slots: {
+          memory_kind: "execution_workflow",
+          target_files: ["vault/extended_system_view.go", "vault/logical_system.go", "vault/logical_system_stubs_oss.go"],
+          execution_native_v1: {
+            execution_kind: "workflow_anchor",
+            compression_layer: "L2",
+            contract_trust: "authoritative",
+            task_signature: "pr-title-current",
+            workflow_signature: "pr-title-current-workflow",
+            target_files: ["vault/extended_system_view.go", "vault/logical_system.go", "vault/logical_system_stubs_oss.go"],
+          },
+        },
+        confidence: 0.92,
+        salience: 0.9,
+      },
+      {
+        id: "mem-prior-corrected-title",
+        type: "procedure",
+        title: "Earlier workflow: Backport of Typo Corrected same typo in docs",
+        text_summary: "AIONIS_PR_TITLE_PRIOR: Earlier reusable execution workflow for a repo PR. Earlier changed target files: website/content/docs/agent/index.mdx, website/content/docs/auth/approle.mdx, website/next.config.js. Reusable procedure: inspect the earlier target files before patching.",
+        tier: "hot",
+        slots: {
+          memory_kind: "execution_workflow",
+          target_files: ["website/content/docs/agent/index.mdx", "website/content/docs/auth/approle.mdx", "website/next.config.js"],
+          execution_native_v1: {
+            execution_kind: "workflow_anchor",
+            compression_layer: "L2",
+            contract_trust: "authoritative",
+            task_signature: "pr-title-prior",
+            workflow_signature: "pr-title-prior-workflow",
+            target_files: ["website/content/docs/agent/index.mdx", "website/content/docs/auth/approle.mdx", "website/next.config.js"],
+          },
+        },
+        confidence: 0.82,
+        salience: 0.9,
+      },
+    ],
+    source_map: {
+      routes_used: ["/v1/memory/recall_text"],
+    },
+  });
+
+  const current = memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-current-pr-fix-title");
+  const prior = memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-prior-corrected-title");
+  assert.equal(current?.lifecycle_state, "active");
+  assert.equal(current?.authority, "trusted");
+  assert.equal(prior?.lifecycle_state, "active");
+  assert.equal(prior?.authority, "trusted");
+  assert.equal(memoryPacket.contradiction_warnings.length, 0);
+  assert.equal(memoryPacket.evidence_trail.some((entry) => entry.source === "edge"), false);
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+
+  assert.equal(context.recommended_posture, "inspect_before_use");
+  assert.equal(context.authority, "advisory");
+  assert.equal(context.use_now_memory_ids.length, 0);
+  assert.ok(context.inspect_before_use_memory_ids.includes("mem-current-pr-fix-title"));
+  assert.ok(context.inspect_before_use_memory_ids.includes("mem-prior-corrected-title"));
+});
+
 test("product agent context keeps candidate and suppressed memory out of use_now", () => {
   const guidePacket = buildAionisGuidePacket({
     tenant_id: "tenant-local",
@@ -2196,11 +2388,220 @@ test("product agent context downgrades conflicting trusted workflows to inspect-
   assert.ok(context.risk.reasons.includes("trusted_workflow_conflict_requires_inspection"));
   assert.equal(context.use_now.some((entry) => entry.includes("conflicting legacy adapter")), false);
   assert.ok(context.inspect_before_use.some((entry) => entry.includes("conflicting legacy adapter")));
-  assert.equal(context.use_now_memory_ids.includes("mem-trusted-a"), true);
+  assert.equal(context.use_now_memory_ids.includes("mem-trusted-a"), false);
   assert.equal(context.use_now_memory_ids.includes("mem-trusted-b"), false);
-  assert.equal(context.inspect_before_use_memory_ids.includes("mem-trusted-a"), false);
+  assert.ok(context.inspect_before_use_memory_ids.includes("mem-trusted-a"));
   assert.ok(context.inspect_before_use_memory_ids.includes("mem-trusted-b"));
+  assert.equal(context.use_now.some((entry) => entry.includes("connection runtime path")), false);
   assert.equal(context.prompt_text.includes("Workflow trusted: Trusted workflow B: conflicting legacy adapter path"), false);
+});
+
+test("product agent context uses structured target files for trusted workflow conflict detection", () => {
+  const guidePacket = buildAionisGuidePacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    task: {
+      task_id: "task-1",
+      run_id: "run-1",
+      task_signature: "runtime-continuation",
+      task_family: "coding",
+    },
+    planning: planningSummaryFixture(),
+    source_map: {
+      routes_used: ["/v1/memory/context/assemble"],
+      internal_surfaces_used: ["planning_summary"],
+    },
+  });
+  const unsafeGuidePacket = {
+    ...guidePacket,
+    guide_brief: {
+      ...guidePacket.guide_brief,
+      recommended_posture: "reuse_supported_history" as const,
+      authority: "trusted" as const,
+      use_now: [
+        "Workflow trusted: Trusted workflow A: runtime target",
+        "Workflow trusted: Trusted workflow B: adapter target",
+      ],
+      inspect_before_use: [],
+      do_not_use: [],
+    },
+  };
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    actor: {
+      consumer_agent_id: "agent-b",
+      consumer_team_id: "team-a",
+      producer_agent_ids: ["agent-a"],
+    },
+    query: {
+      text: "Recover runtime continuation",
+      intent: "planning",
+    },
+    nodes: [
+      {
+        id: "mem-target-a",
+        type: "procedure",
+        title: "Trusted workflow A: runtime target",
+        text_summary: "Use the runtime procedure and recover local test/build conventions for this workflow.",
+        tier: "warm",
+        slots: {
+          target_files: ["src/runtime/current.ts"],
+          execution_native_v1: {
+            execution_kind: "workflow_anchor",
+            compression_layer: "L2",
+            contract_trust: "authoritative",
+          },
+        },
+        confidence: 0.9,
+        salience: 0.9,
+        evidence_ref: "ev-target-a",
+      },
+      {
+        id: "mem-target-b",
+        type: "procedure",
+        title: "Trusted workflow B: adapter target",
+        text_summary: "Use the adapter procedure and recover local test/build conventions for this workflow.",
+        tier: "warm",
+        slots: {
+          target_files: ["src/adapter/other.ts"],
+          execution_native_v1: {
+            execution_kind: "workflow_anchor",
+            compression_layer: "L2",
+            contract_trust: "authoritative",
+          },
+        },
+        confidence: 0.88,
+        salience: 0.88,
+        evidence_ref: "ev-target-b",
+      },
+    ],
+    source_map: {
+      routes_used: ["/v1/memory/recall_text"],
+      internal_surfaces_used: ["recall"],
+    },
+  });
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    guide_packet: unsafeGuidePacket,
+  });
+
+  assert.equal(context.history_used, true);
+  assert.equal(context.recommended_posture, "inspect_before_use");
+  assert.equal(context.authority, "advisory");
+  assert.ok(context.risk.reasons.includes("trusted_workflow_target_conflict"));
+  assert.equal(context.use_now_memory_ids.includes("mem-target-a"), false);
+  assert.equal(context.use_now_memory_ids.includes("mem-target-b"), false);
+  assert.ok(context.inspect_before_use_memory_ids.includes("mem-target-a"));
+  assert.ok(context.inspect_before_use_memory_ids.includes("mem-target-b"));
+  assert.equal(context.use_now.some((entry) => entry.includes("Trusted workflow A: runtime target")), false);
+  assert.equal(context.use_now.some((entry) => entry.includes("Trusted workflow B: adapter target")), false);
+});
+
+test("product agent context keeps multiple trusted workflows inspect-first when direct-use selection is ambiguous", () => {
+  const guidePacket = buildAionisGuidePacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    task: {
+      task_id: "task-1",
+      run_id: "run-1",
+      task_signature: "runtime-continuation",
+      task_family: "coding",
+    },
+    planning: planningSummaryFixture(),
+    source_map: {
+      routes_used: ["/v1/memory/context/assemble"],
+      internal_surfaces_used: ["planning_summary"],
+    },
+  });
+  const unsafeGuidePacket = {
+    ...guidePacket,
+    guide_brief: {
+      ...guidePacket.guide_brief,
+      recommended_posture: "reuse_supported_history" as const,
+      authority: "trusted" as const,
+      use_now: [
+        "Workflow trusted: Trusted workflow A: shared target",
+        "Workflow trusted: Trusted workflow B: shared target",
+      ],
+      inspect_before_use: [],
+      do_not_use: [],
+    },
+  };
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    actor: {
+      consumer_agent_id: "agent-b",
+      consumer_team_id: "team-a",
+      producer_agent_ids: ["agent-a"],
+    },
+    query: {
+      text: "Recover runtime continuation",
+      intent: "planning",
+    },
+    nodes: [
+      {
+        id: "mem-shared-a",
+        type: "procedure",
+        title: "Trusted workflow A: shared target",
+        text_summary: "Use workflow A for the shared file.",
+        tier: "warm",
+        slots: {
+          target_files: ["src/shared/current.ts"],
+          execution_native_v1: {
+            execution_kind: "workflow_anchor",
+            compression_layer: "L2",
+            contract_trust: "authoritative",
+          },
+        },
+        confidence: 0.9,
+        salience: 0.9,
+        evidence_ref: "ev-shared-a",
+      },
+      {
+        id: "mem-shared-b",
+        type: "procedure",
+        title: "Trusted workflow B: shared target",
+        text_summary: "Use workflow B for the shared file.",
+        tier: "warm",
+        slots: {
+          target_files: ["src/shared/current.ts"],
+          execution_native_v1: {
+            execution_kind: "workflow_anchor",
+            compression_layer: "L2",
+            contract_trust: "authoritative",
+          },
+        },
+        confidence: 0.88,
+        salience: 0.88,
+        evidence_ref: "ev-shared-b",
+      },
+    ],
+    source_map: {
+      routes_used: ["/v1/memory/recall_text"],
+      internal_surfaces_used: ["recall"],
+    },
+  });
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    guide_packet: unsafeGuidePacket,
+  });
+
+  assert.equal(context.history_used, true);
+  assert.equal(context.recommended_posture, "inspect_before_use");
+  assert.equal(context.authority, "advisory");
+  assert.ok(context.risk.reasons.includes("multiple_trusted_workflows_require_inspection"));
+  assert.equal(context.use_now_memory_ids.includes("mem-shared-a"), false);
+  assert.equal(context.use_now_memory_ids.includes("mem-shared-b"), false);
+  assert.ok(context.inspect_before_use_memory_ids.includes("mem-shared-a"));
+  assert.ok(context.inspect_before_use_memory_ids.includes("mem-shared-b"));
 });
 
 test("product memory assembler converts recall output into evidence-scoped MemoryPacket", () => {

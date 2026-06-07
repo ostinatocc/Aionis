@@ -229,10 +229,6 @@ export function memoryLifecycleRelationsFromEdges(edges: MemoryLifecycleEdgeInpu
 }
 
 const DIRECT_CORRECTION_CUES = [
-  "corrected",
-  "correction",
-  "revised",
-  "updated",
   "invalidated",
   "invalidates",
   "superseded",
@@ -256,6 +252,10 @@ const DIRECT_CORRECTION_CUES = [
 ];
 
 const CONTEXTUAL_CORRECTION_CUES = [
+  "corrected",
+  "correction",
+  "revised",
+  "updated",
   "obsolete",
   "outdated",
   "stale",
@@ -479,9 +479,6 @@ function sourceIsNewer(source: AdjudicableMemoryEntry, target: AdjudicableMemory
     || sourceText.includes("new evidence")
     || sourceText.includes("current evidence")
     || sourceText.includes("current change")
-    || sourceText.includes("corrected")
-    || sourceText.includes("updated")
-    || sourceText.includes("revised")
   ) {
     return true;
   }

@@ -115,6 +115,8 @@ export type BuildAionisAgentContextArgs = {
   scope: string;
   memory_packet?: AionisMemoryPacket | null;
   guide_packet?: AionisGuidePacket | null;
+  context_char_budget?: number | null;
+  context_compaction_profile?: "balanced" | "aggressive" | null;
 };
 
 export type ApplyAionisInspectBeforeUseActiveProjectionArgs = {
@@ -122,6 +124,8 @@ export type ApplyAionisInspectBeforeUseActiveProjectionArgs = {
   memory_packet?: AionisMemoryPacket | null;
   candidate_memory_ids: string[];
   reason: string;
+  context_char_budget?: number | null;
+  context_compaction_profile?: "balanced" | "aggressive" | null;
 };
 
 export type BuildAionisGuidePacketArgs = {
@@ -1012,6 +1016,164 @@ function buildAionisGuideBrief(args: {
   };
 }
 
+type AgentContextPromptProfile = {
+  summaryChars: number;
+  targetFileItems: number;
+  targetFileChars: number;
+  useNowItems: number;
+  useNowChars: number;
+  inspectItems: number;
+  inspectChars: number;
+  doNotUseItems: number;
+  doNotUseChars: number;
+  rehydrateItems: number;
+  rehydrateChars: number;
+  memoryIdItems: number;
+};
+
+const AGENT_CONTEXT_PROMPT_PROFILES: Record<"balanced" | "aggressive" | "tight" | "minimal" | "ids_only", AgentContextPromptProfile> = {
+  balanced: {
+    summaryChars: 140,
+    targetFileItems: 6,
+    targetFileChars: 120,
+    useNowItems: 4,
+    useNowChars: 220,
+    inspectItems: 3,
+    inspectChars: 140,
+    doNotUseItems: 3,
+    doNotUseChars: 140,
+    rehydrateItems: 3,
+    rehydrateChars: 100,
+    memoryIdItems: 6,
+  },
+  aggressive: {
+    summaryChars: 120,
+    targetFileItems: 4,
+    targetFileChars: 90,
+    useNowItems: 3,
+    useNowChars: 150,
+    inspectItems: 2,
+    inspectChars: 110,
+    doNotUseItems: 2,
+    doNotUseChars: 110,
+    rehydrateItems: 2,
+    rehydrateChars: 80,
+    memoryIdItems: 5,
+  },
+  tight: {
+    summaryChars: 96,
+    targetFileItems: 3,
+    targetFileChars: 70,
+    useNowItems: 2,
+    useNowChars: 110,
+    inspectItems: 1,
+    inspectChars: 90,
+    doNotUseItems: 1,
+    doNotUseChars: 90,
+    rehydrateItems: 1,
+    rehydrateChars: 70,
+    memoryIdItems: 4,
+  },
+  minimal: {
+    summaryChars: 80,
+    targetFileItems: 2,
+    targetFileChars: 50,
+    useNowItems: 1,
+    useNowChars: 80,
+    inspectItems: 1,
+    inspectChars: 70,
+    doNotUseItems: 1,
+    doNotUseChars: 70,
+    rehydrateItems: 1,
+    rehydrateChars: 60,
+    memoryIdItems: 3,
+  },
+  ids_only: {
+    summaryChars: 60,
+    targetFileItems: 0,
+    targetFileChars: 0,
+    useNowItems: 0,
+    useNowChars: 0,
+    inspectItems: 0,
+    inspectChars: 0,
+    doNotUseItems: 0,
+    doNotUseChars: 0,
+    rehydrateItems: 0,
+    rehydrateChars: 0,
+    memoryIdItems: 3,
+  },
+};
+
+function boundedPromptCharBudget(value: number | null | undefined): number | null {
+  if (!Number.isFinite(value ?? NaN)) return null;
+  return Math.max(1, Math.floor(Number(value)));
+}
+
+function promptProfilesFor(
+  profile: "balanced" | "aggressive" | null | undefined,
+  budget: number | null,
+): AgentContextPromptProfile[] {
+  if (budget === null) {
+    return [AGENT_CONTEXT_PROMPT_PROFILES[profile === "aggressive" ? "aggressive" : "balanced"]];
+  }
+  return profile === "aggressive"
+    ? [
+        AGENT_CONTEXT_PROMPT_PROFILES.aggressive,
+        AGENT_CONTEXT_PROMPT_PROFILES.tight,
+        AGENT_CONTEXT_PROMPT_PROFILES.minimal,
+        AGENT_CONTEXT_PROMPT_PROFILES.ids_only,
+      ]
+    : [
+        AGENT_CONTEXT_PROMPT_PROFILES.balanced,
+        AGENT_CONTEXT_PROMPT_PROFILES.aggressive,
+        AGENT_CONTEXT_PROMPT_PROFILES.tight,
+        AGENT_CONTEXT_PROMPT_PROFILES.minimal,
+        AGENT_CONTEXT_PROMPT_PROFILES.ids_only,
+      ];
+}
+
+function renderAgentContextPrompt(args: {
+  summary: string;
+  historyUsed: boolean;
+  recommendedPosture: AionisAgentContext["recommended_posture"];
+  authority: AionisAgentContext["authority"];
+  negativeTransferRisk: AionisAgentContext["risk"]["negative_transfer_risk"];
+  targetFiles: string[];
+  useNow: string[];
+  inspectBeforeUse: string[];
+  doNotUse: string[];
+  memoryIds: string[];
+  rehydrateHints: AionisAgentContext["rehydrate_hints"];
+  profile: AgentContextPromptProfile;
+}): string {
+  const inline = (label: string, values: string[], maxItems: number, maxChars: number): string | null => {
+    if (maxItems <= 0 || maxChars <= 0) return null;
+    const entries = values
+      .slice(0, maxItems)
+      .map((entry) => shortenPromptText(entry, maxChars));
+    return entries.length > 0 ? `${label}: ${entries.join(" | ")}` : null;
+  };
+  const sections = compactStrings([
+    `AIONIS_AGENT_CONTEXT v1`,
+    `state: history=${args.historyUsed ? "yes" : "no"} posture=${args.recommendedPosture} authority=${args.authority} risk=${args.negativeTransferRisk}`,
+    `summary: ${shortenPromptText(args.summary, args.profile.summaryChars)}`,
+    inline("target_files", args.targetFiles, args.profile.targetFileItems, args.profile.targetFileChars),
+    inline("use_now", args.useNow, args.profile.useNowItems, args.profile.useNowChars),
+    inline("inspect_before_use", args.inspectBeforeUse, args.profile.inspectItems, args.profile.inspectChars),
+    inline("do_not_use", args.doNotUse, args.profile.doNotUseItems, args.profile.doNotUseChars),
+    args.rehydrateHints.length > 0 && args.profile.rehydrateItems > 0
+      ? `rehydrate_if_needed: ${args.rehydrateHints
+        .slice(0, args.profile.rehydrateItems)
+        .map((entry) => `${entry.memory_id}${entry.required ? "!" : ""}:${shortenPromptText(entry.reason, args.profile.rehydrateChars)}`)
+        .join(" | ")}`
+      : null,
+    args.memoryIds.length > 0 && args.profile.memoryIdItems > 0
+      ? `memory_ids: ${args.memoryIds.slice(0, args.profile.memoryIdItems).join(",")}`
+      : null,
+  ]);
+  return sections.join("\n");
+}
+
 function buildAgentContextPrompt(args: {
   summary: string;
   historyUsed: boolean;
@@ -1024,30 +1186,17 @@ function buildAgentContextPrompt(args: {
   doNotUse: string[];
   memoryIds: string[];
   rehydrateHints: AionisAgentContext["rehydrate_hints"];
+  contextCharBudget?: number | null;
+  contextCompactionProfile?: "balanced" | "aggressive" | null;
 }): string {
-  const inline = (label: string, values: string[], maxItems: number, maxChars: number): string | null => {
-    const entries = values
-      .slice(0, maxItems)
-      .map((entry) => shortenPromptText(entry, maxChars));
-    return entries.length > 0 ? `${label}: ${entries.join(" | ")}` : null;
-  };
-  const sections = compactStrings([
-    `AIONIS_AGENT_CONTEXT v1`,
-    `state: history=${args.historyUsed ? "yes" : "no"} posture=${args.recommendedPosture} authority=${args.authority} risk=${args.negativeTransferRisk}`,
-    `summary: ${shortenPromptText(args.summary, 140)}`,
-    inline("target_files", args.targetFiles, 6, 120),
-    inline("use_now", args.useNow, 4, 220),
-    inline("inspect_before_use", args.inspectBeforeUse, 3, 140),
-    inline("do_not_use", args.doNotUse, 3, 140),
-    args.rehydrateHints.length > 0
-      ? `rehydrate_if_needed: ${args.rehydrateHints
-        .slice(0, 3)
-        .map((entry) => `${entry.memory_id}${entry.required ? "!" : ""}:${shortenPromptText(entry.reason, 100)}`)
-        .join(" | ")}`
-      : null,
-    args.memoryIds.length > 0 ? `memory_ids: ${args.memoryIds.slice(0, 6).join(",")}` : null,
-  ]);
-  return sections.join("\n");
+  const budget = boundedPromptCharBudget(args.contextCharBudget);
+  let lastPrompt = "";
+  for (const profile of promptProfilesFor(args.contextCompactionProfile, budget)) {
+    const prompt = renderAgentContextPrompt({ ...args, profile });
+    lastPrompt = prompt;
+    if (budget === null || prompt.length <= budget) return prompt;
+  }
+  return budget === null ? lastPrompt : shortenPromptText(lastPrompt, budget);
 }
 
 function shortenPromptText(value: string, maxChars: number): string {
@@ -1215,6 +1364,21 @@ function sameTargetSet(left: string[], right: string[]): boolean {
   return left.some((entry) => rightSet.has(entry));
 }
 
+function normalizePathTarget(value: string): string | null {
+  const normalized = value
+    .trim()
+    .replace(/[),.;:]+$/g, "")
+    .replace(/^\.\/+/, "")
+    .replace(/\/+/g, "/");
+  return normalized.length > 0 ? normalized : null;
+}
+
+function memoryEntryPathTargets(entry: MemoryPacketEntry): string[] {
+  const structuredTargets = compactStrings(entry.target_files.map(normalizePathTarget));
+  if (structuredTargets.length > 0) return structuredTargets;
+  return compactStrings(extractPathTargets(`${entry.title ?? ""}\n${entry.summary}`).map(normalizePathTarget));
+}
+
 function trustedWorkflowConflictAudit(entries: MemoryPacketEntry[]): {
   hasConflict: boolean;
   moveAllWorkflowUseNow: boolean;
@@ -1233,7 +1397,7 @@ function trustedWorkflowConflictAudit(entries: MemoryPacketEntry[]): {
 
   const selfDisclaimed = workflowEntries.filter((entry) => workflowConflictSignals(entry).length > 0);
   const entriesWithTargets = workflowEntries
-    .map((entry) => ({ entry, targets: extractPathTargets(`${entry.title ?? ""}\n${entry.summary}`) }))
+    .map((entry) => ({ entry, targets: memoryEntryPathTargets(entry) }))
     .filter((item) => item.targets.length > 0);
   const targetConflictEntries = new Set<MemoryPacketEntry>();
   for (let index = 0; index < entriesWithTargets.length; index += 1) {
@@ -1249,13 +1413,20 @@ function trustedWorkflowConflictAudit(entries: MemoryPacketEntry[]): {
 
   const conflictedEntries = [...new Set([...selfDisclaimed, ...targetConflictEntries])];
   const hasTargetConflict = targetConflictEntries.size > 0;
+  const ambiguousMultipleWorkflows =
+    workflowEntries.length > 1
+    && selfDisclaimed.length === 0
+    && !hasTargetConflict;
+  const moveAllTrustedWorkflows = workflowEntries.length > 1;
   return {
-    hasConflict: conflictedEntries.length > 0,
-    moveAllWorkflowUseNow: hasTargetConflict,
-    conflictedEntries,
+    hasConflict: conflictedEntries.length > 0 || moveAllTrustedWorkflows,
+    moveAllWorkflowUseNow: moveAllTrustedWorkflows,
+    conflictedEntries: moveAllTrustedWorkflows ? workflowEntries : conflictedEntries,
     reasons: compactStrings([
       selfDisclaimed.length > 0 ? "trusted_workflow_self_disclaimed_conflict" : null,
       hasTargetConflict ? "trusted_workflow_target_conflict" : null,
+      ambiguousMultipleWorkflows ? "multiple_trusted_workflows_require_inspection" : null,
+      moveAllTrustedWorkflows && !ambiguousMultipleWorkflows ? "multiple_trusted_workflows_require_inspection" : null,
     ]),
   };
 }
@@ -1439,11 +1610,11 @@ function compileAgentContextSurfaces(args: {
       blocked_authority_count: args.rawRisk.blocked_authority_count + blockedEntries.length,
       stale_memory_count: args.rawRisk.stale_memory_count,
       reasons: compactStrings([
-        ...args.rawRisk.reasons,
-        inspectEntries.length > 0 ? "candidate_or_contested_memory_kept_out_of_use_now" : null,
-        blockedEntries.length > 0 ? "blocked_or_suppressed_memory_kept_out_of_use_now" : null,
         trustedConflict.hasConflict ? "trusted_workflow_conflict_requires_inspection" : null,
         ...trustedConflict.reasons,
+        inspectEntries.length > 0 ? "candidate_or_contested_memory_kept_out_of_use_now" : null,
+        blockedEntries.length > 0 ? "blocked_or_suppressed_memory_kept_out_of_use_now" : null,
+        ...args.rawRisk.reasons,
       ]).slice(0, 5),
     },
   };
@@ -1521,6 +1692,8 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     doNotUse: surfaces.doNotUse,
     memoryIds,
     rehydrateHints,
+    contextCharBudget: args.context_char_budget,
+    contextCompactionProfile: args.context_compaction_profile,
   });
 
   return parseAionisAgentContext({
@@ -1610,6 +1783,8 @@ export function applyAionisInspectBeforeUseActiveProjection(
     doNotUse: args.agent_context.do_not_use,
     memoryIds: args.agent_context.memory_ids,
     rehydrateHints: args.agent_context.rehydrate_hints,
+    contextCharBudget: args.context_char_budget,
+    contextCompactionProfile: args.context_compaction_profile,
   });
 
   return parseAionisAgentContext({

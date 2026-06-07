@@ -1634,6 +1634,8 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       scope: String(body.scope ?? parsed.scope ?? env.MEMORY_SCOPE),
       memory_packet: memoryPacket,
       guide_packet: guidePacket,
+      context_char_budget: parsed.context_char_budget,
+      context_compaction_profile: parsed.context_compaction_profile ?? parsed.context_optimization_profile ?? null,
     });
     const tenantId = String(body.tenant_id ?? parsed.tenant_id ?? env.MEMORY_TENANT_ID);
     const scope = String(body.scope ?? parsed.scope ?? env.MEMORY_SCOPE);
@@ -1656,6 +1658,8 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
         memory_packet: memoryPacket,
         candidate_memory_ids: activeProjectionMemoryIds,
         reason: "inspect_before_use_active_projection",
+        context_char_budget: parsed.context_char_budget,
+        context_compaction_profile: parsed.context_compaction_profile ?? parsed.context_optimization_profile ?? null,
       });
       activeProjectionApplied = projectedContext !== agentContext;
       agentContext = projectedContext;
