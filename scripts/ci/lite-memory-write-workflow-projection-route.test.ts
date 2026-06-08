@@ -22,6 +22,7 @@ import {
 } from "../../src/memory/schemas.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
+import { createSqliteDatabase } from "../../src/store/sqlite.ts";
 import {
   createExecutionTreeV1,
   createLiteExecutionTreeStore,
@@ -32,6 +33,16 @@ import { InflightGate } from "../../src/util/inflight_gate.ts";
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-write-workflow-projection-"));
   return path.join(dir, `${name}.sqlite`);
+}
+
+function countExecutionTreeRows(dbPath: string): number {
+  const db = createSqliteDatabase(dbPath);
+  try {
+    const row = db.prepare<{ count: number }>("SELECT COUNT(*) AS count FROM lite_execution_trees").get();
+    return Number(row.count);
+  } finally {
+    db.close();
+  }
 }
 
 function buildEnv(overrides: Record<string, unknown> = {}) {
@@ -606,6 +617,79 @@ test("memory/write auto-creates execution tree from execution continuity slots",
     );
     assert.equal(stored?.revision, 4);
     assert.equal(stored?.tree.current_summary_node_id, "summary:2");
+  } finally {
+    await app.close();
+    await liteWriteStore.close();
+    await liteRecallStore.close();
+    await executionTreeStore.close();
+  }
+});
+
+test("memory/write does not auto-create execution tree for ordinary preference fact or general memory", async () => {
+  const dbPath = tmpDbPath("write-ordinary-memory-no-execution-tree");
+  const app = Fastify();
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const executionTreeStore = createLiteExecutionTreeStore(dbPath);
+  try {
+    registerApp({
+      app,
+      liteWriteStore,
+      liteRecallStore,
+      executionTreeStore,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/memory/write",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        input_text: "Record ordinary user preference, project fact, and general context without execution state.",
+        auto_embed: true,
+        memory_lane: "private",
+        nodes: [
+          {
+            client_id: "ordinary-preference-no-tree",
+            type: "rule",
+            title: "User response preference",
+            text_summary: "The user prefers concise status summaries.",
+            slots: {
+              memory_type: "preference",
+              preference: "concise status summaries",
+              source: "user_stated",
+            },
+          },
+          {
+            client_id: "ordinary-fact-no-tree",
+            type: "concept",
+            title: "Runtime project fact",
+            text_summary: "Aionis Runtime is the local memory runtime under test.",
+            slots: {
+              memory_type: "fact",
+              fact_scope: "project",
+              source: "operator_note",
+            },
+          },
+          {
+            client_id: "ordinary-general-context-no-tree",
+            type: "entity",
+            title: "General project context",
+            text_summary: "General memory can be recalled without becoming execution state.",
+            slots: {
+              memory_type: "general",
+              topic: "runtime memory",
+              source: "operator_note",
+            },
+          },
+        ],
+        edges: [],
+      },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    const body = response.json();
+    assert.equal(body.nodes.length, 3);
+    assert.equal(countExecutionTreeRows(dbPath), 0);
   } finally {
     await app.close();
     await liteWriteStore.close();
