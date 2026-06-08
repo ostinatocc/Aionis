@@ -1,6 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Env } from "../config.js";
 import type { ExecutionStateStore } from "../execution/state-store.js";
+import type { ExecutionTreeStore } from "../execution/tree-store.js";
+import {
+  applyAutoExecutionTreeFromSlots,
+  isExecutionTreeDefaultDisabled,
+} from "../execution/tree-auto.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
 import { createEmbeddingSurfacePolicy, type EmbeddingSurfacePolicy } from "../embeddings/surface-policy.js";
 import {
@@ -32,6 +37,14 @@ type PreparedWriteRouteState = PreparedWrite & {
 
 type WriteWarningLike = { code: string; message: string; details?: Record<string, unknown> };
 type LiteInlineEmbeddingResultLike = { updated: number; failed: number; error?: string | null } | null;
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function isExecutionTreeDefaultDisabledRequest(body: unknown): boolean {
+  return isExecutionTreeDefaultDisabled(asRecord(body));
+}
 
 function isEnqueuedTopicCluster(result: WriteResult["topic_cluster"]): result is { enqueued: true } {
   return !!result && "enqueued" in result && result.enqueued === true;
@@ -66,6 +79,7 @@ export function registerMemoryWriteRoutes(args: {
   tenantFromBody: (body: unknown) => string;
   acquireInflightSlot: (kind: "write") => Promise<InflightGateToken>;
   executionStateStore?: ExecutionStateStore | null;
+  executionTreeStore?: ExecutionTreeStore | null;
   learningControlRuntimeProviderBuilderOptions?: LiteLearningControlRuntimeProviderBuilderOptions;
 }) {
   const {
@@ -81,6 +95,7 @@ export function registerMemoryWriteRoutes(args: {
     tenantFromBody,
     acquireInflightSlot,
     executionStateStore,
+    executionTreeStore,
   } = args;
   if (env.AIONIS_EDITION !== "lite") {
     throw new Error("aionis-lite memory-write route only supports AIONIS_EDITION=lite");
@@ -219,6 +234,7 @@ export function registerMemoryWriteRoutes(args: {
     prepared: PreparedWriteRouteState;
     out: WriteResult;
     executionOverlays: ReturnType<typeof collectExecutionWriteOverlaySlots> | null;
+    executionTreeDefaultDisabled: boolean;
   }) => {
     if (executionStateStore && args.executionOverlays) {
       for (const state of args.executionOverlays.states) {
@@ -226,6 +242,31 @@ export function registerMemoryWriteRoutes(args: {
       }
       for (const transition of args.executionOverlays.transitions) {
         executionStateStore.applyTransition(transition);
+      }
+    }
+    if (executionTreeStore && args.executionOverlays) {
+      for (const tree of args.executionOverlays.trees) {
+        const hasOperationsForTree = args.executionOverlays.treeOperations.some(
+          (operation) => operation.scope === tree.scope && operation.tree_id === tree.tree_id,
+        );
+        if (!hasOperationsForTree || !executionTreeStore.has(tree.scope, tree.tree_id)) {
+          executionTreeStore.put(tree);
+        }
+      }
+      for (const operation of args.executionOverlays.treeOperations) {
+        executionTreeStore.applyOperation(operation);
+      }
+      if (!args.executionTreeDefaultDisabled && env.EXECUTION_TREE_DEFAULT_ENABLED !== false) {
+        for (const node of args.prepared.nodes) {
+          const slots = asRecord(node.slots);
+          if (!slots) continue;
+          applyAutoExecutionTreeFromSlots({
+            executionTreeStore,
+            slots,
+            title: typeof node.title === "string" ? node.title : null,
+            textSummary: typeof node.text_summary === "string" ? node.text_summary : null,
+          });
+        }
       }
     }
   };
@@ -264,7 +305,9 @@ export function registerMemoryWriteRoutes(args: {
       writeEmbedder,
     );
     const preparedForRoute: PreparedWriteRouteState = prepared;
-    const executionOverlays = executionStateStore ? collectExecutionWriteOverlaySlots(preparedForRoute.nodes) : null;
+    const executionOverlays = executionStateStore || executionTreeStore
+      ? collectExecutionWriteOverlaySlots(preparedForRoute.nodes)
+      : null;
     if (env.MEMORY_WRITE_REQUIRE_NODES && prepared.nodes.length === 0) {
       throw new HttpError(
         400,
@@ -300,6 +343,7 @@ export function registerMemoryWriteRoutes(args: {
     out: WriteResult;
     computedPolicy: EffectiveWritePolicy;
     policy: EffectiveWritePolicy;
+    executionTreeDefaultDisabled: boolean;
     forcedLiteTopicClusterAsync: boolean;
     liteInlineEmbedding: LiteInlineEmbeddingResultLike;
     ms: number;
@@ -318,6 +362,7 @@ export function registerMemoryWriteRoutes(args: {
       prepared: args.preparedForRoute,
       out: args.out,
       executionOverlays: args.executionOverlays,
+      executionTreeDefaultDisabled: args.executionTreeDefaultDisabled,
     });
 
     const writeContext = resolveWriteScopeTenant({
@@ -350,6 +395,7 @@ export function registerMemoryWriteRoutes(args: {
     const gate = await acquireInflightSlot("write");
     try {
       const { prepared, preparedForRoute, executionOverlays, computedPolicy, policy } = await prepareWriteRouteState(body);
+      const executionTreeDefaultDisabled = isExecutionTreeDefaultDisabledRequest(body);
       const { out, forcedLiteTopicClusterAsync, liteInlineEmbedding } = await runCommittedMemoryWrite({
         prepared: preparedForRoute,
         policy,
@@ -362,6 +408,7 @@ export function registerMemoryWriteRoutes(args: {
         executionOverlays,
         computedPolicy,
         policy,
+        executionTreeDefaultDisabled,
         forcedLiteTopicClusterAsync,
         liteInlineEmbedding,
         ms: performance.now() - t0,

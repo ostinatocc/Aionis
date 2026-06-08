@@ -3,13 +3,21 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createLiteExecutionStateStore } from "../../src/execution/state-store.ts";
-import type { ExecutionStateV1 } from "../../src/execution/types.ts";
+import {
+  createExecutionTreeV1,
+  applyExecutionTreeOperationV1,
+  createLiteExecutionStateStore,
+  createLiteExecutionTreeStore,
+  type ExecutionStateV1,
+  type ExecutionTreeOperationV1,
+} from "../../src/execution/index.ts";
 import {
   applyExecutionContinuityTransitionsFromSlots,
+  applyExecutionTreeOperationsFromSlots,
   buildExecutionContinuityContext,
   executionContinuityKernel,
   executionPacketToStaticBlocks,
+  executionTreeToStaticBlocks,
   mergeExecutionPacketStaticBlocks,
   resolveExecutionKernelContext,
 } from "../../src/kernel/execution-continuity-kernel.ts";
@@ -54,6 +62,78 @@ function sampleState(): ExecutionStateV1 {
   };
 }
 
+function treeOp(input: Omit<ExecutionTreeOperationV1, "tree_id" | "scope" | "actor_role">): ExecutionTreeOperationV1 {
+  return {
+    tree_id: "tree-focused-continuity",
+    scope: "focused-scope",
+    actor_role: "patch",
+    ...input,
+  } as ExecutionTreeOperationV1;
+}
+
+function sampleExecutionTree() {
+  let tree = createExecutionTreeV1({
+    tree_id: "tree-focused-continuity",
+    scope: "focused-scope",
+    task_brief: "Keep execution context branch-aware",
+    at: now,
+  });
+  for (const operation of [
+    treeOp({
+      operation_id: "grow-1",
+      type: "grow",
+      at: "2026-05-18T00:01:00.000Z",
+      action: "inspect focused kernel files",
+      observation: "identified the continuity boundary",
+      title: null,
+      tool_name: "bash",
+      refs: [],
+    }),
+    treeOp({
+      operation_id: "compress-1",
+      type: "compress",
+      at: "2026-05-18T00:02:00.000Z",
+      title: "inspection boundary",
+      summary: "Continuity boundary is identified and preserved.",
+    }),
+    treeOp({
+      operation_id: "grow-bad",
+      type: "grow",
+      at: "2026-05-18T00:03:00.000Z",
+      action: "rewrite unrelated runtime surfaces",
+      observation: "review rejected the broad path",
+      title: null,
+      tool_name: "bash",
+      refs: [],
+    }),
+    treeOp({
+      operation_id: "compress-bad",
+      type: "compress",
+      at: "2026-05-18T00:04:00.000Z",
+      title: "broad attempt",
+      summary: "Broad rewrite attempted and rejected.",
+    }),
+    treeOp({
+      operation_id: "maintain-bad",
+      type: "maintain",
+      at: "2026-05-18T00:05:00.000Z",
+      passed: false,
+      target_summary_node_id: "summary:4",
+      diagnostic_note: "broad attempt is not part of the accepted execution path",
+    }),
+    treeOp({
+      operation_id: "revise-bad",
+      type: "revise",
+      at: "2026-05-18T00:06:00.000Z",
+      target_summary_node_id: "summary:4",
+      diagnostic_note: "restore to focused boundary",
+    }),
+  ] as ExecutionTreeOperationV1[]) {
+    tree = applyExecutionTreeOperationV1(tree, operation);
+  }
+  return tree;
+}
+
 test("execution continuity kernel recovers state-first packet context", () => {
   const state = sampleState();
   const recovered = resolveExecutionKernelContext({ execution_state_v1: state });
@@ -92,6 +172,34 @@ test("execution continuity kernel builds always-included static context from pac
   assert.equal(merged[0]?.title, "Execution Brief");
   assert.ok(merged.some((block) => block.id === "execution-side-outputs"));
   assert.equal(merged.at(-1)?.id, "caller-context");
+});
+
+test("execution continuity kernel includes branch-aware execution tree context", () => {
+  const tree = sampleExecutionTree();
+  const treeBlocks = executionTreeToStaticBlocks(tree);
+
+  const compressed = treeBlocks.find((block) => block.title === "Execution Compressed State");
+  const hints = treeBlocks.find((block) => block.title === "Execution Branch Hints");
+  assert.equal(compressed?.always_include, true);
+  assert.ok(compressed?.tags.includes("continuation"));
+  assert.ok(compressed?.content.includes("branch_role=current_compressed_path; use_for_next_action=true"));
+  assert.ok(compressed?.content.includes("Continuity boundary is identified and preserved."));
+  assert.ok(!compressed?.content.includes("Broad rewrite attempted and rejected."));
+  assert.equal(hints?.always_include, false);
+  assert.ok((hints?.priority ?? 100) < (compressed?.priority ?? 0));
+  assert.ok(hints?.tags.includes("failed-branch"));
+  assert.ok(hints?.intents.includes("avoid"));
+  assert.ok(hints?.content.includes("branch_role=failed_or_alternate_branch; use_for_next_action=false"));
+  assert.ok(hints?.content.includes("avoid_branch=true"));
+  assert.ok(hints?.content.includes("Broad rewrite attempted and rejected."));
+  assert.ok(hints?.content.includes("restore to focused boundary"));
+
+  const merged = mergeExecutionPacketStaticBlocks({
+    execution_state_v1: sampleState(),
+    execution_tree_v1: tree,
+  });
+  assert.ok(merged.some((block) => block.title === "Execution Compressed State"));
+  assert.ok(merged.some((block) => block.title === "Execution Branch Hints"));
 });
 
 test("execution continuity kernel injects side outputs into context without overwriting caller values", () => {
@@ -148,6 +256,45 @@ test("execution continuity kernel persists handoff transitions across reopened L
     assert.equal(recovered?.last_transition_type, "validation_completed");
   } finally {
     await reopened.close();
+  }
+});
+
+test("execution continuity kernel persists execution tree operations from write slots", async () => {
+  const dbPath = tmpDbPath("continuity-tree");
+  const store = createLiteExecutionTreeStore(dbPath);
+  const tree = createExecutionTreeV1({
+    tree_id: "tree-focused-continuity",
+    scope: "focused-scope",
+    task_brief: "Persist branch-aware continuity through write slots",
+    at: now,
+  });
+  try {
+    const applied = applyExecutionTreeOperationsFromSlots({
+      executionTreeStore: store,
+      writeSlots: {
+        execution_tree_v1: tree,
+        execution_tree_operations_v1: [
+          treeOp({
+            operation_id: "grow-slot-1",
+            type: "grow",
+            at: "2026-05-18T00:01:00.000Z",
+            action: "inspect execution tree slot",
+            observation: "tree operation persisted through the kernel helper",
+            title: null,
+            tool_name: "bash",
+            refs: [],
+          }),
+        ],
+      },
+    });
+
+    assert.equal(applied?.length, 1);
+    const stored = store.get(tree.scope, tree.tree_id);
+    assert.equal(stored?.revision, 2);
+    assert.equal(stored?.last_operation_type, "grow");
+    assert.equal(stored?.tree.nodes[stored.tree.current_raw_node_id]?.content.action, "inspect execution tree slot");
+  } finally {
+    await store.close();
   }
 });
 

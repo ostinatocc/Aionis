@@ -57,6 +57,14 @@ Supported product inputs:
 
 This facade is a product input adapter only. It must not add host-specific behavior, benchmark-specific actions, or single-task repair rules. Internal routes may still use richer schemas after the facade has normalized user input.
 
+### Execution State Tree Default
+
+Execution-tree state is a default internal product path for execution continuity, not a replacement for ordinary memory.
+
+Default tree construction applies when `POST /v1/handoff/store` or `POST /v1/memory/write` carries execution continuity slots such as `execution_state_v1`, `execution_packet_v1`, `execution_result_summary`, `execution_artifacts`, or `execution_evidence`. The Runtime records the current execution branch, compressed progress, validation outcome, and failed/alternate branch hints so later `guide`, planning, context assembly, and recover surfaces can use the current branch without promoting failed branches as next-action context.
+
+This default path must stay scoped to execution state. Plain facts, preferences, and general cognitive memory must not be auto-converted into execution trees. Callers can disable only the automatic tree side effect by setting `execution_tree_disabled: true` or `execution_tree_default_disabled: true` on handoff/write requests; explicit `execution_tree_v1` and `execution_tree_operations_v1` remain caller-owned state and are still applied. Operators can disable the default globally with `EXECUTION_TREE_DEFAULT_ENABLED=false`.
+
 ## Guide Output Contract
 
 `POST /v1/guide` is the product entry for giving an Agent usable historical context.

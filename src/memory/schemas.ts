@@ -9,6 +9,7 @@ import {
   ExecutionStateV1Schema,
 } from "../execution/types.js";
 import { ExecutionStateTransitionV1Schema } from "../execution/transitions.js";
+import { ExecutionTreeV1Schema, ExecutionTreeOperationV1Schema } from "../execution/tree.js";
 import {
   RuntimeVerificationControlV1Schema,
   RuntimeVerificationSurfaceV1Schema,
@@ -116,6 +117,8 @@ export const MemoryWriteRequest = z
     force_reembed: z.boolean().optional(),
     trigger_topic_cluster: z.boolean().optional(),
     topic_cluster_async: z.boolean().optional(),
+    execution_tree_disabled: z.boolean().optional(),
+    execution_tree_default_disabled: z.boolean().optional(),
     distill: z
       .object({
         enabled: z.boolean().default(true),
@@ -1114,6 +1117,7 @@ export const PlanningContextRequest = z.object({
   execution_evidence: z.array(z.record(z.unknown())).optional(),
   execution_state_v1: ExecutionStateV1Schema.optional(),
   execution_packet_v1: ExecutionPacketV1Schema.optional(),
+  execution_tree_v1: ExecutionTreeV1Schema.optional(),
   edit_boundary_context: RuntimeEditBoundaryContextSchema.optional(),
   runtime_verification: RuntimeVerificationControlV1Schema.optional(),
   trajectory: TrajectoryCompileSourceSchema.optional(),
@@ -1166,6 +1170,7 @@ export const ContextAssembleRequest = z.object({
   execution_evidence: z.array(z.record(z.unknown())).optional(),
   execution_state_v1: ExecutionStateV1Schema.optional(),
   execution_packet_v1: ExecutionPacketV1Schema.optional(),
+  execution_tree_v1: ExecutionTreeV1Schema.optional(),
   edit_boundary_context: RuntimeEditBoundaryContextSchema.optional(),
   runtime_verification: RuntimeVerificationControlV1Schema.optional(),
   trajectory: TrajectoryCompileSourceSchema.optional(),
@@ -2799,6 +2804,29 @@ export const PlannerPacketTextSurfaceSchema = z.object({
 
 export type PlannerPacketTextSurface = z.infer<typeof PlannerPacketTextSurfaceSchema>;
 
+export const ExecutionTreeEffectSummarySchema = z.object({
+  summary_version: z.literal("execution_tree_effect_summary_v1"),
+  tree_present: z.boolean(),
+  static_selection_observed: z.boolean(),
+  current_compressed_node_count: z.number().int().min(0),
+  current_raw_node_count: z.number().int().min(0),
+  branch_hint_count: z.number().int().min(0),
+  failed_branch_hint_count: z.number().int().min(0),
+  alternate_branch_hint_count: z.number().int().min(0),
+  validated_current_node_count: z.number().int().min(0),
+  selected_current_block_count: z.number().int().min(0),
+  selected_failed_hint_block_count: z.number().int().min(0),
+  compression_signal_present: z.boolean(),
+  revision_signal_present: z.boolean(),
+  raw_continuation_signal_present: z.boolean(),
+  failed_branch_isolated: z.boolean(),
+  next_action_contamination_risk: z.enum(["none", "unobserved", "possible"]),
+  effect_posture: z.enum(["absent", "continuity_available", "branch_isolated", "needs_review"]),
+  findings: z.array(z.string().min(1).max(256)).max(8),
+}).strict();
+
+export type ExecutionTreeEffectSummary = z.infer<typeof ExecutionTreeEffectSummarySchema>;
+
 export const ExecutionMemoryOperatorSurfaceSchema = z.object({
   surface_version: z.literal("execution_memory_operator_v1"),
   headline: z.string(),
@@ -2818,6 +2846,7 @@ export const ExecutionKernelPacketSummarySchema = z.object({
   execution_packet_v1_present: z.boolean(),
   execution_state_v1_present: z.boolean(),
   runtime_verification: RuntimeVerificationSurfaceV1Schema.optional(),
+  execution_tree_effect_summary: ExecutionTreeEffectSummarySchema.optional(),
   pattern_signal_summary: PatternSignalSummarySchema,
   workflow_signal_summary: WorkflowSignalSummarySchema,
   workflow_lifecycle_summary: WorkflowLifecycleSummarySchema,
@@ -3082,6 +3111,7 @@ export const ExecutionSummaryV1Schema = z.object({
   collaboration_routing_summary: ExecutionCollaborationRoutingSummarySchema,
   delegation_records_summary: ExecutionDelegationRecordsSummarySchema,
   instrumentation_summary: ExecutionInstrumentationSummarySchema,
+  execution_tree_effect_summary: ExecutionTreeEffectSummarySchema.optional(),
   pattern_signal_summary: PatternSignalSummarySchema,
   workflow_signal_summary: WorkflowSignalSummarySchema,
   workflow_lifecycle_summary: WorkflowLifecycleSummarySchema,
@@ -3619,6 +3649,7 @@ export const PlanningSummaryContractSchema = z.object({
   policy_maintenance_summary: PolicyMaintenanceSummarySchema,
   continuity_carrier_summary: ContinuityCarrierSummarySchema,
   forgetting_summary: ExecutionForgettingSummarySchema,
+  execution_tree_effect_summary: ExecutionTreeEffectSummarySchema.optional(),
   trusted_pattern_count: z.number().int().min(0),
   contested_pattern_count: z.number().int().min(0),
   trusted_pattern_tools: z.array(z.string()),
@@ -3649,6 +3680,7 @@ export const AssemblySummaryContractSchema = z.object({
   policy_maintenance_summary: PolicyMaintenanceSummarySchema,
   continuity_carrier_summary: ContinuityCarrierSummarySchema,
   forgetting_summary: ExecutionForgettingSummarySchema,
+  execution_tree_effect_summary: ExecutionTreeEffectSummarySchema.optional(),
   trusted_pattern_count: z.number().int().min(0),
   contested_pattern_count: z.number().int().min(0),
   trusted_pattern_tools: z.array(z.string()),
@@ -4200,6 +4232,10 @@ export const HandoffStoreRequest = z.object({
   execution_packet_v1: ExecutionPacketV1Schema.optional(),
   control_profile_v1: ControlProfileV1Schema.optional(),
   execution_transitions_v1: z.array(ExecutionStateTransitionV1Schema).optional(),
+  execution_tree_disabled: z.boolean().optional(),
+  execution_tree_default_disabled: z.boolean().optional(),
+  execution_tree_v1: ExecutionTreeV1Schema.optional(),
+  execution_tree_operations_v1: z.array(ExecutionTreeOperationV1Schema).optional(),
   trajectory: TrajectoryCompileSourceSchema.optional(),
   trajectory_hints: TrajectoryCompileHintsSchema.optional(),
 }).superRefine((value, ctx) => {

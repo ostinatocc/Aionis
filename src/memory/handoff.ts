@@ -20,12 +20,17 @@ import {
   ExecutionPacketV1Schema,
   ExecutionStateV1Schema,
   ExecutionStateTransitionV1Schema,
+  ExecutionTreeV1Schema,
+  createExecutionTreeFromExecutionStateV1,
   type ExecutionStateStore,
+  type ExecutionTreeStore,
   type ControlProfileName,
   type ControlProfileV1,
   type ExecutionPacketV1,
   type ExecutionStateV1,
   type ExecutionStateTransitionV1,
+  type ExecutionTreeV1,
+  type ExecutionTreeOperationV1,
   type ReviewerContract,
   type ResumeAnchor,
 } from "../execution/index.js";
@@ -82,9 +87,11 @@ type RecoveredExecutionProjection = {
   execution_state_v1: ExecutionStateV1;
   execution_packet_v1: ExecutionPacketV1;
   control_profile_v1: ControlProfileV1;
+  execution_tree_v1?: ExecutionTreeV1;
 };
 
 type HandoffStoreExecutionTransitions = ExecutionStateTransitionV1[];
+type HandoffStoreExecutionTreeOperations = ExecutionTreeOperationV1[];
 type DelegationRecordSourceMode = "memory_only" | "packet_backed";
 
 export function buildHandoffExecutionStateIdentity(anchor: string): { state_id: string; scope: string } {
@@ -173,7 +180,7 @@ function extractExecutionRefs(entries: Array<Record<string, unknown>>, limit = 8
 }
 
 function deriveDelegationSourceMode(raw: Record<string, unknown>): DelegationRecordSourceMode {
-  return raw.execution_packet_v1 || raw.execution_state_v1 ? "packet_backed" : "memory_only";
+  return raw.execution_packet_v1 || raw.execution_state_v1 || raw.execution_tree_v1 ? "packet_backed" : "memory_only";
 }
 
 function buildStoredPromptSafeHandoff(input: {
@@ -300,10 +307,12 @@ function readInlineExecutionProjection(raw: Record<string, unknown>, executionRe
     const controlProfile = raw.control_profile_v1
       ? ControlProfileV1Schema.parse(raw.control_profile_v1)
       : deriveControlProfile(state.current_stage);
+    const tree = raw.execution_tree_v1 ? ExecutionTreeV1Schema.parse(raw.execution_tree_v1) : null;
     return {
       execution_state_v1: state,
       execution_packet_v1: packet,
       control_profile_v1: controlProfile,
+      ...(tree ? { execution_tree_v1: tree } : {}),
     };
   } catch {
     return null;
@@ -567,6 +576,8 @@ export function buildHandoffWriteBody(input: unknown): MemoryWriteInput {
   const executionTransitions = Array.isArray(raw.execution_transitions_v1)
     ? raw.execution_transitions_v1.map((transition) => ExecutionStateTransitionV1Schema.parse(transition))
     : buildHandoffStoreExecutionTransitions(effectiveExecutionProjection.execution_state_v1);
+  const executionTree = parsed.execution_tree_v1 ?? effectiveExecutionProjection.execution_tree_v1 ?? null;
+  const executionTreeOperations: HandoffStoreExecutionTreeOperations = parsed.execution_tree_operations_v1 ?? [];
   const executionArtifacts = safeRecordArray(parsed.execution_artifacts);
   const executionEvidence = safeRecordArray(parsed.execution_evidence);
   const executionResultSummary = compiledTrajectory
@@ -664,6 +675,11 @@ export function buildHandoffWriteBody(input: unknown): MemoryWriteInput {
           execution_packet_v1: effectiveExecutionProjection.execution_packet_v1,
           control_profile_v1: effectiveExecutionProjection.control_profile_v1,
           execution_transitions_v1: executionTransitions,
+          ...((parsed.execution_tree_disabled || parsed.execution_tree_default_disabled)
+            ? { execution_tree_disabled: true }
+            : {}),
+          ...(executionTree ? { execution_tree_v1: executionTree } : {}),
+          ...(executionTreeOperations.length > 0 ? { execution_tree_operations_v1: executionTreeOperations } : {}),
           delegation_records_v1: delegationRecords,
         },
       },
@@ -841,15 +857,18 @@ function readStoredExecutionProjection(node: HandoffNode): RecoveredExecutionPro
   const rawState = (slots as Record<string, unknown>).execution_state_v1;
   const rawPacket = (slots as Record<string, unknown>).execution_packet_v1;
   const rawControlProfile = (slots as Record<string, unknown>).control_profile_v1;
+  const rawTree = (slots as Record<string, unknown>).execution_tree_v1;
   if (!rawState || !rawPacket) return null;
   try {
     const parsedState = ExecutionStateV1Schema.parse(rawState);
+    const parsedTree = rawTree ? ExecutionTreeV1Schema.parse(rawTree) : null;
     return {
       execution_state_v1: parsedState,
       execution_packet_v1: ExecutionPacketV1Schema.parse(rawPacket),
       control_profile_v1: rawControlProfile
         ? ControlProfileV1Schema.parse(rawControlProfile)
         : deriveControlProfile(parsedState.current_stage),
+      ...(parsedTree ? { execution_tree_v1: parsedTree } : {}),
     };
   } catch {
     return null;
@@ -880,6 +899,27 @@ function readExecutionProjectionFromStateStore(
   };
 }
 
+function readStoredExecutionTree(node: HandoffNode): ExecutionTreeV1 | null {
+  const slots = node.slots && typeof node.slots === "object" ? node.slots : null;
+  if (!slots) return null;
+  const rawTree = (slots as Record<string, unknown>).execution_tree_v1;
+  if (!rawTree) return null;
+  try {
+    return ExecutionTreeV1Schema.parse(rawTree);
+  } catch {
+    return null;
+  }
+}
+
+function readExecutionTreeFromStore(
+  executionTreeStore: ExecutionTreeStore | null | undefined,
+  fallbackTree: ExecutionTreeV1 | null,
+): ExecutionTreeV1 | null {
+  if (!executionTreeStore || !fallbackTree) return null;
+  const stored = executionTreeStore.get(fallbackTree.scope, fallbackTree.tree_id);
+  return stored?.tree ?? null;
+}
+
 function deriveControlProfile(stage: ExecutionStateV1["current_stage"]): ControlProfileV1 {
   const profileName = (stage === "resume" ? "resume" : stage) satisfies ControlProfileName;
   return controlProfileDefaults(profileName);
@@ -890,6 +930,7 @@ function normalizeRecoveredHandoff(
   matchedNodes: number,
   input: HandoffRecoverInput,
   executionStateStore?: ExecutionStateStore | null,
+  executionTreeStore?: ExecutionTreeStore | null,
 ) {
   const promptSafe = buildPromptSafeHandoff(node, input);
   const executionReady = buildExecutionReadyHandoff(node, input, promptSafe);
@@ -898,6 +939,9 @@ function normalizeRecoveredHandoff(
     readExecutionProjectionFromStateStore(executionStateStore, promptSafe.anchor, executionReady, node) ??
     readStoredExecutionProjection(node) ??
     buildExecutionProjectionFromRecoveredHandoff(node, promptSafe, executionReady);
+  const storedExecutionTree = readStoredExecutionTree(node) ?? executionProjection.execution_tree_v1 ?? null;
+  const lookupExecutionTree = storedExecutionTree ?? createExecutionTreeFromExecutionStateV1(executionProjection.execution_state_v1);
+  const latestExecutionTree = readExecutionTreeFromStore(executionTreeStore, lookupExecutionTree) ?? storedExecutionTree;
   const executionArtifacts =
     slots && "execution_artifacts" in slots ? safeRecordArray(slots.execution_artifacts) : undefined;
   const executionEvidence =
@@ -965,6 +1009,7 @@ function normalizeRecoveredHandoff(
     execution_evidence: executionEvidence,
     delegation_records_v1: delegationRecords,
     ...executionProjection,
+    ...(latestExecutionTree ? { execution_tree_v1: latestExecutionTree } : {}),
   };
 }
 
@@ -994,6 +1039,7 @@ function pickLatestHandoffCandidate(nodes: unknown[]): HandoffFindCandidate | nu
 export async function recoverHandoff(args: {
   liteWriteStore: LiteWriteStore;
   executionStateStore?: ExecutionStateStore | null;
+  executionTreeStore?: ExecutionTreeStore | null;
   input: unknown;
   defaultScope: string;
   defaultTenantId: string;
@@ -1094,6 +1140,6 @@ export async function recoverHandoff(args: {
   return {
     tenant_id: resolvedTenantId,
     scope: resolvedScope,
-    ...normalizeRecoveredHandoff(resolved.node as HandoffNode, matchedNodes, parsed, args.executionStateStore),
+    ...normalizeRecoveredHandoff(resolved.node as HandoffNode, matchedNodes, parsed, args.executionStateStore, args.executionTreeStore),
   };
 }

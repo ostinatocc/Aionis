@@ -41,10 +41,12 @@ export function registerBootstrapLifecycle(args: {
   liteReplayStore?: CloseableRuntimeStore | null;
   liteWriteStore?: CloseableRuntimeStore | null;
   executionStateStore?: CloseableRuntimeStore | null;
+  executionTreeStore?: CloseableRuntimeStore | null;
 }) {
-  const { app, store, sandboxExecutor, liteRecallStore, liteReplayStore, liteWriteStore, executionStateStore } = args;
+  const { app, store, sandboxExecutor, liteRecallStore, liteReplayStore, liteWriteStore, executionStateStore, executionTreeStore } = args;
   app.addHook("onClose", async () => {
     sandboxExecutor.shutdown();
+    if (executionTreeStore) await executionTreeStore.close();
     if (executionStateStore) await executionStateStore.close();
     if (liteRecallStore) await liteRecallStore.close();
     if (liteReplayStore) await liteReplayStore.close();

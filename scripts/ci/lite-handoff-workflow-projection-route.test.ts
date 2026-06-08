@@ -12,6 +12,7 @@ import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
 import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
 import { registerHandoffRoutes } from "../../src/routes/handoff.ts";
 import {
+  ContextAssembleRouteContractSchema,
   ExecutionMemoryIntrospectionResponseSchema,
   ExperienceIntelligenceResponseSchema,
   PlanningContextRouteContractSchema,
@@ -19,6 +20,12 @@ import {
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { createLiteExecutionStateStore } from "../../src/execution/state-store.ts";
+import {
+  applyExecutionTreeOperationV1,
+  createExecutionTreeV1,
+  createLiteExecutionTreeStore,
+  type ExecutionTreeOperationV1,
+} from "../../src/execution/index.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
 
 function tmpDbPath(name: string): string {
@@ -48,6 +55,7 @@ function buildEnv(overrides: Record<string, unknown> = {}) {
     AUTO_TOPIC_CLUSTER_ON_WRITE: false,
     TOPIC_CLUSTER_ASYNC_ON_WRITE: true,
     MEMORY_WRITE_REQUIRE_NODES: false,
+    EXECUTION_TREE_DEFAULT_ENABLED: true,
     MEMORY_RECALL_TEXT_CONTEXT_TOKEN_BUDGET_DEFAULT: 4096,
     MEMORY_RECALL_STAGE1_EXACT_RECOVERY_ON_EMPTY: true,
     MEMORY_RECALL_ADAPTIVE_HARD_CAP_WAIT_MS: 0,
@@ -63,6 +71,7 @@ function registerApp(args: {
   liteWriteStore: ReturnType<typeof createLiteWriteStore>;
   liteRecallStore: ReturnType<typeof createLiteRecallStore>;
   executionStateStore?: ReturnType<typeof createLiteExecutionStateStore> | null;
+  executionTreeStore?: ReturnType<typeof createLiteExecutionTreeStore> | null;
   envOverrides?: Record<string, unknown>;
 }) {
   const env = buildEnv(args.envOverrides);
@@ -91,6 +100,7 @@ function registerApp(args: {
     tenantFromBody: guards.tenantFromBody,
     acquireInflightSlot: guards.acquireInflightSlot,
     executionStateStore: args.executionStateStore ?? null,
+    executionTreeStore: args.executionTreeStore ?? null,
   });
 
   registerMemoryContextRuntimeRoutes({
@@ -268,6 +278,213 @@ function buildHandoffPayload(args: {
   };
 }
 
+function handoffTreeOperation(
+  input: Omit<ExecutionTreeOperationV1, "tree_id" | "scope" | "actor_role">,
+): ExecutionTreeOperationV1 {
+  return {
+    tree_id: "tree-handoff-runtime",
+    scope: "aionis://execution-tree/handoff-runtime",
+    actor_role: "patch",
+    ...input,
+  } as ExecutionTreeOperationV1;
+}
+
+function planningTreeOperation(
+  input: Omit<ExecutionTreeOperationV1, "tree_id" | "scope" | "actor_role">,
+): ExecutionTreeOperationV1 {
+  return {
+    tree_id: "tree-planning-runtime",
+    scope: "aionis://execution-tree/planning-runtime",
+    actor_role: "patch",
+    ...input,
+  } as ExecutionTreeOperationV1;
+}
+
+function buildPlanningExecutionTreeWithFailedBranch() {
+  let tree = createExecutionTreeV1({
+    tree_id: "tree-planning-runtime",
+    scope: "aionis://execution-tree/planning-runtime",
+    task_brief: "Keep planning continuation branch-aware",
+    at: "2026-03-21T12:00:00.000Z",
+  });
+  for (const operation of [
+    planningTreeOperation({
+      operation_id: "planning-tree-grow-1",
+      type: "grow",
+      at: "2026-03-21T12:01:00.000Z",
+      action: "inspect narrow continuation boundary",
+      observation: "current branch should keep the focused runtime boundary",
+      title: null,
+      tool_name: "bash",
+      refs: [],
+    }),
+    planningTreeOperation({
+      operation_id: "planning-tree-compress-1",
+      type: "compress",
+      at: "2026-03-21T12:02:00.000Z",
+      title: "focused runtime boundary",
+      summary: "Focused boundary is the accepted continuation path.",
+    }),
+    planningTreeOperation({
+      operation_id: "planning-tree-grow-bad",
+      type: "grow",
+      at: "2026-03-21T12:03:00.000Z",
+      action: "rewrite broad runtime surface",
+      observation: "broad branch mixed unrelated runtime responsibilities",
+      title: null,
+      tool_name: "bash",
+      refs: [],
+    }),
+    planningTreeOperation({
+      operation_id: "planning-tree-compress-bad",
+      type: "compress",
+      at: "2026-03-21T12:04:00.000Z",
+      title: "broad rejected branch",
+      summary: "Broad runtime rewrite was rejected.",
+    }),
+    planningTreeOperation({
+      operation_id: "planning-tree-maintain-bad",
+      type: "maintain",
+      at: "2026-03-21T12:05:00.000Z",
+      passed: false,
+      target_summary_node_id: "summary:4",
+      diagnostic_note: "broad branch is an avoidance hint, not the next action",
+    }),
+    planningTreeOperation({
+      operation_id: "planning-tree-revise-bad",
+      type: "revise",
+      at: "2026-03-21T12:06:00.000Z",
+      target_summary_node_id: "summary:4",
+      diagnostic_note: "resume from focused boundary",
+    }),
+    planningTreeOperation({
+      operation_id: "planning-tree-grow-current",
+      type: "grow",
+      at: "2026-03-21T12:07:00.000Z",
+      action: "continue the restored focused branch",
+      observation: "current branch is ready for the next patch",
+      title: null,
+      tool_name: "bash",
+      refs: [],
+    }),
+  ] as ExecutionTreeOperationV1[]) {
+    tree = applyExecutionTreeOperationV1(tree, operation);
+  }
+  return tree;
+}
+
+test("planning/context injects execution tree current branch without promoting failed branch as next-action context", async () => {
+  const dbPath = tmpDbPath("planning-tree-static-context");
+  const app = Fastify();
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const handoffPayload = buildHandoffPayload({
+    stateId: "state:planning-tree-static-context",
+    title: "Planning tree static context",
+    summary: "Continue the focused runtime branch",
+    filePath: "src/routes/memory-context-runtime.ts",
+  });
+  const tree = buildPlanningExecutionTreeWithFailedBranch();
+  try {
+    registerApp({
+      app,
+      liteWriteStore,
+      liteRecallStore,
+    });
+
+    const planning = await app.inject({
+      method: "POST",
+      url: "/v1/memory/planning/context",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "continue the current focused runtime branch",
+        context: {
+          goal: "continue the current focused runtime branch",
+        },
+        tool_candidates: ["bash", "edit", "test"],
+        return_layered_context: true,
+        execution_state_v1: handoffPayload.execution_state_v1,
+        execution_tree_v1: tree,
+      },
+    });
+    assert.equal(planning.statusCode, 200, planning.body);
+
+    const body = PlanningContextRouteContractSchema.parse(planning.json()) as Record<string, unknown>;
+    const executionTreeEffectSummary = (body.planning_summary as any).execution_tree_effect_summary;
+    assert.ok(executionTreeEffectSummary);
+    assert.equal(executionTreeEffectSummary.summary_version, "execution_tree_effect_summary_v1");
+    assert.equal(executionTreeEffectSummary.tree_present, true);
+    assert.equal(executionTreeEffectSummary.current_compressed_node_count, 1);
+    assert.equal(executionTreeEffectSummary.current_raw_node_count, 1);
+    assert.ok(executionTreeEffectSummary.failed_branch_hint_count > 0);
+    assert.equal(executionTreeEffectSummary.selected_current_block_count, 2);
+    assert.equal(executionTreeEffectSummary.selected_failed_hint_block_count, 0);
+    assert.equal(executionTreeEffectSummary.failed_branch_isolated, true);
+    assert.equal(executionTreeEffectSummary.next_action_contamination_risk, "none");
+    assert.equal(executionTreeEffectSummary.effect_posture, "branch_isolated");
+    assert.deepEqual((body.execution_kernel as any).execution_tree_effect_summary, executionTreeEffectSummary);
+    assert.deepEqual((body.execution_summary as any).execution_tree_effect_summary, executionTreeEffectSummary);
+
+    const layeredContext = body.layered_context as Record<string, unknown>;
+    const layers = layeredContext.layers as Record<string, unknown>;
+    const staticLayer = layers.static as Record<string, unknown>;
+    const staticItems = Array.isArray(staticLayer.items) ? staticLayer.items.map(String) : [];
+    const staticText = staticItems.join("\n");
+    assert.match(staticText, /branch_role=current_compressed_path; use_for_next_action=true/);
+    assert.match(staticText, /Focused boundary is the accepted continuation path/);
+    assert.match(staticText, /branch_role=current_raw_path; use_for_next_action=true/);
+    assert.match(staticText, /continue the restored focused branch/);
+    assert.doesNotMatch(staticText, /branch_role=failed_or_alternate_branch; use_for_next_action=false/);
+    assert.doesNotMatch(staticText, /avoid_branch=true/);
+    assert.doesNotMatch(staticText, /Broad runtime rewrite was rejected/);
+
+    const staticInjection = layeredContext.static_injection as Record<string, unknown>;
+    const selectedIds = Array.isArray(staticInjection.selected_ids) ? staticInjection.selected_ids.map(String) : [];
+    assert.ok(selectedIds.some((id) => id.endsWith("-compressed-state")));
+    assert.ok(selectedIds.some((id) => id.endsWith("-raw-state")));
+    assert.ok(!selectedIds.some((id) => id.endsWith("-hints")));
+
+    const selectionTrace = Array.isArray(staticInjection.selection_trace)
+      ? staticInjection.selection_trace as Array<Record<string, unknown>>
+      : [];
+    const hintTrace = selectionTrace.find((entry) => String(entry.id).endsWith("-hints"));
+    assert.ok(hintTrace);
+    assert.equal(hintTrace.selected, false);
+    assert.ok(Array.isArray(hintTrace.reasons));
+
+    const assemble = await app.inject({
+      method: "POST",
+      url: "/v1/memory/context/assemble",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "continue the current focused runtime branch",
+        context: {
+          goal: "continue the current focused runtime branch",
+        },
+        tool_candidates: ["bash", "edit", "test"],
+        return_layered_context: true,
+        execution_state_v1: handoffPayload.execution_state_v1,
+        execution_tree_v1: tree,
+      },
+    });
+    assert.equal(assemble.statusCode, 200, assemble.body);
+    const assembleBody = ContextAssembleRouteContractSchema.parse(assemble.json()) as Record<string, unknown>;
+    const assemblyTreeEffectSummary = (assembleBody.assembly_summary as any).execution_tree_effect_summary;
+    assert.ok(assemblyTreeEffectSummary);
+    assert.equal(assemblyTreeEffectSummary.effect_posture, "branch_isolated");
+    assert.equal(assemblyTreeEffectSummary.failed_branch_isolated, true);
+    assert.equal(assemblyTreeEffectSummary.next_action_contamination_risk, "none");
+    assert.deepEqual((assembleBody.execution_kernel as any).execution_tree_effect_summary, assemblyTreeEffectSummary);
+    assert.deepEqual((assembleBody.execution_summary as any).execution_tree_effect_summary, assemblyTreeEffectSummary);
+  } finally {
+    await app.close();
+    await liteWriteStore.close();
+    await liteRecallStore.close();
+  }
+});
+
 test("handoff/recover uses request consumer identity for private lite handoffs", async () => {
   const dbPath = tmpDbPath("handoff-recover-private");
   const app = Fastify();
@@ -316,6 +533,266 @@ test("handoff/recover uses request consumer identity for private lite handoffs",
   } finally {
     await app.close();
     await liteWriteStore.close();
+  }
+});
+
+test("handoff/store persists execution tree operations and recover exposes latest stored tree", async () => {
+  const dbPath = tmpDbPath("handoff-tree-runtime");
+  const app = Fastify();
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const executionTreeStore = createLiteExecutionTreeStore(dbPath);
+  const tree = createExecutionTreeV1({
+    tree_id: "tree-handoff-runtime",
+    scope: "aionis://execution-tree/handoff-runtime",
+    task_brief: "Keep handoff recovery branch-aware",
+    at: "2026-03-21T12:00:00.000Z",
+  });
+  try {
+    registerApp({
+      app,
+      liteWriteStore,
+      liteRecallStore,
+      executionTreeStore,
+    });
+
+    const payload = {
+      ...buildHandoffPayload({
+        stateId: "state:handoff-tree-runtime",
+        title: "Tree-backed handoff",
+        summary: "Persist branch-aware handoff execution state",
+        filePath: "src/routes/tree-backed-handoff.ts",
+      }),
+      execution_tree_disabled: true,
+      execution_tree_v1: tree,
+      execution_tree_operations_v1: [
+        handoffTreeOperation({
+          operation_id: "handoff-tree-grow-1",
+          type: "grow",
+          at: "2026-03-21T12:01:00.000Z",
+          action: "inspect tree-backed handoff",
+          observation: "handoff captured a branch-aware raw step",
+          title: null,
+          tool_name: "bash",
+          refs: [],
+        }),
+      ],
+    };
+
+    const store = await app.inject({
+      method: "POST",
+      url: "/v1/handoff/store",
+      payload,
+    });
+    assert.equal(store.statusCode, 200, store.body);
+    const storeBody = store.json();
+    assert.equal(storeBody.execution_tree_v1.tree_id, tree.tree_id);
+    assert.equal(storeBody.execution_tree_v1.current_raw_node_id, "raw:1");
+    assert.equal(storeBody.execution_tree_v1.nodes["raw:1"].content.action, "inspect tree-backed handoff");
+    assert.equal(storeBody.execution_tree_operations_v1.length, 1);
+    assert.equal(executionTreeStore.get(tree.scope, tree.tree_id)?.revision, 2);
+
+    executionTreeStore.applyOperation(handoffTreeOperation({
+      operation_id: "handoff-tree-compress-1",
+      type: "compress",
+      at: "2026-03-21T12:02:00.000Z",
+      title: "branch-aware handoff",
+      summary: "Handoff recovery exposes the latest execution tree store revision.",
+    }));
+
+    const recover = await app.inject({
+      method: "POST",
+      url: "/v1/handoff/recover",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        consumer_agent_id: "local-user",
+        handoff_kind: "patch_handoff",
+        anchor: payload.anchor,
+        repo_root: payload.repo_root,
+        file_path: payload.file_path,
+      },
+    });
+    assert.equal(recover.statusCode, 200, recover.body);
+    const recovered = recover.json();
+    assert.equal(recovered.execution_tree_v1.current_summary_node_id, "summary:2");
+    assert.equal(
+      recovered.execution_tree_v1.nodes["summary:2"].content.summary,
+      "Handoff recovery exposes the latest execution tree store revision.",
+    );
+  } finally {
+    await app.close();
+    await liteWriteStore.close();
+    await liteRecallStore.close();
+    await executionTreeStore.close();
+  }
+});
+
+test("handoff/store auto-creates execution tree from execution continuity slots", async () => {
+  const dbPath = tmpDbPath("handoff-tree-auto");
+  const app = Fastify();
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const executionTreeStore = createLiteExecutionTreeStore(dbPath);
+  try {
+    registerApp({
+      app,
+      liteWriteStore,
+      liteRecallStore,
+      executionTreeStore,
+    });
+
+    const payload = buildHandoffPayload({
+      stateId: "state:handoff-tree-auto",
+      title: "Auto tree handoff",
+      summary: "Auto-create branch-aware tree from handoff continuity",
+      filePath: "src/routes/auto-tree-handoff.ts",
+    });
+    const store = await app.inject({
+      method: "POST",
+      url: "/v1/handoff/store",
+      payload,
+    });
+    assert.equal(store.statusCode, 200, store.body);
+    const stored = store.json();
+    assert.equal(stored.execution_tree_v1.tree_id, "execution-tree:state:handoff-tree-auto");
+    assert.equal(stored.execution_tree_operations_v1.length, 3);
+    assert.equal(
+      executionTreeStore.get("aionis://execution/state:handoff-tree-auto", "execution-tree:state:handoff-tree-auto")?.revision,
+      4,
+    );
+
+    const recover = await app.inject({
+      method: "POST",
+      url: "/v1/handoff/recover",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        consumer_agent_id: "local-user",
+        handoff_kind: "patch_handoff",
+        anchor: payload.anchor,
+        repo_root: payload.repo_root,
+        file_path: payload.file_path,
+      },
+    });
+    assert.equal(recover.statusCode, 200, recover.body);
+    const recovered = recover.json();
+    assert.equal(recovered.execution_tree_v1.tree_id, "execution-tree:state:handoff-tree-auto");
+    assert.equal(recovered.execution_tree_v1.current_summary_node_id, "summary:2");
+  } finally {
+    await app.close();
+    await liteWriteStore.close();
+    await liteRecallStore.close();
+    await executionTreeStore.close();
+  }
+});
+
+test("handoff/store auto-creates execution tree for task_handoff by default", async () => {
+  const dbPath = tmpDbPath("task-handoff-tree-default");
+  const app = Fastify();
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const executionTreeStore = createLiteExecutionTreeStore(dbPath);
+  try {
+    registerApp({
+      app,
+      liteWriteStore,
+      liteRecallStore,
+      executionTreeStore,
+    });
+
+    const payload = {
+      ...buildHandoffPayload({
+        stateId: "state:task-handoff-tree-default",
+        title: "Task handoff tree default",
+        summary: "Resume task-level execution state with default branch tracking",
+        filePath: "src/routes/task-tree-default.ts",
+      }),
+      handoff_kind: "task_handoff",
+    };
+    delete (payload as Record<string, unknown>).file_path;
+    delete (payload as Record<string, unknown>).target_files;
+
+    const store = await app.inject({
+      method: "POST",
+      url: "/v1/handoff/store",
+      payload,
+    });
+    assert.equal(store.statusCode, 200, store.body);
+    const stored = store.json();
+    assert.equal(stored.handoff.handoff_kind, "task_handoff");
+    assert.equal(stored.execution_tree_v1.tree_id, "execution-tree:state:task-handoff-tree-default");
+    assert.equal(stored.execution_tree_operations_v1.length, 3);
+    assert.equal(
+      executionTreeStore.get("aionis://execution/state:task-handoff-tree-default", "execution-tree:state:task-handoff-tree-default")?.revision,
+      4,
+    );
+  } finally {
+    await app.close();
+    await liteWriteStore.close();
+    await liteRecallStore.close();
+    await executionTreeStore.close();
+  }
+});
+
+test("handoff/store respects execution_tree_disabled for default auto tree", async () => {
+  const dbPath = tmpDbPath("handoff-tree-disabled");
+  const app = Fastify();
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const executionTreeStore = createLiteExecutionTreeStore(dbPath);
+  try {
+    registerApp({
+      app,
+      liteWriteStore,
+      liteRecallStore,
+      executionTreeStore,
+    });
+
+    const payload = {
+      ...buildHandoffPayload({
+        stateId: "state:handoff-tree-disabled",
+        title: "Disabled auto tree handoff",
+        summary: "Store continuity without default execution tree side effect",
+        filePath: "src/routes/disabled-auto-tree-handoff.ts",
+      }),
+      execution_tree_disabled: true,
+    };
+    const store = await app.inject({
+      method: "POST",
+      url: "/v1/handoff/store",
+      payload,
+    });
+    assert.equal(store.statusCode, 200, store.body);
+    const stored = store.json();
+    assert.equal(stored.execution_tree_v1, undefined);
+    assert.equal(stored.execution_tree_operations_v1, undefined);
+    assert.equal(
+      executionTreeStore.get("aionis://execution/state:handoff-tree-disabled", "execution-tree:state:handoff-tree-disabled"),
+      null,
+    );
+
+    const recover = await app.inject({
+      method: "POST",
+      url: "/v1/handoff/recover",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        consumer_agent_id: "local-user",
+        handoff_kind: "patch_handoff",
+        anchor: payload.anchor,
+        repo_root: payload.repo_root,
+        file_path: payload.file_path,
+      },
+    });
+    assert.equal(recover.statusCode, 200, recover.body);
+    const recovered = recover.json();
+    assert.equal(recovered.execution_tree_v1, undefined);
+  } finally {
+    await app.close();
+    await liteWriteStore.close();
+    await liteRecallStore.close();
+    await executionTreeStore.close();
   }
 });
 

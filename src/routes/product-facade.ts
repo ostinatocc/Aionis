@@ -132,6 +132,7 @@ const ProductGuideRequest = z.object({
   runtime_verification: z.unknown().optional(),
   trajectory: z.unknown().optional(),
   trajectory_hints: z.unknown().optional(),
+  execution_tree_v1: z.unknown().optional(),
   include_packets: z.boolean().optional(),
 }).strict();
 

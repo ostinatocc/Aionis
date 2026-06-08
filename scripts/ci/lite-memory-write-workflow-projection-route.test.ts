@@ -22,6 +22,11 @@ import {
 } from "../../src/memory/schemas.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
+import {
+  createExecutionTreeV1,
+  createLiteExecutionTreeStore,
+  type ExecutionTreeOperationV1,
+} from "../../src/execution/index.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
 
 function tmpDbPath(name: string): string {
@@ -51,6 +56,7 @@ function buildEnv(overrides: Record<string, unknown> = {}) {
     AUTO_TOPIC_CLUSTER_ON_WRITE: false,
     TOPIC_CLUSTER_ASYNC_ON_WRITE: true,
     MEMORY_WRITE_REQUIRE_NODES: false,
+    EXECUTION_TREE_DEFAULT_ENABLED: true,
     MEMORY_RECALL_TEXT_CONTEXT_TOKEN_BUDGET_DEFAULT: 4096,
     MEMORY_RECALL_STAGE1_EXACT_RECOVERY_ON_EMPTY: true,
     MEMORY_RECALL_ADAPTIVE_HARD_CAP_WAIT_MS: 0,
@@ -65,6 +71,7 @@ function registerApp(args: {
   app: ReturnType<typeof Fastify>;
   liteWriteStore: ReturnType<typeof createLiteWriteStore>;
   liteRecallStore: ReturnType<typeof createLiteRecallStore>;
+  executionTreeStore?: ReturnType<typeof createLiteExecutionTreeStore> | null;
   envOverrides?: Record<string, unknown>;
 }) {
   const env = buildEnv(args.envOverrides);
@@ -92,6 +99,7 @@ function registerApp(args: {
     tenantFromBody: guards.tenantFromBody,
     acquireInflightSlot: guards.acquireInflightSlot,
     executionStateStore: null,
+    executionTreeStore: args.executionTreeStore ?? null,
   });
 
   registerMemoryContextRuntimeRoutes({
@@ -482,6 +490,232 @@ async function runtimeVerifierEvidenceFromPlanning(args: {
   assert.ok(runtimeVerification.evidence_for_trust_gate);
   return runtimeVerification.evidence_for_trust_gate as Record<string, unknown>;
 }
+
+function memoryWriteTreeOperation(
+  input: Omit<ExecutionTreeOperationV1, "tree_id" | "scope" | "actor_role">,
+): ExecutionTreeOperationV1 {
+  return {
+    tree_id: "tree-memory-write-runtime",
+    scope: "aionis://execution-tree/memory-write-runtime",
+    actor_role: "patch",
+    ...input,
+  } as ExecutionTreeOperationV1;
+}
+
+test("memory/write persists execution tree slots through runtime side effects", async () => {
+  const dbPath = tmpDbPath("write-execution-tree");
+  const app = Fastify();
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const executionTreeStore = createLiteExecutionTreeStore(dbPath);
+  const tree = createExecutionTreeV1({
+    tree_id: "tree-memory-write-runtime",
+    scope: "aionis://execution-tree/memory-write-runtime",
+    task_brief: "Persist execution tree through memory write",
+    at: "2026-03-21T12:00:00.000Z",
+  });
+  try {
+    registerApp({
+      app,
+      liteWriteStore,
+      liteRecallStore,
+      executionTreeStore,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/memory/write",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        input_text: "Persist execution tree continuity through normal memory write.",
+        execution_tree_disabled: true,
+        memory_lane: "private",
+        nodes: [{
+          client_id: "execution-tree-write-event",
+          type: "event",
+          title: "Execution tree write",
+          text_summary: "Tree slots should update the tree store",
+          slots: {
+            execution_tree_v1: tree,
+            execution_tree_operations_v1: [
+              memoryWriteTreeOperation({
+                operation_id: "memory-write-tree-grow-1",
+                type: "grow",
+                at: "2026-03-21T12:01:00.000Z",
+                action: "inspect memory write tree slot",
+                observation: "normal memory write applied the execution tree operation",
+                title: null,
+                tool_name: "bash",
+                refs: [],
+              }),
+            ],
+          },
+        }],
+        edges: [],
+      },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    const stored = executionTreeStore.get(tree.scope, tree.tree_id);
+    assert.equal(stored?.revision, 2);
+    assert.equal(stored?.tree.nodes[stored.tree.current_raw_node_id]?.content.action, "inspect memory write tree slot");
+  } finally {
+    await app.close();
+    await liteWriteStore.close();
+    await liteRecallStore.close();
+    await executionTreeStore.close();
+  }
+});
+
+test("memory/write auto-creates execution tree from execution continuity slots", async () => {
+  const dbPath = tmpDbPath("write-auto-execution-tree");
+  const app = Fastify();
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const executionTreeStore = createLiteExecutionTreeStore(dbPath);
+  try {
+    registerApp({
+      app,
+      liteWriteStore,
+      liteRecallStore,
+      executionTreeStore,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/memory/write",
+      payload: buildExecutionWritePayload({
+        eventId: "auto-tree-write-event",
+        title: "Auto execution tree write",
+        inputText: "Persist implicit execution tree continuity through normal memory write.",
+        taskBrief: "Auto-create execution tree from continuity slots",
+        stateId: "state:auto-memory-write-tree",
+        filePath: "src/routes/auto-tree-write.ts",
+        modifiedFiles: ["src/routes/auto-tree-write.ts"],
+        pendingValidations: [],
+        executionResultSummary: {
+          status: "passed",
+          summary: "Memory write continuity generated a branch-aware tree.",
+        },
+      }),
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    const stored = executionTreeStore.get(
+      "aionis://execution/state:auto-memory-write-tree",
+      "execution-tree:state:auto-memory-write-tree",
+    );
+    assert.equal(stored?.revision, 4);
+    assert.equal(stored?.tree.current_summary_node_id, "summary:2");
+  } finally {
+    await app.close();
+    await liteWriteStore.close();
+    await liteRecallStore.close();
+    await executionTreeStore.close();
+  }
+});
+
+test("memory/write respects root execution_tree_disabled for default auto tree", async () => {
+  const dbPath = tmpDbPath("write-auto-execution-tree-disabled");
+  const app = Fastify();
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const executionTreeStore = createLiteExecutionTreeStore(dbPath);
+  try {
+    registerApp({
+      app,
+      liteWriteStore,
+      liteRecallStore,
+      executionTreeStore,
+    });
+
+    const payload = {
+      ...buildExecutionWritePayload({
+        eventId: "auto-tree-write-disabled-event",
+        title: "Disabled auto execution tree write",
+        inputText: "Persist execution continuity without default tree side effects.",
+        taskBrief: "Do not auto-create execution tree when request disables defaults",
+        stateId: "state:auto-memory-write-tree-disabled",
+        filePath: "src/routes/auto-tree-write-disabled.ts",
+        modifiedFiles: ["src/routes/auto-tree-write-disabled.ts"],
+        pendingValidations: [],
+        executionResultSummary: {
+          status: "passed",
+          summary: "Memory write continuity stayed available without automatic tree storage.",
+        },
+      }),
+      execution_tree_disabled: true,
+    };
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/memory/write",
+      payload,
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    const body = response.json();
+    assert.ok(body.nodes.length > 0);
+    assert.equal(
+      executionTreeStore.get(
+        "aionis://execution/state:auto-memory-write-tree-disabled",
+        "execution-tree:state:auto-memory-write-tree-disabled",
+      ),
+      null,
+    );
+  } finally {
+    await app.close();
+    await liteWriteStore.close();
+    await liteRecallStore.close();
+    await executionTreeStore.close();
+  }
+});
+
+test("memory/write respects EXECUTION_TREE_DEFAULT_ENABLED=false for default auto tree", async () => {
+  const dbPath = tmpDbPath("write-auto-execution-tree-env-disabled");
+  const app = Fastify();
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const executionTreeStore = createLiteExecutionTreeStore(dbPath);
+  try {
+    registerApp({
+      app,
+      liteWriteStore,
+      liteRecallStore,
+      executionTreeStore,
+      envOverrides: { EXECUTION_TREE_DEFAULT_ENABLED: false },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/memory/write",
+      payload: buildExecutionWritePayload({
+        eventId: "auto-tree-write-env-disabled-event",
+        title: "Env disabled auto execution tree write",
+        inputText: "Persist execution continuity while environment disables default tree side effects.",
+        taskBrief: "Do not auto-create execution tree when environment disables defaults",
+        stateId: "state:auto-memory-write-tree-env-disabled",
+        filePath: "src/routes/auto-tree-write-env-disabled.ts",
+        modifiedFiles: ["src/routes/auto-tree-write-env-disabled.ts"],
+        pendingValidations: [],
+        executionResultSummary: {
+          status: "passed",
+          summary: "Memory write continuity stayed available while environment disabled automatic tree storage.",
+        },
+      }),
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(
+      executionTreeStore.get(
+        "aionis://execution/state:auto-memory-write-tree-env-disabled",
+        "execution-tree:state:auto-memory-write-tree-env-disabled",
+      ),
+      null,
+    );
+  } finally {
+    await app.close();
+    await liteWriteStore.close();
+    await liteRecallStore.close();
+    await executionTreeStore.close();
+  }
+});
 
 test("memory/write keeps workflow candidates promotion-ready until learning_control admits stable workflow promotion", async () => {
   const dbPath = tmpDbPath("projection");

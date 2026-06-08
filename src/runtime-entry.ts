@@ -37,6 +37,7 @@ export async function startAionisRuntime(): Promise<void> {
     liteReplayAccess,
     liteWriteStore,
     executionStateStore,
+    executionTreeStore,
     embedder,
     sandboxExecutor,
     recallStoreCapabilities,
@@ -201,6 +202,7 @@ export async function startAionisRuntime(): Promise<void> {
     liteRecallStore,
     liteWriteStore,
     executionStateStore,
+    executionTreeStore,
     sandboxExecutor,
     sandboxTenantBudgetPolicy,
     sandboxRemoteAllowedCidrs,
@@ -215,6 +217,7 @@ export async function startAionisRuntime(): Promise<void> {
     liteReplayStore,
     liteWriteStore,
     executionStateStore,
+    executionTreeStore,
     recallTextEmbedBatcher,
     requireMemoryPrincipal,
     withIdentityFromRequest,
@@ -251,6 +254,7 @@ export async function startAionisRuntime(): Promise<void> {
     liteReplayStore,
     liteWriteStore,
     executionStateStore,
+    executionTreeStore,
   });
 
   await assertBootstrapStoreContracts({

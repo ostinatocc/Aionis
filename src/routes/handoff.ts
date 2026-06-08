@@ -3,11 +3,15 @@ import type { Env } from "../config.js";
 import { createEmbeddingSurfacePolicy, type EmbeddingSurfacePolicy } from "../embeddings/surface-policy.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
 import type { ExecutionStateStore } from "../execution/state-store.js";
+import type { ExecutionTreeStore } from "../execution/tree-store.js";
+import { applyAutoExecutionTreeFromSlots, type AutoExecutionTreeApplyResult } from "../execution/tree-auto.js";
 import { buildLiteLearningControlRuntimeProviders } from "../app/learning-control-runtime-providers.js";
 import {
   readExecutionContinuitySlotFields,
+  readExecutionTreeSlot,
 } from "../memory/execution-slot-surface.js";
 import { applyExecutionContinuityTransitionsFromSlots } from "../kernel/execution-continuity-kernel.js";
+import { applyExecutionTreeOperationsFromSlots } from "../kernel/execution-continuity-kernel.js";
 import {
   resolveNodeAcceptanceChecks,
   resolveNodeNextAction,
@@ -59,6 +63,7 @@ type RegisterHandoffRoutesArgs = {
   tenantFromBody: (body: unknown) => string;
   acquireInflightSlot: (kind: "write" | "recall") => Promise<InflightGateToken>;
   executionStateStore?: ExecutionStateStore | null;
+  executionTreeStore?: ExecutionTreeStore | null;
 };
 
 function firstNode<T>(value: unknown): T | null {
@@ -83,6 +88,7 @@ export function registerHandoffRoutes(args: RegisterHandoffRoutesArgs) {
     tenantFromBody,
     acquireInflightSlot,
     executionStateStore,
+    executionTreeStore,
   } = args;
   if (env.AIONIS_EDITION !== "lite") {
     throw new Error("aionis-lite handoff routes only support AIONIS_EDITION=lite");
@@ -120,6 +126,8 @@ export function registerHandoffRoutes(args: RegisterHandoffRoutesArgs) {
     writeBody: ReturnType<typeof buildHandoffWriteBody>;
     out: HandoffWriteResult;
     appliedExecutionTransitions: Array<Record<string, unknown>> | undefined;
+    appliedExecutionTreeOperations: Array<Record<string, unknown>> | undefined;
+    appliedAutoExecutionTree: AutoExecutionTreeApplyResult | null;
   }) => {
     const handoffNode = firstNode<HandoffNodeLike>(args.out.nodes);
     const handoffSlots = asSlots(handoffNode?.slots);
@@ -127,9 +135,13 @@ export function registerHandoffRoutes(args: RegisterHandoffRoutesArgs) {
     const writeSlots = asSlots(writeNode?.slots);
     const continuitySlots = handoffSlots ?? writeSlots;
     const executionSlots = readExecutionContinuitySlotFields(continuitySlots);
+    const executionTreeSlot = readExecutionTreeSlot(continuitySlots);
     const resolvedAcceptanceChecks = resolveNodeAcceptanceChecks({ slots: continuitySlots });
     const resolvedTargetFiles = resolveNodeTargetFiles({ slots: continuitySlots });
     const resolvedNextAction = resolveNodeNextAction({ slots: continuitySlots });
+    const latestStoredExecutionTree = executionTreeSlot && executionTreeStore
+      ? executionTreeStore.get(executionTreeSlot.scope, executionTreeSlot.tree_id)?.tree ?? null
+      : null;
     const effectiveAcceptanceChecks = resolvedAcceptanceChecks.length > 0
       ? resolvedAcceptanceChecks
       : (args.body.acceptance_checks ?? []);
@@ -176,15 +188,21 @@ export function registerHandoffRoutes(args: RegisterHandoffRoutesArgs) {
       execution_contract_v1: executionSlots.execution_contract_v1,
       execution_state_v1: executionSlots.execution_state_v1,
       execution_packet_v1: executionSlots.execution_packet_v1,
+      execution_tree_v1: args.appliedAutoExecutionTree?.tree ?? latestStoredExecutionTree ?? executionTreeSlot ?? executionSlots.execution_tree_v1,
       control_profile_v1: executionSlots.control_profile_v1,
       execution_transitions_v1:
         args.appliedExecutionTransitions ?? executionSlots.execution_transitions_v1,
+      execution_tree_operations_v1:
+        args.appliedExecutionTreeOperations
+        ?? (args.appliedAutoExecutionTree ? args.appliedAutoExecutionTree.operations : undefined)
+        ?? executionSlots.execution_tree_operations_v1,
     };
   };
   const runHandoffRecoverForPrincipal = (body: HandoffRecoverInput, principal: AuthPrincipal | null) =>
     recoverHandoff({
       liteWriteStore,
       executionStateStore,
+      executionTreeStore,
       input: body,
       defaultScope: env.MEMORY_SCOPE,
       defaultTenantId: env.MEMORY_TENANT_ID,
@@ -221,32 +239,46 @@ export function registerHandoffRoutes(args: RegisterHandoffRoutesArgs) {
       inflightKind: "write",
       parseBody: (input) => HandoffStoreRequest.parse(input),
       execute: async (body, principal) => {
-      const writeBody = buildPrincipalHandoffWriteBody(body, principal);
-      const prepared = await prepareMemoryWrite(
-        writeBody,
-        env.MEMORY_SCOPE,
-        env.MEMORY_TENANT_ID,
-        {
-          maxTextLen: env.MAX_TEXT_LEN,
-          piiRedaction: env.PII_REDACTION,
-          allowCrossScopeEdges: env.ALLOW_CROSS_SCOPE_EDGES,
-        },
-        writeEmbedder,
-      );
-      const out = await runCommittedHandoffWrite(prepared);
+        const writeBody = buildPrincipalHandoffWriteBody(body, principal);
+        const prepared = await prepareMemoryWrite(
+          writeBody,
+          env.MEMORY_SCOPE,
+          env.MEMORY_TENANT_ID,
+          {
+            maxTextLen: env.MAX_TEXT_LEN,
+            piiRedaction: env.PII_REDACTION,
+            allowCrossScopeEdges: env.ALLOW_CROSS_SCOPE_EDGES,
+          },
+          writeEmbedder,
+        );
+        const out = await runCommittedHandoffWrite(prepared);
 
-      const writeNode = firstNode<HandoffWriteBodyNodeLike>(writeBody.nodes);
-      const writeSlots = asSlots(writeNode?.slots);
-      const appliedExecutionTransitions = applyExecutionContinuityTransitionsFromSlots({
-        executionStateStore,
-        writeSlots,
-      });
-      return buildHandoffStoreResponse({
-        body,
-        writeBody,
-        out,
-        appliedExecutionTransitions,
-      });
+        const writeNode = firstNode<HandoffWriteBodyNodeLike>(writeBody.nodes);
+        const writeSlots = asSlots(writeNode?.slots);
+        const appliedExecutionTransitions = applyExecutionContinuityTransitionsFromSlots({
+          executionStateStore,
+          writeSlots,
+        });
+        const appliedExecutionTreeOperations = applyExecutionTreeOperationsFromSlots({
+          executionTreeStore,
+          writeSlots,
+        });
+        const appliedAutoExecutionTree = env.EXECUTION_TREE_DEFAULT_ENABLED === false
+          ? null
+          : applyAutoExecutionTreeFromSlots({
+              executionTreeStore,
+              slots: writeSlots,
+              title: body.title ?? null,
+              textSummary: body.summary,
+            });
+        return buildHandoffStoreResponse({
+          body,
+          writeBody,
+          out,
+          appliedExecutionTransitions,
+          appliedExecutionTreeOperations,
+          appliedAutoExecutionTree,
+        });
       },
     });
     return reply.code(200).send(out);

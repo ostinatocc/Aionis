@@ -4,4 +4,7 @@ export * from "./packet.js";
 export * from "./assemble.js";
 export * from "./transitions.js";
 export * from "./state-store.js";
+export * from "./tree.js";
+export * from "./tree-store.js";
+export * from "./tree-auto.js";
 export * from "./verification.js";

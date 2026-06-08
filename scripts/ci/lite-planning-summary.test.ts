@@ -15,6 +15,12 @@ import {
   summarizeAuthorityVisibilitySurface,
   summarizePatternSignals,
 } from "../../src/app/planning-summary.ts";
+import { buildExecutionTreeEffectSummary } from "../../src/app/planning-summary-execution-tree.ts";
+import {
+  applyExecutionTreeOperationV1,
+  createExecutionTreeV1,
+  type ExecutionTreeOperationV1,
+} from "../../src/execution/index.ts";
 import { resolveContractTrustForSteering } from "../../src/memory/contract-trust.ts";
 import { buildExecutionContractFromProjection } from "../../src/memory/execution-contract.ts";
 import {
@@ -29,6 +35,7 @@ import {
   ExecutionRoutingSignalSummarySchema,
   ExecutionStrategySummarySchema,
   ExecutionSummaryV1Schema,
+  ExecutionTreeEffectSummarySchema,
   HistoryImpactSummarySchema,
   RuntimeVerificationRepairRecommendationSchema,
 } from "../../src/memory/schemas.ts";
@@ -2037,6 +2044,7 @@ test("execution summary top-level and child contracts reject passthrough fields"
     [ExecutionRoutingSignalSummarySchema, summary.routing_signal_summary],
     [ExecutionMaintenanceSummarySchema, summary.maintenance_summary],
     [ExecutionInstrumentationSummarySchema, summary.instrumentation_summary],
+    [ExecutionTreeEffectSummarySchema, summary.execution_tree_effect_summary],
   ] as const;
 
   for (const [schema, contract] of strictContracts) {
@@ -2113,6 +2121,124 @@ test("execution summary top-level and child contracts reject passthrough fields"
       }],
     }),
   );
+});
+
+function buildExecutionTreeWithFailedHintAndCurrentSummary() {
+  let tree = createExecutionTreeV1({
+    tree_id: "summary-budget-tree",
+    scope: "summary-budget-scope",
+    task_brief: "Resume current execution branch without failed branch contamination",
+    at: "2026-06-08T00:00:00.000Z",
+  });
+  const operation = (
+    suffix: string,
+    minute: number,
+    body: Omit<ExecutionTreeOperationV1, "operation_id" | "tree_id" | "scope" | "actor_role" | "at">,
+  ): ExecutionTreeOperationV1 => ({
+    operation_id: `summary-budget-tree:${suffix}`,
+    tree_id: tree.tree_id,
+    scope: tree.scope,
+    actor_role: "test",
+    at: `2026-06-08T00:${String(minute).padStart(2, "0")}:00.000Z`,
+    ...body,
+  } as ExecutionTreeOperationV1);
+  for (const item of [
+    operation("grow-failed", 1, {
+      type: "grow",
+      title: "failed branch",
+      action: "FAILED_BRANCH_MARKER inspect obsolete branch",
+      observation: "FAILED_BRANCH_MARKER failed validation",
+      tool_name: "bash",
+      refs: [],
+    }),
+    operation("compress-failed", 2, {
+      type: "compress",
+      title: "failed summary",
+      summary: "FAILED_BRANCH_MARKER failed branch summary",
+    }),
+    operation("maintain-failed", 3, {
+      type: "maintain",
+      passed: false,
+      target_summary_node_id: "summary:2",
+      diagnostic_note: "FAILED_BRANCH_MARKER do not use for next action",
+    }),
+    operation("revise-failed", 4, {
+      type: "revise",
+      target_summary_node_id: "summary:2",
+      diagnostic_note: "FAILED_BRANCH_MARKER revised away",
+    }),
+    operation("grow-current", 5, {
+      type: "grow",
+      title: "current branch",
+      action: "CURRENT_BRANCH_MARKER continue accepted branch",
+      observation: "CURRENT_BRANCH_MARKER current branch passed",
+      tool_name: "bash",
+      refs: [],
+    }),
+    operation("compress-current", 6, {
+      type: "compress",
+      title: "current summary",
+      summary: "CURRENT_BRANCH_MARKER current branch summary",
+    }),
+    operation("maintain-current", 7, {
+      type: "maintain",
+      passed: true,
+      target_summary_node_id: "summary:4",
+      diagnostic_note: null,
+    }),
+  ]) {
+    tree = applyExecutionTreeOperationV1(tree, item);
+  }
+  return tree;
+}
+
+test("execution tree effect summary uses final visible static items instead of pre-budget static selections", () => {
+  const tree = buildExecutionTreeWithFailedHintAndCurrentSummary();
+  const compressedBlockId = `execution-tree-${tree.tree_id}-compressed-state`;
+  const hintsBlockId = `execution-tree-${tree.tree_id}-hints`;
+  const summary = buildExecutionTreeEffectSummary({
+    executionTree: tree,
+    layeredContext: {
+      static_injection: {
+        selected_ids: [compressedBlockId, hintsBlockId],
+      },
+      layers: {
+        static: {
+          items: [
+            `Execution Compressed State: CURRENT_BRANCH_MARKER current branch summary (block:${compressedBlockId})`,
+          ],
+        },
+      },
+    },
+  });
+
+  assert.equal(summary.selected_current_block_count, 1);
+  assert.equal(summary.selected_failed_hint_block_count, 0);
+  assert.equal(summary.failed_branch_isolated, true);
+  assert.equal(summary.next_action_contamination_risk, "none");
+  assert.equal(summary.effect_posture, "branch_isolated");
+
+  const contaminated = buildExecutionTreeEffectSummary({
+    executionTree: tree,
+    layeredContext: {
+      static_injection: {
+        selected_ids: [compressedBlockId, hintsBlockId],
+      },
+      layers: {
+        static: {
+          items: [
+            `Execution Compressed State: CURRENT_BRANCH_MARKER current branch summary (block:${compressedBlockId})`,
+            `Execution Branch Hints: FAILED_BRANCH_MARKER failed branch summary (block:${hintsBlockId})`,
+          ],
+        },
+      },
+    },
+  });
+
+  assert.equal(contaminated.selected_failed_hint_block_count, 1);
+  assert.equal(contaminated.failed_branch_isolated, false);
+  assert.equal(contaminated.next_action_contamination_risk, "possible");
+  assert.equal(contaminated.effect_posture, "needs_review");
 });
 
 test("buildAssemblySummary carries pattern trust summary through from planning summary", () => {

@@ -31,6 +31,7 @@ import {
   buildExecutionForgettingSummary,
   buildExecutionMaintenanceSummary,
 } from "./planning-summary-forgetting.js";
+import { buildExecutionTreeEffectSummary } from "./planning-summary-execution-tree.js";
 import {
   buildActionRetrievalGate,
   buildContinuityGuidanceSummary,
@@ -49,6 +50,7 @@ import {
   authorityConsumptionStateFromValue,
 } from "../memory/authority-consumption.js";
 import { parseExecutionContract, type ExecutionContractV1 } from "../memory/execution-contract.js";
+import type { ExecutionTreeV1 } from "../execution/index.js";
 
 type ExperienceRecommendationProjection = {
   history_applied: boolean;
@@ -397,6 +399,8 @@ export function buildExecutionSummarySurface(args: {
   execution_artifacts?: unknown;
   execution_evidence?: unknown;
   delegation_records?: unknown;
+  execution_tree?: ExecutionTreeV1 | null;
+  layered_context?: unknown;
 }): ExecutionSummary {
   const summaryBundle = buildExecutionMemorySummaryBundle(args.surface);
   const strategySummary = buildExecutionStrategySummary({
@@ -444,6 +448,10 @@ export function buildExecutionSummarySurface(args: {
     summaryBundle,
     tools: args.tools,
   });
+  const executionTreeEffectSummary = buildExecutionTreeEffectSummary({
+    executionTree: args.execution_tree ?? null,
+    layeredContext: args.layered_context,
+  });
   return {
     summary_version: "execution_summary_v1",
     planner_packet: args.planner_packet ?? null,
@@ -464,6 +472,7 @@ export function buildExecutionSummarySurface(args: {
     collaboration_routing_summary: collaborationRoutingSummary,
     delegation_records_summary: persistedDelegationRecordsSummary ?? delegationRecordsSummary,
     instrumentation_summary: instrumentationSummary,
+    execution_tree_effect_summary: executionTreeEffectSummary,
     ...summaryBundle,
   };
 }
@@ -481,6 +490,7 @@ export function buildPlanningSummary(args: {
   experience_intelligence?: unknown;
   edit_boundary_context?: RuntimeEditBoundaryContext | null;
   execution_evidence?: unknown;
+  execution_tree?: ExecutionTreeV1 | null;
 }): PlanningSummary {
   const rules = args.rules && typeof args.rules === "object" ? (args.rules as Record<string, unknown>) : {};
   const tools = args.tools && typeof args.tools === "object" ? (args.tools as Record<string, unknown>) : {};
@@ -627,6 +637,10 @@ export function buildPlanningSummary(args: {
   const primarySavingsLevers = Array.isArray(costSignals.primary_savings_levers)
     ? costSignals.primary_savings_levers.filter((entry): entry is string => typeof entry === "string")
     : [];
+  const executionTreeEffectSummary = buildExecutionTreeEffectSummary({
+    executionTree: args.execution_tree ?? null,
+    layeredContext: args.layered_context,
+  });
   const historyImpactSummary = buildHistoryImpactSummary({
     continuityGuidance,
     actionIntelligencePreActionGate,
@@ -686,6 +700,7 @@ export function buildPlanningSummary(args: {
     policy_maintenance_summary: policyMaintenanceSummary,
     continuity_carrier_summary: continuityCarrierSummary,
     forgetting_summary: forgettingSummary,
+    execution_tree_effect_summary: executionTreeEffectSummary,
     primary_savings_levers: primarySavingsLevers,
   };
 }
@@ -704,6 +719,7 @@ export function buildAssemblySummary(args: {
   experience_intelligence?: unknown;
   edit_boundary_context?: RuntimeEditBoundaryContext | null;
   execution_evidence?: unknown;
+  execution_tree?: ExecutionTreeV1 | null;
 }): AssemblySummary {
   const planning = buildPlanningSummary({
     rules: args.rules,
@@ -718,6 +734,7 @@ export function buildAssemblySummary(args: {
     experience_intelligence: args.experience_intelligence,
     edit_boundary_context: args.edit_boundary_context ?? null,
     execution_evidence: args.execution_evidence,
+    execution_tree: args.execution_tree ?? null,
   });
   return {
     summary_version: "assembly_summary_v1",
@@ -758,6 +775,7 @@ export function buildAssemblySummary(args: {
     policy_maintenance_summary: planning.policy_maintenance_summary,
     continuity_carrier_summary: planning.continuity_carrier_summary,
     forgetting_summary: planning.forgetting_summary,
+    execution_tree_effect_summary: planning.execution_tree_effect_summary,
     primary_savings_levers: planning.primary_savings_levers,
   };
 }

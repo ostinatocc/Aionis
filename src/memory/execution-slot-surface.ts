@@ -3,6 +3,12 @@ import {
   type ExecutionStateV1,
 } from "../execution/types.js";
 import {
+  ExecutionTreeV1Schema,
+  ExecutionTreeOperationV1Schema,
+  type ExecutionTreeV1,
+  type ExecutionTreeOperationV1,
+} from "../execution/tree.js";
+import {
   ExecutionStateTransitionV1Schema,
   type ExecutionStateTransitionV1,
 } from "../execution/transitions.js";
@@ -15,6 +21,8 @@ export const EXECUTION_SLOT_FIELD_NAMES = {
   contract: "execution_contract_v1",
   state: "execution_state_v1",
   packet: "execution_packet_v1",
+  tree: "execution_tree_v1",
+  treeOperations: "execution_tree_operations_v1",
   controlProfile: "control_profile_v1",
   transition: "execution_transition_v1",
   transitions: "execution_transitions_v1",
@@ -28,6 +36,8 @@ export type ExecutionContinuitySlotFields = {
   execution_contract_v1: unknown;
   execution_state_v1: unknown;
   execution_packet_v1: unknown;
+  execution_tree_v1: unknown;
+  execution_tree_operations_v1: unknown;
   control_profile_v1: unknown;
   execution_transitions_v1: unknown;
 };
@@ -50,6 +60,16 @@ export function readExecutionTransitionSlot(slots: Record<string, unknown> | nul
   return raw === undefined ? null : ExecutionStateTransitionV1Schema.parse(raw);
 }
 
+export function readExecutionTreeSlot(slots: Record<string, unknown> | null): ExecutionTreeV1 | null {
+  const raw = readSlot(slots, EXECUTION_SLOT_FIELD_NAMES.tree);
+  return raw === undefined ? null : ExecutionTreeV1Schema.parse(raw);
+}
+
+export function readExecutionTreeOperationsSlot(slots: Record<string, unknown> | null): ExecutionTreeOperationV1[] | null {
+  const raw = readSlot(slots, EXECUTION_SLOT_FIELD_NAMES.treeOperations);
+  return Array.isArray(raw) ? raw.map((operation) => ExecutionTreeOperationV1Schema.parse(operation)) : null;
+}
+
 export function readExecutionTransitionsSlot(slots: Record<string, unknown> | null): ExecutionStateTransitionV1[] | null {
   const raw = readSlot(slots, EXECUTION_SLOT_FIELD_NAMES.transitions);
   return Array.isArray(raw) ? raw.map((transition) => ExecutionStateTransitionV1Schema.parse(transition)) : null;
@@ -66,6 +86,8 @@ export function readExecutionContinuitySlotFields(
     execution_contract_v1: readSlot(slots, EXECUTION_SLOT_FIELD_NAMES.contract),
     execution_state_v1: readSlot(slots, EXECUTION_SLOT_FIELD_NAMES.state),
     execution_packet_v1: readSlot(slots, EXECUTION_SLOT_FIELD_NAMES.packet),
+    execution_tree_v1: readSlot(slots, EXECUTION_SLOT_FIELD_NAMES.tree),
+    execution_tree_operations_v1: readSlot(slots, EXECUTION_SLOT_FIELD_NAMES.treeOperations),
     control_profile_v1: readSlot(slots, EXECUTION_SLOT_FIELD_NAMES.controlProfile),
     execution_transitions_v1: readSlot(slots, EXECUTION_SLOT_FIELD_NAMES.transitions),
   };
@@ -74,15 +96,23 @@ export function readExecutionContinuitySlotFields(
 export function collectExecutionWriteOverlaySlots(nodes: Iterable<{ slots?: unknown }>): {
   states: ExecutionStateV1[];
   transitions: ExecutionStateTransitionV1[];
+  trees: ExecutionTreeV1[];
+  treeOperations: ExecutionTreeOperationV1[];
 } {
   const states: ExecutionStateV1[] = [];
   const transitions: ExecutionStateTransitionV1[] = [];
+  const trees: ExecutionTreeV1[] = [];
+  const treeOperations: ExecutionTreeOperationV1[] = [];
   for (const node of nodes) {
     const slots = asRecord(node.slots);
     const state = readExecutionStateSlot(slots);
     if (state) states.push(state);
     const transition = readExecutionTransitionSlot(slots);
     if (transition) transitions.push(transition);
+    const tree = readExecutionTreeSlot(slots);
+    if (tree) trees.push(tree);
+    const operations = readExecutionTreeOperationsSlot(slots);
+    if (operations) treeOperations.push(...operations);
   }
-  return { states, transitions };
+  return { states, transitions, trees, treeOperations };
 }

@@ -12,6 +12,7 @@ import { createLiteRuntimeStore } from "../store/lite-runtime-store.js";
 import { createSandboxStore } from "../store/sandbox-access.js";
 import { createLiteWriteStore } from "../store/lite-write-store.js";
 import { createLiteExecutionStateStore } from "../execution/state-store.js";
+import { createLiteExecutionTreeStore } from "../execution/tree-store.js";
 import { EmbedQueryBatcher } from "../util/embed_query_batcher.js";
 import { InflightGate } from "../util/inflight_gate.js";
 import { LruTtlCache } from "../util/lru_ttl_cache.js";
@@ -106,6 +107,7 @@ export async function createRuntimeServices(env: Env) {
   const liteReplayAccess = liteReplayStore?.createReplayAccess() ?? null;
   const liteWriteStore = createLiteWriteStore(env.LITE_WRITE_SQLITE_PATH);
   const executionStateStore = createLiteExecutionStateStore(env.LITE_WRITE_SQLITE_PATH);
+  const executionTreeStore = createLiteExecutionTreeStore(env.LITE_WRITE_SQLITE_PATH);
   const liteRecallStore = createLiteRecallStore(env.LITE_WRITE_SQLITE_PATH);
   const liteRecallAccess = liteRecallStore?.createRecallAccess() ?? null;
   const sandboxStore = createSandboxStore(store);
@@ -226,6 +228,7 @@ export async function createRuntimeServices(env: Env) {
     liteReplayAccess,
     liteWriteStore,
     executionStateStore,
+    executionTreeStore,
     embedder,
     sandboxExecutor,
     recallStoreCapabilities,

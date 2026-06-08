@@ -5,6 +5,7 @@ import {
   buildAssemblySummary,
   buildExecutionMemorySummaryBundle,
   buildExecutionSummarySurface,
+  buildExecutionTreeEffectSummary,
   buildPlanningSummary,
   summarizeActionRecallPacketSurface,
   summarizeWorkflowSignalSurface,
@@ -47,11 +48,13 @@ import {
   type ExecutionPacketAssemblyMode,
   type ExecutionPacketV1,
   type ExecutionStateV1,
+  type ExecutionTreeV1,
 } from "../execution/index.js";
 import {
   buildExecutionContinuityContext,
   executionContinuityToStaticBlocks,
   executionPacketToStaticBlocks,
+  executionTreeToStaticBlocks,
   mergeExecutionPacketStaticBlocks,
   resolveExecutionKernelContext,
 } from "../kernel/execution-continuity-kernel.js";
@@ -204,6 +207,7 @@ function buildExecutionKernelResponse(
     workflow_signals?: unknown;
     recommended_workflows?: unknown;
   },
+  executionTreeEffectSummary?: unknown,
 ) {
   const summaryBundle = buildExecutionMemorySummaryBundle(plannerSurface ?? {});
   return {
@@ -212,6 +216,7 @@ function buildExecutionKernelResponse(
     execution_packet_v1_present: !!parsed.execution_packet_v1,
     execution_state_v1_present: !!parsed.execution_state_v1,
     ...(runtimeVerification ? { runtime_verification: runtimeVerification } : {}),
+    ...(executionTreeEffectSummary ? { execution_tree_effect_summary: executionTreeEffectSummary } : {}),
     ...summaryBundle,
   };
 }
@@ -255,6 +260,8 @@ function buildPlannerPacketResponseSurface(
     execution_artifacts?: unknown;
     execution_evidence?: unknown;
     delegation_records?: unknown;
+    execution_tree?: ExecutionTreeV1 | null;
+    layered_context?: unknown;
   },
 ) {
   return {
@@ -271,6 +278,8 @@ function buildPlannerPacketResponseSurface(
       execution_artifacts: extras?.execution_artifacts,
       execution_evidence: extras?.execution_evidence,
       delegation_records: extras?.delegation_records,
+      execution_tree: extras?.execution_tree ?? null,
+      layered_context: extras?.layered_context,
     }),
   };
 }
@@ -1322,6 +1331,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
     return args.executionKernel.packet
       ? [
           ...executionPacketToStaticBlocks(args.executionKernel.packet),
+          ...(args.parsed.execution_tree_v1 ? executionTreeToStaticBlocks(args.parsed.execution_tree_v1) : []),
           ...executionContinuityToStaticBlocks(parsedWithStaticBlocks).blocks,
           ...staticContextBlocks,
         ]
@@ -1899,6 +1909,10 @@ export function registerMemoryContextRuntimeRoutes(args: {
       consumerAgentId: parsed.consumer_agent_id ?? env.LITE_LOCAL_ACTOR_ID,
       consumerTeamId: parsed.consumer_team_id ?? null,
     });
+    const executionTreeEffectSummary = buildExecutionTreeEffectSummary({
+      executionTree: parsed.execution_tree_v1 ?? null,
+      layeredContext,
+    });
     const planningSummary = buildPlanningSummary({
       rules: out.rules,
       tools: out.tools,
@@ -1912,6 +1926,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
       experience_intelligence: experienceIntelligence,
       edit_boundary_context: parsed.edit_boundary_context ?? null,
       execution_evidence: parsed.execution_evidence,
+      execution_tree: parsed.execution_tree_v1 ?? null,
     });
     const operatorProjection = buildContextOperatorProjection({
       returnLayeredContext: parsed.return_layered_context === true,
@@ -1940,7 +1955,13 @@ export function registerMemoryContextRuntimeRoutes(args: {
     return reply.code(200).send({
       tenant_id: tenantIdOut,
       scope: recallOut.scope,
-      execution_kernel: buildExecutionKernelResponse(executionKernel.source_mode, parsed, runtimeVerification, plannerSurface),
+      execution_kernel: buildExecutionKernelResponse(
+        executionKernel.source_mode,
+        parsed,
+        runtimeVerification,
+        plannerSurface,
+        planningSummary.execution_tree_effect_summary ?? executionTreeEffectSummary,
+      ),
       query: { text: q, embedding_provider: surfaceEmbedder.name },
       recall: {
         ...recallOut,
@@ -1962,6 +1983,8 @@ export function registerMemoryContextRuntimeRoutes(args: {
         execution_artifacts: parsed.execution_artifacts,
         execution_evidence: parsed.execution_evidence,
         delegation_records: persistedDelegationRecords,
+        execution_tree: parsed.execution_tree_v1 ?? null,
+        layered_context: layeredContext,
       }),
       planning_summary: planningSummary,
       aionis_guide_packet: buildAionisGuidePacketForContextRoute({
@@ -2171,6 +2194,10 @@ export function registerMemoryContextRuntimeRoutes(args: {
       consumerAgentId: parsed.consumer_agent_id ?? env.LITE_LOCAL_ACTOR_ID,
       consumerTeamId: parsed.consumer_team_id ?? null,
     });
+    const executionTreeEffectSummary = buildExecutionTreeEffectSummary({
+      executionTree: parsed.execution_tree_v1 ?? null,
+      layeredContext,
+    });
     const assemblySummary = buildAssemblySummary({
       rules: out.rules,
       tools: out.tools,
@@ -2185,6 +2212,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
       experience_intelligence: experienceIntelligence,
       edit_boundary_context: parsed.edit_boundary_context ?? null,
       execution_evidence: parsed.execution_evidence,
+      execution_tree: parsed.execution_tree_v1 ?? null,
     });
     const operatorProjection = buildContextOperatorProjection({
       returnLayeredContext: parsed.return_layered_context === true,
@@ -2270,7 +2298,13 @@ export function registerMemoryContextRuntimeRoutes(args: {
     return reply.code(200).send({
       tenant_id: tenantIdOut,
       scope: recallOut.scope,
-      execution_kernel: buildExecutionKernelResponse(executionKernel.source_mode, parsed, runtimeVerification, plannerSurface),
+      execution_kernel: buildExecutionKernelResponse(
+        executionKernel.source_mode,
+        parsed,
+        runtimeVerification,
+        plannerSurface,
+        assemblySummary.execution_tree_effect_summary ?? executionTreeEffectSummary,
+      ),
       query: { text: q, embedding_provider: surfaceEmbedder.name },
       recall: {
         ...recallOut,
@@ -2292,6 +2326,8 @@ export function registerMemoryContextRuntimeRoutes(args: {
         execution_artifacts: parsed.execution_artifacts,
         execution_evidence: parsed.execution_evidence,
         delegation_records: persistedDelegationRecords,
+        execution_tree: parsed.execution_tree_v1 ?? null,
+        layered_context: layeredContext,
       }),
       assembly_summary: assemblySummary,
       aionis_guide_packet: buildAionisGuidePacketForContextRoute({

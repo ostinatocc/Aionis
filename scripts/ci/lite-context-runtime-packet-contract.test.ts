@@ -368,6 +368,7 @@ const EXECUTION_SUMMARY_V1_KEYS = [
   "continuity_snapshot_summary",
   "delegation_records_summary",
   "distillation_signal_summary",
+  "execution_tree_effect_summary",
   "forgetting_summary",
   "instrumentation_summary",
   "maintenance_summary",
@@ -1063,6 +1064,7 @@ function assertKernelMatchesRouteSurface(body: {
   assert.deepEqual(body.execution_summary.policy_lifecycle_summary, body.execution_kernel.policy_lifecycle_summary);
   assert.deepEqual(body.execution_summary.policy_maintenance_summary, body.execution_kernel.policy_maintenance_summary);
   assert.deepEqual(body.execution_summary.continuity_carrier_summary, body.execution_kernel.continuity_carrier_summary);
+  assert.deepEqual(body.execution_summary.execution_tree_effect_summary, (body.execution_kernel as any).execution_tree_effect_summary);
   assert.deepEqual(body.execution_kernel.action_packet_summary, routeSummary.action_packet_summary);
   assert.deepEqual(body.execution_kernel.workflow_signal_summary, routeSummary.workflow_signal_summary);
   assert.deepEqual(body.execution_kernel.workflow_lifecycle_summary, routeSummary.workflow_lifecycle_summary);
@@ -1073,6 +1075,7 @@ function assertKernelMatchesRouteSurface(body: {
   assert.deepEqual(body.execution_kernel.policy_lifecycle_summary, routeSummary.policy_lifecycle_summary);
   assert.deepEqual(body.execution_kernel.policy_maintenance_summary, routeSummary.policy_maintenance_summary);
   assert.deepEqual(body.execution_kernel.continuity_carrier_summary, routeSummary.continuity_carrier_summary);
+  assert.deepEqual((body.execution_kernel as any).execution_tree_effect_summary, (routeSummary as any).execution_tree_effect_summary);
   const signalOnlyPatternSummary = summarizePatternSignals({ pattern_signals: body.pattern_signals });
   assert.deepEqual(body.execution_kernel.pattern_signal_summary, {
     candidate_pattern_count: signalOnlyPatternSummary.candidate_pattern_count,

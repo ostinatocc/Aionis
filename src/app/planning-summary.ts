@@ -29,6 +29,8 @@ export {
   summarizeWorkflowSignalSurface,
 } from "./planning-summary-surfaces.js";
 
+export { buildExecutionTreeEffectSummary } from "./planning-summary-execution-tree.js";
+
 export type PlanningSummary = {
   summary_version: "planning_summary_v1";
   planner_explanation: string | null;
@@ -67,6 +69,7 @@ export type PlanningSummary = {
   policy_maintenance_summary: PolicyMaintenanceSummary;
   continuity_carrier_summary: ContinuityCarrierSummary;
   forgetting_summary: ExecutionForgettingSummary;
+  execution_tree_effect_summary?: ExecutionTreeEffectSummary;
   primary_savings_levers: string[];
 };
 
@@ -109,6 +112,7 @@ export type AssemblySummary = {
   policy_maintenance_summary: PolicyMaintenanceSummary;
   continuity_carrier_summary: ContinuityCarrierSummary;
   forgetting_summary: ExecutionForgettingSummary;
+  execution_tree_effect_summary?: ExecutionTreeEffectSummary;
   primary_savings_levers: string[];
 };
 
@@ -200,6 +204,38 @@ export type HistoryImpactSummary = {
   };
   next_run_changes: HistoryImpactNextRunChange[];
   primary_reason: string;
+};
+
+export type ExecutionTreeEffectPosture =
+  | "absent"
+  | "continuity_available"
+  | "branch_isolated"
+  | "needs_review";
+
+export type ExecutionTreeNextActionContaminationRisk =
+  | "none"
+  | "unobserved"
+  | "possible";
+
+export type ExecutionTreeEffectSummary = {
+  summary_version: "execution_tree_effect_summary_v1";
+  tree_present: boolean;
+  static_selection_observed: boolean;
+  current_compressed_node_count: number;
+  current_raw_node_count: number;
+  branch_hint_count: number;
+  failed_branch_hint_count: number;
+  alternate_branch_hint_count: number;
+  validated_current_node_count: number;
+  selected_current_block_count: number;
+  selected_failed_hint_block_count: number;
+  compression_signal_present: boolean;
+  revision_signal_present: boolean;
+  raw_continuation_signal_present: boolean;
+  failed_branch_isolated: boolean;
+  next_action_contamination_risk: ExecutionTreeNextActionContaminationRisk;
+  effect_posture: ExecutionTreeEffectPosture;
+  findings: string[];
 };
 
 export type RuntimeContinuitySignalKind =
@@ -841,4 +877,5 @@ export type ExecutionSummary = ExecutionMemorySummaryBundle & {
   collaboration_routing_summary: ExecutionCollaborationRoutingSummary;
   delegation_records_summary: ExecutionDelegationRecordsSummary;
   instrumentation_summary: ExecutionInstrumentationSummary;
+  execution_tree_effect_summary?: ExecutionTreeEffectSummary;
 };

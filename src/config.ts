@@ -158,6 +158,12 @@ const EnvSchema = z.object({
     .transform((v) => (v ?? "false").toLowerCase())
     .pipe(z.enum(["true", "false"]))
     .transform((v) => v === "true"),
+  EXECUTION_TREE_DEFAULT_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => (v ?? "true").toLowerCase())
+    .pipe(z.enum(["true", "false"]))
+    .transform((v) => v === "true"),
   EMBEDDING_ENABLED_SURFACES_JSON: z
     .string()
     .default("")

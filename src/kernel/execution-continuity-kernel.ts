@@ -1,12 +1,17 @@
 import {
   resolveExecutionPacketAssembly,
+  deriveExecutionTreeStateV1,
   type ExecutionPacketAssemblyMode,
   type ExecutionPacketV1,
   type ExecutionStateV1,
+  type ExecutionTreeV1,
 } from "../execution/index.js";
 import type { ExecutionStateStore } from "../execution/state-store.js";
+import type { ExecutionTreeStore } from "../execution/tree-store.js";
 import {
   readExecutionStateSlot,
+  readExecutionTreeOperationsSlot,
+  readExecutionTreeSlot,
   readExecutionTransitionsSlot,
 } from "../memory/execution-slot-surface.js";
 
@@ -20,6 +25,11 @@ type ExecutionContinuityStaticBlock = {
   always_include: boolean;
 };
 
+type ExecutionContinuityStaticBlockOptions = Partial<Pick<
+  ExecutionContinuityStaticBlock,
+  "tags" | "intents" | "priority" | "always_include"
+>>;
+
 export type ExecutionContinuitySideOutputsInput = {
   execution_result_summary?: unknown;
   execution_artifacts?: unknown;
@@ -30,6 +40,7 @@ export type ExecutionContinuityPacketInput = ExecutionContinuitySideOutputsInput
   static_context_blocks?: ExecutionContinuityStaticBlock[];
   execution_packet_v1?: ExecutionPacketV1;
   execution_state_v1?: ExecutionStateV1;
+  execution_tree_v1?: ExecutionTreeV1;
 };
 
 export type ExecutionContinuityContextInput = ExecutionContinuitySideOutputsInput & {
@@ -53,18 +64,115 @@ export type ExecutionContinuityKernel = {
     executionStateStore?: ExecutionStateStore | null;
     writeSlots: Record<string, unknown> | null;
   }): Array<Record<string, unknown>> | undefined;
+  applyTreeOperationsFromSlots(input: {
+    executionTreeStore?: ExecutionTreeStore | null;
+    writeSlots: Record<string, unknown> | null;
+  }): Array<Record<string, unknown>> | undefined;
 };
 
-function toStaticContextBlock(id: string, title: string, content: string): ExecutionContinuityStaticBlock {
+function toStaticContextBlock(
+  id: string,
+  title: string,
+  content: string,
+  options: ExecutionContinuityStaticBlockOptions = {},
+): ExecutionContinuityStaticBlock {
   return {
     id,
     title,
     content,
-    tags: ["execution-packet", "continuity"],
-    intents: ["resume", "review", "continuity"],
-    priority: 95,
-    always_include: true,
+    tags: options.tags ?? ["execution-packet", "continuity"],
+    intents: options.intents ?? ["resume", "review", "continuity"],
+    priority: options.priority ?? 95,
+    always_include: options.always_include ?? true,
   };
+}
+
+const activeExecutionTreeStaticBlock: ExecutionContinuityStaticBlockOptions = {
+  tags: ["execution-tree", "continuation", "continuity"],
+  intents: ["resume", "review", "continuity"],
+  priority: 95,
+  always_include: true,
+};
+
+const executionTreeHintStaticBlock: ExecutionContinuityStaticBlockOptions = {
+  tags: ["execution-tree", "branch-hint", "failed-branch", "continuity"],
+  intents: ["avoid", "revise", "review"],
+  priority: 65,
+  always_include: false,
+};
+
+function compactTreeEntry(entry: {
+  node_id: string;
+  step_id: number;
+  title: string | null;
+  summary: string | null;
+  action: string | null;
+  observation: string | null;
+  status: string;
+  validated: boolean;
+  diagnostic_note: string | null;
+}): string {
+  return [
+    `node=${entry.node_id}`,
+    `step=${entry.step_id}`,
+    entry.title ? `title=${entry.title}` : null,
+    entry.summary ? `summary=${entry.summary}` : null,
+    entry.action ? `action=${entry.action}` : null,
+    entry.observation ? `observation=${entry.observation}` : null,
+    `status=${entry.status}`,
+    `validated=${entry.validated ? "true" : "false"}`,
+    entry.diagnostic_note ? `diagnostic=${entry.diagnostic_note}` : null,
+  ].filter(Boolean).join("; ");
+}
+
+function compactTreeHintEntry(entry: Parameters<typeof compactTreeEntry>[0]): string {
+  const branchRole = entry.status === "failed" ? "avoid_branch=true" : "alternate_branch=true";
+  return `${branchRole}; ${compactTreeEntry(entry)}`;
+}
+
+export function executionTreeToStaticBlocks(tree: ExecutionTreeV1): ExecutionContinuityStaticBlock[] {
+  const state = deriveExecutionTreeStateV1(tree);
+  const blocks: ExecutionContinuityStaticBlock[] = [];
+  if (state.compressed_state.length > 0) {
+    blocks.push(
+      toStaticContextBlock(
+        `execution-tree-${tree.tree_id}-compressed-state`,
+        "Execution Compressed State",
+        [
+          "branch_role=current_compressed_path; use_for_next_action=true",
+          ...state.compressed_state.map(compactTreeEntry),
+        ].join("\n"),
+        activeExecutionTreeStaticBlock,
+      ),
+    );
+  }
+  if (state.raw_state.length > 0) {
+    blocks.push(
+      toStaticContextBlock(
+        `execution-tree-${tree.tree_id}-raw-state`,
+        "Execution Recent Raw State",
+        [
+          "branch_role=current_raw_path; use_for_next_action=true",
+          ...state.raw_state.map(compactTreeEntry),
+        ].join("\n"),
+        activeExecutionTreeStaticBlock,
+      ),
+    );
+  }
+  if (state.execution_hints.length > 0) {
+    blocks.push(
+      toStaticContextBlock(
+        `execution-tree-${tree.tree_id}-hints`,
+        "Execution Branch Hints",
+        [
+          "branch_role=failed_or_alternate_branch; use_for_next_action=false; use_as_avoidance_hint=true",
+          ...state.execution_hints.map(compactTreeHintEntry),
+        ].join("\n"),
+        executionTreeHintStaticBlock,
+      ),
+    );
+  }
+  return blocks;
 }
 
 export function executionPacketToStaticBlocks(packet: ExecutionPacketV1): ExecutionContinuityStaticBlock[] {
@@ -226,9 +334,10 @@ export function buildExecutionContinuityContext(parsed: ExecutionContinuityConte
 export function mergeExecutionPacketStaticBlocks(parsed: ExecutionContinuityPacketInput): ExecutionContinuityStaticBlock[] {
   const base = Array.isArray(parsed.static_context_blocks) ? parsed.static_context_blocks : [];
   const continuityBlocks = executionContinuityToStaticBlocks(parsed).blocks;
+  const treeBlocks = parsed.execution_tree_v1 ? executionTreeToStaticBlocks(parsed.execution_tree_v1) : [];
   const { packet } = resolveExecutionPacketAssembly(parsed);
-  if (!packet) return [...continuityBlocks, ...base];
-  return [...executionPacketToStaticBlocks(packet), ...continuityBlocks, ...base];
+  if (!packet) return [...treeBlocks, ...continuityBlocks, ...base];
+  return [...executionPacketToStaticBlocks(packet), ...treeBlocks, ...continuityBlocks, ...base];
 }
 
 export function resolveExecutionKernelContext(parsed: {
@@ -266,9 +375,32 @@ export function applyExecutionContinuityTransitionsFromSlots(args: {
   return appliedTransitions;
 }
 
+export function applyExecutionTreeOperationsFromSlots(args: {
+  executionTreeStore?: ExecutionTreeStore | null;
+  writeSlots: Record<string, unknown> | null;
+}): Array<Record<string, unknown>> | undefined {
+  if (!args.executionTreeStore) return undefined;
+  const executionTree = readExecutionTreeSlot(args.writeSlots);
+  const operations = readExecutionTreeOperationsSlot(args.writeSlots);
+  const hasOperationsForTree = executionTree && operations?.some(
+    (operation) => operation.scope === executionTree.scope && operation.tree_id === executionTree.tree_id,
+  );
+  if (executionTree && (!hasOperationsForTree || !args.executionTreeStore.has(executionTree.scope, executionTree.tree_id))) {
+    args.executionTreeStore.put(executionTree);
+  }
+  if (!operations || operations.length === 0) return undefined;
+  const appliedOperations: Array<Record<string, unknown>> = [];
+  for (const operation of operations) {
+    args.executionTreeStore.applyOperation(operation);
+    appliedOperations.push(operation as Record<string, unknown>);
+  }
+  return appliedOperations;
+}
+
 export const executionContinuityKernel: ExecutionContinuityKernel = {
   assembleContinuityContext: buildExecutionContinuityContext,
   recoverExecutionState: resolveExecutionKernelContext,
   buildNextActionPacket: mergeExecutionPacketStaticBlocks,
   applyTransitionsFromSlots: applyExecutionContinuityTransitionsFromSlots,
+  applyTreeOperationsFromSlots: applyExecutionTreeOperationsFromSlots,
 };

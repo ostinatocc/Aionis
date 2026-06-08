@@ -18,6 +18,7 @@ import { registerMemoryWriteRoutes } from "../routes/memory-write.js";
 import { registerProductFacadeRoutes } from "../routes/product-facade.js";
 import { registerRuntimeBoundaryInventoryRoutes } from "../routes/runtime-boundary-inventory.js";
 import type { ExecutionStateStore } from "../execution/state-store.js";
+import type { ExecutionTreeStore } from "../execution/tree-store.js";
 import { buildLiteRouteMatrix, registerLiteServerOnlyRoutes } from "./lite-runtime-boundary.js";
 import { createErrorResponse, HttpError } from "../util/http.js";
 
@@ -182,6 +183,7 @@ export function registerHealthRoute(args: {
   liteRecallStore?: { healthSnapshot: () => unknown } | null;
   liteWriteStore?: { healthSnapshot: () => unknown } | null;
   executionStateStore?: { healthSnapshot: () => unknown } | null;
+  executionTreeStore?: { healthSnapshot: () => unknown } | null;
   sandboxExecutor: HealthSnapshotProvider;
   sandboxTenantBudgetPolicy: Map<string, unknown>;
   sandboxRemoteAllowedCidrs: Set<string>;
@@ -193,6 +195,7 @@ export function registerHealthRoute(args: {
     liteRecallStore,
     liteWriteStore,
     executionStateStore,
+    executionTreeStore,
     sandboxExecutor,
     sandboxTenantBudgetPolicy,
     sandboxRemoteAllowedCidrs,
@@ -225,6 +228,7 @@ export function registerHealthRoute(args: {
               recall: liteRecallStore ? liteRecallStore.healthSnapshot() : null,
               write: liteWriteStore ? liteWriteStore.healthSnapshot() : null,
               execution_state: executionStateStore ? executionStateStore.healthSnapshot() : null,
+              execution_tree: executionTreeStore ? executionTreeStore.healthSnapshot() : null,
               replay: liteReplayStore ? liteReplayStore.healthSnapshot() : null,
             },
             route_matrix: buildLiteRouteMatrix(),
@@ -291,6 +295,7 @@ export type RegisterApplicationRoutesArgs = {
   liteReplayStore: RuntimeLiteReplayStore;
   liteWriteStore: RuntimeLiteWriteStore;
   executionStateStore: ExecutionStateStore;
+  executionTreeStore: ExecutionTreeStore;
   recallTextEmbedBatcher: unknown;
   requireMemoryPrincipal: (req: FastifyRequest) => Promise<AuthPrincipal | null>;
   withIdentityFromRequest: (
@@ -346,6 +351,7 @@ type RuntimeWriteRouteRegistrationArgs = Pick<
   | "embeddingSurfacePolicy"
   | "liteWriteStore"
   | "executionStateStore"
+  | "executionTreeStore"
   | "liteRecallAccess"
   | "requireMemoryPrincipal"
   | "withIdentityFromRequest"
@@ -435,6 +441,7 @@ function registerRuntimeWriteRoutes(args: RuntimeWriteRouteRegistrationArgs) {
     embeddingSurfacePolicy,
     liteWriteStore,
     executionStateStore,
+    executionTreeStore,
     liteRecallAccess,
     requireMemoryPrincipal,
     withIdentityFromRequest,
@@ -457,6 +464,7 @@ function registerRuntimeWriteRoutes(args: RuntimeWriteRouteRegistrationArgs) {
     tenantFromBody,
     acquireInflightSlot,
     executionStateStore,
+    executionTreeStore,
   });
 
   registerHandoffRoutes({
@@ -472,6 +480,7 @@ function registerRuntimeWriteRoutes(args: RuntimeWriteRouteRegistrationArgs) {
     tenantFromBody,
     acquireInflightSlot,
     executionStateStore,
+    executionTreeStore,
   });
 
   registerMemoryAccessRoutes({
