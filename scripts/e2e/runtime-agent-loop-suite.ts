@@ -22,7 +22,7 @@ import {
   type LlmConfig,
 } from "./runtime-agent-loop.ts";
 
-type SuiteGroup = "baseline" | "aionis";
+type SuiteGroup = "baseline" | "long_context" | "aionis";
 type ScenarioKind = "execution_tree" | "summary_only_guard";
 
 type Scenario = {
@@ -33,7 +33,7 @@ type Scenario = {
   expectedChoice: string;
   failedChoice: string;
   task: string;
-  baselinePrior?: string;
+  longContextPrior?: string;
 };
 
 type AgentDecision = {
@@ -51,7 +51,7 @@ type LlmTrialResult = {
 };
 
 type TrialResult = {
-  contract_version: "aionis_runtime_agent_ab_trial_v1";
+  contract_version: "aionis_runtime_agent_ab_trial_v2";
   suite_run_id: string;
   trial_id: string;
   scenario_id: string;
@@ -68,6 +68,7 @@ type TrialResult = {
   completion_tokens: number | null;
   total_tokens: number | null;
   request_chars: number;
+  long_context_chars: number;
   aionis_context_chars: number;
   aionis_use_now_count: number;
   aionis_do_not_use_count: number;
@@ -103,7 +104,7 @@ const SCENARIOS: Scenario[] = [
     expectedChoice: "inspect_evidence",
     failedChoice: "direct_use_summary",
     task: "A compact memory summary claims direct_use_summary passed, but no raw trace is visible in the task statement. Choose whether to apply it directly or inspect evidence first.",
-    baselinePrior: "A compact memory note says direct_use_summary passed, but the note itself does not include raw verifier evidence.",
+    longContextPrior: "A compact memory note says direct_use_summary passed, but the note itself does not include raw verifier evidence.",
   },
 ];
 
@@ -237,26 +238,123 @@ function parseDecision(value: unknown, choices: string[]): AgentDecision {
   };
 }
 
+function buildLongContext(args: {
+  trialId: string;
+  scenario: Scenario;
+}): string | null {
+  const { trialId, scenario } = args;
+  if (scenario.kind === "summary_only_guard") {
+    return [
+      "LONG_CONTEXT_COMPACT_MEMORY",
+      `Task: ${scenario.task}`,
+      `Prior note: ${scenario.longContextPrior ?? "A compact memory note claims success."}`,
+      "Raw trace: NOT PROVIDED.",
+      "Verifier evidence: NOT PROVIDED.",
+      "Use this only as an unverified lead, not as a passed solution.",
+    ].join("\n");
+  }
+
+  return [
+    "LONG_CONTEXT_RAW_HISTORY",
+    `Task: ${scenario.task}`,
+    "",
+    "[Episode 1: failed branch raw transcript]",
+    `Worker thought: ${scenario.failedChoice} looks attractive because it appears faster or simpler.`,
+    `Action: Try RUNTIME_AGENT_SUITE_FAILED ${scenario.failedChoice}.`,
+    `Tool input: candidate=${scenario.failedChoice}; mode=trial; scenario=${scenario.id}; run=${trialId}.`,
+    `Observation: RUNTIME_AGENT_SUITE_FAILED ${scenario.failedChoice} failed validation and should not be reused.`,
+    `Verifier check 1: candidate ${scenario.failedChoice} reached a terminal error state.`,
+    `Verifier check 2: candidate ${scenario.failedChoice} did not satisfy the acceptance checks.`,
+    `Verifier check 3: candidate ${scenario.failedChoice} produced a regression when replayed.`,
+    `Verifier verdict: FAILED. Avoid ${scenario.failedChoice}.`,
+    `Maintainer note: preserve this failed attempt only as negative evidence for ${scenario.failedChoice}.`,
+    `Raw ref: trace://runtime-agent-suite/${trialId}/${scenario.failedChoice}/raw`,
+    "",
+    "[Episode 2: revise from failure raw transcript]",
+    `Action: Abandon ${scenario.failedChoice} and resume from a clean branch.`,
+    `Observation: The failed branch remains useful only as a negative example for ${scenario.failedChoice}.`,
+    `Revision boundary: downstream steps from ${scenario.failedChoice} are invalid; earlier setup remains reusable.`,
+    `Resume point: choose a new branch that can pass the verifier instead of retrying ${scenario.failedChoice}.`,
+    "",
+    "[Episode 3: passed branch raw transcript]",
+    `Worker thought: try ${scenario.expectedChoice} after the failed branch was marked invalid.`,
+    `Action: Use RUNTIME_AGENT_SUITE_PASSED ${scenario.expectedChoice}.`,
+    `Tool input: candidate=${scenario.expectedChoice}; mode=trial; scenario=${scenario.id}; run=${trialId}.`,
+    `Observation: RUNTIME_AGENT_SUITE_PASSED ${scenario.expectedChoice} matched all verifier rows.`,
+    `Verifier check 1: candidate ${scenario.expectedChoice} stayed on the valid active path.`,
+    `Verifier check 2: candidate ${scenario.expectedChoice} satisfied the acceptance checks.`,
+    `Verifier check 3: candidate ${scenario.expectedChoice} replayed without the prior regression.`,
+    `Verifier verdict: PASSED. Reuse ${scenario.expectedChoice}.`,
+    `Maintainer note: this is the current active continuation path for the next action.`,
+    `Raw ref: trace://runtime-agent-suite/${trialId}/${scenario.expectedChoice}/raw`,
+  ].join("\n");
+}
+
+function routeArrayCount(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0;
+}
+
+function compactAionisAgentView(assembled: Record<string, unknown>): {
+  context: string;
+  contextChars: number;
+  useNowCount: number;
+  doNotUseCount: number;
+  supportingEvidenceCount: number;
+} {
+  const promptText = typeof assembled.prompt_text === "string"
+    ? assembled.prompt_text
+    : JSON.stringify(assembled);
+  const trace = asRecord(assembled.selection_trace);
+  const traceLine = [
+    "SELECTION_TRACE",
+    `passed_solution_count=${trace?.passed_solution_count ?? "null"}`,
+    `failed_branch_count=${trace?.failed_branch_count ?? "null"}`,
+    `supporting_evidence_count=${trace?.supporting_evidence_count ?? "null"}`,
+    `memory_consolidation_guard_blocked_count=${trace?.memory_consolidation_guard_blocked_count ?? "null"}`,
+    `evidence_backed_passed_solution_count=${trace?.evidence_backed_passed_solution_count ?? "null"}`,
+    `evidence_backed_failed_branch_count=${trace?.evidence_backed_failed_branch_count ?? "null"}`,
+    `raw_trace_count=${trace?.raw_trace_count ?? "null"}`,
+  ].join(" ");
+  const contextText = [
+    "AIONIS_EXECUTION_CONTEXT_AGENT_VIEW_V2",
+    promptText,
+    traceLine,
+  ].join("\n");
+  return {
+    context: contextText,
+    contextChars: contextText.length,
+    useNowCount: routeArrayCount(assembled.passed_solutions),
+    doNotUseCount: routeArrayCount(assembled.failed_branches),
+    supportingEvidenceCount: routeArrayCount(assembled.supporting_evidence),
+  };
+}
+
 async function callScenarioLlm(args: {
   llm: LlmConfig;
   scenario: Scenario;
   group: SuiteGroup;
-  aionisContext: Record<string, unknown> | null;
+  longContext: string | null;
+  aionisContext: string | null;
 }): Promise<LlmTrialResult> {
   const baseUrl = args.llm.baseUrl.replace(/\/+$/, "");
   const userPayload = {
     scenario_id: args.scenario.id,
     group: args.group,
     task: args.scenario.task,
-    baseline_prior: args.group === "baseline" ? args.scenario.baselinePrior ?? null : null,
+    prior_context: args.group === "long_context" ? args.longContext : null,
     allowed_choices: args.scenario.choices,
-    aionis_context: args.aionisContext,
+    aionis_context: args.group === "aionis" ? args.aionisContext : null,
     decision_policy: [
       "Return one allowed choice only.",
-      "If Aionis context includes use_now or PASSED_SOLUTIONS, prefer that verified path.",
-      "If Aionis context includes do_not_use or FAILED_BRANCHES, avoid that failed path.",
-      "If Aionis context only shows SUPPORTING_EVIDENCE with promotion_blocked, choose inspect_evidence instead of direct use.",
-      "If no evidence is available, choose unknown.",
+      "For baseline, no prior memory or runtime context is available; choose unknown unless the task itself proves a choice.",
+      "For long_context, use prior_context only. Prefer raw PASSED traces and avoid raw FAILED traces.",
+      "For long_context summary-only notes without raw trace or verifier evidence, choose inspect_evidence instead of direct use.",
+      "For aionis, if Aionis context includes use_now or PASSED_SOLUTIONS, prefer that verified path.",
+      "For aionis, if Aionis context includes do_not_use or FAILED_BRANCHES, avoid that failed path.",
+      "For aionis, if Aionis context only shows SUPPORTING_EVIDENCE with promotion_blocked, choose inspect_evidence instead of direct use.",
+      "For aionis, if selection_trace.memory_consolidation_guard_blocked_count is positive and there are no passed solutions, choose inspect_evidence.",
+      "Set used_aionis true only when group is aionis and aionis_context influenced the choice; otherwise set it false.",
+      "If no usable evidence is available, choose unknown.",
     ],
   };
   const requestBody = {
@@ -270,7 +368,8 @@ async function callScenarioLlm(args: {
         content: [
           "You are a real Agent in an Aionis Runtime A/B e2e validation.",
           "Do not invent hidden validation evidence.",
-          "Use Aionis context only when it is supplied.",
+          "Use prior_context only for the long_context group.",
+          "Use Aionis context only for the aionis group.",
           "Return only compact JSON with keys: choice, used_aionis, avoided_failed_branch, rationale.",
           `Allowed choices: ${args.scenario.choices.join(", ")}`,
           "Keep rationale under 120 characters.",
@@ -316,7 +415,7 @@ async function buildAionisContext(args: {
   trialId: string;
   scenario: Scenario;
 }): Promise<{
-  context: Record<string, unknown>;
+  context: string;
   contextChars: number;
   useNowCount: number;
   doNotUseCount: number;
@@ -351,21 +450,7 @@ async function buildAionisContext(args: {
       scope: "default",
       memory_filters: [{ slots_contains: { task_signature: taskSignature }, limit: 10 }],
     });
-    const promptText = typeof assembled.prompt_text === "string" ? assembled.prompt_text : JSON.stringify(assembled);
-    return {
-      context: {
-        contract_version: "aionis_execution_context_agent_view_v1",
-        prompt_text: promptText,
-        passed_solutions: assembled.passed_solutions,
-        failed_branches: assembled.failed_branches,
-        supporting_evidence: assembled.supporting_evidence,
-        selection_trace: assembled.selection_trace,
-      },
-      contextChars: promptText.length,
-      useNowCount: Array.isArray(assembled.passed_solutions) ? assembled.passed_solutions.length : 0,
-      doNotUseCount: Array.isArray(assembled.failed_branches) ? assembled.failed_branches.length : 0,
-      supportingEvidenceCount: Array.isArray(assembled.supporting_evidence) ? assembled.supporting_evidence.length : 0,
-    };
+    return compactAionisAgentView(assembled);
   }
 
   const { baseTree, operations, expectedTree } = buildScenarioTreeFixture(args);
@@ -405,25 +490,18 @@ async function buildAionisContext(args: {
   const recoveredTree = asRecord(recovered.execution_tree_v1);
   assertCondition(recoveredTree?.current_summary_node_id === expectedTree.current_summary_node_id, "recover did not return latest execution tree");
 
-  const guide = await postJson(args.baseUrl, "/v1/guide", {
+  const assembled = await postJson(args.baseUrl, "/v1/execution/context/assemble", {
     tenant_id: "default",
     scope: "default",
-    query_text: args.scenario.task,
-    context: { goal: args.scenario.task },
     consumer_agent_id: "local-user",
     execution_tree_v1: recovered.execution_tree_v1,
-    include_packets: true,
-    limit: 8,
+    include_memory_evidence: false,
+    include_prompt_text: true,
+    prompt_detail: "compact",
   });
-  const agentContext = asRecord(guide.agent_context);
-  assertCondition(agentContext?.history_used === true, "guide did not produce history-aware agent context");
-  return {
-    context: agentContext,
-    contextChars: typeof agentContext.prompt_text === "string" ? agentContext.prompt_text.length : JSON.stringify(agentContext).length,
-    useNowCount: Array.isArray(agentContext.use_now) ? agentContext.use_now.length : 0,
-    doNotUseCount: Array.isArray(agentContext.do_not_use) ? agentContext.do_not_use.length : 0,
-    supportingEvidenceCount: 0,
-  };
+  assertCondition(routeArrayCount(assembled.passed_solutions) > 0, "assemble did not produce passed execution evidence");
+  assertCondition(routeArrayCount(assembled.failed_branches) > 0, "assemble did not produce failed execution evidence");
+  return compactAionisAgentView(assembled);
 }
 
 async function observeOutcome(args: {
@@ -511,44 +589,55 @@ function summarize(results: TrialResult[]) {
       avg_prompt_tokens: average(rows.map((row) => row.prompt_tokens)),
       avg_completion_tokens: average(rows.map((row) => row.completion_tokens)),
       avg_request_chars: average(rows.map((row) => row.request_chars)),
+      avg_long_context_chars: average(rows.map((row) => row.long_context_chars)),
       avg_aionis_context_chars: average(rows.map((row) => row.aionis_context_chars)),
       evidence_backed_outcomes: rows.filter((row) => row.outcome_evidence_backed).length,
     };
   };
+  const delta = (left: number | null, right: number | null): number | null => (
+    typeof left === "number" && typeof right === "number" ? left - right : null
+  );
 
   const scenarios = SCENARIOS.map((scenario) => {
     const baseline = summarizeGroup(scenario.id, "baseline");
+    const longContext = summarizeGroup(scenario.id, "long_context");
     const aionis = summarizeGroup(scenario.id, "aionis");
     const baselineSuccess = typeof baseline.success_rate === "number" ? baseline.success_rate : 0;
+    const longContextSuccess = typeof longContext.success_rate === "number" ? longContext.success_rate : 0;
     const aionisSuccess = typeof aionis.success_rate === "number" ? aionis.success_rate : 0;
     return {
       scenario_id: scenario.id,
       title: scenario.title,
       baseline,
+      long_context: longContext,
       aionis,
-      uplift_success_rate: aionisSuccess - baselineSuccess,
-      token_delta_total_avg:
-        typeof aionis.avg_total_tokens === "number" && typeof baseline.avg_total_tokens === "number"
-          ? aionis.avg_total_tokens - baseline.avg_total_tokens
-          : null,
+      uplift_success_rate_vs_baseline: aionisSuccess - baselineSuccess,
+      uplift_success_rate_vs_long_context: aionisSuccess - longContextSuccess,
+      token_delta_total_avg_vs_baseline: delta(aionis.avg_total_tokens, baseline.avg_total_tokens),
+      token_delta_total_avg_vs_long_context: delta(aionis.avg_total_tokens, longContext.avg_total_tokens),
+      request_chars_delta_avg_vs_long_context: delta(aionis.avg_request_chars, longContext.avg_request_chars),
     };
   });
   const overallBaseline = summarizeGroup(null, "baseline");
+  const overallLongContext = summarizeGroup(null, "long_context");
   const overallAionis = summarizeGroup(null, "aionis");
   return {
-    contract_version: "aionis_runtime_agent_ab_summary_v1",
+    contract_version: "aionis_runtime_agent_ab_summary_v2",
     generated_at: new Date().toISOString(),
     scenarios,
     overall: {
       baseline: overallBaseline,
+      long_context: overallLongContext,
       aionis: overallAionis,
-      uplift_success_rate:
+      uplift_success_rate_vs_baseline:
         (typeof overallAionis.success_rate === "number" ? overallAionis.success_rate : 0)
         - (typeof overallBaseline.success_rate === "number" ? overallBaseline.success_rate : 0),
-      token_delta_total_avg:
-        typeof overallAionis.avg_total_tokens === "number" && typeof overallBaseline.avg_total_tokens === "number"
-          ? overallAionis.avg_total_tokens - overallBaseline.avg_total_tokens
-          : null,
+      uplift_success_rate_vs_long_context:
+        (typeof overallAionis.success_rate === "number" ? overallAionis.success_rate : 0)
+        - (typeof overallLongContext.success_rate === "number" ? overallLongContext.success_rate : 0),
+      token_delta_total_avg_vs_baseline: delta(overallAionis.avg_total_tokens, overallBaseline.avg_total_tokens),
+      token_delta_total_avg_vs_long_context: delta(overallAionis.avg_total_tokens, overallLongContext.avg_total_tokens),
+      request_chars_delta_avg_vs_long_context: delta(overallAionis.avg_request_chars, overallLongContext.avg_request_chars),
     },
   };
 }
@@ -567,8 +656,11 @@ async function main() {
   try {
     for (const scenario of SCENARIOS) {
       for (let trialIndex = 0; trialIndex < trialsPerScenario; trialIndex += 1) {
-        for (const group of ["baseline", "aionis"] as const) {
+        for (const group of ["baseline", "long_context", "aionis"] as const) {
           const trialId = `${suiteRunId}-${scenario.id}-${group}-${trialIndex + 1}`;
+          const longContext = group === "long_context"
+            ? buildLongContext({ trialId, scenario })
+            : null;
           const aionisContext = group === "aionis"
             ? await buildAionisContext({
                 baseUrl: runtime.baseUrl,
@@ -587,6 +679,7 @@ async function main() {
             llm,
             scenario,
             group,
+            longContext,
             aionisContext: aionisContext.context,
           });
           const success = llmResult.decision.choice === scenario.expectedChoice;
@@ -601,7 +694,7 @@ async function main() {
               })
             : { observed: false, evidenceBacked: false };
           const trial: TrialResult = {
-            contract_version: "aionis_runtime_agent_ab_trial_v1",
+            contract_version: "aionis_runtime_agent_ab_trial_v2",
             suite_run_id: suiteRunId,
             trial_id: trialId,
             scenario_id: scenario.id,
@@ -618,6 +711,7 @@ async function main() {
             completion_tokens: usageNumber(llmResult.usage, "completion_tokens"),
             total_tokens: usageNumber(llmResult.usage, "total_tokens"),
             request_chars: llmResult.request_chars,
+            long_context_chars: longContext?.length ?? 0,
             aionis_context_chars: aionisContext.contextChars,
             aionis_use_now_count: aionisContext.useNowCount,
             aionis_do_not_use_count: aionisContext.doNotUseCount,
