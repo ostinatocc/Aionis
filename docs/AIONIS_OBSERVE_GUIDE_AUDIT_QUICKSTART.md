@@ -49,6 +49,23 @@ embedding providers above and restart the Runtime.
 
 The commands below use `jq` only to inspect JSON responses.
 
+## SDK Product Loop
+
+For the product SDK path, use the four API loop e2e:
+
+```bash
+export AIONIS_PRODUCT_E2E_BASE_URL="$AIONIS_URL"
+npm run -s runtime:e2e:product-loop
+```
+
+This runs a real Runtime HTTP loop through `observe`, `guide`, `forget`, and
+`measure`. It passes only compact `agent_context.prompt_text` to a simulated
+Agent step, observes the Agent outcome, measures the before/after guide effect,
+and checks that execution-tree audit surfaces stay out of the Agent prompt.
+
+If `AIONIS_PRODUCT_E2E_BASE_URL` is not set, the script starts an isolated local
+Runtime on a random port and uses the embedding provider from the environment.
+
 ## 1. Observe Old Memory
 
 Write a prior working note. It is useful history, but later evidence will

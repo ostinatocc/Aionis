@@ -34,6 +34,106 @@ and raw slots are operator surfaces, not Agent prompt surfaces.
 5. Call `POST /v1/measure` with before/after guide packets or direct
    observations when the product needs to prove whether history helped or hurt.
 
+## SDK Product Path
+
+The focused Runtime also exposes a small TypeScript client for the four product
+actions. The SDK is intentionally a facade over the product routes; it does not
+wrap debug, audit, benchmark, or host-specific adapter APIs.
+
+```ts
+import { createAionisClient } from "./src/sdk.ts";
+
+const aionis = createAionisClient({
+  baseUrl: process.env.AIONIS_URL ?? "http://127.0.0.1:3001",
+  apiKey: process.env.AIONIS_API_KEY,
+  tenant_id: "default",
+  scope: "payments-service",
+});
+
+await aionis.observe({
+  auto_embed: true,
+  execution: {
+    run_id: "run-001",
+    task_signature: "checkout-continuation",
+    title: "Recovered current checkout workflow",
+    summary: "Current checkout work belongs in src/payments/checkout.ts.",
+    outcome: "succeeded",
+    target_files: ["src/payments/checkout.ts"],
+    evidence: [{ ref: "run-001#verifier", summary: "Focused verifier passed." }],
+  },
+});
+
+const guide = await aionis.guide<{ agent_context: { prompt_text: string } }>({
+  query_text: "Continue checkout migration without repeating stale discovery.",
+  consumer_agent_id: "agent-1",
+  limit: 8,
+});
+
+const agentPromptContext = guide.agent_context.prompt_text;
+```
+
+The Agent should receive `agentPromptContext` or selected `agent_context`
+fields. It should not receive `memory_packet`, `guide_packet`,
+`memory_decision_trace`, `memory_decision_audit`, or raw rows by default.
+
+Runnable SDK e2e:
+
+```bash
+npm run -s runtime:e2e:product-loop
+```
+
+By default the e2e starts an isolated local Runtime and therefore needs a real
+embedding provider in the environment. To run against an already-started
+Runtime, set:
+
+```bash
+export AIONIS_PRODUCT_E2E_BASE_URL="http://127.0.0.1:3001"
+npm run -s runtime:e2e:product-loop
+```
+
+The e2e exercises `observe -> guide -> simulated Agent -> observe outcome ->
+forget(rehydrate) -> measure`, and also verifies that the advanced
+`/v1/execution/context/assemble` `agent_context` keeps passed branches,
+failed branches, and audit surfaces separated.
+
+## Multi-Agent Execution Memory
+
+Aionis can be used as a Multi-Agent execution memory backend. The host still
+owns orchestration. Aionis owns memory visibility, branch-aware context,
+feedback attribution, and measurement.
+
+Use these identity rules:
+
+1. Set `producer_agent_id` when an Agent writes `observe`.
+2. Use `memory_lane: "shared"` plus `owner_team_id` when planner, worker,
+   verifier, and reviewer should share execution memory.
+3. Use `consumer_agent_id` and `consumer_team_id` on `guide`.
+4. Use `memory_lane: "private"` only when the same Agent should retrieve the
+   memory later.
+5. Put role hints such as `planner`, `worker`, `verifier`, or `reviewer` in
+   `context.agent_role`; Aionis remains the memory backend, not the role
+   scheduler.
+6. After the Agent acts, call `forget` with `operation: "activate"`,
+   `guide_trace_id`, `used_memory_ids`, `run_id`, `outcome`, and
+   `used_surface` so feedback is attributed only to memory actually used.
+
+Runnable e2e:
+
+```bash
+npm run -s runtime:e2e:multi-agent
+```
+
+This e2e validates the Multi-Agent contract:
+
+1. planner writes a scoped plan
+2. worker writes a failed branch
+3. verifier marks that branch failed
+4. worker writes a passed branch
+5. reviewer receives compact `agent_context`
+6. execution context separates `use_now` and `do_not_use`
+7. reviewer feedback is attributed through `guide_trace_id`
+8. `measure` reports positive history impact
+
 ## `POST /v1/observe`
 
 ### Purpose

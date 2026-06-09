@@ -623,6 +623,16 @@ test("runtime HTTP e2e assembles full-power context from raw evidence, bounded a
     assert.match(String(fullPower.prompt_text), /RAW_EVIDENCE/);
     assert.match(String(fullPower.prompt_text), /GATED_ABSTRACTIONS/);
     assert.match(String(fullPower.prompt_text), /TRACE/);
+    assert.equal(fullPower.agent_context.contract_version, "aionis_agent_context_v1");
+    assert.match(String(fullPower.agent_context.prompt_text), /AIONIS_AGENT_CONTEXT v1/);
+    assert.match(String(fullPower.agent_context.prompt_text), /RUNTIME_E2E_PASSED formula B/);
+    assert.match(String(fullPower.agent_context.prompt_text), /RUNTIME_E2E_FAILED/);
+    assert.match(String(fullPower.agent_context.prompt_text), /formula A/);
+    assert.equal(String(fullPower.agent_context.prompt_text).includes("RAW_EVIDENCE"), false);
+    assert.equal(String(fullPower.agent_context.prompt_text).includes("GATED_ABSTRACTIONS"), false);
+    assert.equal(String(fullPower.agent_context.prompt_text).includes("TRACE"), false);
+    assert.equal(String(fullPower.agent_context.prompt_text).includes("RUNTIME_HTTP_FULL_POWER_ABSTRACTION"), false);
+    assert.ok(String(fullPower.agent_context.prompt_text).length < String(fullPower.prompt_text).length);
     assert.match(JSON.stringify(fullPower.current_active_path), /RUNTIME_E2E_PASSED/);
     assert.match(JSON.stringify(fullPower.passed_solutions), /RUNTIME_E2E_PASSED formula B computes subtotal/);
     assert.match(JSON.stringify(fullPower.failed_branches), /RUNTIME_E2E_FAILED formula A double-counted tax/);
@@ -653,8 +663,8 @@ test("runtime HTTP e2e assembles full-power context from raw evidence, bounded a
     assert.equal(asRecord(fullPower.selection_trace)?.gated_abstraction_contested_count, 1);
 
     const simulatedAgentChoice =
-      JSON.stringify(fullPower.passed_solutions).includes("RUNTIME_E2E_PASSED")
-      && JSON.stringify(fullPower.failed_branches).includes("RUNTIME_E2E_FAILED")
+      String(fullPower.agent_context.prompt_text).includes("RUNTIME_E2E_PASSED")
+      && String(fullPower.agent_context.prompt_text).includes("RUNTIME_E2E_FAILED")
         ? "formula_b"
         : "unknown";
     assert.equal(simulatedAgentChoice, "formula_b");

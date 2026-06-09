@@ -1,5 +1,9 @@
 import { z } from "zod";
 import { memoryFindLite } from "../memory/find.js";
+import {
+  parseAionisAgentContext,
+  type AionisAgentContext,
+} from "../memory/product-output-contract.js";
 import { memoryResolveLite } from "../memory/resolve.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
 import {
@@ -39,8 +43,10 @@ export const ExecutionEvidenceContextRequestSchema = z.object({
   memory_filters: z.array(ExecutionEvidenceMemoryFilterSchema).max(12).default([]),
   include_memory_evidence: z.boolean().default(true),
   include_prompt_text: z.boolean().default(true),
+  include_agent_context: z.boolean().default(true),
   context_mode: z.enum(["execution_evidence", "full_power"]).default("execution_evidence"),
   prompt_detail: z.enum(["compact", "full"]).default("compact"),
+  agent_context_char_budget: z.number().int().positive().max(50_000).default(4_096),
   max_active_entries: z.number().int().positive().max(48).default(16),
   max_validated_evidence: z.number().int().positive().max(50).default(8),
   max_supporting_evidence: z.number().int().positive().max(50).default(8),
@@ -969,6 +975,285 @@ function hasRawTraceBacking(record: unknown): boolean {
   return Array.isArray(item.supporting_raw_trace) && item.supporting_raw_trace.length > 0;
 }
 
+function compactAgentText(value: unknown, maxChars: number): string | null {
+  const text = stringValue(value);
+  if (!text) return null;
+  return truncate(text.replace(/\s+/g, " ").trim(), maxChars);
+}
+
+function recordFirstText(record: Record<string, unknown>, keys: string[], maxChars: number): string | null {
+  for (const key of keys) {
+    const text = compactAgentText(record[key], maxChars);
+    if (text) return text;
+  }
+  return null;
+}
+
+function addAgentLine(lines: string[], line: string | null | undefined, maxLines: number): void {
+  if (!line || lines.length >= maxLines) return;
+  const normalized = line.replace(/\s+/g, " ").trim();
+  if (!normalized || lines.includes(normalized)) return;
+  lines.push(normalized);
+}
+
+function executionRecordNodeId(record: Record<string, unknown>): string | null {
+  return firstString(record.node_id, record.uri, record.id);
+}
+
+function executionUseNowLine(
+  label: "Current active path" | "Passed solution",
+  record: Record<string, unknown>,
+): string | null {
+  const text = recordFirstText(record, ["summary", "observation", "action", "title"], 260);
+  if (!text) return null;
+  const nodeId = executionRecordNodeId(record);
+  const suffix = nodeId ? ` node=${nodeId}` : "";
+  return `${label}: ${text}${suffix}`;
+}
+
+function failedBranchLine(record: Record<string, unknown>): string | null {
+  const text = recordFirstText(record, ["diagnostic_note", "summary", "observation", "title"], 220);
+  if (!text) return null;
+  const nodeId = executionRecordNodeId(record);
+  const suffix = nodeId ? ` node=${nodeId}` : "";
+  return `Avoid failed branch: ${text}${suffix}`;
+}
+
+function admittedAbstractionLine(entry: GatedAbstractionEntry): string | null {
+  const summary = compactAgentText(entry.summary, 220);
+  if (!summary) return null;
+  const applies = entry.applies_when.length > 0
+    ? ` applies_when=${truncate(entry.applies_when.join(" | "), 180)}`
+    : "";
+  const excludes = entry.does_not_apply_when.length > 0
+    ? ` does_not_apply_when=${truncate(entry.does_not_apply_when.join(" | "), 180)}`
+    : "";
+  return `Bounded guidance: ${summary} node=${entry.node_id}${applies}${excludes}`;
+}
+
+function gatedAbstractionInspectLine(entry: GatedAbstractionEntry): string {
+  return `Inspect gated abstraction before use: node=${entry.node_id} gate=${entry.gate_state} use=${entry.use_contract} reason=${truncate(entry.gate_reason, 160)}`;
+}
+
+function gatedAbstractionBlockedLine(entry: GatedAbstractionEntry): string {
+  return `Do not use gated abstraction: node=${entry.node_id} reason=${truncate(entry.gate_reason, 160)}`;
+}
+
+function buildExecutionAgentPrompt(args: {
+  summary: string;
+  historyUsed: boolean;
+  recommendedPosture: AionisAgentContext["recommended_posture"];
+  authority: AionisAgentContext["authority"];
+  negativeTransferRisk: AionisAgentContext["risk"]["negative_transfer_risk"];
+  useNow: string[];
+  inspectBeforeUse: string[];
+  doNotUse: string[];
+  rehydrateHints: AionisAgentContext["rehydrate_hints"];
+  memoryIds: string[];
+  budget: number;
+}): string {
+  const render = (profile: {
+    summaryChars: number;
+    useNowItems: number;
+    useNowChars: number;
+    inspectItems: number;
+    inspectChars: number;
+    doNotUseItems: number;
+    doNotUseChars: number;
+    rehydrateItems: number;
+    rehydrateChars: number;
+    memoryIdItems: number;
+  }) => {
+    const inline = (label: string, values: string[], maxItems: number, maxChars: number): string | null => {
+      if (maxItems <= 0) return null;
+      const entries = values.slice(0, maxItems).map((value) => truncate(value, maxChars));
+      return entries.length > 0 ? `${label}: ${entries.join(" | ")}` : null;
+    };
+    return uniqueStrings([
+      "AIONIS_AGENT_CONTEXT v1",
+      `state: history=${args.historyUsed ? "yes" : "no"} posture=${args.recommendedPosture} authority=${args.authority} risk=${args.negativeTransferRisk}`,
+      `summary: ${truncate(args.summary, profile.summaryChars)}`,
+      inline("use_now", args.useNow, profile.useNowItems, profile.useNowChars),
+      inline("inspect_before_use", args.inspectBeforeUse, profile.inspectItems, profile.inspectChars),
+      inline("do_not_use", args.doNotUse, profile.doNotUseItems, profile.doNotUseChars),
+      args.rehydrateHints.length > 0 && profile.rehydrateItems > 0
+        ? `rehydrate_if_needed: ${args.rehydrateHints
+          .slice(0, profile.rehydrateItems)
+          .map((entry) => `${truncate(entry.memory_id, 90)}:${truncate(entry.reason, profile.rehydrateChars)}`)
+          .join(" | ")}`
+        : null,
+      args.memoryIds.length > 0 && profile.memoryIdItems > 0
+        ? `memory_ids: ${args.memoryIds.slice(0, profile.memoryIdItems).join(",")}`
+        : null,
+    ], 16).join("\n");
+  };
+
+  const profiles = [
+    { summaryChars: 420, useNowItems: 5, useNowChars: 360, inspectItems: 4, inspectChars: 240, doNotUseItems: 4, doNotUseChars: 240, rehydrateItems: 4, rehydrateChars: 120, memoryIdItems: 10 },
+    { summaryChars: 260, useNowItems: 3, useNowChars: 260, inspectItems: 3, inspectChars: 180, doNotUseItems: 3, doNotUseChars: 180, rehydrateItems: 2, rehydrateChars: 90, memoryIdItems: 8 },
+    { summaryChars: 180, useNowItems: 2, useNowChars: 180, inspectItems: 2, inspectChars: 140, doNotUseItems: 2, doNotUseChars: 140, rehydrateItems: 1, rehydrateChars: 70, memoryIdItems: 6 },
+  ];
+  let lastPrompt = "";
+  for (const profile of profiles) {
+    const prompt = render(profile);
+    lastPrompt = prompt;
+    if (prompt.length <= args.budget) return prompt;
+  }
+  return truncate(lastPrompt, args.budget);
+}
+
+function buildExecutionAgentContext(args: {
+  tenantId: string;
+  scope: string;
+  tree: ExecutionTreeV1 | null;
+  activeCompressed: ReturnType<typeof stateEntries>;
+  activeRaw: ReturnType<typeof stateEntries>;
+  passedSolutions: unknown[];
+  failedBranches: unknown[];
+  rawEvidence: RawEvidenceEntry[];
+  gatedAbstractions: GatedAbstractionEntry[];
+  rehydrationRefs: string[];
+  selectionTrace: Record<string, unknown>;
+  budget: number;
+}): AionisAgentContext {
+  const useNow: string[] = [];
+  const inspectBeforeUse: string[] = [];
+  const doNotUse: string[] = [];
+  const memoryIds: string[] = [];
+  const workflowIds: string[] = [];
+
+  if (args.tree?.tree_id) workflowIds.push(args.tree.tree_id);
+
+  for (const entry of args.activeCompressed.slice(-1) as Array<Record<string, unknown>>) {
+    addAgentLine(useNow, executionUseNowLine("Current active path", entry), 4);
+    const nodeId = executionRecordNodeId(entry);
+    if (nodeId) memoryIds.push(nodeId);
+  }
+  if (useNow.length === 0) {
+    for (const entry of args.activeRaw.slice(-1) as Array<Record<string, unknown>>) {
+      addAgentLine(useNow, executionUseNowLine("Current active path", entry), 4);
+      const nodeId = executionRecordNodeId(entry);
+      if (nodeId) memoryIds.push(nodeId);
+    }
+  }
+
+  for (const entry of args.passedSolutions.filter(hasEvidenceBacking).slice(0, 3) as Array<Record<string, unknown>>) {
+    addAgentLine(useNow, executionUseNowLine("Passed solution", entry), 5);
+    const nodeId = executionRecordNodeId(entry);
+    if (nodeId) memoryIds.push(nodeId);
+  }
+
+  for (const entry of args.failedBranches.slice(0, 3) as Array<Record<string, unknown>>) {
+    addAgentLine(doNotUse, failedBranchLine(entry), 4);
+    const nodeId = executionRecordNodeId(entry);
+    if (nodeId) memoryIds.push(nodeId);
+  }
+
+  let admittedAbstractionCount = 0;
+  let inspectAbstractionCount = 0;
+  let blockedAbstractionCount = 0;
+  for (const entry of args.gatedAbstractions) {
+    memoryIds.push(entry.node_id);
+    if (entry.gate_state === "admitted" && entry.use_contract === "bounded_guidance") {
+      admittedAbstractionCount += 1;
+      addAgentLine(useNow, admittedAbstractionLine(entry), 5);
+    } else if (entry.gate_state === "blocked" || entry.use_contract === "do_not_use") {
+      blockedAbstractionCount += 1;
+      addAgentLine(doNotUse, gatedAbstractionBlockedLine(entry), 4);
+    } else {
+      inspectAbstractionCount += 1;
+      addAgentLine(inspectBeforeUse, gatedAbstractionInspectLine(entry), 4);
+    }
+  }
+
+  const rehydrateHints = args.rehydrationRefs.slice(0, 4).map((ref) => ({
+    memory_id: ref,
+    reason: "Raw execution evidence is available outside the compact agent context.",
+    required: false,
+  }));
+  const historyUsed = useNow.length > 0 || inspectBeforeUse.length > 0 || doNotUse.length > 0 || rehydrateHints.length > 0;
+  const negativeTransferRisk: AionisAgentContext["risk"]["negative_transfer_risk"] =
+    blockedAbstractionCount > 0
+      ? "high"
+      : doNotUse.length > 0 || inspectBeforeUse.length > 0
+        ? "medium"
+        : "low";
+  const recommendedPosture: AionisAgentContext["recommended_posture"] = !historyUsed
+    ? "ignore_history"
+    : inspectBeforeUse.length > 0 && useNow.length === 0
+      ? "inspect_before_use"
+      : "reuse_supported_history";
+  const authority: AionisAgentContext["authority"] = !historyUsed
+    ? "none"
+    : useNow.length > 0
+      ? "advisory"
+      : blockedAbstractionCount > 0 && inspectBeforeUse.length === 0
+        ? "blocked"
+        : "candidate";
+  const summary = historyUsed
+    ? [
+        "Execution evidence was compiled into a compact agent context.",
+        `${useNow.length} direct guidance item(s), ${doNotUse.length} avoidance item(s), ${inspectBeforeUse.length} inspect-first item(s).`,
+        `${args.rawEvidence.length} raw evidence item(s) and full selection trace remain on audit fields, not in the agent prompt.`,
+      ].join(" ")
+    : "No usable execution history was recovered for the agent context.";
+  const compactMemoryIds = uniqueStrings(memoryIds, 16);
+  const compactWorkflowIds = uniqueStrings(workflowIds, 8);
+  const promptText = buildExecutionAgentPrompt({
+    summary,
+    historyUsed,
+    recommendedPosture,
+    authority,
+    negativeTransferRisk,
+    useNow,
+    inspectBeforeUse,
+    doNotUse,
+    rehydrateHints,
+    memoryIds: compactMemoryIds,
+    budget: args.budget,
+  });
+
+  return parseAionisAgentContext({
+    contract_version: "aionis_agent_context_v1",
+    tenant_id: args.tenantId,
+    scope: args.scope,
+    prompt_text: promptText,
+    summary,
+    history_used: historyUsed,
+    recommended_posture: recommendedPosture,
+    authority,
+    target_files: [],
+    use_now: useNow,
+    inspect_before_use: inspectBeforeUse,
+    do_not_use: doNotUse,
+    memory_ids: compactMemoryIds,
+    use_now_memory_ids: compactMemoryIds.filter((id) => useNow.some((line) => line.includes(id))).slice(0, 10),
+    inspect_before_use_memory_ids: compactMemoryIds.filter((id) => inspectBeforeUse.some((line) => line.includes(id))).slice(0, 10),
+    do_not_use_memory_ids: compactMemoryIds.filter((id) => doNotUse.some((line) => line.includes(id))).slice(0, 10),
+    rehydrate_hints: rehydrateHints,
+    risk: {
+      negative_transfer_risk: negativeTransferRisk,
+      blocked_authority_count: blockedAbstractionCount,
+      stale_memory_count: 0,
+      reasons: uniqueStrings([
+        doNotUse.length > 0 ? "failed_execution_branches_kept_out_of_use_now" : null,
+        inspectAbstractionCount > 0 ? "candidate_or_contested_abstractions_require_inspection" : null,
+        admittedAbstractionCount > 0 ? "admitted_abstractions_are_bounded_guidance_only" : null,
+      ], 6),
+    },
+    evidence_refs: {
+      memory_ids: compactMemoryIds,
+      workflow_ids: compactWorkflowIds,
+      evidence_count:
+        args.passedSolutions.length
+        + args.failedBranches.length
+        + args.rawEvidence.length
+        + args.gatedAbstractions.length
+        + (typeof args.selectionTrace.raw_trace_count === "number" ? args.selectionTrace.raw_trace_count : 0),
+    },
+  });
+}
+
 function buildPromptText(args: {
   activeCompressed: ReturnType<typeof stateEntries>;
   activeRaw: ReturnType<typeof stateEntries>;
@@ -1238,6 +1523,22 @@ export async function buildExecutionEvidenceContextLite(args: {
         promptDetail: parsed.prompt_detail,
       })
     : null;
+  const agentContext = parsed.include_agent_context
+    ? buildExecutionAgentContext({
+        tenantId,
+        scope,
+        tree,
+        activeCompressed,
+        activeRaw,
+        passedSolutions,
+        failedBranches,
+        rawEvidence,
+        gatedAbstractions,
+        rehydrationRefs,
+        selectionTrace,
+        budget: parsed.agent_context_char_budget,
+      })
+    : null;
 
   return {
     contract_version: "execution_evidence_context_v1",
@@ -1268,6 +1569,7 @@ export async function buildExecutionEvidenceContextLite(args: {
     gated_abstractions: gatedAbstractions,
     rehydration_refs: rehydrationRefs,
     prompt_text: promptText,
+    agent_context: agentContext,
     full_power_trace: fullPowerTrace,
     selection_trace: selectionTrace,
   };

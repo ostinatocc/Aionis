@@ -593,6 +593,22 @@ test("execution context full_power mode exposes raw evidence, gated abstractions
   assert.match(body.prompt_text, /does_not_apply_when=tax is already included in subtotal/);
   assert.match(body.prompt_text, /counterexamples=formula A double-counted tax/);
   assert.match(body.prompt_text, /failed branch raw traces explain what to avoid/);
+  assert.equal(body.agent_context.contract_version, "aionis_agent_context_v1");
+  assert.equal(body.agent_context.history_used, true);
+  assert.equal(body.agent_context.authority, "advisory");
+  assert.match(body.agent_context.prompt_text, /AIONIS_AGENT_CONTEXT v1/);
+  assert.match(body.agent_context.prompt_text, /Passed solution/);
+  assert.match(body.agent_context.prompt_text, /Avoid failed branch/);
+  assert.match(body.agent_context.prompt_text, /inspect_before_use/);
+  assert.equal(body.agent_context.prompt_text.includes("RAW_EVIDENCE"), false);
+  assert.equal(body.agent_context.prompt_text.includes("GATED_ABSTRACTIONS"), false);
+  assert.equal(body.agent_context.prompt_text.includes("TRACE"), false);
+  assert.equal(body.agent_context.prompt_text.includes("FULL_POWER_RAW_EVIDENCE"), false);
+  assert.equal(body.agent_context.prompt_text.includes("FULL_POWER_GATED_ABSTRACTION"), false);
+  assert.ok(body.agent_context.prompt_text.length < body.prompt_text.length);
+  assert.ok(body.agent_context.inspect_before_use.some((entry: string) =>
+    entry.includes("candidate_only_with_counterexamples")
+  ));
 
   assert.ok(body.raw_evidence.some((entry: any) =>
     entry.source === "execution_tree_raw"

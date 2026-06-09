@@ -42,6 +42,48 @@ Internal mechanisms may remain richer than these verbs, but product docs, demos,
 
 The shortest runnable product flow is [AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md](AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md). It demonstrates `observe -> guide -> audit` without adding an Agent harness or benchmark runner.
 
+## Multi-Agent Execution Memory Position
+
+Aionis should be a Multi-Agent execution memory backend, not a Multi-Agent
+orchestrator.
+
+External hosts decide which Agent acts next. Aionis records what each Agent did,
+compiles branch-aware execution state, controls which history can be reused, and
+measures whether that shared history helped.
+
+The product contract for Multi-Agent execution memory is:
+
+| Field / Surface | Meaning |
+|---|---|
+| `producer_agent_id` | Agent that wrote an observed memory or execution event. |
+| `consumer_agent_id` | Agent receiving guide context. Private memory is visible only when this identity is aligned with the writer/owner. |
+| `owner_team_id` / `consumer_team_id` | Team boundary for shared multi-agent memory. |
+| `memory_lane: "private"` | Agent-local memory. Use only when the same Agent should retrieve it later. |
+| `memory_lane: "shared"` | Team-visible execution memory for planner/worker/verifier/reviewer handoff. |
+| `context.agent_role` | Host-supplied role hint such as `planner`, `worker`, `verifier`, or `reviewer`. |
+| `execution_tree_v1` | Branch-aware state: current path, passed branches, failed branches, and revisions. |
+| `guide_trace_id` + `used_memory_ids` | Feedback attribution path after an Agent actually uses recalled memory. |
+
+Role-specific prompt building can be done by the host using `agent_context`
+fields. Aionis must keep the same core boundary for every role:
+
+1. reusable execution history enters `use_now`
+2. candidate or ambiguous history enters `inspect_before_use`
+3. failed branches and blocked authority enter `do_not_use`
+4. raw evidence and traces stay on audit/debug surfaces
+5. feedback attribution is explicit through `guide_trace_id`
+
+Runnable proof surface:
+
+```bash
+npm run -s runtime:e2e:multi-agent
+```
+
+That e2e starts a planner/worker/verifier/reviewer loop over the real Runtime:
+planner writes a plan, worker creates failed and passed branches, verifier marks
+branch outcomes, reviewer inherits the active path, feedback is attributed to
+the guide trace, and `measure` reports whether history changed future behavior.
+
 ## Observe Input Contract
 
 `POST /v1/observe` is the product entry for writing history. Users should not need to know the internal node and slot schema for common writes.
