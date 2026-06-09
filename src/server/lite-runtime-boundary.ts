@@ -22,7 +22,7 @@ export type LiteRouteProductExposure =
   | "internal_control"
   | "operator_support";
 
-export const LITE_ROUTE_CAPABILITY_MATRIX_VERSION = "lite_route_capability_matrix_v4";
+export const LITE_ROUTE_CAPABILITY_MATRIX_VERSION = "lite_route_capability_matrix_v5";
 
 const LITE_PRODUCT_ENTRY_ROUTES = new Set([
   "POST /v1/observe",
@@ -143,6 +143,15 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
     product_effects: ["history_shaped_future_behavior"],
     surface_kind: "core_runtime",
     product_role: "product facade for measuring whether history positively shaped future behavior",
+  },
+  {
+    method: "POST",
+    path: "/v1/operator/snapshot",
+    route_group: "product-facade",
+    capabilities: ["continuity", "learning", "forgetting", "learning_control"],
+    product_effects: ["history_shaped_future_behavior"],
+    surface_kind: "operator_review",
+    product_role: "read-only operator snapshot summarizing active paths, failed branches, guide attribution, learning-control posture, and measured effect",
   },
   {
     method: "POST",

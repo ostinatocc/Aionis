@@ -16,6 +16,7 @@ import { registerMemoryReplayCoreRoutes } from "../routes/memory-replay-core.js"
 import { registerMemoryReplayLearningControlRoutes } from "../routes/memory-replay-learning-control.js";
 import { registerMemoryWriteRoutes } from "../routes/memory-write.js";
 import { registerProductFacadeRoutes } from "../routes/product-facade.js";
+import { registerOperatorSnapshotRoutes } from "../routes/operator-snapshot.js";
 import { registerRuntimeBoundaryInventoryRoutes } from "../routes/runtime-boundary-inventory.js";
 import type { ExecutionStateStore } from "../execution/state-store.js";
 import type { ExecutionTreeStore } from "../execution/tree-store.js";
@@ -677,6 +678,16 @@ function registerProductRoutes(args: ProductFacadeRouteRegistrationArgs) {
     app: args.app,
     env: args.env,
     liteWriteStore: args.liteWriteStore,
+    requireMemoryPrincipal: args.requireMemoryPrincipal,
+    withIdentityFromRequest: args.withIdentityFromRequest,
+    enforceRateLimit: args.enforceRateLimit,
+    enforceTenantQuota: args.enforceTenantQuota,
+    tenantFromBody: args.tenantFromBody,
+    acquireInflightSlot: args.acquireInflightSlot,
+  });
+  registerOperatorSnapshotRoutes({
+    app: args.app,
+    env: args.env,
     requireMemoryPrincipal: args.requireMemoryPrincipal,
     withIdentityFromRequest: args.withIdentityFromRequest,
     enforceRateLimit: args.enforceRateLimit,

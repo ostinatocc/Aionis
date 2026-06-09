@@ -1518,3 +1518,173 @@ export type AionisEffectReport = z.infer<typeof AionisEffectReportSchema>;
 export function parseAionisEffectReport(value: unknown): AionisEffectReport {
   return AionisEffectReportSchema.parse(value);
 }
+
+const AionisOperatorSnapshotClaimStatusSchema = z.enum(["pass", "fail", "warning", "not_applicable"]);
+
+const AionisOperatorSnapshotEntrySchema = z
+  .object({
+    entry_id: z.string().min(1),
+    title: z.string().min(1).nullable(),
+    summary: z.string().min(1),
+    source: z.enum(["agent_context", "execution_context", "guide_packet", "memory_decision_trace", "memory_decision_audit", "effect_report", "unknown"]),
+    memory_ids: z.array(z.string().min(1)).default([]),
+    evidence_refs: z.array(z.string().min(1)).default([]),
+  })
+  .strict();
+
+export const AionisOperatorSnapshotSchema = z
+  .object({
+    contract_version: z.literal("aionis_operator_snapshot_v1"),
+    tenant_id: z.string().min(1),
+    scope: z.string().min(1),
+    intended_use: z.literal("operator_snapshot"),
+    agent_prompt_included: z.literal(false),
+    runtime_mutation: z.literal(false),
+    task: z
+      .object({
+        run_id: z.string().min(1).nullable(),
+        task_signature: z.string().min(1).nullable(),
+        task_family: z.string().min(1).nullable(),
+        workflow_signature: z.string().min(1).nullable(),
+        agent_role: AionisAgentRoleSchema,
+      })
+      .strict(),
+    execution_state: z
+      .object({
+        history_used: z.boolean(),
+        recommended_posture: z.enum([
+          "reuse_supported_history",
+          "use_as_context",
+          "inspect_before_use",
+          "rehydrate_before_use",
+          "ignore_history",
+        ]),
+        authority: AionisGuidanceAuthoritySchema,
+        active_path: z
+          .object({
+            count: z.number().int().nonnegative(),
+            entries: z.array(AionisOperatorSnapshotEntrySchema).default([]),
+          })
+          .strict(),
+        passed_solutions: z
+          .object({
+            count: z.number().int().nonnegative(),
+            entries: z.array(AionisOperatorSnapshotEntrySchema).default([]),
+          })
+          .strict(),
+        failed_branches: z
+          .object({
+            count: z.number().int().nonnegative(),
+            entries: z.array(AionisOperatorSnapshotEntrySchema).default([]),
+          })
+          .strict(),
+        branch_isolation: z
+          .object({
+            active_path_visible: z.boolean(),
+            passed_solution_visible: z.boolean(),
+            failed_branch_visible_in_do_not_use: z.boolean(),
+            failed_branch_leaked_to_use_now: z.boolean(),
+            status: z.enum(["pass", "fail", "not_applicable"]),
+            reason: z.string().min(1),
+          })
+          .strict(),
+      })
+      .strict(),
+    guide_trace: z
+      .object({
+        present: z.boolean(),
+        guide_trace_id: z.string().min(1).nullable(),
+        exposed_memory_ids: z.array(z.string().min(1)).default([]),
+        use_now_memory_ids: z.array(z.string().min(1)).default([]),
+        inspect_before_use_memory_ids: z.array(z.string().min(1)).default([]),
+        do_not_use_memory_ids: z.array(z.string().min(1)).default([]),
+        attributed_memory_ids: z.array(z.string().min(1)).default([]),
+        unattributed_memory_ids: z.array(z.string().min(1)).default([]),
+        feedback_attribution_present: z.boolean(),
+        feedback_outcome: z.enum(["positive", "negative", "neutral"]).nullable(),
+        reason: z.string().min(1),
+      })
+      .strict(),
+    memory_lifecycle: z
+      .object({
+        used_count: z.number().int().nonnegative(),
+        inspect_before_use_count: z.number().int().nonnegative(),
+        do_not_use_count: z.number().int().nonnegative(),
+        rehydrate_count: z.number().int().nonnegative(),
+        controlled_memory_count: z.number().int().nonnegative(),
+        blocked_or_suppressed_count: z.number().int().nonnegative(),
+        stale_memory_count: z.number().int().nonnegative(),
+        learning_control_visible: z.boolean(),
+        consolidation_guard: z
+          .object({
+            supporting_only_count: z.number().int().nonnegative(),
+            candidate_only_count: z.number().int().nonnegative(),
+            promotion_blocked_count: z.number().int().nonnegative(),
+            reason: z.string().min(1),
+          })
+          .strict(),
+      })
+      .strict(),
+    learning_control: z
+      .object({
+        visible: z.boolean(),
+        runtime_mutation: z.literal(false),
+        stable_promotion_allowed: z.boolean().nullable(),
+        candidate_count: z.number().int().nonnegative(),
+        blocked_authority_count: z.number().int().nonnegative(),
+        promotion_denied_reasons: z.array(z.string().min(1)).default([]),
+        reason: z.string().min(1),
+      })
+      .strict(),
+    effect: z
+      .object({
+        present: z.boolean(),
+        impact_direction: AionisEffectImpactDirectionSchema.nullable(),
+        changed_future_behavior: z.boolean().nullable(),
+        token_delta: z.number().nullable(),
+        context_size_delta: z.number().nullable(),
+        repeated_discovery_delta: z.number().nullable(),
+        reason: z.string().min(1),
+      })
+      .strict(),
+    claims: z
+      .array(
+        z
+          .object({
+            claim: z.enum([
+              "active_path_visible",
+              "failed_branch_isolated",
+              "feedback_attribution_visible",
+              "learning_control_visible",
+              "runtime_read_only",
+              "effect_measured",
+            ]),
+            status: AionisOperatorSnapshotClaimStatusSchema,
+            evidence: z.string().min(1),
+          })
+          .strict(),
+      )
+      .default([]),
+    risks: z
+      .object({
+        negative_transfer_risk: AionisRiskLevelSchema,
+        blocked_or_suppressed_count: z.number().int().nonnegative(),
+        unresolved_inspection_count: z.number().int().nonnegative(),
+        reasons: z.array(z.string().min(1)).default([]),
+      })
+      .strict(),
+    source_map: z
+      .object({
+        routes_used: z.array(z.string().min(1)).default([]),
+        internal_surfaces_used: z.array(z.string().min(1)).default([]),
+        omitted_internal_surfaces: z.array(z.string().min(1)).default([]),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type AionisOperatorSnapshot = z.infer<typeof AionisOperatorSnapshotSchema>;
+
+export function parseAionisOperatorSnapshot(value: unknown): AionisOperatorSnapshot {
+  return AionisOperatorSnapshotSchema.parse(value);
+}

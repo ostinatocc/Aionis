@@ -6,7 +6,7 @@ import {
   createAionisClient,
 } from "../../src/sdk.ts";
 
-test("AionisClient wraps the four product facade APIs with scope defaults", async () => {
+test("AionisClient wraps the product facade APIs with scope defaults", async () => {
   const calls: Array<{ url: string; init: RequestInit }> = [];
   const fakeFetch: typeof fetch = async (input, init) => {
     calls.push({ url: String(input), init: init ?? {} });
@@ -28,12 +28,14 @@ test("AionisClient wraps the four product facade APIs with scope defaults", asyn
   await client.guide({ context: { task: "continue" } }, { scope: "scope-b" });
   await client.forget({ operation: "suppress", target: "memory", memory_id: "mem-1" });
   await client.measure({ baseline: { score: 0.3 }, aionis: { score: 0.7 } });
+  await client.operatorSnapshot({ run_id: "run-operator", include_markdown: true });
 
   assert.deepEqual(calls.map((call) => call.url), [
     "http://127.0.0.1:3001/v1/observe",
     "http://127.0.0.1:3001/v1/guide",
     "http://127.0.0.1:3001/v1/forget",
     "http://127.0.0.1:3001/v1/measure",
+    "http://127.0.0.1:3001/v1/operator/snapshot",
   ]);
   assert.equal(calls[0]?.init.method, "POST");
   assert.equal((calls[0]?.init.headers as Record<string, string>).authorization, "Bearer test-key");
@@ -48,6 +50,11 @@ test("AionisClient wraps the four product facade APIs with scope defaults", asyn
   assert.equal(guideBody.tenant_id, "tenant-a");
   assert.equal(guideBody.scope, "scope-b");
   assert.equal(guideBody.mode, "full_power");
+
+  const snapshotBody = JSON.parse(String(calls[4]?.init.body)) as Record<string, unknown>;
+  assert.equal(snapshotBody.tenant_id, "tenant-a");
+  assert.equal(snapshotBody.scope, "scope-a");
+  assert.equal(snapshotBody.run_id, "run-operator");
 });
 
 test("AionisClient defaults guide to full_power and allows explicit guide mode control", async () => {

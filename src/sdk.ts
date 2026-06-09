@@ -101,6 +101,10 @@ export class AionisClient {
     return this.post<T>("/v1/measure", body, options);
   }
 
+  async operatorSnapshot<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {
+    return this.post<T>("/v1/operator/snapshot", body, options);
+  }
+
   async health<T = unknown>(): Promise<T> {
     const response = await this.fetchImpl(`${this.baseUrl}/health`, {
       method: "GET",

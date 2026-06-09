@@ -90,7 +90,7 @@ test("hard invariants stay small and evidence-centered", () => {
 });
 
 test("Lite route capability matrix maps public routes to focused product capabilities", () => {
-  assert.equal(LITE_ROUTE_CAPABILITY_MATRIX_VERSION, "lite_route_capability_matrix_v4");
+  assert.equal(LITE_ROUTE_CAPABILITY_MATRIX_VERSION, "lite_route_capability_matrix_v5");
 
   const capabilityIds = new Set(aionisKernelCapabilityIds());
   const matrix = buildLiteRouteMatrix().route_capability_matrix;
@@ -160,6 +160,7 @@ test("Lite route capability matrix maps public routes to focused product capabil
     "POST /v1/memory/trajectory/compile",
     "POST /v1/memory/write",
     "POST /v1/observe",
+    "POST /v1/operator/snapshot",
   ]);
 
   assert.equal(new Set(routeKeys).size, routeKeys.length, "route capability matrix must not duplicate routes");
@@ -216,6 +217,7 @@ test("Lite route capability matrix separates product entries from internal surfa
   assert.equal(exposureByRoute.get("POST /v1/memory/policies/learning-control/apply"), "internal_control");
   assert.equal(exposureByRoute.get("POST /v1/debug/memory-decision-trace"), "operator_support");
   assert.equal(exposureByRoute.get("POST /v1/audit/memory-decision-report"), "operator_support");
+  assert.equal(exposureByRoute.get("POST /v1/operator/snapshot"), "operator_support");
 });
 
 test("Lite route capability matrix keeps removed product surfaces out", () => {

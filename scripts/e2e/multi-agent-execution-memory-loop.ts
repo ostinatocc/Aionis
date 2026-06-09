@@ -614,6 +614,53 @@ async function runMultiAgentLoop(args: {
   assertCondition(historyImpact?.changed_future_behavior === true, "measure did not report changed future behavior");
   assertCondition(feedbackSummary?.present === true, "measure did not include guide feedback attribution summary");
 
+  const operatorSnapshotResult = await client.operatorSnapshot<Record<string, unknown>>({
+    run_id: args.runId,
+    task_signature: `multi-agent:${args.runId}`,
+    task_family: "multi_agent_execution_memory",
+    workflow_signature: "planner-worker-verifier-reviewer-handoff",
+    agent_context: afterGuide.agent_context,
+    guide_packet: afterGuide.guide_packet,
+    memory_decision_trace: measure.memory_decision_trace,
+    memory_decision_audit: measure.memory_decision_audit,
+    effect_report: measure.effect_report,
+    execution_context: executionAssemble,
+    guide_trace_id: String(afterGuide.guide_trace_id ?? ""),
+    include_markdown: true,
+  });
+  const operatorSnapshot = asRecord(operatorSnapshotResult.operator_snapshot);
+  const operatorExecutionState = asRecord(operatorSnapshot.execution_state);
+  const operatorBranchIsolation = asRecord(operatorExecutionState.branch_isolation);
+  const operatorGuideTrace = asRecord(operatorSnapshot.guide_trace);
+  const operatorEffect = asRecord(operatorSnapshot.effect);
+  assertCondition(
+    operatorSnapshotResult.contract_version === "aionis_operator_snapshot_result_v1",
+    "operator snapshot did not return result v1",
+  );
+  assertCondition(
+    operatorSnapshot.contract_version === "aionis_operator_snapshot_v1",
+    "operator snapshot did not return snapshot v1",
+  );
+  assertCondition(operatorSnapshot.runtime_mutation === false, "operator snapshot must be read-only");
+  assertCondition(operatorBranchIsolation.status === "pass", "operator snapshot did not prove branch isolation");
+  assertCondition(
+    operatorBranchIsolation.failed_branch_leaked_to_use_now === false,
+    "operator snapshot reported failed branch leakage into use_now",
+  );
+  assertCondition(
+    operatorGuideTrace.feedback_attribution_present === true,
+    "operator snapshot did not expose guide feedback attribution",
+  );
+  assertCondition(
+    operatorEffect.impact_direction === "positive",
+    "operator snapshot did not carry positive effect measurement",
+  );
+  assertCondition(
+    typeof operatorSnapshotResult.markdown === "string"
+      && operatorSnapshotResult.markdown.includes("Aionis Operator Snapshot"),
+    "operator snapshot markdown report missing",
+  );
+
   return {
     before_history_used: beforeContext.history_used,
     reviewer_history_used: reviewerContext.history_used,
@@ -629,6 +676,9 @@ async function runMultiAgentLoop(args: {
     feedback_changed_count: feedbackEffect.changed_count,
     measure_history_impact: historyImpact.impact_direction,
     feedback_summary_present: feedbackSummary.present,
+    operator_snapshot_branch_isolation: operatorBranchIsolation.status,
+    operator_snapshot_feedback_attribution_present: operatorGuideTrace.feedback_attribution_present,
+    operator_snapshot_effect_impact: operatorEffect.impact_direction,
     adapter_flow_used: true,
   };
 }
@@ -672,6 +722,7 @@ async function main() {
         reviewer_avoided_failed_branch: true,
         guide_trace_feedback_attributed: true,
         measure_positive_history_impact: true,
+        operator_snapshot_contract_visible: true,
         agent_prompt_boundary_preserved: true,
         execution_memory_adapter_flow: true,
       },
