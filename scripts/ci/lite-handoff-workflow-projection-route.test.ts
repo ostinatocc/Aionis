@@ -425,17 +425,32 @@ test("planning/context injects execution tree current branch without promoting f
     assert.equal(executionTreeEffectSummary.effect_posture, "branch_isolated");
     assert.deepEqual((body.execution_kernel as any).execution_tree_effect_summary, executionTreeEffectSummary);
     assert.deepEqual((body.execution_summary as any).execution_tree_effect_summary, executionTreeEffectSummary);
+    assert.equal((body as any).execution_evidence_context.contract_version, "execution_evidence_context_v1");
+    assert.equal((body as any).execution_evidence_context.tree.present, true);
+    assert.match(JSON.stringify((body as any).execution_evidence_context.current_active_path), /Focused boundary is the accepted continuation path/);
+    assert.match(JSON.stringify((body as any).execution_evidence_context.failed_branches), /Broad runtime rewrite was rejected/);
+    assert.ok((body as any).execution_evidence_context.selection_trace.raw_trace_count >= 1);
+    assert.ok((body as any).aionis_guide_packet.guide_brief.use_now.some((entry: string) =>
+      entry.includes("Current active path") && entry.includes("Focused boundary is the accepted continuation path")
+    ));
+    assert.ok((body as any).aionis_guide_packet.guide_brief.do_not_use.some((entry: string) =>
+      entry.includes("Failed branch to avoid") && entry.includes("Broad runtime rewrite was rejected")
+    ));
+    assert.ok((body as any).aionis_guide_packet.source_map.internal_surfaces_used.includes("execution_evidence_context"));
 
     const layeredContext = body.layered_context as Record<string, unknown>;
     const layers = layeredContext.layers as Record<string, unknown>;
     const staticLayer = layers.static as Record<string, unknown>;
     const staticItems = Array.isArray(staticLayer.items) ? staticLayer.items.map(String) : [];
     const staticText = staticItems.join("\n");
+    assert.match(staticText, /Execution Evidence Active And Passed/);
+    assert.match(staticText, /CURRENT_ACTIVE_PATH/);
     assert.match(staticText, /branch_role=current_compressed_path; use_for_next_action=true/);
     assert.match(staticText, /Focused boundary is the accepted continuation path/);
     assert.match(staticText, /branch_role=current_raw_path; use_for_next_action=true/);
     assert.match(staticText, /continue the restored focused branch/);
     assert.doesNotMatch(staticText, /branch_role=failed_or_alternate_branch; use_for_next_action=false/);
+    assert.doesNotMatch(staticText, /branch_role=failed_branch; use_for_next_action=false/);
     assert.doesNotMatch(staticText, /avoid_branch=true/);
     assert.doesNotMatch(staticText, /Broad runtime rewrite was rejected/);
 
@@ -452,6 +467,9 @@ test("planning/context injects execution tree current branch without promoting f
     assert.ok(hintTrace);
     assert.equal(hintTrace.selected, false);
     assert.ok(Array.isArray(hintTrace.reasons));
+    const evidenceFailedTrace = selectionTrace.find((entry) => String(entry.id).endsWith("-failed-branches"));
+    assert.ok(evidenceFailedTrace);
+    assert.equal(evidenceFailedTrace.selected, false);
 
     const assemble = await app.inject({
       method: "POST",
@@ -478,6 +496,10 @@ test("planning/context injects execution tree current branch without promoting f
     assert.equal(assemblyTreeEffectSummary.next_action_contamination_risk, "none");
     assert.deepEqual((assembleBody.execution_kernel as any).execution_tree_effect_summary, assemblyTreeEffectSummary);
     assert.deepEqual((assembleBody.execution_summary as any).execution_tree_effect_summary, assemblyTreeEffectSummary);
+    assert.equal((assembleBody as any).execution_evidence_context.contract_version, "execution_evidence_context_v1");
+    assert.ok((assembleBody as any).aionis_guide_packet.guide_brief.do_not_use.some((entry: string) =>
+      entry.includes("Failed branch to avoid")
+    ));
   } finally {
     await app.close();
     await liteWriteStore.close();

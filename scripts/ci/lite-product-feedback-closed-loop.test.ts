@@ -14,6 +14,11 @@ import { registerLiteMemoryLifecycleRoutes } from "../../src/routes/memory-lifec
 import { registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
+import {
+  applyExecutionTreeOperationV1,
+  createExecutionTreeV1,
+  type ExecutionTreeOperationV1,
+} from "../../src/execution/index.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
@@ -284,6 +289,124 @@ async function guideForMarker(args: {
   assert.equal(response.statusCode, 200, response.body);
   return response.json();
 }
+
+function productGuideTreeOperation(
+  input: Omit<ExecutionTreeOperationV1, "tree_id" | "scope" | "actor_role">,
+): ExecutionTreeOperationV1 {
+  return {
+    tree_id: "tree-product-guide-execution-evidence",
+    scope: "aionis://execution-tree/product-guide-execution-evidence",
+    actor_role: "worker",
+    ...input,
+  } as ExecutionTreeOperationV1;
+}
+
+function buildProductGuideExecutionTree() {
+  let tree = createExecutionTreeV1({
+    tree_id: "tree-product-guide-execution-evidence",
+    scope: "aionis://execution-tree/product-guide-execution-evidence",
+    task_brief: "Use execution evidence context in the product guide.",
+    at: "2026-06-09T00:00:00.000Z",
+  });
+  tree = applyExecutionTreeOperationV1(tree, productGuideTreeOperation({
+    type: "grow",
+    operation_id: "product-guide-grow-wrong",
+    at: "2026-06-09T00:01:00.000Z",
+    action: "Try formula A with duplicated tax.",
+    observation: "Formula A fails validation because tax is double-counted.",
+    title: "Wrong formula A",
+    refs: ["trace://product-guide/formula-a/raw"],
+  }));
+  tree = applyExecutionTreeOperationV1(tree, productGuideTreeOperation({
+    type: "compress",
+    operation_id: "product-guide-compress-wrong",
+    at: "2026-06-09T00:02:00.000Z",
+    title: "Formula A rejected",
+    summary: "Formula A double-counted tax and must not be reused.",
+  }));
+  const wrongSummaryNodeId = tree.current_summary_node_id;
+  tree = applyExecutionTreeOperationV1(tree, productGuideTreeOperation({
+    type: "maintain",
+    operation_id: "product-guide-maintain-wrong",
+    at: "2026-06-09T00:03:00.000Z",
+    passed: false,
+    target_summary_node_id: wrongSummaryNodeId,
+    diagnostic_note: "Formula A is a failed branch.",
+  }));
+  tree = applyExecutionTreeOperationV1(tree, productGuideTreeOperation({
+    type: "revise",
+    operation_id: "product-guide-revise-wrong",
+    at: "2026-06-09T00:04:00.000Z",
+    target_summary_node_id: wrongSummaryNodeId,
+    diagnostic_note: "Return to the root and try a corrected formula.",
+  }));
+  tree = applyExecutionTreeOperationV1(tree, productGuideTreeOperation({
+    type: "grow",
+    operation_id: "product-guide-grow-passed",
+    at: "2026-06-09T00:05:00.000Z",
+    action: "Use formula B after removing duplicated tax.",
+    observation: "Formula B matches all validation rows.",
+    title: "Verified formula B",
+    refs: ["trace://product-guide/formula-b/raw"],
+  }));
+  tree = applyExecutionTreeOperationV1(tree, productGuideTreeOperation({
+    type: "compress",
+    operation_id: "product-guide-compress-passed",
+    at: "2026-06-09T00:06:00.000Z",
+    title: "Verified formula B",
+    summary: "Formula B computes subtotal + single tax + shipping.",
+  }));
+  tree = applyExecutionTreeOperationV1(tree, productGuideTreeOperation({
+    type: "maintain",
+    operation_id: "product-guide-maintain-passed",
+    at: "2026-06-09T00:07:00.000Z",
+    passed: true,
+    target_summary_node_id: tree.current_summary_node_id,
+    diagnostic_note: null,
+  }));
+  return tree;
+}
+
+test("product guide projects execution evidence context into agent context by default", async () => {
+  const { app } = setupProductApp("execution-evidence-guide-default");
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "continue the verified formula branch",
+        context: {
+          goal: "continue the verified formula branch",
+        },
+        consumer_agent_id: "local-user",
+        execution_tree_v1: buildProductGuideExecutionTree(),
+        include_packets: true,
+        limit: 8,
+      },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    const body = response.json();
+    assert.equal(body.agent_context.history_used, true);
+    assert.equal(body.agent_context.authority, "advisory");
+    assert.ok(body.agent_context.use_now.some((entry: string) =>
+      entry.includes("Passed solution") && entry.includes("Formula B computes subtotal")
+    ));
+    assert.ok(body.agent_context.do_not_use.some((entry: string) =>
+      entry.includes("Failed branch to avoid") && entry.includes("Formula A double-counted tax")
+    ));
+    assert.match(body.agent_context.prompt_text, /Passed solution/);
+    assert.match(body.agent_context.prompt_text, /Formula B computes subtotal/);
+    assert.match(body.agent_context.prompt_text, /do_not_use/);
+    assert.match(body.agent_context.prompt_text, /Formula A double-counted tax/);
+    assert.ok(body.guide_packet.source_map.internal_surfaces_used.includes("execution_evidence_context"));
+    assert.ok(body.guide_packet.guide_brief.expected_product_effects.reduces_repeated_discovery);
+    assert.ok(body.guide_packet.guide_brief.expected_product_effects.controls_negative_transfer);
+  } finally {
+    await app.close();
+  }
+});
 
 async function activateFromGuide(args: {
   app: ReturnType<typeof Fastify>;

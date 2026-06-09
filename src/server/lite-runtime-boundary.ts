@@ -53,6 +53,7 @@ function classifyLiteRouteProductExposure(entry: LiteRouteCapabilityMatrixEntry)
   if (entry.route_group.startsWith("memory-replay")) return "internal_evidence";
   if (
     entry.path === "/v1/memory/trajectory/compile" ||
+    entry.path === "/v1/execution/context/assemble" ||
     entry.path === "/v1/memory/feedback" ||
     entry.path === "/v1/memory/tools/decision" ||
     entry.path === "/v1/memory/tools/run" ||
@@ -250,6 +251,15 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
     product_effects: ["history_shaped_future_behavior"],
     surface_kind: "core_runtime",
     product_role: "assemble internal context evidence behind the product guide facade",
+  },
+  {
+    method: "POST",
+    path: "/v1/execution/context/assemble",
+    route_group: "memory-access-partial",
+    capabilities: ["continuity", "forgetting", "learning_control"],
+    product_effects: ["history_shaped_future_behavior"],
+    surface_kind: "core_runtime",
+    product_role: "assemble execution-tree-first agent context with passed solutions, failed branches, and rehydration references",
   },
   {
     method: "POST",

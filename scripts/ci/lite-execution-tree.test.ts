@@ -193,6 +193,9 @@ test("execution tree auto operation helper creates and advances a tree from exec
     assert.ok(
       deriveExecutionTreeStateV1(first!.tree).compressed_state[0]?.summary?.includes("Typecheck passed after the focused runtime change."),
     );
+    assert.ok(
+      deriveExecutionTreeStateV1(first!.tree).compressed_state[0]?.summary?.includes("Advance execution tree automatically"),
+    );
 
     const duplicate = applyAutoExecutionTreeFromSlots({
       executionTreeStore: store,
@@ -208,6 +211,40 @@ test("execution tree auto operation helper creates and advances a tree from exec
     });
     assert.equal(duplicate?.operations.length, 3);
     assert.equal(store.get("focused-scope", "execution-tree:state:auto-passed")?.revision, 4);
+  } finally {
+    await store.close();
+  }
+});
+
+test("execution tree auto compression preserves actionable solution content before verifier wording", async () => {
+  const dbPath = tmpDbPath("auto-actionable-summary");
+  const store = createLiteExecutionTreeStore(dbPath);
+  const state = sampleExecutionState({
+    stateId: "state:auto-actionable-summary",
+    updatedAt: "2026-06-08T00:12:00.000Z",
+    completedValidations: ["judge accepted answer"],
+  });
+  try {
+    const result = applyAutoExecutionTreeFromSlots({
+      executionTreeStore: store,
+      slots: {
+        execution_state_v1: state,
+        next_action: "Fallback action should not replace explicit solution.",
+        handoff_text: "Fallback handoff should not replace explicit solution.",
+        execution_result_summary: {
+          status: "passed",
+          summary: "Verifier passed the latest answer.",
+          solution_summary: "REUSABLE_SOLUTION_MARKER use theorem B with boundary condition C.",
+        },
+      },
+      title: "Actionable auto execution tree",
+      textSummary: "Fallback text summary should not replace explicit solution.",
+    });
+    assert.equal(result?.operations.length, 3);
+    const compressedSummary = deriveExecutionTreeStateV1(result!.tree).compressed_state[0]?.summary ?? "";
+    assert.match(compressedSummary, /^REUSABLE_SOLUTION_MARKER use theorem B/);
+    assert.match(compressedSummary, /Verifier passed the latest answer/);
+    assert.doesNotMatch(compressedSummary, /^Fallback/);
   } finally {
     await store.close();
   }

@@ -100,6 +100,7 @@ test("Lite route capability matrix maps public routes to focused product capabil
     "GET /v1/runtime/boundary-inventory",
     "POST /v1/audit/memory-decision-report",
     "POST /v1/debug/memory-decision-trace",
+    "POST /v1/execution/context/assemble",
     "POST /v1/forget",
     "POST /v1/guide",
     "POST /v1/handoff/recover",
@@ -194,6 +195,7 @@ test("Lite route capability matrix separates product entries from internal surfa
   for (const route of [
     "POST /v1/memory/write",
     "POST /v1/memory/context/assemble",
+    "POST /v1/execution/context/assemble",
     "POST /v1/memory/experience/intelligence",
     "POST /v1/handoff/recover",
     "POST /v1/memory/find",
@@ -209,6 +211,7 @@ test("Lite route capability matrix separates product entries from internal surfa
   }
 
   assert.equal(exposureByRoute.get("POST /v1/memory/action/retrieval"), "internal_guidance");
+  assert.equal(exposureByRoute.get("POST /v1/execution/context/assemble"), "internal_evidence");
   assert.equal(exposureByRoute.get("POST /v1/memory/replay/playbooks/repair"), "internal_evidence");
   assert.equal(exposureByRoute.get("POST /v1/memory/policies/learning-control/apply"), "internal_control");
   assert.equal(exposureByRoute.get("POST /v1/debug/memory-decision-trace"), "operator_support");

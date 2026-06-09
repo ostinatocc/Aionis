@@ -490,6 +490,7 @@ function registerRuntimeWriteRoutes(args: RuntimeWriteRouteRegistrationArgs) {
     embeddingSurfacePolicy,
     liteWriteStore,
     executionStateStore,
+    executionTreeStore,
     liteRecallAccess,
     requireMemoryPrincipal,
     withIdentityFromRequest,

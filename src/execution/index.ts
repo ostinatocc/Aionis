@@ -7,4 +7,5 @@ export * from "./state-store.js";
 export * from "./tree.js";
 export * from "./tree-store.js";
 export * from "./tree-auto.js";
+export * from "./evidence-context.js";
 export * from "./verification.js";

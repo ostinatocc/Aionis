@@ -32,6 +32,7 @@ export type IdentityRequestKind =
   | "agent_memory_resume_pack"
   | "agent_memory_handoff_pack"
   | "execution_introspect"
+  | "execution_context_assemble"
   | "evolution_review_pack"
   | "action_retrieval"
   | "experience_intelligence"
@@ -316,6 +317,7 @@ export function createRequestGuards({
     if (
       kind === "planning_context"
       || kind === "context_assemble"
+      || kind === "execution_context_assemble"
       || kind === "experience_intelligence"
       || kind === "evolution_review_pack"
       || kind === "continuity_review_pack"

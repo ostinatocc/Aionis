@@ -68,6 +68,7 @@ export const AIONIS_KERNEL_CAPABILITIES = [
     primary_runtime_surfaces: [
       "/v1/memory/planning/context",
       "/v1/memory/context/assemble",
+      "/v1/execution/context/assemble",
       "/v1/handoff/store",
       "/v1/handoff/recover",
       "/v1/memory/execution/introspect",

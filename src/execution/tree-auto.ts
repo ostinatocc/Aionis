@@ -207,6 +207,21 @@ function compactResultSummary(value: unknown): string | null {
   return fields.length > 0 ? fields.join("; ") : null;
 }
 
+function compactActionableResultSummary(value: unknown): string | null {
+  const summary = asRecord(value);
+  if (!summary) return null;
+  return firstString(
+    summary.solution_summary,
+    summary.solution,
+    summary.answer,
+    summary.final_answer,
+    summary.accepted_solution,
+    summary.reusable_pattern,
+    summary.resolution,
+    summary.learned,
+  );
+}
+
 function deriveObservation(source: AutoExecutionTreeSource): string {
   const resultSummary = compactResultSummary(source.slots.execution_result_summary);
   const completedValidations = uniqueStrings([
@@ -229,6 +244,20 @@ function deriveObservation(source: AutoExecutionTreeSource): string {
     source.state ? `stage=${source.state.current_stage}; role=${source.state.active_role}` : null,
   ].filter((value): value is string => !!value);
   return lines.length > 0 ? lines.join("; ") : `Observed execution progress for ${source.tree.task_brief}`;
+}
+
+function deriveProgressSummary(source: AutoExecutionTreeSource): string {
+  const actionableSummary = firstString(
+    compactActionableResultSummary(source.slots.execution_result_summary),
+    source.textSummary,
+    source.slots.handoff_text,
+    source.slots.next_action,
+    source.packet?.next_action,
+  );
+  const observation = deriveObservation(source);
+  if (!actionableSummary) return observation;
+  if (observation === actionableSummary || observation.includes(actionableSummary)) return actionableSummary;
+  return `${actionableSummary}; observation=${observation}`;
 }
 
 function hasCompressionSignal(source: AutoExecutionTreeSource): boolean {
@@ -288,6 +317,7 @@ function operationId(source: AutoExecutionTreeSource, type: ExecutionTreeOperati
     at: source.state?.updated_at ?? null,
     action: deriveAction(source),
     observation: deriveObservation(source),
+    progress_summary: deriveProgressSummary(source),
     result_summary: resultSummary,
     title: source.title ?? null,
     text_summary: source.textSummary ?? null,
@@ -327,7 +357,7 @@ function buildCompressOperation(source: AutoExecutionTreeSource): ExecutionTreeO
     at: operationAt(source),
     type: "compress",
     title: firstString(source.title, "Execution progress"),
-    summary: deriveObservation(source),
+    summary: deriveProgressSummary(source),
   };
 }
 

@@ -21,9 +21,11 @@ import { rehydrateAnchorPayloadLite } from "../memory/rehydrate-anchor.js";
 import { memoryResolveLite } from "../memory/resolve.js";
 import { writeDelegationRecords } from "../memory/delegation-records.js";
 import { buildTrajectoryCompileLite } from "../memory/trajectory-compile.js";
+import { buildExecutionEvidenceContextLite } from "../execution/evidence-context.js";
 import type { RecallStoreAccess } from "../store/recall-access.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
 import type { ExecutionStateStore } from "../execution/state-store.js";
+import type { ExecutionTreeStore } from "../execution/tree-store.js";
 import type { AuthPrincipal } from "../util/auth.js";
 import type { InflightGateToken } from "../util/inflight_gate.js";
 
@@ -38,6 +40,7 @@ type MemoryAccessRequestKind =
   | "agent_memory_resume_pack"
   | "agent_memory_handoff_pack"
   | "execution_introspect"
+  | "execution_context_assemble"
   | "evolution_review_pack"
   | "action_retrieval"
   | "experience_intelligence"
@@ -56,6 +59,7 @@ type RegisterMemoryAccessRoutesArgs = {
   embeddingSurfacePolicy?: EmbeddingSurfacePolicy;
   liteWriteStore: LiteWriteStore;
   executionStateStore?: ExecutionStateStore | null;
+  executionTreeStore?: ExecutionTreeStore | null;
   liteRecallAccess: RecallStoreAccess;
   requireMemoryPrincipal: (req: FastifyRequest) => Promise<AuthPrincipal | null>;
   withIdentityFromRequest: (
@@ -82,6 +86,7 @@ export function registerMemoryAccessRoutes(args: RegisterMemoryAccessRoutesArgs)
     embeddingSurfacePolicy: embeddingSurfacePolicyArg,
     liteWriteStore,
     executionStateStore,
+    executionTreeStore,
     liteRecallAccess,
     requireMemoryPrincipal,
     withIdentityFromRequest,
@@ -166,6 +171,21 @@ export function registerMemoryAccessRoutes(args: RegisterMemoryAccessRoutesArgs)
         defaultScope: env.MEMORY_SCOPE,
         defaultTenantId: env.MEMORY_TENANT_ID,
       })),
+  });
+
+  registerMemoryAccessRoute({
+    method: "post",
+    path: "/v1/execution/context/assemble",
+    requestKind: "execution_context_assemble",
+    inflightKind: "recall",
+    execute: (body) =>
+      buildExecutionEvidenceContextLite({
+        liteWriteStore,
+        executionTreeStore: executionTreeStore ?? null,
+        body,
+        defaultScope: env.MEMORY_SCOPE,
+        defaultTenantId: env.MEMORY_TENANT_ID,
+      }),
   });
 
   registerMemoryAccessRoute({

@@ -50,6 +50,7 @@ import {
   type ExecutionStateV1,
   type ExecutionTreeV1,
 } from "../execution/index.js";
+import { buildExecutionEvidenceContextLite } from "../execution/evidence-context.js";
 import {
   buildExecutionContinuityContext,
   executionContinuityToStaticBlocks,
@@ -74,6 +75,7 @@ import { redactPII } from "../util/redaction.js";
 import type { Env } from "../config.js";
 import type { AuthPrincipal } from "../util/auth.js";
 import type { InflightGateToken } from "../util/inflight_gate.js";
+import type { AionisGuidePacket } from "../memory/product-output-contract.js";
 
 type ContextRuntimeRequest = FastifyRequest<{ Body: unknown }>;
 type ContextRuntimeSurface = "recall_text" | "planning_context" | "context_assemble";
@@ -165,6 +167,7 @@ type ContextAssembleRouteOutput = {
 type ContextRuntimeLiteStoreLike =
   LiteWriteStore;
 type MemoryRecallRuntimeOptions = NonNullable<Parameters<typeof memoryRecallParsed>[6]>;
+type ExecutionEvidenceContextLite = Awaited<ReturnType<typeof buildExecutionEvidenceContextLite>>;
 type RecallEmbedResult = Awaited<
   ReturnType<
     (provider: EmbeddingProvider, queryText: string) => Promise<{
@@ -191,6 +194,268 @@ function normalizeStaticContextBlocks(
     priority: typeof block.priority === "number" ? block.priority : 50,
     always_include: block.always_include === true,
   }));
+}
+
+function asObjectRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function compactRouteStrings(values: Array<string | null | undefined>, max = 32): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const normalized = String(value ?? "").trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+function shortRouteText(value: unknown, maxChars: number): string | null {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) return null;
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+}
+
+function routeRecordArray(root: Record<string, unknown> | null, key: string): Array<Record<string, unknown>> {
+  const value = root?.[key];
+  if (!Array.isArray(value)) return [];
+  return value
+    .map(asObjectRecord)
+    .filter((entry): entry is Record<string, unknown> => !!entry);
+}
+
+function executionEvidenceEntryText(entry: Record<string, unknown>, maxChars = 180): string | null {
+  return shortRouteText(
+    entry.summary
+      ?? entry.observation
+      ?? entry.action
+      ?? entry.title
+      ?? entry.diagnostic_note,
+    maxChars,
+  );
+}
+
+function executionEvidenceTraceSuffix(entry: Record<string, unknown>): string {
+  const count = typeof entry.supporting_raw_trace_count === "number"
+    ? entry.supporting_raw_trace_count
+    : Array.isArray(entry.supporting_raw_trace)
+      ? entry.supporting_raw_trace.length
+      : null;
+  if (count === null) return "";
+  return ` raw_trace=${count}`;
+}
+
+function renderExecutionEvidenceGuideLine(
+  label: string,
+  entry: Record<string, unknown>,
+  maxChars = 180,
+): string | null {
+  const text = executionEvidenceEntryText(entry, maxChars);
+  if (!text) return null;
+  return `${label}: ${text}${executionEvidenceTraceSuffix(entry)}`;
+}
+
+function executionEvidenceGuideSurfaces(context: ExecutionEvidenceContextLite | null): {
+  useNow: string[];
+  doNotUse: string[];
+  riskReasons: string[];
+  historyUsed: boolean;
+  controlsNegativeTransfer: boolean;
+} {
+  const root = asObjectRecord(context);
+  const tree = asObjectRecord(root?.tree);
+  if (!root || tree?.present !== true) {
+    return {
+      useNow: [],
+      doNotUse: [],
+      riskReasons: [],
+      historyUsed: false,
+      controlsNegativeTransfer: false,
+    };
+  }
+
+  const activePath = asObjectRecord(root.current_active_path);
+  const activeCompressed = routeRecordArray(activePath, "compressed_state");
+  const activeRaw = routeRecordArray(activePath, "raw_state");
+  const passedSolutions = routeRecordArray(root, "passed_solutions");
+  const failedBranches = routeRecordArray(root, "failed_branches");
+
+  const currentLines = compactRouteStrings([
+    ...activeCompressed.slice(-1).map((entry) => renderExecutionEvidenceGuideLine("Current active path", entry)),
+    ...activeRaw.slice(-1).map((entry) => renderExecutionEvidenceGuideLine("Current raw step", entry)),
+  ], 2);
+  const passedLines = compactRouteStrings(
+    passedSolutions.slice(0, 3).map((entry) => renderExecutionEvidenceGuideLine("Passed solution", entry)),
+    3,
+  );
+  const failedLines = compactRouteStrings(
+    failedBranches.slice(0, 4).map((entry) => renderExecutionEvidenceGuideLine("Failed branch to avoid", entry)),
+    4,
+  );
+
+  return {
+    useNow: compactRouteStrings([
+      ...passedLines,
+      ...currentLines,
+    ], 5),
+    doNotUse: failedLines,
+    riskReasons: failedLines.length > 0
+      ? ["execution_failed_branches_must_remain_avoidance_context"]
+      : [],
+    historyUsed: currentLines.length > 0 || passedLines.length > 0 || failedLines.length > 0,
+    controlsNegativeTransfer: failedLines.length > 0,
+  };
+}
+
+function guidePostureWithExecutionEvidence(
+  current: AionisGuidePacket["guide_brief"]["recommended_posture"],
+  surfaces: ReturnType<typeof executionEvidenceGuideSurfaces>,
+): AionisGuidePacket["guide_brief"]["recommended_posture"] {
+  if (!surfaces.historyUsed) return current;
+  if (current === "ignore_history") return "reuse_supported_history";
+  return current;
+}
+
+function guideAuthorityWithExecutionEvidence(
+  current: AionisGuidePacket["guide_brief"]["authority"],
+  surfaces: ReturnType<typeof executionEvidenceGuideSurfaces>,
+): AionisGuidePacket["guide_brief"]["authority"] {
+  if (!surfaces.historyUsed) return current;
+  if (current === "none" || current === "candidate") return "advisory";
+  return current;
+}
+
+function augmentGuidePacketWithExecutionEvidence(
+  guide: AionisGuidePacket,
+  context: ExecutionEvidenceContextLite | null,
+): AionisGuidePacket {
+  const surfaces = executionEvidenceGuideSurfaces(context);
+  if (!surfaces.historyUsed) return guide;
+  return {
+    ...guide,
+    guide_brief: {
+      ...guide.guide_brief,
+      history_used: true,
+      recommended_posture: guidePostureWithExecutionEvidence(guide.guide_brief.recommended_posture, surfaces),
+      authority: guideAuthorityWithExecutionEvidence(guide.guide_brief.authority, surfaces),
+      use_now: compactRouteStrings([
+        ...surfaces.useNow,
+        ...guide.guide_brief.use_now,
+      ], 8),
+      do_not_use: compactRouteStrings([
+        ...surfaces.doNotUse,
+        ...guide.guide_brief.do_not_use,
+      ], 8),
+      expected_product_effects: {
+        ...guide.guide_brief.expected_product_effects,
+        reduces_repeated_discovery:
+          guide.guide_brief.expected_product_effects.reduces_repeated_discovery
+          || surfaces.useNow.length > 0,
+        reduces_context_replay:
+          guide.guide_brief.expected_product_effects.reduces_context_replay
+          || surfaces.useNow.length > 0,
+        controls_negative_transfer:
+          guide.guide_brief.expected_product_effects.controls_negative_transfer
+          || surfaces.controlsNegativeTransfer,
+        reason: compactRouteStrings([
+          guide.guide_brief.expected_product_effects.reason,
+          surfaces.useNow.length > 0
+            ? "Execution evidence context provides current or passed execution state without replaying the full trajectory."
+            : null,
+          surfaces.controlsNegativeTransfer
+            ? "Execution evidence context separates failed branches as explicit avoidance context."
+            : null,
+        ], 4).join(" "),
+      },
+    },
+    risk: {
+      ...guide.risk,
+      negative_transfer_risk:
+        guide.risk.negative_transfer_risk === "high" || surfaces.controlsNegativeTransfer
+          ? guide.risk.negative_transfer_risk === "high" ? "high" : "medium"
+          : guide.risk.negative_transfer_risk,
+      reasons: compactRouteStrings([
+        ...surfaces.riskReasons,
+        ...guide.risk.reasons,
+      ], 5),
+    },
+    source_map: {
+      ...guide.source_map,
+      internal_surfaces_used: compactRouteStrings([
+        ...guide.source_map.internal_surfaces_used,
+        "execution_evidence_context",
+      ], 32),
+    },
+  };
+}
+
+function promptSection(promptText: unknown, heading: string): string | null {
+  if (typeof promptText !== "string" || promptText.trim().length === 0) return null;
+  const lines = promptText.split("\n");
+  const start = lines.findIndex((line) => line.trim() === heading);
+  if (start < 0) return null;
+  const out: string[] = [heading];
+  for (const line of lines.slice(start + 1)) {
+    if (/^[A-Z_]+$/.test(line.trim())) break;
+    out.push(line);
+  }
+  const text = out.join("\n").trim();
+  return text.length > heading.length ? text : null;
+}
+
+function executionEvidenceBlockSuffix(context: ExecutionEvidenceContextLite): string {
+  const tree = asObjectRecord(asObjectRecord(context)?.tree);
+  const raw = String(tree?.tree_id ?? tree?.scope ?? "inline-tree").trim();
+  const normalized = raw.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  return (normalized || "inline-tree").slice(0, 70);
+}
+
+function executionEvidenceContextToStaticBlocks(
+  context: ExecutionEvidenceContextLite | null,
+): ExecutionContinuityStaticBlockLike[] {
+  const root = asObjectRecord(context);
+  const tree = asObjectRecord(root?.tree);
+  if (!root || tree?.present !== true) return [];
+  const suffix = executionEvidenceBlockSuffix(context!);
+  const activePassedContent = compactRouteStrings([
+    promptSection(root.prompt_text, "CURRENT_ACTIVE_PATH"),
+    promptSection(root.prompt_text, "PASSED_SOLUTIONS"),
+    promptSection(root.prompt_text, "EPISODIC_TRACES"),
+  ], 3).join("\n\n");
+  const failedContent = promptSection(root.prompt_text, "FAILED_BRANCHES");
+  const blocks: ExecutionContinuityStaticBlockLike[] = [];
+  if (activePassedContent) {
+    blocks.push({
+      id: `execution-evidence-${suffix}-active-passed`,
+      title: "Execution Evidence Active And Passed",
+      content: activePassedContent,
+      tags: ["execution-evidence", "current-active-path", "passed-solutions", "episodic-traces", "continuity"],
+      intents: ["resume", "continue", "review", "evidence"],
+      priority: 100,
+      always_include: true,
+    });
+  }
+  if (failedContent && !/- none\b/.test(failedContent)) {
+    blocks.push({
+      id: `execution-evidence-${suffix}-failed-branches`,
+      title: "Execution Evidence Failed Branches",
+      content: [
+        "branch_role=failed_branch; use_for_next_action=false; use_as_avoidance_hint=true",
+        failedContent,
+      ].join("\n"),
+      tags: ["execution-evidence", "failed-branch", "avoidance", "continuity"],
+      intents: ["avoid", "revise", "review"],
+      priority: 45,
+      always_include: false,
+    });
+  }
+  return blocks;
 }
 
 function buildExecutionKernelResponse(
@@ -290,8 +555,9 @@ function buildAionisGuidePacketForContextRoute(args: {
   surface: "planning_context" | "context_assemble";
   parsed: ParsedPlanningContext | ParsedContextAssemble;
   summary: Parameters<typeof buildAionisGuidePacket>[0]["planning"];
+  executionEvidenceContext?: ExecutionEvidenceContextLite | null;
 }) {
-  return buildAionisGuidePacket({
+  const guide = buildAionisGuidePacket({
     tenant_id: args.tenantId,
     scope: args.scope,
     actor: {
@@ -314,6 +580,7 @@ function buildAionisGuidePacketForContextRoute(args: {
       ],
     },
   });
+  return augmentGuidePacketWithExecutionEvidence(guide, args.executionEvidenceContext ?? null);
 }
 
 function buildAionisLearningPacketForContextRoute(args: {
@@ -1322,20 +1589,47 @@ export function registerMemoryContextRuntimeRoutes(args: {
   const buildEffectiveStaticBlocks = (args: {
     parsed: ParsedPlanningContext | ParsedContextAssemble;
     executionKernel: ReturnType<typeof resolveExecutionKernelContext>;
+    executionEvidenceContext?: ExecutionEvidenceContextLite | null;
   }) => {
     const staticContextBlocks = normalizeStaticContextBlocks(args.parsed.static_context_blocks);
     const parsedWithStaticBlocks = {
       ...args.parsed,
       static_context_blocks: staticContextBlocks,
     };
+    const executionEvidenceBlocks = executionEvidenceContextToStaticBlocks(args.executionEvidenceContext ?? null);
     return args.executionKernel.packet
       ? [
           ...executionPacketToStaticBlocks(args.executionKernel.packet),
+          ...executionEvidenceBlocks,
           ...(args.parsed.execution_tree_v1 ? executionTreeToStaticBlocks(args.parsed.execution_tree_v1) : []),
           ...executionContinuityToStaticBlocks(parsedWithStaticBlocks).blocks,
           ...staticContextBlocks,
         ]
-      : mergeExecutionPacketStaticBlocks(parsedWithStaticBlocks);
+      : [
+          ...executionEvidenceBlocks,
+          ...mergeExecutionPacketStaticBlocks(parsedWithStaticBlocks),
+        ];
+  };
+  const buildDefaultExecutionEvidenceContext = async (
+    parsed: ParsedPlanningContext | ParsedContextAssemble,
+  ): Promise<ExecutionEvidenceContextLite | null> => {
+    if (!parsed.execution_tree_v1) return null;
+    return buildExecutionEvidenceContextLite({
+      liteWriteStore,
+      executionTreeStore: null,
+      body: {
+        tenant_id: parsed.tenant_id,
+        scope: parsed.scope,
+        consumer_agent_id: parsed.consumer_agent_id,
+        consumer_team_id: parsed.consumer_team_id,
+        execution_tree_v1: parsed.execution_tree_v1,
+        include_memory_evidence: false,
+        include_prompt_text: true,
+        prompt_detail: "compact",
+      },
+      defaultScope: env.MEMORY_SCOPE,
+      defaultTenantId: env.MEMORY_TENANT_ID,
+    });
   };
   const resolveContextRuntimeVerification = async (args: {
     parsed: ParsedPlanningContext | ParsedContextAssemble;
@@ -1741,6 +2035,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
       parse: PlanningContextRequest.parse,
     });
     const planningExecutionContext = buildExecutionContinuityContext(parsed);
+    const executionEvidenceContext = await buildDefaultExecutionEvidenceContext(parsed);
 
     let out: PlanningContextRouteOutput;
     try {
@@ -1883,6 +2178,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
     const effectiveStaticBlocks = buildEffectiveStaticBlocks({
       parsed,
       executionKernel,
+      executionEvidenceContext,
     });
     const { layeredContext, costSignals } = buildLayeredContextArtifacts({
       parsed,
@@ -1993,6 +2289,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
         surface: "planning_context",
         parsed,
         summary: planningSummary,
+        executionEvidenceContext,
       }),
       aionis_learning_packet: buildAionisLearningPacketForContextRoute({
         tenantId: tenantIdOut,
@@ -2002,6 +2299,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
         summary: planningSummary,
       }),
       operator_projection: operatorProjection,
+      execution_evidence_context: executionEvidenceContext,
       layered_context: layeredContext,
       cost_signals: costSignals,
     });
@@ -2079,6 +2377,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
       parse: ContextAssembleRequest.parse,
     });
     const executionContext = buildExecutionContinuityContext(parsed);
+    const executionEvidenceContext = await buildDefaultExecutionEvidenceContext(parsed);
 
     let out: ContextAssembleRouteOutput;
     try {
@@ -2168,6 +2467,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
     const effectiveStaticBlocks = buildEffectiveStaticBlocks({
       parsed,
       executionKernel,
+      executionEvidenceContext,
     });
     const { layeredContext, costSignals } = buildLayeredContextArtifacts({
       parsed,
@@ -2336,6 +2636,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
         surface: "context_assemble",
         parsed,
         summary: assemblySummary,
+        executionEvidenceContext,
       }),
       aionis_learning_packet: buildAionisLearningPacketForContextRoute({
         tenantId: tenantIdOut,
@@ -2345,6 +2646,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
         summary: assemblySummary,
       }),
       operator_projection: operatorProjection,
+      execution_evidence_context: executionEvidenceContext,
       layered_context: layeredContext,
       cost_signals: costSignals,
     });
