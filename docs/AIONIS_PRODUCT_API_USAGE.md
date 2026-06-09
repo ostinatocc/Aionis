@@ -124,6 +124,66 @@ Use these identity rules:
    For `guide_trace_id` feedback, Aionis inherits the guide ledger's
    `consumer_team_id` when activating team-owned shared memory.
 
+### Recommended Host Adapter
+
+Agent hosts should prefer the execution memory adapter over hand-writing the
+whole loop. It keeps the product defaults consistent: `guideNext` uses
+full-power guide mode, role and team identity are carried on every call, the
+latest execution tree is reused for reviewer context, and `observeOutcome`
+can attribute feedback through the last `guide_trace_id`.
+
+```ts
+import { createAionisClient } from "./src/sdk.ts";
+import { createExecutionMemoryAdapter } from "./src/adapters/execution-memory.ts";
+
+const client = createAionisClient({
+  baseUrl: process.env.AIONIS_URL ?? "http://127.0.0.1:3001",
+  apiKey: process.env.AIONIS_API_KEY,
+});
+
+const memory = createExecutionMemoryAdapter({
+  client,
+  tenant_id: "default",
+  scope: "checkout-migration",
+  team_id: "checkout-agent-team",
+  default_memory_lane: "shared",
+});
+
+await memory.observeRunStart({
+  run_id: "checkout-run-001",
+  task_signature: "checkout-migration",
+  agent_id: "planner-1",
+  role: "planner",
+  title: "Planner scoped checkout migration",
+  summary: "Worker should edit src/payments/checkout.ts and verifier must reject legacy broad-search patches.",
+});
+
+const guide = await memory.guideNext<{
+  agent_context: {
+    prompt_text: string;
+    use_now_memory_ids: string[];
+  };
+}>({
+  run_id: "checkout-run-001",
+  task_signature: "checkout-migration",
+  agent_id: "reviewer-1",
+  role: "reviewer",
+  query_text: "Continue the passed checkout branch and avoid failed legacy patches.",
+});
+
+await memory.observeOutcome({
+  run_id: "reviewer-run-001",
+  guide_run_id: "checkout-run-001",
+  task_signature: "checkout-migration",
+  agent_id: "reviewer-1",
+  role: "reviewer",
+  title: "Reviewer continued passed checkout branch",
+  summary: "Reviewer used Aionis context and avoided the failed branch.",
+  outcome: "succeeded",
+  used_memory_ids: guide.agent_context.use_now_memory_ids,
+});
+```
+
 Runnable e2e:
 
 ```bash
@@ -141,6 +201,7 @@ The positive e2e validates the Multi-Agent contract:
 6. execution context separates `use_now` and `do_not_use`
 7. reviewer feedback is attributed through `guide_trace_id`
 8. `measure` reports positive history impact
+9. the flow uses `createExecutionMemoryAdapter`
 
 The negative e2e validates the safety contract:
 

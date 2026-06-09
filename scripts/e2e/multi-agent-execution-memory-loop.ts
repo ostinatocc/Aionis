@@ -8,6 +8,10 @@ import {
   type ExecutionTreeOperationV1,
   type ExecutionTreeV1,
 } from "../../src/execution/index.ts";
+import {
+  createExecutionMemoryAdapter,
+  exposedUseNowMemoryIds,
+} from "../../src/adapters/execution-memory.ts";
 import { createAionisClient } from "../../src/sdk.ts";
 import {
   asRecord,
@@ -303,128 +307,124 @@ async function runMultiAgentLoop(args: {
     tenant_id: "default",
     scope: args.scope,
   });
+  const adapter = createExecutionMemoryAdapter({
+    client,
+    tenant_id: "default",
+    scope: args.scope,
+    team_id: TEAM_ID,
+    default_memory_lane: "shared",
+    default_limit: 10,
+    include_packets_by_default: true,
+  });
   await client.health();
 
   const queryText = `${PASSED_MARKER} reviewer continue active path and avoid ${FAILED_MARKER}`;
-  const beforeGuide = await client.guide<Record<string, unknown>>({
+  const beforeGuide = await adapter.guideNext<Record<string, unknown>>({
+    run_id: `run:${args.runId}:reviewer`,
+    task_signature: `multi-agent:${args.runId}`,
+    task_family: "multi_agent_execution_memory",
+    workflow_signature: "planner-worker-verifier-reviewer-handoff",
     query_text: queryText,
-    agent_role: "reviewer",
-    consumer_agent_id: REVIEWER_ID,
-    consumer_team_id: TEAM_ID,
+    agent_id: REVIEWER_ID,
+    role: "reviewer",
     context: {
-      task_signature: `multi-agent:${args.runId}`,
+      reviewer_goal: "check whether any existing multi-agent branch state exists",
     },
     limit: 8,
-    include_packets: true,
   });
   const beforeContext = agentContext(beforeGuide.agent_context, "before reviewer guide");
   assertPromptBoundary(String(beforeContext.prompt_text), "before reviewer guide");
 
-  const plannerObserve = await client.observe<Record<string, unknown>>({
-    auto_embed: true,
-    memory_lane: "shared",
-    producer_agent_id: PLANNER_ID,
-    owner_team_id: TEAM_ID,
-    execution: {
-      run_id: `run:${args.runId}:planner`,
-      task_id: `task:${args.runId}`,
-      task_family: "multi_agent_execution_memory",
-      task_signature: `multi-agent:${args.runId}`,
-      workflow_signature: "planner-worker-verifier-reviewer-handoff",
-      title: `${PLAN_MARKER} planner scoped target file`,
-      summary: `${PLAN_MARKER} planner assigned worker to inspect src/multi-agent-e2e/current-target.ts and verifier to reject broad search regressions.`,
-      outcome: "succeeded",
-      target_files: ["src/multi-agent-e2e/current-target.ts"],
-      workflow_steps: [
-        "Planner identifies current target file",
-        "Worker attempts scoped change",
-        "Verifier marks failed and passed branches",
-        "Reviewer inherits active path",
-      ],
-      tool_set: ["read", "edit", "test"],
-      acceptance_checks: ["reviewer continues passed branch", "reviewer avoids failed branch"],
-      continuation_hint: `Reviewer should continue ${PASSED_MARKER} and avoid ${FAILED_MARKER}.`,
-      confidence: 0.9,
-      evidence: [{
-        ref: `evidence://multi-agent/${args.runId}/planner-plan`,
-        summary: "Planner produced scoped role handoff.",
-      }],
-    },
+  const plannerObserve = await adapter.observeRunStart<Record<string, unknown>>({
+    run_id: `run:${args.runId}:planner`,
+    task_id: `task:${args.runId}`,
+    task_family: "multi_agent_execution_memory",
+    task_signature: `multi-agent:${args.runId}`,
+    workflow_signature: "planner-worker-verifier-reviewer-handoff",
+    agent_id: PLANNER_ID,
+    role: "planner",
+    title: `${PLAN_MARKER} planner scoped target file`,
+    summary: `${PLAN_MARKER} planner assigned worker to inspect src/multi-agent-e2e/current-target.ts and verifier to reject broad search regressions.`,
+    target_files: ["src/multi-agent-e2e/current-target.ts"],
+    workflow_steps: [
+      "Planner identifies current target file",
+      "Worker attempts scoped change",
+      "Verifier marks failed and passed branches",
+      "Reviewer inherits active path",
+    ],
+    tool_set: ["read", "edit", "test"],
+    acceptance_checks: ["reviewer continues passed branch", "reviewer avoids failed branch"],
+    continuation_hint: `Reviewer should continue ${PASSED_MARKER} and avoid ${FAILED_MARKER}.`,
+    confidence: 0.9,
+    evidence: [{
+      ref: `evidence://multi-agent/${args.runId}/planner-plan`,
+      summary: "Planner produced scoped role handoff.",
+    }],
   });
   const plannerMemoryId = firstNodeId(plannerObserve, "planner");
 
-  const failedObserve = await client.observe<Record<string, unknown>>({
-    auto_embed: true,
-    memory_lane: "shared",
-    producer_agent_id: WORKER_ID,
-    owner_team_id: TEAM_ID,
-    execution: {
-      run_id: `run:${args.runId}:worker-failed`,
-      task_family: "multi_agent_execution_memory",
-      task_signature: `multi-agent:${args.runId}`,
-      workflow_signature: "worker-failed-broad-search",
-      title: `${FAILED_MARKER} broad_search_patch failed`,
-      summary: `${FAILED_MARKER} broad_search_patch modified the wrong target and failed verifier replay.`,
-      outcome: "failed",
-      target_files: ["src/multi-agent-e2e/wrong-target.ts"],
-      workflow_steps: ["Broad search", "Patch wrong target", "Verifier replay failed"],
-      tool_set: ["read", "edit", "test"],
-      acceptance_checks: ["verifier rejected broad_search_patch"],
-      continuation_hint: `Do not repeat ${FAILED_MARKER}; resume from planner boundary.`,
-      confidence: 0.4,
-      raw_ref: `trace://multi-agent/${args.runId}/worker-failed`,
-      evidence_ref: `evidence://multi-agent/${args.runId}/verifier-failed`,
-      verification: {
-        verifier_agent_id: VERIFIER_ID,
-        passed: false,
-        reason: `${FAILED_MARKER} changed wrong target.`,
-      },
-      slots: {
-        task_signature: `multi-agent:${args.runId}`,
-        execution_result_summary: {
-          status: "failed",
-          summary: `${FAILED_MARKER} broad_search_patch failed verifier replay.`,
-          diagnostic_note: "Wrong target file; do not reuse.",
-          evidence_refs: [`evidence://multi-agent/${args.runId}/verifier-failed`],
-        },
+  const failedObserve = await adapter.observeStep<Record<string, unknown>>({
+    run_id: `run:${args.runId}:worker-failed`,
+    task_family: "multi_agent_execution_memory",
+    task_signature: `multi-agent:${args.runId}`,
+    workflow_signature: "worker-failed-broad-search",
+    agent_id: WORKER_ID,
+    role: "worker",
+    title: `${FAILED_MARKER} broad_search_patch failed`,
+    summary: `${FAILED_MARKER} broad_search_patch modified the wrong target and failed verifier replay.`,
+    outcome: "failed",
+    target_files: ["src/multi-agent-e2e/wrong-target.ts"],
+    workflow_steps: ["Broad search", "Patch wrong target", "Verifier replay failed"],
+    tool_set: ["read", "edit", "test"],
+    acceptance_checks: ["verifier rejected broad_search_patch"],
+    continuation_hint: `Do not repeat ${FAILED_MARKER}; resume from planner boundary.`,
+    confidence: 0.4,
+    raw_ref: `trace://multi-agent/${args.runId}/worker-failed`,
+    evidence_ref: `evidence://multi-agent/${args.runId}/verifier-failed`,
+    verification: {
+      verifier_agent_id: VERIFIER_ID,
+      passed: false,
+      reason: `${FAILED_MARKER} changed wrong target.`,
+    },
+    slots: {
+      execution_result_summary: {
+        status: "failed",
+        summary: `${FAILED_MARKER} broad_search_patch failed verifier replay.`,
+        diagnostic_note: "Wrong target file; do not reuse.",
+        evidence_refs: [`evidence://multi-agent/${args.runId}/verifier-failed`],
       },
     },
   });
   const failedMemoryId = firstNodeId(failedObserve, "failed worker");
 
-  const passedObserve = await client.observe<Record<string, unknown>>({
-    auto_embed: true,
-    memory_lane: "shared",
-    producer_agent_id: WORKER_ID,
-    owner_team_id: TEAM_ID,
-    execution: {
-      run_id: `run:${args.runId}:worker-passed`,
-      task_family: "multi_agent_execution_memory",
-      task_signature: `multi-agent:${args.runId}`,
-      workflow_signature: "worker-passed-scoped-target",
-      title: `${PASSED_MARKER} scoped_target_patch passed`,
-      summary: `${PASSED_MARKER} scoped_target_patch edited src/multi-agent-e2e/current-target.ts and passed verifier replay.`,
-      outcome: "succeeded",
-      target_files: ["src/multi-agent-e2e/current-target.ts"],
-      workflow_steps: ["Read current target file", "Patch scoped target", "Verifier replay passed"],
-      tool_set: ["read", "edit", "test"],
-      acceptance_checks: ["verifier accepted scoped_target_patch"],
-      continuation_hint: `Reviewer should continue ${PASSED_MARKER} from src/multi-agent-e2e/current-target.ts.`,
-      confidence: 0.93,
-      raw_ref: `trace://multi-agent/${args.runId}/worker-passed`,
-      evidence_ref: `evidence://multi-agent/${args.runId}/verifier-passed`,
-      verification: {
-        verifier_agent_id: VERIFIER_ID,
-        passed: true,
-        reason: `${PASSED_MARKER} passed verifier replay.`,
-      },
-      slots: {
-        task_signature: `multi-agent:${args.runId}`,
-        execution_result_summary: {
-          status: "passed",
-          summary: `${PASSED_MARKER} scoped_target_patch passed verifier replay with raw evidence.`,
-          evidence_refs: [`evidence://multi-agent/${args.runId}/verifier-passed`],
-        },
+  const passedObserve = await adapter.observeStep<Record<string, unknown>>({
+    run_id: `run:${args.runId}:worker-passed`,
+    task_family: "multi_agent_execution_memory",
+    task_signature: `multi-agent:${args.runId}`,
+    workflow_signature: "worker-passed-scoped-target",
+    agent_id: WORKER_ID,
+    role: "worker",
+    title: `${PASSED_MARKER} scoped_target_patch passed`,
+    summary: `${PASSED_MARKER} scoped_target_patch edited src/multi-agent-e2e/current-target.ts and passed verifier replay.`,
+    outcome: "succeeded",
+    target_files: ["src/multi-agent-e2e/current-target.ts"],
+    workflow_steps: ["Read current target file", "Patch scoped target", "Verifier replay passed"],
+    tool_set: ["read", "edit", "test"],
+    acceptance_checks: ["verifier accepted scoped_target_patch"],
+    continuation_hint: `Reviewer should continue ${PASSED_MARKER} from src/multi-agent-e2e/current-target.ts.`,
+    confidence: 0.93,
+    raw_ref: `trace://multi-agent/${args.runId}/worker-passed`,
+    evidence_ref: `evidence://multi-agent/${args.runId}/verifier-passed`,
+    verification: {
+      verifier_agent_id: VERIFIER_ID,
+      passed: true,
+      reason: `${PASSED_MARKER} passed verifier replay.`,
+    },
+    slots: {
+      execution_result_summary: {
+        status: "passed",
+        summary: `${PASSED_MARKER} scoped_target_patch passed verifier replay with raw evidence.`,
+        evidence_refs: [`evidence://multi-agent/${args.runId}/verifier-passed`],
       },
     },
   });
@@ -449,7 +449,15 @@ async function runMultiAgentLoop(args: {
     execution_tree_v1: baseTree,
     execution_tree_operations_v1: operations,
   };
-  const handoffObserve = await client.observe<Record<string, unknown>>({
+  const handoffObserve = await adapter.observeStep<Record<string, unknown>>({
+    run_id: `run:${args.runId}:handoff`,
+    task_family: "multi_agent_execution_memory",
+    task_signature: `multi-agent:${args.runId}`,
+    workflow_signature: "planner-worker-verifier-reviewer-handoff",
+    agent_id: VERIFIER_ID,
+    role: "verifier",
+    title: "Multi-agent execution memory handoff",
+    summary: `Reviewer should continue ${PASSED_MARKER} and avoid ${FAILED_MARKER}.`,
     handoff: handoffPayload,
   });
   const observedTree = asRecord(asRecord(handoffObserve.handoff)?.execution_tree_v1);
@@ -457,22 +465,33 @@ async function runMultiAgentLoop(args: {
     observedTree?.current_summary_node_id === expectedTree.current_summary_node_id,
     "handoff observe did not expose latest multi-agent execution tree",
   );
+  assertCondition(
+    adapter.execution_tree_v1?.current_summary_node_id === expectedTree.current_summary_node_id,
+    "adapter did not retain latest multi-agent execution tree",
+  );
 
-  const afterGuide = await client.guide<Record<string, unknown>>({
+  const afterGuide = await adapter.guideNext<Record<string, unknown>>({
+    run_id: args.runId,
+    task_signature: `multi-agent:${args.runId}`,
+    task_family: "multi_agent_execution_memory",
+    workflow_signature: "planner-worker-verifier-reviewer-handoff",
     query_text: queryText,
-    agent_role: "reviewer",
-    consumer_agent_id: REVIEWER_ID,
-    consumer_team_id: TEAM_ID,
+    agent_id: REVIEWER_ID,
+    role: "reviewer",
     context: {
-      task_signature: `multi-agent:${args.runId}`,
       reviewer_goal: "inherit active path, avoid failed branch, and record feedback attribution",
     },
     tool_candidates: ["read", "edit", "test"],
     limit: 10,
-    include_packets: true,
   });
   const reviewerContext = agentContext(afterGuide.agent_context, "after reviewer guide");
   assertPromptBoundary(String(reviewerContext.prompt_text), "after reviewer guide");
+  const afterSourceMap = asRecord(afterGuide.source_map);
+  assertCondition(
+    Array.isArray(afterSourceMap?.routes_used)
+      && afterSourceMap.routes_used.includes("/v1/execution/context/assemble"),
+    "adapter reviewer guide did not use full_power execution context route",
+  );
   assertCondition(reviewerContext.agent_role === "reviewer", "reviewer guide did not preserve agent_role");
   assertCondition(String(reviewerContext.prompt_text).includes("state: role=reviewer"), "reviewer guide prompt did not include role state");
   assertCondition(String(reviewerContext.prompt_text).includes("role_focus: review branch status"), "reviewer guide prompt did not include reviewer focus");
@@ -521,88 +540,77 @@ async function runMultiAgentLoop(args: {
   assertCondition(reviewerDecision.next_action === "continue_passed_branch", "reviewer did not continue the passed branch");
   assertCondition(reviewerDecision.avoided_failed_branch, "reviewer did not avoid the failed branch");
 
-  const reviewerOutcome = await client.observe<Record<string, unknown>>({
-    auto_embed: true,
-    memory_lane: "shared",
-    producer_agent_id: REVIEWER_ID,
-    owner_team_id: TEAM_ID,
-    execution: {
-      run_id: `run:${args.runId}:reviewer`,
-      task_family: "multi_agent_execution_memory",
-      task_signature: `multi-agent-reviewer:${args.runId}`,
-      workflow_signature: "reviewer-continued-passed-branch",
-      title: "MULTI_AGENT_E2E_REVIEWER continued passed branch",
-      summary: `Reviewer continued ${PASSED_MARKER}, avoided ${FAILED_MARKER}, and preserved branch status for the next Agent.`,
-      outcome: "succeeded",
-      target_files: ["src/multi-agent-e2e/current-target.ts"],
-      workflow_steps: ["Read agent_context", "Inspect branch split", "Continue passed branch"],
-      acceptance_checks: ["continued passed branch", "did not repeat failed branch"],
-      continuation_hint: `Future agents should continue ${PASSED_MARKER} and keep ${FAILED_MARKER} as counter-evidence.`,
-      confidence: 0.91,
-      raw_ref: `trace://multi-agent/${args.runId}/reviewer`,
-      evidence_ref: `evidence://multi-agent/${args.runId}/reviewer-verifier`,
-      verification: {
-        next_action: reviewerDecision.next_action,
-        avoided_failed_branch: reviewerDecision.avoided_failed_branch,
-        passed: true,
-      },
-      slots: {
-        task_signature: `multi-agent-reviewer:${args.runId}`,
-        execution_result_summary: {
-          status: "passed",
-          summary: "Reviewer used multi-agent execution memory correctly.",
-          evidence_refs: [`evidence://multi-agent/${args.runId}/reviewer-verifier`],
-        },
+  const usedMemoryIds = exposedUseNowMemoryIds(afterGuide);
+  assertCondition(usedMemoryIds.includes(passedMemoryId), "reviewer guide did not expose passed memory id for attribution");
+  const reviewerOutcomeResult = await adapter.observeOutcome<Record<string, unknown>, Record<string, unknown>>({
+    run_id: args.runId,
+    task_family: "multi_agent_execution_memory",
+    task_signature: `multi-agent-reviewer:${args.runId}`,
+    workflow_signature: "reviewer-continued-passed-branch",
+    agent_id: REVIEWER_ID,
+    role: "reviewer",
+    title: "MULTI_AGENT_E2E_REVIEWER continued passed branch",
+    summary: `Reviewer continued ${PASSED_MARKER}, avoided ${FAILED_MARKER}, and preserved branch status for the next Agent.`,
+    outcome: "succeeded",
+    target_files: ["src/multi-agent-e2e/current-target.ts"],
+    workflow_steps: ["Read agent_context", "Inspect branch split", "Continue passed branch"],
+    acceptance_checks: ["continued passed branch", "did not repeat failed branch"],
+    continuation_hint: `Future agents should continue ${PASSED_MARKER} and keep ${FAILED_MARKER} as counter-evidence.`,
+    confidence: 0.91,
+    raw_ref: `trace://multi-agent/${args.runId}/reviewer`,
+    evidence_ref: `evidence://multi-agent/${args.runId}/reviewer-verifier`,
+    verification: {
+      next_action: reviewerDecision.next_action,
+      avoided_failed_branch: reviewerDecision.avoided_failed_branch,
+      passed: true,
+    },
+    slots: {
+      execution_result_summary: {
+        status: "passed",
+        summary: "Reviewer used multi-agent execution memory correctly.",
+        evidence_refs: [`evidence://multi-agent/${args.runId}/reviewer-verifier`],
       },
     },
+    used_memory_ids: [passedMemoryId],
+    guide_run_id: args.runId,
+    runtime_signal_refs: [`evidence://multi-agent/${args.runId}/reviewer-verifier`],
+    feedback_reason: "Reviewer used the passed worker branch successfully.",
   });
+  const reviewerOutcome = reviewerOutcomeResult.observe;
   const reviewerMemoryId = firstNodeId(reviewerOutcome, "reviewer");
 
-  const usedMemoryIds = textArray(reviewerContext.use_now_memory_ids);
-  assertCondition(usedMemoryIds.includes(passedMemoryId), "reviewer guide did not expose passed memory id for attribution");
-  const activateFeedback = await client.forget<Record<string, unknown>>({
-    operation: "activate",
-    target: "memory",
-    actor: REVIEWER_ID,
-    guide_trace_id: String(afterGuide.guide_trace_id),
-    used_memory_ids: [passedMemoryId],
-    run_id: `run:${args.runId}:reviewer`,
-    outcome: "positive",
-    used_surface: "use_now",
-    verifier_status: "passed",
-    tool_status: "succeeded",
-    runtime_signal_refs: [`evidence://multi-agent/${args.runId}/reviewer-verifier`],
-    reason: "Reviewer used the passed worker branch successfully.",
-  });
+  const activateFeedback = reviewerOutcomeResult.feedback;
+  assertCondition(activateFeedback, "adapter did not submit guide feedback for reviewer outcome");
   const feedbackEffect = asRecord(activateFeedback.forget_effect);
   assertCondition(feedbackEffect?.changed_count === 1, "activate feedback did not affect exactly one memory");
 
-  const measure = await client.measure<Record<string, unknown>>({
+  const measure = await adapter.measureRun<Record<string, unknown>>({
+    run_id: args.runId,
+    task_id: `task:${args.runId}`,
+    task_signature: `multi-agent:${args.runId}`,
+    task_family: "multi_agent_execution_memory",
     task: {
-      task_id: `task:${args.runId}`,
       run_id: `run:${args.runId}:reviewer`,
-      task_signature: `multi-agent:${args.runId}`,
-      task_family: "multi_agent_execution_memory",
     },
-    product_trace: {
-      before_guide: beforeGuide,
-      after_guide: afterGuide,
-      forget_result: activateFeedback,
-      sufficient_evidence: true,
-      evidence_ids: [
-        `product_trace:multi-agent:${args.runId}`,
-        `memory:${plannerMemoryId}`,
-        `memory:${failedMemoryId}`,
-        `memory:${passedMemoryId}`,
-        `memory:${reviewerMemoryId}`,
-      ],
-    },
+    before_guide: beforeGuide,
+    after_guide: afterGuide,
+    forget_result: activateFeedback,
+    evidence_ids: [
+      `product_trace:multi-agent:${args.runId}`,
+      `memory:${plannerMemoryId}`,
+      `memory:${failedMemoryId}`,
+      `memory:${passedMemoryId}`,
+      `memory:${reviewerMemoryId}`,
+    ],
   });
   const effectReport = asRecord(measure.effect_report);
   const historyImpact = asRecord(effectReport?.history_impact);
   const feedbackSummary = asRecord(effectReport?.feedback_signal_summary);
   assertCondition(measure.contract_version === "aionis_measure_result_v1", "measure did not return measure result v1");
-  assertCondition(historyImpact?.impact_direction === "positive", "measure did not report positive multi-agent history impact");
+  assertCondition(
+    historyImpact?.impact_direction === "positive",
+    `measure did not report positive multi-agent history impact: ${JSON.stringify(effectReport)}`,
+  );
   assertCondition(historyImpact?.changed_future_behavior === true, "measure did not report changed future behavior");
   assertCondition(feedbackSummary?.present === true, "measure did not include guide feedback attribution summary");
 
@@ -621,6 +629,7 @@ async function runMultiAgentLoop(args: {
     feedback_changed_count: feedbackEffect.changed_count,
     measure_history_impact: historyImpact.impact_direction,
     feedback_summary_present: feedbackSummary.present,
+    adapter_flow_used: true,
   };
 }
 
@@ -664,6 +673,7 @@ async function main() {
         guide_trace_feedback_attributed: true,
         measure_positive_history_impact: true,
         agent_prompt_boundary_preserved: true,
+        execution_memory_adapter_flow: true,
       },
     };
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
