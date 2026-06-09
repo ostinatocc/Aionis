@@ -9,6 +9,8 @@ For a runnable local product flow, see
 [AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md](AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md).
 For the full product API usage boundary, see
 [AIONIS_PRODUCT_API_USAGE.md](AIONIS_PRODUCT_API_USAGE.md).
+For external host wiring, see
+[AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md).
 
 ## Rule
 
@@ -29,6 +31,7 @@ rehydrated memory. They must not become Agent prompt content.
 | `guide_packet` | `POST /v1/guide` with `include_packets: true` | Host / measurement / advanced UI | Structured guide behind `agent_context`. | No by default |
 | `memory_decision_trace` | `POST /v1/debug/memory-decision-trace` or `/v1/measure` | Developer debugging | Per-memory decision trace. | Never |
 | `memory_decision_audit` | `POST /v1/audit/memory-decision-report` or `/v1/measure` | Operator audit / product diagnostics | Compact review of memory decisions. | Never |
+| `operator_snapshot` | `POST /v1/operator/snapshot` | Operator / host observability | Read-only run, branch, feedback, and effect summary. | Never |
 
 ## Agent-Facing Contract
 

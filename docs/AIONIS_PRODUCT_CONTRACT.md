@@ -38,9 +38,9 @@ The product surface should collapse around four verbs.
 | `forget` | Control what should cool down, retire, archive, or rehydrate. | semantic forgetting, suppression, archive relocation, anchor rehydration, node activation |
 | `measure` | Prove whether history changed the run positively or negatively. | runtime effect summary, promotion quality, runtime signal trends, maintenance reports, paired eval reports |
 
-Internal mechanisms may remain richer than these verbs, but product docs, demos, and user-facing integrations should not expose every internal route as a product concept. Concrete product API usage is defined in [AIONIS_PRODUCT_API_USAGE.md](AIONIS_PRODUCT_API_USAGE.md), capability routing and deletion decisions are tracked in [AIONIS_CAPABILITY_DECISION_MATRIX.md](AIONIS_CAPABILITY_DECISION_MATRIX.md), and stable user-facing outputs are defined in [AIONIS_PRODUCT_OUTPUT_CONTRACT.md](AIONIS_PRODUCT_OUTPUT_CONTRACT.md).
+Internal mechanisms may remain richer than these verbs, but product docs, demos, and user-facing integrations should not expose every internal route as a product concept. Concrete product API usage is defined in [AIONIS_PRODUCT_API_USAGE.md](AIONIS_PRODUCT_API_USAGE.md), host integration templates are defined in [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md), capability routing and deletion decisions are tracked in [AIONIS_CAPABILITY_DECISION_MATRIX.md](AIONIS_CAPABILITY_DECISION_MATRIX.md), and stable user-facing outputs are defined in [AIONIS_PRODUCT_OUTPUT_CONTRACT.md](AIONIS_PRODUCT_OUTPUT_CONTRACT.md).
 
-The shortest runnable product flow is [AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md](AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md). It demonstrates `observe -> guide -> audit` without adding an Agent harness or benchmark runner.
+The shortest runnable product flow is [AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md](AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md). It demonstrates `observe -> guide -> audit` without adding an Agent harness or benchmark runner. External Agent hosts should use [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md) for the full `observe -> guide -> agent action -> feedback -> measure -> snapshot` loop.
 
 ## Multi-Agent Execution Memory Position
 

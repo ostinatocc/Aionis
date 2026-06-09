@@ -9,6 +9,9 @@ It is not a new mechanism proposal. It does not define an Agent framework,
 benchmark runner, repair system, or host-specific adapter. It describes the
 stable product path over the current Runtime implementation.
 
+For host template wiring and runnable single-agent, multi-agent, and coding
+Agent examples, see [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md).
+
 ## Route Summary
 
 | Route | Product Action | Caller | Primary Consumer | Main Output |
@@ -18,9 +21,22 @@ stable product path over the current Runtime implementation.
 | `POST /v1/forget` | `forget` | Host, operator, or product policy | Host lifecycle controller | `forget_effect` |
 | `POST /v1/measure` | `measure` | Host, operator, or product evaluator | Product diagnostics | `effect_report`, optional decision trace and audit |
 
+Optional read-only operator route:
+
+| Route | Product Role | Caller | Primary Consumer | Main Output |
+|---|---|---|---|---|
+| `POST /v1/operator/snapshot` | inspect | Host or operator after guide/feedback/measure | Operator / host observability | `operator_snapshot`, optional markdown |
+
 The Agent should consume only `agent_context.prompt_text` or selected
 `agent_context` fields. Full packets, decision traces, audit reports, raw rows,
 and raw slots are operator surfaces, not Agent prompt surfaces.
+
+For host decisions, distinguish these two fields:
+
+| Field | Meaning | Product Use |
+|---|---|---|
+| `history_used` | The Aionis history/context channel participated in guide assembly. | Observability of the context channel. |
+| `actionable_history_used` | The Agent received memory-backed guidance, rehydration hints, or execution branches that can affect the next action. | Whether Aionis actually supplied actionable memory. |
 
 ## Integration Flow
 
@@ -30,9 +46,14 @@ and raw slots are operator surfaces, not Agent prompt surfaces.
 3. Pass only `agent_context.prompt_text` or selected `agent_context` fields to
    the Agent.
 4. Call `POST /v1/forget` when a memory, workflow, pattern, archive, or payload
-   lifecycle should change.
+   lifecycle should change. For normal run feedback, use
+   `operation: "activate"` with `guide_trace_id`, `used_memory_ids`, `run_id`,
+   `outcome`, and `used_surface`.
 5. Call `POST /v1/measure` with before/after guide packets or direct
    observations when the product needs to prove whether history helped or hurt.
+6. Call `POST /v1/operator/snapshot` when a host or operator needs a read-only
+   summary of actionable history, feedback attribution, branch isolation, and
+   measured effect.
 
 ## SDK Product Path
 

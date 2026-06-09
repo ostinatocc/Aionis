@@ -9,6 +9,10 @@ This quickstart shows the shortest product path:
 It is not an Agent harness, benchmark runner, demo app, or external framework
 adapter. It only shows how a host should call the product facade.
 
+For the full host loop with feedback, measurement, operator snapshot, and
+single-agent / multi-agent / coding-agent templates, see
+[AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md).
+
 ## Start Runtime
 
 `POST /v1/guide` uses semantic recall, so the Runtime needs an embedding
@@ -65,6 +69,27 @@ and checks that execution-tree audit surfaces stay out of the Agent prompt.
 
 If `AIONIS_PRODUCT_E2E_BASE_URL` is not set, the script starts an isolated local
 Runtime on a random port and uses the embedding provider from the environment.
+
+## Host Template E2Es
+
+For release-level host integration checks, run the real Runtime host-template
+e2es:
+
+```bash
+npm run -s runtime:e2e:single-agent-host-template
+npm run -s runtime:e2e:multi-agent-host-template
+npm run -s runtime:e2e:multi-agent-host-template-fresh
+```
+
+These scripts verify the full host contract:
+
+1. fresh scopes keep `actionable_history_used: false`
+2. ordinary private memory guides a single Agent only when owner/consumer
+   identity is aligned
+3. shared team memory guides multi-agent roles inside the team boundary
+4. feedback attribution uses `guide_trace_id` and exposed `use_now` memory IDs
+5. `measure` reports history impact
+6. operator snapshot remains read-only and operator-facing
 
 ## 1. Observe Old Memory
 
