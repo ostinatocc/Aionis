@@ -13,14 +13,14 @@ import {
   type ExecutionTreeV1,
 } from "../../src/execution/index.ts";
 
-type RuntimeHandle = {
+export type RuntimeHandle = {
   baseUrl: string;
   child: ChildProcessWithoutNullStreams;
   tmpDir: string;
   logs: string[];
 };
 
-type LlmConfig = {
+export type LlmConfig = {
   apiKey: string;
   baseUrl: string;
   model: string;
@@ -28,7 +28,7 @@ type LlmConfig = {
   maxTokens: number;
 };
 
-type EmbeddingConfig = {
+export type EmbeddingConfig = {
   provider: "minimax" | "openai";
 };
 
@@ -40,17 +40,17 @@ type AgentDecision = {
 };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, "../..");
+export const repoRoot = path.resolve(__dirname, "../..");
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
+export function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-function requireLlmConfig(): LlmConfig {
+export function requireLlmConfig(): LlmConfig {
   const customKey = process.env.AIONIS_AGENT_E2E_API_KEY?.trim();
   const deepseekKey = process.env.DEEPSEEK_API_KEY?.trim();
   const openrouterKey = process.env.OPENROUTER_API_KEY?.trim();
@@ -81,7 +81,7 @@ function requireLlmConfig(): LlmConfig {
   return { apiKey, baseUrl, model, provider, maxTokens };
 }
 
-function requireEmbeddingConfig(): EmbeddingConfig {
+export function requireEmbeddingConfig(): EmbeddingConfig {
   const explicit = process.env.AIONIS_AGENT_E2E_EMBEDDING_PROVIDER?.trim() || process.env.EMBEDDING_PROVIDER?.trim();
   const provider = explicit || (process.env.MINIMAX_API_KEY?.trim() ? "minimax" : process.env.OPENAI_API_KEY?.trim() ? "openai" : "");
   if (provider !== "minimax" && provider !== "openai") {
@@ -114,7 +114,7 @@ async function findFreePort(): Promise<number> {
   });
 }
 
-async function startRuntime(embedding: EmbeddingConfig): Promise<RuntimeHandle> {
+export async function startRuntime(embedding: EmbeddingConfig): Promise<RuntimeHandle> {
   const port = await findFreePort();
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-runtime-agent-e2e-"));
   const logs: string[] = [];
@@ -169,11 +169,11 @@ async function startRuntime(embedding: EmbeddingConfig): Promise<RuntimeHandle> 
   throw new Error(`Aionis Runtime did not become healthy.\n${logs.join("").slice(-4_000)}`);
 }
 
-function stopRuntime(handle: RuntimeHandle): void {
+export function stopRuntime(handle: RuntimeHandle): void {
   if (handle.child.exitCode === null) handle.child.kill("SIGTERM");
 }
 
-async function postJson(baseUrl: string, pathName: string, payload: unknown): Promise<Record<string, unknown>> {
+export async function postJson(baseUrl: string, pathName: string, payload: unknown): Promise<Record<string, unknown>> {
   const res = await fetch(`${baseUrl}${pathName}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -294,7 +294,7 @@ function buildRuntimeTreeFixture(runId: string): {
   return { baseTree, operations, expectedTree };
 }
 
-function extractChatCompletionText(payload: unknown): string | null {
+export function extractChatCompletionText(payload: unknown): string | null {
   const root = asRecord(payload);
   const choices = Array.isArray(root?.choices) ? root.choices : [];
   const first = asRecord(choices[0]);
@@ -313,7 +313,7 @@ function extractChatCompletionText(payload: unknown): string | null {
   return null;
 }
 
-function extractJsonObject(text: string): Record<string, unknown> | null {
+export function extractJsonObject(text: string): Record<string, unknown> | null {
   const trimmed = text.trim();
   try {
     const parsed = JSON.parse(trimmed);
@@ -415,7 +415,7 @@ async function callAgentLlm(args: {
   };
 }
 
-function assertCondition(condition: unknown, message: string): asserts condition {
+export function assertCondition(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
@@ -578,7 +578,10 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-  process.exitCode = 1;
-});
+const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : "";
+if (invokedPath === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 1;
+  });
+}
