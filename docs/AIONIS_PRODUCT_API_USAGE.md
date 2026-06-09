@@ -111,8 +111,8 @@ Use these identity rules:
 4. Use `memory_lane: "private"` only when the same Agent should retrieve the
    memory later.
 5. Put role hints such as `planner`, `worker`, `verifier`, or `reviewer` in
-   `context.agent_role`; Aionis remains the memory backend, not the role
-   scheduler.
+   top-level `agent_role` on `/v1/guide`. Legacy `context.agent_role` is still
+   accepted as a compatibility fallback.
 6. After the Agent acts, call `forget` with `operation: "activate"`,
    `guide_trace_id`, `used_memory_ids`, `run_id`, `outcome`, and
    `used_surface` so feedback is attributed only to memory actually used.
@@ -214,19 +214,20 @@ required for normal product use.
 Hosts may render `agent_context.prompt_text` directly, or use these structured
 fields:
 
-1. `summary`
-2. `recommended_posture`
-3. `authority`
-4. `target_files`
-5. `use_now`
-6. `inspect_before_use`
-7. `do_not_use`
-8. `rehydrate_hints`
-9. `memory_ids`
-10. `use_now_memory_ids`
-11. `inspect_before_use_memory_ids`
-12. `do_not_use_memory_ids`
-13. `risk`
+1. `agent_role`
+2. `summary`
+3. `recommended_posture`
+4. `authority`
+5. `target_files`
+6. `use_now`
+7. `inspect_before_use`
+8. `do_not_use`
+9. `rehydrate_hints`
+10. `memory_ids`
+11. `use_now_memory_ids`
+12. `inspect_before_use_memory_ids`
+13. `do_not_use_memory_ids`
+14. `risk`
 
 Do not pass `memory_packet`, `guide_packet`, `memory_decision_trace`,
 `memory_decision_audit`, raw rows, or raw slots to the Agent by default.

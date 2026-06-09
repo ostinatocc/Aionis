@@ -17,11 +17,13 @@ import {
   buildAionisMemoryDecisionTrace,
 } from "../memory/product-output-assembler.js";
 import {
+  AionisAgentRoleSchema,
   AionisAgentContextSchema,
   AionisEffectReportSchema,
   AionisGuidePacketSchema,
   AionisMemoryPacketSchema,
   type AionisAgentContext,
+  type AionisAgentRole,
   type AionisMemoryDecisionAuditReport,
   type AionisMemoryDecisionTrace,
   type AionisGuidePacket,
@@ -115,6 +117,7 @@ const ProductGuideRequest = z.object({
   tenant_id: z.string().trim().min(1).optional(),
   scope: z.string().trim().min(1).optional(),
   query_text: z.string().trim().min(1),
+  agent_role: AionisAgentRoleSchema.optional(),
   context: z.unknown().optional(),
   run_id: z.string().trim().min(1).optional(),
   consumer_agent_id: z.string().trim().min(1).optional(),
@@ -549,6 +552,14 @@ type ProductFeedbackLearningControlPersistence = Awaited<ReturnType<typeof apply
 
 function objectValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function productGuideAgentRole(parsed: z.infer<typeof ProductGuideRequest>): AionisAgentRole {
+  if (parsed.agent_role) return parsed.agent_role;
+  const context = objectValue(parsed.context);
+  const contextRole = context?.agent_role;
+  const parsedContextRole = AionisAgentRoleSchema.safeParse(contextRole);
+  return parsedContextRole.success ? parsedContextRole.data : "agent";
 }
 
 function stringArrayField(value: unknown): string[] {
@@ -1675,9 +1686,11 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     const guidePacket: AionisGuidePacket | null = body.aionis_guide_packet
       ? AionisGuidePacketSchema.parse(body.aionis_guide_packet)
       : null;
+    const agentRole = productGuideAgentRole(parsed);
     let agentContext: AionisAgentContext = buildAionisAgentContext({
       tenant_id: String(body.tenant_id ?? parsed.tenant_id ?? env.MEMORY_TENANT_ID),
       scope: String(body.scope ?? parsed.scope ?? env.MEMORY_SCOPE),
+      agent_role: agentRole,
       memory_packet: memoryPacket,
       guide_packet: guidePacket,
       context_char_budget: parsed.context_char_budget,
@@ -1739,6 +1752,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
           "recall",
           "product_packets",
           "agent_context_compiler",
+          ...(agentRole !== "agent" ? ["role_aware_agent_context"] : []),
           ...(activeProjectionApplied ? ["inspect_before_use_active_projection"] : []),
           "guide_exposure_ledger",
         ],

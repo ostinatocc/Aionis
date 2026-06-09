@@ -98,6 +98,7 @@ type AionisAgentContext = {
   contract_version: "aionis_agent_context_v1";
   tenant_id: string;
   scope: string;
+  agent_role: "agent" | "planner" | "worker" | "verifier" | "reviewer";
   prompt_text: string;
   summary: string;
   history_used: boolean;
@@ -133,7 +134,8 @@ type AionisAgentContext = {
 ```
 
 `prompt_text` is the direct Agent prompt surface. It uses a compact line format:
-header, one `state:` line, one short `summary:`, then optional inline
+header, one role-aware `state:` line, an optional `role_focus:` line, one short
+`summary:`, then optional inline
 `target_files:`, `use_now:`, `inspect_before_use:`, `do_not_use:`,
 `rehydrate_if_needed:`, and `memory_ids:` lines. The structured fields remain
 available so hosts can render, filter, or audit the context without parsing

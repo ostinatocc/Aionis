@@ -35,16 +35,17 @@ rehydrated memory. They must not become Agent prompt content.
 The Agent should receive only `agent_context.prompt_text`, or a host-rendered
 equivalent using these fields:
 
-1. `summary`
-2. `recommended_posture`
-3. `authority`
-4. `target_files`
-5. `use_now`
-6. `inspect_before_use`
-7. `do_not_use`
-8. `rehydrate_hints`
-9. `memory_ids`
-10. `risk`
+1. `agent_role`
+2. `summary`
+3. `recommended_posture`
+4. `authority`
+5. `target_files`
+6. `use_now`
+7. `inspect_before_use`
+8. `do_not_use`
+9. `rehydrate_hints`
+10. `memory_ids`
+11. `risk`
 
 This keeps Aionis useful without turning memory internals into a rule wall.
 

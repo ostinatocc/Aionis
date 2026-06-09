@@ -1098,6 +1098,7 @@ test("product observe turns execution input into recallable execution memory", a
         tenant_id: "default",
         scope: "default",
         query_text: "Recover target file before broad discovery",
+        agent_role: "reviewer",
         consumer_agent_id: "local-user",
         tool_candidates: ["read", "edit", "test"],
         limit: 8,
@@ -1144,6 +1145,7 @@ test("product observe turns execution input into recallable execution memory", a
       "contract_version",
       "tenant_id",
       "scope",
+      "agent_role",
       "prompt_text",
       "summary",
       "history_used",
@@ -1162,10 +1164,14 @@ test("product observe turns execution input into recallable execution memory", a
       "evidence_refs",
     ]);
     assert.equal(guideBody.agent_context.contract_version, "aionis_agent_context_v1");
+    assert.equal(guideBody.agent_context.agent_role, "reviewer");
     assert.equal(typeof guideBody.guide_trace_id, "string");
     assert.ok(guideBody.guide_trace_id.startsWith("guide_trace:"));
     assert.equal(guideBody.agent_context.history_used, true);
     assert.ok(guideBody.agent_context.prompt_text.includes("AIONIS_AGENT_CONTEXT v1"));
+    assert.ok(guideBody.agent_context.prompt_text.includes("state: role=reviewer"));
+    assert.ok(guideBody.agent_context.prompt_text.includes("role_focus: review branch status"));
+    assert.ok(guideBody.source_map.internal_surfaces_used.includes("role_aware_agent_context"));
     assert.ok(guideBody.agent_context.prompt_text.length < JSON.stringify({
       memory_packet: guideBody.memory_packet,
       guide_packet: guideBody.guide_packet,

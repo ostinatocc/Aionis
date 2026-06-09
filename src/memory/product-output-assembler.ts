@@ -18,6 +18,7 @@ import {
   parseAionisMemoryDecisionTrace,
   parseAionisMemoryPacket,
   type AionisAgentContext,
+  type AionisAgentRole,
   type AionisEffectReport,
   type AionisGuidePacket,
   type AionisGuidanceAuthority,
@@ -113,6 +114,7 @@ const NEIGHBORHOOD_DRIFT_STOPWORDS = new Set([
 export type BuildAionisAgentContextArgs = {
   tenant_id: string;
   scope: string;
+  agent_role?: AionisAgentRole | null;
   memory_packet?: AionisMemoryPacket | null;
   guide_packet?: AionisGuidePacket | null;
   context_char_budget?: number | null;
@@ -1134,7 +1136,23 @@ function promptProfilesFor(
       ];
 }
 
+function agentRoleFocusLine(role: AionisAgentRole): string | null {
+  switch (role) {
+    case "planner":
+      return "role_focus: plan from current state, assign bounded next work, and inspect risk before widening scope";
+    case "worker":
+      return "role_focus: execute use_now items, inspect uncertain history, and avoid do_not_use branches";
+    case "verifier":
+      return "role_focus: verify acceptance checks, treat history as claims to check, and preserve failure evidence";
+    case "reviewer":
+      return "role_focus: review branch status, continue the active passed path, and keep failed branches as counter-evidence";
+    case "agent":
+      return null;
+  }
+}
+
 function renderAgentContextPrompt(args: {
+  agentRole: AionisAgentRole;
   summary: string;
   historyUsed: boolean;
   recommendedPosture: AionisAgentContext["recommended_posture"];
@@ -1157,7 +1175,8 @@ function renderAgentContextPrompt(args: {
   };
   const sections = compactStrings([
     `AIONIS_AGENT_CONTEXT v1`,
-    `state: history=${args.historyUsed ? "yes" : "no"} posture=${args.recommendedPosture} authority=${args.authority} risk=${args.negativeTransferRisk}`,
+    `state: role=${args.agentRole} history=${args.historyUsed ? "yes" : "no"} posture=${args.recommendedPosture} authority=${args.authority} risk=${args.negativeTransferRisk}`,
+    agentRoleFocusLine(args.agentRole),
     `summary: ${shortenPromptText(args.summary, args.profile.summaryChars)}`,
     inline("target_files", args.targetFiles, args.profile.targetFileItems, args.profile.targetFileChars),
     inline("use_now", args.useNow, args.profile.useNowItems, args.profile.useNowChars),
@@ -1177,6 +1196,7 @@ function renderAgentContextPrompt(args: {
 }
 
 function buildAgentContextPrompt(args: {
+  agentRole: AionisAgentRole;
   summary: string;
   historyUsed: boolean;
   recommendedPosture: AionisAgentContext["recommended_posture"];
@@ -1630,6 +1650,7 @@ function compileAgentContextSurfaces(args: {
 export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): AionisAgentContext {
   const guide = args.guide_packet ?? null;
   const memory = args.memory_packet ?? null;
+  const agentRole = args.agent_role ?? "agent";
   const guideBrief = guide?.guide_brief ?? null;
   const memoryEntryCount = memory?.relevant_memories.length ?? 0;
   const rawHistoryUsed = guideBrief?.history_used === true || memoryEntryCount > 0;
@@ -1688,6 +1709,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     ? rawSummary
     : "No usable Aionis history was recovered for the Agent context.";
   const promptText = buildAgentContextPrompt({
+    agentRole,
     summary,
     historyUsed: surfaces.historyUsed,
     recommendedPosture: surfaces.recommendedPosture,
@@ -1707,6 +1729,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     contract_version: "aionis_agent_context_v1",
     tenant_id: guide?.tenant_id ?? memory?.tenant_id ?? args.tenant_id,
     scope: guide?.scope ?? memory?.scope ?? args.scope,
+    agent_role: agentRole,
     prompt_text: promptText,
     summary,
     history_used: surfaces.historyUsed,
@@ -1779,6 +1802,7 @@ export function applyAionisInspectBeforeUseActiveProjection(
     ? "inspect_before_use"
     : args.agent_context.recommended_posture;
   const promptText = buildAgentContextPrompt({
+    agentRole: args.agent_context.agent_role,
     summary: args.agent_context.summary,
     historyUsed: args.agent_context.history_used,
     recommendedPosture,

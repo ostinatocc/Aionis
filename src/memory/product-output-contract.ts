@@ -9,6 +9,9 @@ export type AionisGuidanceAuthority = z.infer<typeof AionisGuidanceAuthoritySche
 export const AionisRiskLevelSchema = z.enum(["low", "medium", "high"]);
 export type AionisRiskLevel = z.infer<typeof AionisRiskLevelSchema>;
 
+export const AionisAgentRoleSchema = z.enum(["agent", "planner", "worker", "verifier", "reviewer"]);
+export type AionisAgentRole = z.infer<typeof AionisAgentRoleSchema>;
+
 const AionisHistoryContributionSchema = z
   .object({
     used: z.boolean(),
@@ -390,6 +393,7 @@ export const AionisAgentContextSchema = z
     contract_version: z.literal("aionis_agent_context_v1"),
     tenant_id: z.string().min(1),
     scope: z.string().min(1),
+    agent_role: AionisAgentRoleSchema.default("agent"),
     prompt_text: z.string().min(1),
     summary: z.string().min(1),
     history_used: z.boolean(),

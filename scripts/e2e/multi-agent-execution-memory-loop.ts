@@ -308,10 +308,10 @@ async function runMultiAgentLoop(args: {
   const queryText = `${PASSED_MARKER} reviewer continue active path and avoid ${FAILED_MARKER}`;
   const beforeGuide = await client.guide<Record<string, unknown>>({
     query_text: queryText,
+    agent_role: "reviewer",
     consumer_agent_id: REVIEWER_ID,
     consumer_team_id: TEAM_ID,
     context: {
-      agent_role: "reviewer",
       task_signature: `multi-agent:${args.runId}`,
     },
     limit: 8,
@@ -460,10 +460,10 @@ async function runMultiAgentLoop(args: {
 
   const afterGuide = await client.guide<Record<string, unknown>>({
     query_text: queryText,
+    agent_role: "reviewer",
     consumer_agent_id: REVIEWER_ID,
     consumer_team_id: TEAM_ID,
     context: {
-      agent_role: "reviewer",
       task_signature: `multi-agent:${args.runId}`,
       reviewer_goal: "inherit active path, avoid failed branch, and record feedback attribution",
     },
@@ -473,6 +473,9 @@ async function runMultiAgentLoop(args: {
   });
   const reviewerContext = agentContext(afterGuide.agent_context, "after reviewer guide");
   assertPromptBoundary(String(reviewerContext.prompt_text), "after reviewer guide");
+  assertCondition(reviewerContext.agent_role === "reviewer", "reviewer guide did not preserve agent_role");
+  assertCondition(String(reviewerContext.prompt_text).includes("state: role=reviewer"), "reviewer guide prompt did not include role state");
+  assertCondition(String(reviewerContext.prompt_text).includes("role_focus: review branch status"), "reviewer guide prompt did not include reviewer focus");
   assertCondition(reviewerContext.history_used === true, "reviewer guide did not use multi-agent history");
   assertCondition(
     textArray(reviewerContext.use_now).some((entry) => entry.includes(PASSED_MARKER))

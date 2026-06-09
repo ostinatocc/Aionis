@@ -233,7 +233,8 @@ function validAgentContext() {
     contract_version: "aionis_agent_context_v1",
     tenant_id: "tenant-local",
     scope: "repo-a",
-    prompt_text: "AIONIS_AGENT_CONTEXT v1\nsummary: Use recovered execution context.\nauthority: advisory",
+    agent_role: "reviewer",
+    prompt_text: "AIONIS_AGENT_CONTEXT v1\nstate: role=reviewer history=yes posture=inspect_before_use authority=advisory risk=medium\nrole_focus: review branch status, continue the active passed path, and keep failed branches as counter-evidence\nsummary: Use recovered execution context.",
     summary: "Use recovered execution context.",
     history_used: true,
     recommended_posture: "inspect_before_use",
@@ -689,6 +690,7 @@ test("AionisAgentContext accepts compact agent-facing output", () => {
   const parsed = AionisAgentContextSchema.parse(validAgentContext());
   assert.equal(parsed.contract_version, "aionis_agent_context_v1");
   assert.equal(parsed.history_used, true);
+  assert.equal(parsed.agent_role, "reviewer");
   assert.equal(parsed.authority, "advisory");
   assert.deepEqual(parsed.target_files, ["src/index.ts"]);
   assert.deepEqual(parsed.use_now_memory_ids, ["mem-1"]);

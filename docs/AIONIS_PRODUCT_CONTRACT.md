@@ -60,12 +60,13 @@ The product contract for Multi-Agent execution memory is:
 | `owner_team_id` / `consumer_team_id` | Team boundary for shared multi-agent memory. |
 | `memory_lane: "private"` | Agent-local memory. Use only when the same Agent should retrieve it later. |
 | `memory_lane: "shared"` | Team-visible execution memory for planner/worker/verifier/reviewer handoff. |
-| `context.agent_role` | Host-supplied role hint such as `planner`, `worker`, `verifier`, or `reviewer`. |
+| `agent_role` | Product-level role hint such as `planner`, `worker`, `verifier`, or `reviewer`; legacy `context.agent_role` remains accepted as a compatibility fallback. |
 | `execution_tree_v1` | Branch-aware state: current path, passed branches, failed branches, and revisions. |
 | `guide_trace_id` + `used_memory_ids` | Feedback attribution path after an Agent actually uses recalled memory. |
 
-Role-specific prompt building can be done by the host using `agent_context`
-fields. Aionis must keep the same core boundary for every role:
+Role-specific prompt building should start from Aionis `agent_context`.
+Aionis returns `agent_context.agent_role`, adds a role focus line to
+`agent_context.prompt_text`, and keeps the same core boundary for every role:
 
 1. reusable execution history enters `use_now`
 2. candidate or ambiguous history enters `inspect_before_use`
