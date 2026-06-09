@@ -1263,6 +1263,10 @@ function workflowUseNowLine(text: string): boolean {
   return /^\s*Workflow\s+(trusted|advisory):/i.test(text);
 }
 
+function executionEvidenceUseNowLine(text: string): boolean {
+  return /^\s*(Passed solution|Current active path):/i.test(text);
+}
+
 const TRUSTED_WORKFLOW_CONFLICT_WORDS = [
   "conflict",
   "conflicting",
@@ -1520,6 +1524,7 @@ function compileAgentContextSurfaces(args: {
         : "Inspect trusted workflow conflict before reuse");
       return false;
     }
+    if (executionEvidenceUseNowLine(entry)) return true;
     return hasUsableMemory || args.memoryEntries.length === 0;
   });
 
