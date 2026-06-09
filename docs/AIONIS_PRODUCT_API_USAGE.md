@@ -132,6 +132,20 @@ full-power guide mode, role and team identity are carried on every call, the
 latest execution tree is reused for reviewer context, and `observeOutcome`
 can attribute feedback through the last `guide_trace_id`.
 
+Adapter contract version: `aionis_execution_memory_adapter_v1`.
+
+| Surface | Host Required | Advanced Optional |
+|---|---|---|
+| `createExecutionMemoryAdapter` | `client`; for shared multi-agent memory, `team_id` or per-call `team_id` | `tenant_id`, `scope`, `default_agent_id`, `default_agent_role`, `default_memory_lane`, `default_limit` |
+| `observeRunStart` / `observeStep` | `run_id`, `task_signature`, `agent_id` or `default_agent_id`, `title`, `summary` | `task_family`, `workflow_signature`, `target_files`, `workflow_steps`, `raw_ref`, `evidence_ref`, `slots`, `handoff.execution_tree_v1`, `handoff.execution_tree_operations_v1` |
+| `guideNext` | `run_id`, `task_signature`, `agent_id` or `default_agent_id`, `query_text` | `context`, `execution_tree_v1`, `tool_candidates`, `limit`, `include_packets`, `mode` |
+| `observeOutcome` | same as `observeStep`; `used_memory_ids` when feedback attribution is wanted | `guide_run_id`, `guide_trace_id`, `runtime_signal_refs`, `feedback_outcome`, `used_surface` |
+| `measureRun` | `run_id`, `task_signature` | `before_guide`, `after_guide`, `forget_result`, `evidence_ids`, `task`, `product_trace` |
+
+The adapter rejects shared writes or guides without a team boundary. Use
+`default_memory_lane: "private"` for single-Agent memory that should not require
+`team_id`.
+
 ```ts
 import { createAionisClient } from "./src/sdk.ts";
 import { createExecutionMemoryAdapter } from "./src/adapters/execution-memory.ts";

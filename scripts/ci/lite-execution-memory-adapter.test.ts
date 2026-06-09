@@ -6,6 +6,7 @@ import {
   type ExecutionTreeOperationV1,
 } from "../../src/execution/index.ts";
 import {
+  EXECUTION_MEMORY_ADAPTER_CONTRACT,
   createExecutionMemoryAdapter,
   exposedUseNowMemoryIds,
   type ExecutionMemoryClient,
@@ -18,6 +19,38 @@ function operation(treeId: string, scope: string, value: Record<string, unknown>
     ...value,
   } as ExecutionTreeOperationV1;
 }
+
+function recordingClient(calls: Array<{ method: string; body: Record<string, unknown>; options: unknown }>): ExecutionMemoryClient {
+  return {
+    async observe(body, options) {
+      calls.push({ method: "observe", body, options });
+      return { memory_write: { nodes: [{ id: "memory-recorded" }] } };
+    },
+    async guide(body, options) {
+      calls.push({ method: "guide", body, options });
+      return { guide_trace_id: "guide-recorded", agent_context: { use_now_memory_ids: [] } };
+    },
+    async forget(body, options) {
+      calls.push({ method: "forget", body, options });
+      return { operation: "activate" };
+    },
+    async measure(body, options) {
+      calls.push({ method: "measure", body, options });
+      return { contract_version: "aionis_measure_result_v1" };
+    },
+  };
+}
+
+test("execution memory adapter exposes a stable host-facing contract", () => {
+  assert.equal(EXECUTION_MEMORY_ADAPTER_CONTRACT.contract_version, "aionis_execution_memory_adapter_v1");
+  assert.equal(EXECUTION_MEMORY_ADAPTER_CONTRACT.default_guide_mode, "full_power");
+  assert.ok(EXECUTION_MEMORY_ADAPTER_CONTRACT.host_required.includes("agent_id_or_default_agent_id"));
+  assert.ok(EXECUTION_MEMORY_ADAPTER_CONTRACT.host_required.includes("run_id"));
+  assert.ok(EXECUTION_MEMORY_ADAPTER_CONTRACT.host_required.includes("task_signature"));
+  assert.ok(EXECUTION_MEMORY_ADAPTER_CONTRACT.shared_memory_required.includes("team_id_or_default_team_id"));
+  assert.ok(EXECUTION_MEMORY_ADAPTER_CONTRACT.advanced_optional.includes("execution_tree_v1"));
+  assert.ok(EXECUTION_MEMORY_ADAPTER_CONTRACT.advanced_optional.includes("guide_run_id"));
+});
 
 test("execution memory adapter wires multi-agent observe, full-power guide, feedback, and measure", async () => {
   const calls: Array<{ method: string; body: Record<string, unknown>; options: unknown }> = [];
@@ -181,4 +214,48 @@ test("execution memory adapter wires multi-agent observe, full-power guide, feed
   assert.equal((productTrace.after_guide as Record<string, unknown>).guide_trace_id, "guide-trace-adapter-contract-2");
   assert.ok(productTrace.forget_result);
   assert.deepEqual(productTrace.evidence_ids, ["memory:memory-passed"]);
+});
+
+test("execution memory adapter enforces agent identity and shared team boundary", async () => {
+  const calls: Array<{ method: string; body: Record<string, unknown>; options: unknown }> = [];
+  await assert.rejects(
+    () => createExecutionMemoryAdapter({
+      client: recordingClient(calls),
+      team_id: "team-a",
+    }).guideNext({
+      run_id: "run-missing-agent",
+      task_signature: "missing-agent",
+      query_text: "continue",
+    }),
+    /requires agent_id/,
+  );
+
+  await assert.rejects(
+    () => createExecutionMemoryAdapter({
+      client: recordingClient(calls),
+      default_agent_id: "agent-a",
+    }).observeStep({
+      run_id: "run-missing-team",
+      task_signature: "missing-team",
+      title: "Missing team",
+      summary: "Shared multi-agent memory needs team identity.",
+    }),
+    /requires team_id/,
+  );
+
+  const privateAdapter = createExecutionMemoryAdapter({
+    client: recordingClient(calls),
+    default_agent_id: "agent-private",
+    default_memory_lane: "private",
+  });
+  await privateAdapter.observeStep({
+    run_id: "run-private",
+    task_signature: "private-agent",
+    title: "Private step",
+    summary: "Private single-agent memory can omit team identity.",
+  });
+  const privateObserve = calls.find((call) => call.method === "observe" && call.body.memory_lane === "private");
+  assert.ok(privateObserve);
+  assert.equal(privateObserve.body.producer_agent_id, "agent-private");
+  assert.equal(privateObserve.body.owner_team_id, undefined);
 });

@@ -11,6 +11,42 @@ import type {
 
 export type ExecutionMemoryAgentRole = "agent" | "planner" | "worker" | "verifier" | "reviewer";
 
+export const EXECUTION_MEMORY_ADAPTER_CONTRACT_VERSION = "aionis_execution_memory_adapter_v1" as const;
+
+export const EXECUTION_MEMORY_ADAPTER_CONTRACT = {
+  contract_version: EXECUTION_MEMORY_ADAPTER_CONTRACT_VERSION,
+  host_required: [
+    "client",
+    "agent_id_or_default_agent_id",
+    "run_id",
+    "task_signature",
+    "title",
+    "summary",
+  ],
+  guide_required: [
+    "query_text",
+    "agent_id_or_default_agent_id",
+    "run_id",
+    "task_signature",
+  ],
+  shared_memory_required: [
+    "team_id_or_default_team_id",
+  ],
+  advanced_optional: [
+    "execution_tree_v1",
+    "execution_tree_operations_v1",
+    "guide_run_id",
+    "guide_trace_id",
+    "used_memory_ids",
+    "runtime_signal_refs",
+    "before_guide",
+    "after_guide",
+    "forget_result",
+  ],
+  agent_surface: "agent_context",
+  default_guide_mode: "full_power",
+} as const;
+
 export type ExecutionMemoryClient = {
   observe<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T>;
   guide<T = unknown>(body: AionisJsonObject, options?: AionisGuideRequestOptions): Promise<T>;
@@ -43,6 +79,36 @@ export type ExecutionMemoryRunRef = {
   task_signature: string;
   task_family?: string;
   workflow_signature?: string;
+};
+
+export type ExecutionMemoryHostRequiredFields = ExecutionMemoryRunRef & {
+  title: string;
+  summary: string;
+};
+
+export type ExecutionMemoryHostAgentIdentity = {
+  agent_id: string;
+  role: ExecutionMemoryAgentRole;
+  team_id?: string;
+};
+
+export type ExecutionMemoryHostAdvancedFields = {
+  tenant_id?: string;
+  scope?: string;
+  memory_lane?: "private" | "shared";
+  auto_embed?: boolean;
+  target_files?: string[];
+  workflow_steps?: string[];
+  tool_set?: string[];
+  acceptance_checks?: string[];
+  continuation_hint?: string;
+  confidence?: number;
+  raw_ref?: string;
+  evidence_ref?: string;
+  evidence?: unknown[];
+  verification?: unknown;
+  slots?: AionisJsonObject;
+  execution?: AionisJsonObject;
 };
 
 export type ExecutionMemoryBaseInput = ExecutionMemoryRunRef & ExecutionMemoryAgentRef & {
@@ -156,6 +222,12 @@ function stringArray(value: unknown): string[] {
   return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
 }
 
+function requiredString(value: string | undefined, message: string): string {
+  const trimmed = value?.trim();
+  if (!trimmed) throw new Error(message);
+  return trimmed;
+}
+
 function observeTree(value: unknown): ExecutionTreeV1 | null {
   const body = asRecord(value);
   const handoffTree = asRecord(asRecord(body?.handoff)?.execution_tree_v1);
@@ -254,11 +326,13 @@ export class AionisExecutionMemoryAdapter {
   }
 
   async guideNext<T = unknown>(input: ExecutionMemoryGuideInput): Promise<T> {
+    const teamId = this.teamId(input);
+    this.assertSharedTeamBoundary(this.defaults.default_memory_lane ?? "shared", teamId);
     const response = await this.client.guide<T>({
       query_text: input.query_text,
       agent_role: this.role(input),
       consumer_agent_id: this.agentId(input),
-      consumer_team_id: this.teamId(input),
+      consumer_team_id: teamId,
       context: {
         task_signature: input.task_signature,
         ...(input.task_family ? { task_family: input.task_family } : {}),
@@ -349,11 +423,14 @@ export class AionisExecutionMemoryAdapter {
   }
 
   private observeBase(input: ExecutionMemoryBaseInput): AionisJsonObject {
+    const memoryLane = this.memoryLane(input);
+    const teamId = this.teamId(input);
+    this.assertSharedTeamBoundary(memoryLane, teamId);
     return stripUndefined({
       auto_embed: input.auto_embed ?? true,
-      memory_lane: input.memory_lane ?? this.defaults.default_memory_lane,
+      memory_lane: memoryLane,
       producer_agent_id: this.agentId(input),
-      owner_team_id: this.teamId(input),
+      owner_team_id: teamId,
     });
   }
 
@@ -388,10 +465,13 @@ export class AionisExecutionMemoryAdapter {
   }
 
   private handoffPayload(input: ExecutionMemoryStepInput): AionisJsonObject {
+    const memoryLane = this.memoryLane(input);
+    const teamId = this.teamId(input);
+    this.assertSharedTeamBoundary(memoryLane, teamId);
     return stripUndefined({
-      memory_lane: input.memory_lane ?? this.defaults.default_memory_lane,
+      memory_lane: memoryLane,
       producer_agent_id: this.agentId(input),
-      owner_team_id: this.teamId(input),
+      owner_team_id: teamId,
       task_signature: input.task_signature,
       title: input.title,
       summary: input.summary,
@@ -399,12 +479,16 @@ export class AionisExecutionMemoryAdapter {
     });
   }
 
-  private agentId(input: ExecutionMemoryAgentRef): string | undefined {
-    return input.agent_id ?? this.defaults.default_agent_id;
+  private agentId(input: ExecutionMemoryAgentRef): string {
+    return requiredString(
+      input.agent_id ?? this.defaults.default_agent_id,
+      "ExecutionMemoryAdapter requires agent_id on the call or default_agent_id in adapter options.",
+    );
   }
 
   private teamId(input: ExecutionMemoryAgentRef): string | undefined {
-    return input.team_id ?? this.defaults.team_id;
+    const value = input.team_id ?? this.defaults.team_id;
+    return value?.trim() || undefined;
   }
 
   private role(input: ExecutionMemoryAgentRef): ExecutionMemoryAgentRole {
@@ -416,6 +500,18 @@ export class AionisExecutionMemoryAdapter {
       tenant_id: input.tenant_id ?? this.defaults.tenant_id,
       scope: input.scope ?? this.defaults.scope,
     });
+  }
+
+  private memoryLane(input: { memory_lane?: "private" | "shared" }): "private" | "shared" {
+    return input.memory_lane ?? this.defaults.default_memory_lane ?? "shared";
+  }
+
+  private assertSharedTeamBoundary(memoryLane: "private" | "shared", teamId: string | undefined): void {
+    if (memoryLane === "shared" && !teamId) {
+      throw new Error(
+        "ExecutionMemoryAdapter requires team_id or default team_id for shared multi-agent memory; use memory_lane: \"private\" for single-agent memory.",
+      );
+    }
   }
 
   private rememberGuide(runId: string, guide: unknown): void {
