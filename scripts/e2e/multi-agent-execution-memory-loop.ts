@@ -23,6 +23,7 @@ import {
   type EmbeddingConfig,
   type RuntimeHandle,
 } from "./runtime-agent-loop.ts";
+import { formatE2eError } from "./e2e-error.ts";
 
 export type RuntimeSession = {
   baseUrl: string;
@@ -736,7 +737,7 @@ async function main() {
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : "";
 if (invokedPath === fileURLToPath(import.meta.url)) {
   main().catch((err) => {
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(`${formatE2eError(err)}\n`);
     process.exitCode = 1;
   });
 }

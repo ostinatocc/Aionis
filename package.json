@@ -30,6 +30,7 @@
     "runtime:e2e:product-loop": "npx tsx scripts/e2e/product-four-api-loop.ts",
     "runtime:e2e:multi-agent": "npx tsx scripts/e2e/multi-agent-execution-memory-loop.ts",
     "runtime:e2e:multi-agent-host-template": "npx tsx scripts/e2e/multi-agent-host-template-loop.ts",
+    "runtime:e2e:multi-agent-host-template-fresh": "npx tsx scripts/e2e/multi-agent-host-template-fresh-scope-loop.ts",
     "runtime:e2e:multi-agent-negative": "npx tsx scripts/e2e/multi-agent-execution-memory-negative-loop.ts"
   },
   "dependencies": {

@@ -21,6 +21,7 @@ import {
   stopRuntime,
   type LlmConfig,
 } from "./runtime-agent-loop.ts";
+import { formatE2eError } from "./e2e-error.ts";
 
 type SuiteGroup = "baseline" | "long_context" | "aionis";
 type ScenarioKind = "execution_tree" | "summary_only_guard";
@@ -752,6 +753,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+  process.stderr.write(`${formatE2eError(err)}\n`);
   process.exitCode = 1;
 });

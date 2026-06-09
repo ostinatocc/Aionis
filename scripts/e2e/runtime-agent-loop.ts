@@ -12,6 +12,7 @@ import {
   type ExecutionTreeOperationV1,
   type ExecutionTreeV1,
 } from "../../src/execution/index.ts";
+import { formatE2eError } from "./e2e-error.ts";
 
 export type RuntimeHandle = {
   baseUrl: string;
@@ -581,7 +582,7 @@ async function main() {
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : "";
 if (invokedPath === fileURLToPath(import.meta.url)) {
   main().catch((err) => {
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(`${formatE2eError(err)}\n`);
     process.exitCode = 1;
   });
 }
