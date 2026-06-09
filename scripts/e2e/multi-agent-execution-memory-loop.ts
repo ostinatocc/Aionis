@@ -24,28 +24,28 @@ import {
   type RuntimeHandle,
 } from "./runtime-agent-loop.ts";
 
-type RuntimeSession = {
+export type RuntimeSession = {
   baseUrl: string;
   mode: "external" | "spawned";
   embedding: EmbeddingConfig | null;
   handle: RuntimeHandle | null;
 };
 
-type ReviewerDecision = {
+export type ReviewerDecision = {
   next_action: "continue_passed_branch" | "repeat_failed_branch" | "unknown";
   used_aionis: boolean;
   avoided_failed_branch: boolean;
   rationale: string;
 };
 
-const TEAM_ID = "multi-agent-e2e-team";
-const PLANNER_ID = "planner-agent";
-const WORKER_ID = "worker-agent";
-const VERIFIER_ID = "verifier-agent";
-const REVIEWER_ID = "reviewer-agent";
-const PASSED_MARKER = "MULTI_AGENT_E2E_PASSED_BRANCH";
-const FAILED_MARKER = "MULTI_AGENT_E2E_FAILED_BRANCH";
-const PLAN_MARKER = "MULTI_AGENT_E2E_PLAN";
+export const TEAM_ID = "multi-agent-e2e-team";
+export const PLANNER_ID = "planner-agent";
+export const WORKER_ID = "worker-agent";
+export const VERIFIER_ID = "verifier-agent";
+export const REVIEWER_ID = "reviewer-agent";
+export const PASSED_MARKER = "MULTI_AGENT_E2E_PASSED_BRANCH";
+export const FAILED_MARKER = "MULTI_AGENT_E2E_FAILED_BRANCH";
+export const PLAN_MARKER = "MULTI_AGENT_E2E_PLAN";
 
 function runtimeTreeOperation(
   tree: ExecutionTreeV1,
@@ -58,7 +58,7 @@ function runtimeTreeOperation(
   } as ExecutionTreeOperationV1;
 }
 
-function buildMultiAgentExecutionTree(runId: string): {
+export function buildMultiAgentExecutionTree(runId: string): {
   baseTree: ExecutionTreeV1;
   operations: ExecutionTreeOperationV1[];
   expectedTree: ExecutionTreeV1;
@@ -165,7 +165,7 @@ function buildMultiAgentExecutionTree(runId: string): {
   return { baseTree, operations, expectedTree };
 }
 
-async function openRuntime(): Promise<RuntimeSession> {
+export async function openRuntime(): Promise<RuntimeSession> {
   const externalBaseUrl = (
     process.env.AIONIS_MULTI_AGENT_E2E_BASE_URL
     || process.env.AIONIS_PRODUCT_E2E_BASE_URL
@@ -192,11 +192,11 @@ async function openRuntime(): Promise<RuntimeSession> {
   };
 }
 
-function closeRuntime(session: RuntimeSession): void {
+export function closeRuntime(session: RuntimeSession): void {
   if (session.handle) stopRuntime(session.handle);
 }
 
-async function postRuntimeJson(args: {
+export async function postRuntimeJson(args: {
   baseUrl: string;
   pathName: string;
   apiKey: string | null;
@@ -225,18 +225,18 @@ async function postRuntimeJson(args: {
   return record;
 }
 
-function agentContext(value: unknown, label: string): Record<string, unknown> {
+export function agentContext(value: unknown, label: string): Record<string, unknown> {
   const record = asRecord(value);
   assertCondition(record?.contract_version === "aionis_agent_context_v1", `${label} did not return agent_context v1`);
   assertCondition(typeof record.prompt_text === "string" && record.prompt_text.length > 0, `${label} agent_context missing prompt_text`);
   return record;
 }
 
-function textArray(value: unknown): string[] {
+export function textArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
-function assertPromptBoundary(promptText: string, label: string): void {
+export function assertPromptBoundary(promptText: string, label: string): void {
   for (const forbidden of [
     "memory_decision_trace",
     "memory_decision_audit",
@@ -250,7 +250,7 @@ function assertPromptBoundary(promptText: string, label: string): void {
   }
 }
 
-function firstNodeId(observeBody: Record<string, unknown>, label: string): string {
+export function firstNodeId(observeBody: Record<string, unknown>, label: string): string {
   const write = asRecord(observeBody.memory_write);
   const nodes = Array.isArray(write?.nodes) ? write.nodes : [];
   const first = asRecord(nodes[0]);
@@ -259,7 +259,7 @@ function firstNodeId(observeBody: Record<string, unknown>, label: string): strin
   return id;
 }
 
-function simulateReviewer(args: {
+export function simulateReviewer(args: {
   guideContext: Record<string, unknown>;
   executionContext: Record<string, unknown>;
 }): ReviewerDecision {

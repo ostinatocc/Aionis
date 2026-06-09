@@ -141,6 +141,7 @@ Adapter contract version: `aionis_execution_memory_adapter_v1`.
 | `guideNext` | `run_id`, `task_signature`, `agent_id` or `default_agent_id`, `query_text` | `context`, `execution_tree_v1`, `tool_candidates`, `limit`, `include_packets`, `mode` |
 | `observeOutcome` | same as `observeStep`; `used_memory_ids` when feedback attribution is wanted | `guide_run_id`, `guide_trace_id`, `runtime_signal_refs`, `feedback_outcome`, `used_surface` |
 | `measureRun` | `run_id`, `task_signature` | `before_guide`, `after_guide`, `forget_result`, `evidence_ids`, `task`, `product_trace` |
+| `operatorSnapshotRun` | `run_id`, `task_signature` | `agent_context`, `execution_context`, `measure_result`, `guide_trace_id`, `include_markdown` |
 
 The adapter rejects shared writes or guides without a team boundary. Use
 `default_memory_lane: "private"` for single-Agent memory that should not require
@@ -157,9 +158,9 @@ Template contract version: `aionis_host_integration_template_v1`.
 
 | Template | Use When | Host Hooks | Persist Between Hooks |
 |---|---|---|---|
-| `createGenericAgentHostTemplate` | One Agent loop needs `observe -> guide -> outcome -> measure` without hand wiring trace state | `startRun`, `observeStep`, `beforeRun`, `afterRun`, `measure` | `HostRunState` with `run_id`, `task_signature`, `guide_run_id`, `last_guide_trace_id`, `last_use_now_memory_ids` |
-| `createMultiAgentHostTemplate` | Planner, worker, verifier, and reviewer share execution memory under one `team_id` | `plannerStart`, `workerStep`, `verifierStep`, `reviewerGuide`, `reviewerOutcome`, `measure` | `HostRunState` plus role/team identity |
-| `createCodingAgentHostTemplate` | A coding Agent needs repository and file-scope context around patch execution | `beforePatch`, `afterPatch`, `measure` | `HostRunState` plus `repo_root` and `target_files` |
+| `createGenericAgentHostTemplate` | One Agent loop needs `observe -> guide -> outcome -> measure -> snapshot` without hand wiring trace state | `startRun`, `observeStep`, `beforeRun`, `afterRun`, `measure`, `snapshot` | `HostRunState` with `run_id`, `task_signature`, `guide_run_id`, `last_guide_trace_id`, `last_use_now_memory_ids` |
+| `createMultiAgentHostTemplate` | Planner, worker, verifier, and reviewer share execution memory under one `team_id` | `plannerStart`, `workerStep`, `verifierStep`, `reviewerGuide`, `reviewerOutcome`, `measure`, `snapshot` | `HostRunState` plus role/team identity |
+| `createCodingAgentHostTemplate` | A coding Agent needs repository and file-scope context around patch execution | `beforePatch`, `afterPatch`, `measure`, `snapshot` | `HostRunState` plus `repo_root` and `target_files` |
 
 Only pass `agent_context` to the Agent. Keep `HostRunState` in the host runtime,
 database, job state, or orchestration state; it is not prompt content.
