@@ -1,11 +1,14 @@
 export type AionisJsonObject = Record<string, unknown>;
 
+export type AionisGuideMode = "standard" | "full_power";
+
 export type AionisClientOptions = {
   baseUrl: string;
   apiKey?: string;
   tenant_id?: string;
   scope?: string;
   headers?: Record<string, string>;
+  default_guide_mode?: AionisGuideMode | null;
   fetchImpl?: typeof fetch;
 };
 
@@ -13,6 +16,10 @@ export type AionisRequestOptions = {
   tenant_id?: string;
   scope?: string;
   headers?: Record<string, string>;
+};
+
+export type AionisGuideRequestOptions = AionisRequestOptions & {
+  guide_mode?: AionisGuideMode | null;
 };
 
 export class AionisClientError extends Error {
@@ -65,6 +72,7 @@ export class AionisClient {
   private readonly tenantId: string | null;
   private readonly scope: string | null;
   private readonly headers: Record<string, string>;
+  private readonly defaultGuideMode: AionisGuideMode | null;
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: AionisClientOptions) {
@@ -73,6 +81,7 @@ export class AionisClient {
     this.tenantId = options.tenant_id?.trim() || null;
     this.scope = options.scope?.trim() || null;
     this.headers = { ...(options.headers ?? {}) };
+    this.defaultGuideMode = options.default_guide_mode === undefined ? "full_power" : options.default_guide_mode;
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
@@ -80,8 +89,8 @@ export class AionisClient {
     return this.post<T>("/v1/observe", body, options);
   }
 
-  async guide<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {
-    return this.post<T>("/v1/guide", body, options);
+  async guide<T = unknown>(body: AionisJsonObject, options?: AionisGuideRequestOptions): Promise<T> {
+    return this.post<T>("/v1/guide", this.guideBody(body, options), options);
   }
 
   async forget<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {
@@ -114,6 +123,16 @@ export class AionisClient {
     const payload = await readResponseBody(response);
     if (!response.ok) throw new AionisClientError(response.status, path, payload);
     return payload as T;
+  }
+
+  private guideBody(body: AionisJsonObject, options?: AionisGuideRequestOptions): AionisJsonObject {
+    if (body.mode !== undefined || body.context_mode !== undefined) return body;
+    const guideMode = options?.guide_mode === undefined ? this.defaultGuideMode : options.guide_mode;
+    if (!guideMode) return body;
+    return {
+      mode: guideMode,
+      ...body,
+    };
   }
 
   private requestHeaders(options?: AionisRequestOptions): Record<string, string> {

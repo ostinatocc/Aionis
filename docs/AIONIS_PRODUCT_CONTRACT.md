@@ -132,6 +132,10 @@ Optional audit output:
 | `include_packets: true` | Adds `memory_packet` and `guide_packet` for measurement, debugging, or advanced integrations. |
 | `mode: "full_power"` or `context_mode: "full_power"` | Internally merges semantic recall with safe full-power execution context while still exposing only `agent_context` to the Agent. |
 
+The SDK defaults `guide()` calls to `mode: "full_power"` because that is the
+recommended product adapter path. Raw HTTP callers may still omit mode for the
+legacy standard route behavior or set `mode: "standard"` explicitly.
+
 The default Agent surface must not be the full `memory_packet + guide_packet`. Full packets remain available for audit and `measure`, but they are not the default prompt surface.
 
 Full-power guide mode must preserve the same Agent boundary: raw evidence,

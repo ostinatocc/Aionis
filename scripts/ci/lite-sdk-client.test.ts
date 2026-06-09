@@ -47,6 +47,43 @@ test("AionisClient wraps the four product facade APIs with scope defaults", asyn
   const guideBody = JSON.parse(String(calls[1]?.init.body)) as Record<string, unknown>;
   assert.equal(guideBody.tenant_id, "tenant-a");
   assert.equal(guideBody.scope, "scope-b");
+  assert.equal(guideBody.mode, "full_power");
+});
+
+test("AionisClient defaults guide to full_power and allows explicit guide mode control", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    calls.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const defaultClient = createAionisClient({
+    baseUrl: "http://127.0.0.1:3001",
+    fetchImpl: fakeFetch,
+  });
+
+  await defaultClient.guide({ query_text: "continue" });
+  await defaultClient.guide({ query_text: "legacy", mode: "standard" });
+  await defaultClient.guide({ query_text: "context explicit", context_mode: "standard" });
+  await defaultClient.guide({ query_text: "request override" }, { guide_mode: "standard" });
+  await defaultClient.guide({ query_text: "raw route body" }, { guide_mode: null });
+
+  const standardClient = createAionisClient({
+    baseUrl: "http://127.0.0.1:3001",
+    default_guide_mode: "standard",
+    fetchImpl: fakeFetch,
+  });
+  await standardClient.guide({ query_text: "client legacy default" });
+
+  assert.equal(calls[0]?.mode, "full_power");
+  assert.equal(calls[1]?.mode, "standard");
+  assert.equal(calls[2]?.context_mode, "standard");
+  assert.equal(calls[2]?.mode, undefined);
+  assert.equal(calls[3]?.mode, "standard");
+  assert.equal(calls[4]?.mode, undefined);
+  assert.equal(calls[5]?.mode, "standard");
 });
 
 test("AionisClient health and structured error handling", async () => {

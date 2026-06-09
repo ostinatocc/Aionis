@@ -266,6 +266,12 @@ async function runProductLoop(args: {
   });
   const beforeContext = agentContext(beforeGuide.agent_context, "before guide");
   assertPromptBoundary(String(beforeContext.prompt_text), "before guide");
+  const beforeSourceMap = asRecord(beforeGuide.source_map);
+  assertCondition(
+    Array.isArray(beforeSourceMap?.routes_used)
+      && beforeSourceMap.routes_used.includes("/v1/execution/context/assemble"),
+    "SDK default guide did not use full_power execution context route",
+  );
 
   const continuityObserve = await client.observe<Record<string, unknown>>({
     auto_embed: true,
@@ -411,6 +417,7 @@ async function runProductLoop(args: {
     agent_decision: decision,
     forget_changed_count: forgetEffect.changed_count,
     measure_history_impact: historyImpact.impact_direction,
+    sdk_default_guide_full_power: true,
   };
 }
 
@@ -555,6 +562,7 @@ async function main() {
       checks: {
         sdk_observe_guide_forget_measure: true,
         guide_agent_context_prompt_boundary: true,
+        sdk_default_guide_full_power: true,
         measure_positive_history_impact: true,
         execution_context_agent_prompt_boundary: true,
         execution_context_passed_failed_split: true,

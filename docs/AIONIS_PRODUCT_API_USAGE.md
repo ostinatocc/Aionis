@@ -48,6 +48,8 @@ const aionis = createAionisClient({
   apiKey: process.env.AIONIS_API_KEY,
   tenant_id: "default",
   scope: "payments-service",
+  // SDK guide() defaults to the full-power product path. Set
+  // default_guide_mode: "standard" only for legacy integrations.
 });
 
 await aionis.observe({
@@ -266,6 +268,12 @@ Aionis later know exactly which memories were exposed by that guide call.
 For hosts that want the strongest product guide without calling lower-level
 routes directly, set `mode: "full_power"` or `context_mode: "full_power"` on
 `POST /v1/guide`.
+
+The SDK `guide()` method defaults to `mode: "full_power"`, so normal SDK
+integrations use this product path automatically. A host can opt out with
+`createAionisClient({ default_guide_mode: "standard" })`, by passing
+`mode: "standard"` in the guide body, or by passing `{ guide_mode: null }` as
+the per-call SDK option when it wants to send the raw body unchanged.
 
 Full-power guide still returns `agent_context` as the Agent-facing surface. It
 internally combines semantic recall with the safe `agent_context` projection
