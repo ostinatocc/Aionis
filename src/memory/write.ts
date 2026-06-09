@@ -368,7 +368,10 @@ export async function prepareMemoryWrite(
       default_owner_team_id: defaultOwnerTeamId,
     });
     for (const node of distilled.nodes) {
-      node.slots = normalizeExecutionNativeSlots(node.type, node.slots ?? {}, node.title ?? null, node.text_summary ?? null);
+      node.slots = normalizeExecutionNativeSlots(node.type, node.slots ?? {}, node.title ?? null, node.text_summary ?? null, {
+        raw_ref: node.raw_ref ?? null,
+        evidence_ref: node.evidence_ref ?? null,
+      });
       const enrichedNode = enrichPreparedNodeLifecycle(node);
       const priorId = seenNodeIds.get(node.id);
       if (priorId) {

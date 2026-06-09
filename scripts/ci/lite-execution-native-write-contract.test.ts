@@ -197,6 +197,15 @@ test("prepare/apply write normalizes execution-native metadata for anchors and d
     assert.equal(workflowPrepared?.slots.execution_native_v1.execution_kind, "workflow_anchor");
     assert.equal(workflowPrepared?.slots.execution_native_v1.task_signature, "workflow-validation-recovery-node-tests");
     assert.equal(workflowPrepared?.slots.execution_native_v1.error_signature, "workflow-validation-mismatch");
+    assert.equal(workflowPrepared?.slots.abstraction_boundary_v1?.boundary_version, "abstraction_boundary_v1");
+    assert.equal(workflowPrepared?.slots.abstraction_boundary_v1?.abstraction_kind, "workflow");
+    assert.ok(workflowPrepared?.slots.abstraction_boundary_v1?.applies_when.includes("task_signature=workflow-validation-recovery-node-tests"));
+    assert.ok(workflowPrepared?.slots.abstraction_boundary_v1?.applies_when.includes("workflow_signature=inspect-patch-rerun"));
+    assert.ok(workflowPrepared?.slots.abstraction_boundary_v1?.source_episode_refs.includes(workflowAnchor.source.node_id));
+    assert.equal(
+      workflowPrepared?.slots.execution_native_v1.abstraction_boundary_v1?.gate_contract,
+      "raw_episode_first_bounded_abstraction",
+    );
     assert.equal(workflowPrepared?.slots.execution_contract_v1?.schema_version, "execution_contract_v1");
     assert.equal(workflowPrepared?.slots.execution_contract_v1?.task_signature, "workflow-validation-recovery-node-tests");
     assert.equal(workflowPrepared?.slots.execution_contract_v1?.workflow_signature, "inspect-patch-rerun");
@@ -207,18 +216,36 @@ test("prepare/apply write normalizes execution-native metadata for anchors and d
     assert.equal(patternPrepared?.slots.execution_native_v1.execution_kind, "pattern_anchor");
     assert.equal(patternPrepared?.slots.execution_native_v1.pattern_state, "stable");
     assert.equal(patternPrepared?.slots.execution_native_v1.selected_tool, "edit");
+    assert.equal(patternPrepared?.slots.abstraction_boundary_v1?.abstraction_kind, "pattern");
+    assert.ok(patternPrepared?.slots.abstraction_boundary_v1?.applies_when.includes("pattern_signature=stable-edit-pattern"));
+    assert.ok(patternPrepared?.slots.abstraction_boundary_v1?.applies_when.includes("error_signature=workflow-validation-mismatch"));
+    assert.ok(patternPrepared?.slots.abstraction_boundary_v1?.source_episode_refs.includes(patternAnchor.source.decision_id));
+    assert.ok(patternPrepared?.slots.abstraction_boundary_v1?.source_episode_refs.includes(patternAnchor.payload_refs.run_ids[0]));
+    assert.deepEqual(patternPrepared?.slots.abstraction_boundary_v1?.counterexamples, []);
     assert.equal(patternPrepared?.slots.execution_contract_v1?.schema_version, "execution_contract_v1");
     assert.equal(patternPrepared?.slots.execution_contract_v1?.selected_tool, "edit");
     assert.equal(patternPrepared?.slots.execution_contract_v1?.task_family, "task:workflow_validation_recovery");
     assert.equal(distilledEvidencePrepared?.slots.execution_native_v1.execution_kind, "distilled_evidence");
     assert.equal(distilledEvidencePrepared?.slots.execution_native_v1.distillation?.preferred_promotion_target, "workflow");
     assert.equal(distilledEvidencePrepared?.slots.execution_native_v1.maintenance?.offline_priority, "promote_to_workflow");
+    assert.equal(distilledEvidencePrepared?.slots.abstraction_boundary_v1?.abstraction_kind, "distillation");
+    assert.ok(
+      distilledEvidencePrepared?.slots.abstraction_boundary_v1?.source_episode_refs.some((ref: string) =>
+        ref.startsWith("source_sha256:")
+      ),
+    );
     assert.equal(distilledEvidencePrepared?.slots.execution_contract_v1 ?? null, null);
     assert.equal(distilledFactPrepared?.slots.execution_native_v1.execution_kind, "distilled_fact");
     assert.equal(distilledFactPrepared?.slots.execution_native_v1.compression_layer, "L1");
     assert.equal(distilledFactPrepared?.slots.execution_native_v1.distillation?.preferred_promotion_target, "workflow");
     assert.equal(distilledFactPrepared?.slots.execution_native_v1.distillation?.extraction_pattern, "colon");
     assert.equal(distilledFactPrepared?.slots.execution_native_v1.maintenance?.offline_priority, "promote_to_workflow");
+    assert.equal(distilledFactPrepared?.slots.abstraction_boundary_v1?.abstraction_kind, "distillation");
+    assert.ok(
+      distilledFactPrepared?.slots.abstraction_boundary_v1?.source_episode_refs.some((ref: string) =>
+        ref.startsWith("source_sha256:")
+      ),
+    );
     assert.equal(taskSignatureFactPrepared?.slots.execution_contract_v1?.schema_version, "execution_contract_v1");
     assert.equal(taskSignatureFactPrepared?.slots.execution_contract_v1?.task_signature, "workflow-validation-recovery-node-tests");
     assert.equal(taskSignatureFactPrepared?.slots.execution_contract_v1?.provenance?.source_kind, "write_distillation");
@@ -260,12 +287,17 @@ test("prepare/apply write normalizes execution-native metadata for anchors and d
       (row) => row.slots?.summary_kind === "write_distillation_fact" && row.title === "Workflow Signature",
     );
     assert.equal(storedWorkflow?.slots.execution_native_v1.anchor_kind, "workflow");
+    assert.equal(storedWorkflow?.slots.abstraction_boundary_v1?.abstraction_kind, "workflow");
+    assert.ok(storedWorkflow?.slots.applies_when.includes("workflow_signature=inspect-patch-rerun"));
     assert.equal(storedWorkflow?.slots.execution_contract_v1?.schema_version, "execution_contract_v1");
     assert.equal(storedWorkflow?.slots.execution_contract_v1?.workflow_signature, "inspect-patch-rerun");
     assert.equal(storedPattern?.slots.execution_native_v1.anchor_kind, "pattern");
+    assert.equal(storedPattern?.slots.abstraction_boundary_v1?.abstraction_kind, "pattern");
+    assert.ok(storedPattern?.slots.source_episode_refs.includes(patternAnchor.source.decision_id));
     assert.equal(storedPattern?.slots.execution_contract_v1?.schema_version, "execution_contract_v1");
     assert.equal(storedPattern?.slots.execution_contract_v1?.selected_tool, "edit");
     assert.equal(storedDistilledEvidence?.slots.execution_native_v1.execution_kind, "distilled_evidence");
+    assert.equal(storedDistilledEvidence?.slots.abstraction_boundary_v1?.abstraction_kind, "distillation");
     assert.equal(storedDistilledEvidence?.slots.execution_native_v1.distillation?.preferred_promotion_target, "workflow");
     assert.equal(storedDistilledEvidence?.slots.execution_contract_v1 ?? null, null);
     assert.equal(storedDistilledFact?.slots.execution_native_v1.execution_kind, "distilled_fact");

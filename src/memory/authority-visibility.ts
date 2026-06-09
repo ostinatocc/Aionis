@@ -197,6 +197,17 @@ export function buildRuntimeAuthorityVisibilityFromSlots(args: {
   });
 }
 
+export function runtimeAuthorityEvidenceRefsFromSlots(slots: Record<string, unknown> | null | undefined): string[] {
+  const record = asRecord(slots);
+  if (!record) return [];
+  const authorityGate = authorityGateRecord(record.authority_gate_v1);
+  const evidenceAssessment = evidenceAssessmentRecord(firstRecord(
+    authorityGate?.execution_evidence_assessment,
+    record.execution_evidence_assessment,
+  ));
+  return stringList(evidenceAssessment?.evidence_refs, 128);
+}
+
 export function runtimeAuthorityVisibilityFromEntry(entry: unknown): RuntimeAuthorityVisibilityV1 | null {
   const record = asRecord(entry);
   if (!record) return null;

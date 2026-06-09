@@ -269,6 +269,19 @@ export const MemoryAnchorPayloadRefsSchema = z.object({
   commit_ids: MemoryAnchorIdList.default([]),
 });
 
+export const MemoryAbstractionBoundaryV1Schema = z.object({
+  boundary_version: z.literal("abstraction_boundary_v1"),
+  abstraction_kind: z.enum(["workflow", "pattern", "policy", "distillation", "execution_native", "unknown"]).default("unknown"),
+  applies_when: MemoryAnchorStringList.default([]),
+  does_not_apply_when: MemoryAnchorStringList.default([]),
+  counterexamples: MemoryAnchorStringList.default([]),
+  source_episode_refs: MemoryAnchorIdList.default([]),
+  promotion_reason: z.string().min(1).max(512).nullable().default(null),
+  promotion_state: z.string().min(1).max(64).nullable().default(null),
+  source_evidence_refs: MemoryAnchorIdList.default([]),
+  gate_contract: z.literal("raw_episode_first_bounded_abstraction").default("raw_episode_first_bounded_abstraction"),
+}).strict();
+
 export const MemoryAnchorRehydrationHintSchema = z.object({
   default_mode: MemoryAnchorRehydrationMode.default("summary_only"),
   payload_cost_hint: MemoryAnchorPayloadCostHint.default("medium"),
@@ -746,6 +759,7 @@ export const ExecutionNativeV1Schema = z.object({
   distillation: MemoryDistillationSchema.optional(),
   policy_evolution: MemoryPolicyEvolutionSchema.optional(),
   promotion_evidence_ledger_v1: PromotionEvidenceLedgerV1Schema.optional(),
+  abstraction_boundary_v1: MemoryAbstractionBoundaryV1Schema.optional(),
 });
 
 export type ExecutionNativeV1 = z.infer<typeof ExecutionNativeV1Schema>;

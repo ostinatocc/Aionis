@@ -144,7 +144,10 @@ export function prepareWriteBatch(
       slots = restoreStableSystemSlots(slots, (redacted.value ?? {}) as Record<string, unknown>);
       bump(redacted.counts);
     }
-    slots = normalizeExecutionNativeSlots(node.type, slots, title ?? null, text_summary ?? null);
+    slots = normalizeExecutionNativeSlots(node.type, slots, title ?? null, text_summary ?? null, {
+      raw_ref: node.raw_ref ?? null,
+      evidence_ref: node.evidence_ref ?? null,
+    });
 
     const lane = node.memory_lane ?? defaultLane;
     const producerAgentId = normalizeId(node.producer_agent_id) ?? defaultProducerAgentId;

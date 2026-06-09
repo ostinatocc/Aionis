@@ -39,6 +39,7 @@ export const ExecutionEvidenceContextRequestSchema = z.object({
   memory_filters: z.array(ExecutionEvidenceMemoryFilterSchema).max(12).default([]),
   include_memory_evidence: z.boolean().default(true),
   include_prompt_text: z.boolean().default(true),
+  context_mode: z.enum(["execution_evidence", "full_power"]).default("execution_evidence"),
   prompt_detail: z.enum(["compact", "full"]).default("compact"),
   max_active_entries: z.number().int().positive().max(48).default(16),
   max_validated_evidence: z.number().int().positive().max(50).default(8),
@@ -46,6 +47,8 @@ export const ExecutionEvidenceContextRequestSchema = z.object({
   max_failed_branches: z.number().int().positive().max(50).default(8),
   max_rehydration_refs: z.number().int().positive().max(100).default(32),
   max_raw_trace_entries: z.number().int().positive().max(24).default(4),
+  max_raw_evidence_entries: z.number().int().positive().max(80).default(16),
+  max_gated_abstractions: z.number().int().positive().max(80).default(12),
   evidence_char_budget: z.number().int().positive().max(100_000).default(12_000),
 }).strict();
 
@@ -72,6 +75,46 @@ type MemoryNodeDTO = {
 };
 
 type OutcomeClass = "passed" | "failed" | "unknown";
+
+type RawEvidenceEntry = {
+  source: "execution_tree_raw" | "memory";
+  node_id: string;
+  owner_node_id?: string | null;
+  uri?: string | null;
+  type?: string | null;
+  title?: string | null;
+  summary?: string | null;
+  action?: string | null;
+  observation?: string | null;
+  status?: string | null;
+  outcome?: OutcomeClass;
+  refs: string[];
+  raw_ref?: string | null;
+  evidence_ref?: string | null;
+  evidence_contract: "raw_execution_trace" | "raw_memory_evidence";
+};
+
+type GatedAbstractionEntry = {
+  source: "memory";
+  node_id: string;
+  uri: string;
+  type: string;
+  title: string | null;
+  summary: string | null;
+  summary_kind: string | null;
+  lifecycle_state: string;
+  authority: string;
+  gate_state: "admitted" | "candidate" | "contested" | "blocked";
+  use_contract: "bounded_guidance" | "candidate_only_needs_raw_evidence" | "candidate_only_with_counterexamples" | "do_not_use";
+  gate_reason: string;
+  applies_when: string[];
+  does_not_apply_when: string[];
+  counterexamples: string[];
+  source_episode_refs: string[];
+  promotion_reason: string | null;
+  promotion_state: string | null;
+  source_evidence_refs: string[];
+};
 
 type Budget = {
   take: (value: string | null | undefined, maxChars: number) => string | null;
@@ -251,6 +294,221 @@ function memorySourceEvidenceRefs(node: MemoryNodeDTO): string[] {
     node.evidence_ref,
     ...collectEvidenceRefsFromSlots(node.slots),
   ], 32);
+}
+
+function recordStringList(...values: unknown[]): string[] {
+  const out: string[] = [];
+  const pushValue = (value: unknown) => {
+    const single = stringValue(value);
+    if (single) {
+      out.push(single);
+      return;
+    }
+    const record = asRecord(value);
+    if (!record) return;
+    const ref = firstString(record.ref, record.uri, record.raw_ref, record.evidence_ref, record.node_id, record.id);
+    if (ref) out.push(ref);
+  };
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      for (const item of value) pushValue(item);
+    } else {
+      pushValue(value);
+    }
+  }
+  return uniqueStrings(out, 32);
+}
+
+function nestedSlotRecords(slots: unknown): Record<string, unknown>[] {
+  const root = asRecord(slots);
+  if (!root) return [];
+  return [
+    root,
+    asRecord(root.execution_native_v1),
+    asRecord(root.promotion),
+    asRecord(root.workflow_promotion),
+    asRecord(root.policy_evolution),
+    asRecord(root.distillation),
+    asRecord(root.abstraction_boundary_v1),
+    asRecord(root.promotion_evidence_ledger_v1),
+    asRecord(root.contract_trust),
+  ].filter((record): record is Record<string, unknown> => !!record);
+}
+
+function firstNestedString(slots: unknown, keys: string[]): string | null {
+  for (const record of nestedSlotRecords(slots)) {
+    for (const key of keys) {
+      const value = stringValue(record[key]);
+      if (value) return value;
+    }
+  }
+  return null;
+}
+
+function nestedStringList(slots: unknown, keys: string[]): string[] {
+  const out: string[] = [];
+  for (const record of nestedSlotRecords(slots)) {
+    for (const key of keys) out.push(...recordStringList(record[key]));
+  }
+  return uniqueStrings(out, 32);
+}
+
+function summaryKindFromSlots(slots: unknown): string | null {
+  return firstNestedString(slots, [
+    "summary_kind",
+    "execution_kind",
+    "anchor_kind",
+    "source_kind",
+    "preferred_promotion_target",
+  ]);
+}
+
+function lifecycleStateFromNode(node: MemoryNodeDTO): string {
+  return firstNestedString(node.slots, [
+    "lifecycle_state",
+    "memory_state",
+    "policy_memory_state",
+    "credibility_state",
+    "promotion_state",
+    "maintenance_state",
+  ]) ?? "active";
+}
+
+function promotionStateFromNode(node: MemoryNodeDTO): string | null {
+  return firstNestedString(node.slots, [
+    "promotion_state",
+    "policy_state",
+    "policy_memory_state",
+    "credibility_state",
+    "abstraction_state",
+    "maintenance_state",
+  ]);
+}
+
+function authorityFromNode(node: MemoryNodeDTO): string {
+  return firstNestedString(node.slots, [
+    "authority",
+    "authority_effect",
+    "authority_scope",
+    "activation_mode",
+  ]) ?? "advisory";
+}
+
+function promotionReasonFromNode(node: MemoryNodeDTO): string | null {
+  return firstNestedString(node.slots, [
+    "promotion_reason",
+    "admission_reason",
+    "last_transition",
+    "last_transition_reason",
+    "source_kind",
+  ]);
+}
+
+function nodeAppliesWhen(node: MemoryNodeDTO): string[] {
+  return nestedStringList(node.slots, [
+    "applies_when",
+    "applicable_when",
+    "activation_conditions",
+    "pattern_hints",
+    "workflow_steps",
+    "key_steps",
+  ]);
+}
+
+function nodeDoesNotApplyWhen(node: MemoryNodeDTO): string[] {
+  return nestedStringList(node.slots, [
+    "does_not_apply_when",
+    "not_applicable_when",
+    "exceptions",
+    "negative_conditions",
+    "blocked_conditions",
+  ]);
+}
+
+function nodeCounterexamples(node: MemoryNodeDTO): string[] {
+  return nestedStringList(node.slots, [
+    "counterexamples",
+    "counter_evidence",
+    "counter_evidence_refs",
+    "counterexample_refs",
+    "failed_examples",
+  ]);
+}
+
+function nodeSourceEpisodeRefs(node: MemoryNodeDTO): string[] {
+  return uniqueStrings([
+    ...nestedStringList(node.slots, [
+      "source_episode_refs",
+      "source_event_refs",
+      "source_node_refs",
+      "source_refs",
+      "promotion_evidence_refs",
+      "evidence_refs",
+      "citations",
+    ]),
+    ...memorySourceEvidenceRefs(node),
+  ], 32);
+}
+
+function isAbstractionMemoryNode(node: MemoryNodeDTO): boolean {
+  const summaryKind = summaryKindFromSlots(node.slots);
+  if (summaryKind) {
+    const normalized = summaryKind.toLowerCase();
+    if (
+      normalized.includes("abstraction")
+      || normalized.includes("anchor")
+      || normalized.includes("policy")
+      || normalized.includes("distillation")
+      || normalized.includes("workflow")
+      || normalized.includes("pattern")
+      || normalized.includes("compression")
+    ) return true;
+  }
+  if (nodeAppliesWhen(node).length > 0 || nodeDoesNotApplyWhen(node).length > 0 || nodeCounterexamples(node).length > 0) return true;
+  return node.type === "procedure" || node.type === "rule";
+}
+
+function gateForAbstraction(entry: {
+  lifecycleState: string;
+  promotionState: string | null;
+  sourceEpisodeRefs: string[];
+  counterexamples: string[];
+}): Pick<GatedAbstractionEntry, "gate_state" | "use_contract" | "gate_reason"> {
+  const lifecycle = entry.lifecycleState.toLowerCase();
+  const promotion = (entry.promotionState ?? "").toLowerCase();
+  if (
+    lifecycle.includes("archive")
+    || lifecycle.includes("retired")
+    || lifecycle.includes("stale")
+    || lifecycle.includes("blocked")
+    || promotion.includes("retired")
+    || promotion.includes("blocked")
+  ) {
+    return {
+      gate_state: "blocked",
+      use_contract: "do_not_use",
+      gate_reason: "lifecycle_or_promotion_state_blocks_reuse",
+    };
+  }
+  if (lifecycle.includes("contested") || promotion.includes("contested") || entry.counterexamples.length > 0) {
+    return {
+      gate_state: "contested",
+      use_contract: "candidate_only_with_counterexamples",
+      gate_reason: "counterexamples_or_contested_state_require_careful_use",
+    };
+  }
+  if (entry.sourceEpisodeRefs.length === 0) {
+    return {
+      gate_state: "candidate",
+      use_contract: "candidate_only_needs_raw_evidence",
+      gate_reason: "abstraction_has_no_source_episode_refs",
+    };
+  }
+  return {
+    gate_state: "admitted",
+    use_contract: "bounded_guidance",
+    gate_reason: "source_episode_refs_available",
+  };
 }
 
 function stateEntries(
@@ -589,6 +847,111 @@ function supportingRawTraceFromRecords(records: unknown[]): Array<Record<string,
   return out;
 }
 
+function rawEvidenceFromTreeAndMemory(args: {
+  activeRaw: ReturnType<typeof stateEntries>;
+  passedSolutions: unknown[];
+  failedBranches: unknown[];
+  memoryNodes: MemoryNodeDTO[];
+  maxEntries: number;
+}): RawEvidenceEntry[] {
+  const out = new Map<string, RawEvidenceEntry>();
+  const remember = (entry: RawEvidenceEntry) => {
+    if (out.size >= args.maxEntries && !out.has(entry.node_id)) return;
+    out.set(entry.node_id, entry);
+  };
+
+  for (const entry of args.activeRaw) {
+    remember({
+      source: "execution_tree_raw",
+      node_id: entry.node_id,
+      owner_node_id: null,
+      title: entry.title,
+      action: entry.action,
+      observation: entry.observation,
+      status: entry.status,
+      refs: [],
+      evidence_contract: "raw_execution_trace",
+    });
+  }
+
+  for (const trace of supportingRawTraceFromRecords([...args.passedSolutions, ...args.failedBranches])) {
+    const nodeId = stringValue(trace.node_id);
+    if (!nodeId) continue;
+    remember({
+      source: "execution_tree_raw",
+      node_id: nodeId,
+      owner_node_id: stringValue(trace.owner_node_id),
+      title: stringValue(trace.title),
+      action: stringValue(trace.action),
+      observation: stringValue(trace.observation),
+      status: stringValue(trace.status),
+      refs: recordStringArray(trace, "refs"),
+      evidence_contract: "raw_execution_trace",
+    });
+  }
+
+  for (const node of args.memoryNodes) {
+    if (out.size >= args.maxEntries) break;
+    const refs = memorySourceEvidenceRefs(node);
+    if (node.type !== "event" && node.type !== "evidence" && refs.length === 0) continue;
+    const slots = asRecord(node.slots);
+    const result = asRecord(slots?.execution_result_summary);
+    remember({
+      source: "memory",
+      node_id: node.id,
+      uri: node.uri,
+      type: node.type,
+      title: node.title,
+      summary: firstString(result?.summary, result?.solution_summary, result?.message, node.text_summary),
+      outcome: classifyExecutionOutcome(node.slots),
+      refs,
+      raw_ref: node.raw_ref ?? null,
+      evidence_ref: node.evidence_ref ?? null,
+      evidence_contract: "raw_memory_evidence",
+    });
+  }
+
+  return Array.from(out.values()).slice(0, args.maxEntries);
+}
+
+function gatedAbstractionsFromMemoryNodes(nodes: MemoryNodeDTO[], maxEntries: number): GatedAbstractionEntry[] {
+  const out: GatedAbstractionEntry[] = [];
+  for (const node of nodes) {
+    if (out.length >= maxEntries) break;
+    if (!isAbstractionMemoryNode(node)) continue;
+    const lifecycleState = lifecycleStateFromNode(node);
+    const promotionState = promotionStateFromNode(node);
+    const counterexamples = nodeCounterexamples(node);
+    const sourceEpisodeRefs = nodeSourceEpisodeRefs(node);
+    const gate = gateForAbstraction({
+      lifecycleState,
+      promotionState,
+      sourceEpisodeRefs,
+      counterexamples,
+    });
+    out.push({
+      source: "memory",
+      node_id: node.id,
+      uri: node.uri,
+      type: node.type,
+      title: node.title,
+      summary: node.text_summary ? truncate(node.text_summary, 1_200) : null,
+      summary_kind: summaryKindFromSlots(node.slots),
+      lifecycle_state: lifecycleState,
+      authority: authorityFromNode(node),
+      ...gate,
+      applies_when: nodeAppliesWhen(node),
+      does_not_apply_when: nodeDoesNotApplyWhen(node),
+      counterexamples,
+      source_episode_refs: sourceEpisodeRefs,
+      promotion_reason: promotionReasonFromNode(node),
+      promotion_state: promotionState,
+      source_evidence_refs: memorySourceEvidenceRefs(node),
+    });
+  }
+  return out;
+}
+
 function hasEvidenceBacking(record: unknown): boolean {
   const item = asRecord(record);
   if (!item) return false;
@@ -612,11 +975,19 @@ function buildPromptText(args: {
   validatedEvidence: unknown[];
   supportingEvidence: unknown[];
   failedBranches: unknown[];
+  rawEvidence: RawEvidenceEntry[];
+  gatedAbstractions: GatedAbstractionEntry[];
   rehydrationRefs: string[];
+  selectionTrace: Record<string, unknown>;
+  contextMode: "execution_evidence" | "full_power";
   promptDetail: "compact" | "full";
 }) {
   const lines: string[] = [];
   lines.push("AIONIS_EXECUTION_EVIDENCE_CONTEXT v1");
+  if (args.contextMode === "full_power") {
+    lines.push("mode=full_power");
+    lines.push("contract: PASSED_SOLUTIONS are reusable only when evidence-backed; FAILED_BRANCHES are counter-evidence; RAW_EVIDENCE is first-class source material; GATED_ABSTRACTIONS require applies_when/does_not_apply_when boundaries.");
+  }
   lines.push("");
   lines.push("CURRENT_ACTIVE_PATH");
   if (args.activeCompressed.length === 0 && args.activeRaw.length === 0) lines.push("- none");
@@ -682,6 +1053,37 @@ function buildPromptText(args: {
       ], 12);
       lines.push(`- source=${entry.source ?? ""} node=${entry.node_id ?? ""} diagnostic=${entry.diagnostic_note ?? entry.summary ?? ""} raw_refs=${refs.join(",")}`);
     }
+  }
+
+  if (args.contextMode === "full_power") {
+    lines.push("");
+    lines.push("RAW_EVIDENCE");
+    if (args.rawEvidence.length === 0) lines.push("- none");
+    for (const entry of args.rawEvidence) {
+      const text = firstString(entry.summary, entry.observation, entry.action, entry.title) ?? "";
+      const refs = uniqueStrings([
+        ...(entry.refs ?? []),
+        entry.raw_ref ?? null,
+        entry.evidence_ref ?? null,
+      ], 12);
+      lines.push(`- source=${entry.source} node=${entry.node_id} contract=${entry.evidence_contract} outcome=${entry.outcome ?? entry.status ?? "unknown"} text=${truncate(text, args.promptDetail === "full" ? 1_000 : 500)} refs=${refs.join(",")}`);
+    }
+
+    lines.push("");
+    lines.push("GATED_ABSTRACTIONS");
+    if (args.gatedAbstractions.length === 0) lines.push("- none");
+    for (const entry of args.gatedAbstractions) {
+      const applies = entry.applies_when.length > 0 ? entry.applies_when.join(" | ") : "unspecified";
+      const excludes = entry.does_not_apply_when.length > 0 ? entry.does_not_apply_when.join(" | ") : "unspecified";
+      const counterexamples = entry.counterexamples.length > 0 ? entry.counterexamples.join(" | ") : "none";
+      lines.push(`- node=${entry.node_id} kind=${entry.summary_kind ?? entry.type} gate=${entry.gate_state} use=${entry.use_contract} title=${entry.title ?? ""} summary=${entry.summary ?? ""} applies_when=${truncate(applies, 400)} does_not_apply_when=${truncate(excludes, 400)} counterexamples=${truncate(counterexamples, 400)} source_refs=${entry.source_episode_refs.slice(0, 8).join(",")} reason=${entry.gate_reason}`);
+    }
+
+    lines.push("");
+    lines.push("TRACE");
+    lines.push(`- selection=${args.selectionTrace.source ?? "unknown"} memory_enabled=${args.selectionTrace.memory_enabled ?? false} memory_nodes=${args.selectionTrace.memory_nodes_considered ?? 0} guard_blocked=${args.selectionTrace.memory_consolidation_guard_blocked_count ?? 0}`);
+    lines.push(`- counts passed=${args.selectionTrace.passed_solution_count ?? 0} failed=${args.selectionTrace.failed_branch_count ?? 0} raw=${args.rawEvidence.length} abstractions=${args.gatedAbstractions.length} rehydration_refs=${args.rehydrationRefs.length}`);
+    lines.push("- policy raw evidence is not automatically a passed solution; failed branch raw traces explain what to avoid; gated abstractions are advisory unless admitted and source-backed.");
   }
 
   if (args.promptDetail === "full" || args.rehydrationRefs.length > 0) {
@@ -757,6 +1159,69 @@ export async function buildExecutionEvidenceContextLite(args: {
   const evidenceBackedFailedBranchCount = failedBranches.filter(hasEvidenceBacking).length;
   const rawTraceBackedPassedSolutionCount = passedSolutions.filter(hasRawTraceBacking).length;
   const rawTraceBackedFailedBranchCount = failedBranches.filter(hasRawTraceBacking).length;
+  const rawEvidence = parsed.context_mode === "full_power"
+    ? rawEvidenceFromTreeAndMemory({
+        activeRaw,
+        passedSolutions,
+        failedBranches,
+        memoryNodes: memory.nodes,
+        maxEntries: parsed.max_raw_evidence_entries,
+      })
+    : [];
+  const gatedAbstractions = parsed.context_mode === "full_power"
+    ? gatedAbstractionsFromMemoryNodes(memory.nodes, parsed.max_gated_abstractions)
+    : [];
+  const selectionTrace = {
+    source: "execution_tree_first_memory_evidence_rehydration",
+    context_mode: parsed.context_mode,
+    memory_enabled: parsed.include_memory_evidence,
+    memory_filters_considered: memory.filtersConsidered,
+    direct_refs_considered: memory.directRefsConsidered,
+    memory_nodes_considered: memory.nodes.length,
+    memory_consolidation_guard_blocked_count: memoryEvidence.consolidationGuardBlockedNodeIds.length,
+    memory_consolidation_guard_blocked_node_ids: memoryEvidence.consolidationGuardBlockedNodeIds,
+    passed_solution_count: passedSolutions.length,
+    supporting_evidence_count: memoryEvidence.supporting.length,
+    failed_branch_count: failedBranches.length,
+    raw_evidence_count: rawEvidence.length,
+    gated_abstraction_count: gatedAbstractions.length,
+    gated_abstraction_admitted_count: gatedAbstractions.filter((entry) => entry.gate_state === "admitted").length,
+    gated_abstraction_candidate_count: gatedAbstractions.filter((entry) => entry.gate_state === "candidate").length,
+    gated_abstraction_contested_count: gatedAbstractions.filter((entry) => entry.gate_state === "contested").length,
+    gated_abstraction_blocked_count: gatedAbstractions.filter((entry) => entry.gate_state === "blocked").length,
+    raw_trace_budget_entries_per_node: parsed.max_raw_trace_entries,
+    raw_trace_count: passedRawTraceCount + failedRawTraceCount,
+    passed_solution_raw_trace_count: passedRawTraceCount,
+    failed_branch_raw_trace_count: failedRawTraceCount,
+    evidence_backed_passed_solution_count: evidenceBackedPassedSolutionCount,
+    evidence_backed_failed_branch_count: evidenceBackedFailedBranchCount,
+    raw_trace_backed_passed_solution_count: rawTraceBackedPassedSolutionCount,
+    raw_trace_backed_failed_branch_count: rawTraceBackedFailedBranchCount,
+    tree_lookup_source: treeResolution.source,
+    evidence_budget_remaining_chars: budget.remaining(),
+  };
+  const fullPowerTrace = parsed.context_mode === "full_power"
+    ? {
+        trace_version: "execution_context_full_power_trace_v1",
+        sections: {
+          current_active_path: activeCompressed.length + activeRaw.length,
+          passed_solutions: passedSolutions.length,
+          failed_branches: failedBranches.length,
+          raw_evidence: rawEvidence.length,
+          gated_abstractions: gatedAbstractions.length,
+          supporting_evidence: memoryEvidence.supporting.length,
+          rehydration_refs: rehydrationRefs.length,
+        },
+        contracts: [
+          "passed_solutions_require_validation_or_evidence_backing",
+          "failed_branches_are_counter_evidence_not_reusable_solutions",
+          "raw_evidence_is_first_class_source_material",
+          "gated_abstractions_are_bounded_by_applies_when_does_not_apply_when_counterexamples",
+          "summary_only_execution_memory_is_blocked_from_promotion",
+        ],
+        selection_trace: selectionTrace,
+      }
+    : null;
 
   const promptText = parsed.include_prompt_text
     ? buildPromptText({
@@ -765,13 +1230,18 @@ export async function buildExecutionEvidenceContextLite(args: {
         validatedEvidence: passedSolutions,
         supportingEvidence: memoryEvidence.supporting,
         failedBranches,
+        rawEvidence,
+        gatedAbstractions,
         rehydrationRefs,
+        selectionTrace,
+        contextMode: parsed.context_mode,
         promptDetail: parsed.prompt_detail,
       })
     : null;
 
   return {
     contract_version: "execution_evidence_context_v1",
+    context_mode: parsed.context_mode,
     tenant_id: tenantId,
     scope,
     tree: {
@@ -794,29 +1264,11 @@ export async function buildExecutionEvidenceContextLite(args: {
     validated_evidence: passedSolutions,
     supporting_evidence: memoryEvidence.supporting,
     failed_branches: failedBranches,
+    raw_evidence: rawEvidence,
+    gated_abstractions: gatedAbstractions,
     rehydration_refs: rehydrationRefs,
     prompt_text: promptText,
-    selection_trace: {
-      source: "execution_tree_first_memory_evidence_rehydration",
-      memory_enabled: parsed.include_memory_evidence,
-      memory_filters_considered: memory.filtersConsidered,
-      direct_refs_considered: memory.directRefsConsidered,
-      memory_nodes_considered: memory.nodes.length,
-      memory_consolidation_guard_blocked_count: memoryEvidence.consolidationGuardBlockedNodeIds.length,
-      memory_consolidation_guard_blocked_node_ids: memoryEvidence.consolidationGuardBlockedNodeIds,
-      passed_solution_count: passedSolutions.length,
-      supporting_evidence_count: memoryEvidence.supporting.length,
-      failed_branch_count: failedBranches.length,
-      raw_trace_budget_entries_per_node: parsed.max_raw_trace_entries,
-      raw_trace_count: passedRawTraceCount + failedRawTraceCount,
-      passed_solution_raw_trace_count: passedRawTraceCount,
-      failed_branch_raw_trace_count: failedRawTraceCount,
-      evidence_backed_passed_solution_count: evidenceBackedPassedSolutionCount,
-      evidence_backed_failed_branch_count: evidenceBackedFailedBranchCount,
-      raw_trace_backed_passed_solution_count: rawTraceBackedPassedSolutionCount,
-      raw_trace_backed_failed_branch_count: rawTraceBackedFailedBranchCount,
-      tree_lookup_source: treeResolution.source,
-      evidence_budget_remaining_chars: budget.remaining(),
-    },
+    full_power_trace: fullPowerTrace,
+    selection_trace: selectionTrace,
   };
 }

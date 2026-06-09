@@ -292,6 +292,7 @@ test("execution context assemble separates passed solutions, failed branches, an
   });
 
   assert.equal(body.contract_version, "execution_evidence_context_v1");
+  assert.equal(body.context_mode, "execution_evidence");
   assert.equal(body.tree.present, true);
   assert.equal(body.tree.source, "store");
   assert.ok(
@@ -512,6 +513,115 @@ test("ordinary preference and fact memory does not create execution tree context
   assert.equal(body.selection_trace.evidence_backed_failed_branch_count, 0);
   assert.equal(body.selection_trace.raw_trace_backed_passed_solution_count, 0);
   assert.equal(body.selection_trace.raw_trace_backed_failed_branch_count, 0);
+
+  await app.close();
+});
+
+test("execution context full_power mode exposes raw evidence, gated abstractions, and trace", async () => {
+  const dbPath = tmpDbPath("full-power");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const executionTreeStore = createLiteExecutionTreeStore(dbPath);
+  const app = Fastify();
+  registerApp({ app, liteWriteStore, liteRecallStore, executionTreeStore });
+  const tree = buildRevisedTree();
+  executionTreeStore.put(tree);
+
+  await post(app, "/v1/memory/write", {
+    tenant_id: "default",
+    scope: "default",
+    input_text: "Full-power context fixture with raw evidence and bounded abstraction.",
+    auto_embed: false,
+    memory_lane: "private",
+    nodes: [
+      {
+        client_id: "full-power-raw-evidence",
+        type: "evidence",
+        title: "Raw verifier trace",
+        text_summary: "FULL_POWER_RAW_EVIDENCE verifier observed formula B matches the validation table.",
+        raw_ref: "raw://full-power/verifier",
+        evidence_ref: "evidence://full-power/verifier",
+        slots: {
+          task_signature: "full-power-context-route",
+          evidence_kind: "verifier_trace",
+        },
+      },
+      {
+        client_id: "full-power-gated-abstraction",
+        type: "procedure",
+        title: "Bounded formula workflow",
+        text_summary: "FULL_POWER_GATED_ABSTRACTION reuse formula B only for subtotal/tax/shipping tables.",
+        slots: {
+          task_signature: "full-power-context-route",
+          summary_kind: "pattern_anchor",
+          applies_when: ["invoice rows contain subtotal, single tax, and shipping"],
+          does_not_apply_when: ["tax is already included in subtotal"],
+          counterexamples: ["formula A double-counted tax"],
+          source_episode_refs: ["trace://candidate-b/raw", "raw://full-power/verifier"],
+          promotion_reason: "verified on validation rows with raw evidence",
+          promotion_state: "stable",
+        },
+      },
+    ],
+    edges: [],
+  });
+
+  const body = await post(app, "/v1/execution/context/assemble", {
+    tenant_id: "default",
+    scope: "default",
+    tree_id: tree.tree_id,
+    tree_scope: tree.scope,
+    context_mode: "full_power",
+    prompt_detail: "full",
+    include_memory_evidence: true,
+    memory_filters: [
+      {
+        slots_contains: { task_signature: "full-power-context-route" },
+        limit: 20,
+      },
+    ],
+  });
+
+  assert.equal(body.context_mode, "full_power");
+  assert.match(body.prompt_text, /mode=full_power/);
+  assert.match(body.prompt_text, /RAW_EVIDENCE/);
+  assert.match(body.prompt_text, /GATED_ABSTRACTIONS/);
+  assert.match(body.prompt_text, /TRACE/);
+  assert.match(body.prompt_text, /FULL_POWER_RAW_EVIDENCE/);
+  assert.match(body.prompt_text, /FULL_POWER_GATED_ABSTRACTION/);
+  assert.match(body.prompt_text, /applies_when=invoice rows contain subtotal, single tax, and shipping/);
+  assert.match(body.prompt_text, /does_not_apply_when=tax is already included in subtotal/);
+  assert.match(body.prompt_text, /counterexamples=formula A double-counted tax/);
+  assert.match(body.prompt_text, /failed branch raw traces explain what to avoid/);
+
+  assert.ok(body.raw_evidence.some((entry: any) =>
+    entry.source === "execution_tree_raw"
+    && entry.node_id
+    && String(entry.action).includes("Use formula B")
+  ));
+  assert.ok(body.raw_evidence.some((entry: any) =>
+    entry.source === "memory"
+    && entry.evidence_contract === "raw_memory_evidence"
+    && String(entry.summary).includes("FULL_POWER_RAW_EVIDENCE")
+  ));
+
+  const gated = body.gated_abstractions.find((entry: any) =>
+    String(entry.summary).includes("FULL_POWER_GATED_ABSTRACTION")
+  );
+  assert.ok(gated, "bounded abstraction must be exposed");
+  assert.equal(gated.gate_state, "contested");
+  assert.equal(gated.use_contract, "candidate_only_with_counterexamples");
+  assert.ok(gated.applies_when.includes("invoice rows contain subtotal, single tax, and shipping"));
+  assert.ok(gated.applies_when.includes("task_signature=full-power-context-route"));
+  assert.deepEqual(gated.does_not_apply_when, ["tax is already included in subtotal"]);
+  assert.deepEqual(gated.counterexamples, ["formula A double-counted tax"]);
+  assert.ok(gated.source_episode_refs.includes("trace://candidate-b/raw"));
+  assert.equal(gated.promotion_reason, "verified on validation rows with raw evidence");
+
+  assert.equal(body.full_power_trace.trace_version, "execution_context_full_power_trace_v1");
+  assert.ok(body.full_power_trace.contracts.includes("raw_evidence_is_first_class_source_material"));
+  assert.ok(body.selection_trace.raw_evidence_count >= 2);
+  assert.equal(body.selection_trace.gated_abstraction_contested_count, 1);
 
   await app.close();
 });

@@ -146,6 +146,65 @@ Aionis later know exactly which memories were exposed by that guide call.
 }
 ```
 
+## Advanced Execution Context Assembly
+
+`POST /v1/execution/context/assemble` is the execution-tree-first context
+surface used by advanced hosts and adapters. It is not the default product
+guide facade, but it is the right path when a host already has an execution
+tree, handoff tree id, or explicit execution evidence filters.
+
+Default mode preserves the compact execution evidence contract:
+
+1. `CURRENT_ACTIVE_PATH`
+2. `PASSED_SOLUTIONS`
+3. `FAILED_BRANCHES`
+4. optional supporting evidence and rehydration refs
+
+For full-power Runtime adapters, set `context_mode: "full_power"`. The response
+keeps the existing fields and also exposes:
+
+1. `raw_evidence`
+2. `gated_abstractions`
+3. `full_power_trace`
+
+When `include_prompt_text: true`, the prompt text adds these sections:
+
+1. `RAW_EVIDENCE`
+2. `GATED_ABSTRACTIONS`
+3. `TRACE`
+
+The contract is evidence-first:
+
+1. `PASSED_SOLUTIONS` are reusable only when validated or evidence-backed.
+2. `FAILED_BRANCHES` are counter-evidence and must not be copied as answers.
+3. `RAW_EVIDENCE` is first-class source material, not a passed solution.
+4. `GATED_ABSTRACTIONS` are advisory and bounded by `applies_when`,
+   `does_not_apply_when`, `counterexamples`, and source episode refs.
+5. Summary-only execution memory remains blocked from promotion by the
+   consolidation guard.
+
+Example:
+
+```json
+{
+  "tenant_id": "default",
+  "scope": "payments-service",
+  "tree_id": "execution-tree:checkout-42",
+  "tree_scope": "aionis://execution/checkout-42",
+  "context_mode": "full_power",
+  "prompt_detail": "full",
+  "include_memory_evidence": true,
+  "memory_filters": [
+    {
+      "slots_contains": {
+        "task_signature": "checkout-migration"
+      },
+      "limit": 20
+    }
+  ]
+}
+```
+
 ## `POST /v1/forget`
 
 ### Purpose
