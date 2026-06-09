@@ -64,6 +64,7 @@ function agentContext() {
       reasons: [
         "failed_execution_branches_kept_out_of_use_now",
         "premise_firewall_query_conflicts_with_current_memory",
+        "memory_contract_evidence_only_kept_out_of_use_now",
       ],
     },
     evidence_refs: {
@@ -162,6 +163,7 @@ test("operator snapshot route reports branch isolation and markdown without muta
   assert.deepEqual(body.operator_snapshot.memory_use_receipt.use_now_memory_ids, ["mem-passed"]);
   assert.deepEqual(body.operator_snapshot.memory_use_receipt.do_not_use_memory_ids, ["mem-failed"]);
   assert.ok(body.operator_snapshot.memory_use_receipt.risk_flags.includes("premise_firewall_query_risk"));
+  assert.ok(body.operator_snapshot.memory_use_receipt.risk_flags.includes("memory_contract_risk"));
   assert.ok(body.operator_snapshot.claims.some((claim: Record<string, unknown>) =>
     claim.claim === "memory_use_receipt_visible"
     && claim.status === "pass"

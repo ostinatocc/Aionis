@@ -88,7 +88,7 @@ The receipt maps directly onto existing Runtime concepts:
 | Memory Use Receipt | `memory_decision_trace.memory_use_receipt`, `operator_snapshot.memory_use_receipt` |
 | Premise Firewall | `risk_flags`, `inspect_before_use_memory_ids`, `do_not_use_memory_ids`, `read_only_signal_memory_ids` |
 | Trace-to-Procedure Compiler | `execution_tree_v1`, workflow projection, replay playbook, and `memory_decision_trace` |
-| Memory Contract | `authority`, `scope`, `source_map`, lifecycle state, and feedback attribution gates |
+| Memory Contract | `relevant_memories[].memory_contract`, `agent_context.risk.reasons`, `memory_decision_trace.reason_codes`, `memory_use_receipt.risk_flags` |
 
 ### Shape
 
@@ -150,6 +150,48 @@ Current implemented reason codes:
 The product behavior is advisory. The Agent is told to inspect or avoid the
 premise, but Aionis does not rewrite the task, execute a repair, or mutate
 memory lifecycle from this signal alone.
+
+## Memory Contract
+
+The implemented Memory Contract is a read-only projection on each
+`AionisMemoryPacket.relevant_memories[]` entry. It does not replace existing
+authority, lifecycle, scope, or evidence gates. It makes those gates explicit
+before `agent_context` is compiled.
+
+Current contract fields:
+
+```ts
+type AionisMemoryContract = {
+  source_trust:
+    | "authoritative_runtime"
+    | "scoped_advisory"
+    | "external_or_unverified"
+    | "blocked_or_suppressed";
+  allowed_scope:
+    | "current_scope"
+    | "task_or_workflow_scope"
+    | "supporting_evidence_only"
+    | "none";
+  evidence_requirement:
+    | "satisfied"
+    | "node_evidence_only"
+    | "requires_more_evidence";
+  use_policy:
+    | "direct_use"
+    | "inspect_before_use"
+    | "do_not_use"
+    | "evidence_only";
+  confirmation_required: boolean;
+  reasons: string[];
+};
+```
+
+The first version only changes direct-use behavior for low-level general
+`event`/`evidence` memories whose contract is `evidence_only`; those memories
+move to `inspect_before_use` instead of `use_now`. Candidate, contested,
+suppressed, archived, and blocked memory continue to follow the existing
+authority/lifecycle behavior, with Memory Contract reason codes added for
+audit and receipt visibility.
 
 ## Non-Goals
 
@@ -295,6 +337,7 @@ type AionisMemoryPacket = {
       | "unknown";
     evidence_ids: string[];
     scope_hint?: string | null;
+    memory_contract: AionisMemoryContract;
   }>;
   evidence_trail: Array<{
     evidence_id: string;

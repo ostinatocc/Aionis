@@ -37,6 +37,47 @@ export type AionisMemoryFamily = z.infer<typeof AionisMemoryFamilySchema>;
 
 const AionisMemoryLayerSchema = z.enum(["L0", "L1", "L2", "L3", "L4", "L5"]);
 
+const AionisMemoryContractSchema = z
+  .object({
+    source_trust: z.enum([
+      "authoritative_runtime",
+      "scoped_advisory",
+      "external_or_unverified",
+      "blocked_or_suppressed",
+    ]),
+    allowed_scope: z.enum([
+      "current_scope",
+      "task_or_workflow_scope",
+      "supporting_evidence_only",
+      "none",
+    ]),
+    evidence_requirement: z.enum([
+      "satisfied",
+      "node_evidence_only",
+      "requires_more_evidence",
+    ]),
+    use_policy: z.enum([
+      "direct_use",
+      "inspect_before_use",
+      "do_not_use",
+      "evidence_only",
+    ]),
+    confirmation_required: z.boolean(),
+    reasons: z.array(z.string().min(1)).default([]),
+  })
+  .strict();
+
+function defaultAionisMemoryContract(): z.infer<typeof AionisMemoryContractSchema> {
+  return {
+    source_trust: "scoped_advisory",
+    allowed_scope: "current_scope",
+    evidence_requirement: "node_evidence_only",
+    use_policy: "direct_use",
+    confirmation_required: false,
+    reasons: ["memory_contract_missing_projection_defaulted_to_existing_authority"],
+  };
+}
+
 const AionisMemoryLifecycleRelationKindSchema = z.enum(["supersedes", "contradicts", "invalidates"]);
 
 const AionisMemoryLifecycleRelationSignalsSchema = z
@@ -135,6 +176,7 @@ export const AionisMemoryPacketSchema = z
             observed_at: z.string().min(1).nullable().default(null),
             target_files: z.array(z.string().min(1)).default([]),
             scope_hint: z.string().min(1).nullable().optional(),
+            memory_contract: AionisMemoryContractSchema.default(defaultAionisMemoryContract),
           })
           .strict(),
       )

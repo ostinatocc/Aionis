@@ -1096,6 +1096,7 @@ test("product observe persists lifecycle relation graph and guide suppresses sup
       ),
     );
     assert.ok(guideBody.agent_context.risk.reasons.includes("premise_firewall_query_conflicts_with_current_memory"));
+    assert.ok(guideBody.source_map.internal_surfaces_used.includes("memory_contract"));
     assert.ok(guideBody.source_map.internal_surfaces_used.includes("premise_firewall"));
     assert.equal(guideBody.agent_context.prompt_text.includes("legacy/payments/old-checkout.ts"), false);
     assert.equal(guideBody.agent_context.prompt_text.includes("decision_reviews"), false);

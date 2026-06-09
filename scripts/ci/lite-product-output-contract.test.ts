@@ -652,6 +652,8 @@ test("AionisMemoryPacket accepts evidence-scoped general cognitive memory output
   assert.equal(parsed.memory_family, "general_cognitive");
   assert.equal(parsed.relevant_memories[0]?.memory_type, "preference");
   assert.equal(parsed.relevant_memories[0]?.authority, "advisory");
+  assert.equal(parsed.relevant_memories[0]?.memory_contract.use_policy, "direct_use");
+  assert.equal(parsed.relevant_memories[0]?.memory_contract.source_trust, "scoped_advisory");
   assert.deepEqual(parsed.behavior_impact.expected_effects, ["answer_style"]);
 });
 

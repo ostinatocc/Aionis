@@ -71,6 +71,12 @@ function premiseFirewallRiskFlags(reasons: string[]): string[] {
     : [];
 }
 
+function memoryContractRiskFlags(reasons: string[]): string[] {
+  return reasons.some((reason) => reason.startsWith("memory_contract_"))
+    ? ["memory_contract_risk"]
+    : [];
+}
+
 function parseAgentContext(value: unknown): AionisAgentContext | null {
   const direct = AionisAgentContextSchema.safeParse(value);
   if (direct.success) return direct.data;
@@ -392,6 +398,7 @@ function buildFallbackMemoryUseReceipt(args: {
       negativeTransferRisk !== "low" ? `negative_transfer_risk:${negativeTransferRisk}` : "",
       ...riskReasons,
       ...premiseFirewallRiskFlags(riskReasons),
+      ...memoryContractRiskFlags(riskReasons),
     ]),
     summary: `Aionis compiled memory into ${useNowMemoryIds.length} use_now, ${inspectBeforeUseMemoryIds.length} inspect_before_use, ${doNotUseMemoryIds.length} do_not_use, and ${rehydrateMemoryIds.length} rehydrate decisions; receipt is read-only and excluded from the Agent prompt.`,
   });

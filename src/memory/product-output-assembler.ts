@@ -409,6 +409,73 @@ function memoryScopeHint(args: {
   return "general cognitive memory; apply inside the current tenant and scope";
 }
 
+type MemoryContractProjectionInput = Pick<
+  MemoryPacketEntry,
+  "authority"
+  | "domain"
+  | "evidence_ids"
+  | "lifecycle_state"
+  | "memory_type"
+  | "source_layer"
+>;
+
+function memoryContractEvidenceOnly(entry: MemoryContractProjectionInput): boolean {
+  return entry.domain === "general"
+    && (entry.source_layer === "L0" || entry.source_layer === "L1")
+    && (entry.memory_type === "event" || entry.memory_type === "evidence");
+}
+
+function memoryContractForEntry(entry: MemoryContractProjectionInput): MemoryPacketEntry["memory_contract"] {
+  const blocked = memoryEntryBlocked(entry as MemoryPacketEntry);
+  const inspect = !blocked && memoryEntryInspectBeforeUse(entry as MemoryPacketEntry);
+  const evidenceOnly = !blocked && !inspect && memoryContractEvidenceOnly(entry);
+  const usePolicy = blocked
+    ? "do_not_use"
+    : evidenceOnly
+      ? "evidence_only"
+      : inspect
+        ? "inspect_before_use"
+        : "direct_use";
+  const evidenceRequirement = entry.evidence_ids.length > 0
+    ? "satisfied"
+    : entry.authority === "candidate" || entry.authority === "none" || entry.lifecycle_state === "unknown"
+      ? "requires_more_evidence"
+      : "node_evidence_only";
+  const sourceTrust = blocked
+    ? "blocked_or_suppressed"
+    : entry.authority === "trusted"
+      ? "authoritative_runtime"
+      : entry.authority === "advisory"
+        ? "scoped_advisory"
+        : "external_or_unverified";
+  const allowedScope = blocked
+    ? "none"
+    : evidenceOnly || entry.source_layer === "L0" || entry.source_layer === "L1"
+      ? "supporting_evidence_only"
+      : entry.domain === "execution"
+        ? "task_or_workflow_scope"
+        : "current_scope";
+  const confirmationRequired = usePolicy !== "direct_use" || evidenceRequirement === "requires_more_evidence";
+  return {
+    source_trust: sourceTrust,
+    allowed_scope: allowedScope,
+    evidence_requirement: evidenceRequirement,
+    use_policy: usePolicy,
+    confirmation_required: confirmationRequired,
+    reasons: compactStrings([
+      `memory_contract_authority_${entry.authority}`,
+      `memory_contract_lifecycle_${entry.lifecycle_state}`,
+      usePolicy === "direct_use" ? "memory_contract_direct_use_allowed" : null,
+      usePolicy === "inspect_before_use" ? "memory_contract_requires_inspection" : null,
+      usePolicy === "do_not_use" ? "memory_contract_blocks_direct_use" : null,
+      usePolicy === "evidence_only" ? "memory_contract_evidence_only" : null,
+      evidenceRequirement === "requires_more_evidence" ? "memory_contract_requires_more_evidence" : null,
+      allowedScope === "task_or_workflow_scope" ? "memory_contract_task_or_workflow_scope" : null,
+      allowedScope === "supporting_evidence_only" ? "memory_contract_supporting_evidence_only" : null,
+    ]).slice(0, 8),
+  };
+}
+
 function buildMemoryPacketEntries(args: BuildAionisMemoryPacketArgs): {
   entries: MemoryPacketEntry[];
   lifecycleRelations: MemoryLifecycleRelation[];
@@ -471,7 +538,13 @@ function buildMemoryPacketEntries(args: BuildAionisMemoryPacketArgs): {
   return {
     lifecycleRelations: adjudicated.relations,
     persistedLifecycleRelationCount: persistedRelations.length,
-    entries: adjudicated.entries.map(({ source_index: _sourceIndex, ...entry }) => entry as MemoryPacketEntry),
+    entries: adjudicated.entries.map(({ source_index: _sourceIndex, ...entry }) => {
+      const memoryEntry = entry as MemoryPacketEntry;
+      return {
+        ...memoryEntry,
+        memory_contract: memoryContractForEntry(memoryEntry),
+      };
+    }),
   };
 }
 
@@ -652,6 +725,7 @@ export function buildAionisMemoryPacket(args: BuildAionisMemoryPacketArgs): Aion
         "recall_ranked_nodes",
         "context_items",
         "memory_layer_policy",
+        "memory_contract_projection",
         "semantic_forgetting_surface",
         ...(persistedLifecycleRelationCount > 0 ? ["memory_lifecycle_relation_graph"] : []),
         ...(lifecycleRelations.length > 0 ? ["memory_lifecycle_adjudicator"] : []),
@@ -1659,6 +1733,27 @@ function trustedWorkflowConflictAudit(entries: MemoryPacketEntry[]): {
   };
 }
 
+function memoryContractInspectBeforeUse(entry: MemoryPacketEntry): boolean {
+  return entry.memory_contract.use_policy === "evidence_only";
+}
+
+function memoryContractInspectLine(entry: MemoryPacketEntry): string {
+  return `Memory contract: ${memoryEntryAuditLabel(entry)} is ${entry.memory_contract.use_policy}; ${entry.memory_contract.allowed_scope}; inspect before direct reuse.`;
+}
+
+function memoryContractRiskReasons(entries: MemoryPacketEntry[]): string[] {
+  const hasEvidenceOnly = entries.some((entry) => entry.memory_contract.use_policy === "evidence_only");
+  const hasInspect = entries.some((entry) => entry.memory_contract.use_policy === "inspect_before_use");
+  const hasBlocked = entries.some((entry) => entry.memory_contract.use_policy === "do_not_use");
+  const needsMoreEvidence = entries.some((entry) => entry.memory_contract.evidence_requirement === "requires_more_evidence");
+  return compactStrings([
+    hasEvidenceOnly ? "memory_contract_evidence_only_kept_out_of_use_now" : null,
+    hasInspect ? "memory_contract_requires_inspection" : null,
+    hasBlocked ? "memory_contract_blocks_direct_use" : null,
+    needsMoreEvidence ? "memory_contract_requires_more_evidence" : null,
+  ]).slice(0, 4);
+}
+
 function riskAtLeast(current: AionisRiskLevel, minimum: AionisRiskLevel): AionisRiskLevel {
   const rank: Record<AionisRiskLevel, number> = { low: 0, medium: 1, high: 2 };
   return rank[current] >= rank[minimum] ? current : minimum;
@@ -1707,6 +1802,9 @@ function compileAgentContextSurfaces(args: {
   const trustedWorkflowConflictInspectIds = new Set<string>();
   const premiseInspectIds = new Set(args.premiseFirewall.inspectBeforeUseMemoryIds);
   const premiseDoNotUseIds = new Set(args.premiseFirewall.doNotUseMemoryIds);
+  const memoryContractInspectEntries = usableEntries.filter(memoryContractInspectBeforeUse);
+  const memoryContractInspectIds = new Set(memoryContractInspectEntries.map((entry) => entry.memory_id));
+  const memoryContractRiskReasonList = memoryContractRiskReasons(args.memoryEntries);
   if (trustedConflict.hasConflict) {
     for (const entry of usableEntries) {
       const trustedWorkflow =
@@ -1725,6 +1823,7 @@ function compileAgentContextSurfaces(args: {
     !trustedWorkflowConflictInspectIds.has(entry.memory_id)
     && !premiseInspectIds.has(entry.memory_id)
     && !premiseDoNotUseIds.has(entry.memory_id)
+    && !memoryContractInspectIds.has(entry.memory_id)
   );
   const conflictInspectMemoryEntries = usableEntries.filter((entry) =>
     trustedWorkflowConflictInspectIds.has(entry.memory_id)
@@ -1761,6 +1860,13 @@ function compileAgentContextSurfaces(args: {
       movedToInspect.push(`Premise risk: query mentions ${memoryEntryAuditLabel(premiseInspect)}; inspect before relying on that premise.`);
       return false;
     }
+    const memoryContractInspect = args.memoryEntries.find((memory) =>
+      memoryContractInspectIds.has(memory.memory_id) && textMatchesMemoryEntry(entry, memory)
+    );
+    if (memoryContractInspect) {
+      movedToInspect.push(memoryContractInspectLine(memoryContractInspect));
+      return false;
+    }
     const conflicted = trustedConflict.conflictedEntries.find((memory) => textMatchesMemoryEntry(entry, memory));
     if (
       trustedConflict.hasConflict
@@ -1789,6 +1895,7 @@ function compileAgentContextSurfaces(args: {
     ...args.rawInspectBeforeUse,
     ...args.premiseFirewall.inspectBeforeUse,
     ...movedToInspect,
+    ...memoryContractInspectEntries.map(memoryContractInspectLine),
     ...inspectEntries.map(memoryEntryInspectLine),
     ...conflictInspectMemoryEntries.map((entry) => `Inspect conflicting trusted workflow: ${memoryEntryLabel(entry)}`),
   ]).slice(0, 5);
@@ -1804,7 +1911,8 @@ function compileAgentContextSurfaces(args: {
     || inspectEntries.length > 0
     || blockedEntries.length > 0
     || trustedConflict.hasConflict
-    || args.premiseFirewall.riskReasons.length > 0;
+    || args.premiseFirewall.riskReasons.length > 0
+    || memoryContractRiskReasonList.length > 0;
   const historyUsed = (args.rawHistoryUsed || hasUsableMemory || inspectEntries.length > 0 || blockedEntries.length > 0 || hasRawGuideSurface) && (
     hasUsableMemory
     || inspectEntries.length > 0
@@ -1818,12 +1926,14 @@ function compileAgentContextSurfaces(args: {
     || inspectEntries.length > 0
     || blockedEntries.length > 0
     || args.premiseFirewall.riskReasons.length > 0
+    || memoryContractInspectEntries.length > 0
     || args.rehydrateHints.length > 0;
   let negativeTransferRisk = args.rawRisk.negative_transfer_risk;
   if (blockedEntries.length > 0) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "high");
   else if (inspectEntries.length > 0) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "medium");
   if (trustedConflict.hasConflict) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "medium");
   if (args.premiseFirewall.riskReasons.length > 0) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "medium");
+  if (memoryContractRiskReasonList.length > 0) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "medium");
 
   const recommendedPosture: AionisAgentContext["recommended_posture"] = !actionableHistoryUsed
     ? "ignore_history"
@@ -1871,6 +1981,7 @@ function compileAgentContextSurfaces(args: {
     inspectBeforeUseMemoryIds: compactStrings([
       ...inspectEntries.map((entry) => entry.memory_id),
       ...conflictInspectMemoryEntries.map((entry) => entry.memory_id),
+      ...memoryContractInspectEntries.map((entry) => entry.memory_id),
       ...args.premiseFirewall.inspectBeforeUseMemoryIds,
     ]).slice(0, 10),
     doNotUseMemoryIds: compactStrings([
@@ -1886,6 +1997,7 @@ function compileAgentContextSurfaces(args: {
         ...trustedConflict.reasons,
         inspectEntries.length > 0 ? "candidate_or_contested_memory_kept_out_of_use_now" : null,
         blockedEntries.length > 0 ? "blocked_or_suppressed_memory_kept_out_of_use_now" : null,
+        ...memoryContractRiskReasonList,
         ...args.premiseFirewall.riskReasons,
         ...args.rawRisk.reasons,
       ]).slice(0, 5),
@@ -2160,6 +2272,10 @@ function traceReasonCodes(args: {
     hasRelationEvidence ? "lifecycle_relation_evidence" : null,
     hasWarning ? "contradiction_warning" : null,
     premiseFirewallReasonVisible ? "premise_firewall_query_risk" : null,
+    `memory_contract_${args.entry.memory_contract.use_policy}`,
+    args.entry.memory_contract.confirmation_required ? "memory_contract_confirmation_required" : null,
+    args.entry.memory_contract.evidence_requirement === "requires_more_evidence" ? "memory_contract_requires_more_evidence" : null,
+    args.entry.memory_contract.allowed_scope === "supporting_evidence_only" ? "memory_contract_supporting_evidence_only" : null,
     args.surface === "use_now" ? "available_for_agent_use" : null,
     args.surface === "inspect_before_use" ? "kept_out_of_direct_use" : null,
     args.surface === "do_not_use" ? "blocked_from_agent_use" : null,
@@ -3392,6 +3508,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
         "memory_packet_lifecycle",
         "guide_packet_posture",
         agentContext ? "agent_context_surface_projection" : null,
+        memory?.relevant_memories.some((entry) => entry.memory_contract) ? "memory_contract" : null,
         relationDecisions.length > 0 ? "memory_lifecycle_relation_graph" : null,
         feedbackAttribution.present ? "feedback_attribution_trace" : null,
         neighborhoodDriftObservation.present ? "neighborhood_drift_observation" : null,

@@ -59,6 +59,11 @@ per-memory explanation remains in `memory_decision_trace` and the compact
 risk flag remains in `memory_use_receipt`; neither should be appended to the
 Agent prompt.
 
+Memory Contract follows the same boundary. The Agent sees only the compiled
+`use_now`, `inspect_before_use`, `do_not_use`, and `risk` result. The per-memory
+contract object and reason codes are packet/debug/receipt surfaces for hosts
+and operators.
+
 ## Debug and Audit Contract
 
 Use `memory_decision_trace` when the developer needs exact causality:

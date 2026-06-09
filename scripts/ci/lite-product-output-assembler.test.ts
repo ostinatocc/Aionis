@@ -653,7 +653,15 @@ test("product agent context surfaces active general memory without execution gui
     memory_packet: memoryPacket,
     guide_packet: noExecutionGuidePacket,
   });
+  const activeMemory = memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-general-active");
+  const candidateMemory = memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-general-candidate");
+  const suppressedMemory = memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-general-suppressed");
 
+  assert.equal(activeMemory?.memory_contract.use_policy, "direct_use");
+  assert.equal(activeMemory?.memory_contract.source_trust, "scoped_advisory");
+  assert.equal(candidateMemory?.memory_contract.use_policy, "inspect_before_use");
+  assert.equal(candidateMemory?.memory_contract.confirmation_required, true);
+  assert.equal(suppressedMemory?.memory_contract.use_policy, "do_not_use");
   assert.equal(context.history_used, true);
   assert.equal(context.recommended_posture, "inspect_before_use");
   assert.equal(context.authority, "advisory");
@@ -674,6 +682,82 @@ test("product agent context surfaces active general memory without execution gui
   assert.ok(context.prompt_text.includes("do_not_use"));
   assert.equal(context.prompt_text.includes("use_now_memory_ids"), false);
   assert.equal(context.prompt_text.includes("inspect_before_use_memory_ids"), false);
+});
+
+test("product memory contract keeps low-level evidence out of direct use", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "Use supporting evidence for release notes.",
+    },
+    nodes: [
+      {
+        id: "mem-evidence-event",
+        type: "event",
+        title: "Raw release note event",
+        text_summary: "RAW_EVIDENCE_MARKER A low-level observation from a prior run.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L0",
+        },
+        confidence: 0.88,
+        salience: 0.84,
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        id: "mem-stable-context",
+        type: "concept",
+        title: "Stable release note context",
+        text_summary: "STABLE_CONTEXT_MARKER Use the current release-note outline.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+        },
+        confidence: 0.9,
+        salience: 0.86,
+        created_at: "2026-01-02T00:00:00.000Z",
+      },
+    ],
+  });
+  const evidenceMemory = memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-evidence-event");
+  assert.equal(evidenceMemory?.memory_contract.use_policy, "evidence_only");
+  assert.equal(evidenceMemory?.memory_contract.allowed_scope, "supporting_evidence_only");
+  assert.equal(memoryPacket.source_map.internal_surfaces_used.includes("memory_contract_projection"), true);
+
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-evidence-event"), false);
+  assert.equal(agentContext.inspect_before_use_memory_ids.includes("mem-evidence-event"), true);
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-stable-context"), true);
+  assert.ok(agentContext.inspect_before_use.some((entry) =>
+    entry.startsWith("Memory contract:")
+    && entry.includes("mem-evidence-event")
+    && entry.includes("evidence_only")
+  ));
+  assert.ok(agentContext.risk.reasons.includes("memory_contract_evidence_only_kept_out_of_use_now"));
+
+  const trace = buildAionisMemoryDecisionTrace({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    before_guide: null,
+    after_guide: {
+      memory_packet: memoryPacket,
+      agent_context: agentContext,
+    },
+  });
+  const evidenceDecision = trace.memory_decisions.find((entry) => entry.memory_id === "mem-evidence-event");
+  assert.equal(evidenceDecision?.agent_surface, "inspect_before_use");
+  assert.ok(evidenceDecision?.reason_codes.includes("memory_contract_evidence_only"));
+  assert.ok(evidenceDecision?.reason_codes.includes("memory_contract_supporting_evidence_only"));
+  assert.ok(trace.memory_use_receipt?.risk_flags.includes("memory_contract_evidence_only"));
+  assert.ok(trace.source_map.internal_surfaces_used.includes("memory_contract"));
 });
 
 test("product memory lifecycle adjudication demotes corrected prior memory without explicit labels", () => {

@@ -68,6 +68,12 @@ counter-evidence, `POST /v1/guide` adds `premise_firewall_*` entries to
 `inspect_before_use` or `do_not_use`. Hosts should pass only the resulting
 `agent_context` surface to the Agent and keep trace/receipt details for audit.
 
+Memory Contract is also delivered through `POST /v1/guide` and
+`memory_packet.relevant_memories[].memory_contract` when packets are included.
+Hosts should not re-derive this contract from raw rows. Use the compiled
+`agent_context` fields for prompts and use contract reason codes or receipt
+risk flags for audit logs.
+
 ## `history_used` vs `actionable_history_used`
 
 `history_used` means the Aionis history/context channel participated in guide

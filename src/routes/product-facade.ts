@@ -572,6 +572,10 @@ function productGuidePremiseFirewallVisible(agentContext: AionisAgentContext): b
     || agentContext.do_not_use.some((entry) => entry.startsWith("Premise risk:"));
 }
 
+function productGuideMemoryContractVisible(memoryPacket: AionisMemoryPacket | null): boolean {
+  return memoryPacket?.relevant_memories.some((entry) => !!entry.memory_contract) === true;
+}
+
 function productGuideFullPowerRequested(parsed: z.infer<typeof ProductGuideRequest>): boolean {
   return parsed.mode === "full_power" || parsed.context_mode === "full_power";
 }
@@ -2041,6 +2045,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     if (!exposureWrite.ok) return sendInternalFailure(reply, exposureWrite);
     const includePackets = parsed.include_packets === true;
     const premiseFirewallVisible = productGuidePremiseFirewallVisible(agentContext);
+    const memoryContractVisible = productGuideMemoryContractVisible(memoryPacket);
 
     return reply.code(200).send({
       contract_version: "aionis_guide_result_v1",
@@ -2066,6 +2071,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
           ...(fullPowerRequested ? ["full_power_execution_context"] : []),
           ...(fullPowerExecutionContextMerged ? ["full_power_agent_context_merge"] : []),
           ...(activeProjectionApplied ? ["inspect_before_use_active_projection"] : []),
+          ...(memoryContractVisible ? ["memory_contract"] : []),
           ...(premiseFirewallVisible ? ["premise_firewall"] : []),
           "guide_exposure_ledger",
         ],

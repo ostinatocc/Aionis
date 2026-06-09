@@ -161,6 +161,14 @@ risk through existing `agent_context.risk.reasons`, `inspect_before_use`, and
 `do_not_use` fields. This is state governance before context compilation; it
 does not rewrite the task or mutate memory by itself.
 
+Memory Contract is now explicit on each relevant memory. Aionis derives a
+read-only `memory_contract` from existing authority, lifecycle, scope hint,
+source layer, and evidence IDs before compiling context. Hosts should treat
+`use_policy: "direct_use"` as eligible for `use_now`, and should treat
+`inspect_before_use`, `do_not_use`, and `evidence_only` as governed surfaces
+rather than raw recall results. The contract does not create execution trees,
+promote memory, or mutate authority by itself.
+
 ## Forget Input Contract
 
 `POST /v1/forget` is the product entry for controlled forgetting, suppression, rehydration, and reuse feedback. Users should not need to know the internal lifecycle route names.
