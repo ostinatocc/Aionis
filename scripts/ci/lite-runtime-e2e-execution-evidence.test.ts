@@ -335,6 +335,33 @@ async function post(app: ReturnType<typeof Fastify>, url: string, payload: unkno
   return response.json() as any;
 }
 
+async function listenHttp(app: ReturnType<typeof Fastify>): Promise<string> {
+  return await app.listen({ host: "127.0.0.1", port: 0 });
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+async function postHttp(baseUrl: string, url: string, payload: unknown) {
+  const response = await fetch(`${baseUrl}${url}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const text = await response.text();
+  let parsed: unknown;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    parsed = { raw: text };
+  }
+  assert.equal(response.status, 200, `${url} failed: ${text}`);
+  const record = asRecord(parsed);
+  assert.ok(record, `${url} returned non-object JSON: ${text}`);
+  return record as any;
+}
+
 test("runtime e2e observes handoff tree operations, recovers latest tree, and guides with evidence-first context", async () => {
   const { app, liteWriteStore, liteRecallStore, executionTreeStore } = setupRuntimeE2EApp("observe-recover-guide");
   try {
@@ -475,6 +502,233 @@ test("runtime e2e observes handoff tree operations, recovers latest tree, and gu
       entry.promotion_blocked_reason === "memory_execution_summary_without_raw_or_evidence_refs"
     ));
     assert.equal(guardedContext.selection_trace.memory_consolidation_guard_blocked_count, 2);
+  } finally {
+    await app.close();
+    await liteWriteStore.close();
+    await liteRecallStore.close();
+    await executionTreeStore.close();
+  }
+});
+
+test("runtime HTTP e2e assembles full-power context from raw evidence, bounded abstractions, handoff tree, and observed outcome", async () => {
+  const { app, liteWriteStore, liteRecallStore, executionTreeStore } = setupRuntimeE2EApp("http-full-power-context");
+  let baseUrl: string | null = null;
+  try {
+    baseUrl = await listenHttp(app);
+    const { baseTree, operations, expectedTree } = buildRuntimeTreeFixture();
+    const handoffPayload = {
+      memory_lane: "private",
+      anchor: "runtime-http-full-power:execution-evidence",
+      file_path: "src/runtime-http-full-power-e2e.ts",
+      repo_root: "/Volumes/ziel/AionisRuntime-focused",
+      handoff_kind: "patch_handoff",
+      task_signature: "runtime-http-full-power",
+      title: "Runtime HTTP full-power handoff",
+      summary: "Continue the verified formula B branch and avoid formula A.",
+      handoff_text: "Recover the operation-applied execution tree before continuing.",
+      target_files: ["src/runtime-http-full-power-e2e.ts"],
+      next_action: "Continue from RUNTIME_E2E_PASSED formula B.",
+      execution_tree_disabled: true,
+      execution_tree_v1: baseTree,
+      execution_tree_operations_v1: operations,
+    };
+
+    const observed = await postHttp(baseUrl, "/v1/observe", {
+      tenant_id: "default",
+      scope: "default",
+      handoff: handoffPayload,
+    });
+    const observedTree = asRecord(asRecord(observed.handoff)?.execution_tree_v1);
+    assert.equal(observedTree?.tree_id, expectedTree.tree_id);
+    assert.equal(observedTree?.current_summary_node_id, expectedTree.current_summary_node_id);
+    assert.match(JSON.stringify(observedTree), /RUNTIME_E2E_PASSED formula B computes subtotal/);
+    assert.match(JSON.stringify(observedTree), /RUNTIME_E2E_FAILED formula A double-counted tax/);
+
+    const recovered = await postHttp(baseUrl, "/v1/handoff/recover", {
+      tenant_id: "default",
+      scope: "default",
+      consumer_agent_id: "local-user",
+      handoff_kind: "patch_handoff",
+      anchor: handoffPayload.anchor,
+      repo_root: handoffPayload.repo_root,
+      file_path: handoffPayload.file_path,
+    });
+    const recoveredTree = asRecord(recovered.execution_tree_v1);
+    assert.equal(recoveredTree?.tree_id, expectedTree.tree_id);
+    assert.equal(recoveredTree?.current_summary_node_id, expectedTree.current_summary_node_id);
+
+    await postHttp(baseUrl, "/v1/memory/write", {
+      tenant_id: "default",
+      scope: "default",
+      input_text: "Runtime HTTP full-power context writes raw evidence and a bounded abstraction.",
+      auto_embed: false,
+      memory_lane: "private",
+      nodes: [
+        {
+          client_id: "runtime-http-full-power-raw-evidence",
+          type: "evidence",
+          title: "Runtime HTTP raw verifier trace",
+          text_summary: "RUNTIME_HTTP_FULL_POWER_RAW formula B matched every verifier row.",
+          raw_ref: "raw://runtime-http-full-power/formula-b",
+          evidence_ref: "evidence://runtime-http-full-power/formula-b",
+          slots: {
+            task_signature: "runtime-http-full-power",
+            evidence_kind: "verifier_trace",
+          },
+        },
+        {
+          client_id: "runtime-http-full-power-bounded-abstraction",
+          type: "procedure",
+          title: "Runtime HTTP bounded formula workflow",
+          text_summary: "RUNTIME_HTTP_FULL_POWER_ABSTRACTION use formula B for subtotal, single tax, and shipping rows.",
+          slots: {
+            task_signature: "runtime-http-full-power",
+            summary_kind: "pattern_anchor",
+            applies_when: ["invoice row has subtotal, single tax, and shipping"],
+            does_not_apply_when: ["tax is already included in subtotal"],
+            counterexamples: ["formula A double-counted tax on verifier row 2"],
+            source_episode_refs: [
+              "trace://runtime-e2e/formula-b/raw",
+              "raw://runtime-http-full-power/formula-b",
+            ],
+            promotion_reason: "formula B verified with raw trace",
+            promotion_state: "stable",
+          },
+        },
+      ],
+      edges: [],
+    });
+
+    const fullPower = await postHttp(baseUrl, "/v1/execution/context/assemble", {
+      tenant_id: "default",
+      scope: "default",
+      tree_id: expectedTree.tree_id,
+      tree_scope: expectedTree.scope,
+      context_mode: "full_power",
+      prompt_detail: "full",
+      include_memory_evidence: true,
+      memory_filters: [
+        {
+          slots_contains: { task_signature: "runtime-http-full-power" },
+          limit: 20,
+        },
+      ],
+    });
+
+    assert.equal(fullPower.context_mode, "full_power");
+    assert.equal(asRecord(fullPower.tree)?.source, "store");
+    assert.match(String(fullPower.prompt_text), /CURRENT_ACTIVE_PATH/);
+    assert.match(String(fullPower.prompt_text), /PASSED_SOLUTIONS/);
+    assert.match(String(fullPower.prompt_text), /FAILED_BRANCHES/);
+    assert.match(String(fullPower.prompt_text), /RAW_EVIDENCE/);
+    assert.match(String(fullPower.prompt_text), /GATED_ABSTRACTIONS/);
+    assert.match(String(fullPower.prompt_text), /TRACE/);
+    assert.match(JSON.stringify(fullPower.current_active_path), /RUNTIME_E2E_PASSED/);
+    assert.match(JSON.stringify(fullPower.passed_solutions), /RUNTIME_E2E_PASSED formula B computes subtotal/);
+    assert.match(JSON.stringify(fullPower.failed_branches), /RUNTIME_E2E_FAILED formula A double-counted tax/);
+    assert.ok(fullPower.raw_evidence.some((entry: any) =>
+      entry.source === "execution_tree_raw"
+      && String(entry.action).includes("RUNTIME_E2E_PASSED formula B")
+    ));
+    assert.ok(fullPower.raw_evidence.some((entry: any) =>
+      entry.source === "memory"
+      && entry.evidence_contract === "raw_memory_evidence"
+      && String(entry.summary).includes("RUNTIME_HTTP_FULL_POWER_RAW")
+      && entry.raw_ref === "raw://runtime-http-full-power/formula-b"
+    ));
+    const gated = fullPower.gated_abstractions.find((entry: any) =>
+      String(entry.summary).includes("RUNTIME_HTTP_FULL_POWER_ABSTRACTION")
+    );
+    assert.ok(gated, "full-power context must expose the bounded abstraction");
+    assert.equal(gated.gate_state, "contested");
+    assert.equal(gated.use_contract, "candidate_only_with_counterexamples");
+    assert.ok(gated.applies_when.includes("invoice row has subtotal, single tax, and shipping"));
+    assert.ok(gated.applies_when.includes("task_signature=runtime-http-full-power"));
+    assert.deepEqual(gated.does_not_apply_when, ["tax is already included in subtotal"]);
+    assert.deepEqual(gated.counterexamples, ["formula A double-counted tax on verifier row 2"]);
+    assert.ok(gated.source_episode_refs.includes("raw://runtime-http-full-power/formula-b"));
+    assert.equal(asRecord(fullPower.full_power_trace)?.trace_version, "execution_context_full_power_trace_v1");
+    assert.ok((asRecord(fullPower.full_power_trace)?.contracts as string[]).includes("raw_evidence_is_first_class_source_material"));
+    assert.ok((asRecord(fullPower.selection_trace)?.raw_evidence_count as number) >= 2);
+    assert.equal(asRecord(fullPower.selection_trace)?.gated_abstraction_contested_count, 1);
+
+    const simulatedAgentChoice =
+      JSON.stringify(fullPower.passed_solutions).includes("RUNTIME_E2E_PASSED")
+      && JSON.stringify(fullPower.failed_branches).includes("RUNTIME_E2E_FAILED")
+        ? "formula_b"
+        : "unknown";
+    assert.equal(simulatedAgentChoice, "formula_b");
+
+    const outcomeObserve = await postHttp(baseUrl, "/v1/observe", {
+      tenant_id: "default",
+      scope: "default",
+      input_text: "Runtime HTTP e2e selected formula B after reading full-power Aionis context.",
+      execution: {
+        client_id: "runtime-http-full-power-outcome",
+        run_id: "runtime-http-full-power-run",
+        task_family: "runtime-http-full-power",
+        task_signature: "runtime-http-full-power-outcome",
+        workflow_signature: "runtime-http-full-power-formula-selection",
+        title: "RUNTIME_HTTP_FULL_POWER_OUTCOME formula B",
+        summary: "RUNTIME_HTTP_FULL_POWER_OUTCOME formula B passed after using full-power Aionis context.",
+        outcome: "succeeded",
+        workflow_steps: [
+          "Read full-power execution context",
+          "Reuse passed formula B",
+          "Avoid failed formula A",
+        ],
+        acceptance_checks: ["formula B accepted", "formula A remains rejected"],
+        continuation_hint: "Keep formula B on matching invoice rows.",
+        confidence: 0.9,
+        raw_ref: "raw://runtime-http-full-power/outcome",
+        evidence_ref: "evidence://runtime-http-full-power/outcome",
+        verification: {
+          choice: simulatedAgentChoice,
+          passed: true,
+          verifier: "formula B accepted",
+        },
+        slots: {
+          task_signature: "runtime-http-full-power-outcome",
+          execution_result_summary: {
+            status: "passed",
+            summary: "RUNTIME_HTTP_FULL_POWER_OUTCOME formula B passed after using full-power context.",
+            evidence_refs: ["evidence://runtime-http-full-power/outcome"],
+          },
+        },
+      },
+    });
+    assert.equal(asRecord(outcomeObserve.observed)?.memory_written, true);
+
+    const outcomeContext = await postHttp(baseUrl, "/v1/execution/context/assemble", {
+      tenant_id: "default",
+      scope: "default",
+      context_mode: "full_power",
+      include_memory_evidence: true,
+      memory_filters: [
+        {
+          slots_contains: { task_signature: "runtime-http-full-power-outcome" },
+          limit: 10,
+        },
+      ],
+    });
+    assert.match(JSON.stringify(outcomeContext.passed_solutions), /RUNTIME_HTTP_FULL_POWER_OUTCOME/);
+    assert.equal(asRecord(outcomeContext.selection_trace)?.evidence_backed_passed_solution_count, 1);
+    assert.ok((asRecord(outcomeContext.selection_trace)?.raw_evidence_count as number) >= 1);
+
+    const recoveredAfterOutcome = await postHttp(baseUrl, "/v1/handoff/recover", {
+      tenant_id: "default",
+      scope: "default",
+      consumer_agent_id: "local-user",
+      handoff_kind: "patch_handoff",
+      anchor: handoffPayload.anchor,
+      repo_root: handoffPayload.repo_root,
+      file_path: handoffPayload.file_path,
+    });
+    const finalTree = asRecord(recoveredAfterOutcome.execution_tree_v1);
+    assert.equal(finalTree?.tree_id, expectedTree.tree_id);
+    assert.equal(finalTree?.current_summary_node_id, expectedTree.current_summary_node_id);
+    assert.match(JSON.stringify(finalTree), /RUNTIME_E2E_FAILED validation rejected formula A/);
+    assert.match(JSON.stringify(finalTree), /RUNTIME_E2E_PASSED formula B computes subtotal/);
   } finally {
     await app.close();
     await liteWriteStore.close();
