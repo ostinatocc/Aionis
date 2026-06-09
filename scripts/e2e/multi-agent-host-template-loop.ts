@@ -78,6 +78,7 @@ async function runMultiAgentHostTemplateLoop(args: {
   });
   const beforeContext = agentContext(beforeGuide.agent_context, "before host reviewer guide");
   assertPromptBoundary(String(beforeContext.prompt_text), "before host reviewer guide");
+  assertCondition(beforeContext.actionable_history_used === false, "before host reviewer guide should not expose actionable history");
 
   const plannerObserve = await host.plannerStart<Record<string, unknown>>({
     run_id: `run:${args.runId}:planner`,
@@ -232,6 +233,7 @@ async function runMultiAgentHostTemplateLoop(args: {
   assertCondition(String(reviewerContext.prompt_text).includes("state: role=reviewer"), "host reviewer guide prompt did not include role state");
   assertCondition(String(reviewerContext.prompt_text).includes("role_focus: review branch status"), "host reviewer guide prompt did not include reviewer focus");
   assertCondition(reviewerContext.history_used === true, "host reviewer guide did not use multi-agent history");
+  assertCondition(reviewerContext.actionable_history_used === true, "host reviewer guide did not expose actionable multi-agent history");
   assertCondition(
     textArray(reviewerContext.use_now).some((entry) => entry.includes(PASSED_MARKER))
       || String(reviewerContext.prompt_text).includes(PASSED_MARKER),
@@ -374,6 +376,7 @@ async function runMultiAgentHostTemplateLoop(args: {
     "host operator snapshot did not return snapshot v1",
   );
   assertCondition(operatorSnapshot.runtime_mutation === false, "host operator snapshot must be read-only");
+  assertCondition(operatorExecutionState.actionable_history_used === true, "host operator snapshot did not expose actionable history state");
   assertCondition(operatorBranchIsolation.status === "pass", "host operator snapshot did not prove branch isolation");
   assertCondition(
     operatorBranchIsolation.failed_branch_leaked_to_use_now === false,
@@ -395,7 +398,9 @@ async function runMultiAgentHostTemplateLoop(args: {
 
   return {
     before_history_used: beforeContext.history_used,
+    before_actionable_history_used: beforeContext.actionable_history_used,
     reviewer_history_used: reviewerContext.history_used,
+    reviewer_actionable_history_used: reviewerContext.actionable_history_used,
     reviewer_use_now_count: textArray(reviewerContext.use_now).length,
     reviewer_use_now_memory_ids: usedMemoryIds,
     planner_memory_id: plannerMemoryId,
@@ -409,6 +414,7 @@ async function runMultiAgentHostTemplateLoop(args: {
     measure_history_impact: historyImpact.impact_direction,
     feedback_summary_present: feedbackSummary.present,
     operator_snapshot_branch_isolation: operatorBranchIsolation.status,
+    operator_snapshot_actionable_history_used: operatorExecutionState.actionable_history_used,
     operator_snapshot_feedback_attribution_present: operatorGuideTrace.feedback_attribution_present,
     operator_snapshot_effect_impact: operatorEffect.impact_direction,
     host_template_flow_used: true,

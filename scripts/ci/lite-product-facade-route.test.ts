@@ -927,6 +927,49 @@ test("product observe turns plain input_text into recallable general memory", as
   }
 });
 
+test("fresh single-agent guide distinguishes channel history from actionable history", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("fresh-single-agent-actionable-history");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const guide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "fresh-single-agent-actionable-history",
+        query_text: "Start a fresh single-agent task with no prior memory.",
+        agent_role: "agent",
+        consumer_agent_id: "fresh-agent",
+        mode: "full_power",
+        include_packets: true,
+      },
+    });
+
+    assert.equal(guide.statusCode, 200);
+    const body = guide.json();
+    assert.equal(body.guide_packet.guide_brief.history_used, false);
+    assert.equal(body.guide_packet.guide_brief.actionable_history_used, false);
+    assert.equal(body.guide_packet.guide_brief.recommended_posture, "ignore_history");
+    assert.equal(body.guide_packet.guide_brief.authority, "none");
+    assert.equal(body.agent_context.history_used, true);
+    assert.equal(body.agent_context.actionable_history_used, false);
+    assert.equal(body.agent_context.recommended_posture, "ignore_history");
+    assert.equal(body.agent_context.authority, "none");
+    assert.deepEqual(body.agent_context.use_now_memory_ids, []);
+    assert.deepEqual(body.agent_context.inspect_before_use_memory_ids, []);
+    assert.deepEqual(body.agent_context.do_not_use_memory_ids, []);
+    assert.equal(body.agent_context.prompt_text.includes("actionable_history=no"), true);
+  } finally {
+    await app.close();
+  }
+});
+
 test("product observe persists lifecycle relation graph and guide suppresses superseded memory", async () => {
   const app = Fastify();
   const env = liteEnv();
@@ -1229,6 +1272,7 @@ test("product observe turns execution input into recallable execution memory", a
     assertExactKeys(guideBody.guide_packet.guide_brief, [
       "summary",
       "history_used",
+      "actionable_history_used",
       "recommended_posture",
       "authority",
       "use_now",
@@ -1251,6 +1295,7 @@ test("product observe turns execution input into recallable execution memory", a
       "prompt_text",
       "summary",
       "history_used",
+      "actionable_history_used",
       "recommended_posture",
       "authority",
       "target_files",
@@ -1270,6 +1315,7 @@ test("product observe turns execution input into recallable execution memory", a
     assert.equal(typeof guideBody.guide_trace_id, "string");
     assert.ok(guideBody.guide_trace_id.startsWith("guide_trace:"));
     assert.equal(guideBody.agent_context.history_used, true);
+    assert.equal(guideBody.agent_context.actionable_history_used, true);
     assert.ok(guideBody.agent_context.prompt_text.includes("AIONIS_AGENT_CONTEXT v1"));
     assert.ok(guideBody.agent_context.prompt_text.includes("state: role=reviewer"));
     assert.ok(guideBody.agent_context.prompt_text.includes("role_focus: review branch status"));
@@ -1280,6 +1326,7 @@ test("product observe turns execution input into recallable execution memory", a
     }).length);
     assert.equal(guideBody.memory_packet.memory_family, "execution");
     assert.equal(guideBody.guide_packet.guide_brief.history_used, true);
+    assert.equal(guideBody.guide_packet.guide_brief.actionable_history_used, true);
     assert.ok(
       ["reuse_supported_history", "use_as_context", "inspect_before_use", "rehydrate_before_use"].includes(
         guideBody.guide_packet.guide_brief.recommended_posture,

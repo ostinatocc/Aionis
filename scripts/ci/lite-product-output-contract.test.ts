@@ -28,6 +28,7 @@ function validGuidePacket() {
     guide_brief: {
       summary: "Relevant history exists, but authority, stale-memory, or contradiction risk requires inspection before reuse.",
       history_used: true,
+      actionable_history_used: true,
       recommended_posture: "inspect_before_use",
       authority: "advisory",
       use_now: [
@@ -234,9 +235,10 @@ function validAgentContext() {
     tenant_id: "tenant-local",
     scope: "repo-a",
     agent_role: "reviewer",
-    prompt_text: "AIONIS_AGENT_CONTEXT v1\nstate: role=reviewer history=yes posture=inspect_before_use authority=advisory risk=medium\nrole_focus: review branch status, continue the active passed path, and keep failed branches as counter-evidence\nsummary: Use recovered execution context.",
+    prompt_text: "AIONIS_AGENT_CONTEXT v1\nstate: role=reviewer history=yes actionable_history=yes posture=inspect_before_use authority=advisory risk=medium\nrole_focus: review branch status, continue the active passed path, and keep failed branches as counter-evidence\nsummary: Use recovered execution context.",
     summary: "Use recovered execution context.",
     history_used: true,
+    actionable_history_used: true,
     recommended_posture: "inspect_before_use",
     authority: "advisory",
     target_files: ["src/index.ts"],
@@ -447,6 +449,7 @@ function validMemoryDecisionTrace() {
       unattributed_recalled_memory_count: 2,
       prompt_char_count: 81,
       history_used: true,
+      actionable_history_used: true,
       recommended_posture: "inspect_before_use",
       authority: "advisory",
       negative_transfer_risk: "medium",
@@ -533,6 +536,7 @@ function validMemoryDecisionTrace() {
       inspect_before_use_count: 1,
       do_not_use_count: 1,
       rehydrate_hint_count: 1,
+      actionable_history_used: true,
       memory_ids: ["mem-1", "mem-3"],
     },
     forget_decisions: [],
@@ -690,6 +694,7 @@ test("AionisAgentContext accepts compact agent-facing output", () => {
   const parsed = AionisAgentContextSchema.parse(validAgentContext());
   assert.equal(parsed.contract_version, "aionis_agent_context_v1");
   assert.equal(parsed.history_used, true);
+  assert.equal(parsed.actionable_history_used, true);
   assert.equal(parsed.agent_role, "reviewer");
   assert.equal(parsed.authority, "advisory");
   assert.deepEqual(parsed.target_files, ["src/index.ts"]);

@@ -45,6 +45,7 @@ function agentContext() {
     ].join("\n"),
     summary: "Reviewer should continue the passed branch and avoid the failed branch.",
     history_used: true,
+    actionable_history_used: true,
     recommended_posture: "reuse_supported_history",
     authority: "advisory",
     target_files: ["src/current-target.ts"],
@@ -147,6 +148,7 @@ test("operator snapshot route reports branch isolation and markdown without muta
   assert.equal(body.operator_snapshot.runtime_mutation, false);
   assert.equal(body.operator_snapshot.task.agent_role, "reviewer");
   assert.equal(body.operator_snapshot.execution_state.branch_isolation.status, "pass");
+  assert.equal(body.operator_snapshot.execution_state.actionable_history_used, true);
   assert.equal(body.operator_snapshot.execution_state.branch_isolation.failed_branch_leaked_to_use_now, false);
   assert.equal(body.operator_snapshot.execution_state.failed_branches.count, 1);
   assert.equal(body.operator_snapshot.memory_lifecycle.consolidation_guard.promotion_blocked_count, 1);

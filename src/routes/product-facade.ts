@@ -506,6 +506,7 @@ type ProductGuideExposureLedger = {
   rehydrate_memory_ids: string[];
   prompt_char_count: number;
   history_used: boolean;
+  actionable_history_used: boolean;
   recommended_posture: AionisAgentContext["recommended_posture"];
   authority: AionisAgentContext["authority"];
 };
@@ -633,7 +634,7 @@ function conservativeAuthority(
   executionHistoryUsed: boolean,
   executionAuthority: AionisAgentContext["authority"],
 ): AionisAgentContext["authority"] {
-  if (!base.history_used) return executionAuthority;
+  if (!base.actionable_history_used) return executionAuthority;
   if (!executionHistoryUsed) return base.authority;
   return authorityRank(base.authority) <= authorityRank(executionAuthority) ? base.authority : executionAuthority;
 }
@@ -653,7 +654,7 @@ function renderMergedAgentPrompt(args: {
   const lines: string[] = [];
   const ctx = args.context;
   lines.push("AIONIS_AGENT_CONTEXT v1");
-  lines.push(`state: role=${ctx.agent_role} history_used=${ctx.history_used} posture=${ctx.recommended_posture} authority=${ctx.authority} risk=${ctx.risk.negative_transfer_risk}`);
+  lines.push(`state: role=${ctx.agent_role} history_used=${ctx.history_used} actionable_history_used=${ctx.actionable_history_used} posture=${ctx.recommended_posture} authority=${ctx.authority} risk=${ctx.risk.negative_transfer_risk}`);
   if (ctx.agent_role === "planner") lines.push("role_focus: plan from reusable state and isolate uncertain history");
   else if (ctx.agent_role === "worker") lines.push("role_focus: execute the active path and avoid failed branches");
   else if (ctx.agent_role === "verifier") lines.push("role_focus: verify current work against remembered evidence and counter-evidence");
@@ -730,7 +731,8 @@ function mergeProductGuideAgentContexts(args: {
     ...execution.rehydrate_hints.filter((hint) => knownMemoryIds.has(hint.memory_id)),
   ].slice(0, 6);
   const historyUsed = args.base.history_used || execution.history_used;
-  const recommendedPosture: AionisAgentContext["recommended_posture"] = !historyUsed
+  const actionableHistoryUsed = args.base.actionable_history_used || execution.actionable_history_used;
+  const recommendedPosture: AionisAgentContext["recommended_posture"] = !actionableHistoryUsed
     ? "ignore_history"
     : (executionInspectBeforeUse.length > 0 || executionDoNotUse.length > 0)
       ? "inspect_before_use"
@@ -769,6 +771,7 @@ function mergeProductGuideAgentContexts(args: {
     prompt_text: args.base.prompt_text,
     summary,
     history_used: historyUsed,
+    actionable_history_used: actionableHistoryUsed,
     recommended_posture: recommendedPosture,
     authority,
     target_files: targetFiles,
@@ -835,6 +838,7 @@ function buildGuideExposureLedger(args: {
     rehydrate_memory_ids: args.agentContext.rehydrate_hints.map((hint) => hint.memory_id),
     prompt_char_count: args.agentContext.prompt_text.length,
     history_used: args.agentContext.history_used,
+    actionable_history_used: args.agentContext.actionable_history_used,
     recommended_posture: args.agentContext.recommended_posture,
     authority: args.agentContext.authority,
   };
@@ -884,6 +888,7 @@ function parseGuideExposureLedger(value: unknown): ProductGuideExposureLedger | 
     rehydrate_memory_ids: stringArrayField(record.rehydrate_memory_ids),
     prompt_char_count: Math.max(0, Math.trunc(Number(record.prompt_char_count) || 0)),
     history_used: record.history_used === true,
+    actionable_history_used: record.actionable_history_used === true,
     recommended_posture: recommendedPosture,
     authority,
   };
@@ -1650,9 +1655,11 @@ function productMeasureRepeatedDiscovery(snapshot: ProductMeasureGuideSnapshot, 
   if (explicit !== null) return explicit;
   const guidePacket = snapshot.guide_packet ?? null;
   const memoryPacket = snapshot.memory_packet ?? null;
-  const historyUsed = guidePacket?.guide_brief.history_used === true;
+  const actionableHistoryUsed =
+    snapshot.agent_context?.actionable_history_used === true
+    || guidePacket?.guide_brief.actionable_history_used === true;
   const reducesDiscovery = guidePacket?.guide_brief.expected_product_effects.reduces_repeated_discovery === true;
-  if (historyUsed && reducesDiscovery) return 0;
+  if (actionableHistoryUsed && reducesDiscovery) return 0;
   const actionableHistory =
     (memoryPacket?.relevant_memories.length ?? 0) > 0
     || (guidePacket?.guidance.workflow_candidates.length ?? 0) > 0

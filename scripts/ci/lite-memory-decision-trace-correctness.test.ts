@@ -255,6 +255,7 @@ test("memory decision trace summary and context fields are derived from the emit
   const { agentContext, trace } = buildTraceFixture();
   assertTraceSummaryMatchesDecisions(trace, agentContext);
   assert.equal(trace.summary.history_used, agentContext.history_used);
+  assert.equal(trace.summary.actionable_history_used, agentContext.actionable_history_used);
   assert.equal(trace.summary.recommended_posture, agentContext.recommended_posture);
   assert.equal(trace.summary.authority, agentContext.authority);
   assert.equal(trace.summary.negative_transfer_risk, agentContext.risk.negative_transfer_risk);

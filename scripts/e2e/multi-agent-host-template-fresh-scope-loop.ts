@@ -88,6 +88,7 @@ async function runFreshScopeNegativeLoop(args: {
   });
   const beforeContext = agentContext(beforeGuide.agent_context, "fresh before reviewer guide");
   assertPromptBoundary(String(beforeContext.prompt_text), "fresh before reviewer guide");
+  assertCondition(beforeContext.actionable_history_used === false, "fresh before guide should not expose actionable history");
   assertCondition(beforeGuide.state.last_use_now_memory_ids.length === 0, "fresh before guide exposed use_now memory ids");
   assertCondition(
     !textIncludesAny(beforeContext.use_now, [PASSED_MARKER, FAILED_MARKER, ORDINARY_MEMORY_MARKER]),
@@ -129,6 +130,7 @@ async function runFreshScopeNegativeLoop(args: {
   });
   const noTreeExecutionContext = agentContext(noTreeExecutionAssemble.agent_context, "fresh no-tree execution context");
   assertPromptBoundary(String(noTreeExecutionContext.prompt_text), "fresh no-tree execution context");
+  assertCondition(noTreeExecutionContext.actionable_history_used === false, "fresh no-tree execution context should not be actionable");
   assertCondition(
     !textIncludesAny(noTreeExecutionContext.use_now, [ORDINARY_MEMORY_MARKER, PASSED_MARKER, FAILED_MARKER]),
     "ordinary memory polluted execution use_now before an execution tree existed",
@@ -236,6 +238,7 @@ async function runFreshScopeNegativeLoop(args: {
   const afterContext = agentContext(afterGuide.agent_context, "fresh after reviewer guide");
   assertPromptBoundary(String(afterContext.prompt_text), "fresh after reviewer guide");
   assertCondition(afterContext.history_used === true, "fresh after guide did not use execution history after writes");
+  assertCondition(afterContext.actionable_history_used === true, "fresh after guide did not expose actionable execution history after writes");
   assertCondition(
     textIncludesAny(afterContext.use_now, [PASSED_MARKER]) || String(afterContext.prompt_text ?? "").includes(PASSED_MARKER),
     "fresh after guide did not surface passed branch after writes",
@@ -260,6 +263,7 @@ async function runFreshScopeNegativeLoop(args: {
   });
   const treeExecutionContext = agentContext(treeExecutionAssemble.agent_context, "fresh tree execution context");
   assertPromptBoundary(String(treeExecutionContext.prompt_text), "fresh tree execution context");
+  assertCondition(treeExecutionContext.actionable_history_used === true, "fresh tree execution context should expose actionable branch history");
   const executionUseNow = textArray(treeExecutionContext.use_now).join("\n");
   const executionDoNotUse = textArray(treeExecutionContext.do_not_use).join("\n");
   assertCondition(executionUseNow.includes(PASSED_MARKER), "fresh execution context missing passed branch after writes");
@@ -269,14 +273,18 @@ async function runFreshScopeNegativeLoop(args: {
 
   return {
     before_history_used: beforeContext.history_used,
+    before_actionable_history_used: beforeContext.actionable_history_used,
     before_use_now_count: textArray(beforeContext.use_now).length,
     before_use_now_memory_ids: beforeGuide.state.last_use_now_memory_ids,
     ordinary_memory_id: ordinaryMemoryId,
     no_tree_execution_use_now_count: textArray(noTreeExecutionContext.use_now).length,
+    no_tree_execution_actionable_history_used: noTreeExecutionContext.actionable_history_used,
     no_tree_execution_do_not_use_count: textArray(noTreeExecutionContext.do_not_use).length,
     after_history_used: afterContext.history_used,
+    after_actionable_history_used: afterContext.actionable_history_used,
     after_use_now_count: textArray(afterContext.use_now).length,
     tree_execution_use_now_count: textArray(treeExecutionContext.use_now).length,
+    tree_execution_actionable_history_used: treeExecutionContext.actionable_history_used,
     tree_execution_do_not_use_count: textArray(treeExecutionContext.do_not_use).length,
     ordinary_memory_polluted_execution_context: false,
     fresh_scope_negative_flow_used: true,
@@ -318,6 +326,7 @@ async function main() {
       fresh_scope_negative_loop: freshScopeNegativeLoop,
       checks: {
         fresh_before_guide_has_no_actionable_use_now: true,
+        fresh_before_guide_has_no_actionable_history: true,
         ordinary_memory_does_not_create_execution_context: true,
         reviewer_sees_execution_branch_only_after_writes: true,
         passed_branch_visible_after_writes: true,

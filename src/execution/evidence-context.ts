@@ -1042,6 +1042,7 @@ function gatedAbstractionBlockedLine(entry: GatedAbstractionEntry): string {
 function buildExecutionAgentPrompt(args: {
   summary: string;
   historyUsed: boolean;
+  actionableHistoryUsed: boolean;
   recommendedPosture: AionisAgentContext["recommended_posture"];
   authority: AionisAgentContext["authority"];
   negativeTransferRisk: AionisAgentContext["risk"]["negative_transfer_risk"];
@@ -1071,7 +1072,7 @@ function buildExecutionAgentPrompt(args: {
     };
     return uniqueStrings([
       "AIONIS_AGENT_CONTEXT v1",
-      `state: history=${args.historyUsed ? "yes" : "no"} posture=${args.recommendedPosture} authority=${args.authority} risk=${args.negativeTransferRisk}`,
+      `state: history=${args.historyUsed ? "yes" : "no"} actionable_history=${args.actionableHistoryUsed ? "yes" : "no"} posture=${args.recommendedPosture} authority=${args.authority} risk=${args.negativeTransferRisk}`,
       `summary: ${truncate(args.summary, profile.summaryChars)}`,
       inline("use_now", args.useNow, profile.useNowItems, profile.useNowChars),
       inline("inspect_before_use", args.inspectBeforeUse, profile.inspectItems, profile.inspectChars),
@@ -1172,6 +1173,7 @@ function buildExecutionAgentContext(args: {
     required: false,
   }));
   const historyUsed = useNow.length > 0 || inspectBeforeUse.length > 0 || doNotUse.length > 0 || rehydrateHints.length > 0;
+  const actionableHistoryUsed = historyUsed;
   const negativeTransferRisk: AionisAgentContext["risk"]["negative_transfer_risk"] =
     blockedAbstractionCount > 0
       ? "high"
@@ -1202,6 +1204,7 @@ function buildExecutionAgentContext(args: {
   const promptText = buildExecutionAgentPrompt({
     summary,
     historyUsed,
+    actionableHistoryUsed,
     recommendedPosture,
     authority,
     negativeTransferRisk,
@@ -1220,6 +1223,7 @@ function buildExecutionAgentContext(args: {
     prompt_text: promptText,
     summary,
     history_used: historyUsed,
+    actionable_history_used: actionableHistoryUsed,
     recommended_posture: recommendedPosture,
     authority,
     target_files: [],

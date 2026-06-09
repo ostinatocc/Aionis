@@ -861,12 +861,12 @@ function buildGuideHistoryContributions(
 }
 
 function guideBriefAuthority(args: {
-  historyUsed: boolean;
+  actionableHistoryUsed: boolean;
   workflowCandidates: AionisGuidePacket["guidance"]["workflow_candidates"];
   toolPreferences: AionisGuidePacket["guidance"]["tool_preferences"];
   blockedAuthorityCount: number;
 }): GuideAuthority {
-  if (!args.historyUsed) return "none";
+  if (!args.actionableHistoryUsed) return "none";
   const authorities = [
     ...args.workflowCandidates.map((entry) => entry.authority),
     ...args.toolPreferences.map((entry) => entry.authority),
@@ -879,13 +879,13 @@ function guideBriefAuthority(args: {
 }
 
 function guideBriefPosture(args: {
-  historyUsed: boolean;
+  actionableHistoryUsed: boolean;
   requiredRehydrationCount: number;
   negativeTransferRisk: AionisGuidePacket["risk"]["negative_transfer_risk"];
   blockedAuthorityCount: number;
   authority: GuideAuthority;
 }): AionisGuidePacket["guide_brief"]["recommended_posture"] {
-  if (!args.historyUsed) return "ignore_history";
+  if (!args.actionableHistoryUsed) return "ignore_history";
   if (args.requiredRehydrationCount > 0) return "rehydrate_before_use";
   if (args.negativeTransferRisk === "high" || args.blockedAuthorityCount > 0) return "inspect_before_use";
   if (args.authority === "trusted" || args.authority === "advisory") return "reuse_supported_history";
@@ -958,16 +958,26 @@ function buildAionisGuideBrief(args: {
     || args.workflowCandidates.length > 0
     || args.toolPreferences.length > 0
     || args.targetFiles.length > 0;
+  const actionableHistoryUsed =
+    args.resumable
+    || args.historyContributions.handoff.used
+    || args.historyContributions.replay.used
+    || trustedOrAdvisoryWorkflows.length > 0
+    || trustedOrAdvisoryTools.length > 0
+    || candidateSurfaces.length > 0
+    || blockedSurfaces.length > 0
+    || args.memoryLifecycle.rehydration_hints.length > 0
+    || args.targetFiles.length > 0;
   const requiredRehydrationCount = args.memoryLifecycle.rehydration_hints
     .filter((entry) => entry.required).length;
   const authority = guideBriefAuthority({
-    historyUsed,
+    actionableHistoryUsed,
     workflowCandidates: args.workflowCandidates,
     toolPreferences: args.toolPreferences,
     blockedAuthorityCount: args.blockedAuthorityCount,
   });
   const posture = guideBriefPosture({
-    historyUsed,
+    actionableHistoryUsed,
     requiredRehydrationCount,
     negativeTransferRisk: args.negativeTransferRisk,
     blockedAuthorityCount: args.blockedAuthorityCount,
@@ -990,6 +1000,7 @@ function buildAionisGuideBrief(args: {
   return {
     summary: guideBriefSummary({ posture, authority }),
     history_used: historyUsed,
+    actionable_history_used: actionableHistoryUsed,
     recommended_posture: posture,
     authority,
     use_now: compactStrings([
@@ -1155,6 +1166,7 @@ function renderAgentContextPrompt(args: {
   agentRole: AionisAgentRole;
   summary: string;
   historyUsed: boolean;
+  actionableHistoryUsed: boolean;
   recommendedPosture: AionisAgentContext["recommended_posture"];
   authority: AionisAgentContext["authority"];
   negativeTransferRisk: AionisAgentContext["risk"]["negative_transfer_risk"];
@@ -1175,7 +1187,7 @@ function renderAgentContextPrompt(args: {
   };
   const sections = compactStrings([
     `AIONIS_AGENT_CONTEXT v1`,
-    `state: role=${args.agentRole} history=${args.historyUsed ? "yes" : "no"} posture=${args.recommendedPosture} authority=${args.authority} risk=${args.negativeTransferRisk}`,
+    `state: role=${args.agentRole} history=${args.historyUsed ? "yes" : "no"} actionable_history=${args.actionableHistoryUsed ? "yes" : "no"} posture=${args.recommendedPosture} authority=${args.authority} risk=${args.negativeTransferRisk}`,
     agentRoleFocusLine(args.agentRole),
     `summary: ${shortenPromptText(args.summary, args.profile.summaryChars)}`,
     inline("target_files", args.targetFiles, args.profile.targetFileItems, args.profile.targetFileChars),
@@ -1199,6 +1211,7 @@ function buildAgentContextPrompt(args: {
   agentRole: AionisAgentRole;
   summary: string;
   historyUsed: boolean;
+  actionableHistoryUsed: boolean;
   recommendedPosture: AionisAgentContext["recommended_posture"];
   authority: AionisAgentContext["authority"];
   negativeTransferRisk: AionisAgentContext["risk"]["negative_transfer_risk"];
@@ -1469,12 +1482,14 @@ function compileAgentContextSurfaces(args: {
   rawTargetFiles: string[];
   memoryEntries: MemoryPacketEntry[];
   rawHistoryUsed: boolean;
+  rawActionableHistoryUsed: boolean;
   rawRecommendedPosture: AionisAgentContext["recommended_posture"];
   rawAuthority: AionisAgentContext["authority"];
   rawRisk: AionisAgentContext["risk"];
   rehydrateHints: AionisAgentContext["rehydrate_hints"];
 }): {
   historyUsed: boolean;
+  actionableHistoryUsed: boolean;
   recommendedPosture: AionisAgentContext["recommended_posture"];
   authority: AionisAgentContext["authority"];
   targetFiles: string[];
@@ -1580,12 +1595,19 @@ function compileAgentContextSurfaces(args: {
     || blockedEntries.length > 0
     || hasRawGuideSurface
   );
+  const actionableHistoryUsed =
+    args.rawActionableHistoryUsed
+    || directUseMemoryEntries.length > 0
+    || conflictInspectMemoryEntries.length > 0
+    || inspectEntries.length > 0
+    || blockedEntries.length > 0
+    || args.rehydrateHints.length > 0;
   let negativeTransferRisk = args.rawRisk.negative_transfer_risk;
   if (blockedEntries.length > 0) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "high");
   else if (inspectEntries.length > 0) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "medium");
   if (trustedConflict.hasConflict) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "medium");
 
-  const recommendedPosture: AionisAgentContext["recommended_posture"] = !historyUsed
+  const recommendedPosture: AionisAgentContext["recommended_posture"] = !actionableHistoryUsed
     ? "ignore_history"
     : hasRiskSurface
       ? "inspect_before_use"
@@ -1603,7 +1625,7 @@ function compileAgentContextSurfaces(args: {
       ? "advisory"
       : args.rawAuthority;
 
-  const authority: AionisAgentContext["authority"] = !historyUsed
+  const authority: AionisAgentContext["authority"] = !actionableHistoryUsed
     ? "none"
     : trustedConflict.hasConflict && hasUsableMemory
       ? "advisory"
@@ -1617,6 +1639,7 @@ function compileAgentContextSurfaces(args: {
 
   return {
     historyUsed,
+    actionableHistoryUsed,
     recommendedPosture,
     authority,
     targetFiles,
@@ -1654,6 +1677,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
   const guideBrief = guide?.guide_brief ?? null;
   const memoryEntryCount = memory?.relevant_memories.length ?? 0;
   const rawHistoryUsed = guideBrief?.history_used === true || memoryEntryCount > 0;
+  const rawActionableHistoryUsed = guideBrief?.actionable_history_used === true;
   const rawTargetFiles = compactStrings([
     ...(guide?.recovered_state.target_files ?? []),
   ]).slice(0, 8);
@@ -1700,6 +1724,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     rawTargetFiles,
     memoryEntries: memory?.relevant_memories ?? [],
     rawHistoryUsed,
+    rawActionableHistoryUsed,
     rawRecommendedPosture,
     rawAuthority,
     rawRisk: risk,
@@ -1712,6 +1737,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     agentRole,
     summary,
     historyUsed: surfaces.historyUsed,
+    actionableHistoryUsed: surfaces.actionableHistoryUsed,
     recommendedPosture: surfaces.recommendedPosture,
     authority: surfaces.authority,
     negativeTransferRisk: surfaces.risk.negative_transfer_risk,
@@ -1733,6 +1759,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     prompt_text: promptText,
     summary,
     history_used: surfaces.historyUsed,
+    actionable_history_used: surfaces.actionableHistoryUsed,
     recommended_posture: surfaces.recommendedPosture,
     authority: surfaces.authority,
     target_files: surfaces.targetFiles,
@@ -1805,6 +1832,7 @@ export function applyAionisInspectBeforeUseActiveProjection(
     agentRole: args.agent_context.agent_role,
     summary: args.agent_context.summary,
     historyUsed: args.agent_context.history_used,
+    actionableHistoryUsed: args.agent_context.actionable_history_used,
     recommendedPosture,
     authority,
     negativeTransferRisk: risk.negative_transfer_risk,
@@ -2966,6 +2994,11 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
     confidenceDecayCandidateSummary,
     memoryDecisions,
   });
+  const directUseCount = memoryDecisions.filter((entry) => entry.agent_surface === "use_now").length;
+  const inspectCount = memoryDecisions.filter((entry) => entry.agent_surface === "inspect_before_use").length;
+  const doNotUseCount = memoryDecisions.filter((entry) => entry.agent_surface === "do_not_use").length;
+  const rehydrateCount = memoryDecisions.filter((entry) => entry.agent_surface === "rehydrate").length;
+  const fallbackActionableHistoryUsed = directUseCount > 0 || inspectCount > 0 || doNotUseCount > 0 || rehydrateCount > 0;
   const contextDecision = {
     prompt_char_count: agentContext?.prompt_text.length ?? 0,
     target_files: agentContext?.target_files ?? [],
@@ -2973,15 +3006,16 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
     inspect_before_use_count: agentContext?.inspect_before_use.length ?? guide?.guide_brief.inspect_before_use.length ?? 0,
     do_not_use_count: agentContext?.do_not_use.length ?? guide?.guide_brief.do_not_use.length ?? 0,
     rehydrate_hint_count: agentContext?.rehydrate_hints.length ?? guide?.guide_brief.rehydrate.length ?? 0,
+    actionable_history_used: agentContext?.actionable_history_used ?? guide?.guide_brief.actionable_history_used ?? fallbackActionableHistoryUsed,
     memory_ids: agentContext?.memory_ids ?? guide?.memory_lifecycle.used_memory_ids ?? [],
   };
-  const directUseCount = memoryDecisions.filter((entry) => entry.agent_surface === "use_now").length;
-  const inspectCount = memoryDecisions.filter((entry) => entry.agent_surface === "inspect_before_use").length;
-  const doNotUseCount = memoryDecisions.filter((entry) => entry.agent_surface === "do_not_use").length;
-  const rehydrateCount = memoryDecisions.filter((entry) => entry.agent_surface === "rehydrate").length;
   const feedbackAttributionCount = feedbackAttribution.attributed_memory_ids.length;
   const feedbackThresholdMetCount = feedbackAttribution.threshold_met_memory_ids.length;
   const historyUsed = agentContext?.history_used ?? guide?.guide_brief.history_used ?? memoryDecisions.length > 0;
+  const actionableHistoryUsed =
+    (agentContext?.actionable_history_used
+      ?? guide?.guide_brief.actionable_history_used
+      ?? fallbackActionableHistoryUsed);
   const recommendedPosture =
     agentContext?.recommended_posture
     ?? guide?.guide_brief.recommended_posture
@@ -3036,6 +3070,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
       unattributed_recalled_memory_count: feedbackAttribution.unattributed_recalled_memory_ids.length,
       prompt_char_count: contextDecision.prompt_char_count,
       history_used: historyUsed,
+      actionable_history_used: actionableHistoryUsed,
       recommended_posture: recommendedPosture,
       authority,
       negative_transfer_risk: negativeTransferRisk,

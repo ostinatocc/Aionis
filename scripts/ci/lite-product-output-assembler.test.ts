@@ -430,6 +430,7 @@ test("product agent context assembler compacts GuidePacket for direct Agent use"
 
   assert.equal(context.contract_version, "aionis_agent_context_v1");
   assert.equal(context.history_used, true);
+  assert.equal(context.actionable_history_used, true);
   assert.equal(context.recommended_posture, "rehydrate_before_use");
   assert.equal(context.authority, "trusted");
   assert.deepEqual(context.target_files, ["src/runtime.ts"]);
@@ -490,6 +491,7 @@ test("product agent context assembler enforces explicit prompt character budget"
   assert.ok(fullContext.prompt_text.length > 420);
   assert.ok(budgetedContext.prompt_text.length <= 420);
   assert.equal(budgetedContext.history_used, true);
+  assert.equal(budgetedContext.actionable_history_used, true);
   assert.ok(budgetedContext.memory_ids.includes("mem-budget-0"));
   assert.ok(budgetedContext.use_now_memory_ids.length > 0);
 });
@@ -518,6 +520,7 @@ test("product agent context preserves guide-only recovered target files", () => 
   });
 
   assert.equal(context.history_used, true);
+  assert.equal(context.actionable_history_used, true);
   assert.deepEqual(context.target_files, ["src/runtime.ts"]);
   assert.ok(context.prompt_text.includes("target_files: src/runtime.ts"));
   assert.ok(context.memory_ids.includes("wf-stable-1"));

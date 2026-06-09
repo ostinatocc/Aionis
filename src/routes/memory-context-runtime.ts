@@ -342,6 +342,7 @@ function augmentGuidePacketWithExecutionEvidence(
     guide_brief: {
       ...guide.guide_brief,
       history_used: true,
+      actionable_history_used: true,
       recommended_posture: guidePostureWithExecutionEvidence(guide.guide_brief.recommended_posture, surfaces),
       authority: guideAuthorityWithExecutionEvidence(guide.guide_brief.authority, surfaces),
       use_now: compactRouteStrings([

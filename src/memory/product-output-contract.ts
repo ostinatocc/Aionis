@@ -260,6 +260,7 @@ export const AionisGuidePacketSchema = z
       .object({
         summary: z.string().min(1),
         history_used: z.boolean(),
+        actionable_history_used: z.boolean().default(false),
         recommended_posture: z.enum([
           "reuse_supported_history",
           "use_as_context",
@@ -397,6 +398,7 @@ export const AionisAgentContextSchema = z
     prompt_text: z.string().min(1),
     summary: z.string().min(1),
     history_used: z.boolean(),
+    actionable_history_used: z.boolean().default(false),
     recommended_posture: z.enum([
       "reuse_supported_history",
       "use_as_context",
@@ -758,6 +760,7 @@ export const AionisMemoryDecisionTraceSchema = z
         unattributed_recalled_memory_count: z.number().int().nonnegative(),
         prompt_char_count: z.number().int().nonnegative(),
         history_used: z.boolean(),
+        actionable_history_used: z.boolean().default(false),
         recommended_posture: z.enum([
           "reuse_supported_history",
           "use_as_context",
@@ -1000,6 +1003,7 @@ export const AionisMemoryDecisionTraceSchema = z
         inspect_before_use_count: z.number().int().nonnegative(),
         do_not_use_count: z.number().int().nonnegative(),
         rehydrate_hint_count: z.number().int().nonnegative(),
+        actionable_history_used: z.boolean().default(false),
         memory_ids: z.array(z.string().min(1)).default([]),
       })
       .strict(),
@@ -1552,6 +1556,7 @@ export const AionisOperatorSnapshotSchema = z
     execution_state: z
       .object({
         history_used: z.boolean(),
+        actionable_history_used: z.boolean().default(false),
         recommended_posture: z.enum([
           "reuse_supported_history",
           "use_as_context",

@@ -93,6 +93,12 @@ The agent context is the default product-facing output for `POST /v1/guide`. It 
 
 The route field name is `agent_context`.
 
+`history_used` means the Aionis history/context channel participated in the
+guide assembly. `actionable_history_used` is stricter: it is true only when the
+Agent received memory-backed guidance, rehydration hints, or execution-state
+branches that can affect the next action. Fresh scopes can therefore have
+`history_used: true` while keeping `actionable_history_used: false`.
+
 ```ts
 type AionisAgentContext = {
   contract_version: "aionis_agent_context_v1";
@@ -102,6 +108,8 @@ type AionisAgentContext = {
   prompt_text: string;
   summary: string;
   history_used: boolean;
+  // true only when recovered memory or execution state can affect the Agent's next action
+  actionable_history_used: boolean;
   recommended_posture:
     | "reuse_supported_history"
     | "use_as_context"
@@ -318,6 +326,7 @@ type AionisGuidePacket = {
   guide_brief: {
     summary: string;
     history_used: boolean;
+    actionable_history_used: boolean;
     recommended_posture:
       | "reuse_supported_history"
       | "use_as_context"

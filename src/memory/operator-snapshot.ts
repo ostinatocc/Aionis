@@ -358,6 +358,11 @@ export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArg
   const attributedIds = uniqueStrings(feedbackAttribution?.attributed_memory_ids ?? []);
   const exposedIds = uniqueStrings(agent?.memory_ids ?? guide?.memory_lifecycle.used_memory_ids ?? []);
   const guideTraceId = args.guide_trace_id ?? feedbackAttribution?.guide_trace_id ?? null;
+  const actionableHistoryUsed =
+    agent?.actionable_history_used
+    ?? guide?.guide_brief.actionable_history_used
+    ?? trace?.summary.actionable_history_used
+    ?? (activePathEntries.length > 0 || passedSolutionEntriesValue.length > 0 || failedBranchEntriesValue.length > 0);
 
   return parseAionisOperatorSnapshot({
     contract_version: "aionis_operator_snapshot_v1",
@@ -377,6 +382,7 @@ export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArg
     }),
     execution_state: {
       history_used: agent?.history_used ?? guide?.guide_brief.history_used ?? false,
+      actionable_history_used: actionableHistoryUsed,
       recommended_posture: agent?.recommended_posture ?? guide?.guide_brief.recommended_posture ?? "ignore_history",
       authority: agent?.authority ?? guide?.guide_brief.authority ?? "none",
       active_path: {
@@ -504,6 +510,7 @@ export function renderAionisOperatorSnapshotMarkdown(snapshot: AionisOperatorSna
     `## Execution State`,
     `branch_isolation: ${snapshot.execution_state.branch_isolation.status}`,
     `history_used: ${snapshot.execution_state.history_used}`,
+    `actionable_history_used: ${snapshot.execution_state.actionable_history_used}`,
     `recommended_posture: ${snapshot.execution_state.recommended_posture}`,
     ``,
     `### Current Active Path`,
