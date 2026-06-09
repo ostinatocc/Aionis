@@ -11,7 +11,7 @@ import {
 } from "../../src/adapters/index.ts";
 
 type RecordedCall = {
-  method: "observe" | "guide" | "forget" | "measure";
+  method: "observe" | "guide" | "forget" | "measure" | "operatorSnapshot";
   body: Record<string, unknown>;
   options: unknown;
 };
@@ -50,6 +50,15 @@ function recordingClient(calls: RecordedCall[]): ExecutionMemoryClient {
       calls.push({ method: "measure", body, options });
       return {
         contract_version: "aionis_measure_result_v1",
+        effect_report: { history_impact: { impact_direction: "positive" } },
+        memory_decision_trace: { contract_version: "aionis_memory_decision_trace_v1" },
+      };
+    },
+    async operatorSnapshot(body, options) {
+      calls.push({ method: "operatorSnapshot", body, options });
+      return {
+        contract_version: "aionis_operator_snapshot_result_v1",
+        operator_snapshot: { contract_version: "aionis_operator_snapshot_v1" },
       };
     },
   };
@@ -60,16 +69,25 @@ test("host integration templates expose a stable host-facing contract", () => {
   assert.equal(HOST_INTEGRATION_TEMPLATES.contract_version, "aionis_host_integration_template_v1");
   assert.deepEqual(
     HOST_INTEGRATION_TEMPLATES.templates.generic_agent_loop.required_hooks,
-    ["startRun", "beforeRun", "afterRun", "measure"],
+    ["startRun", "beforeRun", "afterRun", "measure", "snapshot"],
   );
   assert.ok(
     HOST_INTEGRATION_TEMPLATES.templates.generic_agent_loop.persisted_state.includes("last_use_now_memory_ids"),
   );
   assert.ok(
+    HOST_INTEGRATION_TEMPLATES.templates.generic_agent_loop.persisted_state.includes("last_agent_context"),
+  );
+  assert.ok(
     HOST_INTEGRATION_TEMPLATES.templates.multi_agent_loop.persisted_state.includes("team_id"),
   );
   assert.ok(
+    HOST_INTEGRATION_TEMPLATES.templates.multi_agent_loop.required_hooks.includes("snapshot"),
+  );
+  assert.ok(
     HOST_INTEGRATION_TEMPLATES.templates.coding_agent_loop.persisted_state.includes("target_files"),
+  );
+  assert.ok(
+    HOST_INTEGRATION_TEMPLATES.templates.coding_agent_loop.required_hooks.includes("snapshot"),
   );
 });
 
@@ -124,6 +142,11 @@ test("generic host template persists guide state and wires outcome feedback", as
     run_id: "run-template",
     task_signature: "generic-template",
   });
+  await host.snapshot({
+    state: finished.state,
+    run_id: "run-template",
+    task_signature: "generic-template",
+  });
 
   const guideCall = calls.find((call) => call.method === "guide");
   assert.ok(guideCall);
@@ -141,6 +164,14 @@ test("generic host template persists guide state and wires outcome feedback", as
   const measureCall = calls.find((call) => call.method === "measure");
   assert.ok(measureCall);
   assert.equal((measureCall.body.task as Record<string, unknown>).task_signature, "generic-template");
+
+  const snapshotCall = calls.find((call) => call.method === "operatorSnapshot");
+  assert.ok(snapshotCall);
+  assert.equal(snapshotCall.body.run_id, "run-template");
+  assert.equal(snapshotCall.body.task_signature, "generic-template");
+  assert.equal(snapshotCall.body.guide_trace_id, "guide-template-1");
+  assert.deepEqual(snapshotCall.body.agent_context, guided.agent_context);
+  assert.deepEqual(snapshotCall.body.effect_report, { history_impact: { impact_direction: "positive" } });
 });
 
 test("multi-agent host template fixes planner worker verifier reviewer roles", async () => {

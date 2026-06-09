@@ -38,6 +38,10 @@ function recordingClient(calls: Array<{ method: string; body: Record<string, unk
       calls.push({ method: "measure", body, options });
       return { contract_version: "aionis_measure_result_v1" };
     },
+    async operatorSnapshot(body, options) {
+      calls.push({ method: "operatorSnapshot", body, options });
+      return { contract_version: "aionis_operator_snapshot_result_v1" };
+    },
   };
 }
 
@@ -50,6 +54,7 @@ test("execution memory adapter exposes a stable host-facing contract", () => {
   assert.ok(EXECUTION_MEMORY_ADAPTER_CONTRACT.shared_memory_required.includes("team_id_or_default_team_id"));
   assert.ok(EXECUTION_MEMORY_ADAPTER_CONTRACT.advanced_optional.includes("execution_tree_v1"));
   assert.ok(EXECUTION_MEMORY_ADAPTER_CONTRACT.advanced_optional.includes("guide_run_id"));
+  assert.ok(EXECUTION_MEMORY_ADAPTER_CONTRACT.advanced_optional.includes("operator_snapshot"));
 });
 
 test("execution memory adapter wires multi-agent observe, full-power guide, feedback, and measure", async () => {
@@ -112,6 +117,16 @@ test("execution memory adapter wires multi-agent observe, full-power guide, feed
       calls.push({ method: "measure", body, options });
       return {
         contract_version: "aionis_measure_result_v1",
+        effect_report: { history_impact: { impact_direction: "positive" } },
+        memory_decision_trace: { contract_version: "aionis_memory_decision_trace_v1" },
+        memory_decision_audit: { contract_version: "aionis_memory_decision_audit_report_v1" },
+      };
+    },
+    async operatorSnapshot(body, options) {
+      calls.push({ method: "operatorSnapshot", body, options });
+      return {
+        contract_version: "aionis_operator_snapshot_result_v1",
+        operator_snapshot: { contract_version: "aionis_operator_snapshot_v1" },
       };
     },
   };
@@ -175,12 +190,19 @@ test("execution memory adapter wires multi-agent observe, full-power guide, feed
     used_memory_ids: ["memory-passed"],
     runtime_signal_refs: ["evidence://adapter-contract/reviewer"],
   });
-  await adapter.measureRun({
+  const measure = await adapter.measureRun<Record<string, unknown>>({
     run_id: "run-adapter",
     task_id: "task-adapter",
     task_signature: "adapter-contract",
     task_family: "adapter_family",
     evidence_ids: ["memory:memory-passed"],
+  });
+  await adapter.operatorSnapshotRun({
+    run_id: "run-adapter",
+    task_signature: "adapter-contract",
+    task_family: "adapter_family",
+    workflow_signature: "adapter-workflow",
+    measure_result: measure,
   });
 
   const observeStart = calls[0];
@@ -214,6 +236,17 @@ test("execution memory adapter wires multi-agent observe, full-power guide, feed
   assert.equal((productTrace.after_guide as Record<string, unknown>).guide_trace_id, "guide-trace-adapter-contract-2");
   assert.ok(productTrace.forget_result);
   assert.deepEqual(productTrace.evidence_ids, ["memory:memory-passed"]);
+
+  const snapshotCall = calls.find((call) => call.method === "operatorSnapshot");
+  assert.ok(snapshotCall);
+  assert.equal(snapshotCall.body.run_id, "run-adapter");
+  assert.equal(snapshotCall.body.task_signature, "adapter-contract");
+  assert.equal(snapshotCall.body.guide_trace_id, "guide-trace-adapter-contract-2");
+  assert.equal((snapshotCall.body.agent_context as Record<string, unknown>).contract_version, "aionis_agent_context_v1");
+  assert.deepEqual(snapshotCall.body.effect_report, { history_impact: { impact_direction: "positive" } });
+  assert.equal((snapshotCall.body.memory_decision_trace as Record<string, unknown>).contract_version, "aionis_memory_decision_trace_v1");
+  assert.equal((snapshotCall.body.memory_decision_audit as Record<string, unknown>).contract_version, "aionis_memory_decision_audit_report_v1");
+  assert.equal(snapshotCall.body.include_markdown, true);
 });
 
 test("execution memory adapter enforces agent identity and shared team boundary", async () => {

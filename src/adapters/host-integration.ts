@@ -4,6 +4,7 @@ import type {
   ExecutionMemoryAgentRole,
   ExecutionMemoryGuideInput,
   ExecutionMemoryMeasureInput,
+  ExecutionMemoryOperatorSnapshotInput,
   ExecutionMemoryOutcomeInput,
   ExecutionMemoryOutcomeResult,
   ExecutionMemoryRunRef,
@@ -27,18 +28,18 @@ export const HOST_INTEGRATION_TEMPLATES = {
   contract_version: HOST_INTEGRATION_TEMPLATE_CONTRACT_VERSION,
   templates: {
     generic_agent_loop: {
-      required_hooks: ["startRun", "beforeRun", "afterRun", "measure"],
-      persisted_state: ["run_id", "task_signature", "guide_run_id", "last_guide_trace_id", "last_use_now_memory_ids"],
+      required_hooks: ["startRun", "beforeRun", "afterRun", "measure", "snapshot"],
+      persisted_state: ["run_id", "task_signature", "guide_run_id", "last_guide_trace_id", "last_use_now_memory_ids", "last_agent_context"],
       agent_surface: "agent_context",
     },
     multi_agent_loop: {
-      required_hooks: ["plannerStart", "workerStep", "verifierStep", "reviewerGuide", "reviewerOutcome"],
-      persisted_state: ["team_id", "run_id", "task_signature", "guide_run_id", "last_guide_trace_id"],
+      required_hooks: ["plannerStart", "workerStep", "verifierStep", "reviewerGuide", "reviewerOutcome", "measure", "snapshot"],
+      persisted_state: ["team_id", "run_id", "task_signature", "guide_run_id", "last_guide_trace_id", "last_agent_context"],
       roles: ["planner", "worker", "verifier", "reviewer"],
     },
     coding_agent_loop: {
-      required_hooks: ["beforePatch", "afterPatch"],
-      persisted_state: ["run_id", "task_signature", "repo_root", "target_files", "guide_run_id"],
+      required_hooks: ["beforePatch", "afterPatch", "measure", "snapshot"],
+      persisted_state: ["run_id", "task_signature", "repo_root", "target_files", "guide_run_id", "last_agent_context"],
       agent_surface: "agent_context",
     },
   },
@@ -84,6 +85,10 @@ export type HostMeasureInput = ExecutionMemoryMeasureInput & {
   state?: HostRunState;
 };
 
+export type HostSnapshotInput = ExecutionMemoryOperatorSnapshotInput & {
+  state?: HostRunState;
+};
+
 export type HostObserveHookResult<TObserve = unknown> = {
   observe: TObserve;
   state: HostRunState;
@@ -110,6 +115,7 @@ export type GenericAgentHostTemplate = {
     input: HostOutcomeInput,
   ): Promise<HostOutcomeHookResult<TObserve, TFeedback>>;
   measure<TMeasure = unknown>(input: HostMeasureInput): Promise<TMeasure>;
+  snapshot<TSnapshot = unknown>(input: HostSnapshotInput): Promise<TSnapshot>;
 };
 
 export type MultiAgentHostTemplate = {
@@ -123,6 +129,7 @@ export type MultiAgentHostTemplate = {
     input: HostOutcomeInput,
   ): Promise<HostOutcomeHookResult<TObserve, TFeedback>>;
   measure<TMeasure = unknown>(input: HostMeasureInput): Promise<TMeasure>;
+  snapshot<TSnapshot = unknown>(input: HostSnapshotInput): Promise<TSnapshot>;
 };
 
 export type CodingBeforePatchInput = HostGuideInput & {
@@ -145,6 +152,7 @@ export type CodingAgentHostTemplate = {
     input: CodingAfterPatchInput,
   ): Promise<HostOutcomeHookResult<TObserve, TFeedback>>;
   measure<TMeasure = unknown>(input: HostMeasureInput): Promise<TMeasure>;
+  snapshot<TSnapshot = unknown>(input: HostSnapshotInput): Promise<TSnapshot>;
 };
 
 function stripUndefined<T extends Record<string, unknown>>(value: T): AionisJsonObject {
@@ -335,6 +343,16 @@ export function createGenericAgentHostTemplate(
       const { state: _state, ...measureInput } = input;
       return adapter.measureRun<TMeasure>(measureInput);
     },
+
+    async snapshot<TSnapshot = unknown>(input: HostSnapshotInput): Promise<TSnapshot> {
+      const { state, ...snapshotInput } = input;
+      return adapter.operatorSnapshotRun<TSnapshot>({
+        ...snapshotInput,
+        guide_run_id: snapshotInput.guide_run_id ?? state?.guide_run_id,
+        guide_trace_id: snapshotInput.guide_trace_id ?? state?.last_guide_trace_id,
+        agent_context: snapshotInput.agent_context ?? state?.last_agent_context,
+      });
+    },
   };
 }
 
@@ -392,6 +410,10 @@ export function createMultiAgentHostTemplate(
 
     async measure<TMeasure = unknown>(input: HostMeasureInput): Promise<TMeasure> {
       return generic.measure<TMeasure>(input);
+    },
+
+    async snapshot<TSnapshot = unknown>(input: HostSnapshotInput): Promise<TSnapshot> {
+      return generic.snapshot<TSnapshot>(input);
     },
   };
 }
@@ -461,6 +483,10 @@ export function createCodingAgentHostTemplate(
 
     async measure<TMeasure = unknown>(input: HostMeasureInput): Promise<TMeasure> {
       return generic.measure<TMeasure>(input);
+    },
+
+    async snapshot<TSnapshot = unknown>(input: HostSnapshotInput): Promise<TSnapshot> {
+      return generic.snapshot<TSnapshot>(input);
     },
   };
 }

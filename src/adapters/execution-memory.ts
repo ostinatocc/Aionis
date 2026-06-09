@@ -42,6 +42,9 @@ export const EXECUTION_MEMORY_ADAPTER_CONTRACT = {
     "before_guide",
     "after_guide",
     "forget_result",
+    "measure_result",
+    "execution_context",
+    "operator_snapshot",
   ],
   agent_surface: "agent_context",
   default_guide_mode: "full_power",
@@ -52,6 +55,7 @@ export type ExecutionMemoryClient = {
   guide<T = unknown>(body: AionisJsonObject, options?: AionisGuideRequestOptions): Promise<T>;
   forget<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T>;
   measure<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T>;
+  operatorSnapshot<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T>;
 };
 
 export type ExecutionMemoryAdapterOptions = {
@@ -194,6 +198,23 @@ export type ExecutionMemoryMeasureInput = ExecutionMemoryRunRef & {
   product_trace?: AionisJsonObject;
 };
 
+export type ExecutionMemoryOperatorSnapshotInput = ExecutionMemoryRunRef & {
+  tenant_id?: string;
+  scope?: string;
+  guide_run_id?: string;
+  agent_context?: unknown;
+  guide_packet?: unknown;
+  memory_decision_trace?: unknown;
+  memory_decision_audit?: unknown;
+  effect_report?: unknown;
+  execution_context?: unknown;
+  guide_trace_id?: string;
+  measure_result?: unknown;
+  include_markdown?: boolean;
+  source_map?: AionisJsonObject;
+  snapshot?: AionisJsonObject;
+};
+
 export type ExecutionMemoryOutcomeResult<TObserve = unknown, TFeedback = unknown> = {
   observe: TObserve;
   feedback: TFeedback | null;
@@ -289,6 +310,7 @@ export class AionisExecutionMemoryAdapter {
   private currentExecutionTree: ExecutionTreeV1 | null = null;
   private readonly guidesByRunId = new Map<string, unknown[]>();
   private readonly feedbackByRunId = new Map<string, unknown>();
+  private readonly measureByRunId = new Map<string, unknown>();
 
   constructor(options: ExecutionMemoryAdapterOptions) {
     this.client = options.client;
@@ -363,7 +385,7 @@ export class AionisExecutionMemoryAdapter {
     const beforeGuide = input.before_guide ?? guides[0] ?? null;
     const afterGuide = input.after_guide ?? guides.at(-1) ?? null;
     const forgetResult = input.forget_result ?? this.feedbackByRunId.get(input.run_id) ?? null;
-    return this.client.measure<T>({
+    const response = await this.client.measure<T>({
       task: {
         task_id: input.task_id,
         run_id: input.run_id,
@@ -380,6 +402,32 @@ export class AionisExecutionMemoryAdapter {
         evidence_ids: input.evidence_ids ?? [],
         ...(input.product_trace ?? {}),
       },
+    }, this.requestOptions(input));
+    this.measureByRunId.set(input.run_id, response);
+    return response;
+  }
+
+  async operatorSnapshotRun<T = unknown>(input: ExecutionMemoryOperatorSnapshotInput): Promise<T> {
+    const guideRunId = input.guide_run_id ?? input.run_id;
+    const guide = this.lastGuide(guideRunId) ?? this.lastGuide(input.run_id);
+    const guideRecord = asRecord(guide);
+    const measureResult = input.measure_result ?? this.measureByRunId.get(input.run_id) ?? null;
+    const measureRecord = asRecord(measureResult);
+    return this.client.operatorSnapshot<T>({
+      run_id: input.run_id,
+      task_signature: input.task_signature,
+      task_family: input.task_family,
+      workflow_signature: input.workflow_signature,
+      agent_context: input.agent_context ?? guideRecord?.agent_context,
+      guide_packet: input.guide_packet ?? guideRecord?.guide_packet,
+      memory_decision_trace: input.memory_decision_trace ?? measureRecord?.memory_decision_trace,
+      memory_decision_audit: input.memory_decision_audit ?? measureRecord?.memory_decision_audit,
+      effect_report: input.effect_report ?? measureRecord?.effect_report,
+      execution_context: input.execution_context,
+      guide_trace_id: input.guide_trace_id ?? guideTraceId(guide),
+      include_markdown: input.include_markdown ?? true,
+      source_map: input.source_map,
+      ...(input.snapshot ?? {}),
     }, this.requestOptions(input));
   }
 
