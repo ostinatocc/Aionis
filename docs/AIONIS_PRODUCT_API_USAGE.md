@@ -146,6 +146,75 @@ The adapter rejects shared writes or guides without a team boundary. Use
 `default_memory_lane: "private"` for single-Agent memory that should not require
 `team_id`.
 
+### Recommended Host Integration Templates
+
+Hosts that want a ready-to-wire lifecycle should use the host integration
+templates on top of `createExecutionMemoryAdapter`. These templates do not add a
+new Runtime feature. They preserve host state across hooks so the next hook can
+attribute feedback to the exact guide trace and `use_now` memories the Agent saw.
+
+Template contract version: `aionis_host_integration_template_v1`.
+
+| Template | Use When | Host Hooks | Persist Between Hooks |
+|---|---|---|---|
+| `createGenericAgentHostTemplate` | One Agent loop needs `observe -> guide -> outcome -> measure` without hand wiring trace state | `startRun`, `observeStep`, `beforeRun`, `afterRun`, `measure` | `HostRunState` with `run_id`, `task_signature`, `guide_run_id`, `last_guide_trace_id`, `last_use_now_memory_ids` |
+| `createMultiAgentHostTemplate` | Planner, worker, verifier, and reviewer share execution memory under one `team_id` | `plannerStart`, `workerStep`, `verifierStep`, `reviewerGuide`, `reviewerOutcome`, `measure` | `HostRunState` plus role/team identity |
+| `createCodingAgentHostTemplate` | A coding Agent needs repository and file-scope context around patch execution | `beforePatch`, `afterPatch`, `measure` | `HostRunState` plus `repo_root` and `target_files` |
+
+Only pass `agent_context` to the Agent. Keep `HostRunState` in the host runtime,
+database, job state, or orchestration state; it is not prompt content.
+
+```ts
+import { createAionisClient } from "./src/sdk.ts";
+import {
+  createExecutionMemoryAdapter,
+  createMultiAgentHostTemplate,
+} from "./src/adapters/index.ts";
+
+const client = createAionisClient({
+  baseUrl: process.env.AIONIS_URL ?? "http://127.0.0.1:3001",
+  apiKey: process.env.AIONIS_API_KEY,
+});
+
+const memory = createExecutionMemoryAdapter({
+  client,
+  tenant_id: "default",
+  scope: "checkout-migration",
+  team_id: "checkout-agent-team",
+  default_memory_lane: "shared",
+});
+
+const hostMemory = createMultiAgentHostTemplate(memory);
+
+const planned = await hostMemory.plannerStart({
+  run_id: "checkout-run-001",
+  task_signature: "checkout-migration",
+  agent_id: "planner-1",
+  title: "Planner scoped checkout migration",
+  summary: "Worker should edit src/payments/checkout.ts and verifier must reject legacy broad-search patches.",
+});
+
+const guided = await hostMemory.reviewerGuide({
+  state: planned.state,
+  run_id: "checkout-run-001",
+  task_signature: "checkout-migration",
+  agent_id: "reviewer-1",
+  query_text: "Continue the passed checkout branch and avoid failed legacy patches.",
+});
+
+const agentPromptContext = guided.agent_context;
+
+await hostMemory.reviewerOutcome({
+  state: guided.state,
+  run_id: "reviewer-run-001",
+  task_signature: "checkout-migration",
+  agent_id: "reviewer-1",
+  title: "Reviewer continued passed checkout branch",
+  summary: "Reviewer used Aionis context and avoided the failed branch.",
+  outcome: "succeeded",
+});
+```
+
 ```ts
 import { createAionisClient } from "./src/sdk.ts";
 import { createExecutionMemoryAdapter } from "./src/adapters/execution-memory.ts";
