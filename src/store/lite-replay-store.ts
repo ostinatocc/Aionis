@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { fromTenantScopeKey } from "../memory/tenant.js";
+import { memoryNodeVisible } from "./memory-visibility.js";
 import type {
   ReplayNodeRow,
   ReplayPlaybookRow,
@@ -84,9 +85,7 @@ function scopeVariants(scope: string): string[] {
 }
 
 function replayNodeVisible(row: LiteReplayRow, visibility: ReplayVisibilityArgs): boolean {
-  return row.memory_lane === "shared"
-    || (!!visibility.consumerAgentId && row.owner_agent_id === visibility.consumerAgentId)
-    || (!!visibility.consumerTeamId && row.owner_team_id === visibility.consumerTeamId);
+  return memoryNodeVisible(row, visibility.consumerAgentId, visibility.consumerTeamId);
 }
 
 export type LiteReplayStore = ReplayWriteMirror & {

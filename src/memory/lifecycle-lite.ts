@@ -49,6 +49,7 @@ export type ApplyUnusedExposureLearningControlLiteArgs = {
   tenant_id?: string | null;
   scope?: string | null;
   actor?: string | null;
+  consumer_team_id?: string | null;
   run_id?: string | null;
   guide_trace_id?: string | null;
   reason?: string | null;
@@ -60,10 +61,11 @@ async function resolveLifecycleNodes(args: {
   liteWriteStore: LifecycleLiteStore;
   scope: string;
   actor: string;
+  consumerTeamId?: string | null;
   requestedNodeIds: string[];
   requestedClientIds: string[];
 }) {
-  const { liteWriteStore, scope, actor, requestedNodeIds, requestedClientIds } = args;
+  const { liteWriteStore, scope, actor, consumerTeamId, requestedNodeIds, requestedClientIds } = args;
   const foundById = new Map<string, LiteFindNodeRow>();
   const resolvedByClient: Array<{ client_id: string; node_id: string }> = [];
   const missingClientIds: string[] = [];
@@ -73,7 +75,7 @@ async function resolveLifecycleNodes(args: {
       scope,
       id: nodeId,
       consumerAgentId: actor,
-      consumerTeamId: null,
+      consumerTeamId: consumerTeamId ?? null,
       limit: 1,
       offset: 0,
     });
@@ -86,7 +88,7 @@ async function resolveLifecycleNodes(args: {
       scope,
       clientId,
       consumerAgentId: actor,
-      consumerTeamId: null,
+      consumerTeamId: consumerTeamId ?? null,
       limit: 1,
       offset: 0,
     });
@@ -128,6 +130,7 @@ export async function rehydrateArchiveNodesLite(
   );
   const scope = tenancy.scope_key;
   const actor = parsed.actor ?? opts.defaultActor;
+  const consumerTeamId = parsed.consumer_team_id ?? null;
   const startedAt = new Date().toISOString();
   const reason = normalizeMaybeRedact(parsed.reason, opts) ?? null;
   const inputText = normalizeMaybeRedact(parsed.input_text, opts);
@@ -139,6 +142,7 @@ export async function rehydrateArchiveNodesLite(
     liteWriteStore,
     scope,
     actor,
+    consumerTeamId,
     requestedNodeIds,
     requestedClientIds,
   });
@@ -286,6 +290,7 @@ export async function applyUnusedExposureLearningControlLite(
   );
   const scope = tenancy.scope_key;
   const actor = input.actor ?? opts.defaultActor;
+  const consumerTeamId = input.consumer_team_id ?? null;
   const startedAt = new Date().toISOString();
   const reason =
     normalizeMaybeRedact(input.reason ?? undefined, opts)
@@ -328,6 +333,7 @@ export async function applyUnusedExposureLearningControlLite(
     liteWriteStore,
     scope,
     actor,
+    consumerTeamId,
     requestedNodeIds,
     requestedClientIds: [],
   });
@@ -473,6 +479,7 @@ export async function activateMemoryNodesLite(
   );
   const scope = tenancy.scope_key;
   const actor = parsed.actor ?? opts.defaultActor;
+  const consumerTeamId = parsed.consumer_team_id ?? null;
   const startedAt = new Date().toISOString();
   const reason = normalizeMaybeRedact(parsed.reason, opts) ?? null;
   const inputText = normalizeMaybeRedact(parsed.input_text, opts);
@@ -484,6 +491,7 @@ export async function activateMemoryNodesLite(
     liteWriteStore,
     scope,
     actor,
+    consumerTeamId,
     requestedNodeIds,
     requestedClientIds,
   });

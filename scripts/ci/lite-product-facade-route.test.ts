@@ -3066,6 +3066,206 @@ test("product guide trace attribution rejects memories not exposed by that guide
   }
 });
 
+test("product guide visibility enforces private and team-owned shared boundaries", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("guide-visibility-private-team-shared-boundaries");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    async function observeVisibilityMemory(payload: Record<string, unknown>): Promise<string> {
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/observe",
+        payload: {
+          tenant_id: "default",
+          scope: "default",
+          auto_embed: true,
+          ...payload,
+        },
+      });
+      assert.equal(response.statusCode, 200, response.body);
+      const nodeId = response.json().memory_write.nodes[0].id;
+      assert.equal(typeof nodeId, "string");
+      return nodeId;
+    }
+
+    const globalSharedId = await observeVisibilityMemory({
+      memory_lane: "shared",
+      input_text: "AIONIS_VIS_GLOBAL_SHARED marker visible to all scope consumers.",
+      memory: {
+        client_id: "memory:visibility-global-shared",
+        type: "concept",
+        tier: "warm",
+        memory_kind: "general_memory",
+        title: "Visibility global shared",
+        text_summary: "AIONIS_VIS_GLOBAL_SHARED marker visible to all scope consumers.",
+        confidence: 0.88,
+      },
+    });
+    const alphaSharedId = await observeVisibilityMemory({
+      memory_lane: "shared",
+      owner_team_id: "team-alpha",
+      input_text: "AIONIS_VIS_ALPHA_SHARED marker visible only to team alpha.",
+      memory: {
+        client_id: "memory:visibility-alpha-shared",
+        type: "concept",
+        tier: "warm",
+        memory_kind: "general_memory",
+        title: "Visibility alpha shared",
+        text_summary: "AIONIS_VIS_ALPHA_SHARED marker visible only to team alpha.",
+        confidence: 0.88,
+      },
+    });
+    const betaSharedId = await observeVisibilityMemory({
+      memory_lane: "shared",
+      owner_team_id: "team-beta",
+      input_text: "AIONIS_VIS_BETA_SHARED marker visible only to team beta.",
+      memory: {
+        client_id: "memory:visibility-beta-shared",
+        type: "concept",
+        tier: "warm",
+        memory_kind: "general_memory",
+        title: "Visibility beta shared",
+        text_summary: "AIONIS_VIS_BETA_SHARED marker visible only to team beta.",
+        confidence: 0.88,
+      },
+    });
+    const plannerPrivateId = await observeVisibilityMemory({
+      memory_lane: "private",
+      owner_agent_id: "planner-agent",
+      input_text: "AIONIS_VIS_PLANNER_PRIVATE marker visible only to planner agent.",
+      memory: {
+        client_id: "memory:visibility-planner-private",
+        type: "concept",
+        tier: "warm",
+        memory_kind: "general_memory",
+        title: "Visibility planner private",
+        text_summary: "AIONIS_VIS_PLANNER_PRIVATE marker visible only to planner agent.",
+        confidence: 0.88,
+      },
+    });
+    const alphaPrivateId = await observeVisibilityMemory({
+      memory_lane: "private",
+      owner_team_id: "team-alpha",
+      input_text: "AIONIS_VIS_ALPHA_PRIVATE marker visible only to team alpha.",
+      memory: {
+        client_id: "memory:visibility-alpha-private",
+        type: "concept",
+        tier: "warm",
+        memory_kind: "general_memory",
+        title: "Visibility alpha private",
+        text_summary: "AIONIS_VIS_ALPHA_PRIVATE marker visible only to team alpha.",
+        confidence: 0.88,
+      },
+    });
+
+    async function guideIds(payload: Record<string, unknown>): Promise<Set<string>> {
+      const guide = await app.inject({
+        method: "POST",
+        url: "/v1/guide",
+        payload: {
+          tenant_id: "default",
+          scope: "default",
+          query_text: [
+            "AIONIS_VIS_GLOBAL_SHARED",
+            "AIONIS_VIS_ALPHA_SHARED",
+            "AIONIS_VIS_BETA_SHARED",
+            "AIONIS_VIS_PLANNER_PRIVATE",
+            "AIONIS_VIS_ALPHA_PRIVATE",
+            "visibility boundary",
+          ].join(" "),
+          limit: 20,
+          include_packets: true,
+          ...payload,
+        },
+      });
+      assert.equal(guide.statusCode, 200, guide.body);
+      return new Set(guide.json().agent_context.memory_ids);
+    }
+
+    const alphaReviewerIds = await guideIds({
+      consumer_agent_id: "reviewer-alpha",
+      consumer_team_id: "team-alpha",
+    });
+    assert.equal(alphaReviewerIds.has(globalSharedId), true);
+    assert.equal(alphaReviewerIds.has(alphaSharedId), true);
+    assert.equal(alphaReviewerIds.has(alphaPrivateId), true);
+    assert.equal(alphaReviewerIds.has(betaSharedId), false);
+    assert.equal(alphaReviewerIds.has(plannerPrivateId), false);
+
+    const betaReviewerIds = await guideIds({
+      consumer_agent_id: "reviewer-beta",
+      consumer_team_id: "team-beta",
+    });
+    assert.equal(betaReviewerIds.has(globalSharedId), true);
+    assert.equal(betaReviewerIds.has(betaSharedId), true);
+    assert.equal(betaReviewerIds.has(alphaSharedId), false);
+    assert.equal(betaReviewerIds.has(alphaPrivateId), false);
+    assert.equal(betaReviewerIds.has(plannerPrivateId), false);
+
+    const plannerIds = await guideIds({
+      consumer_agent_id: "planner-agent",
+    });
+    assert.equal(plannerIds.has(globalSharedId), true);
+    assert.equal(plannerIds.has(plannerPrivateId), true);
+    assert.equal(plannerIds.has(alphaSharedId), false);
+    assert.equal(plannerIds.has(betaSharedId), false);
+    assert.equal(plannerIds.has(alphaPrivateId), false);
+
+    const alphaTraceGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: [
+          "AIONIS_VIS_GLOBAL_SHARED",
+          "AIONIS_VIS_ALPHA_SHARED",
+          "AIONIS_VIS_BETA_SHARED",
+          "AIONIS_VIS_PLANNER_PRIVATE",
+          "AIONIS_VIS_ALPHA_PRIVATE",
+          "visibility trace attribution boundary",
+        ].join(" "),
+        consumer_agent_id: "reviewer-alpha",
+        consumer_team_id: "team-alpha",
+        limit: 20,
+        include_packets: true,
+      },
+    });
+    assert.equal(alphaTraceGuide.statusCode, 200, alphaTraceGuide.body);
+    const alphaTraceGuideBody = alphaTraceGuide.json();
+    assert.equal(alphaTraceGuideBody.agent_context.memory_ids.includes(betaSharedId), false);
+    const rejectedCrossTeamFeedback = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        actor: "reviewer-alpha",
+        operation: "activate",
+        target: "memory",
+        guide_trace_id: alphaTraceGuideBody.guide_trace_id,
+        used_memory_ids: [betaSharedId],
+        run_id: "run:visibility-cross-team-attribution-reject",
+        outcome: "negative",
+        used_surface: "use_now",
+        verifier_status: "failed",
+        tool_status: "unknown",
+        activate: true,
+        reason: "This feedback tries to attribute a beta-team memory that the alpha guide never exposed.",
+      },
+    });
+    assert.equal(rejectedCrossTeamFeedback.statusCode, 400, rejectedCrossTeamFeedback.body);
+    assert.equal(rejectedCrossTeamFeedback.json().error, "guide_trace_used_memory_not_exposed");
+  } finally {
+    await app.close();
+  }
+});
+
 test("product guide feedback loop downgrades after aligned verifier failure attribution", async () => {
   const app = Fastify();
   const env = liteEnv();

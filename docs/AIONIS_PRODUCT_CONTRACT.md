@@ -59,10 +59,11 @@ The product contract for Multi-Agent execution memory is:
 | `consumer_agent_id` | Agent receiving guide context. Private memory is visible only when this identity is aligned with the writer/owner. |
 | `owner_team_id` / `consumer_team_id` | Team boundary for shared multi-agent memory. |
 | `memory_lane: "private"` | Agent-local memory. Use only when the same Agent should retrieve it later. |
-| `memory_lane: "shared"` | Team-visible execution memory for planner/worker/verifier/reviewer handoff. |
+| `memory_lane: "shared"` without `owner_team_id` | Scope-wide shared memory. |
+| `memory_lane: "shared"` with `owner_team_id` | Team-visible execution memory for planner/worker/verifier/reviewer handoff. |
 | `agent_role` | Product-level role hint such as `planner`, `worker`, `verifier`, or `reviewer`; legacy `context.agent_role` remains accepted as a compatibility fallback. |
 | `execution_tree_v1` | Branch-aware state: current path, passed branches, failed branches, and revisions. |
-| `guide_trace_id` + `used_memory_ids` | Feedback attribution path after an Agent actually uses recalled memory. |
+| `guide_trace_id` + `used_memory_ids` | Feedback attribution path after an Agent actually uses recalled memory. Attribution is limited to memory IDs exposed by that guide. |
 
 Role-specific prompt building should start from Aionis `agent_context`.
 Aionis returns `agent_context.agent_role`, adds a role focus line to
@@ -78,12 +79,18 @@ Runnable proof surface:
 
 ```bash
 npm run -s runtime:e2e:multi-agent
+npm run -s runtime:e2e:multi-agent-negative
 ```
 
-That e2e starts a planner/worker/verifier/reviewer loop over the real Runtime:
+The positive e2e starts a planner/worker/verifier/reviewer loop over the real Runtime:
 planner writes a plan, worker creates failed and passed branches, verifier marks
 branch outcomes, reviewer inherits the active path, feedback is attributed to
 the guide trace, and `measure` reports whether history changed future behavior.
+
+The negative e2e proves the isolation side of the same product contract:
+team-owned shared memory does not leak across teams, private memory does not
+leak across agents, cross-team attribution is rejected, and failed execution
+branches do not enter `use_now`.
 
 ## Observe Input Contract
 

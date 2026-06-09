@@ -14,6 +14,7 @@ import {
   type AssociativeLinkTriggerPayload,
 } from "../memory/associative-linking-types.js";
 import type { RecallAssociativeNodeRow } from "../store/recall-access.js";
+import { memoryNodeVisible } from "../store/memory-visibility.js";
 import { sha256Hex } from "../util/crypto.js";
 import { stableUuid } from "../util/uuid.js";
 
@@ -140,7 +141,10 @@ function isAssociativeVisibilityCompatible(
 ): boolean {
   if (!left || !right) return false;
   if (left.memory_lane === "shared" || right.memory_lane === "shared") {
-    return left.memory_lane === "shared" && right.memory_lane === "shared";
+    return left.memory_lane === "shared"
+      && right.memory_lane === "shared"
+      && memoryNodeVisible(left, right.owner_agent_id, right.owner_team_id)
+      && memoryNodeVisible(right, left.owner_agent_id, left.owner_team_id);
   }
   return (
     (!!left.owner_agent_id && left.owner_agent_id === right.owner_agent_id)

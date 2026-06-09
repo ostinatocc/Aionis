@@ -10,6 +10,7 @@ import {
   type WriteStoreAccess,
   type WriteLifecycleCandidateNodeRow,
 } from "../store/write-access.js";
+import { memoryNodeVisible } from "../store/memory-visibility.js";
 import { type AssociativeLinkTriggerOrigin } from "./associative-linking-types.js";
 import { MemoryWriteRequest } from "./schemas.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
@@ -188,9 +189,15 @@ function lifecycleEntryFromCandidate(node: LifecycleCandidateNode, sourceIndex: 
 }
 
 function candidateCanSeeTarget(source: LifecycleCandidateNode, target: LifecycleCandidateNode): boolean {
-  if (target.memory_lane === "shared") return true;
-  if (source.owner_agent_id && source.owner_agent_id === target.owner_agent_id) return true;
-  if (source.owner_team_id && source.owner_team_id === target.owner_team_id) return true;
+  if (target.memory_lane) {
+    if (memoryNodeVisible({
+      memory_lane: target.memory_lane,
+      owner_agent_id: target.owner_agent_id ?? null,
+      owner_team_id: target.owner_team_id ?? null,
+    }, source.owner_agent_id ?? null, source.owner_team_id ?? null)) {
+      return true;
+    }
+  }
   return !source.owner_agent_id && !source.owner_team_id && !target.owner_agent_id && !target.owner_team_id;
 }
 

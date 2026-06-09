@@ -105,25 +105,30 @@ feedback attribution, and measurement.
 Use these identity rules:
 
 1. Set `producer_agent_id` when an Agent writes `observe`.
-2. Use `memory_lane: "shared"` plus `owner_team_id` when planner, worker,
-   verifier, and reviewer should share execution memory.
-3. Use `consumer_agent_id` and `consumer_team_id` on `guide`.
-4. Use `memory_lane: "private"` only when the same Agent should retrieve the
+2. Use `memory_lane: "shared"` without `owner_team_id` only for scope-wide
+   shared memory.
+3. Use `memory_lane: "shared"` plus `owner_team_id` when planner, worker,
+   verifier, and reviewer should share execution memory inside one team.
+4. Use `consumer_agent_id` and `consumer_team_id` on `guide`.
+5. Use `memory_lane: "private"` only when the same Agent should retrieve the
    memory later.
-5. Put role hints such as `planner`, `worker`, `verifier`, or `reviewer` in
+6. Put role hints such as `planner`, `worker`, `verifier`, or `reviewer` in
    top-level `agent_role` on `/v1/guide`. Legacy `context.agent_role` is still
    accepted as a compatibility fallback.
-6. After the Agent acts, call `forget` with `operation: "activate"`,
-   `guide_trace_id`, `used_memory_ids`, `run_id`, `outcome`, and
+7. After the Agent acts, call `forget` with `operation: "activate"`,
+   `actor`, `guide_trace_id`, `used_memory_ids`, `run_id`, `outcome`, and
    `used_surface` so feedback is attributed only to memory actually used.
+   For `guide_trace_id` feedback, Aionis inherits the guide ledger's
+   `consumer_team_id` when activating team-owned shared memory.
 
 Runnable e2e:
 
 ```bash
 npm run -s runtime:e2e:multi-agent
+npm run -s runtime:e2e:multi-agent-negative
 ```
 
-This e2e validates the Multi-Agent contract:
+The positive e2e validates the Multi-Agent contract:
 
 1. planner writes a scoped plan
 2. worker writes a failed branch
@@ -133,6 +138,14 @@ This e2e validates the Multi-Agent contract:
 6. execution context separates `use_now` and `do_not_use`
 7. reviewer feedback is attributed through `guide_trace_id`
 8. `measure` reports positive history impact
+
+The negative e2e validates the safety contract:
+
+1. scope-wide shared memory remains visible
+2. team-owned shared memory does not cross `consumer_team_id`
+3. private Agent memory does not cross `consumer_agent_id`
+4. `guide_trace_id` feedback rejects memory IDs not exposed by that guide
+5. failed execution branches stay out of `use_now`
 
 ## `POST /v1/observe`
 

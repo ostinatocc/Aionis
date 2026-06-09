@@ -563,6 +563,7 @@ async function runMultiAgentLoop(args: {
   const activateFeedback = await client.forget<Record<string, unknown>>({
     operation: "activate",
     target: "memory",
+    actor: REVIEWER_ID,
     guide_trace_id: String(afterGuide.guide_trace_id),
     used_memory_ids: [passedMemoryId],
     run_id: `run:${args.runId}:reviewer`,

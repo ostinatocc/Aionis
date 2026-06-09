@@ -680,6 +680,7 @@ async function findMemoryNodeSlots(args: {
   scope: string;
   memory_id: string;
   actor: string;
+  consumerTeamId: string | null;
 }): Promise<Record<string, unknown>> {
   const found = await dispatchProductInternalRoute({
     app: args.app,
@@ -690,6 +691,7 @@ async function findMemoryNodeSlots(args: {
       scope: args.scope,
       id: args.memory_id,
       consumer_agent_id: args.actor,
+      ...(args.consumerTeamId ? { consumer_team_id: args.consumerTeamId } : {}),
       include_slots: true,
       limit: 1,
     },
@@ -708,6 +710,7 @@ async function findHistoricalGuideExposureLedgers(args: {
   tenant_id: string;
   scope: string;
   actor: string;
+  consumerTeamId: string | null;
 }): Promise<ProductGuideExposureLedger[]> {
   const ledgerRows: unknown[] = [];
   for (let offset = 0; offset < 1000; offset += 200) {
@@ -721,6 +724,7 @@ async function findHistoricalGuideExposureLedgers(args: {
         type: "evidence",
         memory_lane: "shared",
         consumer_agent_id: args.actor,
+        ...(args.consumerTeamId ? { consumer_team_id: args.consumerTeamId } : {}),
         include_slots: true,
         slots_contains: {
           guide_exposure_v1: {
@@ -780,6 +784,7 @@ async function resolveRepeatedUnusedActiveProjectionIds(args: {
       scope: args.scope,
       memory_id: memoryId,
       actor: args.actor,
+      consumerTeamId: args.currentLedger.consumer_team_id,
     });
     if (hasAnyAttributedUse(slots)) continue;
     candidates.push(memoryId);
@@ -793,6 +798,7 @@ async function resolveTimeDecayActiveProjectionIds(args: {
   tenant_id: string;
   scope: string;
   actor: string;
+  consumerTeamId: string | null;
   memoryPacket: AionisMemoryPacket | null;
   agentContext: AionisAgentContext;
 }): Promise<string[]> {
@@ -819,6 +825,7 @@ async function resolveTimeDecayActiveProjectionIds(args: {
       scope: args.scope,
       memory_id: entry.memory_id,
       actor: args.actor,
+      consumerTeamId: args.consumerTeamId,
     });
     if (nonNegativeInt(slots.positive_attributed_use_count) > 0) continue;
     candidates.push(entry.memory_id);
@@ -851,6 +858,7 @@ async function resolveInspectBeforeUseActiveProjectionIds(args: {
     tenant_id: args.tenant_id,
     scope: args.scope,
     actor,
+    consumerTeamId: args.parsed.consumer_team_id ?? null,
   });
   const repeatedUnusedIds = await resolveRepeatedUnusedActiveProjectionIds({
     app: args.app,
@@ -867,6 +875,7 @@ async function resolveInspectBeforeUseActiveProjectionIds(args: {
     tenant_id: args.tenant_id,
     scope: args.scope,
     actor,
+    consumerTeamId: args.parsed.consumer_team_id ?? null,
     memoryPacket: args.memoryPacket,
     agentContext: args.agentContext,
   });
@@ -881,7 +890,8 @@ async function buildUnusedExposureObservation(args: {
   guideExposure: Extract<ProductGuideExposureResolution, { ok: true }>;
 }): Promise<ProductUnusedExposureObservation> {
   const ledger = args.guideExposure.ledger;
-  const actor = args.parsed.actor ?? args.env.LITE_LOCAL_ACTOR_ID;
+  const actor = ledger.consumer_agent_id ?? args.parsed.actor ?? args.env.LITE_LOCAL_ACTOR_ID;
+  const consumerTeamId = ledger.consumer_team_id;
   const exposureThreshold = 2;
   const historicalLedgers = await findHistoricalGuideExposureLedgers({
     app: args.app,
@@ -889,6 +899,7 @@ async function buildUnusedExposureObservation(args: {
     tenant_id: ledger.tenant_id,
     scope: ledger.scope,
     actor,
+    consumerTeamId,
   });
   const ledgers = [
     ledger,
@@ -910,6 +921,7 @@ async function buildUnusedExposureObservation(args: {
       scope: ledger.scope,
       memory_id: memoryId,
       actor,
+      consumerTeamId,
     });
     let exposureCount = 0;
     let useNowExposureCount = 0;
@@ -979,7 +991,8 @@ async function persistUnusedExposureLearningControl(args: {
       {
         tenant_id: args.guideExposure.ledger.tenant_id,
         scope: args.guideExposure.ledger.scope,
-        actor: args.parsed.actor ?? args.env.LITE_LOCAL_ACTOR_ID,
+        actor: args.guideExposure.ledger.consumer_agent_id ?? args.parsed.actor ?? args.env.LITE_LOCAL_ACTOR_ID,
+        consumer_team_id: args.guideExposure.ledger.consumer_team_id,
         run_id: args.parsed.run_id ?? null,
         guide_trace_id: args.guideExposure.ledger.guide_trace_id,
         reason: "Repeated guide exposure without positive host attribution should be inspected before direct reuse.",
@@ -1205,6 +1218,9 @@ function productForgetPayload(
       ...payload,
       node_ids: nodeIds.length > 0 ? nodeIds : payload.node_ids,
       client_ids: clientIds.length > 0 ? clientIds : payload.client_ids,
+      consumer_team_id: guideExposure?.ok
+        ? guideExposure.ledger.consumer_team_id ?? payload.consumer_team_id
+        : payload.consumer_team_id,
       run_id: parsed.run_id ?? payload.run_id,
       outcome: parsed.outcome ?? payload.outcome,
       activate: parsed.activate ?? payload.activate,

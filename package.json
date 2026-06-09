@@ -28,7 +28,8 @@
     "build": "npm run -s typecheck",
     "core:build": "npm run -s typecheck",
     "runtime:e2e:product-loop": "npx tsx scripts/e2e/product-four-api-loop.ts",
-    "runtime:e2e:multi-agent": "npx tsx scripts/e2e/multi-agent-execution-memory-loop.ts"
+    "runtime:e2e:multi-agent": "npx tsx scripts/e2e/multi-agent-execution-memory-loop.ts",
+    "runtime:e2e:multi-agent-negative": "npx tsx scripts/e2e/multi-agent-execution-memory-negative-loop.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

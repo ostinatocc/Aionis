@@ -4,6 +4,7 @@ import { buildAppliedPolicy, parsePolicyPatch, type PolicyPatch } from "./rule-p
 import { computeEffectiveToolPolicy } from "./tool-policy.js";
 import { resolveTenantScope } from "./tenant.js";
 import type { LiteRuleCandidateRow, LiteWriteStore } from "../store/lite-write-store.js";
+import { memoryNodeVisible } from "../store/memory-visibility.js";
 import { buildRulesEvaluationSummary } from "./tools-lifecycle-summary.js";
 
 type RuleRow = {
@@ -175,14 +176,14 @@ function laneRuleMatchesContext(
   enforceLane: boolean,
 ): { visible: boolean; unowned_private_detected: boolean } {
   if (!enforceLane) return { visible: true, unowned_private_detected: false };
-  if (row.rule_memory_lane === "shared") return { visible: true, unowned_private_detected: false };
 
   const ownerAgent = row.rule_owner_agent_id;
   const ownerTeam = row.rule_owner_team_id;
-  if (ownerAgent && ctxAgentId && ownerAgent === ctxAgentId) {
-    return { visible: true, unowned_private_detected: false };
-  }
-  if (ownerTeam && ctxTeamId && ownerTeam === ctxTeamId) {
+  if (memoryNodeVisible({
+    memory_lane: row.rule_memory_lane,
+    owner_agent_id: ownerAgent,
+    owner_team_id: ownerTeam,
+  }, ctxAgentId, ctxTeamId)) {
     return { visible: true, unowned_private_detected: false };
   }
 

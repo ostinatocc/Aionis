@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { toVectorLiteral } from "../util/vector-literal.js";
 import { hasNodeWorkflowAnchorSurface } from "../memory/node-execution-surface.js";
+import { memoryNodeVisible } from "./memory-visibility.js";
 import { RECALL_STORE_ACCESS_CAPABILITY_VERSION, adjustRecallCandidateSimilarityForTrust } from "./recall-access.js";
 import type {
   RecallAuditInsertParams,
@@ -142,9 +143,7 @@ function candidateVisible(
   consumerAgentId: string | null,
   consumerTeamId: string | null,
 ): boolean {
-  return n.memory_lane === "shared"
-    || (n.memory_lane === "private" && n.owner_agent_id === consumerAgentId)
-    || (!!consumerTeamId && n.memory_lane === "private" && n.owner_team_id === consumerTeamId);
+  return memoryNodeVisible(n, consumerAgentId, consumerTeamId);
 }
 
 function edgeSortDesc(a: LiteRecallEdgeSourceRow, b: LiteRecallEdgeSourceRow): number {

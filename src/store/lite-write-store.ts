@@ -32,6 +32,7 @@ import type {
   WriteLifecycleCandidateNodeRow,
 } from "./write-access.js";
 import { WRITE_STORE_ACCESS_CAPABILITY_VERSION, writeNodeFingerprint } from "./write-access.js";
+import { memoryNodeVisible } from "./memory-visibility.js";
 import { createSqliteDatabase, type SqliteDatabase } from "./sqlite.js";
 
 type LiteLatestNodeView = {
@@ -442,9 +443,7 @@ function nodeVisible(
   consumerAgentId: string | null,
   consumerTeamId: string | null,
 ): boolean {
-  return row.memory_lane === "shared"
-    || (!!consumerAgentId && row.memory_lane === "private" && row.owner_agent_id === consumerAgentId)
-    || (!!consumerTeamId && row.memory_lane === "private" && row.owner_team_id === consumerTeamId);
+  return memoryNodeVisible(row, consumerAgentId, consumerTeamId);
 }
 
 function commitVisible(
@@ -462,11 +461,24 @@ function commitVisible(
          WHERE scope = ?
            AND commit_id = ?
            AND NOT (
-             memory_lane = 'shared'
+             (memory_lane = 'shared' AND owner_team_id IS NULL)
+             OR (? IS NOT NULL AND memory_lane = 'shared' AND owner_agent_id = ?)
+             OR (? IS NOT NULL AND memory_lane = 'shared' AND owner_team_id = ?)
              OR (? IS NOT NULL AND memory_lane = 'private' AND owner_agent_id = ?)
              OR (? IS NOT NULL AND memory_lane = 'private' AND owner_team_id = ?)
            )`,
-      ).get(scope, commitId, consumerAgentId, consumerAgentId, consumerTeamId, consumerTeamId) as { count: number } | undefined
+      ).get(
+        scope,
+        commitId,
+        consumerAgentId,
+        consumerAgentId,
+        consumerTeamId,
+        consumerTeamId,
+        consumerAgentId,
+        consumerAgentId,
+        consumerTeamId,
+        consumerTeamId,
+      ) as { count: number } | undefined
     )?.count ?? 0,
   );
   return hiddenCount === 0;
@@ -778,12 +790,16 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
       }
       const consumerAgentId = args.consumerAgentId ?? null;
       const consumerTeamId = args.consumerTeamId ?? null;
-      const visibility: string[] = ["memory_lane = 'shared'"];
+      const visibility: string[] = ["(memory_lane = 'shared' AND owner_team_id IS NULL)"];
       if (consumerAgentId) {
+        visibility.push("(memory_lane = 'shared' AND owner_agent_id = ?)");
+        params.push(consumerAgentId);
         visibility.push("(memory_lane = 'private' AND owner_agent_id = ?)");
         params.push(consumerAgentId);
       }
       if (consumerTeamId) {
+        visibility.push("(memory_lane = 'shared' AND owner_team_id = ?)");
+        params.push(consumerTeamId);
         visibility.push("(memory_lane = 'private' AND owner_team_id = ?)");
         params.push(consumerTeamId);
       }
