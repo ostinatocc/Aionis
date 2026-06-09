@@ -877,6 +877,153 @@ test("product memory decision trace explains lifecycle and agent-context surface
   assert.equal(audit.claims.some((claim) => claim.claim === "agent_prompt_excluded" && claim.status === "pass"), true);
 });
 
+test("product premise firewall flags query premises contradicted by newer memory", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "Continue from legacy/payments/old-checkout.ts for checkout validation.",
+    },
+    nodes: [
+      {
+        id: "mem-current-route",
+        type: "concept",
+        title: "Current checkout route",
+        text_summary: "Follow-up project memory. The route through legacy/payments/old-checkout.ts became a dead end. Current work sits in: src/payments/checkout.ts.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+        },
+        confidence: 0.92,
+        salience: 0.91,
+        created_at: "2026-01-02T00:00:00.000Z",
+      },
+      {
+        id: "mem-old-route",
+        type: "concept",
+        title: "Old checkout route",
+        text_summary: "First-pass checkout memory. The suspected work area was: legacy/payments/old-checkout.ts.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+        },
+        confidence: 0.9,
+        salience: 0.87,
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+    lifecycle_edges: [{
+      id: "edge-current-contradicts-old",
+      type: "contradicts",
+      src_id: "mem-current-route",
+      dst_id: "mem-old-route",
+      confidence: 0.86,
+    }],
+  });
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+
+  assert.equal(agentContext.risk.reasons.includes("premise_firewall_query_conflicts_with_current_memory"), true);
+  assert.equal(agentContext.risk.negative_transfer_risk, "high");
+  assert.deepEqual(agentContext.use_now_memory_ids, ["mem-current-route"]);
+  assert.deepEqual(agentContext.inspect_before_use_memory_ids, ["mem-old-route"]);
+  assert.ok(agentContext.inspect_before_use.some((entry) =>
+    entry.startsWith("Premise risk:")
+    && entry.includes("mem-current-route")
+    && entry.includes("contradicts")
+  ));
+
+  const trace = buildAionisMemoryDecisionTrace({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    before_guide: null,
+    after_guide: {
+      memory_packet: memoryPacket,
+      agent_context: agentContext,
+    },
+  });
+  const oldDecision = trace.memory_decisions.find((entry) => entry.memory_id === "mem-old-route");
+  assert.ok(oldDecision?.reason_codes.includes("premise_firewall_query_risk"));
+  assert.ok(trace.source_map.internal_surfaces_used.includes("premise_firewall"));
+  assert.ok(trace.memory_use_receipt?.risk_flags.includes("premise_firewall_query_risk"));
+});
+
+test("product premise firewall stays quiet when query does not carry the stale premise", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "Recover checkout validation project memory.",
+    },
+    nodes: [
+      {
+        id: "mem-current-route",
+        type: "concept",
+        title: "Current checkout route",
+        text_summary: "Follow-up project memory. The route through legacy/payments/old-checkout.ts became a dead end. Current work sits in: src/payments/checkout.ts.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+        },
+        confidence: 0.92,
+        salience: 0.91,
+        created_at: "2026-01-02T00:00:00.000Z",
+      },
+      {
+        id: "mem-old-route",
+        type: "concept",
+        title: "Old checkout route",
+        text_summary: "First-pass checkout memory. The suspected work area was: legacy/payments/old-checkout.ts.",
+        tier: "hot",
+        slots: {
+          memory_kind: "general_memory",
+          compression_layer: "L2",
+        },
+        confidence: 0.9,
+        salience: 0.87,
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+    lifecycle_edges: [{
+      id: "edge-current-contradicts-old",
+      type: "contradicts",
+      src_id: "mem-current-route",
+      dst_id: "mem-old-route",
+      confidence: 0.86,
+    }],
+  });
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+
+  assert.equal(agentContext.risk.reasons.includes("premise_firewall_query_conflicts_with_current_memory"), false);
+  assert.equal(agentContext.inspect_before_use.some((entry) => entry.startsWith("Premise risk:")), false);
+  assert.deepEqual(agentContext.inspect_before_use_memory_ids, ["mem-old-route"]);
+
+  const trace = buildAionisMemoryDecisionTrace({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    before_guide: null,
+    after_guide: {
+      memory_packet: memoryPacket,
+      agent_context: agentContext,
+    },
+  });
+  const oldDecision = trace.memory_decisions.find((entry) => entry.memory_id === "mem-old-route");
+  assert.equal(oldDecision?.reason_codes.includes("premise_firewall_query_risk"), false);
+  assert.equal(trace.source_map.internal_surfaces_used.includes("premise_firewall"), false);
+});
+
 test("product memory decision trace observes neighborhood drift without changing guide authority", () => {
   const memoryPacket = buildAionisMemoryPacket({
     tenant_id: "tenant-local",

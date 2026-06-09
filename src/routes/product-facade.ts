@@ -566,6 +566,12 @@ function productGuideAgentRole(parsed: z.infer<typeof ProductGuideRequest>): Aio
   return parsedContextRole.success ? parsedContextRole.data : "agent";
 }
 
+function productGuidePremiseFirewallVisible(agentContext: AionisAgentContext): boolean {
+  return agentContext.risk.reasons.some((reason) => reason.startsWith("premise_firewall_"))
+    || agentContext.inspect_before_use.some((entry) => entry.startsWith("Premise risk:"))
+    || agentContext.do_not_use.some((entry) => entry.startsWith("Premise risk:"));
+}
+
 function productGuideFullPowerRequested(parsed: z.infer<typeof ProductGuideRequest>): boolean {
   return parsed.mode === "full_power" || parsed.context_mode === "full_power";
 }
@@ -1958,6 +1964,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       agent_role: agentRole,
       memory_packet: memoryPacket,
       guide_packet: guidePacket,
+      query_intent_override: parsed.query_text,
       context_char_budget: parsed.context_char_budget,
       context_compaction_profile: parsed.context_compaction_profile ?? parsed.context_optimization_profile ?? null,
     });
@@ -2033,6 +2040,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     });
     if (!exposureWrite.ok) return sendInternalFailure(reply, exposureWrite);
     const includePackets = parsed.include_packets === true;
+    const premiseFirewallVisible = productGuidePremiseFirewallVisible(agentContext);
 
     return reply.code(200).send({
       contract_version: "aionis_guide_result_v1",
@@ -2058,6 +2066,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
           ...(fullPowerRequested ? ["full_power_execution_context"] : []),
           ...(fullPowerExecutionContextMerged ? ["full_power_agent_context_merge"] : []),
           ...(activeProjectionApplied ? ["inspect_before_use_active_projection"] : []),
+          ...(premiseFirewallVisible ? ["premise_firewall"] : []),
           "guide_exposure_ledger",
         ],
         omitted_internal_surfaces: [

@@ -61,6 +61,13 @@ the memory IDs exposed as `use_now`, `inspect_before_use`, `do_not_use`, or
 `rehydrate`, plus feedback attribution and read-only risk flags. It is useful
 for logs, dashboards, and support diagnostics, but it is not prompt content.
 
+Premise Firewall warnings are delivered through the same guide boundary. If a
+user query carries a stale or blocked premise and Aionis has newer/current
+counter-evidence, `POST /v1/guide` adds `premise_firewall_*` entries to
+`agent_context.risk.reasons` and moves the relevant memory IDs to
+`inspect_before_use` or `do_not_use`. Hosts should pass only the resulting
+`agent_context` surface to the Agent and keep trace/receipt details for audit.
+
 ## `history_used` vs `actionable_history_used`
 
 `history_used` means the Aionis history/context channel participated in guide
@@ -78,6 +85,7 @@ Common cases:
 | Ordinary active preference/fact is in `use_now` | `true` | `true` | Agent may use it according to `authority`. |
 | Candidate or contested memory is in `inspect_before_use` | `true` | `true` | Agent must inspect before relying on it. |
 | Failed execution branch is in `do_not_use` | `true` | `true` | Agent must avoid copying it as next action. |
+| Premise Firewall flags stale or blocked premise | `true` | `true` | Agent should inspect or avoid that premise; host should log the risk flag. |
 | Operator snapshot is read after useful guide | `true` | `true` | Operator can see that history affected the run. |
 
 Hosts should use `actionable_history_used` for product decisions such as

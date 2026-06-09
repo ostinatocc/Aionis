@@ -120,6 +120,7 @@ export type BuildAionisAgentContextArgs = {
   agent_role?: AionisAgentRole | null;
   memory_packet?: AionisMemoryPacket | null;
   guide_packet?: AionisGuidePacket | null;
+  query_intent_override?: string | null;
   context_char_budget?: number | null;
   context_compaction_profile?: "balanced" | "aggressive" | null;
 };
@@ -1266,6 +1267,11 @@ function memoryEntryLabel(entry: MemoryPacketEntry): string {
   return compactStrings([entry.title, entry.memory_id])[0] ?? entry.memory_id;
 }
 
+function memoryEntryAuditLabel(entry: MemoryPacketEntry): string {
+  const label = memoryEntryLabel(entry);
+  return label === entry.memory_id ? entry.memory_id : `${label} (${entry.memory_id})`;
+}
+
 function memoryEntryUseNowLine(entry: MemoryPacketEntry, deniedPathTargets: Set<string> = new Set()): string | null {
   const prefix = entry.memory_type === "preference"
     ? "Preference"
@@ -1421,6 +1427,186 @@ function memoryEntryPathTargets(entry: MemoryPacketEntry): string[] {
   return compactStrings(extractPathTargets(`${entry.title ?? ""}\n${entry.summary}`).map(normalizePathTarget));
 }
 
+type PremiseFirewallProjection = {
+  inspectBeforeUse: string[];
+  doNotUse: string[];
+  inspectBeforeUseMemoryIds: string[];
+  doNotUseMemoryIds: string[];
+  riskReasons: string[];
+};
+
+const EMPTY_PREMISE_FIREWALL_PROJECTION: PremiseFirewallProjection = {
+  inspectBeforeUse: [],
+  doNotUse: [],
+  inspectBeforeUseMemoryIds: [],
+  doNotUseMemoryIds: [],
+  riskReasons: [],
+};
+
+const PREMISE_QUERY_CUES = [
+  "assume",
+  "based on",
+  "continue",
+  "deprecated",
+  "former",
+  "initial",
+  "legacy",
+  "obsolete",
+  "old",
+  "outdated",
+  "previous",
+  "prior",
+  "stale",
+  "use",
+];
+
+const PREMISE_FIREWALL_STOPWORDS = new Set([
+  "about",
+  "after",
+  "again",
+  "also",
+  "before",
+  "based",
+  "continue",
+  "current",
+  "from",
+  "into",
+  "memory",
+  "please",
+  "prior",
+  "project",
+  "query",
+  "should",
+  "that",
+  "this",
+  "use",
+  "with",
+  "work",
+]);
+
+function normalizePremiseText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9/._-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function premiseTokens(value: string): Set<string> {
+  const out = new Set<string>();
+  for (const raw of normalizePremiseText(value).replace(/[/_.:-]+/g, " ").match(/[a-z0-9]{4,}/g) ?? []) {
+    const token = raw.replace(/^[._-]+|[._-]+$/g, "");
+    if (!token || PREMISE_FIREWALL_STOPWORDS.has(token)) continue;
+    out.add(token);
+  }
+  return out;
+}
+
+function premiseTokenOverlap(left: Set<string>, right: Set<string>): number {
+  let count = 0;
+  for (const token of left) {
+    if (right.has(token)) count += 1;
+  }
+  return count;
+}
+
+function queryHasPremiseCue(query: string): boolean {
+  const normalized = ` ${normalizePremiseText(query)} `;
+  return PREMISE_QUERY_CUES.some((cue) =>
+    normalized.includes(` ${normalizePremiseText(cue)} `)
+  );
+}
+
+function queryMentionsPathTarget(query: string, target: string): boolean {
+  const normalizedQuery = normalizePremiseText(query).replace(/^\.\/+/, "");
+  const normalizedTarget = normalizePremiseText(target).replace(/^\.\/+/, "");
+  return normalizedTarget.length >= 5 && normalizedQuery.includes(normalizedTarget);
+}
+
+function queryMentionsMemoryEntry(query: string, entry: MemoryPacketEntry): boolean {
+  const normalizedQuery = normalizePremiseText(query);
+  if (!normalizedQuery) return false;
+  if (normalizedQuery.includes(normalizePremiseText(entry.memory_id))) return true;
+  if (memoryEntryPathTargets(entry).some((target) => queryMentionsPathTarget(query, target))) return true;
+
+  const title = normalizePremiseText(entry.title ?? "");
+  if (title.length >= 8 && normalizedQuery.includes(title)) return true;
+
+  if (!queryHasPremiseCue(query)) return false;
+  const queryTokens = premiseTokens(query);
+  const titleTokens = premiseTokens(entry.title ?? "");
+  if (titleTokens.size > 0 && premiseTokenOverlap(queryTokens, titleTokens) >= 2) return true;
+  const memoryTokens = premiseTokens(`${entry.title ?? ""}\n${entry.summary}`);
+  return premiseTokenOverlap(queryTokens, memoryTokens) >= 3;
+}
+
+function relationEvidenceByTarget(
+  evidenceTrail: AionisMemoryPacket["evidence_trail"],
+): Map<string, MemoryLifecycleRelationTraceEvidence> {
+  const out = new Map<string, MemoryLifecycleRelationTraceEvidence>();
+  for (const evidence of evidenceTrail) {
+    const relation = evidence.lifecycle_relation;
+    if (!relation || relation.gate.accepted !== true) continue;
+    out.set(relation.target_memory_id, relation);
+  }
+  return out;
+}
+
+function buildPremiseFirewallProjection(args: {
+  queryIntent: string | null;
+  memoryEntries: MemoryPacketEntry[];
+  evidenceTrail: AionisMemoryPacket["evidence_trail"];
+}): PremiseFirewallProjection {
+  const query = args.queryIntent?.trim();
+  if (!query || args.memoryEntries.length === 0) return EMPTY_PREMISE_FIREWALL_PROJECTION;
+
+  const byId = new Map(args.memoryEntries.map((entry) => [entry.memory_id, entry]));
+  const relationsByTarget = relationEvidenceByTarget(args.evidenceTrail);
+  const inspectBeforeUse: string[] = [];
+  const doNotUse: string[] = [];
+  const inspectBeforeUseMemoryIds: string[] = [];
+  const doNotUseMemoryIds: string[] = [];
+  const riskReasons: string[] = [];
+
+  for (const entry of args.memoryEntries) {
+    if (!queryMentionsMemoryEntry(query, entry)) continue;
+    const relation = relationsByTarget.get(entry.memory_id) ?? null;
+    if (relation) {
+      const source = byId.get(relation.source_memory_id);
+      const sourceLabel = source ? memoryEntryAuditLabel(source) : relation.source_memory_id;
+      inspectBeforeUse.push(
+        `Premise risk: query mentions ${memoryEntryAuditLabel(entry)}, but newer/current memory ${sourceLabel} ${relation.lifecycle_relation} it; inspect before relying on that premise.`,
+      );
+      inspectBeforeUseMemoryIds.push(entry.memory_id);
+      riskReasons.push("premise_firewall_query_conflicts_with_current_memory");
+      continue;
+    }
+    if (memoryEntryBlocked(entry)) {
+      doNotUse.push(
+        `Premise risk: query mentions blocked memory ${memoryEntryAuditLabel(entry)}; keep that premise out of direct use.`,
+      );
+      doNotUseMemoryIds.push(entry.memory_id);
+      riskReasons.push("premise_firewall_query_mentions_blocked_memory");
+      continue;
+    }
+    if (memoryEntryInspectBeforeUse(entry)) {
+      inspectBeforeUse.push(
+        `Premise risk: query mentions ${memoryEntryAuditLabel(entry)}, but this memory is ${entry.lifecycle_state}/${entry.authority}; inspect before relying on that premise.`,
+      );
+      inspectBeforeUseMemoryIds.push(entry.memory_id);
+      riskReasons.push("premise_firewall_query_mentions_uncertain_memory");
+    }
+  }
+
+  return {
+    inspectBeforeUse: compactStrings(inspectBeforeUse).slice(0, 4),
+    doNotUse: compactStrings(doNotUse).slice(0, 4),
+    inspectBeforeUseMemoryIds: compactStrings(inspectBeforeUseMemoryIds).slice(0, 10),
+    doNotUseMemoryIds: compactStrings(doNotUseMemoryIds).slice(0, 10),
+    riskReasons: compactStrings(riskReasons).slice(0, 4),
+  };
+}
+
 function trustedWorkflowConflictAudit(entries: MemoryPacketEntry[]): {
   hasConflict: boolean;
   moveAllWorkflowUseNow: boolean;
@@ -1490,6 +1676,7 @@ function compileAgentContextSurfaces(args: {
   rawAuthority: AionisAgentContext["authority"];
   rawRisk: AionisAgentContext["risk"];
   rehydrateHints: AionisAgentContext["rehydrate_hints"];
+  premiseFirewall: PremiseFirewallProjection;
 }): {
   historyUsed: boolean;
   actionableHistoryUsed: boolean;
@@ -1518,6 +1705,8 @@ function compileAgentContextSurfaces(args: {
   const trustedConflict = trustedWorkflowConflictAudit(args.memoryEntries);
   const trustedConflictIds = new Set(trustedConflict.conflictedEntries.map((entry) => entry.memory_id));
   const trustedWorkflowConflictInspectIds = new Set<string>();
+  const premiseInspectIds = new Set(args.premiseFirewall.inspectBeforeUseMemoryIds);
+  const premiseDoNotUseIds = new Set(args.premiseFirewall.doNotUseMemoryIds);
   if (trustedConflict.hasConflict) {
     for (const entry of usableEntries) {
       const trustedWorkflow =
@@ -1532,8 +1721,15 @@ function compileAgentContextSurfaces(args: {
       }
     }
   }
-  const directUseMemoryEntries = usableEntries.filter((entry) => !trustedWorkflowConflictInspectIds.has(entry.memory_id));
-  const conflictInspectMemoryEntries = usableEntries.filter((entry) => trustedWorkflowConflictInspectIds.has(entry.memory_id));
+  const directUseMemoryEntries = usableEntries.filter((entry) =>
+    !trustedWorkflowConflictInspectIds.has(entry.memory_id)
+    && !premiseInspectIds.has(entry.memory_id)
+    && !premiseDoNotUseIds.has(entry.memory_id)
+  );
+  const conflictInspectMemoryEntries = usableEntries.filter((entry) =>
+    trustedWorkflowConflictInspectIds.has(entry.memory_id)
+    || premiseInspectIds.has(entry.memory_id)
+  );
   const memoryUseNow = compactStrings(directUseMemoryEntries.map((entry) => memoryEntryUseNowLine(entry, deniedPathTargets)));
   const memoryUseNowPathTargets = compactStrings(memoryUseNow.flatMap(extractPathTargets));
   const memoryUseNowPathTargetSet = new Set(memoryUseNowPathTargets);
@@ -1546,9 +1742,23 @@ function compileAgentContextSurfaces(args: {
       movedToDoNotUse.push(`Blocked memory: ${memoryEntryLabel(blocked)}`);
       return false;
     }
+    const premiseDoNotUse = args.memoryEntries.find((memory) =>
+      premiseDoNotUseIds.has(memory.memory_id) && textMatchesMemoryEntry(entry, memory)
+    );
+    if (premiseDoNotUse) {
+      movedToDoNotUse.push(`Premise risk: query mentions blocked memory ${memoryEntryAuditLabel(premiseDoNotUse)}; keep that premise out of direct use.`);
+      return false;
+    }
     const inspect = inspectEntries.find((memory) => textMatchesMemoryEntry(entry, memory));
     if (inspect) {
       movedToInspect.push(`Inspect memory before use: ${memoryEntryLabel(inspect)}`);
+      return false;
+    }
+    const premiseInspect = args.memoryEntries.find((memory) =>
+      premiseInspectIds.has(memory.memory_id) && textMatchesMemoryEntry(entry, memory)
+    );
+    if (premiseInspect) {
+      movedToInspect.push(`Premise risk: query mentions ${memoryEntryAuditLabel(premiseInspect)}; inspect before relying on that premise.`);
       return false;
     }
     const conflicted = trustedConflict.conflictedEntries.find((memory) => textMatchesMemoryEntry(entry, memory));
@@ -1577,12 +1787,14 @@ function compileAgentContextSurfaces(args: {
     : [];
   const inspectBeforeUse = compactStrings([
     ...args.rawInspectBeforeUse,
+    ...args.premiseFirewall.inspectBeforeUse,
     ...movedToInspect,
     ...inspectEntries.map(memoryEntryInspectLine),
     ...conflictInspectMemoryEntries.map((entry) => `Inspect conflicting trusted workflow: ${memoryEntryLabel(entry)}`),
   ]).slice(0, 5);
   const doNotUse = compactStrings([
     ...args.rawDoNotUse,
+    ...args.premiseFirewall.doNotUse,
     ...movedToDoNotUse,
     ...blockedEntries.map((entry) => `Blocked memory: ${memoryEntryLabel(entry)}`),
   ]).slice(0, 5);
@@ -1591,7 +1803,8 @@ function compileAgentContextSurfaces(args: {
     || doNotUse.length > args.rawDoNotUse.length
     || inspectEntries.length > 0
     || blockedEntries.length > 0
-    || trustedConflict.hasConflict;
+    || trustedConflict.hasConflict
+    || args.premiseFirewall.riskReasons.length > 0;
   const historyUsed = (args.rawHistoryUsed || hasUsableMemory || inspectEntries.length > 0 || blockedEntries.length > 0 || hasRawGuideSurface) && (
     hasUsableMemory
     || inspectEntries.length > 0
@@ -1604,11 +1817,13 @@ function compileAgentContextSurfaces(args: {
     || conflictInspectMemoryEntries.length > 0
     || inspectEntries.length > 0
     || blockedEntries.length > 0
+    || args.premiseFirewall.riskReasons.length > 0
     || args.rehydrateHints.length > 0;
   let negativeTransferRisk = args.rawRisk.negative_transfer_risk;
   if (blockedEntries.length > 0) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "high");
   else if (inspectEntries.length > 0) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "medium");
   if (trustedConflict.hasConflict) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "medium");
+  if (args.premiseFirewall.riskReasons.length > 0) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "medium");
 
   const recommendedPosture: AionisAgentContext["recommended_posture"] = !actionableHistoryUsed
     ? "ignore_history"
@@ -1656,8 +1871,12 @@ function compileAgentContextSurfaces(args: {
     inspectBeforeUseMemoryIds: compactStrings([
       ...inspectEntries.map((entry) => entry.memory_id),
       ...conflictInspectMemoryEntries.map((entry) => entry.memory_id),
+      ...args.premiseFirewall.inspectBeforeUseMemoryIds,
     ]).slice(0, 10),
-    doNotUseMemoryIds: compactStrings(blockedEntries.map((entry) => entry.memory_id)).slice(0, 10),
+    doNotUseMemoryIds: compactStrings([
+      ...blockedEntries.map((entry) => entry.memory_id),
+      ...args.premiseFirewall.doNotUseMemoryIds,
+    ]).slice(0, 10),
     risk: {
       negative_transfer_risk: negativeTransferRisk,
       blocked_authority_count: args.rawRisk.blocked_authority_count + blockedEntries.length,
@@ -1667,6 +1886,7 @@ function compileAgentContextSurfaces(args: {
         ...trustedConflict.reasons,
         inspectEntries.length > 0 ? "candidate_or_contested_memory_kept_out_of_use_now" : null,
         blockedEntries.length > 0 ? "blocked_or_suppressed_memory_kept_out_of_use_now" : null,
+        ...args.premiseFirewall.riskReasons,
         ...args.rawRisk.reasons,
       ]).slice(0, 5),
     },
@@ -1732,6 +1952,11 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     rawAuthority,
     rawRisk: risk,
     rehydrateHints,
+    premiseFirewall: buildPremiseFirewallProjection({
+      queryIntent: args.query_intent_override ?? memory?.query.intent ?? null,
+      memoryEntries: memory?.relevant_memories ?? [],
+      evidenceTrail: memory?.evidence_trail ?? [],
+    }),
   });
   const summary = surfaces.historyUsed
     ? rawSummary
@@ -1919,6 +2144,14 @@ function traceReasonCodes(args: {
   const hasWarning = args.memory?.contradiction_warnings.some((warning) =>
     warning.memory_id === args.entry.memory_id
   ) === true;
+  const premiseFirewallReasonVisible =
+    args.agentContext?.risk.reasons.some((reason) => reason.startsWith("premise_firewall_")) === true
+    && (
+      args.agentContext.inspect_before_use_memory_ids.includes(args.entry.memory_id)
+      || args.agentContext.do_not_use_memory_ids.includes(args.entry.memory_id)
+      || traceTextMatchesEntry(args.agentContext.inspect_before_use, args.entry)
+      || traceTextMatchesEntry(args.agentContext.do_not_use, args.entry)
+    );
   return compactStrings([
     args.entry.lifecycle_state === "active" ? "lifecycle_active" : `lifecycle_${args.entry.lifecycle_state}`,
     args.entry.authority === "trusted" || args.entry.authority === "advisory" ? `authority_${args.entry.authority}` : null,
@@ -1926,6 +2159,7 @@ function traceReasonCodes(args: {
     args.entry.authority === "blocked" ? "blocked_authority" : null,
     hasRelationEvidence ? "lifecycle_relation_evidence" : null,
     hasWarning ? "contradiction_warning" : null,
+    premiseFirewallReasonVisible ? "premise_firewall_query_risk" : null,
     args.surface === "use_now" ? "available_for_agent_use" : null,
     args.surface === "inspect_before_use" ? "kept_out_of_direct_use" : null,
     args.surface === "do_not_use" ? "blocked_from_agent_use" : null,
@@ -3163,6 +3397,9 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
         neighborhoodDriftObservation.present ? "neighborhood_drift_observation" : null,
         confidenceDecayCandidateSummary.present ? "confidence_decay_candidate_summary" : null,
         inspectBeforeUseShadowDelta.present ? "inspect_before_use_shadow_delta" : null,
+        agentContext?.risk.reasons.some((reason) => reason.startsWith("premise_firewall_"))
+          ? "premise_firewall"
+          : null,
         forgetDecisions.length > 0 ? "forget_result_projection" : null,
         "memory_decision_trace",
         "memory_use_receipt",

@@ -154,6 +154,13 @@ Generated `memory_decision_trace` and `operator_snapshot` outputs include
 attribution and risk flags. It is for host/operator audit only and must not be
 used as Agent prompt content.
 
+The guide path also includes a Premise Firewall projection. When the current
+query appears to reuse a stale, blocked, contested, or superseded premise and
+Aionis has accepted current-state counter-evidence, the product exposes the
+risk through existing `agent_context.risk.reasons`, `inspect_before_use`, and
+`do_not_use` fields. This is state governance before context compilation; it
+does not rewrite the task or mutate memory by itself.
+
 ## Forget Input Contract
 
 `POST /v1/forget` is the product entry for controlled forgetting, suppression, rehydration, and reuse feedback. Users should not need to know the internal lifecycle route names.

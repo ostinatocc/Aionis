@@ -53,6 +53,12 @@ equivalent using these fields:
 
 This keeps Aionis useful without turning memory internals into a rule wall.
 
+Premise Firewall warnings are Agent-facing only through the existing
+`risk.reasons`, `inspect_before_use`, and `do_not_use` fields. The detailed
+per-memory explanation remains in `memory_decision_trace` and the compact
+risk flag remains in `memory_use_receipt`; neither should be appended to the
+Agent prompt.
+
 ## Debug and Audit Contract
 
 Use `memory_decision_trace` when the developer needs exact causality:

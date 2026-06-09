@@ -65,6 +65,12 @@ function uniqueStrings(values: string[], limit = 128): string[] {
   return compactStrings(values, limit);
 }
 
+function premiseFirewallRiskFlags(reasons: string[]): string[] {
+  return reasons.some((reason) => reason.startsWith("premise_firewall_"))
+    ? ["premise_firewall_query_risk"]
+    : [];
+}
+
 function parseAgentContext(value: unknown): AionisAgentContext | null {
   const direct = AionisAgentContextSchema.safeParse(value);
   if (direct.success) return direct.data;
@@ -360,6 +366,10 @@ function buildFallbackMemoryUseReceipt(args: {
     args.agent?.risk.negative_transfer_risk
     ?? args.guide?.risk.negative_transfer_risk
     ?? "low";
+  const riskReasons = uniqueStrings([
+    ...(args.agent?.risk.reasons ?? []),
+    ...(args.guide?.risk.reasons ?? []),
+  ]);
 
   return parseAionisMemoryUseReceipt({
     contract_version: "aionis_memory_use_receipt_v1",
@@ -380,8 +390,8 @@ function buildFallbackMemoryUseReceipt(args: {
     read_only_signal_memory_ids: [],
     risk_flags: uniqueStrings([
       negativeTransferRisk !== "low" ? `negative_transfer_risk:${negativeTransferRisk}` : "",
-      ...(args.agent?.risk.reasons ?? []),
-      ...(args.guide?.risk.reasons ?? []),
+      ...riskReasons,
+      ...premiseFirewallRiskFlags(riskReasons),
     ]),
     summary: `Aionis compiled memory into ${useNowMemoryIds.length} use_now, ${inspectBeforeUseMemoryIds.length} inspect_before_use, ${doNotUseMemoryIds.length} do_not_use, and ${rehydrateMemoryIds.length} rehydrate decisions; receipt is read-only and excluded from the Agent prompt.`,
   });

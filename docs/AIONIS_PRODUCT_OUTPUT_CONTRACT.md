@@ -124,6 +124,33 @@ type AionisMemoryUseReceipt = {
 | read-only risk/sparse feedback signals | runtime mutation, suppression, archive, or promotion actions |
 | prompt character count and `actionable_history_used` | claims that a memory was useful unless feedback attribution says so |
 
+## Premise Firewall
+
+The first implemented Premise Firewall is a guide-stage projection, not a new
+Runtime subsystem and not a hard Agent interceptor. It checks the current guide
+query against recalled memory and accepted lifecycle relation evidence. When
+the query appears to carry an old, blocked, contested, or superseded premise,
+Aionis keeps the warning on existing product surfaces:
+
+1. `agent_context.risk.reasons`
+2. `agent_context.inspect_before_use`
+3. `agent_context.do_not_use`
+4. `memory_decision_trace.memory_decisions[].reason_codes`
+5. `memory_decision_trace.memory_use_receipt.risk_flags`
+6. `source_map.internal_surfaces_used`
+
+Current implemented reason codes:
+
+| Reason | Meaning | Agent Surface |
+|---|---|---|
+| `premise_firewall_query_conflicts_with_current_memory` | The query mentions a memory that accepted lifecycle evidence says is contradicted or superseded by newer/current memory. | `inspect_before_use` |
+| `premise_firewall_query_mentions_blocked_memory` | The query mentions suppressed, archived, or blocked memory. | `do_not_use` |
+| `premise_firewall_query_mentions_uncertain_memory` | The query mentions candidate, contested, demoted, or rehydration-candidate memory. | `inspect_before_use` |
+
+The product behavior is advisory. The Agent is told to inspect or avoid the
+premise, but Aionis does not rewrite the task, execute a repair, or mutate
+memory lifecycle from this signal alone.
+
 ## Non-Goals
 
 These outputs must not become:

@@ -1088,6 +1088,15 @@ test("product observe persists lifecycle relation graph and guide suppresses sup
         entry.includes(oldNodeId) || entry.includes("Initial checkout validation investigation")
       ),
     );
+    assert.ok(
+      guideBody.agent_context.inspect_before_use.some((entry: string) =>
+        entry.startsWith("Premise risk:")
+        && entry.includes(currentNodeId)
+        && entry.includes("contradicts")
+      ),
+    );
+    assert.ok(guideBody.agent_context.risk.reasons.includes("premise_firewall_query_conflicts_with_current_memory"));
+    assert.ok(guideBody.source_map.internal_surfaces_used.includes("premise_firewall"));
     assert.equal(guideBody.agent_context.prompt_text.includes("legacy/payments/old-checkout.ts"), false);
     assert.equal(guideBody.agent_context.prompt_text.includes("decision_reviews"), false);
 
@@ -1110,6 +1119,9 @@ test("product observe persists lifecycle relation graph and guide suppresses sup
       entry.memory_id === oldNodeId,
     );
     assert.equal(oldDecision?.decision_kind, "downgraded");
+    assert.ok((oldDecision?.reason_codes as string[]).includes("premise_firewall_query_risk"));
+    assert.ok(debugBody.memory_decision_trace.source_map.internal_surfaces_used.includes("premise_firewall"));
+    assert.ok(debugBody.memory_decision_trace.memory_use_receipt.risk_flags.includes("premise_firewall_query_risk"));
     assert.equal(objectValue(oldDecision?.downgraded_detail, "old decision downgraded detail").by_memory_id, currentNodeId);
 
     const auditReport = await app.inject({
