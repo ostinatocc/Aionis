@@ -93,8 +93,9 @@ npm run -s runtime:e2e:product-loop
 
 The e2e exercises `observe -> guide -> simulated Agent -> observe outcome ->
 forget(rehydrate) -> measure`, and also verifies that the advanced
-`/v1/execution/context/assemble` `agent_context` keeps passed branches,
-failed branches, and audit surfaces separated.
+`/v1/execution/context/assemble` and product `/v1/guide mode=full_power`
+`agent_context` keep passed branches, failed branches, and audit surfaces
+separated.
 
 ## Multi-Agent Execution Memory
 
@@ -257,6 +258,45 @@ Aionis later know exactly which memories were exposed by that guide call.
   "consumer_agent_id": "agent-1",
   "limit": 8,
   "include_packets": false
+}
+```
+
+### Full-Power Guide Mode
+
+For hosts that want the strongest product guide without calling lower-level
+routes directly, set `mode: "full_power"` or `context_mode: "full_power"` on
+`POST /v1/guide`.
+
+Full-power guide still returns `agent_context` as the Agent-facing surface. It
+internally combines semantic recall with the safe `agent_context` projection
+from `/v1/execution/context/assemble`, so:
+
+1. ordinary memory can still enter `use_now`
+2. passed execution branches can enter `use_now`
+3. failed branches enter `do_not_use`
+4. contested or stale memory stays out of `use_now`
+5. raw evidence, gated abstractions, and trace details remain omitted from
+   `agent_context.prompt_text`
+
+Use `execution_tree_v1` when the host has current branch state. Use
+`context.task_signature`, `context.task_family`, or `context.workflow_signature`
+to let the Runtime pull matching execution evidence into the internal
+full-power assembly.
+
+Example:
+
+```json
+{
+  "tenant_id": "default",
+  "scope": "payments-service",
+  "mode": "full_power",
+  "query_text": "Continue checkout migration and avoid failed legacy branches.",
+  "consumer_agent_id": "reviewer-1",
+  "agent_role": "reviewer",
+  "context": {
+    "task_signature": "checkout-migration"
+  },
+  "include_packets": true
 }
 ```
 

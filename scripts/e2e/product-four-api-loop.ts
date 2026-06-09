@@ -458,10 +458,10 @@ async function runExecutionContextLoop(args: {
     pathName: "/v1/execution/context/assemble",
     apiKey: args.apiKey,
     payload: {
-    tenant_id: "default",
-    scope: args.scope,
-    consumer_agent_id: CONSUMER_AGENT_ID,
-    execution_tree_v1: observedTree,
+      tenant_id: "default",
+      scope: args.scope,
+      consumer_agent_id: CONSUMER_AGENT_ID,
+      execution_tree_v1: observedTree,
       context_mode: "full_power",
       include_memory_evidence: false,
       include_prompt_text: true,
@@ -479,12 +479,46 @@ async function runExecutionContextLoop(args: {
   assertCondition(String(assembled.prompt_text ?? "").includes("RAW_EVIDENCE"), "audit prompt_text should retain RAW_EVIDENCE in full_power mode");
   assertCondition(asRecord(assembled.full_power_trace) !== null, "full_power_trace was missing from audit surface");
 
+  const fullPowerGuide = await client.guide<Record<string, unknown>>({
+    mode: "full_power",
+    query_text: "PRODUCT_E2E_TREE_PASSED continue scoped branch and avoid PRODUCT_E2E_TREE_FAILED",
+    consumer_agent_id: CONSUMER_AGENT_ID,
+    agent_role: "reviewer",
+    execution_tree_v1: observedTree,
+    include_packets: true,
+    limit: 8,
+  });
+  const fullPowerGuideContext = agentContext(fullPowerGuide.agent_context, "full-power product guide");
+  const fullPowerPrompt = String(fullPowerGuideContext.prompt_text);
+  assertPromptBoundary(fullPowerPrompt, "full-power product guide");
+  assertCondition(
+    textArray(fullPowerGuideContext.use_now).some((entry) => entry.includes("PRODUCT_E2E_TREE_PASSED")),
+    "full-power product guide missing passed branch in use_now",
+  );
+  assertCondition(
+    textArray(fullPowerGuideContext.do_not_use).some((entry) => entry.includes("PRODUCT_E2E_TREE_FAILED")),
+    "full-power product guide missing failed branch in do_not_use",
+  );
+  const fullPowerSourceMap = asRecord(fullPowerGuide.source_map);
+  assertCondition(
+    Array.isArray(fullPowerSourceMap?.routes_used)
+      && fullPowerSourceMap.routes_used.includes("/v1/execution/context/assemble"),
+    "full-power product guide did not use execution context route",
+  );
+  assertCondition(
+    Array.isArray(fullPowerSourceMap?.internal_surfaces_used)
+      && fullPowerSourceMap.internal_surfaces_used.includes("full_power_agent_context_merge"),
+    "full-power product guide did not report agent_context merge",
+  );
+
   return {
     tree_id: observedTree.tree_id,
     use_now_count: textArray(executionContext.use_now).length,
     do_not_use_count: textArray(executionContext.do_not_use).length,
     prompt_chars: executionPrompt.length,
     audit_prompt_has_raw_evidence: String(assembled.prompt_text ?? "").includes("RAW_EVIDENCE"),
+    full_power_guide_use_now_count: textArray(fullPowerGuideContext.use_now).length,
+    full_power_guide_do_not_use_count: textArray(fullPowerGuideContext.do_not_use).length,
   };
 }
 
@@ -524,6 +558,7 @@ async function main() {
         measure_positive_history_impact: true,
         execution_context_agent_prompt_boundary: true,
         execution_context_passed_failed_split: true,
+        full_power_guide_agent_context_merge: true,
       },
     };
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

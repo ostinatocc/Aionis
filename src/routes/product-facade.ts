@@ -117,6 +117,8 @@ const ProductGuideRequest = z.object({
   tenant_id: z.string().trim().min(1).optional(),
   scope: z.string().trim().min(1).optional(),
   query_text: z.string().trim().min(1),
+  mode: z.enum(["standard", "full_power"]).optional(),
+  context_mode: z.enum(["standard", "full_power"]).optional(),
   agent_role: AionisAgentRoleSchema.optional(),
   context: z.unknown().optional(),
   run_id: z.string().trim().min(1).optional(),
@@ -560,6 +562,243 @@ function productGuideAgentRole(parsed: z.infer<typeof ProductGuideRequest>): Aio
   const contextRole = context?.agent_role;
   const parsedContextRole = AionisAgentRoleSchema.safeParse(contextRole);
   return parsedContextRole.success ? parsedContextRole.data : "agent";
+}
+
+function productGuideFullPowerRequested(parsed: z.infer<typeof ProductGuideRequest>): boolean {
+  return parsed.mode === "full_power" || parsed.context_mode === "full_power";
+}
+
+function firstStringValue(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
+}
+
+function nestedStringField(value: unknown, key: string): string | null {
+  const record = objectValue(value);
+  return firstStringValue(record?.[key]);
+}
+
+function productGuideExecutionMemoryFilters(parsed: z.infer<typeof ProductGuideRequest>): Array<Record<string, unknown>> {
+  const context = objectValue(parsed.context);
+  const taskSignature = firstStringValue(
+    context?.task_signature,
+    nestedStringField(parsed.execution_packet_v1, "task_signature"),
+    nestedStringField(parsed.execution_state_v1, "task_signature"),
+  );
+  const taskFamily = firstStringValue(
+    context?.task_family,
+    nestedStringField(parsed.execution_packet_v1, "task_family"),
+    nestedStringField(parsed.execution_state_v1, "task_family"),
+  );
+  const workflowSignature = firstStringValue(
+    context?.workflow_signature,
+    nestedStringField(parsed.execution_packet_v1, "workflow_signature"),
+    nestedStringField(parsed.execution_state_v1, "workflow_signature"),
+  );
+  const filters: Array<Record<string, unknown>> = [];
+  if (taskSignature) filters.push({ slots_contains: { task_signature: taskSignature }, limit: 20 });
+  if (taskFamily) filters.push({ slots_contains: { task_family: taskFamily }, limit: 20 });
+  if (workflowSignature) filters.push({ slots_contains: { workflow_signature: workflowSignature }, limit: 20 });
+  return filters.slice(0, 3);
+}
+
+function riskRank(value: AionisAgentContext["risk"]["negative_transfer_risk"]): number {
+  return value === "high" ? 2 : value === "medium" ? 1 : 0;
+}
+
+function maxRisk(
+  left: AionisAgentContext["risk"]["negative_transfer_risk"],
+  right: AionisAgentContext["risk"]["negative_transfer_risk"],
+): AionisAgentContext["risk"]["negative_transfer_risk"] {
+  return riskRank(left) >= riskRank(right) ? left : right;
+}
+
+function authorityRank(value: AionisAgentContext["authority"]): number {
+  switch (value) {
+    case "trusted": return 4;
+    case "advisory": return 3;
+    case "candidate": return 2;
+    case "blocked": return 1;
+    case "none": return 0;
+  }
+}
+
+function conservativeAuthority(
+  base: AionisAgentContext,
+  executionHistoryUsed: boolean,
+  executionAuthority: AionisAgentContext["authority"],
+): AionisAgentContext["authority"] {
+  if (!base.history_used) return executionAuthority;
+  if (!executionHistoryUsed) return base.authority;
+  return authorityRank(base.authority) <= authorityRank(executionAuthority) ? base.authority : executionAuthority;
+}
+
+function mergeGuideStrings(values: string[], limit: number): string[] {
+  return uniqueStrings(values).slice(0, limit);
+}
+
+function productGuideSafeExecutionLines(values: string[], allowedPrefixes: string[]): string[] {
+  return values.filter((entry) => allowedPrefixes.some((prefix) => entry.startsWith(prefix)));
+}
+
+function renderMergedAgentPrompt(args: {
+  context: AionisAgentContext;
+  contextCharBudget?: number | null;
+}): string {
+  const lines: string[] = [];
+  const ctx = args.context;
+  lines.push("AIONIS_AGENT_CONTEXT v1");
+  lines.push(`state: role=${ctx.agent_role} history_used=${ctx.history_used} posture=${ctx.recommended_posture} authority=${ctx.authority} risk=${ctx.risk.negative_transfer_risk}`);
+  if (ctx.agent_role === "planner") lines.push("role_focus: plan from reusable state and isolate uncertain history");
+  else if (ctx.agent_role === "worker") lines.push("role_focus: execute the active path and avoid failed branches");
+  else if (ctx.agent_role === "verifier") lines.push("role_focus: verify current work against remembered evidence and counter-evidence");
+  else if (ctx.agent_role === "reviewer") lines.push("role_focus: review branch status, inherited state, and feedback attribution");
+  lines.push("");
+  lines.push(`summary: ${ctx.summary}`);
+  lines.push("");
+  lines.push("target_files");
+  if (ctx.target_files.length === 0) lines.push("- none");
+  for (const target of ctx.target_files) lines.push(`- ${target}`);
+  lines.push("");
+  lines.push("use_now");
+  if (ctx.use_now.length === 0) lines.push("- none");
+  for (const entry of ctx.use_now) lines.push(`- ${entry}`);
+  lines.push("");
+  lines.push("inspect_before_use");
+  if (ctx.inspect_before_use.length === 0) lines.push("- none");
+  for (const entry of ctx.inspect_before_use) lines.push(`- ${entry}`);
+  lines.push("");
+  lines.push("do_not_use");
+  if (ctx.do_not_use.length === 0) lines.push("- none");
+  for (const entry of ctx.do_not_use) lines.push(`- ${entry}`);
+  lines.push("");
+  lines.push("memory_ids");
+  if (ctx.memory_ids.length === 0) lines.push("- none");
+  for (const id of ctx.memory_ids) lines.push(`- ${id}`);
+  const prompt = lines.join("\n");
+  const budget = args.contextCharBudget && args.contextCharBudget > 0 ? Math.trunc(args.contextCharBudget) : null;
+  if (!budget || prompt.length <= budget) return prompt;
+  return `${prompt.slice(0, Math.max(0, budget - 3)).trimEnd()}...`;
+}
+
+function mergeProductGuideAgentContexts(args: {
+  base: AionisAgentContext;
+  execution: AionisAgentContext | null;
+  contextCharBudget?: number | null;
+}): { context: AionisAgentContext; changed: boolean } {
+  const execution = args.execution;
+  if (!execution) return { context: args.base, changed: false };
+  const executionUseNow = productGuideSafeExecutionLines(execution.use_now, [
+    "Current active path:",
+    "Passed solution:",
+  ]);
+  const executionInspectBeforeUse: string[] = [];
+  const executionDoNotUse = productGuideSafeExecutionLines(execution.do_not_use, [
+    "Avoid failed branch:",
+  ]);
+  const executionHasSurface =
+    executionUseNow.length > 0
+    || executionInspectBeforeUse.length > 0
+    || executionDoNotUse.length > 0;
+  if (!executionHasSurface) return { context: args.base, changed: false };
+
+  const knownMemoryIds = new Set(args.base.memory_ids);
+  const useNow = mergeGuideStrings([...executionUseNow, ...args.base.use_now], 8);
+  const inspectBeforeUse = mergeGuideStrings([...args.base.inspect_before_use, ...executionInspectBeforeUse], 8);
+  const doNotUse = mergeGuideStrings([...executionDoNotUse, ...args.base.do_not_use], 8);
+  const memoryIds = mergeGuideStrings(args.base.memory_ids, 10);
+  const useNowMemoryIds = mergeGuideStrings([
+    ...args.base.use_now_memory_ids,
+    ...execution.use_now_memory_ids.filter((id) => knownMemoryIds.has(id)),
+  ], 10);
+  const inspectBeforeUseMemoryIds = mergeGuideStrings([
+    ...args.base.inspect_before_use_memory_ids,
+    ...execution.inspect_before_use_memory_ids.filter((id) => knownMemoryIds.has(id)),
+  ], 10);
+  const doNotUseMemoryIds = mergeGuideStrings([
+    ...args.base.do_not_use_memory_ids,
+    ...execution.do_not_use_memory_ids.filter((id) => knownMemoryIds.has(id)),
+  ], 10);
+  const targetFiles = mergeGuideStrings([...execution.target_files, ...args.base.target_files], 8);
+  const rehydrateHints = [
+    ...args.base.rehydrate_hints,
+    ...execution.rehydrate_hints.filter((hint) => knownMemoryIds.has(hint.memory_id)),
+  ].slice(0, 6);
+  const historyUsed = args.base.history_used || execution.history_used;
+  const recommendedPosture: AionisAgentContext["recommended_posture"] = !historyUsed
+    ? "ignore_history"
+    : (executionInspectBeforeUse.length > 0 || executionDoNotUse.length > 0)
+      ? "inspect_before_use"
+      : args.base.recommended_posture === "ignore_history"
+        ? execution.recommended_posture
+        : args.base.recommended_posture;
+  const safeExecutionAuthority: AionisAgentContext["authority"] =
+    executionUseNow.length > 0
+      ? "advisory"
+      : executionInspectBeforeUse.length > 0 || executionDoNotUse.length > 0
+        ? "candidate"
+        : "none";
+  const authority = conservativeAuthority(args.base, executionHasSurface, safeExecutionAuthority);
+  const safeExecutionRisk: AionisAgentContext["risk"]["negative_transfer_risk"] =
+    executionDoNotUse.length > 0 || executionInspectBeforeUse.length > 0 ? "medium" : "low";
+  const safeExecutionRiskReasons = execution.risk.reasons.filter((reason) =>
+    reason === "failed_execution_branches_kept_out_of_use_now"
+  );
+  const risk = {
+    negative_transfer_risk: maxRisk(args.base.risk.negative_transfer_risk, safeExecutionRisk),
+    blocked_authority_count: args.base.risk.blocked_authority_count,
+    stale_memory_count: Math.max(args.base.risk.stale_memory_count, execution.risk.stale_memory_count),
+    reasons: mergeGuideStrings([
+      ...args.base.risk.reasons,
+      ...safeExecutionRiskReasons,
+      "full_power_execution_context_merged",
+    ], 8),
+  };
+  const summary = args.base.history_used && execution.history_used
+    ? "Aionis recovered semantic memory and full-power execution context for this run."
+    : execution.history_used
+      ? execution.summary
+      : args.base.summary;
+  const merged = AionisAgentContextSchema.parse({
+    ...args.base,
+    prompt_text: args.base.prompt_text,
+    summary,
+    history_used: historyUsed,
+    recommended_posture: recommendedPosture,
+    authority,
+    target_files: targetFiles,
+    use_now: useNow,
+    inspect_before_use: inspectBeforeUse,
+    do_not_use: doNotUse,
+    memory_ids: memoryIds,
+    use_now_memory_ids: useNowMemoryIds,
+    inspect_before_use_memory_ids: inspectBeforeUseMemoryIds,
+    do_not_use_memory_ids: doNotUseMemoryIds,
+    rehydrate_hints: rehydrateHints,
+    risk,
+    evidence_refs: {
+      memory_ids: memoryIds,
+      workflow_ids: mergeGuideStrings([
+        ...args.base.evidence_refs.workflow_ids,
+        ...execution.evidence_refs.workflow_ids,
+      ], 10),
+      evidence_count: args.base.evidence_refs.evidence_count + execution.evidence_refs.evidence_count,
+    },
+  });
+  return {
+    context: AionisAgentContextSchema.parse({
+      ...merged,
+      prompt_text: renderMergedAgentPrompt({
+        context: merged,
+        contextCharBudget: args.contextCharBudget,
+      }),
+    }),
+    changed: true,
+  };
 }
 
 function stringArrayField(value: unknown): string[] {
@@ -1703,17 +1942,52 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       ? AionisGuidePacketSchema.parse(body.aionis_guide_packet)
       : null;
     const agentRole = productGuideAgentRole(parsed);
+    const tenantId = String(body.tenant_id ?? parsed.tenant_id ?? env.MEMORY_TENANT_ID);
+    const scope = String(body.scope ?? parsed.scope ?? env.MEMORY_SCOPE);
     let agentContext: AionisAgentContext = buildAionisAgentContext({
-      tenant_id: String(body.tenant_id ?? parsed.tenant_id ?? env.MEMORY_TENANT_ID),
-      scope: String(body.scope ?? parsed.scope ?? env.MEMORY_SCOPE),
+      tenant_id: tenantId,
+      scope,
       agent_role: agentRole,
       memory_packet: memoryPacket,
       guide_packet: guidePacket,
       context_char_budget: parsed.context_char_budget,
       context_compaction_profile: parsed.context_compaction_profile ?? parsed.context_optimization_profile ?? null,
     });
-    const tenantId = String(body.tenant_id ?? parsed.tenant_id ?? env.MEMORY_TENANT_ID);
-    const scope = String(body.scope ?? parsed.scope ?? env.MEMORY_SCOPE);
+    const fullPowerRequested = productGuideFullPowerRequested(parsed);
+    let fullPowerExecutionContextMerged = false;
+    if (fullPowerRequested) {
+      const executionContextResult = await dispatchProductInternalRoute({
+        app,
+        req,
+        path: "/v1/execution/context/assemble",
+        payload: stripUndefined({
+          tenant_id: tenantId,
+          scope,
+          consumer_agent_id: parsed.consumer_agent_id,
+          consumer_team_id: parsed.consumer_team_id,
+          execution_tree_v1: parsed.execution_tree_v1,
+          context_mode: "full_power",
+          prompt_detail: "compact",
+          include_memory_evidence: true,
+          include_prompt_text: false,
+          include_agent_context: true,
+          agent_context_char_budget: Math.min(parsed.context_char_budget ?? 4096, 50_000),
+          memory_filters: productGuideExecutionMemoryFilters(parsed),
+        }),
+      });
+      if (!executionContextResult.ok) return sendInternalFailure(reply, executionContextResult);
+      const executionContextBody = objectValue(executionContextResult.body);
+      const executionAgentContext = executionContextBody?.agent_context
+        ? AionisAgentContextSchema.parse(executionContextBody.agent_context)
+        : null;
+      const merged = mergeProductGuideAgentContexts({
+        base: agentContext,
+        execution: executionAgentContext,
+        contextCharBudget: parsed.context_char_budget,
+      });
+      agentContext = merged.context;
+      fullPowerExecutionContextMerged = merged.changed;
+    }
     const guideTraceId = buildGuideTraceId();
     let activeProjectionApplied = false;
     if (env.AIONIS_INSPECT_BEFORE_USE_MODE === "active") {
@@ -1763,12 +2037,18 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
         guide_packet: guidePacket,
       } : {}),
       source_map: {
-        routes_used: ["/v1/memory/planning/context", "/v1/memory/write"],
+        routes_used: [
+          "/v1/memory/planning/context",
+          ...(fullPowerRequested ? ["/v1/execution/context/assemble"] : []),
+          "/v1/memory/write",
+        ],
         internal_surfaces_used: [
           "recall",
           "product_packets",
           "agent_context_compiler",
           ...(agentRole !== "agent" ? ["role_aware_agent_context"] : []),
+          ...(fullPowerRequested ? ["full_power_execution_context"] : []),
+          ...(fullPowerExecutionContextMerged ? ["full_power_agent_context_merge"] : []),
           ...(activeProjectionApplied ? ["inspect_before_use_active_projection"] : []),
           "guide_exposure_ledger",
         ],
@@ -1777,6 +2057,12 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
           "internal_learning_diagnostics",
           "internal_execution_recommendation_details",
           "internal_cost_diagnostics",
+          ...(fullPowerRequested ? [
+            "full_power_execution_prompt_text",
+            "full_power_raw_evidence",
+            "full_power_gated_abstractions",
+            "full_power_trace",
+          ] : []),
           ...(includePackets ? [] : ["memory_packet", "guide_packet"]),
         ],
       },

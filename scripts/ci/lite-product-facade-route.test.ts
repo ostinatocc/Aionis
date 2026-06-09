@@ -7,6 +7,12 @@ import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
+import {
+  applyExecutionTreeOperationV1,
+  createExecutionTreeV1,
+  type ExecutionTreeOperationV1,
+  type ExecutionTreeV1,
+} from "../../src/execution/index.ts";
 import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
 import { buildAionisUri } from "../../src/memory/uri.ts";
 import { registerHandoffRoutes } from "../../src/routes/handoff.ts";
@@ -60,6 +66,95 @@ function assertNoForbiddenProductFields(value: unknown) {
     }
   };
   visit(value);
+}
+
+function productFullPowerTreeOperation(
+  tree: ExecutionTreeV1,
+  operation: Record<string, unknown>,
+): ExecutionTreeOperationV1 {
+  return {
+    tree_id: tree.tree_id,
+    scope: tree.scope,
+    ...operation,
+  } as ExecutionTreeOperationV1;
+}
+
+function buildProductGuideFullPowerTree(runId: string): ExecutionTreeV1 {
+  let tree = createExecutionTreeV1({
+    tree_id: `tree-product-guide-full-power-${runId}`,
+    scope: `aionis://execution-tree/product-guide-full-power/${runId}`,
+    task_brief: "Product guide full-power context should merge active passed execution and failed branch counter-evidence.",
+    at: "2026-06-09T00:00:00.000Z",
+  });
+  const add = (operation: Record<string, unknown>) => {
+    tree = applyExecutionTreeOperationV1(tree, productFullPowerTreeOperation(tree, operation));
+  };
+
+  add({
+    type: "grow",
+    operation_id: `${runId}:failed-grow`,
+    actor_role: "worker",
+    at: "2026-06-09T00:01:00.000Z",
+    action: "Try FULL_POWER_GUIDE_FAILED_BRANCH broad retry.",
+    observation: "FULL_POWER_GUIDE_FAILED_BRANCH failed verifier checks.",
+    title: "FULL_POWER_GUIDE_FAILED_BRANCH rejected branch",
+  });
+  add({
+    type: "compress",
+    operation_id: `${runId}:failed-compress`,
+    actor_role: "worker",
+    at: "2026-06-09T00:02:00.000Z",
+    title: "FULL_POWER_GUIDE_FAILED_BRANCH rejected summary",
+    summary: "FULL_POWER_GUIDE_FAILED_BRANCH is counter-evidence.",
+  });
+  const failedSummaryNodeId = tree.current_summary_node_id;
+  assert.ok(failedSummaryNodeId);
+  add({
+    type: "maintain",
+    operation_id: `${runId}:failed-maintain`,
+    actor_role: "verifier",
+    at: "2026-06-09T00:03:00.000Z",
+    passed: false,
+    target_summary_node_id: failedSummaryNodeId,
+    diagnostic_note: "FULL_POWER_GUIDE_FAILED_BRANCH failed replay.",
+  });
+  add({
+    type: "revise",
+    operation_id: `${runId}:revise`,
+    actor_role: "worker",
+    at: "2026-06-09T00:04:00.000Z",
+    target_summary_node_id: failedSummaryNodeId,
+    diagnostic_note: "Resume from safe boundary.",
+  });
+  add({
+    type: "grow",
+    operation_id: `${runId}:passed-grow`,
+    actor_role: "worker",
+    at: "2026-06-09T00:05:00.000Z",
+    action: "Use FULL_POWER_GUIDE_PASSED_BRANCH scoped continuation.",
+    observation: "FULL_POWER_GUIDE_PASSED_BRANCH passed verifier replay.",
+    title: "FULL_POWER_GUIDE_PASSED_BRANCH accepted branch",
+  });
+  add({
+    type: "compress",
+    operation_id: `${runId}:passed-compress`,
+    actor_role: "worker",
+    at: "2026-06-09T00:06:00.000Z",
+    title: "FULL_POWER_GUIDE_PASSED_BRANCH accepted summary",
+    summary: "FULL_POWER_GUIDE_PASSED_BRANCH is the active continuation.",
+  });
+  const passedSummaryNodeId = tree.current_summary_node_id;
+  assert.ok(passedSummaryNodeId);
+  add({
+    type: "maintain",
+    operation_id: `${runId}:passed-maintain`,
+    actor_role: "verifier",
+    at: "2026-06-09T00:07:00.000Z",
+    passed: true,
+    target_summary_node_id: passedSummaryNodeId,
+    diagnostic_note: null,
+  });
+  return tree;
 }
 
 function assertProductSourceMap(value: unknown, expectedKeys = ["internal_surfaces_used", "routes_used"]) {
@@ -1223,6 +1318,207 @@ test("product observe turns execution input into recallable execution memory", a
     assert.deepEqual(compactBody.agent_context.target_files, ["src/current-target.ts"]);
     assert.ok(compactBody.source_map.omitted_internal_surfaces.includes("memory_packet"));
     assert.ok(compactBody.source_map.omitted_internal_surfaces.includes("guide_packet"));
+  } finally {
+    await app.close();
+  }
+});
+
+test("product guide full_power merges semantic memory with safe execution context", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("guide-full-power-merged-agent-context");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const generalObserve = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        input_text: "FULL_POWER_GUIDE_GENERAL_MEMORY Use the release checklist when summarizing this task.",
+        memory: {
+          client_id: "memory:full-power-guide-general",
+          type: "concept",
+          tier: "warm",
+          memory_kind: "general_memory",
+          title: "FULL_POWER_GUIDE_GENERAL_MEMORY release checklist",
+          text_summary: "FULL_POWER_GUIDE_GENERAL_MEMORY Use the release checklist when summarizing this task.",
+          confidence: 0.9,
+        },
+      },
+    });
+    assert.equal(generalObserve.statusCode, 200, generalObserve.body);
+    const generalNodeId = generalObserve.json().memory_write.nodes[0].id;
+
+    const contestedObserve = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        input_text: "FULL_POWER_GUIDE_CONTESTED_MEMORY Prefer the old checklist.",
+        memory: {
+          client_id: "memory:full-power-guide-contested",
+          type: "concept",
+          tier: "warm",
+          memory_kind: "general_memory",
+          title: "FULL_POWER_GUIDE_CONTESTED_MEMORY old checklist",
+          text_summary: "FULL_POWER_GUIDE_CONTESTED_MEMORY Prefer the old checklist.",
+          confidence: 0.86,
+        },
+      },
+    });
+    assert.equal(contestedObserve.statusCode, 200, contestedObserve.body);
+    const contestedNodeId = contestedObserve.json().memory_write.nodes[0].id;
+    const contestedFeedback = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        operation: "activate",
+        target: "memory",
+        memory_ids: [contestedNodeId],
+        run_id: "run:full-power-guide-contested",
+        outcome: "negative",
+        used_surface: "use_now",
+        verifier_status: "failed",
+        tool_status: "unknown",
+        activate: true,
+        reason: "The old checklist caused a verifier failure.",
+      },
+    });
+    assert.equal(contestedFeedback.statusCode, 200, contestedFeedback.body);
+
+    const evidenceWrite = await app.inject({
+      method: "POST",
+      url: "/v1/memory/write",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        actor: "local-user",
+        input_text: "Full-power product guide raw evidence and bounded abstraction.",
+        auto_embed: false,
+        nodes: [
+          {
+            client_id: "memory:full-power-guide-raw-evidence",
+            type: "evidence",
+            tier: "warm",
+            memory_lane: "private",
+            owner_agent_id: "local-user",
+            title: "Raw full-power guide evidence",
+            text_summary: "FULL_POWER_GUIDE_RAW_EVIDENCE raw verifier trace should stay out of agent_context prompt.",
+            raw_ref: "raw://product-guide/full-power/verifier",
+            evidence_ref: "evidence://product-guide/full-power/verifier",
+            slots: {
+              task_signature: "full-power-guide-contract",
+              evidence_kind: "verifier_trace",
+            },
+          },
+          {
+            client_id: "memory:full-power-guide-gated-abstraction",
+            type: "procedure",
+            tier: "warm",
+            memory_lane: "private",
+            owner_agent_id: "local-user",
+            title: "Bounded full-power guide abstraction",
+            text_summary: "FULL_POWER_GUIDE_GATED_ABSTRACTION reuse only when applies_when matches.",
+            slots: {
+              task_signature: "full-power-guide-contract",
+              summary_kind: "pattern_anchor",
+              applies_when: ["release checklist task needs branch-aware status"],
+              does_not_apply_when: ["task asks for old checklist"],
+              counterexamples: ["FULL_POWER_GUIDE_CONTESTED_MEMORY caused verifier failure"],
+              source_episode_refs: ["raw://product-guide/full-power/verifier"],
+              promotion_state: "stable",
+            },
+          },
+          {
+            client_id: "memory:full-power-guide-gated-admitted",
+            type: "procedure",
+            tier: "warm",
+            memory_lane: "private",
+            owner_agent_id: "local-user",
+            title: "Admitted bounded guide abstraction",
+            text_summary: "FULL_POWER_GUIDE_GATED_ADMITTED admitted bounded abstraction should stay out of product guide agent_context.",
+            slots: {
+              task_signature: "full-power-guide-contract",
+              summary_kind: "pattern_anchor",
+              applies_when: ["release checklist task needs branch-aware status"],
+              does_not_apply_when: ["task asks for unrelated migration work"],
+              source_episode_refs: ["raw://product-guide/full-power/verifier"],
+              promotion_state: "stable",
+            },
+          },
+        ],
+        edges: [],
+      },
+    });
+    assert.equal(evidenceWrite.statusCode, 200, evidenceWrite.body);
+
+    const executionTree = buildProductGuideFullPowerTree("contract");
+    const guide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        mode: "full_power",
+        query_text: [
+          "FULL_POWER_GUIDE_GENERAL_MEMORY",
+          "FULL_POWER_GUIDE_PASSED_BRANCH",
+          "FULL_POWER_GUIDE_FAILED_BRANCH",
+          "full power guide contract",
+        ].join(" "),
+        agent_role: "reviewer",
+        consumer_agent_id: "local-user",
+        context: {
+          task_signature: "full-power-guide-contract",
+        },
+        execution_tree_v1: executionTree,
+        limit: 12,
+        include_packets: true,
+      },
+    });
+    assert.equal(guide.statusCode, 200, guide.body);
+    const guideBody = guide.json();
+    const agentContext = guideBody.agent_context;
+    assert.equal(agentContext.contract_version, "aionis_agent_context_v1");
+    assert.equal(agentContext.history_used, true);
+    assert.equal(guideBody.source_map.routes_used.includes("/v1/execution/context/assemble"), true);
+    assert.equal(guideBody.source_map.internal_surfaces_used.includes("full_power_execution_context"), true);
+    assert.equal(guideBody.source_map.internal_surfaces_used.includes("full_power_agent_context_merge"), true);
+    assert.equal(agentContext.memory_ids.includes(generalNodeId), true);
+    assert.equal(agentContext.use_now.some((entry: string) => entry.includes("FULL_POWER_GUIDE_GENERAL_MEMORY")), true);
+    assert.equal(agentContext.use_now.some((entry: string) => entry.includes("FULL_POWER_GUIDE_PASSED_BRANCH")), true);
+    assert.equal(agentContext.do_not_use.some((entry: string) => entry.includes("FULL_POWER_GUIDE_FAILED_BRANCH")), true);
+    assert.equal(agentContext.use_now.some((entry: string) => entry.includes("FULL_POWER_GUIDE_CONTESTED_MEMORY")), false);
+    assert.equal(agentContext.inspect_before_use_memory_ids.includes(contestedNodeId), true);
+    assert.equal(agentContext.recommended_posture, "inspect_before_use");
+    assert.equal(agentContext.prompt_text.includes("RAW_EVIDENCE"), false);
+    assert.equal(agentContext.prompt_text.includes("GATED_ABSTRACTIONS"), false);
+    assert.equal(agentContext.prompt_text.includes("TRACE"), false);
+    assert.equal(agentContext.prompt_text.includes("FULL_POWER_GUIDE_RAW_EVIDENCE"), false);
+    assert.equal(agentContext.prompt_text.includes("FULL_POWER_GUIDE_GATED_ABSTRACTION"), false);
+    assert.equal(agentContext.prompt_text.includes("FULL_POWER_GUIDE_GATED_ADMITTED"), false);
+    assert.equal(agentContext.prompt_text.includes("full_power_trace"), false);
+    const visibleAgentText = JSON.stringify({
+      use_now: agentContext.use_now,
+      inspect_before_use: agentContext.inspect_before_use,
+      do_not_use: agentContext.do_not_use,
+      risk: agentContext.risk,
+    });
+    assert.equal(visibleAgentText.includes("FULL_POWER_GUIDE_RAW_EVIDENCE"), false);
+    assert.equal(visibleAgentText.includes("FULL_POWER_GUIDE_GATED_ABSTRACTION"), false);
+    assert.equal(visibleAgentText.includes("FULL_POWER_GUIDE_GATED_ADMITTED"), false);
+    assert.equal(visibleAgentText.includes("Bounded guidance"), false);
+    assert.equal(visibleAgentText.includes("gated abstraction"), false);
   } finally {
     await app.close();
   }

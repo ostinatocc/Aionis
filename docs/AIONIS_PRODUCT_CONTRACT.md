@@ -130,8 +130,13 @@ Optional audit output:
 | Request Flag | Additional Fields |
 |---|---|
 | `include_packets: true` | Adds `memory_packet` and `guide_packet` for measurement, debugging, or advanced integrations. |
+| `mode: "full_power"` or `context_mode: "full_power"` | Internally merges semantic recall with safe full-power execution context while still exposing only `agent_context` to the Agent. |
 
 The default Agent surface must not be the full `memory_packet + guide_packet`. Full packets remain available for audit and `measure`, but they are not the default prompt surface.
+
+Full-power guide mode must preserve the same Agent boundary: raw evidence,
+gated abstractions, selection trace, and audit prompt text are internal or
+operator surfaces. Only the safe merged `agent_context` reaches the Agent.
 
 Decision trace and audit surfaces are separate operator/debug outputs. The usage boundary is defined in [AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md](AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md): Agents consume `agent_context`; developers inspect `memory_decision_trace` and `memory_decision_audit`.
 
