@@ -828,6 +828,14 @@ test("product memory decision trace explains lifecycle and agent-context surface
   assert.equal(trace.summary.learning_control_visible, true);
   assert.equal(trace.summary.relation_count, 1);
   assert.equal(trace.context_decision.prompt_char_count, agentContext.prompt_text.length);
+  assert.ok(trace.memory_use_receipt);
+  assert.equal(trace.memory_use_receipt.agent_prompt_included, false);
+  assert.equal(trace.memory_use_receipt.runtime_mutation, false);
+  assert.equal(trace.memory_use_receipt.prompt_char_count, agentContext.prompt_text.length);
+  assert.deepEqual(trace.memory_use_receipt.use_now_memory_ids, ["mem-current-route"]);
+  assert.deepEqual(trace.memory_use_receipt.inspect_before_use_memory_ids, ["mem-old-route"]);
+  assert.deepEqual(trace.memory_use_receipt.read_only_signal_memory_ids, ["mem-old-route"]);
+  assert.equal(trace.memory_use_receipt.risk_flags.includes("relation:contradicts"), true);
   assert.equal(trace.relation_decisions[0]?.memory_id, "mem-old-route");
   assert.equal(trace.relation_decisions[0]?.source_memory_id, "mem-current-route");
   assert.equal(trace.relation_decisions[0]?.target_memory_id, "mem-old-route");

@@ -4,6 +4,10 @@ Aionis Runtime Focused is a local evidence-gated cognitive memory and execution 
 
 It exists to make an agent feel less stateless and less wasteful across real work: prior execution traces, verifier outcomes, failed paths, recovered facts, reusable workflows, and forgetting decisions should shape what the agent sees and does next.
 
+Aionis is not recall-only memory. It governs memory state first, then compiles
+bounded context; its strongest product surface is auditable, forgettable, and
+reusable execution memory.
+
 The product scope is intentionally narrow:
 
 1. execution continuity

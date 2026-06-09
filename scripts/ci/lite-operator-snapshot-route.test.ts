@@ -153,7 +153,18 @@ test("operator snapshot route reports branch isolation and markdown without muta
   assert.equal(body.operator_snapshot.execution_state.failed_branches.count, 1);
   assert.equal(body.operator_snapshot.memory_lifecycle.consolidation_guard.promotion_blocked_count, 1);
   assert.equal(body.operator_snapshot.guide_trace.guide_trace_id, "guide_trace:snapshot");
+  assert.equal(body.operator_snapshot.memory_use_receipt.contract_version, "aionis_memory_use_receipt_v1");
+  assert.equal(body.operator_snapshot.memory_use_receipt.agent_prompt_included, false);
+  assert.equal(body.operator_snapshot.memory_use_receipt.runtime_mutation, false);
+  assert.deepEqual(body.operator_snapshot.memory_use_receipt.use_now_memory_ids, ["mem-passed"]);
+  assert.deepEqual(body.operator_snapshot.memory_use_receipt.do_not_use_memory_ids, ["mem-failed"]);
+  assert.ok(body.operator_snapshot.claims.some((claim: Record<string, unknown>) =>
+    claim.claim === "memory_use_receipt_visible"
+    && claim.status === "pass"
+  ));
+  assert.ok(body.source_map.internal_surfaces_used.includes("memory_use_receipt"));
   assert.match(body.markdown, /Aionis Operator Snapshot/);
+  assert.match(body.markdown, /Memory Use Receipt/);
   assert.match(body.markdown, /MULTI_AGENT_SNAPSHOT_FAILED/);
 
   await app.close();

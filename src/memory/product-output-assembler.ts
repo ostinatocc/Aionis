@@ -16,6 +16,7 @@ import {
   parseAionisLearningPacket,
   parseAionisMemoryDecisionAuditReport,
   parseAionisMemoryDecisionTrace,
+  parseAionisMemoryUseReceipt,
   parseAionisMemoryPacket,
   type AionisAgentContext,
   type AionisAgentRole,
@@ -28,6 +29,7 @@ import {
   type AionisMemoryDecisionTrace,
   type AionisMemoryDomain,
   type AionisMemoryPacket,
+  type AionisMemoryUseReceipt,
   type AionisRiskLevel,
 } from "./product-output-contract.js";
 import {
@@ -77,6 +79,7 @@ type NeighborhoodDriftObservation = AionisMemoryDecisionTrace["neighborhood_drif
 type NeighborhoodDriftCandidate = NeighborhoodDriftObservation["candidates"][number];
 type ConfidenceDecayCandidateSummary = AionisMemoryDecisionTrace["confidence_decay_candidate_summary"];
 type InspectBeforeUseShadowDelta = AionisMemoryDecisionTrace["inspect_before_use_shadow_delta"];
+type TraceDecisionSurface = AionisMemoryDecisionTrace["memory_decisions"][number]["agent_surface"];
 
 const NEIGHBORHOOD_DRIFT_GROWTH_THRESHOLD = 2;
 const NEIGHBORHOOD_DRIFT_DIRECTIONAL_THRESHOLD = 2;
@@ -2944,6 +2947,71 @@ function traceRehydrateDetail(args: {
   };
 }
 
+function traceMemoryIdsForSurface(
+  trace: AionisMemoryDecisionTrace,
+  surface: TraceDecisionSurface,
+): string[] {
+  return compactStrings(
+    trace.memory_decisions
+      .filter((entry) => entry.agent_surface === surface)
+      .map((entry) => entry.memory_id),
+  );
+}
+
+export function buildAionisMemoryUseReceiptFromDecisionTrace(
+  trace: AionisMemoryDecisionTrace,
+): AionisMemoryUseReceipt {
+  const useNowMemoryIds = traceMemoryIdsForSurface(trace, "use_now");
+  const inspectBeforeUseMemoryIds = traceMemoryIdsForSurface(trace, "inspect_before_use");
+  const doNotUseMemoryIds = traceMemoryIdsForSurface(trace, "do_not_use");
+  const rehydrateMemoryIds = traceMemoryIdsForSurface(trace, "rehydrate");
+  const sparseSummary = trace.feedback_attribution.sparse_feedback_signal_summary;
+  const riskFlags = compactStrings([
+    trace.summary.negative_transfer_risk !== "low"
+      ? `negative_transfer_risk:${trace.summary.negative_transfer_risk}`
+      : null,
+    ...trace.memory_decisions
+      .filter((entry) => entry.agent_surface !== "use_now")
+      .flatMap((entry) => entry.reason_codes),
+    ...trace.relation_decisions.map((entry) => `relation:${entry.lifecycle_relation}`),
+    ...sparseSummary.weak_counter_signal_memory_ids.map((id) => `weak_counter_signal:${id}`),
+    ...sparseSummary.strong_counter_signal_memory_ids.map((id) => `strong_counter_signal:${id}`),
+    ...sparseSummary.relation_counter_signal_memory_ids.map((id) => `relation_counter_signal:${id}`),
+    ...sparseSummary.contradiction_warning_memory_ids.map((id) => `contradiction_warning:${id}`),
+    ...sparseSummary.repeated_unattributed_without_positive_memory_ids.map((id) =>
+      `repeated_unattributed_without_positive:${id}`
+    ),
+  ]).slice(0, 64);
+  const exposedMemoryIds = compactStrings([
+    ...trace.context_decision.memory_ids,
+    ...useNowMemoryIds,
+    ...inspectBeforeUseMemoryIds,
+    ...doNotUseMemoryIds,
+    ...rehydrateMemoryIds,
+  ]);
+
+  return parseAionisMemoryUseReceipt({
+    contract_version: "aionis_memory_use_receipt_v1",
+    intended_use: "memory_use_audit",
+    agent_prompt_included: false,
+    runtime_mutation: false,
+    guide_trace_id: trace.feedback_attribution.guide_trace_id,
+    history_used: trace.summary.history_used,
+    actionable_history_used: trace.summary.actionable_history_used,
+    prompt_char_count: trace.context_decision.prompt_char_count,
+    exposed_memory_ids: exposedMemoryIds,
+    use_now_memory_ids: useNowMemoryIds,
+    inspect_before_use_memory_ids: inspectBeforeUseMemoryIds,
+    do_not_use_memory_ids: doNotUseMemoryIds,
+    rehydrate_memory_ids: rehydrateMemoryIds,
+    attributed_memory_ids: trace.feedback_attribution.attributed_memory_ids,
+    unattributed_recalled_memory_ids: trace.feedback_attribution.unattributed_recalled_memory_ids,
+    read_only_signal_memory_ids: sparseSummary.read_only_signal_memory_ids,
+    risk_flags: riskFlags,
+    summary: `Aionis compiled memory into ${useNowMemoryIds.length} use_now, ${inspectBeforeUseMemoryIds.length} inspect_before_use, ${doNotUseMemoryIds.length} do_not_use, and ${rehydrateMemoryIds.length} rehydrate decisions; receipt is read-only and excluded from the Agent prompt.`,
+  });
+}
+
 export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTraceArgs): AionisMemoryDecisionTrace {
   const memory = args.after_guide.memory_packet ?? null;
   const guide = args.after_guide.guide_packet ?? null;
@@ -3042,7 +3110,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
     || forgetDecisions.length > 0
     || negativeTransferRisk !== "low";
 
-  return parseAionisMemoryDecisionTrace({
+  const traceWithoutReceipt = parseAionisMemoryDecisionTrace({
     contract_version: "aionis_memory_decision_trace_v1",
     tenant_id: args.tenant_id,
     scope: args.scope,
@@ -3097,6 +3165,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
         inspectBeforeUseShadowDelta.present ? "inspect_before_use_shadow_delta" : null,
         forgetDecisions.length > 0 ? "forget_result_projection" : null,
         "memory_decision_trace",
+        "memory_use_receipt",
       ]),
       omitted_internal_surfaces: args.source_map?.omitted_internal_surfaces ?? [
         "raw_memory_rows",
@@ -3105,6 +3174,11 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
         "agent_prompt_injection",
       ],
     },
+  });
+
+  return parseAionisMemoryDecisionTrace({
+    ...traceWithoutReceipt,
+    memory_use_receipt: buildAionisMemoryUseReceiptFromDecisionTrace(traceWithoutReceipt),
   });
 }
 

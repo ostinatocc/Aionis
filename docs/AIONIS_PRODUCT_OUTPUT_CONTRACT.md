@@ -4,6 +4,11 @@ Status: implemented product output contract
 
 This document defines the stable product outputs Aionis should converge toward. It does not add routes, mechanisms, or tests by itself.
 
+Aionis is not recall memory; it is a state-adjudicated memory runtime. It does
+not push history straight into the LLM: it governs memory state first, then
+compiles bounded context. Its core moat is execution memory: auditable,
+forgettable, and reusable operational experience for Agents.
+
 The executable schema contract lives in `src/memory/product-output-contract.ts`.
 The pure assembler from current Runtime summaries lives in `src/memory/product-output-assembler.ts`.
 The current Runtime route integration exposes `aionis_guide_packet` from:
@@ -35,6 +40,7 @@ The goal is to stop exposing dozens of internal Runtime routes as product concep
 4. `AionisLearningPacket`: which learning candidates are visible, constrained, promotion-ready, or blocked
 5. `AionisEffectReport`: whether history helped, hurt, or did nothing
 6. `AionisMemoryDecisionTrace` and `AionisMemoryDecisionAuditReport`: operator/debug outputs explaining memory decisions without entering the Agent prompt
+7. `AionisMemoryUseReceipt`: a compact read-only receipt of which memory was used, inspected, blocked, rehydrated, attributed, or left unattributed
 
 ## Output Boundary
 
@@ -47,10 +53,11 @@ The goal is to stop exposing dozens of internal Runtime routes as product concep
 | `AionisEffectReport` | `measure` | Prove whether historical memory changed the run and whether that change was positive. |
 | `AionisMemoryDecisionTrace` | `debug` / `measure` | Explain per-memory use, downgrade, block, and rehydrate decisions. |
 | `AionisMemoryDecisionAuditReport` | `audit` / `measure` | Provide a compact operator review of memory decisions, risks, and claims. |
+| `AionisMemoryUseReceipt` | `debug` / `measure` / `snapshot` | Show exactly what memory was exposed or blocked without adding prompt content or mutating runtime state. |
 
 `POST /v1/guide` defaults to `AionisAgentContext` only. Callers that need audit or measurement data must set `include_packets: true` to include `memory_packet` and `guide_packet`. Full packets are not the default Agent prompt surface.
 
-The prompt/debug boundary is defined in [AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md](AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md). `memory_decision_trace` and `memory_decision_audit` are never Agent prompt surfaces.
+The prompt/debug boundary is defined in [AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md](AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md). `memory_decision_trace`, `memory_decision_audit`, and `memory_use_receipt` are never Agent prompt surfaces.
 
 Concrete product API usage for `observe`, `guide`, `forget`, and `measure` is
 defined in [AIONIS_PRODUCT_API_USAGE.md](AIONIS_PRODUCT_API_USAGE.md).
@@ -65,6 +72,57 @@ changes guide authority or memory lifecycle by itself.
 
 1. `observe` produces general and execution evidence that later appears in memory/guide/learning/effect fields.
 2. `forget` changes lifecycle and suppression state that later appears in memory/guide/learning/effect fields.
+
+## AionisMemoryUseReceipt
+
+The memory use receipt is the stable audit projection for "what Aionis actually
+did with memory in this run." It is derived from `memory_decision_trace` when a
+trace exists, and from `agent_context`/`guide_packet` when an operator snapshot
+is built without a trace. It is not an Agent prompt surface and cannot mutate
+runtime state.
+
+The receipt maps directly onto existing Runtime concepts:
+
+| Concept | Current Product Surface |
+|---|---|
+| Memory Use Receipt | `memory_decision_trace.memory_use_receipt`, `operator_snapshot.memory_use_receipt` |
+| Premise Firewall | `risk_flags`, `inspect_before_use_memory_ids`, `do_not_use_memory_ids`, `read_only_signal_memory_ids` |
+| Trace-to-Procedure Compiler | `execution_tree_v1`, workflow projection, replay playbook, and `memory_decision_trace` |
+| Memory Contract | `authority`, `scope`, `source_map`, lifecycle state, and feedback attribution gates |
+
+### Shape
+
+```ts
+type AionisMemoryUseReceipt = {
+  contract_version: "aionis_memory_use_receipt_v1";
+  intended_use: "memory_use_audit";
+  agent_prompt_included: false;
+  runtime_mutation: false;
+  guide_trace_id: string | null;
+  history_used: boolean;
+  actionable_history_used: boolean;
+  prompt_char_count: number;
+  exposed_memory_ids: string[];
+  use_now_memory_ids: string[];
+  inspect_before_use_memory_ids: string[];
+  do_not_use_memory_ids: string[];
+  rehydrate_memory_ids: string[];
+  attributed_memory_ids: string[];
+  unattributed_recalled_memory_ids: string[];
+  read_only_signal_memory_ids: string[];
+  risk_flags: string[];
+  summary: string;
+};
+```
+
+### Receipt Rules
+
+| Include | Exclude |
+|---|---|
+| memory IDs exposed through `use_now`, `inspect_before_use`, `do_not_use`, or `rehydrate` | raw memory rows or raw slots |
+| feedback attribution and unattributed recalled IDs | full prompt text or hidden trace internals |
+| read-only risk/sparse feedback signals | runtime mutation, suppression, archive, or promotion actions |
+| prompt character count and `actionable_history_used` | claims that a memory was useful unless feedback attribution says so |
 
 ## Non-Goals
 

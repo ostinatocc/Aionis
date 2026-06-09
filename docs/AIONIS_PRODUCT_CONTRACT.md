@@ -10,6 +10,10 @@ Aionis is an evidence-gated Cognitive Memory and Execution Learning Runtime for 
 
 It helps an Agent recall ordinary memory with evidence, remember real execution, learn what worked, forget what hurts, and let historical evidence shape future behavior under controlled authority.
 
+Aionis is not a recall-only memory system. It is a state-adjudicated memory
+runtime: it governs memory authority, lifecycle, scope, attribution, and risk
+before compiling bounded context for an Agent.
+
 The product is not "cross-thread handoff" alone. Cross-thread, cross-Agent, and cross-LLM continuity are proof surfaces for a larger product promise:
 
 History should change future behavior in a measurable, positive, and controllable way.
@@ -143,6 +147,12 @@ gated abstractions, selection trace, and audit prompt text are internal or
 operator surfaces. Only the safe merged `agent_context` reaches the Agent.
 
 Decision trace and audit surfaces are separate operator/debug outputs. The usage boundary is defined in [AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md](AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md): Agents consume `agent_context`; developers inspect `memory_decision_trace` and `memory_decision_audit`.
+
+Generated `memory_decision_trace` and `operator_snapshot` outputs include
+`memory_use_receipt`, a compact read-only receipt of the memory IDs exposed as
+`use_now`, `inspect_before_use`, `do_not_use`, or `rehydrate`, plus feedback
+attribution and risk flags. It is for host/operator audit only and must not be
+used as Agent prompt content.
 
 ## Forget Input Contract
 

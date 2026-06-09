@@ -7,6 +7,7 @@ import {
   AionisLearningPacketSchema,
   AionisMemoryDecisionAuditReportSchema,
   AionisMemoryDecisionTraceSchema,
+  AionisMemoryUseReceiptSchema,
   AionisMemoryPacketSchema,
 } from "../../src/memory/product-output-contract.ts";
 
@@ -539,6 +540,26 @@ function validMemoryDecisionTrace() {
       actionable_history_used: true,
       memory_ids: ["mem-1", "mem-3"],
     },
+    memory_use_receipt: {
+      contract_version: "aionis_memory_use_receipt_v1",
+      intended_use: "memory_use_audit",
+      agent_prompt_included: false,
+      runtime_mutation: false,
+      guide_trace_id: null,
+      history_used: true,
+      actionable_history_used: true,
+      prompt_char_count: 81,
+      exposed_memory_ids: ["mem-1", "mem-3", "mem-pref-1"],
+      use_now_memory_ids: ["mem-pref-1"],
+      inspect_before_use_memory_ids: [],
+      do_not_use_memory_ids: [],
+      rehydrate_memory_ids: [],
+      attributed_memory_ids: [],
+      unattributed_recalled_memory_ids: ["mem-1", "mem-3"],
+      read_only_signal_memory_ids: [],
+      risk_flags: ["negative_transfer_risk:medium"],
+      summary: "Aionis compiled memory decisions into a read-only memory use receipt.",
+    },
     forget_decisions: [],
     source_map: {
       routes_used: ["/v1/measure"],
@@ -824,6 +845,11 @@ test("AionisMemoryDecisionTrace accepts read-only measure/debug/audit output", (
   assert.equal(parsed.intended_use, "measure_debug_audit");
   assert.equal(parsed.agent_prompt_included, false);
   assert.equal(parsed.runtime_mutation, false);
+  assert.equal(parsed.memory_use_receipt?.contract_version, "aionis_memory_use_receipt_v1");
+  assert.equal(parsed.memory_use_receipt?.agent_prompt_included, false);
+  assert.equal(parsed.memory_use_receipt?.runtime_mutation, false);
+  assert.deepEqual(parsed.memory_use_receipt?.use_now_memory_ids, ["mem-pref-1"]);
+  assert.deepEqual(parsed.memory_use_receipt?.unattributed_recalled_memory_ids, ["mem-1", "mem-3"]);
   assert.equal(parsed.memory_decisions[0]?.agent_surface, "use_now");
   assert.equal(parsed.memory_decisions[0]?.feedback_detail, null);
   assert.equal(parsed.feedback_attribution.present, false);
@@ -855,6 +881,17 @@ test("AionisMemoryDecisionTrace rejects prompt injection and runtime mutation cl
       AionisMemoryDecisionTraceSchema.parse({
         ...validMemoryDecisionTrace(),
         runtime_mutation: true,
+      }),
+  );
+
+  assert.throws(
+    () =>
+      AionisMemoryDecisionTraceSchema.parse({
+        ...validMemoryDecisionTrace(),
+        memory_use_receipt: {
+          ...validMemoryDecisionTrace().memory_use_receipt,
+          agent_prompt_included: true,
+        },
       }),
   );
 
@@ -927,6 +964,22 @@ test("AionisMemoryDecisionTrace rejects prompt injection and runtime mutation cl
           entries: [],
           reason: "Invalid mutation claim.",
         },
+      }),
+  );
+});
+
+test("AionisMemoryUseReceipt accepts only read-only memory usage audit fields", () => {
+  const parsed = AionisMemoryUseReceiptSchema.parse(validMemoryDecisionTrace().memory_use_receipt);
+  assert.equal(parsed.contract_version, "aionis_memory_use_receipt_v1");
+  assert.equal(parsed.intended_use, "memory_use_audit");
+  assert.equal(parsed.agent_prompt_included, false);
+  assert.equal(parsed.runtime_mutation, false);
+
+  assert.throws(
+    () =>
+      AionisMemoryUseReceiptSchema.parse({
+        ...validMemoryDecisionTrace().memory_use_receipt,
+        runtime_mutation: true,
       }),
   );
 });

@@ -4,14 +4,17 @@ import {
   AionisGuidePacketSchema,
   AionisMemoryDecisionAuditReportSchema,
   AionisMemoryDecisionTraceSchema,
+  parseAionisMemoryUseReceipt,
   parseAionisOperatorSnapshot,
   type AionisAgentContext,
   type AionisEffectReport,
   type AionisGuidePacket,
   type AionisMemoryDecisionAuditReport,
   type AionisMemoryDecisionTrace,
+  type AionisMemoryUseReceipt,
   type AionisOperatorSnapshot,
 } from "./product-output-contract.js";
+import { buildAionisMemoryUseReceiptFromDecisionTrace } from "./product-output-assembler.js";
 
 export type BuildAionisOperatorSnapshotArgs = {
   tenant_id: string;
@@ -226,6 +229,7 @@ function sourceMapFromInputs(args: {
       "operator_snapshot",
       ...(args.guide ? ["guide_packet"] : []),
       ...(args.trace ? ["memory_decision_trace"] : []),
+      "memory_use_receipt",
       ...(args.audit ? ["memory_decision_audit_report"] : []),
     ]),
     omitted_internal_surfaces: uniqueStrings([
@@ -272,6 +276,7 @@ function buildClaims(args: {
   guideTracePresent: boolean;
   feedbackPresent: boolean;
   learningControlVisible: boolean;
+  memoryUseReceipt: AionisMemoryUseReceipt;
   effect: AionisEffectReport | null;
 }): AionisOperatorSnapshot["claims"] {
   return [
@@ -302,6 +307,11 @@ function buildClaims(args: {
         : "No learning-control surface was visible in supplied inputs.",
     },
     {
+      claim: "memory_use_receipt_visible",
+      status: "pass",
+      evidence: `Receipt exposes ${args.memoryUseReceipt.exposed_memory_ids.length} memory ids; agent_prompt_included=${args.memoryUseReceipt.agent_prompt_included}.`,
+    },
+    {
       claim: "runtime_read_only",
       status: "pass",
       evidence: "Operator snapshot is a read-only projection and does not mutate runtime state.",
@@ -314,6 +324,67 @@ function buildClaims(args: {
         : "No effect report was supplied.",
     },
   ];
+}
+
+function buildFallbackMemoryUseReceipt(args: {
+  guideTraceId: string | null;
+  agent: AionisAgentContext | null;
+  guide: AionisGuidePacket | null;
+}): AionisMemoryUseReceipt {
+  const useNowMemoryIds = uniqueStrings([
+    ...(args.agent?.use_now_memory_ids ?? []),
+    ...(args.guide?.memory_lifecycle.used_memory_ids ?? []),
+  ]);
+  const inspectBeforeUseMemoryIds = uniqueStrings(args.agent?.inspect_before_use_memory_ids ?? []);
+  const doNotUseMemoryIds = uniqueStrings([
+    ...(args.agent?.do_not_use_memory_ids ?? []),
+    ...(args.guide?.memory_lifecycle.suppressed_memory_ids ?? []),
+  ]);
+  const rehydrateMemoryIds = uniqueStrings([
+    ...(args.agent?.rehydrate_hints.map((hint) => hint.memory_id) ?? []),
+    ...(args.guide?.guide_brief.rehydrate.map((hint) => hint.memory_id) ?? []),
+  ]);
+  const exposedMemoryIds = uniqueStrings([
+    ...(args.agent?.memory_ids ?? []),
+    ...useNowMemoryIds,
+    ...inspectBeforeUseMemoryIds,
+    ...doNotUseMemoryIds,
+    ...rehydrateMemoryIds,
+  ]);
+  const historyUsed = args.agent?.history_used ?? args.guide?.guide_brief.history_used ?? false;
+  const actionableHistoryUsed =
+    args.agent?.actionable_history_used
+    ?? args.guide?.guide_brief.actionable_history_used
+    ?? exposedMemoryIds.length > 0;
+  const negativeTransferRisk =
+    args.agent?.risk.negative_transfer_risk
+    ?? args.guide?.risk.negative_transfer_risk
+    ?? "low";
+
+  return parseAionisMemoryUseReceipt({
+    contract_version: "aionis_memory_use_receipt_v1",
+    intended_use: "memory_use_audit",
+    agent_prompt_included: false,
+    runtime_mutation: false,
+    guide_trace_id: args.guideTraceId,
+    history_used: historyUsed,
+    actionable_history_used: actionableHistoryUsed,
+    prompt_char_count: args.agent?.prompt_text.length ?? 0,
+    exposed_memory_ids: exposedMemoryIds,
+    use_now_memory_ids: useNowMemoryIds,
+    inspect_before_use_memory_ids: inspectBeforeUseMemoryIds,
+    do_not_use_memory_ids: doNotUseMemoryIds,
+    rehydrate_memory_ids: rehydrateMemoryIds,
+    attributed_memory_ids: [],
+    unattributed_recalled_memory_ids: [],
+    read_only_signal_memory_ids: [],
+    risk_flags: uniqueStrings([
+      negativeTransferRisk !== "low" ? `negative_transfer_risk:${negativeTransferRisk}` : "",
+      ...(args.agent?.risk.reasons ?? []),
+      ...(args.guide?.risk.reasons ?? []),
+    ]),
+    summary: `Aionis compiled memory into ${useNowMemoryIds.length} use_now, ${inspectBeforeUseMemoryIds.length} inspect_before_use, ${doNotUseMemoryIds.length} do_not_use, and ${rehydrateMemoryIds.length} rehydrate decisions; receipt is read-only and excluded from the Agent prompt.`,
+  });
 }
 
 export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArgs): AionisOperatorSnapshot {
@@ -358,6 +429,10 @@ export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArg
   const attributedIds = uniqueStrings(feedbackAttribution?.attributed_memory_ids ?? []);
   const exposedIds = uniqueStrings(agent?.memory_ids ?? guide?.memory_lifecycle.used_memory_ids ?? []);
   const guideTraceId = args.guide_trace_id ?? feedbackAttribution?.guide_trace_id ?? null;
+  const memoryUseReceipt = trace?.memory_use_receipt
+    ?? (trace
+      ? buildAionisMemoryUseReceiptFromDecisionTrace(trace)
+      : buildFallbackMemoryUseReceipt({ guideTraceId, agent, guide }));
   const actionableHistoryUsed =
     agent?.actionable_history_used
     ?? guide?.guide_brief.actionable_history_used
@@ -427,6 +502,7 @@ export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArg
           ? "Guide trace exists, but feedback attribution was not supplied."
           : "No guide trace was supplied.",
     },
+    memory_use_receipt: memoryUseReceipt,
     memory_lifecycle: {
       used_count: directUseCount,
       inspect_before_use_count: inspectCount,
@@ -471,6 +547,7 @@ export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArg
       guideTracePresent: !!guideTraceId,
       feedbackPresent: feedbackAttribution?.present === true,
       learningControlVisible,
+      memoryUseReceipt,
       effect,
     }),
     risks: {
@@ -523,6 +600,12 @@ export function renderAionisOperatorSnapshotMarkdown(snapshot: AionisOperatorSna
     `guide_trace_id: ${snapshot.guide_trace.guide_trace_id ?? "none"}`,
     `feedback_attribution_present: ${snapshot.guide_trace.feedback_attribution_present}`,
     `attributed_memory_ids: ${snapshot.guide_trace.attributed_memory_ids.join(", ") || "none"}`,
+    ``,
+    `## Memory Use Receipt`,
+    `agent_prompt_included: ${snapshot.memory_use_receipt.agent_prompt_included}`,
+    `runtime_mutation: ${snapshot.memory_use_receipt.runtime_mutation}`,
+    `use_now_memory_ids: ${snapshot.memory_use_receipt.use_now_memory_ids.join(", ") || "none"}`,
+    `do_not_use_memory_ids: ${snapshot.memory_use_receipt.do_not_use_memory_ids.join(", ") || "none"}`,
     ``,
     `## Learning Control`,
     `visible: ${snapshot.learning_control.visible}`,

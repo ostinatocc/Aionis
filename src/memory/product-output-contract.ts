@@ -728,6 +728,35 @@ const AionisEffectConfidenceDecaySummarySchema = z
   })
   .strict();
 
+export const AionisMemoryUseReceiptSchema = z
+  .object({
+    contract_version: z.literal("aionis_memory_use_receipt_v1"),
+    intended_use: z.literal("memory_use_audit"),
+    agent_prompt_included: z.literal(false),
+    runtime_mutation: z.literal(false),
+    guide_trace_id: z.string().min(1).nullable(),
+    history_used: z.boolean(),
+    actionable_history_used: z.boolean().default(false),
+    prompt_char_count: z.number().int().nonnegative(),
+    exposed_memory_ids: z.array(z.string().min(1)).default([]),
+    use_now_memory_ids: z.array(z.string().min(1)).default([]),
+    inspect_before_use_memory_ids: z.array(z.string().min(1)).default([]),
+    do_not_use_memory_ids: z.array(z.string().min(1)).default([]),
+    rehydrate_memory_ids: z.array(z.string().min(1)).default([]),
+    attributed_memory_ids: z.array(z.string().min(1)).default([]),
+    unattributed_recalled_memory_ids: z.array(z.string().min(1)).default([]),
+    read_only_signal_memory_ids: z.array(z.string().min(1)).default([]),
+    risk_flags: z.array(z.string().min(1)).default([]),
+    summary: z.string().min(1),
+  })
+  .strict();
+
+export type AionisMemoryUseReceipt = z.infer<typeof AionisMemoryUseReceiptSchema>;
+
+export function parseAionisMemoryUseReceipt(value: unknown): AionisMemoryUseReceipt {
+  return AionisMemoryUseReceiptSchema.parse(value);
+}
+
 export const AionisMemoryDecisionTraceSchema = z
   .object({
     contract_version: z.literal("aionis_memory_decision_trace_v1"),
@@ -1007,6 +1036,7 @@ export const AionisMemoryDecisionTraceSchema = z
         memory_ids: z.array(z.string().min(1)).default([]),
       })
       .strict(),
+    memory_use_receipt: AionisMemoryUseReceiptSchema.optional(),
     forget_decisions: z
       .array(
         z
@@ -1610,6 +1640,7 @@ export const AionisOperatorSnapshotSchema = z
         reason: z.string().min(1),
       })
       .strict(),
+    memory_use_receipt: AionisMemoryUseReceiptSchema,
     memory_lifecycle: z
       .object({
         used_count: z.number().int().nonnegative(),
@@ -1661,6 +1692,7 @@ export const AionisOperatorSnapshotSchema = z
               "failed_branch_isolated",
               "feedback_attribution_visible",
               "learning_control_visible",
+              "memory_use_receipt_visible",
               "runtime_read_only",
               "effect_measured",
             ]),

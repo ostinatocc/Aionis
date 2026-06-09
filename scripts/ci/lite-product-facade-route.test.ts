@@ -187,10 +187,14 @@ function assertDecisionTraceMatchesGuide(traceRaw: unknown, guideRaw: unknown) {
   const relationDecisions = arrayValue(trace.relation_decisions, "trace.relation_decisions");
   const summary = objectValue(trace.summary, "trace.summary");
   const contextDecision = objectValue(trace.context_decision, "trace.context_decision");
+  const receipt = objectValue(trace.memory_use_receipt, "trace.memory_use_receipt");
 
   assert.equal(trace.contract_version, "aionis_memory_decision_trace_v1");
   assert.equal(trace.agent_prompt_included, false);
   assert.equal(trace.runtime_mutation, false);
+  assert.equal(receipt.contract_version, "aionis_memory_use_receipt_v1");
+  assert.equal(receipt.agent_prompt_included, false);
+  assert.equal(receipt.runtime_mutation, false);
   assert.equal(summary.total_memory_count, memories.length);
   assert.equal(summary.direct_use_count, countTraceSurface(trace, "use_now"));
   assert.equal(summary.inspect_before_use_count, countTraceSurface(trace, "inspect_before_use"));
@@ -213,6 +217,25 @@ function assertDecisionTraceMatchesGuide(traceRaw: unknown, guideRaw: unknown) {
   assert.equal(contextDecision.do_not_use_count, arrayValue(agentContext.do_not_use, "agent_context.do_not_use").length);
   assert.equal(contextDecision.rehydrate_hint_count, arrayValue(agentContext.rehydrate_hints, "agent_context.rehydrate_hints").length);
   assert.deepEqual(contextDecision.memory_ids, agentContext.memory_ids);
+  assert.equal(receipt.history_used, summary.history_used);
+  assert.equal(receipt.actionable_history_used, summary.actionable_history_used);
+  assert.equal(receipt.prompt_char_count, contextDecision.prompt_char_count);
+  assert.deepEqual(
+    receipt.use_now_memory_ids,
+    decisions.filter((entry) => entry.agent_surface === "use_now").map((entry) => entry.memory_id),
+  );
+  assert.deepEqual(
+    receipt.inspect_before_use_memory_ids,
+    decisions.filter((entry) => entry.agent_surface === "inspect_before_use").map((entry) => entry.memory_id),
+  );
+  assert.deepEqual(
+    receipt.do_not_use_memory_ids,
+    decisions.filter((entry) => entry.agent_surface === "do_not_use").map((entry) => entry.memory_id),
+  );
+  assert.deepEqual(
+    receipt.rehydrate_memory_ids,
+    decisions.filter((entry) => entry.agent_surface === "rehydrate").map((entry) => entry.memory_id),
+  );
 
   const promptText = String(agentContext.prompt_text ?? "");
   assert.equal(promptText.includes("memory_decision_trace"), false);
@@ -287,6 +310,7 @@ function assertTraceCoreEqual(leftRaw: unknown, rightRaw: unknown) {
     "relation_decisions",
     "feedback_attribution",
     "context_decision",
+    "memory_use_receipt",
     "forget_decisions",
   ]) {
     assert.deepEqual(left[key], right[key], `trace core mismatch: ${key}`);
@@ -1696,6 +1720,7 @@ test("product measure derives closed-loop effect from guide packets", async () =
     assert.equal(body.effect_report.feedback_signal_summary.authority_mutation, false);
     assert.ok(body.source_map.internal_surfaces_used.includes("product_trace_projection"));
     assert.ok(body.source_map.internal_surfaces_used.includes("memory_decision_trace"));
+    assert.ok(body.source_map.internal_surfaces_used.includes("memory_use_receipt"));
     assert.ok(body.source_map.internal_surfaces_used.includes("memory_decision_audit_report"));
     assert.equal(body.memory_decision_trace.contract_version, "aionis_memory_decision_trace_v1");
     assert.equal(body.memory_decision_trace.agent_prompt_included, false);
@@ -1725,6 +1750,7 @@ test("product measure derives closed-loop effect from guide packets", async () =
     assert.equal(debugBody.memory_decision_trace.contract_version, "aionis_memory_decision_trace_v1");
     assert.equal(debugBody.memory_decision_trace.agent_prompt_included, false);
     assert.deepEqual(debugBody.source_map.routes_used, ["/v1/debug/memory-decision-trace"]);
+    assert.ok(debugBody.source_map.internal_surfaces_used.includes("memory_use_receipt"));
     assertDecisionTraceMatchesGuide(debugBody.memory_decision_trace, afterGuideBody);
     assertTraceCoreEqual(debugBody.memory_decision_trace, body.memory_decision_trace);
 

@@ -640,6 +640,7 @@ Use one of these forms:
 | `effect_report` | Product / operator | User-readable history impact report. |
 | `measurement_input` | Developer | Inputs projected into the evaluator. |
 | `memory_decision_trace` | Developer | Present when `product_trace` is supplied. |
+| `memory_decision_trace.memory_use_receipt` | Host / operator | Compact read-only receipt of exposed, blocked, rehydrated, attributed, and unattributed memory IDs. |
 | `memory_decision_audit` | Operator | Present when `product_trace` is supplied. |
 | `kernel_report` | Advanced developer | Internal effect evaluator output. |
 
@@ -668,6 +669,10 @@ memory. A later positive attributed use clears this feedback-learning control po
 `sparse_feedback_signal_summary` rolls positive attribution, weak/strong
 counter-signals, and repeated unused exposure into one read-only debug summary.
 It sets `authority_mutation: false` to make the boundary explicit.
+`memory_use_receipt` is the smallest stable audit object for memory use. It is
+derived from the same decision trace and keeps `agent_prompt_included: false`
+and `runtime_mutation: false`, so hosts can log or display usage without
+turning the audit surface into Agent context.
 `memory_decision_audit.feedback_signal_review` exposes the same buckets in a
 more operator-readable shape, with memory ids, titles, and reasons. It is for
 measure/debug/audit surfaces only and must not be appended to the Agent prompt.

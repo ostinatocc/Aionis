@@ -112,6 +112,7 @@ export function registerOperatorSnapshotRoutes(args: OperatorSnapshotRouteArgs) 
           routes_used: ["/v1/operator/snapshot"],
           internal_surfaces_used: [
             "operator_snapshot_contract",
+            "memory_use_receipt",
             "operator_snapshot_markdown_renderer",
           ],
           omitted_internal_surfaces: [

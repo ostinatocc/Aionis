@@ -17,6 +17,12 @@ function countBySurface(trace: AionisMemoryDecisionTrace, surface: AionisMemoryD
   return trace.memory_decisions.filter((entry) => entry.agent_surface === surface).length;
 }
 
+function idsBySurface(trace: AionisMemoryDecisionTrace, surface: AionisMemoryDecisionTrace["memory_decisions"][number]["agent_surface"]): string[] {
+  return trace.memory_decisions
+    .filter((entry) => entry.agent_surface === surface)
+    .map((entry) => entry.memory_id);
+}
+
 function assertTraceSummaryMatchesDecisions(trace: AionisMemoryDecisionTrace, agentContext: AionisAgentContext): void {
   assert.equal(trace.summary.total_memory_count, trace.memory_decisions.length);
   assert.equal(trace.summary.direct_use_count, countBySurface(trace, "use_now"));
@@ -36,6 +42,18 @@ function assertTraceSummaryMatchesDecisions(trace: AionisMemoryDecisionTrace, ag
   assert.equal(trace.context_decision.do_not_use_count, agentContext.do_not_use.length);
   assert.equal(trace.context_decision.rehydrate_hint_count, agentContext.rehydrate_hints.length);
   assert.deepEqual(trace.context_decision.memory_ids, agentContext.memory_ids);
+  assert.ok(trace.memory_use_receipt);
+  assert.equal(trace.memory_use_receipt.agent_prompt_included, false);
+  assert.equal(trace.memory_use_receipt.runtime_mutation, false);
+  assert.equal(trace.memory_use_receipt.history_used, trace.summary.history_used);
+  assert.equal(trace.memory_use_receipt.actionable_history_used, trace.summary.actionable_history_used);
+  assert.equal(trace.memory_use_receipt.prompt_char_count, agentContext.prompt_text.length);
+  assert.deepEqual(trace.memory_use_receipt.use_now_memory_ids, idsBySurface(trace, "use_now"));
+  assert.deepEqual(trace.memory_use_receipt.inspect_before_use_memory_ids, idsBySurface(trace, "inspect_before_use"));
+  assert.deepEqual(trace.memory_use_receipt.do_not_use_memory_ids, idsBySurface(trace, "do_not_use"));
+  assert.deepEqual(trace.memory_use_receipt.rehydrate_memory_ids, idsBySurface(trace, "rehydrate"));
+  assert.deepEqual(trace.memory_use_receipt.attributed_memory_ids, trace.feedback_attribution.attributed_memory_ids);
+  assert.deepEqual(trace.memory_use_receipt.unattributed_recalled_memory_ids, trace.feedback_attribution.unattributed_recalled_memory_ids);
   assert.equal(trace.agent_prompt_included, false);
   assert.equal(trace.runtime_mutation, false);
   assert.equal(agentContext.prompt_text.includes("memory_decision_trace"), false);

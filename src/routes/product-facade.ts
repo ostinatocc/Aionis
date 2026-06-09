@@ -2167,6 +2167,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
           internal_surfaces_used: [
             "product_trace_projection",
             "memory_decision_trace",
+            "memory_use_receipt",
           ],
         },
       });
@@ -2259,7 +2260,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
           routes_used: ["/v1/measure"],
           internal_surfaces_used: [
             ...(measureInput.source === "product_trace" ? ["product_trace_projection"] : []),
-            ...(decisionOutputs ? ["memory_decision_trace", "memory_decision_audit_report"] : []),
+            ...(decisionOutputs ? ["memory_decision_trace", "memory_use_receipt", "memory_decision_audit_report"] : []),
             "effect_evaluator",
             "product_effect_report",
           ],

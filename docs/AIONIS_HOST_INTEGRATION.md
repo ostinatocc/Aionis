@@ -48,11 +48,18 @@ Do not pass these to the Agent by default:
 2. `guide_packet`
 3. `memory_decision_trace`
 4. `memory_decision_audit`
-5. raw rows or raw slots
-6. operator snapshot markdown
+5. `memory_use_receipt`
+6. raw rows or raw slots
+7. operator snapshot markdown
 
 Those surfaces are for host measurement, developer debugging, and operator
 inspection.
+
+`memory_use_receipt` is the host-facing audit receipt for memory use. It is
+returned inside `memory_decision_trace` and `operator_snapshot`, and records
+the memory IDs exposed as `use_now`, `inspect_before_use`, `do_not_use`, or
+`rehydrate`, plus feedback attribution and read-only risk flags. It is useful
+for logs, dashboards, and support diagnostics, but it is not prompt content.
 
 ## `history_used` vs `actionable_history_used`
 
@@ -462,4 +469,3 @@ The Runtime e2es require a real embedding provider. For local runs, configure
 local Runtime instances unless `AIONIS_PRODUCT_E2E_BASE_URL`,
 `AIONIS_MULTI_AGENT_E2E_BASE_URL`, `AIONIS_BASE_URL`, or `AIONIS_URL` points to
 an already running Runtime.
-

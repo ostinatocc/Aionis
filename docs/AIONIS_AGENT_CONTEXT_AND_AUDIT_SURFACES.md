@@ -16,8 +16,8 @@ For external host wiring, see
 
 Agents consume `agent_context`.
 
-Developers and operators inspect `memory_decision_trace` and
-`memory_decision_audit`.
+Developers and operators inspect `memory_decision_trace`,
+`memory_decision_audit`, and `memory_use_receipt`.
 
 The audit surfaces explain why Aionis selected, downgraded, blocked, or
 rehydrated memory. They must not become Agent prompt content.
@@ -31,6 +31,7 @@ rehydrated memory. They must not become Agent prompt content.
 | `guide_packet` | `POST /v1/guide` with `include_packets: true` | Host / measurement / advanced UI | Structured guide behind `agent_context`. | No by default |
 | `memory_decision_trace` | `POST /v1/debug/memory-decision-trace` or `/v1/measure` | Developer debugging | Per-memory decision trace. | Never |
 | `memory_decision_audit` | `POST /v1/audit/memory-decision-report` or `/v1/measure` | Operator audit / product diagnostics | Compact review of memory decisions. | Never |
+| `memory_use_receipt` | Inside `memory_decision_trace` and `operator_snapshot` | Host / operator audit | Compact receipt of exposed, blocked, rehydrated, attributed, and unattributed memory IDs. | Never |
 | `operator_snapshot` | `POST /v1/operator/snapshot` | Operator / host observability | Read-only run, branch, feedback, and effect summary. | Never |
 
 ## Agent-Facing Contract
@@ -71,6 +72,17 @@ Use `memory_decision_audit` when the product needs a compact review:
 5. `feedback_signal_review`
 6. counters, claims, risks, and source map
 
+Use `memory_use_receipt` when the host or operator needs the smallest stable
+answer to "what memory did Aionis expose or block this turn?":
+
+1. `use_now_memory_ids`
+2. `inspect_before_use_memory_ids`
+3. `do_not_use_memory_ids`
+4. `rehydrate_memory_ids`
+5. `attributed_memory_ids`
+6. `unattributed_recalled_memory_ids`
+7. `risk_flags`
+
 The audit report is intentionally operator-facing. It is not a better prompt.
 
 ## Correct Use
@@ -95,17 +107,18 @@ Do not:
 
 1. append `memory_decision_trace` to the Agent prompt
 2. append `memory_decision_audit` to the Agent prompt
-3. ask the Agent to reason over raw memory rows or raw slots
-4. treat debug/audit output as a task solver
-5. treat a single debug trace as authority to change Runtime behavior
-6. expose internal route dumps as the product experience
+3. append `memory_use_receipt` to the Agent prompt
+4. ask the Agent to reason over raw memory rows or raw slots
+5. treat debug/audit output as a task solver
+6. treat a single debug trace as authority to change Runtime behavior
+7. expose internal route dumps as the product experience
 
 ## Why This Boundary Exists
 
 `agent_context` is optimized for the Agent: compact, actionable, and bounded.
 
-`memory_decision_trace` and `memory_decision_audit` are optimized for humans and
-host systems: inspectable, causal, and testable.
+`memory_decision_trace`, `memory_decision_audit`, and `memory_use_receipt` are
+optimized for humans and host systems: inspectable, causal, and testable.
 
 Keeping these surfaces separate is what lets Aionis provide memory continuity,
 controlled forgetting, and learning control without adding unnecessary prompt
