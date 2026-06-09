@@ -245,6 +245,14 @@ function memoryRehydrationRefs(node: MemoryNodeDTO): string[] {
   ], 32);
 }
 
+function memorySourceEvidenceRefs(node: MemoryNodeDTO): string[] {
+  return uniqueStrings([
+    node.raw_ref,
+    node.evidence_ref,
+    ...collectEvidenceRefsFromSlots(node.slots),
+  ], 32);
+}
+
 function stateEntries(
   entries: ExecutionTreeStateV1["compressed_state"],
   maxEntries: number,
@@ -487,9 +495,15 @@ function buildMemoryEvidence(args: {
   const validated = [];
   const failed = [];
   const supporting = [];
+  const consolidationGuardBlockedNodeIds: string[] = [];
   for (const node of args.nodes) {
     const outcome = classifyExecutionOutcome(node.slots);
-    const refs = memoryRehydrationRefs(node);
+    const rehydrationRefs = memoryRehydrationRefs(node);
+    const sourceEvidenceRefs = memorySourceEvidenceRefs(node);
+    const hasExecutionOutcome = outcome !== "unknown";
+    const evidenceBacked = sourceEvidenceRefs.length > 0;
+    const promotionAllowed = !hasExecutionOutcome || evidenceBacked;
+    const promotionBlockedReason = promotionAllowed ? null : "memory_execution_summary_without_raw_or_evidence_refs";
     const base = {
       source: "memory" as const,
       node_id: node.id,
@@ -501,27 +515,54 @@ function buildMemoryEvidence(args: {
       outcome,
       confidence: node.confidence ?? null,
       created_at: node.created_at ?? null,
-      rehydration_refs: refs,
-      evidence_backed: refs.length > 0,
+      rehydration_refs: rehydrationRefs,
+      source_evidence_refs: sourceEvidenceRefs,
+      evidence_backed: evidenceBacked,
       raw_trace_backed: false,
       supporting_raw_trace_count: 0,
+      promotion_allowed: promotionAllowed,
+      promotion_blocked: !promotionAllowed,
+      promotion_blocked_reason: promotionBlockedReason,
+      consolidation_guard: hasExecutionOutcome
+        ? {
+            policy: "require_raw_or_evidence_refs_for_execution_memory_promotion",
+            evidence_backed: evidenceBacked,
+            promotion_allowed: promotionAllowed,
+            blocked_reason: promotionBlockedReason,
+          }
+        : null,
     };
     if (outcome === "passed") {
-      if (validated.length < args.parsed.max_validated_evidence) validated.push(base);
+      if (promotionAllowed) {
+        if (validated.length < args.parsed.max_validated_evidence) validated.push(base);
+      } else {
+        consolidationGuardBlockedNodeIds.push(node.id);
+        if (supporting.length < args.parsed.max_supporting_evidence) supporting.push(base);
+      }
     } else if (outcome === "failed") {
-      if (failed.length < args.parsed.max_failed_branches) {
+      if (promotionAllowed && failed.length < args.parsed.max_failed_branches) {
         failed.push({
           ...base,
           branch_role: "failed" as const,
           diagnostic_note: diagnosticNote(node),
           avoid_next_action: true,
         });
+      } else if (!promotionAllowed) {
+        consolidationGuardBlockedNodeIds.push(node.id);
+        if (supporting.length < args.parsed.max_supporting_evidence) {
+          supporting.push({
+            ...base,
+            branch_role: "failed" as const,
+            diagnostic_note: diagnosticNote(node),
+            avoid_next_action: false,
+          });
+        }
       }
     } else if (supporting.length < args.parsed.max_supporting_evidence) {
       supporting.push(base);
     }
   }
-  return { validated, failed, supporting };
+  return { validated, failed, supporting, consolidationGuardBlockedNodeIds };
 }
 
 function recordStringArray(record: Record<string, unknown>, key: string): string[] {
@@ -552,7 +593,7 @@ function hasEvidenceBacking(record: unknown): boolean {
   const item = asRecord(record);
   if (!item) return false;
   if (item.evidence_backed === true) return true;
-  return recordStringArray(item, "rehydration_refs").length > 0
+  return recordStringArray(item, "source_evidence_refs").length > 0
     || recordStringArray(item, "supporting_raw_refs").length > 0
     || recordStringArray(item, "refs").length > 0
     || (Array.isArray(item.supporting_raw_trace) && item.supporting_raw_trace.length > 0);
@@ -619,7 +660,8 @@ function buildPromptText(args: {
     lines.push("SUPPORTING_EVIDENCE");
     if (args.supportingEvidence.length === 0) lines.push("- none");
     for (const entry of args.supportingEvidence as Array<Record<string, unknown>>) {
-      lines.push(`- node=${entry.node_id ?? ""} title=${entry.title ?? ""} summary=${entry.summary ?? ""}`);
+      const promotionBlockedReason = stringValue(entry.promotion_blocked_reason);
+      lines.push(`- node=${entry.node_id ?? ""} title=${entry.title ?? ""} summary=${entry.summary ?? ""}${promotionBlockedReason ? ` promotion_blocked=${promotionBlockedReason}` : ""}`);
     }
   }
 
@@ -760,6 +802,8 @@ export async function buildExecutionEvidenceContextLite(args: {
       memory_filters_considered: memory.filtersConsidered,
       direct_refs_considered: memory.directRefsConsidered,
       memory_nodes_considered: memory.nodes.length,
+      memory_consolidation_guard_blocked_count: memoryEvidence.consolidationGuardBlockedNodeIds.length,
+      memory_consolidation_guard_blocked_node_ids: memoryEvidence.consolidationGuardBlockedNodeIds,
       passed_solution_count: passedSolutions.length,
       supporting_evidence_count: memoryEvidence.supporting.length,
       failed_branch_count: failedBranches.length,

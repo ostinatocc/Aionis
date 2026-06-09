@@ -371,6 +371,83 @@ test("execution context assemble promotes validated active tree nodes without me
   await app.close();
 });
 
+test("execution context consolidation guard keeps summary-only execution memory supporting-only", async () => {
+  const dbPath = tmpDbPath("summary-only-guard");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const executionTreeStore = createLiteExecutionTreeStore(dbPath);
+  const app = Fastify();
+  registerApp({ app, liteWriteStore, liteRecallStore, executionTreeStore });
+
+  await post(app, "/v1/memory/write", {
+    tenant_id: "default",
+    scope: "default",
+    input_text: "Summary-only execution memories without raw or evidence refs.",
+    auto_embed: false,
+    memory_lane: "private",
+    nodes: [
+      {
+        client_id: "summary-only-passed-memory",
+        type: "event",
+        title: "Summary-only passed memory",
+        text_summary: "SUMMARY_ONLY_PASSED_MARKER claims formula C passed without raw backing.",
+        slots: {
+          task_signature: "summary-only-consolidation-guard",
+          execution_result_summary: {
+            status: "passed",
+            summary: "SUMMARY_ONLY_PASSED_MARKER formula C allegedly passed.",
+          },
+        },
+      },
+      {
+        client_id: "summary-only-failed-memory",
+        type: "event",
+        title: "Summary-only failed memory",
+        text_summary: "SUMMARY_ONLY_FAILED_MARKER claims formula D failed without raw backing.",
+        slots: {
+          task_signature: "summary-only-consolidation-guard",
+          execution_result_summary: {
+            status: "failed",
+            summary: "SUMMARY_ONLY_FAILED_MARKER formula D allegedly failed.",
+            diagnostic_note: "SUMMARY_ONLY_FAILED_MARKER no raw verifier trace attached.",
+          },
+        },
+      },
+    ],
+    edges: [],
+  });
+
+  const body = await post(app, "/v1/execution/context/assemble", {
+    tenant_id: "default",
+    scope: "default",
+    memory_filters: [
+      {
+        slots_contains: { task_signature: "summary-only-consolidation-guard" },
+        limit: 20,
+      },
+    ],
+  });
+
+  assert.equal(body.tree.present, false);
+  assert.deepEqual(body.passed_solutions, []);
+  assert.deepEqual(body.failed_branches, []);
+  assert.equal(body.supporting_evidence.length, 2);
+  assert.match(JSON.stringify(body.supporting_evidence), /SUMMARY_ONLY_PASSED_MARKER/);
+  assert.match(JSON.stringify(body.supporting_evidence), /SUMMARY_ONLY_FAILED_MARKER/);
+  assert.ok(body.supporting_evidence.every((entry: any) => entry.promotion_blocked === true));
+  assert.ok(body.supporting_evidence.every((entry: any) =>
+    entry.promotion_blocked_reason === "memory_execution_summary_without_raw_or_evidence_refs"
+  ));
+  assert.match(body.prompt_text, /PASSED_SOLUTIONS\n- none/);
+  assert.match(body.prompt_text, /FAILED_BRANCHES\n- none/);
+  assert.match(body.prompt_text, /SUPPORTING_EVIDENCE[\s\S]*promotion_blocked=memory_execution_summary_without_raw_or_evidence_refs/);
+  assert.equal(body.selection_trace.memory_consolidation_guard_blocked_count, 2);
+  assert.equal(body.selection_trace.evidence_backed_passed_solution_count, 0);
+  assert.equal(body.selection_trace.evidence_backed_failed_branch_count, 0);
+
+  await app.close();
+});
+
 test("ordinary preference and fact memory does not create execution tree context", async () => {
   const dbPath = tmpDbPath("negative");
   const liteWriteStore = createLiteWriteStore(dbPath);
