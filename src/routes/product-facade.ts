@@ -341,6 +341,7 @@ const ProductMeasureRequest = z.object({
     run_id: z.string().trim().min(1).nullable().optional(),
     task_signature: z.string().trim().min(1).nullable().optional(),
     task_family: z.string().trim().min(1).nullable().optional(),
+    workflow_signature: z.string().trim().min(1).nullable().optional(),
   }).strict().optional(),
   baseline: EffectObservationSchema.optional(),
   aionis: EffectObservationSchema.optional(),
