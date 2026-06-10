@@ -52,6 +52,16 @@ Internal mechanisms may remain richer than these verbs, but product docs, demos,
 
 The shortest runnable product flow is [AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md](AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md). It demonstrates `observe -> guide -> audit` without adding an Agent harness or benchmark runner. External Agent hosts should use [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md) for the full `observe -> guide -> agent action -> feedback -> measure -> snapshot` loop.
 
+The primary product proof loop is [AIONIS_GOLDEN_PRODUCT_LOOP.md](AIONIS_GOLDEN_PRODUCT_LOOP.md):
+
+```bash
+npm run -s runtime:e2e:golden-product-loop
+```
+
+It runs the full host path over a real Runtime and proves actionable history,
+failed-branch isolation, feedback attribution, measured effect, memory receipt,
+and trace-to-procedure readiness.
+
 ## Multi-Agent Execution Memory Position
 
 Aionis should be a Multi-Agent execution memory backend, not a Multi-Agent

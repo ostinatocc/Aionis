@@ -70,6 +70,24 @@ and checks that execution-tree audit surfaces stay out of the Agent prompt.
 If `AIONIS_PRODUCT_E2E_BASE_URL` is not set, the script starts an isolated local
 Runtime on a random port and uses the embedding provider from the environment.
 
+## Golden Product Loop
+
+For the full product proof path, run:
+
+```bash
+export AIONIS_PRODUCT_E2E_BASE_URL="$AIONIS_URL"
+npm run -s runtime:e2e:golden-product-loop
+```
+
+This verifies `observe -> guide -> agent action -> outcome feedback -> measure
+-> snapshot` over a real Runtime. It shows that a fresh scope has no actionable
+history, later execution memory changes the reviewer guide, failed branches stay
+isolated, and the operator snapshot explains memory use, feedback attribution,
+measured effect, and trace-to-procedure readiness.
+
+Details and a compact result example are in
+[AIONIS_GOLDEN_PRODUCT_LOOP.md](AIONIS_GOLDEN_PRODUCT_LOOP.md).
+
 ## Host Template E2Es
 
 For release-level host integration checks, run the real Runtime host-template

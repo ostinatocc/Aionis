@@ -31,7 +31,7 @@ import {
   textArray,
 } from "./multi-agent-execution-memory-loop.ts";
 
-async function runMultiAgentHostTemplateLoop(args: {
+export async function runMultiAgentHostTemplateLoop(args: {
   baseUrl: string;
   apiKey: string | null;
   runId: string;
@@ -367,6 +367,8 @@ async function runMultiAgentHostTemplateLoop(args: {
   const operatorBranchIsolation = asRecord(operatorExecutionState.branch_isolation);
   const operatorGuideTrace = asRecord(operatorSnapshot.guide_trace);
   const operatorEffect = asRecord(operatorSnapshot.effect);
+  const operatorMemoryUseReceipt = asRecord(operatorSnapshot.memory_use_receipt);
+  const operatorTraceToProcedure = asRecord(operatorSnapshot.trace_to_procedure);
   assertCondition(
     operatorSnapshotResult.contract_version === "aionis_operator_snapshot_result_v1",
     "host operator snapshot did not return result v1",
@@ -389,6 +391,31 @@ async function runMultiAgentHostTemplateLoop(args: {
   assertCondition(
     operatorEffect.impact_direction === "positive",
     "host operator snapshot did not carry positive effect measurement",
+  );
+  assertCondition(
+    operatorMemoryUseReceipt?.contract_version === "aionis_memory_use_receipt_v1",
+    "host operator snapshot did not expose memory use receipt",
+  );
+  assertCondition(
+    operatorMemoryUseReceipt.runtime_mutation === false,
+    "host memory use receipt must be read-only",
+  );
+  assertCondition(
+    operatorTraceToProcedure?.present === true,
+    "host operator snapshot did not expose trace-to-procedure readiness",
+  );
+  assertCondition(
+    operatorTraceToProcedure.runtime_mutation === false,
+    "host trace-to-procedure projection must be read-only",
+  );
+  assertCondition(
+    Array.isArray(operatorTraceToProcedure.source_surfaces)
+      && operatorTraceToProcedure.source_surfaces.includes("execution_tree"),
+    "host trace-to-procedure projection did not include execution_tree",
+  );
+  assertCondition(
+    operatorTraceToProcedure.candidate_visible === true,
+    "host trace-to-procedure projection did not expose candidate readiness",
   );
   assertCondition(
     typeof operatorSnapshotResult.markdown === "string"
@@ -417,6 +444,10 @@ async function runMultiAgentHostTemplateLoop(args: {
     operator_snapshot_actionable_history_used: operatorExecutionState.actionable_history_used,
     operator_snapshot_feedback_attribution_present: operatorGuideTrace.feedback_attribution_present,
     operator_snapshot_effect_impact: operatorEffect.impact_direction,
+    operator_snapshot_memory_use_receipt_visible: operatorMemoryUseReceipt.contract_version === "aionis_memory_use_receipt_v1",
+    operator_snapshot_trace_to_procedure_present: operatorTraceToProcedure.present,
+    operator_snapshot_trace_to_procedure_status: operatorTraceToProcedure.promotion_status,
+    operator_snapshot_trace_to_procedure_source_surfaces: operatorTraceToProcedure.source_surfaces,
     host_template_flow_used: true,
     host_template_snapshot_used: true,
   };

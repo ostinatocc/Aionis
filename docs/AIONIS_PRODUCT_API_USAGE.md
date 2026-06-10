@@ -103,6 +103,7 @@ Runnable SDK e2e:
 
 ```bash
 npm run -s runtime:e2e:product-loop
+npm run -s runtime:e2e:golden-product-loop
 ```
 
 By default the e2e starts an isolated local Runtime and therefore needs a real
@@ -114,11 +115,21 @@ export AIONIS_PRODUCT_E2E_BASE_URL="http://127.0.0.1:3001"
 npm run -s runtime:e2e:product-loop
 ```
 
-The e2e exercises `observe -> guide -> simulated Agent -> observe outcome ->
-forget(rehydrate) -> measure`, and also verifies that the advanced
+The product-loop e2e exercises `observe -> guide -> simulated Agent -> observe
+outcome -> forget(rehydrate) -> measure`, and also verifies that the advanced
 `/v1/execution/context/assemble` and product `/v1/guide mode=full_power`
 `agent_context` keep passed branches, failed branches, and audit surfaces
 separated.
+
+The golden product loop exercises the full product path:
+
+```text
+observe -> guide -> agent action -> outcome feedback -> measure -> snapshot
+```
+
+It is the preferred product proof when validating that Aionis changes the next
+Agent context, isolates failed branches, and gives operators a read-only memory
+use receipt plus trace-to-procedure readiness.
 
 ## Multi-Agent Execution Memory
 

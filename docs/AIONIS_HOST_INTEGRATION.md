@@ -481,6 +481,7 @@ Before treating a host integration change as stable, run:
 ```bash
 npm run -s typecheck
 npm run -s lite:test
+npm run -s runtime:e2e:golden-product-loop
 npm run -s runtime:e2e:single-agent-host-template
 npm run -s runtime:e2e:multi-agent-host-template
 npm run -s runtime:e2e:multi-agent-host-template-fresh

@@ -1,0 +1,60 @@
+{
+  "contract_version": "aionis_golden_product_loop_e2e_result_v1",
+  "run_id": "golden-product-example",
+  "runtime": {
+    "mode": "spawned",
+    "base_url": "http://127.0.0.1:3001",
+    "embedding_provider": "minimax"
+  },
+  "product_loop": "observe -> guide -> agent action -> outcome feedback -> measure -> snapshot",
+  "product_story": {
+    "did_not_start_from_zero": {
+      "before_actionable_history_used": false,
+      "after_actionable_history_used": true,
+      "proof": "Fresh reviewer guide has no actionable history; after observe/handoff, reviewer guide has actionable execution memory."
+    },
+    "failed_branch_isolated": {
+      "branch_isolation": "pass",
+      "reviewer_next_action": "continue_passed_branch",
+      "reviewer_avoided_failed_branch": true,
+      "proof": "Failed branch remains visible as do_not_use/counter-evidence and does not leak into use_now."
+    },
+    "operator_explains_memory": {
+      "memory_use_receipt_visible": true,
+      "feedback_attribution_present": true,
+      "trace_to_procedure_present": true,
+      "trace_to_procedure_status": "candidate_only",
+      "trace_to_procedure_source_surfaces": [
+        "execution_tree",
+        "workflow_projection",
+        "execution_contract"
+      ],
+      "proof": "Operator snapshot exposes read-only memory receipt, feedback attribution, effect, and procedure-readiness state."
+    }
+  },
+  "golden_metrics": {
+    "before_actionable_history_used": false,
+    "reviewer_actionable_history_used": true,
+    "reviewer_use_now_count": 3,
+    "execution_do_not_use_count": 1,
+    "feedback_changed_count": 1,
+    "measure_history_impact": "positive",
+    "operator_snapshot_effect_impact": "positive"
+  },
+  "memory_ids": {
+    "planner_memory_id": "mem_planner_example",
+    "failed_memory_id": "mem_failed_example",
+    "passed_memory_id": "mem_passed_example",
+    "reviewer_memory_id": "mem_reviewer_example"
+  },
+  "checks": {
+    "real_runtime_loop": true,
+    "observe_guide_agent_feedback_measure_snapshot": true,
+    "starts_without_actionable_history": true,
+    "later_uses_actionable_execution_memory": true,
+    "reviewer_continues_passed_branch": true,
+    "reviewer_avoids_failed_branch": true,
+    "operator_snapshot_explains_use": true,
+    "trace_to_procedure_visible": true
+  }
+}
