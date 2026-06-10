@@ -558,6 +558,22 @@ function validMemoryDecisionTrace() {
       attributed_memory_ids: [],
       unattributed_recalled_memory_ids: ["mem-1", "mem-3"],
       read_only_signal_memory_ids: [],
+      decision_summaries: [
+        {
+          memory_id: "mem-pref-1",
+          agent_surface: "use_now",
+          decision_kind: "used",
+          actionable: true,
+          reason_codes: ["memory_contract_direct_use", "available_for_agent_use"],
+        },
+        {
+          memory_id: "mem-3",
+          agent_surface: "inspect_before_use",
+          decision_kind: "downgraded",
+          actionable: false,
+          reason_codes: ["memory_contract_inspect_before_use", "kept_out_of_direct_use"],
+        },
+      ],
       risk_flags: ["negative_transfer_risk:medium"],
       summary: "Aionis compiled memory decisions into a read-only memory use receipt.",
     },
@@ -1024,6 +1040,10 @@ test("AionisMemoryUseReceipt accepts only read-only memory usage audit fields", 
   assert.equal(parsed.intended_use, "memory_use_audit");
   assert.equal(parsed.agent_prompt_included, false);
   assert.equal(parsed.runtime_mutation, false);
+  assert.equal(parsed.decision_summaries[0]?.memory_id, "mem-pref-1");
+  assert.equal(parsed.decision_summaries[0]?.agent_surface, "use_now");
+  assert.equal(parsed.decision_summaries[0]?.decision_kind, "used");
+  assert.equal(parsed.decision_summaries[0]?.actionable, true);
 
   assert.throws(
     () =>

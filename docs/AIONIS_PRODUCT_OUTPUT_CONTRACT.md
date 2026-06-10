@@ -90,7 +90,7 @@ The receipt maps directly onto existing Runtime concepts:
 | Memory Use Receipt | `memory_decision_trace.memory_use_receipt`, `operator_snapshot.memory_use_receipt` |
 | Premise Firewall | `risk_flags`, `inspect_before_use_memory_ids`, `do_not_use_memory_ids`, `read_only_signal_memory_ids` |
 | Trace-to-Procedure Compiler | `operator_snapshot.trace_to_procedure`, derived from `execution_tree_v1`, workflow projection, replay playbook, execution contract, `memory_decision_trace`, and promotion evidence |
-| Memory Contract | `relevant_memories[].memory_contract`, `agent_context.risk.reasons`, `memory_decision_trace.reason_codes`, `memory_use_receipt.risk_flags` |
+| Memory Contract | `relevant_memories[].memory_contract`, `agent_context.risk.reasons`, `memory_decision_trace.reason_codes`, `memory_use_receipt.decision_summaries`, `memory_use_receipt.risk_flags` |
 
 ### Shape
 
@@ -112,6 +112,13 @@ type AionisMemoryUseReceipt = {
   attributed_memory_ids: string[];
   unattributed_recalled_memory_ids: string[];
   read_only_signal_memory_ids: string[];
+  decision_summaries: Array<{
+    memory_id: string;
+    agent_surface: "use_now" | "inspect_before_use" | "do_not_use" | "rehydrate" | "not_agent_facing";
+    decision_kind: "used" | "downgraded" | "blocked" | "rehydrate" | "not_agent_facing";
+    actionable: boolean;
+    reason_codes: string[];
+  }>;
   risk_flags: string[];
   summary: string;
 };
@@ -123,6 +130,7 @@ type AionisMemoryUseReceipt = {
 |---|---|
 | memory IDs exposed through `use_now`, `inspect_before_use`, `do_not_use`, or `rehydrate` | raw memory rows or raw slots |
 | feedback attribution and unattributed recalled IDs | full prompt text or hidden trace internals |
+| compact decision summaries with surface and reason codes | raw memory text, raw slots, or full trace internals |
 | read-only risk/sparse feedback signals | runtime mutation, suppression, archive, or promotion actions |
 | prompt character count and `actionable_history_used` | claims that a memory was useful unless feedback attribution says so |
 

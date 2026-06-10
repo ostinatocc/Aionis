@@ -4320,6 +4320,16 @@ export function buildAionisMemoryUseReceiptFromDecisionTrace(
     ...doNotUseMemoryIds,
     ...rehydrateMemoryIds,
   ]);
+  const decisionSummaries = trace.memory_decisions
+    .filter((entry) => entry.agent_surface !== "not_agent_facing" || entry.reason_codes.length > 0)
+    .slice(0, 48)
+    .map((entry) => ({
+      memory_id: entry.memory_id,
+      agent_surface: entry.agent_surface,
+      decision_kind: entry.decision_kind,
+      actionable: entry.agent_surface === "use_now",
+      reason_codes: compactStrings(entry.reason_codes).slice(0, 12),
+    }));
 
   return parseAionisMemoryUseReceipt({
     contract_version: "aionis_memory_use_receipt_v1",
@@ -4338,6 +4348,7 @@ export function buildAionisMemoryUseReceiptFromDecisionTrace(
     attributed_memory_ids: trace.feedback_attribution.attributed_memory_ids,
     unattributed_recalled_memory_ids: trace.feedback_attribution.unattributed_recalled_memory_ids,
     read_only_signal_memory_ids: sparseSummary.read_only_signal_memory_ids,
+    decision_summaries: decisionSummaries,
     risk_flags: riskFlags,
     summary: `Aionis compiled memory into ${useNowMemoryIds.length} use_now, ${inspectBeforeUseMemoryIds.length} inspect_before_use, ${doNotUseMemoryIds.length} do_not_use, and ${rehydrateMemoryIds.length} rehydrate decisions; receipt is read-only and excluded from the Agent prompt.`,
   });

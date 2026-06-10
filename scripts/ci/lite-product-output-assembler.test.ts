@@ -1250,6 +1250,42 @@ test("product agent context surfaces active general memory without execution gui
   assert.ok(context.prompt_text.includes("do_not_use"));
   assert.equal(context.prompt_text.includes("use_now_memory_ids"), false);
   assert.equal(context.prompt_text.includes("inspect_before_use_memory_ids"), false);
+
+  const trace = buildAionisMemoryDecisionTrace({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    before_guide: null,
+    after_guide: {
+      memory_packet: memoryPacket,
+      agent_context: context,
+    },
+    source_map: {
+      routes_used: ["/v1/debug/memory-decision-trace"],
+    },
+  });
+  const receipt = trace.memory_use_receipt;
+  assert.ok(receipt);
+  assert.deepEqual(receipt.use_now_memory_ids, ["mem-general-active", "mem-preference-active"]);
+  assert.deepEqual(receipt.inspect_before_use_memory_ids, ["mem-general-candidate"]);
+  assert.deepEqual(receipt.do_not_use_memory_ids, ["mem-general-suppressed"]);
+  const activeReceipt = receipt.decision_summaries.find((entry) => entry.memory_id === "mem-general-active");
+  const candidateReceipt = receipt.decision_summaries.find((entry) => entry.memory_id === "mem-general-candidate");
+  const suppressedReceipt = receipt.decision_summaries.find((entry) => entry.memory_id === "mem-general-suppressed");
+  assert.equal(activeReceipt?.agent_surface, "use_now");
+  assert.equal(activeReceipt?.decision_kind, "used");
+  assert.equal(activeReceipt?.actionable, true);
+  assert.ok(activeReceipt?.reason_codes.includes("memory_contract_direct_use"));
+  assert.equal(candidateReceipt?.agent_surface, "inspect_before_use");
+  assert.equal(candidateReceipt?.decision_kind, "downgraded");
+  assert.equal(candidateReceipt?.actionable, false);
+  assert.ok(candidateReceipt?.reason_codes.includes("memory_contract_inspect_before_use"));
+  assert.ok(candidateReceipt?.reason_codes.includes("memory_contract_confirmation_required"));
+  assert.equal(suppressedReceipt?.agent_surface, "do_not_use");
+  assert.equal(suppressedReceipt?.decision_kind, "blocked");
+  assert.equal(suppressedReceipt?.actionable, false);
+  assert.ok(suppressedReceipt?.reason_codes.includes("memory_contract_do_not_use"));
+  assert.ok(suppressedReceipt?.reason_codes.includes("blocked_from_agent_use"));
+  assert.equal(context.prompt_text.includes("decision_summaries"), false);
 });
 
 test("product memory contract keeps low-level evidence out of direct use", () => {

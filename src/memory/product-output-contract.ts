@@ -861,6 +861,19 @@ export const AionisMemoryUseReceiptSchema = z
     attributed_memory_ids: z.array(z.string().min(1)).default([]),
     unattributed_recalled_memory_ids: z.array(z.string().min(1)).default([]),
     read_only_signal_memory_ids: z.array(z.string().min(1)).default([]),
+    decision_summaries: z
+      .array(
+        z
+          .object({
+            memory_id: z.string().min(1),
+            agent_surface: AionisMemoryDecisionSurfaceSchema,
+            decision_kind: AionisMemoryDecisionKindSchema,
+            actionable: z.boolean(),
+            reason_codes: z.array(z.string().min(1)).default([]),
+          })
+          .strict(),
+      )
+      .default([]),
     risk_flags: z.array(z.string().min(1)).default([]),
     summary: z.string().min(1),
   })
