@@ -1,6 +1,11 @@
 export type AionisJsonObject = Record<string, unknown>;
 
 export type AionisGuideMode = "standard" | "full_power";
+export type AionisFeedbackOutcome = "positive" | "negative" | "neutral";
+export type AionisFeedbackUsedSurface = "use_now" | "inspect_before_use" | "do_not_use" | "explicit_host_assertion";
+export type AionisFeedbackStatus = "passed" | "failed" | "not_run" | "unknown";
+export type AionisRehydrateMode = "summary_only" | "partial" | "full" | "differential";
+export type AionisForgetTarget = "pattern" | "archive" | "payload" | "memory";
 
 export type AionisClientOptions = {
   baseUrl: string;
@@ -20,6 +25,35 @@ export type AionisRequestOptions = {
 
 export type AionisGuideRequestOptions = AionisRequestOptions & {
   guide_mode?: AionisGuideMode | null;
+};
+
+export type AionisFeedbackRequest = AionisJsonObject & {
+  reason: string;
+  run_id: string;
+  outcome: AionisFeedbackOutcome;
+  used_surface: AionisFeedbackUsedSurface;
+  actor?: string;
+  guide_trace_id?: string;
+  used_memory_ids?: string[];
+  memory_ids?: string[];
+  node_ids?: string[];
+  verifier_status?: AionisFeedbackStatus;
+  tool_status?: AionisFeedbackStatus;
+  runtime_signal_refs?: string[];
+  target?: "memory";
+};
+
+export type AionisRehydrateRequest = AionisJsonObject & {
+  reason: string;
+  memory_ids?: string[];
+  node_ids?: string[];
+  client_ids?: string[];
+  anchor_id?: string;
+  anchor_uri?: string;
+  target_tier?: "warm" | "hot";
+  mode?: AionisRehydrateMode;
+  include_linked_decisions?: boolean;
+  target?: Extract<AionisForgetTarget, "archive" | "payload" | "memory">;
 };
 
 export class AionisClientError extends Error {
@@ -95,6 +129,21 @@ export class AionisClient {
 
   async forget<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {
     return this.post<T>("/v1/forget", body, options);
+  }
+
+  async feedback<T = unknown>(body: AionisFeedbackRequest, options?: AionisRequestOptions): Promise<T> {
+    return this.forget<T>({
+      ...body,
+      operation: "activate",
+      target: body.target ?? "memory",
+    }, options);
+  }
+
+  async rehydrate<T = unknown>(body: AionisRehydrateRequest, options?: AionisRequestOptions): Promise<T> {
+    return this.forget<T>({
+      ...body,
+      operation: "rehydrate",
+    }, options);
   }
 
   async measure<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {

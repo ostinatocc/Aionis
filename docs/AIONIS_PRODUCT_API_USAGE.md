@@ -45,21 +45,25 @@ For host decisions, distinguish these two fields:
 2. Call `POST /v1/guide` before the next Agent run.
 3. Pass only `agent_context.prompt_text` or selected `agent_context` fields to
    the Agent.
-4. Call `POST /v1/forget` when a memory, workflow, pattern, archive, or payload
-   lifecycle should change. For normal run feedback, use
-   `operation: "activate"` with `guide_trace_id`, `used_memory_ids`, `run_id`,
-   `outcome`, and `used_surface`.
-5. Call `POST /v1/measure` with before/after guide packets or direct
+4. Call SDK `feedback()` after the Agent acts, or raw `POST /v1/forget` with
+   `operation: "activate"` when using HTTP directly. Include `guide_trace_id`,
+   `used_memory_ids`, `run_id`, `outcome`, and `used_surface`.
+5. Call SDK `rehydrate()` when an archived memory or anchor payload needs to be
+   expanded, or raw `POST /v1/forget` with `operation: "rehydrate"` when using
+   HTTP directly.
+6. Call `POST /v1/measure` with before/after guide packets or direct
    observations when the product needs to prove whether history helped or hurt.
-6. Call `POST /v1/operator/snapshot` when a host or operator needs a read-only
+7. Call `POST /v1/operator/snapshot` when a host or operator needs a read-only
    summary of actionable history, feedback attribution, branch isolation, and
    measured effect.
 
 ## SDK Product Path
 
-The focused Runtime also exposes a small TypeScript client for the four product
+The focused Runtime also exposes a small TypeScript client for the product
 actions. The SDK is intentionally a facade over the product routes; it does not
-wrap debug, audit, benchmark, or host-specific adapter APIs.
+wrap debug, audit, benchmark, or host-specific adapter APIs. `feedback()` and
+`rehydrate()` are readable aliases over the controlled `/v1/forget` product
+route, so hosts do not need to memorize lifecycle operation names.
 
 ```ts
 import { createAionisClient } from "./src/sdk.ts";
@@ -86,13 +90,34 @@ await aionis.observe({
   },
 });
 
-const guide = await aionis.guide<{ agent_context: { prompt_text: string } }>({
+const guide = await aionis.guide<{
+  guide_trace_id: string;
+  agent_context: {
+    prompt_text: string;
+    use_now_memory_ids: string[];
+  };
+}>({
   query_text: "Continue checkout migration without repeating stale discovery.",
   consumer_agent_id: "agent-1",
   limit: 8,
 });
 
 const agentPromptContext = guide.agent_context.prompt_text;
+
+await aionis.feedback({
+  reason: "Agent used the exposed checkout continuation successfully.",
+  run_id: "run-001",
+  outcome: "positive",
+  used_surface: "use_now",
+  guide_trace_id: guide.guide_trace_id,
+  used_memory_ids: guide.agent_context.use_now_memory_ids.slice(0, 1),
+});
+
+await aionis.rehydrate({
+  reason: "Expand the archived checkout trace before exact replay.",
+  anchor_uri: "aionis://anchors/checkout-trace",
+  mode: "partial",
+});
 ```
 
 The Agent should receive `agentPromptContext` or selected `agent_context`
@@ -104,6 +129,7 @@ Runnable SDK e2e:
 ```bash
 npm run -s runtime:e2e:product-loop
 npm run -s runtime:e2e:golden-product-loop
+npm run -s runtime:e2e:agent-suite
 ```
 
 By default the e2e starts an isolated local Runtime and therefore needs a real
@@ -116,7 +142,7 @@ npm run -s runtime:e2e:product-loop
 ```
 
 The product-loop e2e exercises `observe -> guide -> simulated Agent -> observe
-outcome -> forget(rehydrate) -> measure`, and also verifies that the advanced
+outcome -> rehydrate -> measure`, and also verifies that the advanced
 `/v1/execution/context/assemble` and product `/v1/guide mode=full_power`
 `agent_context` keep passed branches, failed branches, and audit surfaces
 separated.
@@ -130,6 +156,12 @@ observe -> guide -> agent action -> outcome feedback -> measure -> snapshot
 It is the preferred product proof when validating that Aionis changes the next
 Agent context, isolates failed branches, and gives operators a read-only memory
 use receipt plus trace-to-procedure readiness.
+
+The agent-suite e2e is the real LLM downstream demo. It compares `baseline`,
+`long_context`, and `aionis` groups, then fails if Aionis does not recover the
+verified active path, suppress failed branch direct use, provide evidence-backed
+feedback, and keep execution context shorter than raw long history. This
+validates Agent-context behavior; it is not an external task-success benchmark.
 
 ## Multi-Agent Execution Memory
 
@@ -150,9 +182,10 @@ Use these identity rules:
 6. Put role hints such as `planner`, `worker`, `verifier`, or `reviewer` in
    top-level `agent_role` on `/v1/guide`. Legacy `context.agent_role` is still
    accepted as a compatibility fallback.
-7. After the Agent acts, call `forget` with `operation: "activate"`,
-   `actor`, `guide_trace_id`, `used_memory_ids`, `run_id`, `outcome`, and
-   `used_surface` so feedback is attributed only to memory actually used.
+7. After the Agent acts, call SDK `feedback()` with `actor`, `guide_trace_id`,
+   `used_memory_ids`, `run_id`, `outcome`, and `used_surface` so feedback is
+   attributed only to memory actually used. When using raw HTTP, this maps to
+   `/v1/forget` with `operation: "activate"`.
    For `guide_trace_id` feedback, Aionis inherits the guide ledger's
    `consumer_team_id` when activating team-owned shared memory.
 

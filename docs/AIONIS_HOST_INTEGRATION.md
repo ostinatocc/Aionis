@@ -31,7 +31,7 @@ Use the product routes directly when integrating over HTTP:
 | `observe` | `POST /v1/observe` | Report real memory, execution, outcome, or handoff evidence. | Persist scoped evidence and execution memory. |
 | `guide` | `POST /v1/guide` | Ask for context before the next Agent acts. | Return compact `agent_context`. |
 | `agent action` | Host-owned | Give the Agent only `agent_context.prompt_text` or selected `agent_context` fields. | No action execution. |
-| `outcome feedback` | `POST /v1/forget operation=activate` or adapter `afterRun` | Report which exposed memory IDs were actually used and what happened. | Attribute feedback only to exposed and reported memory. |
+| `outcome feedback` | SDK `feedback()`, adapter `afterRun`, or raw `POST /v1/forget operation=activate` | Report which exposed memory IDs were actually used and what happened. | Attribute feedback only to exposed and reported memory. |
 | `measure` | `POST /v1/measure` | Provide before/after guide packets or product trace. | Report whether history helped or hurt. |
 | `snapshot` | `POST /v1/operator/snapshot` | Ask for read-only operator state. | Summarize active context, attribution, and measured effect. |
 
@@ -497,6 +497,7 @@ npm run -s runtime:e2e:golden-product-loop
 npm run -s runtime:e2e:single-agent-host-template
 npm run -s runtime:e2e:multi-agent-host-template
 npm run -s runtime:e2e:multi-agent-host-template-fresh
+npm run -s runtime:e2e:agent-suite
 ```
 
 The Runtime e2es require a real embedding provider. For local runs, configure
@@ -504,3 +505,10 @@ The Runtime e2es require a real embedding provider. For local runs, configure
 local Runtime instances unless `AIONIS_PRODUCT_E2E_BASE_URL`,
 `AIONIS_MULTI_AGENT_E2E_BASE_URL`, `AIONIS_BASE_URL`, or `AIONIS_URL` points to
 an already running Runtime.
+
+`runtime:e2e:agent-suite` also requires a real chat-completions LLM through
+`AIONIS_AGENT_E2E_API_KEY`, `DEEPSEEK_API_KEY`, or `OPENROUTER_API_KEY`. It is
+the product-level downstream Agent demo: it verifies that Aionis gives a real
+LLM shorter execution context, restores the verified active path, blocks failed
+branch leakage, and records evidence-backed feedback. It does not make Aionis
+responsible for external task execution.

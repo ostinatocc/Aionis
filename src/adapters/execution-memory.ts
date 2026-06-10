@@ -54,6 +54,8 @@ export type ExecutionMemoryClient = {
   observe<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T>;
   guide<T = unknown>(body: AionisJsonObject, options?: AionisGuideRequestOptions): Promise<T>;
   forget<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T>;
+  feedback?<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T>;
+  rehydrate?<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T>;
   measure<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T>;
   operatorSnapshot<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T>;
 };
@@ -452,8 +454,7 @@ export class AionisExecutionMemoryAdapter {
     const lastGuide = this.lastGuide(feedbackRunId);
     const traceId = input.guide_trace_id ?? guideTraceId(lastGuide);
     if (!traceId) return null;
-    const response = await this.client.forget<T>({
-      operation: "activate",
+    const feedbackBody = {
       target: "memory",
       actor: this.agentId(input),
       guide_trace_id: traceId,
@@ -465,7 +466,14 @@ export class AionisExecutionMemoryAdapter {
       tool_status: toolStatus(input),
       runtime_signal_refs: input.runtime_signal_refs,
       reason: input.feedback_reason ?? input.summary,
-    }, this.requestOptions(input));
+    };
+    const requestOptions = this.requestOptions(input);
+    const response = this.client.feedback
+      ? await this.client.feedback<T>(feedbackBody, requestOptions)
+      : await this.client.forget<T>({
+        operation: "activate",
+        ...feedbackBody,
+      }, requestOptions);
     this.feedbackByRunId.set(feedbackRunId, response);
     return response;
   }

@@ -27,12 +27,29 @@ test("AionisClient wraps the product facade APIs with scope defaults", async () 
   await client.observe({ input_text: "Observed event." });
   await client.guide({ context: { task: "continue" } }, { scope: "scope-b" });
   await client.forget({ operation: "suppress", target: "memory", memory_id: "mem-1" });
+  await client.feedback({
+    operation: "suppress",
+    reason: "Agent used exposed memory successfully.",
+    run_id: "run-feedback",
+    outcome: "positive",
+    used_surface: "use_now",
+    guide_trace_id: "guide-trace-feedback",
+    used_memory_ids: ["mem-used"],
+  });
+  await client.rehydrate({
+    operation: "activate",
+    reason: "Expand archived payload before exact use.",
+    anchor_uri: "aionis://anchor/payload-1",
+    mode: "partial",
+  });
   await client.measure({ baseline: { score: 0.3 }, aionis: { score: 0.7 } });
   await client.operatorSnapshot({ run_id: "run-operator", include_markdown: true });
 
   assert.deepEqual(calls.map((call) => call.url), [
     "http://127.0.0.1:3001/v1/observe",
     "http://127.0.0.1:3001/v1/guide",
+    "http://127.0.0.1:3001/v1/forget",
+    "http://127.0.0.1:3001/v1/forget",
     "http://127.0.0.1:3001/v1/forget",
     "http://127.0.0.1:3001/v1/measure",
     "http://127.0.0.1:3001/v1/operator/snapshot",
@@ -51,7 +68,18 @@ test("AionisClient wraps the product facade APIs with scope defaults", async () 
   assert.equal(guideBody.scope, "scope-b");
   assert.equal(guideBody.mode, "full_power");
 
-  const snapshotBody = JSON.parse(String(calls[4]?.init.body)) as Record<string, unknown>;
+  const feedbackBody = JSON.parse(String(calls[3]?.init.body)) as Record<string, unknown>;
+  assert.equal(feedbackBody.operation, "activate");
+  assert.equal(feedbackBody.target, "memory");
+  assert.equal(feedbackBody.guide_trace_id, "guide-trace-feedback");
+  assert.deepEqual(feedbackBody.used_memory_ids, ["mem-used"]);
+
+  const rehydrateBody = JSON.parse(String(calls[4]?.init.body)) as Record<string, unknown>;
+  assert.equal(rehydrateBody.operation, "rehydrate");
+  assert.equal(rehydrateBody.anchor_uri, "aionis://anchor/payload-1");
+  assert.equal(rehydrateBody.mode, "partial");
+
+  const snapshotBody = JSON.parse(String(calls[6]?.init.body)) as Record<string, unknown>;
   assert.equal(snapshotBody.tenant_id, "tenant-a");
   assert.equal(snapshotBody.scope, "scope-a");
   assert.equal(snapshotBody.run_id, "run-operator");

@@ -373,8 +373,7 @@ async function runProductLoop(args: {
   });
   const archiveMemoryId = nodeIdFromObserve(archiveObserve, "archive");
 
-  const forget = await client.forget<Record<string, unknown>>({
-    operation: "rehydrate",
+  const forget = await client.rehydrate<Record<string, unknown>>({
     target: "archive",
     memory_ids: [archiveMemoryId],
     target_tier: "hot",

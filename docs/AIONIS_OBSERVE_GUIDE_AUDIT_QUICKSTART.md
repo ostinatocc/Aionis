@@ -109,6 +109,28 @@ These scripts verify the full host contract:
 5. `measure` reports history impact
 6. operator snapshot remains read-only and operator-facing
 
+## Real Agent Downstream Demo
+
+To validate that compact Aionis execution context changes a real LLM Agent's
+next action, run:
+
+```bash
+export AIONIS_AGENT_E2E_TRIALS_PER_SCENARIO=3
+npm run -s runtime:e2e:agent-suite
+```
+
+This starts an isolated Runtime, writes branch-aware execution history, compares
+`baseline`, `long_context`, and `aionis` groups, and writes a summary under
+`.tmp/runtime-agent-e2e/`. The `product_demo` section checks that Aionis:
+
+1. restores the verified active path for the Agent
+2. keeps failed branches out of direct use
+3. gives the Agent shorter execution context than raw long history
+4. records evidence-backed feedback after the Agent acts
+
+This is a downstream Agent-context demo, not a claim that Aionis owns external
+task execution.
+
 ## 1. Observe Old Memory
 
 Write a prior working note. It is useful history, but later evidence will

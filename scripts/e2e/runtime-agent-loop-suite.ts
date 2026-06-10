@@ -573,6 +573,19 @@ function average(values: Array<number | null>): number | null {
   return nums.reduce((sum, value) => sum + value, 0) / nums.length;
 }
 
+function ratio(numerator: number, denominator: number): number | null {
+  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) return null;
+  return numerator / denominator;
+}
+
+function parseRateEnv(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.min(1, value));
+}
+
 function summarize(results: TrialResult[]) {
   const summarizeGroup = (scenarioId: string | null, group: SuiteGroup) => {
     const rows = results.filter((row) => row.group === group && (scenarioId === null || row.scenario_id === scenarioId));
@@ -640,6 +653,83 @@ function summarize(results: TrialResult[]) {
       token_delta_total_avg_vs_long_context: delta(overallAionis.avg_total_tokens, overallLongContext.avg_total_tokens),
       request_chars_delta_avg_vs_long_context: delta(overallAionis.avg_request_chars, overallLongContext.avg_request_chars),
     },
+  };
+}
+
+function buildProductDemoReport(results: TrialResult[]) {
+  const minSuccessRate = parseRateEnv("AIONIS_AGENT_E2E_MIN_SUCCESS_RATE", 0.95);
+  const maxFailedBranchLeakageRate = parseRateEnv("AIONIS_AGENT_E2E_MAX_FAILED_BRANCH_LEAKAGE_RATE", 0);
+  const minEvidenceBackedOutcomeRate = parseRateEnv("AIONIS_AGENT_E2E_MIN_EVIDENCE_BACKED_OUTCOME_RATE", 1);
+  const minExecutionContextCompressionRatio = parseRateEnv("AIONIS_AGENT_E2E_MIN_CONTEXT_COMPRESSION_RATIO", 0.05);
+  const aionisRows = results.filter((row) => row.group === "aionis");
+  const aionisExecutionRows = aionisRows.filter((row) => row.scenario_id !== "summary_only_guard");
+  const longContextExecutionRows = results.filter((row) => row.group === "long_context" && row.scenario_id !== "summary_only_guard");
+  const aionisSummaryOnlyRows = aionisRows.filter((row) => row.scenario_id === "summary_only_guard");
+  const successRate = ratio(aionisRows.filter((row) => row.success).length, aionisRows.length);
+  const failedBranchLeakageRate = ratio(aionisRows.filter((row) => row.failed_branch_leakage).length, aionisRows.length);
+  const evidenceBackedOutcomeRate = ratio(aionisRows.filter((row) => row.outcome_evidence_backed).length, aionisRows.length);
+  const avgLongExecutionContextChars = average(longContextExecutionRows.map((row) => row.long_context_chars));
+  const avgAionisExecutionContextChars = average(aionisExecutionRows.map((row) => row.aionis_context_chars));
+  const executionContextCompressionRatio =
+    typeof avgLongExecutionContextChars === "number"
+    && typeof avgAionisExecutionContextChars === "number"
+      ? 1 - (avgAionisExecutionContextChars / avgLongExecutionContextChars)
+      : null;
+  const routeSeparatedExecutionRows = aionisExecutionRows.filter(
+    (row) => row.aionis_use_now_count > 0 && row.aionis_do_not_use_count > 0,
+  ).length;
+  const summaryOnlyGuardedRows = aionisSummaryOnlyRows.filter(
+    (row) => row.success && row.aionis_supporting_evidence_count > 0 && row.decision.choice === "inspect_evidence",
+  ).length;
+  const failures: string[] = [];
+  if (aionisRows.length === 0) failures.push("aionis group produced no trials");
+  if (typeof successRate !== "number" || successRate < minSuccessRate) {
+    failures.push(`aionis_success_rate ${successRate ?? "null"} below ${minSuccessRate}`);
+  }
+  if (typeof failedBranchLeakageRate !== "number" || failedBranchLeakageRate > maxFailedBranchLeakageRate) {
+    failures.push(`aionis_failed_branch_leakage_rate ${failedBranchLeakageRate ?? "null"} above ${maxFailedBranchLeakageRate}`);
+  }
+  if (typeof evidenceBackedOutcomeRate !== "number" || evidenceBackedOutcomeRate < minEvidenceBackedOutcomeRate) {
+    failures.push(`aionis_evidence_backed_outcome_rate ${evidenceBackedOutcomeRate ?? "null"} below ${minEvidenceBackedOutcomeRate}`);
+  }
+  if (aionisExecutionRows.length === 0 || routeSeparatedExecutionRows !== aionisExecutionRows.length) {
+    failures.push("aionis execution trials did not all expose both use_now and do_not_use routes");
+  }
+  if (aionisSummaryOnlyRows.length === 0 || summaryOnlyGuardedRows !== aionisSummaryOnlyRows.length) {
+    failures.push("aionis summary-only trials were not consistently held as supporting evidence");
+  }
+  if (
+    typeof executionContextCompressionRatio !== "number"
+    || executionContextCompressionRatio < minExecutionContextCompressionRatio
+  ) {
+    failures.push(
+      `aionis_execution_context_compression_ratio ${executionContextCompressionRatio ?? "null"} below ${minExecutionContextCompressionRatio}`,
+    );
+  }
+  return {
+    contract_version: "aionis_real_agent_product_demo_v1",
+    purpose:
+      "Real LLM downstream demo that checks context compression, failed-branch isolation, cross-session recovery, and evidence-backed feedback.",
+    thresholds: {
+      min_success_rate: minSuccessRate,
+      max_failed_branch_leakage_rate: maxFailedBranchLeakageRate,
+      min_evidence_backed_outcome_rate: minEvidenceBackedOutcomeRate,
+      min_execution_context_compression_ratio: minExecutionContextCompressionRatio,
+    },
+    metrics: {
+      aionis_trial_count: aionisRows.length,
+      aionis_execution_trial_count: aionisExecutionRows.length,
+      aionis_success_rate: successRate,
+      aionis_failed_branch_leakage_rate: failedBranchLeakageRate,
+      aionis_evidence_backed_outcome_rate: evidenceBackedOutcomeRate,
+      avg_long_execution_context_chars: avgLongExecutionContextChars,
+      avg_aionis_execution_context_chars: avgAionisExecutionContextChars,
+      aionis_execution_context_compression_ratio: executionContextCompressionRatio,
+      route_separated_execution_rows: routeSeparatedExecutionRows,
+      summary_only_guarded_rows: summaryOnlyGuardedRows,
+    },
+    passed: failures.length === 0,
+    failures,
   };
 }
 
@@ -728,8 +818,11 @@ async function main() {
         }
       }
     }
+    const aggregate = summarize(results);
+    const productDemo = buildProductDemoReport(results);
     const summary = {
-      ...summarize(results),
+      ...aggregate,
+      product_demo: productDemo,
       suite_run_id: suiteRunId,
       llm: {
         provider: llm.provider,
@@ -747,6 +840,9 @@ async function main() {
     };
     fs.writeFileSync(summaryPath, `${JSON.stringify(summary, null, 2)}\n`);
     process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+    if (!productDemo.passed) {
+      throw new Error(`runtime agent product demo gates failed: ${productDemo.failures.join("; ")}`);
+    }
   } finally {
     stopRuntime(runtime);
   }

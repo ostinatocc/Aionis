@@ -249,6 +249,71 @@ test("execution memory adapter wires multi-agent observe, full-power guide, feed
   assert.equal(snapshotCall.body.include_markdown, true);
 });
 
+test("execution memory adapter prefers first-class SDK feedback when available", async () => {
+  const calls: Array<{ method: string; body: Record<string, unknown>; options: unknown }> = [];
+  const client: ExecutionMemoryClient = {
+    async observe(body, options) {
+      calls.push({ method: "observe", body, options });
+      return { memory_write: { nodes: [{ id: "memory-observed" }] } };
+    },
+    async guide(body, options) {
+      calls.push({ method: "guide", body, options });
+      return {
+        guide_trace_id: "guide-trace-feedback-sdk",
+        agent_context: { use_now_memory_ids: ["memory-used"] },
+      };
+    },
+    async forget(body, options) {
+      calls.push({ method: "forget", body, options });
+      return { operation: "activate", via: "forget" };
+    },
+    async feedback(body, options) {
+      calls.push({ method: "feedback", body, options });
+      return { operation: "activate", via: "feedback" };
+    },
+    async measure(body, options) {
+      calls.push({ method: "measure", body, options });
+      return { contract_version: "aionis_measure_result_v1" };
+    },
+    async operatorSnapshot(body, options) {
+      calls.push({ method: "operatorSnapshot", body, options });
+      return { contract_version: "aionis_operator_snapshot_result_v1" };
+    },
+  };
+  const adapter = createExecutionMemoryAdapter({
+    client,
+    tenant_id: "tenant-feedback",
+    scope: "scope-feedback",
+    team_id: "team-feedback",
+    default_agent_id: "reviewer-feedback",
+    default_agent_role: "reviewer",
+  });
+
+  await adapter.guideNext({
+    run_id: "run-feedback",
+    task_signature: "feedback-sdk",
+    query_text: "continue from exposed memory",
+  });
+  const result = await adapter.observeOutcome<Record<string, unknown>, Record<string, unknown>>({
+    run_id: "run-feedback",
+    task_signature: "feedback-sdk",
+    title: "Feedback SDK outcome",
+    summary: "Reviewer used exposed memory successfully.",
+    outcome: "succeeded",
+    used_memory_ids: ["memory-used"],
+  });
+
+  assert.equal(result.feedback?.via, "feedback");
+  assert.equal(calls.some((call) => call.method === "forget"), false);
+  const feedbackCall = calls.find((call) => call.method === "feedback");
+  assert.ok(feedbackCall);
+  assert.equal(feedbackCall.body.guide_trace_id, "guide-trace-feedback-sdk");
+  assert.deepEqual(feedbackCall.body.used_memory_ids, ["memory-used"]);
+  assert.equal(feedbackCall.body.run_id, "run-feedback");
+  assert.equal(feedbackCall.body.outcome, "positive");
+  assert.equal((feedbackCall.options as Record<string, unknown>).tenant_id, "tenant-feedback");
+});
+
 test("execution memory adapter enforces agent identity and shared team boundary", async () => {
   const calls: Array<{ method: string; body: Record<string, unknown>; options: unknown }> = [];
   await assert.rejects(

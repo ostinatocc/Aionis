@@ -39,7 +39,9 @@ An Agent using Aionis should:
 
 ## Four Product Actions
 
-The product surface should collapse around four verbs.
+The HTTP product surface should collapse around four verbs. SDKs may expose
+readable aliases such as `feedback()` and `rehydrate()` when they map back to
+the same product routes.
 
 | Product Action | User Meaning | Current Runtime Capabilities |
 |---|---|---|
@@ -210,7 +212,11 @@ promote memory, or mutate authority by itself.
 
 ## Forget Input Contract
 
-`POST /v1/forget` is the product entry for controlled forgetting, suppression, rehydration, and reuse feedback. Users should not need to know the internal lifecycle route names.
+`POST /v1/forget` is the HTTP product entry for controlled forgetting,
+suppression, rehydration, and reuse feedback. SDK users should prefer
+`client.feedback()` for `activate` feedback and `client.rehydrate()` for
+rehydration, while raw HTTP users can still pass the operation explicitly.
+Users should not need to know the internal lifecycle route names.
 
 Supported product operations:
 
@@ -246,6 +252,13 @@ Supported measurement inputs:
 | `product_trace.forget_result` | Caller supplies the product forget result used between guide snapshots. | Counts suppression or rehydration effect without exposing internal lifecycle route schemas. |
 
 Product trace measurement proves packet-level Aionis effects: history used, repeated-discovery reduction signal, useful context ratio, stale-memory suppression, rehydration, workflow candidate reuse, and authority blocking. It must not be described as proof that an external Agent completed a task unless an external validation layer supplies that outcome as separate evidence.
+
+`npm run -s runtime:e2e:agent-suite` is the focused downstream Agent-context
+demo. It supplies that separate external validation layer with a real LLM and
+compares `baseline`, `long_context`, and `aionis` contexts. Its product gates
+are scoped to Aionis-owned effects: active-path recovery, failed-branch leakage
+blocking, execution-context compression, and evidence-backed feedback. The
+demo does not turn the external Agent's task behavior into a Runtime rule.
 
 ## Core Capabilities
 
