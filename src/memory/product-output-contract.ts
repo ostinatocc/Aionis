@@ -45,6 +45,43 @@ export type AionisMemoryDomain = z.infer<typeof AionisMemoryDomainSchema>;
 export const AionisMemoryFamilySchema = z.enum(["general_cognitive", "execution", "mixed", "empty"]);
 export type AionisMemoryFamily = z.infer<typeof AionisMemoryFamilySchema>;
 
+export const AionisLifecycleCandidateSignalSchema = z
+  .object({
+    memory_id: z.string().min(1),
+    signal_type: z.enum(["current", "procedure", "negative", "stale", "contested", "rehydrate"]),
+    confidence: ConfidenceSchema,
+    evidence_span: z
+      .object({
+        source_field: z.enum(["title", "text_summary", "slots", "query"]),
+        quote: z.string().min(1),
+      })
+      .strict(),
+    producer: z.enum(["rule_v1", "llm_shadow_v1"]),
+    reason: z.string().min(1),
+  })
+  .strict();
+export type AionisLifecycleCandidateSignal = z.infer<typeof AionisLifecycleCandidateSignalSchema>;
+
+const AionisLifecycleCandidateSummarySchema = z
+  .object({
+    present: z.boolean(),
+    contract_version: z.literal("aionis_lifecycle_candidate_summary_v1").nullable(),
+    mode: z.enum(["rule_shadow", "rule_gated"]).nullable(),
+    authority_mutation: z.literal(false),
+    agent_prompt_included: z.literal(false),
+    signal_payload_prompt_included: z.literal(false).default(false),
+    surface_effect_prompt_included: z.boolean().default(false),
+    candidate_count: z.number().int().nonnegative(),
+    gated_count: z.number().int().nonnegative(),
+    shadow_only_count: z.number().int().nonnegative(),
+    candidate_memory_ids: z.array(z.string().min(1)).default([]),
+    gated_memory_ids: z.array(z.string().min(1)).default([]),
+    shadow_only_memory_ids: z.array(z.string().min(1)).default([]),
+    signals: z.array(AionisLifecycleCandidateSignalSchema).default([]),
+    reason: z.string().min(1),
+  })
+  .strict();
+
 const AionisMemoryLayerSchema = z.enum(["L0", "L1", "L2", "L3", "L4", "L5"]);
 
 const AionisMemoryContractSchema = z
@@ -992,6 +1029,23 @@ export const AionisMemoryDecisionTraceSchema = z
           .strict(),
       )
       .default([]),
+    lifecycle_candidate_summary: AionisLifecycleCandidateSummarySchema.default({
+      present: false,
+      contract_version: null,
+      mode: null,
+      authority_mutation: false,
+      agent_prompt_included: false,
+      signal_payload_prompt_included: false,
+      surface_effect_prompt_included: false,
+      candidate_count: 0,
+      gated_count: 0,
+      shadow_only_count: 0,
+      candidate_memory_ids: [],
+      gated_memory_ids: [],
+      shadow_only_memory_ids: [],
+      signals: [],
+      reason: "No lifecycle candidate signals were supplied for this trace.",
+    }),
     feedback_attribution: z
       .object({
         present: z.boolean(),
