@@ -4,7 +4,11 @@ Date: 2026-06-10
 
 Runtime workspace: `/Volumes/ziel/AionisRuntime-focused`
 
-Recorded Runtime head: `04257f2`
+Recorded Runtime heads:
+
+1. `04257f2` for the original deterministic and LLM-scored compression reports.
+2. `14b285d` for the 200-scenario unlabelled lifecycle holdout and real Agent
+   downstream demo.
 
 Eval workspace: `/Volumes/ziel/AionisRuntime-evals/state-preserving-compression-benchmark`
 
@@ -30,15 +34,22 @@ eval run.
 
 ## Source Reports
 
-The current baseline is defined by these two reports:
+The current baseline is defined by these reports:
 
 1. Deterministic 100-scenario run:
    `/Volumes/ziel/AionisRuntime-evals/state-preserving-compression-benchmark/reports/state-compression-2026-06-10T07-58-39-156Z/summary.json`
 2. LLM-scored 24-scenario subset:
    `/Volumes/ziel/AionisRuntime-evals/state-preserving-compression-benchmark/reports/state-compression-2026-06-10T08-03-35-087Z/summary.json`
+3. Unlabelled lifecycle 200-scenario paraphrase holdout:
+   `/Volumes/ziel/AionisRuntime-evals/state-preserving-compression-benchmark/reports/unlabelled-lifecycle-2026-06-10T12-26-37-752Z/summary.json`
+4. Real LLM downstream Agent demo:
+   `/Volumes/ziel/AionisRuntime-focused/.tmp/runtime-agent-e2e/suite-2026-06-10T12-48-41-477Z-e4bc3df7.summary.json`
 
-Both reports use the same fixture:
+The first two reports use the same fixture:
 `/Volumes/ziel/AionisRuntime-evals/state-preserving-compression-benchmark/fixtures/github-git-history-scenarios-v0.1.json`
+
+The 200-scenario holdout uses:
+`/Volumes/ziel/AionisRuntime-evals/state-preserving-compression-benchmark/fixtures/github-git-history-holdout-200-v0.1.json`
 
 The fixture is built from real public GitHub commit metadata and history.
 Failed, stale, contested, and rehydrate expectations are benchmark-adjudicated
@@ -84,6 +95,63 @@ Threshold status: `pass`.
 
 Threshold status: `pass`.
 
+## Unlabelled Lifecycle 200-Scenario Holdout
+
+This run removes structured memory kind and lifecycle labels from the input
+history, scrubs lifecycle cue wording, and uses a paraphrase holdout. The goal
+is to check whether Runtime can infer useful lifecycle posture from execution
+history structure instead of relying on pre-labelled memory rows.
+
+| Arm | Scenarios | Current state recall | Use-now recall | Negative recall | Stale recall | Procedure retention | Rehydrate recall | Forbidden direct-use | Stale direct-use |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Builtin textual inference | 200 | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% |
+| Aionis Runtime unlabelled | 200 | 96.5% | 96.8% | 98.0% | 100.0% | 97.0% | 100.0% | 2.0% | 0.0% |
+
+Scenario coverage is balanced across long-running continuation, failed branch
+avoidance, stale premise resistance, contradicted memory, procedure reuse,
+rehydration needed, multi-agent handoff, and sparse feedback.
+
+Threshold status: `informational pass with failure buckets`.
+
+Important failure bucket: 4 of 200 Runtime scenarios still leaked forbidden
+direct-use, and 15 of 200 had at least one recall miss. These are evaluation
+evidence and must not be converted into Runtime rules unless repeated
+cross-suite evidence shows the same general failure.
+
+## Real LLM Downstream Agent Demo
+
+This run is not a compression benchmark arm. It is a downstream product demo
+that gives a real LLM one of three contexts: no prior memory, raw long context,
+or Aionis execution context. The Agent must choose the next action from a small
+allowed set after Runtime writes branch-aware execution history.
+
+Run id:
+`suite-2026-06-10T12-48-41-477Z-e4bc3df7`
+
+| Group | Trials | Success | Failed branch leakage | Evidence-backed outcomes | Avg request chars | Avg total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Baseline | 9 | 0.0% | 0.0% | 0.0% | 2045.33 | 629.44 |
+| Long context | 9 | 100.0% | 0.0% | 0.0% | 3773.67 | 1092.44 |
+| Aionis | 9 | 100.0% | 0.0% | 100.0% | 3491.00 | 1192.56 |
+
+Product demo gate:
+
+| Metric | Result |
+| --- | ---: |
+| Aionis success rate | 100.0% |
+| Aionis failed branch leakage | 0.0% |
+| Aionis evidence-backed feedback | 100.0% |
+| Route-separated execution rows | 6 / 6 |
+| Summary-only guarded rows | 3 / 3 |
+| Execution context compression vs raw long history | 24.4% |
+
+Threshold status: `pass`.
+
+Accepted interpretation: Aionis can give a real LLM shorter execution-state
+context than raw long history while preserving the active branch, suppressing
+failed branch direct use, and recording feedback attribution. The run does not
+claim Aionis owns the external task execution layer.
+
 ## Product Interpretation
 
 The accepted product claim from this baseline is:
@@ -99,6 +167,11 @@ The accepted engineering conclusions are:
 3. Memory-use receipts and decision traces are required for product-grade audit.
 4. Ordinary recall and raw retrieval are insufficient for failed-path, stale,
    contradicted, and rehydrate-sensitive execution memory.
+5. Unlabelled execution-like history can be governed through Runtime lifecycle
+   inference, but the 200-scenario holdout still leaves explicit failure
+   buckets that should be tracked before broader claims.
+6. The real Agent demo is valid product evidence for downstream context effects,
+   not a broad benchmark result.
 
 The baseline does not justify these claims:
 
@@ -122,3 +195,9 @@ The current reports were generated with:
 Future compression evaluations should preserve this document as the baseline
 record and write new report paths and deltas in follow-up docs or changelog
 entries instead of overwriting these numbers.
+
+The 200-scenario holdout was generated from public GitHub commit metadata with
+balanced scenario types. The real Agent demo was run with `deepseek-v4-flash`
+for chat completions and `minimax` embeddings through the local Runtime e2e
+scripts. API keys are not stored in this repository, and `.tmp` report artifacts
+are intentionally not committed.
