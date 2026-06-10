@@ -780,7 +780,7 @@ test("product agent context keeps explicit rehydrate hints out of use and inspec
   );
 });
 
-test("product agent context hides optional rehydrate hints for ordinary continuation", () => {
+test("product agent context surfaces optional request_rehydrate memory without inspect/use confusion", () => {
   const memoryPacket = buildAionisMemoryPacket({
     tenant_id: "tenant-local",
     scope: "repo-a",
@@ -855,10 +855,87 @@ test("product agent context hides optional rehydrate hints for ordinary continua
     context_compaction_profile: "aggressive",
   });
 
-  assert.deepEqual(context.rehydrate_hints, []);
-  assert.equal(context.prompt_text.includes("rehydrate:"), false);
+  assert.equal(context.rehydrate_hints.length, 1);
+  assert.equal(context.rehydrate_hints[0]?.memory_id, "mem-optional-raw-pointer");
+  assert.equal(context.rehydrate_hints[0]?.required, false);
+  assert.match(context.prompt_text, /rehydrate: id=m\d+/);
+  assert.equal(context.prompt_text.includes("req=1"), false);
   assert.equal(context.use_now_memory_ids.includes("mem-optional-raw-pointer"), false);
-  assert.equal(context.inspect_before_use_memory_ids.includes("mem-optional-raw-pointer"), true);
+  assert.equal(context.inspect_before_use_memory_ids.includes("mem-optional-raw-pointer"), false);
+  assert.equal(
+    context.prompt_aliases.find((entry) => entry.memory_id === "mem-optional-raw-pointer")?.surface,
+    "rehydrate",
+  );
+});
+
+test("product agent context never direct-uses active request_rehydrate memory", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "Continue ordinary runtime work.",
+    },
+    nodes: [
+      {
+        id: "mem-active-raw-pointer",
+        type: "evidence",
+        title: "Active raw runtime trace pointer",
+        text_summary: "Raw trace pointer exists for src/runtime.ts.",
+        tier: "warm",
+        slots: {
+          memory_kind: "execution_memory",
+          lifecycle_state: "active",
+          compression_layer: "L1",
+          contract_trust: "advisory",
+          execution_native_v1: {
+            schema_version: "execution_native_v1",
+            execution_kind: "execution_native",
+            summary_kind: "raw_trace_pointer",
+            compression_layer: "L1",
+            contract_trust: "advisory",
+            task_signature: "runtime-active-request-rehydrate",
+            workflow_signature: "runtime-active-request-rehydrate:wf",
+            anchor_kind: "execution",
+            anchor_level: "L1",
+            target_files: ["src/runtime.ts"],
+            next_action: "Rehydrate raw trace before exact evidence use.",
+          },
+        },
+        confidence: 0.82,
+        salience: 0.86,
+      },
+    ],
+  });
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    context_compaction_profile: "aggressive",
+  });
+  const trace = buildAionisMemoryDecisionTrace({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    before_guide: null,
+    after_guide: {
+      memory_packet: memoryPacket,
+      agent_context: context,
+    },
+  });
+  const decision = trace.memory_decisions.find((entry) => entry.memory_id === "mem-active-raw-pointer");
+
+  assert.deepEqual(context.rehydrate_hints, [
+    {
+      memory_id: "mem-active-raw-pointer",
+      reason: "Execution state requests payload rehydration before relying on raw or exact evidence.",
+      required: false,
+    },
+  ]);
+  assert.equal(context.use_now_memory_ids.includes("mem-active-raw-pointer"), false);
+  assert.equal(context.inspect_before_use_memory_ids.includes("mem-active-raw-pointer"), false);
+  assert.equal(decision?.agent_surface, "rehydrate");
+  assert.equal(decision?.decision_kind, "rehydrate");
 });
 
 test("product agent context contract renderer prioritizes inspect-gated current execution state", () => {

@@ -1940,6 +1940,14 @@ function memoryEntryRehydrateEligible(entry: MemoryPacketEntry): boolean {
     || entry.execution_state?.transition_kind === "request_rehydrate";
 }
 
+function memoryEntryRehydrateSurface(entry: MemoryPacketEntry): boolean {
+  return !memoryEntryBlocked(entry)
+    && (
+      entry.lifecycle_state === "rehydration_candidate"
+      || entry.execution_state?.transition_kind === "request_rehydrate"
+    );
+}
+
 function queryRequestsRehydration(value: string | null | undefined): boolean {
   const text = typeof value === "string" ? value.toLowerCase().replace(/\s+/g, " ").trim() : "";
   if (!text) return false;
@@ -2507,6 +2515,22 @@ function lifecycleCandidateRehydrateHints(args: {
     .slice(0, 6);
 }
 
+function executionStateRehydrateHints(args: {
+  entries: MemoryPacketEntry[];
+  rehydrationRequested: boolean;
+}): AionisAgentContext["rehydrate_hints"] {
+  return args.entries
+    .filter(memoryEntryRehydrateSurface)
+    .map((entry) => ({
+      memory_id: entry.memory_id,
+      reason: entry.execution_state?.transition_kind === "request_rehydrate"
+        ? "Execution state requests payload rehydration before relying on raw or exact evidence."
+        : "Memory is a rehydration candidate; expand payload before relying on summary-only context.",
+      required: args.rehydrationRequested,
+    }))
+    .slice(0, 6);
+}
+
 function riskAtLeast(current: AionisRiskLevel, minimum: AionisRiskLevel): AionisRiskLevel {
   const rank: Record<AionisRiskLevel, number> = { low: 0, medium: 1, high: 2 };
   return rank[current] >= rank[minimum] ? current : minimum;
@@ -2542,6 +2566,10 @@ function compileAgentContextSurfaces(args: {
 } {
   const blockedEntries = args.memoryEntries.filter(memoryEntryBlocked);
   const rehydrateHintIds = new Set(args.rehydrateHints.map((hint) => hint.memory_id));
+  const rehydrateSurfaceIds = new Set([
+    ...rehydrateHintIds,
+    ...args.memoryEntries.filter(memoryEntryRehydrateSurface).map((entry) => entry.memory_id),
+  ]);
   const lifecycleCandidateSignalsById = lifecycleCandidateSignalsByMemoryId(args.lifecycleCandidateSignals);
   const lifecycleCandidateAdmittedUseNowIds = new Set(
     args.memoryEntries
@@ -2560,13 +2588,13 @@ function compileAgentContextSurfaces(args: {
       .map((entry) => entry.memory_id),
   );
   const inspectEntries = args.memoryEntries.filter((entry) =>
-    !rehydrateHintIds.has(entry.memory_id)
+    !rehydrateSurfaceIds.has(entry.memory_id)
     && !memoryEntryBlocked(entry)
     && memoryEntryInspectBeforeUse(entry)
     && !lifecycleCandidateAdmittedUseNowIds.has(entry.memory_id)
   );
   const usableEntries = args.memoryEntries.filter((entry) =>
-    !rehydrateHintIds.has(entry.memory_id)
+    !rehydrateSurfaceIds.has(entry.memory_id)
     && (memoryEntryUsable(entry) || lifecycleCandidateAdmittedUseNowIds.has(entry.memory_id))
   );
   const deniedPathTargets = deniedAgentActionPathTargets(args.memoryEntries);
@@ -2851,6 +2879,10 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
       signals: lifecycleCandidateSignals,
       rehydrationRequested,
     }),
+    ...executionStateRehydrateHints({
+      entries: memory?.relevant_memories ?? [],
+      rehydrationRequested,
+    }),
   ].filter((hint) => {
     if (rehydrateHintIds.has(hint.memory_id)) return false;
     rehydrateHintIds.add(hint.memory_id);
@@ -2862,7 +2894,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     return (!entry
         || memoryEntryRehydrateEligible(entry)
         || lifecycleCandidateRehydrateEligible({ entry, signals: lifecycleSignals }))
-      && (hint.required || rehydrationRequested);
+      && (hint.required || rehydrationRequested || (entry ? memoryEntryRehydrateSurface(entry) : false));
   });
   const memoryIds = compactStrings([
     ...(guide?.memory_lifecycle.used_memory_ids ?? []),
@@ -3072,7 +3104,7 @@ function traceSurfaceForMemory(args: {
     ...(args.agentContext?.rehydrate_hints ?? []).map((hint) => hint.memory_id),
     ...(guideBrief?.rehydrate ?? []).map((hint) => hint.memory_id),
   ]);
-  if (rehydrateIds.has(args.entry.memory_id) || args.entry.lifecycle_state === "rehydration_candidate") {
+  if (rehydrateIds.has(args.entry.memory_id) || memoryEntryRehydrateSurface(args.entry)) {
     return "rehydrate";
   }
   if (args.agentContext?.inspect_before_use_memory_ids.includes(args.entry.memory_id)) return "inspect_before_use";
