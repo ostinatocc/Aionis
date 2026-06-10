@@ -88,6 +88,23 @@ measured effect, and trace-to-procedure readiness.
 Details and a compact result example are in
 [AIONIS_GOLDEN_PRODUCT_LOOP.md](AIONIS_GOLDEN_PRODUCT_LOOP.md).
 
+## Ordinary Memory Product Loop
+
+For the general cognitive memory path, run:
+
+```bash
+export AIONIS_PRODUCT_E2E_BASE_URL="$AIONIS_URL"
+npm run -s runtime:e2e:ordinary-memory
+```
+
+This verifies ordinary preference/fact/project memory over a real Runtime:
+active ordinary memory can enter `use_now`, newer corrected facts can push old
+facts to `inspect_before_use`, and `memory_use_receipt.decision_summaries`
+explain each decision without entering the Agent prompt. The same loop also
+checks candidate memory stays inspect-first, suppressed memory stays
+`do_not_use`, private ordinary memory does not cross agent ownership boundaries,
+and ordinary memory writes do not create execution trees.
+
 ## Host Template E2Es
 
 For release-level host integration checks, run the real Runtime host-template

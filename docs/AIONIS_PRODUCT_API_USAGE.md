@@ -128,6 +128,7 @@ Runnable SDK e2e:
 
 ```bash
 npm run -s runtime:e2e:product-loop
+npm run -s runtime:e2e:ordinary-memory
 npm run -s runtime:e2e:golden-product-loop
 npm run -s runtime:e2e:agent-suite
 ```
@@ -146,6 +147,15 @@ outcome -> rehydrate -> measure`, and also verifies that the advanced
 `/v1/execution/context/assemble` and product `/v1/guide mode=full_power`
 `agent_context` keep passed branches, failed branches, and audit surfaces
 separated.
+
+The ordinary-memory e2e exercises the general cognitive memory path:
+`observe ordinary memory -> guide -> trace/receipt -> feedback -> measure ->
+snapshot`. It checks that active preferences and corrected facts can be used,
+stale or contradicted facts stay inspect-first, and receipt decision summaries
+make the use/suppress reason visible without becoming prompt content. Its
+holdout coverage includes active project notes, candidate memory,
+suppressed memory, private visibility boundaries, and a negative control that
+ordinary memory writes do not produce execution-tree state.
 
 The golden product loop exercises the full product path:
 
