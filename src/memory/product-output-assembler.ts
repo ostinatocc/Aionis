@@ -1524,6 +1524,34 @@ function contractEntryIsProcedure(entry: MemoryPacketEntry): boolean {
     || kind.includes("pattern");
 }
 
+function contractCurrentCandidatePriority(entry: MemoryPacketEntry): number {
+  if (contractEntryIsCurrentState(entry)) return 0;
+  if (entry.domain === "execution" || entry.memory_type === "execution_memory") return 10;
+  if (entry.memory_type === "project_context") return 20;
+  if (entry.memory_type === "fact") return 21;
+  if (entry.memory_type === "event") return 22;
+  if (entry.memory_type === "evidence") return 23;
+  if (entry.memory_type === "unknown") return 30;
+  if (entry.memory_type === "preference" || entry.memory_type === "rule") return 40;
+  if (entry.memory_type === "procedure") return 50;
+  return 35;
+}
+
+function firstContractCurrentCandidate(entries: MemoryPacketEntry[]): MemoryPacketEntry | null {
+  let bestEntry: MemoryPacketEntry | null = null;
+  let bestPriority = Number.POSITIVE_INFINITY;
+  let bestIndex = Number.POSITIVE_INFINITY;
+  entries.forEach((entry, index) => {
+    const priority = contractCurrentCandidatePriority(entry);
+    if (priority < bestPriority || (priority === bestPriority && index < bestIndex)) {
+      bestEntry = entry;
+      bestPriority = priority;
+      bestIndex = index;
+    }
+  });
+  return bestEntry;
+}
+
 function contractEntryIsHandoff(entry: MemoryPacketEntry): boolean {
   const kind = executionStateKind(entry);
   return kind.includes("handoff") || !!entry.execution_state?.handoff_target;
@@ -1597,14 +1625,10 @@ function contractPromptAliasesFor(args: {
     .map((id) => entries.get(id))
     .filter((entry): entry is MemoryPacketEntry => !!entry)
     .sort((left, right) => contractInspectPriority(left) - contractInspectPriority(right));
-  const useCurrentEntry =
-    useEntries.find(contractEntryIsCurrentState)
-    ?? useEntries.find((entry) => entry.memory_type !== "procedure")
-    ?? useEntries[0]
-    ?? null;
+  const useCurrentEntry = firstContractCurrentCandidate(useEntries);
   const inspectCurrentEntry = useCurrentEntry
     ? null
-    : inspectEntries.find(contractEntryIsCurrentState) ?? null;
+    : firstContractCurrentCandidate(inspectEntries);
   const currentEntry = useCurrentEntry ?? inspectCurrentEntry;
   const procedureEntries = useEntries.filter((entry) =>
     entry.memory_type === "procedure"
@@ -1742,14 +1766,10 @@ function renderExecutionStateContractPrompt(args: {
     .map((id) => entries.get(id))
     .filter((entry): entry is MemoryPacketEntry => !!entry)
     .sort((left, right) => contractInspectPriority(left) - contractInspectPriority(right));
-  const useCurrentEntry =
-    useEntries.find(contractEntryIsCurrentState)
-    ?? useEntries.find((entry) => entry.memory_type !== "procedure")
-    ?? useEntries[0]
-    ?? null;
+  const useCurrentEntry = firstContractCurrentCandidate(useEntries);
   const inspectCurrentEntry = useCurrentEntry
     ? null
-    : inspectEntries.find(contractEntryIsCurrentState) ?? null;
+    : firstContractCurrentCandidate(inspectEntries);
   const currentEntry = useCurrentEntry ?? inspectCurrentEntry;
   const currentEntryGate: "use" | "inspect" = useCurrentEntry ? "use" : "inspect";
   const procedureEntries = useEntries.filter((entry) =>

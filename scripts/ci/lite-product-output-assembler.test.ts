@@ -1251,6 +1251,21 @@ test("product agent context surfaces active general memory without execution gui
   assert.equal(context.prompt_text.includes("use_now_memory_ids"), false);
   assert.equal(context.prompt_text.includes("inspect_before_use_memory_ids"), false);
 
+  const aggressiveContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    guide_packet: noExecutionGuidePacket,
+    context_compaction_profile: "aggressive",
+  });
+  assert.ok(aggressiveContext.prompt_text.includes("AIONIS_CTX v2"));
+  assert.ok(aggressiveContext.prompt_text.includes("current: id="));
+  assert.ok(aggressiveContext.prompt_text.includes("ACTIVE_GENERAL_MARKER"));
+  assert.equal(aggressiveContext.prompt_text.includes("PREFERENCE_MARKER"), false);
+  const aggressiveAliasesByMemoryId = new Map(aggressiveContext.prompt_aliases.map((entry) => [entry.memory_id, entry]));
+  assert.equal(aggressiveAliasesByMemoryId.get("mem-general-active")?.surface, "current");
+  assert.notEqual(aggressiveAliasesByMemoryId.get("mem-preference-active")?.surface, "current");
+
   const trace = buildAionisMemoryDecisionTrace({
     tenant_id: "tenant-local",
     scope: "repo-a",
