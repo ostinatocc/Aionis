@@ -14,6 +14,12 @@ Aionis is not a recall-only memory system. It is a state-adjudicated memory
 runtime: it governs memory authority, lifecycle, scope, attribution, and risk
 before compiling bounded context for an Agent.
 
+The implemented state model is documented in [AIONIS_STATE_MODEL.md](AIONIS_STATE_MODEL.md).
+Aionis does not own a global Agent orchestration state machine. It owns the
+state governance planes under memory and execution: execution state, execution
+tree branches, lifecycle/forgetting, workflow promotion, learning-control gates,
+and read-only operator projections.
+
 The product is not "cross-thread handoff" alone. Cross-thread, cross-Agent, and cross-LLM continuity are proof surfaces for a larger product promise:
 
 History should change future behavior in a measurable, positive, and controllable way.
