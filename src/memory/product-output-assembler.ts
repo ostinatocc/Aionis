@@ -2440,6 +2440,20 @@ function lifecycleCandidateMemoryDirectUseAdmissible(args: {
   );
 }
 
+function lifecycleCandidateMemoryDirectUseProtected(args: {
+  entry: MemoryPacketEntry;
+  signals: AionisLifecycleCandidateSignal[];
+}): boolean {
+  if (lifecycleCandidateMemoryDirectUseUnsafe(args.signals)) return false;
+  const hasCurrentOrProcedureSignal = args.signals.some((signal) =>
+    signal.producer === "rule_v1"
+    && signal.confidence >= 0.76
+    && (signal.signal_type === "current" || signal.signal_type === "procedure")
+  );
+  if (!hasCurrentOrProcedureSignal) return false;
+  return memoryEntryUsable(args.entry) || lifecycleCandidateMemoryDirectUseAdmissible(args);
+}
+
 function lifecycleCandidateInspectMemoryIds(signals: AionisLifecycleCandidateSignal[]): string[] {
   const byId = lifecycleCandidateSignalsByMemoryId(signals);
   return compactStrings(
@@ -2447,6 +2461,50 @@ function lifecycleCandidateInspectMemoryIds(signals: AionisLifecycleCandidateSig
       .filter(([, entries]) => lifecycleCandidateMemoryDirectUseUnsafe(entries))
       .map(([memoryId]) => memoryId),
   );
+}
+
+function lifecycleCandidateRehydrateSignal(signal: AionisLifecycleCandidateSignal): boolean {
+  return signal.producer === "rule_v1"
+    && signal.signal_type === "rehydrate"
+    && signal.confidence >= 0.78;
+}
+
+function lifecycleCandidateRehydrateEligible(args: {
+  entry: MemoryPacketEntry;
+  signals: AionisLifecycleCandidateSignal[];
+}): boolean {
+  if (memoryEntryBlocked(args.entry)) return false;
+  if (
+    args.entry.domain !== "execution"
+    && args.entry.memory_type !== "execution_memory"
+    && args.entry.memory_type !== "procedure"
+  ) {
+    return false;
+  }
+  if (!args.signals.some(lifecycleCandidateRehydrateSignal)) return false;
+  return !args.signals.some((signal) =>
+    signal.signal_type === "negative" || signal.signal_type === "stale"
+  );
+}
+
+function lifecycleCandidateRehydrateHints(args: {
+  entries: MemoryPacketEntry[];
+  signals: AionisLifecycleCandidateSignal[];
+  rehydrationRequested: boolean;
+}): AionisAgentContext["rehydrate_hints"] {
+  if (!args.rehydrationRequested) return [];
+  const signalsById = lifecycleCandidateSignalsByMemoryId(args.signals);
+  return args.entries
+    .filter((entry) => lifecycleCandidateRehydrateEligible({
+      entry,
+      signals: signalsById.get(entry.memory_id) ?? [],
+    }))
+    .map((entry) => ({
+      memory_id: entry.memory_id,
+      reason: "Lifecycle candidate points to raw evidence, trace, payload, or pointer evidence; rehydrate before relying on summary-only context.",
+      required: true,
+    }))
+    .slice(0, 6);
 }
 
 function riskAtLeast(current: AionisRiskLevel, minimum: AionisRiskLevel): AionisRiskLevel {
@@ -2493,6 +2551,14 @@ function compileAgentContextSurfaces(args: {
       }))
       .map((entry) => entry.memory_id),
   );
+  const lifecycleCandidateDirectUseProtectedIds = new Set(
+    args.memoryEntries
+      .filter((entry) => lifecycleCandidateMemoryDirectUseProtected({
+        entry,
+        signals: lifecycleCandidateSignalsById.get(entry.memory_id) ?? [],
+      }))
+      .map((entry) => entry.memory_id),
+  );
   const inspectEntries = args.memoryEntries.filter((entry) =>
     !rehydrateHintIds.has(entry.memory_id)
     && !memoryEntryBlocked(entry)
@@ -2515,12 +2581,12 @@ function compileAgentContextSurfaces(args: {
   const trustedConflictIds = new Set(trustedConflict.conflictedEntries.map((entry) => entry.memory_id));
   const trustedWorkflowConflictInspectIds = new Set<string>();
   const premiseInspectIds = new Set(args.premiseFirewall.inspectBeforeUseMemoryIds.filter((memoryId) =>
-    !lifecycleCandidateAdmittedUseNowIds.has(memoryId)
+    !lifecycleCandidateDirectUseProtectedIds.has(memoryId)
   ));
   const premiseDoNotUseIds = new Set(args.premiseFirewall.doNotUseMemoryIds);
   const premiseInspectBeforeUse = args.premiseFirewall.inspectBeforeUse.filter((line) =>
     !args.memoryEntries.some((entry) =>
-      lifecycleCandidateAdmittedUseNowIds.has(entry.memory_id) && textMatchesMemoryEntry(line, entry)
+      lifecycleCandidateDirectUseProtectedIds.has(entry.memory_id) && textMatchesMemoryEntry(line, entry)
     )
   );
   const premiseRiskReasons = premiseInspectIds.size > 0
@@ -2674,10 +2740,13 @@ function compileAgentContextSurfaces(args: {
   if (lifecycleCandidateInspectIds.size > 0) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "medium");
   if (memoryContractRiskReasonList.length > 0) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "medium");
 
+  const requiredRehydration = args.rehydrateHints.some((hint) => hint.required);
   const recommendedPosture: AionisAgentContext["recommended_posture"] = !actionableHistoryUsed
     ? "ignore_history"
     : hasRiskSurface
       ? "inspect_before_use"
+      : requiredRehydration
+        ? "rehydrate_before_use"
       : args.rawRecommendedPosture === "ignore_history"
         ? "use_as_context"
         : args.rawRecommendedPosture;
@@ -2738,6 +2807,8 @@ function compileAgentContextSurfaces(args: {
         lifecycleCandidateAdmittedUseNowIds.size > 0 ? "lifecycle_candidate_current_or_procedure_admitted" : null,
         blockedEntries.length > 0 ? "blocked_or_suppressed_memory_kept_out_of_use_now" : null,
         lifecycleCandidateInspectIds.size > 0 ? "lifecycle_candidate_kept_out_of_use_now" : null,
+        args.rehydrateHints.length > 0 ? "rehydration_hint_available" : null,
+        requiredRehydration ? "rehydration_required_before_use" : null,
         ...memoryContractRiskReasonList,
         ...premiseRiskReasons,
         ...args.rawRisk.reasons,
@@ -2758,6 +2829,15 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     ...(guide?.recovered_state.target_files ?? []),
   ]).slice(0, 8);
   const rehydrateHintIds = new Set<string>();
+  const memoryEntriesById = new Map((memory?.relevant_memories ?? []).map((entry) => [entry.memory_id, entry]));
+  const rehydrationRequested =
+    guideBrief?.recommended_posture === "rehydrate_before_use"
+    || queryRequestsRehydration(args.query_intent_override)
+    || queryRequestsRehydration(memory?.query.intent ?? null);
+  const lifecycleCandidateSignals = inferLifecycleCandidateSignals({
+    entries: memory?.relevant_memories ?? [],
+    query_intent: args.query_intent_override ?? memory?.query.intent ?? null,
+  });
   const rawRehydrateHints: AionisAgentContext["rehydrate_hints"] = [
     ...(guide?.memory_lifecycle.rehydration_hints ?? []),
     ...(guideBrief?.rehydrate ?? []),
@@ -2766,24 +2846,23 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
       reason: hint.reason,
       required: hint.required,
     })),
+    ...lifecycleCandidateRehydrateHints({
+      entries: memory?.relevant_memories ?? [],
+      signals: lifecycleCandidateSignals,
+      rehydrationRequested,
+    }),
   ].filter((hint) => {
     if (rehydrateHintIds.has(hint.memory_id)) return false;
     rehydrateHintIds.add(hint.memory_id);
     return true;
   }).slice(0, 6);
-  const memoryEntriesById = new Map((memory?.relevant_memories ?? []).map((entry) => [entry.memory_id, entry]));
-  const rehydrationRequested =
-    guideBrief?.recommended_posture === "rehydrate_before_use"
-    || queryRequestsRehydration(args.query_intent_override)
-    || queryRequestsRehydration(memory?.query.intent ?? null);
   const rehydrateHints = rawRehydrateHints.filter((hint) => {
     const entry = memoryEntriesById.get(hint.memory_id);
-    return (!entry || memoryEntryRehydrateEligible(entry))
+    const lifecycleSignals = lifecycleCandidateSignals.filter((signal) => signal.memory_id === hint.memory_id);
+    return (!entry
+        || memoryEntryRehydrateEligible(entry)
+        || lifecycleCandidateRehydrateEligible({ entry, signals: lifecycleSignals }))
       && (hint.required || rehydrationRequested);
-  });
-  const lifecycleCandidateSignals = inferLifecycleCandidateSignals({
-    entries: memory?.relevant_memories ?? [],
-    query_intent: args.query_intent_override ?? memory?.query.intent ?? null,
   });
   const memoryIds = compactStrings([
     ...(guide?.memory_lifecycle.used_memory_ids ?? []),

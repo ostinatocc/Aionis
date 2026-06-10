@@ -256,6 +256,169 @@ test("rehydrate lifecycle candidates stay shadow-only unless the memory is eligi
   assert.ok(trace.lifecycle_candidate_summary.shadow_only_memory_ids.includes("mem-raw-summary"));
 });
 
+test("rehydrate lifecycle candidates surface explicit raw evidence requests without direct use", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "The next agent needs exact raw diff evidence before acting. Request the rehydrate pointer for src/checkout/adapter.ts; do not rely only on summary context.",
+    },
+    nodes: [
+      {
+        id: "mem-current",
+        type: "procedure",
+        title: "Current execution state",
+        text_summary: "Latest accepted state: continue at src/checkout/adapter.ts and verify tests/checkout/adapter.test.ts.",
+        slots: {
+          target_files: ["src/checkout/adapter.ts", "tests/checkout/adapter.test.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "checkout-migration",
+            workflow_signature: "checkout-migration",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.9,
+      },
+      {
+        id: "mem-procedure",
+        type: "procedure",
+        title: "Reusable execution procedure",
+        text_summary: "Procedure: inspect src/checkout/adapter.ts; keep changes scoped; run or review tests/checkout/adapter.test.ts.",
+        slots: {
+          target_files: ["src/checkout/adapter.ts", "tests/checkout/adapter.test.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "checkout-migration",
+            workflow_signature: "checkout-migration",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.88,
+      },
+      {
+        id: "mem-trace",
+        type: "procedure",
+        title: "Raw execution trace pointer",
+        text_summary: "Open this pointer when the next agent needs exact patch details, review trace, or per-file proof for src/checkout/adapter.ts.",
+        slots: {
+          target_files: [
+            "trace://checkout-migration/raw",
+            "src/checkout/adapter.ts",
+            "tests/checkout/adapter.test.ts",
+          ],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "checkout-migration",
+            workflow_signature: "checkout-migration",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.86,
+      },
+    ],
+    ranked: [
+      { id: "mem-current", score: 0.99 },
+      { id: "mem-procedure", score: 0.98 },
+      { id: "mem-trace", score: 0.97 },
+    ],
+  });
+
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+
+  assert.equal(agentContext.recommended_posture, "inspect_before_use");
+  assert.ok(agentContext.rehydrate_hints.some((hint) => hint.memory_id === "mem-trace" && hint.required));
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-trace"), false);
+  assert.ok(agentContext.use_now_memory_ids.includes("mem-current"));
+  assert.ok(agentContext.use_now_memory_ids.includes("mem-procedure"));
+  assert.ok(agentContext.risk.reasons.includes("rehydration_required_before_use"));
+  assert.match(agentContext.prompt_text, /rehydrate_if_needed/);
+
+  const trace = buildAionisMemoryDecisionTrace({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    before_guide: null,
+    after_guide: {
+      memory_packet: memoryPacket,
+      agent_context: agentContext,
+    },
+  });
+  const traceDecision = trace.memory_decisions.find((entry) => entry.memory_id === "mem-trace");
+  assert.equal(traceDecision?.agent_surface, "rehydrate");
+  assert.equal(traceDecision?.decision_kind, "rehydrate");
+  assert.ok(traceDecision?.reason_codes.includes("lifecycle_candidate_rehydrate"));
+  assert.ok(traceDecision?.reason_codes.includes("requires_differential_rehydration"));
+  assert.ok(trace.lifecycle_candidate_summary.gated_memory_ids.includes("mem-trace"));
+  assert.equal(trace.lifecycle_candidate_summary.surface_effect_prompt_included, true);
+});
+
+test("rehydrate lifecycle candidates do not promote ordinary or stale raw references", () => {
+  const ordinaryMemoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "Need exact raw diff evidence before acting.",
+    },
+    nodes: [
+      {
+        id: "fact-raw",
+        type: "entity",
+        title: "Raw style preference",
+        text_summary: "The user sometimes asks for raw logs in status updates.",
+        confidence: 0.83,
+        salience: 0.82,
+      },
+    ],
+  });
+  const ordinaryContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: ordinaryMemoryPacket,
+  });
+  assert.deepEqual(ordinaryContext.rehydrate_hints, []);
+
+  const staleMemoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "Need exact raw diff evidence before acting.",
+    },
+    nodes: [
+      {
+        id: "mem-stale-trace",
+        type: "procedure",
+        title: "Outdated raw execution trace pointer",
+        text_summary: "Outdated pointer to raw trace for src/checkout/legacy.ts; inspect before reuse.",
+        slots: {
+          target_files: ["src/checkout/legacy.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "checkout-migration",
+            workflow_signature: "checkout-legacy",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.9,
+      },
+    ],
+  });
+  const staleContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: staleMemoryPacket,
+  });
+  assert.deepEqual(staleContext.rehydrate_hints, []);
+  assert.equal(staleContext.use_now_memory_ids.includes("mem-stale-trace"), false);
+  assert.ok(staleContext.inspect_before_use_memory_ids.includes("mem-stale-trace"));
+});
+
 test("lifecycle candidates use target-file relations without benchmark wording cues", () => {
   const directSignals = inferLifecycleCandidateSignals({
     entries: [
@@ -571,6 +734,102 @@ test("lifecycle candidates preserve parallel active target clusters", () => {
   assert.ok(agentContext.use_now_memory_ids.includes("mem-worker-a"));
   assert.equal(agentContext.inspect_before_use_memory_ids.includes("mem-worker-a"), false);
   assert.equal(agentContext.inspect_before_use_memory_ids.includes("mem-worker-b"), false);
+});
+
+test("lifecycle candidates keep unsupported alternate target clusters inspect-first when an affirmative cluster exists", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "Continue from the accepted worker state and do not restart from the alternate route.",
+    },
+    nodes: [
+      {
+        id: "mem-current-a",
+        type: "procedure",
+        title: "Current worker state",
+        text_summary: "Latest accepted state: continue at src/worker/current.ts and verify tests/worker/current.test.ts.",
+        slots: {
+          target_files: ["src/worker/current.ts", "tests/worker/current.test.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "target-cluster-selection",
+            workflow_signature: "current-worker",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.92,
+      },
+      {
+        id: "mem-procedure-a",
+        type: "procedure",
+        title: "Reusable worker procedure",
+        text_summary: "Procedure: inspect src/worker/current.ts; keep changes scoped; run or review tests/worker/current.test.ts.",
+        slots: {
+          target_files: ["src/worker/current.ts", "tests/worker/current.test.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "target-cluster-selection",
+            workflow_signature: "current-worker",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.9,
+      },
+      {
+        id: "mem-alt-a",
+        type: "procedure",
+        title: "Check alternate route",
+        text_summary: "A broad continuation around src/worker/legacy.ts was recorded for comparison.",
+        slots: {
+          target_files: ["src/worker/legacy.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "target-cluster-selection",
+            workflow_signature: "alternate-worker",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.89,
+      },
+      {
+        id: "mem-alt-b",
+        type: "procedure",
+        title: "Alternate route note",
+        text_summary: "Another broad note around src/worker/legacy.ts was recorded for comparison.",
+        slots: {
+          target_files: ["src/worker/legacy.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "target-cluster-selection",
+            workflow_signature: "alternate-worker",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.88,
+      },
+    ],
+    ranked: [
+      { id: "mem-current-a", score: 0.99 },
+      { id: "mem-procedure-a", score: 0.98 },
+      { id: "mem-alt-a", score: 0.97 },
+      { id: "mem-alt-b", score: 0.96 },
+    ],
+  });
+
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+
+  assert.ok(agentContext.use_now_memory_ids.includes("mem-current-a"));
+  assert.ok(agentContext.use_now_memory_ids.includes("mem-procedure-a"));
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-alt-a"), false);
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-alt-b"), false);
+  assert.ok(agentContext.inspect_before_use_memory_ids.includes("mem-alt-a"));
+  assert.ok(agentContext.inspect_before_use_memory_ids.includes("mem-alt-b"));
 });
 
 test("lifecycle candidates do not admit same target-set negative or stale clusters", () => {

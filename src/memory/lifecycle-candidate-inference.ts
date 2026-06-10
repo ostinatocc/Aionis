@@ -65,6 +65,13 @@ const TITLE_RULES: RulePattern[] = [
     confidence: 0.84,
     reason: "Title carries an older or stale-state cue.",
   },
+  {
+    signal_type: "rehydrate",
+    source_field: "title",
+    pattern: /\b(?:raw|trace|payload|pointer|source evidence|evidence pointer)\b/i,
+    confidence: 0.82,
+    reason: "Title carries an explicit raw evidence, trace, payload, or pointer cue.",
+  },
 ];
 
 const SUMMARY_RULES: RulePattern[] = [
@@ -106,8 +113,8 @@ const SUMMARY_RULES: RulePattern[] = [
   {
     signal_type: "rehydrate",
     source_field: "text_summary",
-    pattern: /\b(?:rehydrate|expand|exact raw|raw diff|raw trace|raw trajectory|payload|source evidence pointer|file-level evidence|full context)\b/i,
-    confidence: 0.78,
+    pattern: /\b(?:rehydrate|expand|exact raw|raw diff|raw trace|raw trajectory|raw evidence|payload|source evidence pointer|file-level evidence|full context|exact patch details|review trace|per-file proof|open this pointer)\b/i,
+    confidence: 0.82,
     reason: "Summary points to raw or full evidence that may require rehydration.",
   },
 ];
@@ -119,6 +126,7 @@ export function inferLifecycleCandidateSignals(args: {
 }): AionisLifecycleCandidateSignal[] {
   const producer = args.producer ?? "rule_v1";
   const signals: AionisLifecycleCandidateSignal[] = [];
+  const textSignalDrafts: LifecycleCandidateSignalDraft[] = [];
   const seen = new Set<string>();
   const addSignal = (signal: LifecycleCandidateSignalDraft) => {
     const key = [
@@ -140,7 +148,7 @@ export function inferLifecycleCandidateSignals(args: {
       const source = rule.source_field === "title" ? entry.title : entry.summary;
       const quote = evidenceQuote(source, rule.pattern);
       if (!quote) continue;
-      addSignal({
+      const signal = {
         memory_id: entry.memory_id,
         signal_type: rule.signal_type,
         confidence: rule.confidence,
@@ -149,10 +157,12 @@ export function inferLifecycleCandidateSignals(args: {
           quote,
         },
         reason: rule.reason,
-      });
+      } satisfies LifecycleCandidateSignalDraft;
+      textSignalDrafts.push(signal);
+      addSignal(signal);
     }
   }
-  for (const signal of inferTargetClusterSignals(args.entries)) {
+  for (const signal of inferTargetClusterSignals(args.entries, textSignalDrafts)) {
     addSignal(signal);
   }
   return signals.slice(0, 64);
@@ -201,7 +211,17 @@ function evidenceQuote(value: string | null | undefined, pattern: RegExp): strin
   return text.slice(start, end).trim();
 }
 
-function inferTargetClusterSignals(entries: LifecycleCandidateEntry[]): LifecycleCandidateSignalDraft[] {
+function inferTargetClusterSignals(
+  entries: LifecycleCandidateEntry[],
+  textSignals: LifecycleCandidateSignalDraft[],
+): LifecycleCandidateSignalDraft[] {
+  const affirmativeSignalMemoryIds = new Set(
+    textSignals
+      .filter((signal) =>
+        signal.signal_type === "current" || signal.signal_type === "procedure"
+      )
+      .map((signal) => signal.memory_id),
+  );
   const projections = entries
     .filter((entry) => entryEligibleForLifecycleCandidateInference(entry))
     .map((entry) => ({
@@ -225,14 +245,20 @@ function inferTargetClusterSignals(entries: LifecycleCandidateEntry[]): Lifecycl
     }))
     .filter((entry) => entry.support >= 2);
   if (supportedTargetSets.length === 0) return [];
+  const structuralActiveTargetSets = supportedTargetSets
+    .filter((entry) => !supportedTargetSets.some((other) =>
+      other.targetSet !== entry.targetSet
+      && other.support >= entry.support
+      && targetSetIsStrictSubset(entry.targets, other.targets)
+    ));
+  const affirmativeStructuralActiveTargetSets = structuralActiveTargetSets.filter((entry) =>
+    [...(supportByTargetSet.get(entry.targetSet) ?? [])].some((memoryId) => affirmativeSignalMemoryIds.has(memoryId))
+  );
   const activeClusterTargetSets = new Set(
-    supportedTargetSets
-      .filter((entry) => !supportedTargetSets.some((other) =>
-        other.targetSet !== entry.targetSet
-        && other.support >= entry.support
-        && targetSetIsStrictSubset(entry.targets, other.targets)
-      ))
-      .map((entry) => entry.targetSet),
+    (affirmativeStructuralActiveTargetSets.length > 0
+      ? affirmativeStructuralActiveTargetSets
+      : structuralActiveTargetSets
+    ).map((entry) => entry.targetSet),
   );
 
   const inActiveCluster = projections.filter((projection) =>
