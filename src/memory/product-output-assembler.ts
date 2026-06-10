@@ -1618,7 +1618,7 @@ function contractPromptAliasesFor(args: {
   }
   for (const entry of renderedAvoidEntries) surfaceById.set(entry.memory_id, "avoid");
   for (const hint of renderedRehydrateHints) {
-    if (!surfaceById.has(hint.memory_id)) surfaceById.set(hint.memory_id, "rehydrate");
+    surfaceById.set(hint.memory_id, "rehydrate");
   }
   const renderedIds = compactStrings([
     currentEntry?.memory_id,
@@ -1840,9 +1840,14 @@ function renderExecutionStateContractPrompt(args: {
       labelStyle: args.profile.contractLabels,
     })),
     ...avoidFallbacks.map((entry) => `avoid: note=${shortenPromptText(entry, args.profile.doNotUseChars)}`),
-    ...renderedRehydrateHints.map((hint) =>
-      `rehydrate: id=${aliases.get(hint.memory_id) ?? hint.memory_id}${hint.required ? " req=1" : ""} n=${shortenPromptText(hint.reason, args.profile.rehydrateChars)}`
-    ),
+    ...renderedRehydrateHints.map((hint) => {
+      const entry = entries.get(hint.memory_id);
+      return `rehydrate: id=${aliases.get(hint.memory_id) ?? hint.memory_id}${hint.required ? " req=1" : ""}${contractEntryFiles({
+        entry,
+        maxItems: args.profile.targetFileItems,
+        maxChars: args.profile.targetFileChars,
+      })}${contractEntryExecutionMeta(entry, args.profile.contractLabels)} n=${shortenPromptText(hint.reason, args.profile.rehydrateChars)}`;
+    }),
     renderedIds.length > 0 && args.profile.includeMemoryIdMap && args.profile.memoryIdItems > 0
       ? `ids ${renderedIds.map((id) => `${aliases.get(id) ?? id}=${id}`).join(",")}`
       : null,
@@ -1915,6 +1920,21 @@ function memoryEntryInspectBeforeUse(entry: MemoryPacketEntry): boolean {
     || entry.lifecycle_state === "contested"
     || entry.lifecycle_state === "demoted"
     || entry.lifecycle_state === "rehydration_candidate";
+}
+
+function memoryEntryRehydrateEligible(entry: MemoryPacketEntry): boolean {
+  return entry.lifecycle_state === "rehydration_candidate"
+    || entry.lifecycle_state === "archived"
+    || entry.execution_state?.transition_kind === "request_rehydrate";
+}
+
+function queryRequestsRehydration(value: string | null | undefined): boolean {
+  const text = typeof value === "string" ? value.toLowerCase().replace(/\s+/g, " ").trim() : "";
+  if (!text) return false;
+  return /\brequest(?:s|ed|ing)?\s+(?:the\s+)?rehydrat/.test(text)
+    || /\bneeds?\s+(?:the\s+)?(?:exact|raw|full|file-level|source)[^.!?\n]{0,80}\b(?:diff|trace|trajectory|payload|evidence|history|context)\b/.test(text)
+    || /\b(?:exact|raw|full|file-level|source)[^.!?\n]{0,80}\b(?:diff|trace|trajectory|payload|evidence|history|context)\b/.test(text)
+    || /\bexpand(?:ed|ing)?\s+(?:the\s+)?(?:raw\s+|full\s+)?(?:trace|trajectory|payload|evidence|history|context)\b/.test(text);
 }
 
 function memoryEntryUsable(entry: MemoryPacketEntry): boolean {
@@ -2372,8 +2392,16 @@ function compileAgentContextSurfaces(args: {
   risk: AionisAgentContext["risk"];
 } {
   const blockedEntries = args.memoryEntries.filter(memoryEntryBlocked);
-  const inspectEntries = args.memoryEntries.filter((entry) => !memoryEntryBlocked(entry) && memoryEntryInspectBeforeUse(entry));
-  const usableEntries = args.memoryEntries.filter(memoryEntryUsable);
+  const rehydrateHintIds = new Set(args.rehydrateHints.map((hint) => hint.memory_id));
+  const inspectEntries = args.memoryEntries.filter((entry) =>
+    !rehydrateHintIds.has(entry.memory_id)
+    && !memoryEntryBlocked(entry)
+    && memoryEntryInspectBeforeUse(entry)
+  );
+  const usableEntries = args.memoryEntries.filter((entry) =>
+    !rehydrateHintIds.has(entry.memory_id)
+    && memoryEntryUsable(entry)
+  );
   const deniedPathTargets = deniedAgentActionPathTargets(args.memoryEntries);
   const hasUsableMemory = usableEntries.length > 0;
   const hasRawGuideSurface =
@@ -2603,7 +2631,8 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
   ]).slice(0, 8);
   const rehydrateHintIds = new Set<string>();
   const rawRehydrateHints: AionisAgentContext["rehydrate_hints"] = [
-    ...(guide?.memory_lifecycle.rehydration_hints ?? guideBrief?.rehydrate ?? []),
+    ...(guide?.memory_lifecycle.rehydration_hints ?? []),
+    ...(guideBrief?.rehydrate ?? []),
     ...(memory?.lifecycle.rehydration_hints ?? []).map((hint) => ({
       memory_id: hint.memory_id,
       reason: hint.reason,
@@ -2615,9 +2644,14 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     return true;
   }).slice(0, 6);
   const memoryEntriesById = new Map((memory?.relevant_memories ?? []).map((entry) => [entry.memory_id, entry]));
+  const rehydrationRequested =
+    guideBrief?.recommended_posture === "rehydrate_before_use"
+    || queryRequestsRehydration(args.query_intent_override)
+    || queryRequestsRehydration(memory?.query.intent ?? null);
   const rehydrateHints = rawRehydrateHints.filter((hint) => {
     const entry = memoryEntriesById.get(hint.memory_id);
-    return !entry || entry.lifecycle_state === "rehydration_candidate" || entry.lifecycle_state === "archived";
+    return (!entry || memoryEntryRehydrateEligible(entry))
+      && (hint.required || rehydrationRequested);
   });
   const memoryIds = compactStrings([
     ...(guide?.memory_lifecycle.used_memory_ids ?? []),

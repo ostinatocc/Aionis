@@ -1750,7 +1750,7 @@ test("full-power product guide merges structured execution control memory into p
         tenant_id: "default",
         scope: "default",
         mode: "full_power",
-        query_text: "Continue the structured execution control task without repeating bad branches.",
+        query_text: "Continue the structured execution control task without repeating bad branches; request exact raw failed trace detail if a payload pointer is available.",
         agent_role: "worker",
         consumer_agent_id: "control-agent",
         consumer_team_id: "control-team",

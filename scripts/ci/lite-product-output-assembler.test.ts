@@ -502,7 +502,7 @@ test("product agent context contract renderer preserves execution state surfaces
     scope: "repo-a",
     query: {
       source: "text",
-      intent: "continue checkout execution-state contract renderer",
+      intent: "continue checkout execution-state contract renderer and request exact raw trace payload when needed",
     },
     nodes: [
       {
@@ -666,13 +666,199 @@ test("product agent context contract renderer preserves execution state surfaces
     surface: "procedure",
   });
   assert.equal(aliasesByMemoryId.get("mem-contract-failed-branch")?.surface, "avoid");
-  assert.ok(["inspect", "rehydrate"].includes(aliasesByMemoryId.get("mem-contract-rehydrate")?.surface ?? ""));
+  assert.equal(aliasesByMemoryId.get("mem-contract-rehydrate")?.surface, "rehydrate");
   assert.ok(context.memory_ids.includes("mem-contract-current"));
   assert.ok(context.memory_ids.includes("mem-contract-procedure"));
   assert.ok(context.use_now_memory_ids.includes("mem-contract-current"));
   assert.ok(context.use_now_memory_ids.includes("mem-contract-procedure"));
   assert.ok(context.do_not_use_memory_ids.includes("mem-contract-failed-branch"));
   assert.ok(context.rehydrate_hints.some((entry) => entry.memory_id === "mem-contract-rehydrate"));
+});
+
+test("product agent context keeps explicit rehydrate hints out of use and inspect surfaces", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "Need exact raw diff evidence before editing src/runtime.ts.",
+    },
+    nodes: [
+      {
+        id: "mem-current-state",
+        type: "evidence",
+        title: "Current runtime state",
+        text_summary: "Current state points to src/runtime.ts.",
+        tier: "hot",
+        slots: {
+          memory_kind: "execution_memory",
+          lifecycle_state: "active",
+          compression_layer: "L2",
+          contract_trust: "authoritative",
+          execution_native_v1: {
+            schema_version: "execution_native_v1",
+            execution_kind: "execution_native",
+            summary_kind: "current_state",
+            compression_layer: "L2",
+            contract_trust: "authoritative",
+            task_signature: "runtime-rehydrate-projection",
+            workflow_signature: "runtime-rehydrate-projection:wf",
+            anchor_kind: "execution",
+            anchor_level: "L2",
+            target_files: ["src/runtime.ts"],
+            next_action: "Continue from current runtime state.",
+          },
+        },
+        confidence: 0.9,
+        salience: 0.92,
+      },
+      {
+        id: "mem-raw-pointer",
+        type: "evidence",
+        title: "Raw runtime trace pointer",
+        text_summary: "Raw trace pointer exists for src/runtime.ts and should be expanded before exact evidence use.",
+        tier: "warm",
+        slots: {
+          memory_kind: "execution_memory",
+          lifecycle_state: "active",
+          compression_layer: "L1",
+          contract_trust: "advisory",
+          execution_native_v1: {
+            schema_version: "execution_native_v1",
+            execution_kind: "execution_native",
+            summary_kind: "raw_trace_pointer",
+            compression_layer: "L1",
+            contract_trust: "advisory",
+            task_signature: "runtime-rehydrate-projection",
+            workflow_signature: "runtime-rehydrate-projection:wf",
+            anchor_kind: "execution",
+            anchor_level: "L1",
+            target_files: ["src/runtime.ts"],
+            next_action: "Rehydrate raw trace before exact evidence use.",
+          },
+        },
+        confidence: 0.78,
+        salience: 0.8,
+      },
+    ],
+  });
+  const hintedPacket = {
+    ...memoryPacket,
+    lifecycle: {
+      ...memoryPacket.lifecycle,
+      rehydration_hints: [
+        {
+          memory_id: "mem-raw-pointer",
+          mode: "differential" as const,
+          reason: "Exact raw trace evidence is needed before acting.",
+          required: true,
+        },
+      ],
+    },
+  };
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: hintedPacket,
+    context_compaction_profile: "aggressive",
+  });
+
+  assert.deepEqual(context.rehydrate_hints, [
+    {
+      memory_id: "mem-raw-pointer",
+      reason: "Exact raw trace evidence is needed before acting.",
+      required: true,
+    },
+  ]);
+  assert.equal(context.use_now_memory_ids.includes("mem-raw-pointer"), false);
+  assert.equal(context.inspect_before_use_memory_ids.includes("mem-raw-pointer"), false);
+  assert.match(context.prompt_text, /rehydrate: id=m\d+ req=1/);
+  assert.equal(
+    context.prompt_aliases.find((entry) => entry.memory_id === "mem-raw-pointer")?.surface,
+    "rehydrate",
+  );
+});
+
+test("product agent context hides optional rehydrate hints for ordinary continuation", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "Continue from current runtime state.",
+    },
+    nodes: [
+      {
+        id: "mem-continuation-current",
+        type: "evidence",
+        title: "Current continuation state",
+        text_summary: "Current state points to src/runtime.ts.",
+        tier: "hot",
+        slots: {
+          memory_kind: "execution_memory",
+          lifecycle_state: "active",
+          compression_layer: "L2",
+          contract_trust: "authoritative",
+          execution_native_v1: {
+            schema_version: "execution_native_v1",
+            execution_kind: "execution_native",
+            summary_kind: "current_state",
+            compression_layer: "L2",
+            contract_trust: "authoritative",
+            task_signature: "runtime-ordinary-continuation",
+            workflow_signature: "runtime-ordinary-continuation:wf",
+            anchor_kind: "execution",
+            anchor_level: "L2",
+            target_files: ["src/runtime.ts"],
+            next_action: "Continue from current state.",
+          },
+        },
+        confidence: 0.9,
+        salience: 0.92,
+      },
+      {
+        id: "mem-optional-raw-pointer",
+        type: "evidence",
+        title: "Optional raw runtime trace pointer",
+        text_summary: "Optional raw trace pointer exists for src/runtime.ts.",
+        tier: "warm",
+        slots: {
+          memory_kind: "execution_memory",
+          lifecycle_state: "rehydration_candidate",
+          compression_layer: "L1",
+          contract_trust: "advisory",
+          execution_native_v1: {
+            schema_version: "execution_native_v1",
+            execution_kind: "execution_native",
+            summary_kind: "raw_trace_pointer",
+            compression_layer: "L1",
+            contract_trust: "advisory",
+            task_signature: "runtime-ordinary-continuation",
+            workflow_signature: "runtime-ordinary-continuation:wf",
+            anchor_kind: "execution",
+            anchor_level: "L1",
+            target_files: ["src/runtime.ts"],
+            next_action: "Rehydrate raw trace only if exact detail is needed.",
+          },
+        },
+        confidence: 0.78,
+        salience: 0.8,
+      },
+    ],
+  });
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    context_compaction_profile: "aggressive",
+  });
+
+  assert.deepEqual(context.rehydrate_hints, []);
+  assert.equal(context.prompt_text.includes("rehydrate:"), false);
+  assert.equal(context.use_now_memory_ids.includes("mem-optional-raw-pointer"), false);
+  assert.equal(context.inspect_before_use_memory_ids.includes("mem-optional-raw-pointer"), true);
 });
 
 test("product agent context contract renderer prioritizes inspect-gated current execution state", () => {

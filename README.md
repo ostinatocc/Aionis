@@ -75,6 +75,9 @@ Real validation must run a frozen Runtime version against isolated workspaces. A
 
 Product-output contracts are verified by focused tests against the Runtime kernel and product output assembler. Real external-agent validation belongs in a separate evaluation workspace, not in this focused Runtime package.
 
+The current state-preserving context compression baseline is recorded in
+[docs/AIONIS_CONTEXT_COMPRESSION_BASELINE.md](docs/AIONIS_CONTEXT_COMPRESSION_BASELINE.md).
+
 ## Engineering Priorities
 
 1. Keep the local Lite store behind explicit Runtime store-port contracts.
