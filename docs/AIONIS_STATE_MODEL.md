@@ -114,6 +114,25 @@ Product role:
 Execution state is the low-level continuity model behind handoff/resume and
 state-first execution packets. It is not a host scheduler.
 
+### Handoff vs Resume Semantics
+
+Runtime now exposes execution transition intent as a product projection on
+`AionisMemoryPacket.relevant_memories[].execution_state.transition_kind` and in
+the compact `AIONIS_CTX v2` prompt contract.
+
+| Transition | State Meaning | Host/Agent Meaning |
+|---|---|---|
+| `resume_current_state` | The current active path is still usable. | Continue from the active boundary. |
+| `handoff_to_actor` | A source actor produced state for a named `handoff_target`. | Route the context or let the target actor accept it. |
+| `accept_handoff` | Prompt-level interpretation when the consuming `agent_role` matches `handoff_target`. | The current agent should treat the state as its handoff input, subject to the gate. |
+| `inspect_before_use` | Candidate, contested, or demoted execution state exists. | Inspect evidence before direct action. |
+| `avoid_failed_branch` | Failed, stale, suppressed, archived, or rejected branch exists. | Preserve as counter-evidence only; do not continue it. |
+| `request_rehydrate` | The entry is a compact pointer or rehydration candidate. | Expand the relevant payload before exact execution. |
+
+The lifecycle gate still governs trust. A current handoff can be
+`transition_kind=handoff_to_actor` while its prompt line also says
+`gate=inspect` if evidence is candidate or contested.
+
 ## Execution Tree State Machine
 
 Execution tree is the branch-aware state machine for long-horizon execution.

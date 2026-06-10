@@ -675,6 +675,7 @@ test("AionisMemoryPacket accepts strict execution-state memory projection", () =
       task_signature: "runtime-handoff",
       workflow_signature: "planner-worker-reviewer",
       next_action_hint: "Continue the passed branch.",
+      transition_kind: "handoff_to_actor",
       actor_role: "worker",
       handoff_target: "reviewer",
       source_agent_id: "worker-1",
@@ -686,6 +687,7 @@ test("AionisMemoryPacket accepts strict execution-state memory projection", () =
   assert.equal(parsed.memory_family, "execution");
   assert.equal(parsed.relevant_memories[0]?.execution_state?.summary_kind, "current_state");
   assert.equal(parsed.relevant_memories[0]?.execution_state?.next_action_hint, "Continue the passed branch.");
+  assert.equal(parsed.relevant_memories[0]?.execution_state?.transition_kind, "handoff_to_actor");
 
   assert.throws(
     () =>

@@ -68,6 +68,7 @@ type TrainingCandidateLabel = AionisEffectReport["training_candidates"][number][
 type MemoryPacketEntry = AionisMemoryPacket["relevant_memories"][number];
 type MemoryPacketLifecycleState = MemoryPacketEntry["lifecycle_state"];
 type MemoryPacketMemoryType = MemoryPacketEntry["memory_type"];
+type ExecutionTransitionKind = NonNullable<NonNullable<MemoryPacketEntry["execution_state"]>["transition_kind"]>;
 type MemoryPacketEvidenceTrailEntry = AionisMemoryPacket["evidence_trail"][number];
 type MemoryLifecycleRelationTraceEvidence = NonNullable<MemoryPacketEvidenceTrailEntry["lifecycle_relation"]>;
 type LearningCandidate = AionisLearningPacket["candidates"][number];
@@ -483,11 +484,61 @@ function memoryContractForEntry(entry: MemoryContractProjectionInput): MemoryPac
   };
 }
 
+function structuredKindTokens(...values: Array<string | null>): string[] {
+  return values
+    .flatMap((value) => (value ?? "").toLowerCase().split(/[^a-z0-9]+/g))
+    .filter(Boolean);
+}
+
+function structuredKindHasAffirmedToken(tokens: string[], candidates: Set<string>): boolean {
+  return tokens.some((token, index) =>
+    candidates.has(token)
+    && tokens[index - 1] !== "not"
+    && tokens[index - 1] !== "no"
+    && tokens[index - 1] !== "non"
+  );
+}
+
+function executionTransitionKind(args: {
+  lifecycleState: MemoryPacketLifecycleState;
+  summaryKind: string | null;
+  executionKind: string | null;
+  handoffTarget: string | null;
+  nextActionHint: string | null;
+}): ExecutionTransitionKind | null {
+  const tokens = structuredKindTokens(args.summaryKind, args.executionKind);
+  if (
+    args.lifecycleState === "suppressed"
+    || args.lifecycleState === "archived"
+    || structuredKindHasAffirmedToken(tokens, new Set(["failed", "failure", "rejected", "invalidated", "stale"]))
+  ) {
+    return "avoid_failed_branch";
+  }
+  if (
+    args.lifecycleState === "rehydration_candidate"
+    || structuredKindHasAffirmedToken(tokens, new Set(["raw", "trace", "pointer", "rehydrate", "rehydration"]))
+  ) {
+    return "request_rehydrate";
+  }
+  if (args.handoffTarget) return "handoff_to_actor";
+  if (args.lifecycleState === "candidate" || args.lifecycleState === "contested" || args.lifecycleState === "demoted") {
+    return "inspect_before_use";
+  }
+  if (
+    args.nextActionHint
+    || structuredKindHasAffirmedToken(tokens, new Set(["current", "active", "resume", "handoff"]))
+  ) {
+    return "resume_current_state";
+  }
+  return null;
+}
+
 function memoryExecutionStateProjection(args: {
   node: BuildAionisMemoryPacketArgs["nodes"][number];
   slots: Record<string, unknown> | null;
   contextItem: Record<string, unknown> | null;
   domain: AionisMemoryDomain;
+  lifecycleState: MemoryPacketLifecycleState;
 }): MemoryPacketEntry["execution_state"] | undefined {
   const executionNative = asRecord(args.slots?.execution_native_v1);
   const executionState = asRecord(args.slots?.execution_state);
@@ -529,12 +580,20 @@ function memoryExecutionStateProjection(args: {
     || !!actorRole
     || !!handoffTarget;
   if (!hasExecutionSurface) return undefined;
+  const transitionKind = executionTransitionKind({
+    lifecycleState: args.lifecycleState,
+    summaryKind,
+    executionKind,
+    handoffTarget,
+    nextActionHint,
+  });
   return {
     summary_kind: summaryKind,
     execution_kind: executionKind,
     task_signature: taskSignature,
     workflow_signature: workflowSignature,
     next_action_hint: nextActionHint,
+    transition_kind: transitionKind,
     actor_role: actorRole,
     handoff_target: handoffTarget,
     source_agent_id: sourceAgentId,
@@ -581,6 +640,7 @@ function buildMemoryPacketEntries(args: BuildAionisMemoryPacketArgs): {
       slots,
       contextItem,
       domain,
+      lifecycleState,
     });
     return {
       memory_id: node.id,
@@ -1392,9 +1452,10 @@ function contractEntryExecutionMeta(entry: MemoryPacketEntry | null | undefined)
   if (!state) return "";
   const meta = compactStrings([
     state.summary_kind ? `kind=${contractMetaToken(state.summary_kind)}` : null,
+    state.transition_kind ? `transition=${contractMetaToken(state.transition_kind)}` : null,
     state.actor_role ? `actor_role=${contractMetaToken(state.actor_role)}` : null,
     state.handoff_target ? `handoff_target=${contractMetaToken(state.handoff_target)}` : null,
-  ]).slice(0, 3);
+  ]).slice(0, 4);
   return meta.length > 0 ? ` ${meta.join(" ")}` : "";
 }
 
@@ -1452,6 +1513,21 @@ function firstExecutionStateEntryWithNext(entries: MemoryPacketEntry[]): MemoryP
   ) ?? null;
 }
 
+function contractHandoffTargetMatchesAgentRole(target: string | null, agentRole: AionisAgentRole): boolean {
+  const normalized = contractMetaToken(target ?? "").toLowerCase();
+  return normalized === agentRole || normalized.startsWith(`${agentRole}-`) || normalized.startsWith(`${agentRole}_`);
+}
+
+function contractPromptTransitionKind(
+  state: NonNullable<MemoryPacketEntry["execution_state"]>,
+  agentRole: AionisAgentRole,
+): string | null {
+  if (state.transition_kind === "handoff_to_actor" && contractHandoffTargetMatchesAgentRole(state.handoff_target, agentRole)) {
+    return "accept_handoff";
+  }
+  return state.transition_kind;
+}
+
 function contractNextActionLine(args: {
   entry: MemoryPacketEntry | null;
   agentRole: AionisAgentRole;
@@ -1461,7 +1537,9 @@ function contractNextActionLine(args: {
   const state = args.entry?.execution_state;
   if (!state) return null;
   const nextAction = normalizeContractPromptNote(state.next_action_hint);
+  const promptTransition = contractPromptTransitionKind(state, args.agentRole);
   const parts = compactStrings([
+    promptTransition ? `transition=${contractMetaToken(promptTransition)}` : null,
     nextAction ? `action=${shortenPromptText(nextAction, args.maxChars)}` : null,
     `actor_role=${contractMetaToken(state.actor_role ?? args.agentRole)}`,
     state.handoff_target ? `handoff_target=${contractMetaToken(state.handoff_target)}` : null,

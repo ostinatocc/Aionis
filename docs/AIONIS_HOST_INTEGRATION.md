@@ -74,6 +74,15 @@ Hosts should not re-derive this contract from raw rows. Use the compiled
 `agent_context` fields for prompts and use contract reason codes or receipt
 risk flags for audit logs.
 
+Execution transition intent is delivered through
+`memory_packet.relevant_memories[].execution_state.transition_kind` when packets
+are included and through the compact `AIONIS_CTX v2` prompt line. Hosts should
+treat `handoff_to_actor` as a routing/acceptance signal, `resume_current_state`
+as continuation, `avoid_failed_branch` as counter-evidence only, and
+`request_rehydrate` as a pointer-expansion signal. If the prompt shows
+`transition=accept_handoff`, the current `agent_role` matches the handoff target,
+but the lifecycle gate still applies.
+
 Trace-to-Procedure readiness is delivered through
 `operator_snapshot.trace_to_procedure`, not through the Agent prompt. Hosts can
 use it for run logs, dashboards, support diagnostics, or workflow review: it

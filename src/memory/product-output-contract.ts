@@ -12,6 +12,16 @@ export type AionisRiskLevel = z.infer<typeof AionisRiskLevelSchema>;
 export const AionisAgentRoleSchema = z.enum(["agent", "planner", "worker", "verifier", "reviewer"]);
 export type AionisAgentRole = z.infer<typeof AionisAgentRoleSchema>;
 
+export const AionisExecutionTransitionKindSchema = z.enum([
+  "resume_current_state",
+  "handoff_to_actor",
+  "accept_handoff",
+  "inspect_before_use",
+  "avoid_failed_branch",
+  "request_rehydrate",
+]);
+export type AionisExecutionTransitionKind = z.infer<typeof AionisExecutionTransitionKindSchema>;
+
 const AionisHistoryContributionSchema = z
   .object({
     used: z.boolean(),
@@ -183,6 +193,7 @@ export const AionisMemoryPacketSchema = z
                 task_signature: z.string().min(1).nullable().default(null),
                 workflow_signature: z.string().min(1).nullable().default(null),
                 next_action_hint: z.string().min(1).nullable().default(null),
+                transition_kind: AionisExecutionTransitionKindSchema.nullable().default(null),
                 actor_role: z.string().min(1).nullable().default(null),
                 handoff_target: z.string().min(1).nullable().default(null),
                 source_agent_id: z.string().min(1).nullable().default(null),

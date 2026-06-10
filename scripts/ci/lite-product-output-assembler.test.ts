@@ -632,13 +632,23 @@ test("product agent context contract renderer preserves execution state surfaces
   const currentMemory = memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-contract-current");
   assert.equal(currentMemory?.execution_state?.summary_kind, "current_state");
   assert.equal(currentMemory?.execution_state?.next_action_hint, "Continue scoped checkout adapter patch from current boundary.");
+  assert.equal(currentMemory?.execution_state?.transition_kind, "handoff_to_actor");
   assert.equal(currentMemory?.execution_state?.actor_role, "worker");
   assert.equal(currentMemory?.execution_state?.handoff_target, "reviewer");
-  assert.ok(context.prompt_text.includes("next action=Continue scoped checkout adapter patch"));
+  const failedMemory = memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-contract-failed-branch");
+  const rehydrateMemory = memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-contract-rehydrate");
+  const procedureMemory = memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-contract-procedure");
+  assert.equal(failedMemory?.execution_state?.transition_kind, "avoid_failed_branch");
+  assert.equal(rehydrateMemory?.execution_state?.transition_kind, "request_rehydrate");
+  assert.equal(procedureMemory?.execution_state?.transition_kind, null);
+  assert.ok(context.prompt_text.includes("action=Continue scoped checkout adapter patch"));
+  assert.ok(context.prompt_text.includes("transition=handoff_to_actor"));
   assert.ok(context.prompt_text.includes("actor_role=worker"));
   assert.ok(context.prompt_text.includes("handoff_target=reviewer"));
   assert.ok(context.prompt_text.includes("current: id=m1"));
   assert.ok(context.prompt_text.includes("kind=current_state"));
+  assert.ok(context.prompt_text.includes("transition=avoid_failed_branch"));
+  assert.ok(context.prompt_text.includes("transition=request_rehydrate"));
   assert.ok(context.prompt_text.includes("procedure: id=m2"));
   assert.match(context.prompt_text, /avoid: id=m\d+/);
   assert.match(context.prompt_text, /rehydrate: id=m\d+/);
@@ -725,13 +735,52 @@ test("product agent context contract renderer prioritizes inspect-gated current 
   });
 
   assert.equal(context.use_now_memory_ids.length, 0);
+  const currentMemory = memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-inspect-current");
+  assert.equal(currentMemory?.execution_state?.transition_kind, "handoff_to_actor");
   assert.ok(context.inspect_before_use_memory_ids.includes("mem-inspect-current"));
   assert.match(context.prompt_text, /current: id=m1 .*gate=inspect/);
   assert.ok(context.prompt_text.includes("m1=mem-inspect-current"));
-  assert.ok(context.prompt_text.includes("next action=Continue the passed branch"));
+  assert.ok(context.prompt_text.includes("transition=accept_handoff"));
+  assert.ok(context.prompt_text.includes("action=Continue the passed branch"));
   assert.ok(context.prompt_text.includes("actor_role=worker"));
   assert.ok(context.prompt_text.includes("handoff_target=reviewer"));
   assert.ok(context.prompt_text.indexOf("mem-inspect-current") < context.prompt_text.indexOf("mem-inspect-procedure"));
+});
+
+test("execution transition classifier does not treat negated structured kind as failed", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "continue a non-failed current execution state",
+    },
+    nodes: [{
+      id: "mem-not-failed-current",
+      type: "concept",
+      title: "Current state explicitly not failed",
+      text_summary: "The active path is still valid; continue from the current boundary.",
+      tier: "hot",
+      slots: {
+        memory_kind: "execution_state",
+        contract_trust: "authoritative",
+        execution_native_v1: {
+          schema_version: "execution_native_v1",
+          execution_kind: "execution_native",
+          summary_kind: "not_failed_current_state",
+          compression_layer: "L2",
+          contract_trust: "authoritative",
+          task_signature: "negated-failure-boundary",
+          next_action: "Resume current valid state.",
+        },
+      },
+      confidence: 0.94,
+      salience: 0.9,
+    }],
+  });
+
+  const memory = memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-not-failed-current");
+  assert.equal(memory?.execution_state?.transition_kind, "resume_current_state");
 });
 
 test("product agent context preserves guide-only recovered target files", () => {

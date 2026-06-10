@@ -94,6 +94,8 @@ Aionis returns `agent_context.agent_role`, adds a role focus line to
 3. failed branches and blocked authority enter `do_not_use`
 4. raw evidence and traces stay on audit/debug surfaces
 5. feedback attribution is explicit through `guide_trace_id`
+6. execution handoff/resume intent is explicit through
+   `execution_state.transition_kind`
 
 Runnable proof surface:
 

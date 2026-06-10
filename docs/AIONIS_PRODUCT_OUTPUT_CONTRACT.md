@@ -390,6 +390,25 @@ type AionisMemoryPacket = {
       | "unknown";
     evidence_ids: string[];
     scope_hint?: string | null;
+    execution_state?: {
+      summary_kind: string | null;
+      execution_kind: string | null;
+      task_signature: string | null;
+      workflow_signature: string | null;
+      next_action_hint: string | null;
+      transition_kind:
+        | "resume_current_state"
+        | "handoff_to_actor"
+        | "accept_handoff"
+        | "inspect_before_use"
+        | "avoid_failed_branch"
+        | "request_rehydrate"
+        | null;
+      actor_role: string | null;
+      handoff_target: string | null;
+      source_agent_id: string | null;
+      source_team_id: string | null;
+    };
     memory_contract: AionisMemoryContract;
   }>;
   evidence_trail: Array<{
@@ -451,12 +470,31 @@ type AionisMemoryPacket = {
 };
 ```
 
+### Execution Transition Semantics
+
+`relevant_memories[].execution_state.transition_kind` is the product-facing
+execution intent compiled from the state-governed memory entry. It is not a host
+scheduler and it does not mutate Runtime state by itself.
+
+| Value | Meaning |
+|---|---|
+| `resume_current_state` | The entry is a usable continuation of the active execution state. |
+| `handoff_to_actor` | The entry carries work from one actor to a named `handoff_target`; hosts may route it and target agents may accept it. |
+| `accept_handoff` | Agent-context prompt interpretation when the current `agent_role` matches the `handoff_target`. Memory packet entries usually retain the factual `handoff_to_actor` state. |
+| `inspect_before_use` | The entry may be useful, but candidate/contested/demoted state blocks direct reuse. |
+| `avoid_failed_branch` | The entry represents failed, stale, suppressed, archived, or rejected execution state and should only guide avoidance. |
+| `request_rehydrate` | The entry is a compact pointer or rehydration candidate; expand only the relevant payload before exact action. |
+
+`lifecycle_state` answers whether the memory can be trusted. `transition_kind`
+answers how the execution context should treat it.
+
 ### Field Mapping
 
 | Memory Field | Current Capabilities | Current Code Surfaces |
 |---|---|---|
 | `relevant_memories` | ranked recall, context items, L0-L5 compression layers | `src/memory/recall.ts`, `src/memory/context.ts`, `src/memory/node-execution-surface.ts` |
 | `memory_family` | distinguishes ordinary cognitive memory from execution memory | `src/memory/product-output-assembler.ts` |
+| `relevant_memories[].execution_state.transition_kind` | resume/handoff/inspect/avoid/rehydrate execution intent | `src/memory/product-output-assembler.ts`, `src/memory/schemas.ts` |
 | `evidence_trail` | node references, raw/evidence refs, commit refs | `src/memory/recall-serialization.ts`, Lite stores |
 | `lifecycle` | candidate, suppressed, archived, rehydration state | `src/memory/semantic-forgetting.ts`, `src/memory/archive-relocation.ts`, `src/memory/rehydrate-anchor.ts` |
 | `contradiction_warnings` | candidate/contested memory visibility | `src/memory/product-output-assembler.ts`, lifecycle and authority surfaces |
