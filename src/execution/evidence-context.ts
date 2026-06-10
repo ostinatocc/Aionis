@@ -1039,6 +1039,34 @@ function gatedAbstractionBlockedLine(entry: GatedAbstractionEntry): string {
   return `Do not use gated abstraction: node=${entry.node_id} reason=${truncate(entry.gate_reason, 160)}`;
 }
 
+function agentPromptPostureLabel(value: AionisAgentContext["recommended_posture"]): string {
+  switch (value) {
+    case "ignore_history": return "ignore";
+    case "rehydrate_before_use": return "rehydrate";
+    case "inspect_before_use": return "inspect";
+    case "reuse_supported_history": return "reuse";
+    case "use_as_context": return "context";
+  }
+}
+
+function agentPromptAuthorityLabel(value: AionisAgentContext["authority"]): string {
+  switch (value) {
+    case "trusted": return "trust";
+    case "advisory": return "adv";
+    case "candidate": return "cand";
+    case "blocked": return "block";
+    case "none": return "none";
+  }
+}
+
+function agentPromptRiskLabel(value: AionisAgentContext["risk"]["negative_transfer_risk"]): string {
+  switch (value) {
+    case "high": return "hi";
+    case "medium": return "med";
+    case "low": return "low";
+  }
+}
+
 function buildExecutionAgentPrompt(args: {
   summary: string;
   historyUsed: boolean;
@@ -1055,44 +1083,48 @@ function buildExecutionAgentPrompt(args: {
 }): string {
   const render = (profile: {
     summaryChars: number;
-    useNowItems: number;
-    useNowChars: number;
+    currentItems: number;
+    currentChars: number;
+    procedureItems: number;
+    procedureChars: number;
     inspectItems: number;
     inspectChars: number;
-    doNotUseItems: number;
-    doNotUseChars: number;
+    avoidItems: number;
+    avoidChars: number;
     rehydrateItems: number;
     rehydrateChars: number;
     memoryIdItems: number;
   }) => {
-    const inline = (label: string, values: string[], maxItems: number, maxChars: number): string | null => {
-      if (maxItems <= 0) return null;
-      const entries = values.slice(0, maxItems).map((value) => truncate(value, maxChars));
-      return entries.length > 0 ? `${label}: ${entries.join(" | ")}` : null;
+    const line = (label: string, values: string[], maxItems: number, maxChars: number): string[] => {
+      if (maxItems <= 0) return [];
+      return values.slice(0, maxItems).map((value) => `${label}: note=${truncate(value, maxChars)}`);
     };
+    const currentLines = args.useNow.filter((value) => value.startsWith("Current active path:"));
+    const procedureLines = args.useNow.filter((value) => !value.startsWith("Current active path:"));
     return uniqueStrings([
-      "AIONIS_AGENT_CONTEXT v1",
-      `state: history=${args.historyUsed ? "yes" : "no"} actionable_history=${args.actionableHistoryUsed ? "yes" : "no"} posture=${args.recommendedPosture} authority=${args.authority} risk=${args.negativeTransferRisk}`,
-      `summary: ${truncate(args.summary, profile.summaryChars)}`,
-      inline("use_now", args.useNow, profile.useNowItems, profile.useNowChars),
-      inline("inspect_before_use", args.inspectBeforeUse, profile.inspectItems, profile.inspectChars),
-      inline("do_not_use", args.doNotUse, profile.doNotUseItems, profile.doNotUseChars),
+      "AIONIS_CTX v2",
+      `state r=agent h=${args.historyUsed ? 1 : 0} a=${args.actionableHistoryUsed ? 1 : 0} p=${agentPromptPostureLabel(args.recommendedPosture)} auth=${agentPromptAuthorityLabel(args.authority)} risk=${agentPromptRiskLabel(args.negativeTransferRisk)}`,
+      `summary ${truncate(args.summary, profile.summaryChars)}`,
+      ...line("current", currentLines.length > 0 ? currentLines : args.useNow.slice(0, 1), profile.currentItems, profile.currentChars),
+      ...line("procedure", procedureLines, profile.procedureItems, profile.procedureChars),
+      ...line("inspect", args.inspectBeforeUse, profile.inspectItems, profile.inspectChars),
+      ...line("avoid", args.doNotUse, profile.avoidItems, profile.avoidChars),
       args.rehydrateHints.length > 0 && profile.rehydrateItems > 0
-        ? `rehydrate_if_needed: ${args.rehydrateHints
+        ? `rehydrate: ${args.rehydrateHints
           .slice(0, profile.rehydrateItems)
-          .map((entry) => `${truncate(entry.memory_id, 90)}:${truncate(entry.reason, profile.rehydrateChars)}`)
+          .map((entry) => `id=${truncate(entry.memory_id, 90)} reason=${truncate(entry.reason, profile.rehydrateChars)}`)
           .join(" | ")}`
         : null,
       args.memoryIds.length > 0 && profile.memoryIdItems > 0
-        ? `memory_ids: ${args.memoryIds.slice(0, profile.memoryIdItems).join(",")}`
+        ? `ids ${args.memoryIds.slice(0, profile.memoryIdItems).join(",")}`
         : null,
     ], 16).join("\n");
   };
 
   const profiles = [
-    { summaryChars: 420, useNowItems: 5, useNowChars: 360, inspectItems: 4, inspectChars: 240, doNotUseItems: 4, doNotUseChars: 240, rehydrateItems: 4, rehydrateChars: 120, memoryIdItems: 10 },
-    { summaryChars: 260, useNowItems: 3, useNowChars: 260, inspectItems: 3, inspectChars: 180, doNotUseItems: 3, doNotUseChars: 180, rehydrateItems: 2, rehydrateChars: 90, memoryIdItems: 8 },
-    { summaryChars: 180, useNowItems: 2, useNowChars: 180, inspectItems: 2, inspectChars: 140, doNotUseItems: 2, doNotUseChars: 140, rehydrateItems: 1, rehydrateChars: 70, memoryIdItems: 6 },
+    { summaryChars: 240, currentItems: 2, currentChars: 200, procedureItems: 3, procedureChars: 180, inspectItems: 3, inspectChars: 130, avoidItems: 3, avoidChars: 130, rehydrateItems: 3, rehydrateChars: 80, memoryIdItems: 10 },
+    { summaryChars: 150, currentItems: 1, currentChars: 140, procedureItems: 2, procedureChars: 120, inspectItems: 2, inspectChars: 90, avoidItems: 2, avoidChars: 90, rehydrateItems: 2, rehydrateChars: 60, memoryIdItems: 8 },
+    { summaryChars: 100, currentItems: 1, currentChars: 100, procedureItems: 1, procedureChars: 90, inspectItems: 1, inspectChars: 70, avoidItems: 1, avoidChars: 70, rehydrateItems: 1, rehydrateChars: 50, memoryIdItems: 6 },
   ];
   let lastPrompt = "";
   for (const profile of profiles) {

@@ -596,10 +596,10 @@ test("execution context full_power mode exposes raw evidence, gated abstractions
   assert.equal(body.agent_context.contract_version, "aionis_agent_context_v1");
   assert.equal(body.agent_context.history_used, true);
   assert.equal(body.agent_context.authority, "advisory");
-  assert.match(body.agent_context.prompt_text, /AIONIS_AGENT_CONTEXT v1/);
-  assert.match(body.agent_context.prompt_text, /Passed solution/);
-  assert.match(body.agent_context.prompt_text, /Avoid failed branch/);
-  assert.match(body.agent_context.prompt_text, /inspect_before_use/);
+  assert.match(body.agent_context.prompt_text, /AIONIS_CTX v2/);
+  assert.match(body.agent_context.prompt_text, /procedure: note=Passed solution/);
+  assert.match(body.agent_context.prompt_text, /avoid: note=Avoid failed branch/);
+  assert.match(body.agent_context.prompt_text, /inspect: note=Inspect gated abstraction before use/);
   assert.equal(body.agent_context.prompt_text.includes("RAW_EVIDENCE"), false);
   assert.equal(body.agent_context.prompt_text.includes("GATED_ABSTRACTIONS"), false);
   assert.equal(body.agent_context.prompt_text.includes("TRACE"), false);

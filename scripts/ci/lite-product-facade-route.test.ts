@@ -1592,6 +1592,8 @@ test("product guide full_power merges semantic memory with safe execution contex
     assert.equal(agentContext.use_now.some((entry: string) => entry.includes("FULL_POWER_GUIDE_CONTESTED_MEMORY")), false);
     assert.equal(agentContext.inspect_before_use_memory_ids.includes(contestedNodeId), true);
     assert.equal(agentContext.recommended_posture, "inspect_before_use");
+    assert.equal(agentContext.prompt_text.includes("AIONIS_CTX v2"), true);
+    assert.equal(agentContext.prompt_text.includes("avoid: note="), true);
     assert.equal(agentContext.prompt_text.includes("RAW_EVIDENCE"), false);
     assert.equal(agentContext.prompt_text.includes("GATED_ABSTRACTIONS"), false);
     assert.equal(agentContext.prompt_text.includes("TRACE"), false);
@@ -1610,6 +1612,196 @@ test("product guide full_power merges semantic memory with safe execution contex
     assert.equal(visibleAgentText.includes("FULL_POWER_GUIDE_GATED_ADMITTED"), false);
     assert.equal(visibleAgentText.includes("Bounded guidance"), false);
     assert.equal(visibleAgentText.includes("gated abstraction"), false);
+  } finally {
+    await app.close();
+  }
+});
+
+test("full-power product guide merges structured execution control memory into packet context and receipt", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("full-power-structured-execution-control");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const taskSignature = "structured-execution-control-guide";
+    const workflowSignature = "workflow:structured-execution-control-guide";
+    const executionSlots = (
+      id: string,
+      lifecycle_state: string,
+      status: string,
+      extra: Record<string, unknown> = {},
+    ) => ({
+      lifecycle_state,
+      execution_result_summary: {
+        status,
+        summary: `Structured control evidence ${id}`,
+      },
+      execution_native_v1: {
+        schema_version: "execution_native_v1",
+        execution_kind: "execution_native",
+        summary_kind: id,
+        compression_layer: id === "rehydrate" ? "L1" : "L2",
+        contract_trust: status === "failed" ? "observational" : "advisory",
+        task_signature: taskSignature,
+        workflow_signature: workflowSignature,
+        anchor_kind: "execution",
+        anchor_level: id === "rehydrate" ? "L1" : "L2",
+        selected_tool: "edit",
+        file_path: `src/${id}.ts`,
+        target_files: [`src/${id}.ts`],
+        next_action: id === "failed"
+          ? "Do not continue this failed branch."
+          : id === "contested"
+            ? "Inspect before relying on this contested branch."
+            : "Rehydrate payload only if exact trace details are required.",
+        ...extra,
+      },
+    });
+
+    const write = await app.inject({
+      method: "POST",
+      url: "/v1/memory/write",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        actor: "local-user",
+        input_text: "Structured full-power execution control evidence.",
+        auto_embed: false,
+        nodes: [
+          {
+            client_id: "structured-control-failed",
+            type: "evidence",
+            tier: "warm",
+            memory_lane: "private",
+            owner_agent_id: "control-agent",
+            owner_team_id: "control-team",
+            title: "STRUCTURED_CONTROL_FAILED_BRANCH",
+            text_summary: "STRUCTURED_CONTROL_FAILED_BRANCH broad edit failed verifier checks and must not be reused.",
+            slots: executionSlots("failed", "suppressed", "failed"),
+          },
+          {
+            client_id: "structured-control-contested",
+            type: "evidence",
+            tier: "warm",
+            memory_lane: "private",
+            owner_agent_id: "control-agent",
+            owner_team_id: "control-team",
+            title: "STRUCTURED_CONTROL_CONTESTED_BRANCH",
+            text_summary: "STRUCTURED_CONTROL_CONTESTED_BRANCH has conflicting evidence and needs inspection before reuse.",
+            slots: executionSlots("contested", "contested", "contested"),
+          },
+          {
+            client_id: "structured-control-rehydrate",
+            type: "evidence",
+            tier: "warm",
+            memory_lane: "private",
+            owner_agent_id: "control-agent",
+            owner_team_id: "control-team",
+            title: "STRUCTURED_CONTROL_REHYDRATE_POINTER",
+            text_summary: "STRUCTURED_CONTROL_REHYDRATE_POINTER is a cold trace pointer; do not expand unless exact details are needed.",
+            slots: executionSlots("rehydrate", "rehydration_candidate", "passed", {
+              rehydration: {
+                default_mode: "partial",
+                payload_cost_hint: "medium",
+                recommended_when: ["exact failed trace detail is required"],
+              },
+            }),
+          },
+          {
+            client_id: "structured-control-other-task",
+            type: "evidence",
+            tier: "warm",
+            memory_lane: "private",
+            owner_agent_id: "control-agent",
+            owner_team_id: "control-team",
+            title: "STRUCTURED_CONTROL_OTHER_TASK",
+            text_summary: "STRUCTURED_CONTROL_OTHER_TASK belongs to another task and must not be recalled.",
+            slots: {
+              ...executionSlots("other", "suppressed", "failed"),
+              execution_native_v1: {
+                ...(executionSlots("other", "suppressed", "failed").execution_native_v1 as Record<string, unknown>),
+                task_signature: "unrelated-structured-control-guide",
+                workflow_signature: "workflow:unrelated-structured-control-guide",
+              },
+            },
+          },
+        ],
+        edges: [],
+      },
+    });
+    assert.equal(write.statusCode, 200, write.body);
+    const writtenNodes = arrayValue(write.json().nodes, "write.nodes");
+    const idByClientId = new Map(writtenNodes.map((entry) => [entry.client_id, entry.id]));
+    const failedNodeId = String(idByClientId.get("structured-control-failed"));
+    const contestedNodeId = String(idByClientId.get("structured-control-contested"));
+    const rehydrateNodeId = String(idByClientId.get("structured-control-rehydrate"));
+    const otherNodeId = String(idByClientId.get("structured-control-other-task"));
+
+    const guide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        mode: "full_power",
+        query_text: "Continue the structured execution control task without repeating bad branches.",
+        agent_role: "worker",
+        consumer_agent_id: "control-agent",
+        consumer_team_id: "control-team",
+        context: {
+          task_signature: taskSignature,
+          workflow_signature: workflowSignature,
+        },
+        include_packets: true,
+        context_char_budget: 4096,
+      },
+    });
+    assert.equal(guide.statusCode, 200, guide.body);
+    const guideBody = guide.json();
+    const agentContext = guideBody.agent_context;
+    const memoryPacket = guideBody.memory_packet;
+    assert.equal(guideBody.source_map.internal_surfaces_used.includes("full_power_structured_execution_recall"), true);
+    assert.equal(agentContext.do_not_use_memory_ids.includes(failedNodeId), true);
+    assert.equal(agentContext.inspect_before_use_memory_ids.includes(contestedNodeId), true);
+    assert.equal(agentContext.rehydrate_hints.some((hint: Record<string, unknown>) => hint.memory_id === rehydrateNodeId), true);
+    assert.equal(agentContext.do_not_use.some((entry: string) => entry.includes("STRUCTURED_CONTROL_FAILED_BRANCH")), true);
+    assert.equal(agentContext.inspect_before_use.some((entry: string) => entry.includes("STRUCTURED_CONTROL_CONTESTED_BRANCH")), true);
+    assert.equal(agentContext.prompt_text.includes("STRUCTURED_CONTROL_OTHER_TASK"), false);
+    const packetMemoryIds = arrayValue(memoryPacket.relevant_memories, "memory_packet.relevant_memories")
+      .map((entry) => entry.memory_id);
+    assert.equal(packetMemoryIds.includes(failedNodeId), true);
+    assert.equal(packetMemoryIds.includes(contestedNodeId), true);
+    assert.equal(packetMemoryIds.includes(rehydrateNodeId), true);
+    assert.equal(packetMemoryIds.includes(otherNodeId), false);
+
+    const measure = await app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        product_trace: {
+          baseline: {
+            forgetting: {
+              contextItems: 0,
+              usefulContextItems: 0,
+              staleMemorySurfaced: 0,
+            },
+          },
+          after_guide: guideBody,
+          evidence_ids: ["structured-execution-control-guide:test"],
+        },
+      },
+    });
+    assert.equal(measure.statusCode, 200, measure.body);
+    const receipt = measure.json().memory_decision_trace.memory_use_receipt;
+    assert.equal(receipt.do_not_use_memory_ids.includes(failedNodeId), true);
+    assert.equal(receipt.inspect_before_use_memory_ids.includes(contestedNodeId), true);
+    assert.equal(receipt.rehydrate_memory_ids.includes(rehydrateNodeId), true);
   } finally {
     await app.close();
   }

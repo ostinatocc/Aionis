@@ -567,6 +567,7 @@ export function resolveNodeRehydrationDefaultMode(
 ): "summary_only" | "partial" | "full" | "differential" | null {
   const mode = firstString(
     parseNodeExecutionNative(slots)?.rehydration_default_mode,
+    asRecord(parseNodeExecutionNative(slots)?.rehydration)?.default_mode,
     asRecord(parseNodeAnchor(slots)?.rehydration)?.default_mode,
   );
   return mode === "summary_only" || mode === "partial" || mode === "full" || mode === "differential"

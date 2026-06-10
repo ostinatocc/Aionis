@@ -13,8 +13,10 @@ import {
   applyAionisInspectBeforeUseActiveProjection,
   buildAionisAgentContext,
   buildAionisEffectReport,
+  buildAionisMemoryPacket,
   buildAionisMemoryDecisionAuditReport,
   buildAionisMemoryDecisionTrace,
+  type BuildAionisMemoryPacketArgs,
 } from "../memory/product-output-assembler.js";
 import {
   AionisAgentRoleSchema,
@@ -30,7 +32,7 @@ import {
   type AionisMemoryPacket,
 } from "../memory/product-output-contract.js";
 import { applyUnusedExposureLearningControlLite } from "../memory/lifecycle-lite.js";
-import type { LiteWriteStore } from "../store/lite-write-store.js";
+import type { LiteExecutionNativeNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
 import type { AuthPrincipal } from "../util/auth.js";
 import type { InflightGateToken } from "../util/inflight_gate.js";
 import {
@@ -489,6 +491,40 @@ function uniqueStrings(values: Array<string | null | undefined>): string[] {
   return out;
 }
 
+function compactProductPromptText(value: string, maxChars: number): string {
+  const compacted = value.replace(/\s+/g, " ").trim();
+  if (compacted.length <= maxChars) return compacted;
+  return `${compacted.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+}
+
+function productPromptPostureLabel(value: AionisAgentContext["recommended_posture"]): string {
+  switch (value) {
+    case "ignore_history": return "ignore";
+    case "rehydrate_before_use": return "rehydrate";
+    case "inspect_before_use": return "inspect";
+    case "reuse_supported_history": return "reuse";
+    case "use_as_context": return "context";
+  }
+}
+
+function productPromptAuthorityLabel(value: AionisAgentContext["authority"]): string {
+  switch (value) {
+    case "trusted": return "trust";
+    case "advisory": return "adv";
+    case "candidate": return "cand";
+    case "blocked": return "block";
+    case "none": return "none";
+  }
+}
+
+function productPromptRiskLabel(value: AionisAgentContext["risk"]["negative_transfer_risk"]): string {
+  switch (value) {
+    case "high": return "hi";
+    case "medium": return "med";
+    case "low": return "low";
+  }
+}
+
 type ProductGuideExposureLedger = {
   contract_version: "aionis_guide_exposure_v1";
   guide_trace_id: string;
@@ -594,28 +630,341 @@ function nestedStringField(value: unknown, key: string): string | null {
   return firstStringValue(record?.[key]);
 }
 
-function productGuideExecutionMemoryFilters(parsed: z.infer<typeof ProductGuideRequest>): Array<Record<string, unknown>> {
+function productGuideExecutionSignatures(parsed: z.infer<typeof ProductGuideRequest>): {
+  taskSignature: string | null;
+  taskFamily: string | null;
+  workflowSignature: string | null;
+} {
   const context = objectValue(parsed.context);
-  const taskSignature = firstStringValue(
-    context?.task_signature,
-    nestedStringField(parsed.execution_packet_v1, "task_signature"),
-    nestedStringField(parsed.execution_state_v1, "task_signature"),
-  );
-  const taskFamily = firstStringValue(
-    context?.task_family,
-    nestedStringField(parsed.execution_packet_v1, "task_family"),
-    nestedStringField(parsed.execution_state_v1, "task_family"),
-  );
-  const workflowSignature = firstStringValue(
-    context?.workflow_signature,
-    nestedStringField(parsed.execution_packet_v1, "workflow_signature"),
-    nestedStringField(parsed.execution_state_v1, "workflow_signature"),
-  );
+  return {
+    taskSignature: firstStringValue(
+      context?.task_signature,
+      nestedStringField(parsed.execution_packet_v1, "task_signature"),
+      nestedStringField(parsed.execution_state_v1, "task_signature"),
+    ),
+    taskFamily: firstStringValue(
+      context?.task_family,
+      nestedStringField(parsed.execution_packet_v1, "task_family"),
+      nestedStringField(parsed.execution_state_v1, "task_family"),
+    ),
+    workflowSignature: firstStringValue(
+      context?.workflow_signature,
+      nestedStringField(parsed.execution_packet_v1, "workflow_signature"),
+      nestedStringField(parsed.execution_state_v1, "workflow_signature"),
+    ),
+  };
+}
+
+function productGuideExecutionMemoryFilters(parsed: z.infer<typeof ProductGuideRequest>): Array<Record<string, unknown>> {
+  const { taskSignature, taskFamily, workflowSignature } = productGuideExecutionSignatures(parsed);
   const filters: Array<Record<string, unknown>> = [];
   if (taskSignature) filters.push({ slots_contains: { task_signature: taskSignature }, limit: 20 });
   if (taskFamily) filters.push({ slots_contains: { task_family: taskFamily }, limit: 20 });
   if (workflowSignature) filters.push({ slots_contains: { workflow_signature: workflowSignature }, limit: 20 });
   return filters.slice(0, 3);
+}
+
+function nestedObjectField(value: unknown, key: string): Record<string, unknown> | null {
+  const record = objectValue(value);
+  return objectValue(record?.[key]);
+}
+
+function structuredRecallRehydrationMode(row: LiteExecutionNativeNodeRow): string | null {
+  const executionNative = row.execution_native as Record<string, unknown>;
+  return firstStringValue(
+    executionNative.rehydration_default_mode,
+    objectValue(executionNative.rehydration)?.default_mode,
+    nestedObjectField(row.slots.anchor_v1, "rehydration")?.default_mode,
+  );
+}
+
+function structuredRecallExecutionStatus(row: LiteExecutionNativeNodeRow): string | null {
+  const executionNative = row.execution_native as Record<string, unknown>;
+  return firstStringValue(
+    objectValue(row.slots.execution_result_summary)?.status,
+    objectValue(executionNative.outcome)?.status,
+  );
+}
+
+function productGuideStructuredControlNode(row: LiteExecutionNativeNodeRow): boolean {
+  const executionNative = row.execution_native as Record<string, unknown>;
+  const lifecycle = firstStringValue(row.slots.lifecycle_state);
+  const status = structuredRecallExecutionStatus(row);
+  const rehydrationMode = structuredRecallRehydrationMode(row);
+  const tier = firstStringValue(row.tier);
+  const trust = firstStringValue(executionNative.contract_trust, row.slots.contract_trust);
+  const layer = firstStringValue(executionNative.compression_layer, row.slots.compression_layer);
+  const summaryKind = firstStringValue(executionNative.summary_kind, row.slots.summary_kind);
+  const currentStateKind =
+    summaryKind === "current_state"
+    || summaryKind === "current_active_path"
+    || summaryKind === "active_state";
+  const activeStateCarrier = (
+    currentStateKind
+    && (status === "passed" || status === "succeeded" || lifecycle === "active" || lifecycle === null)
+  )
+    && (trust === "authoritative" || trust === "advisory")
+    && (layer === "L2" || layer === "L3" || layer === "L4" || layer === "L5" || layer === null);
+  return lifecycle === "suppressed"
+    || lifecycle === "disabled"
+    || lifecycle === "contested"
+    || lifecycle === "candidate"
+    || lifecycle === "rehydration_candidate"
+    || status === "failed"
+    || status === "blocked"
+    || status === "contested"
+    || !!rehydrationMode
+    || tier === "cold"
+    || tier === "archive"
+    || activeStateCarrier;
+}
+
+function productGuideStructuredControlSlots(row: LiteExecutionNativeNodeRow): Record<string, unknown> {
+  const slots: Record<string, unknown> = { ...row.slots };
+  const lifecycle = firstStringValue(slots.lifecycle_state);
+  const status = structuredRecallExecutionStatus(row);
+  const rehydrationMode = structuredRecallRehydrationMode(row);
+  const executionNative: Record<string, unknown> = objectValue(slots.execution_native_v1)
+    ? { ...(objectValue(slots.execution_native_v1) as Record<string, unknown>) }
+    : { ...row.execution_native };
+
+  if (!firstStringValue(executionNative.rehydration_default_mode) && rehydrationMode) {
+    executionNative.rehydration_default_mode = rehydrationMode;
+  }
+  slots.execution_native_v1 = executionNative;
+
+  if (status === "failed" || status === "blocked" || lifecycle === "disabled") {
+    slots.lifecycle_state = "suppressed";
+  } else if (status === "contested" && !lifecycle) {
+    slots.lifecycle_state = "contested";
+  } else if (rehydrationMode && !lifecycle) {
+    slots.lifecycle_state = "rehydration_candidate";
+  }
+
+  return slots;
+}
+
+function mergeAionisMemoryPackets(
+  base: AionisMemoryPacket | null,
+  supplemental: AionisMemoryPacket | null,
+): { packet: AionisMemoryPacket | null; changed: boolean } {
+  if (!supplemental || supplemental.relevant_memories.length === 0) return { packet: base, changed: false };
+  if (!base) return { packet: supplemental, changed: true };
+
+  const seenMemoryIds = new Set(base.relevant_memories.map((entry) => entry.memory_id));
+  const relevantMemories = [
+    ...base.relevant_memories,
+    ...supplemental.relevant_memories.filter((entry) => {
+      if (seenMemoryIds.has(entry.memory_id)) return false;
+      seenMemoryIds.add(entry.memory_id);
+      return true;
+    }),
+  ];
+  const changed = relevantMemories.length > base.relevant_memories.length;
+  if (!changed) return { packet: base, changed: false };
+
+  const evidenceIds = new Set<string>();
+  const evidenceTrail = [...base.evidence_trail, ...supplemental.evidence_trail].filter((entry) => {
+    if (evidenceIds.has(entry.evidence_id)) return false;
+    evidenceIds.add(entry.evidence_id);
+    return true;
+  });
+  const contradictionWarnings = [
+    ...base.contradiction_warnings,
+    ...supplemental.contradiction_warnings.filter((entry) =>
+      !base.contradiction_warnings.some((existing) =>
+        existing.memory_id === entry.memory_id && existing.suggested_action === entry.suggested_action
+      )
+    ),
+  ];
+  const domains = new Set(relevantMemories.map((entry) => entry.domain));
+  const memoryFamily: AionisMemoryPacket["memory_family"] =
+    relevantMemories.length === 0
+      ? "empty"
+      : domains.size > 1
+        ? "mixed"
+        : domains.has("execution")
+          ? "execution"
+          : "general_cognitive";
+  const staleMemoryCount = relevantMemories.filter((entry) =>
+    entry.lifecycle_state === "suppressed"
+    || entry.lifecycle_state === "demoted"
+    || entry.lifecycle_state === "archived"
+  ).length;
+  const rehydrationHints = [
+    ...base.lifecycle.rehydration_hints,
+    ...supplemental.lifecycle.rehydration_hints.filter((hint) =>
+      !base.lifecycle.rehydration_hints.some((existing) => existing.memory_id === hint.memory_id)
+    ),
+  ];
+
+  return {
+    packet: AionisMemoryPacketSchema.parse({
+      ...base,
+      memory_family: memoryFamily,
+      relevant_memories: relevantMemories,
+      evidence_trail: evidenceTrail,
+      lifecycle: {
+        used_memory_ids: uniqueStrings([
+          ...base.lifecycle.used_memory_ids,
+          ...supplemental.lifecycle.used_memory_ids,
+        ]),
+        candidate_memory_ids: uniqueStrings([
+          ...base.lifecycle.candidate_memory_ids,
+          ...supplemental.lifecycle.candidate_memory_ids,
+        ]),
+        suppressed_memory_ids: uniqueStrings([
+          ...base.lifecycle.suppressed_memory_ids,
+          ...supplemental.lifecycle.suppressed_memory_ids,
+        ]),
+        archived_memory_ids: uniqueStrings([
+          ...base.lifecycle.archived_memory_ids,
+          ...supplemental.lifecycle.archived_memory_ids,
+        ]),
+        rehydration_hints: rehydrationHints,
+      },
+      contradiction_warnings: contradictionWarnings,
+      forgetting_state: {
+        stale_memory_count: staleMemoryCount,
+        suppressed_count: relevantMemories.filter((entry) => entry.lifecycle_state === "suppressed").length,
+        archived_count: relevantMemories.filter((entry) => entry.lifecycle_state === "archived").length,
+        rehydration_candidate_count: rehydrationHints.length,
+      },
+      behavior_impact: {
+        will_shape_behavior:
+          base.behavior_impact.will_shape_behavior || supplemental.behavior_impact.will_shape_behavior,
+        changed_fields: uniqueStrings([
+          ...base.behavior_impact.changed_fields,
+          ...supplemental.behavior_impact.changed_fields,
+          "structured_execution_control_recall",
+        ]),
+        expected_effects: Array.from(new Set([
+          ...base.behavior_impact.expected_effects,
+          ...supplemental.behavior_impact.expected_effects,
+        ])),
+        explanation: `${base.behavior_impact.explanation} Full-power guide also merged task-scoped execution control memory for safer context compilation.`,
+      },
+      risk: {
+        negative_transfer_risk: maxRisk(
+          base.risk.negative_transfer_risk,
+          supplemental.risk.negative_transfer_risk,
+        ),
+        contradiction_count: contradictionWarnings.length,
+        low_confidence_count: relevantMemories.filter((entry) => entry.confidence < 0.6).length,
+        stale_memory_count: staleMemoryCount,
+        reasons: mergeGuideStrings([
+          ...base.risk.reasons,
+          ...supplemental.risk.reasons,
+          "full_power_structured_execution_control_memory_present",
+        ], 8),
+      },
+      source_map: {
+        routes_used: uniqueStrings([
+          ...base.source_map.routes_used,
+          ...supplemental.source_map.routes_used,
+        ]),
+        internal_surfaces_used: uniqueStrings([
+          ...base.source_map.internal_surfaces_used,
+          ...supplemental.source_map.internal_surfaces_used,
+          "full_power_structured_execution_recall",
+        ]),
+        omitted_internal_surfaces: uniqueStrings([
+          ...base.source_map.omitted_internal_surfaces,
+          ...supplemental.source_map.omitted_internal_surfaces,
+        ]),
+      },
+    }),
+    changed: true,
+  };
+}
+
+async function buildProductGuideStructuredExecutionPacket(args: {
+  liteWriteStore: LiteWriteStore;
+  parsed: z.infer<typeof ProductGuideRequest>;
+  tenant_id: string;
+  scope: string;
+}): Promise<AionisMemoryPacket | null> {
+  const { taskSignature, workflowSignature } = productGuideExecutionSignatures(args.parsed);
+  if (!taskSignature && !workflowSignature) return null;
+
+  const batches = await Promise.all([
+    taskSignature
+      ? args.liteWriteStore.findExecutionNativeNodes({
+          scope: args.scope,
+          taskSignature,
+          consumerAgentId: args.parsed.consumer_agent_id ?? null,
+          consumerTeamId: args.parsed.consumer_team_id ?? null,
+          limit: 24,
+          offset: 0,
+        })
+      : Promise.resolve({ rows: [] as LiteExecutionNativeNodeRow[], has_more: false }),
+    workflowSignature
+      ? args.liteWriteStore.findExecutionNativeNodes({
+          scope: args.scope,
+          workflowSignature,
+          consumerAgentId: args.parsed.consumer_agent_id ?? null,
+          consumerTeamId: args.parsed.consumer_team_id ?? null,
+          limit: 24,
+          offset: 0,
+        })
+      : Promise.resolve({ rows: [] as LiteExecutionNativeNodeRow[], has_more: false }),
+  ]);
+  const rowsById = new Map<string, LiteExecutionNativeNodeRow>();
+  for (const row of batches.flatMap((batch) => batch.rows)) {
+    if (!rowsById.has(row.id)) rowsById.set(row.id, row);
+  }
+  const rows = Array.from(rowsById.values())
+    .filter(productGuideStructuredControlNode)
+    .slice(0, 16);
+  if (rows.length === 0) return null;
+
+  const nodes: BuildAionisMemoryPacketArgs["nodes"] = rows.map((row) => ({
+    id: row.id,
+    type: row.type,
+    title: row.title,
+    text_summary: row.text_summary,
+    tier: row.tier,
+    slots: productGuideStructuredControlSlots(row),
+    raw_ref: row.raw_ref,
+    evidence_ref: row.evidence_ref,
+    commit_id: row.commit_id,
+    confidence: row.confidence,
+    salience: row.salience,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }));
+
+  return buildAionisMemoryPacket({
+    tenant_id: args.tenant_id,
+    scope: args.scope,
+    actor: {
+      consumer_agent_id: args.parsed.consumer_agent_id ?? null,
+      consumer_team_id: args.parsed.consumer_team_id ?? null,
+      producer_agent_ids: [],
+    },
+    query: {
+      source: "text",
+      intent: args.parsed.query_text,
+    },
+    nodes,
+    ranked: nodes.map((node, index) => ({
+      id: node.id,
+      score: Math.max(0.5, 0.99 - index * 0.01),
+    })),
+    source_map: {
+      routes_used: ["/v1/guide"],
+      internal_surfaces_used: [
+        "structured_execution_signature_recall",
+        "memory_contract_projection",
+        "semantic_forgetting_surface",
+      ],
+      omitted_internal_surfaces: [
+        "raw_embedding_vectors",
+        "raw_slots",
+        "full_payloads",
+      ],
+    },
+  });
 }
 
 function riskRank(value: AionisAgentContext["risk"]["negative_transfer_risk"]): number {
@@ -661,37 +1010,28 @@ function renderMergedAgentPrompt(args: {
   context: AionisAgentContext;
   contextCharBudget?: number | null;
 }): string {
-  const lines: string[] = [];
   const ctx = args.context;
-  lines.push("AIONIS_AGENT_CONTEXT v1");
-  lines.push(`state: role=${ctx.agent_role} history_used=${ctx.history_used} actionable_history_used=${ctx.actionable_history_used} posture=${ctx.recommended_posture} authority=${ctx.authority} risk=${ctx.risk.negative_transfer_risk}`);
-  if (ctx.agent_role === "planner") lines.push("role_focus: plan from reusable state and isolate uncertain history");
-  else if (ctx.agent_role === "worker") lines.push("role_focus: execute the active path and avoid failed branches");
-  else if (ctx.agent_role === "verifier") lines.push("role_focus: verify current work against remembered evidence and counter-evidence");
-  else if (ctx.agent_role === "reviewer") lines.push("role_focus: review branch status, inherited state, and feedback attribution");
-  lines.push("");
-  lines.push(`summary: ${ctx.summary}`);
-  lines.push("");
-  lines.push("target_files");
-  if (ctx.target_files.length === 0) lines.push("- none");
-  for (const target of ctx.target_files) lines.push(`- ${target}`);
-  lines.push("");
-  lines.push("use_now");
-  if (ctx.use_now.length === 0) lines.push("- none");
-  for (const entry of ctx.use_now) lines.push(`- ${entry}`);
-  lines.push("");
-  lines.push("inspect_before_use");
-  if (ctx.inspect_before_use.length === 0) lines.push("- none");
-  for (const entry of ctx.inspect_before_use) lines.push(`- ${entry}`);
-  lines.push("");
-  lines.push("do_not_use");
-  if (ctx.do_not_use.length === 0) lines.push("- none");
-  for (const entry of ctx.do_not_use) lines.push(`- ${entry}`);
-  lines.push("");
-  lines.push("memory_ids");
-  if (ctx.memory_ids.length === 0) lines.push("- none");
-  for (const id of ctx.memory_ids) lines.push(`- ${id}`);
-  const prompt = lines.join("\n");
+  const currentLines = ctx.use_now.filter((entry) => entry.startsWith("Current active path:"));
+  const procedureLines = ctx.use_now.filter((entry) => !entry.startsWith("Current active path:"));
+  const line = (label: string, values: string[], limit: number, maxChars: number): string[] =>
+    values.slice(0, limit).map((entry) => `${label}: note=${compactProductPromptText(entry, maxChars)}`);
+  const prompt = uniqueStrings([
+    "AIONIS_CTX v2",
+    `state r=${ctx.agent_role} h=${ctx.history_used ? 1 : 0} a=${ctx.actionable_history_used ? 1 : 0} p=${productPromptPostureLabel(ctx.recommended_posture)} auth=${productPromptAuthorityLabel(ctx.authority)} risk=${productPromptRiskLabel(ctx.risk.negative_transfer_risk)}`,
+    `summary ${compactProductPromptText(ctx.summary, 160)}`,
+    ctx.target_files.length > 0 ? `files ${ctx.target_files.slice(0, 4).join(",")}` : null,
+    ...line("current", currentLines.length > 0 ? currentLines : ctx.use_now.slice(0, 1), 2, 160),
+    ...line("procedure", procedureLines, 3, 130),
+    ...line("inspect", ctx.inspect_before_use, 3, 100),
+    ...line("avoid", ctx.do_not_use, 3, 100),
+    ctx.rehydrate_hints.length > 0
+      ? `rehydrate: ${ctx.rehydrate_hints
+        .slice(0, 3)
+        .map((entry) => `id=${entry.memory_id}${entry.required ? " req=1" : ""} n=${compactProductPromptText(entry.reason, 70)}`)
+        .join(" | ")}`
+      : null,
+    ctx.memory_ids.length > 0 ? `ids ${ctx.memory_ids.slice(0, 8).join(",")}` : null,
+  ]).join("\n");
   const budget = args.contextCharBudget && args.contextCharBudget > 0 ? Math.trunc(args.contextCharBudget) : null;
   if (!budget || prompt.length <= budget) return prompt;
   return `${prompt.slice(0, Math.max(0, budget - 3)).trimEnd()}...`;
@@ -1953,7 +2293,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     const recall = body.recall && typeof body.recall === "object" && !Array.isArray(body.recall)
       ? body.recall as Record<string, unknown>
       : {};
-    const memoryPacket: AionisMemoryPacket | null = recall.aionis_memory_packet
+    let memoryPacket: AionisMemoryPacket | null = recall.aionis_memory_packet
       ? AionisMemoryPacketSchema.parse(recall.aionis_memory_packet)
       : null;
     const guidePacket: AionisGuidePacket | null = body.aionis_guide_packet
@@ -1962,6 +2302,19 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     const agentRole = productGuideAgentRole(parsed);
     const tenantId = String(body.tenant_id ?? parsed.tenant_id ?? env.MEMORY_TENANT_ID);
     const scope = String(body.scope ?? parsed.scope ?? env.MEMORY_SCOPE);
+    const fullPowerRequested = productGuideFullPowerRequested(parsed);
+    let fullPowerStructuredMemoryMerged = false;
+    if (fullPowerRequested) {
+      const structuredExecutionPacket = await buildProductGuideStructuredExecutionPacket({
+        liteWriteStore,
+        parsed,
+        tenant_id: tenantId,
+        scope,
+      });
+      const mergedPacket = mergeAionisMemoryPackets(memoryPacket, structuredExecutionPacket);
+      memoryPacket = mergedPacket.packet;
+      fullPowerStructuredMemoryMerged = mergedPacket.changed;
+    }
     let agentContext: AionisAgentContext = buildAionisAgentContext({
       tenant_id: tenantId,
       scope,
@@ -1972,7 +2325,6 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       context_char_budget: parsed.context_char_budget,
       context_compaction_profile: parsed.context_compaction_profile ?? parsed.context_optimization_profile ?? null,
     });
-    const fullPowerRequested = productGuideFullPowerRequested(parsed);
     let fullPowerExecutionContextMerged = false;
     if (fullPowerRequested) {
       const executionContextResult = await dispatchProductInternalRoute({
@@ -2069,6 +2421,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
           "agent_context_compiler",
           ...(agentRole !== "agent" ? ["role_aware_agent_context"] : []),
           ...(fullPowerRequested ? ["full_power_execution_context"] : []),
+          ...(fullPowerStructuredMemoryMerged ? ["full_power_structured_execution_recall"] : []),
           ...(fullPowerExecutionContextMerged ? ["full_power_agent_context_merge"] : []),
           ...(activeProjectionApplied ? ["inspect_before_use_active_projection"] : []),
           ...(memoryContractVisible ? ["memory_contract"] : []),

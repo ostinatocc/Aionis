@@ -624,7 +624,10 @@ test("runtime HTTP e2e assembles full-power context from raw evidence, bounded a
     assert.match(String(fullPower.prompt_text), /GATED_ABSTRACTIONS/);
     assert.match(String(fullPower.prompt_text), /TRACE/);
     assert.equal(fullPower.agent_context.contract_version, "aionis_agent_context_v1");
-    assert.match(String(fullPower.agent_context.prompt_text), /AIONIS_AGENT_CONTEXT v1/);
+    assert.match(String(fullPower.agent_context.prompt_text), /AIONIS_CTX v2/);
+    assert.match(String(fullPower.agent_context.prompt_text), /current: note=Current active path/);
+    assert.match(String(fullPower.agent_context.prompt_text), /procedure: note=Passed solution/);
+    assert.match(String(fullPower.agent_context.prompt_text), /avoid: note=Avoid failed branch/);
     assert.match(String(fullPower.agent_context.prompt_text), /RUNTIME_E2E_PASSED formula B/);
     assert.match(String(fullPower.agent_context.prompt_text), /RUNTIME_E2E_FAILED/);
     assert.match(String(fullPower.agent_context.prompt_text), /formula A/);

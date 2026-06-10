@@ -496,6 +496,150 @@ test("product agent context assembler enforces explicit prompt character budget"
   assert.ok(budgetedContext.use_now_memory_ids.length > 0);
 });
 
+test("product agent context contract renderer preserves execution state surfaces", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "continue checkout execution-state contract renderer",
+    },
+    nodes: [
+      {
+        id: "mem-contract-current",
+        type: "concept",
+        title: "Checkout adapter current state",
+        text_summary: "Continue from the current checkout adapter boundary in src/checkout/adapter.ts.",
+        tier: "hot",
+        slots: {
+          memory_kind: "execution_state",
+          compression_layer: "L2",
+          contract_trust: "authoritative",
+          execution_native_v1: {
+            schema_version: "execution_native_v1",
+            execution_kind: "execution_native",
+            summary_kind: "current_state",
+            compression_layer: "L2",
+            contract_trust: "authoritative",
+            task_signature: "checkout-contract-renderer",
+            workflow_signature: "checkout-contract-renderer:wf",
+            anchor_kind: "execution",
+            anchor_level: "L2",
+            target_files: ["src/checkout/adapter.ts"],
+          },
+        },
+        confidence: 0.94,
+        salience: 0.92,
+      },
+      {
+        id: "mem-contract-procedure",
+        type: "procedure",
+        title: "Checkout adapter replay procedure",
+        text_summary: "Reusable procedure: inspect adapter boundary, update the checkout mapping, then run focused tests.",
+        tier: "hot",
+        slots: {
+          memory_kind: "execution_workflow",
+          compression_layer: "L3",
+          contract_trust: "advisory",
+          execution_native_v1: {
+            schema_version: "execution_native_v1",
+            execution_kind: "workflow_anchor",
+            summary_kind: "workflow_anchor",
+            compression_layer: "L3",
+            contract_trust: "advisory",
+            task_signature: "checkout-contract-renderer",
+            workflow_signature: "checkout-contract-renderer:wf",
+            anchor_kind: "workflow",
+            anchor_level: "L3",
+            target_files: ["src/checkout/adapter.ts"],
+            workflow_steps: ["Inspect adapter boundary.", "Run focused tests."],
+          },
+        },
+        confidence: 0.88,
+        salience: 0.9,
+      },
+      {
+        id: "mem-contract-failed-branch",
+        type: "concept",
+        title: "Checkout broad search failed branch",
+        text_summary: "Failed branch: broad legacy search touched unrelated modules and must not be reused.",
+        tier: "warm",
+        slots: {
+          memory_kind: "execution_state",
+          lifecycle_state: "suppressed",
+          compression_layer: "L2",
+          contract_trust: "authoritative",
+          execution_native_v1: {
+            schema_version: "execution_native_v1",
+            execution_kind: "execution_native",
+            summary_kind: "failed_branch",
+            compression_layer: "L2",
+            contract_trust: "authoritative",
+            task_signature: "checkout-contract-renderer",
+            workflow_signature: "checkout-contract-renderer:failed",
+            anchor_kind: "execution",
+            anchor_level: "L2",
+            target_files: ["src/legacy/search.ts"],
+          },
+        },
+        confidence: 0.9,
+        salience: 0.84,
+      },
+      {
+        id: "mem-contract-rehydrate",
+        type: "concept",
+        title: "Checkout detailed trace payload",
+        text_summary: "Cold detailed trace payload exists for checkout migration and should be expanded only if needed.",
+        tier: "cold",
+        slots: {
+          memory_kind: "execution_trace",
+          compression_layer: "L1",
+          contract_trust: "advisory",
+          execution_native_v1: {
+            schema_version: "execution_native_v1",
+            execution_kind: "execution_native",
+            summary_kind: "raw_trace_pointer",
+            compression_layer: "L1",
+            contract_trust: "advisory",
+            task_signature: "checkout-contract-renderer",
+            workflow_signature: "checkout-contract-renderer:wf",
+            anchor_kind: "execution",
+            anchor_level: "L1",
+            target_files: ["src/checkout/trace.jsonl"],
+            rehydration: {
+              default_mode: "partial",
+            },
+          },
+        },
+        confidence: 0.78,
+        salience: 0.72,
+      },
+    ],
+  });
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    context_compaction_profile: "aggressive",
+  });
+
+  assert.ok(context.prompt_text.includes("AIONIS_CTX v2"));
+  assert.equal(context.prompt_text.includes("AIONIS_AGENT_CONTEXT v1"), false);
+  assert.ok(context.prompt_text.includes("current: id=m1"));
+  assert.ok(context.prompt_text.includes("procedure: id=m2"));
+  assert.match(context.prompt_text, /avoid: id=m\d+/);
+  assert.match(context.prompt_text, /rehydrate: id=m\d+/);
+  assert.ok(context.prompt_text.includes("m1=mem-contract-current"));
+  assert.ok(context.prompt_text.includes("m2=mem-contract-procedure"));
+  assert.ok(context.prompt_text.includes("mem-contract-failed-branch"));
+  assert.ok(context.prompt_text.includes("mem-contract-rehydrate"));
+  assert.ok(context.use_now_memory_ids.includes("mem-contract-current"));
+  assert.ok(context.use_now_memory_ids.includes("mem-contract-procedure"));
+  assert.ok(context.do_not_use_memory_ids.includes("mem-contract-failed-branch"));
+  assert.ok(context.rehydrate_hints.some((entry) => entry.memory_id === "mem-contract-rehydrate"));
+});
+
 test("product agent context preserves guide-only recovered target files", () => {
   const guidePacket = buildAionisGuidePacket({
     tenant_id: "tenant-local",

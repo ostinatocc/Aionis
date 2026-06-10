@@ -313,6 +313,7 @@ function memoryLifecycleState(args: {
   if (archiveRelocation.relocation_state === "cold_archive" || semanticForgetting.action === "archive" || tier === "archive") {
     return "archived";
   }
+  if (lifecycle === "rehydration_candidate") return "rehydration_candidate";
   if (semanticForgetting.action === "demote") return "demoted";
   if (semanticForgetting.action === "review") return "contested";
   if (lifecycle === "suppressed" || lifecycle === "disabled") return "suppressed";
@@ -1110,6 +1111,7 @@ function buildAionisGuideBrief(args: {
 }
 
 type AgentContextPromptProfile = {
+  style: "standard" | "contract";
   summaryChars: number;
   targetFileItems: number;
   targetFileChars: number;
@@ -1126,6 +1128,7 @@ type AgentContextPromptProfile = {
 
 const AGENT_CONTEXT_PROMPT_PROFILES: Record<"balanced" | "aggressive" | "tight" | "minimal" | "ids_only", AgentContextPromptProfile> = {
   balanced: {
+    style: "standard",
     summaryChars: 140,
     targetFileItems: 6,
     targetFileChars: 120,
@@ -1140,20 +1143,22 @@ const AGENT_CONTEXT_PROMPT_PROFILES: Record<"balanced" | "aggressive" | "tight" 
     memoryIdItems: 6,
   },
   aggressive: {
-    summaryChars: 120,
-    targetFileItems: 4,
-    targetFileChars: 90,
-    useNowItems: 3,
-    useNowChars: 150,
+    style: "contract",
+    summaryChars: 80,
+    targetFileItems: 2,
+    targetFileChars: 64,
+    useNowItems: 1,
+    useNowChars: 76,
     inspectItems: 2,
-    inspectChars: 110,
+    inspectChars: 58,
     doNotUseItems: 2,
-    doNotUseChars: 110,
-    rehydrateItems: 2,
-    rehydrateChars: 80,
-    memoryIdItems: 5,
+    doNotUseChars: 58,
+    rehydrateItems: 1,
+    rehydrateChars: 44,
+    memoryIdItems: 6,
   },
   tight: {
+    style: "contract",
     summaryChars: 96,
     targetFileItems: 3,
     targetFileChars: 70,
@@ -1165,9 +1170,10 @@ const AGENT_CONTEXT_PROMPT_PROFILES: Record<"balanced" | "aggressive" | "tight" 
     doNotUseChars: 90,
     rehydrateItems: 1,
     rehydrateChars: 70,
-    memoryIdItems: 4,
+    memoryIdItems: 5,
   },
   minimal: {
+    style: "contract",
     summaryChars: 80,
     targetFileItems: 2,
     targetFileChars: 50,
@@ -1179,9 +1185,10 @@ const AGENT_CONTEXT_PROMPT_PROFILES: Record<"balanced" | "aggressive" | "tight" 
     doNotUseChars: 70,
     rehydrateItems: 1,
     rehydrateChars: 60,
-    memoryIdItems: 3,
+    memoryIdItems: 4,
   },
   ids_only: {
+    style: "contract",
     summaryChars: 60,
     targetFileItems: 0,
     targetFileChars: 0,
@@ -1254,8 +1261,13 @@ function renderAgentContextPrompt(args: {
   doNotUse: string[];
   memoryIds: string[];
   rehydrateHints: AionisAgentContext["rehydrate_hints"];
+  memoryEntries: MemoryPacketEntry[];
+  useNowMemoryIds: string[];
+  inspectBeforeUseMemoryIds: string[];
+  doNotUseMemoryIds: string[];
   profile: AgentContextPromptProfile;
 }): string {
+  if (args.profile.style === "contract") return renderExecutionStateContractPrompt(args);
   const inline = (label: string, values: string[], maxItems: number, maxChars: number): string | null => {
     if (maxItems <= 0 || maxChars <= 0) return null;
     const entries = values
@@ -1264,7 +1276,7 @@ function renderAgentContextPrompt(args: {
     return entries.length > 0 ? `${label}: ${entries.join(" | ")}` : null;
   };
   const sections = compactStrings([
-    `AIONIS_AGENT_CONTEXT v1`,
+    "AIONIS_AGENT_CONTEXT v1",
     `state: role=${args.agentRole} history=${args.historyUsed ? "yes" : "no"} actionable_history=${args.actionableHistoryUsed ? "yes" : "no"} posture=${args.recommendedPosture} authority=${args.authority} risk=${args.negativeTransferRisk}`,
     agentRoleFocusLine(args.agentRole),
     `summary: ${shortenPromptText(args.summary, args.profile.summaryChars)}`,
@@ -1285,6 +1297,195 @@ function renderAgentContextPrompt(args: {
   return sections.join("\n");
 }
 
+function entryById(entries: MemoryPacketEntry[]): Map<string, MemoryPacketEntry> {
+  return new Map(entries.map((entry) => [entry.memory_id, entry]));
+}
+
+function contractEntrySummary(entry: MemoryPacketEntry | null | undefined, fallback: string, maxChars: number): string {
+  if (!entry) return shortenPromptText(normalizeContractPromptNote(fallback) ?? "", maxChars);
+  return shortenPromptText(compactStrings([
+    normalizeContractPromptNote(entry.summary),
+    normalizeContractPromptTitle(entry.title ?? null),
+    normalizeContractPromptNote(fallback),
+  ])[0] ?? "", maxChars);
+}
+
+function contractEntryFiles(entry: MemoryPacketEntry | null | undefined, fallback: string[] = []): string {
+  const files = compactStrings([...(entry?.target_files ?? []), ...fallback]).slice(0, 2);
+  return files.length > 0 ? ` f=${files.join(",")}` : "";
+}
+
+function normalizeContractPromptTitle(value: string | null): string | null {
+  const text = normalizeContractPromptNote(value);
+  if (!text) return null;
+  const withoutPrefix = text.replace(/^[A-Za-z0-9_.@+-]{8,80}:\s+/, "").trim();
+  return withoutPrefix || text;
+}
+
+function normalizeContractPromptNote(value: string | null | undefined): string | null {
+  if (!value) return null;
+  let text = value.replace(/\s+/g, " ").trim();
+  text = text.replace(/^(?:[A-Z][A-Z0-9_]{3,}=[^.!?]{1,160}[.!?]\s*)+/, "").trim();
+  if (/^Recovered state: prior execution shaped evidence-backed guidance\.?$/i.test(text)) return null;
+  return text || null;
+}
+
+function contractPostureLabel(value: AionisAgentContext["recommended_posture"]): string {
+  switch (value) {
+    case "ignore_history": return "ignore";
+    case "rehydrate_before_use": return "rehydrate";
+    case "inspect_before_use": return "inspect";
+    case "reuse_supported_history": return "reuse";
+    case "use_as_context": return "context";
+  }
+}
+
+function contractAuthorityLabel(value: AionisAgentContext["authority"]): string {
+  switch (value) {
+    case "trusted": return "trust";
+    case "advisory": return "adv";
+    case "candidate": return "cand";
+    case "blocked": return "block";
+    case "none": return "none";
+  }
+}
+
+function contractRiskLabel(value: AionisAgentContext["risk"]["negative_transfer_risk"]): string {
+  switch (value) {
+    case "high": return "hi";
+    case "medium": return "med";
+    case "low": return "low";
+  }
+}
+
+function contractEntryLine(args: {
+  label: "current" | "procedure" | "inspect" | "avoid";
+  entry: MemoryPacketEntry | null | undefined;
+  alias?: string | null;
+  fallback: string;
+  maxChars: number;
+  fallbackFiles?: string[];
+}): string | null {
+  const id = args.alias ? ` id=${args.alias}` : "";
+  const files = contractEntryFiles(args.entry, args.fallbackFiles);
+  const reason = contractEntrySummary(args.entry, args.fallback, args.maxChars);
+  if (!id && !files && !reason) return null;
+  const note = reason ? ` n=${reason}` : "";
+  return `${args.label}:${id}${files}${note}`;
+}
+
+function renderExecutionStateContractPrompt(args: {
+  agentRole: AionisAgentRole;
+  summary: string;
+  historyUsed: boolean;
+  actionableHistoryUsed: boolean;
+  recommendedPosture: AionisAgentContext["recommended_posture"];
+  authority: AionisAgentContext["authority"];
+  negativeTransferRisk: AionisAgentContext["risk"]["negative_transfer_risk"];
+  targetFiles: string[];
+  useNow: string[];
+  inspectBeforeUse: string[];
+  doNotUse: string[];
+  memoryIds: string[];
+  rehydrateHints: AionisAgentContext["rehydrate_hints"];
+  memoryEntries: MemoryPacketEntry[];
+  useNowMemoryIds: string[];
+  inspectBeforeUseMemoryIds: string[];
+  doNotUseMemoryIds: string[];
+  profile: AgentContextPromptProfile;
+}): string {
+  const entries = entryById(args.memoryEntries);
+  const useEntries = args.useNowMemoryIds.map((id) => entries.get(id)).filter((entry): entry is MemoryPacketEntry => !!entry);
+  const currentEntry =
+    useEntries.find((entry) => entry.memory_type !== "procedure")
+    ?? useEntries[0]
+    ?? null;
+  const procedureEntries = useEntries.filter((entry) =>
+    entry.memory_type === "procedure"
+    || entry.domain === "execution"
+  );
+  const inspectEntries = args.inspectBeforeUseMemoryIds
+    .map((id) => entries.get(id))
+    .filter((entry): entry is MemoryPacketEntry => !!entry);
+  const avoidEntries = args.doNotUseMemoryIds
+    .map((id) => entries.get(id))
+    .filter((entry): entry is MemoryPacketEntry => !!entry);
+  const renderedProcedureEntries = procedureEntries
+    .filter((entry) => entry.memory_id !== currentEntry?.memory_id)
+    .slice(0, Math.max(0, args.profile.useNowItems));
+  const renderedInspectEntries = inspectEntries.slice(0, args.profile.inspectItems);
+  const renderedAvoidEntries = avoidEntries.slice(0, args.profile.doNotUseItems);
+    const renderedRehydrateHints = args.rehydrateHints.slice(0, args.profile.rehydrateItems);
+  const renderedIds = compactStrings([
+    currentEntry?.memory_id,
+    ...renderedProcedureEntries.map((entry) => entry.memory_id),
+    ...renderedInspectEntries.map((entry) => entry.memory_id),
+    ...renderedAvoidEntries.map((entry) => entry.memory_id),
+    ...renderedRehydrateHints.map((entry) => entry.memory_id),
+    ...args.memoryIds,
+  ]).slice(0, Math.max(args.profile.memoryIdItems, 0));
+  const aliases = new Map(renderedIds.map((id, index) => [id, `m${index + 1}`]));
+  const currentFallback = args.useNow[0] ?? args.summary;
+  const procedureFallbacks: string[] = [];
+  const inspectFallbacks = inspectEntries.length > 0 ? [] : args.inspectBeforeUse.slice(0, args.profile.inspectItems);
+  const avoidFallbacks = avoidEntries.length > 0 ? [] : args.doNotUse.slice(0, args.profile.doNotUseItems);
+  const hasRenderedContractEntries =
+    !!currentEntry
+    || renderedProcedureEntries.length > 0
+    || renderedInspectEntries.length > 0
+    || renderedAvoidEntries.length > 0
+    || renderedRehydrateHints.length > 0;
+  const sections = compactStrings([
+    "AIONIS_CTX v2",
+    `state r=${args.agentRole} h=${args.historyUsed ? 1 : 0} a=${args.actionableHistoryUsed ? 1 : 0} p=${contractPostureLabel(args.recommendedPosture)} auth=${contractAuthorityLabel(args.authority)} risk=${contractRiskLabel(args.negativeTransferRisk)}`,
+    !hasRenderedContractEntries && normalizeContractPromptNote(args.summary)
+      ? `sum ${shortenPromptText(normalizeContractPromptNote(args.summary) ?? "", args.profile.summaryChars)}`
+      : null,
+    currentEntry || args.targetFiles.length > 0 || currentFallback
+      ? contractEntryLine({
+          label: "current",
+          entry: currentEntry,
+          alias: currentEntry ? aliases.get(currentEntry.memory_id) : null,
+          fallback: currentFallback,
+          maxChars: args.profile.useNowChars,
+          fallbackFiles: args.targetFiles,
+        })
+      : null,
+    ...renderedProcedureEntries
+      .map((entry) => contractEntryLine({
+        label: "procedure",
+        entry,
+        alias: aliases.get(entry.memory_id),
+        fallback: entry.summary,
+        maxChars: args.profile.useNowChars,
+      })),
+    ...procedureFallbacks.map((entry) => `procedure: note=${shortenPromptText(entry, args.profile.useNowChars)}`),
+    ...renderedInspectEntries.map((entry) => contractEntryLine({
+      label: "inspect",
+      entry,
+      alias: aliases.get(entry.memory_id),
+      fallback: entry.summary,
+      maxChars: args.profile.inspectChars,
+    })),
+    ...inspectFallbacks.map((entry) => `inspect: note=${shortenPromptText(entry, args.profile.inspectChars)}`),
+    ...renderedAvoidEntries.map((entry) => contractEntryLine({
+      label: "avoid",
+      entry,
+      alias: aliases.get(entry.memory_id),
+      fallback: entry.summary,
+      maxChars: args.profile.doNotUseChars,
+    })),
+    ...avoidFallbacks.map((entry) => `avoid: note=${shortenPromptText(entry, args.profile.doNotUseChars)}`),
+    ...renderedRehydrateHints.map((hint) =>
+      `rehydrate: id=${aliases.get(hint.memory_id) ?? hint.memory_id}${hint.required ? " req=1" : ""} n=${shortenPromptText(hint.reason, args.profile.rehydrateChars)}`
+    ),
+    renderedIds.length > 0 && args.profile.memoryIdItems > 0
+      ? `ids ${renderedIds.map((id) => `${aliases.get(id) ?? id}=${id}`).join(",")}`
+      : null,
+  ]);
+  return sections.join("\n");
+}
+
 function buildAgentContextPrompt(args: {
   agentRole: AionisAgentRole;
   summary: string;
@@ -1299,6 +1500,10 @@ function buildAgentContextPrompt(args: {
   doNotUse: string[];
   memoryIds: string[];
   rehydrateHints: AionisAgentContext["rehydrate_hints"];
+  memoryEntries: MemoryPacketEntry[];
+  useNowMemoryIds: string[];
+  inspectBeforeUseMemoryIds: string[];
+  doNotUseMemoryIds: string[];
   contextCharBudget?: number | null;
   contextCompactionProfile?: "balanced" | "aggressive" | null;
 }): string {
@@ -2016,7 +2221,24 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
   const rawTargetFiles = compactStrings([
     ...(guide?.recovered_state.target_files ?? []),
   ]).slice(0, 8);
-  const rehydrateHints = (guide?.memory_lifecycle.rehydration_hints ?? guideBrief?.rehydrate ?? []).slice(0, 6);
+  const rehydrateHintIds = new Set<string>();
+  const rawRehydrateHints: AionisAgentContext["rehydrate_hints"] = [
+    ...(guide?.memory_lifecycle.rehydration_hints ?? guideBrief?.rehydrate ?? []),
+    ...(memory?.lifecycle.rehydration_hints ?? []).map((hint) => ({
+      memory_id: hint.memory_id,
+      reason: hint.reason,
+      required: hint.required,
+    })),
+  ].filter((hint) => {
+    if (rehydrateHintIds.has(hint.memory_id)) return false;
+    rehydrateHintIds.add(hint.memory_id);
+    return true;
+  }).slice(0, 6);
+  const memoryEntriesById = new Map((memory?.relevant_memories ?? []).map((entry) => [entry.memory_id, entry]));
+  const rehydrateHints = rawRehydrateHints.filter((hint) => {
+    const entry = memoryEntriesById.get(hint.memory_id);
+    return !entry || entry.lifecycle_state === "rehydration_candidate" || entry.lifecycle_state === "archived";
+  });
   const memoryIds = compactStrings([
     ...(guide?.memory_lifecycle.used_memory_ids ?? []),
     ...(memory?.lifecycle.used_memory_ids ?? []),
@@ -2087,6 +2309,10 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     doNotUse: surfaces.doNotUse,
     memoryIds,
     rehydrateHints,
+    memoryEntries: memory?.relevant_memories ?? [],
+    useNowMemoryIds: surfaces.useNowMemoryIds,
+    inspectBeforeUseMemoryIds: surfaces.inspectBeforeUseMemoryIds,
+    doNotUseMemoryIds: surfaces.doNotUseMemoryIds,
     contextCharBudget: args.context_char_budget,
     contextCompactionProfile: args.context_compaction_profile,
   });
@@ -2182,6 +2408,10 @@ export function applyAionisInspectBeforeUseActiveProjection(
     doNotUse: args.agent_context.do_not_use,
     memoryIds: args.agent_context.memory_ids,
     rehydrateHints: args.agent_context.rehydrate_hints,
+    memoryEntries,
+    useNowMemoryIds,
+    inspectBeforeUseMemoryIds,
+    doNotUseMemoryIds: args.agent_context.do_not_use_memory_ids,
     contextCharBudget: args.context_char_budget,
     contextCompactionProfile: args.context_compaction_profile,
   });
