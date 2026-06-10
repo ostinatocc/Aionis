@@ -251,6 +251,22 @@ export function assertPromptBoundary(promptText: string, label: string): void {
   }
 }
 
+export function assertReviewerPromptState(promptText: string, label: string): void {
+  if (promptText.includes("AIONIS_CTX v2")) {
+    assertCondition(/^state r=reviewer\b/m.test(promptText), `${label} prompt did not include reviewer v2 state`);
+    assertCondition(
+      /^next\b.*\b(?:actor_role|role)=reviewer\b/m.test(promptText),
+      `${label} prompt did not include reviewer v2 next-action role`,
+    );
+    return;
+  }
+  assertCondition(promptText.includes("state: role=reviewer"), `${label} prompt did not include reviewer v1 state`);
+  assertCondition(
+    promptText.includes("role_focus: review branch status"),
+    `${label} prompt did not include reviewer v1 focus`,
+  );
+}
+
 export function firstNodeId(observeBody: Record<string, unknown>, label: string): string {
   const write = asRecord(observeBody.memory_write);
   const nodes = Array.isArray(write?.nodes) ? write.nodes : [];
@@ -494,8 +510,7 @@ async function runMultiAgentLoop(args: {
     "adapter reviewer guide did not use full_power execution context route",
   );
   assertCondition(reviewerContext.agent_role === "reviewer", "reviewer guide did not preserve agent_role");
-  assertCondition(String(reviewerContext.prompt_text).includes("state: role=reviewer"), "reviewer guide prompt did not include role state");
-  assertCondition(String(reviewerContext.prompt_text).includes("role_focus: review branch status"), "reviewer guide prompt did not include reviewer focus");
+  assertReviewerPromptState(String(reviewerContext.prompt_text), "reviewer guide");
   assertCondition(reviewerContext.history_used === true, "reviewer guide did not use multi-agent history");
   assertCondition(
     textArray(reviewerContext.use_now).some((entry) => entry.includes(PASSED_MARKER))

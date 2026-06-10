@@ -21,6 +21,7 @@ import {
   VERIFIER_ID,
   WORKER_ID,
   agentContext,
+  assertReviewerPromptState,
   assertPromptBoundary,
   buildMultiAgentExecutionTree,
   closeRuntime,
@@ -230,8 +231,7 @@ export async function runMultiAgentHostTemplateLoop(args: {
     "host reviewer guide did not use full_power execution context route",
   );
   assertCondition(reviewerContext.agent_role === "reviewer", "host reviewer guide did not preserve agent_role");
-  assertCondition(String(reviewerContext.prompt_text).includes("state: role=reviewer"), "host reviewer guide prompt did not include role state");
-  assertCondition(String(reviewerContext.prompt_text).includes("role_focus: review branch status"), "host reviewer guide prompt did not include reviewer focus");
+  assertReviewerPromptState(String(reviewerContext.prompt_text), "host reviewer guide");
   assertCondition(reviewerContext.history_used === true, "host reviewer guide did not use multi-agent history");
   assertCondition(reviewerContext.actionable_history_used === true, "host reviewer guide did not expose actionable multi-agent history");
   assertCondition(
