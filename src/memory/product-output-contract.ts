@@ -1608,6 +1608,23 @@ const AionisOperatorSnapshotEntrySchema = z
   })
   .strict();
 
+const AionisTraceToProcedureSourceSurfaceSchema = z.enum([
+  "execution_tree",
+  "workflow_projection",
+  "replay_playbook",
+  "execution_contract",
+  "memory_decision_trace",
+  "promotion_evidence",
+]);
+
+const AionisTraceToProcedurePromotionStatusSchema = z.enum([
+  "stable_ready",
+  "candidate_only",
+  "blocked",
+  "insufficient_evidence",
+  "not_applicable",
+]);
+
 export const AionisOperatorSnapshotSchema = z
   .object({
     contract_version: z.literal("aionis_operator_snapshot_v1"),
@@ -1665,6 +1682,21 @@ export const AionisOperatorSnapshotSchema = z
             reason: z.string().min(1),
           })
           .strict(),
+      })
+      .strict(),
+    trace_to_procedure: z
+      .object({
+        present: z.boolean(),
+        runtime_mutation: z.literal(false),
+        source_surfaces: z.array(AionisTraceToProcedureSourceSurfaceSchema).default([]),
+        procedure_memory_ids: z.array(z.string().min(1)).default([]),
+        workflow_ids: z.array(z.string().min(1)).default([]),
+        evidence_refs: z.array(z.string().min(1)).default([]),
+        candidate_visible: z.boolean(),
+        stable_reuse_visible: z.boolean(),
+        promotion_status: AionisTraceToProcedurePromotionStatusSchema,
+        promotion_blocked_count: z.number().int().nonnegative(),
+        reason: z.string().min(1),
       })
       .strict(),
     guide_trace: z
@@ -1735,6 +1767,7 @@ export const AionisOperatorSnapshotSchema = z
               "feedback_attribution_visible",
               "learning_control_visible",
               "memory_use_receipt_visible",
+              "trace_to_procedure_visible",
               "runtime_read_only",
               "effect_measured",
             ]),

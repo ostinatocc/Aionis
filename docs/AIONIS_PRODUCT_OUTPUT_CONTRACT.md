@@ -41,6 +41,7 @@ The goal is to stop exposing dozens of internal Runtime routes as product concep
 5. `AionisEffectReport`: whether history helped, hurt, or did nothing
 6. `AionisMemoryDecisionTrace` and `AionisMemoryDecisionAuditReport`: operator/debug outputs explaining memory decisions without entering the Agent prompt
 7. `AionisMemoryUseReceipt`: a compact read-only receipt of which memory was used, inspected, blocked, rehydrated, attributed, or left unattributed
+8. `AionisOperatorSnapshot`: a read-only operator projection of execution state, memory use, learning control, effect, and Trace-to-Procedure readiness
 
 ## Output Boundary
 
@@ -54,6 +55,7 @@ The goal is to stop exposing dozens of internal Runtime routes as product concep
 | `AionisMemoryDecisionTrace` | `debug` / `measure` | Explain per-memory use, downgrade, block, and rehydrate decisions. |
 | `AionisMemoryDecisionAuditReport` | `audit` / `measure` | Provide a compact operator review of memory decisions, risks, and claims. |
 | `AionisMemoryUseReceipt` | `debug` / `measure` / `snapshot` | Show exactly what memory was exposed or blocked without adding prompt content or mutating runtime state. |
+| `AionisOperatorSnapshot` | `snapshot` | Show read-only execution state, trace-to-procedure readiness, learning control, effect, and claims for hosts/operators. |
 
 `POST /v1/guide` defaults to `AionisAgentContext` only. Callers that need audit or measurement data must set `include_packets: true` to include `memory_packet` and `guide_packet`. Full packets are not the default Agent prompt surface.
 
@@ -87,7 +89,7 @@ The receipt maps directly onto existing Runtime concepts:
 |---|---|
 | Memory Use Receipt | `memory_decision_trace.memory_use_receipt`, `operator_snapshot.memory_use_receipt` |
 | Premise Firewall | `risk_flags`, `inspect_before_use_memory_ids`, `do_not_use_memory_ids`, `read_only_signal_memory_ids` |
-| Trace-to-Procedure Compiler | `execution_tree_v1`, workflow projection, replay playbook, and `memory_decision_trace` |
+| Trace-to-Procedure Compiler | `operator_snapshot.trace_to_procedure`, derived from `execution_tree_v1`, workflow projection, replay playbook, execution contract, `memory_decision_trace`, and promotion evidence |
 | Memory Contract | `relevant_memories[].memory_contract`, `agent_context.risk.reasons`, `memory_decision_trace.reason_codes`, `memory_use_receipt.risk_flags` |
 
 ### Shape
@@ -192,6 +194,57 @@ move to `inspect_before_use` instead of `use_now`. Candidate, contested,
 suppressed, archived, and blocked memory continue to follow the existing
 authority/lifecycle behavior, with Memory Contract reason codes added for
 audit and receipt visibility.
+
+## Trace-to-Procedure Projection
+
+`operator_snapshot.trace_to_procedure` is the product-facing summary of how
+Aionis turns traces into reusable procedure candidates. It is assembled from
+existing Runtime state and does not add a writer, promotion path, or Agent
+prompt content.
+
+```ts
+type AionisTraceToProcedureProjection = {
+  present: boolean;
+  runtime_mutation: false;
+  source_surfaces: Array<
+    | "execution_tree"
+    | "workflow_projection"
+    | "replay_playbook"
+    | "execution_contract"
+    | "memory_decision_trace"
+    | "promotion_evidence"
+  >;
+  procedure_memory_ids: string[];
+  workflow_ids: string[];
+  evidence_refs: string[];
+  candidate_visible: boolean;
+  stable_reuse_visible: boolean;
+  promotion_status:
+    | "stable_ready"
+    | "candidate_only"
+    | "blocked"
+    | "insufficient_evidence"
+    | "not_applicable";
+  promotion_blocked_count: number;
+  reason: string;
+};
+```
+
+### Projection Rules
+
+| Include | Exclude |
+|---|---|
+| active path, passed solutions, and failed branches already visible in execution context | raw tree payloads, raw slots, or full chat transcript |
+| workflow IDs from guide/effect/agent evidence refs | new workflow compilation or playbook mutation |
+| replay contribution and replay run evidence IDs | replay repair as a product promise |
+| promotion evidence and blocked-promotion counts | automatic stable promotion |
+| procedure/execution memory IDs from decision trace | broad claim that a single trace is reusable everywhere |
+
+`promotion_status` reports readiness only. `blocked` means Aionis has procedure
+evidence but the existing learning-control or consolidation gates did not allow
+stable reuse. `candidate_only` means the trace can inform inspection or
+advisory workflow reuse. `stable_ready` requires trusted/promoted workflow or
+procedure evidence already visible through current Runtime surfaces.
 
 ## Non-Goals
 

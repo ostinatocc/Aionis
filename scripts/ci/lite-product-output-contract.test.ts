@@ -9,6 +9,7 @@ import {
   AionisMemoryDecisionTraceSchema,
   AionisMemoryUseReceiptSchema,
   AionisMemoryPacketSchema,
+  AionisOperatorSnapshotSchema,
 } from "../../src/memory/product-output-contract.ts";
 
 function validGuidePacket() {
@@ -982,6 +983,143 @@ test("AionisMemoryUseReceipt accepts only read-only memory usage audit fields", 
       AionisMemoryUseReceiptSchema.parse({
         ...validMemoryDecisionTrace().memory_use_receipt,
         runtime_mutation: true,
+      }),
+  );
+});
+
+test("AionisOperatorSnapshot accepts trace-to-procedure as a read-only product projection", () => {
+  const parsed = AionisOperatorSnapshotSchema.parse({
+    contract_version: "aionis_operator_snapshot_v1",
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    intended_use: "operator_snapshot",
+    agent_prompt_included: false,
+    runtime_mutation: false,
+    task: {
+      run_id: "run-2",
+      task_signature: "fix-build",
+      task_family: "coding",
+      workflow_signature: "line-local-verifier",
+      agent_role: "reviewer",
+    },
+    execution_state: {
+      history_used: true,
+      actionable_history_used: true,
+      recommended_posture: "inspect_before_use",
+      authority: "advisory",
+      active_path: {
+        count: 1,
+        entries: [{
+          entry_id: "active-1",
+          title: "Continue scoped verifier repair",
+          summary: "Continue the scoped verifier branch.",
+          source: "execution_context",
+          memory_ids: ["mem-exec-1"],
+          evidence_refs: ["trace://run-2/active"],
+        }],
+      },
+      passed_solutions: { count: 0, entries: [] },
+      failed_branches: { count: 0, entries: [] },
+      branch_isolation: {
+        active_path_visible: true,
+        passed_solution_visible: false,
+        failed_branch_visible_in_do_not_use: false,
+        failed_branch_leaked_to_use_now: false,
+        status: "not_applicable",
+        reason: "No failed branch evidence was supplied.",
+      },
+    },
+    trace_to_procedure: {
+      present: true,
+      runtime_mutation: false,
+      source_surfaces: ["execution_tree", "workflow_projection", "execution_contract", "promotion_evidence"],
+      procedure_memory_ids: ["mem-exec-1"],
+      workflow_ids: ["wf-1"],
+      evidence_refs: ["trace://run-2/active", "pqs-1"],
+      candidate_visible: true,
+      stable_reuse_visible: false,
+      promotion_status: "blocked",
+      promotion_blocked_count: 1,
+      reason: "Procedure evidence is visible, but stable promotion remains blocked.",
+    },
+    guide_trace: {
+      present: true,
+      guide_trace_id: "guide_trace:run-2",
+      exposed_memory_ids: ["mem-exec-1"],
+      use_now_memory_ids: [],
+      inspect_before_use_memory_ids: ["mem-exec-1"],
+      do_not_use_memory_ids: [],
+      attributed_memory_ids: [],
+      unattributed_memory_ids: [],
+      feedback_attribution_present: false,
+      feedback_outcome: null,
+      reason: "Guide trace exists, but feedback attribution was not supplied.",
+    },
+    memory_use_receipt: validMemoryDecisionTrace().memory_use_receipt,
+    memory_lifecycle: {
+      used_count: 0,
+      inspect_before_use_count: 1,
+      do_not_use_count: 0,
+      rehydrate_count: 0,
+      controlled_memory_count: 1,
+      blocked_or_suppressed_count: 0,
+      stale_memory_count: 0,
+      learning_control_visible: true,
+      consolidation_guard: {
+        supporting_only_count: 0,
+        candidate_only_count: 1,
+        promotion_blocked_count: 1,
+        reason: "Candidate memory stayed outside stable direct-use authority.",
+      },
+    },
+    learning_control: {
+      visible: true,
+      runtime_mutation: false,
+      stable_promotion_allowed: false,
+      candidate_count: 1,
+      blocked_authority_count: 0,
+      promotion_denied_reasons: ["candidate lacked holdout evidence"],
+      reason: "Learning-control state is visible without granting runtime mutation authority.",
+    },
+    effect: {
+      present: false,
+      impact_direction: null,
+      changed_future_behavior: null,
+      token_delta: null,
+      context_size_delta: null,
+      repeated_discovery_delta: null,
+      reason: "No effect report was supplied.",
+    },
+    claims: [{
+      claim: "trace_to_procedure_visible",
+      status: "pass",
+      evidence: "Trace-to-procedure projection is visible.",
+    }],
+    risks: {
+      negative_transfer_risk: "medium",
+      blocked_or_suppressed_count: 0,
+      unresolved_inspection_count: 1,
+      reasons: ["candidate memory requires inspection"],
+    },
+    source_map: {
+      routes_used: ["/v1/operator/snapshot"],
+      internal_surfaces_used: ["operator_snapshot", "trace_to_procedure_projection"],
+      omitted_internal_surfaces: ["raw_memory_rows", "raw_slots"],
+    },
+  });
+
+  assert.equal(parsed.trace_to_procedure.runtime_mutation, false);
+  assert.equal(parsed.trace_to_procedure.promotion_status, "blocked");
+  assert.ok(parsed.trace_to_procedure.source_surfaces.includes("execution_tree"));
+
+  assert.throws(
+    () =>
+      AionisOperatorSnapshotSchema.parse({
+        ...parsed,
+        trace_to_procedure: {
+          ...parsed.trace_to_procedure,
+          runtime_mutation: true,
+        },
       }),
   );
 });

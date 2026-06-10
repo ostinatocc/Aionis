@@ -119,6 +119,27 @@ Default tree construction applies when `POST /v1/handoff/store` or `POST /v1/mem
 
 This default path must stay scoped to execution state. Plain facts, preferences, and general cognitive memory must not be auto-converted into execution trees. Callers can disable only the automatic tree side effect by setting `execution_tree_disabled: true` or `execution_tree_default_disabled: true` on handoff/write requests; explicit `execution_tree_v1` and `execution_tree_operations_v1` remain caller-owned state and are still applied. Operators can disable the default globally with `EXECUTION_TREE_DEFAULT_ENABLED=false`.
 
+### Trace-to-Procedure Product Surface
+
+Trace-to-Procedure is not a new Runtime subsystem. It is the product-visible
+projection that explains how existing execution evidence can become reusable
+procedure memory.
+
+Current implementation surface:
+
+| Field | Meaning |
+|---|---|
+| `operator_snapshot.trace_to_procedure.source_surfaces` | Which existing surfaces are visible: execution tree, workflow projection, replay playbook, execution contract, memory decision trace, or promotion evidence. |
+| `procedure_memory_ids` / `workflow_ids` | The execution memory and workflow identifiers currently visible to the host/operator. |
+| `candidate_visible` | A trace-derived or workflow-derived procedure candidate is visible, but may still be advisory. |
+| `stable_reuse_visible` | Stable workflow/procedure reuse is visible through trusted authority or promoted workflow evidence. |
+| `promotion_status` | `stable_ready`, `candidate_only`, `blocked`, `insufficient_evidence`, or `not_applicable`. |
+
+This surface is read-only. It must not promote a candidate, mutate authority,
+compile a new playbook, or enter the Agent prompt. It lets hosts and operators
+see whether Aionis has enough evidence to reuse operational experience without
+turning one run into a hard rule.
+
 ## Guide Output Contract
 
 `POST /v1/guide` is the product entry for giving an Agent usable historical context.

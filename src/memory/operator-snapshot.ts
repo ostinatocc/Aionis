@@ -228,6 +228,7 @@ function sourceMapFromInputs(args: {
   guide: AionisGuidePacket | null;
   trace: AionisMemoryDecisionTrace | null;
   audit: AionisMemoryDecisionAuditReport | null;
+  traceToProcedurePresent?: boolean;
 }) {
   return {
     routes_used: uniqueStrings([
@@ -243,6 +244,7 @@ function sourceMapFromInputs(args: {
       ...(args.trace ? ["memory_decision_trace"] : []),
       "memory_use_receipt",
       ...(args.audit ? ["memory_decision_audit_report"] : []),
+      ...(args.traceToProcedurePresent ? ["trace_to_procedure_projection"] : []),
     ]),
     omitted_internal_surfaces: uniqueStrings([
       ...(args.source_map?.omitted_internal_surfaces ?? []),
@@ -279,6 +281,115 @@ function consolidationGuardFromTrace(
   };
 }
 
+function isProcedureDecision(decision: AionisMemoryDecisionTrace["memory_decisions"][number]): boolean {
+  return decision.domain === "execution"
+    || decision.memory_type === "procedure"
+    || decision.memory_type === "execution_memory";
+}
+
+function buildTraceToProcedureProjection(args: {
+  activePathEntries: AionisOperatorSnapshot["execution_state"]["active_path"]["entries"];
+  passedSolutionEntries: AionisOperatorSnapshot["execution_state"]["passed_solutions"]["entries"];
+  failedBranchEntries: AionisOperatorSnapshot["execution_state"]["failed_branches"]["entries"];
+  guide: AionisGuidePacket | null;
+  trace: AionisMemoryDecisionTrace | null;
+  effect: AionisEffectReport | null;
+  agent: AionisAgentContext | null;
+  consolidationGuard: AionisOperatorSnapshot["memory_lifecycle"]["consolidation_guard"];
+  promotionDeniedReasons: string[];
+}): AionisOperatorSnapshot["trace_to_procedure"] {
+  const executionEntries = [
+    ...args.activePathEntries,
+    ...args.passedSolutionEntries,
+    ...args.failedBranchEntries,
+  ];
+  const procedureDecisions = (args.trace?.memory_decisions ?? []).filter(isProcedureDecision);
+  const guideWorkflowCandidates = args.guide?.guidance.workflow_candidates ?? [];
+  const replayEvidenceVisible =
+    args.guide?.history_contributions.replay.used === true
+    || args.effect?.history_contributions.replay.used === true
+    || (args.effect?.evidence.replay_run_ids.length ?? 0) > 0;
+  const promotionEvidenceVisible =
+    (args.effect?.evidence.promotion_quality_summary_ids.length ?? 0) > 0
+    || (args.effect?.training_candidates.length ?? 0) > 0
+    || args.promotionDeniedReasons.length > 0
+    || args.consolidationGuard.promotion_blocked_count > 0;
+  const workflowIds = uniqueStrings([
+    ...(args.agent?.evidence_refs.workflow_ids ?? []),
+    ...guideWorkflowCandidates.map((entry) => entry.workflow_id),
+    ...(args.effect?.learning_effect.promoted_workflow_ids ?? []),
+    ...(args.effect?.learning_effect.candidate_workflow_ids ?? []),
+  ], 48);
+  const procedureMemoryIds = uniqueStrings([
+    ...procedureDecisions.map((entry) => entry.memory_id),
+    ...executionEntries.flatMap((entry) => entry.memory_ids),
+  ], 48);
+  const evidenceRefs = uniqueStrings([
+    ...procedureDecisions.flatMap((entry) => entry.evidence_ids),
+    ...executionEntries.flatMap((entry) => entry.evidence_refs),
+    ...(args.effect?.evidence.evidence_ids ?? []),
+    ...(args.effect?.evidence.replay_run_ids ?? []),
+    ...(args.effect?.evidence.signal_summary_ids ?? []),
+    ...(args.effect?.evidence.promotion_quality_summary_ids ?? []),
+    ...(args.guide?.history_contributions.handoff.source_ids ?? []),
+    ...(args.guide?.history_contributions.replay.source_ids ?? []),
+  ], 64);
+  const sourceSurfaces = uniqueStrings([
+    executionEntries.length > 0 ? "execution_tree" : "",
+    guideWorkflowCandidates.length > 0 || workflowIds.length > 0 ? "workflow_projection" : "",
+    replayEvidenceVisible ? "replay_playbook" : "",
+    workflowIds.length > 0 || procedureMemoryIds.length > 0 ? "execution_contract" : "",
+    procedureDecisions.length > 0 ? "memory_decision_trace" : "",
+    promotionEvidenceVisible ? "promotion_evidence" : "",
+  ], 8) as AionisOperatorSnapshot["trace_to_procedure"]["source_surfaces"];
+  const stableReuseVisible =
+    guideWorkflowCandidates.some((entry) => entry.authority === "trusted")
+    || (args.effect?.learning_effect.promoted_workflow_ids.length ?? 0) > 0
+    || procedureDecisions.some((entry) => entry.authority === "trusted" && entry.agent_surface === "use_now");
+  const candidateVisible =
+    executionEntries.length > 0
+    || procedureMemoryIds.length > 0
+    || guideWorkflowCandidates.some((entry) => entry.authority === "candidate" || entry.authority === "advisory")
+    || (args.effect?.learning_effect.candidate_workflow_ids.length ?? 0) > 0;
+  const promotionBlockedCount = Math.max(
+    args.consolidationGuard.promotion_blocked_count,
+    args.promotionDeniedReasons.length,
+  );
+  const present = sourceSurfaces.length > 0;
+  const promotionStatus: AionisOperatorSnapshot["trace_to_procedure"]["promotion_status"] = !present
+    ? "not_applicable"
+    : promotionBlockedCount > 0
+      ? "blocked"
+      : stableReuseVisible
+        ? "stable_ready"
+        : candidateVisible
+          ? "candidate_only"
+          : "insufficient_evidence";
+  const reason = !present
+    ? "No execution trace, workflow projection, replay, decision trace, or promotion evidence was supplied."
+    : promotionStatus === "blocked"
+      ? "Procedure evidence is visible, but stable promotion remains blocked by learning-control or consolidation evidence gates."
+      : promotionStatus === "stable_ready"
+        ? "Stable workflow or procedure reuse is visible through existing execution-memory surfaces."
+        : promotionStatus === "candidate_only"
+          ? "Trace-derived procedure evidence is visible as candidate or advisory reuse, not stable direct-use authority."
+          : "Execution-memory evidence is visible, but it is not sufficient to claim reusable procedure readiness.";
+
+  return {
+    present,
+    runtime_mutation: false,
+    source_surfaces: sourceSurfaces,
+    procedure_memory_ids: procedureMemoryIds,
+    workflow_ids: workflowIds,
+    evidence_refs: evidenceRefs,
+    candidate_visible: candidateVisible,
+    stable_reuse_visible: stableReuseVisible,
+    promotion_status: promotionStatus,
+    promotion_blocked_count: promotionBlockedCount,
+    reason,
+  };
+}
+
 function buildClaims(args: {
   activeCount: number;
   passedCount: number;
@@ -289,6 +400,7 @@ function buildClaims(args: {
   feedbackPresent: boolean;
   learningControlVisible: boolean;
   memoryUseReceipt: AionisMemoryUseReceipt;
+  traceToProcedure: AionisOperatorSnapshot["trace_to_procedure"];
   effect: AionisEffectReport | null;
 }): AionisOperatorSnapshot["claims"] {
   return [
@@ -322,6 +434,13 @@ function buildClaims(args: {
       claim: "memory_use_receipt_visible",
       status: "pass",
       evidence: `Receipt exposes ${args.memoryUseReceipt.exposed_memory_ids.length} memory ids; agent_prompt_included=${args.memoryUseReceipt.agent_prompt_included}.`,
+    },
+    {
+      claim: "trace_to_procedure_visible",
+      status: args.traceToProcedure.present ? "pass" : "not_applicable",
+      evidence: args.traceToProcedure.present
+        ? `Trace-to-procedure projection sees ${args.traceToProcedure.source_surfaces.join(", ")}; promotion_status=${args.traceToProcedure.promotion_status}.`
+        : "No trace-to-procedure source surfaces were supplied.",
     },
     {
       claim: "runtime_read_only",
@@ -443,6 +562,7 @@ export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArg
     ...(guide?.risk.reasons ?? []),
     ...(effect?.learning_effect.promotion_denied_reasons ?? []),
   ], 16);
+  const consolidationGuard = consolidationGuardFromTrace(trace, executionContext);
   const attributedIds = uniqueStrings(feedbackAttribution?.attributed_memory_ids ?? []);
   const exposedIds = uniqueStrings(agent?.memory_ids ?? guide?.memory_lifecycle.used_memory_ids ?? []);
   const guideTraceId = args.guide_trace_id ?? feedbackAttribution?.guide_trace_id ?? null;
@@ -455,6 +575,17 @@ export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArg
     ?? guide?.guide_brief.actionable_history_used
     ?? trace?.summary.actionable_history_used
     ?? (activePathEntries.length > 0 || passedSolutionEntriesValue.length > 0 || failedBranchEntriesValue.length > 0);
+  const traceToProcedure = buildTraceToProcedureProjection({
+    activePathEntries,
+    passedSolutionEntries: passedSolutionEntriesValue,
+    failedBranchEntries: failedBranchEntriesValue,
+    guide,
+    trace,
+    effect,
+    agent,
+    consolidationGuard,
+    promotionDeniedReasons,
+  });
 
   return parseAionisOperatorSnapshot({
     contract_version: "aionis_operator_snapshot_v1",
@@ -502,6 +633,7 @@ export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArg
             : "No failed branch evidence was supplied.",
       },
     },
+    trace_to_procedure: traceToProcedure,
     guide_trace: {
       present: !!guideTraceId || !!trace?.feedback_attribution.present,
       guide_trace_id: guideTraceId,
@@ -529,7 +661,7 @@ export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArg
       blocked_or_suppressed_count: blockedOrSuppressedCount,
       stale_memory_count: trace?.summary ? 0 : guide?.risk.stale_memory_count ?? 0,
       learning_control_visible: learningControlVisible,
-      consolidation_guard: consolidationGuardFromTrace(trace, executionContext),
+      consolidation_guard: consolidationGuard,
     },
     learning_control: {
       visible: learningControlVisible || !!candidateLearning?.present,
@@ -565,6 +697,7 @@ export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArg
       feedbackPresent: feedbackAttribution?.present === true,
       learningControlVisible,
       memoryUseReceipt,
+      traceToProcedure,
       effect,
     }),
     risks: {
@@ -586,6 +719,7 @@ export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArg
       guide,
       trace,
       audit,
+      traceToProcedurePresent: traceToProcedure.present,
     }),
   });
 }
@@ -623,6 +757,13 @@ export function renderAionisOperatorSnapshotMarkdown(snapshot: AionisOperatorSna
     `runtime_mutation: ${snapshot.memory_use_receipt.runtime_mutation}`,
     `use_now_memory_ids: ${snapshot.memory_use_receipt.use_now_memory_ids.join(", ") || "none"}`,
     `do_not_use_memory_ids: ${snapshot.memory_use_receipt.do_not_use_memory_ids.join(", ") || "none"}`,
+    ``,
+    `## Trace to Procedure`,
+    `present: ${snapshot.trace_to_procedure.present}`,
+    `promotion_status: ${snapshot.trace_to_procedure.promotion_status}`,
+    `source_surfaces: ${snapshot.trace_to_procedure.source_surfaces.join(", ") || "none"}`,
+    `workflow_ids: ${snapshot.trace_to_procedure.workflow_ids.join(", ") || "none"}`,
+    `procedure_memory_ids: ${snapshot.trace_to_procedure.procedure_memory_ids.join(", ") || "none"}`,
     ``,
     `## Learning Control`,
     `visible: ${snapshot.learning_control.visible}`,

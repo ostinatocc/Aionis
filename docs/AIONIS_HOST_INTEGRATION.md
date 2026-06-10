@@ -74,6 +74,13 @@ Hosts should not re-derive this contract from raw rows. Use the compiled
 `agent_context` fields for prompts and use contract reason codes or receipt
 risk flags for audit logs.
 
+Trace-to-Procedure readiness is delivered through
+`operator_snapshot.trace_to_procedure`, not through the Agent prompt. Hosts can
+use it for run logs, dashboards, support diagnostics, or workflow review: it
+shows which existing execution-memory surfaces are visible and whether reuse is
+stable, candidate-only, blocked, or still insufficient. It does not compile,
+promote, or run a playbook.
+
 ## `history_used` vs `actionable_history_used`
 
 `history_used` means the Aionis history/context channel participated in guide
@@ -463,6 +470,7 @@ The snapshot is read-only. It should show:
 3. feedback attribution status
 4. learning-control posture
 5. measured effect direction
+6. trace-to-procedure readiness for reusable workflow/procedure memory
 
 It is not Agent prompt content.
 

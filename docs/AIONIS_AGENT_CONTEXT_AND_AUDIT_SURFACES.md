@@ -33,6 +33,7 @@ rehydrated memory. They must not become Agent prompt content.
 | `memory_decision_audit` | `POST /v1/audit/memory-decision-report` or `/v1/measure` | Operator audit / product diagnostics | Compact review of memory decisions. | Never |
 | `memory_use_receipt` | Inside `memory_decision_trace` and `operator_snapshot` | Host / operator audit | Compact receipt of exposed, blocked, rehydrated, attributed, and unattributed memory IDs. | Never |
 | `operator_snapshot` | `POST /v1/operator/snapshot` | Operator / host observability | Read-only run, branch, feedback, and effect summary. | Never |
+| `operator_snapshot.trace_to_procedure` | Inside `operator_snapshot` | Operator / host observability | Read-only procedure-readiness projection from execution tree, workflow, replay, contract, trace, and promotion evidence. | Never |
 
 ## Agent-Facing Contract
 
@@ -64,6 +65,10 @@ Memory Contract follows the same boundary. The Agent sees only the compiled
 contract object and reason codes are packet/debug/receipt surfaces for hosts
 and operators.
 
+Trace-to-Procedure follows the operator boundary. It can explain why a workflow
+or procedure is stable, candidate-only, blocked, or not applicable, but it must
+not be appended to the Agent prompt or treated as a new action policy.
+
 ## Debug and Audit Contract
 
 Use `memory_decision_trace` when the developer needs exact causality:
@@ -93,6 +98,16 @@ answer to "what memory did Aionis expose or block this turn?":
 5. `attributed_memory_ids`
 6. `unattributed_recalled_memory_ids`
 7. `risk_flags`
+
+Use `operator_snapshot.trace_to_procedure` when the host or operator needs to
+understand whether existing execution evidence is ready for reusable procedure
+memory:
+
+1. visible source surfaces
+2. procedure memory IDs and workflow IDs
+3. candidate vs stable reuse state
+4. promotion blocked count and reason
+5. evidence references
 
 The audit report is intentionally operator-facing. It is not a better prompt.
 

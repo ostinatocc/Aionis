@@ -69,7 +69,7 @@ function agentContext() {
     },
     evidence_refs: {
       memory_ids: ["mem-passed", "mem-failed"],
-      workflow_ids: [],
+      workflow_ids: ["wf-checkout-reviewer"],
       evidence_count: 2,
     },
   };
@@ -83,6 +83,7 @@ function executionContext() {
       compressed_state: [
         {
           node_id: "active-1",
+          memory_id: "mem-active",
           title: "Active reviewer continuation",
           summary: "MULTI_AGENT_SNAPSHOT_PASSED reviewer continues scoped branch.",
           supporting_raw_refs: ["trace://snapshot/passed/raw"],
@@ -93,6 +94,7 @@ function executionContext() {
       {
         source: "execution_tree",
         node_id: "passed-1",
+        memory_id: "mem-passed",
         title: "Passed scoped patch",
         summary: "MULTI_AGENT_SNAPSHOT_PASSED scoped patch passed verifier replay.",
         evidence_refs: ["evidence://snapshot/passed"],
@@ -102,6 +104,7 @@ function executionContext() {
       {
         source: "execution_tree",
         node_id: "failed-1",
+        memory_id: "mem-failed",
         title: "Failed broad retry",
         summary: "MULTI_AGENT_SNAPSHOT_FAILED broad retry failed verifier replay.",
         supporting_raw_refs: ["trace://snapshot/failed/raw"],
@@ -164,13 +167,30 @@ test("operator snapshot route reports branch isolation and markdown without muta
   assert.deepEqual(body.operator_snapshot.memory_use_receipt.do_not_use_memory_ids, ["mem-failed"]);
   assert.ok(body.operator_snapshot.memory_use_receipt.risk_flags.includes("premise_firewall_query_risk"));
   assert.ok(body.operator_snapshot.memory_use_receipt.risk_flags.includes("memory_contract_risk"));
+  assert.equal(body.operator_snapshot.trace_to_procedure.present, true);
+  assert.equal(body.operator_snapshot.trace_to_procedure.runtime_mutation, false);
+  assert.equal(body.operator_snapshot.trace_to_procedure.candidate_visible, true);
+  assert.equal(body.operator_snapshot.trace_to_procedure.stable_reuse_visible, false);
+  assert.equal(body.operator_snapshot.trace_to_procedure.promotion_status, "blocked");
+  assert.equal(body.operator_snapshot.trace_to_procedure.promotion_blocked_count, 1);
+  assert.ok(body.operator_snapshot.trace_to_procedure.source_surfaces.includes("execution_tree"));
+  assert.ok(body.operator_snapshot.trace_to_procedure.source_surfaces.includes("workflow_projection"));
+  assert.ok(body.operator_snapshot.trace_to_procedure.source_surfaces.includes("promotion_evidence"));
+  assert.ok(body.operator_snapshot.trace_to_procedure.procedure_memory_ids.includes("mem-passed"));
+  assert.ok(body.operator_snapshot.trace_to_procedure.workflow_ids.includes("wf-checkout-reviewer"));
   assert.ok(body.operator_snapshot.claims.some((claim: Record<string, unknown>) =>
     claim.claim === "memory_use_receipt_visible"
     && claim.status === "pass"
   ));
+  assert.ok(body.operator_snapshot.claims.some((claim: Record<string, unknown>) =>
+    claim.claim === "trace_to_procedure_visible"
+    && claim.status === "pass"
+  ));
   assert.ok(body.source_map.internal_surfaces_used.includes("memory_use_receipt"));
+  assert.ok(body.source_map.internal_surfaces_used.includes("trace_to_procedure_projection"));
   assert.match(body.markdown, /Aionis Operator Snapshot/);
   assert.match(body.markdown, /Memory Use Receipt/);
+  assert.match(body.markdown, /Trace to Procedure/);
   assert.match(body.markdown, /MULTI_AGENT_SNAPSHOT_FAILED/);
 
   await app.close();

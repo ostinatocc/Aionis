@@ -8,6 +8,12 @@ Aionis is not recall-only memory. It governs memory state first, then compiles
 bounded context; its strongest product surface is auditable, forgettable, and
 reusable execution memory.
 
+The operator-facing product path now includes a read-only Trace-to-Procedure
+projection in `operator_snapshot.trace_to_procedure`: it shows whether existing
+execution trees, workflow projections, replay evidence, execution contracts,
+decision traces, and promotion evidence are enough for candidate or stable
+procedure reuse.
+
 The product scope is intentionally narrow:
 
 1. execution continuity
