@@ -1101,9 +1101,16 @@ function buildExecutionAgentPrompt(args: {
     };
     const currentLines = args.useNow.filter((value) => value.startsWith("Current active path:"));
     const procedureLines = args.useNow.filter((value) => !value.startsWith("Current active path:"));
+    const nextActionSource = currentLines[0] ?? args.useNow[0] ?? args.inspectBeforeUse[0] ?? null;
+    const nextAction = nextActionSource
+      ? nextActionSource.replace(/^(?:Current active path|Passed solution|Admitted abstraction|Inspect gated abstraction before use):\s*/i, "")
+      : null;
     return uniqueStrings([
       "AIONIS_CTX v2",
       `state r=agent h=${args.historyUsed ? 1 : 0} a=${args.actionableHistoryUsed ? 1 : 0} p=${agentPromptPostureLabel(args.recommendedPosture)} auth=${agentPromptAuthorityLabel(args.authority)} risk=${agentPromptRiskLabel(args.negativeTransferRisk)}`,
+      args.actionableHistoryUsed
+        ? `next ${nextAction ? `action=${truncate(nextAction, profile.currentChars)} ` : ""}actor_role=agent`
+        : null,
       `summary ${truncate(args.summary, profile.summaryChars)}`,
       ...line("current", currentLines.length > 0 ? currentLines : args.useNow.slice(0, 1), profile.currentItems, profile.currentChars),
       ...line("procedure", procedureLines, profile.procedureItems, profile.procedureChars),

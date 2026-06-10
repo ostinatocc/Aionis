@@ -526,6 +526,9 @@ test("product agent context contract renderer preserves execution state surfaces
             anchor_kind: "execution",
             anchor_level: "L2",
             target_files: ["src/checkout/adapter.ts"],
+            next_action: "Continue scoped checkout adapter patch from current boundary.",
+            actor_role: "worker",
+            handoff_target: "reviewer",
           },
         },
         confidence: 0.94,
@@ -626,7 +629,16 @@ test("product agent context contract renderer preserves execution state surfaces
 
   assert.ok(context.prompt_text.includes("AIONIS_CTX v2"));
   assert.equal(context.prompt_text.includes("AIONIS_AGENT_CONTEXT v1"), false);
+  const currentMemory = memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-contract-current");
+  assert.equal(currentMemory?.execution_state?.summary_kind, "current_state");
+  assert.equal(currentMemory?.execution_state?.next_action_hint, "Continue scoped checkout adapter patch from current boundary.");
+  assert.equal(currentMemory?.execution_state?.actor_role, "worker");
+  assert.equal(currentMemory?.execution_state?.handoff_target, "reviewer");
+  assert.ok(context.prompt_text.includes("next action=Continue scoped checkout adapter patch"));
+  assert.ok(context.prompt_text.includes("actor_role=worker"));
+  assert.ok(context.prompt_text.includes("handoff_target=reviewer"));
   assert.ok(context.prompt_text.includes("current: id=m1"));
+  assert.ok(context.prompt_text.includes("kind=current_state"));
   assert.ok(context.prompt_text.includes("procedure: id=m2"));
   assert.match(context.prompt_text, /avoid: id=m\d+/);
   assert.match(context.prompt_text, /rehydrate: id=m\d+/);
@@ -638,6 +650,88 @@ test("product agent context contract renderer preserves execution state surfaces
   assert.ok(context.use_now_memory_ids.includes("mem-contract-procedure"));
   assert.ok(context.do_not_use_memory_ids.includes("mem-contract-failed-branch"));
   assert.ok(context.rehydrate_hints.some((entry) => entry.memory_id === "mem-contract-rehydrate"));
+});
+
+test("product agent context contract renderer prioritizes inspect-gated current execution state", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "review current multi-agent handoff state",
+    },
+    nodes: [
+      {
+        id: "mem-inspect-procedure",
+        type: "procedure",
+        title: "Reviewer handoff procedure",
+        text_summary: "Reusable procedure should be inspected before reviewer handoff.",
+        tier: "hot",
+        slots: {
+          memory_kind: "execution_workflow",
+          lifecycle_state: "candidate",
+          execution_native_v1: {
+            schema_version: "execution_native_v1",
+            execution_kind: "workflow_candidate",
+            summary_kind: "workflow_candidate",
+            compression_layer: "L2",
+            contract_trust: "advisory",
+            task_signature: "multi-agent-contract-renderer",
+            workflow_signature: "planner-worker-reviewer",
+            target_files: ["src/checkout/reviewer.ts"],
+            next_action: "Inspect reviewer workflow before reuse.",
+            actor_role: "worker",
+            handoff_target: "reviewer",
+          },
+        },
+        confidence: 0.7,
+        salience: 0.9,
+      },
+      {
+        id: "mem-inspect-current",
+        type: "concept",
+        title: "Reviewer current active path",
+        text_summary: "Current active path: reviewer should continue the passed checkout adapter branch.",
+        tier: "hot",
+        slots: {
+          memory_kind: "execution_state",
+          lifecycle_state: "candidate",
+          execution_native_v1: {
+            schema_version: "execution_native_v1",
+            execution_kind: "execution_native",
+            summary_kind: "current_state",
+            compression_layer: "L2",
+            contract_trust: "advisory",
+            task_signature: "multi-agent-contract-renderer",
+            workflow_signature: "planner-worker-reviewer",
+            target_files: ["src/checkout/reviewer.ts"],
+            next_action: "Continue the passed branch and hand off to reviewer verification.",
+            actor_role: "worker",
+            handoff_target: "reviewer",
+          },
+        },
+        confidence: 0.7,
+        salience: 0.88,
+      },
+    ],
+  });
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    agent_role: "reviewer",
+    memory_packet: memoryPacket,
+    context_compaction_profile: "aggressive",
+  });
+
+  assert.equal(context.use_now_memory_ids.length, 0);
+  assert.ok(context.inspect_before_use_memory_ids.includes("mem-inspect-current"));
+  assert.match(context.prompt_text, /current: id=m1 .*gate=inspect/);
+  assert.ok(context.prompt_text.includes("m1=mem-inspect-current"));
+  assert.ok(context.prompt_text.includes("next action=Continue the passed branch"));
+  assert.ok(context.prompt_text.includes("actor_role=worker"));
+  assert.ok(context.prompt_text.includes("handoff_target=reviewer"));
+  assert.ok(context.prompt_text.indexOf("mem-inspect-current") < context.prompt_text.indexOf("mem-inspect-procedure"));
 });
 
 test("product agent context preserves guide-only recovered target files", () => {

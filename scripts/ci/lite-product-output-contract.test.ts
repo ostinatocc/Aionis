@@ -658,6 +658,51 @@ test("AionisMemoryPacket accepts evidence-scoped general cognitive memory output
   assert.deepEqual(parsed.behavior_impact.expected_effects, ["answer_style"]);
 });
 
+test("AionisMemoryPacket accepts strict execution-state memory projection", () => {
+  const packet: any = validMemoryPacket();
+  packet.memory_family = "execution";
+  packet.relevant_memories[0] = {
+    ...packet.relevant_memories[0],
+    memory_id: "mem-exec-1",
+    title: "Reviewer handoff current state",
+    summary: "Reviewer should continue the passed branch and avoid the rejected path.",
+    memory_type: "execution_memory",
+    domain: "execution",
+    target_files: ["src/runtime.ts"],
+    execution_state: {
+      summary_kind: "current_state",
+      execution_kind: "execution_native",
+      task_signature: "runtime-handoff",
+      workflow_signature: "planner-worker-reviewer",
+      next_action_hint: "Continue the passed branch.",
+      actor_role: "worker",
+      handoff_target: "reviewer",
+      source_agent_id: "worker-1",
+      source_team_id: "runtime-team",
+    },
+  };
+
+  const parsed = AionisMemoryPacketSchema.parse(packet);
+  assert.equal(parsed.memory_family, "execution");
+  assert.equal(parsed.relevant_memories[0]?.execution_state?.summary_kind, "current_state");
+  assert.equal(parsed.relevant_memories[0]?.execution_state?.next_action_hint, "Continue the passed branch.");
+
+  assert.throws(
+    () =>
+      AionisMemoryPacketSchema.parse({
+        ...packet,
+        relevant_memories: [{
+          ...packet.relevant_memories[0],
+          execution_state: {
+            ...packet.relevant_memories[0].execution_state,
+            raw_trace: "must stay out of product output",
+          },
+        }],
+      }),
+    /Unrecognized key/,
+  );
+});
+
 test("AionisMemoryPacket rejects raw memory leakage and loose fields", () => {
   assert.throws(
     () =>

@@ -928,6 +928,9 @@ async function buildProductGuideStructuredExecutionPacket(args: {
     raw_ref: row.raw_ref,
     evidence_ref: row.evidence_ref,
     commit_id: row.commit_id,
+    producer_agent_id: row.producer_agent_id,
+    owner_agent_id: row.owner_agent_id,
+    owner_team_id: row.owner_team_id,
     confidence: row.confidence,
     salience: row.salience,
     created_at: row.created_at,
@@ -1013,11 +1016,18 @@ function renderMergedAgentPrompt(args: {
   const ctx = args.context;
   const currentLines = ctx.use_now.filter((entry) => entry.startsWith("Current active path:"));
   const procedureLines = ctx.use_now.filter((entry) => !entry.startsWith("Current active path:"));
+  const nextActionSource = currentLines[0] ?? ctx.use_now[0] ?? ctx.inspect_before_use[0] ?? null;
+  const nextAction = nextActionSource
+    ? nextActionSource.replace(/^(?:Current active path|Passed solution|Candidate workflow|Inspect gated abstraction before use):\s*/i, "")
+    : null;
   const line = (label: string, values: string[], limit: number, maxChars: number): string[] =>
     values.slice(0, limit).map((entry) => `${label}: note=${compactProductPromptText(entry, maxChars)}`);
   const prompt = uniqueStrings([
     "AIONIS_CTX v2",
     `state r=${ctx.agent_role} h=${ctx.history_used ? 1 : 0} a=${ctx.actionable_history_used ? 1 : 0} p=${productPromptPostureLabel(ctx.recommended_posture)} auth=${productPromptAuthorityLabel(ctx.authority)} risk=${productPromptRiskLabel(ctx.risk.negative_transfer_risk)}`,
+    ctx.actionable_history_used
+      ? `next ${nextAction ? `action=${compactProductPromptText(nextAction, 130)} ` : ""}actor_role=${ctx.agent_role}`
+      : null,
     `summary ${compactProductPromptText(ctx.summary, 160)}`,
     ctx.target_files.length > 0 ? `files ${ctx.target_files.slice(0, 4).join(",")}` : null,
     ...line("current", currentLines.length > 0 ? currentLines : ctx.use_now.slice(0, 1), 2, 160),

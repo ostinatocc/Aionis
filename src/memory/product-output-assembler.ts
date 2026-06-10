@@ -42,10 +42,13 @@ import {
   resolveNodeCompressionLayer,
   resolveNodeExecutionContractTrust,
   resolveNodeExecutionKind,
+  resolveNodeNextAction,
   resolveNodeRehydrationDefaultMode,
   resolveNodeSemanticForgettingSurface,
   resolveNodeSummaryKind,
   resolveNodeTargetFiles,
+  resolveNodeTaskSignature,
+  resolveNodeWorkflowSignature,
 } from "./node-execution-surface.js";
 import {
   adjudicateMemoryLifecycle,
@@ -171,6 +174,9 @@ export type BuildAionisMemoryPacketArgs = {
     raw_ref?: string | null;
     evidence_ref?: string | null;
     commit_id?: string | null;
+    producer_agent_id?: string | null;
+    owner_agent_id?: string | null;
+    owner_team_id?: string | null;
     confidence?: number | null;
     salience?: number | null;
     created_at?: string | null;
@@ -477,6 +483,65 @@ function memoryContractForEntry(entry: MemoryContractProjectionInput): MemoryPac
   };
 }
 
+function memoryExecutionStateProjection(args: {
+  node: BuildAionisMemoryPacketArgs["nodes"][number];
+  slots: Record<string, unknown> | null;
+  contextItem: Record<string, unknown> | null;
+  domain: AionisMemoryDomain;
+}): MemoryPacketEntry["execution_state"] | undefined {
+  const executionNative = asRecord(args.slots?.execution_native_v1);
+  const executionState = asRecord(args.slots?.execution_state);
+  const summaryKind = resolveNodeSummaryKind(args.slots) ?? stringValue(args.contextItem?.summary_kind);
+  const executionKind = resolveNodeExecutionKind(args.slots) ?? stringValue(args.contextItem?.execution_kind);
+  const taskSignature = resolveNodeTaskSignature({ slots: args.slots })
+    ?? stringValue(args.contextItem?.task_signature);
+  const workflowSignature = resolveNodeWorkflowSignature({ slots: args.slots })
+    ?? stringValue(args.contextItem?.workflow_signature);
+  const nextActionHint = resolveNodeNextAction({ slots: args.slots })
+    ?? stringValue(args.contextItem?.next_action);
+  const actorRole = stringValue(executionNative?.actor_role)
+    ?? stringValue(executionState?.actor_role)
+    ?? stringValue(args.slots?.actor_role)
+    ?? stringValue(args.contextItem?.actor_role);
+  const handoffTarget = stringValue(executionNative?.handoff_target)
+    ?? stringValue(executionNative?.handoff_target_role)
+    ?? stringValue(executionNative?.next_actor_role)
+    ?? stringValue(executionState?.handoff_target)
+    ?? stringValue(args.slots?.handoff_target)
+    ?? stringValue(args.slots?.handoff_target_role)
+    ?? stringValue(args.slots?.next_actor_role)
+    ?? stringValue(args.contextItem?.handoff_target)
+    ?? stringValue(args.contextItem?.handoff_target_role)
+    ?? stringValue(args.contextItem?.next_actor_role);
+  const sourceAgentId = stringValue(args.node.owner_agent_id)
+    ?? stringValue(args.node.producer_agent_id)
+    ?? stringValue(args.contextItem?.owner_agent_id)
+    ?? stringValue(args.contextItem?.producer_agent_id);
+  const sourceTeamId = stringValue(args.node.owner_team_id)
+    ?? stringValue(args.contextItem?.owner_team_id);
+  const hasExecutionSurface =
+    args.domain === "execution"
+    || !!summaryKind
+    || !!executionKind
+    || !!taskSignature
+    || !!workflowSignature
+    || !!nextActionHint
+    || !!actorRole
+    || !!handoffTarget;
+  if (!hasExecutionSurface) return undefined;
+  return {
+    summary_kind: summaryKind,
+    execution_kind: executionKind,
+    task_signature: taskSignature,
+    workflow_signature: workflowSignature,
+    next_action_hint: nextActionHint,
+    actor_role: actorRole,
+    handoff_target: handoffTarget,
+    source_agent_id: sourceAgentId,
+    source_team_id: sourceTeamId,
+  };
+}
+
 function buildMemoryPacketEntries(args: BuildAionisMemoryPacketArgs): {
   entries: MemoryPacketEntry[];
   lifecycleRelations: MemoryLifecycleRelation[];
@@ -511,6 +576,12 @@ function buildMemoryPacketEntries(args: BuildAionisMemoryPacketArgs): {
       tier: stringValue(node.tier),
       confidence,
     });
+    const executionState = memoryExecutionStateProjection({
+      node,
+      slots,
+      contextItem,
+      domain,
+    });
     return {
       memory_id: node.id,
       title: memoryTitle({ node, contextItem }),
@@ -529,6 +600,7 @@ function buildMemoryPacketEntries(args: BuildAionisMemoryPacketArgs): {
         ?? stringValue(contextItem?.created_at),
       target_files: targetFiles,
       scope_hint: memoryScopeHint({ domain, sourceLayer: layer }),
+      ...(executionState ? { execution_state: executionState } : {}),
       source_index: sourceIndex,
     };
   });
@@ -1315,6 +1387,89 @@ function contractEntryFiles(entry: MemoryPacketEntry | null | undefined, fallbac
   return files.length > 0 ? ` f=${files.join(",")}` : "";
 }
 
+function contractEntryExecutionMeta(entry: MemoryPacketEntry | null | undefined): string {
+  const state = entry?.execution_state;
+  if (!state) return "";
+  const meta = compactStrings([
+    state.summary_kind ? `kind=${contractMetaToken(state.summary_kind)}` : null,
+    state.actor_role ? `actor_role=${contractMetaToken(state.actor_role)}` : null,
+    state.handoff_target ? `handoff_target=${contractMetaToken(state.handoff_target)}` : null,
+  ]).slice(0, 3);
+  return meta.length > 0 ? ` ${meta.join(" ")}` : "";
+}
+
+function contractMetaToken(value: string): string {
+  return shortenPromptText(value.replace(/\s+/g, "_").replace(/[^A-Za-z0-9_.:@/-]/g, ""), 96) || "unknown";
+}
+
+function executionStateKind(entry: MemoryPacketEntry): string {
+  return (entry.execution_state?.summary_kind ?? "").toLowerCase();
+}
+
+function executionStateText(entry: MemoryPacketEntry): string {
+  return `${entry.title ?? ""} ${entry.summary}`.toLowerCase();
+}
+
+function contractEntryIsCurrentState(entry: MemoryPacketEntry): boolean {
+  const kind = executionStateKind(entry);
+  if (
+    kind.includes("current")
+    || kind.includes("active_path")
+    || kind.includes("active_state")
+    || kind === "handoff"
+  ) return true;
+  if (entry.domain !== "execution") return false;
+  const text = executionStateText(entry);
+  return text.includes("current active path") || text.includes("active continuation");
+}
+
+function contractEntryIsProcedure(entry: MemoryPacketEntry): boolean {
+  const kind = executionStateKind(entry);
+  return entry.memory_type === "procedure"
+    || kind.includes("workflow")
+    || kind.includes("procedure")
+    || kind.includes("playbook")
+    || kind.includes("pattern");
+}
+
+function contractEntryIsHandoff(entry: MemoryPacketEntry): boolean {
+  const kind = executionStateKind(entry);
+  return kind.includes("handoff") || !!entry.execution_state?.handoff_target;
+}
+
+function contractInspectPriority(entry: MemoryPacketEntry): number {
+  if (contractEntryIsCurrentState(entry)) return 0;
+  if (contractEntryIsHandoff(entry)) return 1;
+  if (contractEntryIsProcedure(entry)) return 2;
+  return 3;
+}
+
+function firstExecutionStateEntryWithNext(entries: MemoryPacketEntry[]): MemoryPacketEntry | null {
+  return entries.find((entry) =>
+    !!entry.execution_state?.next_action_hint
+    || !!entry.execution_state?.handoff_target
+    || !!entry.execution_state?.actor_role
+  ) ?? null;
+}
+
+function contractNextActionLine(args: {
+  entry: MemoryPacketEntry | null;
+  agentRole: AionisAgentRole;
+  sourceAlias?: string | null;
+  maxChars: number;
+}): string | null {
+  const state = args.entry?.execution_state;
+  if (!state) return null;
+  const nextAction = normalizeContractPromptNote(state.next_action_hint);
+  const parts = compactStrings([
+    nextAction ? `action=${shortenPromptText(nextAction, args.maxChars)}` : null,
+    `actor_role=${contractMetaToken(state.actor_role ?? args.agentRole)}`,
+    state.handoff_target ? `handoff_target=${contractMetaToken(state.handoff_target)}` : null,
+    args.entry ? `source=${contractMetaToken(args.sourceAlias ?? args.entry.memory_id)}` : null,
+  ]);
+  return parts.length > 0 ? `next ${parts.join(" ")}` : null;
+}
+
 function normalizeContractPromptTitle(value: string | null): string | null {
   const text = normalizeContractPromptNote(value);
   if (!text) return null;
@@ -1365,13 +1520,16 @@ function contractEntryLine(args: {
   fallback: string;
   maxChars: number;
   fallbackFiles?: string[];
+  gate?: "inspect" | "use" | "avoid" | null;
 }): string | null {
   const id = args.alias ? ` id=${args.alias}` : "";
   const files = contractEntryFiles(args.entry, args.fallbackFiles);
+  const gate = args.gate && args.gate !== "use" ? ` gate=${args.gate}` : "";
+  const meta = contractEntryExecutionMeta(args.entry);
   const reason = contractEntrySummary(args.entry, args.fallback, args.maxChars);
   if (!id && !files && !reason) return null;
   const note = reason ? ` n=${reason}` : "";
-  return `${args.label}:${id}${files}${note}`;
+  return `${args.label}:${id}${files}${gate}${meta}${note}`;
 }
 
 function renderExecutionStateContractPrompt(args: {
@@ -1396,26 +1554,39 @@ function renderExecutionStateContractPrompt(args: {
 }): string {
   const entries = entryById(args.memoryEntries);
   const useEntries = args.useNowMemoryIds.map((id) => entries.get(id)).filter((entry): entry is MemoryPacketEntry => !!entry);
-  const currentEntry =
+  const inspectEntries = args.inspectBeforeUseMemoryIds
+    .map((id) => entries.get(id))
+    .filter((entry): entry is MemoryPacketEntry => !!entry)
+    .sort((left, right) => contractInspectPriority(left) - contractInspectPriority(right));
+  const useCurrentEntry =
     useEntries.find((entry) => entry.memory_type !== "procedure")
     ?? useEntries[0]
     ?? null;
+  const inspectCurrentEntry = useCurrentEntry
+    ? null
+    : inspectEntries.find(contractEntryIsCurrentState) ?? null;
+  const currentEntry = useCurrentEntry ?? inspectCurrentEntry;
+  const currentEntryGate: "use" | "inspect" = useCurrentEntry ? "use" : "inspect";
   const procedureEntries = useEntries.filter((entry) =>
     entry.memory_type === "procedure"
     || entry.domain === "execution"
   );
-  const inspectEntries = args.inspectBeforeUseMemoryIds
-    .map((id) => entries.get(id))
-    .filter((entry): entry is MemoryPacketEntry => !!entry);
   const avoidEntries = args.doNotUseMemoryIds
     .map((id) => entries.get(id))
     .filter((entry): entry is MemoryPacketEntry => !!entry);
   const renderedProcedureEntries = procedureEntries
     .filter((entry) => entry.memory_id !== currentEntry?.memory_id)
     .slice(0, Math.max(0, args.profile.useNowItems));
-  const renderedInspectEntries = inspectEntries.slice(0, args.profile.inspectItems);
+  const renderedInspectEntries = inspectEntries
+    .filter((entry) => entry.memory_id !== currentEntry?.memory_id)
+    .slice(0, args.profile.inspectItems);
   const renderedAvoidEntries = avoidEntries.slice(0, args.profile.doNotUseItems);
-    const renderedRehydrateHints = args.rehydrateHints.slice(0, args.profile.rehydrateItems);
+  const renderedRehydrateHints = args.rehydrateHints.slice(0, args.profile.rehydrateItems);
+  const nextActionEntry = firstExecutionStateEntryWithNext(compactStrings([
+    currentEntry?.memory_id,
+    ...renderedProcedureEntries.map((entry) => entry.memory_id),
+    ...renderedInspectEntries.map((entry) => entry.memory_id),
+  ]).map((id) => entries.get(id)).filter((entry): entry is MemoryPacketEntry => !!entry));
   const renderedIds = compactStrings([
     currentEntry?.memory_id,
     ...renderedProcedureEntries.map((entry) => entry.memory_id),
@@ -1438,6 +1609,12 @@ function renderExecutionStateContractPrompt(args: {
   const sections = compactStrings([
     "AIONIS_CTX v2",
     `state r=${args.agentRole} h=${args.historyUsed ? 1 : 0} a=${args.actionableHistoryUsed ? 1 : 0} p=${contractPostureLabel(args.recommendedPosture)} auth=${contractAuthorityLabel(args.authority)} risk=${contractRiskLabel(args.negativeTransferRisk)}`,
+    contractNextActionLine({
+      entry: nextActionEntry,
+      agentRole: args.agentRole,
+      sourceAlias: nextActionEntry ? aliases.get(nextActionEntry.memory_id) : null,
+      maxChars: args.profile.useNowChars,
+    }),
     !hasRenderedContractEntries && normalizeContractPromptNote(args.summary)
       ? `sum ${shortenPromptText(normalizeContractPromptNote(args.summary) ?? "", args.profile.summaryChars)}`
       : null,
@@ -1449,6 +1626,7 @@ function renderExecutionStateContractPrompt(args: {
           fallback: currentFallback,
           maxChars: args.profile.useNowChars,
           fallbackFiles: args.targetFiles,
+          gate: currentEntry ? currentEntryGate : null,
         })
       : null,
     ...renderedProcedureEntries

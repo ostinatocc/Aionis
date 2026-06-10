@@ -176,6 +176,20 @@ export const AionisMemoryPacketSchema = z
             observed_at: z.string().min(1).nullable().default(null),
             target_files: z.array(z.string().min(1)).default([]),
             scope_hint: z.string().min(1).nullable().optional(),
+            execution_state: z
+              .object({
+                summary_kind: z.string().min(1).nullable().default(null),
+                execution_kind: z.string().min(1).nullable().default(null),
+                task_signature: z.string().min(1).nullable().default(null),
+                workflow_signature: z.string().min(1).nullable().default(null),
+                next_action_hint: z.string().min(1).nullable().default(null),
+                actor_role: z.string().min(1).nullable().default(null),
+                handoff_target: z.string().min(1).nullable().default(null),
+                source_agent_id: z.string().min(1).nullable().default(null),
+                source_team_id: z.string().min(1).nullable().default(null),
+              })
+              .strict()
+              .optional(),
             memory_contract: AionisMemoryContractSchema.default(defaultAionisMemoryContract),
           })
           .strict(),
