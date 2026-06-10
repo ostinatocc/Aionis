@@ -1509,7 +1509,10 @@ function contractEntryIsCurrentState(entry: MemoryPacketEntry): boolean {
   ) return true;
   if (entry.domain !== "execution") return false;
   const text = executionStateText(entry);
-  return text.includes("current active path") || text.includes("active continuation");
+  return text.includes("current active path")
+    || text.includes("active continuation")
+    || /\bcurrent\b.{0,48}\b(?:state|path|continuation|handoff)\b/.test(text)
+    || /\b(?:latest|accepted|approved)\b.{0,80}\b(?:state|handoff|continuation|path|point)\b/.test(text);
 }
 
 function contractEntryIsProcedure(entry: MemoryPacketEntry): boolean {
@@ -1595,7 +1598,8 @@ function contractPromptAliasesFor(args: {
     .filter((entry): entry is MemoryPacketEntry => !!entry)
     .sort((left, right) => contractInspectPriority(left) - contractInspectPriority(right));
   const useCurrentEntry =
-    useEntries.find((entry) => entry.memory_type !== "procedure")
+    useEntries.find(contractEntryIsCurrentState)
+    ?? useEntries.find((entry) => entry.memory_type !== "procedure")
     ?? useEntries[0]
     ?? null;
   const inspectCurrentEntry = useCurrentEntry
@@ -1739,7 +1743,8 @@ function renderExecutionStateContractPrompt(args: {
     .filter((entry): entry is MemoryPacketEntry => !!entry)
     .sort((left, right) => contractInspectPriority(left) - contractInspectPriority(right));
   const useCurrentEntry =
-    useEntries.find((entry) => entry.memory_type !== "procedure")
+    useEntries.find(contractEntryIsCurrentState)
+    ?? useEntries.find((entry) => entry.memory_type !== "procedure")
     ?? useEntries[0]
     ?? null;
   const inspectCurrentEntry = useCurrentEntry

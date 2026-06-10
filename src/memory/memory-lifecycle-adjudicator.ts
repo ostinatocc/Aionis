@@ -451,6 +451,33 @@ function pathOverlap(left: string[], right: string[]): number {
   return count;
 }
 
+function normalizeTargetPath(value: string): string | null {
+  const normalized = value
+    .trim()
+    .replace(/^['"`]+|['"`]+$/g, "")
+    .replace(/\\/g, "/")
+    .replace(/\/+/g, "/")
+    .replace(/^\.\//, "")
+    .toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function structuredTargetSet(entry: AdjudicableMemoryEntry): string[] {
+  return [...new Set(
+    (entry.target_files ?? [])
+      .map(normalizeTargetPath)
+      .filter((value): value is string => !!value),
+  )].sort();
+}
+
+function sameStructuredTargetSet(source: AdjudicableMemoryEntry, target: AdjudicableMemoryEntry): boolean {
+  const sourceTargets = structuredTargetSet(source);
+  const targetTargets = structuredTargetSet(target);
+  return sourceTargets.length > 0
+    && sourceTargets.length === targetTargets.length
+    && sourceTargets.every((value, index) => value === targetTargets[index]);
+}
+
 function hasUsableAuthority(entry: AdjudicableMemoryEntry): boolean {
   return entry.authority === "trusted" || entry.authority === "advisory";
 }
@@ -482,7 +509,7 @@ function sourceIsNewer(source: AdjudicableMemoryEntry, target: AdjudicableMemory
   ) {
     return true;
   }
-  return source.source_index < target.source_index;
+  return false;
 }
 
 function relationConfidence(args: {
@@ -521,6 +548,7 @@ function relationSurface(source: AdjudicableMemoryEntry, target: AdjudicableMemo
     targetPaths,
     sharedPathCount,
     hasPathConflict,
+    sameStructuredTargetSet: sameStructuredTargetSet(source, target),
     tokenOverlap,
     priorCues,
     relatedByText: tokenOverlap >= 3,
@@ -637,6 +665,7 @@ function inferRelation(source: AdjudicableMemoryEntry, target: AdjudicableMemory
   if (correctionCues.length === 0) return null;
 
   const surface = relationSurface(source, target);
+  if (surface.sameStructuredTargetSet) return null;
   const relationSupported = surface.relatedByText || surface.relatedByPath || surface.relatedByPriorCue;
   if (!relationSupported) return null;
   const sameDomain = source.domain === target.domain;
@@ -705,6 +734,11 @@ export function adjudicateMemoryLifecycle(
     if (!isMemoryLifecycleRelationType(relation.relation)) continue;
     if (relation.confidence < 0.7) continue;
     if (!entryIds.has(relation.target_memory_id)) continue;
+    const source = entriesById.get(relation.source_memory_id);
+    const target = entriesById.get(relation.target_memory_id);
+    if (source && target && relation.evidence.producer === "rule_cue" && sameStructuredTargetSet(source, target)) {
+      continue;
+    }
     const existing = relationsByTarget.get(relation.target_memory_id);
     relationsByTarget.set(relation.target_memory_id, existing ? strongerRelation(existing, relation) : relation);
   }

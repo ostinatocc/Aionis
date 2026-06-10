@@ -197,6 +197,21 @@ test("lifecycle candidates admit scrubbed current and procedure candidates while
   assert.ok(currentDecision?.reason_codes.includes("lifecycle_candidate_direct_use_admitted"));
   assert.equal(failedDecision?.agent_surface, "inspect_before_use");
   assert.ok(failedDecision?.reason_codes.includes("lifecycle_candidate_direct_use_gated"));
+
+  const contractContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    context_compaction_profile: "aggressive",
+  });
+  assert.equal(
+    contractContext.prompt_aliases.find((entry) => entry.memory_id === "mem-current-scrubbed")?.surface,
+    "current",
+  );
+  assert.equal(
+    contractContext.prompt_aliases.find((entry) => entry.memory_id === "mem-procedure-scrubbed")?.surface,
+    "procedure",
+  );
 });
 
 test("rehydrate lifecycle candidates stay shadow-only unless the memory is eligible", () => {
@@ -239,4 +254,381 @@ test("rehydrate lifecycle candidates stay shadow-only unless the memory is eligi
   assert.equal(trace.lifecycle_candidate_summary.surface_effect_prompt_included, false);
   assert.deepEqual(trace.lifecycle_candidate_summary.gated_memory_ids, []);
   assert.ok(trace.lifecycle_candidate_summary.shadow_only_memory_ids.includes("mem-raw-summary"));
+});
+
+test("lifecycle candidates use target-file relations without benchmark wording cues", () => {
+  const directSignals = inferLifecycleCandidateSignals({
+    entries: [
+      {
+        memory_id: "mem-cluster-a",
+        title: "Note A",
+        summary: "The small change surface was prepared and checked.",
+        memory_type: "procedure",
+        domain: "execution",
+        lifecycle_state: "active",
+        authority: "candidate",
+        target_files: ["src/checkout/adapter.ts", "tests/checkout/adapter.test.ts"],
+      },
+      {
+        memory_id: "mem-cluster-b",
+        title: "Note B",
+        summary: "The same change surface has a short apply-and-verify sequence.",
+        memory_type: "procedure",
+        domain: "execution",
+        lifecycle_state: "active",
+        authority: "candidate",
+        target_files: ["src/checkout/adapter.ts", "tests/checkout/adapter.test.ts"],
+      },
+      {
+        memory_id: "mem-subset",
+        title: "Note C",
+        summary: "A narrower alternate edit touched only the verification surface.",
+        memory_type: "procedure",
+        domain: "execution",
+        lifecycle_state: "active",
+        authority: "candidate",
+        target_files: ["tests/checkout/adapter.test.ts"],
+      },
+      {
+        memory_id: "mem-subset-b",
+        title: "Note D",
+        summary: "Another alternate note also touched only the verification surface.",
+        memory_type: "procedure",
+        domain: "execution",
+        lifecycle_state: "active",
+        authority: "candidate",
+        target_files: ["tests/checkout/adapter.test.ts"],
+      },
+      {
+        memory_id: "mem-disjoint",
+        title: "Note E",
+        summary: "A broader alternate edit touched another file family.",
+        memory_type: "procedure",
+        domain: "execution",
+        lifecycle_state: "active",
+        authority: "candidate",
+        target_files: ["src/checkout/legacy.ts"],
+      },
+    ],
+  });
+  assert.ok(directSignals.some((signal) =>
+    signal.memory_id === "mem-cluster-a"
+    && signal.signal_type === "current"
+    && signal.evidence_span.source_field === "slots"
+  ));
+  assert.ok(directSignals.some((signal) =>
+    signal.memory_id === "mem-disjoint"
+    && signal.signal_type === "contested"
+    && signal.evidence_span.source_field === "slots"
+  ));
+  assert.ok(directSignals.some((signal) =>
+    signal.memory_id === "mem-subset"
+    && signal.signal_type === "contested"
+    && signal.evidence_span.source_field === "slots"
+  ));
+  assert.ok(directSignals.some((signal) =>
+    signal.memory_id === "mem-subset-b"
+    && signal.signal_type === "contested"
+    && signal.evidence_span.source_field === "slots"
+  ));
+
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "continue the repo task",
+    },
+    nodes: [
+      {
+        id: "mem-cluster-a",
+        type: "procedure",
+        title: "Note A",
+        text_summary: "The small change surface was prepared and checked.",
+        slots: {
+          target_files: ["src/checkout/adapter.ts", "tests/checkout/adapter.test.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "checkout-migration",
+            workflow_signature: "checkout-migration",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.89,
+      },
+      {
+        id: "mem-cluster-b",
+        type: "procedure",
+        title: "Note B",
+        text_summary: "The same change surface has a short apply-and-verify sequence.",
+        slots: {
+          target_files: ["src/checkout/adapter.ts", "tests/checkout/adapter.test.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "checkout-migration",
+            workflow_signature: "checkout-migration",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.88,
+      },
+      {
+        id: "mem-subset",
+        type: "procedure",
+        title: "Note C",
+        text_summary: "A narrower alternate edit touched only the verification surface.",
+        slots: {
+          target_files: ["tests/checkout/adapter.test.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "checkout-migration",
+            workflow_signature: "checkout-migration",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.875,
+      },
+      {
+        id: "mem-subset-b",
+        type: "procedure",
+        title: "Note D",
+        text_summary: "Another alternate note also touched only the verification surface.",
+        slots: {
+          target_files: ["tests/checkout/adapter.test.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "checkout-migration",
+            workflow_signature: "checkout-migration",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.872,
+      },
+      {
+        id: "mem-disjoint",
+        type: "procedure",
+        title: "Note E",
+        text_summary: "A broader alternate edit touched another file family.",
+        slots: {
+          target_files: ["src/checkout/legacy.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "checkout-migration",
+            workflow_signature: "checkout-migration",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.87,
+      },
+    ],
+    ranked: [
+      { id: "mem-cluster-a", score: 0.98 },
+      { id: "mem-cluster-b", score: 0.97 },
+      { id: "mem-subset", score: 0.965 },
+      { id: "mem-subset-b", score: 0.962 },
+      { id: "mem-disjoint", score: 0.96 },
+    ],
+  });
+  assert.equal(memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-cluster-a")?.authority, "candidate");
+  assert.equal(memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-disjoint")?.authority, "candidate");
+
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+  assert.ok(agentContext.use_now_memory_ids.includes("mem-cluster-a"));
+  assert.ok(agentContext.use_now_memory_ids.includes("mem-cluster-b"));
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-subset"), false);
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-subset-b"), false);
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-disjoint"), false);
+  assert.ok(agentContext.inspect_before_use_memory_ids.includes("mem-subset"));
+  assert.ok(agentContext.inspect_before_use_memory_ids.includes("mem-subset-b"));
+  assert.ok(agentContext.inspect_before_use_memory_ids.includes("mem-disjoint"));
+
+  const trace = buildAionisMemoryDecisionTrace({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    before_guide: null,
+    after_guide: {
+      memory_packet: memoryPacket,
+      agent_context: agentContext,
+    },
+  });
+  const clusterDecision = trace.memory_decisions.find((entry) => entry.memory_id === "mem-cluster-a");
+  assert.ok(clusterDecision?.reason_codes.includes("lifecycle_candidate_direct_use_admitted"));
+  assert.ok(trace.lifecycle_candidate_summary.gated_memory_ids.includes("mem-subset"));
+  assert.ok(trace.lifecycle_candidate_summary.gated_memory_ids.includes("mem-subset-b"));
+  assert.ok(trace.lifecycle_candidate_summary.gated_memory_ids.includes("mem-disjoint"));
+});
+
+test("lifecycle candidates preserve parallel active target clusters", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "continue both active workstreams",
+    },
+    nodes: [
+      {
+        id: "mem-api-a",
+        type: "procedure",
+        title: "API surface note A",
+        text_summary: "Active state for the API surface is ready to continue.",
+        slots: {
+          target_files: ["src/api/router.ts", "tests/api/router.test.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "parallel-workstreams",
+            workflow_signature: "api-workstream",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.92,
+      },
+      {
+        id: "mem-api-b",
+        type: "procedure",
+        title: "API surface note B",
+        text_summary: "The API surface has a scoped apply and verify sequence.",
+        slots: {
+          target_files: ["src/api/router.ts", "tests/api/router.test.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "parallel-workstreams",
+            workflow_signature: "api-workstream",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.91,
+      },
+      {
+        id: "mem-api-c",
+        type: "procedure",
+        title: "API surface note C",
+        text_summary: "A third API note confirms the same target surface.",
+        slots: {
+          target_files: ["src/api/router.ts", "tests/api/router.test.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "parallel-workstreams",
+            workflow_signature: "api-workstream",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.9,
+      },
+      {
+        id: "mem-worker-a",
+        type: "procedure",
+        title: "Worker surface note A",
+        text_summary: "Active state for the worker surface is ready to continue.",
+        slots: {
+          target_files: ["src/worker/queue.ts", "tests/worker/queue.test.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "parallel-workstreams",
+            workflow_signature: "worker-workstream",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.89,
+      },
+      {
+        id: "mem-worker-b",
+        type: "procedure",
+        title: "Worker surface note B",
+        text_summary: "The worker surface has a scoped apply and verify sequence.",
+        slots: {
+          target_files: ["src/worker/queue.ts", "tests/worker/queue.test.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "parallel-workstreams",
+            workflow_signature: "worker-workstream",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.88,
+      },
+    ],
+    ranked: [
+      { id: "mem-api-a", score: 0.99 },
+      { id: "mem-api-b", score: 0.98 },
+      { id: "mem-api-c", score: 0.97 },
+      { id: "mem-worker-a", score: 0.96 },
+      { id: "mem-worker-b", score: 0.95 },
+    ],
+  });
+
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+
+  assert.ok(agentContext.use_now_memory_ids.includes("mem-api-a"));
+  assert.ok(agentContext.use_now_memory_ids.includes("mem-worker-a"));
+  assert.equal(agentContext.inspect_before_use_memory_ids.includes("mem-worker-a"), false);
+  assert.equal(agentContext.inspect_before_use_memory_ids.includes("mem-worker-b"), false);
+});
+
+test("lifecycle candidates do not admit same target-set negative or stale clusters", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "continue from safe execution state",
+    },
+    nodes: [
+      {
+        id: "mem-negative-a",
+        type: "procedure",
+        title: "Rejected worker route",
+        text_summary: "Rejected route for src/worker/queue.ts and tests/worker/queue.test.ts; inspect before reuse.",
+        slots: {
+          target_files: ["src/worker/queue.ts", "tests/worker/queue.test.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "negative-cluster",
+            workflow_signature: "worker-negative",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.9,
+      },
+      {
+        id: "mem-negative-b",
+        type: "procedure",
+        title: "Outdated worker route",
+        text_summary: "Outdated route for src/worker/queue.ts and tests/worker/queue.test.ts; inspect before reuse.",
+        slots: {
+          target_files: ["src/worker/queue.ts", "tests/worker/queue.test.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "negative-cluster",
+            workflow_signature: "worker-negative",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.89,
+      },
+    ],
+    ranked: [
+      { id: "mem-negative-a", score: 0.99 },
+      { id: "mem-negative-b", score: 0.98 },
+    ],
+  });
+
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-negative-a"), false);
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-negative-b"), false);
+  assert.ok(agentContext.inspect_before_use_memory_ids.includes("mem-negative-a"));
+  assert.ok(agentContext.inspect_before_use_memory_ids.includes("mem-negative-b"));
 });

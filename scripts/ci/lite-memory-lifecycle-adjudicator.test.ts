@@ -94,6 +94,73 @@ test("lifecycle adjudicator rejects unrelated high-confidence semantic candidate
   assert.equal(adjudicated.entries.find((entry) => entry.memory_id === unrelated.memory_id)?.lifecycle_state, "active");
 });
 
+test("lifecycle adjudicator keeps same target-set execution procedure active despite generic stale-branch safeguards", () => {
+  const currentWorkflow: AdjudicableMemoryEntry = {
+    memory_id: "00000000-0000-4000-8000-000000000004",
+    title: "Current execution state",
+    summary: "Current state: resume src/runtime.ts and tests/runtime.test.ts. Avoid restarting from superseded route assumptions.",
+    domain: "execution",
+    authority: "advisory",
+    confidence: 0.82,
+    salience: 0.9,
+    lifecycle_state: "active",
+    observed_at: "2026-01-03T00:00:00.000Z",
+    target_files: ["src/runtime.ts", "tests/runtime.test.ts"],
+    source_index: 0,
+  };
+  const reusableProcedure: AdjudicableMemoryEntry = {
+    memory_id: "00000000-0000-4000-8000-000000000005",
+    title: "Reusable execution procedure",
+    summary: "Procedure: inspect src/runtime.ts, keep the edit boundary narrow, and validate tests/runtime.test.ts.",
+    domain: "execution",
+    authority: "advisory",
+    confidence: 0.8,
+    salience: 0.88,
+    lifecycle_state: "active",
+    observed_at: "2026-01-02T00:00:00.000Z",
+    target_files: ["src/runtime.ts", "tests/runtime.test.ts"],
+    source_index: 1,
+  };
+
+  const adjudicated = adjudicateMemoryLifecycle([currentWorkflow, reusableProcedure]);
+
+  assert.equal(adjudicated.relations.length, 0);
+  assert.equal(adjudicated.entries.find((entry) => entry.memory_id === reusableProcedure.memory_id)?.lifecycle_state, "active");
+  assert.equal(adjudicated.entries.find((entry) => entry.memory_id === reusableProcedure.memory_id)?.authority, "advisory");
+});
+
+test("lifecycle adjudicator does not treat recall rank as recency for stale execution notes", () => {
+  const staleFirst: AdjudicableMemoryEntry = {
+    memory_id: "00000000-0000-4000-8000-000000000006",
+    title: "superseded premise from legacy/runtime.ts",
+    summary: "Superseded execution note points at legacy/runtime.ts as the continuation point.",
+    domain: "execution",
+    authority: "advisory",
+    confidence: 0.82,
+    salience: 0.95,
+    lifecycle_state: "active",
+    target_files: ["legacy/runtime.ts"],
+    source_index: 0,
+  };
+  const currentSecond: AdjudicableMemoryEntry = {
+    memory_id: "00000000-0000-4000-8000-000000000007",
+    title: "current execution state",
+    summary: "Current state points at src/runtime.ts and tests/runtime.test.ts.",
+    domain: "execution",
+    authority: "advisory",
+    confidence: 0.82,
+    salience: 0.9,
+    lifecycle_state: "active",
+    target_files: ["src/runtime.ts", "tests/runtime.test.ts"],
+    source_index: 1,
+  };
+
+  const adjudicated = adjudicateMemoryLifecycle([staleFirst, currentSecond]);
+
+  assert.equal(adjudicated.relations.length, 0);
+  assert.equal(adjudicated.entries.find((entry) => entry.memory_id === currentSecond.memory_id)?.lifecycle_state, "active");
+});
+
 test("memory write persists only runtime-admitted lifecycle relation candidates", async () => {
   const dbPath = tmpDbPath("candidate-relation");
   const store = createLiteWriteStore(dbPath);

@@ -21,6 +21,10 @@ export type LifecycleCandidateEntry = {
 
 type LifecycleCandidateSignalType = AionisLifecycleCandidateSignal["signal_type"];
 type LifecycleCandidateEvidenceField = AionisLifecycleCandidateSignal["evidence_span"]["source_field"];
+type LifecycleCandidateSignalDraft = Pick<
+  AionisLifecycleCandidateSignal,
+  "memory_id" | "signal_type" | "confidence" | "evidence_span" | "reason"
+>;
 
 type RulePattern = {
   signal_type: LifecycleCandidateSignalType;
@@ -116,16 +120,27 @@ export function inferLifecycleCandidateSignals(args: {
   const producer = args.producer ?? "rule_v1";
   const signals: AionisLifecycleCandidateSignal[] = [];
   const seen = new Set<string>();
+  const addSignal = (signal: LifecycleCandidateSignalDraft) => {
+    const key = [
+      signal.memory_id,
+      signal.signal_type,
+      signal.evidence_span.source_field,
+      signal.evidence_span.quote.toLowerCase(),
+    ].join(":");
+    if (seen.has(key)) return;
+    seen.add(key);
+    signals.push({
+      ...signal,
+      producer,
+    });
+  };
   for (const entry of args.entries) {
     if (!entryEligibleForLifecycleCandidateInference(entry)) continue;
     for (const rule of [...TITLE_RULES, ...SUMMARY_RULES]) {
       const source = rule.source_field === "title" ? entry.title : entry.summary;
       const quote = evidenceQuote(source, rule.pattern);
       if (!quote) continue;
-      const key = `${entry.memory_id}:${rule.signal_type}:${rule.source_field}:${quote.toLowerCase()}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      signals.push({
+      addSignal({
         memory_id: entry.memory_id,
         signal_type: rule.signal_type,
         confidence: rule.confidence,
@@ -133,10 +148,12 @@ export function inferLifecycleCandidateSignals(args: {
           source_field: rule.source_field,
           quote,
         },
-        producer,
         reason: rule.reason,
       });
     }
+  }
+  for (const signal of inferTargetClusterSignals(args.entries)) {
+    addSignal(signal);
   }
   return signals.slice(0, 64);
 }
@@ -182,4 +199,113 @@ function evidenceQuote(value: string | null | undefined, pattern: RegExp): strin
   const start = Math.max(0, match.index - 60);
   const end = Math.min(text.length, match.index + (match[0]?.length ?? 0) + 80);
   return text.slice(start, end).trim();
+}
+
+function inferTargetClusterSignals(entries: LifecycleCandidateEntry[]): LifecycleCandidateSignalDraft[] {
+  const projections = entries
+    .filter((entry) => entryEligibleForLifecycleCandidateInference(entry))
+    .map((entry) => ({
+      entry,
+      targets: normalizedTargetFiles(entry),
+      targetQuote: targetFilesQuote(entry.target_files ?? []),
+    }))
+    .filter((projection) => projection.targets.length > 0);
+  const supportByTargetSet = new Map<string, Set<string>>();
+  for (const projection of projections) {
+    const key = targetSetKey(projection.targets);
+    const ids = supportByTargetSet.get(key) ?? new Set<string>();
+    ids.add(projection.entry.memory_id);
+    supportByTargetSet.set(key, ids);
+  }
+  const supportedTargetSets = [...supportByTargetSet.entries()]
+    .map(([targetSet, ids]) => ({
+      targetSet,
+      support: ids.size,
+      targets: targetSetTargets(targetSet),
+    }))
+    .filter((entry) => entry.support >= 2);
+  if (supportedTargetSets.length === 0) return [];
+  const activeClusterTargetSets = new Set(
+    supportedTargetSets
+      .filter((entry) => !supportedTargetSets.some((other) =>
+        other.targetSet !== entry.targetSet
+        && other.support >= entry.support
+        && targetSetIsStrictSubset(entry.targets, other.targets)
+      ))
+      .map((entry) => entry.targetSet),
+  );
+
+  const inActiveCluster = projections.filter((projection) =>
+    activeClusterTargetSets.has(targetSetKey(projection.targets))
+  );
+  if (new Set(inActiveCluster.map((projection) => projection.entry.memory_id)).size < 2) return [];
+
+  const signals: LifecycleCandidateSignalDraft[] = [];
+  for (const projection of projections) {
+    const matchesActiveCluster = activeClusterTargetSets.has(targetSetKey(projection.targets));
+    if (matchesActiveCluster) {
+      signals.push({
+        memory_id: projection.entry.memory_id,
+        signal_type: "current",
+        confidence: 0.78,
+        evidence_span: {
+          source_field: "slots",
+          quote: `target_files match active execution cluster: ${projection.targetQuote}`,
+        },
+        reason: "Exact target-file relation places this memory in the supported active execution cluster.",
+      });
+      continue;
+    }
+    signals.push({
+      memory_id: projection.entry.memory_id,
+      signal_type: "contested",
+      confidence: 0.86,
+      evidence_span: {
+        source_field: "slots",
+        quote: `target_files outside active execution cluster: ${projection.targetQuote}`,
+      },
+      reason: "Target-file relation places this memory outside the supported active execution cluster; inspect before direct reuse.",
+    });
+  }
+  return signals;
+}
+
+function normalizedTargetFiles(entry: LifecycleCandidateEntry): string[] {
+  const targets = (entry.target_files ?? [])
+    .map(normalizeTargetFile)
+    .filter((value): value is string => !!value);
+  return [...new Set(targets)];
+}
+
+function targetSetKey(targets: string[]): string {
+  return [...targets].sort().join("\n");
+}
+
+function targetSetTargets(targetSet: string): string[] {
+  return targetSet.split("\n").filter(Boolean);
+}
+
+function targetSetIsStrictSubset(candidate: string[], container: string[]): boolean {
+  if (candidate.length === 0 || candidate.length >= container.length) return false;
+  const containerSet = new Set(container);
+  return candidate.every((target) => containerSet.has(target));
+}
+
+function normalizeTargetFile(value: string): string | null {
+  const normalized = value
+    .trim()
+    .replace(/^['"`]+|['"`]+$/g, "")
+    .replace(/\\/g, "/")
+    .replace(/\/+/g, "/")
+    .replace(/^\.\//, "")
+    .toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function targetFilesQuote(values: string[]): string {
+  return values
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, 4)
+    .join(", ");
 }
