@@ -131,7 +131,9 @@ the compact `AIONIS_CTX v2` prompt contract.
 
 The lifecycle gate still governs trust. A current handoff can be
 `transition_kind=handoff_to_actor` while its prompt line also says
-`gate=inspect` if evidence is candidate or contested.
+`gate=inspect` if evidence is candidate or contested. Aggressive Agent Context
+may render this as short labels such as `tr=accept_handoff` and `gate=inspect`;
+the full transition value remains in structured product output.
 
 ## Execution Tree State Machine
 

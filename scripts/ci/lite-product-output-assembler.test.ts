@@ -641,21 +641,34 @@ test("product agent context contract renderer preserves execution state surfaces
   assert.equal(failedMemory?.execution_state?.transition_kind, "avoid_failed_branch");
   assert.equal(rehydrateMemory?.execution_state?.transition_kind, "request_rehydrate");
   assert.equal(procedureMemory?.execution_state?.transition_kind, null);
-  assert.ok(context.prompt_text.includes("action=Continue scoped checkout adapter patch"));
-  assert.ok(context.prompt_text.includes("transition=handoff_to_actor"));
-  assert.ok(context.prompt_text.includes("actor_role=worker"));
-  assert.ok(context.prompt_text.includes("handoff_target=reviewer"));
+  assert.ok(context.prompt_text.includes("act=Continue scoped checkout adapter patch"));
+  assert.ok(context.prompt_text.includes("tr=handoff_to_actor"));
+  assert.ok(context.prompt_text.includes("role=worker"));
+  assert.ok(context.prompt_text.includes("to=reviewer"));
   assert.ok(context.prompt_text.includes("current: id=m1"));
-  assert.ok(context.prompt_text.includes("kind=current_state"));
-  assert.ok(context.prompt_text.includes("transition=avoid_failed_branch"));
-  assert.ok(context.prompt_text.includes("transition=request_rehydrate"));
+  assert.ok(context.prompt_text.includes("k=current_state"));
+  assert.ok(context.prompt_text.includes("tr=avoid_failed_branch"));
+  assert.ok(context.prompt_text.includes("tr=request_rehydrate"));
   assert.ok(context.prompt_text.includes("procedure: id=m2"));
   assert.match(context.prompt_text, /avoid: id=m\d+/);
   assert.match(context.prompt_text, /rehydrate: id=m\d+/);
-  assert.ok(context.prompt_text.includes("m1=mem-contract-current"));
-  assert.ok(context.prompt_text.includes("m2=mem-contract-procedure"));
-  assert.ok(context.prompt_text.includes("mem-contract-failed-branch"));
-  assert.ok(context.prompt_text.includes("mem-contract-rehydrate"));
+  assert.equal(context.prompt_text.includes("m1=mem-contract-current"), false);
+  assert.equal(context.prompt_text.includes("mem-contract-failed-branch"), false);
+  const aliasesByMemoryId = new Map(context.prompt_aliases.map((entry) => [entry.memory_id, entry]));
+  assert.deepEqual(aliasesByMemoryId.get("mem-contract-current"), {
+    alias: "m1",
+    memory_id: "mem-contract-current",
+    surface: "current",
+  });
+  assert.deepEqual(aliasesByMemoryId.get("mem-contract-procedure"), {
+    alias: "m2",
+    memory_id: "mem-contract-procedure",
+    surface: "procedure",
+  });
+  assert.equal(aliasesByMemoryId.get("mem-contract-failed-branch")?.surface, "avoid");
+  assert.ok(["inspect", "rehydrate"].includes(aliasesByMemoryId.get("mem-contract-rehydrate")?.surface ?? ""));
+  assert.ok(context.memory_ids.includes("mem-contract-current"));
+  assert.ok(context.memory_ids.includes("mem-contract-procedure"));
   assert.ok(context.use_now_memory_ids.includes("mem-contract-current"));
   assert.ok(context.use_now_memory_ids.includes("mem-contract-procedure"));
   assert.ok(context.do_not_use_memory_ids.includes("mem-contract-failed-branch"));
@@ -739,12 +752,17 @@ test("product agent context contract renderer prioritizes inspect-gated current 
   assert.equal(currentMemory?.execution_state?.transition_kind, "handoff_to_actor");
   assert.ok(context.inspect_before_use_memory_ids.includes("mem-inspect-current"));
   assert.match(context.prompt_text, /current: id=m1 .*gate=inspect/);
-  assert.ok(context.prompt_text.includes("m1=mem-inspect-current"));
-  assert.ok(context.prompt_text.includes("transition=accept_handoff"));
-  assert.ok(context.prompt_text.includes("action=Continue the passed branch"));
-  assert.ok(context.prompt_text.includes("actor_role=worker"));
-  assert.ok(context.prompt_text.includes("handoff_target=reviewer"));
-  assert.ok(context.prompt_text.indexOf("mem-inspect-current") < context.prompt_text.indexOf("mem-inspect-procedure"));
+  assert.equal(context.prompt_text.includes("m1=mem-inspect-current"), false);
+  assert.deepEqual(context.prompt_aliases.slice(0, 2), [
+    { alias: "m1", memory_id: "mem-inspect-current", surface: "current" },
+    { alias: "m2", memory_id: "mem-inspect-procedure", surface: "inspect" },
+  ]);
+  assert.ok(context.prompt_text.includes("tr=accept_handoff"));
+  assert.ok(context.prompt_text.includes("act=Continue the passed branch"));
+  assert.ok(context.prompt_text.includes("role=worker"));
+  assert.ok(context.prompt_text.includes("to=reviewer"));
+  assert.ok(context.memory_ids.includes("mem-inspect-current"));
+  assert.ok(context.memory_ids.includes("mem-inspect-procedure"));
 });
 
 test("execution transition classifier does not treat negated structured kind as failed", () => {

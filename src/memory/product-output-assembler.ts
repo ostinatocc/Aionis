@@ -1244,6 +1244,7 @@ function buildAionisGuideBrief(args: {
 
 type AgentContextPromptProfile = {
   style: "standard" | "contract";
+  contractLabels: "full" | "compact";
   summaryChars: number;
   targetFileItems: number;
   targetFileChars: number;
@@ -1256,11 +1257,13 @@ type AgentContextPromptProfile = {
   rehydrateItems: number;
   rehydrateChars: number;
   memoryIdItems: number;
+  includeMemoryIdMap: boolean;
 };
 
 const AGENT_CONTEXT_PROMPT_PROFILES: Record<"balanced" | "aggressive" | "tight" | "minimal" | "ids_only", AgentContextPromptProfile> = {
   balanced: {
     style: "standard",
+    contractLabels: "full",
     summaryChars: 140,
     targetFileItems: 6,
     targetFileChars: 120,
@@ -1273,54 +1276,62 @@ const AGENT_CONTEXT_PROMPT_PROFILES: Record<"balanced" | "aggressive" | "tight" 
     rehydrateItems: 3,
     rehydrateChars: 100,
     memoryIdItems: 6,
+    includeMemoryIdMap: true,
   },
   aggressive: {
     style: "contract",
+    contractLabels: "compact",
     summaryChars: 80,
-    targetFileItems: 2,
-    targetFileChars: 64,
+    targetFileItems: 1,
+    targetFileChars: 44,
     useNowItems: 1,
-    useNowChars: 76,
-    inspectItems: 2,
-    inspectChars: 58,
-    doNotUseItems: 2,
-    doNotUseChars: 58,
+    useNowChars: 56,
+    inspectItems: 1,
+    inspectChars: 42,
+    doNotUseItems: 1,
+    doNotUseChars: 42,
     rehydrateItems: 1,
-    rehydrateChars: 44,
-    memoryIdItems: 6,
+    rehydrateChars: 34,
+    memoryIdItems: 4,
+    includeMemoryIdMap: false,
   },
   tight: {
     style: "contract",
+    contractLabels: "compact",
     summaryChars: 96,
-    targetFileItems: 3,
-    targetFileChars: 70,
-    useNowItems: 2,
-    useNowChars: 110,
+    targetFileItems: 1,
+    targetFileChars: 40,
+    useNowItems: 1,
+    useNowChars: 50,
     inspectItems: 1,
-    inspectChars: 90,
+    inspectChars: 38,
     doNotUseItems: 1,
-    doNotUseChars: 90,
+    doNotUseChars: 38,
     rehydrateItems: 1,
-    rehydrateChars: 70,
-    memoryIdItems: 5,
+    rehydrateChars: 32,
+    memoryIdItems: 4,
+    includeMemoryIdMap: false,
   },
   minimal: {
     style: "contract",
+    contractLabels: "compact",
     summaryChars: 80,
-    targetFileItems: 2,
-    targetFileChars: 50,
+    targetFileItems: 1,
+    targetFileChars: 36,
     useNowItems: 1,
-    useNowChars: 80,
+    useNowChars: 44,
     inspectItems: 1,
-    inspectChars: 70,
+    inspectChars: 32,
     doNotUseItems: 1,
-    doNotUseChars: 70,
+    doNotUseChars: 32,
     rehydrateItems: 1,
-    rehydrateChars: 60,
+    rehydrateChars: 28,
     memoryIdItems: 4,
+    includeMemoryIdMap: false,
   },
   ids_only: {
     style: "contract",
+    contractLabels: "compact",
     summaryChars: 60,
     targetFileItems: 0,
     targetFileChars: 0,
@@ -1333,6 +1344,7 @@ const AGENT_CONTEXT_PROMPT_PROFILES: Record<"balanced" | "aggressive" | "tight" 
     rehydrateItems: 0,
     rehydrateChars: 0,
     memoryIdItems: 3,
+    includeMemoryIdMap: true,
   },
 };
 
@@ -1442,19 +1454,28 @@ function contractEntrySummary(entry: MemoryPacketEntry | null | undefined, fallb
   ])[0] ?? "", maxChars);
 }
 
-function contractEntryFiles(entry: MemoryPacketEntry | null | undefined, fallback: string[] = []): string {
-  const files = compactStrings([...(entry?.target_files ?? []), ...fallback]).slice(0, 2);
+function contractEntryFiles(args: {
+  entry: MemoryPacketEntry | null | undefined;
+  fallback?: string[];
+  maxItems: number;
+  maxChars: number;
+}): string {
+  if (args.maxItems <= 0 || args.maxChars <= 0) return "";
+  const files = compactStrings([...(args.entry?.target_files ?? []), ...(args.fallback ?? [])])
+    .slice(0, args.maxItems)
+    .map((file) => shortenPromptText(file, args.maxChars));
   return files.length > 0 ? ` f=${files.join(",")}` : "";
 }
 
-function contractEntryExecutionMeta(entry: MemoryPacketEntry | null | undefined): string {
+function contractEntryExecutionMeta(entry: MemoryPacketEntry | null | undefined, labelStyle: AgentContextPromptProfile["contractLabels"]): string {
   const state = entry?.execution_state;
   if (!state) return "";
+  const compact = labelStyle === "compact";
   const meta = compactStrings([
-    state.summary_kind ? `kind=${contractMetaToken(state.summary_kind)}` : null,
-    state.transition_kind ? `transition=${contractMetaToken(state.transition_kind)}` : null,
-    state.actor_role ? `actor_role=${contractMetaToken(state.actor_role)}` : null,
-    state.handoff_target ? `handoff_target=${contractMetaToken(state.handoff_target)}` : null,
+    state.summary_kind ? `${compact ? "k" : "kind"}=${contractMetaToken(state.summary_kind)}` : null,
+    state.transition_kind ? `${compact ? "tr" : "transition"}=${contractMetaToken(state.transition_kind)}` : null,
+    state.actor_role ? `${compact ? "role" : "actor_role"}=${contractMetaToken(state.actor_role)}` : null,
+    state.handoff_target ? `${compact ? "to" : "handoff_target"}=${contractMetaToken(state.handoff_target)}` : null,
   ]).slice(0, 4);
   return meta.length > 0 ? ` ${meta.join(" ")}` : "";
 }
@@ -1533,19 +1554,85 @@ function contractNextActionLine(args: {
   agentRole: AionisAgentRole;
   sourceAlias?: string | null;
   maxChars: number;
+  labelStyle: AgentContextPromptProfile["contractLabels"];
 }): string | null {
   const state = args.entry?.execution_state;
   if (!state) return null;
   const nextAction = normalizeContractPromptNote(state.next_action_hint);
   const promptTransition = contractPromptTransitionKind(state, args.agentRole);
+  const compact = args.labelStyle === "compact";
   const parts = compactStrings([
-    promptTransition ? `transition=${contractMetaToken(promptTransition)}` : null,
-    nextAction ? `action=${shortenPromptText(nextAction, args.maxChars)}` : null,
-    `actor_role=${contractMetaToken(state.actor_role ?? args.agentRole)}`,
-    state.handoff_target ? `handoff_target=${contractMetaToken(state.handoff_target)}` : null,
-    args.entry ? `source=${contractMetaToken(args.sourceAlias ?? args.entry.memory_id)}` : null,
+    promptTransition ? `${compact ? "tr" : "transition"}=${contractMetaToken(promptTransition)}` : null,
+    nextAction ? `${compact ? "act" : "action"}=${shortenPromptText(nextAction, args.maxChars)}` : null,
+    `${compact ? "role" : "actor_role"}=${contractMetaToken(state.actor_role ?? args.agentRole)}`,
+    state.handoff_target ? `${compact ? "to" : "handoff_target"}=${contractMetaToken(state.handoff_target)}` : null,
+    args.entry ? `${compact ? "src" : "source"}=${contractMetaToken(args.sourceAlias ?? args.entry.memory_id)}` : null,
   ]);
   return parts.length > 0 ? `next ${parts.join(" ")}` : null;
+}
+
+function contractPromptAliasesFor(args: {
+  memoryEntries: MemoryPacketEntry[];
+  useNowMemoryIds: string[];
+  inspectBeforeUseMemoryIds: string[];
+  doNotUseMemoryIds: string[];
+  rehydrateHints: AionisAgentContext["rehydrate_hints"];
+  memoryIds: string[];
+  profile: AgentContextPromptProfile;
+}): AionisAgentContext["prompt_aliases"] {
+  if (args.profile.style !== "contract") return [];
+  const entries = entryById(args.memoryEntries);
+  const useEntries = args.useNowMemoryIds.map((id) => entries.get(id)).filter((entry): entry is MemoryPacketEntry => !!entry);
+  const inspectEntries = args.inspectBeforeUseMemoryIds
+    .map((id) => entries.get(id))
+    .filter((entry): entry is MemoryPacketEntry => !!entry)
+    .sort((left, right) => contractInspectPriority(left) - contractInspectPriority(right));
+  const useCurrentEntry =
+    useEntries.find((entry) => entry.memory_type !== "procedure")
+    ?? useEntries[0]
+    ?? null;
+  const inspectCurrentEntry = useCurrentEntry
+    ? null
+    : inspectEntries.find(contractEntryIsCurrentState) ?? null;
+  const currentEntry = useCurrentEntry ?? inspectCurrentEntry;
+  const procedureEntries = useEntries.filter((entry) =>
+    entry.memory_type === "procedure"
+    || entry.domain === "execution"
+  );
+  const avoidEntries = args.doNotUseMemoryIds
+    .map((id) => entries.get(id))
+    .filter((entry): entry is MemoryPacketEntry => !!entry);
+  const renderedProcedureEntries = procedureEntries
+    .filter((entry) => entry.memory_id !== currentEntry?.memory_id)
+    .slice(0, Math.max(0, args.profile.useNowItems));
+  const renderedInspectEntries = inspectEntries
+    .filter((entry) => entry.memory_id !== currentEntry?.memory_id)
+    .slice(0, args.profile.inspectItems);
+  const renderedAvoidEntries = avoidEntries.slice(0, args.profile.doNotUseItems);
+  const renderedRehydrateHints = args.rehydrateHints.slice(0, args.profile.rehydrateItems);
+  const surfaceById = new Map<string, AionisAgentContext["prompt_aliases"][number]["surface"]>();
+  if (currentEntry) surfaceById.set(currentEntry.memory_id, "current");
+  for (const entry of renderedProcedureEntries) surfaceById.set(entry.memory_id, "procedure");
+  for (const entry of renderedInspectEntries) {
+    if (!surfaceById.has(entry.memory_id)) surfaceById.set(entry.memory_id, "inspect");
+  }
+  for (const entry of renderedAvoidEntries) surfaceById.set(entry.memory_id, "avoid");
+  for (const hint of renderedRehydrateHints) {
+    if (!surfaceById.has(hint.memory_id)) surfaceById.set(hint.memory_id, "rehydrate");
+  }
+  const renderedIds = compactStrings([
+    currentEntry?.memory_id,
+    ...renderedProcedureEntries.map((entry) => entry.memory_id),
+    ...renderedInspectEntries.map((entry) => entry.memory_id),
+    ...renderedAvoidEntries.map((entry) => entry.memory_id),
+    ...renderedRehydrateHints.map((entry) => entry.memory_id),
+    ...args.memoryIds,
+  ]).slice(0, Math.max(args.profile.memoryIdItems, 0));
+  return renderedIds.map((memoryId, index) => ({
+    alias: `m${index + 1}`,
+    memory_id: memoryId,
+    surface: surfaceById.get(memoryId) ?? "other",
+  }));
 }
 
 function normalizeContractPromptTitle(value: string | null): string | null {
@@ -1597,13 +1684,21 @@ function contractEntryLine(args: {
   alias?: string | null;
   fallback: string;
   maxChars: number;
+  maxFileItems: number;
+  maxFileChars: number;
+  labelStyle: AgentContextPromptProfile["contractLabels"];
   fallbackFiles?: string[];
   gate?: "inspect" | "use" | "avoid" | null;
 }): string | null {
   const id = args.alias ? ` id=${args.alias}` : "";
-  const files = contractEntryFiles(args.entry, args.fallbackFiles);
+  const files = contractEntryFiles({
+    entry: args.entry,
+    fallback: args.fallbackFiles,
+    maxItems: args.maxFileItems,
+    maxChars: args.maxFileChars,
+  });
   const gate = args.gate && args.gate !== "use" ? ` gate=${args.gate}` : "";
-  const meta = contractEntryExecutionMeta(args.entry);
+  const meta = contractEntryExecutionMeta(args.entry, args.labelStyle);
   const reason = contractEntrySummary(args.entry, args.fallback, args.maxChars);
   if (!id && !files && !reason) return null;
   const note = reason ? ` n=${reason}` : "";
@@ -1692,6 +1787,7 @@ function renderExecutionStateContractPrompt(args: {
       agentRole: args.agentRole,
       sourceAlias: nextActionEntry ? aliases.get(nextActionEntry.memory_id) : null,
       maxChars: args.profile.useNowChars,
+      labelStyle: args.profile.contractLabels,
     }),
     !hasRenderedContractEntries && normalizeContractPromptNote(args.summary)
       ? `sum ${shortenPromptText(normalizeContractPromptNote(args.summary) ?? "", args.profile.summaryChars)}`
@@ -1703,6 +1799,9 @@ function renderExecutionStateContractPrompt(args: {
           alias: currentEntry ? aliases.get(currentEntry.memory_id) : null,
           fallback: currentFallback,
           maxChars: args.profile.useNowChars,
+          maxFileItems: args.profile.targetFileItems,
+          maxFileChars: args.profile.targetFileChars,
+          labelStyle: args.profile.contractLabels,
           fallbackFiles: args.targetFiles,
           gate: currentEntry ? currentEntryGate : null,
         })
@@ -1714,6 +1813,9 @@ function renderExecutionStateContractPrompt(args: {
         alias: aliases.get(entry.memory_id),
         fallback: entry.summary,
         maxChars: args.profile.useNowChars,
+        maxFileItems: args.profile.targetFileItems,
+        maxFileChars: args.profile.targetFileChars,
+        labelStyle: args.profile.contractLabels,
       })),
     ...procedureFallbacks.map((entry) => `procedure: note=${shortenPromptText(entry, args.profile.useNowChars)}`),
     ...renderedInspectEntries.map((entry) => contractEntryLine({
@@ -1722,6 +1824,9 @@ function renderExecutionStateContractPrompt(args: {
       alias: aliases.get(entry.memory_id),
       fallback: entry.summary,
       maxChars: args.profile.inspectChars,
+      maxFileItems: args.profile.targetFileItems,
+      maxFileChars: args.profile.targetFileChars,
+      labelStyle: args.profile.contractLabels,
     })),
     ...inspectFallbacks.map((entry) => `inspect: note=${shortenPromptText(entry, args.profile.inspectChars)}`),
     ...renderedAvoidEntries.map((entry) => contractEntryLine({
@@ -1730,19 +1835,22 @@ function renderExecutionStateContractPrompt(args: {
       alias: aliases.get(entry.memory_id),
       fallback: entry.summary,
       maxChars: args.profile.doNotUseChars,
+      maxFileItems: args.profile.targetFileItems,
+      maxFileChars: args.profile.targetFileChars,
+      labelStyle: args.profile.contractLabels,
     })),
     ...avoidFallbacks.map((entry) => `avoid: note=${shortenPromptText(entry, args.profile.doNotUseChars)}`),
     ...renderedRehydrateHints.map((hint) =>
       `rehydrate: id=${aliases.get(hint.memory_id) ?? hint.memory_id}${hint.required ? " req=1" : ""} n=${shortenPromptText(hint.reason, args.profile.rehydrateChars)}`
     ),
-    renderedIds.length > 0 && args.profile.memoryIdItems > 0
+    renderedIds.length > 0 && args.profile.includeMemoryIdMap && args.profile.memoryIdItems > 0
       ? `ids ${renderedIds.map((id) => `${aliases.get(id) ?? id}=${id}`).join(",")}`
       : null,
   ]);
   return sections.join("\n");
 }
 
-function buildAgentContextPrompt(args: {
+type BuildAgentContextPromptInput = {
   agentRole: AionisAgentRole;
   summary: string;
   historyUsed: boolean;
@@ -1762,18 +1870,34 @@ function buildAgentContextPrompt(args: {
   doNotUseMemoryIds: string[];
   contextCharBudget?: number | null;
   contextCompactionProfile?: "balanced" | "aggressive" | null;
-}): string {
+};
+
+function buildAgentContextPromptResult(args: BuildAgentContextPromptInput): {
+  promptText: string;
+  promptAliases: AionisAgentContext["prompt_aliases"];
+} {
   const budget = boundedPromptCharBudget(args.contextCharBudget);
   let lastPrompt = "";
+  let lastAliases: AionisAgentContext["prompt_aliases"] = [];
   for (const profile of promptProfilesFor(args.contextCompactionProfile, budget)) {
     const prompt = renderAgentContextPrompt({ ...args, profile });
+    const promptAliases = contractPromptAliasesFor({ ...args, profile });
     lastPrompt = prompt;
-    if (budget === null || prompt.length <= budget) return prompt;
+    lastAliases = promptAliases;
+    if (budget === null || prompt.length <= budget) return { promptText: prompt, promptAliases };
   }
-  return budget === null ? lastPrompt : shortenPromptText(lastPrompt, budget);
+  return {
+    promptText: budget === null ? lastPrompt : shortenPromptText(lastPrompt, budget),
+    promptAliases: lastAliases,
+  };
+}
+
+function buildAgentContextPrompt(args: BuildAgentContextPromptInput): string {
+  return buildAgentContextPromptResult(args).promptText;
 }
 
 function shortenPromptText(value: string, maxChars: number): string {
+  if (maxChars <= 0) return "";
   const compacted = value.replace(/\s+/g, " ").trim();
   if (compacted.length <= maxChars) return compacted;
   return `${compacted.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
@@ -2551,7 +2675,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
   const summary = surfaces.historyUsed
     ? rawSummary
     : "No usable Aionis history was recovered for the Agent context.";
-  const promptText = buildAgentContextPrompt({
+  const promptResult = buildAgentContextPromptResult({
     agentRole,
     summary,
     historyUsed: surfaces.historyUsed,
@@ -2578,7 +2702,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     tenant_id: guide?.tenant_id ?? memory?.tenant_id ?? args.tenant_id,
     scope: guide?.scope ?? memory?.scope ?? args.scope,
     agent_role: agentRole,
-    prompt_text: promptText,
+    prompt_text: promptResult.promptText,
     summary,
     history_used: surfaces.historyUsed,
     actionable_history_used: surfaces.actionableHistoryUsed,
@@ -2592,6 +2716,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     use_now_memory_ids: surfaces.useNowMemoryIds,
     inspect_before_use_memory_ids: surfaces.inspectBeforeUseMemoryIds,
     do_not_use_memory_ids: surfaces.doNotUseMemoryIds,
+    prompt_aliases: promptResult.promptAliases,
     rehydrate_hints: rehydrateHints,
     risk: surfaces.risk,
     evidence_refs: {
@@ -2650,7 +2775,7 @@ export function applyAionisInspectBeforeUseActiveProjection(
   const recommendedPosture: AionisAgentContext["recommended_posture"] = args.agent_context.history_used
     ? "inspect_before_use"
     : args.agent_context.recommended_posture;
-  const promptText = buildAgentContextPrompt({
+  const promptResult = buildAgentContextPromptResult({
     agentRole: args.agent_context.agent_role,
     summary: args.agent_context.summary,
     historyUsed: args.agent_context.history_used,
@@ -2674,7 +2799,8 @@ export function applyAionisInspectBeforeUseActiveProjection(
 
   return parseAionisAgentContext({
     ...args.agent_context,
-    prompt_text: promptText,
+    prompt_text: promptResult.promptText,
+    prompt_aliases: promptResult.promptAliases,
     recommended_posture: recommendedPosture,
     authority,
     use_now: useNow,

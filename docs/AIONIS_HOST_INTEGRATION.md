@@ -79,9 +79,12 @@ Execution transition intent is delivered through
 are included and through the compact `AIONIS_CTX v2` prompt line. Hosts should
 treat `handoff_to_actor` as a routing/acceptance signal, `resume_current_state`
 as continuation, `avoid_failed_branch` as counter-evidence only, and
-`request_rehydrate` as a pointer-expansion signal. If the prompt shows
-`transition=accept_handoff`, the current `agent_role` matches the handoff target,
-but the lifecycle gate still applies.
+`request_rehydrate` as a pointer-expansion signal. In aggressive prompt mode the
+same line may use short labels such as `tr=accept_handoff`, `act=...`,
+`role=...`, and `to=...`. The current `agent_role` matches the handoff target
+when `tr=accept_handoff`, but the lifecycle gate still applies. Full memory IDs
+remain in `agent_context` structured fields; hosts should not require the Agent
+prompt to carry UUIDs for attribution.
 
 Trace-to-Procedure readiness is delivered through
 `operator_snapshot.trace_to_procedure`, not through the Agent prompt. Hosts can

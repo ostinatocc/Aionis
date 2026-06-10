@@ -1343,6 +1343,7 @@ test("product observe turns execution input into recallable execution memory", a
       "use_now_memory_ids",
       "inspect_before_use_memory_ids",
       "do_not_use_memory_ids",
+      "prompt_aliases",
       "rehydrate_hints",
       "risk",
       "evidence_refs",
@@ -1353,6 +1354,7 @@ test("product observe turns execution input into recallable execution memory", a
     assert.ok(guideBody.guide_trace_id.startsWith("guide_trace:"));
     assert.equal(guideBody.agent_context.history_used, true);
     assert.equal(guideBody.agent_context.actionable_history_used, true);
+    assert.deepEqual(guideBody.agent_context.prompt_aliases, []);
     assert.ok(guideBody.agent_context.prompt_text.includes("AIONIS_AGENT_CONTEXT v1"));
     assert.ok(guideBody.agent_context.prompt_text.includes("state: role=reviewer"));
     assert.ok(guideBody.agent_context.prompt_text.includes("role_focus: review branch status"));

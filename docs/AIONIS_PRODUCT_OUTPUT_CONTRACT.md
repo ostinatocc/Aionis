@@ -301,6 +301,14 @@ type AionisAgentContext = {
   use_now: string[];
   inspect_before_use: string[];
   do_not_use: string[];
+  use_now_memory_ids: string[];
+  inspect_before_use_memory_ids: string[];
+  do_not_use_memory_ids: string[];
+  prompt_aliases: Array<{
+    alias: string;
+    memory_id: string;
+    surface: "current" | "procedure" | "inspect" | "avoid" | "rehydrate" | "other";
+  }>;
   memory_ids: string[];
   rehydrate_hints: Array<{
     memory_id: string;
@@ -321,13 +329,15 @@ type AionisAgentContext = {
 };
 ```
 
-`prompt_text` is the direct Agent prompt surface. It uses a compact line format:
-header, one role-aware `state:` line, an optional `role_focus:` line, one short
-`summary:`, then optional inline
-`target_files:`, `use_now:`, `inspect_before_use:`, `do_not_use:`,
-`rehydrate_if_needed:`, and `memory_ids:` lines. The structured fields remain
-available so hosts can render, filter, or audit the context without parsing
-the prompt text.
+`prompt_text` is the direct Agent prompt surface. In `balanced` mode it uses a
+compact readable line format. In `aggressive` mode it uses the `AIONIS_CTX v2`
+contract format with short field labels such as `tr` for transition, `act` for
+next action, `role` for source role, and `to` for handoff target. Aggressive
+mode uses short aliases (`m1`, `m2`, ...) in prompt text and keeps full memory
+IDs in the structured fields (`use_now_memory_ids`,
+`inspect_before_use_memory_ids`, `do_not_use_memory_ids`, `rehydrate_hints`,
+`prompt_aliases`, and `memory_ids`) so hosts can audit and attribute memory use
+without making the Agent carry UUIDs in prompt context.
 
 ## AionisMemoryPacket
 
