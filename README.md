@@ -1,63 +1,245 @@
-# Aionis Runtime Focused
+# Aionis
 
-Aionis Runtime Focused is a local evidence-gated cognitive memory and execution learning Runtime for agents.
+The state-adjudicated memory runtime for agents that need to keep working.
 
-It exists to make an agent feel less stateless and less wasteful across real work: prior execution traces, verifier outcomes, failed paths, recovered facts, reusable workflows, and forgetting decisions should shape what the agent sees and does next.
+Memory is not recall. Memory is state.
 
-Aionis is not recall-only memory. It governs memory state first, then compiles
-bounded context; its strongest product surface is auditable, forgettable, and
-reusable execution memory.
+Aionis gives long-running and multi-agent systems a state-governed memory layer:
+it remembers what worked, keeps failed branches from leaking back into prompts,
+compresses execution history into actionable context, and gives operators a
+traceable receipt for every memory decision.
 
-The operator-facing product path now includes a read-only Trace-to-Procedure
-projection in `operator_snapshot.trace_to_procedure`: it shows whether existing
-execution trees, workflow projections, replay evidence, execution contracts,
-decision traces, and promotion evidence are enough for candidate or stable
-procedure reuse.
+Stop stuffing raw history into prompts. Aionis turns agent memory into governed
+execution state.
 
-The product scope is intentionally narrow:
+## Why Aionis?
 
-1. execution continuity
-2. evidence-gated self-learning
-3. controlled forgetting
-4. dynamic learning control
-5. history-shaped future behavior
-6. evidence-scoped ordinary memory recall
+Most agent memory systems retrieve history. Aionis adjudicates it.
 
-Cross-thread, cross-Agent, and cross-LLM continuity are important proof surfaces, but they are not the whole product. The broader product contract is [docs/AIONIS_PRODUCT_CONTRACT.md](docs/AIONIS_PRODUCT_CONTRACT.md): observe real execution, guide future work, forget stale or harmful memory, and measure whether history helped. The implemented state model is defined in [docs/AIONIS_STATE_MODEL.md](docs/AIONIS_STATE_MODEL.md). The primary product proof loop is [docs/AIONIS_GOLDEN_PRODUCT_LOOP.md](docs/AIONIS_GOLDEN_PRODUCT_LOOP.md). Product API usage is defined in [docs/AIONIS_PRODUCT_API_USAGE.md](docs/AIONIS_PRODUCT_API_USAGE.md), host integration is defined in [docs/AIONIS_HOST_INTEGRATION.md](docs/AIONIS_HOST_INTEGRATION.md), capability routing and delete-review decisions live in [docs/AIONIS_CAPABILITY_DECISION_MATRIX.md](docs/AIONIS_CAPABILITY_DECISION_MATRIX.md), product outputs are defined in [docs/AIONIS_PRODUCT_OUTPUT_CONTRACT.md](docs/AIONIS_PRODUCT_OUTPUT_CONTRACT.md), the prompt/debug boundary is defined in [docs/AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md](docs/AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md), and the shortest product flow is [docs/AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md](docs/AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md).
+Before the next Agent sees context, Aionis decides which memories are current,
+stale, contested, failed, reusable, or worth rehydrating. The result is shorter
+Agent context, safer reuse, stronger multi-agent handoff, and inspectable memory
+decisions.
 
-It is not an external host framework product, a docs product, a playground, a cloud control plane, or a benchmark runner. External project evaluation must live outside this focused product tree and must not define Runtime behavior.
+Aionis is built for agents that continue work, not chats that end.
 
-## Product Contract
+| Problem | What Aionis does |
+|---|---|
+| Agents repeat old mistakes | Failed branches become counter-evidence instead of future instructions. |
+| Context keeps growing | Execution history is compressed into bounded Agent context. |
+| Memory recall is unsafe | Memories are gated into `use_now`, `inspect_before_use`, `do_not_use`, or `rehydrate`. |
+| Multi-agent handoff loses state | Planner, worker, verifier, and reviewer can share branch-aware execution memory. |
+| Nobody knows why memory was used | Memory use receipts and operator snapshots explain every decision. |
 
-Aionis should answer these questions during real agent execution:
+## Quickstart
 
-1. What has already happened in this run or prior related runs?
-2. Which facts, files, verifier results, and workflow steps are proven?
-3. Which evidence-backed context, workflow candidates, and risk notes should shape the next run?
-4. Which learned workflow is reusable, contested, retired, or archived?
-5. Which stale or harmful memory should be forgotten, demoted, or rehydrated only on demand?
-6. Which guidance is blocked because it lacks authority?
-7. How did prior execution history change the current guide packet, workflow reuse, memory lifecycle, or verification posture?
+Clone the repo, install dependencies, configure an embedding provider, then run
+the SDK quickstart.
 
-The executable kernel boundary lives in `src/kernel/boundary.ts`. The lightweight source boundary is [docs/ARCHITECTURE_BOUNDARY.md](docs/ARCHITECTURE_BOUNDARY.md), and the convergence scope is [docs/FOCUS.md](docs/FOCUS.md).
+```bash
+npm install
 
-Runtime does not own semantic repair. Guided replay emits structured `agent_repair_request` evidence; the Agent or external LLM candidate producer proposes repairs, and Aionis adjudicates authority only after real execution evidence.
+export EMBEDDING_PROVIDER="minimax"
+export MINIMAX_API_KEY="your-minimax-key"
 
-## Kept Surfaces
+npm run -s runtime:quickstart:sdk
+```
 
-The focused workspace keeps:
+The SDK quickstart runs a real local Runtime and verifies:
 
-1. `src/` Runtime kernel and routes
-2. `scripts/start-lite.sh` direct local Runtime launcher
-3. focused tests for continuity, learning, learning control, replay, and forgetting
+1. a fresh guide starts without actionable history
+2. ordinary preference and project memory become reusable context
+3. the Agent receives compact `agent_context`
+4. feedback is attributed to the exact memory IDs exposed by the guide
+5. `measure` reports whether history changed future context
+6. operator audit surfaces remain read-only
 
-## Removed Surfaces
+For multi-agent execution memory:
 
-The focused workspace excludes external validation runners, benchmark tracks, SDK/package release wrappers, examples, docs products, inspector/playground UIs, marketing surfaces, broad automation products, cloud control planes, old measurement runners, and obsolete extension surfaces that do not directly strengthen the Runtime kernel.
+```bash
+npm run -s runtime:quickstart:multi-agent
+```
 
-## Validation
+That loop writes planner, worker, verifier, and reviewer evidence, then proves
+that the reviewer can continue the passed branch while avoiding the failed
+branch.
 
-Local contract verification:
+## What The Agent Gets
+
+Aionis does not ask you to dump raw traces into the prompt. The Agent gets a
+compiled contract:
+
+```text
+AIONIS_CTX v2
+state role=reviewer history=actionable
+current use_now=continue verified checkout branch
+avoid do_not_use=failed broad search branch
+inspect contested=older route note requires verification
+```
+
+The structured context also carries memory IDs for attribution:
+
+```ts
+type AgentContext = {
+  prompt_text: string;
+  use_now: string[];
+  inspect_before_use: string[];
+  do_not_use: string[];
+  rehydrate_hints: string[];
+  use_now_memory_ids: string[];
+  inspect_before_use_memory_ids: string[];
+  do_not_use_memory_ids: string[];
+  actionable_history_used: boolean;
+};
+```
+
+Give the Agent `agent_context.prompt_text` or selected `agent_context` fields.
+Keep packets, traces, receipts, raw slots, and operator snapshots for host logs
+and observability.
+
+## SDK Usage
+
+```ts
+import {
+  agentPromptFromGuide,
+  createAionisClient,
+} from "./src/sdk.ts";
+
+const aionis = createAionisClient({
+  baseUrl: process.env.AIONIS_URL ?? "http://127.0.0.1:3001",
+  apiKey: process.env.AIONIS_API_KEY,
+  tenant_id: "default",
+  scope: "checkout-agent",
+});
+
+await aionis.remember({
+  kind: "preference",
+  text: "Prefer concise product updates with concrete next steps.",
+  memory_lane: "private",
+  owner_agent_id: "agent-1",
+});
+
+const guide = await aionis.guide<{
+  guide_trace_id: string;
+  agent_context: {
+    prompt_text: string;
+    use_now_memory_ids: string[];
+  };
+}>({
+  query_text: "Continue the product update.",
+  consumer_agent_id: "agent-1",
+  limit: 8,
+  include_packets: true,
+});
+
+const promptContext = agentPromptFromGuide(guide);
+
+await aionis.feedback({
+  reason: "Agent used the exposed memory successfully.",
+  run_id: "run-001",
+  outcome: "positive",
+  used_surface: "use_now",
+  guide_trace_id: guide.guide_trace_id,
+  used_memory_ids: guide.agent_context.use_now_memory_ids.slice(0, 1),
+});
+```
+
+Full SDK guide: [docs/AIONIS_SDK_QUICKSTART.md](docs/AIONIS_SDK_QUICKSTART.md).
+
+## Multi-Agent Execution Memory
+
+Execution memory is Aionis's flagship surface.
+
+It is designed for systems where multiple agents need to continue one body of
+work without losing branch state:
+
+```text
+Planner creates the scoped plan.
+Worker tries a branch.
+Verifier marks the branch passed or failed.
+Reviewer receives compact context and continues the active path.
+```
+
+Aionis keeps the useful execution state alive:
+
+1. passed solutions can be reused
+2. failed branches stay visible as counter-evidence
+3. active path is separated from stale or contested memory
+4. handoff state can survive across Agents, sessions, and runs
+5. operator snapshots explain what was used, blocked, and measured
+
+Run it:
+
+```bash
+npm run -s runtime:quickstart:multi-agent
+```
+
+Host integration guide:
+[docs/AIONIS_HOST_INTEGRATION.md](docs/AIONIS_HOST_INTEGRATION.md).
+
+## Core Concepts
+
+| Concept | Meaning |
+|---|---|
+| Ordinary Memory | Preferences, facts, project context, and notes that can guide future work. |
+| Execution Memory | Branch-aware memory of actions, outcomes, verifier evidence, handoffs, and reusable workflows. |
+| Agent Context | The compact prompt contract given to the Agent. |
+| Memory Lifecycle | The governed state of memory: active, candidate, contested, suppressed, demoted, archived, or rehydrated. |
+| Memory Use Receipt | A read-only record of which memories were used, inspected, blocked, or requested for rehydration. |
+| Feedback Attribution | Feedback is applied only to memory IDs actually exposed by a guide and reported as used. |
+| Operator Snapshot | Read-only observability for branch isolation, memory use, measured effect, and trace-to-procedure readiness. |
+
+## When To Use Aionis
+
+Aionis is strongest when agents are expected to keep working across time:
+
+1. long-running coding agents
+2. multi-agent planner/worker/verifier/reviewer systems
+3. support or operations agents that must remember outcomes
+4. workflow agents that should avoid repeated discovery
+5. products that need auditable memory use
+6. systems where stale or failed context is dangerous
+
+If you only need a one-shot chat or a simple vector search over documents,
+Aionis is probably more Runtime than you need.
+
+## Product Surface
+
+Aionis exposes a focused product loop:
+
+```text
+observe -> guide -> agent action -> feedback -> measure -> snapshot
+```
+
+| Step | What happens |
+|---|---|
+| `observe` | Write real memory, execution evidence, outcomes, or handoff state. |
+| `guide` | Compile governed memory into Agent-facing context. |
+| `agent action` | Your host runs the Agent with only the compiled context. |
+| `feedback` | Attribute the outcome to the memories actually used. |
+| `measure` | Check whether history helped, hurt, or lacked enough evidence. |
+| `snapshot` | Inspect memory use, branch isolation, and effect without mutating Runtime state. |
+
+API usage guide:
+[docs/AIONIS_PRODUCT_API_USAGE.md](docs/AIONIS_PRODUCT_API_USAGE.md).
+
+Output contracts:
+[docs/AIONIS_PRODUCT_OUTPUT_CONTRACT.md](docs/AIONIS_PRODUCT_OUTPUT_CONTRACT.md).
+
+## Documentation
+
+| Document | Purpose |
+|---|---|
+| [AIONIS_SDK_QUICKSTART.md](docs/AIONIS_SDK_QUICKSTART.md) | Smallest SDK product loop. |
+| [AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md](docs/AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md) | Short observe, guide, and audit path. |
+| [AIONIS_HOST_INTEGRATION.md](docs/AIONIS_HOST_INTEGRATION.md) | Single-agent, multi-agent, and coding-agent host integration. |
+| [AIONIS_PRODUCT_CONTRACT.md](docs/AIONIS_PRODUCT_CONTRACT.md) | Product contract and boundaries. |
+| [AIONIS_STATE_MODEL.md](docs/AIONIS_STATE_MODEL.md) | Implemented memory and execution state model. |
+| [AIONIS_CONTEXT_COMPRESSION_BASELINE.md](docs/AIONIS_CONTEXT_COMPRESSION_BASELINE.md) | Current state-preserving context compression baseline. |
+
+## Development
+
+Local verification:
 
 ```bash
 npm install
@@ -65,36 +247,26 @@ npm run -s typecheck
 npm run -s lite:test
 ```
 
-Product proof loop with a configured embedding provider or running Runtime:
-
-```bash
-npm run -s runtime:e2e:golden-product-loop
-```
-
-Developer-facing SDK and multi-agent quickstarts:
+Product proof loops:
 
 ```bash
 npm run -s runtime:quickstart:sdk
 npm run -s runtime:quickstart:multi-agent
+npm run -s runtime:e2e:golden-product-loop
 ```
 
-The SDK quickstart is the smallest product loop over `src/sdk.ts`. The
-multi-agent quickstart runs the SDK client, execution-memory adapter, and
-multi-agent host template over a real Runtime, then prints a compact JSON
-summary of the Agent context, branch isolation, feedback attribution, measured
-effect, and operator-audit surfaces.
+The current package is the focused local Runtime. It keeps Runtime kernel,
+routes, Lite store contracts, SDK quickstarts, and product e2es in one repo.
+Internal architecture boundaries live in:
 
-Real validation must run a frozen Runtime version against isolated workspaces. Aionis must not be modified during a task run to satisfy that task. Failed runs create evidence and candidates; they do not promote project-specific rules into Core.
+1. [docs/FOCUS.md](docs/FOCUS.md)
+2. [docs/ARCHITECTURE_BOUNDARY.md](docs/ARCHITECTURE_BOUNDARY.md)
+3. [docs/AIONIS_CAPABILITY_DECISION_MATRIX.md](docs/AIONIS_CAPABILITY_DECISION_MATRIX.md)
 
-Product-output contracts are verified by focused tests against the Runtime kernel and product output assembler. Real external-agent validation belongs in a separate evaluation workspace, not in this focused Runtime package.
+External benchmark runners, UI playgrounds, cloud control planes, and
+project-specific repair rules are intentionally outside this focused Runtime
+tree.
 
-The current state-preserving context compression baseline is recorded in
-[docs/AIONIS_CONTEXT_COMPRESSION_BASELINE.md](docs/AIONIS_CONTEXT_COMPRESSION_BASELINE.md).
+## License
 
-## Engineering Priorities
-
-1. Keep the local Lite store behind explicit Runtime store-port contracts.
-2. Strengthen execution continuity packets for task start, handoff, resume, verified facts, and evidence-backed guidance.
-3. Strengthen self-learning from real traces without turning one task into source-code policy.
-4. Strengthen controlled forgetting so stale guidance is demoted or rehydrated instead of accumulating forever.
-5. Keep Core free of project-specific repair rules, provider-specific benchmark assumptions, and eval-runner policy.
+Apache-2.0.
