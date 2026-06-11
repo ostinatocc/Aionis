@@ -932,7 +932,7 @@ type AionisEffectReport = {
 | `learning_effect` | learning loop, promotion evidence, authority gates | `src/memory/learning-loop.ts`, `src/memory/promotion-evidence-ledger.ts`, `src/memory/authority-*.ts` |
 | `forgetting_effect` | semantic forgetting, archive, rehydrate, activation | `src/kernel/forgetting-kernel.ts`, `src/memory/lifecycle-lite.ts`, `src/memory/archive-relocation.ts` |
 | `feedback_signal_summary` | product-level read-only feedback signal summary | `src/memory/product-output-assembler.ts`, `memory_decision_audit.feedback_signal_review` |
-| `feedback_learning_control` | `/v1/forget activate` persistence result for repeated-unused-without-positive inspect-before-use posture | `src/routes/product-facade.ts`, `src/memory/lifecycle-lite.ts`, `src/memory/node-feedback-state.ts` |
+| `feedback_learning_control` | `/v1/feedback` or advanced `/v1/forget activate` persistence result for repeated-unused-without-positive inspect-before-use posture | `src/routes/product-facade.ts`, `src/memory/lifecycle-lite.ts`, `src/memory/node-feedback-state.ts` |
 | `inspect_before_use_shadow_delta` | disabled preview of confidence-decay candidates that would move to inspect-before-use | `src/memory/product-output-assembler.ts`, `memory_decision_trace.inspect_before_use_shadow_delta` |
 | `training_candidates` | execution evidence, handoff, replay, promotion/demotion, forgetting | `src/memory/execution-evidence.ts`, `src/memory/handoff.ts`, `src/memory/replay*.ts`, `src/memory/promotion-quality-summary.ts` |
 | `evidence` | replay, runtime signals, promotion quality | `src/memory/replay*.ts`, `src/memory/runtime-signal-*.ts`, `src/memory/promotion-quality-summary.ts` |

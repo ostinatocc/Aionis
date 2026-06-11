@@ -222,18 +222,11 @@ export class AionisClient {
   }
 
   async feedback<T = unknown>(body: AionisFeedbackRequest, options?: AionisRequestOptions): Promise<T> {
-    return this.forget<T>({
-      ...body,
-      operation: "activate",
-      target: body.target ?? "memory",
-    }, options);
+    return this.post<T>("/v1/feedback", body, options);
   }
 
   async rehydrate<T = unknown>(body: AionisRehydrateRequest, options?: AionisRequestOptions): Promise<T> {
-    return this.forget<T>({
-      ...body,
-      operation: "rehydrate",
-    }, options);
+    return this.post<T>("/v1/rehydrate", body, options);
   }
 
   async measure<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {
@@ -242,6 +235,10 @@ export class AionisClient {
 
   async operatorSnapshot<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {
     return this.post<T>("/v1/operator/snapshot", body, options);
+  }
+
+  async snapshot<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {
+    return this.operatorSnapshot<T>(body, options);
   }
 
   async health<T = unknown>(): Promise<T> {

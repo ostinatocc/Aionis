@@ -119,12 +119,16 @@ Typical integration flow:
 2. Call `POST /v1/guide`.
 3. Pass only `guide.agent_context.prompt_text` or selected `agent_context`
    fields to the Agent.
-4. If the Agent output looks wrong, call
+4. Call `POST /v1/feedback` after the Agent acts so outcome attribution is
+   tied to exposed memory IDs.
+5. Call `POST /v1/rehydrate` only when compact context says colder evidence or
+   payload is needed.
+6. If the Agent output looks wrong, call
    `POST /v1/debug/memory-decision-trace` with the same guide output as
    `product_trace.after_guide`.
-5. If a product or customer audit is needed, call
+7. If a product or customer audit is needed, call
    `POST /v1/audit/memory-decision-report`.
-6. Use `POST /v1/measure` when comparing before/after guide packets or
+8. Use `POST /v1/measure` when comparing before/after guide packets or
    measuring whether history helped.
 
 ## Incorrect Use

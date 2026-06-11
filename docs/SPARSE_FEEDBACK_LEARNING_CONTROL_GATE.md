@@ -23,7 +23,7 @@ The output belongs to `AionisMemoryDecisionTrace` and `AionisMemoryDecisionAudit
 | strong negative counter-signal | host marks exposed memory as used and verifier/tool/runtime failure aligns | `candidate_inspect_before_use_memory_ids` | never from this summary |
 | repeated weak negative counter-signal | repeated weak negative attributed use crosses threshold | `candidate_inspect_before_use_memory_ids` | never from this summary |
 | repeated exposed but unused | memory is repeatedly exposed but not host-marked used | observation only unless there is no positive attributed use | never |
-| repeated unused without positive attribution | memory is repeatedly exposed and has no positive attributed use | `candidate_inspect_before_use_memory_ids`; `/v1/forget activate` may persist `feedback_learning_control_posture=inspect_before_use` | no authority slot mutation; memory surface changes to inspect-before-use |
+| repeated unused without positive attribution | memory is repeatedly exposed and has no positive attributed use | `candidate_inspect_before_use_memory_ids`; `/v1/feedback` or advanced `/v1/forget activate` may persist `feedback_learning_control_posture=inspect_before_use` | no authority slot mutation; memory surface changes to inspect-before-use |
 | repeated unused with positive attribution | memory is repeatedly exposed but has prior positive attributed use | `blocked_by_positive_attribution_memory_ids` | never |
 | neighborhood drift | related newer memories indicate directional drift | observation only | never |
 
@@ -41,7 +41,7 @@ The output belongs to `AionisMemoryDecisionTrace` and `AionisMemoryDecisionAudit
 
 ## Persistent Inspect-Before-Use Contract
 
-`/v1/forget` with `operation: "activate"` may persist repeated-unused evidence only when all of these conditions hold:
+`/v1/feedback` or advanced `/v1/forget` with `operation: "activate"` may persist repeated-unused evidence only when all of these conditions hold:
 
 1. the feedback is tied to a valid `guide_trace_id`
 2. the memory was exposed in the same tenant and scope

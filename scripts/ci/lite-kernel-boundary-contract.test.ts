@@ -101,6 +101,7 @@ test("Lite route capability matrix maps public routes to focused product capabil
     "POST /v1/audit/memory-decision-report",
     "POST /v1/debug/memory-decision-trace",
     "POST /v1/execution/context/assemble",
+    "POST /v1/feedback",
     "POST /v1/forget",
     "POST /v1/guide",
     "POST /v1/handoff/recover",
@@ -161,6 +162,7 @@ test("Lite route capability matrix maps public routes to focused product capabil
     "POST /v1/memory/write",
     "POST /v1/observe",
     "POST /v1/operator/snapshot",
+    "POST /v1/rehydrate",
   ]);
 
   assert.equal(new Set(routeKeys).size, routeKeys.length, "route capability matrix must not duplicate routes");
@@ -187,6 +189,8 @@ test("Lite route capability matrix separates product entries from internal surfa
   for (const route of [
     "POST /v1/observe",
     "POST /v1/guide",
+    "POST /v1/feedback",
+    "POST /v1/rehydrate",
     "POST /v1/forget",
     "POST /v1/measure",
   ]) {
@@ -248,5 +252,13 @@ test("Lite route capability matrix makes history-shaped behavior explicit", () =
   assert.ok(
     historyRoutes.some((entry) => entry.path === "/v1/forget"),
     "forget facade must expose history-shaped future behavior",
+  );
+  assert.ok(
+    historyRoutes.some((entry) => entry.path === "/v1/feedback"),
+    "feedback facade must expose history-shaped future behavior",
+  );
+  assert.ok(
+    historyRoutes.some((entry) => entry.path === "/v1/rehydrate"),
+    "rehydrate facade must expose history-shaped future behavior",
   );
 });

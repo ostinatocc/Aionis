@@ -31,7 +31,7 @@ Use the product routes directly when integrating over HTTP:
 | `observe` | `POST /v1/observe` | Report real memory, execution, outcome, or handoff evidence. | Persist scoped evidence and execution memory. |
 | `guide` | `POST /v1/guide` | Ask for context before the next Agent acts. | Return compact `agent_context`. |
 | `agent action` | Host-owned | Give the Agent only `agent_context.prompt_text` or selected `agent_context` fields. | No action execution. |
-| `outcome feedback` | SDK `feedback()`, adapter `afterRun`, or raw `POST /v1/forget operation=activate` | Report which exposed memory IDs were actually used and what happened. | Attribute feedback only to exposed and reported memory. |
+| `outcome feedback` | SDK `feedback()`, adapter `afterRun`, or raw `POST /v1/feedback` | Report which exposed memory IDs were actually used and what happened. | Attribute feedback only to exposed and reported memory. |
 | `measure` | `POST /v1/measure` | Provide before/after guide packets or product trace. | Report whether history helped or hurt. |
 | `snapshot` | `POST /v1/operator/snapshot` | Ask for read-only operator state. | Summarize active context, attribution, and measured effect. |
 

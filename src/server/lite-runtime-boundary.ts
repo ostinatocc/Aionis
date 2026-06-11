@@ -27,6 +27,8 @@ export const LITE_ROUTE_CAPABILITY_MATRIX_VERSION = "lite_route_capability_matri
 const LITE_PRODUCT_ENTRY_ROUTES = new Set([
   "POST /v1/observe",
   "POST /v1/guide",
+  "POST /v1/feedback",
+  "POST /v1/rehydrate",
   "POST /v1/forget",
   "POST /v1/measure",
 ]);
@@ -133,7 +135,25 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
     capabilities: ["forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
     surface_kind: "core_runtime",
-    product_role: "product facade for suppression, activation, archive rehydration, and payload rehydration",
+    product_role: "advanced product facade for explicit lifecycle suppression, activation, archive rehydration, and payload rehydration",
+  },
+  {
+    method: "POST",
+    path: "/v1/feedback",
+    route_group: "product-facade",
+    capabilities: ["learning", "learning_control"],
+    product_effects: ["history_shaped_future_behavior"],
+    surface_kind: "core_runtime",
+    product_role: "product facade for attributing run outcomes to memory actually exposed by guide",
+  },
+  {
+    method: "POST",
+    path: "/v1/rehydrate",
+    route_group: "product-facade",
+    capabilities: ["forgetting", "learning_control"],
+    product_effects: ["history_shaped_future_behavior"],
+    surface_kind: "core_runtime",
+    product_role: "product facade for expanding archived memory or anchor payload on demand",
   },
   {
     method: "POST",

@@ -2,8 +2,8 @@
 
 Status: product API usage guide for the focused Runtime
 
-This document explains how a host should use the four product actions:
-`observe`, `guide`, `forget`, and `measure`.
+This document explains how a host should use the product actions:
+`observe`, `guide`, `feedback`, `measure`, `rehydrate`, and `snapshot`.
 
 It is not a new mechanism proposal. It does not define an Agent framework,
 benchmark runner, repair system, or host-specific adapter. It describes the
@@ -20,8 +20,10 @@ For the smallest SDK loop, see
 |---|---|---|---|---|
 | `POST /v1/observe` | `observe` | Host after real work or memory input | Runtime write path | `observed`, `structured_memory` |
 | `POST /v1/guide` | `guide` | Host before the next Agent run | Agent prompt builder | `agent_context` |
-| `POST /v1/forget` | `forget` | Host, operator, or product policy | Host lifecycle controller | `forget_effect` |
+| `POST /v1/feedback` | `feedback` | Host after the Agent acts | Feedback attribution | `forget_effect` with `operation: "activate"` |
+| `POST /v1/rehydrate` | `rehydrate` | Host when compact context needs original evidence or payload | Payload / archive lifecycle controller | `forget_effect` with `operation: "rehydrate"` |
 | `POST /v1/measure` | `measure` | Host, operator, or product evaluator | Product diagnostics | `effect_report`, optional decision trace and audit |
+| `POST /v1/forget` | advanced lifecycle | Host, operator, or product policy | Lifecycle controller | `forget_effect` |
 
 Optional read-only operator route:
 
@@ -47,12 +49,11 @@ For host decisions, distinguish these two fields:
 2. Call `POST /v1/guide` before the next Agent run.
 3. Pass only `agent_context.prompt_text` or selected `agent_context` fields to
    the Agent.
-4. Call SDK `feedback()` after the Agent acts, or raw `POST /v1/forget` with
-   `operation: "activate"` when using HTTP directly. Include `guide_trace_id`,
-   `used_memory_ids`, `run_id`, `outcome`, and `used_surface`.
-5. Call SDK `rehydrate()` when an archived memory or anchor payload needs to be
-   expanded, or raw `POST /v1/forget` with `operation: "rehydrate"` when using
-   HTTP directly.
+4. Call SDK `feedback()` or raw `POST /v1/feedback` after the Agent acts.
+   Include `guide_trace_id`, `used_memory_ids`, `run_id`, `outcome`, and
+   `used_surface`.
+5. Call SDK `rehydrate()` or raw `POST /v1/rehydrate` when an archived memory
+   or anchor payload needs to be expanded.
 6. Call `POST /v1/measure` with before/after guide packets or direct
    observations when the product needs to prove whether history helped or hurt.
 7. Call `POST /v1/operator/snapshot` when a host or operator needs a read-only
@@ -63,9 +64,10 @@ For host decisions, distinguish these two fields:
 
 The focused Runtime also exposes a small TypeScript client for the product
 actions. The SDK is intentionally a facade over the product routes; it does not
-wrap debug, audit, benchmark, or host-specific adapter APIs. `feedback()` and
-`rehydrate()` are readable aliases over the controlled `/v1/forget` product
-route, so hosts do not need to memorize lifecycle operation names.
+wrap debug, audit, benchmark, or host-specific adapter APIs. `feedback()` posts
+to `/v1/feedback`, `rehydrate()` posts to `/v1/rehydrate`, and `snapshot()` is a
+short alias for `/v1/operator/snapshot`. The lower-level `/v1/forget` route
+remains available for explicit suppress/unsuppress lifecycle control.
 
 ```ts
 import {
@@ -207,10 +209,9 @@ Use these identity rules:
 6. Put role hints such as `planner`, `worker`, `verifier`, or `reviewer` in
    top-level `agent_role` on `/v1/guide`. Legacy `context.agent_role` is still
    accepted as a compatibility fallback.
-7. After the Agent acts, call SDK `feedback()` with `actor`, `guide_trace_id`,
-   `used_memory_ids`, `run_id`, `outcome`, and `used_surface` so feedback is
-   attributed only to memory actually used. When using raw HTTP, this maps to
-   `/v1/forget` with `operation: "activate"`.
+7. After the Agent acts, call SDK `feedback()` or raw `POST /v1/feedback` with
+   `actor`, `guide_trace_id`, `used_memory_ids`, `run_id`, `outcome`, and
+   `used_surface` so feedback is attributed only to memory actually used.
    For `guide_trace_id` feedback, Aionis inherits the guide ledger's
    `consumer_team_id` when activating team-owned shared memory.
 
@@ -602,18 +603,75 @@ Example:
 }
 ```
 
-## `POST /v1/forget`
+## `POST /v1/feedback`
 
 ### Purpose
 
-Change memory lifecycle or payload availability without deleting source
-evidence silently.
+Attribute a real run outcome to the memory IDs the host knows were actually
+used. This is the normal product path after `guide -> agent action`.
 
 ### Minimal Request Fields
 
 | Field | Required | Meaning |
 |---|---:|---|
-| `operation` | Yes | `suppress`, `unsuppress`, `rehydrate`, or `activate`. |
+| `reason` | Yes | Why this feedback is being recorded. |
+| `run_id` | Yes | The concrete run that used the memory. |
+| `outcome` | Yes | `positive`, `negative`, or `neutral`. |
+| `used_surface` | Yes | `use_now` or `explicit_host_assertion` is required for non-neutral feedback. |
+| `guide_trace_id` + `used_memory_ids` | Preferred | Lets Aionis verify attribution against the exact guide exposure ledger. |
+| `memory_ids` / `node_ids` | Conditional | Direct attribution when the host already has precise memory IDs. |
+| `verifier_status` / `tool_status` / `runtime_signal_refs` | No | Optional evidence for stronger positive or negative feedback. |
+
+### Main Response Fields
+
+| Field | Consumer | Meaning |
+|---|---|---|
+| `product_action` | Developer | Always `feedback`. |
+| `operation` | Host / measure | Always `activate`; kept so `product_trace.forget_result` stays compatible. |
+| `forget_effect` | Host / measure | Product-level feedback attribution effect. |
+| `result` | Advanced host / audit | Internal node activation result. |
+
+## `POST /v1/rehydrate`
+
+### Purpose
+
+Expand archived memory or anchor payload only when the compact context says the
+Agent needs the colder evidence or payload.
+
+### Minimal Request Fields
+
+| Field | Required | Meaning |
+|---|---:|---|
+| `reason` | Yes | Why the compact context is insufficient. |
+| `memory_ids` / `node_ids` / `client_ids` | Conditional | Archived memory to move back to `warm` or `hot`. |
+| `anchor_id` / `anchor_uri` | Conditional | Anchor payload to expand. |
+| `target` | No | `archive`, `payload`, or `memory`; inferred when possible. |
+| `target_tier` | No | `warm` or `hot` for archived memory. |
+| `mode` | No | `summary_only`, `partial`, `full`, or `differential` for payload rehydration. |
+
+### Main Response Fields
+
+| Field | Consumer | Meaning |
+|---|---|---|
+| `product_action` | Developer | Always `rehydrate`. |
+| `operation` | Host / measure | Always `rehydrate`; kept so `product_trace.forget_result` stays compatible. |
+| `forget_effect` | Host / measure | Product-level rehydration effect. |
+| `result` | Advanced host / audit | Internal archive or anchor rehydration result. |
+
+## `POST /v1/forget`
+
+### Purpose
+
+Change memory lifecycle or payload availability without deleting source
+evidence silently. This is the advanced lifecycle facade. Normal product loops
+should prefer `/v1/feedback` for run attribution and `/v1/rehydrate` for payload
+or archive expansion.
+
+### Minimal Request Fields
+
+| Field | Required | Meaning |
+|---|---:|---|
+| `operation` | Yes | `suppress`, `unsuppress`, `rehydrate`, or `activate`. Prefer `/v1/feedback` and `/v1/rehydrate` for normal product loops. |
 | `reason` | Yes | Why this lifecycle action is being taken. |
 | `target` | No | `memory`, `archive`, `payload`, or `pattern`. |
 | `memory_ids` / `node_ids` / `client_ids` | Conditional | Required for memory activation and many rehydrate operations. |
@@ -638,12 +696,12 @@ evidence silently.
 The host should consume `forget_effect`. It should not ask the Agent to reason
 over internal lifecycle rows or raw slots.
 
-For sparse-feedback attribution, use `operation: "activate"` after a run when
-the host knows which `agent_context.use_now_memory_ids` were actually used.
-`run_id`, `outcome`, and `used_surface` are required. Non-neutral feedback must
-use `used_surface: "use_now"` or `used_surface: "explicit_host_assertion"`; this
-is the attribution gate that prevents Aionis from blaming every recalled memory
-for a run outcome.
+For sparse-feedback attribution, prefer `/v1/feedback`. The explicit
+`operation: "activate"` form remains available for advanced callers. In either
+case, `run_id`, `outcome`, and `used_surface` are required. Non-neutral feedback
+must use `used_surface: "use_now"` or `used_surface: "explicit_host_assertion"`;
+this is the attribution gate that prevents Aionis from blaming every recalled
+memory for a run outcome.
 
 Prefer passing `guide_trace_id` from `/v1/guide` plus `used_memory_ids`. Aionis
 will load the persisted guide exposure ledger, reject ids that were not exposed

@@ -176,6 +176,27 @@ test("README and positioning docs keep the external product language stable", ()
   assert.match(positioning, /guaranteed external task success/);
 });
 
+test("README and product API docs keep developer entrypoints product-shaped", () => {
+  const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
+  const apiUsage = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_PRODUCT_API_USAGE.md"), "utf8");
+  const productContract = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_PRODUCT_CONTRACT.md"), "utf8");
+  const sdkQuickstart = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_SDK_QUICKSTART.md"), "utf8");
+
+  for (const text of [readme, apiUsage, productContract]) {
+    assert.match(text, /\/v1\/feedback/);
+    assert.match(text, /\/v1\/rehydrate/);
+  }
+
+  assert.match(readme, /\/v1\/operator\/snapshot/);
+  assert.match(apiUsage, /`feedback\(\)` posts\s+to `\/v1\/feedback`/);
+  assert.match(apiUsage, /`rehydrate\(\)` posts to `\/v1\/rehydrate`/);
+  assert.match(apiUsage, /`snapshot\(\)` is a\s+short alias for `\/v1\/operator\/snapshot`/);
+  assert.match(productContract, /`POST \/v1\/feedback` is the normal HTTP product entry/);
+  assert.match(productContract, /`POST \/v1\/forget` remains the advanced lifecycle facade/);
+  assert.match(sdkQuickstart, /`snapshot\(\)` exposes read-only memory use receipt/);
+  assert.doesNotMatch(sdkQuickstart, /`operatorSnapshot\(\)` exposes/);
+});
+
 test("lite repo does not keep fixture-only real validation artifacts", () => {
   assert.equal(
     fs.existsSync(path.join(ROOT, "scripts", "fixtures", "real-ab-validation")),

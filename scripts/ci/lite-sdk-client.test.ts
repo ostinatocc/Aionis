@@ -30,7 +30,6 @@ test("AionisClient wraps the product facade APIs with scope defaults", async () 
   await client.guide({ context: { task: "continue" } }, { scope: "scope-b" });
   await client.forget({ operation: "suppress", target: "memory", memory_id: "mem-1" });
   await client.feedback({
-    operation: "suppress",
     reason: "Agent used exposed memory successfully.",
     run_id: "run-feedback",
     outcome: "positive",
@@ -39,20 +38,19 @@ test("AionisClient wraps the product facade APIs with scope defaults", async () 
     used_memory_ids: ["mem-used"],
   });
   await client.rehydrate({
-    operation: "activate",
     reason: "Expand archived payload before exact use.",
     anchor_uri: "aionis://anchor/payload-1",
     mode: "partial",
   });
   await client.measure({ baseline: { score: 0.3 }, aionis: { score: 0.7 } });
-  await client.operatorSnapshot({ run_id: "run-operator", include_markdown: true });
+  await client.snapshot({ run_id: "run-operator", include_markdown: true });
 
   assert.deepEqual(calls.map((call) => call.url), [
     "http://127.0.0.1:3001/v1/observe",
     "http://127.0.0.1:3001/v1/guide",
     "http://127.0.0.1:3001/v1/forget",
-    "http://127.0.0.1:3001/v1/forget",
-    "http://127.0.0.1:3001/v1/forget",
+    "http://127.0.0.1:3001/v1/feedback",
+    "http://127.0.0.1:3001/v1/rehydrate",
     "http://127.0.0.1:3001/v1/measure",
     "http://127.0.0.1:3001/v1/operator/snapshot",
   ]);
@@ -71,13 +69,13 @@ test("AionisClient wraps the product facade APIs with scope defaults", async () 
   assert.equal(guideBody.mode, "full_power");
 
   const feedbackBody = JSON.parse(String(calls[3]?.init.body)) as Record<string, unknown>;
-  assert.equal(feedbackBody.operation, "activate");
-  assert.equal(feedbackBody.target, "memory");
+  assert.equal(feedbackBody.operation, undefined);
+  assert.equal(feedbackBody.target, undefined);
   assert.equal(feedbackBody.guide_trace_id, "guide-trace-feedback");
   assert.deepEqual(feedbackBody.used_memory_ids, ["mem-used"]);
 
   const rehydrateBody = JSON.parse(String(calls[4]?.init.body)) as Record<string, unknown>;
-  assert.equal(rehydrateBody.operation, "rehydrate");
+  assert.equal(rehydrateBody.operation, undefined);
   assert.equal(rehydrateBody.anchor_uri, "aionis://anchor/payload-1");
   assert.equal(rehydrateBody.mode, "partial");
 

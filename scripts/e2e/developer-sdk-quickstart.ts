@@ -159,7 +159,7 @@ async function main() {
     assertCondition(historyImpact?.impact_direction === "positive", "SDK quickstart measure did not report positive history impact");
     assertCondition(receipt?.contract_version === "aionis_memory_use_receipt_v1", "SDK quickstart measure missing memory use receipt");
 
-    const snapshot = await aionis.operatorSnapshot<Record<string, unknown>>({
+    const snapshot = await aionis.snapshot<Record<string, unknown>>({
       run_id: runId,
       task_signature: "sdk-quickstart",
       task_family: "developer_sdk_quickstart",

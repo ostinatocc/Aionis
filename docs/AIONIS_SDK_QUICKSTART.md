@@ -98,7 +98,7 @@ JSON showing:
 4. `guide()` returns compact `agent_context` with direct-use memory IDs
 5. `feedback()` attributes outcome only to memory exposed by that guide trace
 6. `measure()` reports whether history changed the future context
-7. `operatorSnapshot()` exposes read-only memory use receipt and effect state
+7. `snapshot()` exposes read-only memory use receipt and effect state
 
 For multi-agent execution memory, use:
 

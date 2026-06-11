@@ -37,18 +37,21 @@ An Agent using Aionis should:
 7. measure whether history helped or hurt the current run
 8. produce reusable memory and execution evidence that can later become training data
 
-## Four Product Actions
+## Product Actions
 
-The HTTP product surface should collapse around four verbs. SDKs may expose
-readable aliases such as `feedback()` and `rehydrate()` when they map back to
-the same product routes.
+The HTTP product surface should collapse around a small set of verbs that match
+the host loop. Advanced lifecycle controls stay available, but ordinary hosts
+should not have to understand internal route names or lifecycle operation codes.
 
 | Product Action | User Meaning | Current Runtime Capabilities |
 |---|---|---|
 | `observe` | Record what actually happened during execution. | memory write, handoff store, trajectory compile, replay step evidence, delegation records, tool feedback |
 | `guide` | Produce the next compact cognitive and execution context from history. | recall, recall_text, context assemble, planning context, action retrieval, experience intelligence, resume/handoff packs |
-| `forget` | Control what should cool down, retire, archive, or rehydrate. | semantic forgetting, suppression, archive relocation, anchor rehydration, node activation |
+| `feedback` | Attribute run outcome to exposed memory actually used by the host. | node activation, guide exposure ledger verification, feedback learning-control persistence |
+| `rehydrate` | Expand archived memory or anchor payload only when compact context needs it. | archive relocation, anchor payload rehydration, linked decision rehydration |
 | `measure` | Prove whether history changed the run positively or negatively. | runtime effect summary, promotion quality, runtime signal trends, maintenance reports, paired eval reports |
+| `snapshot` | Inspect memory use, branch isolation, and effect without mutating Runtime state. | operator snapshot, memory use receipt, trace-to-procedure readiness |
+| `forget` | Advanced lifecycle control for suppression, unsuppression, activation, and rehydration. | semantic forgetting, suppression, archive relocation, anchor rehydration, node activation |
 
 Internal mechanisms may remain richer than these verbs, but product docs, demos, and user-facing integrations should not expose every internal route as a product concept. Concrete product API usage is defined in [AIONIS_PRODUCT_API_USAGE.md](AIONIS_PRODUCT_API_USAGE.md), host integration templates are defined in [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md), capability routing and deletion decisions are tracked in [AIONIS_CAPABILITY_DECISION_MATRIX.md](AIONIS_CAPABILITY_DECISION_MATRIX.md), and stable user-facing outputs are defined in [AIONIS_PRODUCT_OUTPUT_CONTRACT.md](AIONIS_PRODUCT_OUTPUT_CONTRACT.md).
 
@@ -211,13 +214,22 @@ source layer, and evidence IDs before compiling context. Hosts should treat
 rather than raw recall results. The contract does not create execution trees,
 promote memory, or mutate authority by itself.
 
-## Forget Input Contract
+## Feedback, Rehydrate, And Forget Input Contract
 
-`POST /v1/forget` is the HTTP product entry for controlled forgetting,
-suppression, rehydration, and reuse feedback. SDK users should prefer
-`client.feedback()` for `activate` feedback and `client.rehydrate()` for
-rehydration, while raw HTTP users can still pass the operation explicitly.
-Users should not need to know the internal lifecycle route names.
+`POST /v1/feedback` is the normal HTTP product entry for attributing run
+outcomes to memory actually exposed by a guide. It maps to controlled
+activation feedback internally, but callers do not need to pass
+`operation: "activate"`.
+
+`POST /v1/rehydrate` is the normal HTTP product entry for expanding archived
+memory or anchor payload on demand. It maps to controlled rehydration
+internally, but callers do not need to pass `operation: "rehydrate"`.
+
+`POST /v1/forget` remains the advanced lifecycle facade for explicit
+suppression, unsuppression, activation, archive rehydration, and payload
+rehydration. SDK users should prefer `client.feedback()` and
+`client.rehydrate()` for normal product loops. Users should not need to know the
+internal lifecycle route names.
 
 Supported product operations:
 
@@ -225,8 +237,8 @@ Supported product operations:
 |---|---|---|
 | `suppress` | Temporarily or strongly suppress a learned pattern from future guidance. | Pattern suppression with `shadow_learn` or `hard_freeze` mode. |
 | `unsuppress` | Restore a previously suppressed pattern when it becomes valid again. | Pattern unsuppression. |
-| `rehydrate` | Bring archived memory or anchor payload back into usable context on demand. | Archive rehydration for memory IDs, or anchor payload rehydration for anchors. |
-| `activate` | Record that a recalled memory was actually useful in a run. | Node activation feedback with outcome and run evidence. |
+| `rehydrate` | Bring archived memory or anchor payload back into usable context on demand. Prefer `/v1/rehydrate` for normal product loops. | Archive rehydration for memory IDs, or anchor payload rehydration for anchors. |
+| `activate` | Record that a recalled memory was actually useful in a run. Prefer `/v1/feedback` for normal product loops. | Node activation feedback with outcome and run evidence. |
 
 Supported targets:
 

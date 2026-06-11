@@ -478,6 +478,32 @@ function observeWritePayload(parsed: z.infer<typeof ProductObserveRequest>): {
 
 type ProductForgetInput = z.infer<typeof ProductForgetRequest>;
 type ProductForgetTarget = NonNullable<ProductForgetInput["target"]>;
+type ProductLifecycleSurface = "forget" | "feedback" | "rehydrate";
+
+function productFeedbackRequest(body: unknown): ProductForgetInput {
+  const record = objectValue(body) ?? {};
+  return ProductForgetRequest.parse({
+    ...record,
+    operation: "activate",
+    target: "memory",
+  });
+}
+
+function productRehydrateRequest(body: unknown): ProductForgetInput {
+  const record = objectValue(body) ?? {};
+  return ProductForgetRequest.parse({
+    ...record,
+    operation: "rehydrate",
+  });
+}
+
+function productLifecycleContractVersion(surface: ProductLifecycleSurface): string {
+  switch (surface) {
+    case "feedback": return "aionis_feedback_result_v1";
+    case "rehydrate": return "aionis_rehydrate_result_v1";
+    case "forget": return "aionis_forget_result_v1";
+  }
+}
 
 function uniqueStrings(values: Array<string | null | undefined>): string[] {
   const seen = new Set<string>();
@@ -2455,8 +2481,12 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     });
   });
 
-  app.post("/v1/forget", async (req: ProductFacadeRequest, reply: FastifyReply) => {
-    const parsed = ProductForgetRequest.parse(req.body);
+  const handleProductLifecycle = async (
+    req: ProductFacadeRequest,
+    reply: FastifyReply,
+    parsed: ProductForgetInput,
+    surface: ProductLifecycleSurface,
+  ) => {
     const guideExposure = await resolveGuideExposureForActivation({ app, req, parsed, env });
     if (guideExposure && !guideExposure.ok) {
       return reply.code(guideExposure.statusCode).send(guideExposure.body);
@@ -2485,9 +2515,10 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       : null;
 
     return reply.code(200).send({
-      contract_version: "aionis_forget_result_v1",
+      contract_version: productLifecycleContractVersion(surface),
       tenant_id: parsed.tenant_id ?? env.MEMORY_TENANT_ID,
       scope: parsed.scope ?? env.MEMORY_SCOPE,
+      ...(surface !== "forget" ? { product_action: surface } : {}),
       operation: parsed.operation,
       target,
       forget_effect: productForgetEffect({
@@ -2519,6 +2550,21 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
         ],
       },
     });
+  };
+
+  app.post("/v1/forget", async (req: ProductFacadeRequest, reply: FastifyReply) => {
+    const parsed = ProductForgetRequest.parse(req.body);
+    return handleProductLifecycle(req, reply, parsed, "forget");
+  });
+
+  app.post("/v1/feedback", async (req: ProductFacadeRequest, reply: FastifyReply) => {
+    const parsed = productFeedbackRequest(req.body);
+    return handleProductLifecycle(req, reply, parsed, "feedback");
+  });
+
+  app.post("/v1/rehydrate", async (req: ProductFacadeRequest, reply: FastifyReply) => {
+    const parsed = productRehydrateRequest(req.body);
+    return handleProductLifecycle(req, reply, parsed, "rehydrate");
   });
 
   app.post("/v1/debug/memory-decision-trace", async (req: ProductFacadeRequest, reply: FastifyReply) => {

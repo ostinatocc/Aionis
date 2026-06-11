@@ -261,6 +261,11 @@ observe -> guide -> agent action -> feedback -> measure -> snapshot
 | `measure` | Check whether history helped, hurt, or lacked enough evidence. |
 | `snapshot` | Inspect memory use, branch isolation, and effect without mutating Runtime state. |
 
+HTTP entrypoints: `/v1/observe`, `/v1/guide`, `/v1/feedback`,
+`/v1/measure`, `/v1/rehydrate`, and `/v1/operator/snapshot`.
+The advanced `/v1/forget` lifecycle facade remains available for explicit
+suppression and compatibility.
+
 API usage guide:
 [docs/AIONIS_PRODUCT_API_USAGE.md](docs/AIONIS_PRODUCT_API_USAGE.md).
 

@@ -4069,6 +4069,133 @@ test("product guide feedback loop downgrades after aligned verifier failure attr
   }
 });
 
+test("product feedback alias records activation without exposing forget operation to callers", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("feedback-alias-activate-memory");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const observe = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        input_text: "Use compact product status reports when asked for progress.",
+        memory: {
+          client_id: "memory:product-feedback-alias",
+          type: "concept",
+          tier: "warm",
+          memory_kind: "general_memory",
+          title: "Product status style",
+          text_summary: "Use compact product status reports when asked for progress.",
+          confidence: 0.8,
+        },
+      },
+    });
+    assert.equal(observe.statusCode, 200);
+    const nodeId = observe.json().memory_write.nodes[0].id;
+
+    const feedback = await app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        memory_ids: [nodeId],
+        run_id: "run:product-feedback-alias",
+        outcome: "positive",
+        used_surface: "use_now",
+        verifier_status: "passed",
+        tool_status: "succeeded",
+        reason: "The recalled style memory was reused correctly in the current run.",
+      },
+    });
+
+    assert.equal(feedback.statusCode, 200, feedback.payload);
+    const body = feedback.json();
+    assertNoForbiddenProductFields(body);
+    assert.equal(body.contract_version, "aionis_feedback_result_v1");
+    assert.equal(body.product_action, "feedback");
+    assert.equal(body.operation, "activate");
+    assert.equal(body.target, "memory");
+    assert.equal(body.forget_effect.changed_count, 1);
+    assert.equal(body.forget_effect.reversible, false);
+    assert.deepEqual(body.forget_effect.affected_memory_ids, [nodeId]);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/memory/nodes/activate"]);
+    assert.equal(body.result.activated.updated_nodes, 1);
+    assert.equal(body.result.activated.outcome, "positive");
+  } finally {
+    await app.close();
+  }
+});
+
+test("product rehydrate alias restores archived memory without exposing forget operation to callers", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("rehydrate-alias-archive");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const observe = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        input_text: "Archive this workflow until the same continuation returns.",
+        memory: {
+          client_id: "archive:product-rehydrate-alias",
+          type: "procedure",
+          tier: "archive",
+          memory_kind: "execution_workflow",
+          title: "Archived workflow for product rehydrate alias",
+          text_summary: "Rehydrate this archived workflow only when the same continuation need returns.",
+          confidence: 0.82,
+        },
+      },
+    });
+    assert.equal(observe.statusCode, 200);
+    const nodeId = observe.json().memory_write.nodes[0].id;
+
+    const rehydrate = await app.inject({
+      method: "POST",
+      url: "/v1/rehydrate",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        target: "archive",
+        memory_ids: [nodeId],
+        target_tier: "hot",
+        reason: "The related task returned and needs this archived workflow.",
+      },
+    });
+
+    assert.equal(rehydrate.statusCode, 200, rehydrate.payload);
+    const body = rehydrate.json();
+    assertNoForbiddenProductFields(body);
+    assert.equal(body.contract_version, "aionis_rehydrate_result_v1");
+    assert.equal(body.product_action, "rehydrate");
+    assert.equal(body.operation, "rehydrate");
+    assert.equal(body.target, "archive");
+    assert.equal(body.forget_effect.changed_count, 1);
+    assert.equal(body.forget_effect.reversible, true);
+    assert.deepEqual(body.forget_effect.affected_memory_ids, [nodeId]);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/memory/archive/rehydrate"]);
+    assert.equal(body.result.rehydrated.moved_nodes, 1);
+  } finally {
+    await app.close();
+  }
+});
+
 test("product forget activate requires run outcome attribution", async () => {
   const app = Fastify();
   const env = liteEnv();
