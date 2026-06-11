@@ -153,7 +153,7 @@ It keeps product defaults consistent:
 5. `measureRun` and `operatorSnapshotRun` reuse stored guide and feedback state.
 
 ```ts
-import { createAionisClient } from "./src/sdk.ts";
+import { createAionisClient } from "@aionis/sdk";
 import { createExecutionMemoryAdapter } from "./src/adapters/index.ts";
 
 const client = createAionisClient({
@@ -205,7 +205,7 @@ import {
   createExecutionMemoryAdapter,
   createGenericAgentHostTemplate,
 } from "./src/adapters/index.ts";
-import { createAionisClient } from "./src/sdk.ts";
+import { createAionisClient } from "@aionis/sdk";
 
 const client = createAionisClient({
   baseUrl: process.env.AIONIS_URL ?? "http://127.0.0.1:3001",
@@ -303,7 +303,7 @@ import {
   createExecutionMemoryAdapter,
   createMultiAgentHostTemplate,
 } from "./src/adapters/index.ts";
-import { createAionisClient } from "./src/sdk.ts";
+import { createAionisClient } from "@aionis/sdk";
 
 const client = createAionisClient({
   baseUrl: process.env.AIONIS_URL ?? "http://127.0.0.1:3001",
@@ -388,7 +388,7 @@ import {
   createCodingAgentHostTemplate,
   createExecutionMemoryAdapter,
 } from "./src/adapters/index.ts";
-import { createAionisClient } from "./src/sdk.ts";
+import { createAionisClient } from "@aionis/sdk";
 
 const client = createAionisClient({
   baseUrl: process.env.AIONIS_URL ?? "http://127.0.0.1:3001",

@@ -1,0 +1,63 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  createInstallPlan,
+  parseCreateAionisArgs,
+  providerEnvKey,
+  quickstartScriptName,
+} from "../src/index.ts";
+
+test("@aionis/create parses defaults for the one-command installer", () => {
+  const options = parseCreateAionisArgs([], {});
+  assert.equal(options.dir, "Aionis");
+  assert.equal(options.repo, "https://github.com/ostinatocc/Aionis.git");
+  assert.equal(options.provider, "minimax");
+  assert.equal(options.quickstart, "sdk");
+  assert.equal(options.skipInstall, false);
+  assert.equal(options.skipQuickstart, false);
+});
+
+test("@aionis/create parses explicit Runtime, SDK, and quickstart options", () => {
+  const options = parseCreateAionisArgs([
+    "my-aionis",
+    "--repo",
+    "https://example.test/Aionis.git",
+    "--branch",
+    "main",
+    "--provider",
+    "openai",
+    "--api-key",
+    "sk-test",
+    "--quickstart",
+    "http",
+    "--skip-install",
+  ]);
+  assert.equal(options.dir, "my-aionis");
+  assert.equal(options.repo, "https://example.test/Aionis.git");
+  assert.equal(options.branch, "main");
+  assert.equal(options.provider, "openai");
+  assert.equal(options.apiKey, "sk-test");
+  assert.equal(options.quickstart, "http");
+  assert.equal(options.skipInstall, true);
+});
+
+test("@aionis/create exposes stable provider and quickstart mappings", () => {
+  assert.equal(providerEnvKey("minimax"), "MINIMAX_API_KEY");
+  assert.equal(providerEnvKey("openai"), "OPENAI_API_KEY");
+  assert.equal(providerEnvKey("custom provider"), "CUSTOM_PROVIDER_API_KEY");
+  assert.equal(quickstartScriptName("sdk"), "runtime:quickstart:sdk");
+  assert.equal(quickstartScriptName("http"), "runtime:quickstart:http");
+  assert.equal(quickstartScriptName("multi-agent"), "runtime:quickstart:multi-agent");
+  assert.equal(quickstartScriptName("none"), null);
+});
+
+test("@aionis/create install plan includes Runtime install, SDK build, and selected quickstart", () => {
+  const plan = createInstallPlan(parseCreateAionisArgs(["--quickstart", "multi-agent"]));
+  assert.deepEqual(plan, [
+    "clone https://github.com/ostinatocc/Aionis.git -> Aionis",
+    "npm install",
+    "npm run -s packages:build",
+    "npm run -s runtime:quickstart:multi-agent",
+  ]);
+  assert.throws(() => parseCreateAionisArgs(["--quickstart", "bad"]), /Unsupported quickstart/);
+});

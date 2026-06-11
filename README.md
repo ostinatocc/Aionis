@@ -46,8 +46,14 @@ Full positioning guide:
 
 ## Quickstart
 
-Clone the repo, install dependencies, configure an embedding provider, then run
-the SDK quickstart.
+After npm package publishing, install Runtime and SDK with one command:
+
+```bash
+MINIMAX_API_KEY="your-key" npx @aionis/create --provider minimax --quickstart sdk
+```
+
+For local development from this repo, install dependencies, configure an
+embedding provider, then run the SDK quickstart.
 
 ```bash
 npm install
@@ -157,7 +163,7 @@ import {
   agentPromptFromGuide,
   createAionisClient,
   feedbackFromGuide,
-} from "./src/sdk.ts";
+} from "@aionis/sdk";
 
 const aionis = createAionisClient({
   baseUrl: process.env.AIONIS_URL ?? "http://127.0.0.1:3001",
@@ -282,6 +288,8 @@ forgetting/lifecycle paths for common host loops.
 
 API usage guide:
 [docs/AIONIS_PRODUCT_API_USAGE.md](docs/AIONIS_PRODUCT_API_USAGE.md).
+Install guide:
+[docs/AIONIS_INSTALL.md](docs/AIONIS_INSTALL.md).
 HTTP quickstart:
 [docs/AIONIS_HTTP_QUICKSTART.md](docs/AIONIS_HTTP_QUICKSTART.md).
 
@@ -292,6 +300,7 @@ Output contracts:
 
 | Document | Purpose |
 |---|---|
+| [AIONIS_INSTALL.md](docs/AIONIS_INSTALL.md) | One-command install path for Runtime plus SDK packages. |
 | [AIONIS_HTTP_QUICKSTART.md](docs/AIONIS_HTTP_QUICKSTART.md) | Smallest curl-first product loop. |
 | [AIONIS_QUICKSTART_MATRIX.md](docs/AIONIS_QUICKSTART_MATRIX.md) | Which first-run command to use for SDK, HTTP, and multi-agent hosts. |
 | [AIONIS_CONTROLLED_FORGETTING_QUICKSTART.md](docs/AIONIS_CONTROLLED_FORGETTING_QUICKSTART.md) | Controlled forgetting with suppress, unsuppress, and measure. |

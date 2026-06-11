@@ -7,6 +7,12 @@ starts or targets a real Runtime and verifies a concrete product contract.
 
 ## Start Here
 
+After npm package publishing, the fastest path is:
+
+```bash
+MINIMAX_API_KEY="your-key" npx @aionis/create --provider minimax --quickstart sdk
+```
+
 | If you are building... | Run this | Transport | Main API path | Result contract |
 |---|---|---|---|---|
 | A TypeScript or Node Agent | `npm run -s runtime:quickstart:sdk` | SDK facade | `remember -> guide -> feedback -> measure -> snapshot` | `aionis_sdk_quickstart_result_v1` |

@@ -19,6 +19,8 @@ For the smallest SDK loop, see
 [AIONIS_SDK_QUICKSTART.md](AIONIS_SDK_QUICKSTART.md).
 For choosing SDK, raw HTTP, or multi-agent first-run commands, see
 [AIONIS_QUICKSTART_MATRIX.md](AIONIS_QUICKSTART_MATRIX.md).
+For one-command Runtime plus SDK installation, see
+[AIONIS_INSTALL.md](AIONIS_INSTALL.md).
 
 ## Route Summary
 
@@ -82,7 +84,7 @@ import {
   feedbackFromGuide,
   measureInputFromGuideLoop,
   snapshotInputFromGuideLoop,
-} from "./src/sdk.ts";
+} from "@aionis/sdk";
 
 const aionis = createAionisClient({
   baseUrl: process.env.AIONIS_URL ?? "http://127.0.0.1:3001",
@@ -293,7 +295,7 @@ Only pass `agent_context` to the Agent. Keep `HostRunState` in the host runtime,
 database, job state, or orchestration state; it is not prompt content.
 
 ```ts
-import { createAionisClient } from "./src/sdk.ts";
+import { createAionisClient } from "@aionis/sdk";
 import {
   createExecutionMemoryAdapter,
   createMultiAgentHostTemplate,
@@ -344,7 +346,7 @@ await hostMemory.reviewerOutcome({
 ```
 
 ```ts
-import { createAionisClient } from "./src/sdk.ts";
+import { createAionisClient } from "@aionis/sdk";
 import { createExecutionMemoryAdapter } from "./src/adapters/execution-memory.ts";
 
 const client = createAionisClient({

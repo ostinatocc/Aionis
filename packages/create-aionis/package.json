@@ -1,0 +1,25 @@
+{
+  "name": "@aionis/create",
+  "version": "0.1.0",
+  "description": "One-command installer for Aionis Runtime and SDK.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "create-aionis": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsx --test test/*.test.ts",
+    "prepack": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

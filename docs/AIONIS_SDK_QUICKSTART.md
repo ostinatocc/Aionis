@@ -43,7 +43,7 @@ import {
   feedbackFromGuide,
   measureInputFromGuideLoop,
   snapshotInputFromGuideLoop,
-} from "./src/sdk.ts";
+} from "@aionis/sdk";
 
 const aionis = createAionisClient({
   baseUrl: process.env.AIONIS_URL ?? "http://127.0.0.1:3001",

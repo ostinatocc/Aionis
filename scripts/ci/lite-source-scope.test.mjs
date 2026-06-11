@@ -37,6 +37,11 @@ const ALLOWED_JOB_FILES = [
   "associative-linking-lib.ts",
 ];
 
+const ALLOWED_PACKAGE_DIRS = [
+  "aionis-sdk",
+  "create-aionis",
+];
+
 function listSourceFiles(dir) {
   const out = [];
   for (const name of fs.readdirSync(dir)) {
@@ -78,10 +83,46 @@ test("lite repo keeps only kernel-linked job helpers", () => {
   assert.equal(fs.existsSync(path.join(jobsDir, "fixtures")), false, "src/jobs/fixtures should be absent in lite repo");
 });
 
-test("focused repo does not keep app, package, or example wrapper surfaces", () => {
+test("focused repo keeps only publishable SDK and installer package surfaces", () => {
   assert.equal(fs.existsSync(path.join(ROOT, "apps")), false, "apps wrapper surface should be absent");
-  assert.equal(fs.existsSync(path.join(ROOT, "packages")), false, "package wrapper surface should be absent");
   assert.equal(fs.existsSync(path.join(ROOT, "examples")), false, "example wrapper surface should be absent");
+  const packagesDir = path.join(ROOT, "packages");
+  assert.equal(fs.existsSync(packagesDir), true, "packages should contain publishable product entrypoints");
+  assert.deepEqual(fs.readdirSync(packagesDir).sort(), ALLOWED_PACKAGE_DIRS);
+});
+
+test("workspace packages stay product-entrypoint only and do not import Runtime core", () => {
+  const packageJson = readJson("package.json");
+  assert.deepEqual(packageJson.workspaces, [
+    "packages/aionis-sdk",
+    "packages/create-aionis",
+  ]);
+  assert.equal(packageJson.scripts?.["packages:build"], "npm run -w @aionis/sdk -s build && npm run -w @aionis/create -s build");
+  assert.equal(packageJson.scripts?.["packages:test"], "npm run -w @aionis/sdk -s test && npm run -w @aionis/create -s test");
+
+  const sdkPackage = readJson("packages/aionis-sdk/package.json");
+  assert.equal(sdkPackage.name, "@aionis/sdk");
+  assert.equal(sdkPackage.private, undefined);
+  assert.equal(sdkPackage.exports?.["."]?.import, "./dist/index.js");
+  assert.equal(sdkPackage.exports?.["."]?.types, "./dist/index.d.ts");
+  assert.equal(sdkPackage.publishConfig?.access, "public");
+
+  const createPackage = readJson("packages/create-aionis/package.json");
+  assert.equal(createPackage.name, "@aionis/create");
+  assert.equal(createPackage.private, undefined);
+  assert.equal(createPackage.bin?.["create-aionis"], "./dist/index.js");
+  assert.equal(createPackage.publishConfig?.access, "public");
+
+  const runtimeSdk = fs.readFileSync(path.join(ROOT, "src", "sdk.ts"), "utf8");
+  const packageSdk = fs.readFileSync(path.join(ROOT, "packages", "aionis-sdk", "src", "index.ts"), "utf8");
+  assert.equal(packageSdk, runtimeSdk, "@aionis/sdk source should stay in sync with src/sdk.ts until SDK becomes canonical");
+
+  for (const packageDir of ALLOWED_PACKAGE_DIRS) {
+    for (const file of listSourceFiles(path.join(ROOT, "packages", packageDir, "src"))) {
+      const source = fs.readFileSync(file, "utf8");
+      assert.doesNotMatch(source, /from\s+["']\.\.\/\.\.\/\.\.\/src\/(?:routes|memory|execution|store|kernel)\//, `${path.relative(ROOT, file)} should not import Runtime core`);
+    }
+  }
 });
 
 test("focused package does not expose external eval or demo runner entrypoints", () => {
@@ -247,11 +288,16 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
 
   assert.match(readme, /docs\/AIONIS_HTTP_QUICKSTART\.md/);
   assert.match(readme, /docs\/AIONIS_QUICKSTART_MATRIX\.md/);
+  assert.match(readme, /docs\/AIONIS_INSTALL\.md/);
+  assert.match(readme, /npx @aionis\/create/);
+  assert.match(readme, /from "@aionis\/sdk"/);
   assert.match(readme, /docs\/AIONIS_CONTROLLED_FORGETTING_QUICKSTART\.md/);
   assert.match(readme, /Controlled forgetting is a core Aionis capability/);
   assert.match(readme, /\/v1\/operator\/snapshot/);
   assert.match(apiUsage, /AIONIS_HTTP_QUICKSTART\.md/);
   assert.match(apiUsage, /AIONIS_QUICKSTART_MATRIX\.md/);
+  assert.match(apiUsage, /AIONIS_INSTALL\.md/);
+  assert.match(apiUsage, /from "@aionis\/sdk"/);
   assert.match(apiUsage, /AIONIS_CONTROLLED_FORGETTING_QUICKSTART\.md/);
   assert.match(apiUsage, /Controlled forgetting is a core Aionis capability/);
   assert.match(apiUsage, /explicit lifecycle-control API/);
@@ -265,8 +311,10 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(productContract, /Forget is a core Aionis capability/);
   assert.match(productContract, /`POST \/v1\/forget` is the explicit lifecycle-control API/);
   assert.match(quickstartMatrix, /Stable Product Boundary/);
+  assert.match(quickstartMatrix, /npx @aionis\/create/);
   assert.match(quickstartMatrix, /Measure and operator snapshot are read-only product surfaces/);
   assert.match(sdkQuickstart, /`snapshot\(\)` exposes read-only memory use receipt/);
+  assert.match(sdkQuickstart, /from "@aionis\/sdk"/);
   assert.match(sdkQuickstart, /feedbackFromGuide\(\)/);
   assert.match(sdkQuickstart, /measureInputFromGuideLoop\(\)/);
   assert.match(sdkQuickstart, /snapshotInputFromGuideLoop\(\)/);
