@@ -165,7 +165,7 @@ test("AionisClient remember writes ordinary memory through observe", async () =>
 
   const memory = body.memory as Record<string, unknown>;
   assert.equal(memory.client_id, "pref-status");
-  assert.equal(memory.type, "rule");
+  assert.equal(memory.type, "self_model");
   assert.equal(memory.memory_kind, "general_memory");
   assert.equal(memory.title, "Status preference");
   assert.equal(memory.text_summary, "Prefer concise status updates with concrete evidence.");
@@ -174,7 +174,7 @@ test("AionisClient remember writes ordinary memory through observe", async () =>
   assert.equal(slots.source, "user");
   assert.equal(slots.memory_kind, "general_memory");
   assert.equal(slots.lifecycle_state, "active");
-  assert.equal(slots.state, "active");
+  assert.equal("state" in slots, false);
   assert.equal(slots.compression_layer, "L2");
 });
 

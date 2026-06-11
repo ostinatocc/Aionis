@@ -7,7 +7,7 @@
   "description": "Focused Aionis local Runtime kernel for execution continuity, learning control, and controlled forgetting.",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ostinatocc/AionisCore.git"
+    "url": "https://github.com/ostinatocc/Aionis.git"
   },
   "engines": {
     "node": ">=22.0.0"

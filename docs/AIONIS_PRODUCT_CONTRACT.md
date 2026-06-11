@@ -78,9 +78,10 @@ The product contract for Multi-Agent execution memory is:
 | Field / Surface | Meaning |
 |---|---|
 | `producer_agent_id` | Agent that wrote an observed memory or execution event. |
-| `consumer_agent_id` | Agent receiving guide context. Private memory is visible only when this identity is aligned with the writer/owner. |
-| `owner_team_id` / `consumer_team_id` | Team boundary for shared multi-agent memory. |
-| `memory_lane: "private"` | Agent-local memory. Use only when the same Agent should retrieve it later. |
+| `consumer_agent_id` | Agent receiving guide context. Agent-private memory is visible only when this identity is aligned with the writer/owner. |
+| `owner_team_id` / `consumer_team_id` | Team boundary for shared or team-private multi-agent memory. |
+| `memory_lane: "private"` with `owner_agent_id` | Agent-local memory. Use only when the same Agent should retrieve it later. |
+| `memory_lane: "private"` with `owner_team_id` | Team-private memory. Visible only to consumers carrying the same `consumer_team_id`; not scope-wide shared memory. |
 | `memory_lane: "shared"` without `owner_team_id` | Scope-wide shared memory. |
 | `memory_lane: "shared"` with `owner_team_id` | Team-visible execution memory for planner/worker/verifier/reviewer handoff. |
 | `agent_role` | Product-level role hint such as `planner`, `worker`, `verifier`, or `reviewer`; legacy `context.agent_role` remains accepted as a compatibility fallback. |

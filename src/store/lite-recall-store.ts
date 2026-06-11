@@ -273,7 +273,7 @@ export function createLiteRecallStore(
       const row = item.row;
       const slots = parseJsonObject(row.slots_json);
       const hasWorkflowAnchorSurface = hasNodeWorkflowAnchorSurface(slots);
-      if (!["event", "topic", "concept", "entity", "rule", "procedure"].includes(row.type)) continue;
+      if (!["event", "topic", "concept", "entity", "rule", "procedure", "self_model"].includes(row.type)) continue;
       if (row.type === "procedure" && !hasWorkflowAnchorSurface) continue;
       if ((row.type === "event" || row.type === "evidence")
         && String(slots.replay_learning_episode ?? "false") === "true"

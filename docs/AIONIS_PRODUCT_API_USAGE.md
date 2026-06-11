@@ -197,8 +197,10 @@ Use these identity rules:
 3. Use `memory_lane: "shared"` plus `owner_team_id` when planner, worker,
    verifier, and reviewer should share execution memory inside one team.
 4. Use `consumer_agent_id` and `consumer_team_id` on `guide`.
-5. Use `memory_lane: "private"` only when the same Agent should retrieve the
-   memory later.
+5. Use `memory_lane: "private"` with `owner_agent_id` when only the same Agent
+   should retrieve the memory later. Use `memory_lane: "private"` with
+   `owner_team_id` only for team-private memory that should stay invisible
+   outside that team.
 6. Put role hints such as `planner`, `worker`, `verifier`, or `reviewer` in
    top-level `agent_role` on `/v1/guide`. Legacy `context.agent_role` is still
    accepted as a compatibility fallback.

@@ -124,6 +124,7 @@ Aionis visibility depends on producer, owner, consumer, team, and lane.
 | Integration | Lane | Required Identity | Meaning |
 |---|---|---|---|
 | Single Agent memory | `memory_lane: "private"` | `owner_agent_id` on writes; `consumer_agent_id` on guide | Only the same Agent should retrieve it. |
+| Team-private memory | `memory_lane: "private"` | `owner_team_id` on writes; `consumer_team_id` on guide | Visible only inside that team, but not scope-wide shared memory. |
 | Scope-wide shared memory | `memory_lane: "shared"` without `owner_team_id` | `producer_agent_id` recommended | Visible within the scope. |
 | Multi-Agent team memory | `memory_lane: "shared"` with `owner_team_id` | `owner_team_id` on writes; `consumer_team_id` on guide | Planner, worker, verifier, and reviewer share memory inside one team. |
 | Feedback attribution | Any | `guide_trace_id`, `used_memory_ids`, `run_id`, `outcome`, `used_surface` | Aionis attributes feedback only to memory exposed by that guide and reported as used. |
@@ -132,7 +133,9 @@ Important boundary:
 
 1. Do not use shared memory without a team boundary for team-private
    multi-agent state.
-2. Do not use private memory for a handoff that a different Agent must read.
+2. Do not use agent-private memory for a handoff that a different Agent must read.
+   Use team-private or team-owned shared memory when multiple Agents in one
+   team must read it.
 3. Do not claim feedback for all recalled memories. Report only memory IDs the
    host knows were used.
 4. Keep `guide_trace_id` and `last_use_now_memory_ids` in host state. They are

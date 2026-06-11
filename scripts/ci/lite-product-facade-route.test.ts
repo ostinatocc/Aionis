@@ -1220,6 +1220,97 @@ test("product observe keeps active preference rules recallable in agent context"
   }
 });
 
+test("product observe keeps SDK-style preference memory recallable without activating policy rules", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("observe-sdk-style-preference-memory");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const preferenceText = "SDK_STYLE_PREF_MARKER: The user prefers compact product updates with concrete next steps.";
+    const observe = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        input_text: preferenceText,
+        memory_kind: "general_memory",
+        memory_lane: "private",
+        owner_agent_id: "local-user",
+        memory: {
+          client_id: "sdk-style-preference-memory",
+          type: "self_model",
+          memory_kind: "general_memory",
+          title: "SDK style response preference",
+          text_summary: preferenceText,
+          confidence: 0.9,
+          slots: {
+            memory_kind: "general_memory",
+            lifecycle_state: "active",
+            compression_layer: "L2",
+          },
+        },
+      },
+    });
+
+    assert.equal(observe.statusCode, 200, observe.body);
+    const nodeId = observe.json().memory_write.nodes[0].id;
+
+    const guide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "SDK_STYLE_PREF_MARKER response preference",
+        consumer_agent_id: "local-user",
+        limit: 8,
+        include_packets: true,
+      },
+    });
+
+    assert.equal(guide.statusCode, 200, guide.body);
+    const guideBody = guide.json();
+    assert.equal(guideBody.agent_context.use_now_memory_ids.includes(nodeId), true);
+    assert.ok(
+      guideBody.memory_packet.relevant_memories.some((entry: Record<string, unknown>) =>
+        entry.memory_id === nodeId
+        && entry.memory_type === "preference"
+        && entry.summary === preferenceText,
+      ),
+    );
+    assert.ok(
+      guideBody.agent_context.use_now.some((entry: string) => entry.includes("SDK_STYLE_PREF_MARKER")),
+    );
+
+    const rules = await app.inject({
+      method: "POST",
+      url: "/v1/memory/rules/evaluate",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        context: {
+          agent_id: "local-user",
+          task: "SDK_STYLE_PREF_MARKER response preference",
+        },
+        include_shadow: true,
+        limit: 20,
+      },
+    });
+
+    assert.equal(rules.statusCode, 200, rules.body);
+    assert.equal(rules.json().considered, 0);
+    assert.equal(rules.json().matched, 0);
+  } finally {
+    await app.close();
+  }
+});
+
 test("product observe turns execution input into recallable execution memory", async () => {
   const app = Fastify();
   const env = liteEnv();

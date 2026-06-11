@@ -125,7 +125,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function rememberNodeType(kind: AionisRememberKind): string {
   switch (kind) {
-    case "preference": return "rule";
+    case "preference": return "self_model";
     case "project_context": return "topic";
     case "procedure": return "procedure";
     case "event": return "event";
@@ -148,7 +148,6 @@ function rememberBody(body: AionisRememberRequest): AionisJsonObject {
     ...(body.slots ?? {}),
     memory_kind: "general_memory",
     lifecycle_state: lifecycleState,
-    state: lifecycleState,
     compression_layer: body.slots?.compression_layer ?? "L2",
   });
   return stripUndefined({
