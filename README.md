@@ -12,6 +12,13 @@ only the governed execution state into the next Agent context.
 MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quickstart sdk
 ```
 
+Already have a local Runtime? Add Aionis to Claude Code, Cursor, or another MCP
+client:
+
+```bash
+npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope my-project
+```
+
 Use Aionis when your Agents must continue real work across sessions, roles,
 handoffs, and mistakes.
 
@@ -35,7 +42,7 @@ into governed Agent context.
 
 ```mermaid
 flowchart LR
-  Host["Agent Host\nsingle-agent or multi-agent"] --> SDK["@aionis/sdk\nor HTTP API"]
+  Host["Agent Host\nsingle-agent or multi-agent"] --> SDK["@aionis/sdk\nHTTP API\nor @aionis/mcp"]
 
   SDK --> Observe["observe\nwrite evidence"]
   SDK --> Guide["guide\ncompile context"]
@@ -87,7 +94,7 @@ Full positioning guide:
 
 ## Quickstart
 
-Install the Runtime and SDK with one command:
+Install the Runtime, SDK, and MCP bridge with one command:
 
 ```bash
 MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quickstart sdk
@@ -249,6 +256,39 @@ await aionis.feedback(feedbackFromGuide({
 
 Full SDK guide: [docs/AIONIS_SDK_QUICKSTART.md](docs/AIONIS_SDK_QUICKSTART.md).
 
+## MCP For Claude Code And Cursor
+
+`@aionis/mcp` is the drop-in path for coding agents. It exposes Aionis as MCP
+tools without asking the host to implement the full feedback loop on day one.
+
+```json
+{
+  "mcpServers": {
+    "aionis": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@aionis/mcp@latest",
+        "--base-url",
+        "http://127.0.0.1:3001",
+        "--scope",
+        "my-project"
+      ],
+      "env": {
+        "AIONIS_TENANT_ID": "default"
+      }
+    }
+  }
+}
+```
+
+The main tool is `aionis_context`: it compiles governed execution state for the
+current run and can optionally record a lightweight observation first. Feedback
+is optional; teams can start with context-only use and later add
+`aionis_record_step`, `aionis_measure`, and `aionis_snapshot`.
+
+Full MCP guide: [docs/AIONIS_MCP.md](docs/AIONIS_MCP.md).
+
 ## Use Aionis In Your Agent
 
 For long-running or multi-agent work, use the execution helpers instead of
@@ -382,7 +422,8 @@ Output contracts:
 
 | Document | Purpose |
 |---|---|
-| [AIONIS_INSTALL.md](docs/AIONIS_INSTALL.md) | One-command install path for Runtime plus SDK packages. |
+| [AIONIS_INSTALL.md](docs/AIONIS_INSTALL.md) | One-command install path for Runtime plus SDK and MCP packages. |
+| [AIONIS_MCP.md](docs/AIONIS_MCP.md) | MCP bridge for Claude Code, Cursor, and other coding-agent clients. |
 | [AIONIS_RUNTIME_ARCHITECTURE.md](docs/AIONIS_RUNTIME_ARCHITECTURE.md) | Product architecture, memory layers, execution memory, context compiler, and source map. |
 | [AIONIS_HTTP_QUICKSTART.md](docs/AIONIS_HTTP_QUICKSTART.md) | Smallest curl-first product loop. |
 | [AIONIS_QUICKSTART_MATRIX.md](docs/AIONIS_QUICKSTART_MATRIX.md) | Which first-run command to use for SDK, HTTP, and multi-agent hosts. |

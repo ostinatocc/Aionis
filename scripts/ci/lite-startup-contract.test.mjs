@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
-const ALLOWED_PRODUCT_PACKAGES = ["aionis-sdk", "create-aionis"];
+const ALLOWED_PRODUCT_PACKAGES = ["aionis-mcp", "aionis-sdk", "create-aionis"];
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));

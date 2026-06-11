@@ -7,6 +7,7 @@
   "description": "Focused Aionis local Runtime kernel for execution continuity, learning control, and controlled forgetting.",
   "workspaces": [
     "packages/aionis-sdk",
+    "packages/aionis-mcp",
     "packages/create-aionis"
   ],
   "repository": {
@@ -31,8 +32,8 @@
     "smoke:lite": "npm run -s lite:smoke",
     "build": "npm run -s typecheck && npm run -s packages:build",
     "core:build": "npm run -s typecheck",
-    "packages:build": "npm run -w @aionis/sdk -s build && npm run -w @aionis/create -s build",
-    "packages:test": "npm run -w @aionis/sdk -s test && npm run -w @aionis/create -s test",
+    "packages:build": "npm run -w @aionis/sdk -s build && npm run -w @aionis/mcp -s build && npm run -w @aionis/create -s build",
+    "packages:test": "npm run -w @aionis/sdk -s test && npm run -w @aionis/mcp -s test && npm run -w @aionis/create -s test",
     "runtime:e2e:product-loop": "npx tsx scripts/e2e/product-four-api-loop.ts",
     "runtime:quickstart:sdk": "npx tsx scripts/e2e/developer-sdk-quickstart.ts",
     "runtime:quickstart:http": "npx tsx scripts/e2e/developer-http-quickstart.ts",

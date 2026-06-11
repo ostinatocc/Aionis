@@ -38,6 +38,7 @@ const ALLOWED_JOB_FILES = [
 ];
 
 const ALLOWED_PACKAGE_DIRS = [
+  "aionis-mcp",
   "aionis-sdk",
   "create-aionis",
 ];
@@ -95,10 +96,11 @@ test("workspace packages stay product-entrypoint only and do not import Runtime 
   const packageJson = readJson("package.json");
   assert.deepEqual(packageJson.workspaces, [
     "packages/aionis-sdk",
+    "packages/aionis-mcp",
     "packages/create-aionis",
   ]);
-  assert.equal(packageJson.scripts?.["packages:build"], "npm run -w @aionis/sdk -s build && npm run -w @aionis/create -s build");
-  assert.equal(packageJson.scripts?.["packages:test"], "npm run -w @aionis/sdk -s test && npm run -w @aionis/create -s test");
+  assert.equal(packageJson.scripts?.["packages:build"], "npm run -w @aionis/sdk -s build && npm run -w @aionis/mcp -s build && npm run -w @aionis/create -s build");
+  assert.equal(packageJson.scripts?.["packages:test"], "npm run -w @aionis/sdk -s test && npm run -w @aionis/mcp -s test && npm run -w @aionis/create -s test");
 
   const sdkPackage = readJson("packages/aionis-sdk/package.json");
   assert.equal(sdkPackage.name, "@aionis/sdk");
@@ -106,6 +108,13 @@ test("workspace packages stay product-entrypoint only and do not import Runtime 
   assert.equal(sdkPackage.exports?.["."]?.import, "./dist/index.js");
   assert.equal(sdkPackage.exports?.["."]?.types, "./dist/index.d.ts");
   assert.equal(sdkPackage.publishConfig?.access, "public");
+
+  const mcpPackage = readJson("packages/aionis-mcp/package.json");
+  assert.equal(mcpPackage.name, "@aionis/mcp");
+  assert.equal(mcpPackage.private, undefined);
+  assert.equal(mcpPackage.bin?.["aionis-mcp"], "./dist/index.js");
+  assert.equal(mcpPackage.dependencies?.["@aionis/sdk"], "^0.1.2");
+  assert.equal(mcpPackage.publishConfig?.access, "public");
 
   const createPackage = readJson("packages/create-aionis/package.json");
   assert.equal(createPackage.name, "@aionis/create");
@@ -181,6 +190,9 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.match(readme, /docs\/examples\/http-quickstart-result\.json/);
   assert.match(readme, /docs\/examples\/multi-agent-quickstart-result\.json/);
   assert.match(readme, /docs\/examples\/judgment-calibration-product-loop-result\.json/);
+  assert.match(readme, /@aionis\/mcp@latest/);
+  assert.match(readme, /docs\/AIONIS_MCP\.md/);
+  assert.match(readme, /aionis_context/);
   assert.equal(packageJson.scripts?.["runtime:quickstart:sdk"], "npx tsx scripts/e2e/developer-sdk-quickstart.ts");
   assert.equal(
     packageJson.scripts?.["runtime:quickstart:http"],
@@ -285,6 +297,8 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
   const apiUsage = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_PRODUCT_API_USAGE.md"), "utf8");
   const productContract = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_PRODUCT_CONTRACT.md"), "utf8");
+  const installDoc = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_INSTALL.md"), "utf8");
+  const mcpDoc = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_MCP.md"), "utf8");
   const quickstartMatrix = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_QUICKSTART_MATRIX.md"), "utf8");
   const sdkQuickstart = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_SDK_QUICKSTART.md"), "utf8");
   const httpQuickstart = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_HTTP_QUICKSTART.md"), "utf8");
@@ -300,7 +314,11 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(readme, /docs\/AIONIS_HTTP_QUICKSTART\.md/);
   assert.match(readme, /docs\/AIONIS_QUICKSTART_MATRIX\.md/);
   assert.match(readme, /docs\/AIONIS_INSTALL\.md/);
+  assert.match(readme, /docs\/AIONIS_MCP\.md/);
   assert.match(readme, /npx @aionis\/create/);
+  assert.match(readme, /npx @aionis\/mcp@latest/);
+  assert.match(readme, /docs\/AIONIS_MCP\.md/);
+  assert.match(readme, /aionis_context/);
   assert.match(readme, /from "@aionis\/sdk"/);
   assert.match(readme, /aionis\.execution\.observeStep/);
   assert.match(readme, /docs\/examples\/minimal-agent\.ts/);
@@ -325,6 +343,8 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(productContract, /`POST \/v1\/forget` is the explicit lifecycle-control API/);
   assert.match(quickstartMatrix, /Stable Product Boundary/);
   assert.match(quickstartMatrix, /npx @aionis\/create/);
+  assert.match(quickstartMatrix, /npx @aionis\/mcp@latest/);
+  assert.match(quickstartMatrix, /MCP stdio/);
   assert.match(quickstartMatrix, /Measure and operator snapshot are read-only product surfaces/);
   assert.match(sdkQuickstart, /`snapshot\(\)` exposes read-only memory use receipt/);
   assert.match(sdkQuickstart, /from "@aionis\/sdk"/);
@@ -334,6 +354,12 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(sdkQuickstart, /aionis\.execution\.observeStep/);
   assert.match(sdkQuickstart, /aionis\.execution\.guideForRole/);
   assert.match(sdkQuickstart, /examples\/minimal-agent\.ts/);
+  assert.match(installDoc, /@aionis\/mcp/);
+  assert.match(installDoc, /AIONIS_MCP\.md/);
+  assert.match(mcpDoc, /aionis_context/);
+  assert.match(mcpDoc, /aionis_record_step/);
+  assert.match(mcpDoc, /Drop-In Mode/);
+  assert.match(mcpDoc, /@aionis\/sdk/);
   assert.doesNotMatch(sdkQuickstart, /`operatorSnapshot\(\)` exposes/);
   assert.match(minimalAgentExample, /from "@aionis\/sdk"/);
   assert.match(minimalAgentExample, /aionis\.execution\.observeStep/);

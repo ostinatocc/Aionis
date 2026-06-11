@@ -1,13 +1,14 @@
 # Install Aionis
 
-Status: product install path for Runtime plus SDK packages
+Status: product install path for Runtime plus SDK and MCP packages
 
 ## One Command
 
-Aionis publishes two npm packages:
+Aionis publishes three npm packages:
 
 - `@aionis/create`: one-command Runtime installer
 - `@aionis/sdk`: TypeScript SDK facade for product routes
+- `@aionis/mcp`: MCP stdio bridge for Claude Code, Cursor, and other MCP clients
 
 Install Runtime plus SDK and run the SDK quickstart:
 
@@ -32,7 +33,7 @@ The installer does not change Runtime core. It performs product setup:
 1. clone `https://github.com/ostinatocc/Aionis.git`
 2. run `npm install`
 3. write `.env` with the selected embedding provider
-4. build `@aionis/sdk` and `@aionis/create`
+4. build `@aionis/sdk`, `@aionis/mcp`, and `@aionis/create`
 5. run the selected quickstart when an API key is available
 
 ## Local Development
@@ -74,3 +75,19 @@ import {
 Use the SDK only as a facade over the product routes. The Runtime still owns
 memory governance, context compilation, feedback attribution, measurement, and
 operator snapshots.
+
+## MCP Package
+
+For MCP clients that can spawn a local stdio server:
+
+```bash
+npm install -g @aionis/mcp
+```
+
+Or use it directly:
+
+```bash
+npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope my-project
+```
+
+MCP integration guide: [AIONIS_MCP.md](AIONIS_MCP.md).

@@ -270,7 +270,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     `\nAionis is ready.\n`
       + `Runtime directory: ${targetDir}\n`
       + `Start Runtime: cd ${targetDir} && npm run -s lite:start\n`
-      + `SDK package: @aionis/sdk\n`,
+      + `SDK package: @aionis/sdk\n`
+      + `MCP package: @aionis/mcp\n`,
   );
 }
 

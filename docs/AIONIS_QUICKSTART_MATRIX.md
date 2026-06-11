@@ -16,6 +16,7 @@ MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quicks
 | If you are building... | Run this | Transport | Main API path | Result contract |
 |---|---|---|---|---|
 | A TypeScript or Node Agent | `npm run -s runtime:quickstart:sdk` | SDK facade | `remember -> guide -> feedback -> measure -> snapshot` | `aionis_sdk_quickstart_result_v1` |
+| Claude Code, Cursor, or another MCP client | `npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope my-project` | MCP stdio | `aionis_context -> agent action -> aionis_record_step` | MCP tool result JSON |
 | A service that calls Aionis over HTTP | `npm run -s runtime:quickstart:http` | Raw HTTP | `observe -> guide -> feedback -> measure -> snapshot -> rehydrate` | `aionis_http_quickstart_result_v1` |
 | A planner/worker/verifier/reviewer system | `npm run -s runtime:quickstart:multi-agent` | SDK + execution memory adapter | `observe -> guide -> feedback -> measure -> snapshot` with shared team memory | `aionis_multi_agent_quickstart_result_v1` |
 
@@ -43,6 +44,7 @@ surfaces.
 | Interface | Use When | Avoid When |
 |---|---|---|
 | SDK facade | Your host can import TypeScript/JavaScript helpers and wants fewer handwritten payloads. | You need to prove raw HTTP behavior or integrate from another language. |
+| MCP bridge | You want to try Aionis in Claude Code, Cursor, or another MCP client before writing a host adapter. | You need a deeply customized production feedback and measurement loop. |
 | Raw HTTP | You want the smallest language-neutral contract and explicit request bodies. | You prefer helper functions for feedback attribution, measure input, and snapshot input. |
 | Execution memory adapter | You run multi-agent or long-horizon workflows and need role, team, branch, and handoff state carried consistently. | You only need ordinary preference/fact memory for one Agent. |
 

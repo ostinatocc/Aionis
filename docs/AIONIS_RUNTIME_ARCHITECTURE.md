@@ -36,6 +36,7 @@ flowchart TB
 
   subgraph ProductAPI["Product API Surface"]
     SDK["@aionis/sdk"]
+    MCP["@aionis/mcp\nstdio bridge"]
     HTTP["HTTP Routes\n/v1/observe /guide /feedback /measure /forget /rehydrate /operator/snapshot"]
   end
 
@@ -53,8 +54,10 @@ flowchart TB
 
   Agent --> Adapter
   Adapter --> SDK
+  Adapter --> MCP
   Adapter --> HTTP
   SDK --> Facade
+  MCP --> SDK
   HTTP --> Facade
 
   Facade --> Recall
@@ -88,8 +91,10 @@ flowchart TB
 | `POST /v1/rehydrate` | Host when compact context points to hidden evidence | Expand archived memory, anchor payload, or colder evidence on demand. |
 | `POST /v1/operator/snapshot` | Host or operator | Read-only audit of run state, memory use, feedback, and effect. |
 
-The SDK package is a facade over these product routes. The Runtime owns memory
-governance; the SDK helps hosts avoid hand-written payload drift.
+The SDK package is a facade over these product routes. The MCP package is a
+stdio bridge over the SDK for Claude Code, Cursor, and other MCP clients. The
+Runtime owns memory governance; SDK and MCP only help hosts avoid hand-written
+payload drift.
 
 ## Memory Layers
 
@@ -202,6 +207,7 @@ into the Agent prompt.
 |---|---|
 | Product facade routes | `src/routes/product-facade.ts` |
 | SDK facade | `src/sdk.ts`, `packages/aionis-sdk/src/index.ts` |
+| MCP bridge | `packages/aionis-mcp/src/index.ts`, `packages/aionis-mcp/src/server.ts`, `packages/aionis-mcp/src/tools.ts` |
 | Product output contracts | `src/memory/product-output-contract.ts` |
 | Product output assembly | `src/memory/product-output-assembler.ts` |
 | Lifecycle adjudication | `src/memory/memory-lifecycle-adjudicator.ts`, `src/memory/lifecycle-candidate-inference.ts` |
