@@ -17,6 +17,8 @@ For explicit suppress/unsuppress lifecycle control, see
 [AIONIS_CONTROLLED_FORGETTING_QUICKSTART.md](AIONIS_CONTROLLED_FORGETTING_QUICKSTART.md).
 For the smallest SDK loop, see
 [AIONIS_SDK_QUICKSTART.md](AIONIS_SDK_QUICKSTART.md).
+For choosing SDK, raw HTTP, or multi-agent first-run commands, see
+[AIONIS_QUICKSTART_MATRIX.md](AIONIS_QUICKSTART_MATRIX.md).
 
 ## Route Summary
 

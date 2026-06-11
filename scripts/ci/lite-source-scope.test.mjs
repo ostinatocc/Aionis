@@ -130,9 +130,11 @@ test("focused package exposes developer quickstarts through the Runtime e2e surf
 test("README quickstart examples stay aligned with product result contracts", () => {
   const packageJson = readJson("package.json");
   const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
+  const matrix = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_QUICKSTART_MATRIX.md"), "utf8");
   assert.match(readme, /npm run -s runtime:quickstart:sdk/);
   assert.match(readme, /npm run -s runtime:quickstart:http/);
   assert.match(readme, /npm run -s runtime:quickstart:multi-agent/);
+  assert.match(readme, /docs\/AIONIS_QUICKSTART_MATRIX\.md/);
   assert.match(readme, /npm run -s runtime:e2e:judgment-calibration/);
   assert.match(readme, /docs\/examples\/sdk-quickstart-result\.json/);
   assert.match(readme, /docs\/examples\/http-quickstart-result\.json/);
@@ -190,6 +192,25 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.equal(calibration.operator_audit?.snapshot_calibration_visible, true);
   assert.equal(calibration.checks?.feedback_attributes_only_used_memory, true);
   assert.equal(calibration.checks?.unreported_memory_is_unused_not_negative, true);
+
+  for (const command of [
+    "npm run -s runtime:quickstart:sdk",
+    "npm run -s runtime:quickstart:http",
+    "npm run -s runtime:quickstart:multi-agent",
+    "npm run -s runtime:e2e:golden-product-loop",
+    "npm run -s runtime:e2e:judgment-calibration",
+    "npm run -s runtime:e2e:ordinary-memory",
+  ]) {
+    assert.match(matrix, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.match(matrix, /aionis_sdk_quickstart_result_v1/);
+  assert.match(matrix, /aionis_http_quickstart_result_v1/);
+  assert.match(matrix, /aionis_multi_agent_quickstart_result_v1/);
+  assert.match(matrix, /SDK facade/);
+  assert.match(matrix, /Raw HTTP/);
+  assert.match(matrix, /execution memory adapter/i);
+  assert.match(matrix, /agent_context\.prompt_text/);
+  assert.match(matrix, /guide_trace_id/);
 });
 
 test("README and positioning docs keep the external product language stable", () => {
@@ -213,6 +234,7 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
   const apiUsage = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_PRODUCT_API_USAGE.md"), "utf8");
   const productContract = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_PRODUCT_CONTRACT.md"), "utf8");
+  const quickstartMatrix = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_QUICKSTART_MATRIX.md"), "utf8");
   const sdkQuickstart = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_SDK_QUICKSTART.md"), "utf8");
   const httpQuickstart = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_HTTP_QUICKSTART.md"), "utf8");
   const forgetQuickstart = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_CONTROLLED_FORGETTING_QUICKSTART.md"), "utf8");
@@ -224,10 +246,12 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   }
 
   assert.match(readme, /docs\/AIONIS_HTTP_QUICKSTART\.md/);
+  assert.match(readme, /docs\/AIONIS_QUICKSTART_MATRIX\.md/);
   assert.match(readme, /docs\/AIONIS_CONTROLLED_FORGETTING_QUICKSTART\.md/);
   assert.match(readme, /Controlled forgetting is a core Aionis capability/);
   assert.match(readme, /\/v1\/operator\/snapshot/);
   assert.match(apiUsage, /AIONIS_HTTP_QUICKSTART\.md/);
+  assert.match(apiUsage, /AIONIS_QUICKSTART_MATRIX\.md/);
   assert.match(apiUsage, /AIONIS_CONTROLLED_FORGETTING_QUICKSTART\.md/);
   assert.match(apiUsage, /Controlled forgetting is a core Aionis capability/);
   assert.match(apiUsage, /explicit lifecycle-control API/);
@@ -240,6 +264,8 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(productContract, /`POST \/v1\/feedback` is the normal HTTP product entry/);
   assert.match(productContract, /Forget is a core Aionis capability/);
   assert.match(productContract, /`POST \/v1\/forget` is the explicit lifecycle-control API/);
+  assert.match(quickstartMatrix, /Stable Product Boundary/);
+  assert.match(quickstartMatrix, /Measure and operator snapshot are read-only product surfaces/);
   assert.match(sdkQuickstart, /`snapshot\(\)` exposes read-only memory use receipt/);
   assert.match(sdkQuickstart, /feedbackFromGuide\(\)/);
   assert.match(sdkQuickstart, /measureInputFromGuideLoop\(\)/);

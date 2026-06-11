@@ -83,6 +83,9 @@ That loop writes planner, worker, verifier, and reviewer evidence, then proves
 that the reviewer can continue the passed branch while avoiding the failed
 branch.
 
+Not sure which entrypoint to use? See the
+[quickstart matrix](docs/AIONIS_QUICKSTART_MATRIX.md).
+
 ## Example Output
 
 The SDK quickstart prints a compact product result like this:
@@ -290,6 +293,7 @@ Output contracts:
 | Document | Purpose |
 |---|---|
 | [AIONIS_HTTP_QUICKSTART.md](docs/AIONIS_HTTP_QUICKSTART.md) | Smallest curl-first product loop. |
+| [AIONIS_QUICKSTART_MATRIX.md](docs/AIONIS_QUICKSTART_MATRIX.md) | Which first-run command to use for SDK, HTTP, and multi-agent hosts. |
 | [AIONIS_CONTROLLED_FORGETTING_QUICKSTART.md](docs/AIONIS_CONTROLLED_FORGETTING_QUICKSTART.md) | Controlled forgetting with suppress, unsuppress, and measure. |
 | [AIONIS_SDK_QUICKSTART.md](docs/AIONIS_SDK_QUICKSTART.md) | Smallest SDK product loop. |
 | [AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md](docs/AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md) | Short observe, guide, and audit path. |
