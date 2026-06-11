@@ -12,6 +12,8 @@ adapter. It only shows how a host should call the product facade.
 For the full host loop with feedback, measurement, operator snapshot, and
 single-agent / multi-agent / coding-agent templates, see
 [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md).
+For a curl-first loop over the public product routes, see
+[AIONIS_HTTP_QUICKSTART.md](AIONIS_HTTP_QUICKSTART.md).
 
 ## Start Runtime
 
@@ -66,14 +68,14 @@ This verifies `remember -> guide -> agent prompt -> feedback -> measure ->
 snapshot` through `src/sdk.ts` and prints a compact JSON summary. The full SDK
 guide is [AIONIS_SDK_QUICKSTART.md](AIONIS_SDK_QUICKSTART.md).
 
-For the broader product SDK path, use the four API loop e2e:
+For the broader product SDK path, use the product loop e2e:
 
 ```bash
 export AIONIS_PRODUCT_E2E_BASE_URL="$AIONIS_URL"
 npm run -s runtime:e2e:product-loop
 ```
 
-This runs a real Runtime HTTP loop through `observe`, `guide`, `forget`, and
+This runs a real Runtime loop through `observe`, `guide`, `rehydrate`, and
 `measure`. It passes only compact `agent_context.prompt_text` to a simulated
 Agent step, observes the Agent outcome, measures the before/after guide effect,
 and checks that execution-tree audit surfaces stay out of the Agent prompt.

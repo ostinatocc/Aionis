@@ -11,6 +11,8 @@ stable product path over the current Runtime implementation.
 
 For host template wiring and runnable single-agent, multi-agent, and coding
 Agent examples, see [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md).
+For curl-first HTTP integration, see
+[AIONIS_HTTP_QUICKSTART.md](AIONIS_HTTP_QUICKSTART.md).
 For the smallest SDK loop, see
 [AIONIS_SDK_QUICKSTART.md](AIONIS_SDK_QUICKSTART.md).
 

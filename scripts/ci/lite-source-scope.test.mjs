@@ -181,13 +181,16 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   const apiUsage = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_PRODUCT_API_USAGE.md"), "utf8");
   const productContract = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_PRODUCT_CONTRACT.md"), "utf8");
   const sdkQuickstart = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_SDK_QUICKSTART.md"), "utf8");
+  const httpQuickstart = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_HTTP_QUICKSTART.md"), "utf8");
 
   for (const text of [readme, apiUsage, productContract]) {
     assert.match(text, /\/v1\/feedback/);
     assert.match(text, /\/v1\/rehydrate/);
   }
 
+  assert.match(readme, /docs\/AIONIS_HTTP_QUICKSTART\.md/);
   assert.match(readme, /\/v1\/operator\/snapshot/);
+  assert.match(apiUsage, /AIONIS_HTTP_QUICKSTART\.md/);
   assert.match(apiUsage, /`feedback\(\)` posts\s+to `\/v1\/feedback`/);
   assert.match(apiUsage, /`rehydrate\(\)` posts to `\/v1\/rehydrate`/);
   assert.match(apiUsage, /`snapshot\(\)` is a\s+short alias for `\/v1\/operator\/snapshot`/);
@@ -195,6 +198,14 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(productContract, /`POST \/v1\/forget` remains the advanced lifecycle facade/);
   assert.match(sdkQuickstart, /`snapshot\(\)` exposes read-only memory use receipt/);
   assert.doesNotMatch(sdkQuickstart, /`operatorSnapshot\(\)` exposes/);
+
+  assert.match(httpQuickstart, /observe -> guide -> agent action -> feedback -> measure -> snapshot/);
+  assert.match(httpQuickstart, /curl -sS -X POST "\$AIONIS_URL\/v1\/feedback"/);
+  assert.match(httpQuickstart, /curl -sS -X POST "\$AIONIS_URL\/v1\/rehydrate"/);
+  assert.match(httpQuickstart, /curl -sS -X POST "\$AIONIS_URL\/v1\/operator\/snapshot"/);
+  assert.match(httpQuickstart, /product_trace/);
+  assert.match(httpQuickstart, /memory_decision_trace/);
+  assert.doesNotMatch(httpQuickstart, /operation=activate/);
 });
 
 test("lite repo does not keep fixture-only real validation artifacts", () => {

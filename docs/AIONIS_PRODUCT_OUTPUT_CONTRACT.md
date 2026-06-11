@@ -61,8 +61,9 @@ The goal is to stop exposing dozens of internal Runtime routes as product concep
 
 The prompt/debug boundary is defined in [AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md](AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md). `memory_decision_trace`, `memory_decision_audit`, and `memory_use_receipt` are never Agent prompt surfaces.
 
-Concrete product API usage for `observe`, `guide`, `forget`, and `measure` is
-defined in [AIONIS_PRODUCT_API_USAGE.md](AIONIS_PRODUCT_API_USAGE.md).
+Concrete product API usage for `observe`, `guide`, `feedback`, `measure`,
+`rehydrate`, and `snapshot` is defined in
+[AIONIS_PRODUCT_API_USAGE.md](AIONIS_PRODUCT_API_USAGE.md).
 Sparse feedback candidate learning-control boundaries are defined in
 [SPARSE_FEEDBACK_LEARNING_CONTROL_GATE.md](SPARSE_FEEDBACK_LEARNING_CONTROL_GATE.md).
 Sparse feedback confidence decay boundaries are defined in

@@ -373,15 +373,15 @@ async function runProductLoop(args: {
   });
   const archiveMemoryId = nodeIdFromObserve(archiveObserve, "archive");
 
-  const forget = await client.rehydrate<Record<string, unknown>>({
+  const rehydrate = await client.rehydrate<Record<string, unknown>>({
     target: "archive",
     memory_ids: [archiveMemoryId],
     target_tier: "hot",
     reason: "The product e2e continuation needs the archived workflow again.",
   });
-  const forgetEffect = asRecord(forget.forget_effect);
-  assertCondition(forget.operation === "rehydrate", "forget operation was not rehydrate");
-  assertCondition(forgetEffect?.changed_count === 1, "forget did not rehydrate exactly one archived memory");
+  const rehydrateEffect = asRecord(rehydrate.forget_effect);
+  assertCondition(rehydrate.operation === "rehydrate", "rehydrate operation was not rehydrate");
+  assertCondition(rehydrateEffect?.changed_count === 1, "rehydrate did not restore exactly one archived memory");
 
   const measure = await client.measure<Record<string, unknown>>({
     task: {
@@ -393,7 +393,7 @@ async function runProductLoop(args: {
     product_trace: {
       before_guide: beforeGuide,
       after_guide: afterGuide,
-      forget_result: forget,
+      forget_result: rehydrate,
       sufficient_evidence: true,
       evidence_ids: [
         `product_trace:product-four-api:${args.runId}`,
@@ -415,7 +415,7 @@ async function runProductLoop(args: {
     continuity_memory_id: continuityMemoryId,
     archive_memory_id: archiveMemoryId,
     agent_decision: decision,
-    forget_changed_count: forgetEffect.changed_count,
+    rehydrate_changed_count: rehydrateEffect.changed_count,
     measure_history_impact: historyImpact.impact_direction,
     sdk_default_guide_full_power: true,
   };
@@ -560,7 +560,7 @@ async function main() {
       product_loop: productLoop,
       execution_context_loop: executionContextLoop,
       checks: {
-        sdk_observe_guide_forget_measure: true,
+        sdk_observe_guide_rehydrate_measure: true,
         guide_agent_context_prompt_boundary: true,
         sdk_default_guide_full_power: true,
         measure_positive_history_impact: true,
