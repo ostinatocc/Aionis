@@ -2700,6 +2700,16 @@ function compileAgentContextSurfaces(args: {
       movedToInspect.push(`Inspect memory before use: ${memoryEntryLabel(inspect)}`);
       return false;
     }
+    const lifecycleCandidateInspect = args.memoryEntries.find((memory) =>
+      lifecycleCandidateInspectIds.has(memory.memory_id) && textMatchesMemoryEntry(entry, memory)
+    );
+    if (lifecycleCandidateInspect) {
+      movedToInspect.push(lifecycleCandidateInspectLine({
+        entry: lifecycleCandidateInspect,
+        signals: lifecycleCandidateSignalsById.get(lifecycleCandidateInspect.memory_id) ?? [],
+      }));
+      return false;
+    }
     const premiseInspect = args.memoryEntries.find((memory) =>
       premiseInspectIds.has(memory.memory_id) && textMatchesMemoryEntry(entry, memory)
     );

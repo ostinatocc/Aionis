@@ -3150,6 +3150,109 @@ test("product agent context keeps candidate and suppressed memory out of use_now
   assert.equal(context.prompt_text.includes("Workflow trusted: Suppressed wrong workflow"), false);
 });
 
+test("product agent context removes lifecycle-unsafe workflow text from raw guide use_now", () => {
+  const guidePacket = buildAionisGuidePacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    task: {
+      task_id: "task-1",
+      run_id: "run-1",
+      task_signature: "banner-continuation",
+      task_family: "coding",
+    },
+    planning: planningSummaryFixture(),
+    source_map: {
+      routes_used: ["/v1/memory/context/assemble"],
+      internal_surfaces_used: ["planning_summary"],
+    },
+  });
+  const unsafeGuidePacket = {
+    ...guidePacket,
+    guide_brief: {
+      ...guidePacket.guide_brief,
+      recommended_posture: "reuse_supported_history" as const,
+      authority: "trusted" as const,
+      use_now: [
+        "Workflow trusted: Recovered to theme component banner route",
+        "Workflow trusted: Tried legacy inline banner script route",
+      ],
+      inspect_before_use: [],
+      do_not_use: [],
+    },
+  };
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    actor: {
+      consumer_agent_id: "agent-b",
+      consumer_team_id: "team-a",
+      producer_agent_ids: ["agent-a"],
+    },
+    query: {
+      text: "Continue banner work without reviving obsolete inlineScript banner.js route.",
+      intent: "continue current theme component banner state",
+    },
+    nodes: [
+      {
+        id: "mem-current-banner",
+        type: "procedure",
+        title: "Recovered to theme component banner route",
+        text_summary: "Current valid state: continue through TopBanner.vue and config.ts. Do not revive inlineScript(\"banner.js\").",
+        tier: "warm",
+        slots: {
+          execution_native_v1: {
+            execution_kind: "workflow_anchor",
+            compression_layer: "L2",
+            contract_trust: "authoritative",
+            target_files: ["docs/.vitepress/theme/components/TopBanner.vue", "docs/.vitepress/config.ts"],
+          },
+        },
+        confidence: 0.86,
+        salience: 0.9,
+        evidence_ref: "ev-current-banner",
+      },
+      {
+        id: "mem-failed-banner",
+        type: "procedure",
+        title: "Tried legacy inline banner script route",
+        text_summary: "Verifier rejected the inline-script banner route; it preserves obsolete banner.js path instead of the theme component migration. Check before direct use.",
+        tier: "warm",
+        slots: {
+          execution_native_v1: {
+            execution_kind: "workflow_anchor",
+            compression_layer: "L2",
+            contract_trust: "observational",
+            target_files: ["docs/.vitepress/inlined-scripts/banner.js"],
+          },
+        },
+        confidence: 0.84,
+        salience: 0.88,
+        evidence_ref: "ev-failed-banner",
+      },
+    ],
+    source_map: {
+      routes_used: ["/v1/memory/recall_text"],
+      internal_surfaces_used: ["recall"],
+    },
+  });
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    guide_packet: unsafeGuidePacket,
+  });
+
+  assert.equal(context.use_now.some((entry) => entry.includes("Tried legacy inline banner script route")), false);
+  assert.equal(context.prompt_text.includes("Workflow trusted: Tried legacy inline banner script route"), false);
+  assert.equal(context.use_now_memory_ids.includes("mem-failed-banner"), false);
+  assert.ok(context.inspect_before_use_memory_ids.includes("mem-failed-banner"));
+  assert.ok(context.inspect_before_use.some((entry) =>
+    entry.includes("Tried legacy inline banner script route") || entry.includes("mem-failed-banner")
+  ));
+  assert.ok(context.risk.reasons.includes("lifecycle_candidate_kept_out_of_use_now"));
+});
+
 test("product agent context downgrades conflicting trusted workflows to inspect-first", () => {
   const guidePacket = buildAionisGuidePacket({
     tenant_id: "tenant-local",
