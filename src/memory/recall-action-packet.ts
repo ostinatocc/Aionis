@@ -15,9 +15,11 @@ import {
   resolveNodeAnchorKind,
   resolveNodeAnchorLevel,
   resolveNodeDistillationSurface,
+  executionOutcomeRoleBlocksDirectUse,
   resolveNodeExecutionContract,
   resolveNodeExecutionContractTrust,
   resolveNodeExecutionKind,
+  resolveNodeExecutionOutcomeRole,
   resolveNodeLifecycleState,
   resolveNodeMaintenanceSurface,
   resolveNodePatternExecutionSurface,
@@ -45,6 +47,7 @@ export type ActionRecallWorkflow = {
   anchor_level: string;
   execution_contract_v1: ExecutionContractV1 | null;
   contract_trust: "authoritative" | "advisory" | "observational" | null;
+  execution_outcome_role: "passed_solution" | "failed_branch" | "blocked" | "unknown";
   promotion_state: "candidate" | "stable" | null;
   source_kind: string | null;
   distillation_origin: string | null;
@@ -172,6 +175,7 @@ export function recallAnchorMeta(node: NodeRow): {
   anchorKind: string | null;
   anchorLevel: string | null;
   executionKind: string | null;
+  executionOutcomeRole: "passed_solution" | "failed_branch" | "blocked" | "unknown";
   workflowSignature: string | null;
   workflowSourceKind: string | null;
   patternState: "provisional" | "stable";
@@ -218,6 +222,7 @@ export function recallAnchorMeta(node: NodeRow): {
     anchorKind,
     anchorLevel,
     executionKind,
+    executionOutcomeRole: resolveNodeExecutionOutcomeRole(slots),
     workflowSignature: resolveNodeWorkflowSignature({ slots }),
     workflowSourceKind: resolveNodeWorkflowSourceKind(slots),
     patternState,
@@ -298,6 +303,7 @@ export function buildActionRecallPacket(args: {
         slots: meta.slots,
       });
       const authorityState = authorityConsumptionStateFromValue({ authority_visibility: authorityVisibility });
+      const outcomeBlocksDirectUse = executionOutcomeRoleBlocksDirectUse(meta.executionOutcomeRole);
       const workflowEntry: ActionRecallWorkflow = {
         anchor_id: node.id,
         uri,
@@ -307,6 +313,7 @@ export function buildActionRecallPacket(args: {
         anchor_level: anchorLevel,
         execution_contract_v1: meta.executionContract,
         contract_trust: meta.contractTrust,
+        execution_outcome_role: meta.executionOutcomeRole,
         promotion_state: firstString(meta.workflowPromotion?.promotion_state) as any,
         source_kind: meta.workflowSourceKind,
         distillation_origin: firstString(distillation?.distillation_origin),
@@ -314,7 +321,7 @@ export function buildActionRecallPacket(args: {
         promotion_origin: firstString(meta.workflowPromotion?.promotion_origin) as any,
         required_observations: firstFinite(meta.workflowPromotion?.required_observations),
         observed_count: firstFinite(meta.workflowPromotion?.observed_count),
-        promotion_ready: isWorkflowPromotionReady(meta.workflowPromotion) && !authorityState.blocks_promotion_readiness,
+        promotion_ready: isWorkflowPromotionReady(meta.workflowPromotion) && !authorityState.blocks_promotion_readiness && !outcomeBlocksDirectUse,
         workflow_signature: meta.workflowSignature,
         last_transition: firstString(meta.workflowPromotion?.last_transition) as any,
         last_transition_at: firstString(meta.workflowPromotion?.last_transition_at),
@@ -331,7 +338,11 @@ export function buildActionRecallPacket(args: {
         archive_payload_scope: archiveRelocation.payload_scope,
         authority_visibility: authorityVisibility,
       };
-      if (meta.executionKind === "workflow_candidate" || firstString(meta.workflowPromotion?.promotion_state) === "candidate") {
+      if (
+        meta.executionKind === "workflow_candidate"
+        || firstString(meta.workflowPromotion?.promotion_state) === "candidate"
+        || outcomeBlocksDirectUse
+      ) {
         deferredCandidateWorkflows.push(workflowEntry);
       } else {
         recommendedWorkflows.push(workflowEntry);

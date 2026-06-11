@@ -726,9 +726,12 @@ export const ExecutionNativeKind = z.enum([
   "execution_native",
 ]);
 
+export const ExecutionOutcomeRoleSchema = z.enum(["passed_solution", "failed_branch", "blocked", "unknown"]);
+
 export const ExecutionNativeV1Schema = z.object({
   schema_version: z.literal("execution_native_v1"),
   execution_kind: ExecutionNativeKind,
+  execution_outcome_role: ExecutionOutcomeRoleSchema.optional(),
   summary_kind: z.string().min(1).max(128).nullable().optional(),
   compression_layer: MemoryLayerId.optional(),
   contract_trust: ContractTrustSchema.optional(),

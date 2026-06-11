@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { normalizeExecutionOutcomeRoleFromValue } from "../memory/execution-outcome-role.js";
 
 export type ProductObserveStructuringSummary = {
   schema_version: "aionis_observe_structuring_v1";
@@ -248,6 +249,10 @@ function executionObservationAsNode(parsed: ProductObserveMemoryInput): Record<s
     slots.continuation_hint,
     summary,
   );
+  const executionOutcomeRole = normalizeExecutionOutcomeRoleFromValue(execution.execution_outcome_role)
+    ?? normalizeExecutionOutcomeRoleFromValue(slots.execution_outcome_role)
+    ?? normalizeExecutionOutcomeRoleFromValue(execution.outcome)
+    ?? normalizeExecutionOutcomeRoleFromValue(slots.outcome);
 
   slots.memory_kind = "execution_workflow";
   slots.product_observe_v1 = {
@@ -263,6 +268,7 @@ function executionObservationAsNode(parsed: ProductObserveMemoryInput): Record<s
     run_id: productFirstString(execution.run_id, slots.run_id),
     task_id: productFirstString(execution.task_id, slots.task_id),
     outcome: productFirstString(execution.outcome, slots.outcome),
+    execution_outcome_role: executionOutcomeRole ?? undefined,
     evidence,
     artifacts,
     acceptance_checks: acceptanceChecks,
@@ -330,6 +336,13 @@ function structureExecutionWorkflowNode(node: Record<string, unknown>): Record<s
     `observed_workflow:${productSlug(signatureBase)}`,
   );
   const nextAction = productFirstString(node.next_action, slots.next_action, summary);
+  const executionObservation = productRecord(slots.execution_observation_v1);
+  const executionOutcomeRole = normalizeExecutionOutcomeRoleFromValue(node.execution_outcome_role)
+    ?? normalizeExecutionOutcomeRoleFromValue(slots.execution_outcome_role)
+    ?? normalizeExecutionOutcomeRoleFromValue(executionObservation?.execution_outcome_role)
+    ?? normalizeExecutionOutcomeRoleFromValue(node.outcome)
+    ?? normalizeExecutionOutcomeRoleFromValue(slots.outcome)
+    ?? normalizeExecutionOutcomeRoleFromValue(executionObservation?.outcome);
 
   slots.summary_kind = productFirstString(slots.summary_kind, "workflow_anchor");
   slots.compression_layer = productFirstString(slots.compression_layer, "L2");
@@ -344,6 +357,7 @@ function structureExecutionWorkflowNode(node: Record<string, unknown>): Record<s
     ...(productRecord(slots.execution_native_v1) ?? {}),
     schema_version: "execution_native_v1",
     execution_kind: "workflow_anchor",
+    ...(executionOutcomeRole ? { execution_outcome_role: executionOutcomeRole } : {}),
     summary_kind: "workflow_anchor",
     compression_layer: "L2",
     contract_trust: productContractTrust(slots.contract_trust) ?? productContractTrust(node.contract_trust) ?? "advisory",

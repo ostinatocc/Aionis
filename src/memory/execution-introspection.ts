@@ -41,9 +41,11 @@ import {
   resolveNodeAnchorLevel,
   resolveNodeCompressionLayer,
   resolveNodeDistillationSurface,
+  executionOutcomeRoleBlocksDirectUse,
   resolveNodeExecutionContract,
   resolveNodeExecutionContractTrust,
   resolveNodeExecutionKind,
+  resolveNodeExecutionOutcomeRole,
   resolveNodeErrorFamily,
   resolveNodeErrorSignature,
   resolveNodeFilePath,
@@ -338,6 +340,8 @@ function toWorkflowEntry(row: LiteExecutionNativeNodeRow, tenantId: string, scop
   const workflowSteps = resolveNodeWorkflowSteps({ slots });
   const patternHints = resolveNodePatternHints({ slots });
   const serviceLifecycleConstraints = resolveNodeServiceLifecycleConstraints({ slots });
+  const executionOutcomeRole = resolveNodeExecutionOutcomeRole(slots);
+  const outcomeBlocksDirectUse = executionOutcomeRoleBlocksDirectUse(executionOutcomeRole);
   const operatorOverride = readAnchorOperatorOverride(slots);
   const suppressed = isAnchorSuppressed(operatorOverride);
   const observedCount = Number(workflowPromotion.observed_count ?? Number.NaN);
@@ -350,7 +354,8 @@ function toWorkflowEntry(row: LiteExecutionNativeNodeRow, tenantId: string, scop
     && Number.isFinite(requiredObservations)
     && requiredObservations > 0
     && observedCount >= requiredObservations
-    && !authorityState.blocks_promotion_readiness;
+    && !authorityState.blocks_promotion_readiness
+    && !outcomeBlocksDirectUse;
   const authorityDecisionReport = buildEntryAuthorityDecisionReport({
     subject: `workflow:${row.id}`,
     outcomeContractGate,
@@ -371,6 +376,7 @@ function toWorkflowEntry(row: LiteExecutionNativeNodeRow, tenantId: string, scop
     promotion_origin: firstString(workflowPromotion.promotion_origin),
     promotion_state: promotionState,
     contract_trust: contractTrust,
+    execution_outcome_role: executionOutcomeRole,
     outcome_contract_gate: outcomeContractGate,
     ...(optionalRecord(slots.authority_gate_v1) ? { authority_gate_v1: optionalRecord(slots.authority_gate_v1) } : {}),
     ...(executionEvidenceAssessment ? { execution_evidence_assessment: executionEvidenceAssessment } : {}),
@@ -527,6 +533,7 @@ function toWorkflowSignal(entry: ReturnType<typeof toWorkflowEntry>) {
     observed_count: entry.observed_count,
     required_observations: entry.required_observations,
     source_kind: entry.source_kind,
+    execution_outcome_role: entry.execution_outcome_role,
     promotion_origin: entry.promotion_origin,
     last_transition: entry.last_transition,
     maintenance_state: entry.maintenance_state,
@@ -865,14 +872,22 @@ export async function buildExecutionMemoryIntrospectionLite(
   const rawRecommendedWorkflows = dedupeByAnchorId(
     workflowAnchors.rows.map((row) => toWorkflowEntry(row, tenantId, scope)),
   );
-  const recommendedWorkflows = rawRecommendedWorkflows.filter((entry) => !entry.suppressed);
+  const demotedRecommendedWorkflows = rawRecommendedWorkflows.filter(
+    (entry) => !entry.suppressed && executionOutcomeRoleBlocksDirectUse(entry.execution_outcome_role),
+  );
+  const recommendedWorkflows = rawRecommendedWorkflows.filter(
+    (entry) => !entry.suppressed && !executionOutcomeRoleBlocksDirectUse(entry.execution_outcome_role),
+  );
   const stableWorkflowSignatures = new Set(
     recommendedWorkflows
       .map((entry) => entry.workflow_signature)
       .filter((value): value is string => typeof value === "string" && value.length > 0),
   );
   const rawCandidateWorkflowsAll = dedupeByAnchorId(
-    workflowCandidates.rows.map((row) => toWorkflowEntry(row, tenantId, scope)),
+    [
+      ...workflowCandidates.rows.map((row) => toWorkflowEntry(row, tenantId, scope)),
+      ...demotedRecommendedWorkflows,
+    ],
   );
   const rawCandidateWorkflows = rawCandidateWorkflowsAll.filter((entry) => !entry.suppressed);
   const candidateWorkflows = dedupeWorkflowCandidatesBySignature(
