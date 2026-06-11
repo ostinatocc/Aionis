@@ -1,0 +1,60 @@
+{
+  "contract_version": "aionis_multi_agent_quickstart_result_v1",
+  "run_id": "multi-agent-quickstart-example",
+  "runtime": {
+    "mode": "spawned",
+    "base_url": "http://127.0.0.1:3001",
+    "embedding_provider": "minimax"
+  },
+  "integration_path": {
+    "sdk_client": "createAionisClient",
+    "adapter": "createExecutionMemoryAdapter",
+    "host_template": "createMultiAgentHostTemplate",
+    "product_loop": "observe -> guide -> agent action -> feedback -> measure -> snapshot"
+  },
+  "agent_context": {
+    "before_actionable_history_used": false,
+    "after_actionable_history_used": true,
+    "prompt_contract_version": "aionis_agent_context_v1",
+    "prompt_char_count": 1751,
+    "prompt_preview": "AIONIS_CTX v2\nstate role=reviewer history=actionable\ncurrent use_now=continue verified passed branch\navoid do_not_use=failed broad search branch",
+    "use_now_count": 8,
+    "do_not_use_count": 2,
+    "exposed_use_now_memory_ids": [
+      "mem_passed_example"
+    ]
+  },
+  "memory_governance": {
+    "planner_memory_id": "mem_planner_example",
+    "failed_memory_id": "mem_failed_example",
+    "passed_memory_id": "mem_passed_example",
+    "reviewer_memory_id": "mem_reviewer_example",
+    "branch_isolation": "pass",
+    "feedback_changed_count": 1,
+    "measure_history_impact": "positive"
+  },
+  "operator_audit": {
+    "memory_use_receipt_visible": true,
+    "feedback_attribution_present": true,
+    "effect_impact": "positive",
+    "trace_to_procedure_present": true,
+    "trace_to_procedure_status": "blocked",
+    "trace_to_procedure_source_surfaces": [
+      "execution_tree",
+      "workflow_projection",
+      "replay_playbook",
+      "execution_contract",
+      "memory_decision_trace",
+      "promotion_evidence"
+    ]
+  },
+  "checks": {
+    "starts_without_actionable_history": true,
+    "reviewer_gets_actionable_execution_memory": true,
+    "reviewer_continues_passed_branch": true,
+    "reviewer_avoids_failed_branch": true,
+    "guide_feedback_attributed": true,
+    "positive_history_impact_measured": true,
+    "operator_snapshot_read_only": true
+  }
+}

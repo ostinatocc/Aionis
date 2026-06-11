@@ -1,0 +1,44 @@
+{
+  "contract_version": "aionis_sdk_quickstart_result_v1",
+  "run_id": "sdk-quickstart-example",
+  "runtime": {
+    "mode": "spawned",
+    "base_url": "http://127.0.0.1:3001",
+    "embedding_provider": "minimax"
+  },
+  "integration_path": {
+    "sdk_client": "createAionisClient",
+    "product_loop": "remember -> guide -> agent prompt -> feedback -> measure -> snapshot"
+  },
+  "agent_context": {
+    "before_actionable_history_used": false,
+    "after_actionable_history_used": true,
+    "prompt_char_count": 723,
+    "prompt_preview": "AIONIS_CTX v2\nstate role=agent history=actionable\ncurrent use_now=SDK preference and project context",
+    "use_now_memory_ids": [
+      "mem_preference_example",
+      "mem_project_fact_example"
+    ]
+  },
+  "memory_governance": {
+    "preference_memory_id": "mem_preference_example",
+    "project_fact_memory_id": "mem_project_fact_example",
+    "feedback_attributed_memory_count": 1,
+    "measure_history_impact": "positive"
+  },
+  "operator_audit": {
+    "memory_use_receipt_visible": true,
+    "receipt_decision_summary_count": 2,
+    "snapshot_receipt_visible": true,
+    "snapshot_runtime_mutation": false
+  },
+  "checks": {
+    "starts_without_actionable_history": true,
+    "guide_exposes_preference": true,
+    "guide_exposes_project_fact": true,
+    "agent_prompt_boundary_preserved": true,
+    "feedback_attributed": true,
+    "positive_history_impact_measured": true,
+    "operator_snapshot_read_only": true
+  }
+}

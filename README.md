@@ -64,6 +64,35 @@ That loop writes planner, worker, verifier, and reviewer evidence, then proves
 that the reviewer can continue the passed branch while avoiding the failed
 branch.
 
+## Example Output
+
+The SDK quickstart prints a compact product result like this:
+
+```json
+{
+  "contract_version": "aionis_sdk_quickstart_result_v1",
+  "agent_context": {
+    "before_actionable_history_used": false,
+    "after_actionable_history_used": true,
+    "use_now_memory_ids": ["mem_preference_example", "mem_project_fact_example"]
+  },
+  "memory_governance": {
+    "feedback_attributed_memory_count": 1,
+    "measure_history_impact": "positive"
+  },
+  "operator_audit": {
+    "memory_use_receipt_visible": true,
+    "snapshot_runtime_mutation": false
+  }
+}
+```
+
+Full example outputs:
+
+1. [SDK quickstart result](docs/examples/sdk-quickstart-result.json)
+2. [Multi-agent quickstart result](docs/examples/multi-agent-quickstart-result.json)
+3. [Golden product loop result](docs/examples/golden-product-loop-result.json)
+
 ## What The Agent Gets
 
 Aionis does not ask you to dump raw traces into the prompt. The Agent gets a

@@ -51,6 +51,10 @@ function listSourceFiles(dir) {
   return out;
 }
 
+function readJson(rel) {
+  return JSON.parse(fs.readFileSync(path.join(ROOT, rel), "utf8"));
+}
+
 test("lite repo excludes bench/dev/eval/sdk source entrypoints", () => {
   for (const rel of FORBIDDEN_PATHS) {
     assert.equal(fs.existsSync(path.join(ROOT, rel)), false, `${rel} should be absent in lite repo`);
@@ -121,6 +125,38 @@ test("focused package exposes developer quickstarts through the Runtime e2e surf
     fs.existsSync(path.join(ROOT, "scripts", "e2e", "developer-multi-agent-quickstart.ts")),
     true,
   );
+});
+
+test("README quickstart examples stay aligned with product result contracts", () => {
+  const packageJson = readJson("package.json");
+  const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
+  assert.match(readme, /npm run -s runtime:quickstart:sdk/);
+  assert.match(readme, /npm run -s runtime:quickstart:multi-agent/);
+  assert.match(readme, /docs\/examples\/sdk-quickstart-result\.json/);
+  assert.match(readme, /docs\/examples\/multi-agent-quickstart-result\.json/);
+  assert.equal(packageJson.scripts?.["runtime:quickstart:sdk"], "npx tsx scripts/e2e/developer-sdk-quickstart.ts");
+  assert.equal(
+    packageJson.scripts?.["runtime:quickstart:multi-agent"],
+    "npx tsx scripts/e2e/developer-multi-agent-quickstart.ts",
+  );
+
+  const sdk = readJson("docs/examples/sdk-quickstart-result.json");
+  assert.equal(sdk.contract_version, "aionis_sdk_quickstart_result_v1");
+  assert.equal(sdk.agent_context?.before_actionable_history_used, false);
+  assert.equal(sdk.agent_context?.after_actionable_history_used, true);
+  assert.equal(sdk.memory_governance?.measure_history_impact, "positive");
+  assert.equal(sdk.operator_audit?.memory_use_receipt_visible, true);
+  assert.equal(sdk.operator_audit?.snapshot_runtime_mutation, false);
+  assert.equal(sdk.checks?.feedback_attributed, true);
+
+  const multiAgent = readJson("docs/examples/multi-agent-quickstart-result.json");
+  assert.equal(multiAgent.contract_version, "aionis_multi_agent_quickstart_result_v1");
+  assert.equal(multiAgent.agent_context?.before_actionable_history_used, false);
+  assert.equal(multiAgent.agent_context?.after_actionable_history_used, true);
+  assert.equal(multiAgent.memory_governance?.branch_isolation, "pass");
+  assert.equal(multiAgent.memory_governance?.measure_history_impact, "positive");
+  assert.equal(multiAgent.operator_audit?.memory_use_receipt_visible, true);
+  assert.equal(multiAgent.checks?.reviewer_avoids_failed_branch, true);
 });
 
 test("lite repo does not keep fixture-only real validation artifacts", () => {
