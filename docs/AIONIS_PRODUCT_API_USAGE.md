@@ -778,6 +778,7 @@ Use one of these forms:
 | `measurement_input` | Developer | Inputs projected into the evaluator. |
 | `memory_decision_trace` | Developer | Present when `product_trace` is supplied. |
 | `memory_decision_trace.memory_use_receipt` | Host / operator | Compact read-only receipt of exposed, blocked, rehydrated, attributed, and unattributed memory IDs. |
+| `memory_decision_trace.judgment_calibration_summary` | Host / operator | Read-only summary of supported, contradicted, unused, weak, and inconclusive memory judgments. |
 | `memory_decision_audit` | Operator | Present when `product_trace` is supplied. |
 | `kernel_report` | Advanced developer | Internal effect evaluator output. |
 
@@ -810,6 +811,12 @@ It sets `authority_mutation: false` to make the boundary explicit.
 derived from the same decision trace and keeps `agent_prompt_included: false`
 and `runtime_mutation: false`, so hosts can log or display usage without
 turning the audit surface into Agent context.
+`judgment_calibration_summary` is the first Judgment Ledger projection. It is
+derived from the same decision trace and feedback attribution: positive
+host-used memory becomes supported, threshold-met negative evidence becomes
+contradicted, single weak negative evidence remains weak/inconclusive, and
+shown-but-unreported memory becomes unused. The summary is read-only and does
+not mutate authority, ranking, suppression, or lifecycle state.
 `memory_decision_audit.feedback_signal_review` exposes the same buckets in a
 more operator-readable shape, with memory ids, titles, and reasons. It is for
 measure/debug/audit surfaces only and must not be appended to the Agent prompt.

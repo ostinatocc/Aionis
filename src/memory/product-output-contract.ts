@@ -777,6 +777,80 @@ const AionisFeedbackAttributionDetailSchema = z
   })
   .strict();
 
+const AionisJudgmentCalibrationBucketSchema = z
+  .object({
+    bucket: z.string().min(1),
+    record_count: z.number().int().nonnegative(),
+    supported_count: z.number().int().nonnegative(),
+    contradicted_count: z.number().int().nonnegative(),
+    weak_count: z.number().int().nonnegative(),
+    unused_count: z.number().int().nonnegative(),
+    inconclusive_count: z.number().int().nonnegative(),
+    memory_ids: z.array(z.string().min(1)).default([]),
+    recommended_adjustment: z.enum([
+      "keep",
+      "rank_up",
+      "rank_down",
+      "inspect_first",
+      "needs_more_evidence",
+    ]),
+    authority: z.literal("read_only"),
+    reason: z.string().min(1),
+  })
+  .strict();
+
+export const AionisJudgmentCalibrationSummarySchema = z
+  .object({
+    contract_version: z.literal("aionis_judgment_calibration_summary_v1"),
+    intended_use: z.literal("judgment_calibration_audit"),
+    source: z.literal("memory_decision_trace"),
+    agent_prompt_included: z.literal(false),
+    runtime_mutation: z.literal(false),
+    authority: z.literal("read_only"),
+    window: z
+      .object({
+        record_count: z.number().int().nonnegative(),
+        anchored_count: z.number().int().nonnegative(),
+        weak_count: z.number().int().nonnegative(),
+        unused_count: z.number().int().nonnegative(),
+        inconclusive_count: z.number().int().nonnegative(),
+      })
+      .strict(),
+    supported_memory_ids: z.array(z.string().min(1)).default([]),
+    contradicted_memory_ids: z.array(z.string().min(1)).default([]),
+    weak_memory_ids: z.array(z.string().min(1)).default([]),
+    unused_memory_ids: z.array(z.string().min(1)).default([]),
+    inconclusive_memory_ids: z.array(z.string().min(1)).default([]),
+    buckets: z.array(AionisJudgmentCalibrationBucketSchema).default([]),
+    reason: z.string().min(1),
+  })
+  .strict();
+
+export type AionisJudgmentCalibrationSummary = z.infer<typeof AionisJudgmentCalibrationSummarySchema>;
+
+const DEFAULT_AIONIS_JUDGMENT_CALIBRATION_SUMMARY: AionisJudgmentCalibrationSummary = {
+  contract_version: "aionis_judgment_calibration_summary_v1",
+  intended_use: "judgment_calibration_audit",
+  source: "memory_decision_trace",
+  agent_prompt_included: false,
+  runtime_mutation: false,
+  authority: "read_only",
+  window: {
+    record_count: 0,
+    anchored_count: 0,
+    weak_count: 0,
+    unused_count: 0,
+    inconclusive_count: 0,
+  },
+  supported_memory_ids: [],
+  contradicted_memory_ids: [],
+  weak_memory_ids: [],
+  unused_memory_ids: [],
+  inconclusive_memory_ids: [],
+  buckets: [],
+  reason: "No memory judgment decisions were available for calibration.",
+};
+
 const AionisAuditFeedbackSignalMemorySchema = z
   .object({
     memory_id: z.string().min(1),
@@ -1122,6 +1196,7 @@ export const AionisMemoryDecisionTraceSchema = z
         reason: z.string().min(1),
       })
       .strict(),
+    judgment_calibration_summary: AionisJudgmentCalibrationSummarySchema.default(DEFAULT_AIONIS_JUDGMENT_CALIBRATION_SUMMARY),
     neighborhood_drift_observation: AionisNeighborhoodDriftObservationSchema.default({
       present: false,
       contract_version: null,
@@ -1283,6 +1358,7 @@ export const AionisMemoryDecisionAuditReportSchema = z
         reason: z.string().min(1),
       })
       .strict(),
+    judgment_calibration_review: AionisJudgmentCalibrationSummarySchema.default(DEFAULT_AIONIS_JUDGMENT_CALIBRATION_SUMMARY),
     neighborhood_drift_review: AionisNeighborhoodDriftObservationSchema.default({
       present: false,
       contract_version: null,
@@ -1817,6 +1893,7 @@ export const AionisOperatorSnapshotSchema = z
         reason: z.string().min(1),
       })
       .strict(),
+    judgment_calibration: AionisJudgmentCalibrationSummarySchema.default(DEFAULT_AIONIS_JUDGMENT_CALIBRATION_SUMMARY),
     memory_use_receipt: AionisMemoryUseReceiptSchema,
     memory_lifecycle: z
       .object({
@@ -1870,6 +1947,7 @@ export const AionisOperatorSnapshotSchema = z
               "feedback_attribution_visible",
               "learning_control_visible",
               "memory_use_receipt_visible",
+              "judgment_calibration_visible",
               "trace_to_procedure_visible",
               "runtime_read_only",
               "effect_measured",

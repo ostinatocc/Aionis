@@ -204,6 +204,13 @@ Generated `memory_decision_trace` and `operator_snapshot` outputs include
 attribution and risk flags. It is for host/operator audit only and must not be
 used as Agent prompt content.
 
+Generated `memory_decision_trace`, `memory_decision_audit`, and
+`operator_snapshot` outputs also include `judgment_calibration_summary`, a
+read-only Judgment Ledger projection over the current decision trace. It
+summarizes supported, contradicted, unused, weak, and inconclusive memory
+judgments without changing memory authority, ranking, suppression, or lifecycle
+state.
+
 The guide path also includes a Premise Firewall projection. When the current
 query appears to reuse a stale, blocked, contested, or superseded premise and
 Aionis has accepted current-state counter-evidence, the product exposes the

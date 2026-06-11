@@ -41,7 +41,8 @@ The goal is to stop exposing dozens of internal Runtime routes as product concep
 5. `AionisEffectReport`: whether history helped, hurt, or did nothing
 6. `AionisMemoryDecisionTrace` and `AionisMemoryDecisionAuditReport`: operator/debug outputs explaining memory decisions without entering the Agent prompt
 7. `AionisMemoryUseReceipt`: a compact read-only receipt of which memory was used, inspected, blocked, rehydrated, attributed, or left unattributed
-8. `AionisOperatorSnapshot`: a read-only operator projection of execution state, memory use, learning control, effect, and Trace-to-Procedure readiness
+8. `AionisJudgmentCalibrationSummary`: a compact read-only calibration summary of which memory judgments were supported, contradicted, unused, weak, or inconclusive
+9. `AionisOperatorSnapshot`: a read-only operator projection of execution state, memory use, judgment calibration, learning control, effect, and Trace-to-Procedure readiness
 
 ## Output Boundary
 
@@ -55,11 +56,12 @@ The goal is to stop exposing dozens of internal Runtime routes as product concep
 | `AionisMemoryDecisionTrace` | `debug` / `measure` | Explain per-memory use, downgrade, block, and rehydrate decisions. |
 | `AionisMemoryDecisionAuditReport` | `audit` / `measure` | Provide a compact operator review of memory decisions, risks, and claims. |
 | `AionisMemoryUseReceipt` | `debug` / `measure` / `snapshot` | Show exactly what memory was exposed or blocked without adding prompt content or mutating runtime state. |
-| `AionisOperatorSnapshot` | `snapshot` | Show read-only execution state, trace-to-procedure readiness, learning control, effect, and claims for hosts/operators. |
+| `AionisJudgmentCalibrationSummary` | `debug` / `measure` / `audit` / `snapshot` | Summarize whether exposed memory judgments were supported, contradicted, unused, weak, or inconclusive without changing authority. |
+| `AionisOperatorSnapshot` | `snapshot` | Show read-only execution state, trace-to-procedure readiness, judgment calibration, learning control, effect, and claims for hosts/operators. |
 
 `POST /v1/guide` defaults to `AionisAgentContext` only. Callers that need audit or measurement data must set `include_packets: true` to include `memory_packet` and `guide_packet`. Full packets are not the default Agent prompt surface.
 
-The prompt/debug boundary is defined in [AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md](AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md). `memory_decision_trace`, `memory_decision_audit`, and `memory_use_receipt` are never Agent prompt surfaces.
+The prompt/debug boundary is defined in [AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md](AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md). `memory_decision_trace`, `memory_decision_audit`, `memory_use_receipt`, and `judgment_calibration_summary` are never Agent prompt surfaces.
 
 Concrete product API usage for `observe`, `guide`, `feedback`, `measure`,
 `rehydrate`, and `snapshot` is defined in
@@ -134,6 +136,80 @@ type AionisMemoryUseReceipt = {
 | compact decision summaries with surface and reason codes | raw memory text, raw slots, or full trace internals |
 | read-only risk/sparse feedback signals | runtime mutation, suppression, archive, or promotion actions |
 | prompt character count and `actionable_history_used` | claims that a memory was useful unless feedback attribution says so |
+
+## AionisJudgmentCalibrationSummary
+
+The judgment calibration summary is the first implemented Judgment Ledger
+projection. It is derived from `memory_decision_trace`, not from a new store. It
+does not persist new authority, does not change ranking, and does not enter the
+Agent prompt.
+
+Current surfaces:
+
+| Surface | Field |
+|---|---|
+| Trace | `memory_decision_trace.judgment_calibration_summary` |
+| Audit | `memory_decision_audit.judgment_calibration_review` |
+| Snapshot | `operator_snapshot.judgment_calibration` |
+
+### Shape
+
+```ts
+type AionisJudgmentCalibrationSummary = {
+  contract_version: "aionis_judgment_calibration_summary_v1";
+  intended_use: "judgment_calibration_audit";
+  source: "memory_decision_trace";
+  agent_prompt_included: false;
+  runtime_mutation: false;
+  authority: "read_only";
+  window: {
+    record_count: number;
+    anchored_count: number;
+    weak_count: number;
+    unused_count: number;
+    inconclusive_count: number;
+  };
+  supported_memory_ids: string[];
+  contradicted_memory_ids: string[];
+  weak_memory_ids: string[];
+  unused_memory_ids: string[];
+  inconclusive_memory_ids: string[];
+  buckets: Array<{
+    bucket: string;
+    record_count: number;
+    supported_count: number;
+    contradicted_count: number;
+    weak_count: number;
+    unused_count: number;
+    inconclusive_count: number;
+    memory_ids: string[];
+    recommended_adjustment:
+      | "keep"
+      | "rank_up"
+      | "rank_down"
+      | "inspect_first"
+      | "needs_more_evidence";
+    authority: "read_only";
+    reason: string;
+  }>;
+  reason: string;
+};
+```
+
+### Calibration Rules
+
+| Input Evidence | Calibration Output |
+|---|---|
+| host-marked used memory with positive feedback | `supported_memory_ids` |
+| host-marked used memory with threshold-met or strong negative evidence | `contradicted_memory_ids` |
+| single weak negative feedback below threshold | `weak_memory_ids` and `inconclusive_memory_ids` |
+| recalled memory not marked as used in feedback | `unused_memory_ids` |
+| no feedback attribution | `inconclusive_memory_ids` |
+
+`unused` is not negative feedback. Weak negative feedback is not authority
+mutation. The summary may recommend `inspect_first` or `needs_more_evidence`,
+but those are read-only audit recommendations until existing lifecycle,
+authority, and learning-control gates accept separate evidence.
 
 ## Premise Firewall
 

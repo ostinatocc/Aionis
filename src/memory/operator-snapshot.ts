@@ -244,6 +244,10 @@ function sourceMapFromInputs(args: {
       ...(args.trace ? ["memory_decision_trace"] : []),
       "memory_use_receipt",
       ...(args.audit ? ["memory_decision_audit_report"] : []),
+      ...(args.trace?.judgment_calibration_summary.window.record_count
+          || args.audit?.judgment_calibration_review.window.record_count
+        ? ["judgment_calibration_summary"]
+        : []),
       ...(args.traceToProcedurePresent ? ["trace_to_procedure_projection"] : []),
     ]),
     omitted_internal_surfaces: uniqueStrings([
@@ -400,6 +404,7 @@ function buildClaims(args: {
   feedbackPresent: boolean;
   learningControlVisible: boolean;
   memoryUseReceipt: AionisMemoryUseReceipt;
+  judgmentCalibration?: AionisOperatorSnapshot["judgment_calibration"] | null;
   traceToProcedure: AionisOperatorSnapshot["trace_to_procedure"];
   effect: AionisEffectReport | null;
 }): AionisOperatorSnapshot["claims"] {
@@ -434,6 +439,13 @@ function buildClaims(args: {
       claim: "memory_use_receipt_visible",
       status: "pass",
       evidence: `Receipt exposes ${args.memoryUseReceipt.exposed_memory_ids.length} memory ids; agent_prompt_included=${args.memoryUseReceipt.agent_prompt_included}.`,
+    },
+    {
+      claim: "judgment_calibration_visible",
+      status: (args.judgmentCalibration?.window.record_count ?? 0) > 0 ? "pass" : "not_applicable",
+      evidence: args.judgmentCalibration
+        ? `Judgment calibration summarizes ${args.judgmentCalibration.window.record_count} read-only records; authority=${args.judgmentCalibration.authority}.`
+        : "No judgment calibration summary was supplied.",
     },
     {
       claim: "trace_to_procedure_visible",
@@ -570,6 +582,9 @@ export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArg
     ?? (trace
       ? buildAionisMemoryUseReceiptFromDecisionTrace(trace)
       : buildFallbackMemoryUseReceipt({ guideTraceId, agent, guide }));
+  const judgmentCalibration = trace?.judgment_calibration_summary
+    ?? audit?.judgment_calibration_review
+    ?? null;
   const actionableHistoryUsed =
     agent?.actionable_history_used
     ?? guide?.guide_brief.actionable_history_used
@@ -651,6 +666,7 @@ export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArg
           ? "Guide trace exists, but feedback attribution was not supplied."
           : "No guide trace was supplied.",
     },
+    judgment_calibration: judgmentCalibration ?? undefined,
     memory_use_receipt: memoryUseReceipt,
     memory_lifecycle: {
       used_count: directUseCount,
@@ -697,6 +713,7 @@ export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArg
       feedbackPresent: feedbackAttribution?.present === true,
       learningControlVisible,
       memoryUseReceipt,
+      judgmentCalibration,
       traceToProcedure,
       effect,
     }),
@@ -757,6 +774,12 @@ export function renderAionisOperatorSnapshotMarkdown(snapshot: AionisOperatorSna
     `runtime_mutation: ${snapshot.memory_use_receipt.runtime_mutation}`,
     `use_now_memory_ids: ${snapshot.memory_use_receipt.use_now_memory_ids.join(", ") || "none"}`,
     `do_not_use_memory_ids: ${snapshot.memory_use_receipt.do_not_use_memory_ids.join(", ") || "none"}`,
+    ``,
+    `## Judgment Calibration`,
+    `record_count: ${snapshot.judgment_calibration.window.record_count}`,
+    `anchored_count: ${snapshot.judgment_calibration.window.anchored_count}`,
+    `unused_count: ${snapshot.judgment_calibration.window.unused_count}`,
+    `authority: ${snapshot.judgment_calibration.authority}`,
     ``,
     `## Trace to Procedure`,
     `present: ${snapshot.trace_to_procedure.present}`,

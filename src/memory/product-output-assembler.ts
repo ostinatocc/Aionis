@@ -23,6 +23,7 @@ import {
   type AionisEffectReport,
   type AionisGuidePacket,
   type AionisGuidanceAuthority,
+  type AionisJudgmentCalibrationSummary,
   type AionisLifecycleCandidateSignal,
   type AionisLearningPacket,
   type AionisMemoryDecisionAuditReport,
@@ -91,6 +92,7 @@ type ConfidenceDecayCandidateSummary = AionisMemoryDecisionTrace["confidence_dec
 type InspectBeforeUseShadowDelta = AionisMemoryDecisionTrace["inspect_before_use_shadow_delta"];
 type TraceDecisionSurface = AionisMemoryDecisionTrace["memory_decisions"][number]["agent_surface"];
 type LifecycleCandidateSummary = AionisMemoryDecisionTrace["lifecycle_candidate_summary"];
+type JudgmentCalibrationSummary = AionisJudgmentCalibrationSummary;
 
 const NEIGHBORHOOD_DRIFT_GROWTH_THRESHOLD = 2;
 const NEIGHBORHOOD_DRIFT_DIRECTIONAL_THRESHOLD = 2;
@@ -4309,6 +4311,196 @@ function buildLifecycleCandidateSummary(args: {
   };
 }
 
+type JudgmentCalibrationOutcome = "supported" | "contradicted" | "unused" | "inconclusive";
+
+type JudgmentCalibrationBucketDraft = {
+  record_count: number;
+  supported_count: number;
+  contradicted_count: number;
+  weak_count: number;
+  unused_count: number;
+  inconclusive_count: number;
+  memory_ids: string[];
+};
+
+function emptyJudgmentCalibrationBucketDraft(): JudgmentCalibrationBucketDraft {
+  return {
+    record_count: 0,
+    supported_count: 0,
+    contradicted_count: 0,
+    weak_count: 0,
+    unused_count: 0,
+    inconclusive_count: 0,
+    memory_ids: [],
+  };
+}
+
+function feedbackDetailIsWeakNegative(
+  detail: FeedbackAttributionDetail | null,
+): boolean {
+  return detail?.outcome === "negative"
+    && (
+      detail.attribution_strength === "weak_counter_signal"
+      || detail.threshold_state === "weak_below_threshold"
+    )
+    && detail.threshold_met === false;
+}
+
+function judgmentOutcomeForDecision(args: {
+  decision: AionisMemoryDecisionTrace["memory_decisions"][number];
+  feedbackAttribution: FeedbackAttributionSummary;
+}): JudgmentCalibrationOutcome {
+  const detail = args.decision.feedback_detail;
+  if (detail) {
+    if (detail.outcome === "positive") return "supported";
+    if (detail.outcome === "negative") {
+      return feedbackDetailIsWeakNegative(detail) ? "inconclusive" : "contradicted";
+    }
+    return "inconclusive";
+  }
+  if (
+    args.feedbackAttribution.present
+    && args.feedbackAttribution.unattributed_recalled_memory_ids.includes(args.decision.memory_id)
+  ) {
+    return "unused";
+  }
+  return "inconclusive";
+}
+
+function judgmentCalibrationBucketsForDecision(args: {
+  decision: AionisMemoryDecisionTrace["memory_decisions"][number];
+  relationDecision: AionisMemoryDecisionTrace["relation_decisions"][number] | undefined;
+  lifecycleSignals: AionisLifecycleCandidateSignal[];
+  feedbackAttribution: FeedbackAttributionSummary;
+}): string[] {
+  const sparse = args.feedbackAttribution.sparse_feedback_signal_summary;
+  return compactStrings([
+    `surface:${args.decision.agent_surface}`,
+    `domain:${args.decision.domain}`,
+    args.decision.memory_type === "procedure" || args.decision.memory_type === "execution_memory"
+      ? "domain:execution_memory"
+      : null,
+    args.relationDecision ? `signal:relation_${args.relationDecision.lifecycle_relation}` : null,
+    ...args.lifecycleSignals.map((signal) => `signal:lifecycle_${signal.signal_type}`),
+    sparse.positive_attributed_memory_ids.includes(args.decision.memory_id) ? "signal:feedback_positive" : null,
+    sparse.weak_counter_signal_memory_ids.includes(args.decision.memory_id)
+      || sparse.strong_counter_signal_memory_ids.includes(args.decision.memory_id)
+      ? "signal:feedback_negative"
+      : null,
+    sparse.repeated_unattributed_memory_ids.includes(args.decision.memory_id) ? "signal:repeated_unused" : null,
+  ]);
+}
+
+function judgmentCalibrationRecommendedAdjustment(
+  draft: JudgmentCalibrationBucketDraft,
+): JudgmentCalibrationSummary["buckets"][number]["recommended_adjustment"] {
+  if (draft.record_count === 0) return "needs_more_evidence";
+  if (draft.contradicted_count > 0 && draft.contradicted_count >= draft.supported_count) return "inspect_first";
+  if (draft.unused_count > draft.supported_count && draft.unused_count > 0) return "needs_more_evidence";
+  if (draft.supported_count > draft.contradicted_count && draft.supported_count > 0) return "keep";
+  return "needs_more_evidence";
+}
+
+function buildAionisJudgmentCalibrationSummary(args: {
+  memoryDecisions: AionisMemoryDecisionTrace["memory_decisions"];
+  relationDecisions: AionisMemoryDecisionTrace["relation_decisions"];
+  lifecycleCandidateSummary: LifecycleCandidateSummary;
+  feedbackAttribution: FeedbackAttributionSummary;
+}): JudgmentCalibrationSummary {
+  const relationByTarget = relationDecisionByTarget(args.relationDecisions);
+  const lifecycleSignalsByMemoryId = new Map<string, AionisLifecycleCandidateSignal[]>();
+  for (const signal of args.lifecycleCandidateSummary.signals) {
+    const next = lifecycleSignalsByMemoryId.get(signal.memory_id) ?? [];
+    next.push(signal);
+    lifecycleSignalsByMemoryId.set(signal.memory_id, next);
+  }
+
+  const supportedMemoryIds: string[] = [];
+  const contradictedMemoryIds: string[] = [];
+  const weakMemoryIds: string[] = [];
+  const unusedMemoryIds: string[] = [];
+  const inconclusiveMemoryIds: string[] = [];
+  const buckets = new Map<string, JudgmentCalibrationBucketDraft>();
+  let anchoredCount = 0;
+
+  for (const decision of args.memoryDecisions) {
+    const outcome = judgmentOutcomeForDecision({
+      decision,
+      feedbackAttribution: args.feedbackAttribution,
+    });
+    const weak = feedbackDetailIsWeakNegative(decision.feedback_detail);
+    if (decision.feedback_detail?.host_marked_used === true) anchoredCount += 1;
+    if (outcome === "supported") supportedMemoryIds.push(decision.memory_id);
+    else if (outcome === "contradicted") contradictedMemoryIds.push(decision.memory_id);
+    else if (outcome === "unused") unusedMemoryIds.push(decision.memory_id);
+    else inconclusiveMemoryIds.push(decision.memory_id);
+    if (weak) weakMemoryIds.push(decision.memory_id);
+
+    const decisionBuckets = judgmentCalibrationBucketsForDecision({
+      decision,
+      relationDecision: relationByTarget.get(decision.memory_id),
+      lifecycleSignals: lifecycleSignalsByMemoryId.get(decision.memory_id) ?? [],
+      feedbackAttribution: args.feedbackAttribution,
+    });
+    for (const bucket of decisionBuckets) {
+      const draft = buckets.get(bucket) ?? emptyJudgmentCalibrationBucketDraft();
+      draft.record_count += 1;
+      if (outcome === "supported") draft.supported_count += 1;
+      else if (outcome === "contradicted") draft.contradicted_count += 1;
+      else if (outcome === "unused") draft.unused_count += 1;
+      else draft.inconclusive_count += 1;
+      if (weak) draft.weak_count += 1;
+      draft.memory_ids = compactStrings([...draft.memory_ids, decision.memory_id]).slice(0, 48);
+      buckets.set(bucket, draft);
+    }
+  }
+
+  const summaryBuckets: JudgmentCalibrationSummary["buckets"] = [...buckets.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .slice(0, 32)
+    .map(([bucket, draft]) => ({
+      bucket,
+      record_count: draft.record_count,
+      supported_count: draft.supported_count,
+      contradicted_count: draft.contradicted_count,
+      weak_count: draft.weak_count,
+      unused_count: draft.unused_count,
+      inconclusive_count: draft.inconclusive_count,
+      memory_ids: draft.memory_ids,
+      recommended_adjustment: judgmentCalibrationRecommendedAdjustment(draft),
+      authority: "read_only",
+      reason: `Read-only calibration bucket ${bucket}: ${draft.supported_count} supported, ${draft.contradicted_count} contradicted, ${draft.unused_count} unused, ${draft.inconclusive_count} inconclusive.`,
+    }));
+
+  const recordCount = args.memoryDecisions.length;
+  const weakIds = compactStrings(weakMemoryIds);
+  const inconclusiveIds = compactStrings(inconclusiveMemoryIds);
+  return {
+    contract_version: "aionis_judgment_calibration_summary_v1",
+    intended_use: "judgment_calibration_audit",
+    source: "memory_decision_trace",
+    agent_prompt_included: false,
+    runtime_mutation: false,
+    authority: "read_only",
+    window: {
+      record_count: recordCount,
+      anchored_count: anchoredCount,
+      weak_count: weakIds.length,
+      unused_count: compactStrings(unusedMemoryIds).length,
+      inconclusive_count: inconclusiveIds.length,
+    },
+    supported_memory_ids: compactStrings(supportedMemoryIds).slice(0, 64),
+    contradicted_memory_ids: compactStrings(contradictedMemoryIds).slice(0, 64),
+    weak_memory_ids: weakIds.slice(0, 64),
+    unused_memory_ids: compactStrings(unusedMemoryIds).slice(0, 64),
+    inconclusive_memory_ids: inconclusiveIds.slice(0, 64),
+    buckets: summaryBuckets,
+    reason: recordCount > 0
+      ? "Memory judgment calibration was derived from decision trace surfaces and feedback attribution only; it is read-only and does not mutate authority."
+      : "No memory judgment decisions were available for calibration.",
+  };
+}
+
 export function buildAionisMemoryUseReceiptFromDecisionTrace(
   trace: AionisMemoryDecisionTrace,
 ): AionisMemoryUseReceipt {
@@ -4418,6 +4610,12 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
     memoryDecisions,
     agentContext,
   });
+  const judgmentCalibrationSummary = buildAionisJudgmentCalibrationSummary({
+    memoryDecisions,
+    relationDecisions,
+    lifecycleCandidateSummary,
+    feedbackAttribution,
+  });
   const neighborhoodDriftObservation = buildNeighborhoodDriftObservation({
     memory,
     memoryDecisions,
@@ -4518,6 +4716,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
     relation_decisions: relationDecisions,
     lifecycle_candidate_summary: lifecycleCandidateSummary,
     feedback_attribution: feedbackAttribution,
+    judgment_calibration_summary: judgmentCalibrationSummary,
     neighborhood_drift_observation: neighborhoodDriftObservation,
     confidence_decay_candidate_summary: confidenceDecayCandidateSummary,
     inspect_before_use_shadow_delta: inspectBeforeUseShadowDelta,
@@ -4533,6 +4732,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
         relationDecisions.length > 0 ? "memory_lifecycle_relation_graph" : null,
         lifecycleCandidateSummary.present ? "lifecycle_candidate_inference" : null,
         feedbackAttribution.present ? "feedback_attribution_trace" : null,
+        judgmentCalibrationSummary.window.record_count > 0 ? "judgment_calibration_summary" : null,
         neighborhoodDriftObservation.present ? "neighborhood_drift_observation" : null,
         confidenceDecayCandidateSummary.present ? "confidence_decay_candidate_summary" : null,
         inspectBeforeUseShadowDelta.present ? "inspect_before_use_shadow_delta" : null,
@@ -4780,6 +4980,7 @@ export function buildAionisMemoryDecisionAuditReport(
       ]).slice(0, 12),
     },
     feedback_signal_review: feedbackSignalReview,
+    judgment_calibration_review: trace.judgment_calibration_summary,
     neighborhood_drift_review: trace.neighborhood_drift_observation,
     confidence_decay_candidate_review: trace.confidence_decay_candidate_summary,
     inspect_before_use_shadow_delta_review: trace.inspect_before_use_shadow_delta,
@@ -4792,6 +4993,7 @@ export function buildAionisMemoryDecisionAuditReport(
         trace.neighborhood_drift_observation.present ? "neighborhood_drift_observation" : null,
         trace.confidence_decay_candidate_summary.present ? "confidence_decay_candidate_summary" : null,
         trace.inspect_before_use_shadow_delta.present ? "inspect_before_use_shadow_delta" : null,
+        trace.judgment_calibration_summary.window.record_count > 0 ? "judgment_calibration_summary" : null,
         "memory_decision_audit_report",
       ]),
       omitted_internal_surfaces: args.source_map?.omitted_internal_surfaces ?? [

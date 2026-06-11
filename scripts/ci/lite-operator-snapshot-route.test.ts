@@ -167,6 +167,10 @@ test("operator snapshot route reports branch isolation and markdown without muta
   assert.deepEqual(body.operator_snapshot.memory_use_receipt.do_not_use_memory_ids, ["mem-failed"]);
   assert.ok(body.operator_snapshot.memory_use_receipt.risk_flags.includes("premise_firewall_query_risk"));
   assert.ok(body.operator_snapshot.memory_use_receipt.risk_flags.includes("memory_contract_risk"));
+  assert.equal(body.operator_snapshot.judgment_calibration.contract_version, "aionis_judgment_calibration_summary_v1");
+  assert.equal(body.operator_snapshot.judgment_calibration.agent_prompt_included, false);
+  assert.equal(body.operator_snapshot.judgment_calibration.runtime_mutation, false);
+  assert.equal(body.operator_snapshot.judgment_calibration.authority, "read_only");
   assert.equal(body.operator_snapshot.trace_to_procedure.present, true);
   assert.equal(body.operator_snapshot.trace_to_procedure.runtime_mutation, false);
   assert.equal(body.operator_snapshot.trace_to_procedure.candidate_visible, true);
@@ -183,6 +187,10 @@ test("operator snapshot route reports branch isolation and markdown without muta
     && claim.status === "pass"
   ));
   assert.ok(body.operator_snapshot.claims.some((claim: Record<string, unknown>) =>
+    claim.claim === "judgment_calibration_visible"
+    && claim.status === "not_applicable"
+  ));
+  assert.ok(body.operator_snapshot.claims.some((claim: Record<string, unknown>) =>
     claim.claim === "trace_to_procedure_visible"
     && claim.status === "pass"
   ));
@@ -190,6 +198,7 @@ test("operator snapshot route reports branch isolation and markdown without muta
   assert.ok(body.source_map.internal_surfaces_used.includes("trace_to_procedure_projection"));
   assert.match(body.markdown, /Aionis Operator Snapshot/);
   assert.match(body.markdown, /Memory Use Receipt/);
+  assert.match(body.markdown, /Judgment Calibration/);
   assert.match(body.markdown, /Trace to Procedure/);
   assert.match(body.markdown, /MULTI_AGENT_SNAPSHOT_FAILED/);
 

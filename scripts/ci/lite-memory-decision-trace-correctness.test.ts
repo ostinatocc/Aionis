@@ -59,6 +59,7 @@ function assertTraceSummaryMatchesDecisions(trace: AionisMemoryDecisionTrace, ag
   assert.equal(agentContext.prompt_text.includes("memory_decision_trace"), false);
   assert.equal(agentContext.prompt_text.includes("memory_decision_audit"), false);
   assert.equal(agentContext.prompt_text.includes("decision_reviews"), false);
+  assert.equal(agentContext.prompt_text.includes("judgment_calibration"), false);
 }
 
 function assertTraceReviewsMirrorDecisions(
@@ -149,6 +150,7 @@ function assertTraceReviewsMirrorDecisions(
   );
   assert.deepEqual(audit.feedback_signal_review.read_only_signal_memory_ids, sparseSummary.read_only_signal_memory_ids);
   assert.deepEqual(audit.feedback_signal_review.candidate_learning_control_summary, sparseSummary.candidate_learning_control_summary);
+  assert.deepEqual(audit.judgment_calibration_review, trace.judgment_calibration_summary);
 }
 
 function buildTraceFixture(): {
@@ -269,6 +271,87 @@ function buildTraceFixture(): {
   };
 }
 
+function buildActivateForgetResult(args: {
+  outcome: "positive" | "negative" | "neutral";
+  attribution_strength: "positive_attribution" | "weak_counter_signal" | "strong_counter_signal" | "observed_feedback";
+  weak_counter_signal_count?: number;
+  strong_counter_signal_count?: number;
+}): Record<string, unknown> {
+  return {
+    operation: "activate",
+    target: "memory",
+    reason: "host attributed guide outcome to used memory",
+    forget_effect: {
+      action: "activate",
+      target: "memory",
+      changed_count: 1,
+      affected_memory_ids: ["mem-current"],
+      attribution: {
+        guide_trace_id: "guide-trace-calibration",
+        run_id: "run-calibration",
+        outcome: args.outcome,
+        used_surface: "use_now",
+        verifier_status: args.outcome === "positive" ? "passed" : "not_run",
+        tool_status: args.outcome === "positive" ? "succeeded" : "unknown",
+        runtime_signal_refs: ["runtime-signal:calibration"],
+      },
+      guide_trace: {
+        guide_trace_id: "guide-trace-calibration",
+        exposed_memory_count: 2,
+        attributed_memory_count: 1,
+        unattributed_recalled_memory_count: 1,
+        unattributed_recalled_memory_ids: ["mem-old"],
+        unattributed_use_now_memory_ids: [],
+        unattributed_inspect_before_use_memory_ids: ["mem-old"],
+        unattributed_do_not_use_memory_ids: [],
+        unattributed_rehydrate_memory_ids: [],
+      },
+    },
+    result: {
+      activated: {
+        feedback_attributions: [
+          {
+            memory_id: "mem-current",
+            run_id: "run-calibration",
+            outcome: args.outcome,
+            used_surface: "use_now",
+            verifier_status: args.outcome === "positive" ? "passed" : "not_run",
+            tool_status: args.outcome === "positive" ? "succeeded" : "unknown",
+            runtime_signal_refs: ["runtime-signal:calibration"],
+            attribution_strength: args.attribution_strength,
+            weak_counter_signal_count: args.weak_counter_signal_count ?? 0,
+            strong_counter_signal_count: args.strong_counter_signal_count ?? 0,
+          },
+        ],
+      },
+    },
+  };
+}
+
+function buildTraceFixtureWithFeedback(args: {
+  outcome: "positive" | "negative" | "neutral";
+  attribution_strength: "positive_attribution" | "weak_counter_signal" | "strong_counter_signal" | "observed_feedback";
+  weak_counter_signal_count?: number;
+  strong_counter_signal_count?: number;
+}) {
+  const fixture = buildTraceFixture();
+  const trace = buildAionisMemoryDecisionTrace({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    before_guide: null,
+    after_guide: {
+      memory_packet: fixture.memoryPacket,
+      agent_context: fixture.agentContext,
+    },
+    forget_result: buildActivateForgetResult(args),
+  });
+  return {
+    ...fixture,
+    trace,
+    audit: buildAionisMemoryDecisionAuditReport({ trace }),
+  };
+}
+
 test("memory decision trace summary and context fields are derived from the emitted packets", () => {
   const { agentContext, trace } = buildTraceFixture();
   assertTraceSummaryMatchesDecisions(trace, agentContext);
@@ -277,6 +360,58 @@ test("memory decision trace summary and context fields are derived from the emit
   assert.equal(trace.summary.recommended_posture, agentContext.recommended_posture);
   assert.equal(trace.summary.authority, agentContext.authority);
   assert.equal(trace.summary.negative_transfer_risk, agentContext.risk.negative_transfer_risk);
+  assert.equal(trace.judgment_calibration_summary.contract_version, "aionis_judgment_calibration_summary_v1");
+  assert.equal(trace.judgment_calibration_summary.agent_prompt_included, false);
+  assert.equal(trace.judgment_calibration_summary.runtime_mutation, false);
+  assert.equal(trace.judgment_calibration_summary.authority, "read_only");
+  assert.equal(trace.judgment_calibration_summary.window.record_count, trace.memory_decisions.length);
+  assert.equal(trace.judgment_calibration_summary.window.anchored_count, 0);
+  assert.deepEqual(trace.judgment_calibration_summary.supported_memory_ids, []);
+  assert.deepEqual(trace.judgment_calibration_summary.contradicted_memory_ids, []);
+  assert.deepEqual(trace.judgment_calibration_summary.unused_memory_ids, []);
+});
+
+test("judgment calibration marks positive used memory as supported and unreported recalled memory as unused", () => {
+  const { agentContext, trace, audit } = buildTraceFixtureWithFeedback({
+    outcome: "positive",
+    attribution_strength: "positive_attribution",
+  });
+  assertTraceSummaryMatchesDecisions(trace, agentContext);
+  assert.deepEqual(trace.judgment_calibration_summary.supported_memory_ids, ["mem-current"]);
+  assert.deepEqual(trace.judgment_calibration_summary.unused_memory_ids, ["mem-old"]);
+  assert.deepEqual(trace.judgment_calibration_summary.contradicted_memory_ids, []);
+  assert.deepEqual(trace.judgment_calibration_summary.weak_memory_ids, []);
+  assert.equal(trace.judgment_calibration_summary.window.anchored_count, 1);
+  assert.equal(trace.judgment_calibration_summary.window.unused_count, 1);
+  const useNowBucket = trace.judgment_calibration_summary.buckets.find((entry) => entry.bucket === "surface:use_now");
+  assert.equal(useNowBucket?.supported_count, 1);
+  assert.equal(useNowBucket?.recommended_adjustment, "keep");
+  const inspectBucket = trace.judgment_calibration_summary.buckets.find((entry) => entry.bucket === "surface:inspect_before_use");
+  assert.equal(inspectBucket?.unused_count, 1);
+  assert.equal(inspectBucket?.recommended_adjustment, "needs_more_evidence");
+  assert.deepEqual(audit.judgment_calibration_review, trace.judgment_calibration_summary);
+});
+
+test("judgment calibration keeps a single weak negative as inconclusive read-only evidence", () => {
+  const { agentContext, trace, audit } = buildTraceFixtureWithFeedback({
+    outcome: "negative",
+    attribution_strength: "weak_counter_signal",
+    weak_counter_signal_count: 1,
+  });
+  assertTraceSummaryMatchesDecisions(trace, agentContext);
+  assert.deepEqual(trace.judgment_calibration_summary.supported_memory_ids, []);
+  assert.deepEqual(trace.judgment_calibration_summary.contradicted_memory_ids, []);
+  assert.deepEqual(trace.judgment_calibration_summary.weak_memory_ids, ["mem-current"]);
+  assert.ok(trace.judgment_calibration_summary.inconclusive_memory_ids.includes("mem-current"));
+  assert.equal(trace.judgment_calibration_summary.window.anchored_count, 1);
+  assert.equal(trace.judgment_calibration_summary.window.weak_count, 1);
+  assert.equal(trace.judgment_calibration_summary.runtime_mutation, false);
+  const negativeBucket = trace.judgment_calibration_summary.buckets.find((entry) => entry.bucket === "signal:feedback_negative");
+  assert.equal(negativeBucket?.weak_count, 1);
+  assert.equal(negativeBucket?.contradicted_count, 0);
+  assert.equal(negativeBucket?.recommended_adjustment, "needs_more_evidence");
+  assert.equal(audit.runtime_mutation, false);
+  assert.equal(audit.judgment_calibration_review.runtime_mutation, false);
 });
 
 test("memory decision trace relation evidence matches lifecycle evidence trail targets", () => {
