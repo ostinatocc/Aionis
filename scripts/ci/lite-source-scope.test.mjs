@@ -216,10 +216,16 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(apiUsage, /`feedback\(\)` posts\s+to `\/v1\/feedback`/);
   assert.match(apiUsage, /`rehydrate\(\)` posts to `\/v1\/rehydrate`/);
   assert.match(apiUsage, /`snapshot\(\)` is a\s+short alias for `\/v1\/operator\/snapshot`/);
+  assert.match(apiUsage, /feedbackFromGuide\(\)/);
+  assert.match(apiUsage, /measureInputFromGuideLoop\(\)/);
+  assert.match(apiUsage, /snapshotInputFromGuideLoop\(\)/);
   assert.match(productContract, /`POST \/v1\/feedback` is the normal HTTP product entry/);
   assert.match(productContract, /Forget is a core Aionis capability/);
   assert.match(productContract, /`POST \/v1\/forget` is the explicit lifecycle-control API/);
   assert.match(sdkQuickstart, /`snapshot\(\)` exposes read-only memory use receipt/);
+  assert.match(sdkQuickstart, /feedbackFromGuide\(\)/);
+  assert.match(sdkQuickstart, /measureInputFromGuideLoop\(\)/);
+  assert.match(sdkQuickstart, /snapshotInputFromGuideLoop\(\)/);
   assert.doesNotMatch(sdkQuickstart, /`operatorSnapshot\(\)` exposes/);
 
   assert.match(httpQuickstart, /observe -> guide -> agent action -> feedback -> measure -> snapshot/);

@@ -7,6 +7,9 @@ import {
   agentContextFromGuide,
   agentPromptFromGuide,
   createAionisClient,
+  feedbackFromGuide,
+  measureInputFromGuideLoop,
+  snapshotInputFromGuideLoop,
 } from "../../src/sdk.ts";
 import {
   asRecord,
@@ -123,34 +126,31 @@ async function main() {
     assertCondition(useNow.some((entry) => entry.includes(PREF_MARKER)), "SDK preference marker missing from use_now");
     assertCondition(useNow.some((entry) => entry.includes(PROJECT_MARKER)), "SDK project marker missing from use_now");
 
-    const feedback = await aionis.feedback<Record<string, unknown>>({
+    const feedback = await aionis.feedback<Record<string, unknown>>(feedbackFromGuide({
+      guide: afterGuide,
       reason: "SDK quickstart Agent used the exposed project fact successfully.",
       run_id: `run:${runId}:feedback`,
       outcome: "positive",
-      used_surface: "use_now",
-      guide_trace_id: String(afterGuide.guide_trace_id ?? ""),
       used_memory_ids: [projectFactId],
-    });
+    }));
 
-    const measure = await aionis.measure<Record<string, unknown>>({
+    const measure = await aionis.measure<Record<string, unknown>>(measureInputFromGuideLoop({
       task: {
         task_id: `task:${runId}`,
         run_id: runId,
         task_signature: "sdk-quickstart",
         task_family: "developer_sdk_quickstart",
       },
-      product_trace: {
-        before_guide: beforeGuide,
-        after_guide: afterGuide,
-        forget_result: feedback,
-        sufficient_evidence: true,
-        evidence_ids: [
-          `memory:${preferenceId}`,
-          `memory:${projectFactId}`,
-          `feedback:${runId}`,
-        ],
-      },
-    });
+      before_guide: beforeGuide,
+      after_guide: afterGuide,
+      feedback_result: feedback,
+      sufficient_evidence: true,
+      evidence_ids: [
+        `memory:${preferenceId}`,
+        `memory:${projectFactId}`,
+        `feedback:${runId}`,
+      ],
+    }));
     const effectReport = asRecord(measure.effect_report);
     const historyImpact = asRecord(effectReport?.history_impact);
     const decisionTrace = asRecord(measure.memory_decision_trace);
@@ -159,18 +159,14 @@ async function main() {
     assertCondition(historyImpact?.impact_direction === "positive", "SDK quickstart measure did not report positive history impact");
     assertCondition(receipt?.contract_version === "aionis_memory_use_receipt_v1", "SDK quickstart measure missing memory use receipt");
 
-    const snapshot = await aionis.snapshot<Record<string, unknown>>({
+    const snapshot = await aionis.snapshot<Record<string, unknown>>(snapshotInputFromGuideLoop({
       run_id: runId,
       task_signature: "sdk-quickstart",
       task_family: "developer_sdk_quickstart",
-      agent_context: afterContext,
-      guide_packet: afterGuide.guide_packet,
-      memory_decision_trace: measure.memory_decision_trace,
-      memory_decision_audit: measure.memory_decision_audit,
-      effect_report: measure.effect_report,
-      guide_trace_id: afterGuide.guide_trace_id,
+      guide: afterGuide,
+      measure_result: measure,
       include_markdown: false,
-    });
+    }));
     const operatorSnapshot = asRecord(snapshot.operator_snapshot);
     const snapshotReceipt = asRecord(operatorSnapshot?.memory_use_receipt);
     assertCondition(operatorSnapshot?.contract_version === "aionis_operator_snapshot_v1", "SDK quickstart snapshot missing snapshot v1");

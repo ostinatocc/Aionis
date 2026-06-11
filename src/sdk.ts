@@ -81,6 +81,50 @@ export type AionisRehydrateRequest = AionisJsonObject & {
   target?: Extract<AionisForgetTarget, "archive" | "payload" | "memory">;
 };
 
+export type AionisProductTask = {
+  task_id: string;
+  run_id: string;
+  task_signature: string;
+  task_family?: string;
+};
+
+export type AionisFeedbackFromGuideInput = {
+  guide: unknown;
+  reason: string;
+  run_id: string;
+  outcome: AionisFeedbackOutcome;
+  used_memory_ids: string[];
+  used_surface?: AionisFeedbackUsedSurface;
+  actor?: string;
+  verifier_status?: AionisFeedbackStatus;
+  tool_status?: AionisFeedbackStatus;
+  runtime_signal_refs?: string[];
+};
+
+export type AionisMeasureFromGuideLoopInput = {
+  task: AionisProductTask;
+  after_guide: unknown;
+  before_guide?: unknown;
+  feedback_result?: unknown;
+  sufficient_evidence?: boolean;
+  evidence_ids?: string[];
+  tenant_id?: string;
+  scope?: string;
+  product_trace?: AionisJsonObject;
+};
+
+export type AionisSnapshotFromGuideLoopInput = {
+  run_id: string;
+  task_signature: string;
+  task_family?: string;
+  guide: unknown;
+  measure_result: unknown;
+  include_markdown?: boolean;
+  tenant_id?: string;
+  scope?: string;
+  extra?: AionisJsonObject;
+};
+
 export class AionisClientError extends Error {
   readonly status: number;
   readonly path: string;
@@ -121,6 +165,17 @@ function stripUndefined(value: AionisJsonObject): AionisJsonObject {
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+function rehydrateHintMemoryIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => asRecord(entry)?.memory_id)
+    .filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
 }
 
 function rememberNodeType(kind: AionisRememberKind): string {
@@ -303,4 +358,87 @@ export function agentPromptFromGuide(guide: unknown): string {
     throw new Error("Aionis guide response is missing agent_context.prompt_text");
   }
   return promptText;
+}
+
+export function memoryIdsFromGuide(guide: unknown): string[] {
+  const context = asRecord(agentContextFromGuide(guide));
+  const ids = [
+    ...stringArray(context?.memory_ids),
+    ...stringArray(context?.use_now_memory_ids),
+    ...stringArray(context?.inspect_before_use_memory_ids),
+    ...stringArray(context?.do_not_use_memory_ids),
+    ...rehydrateHintMemoryIds(context?.rehydrate_hints),
+  ];
+  return Array.from(new Set(ids));
+}
+
+export function feedbackFromGuide(input: AionisFeedbackFromGuideInput): AionisFeedbackRequest {
+  const guide = asRecord(input.guide);
+  const guideTraceId = guide?.guide_trace_id;
+  if (typeof guideTraceId !== "string" || guideTraceId.length === 0) {
+    throw new Error("feedbackFromGuide requires guide.guide_trace_id");
+  }
+  if (input.used_memory_ids.length === 0) {
+    throw new Error("feedbackFromGuide requires at least one host-used memory id");
+  }
+  const exposedMemoryIds = new Set(memoryIdsFromGuide(input.guide));
+  const unexposed = input.used_memory_ids.filter((id) => !exposedMemoryIds.has(id));
+  if (unexposed.length > 0) {
+    throw new Error(`feedbackFromGuide received memory ids not exposed by guide: ${unexposed.join(", ")}`);
+  }
+  return stripUndefined({
+    reason: input.reason,
+    run_id: input.run_id,
+    outcome: input.outcome,
+    used_surface: input.used_surface ?? "use_now",
+    actor: input.actor,
+    guide_trace_id: guideTraceId,
+    used_memory_ids: input.used_memory_ids,
+    verifier_status: input.verifier_status,
+    tool_status: input.tool_status,
+    runtime_signal_refs: input.runtime_signal_refs,
+  }) as AionisFeedbackRequest;
+}
+
+export function measureInputFromGuideLoop(input: AionisMeasureFromGuideLoopInput): AionisJsonObject {
+  return stripUndefined({
+    tenant_id: input.tenant_id,
+    scope: input.scope,
+    task: stripUndefined({
+      task_id: input.task.task_id,
+      run_id: input.task.run_id,
+      task_signature: input.task.task_signature,
+      task_family: input.task.task_family,
+    }),
+    product_trace: stripUndefined({
+      before_guide: input.before_guide,
+      after_guide: input.after_guide,
+      forget_result: input.feedback_result,
+      sufficient_evidence: input.sufficient_evidence,
+      evidence_ids: input.evidence_ids,
+      ...(input.product_trace ?? {}),
+    }),
+  });
+}
+
+export function snapshotInputFromGuideLoop(input: AionisSnapshotFromGuideLoopInput): AionisJsonObject {
+  const guide = asRecord(input.guide);
+  const measure = asRecord(input.measure_result);
+  if (!guide) throw new Error("snapshotInputFromGuideLoop requires a guide response object");
+  if (!measure) throw new Error("snapshotInputFromGuideLoop requires a measure result object");
+  return stripUndefined({
+    tenant_id: input.tenant_id,
+    scope: input.scope,
+    run_id: input.run_id,
+    task_signature: input.task_signature,
+    task_family: input.task_family,
+    agent_context: agentContextFromGuide(input.guide),
+    guide_packet: guide.guide_packet,
+    memory_decision_trace: measure.memory_decision_trace,
+    memory_decision_audit: measure.memory_decision_audit,
+    effect_report: measure.effect_report,
+    guide_trace_id: guide.guide_trace_id,
+    include_markdown: input.include_markdown,
+    ...(input.extra ?? {}),
+  });
 }

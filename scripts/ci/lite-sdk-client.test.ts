@@ -6,6 +6,10 @@ import {
   agentContextFromGuide,
   agentPromptFromGuide,
   createAionisClient,
+  feedbackFromGuide,
+  measureInputFromGuideLoop,
+  memoryIdsFromGuide,
+  snapshotInputFromGuideLoop,
 } from "../../src/sdk.ts";
 
 test("AionisClient wraps the product facade APIs with scope defaults", async () => {
@@ -192,6 +196,132 @@ test("agent prompt helpers expose only agent_context from guide responses", () =
   assert.equal(agentPromptFromGuide(guide), "AIONIS_CTX v2\ncurrent: n=Use scoped memory.");
   assert.deepEqual(agentContextFromGuide<Record<string, unknown>>(guide).use_now_memory_ids, ["mem-1"]);
   assert.throws(() => agentPromptFromGuide({ memory_packet: {} }), /missing agent_context/);
+});
+
+test("SDK product-loop helpers keep guide feedback attribution explicit", () => {
+  const guide = {
+    guide_trace_id: "guide-product-loop",
+    agent_context: {
+      contract_version: "aionis_agent_context_v1",
+      prompt_text: "AIONIS_CTX v2\ncurrent: n=Use scoped memory.",
+      memory_ids: ["mem-1", "mem-2"],
+      use_now_memory_ids: ["mem-1"],
+      inspect_before_use_memory_ids: ["mem-2"],
+      do_not_use_memory_ids: ["mem-3"],
+      rehydrate_hints: [{ memory_id: "mem-4", reason: "Needs raw payload." }],
+    },
+  };
+
+  assert.deepEqual(memoryIdsFromGuide(guide), ["mem-1", "mem-2", "mem-3", "mem-4"]);
+  assert.deepEqual(feedbackFromGuide({
+    guide,
+    reason: "Agent used mem-1 successfully.",
+    run_id: "run-product-loop",
+    outcome: "positive",
+    used_memory_ids: ["mem-1"],
+    verifier_status: "passed",
+    tool_status: "succeeded",
+  }), {
+    reason: "Agent used mem-1 successfully.",
+    run_id: "run-product-loop",
+    outcome: "positive",
+    used_surface: "use_now",
+    guide_trace_id: "guide-product-loop",
+    used_memory_ids: ["mem-1"],
+    verifier_status: "passed",
+    tool_status: "succeeded",
+  });
+  assert.throws(
+    () => feedbackFromGuide({
+      guide,
+      reason: "Bad attribution.",
+      run_id: "run-product-loop",
+      outcome: "positive",
+      used_memory_ids: ["mem-not-shown"],
+    }),
+    /not exposed by guide/,
+  );
+});
+
+test("SDK product-loop helpers assemble measure and snapshot inputs without leaking prompt internals", () => {
+  const beforeGuide = {
+    guide_trace_id: "guide-before",
+    agent_context: {
+      contract_version: "aionis_agent_context_v1",
+      prompt_text: "AIONIS_CTX v2\nstate role=agent history=fresh",
+      use_now_memory_ids: [],
+    },
+  };
+  const afterGuide = {
+    guide_trace_id: "guide-after",
+    agent_context: {
+      contract_version: "aionis_agent_context_v1",
+      prompt_text: "AIONIS_CTX v2\ncurrent: n=Use scoped memory.",
+      use_now_memory_ids: ["mem-1"],
+    },
+    guide_packet: {
+      contract_version: "aionis_guide_packet_v1",
+    },
+    memory_packet: {
+      raw: "operator-only",
+    },
+  };
+  const feedback = {
+    product_action: "feedback",
+    operation: "activate",
+    forget_effect: {
+      changed_count: 1,
+    },
+  };
+  const measureInput = measureInputFromGuideLoop({
+    task: {
+      task_id: "task-product-loop",
+      run_id: "run-product-loop",
+      task_signature: "product-loop",
+      task_family: "developer_sdk",
+    },
+    before_guide: beforeGuide,
+    after_guide: afterGuide,
+    feedback_result: feedback,
+    sufficient_evidence: true,
+    evidence_ids: ["feedback:run-product-loop"],
+  });
+
+  assert.equal((measureInput.task as Record<string, unknown>).run_id, "run-product-loop");
+  const productTrace = measureInput.product_trace as Record<string, unknown>;
+  assert.equal(productTrace.before_guide, beforeGuide);
+  assert.equal(productTrace.after_guide, afterGuide);
+  assert.equal(productTrace.forget_result, feedback);
+  assert.equal(productTrace.sufficient_evidence, true);
+
+  const measureResult = {
+    effect_report: {
+      contract_version: "aionis_effect_report_v1",
+    },
+    memory_decision_trace: {
+      contract_version: "aionis_memory_decision_trace_v1",
+    },
+    memory_decision_audit: {
+      contract_version: "aionis_memory_decision_audit_report_v1",
+    },
+  };
+  const snapshotInput = snapshotInputFromGuideLoop({
+    run_id: "run-product-loop",
+    task_signature: "product-loop",
+    task_family: "developer_sdk",
+    guide: afterGuide,
+    measure_result: measureResult,
+    include_markdown: true,
+  });
+
+  assert.equal(snapshotInput.run_id, "run-product-loop");
+  assert.equal(snapshotInput.agent_context, afterGuide.agent_context);
+  assert.equal(snapshotInput.guide_packet, afterGuide.guide_packet);
+  assert.equal(snapshotInput.memory_decision_trace, measureResult.memory_decision_trace);
+  assert.equal(snapshotInput.memory_decision_audit, measureResult.memory_decision_audit);
+  assert.equal(snapshotInput.effect_report, measureResult.effect_report);
+  assert.equal(snapshotInput.guide_trace_id, "guide-after");
+  assert.equal("memory_packet" in snapshotInput, false);
 });
 
 test("AionisClient health and structured error handling", async () => {

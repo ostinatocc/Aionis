@@ -146,6 +146,7 @@ and observability.
 import {
   agentPromptFromGuide,
   createAionisClient,
+  feedbackFromGuide,
 } from "./src/sdk.ts";
 
 const aionis = createAionisClient({
@@ -177,14 +178,13 @@ const guide = await aionis.guide<{
 
 const promptContext = agentPromptFromGuide(guide);
 
-await aionis.feedback({
+await aionis.feedback(feedbackFromGuide({
+  guide,
   reason: "Agent used the exposed memory successfully.",
   run_id: "run-001",
   outcome: "positive",
-  used_surface: "use_now",
-  guide_trace_id: guide.guide_trace_id,
   used_memory_ids: guide.agent_context.use_now_memory_ids.slice(0, 1),
-});
+}));
 ```
 
 Full SDK guide: [docs/AIONIS_SDK_QUICKSTART.md](docs/AIONIS_SDK_QUICKSTART.md).

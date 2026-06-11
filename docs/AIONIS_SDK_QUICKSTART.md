@@ -40,6 +40,9 @@ on a random port.
 import {
   agentPromptFromGuide,
   createAionisClient,
+  feedbackFromGuide,
+  measureInputFromGuideLoop,
+  snapshotInputFromGuideLoop,
 } from "./src/sdk.ts";
 
 const aionis = createAionisClient({
@@ -71,20 +74,45 @@ const guide = await aionis.guide<{
 
 const agentPromptContext = agentPromptFromGuide(guide);
 
-await aionis.feedback({
+const feedback = await aionis.feedback(feedbackFromGuide({
+  guide,
   reason: "Agent used the exposed memory successfully.",
   run_id: "run-001",
   outcome: "positive",
-  used_surface: "use_now",
-  guide_trace_id: guide.guide_trace_id,
   used_memory_ids: guide.agent_context.use_now_memory_ids.slice(0, 1),
-});
+}));
+
+const measure = await aionis.measure(measureInputFromGuideLoop({
+  task: {
+    task_id: "task-001",
+    run_id: "run-001",
+    task_signature: "product-update",
+    task_family: "developer_sdk",
+  },
+  after_guide: guide,
+  feedback_result: feedback,
+  sufficient_evidence: true,
+  evidence_ids: ["feedback:run-001"],
+}));
+
+await aionis.snapshot(snapshotInputFromGuideLoop({
+  run_id: "run-001",
+  task_signature: "product-update",
+  task_family: "developer_sdk",
+  guide,
+  measure_result: measure,
+  include_markdown: true,
+}));
 ```
 
 Give only `agentPromptContext` or selected `agent_context` fields to the Agent.
 Keep `guide_trace_id` and `use_now_memory_ids` in host state for attribution.
 Do not pass `memory_packet`, `guide_packet`, `memory_decision_trace`,
 `memory_decision_audit`, raw rows, or raw slots to the Agent by default.
+`feedbackFromGuide()` still requires the host to provide the memory IDs the
+Agent actually used; it only validates that those IDs were exposed by the guide.
+`measureInputFromGuideLoop()` and `snapshotInputFromGuideLoop()` keep the
+normal product trace and operator snapshot payloads out of handwritten app code.
 
 ## What The Script Proves
 

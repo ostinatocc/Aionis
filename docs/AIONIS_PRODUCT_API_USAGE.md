@@ -77,6 +77,9 @@ remains available for explicit suppress/unsuppress lifecycle control.
 import {
   agentPromptFromGuide,
   createAionisClient,
+  feedbackFromGuide,
+  measureInputFromGuideLoop,
+  snapshotInputFromGuideLoop,
 } from "./src/sdk.ts";
 
 const aionis = createAionisClient({
@@ -122,14 +125,37 @@ const guide = await aionis.guide<{
 
 const agentPromptContext = agentPromptFromGuide(guide);
 
-await aionis.feedback({
+const feedback = await aionis.feedback(feedbackFromGuide({
+  guide,
   reason: "Agent used the exposed checkout continuation successfully.",
   run_id: "run-001",
   outcome: "positive",
-  used_surface: "use_now",
-  guide_trace_id: guide.guide_trace_id,
   used_memory_ids: guide.agent_context.use_now_memory_ids.slice(0, 1),
-});
+  verifier_status: "passed",
+  tool_status: "succeeded",
+}));
+
+const measure = await aionis.measure(measureInputFromGuideLoop({
+  task: {
+    task_id: "task-001",
+    run_id: "run-001",
+    task_signature: "checkout-continuation",
+    task_family: "developer_sdk",
+  },
+  after_guide: guide,
+  feedback_result: feedback,
+  sufficient_evidence: true,
+  evidence_ids: ["verifier:run-001"],
+}));
+
+await aionis.snapshot(snapshotInputFromGuideLoop({
+  run_id: "run-001",
+  task_signature: "checkout-continuation",
+  task_family: "developer_sdk",
+  guide,
+  measure_result: measure,
+  include_markdown: true,
+}));
 
 await aionis.rehydrate({
   reason: "Expand the archived checkout trace before exact replay.",
@@ -141,6 +167,9 @@ await aionis.rehydrate({
 The Agent should receive `agentPromptContext` or selected `agent_context`
 fields. It should not receive `memory_packet`, `guide_packet`,
 `memory_decision_trace`, `memory_decision_audit`, or raw rows by default.
+`feedbackFromGuide()` validates attribution against the guide exposure ledger,
+while `measureInputFromGuideLoop()` and `snapshotInputFromGuideLoop()` hide the
+internal `product_trace` and operator snapshot wiring from normal app code.
 
 Runnable SDK e2e:
 
