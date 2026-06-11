@@ -103,11 +103,19 @@ test("focused package does not expose external eval or demo runner entrypoints",
   }
 });
 
-test("focused package exposes the multi-agent quickstart through the Runtime e2e surface", () => {
+test("focused package exposes developer quickstarts through the Runtime e2e surface", () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+  assert.equal(
+    packageJson.scripts?.["runtime:quickstart:sdk"],
+    "npx tsx scripts/e2e/developer-sdk-quickstart.ts",
+  );
   assert.equal(
     packageJson.scripts?.["runtime:quickstart:multi-agent"],
     "npx tsx scripts/e2e/developer-multi-agent-quickstart.ts",
+  );
+  assert.equal(
+    fs.existsSync(path.join(ROOT, "scripts", "e2e", "developer-sdk-quickstart.ts")),
+    true,
   );
   assert.equal(
     fs.existsSync(path.join(ROOT, "scripts", "e2e", "developer-multi-agent-quickstart.ts")),

@@ -11,6 +11,8 @@ stable product path over the current Runtime implementation.
 
 For host template wiring and runnable single-agent, multi-agent, and coding
 Agent examples, see [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md).
+For the smallest SDK loop, see
+[AIONIS_SDK_QUICKSTART.md](AIONIS_SDK_QUICKSTART.md).
 
 ## Route Summary
 
@@ -137,6 +139,7 @@ fields. It should not receive `memory_packet`, `guide_packet`,
 Runnable SDK e2e:
 
 ```bash
+npm run -s runtime:quickstart:sdk
 npm run -s runtime:e2e:product-loop
 npm run -s runtime:e2e:ordinary-memory
 npm run -s runtime:e2e:golden-product-loop

@@ -498,6 +498,7 @@ Before treating a host integration change as stable, run:
 ```bash
 npm run -s typecheck
 npm run -s lite:test
+npm run -s runtime:quickstart:sdk
 npm run -s runtime:e2e:ordinary-memory
 npm run -s runtime:e2e:golden-product-loop
 npm run -s runtime:quickstart:multi-agent

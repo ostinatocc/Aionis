@@ -55,7 +55,18 @@ The commands below use `jq` only to inspect JSON responses.
 
 ## SDK Product Loop
 
-For the product SDK path, use the four API loop e2e:
+For the smallest developer-facing SDK loop, run:
+
+```bash
+export AIONIS_PRODUCT_E2E_BASE_URL="$AIONIS_URL"
+npm run -s runtime:quickstart:sdk
+```
+
+This verifies `remember -> guide -> agent prompt -> feedback -> measure ->
+snapshot` through `src/sdk.ts` and prints a compact JSON summary. The full SDK
+guide is [AIONIS_SDK_QUICKSTART.md](AIONIS_SDK_QUICKSTART.md).
+
+For the broader product SDK path, use the four API loop e2e:
 
 ```bash
 export AIONIS_PRODUCT_E2E_BASE_URL="$AIONIS_URL"

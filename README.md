@@ -71,16 +71,18 @@ Product proof loop with a configured embedding provider or running Runtime:
 npm run -s runtime:e2e:golden-product-loop
 ```
 
-Developer-facing multi-agent quickstart:
+Developer-facing SDK and multi-agent quickstarts:
 
 ```bash
+npm run -s runtime:quickstart:sdk
 npm run -s runtime:quickstart:multi-agent
 ```
 
-This runs the SDK client, execution-memory adapter, and multi-agent host
-template over a real Runtime, then prints a compact JSON summary of the Agent
-context, branch isolation, feedback attribution, measured effect, and
-operator-audit surfaces.
+The SDK quickstart is the smallest product loop over `src/sdk.ts`. The
+multi-agent quickstart runs the SDK client, execution-memory adapter, and
+multi-agent host template over a real Runtime, then prints a compact JSON
+summary of the Agent context, branch isolation, feedback attribution, measured
+effect, and operator-audit surfaces.
 
 Real validation must run a frozen Runtime version against isolated workspaces. Aionis must not be modified during a task run to satisfy that task. Failed runs create evidence and candidates; they do not promote project-specific rules into Core.
 
