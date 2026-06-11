@@ -175,6 +175,7 @@ Runnable SDK e2e:
 
 ```bash
 npm run -s runtime:quickstart:sdk
+npm run -s runtime:quickstart:http
 npm run -s runtime:e2e:product-loop
 npm run -s runtime:e2e:ordinary-memory
 npm run -s runtime:e2e:golden-product-loop

@@ -41,6 +41,12 @@ npm install
 npm run -s lite:start
 ```
 
+Runnable HTTP smoke test:
+
+```bash
+npm run -s runtime:quickstart:http
+```
+
 Use the local Runtime URL:
 
 ```bash
@@ -62,6 +68,7 @@ curl -sS -X POST "$AIONIS_URL/v1/guide" \
   -d "{
     \"tenant_id\": \"default\",
     \"scope\": \"$AIONIS_SCOPE\",
+    \"mode\": \"full_power\",
     \"query_text\": \"Continue the HTTP quickstart status update.\",
     \"consumer_agent_id\": \"$AIONIS_AGENT_ID\",
     \"limit\": 8,
@@ -110,6 +117,7 @@ curl -sS -X POST "$AIONIS_URL/v1/guide" \
   -d "{
     \"tenant_id\": \"default\",
     \"scope\": \"$AIONIS_SCOPE\",
+    \"mode\": \"full_power\",
     \"query_text\": \"HTTP_QUICKSTART_PREF continue the product update.\",
     \"consumer_agent_id\": \"$AIONIS_AGENT_ID\",
     \"limit\": 8,
@@ -208,6 +216,7 @@ jq -n \
     run_id: "run-http-quickstart-001",
     task_signature: "http-quickstart",
     agent_context: $after[0].agent_context,
+    guide_packet: $after[0].guide_packet,
     memory_decision_trace: $measure[0].memory_decision_trace,
     memory_decision_audit: $measure[0].memory_decision_audit,
     effect_report: $measure[0].effect_report,
@@ -234,8 +243,7 @@ curl -sS -X POST "$AIONIS_URL/v1/observe" \
     \"scope\": \"$AIONIS_SCOPE\",
     \"auto_embed\": true,
     \"input_text\": \"HTTP_QUICKSTART_ARCHIVE: archived workflow can be restored when the same continuation returns.\",
-    \"memory_lane\": \"private\",
-    \"owner_agent_id\": \"$AIONIS_AGENT_ID\",
+    \"memory_lane\": \"shared\",
     \"memory\": {
       \"client_id\": \"http-quickstart-archived-workflow\",
       \"type\": \"procedure\",

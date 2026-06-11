@@ -131,12 +131,18 @@ test("README quickstart examples stay aligned with product result contracts", ()
   const packageJson = readJson("package.json");
   const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
   assert.match(readme, /npm run -s runtime:quickstart:sdk/);
+  assert.match(readme, /npm run -s runtime:quickstart:http/);
   assert.match(readme, /npm run -s runtime:quickstart:multi-agent/);
   assert.match(readme, /npm run -s runtime:e2e:judgment-calibration/);
   assert.match(readme, /docs\/examples\/sdk-quickstart-result\.json/);
+  assert.match(readme, /docs\/examples\/http-quickstart-result\.json/);
   assert.match(readme, /docs\/examples\/multi-agent-quickstart-result\.json/);
   assert.match(readme, /docs\/examples\/judgment-calibration-product-loop-result\.json/);
   assert.equal(packageJson.scripts?.["runtime:quickstart:sdk"], "npx tsx scripts/e2e/developer-sdk-quickstart.ts");
+  assert.equal(
+    packageJson.scripts?.["runtime:quickstart:http"],
+    "npx tsx scripts/e2e/developer-http-quickstart.ts",
+  );
   assert.equal(
     packageJson.scripts?.["runtime:quickstart:multi-agent"],
     "npx tsx scripts/e2e/developer-multi-agent-quickstart.ts",
@@ -154,6 +160,18 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.equal(sdk.operator_audit?.memory_use_receipt_visible, true);
   assert.equal(sdk.operator_audit?.snapshot_runtime_mutation, false);
   assert.equal(sdk.checks?.feedback_attributed, true);
+
+  const http = readJson("docs/examples/http-quickstart-result.json");
+  assert.equal(http.contract_version, "aionis_http_quickstart_result_v1");
+  assert.equal(http.integration_path?.transport, "raw_http_fetch");
+  assert.equal(http.agent_context?.before_actionable_history_used, false);
+  assert.equal(http.agent_context?.after_actionable_history_used, true);
+  assert.equal(http.memory_governance?.measure_history_impact, "positive");
+  assert.equal(http.operator_audit?.snapshot_runtime_mutation, false);
+  assert.equal(http.rehydration?.product_action, "rehydrate");
+  assert.equal(http.rehydration?.changed_count, 1);
+  assert.equal(http.checks?.rehydrate_product_route_used, true);
+  assert.equal(http.checks?.rehydrate_moved_archive, true);
 
   const multiAgent = readJson("docs/examples/multi-agent-quickstart-result.json");
   assert.equal(multiAgent.contract_version, "aionis_multi_agent_quickstart_result_v1");
@@ -229,6 +247,7 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.doesNotMatch(sdkQuickstart, /`operatorSnapshot\(\)` exposes/);
 
   assert.match(httpQuickstart, /observe -> guide -> agent action -> feedback -> measure -> snapshot/);
+  assert.match(httpQuickstart, /npm run -s runtime:quickstart:http/);
   assert.match(httpQuickstart, /curl -sS -X POST "\$AIONIS_URL\/v1\/feedback"/);
   assert.match(httpQuickstart, /curl -sS -X POST "\$AIONIS_URL\/v1\/rehydrate"/);
   assert.match(httpQuickstart, /curl -sS -X POST "\$AIONIS_URL\/v1\/operator\/snapshot"/);

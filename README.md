@@ -67,6 +67,12 @@ The SDK quickstart runs a real local Runtime and verifies:
 5. `measure` reports whether history changed future context
 6. operator audit surfaces remain read-only
 
+For raw HTTP integration without the TypeScript SDK:
+
+```bash
+npm run -s runtime:quickstart:http
+```
+
 For multi-agent execution memory:
 
 ```bash
@@ -103,9 +109,10 @@ The SDK quickstart prints a compact product result like this:
 Full example outputs:
 
 1. [SDK quickstart result](docs/examples/sdk-quickstart-result.json)
-2. [Multi-agent quickstart result](docs/examples/multi-agent-quickstart-result.json)
-3. [Golden product loop result](docs/examples/golden-product-loop-result.json)
-4. [Judgment calibration product loop result](docs/examples/judgment-calibration-product-loop-result.json)
+2. [HTTP quickstart result](docs/examples/http-quickstart-result.json)
+3. [Multi-agent quickstart result](docs/examples/multi-agent-quickstart-result.json)
+4. [Golden product loop result](docs/examples/golden-product-loop-result.json)
+5. [Judgment calibration product loop result](docs/examples/judgment-calibration-product-loop-result.json)
 
 ## What The Agent Gets
 
@@ -306,6 +313,7 @@ Product proof loops:
 
 ```bash
 npm run -s runtime:quickstart:sdk
+npm run -s runtime:quickstart:http
 npm run -s runtime:quickstart:multi-agent
 npm run -s runtime:e2e:golden-product-loop
 npm run -s runtime:e2e:judgment-calibration
