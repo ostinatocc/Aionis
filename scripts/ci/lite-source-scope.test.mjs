@@ -132,12 +132,18 @@ test("README quickstart examples stay aligned with product result contracts", ()
   const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
   assert.match(readme, /npm run -s runtime:quickstart:sdk/);
   assert.match(readme, /npm run -s runtime:quickstart:multi-agent/);
+  assert.match(readme, /npm run -s runtime:e2e:judgment-calibration/);
   assert.match(readme, /docs\/examples\/sdk-quickstart-result\.json/);
   assert.match(readme, /docs\/examples\/multi-agent-quickstart-result\.json/);
+  assert.match(readme, /docs\/examples\/judgment-calibration-product-loop-result\.json/);
   assert.equal(packageJson.scripts?.["runtime:quickstart:sdk"], "npx tsx scripts/e2e/developer-sdk-quickstart.ts");
   assert.equal(
     packageJson.scripts?.["runtime:quickstart:multi-agent"],
     "npx tsx scripts/e2e/developer-multi-agent-quickstart.ts",
+  );
+  assert.equal(
+    packageJson.scripts?.["runtime:e2e:judgment-calibration"],
+    "npx tsx scripts/e2e/judgment-calibration-product-loop.ts",
   );
 
   const sdk = readJson("docs/examples/sdk-quickstart-result.json");
@@ -157,6 +163,15 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.equal(multiAgent.memory_governance?.measure_history_impact, "positive");
   assert.equal(multiAgent.operator_audit?.memory_use_receipt_visible, true);
   assert.equal(multiAgent.checks?.reviewer_avoids_failed_branch, true);
+
+  const calibration = readJson("docs/examples/judgment-calibration-product-loop-result.json");
+  assert.equal(calibration.contract_version, "aionis_judgment_calibration_product_loop_result_v1");
+  assert.deepEqual(calibration.judgment_calibration?.supported_memory_ids, ["mem_supported_example"]);
+  assert.deepEqual(calibration.judgment_calibration?.unused_memory_ids, ["mem_unused_example"]);
+  assert.equal(calibration.operator_audit?.trace_calibration_read_only, true);
+  assert.equal(calibration.operator_audit?.snapshot_calibration_visible, true);
+  assert.equal(calibration.checks?.feedback_attributes_only_used_memory, true);
+  assert.equal(calibration.checks?.unreported_memory_is_unused_not_negative, true);
 });
 
 test("README and positioning docs keep the external product language stable", () => {

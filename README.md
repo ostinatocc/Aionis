@@ -105,6 +105,7 @@ Full example outputs:
 1. [SDK quickstart result](docs/examples/sdk-quickstart-result.json)
 2. [Multi-agent quickstart result](docs/examples/multi-agent-quickstart-result.json)
 3. [Golden product loop result](docs/examples/golden-product-loop-result.json)
+4. [Judgment calibration product loop result](docs/examples/judgment-calibration-product-loop-result.json)
 
 ## What The Agent Gets
 
@@ -307,7 +308,12 @@ Product proof loops:
 npm run -s runtime:quickstart:sdk
 npm run -s runtime:quickstart:multi-agent
 npm run -s runtime:e2e:golden-product-loop
+npm run -s runtime:e2e:judgment-calibration
 ```
+
+The judgment calibration loop verifies that supported memory, unused recalled
+memory, and operator audit output stay separated without mutating Runtime state
+or leaking raw audit fields into the Agent prompt.
 
 The current package is the focused local Runtime. It keeps Runtime kernel,
 routes, Lite store contracts, SDK quickstarts, and product e2es in one repo.
