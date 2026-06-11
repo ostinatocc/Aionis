@@ -367,14 +367,16 @@ await hostMemory.reviewerOutcome({
 Release validation:
 
 ```bash
+npm run -s runtime:quickstart:multi-agent
 npm run -s runtime:e2e:multi-agent-host-template
 npm run -s runtime:e2e:multi-agent-host-template-fresh
 ```
 
-These e2es verify shared team memory, planner/worker/verifier/reviewer role
-state, passed-branch reuse, failed-branch isolation, feedback attribution,
-fresh-scope negative control, and operator snapshot visibility over a real
-Runtime.
+The quickstart prints the compact developer-facing result for SDK client,
+execution-memory adapter, and multi-agent host-template wiring. The release
+e2es verify shared team memory, planner/worker/verifier/reviewer role state,
+passed-branch reuse, failed-branch isolation, feedback attribution, fresh-scope
+negative control, and operator snapshot visibility over a real Runtime.
 
 ## Coding-Agent Template
 
@@ -498,6 +500,7 @@ npm run -s typecheck
 npm run -s lite:test
 npm run -s runtime:e2e:ordinary-memory
 npm run -s runtime:e2e:golden-product-loop
+npm run -s runtime:quickstart:multi-agent
 npm run -s runtime:e2e:single-agent-host-template
 npm run -s runtime:e2e:multi-agent-host-template
 npm run -s runtime:e2e:multi-agent-host-template-fresh

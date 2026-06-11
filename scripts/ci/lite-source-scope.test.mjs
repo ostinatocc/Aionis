@@ -103,6 +103,18 @@ test("focused package does not expose external eval or demo runner entrypoints",
   }
 });
 
+test("focused package exposes the multi-agent quickstart through the Runtime e2e surface", () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+  assert.equal(
+    packageJson.scripts?.["runtime:quickstart:multi-agent"],
+    "npx tsx scripts/e2e/developer-multi-agent-quickstart.ts",
+  );
+  assert.equal(
+    fs.existsSync(path.join(ROOT, "scripts", "e2e", "developer-multi-agent-quickstart.ts")),
+    true,
+  );
+});
+
 test("lite repo does not keep fixture-only real validation artifacts", () => {
   assert.equal(
     fs.existsSync(path.join(ROOT, "scripts", "fixtures", "real-ab-validation")),

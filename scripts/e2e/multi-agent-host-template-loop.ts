@@ -223,6 +223,7 @@ export async function runMultiAgentHostTemplateLoop(args: {
     limit: 10,
   });
   const reviewerContext = agentContext(afterGuide.agent_context, "after host reviewer guide");
+  const reviewerPromptText = String(reviewerContext.prompt_text ?? "");
   assertPromptBoundary(String(reviewerContext.prompt_text), "after host reviewer guide");
   const afterSourceMap = asRecord(afterGuide.guide.source_map);
   assertCondition(
@@ -428,6 +429,9 @@ export async function runMultiAgentHostTemplateLoop(args: {
     before_actionable_history_used: beforeContext.actionable_history_used,
     reviewer_history_used: reviewerContext.history_used,
     reviewer_actionable_history_used: reviewerContext.actionable_history_used,
+    reviewer_prompt_contract_version: reviewerContext.contract_version,
+    reviewer_prompt_char_count: reviewerPromptText.length,
+    reviewer_prompt_preview: reviewerPromptText.slice(0, 800),
     reviewer_use_now_count: textArray(reviewerContext.use_now).length,
     reviewer_use_now_memory_ids: usedMemoryIds,
     planner_memory_id: plannerMemoryId,

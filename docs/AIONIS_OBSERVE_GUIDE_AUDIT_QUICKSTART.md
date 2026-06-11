@@ -126,6 +126,32 @@ These scripts verify the full host contract:
 5. `measure` reports history impact
 6. operator snapshot remains read-only and operator-facing
 
+## Multi-Agent Developer Quickstart
+
+For the shortest developer-facing multi-agent product path, run:
+
+```bash
+export AIONIS_PRODUCT_E2E_BASE_URL="$AIONIS_URL"
+npm run -s runtime:quickstart:multi-agent
+```
+
+This runs the SDK client, execution-memory adapter, and
+`createMultiAgentHostTemplate` over a real Runtime. It writes planner, worker,
+verifier, and reviewer execution evidence; gives the reviewer only compact
+`agent_context`; records feedback attribution; measures history impact; and
+returns a compact JSON summary with:
+
+1. whether the fresh guide had actionable history
+2. whether the reviewer guide used actionable execution memory
+3. prompt contract version, prompt size, and prompt preview
+4. exposed `use_now` memory IDs for attribution
+5. failed-branch isolation status
+6. memory use receipt, feedback attribution, effect, and trace-to-procedure
+   operator surfaces
+
+If `AIONIS_PRODUCT_E2E_BASE_URL` is not set, the script starts an isolated local
+Runtime and uses the embedding provider from the environment.
+
 ## Real Agent Downstream Demo
 
 To validate that compact Aionis execution context changes a real LLM Agent's
