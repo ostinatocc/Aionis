@@ -4,22 +4,27 @@ Status: product install path for Runtime plus SDK packages
 
 ## One Command
 
-After the installer package is published to npm:
+Aionis publishes two npm packages:
+
+- `@aionis/create`: one-command Runtime installer
+- `@aionis/sdk`: TypeScript SDK facade for product routes
+
+Install Runtime plus SDK and run the SDK quickstart:
 
 ```bash
-MINIMAX_API_KEY="your-key" npx @aionis/create --provider minimax --quickstart sdk
+MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quickstart sdk
 ```
 
 For raw HTTP users:
 
 ```bash
-MINIMAX_API_KEY="your-key" npx @aionis/create --provider minimax --quickstart http
+MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quickstart http
 ```
 
 For multi-agent execution memory:
 
 ```bash
-MINIMAX_API_KEY="your-key" npx @aionis/create --provider minimax --quickstart multi-agent
+MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quickstart multi-agent
 ```
 
 The installer does not change Runtime core. It performs product setup:
@@ -30,7 +35,7 @@ The installer does not change Runtime core. It performs product setup:
 4. build `@aionis/sdk` and `@aionis/create`
 5. run the selected quickstart when an API key is available
 
-## Local Development Before npm Publish
+## Local Development
 
 From this repo:
 
@@ -50,7 +55,7 @@ npx tsx packages/create-aionis/src/index.ts ./Aionis-local \
 
 ## SDK Package
 
-After `@aionis/sdk` is published:
+For hosts that already have an Aionis Runtime URL:
 
 ```bash
 npm install @aionis/sdk

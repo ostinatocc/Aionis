@@ -7,10 +7,10 @@ starts or targets a real Runtime and verifies a concrete product contract.
 
 ## Start Here
 
-After npm package publishing, the fastest path is:
+The fastest path is the published installer:
 
 ```bash
-MINIMAX_API_KEY="your-key" npx @aionis/create --provider minimax --quickstart sdk
+MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quickstart sdk
 ```
 
 | If you are building... | Run this | Transport | Main API path | Result contract |

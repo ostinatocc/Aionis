@@ -46,11 +46,14 @@ Full positioning guide:
 
 ## Quickstart
 
-After npm package publishing, install Runtime and SDK with one command:
+Install the Runtime and SDK with one command:
 
 ```bash
-MINIMAX_API_KEY="your-key" npx @aionis/create --provider minimax --quickstart sdk
+MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quickstart sdk
 ```
+
+This clones the Runtime, installs dependencies, writes `.env`, builds the
+workspace packages, and runs the SDK quickstart against a real local Runtime.
 
 For local development from this repo, install dependencies, configure an
 embedding provider, then run the SDK quickstart.
