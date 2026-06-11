@@ -31,6 +31,18 @@ Aionis is built for agents that continue work, not chats that end.
 | Multi-agent handoff loses state | Planner, worker, verifier, and reviewer can share branch-aware execution memory. |
 | Nobody knows why memory was used | Memory use receipts and operator snapshots explain every decision. |
 
+## Aionis vs Recall Memory
+
+| Approach | Default behavior | Aionis behavior |
+|---|---|---|
+| Long context | Pass everything to the model. | Compile only governed memory state into Agent context. |
+| Vector recall / RAG | Retrieve related text. | Decide whether memory is current, stale, contested, failed, or rehydratable before use. |
+| Recall memory | Return relevant memories. | Split memory into `use_now`, `inspect_before_use`, `do_not_use`, and `rehydrate`. |
+| Workflow memory | Store successful procedures. | Preserve passed paths and failed branches so mistakes become counter-evidence. |
+
+Full positioning guide:
+[docs/AIONIS_PRODUCT_POSITIONING.md](docs/AIONIS_PRODUCT_POSITIONING.md).
+
 ## Quickstart
 
 Clone the repo, install dependencies, configure an embedding provider, then run
@@ -263,6 +275,7 @@ Output contracts:
 | [AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md](docs/AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md) | Short observe, guide, and audit path. |
 | [AIONIS_HOST_INTEGRATION.md](docs/AIONIS_HOST_INTEGRATION.md) | Single-agent, multi-agent, and coding-agent host integration. |
 | [AIONIS_PRODUCT_CONTRACT.md](docs/AIONIS_PRODUCT_CONTRACT.md) | Product contract and boundaries. |
+| [AIONIS_PRODUCT_POSITIONING.md](docs/AIONIS_PRODUCT_POSITIONING.md) | External product positioning, claims, and comparison language. |
 | [AIONIS_STATE_MODEL.md](docs/AIONIS_STATE_MODEL.md) | Implemented memory and execution state model. |
 | [AIONIS_CONTEXT_COMPRESSION_BASELINE.md](docs/AIONIS_CONTEXT_COMPRESSION_BASELINE.md) | Current state-preserving context compression baseline. |
 

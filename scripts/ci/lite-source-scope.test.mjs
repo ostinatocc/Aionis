@@ -159,6 +159,23 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.equal(multiAgent.checks?.reviewer_avoids_failed_branch, true);
 });
 
+test("README and positioning docs keep the external product language stable", () => {
+  const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
+  const positioning = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_PRODUCT_POSITIONING.md"), "utf8");
+
+  assert.match(readme, /state-adjudicated memory runtime/);
+  assert.match(readme, /Memory is not recall\. Memory is state\./);
+  assert.match(readme, /Aionis vs Recall Memory/);
+  assert.match(readme, /docs\/AIONIS_PRODUCT_POSITIONING\.md/);
+
+  assert.match(positioning, /state-adjudicated memory runtime/);
+  assert.match(positioning, /not recall-only memory/i);
+  assert.match(positioning, /execution memory/i);
+  assert.match(positioning, /failed branches become counter-evidence/i);
+  assert.match(positioning, /auditable memory use receipts/i);
+  assert.match(positioning, /guaranteed external task success/);
+});
+
 test("lite repo does not keep fixture-only real validation artifacts", () => {
   assert.equal(
     fs.existsSync(path.join(ROOT, "scripts", "fixtures", "real-ab-validation")),
