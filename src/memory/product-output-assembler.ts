@@ -2513,7 +2513,9 @@ function lifecycleCandidateRehydrateEligible(args: {
   }
   if (!args.signals.some(lifecycleCandidateRehydrateSignal)) return false;
   return !args.signals.some((signal) =>
-    signal.signal_type === "negative" || signal.signal_type === "stale"
+    signal.signal_type === "negative"
+    || signal.signal_type === "stale"
+    || (signal.signal_type === "contested" && signal.evidence_span.source_field !== "slots")
   );
 }
 
@@ -2522,7 +2524,6 @@ function lifecycleCandidateRehydrateHints(args: {
   signals: AionisLifecycleCandidateSignal[];
   rehydrationRequested: boolean;
 }): AionisAgentContext["rehydrate_hints"] {
-  if (!args.rehydrationRequested) return [];
   const signalsById = lifecycleCandidateSignalsByMemoryId(args.signals);
   return args.entries
     .filter((entry) => lifecycleCandidateRehydrateEligible({
@@ -2532,7 +2533,7 @@ function lifecycleCandidateRehydrateHints(args: {
     .map((entry) => ({
       memory_id: entry.memory_id,
       reason: "Lifecycle candidate points to raw evidence, trace, payload, or pointer evidence; rehydrate before relying on summary-only context.",
-      required: true,
+      required: args.rehydrationRequested,
     }))
     .slice(0, 6);
 }
@@ -2896,13 +2897,13 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
       reason: hint.reason,
       required: hint.required,
     })),
+    ...executionStateRehydrateHints({
+      entries: memory?.relevant_memories ?? [],
+      rehydrationRequested,
+    }),
     ...lifecycleCandidateRehydrateHints({
       entries: memory?.relevant_memories ?? [],
       signals: lifecycleCandidateSignals,
-      rehydrationRequested,
-    }),
-    ...executionStateRehydrateHints({
-      entries: memory?.relevant_memories ?? [],
       rehydrationRequested,
     }),
   ].filter((hint) => {
@@ -2916,7 +2917,13 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     return (!entry
         || memoryEntryRehydrateEligible(entry)
         || lifecycleCandidateRehydrateEligible({ entry, signals: lifecycleSignals }))
-      && (hint.required || rehydrationRequested || (entry ? memoryEntryRehydrateSurface(entry) : false));
+      && (
+        hint.required
+        || rehydrationRequested
+        || (entry
+          ? memoryEntryRehydrateSurface(entry) || lifecycleCandidateRehydrateEligible({ entry, signals: lifecycleSignals })
+          : false)
+      );
   });
   const memoryIds = compactStrings([
     ...(guide?.memory_lifecycle.used_memory_ids ?? []),

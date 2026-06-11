@@ -389,7 +389,115 @@ test("lifecycle candidates keep retired and contradicted execution routes inspec
   assert.ok(contestedDecision?.reason_codes.includes("lifecycle_candidate_direct_use_gated"));
 });
 
-test("rehydrate lifecycle candidates stay shadow-only unless the memory is eligible", () => {
+test("lifecycle candidates keep indirect previous-round routes inspect-first", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "continue the current page data task from the live continuation point",
+    },
+    nodes: [
+      {
+        id: "mem-current-indirect",
+        type: "procedure",
+        title: "Where the next continuation picks up",
+        text_summary: "If the work resumes now, the thread picks up around apps/product/current.ts. This is the live continuation point.",
+        slots: {
+          target_files: ["apps/product/current.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "data-page-continuation",
+            workflow_signature: "footer-current",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.92,
+      },
+      {
+        id: "mem-procedure-indirect",
+        type: "procedure",
+        title: "Reusable part of the previous work",
+        text_summary: "The reusable part is the narrow operating pattern: inspect apps/product/current.ts, keep changes scoped, and preserve branch notes as audit context rather than direct instructions.",
+        slots: {
+          target_files: ["apps/product/current.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "data-page-continuation",
+            workflow_signature: "footer-current",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.9,
+      },
+      {
+        id: "mem-failed-indirect",
+        type: "procedure",
+        title: "Route that did not become the handoff: apps/product/legacy-path.ts",
+        text_summary: "The path through apps/product/legacy-path.ts absorbed exploration and the handoff returned to the accepted file family around apps/product/current.ts. Treat this as background about what not to execute directly, not as the route for the next step.",
+        slots: {
+          target_files: ["apps/product/legacy-path.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "data-page-continuation",
+            workflow_signature: "hosted-postgres-retired",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.89,
+      },
+      {
+        id: "mem-stale-indirect",
+        type: "procedure",
+        title: "Previous-round note around apps/product/legacy-path.ts",
+        text_summary: "This note belongs to an earlier round. The continuation now orbits apps/product/current.ts; keep the earlier note available for audit rather than making it the path to run.",
+        slots: {
+          target_files: ["apps/product/legacy-path.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "data-page-continuation",
+            workflow_signature: "hosted-postgres-retired",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.88,
+      },
+    ],
+    ranked: [
+      { id: "mem-current-indirect", score: 0.99 },
+      { id: "mem-procedure-indirect", score: 0.98 },
+      { id: "mem-failed-indirect", score: 0.97 },
+      { id: "mem-stale-indirect", score: 0.96 },
+    ],
+  });
+
+  const signals = inferLifecycleCandidateSignals({
+    entries: memoryPacket.relevant_memories,
+  });
+  const signalTypesFor = (memoryId: string) =>
+    signals.filter((signal) => signal.memory_id === memoryId).map((signal) => signal.signal_type);
+  assert.ok(signalTypesFor("mem-current-indirect").includes("current"));
+  assert.ok(signalTypesFor("mem-procedure-indirect").includes("procedure"));
+  assert.equal(signalTypesFor("mem-failed-indirect").includes("current"), false);
+  assert.equal(signalTypesFor("mem-failed-indirect").includes("procedure"), false);
+  assert.ok(signalTypesFor("mem-failed-indirect").includes("negative"));
+  assert.ok(signalTypesFor("mem-stale-indirect").includes("stale"));
+
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+
+  assert.ok(agentContext.use_now_memory_ids.includes("mem-current-indirect"));
+  assert.ok(agentContext.use_now_memory_ids.includes("mem-procedure-indirect"));
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-failed-indirect"), false);
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-stale-indirect"), false);
+  assert.ok(agentContext.inspect_before_use_memory_ids.includes("mem-failed-indirect"));
+  assert.ok(agentContext.inspect_before_use_memory_ids.includes("mem-stale-indirect"));
+});
+
+test("rehydrate lifecycle candidates surface explicit execution pointers as optional evidence without direct use", () => {
   const memoryPacket = buildAionisMemoryPacket({
     tenant_id: "tenant-local",
     scope: "repo-a",
@@ -401,8 +509,16 @@ test("rehydrate lifecycle candidates stay shadow-only unless the memory is eligi
       {
         id: "mem-raw-summary",
         type: "procedure",
-        title: "Checkout source evidence pointer",
-        text_summary: "Source evidence pointer references exact raw diff and file-level evidence for src/checkout/adapter.ts.",
+        title: "Pointer for exact evidence",
+        text_summary: "This entry is a pointer to the exact supporting material for src/checkout/adapter.ts. Use it when a summary is not enough and the raw commit evidence must be opened.",
+        slots: {
+          target_files: ["trace://checkout-migration/raw", "src/checkout/adapter.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "checkout-migration",
+            workflow_signature: "checkout-migration",
+          },
+        },
         confidence: 0.83,
         salience: 0.82,
       },
@@ -413,7 +529,9 @@ test("rehydrate lifecycle candidates stay shadow-only unless the memory is eligi
     scope: "repo-a",
     memory_packet: memoryPacket,
   });
-  assert.deepEqual(agentContext.rehydrate_hints, []);
+  assert.ok(agentContext.rehydrate_hints.some((hint) => hint.memory_id === "mem-raw-summary" && !hint.required));
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-raw-summary"), false);
+  assert.match(agentContext.prompt_text, /rehydrate_if_needed/);
 
   const trace = buildAionisMemoryDecisionTrace({
     tenant_id: "tenant-local",
@@ -426,9 +544,11 @@ test("rehydrate lifecycle candidates stay shadow-only unless the memory is eligi
   });
   assert.equal(trace.lifecycle_candidate_summary.present, true);
   assert.equal(trace.lifecycle_candidate_summary.signal_payload_prompt_included, false);
-  assert.equal(trace.lifecycle_candidate_summary.surface_effect_prompt_included, false);
-  assert.deepEqual(trace.lifecycle_candidate_summary.gated_memory_ids, []);
-  assert.ok(trace.lifecycle_candidate_summary.shadow_only_memory_ids.includes("mem-raw-summary"));
+  assert.equal(trace.lifecycle_candidate_summary.surface_effect_prompt_included, true);
+  assert.ok(trace.lifecycle_candidate_summary.gated_memory_ids.includes("mem-raw-summary"));
+  const rawDecision = trace.memory_decisions.find((entry) => entry.memory_id === "mem-raw-summary");
+  assert.equal(rawDecision?.agent_surface, "rehydrate");
+  assert.equal(rawDecision?.rehydrate_detail?.required, false);
 });
 
 test("rehydrate lifecycle candidates surface explicit raw evidence requests without direct use", () => {

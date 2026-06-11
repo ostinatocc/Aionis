@@ -35,33 +35,39 @@ type RulePattern = {
 };
 
 const EXECUTION_TARGET_PATH = /(?:^|[.\s])(?:src|app|lib|packages|tests?|scripts|docs|services|routes|components)\//i;
+const NEGATED_SELF_CONTINUATION_PATTERN = /\b(?:did\s+not|didn't|does\s+not|doesn't|never|not)\b[^.!?\n]{0,120}\b(?:become|serve\s+as|remain|work\s+as|act\s+as|use|execute|run|follow|adopt|rely|continue|resume)\b[^.!?\n]{0,120}\b(?:handoff|route|path|branch|continuation|current|accepted|direct(?:\s+use)?|next[-\s]?action|execution)\b/i;
+const RETIRED_OR_FAILED_ROUTE_PATTERN = /\b(?:retired|abandoned|discarded|failed|non-current|dead[-\s]?end|did\s+not\s+pan\s+out|didn't\s+pan\s+out|did\s+not\s+become|didn't\s+become|was\s+not\s+accepted|not\s+accepted)\b[^.!?\n]{0,120}\b(?:route|path|branch|handoff|continuation|approach)\b/i;
+const DIRECT_USE_EXCLUSION_PATTERN = /\b(?:keep|kept)\s+(?:it|this|the\s+(?:route|path|branch|entry|note|approach))\s+(?:out|outside)\b[^.!?\n]{0,100}\b(?:immediate|direct|next[-\s]?action|use_now|use\s+now|direct\s+use|agent\s+context)\b/i;
+const BACKGROUND_NOT_ROUTE_PATTERN = /\b(?:treat|keep|preserve)\s+(?:this|it|the\s+(?:route|path|branch|entry|note|approach))\b[^.!?\n]{0,100}\b(?:background|audit|cautionary)\b[^.!?\n]{0,140}\b(?:not\s+as|rather\s+than|instead\s+of)\b[^.!?\n]{0,100}\b(?:route|path|direct|instruction|next\s+step|next[-\s]?action|execute)\b/i;
+const EARLIER_ROUND_PATTERN = /\b(?:previous[-\s]?round|earlier\s+round|earlier\s+note|previous\s+note|belongs\s+to\s+an?\s+earlier|from\s+an?\s+earlier|prior\s+round)\b/i;
+const NEWER_CONTINUATION_ELSEWHERE_PATTERN = /\b(?:continuation|handoff|current\s+state|accepted\s+state)\b[^.!?\n]{0,80}\b(?:now|later|subsequently)\b[^.!?\n]{0,80}\b(?:orbits|moved|returned|shifted|points?)\b/i;
 
 const TITLE_RULES: RulePattern[] = [
   {
     signal_type: "current",
     source_field: "title",
-    pattern: /\b(?:current|active|accepted|resume|handoff)\b/i,
+    pattern: /\b(?:current|active|accepted|resume|handoff|next continuation|continuation picks up|live continuation)\b/i,
     confidence: 0.78,
     reason: "Title carries a current or active continuation cue.",
   },
   {
     signal_type: "procedure",
     source_field: "title",
-    pattern: /\b(?:procedure|workflow|playbook|steps?|adapter|migration|handoff)\b/i,
+    pattern: /\b(?:procedure|workflow|playbook|steps?|adapter|migration|handoff|reusable part|operating pattern|operating recipe)\b/i,
     confidence: 0.76,
     reason: "Title carries a reusable procedure or workflow cue.",
   },
   {
     signal_type: "negative",
     source_field: "title",
-    pattern: /\b(?:failed|failure|rejected|invalidated|counter[-\s]?evidence|non-current branch)\b/i,
+    pattern: /\b(?:failed|failure|rejected|invalidated|counter[-\s]?evidence|non-current branch|retired route|route that did not become|did not become (?:the )?(?:handoff|route|continuation)|dead[-\s]?end)\b/i,
     confidence: 0.9,
     reason: "Title carries a failed or counter-evidence cue.",
   },
   {
     signal_type: "stale",
     source_field: "title",
-    pattern: /\b(?:stale|outdated|obsolete|older|earlier|legacy)\b/i,
+    pattern: /\b(?:stale|outdated|obsolete|older|earlier|legacy|previous[-\s]?round|previous note|earlier note)\b/i,
     confidence: 0.84,
     reason: "Title carries an older or stale-state cue.",
   },
@@ -75,7 +81,7 @@ const TITLE_RULES: RulePattern[] = [
   {
     signal_type: "rehydrate",
     source_field: "title",
-    pattern: /\b(?:raw|trace|payload|pointer|source evidence|evidence pointer)\b/i,
+    pattern: /\b(?:raw|trace|payload|pointer|source evidence|evidence pointer|exact evidence|exact supporting material)\b/i,
     confidence: 0.82,
     reason: "Title carries an explicit raw evidence, trace, payload, or pointer cue.",
   },
@@ -85,28 +91,28 @@ const SUMMARY_RULES: RulePattern[] = [
   {
     signal_type: "current",
     source_field: "text_summary",
-    pattern: /\b(?:current valid state|current executable state|accepted continuation|resume from|active continuation|current active path)\b/i,
+    pattern: /\b(?:current valid state|current executable state|accepted continuation|resume from|active continuation|current active path|work resumes now|thread picks up|picks up around|live continuation point|accepted file family)\b/i,
     confidence: 0.86,
     reason: "Summary states a current executable continuation.",
   },
   {
     signal_type: "procedure",
     source_field: "text_summary",
-    pattern: /\b(?:reusable procedure|procedure:|workflow:|playbook:|steps?:|run or review tests|keep changes scoped)\b/i,
+    pattern: /\b(?:reusable procedure|procedure:|workflow:|playbook:|steps?:|run or review tests|keep changes scoped|reusable part|narrow operating pattern|operating pattern|operating recipe|scoped apply and verify)\b/i,
     confidence: 0.82,
     reason: "Summary states reusable workflow or procedure content.",
   },
   {
     signal_type: "negative",
     source_field: "text_summary",
-    pattern: /\b(?:failed branch|failure branch|rejected|invalidated|counter[-\s]?evidence|non-current branch|check before direct use|should be checked before|treated as (?:an? )?retired route|retired route for)\b/i,
+    pattern: /\b(?:failed branch|failure branch|rejected|invalidated|counter[-\s]?evidence|non-current branch|check before direct use|should be checked before|treated as (?:an? )?retired route|retired route for|did not become (?:the )?(?:accepted continuation|handoff|route|path)|didn't become (?:the )?(?:accepted continuation|handoff|route|path)|did not become accepted|didn't become accepted|keep (?:it|this|the (?:route|path|branch|entry|note|approach)) (?:out|outside) (?:of )?(?:the )?(?:immediate|direct|next[-\s]?action)|cautionary background|what not to execute directly|not as (?:the )?(?:route|path|direct instruction|next step))\b/i,
     confidence: 0.92,
     reason: "Summary marks this memory as failed, rejected, or counter-evidence.",
   },
   {
     signal_type: "stale",
     source_field: "text_summary",
-    pattern: /\b(?:stale|outdated|obsolete|no longer usable|older execution note|older .* newer .* evidence|earlier premise|newer .* current)\b/i,
+    pattern: /\b(?:stale|outdated|obsolete|no longer usable|older execution note|older .* newer .* evidence|earlier premise|newer .* current|previous[-\s]?round|earlier round|earlier note|previous note|belongs to an? earlier|available for audit rather than making it the path|continuation now orbits|current state now orbits)\b/i,
     confidence: 0.88,
     reason: "Summary marks this memory as older than newer/current evidence.",
   },
@@ -120,7 +126,7 @@ const SUMMARY_RULES: RulePattern[] = [
   {
     signal_type: "rehydrate",
     source_field: "text_summary",
-    pattern: /\b(?:rehydrate|expand|exact raw|raw diff|raw trace|raw trajectory|raw evidence|payload|source evidence pointer|file-level evidence|full context|exact patch details|review trace|per-file proof|open this pointer)\b/i,
+    pattern: /\b(?:rehydrate|expand|exact raw|raw diff|raw trace|raw trajectory|raw evidence|payload|source evidence pointer|file-level evidence|full context|exact patch details|review trace|per-file proof|open this pointer|pointer to (?:the )?exact supporting material|exact supporting material|raw commit evidence must be opened)\b/i,
     confidence: 0.82,
     reason: "Summary points to raw or full evidence that may require rehydration.",
   },
@@ -155,6 +161,7 @@ export function inferLifecycleCandidateSignals(args: {
       const source = rule.source_field === "title" ? entry.title : entry.summary;
       const quote = evidenceQuote(source, rule.pattern);
       if (!quote) continue;
+      if (positiveSignalSuppressedBySelfNegation(rule.signal_type, source)) continue;
       const signal = {
         memory_id: entry.memory_id,
         signal_type: rule.signal_type,
@@ -192,7 +199,6 @@ export function lifecycleCandidateAllowsRehydrate(args: {
   rehydration_requested: boolean;
 }): boolean {
   return args.signal.signal_type === "rehydrate"
-    && args.rehydration_requested
     && (args.surface === "rehydrate" || args.memory_lifecycle_state === "rehydration_candidate");
 }
 
@@ -218,14 +224,52 @@ function evidenceQuote(value: string | null | undefined, pattern: RegExp): strin
   return text.slice(start, end).trim();
 }
 
+function sourceText(value: string | null | undefined): string {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+}
+
+function selfNegatedContinuationCue(value: string | null | undefined): boolean {
+  const text = sourceText(value);
+  if (!text) return false;
+  return NEGATED_SELF_CONTINUATION_PATTERN.test(text)
+    || RETIRED_OR_FAILED_ROUTE_PATTERN.test(text)
+    || DIRECT_USE_EXCLUSION_PATTERN.test(text)
+    || BACKGROUND_NOT_ROUTE_PATTERN.test(text)
+    || EARLIER_ROUND_PATTERN.test(text)
+    || NEWER_CONTINUATION_ELSEWHERE_PATTERN.test(text);
+}
+
+function positiveSignalSuppressedBySelfNegation(
+  signalType: LifecycleCandidateSignalType,
+  value: string | null | undefined,
+): boolean {
+  if (signalType !== "current" && signalType !== "procedure") return false;
+  return selfNegatedContinuationCue(value);
+}
+
+function signalDraftDirectUseUnsafe(signal: LifecycleCandidateSignalDraft): boolean {
+  return signal.confidence >= 0.84
+    && (
+      signal.signal_type === "negative"
+      || signal.signal_type === "stale"
+      || signal.signal_type === "contested"
+    );
+}
+
 function inferTargetClusterSignals(
   entries: LifecycleCandidateEntry[],
   textSignals: LifecycleCandidateSignalDraft[],
 ): LifecycleCandidateSignalDraft[] {
+  const unsafeSignalMemoryIds = new Set(
+    textSignals
+      .filter(signalDraftDirectUseUnsafe)
+      .map((signal) => signal.memory_id),
+  );
   const affirmativeSignalMemoryIds = new Set(
     textSignals
       .filter((signal) =>
-        signal.signal_type === "current" || signal.signal_type === "procedure"
+        (signal.signal_type === "current" || signal.signal_type === "procedure")
+        && !unsafeSignalMemoryIds.has(signal.memory_id)
       )
       .map((signal) => signal.memory_id),
   );
@@ -277,6 +321,7 @@ function inferTargetClusterSignals(
   for (const projection of projections) {
     const matchesActiveCluster = activeClusterTargetSets.has(targetSetKey(projection.targets));
     if (matchesActiveCluster) {
+      if (unsafeSignalMemoryIds.has(projection.entry.memory_id)) continue;
       signals.push({
         memory_id: projection.entry.memory_id,
         signal_type: "current",
