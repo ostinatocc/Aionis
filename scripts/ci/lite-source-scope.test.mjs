@@ -257,11 +257,21 @@ test("README quickstart examples stay aligned with product result contracts", ()
 test("README and positioning docs keep the external product language stable", () => {
   const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
   const positioning = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_PRODUCT_POSITIONING.md"), "utf8");
+  const architecture = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_RUNTIME_ARCHITECTURE.md"), "utf8");
 
   assert.match(readme, /state-adjudicated memory runtime/);
   assert.match(readme, /Memory is not recall\. Memory is state\./);
+  assert.match(readme, /Why Teams Use Aionis/);
+  assert.match(readme, /Architecture Overview/);
+  assert.match(readme, /docs\/AIONIS_RUNTIME_ARCHITECTURE\.md/);
   assert.match(readme, /Aionis vs Recall Memory/);
   assert.match(readme, /docs\/AIONIS_PRODUCT_POSITIONING\.md/);
+
+  assert.match(architecture, /Product Path/);
+  assert.match(architecture, /Execution memory is Aionis's main moat/);
+  assert.match(architecture, /Context Compiler/);
+  assert.match(architecture, /Controlled Forgetting and Rehydration/);
+  assert.match(architecture, /Source Map/);
 
   assert.match(positioning, /state-adjudicated memory runtime/);
   assert.match(positioning, /not recall-only memory/i);

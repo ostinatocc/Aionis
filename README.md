@@ -1,36 +1,77 @@
 # Aionis
 
-The state-adjudicated memory runtime for agents that need to keep working.
+**The state-adjudicated memory runtime for agents that need to keep working.**
 
 Memory is not recall. Memory is state.
 
-Aionis gives long-running and multi-agent systems a state-governed memory layer:
-it remembers what worked, keeps failed branches from leaking back into prompts,
-forgets what hurts, compresses execution history into actionable context, and
-gives operators a traceable receipt for every memory decision.
+Aionis sits between your Agent and its history. It adjudicates whether memory is
+current, stale, contested, failed, reusable, or worth rehydrating, then compiles
+only the governed execution state into the next Agent context.
 
-Stop stuffing raw history into prompts. Aionis turns agent memory into governed
-execution state.
+```bash
+MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quickstart sdk
+```
 
-## Why Aionis?
+Use Aionis when your Agents must continue real work across sessions, roles,
+handoffs, and mistakes.
 
-Most agent memory systems retrieve history. Aionis adjudicates it.
+## Why Teams Use Aionis
 
-Before the next Agent sees context, Aionis decides which memories are current,
-stale, contested, failed, reusable, or worth rehydrating. The result is shorter
-Agent context, safer reuse, stronger multi-agent handoff, and inspectable memory
-decisions.
+Most memory systems retrieve text. Aionis governs state.
 
-Aionis is built for agents that continue work, not chats that end.
-
-| Problem | What Aionis does |
+| You need | Aionis gives you |
 |---|---|
-| Agents repeat old mistakes | Failed branches become counter-evidence instead of future instructions. |
-| Context keeps growing | Execution history is compressed into bounded Agent context. |
-| Memory recall is unsafe | Memories are gated into `use_now`, `inspect_before_use`, `do_not_use`, or `rehydrate`. |
-| Bad memory sticks forever | Controlled forgetting suppresses, archives, or cools stale and harmful memory without deleting evidence silently. |
-| Multi-agent handoff loses state | Planner, worker, verifier, and reviewer can share branch-aware execution memory. |
-| Nobody knows why memory was used | Memory use receipts and operator snapshots explain every decision. |
+| Agents that stop repeating old mistakes | Failed branches become counter-evidence instead of future instructions. |
+| Shorter context without losing the task | Execution history is compressed into current state, reusable procedures, and rehydrate pointers. |
+| Safer memory than raw RAG | Memories are gated into `use_now`, `inspect_before_use`, `do_not_use`, or `rehydrate`. |
+| Multi-agent execution continuity | Planner, worker, verifier, and reviewer share branch-aware execution memory. |
+| Memory that can be controlled | Stale or harmful memory can be suppressed, archived, restored, or rehydrated. |
+| Operator confidence | Every guide can produce memory use receipts, decision traces, and read-only snapshots. |
+
+## Architecture Overview
+
+Aionis is not a prompt-stuffing layer. It is a Runtime that turns raw history
+into governed Agent context.
+
+```mermaid
+flowchart LR
+  Host["Agent Host\nsingle-agent or multi-agent"] --> SDK["@aionis/sdk\nor HTTP API"]
+
+  SDK --> Observe["observe\nwrite evidence"]
+  SDK --> Guide["guide\ncompile context"]
+  SDK --> Feedback["feedback\nattribute outcome"]
+  SDK --> Measure["measure\nscore effect"]
+  SDK --> Forget["forget / rehydrate\ncontrol lifecycle"]
+  SDK --> Snapshot["operator snapshot\nread-only audit"]
+
+  Observe --> Governance["State Governance\nlifecycle + authority + scope + source"]
+  Feedback --> Governance
+  Forget --> Governance
+
+  Governance <--> Store["Memory Store\nordinary memory + execution traces + archives"]
+  Governance --> Exec["Execution Memory\nactive path + failed branches + procedures"]
+
+  Store --> Compiler["Context Compiler\nuse_now + inspect + do_not_use + rehydrate"]
+  Exec --> Compiler
+  Guide --> Compiler
+
+  Compiler --> AgentContext["Agent Context\nshort + governed + attributable"]
+  Compiler --> Receipt["Memory Use Receipt\nwhy used or suppressed"]
+  Compiler --> Operator["Operator Snapshot\nbranch isolation + audit"]
+
+  AgentContext --> Host
+  Receipt --> Host
+  Operator --> Host
+```
+
+The default product loop is:
+
+```text
+observe -> guide -> agent action -> feedback -> measure -> snapshot
+```
+
+Full architecture guide:
+[docs/AIONIS_RUNTIME_ARCHITECTURE.md](docs/AIONIS_RUNTIME_ARCHITECTURE.md).
 
 ## Aionis vs Recall Memory
 
@@ -304,6 +345,7 @@ Output contracts:
 | Document | Purpose |
 |---|---|
 | [AIONIS_INSTALL.md](docs/AIONIS_INSTALL.md) | One-command install path for Runtime plus SDK packages. |
+| [AIONIS_RUNTIME_ARCHITECTURE.md](docs/AIONIS_RUNTIME_ARCHITECTURE.md) | Product architecture, memory layers, execution memory, context compiler, and source map. |
 | [AIONIS_HTTP_QUICKSTART.md](docs/AIONIS_HTTP_QUICKSTART.md) | Smallest curl-first product loop. |
 | [AIONIS_QUICKSTART_MATRIX.md](docs/AIONIS_QUICKSTART_MATRIX.md) | Which first-run command to use for SDK, HTTP, and multi-agent hosts. |
 | [AIONIS_CONTROLLED_FORGETTING_QUICKSTART.md](docs/AIONIS_CONTROLLED_FORGETTING_QUICKSTART.md) | Controlled forgetting with suppress, unsuppress, and measure. |
