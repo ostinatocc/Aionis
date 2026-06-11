@@ -40,7 +40,7 @@ const TITLE_RULES: RulePattern[] = [
   {
     signal_type: "current",
     source_field: "title",
-    pattern: /\b(?:current|active|accepted|resume|continuation|handoff)\b/i,
+    pattern: /\b(?:current|active|accepted|resume|handoff)\b/i,
     confidence: 0.78,
     reason: "Title carries a current or active continuation cue.",
   },
@@ -64,6 +64,13 @@ const TITLE_RULES: RulePattern[] = [
     pattern: /\b(?:stale|outdated|obsolete|older|earlier|legacy)\b/i,
     confidence: 0.84,
     reason: "Title carries an older or stale-state cue.",
+  },
+  {
+    signal_type: "contested",
+    source_field: "title",
+    pattern: /\b(?:contested|conflicting|contradicted|disagreeing continuation)\b/i,
+    confidence: 0.86,
+    reason: "Title carries a conflict or disagreeing-continuation cue.",
   },
   {
     signal_type: "rehydrate",
@@ -92,7 +99,7 @@ const SUMMARY_RULES: RulePattern[] = [
   {
     signal_type: "negative",
     source_field: "text_summary",
-    pattern: /\b(?:failed branch|failure branch|rejected|invalidated|counter[-\s]?evidence|non-current branch|check before direct use|should be checked before)\b/i,
+    pattern: /\b(?:failed branch|failure branch|rejected|invalidated|counter[-\s]?evidence|non-current branch|check before direct use|should be checked before|treated as (?:an? )?retired route|retired route for)\b/i,
     confidence: 0.92,
     reason: "Summary marks this memory as failed, rejected, or counter-evidence.",
   },
@@ -106,7 +113,7 @@ const SUMMARY_RULES: RulePattern[] = [
   {
     signal_type: "contested",
     source_field: "text_summary",
-    pattern: /\b(?:contested|conflicting|conflicts with|contradicted|contradicts|requires inspection|inspect before reuse)\b/i,
+    pattern: /\b(?:contested|conflicting|conflicts with|contradicted|contradicts|requires inspection|inspect before reuse|audit before adopting|prior memory says[^.]{0,200}\bbut\b[^.]{0,200}\baccepted\b[^.]{0,80}\bevidence\b[^.]{0,80}\bpoints?)\b/i,
     confidence: 0.86,
     reason: "Summary carries conflict or inspect-before-reuse evidence.",
   },

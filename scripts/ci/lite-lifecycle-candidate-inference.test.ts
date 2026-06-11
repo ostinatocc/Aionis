@@ -5,7 +5,10 @@ import {
   buildAionisMemoryDecisionTrace,
   buildAionisMemoryPacket,
 } from "../../src/memory/product-output-assembler.ts";
-import { inferLifecycleCandidateSignals } from "../../src/memory/lifecycle-candidate-inference.ts";
+import {
+  inferLifecycleCandidateSignals,
+  lifecycleCandidateDirectUseUnsafe,
+} from "../../src/memory/lifecycle-candidate-inference.ts";
 
 test("rule lifecycle candidate producer ignores ordinary fact and preference memories", () => {
   const signals = inferLifecycleCandidateSignals({
@@ -31,6 +34,62 @@ test("rule lifecycle candidate producer ignores ordinary fact and preference mem
     ],
   });
   assert.deepEqual(signals, []);
+});
+
+test("rule lifecycle candidate producer treats retired routes and accepted-evidence conflicts as unsafe", () => {
+  const signals = inferLifecycleCandidateSignals({
+    entries: [
+      {
+        memory_id: "mem-current",
+        title: "Latest accepted execution state",
+        summary: "Latest accepted state: pick up at packages/runtime/current.ts. Keep out of the immediate action plan restart from superseded or retired route assumptions.",
+        memory_type: "procedure",
+        domain: "execution",
+        lifecycle_state: "active",
+        authority: "candidate",
+        target_files: ["packages/runtime/current.ts"],
+      },
+      {
+        memory_id: "mem-procedure",
+        title: "Reusable runtime procedure",
+        summary: "Reusable procedure: inspect packages/runtime/current.ts and verify nearby tests before continuing.",
+        memory_type: "procedure",
+        domain: "execution",
+        lifecycle_state: "active",
+        authority: "candidate",
+        target_files: ["packages/runtime/current.ts"],
+      },
+      {
+        memory_id: "mem-retired",
+        title: "Check broad branch around packages/runtime/old.ts",
+        summary: "Evaluation note: a broad continuation around packages/runtime/old.ts is treated as a retired route for this handoff. Keep it out of direct next-action context.",
+        memory_type: "procedure",
+        domain: "execution",
+        lifecycle_state: "active",
+        authority: "candidate",
+        target_files: ["packages/runtime/old.ts"],
+      },
+      {
+        memory_id: "mem-contested",
+        title: "disagreeing continuation around packages/runtime/old.ts",
+        summary: "A prior memory says continue through packages/runtime/old.ts, but accepted commit evidence points to packages/runtime/current.ts. Audit before adopting and prefer the accepted state unless raw evidence says otherwise.",
+        memory_type: "procedure",
+        domain: "execution",
+        lifecycle_state: "active",
+        authority: "candidate",
+        target_files: ["packages/runtime/old.ts"],
+      },
+    ],
+  });
+
+  const signalsFor = (memoryId: string) => signals.filter((signal) => signal.memory_id === memoryId);
+  assert.ok(signalsFor("mem-retired").some((signal) =>
+    signal.signal_type === "negative" && lifecycleCandidateDirectUseUnsafe(signal)
+  ));
+  assert.ok(signalsFor("mem-contested").some((signal) =>
+    signal.signal_type === "contested" && lifecycleCandidateDirectUseUnsafe(signal)
+  ));
+  assert.equal(signalsFor("mem-current").some(lifecycleCandidateDirectUseUnsafe), false);
 });
 
 test("lifecycle candidates move unlabelled failed execution branches out of direct use without hurting procedures", () => {
@@ -212,6 +271,122 @@ test("lifecycle candidates admit scrubbed current and procedure candidates while
     contractContext.prompt_aliases.find((entry) => entry.memory_id === "mem-procedure-scrubbed")?.surface,
     "procedure",
   );
+});
+
+test("lifecycle candidates keep retired and contradicted execution routes inspect-first", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "Continue from the accepted execution state and avoid obsolete broad branches.",
+    },
+    nodes: [
+      {
+        id: "mem-current-route",
+        type: "procedure",
+        title: "Latest accepted runtime state",
+        text_summary: "Latest accepted state: the approved handoff point is packages/runtime/current.ts. Keep out of the immediate action plan restart from superseded or retired route assumptions.",
+        slots: {
+          target_files: ["packages/runtime/current.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "runtime-continuation",
+            workflow_signature: "runtime-continuation",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.9,
+      },
+      {
+        id: "mem-procedure-route",
+        type: "procedure",
+        title: "Reusable runtime procedure",
+        text_summary: "Reusable procedure: inspect packages/runtime/current.ts; keep changes scoped to the current target; run or review tests near packages/runtime/current.ts.",
+        slots: {
+          target_files: ["packages/runtime/current.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "runtime-continuation",
+            workflow_signature: "runtime-continuation",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.88,
+      },
+      {
+        id: "mem-retired-route",
+        type: "procedure",
+        title: "Check broad branch around packages/runtime/old.ts",
+        text_summary: "Evaluation note: a broad continuation around packages/runtime/old.ts is treated as a retired route for this handoff. Keep it out of direct next-action context.",
+        slots: {
+          target_files: ["packages/runtime/old.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "runtime-continuation",
+            workflow_signature: "runtime-retired-route",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.87,
+      },
+      {
+        id: "mem-contested-route",
+        type: "procedure",
+        title: "disagreeing continuation around packages/runtime/old.ts",
+        text_summary: "A prior memory says continue through packages/runtime/old.ts, but accepted commit evidence points to packages/runtime/current.ts. Audit before adopting and prefer the accepted state unless raw evidence says otherwise.",
+        slots: {
+          target_files: ["packages/runtime/old.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "runtime-continuation",
+            workflow_signature: "runtime-contested-route",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.86,
+      },
+    ],
+    ranked: [
+      { id: "mem-current-route", score: 0.99 },
+      { id: "mem-procedure-route", score: 0.98 },
+      { id: "mem-retired-route", score: 0.97 },
+      { id: "mem-contested-route", score: 0.96 },
+    ],
+  });
+
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+  assert.ok(agentContext.use_now_memory_ids.includes("mem-current-route"));
+  assert.ok(agentContext.use_now_memory_ids.includes("mem-procedure-route"));
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-retired-route"), false);
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-contested-route"), false);
+  assert.ok(agentContext.inspect_before_use_memory_ids.includes("mem-retired-route"));
+  assert.ok(agentContext.inspect_before_use_memory_ids.includes("mem-contested-route"));
+  assert.ok(agentContext.risk.reasons.includes("lifecycle_candidate_kept_out_of_use_now"));
+  assert.equal(agentContext.prompt_text.includes("use_now:"), true);
+  assert.equal(agentContext.prompt_text.includes("inspect_before_use:"), true);
+
+  const trace = buildAionisMemoryDecisionTrace({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    before_guide: null,
+    after_guide: {
+      memory_packet: memoryPacket,
+      agent_context: agentContext,
+    },
+  });
+  const currentDecision = trace.memory_decisions.find((entry) => entry.memory_id === "mem-current-route");
+  const retiredDecision = trace.memory_decisions.find((entry) => entry.memory_id === "mem-retired-route");
+  const contestedDecision = trace.memory_decisions.find((entry) => entry.memory_id === "mem-contested-route");
+  assert.equal(currentDecision?.agent_surface, "use_now");
+  assert.equal(retiredDecision?.agent_surface, "inspect_before_use");
+  assert.equal(contestedDecision?.agent_surface, "inspect_before_use");
+  assert.ok(retiredDecision?.reason_codes.includes("lifecycle_candidate_direct_use_gated"));
+  assert.ok(contestedDecision?.reason_codes.includes("lifecycle_candidate_direct_use_gated"));
 });
 
 test("rehydrate lifecycle candidates stay shadow-only unless the memory is eligible", () => {
