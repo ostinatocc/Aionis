@@ -6,8 +6,8 @@ Memory is not recall. Memory is state.
 
 Aionis gives long-running and multi-agent systems a state-governed memory layer:
 it remembers what worked, keeps failed branches from leaking back into prompts,
-compresses execution history into actionable context, and gives operators a
-traceable receipt for every memory decision.
+forgets what hurts, compresses execution history into actionable context, and
+gives operators a traceable receipt for every memory decision.
 
 Stop stuffing raw history into prompts. Aionis turns agent memory into governed
 execution state.
@@ -28,6 +28,7 @@ Aionis is built for agents that continue work, not chats that end.
 | Agents repeat old mistakes | Failed branches become counter-evidence instead of future instructions. |
 | Context keeps growing | Execution history is compressed into bounded Agent context. |
 | Memory recall is unsafe | Memories are gated into `use_now`, `inspect_before_use`, `do_not_use`, or `rehydrate`. |
+| Bad memory sticks forever | Controlled forgetting suppresses, archives, or cools stale and harmful memory without deleting evidence silently. |
 | Multi-agent handoff loses state | Planner, worker, verifier, and reviewer can share branch-aware execution memory. |
 | Nobody knows why memory was used | Memory use receipts and operator snapshots explain every decision. |
 
@@ -258,13 +259,15 @@ observe -> guide -> agent action -> feedback -> measure -> snapshot
 | `guide` | Compile governed memory into Agent-facing context. |
 | `agent action` | Your host runs the Agent with only the compiled context. |
 | `feedback` | Attribute the outcome to the memories actually used. |
+| `forget` | Explicitly suppress, unsuppress, archive, or restore memory lifecycle state. |
 | `measure` | Check whether history helped, hurt, or lacked enough evidence. |
 | `snapshot` | Inspect memory use, branch isolation, and effect without mutating Runtime state. |
 
 HTTP entrypoints: `/v1/observe`, `/v1/guide`, `/v1/feedback`,
-`/v1/measure`, `/v1/rehydrate`, and `/v1/operator/snapshot`.
-The advanced `/v1/forget` lifecycle facade remains available for explicit
-suppression and compatibility.
+`/v1/forget`, `/v1/measure`, `/v1/rehydrate`, and `/v1/operator/snapshot`.
+Controlled forgetting is a core Aionis capability. `/v1/forget` is the explicit
+lifecycle-control API; `/v1/feedback` and `/v1/rehydrate` are productized
+forgetting/lifecycle paths for common host loops.
 
 API usage guide:
 [docs/AIONIS_PRODUCT_API_USAGE.md](docs/AIONIS_PRODUCT_API_USAGE.md).
@@ -279,6 +282,7 @@ Output contracts:
 | Document | Purpose |
 |---|---|
 | [AIONIS_HTTP_QUICKSTART.md](docs/AIONIS_HTTP_QUICKSTART.md) | Smallest curl-first product loop. |
+| [AIONIS_CONTROLLED_FORGETTING_QUICKSTART.md](docs/AIONIS_CONTROLLED_FORGETTING_QUICKSTART.md) | Controlled forgetting with suppress, unsuppress, and measure. |
 | [AIONIS_SDK_QUICKSTART.md](docs/AIONIS_SDK_QUICKSTART.md) | Smallest SDK product loop. |
 | [AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md](docs/AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md) | Short observe, guide, and audit path. |
 | [AIONIS_HOST_INTEGRATION.md](docs/AIONIS_HOST_INTEGRATION.md) | Single-agent, multi-agent, and coding-agent host integration. |

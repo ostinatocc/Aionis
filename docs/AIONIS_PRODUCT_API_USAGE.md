@@ -13,6 +13,8 @@ For host template wiring and runnable single-agent, multi-agent, and coding
 Agent examples, see [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md).
 For curl-first HTTP integration, see
 [AIONIS_HTTP_QUICKSTART.md](AIONIS_HTTP_QUICKSTART.md).
+For explicit suppress/unsuppress lifecycle control, see
+[AIONIS_CONTROLLED_FORGETTING_QUICKSTART.md](AIONIS_CONTROLLED_FORGETTING_QUICKSTART.md).
 For the smallest SDK loop, see
 [AIONIS_SDK_QUICKSTART.md](AIONIS_SDK_QUICKSTART.md).
 
@@ -25,7 +27,7 @@ For the smallest SDK loop, see
 | `POST /v1/feedback` | `feedback` | Host after the Agent acts | Feedback attribution | `forget_effect` with `operation: "activate"` |
 | `POST /v1/rehydrate` | `rehydrate` | Host when compact context needs original evidence or payload | Payload / archive lifecycle controller | `forget_effect` with `operation: "rehydrate"` |
 | `POST /v1/measure` | `measure` | Host, operator, or product evaluator | Product diagnostics | `effect_report`, optional decision trace and audit |
-| `POST /v1/forget` | advanced lifecycle | Host, operator, or product policy | Lifecycle controller | `forget_effect` |
+| `POST /v1/forget` | controlled forgetting | Host, operator, or product policy | Explicit lifecycle controller | `forget_effect` |
 
 Optional read-only operator route:
 
@@ -664,16 +666,22 @@ Agent needs the colder evidence or payload.
 
 ### Purpose
 
-Change memory lifecycle or payload availability without deleting source
-evidence silently. This is the advanced lifecycle facade. Normal product loops
-should prefer `/v1/feedback` for run attribution and `/v1/rehydrate` for payload
-or archive expansion.
+Controlled forgetting is a core Aionis capability. `POST /v1/forget` is the
+explicit lifecycle-control API for suppressing stale or harmful memory,
+unsuppressing reviewed memory, activating directly attributed memory, moving
+archived memory, or rehydrating payloads without deleting source evidence
+silently.
+
+Normal host loops can use `/v1/feedback` for run attribution and
+`/v1/rehydrate` for payload or archive expansion. Those are productized
+forgetting/lifecycle paths; they do not replace `/v1/forget` when the host or
+operator needs explicit lifecycle control.
 
 ### Minimal Request Fields
 
 | Field | Required | Meaning |
 |---|---:|---|
-| `operation` | Yes | `suppress`, `unsuppress`, `rehydrate`, or `activate`. Prefer `/v1/feedback` and `/v1/rehydrate` for normal product loops. |
+| `operation` | Yes | `suppress`, `unsuppress`, `rehydrate`, or `activate`. Use `/v1/forget` when explicit lifecycle control is the product action. |
 | `reason` | Yes | Why this lifecycle action is being taken. |
 | `target` | No | `memory`, `archive`, `payload`, or `pattern`. |
 | `memory_ids` / `node_ids` / `client_ids` | Conditional | Required for memory activation and many rehydrate operations. |

@@ -14,6 +14,8 @@ single-agent / multi-agent / coding-agent templates, see
 [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md).
 For a curl-first loop over the public product routes, see
 [AIONIS_HTTP_QUICKSTART.md](AIONIS_HTTP_QUICKSTART.md).
+For explicit controlled forgetting with suppress, unsuppress, and measure, see
+[AIONIS_CONTROLLED_FORGETTING_QUICKSTART.md](AIONIS_CONTROLLED_FORGETTING_QUICKSTART.md).
 
 ## Start Runtime
 

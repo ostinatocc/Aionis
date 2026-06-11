@@ -14,6 +14,11 @@ Aionis is not a recall-only memory system. It is a state-adjudicated memory
 runtime: it governs memory authority, lifecycle, scope, attribution, and risk
 before compiling bounded context for an Agent.
 
+Forget is a core Aionis capability, not a compatibility feature. Controlled
+forgetting means stale, harmful, weak, contradicted, or over-exposed memory can
+be suppressed, demoted, archived, rehydrated, or restored with evidence and
+auditability instead of being blindly recalled forever or silently deleted.
+
 The implemented state model is documented in [AIONIS_STATE_MODEL.md](AIONIS_STATE_MODEL.md).
 Aionis does not own a global Agent orchestration state machine. It owns the
 state governance planes under memory and execution: execution state, execution
@@ -49,9 +54,9 @@ should not have to understand internal route names or lifecycle operation codes.
 | `guide` | Produce the next compact cognitive and execution context from history. | recall, recall_text, context assemble, planning context, action retrieval, experience intelligence, resume/handoff packs |
 | `feedback` | Attribute run outcome to exposed memory actually used by the host. | node activation, guide exposure ledger verification, feedback learning-control persistence |
 | `rehydrate` | Expand archived memory or anchor payload only when compact context needs it. | archive relocation, anchor payload rehydration, linked decision rehydration |
+| `forget` | Explicitly control memory lifecycle when a host or operator knows memory should be suppressed, restored, archived, activated, or rehydrated. | semantic forgetting, suppression, unsuppression, archive relocation, anchor rehydration, node activation |
 | `measure` | Prove whether history changed the run positively or negatively. | runtime effect summary, promotion quality, runtime signal trends, maintenance reports, paired eval reports |
 | `snapshot` | Inspect memory use, branch isolation, and effect without mutating Runtime state. | operator snapshot, memory use receipt, trace-to-procedure readiness |
-| `forget` | Advanced lifecycle control for suppression, unsuppression, activation, and rehydration. | semantic forgetting, suppression, archive relocation, anchor rehydration, node activation |
 
 Internal mechanisms may remain richer than these verbs, but product docs, demos, and user-facing integrations should not expose every internal route as a product concept. Concrete product API usage is defined in [AIONIS_PRODUCT_API_USAGE.md](AIONIS_PRODUCT_API_USAGE.md), host integration templates are defined in [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md), capability routing and deletion decisions are tracked in [AIONIS_CAPABILITY_DECISION_MATRIX.md](AIONIS_CAPABILITY_DECISION_MATRIX.md), and stable user-facing outputs are defined in [AIONIS_PRODUCT_OUTPUT_CONTRACT.md](AIONIS_PRODUCT_OUTPUT_CONTRACT.md).
 
@@ -225,11 +230,13 @@ activation feedback internally, but callers do not need to pass
 memory or anchor payload on demand. It maps to controlled rehydration
 internally, but callers do not need to pass `operation: "rehydrate"`.
 
-`POST /v1/forget` remains the advanced lifecycle facade for explicit
-suppression, unsuppression, activation, archive rehydration, and payload
-rehydration. SDK users should prefer `client.feedback()` and
-`client.rehydrate()` for normal product loops. Users should not need to know the
-internal lifecycle route names.
+`POST /v1/forget` is the explicit lifecycle-control API for controlled
+forgetting: suppressing stale or harmful memory, unsuppressing reviewed memory,
+activating directly attributed memory, moving archived memory, and rehydrating
+payloads. SDK users should prefer `client.feedback()` and `client.rehydrate()`
+for the common feedback and pointer-expansion paths, but `/v1/forget` remains a
+first-class product surface for deliberate lifecycle control. Users should not
+need to know the internal lifecycle route names.
 
 Supported product operations:
 

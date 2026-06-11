@@ -47,7 +47,7 @@ product docs, or Runtime source behavior.
 
 | Gap | Why It Matters | Correct Next Work |
 |---|---|---|
-| Product facade still exposes many internal routes | Users should not need to understand every Runtime subsystem. | Collapse output usage around observe, guide, forget, and measure. |
+| Product facade still exposes many internal routes | Users should not need to understand every Runtime subsystem. | Collapse output usage around observe, guide, feedback, controlled forget, measure, rehydrate, and snapshot. |
 | Cross-Agent and cross-LLM proof is under-validated | The substrate exists, but proof is not strong enough for claims. | Validate externally without adding host code to this tree. |
 | History-shaped behavior can be too strong or too weak | Positive transfer requires calibrated authority and entropy. | Improve generic effect reporting and intervention intensity, not task rules. |
 | Ordinary memory is less productized than execution memory | Aionis can differentiate by applying lifecycle, authority, and forgetting to ordinary memory too. | Strengthen memory packet quality through existing recall/write surfaces. |

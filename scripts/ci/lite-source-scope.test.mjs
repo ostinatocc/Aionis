@@ -182,20 +182,28 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   const productContract = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_PRODUCT_CONTRACT.md"), "utf8");
   const sdkQuickstart = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_SDK_QUICKSTART.md"), "utf8");
   const httpQuickstart = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_HTTP_QUICKSTART.md"), "utf8");
+  const forgetQuickstart = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_CONTROLLED_FORGETTING_QUICKSTART.md"), "utf8");
 
   for (const text of [readme, apiUsage, productContract]) {
     assert.match(text, /\/v1\/feedback/);
+    assert.match(text, /\/v1\/forget/);
     assert.match(text, /\/v1\/rehydrate/);
   }
 
   assert.match(readme, /docs\/AIONIS_HTTP_QUICKSTART\.md/);
+  assert.match(readme, /docs\/AIONIS_CONTROLLED_FORGETTING_QUICKSTART\.md/);
+  assert.match(readme, /Controlled forgetting is a core Aionis capability/);
   assert.match(readme, /\/v1\/operator\/snapshot/);
   assert.match(apiUsage, /AIONIS_HTTP_QUICKSTART\.md/);
+  assert.match(apiUsage, /AIONIS_CONTROLLED_FORGETTING_QUICKSTART\.md/);
+  assert.match(apiUsage, /Controlled forgetting is a core Aionis capability/);
+  assert.match(apiUsage, /explicit lifecycle-control API/);
   assert.match(apiUsage, /`feedback\(\)` posts\s+to `\/v1\/feedback`/);
   assert.match(apiUsage, /`rehydrate\(\)` posts to `\/v1\/rehydrate`/);
   assert.match(apiUsage, /`snapshot\(\)` is a\s+short alias for `\/v1\/operator\/snapshot`/);
   assert.match(productContract, /`POST \/v1\/feedback` is the normal HTTP product entry/);
-  assert.match(productContract, /`POST \/v1\/forget` remains the advanced lifecycle facade/);
+  assert.match(productContract, /Forget is a core Aionis capability/);
+  assert.match(productContract, /`POST \/v1\/forget` is the explicit lifecycle-control API/);
   assert.match(sdkQuickstart, /`snapshot\(\)` exposes read-only memory use receipt/);
   assert.doesNotMatch(sdkQuickstart, /`operatorSnapshot\(\)` exposes/);
 
@@ -206,6 +214,16 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(httpQuickstart, /product_trace/);
   assert.match(httpQuickstart, /memory_decision_trace/);
   assert.doesNotMatch(httpQuickstart, /operation=activate/);
+
+  assert.match(forgetQuickstart, /Forget is a core Aionis capability/);
+  assert.match(forgetQuickstart, /\/v1\/forget/);
+  assert.match(forgetQuickstart, /operation\\\": \\\"suppress\\\"/);
+  assert.match(forgetQuickstart, /operation\\\": \\\"unsuppress\\\"/);
+  assert.match(forgetQuickstart, /product_trace/);
+  assert.match(forgetQuickstart, /forget_result/);
+  assert.match(forgetQuickstart, /explicit\s+lifecycle-control API/);
+  assert.doesNotMatch(`${readme}\n${apiUsage}\n${productContract}\n${forgetQuickstart}`, /compatibility-only/i);
+  assert.doesNotMatch(`${readme}\n${apiUsage}\n${productContract}\n${forgetQuickstart}`, /deprecated/i);
 });
 
 test("lite repo does not keep fixture-only real validation artifacts", () => {
