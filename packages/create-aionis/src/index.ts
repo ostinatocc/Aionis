@@ -211,6 +211,16 @@ export function createInstallPlan(options: CreateAionisOptions): string[] {
   ];
 }
 
+export function isCliEntrypoint(argvEntry: string | undefined, moduleUrl = import.meta.url): boolean {
+  if (!argvEntry) return false;
+  const modulePath = fileURLToPath(moduleUrl);
+  try {
+    return fs.realpathSync(argvEntry) === fs.realpathSync(modulePath);
+  } catch {
+    return path.resolve(argvEntry) === path.resolve(modulePath);
+  }
+}
+
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   const options = parseCreateAionisArgs(argv);
   ensureNodeVersion();
@@ -264,8 +274,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   );
 }
 
-const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : "";
-if (invokedPath === fileURLToPath(import.meta.url)) {
+if (isCliEntrypoint(process.argv[1])) {
   main().catch((err) => {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     process.exitCode = 1;

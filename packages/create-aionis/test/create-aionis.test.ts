@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import {
   createInstallPlan,
+  isCliEntrypoint,
   parseCreateAionisArgs,
   providerEnvKey,
   quickstartScriptName,
@@ -60,4 +65,15 @@ test("@aionis/create install plan includes Runtime install, SDK build, and selec
     "npm run -s runtime:quickstart:multi-agent",
   ]);
   assert.throws(() => parseCreateAionisArgs(["--quickstart", "bad"]), /Unsupported quickstart/);
+});
+
+test("@aionis/create recognizes npm bin symlink as the CLI entrypoint", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-create-entrypoint-"));
+  const target = path.join(dir, "index.js");
+  const symlink = path.join(dir, "create-aionis");
+  fs.writeFileSync(target, "");
+  fs.symlinkSync(target, symlink);
+
+  assert.equal(isCliEntrypoint(symlink, pathToFileURL(target).href), true);
+  assert.equal(isCliEntrypoint(undefined, pathToFileURL(target).href), false);
 });
