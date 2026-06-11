@@ -6,6 +6,10 @@ export type AionisFeedbackUsedSurface = "use_now" | "inspect_before_use" | "do_n
 export type AionisFeedbackStatus = "passed" | "failed" | "not_run" | "unknown";
 export type AionisRehydrateMode = "summary_only" | "partial" | "full" | "differential";
 export type AionisForgetTarget = "pattern" | "archive" | "payload" | "memory";
+export type AionisMemoryLane = "private" | "shared";
+export type AionisRememberKind = "fact" | "preference" | "project_context" | "procedure" | "event" | "evidence";
+export type AionisRememberLifecycleState = "active" | "candidate" | "contested" | "suppressed" | "demoted" | "archived";
+export type AionisRememberTier = "hot" | "warm" | "cold" | "archive";
 
 export type AionisClientOptions = {
   baseUrl: string;
@@ -25,6 +29,27 @@ export type AionisRequestOptions = {
 
 export type AionisGuideRequestOptions = AionisRequestOptions & {
   guide_mode?: AionisGuideMode | null;
+};
+
+export type AionisRememberRequest = AionisJsonObject & {
+  text: string;
+  kind?: AionisRememberKind;
+  title?: string;
+  client_id?: string;
+  memory_lane?: AionisMemoryLane;
+  producer_agent_id?: string;
+  owner_agent_id?: string;
+  owner_team_id?: string;
+  lifecycle_state?: AionisRememberLifecycleState;
+  tier?: AionisRememberTier;
+  confidence?: number;
+  salience?: number;
+  importance?: number;
+  auto_embed?: boolean;
+  raw_ref?: string;
+  evidence_ref?: string;
+  target_files?: string[];
+  slots?: AionisJsonObject;
 };
 
 export type AionisFeedbackRequest = AionisJsonObject & {
@@ -90,6 +115,68 @@ function scopedBody(
   };
 }
 
+function stripUndefined(value: AionisJsonObject): AionisJsonObject {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined && entry !== null));
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function rememberNodeType(kind: AionisRememberKind): string {
+  switch (kind) {
+    case "preference": return "rule";
+    case "project_context": return "topic";
+    case "procedure": return "procedure";
+    case "event": return "event";
+    case "evidence": return "evidence";
+    case "fact": return "concept";
+  }
+}
+
+function rememberTitle(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return normalized.length <= 96 ? normalized : `${normalized.slice(0, 93)}...`;
+}
+
+function rememberBody(body: AionisRememberRequest): AionisJsonObject {
+  const text = body.text.trim();
+  if (!text) throw new Error("AionisClient.remember requires non-empty text");
+  const kind = body.kind ?? "fact";
+  const lifecycleState = body.lifecycle_state ?? "active";
+  const slots = stripUndefined({
+    ...(body.slots ?? {}),
+    memory_kind: "general_memory",
+    lifecycle_state: lifecycleState,
+    state: lifecycleState,
+    compression_layer: body.slots?.compression_layer ?? "L2",
+  });
+  return stripUndefined({
+    auto_embed: body.auto_embed ?? true,
+    input_text: text,
+    memory_kind: "general_memory",
+    memory_lane: body.memory_lane,
+    producer_agent_id: body.producer_agent_id,
+    owner_agent_id: body.owner_agent_id,
+    owner_team_id: body.owner_team_id,
+    memory: stripUndefined({
+      client_id: body.client_id,
+      type: rememberNodeType(kind),
+      memory_kind: "general_memory",
+      title: body.title ?? rememberTitle(text),
+      text_summary: text,
+      confidence: body.confidence,
+      salience: body.salience,
+      importance: body.importance,
+      tier: body.tier,
+      raw_ref: body.raw_ref,
+      evidence_ref: body.evidence_ref,
+      target_files: body.target_files,
+      slots,
+    }),
+  });
+}
+
 async function readResponseBody(response: Response): Promise<unknown> {
   const text = await response.text();
   if (!text) return null;
@@ -121,6 +208,10 @@ export class AionisClient {
 
   async observe<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {
     return this.post<T>("/v1/observe", body, options);
+  }
+
+  async remember<T = unknown>(body: AionisRememberRequest, options?: AionisRequestOptions): Promise<T> {
+    return this.observe<T>(rememberBody(body), options);
   }
 
   async guide<T = unknown>(body: AionisJsonObject, options?: AionisGuideRequestOptions): Promise<T> {
@@ -200,4 +291,20 @@ export class AionisClient {
 
 export function createAionisClient(options: AionisClientOptions): AionisClient {
   return new AionisClient(options);
+}
+
+export function agentContextFromGuide<T = AionisJsonObject>(guide: unknown): T {
+  const context = asRecord(guide)?.agent_context;
+  if (!context || typeof context !== "object" || Array.isArray(context)) {
+    throw new Error("Aionis guide response is missing agent_context");
+  }
+  return context as T;
+}
+
+export function agentPromptFromGuide(guide: unknown): string {
+  const promptText = asRecord(agentContextFromGuide(guide))?.prompt_text;
+  if (typeof promptText !== "string" || promptText.length === 0) {
+    throw new Error("Aionis guide response is missing agent_context.prompt_text");
+  }
+  return promptText;
 }

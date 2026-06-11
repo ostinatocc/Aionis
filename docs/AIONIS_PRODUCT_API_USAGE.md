@@ -66,7 +66,10 @@ wrap debug, audit, benchmark, or host-specific adapter APIs. `feedback()` and
 route, so hosts do not need to memorize lifecycle operation names.
 
 ```ts
-import { createAionisClient } from "./src/sdk.ts";
+import {
+  agentPromptFromGuide,
+  createAionisClient,
+} from "./src/sdk.ts";
 
 const aionis = createAionisClient({
   baseUrl: process.env.AIONIS_URL ?? "http://127.0.0.1:3001",
@@ -75,6 +78,13 @@ const aionis = createAionisClient({
   scope: "payments-service",
   // SDK guide() defaults to the full-power product path. Set
   // default_guide_mode: "standard" only for legacy integrations.
+});
+
+await aionis.remember({
+  kind: "preference",
+  text: "Prefer concise status updates with concrete evidence references.",
+  owner_agent_id: "agent-1",
+  memory_lane: "private",
 });
 
 await aionis.observe({
@@ -102,7 +112,7 @@ const guide = await aionis.guide<{
   limit: 8,
 });
 
-const agentPromptContext = guide.agent_context.prompt_text;
+const agentPromptContext = agentPromptFromGuide(guide);
 
 await aionis.feedback({
   reason: "Agent used the exposed checkout continuation successfully.",

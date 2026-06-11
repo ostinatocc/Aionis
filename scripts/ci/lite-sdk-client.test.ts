@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   AionisClient,
   AionisClientError,
+  agentContextFromGuide,
+  agentPromptFromGuide,
   createAionisClient,
 } from "../../src/sdk.ts";
 
@@ -119,6 +121,79 @@ test("AionisClient defaults guide to full_power and allows explicit guide mode c
   assert.equal(calls[3]?.mode, "standard");
   assert.equal(calls[4]?.mode, undefined);
   assert.equal(calls[5]?.mode, "standard");
+});
+
+test("AionisClient remember writes ordinary memory through observe", async () => {
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const fakeFetch: typeof fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+    });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const client = createAionisClient({
+    baseUrl: "http://127.0.0.1:3001",
+    tenant_id: "tenant-a",
+    scope: "scope-a",
+    fetchImpl: fakeFetch,
+  });
+
+  await client.remember({
+    kind: "preference",
+    text: "Prefer concise status updates with concrete evidence.",
+    title: "Status preference",
+    client_id: "pref-status",
+    memory_lane: "private",
+    owner_agent_id: "agent-1",
+    confidence: 0.9,
+    slots: { source: "user" },
+  });
+
+  assert.equal(calls[0]?.url, "http://127.0.0.1:3001/v1/observe");
+  const body = calls[0]?.body ?? {};
+  assert.equal(body.tenant_id, "tenant-a");
+  assert.equal(body.scope, "scope-a");
+  assert.equal(body.auto_embed, true);
+  assert.equal(body.input_text, "Prefer concise status updates with concrete evidence.");
+  assert.equal(body.memory_kind, "general_memory");
+  assert.equal(body.memory_lane, "private");
+  assert.equal(body.owner_agent_id, "agent-1");
+
+  const memory = body.memory as Record<string, unknown>;
+  assert.equal(memory.client_id, "pref-status");
+  assert.equal(memory.type, "rule");
+  assert.equal(memory.memory_kind, "general_memory");
+  assert.equal(memory.title, "Status preference");
+  assert.equal(memory.text_summary, "Prefer concise status updates with concrete evidence.");
+  assert.equal(memory.confidence, 0.9);
+  const slots = memory.slots as Record<string, unknown>;
+  assert.equal(slots.source, "user");
+  assert.equal(slots.memory_kind, "general_memory");
+  assert.equal(slots.lifecycle_state, "active");
+  assert.equal(slots.state, "active");
+  assert.equal(slots.compression_layer, "L2");
+});
+
+test("agent prompt helpers expose only agent_context from guide responses", () => {
+  const guide = {
+    guide_trace_id: "guide-1",
+    agent_context: {
+      contract_version: "aionis_agent_context_v1",
+      prompt_text: "AIONIS_CTX v2\ncurrent: n=Use scoped memory.",
+      use_now_memory_ids: ["mem-1"],
+    },
+    memory_packet: {
+      raw: "operator-only",
+    },
+  };
+
+  assert.equal(agentPromptFromGuide(guide), "AIONIS_CTX v2\ncurrent: n=Use scoped memory.");
+  assert.deepEqual(agentContextFromGuide<Record<string, unknown>>(guide).use_now_memory_ids, ["mem-1"]);
+  assert.throws(() => agentPromptFromGuide({ memory_packet: {} }), /missing agent_context/);
 });
 
 test("AionisClient health and structured error handling", async () => {
