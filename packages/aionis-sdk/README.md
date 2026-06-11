@@ -60,3 +60,40 @@ await aionis.snapshot(snapshotInputFromGuideLoop({
 
 Only pass `agentPrompt` or selected `agent_context` fields to your Agent. Keep
 packets, traces, receipts, raw slots, and operator snapshots in host logs.
+
+## Execution Memory Helpers
+
+Use `aionis.execution` when the host wants branch-aware execution memory without
+hand-writing low-level payloads.
+
+```ts
+await aionis.execution.observeStep({
+  agent_id: "worker-1",
+  run_id: "run-001",
+  task_signature: "checkout-migration",
+  title: "Implement checkout adapter",
+  summary: "Worker implemented the adapter and needs review.",
+  outcome: "succeeded",
+  target_files: ["src/checkout.ts"],
+});
+
+const guide = await aionis.execution.guideForRole({
+  agent_id: "reviewer-1",
+  team_id: "checkout-team",
+  role: "reviewer",
+  run_id: "run-001",
+  task_signature: "checkout-migration",
+  query_text: "Continue from the current verified execution path.",
+});
+
+const feedback = await aionis.execution.feedbackFromOutcome({
+  agent_id: "reviewer-1",
+  run_id: "run-001",
+  task_signature: "checkout-migration",
+  title: "Reviewer continued branch",
+  summary: "Reviewer used the current execution memory.",
+  outcome: "succeeded",
+  guide,
+  used_memory_ids: guide.agent_context.use_now_memory_ids.slice(0, 1),
+});
+```

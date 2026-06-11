@@ -4,12 +4,16 @@ export type AionisGuideMode = "standard" | "full_power";
 export type AionisFeedbackOutcome = "positive" | "negative" | "neutral";
 export type AionisFeedbackUsedSurface = "use_now" | "inspect_before_use" | "do_not_use" | "explicit_host_assertion";
 export type AionisFeedbackStatus = "passed" | "failed" | "not_run" | "unknown";
+export type AionisToolStatus = "succeeded" | "failed" | "not_run" | "unknown";
 export type AionisRehydrateMode = "summary_only" | "partial" | "full" | "differential";
 export type AionisForgetTarget = "pattern" | "archive" | "payload" | "memory";
 export type AionisMemoryLane = "private" | "shared";
 export type AionisRememberKind = "fact" | "preference" | "project_context" | "procedure" | "event" | "evidence";
 export type AionisRememberLifecycleState = "active" | "candidate" | "contested" | "suppressed" | "demoted" | "archived";
 export type AionisRememberTier = "hot" | "warm" | "cold" | "archive";
+export type AionisExecutionAgentRole = "agent" | "planner" | "worker" | "verifier" | "reviewer";
+export type AionisExecutionOutcomeStatus = "succeeded" | "failed" | "blocked" | "interrupted" | "unknown";
+export type AionisHandoffKind = "patch_handoff" | "review_handoff" | "task_handoff";
 
 export type AionisClientOptions = {
   baseUrl: string;
@@ -63,7 +67,7 @@ export type AionisFeedbackRequest = AionisJsonObject & {
   memory_ids?: string[];
   node_ids?: string[];
   verifier_status?: AionisFeedbackStatus;
-  tool_status?: AionisFeedbackStatus;
+  tool_status?: AionisToolStatus;
   runtime_signal_refs?: string[];
   target?: "memory";
 };
@@ -97,7 +101,7 @@ export type AionisFeedbackFromGuideInput = {
   used_surface?: AionisFeedbackUsedSurface;
   actor?: string;
   verifier_status?: AionisFeedbackStatus;
-  tool_status?: AionisFeedbackStatus;
+  tool_status?: AionisToolStatus;
   runtime_signal_refs?: string[];
 };
 
@@ -123,6 +127,131 @@ export type AionisSnapshotFromGuideLoopInput = {
   tenant_id?: string;
   scope?: string;
   extra?: AionisJsonObject;
+};
+
+export type AionisExecutionRunRef = {
+  run_id: string;
+  task_id?: string;
+  task_signature: string;
+  task_family?: string;
+  workflow_signature?: string;
+};
+
+export type AionisExecutionAgentRef = {
+  agent_id?: string;
+  team_id?: string;
+  role?: AionisExecutionAgentRole;
+};
+
+export type AionisExecutionBaseInput = AionisExecutionRunRef & AionisExecutionAgentRef & {
+  tenant_id?: string;
+  scope?: string;
+  memory_lane?: AionisMemoryLane;
+  auto_embed?: boolean;
+};
+
+export type AionisExecutionStepInput = AionisExecutionBaseInput & {
+  title: string;
+  summary: string;
+  outcome?: AionisExecutionOutcomeStatus;
+  target_files?: string[];
+  workflow_steps?: string[];
+  tool_set?: string[];
+  acceptance_checks?: string[];
+  continuation_hint?: string;
+  resume_hint?: string;
+  reuse_hint?: string;
+  confidence?: number;
+  raw_ref?: string;
+  evidence_ref?: string;
+  evidence?: AionisJsonObject[];
+  artifacts?: AionisJsonObject[];
+  verification?: AionisJsonObject;
+  slots?: AionisJsonObject;
+  input_text?: string;
+  execution?: AionisJsonObject;
+};
+
+export type AionisExecutionHandoffInput = AionisExecutionStepInput & {
+  handoff_kind?: AionisHandoffKind;
+  anchor?: string;
+  file_path?: string;
+  repo_root?: string;
+  symbol?: string;
+  handoff_text?: string;
+  risk?: string;
+  tags?: string[];
+  next_action?: string;
+  must_change?: string[];
+  must_remove?: string[];
+  must_keep?: string[];
+  execution_state_v1?: AionisJsonObject;
+  execution_packet_v1?: AionisJsonObject;
+  control_profile_v1?: AionisJsonObject;
+  execution_transitions_v1?: unknown[];
+  execution_tree_disabled?: boolean;
+  execution_tree_default_disabled?: boolean;
+  execution_tree_v1?: AionisJsonObject;
+  execution_tree_operations_v1?: unknown[];
+  trajectory?: AionisJsonObject;
+  trajectory_hints?: AionisJsonObject;
+  handoff?: AionisJsonObject;
+};
+
+export type AionisExecutionGuideForRoleInput = AionisExecutionRunRef & AionisExecutionAgentRef & {
+  tenant_id?: string;
+  scope?: string;
+  query_text: string;
+  context?: AionisJsonObject;
+  execution_tree_v1?: AionisJsonObject | null;
+  tool_candidates?: string[];
+  limit?: number;
+  include_packets?: boolean;
+  mode?: AionisGuideMode;
+  context_mode?: AionisGuideMode;
+  context_char_budget?: number;
+  context_token_budget?: number;
+  context_compaction_profile?: "balanced" | "aggressive";
+  context_optimization_profile?: "balanced" | "aggressive";
+  guide?: AionisJsonObject;
+};
+
+export type AionisExecutionOutcomeInput = AionisExecutionStepInput & {
+  guide?: unknown;
+  guide_trace_id?: string;
+  used_memory_ids?: string[];
+  feedback?: boolean;
+  feedback_outcome?: AionisFeedbackOutcome;
+  used_surface?: AionisFeedbackUsedSurface;
+  verifier_status?: AionisFeedbackStatus;
+  tool_status?: AionisToolStatus;
+  runtime_signal_refs?: string[];
+  feedback_reason?: string;
+};
+
+export type AionisExecutionMeasureRunInput = AionisExecutionRunRef & {
+  tenant_id?: string;
+  scope?: string;
+  before_guide?: unknown;
+  after_guide: unknown;
+  feedback_result?: unknown;
+  sufficient_evidence?: boolean;
+  evidence_ids?: string[];
+  product_trace?: AionisJsonObject;
+};
+
+export type AionisExecutionSnapshotRunInput = AionisExecutionRunRef & {
+  tenant_id?: string;
+  scope?: string;
+  guide: unknown;
+  measure_result: unknown;
+  include_markdown?: boolean;
+  extra?: AionisJsonObject;
+};
+
+export type AionisExecutionOutcomeResult<TObserve = unknown, TFeedback = unknown> = {
+  observe: TObserve;
+  feedback: TFeedback | null;
 };
 
 export class AionisClientError extends Error {
@@ -231,6 +360,157 @@ function rememberBody(body: AionisRememberRequest): AionisJsonObject {
   });
 }
 
+function requiredString(value: string | undefined, message: string): string {
+  const trimmed = value?.trim();
+  if (!trimmed) throw new Error(message);
+  return trimmed;
+}
+
+function executionMemoryLane(input: { memory_lane?: AionisMemoryLane; team_id?: string }): AionisMemoryLane {
+  if (input.memory_lane) return input.memory_lane;
+  return input.team_id?.trim() ? "shared" : "private";
+}
+
+function executionResultSummary(input: AionisExecutionStepInput): AionisJsonObject | undefined {
+  if (!input.outcome || input.outcome === "unknown") return undefined;
+  return stripUndefined({
+    status: input.outcome === "succeeded" ? "passed" : input.outcome,
+    summary: input.summary,
+    evidence_refs: input.evidence_ref ? [input.evidence_ref] : undefined,
+  });
+}
+
+function executionFeedbackOutcome(input: AionisExecutionOutcomeInput): AionisFeedbackOutcome {
+  if (input.feedback_outcome) return input.feedback_outcome;
+  if (input.outcome === "succeeded") return "positive";
+  if (input.outcome === "failed" || input.outcome === "blocked" || input.outcome === "interrupted") return "negative";
+  return "neutral";
+}
+
+function executionVerifierStatus(input: AionisExecutionOutcomeInput): AionisFeedbackStatus {
+  if (input.verifier_status) return input.verifier_status;
+  if (input.outcome === "succeeded") return "passed";
+  if (input.outcome === "failed" || input.outcome === "blocked" || input.outcome === "interrupted") return "failed";
+  return "unknown";
+}
+
+function executionToolStatus(input: AionisExecutionOutcomeInput): AionisToolStatus {
+  if (input.tool_status) return input.tool_status;
+  if (input.outcome === "succeeded") return "succeeded";
+  if (input.outcome === "failed" || input.outcome === "blocked" || input.outcome === "interrupted") return "failed";
+  return "unknown";
+}
+
+function executionAgentId(input: AionisExecutionAgentRef): string {
+  return requiredString(input.agent_id, "Aionis execution helper requires agent_id.");
+}
+
+function executionRole(input: AionisExecutionAgentRef): AionisExecutionAgentRole {
+  return input.role ?? "agent";
+}
+
+function executionScopeOptions(input: { tenant_id?: string; scope?: string }): AionisRequestOptions {
+  return stripUndefined({
+    tenant_id: input.tenant_id,
+    scope: input.scope,
+  }) as AionisRequestOptions;
+}
+
+function executionObserveBase(input: AionisExecutionBaseInput): AionisJsonObject {
+  const memoryLane = executionMemoryLane(input);
+  if (memoryLane === "shared" && !input.team_id?.trim()) {
+    throw new Error("Aionis shared execution memory requires team_id. Use memory_lane: \"private\" for single-agent memory.");
+  }
+  const agentId = executionAgentId(input);
+  return stripUndefined({
+    auto_embed: input.auto_embed ?? true,
+    memory_lane: memoryLane,
+    producer_agent_id: agentId,
+    owner_agent_id: memoryLane === "private" ? agentId : undefined,
+    owner_team_id: input.team_id,
+  });
+}
+
+function executionPayload(input: AionisExecutionStepInput): AionisJsonObject {
+  const result = executionResultSummary(input);
+  return stripUndefined({
+    run_id: input.run_id,
+    task_id: input.task_id,
+    task_family: input.task_family,
+    task_signature: input.task_signature,
+    workflow_signature: input.workflow_signature,
+    title: input.title,
+    summary: input.summary,
+    outcome: input.outcome ?? "unknown",
+    target_files: input.target_files,
+    workflow_steps: input.workflow_steps,
+    tool_set: input.tool_set,
+    acceptance_checks: input.acceptance_checks,
+    continuation_hint: input.continuation_hint,
+    resume_hint: input.resume_hint,
+    reuse_hint: input.reuse_hint,
+    confidence: input.confidence,
+    raw_ref: input.raw_ref,
+    evidence_ref: input.evidence_ref,
+    evidence: input.evidence,
+    artifacts: input.artifacts,
+    verification: input.verification,
+    slots: stripUndefined({
+      task_signature: input.task_signature,
+      ...(result ? { execution_result_summary: result } : {}),
+      ...(input.slots ?? {}),
+    }),
+    ...(input.execution ?? {}),
+  });
+}
+
+function executionHandoffPayload(input: AionisExecutionHandoffInput): AionisJsonObject {
+  const agentId = executionAgentId(input);
+  const memoryLane = executionMemoryLane(input);
+  const anchor = input.anchor ?? `${input.task_signature}:${input.run_id}:${agentId}`;
+  const handoffKind = input.handoff_kind ?? "task_handoff";
+  return stripUndefined({
+    memory_lane: memoryLane,
+    actor: agentId,
+    producer_agent_id: agentId,
+    owner_agent_id: memoryLane === "private" ? agentId : undefined,
+    owner_team_id: input.team_id,
+    anchor,
+    handoff_kind: handoffKind,
+    file_path: input.file_path,
+    repo_root: input.repo_root,
+    symbol: input.symbol,
+    task_family: input.task_family,
+    task_signature: input.task_signature,
+    workflow_signature: input.workflow_signature,
+    title: input.title,
+    summary: input.summary,
+    handoff_text: input.handoff_text ?? input.continuation_hint ?? input.summary,
+    risk: input.risk,
+    acceptance_checks: input.acceptance_checks,
+    tags: input.tags,
+    target_files: input.target_files,
+    next_action: input.next_action ?? input.continuation_hint,
+    must_change: input.must_change,
+    must_remove: input.must_remove,
+    must_keep: input.must_keep,
+    execution_result_summary: executionResultSummary(input),
+    execution_artifacts: input.artifacts,
+    execution_evidence: input.evidence,
+    execution_state_v1: input.execution_state_v1,
+    execution_packet_v1: input.execution_packet_v1,
+    control_profile_v1: input.control_profile_v1,
+    execution_transitions_v1: input.execution_transitions_v1,
+    execution_tree_disabled: input.execution_tree_disabled,
+    execution_tree_default_disabled: input.execution_tree_default_disabled,
+    execution_tree_v1: input.execution_tree_v1,
+    execution_tree_operations_v1: input.execution_tree_operations_v1,
+    trajectory: input.trajectory,
+    trajectory_hints: input.trajectory_hints,
+    ...(input.handoff ?? {}),
+  });
+}
+
 async function readResponseBody(response: Response): Promise<unknown> {
   const text = await response.text();
   if (!text) return null;
@@ -242,6 +522,8 @@ async function readResponseBody(response: Response): Promise<unknown> {
 }
 
 export class AionisClient {
+  readonly execution: AionisExecutionClient;
+
   private readonly baseUrl: string;
   private readonly apiKey: string | null;
   private readonly tenantId: string | null;
@@ -258,6 +540,7 @@ export class AionisClient {
     this.headers = { ...(options.headers ?? {}) };
     this.defaultGuideMode = options.default_guide_mode === undefined ? "full_power" : options.default_guide_mode;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.execution = new AionisExecutionClient(this);
   }
 
   async observe<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {
@@ -321,12 +604,13 @@ export class AionisClient {
   }
 
   private guideBody(body: AionisJsonObject, options?: AionisGuideRequestOptions): AionisJsonObject {
-    if (body.mode !== undefined || body.context_mode !== undefined) return body;
+    const compactBody = stripUndefined(body);
+    if (compactBody.mode !== undefined || compactBody.context_mode !== undefined) return compactBody;
     const guideMode = options?.guide_mode === undefined ? this.defaultGuideMode : options.guide_mode;
-    if (!guideMode) return body;
+    if (!guideMode) return compactBody;
     return {
       mode: guideMode,
-      ...body,
+      ...compactBody,
     };
   }
 
@@ -337,6 +621,160 @@ export class AionisClient {
       ...(this.apiKey ? { authorization: `Bearer ${this.apiKey}` } : {}),
       ...(options?.headers ?? {}),
     };
+  }
+}
+
+export class AionisExecutionClient {
+  private readonly client: AionisClient;
+
+  constructor(client: AionisClient) {
+    this.client = client;
+  }
+
+  async observeStep<T = unknown>(input: AionisExecutionStepInput, options?: AionisRequestOptions): Promise<T> {
+    return this.client.observe<T>({
+      ...executionObserveBase(input),
+      input_text: input.input_text ?? `${input.title}\n${input.summary}`,
+      execution: executionPayload(input),
+    }, {
+      ...executionScopeOptions(input),
+      ...(options ?? {}),
+    });
+  }
+
+  async handoff<T = unknown>(input: AionisExecutionHandoffInput, options?: AionisRequestOptions): Promise<T> {
+    return this.client.observe<T>({
+      ...executionObserveBase(input),
+      handoff: executionHandoffPayload(input),
+    }, {
+      ...executionScopeOptions(input),
+      ...(options ?? {}),
+    });
+  }
+
+  async guideForRole<T = unknown>(
+    input: AionisExecutionGuideForRoleInput,
+    options?: AionisGuideRequestOptions,
+  ): Promise<T> {
+    const agentId = executionAgentId(input);
+    return this.client.guide<T>({
+      query_text: input.query_text,
+      agent_role: executionRole(input),
+      consumer_agent_id: agentId,
+      consumer_team_id: input.team_id,
+      run_id: input.run_id,
+      context: {
+        task_id: input.task_id,
+        task_signature: input.task_signature,
+        task_family: input.task_family,
+        workflow_signature: input.workflow_signature,
+        ...(input.context ?? {}),
+      },
+      execution_tree_v1: input.execution_tree_v1 ?? undefined,
+      tool_candidates: input.tool_candidates,
+      limit: input.limit ?? 10,
+      include_packets: input.include_packets ?? true,
+      mode: input.mode,
+      context_mode: input.context_mode,
+      context_char_budget: input.context_char_budget,
+      context_token_budget: input.context_token_budget,
+      context_compaction_profile: input.context_compaction_profile,
+      context_optimization_profile: input.context_optimization_profile,
+      ...(input.guide ?? {}),
+    }, {
+      ...executionScopeOptions(input),
+      ...(options ?? {}),
+    });
+  }
+
+  async observeOutcome<TObserve = unknown, TFeedback = unknown>(
+    input: AionisExecutionOutcomeInput,
+    options?: AionisRequestOptions,
+  ): Promise<AionisExecutionOutcomeResult<TObserve, TFeedback>> {
+    const observe = await this.observeStep<TObserve>(input, options);
+    const feedback = input.feedback === false ? null : await this.feedbackFromOutcome<TFeedback>(input, options);
+    return { observe, feedback };
+  }
+
+  async feedbackFromOutcome<T = unknown>(
+    input: AionisExecutionOutcomeInput,
+    options?: AionisRequestOptions,
+  ): Promise<T | null> {
+    const usedMemoryIds = input.used_memory_ids ?? [];
+    if (usedMemoryIds.length === 0) return null;
+    if (input.guide) {
+      return this.client.feedback<T>(feedbackFromGuide({
+        guide: input.guide,
+        reason: input.feedback_reason ?? input.summary,
+        run_id: input.run_id,
+        outcome: executionFeedbackOutcome(input),
+        used_memory_ids: usedMemoryIds,
+        used_surface: input.used_surface ?? "use_now",
+        actor: input.agent_id,
+        verifier_status: executionVerifierStatus(input),
+        tool_status: executionToolStatus(input),
+        runtime_signal_refs: input.runtime_signal_refs,
+      }), {
+        ...executionScopeOptions(input),
+        ...(options ?? {}),
+      });
+    }
+    if (!input.guide_trace_id) return null;
+    return this.client.feedback<T>({
+      target: "memory",
+      reason: input.feedback_reason ?? input.summary,
+      run_id: input.run_id,
+      outcome: executionFeedbackOutcome(input),
+      used_surface: input.used_surface ?? "use_now",
+      actor: input.agent_id,
+      guide_trace_id: input.guide_trace_id,
+      used_memory_ids: usedMemoryIds,
+      verifier_status: executionVerifierStatus(input),
+      tool_status: executionToolStatus(input),
+      runtime_signal_refs: input.runtime_signal_refs,
+    }, {
+      ...executionScopeOptions(input),
+      ...(options ?? {}),
+    });
+  }
+
+  async measureRun<T = unknown>(input: AionisExecutionMeasureRunInput, options?: AionisRequestOptions): Promise<T> {
+    return this.client.measure<T>(measureInputFromGuideLoop({
+      task: {
+        task_id: input.task_id ?? input.run_id,
+        run_id: input.run_id,
+        task_signature: input.task_signature,
+        task_family: input.task_family,
+      },
+      before_guide: input.before_guide,
+      after_guide: input.after_guide,
+      feedback_result: input.feedback_result,
+      sufficient_evidence: input.sufficient_evidence,
+      evidence_ids: input.evidence_ids,
+      tenant_id: input.tenant_id,
+      scope: input.scope,
+      product_trace: {
+        workflow_signature: input.workflow_signature,
+        ...(input.product_trace ?? {}),
+      },
+    }), options);
+  }
+
+  async snapshotRun<T = unknown>(input: AionisExecutionSnapshotRunInput, options?: AionisRequestOptions): Promise<T> {
+    return this.client.snapshot<T>(snapshotInputFromGuideLoop({
+      run_id: input.run_id,
+      task_signature: input.task_signature,
+      task_family: input.task_family,
+      guide: input.guide,
+      measure_result: input.measure_result,
+      include_markdown: input.include_markdown,
+      tenant_id: input.tenant_id,
+      scope: input.scope,
+      extra: {
+        workflow_signature: input.workflow_signature,
+        ...(input.extra ?? {}),
+      },
+    }), options);
   }
 }
 

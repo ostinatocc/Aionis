@@ -114,6 +114,46 @@ Agent actually used; it only validates that those IDs were exposed by the guide.
 `measureInputFromGuideLoop()` and `snapshotInputFromGuideLoop()` keep the
 normal product trace and operator snapshot payloads out of handwritten app code.
 
+## Execution Helper Loop
+
+For execution memory, use `aionis.execution` so the host does not need to build
+execution payloads by hand:
+
+```ts
+await aionis.execution.observeStep({
+  agent_id: "worker-1",
+  run_id: "run-001",
+  task_signature: "checkout-migration",
+  title: "Implement checkout adapter",
+  summary: "Worker implemented the adapter and needs review.",
+  outcome: "succeeded",
+  target_files: ["src/checkout.ts"],
+});
+
+const guide = await aionis.execution.guideForRole({
+  agent_id: "reviewer-1",
+  team_id: "checkout-team",
+  role: "reviewer",
+  run_id: "run-001",
+  task_signature: "checkout-migration",
+  query_text: "Continue from the current verified execution path.",
+});
+
+const feedback = await aionis.execution.feedbackFromOutcome({
+  agent_id: "reviewer-1",
+  run_id: "run-001",
+  task_signature: "checkout-migration",
+  title: "Reviewer continued branch",
+  summary: "Reviewer used the current execution memory.",
+  outcome: "succeeded",
+  guide,
+  used_memory_ids: guide.agent_context.use_now_memory_ids.slice(0, 1),
+});
+```
+
+For a complete minimal loop, see
+[docs/examples/minimal-agent.ts](examples/minimal-agent.ts).
+
 ## What The Script Proves
 
 `npm run -s runtime:quickstart:sdk` runs a real Runtime loop and prints compact

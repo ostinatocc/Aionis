@@ -289,6 +289,7 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   const sdkQuickstart = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_SDK_QUICKSTART.md"), "utf8");
   const httpQuickstart = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_HTTP_QUICKSTART.md"), "utf8");
   const forgetQuickstart = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_CONTROLLED_FORGETTING_QUICKSTART.md"), "utf8");
+  const minimalAgentExample = fs.readFileSync(path.join(ROOT, "docs", "examples", "minimal-agent.ts"), "utf8");
 
   for (const text of [readme, apiUsage, productContract]) {
     assert.match(text, /\/v1\/feedback/);
@@ -301,6 +302,8 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(readme, /docs\/AIONIS_INSTALL\.md/);
   assert.match(readme, /npx @aionis\/create/);
   assert.match(readme, /from "@aionis\/sdk"/);
+  assert.match(readme, /aionis\.execution\.observeStep/);
+  assert.match(readme, /docs\/examples\/minimal-agent\.ts/);
   assert.match(readme, /docs\/AIONIS_CONTROLLED_FORGETTING_QUICKSTART\.md/);
   assert.match(readme, /Controlled forgetting is a core Aionis capability/);
   assert.match(readme, /\/v1\/operator\/snapshot/);
@@ -328,7 +331,14 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(sdkQuickstart, /feedbackFromGuide\(\)/);
   assert.match(sdkQuickstart, /measureInputFromGuideLoop\(\)/);
   assert.match(sdkQuickstart, /snapshotInputFromGuideLoop\(\)/);
+  assert.match(sdkQuickstart, /aionis\.execution\.observeStep/);
+  assert.match(sdkQuickstart, /aionis\.execution\.guideForRole/);
+  assert.match(sdkQuickstart, /examples\/minimal-agent\.ts/);
   assert.doesNotMatch(sdkQuickstart, /`operatorSnapshot\(\)` exposes/);
+  assert.match(minimalAgentExample, /from "@aionis\/sdk"/);
+  assert.match(minimalAgentExample, /aionis\.execution\.observeStep/);
+  assert.match(minimalAgentExample, /aionis\.execution\.feedbackFromOutcome/);
+  assert.match(minimalAgentExample, /aionis\.execution\.snapshotRun/);
 
   assert.match(httpQuickstart, /observe -> guide -> agent action -> feedback -> measure -> snapshot/);
   assert.match(httpQuickstart, /npm run -s runtime:quickstart:http/);

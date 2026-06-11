@@ -249,6 +249,44 @@ await aionis.feedback(feedbackFromGuide({
 
 Full SDK guide: [docs/AIONIS_SDK_QUICKSTART.md](docs/AIONIS_SDK_QUICKSTART.md).
 
+## Use Aionis In Your Agent
+
+For long-running or multi-agent work, use the execution helpers instead of
+hand-writing execution memory payloads:
+
+```ts
+import { agentPromptFromGuide, createAionisClient } from "@aionis/sdk";
+
+const aionis = createAionisClient({
+  baseUrl: process.env.AIONIS_URL ?? "http://127.0.0.1:3001",
+  scope: "checkout-agent",
+});
+
+await aionis.execution.observeStep({
+  agent_id: "worker-1",
+  run_id: "run-001",
+  task_signature: "checkout-migration",
+  title: "Implement checkout adapter",
+  summary: "Worker implemented the adapter and needs review.",
+  outcome: "succeeded",
+  target_files: ["src/checkout.ts"],
+});
+
+const guide = await aionis.execution.guideForRole({
+  agent_id: "reviewer-1",
+  team_id: "checkout-team",
+  role: "reviewer",
+  run_id: "run-001",
+  task_signature: "checkout-migration",
+  query_text: "Continue from the current verified execution path.",
+});
+
+const prompt = agentPromptFromGuide(guide);
+```
+
+Full minimal Agent example:
+[docs/examples/minimal-agent.ts](docs/examples/minimal-agent.ts).
+
 ## Multi-Agent Execution Memory
 
 Execution memory is Aionis's flagship surface.
