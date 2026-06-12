@@ -679,11 +679,14 @@ test("product agent context contract renderer preserves execution state surfaces
   assert.match(context.prompt_text, /cmd .*raw=m\d+/);
   assert.ok(context.prompt_text.includes("priority: go>chk"));
   assert.ok(context.prompt_text.includes("go=primary_next_route"));
-  assert.ok(context.prompt_text.includes("missing_go=restore_or_rehydrate_not_old"));
+  assert.ok(context.prompt_text.includes("missing_go=create_restore_raw_or_report_conflict_no_old"));
+  assert.ok(context.prompt_text.includes("old_ref_not_supersede_go=1"));
   assert.ok(context.prompt_text.includes("chk=reference_only_not_primary"));
   assert.ok(context.prompt_text.includes("no=blocked_direction"));
-  assert.ok(context.prompt_text.includes("route active=src/checkout/adapter.ts"));
-  assert.ok(context.prompt_text.includes("missing=restore/create/rehydrate"));
+  assert.ok(context.prompt_text.includes("active=src/checkout/adapter.ts"));
+  assert.ok(context.prompt_text.includes("conflict=missing_active_not_superseded"));
+  assert.ok(context.prompt_text.includes("missing_action=create/restore/rehydrate/report"));
+  assert.ok(context.prompt_text.includes("old_ref_not_supersede=1"));
   assert.ok(context.prompt_text.includes("ref_only=src/checkout/candidate.ts"));
   assert.ok(context.prompt_text.includes("block_dir=src/legacy/search.ts"));
   assert.ok(context.prompt_text.includes("current: id=m1"));
@@ -750,6 +753,7 @@ test("product agent context contract renderer preserves execution state surfaces
   assert.deepEqual(context.route_contract.pending_artifacts[0]?.allowed_actions, ["create", "restore", "rehydrate"]);
   assert.deepEqual(context.route_contract.reference_only_targets.map((entry) => entry.target), ["src/checkout/candidate.ts"]);
   assert.deepEqual(context.route_contract.blocked_direction_targets.map((entry) => entry.target), ["src/legacy/search.ts"]);
+  assert.equal(context.route_contract.conflict_policy, "do_not_treat_missing_active_target_as_superseded");
   assert.equal(context.route_contract.fallback_policy, "do_not_promote_reference_or_blocked_targets");
 
   const standardContext = buildAionisAgentContext({
@@ -759,11 +763,14 @@ test("product agent context contract renderer preserves execution state surfaces
   });
   assert.ok(standardContext.prompt_text.includes("AIONIS_AGENT_CONTEXT v1"));
   assert.ok(standardContext.prompt_text.includes("execution_contract: SHOULD_CONTINUE is the primary next route when present"));
-  assert.ok(standardContext.prompt_text.includes("If a SHOULD_CONTINUE target is missing, absence alone is not stale proof"));
+  assert.ok(standardContext.prompt_text.includes("Missing SHOULD_CONTINUE target is not stale proof"));
+  assert.ok(standardContext.prompt_text.includes("Existing INSPECT_FIRST/MUST_NOT targets do not supersede SHOULD_CONTINUE"));
   assert.ok(standardContext.prompt_text.includes("INSPECT_FIRST is reference-only evidence and must not replace SHOULD_CONTINUE"));
   assert.ok(standardContext.prompt_text.includes("MUST_NOT blocks direction"));
-  assert.ok(standardContext.prompt_text.includes("route_contract: active_targets=src/checkout/adapter.ts"));
-  assert.ok(standardContext.prompt_text.includes("if_active_target_missing=restore_or_create_or_rehydrate_before_fallback"));
+  assert.ok(standardContext.prompt_text.includes("route_contract: conflict_policy=do_not_treat_missing_active_target_as_superseded"));
+  assert.ok(standardContext.prompt_text.includes("if_active_target_missing=create_or_restore_or_rehydrate_or_report_conflict_before_fallback"));
+  assert.ok(standardContext.prompt_text.includes("old_or_reference_target_presence_does_not_supersede_active_route"));
+  assert.ok(standardContext.prompt_text.includes("active_targets=src/checkout/adapter.ts"));
   assert.ok(standardContext.prompt_text.includes("reference_only_targets=src/checkout/candidate.ts"));
   assert.ok(standardContext.prompt_text.includes("blocked_direction_targets=src/legacy/search.ts"));
   assert.ok(standardContext.prompt_text.includes("fallback_policy=do_not_promote_reference_or_blocked_targets"));

@@ -283,6 +283,7 @@ test("SDK product-loop helpers keep guide feedback attribution explicit", () => 
   assert.deepEqual(shouldContinueMemoryIdsFromGuide(guide), ["mem-1"]);
   assert.deepEqual(mustNotMemoryIdsFromGuide(guide), ["mem-5"]);
   assert.equal(commandPostureFromGuide(guide, "must_not")[0]?.reason, "Memory is stale.");
+  assert.equal(routeContractFromGuide(guide)?.conflict_policy, "do_not_treat_missing_active_target_as_superseded");
   assert.equal(routeContractFromGuide(guide)?.fallback_policy, "do_not_promote_reference_or_blocked_targets");
   assert.deepEqual(activeRouteTargetsFromGuide(guide), ["src/current.ts"]);
   assert.deepEqual(pendingArtifactTargetsFromGuide(guide), ["src/current.ts"]);

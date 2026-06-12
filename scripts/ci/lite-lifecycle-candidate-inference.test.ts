@@ -1186,3 +1186,148 @@ test("lifecycle candidates do not admit same target-set negative or stale cluste
   assert.ok(agentContext.inspect_before_use_memory_ids.includes("mem-negative-a"));
   assert.ok(agentContext.inspect_before_use_memory_ids.includes("mem-negative-b"));
 });
+
+test("lifecycle target clusters do not let repeated unsafe old routes outvote accepted current targets", () => {
+  const acceptedTargets = [
+    "packages/vite/src/node/server/bundledDev.ts",
+    "packages/vite/src/node/server/environment.ts",
+  ];
+  const oldRouteTargets = ["packages/vite/src/node/server/environments/fullBundleEnvironment.ts"];
+  const signals = inferLifecycleCandidateSignals({
+    entries: [
+      {
+        memory_id: "mem-accepted-route",
+        title: "Accepted continuation for bundled dev migration",
+        summary: "Accepted continuation: resume from packages/vite/src/node/server/bundledDev.ts and packages/vite/src/node/server/environment.ts.",
+        memory_type: "procedure",
+        domain: "execution",
+        lifecycle_state: "active",
+        authority: "candidate",
+        target_files: acceptedTargets,
+      },
+      {
+        memory_id: "mem-old-route-attempt",
+        title: "Rejected legacy branch",
+        summary: "Rejected branch around packages/vite/src/node/server/environments/fullBundleEnvironment.ts did not become the accepted continuation.",
+        memory_type: "procedure",
+        domain: "execution",
+        lifecycle_state: "active",
+        authority: "candidate",
+        target_files: oldRouteTargets,
+      },
+      {
+        memory_id: "mem-old-route-verifier",
+        title: "Failed legacy branch verifier",
+        summary: "Failed branch around packages/vite/src/node/server/environments/fullBundleEnvironment.ts; keep this route outside direct next-action context.",
+        memory_type: "procedure",
+        domain: "execution",
+        lifecycle_state: "active",
+        authority: "candidate",
+        target_files: oldRouteTargets,
+      },
+    ],
+  });
+
+  assert.ok(signals.some((signal) =>
+    signal.memory_id === "mem-accepted-route"
+    && signal.signal_type === "current"
+  ));
+  assert.equal(
+    signals.some((signal) =>
+      signal.memory_id === "mem-accepted-route"
+      && signal.signal_type === "contested"
+      && signal.evidence_span.source_field === "slots"
+    ),
+    false,
+  );
+  assert.ok(signals.some((signal) =>
+    signal.memory_id === "mem-old-route-attempt"
+    && lifecycleCandidateDirectUseUnsafe(signal)
+  ));
+  assert.ok(signals.some((signal) =>
+    signal.memory_id === "mem-old-route-verifier"
+    && lifecycleCandidateDirectUseUnsafe(signal)
+  ));
+
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "Continue the bundled dev migration without extending the old full bundle path.",
+    },
+    nodes: [
+      {
+        id: "mem-accepted-route",
+        type: "procedure",
+        title: "Accepted continuation for bundled dev migration",
+        text_summary: "Accepted continuation: resume from packages/vite/src/node/server/bundledDev.ts and packages/vite/src/node/server/environment.ts.",
+        slots: {
+          target_files: acceptedTargets,
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "bundled-dev-migration",
+            workflow_signature: "bundled-dev-migration",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.95,
+      },
+      {
+        id: "mem-old-route-attempt",
+        type: "procedure",
+        title: "Rejected legacy branch",
+        text_summary: "Rejected branch around packages/vite/src/node/server/environments/fullBundleEnvironment.ts did not become the accepted continuation.",
+        slots: {
+          target_files: oldRouteTargets,
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "bundled-dev-migration",
+            workflow_signature: "legacy-full-bundle",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.94,
+      },
+      {
+        id: "mem-old-route-verifier",
+        type: "procedure",
+        title: "Failed legacy branch verifier",
+        text_summary: "Failed branch around packages/vite/src/node/server/environments/fullBundleEnvironment.ts; keep this route outside direct next-action context.",
+        slots: {
+          target_files: oldRouteTargets,
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "bundled-dev-migration",
+            workflow_signature: "legacy-full-bundle",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.93,
+      },
+    ],
+    ranked: [
+      { id: "mem-accepted-route", score: 0.99 },
+      { id: "mem-old-route-attempt", score: 0.98 },
+      { id: "mem-old-route-verifier", score: 0.97 },
+    ],
+  });
+
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+  assert.ok(agentContext.use_now_memory_ids.includes("mem-accepted-route"));
+  assert.equal(agentContext.inspect_before_use_memory_ids.includes("mem-accepted-route"), false);
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-old-route-attempt"), false);
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-old-route-verifier"), false);
+  assert.ok(agentContext.inspect_before_use_memory_ids.includes("mem-old-route-attempt"));
+  assert.ok(agentContext.inspect_before_use_memory_ids.includes("mem-old-route-verifier"));
+  assert.ok(agentContext.route_contract.active_targets.some((entry) =>
+    entry.target === "packages/vite/src/node/server/bundledDev.ts"
+  ));
+  assert.ok(agentContext.route_contract.reference_only_targets.some((entry) =>
+    entry.target === "packages/vite/src/node/server/environments/fullBundleEnvironment.ts"
+  ));
+});

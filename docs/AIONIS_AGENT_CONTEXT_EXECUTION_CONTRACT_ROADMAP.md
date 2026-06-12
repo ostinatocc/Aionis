@@ -42,7 +42,8 @@ Implemented scope:
    - `MUST_NOT` blocks direction; any inspection is only counter-evidence or
      reference
 3. Render compact contract prompts with explicit surface markers:
-   - `missing_go=restore_or_rehydrate_not_old`
+   - `missing_go=create_restore_raw_or_report_conflict_no_old`
+   - `old_ref_not_supersede_go=1`
    - `chk=reference_only_not_primary`
    - `no=blocked_direction`
    - `inspect: ... ref=1 primary=0`
@@ -82,6 +83,7 @@ machine-readable for SDK, MCP, host adapters, and Agent prompts:
   ],
   "reference_only_targets": [],
   "blocked_direction_targets": [],
+  "conflict_policy": "do_not_treat_missing_active_target_as_superseded",
   "fallback_policy": "do_not_promote_reference_or_blocked_targets"
 }
 ```
@@ -91,6 +93,27 @@ compact `AIONIS_CTX v2` prompts. The wording is conditional: Aionis does not
 claim a file is missing. It says that if the host observes an active target is
 missing, absence alone is not stale proof; the Agent should restore, create, or
 rehydrate before falling back to reference-only or blocked routes.
+
+## Phase 3: Active-Route Conflict Resolution
+
+Implemented scope:
+
+1. Keep the Phase 1/2 fields and lifecycle gates intact.
+2. Add `agent_context.route_contract.conflict_policy`:
+   `do_not_treat_missing_active_target_as_superseded`.
+3. Render the conflict policy before long target lists so it survives compact
+   prompt truncation:
+   - `conflict=missing_active_not_superseded`
+   - `missing_action=create/restore/rehydrate/report`
+   - `old_ref_not_supersede=1`
+4. Strengthen standard prompt wording so an existing `INSPECT_FIRST` or
+   `MUST_NOT` target cannot supersede `SHOULD_CONTINUE` merely because it
+   exists in the workspace.
+
+This phase still does not make Aionis an executor. If the Agent cannot safely
+create or restore the active target, it should report the conflict or request
+rehydration. It should not silently abandon the active route in favor of a
+reference-only or blocked target.
 
 Wired product path:
 

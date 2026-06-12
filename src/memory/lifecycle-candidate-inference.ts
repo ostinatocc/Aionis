@@ -283,6 +283,7 @@ function inferTargetClusterSignals(
     .filter((projection) => projection.targets.length > 0);
   const supportByTargetSet = new Map<string, Set<string>>();
   for (const projection of projections) {
+    if (unsafeSignalMemoryIds.has(projection.entry.memory_id)) continue;
     const key = targetSetKey(projection.targets);
     const ids = supportByTargetSet.get(key) ?? new Set<string>();
     ids.add(projection.entry.memory_id);

@@ -410,6 +410,39 @@ type AionisAgentContext = {
     reason: string;
     target_files: string[];
   }>;
+  route_contract: {
+    active_targets: Array<{
+      target: string;
+      source_memory_id?: string;
+      source: "target_files" | "should_continue" | "inspect_first" | "must_not";
+      artifact_status: "unknown" | "may_be_absent";
+      missing_policy: "restore_or_create_if_task_consistent_or_rehydrate";
+      reason?: string;
+    }>;
+    pending_artifacts: Array<{
+      target: string;
+      source_memory_id?: string;
+      source: "target_files" | "should_continue" | "inspect_first" | "must_not";
+      status: "unknown_until_host_observation";
+      when: "if_active_target_is_missing";
+      allowed_actions: Array<"create" | "restore" | "rehydrate">;
+      reason?: string;
+    }>;
+    reference_only_targets: Array<{
+      target: string;
+      source_memory_id?: string;
+      source: "target_files" | "should_continue" | "inspect_first" | "must_not";
+      reason?: string;
+    }>;
+    blocked_direction_targets: Array<{
+      target: string;
+      source_memory_id?: string;
+      source: "target_files" | "should_continue" | "inspect_first" | "must_not";
+      reason?: string;
+    }>;
+    conflict_policy: "do_not_treat_missing_active_target_as_superseded";
+    fallback_policy: "do_not_promote_reference_or_blocked_targets";
+  };
   prompt_aliases: Array<{
     alias: string;
     memory_id: string;
@@ -457,6 +490,14 @@ layer:
 | `inspect_first` | Check current code, evidence, or operator state before acting from the memory. |
 | `rehydrate_first` | Recover raw payload or trace before relying on exact details. |
 | `optional_context` | Useful context only; it must not override current evidence or higher-authority state. |
+
+`route_contract` is the machine-readable continuation contract behind the
+prompt. `active_targets` are governed continuation targets. `pending_artifacts`
+tell a host that an active target may need to be created, restored, or
+rehydrated if local observation says it is absent. The conflict policy means
+absence alone must not silently supersede the active route; the Agent should
+create, restore, rehydrate, or report the conflict before falling back to an old
+or reference-only route.
 
 `agent_context_mode` describes how the Agent prompt was rendered. `standard` is
 the default. `compact_agent` is an opt-in token-sensitive rendering that keeps

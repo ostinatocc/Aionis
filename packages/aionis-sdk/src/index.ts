@@ -60,6 +60,7 @@ export type AionisRouteContract = {
   pending_artifacts: AionisRouteContractPendingArtifact[];
   reference_only_targets: AionisRouteContractTarget[];
   blocked_direction_targets: AionisRouteContractTarget[];
+  conflict_policy: "do_not_treat_missing_active_target_as_superseded";
   fallback_policy: "do_not_promote_reference_or_blocked_targets";
 };
 
@@ -997,6 +998,7 @@ export function routeContractFromGuide(guide: unknown): AionisRouteContract | nu
     pending_artifacts: routeContractPendingArtifactArray(contract.pending_artifacts),
     reference_only_targets: routeContractTargetArray(contract.reference_only_targets),
     blocked_direction_targets: routeContractTargetArray(contract.blocked_direction_targets),
+    conflict_policy: "do_not_treat_missing_active_target_as_superseded",
     fallback_policy: "do_not_promote_reference_or_blocked_targets",
   };
 }

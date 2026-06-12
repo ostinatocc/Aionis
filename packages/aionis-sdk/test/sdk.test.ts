@@ -137,6 +137,7 @@ test("@aionis/sdk guide helpers keep Agent prompt and feedback attribution bound
   assert.deepEqual(mustNotMemoryIdsFromGuide(guide), ["mem-3"]);
   assert.deepEqual(inspectFirstMemoryIdsFromGuide(guide), ["mem-2"]);
   assert.deepEqual(commandPostureFromGuide(guide, "must_not")[0]?.instruction, "Do not reuse the failed branch.");
+  assert.equal(routeContractFromGuide(guide)?.conflict_policy, "do_not_treat_missing_active_target_as_superseded");
   assert.equal(routeContractFromGuide(guide)?.fallback_policy, "do_not_promote_reference_or_blocked_targets");
   assert.deepEqual(activeRouteTargetsFromGuide(guide), ["src/a.ts"]);
   assert.deepEqual(pendingArtifactTargetsFromGuide(guide), ["src/a.ts"]);

@@ -527,6 +527,9 @@ const AionisRouteContractSchema = z
       .default([]),
     reference_only_targets: z.array(AionisRouteContractTargetSchema).default([]),
     blocked_direction_targets: z.array(AionisRouteContractTargetSchema).default([]),
+    conflict_policy: z
+      .literal("do_not_treat_missing_active_target_as_superseded")
+      .default("do_not_treat_missing_active_target_as_superseded"),
     fallback_policy: z
       .literal("do_not_promote_reference_or_blocked_targets")
       .default("do_not_promote_reference_or_blocked_targets"),
@@ -537,6 +540,7 @@ const AionisRouteContractSchema = z
     pending_artifacts: [],
     reference_only_targets: [],
     blocked_direction_targets: [],
+    conflict_policy: "do_not_treat_missing_active_target_as_superseded",
     fallback_policy: "do_not_promote_reference_or_blocked_targets",
   });
 

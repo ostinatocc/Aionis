@@ -1463,14 +1463,16 @@ function commandPosturePriorityLine(args: {
     ? compactStrings([
         hasContinue && hasInspect ? "go>chk" : null,
         hasContinue ? "go=primary_next_route" : null,
-        hasContinue ? "missing_go=restore_or_rehydrate_not_old" : null,
+        hasContinue ? "missing_go=create_restore_raw_or_report_conflict_no_old" : null,
+        hasContinue && (hasInspect || hasMustNot) ? "old_ref_not_supersede_go=1" : null,
         hasInspect ? "chk=reference_only_not_primary" : null,
         hasMustNot ? "no=blocked_direction" : null,
         hasRehydrate ? "raw=rehydrate_before_exact_use" : null,
       ])
     : compactStrings([
         hasContinue ? "SHOULD_CONTINUE is the primary next route when present" : null,
-        hasContinue ? "If a SHOULD_CONTINUE target is missing, absence alone is not stale proof; restore or create the active target when task-consistent, or rehydrate before falling back" : null,
+        hasContinue ? "Missing SHOULD_CONTINUE target is not stale proof; create, restore, rehydrate, or report conflict before fallback" : null,
+        hasContinue && (hasInspect || hasMustNot) ? "Existing INSPECT_FIRST/MUST_NOT targets do not supersede SHOULD_CONTINUE just because they exist" : null,
         hasInspect ? "INSPECT_FIRST is reference-only evidence and must not replace SHOULD_CONTINUE" : null,
         hasMustNot ? "MUST_NOT blocks direction; inspect only as counter-evidence when necessary" : null,
         hasRehydrate ? "REHYDRATE_FIRST requires raw evidence before exact use" : null,
@@ -1582,6 +1584,7 @@ function buildAgentRouteContract(args: {
     pending_artifacts: pendingArtifacts,
     reference_only_targets: referenceOnlyTargets,
     blocked_direction_targets: blockedDirectionTargets,
+    conflict_policy: "do_not_treat_missing_active_target_as_superseded",
     fallback_policy: "do_not_promote_reference_or_blocked_targets",
   };
 }
@@ -1601,18 +1604,22 @@ function routeContractLine(args: {
   if (active.length === 0 && reference.length === 0 && blocked.length === 0) return null;
   const parts = args.compact
     ? compactStrings([
+        active.length > 0 ? "conflict=missing_active_not_superseded" : null,
+        active.length > 0 ? "missing_action=create/restore/rehydrate/report" : null,
+        active.length > 0 ? "old_ref_not_supersede=1" : null,
         active.length > 0 ? `active=${active.join(",")}` : null,
-        active.length > 0 ? "missing=restore/create/rehydrate" : null,
         reference.length > 0 ? `ref_only=${reference.join(",")}` : null,
         blocked.length > 0 ? `block_dir=${blocked.join(",")}` : null,
-        reference.length > 0 || blocked.length > 0 ? "no_fallback_to_ref=1" : null,
+        active.length > 0 || reference.length > 0 || blocked.length > 0 ? "no_fallback_to_ref=1" : null,
       ])
     : compactStrings([
+        active.length > 0 ? "conflict_policy=do_not_treat_missing_active_target_as_superseded" : null,
+        active.length > 0 ? "if_active_target_missing=create_or_restore_or_rehydrate_or_report_conflict_before_fallback" : null,
+        active.length > 0 ? "old_or_reference_target_presence_does_not_supersede_active_route" : null,
+        active.length > 0 || reference.length > 0 || blocked.length > 0 ? "fallback_policy=do_not_promote_reference_or_blocked_targets" : null,
         active.length > 0 ? `active_targets=${active.join(",")}` : null,
-        active.length > 0 ? "if_active_target_missing=restore_or_create_or_rehydrate_before_fallback" : null,
         reference.length > 0 ? `reference_only_targets=${reference.join(",")}` : null,
         blocked.length > 0 ? `blocked_direction_targets=${blocked.join(",")}` : null,
-        reference.length > 0 || blocked.length > 0 ? "fallback_policy=do_not_promote_reference_or_blocked_targets" : null,
       ]);
   if (parts.length === 0) return null;
   return shortenPromptText(`${args.compact ? "route" : "route_contract:"} ${parts.join(args.compact ? " " : "; ")}`, args.maxChars);
@@ -1659,12 +1666,12 @@ function renderAgentContextPrompt(args: {
     }),
     commandPosturePriorityLine({
       commandPosture: args.commandPosture,
-      maxChars: 360,
+      maxChars: 520,
     }),
     routeContractLine({
       routeContract: args.routeContract,
       maxItems: 4,
-      maxChars: 420,
+      maxChars: 560,
     }),
     `summary: ${shortenPromptText(args.summary, args.profile.summaryChars)}`,
     inline("target_files", args.targetFiles, args.profile.targetFileItems, args.profile.targetFileChars),

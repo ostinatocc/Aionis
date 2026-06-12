@@ -836,6 +836,7 @@ test("AionisAgentContext accepts compact agent-facing output", () => {
   assert.deepEqual(parsed.command_posture.map((entry) => entry.posture), ["should_continue", "must_not"]);
   assert.deepEqual(parsed.route_contract.active_targets.map((entry) => entry.target), ["src/index.ts"]);
   assert.equal(parsed.route_contract.pending_artifacts[0]?.when, "if_active_target_is_missing");
+  assert.equal(parsed.route_contract.conflict_policy, "do_not_treat_missing_active_target_as_superseded");
   assert.equal(parsed.route_contract.fallback_policy, "do_not_promote_reference_or_blocked_targets");
   assert.equal(parsed.risk.negative_transfer_risk, "medium");
 
@@ -858,6 +859,7 @@ test("AionisAgentContext accepts compact agent-facing output", () => {
     route_contract: undefined,
   });
   assert.deepEqual(defaultRouteParsed.route_contract.active_targets, []);
+  assert.equal(defaultRouteParsed.route_contract.conflict_policy, "do_not_treat_missing_active_target_as_superseded");
 });
 
 test("AionisAgentContext rejects packet leakage and loose fields", () => {
