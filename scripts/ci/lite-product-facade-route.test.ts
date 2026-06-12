@@ -1436,6 +1436,7 @@ test("product observe turns execution input into recallable execution memory", a
       "inspect_before_use_memory_ids",
       "do_not_use_memory_ids",
       "command_posture",
+      "route_contract",
       "prompt_aliases",
       "rehydrate_hints",
       "risk",
@@ -1452,6 +1453,7 @@ test("product observe turns execution input into recallable execution memory", a
     assert.ok(guideBody.agent_context.prompt_text.includes("AIONIS_AGENT_CONTEXT v1"));
     assert.ok(guideBody.agent_context.prompt_text.includes("state: role=reviewer"));
     assert.ok(guideBody.agent_context.prompt_text.includes("role_focus: review branch status"));
+    assert.equal(guideBody.agent_context.route_contract.fallback_policy, "do_not_promote_reference_or_blocked_targets");
     assert.ok(guideBody.source_map.internal_surfaces_used.includes("role_aware_agent_context"));
     assert.ok(guideBody.agent_context.prompt_text.length < JSON.stringify({
       memory_packet: guideBody.memory_packet,
@@ -1503,6 +1505,7 @@ test("product observe turns execution input into recallable execution memory", a
     assert.equal(compactBody.agent_context.contract_version, "aionis_agent_context_v1");
     assert.equal(compactBody.agent_context.history_used, true);
     assert.deepEqual(compactBody.agent_context.target_files, ["src/current-target.ts"]);
+    assert.equal(compactBody.agent_context.route_contract.fallback_policy, "do_not_promote_reference_or_blocked_targets");
     assert.ok(compactBody.source_map.omitted_internal_surfaces.includes("memory_packet"));
     assert.ok(compactBody.source_map.omitted_internal_surfaces.includes("guide_packet"));
   } finally {

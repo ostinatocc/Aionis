@@ -269,6 +269,32 @@ function validAgentContext() {
         target_files: [],
       },
     ],
+    route_contract: {
+      active_targets: [
+        {
+          target: "src/index.ts",
+          source_memory_id: "mem-1",
+          source: "should_continue",
+          artifact_status: "may_be_absent",
+          missing_policy: "restore_or_create_if_task_consistent_or_rehydrate",
+          reason: "Continue the current active state.",
+        },
+      ],
+      pending_artifacts: [
+        {
+          target: "src/index.ts",
+          source_memory_id: "mem-1",
+          source: "should_continue",
+          status: "unknown_until_host_observation",
+          when: "if_active_target_is_missing",
+          allowed_actions: ["create", "restore", "rehydrate"],
+          reason: "If the active route target is absent, restore or create it before falling back.",
+        },
+      ],
+      reference_only_targets: [],
+      blocked_direction_targets: [],
+      fallback_policy: "do_not_promote_reference_or_blocked_targets",
+    },
     rehydrate_hints: [{
       memory_id: "mem-3",
       reason: "Archived payload may contain the old verifier output.",
@@ -808,6 +834,9 @@ test("AionisAgentContext accepts compact agent-facing output", () => {
   assert.deepEqual(parsed.inspect_before_use_memory_ids, ["mem-3"]);
   assert.deepEqual(parsed.do_not_use_memory_ids, ["mem-2"]);
   assert.deepEqual(parsed.command_posture.map((entry) => entry.posture), ["should_continue", "must_not"]);
+  assert.deepEqual(parsed.route_contract.active_targets.map((entry) => entry.target), ["src/index.ts"]);
+  assert.equal(parsed.route_contract.pending_artifacts[0]?.when, "if_active_target_is_missing");
+  assert.equal(parsed.route_contract.fallback_policy, "do_not_promote_reference_or_blocked_targets");
   assert.equal(parsed.risk.negative_transfer_risk, "medium");
 
   const compactParsed = AionisAgentContextSchema.parse({
@@ -823,6 +852,12 @@ test("AionisAgentContext accepts compact agent-facing output", () => {
     command_posture: undefined,
   });
   assert.deepEqual(legacyParsed.command_posture, []);
+
+  const defaultRouteParsed = AionisAgentContextSchema.parse({
+    ...validAgentContext(),
+    route_contract: undefined,
+  });
+  assert.deepEqual(defaultRouteParsed.route_contract.active_targets, []);
 });
 
 test("AionisAgentContext rejects packet leakage and loose fields", () => {

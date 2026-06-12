@@ -1480,6 +1480,144 @@ function commandPosturePriorityLine(args: {
   return shortenPromptText(`${prefix} ${parts.join("; ")}`, args.maxChars);
 }
 
+function pushUniqueRouteTarget<T extends { target: string }>(
+  rows: T[],
+  seen: Set<string>,
+  row: T,
+  maxItems: number,
+): void {
+  if (rows.length >= maxItems) return;
+  const target = row.target.trim();
+  if (!target) return;
+  const key = target.toLowerCase();
+  if (seen.has(key)) return;
+  seen.add(key);
+  rows.push({ ...row, target });
+}
+
+function buildAgentRouteContract(args: {
+  targetFiles: string[];
+  commandPosture: AionisAgentContext["command_posture"];
+}): AionisAgentContext["route_contract"] {
+  const activeTargets: AionisAgentContext["route_contract"]["active_targets"] = [];
+  const pendingArtifacts: AionisAgentContext["route_contract"]["pending_artifacts"] = [];
+  const referenceOnlyTargets: AionisAgentContext["route_contract"]["reference_only_targets"] = [];
+  const blockedDirectionTargets: AionisAgentContext["route_contract"]["blocked_direction_targets"] = [];
+  const activeSeen = new Set<string>();
+  const referenceSeen = new Set<string>();
+  const blockedSeen = new Set<string>();
+  const explicitTargetSet = new Set(args.targetFiles.map((target) => target.trim().toLowerCase()).filter(Boolean));
+  const shouldContinueEntries = args.commandPosture.filter((entry) =>
+    entry.posture === "should_continue"
+    && (entry.surface === "current" || entry.surface === "procedure")
+  );
+  const routeEntries = shouldContinueEntries.filter((entry) =>
+    explicitTargetSet.size === 0
+    || entry.target_files.some((target) => explicitTargetSet.has(target.trim().toLowerCase()))
+  );
+
+  for (const entry of routeEntries) {
+    for (const target of entry.target_files) {
+      pushUniqueRouteTarget(activeTargets, activeSeen, {
+        target,
+        source_memory_id: entry.memory_id,
+        source: "should_continue",
+        artifact_status: "may_be_absent",
+        missing_policy: "restore_or_create_if_task_consistent_or_rehydrate",
+        reason: entry.instruction,
+      }, 6);
+    }
+  }
+  if (activeTargets.length === 0) {
+    for (const target of args.targetFiles) {
+      pushUniqueRouteTarget(activeTargets, activeSeen, {
+        target,
+        source: "target_files",
+        artifact_status: "may_be_absent",
+        missing_policy: "restore_or_create_if_task_consistent_or_rehydrate",
+        reason: "Target file is part of the active execution route.",
+      }, 6);
+    }
+  }
+
+  for (const target of activeTargets) {
+    pushUniqueRouteTarget(pendingArtifacts, new Set(pendingArtifacts.map((entry) => entry.target.toLowerCase())), {
+      target: target.target,
+      source_memory_id: target.source_memory_id,
+      source: target.source,
+      status: "unknown_until_host_observation",
+      when: "if_active_target_is_missing",
+      allowed_actions: ["create", "restore", "rehydrate"],
+      reason: "If the active route target is absent, absence alone is not stale proof; restore, create, or rehydrate before falling back.",
+    }, 6);
+  }
+
+  const activeTargetKeys = new Set(activeTargets.map((entry) => entry.target.toLowerCase()));
+  for (const entry of args.commandPosture) {
+    const source = entry.posture === "inspect_first"
+      ? "inspect_first"
+      : entry.posture === "must_not"
+        ? "must_not"
+        : null;
+    if (!source) continue;
+    for (const target of entry.target_files) {
+      const normalized = target.trim().toLowerCase();
+      if (!normalized || activeTargetKeys.has(normalized)) continue;
+      const row = {
+        target,
+        source_memory_id: entry.memory_id,
+        source,
+        reason: entry.instruction,
+      } as const;
+      if (source === "inspect_first") {
+        pushUniqueRouteTarget(referenceOnlyTargets, referenceSeen, row, 6);
+      } else {
+        pushUniqueRouteTarget(blockedDirectionTargets, blockedSeen, row, 6);
+      }
+    }
+  }
+
+  return {
+    active_targets: activeTargets,
+    pending_artifacts: pendingArtifacts,
+    reference_only_targets: referenceOnlyTargets,
+    blocked_direction_targets: blockedDirectionTargets,
+    fallback_policy: "do_not_promote_reference_or_blocked_targets",
+  };
+}
+
+function routeContractLine(args: {
+  routeContract: AionisAgentContext["route_contract"];
+  compact?: boolean;
+  maxItems: number;
+  maxChars: number;
+}): string | null {
+  if (args.maxItems <= 0 || args.maxChars <= 0) return null;
+  const targets = (rows: Array<{ target: string }>, maxChars: number): string[] =>
+    rows.slice(0, args.maxItems).map((row) => shortenPromptText(row.target, maxChars));
+  const active = targets(args.routeContract.active_targets, args.compact ? 34 : 48);
+  const reference = targets(args.routeContract.reference_only_targets, args.compact ? 28 : 42);
+  const blocked = targets(args.routeContract.blocked_direction_targets, args.compact ? 28 : 42);
+  if (active.length === 0 && reference.length === 0 && blocked.length === 0) return null;
+  const parts = args.compact
+    ? compactStrings([
+        active.length > 0 ? `active=${active.join(",")}` : null,
+        active.length > 0 ? "missing=restore/create/rehydrate" : null,
+        reference.length > 0 ? `ref_only=${reference.join(",")}` : null,
+        blocked.length > 0 ? `block_dir=${blocked.join(",")}` : null,
+        reference.length > 0 || blocked.length > 0 ? "no_fallback_to_ref=1" : null,
+      ])
+    : compactStrings([
+        active.length > 0 ? `active_targets=${active.join(",")}` : null,
+        active.length > 0 ? "if_active_target_missing=restore_or_create_or_rehydrate_before_fallback" : null,
+        reference.length > 0 ? `reference_only_targets=${reference.join(",")}` : null,
+        blocked.length > 0 ? `blocked_direction_targets=${blocked.join(",")}` : null,
+        reference.length > 0 || blocked.length > 0 ? "fallback_policy=do_not_promote_reference_or_blocked_targets" : null,
+      ]);
+  if (parts.length === 0) return null;
+  return shortenPromptText(`${args.compact ? "route" : "route_contract:"} ${parts.join(args.compact ? " " : "; ")}`, args.maxChars);
+}
+
 function renderAgentContextPrompt(args: {
   agentRole: AionisAgentRole;
   summary: string;
@@ -1499,6 +1637,7 @@ function renderAgentContextPrompt(args: {
   inspectBeforeUseMemoryIds: string[];
   doNotUseMemoryIds: string[];
   commandPosture: AionisAgentContext["command_posture"];
+  routeContract: AionisAgentContext["route_contract"];
   profile: AgentContextPromptProfile;
 }): string {
   if (args.profile.style === "contract") return renderExecutionStateContractPrompt(args);
@@ -1521,6 +1660,11 @@ function renderAgentContextPrompt(args: {
     commandPosturePriorityLine({
       commandPosture: args.commandPosture,
       maxChars: 360,
+    }),
+    routeContractLine({
+      routeContract: args.routeContract,
+      maxItems: 4,
+      maxChars: 420,
     }),
     `summary: ${shortenPromptText(args.summary, args.profile.summaryChars)}`,
     inline("target_files", args.targetFiles, args.profile.targetFileItems, args.profile.targetFileChars),
@@ -1856,6 +2000,7 @@ function renderExecutionStateContractPrompt(args: {
   inspectBeforeUseMemoryIds: string[];
   doNotUseMemoryIds: string[];
   commandPosture: AionisAgentContext["command_posture"];
+  routeContract: AionisAgentContext["route_contract"];
   profile: AgentContextPromptProfile;
 }): string {
   const entries = entryById(args.memoryEntries);
@@ -1923,6 +2068,12 @@ function renderExecutionStateContractPrompt(args: {
       commandPosture: args.commandPosture,
       compact: true,
       maxChars: 180,
+    }),
+    routeContractLine({
+      routeContract: args.routeContract,
+      compact: true,
+      maxItems: Math.max(args.profile.targetFileItems, 1),
+      maxChars: 220,
     }),
     contractNextActionLine({
       entry: nextActionEntry,
@@ -2016,6 +2167,7 @@ type BuildAgentContextPromptInput = {
   inspectBeforeUseMemoryIds: string[];
   doNotUseMemoryIds: string[];
   commandPosture: AionisAgentContext["command_posture"];
+  routeContract: AionisAgentContext["route_contract"];
   contextCharBudget?: number | null;
   agentContextMode?: "standard" | "compact_agent" | null;
   contextCompactionProfile?: "balanced" | "aggressive" | null;
@@ -3205,6 +3357,10 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     doNotUseMemoryIds: surfaces.doNotUseMemoryIds,
     rehydrateHints,
   });
+  const routeContract = buildAgentRouteContract({
+    targetFiles: surfaces.targetFiles,
+    commandPosture,
+  });
   const promptResult = buildAgentContextPromptResult({
     agentRole,
     summary,
@@ -3224,6 +3380,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     inspectBeforeUseMemoryIds: surfaces.inspectBeforeUseMemoryIds,
     doNotUseMemoryIds: surfaces.doNotUseMemoryIds,
     commandPosture,
+    routeContract,
     agentContextMode,
     contextCharBudget: args.context_char_budget,
     contextCompactionProfile: args.context_compaction_profile,
@@ -3250,6 +3407,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     inspect_before_use_memory_ids: surfaces.inspectBeforeUseMemoryIds,
     do_not_use_memory_ids: surfaces.doNotUseMemoryIds,
     command_posture: commandPosture,
+    route_contract: routeContract,
     prompt_aliases: promptResult.promptAliases,
     rehydrate_hints: rehydrateHints,
     risk: surfaces.risk,
@@ -3316,6 +3474,10 @@ export function applyAionisInspectBeforeUseActiveProjection(
     doNotUseMemoryIds: args.agent_context.do_not_use_memory_ids,
     rehydrateHints: args.agent_context.rehydrate_hints,
   });
+  const routeContract = buildAgentRouteContract({
+    targetFiles: args.agent_context.target_files,
+    commandPosture,
+  });
   const promptResult = buildAgentContextPromptResult({
     agentRole: args.agent_context.agent_role,
     summary: args.agent_context.summary,
@@ -3335,6 +3497,7 @@ export function applyAionisInspectBeforeUseActiveProjection(
     inspectBeforeUseMemoryIds,
     doNotUseMemoryIds: args.agent_context.do_not_use_memory_ids,
     commandPosture,
+    routeContract,
     agentContextMode: args.agent_context.agent_context_mode,
     contextCharBudget: args.context_char_budget,
     contextCompactionProfile: args.context_compaction_profile,
@@ -3351,6 +3514,7 @@ export function applyAionisInspectBeforeUseActiveProjection(
     use_now_memory_ids: useNowMemoryIds,
     inspect_before_use_memory_ids: inspectBeforeUseMemoryIds,
     command_posture: commandPosture,
+    route_contract: routeContract,
     risk,
   });
 }

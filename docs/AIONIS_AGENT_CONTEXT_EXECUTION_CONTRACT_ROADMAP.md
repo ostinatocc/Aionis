@@ -52,38 +52,64 @@ This phase deliberately does not add an automatic "create missing file" rule.
 Aionis should not decide the concrete action for the Agent; it should preserve
 the governed priority order and make fallback unsafe unless evidence is restored.
 
-## Phase 2: Pending Artifact Schema
+## Phase 2: Route Contract Projection
 
-Deferred scope:
+Implemented scope:
 
-Add a structured representation for active targets that may not exist yet. The
-likely shape is a bounded execution-state field such as:
+Add a structured `agent_context.route_contract` projection. This is still a
+product-output contract, not a new lifecycle gate. It makes the governed route
+machine-readable for SDK, MCP, host adapters, and Agent prompts:
 
 ```json
 {
+  "active_targets": [
+    {
+      "target": "path-or-resource",
+      "source_memory_id": "mem-...",
+      "source": "should_continue",
+      "artifact_status": "may_be_absent",
+      "missing_policy": "restore_or_create_if_task_consistent_or_rehydrate"
+    }
+  ],
   "pending_artifacts": [
     {
-      "artifact": "path-or-resource",
-      "status": "expected_missing",
-      "reason": "accepted continuation has not materialized this target yet",
+      "target": "path-or-resource",
+      "status": "unknown_until_host_observation",
+      "when": "if_active_target_is_missing",
       "source_memory_id": "mem-...",
       "allowed_actions": ["create", "restore", "rehydrate"]
     }
-  ]
+  ],
+  "reference_only_targets": [],
+  "blocked_direction_targets": [],
+  "fallback_policy": "do_not_promote_reference_or_blocked_targets"
 }
 ```
 
-This should be considered only after multiple unrelated E2E runs show the same
-failure mode. If implemented, it must be wired through the existing product path:
+The field is rendered into both standard `AIONIS_AGENT_CONTEXT v1` prompts and
+compact `AIONIS_CTX v2` prompts. The wording is conditional: Aionis does not
+claim a file is missing. It says that if the host observes an active target is
+missing, absence alone is not stale proof; the Agent should restore, create, or
+rehydrate before falling back to reference-only or blocked routes.
 
-1. observe / handoff structuring
-2. execution-state memory packet
-3. guide packet
-4. `agent_context`
-5. SDK and host integration docs
-6. operator/audit surfaces
+Wired product path:
+
+1. execution-state memory packet / command posture
+2. `agent_context.route_contract`
+3. standard and compact Agent prompt rendering
+4. SDK route-contract helpers
+5. MCP structured output
 
 It must not bypass stale, failed, contested, authority, or rehydration gates.
+
+Deferred deeper scope:
+
+1. observe / handoff inputs can eventually mark explicit `pending_artifacts`
+   when the host knows an intended artifact does not exist yet
+2. operator/audit surfaces can summarize route-contract adherence and
+   right-history abandonment as a first-class metric
+3. feedback/measure can attribute deviations from `active_targets` separately
+   from wrong-history direct use
 
 ## Non-Goals
 

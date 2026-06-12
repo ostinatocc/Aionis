@@ -493,6 +493,53 @@ export function parseAionisGuidePacket(value: unknown): AionisGuidePacket {
   return AionisGuidePacketSchema.parse(value);
 }
 
+const AionisRouteContractTargetSchema = z
+  .object({
+    target: z.string().min(1),
+    source_memory_id: z.string().min(1).optional(),
+    source: z.enum(["target_files", "should_continue", "inspect_first", "must_not"]),
+    reason: z.string().min(1).optional(),
+  })
+  .strict();
+
+const AionisRouteContractSchema = z
+  .object({
+    active_targets: z
+      .array(
+        AionisRouteContractTargetSchema.extend({
+          artifact_status: z.enum(["unknown", "may_be_absent"]).default("unknown"),
+          missing_policy: z
+            .literal("restore_or_create_if_task_consistent_or_rehydrate")
+            .default("restore_or_create_if_task_consistent_or_rehydrate"),
+        }).strict(),
+      )
+      .default([]),
+    pending_artifacts: z
+      .array(
+        AionisRouteContractTargetSchema.extend({
+          status: z.literal("unknown_until_host_observation").default("unknown_until_host_observation"),
+          when: z.literal("if_active_target_is_missing").default("if_active_target_is_missing"),
+          allowed_actions: z
+            .array(z.enum(["create", "restore", "rehydrate"]))
+            .default(["create", "restore", "rehydrate"]),
+        }).strict(),
+      )
+      .default([]),
+    reference_only_targets: z.array(AionisRouteContractTargetSchema).default([]),
+    blocked_direction_targets: z.array(AionisRouteContractTargetSchema).default([]),
+    fallback_policy: z
+      .literal("do_not_promote_reference_or_blocked_targets")
+      .default("do_not_promote_reference_or_blocked_targets"),
+  })
+  .strict()
+  .default({
+    active_targets: [],
+    pending_artifacts: [],
+    reference_only_targets: [],
+    blocked_direction_targets: [],
+    fallback_policy: "do_not_promote_reference_or_blocked_targets",
+  });
+
 export const AionisAgentContextSchema = z
   .object({
     contract_version: z.literal("aionis_agent_context_v1"),
@@ -548,6 +595,7 @@ export const AionisAgentContextSchema = z
           .strict(),
       )
       .default([]),
+    route_contract: AionisRouteContractSchema,
     prompt_aliases: z
       .array(
         z

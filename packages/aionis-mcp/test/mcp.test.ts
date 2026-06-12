@@ -58,6 +58,36 @@ function fakeClient(calls: Array<{ method: string; input?: unknown; options?: un
                 target_files: ["src/legacy.ts"],
               },
             ],
+            route_contract: {
+              active_targets: [
+                {
+                  target: "src/checkout.ts",
+                  source_memory_id: "mem-1",
+                  source: "should_continue",
+                  artifact_status: "may_be_absent",
+                  missing_policy: "restore_or_create_if_task_consistent_or_rehydrate",
+                },
+              ],
+              pending_artifacts: [
+                {
+                  target: "src/checkout.ts",
+                  source_memory_id: "mem-1",
+                  source: "should_continue",
+                  status: "unknown_until_host_observation",
+                  when: "if_active_target_is_missing",
+                  allowed_actions: ["create", "restore", "rehydrate"],
+                },
+              ],
+              reference_only_targets: [],
+              blocked_direction_targets: [
+                {
+                  target: "src/legacy.ts",
+                  source_memory_id: "mem-failed",
+                  source: "must_not",
+                },
+              ],
+              fallback_policy: "do_not_promote_reference_or_blocked_targets",
+            },
           },
         };
       },
@@ -146,6 +176,15 @@ test("@aionis/mcp context tool records optional observation then compiles prompt
   assert.deepEqual(output.structuredContent?.should_continue_memory_ids, ["mem-1"]);
   assert.deepEqual(output.structuredContent?.must_not_memory_ids, ["mem-failed"]);
   assert.deepEqual(output.structuredContent?.command_posture_memory_ids, ["mem-1", "mem-failed"]);
+  assert.deepEqual((output.structuredContent?.route_contract as Record<string, unknown>)?.active_targets, [
+    {
+      target: "src/checkout.ts",
+      source_memory_id: "mem-1",
+      source: "should_continue",
+      artifact_status: "may_be_absent",
+      missing_policy: "restore_or_create_if_task_consistent_or_rehydrate",
+    },
+  ]);
   assert.equal((calls[0]?.input as { outcome?: string }).outcome, "unknown");
   assert.equal((calls[1]?.input as { context_mode?: string }).context_mode, "compact_agent");
   assert.equal((calls[1]?.input as { context_char_budget?: number }).context_char_budget, 3000);

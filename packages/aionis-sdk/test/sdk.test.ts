@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  activeRouteTargetsFromGuide,
   agentPromptFromGuide,
+  blockedDirectionRouteTargetsFromGuide,
   commandPostureFromGuide,
   commandPostureMemoryIdsFromGuide,
   createAionisClient,
@@ -9,6 +11,9 @@ import {
   inspectFirstMemoryIdsFromGuide,
   memoryIdsFromGuide,
   mustNotMemoryIdsFromGuide,
+  pendingArtifactTargetsFromGuide,
+  referenceOnlyRouteTargetsFromGuide,
+  routeContractFromGuide,
   shouldContinueMemoryIdsFromGuide,
 } from "../src/index.ts";
 
@@ -83,6 +88,42 @@ test("@aionis/sdk guide helpers keep Agent prompt and feedback attribution bound
           target_files: [],
         },
       ],
+      route_contract: {
+        active_targets: [
+          {
+            target: "src/a.ts",
+            source_memory_id: "mem-1",
+            source: "should_continue",
+            artifact_status: "may_be_absent",
+            missing_policy: "restore_or_create_if_task_consistent_or_rehydrate",
+          },
+        ],
+        pending_artifacts: [
+          {
+            target: "src/a.ts",
+            source_memory_id: "mem-1",
+            source: "should_continue",
+            status: "unknown_until_host_observation",
+            when: "if_active_target_is_missing",
+            allowed_actions: ["create", "restore", "rehydrate"],
+          },
+        ],
+        reference_only_targets: [
+          {
+            target: "src/candidate.ts",
+            source_memory_id: "mem-2",
+            source: "inspect_first",
+          },
+        ],
+        blocked_direction_targets: [
+          {
+            target: "src/old.ts",
+            source_memory_id: "mem-3",
+            source: "must_not",
+          },
+        ],
+        fallback_policy: "do_not_promote_reference_or_blocked_targets",
+      },
     },
     memory_packet: {
       raw: "operator-only",
@@ -96,6 +137,11 @@ test("@aionis/sdk guide helpers keep Agent prompt and feedback attribution bound
   assert.deepEqual(mustNotMemoryIdsFromGuide(guide), ["mem-3"]);
   assert.deepEqual(inspectFirstMemoryIdsFromGuide(guide), ["mem-2"]);
   assert.deepEqual(commandPostureFromGuide(guide, "must_not")[0]?.instruction, "Do not reuse the failed branch.");
+  assert.equal(routeContractFromGuide(guide)?.fallback_policy, "do_not_promote_reference_or_blocked_targets");
+  assert.deepEqual(activeRouteTargetsFromGuide(guide), ["src/a.ts"]);
+  assert.deepEqual(pendingArtifactTargetsFromGuide(guide), ["src/a.ts"]);
+  assert.deepEqual(referenceOnlyRouteTargetsFromGuide(guide), ["src/candidate.ts"]);
+  assert.deepEqual(blockedDirectionRouteTargetsFromGuide(guide), ["src/old.ts"]);
   assert.deepEqual(feedbackFromGuide({
     guide,
     reason: "Agent used mem-1.",

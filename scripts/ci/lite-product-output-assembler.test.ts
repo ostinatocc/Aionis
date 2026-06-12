@@ -682,6 +682,10 @@ test("product agent context contract renderer preserves execution state surfaces
   assert.ok(context.prompt_text.includes("missing_go=restore_or_rehydrate_not_old"));
   assert.ok(context.prompt_text.includes("chk=reference_only_not_primary"));
   assert.ok(context.prompt_text.includes("no=blocked_direction"));
+  assert.ok(context.prompt_text.includes("route active=src/checkout/adapter.ts"));
+  assert.ok(context.prompt_text.includes("missing=restore/create/rehydrate"));
+  assert.ok(context.prompt_text.includes("ref_only=src/checkout/candidate.ts"));
+  assert.ok(context.prompt_text.includes("block_dir=src/legacy/search.ts"));
   assert.ok(context.prompt_text.includes("current: id=m1"));
   assert.ok(context.prompt_text.includes("k=current_state"));
   assert.ok(context.prompt_text.includes("tr=avoid_failed_branch"));
@@ -740,6 +744,13 @@ test("product agent context contract renderer preserves execution state surfaces
     && entry.posture === "rehydrate_first"
     && entry.surface === "rehydrate"
   ));
+  assert.deepEqual(context.route_contract.active_targets.map((entry) => entry.target), ["src/checkout/adapter.ts"]);
+  assert.deepEqual(context.route_contract.pending_artifacts.map((entry) => entry.target), ["src/checkout/adapter.ts"]);
+  assert.equal(context.route_contract.pending_artifacts[0]?.status, "unknown_until_host_observation");
+  assert.deepEqual(context.route_contract.pending_artifacts[0]?.allowed_actions, ["create", "restore", "rehydrate"]);
+  assert.deepEqual(context.route_contract.reference_only_targets.map((entry) => entry.target), ["src/checkout/candidate.ts"]);
+  assert.deepEqual(context.route_contract.blocked_direction_targets.map((entry) => entry.target), ["src/legacy/search.ts"]);
+  assert.equal(context.route_contract.fallback_policy, "do_not_promote_reference_or_blocked_targets");
 
   const standardContext = buildAionisAgentContext({
     tenant_id: "tenant-local",
@@ -751,6 +762,11 @@ test("product agent context contract renderer preserves execution state surfaces
   assert.ok(standardContext.prompt_text.includes("If a SHOULD_CONTINUE target is missing, absence alone is not stale proof"));
   assert.ok(standardContext.prompt_text.includes("INSPECT_FIRST is reference-only evidence and must not replace SHOULD_CONTINUE"));
   assert.ok(standardContext.prompt_text.includes("MUST_NOT blocks direction"));
+  assert.ok(standardContext.prompt_text.includes("route_contract: active_targets=src/checkout/adapter.ts"));
+  assert.ok(standardContext.prompt_text.includes("if_active_target_missing=restore_or_create_or_rehydrate_before_fallback"));
+  assert.ok(standardContext.prompt_text.includes("reference_only_targets=src/checkout/candidate.ts"));
+  assert.ok(standardContext.prompt_text.includes("blocked_direction_targets=src/legacy/search.ts"));
+  assert.ok(standardContext.prompt_text.includes("fallback_policy=do_not_promote_reference_or_blocked_targets"));
 });
 
 test("product agent context keeps explicit rehydrate hints out of use and inspect surfaces", () => {

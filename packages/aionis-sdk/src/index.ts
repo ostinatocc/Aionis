@@ -39,6 +39,30 @@ export type AionisCommandPosture = {
   target_files: string[];
 };
 
+export type AionisRouteContractSource = "target_files" | "should_continue" | "inspect_first" | "must_not";
+export type AionisRouteContractTarget = {
+  target: string;
+  source_memory_id?: string;
+  source: AionisRouteContractSource;
+  reason?: string;
+};
+export type AionisRouteContractActiveTarget = AionisRouteContractTarget & {
+  artifact_status: "unknown" | "may_be_absent";
+  missing_policy: "restore_or_create_if_task_consistent_or_rehydrate";
+};
+export type AionisRouteContractPendingArtifact = AionisRouteContractTarget & {
+  status: "unknown_until_host_observation";
+  when: "if_active_target_is_missing";
+  allowed_actions: Array<"create" | "restore" | "rehydrate">;
+};
+export type AionisRouteContract = {
+  active_targets: AionisRouteContractActiveTarget[];
+  pending_artifacts: AionisRouteContractPendingArtifact[];
+  reference_only_targets: AionisRouteContractTarget[];
+  blocked_direction_targets: AionisRouteContractTarget[];
+  fallback_policy: "do_not_promote_reference_or_blocked_targets";
+};
+
 export type AionisClientOptions = {
   baseUrl: string;
   apiKey?: string;
@@ -362,6 +386,75 @@ function commandPostureArray(value: unknown): AionisCommandPosture[] {
       target_files: stringArray(record.target_files),
     }];
   });
+}
+
+function isRouteContractSource(value: unknown): value is AionisRouteContractSource {
+  return value === "target_files"
+    || value === "should_continue"
+    || value === "inspect_first"
+    || value === "must_not";
+}
+
+function routeContractTargetArray(value: unknown): AionisRouteContractTarget[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const record = asRecord(entry);
+    if (!record || typeof record.target !== "string" || record.target.length === 0 || !isRouteContractSource(record.source)) {
+      return [];
+    }
+    const sourceMemoryId = typeof record.source_memory_id === "string" && record.source_memory_id.length > 0
+      ? record.source_memory_id
+      : undefined;
+    const reason = typeof record.reason === "string" && record.reason.length > 0 ? record.reason : undefined;
+    return [{
+      target: record.target,
+      ...(sourceMemoryId ? { source_memory_id: sourceMemoryId } : {}),
+      source: record.source,
+      ...(reason ? { reason } : {}),
+    }];
+  });
+}
+
+function routeContractActiveTargetArray(value: unknown): AionisRouteContractActiveTarget[] {
+  const records = Array.isArray(value) ? value : [];
+  return routeContractTargetArray(records).map((entry, index) => {
+    const record = asRecord(records[index]);
+    return {
+      ...entry,
+      artifact_status: record?.artifact_status === "may_be_absent" ? "may_be_absent" : "unknown",
+      missing_policy: "restore_or_create_if_task_consistent_or_rehydrate",
+    };
+  });
+}
+
+function routeContractPendingArtifactArray(value: unknown): AionisRouteContractPendingArtifact[] {
+  const records = Array.isArray(value) ? value : [];
+  return routeContractTargetArray(records).map((entry, index) => {
+    const record = asRecord(records[index]);
+    const actions = stringArray(record?.allowed_actions).filter((action): action is "create" | "restore" | "rehydrate" =>
+      action === "create" || action === "restore" || action === "rehydrate"
+    );
+    return {
+      ...entry,
+      status: "unknown_until_host_observation",
+      when: "if_active_target_is_missing",
+      allowed_actions: actions.length > 0 ? actions : ["create", "restore", "rehydrate"],
+    };
+  });
+}
+
+function routeContractMemoryIds(value: unknown): string[] {
+  const contract = asRecord(value);
+  if (!contract) return [];
+  const rows = [
+    ...routeContractTargetArray(contract.active_targets),
+    ...routeContractTargetArray(contract.pending_artifacts),
+    ...routeContractTargetArray(contract.reference_only_targets),
+    ...routeContractTargetArray(contract.blocked_direction_targets),
+  ];
+  return rows
+    .map((entry) => entry.source_memory_id)
+    .filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
 }
 
 function isCommandPostureKind(value: unknown): value is AionisCommandPostureKind {
@@ -891,8 +984,37 @@ export function memoryIdsFromGuide(guide: unknown): string[] {
     ...stringArray(context?.do_not_use_memory_ids),
     ...rehydrateHintMemoryIds(context?.rehydrate_hints),
     ...commandPostureArray(context?.command_posture).map((entry) => entry.memory_id),
+    ...routeContractMemoryIds(context?.route_contract),
   ];
   return Array.from(new Set(ids));
+}
+
+export function routeContractFromGuide(guide: unknown): AionisRouteContract | null {
+  const contract = asRecord(asRecord(agentContextFromGuide(guide))?.route_contract);
+  if (!contract) return null;
+  return {
+    active_targets: routeContractActiveTargetArray(contract.active_targets),
+    pending_artifacts: routeContractPendingArtifactArray(contract.pending_artifacts),
+    reference_only_targets: routeContractTargetArray(contract.reference_only_targets),
+    blocked_direction_targets: routeContractTargetArray(contract.blocked_direction_targets),
+    fallback_policy: "do_not_promote_reference_or_blocked_targets",
+  };
+}
+
+export function activeRouteTargetsFromGuide(guide: unknown): string[] {
+  return routeContractFromGuide(guide)?.active_targets.map((entry) => entry.target) ?? [];
+}
+
+export function pendingArtifactTargetsFromGuide(guide: unknown): string[] {
+  return routeContractFromGuide(guide)?.pending_artifacts.map((entry) => entry.target) ?? [];
+}
+
+export function referenceOnlyRouteTargetsFromGuide(guide: unknown): string[] {
+  return routeContractFromGuide(guide)?.reference_only_targets.map((entry) => entry.target) ?? [];
+}
+
+export function blockedDirectionRouteTargetsFromGuide(guide: unknown): string[] {
+  return routeContractFromGuide(guide)?.blocked_direction_targets.map((entry) => entry.target) ?? [];
 }
 
 export function commandPostureFromGuide(
