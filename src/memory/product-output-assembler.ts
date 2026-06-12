@@ -1463,14 +1463,16 @@ function commandPosturePriorityLine(args: {
     ? compactStrings([
         hasContinue && hasInspect ? "go>chk" : null,
         hasContinue ? "go=primary_next_route" : null,
-        hasInspect ? "chk=risk_only_not_primary" : null,
-        hasMustNot ? "no=blocked" : null,
+        hasContinue ? "missing_go=restore_or_rehydrate_not_old" : null,
+        hasInspect ? "chk=reference_only_not_primary" : null,
+        hasMustNot ? "no=blocked_direction" : null,
         hasRehydrate ? "raw=rehydrate_before_exact_use" : null,
       ])
     : compactStrings([
         hasContinue ? "SHOULD_CONTINUE is the primary next route when present" : null,
-        hasInspect ? "INSPECT_FIRST is risk/evidence only and must not replace SHOULD_CONTINUE" : null,
-        hasMustNot ? "MUST_NOT is blocked" : null,
+        hasContinue ? "If a SHOULD_CONTINUE target is missing, absence alone is not stale proof; restore or create the active target when task-consistent, or rehydrate before falling back" : null,
+        hasInspect ? "INSPECT_FIRST is reference-only evidence and must not replace SHOULD_CONTINUE" : null,
+        hasMustNot ? "MUST_NOT blocks direction; inspect only as counter-evidence when necessary" : null,
         hasRehydrate ? "REHYDRATE_FIRST requires raw evidence before exact use" : null,
       ]);
   if (parts.length === 0) return null;
@@ -1823,11 +1825,16 @@ function contractEntryLine(args: {
     maxChars: args.maxFileChars,
   });
   const gate = args.gate && args.gate !== "use" ? ` gate=${args.gate}` : "";
+  const surfaceConstraint = args.label === "inspect" || args.gate === "inspect"
+    ? args.labelStyle === "compact" ? " ref=1 primary=0" : " reference_only=1 primary=0"
+    : args.label === "avoid"
+      ? args.labelStyle === "compact" ? " dir=blocked ref=counter" : " direction=blocked reference_only=counter_evidence"
+      : "";
   const meta = contractEntryExecutionMeta(args.entry, args.labelStyle);
   const reason = contractEntrySummary(args.entry, args.fallback, args.maxChars);
   if (!id && !files && !reason) return null;
   const note = reason ? ` n=${reason}` : "";
-  return `${args.label}:${id}${files}${gate}${meta}${note}`;
+  return `${args.label}:${id}${files}${gate}${surfaceConstraint}${meta}${note}`;
 }
 
 function renderExecutionStateContractPrompt(args: {
@@ -2675,7 +2682,7 @@ function buildAgentContextCommandPostures(args: {
       posture: "must_not",
       surface: "do_not_use",
       memory_id: memoryId,
-      instruction: "Do not continue, edit from, cite, or revive this memory as usable next-action guidance.",
+      instruction: "Do not continue, extend, cite as authority, or revive this memory as usable next-action guidance; if inspected, treat it only as counter-evidence or reference.",
       reason: entry
         ? `${memoryEntryAuditLabel(entry)} is classified as blocked, failed, stale, suppressed, or do-not-use history.`
         : `${memoryId} is classified as do-not-use history.`,

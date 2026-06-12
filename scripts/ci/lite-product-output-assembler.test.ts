@@ -679,13 +679,16 @@ test("product agent context contract renderer preserves execution state surfaces
   assert.match(context.prompt_text, /cmd .*raw=m\d+/);
   assert.ok(context.prompt_text.includes("priority: go>chk"));
   assert.ok(context.prompt_text.includes("go=primary_next_route"));
-  assert.ok(context.prompt_text.includes("chk=risk_only_not_primary"));
+  assert.ok(context.prompt_text.includes("missing_go=restore_or_rehydrate_not_old"));
+  assert.ok(context.prompt_text.includes("chk=reference_only_not_primary"));
+  assert.ok(context.prompt_text.includes("no=blocked_direction"));
   assert.ok(context.prompt_text.includes("current: id=m1"));
   assert.ok(context.prompt_text.includes("k=current_state"));
   assert.ok(context.prompt_text.includes("tr=avoid_failed_branch"));
   assert.ok(context.prompt_text.includes("tr=request_rehydrate"));
   assert.ok(context.prompt_text.includes("procedure: id=m2"));
-  assert.match(context.prompt_text, /avoid: id=m\d+/);
+  assert.match(context.prompt_text, /inspect: id=m\d+.*ref=1 primary=0/);
+  assert.match(context.prompt_text, /avoid: id=m\d+.*dir=blocked ref=counter/);
   assert.match(context.prompt_text, /rehydrate: id=m\d+/);
   assert.equal(context.prompt_text.includes("m1=mem-contract-current"), false);
   assert.equal(context.prompt_text.includes("mem-contract-failed-branch"), false);
@@ -730,6 +733,7 @@ test("product agent context contract renderer preserves execution state surfaces
     entry.memory_id === "mem-contract-failed-branch"
     && entry.posture === "must_not"
     && entry.surface === "do_not_use"
+    && entry.instruction.includes("counter-evidence or reference")
   ));
   assert.ok(context.command_posture.some((entry) =>
     entry.memory_id === "mem-contract-rehydrate"
@@ -744,8 +748,9 @@ test("product agent context contract renderer preserves execution state surfaces
   });
   assert.ok(standardContext.prompt_text.includes("AIONIS_AGENT_CONTEXT v1"));
   assert.ok(standardContext.prompt_text.includes("execution_contract: SHOULD_CONTINUE is the primary next route when present"));
-  assert.ok(standardContext.prompt_text.includes("INSPECT_FIRST is risk/evidence only and must not replace SHOULD_CONTINUE"));
-  assert.ok(standardContext.prompt_text.includes("MUST_NOT is blocked"));
+  assert.ok(standardContext.prompt_text.includes("If a SHOULD_CONTINUE target is missing, absence alone is not stale proof"));
+  assert.ok(standardContext.prompt_text.includes("INSPECT_FIRST is reference-only evidence and must not replace SHOULD_CONTINUE"));
+  assert.ok(standardContext.prompt_text.includes("MUST_NOT blocks direction"));
 });
 
 test("product agent context keeps explicit rehydrate hints out of use and inspect surfaces", () => {
