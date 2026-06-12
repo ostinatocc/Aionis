@@ -1302,7 +1302,7 @@ const AGENT_CONTEXT_PROMPT_PROFILES: Record<"balanced" | "aggressive" | "tight" 
     doNotUseChars: 42,
     rehydrateItems: 1,
     rehydrateChars: 34,
-    memoryIdItems: 4,
+    memoryIdItems: 5,
     includeMemoryIdMap: false,
   },
   tight: {
@@ -1319,7 +1319,7 @@ const AGENT_CONTEXT_PROMPT_PROFILES: Record<"balanced" | "aggressive" | "tight" 
     doNotUseChars: 38,
     rehydrateItems: 1,
     rehydrateChars: 32,
-    memoryIdItems: 4,
+    memoryIdItems: 5,
     includeMemoryIdMap: false,
   },
   minimal: {
@@ -1336,7 +1336,7 @@ const AGENT_CONTEXT_PROMPT_PROFILES: Record<"balanced" | "aggressive" | "tight" 
     doNotUseChars: 32,
     rehydrateItems: 1,
     rehydrateChars: 28,
-    memoryIdItems: 4,
+    memoryIdItems: 5,
     includeMemoryIdMap: false,
   },
   ids_only: {
@@ -1353,7 +1353,7 @@ const AGENT_CONTEXT_PROMPT_PROFILES: Record<"balanced" | "aggressive" | "tight" 
     doNotUseChars: 0,
     rehydrateItems: 0,
     rehydrateChars: 0,
-    memoryIdItems: 3,
+    memoryIdItems: 5,
     includeMemoryIdMap: true,
   },
 };
@@ -1448,6 +1448,36 @@ function commandPostureLine(args: {
   return shortenPromptText(`${prefix} ${parts.join(" ")}`, args.maxChars);
 }
 
+function commandPosturePriorityLine(args: {
+  commandPosture: AionisAgentContext["command_posture"];
+  compact?: boolean;
+  maxChars: number;
+}): string | null {
+  if (args.maxChars <= 0 || args.commandPosture.length === 0) return null;
+  const postures = new Set(args.commandPosture.map((entry) => entry.posture));
+  const hasContinue = postures.has("should_continue");
+  const hasInspect = postures.has("inspect_first");
+  const hasMustNot = postures.has("must_not");
+  const hasRehydrate = postures.has("rehydrate_first");
+  const parts = args.compact
+    ? compactStrings([
+        hasContinue && hasInspect ? "go>chk" : null,
+        hasContinue ? "go=primary_next_route" : null,
+        hasInspect ? "chk=risk_only_not_primary" : null,
+        hasMustNot ? "no=blocked" : null,
+        hasRehydrate ? "raw=rehydrate_before_exact_use" : null,
+      ])
+    : compactStrings([
+        hasContinue ? "SHOULD_CONTINUE is the primary next route when present" : null,
+        hasInspect ? "INSPECT_FIRST is risk/evidence only and must not replace SHOULD_CONTINUE" : null,
+        hasMustNot ? "MUST_NOT is blocked" : null,
+        hasRehydrate ? "REHYDRATE_FIRST requires raw evidence before exact use" : null,
+      ]);
+  if (parts.length === 0) return null;
+  const prefix = args.compact ? "priority:" : "execution_contract:";
+  return shortenPromptText(`${prefix} ${parts.join("; ")}`, args.maxChars);
+}
+
 function renderAgentContextPrompt(args: {
   agentRole: AionisAgentRole;
   summary: string;
@@ -1484,6 +1514,10 @@ function renderAgentContextPrompt(args: {
     commandPostureLine({
       commandPosture: args.commandPosture,
       maxItems: 4,
+      maxChars: 360,
+    }),
+    commandPosturePriorityLine({
+      commandPosture: args.commandPosture,
       maxChars: 360,
     }),
     `summary: ${shortenPromptText(args.summary, args.profile.summaryChars)}`,
@@ -1877,6 +1911,11 @@ function renderExecutionStateContractPrompt(args: {
       maxItems: args.profile.memoryIdItems,
       maxChars: 220,
       compact: true,
+    }),
+    commandPosturePriorityLine({
+      commandPosture: args.commandPosture,
+      compact: true,
+      maxChars: 180,
     }),
     contractNextActionLine({
       entry: nextActionEntry,
@@ -2662,7 +2701,7 @@ function buildAgentContextCommandPostures(args: {
       posture: "inspect_first",
       surface: "inspect_before_use",
       memory_id: memoryId,
-      instruction: "Inspect current code, evidence, or operator state before acting from this memory.",
+      instruction: "Inspect only as risk or evidence; do not use as the primary implementation route or override should_continue guidance.",
       reason: `${label(memoryId)} is candidate, contested, stale-risk, or otherwise not direct-use safe.`,
       target_files: entryFiles(entry),
     });

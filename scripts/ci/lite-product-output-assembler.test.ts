@@ -562,6 +562,34 @@ test("product agent context contract renderer preserves execution state surfaces
         salience: 0.9,
       },
       {
+        id: "mem-contract-contested",
+        type: "concept",
+        title: "Checkout candidate branch requires inspection",
+        text_summary: "Candidate branch touches src/checkout/candidate.ts and must only be inspected as risk evidence.",
+        tier: "warm",
+        slots: {
+          memory_kind: "execution_state",
+          lifecycle_state: "contested",
+          compression_layer: "L2",
+          contract_trust: "advisory",
+          execution_native_v1: {
+            schema_version: "execution_native_v1",
+            execution_kind: "execution_native",
+            summary_kind: "current_state",
+            compression_layer: "L2",
+            contract_trust: "advisory",
+            task_signature: "checkout-contract-renderer",
+            workflow_signature: "checkout-contract-renderer:candidate",
+            anchor_kind: "execution",
+            anchor_level: "L2",
+            target_files: ["src/checkout/candidate.ts"],
+            next_action: "Inspect current code before considering this candidate branch.",
+          },
+        },
+        confidence: 0.74,
+        salience: 0.82,
+      },
+      {
         id: "mem-contract-failed-branch",
         type: "concept",
         title: "Checkout broad search failed branch",
@@ -646,8 +674,12 @@ test("product agent context contract renderer preserves execution state surfaces
   assert.ok(context.prompt_text.includes("role=worker"));
   assert.ok(context.prompt_text.includes("to=reviewer"));
   assert.match(context.prompt_text, /cmd .*go=m1/);
+  assert.match(context.prompt_text, /cmd .*chk=m\d+/);
   assert.match(context.prompt_text, /cmd .*no=m\d+/);
   assert.match(context.prompt_text, /cmd .*raw=m\d+/);
+  assert.ok(context.prompt_text.includes("priority: go>chk"));
+  assert.ok(context.prompt_text.includes("go=primary_next_route"));
+  assert.ok(context.prompt_text.includes("chk=risk_only_not_primary"));
   assert.ok(context.prompt_text.includes("current: id=m1"));
   assert.ok(context.prompt_text.includes("k=current_state"));
   assert.ok(context.prompt_text.includes("tr=avoid_failed_branch"));
@@ -668,12 +700,14 @@ test("product agent context contract renderer preserves execution state surfaces
     memory_id: "mem-contract-procedure",
     surface: "procedure",
   });
+  assert.equal(aliasesByMemoryId.get("mem-contract-contested")?.surface, "inspect");
   assert.equal(aliasesByMemoryId.get("mem-contract-failed-branch")?.surface, "avoid");
   assert.equal(aliasesByMemoryId.get("mem-contract-rehydrate")?.surface, "rehydrate");
   assert.ok(context.memory_ids.includes("mem-contract-current"));
   assert.ok(context.memory_ids.includes("mem-contract-procedure"));
   assert.ok(context.use_now_memory_ids.includes("mem-contract-current"));
   assert.ok(context.use_now_memory_ids.includes("mem-contract-procedure"));
+  assert.ok(context.inspect_before_use_memory_ids.includes("mem-contract-contested"));
   assert.ok(context.do_not_use_memory_ids.includes("mem-contract-failed-branch"));
   assert.ok(context.rehydrate_hints.some((entry) => entry.memory_id === "mem-contract-rehydrate"));
   assert.ok(context.command_posture.some((entry) =>
@@ -687,6 +721,12 @@ test("product agent context contract renderer preserves execution state surfaces
     && entry.surface === "procedure"
   ));
   assert.ok(context.command_posture.some((entry) =>
+    entry.memory_id === "mem-contract-contested"
+    && entry.posture === "inspect_first"
+    && entry.surface === "inspect_before_use"
+    && entry.instruction.includes("do not use as the primary implementation route")
+  ));
+  assert.ok(context.command_posture.some((entry) =>
     entry.memory_id === "mem-contract-failed-branch"
     && entry.posture === "must_not"
     && entry.surface === "do_not_use"
@@ -696,6 +736,16 @@ test("product agent context contract renderer preserves execution state surfaces
     && entry.posture === "rehydrate_first"
     && entry.surface === "rehydrate"
   ));
+
+  const standardContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+  assert.ok(standardContext.prompt_text.includes("AIONIS_AGENT_CONTEXT v1"));
+  assert.ok(standardContext.prompt_text.includes("execution_contract: SHOULD_CONTINUE is the primary next route when present"));
+  assert.ok(standardContext.prompt_text.includes("INSPECT_FIRST is risk/evidence only and must not replace SHOULD_CONTINUE"));
+  assert.ok(standardContext.prompt_text.includes("MUST_NOT is blocked"));
 });
 
 test("product agent context keeps explicit rehydrate hints out of use and inspect surfaces", () => {

@@ -41,6 +41,7 @@
     "runtime:e2e:ordinary-memory": "npx tsx scripts/e2e/ordinary-memory-product-loop.ts",
     "runtime:e2e:golden-product-loop": "npx tsx scripts/e2e/golden-product-loop.ts",
     "runtime:e2e:judgment-calibration": "npx tsx scripts/e2e/judgment-calibration-product-loop.ts",
+    "runtime:e2e:command-posture": "npm run -s packages:build && npx tsx scripts/e2e/command-posture-product-loop.ts",
     "runtime:e2e:single-agent-host-template": "npx tsx scripts/e2e/single-agent-host-template-loop.ts",
     "runtime:e2e:multi-agent": "npx tsx scripts/e2e/multi-agent-execution-memory-loop.ts",
     "runtime:e2e:multi-agent-host-template": "npx tsx scripts/e2e/multi-agent-host-template-loop.ts",
