@@ -7,9 +7,11 @@ import {
   agentContextFromGuide,
   agentPromptFromGuide,
   blockedDirectionRouteTargetsFromGuide,
+  blockedRoutesFromGuide,
   commandPostureFromGuide,
   commandPostureMemoryIdsFromGuide,
   createAionisClient,
+  evidenceSourcesFromGuide,
   feedbackFromGuide,
   mustNotMemoryIdsFromGuide,
   measureInputFromGuideLoop,
@@ -275,6 +277,24 @@ test("SDK product-loop helpers keep guide feedback attribution explicit", () => 
             source: "must_not",
           },
         ],
+        evidence_sources: [
+          {
+            target: "src/reference.ts",
+            source_memory_id: "mem-6",
+            source: "inspect_first",
+            evidence_use: "reference_only",
+            direction_policy: "must_not_be_primary_route",
+          },
+        ],
+        blocked_routes: [
+          {
+            target: "src/stale.ts",
+            source_memory_id: "mem-5",
+            source: "must_not",
+            direction_policy: "blocked_route",
+            evidence_use: "counter_evidence_only",
+          },
+        ],
         fallback_policy: "do_not_promote_reference_or_blocked_targets",
       },
     },
@@ -293,6 +313,10 @@ test("SDK product-loop helpers keep guide feedback attribution explicit", () => 
   assert.deepEqual(pendingArtifactTargetsFromGuide(guide), ["src/current.ts"]);
   assert.deepEqual(referenceOnlyRouteTargetsFromGuide(guide), ["src/reference.ts"]);
   assert.deepEqual(blockedDirectionRouteTargetsFromGuide(guide), ["src/stale.ts"]);
+  assert.deepEqual(evidenceSourcesFromGuide(guide).map((entry) => entry.target), ["src/reference.ts"]);
+  assert.deepEqual(blockedRoutesFromGuide(guide).map((entry) => entry.target), ["src/stale.ts"]);
+  assert.equal(evidenceSourcesFromGuide(guide)[0]?.direction_policy, "must_not_be_primary_route");
+  assert.equal(blockedRoutesFromGuide(guide)[0]?.evidence_use, "counter_evidence_only");
   assert.deepEqual(feedbackFromGuide({
     guide,
     reason: "Agent used mem-1 successfully.",

@@ -264,7 +264,7 @@ async function main() {
     assertPromptBoundary(String(context.prompt_text), "command posture guide");
     assertCondition(promptText.includes("priority: go>chk"), "compact command posture prompt missing go-before-inspect priority");
     assertCondition(promptText.includes("go=primary_next_route"), "compact command posture prompt missing primary route instruction");
-    assertCondition(promptText.includes("chk=risk_only_not_primary"), "compact command posture prompt missing inspect-only instruction");
+    assertCondition(promptText.includes("chk=reference_only_not_primary"), "compact command posture prompt missing inspect-only instruction");
     assertCommandPosture(rows, currentId, "should_continue", "SDK guide command posture");
     assertCommandPosture(rows, failedId, "must_not", "SDK guide command posture");
     assertCommandPosture(rows, contestedId, "inspect_first", "SDK guide command posture");
@@ -311,7 +311,7 @@ async function main() {
       "standard command posture prompt missing SHOULD_CONTINUE priority contract",
     );
     assertCondition(
-      standardPrompt.includes("INSPECT_FIRST is risk/evidence only and must not replace SHOULD_CONTINUE"),
+      standardPrompt.includes("INSPECT_FIRST is reference-only evidence and must not replace SHOULD_CONTINUE"),
       "standard command posture prompt missing inspect-only priority contract",
     );
 

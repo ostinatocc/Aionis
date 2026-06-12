@@ -85,6 +85,8 @@ machine-readable for SDK, MCP, host adapters, and Agent prompts:
   ],
   "reference_only_targets": [],
   "blocked_direction_targets": [],
+  "evidence_sources": [],
+  "blocked_routes": [],
   "conflict_policy": "do_not_treat_missing_active_target_as_superseded",
   "fallback_policy": "do_not_promote_reference_or_blocked_targets",
   "action_policy": {
@@ -152,6 +154,30 @@ Wired product path:
 5. MCP structured output
 
 It must not bypass stale, failed, contested, authority, or rehydration gates.
+
+## Phase 5: Structured Evidence And Blocked Route Projection
+
+Implemented scope:
+
+1. Keep the existing lifecycle, authority, premise, and rehydration gates
+   unchanged.
+2. Keep `reference_only_targets` and `blocked_direction_targets` for backwards
+   compatibility.
+3. Add explicit host-facing aliases:
+   - `route_contract.evidence_sources`
+   - `route_contract.blocked_routes`
+4. Use the aliases to expose the same route semantics that external Agent E2E
+   already measures as `active_target`, `evidence_source`, and blocked route
+   behavior.
+
+This phase avoids adding more prompt-level constraints. It makes the distinction
+machine-readable:
+
+1. `active_targets` are the governed continuation route.
+2. `pending_artifacts` tell the host what to do if an active target is absent.
+3. `evidence_sources` are readable reference evidence, not the primary route.
+4. `blocked_routes` are blocked directions that can only be used as
+   counter-evidence.
 
 Deferred deeper scope:
 

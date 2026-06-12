@@ -58,6 +58,14 @@ export type AionisRouteContractPendingArtifact = AionisRouteContractTarget & {
   preferred_action_order: AionisRouteContractMissingActiveAction[];
   terminal_inspect_allowed: false;
 };
+export type AionisRouteContractEvidenceSource = AionisRouteContractTarget & {
+  evidence_use: "reference_only";
+  direction_policy: "must_not_be_primary_route";
+};
+export type AionisRouteContractBlockedRoute = AionisRouteContractTarget & {
+  direction_policy: "blocked_route";
+  evidence_use: "counter_evidence_only";
+};
 export type AionisRouteContractActionPolicy = {
   missing_active_target_preferred_order: AionisRouteContractMissingActiveAction[];
   terminal_inspect_allowed: false;
@@ -68,6 +76,8 @@ export type AionisRouteContract = {
   pending_artifacts: AionisRouteContractPendingArtifact[];
   reference_only_targets: AionisRouteContractTarget[];
   blocked_direction_targets: AionisRouteContractTarget[];
+  evidence_sources: AionisRouteContractEvidenceSource[];
+  blocked_routes: AionisRouteContractBlockedRoute[];
   conflict_policy: "do_not_treat_missing_active_target_as_superseded";
   fallback_policy: "do_not_promote_reference_or_blocked_targets";
   action_policy: AionisRouteContractActionPolicy;
@@ -458,6 +468,22 @@ function routeContractPendingArtifactArray(value: unknown): AionisRouteContractP
   });
 }
 
+function routeContractEvidenceSourceArray(value: unknown): AionisRouteContractEvidenceSource[] {
+  return routeContractTargetArray(value).map((entry) => ({
+    ...entry,
+    evidence_use: "reference_only",
+    direction_policy: "must_not_be_primary_route",
+  }));
+}
+
+function routeContractBlockedRouteArray(value: unknown): AionisRouteContractBlockedRoute[] {
+  return routeContractTargetArray(value).map((entry) => ({
+    ...entry,
+    direction_policy: "blocked_route",
+    evidence_use: "counter_evidence_only",
+  }));
+}
+
 function routeContractActionPolicy(value: unknown): AionisRouteContractActionPolicy {
   const record = asRecord(value);
   const preferred = stringArray(record?.missing_active_target_preferred_order).filter((action): action is AionisRouteContractMissingActiveAction =>
@@ -478,6 +504,8 @@ function routeContractMemoryIds(value: unknown): string[] {
     ...routeContractTargetArray(contract.pending_artifacts),
     ...routeContractTargetArray(contract.reference_only_targets),
     ...routeContractTargetArray(contract.blocked_direction_targets),
+    ...routeContractTargetArray(contract.evidence_sources),
+    ...routeContractTargetArray(contract.blocked_routes),
   ];
   return rows
     .map((entry) => entry.source_memory_id)
@@ -1024,6 +1052,12 @@ export function routeContractFromGuide(guide: unknown): AionisRouteContract | nu
     pending_artifacts: routeContractPendingArtifactArray(contract.pending_artifacts),
     reference_only_targets: routeContractTargetArray(contract.reference_only_targets),
     blocked_direction_targets: routeContractTargetArray(contract.blocked_direction_targets),
+    evidence_sources: routeContractEvidenceSourceArray(
+      Array.isArray(contract.evidence_sources) ? contract.evidence_sources : contract.reference_only_targets,
+    ),
+    blocked_routes: routeContractBlockedRouteArray(
+      Array.isArray(contract.blocked_routes) ? contract.blocked_routes : contract.blocked_direction_targets,
+    ),
     conflict_policy: "do_not_treat_missing_active_target_as_superseded",
     fallback_policy: "do_not_promote_reference_or_blocked_targets",
     action_policy: routeContractActionPolicy(contract.action_policy),
@@ -1044,6 +1078,14 @@ export function referenceOnlyRouteTargetsFromGuide(guide: unknown): string[] {
 
 export function blockedDirectionRouteTargetsFromGuide(guide: unknown): string[] {
   return routeContractFromGuide(guide)?.blocked_direction_targets.map((entry) => entry.target) ?? [];
+}
+
+export function evidenceSourcesFromGuide(guide: unknown): AionisRouteContractEvidenceSource[] {
+  return routeContractFromGuide(guide)?.evidence_sources ?? [];
+}
+
+export function blockedRoutesFromGuide(guide: unknown): AionisRouteContractBlockedRoute[] {
+  return routeContractFromGuide(guide)?.blocked_routes ?? [];
 }
 
 export function commandPostureFromGuide(

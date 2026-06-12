@@ -131,7 +131,14 @@ For a host loop, the most common posture helpers are:
 const mustNot = mustNotMemoryIdsFromGuide(guide);
 const shouldContinue = shouldContinueMemoryIdsFromGuide(guide);
 const posture = commandPostureFromGuide(guide);
+const route = routeContractFromGuide(guide);
+const evidence = evidenceSourcesFromGuide(guide);
+const blocked = blockedRoutesFromGuide(guide);
 ```
 
 These helpers read only `agent_context`. They do not expose `memory_packet`,
 `guide_packet`, traces, or operator-only evidence to the Agent.
+`routeContractFromGuide` exposes the structured execution contract:
+`active_targets` are the continuation route, `pending_artifacts` describe
+missing-active-target handling, `evidence_sources` are reference-only evidence,
+and `blocked_routes` are counter-evidence only.

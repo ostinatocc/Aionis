@@ -295,6 +295,20 @@ function validAgentContext() {
       ],
       reference_only_targets: [],
       blocked_direction_targets: [],
+      evidence_sources: [
+        {
+          target: "src/reference.ts",
+          source_memory_id: "mem-3",
+          source: "inspect_first",
+        },
+      ],
+      blocked_routes: [
+        {
+          target: "src/legacy.ts",
+          source_memory_id: "mem-2",
+          source: "must_not",
+        },
+      ],
       fallback_policy: "do_not_promote_reference_or_blocked_targets",
       action_policy: {
         missing_active_target_preferred_order: ["create", "restore", "rehydrate", "report_conflict"],
@@ -846,6 +860,24 @@ test("AionisAgentContext accepts compact agent-facing output", () => {
   assert.deepEqual(parsed.route_contract.pending_artifacts[0]?.allowed_actions, ["create", "restore", "rehydrate", "report_conflict"]);
   assert.deepEqual(parsed.route_contract.pending_artifacts[0]?.preferred_action_order, ["create", "restore", "rehydrate", "report_conflict"]);
   assert.equal(parsed.route_contract.pending_artifacts[0]?.terminal_inspect_allowed, false);
+  assert.deepEqual(parsed.route_contract.evidence_sources, [
+    {
+      target: "src/reference.ts",
+      source_memory_id: "mem-3",
+      source: "inspect_first",
+      evidence_use: "reference_only",
+      direction_policy: "must_not_be_primary_route",
+    },
+  ]);
+  assert.deepEqual(parsed.route_contract.blocked_routes, [
+    {
+      target: "src/legacy.ts",
+      source_memory_id: "mem-2",
+      source: "must_not",
+      direction_policy: "blocked_route",
+      evidence_use: "counter_evidence_only",
+    },
+  ]);
   assert.equal(parsed.route_contract.conflict_policy, "do_not_treat_missing_active_target_as_superseded");
   assert.equal(parsed.route_contract.fallback_policy, "do_not_promote_reference_or_blocked_targets");
   assert.deepEqual(parsed.route_contract.action_policy.missing_active_target_preferred_order, ["create", "restore", "rehydrate", "report_conflict"]);
@@ -872,6 +904,8 @@ test("AionisAgentContext accepts compact agent-facing output", () => {
     route_contract: undefined,
   });
   assert.deepEqual(defaultRouteParsed.route_contract.active_targets, []);
+  assert.deepEqual(defaultRouteParsed.route_contract.evidence_sources, []);
+  assert.deepEqual(defaultRouteParsed.route_contract.blocked_routes, []);
   assert.equal(defaultRouteParsed.route_contract.conflict_policy, "do_not_treat_missing_active_target_as_superseded");
   assert.deepEqual(defaultRouteParsed.route_contract.action_policy.missing_active_target_preferred_order, ["create", "restore", "rehydrate", "report_conflict"]);
 });

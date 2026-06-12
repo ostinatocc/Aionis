@@ -757,6 +757,26 @@ test("product agent context contract renderer preserves execution state surfaces
   assert.equal(context.route_contract.pending_artifacts[0]?.terminal_inspect_allowed, false);
   assert.deepEqual(context.route_contract.reference_only_targets.map((entry) => entry.target), ["src/checkout/candidate.ts"]);
   assert.deepEqual(context.route_contract.blocked_direction_targets.map((entry) => entry.target), ["src/legacy/search.ts"]);
+  assert.deepEqual(context.route_contract.evidence_sources, [
+    {
+      target: "src/checkout/candidate.ts",
+      source_memory_id: "mem-contract-contested",
+      source: "inspect_first",
+      reason: "Inspect only as risk or evidence; do not use as the primary implementation route or override should_continue guidance.",
+      evidence_use: "reference_only",
+      direction_policy: "must_not_be_primary_route",
+    },
+  ]);
+  assert.deepEqual(context.route_contract.blocked_routes, [
+    {
+      target: "src/legacy/search.ts",
+      source_memory_id: "mem-contract-failed-branch",
+      source: "must_not",
+      reason: "Do not continue, extend, cite as authority, or revive this memory as usable next-action guidance; if inspected, treat it only as counter-evidence or reference.",
+      direction_policy: "blocked_route",
+      evidence_use: "counter_evidence_only",
+    },
+  ]);
   assert.equal(context.route_contract.conflict_policy, "do_not_treat_missing_active_target_as_superseded");
   assert.equal(context.route_contract.fallback_policy, "do_not_promote_reference_or_blocked_targets");
   assert.deepEqual(context.route_contract.action_policy.missing_active_target_preferred_order, ["create", "restore", "rehydrate", "report_conflict"]);

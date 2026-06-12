@@ -1505,9 +1505,13 @@ function buildAgentRouteContract(args: {
   const pendingArtifacts: AionisAgentContext["route_contract"]["pending_artifacts"] = [];
   const referenceOnlyTargets: AionisAgentContext["route_contract"]["reference_only_targets"] = [];
   const blockedDirectionTargets: AionisAgentContext["route_contract"]["blocked_direction_targets"] = [];
+  const evidenceSources: AionisAgentContext["route_contract"]["evidence_sources"] = [];
+  const blockedRoutes: AionisAgentContext["route_contract"]["blocked_routes"] = [];
   const activeSeen = new Set<string>();
   const referenceSeen = new Set<string>();
   const blockedSeen = new Set<string>();
+  const evidenceSeen = new Set<string>();
+  const blockedRouteSeen = new Set<string>();
   const explicitTargetSet = new Set(args.targetFiles.map((target) => target.trim().toLowerCase()).filter(Boolean));
   const shouldContinueEntries = args.commandPosture.filter((entry) =>
     entry.posture === "should_continue"
@@ -1575,8 +1579,18 @@ function buildAgentRouteContract(args: {
       } as const;
       if (source === "inspect_first") {
         pushUniqueRouteTarget(referenceOnlyTargets, referenceSeen, row, 6);
+        pushUniqueRouteTarget(evidenceSources, evidenceSeen, {
+          ...row,
+          evidence_use: "reference_only",
+          direction_policy: "must_not_be_primary_route",
+        }, 6);
       } else {
         pushUniqueRouteTarget(blockedDirectionTargets, blockedSeen, row, 6);
+        pushUniqueRouteTarget(blockedRoutes, blockedRouteSeen, {
+          ...row,
+          direction_policy: "blocked_route",
+          evidence_use: "counter_evidence_only",
+        }, 6);
       }
     }
   }
@@ -1586,6 +1600,8 @@ function buildAgentRouteContract(args: {
     pending_artifacts: pendingArtifacts,
     reference_only_targets: referenceOnlyTargets,
     blocked_direction_targets: blockedDirectionTargets,
+    evidence_sources: evidenceSources,
+    blocked_routes: blockedRoutes,
     conflict_policy: "do_not_treat_missing_active_target_as_superseded",
     fallback_policy: "do_not_promote_reference_or_blocked_targets",
     action_policy: {

@@ -442,6 +442,22 @@ type AionisAgentContext = {
       source: "target_files" | "should_continue" | "inspect_first" | "must_not";
       reason?: string;
     }>;
+    evidence_sources: Array<{
+      target: string;
+      source_memory_id?: string;
+      source: "target_files" | "should_continue" | "inspect_first" | "must_not";
+      evidence_use: "reference_only";
+      direction_policy: "must_not_be_primary_route";
+      reason?: string;
+    }>;
+    blocked_routes: Array<{
+      target: string;
+      source_memory_id?: string;
+      source: "target_files" | "should_continue" | "inspect_first" | "must_not";
+      direction_policy: "blocked_route";
+      evidence_use: "counter_evidence_only";
+      reason?: string;
+    }>;
     conflict_policy: "do_not_treat_missing_active_target_as_superseded";
     fallback_policy: "do_not_promote_reference_or_blocked_targets";
     action_policy: {
@@ -508,6 +524,14 @@ evidence, but must not be the final answer when an active route is clear. The
 conflict policy means absence alone must not silently supersede the active
 route; the Agent should create, restore, rehydrate, or report the conflict
 before falling back to an old or reference-only route.
+
+`evidence_sources` and `blocked_routes` are structured aliases over the same
+governed surfaces. `evidence_sources` are readable reference evidence, not
+primary execution routes. `blocked_routes` are blocked directions; they may be
+useful as counter-evidence but must not be revived as the active route. These
+fields exist for SDK, MCP, and host adapters that want explicit
+`active_target` / `evidence_source` / `blocked_route` semantics without parsing
+prompt text.
 
 `agent_context_mode` describes how the Agent prompt was rendered. `standard` is
 the default. `compact_agent` is an opt-in token-sensitive rendering that keeps

@@ -502,6 +502,16 @@ const AionisRouteContractTargetSchema = z
   })
   .strict();
 
+const AionisRouteContractEvidenceSourceSchema = AionisRouteContractTargetSchema.extend({
+  evidence_use: z.literal("reference_only").default("reference_only"),
+  direction_policy: z.literal("must_not_be_primary_route").default("must_not_be_primary_route"),
+}).strict();
+
+const AionisRouteContractBlockedRouteSchema = AionisRouteContractTargetSchema.extend({
+  direction_policy: z.literal("blocked_route").default("blocked_route"),
+  evidence_use: z.literal("counter_evidence_only").default("counter_evidence_only"),
+}).strict();
+
 const AionisRouteContractMissingActiveActionSchema = z.enum(["create", "restore", "rehydrate", "report_conflict"]);
 const AionisRouteContractMissingActiveActionOrder = ["create", "restore", "rehydrate", "report_conflict"] as const;
 const AionisRouteContractActionPolicySchema = z
@@ -550,6 +560,8 @@ const AionisRouteContractSchema = z
       .default([]),
     reference_only_targets: z.array(AionisRouteContractTargetSchema).default([]),
     blocked_direction_targets: z.array(AionisRouteContractTargetSchema).default([]),
+    evidence_sources: z.array(AionisRouteContractEvidenceSourceSchema).default([]),
+    blocked_routes: z.array(AionisRouteContractBlockedRouteSchema).default([]),
     conflict_policy: z
       .literal("do_not_treat_missing_active_target_as_superseded")
       .default("do_not_treat_missing_active_target_as_superseded"),
@@ -564,6 +576,8 @@ const AionisRouteContractSchema = z
     pending_artifacts: [],
     reference_only_targets: [],
     blocked_direction_targets: [],
+    evidence_sources: [],
+    blocked_routes: [],
     conflict_policy: "do_not_treat_missing_active_target_as_superseded",
     fallback_policy: "do_not_promote_reference_or_blocked_targets",
     action_policy: {

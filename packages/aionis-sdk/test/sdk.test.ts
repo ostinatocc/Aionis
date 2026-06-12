@@ -4,9 +4,11 @@ import {
   activeRouteTargetsFromGuide,
   agentPromptFromGuide,
   blockedDirectionRouteTargetsFromGuide,
+  blockedRoutesFromGuide,
   commandPostureFromGuide,
   commandPostureMemoryIdsFromGuide,
   createAionisClient,
+  evidenceSourcesFromGuide,
   feedbackFromGuide,
   inspectFirstMemoryIdsFromGuide,
   memoryIdsFromGuide,
@@ -124,6 +126,24 @@ test("@aionis/sdk guide helpers keep Agent prompt and feedback attribution bound
             source: "must_not",
           },
         ],
+        evidence_sources: [
+          {
+            target: "src/candidate.ts",
+            source_memory_id: "mem-2",
+            source: "inspect_first",
+            evidence_use: "reference_only",
+            direction_policy: "must_not_be_primary_route",
+          },
+        ],
+        blocked_routes: [
+          {
+            target: "src/old.ts",
+            source_memory_id: "mem-3",
+            source: "must_not",
+            direction_policy: "blocked_route",
+            evidence_use: "counter_evidence_only",
+          },
+        ],
         fallback_policy: "do_not_promote_reference_or_blocked_targets",
       },
     },
@@ -147,6 +167,24 @@ test("@aionis/sdk guide helpers keep Agent prompt and feedback attribution bound
   assert.deepEqual(pendingArtifactTargetsFromGuide(guide), ["src/a.ts"]);
   assert.deepEqual(referenceOnlyRouteTargetsFromGuide(guide), ["src/candidate.ts"]);
   assert.deepEqual(blockedDirectionRouteTargetsFromGuide(guide), ["src/old.ts"]);
+  assert.deepEqual(evidenceSourcesFromGuide(guide), [
+    {
+      target: "src/candidate.ts",
+      source_memory_id: "mem-2",
+      source: "inspect_first",
+      evidence_use: "reference_only",
+      direction_policy: "must_not_be_primary_route",
+    },
+  ]);
+  assert.deepEqual(blockedRoutesFromGuide(guide), [
+    {
+      target: "src/old.ts",
+      source_memory_id: "mem-3",
+      source: "must_not",
+      direction_policy: "blocked_route",
+      evidence_use: "counter_evidence_only",
+    },
+  ]);
   assert.deepEqual(feedbackFromGuide({
     guide,
     reason: "Agent used mem-1.",
