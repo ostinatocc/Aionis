@@ -60,6 +60,66 @@ test("recall access trust adjustment penalizes open counter evidence via resolve
   );
 });
 
+test("recall access trust adjustment promotes passed execution workflow anchors", () => {
+  assert.equal(
+    adjustRecallCandidateSimilarityForTrust({
+      type: "procedure",
+      slots: {
+        execution_native_v1: {
+          execution_kind: "workflow_anchor",
+          execution_outcome_role: "passed_solution",
+          execution_contract_v1: {
+            schema_version: "execution_contract_v1",
+            contract_trust: "advisory",
+          },
+        },
+      },
+      similarity: 0.5,
+    }),
+    0.66,
+  );
+});
+
+test("recall access trust adjustment demotes unknown advisory workflow anchors", () => {
+  assert.equal(
+    adjustRecallCandidateSimilarityForTrust({
+      type: "procedure",
+      slots: {
+        execution_native_v1: {
+          execution_kind: "workflow_anchor",
+          execution_outcome_role: "unknown",
+          execution_contract_v1: {
+            schema_version: "execution_contract_v1",
+            contract_trust: "advisory",
+          },
+        },
+      },
+      similarity: 0.5,
+    }),
+    0.42,
+  );
+});
+
+test("recall access trust adjustment demotes failed workflow anchors", () => {
+  assert.equal(
+    adjustRecallCandidateSimilarityForTrust({
+      type: "procedure",
+      slots: {
+        execution_native_v1: {
+          execution_kind: "workflow_anchor",
+          execution_outcome_role: "failed_branch",
+          execution_contract_v1: {
+            schema_version: "execution_contract_v1",
+            contract_trust: "advisory",
+          },
+        },
+      },
+      similarity: 0.5,
+    }),
+    0.26,
+  );
+});
+
 test("recall access trust adjustment does not read slot schema fields directly", () => {
   const source = fs.readFileSync(path.join(ROOT, "src/store/recall-access.ts"), "utf8");
   const match = source.match(/export function adjustRecallCandidateSimilarityForTrust[\s\S]*?\n}\n/);

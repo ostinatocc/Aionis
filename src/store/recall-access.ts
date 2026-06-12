@@ -1,4 +1,9 @@
-import { resolveNodePatternExecutionSurface } from "../memory/node-execution-surface.js";
+import {
+  resolveNodeAnchorKind,
+  resolveNodeExecutionContractTrust,
+  resolveNodeExecutionOutcomeRole,
+  resolveNodePatternExecutionSurface,
+} from "../memory/node-execution-surface.js";
 
 export const RECALL_STORE_ACCESS_CAPABILITY_VERSION = 2 as const;
 
@@ -160,15 +165,28 @@ export function adjustRecallCandidateSimilarityForTrust(args: {
 }): number {
   const slots = asRecord(args.slots);
   const patternSurface = resolveNodePatternExecutionSurface({ slots });
-  if (patternSurface.anchor_kind !== "pattern") return args.similarity;
-  const patternState = patternSurface.pattern_state === "stable" ? "stable" : "provisional";
-  if (patternSurface.promotion.counter_evidence_open) {
-    return clampSimilarity(args.similarity - 0.12);
+  if (patternSurface.anchor_kind === "pattern") {
+    const patternState = patternSurface.pattern_state === "stable" ? "stable" : "provisional";
+    if (patternSurface.promotion.counter_evidence_open) {
+      return clampSimilarity(args.similarity - 0.12);
+    }
+    if (patternState === "stable") {
+      return clampSimilarity(args.similarity + 0.08);
+    }
+    return clampSimilarity(args.similarity - 0.05);
   }
-  if (patternState === "stable") {
-    return clampSimilarity(args.similarity + 0.08);
+
+  if (resolveNodeAnchorKind(slots) === "workflow") {
+    const outcomeRole = resolveNodeExecutionOutcomeRole(slots);
+    const contractTrust = resolveNodeExecutionContractTrust({ slots });
+    let adjusted = args.similarity;
+    if (outcomeRole === "passed_solution") adjusted += 0.16;
+    else if (outcomeRole === "failed_branch" || outcomeRole === "blocked") adjusted -= 0.24;
+    else if (contractTrust === "advisory" || contractTrust === "observational" || contractTrust == null) adjusted -= 0.08;
+    if (contractTrust === "authoritative") adjusted += 0.06;
+    return clampSimilarity(adjusted);
   }
-  return clampSimilarity(args.similarity - 0.05);
+  return args.similarity;
 }
 
 export function assertRecallStoreAccessContract(access: RecallStoreAccess): void {
