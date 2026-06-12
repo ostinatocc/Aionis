@@ -36,6 +36,24 @@ function recordingClient(calls: RecordedCall[]): ExecutionMemoryClient {
           contract_version: "aionis_agent_context_v1",
           prompt_text: `Use memory-template-${guideCount}.`,
           use_now_memory_ids: [`memory-template-${guideCount}`],
+          command_posture: [
+            {
+              posture: "should_continue",
+              surface: "current",
+              memory_id: `memory-template-${guideCount}`,
+              instruction: "Continue the active memory.",
+              reason: "The memory is current.",
+              target_files: ["src/current.ts"],
+            },
+            {
+              posture: "must_not",
+              surface: "do_not_use",
+              memory_id: `memory-template-${guideCount}-failed`,
+              instruction: "Do not repeat the failed memory.",
+              reason: "The memory represents a failed branch.",
+              target_files: ["src/failed.ts"],
+            },
+          ],
         },
       };
     },
@@ -76,6 +94,9 @@ test("host integration templates expose a stable host-facing contract", () => {
   );
   assert.ok(
     HOST_INTEGRATION_TEMPLATES.templates.generic_agent_loop.persisted_state.includes("last_agent_context"),
+  );
+  assert.ok(
+    HOST_INTEGRATION_TEMPLATES.templates.generic_agent_loop.persisted_state.includes("last_command_posture"),
   );
   assert.ok(
     HOST_INTEGRATION_TEMPLATES.templates.multi_agent_loop.persisted_state.includes("team_id"),
@@ -121,10 +142,32 @@ test("generic host template persists guide state and wires outcome feedback", as
   assert.equal(guided.state.guide_run_id, "run-template");
   assert.equal(guided.state.last_guide_trace_id, "guide-template-1");
   assert.deepEqual(guided.state.last_use_now_memory_ids, ["memory-template-1"]);
+  assert.deepEqual(guided.should_continue_memory_ids, ["memory-template-1"]);
+  assert.deepEqual(guided.must_not_memory_ids, ["memory-template-1-failed"]);
+  assert.deepEqual(guided.state.last_should_continue_memory_ids, ["memory-template-1"]);
+  assert.deepEqual(guided.state.last_must_not_memory_ids, ["memory-template-1-failed"]);
   assert.deepEqual(guided.agent_context, {
     contract_version: "aionis_agent_context_v1",
     prompt_text: "Use memory-template-1.",
     use_now_memory_ids: ["memory-template-1"],
+    command_posture: [
+      {
+        posture: "should_continue",
+        surface: "current",
+        memory_id: "memory-template-1",
+        instruction: "Continue the active memory.",
+        reason: "The memory is current.",
+        target_files: ["src/current.ts"],
+      },
+      {
+        posture: "must_not",
+        surface: "do_not_use",
+        memory_id: "memory-template-1-failed",
+        instruction: "Do not repeat the failed memory.",
+        reason: "The memory represents a failed branch.",
+        target_files: ["src/failed.ts"],
+      },
+    ],
   });
 
   const finished = await host.afterRun({

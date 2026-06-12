@@ -40,6 +40,24 @@ function fakeClient(calls: Array<{ method: string; input?: unknown; options?: un
           agent_context: {
             prompt_text: "AIONIS_CTX v2\nCURRENT_ACTIVE_PATH: continue verified branch",
             use_now_memory_ids: ["mem-1"],
+            command_posture: [
+              {
+                posture: "should_continue",
+                surface: "current",
+                memory_id: "mem-1",
+                instruction: "Continue the verified branch.",
+                reason: "The branch is current.",
+                target_files: ["src/checkout.ts"],
+              },
+              {
+                posture: "must_not",
+                surface: "do_not_use",
+                memory_id: "mem-failed",
+                instruction: "Do not repeat the failed branch.",
+                reason: "The branch failed review.",
+                target_files: ["src/legacy.ts"],
+              },
+            ],
           },
         };
       },
@@ -125,6 +143,9 @@ test("@aionis/mcp context tool records optional observation then compiles prompt
   assert.match(output.content[0]?.text ?? "", /CURRENT_ACTIVE_PATH/);
   assert.equal(output.structuredContent?.drop_in_mode, true);
   assert.equal(output.structuredContent?.feedback_required, false);
+  assert.deepEqual(output.structuredContent?.should_continue_memory_ids, ["mem-1"]);
+  assert.deepEqual(output.structuredContent?.must_not_memory_ids, ["mem-failed"]);
+  assert.deepEqual(output.structuredContent?.command_posture_memory_ids, ["mem-1", "mem-failed"]);
   assert.equal((calls[0]?.input as { outcome?: string }).outcome, "unknown");
   assert.equal((calls[1]?.input as { context_mode?: string }).context_mode, "compact_agent");
   assert.equal((calls[1]?.input as { context_char_budget?: number }).context_char_budget, 3000);

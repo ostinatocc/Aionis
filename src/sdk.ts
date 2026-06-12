@@ -15,6 +15,29 @@ export type AionisRememberTier = "hot" | "warm" | "cold" | "archive";
 export type AionisExecutionAgentRole = "agent" | "planner" | "worker" | "verifier" | "reviewer";
 export type AionisExecutionOutcomeStatus = "succeeded" | "failed" | "blocked" | "interrupted" | "unknown";
 export type AionisHandoffKind = "patch_handoff" | "review_handoff" | "task_handoff";
+export type AionisCommandPostureKind =
+  | "must_not"
+  | "should_continue"
+  | "inspect_first"
+  | "rehydrate_first"
+  | "optional_context";
+export type AionisCommandPostureSurface =
+  | "current"
+  | "procedure"
+  | "use_now"
+  | "inspect_before_use"
+  | "do_not_use"
+  | "rehydrate"
+  | "context";
+
+export type AionisCommandPosture = {
+  posture: AionisCommandPostureKind;
+  surface: AionisCommandPostureSurface;
+  memory_id: string;
+  instruction: string;
+  reason: string;
+  target_files: string[];
+};
 
 export type AionisClientOptions = {
   baseUrl: string;
@@ -306,6 +329,57 @@ function rehydrateHintMemoryIds(value: unknown): string[] {
   return value
     .map((entry) => asRecord(entry)?.memory_id)
     .filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+}
+
+function commandPostureArray(value: unknown): AionisCommandPosture[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const record = asRecord(entry);
+    if (!record) return [];
+    const posture = record.posture;
+    const surface = record.surface;
+    const memoryId = record.memory_id;
+    const instruction = record.instruction;
+    const reason = record.reason;
+    if (
+      !isCommandPostureKind(posture)
+      || !isCommandPostureSurface(surface)
+      || typeof memoryId !== "string"
+      || memoryId.length === 0
+      || typeof instruction !== "string"
+      || instruction.length === 0
+      || typeof reason !== "string"
+      || reason.length === 0
+    ) {
+      return [];
+    }
+    return [{
+      posture,
+      surface,
+      memory_id: memoryId,
+      instruction,
+      reason,
+      target_files: stringArray(record.target_files),
+    }];
+  });
+}
+
+function isCommandPostureKind(value: unknown): value is AionisCommandPostureKind {
+  return value === "must_not"
+    || value === "should_continue"
+    || value === "inspect_first"
+    || value === "rehydrate_first"
+    || value === "optional_context";
+}
+
+function isCommandPostureSurface(value: unknown): value is AionisCommandPostureSurface {
+  return value === "current"
+    || value === "procedure"
+    || value === "use_now"
+    || value === "inspect_before_use"
+    || value === "do_not_use"
+    || value === "rehydrate"
+    || value === "context";
 }
 
 function rememberNodeType(kind: AionisRememberKind): string {
@@ -816,8 +890,44 @@ export function memoryIdsFromGuide(guide: unknown): string[] {
     ...stringArray(context?.inspect_before_use_memory_ids),
     ...stringArray(context?.do_not_use_memory_ids),
     ...rehydrateHintMemoryIds(context?.rehydrate_hints),
+    ...commandPostureArray(context?.command_posture).map((entry) => entry.memory_id),
   ];
   return Array.from(new Set(ids));
+}
+
+export function commandPostureFromGuide(
+  guide: unknown,
+  posture?: AionisCommandPostureKind,
+): AionisCommandPosture[] {
+  const rows = commandPostureArray(asRecord(agentContextFromGuide(guide))?.command_posture);
+  return posture ? rows.filter((entry) => entry.posture === posture) : rows;
+}
+
+export function commandPostureMemoryIdsFromGuide(
+  guide: unknown,
+  posture?: AionisCommandPostureKind,
+): string[] {
+  return Array.from(new Set(commandPostureFromGuide(guide, posture).map((entry) => entry.memory_id)));
+}
+
+export function mustNotMemoryIdsFromGuide(guide: unknown): string[] {
+  return commandPostureMemoryIdsFromGuide(guide, "must_not");
+}
+
+export function shouldContinueMemoryIdsFromGuide(guide: unknown): string[] {
+  return commandPostureMemoryIdsFromGuide(guide, "should_continue");
+}
+
+export function inspectFirstMemoryIdsFromGuide(guide: unknown): string[] {
+  return commandPostureMemoryIdsFromGuide(guide, "inspect_first");
+}
+
+export function rehydrateFirstMemoryIdsFromGuide(guide: unknown): string[] {
+  return commandPostureMemoryIdsFromGuide(guide, "rehydrate_first");
+}
+
+export function optionalContextMemoryIdsFromGuide(guide: unknown): string[] {
+  return commandPostureMemoryIdsFromGuide(guide, "optional_context");
 }
 
 export function feedbackFromGuide(input: AionisFeedbackFromGuideInput): AionisFeedbackRequest {

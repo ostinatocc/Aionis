@@ -35,6 +35,15 @@ The server exposes stable product tools, not internal Runtime packets:
 `aionis_context` accepts `context_mode: "compact_agent"` when an MCP client
 needs a shorter Agent prompt. The Runtime still returns governed memory buckets
 and IDs for attribution; compact mode only changes the prompt rendering.
+The tool also returns structured command posture fields in `structuredContent`:
+
+| Field | Meaning |
+|---|---|
+| `command_posture` | Bounded Agent instructions compiled from governed memory surfaces. |
+| `must_not_memory_ids` | Failed, stale, suppressed, or do-not-use memories the client should not continue. |
+| `should_continue_memory_ids` | Current active state or accepted procedure memories the client should prefer. |
+| `inspect_first_memory_ids` | Candidate or contested memories that require inspection before action. |
+| `rehydrate_first_memory_ids` | Compact pointers that need raw payload recovery before exact use. |
 
 ## Claude Code / Cursor Config
 

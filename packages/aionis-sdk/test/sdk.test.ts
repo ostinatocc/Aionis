@@ -2,9 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   agentPromptFromGuide,
+  commandPostureFromGuide,
+  commandPostureMemoryIdsFromGuide,
   createAionisClient,
   feedbackFromGuide,
+  inspectFirstMemoryIdsFromGuide,
   memoryIdsFromGuide,
+  mustNotMemoryIdsFromGuide,
+  shouldContinueMemoryIdsFromGuide,
 } from "../src/index.ts";
 
 test("@aionis/sdk wraps product facade routes", async () => {
@@ -52,6 +57,32 @@ test("@aionis/sdk guide helpers keep Agent prompt and feedback attribution bound
       memory_ids: ["mem-1"],
       use_now_memory_ids: ["mem-1"],
       inspect_before_use_memory_ids: ["mem-2"],
+      command_posture: [
+        {
+          posture: "should_continue",
+          surface: "current",
+          memory_id: "mem-1",
+          instruction: "Continue the current branch.",
+          reason: "The branch is active.",
+          target_files: ["src/a.ts"],
+        },
+        {
+          posture: "must_not",
+          surface: "do_not_use",
+          memory_id: "mem-3",
+          instruction: "Do not reuse the failed branch.",
+          reason: "The branch failed verification.",
+          target_files: ["src/old.ts"],
+        },
+        {
+          posture: "inspect_first",
+          surface: "inspect_before_use",
+          memory_id: "mem-2",
+          instruction: "Inspect before relying on this candidate.",
+          reason: "The memory is candidate-only.",
+          target_files: [],
+        },
+      ],
     },
     memory_packet: {
       raw: "operator-only",
@@ -59,7 +90,12 @@ test("@aionis/sdk guide helpers keep Agent prompt and feedback attribution bound
   };
 
   assert.equal(agentPromptFromGuide(guide), "AIONIS_CTX v2\ncurrent: n=Use scoped memory.");
-  assert.deepEqual(memoryIdsFromGuide(guide), ["mem-1", "mem-2"]);
+  assert.deepEqual(memoryIdsFromGuide(guide), ["mem-1", "mem-2", "mem-3"]);
+  assert.deepEqual(commandPostureMemoryIdsFromGuide(guide), ["mem-1", "mem-3", "mem-2"]);
+  assert.deepEqual(shouldContinueMemoryIdsFromGuide(guide), ["mem-1"]);
+  assert.deepEqual(mustNotMemoryIdsFromGuide(guide), ["mem-3"]);
+  assert.deepEqual(inspectFirstMemoryIdsFromGuide(guide), ["mem-2"]);
+  assert.deepEqual(commandPostureFromGuide(guide, "must_not")[0]?.instruction, "Do not reuse the failed branch.");
   assert.deepEqual(feedbackFromGuide({
     guide,
     reason: "Agent used mem-1.",
@@ -73,7 +109,7 @@ test("@aionis/sdk guide helpers keep Agent prompt and feedback attribution bound
       reason: "Agent used an unexposed memory.",
       run_id: "run-1",
       outcome: "positive",
-      used_memory_ids: ["mem-3"],
+      used_memory_ids: ["mem-4"],
     }),
     /not exposed by guide/,
   );

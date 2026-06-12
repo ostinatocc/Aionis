@@ -5,10 +5,14 @@ import {
   AionisClientError,
   agentContextFromGuide,
   agentPromptFromGuide,
+  commandPostureFromGuide,
+  commandPostureMemoryIdsFromGuide,
   createAionisClient,
   feedbackFromGuide,
+  mustNotMemoryIdsFromGuide,
   measureInputFromGuideLoop,
   memoryIdsFromGuide,
+  shouldContinueMemoryIdsFromGuide,
   snapshotInputFromGuideLoop,
 } from "../../src/sdk.ts";
 
@@ -212,10 +216,32 @@ test("SDK product-loop helpers keep guide feedback attribution explicit", () => 
       inspect_before_use_memory_ids: ["mem-2"],
       do_not_use_memory_ids: ["mem-3"],
       rehydrate_hints: [{ memory_id: "mem-4", reason: "Needs raw payload." }],
+      command_posture: [
+        {
+          posture: "should_continue",
+          surface: "current",
+          memory_id: "mem-1",
+          instruction: "Continue current state.",
+          reason: "Current state is active.",
+          target_files: ["src/current.ts"],
+        },
+        {
+          posture: "must_not",
+          surface: "do_not_use",
+          memory_id: "mem-5",
+          instruction: "Do not reuse stale memory.",
+          reason: "Memory is stale.",
+          target_files: ["src/stale.ts"],
+        },
+      ],
     },
   };
 
-  assert.deepEqual(memoryIdsFromGuide(guide), ["mem-1", "mem-2", "mem-3", "mem-4"]);
+  assert.deepEqual(memoryIdsFromGuide(guide), ["mem-1", "mem-2", "mem-3", "mem-4", "mem-5"]);
+  assert.deepEqual(commandPostureMemoryIdsFromGuide(guide), ["mem-1", "mem-5"]);
+  assert.deepEqual(shouldContinueMemoryIdsFromGuide(guide), ["mem-1"]);
+  assert.deepEqual(mustNotMemoryIdsFromGuide(guide), ["mem-5"]);
+  assert.equal(commandPostureFromGuide(guide, "must_not")[0]?.reason, "Memory is stale.");
   assert.deepEqual(feedbackFromGuide({
     guide,
     reason: "Agent used mem-1 successfully.",

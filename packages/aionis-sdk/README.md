@@ -9,9 +9,12 @@ npm install @aionis/sdk
 ```ts
 import {
   agentPromptFromGuide,
+  commandPostureFromGuide,
   createAionisClient,
   feedbackFromGuide,
   measureInputFromGuideLoop,
+  mustNotMemoryIdsFromGuide,
+  shouldContinueMemoryIdsFromGuide,
   snapshotInputFromGuideLoop,
 } from "@aionis/sdk";
 
@@ -30,6 +33,9 @@ const guide = await aionis.guide({
 });
 
 const agentPrompt = agentPromptFromGuide(guide);
+const commandPosture = commandPostureFromGuide(guide);
+const mustNotMemoryIds = mustNotMemoryIdsFromGuide(guide);
+const shouldContinueMemoryIds = shouldContinueMemoryIdsFromGuide(guide);
 
 const feedback = await aionis.feedback(feedbackFromGuide({
   guide,
@@ -60,6 +66,11 @@ await aionis.snapshot(snapshotInputFromGuideLoop({
 
 Only pass `agentPrompt` or selected `agent_context` fields to your Agent. Keep
 packets, traces, receipts, raw slots, and operator snapshots in host logs.
+Use `commandPostureFromGuide()` when the host wants structured execution
+instructions: `must_not` blocks failed or stale branches, `should_continue`
+biases the Agent toward active state or accepted procedure, `inspect_first`
+keeps candidate history out of direct action, and `rehydrate_first` asks the
+host to recover raw payload before exact use.
 
 For token-sensitive Agent calls, request compact prompt rendering:
 
@@ -113,3 +124,14 @@ const feedback = await aionis.execution.feedbackFromOutcome({
   used_memory_ids: guide.agent_context.use_now_memory_ids.slice(0, 1),
 });
 ```
+
+For a host loop, the most common posture helpers are:
+
+```ts
+const mustNot = mustNotMemoryIdsFromGuide(guide);
+const shouldContinue = shouldContinueMemoryIdsFromGuide(guide);
+const posture = commandPostureFromGuide(guide);
+```
+
+These helpers read only `agent_context`. They do not expose `memory_packet`,
+`guide_packet`, traces, or operator-only evidence to the Agent.

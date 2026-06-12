@@ -13,8 +13,16 @@ import type {
 } from "./execution-memory.js";
 import { exposedUseNowMemoryIds } from "./execution-memory.js";
 import type {
+  AionisCommandPosture,
   AionisGuideMode,
   AionisJsonObject,
+} from "../sdk.js";
+import {
+  commandPostureFromGuide,
+  inspectFirstMemoryIdsFromGuide,
+  mustNotMemoryIdsFromGuide,
+  rehydrateFirstMemoryIdsFromGuide,
+  shouldContinueMemoryIdsFromGuide,
 } from "../sdk.js";
 
 export type HostIntegrationTemplateKind =
@@ -29,17 +37,25 @@ export const HOST_INTEGRATION_TEMPLATES = {
   templates: {
     generic_agent_loop: {
       required_hooks: ["startRun", "beforeRun", "afterRun", "measure", "snapshot"],
-      persisted_state: ["run_id", "task_signature", "guide_run_id", "last_guide_trace_id", "last_use_now_memory_ids", "last_agent_context"],
+      persisted_state: [
+        "run_id",
+        "task_signature",
+        "guide_run_id",
+        "last_guide_trace_id",
+        "last_use_now_memory_ids",
+        "last_command_posture",
+        "last_agent_context",
+      ],
       agent_surface: "agent_context",
     },
     multi_agent_loop: {
       required_hooks: ["plannerStart", "workerStep", "verifierStep", "reviewerGuide", "reviewerOutcome", "measure", "snapshot"],
-      persisted_state: ["team_id", "run_id", "task_signature", "guide_run_id", "last_guide_trace_id", "last_agent_context"],
+      persisted_state: ["team_id", "run_id", "task_signature", "guide_run_id", "last_guide_trace_id", "last_command_posture", "last_agent_context"],
       roles: ["planner", "worker", "verifier", "reviewer"],
     },
     coding_agent_loop: {
       required_hooks: ["beforePatch", "afterPatch", "measure", "snapshot"],
-      persisted_state: ["run_id", "task_signature", "repo_root", "target_files", "guide_run_id", "last_agent_context"],
+      persisted_state: ["run_id", "task_signature", "repo_root", "target_files", "guide_run_id", "last_command_posture", "last_agent_context"],
       agent_surface: "agent_context",
     },
   },
@@ -51,6 +67,11 @@ export type HostRunState = ExecutionMemoryRunRef & ExecutionMemoryAgentRef & {
   guide_run_id?: string;
   last_guide_trace_id?: string;
   last_use_now_memory_ids: string[];
+  last_command_posture: AionisCommandPosture[];
+  last_must_not_memory_ids: string[];
+  last_should_continue_memory_ids: string[];
+  last_inspect_first_memory_ids: string[];
+  last_rehydrate_first_memory_ids: string[];
   last_agent_context?: unknown;
   last_outcome?: string;
   repo_root?: string;
@@ -97,6 +118,11 @@ export type HostObserveHookResult<TObserve = unknown> = {
 export type HostGuideHookResult<TGuide = unknown> = {
   guide: TGuide;
   agent_context: unknown | null;
+  command_posture: AionisCommandPosture[];
+  must_not_memory_ids: string[];
+  should_continue_memory_ids: string[];
+  inspect_first_memory_ids: string[];
+  rehydrate_first_memory_ids: string[];
   state: HostRunState;
 };
 
@@ -176,6 +202,22 @@ function agentContext(value: unknown): unknown | null {
   return asRecord(value)?.agent_context ?? null;
 }
 
+function guideCommandSurfaces(guide: unknown): {
+  command_posture: AionisCommandPosture[];
+  must_not_memory_ids: string[];
+  should_continue_memory_ids: string[];
+  inspect_first_memory_ids: string[];
+  rehydrate_first_memory_ids: string[];
+} {
+  return {
+    command_posture: commandPostureFromGuide(guide),
+    must_not_memory_ids: mustNotMemoryIdsFromGuide(guide),
+    should_continue_memory_ids: shouldContinueMemoryIdsFromGuide(guide),
+    inspect_first_memory_ids: inspectFirstMemoryIdsFromGuide(guide),
+    rehydrate_first_memory_ids: rehydrateFirstMemoryIdsFromGuide(guide),
+  };
+}
+
 function stateFromGuide(args: {
   template: HostIntegrationTemplateKind;
   input: ExecutionMemoryRunRef & ExecutionMemoryAgentRef;
@@ -184,6 +226,7 @@ function stateFromGuide(args: {
   repo_root?: string;
   target_files?: string[];
 }): HostRunState {
+  const commandSurfaces = guideCommandSurfaces(args.guide);
   return {
     contract_version: HOST_INTEGRATION_TEMPLATE_CONTRACT_VERSION,
     template: args.template,
@@ -198,6 +241,11 @@ function stateFromGuide(args: {
     guide_run_id: args.input.run_id,
     last_guide_trace_id: stringField(args.guide, "guide_trace_id") ?? args.previous?.last_guide_trace_id,
     last_use_now_memory_ids: exposedUseNowMemoryIds(args.guide),
+    last_command_posture: commandSurfaces.command_posture,
+    last_must_not_memory_ids: commandSurfaces.must_not_memory_ids,
+    last_should_continue_memory_ids: commandSurfaces.should_continue_memory_ids,
+    last_inspect_first_memory_ids: commandSurfaces.inspect_first_memory_ids,
+    last_rehydrate_first_memory_ids: commandSurfaces.rehydrate_first_memory_ids,
     last_agent_context: agentContext(args.guide) ?? args.previous?.last_agent_context,
     last_outcome: args.previous?.last_outcome,
     repo_root: args.repo_root ?? args.previous?.repo_root,
@@ -225,6 +273,11 @@ function stateFromObserve(args: {
     guide_run_id: args.previous?.guide_run_id,
     last_guide_trace_id: args.previous?.last_guide_trace_id,
     last_use_now_memory_ids: args.previous?.last_use_now_memory_ids ?? [],
+    last_command_posture: args.previous?.last_command_posture ?? [],
+    last_must_not_memory_ids: args.previous?.last_must_not_memory_ids ?? [],
+    last_should_continue_memory_ids: args.previous?.last_should_continue_memory_ids ?? [],
+    last_inspect_first_memory_ids: args.previous?.last_inspect_first_memory_ids ?? [],
+    last_rehydrate_first_memory_ids: args.previous?.last_rehydrate_first_memory_ids ?? [],
     last_agent_context: args.previous?.last_agent_context,
     last_outcome: args.input.outcome ?? args.previous?.last_outcome,
     repo_root: args.repo_root ?? args.previous?.repo_root,
@@ -306,9 +359,11 @@ export function createGenericAgentHostTemplate(
       const { state, ...guideInput } = input;
       const effective = withDefaults(guideInput, defaults);
       const guide = await adapter.guideNext<TGuide>(effective);
+      const commandSurfaces = guideCommandSurfaces(guide);
       return {
         guide,
         agent_context: agentContext(guide),
+        ...commandSurfaces,
         state: stateFromGuide({
           template: "generic_agent_loop",
           input: effective,
