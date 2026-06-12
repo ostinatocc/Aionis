@@ -769,6 +769,67 @@ test("product agent context contract renderer preserves execution state surfaces
   assert.ok(standardContext.prompt_text.includes("fallback_policy=do_not_promote_reference_or_blocked_targets"));
 });
 
+test("product agent route contract does not promote background execution events to active route", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "continue the current implementation route",
+    },
+    nodes: [
+      {
+        id: "mem-background-event",
+        type: "concept",
+        title: "Workflow trusted: Background repository activity 57",
+        text_summary: "Workflow trusted: background repository activity touched internal/e2e-noise/checkout/note-57.txt during unrelated repo churn.",
+        tier: "hot",
+        slots: {
+          memory_kind: "execution_memory",
+          lifecycle_state: "active",
+          compression_layer: "L2",
+          contract_trust: "authoritative",
+          execution_native_v1: {
+            schema_version: "execution_native_v1",
+            execution_kind: "execution_native",
+            summary_kind: "event",
+            compression_layer: "L2",
+            contract_trust: "authoritative",
+            task_signature: "checkout-contract-renderer",
+            workflow_signature: "checkout-contract-renderer:background",
+            anchor_kind: "execution",
+            anchor_level: "L2",
+            target_files: ["internal/e2e-noise/checkout/note-57.txt"],
+          },
+        },
+        confidence: 0.99,
+        salience: 0.99,
+      },
+    ],
+  });
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+
+  assert.deepEqual(context.use_now_memory_ids, ["mem-background-event"]);
+  assert.deepEqual(context.route_contract.active_targets, []);
+  assert.deepEqual(context.route_contract.pending_artifacts, []);
+  assert.ok(context.command_posture.some((entry) =>
+    entry.memory_id === "mem-background-event"
+    && entry.posture === "optional_context"
+  ));
+  assert.equal(
+    context.command_posture.some((entry) =>
+      entry.memory_id === "mem-background-event"
+      && entry.posture === "should_continue"
+    ),
+    false,
+  );
+});
+
 test("product agent context keeps explicit rehydrate hints out of use and inspect surfaces", () => {
   const memoryPacket = buildAionisMemoryPacket({
     tenant_id: "tenant-local",

@@ -1528,7 +1528,7 @@ function buildAgentRouteContract(args: {
       }, 6);
     }
   }
-  if (activeTargets.length === 0) {
+  if (activeTargets.length === 0 && args.commandPosture.length === 0) {
     for (const target of args.targetFiles) {
       pushUniqueRouteTarget(activeTargets, activeSeen, {
         target,
@@ -2868,7 +2868,7 @@ function buildAgentContextCommandPostures(args: {
 
   for (const memoryId of args.useNowMemoryIds) {
     const entry = entries.get(memoryId);
-    if (entry && (contractEntryIsCurrentState(entry) || contractEntryIsProcedure(entry) || entry.domain === "execution")) {
+    if (entry && (contractEntryIsCurrentState(entry) || contractEntryIsProcedure(entry))) {
       const current = contractEntryIsCurrentState(entry);
       push({
         posture: "should_continue",
