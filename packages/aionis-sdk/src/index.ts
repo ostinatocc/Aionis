@@ -1,6 +1,7 @@
 export type AionisJsonObject = Record<string, unknown>;
 
 export type AionisGuideMode = "standard" | "full_power";
+export type AionisGuideContextMode = AionisGuideMode | "compact_agent";
 export type AionisFeedbackOutcome = "positive" | "negative" | "neutral";
 export type AionisFeedbackUsedSurface = "use_now" | "inspect_before_use" | "do_not_use" | "explicit_host_assertion";
 export type AionisFeedbackStatus = "passed" | "failed" | "not_run" | "unknown";
@@ -208,7 +209,7 @@ export type AionisExecutionGuideForRoleInput = AionisExecutionRunRef & AionisExe
   limit?: number;
   include_packets?: boolean;
   mode?: AionisGuideMode;
-  context_mode?: AionisGuideMode;
+  context_mode?: AionisGuideContextMode;
   context_char_budget?: number;
   context_token_budget?: number;
   context_compaction_profile?: "balanced" | "aggressive";
@@ -605,8 +606,17 @@ export class AionisClient {
 
   private guideBody(body: AionisJsonObject, options?: AionisGuideRequestOptions): AionisJsonObject {
     const compactBody = stripUndefined(body);
-    if (compactBody.mode !== undefined || compactBody.context_mode !== undefined) return compactBody;
     const guideMode = options?.guide_mode === undefined ? this.defaultGuideMode : options.guide_mode;
+    if (compactBody.mode !== undefined) return compactBody;
+    if (compactBody.context_mode !== undefined) {
+      if (compactBody.context_mode === "compact_agent" && guideMode) {
+        return {
+          mode: guideMode,
+          ...compactBody,
+        };
+      }
+      return compactBody;
+    }
     if (!guideMode) return compactBody;
     return {
       mode: guideMode,

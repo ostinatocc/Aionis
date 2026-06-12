@@ -249,6 +249,30 @@ test("execution memory adapter wires multi-agent observe, full-power guide, feed
   assert.equal(snapshotCall.body.include_markdown, true);
 });
 
+test("execution memory adapter passes compact agent context as guide rendering mode", async () => {
+  const calls: Array<{ method: string; body: Record<string, unknown>; options: unknown }> = [];
+  const adapter = createExecutionMemoryAdapter({
+    client: recordingClient(calls),
+    tenant_id: "tenant-compact",
+    scope: "scope-compact",
+    team_id: "team-compact",
+    default_agent_id: "reviewer-compact",
+    default_agent_role: "reviewer",
+  });
+
+  await adapter.guideNext({
+    run_id: "run-compact",
+    task_signature: "compact-adapter",
+    query_text: "Continue the active path with a compact prompt.",
+    context_mode: "compact_agent",
+  });
+
+  const guideCall = calls.find((call) => call.method === "guide");
+  assert.ok(guideCall);
+  assert.equal(guideCall.body.mode, "full_power");
+  assert.equal(guideCall.body.context_mode, "compact_agent");
+});
+
 test("execution memory adapter prefers first-class SDK feedback when available", async () => {
   const calls: Array<{ method: string; body: Record<string, unknown>; options: unknown }> = [];
   const client: ExecutionMemoryClient = {

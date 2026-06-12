@@ -117,6 +117,7 @@ test("@aionis/mcp context tool records optional observation then compiles prompt
     title: "Resume checkout migration",
     summary: "Worker is continuing after verifier approved the adapter boundary.",
     target_files: ["src/checkout.ts"],
+    context_mode: "compact_agent",
     context_char_budget: 3000,
   });
 
@@ -125,6 +126,7 @@ test("@aionis/mcp context tool records optional observation then compiles prompt
   assert.equal(output.structuredContent?.drop_in_mode, true);
   assert.equal(output.structuredContent?.feedback_required, false);
   assert.equal((calls[0]?.input as { outcome?: string }).outcome, "unknown");
+  assert.equal((calls[1]?.input as { context_mode?: string }).context_mode, "compact_agent");
   assert.equal((calls[1]?.input as { context_char_budget?: number }).context_char_budget, 3000);
 });
 

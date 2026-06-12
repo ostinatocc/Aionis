@@ -499,6 +499,7 @@ export const AionisAgentContextSchema = z
     tenant_id: z.string().min(1),
     scope: z.string().min(1),
     agent_role: AionisAgentRoleSchema.default("agent"),
+    agent_context_mode: z.enum(["standard", "compact_agent"]).default("standard"),
     prompt_text: z.string().min(1),
     summary: z.string().min(1),
     history_used: z.boolean(),

@@ -106,6 +106,7 @@ test("AionisClient defaults guide to full_power and allows explicit guide mode c
   await defaultClient.guide({ query_text: "continue" });
   await defaultClient.guide({ query_text: "legacy", mode: "standard" });
   await defaultClient.guide({ query_text: "context explicit", context_mode: "standard" });
+  await defaultClient.guide({ query_text: "compact execution context", context_mode: "compact_agent" });
   await defaultClient.guide({ query_text: "request override" }, { guide_mode: "standard" });
   await defaultClient.guide({ query_text: "raw route body" }, { guide_mode: null });
 
@@ -120,9 +121,11 @@ test("AionisClient defaults guide to full_power and allows explicit guide mode c
   assert.equal(calls[1]?.mode, "standard");
   assert.equal(calls[2]?.context_mode, "standard");
   assert.equal(calls[2]?.mode, undefined);
-  assert.equal(calls[3]?.mode, "standard");
-  assert.equal(calls[4]?.mode, undefined);
-  assert.equal(calls[5]?.mode, "standard");
+  assert.equal(calls[3]?.context_mode, "compact_agent");
+  assert.equal(calls[3]?.mode, "full_power");
+  assert.equal(calls[4]?.mode, "standard");
+  assert.equal(calls[5]?.mode, undefined);
+  assert.equal(calls[6]?.mode, "standard");
 });
 
 test("AionisClient remember writes ordinary memory through observe", async () => {

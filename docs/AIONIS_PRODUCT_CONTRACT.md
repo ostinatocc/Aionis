@@ -185,6 +185,7 @@ Optional audit output:
 |---|---|
 | `include_packets: true` | Adds `memory_packet` and `guide_packet` for measurement, debugging, or advanced integrations. |
 | `mode: "full_power"` or `context_mode: "full_power"` | Internally merges semantic recall with safe full-power execution context while still exposing only `agent_context` to the Agent. |
+| `context_mode: "compact_agent"` | Uses the same governed full-power guide path but emits a shorter contract-style Agent prompt. Structured `use_now`, `inspect_before_use`, `do_not_use`, `rehydrate_hints`, IDs, receipts, and traces remain available outside the prompt. |
 
 The SDK defaults `guide()` calls to `mode: "full_power"` because that is the
 recommended product adapter path. Raw HTTP callers may still omit mode for the
@@ -195,6 +196,12 @@ The default Agent surface must not be the full `memory_packet + guide_packet`. F
 Full-power guide mode must preserve the same Agent boundary: raw evidence,
 gated abstractions, selection trace, and audit prompt text are internal or
 operator surfaces. Only the safe merged `agent_context` reaches the Agent.
+
+Compact Agent context is an Agent-facing rendering choice, not a different
+memory decision path. When requested, `agent_context.agent_context_mode` is
+`compact_agent`; the prompt may start with `AIONIS_CTX compact_agent`, while
+the governed memory buckets, attribution IDs, lifecycle decisions, and audit
+surfaces stay aligned with the standard guide result.
 
 Decision trace and audit surfaces are separate operator/debug outputs. The usage boundary is defined in [AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md](AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md): Agents consume `agent_context`; developers inspect `memory_decision_trace` and `memory_decision_audit`.
 

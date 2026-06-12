@@ -783,12 +783,21 @@ test("AionisAgentContext accepts compact agent-facing output", () => {
   assert.equal(parsed.history_used, true);
   assert.equal(parsed.actionable_history_used, true);
   assert.equal(parsed.agent_role, "reviewer");
+  assert.equal(parsed.agent_context_mode, "standard");
   assert.equal(parsed.authority, "advisory");
   assert.deepEqual(parsed.target_files, ["src/index.ts"]);
   assert.deepEqual(parsed.use_now_memory_ids, ["mem-1"]);
   assert.deepEqual(parsed.inspect_before_use_memory_ids, ["mem-3"]);
   assert.deepEqual(parsed.do_not_use_memory_ids, ["mem-2"]);
   assert.equal(parsed.risk.negative_transfer_risk, "medium");
+
+  const compactParsed = AionisAgentContextSchema.parse({
+    ...validAgentContext(),
+    agent_context_mode: "compact_agent",
+    prompt_text: "AIONIS_CTX compact_agent\nstate r=reviewer h=1 a=1 p=inspect auth=adv risk=med\navoid: note=Suppressed memory",
+  });
+  assert.equal(compactParsed.agent_context_mode, "compact_agent");
+  assert.equal(compactParsed.prompt_text.includes("AIONIS_CTX compact_agent"), true);
 });
 
 test("AionisAgentContext rejects packet leakage and loose fields", () => {

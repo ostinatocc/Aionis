@@ -134,6 +134,7 @@ export type BuildAionisAgentContextArgs = {
   memory_packet?: AionisMemoryPacket | null;
   guide_packet?: AionisGuidePacket | null;
   query_intent_override?: string | null;
+  agent_context_mode?: "standard" | "compact_agent" | null;
   context_char_budget?: number | null;
   context_compaction_profile?: "balanced" | "aggressive" | null;
 };
@@ -1363,9 +1364,21 @@ function boundedPromptCharBudget(value: number | null | undefined): number | nul
 }
 
 function promptProfilesFor(
+  agentContextMode: "standard" | "compact_agent",
   profile: "balanced" | "aggressive" | null | undefined,
   budget: number | null,
 ): AgentContextPromptProfile[] {
+  if (agentContextMode === "compact_agent") {
+    if (budget === null) {
+      return [AGENT_CONTEXT_PROMPT_PROFILES.aggressive];
+    }
+    return [
+      AGENT_CONTEXT_PROMPT_PROFILES.aggressive,
+      AGENT_CONTEXT_PROMPT_PROFILES.tight,
+      AGENT_CONTEXT_PROMPT_PROFILES.minimal,
+      AGENT_CONTEXT_PROMPT_PROFILES.ids_only,
+    ];
+  }
   if (budget === null) {
     return [AGENT_CONTEXT_PROMPT_PROFILES[profile === "aggressive" ? "aggressive" : "balanced"]];
   }
@@ -1908,6 +1921,7 @@ type BuildAgentContextPromptInput = {
   inspectBeforeUseMemoryIds: string[];
   doNotUseMemoryIds: string[];
   contextCharBudget?: number | null;
+  agentContextMode?: "standard" | "compact_agent" | null;
   contextCompactionProfile?: "balanced" | "aggressive" | null;
 };
 
@@ -1916,9 +1930,10 @@ function buildAgentContextPromptResult(args: BuildAgentContextPromptInput): {
   promptAliases: AionisAgentContext["prompt_aliases"];
 } {
   const budget = boundedPromptCharBudget(args.contextCharBudget);
+  const agentContextMode = args.agentContextMode === "compact_agent" ? "compact_agent" : "standard";
   let lastPrompt = "";
   let lastAliases: AionisAgentContext["prompt_aliases"] = [];
-  for (const profile of promptProfilesFor(args.contextCompactionProfile, budget)) {
+  for (const profile of promptProfilesFor(agentContextMode, args.contextCompactionProfile, budget)) {
     const prompt = renderAgentContextPrompt({ ...args, profile });
     const promptAliases = contractPromptAliasesFor({ ...args, profile });
     lastPrompt = prompt;
@@ -2882,6 +2897,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
   const guide = args.guide_packet ?? null;
   const memory = args.memory_packet ?? null;
   const agentRole = args.agent_role ?? "agent";
+  const agentContextMode = args.agent_context_mode === "compact_agent" ? "compact_agent" : "standard";
   const guideBrief = guide?.guide_brief ?? null;
   const memoryEntryCount = memory?.relevant_memories.length ?? 0;
   const rawHistoryUsed = guideBrief?.history_used === true || memoryEntryCount > 0;
@@ -3010,6 +3026,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     useNowMemoryIds: surfaces.useNowMemoryIds,
     inspectBeforeUseMemoryIds: surfaces.inspectBeforeUseMemoryIds,
     doNotUseMemoryIds: surfaces.doNotUseMemoryIds,
+    agentContextMode,
     contextCharBudget: args.context_char_budget,
     contextCompactionProfile: args.context_compaction_profile,
   });
@@ -3019,6 +3036,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     tenant_id: guide?.tenant_id ?? memory?.tenant_id ?? args.tenant_id,
     scope: guide?.scope ?? memory?.scope ?? args.scope,
     agent_role: agentRole,
+    agent_context_mode: agentContextMode,
     prompt_text: promptResult.promptText,
     summary,
     history_used: surfaces.historyUsed,
@@ -3110,6 +3128,7 @@ export function applyAionisInspectBeforeUseActiveProjection(
     useNowMemoryIds,
     inspectBeforeUseMemoryIds,
     doNotUseMemoryIds: args.agent_context.do_not_use_memory_ids,
+    agentContextMode: args.agent_context.agent_context_mode,
     contextCharBudget: args.context_char_budget,
     contextCompactionProfile: args.context_compaction_profile,
   });

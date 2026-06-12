@@ -6,6 +6,7 @@ import {
   type AionisExecutionOutcomeStatus,
   type AionisFeedbackOutcome,
   type AionisFeedbackUsedSurface,
+  type AionisGuideContextMode,
   type AionisGuideMode,
   type AionisHandoffKind,
   type AionisJsonObject,
@@ -59,6 +60,7 @@ export type AionisContextInput = {
   guide?: JsonRecord;
   limit?: number;
   mode?: AionisGuideMode;
+  context_mode?: AionisGuideContextMode;
   context_char_budget?: number;
   context_token_budget?: number;
   context_compaction_profile?: "balanced" | "aggressive";
@@ -321,6 +323,7 @@ export async function handleAionisMcpTool(
       tool_candidates: input.tool_candidates,
       limit: input.limit,
       mode: input.mode,
+      context_mode: input.context_mode,
       context_char_budget: input.context_char_budget,
       context_token_budget: input.context_token_budget,
       context_compaction_profile: input.context_compaction_profile,

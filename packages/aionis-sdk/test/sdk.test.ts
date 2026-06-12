@@ -79,6 +79,29 @@ test("@aionis/sdk guide helpers keep Agent prompt and feedback attribution bound
   );
 });
 
+test("@aionis/sdk compact agent context keeps default full_power guide mode", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    calls.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  };
+  const client = createAionisClient({
+    baseUrl: "http://127.0.0.1:3001",
+    fetchImpl: fakeFetch,
+  });
+
+  await client.execution.guideForRole({
+    agent_id: "agent-compact",
+    run_id: "run-compact",
+    task_signature: "compact-agent",
+    query_text: "Continue from current execution state.",
+    context_mode: "compact_agent",
+  });
+
+  assert.equal(calls[0]?.mode, "full_power");
+  assert.equal(calls[0]?.context_mode, "compact_agent");
+});
+
 test("@aionis/sdk execution helpers wrap observe, guide, feedback, measure, and snapshot", async () => {
   const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
   const fakeFetch: typeof fetch = async (input, init) => {

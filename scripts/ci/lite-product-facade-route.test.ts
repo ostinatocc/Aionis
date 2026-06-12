@@ -1420,6 +1420,7 @@ test("product observe turns execution input into recallable execution memory", a
       "tenant_id",
       "scope",
       "agent_role",
+      "agent_context_mode",
       "prompt_text",
       "summary",
       "history_used",
@@ -1441,6 +1442,7 @@ test("product observe turns execution input into recallable execution memory", a
     ]);
     assert.equal(guideBody.agent_context.contract_version, "aionis_agent_context_v1");
     assert.equal(guideBody.agent_context.agent_role, "reviewer");
+    assert.equal(guideBody.agent_context.agent_context_mode, "standard");
     assert.equal(typeof guideBody.guide_trace_id, "string");
     assert.ok(guideBody.guide_trace_id.startsWith("guide_trace:"));
     assert.equal(guideBody.agent_context.history_used, true);
@@ -1705,6 +1707,41 @@ test("product guide full_power merges semantic memory with safe execution contex
     assert.equal(visibleAgentText.includes("FULL_POWER_GUIDE_GATED_ADMITTED"), false);
     assert.equal(visibleAgentText.includes("Bounded guidance"), false);
     assert.equal(visibleAgentText.includes("gated abstraction"), false);
+
+    const compactGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        context_mode: "compact_agent",
+        query_text: [
+          "FULL_POWER_GUIDE_GENERAL_MEMORY",
+          "FULL_POWER_GUIDE_PASSED_BRANCH",
+          "FULL_POWER_GUIDE_FAILED_BRANCH",
+          "full power guide contract",
+        ].join(" "),
+        agent_role: "reviewer",
+        consumer_agent_id: "local-user",
+        context: {
+          task_signature: "full-power-guide-contract",
+        },
+        execution_tree_v1: executionTree,
+        limit: 12,
+      },
+    });
+    assert.equal(compactGuide.statusCode, 200, compactGuide.body);
+    const compactGuideBody = compactGuide.json();
+    const compactAgentContext = compactGuideBody.agent_context;
+    assert.equal(compactAgentContext.agent_context_mode, "compact_agent");
+    assert.equal(compactGuideBody.source_map.routes_used.includes("/v1/execution/context/assemble"), true);
+    assert.equal(compactGuideBody.source_map.internal_surfaces_used.includes("compact_agent_context"), true);
+    assert.equal(compactAgentContext.prompt_text.includes("AIONIS_CTX compact_agent"), true);
+    assert.equal(compactAgentContext.prompt_text.length < agentContext.prompt_text.length, true);
+    assert.equal(compactAgentContext.use_now.some((entry: string) => entry.includes("FULL_POWER_GUIDE_PASSED_BRANCH")), true);
+    assert.equal(compactAgentContext.do_not_use.some((entry: string) => entry.includes("FULL_POWER_GUIDE_FAILED_BRANCH")), true);
+    assert.equal(compactAgentContext.prompt_text.includes("RAW_EVIDENCE"), false);
+    assert.equal(compactAgentContext.prompt_text.includes("TRACE"), false);
   } finally {
     await app.close();
   }

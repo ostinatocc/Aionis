@@ -162,6 +162,10 @@ The host may pass `agent_context.prompt_text` or selected `agent_context` fields
 to the Agent. The host should keep packets, raw slots, receipts, decision traces,
 and operator snapshots outside the Agent prompt.
 
+Token-sensitive hosts can request `context_mode: "compact_agent"` on the guide
+path. This does not create a new memory decision path; it reuses the governed
+context compiler and only changes the Agent-facing prompt rendering.
+
 ## Feedback, Measurement, and Learning Control
 
 Aionis does not blindly promote memory just because it was recalled. Feedback is

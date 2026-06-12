@@ -3,6 +3,7 @@ import type {
   ExecutionTreeV1,
 } from "../execution/index.js";
 import type {
+  AionisGuideContextMode,
   AionisGuideMode,
   AionisGuideRequestOptions,
   AionisJsonObject,
@@ -171,7 +172,7 @@ export type ExecutionMemoryGuideInput = ExecutionMemoryRunRef & ExecutionMemoryA
   limit?: number;
   include_packets?: boolean;
   mode?: AionisGuideMode;
-  context_mode?: AionisGuideMode;
+  context_mode?: AionisGuideContextMode;
   guide?: AionisJsonObject;
 };
 
@@ -352,6 +353,9 @@ export class AionisExecutionMemoryAdapter {
   async guideNext<T = unknown>(input: ExecutionMemoryGuideInput): Promise<T> {
     const teamId = this.teamId(input);
     this.assertSharedTeamBoundary(this.defaults.default_memory_lane ?? "shared", teamId);
+    const legacyContextModeAsGuideMode =
+      input.context_mode === "standard" || input.context_mode === "full_power" ? input.context_mode : undefined;
+    const agentContextMode = input.context_mode === "compact_agent" ? "compact_agent" : undefined;
     const response = await this.client.guide<T>({
       query_text: input.query_text,
       agent_role: this.role(input),
@@ -367,7 +371,8 @@ export class AionisExecutionMemoryAdapter {
       tool_candidates: input.tool_candidates,
       limit: input.limit ?? this.defaults.default_limit,
       include_packets: input.include_packets ?? this.defaults.include_packets_by_default,
-      mode: input.mode ?? input.context_mode ?? this.defaults.default_guide_mode ?? "full_power",
+      mode: input.mode ?? legacyContextModeAsGuideMode ?? this.defaults.default_guide_mode ?? "full_power",
+      ...(agentContextMode ? { context_mode: agentContextMode } : {}),
       ...(input.guide ?? {}),
     }, this.requestOptions(input));
     this.rememberGuide(input.run_id, response);

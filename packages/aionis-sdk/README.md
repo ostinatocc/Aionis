@@ -61,6 +61,21 @@ await aionis.snapshot(snapshotInputFromGuideLoop({
 Only pass `agentPrompt` or selected `agent_context` fields to your Agent. Keep
 packets, traces, receipts, raw slots, and operator snapshots in host logs.
 
+For token-sensitive Agent calls, request compact prompt rendering:
+
+```ts
+const compactGuide = await aionis.guide({
+  query_text: "Continue the task without repeating failed work.",
+  consumer_agent_id: "agent-1",
+  context_mode: "compact_agent",
+});
+
+const compactPrompt = agentPromptFromGuide(compactGuide);
+```
+
+`context_mode: "compact_agent"` keeps SDK guide defaults on the governed
+full-power path while shortening only `agent_context.prompt_text`.
+
 ## Execution Memory Helpers
 
 Use `aionis.execution` when the host wants branch-aware execution memory without
@@ -84,6 +99,7 @@ const guide = await aionis.execution.guideForRole({
   run_id: "run-001",
   task_signature: "checkout-migration",
   query_text: "Continue from the current verified execution path.",
+  context_mode: "compact_agent",
 });
 
 const feedback = await aionis.execution.feedbackFromOutcome({

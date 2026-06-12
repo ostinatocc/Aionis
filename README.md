@@ -234,6 +234,7 @@ const guide = await aionis.guide<{
   guide_trace_id: string;
   agent_context: {
     prompt_text: string;
+    agent_context_mode: "standard" | "compact_agent";
     use_now_memory_ids: string[];
   };
 }>({
@@ -255,6 +256,25 @@ await aionis.feedback(feedbackFromGuide({
 ```
 
 Full SDK guide: [docs/AIONIS_SDK_QUICKSTART.md](docs/AIONIS_SDK_QUICKSTART.md).
+
+For token-sensitive Agent calls, opt into compact prompt rendering:
+
+```ts
+const compactGuide = await aionis.execution.guideForRole({
+  agent_id: "reviewer-1",
+  team_id: "checkout-team",
+  role: "reviewer",
+  run_id: "run-001",
+  task_signature: "checkout-migration",
+  query_text: "Continue the verified branch without repeating failed work.",
+  context_mode: "compact_agent",
+});
+
+const compactPrompt = agentPromptFromGuide(compactGuide);
+```
+
+Compact mode shortens the Agent prompt. It does not remove governed memory
+buckets, memory IDs, feedback attribution, receipts, or operator audit surfaces.
 
 ## MCP For Claude Code And Cursor
 
@@ -286,6 +306,8 @@ The main tool is `aionis_context`: it compiles governed execution state for the
 current run and can optionally record a lightweight observation first. Feedback
 is optional; teams can start with context-only use and later add
 `aionis_record_step`, `aionis_measure`, and `aionis_snapshot`.
+Set `context_mode: "compact_agent"` on `aionis_context` when the Agent needs a
+shorter prompt while the host keeps structured IDs and audit fields.
 
 Full MCP guide: [docs/AIONIS_MCP.md](docs/AIONIS_MCP.md).
 

@@ -369,6 +369,7 @@ type AionisAgentContext = {
   contract_version: "aionis_agent_context_v1";
   tenant_id: string;
   scope: string;
+  agent_context_mode: "standard" | "compact_agent";
   agent_role: "agent" | "planner" | "worker" | "verifier" | "reviewer";
   prompt_text: string;
   summary: string;
@@ -423,6 +424,11 @@ IDs in the structured fields (`use_now_memory_ids`,
 `inspect_before_use_memory_ids`, `do_not_use_memory_ids`, `rehydrate_hints`,
 `prompt_aliases`, and `memory_ids`) so hosts can audit and attribute memory use
 without making the Agent carry UUIDs in prompt context.
+
+`agent_context_mode` describes how the Agent prompt was rendered. `standard` is
+the default. `compact_agent` is an opt-in token-sensitive rendering that keeps
+the same structured memory buckets, IDs, lifecycle decisions, and audit
+surfaces while emitting a shorter contract-style `prompt_text`.
 
 ## AionisMemoryPacket
 

@@ -32,6 +32,10 @@ The server exposes stable product tools, not internal Runtime packets:
 | `aionis_snapshot` | Return read-only operator/audit state. |
 | `aionis_health` | Check Runtime reachability. |
 
+`aionis_context` accepts `context_mode: "compact_agent"` when an MCP client
+needs a shorter Agent prompt. The Runtime still returns governed memory buckets
+and IDs for attribution; compact mode only changes the prompt rendering.
+
 ## Claude Code / Cursor Config
 
 Use the MCP client's command/args configuration:

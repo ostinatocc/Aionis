@@ -485,6 +485,7 @@ Return compact historical context for the next Agent run.
 | `consumer_agent_id` | No | Agent receiving the guide. |
 | `limit` | No | Maximum recall breadth. |
 | `include_packets` | No | Adds `memory_packet` and `guide_packet` for audit or measure. |
+| `context_mode` | No | `full_power` for full product guide mode, or `compact_agent` for the same governed path with a shorter Agent prompt. |
 
 `POST /v1/guide` uses semantic recall, so a configured embedding provider is
 required for normal product use.
@@ -564,6 +565,42 @@ Use `execution_tree_v1` when the host has current branch state. Use
 `context.task_signature`, `context.task_family`, or `context.workflow_signature`
 to let the Runtime pull matching execution evidence into the internal
 full-power assembly.
+
+### Compact Agent Context
+
+For hosts that are token-sensitive, set `context_mode: "compact_agent"` on
+`POST /v1/guide`. This uses the same governed full-power product path as the
+standard SDK guide default, but renders a shorter Agent-facing prompt. The
+Runtime still returns the structured context fields needed for attribution and
+audit:
+
+1. `agent_context.agent_context_mode: "compact_agent"`
+2. `use_now_memory_ids`
+3. `inspect_before_use_memory_ids`
+4. `do_not_use_memory_ids`
+5. `rehydrate_hints`
+6. optional packets and receipt/trace surfaces when requested
+
+Compact mode must not change memory authority. If a memory is stale, failed,
+contested, or rehydratable, it still belongs in `inspect_before_use`,
+`do_not_use`, or `rehydrate_hints`; compact mode only changes how the safe
+Agent prompt is rendered.
+
+Example:
+
+```json
+{
+  "tenant_id": "default",
+  "scope": "payments-service",
+  "context_mode": "compact_agent",
+  "query_text": "Continue checkout migration and avoid failed legacy branches.",
+  "consumer_agent_id": "reviewer-1",
+  "agent_role": "reviewer",
+  "context": {
+    "task_signature": "checkout-migration"
+  }
+}
+```
 
 Example:
 

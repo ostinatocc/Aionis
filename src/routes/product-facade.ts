@@ -120,7 +120,7 @@ const ProductGuideRequest = z.object({
   scope: z.string().trim().min(1).optional(),
   query_text: z.string().trim().min(1),
   mode: z.enum(["standard", "full_power"]).optional(),
-  context_mode: z.enum(["standard", "full_power"]).optional(),
+  context_mode: z.enum(["standard", "full_power", "compact_agent"]).optional(),
   agent_role: AionisAgentRoleSchema.optional(),
   context: z.unknown().optional(),
   run_id: z.string().trim().min(1).optional(),
@@ -639,7 +639,11 @@ function productGuideMemoryContractVisible(memoryPacket: AionisMemoryPacket | nu
 }
 
 function productGuideFullPowerRequested(parsed: z.infer<typeof ProductGuideRequest>): boolean {
-  return parsed.mode === "full_power" || parsed.context_mode === "full_power";
+  return parsed.mode === "full_power" || parsed.context_mode === "full_power" || parsed.context_mode === "compact_agent";
+}
+
+function productGuideAgentContextMode(parsed: z.infer<typeof ProductGuideRequest>): AionisAgentContext["agent_context_mode"] {
+  return parsed.context_mode === "compact_agent" ? "compact_agent" : "standard";
 }
 
 function firstStringValue(...values: unknown[]): string | null {
@@ -1038,8 +1042,10 @@ function productGuideSafeExecutionLines(values: string[], allowedPrefixes: strin
 function renderMergedAgentPrompt(args: {
   context: AionisAgentContext;
   contextCharBudget?: number | null;
+  agentContextMode?: AionisAgentContext["agent_context_mode"];
 }): string {
   const ctx = args.context;
+  const compactAgent = args.agentContextMode === "compact_agent";
   const currentLines = ctx.use_now.filter((entry) => entry.startsWith("Current active path:"));
   const procedureLines = ctx.use_now.filter((entry) => !entry.startsWith("Current active path:"));
   const nextActionSource = currentLines[0] ?? ctx.use_now[0] ?? ctx.inspect_before_use[0] ?? null;
@@ -1049,24 +1055,24 @@ function renderMergedAgentPrompt(args: {
   const line = (label: string, values: string[], limit: number, maxChars: number): string[] =>
     values.slice(0, limit).map((entry) => `${label}: note=${compactProductPromptText(entry, maxChars)}`);
   const prompt = uniqueStrings([
-    "AIONIS_CTX v2",
+    compactAgent ? "AIONIS_CTX compact_agent" : "AIONIS_CTX v2",
     `state r=${ctx.agent_role} h=${ctx.history_used ? 1 : 0} a=${ctx.actionable_history_used ? 1 : 0} p=${productPromptPostureLabel(ctx.recommended_posture)} auth=${productPromptAuthorityLabel(ctx.authority)} risk=${productPromptRiskLabel(ctx.risk.negative_transfer_risk)}`,
     ctx.actionable_history_used
       ? `next ${nextAction ? `action=${compactProductPromptText(nextAction, 130)} ` : ""}actor_role=${ctx.agent_role}`
       : null,
-    `summary ${compactProductPromptText(ctx.summary, 160)}`,
-    ctx.target_files.length > 0 ? `files ${ctx.target_files.slice(0, 4).join(",")}` : null,
-    ...line("current", currentLines.length > 0 ? currentLines : ctx.use_now.slice(0, 1), 2, 160),
-    ...line("procedure", procedureLines, 3, 130),
-    ...line("inspect", ctx.inspect_before_use, 3, 100),
-    ...line("avoid", ctx.do_not_use, 3, 100),
+    compactAgent ? null : `summary ${compactProductPromptText(ctx.summary, 160)}`,
+    ctx.target_files.length > 0 ? `files ${ctx.target_files.slice(0, compactAgent ? 2 : 4).join(",")}` : null,
+    ...line("current", currentLines.length > 0 ? currentLines : ctx.use_now.slice(0, 1), compactAgent ? 1 : 2, compactAgent ? 90 : 160),
+    ...line("procedure", procedureLines, compactAgent ? 1 : 3, compactAgent ? 90 : 130),
+    ...line("inspect", ctx.inspect_before_use, compactAgent ? 1 : 3, compactAgent ? 70 : 100),
+    ...line("avoid", ctx.do_not_use, compactAgent ? 3 : 3, compactAgent ? 90 : 100),
     ctx.rehydrate_hints.length > 0
       ? `rehydrate: ${ctx.rehydrate_hints
-        .slice(0, 3)
-        .map((entry) => `id=${entry.memory_id}${entry.required ? " req=1" : ""} n=${compactProductPromptText(entry.reason, 70)}`)
+        .slice(0, compactAgent ? 2 : 3)
+        .map((entry) => `id=${entry.memory_id}${entry.required ? " req=1" : ""} n=${compactProductPromptText(entry.reason, compactAgent ? 50 : 70)}`)
         .join(" | ")}`
       : null,
-    ctx.memory_ids.length > 0 ? `ids ${ctx.memory_ids.slice(0, 8).join(",")}` : null,
+    !compactAgent && ctx.memory_ids.length > 0 ? `ids ${ctx.memory_ids.slice(0, 8).join(",")}` : null,
   ]).join("\n");
   const budget = args.contextCharBudget && args.contextCharBudget > 0 ? Math.trunc(args.contextCharBudget) : null;
   if (!budget || prompt.length <= budget) return prompt;
@@ -1077,6 +1083,7 @@ function mergeProductGuideAgentContexts(args: {
   base: AionisAgentContext;
   execution: AionisAgentContext | null;
   contextCharBudget?: number | null;
+  agentContextMode?: AionisAgentContext["agent_context_mode"];
 }): { context: AionisAgentContext; changed: boolean } {
   const execution = args.execution;
   if (!execution) return { context: args.base, changed: false };
@@ -1154,6 +1161,7 @@ function mergeProductGuideAgentContexts(args: {
       : args.base.summary;
   const merged = AionisAgentContextSchema.parse({
     ...args.base,
+    agent_context_mode: args.agentContextMode ?? args.base.agent_context_mode,
     prompt_text: args.base.prompt_text,
     summary,
     history_used: historyUsed,
@@ -1185,6 +1193,7 @@ function mergeProductGuideAgentContexts(args: {
       prompt_text: renderMergedAgentPrompt({
         context: merged,
         contextCharBudget: args.contextCharBudget,
+        agentContextMode: args.agentContextMode ?? merged.agent_context_mode,
       }),
     }),
     changed: true,
@@ -2339,6 +2348,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     const tenantId = String(body.tenant_id ?? parsed.tenant_id ?? env.MEMORY_TENANT_ID);
     const scope = String(body.scope ?? parsed.scope ?? env.MEMORY_SCOPE);
     const fullPowerRequested = productGuideFullPowerRequested(parsed);
+    const agentContextMode = productGuideAgentContextMode(parsed);
     let fullPowerStructuredMemoryMerged = false;
     if (fullPowerRequested) {
       const structuredExecutionPacket = await buildProductGuideStructuredExecutionPacket({
@@ -2358,6 +2368,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       memory_packet: memoryPacket,
       guide_packet: guidePacket,
       query_intent_override: parsed.query_text,
+      agent_context_mode: agentContextMode,
       context_char_budget: parsed.context_char_budget,
       context_compaction_profile: parsed.context_compaction_profile ?? parsed.context_optimization_profile ?? null,
     });
@@ -2391,6 +2402,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
         base: agentContext,
         execution: executionAgentContext,
         contextCharBudget: parsed.context_char_budget,
+        agentContextMode,
       });
       agentContext = merged.context;
       fullPowerExecutionContextMerged = merged.changed;
@@ -2459,6 +2471,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
           ...(fullPowerRequested ? ["full_power_execution_context"] : []),
           ...(fullPowerStructuredMemoryMerged ? ["full_power_structured_execution_recall"] : []),
           ...(fullPowerExecutionContextMerged ? ["full_power_agent_context_merge"] : []),
+          ...(agentContextMode === "compact_agent" ? ["compact_agent_context"] : []),
           ...(activeProjectionApplied ? ["inspect_before_use_active_projection"] : []),
           ...(memoryContractVisible ? ["memory_contract"] : []),
           ...(premiseFirewallVisible ? ["premise_firewall"] : []),

@@ -5,6 +5,7 @@ import { handleAionisMcpTool, type AionisMcpClient, type AionisMcpToolName } fro
 const role = z.enum(["agent", "planner", "worker", "verifier", "reviewer"]).optional();
 const outcome = z.enum(["succeeded", "failed", "blocked", "interrupted", "unknown"]).optional();
 const guideMode = z.enum(["standard", "full_power"]).optional();
+const guideContextMode = z.enum(["standard", "full_power", "compact_agent"]).optional();
 const memoryLane = z.enum(["private", "shared"]).optional();
 const stringArray = z.array(z.string()).optional();
 const jsonObject = z.record(z.unknown()).optional();
@@ -78,6 +79,7 @@ export function createAionisMcpServer(client: AionisMcpClient): McpServer {
       guide: jsonObject,
       limit: z.number().int().positive().optional(),
       mode: guideMode,
+      context_mode: guideContextMode,
       context_char_budget: z.number().int().positive().optional(),
       context_token_budget: z.number().int().positive().optional(),
       context_compaction_profile: z.enum(["balanced", "aggressive"]).optional(),

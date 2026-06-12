@@ -1266,6 +1266,25 @@ test("product agent context surfaces active general memory without execution gui
   assert.equal(aggressiveAliasesByMemoryId.get("mem-general-active")?.surface, "current");
   assert.notEqual(aggressiveAliasesByMemoryId.get("mem-preference-active")?.surface, "current");
 
+  const compactAgentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    guide_packet: noExecutionGuidePacket,
+    agent_context_mode: "compact_agent",
+  });
+  assert.equal(compactAgentContext.agent_context_mode, "compact_agent");
+  assert.ok(compactAgentContext.prompt_text.includes("AIONIS_CTX v2"));
+  assert.equal(compactAgentContext.prompt_text.includes("AIONIS_AGENT_CONTEXT v1"), false);
+  assert.ok(compactAgentContext.prompt_text.length < context.prompt_text.length);
+  assert.deepEqual(compactAgentContext.use_now_memory_ids, context.use_now_memory_ids);
+  assert.deepEqual(compactAgentContext.inspect_before_use_memory_ids, context.inspect_before_use_memory_ids);
+  assert.deepEqual(compactAgentContext.do_not_use_memory_ids, context.do_not_use_memory_ids);
+  assert.ok(compactAgentContext.do_not_use_memory_ids.includes("mem-general-suppressed"));
+  assert.ok(compactAgentContext.prompt_aliases.some((entry) =>
+    entry.memory_id === "mem-general-suppressed" && entry.surface === "avoid"
+  ));
+
   const trace = buildAionisMemoryDecisionTrace({
     tenant_id: "tenant-local",
     scope: "repo-a",

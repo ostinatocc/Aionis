@@ -86,6 +86,15 @@ when `tr=accept_handoff`, but the lifecycle gate still applies. Full memory IDs
 remain in `agent_context` structured fields; hosts should not require the Agent
 prompt to carry UUIDs for attribution.
 
+Hosts that need a shorter Agent prompt can request
+`context_mode: "compact_agent"` on `/v1/guide`, SDK `guide()`, SDK
+`execution.guideForRole()`, `createExecutionMemoryAdapter().guideNext()`, host
+templates that pass through guide input, or MCP `aionis_context`. This keeps
+the same governed `use_now`, `inspect_before_use`, `do_not_use`,
+`rehydrate_hints`, and memory ID fields, but renders a tighter contract-style
+prompt for the Agent. Do not use compact mode as an audit substitute; receipts,
+traces, packets, and operator snapshots still belong in host logs.
+
 Trace-to-Procedure readiness is delivered through
 `operator_snapshot.trace_to_procedure`, not through the Agent prompt. Hosts can
 use it for run logs, dashboards, support diagnostics, or workflow review: it
