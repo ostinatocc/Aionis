@@ -1455,6 +1455,8 @@ test("product observe turns execution input into recallable execution memory", a
     assert.ok(guideBody.agent_context.prompt_text.includes("role_focus: review branch status"));
     assert.equal(guideBody.agent_context.route_contract.conflict_policy, "do_not_treat_missing_active_target_as_superseded");
     assert.equal(guideBody.agent_context.route_contract.fallback_policy, "do_not_promote_reference_or_blocked_targets");
+    assert.deepEqual(guideBody.agent_context.route_contract.action_policy.missing_active_target_preferred_order, ["create", "restore", "rehydrate", "report_conflict"]);
+    assert.equal(guideBody.agent_context.route_contract.action_policy.terminal_inspect_allowed, false);
     assert.ok(guideBody.source_map.internal_surfaces_used.includes("role_aware_agent_context"));
     assert.ok(guideBody.agent_context.prompt_text.length < JSON.stringify({
       memory_packet: guideBody.memory_packet,
@@ -1508,6 +1510,8 @@ test("product observe turns execution input into recallable execution memory", a
     assert.deepEqual(compactBody.agent_context.target_files, ["src/current-target.ts"]);
     assert.equal(compactBody.agent_context.route_contract.conflict_policy, "do_not_treat_missing_active_target_as_superseded");
     assert.equal(compactBody.agent_context.route_contract.fallback_policy, "do_not_promote_reference_or_blocked_targets");
+    assert.deepEqual(compactBody.agent_context.route_contract.action_policy.missing_active_target_preferred_order, ["create", "restore", "rehydrate", "report_conflict"]);
+    assert.equal(compactBody.agent_context.route_contract.action_policy.terminal_inspect_allowed, false);
     assert.ok(compactBody.source_map.omitted_internal_surfaces.includes("memory_packet"));
     assert.ok(compactBody.source_map.omitted_internal_surfaces.includes("guide_packet"));
   } finally {

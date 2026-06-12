@@ -687,6 +687,8 @@ test("product agent context contract renderer preserves execution state surfaces
   assert.ok(context.prompt_text.includes("conflict=missing_active_not_superseded"));
   assert.ok(context.prompt_text.includes("missing_action=create/restore/rehydrate/report"));
   assert.ok(context.prompt_text.includes("old_ref_not_supersede=1"));
+  assert.ok(context.prompt_text.includes("action missing_active=create>restore>rehydrate>report_conflict"));
+  assert.ok(context.prompt_text.includes("terminal_inspect=0"));
   assert.ok(context.prompt_text.includes("ref_only=src/checkout/candidate.ts"));
   assert.ok(context.prompt_text.includes("block_dir=src/legacy/search.ts"));
   assert.ok(context.prompt_text.includes("current: id=m1"));
@@ -750,11 +752,16 @@ test("product agent context contract renderer preserves execution state surfaces
   assert.deepEqual(context.route_contract.active_targets.map((entry) => entry.target), ["src/checkout/adapter.ts"]);
   assert.deepEqual(context.route_contract.pending_artifacts.map((entry) => entry.target), ["src/checkout/adapter.ts"]);
   assert.equal(context.route_contract.pending_artifacts[0]?.status, "unknown_until_host_observation");
-  assert.deepEqual(context.route_contract.pending_artifacts[0]?.allowed_actions, ["create", "restore", "rehydrate"]);
+  assert.deepEqual(context.route_contract.pending_artifacts[0]?.allowed_actions, ["create", "restore", "rehydrate", "report_conflict"]);
+  assert.deepEqual(context.route_contract.pending_artifacts[0]?.preferred_action_order, ["create", "restore", "rehydrate", "report_conflict"]);
+  assert.equal(context.route_contract.pending_artifacts[0]?.terminal_inspect_allowed, false);
   assert.deepEqual(context.route_contract.reference_only_targets.map((entry) => entry.target), ["src/checkout/candidate.ts"]);
   assert.deepEqual(context.route_contract.blocked_direction_targets.map((entry) => entry.target), ["src/legacy/search.ts"]);
   assert.equal(context.route_contract.conflict_policy, "do_not_treat_missing_active_target_as_superseded");
   assert.equal(context.route_contract.fallback_policy, "do_not_promote_reference_or_blocked_targets");
+  assert.deepEqual(context.route_contract.action_policy.missing_active_target_preferred_order, ["create", "restore", "rehydrate", "report_conflict"]);
+  assert.equal(context.route_contract.action_policy.terminal_inspect_allowed, false);
+  assert.equal(context.route_contract.action_policy.reference_fallback_requires, "explicit_raw_evidence_or_operator_confirmation");
 
   const standardContext = buildAionisAgentContext({
     tenant_id: "tenant-local",
@@ -774,6 +781,9 @@ test("product agent context contract renderer preserves execution state surfaces
   assert.ok(standardContext.prompt_text.includes("reference_only_targets=src/checkout/candidate.ts"));
   assert.ok(standardContext.prompt_text.includes("blocked_direction_targets=src/legacy/search.ts"));
   assert.ok(standardContext.prompt_text.includes("fallback_policy=do_not_promote_reference_or_blocked_targets"));
+  assert.ok(standardContext.prompt_text.includes("action_policy: missing_active_target_order=create>restore>rehydrate>report_conflict"));
+  assert.ok(standardContext.prompt_text.includes("terminal_inspect_allowed=false"));
+  assert.ok(standardContext.prompt_text.includes("reference_fallback_requires=explicit_raw_evidence_or_operator_confirmation"));
 });
 
 test("product agent route contract does not promote background execution events to active route", () => {

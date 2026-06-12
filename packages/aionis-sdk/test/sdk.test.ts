@@ -105,7 +105,9 @@ test("@aionis/sdk guide helpers keep Agent prompt and feedback attribution bound
             source: "should_continue",
             status: "unknown_until_host_observation",
             when: "if_active_target_is_missing",
-            allowed_actions: ["create", "restore", "rehydrate"],
+            allowed_actions: ["create", "restore", "rehydrate", "report_conflict"],
+            preferred_action_order: ["create", "restore", "rehydrate", "report_conflict"],
+            terminal_inspect_allowed: false,
           },
         ],
         reference_only_targets: [
@@ -139,6 +141,8 @@ test("@aionis/sdk guide helpers keep Agent prompt and feedback attribution bound
   assert.deepEqual(commandPostureFromGuide(guide, "must_not")[0]?.instruction, "Do not reuse the failed branch.");
   assert.equal(routeContractFromGuide(guide)?.conflict_policy, "do_not_treat_missing_active_target_as_superseded");
   assert.equal(routeContractFromGuide(guide)?.fallback_policy, "do_not_promote_reference_or_blocked_targets");
+  assert.deepEqual(routeContractFromGuide(guide)?.action_policy.missing_active_target_preferred_order, ["create", "restore", "rehydrate", "report_conflict"]);
+  assert.equal(routeContractFromGuide(guide)?.pending_artifacts[0]?.terminal_inspect_allowed, false);
   assert.deepEqual(activeRouteTargetsFromGuide(guide), ["src/a.ts"]);
   assert.deepEqual(pendingArtifactTargetsFromGuide(guide), ["src/a.ts"]);
   assert.deepEqual(referenceOnlyRouteTargetsFromGuide(guide), ["src/candidate.ts"]);

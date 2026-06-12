@@ -50,10 +50,18 @@ export type AionisRouteContractActiveTarget = AionisRouteContractTarget & {
   artifact_status: "unknown" | "may_be_absent";
   missing_policy: "restore_or_create_if_task_consistent_or_rehydrate";
 };
+export type AionisRouteContractMissingActiveAction = "create" | "restore" | "rehydrate" | "report_conflict";
 export type AionisRouteContractPendingArtifact = AionisRouteContractTarget & {
   status: "unknown_until_host_observation";
   when: "if_active_target_is_missing";
-  allowed_actions: Array<"create" | "restore" | "rehydrate">;
+  allowed_actions: AionisRouteContractMissingActiveAction[];
+  preferred_action_order: AionisRouteContractMissingActiveAction[];
+  terminal_inspect_allowed: false;
+};
+export type AionisRouteContractActionPolicy = {
+  missing_active_target_preferred_order: AionisRouteContractMissingActiveAction[];
+  terminal_inspect_allowed: false;
+  reference_fallback_requires: "explicit_raw_evidence_or_operator_confirmation";
 };
 export type AionisRouteContract = {
   active_targets: AionisRouteContractActiveTarget[];
@@ -62,6 +70,7 @@ export type AionisRouteContract = {
   blocked_direction_targets: AionisRouteContractTarget[];
   conflict_policy: "do_not_treat_missing_active_target_as_superseded";
   fallback_policy: "do_not_promote_reference_or_blocked_targets";
+  action_policy: AionisRouteContractActionPolicy;
 };
 
 export type AionisClientOptions = {
@@ -432,16 +441,33 @@ function routeContractPendingArtifactArray(value: unknown): AionisRouteContractP
   const records = Array.isArray(value) ? value : [];
   return routeContractTargetArray(records).map((entry, index) => {
     const record = asRecord(records[index]);
-    const actions = stringArray(record?.allowed_actions).filter((action): action is "create" | "restore" | "rehydrate" =>
-      action === "create" || action === "restore" || action === "rehydrate"
+    const actions = stringArray(record?.allowed_actions).filter((action): action is AionisRouteContractMissingActiveAction =>
+      action === "create" || action === "restore" || action === "rehydrate" || action === "report_conflict"
+    );
+    const preferred = stringArray(record?.preferred_action_order).filter((action): action is AionisRouteContractMissingActiveAction =>
+      action === "create" || action === "restore" || action === "rehydrate" || action === "report_conflict"
     );
     return {
       ...entry,
       status: "unknown_until_host_observation",
       when: "if_active_target_is_missing",
-      allowed_actions: actions.length > 0 ? actions : ["create", "restore", "rehydrate"],
+      allowed_actions: actions.length > 0 ? actions : ["create", "restore", "rehydrate", "report_conflict"],
+      preferred_action_order: preferred.length > 0 ? preferred : ["create", "restore", "rehydrate", "report_conflict"],
+      terminal_inspect_allowed: false,
     };
   });
+}
+
+function routeContractActionPolicy(value: unknown): AionisRouteContractActionPolicy {
+  const record = asRecord(value);
+  const preferred = stringArray(record?.missing_active_target_preferred_order).filter((action): action is AionisRouteContractMissingActiveAction =>
+    action === "create" || action === "restore" || action === "rehydrate" || action === "report_conflict"
+  );
+  return {
+    missing_active_target_preferred_order: preferred.length > 0 ? preferred : ["create", "restore", "rehydrate", "report_conflict"],
+    terminal_inspect_allowed: false,
+    reference_fallback_requires: "explicit_raw_evidence_or_operator_confirmation",
+  };
 }
 
 function routeContractMemoryIds(value: unknown): string[] {
@@ -1000,6 +1026,7 @@ export function routeContractFromGuide(guide: unknown): AionisRouteContract | nu
     blocked_direction_targets: routeContractTargetArray(contract.blocked_direction_targets),
     conflict_policy: "do_not_treat_missing_active_target_as_superseded",
     fallback_policy: "do_not_promote_reference_or_blocked_targets",
+    action_policy: routeContractActionPolicy(contract.action_policy),
   };
 }
 

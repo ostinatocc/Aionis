@@ -425,7 +425,9 @@ type AionisAgentContext = {
       source: "target_files" | "should_continue" | "inspect_first" | "must_not";
       status: "unknown_until_host_observation";
       when: "if_active_target_is_missing";
-      allowed_actions: Array<"create" | "restore" | "rehydrate">;
+      allowed_actions: Array<"create" | "restore" | "rehydrate" | "report_conflict">;
+      preferred_action_order: Array<"create" | "restore" | "rehydrate" | "report_conflict">;
+      terminal_inspect_allowed: false;
       reason?: string;
     }>;
     reference_only_targets: Array<{
@@ -442,6 +444,11 @@ type AionisAgentContext = {
     }>;
     conflict_policy: "do_not_treat_missing_active_target_as_superseded";
     fallback_policy: "do_not_promote_reference_or_blocked_targets";
+    action_policy: {
+      missing_active_target_preferred_order: Array<"create" | "restore" | "rehydrate" | "report_conflict">;
+      terminal_inspect_allowed: false;
+      reference_fallback_requires: "explicit_raw_evidence_or_operator_confirmation";
+    };
   };
   prompt_aliases: Array<{
     alias: string;
@@ -494,10 +501,13 @@ layer:
 `route_contract` is the machine-readable continuation contract behind the
 prompt. `active_targets` are governed continuation targets. `pending_artifacts`
 tell a host that an active target may need to be created, restored, or
-rehydrated if local observation says it is absent. The conflict policy means
-absence alone must not silently supersede the active route; the Agent should
-create, restore, rehydrate, or report the conflict before falling back to an old
-or reference-only route.
+rehydrated if local observation says it is absent. `action_policy` orders the
+safe next decisions for missing active targets: create, restore, rehydrate, then
+report conflict. `terminal_inspect_allowed=false` means inspection may gather
+evidence, but must not be the final answer when an active route is clear. The
+conflict policy means absence alone must not silently supersede the active
+route; the Agent should create, restore, rehydrate, or report the conflict
+before falling back to an old or reference-only route.
 
 `agent_context_mode` describes how the Agent prompt was rendered. `standard` is
 the default. `compact_agent` is an opt-in token-sensitive rendering that keeps

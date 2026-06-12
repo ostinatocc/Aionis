@@ -1549,8 +1549,10 @@ function buildAgentRouteContract(args: {
       source: target.source,
       status: "unknown_until_host_observation",
       when: "if_active_target_is_missing",
-      allowed_actions: ["create", "restore", "rehydrate"],
-      reason: "If the active route target is absent, absence alone is not stale proof; restore, create, or rehydrate before falling back.",
+      allowed_actions: ["create", "restore", "rehydrate", "report_conflict"],
+      preferred_action_order: ["create", "restore", "rehydrate", "report_conflict"],
+      terminal_inspect_allowed: false,
+      reason: "If the active route target is absent, absence alone is not stale proof; create, restore, rehydrate, or report conflict before falling back.",
     }, 6);
   }
 
@@ -1586,6 +1588,11 @@ function buildAgentRouteContract(args: {
     blocked_direction_targets: blockedDirectionTargets,
     conflict_policy: "do_not_treat_missing_active_target_as_superseded",
     fallback_policy: "do_not_promote_reference_or_blocked_targets",
+    action_policy: {
+      missing_active_target_preferred_order: ["create", "restore", "rehydrate", "report_conflict"],
+      terminal_inspect_allowed: false,
+      reference_fallback_requires: "explicit_raw_evidence_or_operator_confirmation",
+    },
   };
 }
 
@@ -1623,6 +1630,19 @@ function routeContractLine(args: {
       ]);
   if (parts.length === 0) return null;
   return shortenPromptText(`${args.compact ? "route" : "route_contract:"} ${parts.join(args.compact ? " " : "; ")}`, args.maxChars);
+}
+
+function routeActionPolicyLine(args: {
+  routeContract: AionisAgentContext["route_contract"];
+  compact?: boolean;
+  maxChars: number;
+}): string | null {
+  if (args.maxChars <= 0 || args.routeContract.active_targets.length === 0) return null;
+  const order = args.routeContract.action_policy.missing_active_target_preferred_order.join(">");
+  const line = args.compact
+    ? `action missing_active=${order} terminal_inspect=0 ref_fallback_raw_or_confirm=1`
+    : `action_policy: missing_active_target_order=${order}; terminal_inspect_allowed=false; reference_fallback_requires=explicit_raw_evidence_or_operator_confirmation`;
+  return shortenPromptText(line, args.maxChars);
 }
 
 function renderAgentContextPrompt(args: {
@@ -1672,6 +1692,10 @@ function renderAgentContextPrompt(args: {
       routeContract: args.routeContract,
       maxItems: 4,
       maxChars: 560,
+    }),
+    routeActionPolicyLine({
+      routeContract: args.routeContract,
+      maxChars: 260,
     }),
     `summary: ${shortenPromptText(args.summary, args.profile.summaryChars)}`,
     inline("target_files", args.targetFiles, args.profile.targetFileItems, args.profile.targetFileChars),
@@ -2081,6 +2105,11 @@ function renderExecutionStateContractPrompt(args: {
       compact: true,
       maxItems: Math.max(args.profile.targetFileItems, 1),
       maxChars: 220,
+    }),
+    routeActionPolicyLine({
+      routeContract: args.routeContract,
+      compact: true,
+      maxChars: 120,
     }),
     contractNextActionLine({
       entry: nextActionEntry,

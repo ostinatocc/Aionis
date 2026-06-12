@@ -502,6 +502,25 @@ const AionisRouteContractTargetSchema = z
   })
   .strict();
 
+const AionisRouteContractMissingActiveActionSchema = z.enum(["create", "restore", "rehydrate", "report_conflict"]);
+const AionisRouteContractMissingActiveActionOrder = ["create", "restore", "rehydrate", "report_conflict"] as const;
+const AionisRouteContractActionPolicySchema = z
+  .object({
+    missing_active_target_preferred_order: z
+      .array(AionisRouteContractMissingActiveActionSchema)
+      .default([...AionisRouteContractMissingActiveActionOrder]),
+    terminal_inspect_allowed: z.literal(false).default(false),
+    reference_fallback_requires: z
+      .literal("explicit_raw_evidence_or_operator_confirmation")
+      .default("explicit_raw_evidence_or_operator_confirmation"),
+  })
+  .strict()
+  .default({
+    missing_active_target_preferred_order: [...AionisRouteContractMissingActiveActionOrder],
+    terminal_inspect_allowed: false,
+    reference_fallback_requires: "explicit_raw_evidence_or_operator_confirmation",
+  });
+
 const AionisRouteContractSchema = z
   .object({
     active_targets: z
@@ -520,8 +539,12 @@ const AionisRouteContractSchema = z
           status: z.literal("unknown_until_host_observation").default("unknown_until_host_observation"),
           when: z.literal("if_active_target_is_missing").default("if_active_target_is_missing"),
           allowed_actions: z
-            .array(z.enum(["create", "restore", "rehydrate"]))
-            .default(["create", "restore", "rehydrate"]),
+            .array(AionisRouteContractMissingActiveActionSchema)
+            .default([...AionisRouteContractMissingActiveActionOrder]),
+          preferred_action_order: z
+            .array(AionisRouteContractMissingActiveActionSchema)
+            .default([...AionisRouteContractMissingActiveActionOrder]),
+          terminal_inspect_allowed: z.literal(false).default(false),
         }).strict(),
       )
       .default([]),
@@ -533,6 +556,7 @@ const AionisRouteContractSchema = z
     fallback_policy: z
       .literal("do_not_promote_reference_or_blocked_targets")
       .default("do_not_promote_reference_or_blocked_targets"),
+    action_policy: AionisRouteContractActionPolicySchema,
   })
   .strict()
   .default({
@@ -542,6 +566,11 @@ const AionisRouteContractSchema = z
     blocked_direction_targets: [],
     conflict_policy: "do_not_treat_missing_active_target_as_superseded",
     fallback_policy: "do_not_promote_reference_or_blocked_targets",
+    action_policy: {
+      missing_active_target_preferred_order: [...AionisRouteContractMissingActiveActionOrder],
+      terminal_inspect_allowed: false,
+      reference_fallback_requires: "explicit_raw_evidence_or_operator_confirmation",
+    },
   });
 
 export const AionisAgentContextSchema = z

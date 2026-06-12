@@ -78,13 +78,20 @@ machine-readable for SDK, MCP, host adapters, and Agent prompts:
       "status": "unknown_until_host_observation",
       "when": "if_active_target_is_missing",
       "source_memory_id": "mem-...",
-      "allowed_actions": ["create", "restore", "rehydrate"]
+      "allowed_actions": ["create", "restore", "rehydrate", "report_conflict"],
+      "preferred_action_order": ["create", "restore", "rehydrate", "report_conflict"],
+      "terminal_inspect_allowed": false
     }
   ],
   "reference_only_targets": [],
   "blocked_direction_targets": [],
   "conflict_policy": "do_not_treat_missing_active_target_as_superseded",
-  "fallback_policy": "do_not_promote_reference_or_blocked_targets"
+  "fallback_policy": "do_not_promote_reference_or_blocked_targets",
+  "action_policy": {
+    "missing_active_target_preferred_order": ["create", "restore", "rehydrate", "report_conflict"],
+    "terminal_inspect_allowed": false,
+    "reference_fallback_requires": "explicit_raw_evidence_or_operator_confirmation"
+  }
 }
 ```
 
@@ -114,6 +121,27 @@ This phase still does not make Aionis an executor. If the Agent cannot safely
 create or restore the active target, it should report the conflict or request
 rehydration. It should not silently abandon the active route in favor of a
 reference-only or blocked target.
+
+## Phase 4: Active-Target Action Policy
+
+Implemented scope:
+
+1. Keep `route_contract` as the host-facing surface; do not add a parallel
+   executor or task-specific rule layer.
+2. Add ordered action policy for missing active targets:
+   `create -> restore -> rehydrate -> report_conflict`.
+3. Mark `terminal_inspect_allowed=false`. Inspection can gather evidence, but
+   it is not a terminal action when Aionis has already provided a clear active
+   route.
+4. Require explicit raw evidence or operator confirmation before falling back
+   from a missing active target to a reference-only or blocked target.
+5. Render the policy as a separate prompt line so it is not lost behind long
+   route target lists.
+
+This still does not force the Agent to edit files. It makes the action contract
+unambiguous for hosts and Agents: if the active target is absent, the next
+decision must be create, restore, rehydrate, or report conflict, not quiet
+abandonment of the active route after reading reference files.
 
 Wired product path:
 

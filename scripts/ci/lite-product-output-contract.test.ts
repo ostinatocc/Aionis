@@ -287,13 +287,20 @@ function validAgentContext() {
           source: "should_continue",
           status: "unknown_until_host_observation",
           when: "if_active_target_is_missing",
-          allowed_actions: ["create", "restore", "rehydrate"],
+          allowed_actions: ["create", "restore", "rehydrate", "report_conflict"],
+          preferred_action_order: ["create", "restore", "rehydrate", "report_conflict"],
+          terminal_inspect_allowed: false,
           reason: "If the active route target is absent, restore or create it before falling back.",
         },
       ],
       reference_only_targets: [],
       blocked_direction_targets: [],
       fallback_policy: "do_not_promote_reference_or_blocked_targets",
+      action_policy: {
+        missing_active_target_preferred_order: ["create", "restore", "rehydrate", "report_conflict"],
+        terminal_inspect_allowed: false,
+        reference_fallback_requires: "explicit_raw_evidence_or_operator_confirmation",
+      },
     },
     rehydrate_hints: [{
       memory_id: "mem-3",
@@ -836,8 +843,14 @@ test("AionisAgentContext accepts compact agent-facing output", () => {
   assert.deepEqual(parsed.command_posture.map((entry) => entry.posture), ["should_continue", "must_not"]);
   assert.deepEqual(parsed.route_contract.active_targets.map((entry) => entry.target), ["src/index.ts"]);
   assert.equal(parsed.route_contract.pending_artifacts[0]?.when, "if_active_target_is_missing");
+  assert.deepEqual(parsed.route_contract.pending_artifacts[0]?.allowed_actions, ["create", "restore", "rehydrate", "report_conflict"]);
+  assert.deepEqual(parsed.route_contract.pending_artifacts[0]?.preferred_action_order, ["create", "restore", "rehydrate", "report_conflict"]);
+  assert.equal(parsed.route_contract.pending_artifacts[0]?.terminal_inspect_allowed, false);
   assert.equal(parsed.route_contract.conflict_policy, "do_not_treat_missing_active_target_as_superseded");
   assert.equal(parsed.route_contract.fallback_policy, "do_not_promote_reference_or_blocked_targets");
+  assert.deepEqual(parsed.route_contract.action_policy.missing_active_target_preferred_order, ["create", "restore", "rehydrate", "report_conflict"]);
+  assert.equal(parsed.route_contract.action_policy.terminal_inspect_allowed, false);
+  assert.equal(parsed.route_contract.action_policy.reference_fallback_requires, "explicit_raw_evidence_or_operator_confirmation");
   assert.equal(parsed.risk.negative_transfer_risk, "medium");
 
   const compactParsed = AionisAgentContextSchema.parse({
@@ -860,6 +873,7 @@ test("AionisAgentContext accepts compact agent-facing output", () => {
   });
   assert.deepEqual(defaultRouteParsed.route_contract.active_targets, []);
   assert.equal(defaultRouteParsed.route_contract.conflict_policy, "do_not_treat_missing_active_target_as_superseded");
+  assert.deepEqual(defaultRouteParsed.route_contract.action_policy.missing_active_target_preferred_order, ["create", "restore", "rehydrate", "report_conflict"]);
 });
 
 test("AionisAgentContext rejects packet leakage and loose fields", () => {
