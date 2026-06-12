@@ -1413,6 +1413,41 @@ function agentRoleFocusLine(role: AionisAgentRole): string | null {
   }
 }
 
+function commandPostureLine(args: {
+  commandPosture: AionisAgentContext["command_posture"];
+  maxItems: number;
+  maxChars: number;
+  aliases?: Map<string, string>;
+  compact?: boolean;
+}): string | null {
+  if (args.maxItems <= 0 || args.maxChars <= 0 || args.commandPosture.length === 0) return null;
+  const grouped = new Map<AionisAgentContext["command_posture"][number]["posture"], string[]>();
+  for (const entry of args.commandPosture) {
+    const id = args.aliases ? args.aliases.get(entry.memory_id) : entry.memory_id;
+    if (!id) continue;
+    const existing = grouped.get(entry.posture) ?? [];
+    const files = entry.target_files.length > 0
+      ? `(${entry.target_files.slice(0, 2).map((file) => shortenPromptText(file, 36)).join(",")})`
+      : "";
+    existing.push(`${id}${files}`);
+    grouped.set(entry.posture, existing);
+  }
+  const labels: Array<[AionisAgentContext["command_posture"][number]["posture"], string]> = [
+    ["must_not", args.compact ? "no" : "must_not"],
+    ["should_continue", args.compact ? "go" : "should_continue"],
+    ["inspect_first", args.compact ? "chk" : "inspect_first"],
+    ["rehydrate_first", args.compact ? "raw" : "rehydrate_first"],
+    ["optional_context", args.compact ? "ctx" : "optional_context"],
+  ];
+  const parts = compactStrings(labels.map(([posture, label]) => {
+    const values = grouped.get(posture)?.slice(0, args.maxItems) ?? [];
+    return values.length > 0 ? `${label}=${values.join(",")}` : null;
+  }));
+  if (parts.length === 0) return null;
+  const prefix = args.compact ? "cmd" : "command_posture:";
+  return shortenPromptText(`${prefix} ${parts.join(" ")}`, args.maxChars);
+}
+
 function renderAgentContextPrompt(args: {
   agentRole: AionisAgentRole;
   summary: string;
@@ -1431,6 +1466,7 @@ function renderAgentContextPrompt(args: {
   useNowMemoryIds: string[];
   inspectBeforeUseMemoryIds: string[];
   doNotUseMemoryIds: string[];
+  commandPosture: AionisAgentContext["command_posture"];
   profile: AgentContextPromptProfile;
 }): string {
   if (args.profile.style === "contract") return renderExecutionStateContractPrompt(args);
@@ -1445,6 +1481,11 @@ function renderAgentContextPrompt(args: {
     "AIONIS_AGENT_CONTEXT v1",
     `state: role=${args.agentRole} history=${args.historyUsed ? "yes" : "no"} actionable_history=${args.actionableHistoryUsed ? "yes" : "no"} posture=${args.recommendedPosture} authority=${args.authority} risk=${args.negativeTransferRisk}`,
     agentRoleFocusLine(args.agentRole),
+    commandPostureLine({
+      commandPosture: args.commandPosture,
+      maxItems: 4,
+      maxChars: 360,
+    }),
     `summary: ${shortenPromptText(args.summary, args.profile.summaryChars)}`,
     inline("target_files", args.targetFiles, args.profile.targetFileItems, args.profile.targetFileChars),
     inline("use_now", args.useNow, args.profile.useNowItems, args.profile.useNowChars),
@@ -1773,6 +1814,7 @@ function renderExecutionStateContractPrompt(args: {
   useNowMemoryIds: string[];
   inspectBeforeUseMemoryIds: string[];
   doNotUseMemoryIds: string[];
+  commandPosture: AionisAgentContext["command_posture"];
   profile: AgentContextPromptProfile;
 }): string {
   const entries = entryById(args.memoryEntries);
@@ -1829,6 +1871,13 @@ function renderExecutionStateContractPrompt(args: {
   const sections = compactStrings([
     "AIONIS_CTX v2",
     `state r=${args.agentRole} h=${args.historyUsed ? 1 : 0} a=${args.actionableHistoryUsed ? 1 : 0} p=${contractPostureLabel(args.recommendedPosture)} auth=${contractAuthorityLabel(args.authority)} risk=${contractRiskLabel(args.negativeTransferRisk)}`,
+    commandPostureLine({
+      commandPosture: args.commandPosture,
+      aliases,
+      maxItems: args.profile.memoryIdItems,
+      maxChars: 220,
+      compact: true,
+    }),
     contractNextActionLine({
       entry: nextActionEntry,
       agentRole: args.agentRole,
@@ -1920,6 +1969,7 @@ type BuildAgentContextPromptInput = {
   useNowMemoryIds: string[];
   inspectBeforeUseMemoryIds: string[];
   doNotUseMemoryIds: string[];
+  commandPosture: AionisAgentContext["command_posture"];
   contextCharBudget?: number | null;
   agentContextMode?: "standard" | "compact_agent" | null;
   contextCompactionProfile?: "balanced" | "aggressive" | null;
@@ -2553,6 +2603,100 @@ function lifecycleCandidateRehydrateHints(args: {
     .slice(0, 6);
 }
 
+function buildAgentContextCommandPostures(args: {
+  memoryEntries: MemoryPacketEntry[];
+  useNowMemoryIds: string[];
+  inspectBeforeUseMemoryIds: string[];
+  doNotUseMemoryIds: string[];
+  rehydrateHints: AionisAgentContext["rehydrate_hints"];
+}): AionisAgentContext["command_posture"] {
+  const entries = entryById(args.memoryEntries);
+  const rehydrateIds = new Set(args.rehydrateHints.map((hint) => hint.memory_id));
+  const seen = new Set<string>();
+  const rows: AionisAgentContext["command_posture"] = [];
+  const push = (row: AionisAgentContext["command_posture"][number]) => {
+    const key = `${row.posture}:${row.memory_id}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    rows.push({
+      ...row,
+      target_files: compactStrings(row.target_files).slice(0, 6),
+    });
+  };
+  const entryFiles = (entry: MemoryPacketEntry | null | undefined): string[] =>
+    compactStrings(entry?.target_files ?? []).slice(0, 6);
+  const label = (memoryId: string): string => {
+    const entry = entries.get(memoryId);
+    return entry ? memoryEntryAuditLabel(entry) : memoryId;
+  };
+
+  for (const memoryId of args.doNotUseMemoryIds) {
+    const entry = entries.get(memoryId);
+    push({
+      posture: "must_not",
+      surface: "do_not_use",
+      memory_id: memoryId,
+      instruction: "Do not continue, edit from, cite, or revive this memory as usable next-action guidance.",
+      reason: entry
+        ? `${memoryEntryAuditLabel(entry)} is classified as blocked, failed, stale, suppressed, or do-not-use history.`
+        : `${memoryId} is classified as do-not-use history.`,
+      target_files: entryFiles(entry),
+    });
+  }
+
+  for (const hint of args.rehydrateHints) {
+    push({
+      posture: "rehydrate_first",
+      surface: "rehydrate",
+      memory_id: hint.memory_id,
+      instruction: "Recover the raw payload or execution trace before relying on exact details.",
+      reason: hint.reason,
+      target_files: entryFiles(entries.get(hint.memory_id)),
+    });
+  }
+
+  for (const memoryId of args.inspectBeforeUseMemoryIds) {
+    if (rehydrateIds.has(memoryId)) continue;
+    const entry = entries.get(memoryId);
+    push({
+      posture: "inspect_first",
+      surface: "inspect_before_use",
+      memory_id: memoryId,
+      instruction: "Inspect current code, evidence, or operator state before acting from this memory.",
+      reason: `${label(memoryId)} is candidate, contested, stale-risk, or otherwise not direct-use safe.`,
+      target_files: entryFiles(entry),
+    });
+  }
+
+  for (const memoryId of args.useNowMemoryIds) {
+    const entry = entries.get(memoryId);
+    if (entry && (contractEntryIsCurrentState(entry) || contractEntryIsProcedure(entry) || entry.domain === "execution")) {
+      const current = contractEntryIsCurrentState(entry);
+      push({
+        posture: "should_continue",
+        surface: current ? "current" : "procedure",
+        memory_id: memoryId,
+        instruction: current
+          ? "Prefer continuing this current active state before widening discovery."
+          : "Reuse this accepted execution procedure when the current task scope matches.",
+        reason: `${memoryEntryAuditLabel(entry)} survived lifecycle, authority, and negative-transfer gates for direct use.`,
+        target_files: entryFiles(entry),
+      });
+      continue;
+    }
+    push({
+      posture: "optional_context",
+      surface: "use_now",
+      memory_id: memoryId,
+      instruction: "Use as contextual support only; do not override current evidence or higher-authority state.",
+      reason: `${label(memoryId)} is available in use_now but is not an execution-state command.`,
+      target_files: entryFiles(entry),
+    });
+  }
+
+  return rows.slice(0, 14);
+}
+
 function executionStateRehydrateHints(args: {
   entries: MemoryPacketEntry[];
   rehydrationRequested: boolean;
@@ -3008,6 +3152,13 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
   const summary = surfaces.historyUsed
     ? rawSummary
     : "No usable Aionis history was recovered for the Agent context.";
+  const commandPosture = buildAgentContextCommandPostures({
+    memoryEntries: memory?.relevant_memories ?? [],
+    useNowMemoryIds: surfaces.useNowMemoryIds,
+    inspectBeforeUseMemoryIds: surfaces.inspectBeforeUseMemoryIds,
+    doNotUseMemoryIds: surfaces.doNotUseMemoryIds,
+    rehydrateHints,
+  });
   const promptResult = buildAgentContextPromptResult({
     agentRole,
     summary,
@@ -3026,6 +3177,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     useNowMemoryIds: surfaces.useNowMemoryIds,
     inspectBeforeUseMemoryIds: surfaces.inspectBeforeUseMemoryIds,
     doNotUseMemoryIds: surfaces.doNotUseMemoryIds,
+    commandPosture,
     agentContextMode,
     contextCharBudget: args.context_char_budget,
     contextCompactionProfile: args.context_compaction_profile,
@@ -3051,6 +3203,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     use_now_memory_ids: surfaces.useNowMemoryIds,
     inspect_before_use_memory_ids: surfaces.inspectBeforeUseMemoryIds,
     do_not_use_memory_ids: surfaces.doNotUseMemoryIds,
+    command_posture: commandPosture,
     prompt_aliases: promptResult.promptAliases,
     rehydrate_hints: rehydrateHints,
     risk: surfaces.risk,
@@ -3110,6 +3263,13 @@ export function applyAionisInspectBeforeUseActiveProjection(
   const recommendedPosture: AionisAgentContext["recommended_posture"] = args.agent_context.history_used
     ? "inspect_before_use"
     : args.agent_context.recommended_posture;
+  const commandPosture = buildAgentContextCommandPostures({
+    memoryEntries,
+    useNowMemoryIds,
+    inspectBeforeUseMemoryIds,
+    doNotUseMemoryIds: args.agent_context.do_not_use_memory_ids,
+    rehydrateHints: args.agent_context.rehydrate_hints,
+  });
   const promptResult = buildAgentContextPromptResult({
     agentRole: args.agent_context.agent_role,
     summary: args.agent_context.summary,
@@ -3128,6 +3288,7 @@ export function applyAionisInspectBeforeUseActiveProjection(
     useNowMemoryIds,
     inspectBeforeUseMemoryIds,
     doNotUseMemoryIds: args.agent_context.do_not_use_memory_ids,
+    commandPosture,
     agentContextMode: args.agent_context.agent_context_mode,
     contextCharBudget: args.context_char_budget,
     contextCompactionProfile: args.context_compaction_profile,
@@ -3143,6 +3304,7 @@ export function applyAionisInspectBeforeUseActiveProjection(
     inspect_before_use: inspectBeforeUse,
     use_now_memory_ids: useNowMemoryIds,
     inspect_before_use_memory_ids: inspectBeforeUseMemoryIds,
+    command_posture: commandPosture,
     risk,
   });
 }

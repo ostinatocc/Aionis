@@ -177,7 +177,7 @@ Default output:
 
 | Field | Product Meaning |
 |---|---|
-| `agent_context` | Short Agent-facing context with summary, authority, risk, target files, use/inspect/do-not-use lists, memory IDs, and rehydration hints. |
+| `agent_context` | Short Agent-facing context with summary, authority, risk, target files, use/inspect/do-not-use lists, command posture, memory IDs, and rehydration hints. |
 
 Optional audit output:
 
@@ -185,7 +185,7 @@ Optional audit output:
 |---|---|
 | `include_packets: true` | Adds `memory_packet` and `guide_packet` for measurement, debugging, or advanced integrations. |
 | `mode: "full_power"` or `context_mode: "full_power"` | Internally merges semantic recall with safe full-power execution context while still exposing only `agent_context` to the Agent. |
-| `context_mode: "compact_agent"` | Uses the same governed full-power guide path but emits a shorter contract-style Agent prompt. Structured `use_now`, `inspect_before_use`, `do_not_use`, `rehydrate_hints`, IDs, receipts, and traces remain available outside the prompt. |
+| `context_mode: "compact_agent"` | Uses the same governed full-power guide path but emits a shorter contract-style Agent prompt. Structured `use_now`, `inspect_before_use`, `do_not_use`, `command_posture`, `rehydrate_hints`, IDs, receipts, and traces remain available outside the prompt. |
 
 The SDK defaults `guide()` calls to `mode: "full_power"` because that is the
 recommended product adapter path. Raw HTTP callers may still omit mode for the

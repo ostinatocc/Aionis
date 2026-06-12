@@ -91,9 +91,18 @@ Hosts that need a shorter Agent prompt can request
 `execution.guideForRole()`, `createExecutionMemoryAdapter().guideNext()`, host
 templates that pass through guide input, or MCP `aionis_context`. This keeps
 the same governed `use_now`, `inspect_before_use`, `do_not_use`,
-`rehydrate_hints`, and memory ID fields, but renders a tighter contract-style
-prompt for the Agent. Do not use compact mode as an audit substitute; receipts,
-traces, packets, and operator snapshots still belong in host logs.
+`rehydrate_hints`, `command_posture`, and memory ID fields, but renders a
+tighter contract-style prompt for the Agent. Do not use compact mode as an
+audit substitute; receipts, traces, packets, and operator snapshots still
+belong in host logs.
+
+`command_posture` is the host-readable instruction posture for the same
+governed surfaces. Use `must_not` to block failed/stale branches,
+`should_continue` to bias the Agent toward a current active state or accepted
+procedure, `inspect_first` for contested/candidate history, `rehydrate_first`
+for raw evidence pointers, and `optional_context` for ordinary context. It is a
+policy-safe control hint, not an autonomous scheduler; hosts still own tool
+execution and escalation.
 
 Trace-to-Procedure readiness is delivered through
 `operator_snapshot.trace_to_procedure`, not through the Agent prompt. Hosts can

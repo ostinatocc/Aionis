@@ -251,6 +251,24 @@ function validAgentContext() {
     use_now_memory_ids: ["mem-1"],
     inspect_before_use_memory_ids: ["mem-3"],
     do_not_use_memory_ids: ["mem-2"],
+    command_posture: [
+      {
+        posture: "should_continue",
+        surface: "current",
+        memory_id: "mem-1",
+        instruction: "Continue the current active state.",
+        reason: "Memory passed lifecycle and authority gates.",
+        target_files: ["src/index.ts"],
+      },
+      {
+        posture: "must_not",
+        surface: "do_not_use",
+        memory_id: "mem-2",
+        instruction: "Do not reuse this memory.",
+        reason: "Memory is suppressed.",
+        target_files: [],
+      },
+    ],
     rehydrate_hints: [{
       memory_id: "mem-3",
       reason: "Archived payload may contain the old verifier output.",
@@ -789,6 +807,7 @@ test("AionisAgentContext accepts compact agent-facing output", () => {
   assert.deepEqual(parsed.use_now_memory_ids, ["mem-1"]);
   assert.deepEqual(parsed.inspect_before_use_memory_ids, ["mem-3"]);
   assert.deepEqual(parsed.do_not_use_memory_ids, ["mem-2"]);
+  assert.deepEqual(parsed.command_posture.map((entry) => entry.posture), ["should_continue", "must_not"]);
   assert.equal(parsed.risk.negative_transfer_risk, "medium");
 
   const compactParsed = AionisAgentContextSchema.parse({
@@ -798,6 +817,12 @@ test("AionisAgentContext accepts compact agent-facing output", () => {
   });
   assert.equal(compactParsed.agent_context_mode, "compact_agent");
   assert.equal(compactParsed.prompt_text.includes("AIONIS_CTX compact_agent"), true);
+
+  const legacyParsed = AionisAgentContextSchema.parse({
+    ...validAgentContext(),
+    command_posture: undefined,
+  });
+  assert.deepEqual(legacyParsed.command_posture, []);
 });
 
 test("AionisAgentContext rejects packet leakage and loose fields", () => {

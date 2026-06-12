@@ -518,7 +518,15 @@ fields:
 11. `use_now_memory_ids`
 12. `inspect_before_use_memory_ids`
 13. `do_not_use_memory_ids`
-14. `risk`
+14. `command_posture`
+15. `risk`
+
+`command_posture` is the governed instruction layer for hosts and Agents. It
+uses `must_not`, `should_continue`, `inspect_first`, `rehydrate_first`, and
+`optional_context` after Aionis has already applied lifecycle, authority,
+premise, and rehydration gates. It is safer than asking the Agent to infer
+control flow from a free-form summary, and it does not bypass Runtime
+governance.
 
 Do not pass `memory_packet`, `guide_packet`, `memory_decision_trace`,
 `memory_decision_audit`, raw rows, or raw slots to the Agent by default.
@@ -583,8 +591,8 @@ audit:
 
 Compact mode must not change memory authority. If a memory is stale, failed,
 contested, or rehydratable, it still belongs in `inspect_before_use`,
-`do_not_use`, or `rehydrate_hints`; compact mode only changes how the safe
-Agent prompt is rendered.
+`do_not_use`, `rehydrate_hints`, or the corresponding `command_posture`;
+compact mode only changes how the safe Agent prompt is rendered.
 
 Example:
 

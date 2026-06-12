@@ -51,10 +51,14 @@ equivalent using these fields:
 7. `inspect_before_use`
 8. `do_not_use`
 9. `rehydrate_hints`
-10. `memory_ids`
-11. `risk`
+10. `command_posture`
+11. `memory_ids`
+12. `risk`
 
 This keeps Aionis useful without turning memory internals into a rule wall.
+`command_posture` is the governed instruction posture: `must_not`,
+`should_continue`, `inspect_first`, `rehydrate_first`, or `optional_context`.
+It is compiled after lifecycle, authority, premise, and rehydration gates.
 
 Premise Firewall warnings are Agent-facing only through the existing
 `risk.reasons`, `inspect_before_use`, and `do_not_use` fields. The detailed

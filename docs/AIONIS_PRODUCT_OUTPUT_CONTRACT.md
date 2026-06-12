@@ -390,6 +390,26 @@ type AionisAgentContext = {
   use_now_memory_ids: string[];
   inspect_before_use_memory_ids: string[];
   do_not_use_memory_ids: string[];
+  command_posture: Array<{
+    posture:
+      | "must_not"
+      | "should_continue"
+      | "inspect_first"
+      | "rehydrate_first"
+      | "optional_context";
+    surface:
+      | "current"
+      | "procedure"
+      | "use_now"
+      | "inspect_before_use"
+      | "do_not_use"
+      | "rehydrate"
+      | "context";
+    memory_id: string;
+    instruction: string;
+    reason: string;
+    target_files: string[];
+  }>;
   prompt_aliases: Array<{
     alias: string;
     memory_id: string;
@@ -422,8 +442,21 @@ next action, `role` for source role, and `to` for handoff target. Aggressive
 mode uses short aliases (`m1`, `m2`, ...) in prompt text and keeps full memory
 IDs in the structured fields (`use_now_memory_ids`,
 `inspect_before_use_memory_ids`, `do_not_use_memory_ids`, `rehydrate_hints`,
-`prompt_aliases`, and `memory_ids`) so hosts can audit and attribute memory use
-without making the Agent carry UUIDs in prompt context.
+`command_posture`, `prompt_aliases`, and `memory_ids`) so hosts can audit and
+attribute memory use without making the Agent carry UUIDs in prompt context.
+
+`command_posture` is the Agent-facing command posture compiled after lifecycle,
+authority, premise, and rehydration gates. It does not let an LLM candidate
+override Runtime governance. Hosts should treat it as a bounded instruction
+layer:
+
+| Posture | Meaning |
+|---|---|
+| `must_not` | Do not continue, edit from, cite, or revive the memory as usable next-action guidance. |
+| `should_continue` | Prefer continuing this active state or accepted execution procedure before widening discovery. |
+| `inspect_first` | Check current code, evidence, or operator state before acting from the memory. |
+| `rehydrate_first` | Recover raw payload or trace before relying on exact details. |
+| `optional_context` | Useful context only; it must not override current evidence or higher-authority state. |
 
 `agent_context_mode` describes how the Agent prompt was rendered. `standard` is
 the default. `compact_agent` is an opt-in token-sensitive rendering that keeps

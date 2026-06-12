@@ -1435,6 +1435,7 @@ test("product observe turns execution input into recallable execution memory", a
       "use_now_memory_ids",
       "inspect_before_use_memory_ids",
       "do_not_use_memory_ids",
+      "command_posture",
       "prompt_aliases",
       "rehydrate_hints",
       "risk",

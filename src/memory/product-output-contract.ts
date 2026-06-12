@@ -520,6 +520,34 @@ export const AionisAgentContextSchema = z
     use_now_memory_ids: z.array(z.string().min(1)).default([]),
     inspect_before_use_memory_ids: z.array(z.string().min(1)).default([]),
     do_not_use_memory_ids: z.array(z.string().min(1)).default([]),
+    command_posture: z
+      .array(
+        z
+          .object({
+            posture: z.enum([
+              "must_not",
+              "should_continue",
+              "inspect_first",
+              "rehydrate_first",
+              "optional_context",
+            ]),
+            surface: z.enum([
+              "current",
+              "procedure",
+              "use_now",
+              "inspect_before_use",
+              "do_not_use",
+              "rehydrate",
+              "context",
+            ]),
+            memory_id: z.string().min(1),
+            instruction: z.string().min(1),
+            reason: z.string().min(1),
+            target_files: z.array(z.string().min(1)).default([]),
+          })
+          .strict(),
+      )
+      .default([]),
     prompt_aliases: z
       .array(
         z

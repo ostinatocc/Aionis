@@ -1039,6 +1039,50 @@ function productGuideSafeExecutionLines(values: string[], allowedPrefixes: strin
   return values.filter((entry) => allowedPrefixes.some((prefix) => entry.startsWith(prefix)));
 }
 
+function mergeCommandPostureRows(
+  values: AionisAgentContext["command_posture"],
+  limit: number,
+): AionisAgentContext["command_posture"] {
+  const seen = new Set<string>();
+  const rows: AionisAgentContext["command_posture"] = [];
+  for (const row of values) {
+    const key = `${row.posture}:${row.memory_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push(row);
+    if (rows.length >= limit) break;
+  }
+  return rows;
+}
+
+function renderProductCommandPostureLine(args: {
+  commandPosture: AionisAgentContext["command_posture"];
+  compactAgent: boolean;
+}): string | null {
+  if (args.commandPosture.length === 0) return null;
+  const groups = new Map<AionisAgentContext["command_posture"][number]["posture"], string[]>();
+  for (const row of args.commandPosture) {
+    const values = groups.get(row.posture) ?? [];
+    values.push(row.memory_id);
+    groups.set(row.posture, values);
+  }
+  const labels: Array<[AionisAgentContext["command_posture"][number]["posture"], string]> = [
+    ["must_not", args.compactAgent ? "no" : "must_not"],
+    ["should_continue", args.compactAgent ? "go" : "should_continue"],
+    ["inspect_first", args.compactAgent ? "chk" : "inspect_first"],
+    ["rehydrate_first", args.compactAgent ? "raw" : "rehydrate_first"],
+    ["optional_context", args.compactAgent ? "ctx" : "optional_context"],
+  ];
+  const parts = labels
+    .map(([posture, label]) => {
+      const values = groups.get(posture)?.slice(0, args.compactAgent ? 3 : 5) ?? [];
+      return values.length > 0 ? `${label}=${values.join(",")}` : null;
+    })
+    .filter((entry): entry is string => !!entry);
+  if (parts.length === 0) return null;
+  return compactProductPromptText(`${args.compactAgent ? "cmd" : "command_posture:"} ${parts.join(" ")}`, args.compactAgent ? 180 : 320);
+}
+
 function renderMergedAgentPrompt(args: {
   context: AionisAgentContext;
   contextCharBudget?: number | null;
@@ -1057,6 +1101,10 @@ function renderMergedAgentPrompt(args: {
   const prompt = uniqueStrings([
     compactAgent ? "AIONIS_CTX compact_agent" : "AIONIS_CTX v2",
     `state r=${ctx.agent_role} h=${ctx.history_used ? 1 : 0} a=${ctx.actionable_history_used ? 1 : 0} p=${productPromptPostureLabel(ctx.recommended_posture)} auth=${productPromptAuthorityLabel(ctx.authority)} risk=${productPromptRiskLabel(ctx.risk.negative_transfer_risk)}`,
+    renderProductCommandPostureLine({
+      commandPosture: ctx.command_posture,
+      compactAgent,
+    }),
     ctx.actionable_history_used
       ? `next ${nextAction ? `action=${compactProductPromptText(nextAction, 130)} ` : ""}actor_role=${ctx.agent_role}`
       : null,
@@ -1123,6 +1171,10 @@ function mergeProductGuideAgentContexts(args: {
     ...args.base.rehydrate_hints,
     ...execution.rehydrate_hints.filter((hint) => knownMemoryIds.has(hint.memory_id)),
   ].slice(0, 6);
+  const commandPosture = mergeCommandPostureRows([
+    ...execution.command_posture.filter((row) => knownMemoryIds.has(row.memory_id)),
+    ...args.base.command_posture,
+  ], 14);
   const historyUsed = args.base.history_used || execution.history_used;
   const actionableHistoryUsed = args.base.actionable_history_used || execution.actionable_history_used;
   const recommendedPosture: AionisAgentContext["recommended_posture"] = !actionableHistoryUsed
@@ -1176,6 +1228,7 @@ function mergeProductGuideAgentContexts(args: {
     use_now_memory_ids: useNowMemoryIds,
     inspect_before_use_memory_ids: inspectBeforeUseMemoryIds,
     do_not_use_memory_ids: doNotUseMemoryIds,
+    command_posture: commandPosture,
     rehydrate_hints: rehydrateHints,
     risk,
     evidence_refs: {

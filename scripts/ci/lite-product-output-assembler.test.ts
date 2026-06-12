@@ -645,6 +645,9 @@ test("product agent context contract renderer preserves execution state surfaces
   assert.ok(context.prompt_text.includes("tr=handoff_to_actor"));
   assert.ok(context.prompt_text.includes("role=worker"));
   assert.ok(context.prompt_text.includes("to=reviewer"));
+  assert.match(context.prompt_text, /cmd .*go=m1/);
+  assert.match(context.prompt_text, /cmd .*no=m\d+/);
+  assert.match(context.prompt_text, /cmd .*raw=m\d+/);
   assert.ok(context.prompt_text.includes("current: id=m1"));
   assert.ok(context.prompt_text.includes("k=current_state"));
   assert.ok(context.prompt_text.includes("tr=avoid_failed_branch"));
@@ -673,6 +676,26 @@ test("product agent context contract renderer preserves execution state surfaces
   assert.ok(context.use_now_memory_ids.includes("mem-contract-procedure"));
   assert.ok(context.do_not_use_memory_ids.includes("mem-contract-failed-branch"));
   assert.ok(context.rehydrate_hints.some((entry) => entry.memory_id === "mem-contract-rehydrate"));
+  assert.ok(context.command_posture.some((entry) =>
+    entry.memory_id === "mem-contract-current"
+    && entry.posture === "should_continue"
+    && entry.surface === "current"
+  ));
+  assert.ok(context.command_posture.some((entry) =>
+    entry.memory_id === "mem-contract-procedure"
+    && entry.posture === "should_continue"
+    && entry.surface === "procedure"
+  ));
+  assert.ok(context.command_posture.some((entry) =>
+    entry.memory_id === "mem-contract-failed-branch"
+    && entry.posture === "must_not"
+    && entry.surface === "do_not_use"
+  ));
+  assert.ok(context.command_posture.some((entry) =>
+    entry.memory_id === "mem-contract-rehydrate"
+    && entry.posture === "rehydrate_first"
+    && entry.surface === "rehydrate"
+  ));
 });
 
 test("product agent context keeps explicit rehydrate hints out of use and inspect surfaces", () => {
