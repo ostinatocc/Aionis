@@ -70,13 +70,38 @@ npx @aionis/mcp@latest
 
 | Tool | What it does |
 |---|---|
-| `aionis_context` | Compiles governed context for the current run. Can also record a lightweight observation first. |
+| `aionis_context` | Compiles SDK execution-agent context for the current run. Can also record a lightweight observation first. |
 | `aionis_record_step` | Records execution state and optionally attributes feedback if memory IDs are supplied. |
 | `aionis_handoff` | Records planner/worker/verifier/reviewer handoff state. |
 | `aionis_remember` | Stores ordinary memory through the governed observe path. |
 | `aionis_measure` | Measures guide and feedback impact. |
 | `aionis_snapshot` | Returns read-only operator/audit state. |
 | `aionis_health` | Checks Runtime reachability. |
+
+## Context Output
+
+`aionis_context` is the MCP version of the SDK product path:
+
+```text
+guide -> compileExecutionAgentContext -> agent_prompt + receipt + warnings
+```
+
+The tool keeps `agent_prompt` at the top level for drop-in MCP clients, but it
+also returns `structuredContent.execution_context` with contract version
+`aionis_execution_agent_context_v1`. That compiled context includes:
+
+- active targets and missing active targets
+- pending artifacts and blocked/reference-only targets
+- memory use receipt
+- rehydrate requests
+- execution warnings
+- final prompt budget metadata
+
+MCP hosts can pass `repo_state` with `existing_files`, `missing_files`, or
+per-file `{ target, exists }` entries. Aionis uses that observation to mark
+missing active targets as pending work, not as proof that the accepted route is
+stale. Hosts can also set `budget_profile`, `max_prompt_chars`,
+`include_base_prompt`, and `additional_instructions`.
 
 ## Drop-In Mode
 

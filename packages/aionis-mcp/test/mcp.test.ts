@@ -167,12 +167,28 @@ test("@aionis/mcp context tool records optional observation then compiles prompt
     target_files: ["src/checkout.ts"],
     context_mode: "compact_agent",
     context_char_budget: 3000,
+    repo_state: {
+      missing_files: ["src/checkout.ts"],
+      existing_files: ["src/legacy.ts"],
+    },
+    budget_profile: "compact",
+    max_prompt_chars: 4000,
+    additional_instructions: ["Prefer the accepted route."],
   });
 
   assert.deepEqual(calls.map((call) => call.method), ["observeStep", "guideForRole"]);
-  assert.match(output.content[0]?.text ?? "", /CURRENT_ACTIVE_PATH/);
+  assert.match(output.content[0]?.text ?? "", /AIONIS_EXECUTION_AGENT_CONTEXT v1/);
   assert.equal(output.structuredContent?.drop_in_mode, true);
   assert.equal(output.structuredContent?.feedback_required, false);
+  assert.equal(output.structuredContent?.agent_prompt, (output.structuredContent?.execution_context as Record<string, unknown>)?.agent_prompt);
+  assert.equal((output.structuredContent?.execution_context as Record<string, unknown>)?.contract_version, "aionis_execution_agent_context_v1");
+  assert.deepEqual((output.structuredContent?.execution_context as Record<string, unknown>)?.missing_active_targets, ["src/checkout.ts"]);
+  assert.equal((output.structuredContent?.memory_use_receipt as Record<string, unknown>)?.contract_version, "aionis_memory_use_receipt_v1");
+  assert.equal(
+    ((output.structuredContent?.execution_warnings as Array<Record<string, unknown>>) ?? [])
+      .some((warning) => warning.code === "missing_active_target"),
+    true,
+  );
   assert.deepEqual(output.structuredContent?.should_continue_memory_ids, ["mem-1"]);
   assert.deepEqual(output.structuredContent?.must_not_memory_ids, ["mem-failed"]);
   assert.deepEqual(output.structuredContent?.command_posture_memory_ids, ["mem-1", "mem-failed"]);
@@ -244,7 +260,7 @@ test("@aionis/mcp speaks MCP listTools and callTool over transport", async () =>
         query_text: "Continue safely.",
       },
     });
-    assert.match(response.content[0]?.type === "text" ? response.content[0].text : "", /CURRENT_ACTIVE_PATH/);
+    assert.match(response.content[0]?.type === "text" ? response.content[0].text : "", /AIONIS_EXECUTION_AGENT_CONTEXT v1/);
     assert.deepEqual(calls.map((call) => call.method), ["guideForRole"]);
   } finally {
     await client.close();

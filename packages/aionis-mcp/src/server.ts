@@ -10,6 +10,15 @@ const memoryLane = z.enum(["private", "shared"]).optional();
 const stringArray = z.array(z.string()).optional();
 const jsonObject = z.record(z.unknown()).optional();
 const guideValue = z.unknown().optional();
+const repoState = z.object({
+  existing_files: stringArray,
+  missing_files: stringArray,
+  files: z.array(z.object({
+    target: z.string(),
+    exists: z.boolean(),
+    reason: z.string().optional(),
+  })).optional(),
+}).optional();
 
 type ToolConfig = {
   title?: string;
@@ -84,6 +93,11 @@ export function createAionisMcpServer(client: AionisMcpClient): McpServer {
       context_token_budget: z.number().int().positive().optional(),
       context_compaction_profile: z.enum(["balanced", "aggressive"]).optional(),
       context_optimization_profile: z.enum(["balanced", "aggressive"]).optional(),
+      repo_state: repoState.describe("Optional host-observed file presence for execution-context warnings."),
+      budget_profile: z.enum(["compact", "balanced", "high_recall"]).optional(),
+      max_prompt_chars: z.number().int().positive().optional(),
+      include_base_prompt: z.boolean().optional(),
+      additional_instructions: stringArray,
     },
   });
 

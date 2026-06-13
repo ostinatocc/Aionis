@@ -1,7 +1,7 @@
 import {
-  agentPromptFromGuide,
   commandPostureFromGuide,
   commandPostureMemoryIdsFromGuide,
+  compileExecutionAgentContext,
   createAionisClient,
   inspectFirstMemoryIdsFromGuide,
   mustNotMemoryIdsFromGuide,
@@ -10,7 +10,9 @@ import {
   shouldContinueMemoryIdsFromGuide,
   type AionisClient,
   type AionisExecutionAgentRole,
+  type AionisExecutionContextBudgetProfile,
   type AionisExecutionOutcomeStatus,
+  type AionisExecutionRepoState,
   type AionisFeedbackOutcome,
   type AionisFeedbackUsedSurface,
   type AionisGuideContextMode,
@@ -72,6 +74,11 @@ export type AionisContextInput = {
   context_token_budget?: number;
   context_compaction_profile?: "balanced" | "aggressive";
   context_optimization_profile?: "balanced" | "aggressive";
+  repo_state?: AionisExecutionRepoState;
+  budget_profile?: AionisExecutionContextBudgetProfile;
+  max_prompt_chars?: number;
+  include_base_prompt?: boolean;
+  additional_instructions?: string[];
 };
 
 export type AionisRecordStepInput = {
@@ -205,6 +212,30 @@ function optionalStringArray(value: unknown, label: string): string[] | undefine
   return value;
 }
 
+function optionalRepoState(value: unknown, label: string): AionisExecutionRepoState | undefined {
+  if (value === undefined) return undefined;
+  const state = asRecord(value, label);
+  const existing_files = optionalStringArray(state.existing_files, `${label}.existing_files`);
+  const missing_files = optionalStringArray(state.missing_files, `${label}.missing_files`);
+  if (state.files !== undefined) {
+    if (!Array.isArray(state.files)) throw new Error(`${label}.files must be an array`);
+    for (const [index, file] of state.files.entries()) {
+      const entry = asRecord(file, `${label}.files[${index}]`);
+      if (typeof entry.target !== "string") throw new Error(`${label}.files[${index}].target must be a string`);
+      if (typeof entry.exists !== "boolean") throw new Error(`${label}.files[${index}].exists must be a boolean`);
+      if (entry.reason !== undefined && typeof entry.reason !== "string") {
+        throw new Error(`${label}.files[${index}].reason must be a string`);
+      }
+    }
+  }
+  return {
+    ...state,
+    existing_files,
+    missing_files,
+    files: state.files as AionisExecutionRepoState["files"],
+  };
+}
+
 function contextInput(args: unknown): AionisContextInput {
   const input = asRecord(args, "aionis_context input");
   return {
@@ -214,6 +245,8 @@ function contextInput(args: unknown): AionisContextInput {
     query_text: String(input.query_text ?? ""),
     target_files: optionalStringArray(input.target_files, "target_files"),
     tool_candidates: optionalStringArray(input.tool_candidates, "tool_candidates"),
+    additional_instructions: optionalStringArray(input.additional_instructions, "additional_instructions"),
+    repo_state: optionalRepoState(input.repo_state, "repo_state"),
   } as AionisContextInput;
 }
 
@@ -337,11 +370,29 @@ export async function handleAionisMcpTool(
       context_optimization_profile: input.context_optimization_profile,
       guide: input.guide,
     });
+    const executionContext = compileExecutionAgentContext({
+      guide,
+      task: {
+        run_id: input.run_id,
+        task_id: input.task_id,
+        task_signature: input.task_signature,
+        query_text: input.query_text,
+      },
+      repo_state: input.repo_state,
+      budget_profile: input.budget_profile,
+      max_prompt_chars: input.max_prompt_chars,
+      include_base_prompt: input.include_base_prompt,
+      additional_instructions: input.additional_instructions,
+    });
     return result({
       ok: true,
       observed,
       guide,
-      agent_prompt: agentPromptFromGuide(guide),
+      agent_prompt: executionContext.agent_prompt,
+      execution_context: executionContext,
+      memory_use_receipt: executionContext.memory_use_receipt,
+      rehydrate_requests: executionContext.rehydrate_requests,
+      execution_warnings: executionContext.execution_warnings,
       command_posture: commandPostureFromGuide(guide),
       command_posture_memory_ids: commandPostureMemoryIdsFromGuide(guide),
       route_contract: routeContractFromGuide(guide),

@@ -743,9 +743,9 @@ function generatedMemoryUseReceipt(guide: unknown): AionisMemoryUseReceipt {
     decision_summaries: decisionSummariesFromSurfaces({ useNow, inspect, doNotUse, rehydrate }),
     risk_flags: stringArray(asRecord(context?.risk)?.reasons),
     summary: useNow.length > 0
-      ? "Aionis exposed governed actionable execution memory."
+      ? "Aionis exposed adjudicated actionable execution memory."
       : exposed.length > 0
-        ? "Aionis exposed governed non-actionable memory surfaces."
+        ? "Aionis exposed adjudicated non-actionable memory surfaces."
         : "Aionis did not expose reusable memory for this guide.",
   };
 }

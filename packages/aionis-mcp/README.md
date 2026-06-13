@@ -32,13 +32,26 @@ The server exposes stable product tools, not internal Runtime packets:
 | `aionis_snapshot` | Return read-only operator/audit state. |
 | `aionis_health` | Check Runtime reachability. |
 
-`aionis_context` accepts `context_mode: "compact_agent"` when an MCP client
-needs a shorter Agent prompt. The Runtime still returns governed memory buckets
-and IDs for attribution; compact mode only changes the prompt rendering.
-The tool also returns structured command posture fields in `structuredContent`:
+`aionis_context` is compiler-first. It calls Runtime guide through the SDK, then
+renders the same `aionis_execution_agent_context_v1` contract that SDK users get
+from `compileExecutionAgentContext()`. The top-level `agent_prompt` field is kept
+for MCP clients that only want prompt text; richer clients should read
+`structuredContent.execution_context`.
+
+It accepts `context_mode: "compact_agent"` when an MCP client needs a shorter
+Runtime guide, and `budget_profile`, `max_prompt_chars`, `repo_state`, and
+`additional_instructions` when the host can provide execution-environment facts.
+For example, pass `repo_state.missing_files` so Aionis can tell the Agent that a
+missing active target is pending work rather than stale memory.
+
+The tool returns these structured fields in `structuredContent`:
 
 | Field | Meaning |
 |---|---|
+| `execution_context` | SDK-compiled execution contract, including active targets, missing active targets, warnings, and final `agent_prompt`. |
+| `memory_use_receipt` | Compact audit receipt showing which memories were exposed, suppressed, rehydrated, or attributed. |
+| `rehydrate_requests` | Memory IDs that need raw evidence recovery before exact use. |
+| `execution_warnings` | Runtime/SDK warnings such as missing active targets or blocked routes. |
 | `command_posture` | Bounded Agent instructions compiled from governed memory surfaces. |
 | `must_not_memory_ids` | Failed, stale, suppressed, or do-not-use memories the client should not continue. |
 | `should_continue_memory_ids` | Current active state or accepted procedure memories the client should prefer. |
