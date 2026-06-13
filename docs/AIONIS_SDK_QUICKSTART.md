@@ -5,7 +5,7 @@ Status: developer-facing SDK quickstart for the focused local Runtime
 This quickstart shows the smallest SDK product loop:
 
 ```text
-remember -> guide -> agent prompt -> feedback -> measure -> snapshot
+remember -> guide -> compileExecutionAgentContext -> agent prompt -> feedback -> measure -> snapshot
 ```
 
 It does not add a new Runtime mechanism, external Agent framework, UI, or
@@ -38,7 +38,7 @@ on a random port.
 
 ```ts
 import {
-  agentPromptFromGuide,
+  compileExecutionAgentContext,
   createAionisClient,
   feedbackFromGuide,
   measureInputFromGuideLoop,
@@ -59,20 +59,33 @@ await aionis.remember({
   owner_agent_id: "agent-1",
 });
 
-const guide = await aionis.guide<{
+const guide = await aionis.execution.guideForRole<{
   guide_trace_id: string;
   agent_context: {
     prompt_text: string;
     use_now_memory_ids: string[];
   };
 }>({
+  agent_id: "agent-1",
+  run_id: "run-001",
+  task_signature: "product-update",
   query_text: "Continue the product update.",
-  consumer_agent_id: "agent-1",
   limit: 8,
   include_packets: true,
+  context_mode: "compact_agent",
 });
 
-const agentPromptContext = agentPromptFromGuide(guide);
+const agentContext = compileExecutionAgentContext({
+  guide,
+  task: {
+    run_id: "run-001",
+    task_signature: "product-update",
+    query_text: "Continue the product update.",
+  },
+  budget_profile: "balanced",
+});
+
+// Your host runs the Agent with agentContext.agent_prompt.
 
 const feedback = await aionis.feedback(feedbackFromGuide({
   guide,
@@ -105,10 +118,12 @@ await aionis.snapshot(snapshotInputFromGuideLoop({
 }));
 ```
 
-Give only `agentPromptContext` or selected `agent_context` fields to the Agent.
-Keep `guide_trace_id` and `use_now_memory_ids` in host state for attribution.
-Do not pass `memory_packet`, `guide_packet`, `memory_decision_trace`,
-`memory_decision_audit`, raw rows, or raw slots to the Agent by default.
+For coding and multi-agent hosts, give only `agentContext.agent_prompt` from
+`compileExecutionAgentContext()` to the Agent. Keep `guide_trace_id`,
+`use_now_memory_ids`, and `agentContext.memory_use_receipt` in host state for
+attribution and audit. Do not pass `memory_packet`, `guide_packet`,
+`memory_decision_trace`, `memory_decision_audit`, raw rows, or raw slots to the
+Agent by default.
 `feedbackFromGuide()` still requires the host to provide the memory IDs the
 Agent actually used; it only validates that those IDs were exposed by the guide.
 `measureInputFromGuideLoop()` and `snapshotInputFromGuideLoop()` keep the
@@ -139,6 +154,21 @@ const guide = await aionis.execution.guideForRole({
   query_text: "Continue from the current verified execution path.",
 });
 
+const context = aionis.execution.compileAgentContext({
+  guide,
+  task: {
+    run_id: "run-001",
+    task_signature: "checkout-migration",
+    query_text: "Continue from the current verified execution path.",
+  },
+  repo_state: {
+    existing_files: ["src/checkout.ts"],
+  },
+  budget_profile: "balanced",
+});
+
+// Your host runs the Agent with context.agent_prompt.
+
 const feedback = await aionis.execution.feedbackFromOutcome({
   agent_id: "reviewer-1",
   run_id: "run-001",
@@ -164,9 +194,10 @@ JSON showing:
    executable policy rule
 3. `remember(kind: "project_context")` creates ordinary project memory
 4. `guide()` returns compact `agent_context` with direct-use memory IDs
-5. `feedback()` attributes outcome only to memory exposed by that guide trace
-6. `measure()` reports whether history changed the future context
-7. `snapshot()` exposes read-only memory use receipt and effect state
+5. `compileExecutionAgentContext()` renders the SDK execution contract prompt
+6. `feedback()` attributes outcome only to memory exposed by that guide trace
+7. `measure()` reports whether history changed the future context
+8. `snapshot()` exposes read-only memory use receipt and effect state
 
 For multi-agent execution memory, use:
 

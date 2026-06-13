@@ -64,7 +64,7 @@ npm install @aionis/sdk
 
 ```ts
 import {
-  agentPromptFromGuide,
+  compileExecutionAgentContext,
   createAionisClient,
   feedbackFromGuide,
   measureInputFromGuideLoop,
@@ -74,7 +74,10 @@ import {
 
 Use the SDK only as a facade over the product routes. The Runtime still owns
 memory governance, context compilation, feedback attribution, measurement, and
-operator snapshots.
+operator snapshots. For coding and multi-agent hosts, prefer
+`compileExecutionAgentContext()` over passing raw `agent_context.prompt_text`
+directly; it turns the governed guide into a contract-style Agent prompt plus
+route, rehydrate, and receipt metadata.
 
 ## MCP Package
 

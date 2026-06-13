@@ -79,7 +79,7 @@ remains available for explicit suppress/unsuppress lifecycle control.
 
 ```ts
 import {
-  agentPromptFromGuide,
+  compileExecutionAgentContext,
   createAionisClient,
   feedbackFromGuide,
   measureInputFromGuideLoop,
@@ -115,19 +115,35 @@ await aionis.observe({
   },
 });
 
-const guide = await aionis.guide<{
+const guide = await aionis.execution.guideForRole<{
   guide_trace_id: string;
   agent_context: {
     prompt_text: string;
     use_now_memory_ids: string[];
   };
 }>({
+  agent_id: "agent-1",
+  run_id: "run-001",
+  task_signature: "checkout-continuation",
   query_text: "Continue checkout migration without repeating stale discovery.",
-  consumer_agent_id: "agent-1",
   limit: 8,
+  context_mode: "compact_agent",
 });
 
-const agentPromptContext = agentPromptFromGuide(guide);
+const agentContext = compileExecutionAgentContext({
+  guide,
+  task: {
+    run_id: "run-001",
+    task_signature: "checkout-continuation",
+    query_text: "Continue checkout migration without repeating stale discovery.",
+  },
+  repo_state: {
+    existing_files: ["src/payments/checkout.ts"],
+  },
+  budget_profile: "balanced",
+});
+
+// Your host runs the Agent with agentContext.agent_prompt.
 
 const feedback = await aionis.feedback(feedbackFromGuide({
   guide,
@@ -168,8 +184,10 @@ await aionis.rehydrate({
 });
 ```
 
-The Agent should receive `agentPromptContext` or selected `agent_context`
-fields. It should not receive `memory_packet`, `guide_packet`,
+For coding and multi-agent hosts, the Agent should receive
+`agentContext.agent_prompt` from `compileExecutionAgentContext()`. Simpler hosts
+may still pass selected `agent_context` fields directly. The Agent should not
+receive `memory_packet`, `guide_packet`,
 `memory_decision_trace`, `memory_decision_audit`, or raw rows by default.
 `feedbackFromGuide()` validates attribution against the guide exposure ledger,
 while `measureInputFromGuideLoop()` and `snapshotInputFromGuideLoop()` hide the

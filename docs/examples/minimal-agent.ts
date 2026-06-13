@@ -1,5 +1,5 @@
 import {
-  agentPromptFromGuide,
+  compileExecutionAgentContext,
   createAionisClient,
 } from "@aionis/sdk";
 
@@ -44,11 +44,23 @@ const guide = await aionis.execution.guideForRole<MinimalGuide>({
   run_id: runId,
   task_signature: taskSignature,
   query_text: "Continue the implementation from the current state.",
+  context_mode: "compact_agent",
 });
 
-const promptForAgent = agentPromptFromGuide(guide);
+const context = compileExecutionAgentContext({
+  guide,
+  task: {
+    run_id: runId,
+    task_signature: taskSignature,
+    query_text: "Continue the implementation from the current state.",
+  },
+  repo_state: {
+    existing_files: ["src/example.ts"],
+  },
+  budget_profile: "balanced",
+});
 
-// Your host runs the Agent here with promptForAgent.
+// Your host runs the Agent here with context.agent_prompt.
 const agentResult = {
   status: "succeeded" as const,
   used_memory_ids: guide.agent_context.use_now_memory_ids?.slice(0, 1) ?? [],
@@ -82,7 +94,9 @@ const snapshot = await aionis.execution.snapshotRun({
 });
 
 console.log(JSON.stringify({
-  prompt_preview: promptForAgent.slice(0, 500),
+  prompt_preview: context.agent_prompt.slice(0, 500),
+  execution_context_contract: context.contract_version,
+  memory_use_receipt_visible: context.memory_use_receipt.contract_version === "aionis_memory_use_receipt_v1",
   used_memory_ids: agentResult.used_memory_ids,
   snapshot_visible: !!snapshot,
 }, null, 2));

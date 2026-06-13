@@ -119,7 +119,7 @@ The SDK quickstart runs a real local Runtime and verifies:
 
 1. a fresh guide starts without actionable history
 2. ordinary preference and project memory become reusable context
-3. the Agent receives compact `agent_context`
+3. the SDK compiles governed execution memory into a contract-style Agent prompt
 4. feedback is attributed to the exact memory IDs exposed by the guide
 5. `measure` reports whether history changed future context
 6. operator audit surfaces remain read-only
@@ -154,6 +154,10 @@ The SDK quickstart prints a compact product result like this:
     "before_actionable_history_used": false,
     "after_actionable_history_used": true,
     "use_now_memory_ids": ["mem_preference_example", "mem_project_fact_example"]
+  },
+  "execution_context_compiler": {
+    "contract_version": "aionis_execution_agent_context_v1",
+    "memory_use_receipt_visible": true
   },
   "memory_governance": {
     "feedback_attributed_memory_count": 1,
@@ -211,7 +215,7 @@ and observability.
 
 ```ts
 import {
-  agentPromptFromGuide,
+  compileExecutionAgentContext,
   createAionisClient,
   feedbackFromGuide,
 } from "@aionis/sdk";
@@ -230,7 +234,7 @@ await aionis.remember({
   owner_agent_id: "agent-1",
 });
 
-const guide = await aionis.guide<{
+const guide = await aionis.execution.guideForRole<{
   guide_trace_id: string;
   agent_context: {
     prompt_text: string;
@@ -238,13 +242,26 @@ const guide = await aionis.guide<{
     use_now_memory_ids: string[];
   };
 }>({
+  agent_id: "agent-1",
+  run_id: "run-001",
+  task_signature: "product-update",
   query_text: "Continue the product update.",
-  consumer_agent_id: "agent-1",
   limit: 8,
   include_packets: true,
+  context_mode: "compact_agent",
 });
 
-const promptContext = agentPromptFromGuide(guide);
+const context = compileExecutionAgentContext({
+  guide,
+  task: {
+    run_id: "run-001",
+    task_signature: "product-update",
+    query_text: "Continue the product update.",
+  },
+  budget_profile: "balanced",
+});
+
+// Your host runs the Agent with context.agent_prompt.
 
 await aionis.feedback(feedbackFromGuide({
   guide,
@@ -270,7 +287,10 @@ const compactGuide = await aionis.execution.guideForRole({
   context_mode: "compact_agent",
 });
 
-const compactPrompt = agentPromptFromGuide(compactGuide);
+const compactContext = compileExecutionAgentContext({
+  guide: compactGuide,
+  budget_profile: "compact",
+});
 ```
 
 Compact mode shortens the Agent prompt. It does not remove governed memory
@@ -317,7 +337,7 @@ For long-running or multi-agent work, use the execution helpers instead of
 hand-writing execution memory payloads:
 
 ```ts
-import { agentPromptFromGuide, createAionisClient } from "@aionis/sdk";
+import { compileExecutionAgentContext, createAionisClient } from "@aionis/sdk";
 
 const aionis = createAionisClient({
   baseUrl: process.env.AIONIS_URL ?? "http://127.0.0.1:3001",
@@ -341,9 +361,23 @@ const guide = await aionis.execution.guideForRole({
   run_id: "run-001",
   task_signature: "checkout-migration",
   query_text: "Continue from the current verified execution path.",
+  context_mode: "compact_agent",
 });
 
-const prompt = agentPromptFromGuide(guide);
+const context = compileExecutionAgentContext({
+  guide,
+  task: {
+    run_id: "run-001",
+    task_signature: "checkout-migration",
+    query_text: "Continue from the current verified execution path.",
+  },
+  repo_state: {
+    existing_files: ["src/checkout.ts"],
+  },
+  budget_profile: "balanced",
+});
+
+// Your host runs the Agent with context.agent_prompt.
 ```
 
 Full minimal Agent example:

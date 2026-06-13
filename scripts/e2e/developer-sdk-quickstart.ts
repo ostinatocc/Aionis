@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   agentContextFromGuide,
   agentPromptFromGuide,
+  compileExecutionAgentContext,
   createAionisClient,
   feedbackFromGuide,
   measureInputFromGuideLoop,
@@ -48,6 +49,13 @@ function firstNodeId(observeBody: unknown, label: string): string {
   const id = nodes[0]?.id;
   assertCondition(typeof id === "string" && id.length > 0, `${label} did not return a memory node id`);
   return id;
+}
+
+function optionalObserveNodeId(observeBody: unknown): string | null {
+  const write = asRecord(asRecord(observeBody)?.memory_write);
+  const nodes = recordArray(write?.nodes);
+  const id = nodes[0]?.id;
+  return typeof id === "string" && id.length > 0 ? id : null;
 }
 
 function assertPromptBoundary(promptText: string, label: string): void {
@@ -104,10 +112,29 @@ async function main() {
       text: `${PROJECT_MARKER}: the active integration target is docs/AIONIS_SDK_QUICKSTART.md and scripts/e2e/developer-sdk-quickstart.ts.`,
       memory_lane: "private",
       owner_agent_id: AGENT_ID,
+      target_files: ["docs/AIONIS_SDK_QUICKSTART.md", "scripts/e2e/developer-sdk-quickstart.ts"],
       confidence: 0.94,
       slots: { source: "sdk_quickstart" },
     });
     const projectFactId = firstNodeId(projectFact, "SDK project fact remember");
+
+    const executionHandoff = await aionis.execution.handoff<Record<string, unknown>>({
+      agent_id: AGENT_ID,
+      run_id: runId,
+      task_signature: "sdk-quickstart",
+      task_family: "developer_sdk_quickstart",
+      workflow_signature: "sdk-quickstart-execution-context",
+      title: "SDK quickstart execution handoff",
+      summary: `${PROJECT_MARKER}: continue the SDK quickstart docs update without broad rediscovery.`,
+      outcome: "succeeded",
+      target_files: ["docs/AIONIS_SDK_QUICKSTART.md", "scripts/e2e/developer-sdk-quickstart.ts"],
+      continuation_hint: "Use the SDK execution context compiler as the Agent prompt path.",
+      acceptance_checks: ["compiled execution context is generated", "feedback remains attributed"],
+      evidence_ref: `evidence://sdk-quickstart/${runId}/execution-handoff`,
+    });
+    const handoffStored = !!asRecord(executionHandoff.handoff);
+    assertCondition(handoffStored, "SDK execution handoff was not stored");
+    const executionHandoffId = optionalObserveNodeId(executionHandoff);
 
     const afterGuide = await aionis.guide<Record<string, unknown>>({
       query_text: `${PREF_MARKER} ${PROJECT_MARKER} continue SDK quickstart integration`,
@@ -123,8 +150,56 @@ async function main() {
     assertCondition(afterContext.actionable_history_used === true, "SDK quickstart guide did not expose actionable memory");
     assertCondition(useNowIds.includes(preferenceId), "SDK preference was not exposed in use_now memory IDs");
     assertCondition(useNowIds.includes(projectFactId), "SDK project fact was not exposed in use_now memory IDs");
-    assertCondition(useNow.some((entry) => entry.includes(PREF_MARKER)), "SDK preference marker missing from use_now");
-    assertCondition(useNow.some((entry) => entry.includes(PROJECT_MARKER)), "SDK project marker missing from use_now");
+    assertCondition(
+      useNow.some((entry) => entry.includes(PREF_MARKER)) || promptText.includes(PREF_MARKER),
+      "SDK preference marker missing from Agent-facing context",
+    );
+    assertCondition(
+      useNow.some((entry) => entry.includes(PROJECT_MARKER)) || promptText.includes(PROJECT_MARKER),
+      "SDK project marker missing from Agent-facing context",
+    );
+
+    const executionGuide = await aionis.execution.guideForRole<Record<string, unknown>>({
+      agent_id: AGENT_ID,
+      run_id: `run:${runId}:execution-context`,
+      task_signature: "sdk-quickstart",
+      task_family: "developer_sdk_quickstart",
+      workflow_signature: "sdk-quickstart-execution-context",
+      query_text: `${PROJECT_MARKER} continue the SDK quickstart execution-memory path`,
+      context_mode: "compact_agent",
+      limit: 10,
+      include_packets: true,
+    });
+    const compiledContext = aionis.execution.compileAgentContext({
+      guide: executionGuide,
+      task: {
+        run_id: runId,
+        task_signature: "sdk-quickstart",
+        query_text: "Continue the SDK quickstart execution-memory path.",
+      },
+      repo_state: {
+        existing_files: ["scripts/e2e/developer-sdk-quickstart.ts"],
+        missing_files: ["docs/AIONIS_SDK_QUICKSTART.md"],
+      },
+      budget_profile: "balanced",
+    });
+    assertPromptBoundary(compiledContext.agent_prompt, "compiled SDK execution context");
+    assertCondition(
+      compiledContext.agent_prompt.includes("AIONIS_EXECUTION_AGENT_CONTEXT v1"),
+      "SDK quickstart did not render execution Agent context contract",
+    );
+    assertCondition(
+      compiledContext.memory_use_receipt.contract_version === "aionis_memory_use_receipt_v1",
+      "SDK execution context missing memory use receipt",
+    );
+    assertCondition(
+      compiledContext.memory_use_receipt.history_used === true,
+      "SDK execution context did not preserve memory-use audit state",
+    );
+    assertCondition(
+      compiledContext.prompt_char_count > 0,
+      "SDK execution context produced empty Agent prompt",
+    );
 
     const feedback = await aionis.feedback<Record<string, unknown>>(feedbackFromGuide({
       guide: afterGuide,
@@ -184,7 +259,8 @@ async function main() {
       },
       integration_path: {
         sdk_client: "createAionisClient",
-        product_loop: "remember -> guide -> agent prompt -> feedback -> measure -> snapshot",
+        product_loop: "remember -> guide -> compileExecutionAgentContext -> agent prompt -> feedback -> measure -> snapshot",
+        execution_context_compiler: "aionis.execution.compileAgentContext",
       },
       agent_context: {
         before_actionable_history_used: beforeContext.actionable_history_used,
@@ -193,9 +269,24 @@ async function main() {
         prompt_preview: promptText.slice(0, 800),
         use_now_memory_ids: useNowIds,
       },
+      execution_context_compiler: {
+        contract_version: compiledContext.contract_version,
+        budget_profile: compiledContext.budget_profile,
+        prompt_char_count: compiledContext.prompt_char_count,
+        prompt_preview: compiledContext.agent_prompt.slice(0, 800),
+        route_contract_present: compiledContext.route_contract !== null,
+        active_targets: compiledContext.active_targets,
+        missing_active_targets: compiledContext.missing_active_targets,
+        blocked_direction_targets: compiledContext.blocked_direction_targets,
+        rehydrate_request_count: compiledContext.rehydrate_requests.length,
+        warning_codes: compiledContext.execution_warnings.map((entry) => entry.code),
+        memory_use_receipt_visible: compiledContext.memory_use_receipt.contract_version === "aionis_memory_use_receipt_v1",
+      },
       memory_governance: {
         preference_memory_id: preferenceId,
         project_fact_memory_id: projectFactId,
+        execution_handoff_memory_id: executionHandoffId,
+        execution_handoff_stored: handoffStored,
         feedback_attributed_memory_count: guideTrace?.attributed_memory_count ?? null,
         measure_history_impact: historyImpact.impact_direction,
       },
@@ -210,6 +301,8 @@ async function main() {
         guide_exposes_preference: useNowIds.includes(preferenceId),
         guide_exposes_project_fact: useNowIds.includes(projectFactId),
         agent_prompt_boundary_preserved: true,
+        execution_context_compiler_used: compiledContext.contract_version === "aionis_execution_agent_context_v1",
+        execution_context_receipt_visible: compiledContext.memory_use_receipt.contract_version === "aionis_memory_use_receipt_v1",
         feedback_attributed: guideTrace?.attributed_memory_count === 1,
         positive_history_impact_measured: historyImpact.impact_direction === "positive",
         operator_snapshot_read_only: operatorSnapshot.runtime_mutation === false,

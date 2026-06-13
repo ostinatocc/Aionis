@@ -83,6 +83,106 @@ export type AionisRouteContract = {
   action_policy: AionisRouteContractActionPolicy;
 };
 
+export type AionisRehydrateHint = {
+  memory_id: string;
+  reason?: string;
+  required: boolean;
+};
+
+export type AionisMemoryDecisionSummary = {
+  memory_id: string;
+  agent_surface: "use_now" | "inspect_before_use" | "do_not_use" | "rehydrate" | "not_agent_facing";
+  decision_kind: "used" | "downgraded" | "blocked" | "rehydrate" | "not_agent_facing";
+  actionable: boolean;
+  reason_codes: string[];
+};
+
+export type AionisMemoryUseReceipt = {
+  contract_version: "aionis_memory_use_receipt_v1";
+  intended_use: "memory_use_audit";
+  agent_prompt_included: false;
+  runtime_mutation: false;
+  guide_trace_id: string | null;
+  history_used: boolean;
+  actionable_history_used: boolean;
+  prompt_char_count: number;
+  exposed_memory_ids: string[];
+  use_now_memory_ids: string[];
+  inspect_before_use_memory_ids: string[];
+  do_not_use_memory_ids: string[];
+  rehydrate_memory_ids: string[];
+  attributed_memory_ids: string[];
+  unattributed_recalled_memory_ids: string[];
+  read_only_signal_memory_ids: string[];
+  decision_summaries: AionisMemoryDecisionSummary[];
+  risk_flags: string[];
+  summary: string;
+};
+
+export type AionisExecutionContextBudgetProfile = "compact" | "balanced" | "high_recall";
+
+export type AionisExecutionFilePresence = {
+  target: string;
+  exists: boolean;
+  reason?: string;
+};
+
+export type AionisExecutionRepoState = {
+  existing_files?: string[];
+  missing_files?: string[];
+  files?: AionisExecutionFilePresence[];
+};
+
+export type AionisExecutionContextTask = {
+  task_id?: string;
+  run_id?: string;
+  task_signature?: string;
+  query_text?: string;
+  goal?: string;
+};
+
+export type AionisExecutionAgentContextCompileInput = {
+  guide: unknown;
+  task?: string | AionisExecutionContextTask;
+  repo_state?: AionisExecutionRepoState;
+  budget_profile?: AionisExecutionContextBudgetProfile;
+  max_prompt_chars?: number;
+  include_base_prompt?: boolean;
+  additional_instructions?: string[];
+};
+
+export type AionisExecutionContextWarning = {
+  code:
+    | "missing_active_target"
+    | "blocked_route_present"
+    | "reference_only_target_present"
+    | "rehydrate_recommended";
+  message: string;
+  targets?: string[];
+  memory_ids?: string[];
+};
+
+export type AionisCompiledExecutionAgentContext = {
+  contract_version: "aionis_execution_agent_context_v1";
+  budget_profile: AionisExecutionContextBudgetProfile;
+  agent_prompt: string;
+  base_prompt: string;
+  prompt_char_count: number;
+  route_contract: AionisRouteContract | null;
+  command_posture: AionisCommandPosture[];
+  memory_use_receipt: AionisMemoryUseReceipt;
+  rehydrate_requests: AionisRehydrateHint[];
+  use_now_memory_ids: string[];
+  inspect_before_use_memory_ids: string[];
+  do_not_use_memory_ids: string[];
+  active_targets: string[];
+  missing_active_targets: string[];
+  pending_artifacts: string[];
+  reference_only_targets: string[];
+  blocked_direction_targets: string[];
+  execution_warnings: AionisExecutionContextWarning[];
+};
+
 export type AionisClientOptions = {
   baseUrl: string;
   apiKey?: string;
@@ -375,6 +475,21 @@ function rehydrateHintMemoryIds(value: unknown): string[] {
     .filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
 }
 
+function rehydrateHintArray(value: unknown): AionisRehydrateHint[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const record = asRecord(entry);
+    const memoryId = record?.memory_id;
+    if (!record || typeof memoryId !== "string" || memoryId.length === 0) return [];
+    const reason = typeof record.reason === "string" && record.reason.length > 0 ? record.reason : undefined;
+    return [{
+      memory_id: memoryId,
+      ...(reason ? { reason } : {}),
+      required: record.required === undefined ? true : record.required !== false,
+    }];
+  });
+}
+
 function commandPostureArray(value: unknown): AionisCommandPosture[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry) => {
@@ -510,6 +625,203 @@ function routeContractMemoryIds(value: unknown): string[] {
   return rows
     .map((entry) => entry.source_memory_id)
     .filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.filter((entry) => entry.length > 0)));
+}
+
+function guideTraceId(value: unknown): string | null {
+  const entry = asRecord(value)?.guide_trace_id;
+  return typeof entry === "string" && entry.length > 0 ? entry : null;
+}
+
+function safeAgentPromptFromGuide(guide: unknown): string {
+  try {
+    return agentPromptFromGuide(guide);
+  } catch {
+    return "";
+  }
+}
+
+function receiptFromGuideTrace(guide: unknown): AionisMemoryUseReceipt | null {
+  const guideRecord = asRecord(guide);
+  const candidates = [
+    asRecord(asRecord(guideRecord?.memory_decision_trace)?.memory_use_receipt),
+    asRecord(guideRecord?.memory_use_receipt),
+    asRecord(asRecord(guideRecord?.agent_context)?.memory_use_receipt),
+  ];
+  const receipt = candidates.find((entry) => entry?.contract_version === "aionis_memory_use_receipt_v1");
+  return receipt ? receipt as unknown as AionisMemoryUseReceipt : null;
+}
+
+function decisionSummariesFromSurfaces(input: {
+  useNow: string[];
+  inspect: string[];
+  doNotUse: string[];
+  rehydrate: string[];
+}): AionisMemoryDecisionSummary[] {
+  const rows: AionisMemoryDecisionSummary[] = [];
+  const seen = new Set<string>();
+  const push = (entry: AionisMemoryDecisionSummary) => {
+    if (seen.has(entry.memory_id)) return;
+    seen.add(entry.memory_id);
+    rows.push(entry);
+  };
+  for (const memoryId of input.useNow) {
+    push({
+      memory_id: memoryId,
+      agent_surface: "use_now",
+      decision_kind: "used",
+      actionable: true,
+      reason_codes: ["agent_context.use_now_memory_ids"],
+    });
+  }
+  for (const memoryId of input.inspect) {
+    push({
+      memory_id: memoryId,
+      agent_surface: "inspect_before_use",
+      decision_kind: "downgraded",
+      actionable: false,
+      reason_codes: ["agent_context.inspect_before_use_memory_ids"],
+    });
+  }
+  for (const memoryId of input.doNotUse) {
+    push({
+      memory_id: memoryId,
+      agent_surface: "do_not_use",
+      decision_kind: "blocked",
+      actionable: false,
+      reason_codes: ["agent_context.do_not_use_memory_ids"],
+    });
+  }
+  for (const memoryId of input.rehydrate) {
+    push({
+      memory_id: memoryId,
+      agent_surface: "rehydrate",
+      decision_kind: "rehydrate",
+      actionable: false,
+      reason_codes: ["agent_context.rehydrate_hints"],
+    });
+  }
+  return rows;
+}
+
+function generatedMemoryUseReceipt(guide: unknown): AionisMemoryUseReceipt {
+  const context = asRecord(agentContextFromGuide(guide));
+  const useNow = uniqueStrings(stringArray(context?.use_now_memory_ids));
+  const inspect = uniqueStrings(stringArray(context?.inspect_before_use_memory_ids));
+  const doNotUse = uniqueStrings(stringArray(context?.do_not_use_memory_ids));
+  const rehydrate = uniqueStrings(rehydrateHintMemoryIds(context?.rehydrate_hints));
+  const exposed = uniqueStrings([
+    ...stringArray(context?.memory_ids),
+    ...useNow,
+    ...inspect,
+    ...doNotUse,
+    ...rehydrate,
+    ...commandPostureArray(context?.command_posture).map((entry) => entry.memory_id),
+    ...routeContractMemoryIds(context?.route_contract),
+  ]);
+  const prompt = safeAgentPromptFromGuide(guide);
+  return {
+    contract_version: "aionis_memory_use_receipt_v1",
+    intended_use: "memory_use_audit",
+    agent_prompt_included: false,
+    runtime_mutation: false,
+    guide_trace_id: guideTraceId(guide),
+    history_used: exposed.length > 0,
+    actionable_history_used: useNow.length > 0,
+    prompt_char_count: prompt.length,
+    exposed_memory_ids: exposed,
+    use_now_memory_ids: useNow,
+    inspect_before_use_memory_ids: inspect,
+    do_not_use_memory_ids: doNotUse,
+    rehydrate_memory_ids: rehydrate,
+    attributed_memory_ids: [],
+    unattributed_recalled_memory_ids: [],
+    read_only_signal_memory_ids: uniqueStrings([...inspect, ...doNotUse, ...rehydrate]),
+    decision_summaries: decisionSummariesFromSurfaces({ useNow, inspect, doNotUse, rehydrate }),
+    risk_flags: stringArray(asRecord(context?.risk)?.reasons),
+    summary: useNow.length > 0
+      ? "Aionis exposed governed actionable execution memory."
+      : exposed.length > 0
+        ? "Aionis exposed governed non-actionable memory surfaces."
+        : "Aionis did not expose reusable memory for this guide.",
+  };
+}
+
+function targetList<T extends { target: string }>(rows: T[]): string[] {
+  return uniqueStrings(rows.map((entry) => entry.target));
+}
+
+function repoPresenceMap(state?: AionisExecutionRepoState): Map<string, boolean> {
+  const out = new Map<string, boolean>();
+  for (const target of state?.existing_files ?? []) out.set(target, true);
+  for (const target of state?.missing_files ?? []) out.set(target, false);
+  for (const entry of state?.files ?? []) out.set(entry.target, entry.exists);
+  return out;
+}
+
+function truncateText(text: string, maxChars: number): string {
+  if (maxChars <= 0) return "";
+  if (text.length <= maxChars) return text;
+  const marker = "\n...[truncated by Aionis SDK context budget]...";
+  if (maxChars <= marker.length) return marker.slice(0, maxChars);
+  return `${text.slice(0, maxChars - marker.length).trimEnd()}${marker}`;
+}
+
+function defaultExecutionPromptBudget(profile: AionisExecutionContextBudgetProfile): number {
+  switch (profile) {
+    case "compact": return 6_000;
+    case "high_recall": return 24_000;
+    case "balanced": return 12_000;
+  }
+}
+
+function taskLines(task: string | AionisExecutionContextTask | undefined): string[] {
+  if (!task) return [];
+  if (typeof task === "string") return [`- ${task}`];
+  return [
+    task.task_signature ? `- task_signature: ${task.task_signature}` : "",
+    task.run_id ? `- run_id: ${task.run_id}` : "",
+    task.query_text ? `- query: ${task.query_text}` : "",
+    task.goal ? `- goal: ${task.goal}` : "",
+  ].filter((entry) => entry.length > 0);
+}
+
+function bulletLines(values: string[], empty: string): string[] {
+  return values.length > 0 ? values.map((entry) => `- ${entry}`) : [`- ${empty}`];
+}
+
+function postureLines(rows: AionisCommandPosture[], posture: AionisCommandPostureKind, empty: string): string[] {
+  const filtered = rows.filter((entry) => entry.posture === posture);
+  if (filtered.length === 0) return [`- ${empty}`];
+  return filtered.map((entry) => {
+    const targets = entry.target_files.length > 0 ? ` targets=${entry.target_files.join(", ")}` : "";
+    return `- ${entry.memory_id}: ${entry.instruction} (${entry.reason})${targets}`;
+  });
+}
+
+function rehydrateRequestsFromGuide(guide: unknown): AionisRehydrateHint[] {
+  const context = asRecord(agentContextFromGuide(guide));
+  const fromHints = rehydrateHintArray(context?.rehydrate_hints);
+  const fromPosture = commandPostureArray(context?.command_posture)
+    .filter((entry) => entry.posture === "rehydrate_first")
+    .map((entry) => ({
+      memory_id: entry.memory_id,
+      reason: entry.reason || entry.instruction,
+      required: true,
+    }));
+  const byId = new Map<string, AionisRehydrateHint>();
+  for (const entry of [...fromHints, ...fromPosture]) {
+    const previous = byId.get(entry.memory_id);
+    byId.set(entry.memory_id, {
+      memory_id: entry.memory_id,
+      reason: previous?.reason ?? entry.reason,
+      required: (previous?.required ?? false) || entry.required,
+    });
+  }
+  return Array.from(byId.values());
 }
 
 function isCommandPostureKind(value: unknown): value is AionisCommandPostureKind {
@@ -863,6 +1175,10 @@ export class AionisExecutionClient {
     this.client = client;
   }
 
+  compileAgentContext(input: AionisExecutionAgentContextCompileInput): AionisCompiledExecutionAgentContext {
+    return compileExecutionAgentContext(input);
+  }
+
   async observeStep<T = unknown>(input: AionisExecutionStepInput, options?: AionisRequestOptions): Promise<T> {
     return this.client.observe<T>({
       ...executionObserveBase(input),
@@ -1030,6 +1346,14 @@ export function agentPromptFromGuide(guide: unknown): string {
   return promptText;
 }
 
+export function rehydrateHintsFromGuide(guide: unknown): AionisRehydrateHint[] {
+  return rehydrateRequestsFromGuide(guide);
+}
+
+export function memoryUseReceiptFromGuide(guide: unknown): AionisMemoryUseReceipt {
+  return receiptFromGuideTrace(guide) ?? generatedMemoryUseReceipt(guide);
+}
+
 export function memoryIdsFromGuide(guide: unknown): string[] {
   const context = asRecord(agentContextFromGuide(guide));
   const ids = [
@@ -1086,6 +1410,141 @@ export function evidenceSourcesFromGuide(guide: unknown): AionisRouteContractEvi
 
 export function blockedRoutesFromGuide(guide: unknown): AionisRouteContractBlockedRoute[] {
   return routeContractFromGuide(guide)?.blocked_routes ?? [];
+}
+
+export function compileExecutionAgentContext(
+  input: AionisExecutionAgentContextCompileInput,
+): AionisCompiledExecutionAgentContext {
+  const profile = input.budget_profile ?? "balanced";
+  const maxPromptChars = input.max_prompt_chars ?? defaultExecutionPromptBudget(profile);
+  const basePrompt = safeAgentPromptFromGuide(input.guide);
+  const routeContract = routeContractFromGuide(input.guide);
+  const commandPosture = commandPostureFromGuide(input.guide);
+  const receipt = memoryUseReceiptFromGuide(input.guide);
+  const rehydrateRequests = rehydrateHintsFromGuide(input.guide);
+  const useNowMemoryIds = receipt.use_now_memory_ids;
+  const inspectMemoryIds = receipt.inspect_before_use_memory_ids;
+  const doNotUseMemoryIds = receipt.do_not_use_memory_ids;
+  const activeTargets = routeContract ? targetList(routeContract.active_targets) : [];
+  const pendingArtifacts = routeContract ? targetList(routeContract.pending_artifacts) : [];
+  const referenceOnlyTargets = routeContract ? targetList(routeContract.evidence_sources.length > 0
+    ? routeContract.evidence_sources
+    : routeContract.reference_only_targets) : [];
+  const blockedDirectionTargets = routeContract ? targetList(routeContract.blocked_routes.length > 0
+    ? routeContract.blocked_routes
+    : routeContract.blocked_direction_targets) : [];
+  const presence = repoPresenceMap(input.repo_state);
+  const missingActiveTargets = activeTargets.filter((target) => presence.get(target) === false);
+  const warnings: AionisExecutionContextWarning[] = [];
+  if (missingActiveTargets.length > 0) {
+    warnings.push({
+      code: "missing_active_target",
+      message: "An active route target is absent in the observed workspace; treat it as pending work, not stale memory.",
+      targets: missingActiveTargets,
+    });
+  }
+  if (blockedDirectionTargets.length > 0) {
+    warnings.push({
+      code: "blocked_route_present",
+      message: "Blocked or retired targets are counter-evidence only and must not become the primary route.",
+      targets: blockedDirectionTargets,
+    });
+  }
+  if (referenceOnlyTargets.length > 0) {
+    warnings.push({
+      code: "reference_only_target_present",
+      message: "Reference-only targets may be inspected for evidence but must not be promoted into the chosen route.",
+      targets: referenceOnlyTargets,
+    });
+  }
+  if (rehydrateRequests.length > 0) {
+    warnings.push({
+      code: "rehydrate_recommended",
+      message: "Aionis exposed rehydrate pointers for evidence that should be expanded before exact use.",
+      memory_ids: rehydrateRequests.map((entry) => entry.memory_id),
+    });
+  }
+
+  const contractSections = [
+    "AIONIS_EXECUTION_AGENT_CONTEXT v1",
+    "Treat this as the SDK-compiled execution-memory contract. Runtime remains the authority for memory admission.",
+    "",
+    "TASK",
+    ...taskLines(input.task),
+    ...(taskLines(input.task).length === 0 ? ["- Continue the current host task."] : []),
+    "",
+    "EXECUTION CONTRACT",
+    "- Follow active targets and should_continue memories as the current execution route.",
+    "- If an active target is missing, treat it as pending work to create or restore when task-consistent; do not fall back to blocked or reference-only paths because they exist.",
+    "- Reference-only targets may be read for evidence, but they are not valid primary routes without explicit host confirmation.",
+    "- Blocked, must_not, stale, failed, or retired routes are counter-evidence only.",
+    "- If compact evidence is insufficient for a precise edit, request rehydrate instead of guessing.",
+    ...(input.additional_instructions ?? []).map((entry) => `- ${entry}`),
+    "",
+    "ACTIVE_TARGETS",
+    ...bulletLines(activeTargets, "none"),
+    "",
+    "MISSING_ACTIVE_TARGETS",
+    ...bulletLines(missingActiveTargets, "none observed"),
+    "",
+    "PENDING_ARTIFACTS",
+    ...bulletLines(pendingArtifacts, "none"),
+    "",
+    "SHOULD_CONTINUE",
+    ...postureLines(commandPosture, "should_continue", "none"),
+    "",
+    "INSPECT_BEFORE_USE",
+    ...postureLines(commandPosture, "inspect_first", "none"),
+    "",
+    "DO_NOT_USE",
+    ...postureLines(commandPosture, "must_not", "none"),
+    "",
+    "REFERENCE_ONLY_TARGETS",
+    ...bulletLines(referenceOnlyTargets, "none"),
+    "",
+    "BLOCKED_DIRECTION_TARGETS",
+    ...bulletLines(blockedDirectionTargets, "none"),
+    "",
+    "REHYDRATE_REQUESTS",
+    ...(rehydrateRequests.length > 0
+      ? rehydrateRequests.map((entry) => `- ${entry.memory_id}${entry.reason ? `: ${entry.reason}` : ""}`)
+      : ["- none"]),
+  ];
+  const contractPrompt = contractSections.join("\n");
+  const includeBasePrompt = input.include_base_prompt ?? true;
+  const baseHeader = "\n\nBASE_AIONIS_CONTEXT\n";
+  const baseBudget = includeBasePrompt ? Math.max(0, maxPromptChars - contractPrompt.length - baseHeader.length) : 0;
+  const renderedBasePrompt = includeBasePrompt && basePrompt.length > 0 ? truncateText(basePrompt, baseBudget) : "";
+  const agentPrompt = renderedBasePrompt
+    ? truncateText(`${contractPrompt}${baseHeader}${renderedBasePrompt}`, maxPromptChars)
+    : truncateText(contractPrompt, maxPromptChars);
+
+  return {
+    contract_version: "aionis_execution_agent_context_v1",
+    budget_profile: profile,
+    agent_prompt: agentPrompt,
+    base_prompt: basePrompt,
+    prompt_char_count: agentPrompt.length,
+    route_contract: routeContract,
+    command_posture: commandPosture,
+    memory_use_receipt: receipt,
+    rehydrate_requests: rehydrateRequests,
+    use_now_memory_ids: useNowMemoryIds,
+    inspect_before_use_memory_ids: inspectMemoryIds,
+    do_not_use_memory_ids: doNotUseMemoryIds,
+    active_targets: activeTargets,
+    missing_active_targets: missingActiveTargets,
+    pending_artifacts: pendingArtifacts,
+    reference_only_targets: referenceOnlyTargets,
+    blocked_direction_targets: blockedDirectionTargets,
+    execution_warnings: warnings,
+  };
+}
+
+export function compileCodingAgentContext(
+  input: AionisExecutionAgentContextCompileInput,
+): AionisCompiledExecutionAgentContext {
+  return compileExecutionAgentContext(input);
 }
 
 export function commandPostureFromGuide(

@@ -7,14 +7,18 @@ import {
   blockedRoutesFromGuide,
   commandPostureFromGuide,
   commandPostureMemoryIdsFromGuide,
+  compileCodingAgentContext,
+  compileExecutionAgentContext,
   createAionisClient,
   evidenceSourcesFromGuide,
   feedbackFromGuide,
   inspectFirstMemoryIdsFromGuide,
   memoryIdsFromGuide,
+  memoryUseReceiptFromGuide,
   mustNotMemoryIdsFromGuide,
   pendingArtifactTargetsFromGuide,
   referenceOnlyRouteTargetsFromGuide,
+  rehydrateHintsFromGuide,
   routeContractFromGuide,
   shouldContinueMemoryIdsFromGuide,
 } from "../src/index.ts";
@@ -202,6 +206,171 @@ test("@aionis/sdk guide helpers keep Agent prompt and feedback attribution bound
     }),
     /not exposed by guide/,
   );
+});
+
+test("@aionis/sdk compiles a contract-style execution Agent context", () => {
+  const guide = {
+    guide_trace_id: "guide-route-1",
+    agent_context: {
+      prompt_text: "AIONIS_CTX v2\nuse current branch. inspect legacy branch only as reference.",
+      memory_ids: ["mem-current", "mem-inspect", "mem-blocked", "mem-archive"],
+      use_now_memory_ids: ["mem-current"],
+      inspect_before_use_memory_ids: ["mem-inspect"],
+      do_not_use_memory_ids: ["mem-blocked"],
+      command_posture: [
+        {
+          posture: "should_continue",
+          surface: "current",
+          memory_id: "mem-current",
+          instruction: "Continue the bundledDev migration.",
+          reason: "Accepted active route.",
+          target_files: ["packages/vite/src/node/server/bundledDev.ts"],
+        },
+        {
+          posture: "inspect_first",
+          surface: "inspect_before_use",
+          memory_id: "mem-inspect",
+          instruction: "Read fullBundleEnvironment only as legacy reference.",
+          reason: "Superseded source path.",
+          target_files: ["packages/vite/src/node/server/environments/fullBundleEnvironment.ts"],
+        },
+        {
+          posture: "must_not",
+          surface: "do_not_use",
+          memory_id: "mem-blocked",
+          instruction: "Do not implement the old fullBundleEnvironment route.",
+          reason: "Failed branch.",
+          target_files: ["packages/vite/src/node/server/environments/fullBundleEnvironment.ts"],
+        },
+        {
+          posture: "rehydrate_first",
+          surface: "rehydrate",
+          memory_id: "mem-archive",
+          instruction: "Rehydrate original patch payload before exact copy.",
+          reason: "Compact context may omit long hunks.",
+          target_files: ["packages/vite/src/node/server/bundledDev.ts"],
+        },
+      ],
+      route_contract: {
+        active_targets: [
+          {
+            target: "packages/vite/src/node/server/bundledDev.ts",
+            source_memory_id: "mem-current",
+            source: "should_continue",
+            artifact_status: "may_be_absent",
+            missing_policy: "restore_or_create_if_task_consistent_or_rehydrate",
+          },
+        ],
+        pending_artifacts: [
+          {
+            target: "packages/vite/src/node/server/bundledDev.ts",
+            source_memory_id: "mem-current",
+            source: "should_continue",
+            status: "unknown_until_host_observation",
+            when: "if_active_target_is_missing",
+            allowed_actions: ["create", "restore", "rehydrate", "report_conflict"],
+            preferred_action_order: ["create", "restore", "rehydrate", "report_conflict"],
+            terminal_inspect_allowed: false,
+          },
+        ],
+        reference_only_targets: [
+          {
+            target: "packages/vite/src/node/server/environments/fullBundleEnvironment.ts",
+            source_memory_id: "mem-inspect",
+            source: "inspect_first",
+          },
+        ],
+        blocked_direction_targets: [
+          {
+            target: "packages/vite/src/node/server/environments/fullBundleEnvironment.ts",
+            source_memory_id: "mem-blocked",
+            source: "must_not",
+          },
+        ],
+      },
+      rehydrate_hints: [
+        {
+          memory_id: "mem-archive",
+          reason: "Exact accepted patch payload is archived.",
+          required: true,
+        },
+      ],
+      risk: {
+        reasons: ["legacy route is superseded"],
+      },
+    },
+  };
+
+  const compiled = compileExecutionAgentContext({
+    guide,
+    task: {
+      task_signature: "vite-bundled-dev",
+      query_text: "Continue the migration.",
+    },
+    repo_state: {
+      missing_files: ["packages/vite/src/node/server/bundledDev.ts"],
+      existing_files: ["packages/vite/src/node/server/environments/fullBundleEnvironment.ts"],
+    },
+    budget_profile: "balanced",
+  });
+
+  assert.equal(compiled.contract_version, "aionis_execution_agent_context_v1");
+  assert.equal(compiled.budget_profile, "balanced");
+  assert.deepEqual(compiled.use_now_memory_ids, ["mem-current"]);
+  assert.deepEqual(compiled.inspect_before_use_memory_ids, ["mem-inspect"]);
+  assert.deepEqual(compiled.do_not_use_memory_ids, ["mem-blocked"]);
+  assert.deepEqual(compiled.active_targets, ["packages/vite/src/node/server/bundledDev.ts"]);
+  assert.deepEqual(compiled.missing_active_targets, ["packages/vite/src/node/server/bundledDev.ts"]);
+  assert.deepEqual(compiled.reference_only_targets, ["packages/vite/src/node/server/environments/fullBundleEnvironment.ts"]);
+  assert.deepEqual(compiled.blocked_direction_targets, ["packages/vite/src/node/server/environments/fullBundleEnvironment.ts"]);
+  assert.equal(compiled.execution_warnings[0]?.code, "missing_active_target");
+  assert.match(compiled.agent_prompt, /AIONIS_EXECUTION_AGENT_CONTEXT v1/);
+  assert.match(compiled.agent_prompt, /If an active target is missing, treat it as pending work/);
+  assert.match(compiled.agent_prompt, /packages\/vite\/src\/node\/server\/bundledDev\.ts/);
+  assert.match(compiled.agent_prompt, /BLOCKED_DIRECTION_TARGETS/);
+  assert.match(compiled.agent_prompt, /fullBundleEnvironment\.ts/);
+  assert.match(compiled.agent_prompt, /BASE_AIONIS_CONTEXT/);
+  assert.deepEqual(rehydrateHintsFromGuide(guide), [{
+    memory_id: "mem-archive",
+    reason: "Exact accepted patch payload is archived.",
+    required: true,
+  }]);
+  assert.equal(memoryUseReceiptFromGuide(guide).agent_prompt_included, false);
+  assert.deepEqual(memoryUseReceiptFromGuide(guide).rehydrate_memory_ids, ["mem-archive"]);
+
+  const coding = compileCodingAgentContext({ guide, include_base_prompt: false, max_prompt_chars: 2_000 });
+  assert.equal(coding.base_prompt, guide.agent_context.prompt_text);
+  assert.doesNotMatch(coding.agent_prompt, /BASE_AIONIS_CONTEXT/);
+});
+
+test("@aionis/sdk compact execution compiler respects prompt budget", () => {
+  const longPrompt = "base ".repeat(1_000);
+  const guide = {
+    guide_trace_id: "guide-compact-1",
+    agent_context: {
+      prompt_text: longPrompt,
+      memory_ids: ["mem-1"],
+      use_now_memory_ids: ["mem-1"],
+      command_posture: [],
+      route_contract: {
+        active_targets: [],
+        pending_artifacts: [],
+        reference_only_targets: [],
+        blocked_direction_targets: [],
+      },
+    },
+  };
+
+  const compiled = compileExecutionAgentContext({
+    guide,
+    budget_profile: "compact",
+    max_prompt_chars: 1_200,
+  });
+
+  assert.equal(compiled.agent_prompt.length <= 1_200, true);
+  assert.equal(compiled.memory_use_receipt.history_used, true);
+  assert.equal(compiled.memory_use_receipt.actionable_history_used, true);
+  assert.deepEqual(compiled.memory_use_receipt.use_now_memory_ids, ["mem-1"]);
 });
 
 test("@aionis/sdk compact agent context keeps default full_power guide mode", async () => {

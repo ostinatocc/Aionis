@@ -8,7 +8,7 @@ npm install @aionis/sdk
 
 ```ts
 import {
-  agentPromptFromGuide,
+  compileExecutionAgentContext,
   commandPostureFromGuide,
   createAionisClient,
   feedbackFromGuide,
@@ -32,7 +32,12 @@ const guide = await aionis.guide({
   include_packets: true,
 });
 
-const agentPrompt = agentPromptFromGuide(guide);
+const context = compileExecutionAgentContext({
+  guide,
+  task: "Continue the task.",
+  budget_profile: "balanced",
+});
+const agentPrompt = context.agent_prompt;
 const commandPosture = commandPostureFromGuide(guide);
 const mustNotMemoryIds = mustNotMemoryIdsFromGuide(guide);
 const shouldContinueMemoryIds = shouldContinueMemoryIdsFromGuide(guide);
@@ -81,7 +86,10 @@ const compactGuide = await aionis.guide({
   context_mode: "compact_agent",
 });
 
-const compactPrompt = agentPromptFromGuide(compactGuide);
+const compactPrompt = compileExecutionAgentContext({
+  guide: compactGuide,
+  budget_profile: "compact",
+}).agent_prompt;
 ```
 
 `context_mode: "compact_agent"` keeps SDK guide defaults on the governed
@@ -113,6 +121,20 @@ const guide = await aionis.execution.guideForRole({
   context_mode: "compact_agent",
 });
 
+const context = compileExecutionAgentContext({
+  guide,
+  task: {
+    task_signature: "checkout-migration",
+    query_text: "Continue from the current verified execution path.",
+  },
+  repo_state: {
+    existing_files: ["src/checkout.ts"],
+  },
+  budget_profile: "balanced",
+});
+
+// Your host runs the Agent with context.agent_prompt.
+
 const feedback = await aionis.execution.feedbackFromOutcome({
   agent_id: "reviewer-1",
   run_id: "run-001",
@@ -124,6 +146,21 @@ const feedback = await aionis.execution.feedbackFromOutcome({
   used_memory_ids: guide.agent_context.use_now_memory_ids.slice(0, 1),
 });
 ```
+
+`compileExecutionAgentContext` is the recommended product path for coding and
+multi-agent hosts. It converts the governed Runtime `guide` into a contract
+prompt plus structured adapter state:
+
+- active route targets and pending artifacts
+- reference-only and blocked direction targets
+- `use_now`, `inspect_before_use`, `do_not_use`, and `rehydrate` memory IDs
+- a compact Memory Use Receipt for audit and feedback attribution
+- warnings when a host-observed active target is missing
+
+This helper does not mutate Runtime state and does not expose raw packets to the
+Agent. If an active target is missing, the rendered contract tells the Agent to
+treat the target as pending work instead of falling back to a blocked or
+reference-only path that happens to exist.
 
 For a host loop, the most common posture helpers are:
 
