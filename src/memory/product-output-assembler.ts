@@ -1800,11 +1800,13 @@ function contractEntryIsCurrentState(entry: MemoryPacketEntry): boolean {
 
 function contractEntryIsProcedure(entry: MemoryPacketEntry): boolean {
   const kind = executionStateKind(entry);
+  const text = executionStateText(entry);
   return entry.memory_type === "procedure"
-    || kind.includes("workflow")
     || kind.includes("procedure")
     || kind.includes("playbook")
-    || kind.includes("pattern");
+    || kind.includes("pattern")
+    || /\breusable\b.{0,40}\b(?:procedure|workflow|playbook|pattern)\b/.test(text)
+    || /\b(?:procedure|playbook|pattern):/.test(text);
 }
 
 function contractCurrentCandidatePriority(entry: MemoryPacketEntry): number {
