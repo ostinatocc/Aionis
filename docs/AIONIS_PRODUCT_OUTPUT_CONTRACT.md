@@ -208,6 +208,34 @@ type AionisMemoryAdmissionRecord = {
 | `guide_trace_id`, prompt character count, and actionable-history flags | new Runtime gate behavior |
 | feedback outcome only when tied to affected or attributed memory | benchmark-only labels |
 
+## Admission Dataset Export
+
+Admission Dataset Export v1 is an SDK-side read-only projection from
+`AionisMemoryAdmissionRecord` into JSONL rows. It is for host logs, data lakes,
+offline auditing, and future learned admission-policy training. It is not a
+Runtime route, not a persistence table, not an Agent prompt surface, and not a
+learned policy by itself.
+
+Current SDK helpers:
+
+| Helper | Purpose |
+|---|---|
+| `memoryAdmissionDatasetRowsFromGuide(guide, options)` | Convert one guide response into typed dataset rows. |
+| `memoryAdmissionDatasetJsonlFromGuide(guide, options)` | Convert one guide response into appendable JSONL. |
+| `memoryAdmissionDatasetRowsFromRecord(record, options)` | Convert one admission record into typed rows. |
+| `memoryAdmissionDatasetJsonlFromRecords(records, options)` | Convert multiple records into JSONL. |
+
+Dataset rows include:
+
+- candidate memory ID, domain, type, lifecycle, and authority
+- admission action and decision kind
+- prompt exposure and agent-used flags
+- feedback outcome, attribution strength, and derived outcome label
+- reason codes, evidence IDs, guide trace, task/run IDs, and prompt character count
+
+Dataset rows exclude raw memory payloads, raw prompt text, raw slots,
+embeddings, hidden trace internals, and Runtime mutation authority.
+
 ## AionisJudgmentCalibrationSummary
 
 The judgment calibration summary is the first implemented Judgment Ledger

@@ -180,6 +180,56 @@ export type AionisMemoryAdmissionRecord = {
   summary: string;
 };
 
+export type AionisMemoryAdmissionDatasetOutcomeLabel =
+  | "positive_use"
+  | "negative_use"
+  | "neutral_use"
+  | "unused_exposed"
+  | "blocked_or_suppressed"
+  | "rehydrate_requested"
+  | "not_agent_facing"
+  | "unknown";
+
+export type AionisMemoryAdmissionDatasetRow = {
+  contract_version: "aionis_memory_admission_dataset_row_v1";
+  intended_use: "memory_admission_policy_training_or_audit";
+  source: "memory_admission_record";
+  agent_prompt_included: false;
+  runtime_mutation: false;
+  tenant_id: string | null;
+  scope: string | null;
+  guide_trace_id: string | null;
+  run_id: string | null;
+  task_id: string | null;
+  task_signature: string | null;
+  row_index: number;
+  memory_id: string;
+  title: string | null;
+  domain: AionisMemoryAdmissionRecordEntry["domain"];
+  memory_type: AionisMemoryAdmissionRecordEntry["memory_type"];
+  lifecycle_state: AionisMemoryAdmissionRecordEntry["lifecycle_state"];
+  authority: AionisMemoryAdmissionRecordEntry["authority"];
+  admission_action: AionisMemoryAdmissionRecordEntry["admission_action"];
+  decision_kind: AionisMemoryAdmissionRecordEntry["decision_kind"];
+  actionable: boolean;
+  prompt_included: boolean;
+  agent_used: boolean;
+  feedback_outcome: AionisFeedbackOutcome | null;
+  attribution_strength: AionisMemoryAdmissionRecordEntry["attribution_strength"];
+  outcome_label: AionisMemoryAdmissionDatasetOutcomeLabel;
+  reason_codes: string[];
+  evidence_ids: string[];
+  prompt_char_count: number;
+  history_used: boolean;
+  actionable_history_used: boolean;
+};
+
+export type AionisMemoryAdmissionDatasetExportOptions = {
+  run_id?: string | null;
+  task_id?: string | null;
+  task_signature?: string | null;
+};
+
 export type AionisExecutionContextBudgetProfile = "compact" | "balanced" | "high_recall";
 
 export type AionisExecutionFilePresence = {
@@ -1464,6 +1514,99 @@ export function memoryAdmissionRecordFromGuide(guide: unknown): AionisMemoryAdmi
     entries,
     summary: `Aionis generated ${entries.length} compact admission records from memory use receipt surfaces; full decision details require Runtime memory_decision_trace.`,
   };
+}
+
+function admissionDatasetOutcomeLabel(entry: AionisMemoryAdmissionRecordEntry): AionisMemoryAdmissionDatasetOutcomeLabel {
+  if (entry.agent_used && entry.feedback_outcome === "positive") return "positive_use";
+  if (entry.agent_used && entry.feedback_outcome === "negative") return "negative_use";
+  if (entry.agent_used && entry.feedback_outcome === "neutral") return "neutral_use";
+  if (entry.admission_action === "do_not_use") return "blocked_or_suppressed";
+  if (entry.admission_action === "rehydrate") return "rehydrate_requested";
+  if (entry.admission_action === "not_agent_facing") return "not_agent_facing";
+  if (entry.prompt_included && !entry.agent_used) return "unused_exposed";
+  return "unknown";
+}
+
+function admissionDatasetString(value: string | null | undefined): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+export function memoryAdmissionDatasetRowsFromRecord(
+  record: AionisMemoryAdmissionRecord,
+  options: AionisMemoryAdmissionDatasetExportOptions = {},
+): AionisMemoryAdmissionDatasetRow[] {
+  return record.entries.map((entry, index) => ({
+    contract_version: "aionis_memory_admission_dataset_row_v1",
+    intended_use: "memory_admission_policy_training_or_audit",
+    source: "memory_admission_record",
+    agent_prompt_included: false,
+    runtime_mutation: false,
+    tenant_id: admissionDatasetString(record.tenant_id),
+    scope: admissionDatasetString(record.scope),
+    guide_trace_id: admissionDatasetString(record.guide_trace_id),
+    run_id: admissionDatasetString(options.run_id),
+    task_id: admissionDatasetString(options.task_id),
+    task_signature: admissionDatasetString(options.task_signature),
+    row_index: index,
+    memory_id: entry.memory_id,
+    title: entry.title,
+    domain: entry.domain,
+    memory_type: entry.memory_type,
+    lifecycle_state: entry.lifecycle_state,
+    authority: entry.authority,
+    admission_action: entry.admission_action,
+    decision_kind: entry.decision_kind,
+    actionable: entry.actionable,
+    prompt_included: entry.prompt_included,
+    agent_used: entry.agent_used,
+    feedback_outcome: entry.feedback_outcome,
+    attribution_strength: entry.attribution_strength,
+    outcome_label: admissionDatasetOutcomeLabel(entry),
+    reason_codes: [...entry.reason_codes],
+    evidence_ids: [...entry.evidence_ids],
+    prompt_char_count: record.prompt_char_count,
+    history_used: record.history_used,
+    actionable_history_used: record.actionable_history_used,
+  }));
+}
+
+export function memoryAdmissionDatasetRowsFromRecords(
+  records: AionisMemoryAdmissionRecord[],
+  options: AionisMemoryAdmissionDatasetExportOptions = {},
+): AionisMemoryAdmissionDatasetRow[] {
+  return records.flatMap((record) => memoryAdmissionDatasetRowsFromRecord(record, options));
+}
+
+export function memoryAdmissionDatasetRowsFromGuide(
+  guide: unknown,
+  options: AionisMemoryAdmissionDatasetExportOptions = {},
+): AionisMemoryAdmissionDatasetRow[] {
+  return memoryAdmissionDatasetRowsFromRecord(memoryAdmissionRecordFromGuide(guide), options);
+}
+
+export function memoryAdmissionDatasetJsonlFromRows(rows: AionisMemoryAdmissionDatasetRow[]): string {
+  return rows.length > 0 ? `${rows.map((row) => JSON.stringify(row)).join("\n")}\n` : "";
+}
+
+export function memoryAdmissionDatasetJsonlFromRecord(
+  record: AionisMemoryAdmissionRecord,
+  options: AionisMemoryAdmissionDatasetExportOptions = {},
+): string {
+  return memoryAdmissionDatasetJsonlFromRows(memoryAdmissionDatasetRowsFromRecord(record, options));
+}
+
+export function memoryAdmissionDatasetJsonlFromRecords(
+  records: AionisMemoryAdmissionRecord[],
+  options: AionisMemoryAdmissionDatasetExportOptions = {},
+): string {
+  return memoryAdmissionDatasetJsonlFromRows(memoryAdmissionDatasetRowsFromRecords(records, options));
+}
+
+export function memoryAdmissionDatasetJsonlFromGuide(
+  guide: unknown,
+  options: AionisMemoryAdmissionDatasetExportOptions = {},
+): string {
+  return memoryAdmissionDatasetJsonlFromRows(memoryAdmissionDatasetRowsFromGuide(guide, options));
 }
 
 export function memoryIdsFromGuide(guide: unknown): string[] {

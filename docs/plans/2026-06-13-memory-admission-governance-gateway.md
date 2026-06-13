@@ -22,9 +22,17 @@ The first product slice is implemented as a read-only compact
 - SDK `compileExecutionAgentContext().memory_admission_record`
 - MCP `aionis_context.memory_admission_record`
 
+Admission Dataset Export v1 is also implemented as SDK-side JSONL helpers:
+
+- `memoryAdmissionDatasetRowsFromGuide()`
+- `memoryAdmissionDatasetJsonlFromGuide()`
+- `memoryAdmissionDatasetRowsFromRecord()`
+- `memoryAdmissionDatasetJsonlFromRecords()`
+
 This implemented slice is intentionally narrower than the future gateway plan
-below. It does not persist per-row admission records, export JSONL datasets, add
-external backend governance, train an admission model, or change Runtime gates.
+below. It exports JSONL from guide/record objects supplied by the host, but it
+does not persist per-row admission records in Runtime, add external backend
+governance, train an admission model, or change Runtime gates.
 
 ## Product Boundary
 

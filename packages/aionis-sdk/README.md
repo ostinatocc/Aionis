@@ -12,6 +12,7 @@ import {
   commandPostureFromGuide,
   createAionisClient,
   feedbackFromGuide,
+  memoryAdmissionDatasetJsonlFromGuide,
   memoryAdmissionRecordFromGuide,
   measureInputFromGuideLoop,
   mustNotMemoryIdsFromGuide,
@@ -43,6 +44,10 @@ const commandPosture = commandPostureFromGuide(guide);
 const mustNotMemoryIds = mustNotMemoryIdsFromGuide(guide);
 const shouldContinueMemoryIds = shouldContinueMemoryIdsFromGuide(guide);
 const admissionRecord = memoryAdmissionRecordFromGuide(guide);
+const admissionDatasetJsonl = memoryAdmissionDatasetJsonlFromGuide(guide, {
+  run_id: "run-001",
+  task_signature: "first-integration",
+});
 
 const feedback = await aionis.feedback(feedbackFromGuide({
   guide,
@@ -188,3 +193,8 @@ and `blocked_routes` are counter-evidence only.
 read-only admission ledger. It records candidate memory IDs, admission actions,
 prompt exposure, and feedback attribution without changing Runtime authority or
 adding content to the Agent prompt.
+
+`memoryAdmissionDatasetJsonlFromGuide(guide)` exports that ledger as JSONL rows
+for host logs or a data lake. It keeps raw prompt text, raw memory payloads, and
+embeddings out of the export while preserving enough admission/outcome fields to
+audit decisions or train a future admission policy offline.

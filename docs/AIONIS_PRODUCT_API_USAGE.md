@@ -83,6 +83,7 @@ import {
   compileExecutionAgentContext,
   createAionisClient,
   feedbackFromGuide,
+  memoryAdmissionDatasetJsonlFromGuide,
   memoryAdmissionRecordFromGuide,
   measureInputFromGuideLoop,
   snapshotInputFromGuideLoop,
@@ -148,6 +149,11 @@ const agentContext = compileExecutionAgentContext({
 // Your host runs the Agent with agentContext.agent_prompt.
 // Keep the admission record in host/operator logs, not in the Agent prompt.
 const admissionRecord = memoryAdmissionRecordFromGuide(guide);
+const admissionDatasetJsonl = memoryAdmissionDatasetJsonlFromGuide(guide, {
+  run_id: "run-001",
+  task_id: "task-001",
+  task_signature: "checkout-continuation",
+});
 
 const feedback = await aionis.feedback(feedbackFromGuide({
   guide,
@@ -204,6 +210,12 @@ action, prompt exposure flag, and feedback attribution. It is the product path
 for future admission dataset export, Memory Firewall analysis, and Agent Flight
 Recorder replay. It does not mutate memory authority and should stay in host or
 operator storage.
+
+`memoryAdmissionDatasetJsonlFromGuide()` turns that record into JSONL rows that
+can be appended to the host's own logs or data lake. The exported rows include
+candidate memory IDs, admission actions, prompt exposure, feedback attribution,
+outcome labels, reason codes, and evidence IDs. They intentionally exclude raw
+memory payloads, raw prompt text, embeddings, and Runtime mutation authority.
 
 Runnable SDK e2e:
 

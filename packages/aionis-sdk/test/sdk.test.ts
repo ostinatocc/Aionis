@@ -13,6 +13,8 @@ import {
   evidenceSourcesFromGuide,
   feedbackFromGuide,
   inspectFirstMemoryIdsFromGuide,
+  memoryAdmissionDatasetJsonlFromGuide,
+  memoryAdmissionDatasetRowsFromGuide,
   memoryAdmissionRecordFromGuide,
   memoryIdsFromGuide,
   memoryUseReceiptFromGuide,
@@ -354,6 +356,128 @@ test("@aionis/sdk compiles a contract-style execution Agent context", () => {
   const coding = compileCodingAgentContext({ guide, include_base_prompt: false, max_prompt_chars: 2_000 });
   assert.equal(coding.base_prompt, guide.agent_context.prompt_text);
   assert.doesNotMatch(coding.agent_prompt, /BASE_AIONIS_CONTEXT/);
+});
+
+test("@aionis/sdk exports admission dataset rows and JSONL without prompt payload", () => {
+  const guide = {
+    memory_decision_trace: {
+      admission_record: {
+        contract_version: "aionis_memory_admission_record_v1",
+        intended_use: "memory_admission_audit_dataset",
+        source: "memory_decision_trace",
+        agent_prompt_included: false,
+        runtime_mutation: false,
+        tenant_id: "tenant-a",
+        scope: "scope-a",
+        guide_trace_id: "guide-dataset-1",
+        prompt_char_count: 345,
+        history_used: true,
+        actionable_history_used: true,
+        candidate_memory_count: 4,
+        prompt_included_memory_count: 3,
+        agent_used_memory_count: 1,
+        entries: [
+          {
+            memory_id: "mem-positive",
+            title: "Accepted branch",
+            domain: "execution",
+            memory_type: "execution_memory",
+            lifecycle_state: "active",
+            authority: "trusted",
+            admission_action: "use_now",
+            decision_kind: "used",
+            actionable: true,
+            prompt_included: true,
+            agent_used: true,
+            feedback_outcome: "positive",
+            attribution_strength: "positive_attribution",
+            reason_codes: ["current_active_state"],
+            evidence_ids: ["evidence-1"],
+          },
+          {
+            memory_id: "mem-unused",
+            title: "Visible but unused",
+            domain: "general",
+            memory_type: "fact",
+            lifecycle_state: "active",
+            authority: "advisory",
+            admission_action: "inspect_before_use",
+            decision_kind: "downgraded",
+            actionable: false,
+            prompt_included: true,
+            agent_used: false,
+            feedback_outcome: null,
+            attribution_strength: null,
+            reason_codes: ["inspect_before_use"],
+            evidence_ids: [],
+          },
+          {
+            memory_id: "mem-blocked",
+            title: "Blocked stale branch",
+            domain: "execution",
+            memory_type: "execution_memory",
+            lifecycle_state: "contested",
+            authority: "blocked",
+            admission_action: "do_not_use",
+            decision_kind: "blocked",
+            actionable: false,
+            prompt_included: true,
+            agent_used: false,
+            feedback_outcome: null,
+            attribution_strength: null,
+            reason_codes: ["stale_memory"],
+            evidence_ids: ["evidence-2"],
+          },
+          {
+            memory_id: "mem-rehydrate",
+            title: "Archived patch payload",
+            domain: "execution",
+            memory_type: "evidence",
+            lifecycle_state: "rehydration_candidate",
+            authority: "advisory",
+            admission_action: "rehydrate",
+            decision_kind: "rehydrate",
+            actionable: false,
+            prompt_included: true,
+            agent_used: false,
+            feedback_outcome: null,
+            attribution_strength: null,
+            reason_codes: ["payload_archived"],
+            evidence_ids: ["evidence-3"],
+          },
+        ],
+        summary: "Admission record for dataset export.",
+      },
+    },
+    agent_context: {
+      prompt_text: "SECRET_PROMPT_PAYLOAD_SHOULD_NOT_EXPORT",
+      memory_ids: ["mem-positive"],
+    },
+  };
+
+  const rows = memoryAdmissionDatasetRowsFromGuide(guide, {
+    run_id: "run-1",
+    task_id: "task-1",
+    task_signature: "dataset-export",
+  });
+  assert.equal(rows.length, 4);
+  assert.deepEqual(rows.map((row) => row.outcome_label), [
+    "positive_use",
+    "unused_exposed",
+    "blocked_or_suppressed",
+    "rehydrate_requested",
+  ]);
+  assert.equal(rows[0]?.tenant_id, "tenant-a");
+  assert.equal(rows[0]?.scope, "scope-a");
+  assert.equal(rows[0]?.run_id, "run-1");
+  assert.equal(rows[0]?.task_signature, "dataset-export");
+  assert.equal(rows[0]?.agent_prompt_included, false);
+  assert.equal(rows[0]?.runtime_mutation, false);
+
+  const jsonl = memoryAdmissionDatasetJsonlFromGuide(guide, { run_id: "run-1" });
+  assert.equal(jsonl.split("\n").filter(Boolean).length, 4);
+  assert.doesNotMatch(jsonl, /SECRET_PROMPT_PAYLOAD_SHOULD_NOT_EXPORT/);
+  assert.equal(JSON.parse(jsonl.split("\n")[0] ?? "{}").contract_version, "aionis_memory_admission_dataset_row_v1");
 });
 
 test("@aionis/sdk compact execution compiler respects prompt budget", () => {
