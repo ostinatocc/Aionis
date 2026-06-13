@@ -119,6 +119,67 @@ export type AionisMemoryUseReceipt = {
   summary: string;
 };
 
+export type AionisMemoryAdmissionRecordEntry = {
+  memory_id: string;
+  title: string | null;
+  domain: "general" | "execution";
+  memory_type:
+    | "fact"
+    | "preference"
+    | "project_context"
+    | "procedure"
+    | "event"
+    | "evidence"
+    | "rule"
+    | "execution_memory"
+    | "unknown";
+  lifecycle_state:
+    | "active"
+    | "candidate"
+    | "contested"
+    | "suppressed"
+    | "demoted"
+    | "archived"
+    | "rehydration_candidate"
+    | "unknown";
+  authority: "none" | "advisory" | "trusted" | "blocked";
+  admission_action: "use_now" | "inspect_before_use" | "do_not_use" | "rehydrate" | "not_agent_facing";
+  decision_kind: "used" | "downgraded" | "blocked" | "rehydrate" | "not_agent_facing";
+  actionable: boolean;
+  prompt_included: boolean;
+  agent_used: boolean;
+  feedback_outcome: AionisFeedbackOutcome | null;
+  attribution_strength:
+    | "none"
+    | "observed_feedback_only"
+    | "positive_attribution"
+    | "weak_below_threshold"
+    | "repeated_weak_threshold_met"
+    | "strong_signal_threshold_met"
+    | null;
+  reason_codes: string[];
+  evidence_ids: string[];
+};
+
+export type AionisMemoryAdmissionRecord = {
+  contract_version: "aionis_memory_admission_record_v1";
+  intended_use: "memory_admission_audit_dataset";
+  source: "memory_decision_trace";
+  agent_prompt_included: false;
+  runtime_mutation: false;
+  tenant_id?: string;
+  scope?: string;
+  guide_trace_id: string | null;
+  prompt_char_count: number;
+  history_used: boolean;
+  actionable_history_used: boolean;
+  candidate_memory_count: number;
+  prompt_included_memory_count: number;
+  agent_used_memory_count: number;
+  entries: AionisMemoryAdmissionRecordEntry[];
+  summary: string;
+};
+
 export type AionisExecutionContextBudgetProfile = "compact" | "balanced" | "high_recall";
 
 export type AionisExecutionFilePresence = {
@@ -171,6 +232,7 @@ export type AionisCompiledExecutionAgentContext = {
   route_contract: AionisRouteContract | null;
   command_posture: AionisCommandPosture[];
   memory_use_receipt: AionisMemoryUseReceipt;
+  memory_admission_record: AionisMemoryAdmissionRecord;
   rehydrate_requests: AionisRehydrateHint[];
   use_now_memory_ids: string[];
   inspect_before_use_memory_ids: string[];
@@ -653,6 +715,17 @@ function receiptFromGuideTrace(guide: unknown): AionisMemoryUseReceipt | null {
   ];
   const receipt = candidates.find((entry) => entry?.contract_version === "aionis_memory_use_receipt_v1");
   return receipt ? receipt as unknown as AionisMemoryUseReceipt : null;
+}
+
+function admissionRecordFromGuideTrace(guide: unknown): AionisMemoryAdmissionRecord | null {
+  const guideRecord = asRecord(guide);
+  const candidates = [
+    asRecord(asRecord(guideRecord?.memory_decision_trace)?.admission_record),
+    asRecord(guideRecord?.memory_admission_record),
+    asRecord(asRecord(guideRecord?.agent_context)?.memory_admission_record),
+  ];
+  const record = candidates.find((entry) => entry?.contract_version === "aionis_memory_admission_record_v1");
+  return record ? record as unknown as AionisMemoryAdmissionRecord : null;
 }
 
 function decisionSummariesFromSurfaces(input: {
@@ -1354,6 +1427,45 @@ export function memoryUseReceiptFromGuide(guide: unknown): AionisMemoryUseReceip
   return receiptFromGuideTrace(guide) ?? generatedMemoryUseReceipt(guide);
 }
 
+export function memoryAdmissionRecordFromGuide(guide: unknown): AionisMemoryAdmissionRecord {
+  const record = admissionRecordFromGuideTrace(guide);
+  if (record) return record;
+  const receipt = memoryUseReceiptFromGuide(guide);
+  const entries = receipt.decision_summaries.map((summary) => ({
+    memory_id: summary.memory_id,
+    title: null,
+    domain: "execution" as const,
+    memory_type: "unknown" as const,
+    lifecycle_state: "unknown" as const,
+    authority: "none" as const,
+    admission_action: summary.agent_surface,
+    decision_kind: summary.decision_kind,
+    actionable: summary.actionable,
+    prompt_included: summary.agent_surface !== "not_agent_facing",
+    agent_used: receipt.attributed_memory_ids.includes(summary.memory_id),
+    feedback_outcome: null,
+    attribution_strength: null,
+    reason_codes: summary.reason_codes,
+    evidence_ids: [],
+  }));
+  return {
+    contract_version: "aionis_memory_admission_record_v1",
+    intended_use: "memory_admission_audit_dataset",
+    source: "memory_decision_trace",
+    agent_prompt_included: false,
+    runtime_mutation: false,
+    guide_trace_id: receipt.guide_trace_id,
+    prompt_char_count: receipt.prompt_char_count,
+    history_used: receipt.history_used,
+    actionable_history_used: receipt.actionable_history_used,
+    candidate_memory_count: entries.length,
+    prompt_included_memory_count: entries.filter((entry) => entry.prompt_included).length,
+    agent_used_memory_count: entries.filter((entry) => entry.agent_used).length,
+    entries,
+    summary: `Aionis generated ${entries.length} compact admission records from memory use receipt surfaces; full decision details require Runtime memory_decision_trace.`,
+  };
+}
+
 export function memoryIdsFromGuide(guide: unknown): string[] {
   const context = asRecord(agentContextFromGuide(guide));
   const ids = [
@@ -1421,6 +1533,7 @@ export function compileExecutionAgentContext(
   const routeContract = routeContractFromGuide(input.guide);
   const commandPosture = commandPostureFromGuide(input.guide);
   const receipt = memoryUseReceiptFromGuide(input.guide);
+  const admissionRecord = memoryAdmissionRecordFromGuide(input.guide);
   const rehydrateRequests = rehydrateHintsFromGuide(input.guide);
   const useNowMemoryIds = receipt.use_now_memory_ids;
   const inspectMemoryIds = receipt.inspect_before_use_memory_ids;
@@ -1528,6 +1641,7 @@ export function compileExecutionAgentContext(
     route_contract: routeContract,
     command_posture: commandPosture,
     memory_use_receipt: receipt,
+    memory_admission_record: admissionRecord,
     rehydrate_requests: rehydrateRequests,
     use_now_memory_ids: useNowMemoryIds,
     inspect_before_use_memory_ids: inspectMemoryIds,

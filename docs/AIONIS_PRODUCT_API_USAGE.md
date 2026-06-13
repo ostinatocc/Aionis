@@ -41,7 +41,8 @@ Optional read-only operator route:
 
 The Agent should consume only `agent_context.prompt_text` or selected
 `agent_context` fields. Full packets, decision traces, audit reports, raw rows,
-and raw slots are operator surfaces, not Agent prompt surfaces.
+memory admission records, and raw slots are operator surfaces, not Agent prompt
+surfaces.
 
 For host decisions, distinguish these two fields:
 
@@ -82,6 +83,7 @@ import {
   compileExecutionAgentContext,
   createAionisClient,
   feedbackFromGuide,
+  memoryAdmissionRecordFromGuide,
   measureInputFromGuideLoop,
   snapshotInputFromGuideLoop,
 } from "@aionis/sdk";
@@ -144,6 +146,8 @@ const agentContext = compileExecutionAgentContext({
 });
 
 // Your host runs the Agent with agentContext.agent_prompt.
+// Keep the admission record in host/operator logs, not in the Agent prompt.
+const admissionRecord = memoryAdmissionRecordFromGuide(guide);
 
 const feedback = await aionis.feedback(feedbackFromGuide({
   guide,
@@ -188,10 +192,18 @@ For coding and multi-agent hosts, the Agent should receive
 `agentContext.agent_prompt` from `compileExecutionAgentContext()`. Simpler hosts
 may still pass selected `agent_context` fields directly. The Agent should not
 receive `memory_packet`, `guide_packet`,
-`memory_decision_trace`, `memory_decision_audit`, or raw rows by default.
+`memory_decision_trace`, `memory_decision_audit`, `memory_admission_record`, or
+raw rows by default.
 `feedbackFromGuide()` validates attribution against the guide exposure ledger,
 while `measureInputFromGuideLoop()` and `snapshotInputFromGuideLoop()` hide the
 internal `product_trace` and operator snapshot wiring from normal app code.
+
+`memoryAdmissionRecordFromGuide()` returns the read-only
+`AionisMemoryAdmissionRecord`: one row per candidate memory with the admission
+action, prompt exposure flag, and feedback attribution. It is the product path
+for future admission dataset export, Memory Firewall analysis, and Agent Flight
+Recorder replay. It does not mutate memory authority and should stay in host or
+operator storage.
 
 Runnable SDK e2e:
 

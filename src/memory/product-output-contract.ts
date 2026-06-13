@@ -1083,6 +1083,74 @@ export function parseAionisMemoryUseReceipt(value: unknown): AionisMemoryUseRece
   return AionisMemoryUseReceiptSchema.parse(value);
 }
 
+export const AionisMemoryAdmissionRecordSchema = z
+  .object({
+    contract_version: z.literal("aionis_memory_admission_record_v1"),
+    intended_use: z.literal("memory_admission_audit_dataset"),
+    source: z.literal("memory_decision_trace"),
+    agent_prompt_included: z.literal(false),
+    runtime_mutation: z.literal(false),
+    tenant_id: z.string().min(1),
+    scope: z.string().min(1),
+    guide_trace_id: z.string().min(1).nullable(),
+    prompt_char_count: z.number().int().nonnegative(),
+    history_used: z.boolean(),
+    actionable_history_used: z.boolean(),
+    candidate_memory_count: z.number().int().nonnegative(),
+    prompt_included_memory_count: z.number().int().nonnegative(),
+    agent_used_memory_count: z.number().int().nonnegative(),
+    entries: z
+      .array(
+        z
+          .object({
+            memory_id: z.string().min(1),
+            title: z.string().min(1).nullable(),
+            domain: AionisMemoryDomainSchema,
+            memory_type: z.enum([
+              "fact",
+              "preference",
+              "project_context",
+              "procedure",
+              "event",
+              "evidence",
+              "rule",
+              "execution_memory",
+              "unknown",
+            ]),
+            lifecycle_state: z.enum([
+              "active",
+              "candidate",
+              "contested",
+              "suppressed",
+              "demoted",
+              "archived",
+              "rehydration_candidate",
+              "unknown",
+            ]),
+            authority: AionisGuidanceAuthoritySchema,
+            admission_action: AionisMemoryDecisionSurfaceSchema,
+            decision_kind: AionisMemoryDecisionKindSchema,
+            actionable: z.boolean(),
+            prompt_included: z.boolean(),
+            agent_used: z.boolean(),
+            feedback_outcome: AionisFeedbackOutcomeSchema.nullable(),
+            attribution_strength: AionisFeedbackAttributionStrengthSchema.nullable(),
+            reason_codes: z.array(z.string().min(1)).default([]),
+            evidence_ids: z.array(z.string().min(1)).default([]),
+          })
+          .strict(),
+      )
+      .default([]),
+    summary: z.string().min(1),
+  })
+  .strict();
+
+export type AionisMemoryAdmissionRecord = z.infer<typeof AionisMemoryAdmissionRecordSchema>;
+
+export function parseAionisMemoryAdmissionRecord(value: unknown): AionisMemoryAdmissionRecord {
+  return AionisMemoryAdmissionRecordSchema.parse(value);
+}
+
 export const AionisMemoryDecisionTraceSchema = z
   .object({
     contract_version: z.literal("aionis_memory_decision_trace_v1"),
@@ -1381,6 +1449,7 @@ export const AionisMemoryDecisionTraceSchema = z
       })
       .strict(),
     memory_use_receipt: AionisMemoryUseReceiptSchema.optional(),
+    admission_record: AionisMemoryAdmissionRecordSchema.optional(),
     forget_decisions: z
       .array(
         z
@@ -2019,6 +2088,7 @@ export const AionisOperatorSnapshotSchema = z
       .strict(),
     judgment_calibration: AionisJudgmentCalibrationSummarySchema.default(DEFAULT_AIONIS_JUDGMENT_CALIBRATION_SUMMARY),
     memory_use_receipt: AionisMemoryUseReceiptSchema,
+    memory_admission_record: AionisMemoryAdmissionRecordSchema.optional(),
     memory_lifecycle: z
       .object({
         used_count: z.number().int().nonnegative(),

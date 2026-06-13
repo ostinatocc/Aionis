@@ -50,6 +50,7 @@ The tool returns these structured fields in `structuredContent`:
 |---|---|
 | `execution_context` | SDK-compiled execution contract, including active targets, missing active targets, warnings, and final `agent_prompt`. |
 | `memory_use_receipt` | Compact audit receipt showing which memories were exposed, suppressed, rehydrated, or attributed. |
+| `memory_admission_record` | Read-only per-memory admission ledger for host/operator logs and future dataset export. |
 | `rehydrate_requests` | Memory IDs that need raw evidence recovery before exact use. |
 | `execution_warnings` | Runtime/SDK warnings such as missing active targets or blocked routes. |
 | `command_posture` | Bounded Agent instructions compiled from governed memory surfaces. |

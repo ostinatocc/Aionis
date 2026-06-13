@@ -10,6 +10,22 @@
 
 ---
 
+## Current Implementation Status
+
+The first product slice is implemented as a read-only compact
+`AionisMemoryAdmissionRecord` derived from the existing
+`memory_decision_trace`. The stable contract is documented in
+`docs/AIONIS_PRODUCT_OUTPUT_CONTRACT.md` and exposed through:
+
+- `memory_decision_trace.admission_record`
+- `operator_snapshot.memory_admission_record`
+- SDK `compileExecutionAgentContext().memory_admission_record`
+- MCP `aionis_context.memory_admission_record`
+
+This implemented slice is intentionally narrower than the future gateway plan
+below. It does not persist per-row admission records, export JSONL datasets, add
+external backend governance, train an admission model, or change Runtime gates.
+
 ## Product Boundary
 
 This plan adds one shared data spine and three product surfaces:

@@ -184,6 +184,12 @@ test("@aionis/mcp context tool records optional observation then compiles prompt
   assert.equal((output.structuredContent?.execution_context as Record<string, unknown>)?.contract_version, "aionis_execution_agent_context_v1");
   assert.deepEqual((output.structuredContent?.execution_context as Record<string, unknown>)?.missing_active_targets, ["src/checkout.ts"]);
   assert.equal((output.structuredContent?.memory_use_receipt as Record<string, unknown>)?.contract_version, "aionis_memory_use_receipt_v1");
+  assert.equal((output.structuredContent?.memory_admission_record as Record<string, unknown>)?.contract_version, "aionis_memory_admission_record_v1");
+  assert.equal(
+    (output.structuredContent?.memory_admission_record as { entries?: Array<Record<string, unknown>> })?.entries
+      ?.some((entry) => entry.memory_id === "mem-1" && entry.admission_action === "use_now"),
+    true,
+  );
   assert.equal(
     ((output.structuredContent?.execution_warnings as Array<Record<string, unknown>>) ?? [])
       .some((warning) => warning.code === "missing_active_target"),

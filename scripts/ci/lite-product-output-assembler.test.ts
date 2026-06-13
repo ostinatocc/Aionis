@@ -1791,6 +1791,19 @@ test("product memory decision trace explains lifecycle and agent-context surface
   assert.deepEqual(trace.memory_use_receipt.inspect_before_use_memory_ids, ["mem-old-route"]);
   assert.deepEqual(trace.memory_use_receipt.read_only_signal_memory_ids, ["mem-old-route"]);
   assert.equal(trace.memory_use_receipt.risk_flags.includes("relation:contradicts"), true);
+  assert.ok(trace.admission_record);
+  assert.equal(trace.admission_record.contract_version, "aionis_memory_admission_record_v1");
+  assert.equal(trace.admission_record.agent_prompt_included, false);
+  assert.equal(trace.admission_record.runtime_mutation, false);
+  assert.equal(trace.admission_record.candidate_memory_count, 2);
+  assert.equal(trace.admission_record.prompt_included_memory_count, 2);
+  assert.deepEqual(
+    trace.admission_record.entries.map((entry) => [entry.memory_id, entry.admission_action, entry.prompt_included]),
+    [
+      ["mem-current-route", "use_now", true],
+      ["mem-old-route", "inspect_before_use", true],
+    ],
+  );
   assert.equal(trace.relation_decisions[0]?.memory_id, "mem-old-route");
   assert.equal(trace.relation_decisions[0]?.source_memory_id, "mem-current-route");
   assert.equal(trace.relation_decisions[0]?.target_memory_id, "mem-old-route");

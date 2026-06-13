@@ -12,6 +12,7 @@ import {
   commandPostureFromGuide,
   createAionisClient,
   feedbackFromGuide,
+  memoryAdmissionRecordFromGuide,
   measureInputFromGuideLoop,
   mustNotMemoryIdsFromGuide,
   shouldContinueMemoryIdsFromGuide,
@@ -41,6 +42,7 @@ const agentPrompt = context.agent_prompt;
 const commandPosture = commandPostureFromGuide(guide);
 const mustNotMemoryIds = mustNotMemoryIdsFromGuide(guide);
 const shouldContinueMemoryIds = shouldContinueMemoryIdsFromGuide(guide);
+const admissionRecord = memoryAdmissionRecordFromGuide(guide);
 
 const feedback = await aionis.feedback(feedbackFromGuide({
   guide,
@@ -70,7 +72,8 @@ await aionis.snapshot(snapshotInputFromGuideLoop({
 ```
 
 Only pass `agentPrompt` or selected `agent_context` fields to your Agent. Keep
-packets, traces, receipts, raw slots, and operator snapshots in host logs.
+packets, traces, receipts, admission records, raw slots, and operator snapshots
+in host logs.
 Use `commandPostureFromGuide()` when the host wants structured execution
 instructions: `must_not` blocks failed or stale branches, `should_continue`
 biases the Agent toward active state or accepted procedure, `inspect_first`
@@ -155,6 +158,7 @@ prompt plus structured adapter state:
 - reference-only and blocked direction targets
 - `use_now`, `inspect_before_use`, `do_not_use`, and `rehydrate` memory IDs
 - a compact Memory Use Receipt for audit and feedback attribution
+- a Memory Admission Record for per-memory admission dataset rows
 - warnings when a host-observed active target is missing
 
 This helper does not mutate Runtime state and does not expose raw packets to the
@@ -179,3 +183,8 @@ These helpers read only `agent_context`. They do not expose `memory_packet`,
 `active_targets` are the continuation route, `pending_artifacts` describe
 missing-active-target handling, `evidence_sources` are reference-only evidence,
 and `blocked_routes` are counter-evidence only.
+
+`memoryAdmissionRecordFromGuide(guide)` is the host/operator surface for the
+read-only admission ledger. It records candidate memory IDs, admission actions,
+prompt exposure, and feedback attribution without changing Runtime authority or
+adding content to the Agent prompt.

@@ -41,8 +41,9 @@ The goal is to stop exposing dozens of internal Runtime routes as product concep
 5. `AionisEffectReport`: whether history helped, hurt, or did nothing
 6. `AionisMemoryDecisionTrace` and `AionisMemoryDecisionAuditReport`: operator/debug outputs explaining memory decisions without entering the Agent prompt
 7. `AionisMemoryUseReceipt`: a compact read-only receipt of which memory was used, inspected, blocked, rehydrated, attributed, or left unattributed
-8. `AionisJudgmentCalibrationSummary`: a compact read-only calibration summary of which memory judgments were supported, contradicted, unused, weak, or inconclusive
-9. `AionisOperatorSnapshot`: a read-only operator projection of execution state, memory use, judgment calibration, learning control, effect, and Trace-to-Procedure readiness
+8. `AionisMemoryAdmissionRecord`: a read-only per-memory admission dataset projection joining candidate, action, prompt exposure, and feedback attribution
+9. `AionisJudgmentCalibrationSummary`: a compact read-only calibration summary of which memory judgments were supported, contradicted, unused, weak, or inconclusive
+10. `AionisOperatorSnapshot`: a read-only operator projection of execution state, memory use, judgment calibration, learning control, effect, and Trace-to-Procedure readiness
 
 ## Output Boundary
 
@@ -56,12 +57,13 @@ The goal is to stop exposing dozens of internal Runtime routes as product concep
 | `AionisMemoryDecisionTrace` | `debug` / `measure` | Explain per-memory use, downgrade, block, and rehydrate decisions. |
 | `AionisMemoryDecisionAuditReport` | `audit` / `measure` | Provide a compact operator review of memory decisions, risks, and claims. |
 | `AionisMemoryUseReceipt` | `debug` / `measure` / `snapshot` | Show exactly what memory was exposed or blocked without adding prompt content or mutating runtime state. |
+| `AionisMemoryAdmissionRecord` | `debug` / `measure` / `snapshot` | Produce dataset-ready per-memory admission rows without adding prompt content or mutating runtime state. |
 | `AionisJudgmentCalibrationSummary` | `debug` / `measure` / `audit` / `snapshot` | Summarize whether exposed memory judgments were supported, contradicted, unused, weak, or inconclusive without changing authority. |
 | `AionisOperatorSnapshot` | `snapshot` | Show read-only execution state, trace-to-procedure readiness, judgment calibration, learning control, effect, and claims for hosts/operators. |
 
 `POST /v1/guide` defaults to `AionisAgentContext` only. Callers that need audit or measurement data must set `include_packets: true` to include `memory_packet` and `guide_packet`. Full packets are not the default Agent prompt surface.
 
-The prompt/debug boundary is defined in [AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md](AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md). `memory_decision_trace`, `memory_decision_audit`, `memory_use_receipt`, and `judgment_calibration_summary` are never Agent prompt surfaces.
+The prompt/debug boundary is defined in [AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md](AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md). `memory_decision_trace`, `memory_decision_audit`, `memory_use_receipt`, `memory_admission_record`, and `judgment_calibration_summary` are never Agent prompt surfaces.
 
 Concrete product API usage for `observe`, `guide`, `feedback`, `measure`,
 `rehydrate`, and `snapshot` is defined in
@@ -136,6 +138,75 @@ type AionisMemoryUseReceipt = {
 | compact decision summaries with surface and reason codes | raw memory text, raw slots, or full trace internals |
 | read-only risk/sparse feedback signals | runtime mutation, suppression, archive, or promotion actions |
 | prompt character count and `actionable_history_used` | claims that a memory was useful unless feedback attribution says so |
+
+## AionisMemoryAdmissionRecord
+
+The memory admission record is the dataset-ready projection of the same
+decision trace that powers the receipt. It records one row per candidate memory
+for a guide/context run: what Aionis did with it, whether that decision reached
+the Agent-facing context, and whether later feedback attributed use to it.
+
+It is a read-only product surface. It does not add a new gate, does not train a
+model by itself, does not enter the Agent prompt, and does not mutate memory
+authority. Its purpose is to make the future Memory Firewall, Agent Flight
+Recorder, and Admission Dataset Export possible without changing the current
+Runtime decision path.
+
+Current surfaces:
+
+| Surface | Field |
+|---|---|
+| Trace | `memory_decision_trace.admission_record` |
+| Snapshot | `operator_snapshot.memory_admission_record` when a trace is supplied |
+| SDK / MCP | `compileExecutionAgentContext().memory_admission_record`, `aionis_context.memory_admission_record` |
+
+### Shape
+
+```ts
+type AionisMemoryAdmissionRecord = {
+  contract_version: "aionis_memory_admission_record_v1";
+  intended_use: "memory_admission_audit_dataset";
+  source: "memory_decision_trace";
+  agent_prompt_included: false;
+  runtime_mutation: false;
+  tenant_id: string;
+  scope: string;
+  guide_trace_id: string | null;
+  prompt_char_count: number;
+  history_used: boolean;
+  actionable_history_used: boolean;
+  candidate_memory_count: number;
+  prompt_included_memory_count: number;
+  agent_used_memory_count: number;
+  entries: Array<{
+    memory_id: string;
+    title: string | null;
+    domain: "general" | "execution";
+    memory_type: string;
+    lifecycle_state: string;
+    authority: "none" | "advisory" | "trusted" | "blocked";
+    admission_action: "use_now" | "inspect_before_use" | "do_not_use" | "rehydrate" | "not_agent_facing";
+    decision_kind: "used" | "downgraded" | "blocked" | "rehydrate" | "not_agent_facing";
+    actionable: boolean;
+    prompt_included: boolean;
+    agent_used: boolean;
+    feedback_outcome: "positive" | "negative" | "neutral" | null;
+    attribution_strength: string | null;
+    reason_codes: string[];
+    evidence_ids: string[];
+  }>;
+  summary: string;
+};
+```
+
+### Admission Record Rules
+
+| Include | Exclude |
+|---|---|
+| candidate memory id, surface/action, decision kind, reason codes, evidence ids | raw memory text, raw slots, embeddings, or prompt payload |
+| prompt exposure and `agent_used` derived from feedback attribution | learned policy claims or mutation authority |
+| `guide_trace_id`, prompt character count, and actionable-history flags | new Runtime gate behavior |
+| feedback outcome only when tied to affected or attributed memory | benchmark-only labels |
 
 ## AionisJudgmentCalibrationSummary
 

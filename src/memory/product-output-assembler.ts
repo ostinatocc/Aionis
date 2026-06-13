@@ -14,6 +14,7 @@ import {
   parseAionisEffectReport,
   parseAionisGuidePacket,
   parseAionisLearningPacket,
+  parseAionisMemoryAdmissionRecord,
   parseAionisMemoryDecisionAuditReport,
   parseAionisMemoryDecisionTrace,
   parseAionisMemoryUseReceipt,
@@ -26,6 +27,7 @@ import {
   type AionisJudgmentCalibrationSummary,
   type AionisLifecycleCandidateSignal,
   type AionisLearningPacket,
+  type AionisMemoryAdmissionRecord,
   type AionisMemoryDecisionAuditReport,
   type AionisMemoryDecisionSurface,
   type AionisMemoryDecisionTrace,
@@ -5028,6 +5030,62 @@ export function buildAionisMemoryUseReceiptFromDecisionTrace(
   });
 }
 
+export function buildAionisMemoryAdmissionRecordFromDecisionTrace(
+  trace: AionisMemoryDecisionTrace,
+): AionisMemoryAdmissionRecord {
+  const attributedIds = new Set(trace.feedback_attribution.attributed_memory_ids);
+  const promptMemoryIds = new Set([
+    ...trace.context_decision.memory_ids,
+    ...traceMemoryIdsForSurface(trace, "use_now"),
+    ...traceMemoryIdsForSurface(trace, "inspect_before_use"),
+    ...traceMemoryIdsForSurface(trace, "do_not_use"),
+    ...traceMemoryIdsForSurface(trace, "rehydrate"),
+  ]);
+  const entries = trace.memory_decisions.slice(0, 96).map((decision) => {
+    const promptIncluded = decision.agent_surface !== "not_agent_facing" || promptMemoryIds.has(decision.memory_id);
+    const agentUsed = attributedIds.has(decision.memory_id) || decision.feedback_detail?.host_marked_used === true;
+    return {
+      memory_id: decision.memory_id,
+      title: decision.title,
+      domain: decision.domain,
+      memory_type: decision.memory_type,
+      lifecycle_state: decision.lifecycle_state,
+      authority: decision.authority,
+      admission_action: decision.agent_surface,
+      decision_kind: decision.decision_kind,
+      actionable: decision.agent_surface === "use_now",
+      prompt_included: promptIncluded,
+      agent_used: agentUsed,
+      feedback_outcome: agentUsed || trace.feedback_attribution.affected_memory_ids.includes(decision.memory_id)
+        ? trace.feedback_attribution.outcome
+        : null,
+      attribution_strength: decision.feedback_detail?.attribution_strength ?? null,
+      reason_codes: compactStrings(decision.reason_codes).slice(0, 16),
+      evidence_ids: compactStrings(decision.evidence_ids).slice(0, 16),
+    };
+  });
+  const promptIncludedCount = entries.filter((entry) => entry.prompt_included).length;
+  const agentUsedCount = entries.filter((entry) => entry.agent_used).length;
+  return parseAionisMemoryAdmissionRecord({
+    contract_version: "aionis_memory_admission_record_v1",
+    intended_use: "memory_admission_audit_dataset",
+    source: "memory_decision_trace",
+    agent_prompt_included: false,
+    runtime_mutation: false,
+    tenant_id: trace.tenant_id,
+    scope: trace.scope,
+    guide_trace_id: trace.feedback_attribution.guide_trace_id,
+    prompt_char_count: trace.context_decision.prompt_char_count,
+    history_used: trace.summary.history_used,
+    actionable_history_used: trace.summary.actionable_history_used,
+    candidate_memory_count: entries.length,
+    prompt_included_memory_count: promptIncludedCount,
+    agent_used_memory_count: agentUsedCount,
+    entries,
+    summary: `Aionis recorded ${entries.length} memory admission decisions, ${promptIncludedCount} agent-facing exposures, and ${agentUsedCount} host-attributed uses; record is read-only and excluded from the Agent prompt.`,
+  });
+}
+
 export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTraceArgs): AionisMemoryDecisionTrace {
   const memory = args.after_guide.memory_packet ?? null;
   const guide = args.after_guide.guide_packet ?? null;
@@ -5204,6 +5262,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
         forgetDecisions.length > 0 ? "forget_result_projection" : null,
         "memory_decision_trace",
         "memory_use_receipt",
+        "memory_admission_record",
       ]),
       omitted_internal_surfaces: args.source_map?.omitted_internal_surfaces ?? [
         "raw_memory_rows",
@@ -5217,6 +5276,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
   return parseAionisMemoryDecisionTrace({
     ...traceWithoutReceipt,
     memory_use_receipt: buildAionisMemoryUseReceiptFromDecisionTrace(traceWithoutReceipt),
+    admission_record: buildAionisMemoryAdmissionRecordFromDecisionTrace(traceWithoutReceipt),
   });
 }
 

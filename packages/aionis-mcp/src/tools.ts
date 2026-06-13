@@ -391,6 +391,7 @@ export async function handleAionisMcpTool(
       agent_prompt: executionContext.agent_prompt,
       execution_context: executionContext,
       memory_use_receipt: executionContext.memory_use_receipt,
+      memory_admission_record: executionContext.memory_admission_record,
       rehydrate_requests: executionContext.rehydrate_requests,
       execution_warnings: executionContext.execution_warnings,
       command_posture: commandPostureFromGuide(guide),

@@ -5,6 +5,7 @@ import {
   AionisEffectReportSchema,
   AionisGuidePacketSchema,
   AionisLearningPacketSchema,
+  AionisMemoryAdmissionRecordSchema,
   AionisMemoryDecisionAuditReportSchema,
   AionisMemoryDecisionTraceSchema,
   AionisMemoryUseReceiptSchema,
@@ -642,6 +643,42 @@ function validMemoryDecisionTrace() {
       risk_flags: ["negative_transfer_risk:medium"],
       summary: "Aionis compiled memory decisions into a read-only memory use receipt.",
     },
+    admission_record: {
+      contract_version: "aionis_memory_admission_record_v1",
+      intended_use: "memory_admission_audit_dataset",
+      source: "memory_decision_trace",
+      agent_prompt_included: false,
+      runtime_mutation: false,
+      tenant_id: "tenant-local",
+      scope: "repo-a",
+      guide_trace_id: null,
+      prompt_char_count: 81,
+      history_used: true,
+      actionable_history_used: true,
+      candidate_memory_count: 1,
+      prompt_included_memory_count: 1,
+      agent_used_memory_count: 0,
+      entries: [
+        {
+          memory_id: "mem-pref-1",
+          title: "User prefers direct answers",
+          domain: "general",
+          memory_type: "preference",
+          lifecycle_state: "active",
+          authority: "advisory",
+          admission_action: "use_now",
+          decision_kind: "used",
+          actionable: true,
+          prompt_included: true,
+          agent_used: false,
+          feedback_outcome: null,
+          attribution_strength: null,
+          reason_codes: ["lifecycle_active", "authority_advisory", "available_for_agent_use"],
+          evidence_ids: ["commit-1"],
+        },
+      ],
+      summary: "Aionis recorded memory admission decisions for dataset export.",
+    },
     forget_decisions: [],
     source_map: {
       routes_used: ["/v1/measure"],
@@ -1035,6 +1072,12 @@ test("AionisMemoryDecisionTrace accepts read-only measure/debug/audit output", (
   assert.equal(parsed.memory_use_receipt?.runtime_mutation, false);
   assert.deepEqual(parsed.memory_use_receipt?.use_now_memory_ids, ["mem-pref-1"]);
   assert.deepEqual(parsed.memory_use_receipt?.unattributed_recalled_memory_ids, ["mem-1", "mem-3"]);
+  assert.equal(parsed.admission_record?.contract_version, "aionis_memory_admission_record_v1");
+  assert.equal(parsed.admission_record?.agent_prompt_included, false);
+  assert.equal(parsed.admission_record?.runtime_mutation, false);
+  assert.equal(parsed.admission_record?.entries[0]?.admission_action, "use_now");
+  assert.equal(parsed.admission_record?.entries[0]?.prompt_included, true);
+  assert.equal(parsed.admission_record?.entries[0]?.agent_used, false);
   assert.equal(parsed.memory_decisions[0]?.agent_surface, "use_now");
   assert.equal(parsed.memory_decisions[0]?.feedback_detail, null);
   assert.equal(parsed.feedback_attribution.present, false);
@@ -1050,6 +1093,17 @@ test("AionisMemoryDecisionTrace accepts read-only measure/debug/audit output", (
   assert.equal(parsed.inspect_before_use_shadow_delta.authority_mutation, false);
   assert.equal(parsed.inspect_before_use_shadow_delta.agent_prompt_included, false);
   assert.deepEqual(parsed.inspect_before_use_shadow_delta.would_move_to_inspect_before_use_memory_ids, []);
+});
+
+test("AionisMemoryAdmissionRecord accepts read-only admission dataset rows", () => {
+  const parsed = AionisMemoryAdmissionRecordSchema.parse(validMemoryDecisionTrace().admission_record);
+  assert.equal(parsed.contract_version, "aionis_memory_admission_record_v1");
+  assert.equal(parsed.intended_use, "memory_admission_audit_dataset");
+  assert.equal(parsed.source, "memory_decision_trace");
+  assert.equal(parsed.agent_prompt_included, false);
+  assert.equal(parsed.runtime_mutation, false);
+  assert.equal(parsed.entries[0]?.memory_id, "mem-pref-1");
+  assert.equal(parsed.entries[0]?.admission_action, "use_now");
 });
 
 test("AionisMemoryDecisionTrace rejects prompt injection and runtime mutation claims", () => {

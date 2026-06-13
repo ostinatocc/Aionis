@@ -4,17 +4,22 @@ import {
   AionisGuidePacketSchema,
   AionisMemoryDecisionAuditReportSchema,
   AionisMemoryDecisionTraceSchema,
+  parseAionisMemoryAdmissionRecord,
   parseAionisMemoryUseReceipt,
   parseAionisOperatorSnapshot,
   type AionisAgentContext,
   type AionisEffectReport,
   type AionisGuidePacket,
+  type AionisMemoryAdmissionRecord,
   type AionisMemoryDecisionAuditReport,
   type AionisMemoryDecisionTrace,
   type AionisMemoryUseReceipt,
   type AionisOperatorSnapshot,
 } from "./product-output-contract.js";
-import { buildAionisMemoryUseReceiptFromDecisionTrace } from "./product-output-assembler.js";
+import {
+  buildAionisMemoryAdmissionRecordFromDecisionTrace,
+  buildAionisMemoryUseReceiptFromDecisionTrace,
+} from "./product-output-assembler.js";
 
 export type BuildAionisOperatorSnapshotArgs = {
   tenant_id: string;
@@ -94,6 +99,13 @@ function parseTrace(value: unknown): AionisMemoryDecisionTrace | null {
   if (direct.success) return direct.data;
   const nested = AionisMemoryDecisionTraceSchema.safeParse(asRecord(value).memory_decision_trace);
   return nested.success ? nested.data : null;
+}
+
+function memoryAdmissionRecordFromTrace(trace: AionisMemoryDecisionTrace | null): AionisMemoryAdmissionRecord | undefined {
+  if (!trace) return undefined;
+  return parseAionisMemoryAdmissionRecord(
+    trace.admission_record ?? buildAionisMemoryAdmissionRecordFromDecisionTrace(trace),
+  );
 }
 
 function parseAudit(value: unknown): AionisMemoryDecisionAuditReport | null {
@@ -243,6 +255,7 @@ function sourceMapFromInputs(args: {
       ...(args.guide ? ["guide_packet"] : []),
       ...(args.trace ? ["memory_decision_trace"] : []),
       "memory_use_receipt",
+      ...(args.trace ? ["memory_admission_record"] : []),
       ...(args.audit ? ["memory_decision_audit_report"] : []),
       ...(args.trace?.judgment_calibration_summary.window.record_count
           || args.audit?.judgment_calibration_review.window.record_count
@@ -582,6 +595,7 @@ export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArg
     ?? (trace
       ? buildAionisMemoryUseReceiptFromDecisionTrace(trace)
       : buildFallbackMemoryUseReceipt({ guideTraceId, agent, guide }));
+  const memoryAdmissionRecord = memoryAdmissionRecordFromTrace(trace);
   const judgmentCalibration = trace?.judgment_calibration_summary
     ?? audit?.judgment_calibration_review
     ?? null;
@@ -668,6 +682,7 @@ export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArg
     },
     judgment_calibration: judgmentCalibration ?? undefined,
     memory_use_receipt: memoryUseReceipt,
+    memory_admission_record: memoryAdmissionRecord,
     memory_lifecycle: {
       used_count: directUseCount,
       inspect_before_use_count: inspectCount,
@@ -774,6 +789,12 @@ export function renderAionisOperatorSnapshotMarkdown(snapshot: AionisOperatorSna
     `runtime_mutation: ${snapshot.memory_use_receipt.runtime_mutation}`,
     `use_now_memory_ids: ${snapshot.memory_use_receipt.use_now_memory_ids.join(", ") || "none"}`,
     `do_not_use_memory_ids: ${snapshot.memory_use_receipt.do_not_use_memory_ids.join(", ") || "none"}`,
+    ``,
+    `## Memory Admission Record`,
+    `present: ${!!snapshot.memory_admission_record}`,
+    `candidate_memory_count: ${snapshot.memory_admission_record?.candidate_memory_count ?? 0}`,
+    `prompt_included_memory_count: ${snapshot.memory_admission_record?.prompt_included_memory_count ?? 0}`,
+    `agent_used_memory_count: ${snapshot.memory_admission_record?.agent_used_memory_count ?? 0}`,
     ``,
     `## Judgment Calibration`,
     `record_count: ${snapshot.judgment_calibration.window.record_count}`,

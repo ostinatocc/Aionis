@@ -113,7 +113,7 @@ test("workspace packages stay product-entrypoint only and do not import Runtime 
   assert.equal(mcpPackage.name, "@aionis/mcp");
   assert.equal(mcpPackage.private, undefined);
   assert.equal(mcpPackage.bin?.["aionis-mcp"], "./dist/index.js");
-  assert.equal(mcpPackage.dependencies?.["@aionis/sdk"], "^0.1.2");
+  assert.equal(mcpPackage.dependencies?.["@aionis/sdk"], `^${sdkPackage.version}`);
   assert.equal(mcpPackage.publishConfig?.access, "public");
 
   const createPackage = readJson("packages/create-aionis/package.json");
