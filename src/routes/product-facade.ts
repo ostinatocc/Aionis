@@ -18,10 +18,12 @@ import {
   buildAionisMemoryDecisionTrace,
   type BuildAionisMemoryPacketArgs,
 } from "../memory/product-output-assembler.js";
+import { governExternalMemoryCandidates } from "../memory/external-candidate-admission.js";
 import {
   AionisAgentRoleSchema,
   AionisAgentContextSchema,
   AionisEffectReportSchema,
+  AionisExternalMemoryCandidateSchema,
   AionisGuidePacketSchema,
   AionisMemoryPacketSchema,
   type AionisAgentContext,
@@ -141,6 +143,17 @@ const ProductGuideRequest = z.object({
   trajectory_hints: z.unknown().optional(),
   execution_tree_v1: z.unknown().optional(),
   include_packets: z.boolean().optional(),
+}).strict();
+
+const ProductMemoryAdmissionRequest = z.object({
+  tenant_id: z.string().trim().min(1).optional(),
+  scope: z.string().trim().min(1).optional(),
+  run_id: z.string().trim().min(1).optional(),
+  query_text: z.string().trim().min(1),
+  mode: z.enum(["standard", "strict", "firewall"]).optional(),
+  context_mode: z.enum(["standard", "compact_agent"]).optional(),
+  candidates: z.array(AionisExternalMemoryCandidateSchema).min(1).max(200),
+  include_records: z.boolean().optional(),
 }).strict();
 
 const ProductForgetRequest = z.object({
@@ -2545,6 +2558,43 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
         ],
       },
     });
+  });
+
+  app.post("/v1/memory/govern", async (req: ProductFacadeRequest, reply: FastifyReply) => {
+    const principal = await requireMemoryPrincipal(req);
+    const body = withIdentityFromRequest(req, req.body, principal, "recall");
+    const parsed = ProductMemoryAdmissionRequest.parse(body);
+    await enforceRateLimit(req, reply, "recall");
+    await enforceTenantQuota(req, reply, "recall", tenantFromBody(parsed));
+    const gate = await acquireInflightSlot("recall");
+    try {
+      const tenantId = parsed.tenant_id ?? env.MEMORY_TENANT_ID;
+      const scope = parsed.scope ?? env.MEMORY_SCOPE;
+      const external = governExternalMemoryCandidates({
+        tenant_id: tenantId,
+        scope,
+        run_id: parsed.run_id,
+        query_text: parsed.query_text,
+        candidates: parsed.candidates,
+        mode: parsed.mode,
+        context_mode: parsed.context_mode,
+      });
+      return reply.code(200).send({
+        contract_version: external.contract_version,
+        tenant_id: tenantId,
+        scope,
+        run_id: external.run_id,
+        mode: external.mode,
+        agent_context: external.agent_context,
+        memory_use_receipt: external.memory_use_receipt,
+        ...(parsed.include_records === true ? { memory_admission_records: external.memory_admission_records } : {}),
+        ...(external.memory_firewall ? { memory_firewall: external.memory_firewall } : {}),
+        admission_summary: external.admission_summary,
+        source_map: external.source_map,
+      });
+    } finally {
+      gate.release();
+    }
   });
 
   const handleProductLifecycle = async (

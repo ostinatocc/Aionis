@@ -43,6 +43,23 @@ test("AionisClient wraps the product facade APIs with scope defaults", async () 
 
   await client.observe({ input_text: "Observed event." });
   await client.guide({ context: { task: "continue" } }, { scope: "scope-b" });
+  await client.governMemory({
+    query_text: "Govern external memories before prompt use.",
+    candidates: [
+      {
+        external_memory_id: "mem0:current",
+        source_backend: "mem0",
+        text: "Current project state.",
+        authority: {
+          source_trust: "trusted",
+          scope: "project",
+          evidence_requirement: "none",
+        },
+        lifecycle_hint: "current",
+      },
+    ],
+    include_records: true,
+  });
   await client.forget({ operation: "suppress", target: "memory", memory_id: "mem-1" });
   await client.feedback({
     reason: "Agent used exposed memory successfully.",
@@ -63,6 +80,7 @@ test("AionisClient wraps the product facade APIs with scope defaults", async () 
   assert.deepEqual(calls.map((call) => call.url), [
     "http://127.0.0.1:3001/v1/observe",
     "http://127.0.0.1:3001/v1/guide",
+    "http://127.0.0.1:3001/v1/memory/govern",
     "http://127.0.0.1:3001/v1/forget",
     "http://127.0.0.1:3001/v1/feedback",
     "http://127.0.0.1:3001/v1/rehydrate",
@@ -83,18 +101,24 @@ test("AionisClient wraps the product facade APIs with scope defaults", async () 
   assert.equal(guideBody.scope, "scope-b");
   assert.equal(guideBody.mode, "full_power");
 
-  const feedbackBody = JSON.parse(String(calls[3]?.init.body)) as Record<string, unknown>;
+  const governBody = JSON.parse(String(calls[2]?.init.body)) as Record<string, unknown>;
+  assert.equal(governBody.tenant_id, "tenant-a");
+  assert.equal(governBody.scope, "scope-a");
+  assert.equal(governBody.query_text, "Govern external memories before prompt use.");
+  assert.equal(Array.isArray(governBody.candidates), true);
+
+  const feedbackBody = JSON.parse(String(calls[4]?.init.body)) as Record<string, unknown>;
   assert.equal(feedbackBody.operation, undefined);
   assert.equal(feedbackBody.target, undefined);
   assert.equal(feedbackBody.guide_trace_id, "guide-trace-feedback");
   assert.deepEqual(feedbackBody.used_memory_ids, ["mem-used"]);
 
-  const rehydrateBody = JSON.parse(String(calls[4]?.init.body)) as Record<string, unknown>;
+  const rehydrateBody = JSON.parse(String(calls[5]?.init.body)) as Record<string, unknown>;
   assert.equal(rehydrateBody.operation, undefined);
   assert.equal(rehydrateBody.anchor_uri, "aionis://anchor/payload-1");
   assert.equal(rehydrateBody.mode, "partial");
 
-  const snapshotBody = JSON.parse(String(calls[6]?.init.body)) as Record<string, unknown>;
+  const snapshotBody = JSON.parse(String(calls[7]?.init.body)) as Record<string, unknown>;
   assert.equal(snapshotBody.tenant_id, "tenant-a");
   assert.equal(snapshotBody.scope, "scope-a");
   assert.equal(snapshotBody.run_id, "run-operator");

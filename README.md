@@ -6,7 +6,7 @@ Memory is not recall. Memory is state.
 
 Aionis sits between your Agent and its history. It adjudicates whether memory is
 current, stale, contested, failed, reusable, or worth rehydrating, then compiles
-only the governed execution state into the next Agent context.
+only the external execution state into the next Agent context.
 
 ```bash
 MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quickstart sdk
@@ -31,6 +31,7 @@ Most memory systems retrieve text. Aionis governs state.
 | Agents that stop repeating old mistakes | Failed branches become counter-evidence instead of future instructions. |
 | Shorter context without losing the task | Execution history is compressed into current state, reusable procedures, and rehydrate pointers. |
 | Safer memory than raw RAG | Memories are gated into `use_now`, `inspect_before_use`, `do_not_use`, or `rehydrate`. |
+| Admission for any memory backend | Mem0, Zep, vector DB, markdown, or custom memory candidates can be routed through Aionis before prompt use. |
 | Multi-agent execution continuity | Planner, worker, verifier, and reviewer share branch-aware execution memory. |
 | Memory that can be controlled | Stale or harmful memory can be suppressed, archived, restored, or rehydrated. |
 | Operator confidence | Every guide can produce memory use receipts, decision traces, and read-only snapshots. |
@@ -38,7 +39,7 @@ Most memory systems retrieve text. Aionis governs state.
 ## Architecture Overview
 
 Aionis is not a prompt-stuffing layer. It is a Runtime that turns raw history
-into governed Agent context.
+into external Agent context.
 
 ```mermaid
 flowchart LR
@@ -46,23 +47,25 @@ flowchart LR
 
   SDK --> Observe["observe\nwrite evidence"]
   SDK --> Guide["guide\ncompile context"]
+  SDK --> Govern["memory/govern\ngovern external candidates"]
   SDK --> Feedback["feedback\nattribute outcome"]
   SDK --> Measure["measure\nscore effect"]
   SDK --> Forget["forget / rehydrate\ncontrol lifecycle"]
   SDK --> Snapshot["operator snapshot\nread-only audit"]
 
-  Observe --> Governance["State Governance\nlifecycle + authority + scope + source"]
-  Feedback --> Governance
-  Forget --> Governance
+  Observe --> Admission["State Admission\nlifecycle + authority + scope + source"]
+  Feedback --> Admission
+  Forget --> Admission
 
-  Governance <--> Store["Memory Store\nordinary memory + execution traces + archives"]
-  Governance --> Exec["Execution Memory\nactive path + failed branches + procedures"]
+  Admission <--> Store["Memory Store\nordinary memory + execution traces + archives"]
+  Admission --> Exec["Execution Memory\nactive path + failed branches + procedures"]
 
   Store --> Compiler["Context Compiler\nuse_now + inspect + do_not_use + rehydrate"]
   Exec --> Compiler
   Guide --> Compiler
+  Govern --> Compiler
 
-  Compiler --> AgentContext["Agent Context\nshort + governed + attributable"]
+  Compiler --> AgentContext["Agent Context\nshort + external + attributable"]
   Compiler --> Receipt["Memory Use Receipt\nwhy used or suppressed"]
   Compiler --> Operator["Operator Snapshot\nbranch isolation + audit"]
 
@@ -84,13 +87,34 @@ Full architecture guide:
 
 | Approach | Default behavior | Aionis behavior |
 |---|---|---|
-| Long context | Pass everything to the model. | Compile only governed memory state into Agent context. |
+| Long context | Pass everything to the model. | Compile only external memory state into Agent context. |
 | Vector recall / RAG | Retrieve related text. | Decide whether memory is current, stale, contested, failed, or rehydratable before use. |
 | Recall memory | Return relevant memories. | Split memory into `use_now`, `inspect_before_use`, `do_not_use`, and `rehydrate`. |
 | Workflow memory | Store successful procedures. | Preserve passed paths and failed branches so mistakes become counter-evidence. |
 
 Full positioning guide:
 [docs/AIONIS_PRODUCT_POSITIONING.md](docs/AIONIS_PRODUCT_POSITIONING.md).
+
+## Govern Any Memory Backend
+
+Aionis can sit in front of existing memory systems. Pass candidates from Mem0,
+Zep, a vector DB, markdown, logs, or your own store to `POST /v1/memory/govern`
+or SDK `governMemory()`. Aionis returns the same four admission surfaces it uses
+for native memory:
+
+```text
+use_now | inspect_before_use | do_not_use | rehydrate
+```
+
+This lets teams keep their current storage while adding a memory firewall layer:
+failed, stale, contested, suppressed, blocked, or rehydrate-required candidates
+cannot silently become Agent instructions.
+
+API details:
+[docs/AIONIS_PRODUCT_API_USAGE.md](docs/AIONIS_PRODUCT_API_USAGE.md#post-v1memorygovern).
+
+Security/product packaging:
+[docs/AIONIS_MEMORY_FIREWALL.md](docs/AIONIS_MEMORY_FIREWALL.md).
 
 ## Quickstart
 
@@ -119,7 +143,7 @@ The SDK quickstart runs a real local Runtime and verifies:
 
 1. a fresh guide starts without actionable history
 2. ordinary preference and project memory become reusable context
-3. the SDK compiles governed execution memory into a contract-style Agent prompt
+3. the SDK compiles external execution memory into a contract-style Agent prompt
 4. feedback is attributed to the exact memory IDs exposed by the guide
 5. `measure` reports whether history changed future context
 6. admission dataset JSONL export is produced without prompt payload
@@ -163,7 +187,7 @@ The SDK quickstart prints a compact product result like this:
     "contract_version": "aionis_execution_agent_context_v1",
     "memory_use_receipt_visible": true
   },
-  "memory_governance": {
+  "memory_admission": {
     "feedback_attributed_memory_count": 1,
     "measure_history_impact": "positive"
   },
@@ -303,7 +327,7 @@ const compactContext = compileExecutionAgentContext({
 });
 ```
 
-Compact mode shortens the Agent prompt. It does not remove governed memory
+Compact mode shortens the Agent prompt. It does not remove external memory
 buckets, memory IDs, feedback attribution, receipts, or operator audit surfaces.
 
 ## MCP For Claude Code And Cursor
@@ -332,7 +356,7 @@ tools without asking the host to implement the full feedback loop on day one.
 }
 ```
 
-The main tool is `aionis_context`: it compiles governed execution state for the
+The main tool is `aionis_context`: it compiles external execution state for the
 current run and can optionally record a lightweight observation first. Feedback
 is optional; teams can start with context-only use and later add
 `aionis_record_step`, `aionis_measure`, and `aionis_snapshot`.
@@ -431,7 +455,7 @@ Host integration guide:
 | Ordinary Memory | Preferences, facts, project context, and notes that can guide future work. |
 | Execution Memory | Branch-aware memory of actions, outcomes, verifier evidence, handoffs, and reusable workflows. |
 | Agent Context | The compact prompt contract given to the Agent. |
-| Memory Lifecycle | The governed state of memory: active, candidate, contested, suppressed, demoted, archived, or rehydrated. |
+| Memory Lifecycle | The external state of memory: active, candidate, contested, suppressed, demoted, archived, or rehydrated. |
 | Memory Use Receipt | A read-only record of which memories were used, inspected, blocked, or requested for rehydration. |
 | Feedback Attribution | Feedback is applied only to memory IDs actually exposed by a guide and reported as used. |
 | Operator Snapshot | Read-only observability for branch isolation, memory use, measured effect, and trace-to-procedure readiness. |
@@ -461,7 +485,7 @@ observe -> guide -> agent action -> feedback -> measure -> snapshot
 | Step | What happens |
 |---|---|
 | `observe` | Write real memory, execution evidence, outcomes, or handoff state. |
-| `guide` | Compile governed memory into Agent-facing context. |
+| `guide` | Compile external memory into Agent-facing context. |
 | `agent action` | Your host runs the Agent with only the compiled context. |
 | `feedback` | Attribute the outcome to the memories actually used. |
 | `forget` | Explicitly suppress, unsuppress, archive, or restore memory lifecycle state. |

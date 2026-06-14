@@ -3,11 +3,13 @@ import assert from "node:assert/strict";
 import {
   AionisAgentContextSchema,
   AionisEffectReportSchema,
+  AionisExternalMemoryCandidateSchema,
   AionisGuidePacketSchema,
   AionisLearningPacketSchema,
   AionisMemoryAdmissionRecordSchema,
   AionisMemoryDecisionAuditReportSchema,
   AionisMemoryDecisionTraceSchema,
+  AionisMemoryFirewallSummarySchema,
   AionisMemoryUseReceiptSchema,
   AionisMemoryPacketSchema,
   AionisOperatorSnapshotSchema,
@@ -1103,7 +1105,111 @@ test("AionisMemoryAdmissionRecord accepts read-only admission dataset rows", () 
   assert.equal(parsed.agent_prompt_included, false);
   assert.equal(parsed.runtime_mutation, false);
   assert.equal(parsed.entries[0]?.memory_id, "mem-pref-1");
+  assert.equal(parsed.entries[0]?.memory_origin, "aionis");
+  assert.equal(parsed.entries[0]?.source_backend, "aionis");
   assert.equal(parsed.entries[0]?.admission_action, "use_now");
+});
+
+test("AionisExternalMemoryCandidate defaults to inspectable unknown authority", () => {
+  const parsed = AionisExternalMemoryCandidateSchema.parse({
+    external_memory_id: "mem0:checkout-route",
+    source_backend: "mem0",
+    text: "Legacy route using fullBundleEnvironment.ts failed verification.",
+  });
+  assert.equal(parsed.external_memory_id, "mem0:checkout-route");
+  assert.equal(parsed.source_backend, "mem0");
+  assert.deepEqual(parsed.metadata, {});
+  assert.equal(parsed.authority.source_trust, "unknown");
+  assert.equal(parsed.authority.scope, "unknown");
+  assert.equal(parsed.authority.evidence_requirement, "inspect_before_use");
+  assert.equal(parsed.lifecycle_hint, "unknown");
+  assert.deepEqual(parsed.evidence_refs, []);
+
+  assert.throws(
+    () => AionisExternalMemoryCandidateSchema.parse({
+      external_memory_id: "",
+      source_backend: "mem0",
+      text: "invalid",
+    }),
+    /String must contain at least 1 character/,
+  );
+});
+
+test("AionisMemoryAdmissionRecord accepts external candidate admission source", () => {
+  const parsed = AionisMemoryAdmissionRecordSchema.parse({
+    contract_version: "aionis_memory_admission_record_v1",
+    intended_use: "memory_admission_audit_dataset",
+    source: "external_candidate_admission",
+    agent_prompt_included: false,
+    runtime_mutation: false,
+    tenant_id: "default",
+    scope: "default",
+    guide_trace_id: "external-admission:run-1",
+    prompt_char_count: 512,
+    history_used: true,
+    actionable_history_used: false,
+    candidate_memory_count: 1,
+    prompt_included_memory_count: 1,
+    agent_used_memory_count: 0,
+    entries: [
+      {
+        memory_id: "mem0:failed-route",
+        title: "Failed route",
+        memory_origin: "external",
+        source_backend: "mem0",
+        domain: "execution",
+        memory_type: "execution_memory",
+        lifecycle_state: "contested",
+        authority: "advisory",
+        admission_action: "inspect_before_use",
+        decision_kind: "downgraded",
+        actionable: false,
+        prompt_included: true,
+        agent_used: false,
+        feedback_outcome: null,
+        attribution_strength: null,
+        reason_codes: ["external_candidate_admission"],
+        evidence_ids: ["ci-log:123"],
+      },
+    ],
+    summary: "External memory was external without Runtime mutation.",
+  });
+  assert.equal(parsed.source, "external_candidate_admission");
+  assert.equal(parsed.entries[0]?.memory_origin, "external");
+  assert.equal(parsed.entries[0]?.source_backend, "mem0");
+  assert.equal(parsed.entries[0]?.admission_action, "inspect_before_use");
+});
+
+test("AionisMemoryFirewallSummary captures unsafe direct-use and read-only claims", () => {
+  const parsed = AionisMemoryFirewallSummarySchema.parse({
+    contract_version: "aionis_memory_firewall_summary_v1",
+    intended_use: "memory_firewall_audit",
+    mode: "firewall",
+    candidate_count: 4,
+    direct_use_count: 1,
+    inspect_count: 1,
+    blocked_count: 1,
+    rehydrate_count: 1,
+    unsafe_candidate_count: 1,
+    unsafe_direct_use_count: 0,
+    runtime_mutation: false,
+    agent_prompt_included: false,
+    risk_flags: ["unsafe_candidate_count:1", "blocked_count:1"],
+    claims: [
+      {
+        claim: "Unsafe lifecycle candidates cannot enter direct use.",
+        status: "pass",
+        evidence: "0/1 unsafe candidates entered use_now.",
+      },
+    ],
+    summary: "Memory Firewall routed external candidates without unsafe direct-use.",
+  });
+
+  assert.equal(parsed.contract_version, "aionis_memory_firewall_summary_v1");
+  assert.equal(parsed.runtime_mutation, false);
+  assert.equal(parsed.agent_prompt_included, false);
+  assert.equal(parsed.unsafe_direct_use_count, 0);
+  assert.equal(parsed.claims[0]?.status, "pass");
 });
 
 test("AionisMemoryDecisionTrace rejects prompt injection and runtime mutation claims", () => {

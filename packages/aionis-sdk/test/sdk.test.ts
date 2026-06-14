@@ -43,6 +43,16 @@ test("@aionis/sdk wraps product facade routes", async () => {
   });
 
   await client.guide({ query_text: "continue" });
+  await client.governMemory({
+    query_text: "Govern external candidates.",
+    candidates: [
+      {
+        external_memory_id: "mem0:current",
+        source_backend: "mem0",
+        text: "Current project state.",
+      },
+    ],
+  });
   await client.feedback({
     reason: "used memory",
     run_id: "run-1",
@@ -54,12 +64,16 @@ test("@aionis/sdk wraps product facade routes", async () => {
 
   assert.deepEqual(calls.map((call) => call.url), [
     "http://127.0.0.1:3001/v1/guide",
+    "http://127.0.0.1:3001/v1/memory/govern",
     "http://127.0.0.1:3001/v1/feedback",
     "http://127.0.0.1:3001/v1/operator/snapshot",
   ]);
   assert.equal(calls[0]?.body.tenant_id, "tenant-a");
   assert.equal(calls[0]?.body.scope, "scope-a");
   assert.equal(calls[0]?.body.mode, "full_power");
+  assert.equal(calls[1]?.body.tenant_id, "tenant-a");
+  assert.equal(calls[1]?.body.scope, "scope-a");
+  assert.equal(calls[1]?.body.query_text, "Govern external candidates.");
 });
 
 test("@aionis/sdk guide helpers keep Agent prompt and feedback attribution bounded", () => {

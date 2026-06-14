@@ -30,6 +30,7 @@ For admission dataset JSONL export, see
 |---|---|---|---|---|
 | `POST /v1/observe` | `observe` | Host after real work or memory input | Runtime write path | `observed`, `structured_memory` |
 | `POST /v1/guide` | `guide` | Host before the next Agent run | Agent prompt builder | `agent_context` |
+| `POST /v1/memory/govern` | govern external memory | Host before using Mem0/Zep/vector DB/markdown candidates | Memory admission gateway | `agent_context`, `memory_use_receipt`, optional `memory_admission_records` |
 | `POST /v1/feedback` | `feedback` | Host after the Agent acts | Feedback attribution | `forget_effect` with `operation: "activate"` |
 | `POST /v1/rehydrate` | `rehydrate` | Host when compact context needs original evidence or payload | Payload / archive lifecycle controller | `forget_effect` with `operation: "rehydrate"` |
 | `POST /v1/measure` | `measure` | Host, operator, or product evaluator | Product diagnostics | `effect_report`, optional decision trace and audit |
@@ -218,6 +219,11 @@ can be appended to the host's own logs or data lake. The exported rows include
 candidate memory IDs, admission actions, prompt exposure, feedback attribution,
 outcome labels, reason codes, and evidence IDs. They intentionally exclude raw
 memory payloads, raw prompt text, embeddings, and Runtime mutation authority.
+
+`governMemory()` is the SDK method for backend-agnostic memory admission. It
+accepts external memory candidates from systems such as Mem0, Zep, a vector DB,
+markdown files, or a custom store, then routes them through Aionis admission
+surfaces without writing them into Aionis memory first.
 
 Runnable SDK e2e:
 
@@ -530,7 +536,7 @@ Return compact historical context for the next Agent run.
 | `consumer_agent_id` | No | Agent receiving the guide. |
 | `limit` | No | Maximum recall breadth. |
 | `include_packets` | No | Adds `memory_packet` and `guide_packet` for audit or measure. |
-| `context_mode` | No | `full_power` for full product guide mode, or `compact_agent` for the same governed path with a shorter Agent prompt. |
+| `context_mode` | No | `full_power` for full product guide mode, or `compact_agent` for the same external path with a shorter Agent prompt. |
 
 `POST /v1/guide` uses semantic recall, so a configured embedding provider is
 required for normal product use.
@@ -566,12 +572,12 @@ fields:
 14. `command_posture`
 15. `risk`
 
-`command_posture` is the governed instruction layer for hosts and Agents. It
+`command_posture` is the external instruction layer for hosts and Agents. It
 uses `must_not`, `should_continue`, `inspect_first`, `rehydrate_first`, and
 `optional_context` after Aionis has already applied lifecycle, authority,
 premise, and rehydration gates. It is safer than asking the Agent to infer
 control flow from a free-form summary, and it does not bypass Runtime
-governance.
+admission.
 
 Do not pass `memory_packet`, `guide_packet`, `memory_decision_trace`,
 `memory_decision_audit`, raw rows, or raw slots to the Agent by default.
@@ -622,7 +628,7 @@ full-power assembly.
 ### Compact Agent Context
 
 For hosts that are token-sensitive, set `context_mode: "compact_agent"` on
-`POST /v1/guide`. This uses the same governed full-power product path as the
+`POST /v1/guide`. This uses the same external full-power product path as the
 standard SDK guide default, but renders a shorter Agent-facing prompt. The
 Runtime still returns the structured context fields needed for attribution and
 audit:
@@ -730,6 +736,136 @@ Example:
   ]
 }
 ```
+
+## `POST /v1/memory/govern`
+
+### Purpose
+
+Govern candidate memories from any backend before they reach an Agent prompt.
+This is the backend-agnostic admission gateway: Aionis does not require these
+candidates to be stored in Aionis first, and the route does not write Runtime
+memory nodes.
+
+Use this when a host already has memory candidates from Mem0, Zep, Pinecone,
+Qdrant, pgvector, markdown, logs, or a company-specific memory store, but still
+wants Aionis to decide which memories may direct the Agent.
+
+### Minimal Request Fields
+
+| Field | Required | Meaning |
+|---|---:|---|
+| `tenant_id` | No | Tenant identity. Defaults to the Runtime environment. |
+| `scope` | No | Memory scope. Defaults to the Runtime environment. |
+| `run_id` | No | Host run id for audit correlation. |
+| `query_text` | Yes | What the Agent is about to do. |
+| `mode` | No | `standard`, `strict`, or `firewall`. |
+| `context_mode` | No | `standard` or `compact_agent`. |
+| `candidates` | Yes | External memory candidates to govern. |
+| `include_records` | No | Includes read-only admission records for host/operator logs. |
+
+Each candidate uses:
+
+```json
+{
+  "external_memory_id": "mem0:checkout-route",
+  "source_backend": "mem0",
+  "text": "The current accepted checkout migration target is packages/api/src/checkout.ts.",
+  "metadata": {
+    "title": "Current checkout target",
+    "target_files": ["packages/api/src/checkout.ts"]
+  },
+  "authority": {
+    "source_trust": "trusted",
+    "scope": "project",
+    "evidence_requirement": "none"
+  },
+  "lifecycle_hint": "current",
+  "evidence_refs": ["mem0:trace:1"]
+}
+```
+
+`authority` defaults to unknown source trust and `inspect_before_use`.
+`lifecycle_hint` defaults to `unknown`. That means unlabeled external memory is
+safe by default: it can be shown for inspection, but it does not direct the
+Agent without stronger trust and lifecycle evidence.
+
+### Main Response Fields
+
+| Field | Consumer | Meaning |
+|---|---|---|
+| `agent_context` | Agent / host prompt builder | External context compiled from external candidates. |
+| `memory_use_receipt` | Host / operator | Read-only receipt of which external candidates were exposed or suppressed. |
+| `memory_admission_records` | Host / operator | Returned when `include_records: true`; entries use `memory_origin: "external"` and preserve `source_backend`. |
+| `memory_firewall` | Security / operator | Returned in `mode: "firewall"`; summarizes blocked, inspect, rehydrate, direct-use, and unsafe direct-use counts. |
+| `admission_summary` | Developer / operator | Counts by admission action and backend. |
+| `source_map` | Developer | Shows this route used `external_candidate_admission` and omitted `memory_write`. |
+
+### Admission Rules
+
+The gateway uses the same four Agent-facing surfaces as normal Aionis guide
+output:
+
+1. `use_now`
+2. `inspect_before_use`
+3. `do_not_use`
+4. `rehydrate`
+
+External memory cannot enter `use_now` merely because it is semantically
+similar. It must be trusted or known, marked `current` or `procedure`, and have
+`evidence_requirement: "none"`. Failed, stale, contested, suppressed, archived,
+blocked, or rehydrate-required candidates cannot direct the Agent.
+
+`mode: "firewall"` is stricter than the standard gateway mode:
+
+- failed, stale, and contested external candidates are routed to `do_not_use`
+- unknown or untrusted candidates remain `inspect_before_use`
+- rehydrate-required candidates remain `rehydrate`
+- trusted current/procedure candidates may still enter `use_now`
+- the response includes `memory_firewall` with `unsafe_direct_use_count`
+
+See [Aionis Memory Firewall](AIONIS_MEMORY_FIREWALL.md) for the product-facing
+contract and SDK example.
+
+### Example
+
+```json
+{
+  "tenant_id": "default",
+  "scope": "payments-service",
+  "run_id": "run-123",
+  "query_text": "Continue checkout migration without reusing failed legacy branches.",
+  "mode": "standard",
+  "context_mode": "compact_agent",
+  "include_records": true,
+  "candidates": [
+    {
+      "external_memory_id": "mem0:current",
+      "source_backend": "mem0",
+      "text": "The current accepted target is packages/api/src/checkout.ts.",
+      "authority": {
+        "source_trust": "trusted",
+        "scope": "project",
+        "evidence_requirement": "none"
+      },
+      "lifecycle_hint": "current"
+    },
+    {
+      "external_memory_id": "zep:failed",
+      "source_backend": "zep",
+      "text": "The old fullBundleEnvironment.ts route failed verification.",
+      "authority": {
+        "source_trust": "trusted",
+        "scope": "project",
+        "evidence_requirement": "none"
+      },
+      "lifecycle_hint": "failed"
+    }
+  ]
+}
+```
+
+The first candidate may enter `use_now`. The failed candidate is downgraded to
+`inspect_before_use` in standard mode and is never direct-use.
 
 ## `POST /v1/feedback`
 
@@ -947,7 +1083,7 @@ measure/debug/audit surfaces only and must not be appended to the Agent prompt.
 `effect_report.feedback_signal_summary` gives the same signal ids in product
 summary form, so product dashboards can show positive attribution, weak/strong
 counter-signals, and repeated unused exposure without parsing the full trace.
-It also keeps `authority_mutation: false`; authority changes remain governed by
+It also keeps `authority_mutation: false`; authority changes remain external by
 the underlying feedback/forgetting mechanisms, not by this report field.
 `confidence_decay_candidate_summary` is the Direction 2 shadow view: it lists
 memories that may deserve lower future reliance, memories protected by positive

@@ -45,6 +45,85 @@ export type AionisMemoryDomain = z.infer<typeof AionisMemoryDomainSchema>;
 export const AionisMemoryFamilySchema = z.enum(["general_cognitive", "execution", "mixed", "empty"]);
 export type AionisMemoryFamily = z.infer<typeof AionisMemoryFamilySchema>;
 
+export const AionisExternalMemoryAuthoritySchema = z
+  .object({
+    source_trust: z.enum(["trusted", "known", "untrusted", "unknown"]).default("unknown"),
+    scope: z.enum(["user", "project", "team", "org", "global", "unknown"]).default("unknown"),
+    evidence_requirement: z.enum(["none", "inspect_before_use", "rehydrate_before_use", "blocked"])
+      .default("inspect_before_use"),
+  })
+  .strict()
+  .default({
+    source_trust: "unknown",
+    scope: "unknown",
+    evidence_requirement: "inspect_before_use",
+  });
+export type AionisExternalMemoryAuthority = z.infer<typeof AionisExternalMemoryAuthoritySchema>;
+
+export const AionisExternalMemoryLifecycleHintSchema = z.enum([
+  "current",
+  "procedure",
+  "failed",
+  "stale",
+  "contested",
+  "suppressed",
+  "archived",
+  "unknown",
+]);
+export type AionisExternalMemoryLifecycleHint = z.infer<typeof AionisExternalMemoryLifecycleHintSchema>;
+
+export const AionisExternalMemoryCandidateSchema = z
+  .object({
+    external_memory_id: z.string().min(1),
+    source_backend: z.string().min(1),
+    text: z.string().min(1).max(200000),
+    metadata: z.record(z.unknown()).default({}),
+    authority: AionisExternalMemoryAuthoritySchema,
+    lifecycle_hint: AionisExternalMemoryLifecycleHintSchema.default("unknown"),
+    evidence_refs: z.array(z.string().min(1)).max(256).default([]),
+  })
+  .strict();
+export type AionisExternalMemoryCandidate = z.infer<typeof AionisExternalMemoryCandidateSchema>;
+
+export function parseAionisExternalMemoryCandidate(value: unknown): AionisExternalMemoryCandidate {
+  return AionisExternalMemoryCandidateSchema.parse(value);
+}
+
+export const AionisMemoryFirewallSummarySchema = z
+  .object({
+    contract_version: z.literal("aionis_memory_firewall_summary_v1"),
+    intended_use: z.literal("memory_firewall_audit"),
+    mode: z.literal("firewall"),
+    candidate_count: z.number().int().nonnegative(),
+    direct_use_count: z.number().int().nonnegative(),
+    inspect_count: z.number().int().nonnegative(),
+    blocked_count: z.number().int().nonnegative(),
+    rehydrate_count: z.number().int().nonnegative(),
+    unsafe_candidate_count: z.number().int().nonnegative(),
+    unsafe_direct_use_count: z.number().int().nonnegative(),
+    runtime_mutation: z.literal(false),
+    agent_prompt_included: z.literal(false),
+    risk_flags: z.array(z.string().min(1)).default([]),
+    claims: z
+      .array(
+        z
+          .object({
+            claim: z.string().min(1),
+            status: z.enum(["pass", "warn", "fail"]),
+            evidence: z.string().min(1),
+          })
+          .strict(),
+      )
+      .default([]),
+    summary: z.string().min(1),
+  })
+  .strict();
+export type AionisMemoryFirewallSummary = z.infer<typeof AionisMemoryFirewallSummarySchema>;
+
+export function parseAionisMemoryFirewallSummary(value: unknown): AionisMemoryFirewallSummary {
+  return AionisMemoryFirewallSummarySchema.parse(value);
+}
+
 export const AionisLifecycleCandidateSignalSchema = z
   .object({
     memory_id: z.string().min(1),
@@ -1087,7 +1166,7 @@ export const AionisMemoryAdmissionRecordSchema = z
   .object({
     contract_version: z.literal("aionis_memory_admission_record_v1"),
     intended_use: z.literal("memory_admission_audit_dataset"),
-    source: z.literal("memory_decision_trace"),
+    source: z.enum(["memory_decision_trace", "external_candidate_admission"]),
     agent_prompt_included: z.literal(false),
     runtime_mutation: z.literal(false),
     tenant_id: z.string().min(1),
@@ -1105,6 +1184,8 @@ export const AionisMemoryAdmissionRecordSchema = z
           .object({
             memory_id: z.string().min(1),
             title: z.string().min(1).nullable(),
+            memory_origin: z.enum(["aionis", "external"]).default("aionis"),
+            source_backend: z.string().min(1).default("aionis"),
             domain: AionisMemoryDomainSchema,
             memory_type: z.enum([
               "fact",

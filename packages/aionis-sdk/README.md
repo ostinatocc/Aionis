@@ -198,3 +198,48 @@ adding content to the Agent prompt.
 for host logs or a data lake. It keeps raw prompt text, raw memory payloads, and
 embeddings out of the export while preserving enough admission/outcome fields to
 audit decisions or train a future admission policy offline.
+
+## Govern External Memory
+
+Use `governMemory()` when your host already has candidates from Mem0, Zep,
+Pinecone, pgvector, markdown, logs, or another memory backend, but still wants
+Aionis to decide which memory may direct the Agent.
+
+```ts
+const result = await aionis.governMemory({
+  query_text: "Continue the checkout migration without reusing failed branches.",
+  mode: "firewall",
+  include_records: true,
+  candidates: [
+    {
+      external_memory_id: "mem0:current-route",
+      source_backend: "mem0",
+      text: "Current accepted target is packages/api/src/checkout.ts.",
+      authority: {
+        source_trust: "trusted",
+        scope: "project",
+        evidence_requirement: "none",
+      },
+      lifecycle_hint: "current",
+    },
+    {
+      external_memory_id: "zep:failed-route",
+      source_backend: "zep",
+      text: "The legacy route failed verifier checks.",
+      authority: {
+        source_trust: "trusted",
+        scope: "project",
+        evidence_requirement: "none",
+      },
+      lifecycle_hint: "failed",
+    },
+  ],
+});
+
+const prompt = result.agent_context.prompt_text;
+const firewall = result.memory_firewall;
+```
+
+`mode: "firewall"` blocks failed, stale, contested, suppressed, archived, or
+policy-blocked external memory from direct action. Unknown or untrusted memory
+stays `inspect_before_use`; raw evidence pointers stay `rehydrate`.

@@ -717,6 +717,199 @@ function registerFullProductMemoryApp(args: {
   registerProductFacade(args);
 }
 
+test("product memory admission route governs external backend candidates without writing Runtime memory", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("memory-admission-gateway");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  try {
+    registerRuntimeErrorHandler(app);
+    registerProductFacade({ app, env, guards, liteWriteStore });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/memory/govern",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        run_id: "run-admission",
+        query_text: "Continue checkout migration without reusing failed branches.",
+        include_records: true,
+        candidates: [
+          {
+            external_memory_id: "mem0:current",
+            source_backend: "mem0",
+            text: "The current accepted target is packages/api/src/checkout.ts.",
+            metadata: {
+              title: "Current checkout target",
+              target_files: ["packages/api/src/checkout.ts"],
+            },
+            authority: {
+              source_trust: "trusted",
+              scope: "project",
+              evidence_requirement: "none",
+            },
+            lifecycle_hint: "current",
+            evidence_refs: ["mem0:trace:1"],
+          },
+          {
+            external_memory_id: "zep:failed",
+            source_backend: "zep",
+            text: "The old fullBundleEnvironment.ts route failed verification and should stay counter-evidence.",
+            authority: {
+              source_trust: "trusted",
+              scope: "project",
+              evidence_requirement: "none",
+            },
+            lifecycle_hint: "failed",
+            evidence_refs: ["ci:failed"],
+          },
+          {
+            external_memory_id: "vector:raw",
+            source_backend: "vector_db",
+            text: "Exact raw patch evidence is behind this vector result and must be expanded.",
+            authority: {
+              source_trust: "known",
+              scope: "project",
+              evidence_requirement: "rehydrate_before_use",
+            },
+            lifecycle_hint: "procedure",
+          },
+          {
+            external_memory_id: "markdown:blocked",
+            source_backend: "markdown",
+            text: "Suppressed note should not direct the Agent.",
+            lifecycle_hint: "suppressed",
+          },
+        ],
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = response.json();
+    assert.equal(body.contract_version, "aionis_memory_admission_gateway_result_v1");
+    assert.equal(body.agent_context.contract_version, "aionis_agent_context_v1");
+    assert.deepEqual(body.agent_context.use_now_memory_ids, ["mem0:current"]);
+    assert.deepEqual(body.agent_context.inspect_before_use_memory_ids, ["zep:failed"]);
+    assert.deepEqual(body.agent_context.do_not_use_memory_ids, ["markdown:blocked"]);
+    assert.deepEqual(body.agent_context.rehydrate_hints.map((entry: Record<string, unknown>) => entry.memory_id), ["vector:raw"]);
+    assert.equal(body.memory_admission_records.source, "external_candidate_admission");
+    assert.equal(body.memory_admission_records.runtime_mutation, false);
+    assert.equal(body.memory_admission_records.entries.every((entry: Record<string, unknown>) => entry.memory_origin === "external"), true);
+    assert.equal(body.memory_admission_records.entries.find((entry: Record<string, unknown>) => entry.memory_id === "zep:failed")?.admission_action, "inspect_before_use");
+    assert.equal(body.memory_admission_records.entries.find((entry: Record<string, unknown>) => entry.memory_id === "markdown:blocked")?.admission_action, "do_not_use");
+    assert.equal(body.memory_use_receipt.use_now_memory_ids.includes("zep:failed"), false);
+    assert.equal(body.memory_firewall, undefined);
+    assert.equal(String(body.agent_context.prompt_text).includes("memory_admission_record"), false);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/memory/govern"]);
+    assert.equal(body.source_map.internal_surfaces_used.includes("external_candidate_admission"), true);
+    assert.equal(body.source_map.internal_surfaces_used.includes("memory_write"), false);
+    assert.equal(body.source_map.omitted_internal_surfaces.includes("memory_write"), true);
+
+    const nodes = await liteWriteStore.findNodes({ scope: "default", limit: 10, offset: 0 });
+    assert.equal(nodes.rows.length, 0);
+  } finally {
+    await app.close();
+  }
+});
+
+test("product memory admission route exposes Memory Firewall summary in firewall mode", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("memory-firewall-gateway");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  try {
+    registerRuntimeErrorHandler(app);
+    registerProductFacade({ app, env, guards, liteWriteStore });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/memory/govern",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        run_id: "run-firewall",
+        query_text: "Continue current work without stale or failed external memory.",
+        mode: "firewall",
+        include_records: true,
+        candidates: [
+          {
+            external_memory_id: "mem0:current",
+            source_backend: "mem0",
+            text: "Current accepted target is packages/api/src/checkout.ts.",
+            metadata: {
+              title: "Current checkout target",
+              target_files: ["packages/api/src/checkout.ts"],
+            },
+            authority: {
+              source_trust: "trusted",
+              scope: "project",
+              evidence_requirement: "none",
+            },
+            lifecycle_hint: "current",
+          },
+          {
+            external_memory_id: "zep:failed",
+            source_backend: "zep",
+            text: "Failed branch: the legacy route failed verification.",
+            authority: {
+              source_trust: "trusted",
+              scope: "project",
+              evidence_requirement: "none",
+            },
+            lifecycle_hint: "failed",
+          },
+          {
+            external_memory_id: "vector:raw",
+            source_backend: "vector_db",
+            text: "Raw evidence pointer must be opened before exact use.",
+            authority: {
+              source_trust: "trusted",
+              scope: "project",
+              evidence_requirement: "rehydrate_before_use",
+            },
+            lifecycle_hint: "procedure",
+          },
+          {
+            external_memory_id: "markdown:unknown",
+            source_backend: "markdown",
+            text: "Unknown project note claims a route but has no authority.",
+            authority: {
+              source_trust: "unknown",
+              scope: "project",
+              evidence_requirement: "none",
+            },
+            lifecycle_hint: "current",
+          },
+        ],
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = response.json();
+    assert.equal(body.mode, "firewall");
+    assert.equal(body.memory_firewall.contract_version, "aionis_memory_firewall_summary_v1");
+    assert.equal(body.memory_firewall.direct_use_count, 1);
+    assert.equal(body.memory_firewall.blocked_count, 1);
+    assert.equal(body.memory_firewall.inspect_count, 1);
+    assert.equal(body.memory_firewall.rehydrate_count, 1);
+    assert.equal(body.memory_firewall.unsafe_direct_use_count, 0);
+    assert.equal(body.memory_firewall.runtime_mutation, false);
+    assert.equal(body.memory_firewall.claims.some((claim: Record<string, unknown>) => claim.status === "fail"), false);
+    assert.deepEqual(body.agent_context.use_now_memory_ids, ["mem0:current"]);
+    assert.deepEqual(body.agent_context.do_not_use_memory_ids, ["zep:failed"]);
+    assert.deepEqual(body.agent_context.inspect_before_use_memory_ids, ["markdown:unknown"]);
+    assert.deepEqual(body.memory_use_receipt.rehydrate_memory_ids, ["vector:raw"]);
+
+    const nodes = await liteWriteStore.findNodes({ scope: "default", limit: 10, offset: 0 });
+    assert.equal(nodes.rows.length, 0);
+  } finally {
+    await app.close();
+  }
+});
+
 test("product measure facade returns a product effect report without external eval runners", async () => {
   const app = Fastify();
   const env = liteEnv();

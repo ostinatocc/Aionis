@@ -122,6 +122,8 @@ export type AionisMemoryUseReceipt = {
 export type AionisMemoryAdmissionRecordEntry = {
   memory_id: string;
   title: string | null;
+  memory_origin?: "aionis" | "external";
+  source_backend?: string;
   domain: "general" | "execution";
   memory_type:
     | "fact"
@@ -164,7 +166,7 @@ export type AionisMemoryAdmissionRecordEntry = {
 export type AionisMemoryAdmissionRecord = {
   contract_version: "aionis_memory_admission_record_v1";
   intended_use: "memory_admission_audit_dataset";
-  source: "memory_decision_trace";
+  source: "memory_decision_trace" | "external_candidate_admission";
   agent_prompt_included: false;
   runtime_mutation: false;
   tenant_id?: string;
@@ -178,6 +180,79 @@ export type AionisMemoryAdmissionRecord = {
   agent_used_memory_count: number;
   entries: AionisMemoryAdmissionRecordEntry[];
   summary: string;
+};
+
+export type AionisExternalMemoryAuthority = {
+  source_trust?: "trusted" | "known" | "untrusted" | "unknown";
+  scope?: "user" | "project" | "team" | "org" | "global" | "unknown";
+  evidence_requirement?: "none" | "inspect_before_use" | "rehydrate_before_use" | "blocked";
+};
+
+export type AionisExternalMemoryLifecycleHint =
+  | "current"
+  | "procedure"
+  | "failed"
+  | "stale"
+  | "contested"
+  | "suppressed"
+  | "archived"
+  | "unknown";
+
+export type AionisExternalMemoryCandidate = {
+  external_memory_id: string;
+  source_backend: string;
+  text: string;
+  metadata?: AionisJsonObject;
+  authority?: AionisExternalMemoryAuthority;
+  lifecycle_hint?: AionisExternalMemoryLifecycleHint;
+  evidence_refs?: string[];
+};
+
+export type AionisMemoryAdmissionGatewayMode = "standard" | "strict" | "firewall";
+
+export type AionisMemoryAdmissionRequest = AionisJsonObject & {
+  query_text: string;
+  run_id?: string;
+  mode?: AionisMemoryAdmissionGatewayMode;
+  context_mode?: "standard" | "compact_agent";
+  candidates: AionisExternalMemoryCandidate[];
+  include_records?: boolean;
+};
+
+export type AionisMemoryFirewallSummary = {
+  contract_version: "aionis_memory_firewall_summary_v1";
+  intended_use: "memory_firewall_audit";
+  mode: "firewall";
+  candidate_count: number;
+  direct_use_count: number;
+  inspect_count: number;
+  blocked_count: number;
+  rehydrate_count: number;
+  unsafe_candidate_count: number;
+  unsafe_direct_use_count: number;
+  runtime_mutation: false;
+  agent_prompt_included: false;
+  risk_flags: string[];
+  claims: Array<{
+    claim: string;
+    status: "pass" | "warn" | "fail";
+    evidence: string;
+  }>;
+  summary: string;
+};
+
+export type AionisMemoryAdmissionGatewayResponse = AionisJsonObject & {
+  contract_version: "aionis_memory_admission_gateway_result_v1";
+  tenant_id: string;
+  scope: string;
+  run_id: string | null;
+  mode: AionisMemoryAdmissionGatewayMode;
+  agent_context: AionisJsonObject;
+  memory_use_receipt: AionisMemoryUseReceipt;
+  memory_admission_records?: AionisMemoryAdmissionRecord;
+  memory_firewall?: AionisMemoryFirewallSummary;
+  admission_summary: AionisJsonObject;
+  source_map: AionisJsonObject;
 };
 
 export type AionisMemoryAdmissionDatasetOutcomeLabel =
@@ -205,6 +280,8 @@ export type AionisMemoryAdmissionDatasetRow = {
   row_index: number;
   memory_id: string;
   title: string | null;
+  memory_origin: AionisMemoryAdmissionRecordEntry["memory_origin"];
+  source_backend: string | null;
   domain: AionisMemoryAdmissionRecordEntry["domain"];
   memory_type: AionisMemoryAdmissionRecordEntry["memory_type"];
   lifecycle_state: AionisMemoryAdmissionRecordEntry["lifecycle_state"];
@@ -1213,6 +1290,13 @@ export class AionisClient {
     return this.post<T>("/v1/guide", this.guideBody(body, options), options);
   }
 
+  async governMemory<T = AionisMemoryAdmissionGatewayResponse>(
+    body: AionisMemoryAdmissionRequest,
+    options?: AionisRequestOptions,
+  ): Promise<T> {
+    return this.post<T>("/v1/memory/govern", body, options);
+  }
+
   async forget<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {
     return this.post<T>("/v1/forget", body, options);
   }
@@ -1550,6 +1634,8 @@ export function memoryAdmissionDatasetRowsFromRecord(
     row_index: index,
     memory_id: entry.memory_id,
     title: entry.title,
+    memory_origin: entry.memory_origin ?? "aionis",
+    source_backend: admissionDatasetString(entry.source_backend ?? null),
     domain: entry.domain,
     memory_type: entry.memory_type,
     lifecycle_state: entry.lifecycle_state,
