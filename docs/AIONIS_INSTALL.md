@@ -36,6 +36,11 @@ The installer does not change Runtime core. It performs product setup:
 4. build `@aionis/sdk`, `@aionis/mcp`, and `@aionis/create`
 5. run the selected quickstart when an API key is available
 
+Runtime startup needs the selected embedding provider key. If you install with
+`--skip-quickstart` or without an API key, set the required key in the generated
+`.env` before running `npm run -s lite:start`. For `--provider minimax`, that key
+is `MINIMAX_API_KEY`.
+
 ## Local Development
 
 From this repo:

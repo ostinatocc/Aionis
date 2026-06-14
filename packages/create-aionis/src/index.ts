@@ -211,6 +211,40 @@ export function createInstallPlan(options: CreateAionisOptions): string[] {
   ];
 }
 
+export function createCompletionMessage(input: {
+  targetDir: string;
+  providerKey: string;
+  apiKey: string | null;
+  quickstartScript: string | null;
+}): string {
+  if (!input.apiKey) {
+    const lines = [
+      "",
+      "Aionis is installed. Set your embedding key before starting Runtime.",
+      `Runtime directory: ${input.targetDir}`,
+      `Required key: ${input.providerKey}`,
+      `Set it in: ${path.join(input.targetDir, ".env")}`,
+      `Example: ${input.providerKey}="your-key"`,
+      `Start Runtime after the key is set: cd ${input.targetDir} && npm run -s lite:start`,
+      "SDK package: @aionis/sdk",
+      "MCP package: @aionis/mcp",
+    ];
+    if (input.quickstartScript) {
+      lines.push(`Run quickstart after the key is set: npm run -s ${input.quickstartScript}`);
+    }
+    return `${lines.join(os.EOL)}${os.EOL}`;
+  }
+
+  return `${[
+    "",
+    "Aionis is ready.",
+    `Runtime directory: ${input.targetDir}`,
+    `Start Runtime: cd ${input.targetDir} && npm run -s lite:start`,
+    "SDK package: @aionis/sdk",
+    "MCP package: @aionis/mcp",
+  ].join(os.EOL)}${os.EOL}`;
+}
+
 export function isCliEntrypoint(argvEntry: string | undefined, moduleUrl = import.meta.url): boolean {
   if (!argvEntry) return false;
   const modulePath = fileURLToPath(moduleUrl);
@@ -252,11 +286,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const quickstart = quickstartScriptName(options.quickstart);
   if (!options.skipQuickstart && quickstart) {
     if (!apiKey) {
-      process.stdout.write(
-        `\nInstalled Aionis, but ${providerKey} is not set. Set it in ${path.join(targetDir, ".env")} or your shell, then run:\n`
-          + `cd ${targetDir}\n`
-          + `npm run -s ${quickstart}\n`,
-      );
+      process.stdout.write(createCompletionMessage({ targetDir, providerKey, apiKey, quickstartScript: quickstart }));
       return;
     }
     run("npm", ["run", "-s", quickstart], targetDir, {
@@ -266,13 +296,12 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     });
   }
 
-  process.stdout.write(
-    `\nAionis is ready.\n`
-      + `Runtime directory: ${targetDir}\n`
-      + `Start Runtime: cd ${targetDir} && npm run -s lite:start\n`
-      + `SDK package: @aionis/sdk\n`
-      + `MCP package: @aionis/mcp\n`,
-  );
+  process.stdout.write(createCompletionMessage({
+    targetDir,
+    providerKey,
+    apiKey,
+    quickstartScript: options.skipQuickstart ? null : quickstart,
+  }));
 }
 
 if (isCliEntrypoint(process.argv[1])) {
