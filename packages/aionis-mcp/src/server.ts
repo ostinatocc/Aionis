@@ -6,6 +6,8 @@ const role = z.enum(["agent", "planner", "worker", "verifier", "reviewer"]).opti
 const outcome = z.enum(["succeeded", "failed", "blocked", "interrupted", "unknown"]).optional();
 const guideMode = z.enum(["standard", "full_power"]).optional();
 const guideContextMode = z.enum(["standard", "full_power", "compact_agent"]).optional();
+const externalAdmissionMode = z.enum(["standard", "strict", "firewall"]).optional();
+const externalAdmissionContextMode = z.enum(["standard", "compact_agent"]).optional();
 const memoryLane = z.enum(["private", "shared"]).optional();
 const stringArray = z.array(z.string()).optional();
 const jsonObject = z.record(z.unknown()).optional();
@@ -69,7 +71,7 @@ function register(
 export function createAionisMcpServer(client: AionisMcpClient): McpServer {
   const server = new McpServer({
     name: "aionis-mcp",
-    version: "0.1.0",
+    version: "0.1.4",
   });
 
   register(server, client, "aionis_context", {
@@ -161,6 +163,33 @@ export function createAionisMcpServer(client: AionisMcpClient): McpServer {
     },
   });
 
+  register(server, client, "aionis_govern_memory", {
+    title: "Govern External Memory",
+    description: "Route Mem0, Zep, vector DB, markdown, or other external memory candidates through Aionis admission surfaces before prompt use.",
+    inputSchema: {
+      query_text: z.string(),
+      run_id: z.string().optional(),
+      tenant_id: z.string().optional(),
+      scope: z.string().optional(),
+      mode: externalAdmissionMode,
+      context_mode: externalAdmissionContextMode,
+      include_records: z.boolean().optional(),
+      candidates: z.array(z.object({
+        external_memory_id: z.string(),
+        source_backend: z.string(),
+        text: z.string(),
+        metadata: z.record(z.unknown()).optional(),
+        authority: z.object({
+          source_trust: z.enum(["trusted", "known", "untrusted", "unknown"]).optional(),
+          scope: z.enum(["user", "project", "team", "org", "global", "unknown"]).optional(),
+          evidence_requirement: z.enum(["none", "inspect_before_use", "rehydrate_before_use", "blocked"]).optional(),
+        }).optional(),
+        lifecycle_hint: z.enum(["current", "procedure", "failed", "stale", "contested", "suppressed", "archived", "unknown"]).optional(),
+        evidence_refs: z.array(z.string()).optional(),
+      })),
+    },
+  });
+
   register(server, client, "aionis_measure", {
     title: "Measure Aionis Run",
     description: "Measure guide and feedback impact for a run.",
@@ -196,6 +225,25 @@ export function createAionisMcpServer(client: AionisMcpClient): McpServer {
       measure_result: guideValue,
       include_markdown: z.boolean().optional(),
       extra: jsonObject,
+    },
+  });
+
+  register(server, client, "aionis_flight_recorder", {
+    title: "Replay Aionis Agent Decision",
+    description: "Return a read-only Agent Flight Recorder report showing what memory the Agent could see at decision time.",
+    inputSchema: {
+      tenant_id: z.string().optional(),
+      scope: z.string().optional(),
+      guide_trace_id: z.string().optional(),
+      run_id: z.string().optional(),
+      product_trace: jsonObject,
+      agent_context: jsonObject,
+      memory_decision_trace: jsonObject,
+      memory_use_receipt: jsonObject,
+      memory_admission_record: jsonObject,
+      operator_snapshot: jsonObject,
+      feedback_result: jsonObject,
+      decision_time: z.string().optional(),
     },
   });
 

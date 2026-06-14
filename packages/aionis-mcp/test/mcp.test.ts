@@ -20,6 +20,41 @@ function fakeClient(calls: Array<{ method: string; input?: unknown; options?: un
       calls.push({ method: "snapshot", input, options });
       return { snapshot: true };
     },
+    governMemory: async (input, options) => {
+      calls.push({ method: "governMemory", input, options });
+      return {
+        contract_version: "aionis_memory_admission_gateway_result_v1",
+        agent_context: {
+          use_now_memory_ids: ["mem0:current"],
+          do_not_use_memory_ids: ["zep:failed"],
+        },
+        memory_use_receipt: {
+          contract_version: "aionis_memory_use_receipt_v1",
+        },
+        memory_firewall: {
+          contract_version: "aionis_memory_firewall_summary_v1",
+          unsafe_direct_use_count: 0,
+        },
+        admission_summary: {
+          do_not_use_count: 1,
+        },
+      } as any;
+    },
+    flightRecorder: async (input, options) => {
+      calls.push({ method: "flightRecorder", input, options });
+      return {
+        contract_version: "aionis_agent_flight_recorder_result_v1",
+        agent_flight_recorder: {
+          contract_version: "aionis_agent_flight_recorder_report_v1",
+          agent_prompt_included: false,
+          runtime_mutation: false,
+          agent_view: {
+            use_now_memory_ids: ["mem-current"],
+            do_not_use_memory_ids: ["mem-failed"],
+          },
+        },
+      } as any;
+    },
     health: async () => {
       calls.push({ method: "health" });
       return { status: "ok" };
@@ -146,8 +181,10 @@ test("@aionis/mcp exposes stable product tools", () => {
     "aionis_record_step",
     "aionis_handoff",
     "aionis_remember",
+    "aionis_govern_memory",
     "aionis_measure",
     "aionis_snapshot",
+    "aionis_flight_recorder",
     "aionis_health",
   ]);
   const server = createAionisMcpServer(fakeClient([]));
@@ -210,6 +247,61 @@ test("@aionis/mcp context tool records optional observation then compiles prompt
   assert.equal((calls[0]?.input as { outcome?: string }).outcome, "unknown");
   assert.equal((calls[1]?.input as { context_mode?: string }).context_mode, "compact_agent");
   assert.equal((calls[1]?.input as { context_char_budget?: number }).context_char_budget, 3000);
+});
+
+test("@aionis/mcp governs external memory through Memory Firewall mode", async () => {
+  const calls: Array<{ method: string; input?: unknown; options?: unknown }> = [];
+  const output = await handleAionisMcpTool(fakeClient(calls), "aionis_govern_memory", {
+    tenant_id: "tenant-a",
+    scope: "repo-a",
+    query_text: "Continue without failed external memory.",
+    mode: "firewall",
+    include_records: true,
+    candidates: [
+      {
+        external_memory_id: "mem0:current",
+        source_backend: "mem0",
+        text: "Current state.",
+        authority: {
+          source_trust: "trusted",
+          scope: "project",
+          evidence_requirement: "none",
+        },
+        lifecycle_hint: "current",
+      },
+      {
+        external_memory_id: "zep:failed",
+        source_backend: "zep",
+        text: "Failed branch.",
+        lifecycle_hint: "failed",
+      },
+    ],
+  });
+
+  assert.deepEqual(calls.map((call) => call.method), ["governMemory"]);
+  assert.equal((calls[0]?.input as { query_text?: string }).query_text, "Continue without failed external memory.");
+  assert.equal((calls[0]?.input as { mode?: string }).mode, "firewall");
+  assert.deepEqual(calls[0]?.options, { tenant_id: "tenant-a", scope: "repo-a" });
+  assert.equal((output.structuredContent?.memory_firewall as Record<string, unknown>)?.contract_version, "aionis_memory_firewall_summary_v1");
+  assert.equal((output.structuredContent?.agent_context as { do_not_use_memory_ids?: string[] })?.do_not_use_memory_ids?.[0], "zep:failed");
+});
+
+test("@aionis/mcp replays Agent decision through Flight Recorder", async () => {
+  const calls: Array<{ method: string; input?: unknown; options?: unknown }> = [];
+  const output = await handleAionisMcpTool(fakeClient(calls), "aionis_flight_recorder", {
+    tenant_id: "tenant-a",
+    scope: "repo-a",
+    run_id: "run-1",
+    agent_context: {
+      contract_version: "aionis_agent_context_v1",
+      use_now_memory_ids: ["mem-current"],
+    },
+  });
+
+  assert.deepEqual(calls.map((call) => call.method), ["flightRecorder"]);
+  assert.equal((calls[0]?.input as { run_id?: string }).run_id, "run-1");
+  assert.deepEqual(calls[0]?.options, { tenant_id: "tenant-a", scope: "repo-a" });
+  assert.equal((output.structuredContent?.agent_flight_recorder as Record<string, unknown>)?.contract_version, "aionis_agent_flight_recorder_report_v1");
 });
 
 test("@aionis/mcp record step stays useful without feedback attribution", async () => {

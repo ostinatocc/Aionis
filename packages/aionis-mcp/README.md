@@ -28,8 +28,10 @@ The server exposes stable product tools, not internal Runtime packets:
 | `aionis_record_step` | Record a planner/worker/verifier/reviewer step. Feedback attribution is optional. |
 | `aionis_handoff` | Record branch-aware multi-agent handoff state. |
 | `aionis_remember` | Store ordinary project memory through the governed observe path. |
+| `aionis_govern_memory` | Route external Mem0/Zep/vector/markdown candidates through Aionis Memory Firewall before prompt use. |
 | `aionis_measure` | Measure whether guided memory changed the run. |
 | `aionis_snapshot` | Return read-only operator/audit state. |
+| `aionis_flight_recorder` | Replay what memory the Agent could see at decision time. |
 | `aionis_health` | Check Runtime reachability. |
 
 `aionis_context` is compiler-first. It calls Runtime guide through the SDK, then
@@ -58,6 +60,33 @@ The tool returns these structured fields in `structuredContent`:
 | `should_continue_memory_ids` | Current active state or accepted procedure memories the client should prefer. |
 | `inspect_first_memory_ids` | Candidate or contested memories that require inspection before action. |
 | `rehydrate_first_memory_ids` | Compact pointers that need raw payload recovery before exact use. |
+
+Use `aionis_govern_memory` when an MCP client already has memories from another
+backend and needs Aionis to decide which ones may direct the Agent:
+
+```json
+{
+  "query_text": "Continue without reusing failed branches.",
+  "mode": "firewall",
+  "candidates": [
+    {
+      "external_memory_id": "mem0:current",
+      "source_backend": "mem0",
+      "text": "Current accepted target is packages/api/src/checkout.ts.",
+      "authority": {
+        "source_trust": "trusted",
+        "scope": "project",
+        "evidence_requirement": "none"
+      },
+      "lifecycle_hint": "current"
+    }
+  ]
+}
+```
+
+Use `aionis_flight_recorder` after a run to inspect the read-only incident replay
+report. The report includes memory IDs and attribution surfaces, but excludes
+raw prompt text and raw memory payloads.
 
 ## Claude Code / Cursor Config
 

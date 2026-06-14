@@ -74,8 +74,10 @@ npx @aionis/mcp@latest
 | `aionis_record_step` | Records execution state and optionally attributes feedback if memory IDs are supplied. |
 | `aionis_handoff` | Records planner/worker/verifier/reviewer handoff state. |
 | `aionis_remember` | Stores ordinary memory through the governed observe path. |
+| `aionis_govern_memory` | Routes external Mem0/Zep/vector/markdown candidates through Aionis Memory Firewall before prompt use. |
 | `aionis_measure` | Measures guide and feedback impact. |
 | `aionis_snapshot` | Returns read-only operator/audit state. |
+| `aionis_flight_recorder` | Replays what memory the Agent could see at decision time. |
 | `aionis_health` | Checks Runtime reachability. |
 
 ## Context Output
@@ -102,6 +104,58 @@ per-file `{ target, exists }` entries. Aionis uses that observation to mark
 missing active targets as pending work, not as proof that the accepted route is
 stale. Hosts can also set `budget_profile`, `max_prompt_chars`,
 `include_base_prompt`, and `additional_instructions`.
+
+## Memory Firewall
+
+`aionis_govern_memory` is the backend-agnostic admission path. Use it when the
+MCP client already has candidate memories from Mem0, Zep, a vector database, a
+markdown knowledge base, or another source, but still wants Aionis to decide
+which memories may direct the Agent.
+
+Minimal request:
+
+```json
+{
+  "query_text": "Continue without reusing failed branches.",
+  "mode": "firewall",
+  "candidates": [
+    {
+      "external_memory_id": "mem0:current",
+      "source_backend": "mem0",
+      "text": "Current accepted target is packages/api/src/checkout.ts.",
+      "authority": {
+        "source_trust": "trusted",
+        "scope": "project",
+        "evidence_requirement": "none"
+      },
+      "lifecycle_hint": "current"
+    },
+    {
+      "external_memory_id": "zep:failed",
+      "source_backend": "zep",
+      "text": "The old checkout adapter rewrite failed verification.",
+      "lifecycle_hint": "failed"
+    }
+  ]
+}
+```
+
+The response includes `agent_context`, `memory_use_receipt`,
+`memory_firewall`, optional `memory_admission_records`, and
+`admission_summary`. External memories remain external; Aionis governs their
+admission surface before prompt use.
+
+## Agent Flight Recorder
+
+`aionis_flight_recorder` is the read-only incident replay path. It lets an MCP
+host answer what memory the Agent could see when a decision was made, which
+memory IDs were exposed or suppressed, and what feedback attribution was known.
+
+The tool accepts the same audit surfaces that Runtime and SDK integrations
+already produce: `product_trace`, `agent_context`, `memory_decision_trace`,
+`memory_use_receipt`, `memory_admission_record`, `operator_snapshot`, and
+`feedback_result`. The report intentionally excludes raw prompt text and raw
+memory payloads; it is for audit and debugging, not for mutating memory.
 
 ## Drop-In Mode
 

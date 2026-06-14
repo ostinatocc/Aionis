@@ -9,10 +9,12 @@ import {
   routeContractFromGuide,
   shouldContinueMemoryIdsFromGuide,
   type AionisClient,
+  type AionisAgentFlightRecorderRequest,
   type AionisExecutionAgentRole,
   type AionisExecutionContextBudgetProfile,
   type AionisExecutionOutcomeStatus,
   type AionisExecutionRepoState,
+  type AionisExternalMemoryCandidate,
   type AionisFeedbackOutcome,
   type AionisFeedbackUsedSurface,
   type AionisGuideContextMode,
@@ -32,8 +34,10 @@ export const AIONIS_MCP_TOOL_NAMES = [
   "aionis_record_step",
   "aionis_handoff",
   "aionis_remember",
+  "aionis_govern_memory",
   "aionis_measure",
   "aionis_snapshot",
+  "aionis_flight_recorder",
   "aionis_health",
 ] as const;
 
@@ -41,6 +45,8 @@ export type AionisMcpToolName = typeof AIONIS_MCP_TOOL_NAMES[number];
 export type JsonRecord = Record<string, unknown>;
 
 export type AionisMcpClient = Pick<AionisClient, "remember" | "measure" | "snapshot" | "health"> & {
+  governMemory: AionisClient["governMemory"];
+  flightRecorder: AionisClient["flightRecorder"];
   execution: Pick<
     AionisClient["execution"],
     "observeStep" | "handoff" | "guideForRole" | "observeOutcome" | "measureRun" | "snapshotRun"
@@ -151,6 +157,17 @@ export type AionisRememberInput = {
   scope?: string;
 };
 
+export type AionisGovernMemoryInput = {
+  query_text: string;
+  run_id?: string;
+  tenant_id?: string;
+  scope?: string;
+  mode?: "standard" | "strict" | "firewall";
+  context_mode?: "standard" | "compact_agent";
+  include_records?: boolean;
+  candidates: AionisExternalMemoryCandidate[];
+};
+
 export type AionisMeasureInput = {
   run_id: string;
   task_signature: string;
@@ -179,6 +196,11 @@ export type AionisSnapshotInput = {
   measure_result?: unknown;
   include_markdown?: boolean;
   extra?: JsonRecord;
+};
+
+export type AionisFlightRecorderInput = AionisAgentFlightRecorderRequest & {
+  tenant_id?: string;
+  scope?: string;
 };
 
 type ToolResult = {
@@ -286,6 +308,16 @@ function rememberInput(args: unknown): AionisRememberInput {
   } as AionisRememberInput;
 }
 
+function governMemoryInput(args: unknown): AionisGovernMemoryInput {
+  const input = asRecord(args, "aionis_govern_memory input");
+  if (!Array.isArray(input.candidates)) throw new Error("candidates must be an array");
+  return {
+    ...input,
+    query_text: String(input.query_text ?? ""),
+    candidates: input.candidates as AionisExternalMemoryCandidate[],
+  } as AionisGovernMemoryInput;
+}
+
 function measureInput(args: unknown): AionisMeasureInput {
   const input = asRecord(args, "aionis_measure input");
   return {
@@ -303,6 +335,11 @@ function snapshotInput(args: unknown): AionisSnapshotInput {
     run_id: String(input.run_id ?? ""),
     task_signature: typeof input.task_signature === "string" ? input.task_signature : undefined,
   } as AionisSnapshotInput;
+}
+
+function flightRecorderInput(args: unknown): AionisFlightRecorderInput {
+  const input = asRecord(args, "aionis_flight_recorder input");
+  return { ...input } as AionisFlightRecorderInput;
 }
 
 function requireNonEmpty(value: string, label: string): string {
@@ -437,6 +474,24 @@ export async function handleAionisMcpTool(
     return result({ ok: true, remembered });
   }
 
+  if (name === "aionis_govern_memory") {
+    const input = governMemoryInput(args);
+    requireNonEmpty(input.query_text, "query_text");
+    if (input.candidates.length === 0) throw new Error("candidates is required");
+    const { tenant_id: tenantId, scope, ...body } = input;
+    const governed = await client.governMemory(body, { tenant_id: tenantId, scope });
+    const governedRecord = governed as unknown as JsonRecord;
+    return result({
+      ok: true,
+      governed,
+      agent_context: governedRecord.agent_context,
+      memory_use_receipt: governedRecord.memory_use_receipt,
+      memory_firewall: governedRecord.memory_firewall,
+      memory_admission_records: governedRecord.memory_admission_records,
+      admission_summary: governedRecord.admission_summary,
+    });
+  }
+
   if (name === "aionis_measure") {
     const input = measureInput(args);
     requireNonEmpty(input.run_id, "run_id");
@@ -477,6 +532,18 @@ export async function handleAionisMcpTool(
       scope: input.scope,
     });
     return result({ ok: true, snapshot });
+  }
+
+  if (name === "aionis_flight_recorder") {
+    const input = flightRecorderInput(args);
+    const { tenant_id: tenantId, scope, ...body } = input;
+    const replay = await client.flightRecorder(body, { tenant_id: tenantId, scope });
+    const replayRecord = replay as unknown as JsonRecord;
+    return result({
+      ok: true,
+      replay,
+      agent_flight_recorder: replayRecord.agent_flight_recorder,
+    });
   }
 
   if (name === "aionis_health") {
