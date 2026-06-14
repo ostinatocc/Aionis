@@ -28,16 +28,18 @@ import {
 } from "../src/index.ts";
 
 test("@aionis/sdk wraps product facade routes", async () => {
-  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const calls: Array<{ url: string; headers: Headers; body: Record<string, unknown> }> = [];
   const fakeFetch: typeof fetch = async (input, init) => {
     calls.push({
       url: String(input),
+      headers: new Headers(init?.headers),
       body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
     });
     return new Response(JSON.stringify({ ok: true }), { status: 200 });
   };
   const client = createAionisClient({
     baseUrl: "http://127.0.0.1:3001/",
+    apiKey: "test-key",
     tenant_id: "tenant-a",
     scope: "scope-a",
     fetchImpl: fakeFetch,
@@ -99,6 +101,8 @@ test("@aionis/sdk wraps product facade routes", async () => {
   assert.equal(calls[0]?.body.tenant_id, "tenant-a");
   assert.equal(calls[0]?.body.scope, "scope-a");
   assert.equal(calls[0]?.body.mode, "full_power");
+  assert.equal(calls[0]?.headers.get("authorization"), "Bearer test-key");
+  assert.equal(calls[0]?.headers.get("x-api-key"), "test-key");
   assert.equal(calls[1]?.body.tenant_id, "tenant-a");
   assert.equal(calls[1]?.body.scope, "scope-a");
   assert.equal(calls[1]?.body.query_text, "Govern external candidates.");

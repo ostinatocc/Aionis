@@ -19,6 +19,7 @@
   },
   "scripts": {
     "typecheck": "npx tsc --noEmit",
+    "sdk:source-sync": "node scripts/ci/check-sdk-source-sync.mjs",
     "lite:build": "npm run -s typecheck",
     "lite:start": "bash scripts/start-lite.sh",
     "lite:start:local-process": "LITE_SANDBOX_PROFILE=local_process_echo bash scripts/start-lite.sh",
@@ -27,7 +28,7 @@
     "lite:smoke:local-process": "LITE_SANDBOX_PROFILE=local_process_echo bash scripts/lite-smoke.sh",
     "runtime:e2e:agent": "npx tsx scripts/e2e/runtime-agent-loop.ts",
     "runtime:e2e:agent-suite": "npx tsx scripts/e2e/runtime-agent-loop-suite.ts",
-    "test:focused": "npm run -s typecheck && npm run -s packages:build && npm run -s packages:test && npm run -s lite:test",
+    "test:focused": "npm run -s typecheck && npm run -s sdk:source-sync && npm run -s packages:build && npm run -s packages:test && npm run -s lite:test",
     "test:lite": "npm run -s lite:test",
     "smoke:lite": "npm run -s lite:smoke",
     "build": "npm run -s typecheck && npm run -s packages:build",

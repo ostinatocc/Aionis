@@ -21,6 +21,7 @@ import type {
 } from "../memory/associative-candidate-store.js";
 import { stableUuid } from "../util/uuid.js";
 import { assertDim } from "../util/vector-literal.js";
+import { createSqliteTransactionRunner } from "./sqlite-transaction-runner.js";
 import type {
   WriteCommitInsertArgs,
   WriteEdgeUpsertArgs,
@@ -554,7 +555,11 @@ function buildSimpleSlotsSqlFilters(slotsContains: Record<string, unknown> | nul
 export function createLiteWriteStore(path: string): LiteWriteStore {
   mkdirSync(dirname(path), { recursive: true });
   const db = createSqliteDatabase(path);
-  let txDepth = 0;
+  const transaction = createSqliteTransactionRunner({
+    begin: () => db.exec("BEGIN IMMEDIATE"),
+    commit: () => db.exec("COMMIT"),
+    rollback: () => db.exec("ROLLBACK"),
+  });
   db.exec(`
     PRAGMA journal_mode = WAL;
 
@@ -744,21 +749,7 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
     capability_version: WRITE_STORE_ACCESS_CAPABILITY_VERSION,
 
     async withTx<T>(fn: () => Promise<T>): Promise<T> {
-      if (txDepth > 0) {
-        return await fn();
-      }
-      db.exec("BEGIN IMMEDIATE");
-      txDepth += 1;
-      try {
-        const out = await fn();
-        db.exec("COMMIT");
-        return out;
-      } catch (err) {
-        db.exec("ROLLBACK");
-        throw err;
-      } finally {
-        txDepth -= 1;
-      }
+      return await transaction.run(fn);
     },
 
     async findNodes(args): Promise<{ rows: LiteFindNodeRow[]; has_more: boolean }> {

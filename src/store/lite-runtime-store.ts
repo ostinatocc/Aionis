@@ -10,6 +10,7 @@ import type {
   SandboxStoreAccess,
 } from "./sandbox-access.js";
 import { createSqliteDatabase, type SqliteDatabase } from "./sqlite.js";
+import { createSqliteTransactionRunner } from "./sqlite-transaction-runner.js";
 
 type SandboxSessionRecord = {
   id: string;
@@ -605,7 +606,11 @@ export function createLiteRuntimeStore(path: string): LiteRuntimeStore {
   const db = createSqliteDatabase(path);
   initialize(db);
   const session = createLiteRuntimeStoreSession(db);
-  let txDepth = 0;
+  const transaction = createSqliteTransactionRunner({
+    begin: () => db.exec("BEGIN IMMEDIATE"),
+    commit: () => db.exec("COMMIT"),
+    rollback: () => db.exec("ROLLBACK"),
+  });
 
   return {
     backend: "lite_sqlite",
@@ -613,19 +618,7 @@ export function createLiteRuntimeStore(path: string): LiteRuntimeStore {
       return fn(session);
     },
     async withTx<T>(fn: (session: LiteRuntimeStoreSession) => Promise<T>): Promise<T> {
-      if (txDepth > 0) return fn(session);
-      db.exec("BEGIN IMMEDIATE");
-      txDepth += 1;
-      try {
-        const out = await fn(session);
-        db.exec("COMMIT");
-        return out;
-      } catch (err) {
-        db.exec("ROLLBACK");
-        throw err;
-      } finally {
-        txDepth -= 1;
-      }
+      return await transaction.run(() => fn(session));
     },
     async close(): Promise<void> {
       db.close();

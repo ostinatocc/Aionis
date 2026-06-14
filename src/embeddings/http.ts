@@ -111,6 +111,9 @@ export function createEmbedJsonPoster(cfg: RetryConfig) {
 
           lastErr = new EmbedHttpError(msg, res.status, preview);
         } catch (err: any) {
+          if (err instanceof EmbedHttpError && err.status !== null && !isRetryableStatus(err.status)) {
+            throw err;
+          }
           lastErr = err;
           // Network errors / aborts are retryable. But do not loop forever.
           if (attempt >= cfg.maxRetries) break;

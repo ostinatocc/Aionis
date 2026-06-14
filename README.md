@@ -8,6 +8,12 @@ Aionis sits between your Agent and its history. It adjudicates whether memory is
 current, stale, contested, failed, reusable, or worth rehydrating, then compiles
 only the external execution state into the next Agent context.
 
+Current distribution: Aionis ships as a local-first Lite Runtime plus SDK and
+MCP bridge. It is built for developer machines, local agent hosts, and
+self-managed deployments behind your own boundary. It is not yet a hosted
+multi-tenant production control plane; Lite defaults to loopback and
+unauthenticated local use.
+
 Already using Mem0? Keep it for retrieval. Put Aionis in front of the Agent as
 the Memory Firewall:
 

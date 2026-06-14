@@ -1640,7 +1640,7 @@ export class AionisClient {
     return {
       "content-type": "application/json",
       ...this.headers,
-      ...(this.apiKey ? { authorization: `Bearer ${this.apiKey}` } : {}),
+      ...(this.apiKey ? { authorization: `Bearer ${this.apiKey}`, "x-api-key": this.apiKey } : {}),
       ...(options?.headers ?? {}),
     };
   }

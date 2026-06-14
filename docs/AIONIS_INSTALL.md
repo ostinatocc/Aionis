@@ -16,6 +16,11 @@ Install Runtime plus SDK and run the SDK quickstart:
 MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quickstart sdk
 ```
 
+This installs the local-first Lite Runtime. Lite is designed for developer
+machines, local agent hosts, and self-managed deployments behind your own
+boundary. It is not a hosted multi-tenant production service: Lite defaults to
+loopback, `MEMORY_AUTH_MODE=off`, and `TENANT_QUOTA_ENABLED=false`.
+
 For raw HTTP users:
 
 ```bash
