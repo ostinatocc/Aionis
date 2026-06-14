@@ -76,6 +76,13 @@ test("AionisClient wraps the product facade APIs with scope defaults", async () 
   });
   await client.measure({ baseline: { score: 0.3 }, aionis: { score: 0.7 } });
   await client.snapshot({ run_id: "run-operator", include_markdown: true });
+  await client.flightRecorder({
+    run_id: "run-flight",
+    agent_context: {
+      contract_version: "aionis_agent_context_v1",
+      memory_ids: ["mem-current"],
+    },
+  });
 
   assert.deepEqual(calls.map((call) => call.url), [
     "http://127.0.0.1:3001/v1/observe",
@@ -86,6 +93,7 @@ test("AionisClient wraps the product facade APIs with scope defaults", async () 
     "http://127.0.0.1:3001/v1/rehydrate",
     "http://127.0.0.1:3001/v1/measure",
     "http://127.0.0.1:3001/v1/operator/snapshot",
+    "http://127.0.0.1:3001/v1/audit/flight-recorder",
   ]);
   assert.equal(calls[0]?.init.method, "POST");
   assert.equal((calls[0]?.init.headers as Record<string, string>).authorization, "Bearer test-key");
@@ -106,6 +114,11 @@ test("AionisClient wraps the product facade APIs with scope defaults", async () 
   assert.equal(governBody.scope, "scope-a");
   assert.equal(governBody.query_text, "Govern external memories before prompt use.");
   assert.equal(Array.isArray(governBody.candidates), true);
+
+  const flightRecorderBody = JSON.parse(String(calls[8]?.init.body)) as Record<string, unknown>;
+  assert.equal(flightRecorderBody.tenant_id, "tenant-a");
+  assert.equal(flightRecorderBody.scope, "scope-a");
+  assert.equal(flightRecorderBody.run_id, "run-flight");
 
   const feedbackBody = JSON.parse(String(calls[4]?.init.body)) as Record<string, unknown>;
   assert.equal(feedbackBody.operation, undefined);

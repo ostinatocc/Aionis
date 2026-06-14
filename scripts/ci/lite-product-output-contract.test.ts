@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  AionisAgentFlightRecorderReportSchema,
   AionisAgentContextSchema,
   AionisEffectReportSchema,
   AionisExternalMemoryCandidateSchema,
@@ -1468,6 +1469,81 @@ test("AionisOperatorSnapshot accepts trace-to-procedure as a read-only product p
         },
       }),
   );
+});
+
+test("AionisAgentFlightRecorderReport accepts read-only incident replay output", () => {
+  const parsed = AionisAgentFlightRecorderReportSchema.parse({
+    contract_version: "aionis_agent_flight_recorder_report_v1",
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    intended_use: "incident_replay_audit",
+    agent_prompt_included: false,
+    runtime_mutation: false,
+    guide_trace_id: "guide-trace-1",
+    run_id: "run-1",
+    decision_time: "2026-06-13T00:00:00.000Z",
+    agent_view: {
+      history_used: true,
+      actionable_history_used: true,
+      recommended_posture: "reuse_supported_history",
+      authority: "trusted",
+      prompt_char_count: 1024,
+      prompt_text_included: false,
+      exposed_memory_ids: ["mem-current", "mem-failed"],
+      use_now_memory_ids: ["mem-current"],
+      inspect_before_use_memory_ids: [],
+      do_not_use_memory_ids: ["mem-failed"],
+      rehydrate_memory_ids: ["mem-archive"],
+      target_files: ["src/index.ts"],
+    },
+    blocked_or_suppressed: [
+      {
+        memory_id: "mem-failed",
+        title: "Failed legacy route",
+        lifecycle_state: "suppressed",
+        authority: "blocked",
+        agent_surface: "do_not_use",
+        reason_codes: ["suppressed_lifecycle"],
+      },
+    ],
+    attribution: {
+      present: true,
+      outcome: "positive",
+      used_memory_ids: ["mem-current"],
+      attributed_memory_ids: ["mem-current"],
+      unattributed_memory_ids: ["mem-failed"],
+      supported_memory_ids: ["mem-current"],
+      contradicted_memory_ids: [],
+      reason: "Feedback was attributed to the current memory.",
+    },
+    replay_sources: {
+      has_agent_context: true,
+      has_memory_decision_trace: true,
+      has_memory_use_receipt: true,
+      has_memory_admission_record: true,
+      has_operator_snapshot: true,
+      has_feedback_result: true,
+    },
+    claims: [
+      {
+        claim: "prompt_payload_excluded",
+        status: "pass",
+        evidence: "Report includes prompt_char_count but excludes prompt_text.",
+      },
+    ],
+    source_map: {
+      routes_used: ["/v1/audit/flight-recorder"],
+      internal_surfaces_used: ["agent_flight_recorder", "memory_decision_trace"],
+      omitted_internal_surfaces: ["agent_prompt_text", "raw_memory_rows"],
+    },
+    summary: "Agent Flight Recorder reconstructed memory admission at decision time.",
+  });
+
+  assert.equal(parsed.agent_prompt_included, false);
+  assert.equal(parsed.runtime_mutation, false);
+  assert.equal(parsed.agent_view.prompt_text_included, false);
+  assert.deepEqual(parsed.agent_view.use_now_memory_ids, ["mem-current"]);
+  assert.equal(parsed.blocked_or_suppressed[0]?.memory_id, "mem-failed");
 });
 
 test("AionisMemoryDecisionAuditReport accepts compact operator audit output", () => {

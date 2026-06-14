@@ -116,6 +116,19 @@ API details:
 Security/product packaging:
 [docs/AIONIS_MEMORY_FIREWALL.md](docs/AIONIS_MEMORY_FIREWALL.md).
 
+## Replay Agent Decisions
+
+Aionis also exposes an Agent Flight Recorder. After a run, call
+`POST /v1/audit/flight-recorder` or SDK `flightRecorder()` to reconstruct which
+memories entered direct use, which were blocked, which required rehydration, and
+how feedback was attributed.
+
+It answers the operator question production Agent systems usually cannot answer:
+what did the Agent know when it made that decision?
+
+Guide:
+[docs/AIONIS_AGENT_FLIGHT_RECORDER.md](docs/AIONIS_AGENT_FLIGHT_RECORDER.md).
+
 ## Quickstart
 
 Install the Runtime, SDK, and MCP bridge with one command:

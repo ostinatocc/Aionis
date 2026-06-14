@@ -2256,3 +2256,115 @@ export type AionisOperatorSnapshot = z.infer<typeof AionisOperatorSnapshotSchema
 export function parseAionisOperatorSnapshot(value: unknown): AionisOperatorSnapshot {
   return AionisOperatorSnapshotSchema.parse(value);
 }
+
+export const AionisAgentFlightRecorderReportSchema = z
+  .object({
+    contract_version: z.literal("aionis_agent_flight_recorder_report_v1"),
+    tenant_id: z.string().min(1),
+    scope: z.string().min(1),
+    intended_use: z.literal("incident_replay_audit"),
+    agent_prompt_included: z.literal(false),
+    runtime_mutation: z.literal(false),
+    guide_trace_id: z.string().min(1).nullable(),
+    run_id: z.string().min(1).nullable(),
+    decision_time: z.string().datetime(),
+    agent_view: z
+      .object({
+        history_used: z.boolean(),
+        actionable_history_used: z.boolean(),
+        recommended_posture: z.enum([
+          "reuse_supported_history",
+          "use_as_context",
+          "inspect_before_use",
+          "rehydrate_before_use",
+          "ignore_history",
+        ]),
+        authority: AionisGuidanceAuthoritySchema,
+        prompt_char_count: z.number().int().nonnegative(),
+        prompt_text_included: z.literal(false),
+        exposed_memory_ids: z.array(z.string().min(1)).default([]),
+        use_now_memory_ids: z.array(z.string().min(1)).default([]),
+        inspect_before_use_memory_ids: z.array(z.string().min(1)).default([]),
+        do_not_use_memory_ids: z.array(z.string().min(1)).default([]),
+        rehydrate_memory_ids: z.array(z.string().min(1)).default([]),
+        target_files: z.array(z.string().min(1)).default([]),
+      })
+      .strict(),
+    blocked_or_suppressed: z
+      .array(
+        z
+          .object({
+            memory_id: z.string().min(1),
+            title: z.string().min(1).nullable(),
+            lifecycle_state: z.enum([
+              "active",
+              "candidate",
+              "contested",
+              "suppressed",
+              "demoted",
+              "archived",
+              "rehydration_candidate",
+              "unknown",
+            ]),
+            authority: AionisGuidanceAuthoritySchema,
+            agent_surface: AionisMemoryDecisionSurfaceSchema,
+            reason_codes: z.array(z.string().min(1)).default([]),
+          })
+          .strict(),
+      )
+      .default([]),
+    attribution: z
+      .object({
+        present: z.boolean(),
+        outcome: AionisFeedbackOutcomeSchema.nullable(),
+        used_memory_ids: z.array(z.string().min(1)).default([]),
+        attributed_memory_ids: z.array(z.string().min(1)).default([]),
+        unattributed_memory_ids: z.array(z.string().min(1)).default([]),
+        supported_memory_ids: z.array(z.string().min(1)).default([]),
+        contradicted_memory_ids: z.array(z.string().min(1)).default([]),
+        reason: z.string().min(1),
+      })
+      .strict(),
+    replay_sources: z
+      .object({
+        has_agent_context: z.boolean(),
+        has_memory_decision_trace: z.boolean(),
+        has_memory_use_receipt: z.boolean(),
+        has_memory_admission_record: z.boolean(),
+        has_operator_snapshot: z.boolean(),
+        has_feedback_result: z.boolean(),
+      })
+      .strict(),
+    claims: z
+      .array(
+        z
+          .object({
+            claim: z.enum([
+              "agent_view_reconstructable",
+              "prompt_payload_excluded",
+              "blocked_memory_visible",
+              "feedback_attribution_replayable",
+              "runtime_read_only",
+            ]),
+            status: z.enum(["pass", "warn", "fail"]),
+            evidence: z.string().min(1),
+          })
+          .strict(),
+      )
+      .default([]),
+    source_map: z
+      .object({
+        routes_used: z.array(z.string().min(1)).default([]),
+        internal_surfaces_used: z.array(z.string().min(1)).default([]),
+        omitted_internal_surfaces: z.array(z.string().min(1)).default([]),
+      })
+      .strict(),
+    summary: z.string().min(1),
+  })
+  .strict();
+
+export type AionisAgentFlightRecorderReport = z.infer<typeof AionisAgentFlightRecorderReportSchema>;
+
+export function parseAionisAgentFlightRecorderReport(value: unknown): AionisAgentFlightRecorderReport {
+  return AionisAgentFlightRecorderReportSchema.parse(value);
+}

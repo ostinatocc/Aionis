@@ -2317,6 +2317,44 @@ test("product measure derives closed-loop effect from guide packets", async () =
       auditBody.memory_decision_audit.decision_reviews,
       body.memory_decision_audit.decision_reviews,
     );
+
+    const flightRecorder = await app.inject({
+      method: "POST",
+      url: "/v1/audit/flight-recorder",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        guide_trace_id: afterGuideBody.guide_trace_id,
+        run_id: "run:product-measure-trace",
+        decision_time: "2026-06-13T00:00:00.000Z",
+        product_trace: {
+          before_guide: beforeGuide.json(),
+          after_guide: afterGuideBody,
+        },
+        feedback_result: {
+          run_id: "run:product-measure-trace",
+          outcome: "positive",
+          used_memory_ids: afterGuideBody.agent_context.use_now_memory_ids.slice(0, 1),
+        },
+      },
+    });
+    assert.equal(flightRecorder.statusCode, 200);
+    const flightBody = flightRecorder.json();
+    assert.equal(flightBody.contract_version, "aionis_agent_flight_recorder_result_v1");
+    assert.equal(flightBody.agent_flight_recorder.contract_version, "aionis_agent_flight_recorder_report_v1");
+    assert.equal(flightBody.agent_flight_recorder.agent_prompt_included, false);
+    assert.equal(flightBody.agent_flight_recorder.runtime_mutation, false);
+    assert.equal(flightBody.agent_flight_recorder.agent_view.prompt_text_included, false);
+    assert.deepEqual(
+      flightBody.agent_flight_recorder.agent_view.use_now_memory_ids,
+      afterGuideBody.agent_context.use_now_memory_ids,
+    );
+    assert.equal(flightBody.agent_flight_recorder.replay_sources.has_agent_context, true);
+    assert.equal(flightBody.agent_flight_recorder.replay_sources.has_memory_decision_trace, true);
+    assert.equal(flightBody.agent_flight_recorder.replay_sources.has_operator_snapshot, true);
+    assert.equal(String(JSON.stringify(flightBody.agent_flight_recorder)).includes(afterGuideBody.agent_context.prompt_text), false);
+    assert.deepEqual(flightBody.source_map.routes_used, ["/v1/audit/flight-recorder"]);
+    assert.ok(flightBody.source_map.internal_surfaces_used.includes("agent_flight_recorder"));
   } finally {
     await app.close();
   }

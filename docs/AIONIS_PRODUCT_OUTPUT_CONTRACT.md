@@ -208,6 +208,59 @@ type AionisMemoryAdmissionRecord = {
 | `guide_trace_id`, prompt character count, and actionable-history flags | new Runtime gate behavior |
 | feedback outcome only when tied to affected or attributed memory | benchmark-only labels |
 
+## AionisAgentFlightRecorderReport
+
+The Agent Flight Recorder is the incident-replay projection over the same
+decision trace, receipt, admission record, and operator snapshot surfaces. It
+answers the operator question: what memory could the Agent see at decision time,
+what was blocked, and how later feedback was attributed.
+
+It is not an Agent prompt and not a mutation path. The report includes
+`prompt_char_count` and memory IDs, but it excludes `agent_context.prompt_text`,
+raw memory rows, raw slots, and embedding vectors.
+
+Current surface:
+
+| Surface | Field |
+|---|---|
+| Audit route | `POST /v1/audit/flight-recorder` -> `agent_flight_recorder` |
+| SDK | `client.flightRecorder()` |
+
+Core fields:
+
+```ts
+type AionisAgentFlightRecorderReport = {
+  contract_version: "aionis_agent_flight_recorder_report_v1";
+  intended_use: "incident_replay_audit";
+  agent_prompt_included: false;
+  runtime_mutation: false;
+  guide_trace_id: string | null;
+  run_id: string | null;
+  decision_time: string;
+  agent_view: {
+    prompt_text_included: false;
+    exposed_memory_ids: string[];
+    use_now_memory_ids: string[];
+    inspect_before_use_memory_ids: string[];
+    do_not_use_memory_ids: string[];
+    rehydrate_memory_ids: string[];
+  };
+  blocked_or_suppressed: Array<{
+    memory_id: string;
+    agent_surface: "do_not_use" | "inspect_before_use" | "rehydrate" | "use_now" | "not_agent_facing";
+    reason_codes: string[];
+  }>;
+  attribution: {
+    present: boolean;
+    outcome: "positive" | "negative" | "neutral" | null;
+    used_memory_ids: string[];
+    attributed_memory_ids: string[];
+    supported_memory_ids: string[];
+    contradicted_memory_ids: string[];
+  };
+};
+```
+
 ## Admission Dataset Export
 
 Admission Dataset Export v1 is an SDK-side read-only projection from

@@ -18,7 +18,9 @@ import {
   buildAionisMemoryDecisionTrace,
   type BuildAionisMemoryPacketArgs,
 } from "../memory/product-output-assembler.js";
+import { buildAionisAgentFlightRecorderReport } from "../memory/agent-flight-recorder.js";
 import { governExternalMemoryCandidates } from "../memory/external-candidate-admission.js";
+import { buildAionisOperatorSnapshot } from "../memory/operator-snapshot.js";
 import {
   AionisAgentRoleSchema,
   AionisAgentContextSchema,
@@ -347,6 +349,36 @@ const ProductDecisionTraceRequest = z.object({
   scope: z.string().trim().min(1).optional(),
   product_trace: ProductDecisionTraceBaseSchema,
 }).strict();
+
+const ProductFlightRecorderRequest = z.object({
+  tenant_id: z.string().trim().min(1).optional(),
+  scope: z.string().trim().min(1).optional(),
+  guide_trace_id: z.string().trim().min(1).optional(),
+  run_id: z.string().trim().min(1).optional(),
+  product_trace: ProductDecisionTraceBaseSchema.optional(),
+  agent_context: z.unknown().optional(),
+  memory_decision_trace: z.unknown().optional(),
+  memory_use_receipt: z.unknown().optional(),
+  memory_admission_record: z.unknown().optional(),
+  operator_snapshot: z.unknown().optional(),
+  feedback_result: z.unknown().optional(),
+  decision_time: z.string().datetime().optional(),
+}).strict().superRefine((value, ctx) => {
+  if (
+    !value.product_trace
+    && value.agent_context === undefined
+    && value.memory_decision_trace === undefined
+    && value.memory_use_receipt === undefined
+    && value.memory_admission_record === undefined
+    && value.operator_snapshot === undefined
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["product_trace"],
+      message: "flight recorder requires product_trace or at least one replay artifact",
+    });
+  }
+});
 
 const ProductMeasureRequest = z.object({
   tenant_id: z.string().trim().min(1).optional(),
@@ -2742,6 +2774,87 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
             "product_trace_projection",
             "memory_decision_trace",
             "memory_decision_audit_report",
+          ],
+        },
+      });
+    } finally {
+      gate.release();
+    }
+  });
+
+  app.post("/v1/audit/flight-recorder", async (req: ProductFacadeRequest, reply: FastifyReply) => {
+    const principal = await requireMemoryPrincipal(req);
+    const body = withIdentityFromRequest(req, req.body, principal, "recall");
+    const parsed = ProductFlightRecorderRequest.parse(body);
+    await enforceRateLimit(req, reply, "recall");
+    await enforceTenantQuota(req, reply, "recall", tenantFromBody(parsed));
+    const gate = await acquireInflightSlot("recall");
+    try {
+      const tenantId = parsed.tenant_id ?? env.MEMORY_TENANT_ID;
+      const scope = parsed.scope ?? env.MEMORY_SCOPE;
+      const decisionOutputs = parsed.product_trace
+        ? productMemoryDecisionOutputs({
+            tenant_id: tenantId,
+            scope,
+            trace: parsed.product_trace,
+            routes_used: ["/v1/audit/flight-recorder"],
+          })
+        : null;
+      const derivedOperatorSnapshot = parsed.product_trace
+        ? buildAionisOperatorSnapshot({
+            tenant_id: tenantId,
+            scope,
+            run_id: parsed.run_id ?? null,
+            agent_context: parsed.agent_context ?? parsed.product_trace.after_guide.agent_context ?? undefined,
+            guide_packet: parsed.product_trace.after_guide.guide_packet ?? undefined,
+            memory_decision_trace: decisionOutputs?.memoryDecisionTrace,
+            memory_decision_audit: decisionOutputs?.memoryDecisionAudit,
+            guide_trace_id: parsed.guide_trace_id ?? null,
+            source_map: {
+              routes_used: ["/v1/audit/flight-recorder"],
+              internal_surfaces_used: ["product_trace_projection", "memory_decision_trace"],
+            },
+          })
+        : null;
+      const report = buildAionisAgentFlightRecorderReport({
+        tenant_id: tenantId,
+        scope,
+        guide_trace_id: parsed.guide_trace_id ?? null,
+        run_id: parsed.run_id ?? null,
+        agent_context: parsed.agent_context ?? parsed.product_trace?.after_guide.agent_context,
+        memory_decision_trace: parsed.memory_decision_trace ?? decisionOutputs?.memoryDecisionTrace,
+        memory_use_receipt: parsed.memory_use_receipt,
+        memory_admission_record: parsed.memory_admission_record,
+        operator_snapshot: parsed.operator_snapshot ?? derivedOperatorSnapshot,
+        feedback_result: parsed.feedback_result ?? parsed.product_trace?.forget_result,
+        now: parsed.decision_time,
+        source_map: {
+          routes_used: ["/v1/audit/flight-recorder"],
+          internal_surfaces_used: [
+            ...(parsed.product_trace ? ["product_trace_projection"] : []),
+            ...(decisionOutputs ? ["memory_decision_trace", "memory_decision_audit_report"] : []),
+            ...(derivedOperatorSnapshot ? ["operator_snapshot_contract"] : []),
+          ],
+        },
+      });
+      return reply.code(200).send({
+        contract_version: "aionis_agent_flight_recorder_result_v1",
+        tenant_id: tenantId,
+        scope,
+        agent_flight_recorder: report,
+        source_map: {
+          routes_used: ["/v1/audit/flight-recorder"],
+          internal_surfaces_used: [
+            "agent_flight_recorder",
+            ...(parsed.product_trace ? ["product_trace_projection"] : []),
+            ...(decisionOutputs ? ["memory_decision_trace", "memory_use_receipt", "memory_admission_record", "memory_decision_audit_report"] : []),
+            ...(derivedOperatorSnapshot || parsed.operator_snapshot ? ["operator_snapshot_contract"] : []),
+          ],
+          omitted_internal_surfaces: [
+            "agent_prompt_text",
+            "raw_memory_rows",
+            "raw_slots",
+            "raw_embedding_vectors",
           ],
         },
       });

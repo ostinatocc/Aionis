@@ -23,6 +23,8 @@ For one-command Runtime plus SDK installation, see
 [AIONIS_INSTALL.md](AIONIS_INSTALL.md).
 For admission dataset JSONL export, see
 [AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md](AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md).
+For incident replay, see
+[AIONIS_AGENT_FLIGHT_RECORDER.md](AIONIS_AGENT_FLIGHT_RECORDER.md).
 
 ## Route Summary
 
@@ -34,6 +36,7 @@ For admission dataset JSONL export, see
 | `POST /v1/feedback` | `feedback` | Host after the Agent acts | Feedback attribution | `forget_effect` with `operation: "activate"` |
 | `POST /v1/rehydrate` | `rehydrate` | Host when compact context needs original evidence or payload | Payload / archive lifecycle controller | `forget_effect` with `operation: "rehydrate"` |
 | `POST /v1/measure` | `measure` | Host, operator, or product evaluator | Product diagnostics | `effect_report`, optional decision trace and audit |
+| `POST /v1/audit/flight-recorder` | incident replay | Host or operator after a run | Agent Flight Recorder | `agent_flight_recorder` |
 | `POST /v1/forget` | controlled forgetting | Host, operator, or product policy | Explicit lifecycle controller | `forget_effect` |
 
 Optional read-only operator route:
@@ -866,6 +869,90 @@ contract and SDK example.
 
 The first candidate may enter `use_now`. The failed candidate is downgraded to
 `inspect_before_use` in standard mode and is never direct-use.
+
+## `POST /v1/audit/flight-recorder`
+
+### Purpose
+
+Produce a read-only incident replay report that answers:
+
+```text
+What did the Agent know at decision time?
+```
+
+The report reconstructs:
+
+- memory IDs exposed to the Agent
+- which memories were direct-use, inspect-first, blocked, or rehydrate-first
+- blocked or suppressed memories visible to the operator
+- feedback attribution when supplied
+- source coverage for trace, receipt, admission record, and operator snapshot
+
+It does not include `agent_context.prompt_text`, raw memory rows, raw slots, or
+embedding vectors.
+
+### Request
+
+You can pass an already generated trace/snapshot:
+
+```json
+{
+  "tenant_id": "default",
+  "scope": "checkout-agent",
+  "run_id": "run-123",
+  "guide_trace_id": "guide-trace-123",
+  "memory_decision_trace": { "...": "..." },
+  "operator_snapshot": { "...": "..." },
+  "feedback_result": {
+    "run_id": "run-123",
+    "outcome": "positive",
+    "used_memory_ids": ["mem-current"]
+  }
+}
+```
+
+Or pass the same `product_trace` shape used by `/v1/measure`:
+
+```json
+{
+  "tenant_id": "default",
+  "scope": "checkout-agent",
+  "run_id": "run-123",
+  "product_trace": {
+    "before_guide": { "...": "..." },
+    "after_guide": { "...": "..." }
+  }
+}
+```
+
+### Response
+
+```json
+{
+  "contract_version": "aionis_agent_flight_recorder_result_v1",
+  "agent_flight_recorder": {
+    "contract_version": "aionis_agent_flight_recorder_report_v1",
+    "intended_use": "incident_replay_audit",
+    "agent_prompt_included": false,
+    "runtime_mutation": false,
+    "agent_view": {
+      "prompt_text_included": false,
+      "use_now_memory_ids": ["mem-current"],
+      "do_not_use_memory_ids": ["mem-failed"]
+    },
+    "blocked_or_suppressed": [],
+    "attribution": {
+      "present": true,
+      "outcome": "positive",
+      "used_memory_ids": ["mem-current"]
+    }
+  }
+}
+```
+
+Use this route for incident review, customer support debugging, compliance
+evidence, and post-run memory quality analysis. Do not pass the report back to
+the Agent as prompt context.
 
 ## `POST /v1/feedback`
 

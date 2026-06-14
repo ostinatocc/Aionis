@@ -255,6 +255,59 @@ export type AionisMemoryAdmissionGatewayResponse = AionisJsonObject & {
   source_map: AionisJsonObject;
 };
 
+export type AionisAgentFlightRecorderReport = AionisJsonObject & {
+  contract_version: "aionis_agent_flight_recorder_report_v1";
+  intended_use: "incident_replay_audit";
+  agent_prompt_included: false;
+  runtime_mutation: false;
+  guide_trace_id: string | null;
+  run_id: string | null;
+  decision_time: string;
+  agent_view: AionisJsonObject & {
+    prompt_text_included: false;
+    exposed_memory_ids: string[];
+    use_now_memory_ids: string[];
+    inspect_before_use_memory_ids: string[];
+    do_not_use_memory_ids: string[];
+    rehydrate_memory_ids: string[];
+  };
+  blocked_or_suppressed: AionisJsonObject[];
+  attribution: AionisJsonObject & {
+    present: boolean;
+    outcome: AionisFeedbackOutcome | null;
+    used_memory_ids: string[];
+    attributed_memory_ids: string[];
+    unattributed_memory_ids: string[];
+    supported_memory_ids: string[];
+    contradicted_memory_ids: string[];
+  };
+  replay_sources: AionisJsonObject;
+  claims: AionisJsonObject[];
+  source_map: AionisJsonObject;
+  summary: string;
+};
+
+export type AionisAgentFlightRecorderRequest = AionisJsonObject & {
+  guide_trace_id?: string;
+  run_id?: string;
+  product_trace?: AionisJsonObject;
+  agent_context?: AionisJsonObject;
+  memory_decision_trace?: AionisJsonObject;
+  memory_use_receipt?: AionisJsonObject;
+  memory_admission_record?: AionisJsonObject;
+  operator_snapshot?: AionisJsonObject;
+  feedback_result?: AionisJsonObject;
+  decision_time?: string;
+};
+
+export type AionisAgentFlightRecorderResponse = AionisJsonObject & {
+  contract_version: "aionis_agent_flight_recorder_result_v1";
+  tenant_id: string;
+  scope: string;
+  agent_flight_recorder: AionisAgentFlightRecorderReport;
+  source_map: AionisJsonObject;
+};
+
 export type AionisMemoryAdmissionDatasetOutcomeLabel =
   | "positive_use"
   | "negative_use"
@@ -1315,6 +1368,13 @@ export class AionisClient {
 
   async operatorSnapshot<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {
     return this.post<T>("/v1/operator/snapshot", body, options);
+  }
+
+  async flightRecorder<T = AionisAgentFlightRecorderResponse>(
+    body: AionisAgentFlightRecorderRequest,
+    options?: AionisRequestOptions,
+  ): Promise<T> {
+    return this.post<T>("/v1/audit/flight-recorder", body, options);
   }
 
   async snapshot<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {

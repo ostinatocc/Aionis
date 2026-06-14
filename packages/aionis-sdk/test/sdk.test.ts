@@ -61,12 +61,20 @@ test("@aionis/sdk wraps product facade routes", async () => {
     used_memory_ids: ["mem-1"],
   });
   await client.snapshot({ run_id: "run-1" });
+  await client.flightRecorder({
+    run_id: "run-1",
+    agent_context: {
+      contract_version: "aionis_agent_context_v1",
+      memory_ids: ["mem-1"],
+    },
+  });
 
   assert.deepEqual(calls.map((call) => call.url), [
     "http://127.0.0.1:3001/v1/guide",
     "http://127.0.0.1:3001/v1/memory/govern",
     "http://127.0.0.1:3001/v1/feedback",
     "http://127.0.0.1:3001/v1/operator/snapshot",
+    "http://127.0.0.1:3001/v1/audit/flight-recorder",
   ]);
   assert.equal(calls[0]?.body.tenant_id, "tenant-a");
   assert.equal(calls[0]?.body.scope, "scope-a");
@@ -74,6 +82,9 @@ test("@aionis/sdk wraps product facade routes", async () => {
   assert.equal(calls[1]?.body.tenant_id, "tenant-a");
   assert.equal(calls[1]?.body.scope, "scope-a");
   assert.equal(calls[1]?.body.query_text, "Govern external candidates.");
+  assert.equal(calls[4]?.body.tenant_id, "tenant-a");
+  assert.equal(calls[4]?.body.scope, "scope-a");
+  assert.equal(calls[4]?.body.run_id, "run-1");
 });
 
 test("@aionis/sdk guide helpers keep Agent prompt and feedback attribution bounded", () => {

@@ -243,3 +243,30 @@ const firewall = result.memory_firewall;
 `mode: "firewall"` blocks failed, stale, contested, suppressed, archived, or
 policy-blocked external memory from direct action. Unknown or untrusted memory
 stays `inspect_before_use`; raw evidence pointers stay `rehydrate`.
+
+## Replay Agent Decisions
+
+Use `flightRecorder()` after a run to inspect what memory the Agent was allowed
+to see at decision time.
+
+```ts
+const replay = await aionis.flightRecorder({
+  run_id: "run-001",
+  guide_trace_id: guide.guide_trace_id,
+  product_trace: {
+    before_guide: previousGuide,
+    after_guide: guide,
+  },
+  feedback_result: {
+    run_id: "run-001",
+    outcome: "positive",
+    used_memory_ids: guide.agent_context.use_now_memory_ids.slice(0, 1),
+  },
+});
+
+console.log(replay.agent_flight_recorder.agent_view.use_now_memory_ids);
+```
+
+The report excludes `agent_context.prompt_text` and raw memory payloads. Keep it
+in host/operator logs for incident replay, support debugging, and memory-quality
+review.
