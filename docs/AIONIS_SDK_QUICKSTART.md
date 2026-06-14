@@ -41,8 +41,11 @@ import {
   compileExecutionAgentContext,
   createAionisClient,
   feedbackFromGuide,
+  memoryAdmissionDatasetJsonlFromRows,
+  memoryAdmissionDatasetRowsFromRecord,
   measureInputFromGuideLoop,
   snapshotInputFromGuideLoop,
+  type AionisMemoryAdmissionRecord,
 } from "@aionis/sdk";
 
 const aionis = createAionisClient({
@@ -108,6 +111,17 @@ const measure = await aionis.measure(measureInputFromGuideLoop({
   evidence_ids: ["feedback:run-001"],
 }));
 
+const admissionRows = memoryAdmissionDatasetRowsFromRecord(
+  measure.memory_decision_trace.admission_record as AionisMemoryAdmissionRecord,
+  {
+    run_id: "run-001",
+    task_id: "task-001",
+    task_signature: "product-update",
+  },
+);
+const admissionDatasetJsonl = memoryAdmissionDatasetJsonlFromRows(admissionRows);
+// Keep admissionDatasetJsonl in host/operator logs, not in the Agent prompt.
+
 await aionis.snapshot(snapshotInputFromGuideLoop({
   run_id: "run-001",
   task_signature: "product-update",
@@ -124,6 +138,8 @@ For coding and multi-agent hosts, give only `agentContext.agent_prompt` from
 attribution and audit. Do not pass `memory_packet`, `guide_packet`,
 `memory_decision_trace`, `memory_decision_audit`, raw rows, or raw slots to the
 Agent by default.
+For a focused JSONL export path, see
+[AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md](AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md).
 `feedbackFromGuide()` still requires the host to provide the memory IDs the
 Agent actually used; it only validates that those IDs were exposed by the guide.
 `measureInputFromGuideLoop()` and `snapshotInputFromGuideLoop()` keep the
@@ -197,7 +213,8 @@ JSON showing:
 5. `compileExecutionAgentContext()` renders the SDK execution contract prompt
 6. `feedback()` attributes outcome only to memory exposed by that guide trace
 7. `measure()` reports whether history changed the future context
-8. `snapshot()` exposes read-only memory use receipt and effect state
+8. admission dataset JSONL export is produced without prompt payload
+9. `snapshot()` exposes read-only memory use receipt, admission record, and effect state
 
 For multi-agent execution memory, use:
 

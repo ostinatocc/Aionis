@@ -190,6 +190,7 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.match(readme, /docs\/examples\/http-quickstart-result\.json/);
   assert.match(readme, /docs\/examples\/multi-agent-quickstart-result\.json/);
   assert.match(readme, /docs\/examples\/judgment-calibration-product-loop-result\.json/);
+  assert.match(readme, /docs\/AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART\.md/);
   assert.match(readme, /@aionis\/mcp@latest/);
   assert.match(readme, /docs\/AIONIS_MCP\.md/);
   assert.match(readme, /aionis_context/);
@@ -212,9 +213,14 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.equal(sdk.agent_context?.before_actionable_history_used, false);
   assert.equal(sdk.agent_context?.after_actionable_history_used, true);
   assert.equal(sdk.memory_governance?.measure_history_impact, "positive");
+  assert.equal(sdk.admission_dataset_export?.contract_version, "aionis_memory_admission_dataset_row_v1");
+  assert.equal(sdk.admission_dataset_export?.positive_use_count, 1);
+  assert.equal(sdk.admission_dataset_export?.prompt_payload_excluded, true);
   assert.equal(sdk.operator_audit?.memory_use_receipt_visible, true);
+  assert.equal(sdk.operator_audit?.memory_admission_record_visible, true);
   assert.equal(sdk.operator_audit?.snapshot_runtime_mutation, false);
   assert.equal(sdk.checks?.feedback_attributed, true);
+  assert.equal(sdk.checks?.admission_dataset_feedback_joined, true);
 
   const http = readJson("docs/examples/http-quickstart-result.json");
   assert.equal(http.contract_version, "aionis_http_quickstart_result_v1");
@@ -260,6 +266,7 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.match(matrix, /aionis_http_quickstart_result_v1/);
   assert.match(matrix, /aionis_multi_agent_quickstart_result_v1/);
   assert.match(matrix, /SDK facade/);
+  assert.match(matrix, /AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART\.md/);
   assert.match(matrix, /Raw HTTP/);
   assert.match(matrix, /execution memory adapter/i);
   assert.match(matrix, /agent_context\.prompt_text/);

@@ -8,7 +8,14 @@ import {
   type ExecutionTreeOperationV1,
   type ExecutionTreeV1,
 } from "../../src/execution/index.ts";
-import { createAionisClient } from "../../src/sdk.ts";
+import {
+  createAionisClient,
+  feedbackFromGuide,
+  memoryAdmissionDatasetJsonlFromRows,
+  memoryAdmissionDatasetRowsFromRecord,
+  snapshotInputFromGuideLoop,
+  type AionisMemoryAdmissionRecord,
+} from "../../src/sdk.ts";
 import {
   asRecord,
   assertCondition,
@@ -314,6 +321,11 @@ async function runProductLoop(args: {
   const afterContext = agentContext(afterGuide.agent_context, "after guide");
   assertPromptBoundary(String(afterContext.prompt_text), "after guide");
   assertCondition(afterContext.history_used === true, "after guide did not use observed history");
+  const afterUseNowMemoryIds = textArray(afterContext.use_now_memory_ids);
+  assertCondition(
+    afterUseNowMemoryIds.includes(continuityMemoryId),
+    "after guide did not expose the continuity memory ID for feedback attribution",
+  );
   assertCondition(
     textArray(afterContext.use_now).some((entry) => entry.includes("PRODUCT_E2E_TARGET_FILE"))
       || String(afterContext.prompt_text).includes("PRODUCT_E2E_TARGET_FILE"),
@@ -323,6 +335,16 @@ async function runProductLoop(args: {
   const decision = simulateAgent(afterContext);
   assertCondition(decision.used_aionis, "simulated agent did not use Aionis context");
   assertCondition(decision.target_file === "src/product-e2e/current-target.ts", "simulated agent selected the wrong target file");
+
+  const feedback = await client.feedback<Record<string, unknown>>(feedbackFromGuide({
+    guide: afterGuide,
+    reason: "Product e2e simulated Agent used the continuity memory exposed by Aionis.",
+    run_id: `run:${args.runId}:feedback`,
+    outcome: "positive",
+    used_memory_ids: [continuityMemoryId],
+    verifier_status: "passed",
+    tool_status: "succeeded",
+  }));
 
   await client.observe<Record<string, unknown>>({
     auto_embed: true,
@@ -393,19 +415,55 @@ async function runProductLoop(args: {
     product_trace: {
       before_guide: beforeGuide,
       after_guide: afterGuide,
-      forget_result: rehydrate,
+      forget_result: feedback,
       sufficient_evidence: true,
       evidence_ids: [
         `product_trace:product-four-api:${args.runId}`,
         `memory:${continuityMemoryId}`,
+        `feedback:${args.runId}`,
       ],
     },
   });
   const effectReport = asRecord(measure.effect_report);
   const historyImpact = asRecord(effectReport?.history_impact);
+  const decisionTrace = asRecord(measure.memory_decision_trace);
+  const admissionRecord = asRecord(decisionTrace?.admission_record);
   assertCondition(measure.contract_version === "aionis_measure_result_v1", "measure did not return measure result v1");
   assertCondition(historyImpact?.impact_direction === "positive", "measure did not report positive history impact");
   assertCondition(historyImpact?.changed_future_behavior === true, "measure did not report changed future behavior");
+  assertCondition(
+    admissionRecord?.contract_version === "aionis_memory_admission_record_v1",
+    "measure did not return memory admission record",
+  );
+
+  const admissionDatasetRows = memoryAdmissionDatasetRowsFromRecord(admissionRecord as unknown as AionisMemoryAdmissionRecord, {
+    run_id: `run:${args.runId}:product-loop`,
+    task_id: `task:${args.runId}:product-loop`,
+    task_signature: `product-four-api:${args.runId}`,
+  });
+  const admissionDatasetJsonl = memoryAdmissionDatasetJsonlFromRows(admissionDatasetRows);
+  const continuityDatasetRow = admissionDatasetRows.find((entry) => entry.memory_id === continuityMemoryId);
+  assertCondition(admissionDatasetRows.length > 0, "admission dataset export produced no rows");
+  assertCondition(admissionDatasetJsonl.split("\n").filter(Boolean).length === admissionDatasetRows.length, "admission dataset JSONL line count mismatch");
+  assertCondition(continuityDatasetRow?.outcome_label === "positive_use", "admission dataset did not join positive feedback attribution");
+  assertCondition(!admissionDatasetJsonl.includes("prompt_text"), "admission dataset JSONL leaked prompt_text");
+  assertCondition(!admissionDatasetJsonl.includes("PRODUCT_E2E_AGENT_OUTCOME selected"), "admission dataset JSONL leaked raw Agent outcome text");
+
+  const snapshot = await client.snapshot<Record<string, unknown>>(snapshotInputFromGuideLoop({
+    run_id: `run:${args.runId}:product-loop`,
+    task_signature: `product-four-api:${args.runId}`,
+    task_family: "product_four_api_loop",
+    guide: afterGuide,
+    measure_result: measure,
+    include_markdown: false,
+  }));
+  const operatorSnapshot = asRecord(snapshot.operator_snapshot);
+  const snapshotAdmissionRecord = asRecord(operatorSnapshot?.memory_admission_record);
+  assertCondition(operatorSnapshot?.contract_version === "aionis_operator_snapshot_v1", "operator snapshot did not return snapshot v1");
+  assertCondition(
+    snapshotAdmissionRecord?.contract_version === "aionis_memory_admission_record_v1",
+    "operator snapshot did not expose memory admission record",
+  );
 
   return {
     before_history_used: beforeContext.history_used,
@@ -417,6 +475,14 @@ async function runProductLoop(args: {
     agent_decision: decision,
     rehydrate_changed_count: rehydrateEffect.changed_count,
     measure_history_impact: historyImpact.impact_direction,
+    feedback_attributed_memory_id: continuityMemoryId,
+    admission_dataset_export: {
+      row_count: admissionDatasetRows.length,
+      jsonl_line_count: admissionDatasetJsonl.split("\n").filter(Boolean).length,
+      positive_use_count: admissionDatasetRows.filter((entry) => entry.outcome_label === "positive_use").length,
+      prompt_payload_excluded: !admissionDatasetJsonl.includes("prompt_text"),
+      snapshot_admission_record_visible: snapshotAdmissionRecord?.contract_version === "aionis_memory_admission_record_v1",
+    },
     sdk_default_guide_full_power: true,
   };
 }
@@ -561,9 +627,11 @@ async function main() {
       execution_context_loop: executionContextLoop,
       checks: {
         sdk_observe_guide_rehydrate_measure: true,
+        feedback_to_admission_dataset_export: true,
         guide_agent_context_prompt_boundary: true,
         sdk_default_guide_full_power: true,
         measure_positive_history_impact: true,
+        operator_snapshot_admission_record_visible: true,
         execution_context_agent_prompt_boundary: true,
         execution_context_passed_failed_split: true,
         full_power_guide_agent_context_merge: true,

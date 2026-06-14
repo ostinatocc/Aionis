@@ -233,8 +233,9 @@ Dataset rows include:
 - feedback outcome, attribution strength, and derived outcome label
 - reason codes, evidence IDs, guide trace, task/run IDs, and prompt character count
 
-Dataset rows exclude raw memory payloads, raw prompt text, raw slots,
-embeddings, hidden trace internals, and Runtime mutation authority.
+Dataset rows exclude raw memory body payloads, raw prompt text, raw slots,
+embeddings, hidden trace internals, and Runtime mutation authority. Memory title
+metadata may appear so operators can identify admitted candidates.
 
 ## AionisJudgmentCalibrationSummary
 

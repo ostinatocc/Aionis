@@ -122,7 +122,11 @@ The SDK quickstart runs a real local Runtime and verifies:
 3. the SDK compiles governed execution memory into a contract-style Agent prompt
 4. feedback is attributed to the exact memory IDs exposed by the guide
 5. `measure` reports whether history changed future context
-6. operator audit surfaces remain read-only
+6. admission dataset JSONL export is produced without prompt payload
+7. operator audit surfaces remain read-only
+
+For the dataset export path specifically, see
+[docs/AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md](docs/AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md).
 
 For raw HTTP integration without the TypeScript SDK:
 
@@ -163,8 +167,14 @@ The SDK quickstart prints a compact product result like this:
     "feedback_attributed_memory_count": 1,
     "measure_history_impact": "positive"
   },
+  "admission_dataset_export": {
+    "row_count": 4,
+    "positive_use_count": 1,
+    "prompt_payload_excluded": true
+  },
   "operator_audit": {
     "memory_use_receipt_visible": true,
+    "memory_admission_record_visible": true,
     "snapshot_runtime_mutation": false
   }
 }

@@ -9,8 +9,11 @@ import {
   compileExecutionAgentContext,
   createAionisClient,
   feedbackFromGuide,
+  memoryAdmissionDatasetJsonlFromRows,
+  memoryAdmissionDatasetRowsFromRecord,
   measureInputFromGuideLoop,
   snapshotInputFromGuideLoop,
+  type AionisMemoryAdmissionRecord,
 } from "../../src/sdk.ts";
 import {
   asRecord,
@@ -230,9 +233,30 @@ async function main() {
     const historyImpact = asRecord(effectReport?.history_impact);
     const decisionTrace = asRecord(measure.memory_decision_trace);
     const receipt = asRecord(decisionTrace?.memory_use_receipt);
+    const admissionRecord = asRecord(decisionTrace?.admission_record);
     assertCondition(measure.contract_version === "aionis_measure_result_v1", "SDK quickstart measure did not return result v1");
     assertCondition(historyImpact?.impact_direction === "positive", "SDK quickstart measure did not report positive history impact");
     assertCondition(receipt?.contract_version === "aionis_memory_use_receipt_v1", "SDK quickstart measure missing memory use receipt");
+    assertCondition(admissionRecord?.contract_version === "aionis_memory_admission_record_v1", "SDK quickstart measure missing admission record");
+
+    const admissionDatasetRows = memoryAdmissionDatasetRowsFromRecord(admissionRecord as unknown as AionisMemoryAdmissionRecord, {
+      run_id: runId,
+      task_id: `task:${runId}`,
+      task_signature: "sdk-quickstart",
+    });
+    const admissionDatasetJsonl = memoryAdmissionDatasetJsonlFromRows(admissionDatasetRows);
+    const attributedProjectFactRow = admissionDatasetRows.find((entry) => entry.memory_id === projectFactId);
+    assertCondition(admissionDatasetRows.length > 0, "SDK quickstart admission dataset export produced no rows");
+    assertCondition(
+      admissionDatasetJsonl.split("\n").filter(Boolean).length === admissionDatasetRows.length,
+      "SDK quickstart admission dataset JSONL line count mismatch",
+    );
+    assertCondition(
+      attributedProjectFactRow?.outcome_label === "positive_use",
+      "SDK quickstart admission dataset did not join positive feedback attribution",
+    );
+    assertCondition(!admissionDatasetJsonl.includes("prompt_text"), "SDK quickstart admission dataset leaked prompt_text");
+    assertCondition(!admissionDatasetJsonl.includes("prompt_preview"), "SDK quickstart admission dataset leaked prompt preview");
 
     const snapshot = await aionis.snapshot<Record<string, unknown>>(snapshotInputFromGuideLoop({
       run_id: runId,
@@ -244,8 +268,10 @@ async function main() {
     }));
     const operatorSnapshot = asRecord(snapshot.operator_snapshot);
     const snapshotReceipt = asRecord(operatorSnapshot?.memory_use_receipt);
+    const snapshotAdmissionRecord = asRecord(operatorSnapshot?.memory_admission_record);
     assertCondition(operatorSnapshot?.contract_version === "aionis_operator_snapshot_v1", "SDK quickstart snapshot missing snapshot v1");
     assertCondition(snapshotReceipt?.contract_version === "aionis_memory_use_receipt_v1", "SDK quickstart snapshot missing receipt");
+    assertCondition(snapshotAdmissionRecord?.contract_version === "aionis_memory_admission_record_v1", "SDK quickstart snapshot missing admission record");
 
     const feedbackEffect = asRecord(feedback.forget_effect);
     const guideTrace = asRecord(feedbackEffect?.guide_trace);
@@ -290,10 +316,22 @@ async function main() {
         feedback_attributed_memory_count: guideTrace?.attributed_memory_count ?? null,
         measure_history_impact: historyImpact.impact_direction,
       },
+      admission_dataset_export: {
+        contract_version: "aionis_memory_admission_dataset_row_v1",
+        row_count: admissionDatasetRows.length,
+        jsonl_line_count: admissionDatasetJsonl.split("\n").filter(Boolean).length,
+        positive_use_count: admissionDatasetRows.filter((entry) => entry.outcome_label === "positive_use").length,
+        blocked_or_suppressed_count: admissionDatasetRows.filter((entry) => entry.outcome_label === "blocked_or_suppressed").length,
+        prompt_payload_excluded: !admissionDatasetJsonl.includes("prompt_text"),
+        raw_slots_excluded: !admissionDatasetJsonl.includes("raw_slots") && !admissionDatasetJsonl.includes("\"slots\""),
+        example_jsonl_line: admissionDatasetJsonl.split("\n").find(Boolean) ?? null,
+      },
       operator_audit: {
         memory_use_receipt_visible: true,
         receipt_decision_summary_count: recordArray(receipt.decision_summaries).length,
+        memory_admission_record_visible: true,
         snapshot_receipt_visible: true,
+        snapshot_admission_record_visible: true,
         snapshot_runtime_mutation: operatorSnapshot.runtime_mutation,
       },
       checks: {
@@ -304,6 +342,9 @@ async function main() {
         execution_context_compiler_used: compiledContext.contract_version === "aionis_execution_agent_context_v1",
         execution_context_receipt_visible: compiledContext.memory_use_receipt.contract_version === "aionis_memory_use_receipt_v1",
         feedback_attributed: guideTrace?.attributed_memory_count === 1,
+        admission_dataset_exported: admissionDatasetRows.length > 0,
+        admission_dataset_feedback_joined: attributedProjectFactRow?.outcome_label === "positive_use",
+        admission_dataset_prompt_payload_excluded: !admissionDatasetJsonl.includes("prompt_text"),
         positive_history_impact_measured: historyImpact.impact_direction === "positive",
         operator_snapshot_read_only: operatorSnapshot.runtime_mutation === false,
       },

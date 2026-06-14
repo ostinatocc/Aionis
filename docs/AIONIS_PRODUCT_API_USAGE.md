@@ -21,6 +21,8 @@ For choosing SDK, raw HTTP, or multi-agent first-run commands, see
 [AIONIS_QUICKSTART_MATRIX.md](AIONIS_QUICKSTART_MATRIX.md).
 For one-command Runtime plus SDK installation, see
 [AIONIS_INSTALL.md](AIONIS_INSTALL.md).
+For admission dataset JSONL export, see
+[AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md](AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md).
 
 ## Route Summary
 
@@ -237,8 +239,9 @@ export AIONIS_PRODUCT_E2E_BASE_URL="http://127.0.0.1:3001"
 npm run -s runtime:e2e:product-loop
 ```
 
-The product-loop e2e exercises `observe -> guide -> simulated Agent -> observe
-outcome -> rehydrate -> measure`, and also verifies that the advanced
+The product-loop e2e exercises `observe -> guide -> simulated Agent ->
+feedback -> measure -> admission dataset JSONL export -> snapshot`, and also
+verifies that the advanced
 `/v1/execution/context/assemble` and product `/v1/guide mode=full_power`
 `agent_context` keep passed branches, failed branches, and audit surfaces
 separated.

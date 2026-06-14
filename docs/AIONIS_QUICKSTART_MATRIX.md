@@ -24,7 +24,7 @@ MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quicks
 
 | Quickstart | Proves | Best For | Example Output |
 |---|---|---|---|
-| SDK quickstart | Ordinary preference and project memory become compact Agent context; feedback is attributed to IDs exposed by the guide; measure and snapshot stay read-only. | Single-Agent product integration, SDK users, first local smoke test. | [sdk-quickstart-result.json](examples/sdk-quickstart-result.json) |
+| SDK quickstart | Ordinary preference and project memory become compact Agent context; feedback is attributed to IDs exposed by the guide; admission dataset JSONL export is produced; measure and snapshot stay read-only. | Single-Agent product integration, SDK users, first local smoke test. | [sdk-quickstart-result.json](examples/sdk-quickstart-result.json) |
 | HTTP quickstart | The public HTTP product surface works without SDK helpers; raw `guide_trace_id + used_memory_ids` attribution works; `/v1/rehydrate` can restore archived memory. | Backend services, non-TypeScript hosts, curl/API validation. | [http-quickstart-result.json](examples/http-quickstart-result.json) |
 | Multi-agent quickstart | Planner, worker, verifier, and reviewer can share execution memory; reviewer continues the passed branch and avoids the failed branch. | Multi-Agent execution memory, handoff, branch isolation. | [multi-agent-quickstart-result.json](examples/multi-agent-quickstart-result.json) |
 
@@ -59,6 +59,10 @@ All quickstarts follow the same boundary:
 3. Feedback is attributed only to memory IDs the host reports as used.
 4. Measure and operator snapshot are read-only product surfaces.
 5. Rehydrate expands colder memory or payload only when the host asks for it.
+6. Admission dataset export stays in host/operator logs and excludes raw prompt payload.
+
+Focused dataset export guide:
+[AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md](AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md).
 
 ## Environment
 

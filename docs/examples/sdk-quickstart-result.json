@@ -44,10 +44,22 @@
     "feedback_attributed_memory_count": 1,
     "measure_history_impact": "positive"
   },
+  "admission_dataset_export": {
+    "contract_version": "aionis_memory_admission_dataset_row_v1",
+    "row_count": 4,
+    "jsonl_line_count": 4,
+    "positive_use_count": 1,
+    "blocked_or_suppressed_count": 0,
+    "prompt_payload_excluded": true,
+    "raw_slots_excluded": true,
+    "example_jsonl_line": "{\"contract_version\":\"aionis_memory_admission_dataset_row_v1\",\"intended_use\":\"memory_admission_policy_training_or_audit\",\"source\":\"memory_admission_record\",\"agent_prompt_included\":false,\"runtime_mutation\":false,\"tenant_id\":\"default\",\"scope\":\"sdk-quickstart-example\",\"guide_trace_id\":\"guide-example\",\"run_id\":\"sdk-quickstart-example\",\"task_id\":\"task:sdk-quickstart-example\",\"task_signature\":\"sdk-quickstart\",\"row_index\":0,\"memory_id\":\"mem_project_fact_example\",\"title\":\"SDK quickstart project fact\",\"domain\":\"general\",\"memory_type\":\"project_context\",\"lifecycle_state\":\"active\",\"authority\":\"advisory\",\"admission_action\":\"use_now\",\"decision_kind\":\"used\",\"actionable\":true,\"prompt_included\":true,\"agent_used\":true,\"feedback_outcome\":\"positive\",\"attribution_strength\":\"positive_attribution\",\"outcome_label\":\"positive_use\",\"reason_codes\":[\"available_for_agent_use\"],\"evidence_ids\":[],\"prompt_char_count\":723,\"history_used\":true,\"actionable_history_used\":true}"
+  },
   "operator_audit": {
     "memory_use_receipt_visible": true,
     "receipt_decision_summary_count": 2,
+    "memory_admission_record_visible": true,
     "snapshot_receipt_visible": true,
+    "snapshot_admission_record_visible": true,
     "snapshot_runtime_mutation": false
   },
   "checks": {
@@ -58,6 +70,9 @@
     "execution_context_compiler_used": true,
     "execution_context_receipt_visible": true,
     "feedback_attributed": true,
+    "admission_dataset_exported": true,
+    "admission_dataset_feedback_joined": true,
+    "admission_dataset_prompt_payload_excluded": true,
     "positive_history_impact_measured": true,
     "operator_snapshot_read_only": true
   }
