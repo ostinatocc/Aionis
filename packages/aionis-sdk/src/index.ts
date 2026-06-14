@@ -169,8 +169,8 @@ export type AionisMemoryAdmissionRecord = {
   source: "memory_decision_trace" | "external_candidate_admission";
   agent_prompt_included: false;
   runtime_mutation: false;
-  tenant_id?: string;
-  scope?: string;
+  tenant_id: string;
+  scope: string;
   guide_trace_id: string | null;
   prompt_char_count: number;
   history_used: boolean;
@@ -878,6 +878,30 @@ function guideTraceId(value: unknown): string | null {
   return typeof entry === "string" && entry.length > 0 ? entry : null;
 }
 
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function guideTenantId(value: unknown): string {
+  const guideRecord = asRecord(value);
+  const agentContext = asRecord(guideRecord?.agent_context);
+  const trace = asRecord(guideRecord?.memory_decision_trace);
+  return nonEmptyString(guideRecord?.tenant_id)
+    ?? nonEmptyString(agentContext?.tenant_id)
+    ?? nonEmptyString(trace?.tenant_id)
+    ?? "default";
+}
+
+function guideScope(value: unknown): string {
+  const guideRecord = asRecord(value);
+  const agentContext = asRecord(guideRecord?.agent_context);
+  const trace = asRecord(guideRecord?.memory_decision_trace);
+  return nonEmptyString(guideRecord?.scope)
+    ?? nonEmptyString(agentContext?.scope)
+    ?? nonEmptyString(trace?.scope)
+    ?? "default";
+}
+
 function safeAgentPromptFromGuide(guide: unknown): string {
   try {
     return agentPromptFromGuide(guide);
@@ -905,7 +929,12 @@ function admissionRecordFromGuideTrace(guide: unknown): AionisMemoryAdmissionRec
     asRecord(asRecord(guideRecord?.agent_context)?.memory_admission_record),
   ];
   const record = candidates.find((entry) => entry?.contract_version === "aionis_memory_admission_record_v1");
-  return record ? record as unknown as AionisMemoryAdmissionRecord : null;
+  if (!record) return null;
+  return {
+    ...(record as unknown as AionisMemoryAdmissionRecord),
+    tenant_id: nonEmptyString(record.tenant_id) ?? guideTenantId(guide),
+    scope: nonEmptyString(record.scope) ?? guideScope(guide),
+  };
 }
 
 function decisionSummariesFromSurfaces(input: {
@@ -1648,6 +1677,8 @@ export function memoryAdmissionRecordFromGuide(guide: unknown): AionisMemoryAdmi
     source: "memory_decision_trace",
     agent_prompt_included: false,
     runtime_mutation: false,
+    tenant_id: guideTenantId(guide),
+    scope: guideScope(guide),
     guide_trace_id: receipt.guide_trace_id,
     prompt_char_count: receipt.prompt_char_count,
     history_used: receipt.history_used,

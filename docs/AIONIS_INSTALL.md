@@ -98,4 +98,15 @@ Or use it directly:
 npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope my-project
 ```
 
+For Claude Code:
+
+```bash
+claude mcp add --transport stdio --scope project aionis -- \
+  npx -y @aionis/mcp@latest \
+  --base-url http://127.0.0.1:3001 \
+  --scope my-project
+```
+
 MCP integration guide: [AIONIS_MCP.md](AIONIS_MCP.md).
+
+Claude Code demo: [AIONIS_CLAUDE_CODE_DEMO.md](AIONIS_CLAUDE_CODE_DEMO.md).

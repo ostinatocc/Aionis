@@ -1,0 +1,60 @@
+{
+  "contract_version": "aionis_claude_code_mcp_demo_result_v1",
+  "run_id": "claude-code-mcp-example",
+  "runtime": {
+    "mode": "spawned",
+    "base_url": "http://127.0.0.1:3001",
+    "embedding_provider": "minimax"
+  },
+  "claude_code_mcp": {
+    "transport": "stdio",
+    "add_command": "claude mcp add --transport stdio --scope project aionis -- npx -y @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope my-project",
+    "tools_used": [
+      "aionis_health",
+      "aionis_record_step",
+      "aionis_context",
+      "aionis_flight_recorder"
+    ]
+  },
+  "execution_memory": {
+    "should_continue_memory_ids": [
+      "mem_current_route_example"
+    ],
+    "must_not_memory_ids": [],
+    "inspect_first_memory_ids": [
+      "mem_failed_route_example"
+    ],
+    "feedback_required": false,
+    "prompt_char_count": 1900
+  },
+  "flight_recorder": {
+    "contract_version": "aionis_agent_flight_recorder_report_v1",
+    "prompt_payload_excluded": true,
+    "runtime_mutation": false,
+    "use_now_memory_ids": [
+      "mem_current_route_example"
+    ],
+    "do_not_use_memory_ids": [],
+    "blocked_or_suppressed_count": 0,
+    "feedback_attribution_present": true,
+    "replay_sources": {
+      "has_agent_context": true,
+      "has_memory_use_receipt": true,
+      "has_memory_admission_record": true,
+      "has_feedback_result": true
+    }
+  },
+  "checks": {
+    "health_ok": true,
+    "record_failed_branch": true,
+    "record_passed_branch": true,
+    "context_compiled": true,
+    "should_continue_present": true,
+    "failed_branch_guard_present": true,
+    "memory_use_receipt_visible": true,
+    "memory_admission_record_visible": true,
+    "flight_recorder_replayed": true,
+    "no_prompt_payload_in_recorder": true,
+    "no_runtime_mutation_in_recorder": true
+  }
+}

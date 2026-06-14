@@ -43,6 +43,45 @@ AIONIS_SCOPE=my-project \
 npx @aionis/mcp@latest
 ```
 
+## Claude Code
+
+Add Aionis to the current Claude Code project:
+
+```bash
+claude mcp add --transport stdio --scope project aionis -- \
+  npx -y @aionis/mcp@latest \
+  --base-url http://127.0.0.1:3001 \
+  --scope my-project
+```
+
+Use local scope for a private machine-only config:
+
+```bash
+claude mcp add --transport stdio --scope local aionis -- \
+  npx -y @aionis/mcp@latest \
+  --base-url http://127.0.0.1:3001 \
+  --scope my-project
+```
+
+Inspect the server with:
+
+```bash
+claude mcp list
+claude mcp get aionis
+```
+
+Full Claude Code demo:
+[AIONIS_CLAUDE_CODE_DEMO.md](AIONIS_CLAUDE_CODE_DEMO.md).
+
+Project config example:
+[examples/claude-code-aionis-mcp.project.json](examples/claude-code-aionis-mcp.project.json).
+
+Runtime smoke:
+
+```bash
+npm run -s runtime:quickstart:claude-code-mcp
+```
+
 ## MCP Client Config
 
 ```json

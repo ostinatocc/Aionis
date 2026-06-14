@@ -16,6 +16,15 @@ Already have a local Runtime? Add Aionis to Claude Code, Cursor, or another MCP
 client:
 
 ```bash
+claude mcp add --transport stdio --scope project aionis -- \
+  npx -y @aionis/mcp@latest \
+  --base-url http://127.0.0.1:3001 \
+  --scope my-project
+```
+
+Generic MCP clients can run the bridge directly:
+
+```bash
 npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope my-project
 ```
 
@@ -200,6 +209,15 @@ npm run -s runtime:quickstart:flight-recorder
 That loop replays what memory the Agent could see at decision time without
 including prompt text or mutating Runtime state.
 
+For Claude Code over MCP:
+
+```bash
+npm run -s runtime:quickstart:claude-code-mcp
+```
+
+That loop verifies the same MCP tool path Claude Code uses:
+`aionis_health -> aionis_record_step -> aionis_context -> aionis_flight_recorder`.
+
 Not sure which entrypoint to use? See the
 [quickstart matrix](docs/AIONIS_QUICKSTART_MATRIX.md).
 
@@ -245,6 +263,7 @@ Full example outputs:
 5. [Judgment calibration product loop result](docs/examples/judgment-calibration-product-loop-result.json)
 6. [Memory Firewall quickstart result](docs/examples/memory-firewall-quickstart-result.json)
 7. [Flight Recorder quickstart result](docs/examples/flight-recorder-quickstart-result.json)
+8. [Claude Code MCP demo result](docs/examples/claude-code-mcp-demo-result.json)
 
 ## What The Agent Gets
 
@@ -369,6 +388,15 @@ buckets, memory IDs, feedback attribution, receipts, or operator audit surfaces.
 `@aionis/mcp` is the drop-in path for coding agents. It exposes Aionis as MCP
 tools without asking the host to implement the full feedback loop on day one.
 
+Claude Code local project setup:
+
+```bash
+claude mcp add --transport stdio --scope project aionis -- \
+  npx -y @aionis/mcp@latest \
+  --base-url http://127.0.0.1:3001 \
+  --scope my-project
+```
+
 ```json
 {
   "mcpServers": {
@@ -397,7 +425,14 @@ is optional; teams can start with context-only use and later add
 Set `context_mode: "compact_agent"` on `aionis_context` when the Agent needs a
 shorter prompt while the host keeps structured IDs and audit fields.
 
-Full MCP guide: [docs/AIONIS_MCP.md](docs/AIONIS_MCP.md).
+Claude Code walkthrough:
+[docs/AIONIS_CLAUDE_CODE_DEMO.md](docs/AIONIS_CLAUDE_CODE_DEMO.md).
+
+Example Claude Code result:
+[docs/examples/claude-code-mcp-demo-result.json](docs/examples/claude-code-mcp-demo-result.json).
+
+Full MCP guide:
+[docs/AIONIS_MCP.md](docs/AIONIS_MCP.md).
 
 ## Use Aionis In Your Agent
 

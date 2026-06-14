@@ -366,6 +366,8 @@ test("@aionis/sdk compiles a contract-style execution Agent context", () => {
   assert.equal(memoryUseReceiptFromGuide(guide).agent_prompt_included, false);
   assert.deepEqual(memoryUseReceiptFromGuide(guide).rehydrate_memory_ids, ["mem-archive"]);
   assert.equal(memoryAdmissionRecordFromGuide(guide).contract_version, "aionis_memory_admission_record_v1");
+  assert.equal(memoryAdmissionRecordFromGuide(guide).tenant_id, "default");
+  assert.equal(memoryAdmissionRecordFromGuide(guide).scope, "default");
   assert.deepEqual(
     memoryAdmissionRecordFromGuide(guide).entries.map((entry) => [entry.memory_id, entry.admission_action]),
     [
@@ -376,6 +378,8 @@ test("@aionis/sdk compiles a contract-style execution Agent context", () => {
     ],
   );
   assert.equal(compiled.memory_admission_record.contract_version, "aionis_memory_admission_record_v1");
+  assert.equal(compiled.memory_admission_record.tenant_id, "default");
+  assert.equal(compiled.memory_admission_record.scope, "default");
   assert.equal(compiled.memory_admission_record.candidate_memory_count, 4);
 
   const coding = compileCodingAgentContext({ guide, include_base_prompt: false, max_prompt_chars: 2_000 });
