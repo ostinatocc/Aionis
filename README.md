@@ -138,6 +138,9 @@ API details:
 Security/product packaging:
 [docs/AIONIS_MEMORY_FIREWALL.md](docs/AIONIS_MEMORY_FIREWALL.md).
 
+Mem0 A/B evidence:
+[docs/AIONIS_MEM0_FIREWALL_AB_REPORT.md](docs/AIONIS_MEM0_FIREWALL_AB_REPORT.md).
+
 ## Replay Agent Decisions
 
 Aionis also exposes an Agent Flight Recorder. After a run, call

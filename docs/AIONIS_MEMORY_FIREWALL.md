@@ -26,6 +26,9 @@ Runnable SDK quickstart:
 npm run -s runtime:quickstart:memory-firewall
 ```
 
+Mem0 A/B evidence:
+[AIONIS_MEM0_FIREWALL_AB_REPORT.md](AIONIS_MEM0_FIREWALL_AB_REPORT.md).
+
 Example output:
 [docs/examples/memory-firewall-quickstart-result.json](examples/memory-firewall-quickstart-result.json).
 
