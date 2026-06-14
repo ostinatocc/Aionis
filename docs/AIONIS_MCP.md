@@ -73,6 +73,9 @@ claude mcp get aionis
 Full Claude Code demo:
 [AIONIS_CLAUDE_CODE_DEMO.md](AIONIS_CLAUDE_CODE_DEMO.md).
 
+Real Claude Code transcript:
+[examples/claude-code-real-demo-transcript.md](examples/claude-code-real-demo-transcript.md).
+
 Project config example:
 [examples/claude-code-aionis-mcp.project.json](examples/claude-code-aionis-mcp.project.json).
 

@@ -99,6 +99,10 @@ Expected result contract:
 
 [examples/claude-code-mcp-demo-result.json](examples/claude-code-mcp-demo-result.json)
 
+Real Claude Code transcript:
+
+[examples/claude-code-real-demo-transcript.md](examples/claude-code-real-demo-transcript.md)
+
 The smoke starts or targets a real Runtime and calls:
 
 ```text
@@ -123,8 +127,10 @@ execution-memory contract it received.
 In the `aionis_context` result:
 
 - `agent_prompt` contains `AIONIS_EXECUTION_AGENT_CONTEXT`.
-- `should_continue_memory_ids` is non-empty.
-- `must_not_memory_ids` or `inspect_first_memory_ids` is non-empty.
+- `memory_use_receipt.use_now_memory_ids` or `should_continue_memory_ids`
+  contains the accepted route.
+- `inspect_before_use_memory_ids`, `must_not_memory_ids`, or
+  `inspect_first_memory_ids` contains guarded history.
 - `memory_use_receipt.contract_version` is `aionis_memory_use_receipt_v1`.
 - `memory_admission_record.contract_version` is
   `aionis_memory_admission_record_v1`.
@@ -157,6 +163,22 @@ aionis_context
 
 Add `aionis_flight_recorder` when an operator needs to replay a decision after
 an incident.
+
+## Troubleshooting
+
+If Claude Code connects to MCP and `aionis_record_step` works, but
+`aionis_context` returns `400 /v1/guide`, check the Runtime embedding provider.
+The guide/context path needs recall and planning context; local Runtime startup
+should include an embedding provider:
+
+```bash
+export EMBEDDING_PROVIDER="minimax"
+export MINIMAX_API_KEY="your-minimax-key"
+npm run -s lite:start
+```
+
+Candidate-only governance can still work without embeddings, but the full
+execution-context path should be run with embeddings configured.
 
 ## Boundary
 

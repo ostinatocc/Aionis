@@ -219,6 +219,7 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.match(readme, /docs\/examples\/memory-firewall-quickstart-result\.json/);
   assert.match(readme, /docs\/examples\/flight-recorder-quickstart-result\.json/);
   assert.match(readme, /docs\/examples\/claude-code-mcp-demo-result\.json/);
+  assert.match(readme, /docs\/examples\/claude-code-real-demo-transcript\.md/);
   assert.match(readme, /docs\/examples\/judgment-calibration-product-loop-result\.json/);
   assert.match(readme, /docs\/AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART\.md/);
   assert.match(readme, /@aionis\/mcp@latest/);
@@ -306,6 +307,10 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.equal(flightRecorder.checks?.feedback_attribution_replayed, true);
 
   const claudeCode = readJson("docs/examples/claude-code-mcp-demo-result.json");
+  const claudeCodeTranscript = fs.readFileSync(
+    path.join(ROOT, "docs", "examples", "claude-code-real-demo-transcript.md"),
+    "utf8",
+  );
   assert.equal(claudeCode.contract_version, "aionis_claude_code_mcp_demo_result_v1");
   assert.equal(claudeCode.claude_code_mcp?.transport, "stdio");
   assert.match(claudeCode.claude_code_mcp?.add_command, /claude mcp add --transport stdio/);
@@ -317,6 +322,13 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.equal(claudeCode.checks?.failed_branch_guard_present, true);
   assert.equal(claudeCode.checks?.memory_use_receipt_visible, true);
   assert.equal(claudeCode.checks?.memory_admission_record_visible, true);
+  assert.match(claudeCodeTranscript, /Claude Code Real MCP Demo Transcript/);
+  assert.match(claudeCodeTranscript, /EMBEDDING_PROVIDER=minimax/);
+  assert.match(claudeCodeTranscript, /aionis_context/);
+  assert.match(claudeCodeTranscript, /aionis_memory_use_receipt_v1/);
+  assert.match(claudeCodeTranscript, /aionis_memory_admission_record_v1/);
+  assert.match(claudeCodeTranscript, /400 \/v1\/guide/);
+  assert.match(claudeCodeTranscript, /claude-code-real-demo-pass/);
 
   const calibration = readJson("docs/examples/judgment-calibration-product-loop-result.json");
   assert.equal(calibration.contract_version, "aionis_judgment_calibration_product_loop_result_v1");
@@ -409,6 +421,7 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(readme, /claude mcp add --transport stdio/);
   assert.match(readme, /docs\/AIONIS_MCP\.md/);
   assert.match(readme, /docs\/AIONIS_CLAUDE_CODE_DEMO\.md/);
+  assert.match(readme, /docs\/examples\/claude-code-real-demo-transcript\.md/);
   assert.match(readme, /aionis_context/);
   assert.match(readme, /from "@aionis\/sdk"/);
   assert.match(readme, /aionis\.execution\.observeStep/);
@@ -458,6 +471,7 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(mcpDoc, /claude mcp add --transport stdio/);
   assert.match(mcpDoc, /runtime:quickstart:claude-code-mcp/);
   assert.match(mcpDoc, /AIONIS_CLAUDE_CODE_DEMO\.md/);
+  assert.match(mcpDoc, /claude-code-real-demo-transcript\.md/);
   assert.match(claudeCodeDemo, /claude mcp add --transport stdio/);
   assert.match(claudeCodeDemo, /runtime:quickstart:claude-code-mcp/);
   assert.match(claudeCodeDemo, /aionis_health/);
@@ -466,6 +480,8 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(claudeCodeDemo, /aionis_flight_recorder/);
   assert.match(claudeCodeDemo, /claude-code-aionis-mcp\.project\.json/);
   assert.match(claudeCodeDemo, /claude-code-aionis-demo-prompt\.md/);
+  assert.match(claudeCodeDemo, /claude-code-real-demo-transcript\.md/);
+  assert.match(claudeCodeDemo, /400 \/v1\/guide/);
   assert.doesNotMatch(sdkQuickstart, /`operatorSnapshot\(\)` exposes/);
   assert.match(minimalAgentExample, /from "@aionis\/sdk"/);
   assert.match(minimalAgentExample, /aionis\.execution\.observeStep/);

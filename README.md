@@ -431,6 +431,9 @@ Claude Code walkthrough:
 Example Claude Code result:
 [docs/examples/claude-code-mcp-demo-result.json](docs/examples/claude-code-mcp-demo-result.json).
 
+Real Claude Code transcript:
+[docs/examples/claude-code-real-demo-transcript.md](docs/examples/claude-code-real-demo-transcript.md).
+
 Full MCP guide:
 [docs/AIONIS_MCP.md](docs/AIONIS_MCP.md).
 
