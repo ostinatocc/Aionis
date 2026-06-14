@@ -168,11 +168,27 @@ test("focused package exposes developer quickstarts through the Runtime e2e surf
     "npx tsx scripts/e2e/developer-multi-agent-quickstart.ts",
   );
   assert.equal(
+    packageJson.scripts?.["runtime:quickstart:memory-firewall"],
+    "npx tsx scripts/e2e/developer-memory-firewall-quickstart.ts",
+  );
+  assert.equal(
+    packageJson.scripts?.["runtime:quickstart:flight-recorder"],
+    "npx tsx scripts/e2e/developer-flight-recorder-quickstart.ts",
+  );
+  assert.equal(
     fs.existsSync(path.join(ROOT, "scripts", "e2e", "developer-sdk-quickstart.ts")),
     true,
   );
   assert.equal(
     fs.existsSync(path.join(ROOT, "scripts", "e2e", "developer-multi-agent-quickstart.ts")),
+    true,
+  );
+  assert.equal(
+    fs.existsSync(path.join(ROOT, "scripts", "e2e", "developer-memory-firewall-quickstart.ts")),
+    true,
+  );
+  assert.equal(
+    fs.existsSync(path.join(ROOT, "scripts", "e2e", "developer-flight-recorder-quickstart.ts")),
     true,
   );
 });
@@ -184,11 +200,15 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.match(readme, /npm run -s runtime:quickstart:sdk/);
   assert.match(readme, /npm run -s runtime:quickstart:http/);
   assert.match(readme, /npm run -s runtime:quickstart:multi-agent/);
+  assert.match(readme, /npm run -s runtime:quickstart:memory-firewall/);
+  assert.match(readme, /npm run -s runtime:quickstart:flight-recorder/);
   assert.match(readme, /docs\/AIONIS_QUICKSTART_MATRIX\.md/);
   assert.match(readme, /npm run -s runtime:e2e:judgment-calibration/);
   assert.match(readme, /docs\/examples\/sdk-quickstart-result\.json/);
   assert.match(readme, /docs\/examples\/http-quickstart-result\.json/);
   assert.match(readme, /docs\/examples\/multi-agent-quickstart-result\.json/);
+  assert.match(readme, /docs\/examples\/memory-firewall-quickstart-result\.json/);
+  assert.match(readme, /docs\/examples\/flight-recorder-quickstart-result\.json/);
   assert.match(readme, /docs\/examples\/judgment-calibration-product-loop-result\.json/);
   assert.match(readme, /docs\/AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART\.md/);
   assert.match(readme, /@aionis\/mcp@latest/);
@@ -202,6 +222,14 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.equal(
     packageJson.scripts?.["runtime:quickstart:multi-agent"],
     "npx tsx scripts/e2e/developer-multi-agent-quickstart.ts",
+  );
+  assert.equal(
+    packageJson.scripts?.["runtime:quickstart:memory-firewall"],
+    "npx tsx scripts/e2e/developer-memory-firewall-quickstart.ts",
+  );
+  assert.equal(
+    packageJson.scripts?.["runtime:quickstart:flight-recorder"],
+    "npx tsx scripts/e2e/developer-flight-recorder-quickstart.ts",
   );
   assert.equal(
     packageJson.scripts?.["runtime:e2e:judgment-calibration"],
@@ -243,6 +271,24 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.equal(multiAgent.operator_audit?.memory_use_receipt_visible, true);
   assert.equal(multiAgent.checks?.reviewer_avoids_failed_branch, true);
 
+  const firewall = readJson("docs/examples/memory-firewall-quickstart-result.json");
+  assert.equal(firewall.contract_version, "aionis_memory_firewall_quickstart_result_v1");
+  assert.equal(firewall.memory_firewall?.contract_version, "aionis_memory_firewall_summary_v1");
+  assert.equal(firewall.memory_firewall?.unsafe_direct_use_count, 0);
+  assert.equal(firewall.memory_firewall?.runtime_mutation, false);
+  assert.equal(firewall.operator_audit?.memory_write_omitted, true);
+  assert.equal(firewall.checks?.failed_memory_blocked, true);
+  assert.equal(firewall.checks?.stale_memory_blocked, true);
+  assert.equal(firewall.checks?.rehydrate_memory_pointer_only, true);
+
+  const flightRecorder = readJson("docs/examples/flight-recorder-quickstart-result.json");
+  assert.equal(flightRecorder.contract_version, "aionis_flight_recorder_quickstart_result_v1");
+  assert.equal(flightRecorder.agent_view?.prompt_text_included, false);
+  assert.equal(flightRecorder.incident_replay?.runtime_mutation, false);
+  assert.equal(flightRecorder.replay_sources?.has_memory_admission_record, true);
+  assert.equal(flightRecorder.checks?.blocked_memory_replayed, true);
+  assert.equal(flightRecorder.checks?.feedback_attribution_replayed, true);
+
   const calibration = readJson("docs/examples/judgment-calibration-product-loop-result.json");
   assert.equal(calibration.contract_version, "aionis_judgment_calibration_product_loop_result_v1");
   assert.deepEqual(calibration.judgment_calibration?.supported_memory_ids, ["mem_supported_example"]);
@@ -256,6 +302,8 @@ test("README quickstart examples stay aligned with product result contracts", ()
     "npm run -s runtime:quickstart:sdk",
     "npm run -s runtime:quickstart:http",
     "npm run -s runtime:quickstart:multi-agent",
+    "npm run -s runtime:quickstart:memory-firewall",
+    "npm run -s runtime:quickstart:flight-recorder",
     "npm run -s runtime:e2e:golden-product-loop",
     "npm run -s runtime:e2e:judgment-calibration",
     "npm run -s runtime:e2e:ordinary-memory",
@@ -265,6 +313,8 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.match(matrix, /aionis_sdk_quickstart_result_v1/);
   assert.match(matrix, /aionis_http_quickstart_result_v1/);
   assert.match(matrix, /aionis_multi_agent_quickstart_result_v1/);
+  assert.match(matrix, /aionis_memory_firewall_quickstart_result_v1/);
+  assert.match(matrix, /aionis_flight_recorder_quickstart_result_v1/);
   assert.match(matrix, /SDK facade/);
   assert.match(matrix, /AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART\.md/);
   assert.match(matrix, /Raw HTTP/);

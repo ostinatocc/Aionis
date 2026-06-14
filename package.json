@@ -38,6 +38,8 @@
     "runtime:quickstart:sdk": "npx tsx scripts/e2e/developer-sdk-quickstart.ts",
     "runtime:quickstart:http": "npx tsx scripts/e2e/developer-http-quickstart.ts",
     "runtime:quickstart:multi-agent": "npx tsx scripts/e2e/developer-multi-agent-quickstart.ts",
+    "runtime:quickstart:memory-firewall": "npx tsx scripts/e2e/developer-memory-firewall-quickstart.ts",
+    "runtime:quickstart:flight-recorder": "npx tsx scripts/e2e/developer-flight-recorder-quickstart.ts",
     "runtime:e2e:ordinary-memory": "npx tsx scripts/e2e/ordinary-memory-product-loop.ts",
     "runtime:e2e:golden-product-loop": "npx tsx scripts/e2e/golden-product-loop.ts",
     "runtime:e2e:judgment-calibration": "npx tsx scripts/e2e/judgment-calibration-product-loop.ts",

@@ -20,6 +20,15 @@ Memory Firewall is exposed through the backend-agnostic gateway:
 POST /v1/memory/govern
 ```
 
+Runnable SDK quickstart:
+
+```bash
+npm run -s runtime:quickstart:memory-firewall
+```
+
+Example output:
+[docs/examples/memory-firewall-quickstart-result.json](examples/memory-firewall-quickstart-result.json).
+
 Set `mode` to `firewall`:
 
 ```json

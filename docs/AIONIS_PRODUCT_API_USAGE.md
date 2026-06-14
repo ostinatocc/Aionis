@@ -23,6 +23,8 @@ For one-command Runtime plus SDK installation, see
 [AIONIS_INSTALL.md](AIONIS_INSTALL.md).
 For admission dataset JSONL export, see
 [AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md](AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md).
+For backend-agnostic Memory Firewall, see
+[AIONIS_MEMORY_FIREWALL.md](AIONIS_MEMORY_FIREWALL.md).
 For incident replay, see
 [AIONIS_AGENT_FLIGHT_RECORDER.md](AIONIS_AGENT_FLIGHT_RECORDER.md).
 

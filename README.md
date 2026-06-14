@@ -181,6 +181,25 @@ That loop writes planner, worker, verifier, and reviewer evidence, then proves
 that the reviewer can continue the passed branch while avoiding the failed
 branch.
 
+For backend-agnostic Memory Firewall:
+
+```bash
+npm run -s runtime:quickstart:memory-firewall
+```
+
+That loop passes Mem0/Zep/vector/markdown-style candidates through
+`/v1/memory/govern` and proves unsafe external memories cannot enter
+direct-use.
+
+For Agent Flight Recorder:
+
+```bash
+npm run -s runtime:quickstart:flight-recorder
+```
+
+That loop replays what memory the Agent could see at decision time without
+including prompt text or mutating Runtime state.
+
 Not sure which entrypoint to use? See the
 [quickstart matrix](docs/AIONIS_QUICKSTART_MATRIX.md).
 
@@ -224,6 +243,8 @@ Full example outputs:
 3. [Multi-agent quickstart result](docs/examples/multi-agent-quickstart-result.json)
 4. [Golden product loop result](docs/examples/golden-product-loop-result.json)
 5. [Judgment calibration product loop result](docs/examples/judgment-calibration-product-loop-result.json)
+6. [Memory Firewall quickstart result](docs/examples/memory-firewall-quickstart-result.json)
+7. [Flight Recorder quickstart result](docs/examples/flight-recorder-quickstart-result.json)
 
 ## What The Agent Gets
 

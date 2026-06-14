@@ -19,6 +19,8 @@ MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quicks
 | Claude Code, Cursor, or another MCP client | `npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope my-project` | MCP stdio | `aionis_context -> agent action -> aionis_record_step` | MCP tool result JSON |
 | A service that calls Aionis over HTTP | `npm run -s runtime:quickstart:http` | Raw HTTP | `observe -> guide -> feedback -> measure -> snapshot -> rehydrate` | `aionis_http_quickstart_result_v1` |
 | A planner/worker/verifier/reviewer system | `npm run -s runtime:quickstart:multi-agent` | SDK + execution memory adapter | `observe -> guide -> feedback -> measure -> snapshot` with shared team memory | `aionis_multi_agent_quickstart_result_v1` |
+| A host with Mem0/Zep/vector/markdown memories | `npm run -s runtime:quickstart:memory-firewall` | SDK facade | `governMemory(mode=firewall)` over external candidates | `aionis_memory_firewall_quickstart_result_v1` |
+| An operator debugging an Agent decision | `npm run -s runtime:quickstart:flight-recorder` | SDK facade | `flightRecorder` over agent context, receipt, admission record, and feedback | `aionis_flight_recorder_quickstart_result_v1` |
 
 ## What Each Quickstart Proves
 
@@ -27,6 +29,8 @@ MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quicks
 | SDK quickstart | Ordinary preference and project memory become compact Agent context; feedback is attributed to IDs exposed by the guide; admission dataset JSONL export is produced; measure and snapshot stay read-only. | Single-Agent product integration, SDK users, first local smoke test. | [sdk-quickstart-result.json](examples/sdk-quickstart-result.json) |
 | HTTP quickstart | The public HTTP product surface works without SDK helpers; raw `guide_trace_id + used_memory_ids` attribution works; `/v1/rehydrate` can restore archived memory. | Backend services, non-TypeScript hosts, curl/API validation. | [http-quickstart-result.json](examples/http-quickstart-result.json) |
 | Multi-agent quickstart | Planner, worker, verifier, and reviewer can share execution memory; reviewer continues the passed branch and avoids the failed branch. | Multi-Agent execution memory, handoff, branch isolation. | [multi-agent-quickstart-result.json](examples/multi-agent-quickstart-result.json) |
+| Memory Firewall quickstart | External memory candidates are routed into `use_now`, `inspect_before_use`, `do_not_use`, and `rehydrate`; unsafe direct use stays zero; no external candidates are written into Runtime memory. | Teams keeping Mem0, Zep, vector DBs, markdown notes, or custom stores while adding admission governance. | [memory-firewall-quickstart-result.json](examples/memory-firewall-quickstart-result.json) |
+| Flight Recorder quickstart | Aionis reconstructs direct-use, blocked, and rehydrate memory IDs from read-only artifacts, joins feedback attribution, and excludes prompt payload. | Operator incident replay, support debugging, audit logging. | [flight-recorder-quickstart-result.json](examples/flight-recorder-quickstart-result.json) |
 
 ## Product Proof Loops
 

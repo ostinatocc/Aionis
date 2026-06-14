@@ -29,6 +29,15 @@ memory rows, raw slots, and embedding vectors.
 POST /v1/audit/flight-recorder
 ```
 
+Runnable SDK quickstart:
+
+```bash
+npm run -s runtime:quickstart:flight-recorder
+```
+
+Example output:
+[docs/examples/flight-recorder-quickstart-result.json](examples/flight-recorder-quickstart-result.json).
+
 ## With Product Trace
 
 If the host has the same product trace used by `/v1/measure`, pass it directly:
