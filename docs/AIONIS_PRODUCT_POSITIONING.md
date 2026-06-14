@@ -107,6 +107,29 @@ operator snapshots so hosts can see:
 5. why feedback was attributed
 6. whether history helped or hurt
 
+### 5. Memory Firewall For Existing Backends
+
+Aionis does not need to replace a team's memory store. It can sit in front of
+Mem0, Zep, vector databases, markdown notes, logs, or internal memory stores as
+the admission layer.
+
+The product framing is:
+
+```text
+Use your existing backend for retrieval. Use Aionis to govern what reaches the Agent.
+```
+
+For Mem0 specifically, the wedge is simple:
+
+```text
+Mem0 search -> Aionis governMem0SearchResults -> governed Agent context
+```
+
+This lets Aionis enter teams that already have a memory backend. The value is
+not "store memories better than Mem0"; the value is preventing failed, stale,
+contested, untrusted, suppressed, or rehydrate-required memories from becoming
+direct Agent instructions.
+
 ## Aionis vs Alternatives
 
 | Approach | What it does | What Aionis adds |
@@ -114,6 +137,7 @@ operator snapshots so hosts can see:
 | Long context | Passes more history to the model. | Compiles only governed memory state into the Agent surface. |
 | Vector recall / RAG | Retrieves related text. | Separates current, stale, contested, failed, and rehydratable memory before use. |
 | Recall memory products | Store and retrieve user or task memories. | Adds lifecycle, authority, feedback attribution, and operator audit. |
+| Mem0 / Zep-style memory backends | Retrieve useful memory candidates. | Governs candidate admission before prompt use without replacing the backend. |
 | Workflow memory | Stores successful procedures. | Also keeps failed branches as counter-evidence and tracks active path state. |
 | Prompt summarization | Compresses text. | Preserves execution state, negative memory, rehydration pointers, and receipts. |
 | Agent frameworks | Orchestrate tools, roles, and model calls. | Supplies governed memory context without owning orchestration. |
@@ -165,6 +189,7 @@ Use this language:
 5. `failed branches become counter-evidence, not prompt pollution`
 6. `auditable memory use receipts`
 7. `state-preserving context compilation`
+8. `use Mem0 for retrieval, use Aionis as the Memory Firewall`
 
 Avoid this language:
 
@@ -214,6 +239,7 @@ Aionis can claim:
 4. feedback attribution to exposed memory IDs
 5. read-only memory use receipt and operator snapshot surfaces
 6. state-preserving context compression baselines recorded in docs
+7. backend-agnostic Memory Firewall for retrieved external candidates
 
 Aionis should not claim:
 

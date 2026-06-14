@@ -8,6 +8,17 @@ Aionis sits between your Agent and its history. It adjudicates whether memory is
 current, stale, contested, failed, reusable, or worth rehydrating, then compiles
 only the external execution state into the next Agent context.
 
+Already using Mem0? Keep it for retrieval. Put Aionis in front of the Agent as
+the Memory Firewall:
+
+```text
+Mem0 search -> Aionis governMem0SearchResults -> safe Agent context
+```
+
+In a 12-scenario real local Mem0 A/B, Mem0 retrieved the current route in every
+case but also retrieved unsafe memories in 10 cases. Aionis preserved 100%
+current-route recall while reducing wrong direct-use from 83.3% to 0%.
+
 ```bash
 MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quickstart sdk
 ```
@@ -41,6 +52,7 @@ Most memory systems retrieve text. Aionis governs state.
 | Shorter context without losing the task | Execution history is compressed into current state, reusable procedures, and rehydrate pointers. |
 | Safer memory than raw RAG | Memories are gated into `use_now`, `inspect_before_use`, `do_not_use`, or `rehydrate`. |
 | Admission for any memory backend | Mem0, Zep, vector DB, markdown, or custom memory candidates can be routed through Aionis before prompt use. |
+| A Memory Firewall for Mem0 | Use Mem0 for recall, then prevent failed, stale, contested, or untrusted memories from becoming Agent instructions. |
 | Multi-agent execution continuity | Planner, worker, verifier, and reviewer share branch-aware execution memory. |
 | Memory that can be controlled | Stale or harmful memory can be suppressed, archived, restored, or rehydrated. |
 | Operator confidence | Every guide can produce memory use receipts, decision traces, and read-only snapshots. |
@@ -140,6 +152,9 @@ Security/product packaging:
 
 Mem0 A/B evidence:
 [docs/AIONIS_MEM0_FIREWALL_AB_REPORT.md](docs/AIONIS_MEM0_FIREWALL_AB_REPORT.md).
+
+Launch copy:
+[docs/AIONIS_MEM0_FIREWALL_LAUNCH_POST.md](docs/AIONIS_MEM0_FIREWALL_LAUNCH_POST.md).
 
 ## Replay Agent Decisions
 

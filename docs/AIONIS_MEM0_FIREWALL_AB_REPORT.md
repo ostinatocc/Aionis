@@ -121,3 +121,6 @@ This is a small product evidence snapshot, not a broad benchmark.
 
 Mem0 helps Agents remember. Aionis decides whether what was remembered is safe
 to act on now.
+
+Reusable launch copy:
+[AIONIS_MEM0_FIREWALL_LAUNCH_POST.md](AIONIS_MEM0_FIREWALL_LAUNCH_POST.md).
