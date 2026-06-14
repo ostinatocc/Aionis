@@ -31,6 +31,19 @@ type HealthSnapshotProvider = {
   healthSnapshot: () => unknown;
 };
 
+function toPublicStoreHealthSnapshot(snapshot: unknown): unknown {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return snapshot;
+  const { path, ...rest } = snapshot as Record<string, unknown>;
+  return {
+    ...rest,
+    ...(typeof path === "string" && path.trim().length > 0 ? { path_configured: true } : {}),
+  };
+}
+
+function storeHealthSnapshot(provider?: HealthSnapshotProvider | null): unknown | null {
+  return provider ? toPublicStoreHealthSnapshot(provider.healthSnapshot()) : null;
+}
+
 function assertLiteOnlySourceTree(env: Env): void {
   if (env.AIONIS_EDITION !== "lite") {
     throw new Error("aionis-lite source tree only supports AIONIS_EDITION=lite");
@@ -226,11 +239,11 @@ export function registerHealthRoute(args: {
               local_actor_id: env.LITE_LOCAL_ACTOR_ID,
             },
             stores: {
-              recall: liteRecallStore ? liteRecallStore.healthSnapshot() : null,
-              write: liteWriteStore ? liteWriteStore.healthSnapshot() : null,
-              execution_state: executionStateStore ? executionStateStore.healthSnapshot() : null,
-              execution_tree: executionTreeStore ? executionTreeStore.healthSnapshot() : null,
-              replay: liteReplayStore ? liteReplayStore.healthSnapshot() : null,
+              recall: storeHealthSnapshot(liteRecallStore),
+              write: storeHealthSnapshot(liteWriteStore),
+              execution_state: storeHealthSnapshot(executionStateStore),
+              execution_tree: storeHealthSnapshot(executionTreeStore),
+              replay: storeHealthSnapshot(liteReplayStore),
             },
             route_matrix: buildLiteRouteMatrix(),
           }

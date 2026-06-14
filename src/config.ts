@@ -123,6 +123,12 @@ const EnvSchema = z.object({
   AIONIS_INSPECT_BEFORE_USE_MODE: InspectBeforeUseModeSchema.default("shadow"),
   APP_ENV: z.enum(["dev", "ci", "prod"]).default("dev"),
   AIONIS_LISTEN_HOST: z.string().default(""),
+  AIONIS_ALLOW_UNAUTHENTICATED_REMOTE: z
+    .string()
+    .optional()
+    .transform((v) => (v ?? "false").toLowerCase())
+    .pipe(z.enum(["true", "false"]))
+    .transform((v) => v === "true"),
   TRUST_PROXY: z
     .string()
     .optional()
@@ -658,6 +664,18 @@ function withEditionDefaults(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return out;
 }
 
+function isLoopbackListenHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase();
+  if (normalized.length === 0) return true;
+  if (normalized === "localhost") return true;
+  if (normalized === "::1" || normalized === "[::1]") return true;
+  return normalized === "127.0.0.1" || /^127(?:\.\d{1,3}){3}$/.test(normalized);
+}
+
+function isRemoteListenHost(host: string): boolean {
+  return !isLoopbackListenHost(host);
+}
+
 export function loadEnv(): Env {
   const modeApplied = withModeDefaults(process.env);
   const editionApplied = withEditionDefaults(modeApplied);
@@ -671,6 +689,16 @@ export function loadEnv(): Env {
   parsed.data.TRUSTED_PROXY_CIDRS = trustedProxyCidrs.join(",");
   if (parsed.data.AIONIS_EDITION === "lite" && parsed.data.APP_ENV === "prod") {
     throw new Error("Lite runtime does not currently support APP_ENV=prod; use APP_ENV=dev/ci.");
+  }
+  if (
+    parsed.data.AIONIS_EDITION === "lite"
+    && parsed.data.MEMORY_AUTH_MODE === "off"
+    && isRemoteListenHost(parsed.data.AIONIS_LISTEN_HOST)
+    && !parsed.data.AIONIS_ALLOW_UNAUTHENTICATED_REMOTE
+  ) {
+    throw new Error(
+      "AIONIS_LISTEN_HOST exposes an unauthenticated Lite Runtime; keep AIONIS_LISTEN_HOST on loopback or set AIONIS_ALLOW_UNAUTHENTICATED_REMOTE=true intentionally.",
+    );
   }
   if (parsed.data.EMBEDDING_DIM !== 1536) {
     throw new Error(`EMBEDDING_DIM must be 1536 for text-embedding-3-small; got ${parsed.data.EMBEDDING_DIM}`);

@@ -59,6 +59,35 @@ test("lite plus prod fails with an explicit posture error", async () => {
   );
 });
 
+test("lite unauthenticated remote bind requires explicit operator opt-in", async () => {
+  await withIsolatedEnv(
+    {
+      AIONIS_LISTEN_HOST: "0.0.0.0",
+    },
+    () => {
+      assert.throws(
+        () => loadEnv(),
+        /AIONIS_LISTEN_HOST exposes an unauthenticated Lite Runtime/i,
+      );
+    },
+  );
+});
+
+test("lite unauthenticated remote bind can be intentionally enabled", async () => {
+  await withIsolatedEnv(
+    {
+      AIONIS_LISTEN_HOST: "0.0.0.0",
+      AIONIS_ALLOW_UNAUTHENTICATED_REMOTE: "true",
+    },
+    () => {
+      const env = loadEnv();
+      assert.equal(env.AIONIS_LISTEN_HOST, "0.0.0.0");
+      assert.equal(env.AIONIS_ALLOW_UNAUTHENTICATED_REMOTE, true);
+      assert.equal(env.MEMORY_AUTH_MODE, "off");
+    },
+  );
+});
+
 test("focused runtime rejects non-lite edition config", async () => {
   await withIsolatedEnv(
     {

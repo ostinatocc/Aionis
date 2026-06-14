@@ -34,6 +34,7 @@ test("root startup script owns local Runtime env", () => {
   const startScript = fs.readFileSync(path.join(ROOT, "scripts", "start-lite.sh"), "utf8");
   assert.match(startScript, /APP_ENV/);
   assert.match(startScript, /AIONIS_LISTEN_HOST/);
+  assert.match(startScript, /AIONIS_ALLOW_UNAUTHENTICATED_REMOTE/);
   assert.match(startScript, /LITE_LOCAL_ACTOR_ID/);
   assert.match(startScript, /LITE_SANDBOX_PROFILE/);
   assert.match(startScript, /local_process_echo/);
@@ -48,6 +49,7 @@ test(".env.example exposes local Runtime knobs", () => {
   const envExample = fs.readFileSync(path.join(ROOT, ".env.example"), "utf8");
   assert.match(envExample, /^APP_ENV=dev$/m);
   assert.match(envExample, /^AIONIS_LISTEN_HOST=127\.0\.0\.1$/m);
+  assert.match(envExample, /^# AIONIS_ALLOW_UNAUTHENTICATED_REMOTE=true$/m);
   assert.match(envExample, /^LITE_LOCAL_ACTOR_ID=local-user$/m);
   assert.match(envExample, /^SANDBOX_ENABLED=false$/m);
   assert.match(envExample, /^SANDBOX_ADMIN_ONLY=true$/m);
