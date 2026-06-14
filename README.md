@@ -107,9 +107,10 @@ Full positioning guide:
 ## Govern Any Memory Backend
 
 Aionis can sit in front of existing memory systems. Pass candidates from Mem0,
-Zep, a vector DB, markdown, logs, or your own store to `POST /v1/memory/govern`
-or SDK `governMemory()`. Aionis returns the same four admission surfaces it uses
-for native memory:
+Zep, a vector DB, markdown, logs, or your own store to `POST /v1/memory/govern`,
+SDK `governMemory()`, or the Mem0 drop-in helper
+`governMem0SearchResults()`. Aionis returns the same four admission surfaces it
+uses for native memory:
 
 ```text
 use_now | inspect_before_use | do_not_use | rehydrate
@@ -118,6 +119,18 @@ use_now | inspect_before_use | do_not_use | rehydrate
 This lets teams keep their current storage while adding a memory firewall layer:
 failed, stale, contested, suppressed, blocked, or rehydrate-required candidates
 cannot silently become Agent instructions.
+
+For Mem0 users, the default shape is:
+
+```ts
+const mem0Results = await mem0.search("continue the task", { user_id, top_k: 10 });
+const governed = await aionis.governMem0SearchResults({
+  query_text: "Continue without repeating failed branches.",
+  mem0_results: mem0Results,
+});
+
+await agent.run(governed.agent_context.prompt_text);
+```
 
 API details:
 [docs/AIONIS_PRODUCT_API_USAGE.md](docs/AIONIS_PRODUCT_API_USAGE.md#post-v1memorygovern).

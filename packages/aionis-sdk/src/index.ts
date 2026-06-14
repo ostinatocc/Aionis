@@ -255,6 +255,37 @@ export type AionisMemoryAdmissionGatewayResponse = AionisJsonObject & {
   source_map: AionisJsonObject;
 };
 
+export type AionisMem0SearchResultRow = AionisJsonObject & {
+  id?: string;
+  memory?: unknown;
+  text?: unknown;
+  data?: unknown;
+  content?: unknown;
+  score?: number;
+  metadata?: AionisJsonObject;
+};
+
+export type AionisMem0SearchResultsInput = {
+  results?: AionisMem0SearchResultRow[];
+} | AionisMem0SearchResultRow[];
+
+export type AionisMem0CandidateMapperOptions = {
+  source_backend?: string;
+  id_prefix?: string;
+  default_authority?: AionisExternalMemoryAuthority;
+  default_lifecycle_hint?: AionisExternalMemoryLifecycleHint;
+};
+
+export type AionisGovernMem0SearchResultsInput = AionisJsonObject & {
+  query_text: string;
+  run_id?: string;
+  mode?: AionisMemoryAdmissionGatewayMode;
+  context_mode?: "standard" | "compact_agent";
+  include_records?: boolean;
+  mem0_results: AionisMem0SearchResultsInput;
+  mapper?: AionisMem0CandidateMapperOptions;
+};
+
 export type AionisAgentFlightRecorderReport = AionisJsonObject & {
   contract_version: "aionis_agent_flight_recorder_report_v1";
   intended_use: "incident_replay_audit";
@@ -708,6 +739,138 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+function coerceString(value: unknown): string | null {
+  if (typeof value === "string" && value.trim().length > 0) return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return null;
+}
+
+function stableTextHash(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function parseStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return stringArray(value);
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (Array.isArray(parsed)) return stringArray(parsed);
+    } catch {
+      return trimmed.split(",").map((entry) => entry.trim()).filter(Boolean);
+    }
+  }
+  return [];
+}
+
+function mem0Rows(input: AionisMem0SearchResultsInput): AionisMem0SearchResultRow[] {
+  if (Array.isArray(input)) return input;
+  const results = asRecord(input)?.results;
+  return Array.isArray(results) ? results.filter((entry): entry is AionisMem0SearchResultRow => Boolean(asRecord(entry))) : [];
+}
+
+function mem0RowText(row: AionisMem0SearchResultRow): string {
+  for (const key of ["memory", "text", "data", "content"] as const) {
+    const value = row[key];
+    if (typeof value === "string" && value.trim().length > 0) return value;
+    if (value !== undefined && value !== null && typeof value === "object") return JSON.stringify(value);
+  }
+  return JSON.stringify(row);
+}
+
+function externalMemoryAuthorityFromMetadata(
+  metadata: Record<string, unknown>,
+  fallback?: AionisExternalMemoryAuthority,
+): AionisExternalMemoryAuthority {
+  const embedded = asRecord(metadata.authority);
+  const sourceTrust = metadata.authority_source_trust ?? metadata.source_trust ?? embedded?.source_trust ?? fallback?.source_trust;
+  const scope = metadata.authority_scope ?? metadata.scope ?? embedded?.scope ?? fallback?.scope;
+  const evidence = metadata.authority_evidence_requirement
+    ?? metadata.evidence_requirement
+    ?? embedded?.evidence_requirement
+    ?? fallback?.evidence_requirement;
+  return {
+    source_trust: sourceTrust === "trusted" || sourceTrust === "known" || sourceTrust === "untrusted" || sourceTrust === "unknown"
+      ? sourceTrust
+      : "unknown",
+    scope: scope === "user" || scope === "project" || scope === "team" || scope === "org" || scope === "global" || scope === "unknown"
+      ? scope
+      : "unknown",
+    evidence_requirement: evidence === "none"
+      || evidence === "inspect_before_use"
+      || evidence === "rehydrate_before_use"
+      || evidence === "blocked"
+      ? evidence
+      : "inspect_before_use",
+  };
+}
+
+function externalMemoryLifecycleFromMetadata(
+  metadata: Record<string, unknown>,
+  fallback?: AionisExternalMemoryLifecycleHint,
+): AionisExternalMemoryLifecycleHint {
+  const value = metadata.lifecycle_hint ?? metadata.lifecycle_state ?? metadata.status ?? fallback;
+  return value === "current"
+    || value === "procedure"
+    || value === "failed"
+    || value === "stale"
+    || value === "contested"
+    || value === "suppressed"
+    || value === "archived"
+    || value === "unknown"
+    ? value
+    : "unknown";
+}
+
+function mem0ExternalMemoryId(row: AionisMem0SearchResultRow, metadata: Record<string, unknown>, index: number, prefix: string): string {
+  const explicit = coerceString(metadata.external_memory_id)
+    ?? coerceString(metadata.memory_id)
+    ?? coerceString(row.id)
+    ?? coerceString(metadata.id);
+  if (explicit) return explicit.startsWith(`${prefix}:`) || explicit.includes(":") ? explicit : `${prefix}:${explicit}`;
+  return `${prefix}:result-${index + 1}-${stableTextHash(mem0RowText(row)).slice(0, 10)}`;
+}
+
+export function mem0SearchResultsToAionisCandidates(
+  input: AionisMem0SearchResultsInput,
+  options: AionisMem0CandidateMapperOptions = {},
+): AionisExternalMemoryCandidate[] {
+  const sourceBackend = options.source_backend ?? "mem0";
+  const idPrefix = options.id_prefix ?? sourceBackend;
+  return mem0Rows(input).map((row, index) => {
+    const metadata = asRecord(row.metadata) ?? {};
+    const text = mem0RowText(row);
+    const targetFiles = [
+      ...parseStringArray(metadata.target_files),
+      ...parseStringArray(metadata.target_files_json),
+    ];
+    const evidenceRefs = [
+      ...parseStringArray(metadata.evidence_refs),
+      ...parseStringArray(metadata.evidence_refs_json),
+    ];
+    return {
+      external_memory_id: mem0ExternalMemoryId(row, metadata, index, idPrefix),
+      source_backend: sourceBackend,
+      text,
+      metadata: stripUndefined({
+        ...metadata,
+        ...(targetFiles.length > 0 ? { target_files: Array.from(new Set(targetFiles)) } : {}),
+        ...(typeof row.score === "number" ? { mem0_score: row.score } : {}),
+        ...(row.id !== undefined ? { mem0_row_id: row.id } : {}),
+      }),
+      authority: externalMemoryAuthorityFromMetadata(metadata, options.default_authority),
+      lifecycle_hint: externalMemoryLifecycleFromMetadata(metadata, options.default_lifecycle_hint),
+      evidence_refs: evidenceRefs,
+    };
+  });
 }
 
 function rehydrateHintMemoryIds(value: unknown): string[] {
@@ -1377,6 +1540,25 @@ export class AionisClient {
     options?: AionisRequestOptions,
   ): Promise<T> {
     return this.post<T>("/v1/memory/govern", body, options);
+  }
+
+  async governMem0SearchResults<T = AionisMemoryAdmissionGatewayResponse>(
+    input: AionisGovernMem0SearchResultsInput,
+    options?: AionisRequestOptions,
+  ): Promise<T> {
+    const rawBody = { ...(input as AionisJsonObject) };
+    delete rawBody.mem0_results;
+    delete rawBody.mapper;
+    delete rawBody.candidates;
+    const requestBody: AionisMemoryAdmissionRequest = {
+      ...rawBody,
+      query_text: input.query_text,
+      mode: input.mode ?? "firewall",
+      context_mode: input.context_mode ?? "compact_agent",
+      include_records: input.include_records ?? true,
+      candidates: mem0SearchResultsToAionisCandidates(input.mem0_results, input.mapper),
+    };
+    return this.governMemory<T>(requestBody, options);
   }
 
   async forget<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {

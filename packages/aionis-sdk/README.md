@@ -12,6 +12,7 @@ import {
   commandPostureFromGuide,
   createAionisClient,
   feedbackFromGuide,
+  mem0SearchResultsToAionisCandidates,
   memoryAdmissionDatasetJsonlFromGuide,
   memoryAdmissionRecordFromGuide,
   measureInputFromGuideLoop,
@@ -243,6 +244,53 @@ const firewall = result.memory_firewall;
 `mode: "firewall"` blocks failed, stale, contested, suppressed, archived, or
 policy-blocked external memory from direct action. Unknown or untrusted memory
 stays `inspect_before_use`; raw evidence pointers stay `rehydrate`.
+
+### Mem0 Drop-In Firewall
+
+If your host already calls Mem0, keep Mem0 as the retrieval backend and put
+Aionis at the admission boundary:
+
+```ts
+const mem0Results = await mem0.search("Continue checkout migration", {
+  user_id: "checkout-agent",
+  top_k: 10,
+});
+
+const governed = await aionis.governMem0SearchResults({
+  query_text: "Continue checkout migration without repeating failed branches.",
+  run_id: "run-001",
+  mem0_results: mem0Results,
+});
+
+const promptForAgent = governed.agent_context.prompt_text;
+const receiptForLogs = governed.memory_use_receipt;
+const firewallForOps = governed.memory_firewall;
+```
+
+`governMem0SearchResults()` defaults to:
+
+- `mode: "firewall"`
+- `context_mode: "compact_agent"`
+- `include_records: true`
+- `source_backend: "mem0"`
+
+It accepts plain Mem0 search JSON and does not import or depend on the Mem0
+package. Metadata is preserved when present:
+
+```ts
+const candidates = mem0SearchResultsToAionisCandidates(mem0Results, {
+  default_authority: {
+    source_trust: "known",
+    scope: "project",
+    evidence_requirement: "inspect_before_use",
+  },
+});
+```
+
+Unlabeled Mem0 results are safe by default: they become inspect-first candidates
+instead of direct Agent instructions. To allow direct use, attach trusted
+authority plus `lifecycle_hint: "current"` or `lifecycle_hint: "procedure"` in
+Mem0 metadata.
 
 ## Replay Agent Decisions
 

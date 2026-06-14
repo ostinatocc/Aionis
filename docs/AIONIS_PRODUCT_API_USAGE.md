@@ -230,6 +230,32 @@ accepts external memory candidates from systems such as Mem0, Zep, a vector DB,
 markdown files, or a custom store, then routes them through Aionis admission
 surfaces without writing them into Aionis memory first.
 
+When the backend is Mem0, the preferred SDK path is
+`governMem0SearchResults()`. It accepts plain Mem0 `search()` results, maps them
+to external candidates, then calls the same `/v1/memory/govern` gateway with
+`mode: "firewall"`, `context_mode: "compact_agent"`, and
+`include_records: true` by default.
+
+```ts
+const mem0Results = await mem0.search("Continue checkout migration", {
+  user_id: "checkout-agent",
+  top_k: 10,
+});
+
+const governed = await aionis.governMem0SearchResults({
+  query_text: "Continue checkout migration without repeating failed branches.",
+  run_id: "run-001",
+  mem0_results: mem0Results,
+});
+
+const promptForAgent = governed.agent_context.prompt_text;
+const firewallForOps = governed.memory_firewall;
+const receiptForLogs = governed.memory_use_receipt;
+```
+
+The SDK also exposes `mem0SearchResultsToAionisCandidates()` for hosts that want
+to inspect or enrich the mapped candidates before admission.
+
 Runnable SDK e2e:
 
 ```bash
@@ -830,6 +856,35 @@ blocked, or rehydrate-required candidates cannot direct the Agent.
 
 See [Aionis Memory Firewall](AIONIS_MEMORY_FIREWALL.md) for the product-facing
 contract and SDK example.
+
+### Mem0 SDK Adapter
+
+Use `governMem0SearchResults()` after a Mem0 search:
+
+```ts
+const governed = await aionis.governMem0SearchResults({
+  query_text: "Continue from the current route; do not reuse failed memories.",
+  mem0_results: await mem0.search("current route", {
+    user_id: "project-a",
+    top_k: 10,
+  }),
+});
+```
+
+The adapter does not depend on the Mem0 package at runtime; it accepts the JSON
+shape Mem0 returns. It preserves common metadata fields:
+
+- `external_memory_id` or row `id`
+- `target_files` / `target_files_json`
+- `evidence_refs` / `evidence_refs_json`
+- `lifecycle_hint` / `lifecycle_state`
+- `authority_source_trust`, `authority_scope`, and
+  `authority_evidence_requirement`
+
+If those fields are missing, the mapped candidate defaults to unknown source
+trust and `inspect_before_use`. This keeps retrieved Mem0 text out of direct
+Agent action unless the host or memory metadata supplies enough trust and state
+evidence.
 
 ### Example
 

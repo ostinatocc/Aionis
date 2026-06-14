@@ -145,6 +145,40 @@ Agent actually used; it only validates that those IDs were exposed by the guide.
 `measureInputFromGuideLoop()` and `snapshotInputFromGuideLoop()` keep the
 normal product trace and operator snapshot payloads out of handwritten app code.
 
+## Memory Firewall For Mem0
+
+If your app already uses Mem0, do not write Mem0 results into Aionis first. Keep
+Mem0 as retrieval, then let Aionis govern admission:
+
+```ts
+const mem0Results = await mem0.search("Continue checkout migration", {
+  user_id: "checkout-agent",
+  top_k: 10,
+});
+
+const governed = await aionis.governMem0SearchResults({
+  query_text: "Continue checkout migration without repeating failed branches.",
+  run_id: "run-001",
+  mem0_results: mem0Results,
+});
+
+// Give the Agent only the governed prompt/context.
+await agent.run(governed.agent_context.prompt_text);
+
+// Keep these in host/operator logs.
+log.write({
+  memory_firewall: governed.memory_firewall,
+  memory_use_receipt: governed.memory_use_receipt,
+  memory_admission_records: governed.memory_admission_records,
+});
+```
+
+`governMem0SearchResults()` defaults to firewall mode, compact Agent context,
+and admission records. It accepts plain Mem0 JSON, so `@aionis/sdk` does not add
+Mem0 as a dependency. Unlabeled Mem0 rows are inspect-first by default; direct
+use requires trusted authority metadata plus `lifecycle_hint: "current"` or
+`"procedure"`.
+
 ## Execution Helper Loop
 
 For execution memory, use `aionis.execution` so the host does not need to build

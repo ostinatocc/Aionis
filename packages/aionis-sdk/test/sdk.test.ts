@@ -13,6 +13,7 @@ import {
   evidenceSourcesFromGuide,
   feedbackFromGuide,
   inspectFirstMemoryIdsFromGuide,
+  mem0SearchResultsToAionisCandidates,
   memoryAdmissionDatasetJsonlFromGuide,
   memoryAdmissionDatasetRowsFromGuide,
   memoryAdmissionRecordFromGuide,
@@ -53,6 +54,24 @@ test("@aionis/sdk wraps product facade routes", async () => {
       },
     ],
   });
+  await client.governMem0SearchResults({
+    query_text: "Govern Mem0 search results.",
+    mem0_results: {
+      results: [
+        {
+          id: "row-1",
+          memory: "Current route from Mem0.",
+          metadata: {
+            external_memory_id: "mem0:row-1",
+            lifecycle_hint: "current",
+            authority_source_trust: "trusted",
+            authority_scope: "project",
+            authority_evidence_requirement: "none",
+          },
+        },
+      ],
+    },
+  });
   await client.feedback({
     reason: "used memory",
     run_id: "run-1",
@@ -72,6 +91,7 @@ test("@aionis/sdk wraps product facade routes", async () => {
   assert.deepEqual(calls.map((call) => call.url), [
     "http://127.0.0.1:3001/v1/guide",
     "http://127.0.0.1:3001/v1/memory/govern",
+    "http://127.0.0.1:3001/v1/memory/govern",
     "http://127.0.0.1:3001/v1/feedback",
     "http://127.0.0.1:3001/v1/operator/snapshot",
     "http://127.0.0.1:3001/v1/audit/flight-recorder",
@@ -82,9 +102,76 @@ test("@aionis/sdk wraps product facade routes", async () => {
   assert.equal(calls[1]?.body.tenant_id, "tenant-a");
   assert.equal(calls[1]?.body.scope, "scope-a");
   assert.equal(calls[1]?.body.query_text, "Govern external candidates.");
-  assert.equal(calls[4]?.body.tenant_id, "tenant-a");
-  assert.equal(calls[4]?.body.scope, "scope-a");
-  assert.equal(calls[4]?.body.run_id, "run-1");
+  assert.equal(calls[2]?.body.tenant_id, "tenant-a");
+  assert.equal(calls[2]?.body.scope, "scope-a");
+  assert.equal(calls[2]?.body.query_text, "Govern Mem0 search results.");
+  assert.equal(calls[2]?.body.mode, "firewall");
+  assert.equal(calls[2]?.body.context_mode, "compact_agent");
+  assert.equal(calls[2]?.body.include_records, true);
+  assert.equal((calls[2]?.body.candidates as Array<Record<string, unknown>>)[0]?.external_memory_id, "mem0:row-1");
+  assert.equal(calls[5]?.body.tenant_id, "tenant-a");
+  assert.equal(calls[5]?.body.scope, "scope-a");
+  assert.equal(calls[5]?.body.run_id, "run-1");
+});
+
+test("@aionis/sdk maps Mem0 search results to backend-agnostic admission candidates", () => {
+  const candidates = mem0SearchResultsToAionisCandidates({
+    results: [
+      {
+        id: "mem0-row-current",
+        memory: "Current accepted target is packages/api/src/checkout.ts.",
+        score: 0.92,
+        metadata: {
+          external_memory_id: "mem0:checkout:current-route",
+          title: "Current checkout route",
+          target_files_json: "[\"packages/api/src/checkout.ts\"]",
+          evidence_refs_json: "[\"mem0://checkout/current-route\"]",
+          lifecycle_hint: "current",
+          authority_source_trust: "trusted",
+          authority_scope: "project",
+          authority_evidence_requirement: "none",
+        },
+      },
+      {
+        id: "mem0-row-unsafe",
+        memory: "Legacy checkout rewrite failed verifier checks.",
+      },
+    ],
+  });
+
+  assert.equal(candidates.length, 2);
+  assert.deepEqual(candidates[0], {
+    external_memory_id: "mem0:checkout:current-route",
+    source_backend: "mem0",
+    text: "Current accepted target is packages/api/src/checkout.ts.",
+    metadata: {
+      external_memory_id: "mem0:checkout:current-route",
+      title: "Current checkout route",
+      target_files_json: "[\"packages/api/src/checkout.ts\"]",
+      evidence_refs_json: "[\"mem0://checkout/current-route\"]",
+      lifecycle_hint: "current",
+      authority_source_trust: "trusted",
+      authority_scope: "project",
+      authority_evidence_requirement: "none",
+      target_files: ["packages/api/src/checkout.ts"],
+      mem0_score: 0.92,
+      mem0_row_id: "mem0-row-current",
+    },
+    authority: {
+      source_trust: "trusted",
+      scope: "project",
+      evidence_requirement: "none",
+    },
+    lifecycle_hint: "current",
+    evidence_refs: ["mem0://checkout/current-route"],
+  });
+  assert.equal(candidates[1]?.external_memory_id, "mem0:mem0-row-unsafe");
+  assert.deepEqual(candidates[1]?.authority, {
+    source_trust: "unknown",
+    scope: "unknown",
+    evidence_requirement: "inspect_before_use",
+  });
+  assert.equal(candidates[1]?.lifecycle_hint, "unknown");
 });
 
 test("@aionis/sdk guide helpers keep Agent prompt and feedback attribution bounded", () => {

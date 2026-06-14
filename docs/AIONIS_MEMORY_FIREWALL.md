@@ -124,7 +124,10 @@ observe whether the memory helped or hurt.
 ## SDK Usage
 
 ```ts
-import { createAionisClient } from "@aionis/sdk";
+import {
+  createAionisClient,
+  mem0SearchResultsToAionisCandidates,
+} from "@aionis/sdk";
 
 const aionis = createAionisClient({
   baseUrl: "http://127.0.0.1:3001",
@@ -158,3 +161,66 @@ const audit = result.memory_firewall;
 Only pass `agent_context.prompt_text` or selected `agent_context` fields to the
 Agent. Keep `memory_firewall`, `memory_use_receipt`, and
 `memory_admission_records` in host/operator logs.
+
+### Mem0 Drop-In Path
+
+Aionis does not replace Mem0 retrieval. It governs Mem0 results before they
+become Agent instructions:
+
+```ts
+const mem0Results = await mem0.search("Continue checkout migration", {
+  user_id: "checkout-agent",
+  top_k: 10,
+});
+
+const governed = await aionis.governMem0SearchResults({
+  query_text: "Continue checkout migration without repeating failed branches.",
+  run_id: "run-001",
+  mem0_results: mem0Results,
+});
+
+await agent.run(governed.agent_context.prompt_text);
+
+hostLog.write({
+  memory_firewall: governed.memory_firewall,
+  memory_use_receipt: governed.memory_use_receipt,
+  memory_admission_records: governed.memory_admission_records,
+});
+```
+
+The Mem0 adapter is deliberately dependency-free: it accepts plain Mem0 search
+JSON. If the host wants to inspect or enrich candidates first, use the mapper
+directly:
+
+```ts
+const candidates = mem0SearchResultsToAionisCandidates(mem0Results, {
+  default_authority: {
+    source_trust: "known",
+    scope: "project",
+    evidence_requirement: "inspect_before_use",
+  },
+});
+
+const governed = await aionis.governMemory({
+  query_text: "Continue safely.",
+  mode: "firewall",
+  include_records: true,
+  candidates,
+});
+```
+
+To allow a Mem0 result into `use_now`, provide metadata that says why it is safe
+for action:
+
+```json
+{
+  "external_memory_id": "mem0:checkout:current-route",
+  "lifecycle_hint": "current",
+  "authority_source_trust": "trusted",
+  "authority_scope": "project",
+  "authority_evidence_requirement": "none",
+  "target_files_json": "[\"packages/api/src/checkout.ts\"]"
+}
+```
+
+Without that state and authority metadata, a Mem0 result stays inspect-first.

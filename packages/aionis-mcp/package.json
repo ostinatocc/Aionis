@@ -1,6 +1,6 @@
 {
   "name": "@aionis/mcp",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "MCP stdio bridge for Aionis execution memory.",
   "license": "Apache-2.0",
   "type": "module",
@@ -20,7 +20,7 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@aionis/sdk": "^0.1.7",
+    "@aionis/sdk": "^0.1.8",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^3.25.76"
   },

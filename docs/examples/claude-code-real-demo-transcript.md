@@ -15,7 +15,7 @@ the raw stream dump.
 - Runtime URL: `http://127.0.0.1:34118`
 - Embedding provider: `EMBEDDING_PROVIDER=minimax`
 - MCP package: `@aionis/mcp@latest` -> `0.1.4`
-- SDK package: `@aionis/sdk@latest` -> `0.1.7`
+- SDK package: `@aionis/sdk@latest` -> `0.1.8`
 - Scope: `claude-code-real-demo-pass`
 - Raw local stream: `/tmp/aionis-claude-code-real-demo-pass2.stream.jsonl`
 
