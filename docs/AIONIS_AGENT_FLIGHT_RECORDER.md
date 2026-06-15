@@ -35,8 +35,20 @@ Runnable SDK quickstart:
 npm run -s runtime:quickstart:flight-recorder
 ```
 
+Runnable incident demo:
+
+```bash
+npm run -s runtime:e2e:flight-recorder-incident
+```
+
 Example output:
 [docs/examples/flight-recorder-quickstart-result.json](examples/flight-recorder-quickstart-result.json).
+
+Incident demo guide:
+[AIONIS_FLIGHT_RECORDER_INCIDENT_DEMO.md](AIONIS_FLIGHT_RECORDER_INCIDENT_DEMO.md).
+
+Incident demo output:
+[docs/examples/flight-recorder-incident-demo-result.json](examples/flight-recorder-incident-demo-result.json).
 
 ## With Product Trace
 

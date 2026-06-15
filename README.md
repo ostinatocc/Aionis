@@ -257,6 +257,16 @@ npm run -s runtime:quickstart:flight-recorder
 That loop replays what memory the Agent could see at decision time without
 including prompt text or mutating Runtime state.
 
+For the Agent Flight Recorder incident demo:
+
+```bash
+npm run -s runtime:e2e:flight-recorder-incident
+```
+
+That loop replays a healthy run, a blocked-memory misuse incident, and a missing
+feedback-attribution case. See
+[docs/AIONIS_FLIGHT_RECORDER_INCIDENT_DEMO.md](docs/AIONIS_FLIGHT_RECORDER_INCIDENT_DEMO.md).
+
 For Claude Code over MCP:
 
 ```bash
@@ -324,7 +334,8 @@ Full example outputs:
 6. [Memory Firewall quickstart result](docs/examples/memory-firewall-quickstart-result.json)
 7. [Memory Firewall A/B demo result](docs/examples/memory-firewall-ab-demo-result.json)
 8. [Flight Recorder quickstart result](docs/examples/flight-recorder-quickstart-result.json)
-9. [Claude Code MCP demo result](docs/examples/claude-code-mcp-demo-result.json)
+9. [Flight Recorder incident demo result](docs/examples/flight-recorder-incident-demo-result.json)
+10. [Claude Code MCP demo result](docs/examples/claude-code-mcp-demo-result.json)
 
 ## What The Agent Gets
 
