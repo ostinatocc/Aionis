@@ -175,6 +175,23 @@ what did the Agent know when it made that decision?
 Guide:
 [docs/AIONIS_AGENT_FLIGHT_RECORDER.md](docs/AIONIS_AGENT_FLIGHT_RECORDER.md).
 
+## Loop Engineering Profile
+
+Aionis can sit beside a loop-engineered Agent without becoming the loop runner.
+The host owns plan, action, tools, validation, and retry. Aionis owns the memory
+governance around that loop: observed iteration evidence, next-iteration guide,
+feedback attribution, effect measurement, operator snapshot, and Flight Recorder
+replay.
+
+Run the profile:
+
+```bash
+npm run -s runtime:e2e:loop-engineering-profile
+```
+
+Guide:
+[docs/AIONIS_LOOP_ENGINEERING.md](docs/AIONIS_LOOP_ENGINEERING.md).
+
 ## Quickstart
 
 Install the Runtime, SDK, and MCP bridge with one command:
@@ -335,7 +352,8 @@ Full example outputs:
 7. [Memory Firewall A/B demo result](docs/examples/memory-firewall-ab-demo-result.json)
 8. [Flight Recorder quickstart result](docs/examples/flight-recorder-quickstart-result.json)
 9. [Flight Recorder incident demo result](docs/examples/flight-recorder-incident-demo-result.json)
-10. [Claude Code MCP demo result](docs/examples/claude-code-mcp-demo-result.json)
+10. [Loop Engineering profile result](docs/examples/loop-engineering-profile-result.json)
+11. [Claude Code MCP demo result](docs/examples/claude-code-mcp-demo-result.json)
 
 ## What The Agent Gets
 
@@ -658,6 +676,7 @@ Output contracts:
 |---|---|
 | [AIONIS_INSTALL.md](docs/AIONIS_INSTALL.md) | One-command install path for Runtime plus SDK and MCP packages. |
 | [AIONIS_MCP.md](docs/AIONIS_MCP.md) | MCP bridge for Claude Code, Cursor, and other coding-agent clients. |
+| [AIONIS_LOOP_ENGINEERING.md](docs/AIONIS_LOOP_ENGINEERING.md) | Memory governance profile for loop-engineered Agents. |
 | [AIONIS_RUNTIME_ARCHITECTURE.md](docs/AIONIS_RUNTIME_ARCHITECTURE.md) | Product architecture, memory layers, execution memory, context compiler, and source map. |
 | [AIONIS_HTTP_QUICKSTART.md](docs/AIONIS_HTTP_QUICKSTART.md) | Smallest curl-first product loop. |
 | [AIONIS_QUICKSTART_MATRIX.md](docs/AIONIS_QUICKSTART_MATRIX.md) | Which first-run command to use for SDK, HTTP, and multi-agent hosts. |
