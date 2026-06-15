@@ -3,7 +3,12 @@ import { dirname } from "node:path";
 import { toVectorLiteral } from "../util/vector-literal.js";
 import { hasNodeWorkflowAnchorSurface } from "../memory/node-execution-surface.js";
 import { memoryNodeVisible } from "./memory-visibility.js";
-import { RECALL_STORE_ACCESS_CAPABILITY_VERSION, adjustRecallCandidateSimilarityForTrust } from "./recall-access.js";
+import {
+  RECALL_STORE_ACCESS_CAPABILITY_VERSION,
+  adjustRecallCandidateSimilarityForTrust,
+  normalizeRecallAllowedTiers,
+  recallStage1BoundedScanLimit,
+} from "./recall-access.js";
 import type {
   RecallAuditInsertParams,
   RecallCandidate,
@@ -73,9 +78,6 @@ type LiteRecallAuditRow = RecallAuditInsertParams & {
 };
 
 const STAGE1_RECALL_TYPES = ["event", "topic", "concept", "entity", "rule", "procedure", "self_model"] as const;
-const STAGE1_BOUNDED_SCAN_FLOOR = 2048;
-const STAGE1_OVERSAMPLE_SCAN_MULTIPLIER = 32;
-const STAGE1_LIMIT_SCAN_MULTIPLIER = 64;
 const SQLITE_IN_CHUNK_SIZE = 800;
 
 export type LiteRecallStore = {
@@ -97,14 +99,6 @@ function nowIso(): string {
 
 function placeholders(count: number): string {
   return Array.from({ length: count }, () => "?").join(",");
-}
-
-function boundedStage1ScanLimit(params: RecallStage1Params): number {
-  return Math.max(
-    STAGE1_BOUNDED_SCAN_FLOOR,
-    Math.max(0, params.oversample) * STAGE1_OVERSAMPLE_SCAN_MULTIPLIER,
-    Math.max(0, params.limit) * STAGE1_LIMIT_SCAN_MULTIPLIER,
-  );
 }
 
 function appendRecallVisibilityWhere(
@@ -314,17 +308,18 @@ export function createLiteRecallStore(
     params: RecallStage1Params,
     opts: { boundedScan: boolean },
   ): Promise<RecallCandidate[]> => {
+    const allowedTiers = normalizeRecallAllowedTiers(params.allowedTiers);
     const where = [
       "scope = ?",
-      "tier IN ('hot', 'warm')",
+      `tier IN (${placeholders(allowedTiers.length)})`,
       "embedding_status = 'ready'",
       "embedding_vector_json IS NOT NULL",
       `type IN (${placeholders(STAGE1_RECALL_TYPES.length)})`,
     ];
-    const values: unknown[] = [params.scope, ...STAGE1_RECALL_TYPES];
+    const values: unknown[] = [params.scope, ...allowedTiers, ...STAGE1_RECALL_TYPES];
     appendRecallVisibilityWhere(where, values, params.consumerAgentId, params.consumerTeamId);
     const limitClause = opts.boundedScan ? "LIMIT ?" : "";
-    const limitValues = opts.boundedScan ? [boundedStage1ScanLimit(params)] : [];
+    const limitValues = opts.boundedScan ? [recallStage1BoundedScanLimit(params)] : [];
     const rows = db.prepare(`
       SELECT
         id,
@@ -351,7 +346,7 @@ export function createLiteRecallStore(
       FROM lite_memory_nodes
       WHERE ${where.join("\n        AND ")}
       ORDER BY
-        CASE tier WHEN 'hot' THEN 0 ELSE 1 END,
+        CASE tier WHEN 'hot' THEN 0 WHEN 'warm' THEN 1 WHEN 'cold' THEN 2 ELSE 3 END,
         salience DESC,
         confidence DESC,
         created_at DESC,

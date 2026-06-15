@@ -18,11 +18,49 @@ export type RecallCandidate = {
   similarity: number;
 };
 
+export type RecallMemoryTier = "hot" | "warm" | "cold" | "archive";
+
+export const RECALL_MEMORY_TIERS: readonly RecallMemoryTier[] = ["hot", "warm", "cold", "archive"];
+export const DEFAULT_RECALL_STAGE1_ALLOWED_TIERS: readonly RecallMemoryTier[] = ["hot", "warm"];
+export const EXACT_RECOVERY_RECALL_STAGE1_ALLOWED_TIERS: readonly RecallMemoryTier[] = ["hot", "warm", "cold"];
+export const RECALL_STAGE1_BOUNDED_SCAN_FLOOR = 2048;
+export const RECALL_STAGE1_OVERSAMPLE_SCAN_MULTIPLIER = 32;
+export const RECALL_STAGE1_LIMIT_SCAN_MULTIPLIER = 64;
+
+export function recallStage1BoundedScanLimit(params: {
+  oversample: number;
+  limit: number;
+  scanLimit?: number | null;
+}): number {
+  if (typeof params.scanLimit === "number" && Number.isFinite(params.scanLimit)) {
+    return Math.max(1, Math.trunc(params.scanLimit));
+  }
+  return Math.max(
+    RECALL_STAGE1_BOUNDED_SCAN_FLOOR,
+    Math.max(0, params.oversample) * RECALL_STAGE1_OVERSAMPLE_SCAN_MULTIPLIER,
+    Math.max(0, params.limit) * RECALL_STAGE1_LIMIT_SCAN_MULTIPLIER,
+  );
+}
+
+export function normalizeRecallAllowedTiers(
+  input: readonly RecallMemoryTier[] | undefined,
+  fallback: readonly RecallMemoryTier[] = DEFAULT_RECALL_STAGE1_ALLOWED_TIERS,
+): RecallMemoryTier[] {
+  const seen = new Set<RecallMemoryTier>();
+  for (const tier of input ?? fallback) {
+    if (!RECALL_MEMORY_TIERS.includes(tier) || seen.has(tier)) continue;
+    seen.add(tier);
+  }
+  return seen.size > 0 ? Array.from(seen) : [...fallback];
+}
+
 export type RecallStage1Params = {
   queryEmbedding: number[];
   scope: string;
   oversample: number;
   limit: number;
+  allowedTiers?: RecallMemoryTier[];
+  scanLimit?: number | null;
   consumerAgentId: string | null;
   consumerTeamId: string | null;
 };

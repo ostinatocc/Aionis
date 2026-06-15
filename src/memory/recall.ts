@@ -2,8 +2,13 @@ import { performance } from "node:perf_hooks";
 import { assertDim, toVectorLiteral } from "../util/vector-literal.js";
 import {
   assertRecallStoreAccessContract,
+  DEFAULT_RECALL_STAGE1_ALLOWED_TIERS,
+  EXACT_RECOVERY_RECALL_STAGE1_ALLOWED_TIERS,
+  normalizeRecallAllowedTiers,
+  recallStage1BoundedScanLimit,
   type RecallCandidate,
   type RecallEdgeRow,
+  type RecallMemoryTier,
   type RecallNodeRow,
   type RecallStoreAccess,
 } from "../store/recall-access.js";
@@ -51,6 +56,16 @@ export type MemoryRecallOptions = {
 type NodeRow = RecallNodeRow;
 type EdgeRow = RecallEdgeRow;
 
+type Stage1TierBudgetDebug = {
+  cold_policy: "exact_recovery_on_empty";
+  ann_allowed_tiers: RecallMemoryTier[];
+  ann_scan_cap: number;
+  exact_recovery_allowed_tiers: RecallMemoryTier[];
+  exact_recovery_scan_cap: number | null;
+  ann_seed_tier_counts: Record<RecallMemoryTier, number>;
+  final_seed_tier_counts: Record<RecallMemoryTier, number>;
+};
+
 function isActionRecallEndpoint(endpoint: "recall" | "recall_text" | "planning_context" | "context_assemble"): boolean {
   return endpoint === "planning_context" || endpoint === "context_assemble";
 }
@@ -60,6 +75,16 @@ function routeForRecallEndpoint(endpoint: "recall" | "recall_text" | "planning_c
   if (endpoint === "planning_context") return "/v1/memory/planning/context";
   if (endpoint === "context_assemble") return "/v1/memory/context/assemble";
   return "/v1/memory/recall";
+}
+
+function countCandidateTiers(candidates: RecallCandidate[]): Record<RecallMemoryTier, number> {
+  const counts: Record<RecallMemoryTier, number> = { hot: 0, warm: 0, cold: 0, archive: 0 };
+  for (const candidate of candidates) {
+    if (candidate.tier === "hot" || candidate.tier === "warm" || candidate.tier === "cold" || candidate.tier === "archive") {
+      counts[candidate.tier] += 1;
+    }
+  }
+  return counts;
 }
 
 function compactProducerIds(nodes: Array<{ producer_agent_id?: string | null }>): string[] {
@@ -131,6 +156,10 @@ export async function memoryRecallParsed(
   }
   assertRecallStoreAccessContract(recallAccess);
 
+  const annAllowedTiers = normalizeRecallAllowedTiers(DEFAULT_RECALL_STAGE1_ALLOWED_TIERS);
+  const exactRecoveryAllowedTiers = normalizeRecallAllowedTiers(EXACT_RECOVERY_RECALL_STAGE1_ALLOWED_TIERS);
+  const annScanCap = recallStage1BoundedScanLimit({ oversample, limit: parsed.limit });
+
   // Stage 1 (primary): ANN kNN candidate fetch (fast path).
   const stage1Ann = await timed("stage1_candidates_ann", () =>
     recallAccess.stage1CandidatesAnn({
@@ -138,6 +167,8 @@ export async function memoryRecallParsed(
       scope,
       oversample,
       limit: parsed.limit,
+      allowedTiers: annAllowedTiers,
+      scanLimit: annScanCap,
       consumerAgentId,
       consumerTeamId,
     }),
@@ -155,6 +186,8 @@ export async function memoryRecallParsed(
         scope,
         oversample,
         limit: parsed.limit,
+        allowedTiers: exactRecoveryAllowedTiers,
+        scanLimit: null,
         consumerAgentId,
         consumerTeamId,
       }),
@@ -170,6 +203,15 @@ export async function memoryRecallParsed(
   });
 
   const seedIds = seeds.map((s) => s.id);
+  const stage1TierBudgetDebug: Stage1TierBudgetDebug = {
+    cold_policy: "exact_recovery_on_empty",
+    ann_allowed_tiers: annAllowedTiers,
+    ann_scan_cap: annScanCap,
+    exact_recovery_allowed_tiers: exactRecoveryAllowedTiers,
+    exact_recovery_scan_cap: null,
+    ann_seed_tier_counts: countCandidateTiers(stage1Ann),
+    final_seed_tier_counts: countCandidateTiers(seeds),
+  };
 
   if (seedIds.length === 0) {
     const aionisMemoryPacket = buildAionisMemoryPacket({
@@ -234,6 +276,7 @@ export async function memoryRecallParsed(
                 mode: stage1Mode,
                 ann_seed_count: stage1AnnSeedCount,
                 final_seed_count: 0,
+                tier_budget: stage1TierBudgetDebug,
                 exact_recovery_enabled: stage1ExactRecoveryOnEmpty,
                 exact_recovery_attempted: stage1ExactRecoveryAttempted,
               },
@@ -590,6 +633,7 @@ export async function memoryRecallParsed(
               mode: stage1Mode,
               ann_seed_count: stage1AnnSeedCount,
               final_seed_count: seeds.length,
+              tier_budget: stage1TierBudgetDebug,
               exact_recovery_enabled: stage1ExactRecoveryOnEmpty,
               exact_recovery_attempted: stage1ExactRecoveryAttempted,
             },

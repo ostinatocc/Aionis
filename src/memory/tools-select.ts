@@ -30,7 +30,14 @@ import {
   DEFAULT_TOOL_REGISTRY_INDEX,
   mapCandidatesToFamilies,
 } from "./tool-registry.js";
-import type { RecallStoreAccess, RecallNodeRow } from "../store/recall-access.js";
+import {
+  DEFAULT_RECALL_STAGE1_ALLOWED_TIERS,
+  EXACT_RECOVERY_RECALL_STAGE1_ALLOWED_TIERS,
+  normalizeRecallAllowedTiers,
+  recallStage1BoundedScanLimit,
+  type RecallNodeRow,
+  type RecallStoreAccess,
+} from "../store/recall-access.js";
 import { resolvePatternTaskAffinity, type PatternAffinityLevel } from "./pattern-trust-shaping.js";
 import {
   resolveNodePatternExecutionSurface,
@@ -209,11 +216,15 @@ async function recallToolSelectionPatterns(args: {
   const [queryEmbedding] = await args.embedder.embed([queryText]);
   const consumerAgentId = contextConsumerAgentId(args.context);
   const consumerTeamId = contextConsumerTeamId(args.context);
+  const annAllowedTiers = normalizeRecallAllowedTiers(DEFAULT_RECALL_STAGE1_ALLOWED_TIERS);
+  const exactRecoveryAllowedTiers = normalizeRecallAllowedTiers(EXACT_RECOVERY_RECALL_STAGE1_ALLOWED_TIERS);
   const ann = await args.recallAccess.stage1CandidatesAnn({
     queryEmbedding,
     scope: args.scope,
     oversample: 24,
     limit: 6,
+    allowedTiers: annAllowedTiers,
+    scanLimit: recallStage1BoundedScanLimit({ oversample: 24, limit: 6 }),
     consumerAgentId,
     consumerTeamId,
   });
@@ -224,6 +235,8 @@ async function recallToolSelectionPatterns(args: {
         scope: args.scope,
         oversample: 24,
         limit: 6,
+        allowedTiers: exactRecoveryAllowedTiers,
+        scanLimit: null,
         consumerAgentId,
         consumerTeamId,
       });

@@ -3,6 +3,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { memoryRecallParsed } from "../../src/memory/recall.ts";
+import { MemoryRecallRequest } from "../../src/memory/schemas.ts";
+import {
+  EXACT_RECOVERY_RECALL_STAGE1_ALLOWED_TIERS,
+} from "../../src/store/recall-access.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 
@@ -37,6 +42,7 @@ async function insertReadyNode(
     title?: string;
     summary?: string;
     vector?: number[];
+    tier?: "hot" | "warm" | "cold" | "archive";
     salience?: number;
     confidence?: number;
     ownerAgentId?: string | null;
@@ -49,7 +55,7 @@ async function insertReadyNode(
     scope: args.scope ?? "default",
     clientId: null,
     type: args.type ?? "concept",
-    tier: "hot",
+    tier: args.tier ?? "hot",
     title: args.title ?? args.id,
     textSummary: args.summary ?? args.id,
     slotsJson: "{}",
@@ -116,6 +122,111 @@ test("stage1 bounded ANN keeps exact recovery unbounded", async () => {
 
     assert.notEqual(ann[0]?.id, "target-exact-match");
     assert.equal(exact[0]?.id, "target-exact-match");
+  } finally {
+    await recallStore.close();
+    await writeStore.close();
+  }
+});
+
+test("stage1 tier budget keeps cold memories out of the default ANN path", async () => {
+  const dbPath = tmpDbPath("stage1-tier-budget");
+  const writeStore = createLiteWriteStore(dbPath);
+  const recallStore = createLiteRecallStore(dbPath);
+  try {
+    await writeStore.withTx(async () => {
+      const commitId = await insertCommit(writeStore, "default", "stage1-tier-budget");
+      await insertReadyNode(writeStore, {
+        id: "hot-distractor",
+        vector: [0, 1, 0],
+        tier: "hot",
+        salience: 1,
+        confidence: 1,
+        commitId,
+      });
+      await insertReadyNode(writeStore, {
+        id: "cold-exact-match",
+        vector: [1, 0, 0],
+        tier: "cold",
+        salience: 1,
+        confidence: 1,
+        commitId,
+      });
+    });
+
+    const access = recallStore.createRecallAccess();
+    const ann = await access.stage1CandidatesAnn({
+      queryEmbedding: [1, 0, 0],
+      scope: "default",
+      oversample: 5,
+      limit: 5,
+      consumerAgentId: null,
+      consumerTeamId: null,
+    });
+    const exactWithCold = await access.stage1CandidatesExactRecovery({
+      queryEmbedding: [1, 0, 0],
+      scope: "default",
+      oversample: 5,
+      limit: 5,
+      allowedTiers: [...EXACT_RECOVERY_RECALL_STAGE1_ALLOWED_TIERS],
+      scanLimit: null,
+      consumerAgentId: null,
+      consumerTeamId: null,
+    });
+
+    assert.ok(ann.some((candidate) => candidate.id === "hot-distractor"));
+    assert.ok(!ann.some((candidate) => candidate.id === "cold-exact-match"));
+    assert.equal(exactWithCold[0]?.id, "cold-exact-match");
+  } finally {
+    await recallStore.close();
+    await writeStore.close();
+  }
+});
+
+test("memory recall expands to cold only through exact recovery and reports tier budget debug", async () => {
+  const dbPath = tmpDbPath("stage1-cold-exact-recovery-debug");
+  const writeStore = createLiteWriteStore(dbPath);
+  const recallStore = createLiteRecallStore(dbPath);
+  const queryEmbedding = [1, ...Array.from({ length: 1535 }, () => 0)];
+  const coldOnlyTargetId = "00000000-0000-4000-8000-000000000111";
+  try {
+    await writeStore.withTx(async () => {
+      const commitId = await insertCommit(writeStore, "default", "stage1-cold-exact-recovery-debug");
+      await insertReadyNode(writeStore, {
+        id: coldOnlyTargetId,
+        vector: queryEmbedding,
+        tier: "cold",
+        salience: 1,
+        confidence: 1,
+        commitId,
+      });
+    });
+
+    const recall = await memoryRecallParsed(
+      MemoryRecallRequest.parse({
+        tenant_id: "default",
+        scope: "default",
+        query_embedding: queryEmbedding,
+        limit: 5,
+        neighborhood_hops: 1,
+        max_nodes: 10,
+        max_edges: 10,
+        ranked_limit: 10,
+        return_debug: true,
+      }),
+      "default",
+      "default",
+      { allow_debug_embeddings: false },
+      undefined,
+      "recall",
+      { recall_access: recallStore.createRecallAccess() },
+    );
+
+    assert.equal(recall.seeds[0]?.id, coldOnlyTargetId);
+    assert.equal((recall as any).debug.stage1.mode, "exact_recovery");
+    assert.deepEqual((recall as any).debug.stage1.tier_budget.ann_allowed_tiers, ["hot", "warm"]);
+    assert.deepEqual((recall as any).debug.stage1.tier_budget.exact_recovery_allowed_tiers, ["hot", "warm", "cold"]);
+    assert.equal((recall as any).debug.stage1.tier_budget.ann_seed_tier_counts.cold, 0);
+    assert.equal((recall as any).debug.stage1.tier_budget.final_seed_tier_counts.cold, 1);
   } finally {
     await recallStore.close();
     await writeStore.close();
