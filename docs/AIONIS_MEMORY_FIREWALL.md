@@ -26,11 +26,23 @@ Runnable SDK quickstart:
 npm run -s runtime:quickstart:memory-firewall
 ```
 
+Runnable A/B demo:
+
+```bash
+npm run -s runtime:e2e:memory-firewall-ab
+```
+
+Demo guide:
+[AIONIS_MEMORY_FIREWALL_AB_DEMO.md](AIONIS_MEMORY_FIREWALL_AB_DEMO.md).
+
 Mem0 A/B evidence:
 [AIONIS_MEM0_FIREWALL_AB_REPORT.md](AIONIS_MEM0_FIREWALL_AB_REPORT.md).
 
 Example output:
 [docs/examples/memory-firewall-quickstart-result.json](examples/memory-firewall-quickstart-result.json).
+
+A/B demo output:
+[docs/examples/memory-firewall-ab-demo-result.json](examples/memory-firewall-ab-demo-result.json).
 
 Set `mode` to `firewall`:
 

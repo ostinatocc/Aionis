@@ -42,6 +42,7 @@ surfaces.
 | Product Proof | Run this | Verifies |
 |---|---|---|
 | External package smoke | `npm run -s runtime:smoke:external-packages` | Packs `@aionis/sdk`, `@aionis/mcp`, and `@aionis/create`, installs them into a temporary external project, then verifies SDK, MCP stdio, and CLI entrypoints against a real Runtime. |
+| Memory Firewall A/B demo | `npm run -s runtime:e2e:memory-firewall-ab` | Compares raw retrieved external memory against Aionis-governed memory for unsafe direct-use, current/procedure recall, and audit coverage. Produces `aionis_memory_firewall_ab_demo_result_v1`; see [memory-firewall-ab-demo-result.json](examples/memory-firewall-ab-demo-result.json). |
 | Golden product loop | `npm run -s runtime:e2e:golden-product-loop` | End-to-end product path, failed branch isolation, read-only operator snapshot, trace-to-procedure readiness. |
 | Judgment calibration loop | `npm run -s runtime:e2e:judgment-calibration` | Supported memory, unused recalled memory, and judgment calibration stay separated and read-only. |
 | Ordinary memory loop | `npm run -s runtime:e2e:ordinary-memory` | Preference, fact, stale, suppressed, private visibility, and non-execution-memory behavior. |

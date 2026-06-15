@@ -237,6 +237,17 @@ That loop passes Mem0/Zep/vector/markdown-style candidates through
 `/v1/memory/govern` and proves unsafe external memories cannot enter
 direct-use.
 
+For the Memory Firewall A/B demo:
+
+```bash
+npm run -s runtime:e2e:memory-firewall-ab
+```
+
+That loop compares raw retrieved memory against Aionis-governed memory using the
+same Mem0/Zep/vector/log-style candidates. It shows unsafe direct-use,
+current/procedure recall, and audit coverage side by side. See
+[docs/AIONIS_MEMORY_FIREWALL_AB_DEMO.md](docs/AIONIS_MEMORY_FIREWALL_AB_DEMO.md).
+
 For Agent Flight Recorder:
 
 ```bash
@@ -311,8 +322,9 @@ Full example outputs:
 4. [Golden product loop result](docs/examples/golden-product-loop-result.json)
 5. [Judgment calibration product loop result](docs/examples/judgment-calibration-product-loop-result.json)
 6. [Memory Firewall quickstart result](docs/examples/memory-firewall-quickstart-result.json)
-7. [Flight Recorder quickstart result](docs/examples/flight-recorder-quickstart-result.json)
-8. [Claude Code MCP demo result](docs/examples/claude-code-mcp-demo-result.json)
+7. [Memory Firewall A/B demo result](docs/examples/memory-firewall-ab-demo-result.json)
+8. [Flight Recorder quickstart result](docs/examples/flight-recorder-quickstart-result.json)
+9. [Claude Code MCP demo result](docs/examples/claude-code-mcp-demo-result.json)
 
 ## What The Agent Gets
 

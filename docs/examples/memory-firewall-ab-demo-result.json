@@ -1,0 +1,94 @@
+{
+  "contract_version": "aionis_memory_firewall_ab_demo_result_v1",
+  "run_id": "memory-firewall-ab-example",
+  "runtime": {
+    "mode": "spawned",
+    "base_url": "http://127.0.0.1:3001",
+    "embedding_provider": "minimax"
+  },
+  "product_claim": "Use your existing memory backend for retrieval; use Aionis Memory Firewall to adjudicate whether retrieved memory can act now.",
+  "methodology": {
+    "scenario_count": 6,
+    "backends": ["archive", "logs", "mem0", "vector_db", "zep"],
+    "raw_arm": "All retrieved candidates are direct Agent context.",
+    "aionis_arm": "The same retrieved candidates pass through governMemory(mode=firewall) before prompt use.",
+    "runtime_api": "POST /v1/memory/govern"
+  },
+  "arm_comparison": {
+    "raw_retrieval": {
+      "scenario_count": 6,
+      "wrong_direct_use_rate": 66.7,
+      "unsafe_direct_use_count": 5,
+      "primary_route_chosen_rate": 33.3,
+      "current_route_recall_rate": 100,
+      "audit_coverage_rate": 0,
+      "mean_context_chars": 369
+    },
+    "aionis_memory_firewall": {
+      "scenario_count": 6,
+      "wrong_direct_use_rate": 0,
+      "unsafe_direct_use_count": 0,
+      "primary_route_chosen_rate": 100,
+      "current_route_recall_rate": 100,
+      "audit_coverage_rate": 100,
+      "mean_context_chars": 608
+    },
+    "delta": {
+      "wrong_direct_use_rate_points": 66.7,
+      "audit_coverage_rate_points": 100
+    }
+  },
+  "scenario_results": [
+    {
+      "scenario_id": "mem0_failed_ranked_above_current",
+      "backend_mix": ["mem0"],
+      "raw": {
+        "direct_use_memory_ids": ["mem0:failed-broad-rewrite", "mem0:current-checkout-route"],
+        "unsafe_direct_use_ids": ["mem0:failed-broad-rewrite"],
+        "safe_route_ids": ["mem0:current-checkout-route"],
+        "current_route_recalled": true,
+        "primary_route_chosen": false,
+        "audit_visible": false
+      },
+      "aionis": {
+        "direct_use_memory_ids": ["mem0:current-checkout-route"],
+        "unsafe_direct_use_ids": [],
+        "safe_route_ids": ["mem0:current-checkout-route"],
+        "current_route_recalled": true,
+        "primary_route_chosen": true,
+        "audit_visible": true
+      }
+    },
+    {
+      "scenario_id": "mixed_rehydrate_and_unknown",
+      "backend_mix": ["mem0", "archive", "logs"],
+      "raw": {
+        "direct_use_memory_ids": [
+          "logs:unknown-helper-note",
+          "archive:checkout-raw-verifier",
+          "mem0:current-checkout-route-2"
+        ],
+        "unsafe_direct_use_ids": ["logs:unknown-helper-note", "archive:checkout-raw-verifier"],
+        "safe_route_ids": ["mem0:current-checkout-route-2"],
+        "current_route_recalled": true,
+        "primary_route_chosen": false,
+        "audit_visible": false
+      },
+      "aionis": {
+        "direct_use_memory_ids": ["mem0:current-checkout-route-2"],
+        "unsafe_direct_use_ids": [],
+        "safe_route_ids": ["mem0:current-checkout-route-2"],
+        "current_route_recalled": true,
+        "primary_route_chosen": true,
+        "audit_visible": true
+      }
+    }
+  ],
+  "checks": {
+    "raw_arm_leaks_unsafe_memory": true,
+    "aionis_blocks_unsafe_direct_use": true,
+    "aionis_preserves_current_and_procedure_recall": true,
+    "aionis_adds_audit_coverage": true
+  },
+  "boundary": "This demo measures admission after retrieval. It does not claim better backend retrieval or final external task success."
+}
