@@ -51,6 +51,8 @@ External proof paths:
 
 - Claude Code / Cursor over MCP:
   [docs.aionis.work/integrations/mcp](https://docs.aionis.work/integrations/mcp)
+- 3-5 minute Claude Code demo pack:
+  [docs/AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md](docs/AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md)
 - Memory Firewall for existing backends:
   [docs.aionis.work/products/memory-firewall](https://docs.aionis.work/products/memory-firewall)
 - Runnable examples and generated proof artifacts:
@@ -529,6 +531,9 @@ shorter prompt while the host keeps structured IDs and audit fields.
 Claude Code walkthrough:
 [docs/AIONIS_CLAUDE_CODE_DEMO.md](docs/AIONIS_CLAUDE_CODE_DEMO.md).
 
+3-5 minute demo pack:
+[docs/AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md](docs/AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md).
+
 Example Claude Code result:
 [docs/examples/claude-code-mcp-demo-result.json](docs/examples/claude-code-mcp-demo-result.json).
 
@@ -689,6 +694,7 @@ Official docs: [https://docs.aionis.work](https://docs.aionis.work)
 |---|---|
 | [AIONIS_INSTALL.md](docs/AIONIS_INSTALL.md) | One-command install path for Runtime plus SDK and MCP packages. |
 | [AIONIS_MCP.md](docs/AIONIS_MCP.md) | MCP bridge for Claude Code, Cursor, and other coding-agent clients. |
+| [AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md](docs/AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md) | 3-5 minute Claude Code + Aionis MCP demo script and proof checklist. |
 | [AIONIS_LOOP_ENGINEERING.md](docs/AIONIS_LOOP_ENGINEERING.md) | Memory governance profile for loop-engineered Agents. |
 | [AIONIS_RUNTIME_ARCHITECTURE.md](docs/AIONIS_RUNTIME_ARCHITECTURE.md) | Product architecture, memory layers, execution memory, context compiler, and source map. |
 | [AIONIS_HTTP_QUICKSTART.md](docs/AIONIS_HTTP_QUICKSTART.md) | Smallest curl-first product loop. |

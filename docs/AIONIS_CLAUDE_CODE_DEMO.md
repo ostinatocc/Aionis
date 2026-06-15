@@ -6,6 +6,9 @@ This demo wires Aionis into Claude Code without a custom Claude Code adapter.
 Claude Code talks to `@aionis/mcp`; the MCP bridge calls the same Runtime and
 SDK product APIs used by normal host integrations.
 
+For a screen-recording script, talk track, and proof checklist, use the demo
+pack: [AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md](AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md).
+
 Use it to prove this loop:
 
 ```text
