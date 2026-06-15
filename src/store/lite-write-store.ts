@@ -407,6 +407,17 @@ type LiteExecutionDecisionDbRow = {
   created_at: string;
 };
 
+type LiteExecutionNativeIndexRow = {
+  execution_kind: string | null;
+  anchor_kind: string | null;
+  pattern_state: string | null;
+  task_signature: string | null;
+  error_signature: string | null;
+  workflow_signature: string | null;
+  pattern_signature: string | null;
+  compression_layer: string | null;
+};
+
 type LiteMemoryNodeDbRow = {
   id: string;
   type: string;
@@ -516,7 +527,46 @@ function appendVisibilityWhere(args: {
   args.where.push(`(${visibility.join(" OR ")})`);
 }
 
-const LITE_MEMORY_NODE_SELECT_SQL = `SELECT
+function appendVisibilityWhereForAlias(args: {
+  where: string[];
+  params: unknown[];
+  alias: string;
+  consumerAgentId: string | null;
+  consumerTeamId: string | null;
+}): void {
+  const column = (name: string) => `${args.alias}.${name}`;
+  const visibility: string[] = [`(${column("memory_lane")} = 'shared' AND ${column("owner_team_id")} IS NULL)`];
+  if (args.consumerAgentId) {
+    visibility.push(`(${column("memory_lane")} = 'shared' AND ${column("owner_agent_id")} = ?)`);
+    args.params.push(args.consumerAgentId);
+    visibility.push(`(${column("memory_lane")} = 'private' AND ${column("owner_agent_id")} = ?)`);
+    args.params.push(args.consumerAgentId);
+  }
+  if (args.consumerTeamId) {
+    visibility.push(`(${column("memory_lane")} = 'shared' AND ${column("owner_team_id")} = ?)`);
+    args.params.push(args.consumerTeamId);
+    visibility.push(`(${column("memory_lane")} = 'private' AND ${column("owner_team_id")} = ?)`);
+    args.params.push(args.consumerTeamId);
+  }
+  args.where.push(`(${visibility.join(" OR ")})`);
+}
+
+function executionNativeIndexRowFromNode(row: LiteFindNodeRow): LiteExecutionNativeIndexRow | null {
+  const executionNative = resolveNodeNativeExecutionSurface(row.slots);
+  if (!executionNative) return null;
+  return {
+    execution_kind: resolveNodeExecutionKind(row.slots),
+    anchor_kind: resolveNodeAnchorKind(row.slots),
+    pattern_state: resolveNodePatternState(row.slots),
+    task_signature: resolveNodeTaskSignature({ slots: row.slots }),
+    error_signature: resolveNodeErrorSignature(row.slots),
+    workflow_signature: resolveNodeWorkflowSignature({ slots: row.slots }),
+    pattern_signature: resolveNodePatternSignature(row.slots),
+    compression_layer: resolveNodeCompressionLayer({ type: row.type, slots: row.slots }),
+  };
+}
+
+const LITE_MEMORY_NODE_SELECT_COLUMNS_SQL = `SELECT
    id,
    type,
    client_id,
@@ -536,7 +586,9 @@ const LITE_MEMORY_NODE_SELECT_SQL = `SELECT
    importance,
    confidence,
    created_at,
-   commit_id
+   commit_id`;
+
+const LITE_MEMORY_NODE_SELECT_SQL = `${LITE_MEMORY_NODE_SELECT_COLUMNS_SQL}
  FROM lite_memory_nodes`;
 
 function nodeVisible(
@@ -718,6 +770,36 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
     CREATE INDEX IF NOT EXISTS idx_lite_memory_nodes_scope_type_summary_tool_created
       ON lite_memory_nodes(scope, type, json_extract(slots_json, '$.summary_kind'), json_extract(slots_json, '$.selected_tool'), created_at DESC, id DESC);
 
+    CREATE TABLE IF NOT EXISTS lite_memory_execution_native_index (
+      scope TEXT NOT NULL,
+      node_id TEXT NOT NULL,
+      execution_kind TEXT,
+      anchor_kind TEXT,
+      pattern_state TEXT,
+      task_signature TEXT,
+      error_signature TEXT,
+      workflow_signature TEXT,
+      pattern_signature TEXT,
+      compression_layer TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(scope, node_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_created
+      ON lite_memory_execution_native_index(scope, created_at DESC, node_id DESC);
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_kind_created
+      ON lite_memory_execution_native_index(scope, execution_kind, created_at DESC, node_id DESC);
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_workflow_created
+      ON lite_memory_execution_native_index(scope, workflow_signature, created_at DESC, node_id DESC);
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_task_created
+      ON lite_memory_execution_native_index(scope, task_signature, created_at DESC, node_id DESC);
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_error_created
+      ON lite_memory_execution_native_index(scope, error_signature, created_at DESC, node_id DESC);
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_pattern_created
+      ON lite_memory_execution_native_index(scope, pattern_signature, created_at DESC, node_id DESC);
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_layer_created
+      ON lite_memory_execution_native_index(scope, compression_layer, created_at DESC, node_id DESC);
+
     CREATE TABLE IF NOT EXISTS lite_memory_rule_defs (
       rule_node_id TEXT PRIMARY KEY,
       scope TEXT NOT NULL,
@@ -851,6 +933,77 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
     // Column already exists in initialized databases.
   }
 
+  const deleteExecutionNativeIndexRow = (scope: string, nodeId: string): void => {
+    db.prepare(
+      `DELETE FROM lite_memory_execution_native_index
+       WHERE scope = ?
+         AND node_id = ?`,
+    ).run(scope, nodeId);
+  };
+
+  const syncExecutionNativeIndexFromNode = (scope: string, nodeId: string): void => {
+    const row = db.prepare(
+      `${LITE_MEMORY_NODE_SELECT_SQL}
+       WHERE scope = ?
+         AND id = ?
+       LIMIT 1`,
+    ).get(scope, nodeId) as LiteMemoryNodeDbRow | undefined;
+    if (!row) {
+      deleteExecutionNativeIndexRow(scope, nodeId);
+      return;
+    }
+    const decoded = decodeLiteFindNodeRow(row);
+    const indexRow = executionNativeIndexRowFromNode(decoded);
+    if (!indexRow) {
+      deleteExecutionNativeIndexRow(scope, nodeId);
+      return;
+    }
+    db.prepare(
+      `INSERT INTO lite_memory_execution_native_index
+        (scope, node_id, execution_kind, anchor_kind, pattern_state, task_signature, error_signature,
+         workflow_signature, pattern_signature, compression_layer, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(scope, node_id) DO UPDATE SET
+         execution_kind = excluded.execution_kind,
+         anchor_kind = excluded.anchor_kind,
+         pattern_state = excluded.pattern_state,
+         task_signature = excluded.task_signature,
+         error_signature = excluded.error_signature,
+         workflow_signature = excluded.workflow_signature,
+         pattern_signature = excluded.pattern_signature,
+         compression_layer = excluded.compression_layer,
+         created_at = excluded.created_at,
+         updated_at = excluded.updated_at`,
+    ).run(
+      scope,
+      nodeId,
+      indexRow.execution_kind,
+      indexRow.anchor_kind,
+      indexRow.pattern_state,
+      indexRow.task_signature,
+      indexRow.error_signature,
+      indexRow.workflow_signature,
+      indexRow.pattern_signature,
+      indexRow.compression_layer,
+      decoded.created_at,
+      nowIso(),
+    );
+  };
+
+  const rebuildExecutionNativeIndex = (): void => {
+    db.prepare("DELETE FROM lite_memory_execution_native_index").run();
+    const rows = db.prepare(
+      `SELECT scope, id
+       FROM lite_memory_nodes
+       WHERE slots_json LIKE ? ESCAPE '\\'`,
+    ).all(`%"${escapeSqlLike("execution_native_v1")}"%`) as Array<{ scope: string; id: string }>;
+    for (const row of rows) {
+      syncExecutionNativeIndexFromNode(row.scope, row.id);
+    }
+  };
+
+  rebuildExecutionNativeIndex();
+
   return {
     capability_version: WRITE_STORE_ACCESS_CAPABILITY_VERSION,
 
@@ -915,20 +1068,61 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
     },
 
     async findExecutionNativeNodes(args): Promise<{ rows: LiteExecutionNativeNodeRow[]; has_more: boolean }> {
-      const where: string[] = ["scope = ?", "slots_json LIKE ? ESCAPE '\\'"];
-      const params: unknown[] = [args.scope, `%"${escapeSqlLike("execution_native_v1")}"%`];
-      appendVisibilityWhere({
+      const where: string[] = ["i.scope = ?"];
+      const params: unknown[] = [args.scope];
+      if (args.executionKind) {
+        where.push("i.execution_kind = ?");
+        params.push(args.executionKind);
+      }
+      if (args.anchorKind) {
+        where.push("i.anchor_kind = ?");
+        params.push(args.anchorKind);
+      }
+      if (args.patternState) {
+        where.push("i.pattern_state = ?");
+        params.push(args.patternState);
+      }
+      if (args.taskSignature) {
+        where.push("i.task_signature = ?");
+        params.push(args.taskSignature);
+      }
+      if (args.errorSignature) {
+        where.push("i.error_signature = ?");
+        params.push(args.errorSignature);
+      }
+      if (args.workflowSignature) {
+        where.push("i.workflow_signature = ?");
+        params.push(args.workflowSignature);
+      }
+      if (args.patternSignature) {
+        where.push("i.pattern_signature = ?");
+        params.push(args.patternSignature);
+      }
+      if (args.compressionLayer) {
+        where.push("i.compression_layer = ?");
+        params.push(args.compressionLayer);
+      }
+      appendVisibilityWhereForAlias({
         where,
         params,
+        alias: "n",
         consumerAgentId: args.consumerAgentId ?? null,
         consumerTeamId: args.consumerTeamId ?? null,
       });
       const rows = db.prepare(
-        `${LITE_MEMORY_NODE_SELECT_SQL}
-         WHERE ${where.join(" AND ")}
-         ORDER BY created_at DESC, id DESC`,
-      ).all(...params) as LiteMemoryNodeDbRow[];
-      const filtered = rows
+        `${LITE_MEMORY_NODE_SELECT_COLUMNS_SQL}
+         FROM (
+           SELECT n.*
+           FROM lite_memory_execution_native_index i
+           JOIN lite_memory_nodes n
+             ON n.scope = i.scope
+            AND n.id = i.node_id
+           WHERE ${where.join(" AND ")}
+           ORDER BY i.created_at DESC, i.node_id DESC
+           LIMIT ? OFFSET ?
+         )`,
+      ).all(...params, args.limit + 1, args.offset) as LiteMemoryNodeDbRow[];
+      const decoded = rows
         .map(decodeLiteFindNodeRow)
         .map((row) => {
           const executionNative = resolveNodeNativeExecutionSurface(row.slots);
@@ -938,19 +1132,10 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
             execution_native: executionNative as ExecutionNativeV1,
           } satisfies LiteExecutionNativeNodeRow;
         })
-        .filter((row): row is LiteExecutionNativeNodeRow => !!row)
-        .filter((row) => !args.executionKind || resolveNodeExecutionKind(row.slots) === args.executionKind)
-        .filter((row) => !args.anchorKind || resolveNodeAnchorKind(row.slots) === args.anchorKind)
-        .filter((row) => !args.patternState || resolveNodePatternState(row.slots) === args.patternState)
-        .filter((row) => !args.taskSignature || resolveNodeTaskSignature({ slots: row.slots }) === args.taskSignature)
-        .filter((row) => !args.errorSignature || resolveNodeErrorSignature(row.slots) === args.errorSignature)
-        .filter((row) => !args.workflowSignature || resolveNodeWorkflowSignature({ slots: row.slots }) === args.workflowSignature)
-        .filter((row) => !args.patternSignature || resolveNodePatternSignature(row.slots) === args.patternSignature)
-        .filter((row) => !args.compressionLayer || resolveNodeCompressionLayer({ type: row.type, slots: row.slots }) === args.compressionLayer);
-      const slice = filtered.slice(args.offset, args.offset + args.limit + 1);
-      const hasMore = slice.length > args.limit;
+        .filter((row): row is LiteExecutionNativeNodeRow => !!row);
+      const hasMore = rows.length > args.limit;
       return {
-        rows: hasMore ? slice.slice(0, args.limit) : slice,
+        rows: hasMore ? decoded.slice(0, args.limit) : decoded,
         has_more: hasMore,
       };
     },
@@ -1796,6 +1981,7 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
         args.commitId,
         nowIso(),
       );
+      syncExecutionNativeIndexFromNode(args.scope, args.id);
     },
 
     async insertRuleDef(args: WriteRuleDefInsertArgs): Promise<void> {
@@ -2092,6 +2278,7 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
          WHERE scope = ?
            AND id = ?`,
       ).run(...params);
+      syncExecutionNativeIndexFromNode(args.scope, args.id);
       const { rows } = await this.findNodes({
         scope: args.scope,
         id: args.id,

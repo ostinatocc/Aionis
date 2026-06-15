@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { MemoryAnchorV1Schema } from "../../src/memory/schemas.ts";
 import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
+import { createSqliteDatabase } from "../../src/store/sqlite.ts";
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-execution-native-"));
@@ -492,6 +493,243 @@ test("lite write store exposes execution-first query filters over execution_nati
     assert.equal(signatureFactRows.rows[0]?.title, "Task Signature");
   } finally {
     await store.close();
+  }
+});
+
+test("lite write store materializes execution-native lookup across insert and anchor updates", async () => {
+  const dbPath = tmpDbPath("execution-index");
+  const store = createLiteWriteStore(dbPath);
+  try {
+    const prepared = await prepareMemoryWrite(
+      {
+        tenant_id: "default",
+        scope: "default",
+        actor: "local-user",
+        producer_agent_id: "local-user",
+        owner_agent_id: "local-user",
+        input_text: "Store an execution-native workflow anchor for lookup index sync.",
+        auto_embed: false,
+        nodes: [
+          {
+            type: "procedure",
+            title: "Indexed workflow anchor",
+            text_summary: "Use the indexed workflow path for validation recovery.",
+            slots: {
+              summary_kind: "workflow_anchor",
+              compression_layer: "L2",
+              execution_native_v1: {
+                schema_version: "execution_native_v1",
+                execution_kind: "workflow_anchor",
+                anchor_kind: "workflow",
+                compression_layer: "L2",
+                task_signature: "index-task-v1",
+                workflow_signature: "index-workflow-v1",
+              },
+            },
+          },
+        ],
+        edges: [],
+      },
+      "default",
+      "default",
+      {
+        maxTextLen: 10_000,
+        piiRedaction: false,
+        allowCrossScopeEdges: false,
+      },
+      null,
+    );
+    await store.withTx(() =>
+      applyMemoryWrite(prepared, {
+        maxTextLen: 10_000,
+        piiRedaction: false,
+        allowCrossScopeEdges: false,
+        associativeLinkOrigin: "memory_write",
+        write_access: store,
+      }),
+    );
+
+    const workflowRows = await store.findExecutionNativeNodes({
+      scope: "default",
+      consumerAgentId: "local-user",
+      executionKind: "workflow_anchor",
+      workflowSignature: "index-workflow-v1",
+      limit: 10,
+      offset: 0,
+    });
+    assert.equal(workflowRows.rows.length, 1);
+    const nodeId = workflowRows.rows[0]!.id;
+
+    const directDb = createSqliteDatabase(dbPath);
+    try {
+      const indexRow = directDb.prepare(
+        `SELECT execution_kind, workflow_signature, pattern_signature
+         FROM lite_memory_execution_native_index
+         WHERE scope = ?
+           AND node_id = ?
+         LIMIT 1`,
+      ).get("default", nodeId) as {
+        execution_kind: string | null;
+        workflow_signature: string | null;
+        pattern_signature: string | null;
+      } | undefined;
+      assert.equal(indexRow?.execution_kind, "workflow_anchor");
+      assert.equal(indexRow?.workflow_signature, "index-workflow-v1");
+      assert.equal(indexRow?.pattern_signature, null);
+    } finally {
+      directDb.close();
+    }
+
+    await store.updateNodeAnchorState({
+      scope: "default",
+      id: nodeId,
+      slots: {
+        summary_kind: "pattern_anchor",
+        compression_layer: "L3",
+        execution_native_v1: {
+          schema_version: "execution_native_v1",
+          execution_kind: "pattern_anchor",
+          anchor_kind: "pattern",
+          pattern_state: "stable",
+          compression_layer: "L3",
+          task_signature: "index-task-v1",
+          pattern_signature: "index-pattern-v2",
+        },
+      },
+      textSummary: "Use the indexed stable pattern for validation recovery.",
+      salience: workflowRows.rows[0]!.salience,
+      importance: workflowRows.rows[0]!.importance,
+      confidence: workflowRows.rows[0]!.confidence,
+      tier: "semantic",
+    });
+
+    const oldWorkflowRows = await store.findExecutionNativeNodes({
+      scope: "default",
+      consumerAgentId: "local-user",
+      executionKind: "workflow_anchor",
+      workflowSignature: "index-workflow-v1",
+      limit: 10,
+      offset: 0,
+    });
+    assert.equal(oldWorkflowRows.rows.length, 0);
+
+    const patternRows = await store.findExecutionNativeNodes({
+      scope: "default",
+      consumerAgentId: "local-user",
+      executionKind: "pattern_anchor",
+      patternState: "stable",
+      patternSignature: "index-pattern-v2",
+      limit: 10,
+      offset: 0,
+    });
+    assert.equal(patternRows.rows.length, 1);
+    assert.equal(patternRows.rows[0]?.id, nodeId);
+
+    const updatedDb = createSqliteDatabase(dbPath);
+    try {
+      const indexRow = updatedDb.prepare(
+        `SELECT execution_kind, workflow_signature, pattern_signature
+         FROM lite_memory_execution_native_index
+         WHERE scope = ?
+           AND node_id = ?
+         LIMIT 1`,
+      ).get("default", nodeId) as {
+        execution_kind: string | null;
+        workflow_signature: string | null;
+        pattern_signature: string | null;
+      } | undefined;
+      assert.equal(indexRow?.execution_kind, "pattern_anchor");
+      assert.equal(indexRow?.workflow_signature, null);
+      assert.equal(indexRow?.pattern_signature, "index-pattern-v2");
+    } finally {
+      updatedDb.close();
+    }
+  } finally {
+    await store.close();
+  }
+});
+
+test("lite write store rebuilds execution-native lookup for existing databases", async () => {
+  const dbPath = tmpDbPath("execution-index-backfill");
+  const store = createLiteWriteStore(dbPath);
+  try {
+    const prepared = await prepareMemoryWrite(
+      {
+        tenant_id: "default",
+        scope: "default",
+        actor: "local-user",
+        producer_agent_id: "local-user",
+        owner_agent_id: "local-user",
+        input_text: "Store an execution-native handoff before rebuilding the lookup index.",
+        auto_embed: false,
+        nodes: [
+          {
+            type: "event",
+            title: "Backfilled execution handoff",
+            text_summary: "Continue the indexed backfill workflow.",
+            slots: {
+              summary_kind: "handoff",
+              execution_native_v1: {
+                schema_version: "execution_native_v1",
+                execution_kind: "execution_native",
+                summary_kind: "handoff",
+                compression_layer: "L0",
+                workflow_signature: "backfill-workflow-v1",
+                target_files: ["src/runtime/backfill.ts"],
+                next_action: "Patch src/runtime/backfill.ts and rerun tests",
+              },
+            },
+          },
+        ],
+        edges: [],
+      },
+      "default",
+      "default",
+      {
+        maxTextLen: 10_000,
+        piiRedaction: false,
+        allowCrossScopeEdges: false,
+      },
+      null,
+    );
+    await store.withTx(() =>
+      applyMemoryWrite(prepared, {
+        maxTextLen: 10_000,
+        piiRedaction: false,
+        allowCrossScopeEdges: false,
+        associativeLinkOrigin: "memory_write",
+        write_access: store,
+      }),
+    );
+  } finally {
+    await store.close();
+  }
+
+  const directDb = createSqliteDatabase(dbPath);
+  try {
+    directDb.prepare("DELETE FROM lite_memory_execution_native_index").run();
+    const count = directDb.prepare(
+      "SELECT COUNT(*) AS count FROM lite_memory_execution_native_index",
+    ).get() as { count: number };
+    assert.equal(count.count, 0);
+  } finally {
+    directDb.close();
+  }
+
+  const reopened = createLiteWriteStore(dbPath);
+  try {
+    const rows = await reopened.findExecutionNativeNodes({
+      scope: "default",
+      consumerAgentId: "local-user",
+      executionKind: "execution_native",
+      workflowSignature: "backfill-workflow-v1",
+      limit: 10,
+      offset: 0,
+    });
+    assert.equal(rows.rows.length, 1);
+    assert.equal(rows.rows[0]?.execution_native.next_action, "Patch src/runtime/backfill.ts and rerun tests");
+  } finally {
+    await reopened.close();
   }
 });
 
