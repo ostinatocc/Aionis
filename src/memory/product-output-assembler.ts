@@ -65,6 +65,7 @@ import {
   inferLifecycleCandidateSignals,
   lifecycleCandidateAllowsRehydrate,
   lifecycleCandidateDirectUseUnsafe,
+  lifecycleCandidateRuntimeOwnedProducer,
 } from "./lifecycle-candidate-inference.js";
 
 type ProductTask = AionisGuidePacket["task"];
@@ -2783,7 +2784,7 @@ function lifecycleCandidateMemoryDirectUseAdmissible(args: {
   }
   if (lifecycleCandidateMemoryDirectUseUnsafe(args.signals)) return false;
   return args.signals.some((signal) =>
-    signal.producer === "rule_v1"
+    lifecycleCandidateRuntimeOwnedProducer(signal)
     && signal.confidence >= 0.76
     && (signal.signal_type === "current" || signal.signal_type === "procedure")
   );
@@ -2795,7 +2796,7 @@ function lifecycleCandidateMemoryDirectUseProtected(args: {
 }): boolean {
   if (lifecycleCandidateMemoryDirectUseUnsafe(args.signals)) return false;
   const hasCurrentOrProcedureSignal = args.signals.some((signal) =>
-    signal.producer === "rule_v1"
+    lifecycleCandidateRuntimeOwnedProducer(signal)
     && signal.confidence >= 0.76
     && (signal.signal_type === "current" || signal.signal_type === "procedure")
   );
@@ -2813,7 +2814,7 @@ function lifecycleCandidateInspectMemoryIds(signals: AionisLifecycleCandidateSig
 }
 
 function lifecycleCandidateRehydrateSignal(signal: AionisLifecycleCandidateSignal): boolean {
-  return signal.producer === "rule_v1"
+  return lifecycleCandidateRuntimeOwnedProducer(signal)
     && signal.signal_type === "rehydrate"
     && signal.confidence >= 0.78;
 }

@@ -21,10 +21,10 @@ export type LifecycleCandidateEntry = {
 
 type LifecycleCandidateSignalType = AionisLifecycleCandidateSignal["signal_type"];
 type LifecycleCandidateEvidenceField = AionisLifecycleCandidateSignal["evidence_span"]["source_field"];
-type LifecycleCandidateSignalDraft = Pick<
-  AionisLifecycleCandidateSignal,
-  "memory_id" | "signal_type" | "confidence" | "evidence_span" | "reason"
->;
+type LifecycleCandidateSignalProducer = AionisLifecycleCandidateSignal["producer"];
+type LifecycleCandidateSignalDraft =
+  Pick<AionisLifecycleCandidateSignal, "memory_id" | "signal_type" | "confidence" | "evidence_span" | "reason">
+  & { producer?: LifecycleCandidateSignalProducer };
 
 type RulePattern = {
   signal_type: LifecycleCandidateSignalType;
@@ -132,19 +132,57 @@ const SUMMARY_RULES: RulePattern[] = [
   },
 ];
 
+const SEMANTIC_SHADOW_RULES: RulePattern[] = [
+  {
+    signal_type: "negative",
+    source_field: "text_summary",
+    pattern: /(?:\bthe\s+(?:work|team|agent|thread)\b[^.!?\n]{0,120}\b(?:ended\s+up|eventually|ultimately)\b[^.!?\n]{0,120}\b(?:elsewhere|taking\s+another\s+path|using\s+another\s+path|going\s+a\s+different\s+direction|back\s+on\s+the\s+newer\s+path)\b|\b(?:did\s+not|didn't)\s+pan\s+out\b|\bturned\s+out\s+to\s+be\s+(?:a\s+)?dead[-\s]?end\b|最后(?:还是)?(?:回到|转向|采用).{0,80}(?:新|当前|有效|accepted|current)|这条(?:路|路线|路径|方案).{0,80}(?:没走通|没有走通|后来没用|最后没采用|没有被采用))/i,
+    confidence: 0.7,
+    reason: "Shadow semantic candidate: the text implies a branch did not become the adopted continuation without relying on the primary rule cues.",
+  },
+  {
+    signal_type: "stale",
+    source_field: "text_summary",
+    pattern: /(?:\b(?:earlier|old|prior)\s+(?:route|path|branch|note|attempt)\b[^.!?\n]{0,160}\b(?:kept|left|preserved)\b[^.!?\n]{0,120}\b(?:for\s+(?:audit|context|background)|as\s+(?:audit|context|background))\b|(?:之前|早先|旧的|上一轮).{0,120}(?:只|仅).{0,60}(?:审计|背景|参考|留存)|(?:这条|该)(?:旧)?(?:路线|路径|方案|记录).{0,120}(?:只作|仅作|作为).{0,60}(?:审计|背景|参考))/i,
+    confidence: 0.68,
+    reason: "Shadow semantic candidate: the text implies an older route is retained as background rather than current action evidence.",
+  },
+  {
+    signal_type: "current",
+    source_field: "text_summary",
+    pattern: /(?:\b(?:the\s+handoff|the\s+thread|work)\b[^.!?\n]{0,120}\b(?:continues|resumes|settles|lands)\b[^.!?\n]{0,120}\b(?:here|on|around|at)\b|(?:现在|当前|接下来|继续).{0,80}(?:从|围绕|落在|回到).{0,80}(?:这里|这个|当前|有效))/i,
+    confidence: 0.68,
+    reason: "Shadow semantic candidate: the text implies a current continuation point.",
+  },
+  {
+    signal_type: "procedure",
+    source_field: "text_summary",
+    pattern: /(?:\b(?:the\s+part\s+to\s+reuse|reusable\s+part|repeatable\s+part)\b[^.!?\n]{0,140}\b(?:inspect|verify|keep|run|review)\b|(?:可复用|复用|以后还用|重复使用).{0,120}(?:步骤|流程|做法|模式|检查|验证))/i,
+    confidence: 0.68,
+    reason: "Shadow semantic candidate: the text implies reusable procedure content.",
+  },
+  {
+    signal_type: "rehydrate",
+    source_field: "text_summary",
+    pattern: /(?:\b(?:open|recover|load|fetch)\b[^.!?\n]{0,120}\b(?:the\s+full|complete|raw|exact)\b[^.!?\n]{0,120}\b(?:trace|evidence|payload|diff|record)\b|(?:打开|恢复|读取|查看).{0,100}(?:完整|原始|精确).{0,80}(?:证据|轨迹|记录|payload|diff))/i,
+    confidence: 0.68,
+    reason: "Shadow semantic candidate: the text implies raw or full evidence may be needed.",
+  },
+];
+
 export function inferLifecycleCandidateSignals(args: {
   entries: LifecycleCandidateEntry[];
   query_intent?: string | null;
   producer?: AionisLifecycleCandidateSignal["producer"];
 }): AionisLifecycleCandidateSignal[] {
-  const producer = args.producer ?? "rule_v1";
   const signals: AionisLifecycleCandidateSignal[] = [];
-  const textSignalDrafts: LifecycleCandidateSignalDraft[] = [];
   const seen = new Set<string>();
   const addSignal = (signal: LifecycleCandidateSignalDraft) => {
+    const producer = signal.producer ?? args.producer ?? "rule_v1";
     const key = [
       signal.memory_id,
       signal.signal_type,
+      producer,
       signal.evidence_span.source_field,
       signal.evidence_span.quote.toLowerCase(),
     ].join(":");
@@ -155,41 +193,31 @@ export function inferLifecycleCandidateSignals(args: {
       producer,
     });
   };
-  for (const entry of args.entries) {
-    if (!entryEligibleForLifecycleCandidateInference(entry)) continue;
-    for (const rule of [...TITLE_RULES, ...SUMMARY_RULES]) {
-      const source = rule.source_field === "title" ? entry.title : entry.summary;
-      const quote = evidenceQuote(source, rule.pattern);
-      if (!quote) continue;
-      if (positiveSignalSuppressedBySelfNegation(rule.signal_type, source)) continue;
-      const signal = {
-        memory_id: entry.memory_id,
-        signal_type: rule.signal_type,
-        confidence: rule.confidence,
-        evidence_span: {
-          source_field: rule.source_field,
-          quote,
-        },
-        reason: rule.reason,
-      } satisfies LifecycleCandidateSignalDraft;
-      textSignalDrafts.push(signal);
-      addSignal(signal);
-    }
+  const ruleTextSignalDrafts = inferRuleTextSignals(args.entries);
+  for (const signal of ruleTextSignalDrafts) {
+    addSignal(signal);
   }
-  for (const signal of inferTargetClusterSignals(args.entries, textSignalDrafts)) {
+  for (const signal of inferSemanticShadowSignals(args.entries)) {
+    addSignal(signal);
+  }
+  for (const signal of inferTargetClusterSignals(args.entries, ruleTextSignalDrafts)) {
     addSignal(signal);
   }
   return signals.slice(0, 64);
 }
 
 export function lifecycleCandidateDirectUseUnsafe(signal: AionisLifecycleCandidateSignal): boolean {
-  return signal.producer === "rule_v1"
+  return lifecycleCandidateRuntimeOwnedProducer(signal)
     && signal.confidence >= 0.84
     && (
       signal.signal_type === "negative"
       || signal.signal_type === "stale"
       || signal.signal_type === "contested"
     );
+}
+
+export function lifecycleCandidateRuntimeOwnedProducer(signal: AionisLifecycleCandidateSignal): boolean {
+  return signal.producer === "rule_v1" || signal.producer === "target_cluster_v1";
 }
 
 export function lifecycleCandidateAllowsRehydrate(args: {
@@ -212,6 +240,56 @@ function entryEligibleForLifecycleCandidateInference(entry: LifecycleCandidateEn
   if (entry.execution_state) return true;
   if ((entry.target_files ?? []).some((target) => EXECUTION_TARGET_PATH.test(target))) return true;
   return EXECUTION_TARGET_PATH.test(`${entry.title ?? ""}\n${entry.summary}`);
+}
+
+function inferRuleTextSignals(entries: LifecycleCandidateEntry[]): LifecycleCandidateSignalDraft[] {
+  const signals: LifecycleCandidateSignalDraft[] = [];
+  for (const entry of entries) {
+    if (!entryEligibleForLifecycleCandidateInference(entry)) continue;
+    for (const rule of [...TITLE_RULES, ...SUMMARY_RULES]) {
+      const source = rule.source_field === "title" ? entry.title : entry.summary;
+      const quote = evidenceQuote(source, rule.pattern);
+      if (!quote) continue;
+      if (positiveSignalSuppressedBySelfNegation(rule.signal_type, source)) continue;
+      signals.push({
+        memory_id: entry.memory_id,
+        signal_type: rule.signal_type,
+        confidence: rule.confidence,
+        evidence_span: {
+          source_field: rule.source_field,
+          quote,
+        },
+        producer: "rule_v1",
+        reason: rule.reason,
+      });
+    }
+  }
+  return signals;
+}
+
+function inferSemanticShadowSignals(entries: LifecycleCandidateEntry[]): LifecycleCandidateSignalDraft[] {
+  const signals: LifecycleCandidateSignalDraft[] = [];
+  for (const entry of entries) {
+    if (!entryEligibleForLifecycleCandidateInference(entry)) continue;
+    for (const rule of SEMANTIC_SHADOW_RULES) {
+      const source = rule.source_field === "title" ? entry.title : entry.summary;
+      const quote = evidenceQuote(source, rule.pattern);
+      if (!quote) continue;
+      if (positiveSignalSuppressedBySelfNegation(rule.signal_type, source)) continue;
+      signals.push({
+        memory_id: entry.memory_id,
+        signal_type: rule.signal_type,
+        confidence: rule.confidence,
+        evidence_span: {
+          source_field: rule.source_field,
+          quote,
+        },
+        producer: "semantic_shadow_v1",
+        reason: rule.reason,
+      });
+    }
+  }
+  return signals;
 }
 
 function evidenceQuote(value: string | null | undefined, pattern: RegExp): string | null {
@@ -331,6 +409,7 @@ function inferTargetClusterSignals(
           source_field: "slots",
           quote: `target_files match active execution cluster: ${projection.targetQuote}`,
         },
+        producer: "target_cluster_v1",
         reason: "Exact target-file relation places this memory in the supported active execution cluster.",
       });
       continue;
@@ -343,6 +422,7 @@ function inferTargetClusterSignals(
         source_field: "slots",
         quote: `target_files outside active execution cluster: ${projection.targetQuote}`,
       },
+      producer: "target_cluster_v1",
       reason: "Target-file relation places this memory outside the supported active execution cluster; inspect before direct reuse.",
     });
   }

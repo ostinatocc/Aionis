@@ -1331,3 +1331,98 @@ test("lifecycle target clusters do not let repeated unsafe old routes outvote ac
     entry.target === "packages/vite/src/node/server/environments/fullBundleEnvironment.ts"
   ));
 });
+
+test("semantic shadow lifecycle candidates capture indirect and cross-lingual evidence without authority", () => {
+  const signals = inferLifecycleCandidateSignals({
+    entries: [
+      {
+        memory_id: "mem-indirect-english",
+        title: "Runtime note for src/runtime/path-a.ts",
+        summary: "The work eventually ended up taking another path around src/runtime/current.ts; keep src/runtime/path-a.ts as context for what happened.",
+        memory_type: "procedure",
+        domain: "execution",
+        lifecycle_state: "active",
+        authority: "trusted",
+        target_files: ["src/runtime/path-a.ts"],
+      },
+      {
+        memory_id: "mem-indirect-cn",
+        title: "执行记录 src/runtime/path-a.ts",
+        summary: "这条路线后来没走通，最后还是回到 src/runtime/current.ts 继续；该记录只作为背景参考。",
+        memory_type: "procedure",
+        domain: "execution",
+        lifecycle_state: "active",
+        authority: "trusted",
+        target_files: ["src/runtime/path-a.ts"],
+      },
+    ],
+  });
+  const shadowSignals = signals.filter((signal) => signal.producer === "semantic_shadow_v1");
+  assert.ok(shadowSignals.some((signal) =>
+    signal.memory_id === "mem-indirect-english" && signal.signal_type === "negative"
+  ));
+  assert.ok(shadowSignals.some((signal) =>
+    signal.memory_id === "mem-indirect-cn" && signal.signal_type === "negative"
+  ));
+  assert.equal(shadowSignals.some(lifecycleCandidateDirectUseUnsafe), false);
+});
+
+test("semantic shadow lifecycle candidates stay out of agent-facing surface effects", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "continue the runtime migration",
+    },
+    nodes: [
+      {
+        id: "mem-shadow-only",
+        type: "procedure",
+        title: "Runtime note for src/runtime/path-a.ts",
+        text_summary: "The work eventually ended up taking another path around src/runtime/current.ts; keep src/runtime/path-a.ts as context for what happened.",
+        slots: {
+          target_files: ["src/runtime/path-a.ts"],
+          execution_native_v1: {
+            execution_kind: "execution_workflow",
+            task_signature: "runtime-migration",
+            workflow_signature: "runtime-path-a-note",
+            contract_trust: "authoritative",
+          },
+        },
+        confidence: 0.9,
+        salience: 0.9,
+      },
+    ],
+  });
+  assert.equal(memoryPacket.relevant_memories.find((entry) => entry.memory_id === "mem-shadow-only")?.authority, "trusted");
+
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+  });
+  assert.ok(agentContext.use_now_memory_ids.includes("mem-shadow-only"));
+  assert.equal(agentContext.inspect_before_use_memory_ids.includes("mem-shadow-only"), false);
+
+  const trace = buildAionisMemoryDecisionTrace({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    before_guide: null,
+    after_guide: {
+      memory_packet: memoryPacket,
+      agent_context: agentContext,
+    },
+  });
+  assert.equal(trace.lifecycle_candidate_summary.present, true);
+  assert.equal(trace.lifecycle_candidate_summary.authority_mutation, false);
+  assert.equal(trace.lifecycle_candidate_summary.agent_prompt_included, false);
+  assert.equal(trace.lifecycle_candidate_summary.signal_payload_prompt_included, false);
+  assert.equal(trace.lifecycle_candidate_summary.surface_effect_prompt_included, false);
+  assert.ok(trace.lifecycle_candidate_summary.shadow_only_memory_ids.includes("mem-shadow-only"));
+  assert.equal(trace.lifecycle_candidate_summary.gated_memory_ids.includes("mem-shadow-only"), false);
+  const decision = trace.memory_decisions.find((entry) => entry.memory_id === "mem-shadow-only");
+  assert.equal(decision?.agent_surface, "use_now");
+  assert.ok(decision?.reason_codes.includes("lifecycle_candidate_signal"));
+  assert.equal(decision?.reason_codes.includes("lifecycle_candidate_direct_use_gated"), false);
+});

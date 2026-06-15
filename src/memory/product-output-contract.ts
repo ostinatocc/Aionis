@@ -135,7 +135,7 @@ export const AionisLifecycleCandidateSignalSchema = z
         quote: z.string().min(1),
       })
       .strict(),
-    producer: z.enum(["rule_v1", "llm_shadow_v1"]),
+    producer: z.enum(["rule_v1", "target_cluster_v1", "semantic_shadow_v1", "llm_shadow_v1"]),
     reason: z.string().min(1),
   })
   .strict();
