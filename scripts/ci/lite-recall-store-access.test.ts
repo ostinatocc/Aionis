@@ -20,6 +20,10 @@ function embedding(values: number[]): string {
   return JSON.stringify(values);
 }
 
+function deterministicUuid(n: number): string {
+  return `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+}
+
 async function insertCommit(store: ReturnType<typeof createLiteWriteStore>, scope: string, suffix: string): Promise<string> {
   return store.insertCommit({
     scope,
@@ -43,6 +47,7 @@ async function insertReadyNode(
     summary?: string;
     vector?: number[];
     tier?: "hot" | "warm" | "cold" | "archive";
+    slots?: Record<string, unknown>;
     salience?: number;
     confidence?: number;
     ownerAgentId?: string | null;
@@ -58,7 +63,7 @@ async function insertReadyNode(
     tier: args.tier ?? "hot",
     title: args.title ?? args.id,
     textSummary: args.summary ?? args.id,
-    slotsJson: "{}",
+    slotsJson: JSON.stringify(args.slots ?? {}),
     rawRef: null,
     evidenceRef: null,
     embeddingVector: embedding(args.vector ?? [0, 1, 0]),
@@ -327,6 +332,156 @@ test("stage2 edges fetches only seed neighborhoods in both directions", async ()
     });
 
     assert.deepEqual(edges.map((edge) => edge.id).sort(), ["edge-from-seed", "edge-to-seed"]);
+  } finally {
+    await recallStore.close();
+    await writeStore.close();
+  }
+});
+
+test("large Lite recall smoke keeps tier budget and edge neighborhood bounded", async () => {
+  const dbPath = tmpDbPath("large-recall-smoke");
+  const writeStore = createLiteWriteStore(dbPath);
+  const recallStore = createLiteRecallStore(dbPath);
+  try {
+    await writeStore.withTx(async () => {
+      const commitId = await insertCommit(writeStore, "default", "large-recall-smoke");
+      for (let i = 0; i < 2200; i += 1) {
+        await insertReadyNode(writeStore, {
+          id: deterministicUuid(10_000 + i),
+          type: "concept",
+          title: `ordinary memory ${i}`,
+          vector: i % 2 === 0 ? [0, 1, 0] : [0, 0.9, 0.1],
+          tier: i % 3 === 0 ? "hot" : "warm",
+          salience: 0.9,
+          confidence: 0.9,
+          commitId,
+        });
+      }
+      for (let i = 0; i < 420; i += 1) {
+        await insertReadyNode(writeStore, {
+          id: deterministicUuid(20_000 + i),
+          type: "procedure",
+          title: `execution workflow ${i}`,
+          vector: [0, 0.8, 0.2],
+          tier: i % 2 === 0 ? "hot" : "warm",
+          slots: {
+            execution_native_v1: {
+              execution_kind: "workflow_anchor",
+              anchor_kind: "workflow",
+              workflow_signature: `large-smoke-workflow-${i}`,
+              task_family: "large_recall_smoke",
+              selected_tool: "edit",
+              contract_trust: "authoritative",
+            },
+          },
+          salience: 0.85,
+          confidence: 0.85,
+          commitId,
+        });
+      }
+      await insertReadyNode(writeStore, {
+        id: deterministicUuid(30_001),
+        type: "concept",
+        title: "cold exact target",
+        vector: [1, 0, 0],
+        tier: "cold",
+        salience: 1,
+        confidence: 1,
+        commitId,
+      });
+      await insertReadyNode(writeStore, {
+        id: deterministicUuid(30_002),
+        type: "concept",
+        title: "archive exact target",
+        vector: [1, 0, 0],
+        tier: "archive",
+        salience: 1,
+        confidence: 1,
+        commitId,
+      });
+
+      const seedId = deterministicUuid(40_000);
+      const srcNeighborId = deterministicUuid(40_001);
+      const dstNeighborId = deterministicUuid(40_002);
+      for (const id of [seedId, srcNeighborId, dstNeighborId]) {
+        await insertReadyNode(writeStore, { id, type: "concept", vector: [0, 1, 0], commitId });
+      }
+      await writeStore.upsertEdge({
+        id: "large-smoke-edge-from-seed",
+        scope: "default",
+        type: "related_to",
+        srcId: seedId,
+        dstId: dstNeighborId,
+        weight: 0.74,
+        confidence: 0.74,
+        decayRate: 0,
+        metadataJson: {},
+        commitId,
+      });
+      await writeStore.upsertEdge({
+        id: "large-smoke-edge-to-seed",
+        scope: "default",
+        type: "related_to",
+        srcId: srcNeighborId,
+        dstId: seedId,
+        weight: 0.83,
+        confidence: 0.83,
+        decayRate: 0,
+        metadataJson: {},
+        commitId,
+      });
+      for (let i = 0; i < 1500; i += 1) {
+        await writeStore.upsertEdge({
+          id: `large-smoke-unrelated-edge-${i}`,
+          scope: "default",
+          type: "related_to",
+          srcId: deterministicUuid(10_000 + (i % 2200)),
+          dstId: deterministicUuid(10_000 + ((i + 1) % 2200)),
+          weight: 1,
+          confidence: 1,
+          decayRate: 0,
+          metadataJson: {},
+          commitId,
+        });
+      }
+    });
+
+    const access = recallStore.createRecallAccess();
+    const ann = await access.stage1CandidatesAnn({
+      queryEmbedding: [1, 0, 0],
+      scope: "default",
+      oversample: 50,
+      limit: 25,
+      consumerAgentId: null,
+      consumerTeamId: null,
+    });
+    assert.ok(ann.length > 0);
+    assert.ok(ann.every((candidate) => candidate.tier === "hot" || candidate.tier === "warm"));
+
+    const exact = await access.stage1CandidatesExactRecovery({
+      queryEmbedding: [1, 0, 0],
+      scope: "default",
+      oversample: 50,
+      limit: 5,
+      allowedTiers: [...EXACT_RECOVERY_RECALL_STAGE1_ALLOWED_TIERS],
+      scanLimit: null,
+      consumerAgentId: null,
+      consumerTeamId: null,
+    });
+    assert.equal(exact[0]?.id, deterministicUuid(30_001));
+    assert.ok(!exact.some((candidate) => candidate.tier === "archive"));
+
+    const edges = await access.stage2Edges({
+      seedIds: [deterministicUuid(40_000)],
+      scope: "default",
+      neighborhoodHops: 1,
+      minEdgeWeight: 0,
+      minEdgeConfidence: 0,
+      hop1Budget: 10,
+      hop2Budget: 10,
+      edgeFetchBudget: 10,
+    });
+    assert.deepEqual(edges.map((edge) => edge.id).sort(), ["large-smoke-edge-from-seed", "large-smoke-edge-to-seed"]);
   } finally {
     await recallStore.close();
     await writeStore.close();
