@@ -42,6 +42,7 @@
     "runtime:quickstart:memory-firewall": "npx tsx scripts/e2e/developer-memory-firewall-quickstart.ts",
     "runtime:quickstart:flight-recorder": "npx tsx scripts/e2e/developer-flight-recorder-quickstart.ts",
     "runtime:quickstart:claude-code-mcp": "npm run -s packages:build && npx tsx scripts/e2e/developer-claude-code-mcp-demo.ts",
+    "runtime:smoke:external-packages": "npm run -s packages:build && npx tsx scripts/e2e/external-package-entrypoint-smoke.ts",
     "runtime:e2e:ordinary-memory": "npx tsx scripts/e2e/ordinary-memory-product-loop.ts",
     "runtime:e2e:golden-product-loop": "npx tsx scripts/e2e/golden-product-loop.ts",
     "runtime:e2e:judgment-calibration": "npx tsx scripts/e2e/judgment-calibration-product-loop.ts",

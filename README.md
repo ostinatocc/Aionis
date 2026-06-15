@@ -255,6 +255,18 @@ npm run -s runtime:quickstart:claude-code-mcp
 That loop verifies the same MCP tool path Claude Code uses:
 `aionis_health -> aionis_record_step -> aionis_context -> aionis_flight_recorder`.
 
+Before publishing or after changing package entrypoints, run the external package
+smoke:
+
+```bash
+npm run -s runtime:smoke:external-packages
+```
+
+That loop packs `@aionis/sdk`, `@aionis/mcp`, and `@aionis/create`, installs
+them into a temporary external Node project, then verifies the SDK product loop,
+the MCP stdio tool path, and the installer/MCP CLI entrypoints against a real
+Runtime.
+
 Not sure which entrypoint to use? See the
 [quickstart matrix](docs/AIONIS_QUICKSTART_MATRIX.md).
 

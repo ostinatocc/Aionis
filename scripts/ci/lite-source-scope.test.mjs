@@ -180,6 +180,10 @@ test("focused package exposes developer quickstarts through the Runtime e2e surf
     "npm run -s packages:build && npx tsx scripts/e2e/developer-claude-code-mcp-demo.ts",
   );
   assert.equal(
+    packageJson.scripts?.["runtime:smoke:external-packages"],
+    "npm run -s packages:build && npx tsx scripts/e2e/external-package-entrypoint-smoke.ts",
+  );
+  assert.equal(
     fs.existsSync(path.join(ROOT, "scripts", "e2e", "developer-sdk-quickstart.ts")),
     true,
   );
@@ -199,6 +203,10 @@ test("focused package exposes developer quickstarts through the Runtime e2e surf
     fs.existsSync(path.join(ROOT, "scripts", "e2e", "developer-claude-code-mcp-demo.ts")),
     true,
   );
+  assert.equal(
+    fs.existsSync(path.join(ROOT, "scripts", "e2e", "external-package-entrypoint-smoke.ts")),
+    true,
+  );
 });
 
 test("README quickstart examples stay aligned with product result contracts", () => {
@@ -211,6 +219,7 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.match(readme, /npm run -s runtime:quickstart:memory-firewall/);
   assert.match(readme, /npm run -s runtime:quickstart:flight-recorder/);
   assert.match(readme, /npm run -s runtime:quickstart:claude-code-mcp/);
+  assert.match(readme, /npm run -s runtime:smoke:external-packages/);
   assert.match(readme, /docs\/AIONIS_QUICKSTART_MATRIX\.md/);
   assert.match(readme, /npm run -s runtime:e2e:judgment-calibration/);
   assert.match(readme, /docs\/examples\/sdk-quickstart-result\.json/);
@@ -346,6 +355,7 @@ test("README quickstart examples stay aligned with product result contracts", ()
     "npm run -s runtime:quickstart:memory-firewall",
     "npm run -s runtime:quickstart:flight-recorder",
     "npm run -s runtime:quickstart:claude-code-mcp",
+    "npm run -s runtime:smoke:external-packages",
     "npm run -s runtime:e2e:golden-product-loop",
     "npm run -s runtime:e2e:judgment-calibration",
     "npm run -s runtime:e2e:ordinary-memory",
