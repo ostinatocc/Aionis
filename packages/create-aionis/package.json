@@ -3,6 +3,12 @@
   "version": "0.1.5",
   "description": "One-command installer for Aionis Runtime, SDK, and MCP bridge.",
   "license": "Apache-2.0",
+  "homepage": "https://docs.aionis.work/get-started/install",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ostinatocc/Aionis.git",
+    "directory": "packages/create-aionis"
+  },
   "type": "module",
   "bin": {
     "create-aionis": "dist/index.js"

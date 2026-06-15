@@ -2,6 +2,8 @@
 
 TypeScript SDK facade for Aionis Runtime.
 
+Docs: [https://docs.aionis.work/integrations/sdk](https://docs.aionis.work/integrations/sdk)
+
 ```bash
 npm install @aionis/sdk
 ```
@@ -206,6 +208,9 @@ Use `governMemory()` when your host already has candidates from Mem0, Zep,
 Pinecone, pgvector, markdown, logs, or another memory backend, but still wants
 Aionis to decide which memory may direct the Agent.
 
+Product guide:
+[https://docs.aionis.work/products/memory-firewall](https://docs.aionis.work/products/memory-firewall)
+
 ```ts
 const result = await aionis.governMemory({
   query_text: "Continue the checkout migration without reusing failed branches.",
@@ -296,6 +301,9 @@ Mem0 metadata.
 
 Use `flightRecorder()` after a run to inspect what memory the Agent was allowed
 to see at decision time.
+
+Product guide:
+[https://docs.aionis.work/products/flight-recorder](https://docs.aionis.work/products/flight-recorder)
 
 ```ts
 const replay = await aionis.flightRecorder({

@@ -2,6 +2,8 @@
 
 One-command installer for Aionis Runtime, SDK, and MCP bridge.
 
+Docs: [https://docs.aionis.work/get-started/install](https://docs.aionis.work/get-started/install)
+
 Run:
 
 ```bash
@@ -28,3 +30,9 @@ Common first runs:
 ```bash
 MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quickstart multi-agent
 ```
+
+After install, pick the integration path:
+
+- SDK: [https://docs.aionis.work/integrations/sdk](https://docs.aionis.work/integrations/sdk)
+- MCP for Claude Code / Cursor: [https://docs.aionis.work/integrations/mcp](https://docs.aionis.work/integrations/mcp)
+- Memory Firewall: [https://docs.aionis.work/products/memory-firewall](https://docs.aionis.work/products/memory-firewall)

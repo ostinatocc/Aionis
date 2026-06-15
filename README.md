@@ -4,6 +4,8 @@
 
 Memory is not recall. Memory is state.
 
+Docs: [docs.aionis.work](https://docs.aionis.work)
+
 Aionis sits between your Agent and its history. It adjudicates whether memory is
 current, stale, contested, failed, reusable, or worth rehydrating, then compiles
 only the external execution state into the next Agent context.
@@ -44,6 +46,15 @@ Generic MCP clients can run the bridge directly:
 ```bash
 npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope my-project
 ```
+
+External proof paths:
+
+- Claude Code / Cursor over MCP:
+  [docs.aionis.work/integrations/mcp](https://docs.aionis.work/integrations/mcp)
+- Memory Firewall for existing backends:
+  [docs.aionis.work/products/memory-firewall](https://docs.aionis.work/products/memory-firewall)
+- Runnable examples and generated proof artifacts:
+  [docs.aionis.work/examples](https://docs.aionis.work/examples)
 
 Use Aionis when your Agents must continue real work across sessions, roles,
 handoffs, and mistakes.
@@ -671,6 +682,8 @@ Output contracts:
 [docs/AIONIS_PRODUCT_OUTPUT_CONTRACT.md](docs/AIONIS_PRODUCT_OUTPUT_CONTRACT.md).
 
 ## Documentation
+
+Official docs: [https://docs.aionis.work](https://docs.aionis.work)
 
 | Document | Purpose |
 |---|---|

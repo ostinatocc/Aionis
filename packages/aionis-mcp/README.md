@@ -2,6 +2,8 @@
 
 MCP stdio bridge for Aionis execution memory.
 
+Docs: [https://docs.aionis.work/integrations/mcp](https://docs.aionis.work/integrations/mcp)
+
 Use this package when you want Claude Code, Cursor, or another MCP client to
 try Aionis without rewriting the host Agent loop first.
 
@@ -122,3 +124,9 @@ npm run -s lite:start
 
 For deeper host integration, use `@aionis/sdk`. The MCP bridge is the
 drop-in path; the SDK is the full application integration path.
+
+Claude Code / Cursor walkthrough:
+[https://docs.aionis.work/integrations/mcp](https://docs.aionis.work/integrations/mcp)
+
+Runnable proof artifacts:
+[https://docs.aionis.work/examples](https://docs.aionis.work/examples)
