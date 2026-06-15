@@ -35,6 +35,11 @@ Use the product routes directly when integrating over HTTP:
 | `measure` | `POST /v1/measure` | Provide before/after guide packets or product trace. | Report whether history helped or hurt. |
 | `snapshot` | `POST /v1/operator/snapshot` | Ask for read-only operator state. | Summarize active context, attribution, and measured effect. |
 
+Low-level `POST /v1/memory/write` is still available for internal adapters and
+advanced hosts. A `200` response does not by itself mean a recallable memory was
+created: check `recallable_node_count`. If it is `0`, the response will include
+a `write_no_nodes` warning and the request did not add new recallable memory.
+
 ## Agent Surface
 
 The Agent should receive one of these:

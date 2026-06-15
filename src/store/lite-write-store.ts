@@ -407,6 +407,29 @@ type LiteExecutionDecisionDbRow = {
   created_at: string;
 };
 
+type LiteMemoryNodeDbRow = {
+  id: string;
+  type: string;
+  client_id: string | null;
+  title: string | null;
+  text_summary: string | null;
+  slots_json: string;
+  tier: string;
+  memory_lane: "private" | "shared";
+  producer_agent_id: string | null;
+  owner_agent_id: string | null;
+  owner_team_id: string | null;
+  embedding_status: string | null;
+  embedding_model: string | null;
+  raw_ref: string | null;
+  evidence_ref: string | null;
+  salience: number;
+  importance: number;
+  confidence: number;
+  created_at: string;
+  commit_id: string | null;
+};
+
 const LITE_EXECUTION_DECISION_SELECT_SQL = `SELECT
    id,
    scope,
@@ -438,6 +461,83 @@ function decodeExecutionDecisionRow(row: LiteExecutionDecisionDbRow): LiteExecut
     created_at: row.created_at,
   };
 }
+
+function decodeLiteFindNodeRow(row: LiteMemoryNodeDbRow): LiteFindNodeRow {
+  const slots = parseJsonObject(row.slots_json);
+  return {
+    id: row.id,
+    type: row.type,
+    client_id: row.client_id,
+    title: row.title,
+    text_summary: row.text_summary,
+    slots,
+    tier: row.tier,
+    memory_lane: row.memory_lane,
+    producer_agent_id: row.producer_agent_id,
+    owner_agent_id: row.owner_agent_id,
+    owner_team_id: row.owner_team_id,
+    embedding_status: row.embedding_status,
+    embedding_model: row.embedding_model,
+    raw_ref: row.raw_ref,
+    evidence_ref: row.evidence_ref,
+    salience: row.salience,
+    importance: row.importance,
+    confidence: row.confidence,
+    last_activated: null,
+    created_at: row.created_at,
+    updated_at: row.created_at,
+    commit_id: row.commit_id,
+    topic_state: row.type === "topic" ? String(slots.topic_state ?? "active") : null,
+    member_count: row.type === "topic" && Number.isFinite(Number(slots.member_count))
+      ? Number(slots.member_count)
+      : null,
+  };
+}
+
+function appendVisibilityWhere(args: {
+  where: string[];
+  params: unknown[];
+  consumerAgentId: string | null;
+  consumerTeamId: string | null;
+}): void {
+  const visibility: string[] = ["(memory_lane = 'shared' AND owner_team_id IS NULL)"];
+  if (args.consumerAgentId) {
+    visibility.push("(memory_lane = 'shared' AND owner_agent_id = ?)");
+    args.params.push(args.consumerAgentId);
+    visibility.push("(memory_lane = 'private' AND owner_agent_id = ?)");
+    args.params.push(args.consumerAgentId);
+  }
+  if (args.consumerTeamId) {
+    visibility.push("(memory_lane = 'shared' AND owner_team_id = ?)");
+    args.params.push(args.consumerTeamId);
+    visibility.push("(memory_lane = 'private' AND owner_team_id = ?)");
+    args.params.push(args.consumerTeamId);
+  }
+  args.where.push(`(${visibility.join(" OR ")})`);
+}
+
+const LITE_MEMORY_NODE_SELECT_SQL = `SELECT
+   id,
+   type,
+   client_id,
+   title,
+   text_summary,
+   slots_json,
+   tier,
+   memory_lane,
+   producer_agent_id,
+   owner_agent_id,
+   owner_team_id,
+   embedding_status,
+   embedding_model,
+   raw_ref,
+   evidence_ref,
+   salience,
+   importance,
+   confidence,
+   created_at,
+   commit_id
+ FROM lite_memory_nodes`;
 
 function nodeVisible(
   row: { memory_lane: "private" | "shared"; owner_agent_id: string | null; owner_team_id: string | null },
@@ -781,20 +881,7 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
       }
       const consumerAgentId = args.consumerAgentId ?? null;
       const consumerTeamId = args.consumerTeamId ?? null;
-      const visibility: string[] = ["(memory_lane = 'shared' AND owner_team_id IS NULL)"];
-      if (consumerAgentId) {
-        visibility.push("(memory_lane = 'shared' AND owner_agent_id = ?)");
-        params.push(consumerAgentId);
-        visibility.push("(memory_lane = 'private' AND owner_agent_id = ?)");
-        params.push(consumerAgentId);
-      }
-      if (consumerTeamId) {
-        visibility.push("(memory_lane = 'shared' AND owner_team_id = ?)");
-        params.push(consumerTeamId);
-        visibility.push("(memory_lane = 'private' AND owner_team_id = ?)");
-        params.push(consumerTeamId);
-      }
-      where.push(`(${visibility.join(" OR ")})`);
+      appendVisibilityWhere({ where, params, consumerAgentId, consumerTeamId });
       const slotsSql = buildSimpleSlotsSqlFilters(args.slotsContains);
       where.push(...slotsSql.where);
       params.push(...slotsSql.params);
@@ -804,84 +891,12 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
         ? params
         : [...params, args.limit + 1, args.offset];
       const rows = db.prepare(
-        `SELECT
-           id,
-           type,
-           client_id,
-           title,
-           text_summary,
-           slots_json,
-           tier,
-           memory_lane,
-           producer_agent_id,
-           owner_agent_id,
-           owner_team_id,
-           embedding_status,
-           embedding_model,
-           raw_ref,
-           evidence_ref,
-           salience,
-           importance,
-           confidence,
-           created_at,
-           commit_id
-         FROM lite_memory_nodes
+        `${LITE_MEMORY_NODE_SELECT_SQL}
          WHERE ${where.join(" AND ")}
          ORDER BY created_at DESC, id DESC${limitOffsetSql}`,
-      ).all(...queryParams) as Array<{
-        id: string;
-        type: string;
-        client_id: string | null;
-        title: string | null;
-        text_summary: string | null;
-        slots_json: string;
-        tier: string;
-        memory_lane: "private" | "shared";
-        producer_agent_id: string | null;
-        owner_agent_id: string | null;
-        owner_team_id: string | null;
-        embedding_status: string | null;
-        embedding_model: string | null;
-        raw_ref: string | null;
-        evidence_ref: string | null;
-        salience: number;
-        importance: number;
-        confidence: number;
-        created_at: string;
-        commit_id: string | null;
-      }>;
+      ).all(...queryParams) as LiteMemoryNodeDbRow[];
       const filtered = rows
-        .map((row) => {
-          const slots = parseJsonObject(row.slots_json);
-          return {
-            id: row.id,
-            type: row.type,
-            client_id: row.client_id,
-            title: row.title,
-            text_summary: row.text_summary,
-            slots,
-            tier: row.tier,
-            memory_lane: row.memory_lane,
-            producer_agent_id: row.producer_agent_id,
-            owner_agent_id: row.owner_agent_id,
-            owner_team_id: row.owner_team_id,
-            embedding_status: row.embedding_status,
-            embedding_model: row.embedding_model,
-            raw_ref: row.raw_ref,
-            evidence_ref: row.evidence_ref,
-            salience: row.salience,
-            importance: row.importance,
-            confidence: row.confidence,
-            last_activated: null,
-            created_at: row.created_at,
-            updated_at: row.created_at,
-            commit_id: row.commit_id,
-            topic_state: row.type === "topic" ? String(slots.topic_state ?? "active") : null,
-            member_count: row.type === "topic" && Number.isFinite(Number(slots.member_count))
-              ? Number(slots.member_count)
-              : null,
-          } satisfies LiteFindNodeRow;
-        })
+        .map(decodeLiteFindNodeRow)
         .filter((row) => !args.slotsContains || jsonContains(row.slots, args.slotsContains));
       const slice = requiresSlotsJsonVerification
         ? filtered.slice(args.offset, args.offset + args.limit + 1)
@@ -894,14 +909,21 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
     },
 
     async findExecutionNativeNodes(args): Promise<{ rows: LiteExecutionNativeNodeRow[]; has_more: boolean }> {
-      const { rows } = await this.findNodes({
-        scope: args.scope,
+      const where: string[] = ["scope = ?", "slots_json LIKE ? ESCAPE '\\'"];
+      const params: unknown[] = [args.scope, `%"${escapeSqlLike("execution_native_v1")}"%`];
+      appendVisibilityWhere({
+        where,
+        params,
         consumerAgentId: args.consumerAgentId ?? null,
         consumerTeamId: args.consumerTeamId ?? null,
-        limit: Math.max(args.limit + args.offset + 32, 64),
-        offset: 0,
       });
+      const rows = db.prepare(
+        `${LITE_MEMORY_NODE_SELECT_SQL}
+         WHERE ${where.join(" AND ")}
+         ORDER BY created_at DESC, id DESC`,
+      ).all(...params) as LiteMemoryNodeDbRow[];
       const filtered = rows
+        .map(decodeLiteFindNodeRow)
         .map((row) => {
           const executionNative = resolveNodeNativeExecutionSurface(row.slots);
           if (!executionNative) return null;

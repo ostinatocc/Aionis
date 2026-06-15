@@ -865,22 +865,18 @@ export function registerMemoryContextRuntimeRoutes(args: {
       : null;
   const resolveSurfaceEmbedder = (
     surface: ContextRuntimeSurface,
-    reply: FastifyReply,
   ) => {
     if (!embeddingSurfacePolicy.isEnabled(surface)) {
-      reply.code(409).send({
-        error: "embedding_surface_disabled",
-        message: `embedding surface disabled: ${surface}`,
-        details: { surface },
+      throw new HttpError(409, "embedding_surface_disabled", `embedding surface disabled: ${surface}`, {
+        contract: "error_v1",
+        surface,
       });
-      return null;
     }
     if (!embedder) {
-      reply.code(400).send({
-        error: "no_embedding_provider",
-        message: `Configure EMBEDDING_PROVIDER to use ${surface}.`,
+      throw new HttpError(400, "no_embedding_provider", `Configure EMBEDDING_PROVIDER to use ${surface}.`, {
+        contract: "error_v1",
+        surface,
       });
-      return null;
     }
     return embedder;
   };
@@ -1761,8 +1757,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
   };
 
   app.post("/v1/memory/recall_text", async (req: ContextRuntimeRequest, reply: FastifyReply) => {
-    const surfaceEmbedder = resolveSurfaceEmbedder("recall_text", reply);
-    if (!surfaceEmbedder) return;
+    const surfaceEmbedder = resolveSurfaceEmbedder("recall_text");
 
     const t0 = performance.now();
     const timings: Record<string, number> = {};
@@ -1965,8 +1960,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
   });
 
   app.post("/v1/memory/planning/context", async (req: ContextRuntimeRequest, reply: FastifyReply) => {
-    const surfaceEmbedder = resolveSurfaceEmbedder("planning_context", reply);
-    if (!surfaceEmbedder) return;
+    const surfaceEmbedder = resolveSurfaceEmbedder("planning_context");
 
     const t0 = performance.now();
     const timings: Record<string, number> = {};
@@ -2307,8 +2301,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
   });
 
   app.post("/v1/memory/context/assemble", async (req: ContextRuntimeRequest, reply: FastifyReply) => {
-    const surfaceEmbedder = resolveSurfaceEmbedder("context_assemble", reply);
-    if (!surfaceEmbedder) return;
+    const surfaceEmbedder = resolveSurfaceEmbedder("context_assemble");
 
     const t0 = performance.now();
     const timings: Record<string, number> = {};

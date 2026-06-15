@@ -356,7 +356,12 @@ export function registerMemoryWriteRoutes(args: {
       forcedLiteTopicClusterAsync: args.forcedLiteTopicClusterAsync,
       liteInlineEmbedding: args.liteInlineEmbedding,
     });
-    const response = warnings.length > 0 ? { ...args.out, warnings } : args.out;
+    const response = {
+      ...args.out,
+      recallable_node_count: args.out.nodes.length,
+      edge_count: args.out.edges.length,
+      ...(warnings.length > 0 ? { warnings } : {}),
+    };
 
     await applyWriteSideEffects({
       prepared: args.preparedForRoute,

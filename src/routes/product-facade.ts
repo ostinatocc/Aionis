@@ -38,6 +38,7 @@ import {
 import { applyUnusedExposureLearningControlLite } from "../memory/lifecycle-lite.js";
 import type { LiteExecutionNativeNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
 import type { AuthPrincipal } from "../util/auth.js";
+import { createErrorResponse } from "../util/http.js";
 import type { InflightGateToken } from "../util/inflight_gate.js";
 import {
   structureProductObserveMemoryInput,
@@ -62,6 +63,27 @@ type ProductFacadeArgs = {
   tenantFromBody: (body: unknown) => string;
   acquireInflightSlot: (kind: "recall") => Promise<InflightGateToken>;
 };
+
+function productErrorResponse(args: {
+  status: number;
+  error: string;
+  message: string;
+  details?: Record<string, unknown>;
+  topLevel?: Record<string, unknown>;
+}) {
+  return {
+    ...createErrorResponse({
+      status: args.status,
+      error: args.error,
+      message: args.message,
+      details: {
+        contract: "error_v1",
+        ...(args.details ?? {}),
+      },
+    }),
+    ...(args.topLevel ?? {}),
+  };
+}
 
 const LooseObject = z.record(z.unknown());
 const StringList = z.array(z.string().trim().min(1)).max(256).default([]);
@@ -1828,7 +1850,12 @@ async function resolveGuideExposureForActivation(args: {
     return {
       ok: false,
       statusCode: found.statusCode,
-      body: objectValue(found.body) ?? { error: "guide_trace_lookup_failed" },
+      body: objectValue(found.body) ?? productErrorResponse({
+        status: found.statusCode,
+        error: "guide_trace_lookup_failed",
+        message: "guide trace lookup failed",
+        details: { guide_trace_id: args.parsed.guide_trace_id },
+      }),
     };
   }
   const body = objectValue(found.body);
@@ -1839,11 +1866,13 @@ async function resolveGuideExposureForActivation(args: {
     return {
       ok: false,
       statusCode: 400,
-      body: {
+      body: productErrorResponse({
+        status: 400,
         error: "guide_trace_not_found",
         message: "guide_trace_id does not resolve to a valid Aionis guide exposure ledger",
-        guide_trace_id: args.parsed.guide_trace_id,
-      },
+        details: { guide_trace_id: args.parsed.guide_trace_id },
+        topLevel: { guide_trace_id: args.parsed.guide_trace_id },
+      }),
     };
   }
   const requestedUsedMemoryIds = uniqueStrings([
@@ -1857,12 +1886,19 @@ async function resolveGuideExposureForActivation(args: {
     return {
       ok: false,
       statusCode: 400,
-      body: {
+      body: productErrorResponse({
+        status: 400,
         error: "guide_trace_used_memory_not_exposed",
         message: "activate feedback can only be attributed to memory ids exposed by the referenced guide_trace_id",
-        guide_trace_id: ledger.guide_trace_id,
-        not_exposed_memory_ids: notExposed,
-      },
+        details: {
+          guide_trace_id: ledger.guide_trace_id,
+          not_exposed_memory_ids: notExposed,
+        },
+        topLevel: {
+          guide_trace_id: ledger.guide_trace_id,
+          not_exposed_memory_ids: notExposed,
+        },
+      }),
     };
   }
   const used = new Set(requestedUsedMemoryIds);
@@ -2373,10 +2409,11 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     const writePayload = writeBundle?.payload ?? null;
     const handoffPayload = parsed.handoff ? mergeProductScope(parsed, parsed.handoff) : null;
     if (!writePayload && !handoffPayload) {
-      return reply.code(400).send({
+      return reply.code(400).send(productErrorResponse({
+        status: 400,
         error: "observe_requires_memory_or_handoff",
         message: "observe requires memory input or handoff payload",
-      });
+      }));
     }
 
     const routesUsed: string[] = [];

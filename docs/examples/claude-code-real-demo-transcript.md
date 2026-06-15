@@ -14,7 +14,7 @@ the raw stream dump.
 - Runtime: focused local Runtime over Lite SQLite
 - Runtime URL: `http://127.0.0.1:34118`
 - Embedding provider: `EMBEDDING_PROVIDER=minimax`
-- MCP package: `@aionis/mcp@latest` -> `0.1.4`
+- MCP package: `@aionis/mcp@latest` -> `0.1.5`
 - SDK package: `@aionis/sdk@latest` -> `0.1.8`
 - Scope: `claude-code-real-demo-pass`
 - Raw local stream: `/tmp/aionis-claude-code-real-demo-pass2.stream.jsonl`

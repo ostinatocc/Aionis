@@ -286,7 +286,7 @@ The executable route matrix now also emits `product_exposure` so retained intern
 | Controlled forgetting | Strong mechanisms. Demotion/archive/rehydrate/activation exist. | Needs user-visible proof that stale memory is suppressed and useful archive rehydrates. |
 | Dynamic governance | Strong but heavy. Authority, learning-control, entropy, mutation authority exist. | Must become intervention intensity, not over-governance. |
 | Token/context efficiency | Indirect. Recall policies, effect summaries, token signals exist. | No strong context-offload product like Tencent Agent Memory yet. |
-| Product UX | Weak. Many routes, no SDK, no single product command. | Needs observe/guide/forget/measure facade. |
+| Product UX | Improved. Product facade, SDK, MCP bridge, and one-command installer exist. | Needs continued quickstart polish and clearer product-path examples. |
 | Validation | Good for mechanics; weak for market claims. | Need long-session continuity benchmark and cross-agent handoff benchmark. |
 
 ## Recommended Product Positioning Candidates

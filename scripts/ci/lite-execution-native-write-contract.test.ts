@@ -495,6 +495,113 @@ test("lite write store exposes execution-first query filters over execution_nati
   }
 });
 
+test("lite write store finds older execution-native nodes beyond ordinary memory window", async () => {
+  const dbPath = tmpDbPath("execution-window");
+  const store = createLiteWriteStore(dbPath);
+  const targetFile = "src/runtime/recover.ts";
+  try {
+    const executionPrepared = await prepareMemoryWrite(
+      {
+        tenant_id: "default",
+        scope: "default",
+        actor: "local-user",
+        producer_agent_id: "local-user",
+        owner_agent_id: "local-user",
+        input_text: "Store an older execution-native runtime handoff.",
+        auto_embed: false,
+        nodes: [
+          {
+            type: "event",
+            title: "Recover runtime handoff",
+            text_summary: "Continue the runtime recovery path from the active handoff.",
+            slots: {
+              summary_kind: "handoff",
+              execution_native_v1: {
+                schema_version: "execution_native_v1",
+                execution_kind: "execution_native",
+                summary_kind: "handoff",
+                compression_layer: "L0",
+                file_path: targetFile,
+                target_files: [targetFile],
+                next_action: `Patch ${targetFile} and rerun runtime tests`,
+              },
+            },
+          },
+        ],
+        edges: [],
+      },
+      "default",
+      "default",
+      {
+        maxTextLen: 10_000,
+        piiRedaction: false,
+        allowCrossScopeEdges: false,
+      },
+      null,
+    );
+    await store.withTx(() =>
+      applyMemoryWrite(executionPrepared, {
+        maxTextLen: 10_000,
+        piiRedaction: false,
+        allowCrossScopeEdges: false,
+        associativeLinkOrigin: "memory_write",
+        write_access: store,
+      }),
+    );
+
+    const ordinaryPrepared = await prepareMemoryWrite(
+      {
+        tenant_id: "default",
+        scope: "default",
+        actor: "local-user",
+        producer_agent_id: "local-user",
+        owner_agent_id: "local-user",
+        input_text: "Store ordinary memories after the execution-native handoff.",
+        auto_embed: false,
+        nodes: Array.from({ length: 80 }, (_, index) => ({
+          type: "event",
+          title: `Ordinary memory ${index}`,
+          text_summary: `Ordinary non-execution memory ${index}`,
+          slots: { category: "ordinary", index },
+        })),
+        edges: [],
+      },
+      "default",
+      "default",
+      {
+        maxTextLen: 10_000,
+        piiRedaction: false,
+        allowCrossScopeEdges: false,
+      },
+      null,
+    );
+    await store.withTx(() =>
+      applyMemoryWrite(ordinaryPrepared, {
+        maxTextLen: 10_000,
+        piiRedaction: false,
+        allowCrossScopeEdges: false,
+        associativeLinkOrigin: "memory_write",
+        write_access: store,
+      }),
+    );
+
+    const rows = await store.findExecutionNativeNodes({
+      scope: "default",
+      consumerAgentId: "local-user",
+      executionKind: "execution_native",
+      compressionLayer: "L0",
+      limit: 1,
+      offset: 0,
+    });
+
+    assert.equal(rows.rows.length, 1);
+    assert.equal(rows.rows[0]?.execution_native.file_path, targetFile);
+    assert.equal(rows.has_more, false);
+  } finally {
+    await store.close();
+  }
+});
+
 test("prepare/apply write normalizes execution-native metadata for handoff and session continuity carriers", async () => {
   const dbPath = tmpDbPath("continuity");
   const store = createLiteWriteStore(dbPath);

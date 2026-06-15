@@ -49,6 +49,8 @@ export type WriteResult = {
   commit_hash: string;
   nodes: Array<{ id: string; uri?: string; client_id?: string; type: string }>;
   edges: Array<{ id: string; uri?: string; type: string; src_id: string; dst_id: string }>;
+  recallable_node_count?: number;
+  edge_count?: number;
   embedding_backfill?: { enqueued: true; pending_nodes: number };
   topic_cluster?:
     | {

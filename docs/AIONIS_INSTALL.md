@@ -21,6 +21,10 @@ machines, local agent hosts, and self-managed deployments behind your own
 boundary. It is not a hosted multi-tenant production service: Lite defaults to
 loopback, `MEMORY_AUTH_MODE=off`, and `TENANT_QUOTA_ENABLED=false`.
 
+Runtime requirement: Node.js `>=22.5.0` with the built-in experimental
+`node:sqlite` module available. The installer checks both the version and the
+SQLite feature because Lite stores local memory state in SQLite.
+
 For raw HTTP users:
 
 ```bash
@@ -51,6 +55,7 @@ is `MINIMAX_API_KEY`.
 From this repo:
 
 ```bash
+node --version   # must be >= 22.5.0 and include node:sqlite
 npm install
 npm run -s packages:build
 npm run -s packages:test

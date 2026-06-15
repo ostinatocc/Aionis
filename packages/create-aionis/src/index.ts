@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +21,8 @@ export type CreateAionisOptions = {
 
 const DEFAULT_REPO = "https://github.com/ostinatocc/Aionis.git";
 const DEFAULT_DIR = "Aionis";
+const MIN_NODE_VERSION = "22.5.0";
+const require = createRequire(import.meta.url);
 
 function usage(): string {
   return `Usage:
@@ -155,10 +158,33 @@ function ensureCommand(command: string): void {
   if (result.error || result.status !== 0) throw new Error(`Required command not found: ${command}`);
 }
 
+function compareNodeVersion(actual: string, minimum: string): number {
+  const parse = (value: string) => value.split(".").map((part) => Number.parseInt(part, 10));
+  const a = parse(actual);
+  const b = parse(minimum);
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    const left = Number.isFinite(a[i]) ? a[i] : 0;
+    const right = Number.isFinite(b[i]) ? b[i] : 0;
+    if (left !== right) return left > right ? 1 : -1;
+  }
+  return 0;
+}
+
+function hasNodeSqliteSupport(): boolean {
+  try {
+    const mod = require("node:sqlite") as { DatabaseSync?: unknown };
+    return typeof mod.DatabaseSync === "function";
+  } catch {
+    return false;
+  }
+}
+
 function ensureNodeVersion(): void {
-  const major = Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10);
-  if (!Number.isFinite(major) || major < 22) {
-    throw new Error(`Aionis requires Node >= 22. Current Node is ${process.versions.node}.`);
+  if (compareNodeVersion(process.versions.node, MIN_NODE_VERSION) < 0) {
+    throw new Error(`Aionis Lite requires Node >= ${MIN_NODE_VERSION}. Current Node is ${process.versions.node}.`);
+  }
+  if (!hasNodeSqliteSupport()) {
+    throw new Error("Aionis Lite requires Node's built-in node:sqlite module. Upgrade to a Node 22 build that includes node:sqlite.");
   }
 }
 

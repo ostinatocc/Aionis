@@ -27,7 +27,7 @@ The demo covers Aionis's product path for an external coding agent:
 
 ## Prerequisites
 
-- Node.js 22+
+- Node.js `>=22.5.0` with built-in `node:sqlite`
 - Claude Code CLI
 - Aionis Runtime running locally or reachable through `AIONIS_BASE_URL`
 - An embedding provider for local Runtime startup
