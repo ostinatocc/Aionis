@@ -708,6 +708,8 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
     CREATE INDEX IF NOT EXISTS idx_lite_memory_nodes_scope_created ON lite_memory_nodes(scope, created_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_lite_memory_nodes_scope_commit ON lite_memory_nodes(scope, commit_id);
     CREATE INDEX IF NOT EXISTS idx_lite_memory_nodes_scope_status ON lite_memory_nodes(scope, embedding_status);
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_nodes_scope_recall_stage1
+      ON lite_memory_nodes(scope, tier, embedding_status, type, salience DESC, confidence DESC, created_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_lite_memory_nodes_scope_type_created ON lite_memory_nodes(scope, type, created_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_lite_memory_nodes_scope_client ON lite_memory_nodes(scope, client_id);
     CREATE INDEX IF NOT EXISTS idx_lite_memory_nodes_scope_type_client_created ON lite_memory_nodes(scope, type, client_id, created_at DESC, id DESC);
@@ -751,6 +753,10 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
     );
     CREATE INDEX IF NOT EXISTS idx_lite_memory_edges_scope ON lite_memory_edges(scope);
     CREATE INDEX IF NOT EXISTS idx_lite_memory_edges_scope_commit ON lite_memory_edges(scope, commit_id);
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_edges_scope_src_weight_conf
+      ON lite_memory_edges(scope, src_id, weight DESC, confidence DESC, id ASC);
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_edges_scope_dst_weight_conf
+      ON lite_memory_edges(scope, dst_id, weight DESC, confidence DESC, id ASC);
 
     CREATE TABLE IF NOT EXISTS lite_memory_association_candidates (
       id TEXT PRIMARY KEY,

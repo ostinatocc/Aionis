@@ -72,6 +72,12 @@ type LiteRecallAuditRow = RecallAuditInsertParams & {
   created_at: string;
 };
 
+const STAGE1_RECALL_TYPES = ["event", "topic", "concept", "entity", "rule", "procedure", "self_model"] as const;
+const STAGE1_BOUNDED_SCAN_FLOOR = 2048;
+const STAGE1_OVERSAMPLE_SCAN_MULTIPLIER = 32;
+const STAGE1_LIMIT_SCAN_MULTIPLIER = 64;
+const SQLITE_IN_CHUNK_SIZE = 800;
+
 export type LiteRecallStore = {
   createRecallAccess(): RecallStoreAccess;
   close(): Promise<void>;
@@ -91,6 +97,38 @@ function nowIso(): string {
 
 function placeholders(count: number): string {
   return Array.from({ length: count }, () => "?").join(",");
+}
+
+function boundedStage1ScanLimit(params: RecallStage1Params): number {
+  return Math.max(
+    STAGE1_BOUNDED_SCAN_FLOOR,
+    Math.max(0, params.oversample) * STAGE1_OVERSAMPLE_SCAN_MULTIPLIER,
+    Math.max(0, params.limit) * STAGE1_LIMIT_SCAN_MULTIPLIER,
+  );
+}
+
+function appendRecallVisibilityWhere(
+  where: string[],
+  values: unknown[],
+  consumerAgentId: string | null,
+  consumerTeamId: string | null,
+): void {
+  const visibility: string[] = [
+    "(memory_lane = 'shared' AND owner_team_id IS NULL)",
+  ];
+  if (consumerAgentId) {
+    visibility.push("(memory_lane = 'shared' AND owner_agent_id = ?)");
+    values.push(consumerAgentId);
+    visibility.push("(memory_lane = 'private' AND owner_agent_id = ?)");
+    values.push(consumerAgentId);
+  }
+  if (consumerTeamId) {
+    visibility.push("(memory_lane = 'shared' AND owner_team_id = ?)");
+    values.push(consumerTeamId);
+    visibility.push("(memory_lane = 'private' AND owner_team_id = ?)");
+    values.push(consumerTeamId);
+  }
+  where.push(`(${visibility.join(" OR ")})`);
 }
 
 function parseJsonObject(raw: string | null | undefined): Record<string, unknown> {
@@ -227,7 +265,66 @@ export function createLiteRecallStore(
       ON lite_memory_recall_audit(scope, created_at);
   `);
 
-  const stage1Candidates = async (params: RecallStage1Params): Promise<RecallCandidate[]> => {
+  const fetchEdgesForNodeColumn = (
+    column: "src_id" | "dst_id",
+    ids: string[],
+    params: RecallStage2EdgesParams,
+    budget: number,
+  ): LiteRecallEdgeSourceRow[] => {
+    if (ids.length === 0 || budget <= 0) return [];
+    const rows: LiteRecallEdgeSourceRow[] = [];
+    for (let i = 0; i < ids.length; i += SQLITE_IN_CHUNK_SIZE) {
+      const chunk = ids.slice(i, i + SQLITE_IN_CHUNK_SIZE);
+      const chunkRows = db.prepare(`
+        SELECT id, scope, type, src_id, dst_id, weight, confidence, decay_rate, metadata_json, created_at, commit_id
+        FROM lite_memory_edges
+        WHERE scope = ?
+          AND weight >= ?
+          AND confidence >= ?
+          AND ${column} IN (${placeholders(chunk.length)})
+        ORDER BY weight DESC, confidence DESC, id ASC
+        LIMIT ?
+      `).all(
+        params.scope,
+        params.minEdgeWeight,
+        params.minEdgeConfidence,
+        ...chunk,
+        budget,
+      ) as LiteRecallEdgeSourceRow[];
+      rows.push(...chunkRows);
+    }
+    return rows.sort(edgeSortDesc).slice(0, budget);
+  };
+
+  const fetchHopEdges = (
+    ids: Set<string>,
+    params: RecallStage2EdgesParams,
+    budget: number,
+  ): LiteRecallEdgeSourceRow[] => {
+    if (ids.size === 0 || budget <= 0) return [];
+    const idList = Array.from(ids);
+    const fromSrc = fetchEdgesForNodeColumn("src_id", idList, params, budget);
+    const fromDst = fetchEdgesForNodeColumn("dst_id", idList, params, budget);
+    const merged = new Map<string, LiteRecallEdgeSourceRow>();
+    for (const edge of fromSrc.concat(fromDst)) merged.set(edge.id, edge);
+    return Array.from(merged.values()).sort(edgeSortDesc);
+  };
+
+  const stage1Candidates = async (
+    params: RecallStage1Params,
+    opts: { boundedScan: boolean },
+  ): Promise<RecallCandidate[]> => {
+    const where = [
+      "scope = ?",
+      "tier IN ('hot', 'warm')",
+      "embedding_status = 'ready'",
+      "embedding_vector_json IS NOT NULL",
+      `type IN (${placeholders(STAGE1_RECALL_TYPES.length)})`,
+    ];
+    const values: unknown[] = [params.scope, ...STAGE1_RECALL_TYPES];
+    appendRecallVisibilityWhere(where, values, params.consumerAgentId, params.consumerTeamId);
+    const limitClause = opts.boundedScan ? "LIMIT ?" : "";
+    const limitValues = opts.boundedScan ? [boundedStage1ScanLimit(params)] : [];
     const rows = db.prepare(`
       SELECT
         id,
@@ -252,11 +349,15 @@ export function createLiteRecallStore(
         created_at,
         commit_id
       FROM lite_memory_nodes
-      WHERE scope = ?
-        AND tier IN ('hot', 'warm')
-        AND embedding_status = 'ready'
-        AND embedding_vector_json IS NOT NULL
-    `).all(params.scope) as LiteRecallNodeRow[];
+      WHERE ${where.join("\n        AND ")}
+      ORDER BY
+        CASE tier WHEN 'hot' THEN 0 ELSE 1 END,
+        salience DESC,
+        confidence DESC,
+        created_at DESC,
+        id DESC
+      ${limitClause}
+    `).all(...values, ...limitValues) as LiteRecallNodeRow[];
 
     const ranked: Array<{ row: LiteRecallNodeRow; distance: number }> = [];
     for (const row of rows) {
@@ -273,7 +374,7 @@ export function createLiteRecallStore(
       const row = item.row;
       const slots = parseJsonObject(row.slots_json);
       const hasWorkflowAnchorSurface = hasNodeWorkflowAnchorSurface(slots);
-      if (!["event", "topic", "concept", "entity", "rule", "procedure", "self_model"].includes(row.type)) continue;
+      if (!(STAGE1_RECALL_TYPES as readonly string[]).includes(row.type)) continue;
       if (row.type === "procedure" && !hasWorkflowAnchorSurface) continue;
       if ((row.type === "event" || row.type === "evidence")
         && String(slots.replay_learning_episode ?? "false") === "true"
@@ -323,37 +424,25 @@ export function createLiteRecallStore(
       return {
         capability_version: RECALL_STORE_ACCESS_CAPABILITY_VERSION,
         capabilities,
-        stage1CandidatesAnn: stage1Candidates,
-        stage1CandidatesExactRecovery: stage1Candidates,
+        stage1CandidatesAnn: (params) => stage1Candidates(params, { boundedScan: true }),
+        stage1CandidatesExactRecovery: (params) => stage1Candidates(params, { boundedScan: false }),
         async stage2Edges(params: RecallStage2EdgesParams): Promise<RecallEdgeRow[]> {
-          const rows = db.prepare(`
-            SELECT id, scope, type, src_id, dst_id, weight, confidence, decay_rate, metadata_json, created_at, commit_id
-            FROM lite_memory_edges
-            WHERE scope = ?
-              AND weight >= ?
-              AND confidence >= ?
-          `).all(params.scope, params.minEdgeWeight, params.minEdgeConfidence) as LiteRecallEdgeSourceRow[];
-
-          const selectHop = (ids: Set<string>, budget: number): LiteRecallEdgeSourceRow[] => {
-            const fromSrc = rows.filter((e) => ids.has(e.src_id)).sort(edgeSortDesc).slice(0, budget);
-            const fromDst = rows.filter((e) => ids.has(e.dst_id)).sort(edgeSortDesc).slice(0, budget);
-            const merged = new Map<string, LiteRecallEdgeSourceRow>();
-            for (const edge of fromSrc.concat(fromDst)) merged.set(edge.id, edge);
-            return Array.from(merged.values()).sort(edgeSortDesc);
-          };
-
           const seedSet = new Set(params.seedIds);
           if (params.neighborhoodHops === 1) {
-            return selectHop(seedSet, params.hop1Budget).slice(0, params.edgeFetchBudget).map(edgeToRecallRow);
+            return fetchHopEdges(seedSet, params, params.hop1Budget)
+              .slice(0, params.edgeFetchBudget)
+              .map(edgeToRecallRow);
           }
 
-          const hop1 = selectHop(seedSet, params.hop1Budget);
+          const hop1 = fetchHopEdges(seedSet, params, params.hop1Budget);
           const hopNodes = new Set<string>(params.seedIds);
           for (const edge of hop1) {
             hopNodes.add(edge.src_id);
             hopNodes.add(edge.dst_id);
           }
-          return selectHop(hopNodes, params.hop2Budget).slice(0, params.edgeFetchBudget).map(edgeToRecallRow);
+          return fetchHopEdges(hopNodes, params, params.hop2Budget)
+            .slice(0, params.edgeFetchBudget)
+            .map(edgeToRecallRow);
         },
         async stage2Nodes(params: RecallStage2NodesParams): Promise<RecallNodeRow[]> {
           if (params.nodeIds.length === 0) return [];
