@@ -1,0 +1,338 @@
+import { z } from "zod";
+import type {
+  LearningControlHttpModelClientConfig,
+  LearningControlHttpModelClientTransport,
+} from "./learning-control-model-client.js";
+import {
+  LEARNING_CONTROL_HTTP_ANTHROPIC_TRANSPORT_CONTRACT_VERSION,
+  LEARNING_CONTROL_HTTP_OPENAI_TRANSPORT_CONTRACT_VERSION,
+} from "./learning-control-model-client-http-contract.js";
+import {
+  AionisLifecycleCandidateSignalSchema,
+  type AionisLifecycleCandidateSignal,
+} from "./product-output-contract.js";
+import type { LifecycleCandidateEntry } from "./lifecycle-candidate-inference.js";
+
+export const LIFECYCLE_SHADOW_MODEL_PROMPT_VERSION = "memory_lifecycle_shadow_candidate_prompt_v1";
+
+const LifecycleShadowCandidateSchema = z
+  .object({
+    memory_id: z.string().min(1),
+    signal_type: z.enum(["current", "procedure", "negative", "stale", "contested", "rehydrate"]),
+    confidence: z.number().min(0).max(1),
+    evidence_span: z
+      .object({
+        source_field: z.enum(["title", "text_summary", "slots", "query"]),
+        quote: z.string().min(1),
+      })
+      .strict(),
+    reason: z.string().trim().min(1),
+  })
+  .strict();
+
+const LifecycleShadowCandidateResponseSchema = z
+  .object({
+    candidates: z.array(LifecycleShadowCandidateSchema).max(64).default([]),
+  })
+  .strict();
+
+type LifecycleShadowCandidate = z.infer<typeof LifecycleShadowCandidateSchema>;
+
+export type LifecycleShadowCandidateProducer = (args: {
+  entries: LifecycleCandidateEntry[];
+  query_intent?: string | null;
+}) => Promise<AionisLifecycleCandidateSignal[]>;
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function extractJsonValueFromText(raw: string): unknown {
+  const text = raw.trim();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    // continue
+  }
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
+  if (fenced?.[1]) {
+    try {
+      return JSON.parse(fenced[1].trim());
+    } catch {
+      // continue
+    }
+  }
+  const first = text.indexOf("{");
+  const last = text.lastIndexOf("}");
+  if (first >= 0 && last > first) {
+    try {
+      return JSON.parse(text.slice(first, last + 1));
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function extractChatCompletionText(payload: unknown): string | null {
+  const root = asObject(payload);
+  if (!root) return null;
+  const choices = Array.isArray(root.choices) ? root.choices : [];
+  const first = asObject(choices[0]);
+  if (!first) return null;
+  const msg = asObject(first.message);
+  if (!msg) return null;
+  const content = msg.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    const fragments = content
+      .map((item) => {
+        const obj = asObject(item);
+        if (!obj) return "";
+        const text = obj.text;
+        return typeof text === "string" ? text : "";
+      })
+      .filter((entry) => entry.length > 0);
+    if (fragments.length > 0) return fragments.join("\n");
+  }
+  return null;
+}
+
+function extractAnthropicMessageText(payload: unknown): string | null {
+  const root = asObject(payload);
+  if (!root) return null;
+  const content = Array.isArray(root.content) ? root.content : [];
+  const fragments = content
+    .map((item) => {
+      const obj = asObject(item);
+      if (!obj) return "";
+      const text = obj.text;
+      return typeof text === "string" ? text : "";
+    })
+    .filter((entry) => entry.length > 0);
+  return fragments.length > 0 ? fragments.join("\n") : null;
+}
+
+function inferTransport(config: LearningControlHttpModelClientConfig): LearningControlHttpModelClientTransport {
+  if (config.transport) return config.transport;
+  const baseUrl = config.baseUrl.trim().toLowerCase();
+  if (baseUrl.includes("/anthropic")) return LEARNING_CONTROL_HTTP_ANTHROPIC_TRANSPORT_CONTRACT_VERSION;
+  return LEARNING_CONTROL_HTTP_OPENAI_TRANSPORT_CONTRACT_VERSION;
+}
+
+function compactText(value: string | null | undefined, max = 1200): string {
+  return (value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+function slotEvidenceText(entry: LifecycleCandidateEntry): string {
+  return JSON.stringify({
+    target_files: entry.target_files ?? [],
+    execution_state: entry.execution_state ?? null,
+    memory_type: entry.memory_type,
+    domain: entry.domain,
+    lifecycle_state: entry.lifecycle_state,
+    authority: entry.authority,
+  });
+}
+
+function sourceEvidenceText(args: {
+  entry: LifecycleCandidateEntry;
+  query_intent?: string | null;
+  source_field: LifecycleShadowCandidate["evidence_span"]["source_field"];
+}): string {
+  if (args.source_field === "title") return compactText(args.entry.title, 2000);
+  if (args.source_field === "text_summary") return compactText(args.entry.summary, 20000);
+  if (args.source_field === "slots") return slotEvidenceText(args.entry);
+  return compactText(args.query_intent, 20000);
+}
+
+function normalizedContains(source: string, quote: string): boolean {
+  const normalize = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
+  const normalizedSource = normalize(source);
+  const normalizedQuote = normalize(quote);
+  return !!normalizedQuote && normalizedSource.includes(normalizedQuote);
+}
+
+export function validateLifecycleShadowCandidateSignals(args: {
+  entries: LifecycleCandidateEntry[];
+  query_intent?: string | null;
+  response: unknown;
+  minimum_confidence?: number;
+}): AionisLifecycleCandidateSignal[] {
+  const parsed = LifecycleShadowCandidateResponseSchema.safeParse(args.response);
+  if (!parsed.success) return [];
+  const entriesById = new Map(args.entries.map((entry) => [entry.memory_id, entry]));
+  const minimumConfidence = args.minimum_confidence ?? 0.5;
+  const out: AionisLifecycleCandidateSignal[] = [];
+  const seen = new Set<string>();
+  for (const candidate of parsed.data.candidates) {
+    if (candidate.confidence < minimumConfidence) continue;
+    const entry = entriesById.get(candidate.memory_id);
+    if (!entry) continue;
+    const evidenceSource = sourceEvidenceText({
+      entry,
+      query_intent: args.query_intent,
+      source_field: candidate.evidence_span.source_field,
+    });
+    if (!normalizedContains(evidenceSource, candidate.evidence_span.quote)) continue;
+    const signal = AionisLifecycleCandidateSignalSchema.safeParse({
+      memory_id: candidate.memory_id,
+      signal_type: candidate.signal_type,
+      confidence: candidate.confidence,
+      evidence_span: candidate.evidence_span,
+      producer: "llm_shadow_v1",
+      reason: candidate.reason,
+    });
+    if (!signal.success) continue;
+    const key = [
+      signal.data.memory_id,
+      signal.data.signal_type,
+      signal.data.evidence_span.source_field,
+      signal.data.evidence_span.quote.toLowerCase(),
+    ].join(":");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(signal.data);
+  }
+  return out.slice(0, 64);
+}
+
+function compactEntry(entry: LifecycleCandidateEntry) {
+  return {
+    memory_id: entry.memory_id,
+    title: compactText(entry.title, 400),
+    text_summary: compactText(entry.summary, 1200),
+    memory_type: entry.memory_type,
+    domain: entry.domain,
+    lifecycle_state: entry.lifecycle_state,
+    authority: entry.authority,
+    target_files: entry.target_files ?? [],
+    execution_state: entry.execution_state ?? null,
+    slots_text: slotEvidenceText(entry),
+  };
+}
+
+export function buildLifecycleShadowCandidatePromptPayload(args: {
+  entries: LifecycleCandidateEntry[];
+  query_intent?: string | null;
+  max_entries?: number;
+}) {
+  return {
+    prompt_version: LIFECYCLE_SHADOW_MODEL_PROMPT_VERSION,
+    operation: "memory_lifecycle_shadow_candidate",
+    response_contract: {
+      kind: "strict_json",
+      schema_note:
+        "Return {candidates:[{memory_id,signal_type,confidence,evidence_span:{source_field,quote},reason}]} or {candidates:[]}.",
+      allowed_signal_type:
+        ["current", "procedure", "negative", "stale", "contested", "rehydrate"],
+      evidence_requirement:
+        "evidence_span.quote must be copied verbatim from the selected title, text_summary, slots_text, or query_intent field.",
+    },
+    query_intent: args.query_intent ?? null,
+    entries: args.entries.slice(0, args.max_entries ?? 32).map(compactEntry),
+  };
+}
+
+async function postCandidateJson(args: {
+  config: LearningControlHttpModelClientConfig;
+  systemPrompt: string;
+  userPayload: Record<string, unknown>;
+  fetchImpl?: typeof fetch;
+}): Promise<unknown> {
+  const baseUrl = args.config.baseUrl.trim().replace(/\/+$/, "");
+  const apiKey = args.config.apiKey.trim();
+  const model = args.config.model.trim();
+  if (!baseUrl || !apiKey || !model) return null;
+  const fetchFn = args.fetchImpl ?? fetch;
+  const transport = inferTransport(args.config);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), args.config.timeoutMs);
+  try {
+    const response =
+      transport === LEARNING_CONTROL_HTTP_ANTHROPIC_TRANSPORT_CONTRACT_VERSION
+        ? await fetchFn(`${baseUrl}/v1/messages`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-api-key": apiKey,
+              "anthropic-version": "2023-06-01",
+            },
+            body: JSON.stringify({
+              model,
+              max_tokens: Math.max(args.config.maxTokens, 800),
+              system: args.systemPrompt,
+              messages: [{
+                role: "user",
+                content: [{ type: "text", text: JSON.stringify(args.userPayload, null, 2) }],
+              }],
+            }),
+            signal: controller.signal,
+          })
+        : await fetchFn(`${baseUrl}/chat/completions`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+              model,
+              temperature: args.config.temperature,
+              max_tokens: args.config.maxTokens,
+              ...(args.config.openAiExtraBody ?? {}),
+              messages: [
+                { role: "system", content: args.systemPrompt },
+                { role: "user", content: JSON.stringify(args.userPayload, null, 2) },
+              ],
+            }),
+            signal: controller.signal,
+          });
+    if (!response.ok) {
+      throw new Error(`memory lifecycle shadow model returned HTTP ${response.status}`);
+    }
+    const payload = await response.json().catch(() => null);
+    const content =
+      transport === LEARNING_CONTROL_HTTP_ANTHROPIC_TRANSPORT_CONTRACT_VERSION
+        ? extractAnthropicMessageText(payload)
+        : extractChatCompletionText(payload);
+    if (!content) return null;
+    return extractJsonValueFromText(content);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function createHttpLifecycleShadowCandidateProducer(args: {
+  config: LearningControlHttpModelClientConfig;
+  max_entries?: number;
+  fetchImpl?: typeof fetch;
+}): LifecycleShadowCandidateProducer {
+  return async ({ entries, query_intent }) => {
+    if (entries.length === 0) return [];
+    const promptPayload = buildLifecycleShadowCandidatePromptPayload({
+      entries,
+      query_intent,
+      max_entries: args.max_entries,
+    });
+    const parsed = await postCandidateJson({
+      config: args.config,
+      fetchImpl: args.fetchImpl,
+      systemPrompt:
+        "You produce audit-only lifecycle candidate signals for Aionis memory. "
+        + "Return strict JSON only. "
+        + "You may only emit candidate signal_type values for supplied memory_id values. "
+        + "Do not output use_now, inspect_before_use, do_not_use, authority, lifecycle_state, edits, filters, or final admission decisions. "
+        + "Every candidate must include an evidence_span.quote copied verbatim from the selected title, text_summary, slots_text, or query_intent field. "
+        + "If evidence is weak or not explicitly grounded in the supplied text, return {\"candidates\":[]}.",
+      userPayload: promptPayload,
+    });
+    return validateLifecycleShadowCandidateSignals({
+      entries,
+      query_intent,
+      response: parsed,
+    });
+  };
+}

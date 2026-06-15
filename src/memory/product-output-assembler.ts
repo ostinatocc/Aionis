@@ -222,6 +222,7 @@ export type BuildAionisMemoryDecisionTraceArgs = {
   scope: string;
   before_guide?: AionisDecisionTraceGuideSnapshot | null;
   after_guide: AionisDecisionTraceGuideSnapshot;
+  lifecycle_candidate_shadow_signals?: AionisLifecycleCandidateSignal[];
   forget_result?: unknown;
   source_map?: Partial<AionisMemoryDecisionTrace["source_map"]>;
 };
@@ -241,6 +242,34 @@ function compactStrings(values: Array<string | null | undefined>): string[] {
     output.push(trimmed);
   }
   return output;
+}
+
+function mergeTraceLifecycleCandidateSignals(args: {
+  inferred: AionisLifecycleCandidateSignal[];
+  shadow_signals?: AionisLifecycleCandidateSignal[];
+  memory_ids: Set<string>;
+}): AionisLifecycleCandidateSignal[] {
+  const out: AionisLifecycleCandidateSignal[] = [];
+  const seen = new Set<string>();
+  const add = (signal: AionisLifecycleCandidateSignal) => {
+    if (!args.memory_ids.has(signal.memory_id)) return;
+    const key = [
+      signal.memory_id,
+      signal.signal_type,
+      signal.producer,
+      signal.evidence_span.source_field,
+      signal.evidence_span.quote.toLowerCase(),
+    ].join(":");
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(signal);
+  };
+  for (const signal of args.inferred) add(signal);
+  for (const signal of args.shadow_signals ?? []) {
+    if (signal.producer !== "llm_shadow_v1") continue;
+    add(signal);
+  }
+  return out.slice(0, 64);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -5095,9 +5124,14 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
   const relationByTarget = relationDecisionByTarget(relationDecisions);
   const forgetDecisions = traceForgetDecisions(args.forget_result);
   const feedbackInput = traceFeedbackAttributionInput(args.forget_result);
-  const lifecycleCandidateSignals = inferLifecycleCandidateSignals({
+  const inferredLifecycleCandidateSignals = inferLifecycleCandidateSignals({
     entries: memory?.relevant_memories ?? [],
     query_intent: args.after_guide.memory_packet?.query.intent ?? null,
+  });
+  const lifecycleCandidateSignals = mergeTraceLifecycleCandidateSignals({
+    inferred: inferredLifecycleCandidateSignals,
+    shadow_signals: args.lifecycle_candidate_shadow_signals,
+    memory_ids: new Set((memory?.relevant_memories ?? []).map((entry) => entry.memory_id)),
   });
   const memoryDecisions: AionisMemoryDecisionTrace["memory_decisions"] = (memory?.relevant_memories ?? [])
     .slice(0, 96)
@@ -5252,6 +5286,9 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
         memory?.relevant_memories.some((entry) => entry.memory_contract) ? "memory_contract" : null,
         relationDecisions.length > 0 ? "memory_lifecycle_relation_graph" : null,
         lifecycleCandidateSummary.present ? "lifecycle_candidate_inference" : null,
+        lifecycleCandidateSignals.some((signal) => signal.producer === "llm_shadow_v1")
+          ? "memory_lifecycle_llm_shadow_candidates"
+          : null,
         feedbackAttribution.present ? "feedback_attribution_trace" : null,
         judgmentCalibrationSummary.window.record_count > 0 ? "judgment_calibration_summary" : null,
         neighborhoodDriftObservation.present ? "neighborhood_drift_observation" : null,
