@@ -68,6 +68,7 @@ export type LearningKernelControlProviders = {
 export type LearningKernelArgs = {
   env: Env;
   embedder: EmbeddingProvider | null;
+  queryEmbedder?: EmbeddingProvider | null;
   liteRecallAccess: RecallStoreAccess;
   liteWriteStore: LiteLearningKernelStore;
   learningControlProviders?: LearningKernelControlProviders;
@@ -107,6 +108,7 @@ export function createLearningKernel(args: LearningKernelArgs): LearningKernel {
   const {
     env,
     embedder,
+    queryEmbedder,
     liteRecallAccess,
     liteWriteStore,
     learningControlProviders,
@@ -137,7 +139,7 @@ export function createLearningKernel(args: LearningKernelArgs): LearningKernel {
     selectToolWithLearnedMemory: (body) =>
       selectTools(body, env.MEMORY_SCOPE, env.MEMORY_TENANT_ID, {
         recallAccess: liteRecallAccess,
-        embedder,
+        embedder: queryEmbedder ?? embedder,
         liteWriteStore,
       }),
 

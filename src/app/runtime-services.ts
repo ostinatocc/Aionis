@@ -1,5 +1,5 @@
 import type { Env } from "../config.js";
-import { createEmbeddingProviderFromEnv } from "../embeddings/index.js";
+import { createEmbeddingProvidersFromEnv } from "../embeddings/index.js";
 import { createEmbeddingSurfacePolicy } from "../embeddings/surface-policy.js";
 import {
   SandboxExecutor,
@@ -112,9 +112,11 @@ export async function createRuntimeServices(env: Env) {
   const liteRecallAccess = liteRecallStore?.createRecallAccess() ?? null;
   const sandboxStore = createSandboxStore(store);
 
-  const embedder = createEmbeddingProviderFromEnv(process.env);
+  const embeddingProviders = createEmbeddingProvidersFromEnv(process.env);
+  const embedder = embeddingProviders.write;
+  const queryEmbedder = embeddingProviders.query;
   const embeddingSurfacePolicy = createEmbeddingSurfacePolicy({
-    providerConfigured: !!embedder,
+    providerConfigured: !!(embedder || queryEmbedder),
     enabledSurfaces: env.EMBEDDING_ENABLED_SURFACES_JSON,
   });
   const sandboxExecutor = new SandboxExecutor(sandboxStore, {
@@ -185,7 +187,7 @@ export async function createRuntimeServices(env: Env) {
   const sandboxTenantBudgetPolicy = parseSandboxTenantBudgetPolicy(env.SANDBOX_TENANT_BUDGET_POLICY_JSON);
 
   const recallTextEmbedCache =
-    embedder && env.RECALL_TEXT_EMBED_CACHE_ENABLED
+    queryEmbedder && env.RECALL_TEXT_EMBED_CACHE_ENABLED
       ? new LruTtlCache<string, number[]>({
           maxEntries: env.RECALL_TEXT_EMBED_CACHE_MAX_KEYS,
           ttlMs: env.RECALL_TEXT_EMBED_CACHE_TTL_MS,
@@ -193,7 +195,7 @@ export async function createRuntimeServices(env: Env) {
       : null;
   const recallTextEmbedInflight = new Map<string, Promise<{ vector: number[]; queue_wait_ms: number; batch_size: number }>>();
   const recallTextEmbedBatcher =
-    embedder && env.RECALL_TEXT_EMBED_BATCH_ENABLED
+    queryEmbedder && env.RECALL_TEXT_EMBED_BATCH_ENABLED
       ? new EmbedQueryBatcher({
           maxBatchSize: env.RECALL_TEXT_EMBED_BATCH_MAX_SIZE,
           maxBatchWaitMs: env.RECALL_TEXT_EMBED_BATCH_MAX_WAIT_MS,
@@ -201,7 +203,7 @@ export async function createRuntimeServices(env: Env) {
           maxQueue: env.RECALL_TEXT_EMBED_BATCH_QUEUE_MAX,
           queueTimeoutMs: env.RECALL_TEXT_EMBED_BATCH_QUEUE_TIMEOUT_MS,
           runBatch: async (texts) => {
-            return await embedder.embed(texts);
+            return await queryEmbedder.embed(texts);
           },
         })
       : null;
@@ -230,6 +232,7 @@ export async function createRuntimeServices(env: Env) {
     executionStateStore,
     executionTreeStore,
     embedder,
+    queryEmbedder,
     sandboxExecutor,
     recallStoreCapabilities,
     recallLimiter,

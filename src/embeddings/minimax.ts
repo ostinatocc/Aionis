@@ -24,7 +24,7 @@ export function createMinimaxEmbeddingProvider(opts: MinimaxEmbeddingProviderOpt
   const poster = createEmbedJsonPoster(http);
 
   return {
-    name: `minimax:${model}`,
+    name: `minimax:${model}:${embedType}`,
     dim,
     async embed(texts: string[]): Promise<number[][]> {
       if (texts.length === 0) return [];

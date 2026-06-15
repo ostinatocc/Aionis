@@ -50,6 +50,11 @@ Runtime startup needs the selected embedding provider key. If you install with
 `.env` before running `npm run -s lite:start`. For `--provider minimax`, that key
 is `MINIMAX_API_KEY`.
 
+MiniMax embeddings default to separate surfaces: stored memory is embedded with
+`MINIMAX_EMBED_DB_TYPE=db`, while recall queries use
+`MINIMAX_EMBED_QUERY_TYPE=query`. The legacy `MINIMAX_EMBED_TYPE` setting is
+still accepted when you intentionally want one type for both directions.
+
 ## Local Development
 
 From this repo:

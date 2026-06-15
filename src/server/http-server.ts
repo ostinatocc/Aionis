@@ -93,6 +93,7 @@ export function logMemoryApiConfig(args: {
   app: FastifyInstance;
   env: Env;
   embedder: EmbeddingProvider | null;
+  queryEmbedder: EmbeddingProvider | null;
   embeddingSurfacePolicy: EmbeddingSurfacePolicy;
   sandboxRemoteAllowedHosts: Set<string>;
   sandboxTenantBudgetPolicy: Map<string, unknown>;
@@ -105,6 +106,7 @@ export function logMemoryApiConfig(args: {
     app,
     env,
     embedder,
+    queryEmbedder,
     embeddingSurfacePolicy,
     sandboxRemoteAllowedHosts,
     sandboxTenantBudgetPolicy,
@@ -119,8 +121,10 @@ export function logMemoryApiConfig(args: {
       aionis_mode: env.AIONIS_MODE,
       aionis_edition: env.AIONIS_EDITION,
       app_env: env.APP_ENV,
-      embedding_provider: embedder?.name ?? "none",
-      embedding_dim: embedder?.dim ?? null,
+      embedding_provider: embedder?.name ?? queryEmbedder?.name ?? "none",
+      embedding_write_provider: embedder?.name ?? "none",
+      embedding_query_provider: queryEmbedder?.name ?? "none",
+      embedding_dim: embedder?.dim ?? queryEmbedder?.dim ?? null,
       embedding_enabled_surfaces: embeddingSurfacePolicy.enabled_surfaces,
       embedding_provider_configured: embeddingSurfacePolicy.provider_configured,
       runtime_defaults: {
@@ -303,6 +307,7 @@ export type RegisterApplicationRoutesArgs = {
   app: FastifyInstance;
   env: Env;
   embedder: EmbeddingProvider | null;
+  queryEmbedder: EmbeddingProvider | null;
   embeddingSurfacePolicy: EmbeddingSurfacePolicy;
   liteRecallAccess: RuntimeLiteRecallAccess;
   liteReplayAccess: RuntimeLiteReplayAccess;
@@ -380,6 +385,7 @@ type RuntimeRecallRouteRegistrationArgs = Pick<
   | "app"
   | "env"
   | "embedder"
+  | "queryEmbedder"
   | "embeddingSurfacePolicy"
   | "liteWriteStore"
   | "liteRecallAccess"
@@ -532,6 +538,7 @@ function registerRuntimeRecallRoutes(args: RuntimeRecallRouteRegistrationArgs) {
     app,
     env,
     embedder,
+    queryEmbedder,
     embeddingSurfacePolicy,
     liteWriteStore,
     liteRecallAccess,
@@ -585,7 +592,7 @@ function registerRuntimeRecallRoutes(args: RuntimeRecallRouteRegistrationArgs) {
   registerMemoryContextRuntimeRoutes({
     app,
     env,
-    embedder,
+    embedder: queryEmbedder,
     embeddingSurfacePolicy,
     liteWriteStore,
     liteRecallAccess,
@@ -617,6 +624,7 @@ function registerRuntimeRecallRoutes(args: RuntimeRecallRouteRegistrationArgs) {
     app,
     env,
     embedder,
+    queryEmbedder,
     liteRecallAccess,
     liteWriteStore,
     requireMemoryPrincipal,

@@ -37,6 +37,7 @@ type RegisterMemoryFeedbackToolRoutesArgs = {
   app: FastifyInstance;
   env: Env;
   embedder: EmbeddingProvider | null;
+  queryEmbedder?: EmbeddingProvider | null;
   liteRecallAccess: RecallStoreAccess;
   liteWriteStore: LiteLearningKernelStore;
   requireMemoryPrincipal: (req: FastifyRequest) => Promise<AuthPrincipal | null>;
@@ -58,6 +59,7 @@ export function registerMemoryFeedbackToolRoutes(args: RegisterMemoryFeedbackToo
     app,
     env,
     embedder,
+    queryEmbedder,
     liteRecallAccess,
     liteWriteStore,
     requireMemoryPrincipal,
@@ -77,6 +79,7 @@ export function registerMemoryFeedbackToolRoutes(args: RegisterMemoryFeedbackToo
   const learningKernel = createLearningKernel({
     env,
     embedder,
+    queryEmbedder,
     liteRecallAccess,
     liteWriteStore,
     learningControlProviders: {
