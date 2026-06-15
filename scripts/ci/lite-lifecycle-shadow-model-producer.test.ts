@@ -91,6 +91,184 @@ test("LLM shadow lifecycle validator accepts only grounded candidate signals", (
   assert.equal(signals[0]?.signal_type, "negative");
 });
 
+test("LLM shadow lifecycle validator rejects generic source-only rehydrate candidates", () => {
+  const signals = validateLifecycleShadowCandidateSignals({
+    entries: [
+      {
+        memory_id: "mem-source",
+        title: "GitHub source note",
+        summary: "Real GitHub source from remix-run/react-router commit 18b5e998c9d3.",
+        memory_type: "procedure",
+        domain: "execution",
+        lifecycle_state: "active",
+        authority: "candidate",
+        target_files: ["packages/router/history.ts"],
+        execution_state: {
+          execution_kind: "execution_workflow",
+          transition_kind: "resume_current_state",
+        },
+      },
+    ],
+    query_intent: "continue the current router work",
+    response: {
+      candidates: [{
+        memory_id: "mem-source",
+        signal_type: "rehydrate",
+        confidence: 0.82,
+        evidence_span: {
+          source_field: "text_summary",
+          quote: "Real GitHub source from remix-run/react-router commit 18b5e998c9d3",
+        },
+        reason: "The memory mentions source material.",
+      }],
+    },
+  });
+  assert.deepEqual(signals, []);
+});
+
+test("LLM shadow lifecycle validator accepts query-requested rehydrate for raw pointers", () => {
+  const signals = validateLifecycleShadowCandidateSignals({
+    entries: [
+      {
+        memory_id: "mem-trace",
+        title: "Raw execution trace pointer",
+        summary: "Trace pointer for src/checkout/adapter.ts with raw execution evidence.",
+        memory_type: "procedure",
+        domain: "execution",
+        lifecycle_state: "active",
+        authority: "candidate",
+        target_files: ["trace://checkout-migration/raw", "src/checkout/adapter.ts"],
+        execution_state: {
+          execution_kind: "execution_workflow",
+          transition_kind: "inspect_before_use",
+        },
+      },
+    ],
+    query_intent: "Need exact raw diff evidence before acting; open the pointer if available.",
+    response: {
+      candidates: [{
+        memory_id: "mem-trace",
+        signal_type: "rehydrate",
+        confidence: 0.84,
+        evidence_span: {
+          source_field: "text_summary",
+          quote: "raw execution evidence",
+        },
+        reason: "The current query requests exact raw evidence and this memory can serve it.",
+      }],
+    },
+  });
+  assert.equal(signals.length, 1);
+  assert.equal(signals[0]?.signal_type, "rehydrate");
+  assert.equal(signals[0]?.producer, "llm_shadow_v1");
+});
+
+test("LLM shadow lifecycle validator does not treat generic open requests as rehydrate", () => {
+  const signals = validateLifecycleShadowCandidateSignals({
+    entries: [
+      {
+        memory_id: "mem-trace",
+        title: "Raw execution trace pointer",
+        summary: "Trace pointer for src/checkout/adapter.ts with raw execution evidence.",
+        memory_type: "procedure",
+        domain: "execution",
+        lifecycle_state: "active",
+        authority: "candidate",
+        target_files: ["trace://checkout-migration/raw", "src/checkout/adapter.ts"],
+        execution_state: {
+          execution_kind: "execution_workflow",
+          transition_kind: "inspect_before_use",
+        },
+      },
+    ],
+    query_intent: "Open the current checkout issue and continue the implementation plan.",
+    response: {
+      candidates: [{
+        memory_id: "mem-trace",
+        signal_type: "rehydrate",
+        confidence: 0.84,
+        evidence_span: {
+          source_field: "text_summary",
+          quote: "raw execution evidence",
+        },
+        reason: "The query says open, but not open raw evidence.",
+      }],
+    },
+  });
+  assert.deepEqual(signals, []);
+});
+
+test("LLM shadow lifecycle validator accepts explicit memory rehydrate requirements", () => {
+  const signals = validateLifecycleShadowCandidateSignals({
+    entries: [
+      {
+        memory_id: "mem-raw",
+        title: "Pointer for exact evidence",
+        summary: "This entry is only a pointer to the exact supporting material. The raw commit evidence must be opened before direct use.",
+        memory_type: "procedure",
+        domain: "execution",
+        lifecycle_state: "active",
+        authority: "candidate",
+        target_files: ["trace://checkout-migration/raw", "src/checkout/adapter.ts"],
+        execution_state: {
+          execution_kind: "execution_workflow",
+          transition_kind: "inspect_before_use",
+        },
+      },
+    ],
+    query_intent: "continue checkout work from the current adapter path",
+    response: {
+      candidates: [{
+        memory_id: "mem-raw",
+        signal_type: "rehydrate",
+        confidence: 0.86,
+        evidence_span: {
+          source_field: "text_summary",
+          quote: "raw commit evidence must be opened",
+        },
+        reason: "The memory explicitly says raw evidence must be opened.",
+      }],
+    },
+  });
+  assert.equal(signals.length, 1);
+  assert.equal(signals[0]?.signal_type, "rehydrate");
+});
+
+test("LLM shadow lifecycle validator rejects conditional rehydrate pointers without query demand", () => {
+  const signals = validateLifecycleShadowCandidateSignals({
+    entries: [
+      {
+        memory_id: "mem-conditional",
+        title: "Raw commit trace pointer",
+        summary: "Use it when a summary is not enough and the raw commit evidence must be opened.",
+        memory_type: "procedure",
+        domain: "execution",
+        lifecycle_state: "active",
+        authority: "candidate",
+        target_files: ["trace://checkout-migration/raw", "src/checkout/adapter.ts"],
+        execution_state: {
+          execution_kind: "execution_workflow",
+          transition_kind: "inspect_before_use",
+        },
+      },
+    ],
+    query_intent: "continue checkout work from the current adapter path",
+    response: {
+      candidates: [{
+        memory_id: "mem-conditional",
+        signal_type: "rehydrate",
+        confidence: 0.86,
+        evidence_span: {
+          source_field: "text_summary",
+          quote: "raw commit evidence must be opened",
+        },
+        reason: "The memory is a conditional pointer, but the query does not request raw evidence.",
+      }],
+    },
+  });
+  assert.deepEqual(signals, []);
+});
+
 test("LLM shadow lifecycle prompt payload exposes evidence fields without admission actions", () => {
   const payload = buildLifecycleShadowCandidatePromptPayload({
     entries,
@@ -102,6 +280,16 @@ test("LLM shadow lifecycle prompt payload exposes evidence fields without admiss
   const payloadText = JSON.stringify(payload);
   assert.equal(payloadText.includes("use_now"), false);
   assert.equal(payloadText.includes("do_not_use"), false);
+  assert.match(payload.response_contract.rehydrate_guard, /ordinary source\/supporting memories/);
+  assert.equal(payload.derived_hints.query_requests_rehydrate, false);
+});
+
+test("LLM shadow lifecycle prompt payload marks explicit rehydrate query demand", () => {
+  const payload = buildLifecycleShadowCandidatePromptPayload({
+    entries,
+    query_intent: "Need exact raw diff evidence before acting; open the pointer if available.",
+  });
+  assert.equal(payload.derived_hints.query_requests_rehydrate, true);
 });
 
 test("HTTP LLM shadow lifecycle producer validates strict grounded JSON candidates", async () => {

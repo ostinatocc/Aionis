@@ -156,6 +156,65 @@ function normalizedContains(source: string, quote: string): boolean {
   return !!normalizedQuote && normalizedSource.includes(normalizedQuote);
 }
 
+const REHYDRATE_QUERY_REQUEST_PATTERN = /\b(?:raw|exact|payload|trace|diff|source\s+evidence|supporting\s+material|file[-\s]?level\s+evidence|complete\s+surrounding\s+material|rehydrat(?:e|ion))\b|\b(?:expand|open|recover|load|fetch)\b[^.!?\n]{0,120}\b(?:raw|full\s+context|exact|payload|trace|diff|evidence|pointer|supporting\s+material|source\s+material|complete\s+surrounding\s+material)\b/i;
+const SUMMARY_ONLY_EXCLUSION_PATTERN = /\b(?:do\s+not|don't|cannot|can't|should\s+not|must\s+not)\b[^.!?\n]{0,120}\b(?:rely|depend)\b[^.!?\n]{0,120}\b(?:summary|summaries|summarized\s+context|brief)\b/i;
+const REHYDRATE_MEMORY_POINTER_PATTERN = /\b(?:trace:\/\/|payload:\/\/|archive:\/\/|raw\s+(?:trace|diff|payload|evidence|commit\s+evidence)|exact\s+(?:supporting\s+material|patch\s+details|evidence)|source\s+evidence\s+pointer|evidence\s+pointer|evidence\s+locator|payload\s+pointer|raw\s+execution\s+trace|file[-\s]?level\s+evidence|complete\s+surrounding\s+material|full\s+context)\b/i;
+const REHYDRATE_MEMORY_REQUIREMENT_PATTERN = /\b(?:open(?:ed)?|load(?:ed)?|fetch(?:ed)?|recover(?:ed)?|expand(?:ed)?|rehydrat(?:e|ed|ion))\b[^.!?\n]{0,140}\b(?:raw|full|exact|payload|trace|diff|evidence|supporting\s+material|commit\s+evidence|source\s+material|complete\s+surrounding\s+material|file[-\s]?level)\b|\b(?:raw|full|exact|payload|trace|diff|evidence|supporting\s+material|commit\s+evidence|source\s+material|complete\s+surrounding\s+material|file[-\s]?level)\b[^.!?\n]{0,140}\b(?:must|needs?|requires?|should)\b[^.!?\n]{0,100}\b(?:open(?:ed)?|load(?:ed)?|fetch(?:ed)?|recover(?:ed)?|expand(?:ed)?|rehydrat(?:e|ed|ion))\b|\bsummary\s+is\s+not\s+enough\b/i;
+const CONDITIONAL_REHYDRATE_REQUIREMENT_PATTERN = /\b(?:when|if|only\s+when|only\s+if|as\s+needed)\b[^.!?\n]{0,120}\b(?:summary\s+is\s+not\s+enough|raw|full|exact|payload|trace|diff|evidence|pointer|open|load|fetch|recover|expand|rehydrat(?:e|ion))\b/i;
+const GENERIC_SOURCE_ONLY_PATTERN = /\b(?:real\s+github\s+source|source\s+from|source\s+data|github\s+source|supporting\s+source)\b/i;
+
+function entryRehydrateEvidenceText(entry: LifecycleCandidateEntry): string {
+  return [
+    entry.title ?? "",
+    entry.summary,
+    slotEvidenceText(entry),
+  ].join("\n");
+}
+
+function queryRequestsRehydrate(queryIntent: string | null | undefined): boolean {
+  const query = queryIntent ?? "";
+  return REHYDRATE_QUERY_REQUEST_PATTERN.test(query) || SUMMARY_ONLY_EXCLUSION_PATTERN.test(query);
+}
+
+function memoryCanServeRehydrate(entry: LifecycleCandidateEntry): boolean {
+  const source = entryRehydrateEvidenceText(entry);
+  return REHYDRATE_MEMORY_POINTER_PATTERN.test(source) || REHYDRATE_MEMORY_REQUIREMENT_PATTERN.test(source);
+}
+
+function memoryExplicitlyRequiresRehydrate(args: {
+  entry: LifecycleCandidateEntry;
+  evidence_source: string;
+  quote: string;
+}): boolean {
+  const source = [
+    entryRehydrateEvidenceText(args.entry),
+    args.evidence_source,
+    args.quote,
+  ].join("\n");
+  if (CONDITIONAL_REHYDRATE_REQUIREMENT_PATTERN.test(source)) return false;
+  return REHYDRATE_MEMORY_REQUIREMENT_PATTERN.test(source);
+}
+
+function rehydrateCandidateAllowed(args: {
+  entry: LifecycleCandidateEntry;
+  query_intent?: string | null;
+  evidence_source: string;
+  quote: string;
+}): boolean {
+  const queryRequested = queryRequestsRehydrate(args.query_intent);
+  const canServe = memoryCanServeRehydrate(args.entry);
+  if (queryRequested && canServe) return true;
+  if (memoryExplicitlyRequiresRehydrate(args)) return true;
+
+  const candidateEvidence = [
+    args.evidence_source,
+    args.quote,
+    entryRehydrateEvidenceText(args.entry),
+  ].join("\n");
+  if (GENERIC_SOURCE_ONLY_PATTERN.test(candidateEvidence)) return false;
+  return false;
+}
+
 export function validateLifecycleShadowCandidateSignals(args: {
   entries: LifecycleCandidateEntry[];
   query_intent?: string | null;
@@ -178,6 +237,15 @@ export function validateLifecycleShadowCandidateSignals(args: {
       source_field: candidate.evidence_span.source_field,
     });
     if (!normalizedContains(evidenceSource, candidate.evidence_span.quote)) continue;
+    if (
+      candidate.signal_type === "rehydrate"
+      && !rehydrateCandidateAllowed({
+        entry,
+        query_intent: args.query_intent,
+        evidence_source: evidenceSource,
+        quote: candidate.evidence_span.quote,
+      })
+    ) continue;
     const signal = AionisLifecycleCandidateSignalSchema.safeParse({
       memory_id: candidate.memory_id,
       signal_type: candidate.signal_type,
@@ -231,6 +299,11 @@ export function buildLifecycleShadowCandidatePromptPayload(args: {
         ["current", "procedure", "negative", "stale", "contested", "rehydrate"],
       evidence_requirement:
         "evidence_span.quote must be copied verbatim from the selected title, text_summary, slots_text, or query_intent field.",
+      rehydrate_guard:
+        "Emit rehydrate when query_intent asks for raw/full/exact/payload/trace/diff evidence and the memory is a raw/trace/payload/evidence pointer. Also emit rehydrate when the memory unconditionally says raw/full evidence must be opened before direct use. Conditional pointers such as 'when summary is not enough' are not rehydrate candidates unless query_intent asks for raw evidence. Do not mark ordinary source/supporting memories as rehydrate merely because they contain source data.",
+    },
+    derived_hints: {
+      query_requests_rehydrate: queryRequestsRehydrate(args.query_intent),
     },
     query_intent: args.query_intent ?? null,
     entries: args.entries.slice(0, args.max_entries ?? 32).map(compactEntry),
@@ -326,6 +399,9 @@ export function createHttpLifecycleShadowCandidateProducer(args: {
         + "You may only emit candidate signal_type values for supplied memory_id values. "
         + "Do not output use_now, inspect_before_use, do_not_use, authority, lifecycle_state, edits, filters, or final admission decisions. "
         + "Every candidate must include an evidence_span.quote copied verbatim from the selected title, text_summary, slots_text, or query_intent field. "
+        + "Emit rehydrate when the query asks for raw/full/exact/payload/trace/diff evidence and a memory is a raw/trace/payload/evidence pointer. "
+        + "Emit rehydrate when a memory unconditionally says raw evidence must be opened before direct use. "
+        + "Do not emit rehydrate for conditional pointers unless the query asks for raw evidence, and do not emit it for ordinary source/supporting memories. "
         + "If evidence is weak or not explicitly grounded in the supplied text, return {\"candidates\":[]}.",
       userPayload: promptPayload,
     });
