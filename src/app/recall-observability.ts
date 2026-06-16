@@ -1,3 +1,16 @@
+import type { RecallCandidate, RecallCandidateSourceKind } from "../store/recall-access.js";
+
+const RECALL_SOURCE_KINDS: readonly RecallCandidateSourceKind[] = [
+  "semantic",
+  "lexical",
+  "structured",
+  "execution_native",
+  "graph",
+  "recent",
+  "exact_recovery",
+  "ann",
+];
+
 function normalizeAionisUri(v: unknown): string | null {
   if (typeof v !== "string") return null;
   const s = v.trim();
@@ -86,6 +99,204 @@ function normalizeSelectionStats(input: unknown) {
       ? Math.max(0, Math.trunc(filteredByLayerPolicyCount))
       : 0,
     filtered_by_layer: filteredByLayer,
+  };
+}
+
+function round4(value: number): number {
+  return Number(value.toFixed(4));
+}
+
+function percentile(values: number[], p: number): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  return round4(sorted[idx] ?? 0);
+}
+
+function mean(values: number[]): number | null {
+  if (values.length === 0) return null;
+  return round4(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
+
+function elapsedMs(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? round4(Math.max(0, parsed)) : null;
+}
+
+function candidateIds(candidates: readonly RecallCandidate[]): Set<string> {
+  return new Set(candidates.map((candidate) => candidate.id));
+}
+
+function candidateScore(candidate: RecallCandidate, kind: RecallCandidateSourceKind): number | null {
+  const sourceScore = candidate.sources?.find((source) => source.kind === kind)?.score;
+  if (typeof sourceScore === "number" && Number.isFinite(sourceScore)) return Math.max(0, Math.min(1, sourceScore));
+  return Number.isFinite(candidate.similarity) ? Math.max(0, Math.min(1, candidate.similarity)) : null;
+}
+
+function sourceCandidateMetric(args: {
+  kind: RecallCandidateSourceKind;
+  candidates: readonly RecallCandidate[];
+  elapsed_ms?: number | null;
+}) {
+  const ids = candidateIds(args.candidates);
+  const scores = args.candidates
+    .map((candidate) => candidateScore(candidate, args.kind))
+    .filter((value): value is number => value !== null);
+  return {
+    kind: args.kind,
+    candidate_count: args.candidates.length,
+    unique_candidate_count: ids.size,
+    elapsed_ms: elapsedMs(args.elapsed_ms),
+    mean_score: mean(scores),
+    max_score: scores.length > 0 ? round4(Math.max(...scores)) : null,
+  };
+}
+
+export type RecallSourceObservabilityInput = {
+  sources: Array<{
+    kind: RecallCandidateSourceKind;
+    candidates: readonly RecallCandidate[];
+    elapsed_ms?: number | null;
+  }>;
+  hybrid_merge?: {
+    input_candidates: readonly RecallCandidate[];
+    output_candidates: readonly RecallCandidate[];
+    elapsed_ms?: number | null;
+  } | null;
+};
+
+export type RecallSourceObservabilityMetrics = ReturnType<typeof buildRecallSourceObservabilityMetrics>;
+
+export function buildRecallSourceObservabilityMetrics(args: RecallSourceObservabilityInput) {
+  const sourceByKind = new Map<RecallCandidateSourceKind, {
+    kind: RecallCandidateSourceKind;
+    candidates: readonly RecallCandidate[];
+    elapsed_ms?: number | null;
+  }>();
+  for (const source of args.sources) {
+    sourceByKind.set(source.kind, source);
+  }
+  const stage1Sources = Object.fromEntries(RECALL_SOURCE_KINDS.map((kind) => {
+    const source = sourceByKind.get(kind);
+    return [kind, sourceCandidateMetric({
+      kind,
+      candidates: source?.candidates ?? [],
+      elapsed_ms: source?.elapsed_ms ?? null,
+    })];
+  })) as Record<RecallCandidateSourceKind, ReturnType<typeof sourceCandidateMetric>>;
+
+  const candidateOverlap: Array<{
+    source_a: RecallCandidateSourceKind;
+    source_b: RecallCandidateSourceKind;
+    overlap_count: number;
+  }> = [];
+  for (let leftIndex = 0; leftIndex < RECALL_SOURCE_KINDS.length; leftIndex += 1) {
+    const left = RECALL_SOURCE_KINDS[leftIndex]!;
+    const leftIds = candidateIds(sourceByKind.get(left)?.candidates ?? []);
+    if (leftIds.size === 0) continue;
+    for (let rightIndex = leftIndex + 1; rightIndex < RECALL_SOURCE_KINDS.length; rightIndex += 1) {
+      const right = RECALL_SOURCE_KINDS[rightIndex]!;
+      const rightIds = candidateIds(sourceByKind.get(right)?.candidates ?? []);
+      if (rightIds.size === 0) continue;
+      let overlapCount = 0;
+      for (const id of leftIds) {
+        if (rightIds.has(id)) overlapCount += 1;
+      }
+      if (overlapCount > 0) {
+        candidateOverlap.push({ source_a: left, source_b: right, overlap_count: overlapCount });
+      }
+    }
+  }
+
+  const hybridInput = args.hybrid_merge?.input_candidates ?? [];
+  const hybridOutput = args.hybrid_merge?.output_candidates ?? [];
+  const hybridInputUnique = candidateIds(hybridInput);
+  const hybridOutputUnique = candidateIds(hybridOutput);
+  return {
+    stage1_sources: stage1Sources,
+    hybrid_merge: {
+      input_count: hybridInput.length,
+      input_unique_count: hybridInputUnique.size,
+      output_count: hybridOutput.length,
+      output_unique_count: hybridOutputUnique.size,
+      duplicate_candidate_count: Math.max(0, hybridInput.length - hybridInputUnique.size),
+      source_family_count: args.sources.filter((source) => source.candidates.length > 0).length,
+      elapsed_ms: elapsedMs(args.hybrid_merge?.elapsed_ms),
+    },
+    candidate_overlap: candidateOverlap,
+  };
+}
+
+export type RecallSourceObservabilitySummary = ReturnType<typeof summarizeRecallSourceObservabilityMetrics>;
+
+export function summarizeRecallSourceObservabilityMetrics(metrics: readonly RecallSourceObservabilityMetrics[]) {
+  const stage1Sources = Object.fromEntries(RECALL_SOURCE_KINDS.map((kind) => {
+    const perCase = metrics.map((metric) => metric.stage1_sources[kind]);
+    const candidateCounts = perCase.map((entry) => entry.candidate_count);
+    const latencies = perCase
+      .map((entry) => entry.elapsed_ms)
+      .filter((value): value is number => typeof value === "number");
+    return [kind, {
+      case_count: metrics.length,
+      cases_with_candidates: perCase.filter((entry) => entry.candidate_count > 0).length,
+      total_candidates: candidateCounts.reduce((sum, value) => sum + value, 0),
+      mean_candidates_per_case: mean(candidateCounts) ?? 0,
+      p50_latency_ms: percentile(latencies, 50),
+      p95_latency_ms: percentile(latencies, 95),
+    }];
+  }));
+
+  const hybridLatencies = metrics
+    .map((metric) => metric.hybrid_merge.elapsed_ms)
+    .filter((value): value is number => typeof value === "number");
+  const overlapByPair = new Map<string, {
+    source_a: RecallCandidateSourceKind;
+    source_b: RecallCandidateSourceKind;
+    case_count: number;
+    total_overlap_count: number;
+  }>();
+  for (const metric of metrics) {
+    for (const overlap of metric.candidate_overlap) {
+      const key = `${overlap.source_a}:${overlap.source_b}`;
+      const next = overlapByPair.get(key) ?? {
+        source_a: overlap.source_a,
+        source_b: overlap.source_b,
+        case_count: 0,
+        total_overlap_count: 0,
+      };
+      next.case_count += 1;
+      next.total_overlap_count += overlap.overlap_count;
+      overlapByPair.set(key, next);
+    }
+  }
+
+  return {
+    stage1_sources: stage1Sources as Record<RecallCandidateSourceKind, {
+      case_count: number;
+      cases_with_candidates: number;
+      total_candidates: number;
+      mean_candidates_per_case: number;
+      p50_latency_ms: number | null;
+      p95_latency_ms: number | null;
+    }>,
+    hybrid_merge: {
+      case_count: metrics.length,
+      total_input_count: metrics.reduce((sum, metric) => sum + metric.hybrid_merge.input_count, 0),
+      total_output_count: metrics.reduce((sum, metric) => sum + metric.hybrid_merge.output_count, 0),
+      total_duplicate_candidate_count: metrics.reduce((sum, metric) => sum + metric.hybrid_merge.duplicate_candidate_count, 0),
+      p50_latency_ms: percentile(hybridLatencies, 50),
+      p95_latency_ms: percentile(hybridLatencies, 95),
+    },
+    candidate_overlap: Array.from(overlapByPair.values())
+      .sort((left, right) =>
+        right.total_overlap_count - left.total_overlap_count
+        || left.source_a.localeCompare(right.source_a)
+        || left.source_b.localeCompare(right.source_b))
+      .map((entry) => ({
+        ...entry,
+        mean_overlap_per_case: metrics.length > 0 ? round4(entry.total_overlap_count / metrics.length) : 0,
+      })),
   };
 }
 

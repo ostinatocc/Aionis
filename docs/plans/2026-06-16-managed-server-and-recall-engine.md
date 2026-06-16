@@ -1573,12 +1573,21 @@ git commit -m "feat: surface recall sources in receipts"
 
 ## Task 17: Add Recall Latency and Source Metrics
 
+**Status:** implemented.
+
+Implementation note: this landed as recall/eval observability only. It does
+not change candidate admission, guide placement, or Agent prompt rendering.
+`src/routes/product-facade.ts` did not need a direct change because Task 17
+reports source metrics through the recall eval and reusable
+`src/app/recall-observability.ts` helpers.
+
 **Files:**
 - Modify: `src/app/recall-observability.ts`
-- Modify: `src/routes/product-facade.ts`
 - Modify: `scripts/e2e/recall-engine-eval.ts`
 - Create: `scripts/ci/recall-observability-source-metrics.test.ts`
+- Modify: `scripts/ci/recall-engine-eval.test.ts`
 - Modify: `docs/AIONIS_RECALL_ENGINE_ROADMAP.md`
+- Modify: `docs/examples/recall-engine-baseline-summary.json`
 
 **Step 1: Write observability tests**
 
@@ -1616,15 +1625,15 @@ Update recall eval summary with:
 Run:
 
 ```bash
-npx tsx --test scripts/ci/recall-observability-source-metrics.test.ts
-npm run -s recall:eval
+npx tsx --test scripts/ci/recall-observability-source-metrics.test.ts scripts/ci/recall-engine-eval.test.ts
+npx tsx scripts/e2e/recall-engine-eval.ts --deterministic-latency
 npm run -s typecheck
 ```
 
 **Step 5: Commit**
 
 ```bash
-git add src/app/recall-observability.ts src/routes/product-facade.ts scripts/e2e/recall-engine-eval.ts scripts/ci/recall-observability-source-metrics.test.ts docs/AIONIS_RECALL_ENGINE_ROADMAP.md docs/examples/recall-engine-baseline-summary.json
+git add src/app/recall-observability.ts scripts/e2e/recall-engine-eval.ts scripts/ci/recall-observability-source-metrics.test.ts scripts/ci/recall-engine-eval.test.ts docs/AIONIS_RECALL_ENGINE_ROADMAP.md docs/examples/recall-engine-baseline-summary.json docs/plans/2026-06-16-managed-server-and-recall-engine.md
 git commit -m "feat: add recall source observability"
 ```
 

@@ -18,6 +18,7 @@ test("recall engine eval runs against real Lite stores and emits baseline metric
   });
 
   assert.equal(summary.contract_version, "aionis_recall_engine_baseline_v1");
+  assert.equal(summary.generated_at, "1970-01-01T00:00:00.000Z");
   assert.equal(summary.case_count, 20);
   assert.equal(summary.cases.length, 20);
   assert.equal(summary.candidate_generation.semantic_path, "bounded_sqlite_scan_plus_js_cosine_with_source_trace");

@@ -92,6 +92,9 @@ change:
 | `rehydrate_hit_rate` | Memories that need raw evidence produce rehydrate candidates or pointers. |
 | `p50_recall_latency_ms` | Median candidate retrieval latency. |
 | `p95_recall_latency_ms` | Tail candidate retrieval latency. |
+| `source_observability.stage1_sources` | Per-source candidate counts, case coverage, p50/p95 latency, and score summaries for semantic, lexical, structured, execution-native, exact recovery, graph, recent, and ANN families. |
+| `source_observability.hybrid_merge` | Hybrid merge input/output counts, duplicate candidate count, source-family count, and merge latency. |
+| `source_observability.candidate_overlap` | Candidate overlap between source families so retrieval changes can be diagnosed without changing governance. |
 | `index_rebuild_time_ms` | Time to rebuild any sidecar index. |
 | `embedding_backfill_delay_ms` | Delay between write and searchable embedding availability. |
 
@@ -137,13 +140,21 @@ proxy metrics. Full product evaluations must measure them through `/v1/guide`.
      execution-native sources. Existing product recall paths still keep their
      semantic-scan default until a separate config-gated rollout lands.
 
-6. **Local ANN sidecar**
+6. **Recall source observability**
+   - Report per-source candidate counts, p50/p95 latency, hybrid merge shape,
+     and candidate overlap in the recall eval summary.
+   - Current status: `src/app/recall-observability.ts` exposes reusable source
+     metrics helpers; `scripts/e2e/recall-engine-eval.ts` emits
+     `source_observability` over real Lite stores. Deterministic eval runs fix
+     `generated_at` and null latency fields for stable docs examples.
+
+7. **Local ANN sidecar**
    - Add a local ANN adapter only after source-aware metrics exist.
    - SQLite remains the fact source. ANN is candidate generation only.
    - Candidate IDs must be checked against SQLite authority/scope/lifecycle
      facts before governance.
 
-7. **Flight Recorder and operator visibility**
+8. **Flight Recorder and operator visibility**
    - Include recall source traces in operator snapshots and Flight Recorder.
    - Operators should see whether an Agent missed context because recall missed
      a candidate or because governance blocked it.

@@ -9,8 +9,15 @@ import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import {
   EXACT_RECOVERY_RECALL_STAGE1_ALLOWED_TIERS,
   type RecallCandidate,
+  type RecallCandidateSourceKind,
   type RecallMemoryTier,
 } from "../../src/store/recall-access.ts";
+import {
+  buildRecallSourceObservabilityMetrics,
+  summarizeRecallSourceObservabilityMetrics,
+  type RecallSourceObservabilityMetrics,
+  type RecallSourceObservabilitySummary,
+} from "../../src/app/recall-observability.ts";
 
 type RecallEngineFixture = {
   version: number;
@@ -58,15 +65,7 @@ type RecallEngineMemory = {
   requires_rehydrate?: boolean;
 };
 
-type CandidateSource =
-  | "semantic"
-  | "lexical"
-  | "structured"
-  | "execution_native"
-  | "graph"
-  | "recent"
-  | "exact_recovery"
-  | "ann";
+type CandidateSource = RecallCandidateSourceKind;
 
 type RecallEngineCaseResult = {
   case_id: string;
@@ -83,6 +82,7 @@ type RecallEngineCaseResult = {
   do_not_use_stale_suppression_proxy: number | null;
   rehydrate_hit_rate: number | null;
   latency_ms: number | null;
+  source_observability: RecallSourceObservabilityMetrics;
 };
 
 type RecallEngineSummary = {
@@ -113,6 +113,7 @@ type RecallEngineSummary = {
     index_rebuild_time_ms: null;
     embedding_backfill_delay_ms: number;
   };
+  source_observability: RecallSourceObservabilitySummary;
   metric_notes: string[];
   cases: RecallEngineCaseResult[];
 };
@@ -340,6 +341,25 @@ function targetFilesForCase(testCase: RecallEngineCase): string[] {
   return out;
 }
 
+async function timedCandidates(args: {
+  deterministicLatency: boolean;
+  run: () => Promise<RecallCandidate[]>;
+}): Promise<{ candidates: RecallCandidate[]; elapsed_ms: number | null }> {
+  const start = performance.now();
+  const candidates = await args.run();
+  const elapsed = performance.now() - start;
+  return {
+    candidates,
+    elapsed_ms: args.deterministicLatency ? null : round4(elapsed),
+  };
+}
+
+function addLatencyValues(values: Array<number | null>): number | null {
+  const finite = values.filter((value): value is number => typeof value === "number");
+  if (finite.length === 0) return null;
+  return round4(finite.reduce((sum, value) => sum + value, 0));
+}
+
 function structuredParamsForCase(testCase: RecallEngineCase, scope: string) {
   return {
     scope,
@@ -383,31 +403,84 @@ async function evaluateCase(args: {
   deterministicLatency: boolean;
 }): Promise<RecallEngineCaseResult> {
   const scope = `recall-engine:${args.testCase.case_id}`;
-  const start = performance.now();
-  const hybrid = await args.access.stage1HybridCandidates({
-    queryEmbedding: args.testCase.query_vector,
-    queryText: args.testCase.query_text ?? args.testCase.description,
-    structured: structuredHybridInputForCase(args.testCase),
-    scope,
-    limit: 50,
-    consumerAgentId: null,
-    consumerTeamId: null,
+  const structuredParams = structuredParamsForCase(args.testCase, scope);
+  const semantic = await timedCandidates({
+    deterministicLatency: args.deterministicLatency,
+    run: () => args.access.stage1SemanticCandidates({
+      queryEmbedding: args.testCase.query_vector,
+      scope,
+      oversample: 50,
+      limit: 50,
+      consumerAgentId: null,
+      consumerTeamId: null,
+    }),
   });
-  const exact = await args.access.stage1CandidatesExactRecovery({
-    queryEmbedding: args.testCase.query_vector,
-    scope,
-    oversample: 50,
-    limit: 50,
-    allowedTiers: [...EXACT_RECOVERY_RECALL_STAGE1_ALLOWED_TIERS],
-    scanLimit: null,
-    consumerAgentId: null,
-    consumerTeamId: null,
+  const lexical = await timedCandidates({
+    deterministicLatency: args.deterministicLatency,
+    run: () => args.access.stage1LexicalCandidates({
+      queryText: args.testCase.query_text ?? args.testCase.description,
+      scope,
+      limit: 50,
+      consumerAgentId: null,
+      consumerTeamId: null,
+    }),
   });
-  const elapsed = performance.now() - start;
+  const structured = await timedCandidates({
+    deterministicLatency: args.deterministicLatency,
+    run: () => args.access.stage1StructuredCandidates(structuredParams),
+  });
+  const executionNative = await timedCandidates({
+    deterministicLatency: args.deterministicLatency,
+    run: () => args.access.stage1ExecutionNativeCandidates(structuredParams),
+  });
+  const hybrid = await timedCandidates({
+    deterministicLatency: args.deterministicLatency,
+    run: () => args.access.stage1HybridCandidates({
+      queryEmbedding: args.testCase.query_vector,
+      queryText: args.testCase.query_text ?? args.testCase.description,
+      structured: structuredHybridInputForCase(args.testCase),
+      scope,
+      limit: 50,
+      consumerAgentId: null,
+      consumerTeamId: null,
+    }),
+  });
+  const exact = await timedCandidates({
+    deterministicLatency: args.deterministicLatency,
+    run: () => args.access.stage1CandidatesExactRecovery({
+      queryEmbedding: args.testCase.query_vector,
+      scope,
+      oversample: 50,
+      limit: 50,
+      allowedTiers: [...EXACT_RECOVERY_RECALL_STAGE1_ALLOWED_TIERS],
+      scanLimit: null,
+      consumerAgentId: null,
+      consumerTeamId: null,
+    }),
+  });
+  const sourceObservability = buildRecallSourceObservabilityMetrics({
+    sources: [
+      { kind: "semantic", candidates: semantic.candidates, elapsed_ms: semantic.elapsed_ms },
+      { kind: "lexical", candidates: lexical.candidates, elapsed_ms: lexical.elapsed_ms },
+      { kind: "structured", candidates: structured.candidates, elapsed_ms: structured.elapsed_ms },
+      { kind: "execution_native", candidates: executionNative.candidates, elapsed_ms: executionNative.elapsed_ms },
+      { kind: "exact_recovery", candidates: exact.candidates, elapsed_ms: exact.elapsed_ms },
+    ],
+    hybrid_merge: {
+      input_candidates: [
+        ...semantic.candidates,
+        ...lexical.candidates,
+        ...structured.candidates,
+        ...executionNative.candidates,
+      ],
+      output_candidates: hybrid.candidates,
+      elapsed_ms: hybrid.elapsed_ms,
+    },
+  });
 
   const candidateById = new Map<string, RecallCandidate>();
   const sourceMap = new Map<string, Set<CandidateSource>>();
-  for (const candidate of hybrid.concat(exact)) {
+  for (const candidate of hybrid.candidates.concat(exact.candidates)) {
     const id = candidate.id;
     if (!candidateById.has(id)) candidateById.set(id, candidate);
     sourceMap.set(id, sourceMap.get(id) ?? new Set<CandidateSource>());
@@ -466,7 +539,8 @@ async function evaluateCase(args: {
     failed_branch_blocking_proxy: failedBranchBlockingProxy === null ? null : round4(failedBranchBlockingProxy),
     do_not_use_stale_suppression_proxy: staleSuppressionProxy === null ? null : round4(staleSuppressionProxy),
     rehydrate_hit_rate: rehydrateHitRate === null ? null : round4(rehydrateHitRate),
-    latency_ms: args.deterministicLatency ? null : round4(elapsed),
+    latency_ms: addLatencyValues([hybrid.elapsed_ms, exact.elapsed_ms]),
+    source_observability: sourceObservability,
   };
 }
 
@@ -511,7 +585,7 @@ export async function runRecallEngineEval(options: {
 
     const summary: RecallEngineSummary = {
       contract_version: "aionis_recall_engine_baseline_v1",
-      generated_at: new Date().toISOString(),
+      generated_at: options.deterministicLatency === true ? "1970-01-01T00:00:00.000Z" : new Date().toISOString(),
       fixture_version: fixture.version,
       case_count: fixture.cases.length,
       recall_access_capability_version: access.capability_version,
@@ -537,9 +611,13 @@ export async function runRecallEngineEval(options: {
         index_rebuild_time_ms: null,
         embedding_backfill_delay_ms: 0,
       },
+      source_observability: summarizeRecallSourceObservabilityMetrics(
+        cases.map((result) => result.source_observability),
+      ),
       metric_notes: [
         "This is a recall-only baseline over real Lite SQLite stores and RecallStoreAccess.",
         "stage1 semantic path is bounded SQLite scan plus JavaScript cosine ranking, not true ANN.",
+        "source_observability reports per-source probe counts, latency, hybrid merge shape, and candidate overlap; source traces are observability, not admission authority.",
         "use_now_precision_after_governance and inspect_before_use_correctness are deferred to guide/product evals because recall is not admission.",
         "failed_branch_blocking and do_not_use_stale_suppression are recall-readiness proxies: the unsafe memory must be retrieved so governance can block it.",
       ],

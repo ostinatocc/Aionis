@@ -1,6 +1,6 @@
 {
   "contract_version": "aionis_recall_engine_baseline_v1",
-  "generated_at": "2026-06-16T12:58:26.573Z",
+  "generated_at": "1970-01-01T00:00:00.000Z",
   "fixture_version": 1,
   "case_count": 20,
   "recall_access_capability_version": 3,
@@ -21,14 +21,163 @@
     "do_not_use_stale_suppression": 1,
     "failed_branch_blocking": 1,
     "rehydrate_hit_rate": 1,
-    "p50_recall_latency_ms": 1.2307,
-    "p95_recall_latency_ms": 4.3762,
+    "p50_recall_latency_ms": null,
+    "p95_recall_latency_ms": null,
     "index_rebuild_time_ms": null,
     "embedding_backfill_delay_ms": 0
+  },
+  "source_observability": {
+    "stage1_sources": {
+      "semantic": {
+        "case_count": 20,
+        "cases_with_candidates": 17,
+        "total_candidates": 32,
+        "mean_candidates_per_case": 1.6,
+        "p50_latency_ms": null,
+        "p95_latency_ms": null
+      },
+      "lexical": {
+        "case_count": 20,
+        "cases_with_candidates": 18,
+        "total_candidates": 28,
+        "mean_candidates_per_case": 1.4,
+        "p50_latency_ms": null,
+        "p95_latency_ms": null
+      },
+      "structured": {
+        "case_count": 20,
+        "cases_with_candidates": 16,
+        "total_candidates": 24,
+        "mean_candidates_per_case": 1.2,
+        "p50_latency_ms": null,
+        "p95_latency_ms": null
+      },
+      "execution_native": {
+        "case_count": 20,
+        "cases_with_candidates": 16,
+        "total_candidates": 24,
+        "mean_candidates_per_case": 1.2,
+        "p50_latency_ms": null,
+        "p95_latency_ms": null
+      },
+      "graph": {
+        "case_count": 20,
+        "cases_with_candidates": 0,
+        "total_candidates": 0,
+        "mean_candidates_per_case": 0,
+        "p50_latency_ms": null,
+        "p95_latency_ms": null
+      },
+      "recent": {
+        "case_count": 20,
+        "cases_with_candidates": 0,
+        "total_candidates": 0,
+        "mean_candidates_per_case": 0,
+        "p50_latency_ms": null,
+        "p95_latency_ms": null
+      },
+      "exact_recovery": {
+        "case_count": 20,
+        "cases_with_candidates": 20,
+        "total_candidates": 37,
+        "mean_candidates_per_case": 1.85,
+        "p50_latency_ms": null,
+        "p95_latency_ms": null
+      },
+      "ann": {
+        "case_count": 20,
+        "cases_with_candidates": 0,
+        "total_candidates": 0,
+        "mean_candidates_per_case": 0,
+        "p50_latency_ms": null,
+        "p95_latency_ms": null
+      }
+    },
+    "hybrid_merge": {
+      "case_count": 20,
+      "total_input_count": 108,
+      "total_output_count": 36,
+      "total_duplicate_candidate_count": 72,
+      "p50_latency_ms": null,
+      "p95_latency_ms": null
+    },
+    "candidate_overlap": [
+      {
+        "source_a": "semantic",
+        "source_b": "exact_recovery",
+        "case_count": 17,
+        "total_overlap_count": 32,
+        "mean_overlap_per_case": 1.6
+      },
+      {
+        "source_a": "lexical",
+        "source_b": "exact_recovery",
+        "case_count": 18,
+        "total_overlap_count": 28,
+        "mean_overlap_per_case": 1.4
+      },
+      {
+        "source_a": "execution_native",
+        "source_b": "exact_recovery",
+        "case_count": 16,
+        "total_overlap_count": 24,
+        "mean_overlap_per_case": 1.2
+      },
+      {
+        "source_a": "semantic",
+        "source_b": "lexical",
+        "case_count": 15,
+        "total_overlap_count": 24,
+        "mean_overlap_per_case": 1.2
+      },
+      {
+        "source_a": "structured",
+        "source_b": "exact_recovery",
+        "case_count": 16,
+        "total_overlap_count": 24,
+        "mean_overlap_per_case": 1.2
+      },
+      {
+        "source_a": "structured",
+        "source_b": "execution_native",
+        "case_count": 16,
+        "total_overlap_count": 24,
+        "mean_overlap_per_case": 1.2
+      },
+      {
+        "source_a": "semantic",
+        "source_b": "execution_native",
+        "case_count": 14,
+        "total_overlap_count": 21,
+        "mean_overlap_per_case": 1.05
+      },
+      {
+        "source_a": "semantic",
+        "source_b": "structured",
+        "case_count": 14,
+        "total_overlap_count": 21,
+        "mean_overlap_per_case": 1.05
+      },
+      {
+        "source_a": "lexical",
+        "source_b": "execution_native",
+        "case_count": 13,
+        "total_overlap_count": 20,
+        "mean_overlap_per_case": 1
+      },
+      {
+        "source_a": "lexical",
+        "source_b": "structured",
+        "case_count": 13,
+        "total_overlap_count": 20,
+        "mean_overlap_per_case": 1
+      }
+    ]
   },
   "metric_notes": [
     "This is a recall-only baseline over real Lite SQLite stores and RecallStoreAccess.",
     "stage1 semantic path is bounded SQLite scan plus JavaScript cosine ranking, not true ANN.",
+    "source_observability reports per-source probe counts, latency, hybrid merge shape, and candidate overlap; source traces are observability, not admission authority.",
     "use_now_precision_after_governance and inspect_before_use_correctness are deferred to guide/product evals because recall is not admission.",
     "failed_branch_blocking and do_not_use_stale_suppression are recall-readiness proxies: the unsafe memory must be retrieved so governance can block it."
   ],
@@ -78,7 +227,136 @@
       "failed_branch_blocking_proxy": 1,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 4.3762
+      "latency_ms": null,
+      "source_observability": {
+        "stage1_sources": {
+          "semantic": {
+            "kind": "semantic",
+            "candidate_count": 3,
+            "unique_candidate_count": 3,
+            "elapsed_ms": null,
+            "mean_score": 0.5864,
+            "max_score": 1
+          },
+          "lexical": {
+            "kind": "lexical",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.798,
+            "max_score": 0.958
+          },
+          "structured": {
+            "kind": "structured",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.776,
+            "max_score": 0.976
+          },
+          "execution_native": {
+            "kind": "execution_native",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.818,
+            "max_score": 1
+          },
+          "graph": {
+            "kind": "graph",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "recent": {
+            "kind": "recent",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "exact_recovery": {
+            "kind": "exact_recovery",
+            "candidate_count": 3,
+            "unique_candidate_count": 3,
+            "elapsed_ms": null,
+            "mean_score": 0.5864,
+            "max_score": 1
+          },
+          "ann": {
+            "kind": "ann",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          }
+        },
+        "hybrid_merge": {
+          "input_count": 9,
+          "input_unique_count": 3,
+          "output_count": 3,
+          "output_unique_count": 3,
+          "duplicate_candidate_count": 6,
+          "source_family_count": 5,
+          "elapsed_ms": null
+        },
+        "candidate_overlap": [
+          {
+            "source_a": "semantic",
+            "source_b": "lexical",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "structured",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "execution_native",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "exact_recovery",
+            "overlap_count": 3
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "structured",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "execution_native",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "structured",
+            "source_b": "execution_native",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "structured",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "execution_native",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          }
+        ]
+      }
     },
     {
       "case_id": "case02_preference_scope",
@@ -115,7 +393,136 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 1.4375
+      "latency_ms": null,
+      "source_observability": {
+        "stage1_sources": {
+          "semantic": {
+            "kind": "semantic",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.58,
+            "max_score": 1
+          },
+          "lexical": {
+            "kind": "lexical",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.798,
+            "max_score": 0.798
+          },
+          "structured": {
+            "kind": "structured",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.906,
+            "max_score": 0.906
+          },
+          "execution_native": {
+            "kind": "execution_native",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.966,
+            "max_score": 0.966
+          },
+          "graph": {
+            "kind": "graph",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "recent": {
+            "kind": "recent",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "exact_recovery": {
+            "kind": "exact_recovery",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.58,
+            "max_score": 1
+          },
+          "ann": {
+            "kind": "ann",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          }
+        },
+        "hybrid_merge": {
+          "input_count": 5,
+          "input_unique_count": 2,
+          "output_count": 2,
+          "output_unique_count": 2,
+          "duplicate_candidate_count": 3,
+          "source_family_count": 5,
+          "elapsed_ms": null
+        },
+        "candidate_overlap": [
+          {
+            "source_a": "semantic",
+            "source_b": "lexical",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "structured",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "structured",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "structured",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "structured",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "execution_native",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          }
+        ]
+      }
     },
     {
       "case_id": "case03_stale_endpoint",
@@ -153,7 +560,136 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": 1,
       "rehydrate_hit_rate": null,
-      "latency_ms": 2.8754
+      "latency_ms": null,
+      "source_observability": {
+        "stage1_sources": {
+          "semantic": {
+            "kind": "semantic",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.9996,
+            "max_score": 1
+          },
+          "lexical": {
+            "kind": "lexical",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.878,
+            "max_score": 0.958
+          },
+          "structured": {
+            "kind": "structured",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.976,
+            "max_score": 0.976
+          },
+          "execution_native": {
+            "kind": "execution_native",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 1,
+            "max_score": 1
+          },
+          "graph": {
+            "kind": "graph",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "recent": {
+            "kind": "recent",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "exact_recovery": {
+            "kind": "exact_recovery",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.9996,
+            "max_score": 1
+          },
+          "ann": {
+            "kind": "ann",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          }
+        },
+        "hybrid_merge": {
+          "input_count": 6,
+          "input_unique_count": 2,
+          "output_count": 2,
+          "output_unique_count": 2,
+          "duplicate_candidate_count": 4,
+          "source_family_count": 5,
+          "elapsed_ms": null
+        },
+        "candidate_overlap": [
+          {
+            "source_a": "semantic",
+            "source_b": "lexical",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "structured",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "structured",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "structured",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "structured",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "execution_native",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          }
+        ]
+      }
     },
     {
       "case_id": "case04_rehydrate_plan",
@@ -185,7 +721,116 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": 1,
-      "latency_ms": 1.2307
+      "latency_ms": null,
+      "source_observability": {
+        "stage1_sources": {
+          "semantic": {
+            "kind": "semantic",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "lexical": {
+            "kind": "lexical",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.822,
+            "max_score": 0.822
+          },
+          "structured": {
+            "kind": "structured",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.68,
+            "max_score": 0.68
+          },
+          "execution_native": {
+            "kind": "execution_native",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.74,
+            "max_score": 0.74
+          },
+          "graph": {
+            "kind": "graph",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "recent": {
+            "kind": "recent",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "exact_recovery": {
+            "kind": "exact_recovery",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.92,
+            "max_score": 0.92
+          },
+          "ann": {
+            "kind": "ann",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          }
+        },
+        "hybrid_merge": {
+          "input_count": 3,
+          "input_unique_count": 1,
+          "output_count": 1,
+          "output_unique_count": 1,
+          "duplicate_candidate_count": 2,
+          "source_family_count": 4,
+          "elapsed_ms": null
+        },
+        "candidate_overlap": [
+          {
+            "source_a": "lexical",
+            "source_b": "structured",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "structured",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "structured",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "execution_native",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          }
+        ]
+      }
     },
     {
       "case_id": "case05_target_file_structured_gap",
@@ -221,7 +866,116 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 1.1868
+      "latency_ms": null,
+      "source_observability": {
+        "stage1_sources": {
+          "semantic": {
+            "kind": "semantic",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.9999,
+            "max_score": 1
+          },
+          "lexical": {
+            "kind": "lexical",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "structured": {
+            "kind": "structured",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.976,
+            "max_score": 0.976
+          },
+          "execution_native": {
+            "kind": "execution_native",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 1,
+            "max_score": 1
+          },
+          "graph": {
+            "kind": "graph",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "recent": {
+            "kind": "recent",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "exact_recovery": {
+            "kind": "exact_recovery",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.9999,
+            "max_score": 1
+          },
+          "ann": {
+            "kind": "ann",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          }
+        },
+        "hybrid_merge": {
+          "input_count": 4,
+          "input_unique_count": 2,
+          "output_count": 2,
+          "output_unique_count": 2,
+          "duplicate_candidate_count": 2,
+          "source_family_count": 4,
+          "elapsed_ms": null
+        },
+        "candidate_overlap": [
+          {
+            "source_a": "semantic",
+            "source_b": "structured",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "structured",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "structured",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "execution_native",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          }
+        ]
+      }
     },
     {
       "case_id": "case06_tool_chain",
@@ -263,7 +1017,136 @@
       "failed_branch_blocking_proxy": 1,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 2.2551
+      "latency_ms": null,
+      "source_observability": {
+        "stage1_sources": {
+          "semantic": {
+            "kind": "semantic",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.8799,
+            "max_score": 1
+          },
+          "lexical": {
+            "kind": "lexical",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.718,
+            "max_score": 0.878
+          },
+          "structured": {
+            "kind": "structured",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.788,
+            "max_score": 1
+          },
+          "execution_native": {
+            "kind": "execution_native",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.818,
+            "max_score": 1
+          },
+          "graph": {
+            "kind": "graph",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "recent": {
+            "kind": "recent",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "exact_recovery": {
+            "kind": "exact_recovery",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.8799,
+            "max_score": 1
+          },
+          "ann": {
+            "kind": "ann",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          }
+        },
+        "hybrid_merge": {
+          "input_count": 8,
+          "input_unique_count": 2,
+          "output_count": 2,
+          "output_unique_count": 2,
+          "duplicate_candidate_count": 6,
+          "source_family_count": 5,
+          "elapsed_ms": null
+        },
+        "candidate_overlap": [
+          {
+            "source_a": "semantic",
+            "source_b": "lexical",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "structured",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "execution_native",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "structured",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "execution_native",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "structured",
+            "source_b": "execution_native",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "structured",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "execution_native",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          }
+        ]
+      }
     },
     {
       "case_id": "case07_cold_exact_low_salience",
@@ -294,7 +1177,91 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 1.0847
+      "latency_ms": null,
+      "source_observability": {
+        "stage1_sources": {
+          "semantic": {
+            "kind": "semantic",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.5,
+            "max_score": 0.5
+          },
+          "lexical": {
+            "kind": "lexical",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "structured": {
+            "kind": "structured",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "execution_native": {
+            "kind": "execution_native",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "graph": {
+            "kind": "graph",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "recent": {
+            "kind": "recent",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "exact_recovery": {
+            "kind": "exact_recovery",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.75,
+            "max_score": 1
+          },
+          "ann": {
+            "kind": "ann",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          }
+        },
+        "hybrid_merge": {
+          "input_count": 1,
+          "input_unique_count": 1,
+          "output_count": 1,
+          "output_unique_count": 1,
+          "duplicate_candidate_count": 0,
+          "source_family_count": 2,
+          "elapsed_ms": null
+        },
+        "candidate_overlap": [
+          {
+            "source_a": "semantic",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          }
+        ]
+      }
     },
     {
       "case_id": "case08_multi_agent_handoff",
@@ -336,7 +1303,136 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 7.6067
+      "latency_ms": null,
+      "source_observability": {
+        "stage1_sources": {
+          "semantic": {
+            "kind": "semantic",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 1,
+            "max_score": 1
+          },
+          "lexical": {
+            "kind": "lexical",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 1,
+            "max_score": 1
+          },
+          "structured": {
+            "kind": "structured",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.976,
+            "max_score": 0.976
+          },
+          "execution_native": {
+            "kind": "execution_native",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 1,
+            "max_score": 1
+          },
+          "graph": {
+            "kind": "graph",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "recent": {
+            "kind": "recent",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "exact_recovery": {
+            "kind": "exact_recovery",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 1,
+            "max_score": 1
+          },
+          "ann": {
+            "kind": "ann",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          }
+        },
+        "hybrid_merge": {
+          "input_count": 8,
+          "input_unique_count": 2,
+          "output_count": 2,
+          "output_unique_count": 2,
+          "duplicate_candidate_count": 6,
+          "source_family_count": 5,
+          "elapsed_ms": null
+        },
+        "candidate_overlap": [
+          {
+            "source_a": "semantic",
+            "source_b": "lexical",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "structured",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "execution_native",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "structured",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "execution_native",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "structured",
+            "source_b": "execution_native",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "structured",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "execution_native",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          }
+        ]
+      }
     },
     {
       "case_id": "case09_external_candidate_warning",
@@ -366,7 +1462,101 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 0.6333
+      "latency_ms": null,
+      "source_observability": {
+        "stage1_sources": {
+          "semantic": {
+            "kind": "semantic",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 1,
+            "max_score": 1
+          },
+          "lexical": {
+            "kind": "lexical",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.798,
+            "max_score": 0.798
+          },
+          "structured": {
+            "kind": "structured",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "execution_native": {
+            "kind": "execution_native",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "graph": {
+            "kind": "graph",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "recent": {
+            "kind": "recent",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "exact_recovery": {
+            "kind": "exact_recovery",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 1,
+            "max_score": 1
+          },
+          "ann": {
+            "kind": "ann",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          }
+        },
+        "hybrid_merge": {
+          "input_count": 2,
+          "input_unique_count": 1,
+          "output_count": 1,
+          "output_unique_count": 1,
+          "duplicate_candidate_count": 1,
+          "source_family_count": 3,
+          "elapsed_ms": null
+        },
+        "candidate_overlap": [
+          {
+            "source_a": "semantic",
+            "source_b": "lexical",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          }
+        ]
+      }
     },
     {
       "case_id": "case10_archived_raw_trace",
@@ -395,7 +1585,116 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": 1,
-      "latency_ms": 0.7609
+      "latency_ms": null,
+      "source_observability": {
+        "stage1_sources": {
+          "semantic": {
+            "kind": "semantic",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "lexical": {
+            "kind": "lexical",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.822,
+            "max_score": 0.822
+          },
+          "structured": {
+            "kind": "structured",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.68,
+            "max_score": 0.68
+          },
+          "execution_native": {
+            "kind": "execution_native",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.74,
+            "max_score": 0.74
+          },
+          "graph": {
+            "kind": "graph",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "recent": {
+            "kind": "recent",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "exact_recovery": {
+            "kind": "exact_recovery",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.92,
+            "max_score": 0.92
+          },
+          "ann": {
+            "kind": "ann",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          }
+        },
+        "hybrid_merge": {
+          "input_count": 3,
+          "input_unique_count": 1,
+          "output_count": 1,
+          "output_unique_count": 1,
+          "duplicate_candidate_count": 2,
+          "source_family_count": 4,
+          "elapsed_ms": null
+        },
+        "candidate_overlap": [
+          {
+            "source_a": "lexical",
+            "source_b": "structured",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "structured",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "structured",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "execution_native",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          }
+        ]
+      }
     },
     {
       "case_id": "case11_repo_signature",
@@ -435,7 +1734,136 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 2.7768
+      "latency_ms": null,
+      "source_observability": {
+        "stage1_sources": {
+          "semantic": {
+            "kind": "semantic",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.9599,
+            "max_score": 1
+          },
+          "lexical": {
+            "kind": "lexical",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.838,
+            "max_score": 0.958
+          },
+          "structured": {
+            "kind": "structured",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.798,
+            "max_score": 1
+          },
+          "execution_native": {
+            "kind": "execution_native",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.828,
+            "max_score": 1
+          },
+          "graph": {
+            "kind": "graph",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "recent": {
+            "kind": "recent",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "exact_recovery": {
+            "kind": "exact_recovery",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.9599,
+            "max_score": 1
+          },
+          "ann": {
+            "kind": "ann",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          }
+        },
+        "hybrid_merge": {
+          "input_count": 8,
+          "input_unique_count": 2,
+          "output_count": 2,
+          "output_unique_count": 2,
+          "duplicate_candidate_count": 6,
+          "source_family_count": 5,
+          "elapsed_ms": null
+        },
+        "candidate_overlap": [
+          {
+            "source_a": "semantic",
+            "source_b": "lexical",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "structured",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "execution_native",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "structured",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "execution_native",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "structured",
+            "source_b": "execution_native",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "structured",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "execution_native",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          }
+        ]
+      }
     },
     {
       "case_id": "case12_failure_mode",
@@ -476,7 +1904,136 @@
       "failed_branch_blocking_proxy": 1,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 1.1812
+      "latency_ms": null,
+      "source_observability": {
+        "stage1_sources": {
+          "semantic": {
+            "kind": "semantic",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.88,
+            "max_score": 1
+          },
+          "lexical": {
+            "kind": "lexical",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.558,
+            "max_score": 0.558
+          },
+          "structured": {
+            "kind": "structured",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.811,
+            "max_score": 0.976
+          },
+          "execution_native": {
+            "kind": "execution_native",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.853,
+            "max_score": 1
+          },
+          "graph": {
+            "kind": "graph",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "recent": {
+            "kind": "recent",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "exact_recovery": {
+            "kind": "exact_recovery",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.88,
+            "max_score": 1
+          },
+          "ann": {
+            "kind": "ann",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          }
+        },
+        "hybrid_merge": {
+          "input_count": 7,
+          "input_unique_count": 2,
+          "output_count": 2,
+          "output_unique_count": 2,
+          "duplicate_candidate_count": 5,
+          "source_family_count": 5,
+          "elapsed_ms": null
+        },
+        "candidate_overlap": [
+          {
+            "source_a": "semantic",
+            "source_b": "lexical",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "structured",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "execution_native",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "structured",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "structured",
+            "source_b": "execution_native",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "structured",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "execution_native",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          }
+        ]
+      }
     },
     {
       "case_id": "case13_active_path_missing_file",
@@ -518,7 +2075,136 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": 1,
       "rehydrate_hit_rate": null,
-      "latency_ms": 1.682
+      "latency_ms": null,
+      "source_observability": {
+        "stage1_sources": {
+          "semantic": {
+            "kind": "semantic",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.9599,
+            "max_score": 1
+          },
+          "lexical": {
+            "kind": "lexical",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.779,
+            "max_score": 1
+          },
+          "structured": {
+            "kind": "structured",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.856,
+            "max_score": 0.976
+          },
+          "execution_native": {
+            "kind": "execution_native",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.898,
+            "max_score": 1
+          },
+          "graph": {
+            "kind": "graph",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "recent": {
+            "kind": "recent",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "exact_recovery": {
+            "kind": "exact_recovery",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.9599,
+            "max_score": 1
+          },
+          "ann": {
+            "kind": "ann",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          }
+        },
+        "hybrid_merge": {
+          "input_count": 8,
+          "input_unique_count": 2,
+          "output_count": 2,
+          "output_unique_count": 2,
+          "duplicate_candidate_count": 6,
+          "source_family_count": 5,
+          "elapsed_ms": null
+        },
+        "candidate_overlap": [
+          {
+            "source_a": "semantic",
+            "source_b": "lexical",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "structured",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "execution_native",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "structured",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "execution_native",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "structured",
+            "source_b": "execution_native",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "structured",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "execution_native",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          }
+        ]
+      }
     },
     {
       "case_id": "case14_general_fact",
@@ -546,7 +2232,101 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 1.8844
+      "latency_ms": null,
+      "source_observability": {
+        "stage1_sources": {
+          "semantic": {
+            "kind": "semantic",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 1,
+            "max_score": 1
+          },
+          "lexical": {
+            "kind": "lexical",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.798,
+            "max_score": 0.798
+          },
+          "structured": {
+            "kind": "structured",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "execution_native": {
+            "kind": "execution_native",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "graph": {
+            "kind": "graph",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "recent": {
+            "kind": "recent",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "exact_recovery": {
+            "kind": "exact_recovery",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 1,
+            "max_score": 1
+          },
+          "ann": {
+            "kind": "ann",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          }
+        },
+        "hybrid_merge": {
+          "input_count": 2,
+          "input_unique_count": 1,
+          "output_count": 1,
+          "output_unique_count": 1,
+          "duplicate_candidate_count": 1,
+          "source_family_count": 3,
+          "elapsed_ms": null
+        },
+        "candidate_overlap": [
+          {
+            "source_a": "semantic",
+            "source_b": "lexical",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          }
+        ]
+      }
     },
     {
       "case_id": "case15_acceptance_check",
@@ -584,7 +2364,136 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 3.6815
+      "latency_ms": null,
+      "source_observability": {
+        "stage1_sources": {
+          "semantic": {
+            "kind": "semantic",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 1,
+            "max_score": 1
+          },
+          "lexical": {
+            "kind": "lexical",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.798,
+            "max_score": 0.798
+          },
+          "structured": {
+            "kind": "structured",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.976,
+            "max_score": 0.976
+          },
+          "execution_native": {
+            "kind": "execution_native",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 1,
+            "max_score": 1
+          },
+          "graph": {
+            "kind": "graph",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "recent": {
+            "kind": "recent",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "exact_recovery": {
+            "kind": "exact_recovery",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 1,
+            "max_score": 1
+          },
+          "ann": {
+            "kind": "ann",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          }
+        },
+        "hybrid_merge": {
+          "input_count": 6,
+          "input_unique_count": 2,
+          "output_count": 2,
+          "output_unique_count": 2,
+          "duplicate_candidate_count": 4,
+          "source_family_count": 5,
+          "elapsed_ms": null
+        },
+        "candidate_overlap": [
+          {
+            "source_a": "semantic",
+            "source_b": "lexical",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "structured",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "structured",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "structured",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "structured",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "execution_native",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          }
+        ]
+      }
     },
     {
       "case_id": "case16_contested_memory",
@@ -621,7 +2530,126 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 1.0371
+      "latency_ms": null,
+      "source_observability": {
+        "stage1_sources": {
+          "semantic": {
+            "kind": "semantic",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.9999,
+            "max_score": 1
+          },
+          "lexical": {
+            "kind": "lexical",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.784,
+            "max_score": 0.784
+          },
+          "structured": {
+            "kind": "structured",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.976,
+            "max_score": 0.976
+          },
+          "execution_native": {
+            "kind": "execution_native",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 1,
+            "max_score": 1
+          },
+          "graph": {
+            "kind": "graph",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "recent": {
+            "kind": "recent",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "exact_recovery": {
+            "kind": "exact_recovery",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.9999,
+            "max_score": 1
+          },
+          "ann": {
+            "kind": "ann",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          }
+        },
+        "hybrid_merge": {
+          "input_count": 5,
+          "input_unique_count": 2,
+          "output_count": 2,
+          "output_unique_count": 2,
+          "duplicate_candidate_count": 3,
+          "source_family_count": 5,
+          "elapsed_ms": null
+        },
+        "candidate_overlap": [
+          {
+            "source_a": "semantic",
+            "source_b": "lexical",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "structured",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "structured",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "structured",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "execution_native",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          }
+        ]
+      }
     },
     {
       "case_id": "case17_recent_working_set",
@@ -654,7 +2682,136 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 1.1664
+      "latency_ms": null,
+      "source_observability": {
+        "stage1_sources": {
+          "semantic": {
+            "kind": "semantic",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 1,
+            "max_score": 1
+          },
+          "lexical": {
+            "kind": "lexical",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.958,
+            "max_score": 0.958
+          },
+          "structured": {
+            "kind": "structured",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.976,
+            "max_score": 0.976
+          },
+          "execution_native": {
+            "kind": "execution_native",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 1,
+            "max_score": 1
+          },
+          "graph": {
+            "kind": "graph",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "recent": {
+            "kind": "recent",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "exact_recovery": {
+            "kind": "exact_recovery",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 1,
+            "max_score": 1
+          },
+          "ann": {
+            "kind": "ann",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          }
+        },
+        "hybrid_merge": {
+          "input_count": 4,
+          "input_unique_count": 1,
+          "output_count": 1,
+          "output_unique_count": 1,
+          "duplicate_candidate_count": 3,
+          "source_family_count": 5,
+          "elapsed_ms": null
+        },
+        "candidate_overlap": [
+          {
+            "source_a": "semantic",
+            "source_b": "lexical",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "structured",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "structured",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "structured",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "structured",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "execution_native",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          }
+        ]
+      }
     },
     {
       "case_id": "case18_graph_neighbor_needed",
@@ -692,7 +2849,126 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 0.8805
+      "latency_ms": null,
+      "source_observability": {
+        "stage1_sources": {
+          "semantic": {
+            "kind": "semantic",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.9999,
+            "max_score": 1
+          },
+          "lexical": {
+            "kind": "lexical",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.718,
+            "max_score": 0.718
+          },
+          "structured": {
+            "kind": "structured",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.976,
+            "max_score": 0.976
+          },
+          "execution_native": {
+            "kind": "execution_native",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 1,
+            "max_score": 1
+          },
+          "graph": {
+            "kind": "graph",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "recent": {
+            "kind": "recent",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "exact_recovery": {
+            "kind": "exact_recovery",
+            "candidate_count": 2,
+            "unique_candidate_count": 2,
+            "elapsed_ms": null,
+            "mean_score": 0.9999,
+            "max_score": 1
+          },
+          "ann": {
+            "kind": "ann",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          }
+        },
+        "hybrid_merge": {
+          "input_count": 5,
+          "input_unique_count": 2,
+          "output_count": 2,
+          "output_unique_count": 2,
+          "duplicate_candidate_count": 3,
+          "source_family_count": 5,
+          "elapsed_ms": null
+        },
+        "candidate_overlap": [
+          {
+            "source_a": "semantic",
+            "source_b": "lexical",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "structured",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "exact_recovery",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "structured",
+            "source_b": "execution_native",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "structured",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          },
+          {
+            "source_a": "execution_native",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          }
+        ]
+      }
     },
     {
       "case_id": "case19_archive_not_direct",
@@ -719,7 +2995,91 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": 1,
-      "latency_ms": 0.4771
+      "latency_ms": null,
+      "source_observability": {
+        "stage1_sources": {
+          "semantic": {
+            "kind": "semantic",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "lexical": {
+            "kind": "lexical",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 0.662,
+            "max_score": 0.662
+          },
+          "structured": {
+            "kind": "structured",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "execution_native": {
+            "kind": "execution_native",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "graph": {
+            "kind": "graph",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "recent": {
+            "kind": "recent",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "exact_recovery": {
+            "kind": "exact_recovery",
+            "candidate_count": 1,
+            "unique_candidate_count": 1,
+            "elapsed_ms": null,
+            "mean_score": 1,
+            "max_score": 1
+          },
+          "ann": {
+            "kind": "ann",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          }
+        },
+        "hybrid_merge": {
+          "input_count": 1,
+          "input_unique_count": 1,
+          "output_count": 1,
+          "output_unique_count": 1,
+          "duplicate_candidate_count": 0,
+          "source_family_count": 2,
+          "elapsed_ms": null
+        },
+        "candidate_overlap": [
+          {
+            "source_a": "lexical",
+            "source_b": "exact_recovery",
+            "overlap_count": 1
+          }
+        ]
+      }
     },
     {
       "case_id": "case20_mixed_product_loop",
@@ -776,7 +3136,136 @@
       "failed_branch_blocking_proxy": 1,
       "do_not_use_stale_suppression_proxy": 1,
       "rehydrate_hit_rate": 1,
-      "latency_ms": 2.3024
+      "latency_ms": null,
+      "source_observability": {
+        "stage1_sources": {
+          "semantic": {
+            "kind": "semantic",
+            "candidate_count": 3,
+            "unique_candidate_count": 3,
+            "elapsed_ms": null,
+            "mean_score": 0.9196,
+            "max_score": 1
+          },
+          "lexical": {
+            "kind": "lexical",
+            "candidate_count": 4,
+            "unique_candidate_count": 4,
+            "elapsed_ms": null,
+            "mean_score": 0.6945,
+            "max_score": 1
+          },
+          "structured": {
+            "kind": "structured",
+            "candidate_count": 3,
+            "unique_candidate_count": 3,
+            "elapsed_ms": null,
+            "mean_score": 0.744,
+            "max_score": 0.976
+          },
+          "execution_native": {
+            "kind": "execution_native",
+            "candidate_count": 3,
+            "unique_candidate_count": 3,
+            "elapsed_ms": null,
+            "mean_score": 0.792,
+            "max_score": 1
+          },
+          "graph": {
+            "kind": "graph",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "recent": {
+            "kind": "recent",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          },
+          "exact_recovery": {
+            "kind": "exact_recovery",
+            "candidate_count": 4,
+            "unique_candidate_count": 4,
+            "elapsed_ms": null,
+            "mean_score": 0.9197,
+            "max_score": 1
+          },
+          "ann": {
+            "kind": "ann",
+            "candidate_count": 0,
+            "unique_candidate_count": 0,
+            "elapsed_ms": null,
+            "mean_score": null,
+            "max_score": null
+          }
+        },
+        "hybrid_merge": {
+          "input_count": 13,
+          "input_unique_count": 4,
+          "output_count": 4,
+          "output_unique_count": 4,
+          "duplicate_candidate_count": 9,
+          "source_family_count": 5,
+          "elapsed_ms": null
+        },
+        "candidate_overlap": [
+          {
+            "source_a": "semantic",
+            "source_b": "lexical",
+            "overlap_count": 3
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "structured",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "execution_native",
+            "overlap_count": 2
+          },
+          {
+            "source_a": "semantic",
+            "source_b": "exact_recovery",
+            "overlap_count": 3
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "structured",
+            "overlap_count": 3
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "execution_native",
+            "overlap_count": 3
+          },
+          {
+            "source_a": "lexical",
+            "source_b": "exact_recovery",
+            "overlap_count": 4
+          },
+          {
+            "source_a": "structured",
+            "source_b": "execution_native",
+            "overlap_count": 3
+          },
+          {
+            "source_a": "structured",
+            "source_b": "exact_recovery",
+            "overlap_count": 3
+          },
+          {
+            "source_a": "execution_native",
+            "source_b": "exact_recovery",
+            "overlap_count": 3
+          }
+        ]
+      }
     }
   ]
 }
