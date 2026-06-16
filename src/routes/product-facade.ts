@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
 import stableStringify from "fast-json-stable-stringify";
 import { z } from "zod";
+import { assertLocalStoreRuntimeEdition } from "../app/edition.js";
 import type { Env } from "../config.js";
 import type { IdentityRequestKind } from "../app/request-guards.js";
 import {
@@ -2400,9 +2401,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     acquireInflightSlot,
   } = args;
 
-  if (env.AIONIS_EDITION !== "lite") {
-    throw new Error("aionis-lite product facade routes only support AIONIS_EDITION=lite");
-  }
+  assertLocalStoreRuntimeEdition(env, "local-store product facade routes");
 
   app.post("/v1/observe", async (req: ProductFacadeRequest, reply: FastifyReply) => {
     const principal = await requireMemoryPrincipal(req);

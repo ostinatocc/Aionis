@@ -1,4 +1,5 @@
 import type { Env } from "../config.js";
+import { assertLocalStoreRuntimeEdition } from "./edition.js";
 import { createEmbeddingProvidersFromEnv } from "../embeddings/index.js";
 import { createEmbeddingSurfacePolicy } from "../embeddings/surface-policy.js";
 import {
@@ -96,9 +97,7 @@ function parseSandboxRemoteAllowedCidrs(raw: string): Set<string> {
 }
 
 export async function createRuntimeServices(env: Env) {
-  if (env.AIONIS_EDITION !== "lite") {
-    throw new Error("aionis-lite runtime services only support AIONIS_EDITION=lite");
-  }
+  assertLocalStoreRuntimeEdition(env, "local-store runtime services");
   const sandboxRemoteAllowedHosts = parseSandboxRemoteAllowedHosts(env.SANDBOX_REMOTE_EXECUTOR_ALLOWED_HOSTS_JSON);
   const sandboxRemoteAllowedCidrs = parseSandboxRemoteAllowedCidrs(env.SANDBOX_REMOTE_EXECUTOR_EGRESS_ALLOWED_CIDRS_JSON);
   const sandboxAllowedCommands = parseAllowedSandboxCommands(env.SANDBOX_ALLOWED_COMMANDS_JSON);

@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { assertLocalStoreRuntimeEdition } from "../app/edition.js";
 import { buildRecallObservability, collectRecallTrajectoryUriLinks } from "../app/recall-observability.js";
 import { applyContextOptimizationProfile } from "../app/context-optimization-profile.js";
 import {
@@ -853,9 +854,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
     mapRecallTextEmbeddingError,
     recordContextAssemblyTelemetryBestEffort,
   } = args;
-  if (env.AIONIS_EDITION !== "lite") {
-    throw new Error("aionis-lite memory-context-runtime routes only support AIONIS_EDITION=lite");
-  }
+  assertLocalStoreRuntimeEdition(env, "local-store memory-context-runtime routes");
   const embeddingSurfacePolicy =
     embeddingSurfacePolicyArg ?? createEmbeddingSurfacePolicy({ providerConfigured: !!embedder });
   const recallTextEmbedBatcherStats = () =>

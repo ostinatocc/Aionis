@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ZodError } from "zod";
+import { assertLocalStoreRuntimeEdition } from "../app/edition.js";
 import type { Env } from "../config.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
 import type { EmbeddingSurfacePolicy } from "../embeddings/surface-policy.js";
@@ -64,12 +65,6 @@ function readinessCheck(provider?: HealthSnapshotProvider | null): boolean {
     return true;
   } catch {
     return false;
-  }
-}
-
-function assertLiteOnlySourceTree(env: Env): void {
-  if (env.AIONIS_EDITION !== "lite") {
-    throw new Error("aionis-lite source tree only supports AIONIS_EDITION=lite");
   }
 }
 
@@ -762,9 +757,11 @@ function registerProductRoutes(args: ProductFacadeRouteRegistrationArgs) {
 }
 
 export function registerApplicationRoutes(args: RegisterApplicationRoutesArgs) {
-  assertLiteOnlySourceTree(args.env);
-  registerRuntimeBoundaryRoutes(args);
-  registerAdminRoutes(args);
+  assertLocalStoreRuntimeEdition(args.env, "local-store application routes");
+  if (args.env.AIONIS_EDITION === "lite") {
+    registerRuntimeBoundaryRoutes(args);
+    registerAdminRoutes(args);
+  }
   registerRuntimeKernelRoutes(args);
   registerProductRoutes(args);
 }

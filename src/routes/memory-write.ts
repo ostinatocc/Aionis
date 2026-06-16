@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Env } from "../config.js";
+import { assertLocalStoreRuntimeEdition } from "../app/edition.js";
 import type { ExecutionStateStore } from "../execution/state-store.js";
 import type { ExecutionTreeStore } from "../execution/tree-store.js";
 import {
@@ -97,9 +98,7 @@ export function registerMemoryWriteRoutes(args: {
     executionStateStore,
     executionTreeStore,
   } = args;
-  if (env.AIONIS_EDITION !== "lite") {
-    throw new Error("aionis-lite memory-write route only supports AIONIS_EDITION=lite");
-  }
+  assertLocalStoreRuntimeEdition(env, "local-store memory-write route");
   const embeddingSurfacePolicy =
     embeddingSurfacePolicyArg ?? createEmbeddingSurfacePolicy({ providerConfigured: !!embedder });
   const writeEmbedder = embeddingSurfacePolicy.providerFor("write_auto_embed", embedder);

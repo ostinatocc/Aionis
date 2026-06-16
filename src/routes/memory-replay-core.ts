@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { assertLocalStoreRuntimeEdition } from "../app/edition.js";
 import type { Env } from "../config.js";
 import { createEmbeddingSurfacePolicy, type EmbeddingSurfacePolicy } from "../embeddings/surface-policy.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
@@ -76,9 +77,7 @@ export function registerMemoryReplayCoreRoutes(args: {
   const embeddingSurfacePolicy =
     embeddingSurfacePolicyArg ?? createEmbeddingSurfacePolicy({ providerConfigured: !!embedder });
   const writeEmbedder = embeddingSurfacePolicy.providerFor("write_auto_embed", embedder);
-  if (env.AIONIS_EDITION !== "lite") {
-    throw new Error("aionis-lite replay core routes only support AIONIS_EDITION=lite");
-  }
+  assertLocalStoreRuntimeEdition(env, "local-store replay core routes");
   if (!liteReplayAccess) {
     throw new Error("aionis-lite replay core routes require liteReplayAccess");
   }

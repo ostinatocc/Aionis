@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { assertLocalStoreRuntimeEdition } from "../app/edition.js";
 import type { Env } from "../config.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
 import {
@@ -69,9 +70,7 @@ export function registerMemoryFeedbackToolRoutes(args: RegisterMemoryFeedbackToo
     tenantFromBody,
     acquireInflightSlot,
   } = args;
-  if (env.AIONIS_EDITION !== "lite") {
-    throw new Error("aionis-lite memory-feedback-tools routes only support AIONIS_EDITION=lite");
-  }
+  assertLocalStoreRuntimeEdition(env, "local-store memory-feedback-tools routes");
   const learningControlProviders = buildLiteLearningControlRuntimeProviders(
     env,
     args.learningControlRuntimeProviderBuilderOptions,

@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { assertLocalStoreRuntimeEdition } from "../app/edition.js";
 import { buildRecallObservability, collectRecallTrajectoryUriLinks } from "../app/recall-observability.js";
 import type { Env } from "../config.js";
 import { estimateTokenCountFromText } from "../memory/context.js";
@@ -166,9 +167,7 @@ export function registerMemoryRecallRoutes(args: RegisterMemoryRecallRoutesArgs)
     buildRecallTrajectory,
     buildRecallAuth,
   } = args;
-  if (env.AIONIS_EDITION !== "lite") {
-    throw new Error("aionis-lite memory-recall routes only support AIONIS_EDITION=lite");
-  }
+  assertLocalStoreRuntimeEdition(env, "local-store memory-recall routes");
 
   const runRecallWithOptionalRules = async (
     parsed: ParsedRecallRequest,

@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { assertLocalStoreRuntimeEdition } from "../app/edition.js";
 import type { Env } from "../config.js";
 import { activateMemoryNodesLite, rehydrateArchiveNodesLite } from "../memory/lifecycle-lite.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
@@ -38,9 +39,7 @@ export function registerLiteMemoryLifecycleRoutes(args: RegisterLiteMemoryLifecy
     acquireInflightSlot,
   } = args;
 
-  if (env.AIONIS_EDITION !== "lite") {
-    throw new Error("aionis-lite memory-lifecycle routes only support AIONIS_EDITION=lite");
-  }
+  assertLocalStoreRuntimeEdition(env, "local-store memory-lifecycle routes");
 
   const runLifecycleRoute = async <T>(args: {
     req: MemoryLifecycleRequest;

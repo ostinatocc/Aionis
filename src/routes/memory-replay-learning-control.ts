@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { assertLocalStoreRuntimeEdition } from "../app/edition.js";
 import { ReplayPlaybookDispatchRequest, ReplayPlaybookRunRequest } from "../memory/schemas.js";
 import { replayPlaybookDispatch, replayPlaybookRepairReview, replayPlaybookRun } from "../memory/replay.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
@@ -47,9 +48,7 @@ export function registerMemoryReplayLearningControlRoutes(args: {
     buildReplayRepairReviewOptions,
     buildReplayPlaybookRunOptions,
   } = args;
-  if (env?.AIONIS_EDITION !== "lite") {
-    throw new Error("aionis-lite memory-replay-learning-control routes only support AIONIS_EDITION=lite");
-  }
+  assertLocalStoreRuntimeEdition(env, "local-store memory-replay-learning-control routes");
   const executeLearningControlWrite = <TResult>(
     body: unknown,
     operation: (requestBody: unknown) => Promise<TResult>,

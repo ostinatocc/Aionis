@@ -622,7 +622,8 @@ test("lite server does not statically import server-only routes", () => {
     assert.equal(serverFile.includes(specifier), false, `${specifier} should not be imported by lite http-server`);
   }
   assert.equal(serverFile.includes("../routes/automations.js"), false, "focused lite http-server should not import automation routes");
-  assert.match(serverFile, /assertLiteOnlySourceTree/);
+  assert.match(serverFile, /assertLocalStoreRuntimeEdition/);
+  assert.match(serverFile, /args\.env\.AIONIS_EDITION === "lite"/);
 });
 
 test("focused runtime entry layers do not expose postgres client types", () => {
@@ -802,7 +803,7 @@ test("lite runtime services do not wire postgres or embedded store constructors"
   for (const symbol of forbiddenSymbols) {
     assert.equal(runtimeServicesFile.includes(symbol), false, `${symbol} should be absent from lite runtime-services`);
   }
-  assert.match(runtimeServicesFile, /aionis-lite runtime services only support AIONIS_EDITION=lite/);
+  assert.match(runtimeServicesFile, /assertLocalStoreRuntimeEdition\(env, "local-store runtime services"\)/);
 });
 
 test("request guards keep lite posture while excluding control-plane auth and tenant quota plumbing", () => {
@@ -883,7 +884,7 @@ test("lite memory-access routes do not keep alternate store branches", () => {
     assert.equal(memoryAccessFile.includes(symbol), false, `${symbol} should be absent from lite memory-access routes`);
   }
   assert.equal(serverFile.includes("registerMemoryAccessRoutes({\n    app,\n    env,\n    store,"), false, "lite runtime server should not pass store into memory-access routes");
-  assert.match(memoryAccessFile, /aionis-lite memory-access routes only support AIONIS_EDITION=lite/);
+  assert.match(memoryAccessFile, /assertLocalStoreRuntimeEdition\(env, "local-store memory-access routes"\)/);
 });
 
 test("lite memory-access helper modules do not keep postgres alternate signatures", () => {
@@ -929,7 +930,7 @@ test("lite memory-feedback-tools routes do not keep alternate store branches", (
     assert.equal(memoryFeedbackToolsFile.includes(symbol), false, `${symbol} should be absent from lite memory-feedback-tools routes`);
   }
   assert.equal(serverFile.includes("registerMemoryFeedbackToolRoutes({\n    app,\n    env,\n    store,"), false, "lite runtime server should not pass store into memory-feedback-tools routes");
-  assert.match(memoryFeedbackToolsFile, /aionis-lite memory-feedback-tools routes only support AIONIS_EDITION=lite/);
+  assert.match(memoryFeedbackToolsFile, /assertLocalStoreRuntimeEdition\(env, "local-store memory-feedback-tools routes"\)/);
   assert.match(feedbackFile, /lite_write_store_required/);
 });
 
@@ -988,7 +989,7 @@ test("lite memory-recall routes do not keep store-client recall plumbing", () =>
     false,
     "lite runtime server should not pass embedded runtime into memory-recall routes",
   );
-  assert.match(memoryRecallFile, /aionis-lite memory-recall routes only support AIONIS_EDITION=lite/);
+  assert.match(memoryRecallFile, /assertLocalStoreRuntimeEdition\(env, "local-store memory-recall routes"\)/);
 });
 
 test("lite memory-context-runtime routes do not keep store-client recall plumbing", () => {
@@ -1004,7 +1005,7 @@ test("lite memory-context-runtime routes do not keep store-client recall plumbin
     assert.equal(memoryContextRuntimeFile.includes(symbol), false, `${symbol} should be absent from lite memory-context-runtime routes`);
   }
   assert.equal(serverFile.includes("registerMemoryContextRuntimeRoutes({\n    app,\n    env,\n    store,"), false, "lite runtime server should not pass store into memory-context-runtime routes");
-  assert.match(memoryContextRuntimeFile, /aionis-lite memory-context-runtime routes only support AIONIS_EDITION=lite/);
+  assert.match(memoryContextRuntimeFile, /assertLocalStoreRuntimeEdition\(env, "local-store memory-context-runtime routes"\)/);
 });
 
 test("lite handoff routes do not keep alternate store branches", () => {
@@ -1020,7 +1021,7 @@ test("lite handoff routes do not keep alternate store branches", () => {
     assert.equal(handoffFile.includes(symbol), false, `${symbol} should be absent from lite handoff routes`);
   }
   assert.equal(serverFile.includes("registerHandoffRoutes({\n    app,\n    env,\n    store,"), false, "lite runtime server should not pass store into handoff routes");
-  assert.match(handoffFile, /aionis-lite handoff routes only support AIONIS_EDITION=lite/);
+  assert.match(handoffFile, /assertLocalStoreRuntimeEdition\(env, "local-store handoff routes"\)/);
 });
 
 test("lite memory-write route does not keep server write alternate branches", () => {
@@ -1040,7 +1041,7 @@ test("lite memory-write route does not keep server write alternate branches", ()
   }
   assert.equal(serverFile.includes("registerMemoryWriteRoutes({\n    app,\n    env,\n    store,"), false, "lite runtime server should not pass store into memory-write route");
   assert.equal(runtimeEntryFile.includes("runTopicClusterForEventIds"), false, "lite runtime-entry should not inject server topic clustering into write routes");
-  assert.match(memoryWriteFile, /aionis-lite memory-write route only supports AIONIS_EDITION=lite/);
+  assert.match(memoryWriteFile, /assertLocalStoreRuntimeEdition\(env, "local-store memory-write route"\)/);
 });
 
 test("lite prepared write commit uses store access directly instead of a placeholder pg client", () => {
@@ -1079,7 +1080,7 @@ test("lite memory-replay-learning-control routes do not keep alternate store bra
     assert.equal(replayLearningControlFile.includes(symbol), false, `${symbol} should be absent from lite memory-replay-learning-control routes`);
   }
   assert.equal(serverFile.includes("registerMemoryReplayLearningControlRoutes({\n    app,\n    env,\n    store,"), false, "lite runtime server should not pass store into memory-replay-learning-control routes");
-  assert.match(replayLearningControlFile, /aionis-lite memory-replay-learning-control routes only support AIONIS_EDITION=lite/);
+  assert.match(replayLearningControlFile, /assertLocalStoreRuntimeEdition\(env, "local-store memory-replay-learning-control routes"\)/);
 });
 
 test("lite memory-replay-core routes do not keep alternate store branches", () => {
@@ -1102,7 +1103,7 @@ test("lite memory-replay-core routes do not keep alternate store branches", () =
     assert.equal(replayCoreFile.includes(symbol), false, `${symbol} should be absent from lite memory-replay-core routes`);
   }
   assert.equal(serverFile.includes("registerMemoryReplayCoreRoutes({\n    app,\n    env,\n    store,"), false, "lite runtime server should not pass store into memory-replay-core routes");
-  assert.match(replayCoreFile, /aionis-lite replay core routes only support AIONIS_EDITION=lite/);
+  assert.match(replayCoreFile, /assertLocalStoreRuntimeEdition\(env, "local-store replay core routes"\)/);
   assert.match(replayCoreFile, /require liteReplayAccess/);
   assert.match(replayCoreFile, /require liteWriteStore/);
 });
