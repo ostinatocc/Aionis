@@ -22,8 +22,8 @@ state is the product action.
 starting the Runtime.
 
 ```bash
-export EMBEDDING_PROVIDER="minimax"
-export MINIMAX_API_KEY="your-minimax-key"
+export EMBEDDING_PROVIDER="openai"
+export OPENAI_API_KEY="your-openai-key"
 
 npm install
 npm run -s lite:start
@@ -32,6 +32,9 @@ export AIONIS_URL="http://127.0.0.1:3001"
 export AIONIS_SCOPE="forget-quickstart-$(date +%s)"
 export AIONIS_AGENT_ID="agent-forget-quickstart"
 ```
+
+MiniMax is also supported with `EMBEDDING_PROVIDER=minimax` and
+`MINIMAX_API_KEY`.
 
 The examples use `jq` to save IDs and assemble JSON payloads.
 

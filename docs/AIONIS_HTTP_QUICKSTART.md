@@ -27,6 +27,13 @@ needed for the normal host loop.
 `POST /v1/guide` uses semantic recall, so configure an embedding provider before
 starting the Runtime.
 
+OpenAI example:
+
+```bash
+export EMBEDDING_PROVIDER="openai"
+export OPENAI_API_KEY="your-openai-key"
+```
+
 MiniMax example:
 
 ```bash

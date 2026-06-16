@@ -40,8 +40,8 @@ For local Runtime:
 ```bash
 npm install
 
-export EMBEDDING_PROVIDER="minimax"
-export MINIMAX_API_KEY="your-minimax-key"
+export EMBEDDING_PROVIDER="openai"
+export OPENAI_API_KEY="your-openai-key"
 
 npm run -s lite:start
 ```
@@ -175,8 +175,8 @@ The guide/context path needs recall and planning context; local Runtime startup
 should include an embedding provider:
 
 ```bash
-export EMBEDDING_PROVIDER="minimax"
-export MINIMAX_API_KEY="your-minimax-key"
+export EMBEDDING_PROVIDER="openai"
+export OPENAI_API_KEY="your-openai-key"
 npm run -s lite:start
 ```
 

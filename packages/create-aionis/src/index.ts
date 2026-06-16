@@ -32,7 +32,7 @@ Options:
   --dir <path>              Install directory. Defaults to ./Aionis.
   --repo <url>              Runtime git repo. Defaults to ${DEFAULT_REPO}
   --branch <name>           Git branch or tag to clone.
-  --provider <name>         Embedding provider. Defaults to EMBEDDING_PROVIDER or minimax.
+  --provider <name>         Embedding provider. Defaults to EMBEDDING_PROVIDER or openai.
   --api-key <key>           Provider API key. Prefer env vars for shell history safety.
   --quickstart <name>       sdk, http, multi-agent, or none. Defaults to sdk.
   --skip-install            Clone and write env, but do not run npm install.
@@ -40,8 +40,8 @@ Options:
   -h, --help                Show help.
 
 Examples:
-  MINIMAX_API_KEY=... npx @aionis/create --provider minimax --quickstart sdk
-  OPENAI_API_KEY=... npx @aionis/create my-aionis --provider openai --quickstart http
+  OPENAI_API_KEY=... npx @aionis/create --provider openai --quickstart sdk
+  MINIMAX_API_KEY=... npx @aionis/create my-aionis --provider minimax --quickstart http
 `;
 }
 
@@ -72,7 +72,7 @@ export function parseCreateAionisArgs(argv: string[], env: NodeJS.ProcessEnv = p
   let dir = DEFAULT_DIR;
   let repo = DEFAULT_REPO;
   let branch: string | null = null;
-  let provider = env.EMBEDDING_PROVIDER?.trim() || "minimax";
+  let provider = env.EMBEDDING_PROVIDER?.trim() || "openai";
   let apiKey: string | null = null;
   let quickstart: AionisQuickstart = "sdk";
   let skipInstall = false;

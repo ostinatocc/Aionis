@@ -23,13 +23,6 @@ For explicit controlled forgetting with suppress, unsuppress, and measure, see
 provider. `POST /v1/observe` can write memory without one, but this quickstart
 needs both `observe` and `guide`.
 
-MiniMax example:
-
-```bash
-export EMBEDDING_PROVIDER="minimax"
-export MINIMAX_API_KEY="your-minimax-key"
-```
-
 OpenAI-compatible example:
 
 ```bash
@@ -37,6 +30,13 @@ export EMBEDDING_PROVIDER="openai"
 export OPENAI_API_KEY="your-provider-key"
 export OPENAI_EMBED_BASE_URL="https://api.openai.com/v1"
 export OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
+```
+
+MiniMax example:
+
+```bash
+export EMBEDDING_PROVIDER="minimax"
+export MINIMAX_API_KEY="your-minimax-key"
 ```
 
 Then start the local Runtime:

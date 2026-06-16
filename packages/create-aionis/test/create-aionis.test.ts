@@ -17,7 +17,7 @@ test("@aionis/create parses defaults for the one-command installer", () => {
   const options = parseCreateAionisArgs([], {});
   assert.equal(options.dir, "Aionis");
   assert.equal(options.repo, "https://github.com/ostinatocc/Aionis.git");
-  assert.equal(options.provider, "minimax");
+  assert.equal(options.provider, "openai");
   assert.equal(options.quickstart, "sdk");
   assert.equal(options.skipInstall, false);
   assert.equal(options.skipQuickstart, false);
@@ -71,14 +71,14 @@ test("@aionis/create install plan includes Runtime install, SDK build, and selec
 test("@aionis/create completion message blocks misleading ready state without an embedding key", () => {
   const message = createCompletionMessage({
     targetDir: "/tmp/Aionis",
-    providerKey: "MINIMAX_API_KEY",
+    providerKey: "OPENAI_API_KEY",
     apiKey: null,
     quickstartScript: "runtime:quickstart:sdk",
   });
 
   assert.match(message, /Aionis is installed/);
   assert.match(message, /Set your embedding key before starting Runtime/);
-  assert.match(message, /Required key: MINIMAX_API_KEY/);
+  assert.match(message, /Required key: OPENAI_API_KEY/);
   assert.match(message, /Start Runtime after the key is set/);
   assert.match(message, /Run quickstart after the key is set: npm run -s runtime:quickstart:sdk/);
   assert.doesNotMatch(message, /Aionis is ready/);
@@ -87,7 +87,7 @@ test("@aionis/create completion message blocks misleading ready state without an
 test("@aionis/create completion message keeps the ready state when a key is configured", () => {
   const message = createCompletionMessage({
     targetDir: "/tmp/Aionis",
-    providerKey: "MINIMAX_API_KEY",
+    providerKey: "OPENAI_API_KEY",
     apiKey: "sk-test",
     quickstartScript: null,
   });
@@ -100,7 +100,7 @@ test("@aionis/create completion message keeps the ready state when a key is conf
 test("@aionis/create completion message respects skipped quickstart", () => {
   const message = createCompletionMessage({
     targetDir: "/tmp/Aionis",
-    providerKey: "MINIMAX_API_KEY",
+    providerKey: "OPENAI_API_KEY",
     apiKey: null,
     quickstartScript: null,
   });

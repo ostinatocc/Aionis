@@ -47,14 +47,14 @@ The demo claim is intentionally narrow:
 Install Aionis from npm:
 
 ```bash
-MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quickstart sdk
+OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart sdk
 ```
 
 Or run from a local checkout:
 
 ```bash
-export EMBEDDING_PROVIDER=minimax
-export MINIMAX_API_KEY="your-key"
+export EMBEDDING_PROVIDER=openai
+export OPENAI_API_KEY="your-key"
 npm run -s lite:start
 ```
 
@@ -202,8 +202,8 @@ memory governance Runtime beside it.
 For a short terminal-only demo, run:
 
 ```bash
-export EMBEDDING_PROVIDER=minimax
-export MINIMAX_API_KEY="your-key"
+export EMBEDDING_PROVIDER=openai
+export OPENAI_API_KEY="your-key"
 npm run -s runtime:quickstart:claude-code-mcp
 ```
 

@@ -153,10 +153,13 @@ admitted. Do not put secrets in titles.
 Run the SDK quickstart against a real local Runtime:
 
 ```bash
-export EMBEDDING_PROVIDER="minimax"
-export MINIMAX_API_KEY="your-minimax-key"
+export EMBEDDING_PROVIDER="openai"
+export OPENAI_API_KEY="your-openai-key"
 npm run -s runtime:quickstart:sdk
 ```
+
+MiniMax is also supported with `EMBEDDING_PROVIDER=minimax` and
+`MINIMAX_API_KEY`.
 
 The output includes an `admission_dataset_export` section. The script verifies
 that JSONL rows are produced after feedback/measure, positive attribution is

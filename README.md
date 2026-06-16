@@ -1,14 +1,17 @@
 # Aionis
 
-**The state-adjudicated memory runtime for agents that need to keep working.**
+**Stop coding agents from retrying paths they already proved wrong.**
 
+Failed branches should become counter-evidence, not future instructions.
+Aionis is the state-adjudicated memory runtime that keeps Agent execution state
+usable across sessions, roles, plans, and model boundaries.
 Memory is not recall. Memory is state.
 
 Docs: [docs.aionis.work](https://docs.aionis.work)
 
-Aionis sits between your Agent and its history. It adjudicates whether memory is
+Aionis sits between your Agent and its history. It decides whether memory is
 current, stale, contested, failed, reusable, or worth rehydrating, then compiles
-only the external execution state into the next Agent context.
+only the admitted execution state into the next Agent context.
 
 Current distribution: Aionis ships as a local-first Lite Runtime plus SDK and
 MCP bridge. It is built for developer machines, local agent hosts, and
@@ -28,7 +31,7 @@ case but also retrieved unsafe memories in 10 cases. Aionis preserved 100%
 current-route recall while reducing wrong direct-use from 83.3% to 0%.
 
 ```bash
-MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quickstart sdk
+OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart sdk
 ```
 
 Already have a local Runtime? Add Aionis to Claude Code, Cursor, or another MCP
@@ -237,7 +240,7 @@ Guide:
 Install the Runtime, SDK, and MCP bridge with one command:
 
 ```bash
-MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quickstart sdk
+OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart sdk
 ```
 
 This clones the Runtime, installs dependencies, writes `.env`, builds the
@@ -249,9 +252,17 @@ embedding provider, then run the SDK quickstart.
 ```bash
 npm install
 
+export EMBEDDING_PROVIDER="openai"
+export OPENAI_API_KEY="your-openai-key"
+
+npm run -s runtime:quickstart:sdk
+```
+
+MiniMax is also supported when you prefer it:
+
+```bash
 export EMBEDDING_PROVIDER="minimax"
 export MINIMAX_API_KEY="your-minimax-key"
-
 npm run -s runtime:quickstart:sdk
 ```
 

@@ -36,13 +36,13 @@ If no Runtime URL is set, the script starts an isolated local Runtime and uses
 the configured embedding provider:
 
 ```bash
-export EMBEDDING_PROVIDER="minimax"
-export MINIMAX_API_KEY="your-minimax-key"
+export EMBEDDING_PROVIDER="openai"
+export OPENAI_API_KEY="your-openai-key"
 npm run -s runtime:e2e:golden-product-loop
 ```
 
-OpenAI-compatible embeddings are also supported through `EMBEDDING_PROVIDER=openai`
-with the matching OpenAI-compatible environment variables.
+MiniMax embeddings are also supported through `EMBEDDING_PROVIDER=minimax`
+with `MINIMAX_API_KEY`.
 
 ## Scenario
 

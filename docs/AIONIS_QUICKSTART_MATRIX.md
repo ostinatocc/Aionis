@@ -10,7 +10,7 @@ starts or targets a real Runtime and verifies a concrete product contract.
 The fastest path is the published installer:
 
 ```bash
-MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quickstart sdk
+OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart sdk
 ```
 
 | If you are building... | Run this | Transport | Main API path | Result contract |
@@ -78,6 +78,13 @@ Focused dataset export guide:
 
 All quickstarts need a real embedding provider unless `AIONIS_PRODUCT_E2E_BASE_URL`,
 `AIONIS_BASE_URL`, or `AIONIS_URL` points at an already-running Runtime.
+
+OpenAI example:
+
+```bash
+export EMBEDDING_PROVIDER="openai"
+export OPENAI_API_KEY="your-openai-key"
+```
 
 MiniMax example:
 

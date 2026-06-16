@@ -7,13 +7,13 @@ Docs: [https://docs.aionis.work/get-started/install](https://docs.aionis.work/ge
 Run:
 
 ```bash
-MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quickstart sdk
+OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart sdk
 ```
 
 Install without running a quickstart:
 
 ```bash
-npx @aionis/create@latest my-aionis --provider minimax --skip-quickstart
+npx @aionis/create@latest my-aionis --provider openai --skip-quickstart
 ```
 
 The installer clones the Runtime repo, installs dependencies and workspace
@@ -22,13 +22,14 @@ quickstart. The installed repo includes `@aionis/sdk` for application
 integration and `@aionis/mcp` for Claude Code / Cursor style MCP clients.
 
 Runtime startup needs the selected embedding provider key. If you install
-without a key or skip the quickstart, set `MINIMAX_API_KEY` in the generated
-`.env` before running `npm run -s lite:start`.
+without a key or skip the quickstart, set `OPENAI_API_KEY` in the generated
+`.env` before running `npm run -s lite:start`. MiniMax remains supported with
+`--provider minimax` and `MINIMAX_API_KEY`.
 
 Common first runs:
 
 ```bash
-MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quickstart multi-agent
+OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart multi-agent
 ```
 
 After install, pick the integration path:

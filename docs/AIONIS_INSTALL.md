@@ -13,7 +13,7 @@ Aionis publishes three npm packages:
 Install Runtime plus SDK and run the SDK quickstart:
 
 ```bash
-MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quickstart sdk
+OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart sdk
 ```
 
 This installs the local-first Lite Runtime. Lite is designed for developer
@@ -28,13 +28,13 @@ SQLite feature because Lite stores local memory state in SQLite.
 For raw HTTP users:
 
 ```bash
-MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quickstart http
+OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart http
 ```
 
 For multi-agent execution memory:
 
 ```bash
-MINIMAX_API_KEY="your-key" npx @aionis/create@latest --provider minimax --quickstart multi-agent
+OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart multi-agent
 ```
 
 The installer does not change Runtime core. It performs product setup:
@@ -47,9 +47,10 @@ The installer does not change Runtime core. It performs product setup:
 
 Runtime startup needs the selected embedding provider key. If you install with
 `--skip-quickstart` or without an API key, set the required key in the generated
-`.env` before running `npm run -s lite:start`. For `--provider minimax`, that key
-is `MINIMAX_API_KEY`.
+`.env` before running `npm run -s lite:start`. The default provider is OpenAI;
+for `--provider openai`, that key is `OPENAI_API_KEY`.
 
+MiniMax remains supported with `--provider minimax` and `MINIMAX_API_KEY`.
 MiniMax embeddings default to separate surfaces: stored memory is embedded with
 `MINIMAX_EMBED_DB_TYPE=db`, while recall queries use
 `MINIMAX_EMBED_QUERY_TYPE=query`. The legacy `MINIMAX_EMBED_TYPE` setting is
@@ -70,7 +71,7 @@ Run the installer locally:
 
 ```bash
 npx tsx packages/create-aionis/src/index.ts ./Aionis-local \
-  --provider minimax \
+  --provider openai \
   --quickstart none
 ```
 

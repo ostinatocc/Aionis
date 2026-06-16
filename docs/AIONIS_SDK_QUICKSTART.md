@@ -16,6 +16,13 @@ benchmark runner. It uses the existing product facade through `src/sdk.ts`.
 `guide()` uses semantic recall, so configure an embedding provider before
 starting the Runtime or before running the quickstart script.
 
+OpenAI example:
+
+```bash
+export EMBEDDING_PROVIDER="openai"
+export OPENAI_API_KEY="your-openai-key"
+```
+
 MiniMax example:
 
 ```bash
