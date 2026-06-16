@@ -19,6 +19,9 @@ Aionis turns agent history into governed execution state. It remembers what
 worked, keeps failed or stale branches from leaking back into prompts, compiles
 shorter Agent context, and gives operators a receipt for every memory decision.
 
+Aionis turns plans, decisions, failures, and acceptance checks into reusable
+execution memory.
+
 ## Longer Pitch
 
 Most agent memory systems retrieve related history and hope the model handles
@@ -81,6 +84,12 @@ This is the differentiated Aionis surface. It is what makes Aionis useful for
 multi-agent systems, coding agents, workflow agents, and long-running
 automation.
 
+High-quality plans are execution memory assets when they preserve resolved
+decisions, acceptance checks, failed branches, active targets, execution
+boundaries, and evidence attribution. A strong planner can create the plan, but
+Aionis keeps that plan executable across cheaper workers, future sessions, and
+other Agent roles.
+
 ### 3. Safe Compression
 
 Shorter context is not enough. A useful agent memory runtime must compress while
@@ -112,6 +121,11 @@ operator snapshots so hosts can see:
 Aionis does not need to replace a team's memory store. It can sit in front of
 Mem0, Zep, vector databases, markdown notes, logs, or internal memory stores as
 the admission layer.
+
+Memory Firewall protects the context boundary. Plan-as-memory is the execution
+memory asset that crosses sessions, agents, and models. The two product surfaces
+share the same admission gates, but they should not be positioned as the same
+job.
 
 The product framing is:
 
@@ -190,6 +204,8 @@ Use this language:
 6. `auditable memory use receipts`
 7. `state-preserving context compilation`
 8. `use Mem0 for retrieval, use Aionis as the Memory Firewall`
+9. `plans, decisions, failures, and acceptance checks become reusable execution memory`
+10. `strong models make better plans; Aionis keeps those plans executable across cheaper agents and future sessions`
 
 Avoid this language:
 

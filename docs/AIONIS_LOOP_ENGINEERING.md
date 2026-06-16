@@ -21,6 +21,13 @@ In product terms:
 Aionis is the memory governance runtime for loop-engineered Agents.
 ```
 
+It can also be stated more sharply for planner/worker systems:
+
+```text
+Aionis is the execution memory layer that makes high-quality planning reusable,
+auditable, and executable across agents, sessions, and models.
+```
+
 ## What Aionis Owns
 
 For loop-engineered Agents, Aionis should own:
@@ -43,6 +50,27 @@ Aionis should not own:
 The host runs tools and validators. Aionis records evidence, governs memory
 admission, attributes outcomes, measures effect, and exposes read-only audit
 surfaces.
+
+## Planner / Worker Split
+
+The host may use a stronger model to create the plan and a cheaper model to
+execute it. Aionis does not route those models. Aionis records the plan's
+decisions, acceptance checks, failed branches, and execution boundaries, then
+compiles them into governed context for the next loop iteration.
+
+A plan becomes an Aionis memory asset when it carries:
+
+- resolved decisions
+- acceptance checks
+- rejected or failed branches
+- active targets
+- execution boundaries
+- evidence pointers for rehydration
+- feedback attribution after execution
+
+The planner model is not Runtime authority. The worker model is not Runtime
+authority. Aionis gates decide which parts of the plan can enter actionable
+context.
 
 ## Loop Metadata
 

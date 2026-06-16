@@ -103,7 +103,7 @@ Aionis separates ordinary memory from execution memory.
 | Layer | Examples | How it reaches the Agent |
 |---|---|---|
 | Ordinary Memory | Preferences, facts, project notes, user constraints. | Recalled, lifecycle-adjudicated, and placed into `use_now`, `inspect_before_use`, `do_not_use`, or `rehydrate`. |
-| Execution Memory | Actions, observations, verifier outcomes, handoffs, failed branches, active paths. | Compiled into execution-state context with passed solutions, failed branches, current active path, and procedures. |
+| Execution Memory | Plans, actions, observations, verifier outcomes, handoffs, failed branches, active paths. | Compiled into execution-state context with plan decisions, passed solutions, failed branches, current active path, and procedures. |
 | Archive / Anchor Payloads | Raw traces, long payloads, colder evidence, source anchors. | Kept out of prompt by default; surfaced as rehydrate pointers when needed. |
 
 This lets Aionis compress aggressively without pretending summaries are the same
@@ -135,6 +135,8 @@ Execution memory is Aionis's main moat.
 
 Long-running Agents do not only need facts. They need to know:
 
+- which plan decisions are still active
+- which acceptance checks define success
 - what branch is currently active
 - which branch passed verification
 - which branch failed and should not be repeated
@@ -145,6 +147,18 @@ The Runtime models this with execution trees, execution-native memory rows,
 handoff state, workflow projection, replay playbooks, and product context
 compilation. Failed branches remain useful as counter-evidence; they do not
 become future instructions.
+
+### Plans As Execution Memory Assets
+
+Aionis is not a model router. A host can use a stronger planner model, a cheaper
+worker model, a verifier, or a human reviewer. Aionis records the durable state
+that should cross those boundaries: resolved decisions, acceptance checks,
+failed branches, active targets, execution boundaries, and evidence pointers.
+
+The planner output is evidence, not Runtime authority. It reaches the Agent only
+after the same lifecycle, authority, scope, source, and rehydration gates as
+other execution memory. This lets high-quality planning survive session and
+model boundaries without turning every plan note into an instruction.
 
 ## Context Compiler
 

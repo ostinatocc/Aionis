@@ -72,6 +72,7 @@ Most memory systems retrieve text. Aionis governs state.
 | Safer memory than raw RAG | Memories are gated into `use_now`, `inspect_before_use`, `do_not_use`, or `rehydrate`. |
 | Admission for any memory backend | Mem0, Zep, vector DB, markdown, or custom memory candidates can be routed through Aionis before prompt use. |
 | A Memory Firewall for Mem0 | Use Mem0 for recall, then prevent failed, stale, contested, or untrusted memories from becoming Agent instructions. |
+| Plans that survive model and session boundaries | Strong planners can create plans; Aionis keeps their decisions, checks, failed branches, and boundaries executable for later workers. |
 | Multi-agent execution continuity | Planner, worker, verifier, and reviewer share branch-aware execution memory. |
 | Memory that can be controlled | Stale or harmful memory can be suppressed, archived, restored, or rehydrated. |
 | Operator confidence | Every guide can produce memory use receipts, decision traces, and read-only snapshots. |
@@ -195,6 +196,26 @@ The host owns plan, action, tools, validation, and retry. Aionis owns the memory
 governance around that loop: observed iteration evidence, next-iteration guide,
 feedback attribution, effect measurement, operator snapshot, and Flight Recorder
 replay.
+
+## Plan As Memory Asset
+
+Aionis is not a model router. It is the execution memory layer that preserves
+the decisions made by strong planners and makes them usable by future workers,
+reviewers, and cheaper models.
+
+Plans become governed execution memory when they carry:
+
+- resolved decisions
+- acceptance checks
+- failed branches
+- active targets
+- execution boundaries
+- evidence and feedback attribution
+
+In practice, the planner can be Claude Code, GPT, a human reviewer, or another
+Agent. Aionis records the plan as evidence, compiles only the governed state
+into the worker context, and lets Flight Recorder show what the worker could see
+when it acted.
 
 Run the profile:
 
