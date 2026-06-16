@@ -10,11 +10,15 @@ Aionis publishes three npm packages:
 - `@aionis/sdk`: TypeScript SDK facade for product routes
 - `@aionis/mcp`: MCP stdio bridge for Claude Code, Cursor, and other MCP clients
 
-Install Runtime plus SDK and run the SDK quickstart:
+Install Runtime plus SDK/MCP packages and run the first-value demo:
 
 ```bash
-OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart sdk
+npx @aionis/create@latest
 ```
+
+The default quickstart does not require an embedding or LLM API key. It starts a
+temporary Lite Runtime with `EMBEDDING_PROVIDER=none` and shows Aionis blocking
+failed/stale memory before prompt use.
 
 This installs the local-first Lite Runtime. Lite is designed for developer
 machines, local agent hosts, and self-managed deployments behind your own
@@ -24,6 +28,12 @@ loopback, `MEMORY_AUTH_MODE=off`, and `TENANT_QUOTA_ENABLED=false`.
 Runtime requirement: Node.js `>=22.5.0` with the built-in experimental
 `node:sqlite` module available. The installer checks both the version and the
 SQLite feature because Lite stores local memory state in SQLite.
+
+For full SDK integration with OpenAI-compatible embeddings:
+
+```bash
+OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart sdk
+```
 
 For raw HTTP users:
 
@@ -43,7 +53,8 @@ The installer does not change Runtime core. It performs product setup:
 2. run `npm install`
 3. write `.env` with the selected embedding provider
 4. build `@aionis/sdk`, `@aionis/mcp`, and `@aionis/create`
-5. run the selected quickstart when an API key is available
+5. run the selected quickstart; `first-value` can run without an API key, while
+   recall-backed quickstarts require the selected embedding key
 
 Runtime startup needs the selected embedding provider key. If you install with
 `--skip-quickstart` or without an API key, set the required key in the generated

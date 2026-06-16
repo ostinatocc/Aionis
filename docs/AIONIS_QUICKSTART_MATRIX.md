@@ -10,11 +10,19 @@ starts or targets a real Runtime and verifies a concrete product contract.
 The fastest path is the published installer:
 
 ```bash
+npx @aionis/create@latest
+```
+
+This runs the no-key first-value demo. Use the SDK quickstart after you are
+ready to configure an embedding provider:
+
+```bash
 OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart sdk
 ```
 
 | If you are building... | Run this | Transport | Main API path | Result contract |
 |---|---|---|---|---|
+| You want the fastest first proof | `npm run -s runtime:demo:first-value` | SDK facade over local API | `governMemory(mode=firewall)` over dirty external candidates | `aionis_first_value_demo_result_v1` |
 | A TypeScript or Node Agent | `npm run -s runtime:quickstart:sdk` | SDK facade | `remember -> guide -> feedback -> measure -> snapshot` | `aionis_sdk_quickstart_result_v1` |
 | Claude Code external demo | `npm run -s runtime:quickstart:claude-code-mcp` | MCP stdio + SDK facade | `aionis_health -> aionis_record_step -> aionis_context -> aionis_flight_recorder` | `aionis_claude_code_mcp_demo_result_v1` |
 | Cursor or another MCP client | `npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope my-project` | MCP stdio | `aionis_context -> agent action -> aionis_record_step` | MCP tool result JSON |
@@ -27,6 +35,7 @@ OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quicksta
 
 | Quickstart | Proves | Best For | Example Output |
 |---|---|---|---|
+| First-value demo | Raw retrieval would direct-use failed/stale history; Aionis admits current memory, blocks unsafe memory, keeps rehydrate pointer-only, and emits a receipt. | First local aha, no embedding key, no LLM, no Agent harness. | [first-value-demo-result.json](examples/first-value-demo-result.json) |
 | SDK quickstart | Ordinary preference and project memory become compact Agent context; feedback is attributed to IDs exposed by the guide; admission dataset JSONL export is produced; measure and snapshot stay read-only. | Single-Agent product integration, SDK users, first local smoke test. | [sdk-quickstart-result.json](examples/sdk-quickstart-result.json) |
 | Claude Code MCP demo | Claude Code's MCP tool path can record failed and accepted branches, compile execution context, and replay the decision through Agent Flight Recorder. | Claude Code users, external coding-agent demos, MCP-first trials. | [claude-code-mcp-demo-result.json](examples/claude-code-mcp-demo-result.json) |
 | HTTP quickstart | The public HTTP product surface works without SDK helpers; raw `guide_trace_id + used_memory_ids` attribution works; `/v1/rehydrate` can restore archived memory. | Backend services, non-TypeScript hosts, curl/API validation. | [http-quickstart-result.json](examples/http-quickstart-result.json) |
@@ -41,6 +50,7 @@ surfaces.
 
 | Product Proof | Run this | Verifies |
 |---|---|---|
+| First-value demo | `npm run -s runtime:demo:first-value` | Demonstrates memory admission and audit without an embedding key or LLM. Produces `aionis_first_value_demo_result_v1`; see [first-value-demo-result.json](examples/first-value-demo-result.json). |
 | External package smoke | `npm run -s runtime:smoke:external-packages` | Packs `@aionis/sdk`, `@aionis/mcp`, and `@aionis/create`, installs them into a temporary external project, then verifies SDK, MCP stdio, and CLI entrypoints against a real Runtime. |
 | Memory Firewall A/B demo | `npm run -s runtime:e2e:memory-firewall-ab` | Compares raw retrieved external memory against Aionis-governed memory for unsafe direct-use, current/procedure recall, and audit coverage. Produces `aionis_memory_firewall_ab_demo_result_v1`; see [memory-firewall-ab-demo-result.json](examples/memory-firewall-ab-demo-result.json). |
 | Flight Recorder incident demo | `npm run -s runtime:e2e:flight-recorder-incident` | Replays healthy attribution, blocked-memory misuse, and missing feedback attribution without exposing prompt text. Produces `aionis_flight_recorder_incident_demo_result_v1`; see [flight-recorder-incident-demo-result.json](examples/flight-recorder-incident-demo-result.json). |
@@ -76,8 +86,10 @@ Focused dataset export guide:
 
 ## Environment
 
-All quickstarts need a real embedding provider unless `AIONIS_PRODUCT_E2E_BASE_URL`,
-`AIONIS_BASE_URL`, or `AIONIS_URL` points at an already-running Runtime.
+Most quickstarts need a real embedding provider unless
+`AIONIS_PRODUCT_E2E_BASE_URL`, `AIONIS_BASE_URL`, or `AIONIS_URL` points at an
+already-running Runtime. The first-value demo is the exception: it uses external
+memory admission only and can run with `EMBEDDING_PROVIDER=none`.
 
 OpenAI example:
 

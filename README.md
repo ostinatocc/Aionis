@@ -31,8 +31,13 @@ case but also retrieved unsafe memories in 10 cases. Aionis preserved 100%
 current-route recall while reducing wrong direct-use from 83.3% to 0%.
 
 ```bash
-OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart sdk
+npx @aionis/create@latest
 ```
+
+That default install runs the no-key first-value demo: raw retrieved history
+would put failed and stale routes into direct Agent context; Aionis admits the
+current route, blocks unsafe branches, keeps archived evidence pointer-only, and
+prints a memory-use receipt.
 
 Already have a local Runtime? Add Aionis to Claude Code, Cursor, or another MCP
 client:
@@ -240,18 +245,30 @@ Guide:
 Install the Runtime, SDK, and MCP bridge with one command:
 
 ```bash
-OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart sdk
+npx @aionis/create@latest
 ```
 
 This clones the Runtime, installs dependencies, writes `.env`, builds the
-workspace packages, and runs the SDK quickstart against a real local Runtime.
+workspace packages, and runs the no-key first-value demo.
 
-For local development from this repo, install dependencies, configure an
-embedding provider, then run the SDK quickstart.
+For full SDK integration with recall-backed guide output:
+
+```bash
+OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart sdk
+```
+
+For local development from this repo, install dependencies, then run the
+first-value demo without an embedding key:
 
 ```bash
 npm install
 
+npm run -s runtime:demo:first-value
+```
+
+Then configure an embedding provider and run the SDK quickstart:
+
+```bash
 export EMBEDDING_PROVIDER="openai"
 export OPENAI_API_KEY="your-openai-key"
 
@@ -394,18 +411,19 @@ The SDK quickstart prints a compact product result like this:
 
 Full example outputs:
 
-1. [SDK quickstart result](docs/examples/sdk-quickstart-result.json)
-2. [HTTP quickstart result](docs/examples/http-quickstart-result.json)
-3. [Multi-agent quickstart result](docs/examples/multi-agent-quickstart-result.json)
-4. [Golden product loop result](docs/examples/golden-product-loop-result.json)
-5. [Judgment calibration product loop result](docs/examples/judgment-calibration-product-loop-result.json)
-6. [Memory Firewall quickstart result](docs/examples/memory-firewall-quickstart-result.json)
-7. [Memory Firewall A/B demo result](docs/examples/memory-firewall-ab-demo-result.json)
-8. [Flight Recorder quickstart result](docs/examples/flight-recorder-quickstart-result.json)
-9. [Flight Recorder incident demo result](docs/examples/flight-recorder-incident-demo-result.json)
-10. [Loop Engineering profile result](docs/examples/loop-engineering-profile-result.json)
-11. [Plan as Memory Asset result](docs/examples/plan-as-memory-asset-result.json)
-12. [Claude Code MCP demo result](docs/examples/claude-code-mcp-demo-result.json)
+1. [First-value demo result](docs/examples/first-value-demo-result.json)
+2. [SDK quickstart result](docs/examples/sdk-quickstart-result.json)
+3. [HTTP quickstart result](docs/examples/http-quickstart-result.json)
+4. [Multi-agent quickstart result](docs/examples/multi-agent-quickstart-result.json)
+5. [Golden product loop result](docs/examples/golden-product-loop-result.json)
+6. [Judgment calibration product loop result](docs/examples/judgment-calibration-product-loop-result.json)
+7. [Memory Firewall quickstart result](docs/examples/memory-firewall-quickstart-result.json)
+8. [Memory Firewall A/B demo result](docs/examples/memory-firewall-ab-demo-result.json)
+9. [Flight Recorder quickstart result](docs/examples/flight-recorder-quickstart-result.json)
+10. [Flight Recorder incident demo result](docs/examples/flight-recorder-incident-demo-result.json)
+11. [Loop Engineering profile result](docs/examples/loop-engineering-profile-result.json)
+12. [Plan as Memory Asset result](docs/examples/plan-as-memory-asset-result.json)
+13. [Claude Code MCP demo result](docs/examples/claude-code-mcp-demo-result.json)
 
 ## What The Agent Gets
 
@@ -731,6 +749,7 @@ Official docs: [https://docs.aionis.work](https://docs.aionis.work)
 
 | Document | Purpose |
 |---|---|
+| [AIONIS_FIRST_VALUE_DEMO.md](docs/AIONIS_FIRST_VALUE_DEMO.md) | No-key first run that shows unsafe retrieved memory blocked before prompt use. |
 | [AIONIS_INSTALL.md](docs/AIONIS_INSTALL.md) | One-command install path for Runtime plus SDK and MCP packages. |
 | [AIONIS_MCP.md](docs/AIONIS_MCP.md) | MCP bridge for Claude Code, Cursor, and other coding-agent clients. |
 | [AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md](docs/AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md) | 3-5 minute Claude Code + Aionis MCP demo script and proof checklist. |

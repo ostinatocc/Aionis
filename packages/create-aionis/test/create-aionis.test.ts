@@ -10,6 +10,7 @@ import {
   isCliEntrypoint,
   parseCreateAionisArgs,
   providerEnvKey,
+  quickstartRequiresEmbeddingKey,
   quickstartScriptName,
 } from "../src/index.ts";
 
@@ -18,7 +19,7 @@ test("@aionis/create parses defaults for the one-command installer", () => {
   assert.equal(options.dir, "Aionis");
   assert.equal(options.repo, "https://github.com/ostinatocc/Aionis.git");
   assert.equal(options.provider, "openai");
-  assert.equal(options.quickstart, "sdk");
+  assert.equal(options.quickstart, "first-value");
   assert.equal(options.skipInstall, false);
   assert.equal(options.skipQuickstart, false);
 });
@@ -51,10 +52,14 @@ test("@aionis/create exposes stable provider and quickstart mappings", () => {
   assert.equal(providerEnvKey("minimax"), "MINIMAX_API_KEY");
   assert.equal(providerEnvKey("openai"), "OPENAI_API_KEY");
   assert.equal(providerEnvKey("custom provider"), "CUSTOM_PROVIDER_API_KEY");
+  assert.equal(quickstartScriptName("first-value"), "runtime:demo:first-value");
   assert.equal(quickstartScriptName("sdk"), "runtime:quickstart:sdk");
   assert.equal(quickstartScriptName("http"), "runtime:quickstart:http");
   assert.equal(quickstartScriptName("multi-agent"), "runtime:quickstart:multi-agent");
   assert.equal(quickstartScriptName("none"), null);
+  assert.equal(quickstartRequiresEmbeddingKey("first-value"), false);
+  assert.equal(quickstartRequiresEmbeddingKey("sdk"), true);
+  assert.equal(quickstartRequiresEmbeddingKey("none"), false);
 });
 
 test("@aionis/create install plan includes Runtime install, SDK build, and selected quickstart", () => {
@@ -68,12 +73,23 @@ test("@aionis/create install plan includes Runtime install, SDK build, and selec
   assert.throws(() => parseCreateAionisArgs(["--quickstart", "bad"]), /Unsupported quickstart/);
 });
 
+test("@aionis/create default install plan runs the no-key first-value demo", () => {
+  const plan = createInstallPlan(parseCreateAionisArgs([]));
+  assert.deepEqual(plan, [
+    "clone https://github.com/ostinatocc/Aionis.git -> Aionis",
+    "npm install",
+    "npm run -s packages:build",
+    "npm run -s runtime:demo:first-value",
+  ]);
+});
+
 test("@aionis/create completion message blocks misleading ready state without an embedding key", () => {
   const message = createCompletionMessage({
     targetDir: "/tmp/Aionis",
     providerKey: "OPENAI_API_KEY",
     apiKey: null,
     quickstartScript: "runtime:quickstart:sdk",
+    quickstartRequiresEmbeddingKey: true,
   });
 
   assert.match(message, /Aionis is installed/);
@@ -82,6 +98,20 @@ test("@aionis/create completion message blocks misleading ready state without an
   assert.match(message, /Start Runtime after the key is set/);
   assert.match(message, /Run quickstart after the key is set: npm run -s runtime:quickstart:sdk/);
   assert.doesNotMatch(message, /Aionis is ready/);
+});
+
+test("@aionis/create completion message allows first-value without an embedding key", () => {
+  const message = createCompletionMessage({
+    targetDir: "/tmp/Aionis",
+    providerKey: "OPENAI_API_KEY",
+    apiKey: null,
+    quickstartScript: "runtime:demo:first-value",
+    quickstartRequiresEmbeddingKey: false,
+  });
+
+  assert.match(message, /first-value demo can run without an embedding key/);
+  assert.match(message, /Run the SDK quickstart after the key is set/);
+  assert.doesNotMatch(message, /Run quickstart after the key is set: npm run -s runtime:demo:first-value/);
 });
 
 test("@aionis/create completion message keeps the ready state when a key is configured", () => {

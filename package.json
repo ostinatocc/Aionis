@@ -51,6 +51,7 @@
     "runtime:e2e:flight-recorder-incident": "npx tsx scripts/e2e/flight-recorder-incident-demo.ts",
     "runtime:e2e:loop-engineering-profile": "npx tsx scripts/e2e/loop-engineering-profile.ts",
     "runtime:e2e:plan-as-memory-asset": "npx tsx scripts/e2e/plan-as-memory-asset-demo.ts",
+    "runtime:demo:first-value": "npx tsx scripts/e2e/first-value-demo.ts",
     "runtime:e2e:command-posture": "npm run -s packages:build && npx tsx scripts/e2e/command-posture-product-loop.ts",
     "runtime:e2e:single-agent-host-template": "npx tsx scripts/e2e/single-agent-host-template-loop.ts",
     "runtime:e2e:multi-agent": "npx tsx scripts/e2e/multi-agent-execution-memory-loop.ts",

@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export type AionisQuickstart = "sdk" | "http" | "multi-agent" | "none";
+export type AionisQuickstart = "first-value" | "sdk" | "http" | "multi-agent" | "none";
 
 export type CreateAionisOptions = {
   dir: string;
@@ -34,14 +34,14 @@ Options:
   --branch <name>           Git branch or tag to clone.
   --provider <name>         Embedding provider. Defaults to EMBEDDING_PROVIDER or openai.
   --api-key <key>           Provider API key. Prefer env vars for shell history safety.
-  --quickstart <name>       sdk, http, multi-agent, or none. Defaults to sdk.
+  --quickstart <name>       first-value, sdk, http, multi-agent, or none. Defaults to first-value.
   --skip-install            Clone and write env, but do not run npm install.
   --skip-quickstart         Do not run the selected quickstart after install.
   -h, --help                Show help.
 
 Examples:
-  OPENAI_API_KEY=... npx @aionis/create --provider openai --quickstart sdk
-  MINIMAX_API_KEY=... npx @aionis/create my-aionis --provider minimax --quickstart http
+  npx @aionis/create
+  OPENAI_API_KEY=... npx @aionis/create my-aionis --provider openai --quickstart sdk
 `;
 }
 
@@ -60,12 +60,23 @@ export function providerEnvKey(provider: string): string {
 
 export function quickstartScriptName(quickstart: AionisQuickstart): string | null {
   if (quickstart === "none") return null;
+  if (quickstart === "first-value") return "runtime:demo:first-value";
   return `runtime:quickstart:${quickstart}`;
 }
 
+export function quickstartRequiresEmbeddingKey(quickstart: AionisQuickstart): boolean {
+  return quickstart !== "first-value" && quickstart !== "none";
+}
+
 function parseQuickstart(value: string): AionisQuickstart {
-  if (value === "sdk" || value === "http" || value === "multi-agent" || value === "none") return value;
-  throw new Error(`Unsupported quickstart "${value}". Use sdk, http, multi-agent, or none.`);
+  if (
+    value === "first-value"
+    || value === "sdk"
+    || value === "http"
+    || value === "multi-agent"
+    || value === "none"
+  ) return value;
+  throw new Error(`Unsupported quickstart "${value}". Use first-value, sdk, http, multi-agent, or none.`);
 }
 
 export function parseCreateAionisArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): CreateAionisOptions {
@@ -74,7 +85,7 @@ export function parseCreateAionisArgs(argv: string[], env: NodeJS.ProcessEnv = p
   let branch: string | null = null;
   let provider = env.EMBEDDING_PROVIDER?.trim() || "openai";
   let apiKey: string | null = null;
-  let quickstart: AionisQuickstart = "sdk";
+  let quickstart: AionisQuickstart = "first-value";
   let skipInstall = false;
   let skipQuickstart = false;
   let positionalDirSet = false;
@@ -242,20 +253,25 @@ export function createCompletionMessage(input: {
   providerKey: string;
   apiKey: string | null;
   quickstartScript: string | null;
+  quickstartRequiresEmbeddingKey?: boolean;
 }): string {
   if (!input.apiKey) {
+    const quickstartNeedsKey = input.quickstartRequiresEmbeddingKey ?? true;
     const lines = [
       "",
-      "Aionis is installed. Set your embedding key before starting Runtime.",
+      quickstartNeedsKey
+        ? "Aionis is installed. Set your embedding key before starting Runtime."
+        : "Aionis is installed. The first-value demo can run without an embedding key.",
       `Runtime directory: ${input.targetDir}`,
       `Required key: ${input.providerKey}`,
       `Set it in: ${path.join(input.targetDir, ".env")}`,
       `Example: ${input.providerKey}="your-key"`,
       `Start Runtime after the key is set: cd ${input.targetDir} && npm run -s lite:start`,
+      "Run the SDK quickstart after the key is set: npm run -s runtime:quickstart:sdk",
       "SDK package: @aionis/sdk",
       "MCP package: @aionis/mcp",
     ];
-    if (input.quickstartScript) {
+    if (input.quickstartScript && quickstartNeedsKey) {
       lines.push(`Run quickstart after the key is set: npm run -s ${input.quickstartScript}`);
     }
     return `${lines.join(os.EOL)}${os.EOL}`;
@@ -311,15 +327,23 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
 
   const quickstart = quickstartScriptName(options.quickstart);
   if (!options.skipQuickstart && quickstart) {
-    if (!apiKey) {
-      process.stdout.write(createCompletionMessage({ targetDir, providerKey, apiKey, quickstartScript: quickstart }));
+    const quickstartNeedsKey = quickstartRequiresEmbeddingKey(options.quickstart);
+    if (!apiKey && quickstartNeedsKey) {
+      process.stdout.write(createCompletionMessage({
+        targetDir,
+        providerKey,
+        apiKey,
+        quickstartScript: quickstart,
+        quickstartRequiresEmbeddingKey: quickstartNeedsKey,
+      }));
       return;
     }
-    run("npm", ["run", "-s", quickstart], targetDir, {
+    const quickstartEnv: NodeJS.ProcessEnv = {
       ...process.env,
       EMBEDDING_PROVIDER: options.provider,
-      [providerKey]: apiKey,
-    });
+    };
+    if (apiKey) quickstartEnv[providerKey] = apiKey;
+    run("npm", ["run", "-s", quickstart], targetDir, quickstartEnv);
   }
 
   process.stdout.write(createCompletionMessage({
@@ -327,6 +351,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     providerKey,
     apiKey,
     quickstartScript: options.skipQuickstart ? null : quickstart,
+    quickstartRequiresEmbeddingKey: quickstartRequiresEmbeddingKey(options.quickstart),
   }));
 }
 

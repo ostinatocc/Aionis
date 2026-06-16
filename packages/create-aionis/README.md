@@ -7,10 +7,20 @@ Docs: [https://docs.aionis.work/get-started/install](https://docs.aionis.work/ge
 Run:
 
 ```bash
+npx @aionis/create@latest
+```
+
+The default run installs Aionis and starts the no-key first-value demo. It shows
+the Memory Firewall blocking failed and stale memory before you configure an
+embedding provider.
+
+Run the full SDK quickstart with OpenAI-compatible embeddings:
+
+```bash
 OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart sdk
 ```
 
-Install without running a quickstart:
+Install without running any quickstart:
 
 ```bash
 npx @aionis/create@latest my-aionis --provider openai --skip-quickstart
