@@ -21,6 +21,7 @@ type RecallEngineFixture = {
 type RecallEngineCase = {
   case_id: string;
   description: string;
+  query_text?: string;
   query_vector: number[];
   expected: {
     must_recall_ids: string[];
@@ -88,6 +89,7 @@ type RecallEngineSummary = {
   recall_access_capability_version: number;
   candidate_generation: {
     semantic_path: "bounded_sqlite_scan_plus_js_cosine_with_source_trace";
+    lexical_path: "lite_keyword_index_like_match";
     exact_recovery_path: "unbounded_lite_exact_recovery_with_source_trace";
     governance_admission: "out_of_scope_for_recall_only_baseline";
   };
@@ -302,11 +304,18 @@ async function evaluateCase(args: {
     consumerAgentId: null,
     consumerTeamId: null,
   });
+  const lexical = await args.access.stage1LexicalCandidates({
+    queryText: args.testCase.query_text ?? args.testCase.description,
+    scope,
+    limit: 50,
+    consumerAgentId: null,
+    consumerTeamId: null,
+  });
   const elapsed = performance.now() - start;
 
   const candidateById = new Map<string, RecallCandidate>();
   const sourceMap = new Map<string, Set<CandidateSource>>();
-  for (const candidate of ann.concat(exact)) {
+  for (const candidate of ann.concat(exact, lexical)) {
     const id = candidate.id;
     if (!candidateById.has(id)) candidateById.set(id, candidate);
     sourceMap.set(id, sourceMap.get(id) ?? new Set<CandidateSource>());
@@ -416,6 +425,7 @@ export async function runRecallEngineEval(options: {
       recall_access_capability_version: access.capability_version,
       candidate_generation: {
         semantic_path: "bounded_sqlite_scan_plus_js_cosine_with_source_trace",
+        lexical_path: "lite_keyword_index_like_match",
         exact_recovery_path: "unbounded_lite_exact_recovery_with_source_trace",
         governance_admission: "out_of_scope_for_recall_only_baseline",
       },

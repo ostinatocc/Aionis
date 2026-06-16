@@ -81,6 +81,13 @@ type LiteRecallAuditRow = RecallAuditInsertParams & {
   created_at: string;
 };
 
+type LiteRecallKeywordRow = LiteRecallNodeRow & {
+  lexical_title: string | null;
+  lexical_text_summary: string | null;
+  lexical_slots_text: string | null;
+  lexical_searchable_text: string;
+};
+
 const STAGE1_RECALL_TYPES = ["event", "topic", "concept", "entity", "rule", "procedure", "self_model"] as const;
 const SQLITE_IN_CHUNK_SIZE = 800;
 
@@ -103,6 +110,10 @@ function nowIso(): string {
 
 function placeholders(count: number): string {
   return Array.from({ length: count }, () => "?").join(",");
+}
+
+function escapeSqlLike(value: string): string {
+  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
 }
 
 function appendRecallVisibilityWhere(
@@ -155,6 +166,49 @@ function parseEmbedding(raw: string | null | undefined): number[] | null {
   const numbers = parsed.map((v) => Number(v));
   if (numbers.some((v) => !Number.isFinite(v))) return null;
   return numbers;
+}
+
+function lexicalTerms(queryText: string): string[] {
+  const tokens = queryText
+    .toLowerCase()
+    .split(/[^a-z0-9_./-]+/g)
+    .map((value) => value.trim())
+    .filter((value) => value.length >= 3);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const token of tokens) {
+    if (seen.has(token)) continue;
+    seen.add(token);
+    out.push(token);
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+
+function lexicalMatchFields(row: Pick<LiteRecallKeywordRow, "lexical_title" | "lexical_text_summary" | "lexical_slots_text">, terms: string[]): string[] {
+  const fields: Array<[string, string]> = [
+    ["title", row.lexical_title ?? ""],
+    ["text_summary", row.lexical_text_summary ?? ""],
+    ["slots_text", row.lexical_slots_text ?? ""],
+  ];
+  const matched: string[] = [];
+  for (const [field, value] of fields) {
+    const lower = value.toLowerCase();
+    if (terms.some((term) => lower.includes(term))) matched.push(field);
+  }
+  return matched;
+}
+
+function lexicalScore(row: LiteRecallKeywordRow, terms: string[], matchedFields: string[]): number {
+  const searchable = row.lexical_searchable_text.toLowerCase();
+  const matchedTermCount = terms.filter((term) => searchable.includes(term)).length;
+  const fieldBonus = matchedFields.includes("title") ? 0.18 : matchedFields.includes("text_summary") ? 0.1 : 0;
+  const raw = 0.35
+    + Math.min(0.35, matchedTermCount * 0.08)
+    + fieldBonus
+    + Math.min(0.08, Math.max(0, row.salience) * 0.08)
+    + Math.min(0.04, Math.max(0, row.confidence) * 0.04);
+  return Math.max(0, Math.min(1, raw));
 }
 
 function cosineDistance(a: number[], b: number[]): number {
@@ -237,6 +291,34 @@ function nodeToRecallRow(row: LiteRecallNodeRow, includeSlots: boolean): RecallN
   };
 }
 
+function recallSurfaceAllowed(args: {
+  db: ReturnType<typeof createSqliteDatabase>;
+  scope: string;
+  row: LiteRecallNodeRow;
+  slots: Record<string, unknown>;
+}): boolean {
+  if (!(STAGE1_RECALL_TYPES as readonly string[]).includes(args.row.type)) return false;
+  if (args.row.type === "procedure" && !hasNodeWorkflowAnchorSurface(args.slots)) return false;
+  if ((args.row.type === "event" || args.row.type === "evidence")
+    && String(args.slots.replay_learning_episode ?? "false") === "true"
+    && String(args.slots.lifecycle_state ?? "active") === "archived") {
+    return false;
+  }
+  if (args.row.type === "topic" && String(args.slots.topic_state ?? "active") !== "active") {
+    return false;
+  }
+  if (args.row.type === "rule") {
+    const def = args.db.prepare(`
+      SELECT state
+      FROM lite_memory_rule_defs
+      WHERE scope = ? AND rule_node_id = ?
+      LIMIT 1
+    `).get(args.scope, args.row.id) as { state: string } | undefined;
+    if (!def || (def.state !== "shadow" && def.state !== "active")) return false;
+  }
+  return true;
+}
+
 export function createLiteRecallStore(
   path: string,
   opts: { capabilities?: Partial<RecallStoreCapabilities> } = {},
@@ -261,6 +343,19 @@ export function createLiteRecallStore(
     );
     CREATE INDEX IF NOT EXISTS idx_lite_memory_recall_audit_scope_created
       ON lite_memory_recall_audit(scope, created_at);
+
+    CREATE TABLE IF NOT EXISTS lite_memory_keyword_index (
+      scope TEXT NOT NULL,
+      node_id TEXT NOT NULL,
+      title TEXT,
+      text_summary TEXT,
+      slots_text TEXT NOT NULL,
+      searchable_text TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(scope, node_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_keyword_scope_node
+      ON lite_memory_keyword_index(scope, node_id);
   `);
 
   const fetchEdgesForNodeColumn = (
@@ -377,26 +472,7 @@ export function createLiteRecallStore(
     for (const item of knn) {
       const row = item.row;
       const slots = parseJsonObject(row.slots_json);
-      const hasWorkflowAnchorSurface = hasNodeWorkflowAnchorSurface(slots);
-      if (!(STAGE1_RECALL_TYPES as readonly string[]).includes(row.type)) continue;
-      if (row.type === "procedure" && !hasWorkflowAnchorSurface) continue;
-      if ((row.type === "event" || row.type === "evidence")
-        && String(slots.replay_learning_episode ?? "false") === "true"
-        && String(slots.lifecycle_state ?? "active") === "archived") {
-        continue;
-      }
-      if (row.type === "topic" && String(slots.topic_state ?? "active") !== "active") {
-        continue;
-      }
-      if (row.type === "rule") {
-        const def = db.prepare(`
-          SELECT state
-          FROM lite_memory_rule_defs
-          WHERE scope = ? AND rule_node_id = ?
-          LIMIT 1
-        `).get(params.scope, row.id) as { state: string } | undefined;
-        if (!def || (def.state !== "shadow" && def.state !== "active")) continue;
-      }
+      if (!recallSurfaceAllowed({ db, scope: params.scope, row, slots })) continue;
       const similarity = adjustRecallCandidateSimilarityForTrust({
         type: row.type,
         slots,
@@ -431,7 +507,98 @@ export function createLiteRecallStore(
       .map(({ distance: _distance, ...candidate }) => candidate);
   };
 
-  const emptyLexicalCandidates = async (_params: RecallLexicalParams): Promise<RecallCandidate[]> => [];
+  const stage1LexicalCandidates = async (params: RecallLexicalParams): Promise<RecallCandidate[]> => {
+    const terms = lexicalTerms(params.queryText);
+    if (terms.length === 0 || params.limit <= 0) return [];
+    const where = [
+      "k.scope = ?",
+      `n.type IN (${placeholders(STAGE1_RECALL_TYPES.length)})`,
+      `(${terms.map(() => "LOWER(k.searchable_text) LIKE ? ESCAPE '\\'").join(" OR ")})`,
+    ];
+    const values: unknown[] = [
+      params.scope,
+      ...STAGE1_RECALL_TYPES,
+      ...terms.map((term) => `%${escapeSqlLike(term)}%`),
+    ];
+    appendRecallVisibilityWhere(where, values, params.consumerAgentId, params.consumerTeamId);
+    const rows = db.prepare(`
+      SELECT
+        n.id,
+        n.scope,
+        n.type,
+        n.tier,
+        n.memory_lane,
+        n.producer_agent_id,
+        n.owner_agent_id,
+        n.owner_team_id,
+        n.title,
+        n.text_summary,
+        n.slots_json,
+        n.raw_ref,
+        n.evidence_ref,
+        n.embedding_vector_json,
+        n.embedding_model,
+        n.embedding_status,
+        n.salience,
+        n.importance,
+        n.confidence,
+        n.created_at,
+        n.commit_id,
+        k.title AS lexical_title,
+        k.text_summary AS lexical_text_summary,
+        k.slots_text AS lexical_slots_text,
+        k.searchable_text AS lexical_searchable_text
+      FROM lite_memory_keyword_index k
+      JOIN lite_memory_nodes n
+        ON n.scope = k.scope
+       AND n.id = k.node_id
+      WHERE ${where.join("\n        AND ")}
+      ORDER BY
+        n.salience DESC,
+        n.confidence DESC,
+        n.created_at DESC,
+        n.id DESC
+      LIMIT ?
+    `).all(...values, Math.max(params.limit * 8, params.limit)) as LiteRecallKeywordRow[];
+
+    const out: RecallCandidate[] = [];
+    for (const row of rows) {
+      if (!candidateVisible(row, params.consumerAgentId, params.consumerTeamId)) continue;
+      const slots = parseJsonObject(row.slots_json);
+      if (!recallSurfaceAllowed({ db, scope: params.scope, row, slots })) continue;
+      const matchedFields = lexicalMatchFields(row, terms);
+      if (matchedFields.length === 0) continue;
+      const score = adjustRecallCandidateSimilarityForTrust({
+        type: row.type,
+        slots,
+        similarity: lexicalScore(row, terms, matchedFields),
+      });
+      out.push({
+        id: row.id,
+        type: row.type,
+        title: row.title,
+        text_summary: row.text_summary,
+        tier: row.tier,
+        salience: row.salience,
+        confidence: row.confidence,
+        similarity: score,
+        sources: [{
+          kind: "lexical",
+          score,
+          reason: "keyword_index_match",
+          matched_fields: matchedFields,
+          index_name: "lite_memory_keyword_index",
+        }],
+      });
+    }
+    return out
+      .sort((a, b) =>
+        b.similarity - a.similarity
+        || b.salience - a.salience
+        || b.confidence - a.confidence
+        || a.id.localeCompare(b.id))
+      .slice(0, params.limit);
+  };
   const emptyStructuredCandidates = async (_params: RecallStructuredParams): Promise<RecallCandidate[]> => [];
   const emptyExecutionNativeCandidates = async (_params: RecallExecutionNativeParams): Promise<RecallCandidate[]> => [];
   const stage1HybridCandidates = async (params: RecallHybridParams): Promise<RecallCandidate[]> => {
@@ -476,7 +643,7 @@ export function createLiteRecallStore(
           sourceReason: "bounded_embedding_scan",
           sourceIndexName: "lite_embedding_json_scan",
         }),
-        stage1LexicalCandidates: emptyLexicalCandidates,
+        stage1LexicalCandidates,
         stage1StructuredCandidates: emptyStructuredCandidates,
         stage1ExecutionNativeCandidates: emptyExecutionNativeCandidates,
         stage1HybridCandidates,

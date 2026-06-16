@@ -117,13 +117,16 @@ test("RecallStoreAccess v3 exposes candidate source traces without changing cand
     assert.equal(hybrid[0]?.id, "semantic-target");
     assert.equal(hybrid[0]?.sources?.[0]?.kind, "semantic");
 
-    assert.deepEqual(await access.stage1LexicalCandidates({
+    const lexical = await access.stage1LexicalCandidates({
       queryText: "semantic-target",
       scope: "source-trace/default",
       limit: 5,
       consumerAgentId: null,
       consumerTeamId: null,
-    }), []);
+    });
+    assert.equal(lexical[0]?.id, "semantic-target");
+    assert.equal(lexical[0]?.sources?.[0]?.kind, "lexical");
+    assert.equal(lexical[0]?.sources?.[0]?.reason, "keyword_index_match");
     assert.deepEqual(await access.stage1StructuredCandidates({
       scope: "source-trace/default",
       limit: 5,

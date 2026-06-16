@@ -29,10 +29,10 @@ The current Lite Runtime exposes `RecallStoreAccess` as the store abstraction.
 That is the right seam to evolve.
 
 `RecallStoreAccess` capability v3 exposes candidate source traces. The current
-Lite implementation fills source traces for semantic bounded scans and exact
-recovery. Lexical, structured, execution-native, graph, recent, and ANN source
-methods are contract-visible but intentionally empty until their dedicated
-implementation phases land.
+Lite implementation fills source traces for semantic bounded scans, exact
+recovery, and the first keyword lexical source. Structured, execution-native,
+graph, recent, and ANN source methods are contract-visible but intentionally
+empty until their dedicated implementation phases land.
 
 Today, `stage1CandidatesAnn` is still not a true ANN index. It is a bounded
 SQLite candidate fetch followed by JavaScript vector parsing and cosine
@@ -108,7 +108,10 @@ proxy metrics. Full product evaluations must measure them through `/v1/guide`.
    - Keep capability versioning explicit.
 
 3. **Lexical and structured recall**
-   - Add FTS/keyword candidates first because they are lower-risk than ANN.
+   - Add keyword candidates first because they are lower-risk than ANN.
+   - The current Lite keyword source uses a maintained SQLite keyword index.
+     A future FTS5 implementation can replace the backend without changing the
+     `stage1LexicalCandidates` contract.
    - Add structured signature candidates for target files, task signatures,
      workflow signatures, error signatures, tool names, and acceptance checks.
 

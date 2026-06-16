@@ -704,6 +704,85 @@ function buildSimpleSlotsSqlFilters(slotsContains: Record<string, unknown> | nul
   return { where, params };
 }
 
+const LITE_MEMORY_KEYWORD_SLOT_KEYS = new Set([
+  "acceptance_check_signature",
+  "acceptance_checks",
+  "anchor_kind",
+  "compression_layer",
+  "continuation_hint",
+  "error_signature",
+  "execution_kind",
+  "execution_outcome_role",
+  "failure_mode",
+  "file_cluster",
+  "lifecycle_hint",
+  "pattern_signature",
+  "repo_signature",
+  "selected_tool",
+  "service_lifecycle_constraints",
+  "summary_kind",
+  "target_files",
+  "task_family",
+  "task_signature",
+  "tool_chain_signature",
+  "tool_set",
+  "verification_signature",
+  "workflow_signature",
+  "workflow_steps",
+]);
+
+const LITE_MEMORY_KEYWORD_NESTED_SLOT_KEYS = [
+  "anchor_v1",
+  "execution_contract_v1",
+  "execution_native_v1",
+  "execution_observation_v1",
+  "execution_result_summary",
+  "recovery_contract_v1",
+  "runtime_signal_ledger_v1",
+] as const;
+
+function collectSearchableStrings(value: unknown, out: string[], limit = 96): void {
+  if (out.length >= limit) return;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed) out.push(trimmed);
+    return;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    out.push(String(value));
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectSearchableStrings(item, out, limit);
+      if (out.length >= limit) break;
+    }
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      if (key.toLowerCase().includes("secret") || key.toLowerCase().includes("token") || key.toLowerCase().includes("key")) {
+        continue;
+      }
+      collectSearchableStrings(nested, out, limit);
+      if (out.length >= limit) break;
+    }
+  }
+}
+
+function buildLiteMemoryKeywordSlotsText(slots: Record<string, unknown>): string {
+  const out: string[] = [];
+  for (const [key, value] of Object.entries(slots)) {
+    if (LITE_MEMORY_KEYWORD_SLOT_KEYS.has(key)) {
+      collectSearchableStrings(value, out);
+    }
+  }
+  for (const key of LITE_MEMORY_KEYWORD_NESTED_SLOT_KEYS) {
+    if (slots[key]) collectSearchableStrings(slots[key], out);
+  }
+  return Array.from(new Set(out.map((value) => value.trim()).filter(Boolean))).join("\n");
+}
+
 export function createLiteWriteStore(path: string): LiteWriteStore {
   mkdirSync(dirname(path), { recursive: true });
   const db = createSqliteDatabase(path);
@@ -799,6 +878,21 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
       ON lite_memory_execution_native_index(scope, pattern_signature, created_at DESC, node_id DESC);
     CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_layer_created
       ON lite_memory_execution_native_index(scope, compression_layer, created_at DESC, node_id DESC);
+
+    CREATE TABLE IF NOT EXISTS lite_memory_keyword_index (
+      scope TEXT NOT NULL,
+      node_id TEXT NOT NULL,
+      title TEXT,
+      text_summary TEXT,
+      slots_text TEXT NOT NULL,
+      searchable_text TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(scope, node_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_keyword_scope_node
+      ON lite_memory_keyword_index(scope, node_id);
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_keyword_scope_updated
+      ON lite_memory_keyword_index(scope, updated_at DESC, node_id DESC);
 
     CREATE TABLE IF NOT EXISTS lite_memory_rule_defs (
       rule_node_id TEXT PRIMARY KEY,
@@ -941,6 +1035,56 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
     ).run(scope, nodeId);
   };
 
+  const deleteKeywordIndexRow = (scope: string, nodeId: string): void => {
+    db.prepare(
+      `DELETE FROM lite_memory_keyword_index
+       WHERE scope = ?
+         AND node_id = ?`,
+    ).run(scope, nodeId);
+  };
+
+  const syncKeywordIndexFromNode = (scope: string, nodeId: string): void => {
+    const row = db.prepare(
+      `${LITE_MEMORY_NODE_SELECT_SQL}
+       WHERE scope = ?
+         AND id = ?
+       LIMIT 1`,
+    ).get(scope, nodeId) as LiteMemoryNodeDbRow | undefined;
+    if (!row) {
+      deleteKeywordIndexRow(scope, nodeId);
+      return;
+    }
+    const slots = parseJsonObject(row.slots_json);
+    const slotsText = buildLiteMemoryKeywordSlotsText(slots);
+    const searchableText = [row.title, row.text_summary, slotsText]
+      .map((value) => String(value ?? "").trim())
+      .filter(Boolean)
+      .join("\n");
+    if (!searchableText) {
+      deleteKeywordIndexRow(scope, nodeId);
+      return;
+    }
+    db.prepare(
+      `INSERT INTO lite_memory_keyword_index
+        (scope, node_id, title, text_summary, slots_text, searchable_text, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(scope, node_id) DO UPDATE SET
+         title = excluded.title,
+         text_summary = excluded.text_summary,
+         slots_text = excluded.slots_text,
+         searchable_text = excluded.searchable_text,
+         updated_at = excluded.updated_at`,
+    ).run(
+      scope,
+      nodeId,
+      row.title,
+      row.text_summary,
+      slotsText,
+      searchableText,
+      nowIso(),
+    );
+  };
+
   const syncExecutionNativeIndexFromNode = (scope: string, nodeId: string): void => {
     const row = db.prepare(
       `${LITE_MEMORY_NODE_SELECT_SQL}
@@ -1003,6 +1147,19 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
   };
 
   rebuildExecutionNativeIndex();
+
+  const rebuildKeywordIndex = (): void => {
+    db.prepare("DELETE FROM lite_memory_keyword_index").run();
+    const rows = db.prepare(
+      `SELECT scope, id
+       FROM lite_memory_nodes`,
+    ).all() as Array<{ scope: string; id: string }>;
+    for (const row of rows) {
+      syncKeywordIndexFromNode(row.scope, row.id);
+    }
+  };
+
+  rebuildKeywordIndex();
 
   return {
     capability_version: WRITE_STORE_ACCESS_CAPABILITY_VERSION,
@@ -1982,6 +2139,7 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
         nowIso(),
       );
       syncExecutionNativeIndexFromNode(args.scope, args.id);
+      syncKeywordIndexFromNode(args.scope, args.id);
     },
 
     async insertRuleDef(args: WriteRuleDefInsertArgs): Promise<void> {
@@ -2279,6 +2437,7 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
            AND id = ?`,
       ).run(...params);
       syncExecutionNativeIndexFromNode(args.scope, args.id);
+      syncKeywordIndexFromNode(args.scope, args.id);
       const { rows } = await this.findNodes({
         scope: args.scope,
         id: args.id,
