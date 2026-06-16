@@ -1878,7 +1878,7 @@ function planAssetSummary(input: AionisPlanAssetObserveInput, planId: string): s
     ...decisionLines,
     ...input.plan.acceptance_checks.map((check, index) => `PLAN_ACCEPTANCE_CHECK ${index + 1}: ${check}`),
     ...input.plan.execution_boundaries.map((boundary, index) => `PLAN_EXECUTION_BOUNDARY ${index + 1}: ${boundary}`),
-    ...(input.plan.failed_branches ?? []).map((branch) => `PLAN_REJECTED_BRANCH ${branch.branch_id}: ${branch.statement} Reason: ${branch.reason}`),
+    `Rejected branch count: ${input.plan.failed_branches?.length ?? 0}`,
   ].filter(Boolean).join("\n");
 }
 
@@ -1906,7 +1906,7 @@ export function planAssetObserveEvents(input: AionisPlanAssetObserveInput): Aion
     outcome: "succeeded",
     target_files: targetFiles,
     acceptance_checks: input.plan.acceptance_checks,
-    continuation_hint: "Use this plan as governed execution memory; preserve decisions, acceptance checks, boundaries, and rejected branches.",
+    continuation_hint: "Use this plan as adjudicated execution memory; preserve decisions, acceptance checks, boundaries, and rejected branches.",
     slots: stripUndefined({
       plan_asset_v1: stripUndefined({
         plan_id: planId,
@@ -1926,9 +1926,9 @@ export function planAssetObserveEvents(input: AionisPlanAssetObserveInput): Aion
     summary: [
       "PLAN_REJECTED_BRANCH",
       `Plan ID: ${planId}`,
-      `${branch.branch_id}: ${branch.statement}`,
-      `Reason: ${branch.reason}`,
-      "This branch is counter-evidence and must not become the active execution route.",
+      `${branch.branch_id}: rejected branch.`,
+      `Reason: ${truncateText(branch.reason, 120)}`,
+      "counter-evidence only; do not use as primary route.",
     ].join("\n"),
     outcome: "failed",
     target_files: branch.target_files ?? [],
@@ -1940,6 +1940,8 @@ export function planAssetObserveEvents(input: AionisPlanAssetObserveInput): Aion
         rejected_branch_id: branch.branch_id,
         artifact_ref: input.plan.artifact_ref,
         planner_model: input.planner.model,
+        rejected_branch_statement: branch.statement,
+        rejected_branch_reason: branch.reason,
       }),
       evidence_kind: "plan_rejected_branch",
     }),

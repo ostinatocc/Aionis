@@ -277,7 +277,7 @@ test("SDK plan asset profile maps plans into execution memory observe events", (
   assert.equal(events[0]?.agent_id, "planner-1");
   assert.equal(events[0]?.team_id, "team-a");
   assert.equal(events[0]?.outcome, "succeeded");
-  assert.equal(events[0]?.continuation_hint?.includes("governed execution memory"), true);
+  assert.equal(events[0]?.continuation_hint?.includes("adjudicated execution memory"), true);
   assert.deepEqual(events[0]?.target_files, ["packages/api/src/checkout.ts"]);
   assert.equal((events[0]?.slots?.plan_asset_v1 as Record<string, unknown>)?.plan_id, "plan:checkout-migration");
   assert.equal((events[0]?.slots?.plan_asset_v1 as Record<string, unknown>)?.rejected_branch_count, 1);
