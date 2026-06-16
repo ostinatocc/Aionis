@@ -805,7 +805,7 @@ test("lite runtime services do not wire postgres or embedded store constructors"
   assert.match(runtimeServicesFile, /aionis-lite runtime services only support AIONIS_EDITION=lite/);
 });
 
-test("lite request guards do not keep full auth or tenant quota plumbing", () => {
+test("request guards keep lite posture while excluding control-plane auth and tenant quota plumbing", () => {
   const requestGuardsFile = fs.readFileSync(path.join(ROOT, "src", "app", "request-guards.ts"), "utf8");
   const runtimeEntryFile = fs.readFileSync(path.join(ROOT, "src", "runtime-entry.ts"), "utf8");
   const runtimeServicesFile = fs.readFileSync(path.join(ROOT, "src", "app", "runtime-services.ts"), "utf8");
@@ -814,7 +814,6 @@ test("lite request guards do not keep full auth or tenant quota plumbing", () =>
     "emitControlAudit",
     "resolveControlPlaneApiKeyPrincipal",
     "tenantQuotaResolver",
-    "authResolver",
     "assertIdentityMatch",
   ];
   for (const symbol of forbiddenSymbols) {
@@ -824,6 +823,7 @@ test("lite request guards do not keep full auth or tenant quota plumbing", () =>
   }
   assert.match(requestGuardsFile, /aionis-lite request guards only support MEMORY_AUTH_MODE=off/);
   assert.match(requestGuardsFile, /aionis-lite request guards only support TENANT_QUOTA_ENABLED=false/);
+  assert.match(requestGuardsFile, /aionis-server request guards require MEMORY_AUTH_MODE=api_key, jwt, or api_key_or_jwt/);
 });
 
 test("lite server does not keep db-backed request telemetry plumbing", () => {

@@ -1,7 +1,7 @@
 import type { Env } from "../config.js";
 import type { RecallAuth } from "../memory/recall.js";
 import { secretTokensEqual } from "../util/admin_auth.js";
-import type { AuthPrincipal } from "../util/auth.js";
+import { createAuthResolver, type AuthPrincipal } from "../util/auth.js";
 import { sha256Hex } from "../util/crypto.js";
 import { HttpError } from "../util/http.js";
 import { parseTrustedProxyCidrs, resolveTrustedClientIp } from "../util/ip-guard.js";
@@ -85,6 +85,21 @@ type CreateRequestGuardsArgs = {
   writeInflightGate: InflightGate;
 };
 
+function assertLiteRequestGuardPosture(env: Env): void {
+  if (env.MEMORY_AUTH_MODE !== "off") {
+    throw new Error("aionis-lite request guards only support MEMORY_AUTH_MODE=off");
+  }
+  if (env.TENANT_QUOTA_ENABLED) {
+    throw new Error("aionis-lite request guards only support TENANT_QUOTA_ENABLED=false");
+  }
+}
+
+function assertServerRequestGuardPosture(env: Env): void {
+  if (env.MEMORY_AUTH_MODE === "off" && !env.AIONIS_SERVER_ALLOW_AUTH_OFF_FOR_DEV) {
+    throw new Error("aionis-server request guards require MEMORY_AUTH_MODE=api_key, jwt, or api_key_or_jwt");
+  }
+}
+
 function isLoopbackIp(ip: string | undefined): boolean {
   if (!ip) return false;
   return ip === "127.0.0.1" || ip === "::1" || ip.startsWith("::ffff:127.0.0.1");
@@ -140,15 +155,18 @@ export function createRequestGuards({
   recallInflightGate,
   writeInflightGate,
 }: CreateRequestGuardsArgs) {
-  if (env.AIONIS_EDITION !== "lite") {
-    throw new Error("aionis-lite request guards only support AIONIS_EDITION=lite");
+  if (env.AIONIS_EDITION === "lite") {
+    assertLiteRequestGuardPosture(env);
+  } else {
+    assertServerRequestGuardPosture(env);
   }
-  if (env.MEMORY_AUTH_MODE !== "off") {
-    throw new Error("aionis-lite request guards only support MEMORY_AUTH_MODE=off");
-  }
-  if (env.TENANT_QUOTA_ENABLED) {
-    throw new Error("aionis-lite request guards only support TENANT_QUOTA_ENABLED=false");
-  }
+
+  const authResolver = createAuthResolver({
+    mode: env.MEMORY_AUTH_MODE,
+    apiKeysJson: env.MEMORY_API_KEYS_JSON,
+    jwtHs256Secret: env.MEMORY_JWT_HS256_SECRET,
+    jwtClockSkewSec: env.MEMORY_JWT_CLOCK_SKEW_SEC,
+  });
 
   const trustedProxyCidrs = parseTrustedProxyCidrs(env.TRUSTED_PROXY_CIDRS);
   const requestClientIp = (req: any): string => {
@@ -257,7 +275,14 @@ export function createRequestGuards({
     });
   };
 
-  const requireMemoryPrincipal = async (_req: any): Promise<AuthPrincipal | null> => null;
+  const requireMemoryPrincipal = async (req: any): Promise<AuthPrincipal | null> => {
+    if (env.MEMORY_AUTH_MODE === "off") return null;
+    const principal = authResolver.resolve(req?.headers ?? {});
+    if (principal) return principal;
+    throw new HttpError(401, "unauthorized", "missing or invalid memory credentials", {
+      required_header: authResolver.required_header_hint,
+    });
+  };
 
   const withIdentityFromRequest = (
     req: any,
