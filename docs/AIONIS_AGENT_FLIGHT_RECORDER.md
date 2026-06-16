@@ -16,12 +16,18 @@ failure to inspect:
 - which memories were blocked through `do_not_use`
 - which memories required `rehydrate`
 - which blocked or suppressed memories were visible to the operator
+- why recalled memories entered the candidate set
 - whether feedback was attributed to the memory IDs the Agent could see
 - whether the replay includes decision trace, receipt, admission record, and
   operator snapshot coverage
 
 The report is not an Agent prompt. It excludes `agent_context.prompt_text`, raw
 memory rows, raw slots, and embedding vectors.
+
+Recall source traces are read-only observability. They explain candidate
+generation, for example `semantic`, `lexical`, `structured`, or
+`execution_native`; they do not grant authority and do not decide
+`use_now`, `inspect_before_use`, `do_not_use`, or `rehydrate`.
 
 ## Route
 
@@ -109,13 +115,36 @@ If the host already stored a decision trace or operator snapshot, pass them:
       "exposed_memory_ids": ["mem-current", "mem-failed"],
       "use_now_memory_ids": ["mem-current"],
       "do_not_use_memory_ids": ["mem-failed"],
-      "rehydrate_memory_ids": []
+      "rehydrate_memory_ids": [],
+      "recall_sources_by_memory_id": [
+        {
+          "memory_id": "mem-current",
+          "recall_sources": [
+            {
+              "kind": "execution_native",
+              "score": 0.82,
+              "reason": "execution_native_same_workflow_signature",
+              "matched_fields": ["workflow_signature"],
+              "index_name": "lite_memory_execution_native_index"
+            }
+          ]
+        }
+      ]
     },
     "blocked_or_suppressed": [
       {
         "memory_id": "mem-failed",
         "agent_surface": "do_not_use",
-        "reason_codes": ["suppressed_lifecycle"]
+        "reason_codes": ["suppressed_lifecycle"],
+        "recall_sources": [
+          {
+            "kind": "lexical",
+            "score": 0.64,
+            "reason": "keyword_index_match",
+            "matched_fields": ["text_summary"],
+            "index_name": "lite_memory_keyword_index"
+          }
+        ]
       }
     ],
     "attribution": {

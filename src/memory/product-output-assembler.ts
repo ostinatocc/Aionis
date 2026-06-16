@@ -33,6 +33,7 @@ import {
   type AionisMemoryDecisionTrace,
   type AionisMemoryDomain,
   type AionisMemoryPacket,
+  type AionisRecallSourceTrace,
   type AionisMemoryUseReceipt,
   type AionisRiskLevel,
 } from "./product-output-contract.js";
@@ -198,6 +199,7 @@ export type BuildAionisMemoryPacketArgs = {
   }>;
   context_items?: unknown[];
   ranked?: Array<{ id: string; score?: number | null; activation?: number | null }>;
+  recall_sources_by_memory_id?: Record<string, unknown>;
   lifecycle_edges?: MemoryLifecycleEdgeInput[];
   source_map?: Partial<AionisMemoryPacket["source_map"]>;
 };
@@ -304,6 +306,41 @@ function clampConfidence(value: unknown, fallback: number): number {
   const parsed = numberValue(value);
   const next = parsed === null ? fallback : parsed;
   return Math.max(0, Math.min(1, Number(next.toFixed(6))));
+}
+
+const AIONIS_RECALL_SOURCE_KINDS = new Set<AionisRecallSourceTrace["kind"]>([
+  "semantic",
+  "lexical",
+  "structured",
+  "execution_native",
+  "graph",
+  "recent",
+  "exact_recovery",
+  "ann",
+]);
+
+function recallSourceTraceValue(value: unknown): AionisRecallSourceTrace | null {
+  const record = asRecord(value);
+  const kind = stringValue(record?.kind);
+  const reason = stringValue(record?.reason);
+  if (!kind || !AIONIS_RECALL_SOURCE_KINDS.has(kind as AionisRecallSourceTrace["kind"]) || !reason) {
+    return null;
+  }
+  const score = numberValue(record?.score);
+  return {
+    kind: kind as AionisRecallSourceTrace["kind"],
+    ...(score === null ? {} : { score: clampConfidence(score, 0) }),
+    reason,
+    matched_fields: stringArrayValue(record?.matched_fields).slice(0, 16),
+    ...(stringValue(record?.index_name) ? { index_name: stringValue(record?.index_name)! } : {}),
+  };
+}
+
+function recallSourcesForMemory(
+  recallSourcesByMemoryId: Map<string, AionisRecallSourceTrace[]>,
+  memoryId: string,
+): AionisRecallSourceTrace[] {
+  return (recallSourcesByMemoryId.get(memoryId) ?? []).slice(0, 8);
 }
 
 function contextItemId(item: unknown): string | null {
@@ -659,6 +696,15 @@ function buildMemoryPacketEntries(args: BuildAionisMemoryPacketArgs): {
     const score = numberValue(item.score) ?? numberValue(item.activation);
     if (score !== null) rankedScore.set(item.id, score);
   }
+  const recallSourcesByMemoryId = new Map<string, AionisRecallSourceTrace[]>();
+  for (const [memoryId, rawSources] of Object.entries(args.recall_sources_by_memory_id ?? {})) {
+    if (!memoryId || !Array.isArray(rawSources)) continue;
+    const sources = rawSources
+      .map(recallSourceTraceValue)
+      .filter((entry): entry is AionisRecallSourceTrace => entry !== null)
+      .slice(0, 8);
+    if (sources.length > 0) recallSourcesByMemoryId.set(memoryId, sources);
+  }
   const baseEntries: AdjudicableMemoryEntry[] = args.nodes.slice(0, 32).map((node, sourceIndex) => {
     const slots = asRecord(node.slots);
     const contextItem = contextItems.get(node.id) ?? null;
@@ -701,6 +747,7 @@ function buildMemoryPacketEntries(args: BuildAionisMemoryPacketArgs): {
         ?? stringValue(contextItem?.updated_at)
         ?? stringValue(contextItem?.created_at),
       target_files: targetFiles,
+      recall_sources: recallSourcesForMemory(recallSourcesByMemoryId, node.id),
       scope_hint: memoryScopeHint({ domain, sourceLayer: layer }),
       ...(executionState ? { execution_state: executionState } : {}),
       source_index: sourceIndex,
@@ -5035,6 +5082,7 @@ export function buildAionisMemoryUseReceiptFromDecisionTrace(
       decision_kind: entry.decision_kind,
       actionable: entry.agent_surface === "use_now",
       reason_codes: compactStrings(entry.reason_codes).slice(0, 12),
+      recall_sources: entry.recall_sources,
     }));
 
   return parseAionisMemoryUseReceipt({
@@ -5092,6 +5140,7 @@ export function buildAionisMemoryAdmissionRecordFromDecisionTrace(
       attribution_strength: decision.feedback_detail?.attribution_strength ?? null,
       reason_codes: compactStrings(decision.reason_codes).slice(0, 16),
       evidence_ids: compactStrings(decision.evidence_ids).slice(0, 16),
+      recall_sources: decision.recall_sources,
     };
   });
   const promptIncludedCount = entries.filter((entry) => entry.prompt_included).length;
@@ -5148,6 +5197,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
         agent_surface: surface,
         decision_kind: traceDecisionKind({ surface }),
         evidence_ids: entry.evidence_ids,
+        recall_sources: entry.recall_sources,
         used_detail: traceUsedDetail({ entry, surface, relationDecision }),
         downgraded_detail: traceDowngradedDetail({ surface, relationDecision }),
         blocked_detail: traceBlockedDetail({ entry, surface }),
@@ -5189,6 +5239,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
   const inspectCount = memoryDecisions.filter((entry) => entry.agent_surface === "inspect_before_use").length;
   const doNotUseCount = memoryDecisions.filter((entry) => entry.agent_surface === "do_not_use").length;
   const rehydrateCount = memoryDecisions.filter((entry) => entry.agent_surface === "rehydrate").length;
+  const recallSourceTracePresent = memoryDecisions.some((entry) => entry.recall_sources.length > 0);
   const fallbackActionableHistoryUsed = directUseCount > 0 || inspectCount > 0 || doNotUseCount > 0 || rehydrateCount > 0;
   const contextDecision = {
     prompt_char_count: agentContext?.prompt_text.length ?? 0,
@@ -5283,6 +5334,7 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
         "memory_packet_lifecycle",
         "guide_packet_posture",
         agentContext ? "agent_context_surface_projection" : null,
+        recallSourceTracePresent ? "recall_source_trace" : null,
         memory?.relevant_memories.some((entry) => entry.memory_contract) ? "memory_contract" : null,
         relationDecisions.length > 0 ? "memory_lifecycle_relation_graph" : null,
         lifecycleCandidateSummary.present ? "lifecycle_candidate_inference" : null,

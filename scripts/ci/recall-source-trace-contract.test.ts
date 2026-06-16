@@ -9,6 +9,12 @@ import {
 } from "../../src/store/recall-access.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
+import {
+  buildAionisMemoryDecisionTrace,
+  buildAionisMemoryPacket,
+  buildAionisMemoryUseReceiptFromDecisionTrace,
+} from "../../src/memory/product-output-assembler.ts";
+import { buildAionisAgentFlightRecorderReport } from "../../src/memory/agent-flight-recorder.ts";
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-recall-source-trace-"));
@@ -127,6 +133,63 @@ test("RecallStoreAccess v3 exposes candidate source traces without changing cand
     assert.equal(lexical[0]?.id, "semantic-target");
     assert.equal(lexical[0]?.sources?.[0]?.kind, "lexical");
     assert.equal(lexical[0]?.sources?.[0]?.reason, "keyword_index_match");
+
+    const sourceRows = await access.stage2Nodes({
+      scope: "source-trace/default",
+      nodeIds: ["semantic-target"],
+      consumerAgentId: null,
+      consumerTeamId: null,
+      includeSlots: true,
+    });
+    const memoryPacket = buildAionisMemoryPacket({
+      tenant_id: "default",
+      scope: "source-trace/default",
+      query: {
+        source: "embedding",
+        embedding_dims: 3,
+      },
+      nodes: sourceRows,
+      context_items: [],
+      ranked: [{ id: "semantic-target", score: semantic[0]!.similarity }],
+      recall_sources_by_memory_id: {
+        "semantic-target": semantic[0]!.sources,
+      },
+      source_map: {
+        routes_used: ["/v1/memory/recall"],
+      },
+    });
+    assert.equal(memoryPacket.relevant_memories[0]?.recall_sources[0]?.kind, "semantic");
+    assert.equal(memoryPacket.relevant_memories[0]?.recall_sources[0]?.index_name, "lite_embedding_json_scan");
+
+    const decisionTrace = buildAionisMemoryDecisionTrace({
+      tenant_id: "default",
+      scope: "source-trace/default",
+      after_guide: {
+        memory_packet: memoryPacket,
+        guide_packet: null,
+        agent_context: null,
+      },
+    });
+    assert.equal(decisionTrace.memory_decisions[0]?.recall_sources[0]?.kind, "semantic");
+    assert.ok(decisionTrace.source_map.internal_surfaces_used.includes("recall_source_trace"));
+    assert.equal(decisionTrace.memory_use_receipt.decision_summaries[0]?.recall_sources[0]?.kind, "semantic");
+    assert.equal(decisionTrace.admission_record.entries[0]?.recall_sources[0]?.kind, "semantic");
+
+    const receipt = buildAionisMemoryUseReceiptFromDecisionTrace(decisionTrace);
+    assert.equal(receipt.decision_summaries[0]?.recall_sources[0]?.reason, "bounded_embedding_scan");
+
+    const flightRecorder = buildAionisAgentFlightRecorderReport({
+      tenant_id: "default",
+      scope: "source-trace/default",
+      memory_decision_trace: decisionTrace,
+      memory_use_receipt: receipt,
+      now: "2026-06-16T00:00:00.000Z",
+    });
+    assert.equal(
+      flightRecorder.agent_view.recall_sources_by_memory_id[0]?.recall_sources[0]?.kind,
+      "semantic",
+    );
+
     assert.deepEqual(await access.stage1StructuredCandidates({
       scope: "source-trace/default",
       limit: 5,

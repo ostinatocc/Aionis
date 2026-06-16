@@ -87,6 +87,15 @@ function countCandidateTiers(candidates: RecallCandidate[]): Record<RecallMemory
   return counts;
 }
 
+function recallSourcesByMemoryId(candidates: RecallCandidate[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const candidate of candidates) {
+    if (!candidate.sources || candidate.sources.length === 0) continue;
+    out[candidate.id] = candidate.sources;
+  }
+  return out;
+}
+
 function compactProducerIds(nodes: Array<{ producer_agent_id?: string | null }>): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -229,6 +238,7 @@ export async function memoryRecallParsed(
       nodes: [],
       context_items: [],
       ranked: [],
+      recall_sources_by_memory_id: recallSourcesByMemoryId(seeds),
       source_map: {
         routes_used: [routeForRecallEndpoint(endpoint)],
       },
@@ -530,6 +540,7 @@ export async function memoryRecallParsed(
     nodes: outNodeRows,
     context_items,
     ranked,
+    recall_sources_by_memory_id: recallSourcesByMemoryId(seeds),
     lifecycle_edges: edgesAll,
     source_map: {
       routes_used: [routeForRecallEndpoint(endpoint)],

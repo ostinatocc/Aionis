@@ -68,8 +68,8 @@ Every candidate should carry source traces:
 {
   "memory_id": "mem_123",
   "sources": [
-    { "source": "semantic", "score": 0.84 },
-    { "source": "structured", "reason": "matching workflow_signature" }
+    { "kind": "semantic", "score": 0.84, "reason": "bounded_embedding_scan" },
+    { "kind": "structured", "reason": "same_workflow_signature" }
   ]
 }
 ```
@@ -147,6 +147,13 @@ proxy metrics. Full product evaluations must measure them through `/v1/guide`.
    - Include recall source traces in operator snapshots and Flight Recorder.
    - Operators should see whether an Agent missed context because recall missed
      a candidate or because governance blocked it.
+   - Current status: source traces from `RecallCandidate.sources` are carried
+     into `AionisMemoryPacket.relevant_memories[].recall_sources`,
+     `memory_decision_trace.memory_decisions[].recall_sources`,
+     `memory_use_receipt.decision_summaries[].recall_sources`,
+     `memory_admission_record.entries[].recall_sources`, operator snapshots via
+     receipt/admission record, and Agent Flight Recorder replay fields. These
+     traces are read-only observability and do not participate in admission.
 
 ## Hosted Server Shape
 

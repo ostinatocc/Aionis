@@ -1478,15 +1478,25 @@ git commit -m "feat: add hybrid recall merge"
 
 ## Task 16: Surface Recall Sources in Receipt and Flight Recorder
 
+**Status:** implemented.
+
+Implementation note: this landed without changing admission logic or Agent
+prompt rendering. `RecallCandidate.sources` now flows into
+`AionisMemoryPacket.relevant_memories[].recall_sources`, decision trace,
+Memory Use Receipt, Memory Admission Record, operator snapshots through their
+embedded receipt/admission record, and Agent Flight Recorder replay fields.
+`src/routes/product-facade.ts` did not need a direct change because the product
+facade already carries the assembled packet/trace artifacts.
+
 **Files:**
 - Modify: `src/memory/product-output-contract.ts`
 - Modify: `src/memory/product-output-assembler.ts`
-- Modify: `src/routes/product-facade.ts`
-- Modify: `scripts/e2e/flight-recorder-incident-demo.ts`
-- Create: `scripts/ci/product-recall-source-trace.test.ts`
+- Modify: `src/memory/recall.ts`
+- Modify: `src/memory/agent-flight-recorder.ts`
+- Modify: `scripts/ci/recall-source-trace-contract.test.ts`
 - Modify: docs:
   - `docs/AIONIS_PRODUCT_OUTPUT_CONTRACT.md`
-  - `docs/AIONIS_FLIGHT_RECORDER.md` if present
+  - `docs/AIONIS_AGENT_FLIGHT_RECORDER.md`
   - `docs/AIONIS_RECALL_ENGINE_ROADMAP.md`
 
 **Step 1: Write tests**
@@ -1546,9 +1556,10 @@ Do not put source tracing into agent prompt by default. Keep it in receipt/snaps
 Run:
 
 ```bash
-npx tsx --test scripts/ci/product-recall-source-trace.test.ts
-npm run -s runtime:quickstart:flight-recorder
+npx tsx --test scripts/ci/recall-source-trace-contract.test.ts scripts/ci/lite-agent-flight-recorder.test.ts
+npm run -s recall:eval
 npm run -s typecheck
+npm run -s lite:test
 ```
 
 **Step 5: Commit**
@@ -2047,4 +2058,3 @@ Recall Engine Phase 1 is considered done when:
 - Flight Recorder / receipt can show why a candidate was found.
 - Governance still owns admission decisions.
 - First-value demo and product e2e do not regress.
-

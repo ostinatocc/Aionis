@@ -45,6 +45,29 @@ export type AionisMemoryDomain = z.infer<typeof AionisMemoryDomainSchema>;
 export const AionisMemoryFamilySchema = z.enum(["general_cognitive", "execution", "mixed", "empty"]);
 export type AionisMemoryFamily = z.infer<typeof AionisMemoryFamilySchema>;
 
+export const AionisRecallSourceKindSchema = z.enum([
+  "semantic",
+  "lexical",
+  "structured",
+  "execution_native",
+  "graph",
+  "recent",
+  "exact_recovery",
+  "ann",
+]);
+export type AionisRecallSourceKind = z.infer<typeof AionisRecallSourceKindSchema>;
+
+export const AionisRecallSourceTraceSchema = z
+  .object({
+    kind: AionisRecallSourceKindSchema,
+    score: ConfidenceSchema.optional(),
+    reason: z.string().min(1),
+    matched_fields: z.array(z.string().min(1)).default([]),
+    index_name: z.string().min(1).optional(),
+  })
+  .strict();
+export type AionisRecallSourceTrace = z.infer<typeof AionisRecallSourceTraceSchema>;
+
 export const AionisExternalMemoryAuthoritySchema = z
   .object({
     source_trust: z.enum(["trusted", "known", "untrusted", "unknown"]).default("unknown"),
@@ -301,6 +324,7 @@ export const AionisMemoryPacketSchema = z
             evidence_ids: z.array(z.string().min(1)).default([]),
             observed_at: z.string().min(1).nullable().default(null),
             target_files: z.array(z.string().min(1)).default([]),
+            recall_sources: z.array(AionisRecallSourceTraceSchema).default([]),
             scope_hint: z.string().min(1).nullable().optional(),
             execution_state: z
               .object({
@@ -1147,6 +1171,7 @@ export const AionisMemoryUseReceiptSchema = z
             decision_kind: AionisMemoryDecisionKindSchema,
             actionable: z.boolean(),
             reason_codes: z.array(z.string().min(1)).default([]),
+            recall_sources: z.array(AionisRecallSourceTraceSchema).default([]),
           })
           .strict(),
       )
@@ -1218,6 +1243,7 @@ export const AionisMemoryAdmissionRecordSchema = z
             attribution_strength: AionisFeedbackAttributionStrengthSchema.nullable(),
             reason_codes: z.array(z.string().min(1)).default([]),
             evidence_ids: z.array(z.string().min(1)).default([]),
+            recall_sources: z.array(AionisRecallSourceTraceSchema).default([]),
           })
           .strict(),
       )
@@ -1310,6 +1336,7 @@ export const AionisMemoryDecisionTraceSchema = z
             decision_kind: AionisMemoryDecisionKindSchema,
             reason_codes: z.array(z.string().min(1)).default([]),
             evidence_ids: z.array(z.string().min(1)).default([]),
+            recall_sources: z.array(AionisRecallSourceTraceSchema).default([]),
             used_detail: z
               .object({
                 authority: AionisGuidanceAuthoritySchema,
@@ -2288,6 +2315,16 @@ export const AionisAgentFlightRecorderReportSchema = z
         do_not_use_memory_ids: z.array(z.string().min(1)).default([]),
         rehydrate_memory_ids: z.array(z.string().min(1)).default([]),
         target_files: z.array(z.string().min(1)).default([]),
+        recall_sources_by_memory_id: z
+          .array(
+            z
+              .object({
+                memory_id: z.string().min(1),
+                recall_sources: z.array(AionisRecallSourceTraceSchema).default([]),
+              })
+              .strict(),
+          )
+          .default([]),
       })
       .strict(),
     blocked_or_suppressed: z
@@ -2309,6 +2346,7 @@ export const AionisAgentFlightRecorderReportSchema = z
             authority: AionisGuidanceAuthoritySchema,
             agent_surface: AionisMemoryDecisionSurfaceSchema,
             reason_codes: z.array(z.string().min(1)).default([]),
+            recall_sources: z.array(AionisRecallSourceTraceSchema).default([]),
           })
           .strict(),
       )

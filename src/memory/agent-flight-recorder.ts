@@ -145,6 +145,28 @@ function agentViewFromInputs(args: {
   snapshot: AionisOperatorSnapshot | null;
 }): AionisAgentFlightRecorderReport["agent_view"] {
   const rehydrateFromAgent = args.agent?.rehydrate_hints.map((entry) => entry.memory_id) ?? [];
+  const exposedMemoryIds = compactStrings([
+    ...(args.receipt?.exposed_memory_ids ?? []),
+    ...(args.snapshot?.guide_trace.exposed_memory_ids ?? []),
+    ...(args.agent?.memory_ids ?? []),
+    ...(args.trace?.context_decision.memory_ids ?? []),
+  ]);
+  const recallSourceMap = new Map<string, AionisAgentFlightRecorderReport["agent_view"]["recall_sources_by_memory_id"][number]>();
+  for (const decision of args.trace?.memory_decisions ?? []) {
+    if (decision.recall_sources.length === 0) continue;
+    recallSourceMap.set(decision.memory_id, {
+      memory_id: decision.memory_id,
+      recall_sources: decision.recall_sources,
+    });
+  }
+  for (const summary of args.receipt?.decision_summaries ?? []) {
+    if (summary.recall_sources.length === 0 || recallSourceMap.has(summary.memory_id)) continue;
+    recallSourceMap.set(summary.memory_id, {
+      memory_id: summary.memory_id,
+      recall_sources: summary.recall_sources,
+    });
+  }
+  const exposedSet = new Set(exposedMemoryIds);
   return {
     history_used:
       args.receipt?.history_used
@@ -175,12 +197,7 @@ function agentViewFromInputs(args: {
       ?? args.agent?.prompt_text.length
       ?? 0,
     prompt_text_included: false,
-    exposed_memory_ids: compactStrings([
-      ...(args.receipt?.exposed_memory_ids ?? []),
-      ...(args.snapshot?.guide_trace.exposed_memory_ids ?? []),
-      ...(args.agent?.memory_ids ?? []),
-      ...(args.trace?.context_decision.memory_ids ?? []),
-    ]),
+    exposed_memory_ids: exposedMemoryIds,
     use_now_memory_ids: compactStrings([
       ...(args.receipt?.use_now_memory_ids ?? []),
       ...(args.snapshot?.guide_trace.use_now_memory_ids ?? []),
@@ -205,6 +222,9 @@ function agentViewFromInputs(args: {
       ...(args.trace?.context_decision.target_files ?? []),
       ...(args.snapshot?.execution_state.active_path.entries.flatMap((entry) => entry.evidence_refs) ?? []),
     ]),
+    recall_sources_by_memory_id: Array.from(recallSourceMap.values())
+      .filter((entry) => exposedSet.size === 0 || exposedSet.has(entry.memory_id))
+      .slice(0, 96),
   };
 }
 
@@ -227,6 +247,7 @@ function blockedOrSuppressedFromInputs(args: {
       authority: entry.authority,
       agent_surface: entry.agent_surface,
       reason_codes: entry.reason_codes,
+      recall_sources: entry.recall_sources,
     })) ?? [];
   const fromAdmissionRecord = args.admissionRecord?.entries
     .filter((entry) =>
@@ -242,6 +263,7 @@ function blockedOrSuppressedFromInputs(args: {
       authority: entry.authority,
       agent_surface: entry.admission_action,
       reason_codes: entry.reason_codes,
+      recall_sources: entry.recall_sources,
     })) ?? [];
   const byId = new Map<string, AionisAgentFlightRecorderReport["blocked_or_suppressed"][number]>();
   for (const entry of [...fromTrace, ...fromAdmissionRecord]) byId.set(entry.memory_id, entry);
@@ -254,6 +276,7 @@ function blockedOrSuppressedFromInputs(args: {
       authority: "blocked",
       agent_surface: "do_not_use",
       reason_codes: ["agent_context_do_not_use"],
+      recall_sources: [],
     });
   }
   return [...byId.values()];

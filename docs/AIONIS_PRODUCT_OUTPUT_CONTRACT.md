@@ -123,6 +123,21 @@ type AionisMemoryUseReceipt = {
     decision_kind: "used" | "downgraded" | "blocked" | "rehydrate" | "not_agent_facing";
     actionable: boolean;
     reason_codes: string[];
+    recall_sources: Array<{
+      kind:
+        | "semantic"
+        | "lexical"
+        | "structured"
+        | "execution_native"
+        | "graph"
+        | "recent"
+        | "exact_recovery"
+        | "ann";
+      score?: number;
+      reason: string;
+      matched_fields: string[];
+      index_name?: string;
+    }>;
   }>;
   risk_flags: string[];
   summary: string;
@@ -136,6 +151,7 @@ type AionisMemoryUseReceipt = {
 | memory IDs exposed through `use_now`, `inspect_before_use`, `do_not_use`, or `rehydrate` | raw memory rows or raw slots |
 | feedback attribution and unattributed recalled IDs | full prompt text or hidden trace internals |
 | compact decision summaries with surface and reason codes | raw memory text, raw slots, or full trace internals |
+| read-only recall source traces for why a candidate was retrieved | recall source traces as authority or prompt instructions |
 | read-only risk/sparse feedback signals | runtime mutation, suppression, archive, or promotion actions |
 | prompt character count and `actionable_history_used` | claims that a memory was useful unless feedback attribution says so |
 
@@ -194,6 +210,13 @@ type AionisMemoryAdmissionRecord = {
     attribution_strength: string | null;
     reason_codes: string[];
     evidence_ids: string[];
+    recall_sources: Array<{
+      kind: "semantic" | "lexical" | "structured" | "execution_native" | "graph" | "recent" | "exact_recovery" | "ann";
+      score?: number;
+      reason: string;
+      matched_fields: string[];
+      index_name?: string;
+    }>;
   }>;
   summary: string;
 };
@@ -204,6 +227,7 @@ type AionisMemoryAdmissionRecord = {
 | Include | Exclude |
 |---|---|
 | candidate memory id, surface/action, decision kind, reason codes, evidence ids | raw memory text, raw slots, embeddings, or prompt payload |
+| recall source traces showing candidate-generation source, score, matched fields, and index name | treating retrieval source as memory authority |
 | prompt exposure and `agent_used` derived from feedback attribution | learned policy claims or mutation authority |
 | `guide_trace_id`, prompt character count, and actionable-history flags | new Runtime gate behavior |
 | feedback outcome only when tied to affected or attributed memory | benchmark-only labels |
@@ -244,11 +268,28 @@ type AionisAgentFlightRecorderReport = {
     inspect_before_use_memory_ids: string[];
     do_not_use_memory_ids: string[];
     rehydrate_memory_ids: string[];
+    recall_sources_by_memory_id: Array<{
+      memory_id: string;
+      recall_sources: Array<{
+        kind: "semantic" | "lexical" | "structured" | "execution_native" | "graph" | "recent" | "exact_recovery" | "ann";
+        score?: number;
+        reason: string;
+        matched_fields: string[];
+        index_name?: string;
+      }>;
+    }>;
   };
   blocked_or_suppressed: Array<{
     memory_id: string;
     agent_surface: "do_not_use" | "inspect_before_use" | "rehydrate" | "use_now" | "not_agent_facing";
     reason_codes: string[];
+    recall_sources: Array<{
+      kind: "semantic" | "lexical" | "structured" | "execution_native" | "graph" | "recent" | "exact_recovery" | "ann";
+      score?: number;
+      reason: string;
+      matched_fields: string[];
+      index_name?: string;
+    }>;
   }>;
   attribution: {
     present: boolean;
@@ -751,6 +792,21 @@ type AionisMemoryPacket = {
       | "rehydration_candidate"
       | "unknown";
     evidence_ids: string[];
+    recall_sources: Array<{
+      kind:
+        | "semantic"
+        | "lexical"
+        | "structured"
+        | "execution_native"
+        | "graph"
+        | "recent"
+        | "exact_recovery"
+        | "ann";
+      score?: number;
+      reason: string;
+      matched_fields: string[];
+      index_name?: string;
+    }>;
     scope_hint?: string | null;
     execution_state?: {
       summary_kind: string | null;
