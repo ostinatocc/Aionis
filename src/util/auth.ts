@@ -7,6 +7,8 @@ export type AuthPrincipal = {
   agent_id: string | null;
   team_id: string | null;
   role: string | null;
+  default_scope: string | null;
+  allowed_scopes: string[];
   source: "api_key" | "jwt";
 };
 
@@ -15,6 +17,8 @@ type ApiKeyRecord = {
   agent_id: string | null;
   team_id: string | null;
   role: string | null;
+  default_scope: string | null;
+  allowed_scopes: string[];
 };
 
 export type AuthResolver = {
@@ -33,6 +37,21 @@ function firstHeader(v: unknown): string | null {
   if (typeof v === "string") return asTrimmed(v);
   if (Array.isArray(v) && v.length > 0) return firstHeader(v[0]);
   return null;
+}
+
+function asStringList(v: unknown): string[] {
+  if (Array.isArray(v)) {
+    return v
+      .map((item) => asTrimmed(item))
+      .filter((item): item is string => !!item);
+  }
+  const single = asTrimmed(v);
+  if (!single) return [];
+  if (!single.includes(",")) return [single];
+  return single
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
 }
 
 function parseApiKeys(rawJson: string): Map<string, ApiKeyRecord> {
@@ -63,6 +82,8 @@ function parseApiKeys(rawJson: string): Map<string, ApiKeyRecord> {
       agent_id: asTrimmed(row.agent_id),
       team_id: asTrimmed(row.team_id),
       role: asTrimmed(row.role),
+      default_scope: asTrimmed(row.default_scope),
+      allowed_scopes: asStringList(row.allowed_scopes ?? row.scopes),
     });
   }
   return out;
@@ -120,6 +141,8 @@ function jwtClaimsToPrincipal(payload: Record<string, unknown>): AuthPrincipal |
     agent_id: asTrimmed(payload.agent_id) ?? asTrimmed(payload.sub),
     team_id: asTrimmed(payload.team_id),
     role: asTrimmed(payload.role),
+    default_scope: asTrimmed(payload.default_scope),
+    allowed_scopes: asStringList(payload.allowed_scopes ?? payload.scopes ?? payload.scope),
     source: "jwt",
   };
 }
@@ -130,6 +153,8 @@ function apiKeyRecordToPrincipal(rec: ApiKeyRecord): AuthPrincipal {
     agent_id: rec.agent_id,
     team_id: rec.team_id,
     role: rec.role,
+    default_scope: rec.default_scope,
+    allowed_scopes: rec.allowed_scopes,
     source: "api_key",
   };
 }

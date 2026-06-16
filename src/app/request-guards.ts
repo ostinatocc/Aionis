@@ -100,6 +100,75 @@ function assertServerRequestGuardPosture(env: Env): void {
   }
 }
 
+function firstHeaderValue(v: unknown): string {
+  if (typeof v === "string") return v.trim();
+  if (Array.isArray(v) && v.length > 0) return firstHeaderValue(v[0]);
+  return "";
+}
+
+function stringField(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function serverDefaultScopeForPrincipal(env: Env, principal: AuthPrincipal): string {
+  if (principal.default_scope && principal.default_scope.trim().length > 0) return principal.default_scope.trim();
+  const configured = env.MEMORY_SCOPE.trim();
+  if (!configured || configured === "default") return `${principal.tenant_id}/default`;
+  if (configured === principal.tenant_id || configured.startsWith(`${principal.tenant_id}/`)) return configured;
+  return `${principal.tenant_id}/${configured}`;
+}
+
+function assertTenantAllowedForPrincipal(args: {
+  principal: AuthPrincipal;
+  tenantId: string;
+  source: string;
+}): void {
+  const tenantId = args.tenantId.trim();
+  if (!tenantId) return;
+  if (tenantId === args.principal.tenant_id) return;
+  throw new HttpError(403, "tenant_forbidden", "tenant is not allowed for this principal", {
+    source: args.source,
+  });
+}
+
+function assertScopeAllowedForPrincipal(args: {
+  principal: AuthPrincipal;
+  scope: string;
+}): void {
+  const scope = args.scope.trim();
+  if (!scope) throw new HttpError(400, "invalid_scope", "scope is required");
+  if (args.principal.allowed_scopes.includes(scope)) return;
+  if (args.principal.default_scope === scope) return;
+  if (scope === args.principal.tenant_id || scope.startsWith(`${args.principal.tenant_id}/`)) return;
+  throw new HttpError(403, "scope_forbidden", "scope is not allowed for this principal");
+}
+
+function assertNoTenantOverrideInSlots(args: {
+  value: unknown;
+  principal: AuthPrincipal;
+}): void {
+  const visit = (value: unknown, path: string[], insideSlots: boolean) => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      value.forEach((item, idx) => visit(item, [...path, String(idx)], insideSlots));
+      return;
+    }
+    const record = value as Record<string, unknown>;
+    for (const [key, child] of Object.entries(record)) {
+      const childPath = [...path, key];
+      const childInsideSlots = insideSlots || key === "slots";
+      if (childInsideSlots && key === "tenant_id" && typeof child === "string" && child.trim() && child.trim() !== args.principal.tenant_id) {
+        throw new HttpError(403, "tenant_forbidden", "tenant is not allowed for this principal", {
+          source: childPath.join("."),
+        });
+      }
+      visit(child, childPath, childInsideSlots);
+    }
+  };
+  visit(args.value, [], false);
+}
+
 function isLoopbackIp(ip: string | undefined): boolean {
   if (!ip) return false;
   return ip === "127.0.0.1" || ip === "::1" || ip.startsWith("::ffff:127.0.0.1");
@@ -287,25 +356,37 @@ export function createRequestGuards({
   const withIdentityFromRequest = (
     req: any,
     body: unknown,
-    _principal: AuthPrincipal | null,
+    principal: AuthPrincipal | null,
     kind: IdentityRequestKind,
   ): unknown => {
     if (!body || typeof body !== "object" || Array.isArray(body)) return body;
     const obj = { ...(body as Record<string, any>) };
     const headerTenantRaw = req?.headers?.["x-tenant-id"];
-    const headerTenant = typeof headerTenantRaw === "string" ? headerTenantRaw.trim() : "";
+    const headerTenant = firstHeaderValue(headerTenantRaw);
     const bodyTenant = typeof obj.tenant_id === "string" ? obj.tenant_id.trim() : "";
 
-    if (!bodyTenant && headerTenant) {
-      obj.tenant_id = headerTenant;
-    }
-    if (typeof obj.tenant_id === "string" && obj.tenant_id.trim().length > 0) {
-      (req as any).aionis_tenant_id = obj.tenant_id.trim();
-    } else if (headerTenant) {
-      (req as any).aionis_tenant_id = headerTenant;
-    }
-    if (typeof obj.scope === "string" && obj.scope.trim().length > 0) {
-      (req as any).aionis_scope = obj.scope.trim();
+    if (env.AIONIS_EDITION === "server" && principal) {
+      assertTenantAllowedForPrincipal({ principal, tenantId: headerTenant, source: "x-tenant-id" });
+      assertTenantAllowedForPrincipal({ principal, tenantId: bodyTenant, source: "body.tenant_id" });
+      assertNoTenantOverrideInSlots({ value: obj, principal });
+      const requestedScope = stringField(obj, "scope") || serverDefaultScopeForPrincipal(env, principal);
+      assertScopeAllowedForPrincipal({ principal, scope: requestedScope });
+      obj.tenant_id = principal.tenant_id;
+      obj.scope = requestedScope;
+      (req as any).aionis_tenant_id = principal.tenant_id;
+      (req as any).aionis_scope = requestedScope;
+    } else {
+      if (!bodyTenant && headerTenant) {
+        obj.tenant_id = headerTenant;
+      }
+      if (typeof obj.tenant_id === "string" && obj.tenant_id.trim().length > 0) {
+        (req as any).aionis_tenant_id = obj.tenant_id.trim();
+      } else if (headerTenant) {
+        (req as any).aionis_tenant_id = headerTenant;
+      }
+      if (typeof obj.scope === "string" && obj.scope.trim().length > 0) {
+        (req as any).aionis_scope = obj.scope.trim();
+      }
     }
 
     if (isReplayReadIdentityKind(kind) && !obj.consumer_agent_id) {

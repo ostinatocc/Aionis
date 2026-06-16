@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import stableStringify from "fast-json-stable-stringify";
 import { z } from "zod";
 import type { Env } from "../config.js";
+import type { IdentityRequestKind } from "../app/request-guards.js";
 import {
   evaluateAionisEffect,
   type AionisEffectObservation,
@@ -56,7 +57,7 @@ type ProductFacadeArgs = {
     req: FastifyRequest,
     body: unknown,
     principal: AuthPrincipal | null,
-    kind: "recall",
+    kind: IdentityRequestKind,
   ) => unknown;
   enforceRateLimit: (req: FastifyRequest, reply: FastifyReply, kind: "recall") => Promise<void>;
   enforceTenantQuota: (req: FastifyRequest, reply: FastifyReply, kind: "recall", tenantId: string) => Promise<void>;
@@ -2404,7 +2405,9 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
   }
 
   app.post("/v1/observe", async (req: ProductFacadeRequest, reply: FastifyReply) => {
-    const parsed = ProductObserveRequest.parse(req.body);
+    const principal = await requireMemoryPrincipal(req);
+    const body = withIdentityFromRequest(req, req.body, principal, "write");
+    const parsed = ProductObserveRequest.parse(body);
     const writeBundle = observeWritePayload(parsed);
     const writePayload = writeBundle?.payload ?? null;
     const handoffPayload = parsed.handoff ? mergeProductScope(parsed, parsed.handoff) : null;
@@ -2455,7 +2458,9 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
   });
 
   app.post("/v1/guide", async (req: ProductFacadeRequest, reply: FastifyReply) => {
-    const parsed = ProductGuideRequest.parse(req.body);
+    const principal = await requireMemoryPrincipal(req);
+    const requestBody = withIdentityFromRequest(req, req.body, principal, "recall");
+    const parsed = ProductGuideRequest.parse(requestBody);
     const payload = {
       ...parsed,
       context: parsed.context ?? {},
@@ -2467,21 +2472,21 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       payload,
     });
     if (!guide.ok) return sendInternalFailure(reply, guide);
-    const body = guide.body && typeof guide.body === "object" && !Array.isArray(guide.body)
+    const guideBody = guide.body && typeof guide.body === "object" && !Array.isArray(guide.body)
       ? guide.body as Record<string, unknown>
       : {};
-    const recall = body.recall && typeof body.recall === "object" && !Array.isArray(body.recall)
-      ? body.recall as Record<string, unknown>
+    const recall = guideBody.recall && typeof guideBody.recall === "object" && !Array.isArray(guideBody.recall)
+      ? guideBody.recall as Record<string, unknown>
       : {};
     let memoryPacket: AionisMemoryPacket | null = recall.aionis_memory_packet
       ? AionisMemoryPacketSchema.parse(recall.aionis_memory_packet)
       : null;
-    const guidePacket: AionisGuidePacket | null = body.aionis_guide_packet
-      ? AionisGuidePacketSchema.parse(body.aionis_guide_packet)
+    const guidePacket: AionisGuidePacket | null = guideBody.aionis_guide_packet
+      ? AionisGuidePacketSchema.parse(guideBody.aionis_guide_packet)
       : null;
     const agentRole = productGuideAgentRole(parsed);
-    const tenantId = String(body.tenant_id ?? parsed.tenant_id ?? env.MEMORY_TENANT_ID);
-    const scope = String(body.scope ?? parsed.scope ?? env.MEMORY_SCOPE);
+    const tenantId = String(guideBody.tenant_id ?? parsed.tenant_id ?? env.MEMORY_TENANT_ID);
+    const scope = String(guideBody.scope ?? parsed.scope ?? env.MEMORY_SCOPE);
     const fullPowerRequested = productGuideFullPowerRequested(parsed);
     const agentContextMode = productGuideAgentContextMode(parsed);
     let fullPowerStructuredMemoryMerged = false;
@@ -2738,17 +2743,23 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
   };
 
   app.post("/v1/forget", async (req: ProductFacadeRequest, reply: FastifyReply) => {
-    const parsed = ProductForgetRequest.parse(req.body);
+    const principal = await requireMemoryPrincipal(req);
+    const body = withIdentityFromRequest(req, req.body, principal, "anchors_suppress");
+    const parsed = ProductForgetRequest.parse(body);
     return handleProductLifecycle(req, reply, parsed, "forget");
   });
 
   app.post("/v1/feedback", async (req: ProductFacadeRequest, reply: FastifyReply) => {
-    const parsed = productFeedbackRequest(req.body);
+    const principal = await requireMemoryPrincipal(req);
+    const body = withIdentityFromRequest(req, req.body, principal, "recall");
+    const parsed = productFeedbackRequest(body);
     return handleProductLifecycle(req, reply, parsed, "feedback");
   });
 
   app.post("/v1/rehydrate", async (req: ProductFacadeRequest, reply: FastifyReply) => {
-    const parsed = productRehydrateRequest(req.body);
+    const principal = await requireMemoryPrincipal(req);
+    const body = withIdentityFromRequest(req, req.body, principal, "rehydrate_payload");
+    const parsed = productRehydrateRequest(body);
     return handleProductLifecycle(req, reply, parsed, "rehydrate");
   });
 
