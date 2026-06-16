@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { toVectorLiteral } from "../util/vector-literal.js";
 import { hasNodeWorkflowAnchorSurface } from "../memory/node-execution-surface.js";
 import { mergeRecallCandidatesByRrf } from "../memory/recall-hybrid-merge.js";
 import { memoryNodeVisible } from "./memory-visibility.js";
+import { AnnIndexDimensionError, type AionisLocalAnnIndex, type AnnSearchResult, type AnnVectorRecord } from "./ann/ann-index.js";
 import {
   RECALL_STORE_ACCESS_CAPABILITY_VERSION,
   adjustRecallCandidateSimilarityForTrust,
@@ -108,6 +110,11 @@ type LiteRecallStructuredRow = LiteRecallNodeRow & {
   compression_layer: string | null;
 };
 
+type LiteRecallAnnRebuildRow = LiteRecallNodeRow & {
+  embedding_vector_json: string;
+  embedding_model: string;
+};
+
 type StructuredSignal = {
   field: string;
   column: keyof Pick<
@@ -135,8 +142,15 @@ const SQLITE_IN_CHUNK_SIZE = 800;
 
 export type LiteRecallStore = {
   createRecallAccess(): RecallStoreAccess;
+  rebuildAnnIndex(): Promise<{ indexed: number; skipped: number }>;
   close(): Promise<void>;
   healthSnapshot(): { path: string; mode: "sqlite_recall_v1" };
+};
+
+type LiteRecallAnnOptions = {
+  index: AionisLocalAnnIndex;
+  rebuildOnStart?: boolean;
+  maxCandidates?: number;
 };
 
 function resolveRecallCapabilities(partial?: Partial<RecallStoreCapabilities>): RecallStoreCapabilities {
@@ -208,6 +222,39 @@ function parseEmbedding(raw: string | null | undefined): number[] | null {
   const numbers = parsed.map((v) => Number(v));
   if (numbers.some((v) => !Number.isFinite(v))) return null;
   return numbers;
+}
+
+function vectorHash(raw: string): string {
+  return createHash("sha256").update(raw).digest("hex");
+}
+
+function stringSlot(slots: Record<string, unknown>, key: string): string | null {
+  const value = slots[key];
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function annVectorRecordFromRow(row: LiteRecallAnnRebuildRow): { record: AnnVectorRecord; vector: number[] } | null {
+  const vector = parseEmbedding(row.embedding_vector_json);
+  if (!vector) return null;
+  const slots = parseJsonObject(row.slots_json);
+  return {
+    record: {
+      node_id: row.id,
+      scope: row.scope,
+      tenant_id: null,
+      embedding_model: row.embedding_model,
+      embedding_dim: vector.length,
+      vector_hash: vectorHash(row.embedding_vector_json),
+      tier: row.tier,
+      memory_lane: row.memory_lane,
+      owner_agent_id: row.owner_agent_id,
+      owner_team_id: row.owner_team_id,
+      lifecycle_state: stringSlot(slots, "lifecycle_state"),
+      authority_state: stringSlot(slots, "authority_state"),
+      updated_at: row.created_at,
+    },
+    vector,
+  };
 }
 
 function lexicalTerms(queryText: string): string[] {
@@ -451,11 +498,15 @@ function recallSurfaceAllowed(args: {
 
 export function createLiteRecallStore(
   path: string,
-  opts: { capabilities?: Partial<RecallStoreCapabilities> } = {},
+  opts: { capabilities?: Partial<RecallStoreCapabilities>; ann?: LiteRecallAnnOptions | null } = {},
 ): LiteRecallStore {
   mkdirSync(dirname(path), { recursive: true });
   const db = createSqliteDatabase(path);
   const capabilities = resolveRecallCapabilities(opts.capabilities);
+  const ann = opts.ann ?? null;
+  const annMaxCandidates = Math.max(1, Math.min(10000, Math.trunc(ann?.maxCandidates ?? 200)));
+  let annRebuilt = false;
+  let annRebuildPromise: Promise<{ indexed: number; skipped: number }> | null = null;
 
   db.exec(`
     PRAGMA journal_mode = WAL;
@@ -531,6 +582,203 @@ export function createLiteRecallStore(
     const merged = new Map<string, LiteRecallEdgeSourceRow>();
     for (const edge of fromSrc.concat(fromDst)) merged.set(edge.id, edge);
     return Array.from(merged.values()).sort(edgeSortDesc);
+  };
+
+  const rebuildAnnIndex = async (): Promise<{ indexed: number; skipped: number }> => {
+    if (!ann) return { indexed: 0, skipped: 0 };
+    let indexed = 0;
+    let skipped = 0;
+    const rows = db.prepare(`
+      SELECT
+        id,
+        scope,
+        type,
+        tier,
+        memory_lane,
+        producer_agent_id,
+        owner_agent_id,
+        owner_team_id,
+        title,
+        text_summary,
+        slots_json,
+        raw_ref,
+        evidence_ref,
+        embedding_vector_json,
+        embedding_model,
+        embedding_status,
+        salience,
+        importance,
+        confidence,
+        created_at,
+        commit_id
+      FROM lite_memory_nodes
+      WHERE embedding_status = 'ready'
+        AND embedding_vector_json IS NOT NULL
+        AND embedding_model IS NOT NULL
+    `).all() as LiteRecallAnnRebuildRow[];
+
+    async function* records() {
+      for (const row of rows) {
+        const item = annVectorRecordFromRow(row);
+        if (!item) {
+          skipped += 1;
+          continue;
+        }
+        indexed += 1;
+        yield item;
+      }
+    }
+
+    await ann.index.rebuild(records());
+    annRebuilt = true;
+    return { indexed, skipped };
+  };
+
+  const ensureAnnReady = async (): Promise<void> => {
+    if (!ann || !ann.rebuildOnStart || annRebuilt) return;
+    annRebuildPromise ??= rebuildAnnIndex();
+    await annRebuildPromise;
+  };
+
+  const embeddingModelsForAnnSearch = (
+    params: RecallStage1Params,
+    allowedTiers: string[],
+  ): string[] => {
+    const where = [
+      "scope = ?",
+      `tier IN (${placeholders(allowedTiers.length)})`,
+      "embedding_status = 'ready'",
+      "embedding_vector_json IS NOT NULL",
+      "embedding_model IS NOT NULL",
+      `type IN (${placeholders(STAGE1_RECALL_TYPES.length)})`,
+    ];
+    const values: unknown[] = [params.scope, ...allowedTiers, ...STAGE1_RECALL_TYPES];
+    appendRecallVisibilityWhere(where, values, params.consumerAgentId, params.consumerTeamId);
+    const rows = db.prepare(`
+      SELECT DISTINCT embedding_model
+      FROM lite_memory_nodes
+      WHERE ${where.join("\n        AND ")}
+      ORDER BY embedding_model ASC
+    `).all(...values) as Array<{ embedding_model: string | null }>;
+    return rows
+      .map((row) => row.embedding_model?.trim() ?? "")
+      .filter((model) => model.length > 0);
+  };
+
+  const rowsForAnnResults = (
+    params: RecallStage1Params,
+    allowedTiers: string[],
+    results: AnnSearchResult[],
+  ): LiteRecallNodeRow[] => {
+    if (results.length === 0) return [];
+    const ids = Array.from(new Set(results.map((result) => result.node_id))).filter((id) => id.trim().length > 0);
+    if (ids.length === 0) return [];
+    const rows: LiteRecallNodeRow[] = [];
+    for (let i = 0; i < ids.length; i += SQLITE_IN_CHUNK_SIZE) {
+      const chunk = ids.slice(i, i + SQLITE_IN_CHUNK_SIZE);
+      const where = [
+        "scope = ?",
+        `id IN (${placeholders(chunk.length)})`,
+        `tier IN (${placeholders(allowedTiers.length)})`,
+        "embedding_status = 'ready'",
+        "embedding_vector_json IS NOT NULL",
+        `type IN (${placeholders(STAGE1_RECALL_TYPES.length)})`,
+      ];
+      const values: unknown[] = [params.scope, ...chunk, ...allowedTiers, ...STAGE1_RECALL_TYPES];
+      appendRecallVisibilityWhere(where, values, params.consumerAgentId, params.consumerTeamId);
+      rows.push(...db.prepare(`
+        SELECT
+          id,
+          scope,
+          type,
+          tier,
+          memory_lane,
+          producer_agent_id,
+          owner_agent_id,
+          owner_team_id,
+          title,
+          text_summary,
+          slots_json,
+          raw_ref,
+          evidence_ref,
+          embedding_vector_json,
+          embedding_model,
+          embedding_status,
+          salience,
+          importance,
+          confidence,
+          created_at,
+          commit_id
+        FROM lite_memory_nodes
+        WHERE ${where.join("\n          AND ")}
+      `).all(...values) as LiteRecallNodeRow[]);
+    }
+    return rows;
+  };
+
+  const stage1CandidatesFromAnnSidecar = async (params: RecallStage1Params): Promise<RecallCandidate[] | null> => {
+    if (!ann || params.limit <= 0) return null;
+    await ensureAnnReady();
+    const allowedTiers = normalizeRecallAllowedTiers(params.allowedTiers);
+    const candidateLimit = Math.max(params.limit, Math.min(annMaxCandidates, Math.max(params.oversample, params.limit)));
+    const byId = new Map<string, AnnSearchResult>();
+    for (const model of embeddingModelsForAnnSearch(params, allowedTiers)) {
+      try {
+        const results = await ann.index.search({
+          scope: params.scope,
+          embeddingModel: model,
+          vector: params.queryEmbedding,
+          limit: candidateLimit,
+          filters: { tier: allowedTiers },
+        });
+        for (const result of results) {
+          const existing = byId.get(result.node_id);
+          if (!existing || result.score > existing.score) byId.set(result.node_id, result);
+        }
+      } catch (err) {
+        if (err instanceof AnnIndexDimensionError) continue;
+        throw err;
+      }
+    }
+    if (byId.size === 0) return [];
+    const rows = rowsForAnnResults(params, allowedTiers, Array.from(byId.values()));
+    const out: RecallCandidate[] = [];
+    for (const row of rows) {
+      const annResult = byId.get(row.id);
+      if (!annResult) continue;
+      if (!candidateVisible(row, params.consumerAgentId, params.consumerTeamId)) continue;
+      const slots = parseJsonObject(row.slots_json);
+      if (!recallSurfaceAllowed({ db, scope: params.scope, row, slots })) continue;
+      const similarity = adjustRecallCandidateSimilarityForTrust({
+        type: row.type,
+        slots,
+        similarity: annResult.score,
+      });
+      out.push({
+        id: row.id,
+        type: row.type,
+        title: row.title,
+        text_summary: row.text_summary,
+        tier: row.tier,
+        salience: row.salience,
+        confidence: row.confidence,
+        similarity,
+        sources: [{
+          kind: "ann",
+          score: similarity,
+          reason: "local_ann_index",
+          matched_fields: ["embedding_vector_json"],
+          index_name: "aionis_local_ann",
+        }],
+      });
+    }
+    return out
+      .sort((a, b) =>
+        b.similarity - a.similarity
+        || (byId.get(b.id)?.score ?? 0) - (byId.get(a.id)?.score ?? 0)
+        || b.confidence - a.confidence
+        || a.id.localeCompare(b.id))
+      .slice(0, params.limit);
   };
 
   const stage1Candidates = async (
@@ -850,11 +1098,21 @@ export function createLiteRecallStore(
     stage1StructuredLikeCandidates(params, "structured");
   const stage1ExecutionNativeCandidates = async (params: RecallExecutionNativeParams): Promise<RecallCandidate[]> =>
     stage1StructuredLikeCandidates(params, "execution_native");
+  const stage1SemanticCandidates = async (params: RecallStage1Params): Promise<RecallCandidate[]> => {
+    const annCandidates = await stage1CandidatesFromAnnSidecar(params);
+    if (annCandidates && annCandidates.length > 0) return annCandidates;
+    return stage1Candidates(params, {
+      boundedScan: true,
+      sourceKind: "semantic",
+      sourceReason: "bounded_embedding_scan",
+      sourceIndexName: "lite_embedding_json_scan",
+    });
+  };
   const stage1HybridCandidates = async (params: RecallHybridParams): Promise<RecallCandidate[]> => {
     if (params.limit <= 0) return [];
     const perSourceLimit = Math.max(params.limit, params.limit * 4);
     const semantic = params.queryEmbedding
-      ? await stage1Candidates({
+      ? await stage1SemanticCandidates({
           queryEmbedding: params.queryEmbedding,
           scope: params.scope,
           oversample: params.oversample ?? perSourceLimit,
@@ -863,11 +1121,6 @@ export function createLiteRecallStore(
           scanLimit: params.scanLimit,
           consumerAgentId: params.consumerAgentId,
           consumerTeamId: params.consumerTeamId,
-        }, {
-          boundedScan: true,
-          sourceKind: "semantic",
-          sourceReason: "bounded_embedding_scan",
-          sourceIndexName: "lite_embedding_json_scan",
         })
       : [];
     const lexical = params.queryText
@@ -904,24 +1157,14 @@ export function createLiteRecallStore(
       return {
         capability_version: RECALL_STORE_ACCESS_CAPABILITY_VERSION,
         capabilities,
-        stage1CandidatesAnn: (params) => stage1Candidates(params, {
-          boundedScan: true,
-          sourceKind: "semantic",
-          sourceReason: "bounded_embedding_scan",
-          sourceIndexName: "lite_embedding_json_scan",
-        }),
+        stage1CandidatesAnn: stage1SemanticCandidates,
         stage1CandidatesExactRecovery: (params) => stage1Candidates(params, {
           boundedScan: false,
           sourceKind: "exact_recovery",
           sourceReason: "unbounded_exact_embedding_recovery",
           sourceIndexName: "lite_embedding_json_scan",
         }),
-        stage1SemanticCandidates: (params) => stage1Candidates(params, {
-          boundedScan: true,
-          sourceKind: "semantic",
-          sourceReason: "bounded_embedding_scan",
-          sourceIndexName: "lite_embedding_json_scan",
-        }),
+        stage1SemanticCandidates,
         stage1LexicalCandidates,
         stage1StructuredCandidates,
         stage1ExecutionNativeCandidates,
@@ -1041,6 +1284,8 @@ export function createLiteRecallStore(
         },
       };
     },
+
+    rebuildAnnIndex,
 
     async close(): Promise<void> {
       db.close();

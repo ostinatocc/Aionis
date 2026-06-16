@@ -8,6 +8,7 @@ import { MemoryRecallRequest } from "../../src/memory/schemas.ts";
 import {
   EXACT_RECOVERY_RECALL_STAGE1_ALLOWED_TIERS,
 } from "../../src/store/recall-access.ts";
+import { createLocalAnnIndex } from "../../src/store/ann/local-ann-index.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 
@@ -131,6 +132,76 @@ test("stage1 bounded ANN keeps exact recovery unbounded", async () => {
     assert.equal(exact[0]?.id, "target-exact-match");
     assert.equal(exact[0]?.sources?.[0]?.kind, "exact_recovery");
     assert.equal(exact[0]?.sources?.[0]?.reason, "unbounded_exact_embedding_recovery");
+  } finally {
+    await recallStore.close();
+    await writeStore.close();
+  }
+});
+
+test("stage1 local ANN sidecar is opt-in and still verifies candidates through SQLite facts", async () => {
+  const dbPath = tmpDbPath("stage1-local-ann-sidecar");
+  const writeStore = createLiteWriteStore(dbPath);
+  const recallStore = createLiteRecallStore(dbPath, {
+    ann: {
+      index: createLocalAnnIndex(),
+      rebuildOnStart: true,
+      maxCandidates: 16,
+    },
+  });
+  try {
+    await writeStore.withTx(async () => {
+      const commitId = await insertCommit(writeStore, "default", "stage1-local-ann-sidecar");
+      for (let i = 0; i < 2050; i += 1) {
+        await insertReadyNode(writeStore, {
+          id: `ann-distractor-${String(i).padStart(4, "0")}`,
+          vector: [0, 1, 0],
+          salience: 1,
+          confidence: 1,
+          commitId,
+        });
+      }
+      await insertReadyNode(writeStore, {
+        id: "ann-private-exact-match",
+        vector: [1, 0, 0],
+        salience: 0,
+        confidence: 1,
+        ownerTeamId: "other-team",
+        commitId,
+      });
+      await insertReadyNode(writeStore, {
+        id: "ann-visible-exact-match",
+        vector: [1, 0, 0],
+        salience: 0,
+        confidence: 0.5,
+        commitId,
+      });
+    });
+
+    const access = recallStore.createRecallAccess();
+    const candidates = await access.stage1CandidatesAnn({
+      queryEmbedding: [1, 0, 0],
+      scope: "default",
+      oversample: 1,
+      limit: 2,
+      consumerAgentId: null,
+      consumerTeamId: null,
+    });
+
+    assert.equal(candidates[0]?.id, "ann-visible-exact-match");
+    assert.ok(!candidates.some((candidate) => candidate.id === "ann-private-exact-match"));
+    assert.equal(candidates[0]?.sources?.[0]?.kind, "ann");
+    assert.equal(candidates[0]?.sources?.[0]?.reason, "local_ann_index");
+    assert.equal(candidates[0]?.sources?.[0]?.index_name, "aionis_local_ann");
+
+    const hybrid = await access.stage1HybridCandidates({
+      queryEmbedding: [1, 0, 0],
+      scope: "default",
+      limit: 2,
+      consumerAgentId: null,
+      consumerTeamId: null,
+    });
+    assert.equal(hybrid[0]?.id, "ann-visible-exact-match");
+    assert.ok(hybrid[0]?.sources?.some((source) => source.kind === "ann"));
   } finally {
     await recallStore.close();
     await writeStore.close();

@@ -1641,12 +1641,13 @@ git commit -m "feat: add recall source observability"
 
 ## Task 18: Add Optional ANN Sidecar Interface
 
-Status: first phase implemented. Aionis now has a stable ANN sidecar contract,
-noop provider, local in-memory exact provider, config knobs, and contract tests.
-The provider is default-off and is not yet wired into the product recall path.
-The next phase should make `RECALL_ANN_PROVIDER=local` opt into candidate
-generation from the sidecar, with SQLite fact-source verification before
-governance.
+Status: implemented. Aionis now has a stable ANN sidecar contract, noop
+provider, local in-memory exact provider, config knobs, contract tests, and an
+opt-in Lite recall-store path. `RECALL_ANN_PROVIDER=local` lets semantic
+candidate generation search the sidecar first, then verify IDs through SQLite
+scope/tier/visibility/surface gates before returning `ann` source traces. The
+default provider remains `off`, so existing recall behavior is unchanged unless
+operators opt in.
 
 **Files:**
 - Create: `src/store/ann/ann-index.ts`

@@ -156,8 +156,12 @@ proxy metrics. Full product evaluations must measure them through `/v1/guide`.
    - Current status: the first sidecar contract is implemented behind
      `RECALL_ANN_PROVIDER=off|local`. `off` is the default. The local
      implementation is an in-memory exact sidecar used to stabilize the adapter
-     contract and tests before wiring a production ANN backend. It is not yet
-     the default `stage1CandidatesAnn` path.
+     contract and tests before wiring a production ANN backend. When
+     `RECALL_ANN_PROVIDER=local` is passed into Runtime services, semantic
+     candidate generation can use the sidecar first and then re-check candidate
+     IDs against SQLite scope, tier, visibility, and surface gates before
+     returning `ann` source traces. Empty or unusable sidecar results fall back
+     to the existing bounded SQLite scan.
 
 8. **Flight Recorder and operator visibility**
    - Include recall source traces in operator snapshots and Flight Recorder.
