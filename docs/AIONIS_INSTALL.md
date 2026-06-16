@@ -33,6 +33,17 @@ Runtime editions:
 | `server` | Managed Server path | Remote SDK/MCP endpoint with explicit auth and request controls. Use `AIONIS_EDITION=server`, `AIONIS_MODE=service`, and `MEMORY_AUTH_MODE=api_key`, `jwt`, or `api_key_or_jwt`. |
 | `cloud` | Reserved | Future SaaS control plane. Billing, org management, hosted multi-tenancy, and fleet operations are not implemented in this Runtime package. |
 
+Managed Server exposes hosted-safe probes:
+
+```bash
+curl http://127.0.0.1:3001/healthz
+curl http://127.0.0.1:3001/readyz
+```
+
+`/healthz` returns liveness metadata such as edition, mode, auth mode, and
+package version. `/readyz` returns boolean dependency checks. Neither endpoint
+returns API keys, raw environment values, or local SQLite file paths.
+
 Runtime requirement: Node.js `>=22.5.0` with the built-in experimental
 `node:sqlite` module available. The installer checks both the version and the
 SQLite feature because Lite stores local memory state in SQLite.

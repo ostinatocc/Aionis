@@ -44,6 +44,29 @@ function storeHealthSnapshot(provider?: HealthSnapshotProvider | null): unknown 
   return provider ? toPublicStoreHealthSnapshot(provider.healthSnapshot()) : null;
 }
 
+function hostedSafeHealthPayload(env: Env): Record<string, unknown> {
+  return {
+    ok: true,
+    edition: env.AIONIS_EDITION,
+    mode: env.AIONIS_MODE,
+    storage_backend: resolveRuntimeMemoryStoreBackend(env),
+    auth_mode: env.MEMORY_AUTH_MODE,
+    ...(env.AIONIS_RUNTIME_PACKAGE_NAME ? { package_name: env.AIONIS_RUNTIME_PACKAGE_NAME } : {}),
+    ...(env.AIONIS_RUNTIME_PACKAGE_VERSION ? { package_version: env.AIONIS_RUNTIME_PACKAGE_VERSION } : {}),
+    ...(env.AIONIS_RUNTIME_STARTED_AT ? { started_at: env.AIONIS_RUNTIME_STARTED_AT } : {}),
+  };
+}
+
+function readinessCheck(provider?: HealthSnapshotProvider | null): boolean {
+  if (!provider) return false;
+  try {
+    provider.healthSnapshot();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function assertLiteOnlySourceTree(env: Env): void {
   if (env.AIONIS_EDITION !== "lite") {
     throw new Error("aionis-lite source tree only supports AIONIS_EDITION=lite");
@@ -218,6 +241,26 @@ export function registerHealthRoute(args: {
     sandboxTenantBudgetPolicy,
     sandboxRemoteAllowedCidrs,
   } = args;
+
+  app.get("/healthz", async () => hostedSafeHealthPayload(env));
+
+  app.get("/readyz", async (_req: FastifyRequest, reply: FastifyReply) => {
+    const checks = {
+      recall_store: readinessCheck(liteRecallStore),
+      write_store: readinessCheck(liteWriteStore),
+      execution_state_store: readinessCheck(executionStateStore),
+      execution_tree_store: readinessCheck(executionTreeStore),
+      replay_store: readinessCheck(liteReplayStore),
+      sandbox: readinessCheck(sandboxExecutor),
+    };
+    const ready = Object.values(checks).every((ok) => ok === true);
+    return reply.code(ready ? 200 : 503).send({
+      ...hostedSafeHealthPayload(env),
+      ok: ready,
+      ready,
+      checks,
+    });
+  });
 
   app.get("/health", async () => {
     const sandboxHealth = sandboxExecutor.healthSnapshot();
