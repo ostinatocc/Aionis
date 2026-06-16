@@ -153,6 +153,11 @@ proxy metrics. Full product evaluations must measure them through `/v1/guide`.
    - SQLite remains the fact source. ANN is candidate generation only.
    - Candidate IDs must be checked against SQLite authority/scope/lifecycle
      facts before governance.
+   - Current status: the first sidecar contract is implemented behind
+     `RECALL_ANN_PROVIDER=off|local`. `off` is the default. The local
+     implementation is an in-memory exact sidecar used to stabilize the adapter
+     contract and tests before wiring a production ANN backend. It is not yet
+     the default `stage1CandidatesAnn` path.
 
 8. **Flight Recorder and operator visibility**
    - Include recall source traces in operator snapshots and Flight Recorder.

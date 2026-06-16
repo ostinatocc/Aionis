@@ -7,6 +7,7 @@ const RuntimeModeSchema = z.enum(["local", "service", "cloud"]);
 const EditionSchema = z.enum(["lite", "server"]);
 const AbstractionPolicyProfileSchema = z.enum(["conservative", "balanced", "aggressive"]);
 const InspectBeforeUseModeSchema = z.enum(["shadow", "active"]);
+const RecallAnnProviderSchema = z.enum(["off", "local"]);
 
 function sandboxRemoteHostAllowed(hostname: string, allowlist: string[]): boolean {
   const host = hostname.trim().toLowerCase();
@@ -296,6 +297,15 @@ const EnvSchema = z.object({
     .transform((v) => (v ?? "true").toLowerCase())
     .pipe(z.enum(["true", "false"]))
     .transform((v) => v === "true"),
+  // Optional local ANN sidecar. Default off: ANN only generates candidates and never decides admission.
+  RECALL_ANN_PROVIDER: RecallAnnProviderSchema.default("off"),
+  RECALL_ANN_REBUILD_ON_START: z
+    .string()
+    .optional()
+    .transform((v) => (v ?? "false").toLowerCase())
+    .pipe(z.enum(["true", "false"]))
+    .transform((v) => v === "true"),
+  RECALL_ANN_MAX_CANDIDATES: z.coerce.number().int().positive().max(10000).default(200),
   // Optional default compaction budget for recall_text context output. 0 disables.
   MEMORY_RECALL_TEXT_CONTEXT_TOKEN_BUDGET_DEFAULT: z.coerce.number().int().min(0).max(256000).default(0),
   MEMORY_PLANNING_CONTEXT_OPTIMIZATION_PROFILE_DEFAULT: z.enum(["off", "balanced", "aggressive"]).default("off"),
