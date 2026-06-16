@@ -13,7 +13,10 @@ import {
 } from "./product-output-contract.js";
 import type { LifecycleCandidateEntry } from "./lifecycle-candidate-inference.js";
 
-export const LIFECYCLE_SHADOW_MODEL_PROMPT_VERSION = "memory_lifecycle_shadow_candidate_prompt_v1";
+export const LIFECYCLE_SHADOW_MODEL_PROMPT_VERSION = "memory_lifecycle_shadow_candidate_prompt_v2";
+export const LIFECYCLE_SHADOW_MODEL_MIN_OUTPUT_TOKENS = 3000;
+export const LIFECYCLE_SHADOW_MODEL_PROTOCOL_ATTEMPTS = 3;
+export const LIFECYCLE_SHADOW_MODEL_FALLBACK_PROTOCOL_ATTEMPTS = 1;
 
 const LifecycleShadowCandidateSchema = z
   .object({
@@ -47,6 +50,12 @@ function asObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+function candidateCount(value: unknown): number | null {
+  const root = asObject(value);
+  if (!root) return null;
+  return Array.isArray(root.candidates) ? root.candidates.length : null;
 }
 
 function extractJsonValueFromText(raw: string): unknown {
@@ -156,7 +165,7 @@ function normalizedContains(source: string, quote: string): boolean {
   return !!normalizedQuote && normalizedSource.includes(normalizedQuote);
 }
 
-const REHYDRATE_QUERY_REQUEST_PATTERN = /\b(?:raw|exact|payload|trace|diff|source\s+evidence|supporting\s+material|file[-\s]?level\s+evidence|complete\s+surrounding\s+material|rehydrat(?:e|ion))\b|\b(?:expand|open|recover|load|fetch)\b[^.!?\n]{0,120}\b(?:raw|full\s+context|exact|payload|trace|diff|evidence|pointer|supporting\s+material|source\s+material|complete\s+surrounding\s+material)\b/i;
+const REHYDRATE_QUERY_REQUEST_PATTERN = /\b(?:raw|exact|payload|trace|diff|source\s+evidence|supporting\s+material|file[-\s]?level\s+evidence|complete\s+surrounding\s+material|rehydrat(?:e|ion))\b|\b(?:evidence|trace|payload|raw|source\s+evidence|supporting\s+material)\s+pointers?\b|\b(?:expand|open|recover|load|fetch)\b[^.!?\n]{0,120}\b(?:raw|full\s+context|exact|payload|trace|diff|evidence|pointer|supporting\s+material|source\s+material|complete\s+surrounding\s+material)\b/i;
 const SUMMARY_ONLY_EXCLUSION_PATTERN = /\b(?:do\s+not|don't|cannot|can't|should\s+not|must\s+not)\b[^.!?\n]{0,120}\b(?:rely|depend)\b[^.!?\n]{0,120}\b(?:summary|summaries|summarized\s+context|brief)\b/i;
 const REHYDRATE_MEMORY_POINTER_PATTERN = /\b(?:trace:\/\/|payload:\/\/|archive:\/\/|raw\s+(?:trace|diff|payload|evidence|commit\s+evidence)|exact\s+(?:supporting\s+material|patch\s+details|evidence)|source\s+evidence\s+pointer|evidence\s+pointer|evidence\s+locator|payload\s+pointer|raw\s+execution\s+trace|file[-\s]?level\s+evidence|complete\s+surrounding\s+material|full\s+context)\b/i;
 const REHYDRATE_MEMORY_REQUIREMENT_PATTERN = /\b(?:open(?:ed)?|load(?:ed)?|fetch(?:ed)?|recover(?:ed)?|expand(?:ed)?|rehydrat(?:e|ed|ion))\b[^.!?\n]{0,140}\b(?:raw|full|exact|payload|trace|diff|evidence|supporting\s+material|commit\s+evidence|source\s+material|complete\s+surrounding\s+material|file[-\s]?level)\b|\b(?:raw|full|exact|payload|trace|diff|evidence|supporting\s+material|commit\s+evidence|source\s+material|complete\s+surrounding\s+material|file[-\s]?level)\b[^.!?\n]{0,140}\b(?:must|needs?|requires?|should)\b[^.!?\n]{0,100}\b(?:open(?:ed)?|load(?:ed)?|fetch(?:ed)?|recover(?:ed)?|expand(?:ed)?|rehydrat(?:e|ed|ion))\b|\bsummary\s+is\s+not\s+enough\b/i;
@@ -213,6 +222,39 @@ function rehydrateCandidateAllowed(args: {
   ].join("\n");
   if (GENERIC_SOURCE_ONLY_PATTERN.test(candidateEvidence)) return false;
   return false;
+}
+
+function hasRehydrateOpportunity(args: {
+  entries: LifecycleCandidateEntry[];
+  query_intent?: string | null;
+}): boolean {
+  return queryRequestsRehydrate(args.query_intent)
+    && args.entries.some((entry) => memoryCanServeRehydrate(entry));
+}
+
+function mergeLifecycleCandidateSignals(
+  existing: AionisLifecycleCandidateSignal[],
+  next: AionisLifecycleCandidateSignal[],
+): AionisLifecycleCandidateSignal[] {
+  const out = [...existing];
+  const seen = new Set(out.map((signal) => [
+    signal.memory_id,
+    signal.signal_type,
+    signal.evidence_span.source_field,
+    signal.evidence_span.quote.toLowerCase(),
+  ].join(":")));
+  for (const signal of next) {
+    const key = [
+      signal.memory_id,
+      signal.signal_type,
+      signal.evidence_span.source_field,
+      signal.evidence_span.quote.toLowerCase(),
+    ].join(":");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(signal);
+  }
+  return out.slice(0, 64);
 }
 
 export function validateLifecycleShadowCandidateSignals(args: {
@@ -283,6 +325,17 @@ function compactEntry(entry: LifecycleCandidateEntry) {
   };
 }
 
+function compactFallbackPromptPayload(payload: ReturnType<typeof buildLifecycleShadowCandidatePromptPayload>) {
+  return {
+    prompt_version: payload.prompt_version,
+    operation: payload.operation,
+    query_intent: payload.query_intent,
+    entries: payload.entries,
+    output:
+      "Return JSON only as {candidates:[{memory_id,signal_type,confidence,evidence_span:{source_field,quote},reason}]}. confidence must be a number from 0 to 1. quote must be an exact short substring.",
+  };
+}
+
 export function buildLifecycleShadowCandidatePromptPayload(args: {
   entries: LifecycleCandidateEntry[];
   query_intent?: string | null;
@@ -298,9 +351,11 @@ export function buildLifecycleShadowCandidatePromptPayload(args: {
       allowed_signal_type:
         ["current", "procedure", "negative", "stale", "contested", "rehydrate"],
       evidence_requirement:
-        "evidence_span.quote must be copied verbatim from the selected title, text_summary, slots_text, or query_intent field.",
+        "evidence_span.quote must be copied verbatim from the selected title, text_summary, slots_text, or query_intent field. Prefer the shortest distinctive quote that proves the signal.",
+      coverage_requirement:
+        "Emit every clearly grounded lifecycle candidate you can prove from the supplied fields. Do not stop after the first category when current, procedure, negative/stale, and rehydrate evidence are all present.",
       rehydrate_guard:
-        "Emit rehydrate when query_intent asks for raw/full/exact/payload/trace/diff evidence and the memory is a raw/trace/payload/evidence pointer. Also emit rehydrate when the memory unconditionally says raw/full evidence must be opened before direct use. Conditional pointers such as 'when summary is not enough' are not rehydrate candidates unless query_intent asks for raw evidence. Do not mark ordinary source/supporting memories as rehydrate merely because they contain source data.",
+        "Emit rehydrate when query_intent asks for raw/full/exact/payload/trace/diff evidence or explicitly refers to evidence/trace/payload pointers and the memory is a raw/trace/payload/evidence pointer. Also emit rehydrate when the memory unconditionally says raw/full evidence must be opened before direct use. Conditional pointers such as 'when summary is not enough' are rehydrate candidates only when query_intent asks for raw evidence or explicitly refers to evidence/trace/payload pointers. Do not mark ordinary source/supporting memories as rehydrate merely because they contain source data.",
     },
     derived_hints: {
       query_requests_rehydrate: queryRequestsRehydrate(args.query_intent),
@@ -336,11 +391,11 @@ async function postCandidateJson(args: {
             },
             body: JSON.stringify({
               model,
-              max_tokens: Math.max(args.config.maxTokens, 800),
+              max_tokens: Math.max(args.config.maxTokens, LIFECYCLE_SHADOW_MODEL_MIN_OUTPUT_TOKENS),
               system: args.systemPrompt,
               messages: [{
                 role: "user",
-                content: [{ type: "text", text: JSON.stringify(args.userPayload, null, 2) }],
+                content: [{ type: "text", text: JSON.stringify(args.userPayload) }],
               }],
             }),
             signal: controller.signal,
@@ -354,11 +409,11 @@ async function postCandidateJson(args: {
             body: JSON.stringify({
               model,
               temperature: args.config.temperature,
-              max_tokens: args.config.maxTokens,
+              max_tokens: Math.max(args.config.maxTokens, LIFECYCLE_SHADOW_MODEL_MIN_OUTPUT_TOKENS),
               ...(args.config.openAiExtraBody ?? {}),
               messages: [
                 { role: "system", content: args.systemPrompt },
-                { role: "user", content: JSON.stringify(args.userPayload, null, 2) },
+                { role: "user", content: JSON.stringify(args.userPayload) },
               ],
             }),
             signal: controller.signal,
@@ -390,25 +445,61 @@ export function createHttpLifecycleShadowCandidateProducer(args: {
       query_intent,
       max_entries: args.max_entries,
     });
-    const parsed = await postCandidateJson({
-      config: args.config,
-      fetchImpl: args.fetchImpl,
-      systemPrompt:
-        "You produce audit-only lifecycle candidate signals for Aionis memory. "
-        + "Return strict JSON only. "
-        + "You may only emit candidate signal_type values for supplied memory_id values. "
-        + "Do not output use_now, inspect_before_use, do_not_use, authority, lifecycle_state, edits, filters, or final admission decisions. "
-        + "Every candidate must include an evidence_span.quote copied verbatim from the selected title, text_summary, slots_text, or query_intent field. "
-        + "Emit rehydrate when the query asks for raw/full/exact/payload/trace/diff evidence and a memory is a raw/trace/payload/evidence pointer. "
-        + "Emit rehydrate when a memory unconditionally says raw evidence must be opened before direct use. "
-        + "Do not emit rehydrate for conditional pointers unless the query asks for raw evidence, and do not emit it for ordinary source/supporting memories. "
-        + "If evidence is weak or not explicitly grounded in the supplied text, return {\"candidates\":[]}.",
-      userPayload: promptPayload,
-    });
-    return validateLifecycleShadowCandidateSignals({
-      entries,
-      query_intent,
-      response: parsed,
-    });
+    const systemPrompt =
+      "You produce audit-only lifecycle candidate signals for Aionis memory. "
+      + "Return strict JSON only. "
+      + "You may only emit candidate signal_type values for supplied memory_id values. "
+      + "Do not output use_now, inspect_before_use, do_not_use, authority, lifecycle_state, edits, filters, or final admission decisions. "
+      + "Every candidate must include a short evidence_span.quote copied verbatim from the selected title, text_summary, slots_text, or query_intent field. "
+      + "Emit every clearly grounded lifecycle candidate you can prove from the supplied fields; do not stop after one category. "
+      + "Emit rehydrate when the query asks for raw/full/exact/payload/trace/diff evidence or explicitly refers to evidence/trace/payload pointers and a memory is a raw/trace/payload/evidence pointer. "
+      + "Emit rehydrate when a memory unconditionally says raw evidence must be opened before direct use. "
+      + "Do not emit rehydrate for conditional pointers unless the query asks for raw evidence or explicitly refers to evidence/trace/payload pointers, and do not emit it for ordinary source/supporting memories. "
+      + "If evidence is weak or not explicitly grounded in the supplied text, return {\"candidates\":[]}.";
+    const fallbackSystemPrompt =
+      "JSON only. Produce audit-only lifecycle candidate signals. "
+      + "Use supplied memory_id values only. signal_type must be current, procedure, negative, stale, contested, or rehydrate. "
+      + "confidence must be numeric. quote must be copied exactly. "
+      + "Do not output final admission actions. Ordinary source notes are not rehydrate.";
+    let lastSignals: AionisLifecycleCandidateSignal[] = [];
+    const shouldCoverRehydrate = hasRehydrateOpportunity({ entries, query_intent });
+    for (const prompt of [
+      {
+        systemPrompt,
+        userPayload: promptPayload,
+        attempts: LIFECYCLE_SHADOW_MODEL_PROTOCOL_ATTEMPTS,
+      },
+      {
+        systemPrompt: fallbackSystemPrompt,
+        userPayload: compactFallbackPromptPayload(promptPayload),
+        attempts: LIFECYCLE_SHADOW_MODEL_FALLBACK_PROTOCOL_ATTEMPTS,
+      },
+    ]) {
+      for (let attempt = 0; attempt < prompt.attempts; attempt += 1) {
+        const parsed = await postCandidateJson({
+          config: args.config,
+          fetchImpl: args.fetchImpl,
+          systemPrompt: prompt.systemPrompt,
+          userPayload: prompt.userPayload,
+        });
+        if (parsed === null) continue;
+        const validatedSignals = validateLifecycleShadowCandidateSignals({
+          entries,
+          query_intent,
+          response: parsed,
+        });
+        if (validatedSignals.length > 0) {
+          lastSignals = mergeLifecycleCandidateSignals(lastSignals, validatedSignals);
+        }
+        const count = candidateCount(parsed);
+        const hasRehydrate = lastSignals.some((signal) => signal.signal_type === "rehydrate");
+        if (
+          lastSignals.length > 0
+          && (!shouldCoverRehydrate || hasRehydrate)
+        ) return lastSignals;
+        if (count === 0 && !shouldCoverRehydrate) return lastSignals;
+      }
+    }
+    return lastSignals;
   };
 }

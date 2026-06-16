@@ -8,6 +8,9 @@ import {
 import {
   buildLifecycleShadowCandidatePromptPayload,
   createHttpLifecycleShadowCandidateProducer,
+  LIFECYCLE_SHADOW_MODEL_FALLBACK_PROTOCOL_ATTEMPTS,
+  LIFECYCLE_SHADOW_MODEL_MIN_OUTPUT_TOKENS,
+  LIFECYCLE_SHADOW_MODEL_PROTOCOL_ATTEMPTS,
   validateLifecycleShadowCandidateSignals,
 } from "../../src/memory/lifecycle-shadow-model-producer.ts";
 import {
@@ -163,6 +166,77 @@ test("LLM shadow lifecycle validator accepts query-requested rehydrate for raw p
   assert.equal(signals[0]?.producer, "llm_shadow_v1");
 });
 
+test("LLM shadow lifecycle validator accepts explicit evidence pointer handoff queries", () => {
+  const signals = validateLifecycleShadowCandidateSignals({
+    entries: [
+      {
+        memory_id: "mem-trace",
+        title: "Pointer for exact evidence",
+        summary: "This entry is a pointer to the exact supporting material for src/http/server.ts. Use it when a summary is not enough and the raw commit evidence must be opened.",
+        memory_type: "procedure",
+        domain: "execution",
+        lifecycle_state: "active",
+        authority: "candidate",
+        target_files: ["github://example/repo/commit/abc123", "src/http/server.ts"],
+        execution_state: {
+          execution_kind: "execution_workflow",
+          transition_kind: "inspect_before_use",
+        },
+      },
+    ],
+    query_intent: "Continue this repository handoff around src/http/server.ts. The history includes branch notes and evidence pointers; choose the live continuation.",
+    response: {
+      candidates: [{
+        memory_id: "mem-trace",
+        signal_type: "rehydrate",
+        confidence: 0.84,
+        evidence_span: {
+          source_field: "text_summary",
+          quote: "pointer to the exact supporting material",
+        },
+        reason: "The query explicitly mentions evidence pointers and this memory is the exact evidence pointer.",
+      }],
+    },
+  });
+  assert.equal(signals.length, 1);
+  assert.equal(signals[0]?.signal_type, "rehydrate");
+});
+
+test("LLM shadow lifecycle validator does not turn ordinary source into rehydrate on pointer queries", () => {
+  const signals = validateLifecycleShadowCandidateSignals({
+    entries: [
+      {
+        memory_id: "mem-source",
+        title: "Repository source note",
+        summary: "Real GitHub source from example/repo commit abc123. Changed files include src/http/server.ts. Source URL: https://github.com/example/repo/commit/abc123.",
+        memory_type: "procedure",
+        domain: "execution",
+        lifecycle_state: "active",
+        authority: "candidate",
+        target_files: ["src/http/server.ts"],
+        execution_state: {
+          execution_kind: "execution_workflow",
+          transition_kind: "resume_current_state",
+        },
+      },
+    ],
+    query_intent: "Continue this repository handoff around src/http/server.ts. The history includes branch notes and evidence pointers; choose the live continuation.",
+    response: {
+      candidates: [{
+        memory_id: "mem-source",
+        signal_type: "rehydrate",
+        confidence: 0.84,
+        evidence_span: {
+          source_field: "text_summary",
+          quote: "Real GitHub source",
+        },
+        reason: "The query mentions evidence pointers, but this is only an ordinary source note.",
+      }],
+    },
+  });
+  assert.deepEqual(signals, []);
+});
+
 test("LLM shadow lifecycle validator does not treat generic open requests as rehydrate", () => {
   const signals = validateLifecycleShadowCandidateSignals({
     entries: [
@@ -292,10 +366,21 @@ test("LLM shadow lifecycle prompt payload marks explicit rehydrate query demand"
   assert.equal(payload.derived_hints.query_requests_rehydrate, true);
 });
 
+test("LLM shadow lifecycle prompt payload marks explicit evidence pointer query demand", () => {
+  const payload = buildLifecycleShadowCandidatePromptPayload({
+    entries,
+    query_intent: "Continue the handoff. The history includes branch notes and evidence pointers.",
+  });
+  assert.equal(payload.derived_hints.query_requests_rehydrate, true);
+  assert.match(payload.response_contract.rehydrate_guard, /evidence\/trace\/payload pointers/);
+  assert.match(payload.response_contract.coverage_requirement, /every clearly grounded lifecycle candidate/);
+});
+
 test("HTTP LLM shadow lifecycle producer validates strict grounded JSON candidates", async () => {
   const fetchImpl: typeof fetch = async (_input, init) => {
     const body = JSON.parse(String(init?.body ?? "{}"));
     assert.equal(body.model, "test-model");
+    assert.equal(body.max_tokens, LIFECYCLE_SHADOW_MODEL_MIN_OUTPUT_TOKENS);
     assert.equal(body.messages[0].role, "system");
     assert.match(body.messages[0].content, /audit-only lifecycle candidate signals/);
     return new Response(JSON.stringify({
@@ -339,6 +424,378 @@ test("HTTP LLM shadow lifecycle producer validates strict grounded JSON candidat
   assert.equal(signals.length, 1);
   assert.equal(signals[0]?.producer, "llm_shadow_v1");
   assert.equal(signals[0]?.signal_type, "negative");
+});
+
+test("HTTP LLM shadow lifecycle producer retries unparseable protocol responses only", async () => {
+  let callCount = 0;
+  const fetchImpl: typeof fetch = async () => {
+    callCount += 1;
+    if (callCount === 1) {
+      return new Response(JSON.stringify({
+        choices: [{
+          message: {
+            content: "",
+          },
+        }],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            candidates: [{
+              memory_id: "mem-current",
+              signal_type: "current",
+              confidence: 0.81,
+              evidence_span: {
+                source_field: "text_summary",
+                quote: "continued from this adapter path",
+              },
+              reason: "The retry produced a parseable grounded candidate.",
+            }],
+          }),
+        },
+      }],
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const producer = createHttpLifecycleShadowCandidateProducer({
+    config: {
+      transport: LEARNING_CONTROL_HTTP_OPENAI_TRANSPORT_CONTRACT_VERSION,
+      baseUrl: "https://example.test/v1",
+      apiKey: "test-key",
+      model: "test-model",
+      timeoutMs: 5000,
+      maxTokens: 800,
+      temperature: 0,
+    },
+    fetchImpl,
+  });
+  const signals = await producer({
+    entries,
+    query_intent: "continue checkout work from the current adapter path",
+  });
+  assert.equal(callCount, 2);
+  assert.equal(signals.length, 1);
+  assert.equal(signals[0]?.signal_type, "current");
+});
+
+test("HTTP LLM shadow lifecycle producer retries nonempty invalid candidate responses", async () => {
+  let callCount = 0;
+  const fetchImpl: typeof fetch = async () => {
+    callCount += 1;
+    if (callCount === 1) {
+      return new Response(JSON.stringify({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              candidates: [{
+                memory_id: "mem-current",
+                signal_type: "current",
+                confidence: "high",
+                evidence_span: {
+                  source_field: "text_summary",
+                  quote: "continued from this adapter path",
+                },
+                reason: "The candidate is semantically plausible but violates the numeric confidence contract.",
+              }],
+            }),
+          },
+        }],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            candidates: [{
+              memory_id: "mem-current",
+              signal_type: "current",
+              confidence: 0.81,
+              evidence_span: {
+                source_field: "text_summary",
+                quote: "continued from this adapter path",
+              },
+              reason: "The retry produced a parseable grounded candidate.",
+            }],
+          }),
+        },
+      }],
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const producer = createHttpLifecycleShadowCandidateProducer({
+    config: {
+      transport: LEARNING_CONTROL_HTTP_OPENAI_TRANSPORT_CONTRACT_VERSION,
+      baseUrl: "https://example.test/v1",
+      apiKey: "test-key",
+      model: "test-model",
+      timeoutMs: 5000,
+      maxTokens: 800,
+      temperature: 0,
+    },
+    fetchImpl,
+  });
+  const signals = await producer({
+    entries,
+    query_intent: "continue checkout work from the current adapter path",
+  });
+  assert.equal(callCount, 2);
+  assert.equal(signals.length, 1);
+  assert.equal(signals[0]?.signal_type, "current");
+});
+
+test("HTTP LLM shadow lifecycle producer does not retry explicit empty candidate responses", async () => {
+  let callCount = 0;
+  const fetchImpl: typeof fetch = async () => {
+    callCount += 1;
+    return new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: JSON.stringify({ candidates: [] }),
+        },
+      }],
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const producer = createHttpLifecycleShadowCandidateProducer({
+    config: {
+      transport: LEARNING_CONTROL_HTTP_OPENAI_TRANSPORT_CONTRACT_VERSION,
+      baseUrl: "https://example.test/v1",
+      apiKey: "test-key",
+      model: "test-model",
+      timeoutMs: 5000,
+      maxTokens: 800,
+      temperature: 0,
+    },
+    fetchImpl,
+  });
+  const signals = await producer({
+    entries,
+    query_intent: "continue checkout work from the current adapter path",
+  });
+  assert.equal(callCount, 1);
+  assert.deepEqual(signals, []);
+});
+
+test("HTTP LLM shadow lifecycle producer can recover through compact fallback prompt", async () => {
+  let callCount = 0;
+  const fetchImpl: typeof fetch = async (_input, init) => {
+    callCount += 1;
+    const body = JSON.parse(String(init?.body ?? "{}"));
+    if (callCount <= LIFECYCLE_SHADOW_MODEL_PROTOCOL_ATTEMPTS) {
+      assert.match(body.messages[0].content, /audit-only lifecycle candidate signals/);
+      return new Response(JSON.stringify({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              candidates: [{
+                memory_id: "mem-current",
+                signal_type: "current",
+                confidence: "high",
+                evidence_span: {
+                  source_field: "text_summary",
+                  quote: "continued from this adapter path",
+                },
+                reason: "Primary prompt response violates the numeric confidence contract.",
+              }],
+            }),
+          },
+        }],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    assert.match(body.messages[0].content, /^JSON only/);
+    return new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            candidates: [{
+              memory_id: "mem-current",
+              signal_type: "current",
+              confidence: 0.82,
+              evidence_span: {
+                source_field: "text_summary",
+                quote: "continued from this adapter path",
+              },
+              reason: "Fallback prompt produced a valid grounded candidate.",
+            }],
+          }),
+        },
+      }],
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const producer = createHttpLifecycleShadowCandidateProducer({
+    config: {
+      transport: LEARNING_CONTROL_HTTP_OPENAI_TRANSPORT_CONTRACT_VERSION,
+      baseUrl: "https://example.test/v1",
+      apiKey: "test-key",
+      model: "test-model",
+      timeoutMs: 5000,
+      maxTokens: 800,
+      temperature: 0,
+    },
+    fetchImpl,
+  });
+  const signals = await producer({
+    entries,
+    query_intent: "continue checkout work from the current adapter path",
+  });
+  assert.equal(
+    callCount,
+    LIFECYCLE_SHADOW_MODEL_PROTOCOL_ATTEMPTS
+      + LIFECYCLE_SHADOW_MODEL_FALLBACK_PROTOCOL_ATTEMPTS,
+  );
+  assert.equal(signals.length, 1);
+  assert.equal(signals[0]?.signal_type, "current");
+});
+
+test("HTTP LLM shadow lifecycle producer retries missing rehydrate coverage when opportunity is explicit", async () => {
+  const rehydrateEntries: LifecycleCandidateEntry[] = [
+    entries[0]!,
+    {
+      memory_id: "mem-trace",
+      title: "Pointer for exact evidence",
+      summary: "This entry is a pointer to the exact supporting material for src/checkout/adapter.ts. Use it when a summary is not enough and the raw commit evidence must be opened.",
+      memory_type: "procedure",
+      domain: "execution",
+      lifecycle_state: "active",
+      authority: "candidate",
+      target_files: ["github://example/repo/commit/abc123", "src/checkout/adapter.ts"],
+      execution_state: {
+        execution_kind: "execution_workflow",
+        transition_kind: "inspect_before_use",
+      },
+    },
+  ];
+  let callCount = 0;
+  const fetchImpl: typeof fetch = async () => {
+    callCount += 1;
+    if (callCount === 1) {
+      return new Response(JSON.stringify({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              candidates: [{
+                memory_id: "mem-current",
+                signal_type: "current",
+                confidence: 0.82,
+                evidence_span: {
+                  source_field: "text_summary",
+                  quote: "continued from this adapter path",
+                },
+                reason: "The first response misses rehydrate coverage.",
+              }],
+            }),
+          },
+        }],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            candidates: [{
+              memory_id: "mem-trace",
+              signal_type: "rehydrate",
+              confidence: 0.84,
+              evidence_span: {
+                source_field: "text_summary",
+                quote: "pointer to the exact supporting material",
+              },
+              reason: "The retry covers the explicit evidence pointer opportunity.",
+            }],
+          }),
+        },
+      }],
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const producer = createHttpLifecycleShadowCandidateProducer({
+    config: {
+      transport: LEARNING_CONTROL_HTTP_OPENAI_TRANSPORT_CONTRACT_VERSION,
+      baseUrl: "https://example.test/v1",
+      apiKey: "test-key",
+      model: "test-model",
+      timeoutMs: 5000,
+      maxTokens: 800,
+      temperature: 0,
+    },
+    fetchImpl,
+  });
+  const signals = await producer({
+    entries: rehydrateEntries,
+    query_intent: "Continue this repository handoff. The history includes branch notes and evidence pointers.",
+  });
+  assert.equal(callCount, 2);
+  assert.equal(signals.length, 2);
+  assert.ok(signals.some((signal) =>
+    signal.memory_id === "mem-current" && signal.signal_type === "current"
+  ));
+  assert.ok(signals.some((signal) =>
+    signal.memory_id === "mem-trace" && signal.signal_type === "rehydrate"
+  ));
+});
+
+test("HTTP LLM shadow lifecycle producer bounds repeated protocol failures", async () => {
+  let callCount = 0;
+  const fetchImpl: typeof fetch = async () => {
+    callCount += 1;
+    return new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: "",
+        },
+      }],
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const producer = createHttpLifecycleShadowCandidateProducer({
+    config: {
+      transport: LEARNING_CONTROL_HTTP_OPENAI_TRANSPORT_CONTRACT_VERSION,
+      baseUrl: "https://example.test/v1",
+      apiKey: "test-key",
+      model: "test-model",
+      timeoutMs: 5000,
+      maxTokens: 800,
+      temperature: 0,
+    },
+    fetchImpl,
+  });
+  const signals = await producer({
+    entries,
+    query_intent: "continue checkout work from the current adapter path",
+  });
+  assert.equal(
+    callCount,
+    LIFECYCLE_SHADOW_MODEL_PROTOCOL_ATTEMPTS
+      + LIFECYCLE_SHADOW_MODEL_FALLBACK_PROTOCOL_ATTEMPTS,
+  );
+  assert.deepEqual(signals, []);
 });
 
 test("LLM shadow lifecycle candidates stay trace-only and do not mutate agent context", () => {
