@@ -124,6 +124,16 @@ function jwtClaimsToPrincipal(payload: Record<string, unknown>): AuthPrincipal |
   };
 }
 
+function apiKeyRecordToPrincipal(rec: ApiKeyRecord): AuthPrincipal {
+  return {
+    tenant_id: rec.tenant_id,
+    agent_id: rec.agent_id,
+    team_id: rec.team_id,
+    role: rec.role,
+    source: "api_key",
+  };
+}
+
 function jwtNotExpired(
   payload: Record<string, unknown>,
   nowSec: number,
@@ -156,7 +166,7 @@ export function createAuthResolver(args: {
     mode === "off"
       ? "none"
       : mode === "api_key"
-        ? "x-api-key"
+        ? "x-api-key_or_authorization"
         : mode === "jwt"
           ? "authorization"
           : "x-api-key_or_authorization";
@@ -168,19 +178,16 @@ export function createAuthResolver(args: {
       if (mode === "off") return null;
 
       if (mode === "api_key" || mode === "api_key_or_jwt") {
-        const apiKey = firstHeader(headers["x-api-key"]);
-        if (apiKey) {
+        const headerApiKey = firstHeader(headers["x-api-key"]);
+        const bearerApiKey = parseBearerToken(headers);
+        const candidates = [headerApiKey, bearerApiKey]
+          .filter((v): v is string => typeof v === "string" && v.length > 0)
+          .filter((v, idx, arr) => arr.indexOf(v) === idx);
+        for (const apiKey of candidates) {
           const rec = apiKeys.get(apiKey);
           if (rec) {
-            return {
-              tenant_id: rec.tenant_id,
-              agent_id: rec.agent_id,
-              team_id: rec.team_id,
-              role: rec.role,
-              source: "api_key",
-            };
+            return apiKeyRecordToPrincipal(rec);
           }
-          if (mode === "api_key") return null;
         }
         if (mode === "api_key") return null;
       }
