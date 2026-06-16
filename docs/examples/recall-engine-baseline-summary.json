@@ -1,25 +1,27 @@
 {
   "contract_version": "aionis_recall_engine_baseline_v1",
-  "generated_at": "2026-06-16T12:11:17.634Z",
+  "generated_at": "2026-06-16T12:38:18.161Z",
   "fixture_version": 1,
   "case_count": 20,
   "recall_access_capability_version": 3,
   "candidate_generation": {
     "semantic_path": "bounded_sqlite_scan_plus_js_cosine_with_source_trace",
     "lexical_path": "lite_keyword_index_like_match",
+    "structured_path": "lite_execution_native_index_signature_match",
+    "execution_native_path": "lite_execution_native_index_anchor_match",
     "exact_recovery_path": "unbounded_lite_exact_recovery_with_source_trace",
     "governance_admission": "out_of_scope_for_recall_only_baseline"
   },
   "metrics": {
     "recall_at_50": 1,
-    "candidate_source_coverage": 0.6083,
+    "candidate_source_coverage": 0.925,
     "use_now_precision_after_governance": null,
     "inspect_before_use_correctness": null,
     "do_not_use_stale_suppression": 1,
     "failed_branch_blocking": 1,
     "rehydrate_hit_rate": 1,
-    "p50_recall_latency_ms": 1.8347,
-    "p95_recall_latency_ms": 6.5835,
+    "p50_recall_latency_ms": 1.2927,
+    "p95_recall_latency_ms": 3.8596,
     "index_rebuild_time_ms": null,
     "embedding_backfill_delay_ms": 0
   },
@@ -42,13 +44,17 @@
       "candidate_sources": {
         "case01-current": [
           "exact_recovery",
+          "execution_native",
           "lexical",
-          "semantic"
+          "semantic",
+          "structured"
         ],
         "case01-failed": [
           "exact_recovery",
+          "execution_native",
           "lexical",
-          "semantic"
+          "semantic",
+          "structured"
         ],
         "case01-distractor": [
           "exact_recovery",
@@ -61,18 +67,17 @@
         "execution_native"
       ],
       "covered_required_sources": [
-        "semantic"
-      ],
-      "missing_required_sources": [
+        "semantic",
         "structured",
         "execution_native"
       ],
+      "missing_required_sources": [],
       "recall_at_50": 1,
-      "source_coverage": 0.3333,
+      "source_coverage": 1,
       "failed_branch_blocking_proxy": 1,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 6.5835
+      "latency_ms": 3.8596
     },
     {
       "case_id": "case02_preference_scope",
@@ -89,8 +94,10 @@
         ],
         "case02-distractor": [
           "exact_recovery",
+          "execution_native",
           "lexical",
-          "semantic"
+          "semantic",
+          "structured"
         ]
       },
       "required_sources": [
@@ -107,7 +114,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 2.1266
+      "latency_ms": 1.1852
     },
     {
       "case_id": "case03_stale_endpoint",
@@ -120,8 +127,10 @@
       "candidate_sources": {
         "case03-current": [
           "exact_recovery",
+          "execution_native",
           "lexical",
-          "semantic"
+          "semantic",
+          "structured"
         ],
         "case03-stale": [
           "exact_recovery",
@@ -134,17 +143,16 @@
         "structured"
       ],
       "covered_required_sources": [
-        "semantic"
-      ],
-      "missing_required_sources": [
+        "semantic",
         "structured"
       ],
+      "missing_required_sources": [],
       "recall_at_50": 1,
-      "source_coverage": 0.5,
+      "source_coverage": 1,
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": 1,
       "rehydrate_hit_rate": null,
-      "latency_ms": 2.8009
+      "latency_ms": 2.409
     },
     {
       "case_id": "case04_rehydrate_plan",
@@ -156,7 +164,9 @@
       "candidate_sources": {
         "case04-anchor": [
           "exact_recovery",
-          "lexical"
+          "execution_native",
+          "lexical",
+          "structured"
         ]
       },
       "required_sources": [
@@ -174,7 +184,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": 1,
-      "latency_ms": 1.8347
+      "latency_ms": 0.9071
     },
     {
       "case_id": "case05_target_file_structured_gap",
@@ -187,7 +197,9 @@
       "candidate_sources": {
         "case05-current": [
           "exact_recovery",
-          "semantic"
+          "execution_native",
+          "semantic",
+          "structured"
         ],
         "case05-contested": [
           "exact_recovery",
@@ -199,17 +211,16 @@
         "structured"
       ],
       "covered_required_sources": [
-        "semantic"
-      ],
-      "missing_required_sources": [
+        "semantic",
         "structured"
       ],
+      "missing_required_sources": [],
       "recall_at_50": 1,
-      "source_coverage": 0.5,
+      "source_coverage": 1,
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 1.8857
+      "latency_ms": 1.0572
     },
     {
       "case_id": "case06_tool_chain",
@@ -222,13 +233,17 @@
       "candidate_sources": {
         "case06-current": [
           "exact_recovery",
+          "execution_native",
           "lexical",
-          "semantic"
+          "semantic",
+          "structured"
         ],
         "case06-failed-command": [
           "exact_recovery",
+          "execution_native",
           "lexical",
-          "semantic"
+          "semantic",
+          "structured"
         ]
       },
       "required_sources": [
@@ -237,18 +252,17 @@
         "execution_native"
       ],
       "covered_required_sources": [
-        "semantic"
-      ],
-      "missing_required_sources": [
+        "semantic",
         "structured",
         "execution_native"
       ],
+      "missing_required_sources": [],
       "recall_at_50": 1,
-      "source_coverage": 0.3333,
+      "source_coverage": 1,
       "failed_branch_blocking_proxy": 1,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 3.1949
+      "latency_ms": 1.7788
     },
     {
       "case_id": "case07_cold_exact_low_salience",
@@ -279,7 +293,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 0.6691
+      "latency_ms": 0.5775
     },
     {
       "case_id": "case08_multi_agent_handoff",
@@ -292,13 +306,17 @@
       "candidate_sources": {
         "case08-plan": [
           "exact_recovery",
+          "execution_native",
           "lexical",
-          "semantic"
+          "semantic",
+          "structured"
         ],
         "case08-review": [
           "exact_recovery",
+          "execution_native",
           "lexical",
-          "semantic"
+          "semantic",
+          "structured"
         ]
       },
       "required_sources": [
@@ -307,18 +325,17 @@
         "execution_native"
       ],
       "covered_required_sources": [
-        "semantic"
-      ],
-      "missing_required_sources": [
+        "semantic",
         "structured",
         "execution_native"
       ],
+      "missing_required_sources": [],
       "recall_at_50": 1,
-      "source_coverage": 0.3333,
+      "source_coverage": 1,
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 9.2996
+      "latency_ms": 8.6981
     },
     {
       "case_id": "case09_external_candidate_warning",
@@ -348,7 +365,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 1.9211
+      "latency_ms": 1.0755
     },
     {
       "case_id": "case10_archived_raw_trace",
@@ -360,7 +377,9 @@
       "candidate_sources": {
         "case10-archive": [
           "exact_recovery",
-          "lexical"
+          "execution_native",
+          "lexical",
+          "structured"
         ]
       },
       "required_sources": [
@@ -375,7 +394,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": 1,
-      "latency_ms": 0.4549
+      "latency_ms": 2.3198
     },
     {
       "case_id": "case11_repo_signature",
@@ -388,13 +407,17 @@
       "candidate_sources": {
         "case11-current": [
           "exact_recovery",
+          "execution_native",
           "lexical",
-          "semantic"
+          "semantic",
+          "structured"
         ],
         "case11-other-repo": [
           "exact_recovery",
+          "execution_native",
           "lexical",
-          "semantic"
+          "semantic",
+          "structured"
         ]
       },
       "required_sources": [
@@ -402,17 +425,16 @@
         "structured"
       ],
       "covered_required_sources": [
-        "semantic"
-      ],
-      "missing_required_sources": [
+        "semantic",
         "structured"
       ],
+      "missing_required_sources": [],
       "recall_at_50": 1,
-      "source_coverage": 0.5,
+      "source_coverage": 1,
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 0.733
+      "latency_ms": 1.2927
     },
     {
       "case_id": "case12_failure_mode",
@@ -425,12 +447,16 @@
       "candidate_sources": {
         "case12-current": [
           "exact_recovery",
-          "semantic"
+          "execution_native",
+          "semantic",
+          "structured"
         ],
         "case12-failure-mode": [
           "exact_recovery",
+          "execution_native",
           "lexical",
-          "semantic"
+          "semantic",
+          "structured"
         ]
       },
       "required_sources": [
@@ -439,18 +465,17 @@
         "execution_native"
       ],
       "covered_required_sources": [
-        "semantic"
-      ],
-      "missing_required_sources": [
+        "semantic",
         "structured",
         "execution_native"
       ],
+      "missing_required_sources": [],
       "recall_at_50": 1,
-      "source_coverage": 0.3333,
+      "source_coverage": 1,
       "failed_branch_blocking_proxy": 1,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 0.6711
+      "latency_ms": 1.5462
     },
     {
       "case_id": "case13_active_path_missing_file",
@@ -463,13 +488,17 @@
       "candidate_sources": {
         "case13-active-target": [
           "exact_recovery",
+          "execution_native",
           "lexical",
-          "semantic"
+          "semantic",
+          "structured"
         ],
         "case13-old-path": [
           "exact_recovery",
+          "execution_native",
           "lexical",
-          "semantic"
+          "semantic",
+          "structured"
         ]
       },
       "required_sources": [
@@ -478,18 +507,17 @@
         "execution_native"
       ],
       "covered_required_sources": [
-        "semantic"
-      ],
-      "missing_required_sources": [
+        "semantic",
         "structured",
         "execution_native"
       ],
+      "missing_required_sources": [],
       "recall_at_50": 1,
-      "source_coverage": 0.3333,
+      "source_coverage": 1,
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": 1,
       "rehydrate_hit_rate": null,
-      "latency_ms": 1.1984
+      "latency_ms": 1.1353
     },
     {
       "case_id": "case14_general_fact",
@@ -517,7 +545,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 1.0051
+      "latency_ms": 2.3817
     },
     {
       "case_id": "case15_acceptance_check",
@@ -530,8 +558,10 @@
       "candidate_sources": {
         "case15-route": [
           "exact_recovery",
+          "execution_native",
           "lexical",
-          "semantic"
+          "semantic",
+          "structured"
         ],
         "case15-check": [
           "exact_recovery",
@@ -544,17 +574,16 @@
         "structured"
       ],
       "covered_required_sources": [
-        "semantic"
-      ],
-      "missing_required_sources": [
+        "semantic",
         "structured"
       ],
+      "missing_required_sources": [],
       "recall_at_50": 1,
-      "source_coverage": 0.5,
+      "source_coverage": 1,
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 2.8748
+      "latency_ms": 2.3754
     },
     {
       "case_id": "case16_contested_memory",
@@ -567,7 +596,9 @@
       "candidate_sources": {
         "case16-current": [
           "exact_recovery",
-          "semantic"
+          "execution_native",
+          "semantic",
+          "structured"
         ],
         "case16-contested": [
           "exact_recovery",
@@ -580,17 +611,16 @@
         "structured"
       ],
       "covered_required_sources": [
-        "semantic"
-      ],
-      "missing_required_sources": [
+        "semantic",
         "structured"
       ],
+      "missing_required_sources": [],
       "recall_at_50": 1,
-      "source_coverage": 0.5,
+      "source_coverage": 1,
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 2.9099
+      "latency_ms": 0.9727
     },
     {
       "case_id": "case17_recent_working_set",
@@ -602,8 +632,10 @@
       "candidate_sources": {
         "case17-recent": [
           "exact_recovery",
+          "execution_native",
           "lexical",
-          "semantic"
+          "semantic",
+          "structured"
         ]
       },
       "required_sources": [
@@ -621,7 +653,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 1.2062
+      "latency_ms": 0.746
     },
     {
       "case_id": "case18_graph_neighbor_needed",
@@ -634,7 +666,9 @@
       "candidate_sources": {
         "case18-route": [
           "exact_recovery",
-          "semantic"
+          "execution_native",
+          "semantic",
+          "structured"
         ],
         "case18-verifier": [
           "exact_recovery",
@@ -657,7 +691,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 3.1844
+      "latency_ms": 1.6765
     },
     {
       "case_id": "case19_archive_not_direct",
@@ -684,7 +718,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": 1,
-      "latency_ms": 0.8538
+      "latency_ms": 0.4891
     },
     {
       "case_id": "case20_mixed_product_loop",
@@ -699,8 +733,10 @@
       "candidate_sources": {
         "case20-current": [
           "exact_recovery",
+          "execution_native",
           "lexical",
-          "semantic"
+          "semantic",
+          "structured"
         ],
         "case20-stale": [
           "exact_recovery",
@@ -709,12 +745,16 @@
         ],
         "case20-failed": [
           "exact_recovery",
+          "execution_native",
           "lexical",
-          "semantic"
+          "semantic",
+          "structured"
         ],
         "case20-anchor": [
           "exact_recovery",
-          "lexical"
+          "execution_native",
+          "lexical",
+          "structured"
         ]
       },
       "required_sources": [
@@ -725,18 +765,17 @@
       ],
       "covered_required_sources": [
         "semantic",
+        "structured",
+        "execution_native",
         "exact_recovery"
       ],
-      "missing_required_sources": [
-        "structured",
-        "execution_native"
-      ],
+      "missing_required_sources": [],
       "recall_at_50": 1,
-      "source_coverage": 0.5,
+      "source_coverage": 1,
       "failed_branch_blocking_proxy": 1,
       "do_not_use_stale_suppression_proxy": 1,
       "rehydrate_hit_rate": 1,
-      "latency_ms": 1.5082
+      "latency_ms": 1.4498
     }
   ]
 }

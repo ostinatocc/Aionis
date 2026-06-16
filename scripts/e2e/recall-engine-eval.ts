@@ -46,9 +46,12 @@ type RecallEngineMemory = {
   target_files?: string[];
   workflow_signature?: string;
   task_signature?: string;
+  task_family?: string;
   repo_signature?: string;
+  file_cluster?: string;
   tool_chain_signature?: string;
   failure_mode?: string;
+  verification_signature?: string;
   acceptance_check_signature?: string;
   execution_outcome_role?: string;
   requires_rehydrate?: boolean;
@@ -90,6 +93,8 @@ type RecallEngineSummary = {
   candidate_generation: {
     semantic_path: "bounded_sqlite_scan_plus_js_cosine_with_source_trace";
     lexical_path: "lite_keyword_index_like_match";
+    structured_path: "lite_execution_native_index_signature_match";
+    execution_native_path: "lite_execution_native_index_anchor_match";
     exact_recovery_path: "unbounded_lite_exact_recovery_with_source_trace";
     governance_admission: "out_of_scope_for_recall_only_baseline";
   };
@@ -176,10 +181,13 @@ function slotsForMemory(memory: RecallEngineMemory): Record<string, unknown> {
     lifecycle_hint: memory.lifecycle,
     target_files: memory.target_files ?? [],
     task_signature: memory.task_signature ?? null,
+    task_family: memory.task_family ?? null,
     workflow_signature: memory.workflow_signature ?? null,
     repo_signature: memory.repo_signature ?? null,
+    file_cluster: memory.file_cluster ?? null,
     tool_chain_signature: memory.tool_chain_signature ?? null,
     failure_mode: memory.failure_mode ?? null,
+    verification_signature: memory.verification_signature ?? null,
     acceptance_check_signature: memory.acceptance_check_signature ?? null,
     requires_rehydrate: memory.requires_rehydrate === true,
   };
@@ -188,11 +196,15 @@ function slotsForMemory(memory: RecallEngineMemory): Record<string, unknown> {
       execution_kind: "workflow_anchor",
       anchor_kind: "workflow",
       task_signature: memory.task_signature ?? null,
+      task_family: memory.task_family ?? null,
       workflow_signature: memory.workflow_signature ?? null,
       target_files: memory.target_files ?? [],
       repo_signature: memory.repo_signature ?? null,
+      file_cluster: memory.file_cluster ?? null,
       tool_chain_signature: memory.tool_chain_signature ?? null,
       failure_mode: memory.failure_mode ?? null,
+      verification_signature: memory.verification_signature ?? null,
+      acceptance_check_signature: memory.acceptance_check_signature ?? null,
       execution_outcome_role: memory.execution_outcome_role ?? "unknown",
     };
     base.execution_result_summary = {
@@ -279,6 +291,69 @@ function collectCoveredRequiredSources(sourceMap: Map<string, Set<CandidateSourc
   return { covered, missing };
 }
 
+function firstMemoryField(
+  testCase: RecallEngineCase,
+  field: keyof Pick<
+    RecallEngineMemory,
+    | "task_signature"
+    | "workflow_signature"
+    | "failure_mode"
+    | "repo_signature"
+    | "task_family"
+    | "file_cluster"
+    | "tool_chain_signature"
+    | "verification_signature"
+    | "acceptance_check_signature"
+  >,
+): string | null {
+  const mustRecall = new Set(testCase.expected.must_recall_ids);
+  for (const memory of testCase.memories) {
+    if (!mustRecall.has(memory.id)) continue;
+    const value = memory[field];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  for (const memory of testCase.memories) {
+    const value = memory[field];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function targetFilesForCase(testCase: RecallEngineCase): string[] {
+  const mustRecall = new Set(testCase.expected.must_recall_ids);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const memory of testCase.memories) {
+    if (!mustRecall.has(memory.id)) continue;
+    for (const file of memory.target_files ?? []) {
+      const normalized = file.trim();
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+      out.push(normalized);
+    }
+  }
+  return out;
+}
+
+function structuredParamsForCase(testCase: RecallEngineCase, scope: string) {
+  return {
+    scope,
+    limit: 50,
+    taskSignature: firstMemoryField(testCase, "task_signature"),
+    workflowSignature: firstMemoryField(testCase, "workflow_signature"),
+    taskFamily: firstMemoryField(testCase, "task_family"),
+    repoSignature: firstMemoryField(testCase, "repo_signature"),
+    fileCluster: firstMemoryField(testCase, "file_cluster"),
+    toolChainSignature: firstMemoryField(testCase, "tool_chain_signature"),
+    failureMode: firstMemoryField(testCase, "failure_mode"),
+    verificationSignature: firstMemoryField(testCase, "verification_signature"),
+    acceptanceCheckSignature: firstMemoryField(testCase, "acceptance_check_signature"),
+    targetFiles: targetFilesForCase(testCase),
+    consumerAgentId: null,
+    consumerTeamId: null,
+  };
+}
+
 async function evaluateCase(args: {
   access: ReturnType<ReturnType<typeof createLiteRecallStore>["createRecallAccess"]>;
   testCase: RecallEngineCase;
@@ -311,11 +386,14 @@ async function evaluateCase(args: {
     consumerAgentId: null,
     consumerTeamId: null,
   });
+  const structuredParams = structuredParamsForCase(args.testCase, scope);
+  const structured = await args.access.stage1StructuredCandidates(structuredParams);
+  const executionNative = await args.access.stage1ExecutionNativeCandidates(structuredParams);
   const elapsed = performance.now() - start;
 
   const candidateById = new Map<string, RecallCandidate>();
   const sourceMap = new Map<string, Set<CandidateSource>>();
-  for (const candidate of ann.concat(exact, lexical)) {
+  for (const candidate of ann.concat(exact, lexical, structured, executionNative)) {
     const id = candidate.id;
     if (!candidateById.has(id)) candidateById.set(id, candidate);
     sourceMap.set(id, sourceMap.get(id) ?? new Set<CandidateSource>());
@@ -426,6 +504,8 @@ export async function runRecallEngineEval(options: {
       candidate_generation: {
         semantic_path: "bounded_sqlite_scan_plus_js_cosine_with_source_trace",
         lexical_path: "lite_keyword_index_like_match",
+        structured_path: "lite_execution_native_index_signature_match",
+        execution_native_path: "lite_execution_native_index_anchor_match",
         exact_recovery_path: "unbounded_lite_exact_recovery_with_source_trace",
         governance_admission: "out_of_scope_for_recall_only_baseline",
       },

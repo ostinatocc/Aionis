@@ -3,12 +3,15 @@ import { dirname } from "node:path";
 import type { ExecutionNativeV1 } from "../memory/schemas.js";
 import {
   resolveNodeAnchorKind,
+  resolveNodeAcceptanceChecks,
   resolveNodeCompressionLayer,
   resolveNodeErrorSignature,
   resolveNodeExecutionKind,
   resolveNodeNativeExecutionSurface,
   resolveNodePatternSignature,
   resolveNodePatternState,
+  resolveNodeTargetFiles,
+  resolveNodeTaskFamily,
   resolveNodeTaskSignature,
   resolveNodeWorkflowSignature,
 } from "../memory/node-execution-surface.js";
@@ -412,9 +415,17 @@ type LiteExecutionNativeIndexRow = {
   anchor_kind: string | null;
   pattern_state: string | null;
   task_signature: string | null;
+  task_family: string | null;
   error_signature: string | null;
   workflow_signature: string | null;
   pattern_signature: string | null;
+  repo_signature: string | null;
+  file_cluster: string | null;
+  target_files_text: string | null;
+  tool_chain_signature: string | null;
+  failure_mode: string | null;
+  verification_signature: string | null;
+  acceptance_check_signature: string | null;
   compression_layer: string | null;
 };
 
@@ -551,17 +562,82 @@ function appendVisibilityWhereForAlias(args: {
   args.where.push(`(${visibility.join(" OR ")})`);
 }
 
+function recordOrNull(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function firstNonEmptyString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
+}
+
+function uniqueNonEmptyStringList(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+function joinIndexList(values: readonly string[]): string | null {
+  const out = Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+  return out.length > 0 ? out.join("\n") : null;
+}
+
 function executionNativeIndexRowFromNode(row: LiteFindNodeRow): LiteExecutionNativeIndexRow | null {
   const executionNative = resolveNodeNativeExecutionSurface(row.slots);
   if (!executionNative) return null;
+  const anchor = recordOrNull(row.slots.anchor_v1);
+  const executionOutcome = recordOrNull(executionNative.outcome);
+  const anchorOutcome = recordOrNull(anchor?.outcome);
+  const targetFiles = resolveNodeTargetFiles({ slots: row.slots });
+  const acceptanceChecks = resolveNodeAcceptanceChecks({ slots: row.slots });
   return {
     execution_kind: resolveNodeExecutionKind(row.slots),
     anchor_kind: resolveNodeAnchorKind(row.slots),
     pattern_state: resolveNodePatternState(row.slots),
     task_signature: resolveNodeTaskSignature({ slots: row.slots }),
+    task_family: resolveNodeTaskFamily({ slots: row.slots }),
     error_signature: resolveNodeErrorSignature(row.slots),
     workflow_signature: resolveNodeWorkflowSignature({ slots: row.slots }),
     pattern_signature: resolveNodePatternSignature(row.slots),
+    repo_signature: firstNonEmptyString(row.slots.repo_signature, executionNative.repo_signature, anchor?.repo_signature),
+    file_cluster: firstNonEmptyString(row.slots.file_cluster, executionNative.file_cluster, anchor?.file_cluster),
+    target_files_text: joinIndexList(targetFiles),
+    tool_chain_signature: firstNonEmptyString(
+      row.slots.tool_chain_signature,
+      executionNative.tool_chain_signature,
+      anchor?.tool_chain_signature,
+      uniqueNonEmptyStringList(row.slots.tool_set).join(" "),
+      uniqueNonEmptyStringList(executionNative.tool_set).join(" "),
+      uniqueNonEmptyStringList(anchor?.tool_set).join(" "),
+    ),
+    failure_mode: firstNonEmptyString(row.slots.failure_mode, executionNative.failure_mode, anchor?.failure_mode),
+    verification_signature: firstNonEmptyString(
+      row.slots.verification_signature,
+      executionNative.verification_signature,
+      anchor?.verification_signature,
+      executionOutcome?.verification_signature,
+      anchorOutcome?.verification_signature,
+    ),
+    acceptance_check_signature: firstNonEmptyString(
+      row.slots.acceptance_check_signature,
+      executionNative.acceptance_check_signature,
+      anchor?.acceptance_check_signature,
+      executionOutcome?.acceptance_check_signature,
+      anchorOutcome?.acceptance_check_signature,
+      acceptanceChecks[0],
+    ),
     compression_layer: resolveNodeCompressionLayer({ type: row.type, slots: row.slots }),
   };
 }
@@ -856,9 +932,17 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
       anchor_kind TEXT,
       pattern_state TEXT,
       task_signature TEXT,
+      task_family TEXT,
       error_signature TEXT,
       workflow_signature TEXT,
       pattern_signature TEXT,
+      repo_signature TEXT,
+      file_cluster TEXT,
+      target_files_text TEXT,
+      tool_chain_signature TEXT,
+      failure_mode TEXT,
+      verification_signature TEXT,
+      acceptance_check_signature TEXT,
       compression_layer TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -1026,6 +1110,35 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
   } catch {
     // Column already exists in initialized databases.
   }
+  const executionNativeAddedColumns = [
+    "task_family TEXT",
+    "repo_signature TEXT",
+    "file_cluster TEXT",
+    "target_files_text TEXT",
+    "tool_chain_signature TEXT",
+    "failure_mode TEXT",
+    "verification_signature TEXT",
+    "acceptance_check_signature TEXT",
+  ];
+  for (const columnDef of executionNativeAddedColumns) {
+    try {
+      db.exec(`ALTER TABLE lite_memory_execution_native_index ADD COLUMN ${columnDef}`);
+    } catch {
+      // Column already exists in initialized databases.
+    }
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_family_created
+      ON lite_memory_execution_native_index(scope, task_family, created_at DESC, node_id DESC);
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_repo_created
+      ON lite_memory_execution_native_index(scope, repo_signature, created_at DESC, node_id DESC);
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_failure_created
+      ON lite_memory_execution_native_index(scope, failure_mode, created_at DESC, node_id DESC);
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_verification_created
+      ON lite_memory_execution_native_index(scope, verification_signature, created_at DESC, node_id DESC);
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_acceptance_created
+      ON lite_memory_execution_native_index(scope, acceptance_check_signature, created_at DESC, node_id DESC);
+  `);
 
   const deleteExecutionNativeIndexRow = (scope: string, nodeId: string): void => {
     db.prepare(
@@ -1105,8 +1218,10 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
     db.prepare(
       `INSERT INTO lite_memory_execution_native_index
         (scope, node_id, execution_kind, anchor_kind, pattern_state, task_signature, error_signature,
-         workflow_signature, pattern_signature, compression_layer, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         workflow_signature, pattern_signature, task_family, repo_signature, file_cluster, target_files_text,
+         tool_chain_signature, failure_mode, verification_signature, acceptance_check_signature, compression_layer,
+         created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(scope, node_id) DO UPDATE SET
          execution_kind = excluded.execution_kind,
          anchor_kind = excluded.anchor_kind,
@@ -1115,6 +1230,14 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
          error_signature = excluded.error_signature,
          workflow_signature = excluded.workflow_signature,
          pattern_signature = excluded.pattern_signature,
+         task_family = excluded.task_family,
+         repo_signature = excluded.repo_signature,
+         file_cluster = excluded.file_cluster,
+         target_files_text = excluded.target_files_text,
+         tool_chain_signature = excluded.tool_chain_signature,
+         failure_mode = excluded.failure_mode,
+         verification_signature = excluded.verification_signature,
+         acceptance_check_signature = excluded.acceptance_check_signature,
          compression_layer = excluded.compression_layer,
          created_at = excluded.created_at,
          updated_at = excluded.updated_at`,
@@ -1128,6 +1251,14 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
       indexRow.error_signature,
       indexRow.workflow_signature,
       indexRow.pattern_signature,
+      indexRow.task_family,
+      indexRow.repo_signature,
+      indexRow.file_cluster,
+      indexRow.target_files_text,
+      indexRow.tool_chain_signature,
+      indexRow.failure_mode,
+      indexRow.verification_signature,
+      indexRow.acceptance_check_signature,
       indexRow.compression_layer,
       decoded.created_at,
       nowIso(),

@@ -88,6 +88,47 @@ type LiteRecallKeywordRow = LiteRecallNodeRow & {
   lexical_searchable_text: string;
 };
 
+type LiteRecallStructuredRow = LiteRecallNodeRow & {
+  execution_kind: string | null;
+  anchor_kind: string | null;
+  pattern_state: string | null;
+  task_signature: string | null;
+  task_family: string | null;
+  error_signature: string | null;
+  workflow_signature: string | null;
+  pattern_signature: string | null;
+  repo_signature: string | null;
+  file_cluster: string | null;
+  target_files_text: string | null;
+  tool_chain_signature: string | null;
+  failure_mode: string | null;
+  verification_signature: string | null;
+  acceptance_check_signature: string | null;
+  compression_layer: string | null;
+};
+
+type StructuredSignal = {
+  field: string;
+  column: keyof Pick<
+    LiteRecallStructuredRow,
+    | "task_signature"
+    | "task_family"
+    | "error_signature"
+    | "workflow_signature"
+    | "pattern_signature"
+    | "repo_signature"
+    | "file_cluster"
+    | "target_files_text"
+    | "tool_chain_signature"
+    | "failure_mode"
+    | "verification_signature"
+    | "acceptance_check_signature"
+  >;
+  value: string;
+  reason: string;
+  like: boolean;
+};
+
 const STAGE1_RECALL_TYPES = ["event", "topic", "concept", "entity", "rule", "procedure", "self_model"] as const;
 const SQLITE_IN_CHUNK_SIZE = 800;
 
@@ -208,6 +249,94 @@ function lexicalScore(row: LiteRecallKeywordRow, terms: string[], matchedFields:
     + fieldBonus
     + Math.min(0.08, Math.max(0, row.salience) * 0.08)
     + Math.min(0.04, Math.max(0, row.confidence) * 0.04);
+  return Math.max(0, Math.min(1, raw));
+}
+
+function nonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function uniqueStrings(values: readonly unknown[] | undefined): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values ?? []) {
+    const normalized = nonEmptyString(value);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
+function structuredSignals(params: RecallStructuredParams): StructuredSignal[] {
+  const exact: Array<[string, StructuredSignal["column"], unknown, string]> = [
+    ["task_signature", "task_signature", params.taskSignature, "same_task_signature"],
+    ["workflow_signature", "workflow_signature", params.workflowSignature, "same_workflow_signature"],
+    ["error_signature", "error_signature", params.errorSignature, "same_error_signature"],
+    ["pattern_signature", "pattern_signature", params.patternSignature, "same_pattern_signature"],
+    ["task_family", "task_family", params.taskFamily, "same_task_family"],
+    ["repo_signature", "repo_signature", params.repoSignature, "same_repo_signature"],
+    ["file_cluster", "file_cluster", params.fileCluster, "same_file_cluster"],
+    ["tool_chain_signature", "tool_chain_signature", params.toolChainSignature, "same_tool_chain_signature"],
+    ["failure_mode", "failure_mode", params.failureMode, "same_failure_mode"],
+    ["verification_signature", "verification_signature", params.verificationSignature, "same_verification_signature"],
+    ["acceptance_check_signature", "acceptance_check_signature", params.acceptanceCheckSignature, "same_acceptance_check_signature"],
+  ];
+  const out: StructuredSignal[] = [];
+  for (const [field, column, value, reason] of exact) {
+    const normalized = nonEmptyString(value);
+    if (!normalized) continue;
+    out.push({ field, column, value: normalized, reason, like: false });
+  }
+  for (const targetFile of uniqueStrings(params.targetFiles)) {
+    out.push({
+      field: "target_files",
+      column: "target_files_text",
+      value: targetFile,
+      reason: "matching_target_file",
+      like: true,
+    });
+  }
+  return out;
+}
+
+function structuredMatchedFields(row: LiteRecallStructuredRow, signals: StructuredSignal[]): string[] {
+  const matched: string[] = [];
+  for (const signal of signals) {
+    const value = row[signal.column];
+    if (typeof value !== "string") continue;
+    if (signal.like) {
+      if (value.toLowerCase().includes(signal.value.toLowerCase())) matched.push(signal.field);
+      continue;
+    }
+    if (value === signal.value) matched.push(signal.field);
+  }
+  return Array.from(new Set(matched));
+}
+
+function structuredReason(signals: StructuredSignal[], matchedFields: string[]): string {
+  const priority = [
+    "workflow_signature",
+    "task_signature",
+    "target_files",
+    "failure_mode",
+    "verification_signature",
+    "acceptance_check_signature",
+    "repo_signature",
+    "task_family",
+  ];
+  const field = priority.find((candidate) => matchedFields.includes(candidate)) ?? matchedFields[0];
+  return signals.find((signal) => signal.field === field)?.reason ?? "structured_signature_match";
+}
+
+function structuredScore(row: LiteRecallStructuredRow, matchedFields: string[], sourceKind: "structured" | "execution_native"): number {
+  const base = sourceKind === "execution_native" ? 0.54 : 0.48;
+  const raw = base
+    + Math.min(0.3, matchedFields.length * 0.07)
+    + Math.min(0.08, Math.max(0, row.salience) * 0.08)
+    + Math.min(0.06, Math.max(0, row.confidence) * 0.06);
   return Math.max(0, Math.min(1, raw));
 }
 
@@ -599,8 +728,127 @@ export function createLiteRecallStore(
         || a.id.localeCompare(b.id))
       .slice(0, params.limit);
   };
-  const emptyStructuredCandidates = async (_params: RecallStructuredParams): Promise<RecallCandidate[]> => [];
-  const emptyExecutionNativeCandidates = async (_params: RecallExecutionNativeParams): Promise<RecallCandidate[]> => [];
+  const stage1StructuredLikeCandidates = async (
+    params: RecallStructuredParams,
+    sourceKind: "structured" | "execution_native",
+  ): Promise<RecallCandidate[]> => {
+    if (params.limit <= 0) return [];
+    const signals = structuredSignals(params);
+    if (signals.length === 0) return [];
+    const signalWhere: string[] = [];
+    const signalValues: unknown[] = [];
+    for (const signal of signals) {
+      if (signal.like) {
+        signalWhere.push(`LOWER(i.${signal.column}) LIKE ? ESCAPE '\\'`);
+        signalValues.push(`%${escapeSqlLike(signal.value.toLowerCase())}%`);
+      } else {
+        signalWhere.push(`i.${signal.column} = ?`);
+        signalValues.push(signal.value);
+      }
+    }
+    const where = [
+      "i.scope = ?",
+      `n.type IN (${placeholders(STAGE1_RECALL_TYPES.length)})`,
+      `(${signalWhere.join(" OR ")})`,
+    ];
+    const values: unknown[] = [params.scope, ...STAGE1_RECALL_TYPES, ...signalValues];
+    appendRecallVisibilityWhere(where, values, params.consumerAgentId, params.consumerTeamId);
+    const rows = db.prepare(`
+      SELECT
+        n.id,
+        n.scope,
+        n.type,
+        n.tier,
+        n.memory_lane,
+        n.producer_agent_id,
+        n.owner_agent_id,
+        n.owner_team_id,
+        n.title,
+        n.text_summary,
+        n.slots_json,
+        n.raw_ref,
+        n.evidence_ref,
+        n.embedding_vector_json,
+        n.embedding_model,
+        n.embedding_status,
+        n.salience,
+        n.importance,
+        n.confidence,
+        n.created_at,
+        n.commit_id,
+        i.execution_kind,
+        i.anchor_kind,
+        i.pattern_state,
+        i.task_signature,
+        i.task_family,
+        i.error_signature,
+        i.workflow_signature,
+        i.pattern_signature,
+        i.repo_signature,
+        i.file_cluster,
+        i.target_files_text,
+        i.tool_chain_signature,
+        i.failure_mode,
+        i.verification_signature,
+        i.acceptance_check_signature,
+        i.compression_layer
+      FROM lite_memory_execution_native_index i
+      JOIN lite_memory_nodes n
+        ON n.scope = i.scope
+       AND n.id = i.node_id
+      WHERE ${where.join("\n        AND ")}
+      ORDER BY
+        n.salience DESC,
+        n.confidence DESC,
+        n.created_at DESC,
+        n.id DESC
+      LIMIT ?
+    `).all(...values, Math.max(params.limit * 10, params.limit)) as LiteRecallStructuredRow[];
+
+    const out: RecallCandidate[] = [];
+    for (const row of rows) {
+      if (!candidateVisible(row, params.consumerAgentId, params.consumerTeamId)) continue;
+      const slots = parseJsonObject(row.slots_json);
+      if (!recallSurfaceAllowed({ db, scope: params.scope, row, slots })) continue;
+      const matchedFields = structuredMatchedFields(row, signals);
+      if (matchedFields.length === 0) continue;
+      const score = adjustRecallCandidateSimilarityForTrust({
+        type: row.type,
+        slots,
+        similarity: structuredScore(row, matchedFields, sourceKind),
+      });
+      out.push({
+        id: row.id,
+        type: row.type,
+        title: row.title,
+        text_summary: row.text_summary,
+        tier: row.tier,
+        salience: row.salience,
+        confidence: row.confidence,
+        similarity: score,
+        sources: [{
+          kind: sourceKind,
+          score,
+          reason: sourceKind === "execution_native"
+            ? structuredReason(signals, matchedFields).replace(/^same_/, "execution_native_same_")
+            : structuredReason(signals, matchedFields),
+          matched_fields: matchedFields,
+          index_name: "lite_memory_execution_native_index",
+        }],
+      });
+    }
+    return out
+      .sort((a, b) =>
+        b.similarity - a.similarity
+        || b.salience - a.salience
+        || b.confidence - a.confidence
+        || a.id.localeCompare(b.id))
+      .slice(0, params.limit);
+  };
+  const stage1StructuredCandidates = async (params: RecallStructuredParams): Promise<RecallCandidate[]> =>
+    stage1StructuredLikeCandidates(params, "structured");
+  const stage1ExecutionNativeCandidates = async (params: RecallExecutionNativeParams): Promise<RecallCandidate[]> =>
+    stage1StructuredLikeCandidates(params, "execution_native");
   const stage1HybridCandidates = async (params: RecallHybridParams): Promise<RecallCandidate[]> => {
     if (!params.queryEmbedding) return [];
     return stage1Candidates({
@@ -644,8 +892,8 @@ export function createLiteRecallStore(
           sourceIndexName: "lite_embedding_json_scan",
         }),
         stage1LexicalCandidates,
-        stage1StructuredCandidates: emptyStructuredCandidates,
-        stage1ExecutionNativeCandidates: emptyExecutionNativeCandidates,
+        stage1StructuredCandidates,
+        stage1ExecutionNativeCandidates,
         stage1HybridCandidates,
         async stage2Edges(params: RecallStage2EdgesParams): Promise<RecallEdgeRow[]> {
           const seedSet = new Set(params.seedIds);

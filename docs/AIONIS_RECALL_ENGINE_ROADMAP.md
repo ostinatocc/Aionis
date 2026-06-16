@@ -30,9 +30,10 @@ That is the right seam to evolve.
 
 `RecallStoreAccess` capability v3 exposes candidate source traces. The current
 Lite implementation fills source traces for semantic bounded scans, exact
-recovery, and the first keyword lexical source. Structured, execution-native,
-graph, recent, and ANN source methods are contract-visible but intentionally
-empty until their dedicated implementation phases land.
+recovery, the first keyword lexical source, and a first structured /
+execution-native signature source backed by `lite_memory_execution_native_index`.
+Graph, recent, and ANN source methods remain contract-visible future work until
+their dedicated implementation phases land.
 
 Today, `stage1CandidatesAnn` is still not a true ANN index. It is a bounded
 SQLite candidate fetch followed by JavaScript vector parsing and cosine
@@ -114,11 +115,18 @@ proxy metrics. Full product evaluations must measure them through `/v1/guide`.
      `stage1LexicalCandidates` contract.
    - Add structured signature candidates for target files, task signatures,
      workflow signatures, error signatures, tool names, and acceptance checks.
+   - Current status: first Lite structured source is implemented over the
+     execution-native index. It is deterministic candidate generation only; it
+     does not decide memory admission.
 
 4. **Execution-native recall**
    - Strengthen execution-native candidate generation with task family, repo
      signature, file cluster, tool-chain signature, failure mode, verification
      signature, and active-path relations.
+   - Current status: task family, repo signature, file cluster, target files,
+     tool-chain signature, failure mode, verification signature, and acceptance
+     check signature are materialized in `lite_memory_execution_native_index`
+     and exposed through `stage1ExecutionNativeCandidates`.
 
 5. **Hybrid merge**
    - Merge semantic, lexical, structured, execution-native, graph, recent, and
