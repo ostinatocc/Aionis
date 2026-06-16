@@ -21,9 +21,17 @@ temporary Lite Runtime with `EMBEDDING_PROVIDER=none` and shows Aionis blocking
 failed/stale memory before prompt use.
 
 This installs the local-first Lite Runtime. Lite is designed for developer
-machines, local agent hosts, and self-managed deployments behind your own
-boundary. It is not a hosted multi-tenant production service: Lite defaults to
-loopback, `MEMORY_AUTH_MODE=off`, and `TENANT_QUOTA_ENABLED=false`.
+machines and local agent hosts. It is not a hosted multi-tenant production
+service: Lite defaults to loopback, `MEMORY_AUTH_MODE=off`, and
+`TENANT_QUOTA_ENABLED=false`.
+
+Runtime editions:
+
+| Edition | Status | Intended use |
+|---|---|---|
+| `lite` | Default | Local developer Runtime for first-value demos, local agents, SDK quickstarts, and MCP on the same machine. |
+| `server` | Managed Server path | Remote SDK/MCP endpoint with explicit auth and request controls. Use `AIONIS_EDITION=server`, `AIONIS_MODE=service`, and `MEMORY_AUTH_MODE=api_key`, `jwt`, or `api_key_or_jwt`. |
+| `cloud` | Reserved | Future SaaS control plane. Billing, org management, hosted multi-tenancy, and fleet operations are not implemented in this Runtime package. |
 
 Runtime requirement: Node.js `>=22.5.0` with the built-in experimental
 `node:sqlite` module available. The installer checks both the version and the

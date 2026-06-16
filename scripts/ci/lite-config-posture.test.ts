@@ -88,15 +88,16 @@ test("lite unauthenticated remote bind can be intentionally enabled", async () =
   );
 });
 
-test("focused runtime rejects non-lite edition config", async () => {
+test("lite edition rejects service mode posture", async () => {
   await withIsolatedEnv(
     {
-      AIONIS_EDITION: "server",
+      AIONIS_EDITION: "lite",
+      AIONIS_MODE: "service",
     },
     () => {
       assert.throws(
         () => loadEnv(),
-        /AIONIS_EDITION: Invalid literal value, expected "lite"/i,
+        /Aionis Lite requires AIONIS_MODE=local/i,
       );
     },
   );

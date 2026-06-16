@@ -4,7 +4,7 @@ import { parseEmbeddingEnabledSurfacesJson } from "./embeddings/surface-policy.j
 import { parseTrustedProxyCidrs } from "./util/ip-guard.js";
 
 const RuntimeModeSchema = z.enum(["local", "service", "cloud"]);
-const EditionSchema = z.literal("lite");
+const EditionSchema = z.enum(["lite", "server"]);
 const AbstractionPolicyProfileSchema = z.enum(["conservative", "balanced", "aggressive"]);
 const InspectBeforeUseModeSchema = z.enum(["shadow", "active"]);
 
@@ -124,6 +124,12 @@ const EnvSchema = z.object({
   APP_ENV: z.enum(["dev", "ci", "prod"]).default("dev"),
   AIONIS_LISTEN_HOST: z.string().default(""),
   AIONIS_ALLOW_UNAUTHENTICATED_REMOTE: z
+    .string()
+    .optional()
+    .transform((v) => (v ?? "false").toLowerCase())
+    .pipe(z.enum(["true", "false"]))
+    .transform((v) => v === "true"),
+  AIONIS_SERVER_ALLOW_AUTH_OFF_FOR_DEV: z
     .string()
     .optional()
     .transform((v) => (v ?? "false").toLowerCase())
@@ -676,6 +682,28 @@ function isRemoteListenHost(host: string): boolean {
   return !isLoopbackListenHost(host);
 }
 
+function validateEditionPosture(env: Env): void {
+  if (env.AIONIS_EDITION === "lite") {
+    if (env.AIONIS_MODE !== "local") {
+      throw new Error("Aionis Lite requires AIONIS_MODE=local");
+    }
+    if (env.MEMORY_AUTH_MODE !== "off") {
+      throw new Error("Aionis Lite requires MEMORY_AUTH_MODE=off");
+    }
+    if (env.TENANT_QUOTA_ENABLED) {
+      throw new Error("Aionis Lite requires TENANT_QUOTA_ENABLED=false");
+    }
+    return;
+  }
+
+  if (env.AIONIS_MODE !== "service") {
+    throw new Error("Aionis Server requires AIONIS_MODE=service");
+  }
+  if (env.MEMORY_AUTH_MODE === "off" && !env.AIONIS_SERVER_ALLOW_AUTH_OFF_FOR_DEV) {
+    throw new Error("Aionis Server requires MEMORY_AUTH_MODE=api_key, jwt, or api_key_or_jwt");
+  }
+}
+
 export function loadEnv(): Env {
   const modeApplied = withModeDefaults(process.env);
   const editionApplied = withEditionDefaults(modeApplied);
@@ -687,6 +715,7 @@ export function loadEnv(): Env {
   }
   const trustedProxyCidrs = parseTrustedProxyCidrs(parsed.data.TRUSTED_PROXY_CIDRS);
   parsed.data.TRUSTED_PROXY_CIDRS = trustedProxyCidrs.join(",");
+  validateEditionPosture(parsed.data);
   if (parsed.data.AIONIS_EDITION === "lite" && parsed.data.APP_ENV === "prod") {
     throw new Error("Lite runtime does not currently support APP_ENV=prod; use APP_ENV=dev/ci.");
   }

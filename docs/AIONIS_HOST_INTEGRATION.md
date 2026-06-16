@@ -11,6 +11,16 @@ For route-level request and response details, see
 [AIONIS_PRODUCT_API_USAGE.md](AIONIS_PRODUCT_API_USAGE.md). For stable output
 schemas, see [AIONIS_PRODUCT_OUTPUT_CONTRACT.md](AIONIS_PRODUCT_OUTPUT_CONTRACT.md).
 
+## Runtime Editions
+
+Use the right deployment posture before wiring an Agent host:
+
+| Edition | Host shape | Boundary |
+|---|---|---|
+| `lite` | Local SDK/MCP clients on the same developer machine | Defaults to `AIONIS_MODE=local`, loopback, `MEMORY_AUTH_MODE=off`, and no tenant quota. Do not expose Lite as an unauthenticated remote service. |
+| `server` | Remote SDK/MCP clients connecting to a managed endpoint | Requires `AIONIS_MODE=service` and authenticated access with `api_key`, `jwt`, or `api_key_or_jwt` unless an explicit development override is set. |
+| `cloud` | SaaS control plane | Reserved. Billing, organization management, hosted multi-tenancy, and fleet operations are not implemented by this Runtime package. |
+
 ## Integration Contract
 
 Aionis is a memory and execution-learning Runtime. The host still owns task

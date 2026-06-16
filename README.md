@@ -14,10 +14,12 @@ current, stale, contested, failed, reusable, or worth rehydrating, then compiles
 only the admitted execution state into the next Agent context.
 
 Current distribution: Aionis ships as a local-first Lite Runtime plus SDK and
-MCP bridge. It is built for developer machines, local agent hosts, and
-self-managed deployments behind your own boundary. It is not yet a hosted
-multi-tenant production control plane; Lite defaults to loopback and
-unauthenticated local use.
+MCP bridge. Lite is built for developer machines and local agent hosts; it
+defaults to loopback and unauthenticated local use. The codebase is now adding
+a Managed Server Edition for remote SDK/MCP clients with explicit API-key/JWT
+auth and request controls. Managed Server is not the same as Cloud: Cloud-style
+billing, org management, hosted multi-tenant control plane, and fleet
+operations remain outside this Runtime package.
 
 MCP is the fastest way to try Aionis inside coding agents such as Claude Code,
 Cursor, or any MCP-compatible host.
