@@ -61,6 +61,30 @@ async function main() {
     const health = await callTool("aionis_health");
     assertCondition(health.ok === true, "Claude Code MCP demo health check failed");
 
+    const planStep = await callTool("aionis_record_step", {
+      run_id: runId,
+      task_signature: TASK_SIGNATURE,
+      task_family: TASK_FAMILY,
+      workflow_signature: WORKFLOW_SIGNATURE,
+      agent_id: "claude-code-planner",
+      role: "planner",
+      title: "Plan asset: checkout migration route",
+      summary: [
+        "PLAN_AS_MEMORY_ASSET",
+        "Decision: continue the scoped checkout adapter route.",
+        "Acceptance check: verifier accepts scoped route and rejects broad rewrite.",
+        "Execution boundary: legacy broad route remains reference-only.",
+      ].join("\n"),
+      outcome: "succeeded",
+      target_files: [PASSED_TARGET],
+      acceptance_checks: [
+        "verifier accepts scoped checkout route",
+        "legacy broad route remains reference-only",
+      ],
+      continuation_hint: `Treat this plan as execution memory for ${PASSED_TARGET}.`,
+    });
+    assertCondition(planStep.ok === true, "Claude Code MCP demo plan-step observe failed");
+
     const failedStep = await callTool("aionis_record_step", {
       run_id: runId,
       task_signature: TASK_SIGNATURE,
@@ -192,6 +216,11 @@ async function main() {
           "aionis_flight_recorder",
         ],
       },
+      plan_asset: {
+        recorded: planStep.ok === true,
+        planner_agent_id: "claude-code-planner",
+        target_files: [PASSED_TARGET],
+      },
       execution_memory: {
         should_continue_memory_ids: shouldContinueMemoryIds,
         must_not_memory_ids: mustNotMemoryIds,
@@ -216,6 +245,7 @@ async function main() {
       },
       checks: {
         health_ok: health.ok === true,
+        record_plan_asset: planStep.ok === true,
         record_failed_branch: failedStep.ok === true,
         record_passed_branch: passedStep.ok === true,
         context_compiled: executionContext?.contract_version === "aionis_execution_agent_context_v1",

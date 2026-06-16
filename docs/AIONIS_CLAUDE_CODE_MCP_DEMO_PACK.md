@@ -12,10 +12,11 @@ call.
 Most memory tools retrieve related history. Aionis decides what history is
 allowed to affect the next action.
 
-In the demo, Claude Code records two execution memories:
+In the demo, Claude Code records three execution memories:
 
-1. a failed legacy route
-2. an accepted current route
+1. a planner plan asset with decisions and acceptance checks
+2. a failed legacy route
+3. an accepted current route
 
 Then Claude Code asks Aionis for context. Aionis compiles an execution-memory
 contract that tells the Agent what to continue, what to inspect, and what not to
@@ -71,6 +72,7 @@ branch succeeded, which branch failed, and what is safe to continue.
 Show this simple branch history:
 
 ```text
+planner plan -> scoped checkout route is the intended continuation
 legacy checkout route -> verifier failed
 scoped checkout route -> accepted
 ```
@@ -111,6 +113,7 @@ The prompt asks Claude Code to call:
 
 ```text
 aionis_health
+-> aionis_record_step planner plan asset
 -> aionis_record_step failed legacy branch
 -> aionis_record_step accepted current branch
 -> aionis_context
@@ -129,6 +132,7 @@ only one is allowed to guide the next action.
 Point to these fields in `aionis_context`:
 
 ```text
+plan asset recorded            planner decisions and acceptance checks were observed
 use_now_memory_ids              accepted current route
 inspect_before_use_memory_ids   failed legacy route as reference-only evidence
 memory_use_receipt              why each memory was exposed or suppressed
@@ -174,9 +178,10 @@ Most Agent memory products optimize for recall: bring back related history.
 Aionis starts one step later: should this history be allowed to affect the next
 action?
 
-Here Claude Code has two memories. One route failed verifier checks. Another
-route was accepted. A normal recall layer can retrieve both because both are
-semantically related to the current task.
+Here Claude Code has three pieces of execution memory. A planner produced a
+route plan with acceptance checks. One route failed verifier checks. Another
+route was accepted. A normal recall layer can retrieve all of them because they
+are semantically related to the current task.
 
 Now Claude Code asks Aionis for context over MCP. Aionis compiles the execution
 state into a contract. The accepted branch goes into use_now. The failed branch
