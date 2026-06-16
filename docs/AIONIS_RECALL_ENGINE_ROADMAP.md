@@ -132,6 +132,10 @@ proxy metrics. Full product evaluations must measure them through `/v1/guide`.
    - Merge semantic, lexical, structured, execution-native, graph, recent, and
      exact-recovery candidates with source tracing.
    - Prefer RRF or a simple weighted merge before learned ranking.
+   - Current status: first RRF hybrid merge is implemented for
+     `stage1HybridCandidates` over semantic, lexical, structured, and
+     execution-native sources. Existing product recall paths still keep their
+     semantic-scan default until a separate config-gated rollout lands.
 
 6. **Local ANN sidecar**
    - Add a local ANN adapter only after source-aware metrics exist.

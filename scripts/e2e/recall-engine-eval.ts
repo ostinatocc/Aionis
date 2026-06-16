@@ -47,6 +47,7 @@ type RecallEngineMemory = {
   workflow_signature?: string;
   task_signature?: string;
   task_family?: string;
+  error_signature?: string;
   repo_signature?: string;
   file_cluster?: string;
   tool_chain_signature?: string;
@@ -95,6 +96,7 @@ type RecallEngineSummary = {
     lexical_path: "lite_keyword_index_like_match";
     structured_path: "lite_execution_native_index_signature_match";
     execution_native_path: "lite_execution_native_index_anchor_match";
+    hybrid_path: "rrf_merge_over_semantic_lexical_structured_execution_native";
     exact_recovery_path: "unbounded_lite_exact_recovery_with_source_trace";
     governance_admission: "out_of_scope_for_recall_only_baseline";
   };
@@ -182,6 +184,7 @@ function slotsForMemory(memory: RecallEngineMemory): Record<string, unknown> {
     target_files: memory.target_files ?? [],
     task_signature: memory.task_signature ?? null,
     task_family: memory.task_family ?? null,
+    error_signature: memory.error_signature ?? null,
     workflow_signature: memory.workflow_signature ?? null,
     repo_signature: memory.repo_signature ?? null,
     file_cluster: memory.file_cluster ?? null,
@@ -197,6 +200,7 @@ function slotsForMemory(memory: RecallEngineMemory): Record<string, unknown> {
       anchor_kind: "workflow",
       task_signature: memory.task_signature ?? null,
       task_family: memory.task_family ?? null,
+      error_signature: memory.error_signature ?? null,
       workflow_signature: memory.workflow_signature ?? null,
       target_files: memory.target_files ?? [],
       repo_signature: memory.repo_signature ?? null,
@@ -297,6 +301,7 @@ function firstMemoryField(
     RecallEngineMemory,
     | "task_signature"
     | "workflow_signature"
+    | "error_signature"
     | "failure_mode"
     | "repo_signature"
     | "task_family"
@@ -341,6 +346,7 @@ function structuredParamsForCase(testCase: RecallEngineCase, scope: string) {
     limit: 50,
     taskSignature: firstMemoryField(testCase, "task_signature"),
     workflowSignature: firstMemoryField(testCase, "workflow_signature"),
+    errorSignature: firstMemoryField(testCase, "error_signature"),
     taskFamily: firstMemoryField(testCase, "task_family"),
     repoSignature: firstMemoryField(testCase, "repo_signature"),
     fileCluster: firstMemoryField(testCase, "file_cluster"),
@@ -354,6 +360,23 @@ function structuredParamsForCase(testCase: RecallEngineCase, scope: string) {
   };
 }
 
+function structuredHybridInputForCase(testCase: RecallEngineCase) {
+  const params = structuredParamsForCase(testCase, "unused");
+  return {
+    taskSignature: params.taskSignature,
+    workflowSignature: params.workflowSignature,
+    errorSignature: params.errorSignature,
+    taskFamily: params.taskFamily,
+    repoSignature: params.repoSignature,
+    fileCluster: params.fileCluster,
+    toolChainSignature: params.toolChainSignature,
+    failureMode: params.failureMode,
+    verificationSignature: params.verificationSignature,
+    acceptanceCheckSignature: params.acceptanceCheckSignature,
+    targetFiles: params.targetFiles,
+  };
+}
+
 async function evaluateCase(args: {
   access: ReturnType<ReturnType<typeof createLiteRecallStore>["createRecallAccess"]>;
   testCase: RecallEngineCase;
@@ -361,10 +384,11 @@ async function evaluateCase(args: {
 }): Promise<RecallEngineCaseResult> {
   const scope = `recall-engine:${args.testCase.case_id}`;
   const start = performance.now();
-  const ann = await args.access.stage1CandidatesAnn({
+  const hybrid = await args.access.stage1HybridCandidates({
     queryEmbedding: args.testCase.query_vector,
+    queryText: args.testCase.query_text ?? args.testCase.description,
+    structured: structuredHybridInputForCase(args.testCase),
     scope,
-    oversample: 50,
     limit: 50,
     consumerAgentId: null,
     consumerTeamId: null,
@@ -379,21 +403,11 @@ async function evaluateCase(args: {
     consumerAgentId: null,
     consumerTeamId: null,
   });
-  const lexical = await args.access.stage1LexicalCandidates({
-    queryText: args.testCase.query_text ?? args.testCase.description,
-    scope,
-    limit: 50,
-    consumerAgentId: null,
-    consumerTeamId: null,
-  });
-  const structuredParams = structuredParamsForCase(args.testCase, scope);
-  const structured = await args.access.stage1StructuredCandidates(structuredParams);
-  const executionNative = await args.access.stage1ExecutionNativeCandidates(structuredParams);
   const elapsed = performance.now() - start;
 
   const candidateById = new Map<string, RecallCandidate>();
   const sourceMap = new Map<string, Set<CandidateSource>>();
-  for (const candidate of ann.concat(exact, lexical, structured, executionNative)) {
+  for (const candidate of hybrid.concat(exact)) {
     const id = candidate.id;
     if (!candidateById.has(id)) candidateById.set(id, candidate);
     sourceMap.set(id, sourceMap.get(id) ?? new Set<CandidateSource>());
@@ -506,6 +520,7 @@ export async function runRecallEngineEval(options: {
         lexical_path: "lite_keyword_index_like_match",
         structured_path: "lite_execution_native_index_signature_match",
         execution_native_path: "lite_execution_native_index_anchor_match",
+        hybrid_path: "rrf_merge_over_semantic_lexical_structured_execution_native",
         exact_recovery_path: "unbounded_lite_exact_recovery_with_source_trace",
         governance_admission: "out_of_scope_for_recall_only_baseline",
       },

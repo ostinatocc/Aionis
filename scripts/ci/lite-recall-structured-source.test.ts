@@ -78,6 +78,7 @@ async function insertProcedure(
     title: string;
     textSummary: string;
     slots: Record<string, unknown>;
+    embeddingVector?: number[] | null;
     commitId: string;
   },
 ): Promise<void> {
@@ -92,13 +93,13 @@ async function insertProcedure(
     slotsJson: JSON.stringify(args.slots),
     rawRef: null,
     evidenceRef: null,
-    embeddingVector: null,
-    embeddingModel: null,
+    embeddingVector: args.embeddingVector ? JSON.stringify(args.embeddingVector) : null,
+    embeddingModel: args.embeddingVector ? "test" : null,
     memoryLane: "shared",
     producerAgentId: null,
     ownerAgentId: null,
     ownerTeamId: null,
-    embeddingStatus: "pending",
+    embeddingStatus: args.embeddingVector ? "ready" : "pending",
     embeddingLastError: null,
     salience: 0.9,
     importance: 0.5,
@@ -190,6 +191,73 @@ test("structured recall finds execution-native signatures without ready embeddin
     assert.equal(executionNative[0]?.sources?.[0]?.kind, "execution_native");
     assert.ok(executionNative[0]?.sources?.[0]?.matched_fields?.includes("failure_mode"));
     assert.ok(executionNative[0]?.sources?.[0]?.matched_fields?.includes("verification_signature"));
+  } finally {
+    await recallStore.close();
+    await writeStore.close();
+  }
+});
+
+test("hybrid recall merges semantic lexical structured and execution-native source traces", async () => {
+  const dbPath = tmpDbPath("hybrid");
+  const writeStore = createLiteWriteStore(dbPath);
+  const recallStore = createLiteRecallStore(dbPath);
+  try {
+    await writeStore.withTx(async () => {
+      const commitId = await insertCommit(writeStore, "structured/hybrid", "hybrid");
+      await insertProcedure(writeStore, {
+        id: "hybrid-target",
+        scope: "structured/hybrid",
+        title: "Hybrid BeaconRoute workflow",
+        textSummary: "Continue the BeaconRoute workflow through the accepted structured adapter.",
+        slots: workflowSlots({
+          taskSignature: "task:hybrid-beacon",
+          workflowSignature: "workflow:hybrid-beacon",
+          targetFiles: ["src/runtime/beacon-route.ts"],
+          failureMode: "beacon-legacy-failure",
+          verificationSignature: "unit:beacon-route",
+          acceptanceCheckSignature: "accept:beacon-route",
+        }),
+        embeddingVector: [1, 0, 0],
+        commitId,
+      });
+      await insertProcedure(writeStore, {
+        id: "hybrid-semantic-only",
+        scope: "structured/hybrid",
+        title: "Semantic-only neighbor",
+        textSummary: "A nearby but less supported semantic candidate.",
+        slots: workflowSlots({
+          taskSignature: "task:semantic-only",
+          workflowSignature: "workflow:semantic-only",
+          targetFiles: ["src/runtime/semantic-only.ts"],
+        }),
+        embeddingVector: [0.99, 0.01, 0],
+        commitId,
+      });
+    });
+
+    const hybrid = await recallStore.createRecallAccess().stage1HybridCandidates({
+      scope: "structured/hybrid",
+      limit: 5,
+      queryEmbedding: [1, 0, 0],
+      queryText: "BeaconRoute accepted adapter",
+      structured: {
+        taskSignature: "task:hybrid-beacon",
+        workflowSignature: "workflow:hybrid-beacon",
+        targetFiles: ["src/runtime/beacon-route.ts"],
+        failureMode: "beacon-legacy-failure",
+        verificationSignature: "unit:beacon-route",
+        acceptanceCheckSignature: "accept:beacon-route",
+      },
+      consumerAgentId: null,
+      consumerTeamId: null,
+    });
+    assert.equal(hybrid[0]?.id, "hybrid-target");
+    assert.deepEqual(
+      hybrid[0]?.sources?.map((source) => source.kind).sort(),
+      ["execution_native", "lexical", "semantic", "structured"],
+    );
+    assert.ok((hybrid[0]?.similarity ?? 0) <= 1);
+    assert.ok((hybrid[0]?.similarity ?? 0) > (hybrid[1]?.similarity ?? 0));
   } finally {
     await recallStore.close();
     await writeStore.close();

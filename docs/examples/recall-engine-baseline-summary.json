@@ -1,6 +1,6 @@
 {
   "contract_version": "aionis_recall_engine_baseline_v1",
-  "generated_at": "2026-06-16T12:38:18.161Z",
+  "generated_at": "2026-06-16T12:58:26.573Z",
   "fixture_version": 1,
   "case_count": 20,
   "recall_access_capability_version": 3,
@@ -9,6 +9,7 @@
     "lexical_path": "lite_keyword_index_like_match",
     "structured_path": "lite_execution_native_index_signature_match",
     "execution_native_path": "lite_execution_native_index_anchor_match",
+    "hybrid_path": "rrf_merge_over_semantic_lexical_structured_execution_native",
     "exact_recovery_path": "unbounded_lite_exact_recovery_with_source_trace",
     "governance_admission": "out_of_scope_for_recall_only_baseline"
   },
@@ -20,8 +21,8 @@
     "do_not_use_stale_suppression": 1,
     "failed_branch_blocking": 1,
     "rehydrate_hit_rate": 1,
-    "p50_recall_latency_ms": 1.2927,
-    "p95_recall_latency_ms": 3.8596,
+    "p50_recall_latency_ms": 1.2307,
+    "p95_recall_latency_ms": 4.3762,
     "index_rebuild_time_ms": null,
     "embedding_backfill_delay_ms": 0
   },
@@ -77,27 +78,27 @@
       "failed_branch_blocking_proxy": 1,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 3.8596
+      "latency_ms": 4.3762
     },
     {
       "case_id": "case02_preference_scope",
       "description": "Ordinary preference should remain retrievable without execution-native slots.",
       "recalled_ids": [
-        "case02-preference",
-        "case02-distractor"
+        "case02-distractor",
+        "case02-preference"
       ],
       "missed_required_ids": [],
       "candidate_sources": {
-        "case02-preference": [
-          "exact_recovery",
-          "semantic"
-        ],
         "case02-distractor": [
           "exact_recovery",
           "execution_native",
           "lexical",
           "semantic",
           "structured"
+        ],
+        "case02-preference": [
+          "exact_recovery",
+          "semantic"
         ]
       },
       "required_sources": [
@@ -114,7 +115,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 1.1852
+      "latency_ms": 1.4375
     },
     {
       "case_id": "case03_stale_endpoint",
@@ -152,7 +153,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": 1,
       "rehydrate_hit_rate": null,
-      "latency_ms": 2.409
+      "latency_ms": 2.8754
     },
     {
       "case_id": "case04_rehydrate_plan",
@@ -184,7 +185,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": 1,
-      "latency_ms": 0.9071
+      "latency_ms": 1.2307
     },
     {
       "case_id": "case05_target_file_structured_gap",
@@ -220,7 +221,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 1.0572
+      "latency_ms": 1.1868
     },
     {
       "case_id": "case06_tool_chain",
@@ -262,7 +263,7 @@
       "failed_branch_blocking_proxy": 1,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 1.7788
+      "latency_ms": 2.2551
     },
     {
       "case_id": "case07_cold_exact_low_salience",
@@ -293,7 +294,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 0.5775
+      "latency_ms": 1.0847
     },
     {
       "case_id": "case08_multi_agent_handoff",
@@ -335,7 +336,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 8.6981
+      "latency_ms": 7.6067
     },
     {
       "case_id": "case09_external_candidate_warning",
@@ -365,7 +366,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 1.0755
+      "latency_ms": 0.6333
     },
     {
       "case_id": "case10_archived_raw_trace",
@@ -394,7 +395,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": 1,
-      "latency_ms": 2.3198
+      "latency_ms": 0.7609
     },
     {
       "case_id": "case11_repo_signature",
@@ -434,27 +435,27 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 1.2927
+      "latency_ms": 2.7768
     },
     {
       "case_id": "case12_failure_mode",
       "description": "Failure mode memory should be available as counter-evidence.",
       "recalled_ids": [
-        "case12-current",
-        "case12-failure-mode"
+        "case12-failure-mode",
+        "case12-current"
       ],
       "missed_required_ids": [],
       "candidate_sources": {
-        "case12-current": [
-          "exact_recovery",
-          "execution_native",
-          "semantic",
-          "structured"
-        ],
         "case12-failure-mode": [
           "exact_recovery",
           "execution_native",
           "lexical",
+          "semantic",
+          "structured"
+        ],
+        "case12-current": [
+          "exact_recovery",
+          "execution_native",
           "semantic",
           "structured"
         ]
@@ -475,7 +476,7 @@
       "failed_branch_blocking_proxy": 1,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 1.5462
+      "latency_ms": 1.1812
     },
     {
       "case_id": "case13_active_path_missing_file",
@@ -517,7 +518,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": 1,
       "rehydrate_hit_rate": null,
-      "latency_ms": 1.1353
+      "latency_ms": 1.682
     },
     {
       "case_id": "case14_general_fact",
@@ -545,7 +546,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 2.3817
+      "latency_ms": 1.8844
     },
     {
       "case_id": "case15_acceptance_check",
@@ -583,7 +584,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 2.3754
+      "latency_ms": 3.6815
     },
     {
       "case_id": "case16_contested_memory",
@@ -620,7 +621,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 0.9727
+      "latency_ms": 1.0371
     },
     {
       "case_id": "case17_recent_working_set",
@@ -653,7 +654,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 0.746
+      "latency_ms": 1.1664
     },
     {
       "case_id": "case18_graph_neighbor_needed",
@@ -691,7 +692,7 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": null,
-      "latency_ms": 1.6765
+      "latency_ms": 0.8805
     },
     {
       "case_id": "case19_archive_not_direct",
@@ -718,16 +719,16 @@
       "failed_branch_blocking_proxy": null,
       "do_not_use_stale_suppression_proxy": null,
       "rehydrate_hit_rate": 1,
-      "latency_ms": 0.4891
+      "latency_ms": 0.4771
     },
     {
       "case_id": "case20_mixed_product_loop",
       "description": "Product loop query needs current route, failed branch, stale note, and rehydrate pointer.",
       "recalled_ids": [
         "case20-current",
-        "case20-stale",
         "case20-failed",
-        "case20-anchor"
+        "case20-anchor",
+        "case20-stale"
       ],
       "missed_required_ids": [],
       "candidate_sources": {
@@ -737,11 +738,6 @@
           "lexical",
           "semantic",
           "structured"
-        ],
-        "case20-stale": [
-          "exact_recovery",
-          "lexical",
-          "semantic"
         ],
         "case20-failed": [
           "exact_recovery",
@@ -755,6 +751,11 @@
           "execution_native",
           "lexical",
           "structured"
+        ],
+        "case20-stale": [
+          "exact_recovery",
+          "lexical",
+          "semantic"
         ]
       },
       "required_sources": [
@@ -775,7 +776,7 @@
       "failed_branch_blocking_proxy": 1,
       "do_not_use_stale_suppression_proxy": 1,
       "rehydrate_hit_rate": 1,
-      "latency_ms": 1.4498
+      "latency_ms": 2.3024
     }
   ]
 }

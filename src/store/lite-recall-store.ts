@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { toVectorLiteral } from "../util/vector-literal.js";
 import { hasNodeWorkflowAnchorSurface } from "../memory/node-execution-surface.js";
+import { mergeRecallCandidatesByRrf } from "../memory/recall-hybrid-merge.js";
 import { memoryNodeVisible } from "./memory-visibility.js";
 import {
   RECALL_STORE_ACCESS_CAPABILITY_VERSION,
@@ -850,21 +851,51 @@ export function createLiteRecallStore(
   const stage1ExecutionNativeCandidates = async (params: RecallExecutionNativeParams): Promise<RecallCandidate[]> =>
     stage1StructuredLikeCandidates(params, "execution_native");
   const stage1HybridCandidates = async (params: RecallHybridParams): Promise<RecallCandidate[]> => {
-    if (!params.queryEmbedding) return [];
-    return stage1Candidates({
-      queryEmbedding: params.queryEmbedding,
-      scope: params.scope,
-      oversample: params.oversample ?? params.limit,
+    if (params.limit <= 0) return [];
+    const perSourceLimit = Math.max(params.limit, params.limit * 4);
+    const semantic = params.queryEmbedding
+      ? await stage1Candidates({
+          queryEmbedding: params.queryEmbedding,
+          scope: params.scope,
+          oversample: params.oversample ?? perSourceLimit,
+          limit: perSourceLimit,
+          allowedTiers: params.allowedTiers,
+          scanLimit: params.scanLimit,
+          consumerAgentId: params.consumerAgentId,
+          consumerTeamId: params.consumerTeamId,
+        }, {
+          boundedScan: true,
+          sourceKind: "semantic",
+          sourceReason: "bounded_embedding_scan",
+          sourceIndexName: "lite_embedding_json_scan",
+        })
+      : [];
+    const lexical = params.queryText
+      ? await stage1LexicalCandidates({
+          queryText: params.queryText,
+          scope: params.scope,
+          limit: perSourceLimit,
+          consumerAgentId: params.consumerAgentId,
+          consumerTeamId: params.consumerTeamId,
+        })
+      : [];
+    const structuredParams = params.structured
+      ? {
+          ...params.structured,
+          scope: params.scope,
+          limit: perSourceLimit,
+          consumerAgentId: params.consumerAgentId,
+          consumerTeamId: params.consumerTeamId,
+        }
+      : null;
+    const structured = structuredParams ? await stage1StructuredCandidates(structuredParams) : [];
+    const executionNative = structuredParams ? await stage1ExecutionNativeCandidates(structuredParams) : [];
+    return mergeRecallCandidatesByRrf({
+      semantic,
+      lexical,
+      structured,
+      executionNative,
       limit: params.limit,
-      allowedTiers: params.allowedTiers,
-      scanLimit: params.scanLimit,
-      consumerAgentId: params.consumerAgentId,
-      consumerTeamId: params.consumerTeamId,
-    }, {
-      boundedScan: true,
-      sourceKind: "semantic",
-      sourceReason: "bounded_embedding_scan",
-      sourceIndexName: "lite_embedding_json_scan",
     });
   };
 
