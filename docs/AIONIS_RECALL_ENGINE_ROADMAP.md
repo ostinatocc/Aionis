@@ -28,9 +28,16 @@ lifecycle state, bypass source/scope gates, or decide `use_now`,
 The current Lite Runtime exposes `RecallStoreAccess` as the store abstraction.
 That is the right seam to evolve.
 
-Today, `stage1CandidatesAnn` is not a true ANN index. It is a bounded SQLite
-candidate fetch followed by JavaScript vector parsing and cosine ranking. This
-is acceptable for local Lite demos and focused tests, but it has two limits:
+`RecallStoreAccess` capability v3 exposes candidate source traces. The current
+Lite implementation fills source traces for semantic bounded scans and exact
+recovery. Lexical, structured, execution-native, graph, recent, and ANN source
+methods are contract-visible but intentionally empty until their dedicated
+implementation phases land.
+
+Today, `stage1CandidatesAnn` is still not a true ANN index. It is a bounded
+SQLite candidate fetch followed by JavaScript vector parsing and cosine
+ranking. This is acceptable for local Lite demos and focused tests, but it has
+two limits:
 
 1. large scopes increase recall latency
 2. old or low-salience memories can miss the bounded candidate window even when

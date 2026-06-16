@@ -20,7 +20,7 @@ test("recall engine eval runs against real Lite stores and emits baseline metric
   assert.equal(summary.contract_version, "aionis_recall_engine_baseline_v1");
   assert.equal(summary.case_count, 20);
   assert.equal(summary.cases.length, 20);
-  assert.equal(summary.candidate_generation.semantic_path, "bounded_sqlite_scan_plus_js_cosine");
+  assert.equal(summary.candidate_generation.semantic_path, "bounded_sqlite_scan_plus_js_cosine_with_source_trace");
   assert.equal(summary.candidate_generation.governance_admission, "out_of_scope_for_recall_only_baseline");
   assert.ok(summary.recall_access_capability_version >= 2);
   assert.ok(summary.metrics.recall_at_50 > 0.9);

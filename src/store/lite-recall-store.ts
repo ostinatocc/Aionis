@@ -12,10 +12,14 @@ import {
 import type {
   RecallAuditInsertParams,
   RecallCandidate,
+  RecallExecutionNativeParams,
+  RecallHybridParams,
+  RecallLexicalParams,
   RecallDebugEmbeddingRow,
   RecallEdgeRow,
   RecallNodeRow,
   RecallRuleDefRow,
+  RecallStructuredParams,
   RecallStage1Params,
   RecallStage2EdgesParams,
   RecallStage2NodesParams,
@@ -306,7 +310,12 @@ export function createLiteRecallStore(
 
   const stage1Candidates = async (
     params: RecallStage1Params,
-    opts: { boundedScan: boolean },
+    opts: {
+      boundedScan: boolean;
+      sourceKind: "semantic" | "exact_recovery";
+      sourceReason: string;
+      sourceIndexName: string;
+    },
   ): Promise<RecallCandidate[]> => {
     const allowedTiers = normalizeRecallAllowedTiers(params.allowedTiers);
     const where = [
@@ -388,6 +397,11 @@ export function createLiteRecallStore(
         `).get(params.scope, row.id) as { state: string } | undefined;
         if (!def || (def.state !== "shadow" && def.state !== "active")) continue;
       }
+      const similarity = adjustRecallCandidateSimilarityForTrust({
+        type: row.type,
+        slots,
+        similarity: 1 - item.distance,
+      });
       out.push({
         id: row.id,
         type: row.type,
@@ -396,11 +410,14 @@ export function createLiteRecallStore(
         tier: row.tier,
         salience: row.salience,
         confidence: row.confidence,
-        similarity: adjustRecallCandidateSimilarityForTrust({
-          type: row.type,
-          slots,
-          similarity: 1 - item.distance,
-        }),
+        similarity,
+        sources: [{
+          kind: opts.sourceKind,
+          score: similarity,
+          reason: opts.sourceReason,
+          matched_fields: ["embedding_vector_json"],
+          index_name: opts.sourceIndexName,
+        }],
         distance: item.distance,
       });
     }
@@ -414,13 +431,55 @@ export function createLiteRecallStore(
       .map(({ distance: _distance, ...candidate }) => candidate);
   };
 
+  const emptyLexicalCandidates = async (_params: RecallLexicalParams): Promise<RecallCandidate[]> => [];
+  const emptyStructuredCandidates = async (_params: RecallStructuredParams): Promise<RecallCandidate[]> => [];
+  const emptyExecutionNativeCandidates = async (_params: RecallExecutionNativeParams): Promise<RecallCandidate[]> => [];
+  const stage1HybridCandidates = async (params: RecallHybridParams): Promise<RecallCandidate[]> => {
+    if (!params.queryEmbedding) return [];
+    return stage1Candidates({
+      queryEmbedding: params.queryEmbedding,
+      scope: params.scope,
+      oversample: params.oversample ?? params.limit,
+      limit: params.limit,
+      allowedTiers: params.allowedTiers,
+      scanLimit: params.scanLimit,
+      consumerAgentId: params.consumerAgentId,
+      consumerTeamId: params.consumerTeamId,
+    }, {
+      boundedScan: true,
+      sourceKind: "semantic",
+      sourceReason: "bounded_embedding_scan",
+      sourceIndexName: "lite_embedding_json_scan",
+    });
+  };
+
   return {
     createRecallAccess(): RecallStoreAccess {
       return {
         capability_version: RECALL_STORE_ACCESS_CAPABILITY_VERSION,
         capabilities,
-        stage1CandidatesAnn: (params) => stage1Candidates(params, { boundedScan: true }),
-        stage1CandidatesExactRecovery: (params) => stage1Candidates(params, { boundedScan: false }),
+        stage1CandidatesAnn: (params) => stage1Candidates(params, {
+          boundedScan: true,
+          sourceKind: "semantic",
+          sourceReason: "bounded_embedding_scan",
+          sourceIndexName: "lite_embedding_json_scan",
+        }),
+        stage1CandidatesExactRecovery: (params) => stage1Candidates(params, {
+          boundedScan: false,
+          sourceKind: "exact_recovery",
+          sourceReason: "unbounded_exact_embedding_recovery",
+          sourceIndexName: "lite_embedding_json_scan",
+        }),
+        stage1SemanticCandidates: (params) => stage1Candidates(params, {
+          boundedScan: true,
+          sourceKind: "semantic",
+          sourceReason: "bounded_embedding_scan",
+          sourceIndexName: "lite_embedding_json_scan",
+        }),
+        stage1LexicalCandidates: emptyLexicalCandidates,
+        stage1StructuredCandidates: emptyStructuredCandidates,
+        stage1ExecutionNativeCandidates: emptyExecutionNativeCandidates,
+        stage1HybridCandidates,
         async stage2Edges(params: RecallStage2EdgesParams): Promise<RecallEdgeRow[]> {
           const seedSet = new Set(params.seedIds);
           if (params.neighborhoodHops === 1) {

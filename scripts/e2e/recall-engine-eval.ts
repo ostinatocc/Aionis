@@ -53,7 +53,15 @@ type RecallEngineMemory = {
   requires_rehydrate?: boolean;
 };
 
-type CandidateSource = "semantic_scan" | "exact_recovery";
+type CandidateSource =
+  | "semantic"
+  | "lexical"
+  | "structured"
+  | "execution_native"
+  | "graph"
+  | "recent"
+  | "exact_recovery"
+  | "ann";
 
 type RecallEngineCaseResult = {
   case_id: string;
@@ -79,8 +87,8 @@ type RecallEngineSummary = {
   case_count: number;
   recall_access_capability_version: number;
   candidate_generation: {
-    semantic_path: "bounded_sqlite_scan_plus_js_cosine";
-    exact_recovery_path: "unbounded_lite_exact_recovery";
+    semantic_path: "bounded_sqlite_scan_plus_js_cosine_with_source_trace";
+    exact_recovery_path: "unbounded_lite_exact_recovery_with_source_trace";
     governance_admission: "out_of_scope_for_recall_only_baseline";
   };
   metrics: {
@@ -158,15 +166,6 @@ function intersectionCount(a: readonly string[], b: ReadonlySet<string>): number
     if (b.has(value)) count += 1;
   }
   return count;
-}
-
-function candidateKey(candidate: RecallCandidate): string {
-  return candidate.id;
-}
-
-function normalizeRequiredSource(source: string): string {
-  if (source === "semantic") return "semantic_scan";
-  return source;
 }
 
 function slotsForMemory(memory: RecallEngineMemory): Record<string, unknown> {
@@ -272,8 +271,7 @@ function collectCoveredRequiredSources(sourceMap: Map<string, Set<CandidateSourc
   const covered: string[] = [];
   const missing: string[] = [];
   for (const source of requiredSources) {
-    const normalized = normalizeRequiredSource(source);
-    if (available.has(normalized)) covered.push(source);
+    if (available.has(source)) covered.push(source);
     else missing.push(source);
   }
   return { covered, missing };
@@ -308,17 +306,24 @@ async function evaluateCase(args: {
 
   const candidateById = new Map<string, RecallCandidate>();
   const sourceMap = new Map<string, Set<CandidateSource>>();
-  for (const candidate of ann) {
-    const id = candidateKey(candidate);
-    candidateById.set(id, candidate);
-    sourceMap.set(id, sourceMap.get(id) ?? new Set<CandidateSource>());
-    sourceMap.get(id)?.add("semantic_scan");
-  }
-  for (const candidate of exact) {
-    const id = candidateKey(candidate);
+  for (const candidate of ann.concat(exact)) {
+    const id = candidate.id;
     if (!candidateById.has(id)) candidateById.set(id, candidate);
     sourceMap.set(id, sourceMap.get(id) ?? new Set<CandidateSource>());
-    sourceMap.get(id)?.add("exact_recovery");
+    for (const source of candidate.sources ?? []) {
+      if (
+        source.kind === "semantic"
+        || source.kind === "exact_recovery"
+        || source.kind === "lexical"
+        || source.kind === "structured"
+        || source.kind === "execution_native"
+        || source.kind === "graph"
+        || source.kind === "recent"
+        || source.kind === "ann"
+      ) {
+        sourceMap.get(id)?.add(source.kind);
+      }
+    }
   }
 
   const recalledIds = Array.from(candidateById.keys()).slice(0, 50);
@@ -410,8 +415,8 @@ export async function runRecallEngineEval(options: {
       case_count: fixture.cases.length,
       recall_access_capability_version: access.capability_version,
       candidate_generation: {
-        semantic_path: "bounded_sqlite_scan_plus_js_cosine",
-        exact_recovery_path: "unbounded_lite_exact_recovery",
+        semantic_path: "bounded_sqlite_scan_plus_js_cosine_with_source_trace",
+        exact_recovery_path: "unbounded_lite_exact_recovery_with_source_trace",
         governance_admission: "out_of_scope_for_recall_only_baseline",
       },
       metrics: {

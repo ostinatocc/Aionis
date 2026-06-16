@@ -5,7 +5,25 @@ import {
   resolveNodePatternExecutionSurface,
 } from "../memory/node-execution-surface.js";
 
-export const RECALL_STORE_ACCESS_CAPABILITY_VERSION = 2 as const;
+export const RECALL_STORE_ACCESS_CAPABILITY_VERSION = 3 as const;
+
+export type RecallCandidateSourceKind =
+  | "semantic"
+  | "lexical"
+  | "structured"
+  | "execution_native"
+  | "graph"
+  | "recent"
+  | "exact_recovery"
+  | "ann";
+
+export type RecallCandidateSource = {
+  kind: RecallCandidateSourceKind;
+  score: number;
+  reason: string;
+  matched_fields?: string[];
+  index_name?: string;
+};
 
 export type RecallCandidate = {
   id: string;
@@ -16,6 +34,7 @@ export type RecallCandidate = {
   salience: number;
   confidence: number;
   similarity: number;
+  sources?: RecallCandidateSource[];
 };
 
 export type RecallMemoryTier = "hot" | "warm" | "cold" | "archive";
@@ -59,6 +78,48 @@ export type RecallStage1Params = {
   scope: string;
   oversample: number;
   limit: number;
+  allowedTiers?: RecallMemoryTier[];
+  scanLimit?: number | null;
+  consumerAgentId: string | null;
+  consumerTeamId: string | null;
+};
+
+export type RecallLexicalParams = {
+  queryText: string;
+  scope: string;
+  limit: number;
+  consumerAgentId: string | null;
+  consumerTeamId: string | null;
+};
+
+export type RecallStructuredParams = {
+  scope: string;
+  limit: number;
+  taskSignature?: string | null;
+  workflowSignature?: string | null;
+  errorSignature?: string | null;
+  patternSignature?: string | null;
+  taskFamily?: string | null;
+  repoSignature?: string | null;
+  fileCluster?: string | null;
+  toolChainSignature?: string | null;
+  failureMode?: string | null;
+  verificationSignature?: string | null;
+  acceptanceCheckSignature?: string | null;
+  targetFiles?: string[];
+  consumerAgentId: string | null;
+  consumerTeamId: string | null;
+};
+
+export type RecallExecutionNativeParams = RecallStructuredParams;
+
+export type RecallHybridParams = {
+  scope: string;
+  limit: number;
+  queryEmbedding?: number[] | null;
+  queryText?: string | null;
+  structured?: Omit<RecallStructuredParams, "scope" | "limit" | "consumerAgentId" | "consumerTeamId"> | null;
+  oversample?: number;
   allowedTiers?: RecallMemoryTier[];
   scanLimit?: number | null;
   consumerAgentId: string | null;
@@ -181,6 +242,11 @@ export interface RecallStoreAccess {
   readonly capabilities: RecallStoreCapabilities;
   stage1CandidatesAnn(params: RecallStage1Params): Promise<RecallCandidate[]>;
   stage1CandidatesExactRecovery(params: RecallStage1Params): Promise<RecallCandidate[]>;
+  stage1SemanticCandidates(params: RecallStage1Params): Promise<RecallCandidate[]>;
+  stage1LexicalCandidates(params: RecallLexicalParams): Promise<RecallCandidate[]>;
+  stage1StructuredCandidates(params: RecallStructuredParams): Promise<RecallCandidate[]>;
+  stage1ExecutionNativeCandidates(params: RecallExecutionNativeParams): Promise<RecallCandidate[]>;
+  stage1HybridCandidates(params: RecallHybridParams): Promise<RecallCandidate[]>;
   stage2Edges(params: RecallStage2EdgesParams): Promise<RecallEdgeRow[]>;
   stage2Nodes(params: RecallStage2NodesParams): Promise<RecallNodeRow[]>;
   ruleDefs(scope: string, ruleIds: string[]): Promise<RecallRuleDefRow[]>;
@@ -238,6 +304,11 @@ export function assertRecallStoreAccessContract(access: RecallStoreAccess): void
   const requiredMethods = [
     "stage1CandidatesAnn",
     "stage1CandidatesExactRecovery",
+    "stage1SemanticCandidates",
+    "stage1LexicalCandidates",
+    "stage1StructuredCandidates",
+    "stage1ExecutionNativeCandidates",
+    "stage1HybridCandidates",
     "stage2Edges",
     "stage2Nodes",
     "ruleDefs",

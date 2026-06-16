@@ -126,7 +126,11 @@ test("stage1 bounded ANN keeps exact recovery unbounded", async () => {
     });
 
     assert.notEqual(ann[0]?.id, "target-exact-match");
+    assert.equal(ann[0]?.sources?.[0]?.kind, "semantic");
+    assert.equal(ann[0]?.sources?.[0]?.reason, "bounded_embedding_scan");
     assert.equal(exact[0]?.id, "target-exact-match");
+    assert.equal(exact[0]?.sources?.[0]?.kind, "exact_recovery");
+    assert.equal(exact[0]?.sources?.[0]?.reason, "unbounded_exact_embedding_recovery");
   } finally {
     await recallStore.close();
     await writeStore.close();
