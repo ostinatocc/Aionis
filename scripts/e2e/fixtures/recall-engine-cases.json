@@ -1,0 +1,779 @@
+{
+  "version": 1,
+  "description": "Deterministic Recall Engine baseline cases over real Lite SQLite stores. The cases measure candidate retrieval readiness, not admission authority.",
+  "cases": [
+    {
+      "case_id": "case01_current_checkout_adapter",
+      "description": "Current execution branch and failed legacy branch are both semantically related.",
+      "query_vector": [1, 0, 0, 0],
+      "expected": {
+        "must_recall_ids": ["case01-current", "case01-failed"],
+        "preferred_direct_use_ids": ["case01-current"],
+        "must_not_direct_use_ids": ["case01-failed"],
+        "stale_ids": [],
+        "failed_branch_ids": ["case01-failed"],
+        "rehydrate_ids": [],
+        "required_sources": ["semantic", "structured", "execution_native"]
+      },
+      "memories": [
+        {
+          "id": "case01-current",
+          "type": "procedure",
+          "tier": "hot",
+          "title": "Checkout adapter accepted branch",
+          "text_summary": "Continue the accepted checkout adapter branch in src/checkout/adapter.ts after verifier passed.",
+          "vector": [1, 0, 0, 0],
+          "lifecycle": "current",
+          "target_files": ["src/checkout/adapter.ts"],
+          "workflow_signature": "checkout-adapter-v4",
+          "task_signature": "checkout-migration",
+          "execution_outcome_role": "passed_solution"
+        },
+        {
+          "id": "case01-failed",
+          "type": "procedure",
+          "tier": "hot",
+          "title": "Legacy checkout broad search failed",
+          "text_summary": "Do not repeat the broad legacy checkout search branch; verifier rejected unrelated module edits.",
+          "vector": [0.96, 0.04, 0, 0],
+          "lifecycle": "failed_branch",
+          "target_files": ["src/checkout/legacy-search.ts"],
+          "workflow_signature": "checkout-adapter-v4",
+          "task_signature": "checkout-migration",
+          "execution_outcome_role": "failed_branch"
+        },
+        {
+          "id": "case01-distractor",
+          "type": "concept",
+          "tier": "hot",
+          "title": "Payment UI note",
+          "text_summary": "Payment UI color preference unrelated to checkout migration.",
+          "vector": [0, 1, 0, 0],
+          "lifecycle": "active",
+          "target_files": ["src/payments/ui.ts"]
+        }
+      ]
+    },
+    {
+      "case_id": "case02_preference_scope",
+      "description": "Ordinary preference should remain retrievable without execution-native slots.",
+      "query_vector": [0, 1, 0, 0],
+      "expected": {
+        "must_recall_ids": ["case02-preference"],
+        "preferred_direct_use_ids": ["case02-preference"],
+        "must_not_direct_use_ids": [],
+        "stale_ids": [],
+        "failed_branch_ids": [],
+        "rehydrate_ids": [],
+        "required_sources": ["semantic", "lexical"]
+      },
+      "memories": [
+        {
+          "id": "case02-preference",
+          "type": "concept",
+          "tier": "hot",
+          "title": "User prefers concise status updates",
+          "text_summary": "User prefers concise engineering status updates with verification lines.",
+          "vector": [0, 1, 0, 0],
+          "lifecycle": "active",
+          "target_files": []
+        },
+        {
+          "id": "case02-distractor",
+          "type": "procedure",
+          "tier": "hot",
+          "title": "Tax engine branch",
+          "text_summary": "Tax engine branch has no relation to communication preference.",
+          "vector": [1, 0, 0, 0],
+          "lifecycle": "current",
+          "target_files": ["src/tax/engine.ts"],
+          "workflow_signature": "tax-engine",
+          "task_signature": "tax-refactor",
+          "execution_outcome_role": "passed_solution"
+        }
+      ]
+    },
+    {
+      "case_id": "case03_stale_endpoint",
+      "description": "Stale endpoint note should be recalled as evidence for suppression.",
+      "query_vector": [0, 0, 1, 0],
+      "expected": {
+        "must_recall_ids": ["case03-current", "case03-stale"],
+        "preferred_direct_use_ids": ["case03-current"],
+        "must_not_direct_use_ids": ["case03-stale"],
+        "stale_ids": ["case03-stale"],
+        "failed_branch_ids": [],
+        "rehydrate_ids": [],
+        "required_sources": ["semantic", "structured"]
+      },
+      "memories": [
+        {
+          "id": "case03-current",
+          "type": "procedure",
+          "tier": "warm",
+          "title": "Orders endpoint v2 current",
+          "text_summary": "Use /api/orders/v2 for order sync continuation.",
+          "vector": [0, 0, 1, 0],
+          "lifecycle": "current",
+          "target_files": ["src/api/orders-v2.ts"],
+          "workflow_signature": "orders-sync",
+          "task_signature": "orders-api",
+          "execution_outcome_role": "passed_solution"
+        },
+        {
+          "id": "case03-stale",
+          "type": "concept",
+          "tier": "warm",
+          "title": "Orders endpoint v1 stale",
+          "text_summary": "Old /api/orders/v1 endpoint is stale after migration to v2.",
+          "vector": [0, 0, 0.96, 0.04],
+          "lifecycle": "stale",
+          "target_files": ["src/api/orders-v1.ts"]
+        }
+      ]
+    },
+    {
+      "case_id": "case04_rehydrate_plan",
+      "description": "Compact plan anchor should be recalled and marked as needing rehydrate.",
+      "query_vector": [0, 0, 0, 1],
+      "expected": {
+        "must_recall_ids": ["case04-anchor"],
+        "preferred_direct_use_ids": [],
+        "must_not_direct_use_ids": [],
+        "stale_ids": [],
+        "failed_branch_ids": [],
+        "rehydrate_ids": ["case04-anchor"],
+        "required_sources": ["semantic", "exact_recovery"]
+      },
+      "memories": [
+        {
+          "id": "case04-anchor",
+          "type": "procedure",
+          "tier": "cold",
+          "title": "Billing migration plan anchor",
+          "text_summary": "Billing migration plan is archived and should be rehydrated before implementation.",
+          "vector": [0, 0, 0, 1],
+          "lifecycle": "rehydrate",
+          "target_files": ["docs/billing-plan.md", "src/billing/migrate.ts"],
+          "workflow_signature": "billing-migration",
+          "task_signature": "billing-plan",
+          "execution_outcome_role": "unknown",
+          "requires_rehydrate": true
+        }
+      ]
+    },
+    {
+      "case_id": "case05_target_file_structured_gap",
+      "description": "Target-file relation is useful even when semantic similarity is split.",
+      "query_vector": [0.7, 0.7, 0, 0],
+      "expected": {
+        "must_recall_ids": ["case05-current", "case05-contested"],
+        "preferred_direct_use_ids": ["case05-current"],
+        "must_not_direct_use_ids": ["case05-contested"],
+        "stale_ids": [],
+        "failed_branch_ids": [],
+        "rehydrate_ids": [],
+        "required_sources": ["semantic", "structured"]
+      },
+      "memories": [
+        {
+          "id": "case05-current",
+          "type": "procedure",
+          "tier": "hot",
+          "title": "Vite config accepted route",
+          "text_summary": "Use vite.config.ts route after accepted plugin boundary update.",
+          "vector": [0.7, 0.7, 0, 0],
+          "lifecycle": "current",
+          "target_files": ["vite.config.ts"],
+          "workflow_signature": "vite-plugin-boundary",
+          "task_signature": "vite-config",
+          "execution_outcome_role": "passed_solution"
+        },
+        {
+          "id": "case05-contested",
+          "type": "concept",
+          "tier": "hot",
+          "title": "Old Vite plugin note contested",
+          "text_summary": "Prior plugin note is contested by accepted vite.config.ts route.",
+          "vector": [0.69, 0.71, 0, 0],
+          "lifecycle": "contested",
+          "target_files": ["plugins/legacy-vite.ts"]
+        }
+      ]
+    },
+    {
+      "case_id": "case06_tool_chain",
+      "description": "Tool-chain execution memory should surface alongside failed verifier command.",
+      "query_vector": [0.4, 0.2, 0.8, 0],
+      "expected": {
+        "must_recall_ids": ["case06-current", "case06-failed-command"],
+        "preferred_direct_use_ids": ["case06-current"],
+        "must_not_direct_use_ids": ["case06-failed-command"],
+        "stale_ids": [],
+        "failed_branch_ids": ["case06-failed-command"],
+        "rehydrate_ids": [],
+        "required_sources": ["semantic", "structured", "execution_native"]
+      },
+      "memories": [
+        {
+          "id": "case06-current",
+          "type": "procedure",
+          "tier": "hot",
+          "title": "Use unit verifier before integration verifier",
+          "text_summary": "Accepted tool chain is pnpm test:unit then pnpm test:integration for auth adapter.",
+          "vector": [0.4, 0.2, 0.8, 0],
+          "lifecycle": "current",
+          "target_files": ["src/auth/adapter.ts"],
+          "workflow_signature": "auth-adapter",
+          "task_signature": "auth-tests",
+          "tool_chain_signature": "pnpm-test-unit-integration",
+          "execution_outcome_role": "passed_solution"
+        },
+        {
+          "id": "case06-failed-command",
+          "type": "procedure",
+          "tier": "hot",
+          "title": "Failed direct integration verifier",
+          "text_summary": "Direct integration verifier failed before unit fixtures were updated.",
+          "vector": [0.39, 0.21, 0.8, 0],
+          "lifecycle": "failed_branch",
+          "target_files": ["src/auth/adapter.ts"],
+          "workflow_signature": "auth-adapter",
+          "task_signature": "auth-tests",
+          "tool_chain_signature": "pnpm-test-integration-only",
+          "execution_outcome_role": "failed_branch"
+        }
+      ]
+    },
+    {
+      "case_id": "case07_cold_exact_low_salience",
+      "description": "Cold exact recovery should find a low-salience memory that bounded hot/warm recall would miss.",
+      "query_vector": [0.25, 0.25, 0.25, 0.25],
+      "expected": {
+        "must_recall_ids": ["case07-cold"],
+        "preferred_direct_use_ids": ["case07-cold"],
+        "must_not_direct_use_ids": [],
+        "stale_ids": [],
+        "failed_branch_ids": [],
+        "rehydrate_ids": [],
+        "required_sources": ["exact_recovery"]
+      },
+      "memories": [
+        {
+          "id": "case07-cold",
+          "type": "concept",
+          "tier": "cold",
+          "title": "Rare customer timezone rule",
+          "text_summary": "Rare customer timezone rule: display billing cutoff in account timezone.",
+          "vector": [0.25, 0.25, 0.25, 0.25],
+          "lifecycle": "active",
+          "target_files": ["src/billing/timezone.ts"]
+        },
+        {
+          "id": "case07-hot-distractor",
+          "type": "concept",
+          "tier": "hot",
+          "title": "Hot unrelated preference",
+          "text_summary": "Hot unrelated dashboard color preference.",
+          "vector": [0, 1, 0, 0],
+          "lifecycle": "active",
+          "target_files": ["src/dashboard/theme.ts"]
+        }
+      ]
+    },
+    {
+      "case_id": "case08_multi_agent_handoff",
+      "description": "Planner handoff and reviewer acceptance should be visible together.",
+      "query_vector": [0.8, 0, 0.2, 0],
+      "expected": {
+        "must_recall_ids": ["case08-plan", "case08-review"],
+        "preferred_direct_use_ids": ["case08-plan", "case08-review"],
+        "must_not_direct_use_ids": [],
+        "stale_ids": [],
+        "failed_branch_ids": [],
+        "rehydrate_ids": [],
+        "required_sources": ["semantic", "structured", "execution_native"]
+      },
+      "memories": [
+        {
+          "id": "case08-plan",
+          "type": "procedure",
+          "tier": "hot",
+          "title": "Planner handoff for checkout tax",
+          "text_summary": "Planner handoff says continue checkout tax normalization using taxBoundary.ts.",
+          "vector": [0.8, 0, 0.2, 0],
+          "lifecycle": "current",
+          "target_files": ["src/checkout/taxBoundary.ts"],
+          "workflow_signature": "checkout-tax-handoff",
+          "task_signature": "checkout-tax",
+          "execution_outcome_role": "passed_solution"
+        },
+        {
+          "id": "case08-review",
+          "type": "procedure",
+          "tier": "warm",
+          "title": "Reviewer accepted tax boundary",
+          "text_summary": "Reviewer accepted taxBoundary.ts after verifier passed.",
+          "vector": [0.79, 0, 0.21, 0],
+          "lifecycle": "current",
+          "target_files": ["src/checkout/taxBoundary.ts"],
+          "workflow_signature": "checkout-tax-handoff",
+          "task_signature": "checkout-tax",
+          "execution_outcome_role": "passed_solution"
+        }
+      ]
+    },
+    {
+      "case_id": "case09_external_candidate_warning",
+      "description": "External memory candidate should be retrievable but remain inspect-grade later.",
+      "query_vector": [0.1, 0.9, 0, 0],
+      "expected": {
+        "must_recall_ids": ["case09-external"],
+        "preferred_direct_use_ids": [],
+        "must_not_direct_use_ids": [],
+        "stale_ids": [],
+        "failed_branch_ids": [],
+        "rehydrate_ids": [],
+        "required_sources": ["semantic", "lexical"]
+      },
+      "memories": [
+        {
+          "id": "case09-external",
+          "type": "concept",
+          "tier": "warm",
+          "title": "External note about webhook retries",
+          "text_summary": "External imported note says webhook retries might require exponential backoff; inspect before use.",
+          "vector": [0.1, 0.9, 0, 0],
+          "lifecycle": "candidate",
+          "target_files": ["src/webhooks/retry.ts"]
+        }
+      ]
+    },
+    {
+      "case_id": "case10_archived_raw_trace",
+      "description": "Archived raw trace should appear through exact recovery and require rehydrate.",
+      "query_vector": [0.1, 0.1, 0.1, 0.7],
+      "expected": {
+        "must_recall_ids": ["case10-archive"],
+        "preferred_direct_use_ids": [],
+        "must_not_direct_use_ids": [],
+        "stale_ids": [],
+        "failed_branch_ids": [],
+        "rehydrate_ids": ["case10-archive"],
+        "required_sources": ["exact_recovery"]
+      },
+      "memories": [
+        {
+          "id": "case10-archive",
+          "type": "procedure",
+          "tier": "cold",
+          "title": "Archived migration raw trace",
+          "text_summary": "Raw migration trace archived; rehydrate before replaying detailed commands.",
+          "vector": [0.1, 0.1, 0.1, 0.7],
+          "lifecycle": "rehydrate",
+          "target_files": ["migrations/2026_add_index.sql"],
+          "workflow_signature": "db-index-migration",
+          "task_signature": "db-migration",
+          "execution_outcome_role": "unknown",
+          "requires_rehydrate": true
+        }
+      ]
+    },
+    {
+      "case_id": "case11_repo_signature",
+      "description": "Same task family in another repo should not dominate the target repo candidate.",
+      "query_vector": [0.6, 0.2, 0.2, 0],
+      "expected": {
+        "must_recall_ids": ["case11-current"],
+        "preferred_direct_use_ids": ["case11-current"],
+        "must_not_direct_use_ids": [],
+        "stale_ids": [],
+        "failed_branch_ids": [],
+        "rehydrate_ids": [],
+        "required_sources": ["semantic", "structured"]
+      },
+      "memories": [
+        {
+          "id": "case11-current",
+          "type": "procedure",
+          "tier": "hot",
+          "title": "Repo A cache invalidation accepted",
+          "text_summary": "Repo A cache invalidation should update cacheKey.ts.",
+          "vector": [0.6, 0.2, 0.2, 0],
+          "lifecycle": "current",
+          "target_files": ["packages/repo-a/cacheKey.ts"],
+          "workflow_signature": "repo-a-cache",
+          "task_signature": "cache-invalidation",
+          "repo_signature": "repo-a",
+          "execution_outcome_role": "passed_solution"
+        },
+        {
+          "id": "case11-other-repo",
+          "type": "procedure",
+          "tier": "hot",
+          "title": "Repo B cache invalidation note",
+          "text_summary": "Repo B cache invalidation uses a different cacheKey module.",
+          "vector": [0.59, 0.21, 0.2, 0],
+          "lifecycle": "candidate",
+          "target_files": ["packages/repo-b/cacheKey.ts"],
+          "workflow_signature": "repo-b-cache",
+          "task_signature": "cache-invalidation",
+          "repo_signature": "repo-b",
+          "execution_outcome_role": "unknown"
+        }
+      ]
+    },
+    {
+      "case_id": "case12_failure_mode",
+      "description": "Failure mode memory should be available as counter-evidence.",
+      "query_vector": [0.3, 0.3, 0.4, 0],
+      "expected": {
+        "must_recall_ids": ["case12-failure-mode", "case12-current"],
+        "preferred_direct_use_ids": ["case12-current"],
+        "must_not_direct_use_ids": ["case12-failure-mode"],
+        "stale_ids": [],
+        "failed_branch_ids": ["case12-failure-mode"],
+        "rehydrate_ids": [],
+        "required_sources": ["semantic", "structured", "execution_native"]
+      },
+      "memories": [
+        {
+          "id": "case12-failure-mode",
+          "type": "procedure",
+          "tier": "hot",
+          "title": "Flaky sleep retry failure mode",
+          "text_summary": "Do not fix flaky test by adding arbitrary sleep; verifier rejected timing-only patch.",
+          "vector": [0.3, 0.3, 0.4, 0],
+          "lifecycle": "failed_branch",
+          "target_files": ["tests/session.spec.ts"],
+          "workflow_signature": "session-flake",
+          "task_signature": "test-flake",
+          "failure_mode": "timing_sleep_patch",
+          "execution_outcome_role": "failed_branch"
+        },
+        {
+          "id": "case12-current",
+          "type": "procedure",
+          "tier": "warm",
+          "title": "Await event boundary accepted",
+          "text_summary": "Accepted fix waits for explicit session-ready event instead of sleep.",
+          "vector": [0.31, 0.29, 0.4, 0],
+          "lifecycle": "current",
+          "target_files": ["tests/session.spec.ts", "src/session/events.ts"],
+          "workflow_signature": "session-flake",
+          "task_signature": "test-flake",
+          "failure_mode": "event_boundary",
+          "execution_outcome_role": "passed_solution"
+        }
+      ]
+    },
+    {
+      "case_id": "case13_active_path_missing_file",
+      "description": "Active target may be pending creation, not stale.",
+      "query_vector": [0.55, 0, 0.45, 0],
+      "expected": {
+        "must_recall_ids": ["case13-active-target", "case13-old-path"],
+        "preferred_direct_use_ids": ["case13-active-target"],
+        "must_not_direct_use_ids": ["case13-old-path"],
+        "stale_ids": ["case13-old-path"],
+        "failed_branch_ids": [],
+        "rehydrate_ids": [],
+        "required_sources": ["semantic", "structured", "execution_native"]
+      },
+      "memories": [
+        {
+          "id": "case13-active-target",
+          "type": "procedure",
+          "tier": "hot",
+          "title": "Create bundledDev.ts active target",
+          "text_summary": "Active route is to create bundledDev.ts; missing file means pending creation.",
+          "vector": [0.55, 0, 0.45, 0],
+          "lifecycle": "current",
+          "target_files": ["src/env/bundledDev.ts"],
+          "workflow_signature": "env-bundling",
+          "task_signature": "env-bundle",
+          "execution_outcome_role": "passed_solution"
+        },
+        {
+          "id": "case13-old-path",
+          "type": "procedure",
+          "tier": "warm",
+          "title": "Old fullBundleEnvironment path",
+          "text_summary": "fullBundleEnvironment.ts is readable as reference but stale as active route.",
+          "vector": [0.54, 0.01, 0.45, 0],
+          "lifecycle": "stale",
+          "target_files": ["src/env/fullBundleEnvironment.ts"],
+          "workflow_signature": "env-bundling",
+          "task_signature": "env-bundle",
+          "execution_outcome_role": "unknown"
+        }
+      ]
+    },
+    {
+      "case_id": "case14_general_fact",
+      "description": "Simple fact recall should not require execution structure.",
+      "query_vector": [0, 0.5, 0.5, 0],
+      "expected": {
+        "must_recall_ids": ["case14-fact"],
+        "preferred_direct_use_ids": ["case14-fact"],
+        "must_not_direct_use_ids": [],
+        "stale_ids": [],
+        "failed_branch_ids": [],
+        "rehydrate_ids": [],
+        "required_sources": ["semantic"]
+      },
+      "memories": [
+        {
+          "id": "case14-fact",
+          "type": "concept",
+          "tier": "hot",
+          "title": "Billing cutoff timezone fact",
+          "text_summary": "Billing cutoff is computed in the account timezone, not server timezone.",
+          "vector": [0, 0.5, 0.5, 0],
+          "lifecycle": "active",
+          "target_files": ["src/billing/cutoff.ts"]
+        }
+      ]
+    },
+    {
+      "case_id": "case15_acceptance_check",
+      "description": "Acceptance check memory should be retrieved with the implementation route.",
+      "query_vector": [0.2, 0, 0.8, 0],
+      "expected": {
+        "must_recall_ids": ["case15-check", "case15-route"],
+        "preferred_direct_use_ids": ["case15-check", "case15-route"],
+        "must_not_direct_use_ids": [],
+        "stale_ids": [],
+        "failed_branch_ids": [],
+        "rehydrate_ids": [],
+        "required_sources": ["semantic", "structured"]
+      },
+      "memories": [
+        {
+          "id": "case15-check",
+          "type": "concept",
+          "tier": "warm",
+          "title": "Import resolver acceptance check",
+          "text_summary": "Acceptance check: resolver must preserve aliases and reject bare relative parent imports.",
+          "vector": [0.2, 0, 0.8, 0],
+          "lifecycle": "active",
+          "target_files": ["src/imports/resolver.ts"],
+          "acceptance_check_signature": "alias-preserve-parent-reject"
+        },
+        {
+          "id": "case15-route",
+          "type": "procedure",
+          "tier": "hot",
+          "title": "Resolver accepted route",
+          "text_summary": "Accepted route updates resolver.ts and resolver.spec.ts together.",
+          "vector": [0.21, 0, 0.79, 0],
+          "lifecycle": "current",
+          "target_files": ["src/imports/resolver.ts", "tests/resolver.spec.ts"],
+          "workflow_signature": "import-resolver",
+          "task_signature": "resolver-alias",
+          "execution_outcome_role": "passed_solution"
+        }
+      ]
+    },
+    {
+      "case_id": "case16_contested_memory",
+      "description": "Contested memory should be retrievable but not preferred direct use.",
+      "query_vector": [0.65, 0.05, 0.3, 0],
+      "expected": {
+        "must_recall_ids": ["case16-current", "case16-contested"],
+        "preferred_direct_use_ids": ["case16-current"],
+        "must_not_direct_use_ids": ["case16-contested"],
+        "stale_ids": [],
+        "failed_branch_ids": [],
+        "rehydrate_ids": [],
+        "required_sources": ["semantic", "structured"]
+      },
+      "memories": [
+        {
+          "id": "case16-current",
+          "type": "procedure",
+          "tier": "hot",
+          "title": "Next app router current route",
+          "text_summary": "Accepted route updates app router metadata in app/layout.tsx.",
+          "vector": [0.65, 0.05, 0.3, 0],
+          "lifecycle": "current",
+          "target_files": ["app/layout.tsx"],
+          "workflow_signature": "next-app-router",
+          "task_signature": "next-metadata",
+          "execution_outcome_role": "passed_solution"
+        },
+        {
+          "id": "case16-contested",
+          "type": "concept",
+          "tier": "warm",
+          "title": "Pages router note contested",
+          "text_summary": "Prior pages router metadata note is contested by app router evidence.",
+          "vector": [0.64, 0.06, 0.3, 0],
+          "lifecycle": "contested",
+          "target_files": ["pages/_app.tsx"]
+        }
+      ]
+    },
+    {
+      "case_id": "case17_recent_working_set",
+      "description": "Recent hot working set should keep a current low-text memory visible.",
+      "query_vector": [0.05, 0.05, 0.9, 0],
+      "expected": {
+        "must_recall_ids": ["case17-recent"],
+        "preferred_direct_use_ids": ["case17-recent"],
+        "must_not_direct_use_ids": [],
+        "stale_ids": [],
+        "failed_branch_ids": [],
+        "rehydrate_ids": [],
+        "required_sources": ["semantic", "recent"]
+      },
+      "memories": [
+        {
+          "id": "case17-recent",
+          "type": "procedure",
+          "tier": "hot",
+          "title": "Recently accepted route for token refresh",
+          "text_summary": "Continue token refresh race fix in refreshQueue.ts.",
+          "vector": [0.05, 0.05, 0.9, 0],
+          "lifecycle": "current",
+          "target_files": ["src/auth/refreshQueue.ts"],
+          "workflow_signature": "token-refresh-race",
+          "task_signature": "token-refresh",
+          "execution_outcome_role": "passed_solution"
+        }
+      ]
+    },
+    {
+      "case_id": "case18_graph_neighbor_needed",
+      "description": "Graph neighbor source will be needed for linked verifier evidence.",
+      "query_vector": [0.45, 0.45, 0.1, 0],
+      "expected": {
+        "must_recall_ids": ["case18-route", "case18-verifier"],
+        "preferred_direct_use_ids": ["case18-route", "case18-verifier"],
+        "must_not_direct_use_ids": [],
+        "stale_ids": [],
+        "failed_branch_ids": [],
+        "rehydrate_ids": [],
+        "required_sources": ["semantic", "graph"]
+      },
+      "memories": [
+        {
+          "id": "case18-route",
+          "type": "procedure",
+          "tier": "hot",
+          "title": "CSV parser accepted route",
+          "text_summary": "Accepted route updates streaming csv parser state machine.",
+          "vector": [0.45, 0.45, 0.1, 0],
+          "lifecycle": "current",
+          "target_files": ["src/csv/parser.ts"],
+          "workflow_signature": "csv-stream-parser",
+          "task_signature": "csv-parser",
+          "execution_outcome_role": "passed_solution"
+        },
+        {
+          "id": "case18-verifier",
+          "type": "concept",
+          "tier": "warm",
+          "title": "CSV verifier evidence",
+          "text_summary": "Verifier evidence: parser handles quoted newline fields.",
+          "vector": [0.44, 0.46, 0.1, 0],
+          "lifecycle": "active",
+          "target_files": ["tests/csv/parser.spec.ts"]
+        }
+      ]
+    },
+    {
+      "case_id": "case19_archive_not_direct",
+      "description": "Archived evidence should be recoverable but not direct-use.",
+      "query_vector": [0.15, 0.15, 0.15, 0.55],
+      "expected": {
+        "must_recall_ids": ["case19-archive"],
+        "preferred_direct_use_ids": [],
+        "must_not_direct_use_ids": [],
+        "stale_ids": [],
+        "failed_branch_ids": [],
+        "rehydrate_ids": ["case19-archive"],
+        "required_sources": ["exact_recovery"]
+      },
+      "memories": [
+        {
+          "id": "case19-archive",
+          "type": "concept",
+          "tier": "cold",
+          "title": "Archived vendor API transcript",
+          "text_summary": "Archived vendor API transcript must be rehydrated before quoting exact payload fields.",
+          "vector": [0.15, 0.15, 0.15, 0.55],
+          "lifecycle": "rehydrate",
+          "target_files": ["docs/vendor-api-transcript.md"],
+          "requires_rehydrate": true
+        }
+      ]
+    },
+    {
+      "case_id": "case20_mixed_product_loop",
+      "description": "Product loop query needs current route, failed branch, stale note, and rehydrate pointer.",
+      "query_vector": [0.5, 0.25, 0.25, 0],
+      "expected": {
+        "must_recall_ids": ["case20-current", "case20-failed", "case20-stale", "case20-anchor"],
+        "preferred_direct_use_ids": ["case20-current"],
+        "must_not_direct_use_ids": ["case20-failed", "case20-stale"],
+        "stale_ids": ["case20-stale"],
+        "failed_branch_ids": ["case20-failed"],
+        "rehydrate_ids": ["case20-anchor"],
+        "required_sources": ["semantic", "structured", "execution_native", "exact_recovery"]
+      },
+      "memories": [
+        {
+          "id": "case20-current",
+          "type": "procedure",
+          "tier": "hot",
+          "title": "Measure API current route",
+          "text_summary": "Continue measure API route that records before and after guide effects.",
+          "vector": [0.5, 0.25, 0.25, 0],
+          "lifecycle": "current",
+          "target_files": ["src/routes/measure.ts"],
+          "workflow_signature": "measure-api",
+          "task_signature": "effect-measurement",
+          "execution_outcome_role": "passed_solution"
+        },
+        {
+          "id": "case20-failed",
+          "type": "procedure",
+          "tier": "hot",
+          "title": "Failed direct metric mutation branch",
+          "text_summary": "Do not mutate memory authority from measure; verifier rejected direct metric mutation.",
+          "vector": [0.49, 0.26, 0.25, 0],
+          "lifecycle": "failed_branch",
+          "target_files": ["src/memory/measure.ts"],
+          "workflow_signature": "measure-api",
+          "task_signature": "effect-measurement",
+          "execution_outcome_role": "failed_branch"
+        },
+        {
+          "id": "case20-stale",
+          "type": "concept",
+          "tier": "warm",
+          "title": "Old measurement output stale",
+          "text_summary": "Old measurement output contract is stale after memory use receipt addition.",
+          "vector": [0.48, 0.25, 0.27, 0],
+          "lifecycle": "stale",
+          "target_files": ["docs/old-measure-output.md"]
+        },
+        {
+          "id": "case20-anchor",
+          "type": "procedure",
+          "tier": "cold",
+          "title": "Archived metric calibration trace",
+          "text_summary": "Archived metric calibration trace should be rehydrated for exact audit details.",
+          "vector": [0.5, 0.25, 0.25, 0],
+          "lifecycle": "rehydrate",
+          "target_files": ["docs/calibration-trace.md"],
+          "workflow_signature": "measure-api",
+          "task_signature": "effect-measurement",
+          "execution_outcome_role": "unknown",
+          "requires_rehydrate": true
+        }
+      ]
+    }
+  ]
+}

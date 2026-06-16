@@ -72,6 +72,28 @@ It runs the full host path over a real Runtime and proves actionable history,
 failed-branch isolation, feedback attribution, measured effect, memory receipt,
 and trace-to-procedure readiness.
 
+## Recall vs Admission Boundary
+
+Aionis can improve recall without changing its product contract.
+
+The Recall Engine finds candidate memories from semantic, lexical, structured,
+execution-native, graph, recent, exact-recovery, and future ANN sources. It may
+explain why a candidate was found and how strong the retrieval signal was. It
+must not decide whether that memory is safe to use.
+
+Admission remains governed by lifecycle, authority, scope, source, risk,
+feedback attribution, and rehydration state. A recalled memory becomes useful
+only after the Runtime places it into one of the product surfaces:
+
+```text
+use_now | inspect_before_use | do_not_use | rehydrate
+```
+
+This keeps Aionis different from recall-only memory systems. Better retrieval
+raises the ceiling for what governance can inspect; governance still controls
+what reaches the Agent. The implementation roadmap is
+[AIONIS_RECALL_ENGINE_ROADMAP.md](AIONIS_RECALL_ENGINE_ROADMAP.md).
+
 ## Multi-Agent Execution Memory Position
 
 Aionis should be a Multi-Agent execution memory backend, not a Multi-Agent

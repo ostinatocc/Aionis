@@ -141,6 +141,11 @@ observe -> guide -> agent action -> feedback -> measure -> snapshot
 Full architecture guide:
 [docs/AIONIS_RUNTIME_ARCHITECTURE.md](docs/AIONIS_RUNTIME_ARCHITECTURE.md).
 
+Recall Engine roadmap:
+[docs/AIONIS_RECALL_ENGINE_ROADMAP.md](docs/AIONIS_RECALL_ENGINE_ROADMAP.md).
+Aionis is improving candidate retrieval underneath the product surface, but
+retrieval still cannot bypass state admission.
+
 ## Aionis vs Recall Memory
 
 | Approach | Default behavior | Aionis behavior |

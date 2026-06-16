@@ -1,0 +1,715 @@
+{
+  "contract_version": "aionis_recall_engine_baseline_v1",
+  "generated_at": "2026-06-16T11:48:34.719Z",
+  "fixture_version": 1,
+  "case_count": 20,
+  "recall_access_capability_version": 2,
+  "candidate_generation": {
+    "semantic_path": "bounded_sqlite_scan_plus_js_cosine",
+    "exact_recovery_path": "unbounded_lite_exact_recovery",
+    "governance_admission": "out_of_scope_for_recall_only_baseline"
+  },
+  "metrics": {
+    "recall_at_50": 1,
+    "candidate_source_coverage": 0.5583,
+    "use_now_precision_after_governance": null,
+    "inspect_before_use_correctness": null,
+    "do_not_use_stale_suppression": 1,
+    "failed_branch_blocking": 1,
+    "rehydrate_hit_rate": 1,
+    "p50_recall_latency_ms": 0.5714,
+    "p95_recall_latency_ms": 2.21,
+    "index_rebuild_time_ms": null,
+    "embedding_backfill_delay_ms": 0
+  },
+  "metric_notes": [
+    "This is a recall-only baseline over real Lite SQLite stores and RecallStoreAccess.",
+    "stage1 semantic path is bounded SQLite scan plus JavaScript cosine ranking, not true ANN.",
+    "use_now_precision_after_governance and inspect_before_use_correctness are deferred to guide/product evals because recall is not admission.",
+    "failed_branch_blocking and do_not_use_stale_suppression are recall-readiness proxies: the unsafe memory must be retrieved so governance can block it."
+  ],
+  "cases": [
+    {
+      "case_id": "case01_current_checkout_adapter",
+      "description": "Current execution branch and failed legacy branch are both semantically related.",
+      "recalled_ids": [
+        "case01-current",
+        "case01-failed",
+        "case01-distractor"
+      ],
+      "missed_required_ids": [],
+      "candidate_sources": {
+        "case01-current": [
+          "exact_recovery",
+          "semantic_scan"
+        ],
+        "case01-failed": [
+          "exact_recovery",
+          "semantic_scan"
+        ],
+        "case01-distractor": [
+          "exact_recovery",
+          "semantic_scan"
+        ]
+      },
+      "required_sources": [
+        "semantic",
+        "structured",
+        "execution_native"
+      ],
+      "covered_required_sources": [
+        "semantic"
+      ],
+      "missing_required_sources": [
+        "structured",
+        "execution_native"
+      ],
+      "recall_at_50": 1,
+      "source_coverage": 0.3333,
+      "failed_branch_blocking_proxy": 1,
+      "do_not_use_stale_suppression_proxy": null,
+      "rehydrate_hit_rate": null,
+      "latency_ms": 2.21
+    },
+    {
+      "case_id": "case02_preference_scope",
+      "description": "Ordinary preference should remain retrievable without execution-native slots.",
+      "recalled_ids": [
+        "case02-preference",
+        "case02-distractor"
+      ],
+      "missed_required_ids": [],
+      "candidate_sources": {
+        "case02-preference": [
+          "exact_recovery",
+          "semantic_scan"
+        ],
+        "case02-distractor": [
+          "exact_recovery",
+          "semantic_scan"
+        ]
+      },
+      "required_sources": [
+        "semantic",
+        "lexical"
+      ],
+      "covered_required_sources": [
+        "semantic"
+      ],
+      "missing_required_sources": [
+        "lexical"
+      ],
+      "recall_at_50": 1,
+      "source_coverage": 0.5,
+      "failed_branch_blocking_proxy": null,
+      "do_not_use_stale_suppression_proxy": null,
+      "rehydrate_hit_rate": null,
+      "latency_ms": 0.8907
+    },
+    {
+      "case_id": "case03_stale_endpoint",
+      "description": "Stale endpoint note should be recalled as evidence for suppression.",
+      "recalled_ids": [
+        "case03-current",
+        "case03-stale"
+      ],
+      "missed_required_ids": [],
+      "candidate_sources": {
+        "case03-current": [
+          "exact_recovery",
+          "semantic_scan"
+        ],
+        "case03-stale": [
+          "exact_recovery",
+          "semantic_scan"
+        ]
+      },
+      "required_sources": [
+        "semantic",
+        "structured"
+      ],
+      "covered_required_sources": [
+        "semantic"
+      ],
+      "missing_required_sources": [
+        "structured"
+      ],
+      "recall_at_50": 1,
+      "source_coverage": 0.5,
+      "failed_branch_blocking_proxy": null,
+      "do_not_use_stale_suppression_proxy": 1,
+      "rehydrate_hit_rate": null,
+      "latency_ms": 0.9499
+    },
+    {
+      "case_id": "case04_rehydrate_plan",
+      "description": "Compact plan anchor should be recalled and marked as needing rehydrate.",
+      "recalled_ids": [
+        "case04-anchor"
+      ],
+      "missed_required_ids": [],
+      "candidate_sources": {
+        "case04-anchor": [
+          "exact_recovery"
+        ]
+      },
+      "required_sources": [
+        "semantic",
+        "exact_recovery"
+      ],
+      "covered_required_sources": [
+        "exact_recovery"
+      ],
+      "missing_required_sources": [
+        "semantic"
+      ],
+      "recall_at_50": 1,
+      "source_coverage": 0.5,
+      "failed_branch_blocking_proxy": null,
+      "do_not_use_stale_suppression_proxy": null,
+      "rehydrate_hit_rate": 1,
+      "latency_ms": 0.2939
+    },
+    {
+      "case_id": "case05_target_file_structured_gap",
+      "description": "Target-file relation is useful even when semantic similarity is split.",
+      "recalled_ids": [
+        "case05-current",
+        "case05-contested"
+      ],
+      "missed_required_ids": [],
+      "candidate_sources": {
+        "case05-current": [
+          "exact_recovery",
+          "semantic_scan"
+        ],
+        "case05-contested": [
+          "exact_recovery",
+          "semantic_scan"
+        ]
+      },
+      "required_sources": [
+        "semantic",
+        "structured"
+      ],
+      "covered_required_sources": [
+        "semantic"
+      ],
+      "missing_required_sources": [
+        "structured"
+      ],
+      "recall_at_50": 1,
+      "source_coverage": 0.5,
+      "failed_branch_blocking_proxy": null,
+      "do_not_use_stale_suppression_proxy": null,
+      "rehydrate_hit_rate": null,
+      "latency_ms": 0.5678
+    },
+    {
+      "case_id": "case06_tool_chain",
+      "description": "Tool-chain execution memory should surface alongside failed verifier command.",
+      "recalled_ids": [
+        "case06-current",
+        "case06-failed-command"
+      ],
+      "missed_required_ids": [],
+      "candidate_sources": {
+        "case06-current": [
+          "exact_recovery",
+          "semantic_scan"
+        ],
+        "case06-failed-command": [
+          "exact_recovery",
+          "semantic_scan"
+        ]
+      },
+      "required_sources": [
+        "semantic",
+        "structured",
+        "execution_native"
+      ],
+      "covered_required_sources": [
+        "semantic"
+      ],
+      "missing_required_sources": [
+        "structured",
+        "execution_native"
+      ],
+      "recall_at_50": 1,
+      "source_coverage": 0.3333,
+      "failed_branch_blocking_proxy": 1,
+      "do_not_use_stale_suppression_proxy": null,
+      "rehydrate_hit_rate": null,
+      "latency_ms": 1.3795
+    },
+    {
+      "case_id": "case07_cold_exact_low_salience",
+      "description": "Cold exact recovery should find a low-salience memory that bounded hot/warm recall would miss.",
+      "recalled_ids": [
+        "case07-hot-distractor",
+        "case07-cold"
+      ],
+      "missed_required_ids": [],
+      "candidate_sources": {
+        "case07-hot-distractor": [
+          "exact_recovery",
+          "semantic_scan"
+        ],
+        "case07-cold": [
+          "exact_recovery"
+        ]
+      },
+      "required_sources": [
+        "exact_recovery"
+      ],
+      "covered_required_sources": [
+        "exact_recovery"
+      ],
+      "missing_required_sources": [],
+      "recall_at_50": 1,
+      "source_coverage": 1,
+      "failed_branch_blocking_proxy": null,
+      "do_not_use_stale_suppression_proxy": null,
+      "rehydrate_hit_rate": null,
+      "latency_ms": 0.4003
+    },
+    {
+      "case_id": "case08_multi_agent_handoff",
+      "description": "Planner handoff and reviewer acceptance should be visible together.",
+      "recalled_ids": [
+        "case08-plan",
+        "case08-review"
+      ],
+      "missed_required_ids": [],
+      "candidate_sources": {
+        "case08-plan": [
+          "exact_recovery",
+          "semantic_scan"
+        ],
+        "case08-review": [
+          "exact_recovery",
+          "semantic_scan"
+        ]
+      },
+      "required_sources": [
+        "semantic",
+        "structured",
+        "execution_native"
+      ],
+      "covered_required_sources": [
+        "semantic"
+      ],
+      "missing_required_sources": [
+        "structured",
+        "execution_native"
+      ],
+      "recall_at_50": 1,
+      "source_coverage": 0.3333,
+      "failed_branch_blocking_proxy": null,
+      "do_not_use_stale_suppression_proxy": null,
+      "rehydrate_hit_rate": null,
+      "latency_ms": 0.5202
+    },
+    {
+      "case_id": "case09_external_candidate_warning",
+      "description": "External memory candidate should be retrievable but remain inspect-grade later.",
+      "recalled_ids": [
+        "case09-external"
+      ],
+      "missed_required_ids": [],
+      "candidate_sources": {
+        "case09-external": [
+          "exact_recovery",
+          "semantic_scan"
+        ]
+      },
+      "required_sources": [
+        "semantic",
+        "lexical"
+      ],
+      "covered_required_sources": [
+        "semantic"
+      ],
+      "missing_required_sources": [
+        "lexical"
+      ],
+      "recall_at_50": 1,
+      "source_coverage": 0.5,
+      "failed_branch_blocking_proxy": null,
+      "do_not_use_stale_suppression_proxy": null,
+      "rehydrate_hit_rate": null,
+      "latency_ms": 0.3965
+    },
+    {
+      "case_id": "case10_archived_raw_trace",
+      "description": "Archived raw trace should appear through exact recovery and require rehydrate.",
+      "recalled_ids": [
+        "case10-archive"
+      ],
+      "missed_required_ids": [],
+      "candidate_sources": {
+        "case10-archive": [
+          "exact_recovery"
+        ]
+      },
+      "required_sources": [
+        "exact_recovery"
+      ],
+      "covered_required_sources": [
+        "exact_recovery"
+      ],
+      "missing_required_sources": [],
+      "recall_at_50": 1,
+      "source_coverage": 1,
+      "failed_branch_blocking_proxy": null,
+      "do_not_use_stale_suppression_proxy": null,
+      "rehydrate_hit_rate": 1,
+      "latency_ms": 0.2476
+    },
+    {
+      "case_id": "case11_repo_signature",
+      "description": "Same task family in another repo should not dominate the target repo candidate.",
+      "recalled_ids": [
+        "case11-current",
+        "case11-other-repo"
+      ],
+      "missed_required_ids": [],
+      "candidate_sources": {
+        "case11-current": [
+          "exact_recovery",
+          "semantic_scan"
+        ],
+        "case11-other-repo": [
+          "exact_recovery",
+          "semantic_scan"
+        ]
+      },
+      "required_sources": [
+        "semantic",
+        "structured"
+      ],
+      "covered_required_sources": [
+        "semantic"
+      ],
+      "missing_required_sources": [
+        "structured"
+      ],
+      "recall_at_50": 1,
+      "source_coverage": 0.5,
+      "failed_branch_blocking_proxy": null,
+      "do_not_use_stale_suppression_proxy": null,
+      "rehydrate_hit_rate": null,
+      "latency_ms": 0.5913
+    },
+    {
+      "case_id": "case12_failure_mode",
+      "description": "Failure mode memory should be available as counter-evidence.",
+      "recalled_ids": [
+        "case12-current",
+        "case12-failure-mode"
+      ],
+      "missed_required_ids": [],
+      "candidate_sources": {
+        "case12-current": [
+          "exact_recovery",
+          "semantic_scan"
+        ],
+        "case12-failure-mode": [
+          "exact_recovery",
+          "semantic_scan"
+        ]
+      },
+      "required_sources": [
+        "semantic",
+        "structured",
+        "execution_native"
+      ],
+      "covered_required_sources": [
+        "semantic"
+      ],
+      "missing_required_sources": [
+        "structured",
+        "execution_native"
+      ],
+      "recall_at_50": 1,
+      "source_coverage": 0.3333,
+      "failed_branch_blocking_proxy": 1,
+      "do_not_use_stale_suppression_proxy": null,
+      "rehydrate_hit_rate": null,
+      "latency_ms": 0.8866
+    },
+    {
+      "case_id": "case13_active_path_missing_file",
+      "description": "Active target may be pending creation, not stale.",
+      "recalled_ids": [
+        "case13-active-target",
+        "case13-old-path"
+      ],
+      "missed_required_ids": [],
+      "candidate_sources": {
+        "case13-active-target": [
+          "exact_recovery",
+          "semantic_scan"
+        ],
+        "case13-old-path": [
+          "exact_recovery",
+          "semantic_scan"
+        ]
+      },
+      "required_sources": [
+        "semantic",
+        "structured",
+        "execution_native"
+      ],
+      "covered_required_sources": [
+        "semantic"
+      ],
+      "missing_required_sources": [
+        "structured",
+        "execution_native"
+      ],
+      "recall_at_50": 1,
+      "source_coverage": 0.3333,
+      "failed_branch_blocking_proxy": null,
+      "do_not_use_stale_suppression_proxy": 1,
+      "rehydrate_hit_rate": null,
+      "latency_ms": 0.4427
+    },
+    {
+      "case_id": "case14_general_fact",
+      "description": "Simple fact recall should not require execution structure.",
+      "recalled_ids": [
+        "case14-fact"
+      ],
+      "missed_required_ids": [],
+      "candidate_sources": {
+        "case14-fact": [
+          "exact_recovery",
+          "semantic_scan"
+        ]
+      },
+      "required_sources": [
+        "semantic"
+      ],
+      "covered_required_sources": [
+        "semantic"
+      ],
+      "missing_required_sources": [],
+      "recall_at_50": 1,
+      "source_coverage": 1,
+      "failed_branch_blocking_proxy": null,
+      "do_not_use_stale_suppression_proxy": null,
+      "rehydrate_hit_rate": null,
+      "latency_ms": 0.3088
+    },
+    {
+      "case_id": "case15_acceptance_check",
+      "description": "Acceptance check memory should be retrieved with the implementation route.",
+      "recalled_ids": [
+        "case15-route",
+        "case15-check"
+      ],
+      "missed_required_ids": [],
+      "candidate_sources": {
+        "case15-route": [
+          "exact_recovery",
+          "semantic_scan"
+        ],
+        "case15-check": [
+          "exact_recovery",
+          "semantic_scan"
+        ]
+      },
+      "required_sources": [
+        "semantic",
+        "structured"
+      ],
+      "covered_required_sources": [
+        "semantic"
+      ],
+      "missing_required_sources": [
+        "structured"
+      ],
+      "recall_at_50": 1,
+      "source_coverage": 0.5,
+      "failed_branch_blocking_proxy": null,
+      "do_not_use_stale_suppression_proxy": null,
+      "rehydrate_hit_rate": null,
+      "latency_ms": 0.5714
+    },
+    {
+      "case_id": "case16_contested_memory",
+      "description": "Contested memory should be retrievable but not preferred direct use.",
+      "recalled_ids": [
+        "case16-current",
+        "case16-contested"
+      ],
+      "missed_required_ids": [],
+      "candidate_sources": {
+        "case16-current": [
+          "exact_recovery",
+          "semantic_scan"
+        ],
+        "case16-contested": [
+          "exact_recovery",
+          "semantic_scan"
+        ]
+      },
+      "required_sources": [
+        "semantic",
+        "structured"
+      ],
+      "covered_required_sources": [
+        "semantic"
+      ],
+      "missing_required_sources": [
+        "structured"
+      ],
+      "recall_at_50": 1,
+      "source_coverage": 0.5,
+      "failed_branch_blocking_proxy": null,
+      "do_not_use_stale_suppression_proxy": null,
+      "rehydrate_hit_rate": null,
+      "latency_ms": 0.5369
+    },
+    {
+      "case_id": "case17_recent_working_set",
+      "description": "Recent hot working set should keep a current low-text memory visible.",
+      "recalled_ids": [
+        "case17-recent"
+      ],
+      "missed_required_ids": [],
+      "candidate_sources": {
+        "case17-recent": [
+          "exact_recovery",
+          "semantic_scan"
+        ]
+      },
+      "required_sources": [
+        "semantic",
+        "recent"
+      ],
+      "covered_required_sources": [
+        "semantic"
+      ],
+      "missing_required_sources": [
+        "recent"
+      ],
+      "recall_at_50": 1,
+      "source_coverage": 0.5,
+      "failed_branch_blocking_proxy": null,
+      "do_not_use_stale_suppression_proxy": null,
+      "rehydrate_hit_rate": null,
+      "latency_ms": 0.7267
+    },
+    {
+      "case_id": "case18_graph_neighbor_needed",
+      "description": "Graph neighbor source will be needed for linked verifier evidence.",
+      "recalled_ids": [
+        "case18-route",
+        "case18-verifier"
+      ],
+      "missed_required_ids": [],
+      "candidate_sources": {
+        "case18-route": [
+          "exact_recovery",
+          "semantic_scan"
+        ],
+        "case18-verifier": [
+          "exact_recovery",
+          "semantic_scan"
+        ]
+      },
+      "required_sources": [
+        "semantic",
+        "graph"
+      ],
+      "covered_required_sources": [
+        "semantic"
+      ],
+      "missing_required_sources": [
+        "graph"
+      ],
+      "recall_at_50": 1,
+      "source_coverage": 0.5,
+      "failed_branch_blocking_proxy": null,
+      "do_not_use_stale_suppression_proxy": null,
+      "rehydrate_hit_rate": null,
+      "latency_ms": 1.7655
+    },
+    {
+      "case_id": "case19_archive_not_direct",
+      "description": "Archived evidence should be recoverable but not direct-use.",
+      "recalled_ids": [
+        "case19-archive"
+      ],
+      "missed_required_ids": [],
+      "candidate_sources": {
+        "case19-archive": [
+          "exact_recovery"
+        ]
+      },
+      "required_sources": [
+        "exact_recovery"
+      ],
+      "covered_required_sources": [
+        "exact_recovery"
+      ],
+      "missing_required_sources": [],
+      "recall_at_50": 1,
+      "source_coverage": 1,
+      "failed_branch_blocking_proxy": null,
+      "do_not_use_stale_suppression_proxy": null,
+      "rehydrate_hit_rate": 1,
+      "latency_ms": 0.9356
+    },
+    {
+      "case_id": "case20_mixed_product_loop",
+      "description": "Product loop query needs current route, failed branch, stale note, and rehydrate pointer.",
+      "recalled_ids": [
+        "case20-current",
+        "case20-stale",
+        "case20-failed",
+        "case20-anchor"
+      ],
+      "missed_required_ids": [],
+      "candidate_sources": {
+        "case20-current": [
+          "exact_recovery",
+          "semantic_scan"
+        ],
+        "case20-stale": [
+          "exact_recovery",
+          "semantic_scan"
+        ],
+        "case20-failed": [
+          "exact_recovery",
+          "semantic_scan"
+        ],
+        "case20-anchor": [
+          "exact_recovery"
+        ]
+      },
+      "required_sources": [
+        "semantic",
+        "structured",
+        "execution_native",
+        "exact_recovery"
+      ],
+      "covered_required_sources": [
+        "semantic",
+        "exact_recovery"
+      ],
+      "missing_required_sources": [
+        "structured",
+        "execution_native"
+      ],
+      "recall_at_50": 1,
+      "source_coverage": 0.5,
+      "failed_branch_blocking_proxy": 1,
+      "do_not_use_stale_suppression_proxy": 1,
+      "rehydrate_hit_rate": 1,
+      "latency_ms": 7.7006
+    }
+  ]
+}

@@ -110,6 +110,21 @@ This lets Aionis compress aggressively without pretending summaries are the same
 as evidence. The compact context can say what to do now and what to avoid while
 keeping heavier evidence available behind rehydrate pointers.
 
+## Recall Engine Boundary
+
+Recall is candidate generation, not authority.
+
+The Runtime can retrieve memory through semantic similarity, exact recovery,
+execution-native anchors, graph neighbors, and future lexical, structured, or
+ANN sources. Those sources only answer which memories may matter and why they
+were retrieved. State governance still decides whether the memory can become
+`use_now`, `inspect_before_use`, `do_not_use`, or `rehydrate`.
+
+The Recall Engine roadmap is tracked in
+[AIONIS_RECALL_ENGINE_ROADMAP.md](AIONIS_RECALL_ENGINE_ROADMAP.md). The invariant
+is simple: improve candidate retrieval below the governance layer without
+weakening lifecycle, authority, scope, source, risk, or rehydration gates.
+
 ## State Governance
 
 Before memory enters Agent context, Aionis evaluates state:
