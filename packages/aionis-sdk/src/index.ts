@@ -613,6 +613,47 @@ export type AionisExecutionStepInput = AionisExecutionBaseInput & {
   execution?: AionisJsonObject;
 };
 
+export type AionisPlanAssetDecision = {
+  decision_id: string;
+  statement: string;
+  rationale?: string;
+  alternatives_rejected?: string[];
+  target_files?: string[];
+};
+
+export type AionisPlanAssetFailedBranch = {
+  branch_id: string;
+  statement: string;
+  reason: string;
+  target_files?: string[];
+};
+
+export type AionisPlanAsset = {
+  plan_id?: string;
+  title: string;
+  summary: string;
+  artifact_ref?: string;
+  decisions: AionisPlanAssetDecision[];
+  acceptance_checks: string[];
+  execution_boundaries: string[];
+  failed_branches?: AionisPlanAssetFailedBranch[];
+};
+
+export type AionisPlanAssetPlanner = {
+  agent_id: string;
+  team_id?: string;
+  model?: string;
+};
+
+export type AionisPlanAssetObserveInput = AionisExecutionRunRef & {
+  tenant_id?: string;
+  scope?: string;
+  memory_lane?: AionisMemoryLane;
+  auto_embed?: boolean;
+  planner: AionisPlanAssetPlanner;
+  plan: AionisPlanAsset;
+};
+
 export type AionisExecutionHandoffInput = AionisExecutionStepInput & {
   handoff_kind?: AionisHandoffKind;
   anchor?: string;
@@ -1806,6 +1847,104 @@ export class AionisExecutionClient {
 
 export function createAionisClient(options: AionisClientOptions): AionisClient {
   return new AionisClient(options);
+}
+
+function planAssetId(input: AionisPlanAssetObserveInput): string {
+  return input.plan.plan_id ?? `plan:${stableTextHash([
+    input.run_id,
+    input.task_signature,
+    input.workflow_signature ?? "",
+    input.plan.title,
+    input.plan.summary,
+  ].join("\n"))}`;
+}
+
+function planAssetTargetFiles(plan: AionisPlanAsset): string[] {
+  return uniqueStrings(plan.decisions.flatMap((decision) => decision.target_files ?? []));
+}
+
+function planAssetSummary(input: AionisPlanAssetObserveInput, planId: string): string {
+  const decisionLines = input.plan.decisions.map((decision) => [
+    `PLAN_DECISION ${decision.decision_id}: ${decision.statement}`,
+    decision.rationale ? `Rationale: ${decision.rationale}` : "",
+    ...(decision.alternatives_rejected ?? []).map((entry) => `Rejected alternative: ${entry}`),
+  ].filter(Boolean).join(" "));
+  return [
+    "PLAN_AS_MEMORY_ASSET",
+    `Plan ID: ${planId}`,
+    input.plan.artifact_ref ? `Artifact: ${input.plan.artifact_ref}` : "",
+    input.planner.model ? `Planner model: ${input.planner.model}` : "",
+    input.plan.summary,
+    ...decisionLines,
+    ...input.plan.acceptance_checks.map((check, index) => `PLAN_ACCEPTANCE_CHECK ${index + 1}: ${check}`),
+    ...input.plan.execution_boundaries.map((boundary, index) => `PLAN_EXECUTION_BOUNDARY ${index + 1}: ${boundary}`),
+    ...(input.plan.failed_branches ?? []).map((branch) => `PLAN_REJECTED_BRANCH ${branch.branch_id}: ${branch.statement} Reason: ${branch.reason}`),
+  ].filter(Boolean).join("\n");
+}
+
+export function planAssetObserveEvents(input: AionisPlanAssetObserveInput): AionisExecutionStepInput[] {
+  const planId = planAssetId(input);
+  const targetFiles = planAssetTargetFiles(input.plan);
+  const base = {
+    run_id: input.run_id,
+    task_id: input.task_id,
+    task_signature: input.task_signature,
+    task_family: input.task_family,
+    workflow_signature: input.workflow_signature,
+    tenant_id: input.tenant_id,
+    scope: input.scope,
+    memory_lane: input.memory_lane,
+    auto_embed: input.auto_embed,
+    agent_id: input.planner.agent_id,
+    team_id: input.planner.team_id,
+    role: "planner" as const,
+  };
+  const planEvent: AionisExecutionStepInput = {
+    ...base,
+    title: input.plan.title,
+    summary: planAssetSummary(input, planId),
+    outcome: "succeeded",
+    target_files: targetFiles,
+    acceptance_checks: input.plan.acceptance_checks,
+    continuation_hint: "Use this plan as governed execution memory; preserve decisions, acceptance checks, boundaries, and rejected branches.",
+    slots: stripUndefined({
+      plan_asset_v1: stripUndefined({
+        plan_id: planId,
+        artifact_ref: input.plan.artifact_ref,
+        planner_model: input.planner.model,
+        decision_ids: input.plan.decisions.map((decision) => decision.decision_id),
+        acceptance_check_count: input.plan.acceptance_checks.length,
+        execution_boundary_count: input.plan.execution_boundaries.length,
+        rejected_branch_count: input.plan.failed_branches?.length ?? 0,
+      }),
+      evidence_kind: "plan_asset",
+    }),
+  };
+  const rejectedBranchEvents = (input.plan.failed_branches ?? []).map((branch): AionisExecutionStepInput => ({
+    ...base,
+    title: `Rejected plan branch: ${branch.branch_id}`,
+    summary: [
+      "PLAN_REJECTED_BRANCH",
+      `Plan ID: ${planId}`,
+      `${branch.branch_id}: ${branch.statement}`,
+      `Reason: ${branch.reason}`,
+      "This branch is counter-evidence and must not become the active execution route.",
+    ].join("\n"),
+    outcome: "failed",
+    target_files: branch.target_files ?? [],
+    acceptance_checks: input.plan.acceptance_checks,
+    continuation_hint: "Do not continue this rejected plan branch as the primary route.",
+    slots: stripUndefined({
+      plan_asset_v1: stripUndefined({
+        plan_id: planId,
+        rejected_branch_id: branch.branch_id,
+        artifact_ref: input.plan.artifact_ref,
+        planner_model: input.planner.model,
+      }),
+      evidence_kind: "plan_rejected_branch",
+    }),
+  }));
+  return [planEvent, ...rejectedBranchEvents];
 }
 
 export function agentContextFromGuide<T = AionisJsonObject>(guide: unknown): T {

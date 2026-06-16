@@ -21,6 +21,7 @@ import {
   memoryUseReceiptFromGuide,
   mustNotMemoryIdsFromGuide,
   pendingArtifactTargetsFromGuide,
+  planAssetObserveEvents,
   referenceOnlyRouteTargetsFromGuide,
   rehydrateHintsFromGuide,
   routeContractFromGuide,
@@ -176,6 +177,67 @@ test("@aionis/sdk maps Mem0 search results to backend-agnostic admission candida
     evidence_requirement: "inspect_before_use",
   });
   assert.equal(candidates[1]?.lifecycle_hint, "unknown");
+});
+
+test("@aionis/sdk builds plan asset observe events", () => {
+  const events = planAssetObserveEvents({
+    run_id: "run-plan-1",
+    task_signature: "feature-flag-service",
+    task_family: "coding",
+    workflow_signature: "planner-worker-demo",
+    planner: {
+      agent_id: "planner-claude",
+      model: "strong-planner-model",
+    },
+    plan: {
+      title: "Feature flag service plan",
+      summary: "Build sticky rollout evaluation with audit logging.",
+      artifact_ref: "plan.md",
+      decisions: [
+        {
+          decision_id: "decision:bucket-math",
+          statement: "Use deterministic 10,000 bucket hashing by flag key and user id.",
+          rationale: "Growing rollout percentages preserves already-enabled users.",
+          target_files: ["packages/api/src/flags.ts"],
+        },
+      ],
+      acceptance_checks: [
+        "same user gets same result across repeated calls",
+        "20% to 40% rollout preserves original 20%",
+      ],
+      execution_boundaries: [
+        "do not store per-user rollout state",
+        "do not store plaintext API keys",
+      ],
+      failed_branches: [
+        {
+          branch_id: "failed:random-rollout",
+          statement: "Random per-request rollout assignment is invalid.",
+          reason: "It violates sticky rollout.",
+          target_files: ["packages/api/src/random-rollout.ts"],
+        },
+      ],
+    },
+  });
+
+  assert.equal(events.length, 2);
+  assert.equal(events[0]?.role, "planner");
+  assert.equal(events[0]?.outcome, "succeeded");
+  assert.deepEqual(events[0]?.target_files, ["packages/api/src/flags.ts"]);
+  assert.deepEqual(events[0]?.acceptance_checks?.slice(0, 1), [
+    "same user gets same result across repeated calls",
+  ]);
+  assert.match(events[0]?.summary ?? "", /PLAN_AS_MEMORY_ASSET/);
+  assert.match(events[0]?.summary ?? "", /PLAN_DECISION decision:bucket-math/);
+  assert.match(events[0]?.summary ?? "", /PLAN_ACCEPTANCE_CHECK 1/);
+  assert.match(events[0]?.summary ?? "", /PLAN_EXECUTION_BOUNDARY 1/);
+  assert.equal((events[0]?.slots?.plan_asset_v1 as Record<string, unknown>)?.planner_model, "strong-planner-model");
+
+  assert.equal(events[1]?.outcome, "failed");
+  assert.equal(events[1]?.title, "Rejected plan branch: failed:random-rollout");
+  assert.deepEqual(events[1]?.target_files, ["packages/api/src/random-rollout.ts"]);
+  assert.match(events[1]?.summary ?? "", /counter-evidence/);
+  assert.equal((events[1]?.slots?.plan_asset_v1 as Record<string, unknown>)?.rejected_branch_id, "failed:random-rollout");
 });
 
 test("@aionis/sdk guide helpers keep Agent prompt and feedback attribution bounded", () => {

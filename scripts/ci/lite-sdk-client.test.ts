@@ -17,6 +17,7 @@ import {
   measureInputFromGuideLoop,
   memoryIdsFromGuide,
   pendingArtifactTargetsFromGuide,
+  planAssetObserveEvents,
   referenceOnlyRouteTargetsFromGuide,
   routeContractFromGuide,
   shouldContinueMemoryIdsFromGuide,
@@ -229,6 +230,61 @@ test("AionisClient remember writes ordinary memory through observe", async () =>
   assert.equal(slots.lifecycle_state, "active");
   assert.equal("state" in slots, false);
   assert.equal(slots.compression_layer, "L2");
+});
+
+test("SDK plan asset profile maps plans into execution memory observe events", () => {
+  const events = planAssetObserveEvents({
+    run_id: "run-plan-profile",
+    task_signature: "checkout-migration",
+    task_family: "coding",
+    workflow_signature: "planner-worker",
+    planner: {
+      agent_id: "planner-1",
+      team_id: "team-a",
+      model: "strong-planner",
+    },
+    plan: {
+      plan_id: "plan:checkout-migration",
+      title: "Checkout migration plan",
+      summary: "Continue the scoped adapter route and keep the old route reference-only.",
+      artifact_ref: "plan.md",
+      decisions: [
+        {
+          decision_id: "decision:scoped-adapter",
+          statement: "Patch packages/api/src/checkout.ts as the active target.",
+          target_files: ["packages/api/src/checkout.ts"],
+        },
+      ],
+      acceptance_checks: [
+        "verifier accepts scoped checkout route",
+        "legacy broad route remains reference-only",
+      ],
+      execution_boundaries: [
+        "do not revive src/legacy/checkout.ts as primary route",
+      ],
+      failed_branches: [
+        {
+          branch_id: "failed:legacy-route",
+          statement: "Legacy broad route failed verifier checks.",
+          reason: "It touched unrelated checkout modules.",
+          target_files: ["src/legacy/checkout.ts"],
+        },
+      ],
+    },
+  });
+
+  assert.equal(events.length, 2);
+  assert.equal(events[0]?.agent_id, "planner-1");
+  assert.equal(events[0]?.team_id, "team-a");
+  assert.equal(events[0]?.outcome, "succeeded");
+  assert.equal(events[0]?.continuation_hint?.includes("governed execution memory"), true);
+  assert.deepEqual(events[0]?.target_files, ["packages/api/src/checkout.ts"]);
+  assert.equal((events[0]?.slots?.plan_asset_v1 as Record<string, unknown>)?.plan_id, "plan:checkout-migration");
+  assert.equal((events[0]?.slots?.plan_asset_v1 as Record<string, unknown>)?.rejected_branch_count, 1);
+
+  assert.equal(events[1]?.outcome, "failed");
+  assert.equal(events[1]?.continuation_hint, "Do not continue this rejected plan branch as the primary route.");
+  assert.deepEqual(events[1]?.target_files, ["src/legacy/checkout.ts"]);
 });
 
 test("agent prompt helpers expose only agent_context from guide responses", () => {
