@@ -270,3 +270,67 @@ test("server edition can construct local-store Runtime services", async () => {
     await services.store.close();
   }
 });
+
+test("server edition serves product routes over a real HTTP listener", async () => {
+  const app = Fastify();
+  const writePath = tmpDbPath("http-write");
+  const replayPath = tmpDbPath("http-replay");
+  const env = await serverEnv(writePath, replayPath);
+  const stores = registerServerProductApp({ app, env, writePath, replayPath });
+  try {
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const address = app.server.address();
+    assert.ok(address && typeof address === "object");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const memoryText = "HTTP server smoke memory: keep managed server continuation notes auditable.";
+    const observe = await fetch(`${baseUrl}/v1/observe`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer tenant-a-key",
+      },
+      body: JSON.stringify({
+        input_text: memoryText,
+        auto_embed: true,
+      }),
+    });
+    const observeText = await observe.text();
+    assert.equal(observe.status, 200, observeText);
+    const observeBody = JSON.parse(observeText) as Record<string, any>;
+    assert.equal(observeBody.contract_version, "aionis_observe_result_v1");
+    assert.equal(observeBody.tenant_id, "tenant-a");
+    assert.equal(observeBody.scope, "tenant-a/default");
+
+    const guide = await fetch(`${baseUrl}/v1/guide`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": "tenant-a-key",
+      },
+      body: JSON.stringify({
+        query_text: "How should managed server continuation notes be written?",
+        include_packets: true,
+        limit: 8,
+      }),
+    });
+    const guideText = await guide.text();
+    assert.equal(guide.status, 200, guideText);
+    const guideBody = JSON.parse(guideText) as Record<string, any>;
+    assert.equal(guideBody.contract_version, "aionis_guide_result_v1");
+    assert.equal(guideBody.tenant_id, "tenant-a");
+    assert.equal(guideBody.scope, "tenant-a/default");
+    assert.ok(
+      guideBody.memory_packet.relevant_memories.some((entry: Record<string, unknown>) =>
+        entry.domain === "general" && entry.summary === memoryText,
+      ),
+    );
+  } finally {
+    await app.close();
+    await stores.executionTreeStore.close();
+    await stores.executionStateStore.close();
+    await stores.liteRecallStore.close();
+    await stores.liteReplayStore.close();
+    await stores.liteWriteStore.close();
+  }
+});
