@@ -72,6 +72,30 @@ The planner model is not Runtime authority. The worker model is not Runtime
 authority. Aionis gates decide which parts of the plan can enter actionable
 context.
 
+## Optional Multi-Model Review
+
+A host may use a multi-model reviewer, router, or Fusion-style API to inspect a
+plan for blind spots before it is recorded. That reviewer can produce advisory
+evidence, but it is not a Runtime authority boundary.
+
+The safe shape is:
+
+```text
+planner creates plan
+-> optional reviewer checks plan
+-> Aionis observes accepted decisions and rejected branches
+-> Aionis guide compiles worker context
+-> host runs worker/validator
+-> Aionis attributes feedback and measures outcome
+```
+
+The reviewer cannot override Aionis lifecycle, source, scope, suppression,
+do-not-use, or rehydrate gates. If a reviewer says an unsafe memory is useful,
+the Runtime must still keep that memory out of `use_now`.
+
+Detailed boundary:
+[AIONIS_OPENROUTER_FUSION.md](AIONIS_OPENROUTER_FUSION.md).
+
 ## Loop Metadata
 
 Hosts can use the existing `observe` / SDK execution helpers and place loop

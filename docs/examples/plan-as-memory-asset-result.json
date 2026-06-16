@@ -1,17 +1,17 @@
 {
   "contract_version": "aionis_plan_as_memory_asset_demo_result_v1",
-  "run_id": "plan-asset-8ff8d193",
+  "run_id": "plan-asset-1699d303",
   "runtime": {
     "mode": "spawned",
-    "base_url": "http://127.0.0.1:60147",
+    "base_url": "http://127.0.0.1:61234",
     "embedding_provider": "minimax"
   },
   "positioning": "Strong planners make plans; Aionis keeps those plans reusable as governed execution memory.",
   "plan_asset": {
     "recorded": true,
-    "plan_memory_id": "4f9eed71-c108-5f95-a3f2-2adb06619c1a",
-    "rejected_branch_memory_id": "1e1e7984-5b59-517f-8252-6b46b0ac774f",
-    "passed_memory_id": "5e804d5a-5f7e-565d-bbbd-cdde2c0d74c6",
+    "plan_memory_id": "66a27385-e524-578e-8fa6-b7f27f106709",
+    "rejected_branch_memory_id": "226daaa8-81ec-5782-a800-9f165ee8a449",
+    "passed_memory_id": "015bfb5b-f2e6-542b-b1fb-8df7c48a0655",
     "decision_count": 1,
     "acceptance_check_count": 2,
     "rejected_branch_count": 1
@@ -26,11 +26,11 @@
     "prompt_char_count": 2754,
     "active_targets": [],
     "use_now_memory_ids": [
-      "5e804d5a-5f7e-565d-bbbd-cdde2c0d74c6"
+      "015bfb5b-f2e6-542b-b1fb-8df7c48a0655"
     ],
     "inspect_before_use_memory_ids": [
-      "4f9eed71-c108-5f95-a3f2-2adb06619c1a",
-      "1e1e7984-5b59-517f-8252-6b46b0ac774f"
+      "66a27385-e524-578e-8fa6-b7f27f106709",
+      "226daaa8-81ec-5782-a800-9f165ee8a449"
     ],
     "do_not_use_memory_ids": []
   },

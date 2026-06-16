@@ -27,7 +27,7 @@ The server exposes stable product tools, not internal Runtime packets:
 | Tool | Purpose |
 |---|---|
 | `aionis_context` | Compile governed Agent context for the current run. Optionally records a lightweight observation first. |
-| `aionis_record_step` | Record a planner/worker/verifier/reviewer step. Feedback attribution is optional. |
+| `aionis_record_step` | Record a planner/worker/verifier/reviewer step, including planner plan assets and rejected branch evidence. Feedback attribution is optional. |
 | `aionis_handoff` | Record branch-aware multi-agent handoff state. |
 | `aionis_remember` | Store ordinary project memory through the governed observe path. |
 | `aionis_govern_memory` | Route external Mem0/Zep/vector/markdown candidates through Aionis Memory Firewall before prompt use. |
@@ -47,6 +47,20 @@ Runtime guide, and `budget_profile`, `max_prompt_chars`, `repo_state`, and
 `additional_instructions` when the host can provide execution-environment facts.
 For example, pass `repo_state.missing_files` so Aionis can tell the Agent that a
 missing active target is pending work rather than stale memory.
+
+For Claude Code or Cursor demos, the recommended flow is:
+
+1. Use `aionis_record_step` as a planner to record the accepted plan,
+   active targets, acceptance checks, and execution boundary.
+2. Use `aionis_record_step` again for any rejected branch as `outcome:
+   "failed"` with the rejected target files.
+3. Ask `aionis_context` for the worker/reviewer context before implementation.
+4. Use `aionis_flight_recorder` after the run to replay which plan memories and
+   failed branches were visible at decision time.
+
+This is the MCP shape of Aionis Plan as Memory Asset: the MCP client can use a
+strong planner once, then let later workers continue from adjudicated execution
+memory instead of raw chat history.
 
 The tool returns these structured fields in `structuredContent`:
 

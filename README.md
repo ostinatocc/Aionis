@@ -197,6 +197,12 @@ governance around that loop: observed iteration evidence, next-iteration guide,
 feedback attribution, effect measurement, operator snapshot, and Flight Recorder
 replay.
 
+Run the loop profile:
+
+```bash
+npm run -s runtime:e2e:loop-engineering-profile
+```
+
 ## Plan As Memory Asset
 
 Aionis is not a model router. It is the execution memory layer that preserves
@@ -217,10 +223,10 @@ Agent. Aionis records the plan as evidence, compiles only the governed state
 into the worker context, and lets Flight Recorder show what the worker could see
 when it acted.
 
-Run the profile:
+Run the plan asset profile:
 
 ```bash
-npm run -s runtime:e2e:loop-engineering-profile
+npm run -s runtime:e2e:plan-as-memory-asset
 ```
 
 Guide:
@@ -387,7 +393,8 @@ Full example outputs:
 8. [Flight Recorder quickstart result](docs/examples/flight-recorder-quickstart-result.json)
 9. [Flight Recorder incident demo result](docs/examples/flight-recorder-incident-demo-result.json)
 10. [Loop Engineering profile result](docs/examples/loop-engineering-profile-result.json)
-11. [Claude Code MCP demo result](docs/examples/claude-code-mcp-demo-result.json)
+11. [Plan as Memory Asset result](docs/examples/plan-as-memory-asset-result.json)
+12. [Claude Code MCP demo result](docs/examples/claude-code-mcp-demo-result.json)
 
 ## What The Agent Gets
 
@@ -717,6 +724,7 @@ Official docs: [https://docs.aionis.work](https://docs.aionis.work)
 | [AIONIS_MCP.md](docs/AIONIS_MCP.md) | MCP bridge for Claude Code, Cursor, and other coding-agent clients. |
 | [AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md](docs/AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md) | 3-5 minute Claude Code + Aionis MCP demo script and proof checklist. |
 | [AIONIS_LOOP_ENGINEERING.md](docs/AIONIS_LOOP_ENGINEERING.md) | Memory governance profile for loop-engineered Agents. |
+| [AIONIS_OPENROUTER_FUSION.md](docs/AIONIS_OPENROUTER_FUSION.md) | Boundary for optional multi-model plan review without turning Aionis into a model router. |
 | [AIONIS_RUNTIME_ARCHITECTURE.md](docs/AIONIS_RUNTIME_ARCHITECTURE.md) | Product architecture, memory layers, execution memory, context compiler, and source map. |
 | [AIONIS_HTTP_QUICKSTART.md](docs/AIONIS_HTTP_QUICKSTART.md) | Smallest curl-first product loop. |
 | [AIONIS_QUICKSTART_MATRIX.md](docs/AIONIS_QUICKSTART_MATRIX.md) | Which first-run command to use for SDK, HTTP, and multi-agent hosts. |

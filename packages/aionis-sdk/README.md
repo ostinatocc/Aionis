@@ -19,6 +19,7 @@ import {
   memoryAdmissionRecordFromGuide,
   measureInputFromGuideLoop,
   mustNotMemoryIdsFromGuide,
+  planAssetObserveEvents,
   shouldContinueMemoryIdsFromGuide,
   snapshotInputFromGuideLoop,
 } from "@aionis/sdk";
@@ -105,6 +106,63 @@ const compactPrompt = compileExecutionAgentContext({
 
 `context_mode: "compact_agent"` keeps SDK guide defaults on the governed
 full-power path while shortening only `agent_context.prompt_text`.
+
+## Plan As Memory Asset
+
+Use `planAssetObserveEvents()` when a strong planner, reviewer, or human lead
+creates an execution plan that should survive across agents, sessions, or model
+tiers. The helper records the accepted plan as current execution memory and
+records rejected routes as failed branch evidence.
+
+```ts
+const planEvents = planAssetObserveEvents({
+  run_id: "run-001",
+  task_signature: "checkout-migration",
+  planner_agent_id: "claude-planner",
+  title: "Checkout migration plan",
+  summary: "Move checkout orchestration to the typed adapter path.",
+  active_targets: ["packages/api/src/checkoutAdapter.ts"],
+  decisions: [
+    "Keep legacy fullBundleEnvironment.ts read-only as reference evidence.",
+    "Implement the new adapter path before extending checkout orchestration.",
+  ],
+  acceptance_checks: [
+    "npm run -s test -- checkout",
+    "No writes to legacy fullBundleEnvironment.ts",
+  ],
+  rejected_branches: [
+    {
+      title: "Extend legacy bundle environment",
+      summary: "Verifier rejected the legacy route.",
+      target_files: ["packages/api/src/fullBundleEnvironment.ts"],
+      reason: "It passed narrow smoke checks but failed checkout integration.",
+    },
+  ],
+});
+
+for (const event of planEvents) {
+  await aionis.execution.observeStep(event);
+}
+
+const guide = await aionis.execution.guideForRole({
+  agent_id: "worker-1",
+  role: "worker",
+  run_id: "run-001",
+  task_signature: "checkout-migration",
+  query_text: "Implement the accepted plan without reusing rejected routes.",
+  context_mode: "compact_agent",
+});
+```
+
+The failed branch details are emitted as separate failed evidence instead of
+being folded into the direct-use plan summary. That keeps the worker prompt
+short while preserving counter-evidence for the Runtime gate.
+
+Runnable proof:
+
+```bash
+npm run -s runtime:e2e:plan-as-memory-asset
+```
 
 ## Execution Memory Helpers
 

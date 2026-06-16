@@ -71,7 +71,7 @@ function register(
 export function createAionisMcpServer(client: AionisMcpClient): McpServer {
   const server = new McpServer({
     name: "aionis-mcp",
-    version: "0.1.6",
+    version: "0.1.7",
   });
 
   register(server, client, "aionis_context", {
