@@ -19,28 +19,14 @@ self-managed deployments behind your own boundary. It is not yet a hosted
 multi-tenant production control plane; Lite defaults to loopback and
 unauthenticated local use.
 
-Already using Mem0? Keep it for retrieval. Put Aionis in front of the Agent as
-the Memory Firewall:
-
-```text
-Mem0 search -> Aionis governMem0SearchResults -> safe Agent context
-```
-
-In a 12-scenario real local Mem0 A/B, Mem0 retrieved the current route in every
-case but also retrieved unsafe memories in 10 cases. Aionis preserved 100%
-current-route recall while reducing wrong direct-use from 83.3% to 0%.
+MCP is the fastest way to try Aionis inside coding agents such as Claude Code,
+Cursor, or any MCP-compatible host.
 
 ```bash
 npx @aionis/create@latest
 ```
 
-That default install runs the no-key first-value demo: raw retrieved history
-would put failed and stale routes into direct Agent context; Aionis admits the
-current route, blocks unsafe branches, keeps archived evidence pointer-only, and
-prints a memory-use receipt.
-
-Already have a local Runtime? Add Aionis to Claude Code, Cursor, or another MCP
-client:
+Then add Aionis to Claude Code:
 
 ```bash
 claude mcp add --transport stdio --scope project aionis -- \
@@ -54,6 +40,27 @@ Generic MCP clients can run the bridge directly:
 ```bash
 npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope my-project
 ```
+
+The default install runs the no-key first-value demo: raw retrieved history
+would put failed and stale routes into direct Agent context; Aionis admits the
+current route, blocks unsafe branches, keeps archived evidence pointer-only, and
+prints a memory-use receipt.
+
+Already using Mem0, Zep, Supermemory, Pinecone, pgvector, Chroma, Weaviate,
+LangGraph Store, markdown memory, logs, or a custom vector store? Keep it for
+retrieval. Put Aionis in front of the Agent as the Memory Firewall:
+
+```text
+external memory search -> Aionis governMemory / governMem0SearchResults -> safe Agent context
+```
+
+In a backend-agnostic local demo, raw retrieval direct-uses failed, stale, and
+unknown memory; Aionis keeps the current route in `use_now`, moves failed/stale
+memory to `do_not_use`, leaves unknown memory `inspect_before_use`, and keeps
+archived evidence pointer-only under `rehydrate`. For Mem0 specifically, a
+12-scenario local A/B showed Mem0 retrieved the current route in every case but
+also retrieved unsafe memories in 10 cases; Aionis preserved 100% current-route
+recall while reducing wrong direct-use from 83.3% to 0%.
 
 External proof paths:
 
@@ -78,8 +85,8 @@ Most memory systems retrieve text. Aionis governs state.
 | Agents that stop repeating old mistakes | Failed branches become counter-evidence instead of future instructions. |
 | Shorter context without losing the task | Execution history is compressed into current state, reusable procedures, and rehydrate pointers. |
 | Safer memory than raw RAG | Memories are gated into `use_now`, `inspect_before_use`, `do_not_use`, or `rehydrate`. |
-| Admission for any memory backend | Mem0, Zep, vector DB, markdown, or custom memory candidates can be routed through Aionis before prompt use. |
-| A Memory Firewall for Mem0 | Use Mem0 for recall, then prevent failed, stale, contested, or untrusted memories from becoming Agent instructions. |
+| Admission for any memory backend | Mem0, Zep, Supermemory, Pinecone, pgvector, Chroma, Weaviate, LangGraph Store, markdown, logs, or custom memory candidates can be routed through Aionis before prompt use. |
+| Memory Firewall for retrieval systems | Use your memory backend for recall, then prevent failed, stale, contested, unknown, or rehydrate-required memories from becoming Agent instructions. |
 | Plans that survive model and session boundaries | Strong planners can create plans; Aionis keeps their decisions, checks, failed branches, and boundaries executable for later workers. |
 | Multi-agent execution continuity | Planner, worker, verifier, and reviewer share branch-aware execution memory. |
 | Memory that can be controlled | Stale or harmful memory can be suppressed, archived, restored, or rehydrated. |
