@@ -1750,6 +1750,13 @@ git commit -m "feat: add optional ann index contract"
 
 ## Task 19: Evaluate USearch, sqlite-vec, and LanceDB Without Committing a Dependency
 
+Status: implemented. Aionis now has an ANN backend evaluation note and a
+manual dependency-optional probe script. No ANN backend dependency has been
+added to Runtime. The current recommendation is to evaluate USearch first as
+the production local sidecar candidate, keep sqlite-vec as a SQLite-native
+backup gated by extension-loading proof, and defer LanceDB to Managed Server
+Edition research.
+
 **Files:**
 - Create: `docs/research/2026-06-16-ann-backend-evaluation.md`
 - Create: `scripts/research/ann-backend-probe.mjs`

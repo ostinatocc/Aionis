@@ -162,6 +162,10 @@ proxy metrics. Full product evaluations must measure them through `/v1/guide`.
      IDs against SQLite scope, tier, visibility, and surface gates before
      returning `ann` source traces. Empty or unusable sidecar results fall back
      to the existing bounded SQLite scan.
+   - Backend evaluation status: USearch, sqlite-vec, and LanceDB are documented
+     in `docs/research/2026-06-16-ann-backend-evaluation.md`. No backend
+     dependency is committed yet. `scripts/research/ann-backend-probe.mjs`
+     provides a manual, dependency-optional probe for local measurements.
 
 8. **Flight Recorder and operator visibility**
    - Include recall source traces in operator snapshots and Flight Recorder.
