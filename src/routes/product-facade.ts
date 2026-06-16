@@ -843,6 +843,29 @@ function productGuideStructuredControlSlots(row: LiteExecutionNativeNodeRow): Re
   return slots;
 }
 
+function recallSourceKey(value: unknown): string {
+  const record = objectValue(value);
+  if (!record) return stableStringify(value) ?? String(value);
+  return stableStringify({
+    kind: record.kind,
+    index_name: record.index_name,
+    reason: record.reason,
+    matched_fields: Array.isArray(record.matched_fields) ? record.matched_fields : [],
+  }) ?? String(value);
+}
+
+function mergeRecallSourceArrays(left: unknown, right: unknown): unknown[] {
+  const out: unknown[] = Array.isArray(left) ? [...left] : [];
+  const seen = new Set(out.map((entry) => recallSourceKey(entry)));
+  for (const entry of Array.isArray(right) ? right : []) {
+    const key = recallSourceKey(entry);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(entry);
+  }
+  return out;
+}
+
 function mergeAionisMemoryPackets(
   base: AionisMemoryPacket | null,
   supplemental: AionisMemoryPacket | null,
@@ -851,15 +874,28 @@ function mergeAionisMemoryPackets(
   if (!base) return { packet: supplemental, changed: true };
 
   const seenMemoryIds = new Set(base.relevant_memories.map((entry) => entry.memory_id));
+  const supplementalById = new Map(supplemental.relevant_memories.map((entry) => [entry.memory_id, entry]));
+  let recallSourceChanged = false;
+  const baseMemoriesWithMergedSources = base.relevant_memories.map((entry) => {
+    const duplicate = supplementalById.get(entry.memory_id);
+    if (!duplicate) return entry;
+    const recallSources = mergeRecallSourceArrays(entry.recall_sources, duplicate.recall_sources);
+    if (recallSources.length === entry.recall_sources.length) return entry;
+    recallSourceChanged = true;
+    return {
+      ...entry,
+      recall_sources: recallSources,
+    };
+  });
   const relevantMemories = [
-    ...base.relevant_memories,
+    ...baseMemoriesWithMergedSources,
     ...supplemental.relevant_memories.filter((entry) => {
       if (seenMemoryIds.has(entry.memory_id)) return false;
       seenMemoryIds.add(entry.memory_id);
       return true;
     }),
   ];
-  const changed = relevantMemories.length > base.relevant_memories.length;
+  const changed = relevantMemories.length > base.relevant_memories.length || recallSourceChanged;
   if (!changed) return { packet: base, changed: false };
 
   const evidenceIds = new Set<string>();
@@ -1035,6 +1071,10 @@ async function buildProductGuideStructuredExecutionPacket(args: {
     created_at: row.created_at,
     updated_at: row.updated_at,
   }));
+  const matchedFields = uniqueStrings([
+    taskSignature ? "task_signature" : null,
+    workflowSignature ? "workflow_signature" : null,
+  ]);
 
   return buildAionisMemoryPacket({
     tenant_id: args.tenant_id,
@@ -1053,6 +1093,16 @@ async function buildProductGuideStructuredExecutionPacket(args: {
       id: node.id,
       score: Math.max(0.5, 0.99 - index * 0.01),
     })),
+    recall_sources_by_memory_id: Object.fromEntries(nodes.map((node, index) => [
+      node.id,
+      [{
+        kind: "execution_native",
+        score: Math.max(0.5, 0.99 - index * 0.01),
+        reason: "structured_execution_signature_recall",
+        matched_fields: matchedFields,
+        index_name: "lite_memory_execution_native_index",
+      }],
+    ])),
     source_map: {
       routes_used: ["/v1/guide"],
       internal_surfaces_used: [

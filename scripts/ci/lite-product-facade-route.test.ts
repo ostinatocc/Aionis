@@ -2110,6 +2110,13 @@ test("full-power product guide merges structured execution control memory into p
     assert.equal(packetMemoryIds.includes(contestedNodeId), true);
     assert.equal(packetMemoryIds.includes(rehydrateNodeId), true);
     assert.equal(packetMemoryIds.includes(otherNodeId), false);
+    const failedMemoryEntry = arrayValue(memoryPacket.relevant_memories, "memory_packet.relevant_memories")
+      .find((entry) => entry.memory_id === failedNodeId);
+    assert.equal(
+      arrayValue(failedMemoryEntry?.recall_sources, "failed recall_sources")
+        .some((source) => source.kind === "execution_native"),
+      true,
+    );
 
     const measure = await app.inject({
       method: "POST",

@@ -21,6 +21,35 @@ Use the right deployment posture before wiring an Agent host:
 | `server` | Remote SDK/MCP clients connecting to a managed endpoint | Requires `AIONIS_MODE=service` and authenticated access with `api_key`, `jwt`, or `api_key_or_jwt` unless an explicit development override is set. |
 | `cloud` | SaaS control plane | Reserved. Billing, organization management, hosted multi-tenancy, and fleet operations are not implemented by this Runtime package. |
 
+### Managed Server Hybrid Recall Check
+
+Server Edition keeps the same governance contract as Lite, but exposes it to
+remote SDK or MCP clients behind an authenticated endpoint. The Server path
+must not turn recall into admission: semantic, lexical, structured,
+execution-native, ANN, graph, and recent sources can propose candidates, while
+the product layer still decides `use_now`, `inspect_before_use`, `do_not_use`,
+and `rehydrate`.
+
+Run the managed-server hybrid recall e2e when changing Server registration,
+SDK auth, recall sources, source tracing, or product admission output:
+
+```bash
+npm run -s runtime:e2e:managed-server-hybrid-recall
+```
+
+The e2e starts a temporary Server Edition instance with API key auth, writes an
+execution history with accepted, failed, stale, lexical, and structured
+signals, calls `guide` through `createAionisClient`, then verifies:
+
+1. accepted execution memory reaches `use_now`
+2. failed and stale branches do not enter direct use
+3. at least two recall source families are visible in trace
+4. `memory_use_receipt` and admission reasons are available for audit
+5. `operator_snapshot` includes the guide trace and receipt
+
+The committed example result lives at
+[`docs/examples/managed-server-hybrid-recall-result.json`](examples/managed-server-hybrid-recall-result.json).
+
 ## Integration Contract
 
 Aionis is a memory and execution-learning Runtime. The host still owns task
@@ -534,6 +563,7 @@ npm run -s lite:test
 npm run -s runtime:quickstart:sdk
 npm run -s runtime:e2e:ordinary-memory
 npm run -s runtime:e2e:golden-product-loop
+npm run -s runtime:e2e:managed-server-hybrid-recall
 npm run -s runtime:quickstart:multi-agent
 npm run -s runtime:e2e:single-agent-host-template
 npm run -s runtime:e2e:multi-agent-host-template

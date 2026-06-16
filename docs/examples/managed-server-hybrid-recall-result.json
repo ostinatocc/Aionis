@@ -1,0 +1,34 @@
+{
+  "contract_version": "aionis_managed_server_hybrid_recall_e2e_result_v1",
+  "run_id": "managed-server-hybrid-recall-example",
+  "server": {
+    "started_over_real_http": true,
+    "auth_mode": "api_key",
+    "sdk_client": "createAionisClient",
+    "tenant_id": "tenant-a",
+    "scope": "tenant-a/default"
+  },
+  "scenario": {
+    "accepted_memory_id": "d8cdc7c2-e71e-540d-9ef5-94a08d52bbb8",
+    "failed_memory_id": "f3f3e0c4-a0d5-5b0c-b173-49f4c7675acb",
+    "stale_memory_id": "fcb3f4e5-f612-52e1-8f12-82898384de15",
+    "lexical_memory_id": "7877974c-13f7-54e6-b1d6-d1a7bff6c761",
+    "target_file": "src/checkout/managed-current-route.ts",
+    "workflow_signature": "workflow:managed-server-hybrid-recall"
+  },
+  "assertions": {
+    "accepted_route_use_now": true,
+    "failed_direct_use_blocked": true,
+    "stale_direct_use_blocked": true,
+    "recall_source_family_count": 2,
+    "recall_source_families": [
+      "execution_native",
+      "semantic"
+    ],
+    "memory_use_receipt_visible": true,
+    "admission_record_visible": true,
+    "operator_snapshot_trace_visible": true,
+    "operator_snapshot_receipt_visible": true
+  },
+  "note": "This e2e starts Server Edition with API key auth, writes governed execution history, calls guide through the remote SDK, and verifies recall source traces remain below memory admission governance."
+}
