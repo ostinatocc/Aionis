@@ -150,6 +150,25 @@ admitted. Do not put secrets in titles.
 
 ## Runnable Validation
 
+Run the dedicated Admission Dataset Export e2e:
+
+```bash
+export EMBEDDING_PROVIDER="openai"
+export OPENAI_API_KEY="your-openai-key"
+npm run -s runtime:e2e:admission-dataset-export
+```
+
+The output contract is `aionis_admission_dataset_export_e2e_result_v1`.
+The script verifies that:
+
+- a directly used memory becomes `positive_use` after host feedback
+- a suppressed memory becomes `blocked_or_suppressed`
+- JSONL line count matches row count
+- prompt text, raw memory payloads, and raw slots are excluded
+
+See [admission-dataset-export-result.json](examples/admission-dataset-export-result.json)
+for a compact example report.
+
 Run the SDK quickstart against a real local Runtime:
 
 ```bash
@@ -165,7 +184,8 @@ The output includes an `admission_dataset_export` section. The script verifies
 that JSONL rows are produced after feedback/measure, positive attribution is
 joined, and prompt payload is not exported.
 
-The broader product e2e also validates the same loop:
+The broader product e2e also validates the same loop as part of the full
+product surface:
 
 ```bash
 npm run -s runtime:e2e:product-loop

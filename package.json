@@ -38,6 +38,7 @@
     "packages:build": "npm run -w @aionis/sdk -s build && npm run -w @aionis/mcp -s build && npm run -w @aionis/create -s build",
     "packages:test": "npm run -w @aionis/sdk -s test && npm run -w @aionis/mcp -s test && npm run -w @aionis/create -s test",
     "runtime:e2e:product-loop": "npx tsx scripts/e2e/product-four-api-loop.ts",
+    "runtime:e2e:admission-dataset-export": "npx tsx scripts/e2e/admission-dataset-export-loop.ts",
     "runtime:quickstart:sdk": "npx tsx scripts/e2e/developer-sdk-quickstart.ts",
     "runtime:quickstart:http": "npx tsx scripts/e2e/developer-http-quickstart.ts",
     "runtime:quickstart:multi-agent": "npx tsx scripts/e2e/developer-multi-agent-quickstart.ts",
