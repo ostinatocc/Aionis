@@ -2380,6 +2380,23 @@ function memoryEntryUsable(entry: MemoryPacketEntry): boolean {
     && entry.lifecycle_state === "active";
 }
 
+function memoryEntryIsExecutionScoped(entry: MemoryPacketEntry): boolean {
+  return entry.domain === "execution"
+    || entry.memory_type === "execution_memory"
+    || entry.memory_type === "procedure";
+}
+
+function memoryEntryDirectUseEligible(args: {
+  entry: MemoryPacketEntry;
+  lifecycleCandidateAdmitted: boolean;
+}): boolean {
+  if (!memoryEntryUsable(args.entry) && !args.lifecycleCandidateAdmitted) return false;
+  if (!memoryEntryIsExecutionScoped(args.entry)) return true;
+  return contractEntryIsCurrentState(args.entry)
+    || contractEntryIsProcedure(args.entry)
+    || args.lifecycleCandidateAdmitted;
+}
+
 function memoryEntryLabel(entry: MemoryPacketEntry): string {
   return compactStrings([entry.title, entry.memory_id])[0] ?? entry.memory_id;
 }
@@ -2937,6 +2954,7 @@ function lifecycleCandidateRehydrateHints(args: {
 function buildAgentContextCommandPostures(args: {
   memoryEntries: MemoryPacketEntry[];
   useNowMemoryIds: string[];
+  optionalContextMemoryIds: string[];
   inspectBeforeUseMemoryIds: string[];
   doNotUseMemoryIds: string[];
   rehydrateHints: AionisAgentContext["rehydrate_hints"];
@@ -3025,6 +3043,24 @@ function buildAgentContextCommandPostures(args: {
     });
   }
 
+  for (const memoryId of args.optionalContextMemoryIds) {
+    if (args.useNowMemoryIds.includes(memoryId)) continue;
+    if (args.inspectBeforeUseMemoryIds.includes(memoryId)) continue;
+    if (args.doNotUseMemoryIds.includes(memoryId)) continue;
+    if (rehydrateIds.has(memoryId)) continue;
+    const entry = entries.get(memoryId);
+    push({
+      posture: "optional_context",
+      surface: "context",
+      memory_id: memoryId,
+      instruction: "Use as background context only; do not treat this as the active route or next implementation command.",
+      reason: entry
+        ? `${memoryEntryAuditLabel(entry)} is active context but lacks current-state, procedure, accepted-route, or handoff evidence for direct action.`
+        : `${memoryId} is optional context and lacks direct-action authority.`,
+      target_files: entryFiles(entry),
+    });
+  }
+
   return rows.slice(0, 14);
 }
 
@@ -3073,6 +3109,7 @@ function compileAgentContextSurfaces(args: {
   inspectBeforeUse: string[];
   doNotUse: string[];
   useNowMemoryIds: string[];
+  optionalContextMemoryIds: string[];
   inspectBeforeUseMemoryIds: string[];
   doNotUseMemoryIds: string[];
   risk: AionisAgentContext["risk"];
@@ -3112,6 +3149,12 @@ function compileAgentContextSurfaces(args: {
   );
   const deniedPathTargets = deniedAgentActionPathTargets(args.memoryEntries);
   const hasUsableMemory = usableEntries.length > 0;
+  const directlyUsableEntries = usableEntries.filter((entry) =>
+    memoryEntryDirectUseEligible({
+      entry,
+      lifecycleCandidateAdmitted: lifecycleCandidateAdmittedUseNowIds.has(entry.memory_id),
+    })
+  );
   const hasRawGuideSurface =
     args.rawTargetFiles.length > 0
     || args.rawUseNow.length > 0
@@ -3154,8 +3197,17 @@ function compileAgentContextSurfaces(args: {
       }
     }
   }
-  const directUseMemoryEntries = usableEntries.filter((entry) =>
+  const directUseMemoryEntries = directlyUsableEntries.filter((entry) =>
     !trustedWorkflowConflictInspectIds.has(entry.memory_id)
+    && !premiseInspectIds.has(entry.memory_id)
+    && !premiseDoNotUseIds.has(entry.memory_id)
+    && !lifecycleCandidateInspectIds.has(entry.memory_id)
+    && !memoryContractInspectIds.has(entry.memory_id)
+  );
+  const directUseMemoryIdSet = new Set(directUseMemoryEntries.map((entry) => entry.memory_id));
+  const optionalContextEntries = usableEntries.filter((entry) =>
+    !directUseMemoryIdSet.has(entry.memory_id)
+    && !trustedWorkflowConflictInspectIds.has(entry.memory_id)
     && !premiseInspectIds.has(entry.memory_id)
     && !premiseDoNotUseIds.has(entry.memory_id)
     && !lifecycleCandidateInspectIds.has(entry.memory_id)
@@ -3226,7 +3278,8 @@ function compileAgentContextSurfaces(args: {
       return false;
     }
     if (executionEvidenceUseNowLine(entry)) return true;
-    return hasUsableMemory || args.memoryEntries.length === 0;
+    if (workflowUseNowLine(entry)) return directUseMemoryEntries.length > 0 || args.rawTargetFiles.length > 0;
+    return directUseMemoryEntries.length > 0 || args.rawTargetFiles.length > 0 || args.memoryEntries.length === 0;
   });
 
   const rawTargetFiles = args.rawTargetFiles.filter((target) =>
@@ -3337,6 +3390,7 @@ function compileAgentContextSurfaces(args: {
     inspectBeforeUse,
     doNotUse,
     useNowMemoryIds: compactStrings(directUseMemoryEntries.map((entry) => entry.memory_id)).slice(0, 10),
+    optionalContextMemoryIds: compactStrings(optionalContextEntries.map((entry) => entry.memory_id)).slice(0, 10),
     inspectBeforeUseMemoryIds: compactStrings([
       ...inspectEntries.map((entry) => entry.memory_id),
       ...conflictInspectMemoryEntries.map((entry) => entry.memory_id),
@@ -3486,6 +3540,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
   const commandPosture = buildAgentContextCommandPostures({
     memoryEntries: memory?.relevant_memories ?? [],
     useNowMemoryIds: surfaces.useNowMemoryIds,
+    optionalContextMemoryIds: surfaces.optionalContextMemoryIds,
     inspectBeforeUseMemoryIds: surfaces.inspectBeforeUseMemoryIds,
     doNotUseMemoryIds: surfaces.doNotUseMemoryIds,
     rehydrateHints,
@@ -3603,6 +3658,9 @@ export function applyAionisInspectBeforeUseActiveProjection(
   const commandPosture = buildAgentContextCommandPostures({
     memoryEntries,
     useNowMemoryIds,
+    optionalContextMemoryIds: args.agent_context.command_posture
+      .filter((entry) => entry.posture === "optional_context" && !movingIds.has(entry.memory_id))
+      .map((entry) => entry.memory_id),
     inspectBeforeUseMemoryIds,
     doNotUseMemoryIds: args.agent_context.do_not_use_memory_ids,
     rehydrateHints: args.agent_context.rehydrate_hints,

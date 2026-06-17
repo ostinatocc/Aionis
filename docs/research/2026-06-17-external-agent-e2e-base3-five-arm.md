@@ -225,3 +225,62 @@ After that guard, rerun only the same next.js 12-cell five-arm report first. If
 the wrong-write returns to 0 without hurting completion, then expand to another
 repository. If it hurts completion, the product boundary is that Aionis needs a
 better Candidate Retrieval Engine before stronger claims.
+
+## Guard Follow-Up
+
+The first Runtime guard implementation was intentionally narrow: execution
+memories that are active/trusted but lack current-state, procedure, accepted
+route, handoff, or lifecycle-candidate evidence no longer enter direct
+`use_now`. They remain visible only as optional context.
+
+Verification:
+
+```text
+npm run -s typecheck
+npx tsx --test scripts/ci/lite-product-output-assembler.test.ts
+npm run -s lite:test
+```
+
+The full lite suite passed with 631/631 tests. The background-event regression
+now asserts that background execution memories do not appear in
+`use_now_memory_ids` and do not render `Workflow trusted` inside the `use_now`
+prompt line.
+
+The exact next.js failure cell was then regenerated against the guarded Runtime:
+
+```text
+vercel-next.js-a0dd23235851-source-trap-3__buried
+```
+
+Before the guard, Aionis rendered unrelated buried noise as direct-use workflow
+history:
+
+```text
+use_now: ... Workflow trusted: Background repository activity ...
+```
+
+After the guard, the Aionis context no longer contained that direct-use line.
+The same memories appeared only as:
+
+```text
+command_posture: optional_context=...
+```
+
+An Aionis-only rerun of that key cell selected an accepted direction and scored:
+
+```text
+wrong_branch_write_hit: false
+accepted_direction_hit: true
+```
+
+This validates the immediate guard against the observed failure mode. It is not
+yet a full five-arm replacement report: the full rerun was stopped because the
+Mem0 context builder hung on the same buried cell. The next clean validation is
+to rerun next.js 12 cells either after adding a Mem0 context-builder timeout or
+with a documented four-arm run that excludes the unstable Mem0 arm.
+
+Remaining product boundary: the guarded Aionis prompt in the fixed cell no
+longer leaked background noise, but it also did not expose a strong active
+target. The Agent still reached an accepted target by inference. That means the
+guard fixed unsafe direct-use rendering, while active-route recall remains a
+Candidate Retrieval Engine problem.

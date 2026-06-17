@@ -880,13 +880,16 @@ test("product agent route contract does not promote background execution events 
     memory_packet: memoryPacket,
   });
 
-  assert.ok(context.use_now_memory_ids.includes("mem-background-event"));
-  assert.ok(context.use_now_memory_ids.includes("mem-background-workflow-anchor"));
+  assert.equal(context.use_now_memory_ids.includes("mem-background-event"), false);
+  assert.equal(context.use_now_memory_ids.includes("mem-background-workflow-anchor"), false);
+  assert.equal(context.use_now.some((line) => line.includes("Background repository activity")), false);
+  assert.equal(context.prompt_text.includes("use_now: Workflow trusted: Background repository activity"), false);
   assert.deepEqual(context.route_contract.active_targets, []);
   assert.deepEqual(context.route_contract.pending_artifacts, []);
   assert.ok(context.command_posture.some((entry) =>
     entry.memory_id === "mem-background-event"
     && entry.posture === "optional_context"
+    && entry.surface === "context"
   ));
   assert.equal(
     context.command_posture.some((entry) =>
@@ -898,6 +901,7 @@ test("product agent route contract does not promote background execution events 
   assert.ok(context.command_posture.some((entry) =>
     entry.memory_id === "mem-background-workflow-anchor"
     && entry.posture === "optional_context"
+    && entry.surface === "context"
   ));
   assert.equal(
     context.command_posture.some((entry) =>
