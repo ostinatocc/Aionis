@@ -6,9 +6,16 @@ import path from "node:path";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
 import { createRuntimeServices } from "../../src/app/runtime-services.ts";
 import { loadEnv, type Env } from "../../src/config.ts";
+import { registerHandoffRoutes } from "../../src/routes/handoff.ts";
+import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
+import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
+import { registerMemoryFeedbackToolRoutes } from "../../src/routes/memory-feedback-tools.ts";
+import { registerLiteMemoryLifecycleRoutes } from "../../src/routes/memory-lifecycle-lite.ts";
+import { registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
 import { createHttpApp, registerBootstrapLifecycle } from "../../src/server/bootstrap.ts";
 import { registerHealthRoute, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
+import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-claim-ledger-product-"));
@@ -72,6 +79,129 @@ async function setupClaimLedgerProductApp() {
     writeInflightGate: services.writeInflightGate,
   });
   registerRuntimeErrorHandler(app);
+  registerMemoryWriteRoutes({
+    app,
+    env,
+    embedder: DeterministicEmbeddingProvider,
+    liteWriteStore: services.liteWriteStore,
+    requireMemoryPrincipal: guards.requireMemoryPrincipal,
+    withIdentityFromRequest: guards.withIdentityFromRequest,
+    enforceRateLimit: guards.enforceRateLimit,
+    enforceTenantQuota: guards.enforceTenantQuota,
+    tenantFromBody: guards.tenantFromBody,
+    acquireInflightSlot: guards.acquireInflightSlot,
+    executionStateStore: services.executionStateStore,
+  });
+  registerHandoffRoutes({
+    app,
+    env,
+    embedder: DeterministicEmbeddingProvider,
+    liteWriteStore: services.liteWriteStore,
+    requireMemoryPrincipal: guards.requireMemoryPrincipal,
+    withIdentityFromRequest: guards.withIdentityFromRequest as any,
+    enforceRateLimit: guards.enforceRateLimit,
+    enforceTenantQuota: guards.enforceTenantQuota,
+    tenantFromBody: guards.tenantFromBody,
+    acquireInflightSlot: guards.acquireInflightSlot,
+    executionStateStore: services.executionStateStore,
+  });
+  registerMemoryAccessRoutes({
+    app,
+    env,
+    embedder: DeterministicEmbeddingProvider,
+    liteWriteStore: services.liteWriteStore,
+    liteRecallAccess: services.liteRecallStore.createRecallAccess(),
+    executionStateStore: services.executionStateStore,
+    requireMemoryPrincipal: guards.requireMemoryPrincipal,
+    withIdentityFromRequest: guards.withIdentityFromRequest as any,
+    enforceRateLimit: guards.enforceRateLimit,
+    enforceTenantQuota: guards.enforceTenantQuota,
+    tenantFromBody: guards.tenantFromBody,
+    acquireInflightSlot: guards.acquireInflightSlot,
+  });
+  registerMemoryContextRuntimeRoutes({
+    app,
+    env,
+    embedder: DeterministicEmbeddingProvider,
+    liteWriteStore: services.liteWriteStore,
+    liteRecallAccess: services.liteRecallStore.createRecallAccess(),
+    recallTextEmbedBatcher: { stats: () => null },
+    requireMemoryPrincipal: guards.requireMemoryPrincipal,
+    withIdentityFromRequest: guards.withIdentityFromRequest,
+    enforceRateLimit: guards.enforceRateLimit,
+    enforceTenantQuota: guards.enforceTenantQuota,
+    enforceRecallTextEmbedQuota: guards.enforceRecallTextEmbedQuota,
+    buildRecallAuth: guards.buildRecallAuth,
+    tenantFromBody: guards.tenantFromBody,
+    acquireInflightSlot: guards.acquireInflightSlot,
+    hasExplicitRecallKnobs: () => false,
+    resolveRecallProfile: () => ({ profile: "balanced", source: "test" }),
+    resolveExplicitRecallMode: () => ({
+      mode: null,
+      profile: "balanced",
+      defaults: {},
+      applied: false,
+      reason: "test_default",
+      source: "test",
+    }),
+    resolveClassAwareRecallProfile: (_endpoint, _body, baseProfile) => ({
+      profile: baseProfile,
+      defaults: {},
+      enabled: false,
+      applied: false,
+      reason: "test_default",
+      source: "test",
+      workload_class: null,
+      signals: [],
+    }),
+    withRecallProfileDefaults: (body) => ({ ...(body as Record<string, unknown>) }),
+    resolveRecallStrategy: () => ({ strategy: "local", defaults: {}, applied: false }),
+    resolveAdaptiveRecallProfile: (profile) => ({ profile, defaults: {}, applied: false, reason: "test_default" }),
+    resolveAdaptiveRecallHardCap: () => ({ defaults: {}, applied: false, reason: "test_default" }),
+    inferRecallStrategyFromKnobs: () => "local",
+    buildRecallTrajectory: () => ({ strategy: "local" }),
+    embedRecallTextQuery: async (provider, queryText) => {
+      const [vec] = await provider.embed([queryText]);
+      return {
+        vec,
+        ms: 0,
+        cache_hit: false,
+        singleflight_join: false,
+        queue_wait_ms: 0,
+        batch_size: 1,
+      };
+    },
+    mapRecallTextEmbeddingError: () => ({
+      statusCode: 500,
+      code: "embed_failed",
+      message: "embedding failed",
+    }),
+    recordContextAssemblyTelemetryBestEffort: async () => {},
+  });
+  registerLiteMemoryLifecycleRoutes({
+    app,
+    env,
+    liteWriteStore: services.liteWriteStore,
+    requireMemoryPrincipal: guards.requireMemoryPrincipal,
+    withIdentityFromRequest: guards.withIdentityFromRequest as any,
+    enforceRateLimit: guards.enforceRateLimit,
+    enforceTenantQuota: guards.enforceTenantQuota,
+    tenantFromBody: guards.tenantFromBody,
+    acquireInflightSlot: guards.acquireInflightSlot,
+  });
+  registerMemoryFeedbackToolRoutes({
+    app,
+    env,
+    embedder: DeterministicEmbeddingProvider,
+    liteWriteStore: services.liteWriteStore,
+    liteRecallAccess: services.liteRecallStore.createRecallAccess(),
+    requireMemoryPrincipal: guards.requireMemoryPrincipal,
+    withIdentityFromRequest: guards.withIdentityFromRequest as any,
+    enforceRateLimit: guards.enforceRateLimit,
+    enforceTenantQuota: guards.enforceTenantQuota,
+    tenantFromBody: guards.tenantFromBody,
+    acquireInflightSlot: guards.acquireInflightSlot,
+  });
   registerProductFacadeRoutes({
     app,
     env,
@@ -293,6 +423,91 @@ test("product observe claim receipt reports superseded and contested claim ids",
     assert.deepEqual(receipt.superseded_claim_ids, [oldClaimId]);
     assert.equal(receipt.contested_claim_ids.length, 1);
     assert.ok(receipt.claim_ids.includes(receipt.contested_claim_ids[0]));
+  } finally {
+    await app.close();
+  }
+});
+
+test("claim ledger projection is compiled into guide context without polluting memory attribution ids", async () => {
+  const { app } = await setupClaimLedgerProductApp();
+  try {
+    const oldObserve = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        claims: [{
+          contract_version: "aionis_claim_write_v1",
+          client_id: "claim-checkout-old-target",
+          subject_key: "project:checkout",
+          predicate: "active_execution_target",
+          value: { target: "src/legacyCheckout.ts" },
+          value_text: "The old active checkout target was src/legacyCheckout.ts.",
+          slot_key: "project:checkout.active_execution_target",
+          conflict_policy: "singleton_latest",
+          claim_kind: "execution_fact",
+          authority: "advisory",
+          confidence: 0.72,
+          evidence_refs: ["run:checkout-001"],
+        }],
+      },
+    });
+    assert.equal(oldObserve.statusCode, 200, oldObserve.body);
+    const oldClaimId = oldObserve.json().claim_ledger.claim_ids[0];
+
+    const currentObserve = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        claims: [{
+          contract_version: "aionis_claim_write_v1",
+          client_id: "claim-checkout-current-target",
+          subject_key: "project:checkout",
+          predicate: "active_execution_target",
+          value: { target: "src/checkoutAdapter.ts" },
+          value_text: "The current accepted checkout target is src/checkoutAdapter.ts.",
+          slot_key: "project:checkout.active_execution_target",
+          conflict_policy: "singleton_latest",
+          claim_kind: "execution_fact",
+          authority: "trusted",
+          confidence: 0.94,
+          evidence_refs: ["run:checkout-002", "review:accepted"],
+        }],
+      },
+    });
+    assert.equal(currentObserve.statusCode, 200, currentObserve.body);
+    const currentBody = currentObserve.json() as Record<string, any>;
+    const currentClaimId = currentBody.claim_ledger.claim_ids[0];
+    assert.deepEqual(currentBody.claim_ledger.superseded_claim_ids, [oldClaimId]);
+
+    const guide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        query_text: "Continue the checkout adapter migration.",
+        scope: "claim-ledger/default",
+        context_char_budget: 4096,
+      },
+    });
+    assert.equal(guide.statusCode, 200, guide.body);
+    const body = guide.json() as Record<string, any>;
+    assert.equal(body.claim_ledger_projection.contract_version, "aionis_claim_ledger_projection_v1");
+    assert.equal(body.claim_ledger_projection.runtime_mutation, false);
+    assert.equal(body.claim_ledger_projection.agent_prompt_included, false);
+    assert.equal(body.claim_ledger_projection.use_now[0].claim_id, currentClaimId);
+    assert.equal(body.claim_ledger_projection.do_not_use[0].claim_id, oldClaimId);
+    assert.ok(body.agent_context.use_now.some((line: string) =>
+      line.includes(currentClaimId) && line.includes("src/checkoutAdapter.ts"),
+    ));
+    assert.ok(body.agent_context.do_not_use.some((line: string) =>
+      line.includes(oldClaimId) && line.includes("src/legacyCheckout.ts"),
+    ));
+    assert.ok(body.agent_context.prompt_text.includes("Claim ledger use_now"));
+    assert.ok(body.agent_context.prompt_text.includes("Claim ledger do_not_use"));
+    assert.equal(body.agent_context.memory_ids.includes(currentClaimId), false);
+    assert.equal(body.agent_context.use_now_memory_ids.includes(currentClaimId), false);
+    assert.equal(body.agent_context.do_not_use_memory_ids.includes(oldClaimId), false);
+    assert.ok(body.source_map.internal_surfaces_used.includes("claim_ledger_projection"));
+    assert.ok(body.source_map.internal_surfaces_used.includes("claim_ledger_agent_context_projection"));
   } finally {
     await app.close();
   }

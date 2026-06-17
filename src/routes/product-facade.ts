@@ -21,6 +21,7 @@ import {
   type BuildAionisMemoryPacketArgs,
 } from "../memory/product-output-assembler.js";
 import { buildAionisAgentFlightRecorderReport } from "../memory/agent-flight-recorder.js";
+import { buildClaimLedgerProjection } from "../memory/claim-ledger-projection.js";
 import { governExternalMemoryCandidates } from "../memory/external-candidate-admission.js";
 import { buildAionisOperatorSnapshot } from "../memory/operator-snapshot.js";
 import {
@@ -32,6 +33,8 @@ import {
   AionisMemoryPacketSchema,
   type AionisAgentContext,
   type AionisAgentRole,
+  type AionisClaimLedgerProjection,
+  type AionisClaimLedgerProjectionItem,
   type AionisMemoryDecisionAuditReport,
   type AionisMemoryDecisionTrace,
   type AionisGuidePacket,
@@ -50,6 +53,10 @@ import {
 } from "./product-observe-structuring.js";
 
 type ProductFacadeRequest = FastifyRequest<{ Body: unknown }>;
+
+const CLAIM_LEDGER_GUIDE_LIVE_LIMIT = 12;
+const CLAIM_LEDGER_GUIDE_SUPERSEDED_SLOT_LIMIT = 8;
+const CLAIM_LEDGER_GUIDE_SUPERSEDED_PER_SLOT_LIMIT = 4;
 
 type ProductFacadeArgs = {
   app: FastifyInstance;
@@ -1454,6 +1461,156 @@ function mergeProductGuideAgentContexts(args: {
   };
 }
 
+function claimLedgerProjectionHasPromptSurface(projection: AionisClaimLedgerProjection | null): projection is AionisClaimLedgerProjection {
+  return !!projection && (
+    projection.use_now.length > 0
+    || projection.inspect_before_use.length > 0
+    || projection.do_not_use.length > 0
+  );
+}
+
+function claimLedgerProjectionHasAnySurface(projection: AionisClaimLedgerProjection | null): projection is AionisClaimLedgerProjection {
+  return !!projection && (
+    projection.use_now.length > 0
+    || projection.inspect_before_use.length > 0
+    || projection.do_not_use.length > 0
+    || projection.audit_only.length > 0
+  );
+}
+
+function renderClaimLedgerAgentLine(item: AionisClaimLedgerProjectionItem): string {
+  const slot = item.slot_key ?? `${item.subject_key}.${item.predicate}`;
+  const evidence = item.evidence_refs.length > 0
+    ? ` evidence=${item.evidence_refs.slice(0, 2).join(",")}`
+    : "";
+  const supersededBy = item.superseded_by_claim_id
+    ? ` superseded_by=${item.superseded_by_claim_id}`
+    : "";
+  return compactProductPromptText(
+    [
+      `Claim ledger ${item.surface}:`,
+      `claim_id=${item.claim_id}`,
+      `slot=${slot}`,
+      `authority=${item.authority}`,
+      `status=${item.status}`,
+      `reason=${item.reason_code}`,
+      `value=${item.value_text}`,
+      evidence,
+      supersededBy,
+    ].filter((entry) => entry.trim().length > 0).join(" "),
+    360,
+  );
+}
+
+async function buildProductGuideClaimLedgerProjection(args: {
+  claimLedgerAccess: ClaimLedgerAccess | null | undefined;
+  scope: string;
+  queryText?: string | null;
+}): Promise<AionisClaimLedgerProjection | null> {
+  if (!args.claimLedgerAccess) return null;
+  const live = await args.claimLedgerAccess.findLiveClaims({
+    scope: args.scope,
+    limit: CLAIM_LEDGER_GUIDE_LIVE_LIMIT,
+  });
+  const slotKeys = uniqueStrings(live.rows.map((row) => row.slot_key)).slice(
+    0,
+    CLAIM_LEDGER_GUIDE_SUPERSEDED_SLOT_LIMIT,
+  );
+  const supersededRows: ClaimLedgerRow[] = [];
+  const supersededIds = new Set<string>();
+  for (const slotKey of slotKeys) {
+    const superseded = await args.claimLedgerAccess.findSupersededClaims({
+      scope: args.scope,
+      slotKey,
+      limit: CLAIM_LEDGER_GUIDE_SUPERSEDED_PER_SLOT_LIMIT,
+    });
+    for (const row of superseded.rows) {
+      if (supersededIds.has(row.claim_id)) continue;
+      supersededIds.add(row.claim_id);
+      supersededRows.push(row);
+    }
+  }
+  if (live.rows.length === 0 && supersededRows.length === 0) return null;
+  return buildClaimLedgerProjection({
+    liveClaims: live.rows,
+    supersededClaims: supersededRows,
+    queryText: args.queryText,
+    limit: CLAIM_LEDGER_GUIDE_LIVE_LIMIT,
+  });
+}
+
+function applyClaimLedgerProjectionToAgentContext(args: {
+  agentContext: AionisAgentContext;
+  projection: AionisClaimLedgerProjection | null;
+  contextCharBudget?: number | null;
+  agentContextMode?: AionisAgentContext["agent_context_mode"];
+}): { context: AionisAgentContext; changed: boolean } {
+  if (!claimLedgerProjectionHasPromptSurface(args.projection)) {
+    return { context: args.agentContext, changed: false };
+  }
+  const projection = args.projection;
+  const claimUseNow = projection.use_now.map(renderClaimLedgerAgentLine);
+  const claimInspect = projection.inspect_before_use.map(renderClaimLedgerAgentLine);
+  const claimDoNotUse = projection.do_not_use.map(renderClaimLedgerAgentLine);
+  const claimActionable = claimUseNow.length > 0;
+  const claimRequiresInspection = claimInspect.length > 0 || claimDoNotUse.length > 0;
+  const projectedAuthority: AionisAgentContext["authority"] = projection.use_now.some((item) => item.authority === "trusted")
+    ? "trusted"
+    : claimUseNow.length > 0
+      ? "advisory"
+      : claimRequiresInspection
+        ? "candidate"
+        : args.agentContext.authority;
+  const authority = authorityRank(args.agentContext.authority) >= authorityRank(projectedAuthority)
+    ? args.agentContext.authority
+    : projectedAuthority;
+  const recommendedPosture: AionisAgentContext["recommended_posture"] = claimRequiresInspection
+    ? "inspect_before_use"
+    : claimActionable && args.agentContext.recommended_posture === "ignore_history"
+      ? "use_as_context"
+      : args.agentContext.recommended_posture;
+  const risk = {
+    negative_transfer_risk: claimRequiresInspection
+      ? maxRisk(args.agentContext.risk.negative_transfer_risk, "medium")
+      : args.agentContext.risk.negative_transfer_risk,
+    blocked_authority_count: args.agentContext.risk.blocked_authority_count,
+    stale_memory_count: args.agentContext.risk.stale_memory_count,
+    reasons: mergeGuideStrings([
+      ...args.agentContext.risk.reasons,
+      "claim_ledger_projection_applied",
+      ...(projection.do_not_use.length > 0 ? ["claim_ledger_blocked_or_superseded_claims_kept_out_of_use_now"] : []),
+      ...(projection.inspect_before_use.length > 0 ? ["claim_ledger_contested_claims_require_inspection"] : []),
+    ], 8),
+  };
+  const projected = AionisAgentContextSchema.parse({
+    ...args.agentContext,
+    history_used: args.agentContext.history_used || claimLedgerProjectionHasAnySurface(projection),
+    actionable_history_used: args.agentContext.actionable_history_used || claimActionable,
+    recommended_posture: recommendedPosture,
+    authority,
+    summary: args.agentContext.history_used || claimLedgerProjectionHasAnySurface(projection)
+      ? args.agentContext.summary === "No reusable Aionis memory was found for this request."
+        ? "Aionis recovered claim-ledger state for this request."
+        : args.agentContext.summary
+      : args.agentContext.summary,
+    use_now: mergeGuideStrings([...claimUseNow, ...args.agentContext.use_now], 10),
+    inspect_before_use: mergeGuideStrings([...args.agentContext.inspect_before_use, ...claimInspect], 10),
+    do_not_use: mergeGuideStrings([...claimDoNotUse, ...args.agentContext.do_not_use], 10),
+    risk,
+  });
+  return {
+    context: AionisAgentContextSchema.parse({
+      ...projected,
+      prompt_text: renderMergedAgentPrompt({
+        context: projected,
+        contextCharBudget: args.contextCharBudget,
+        agentContextMode: args.agentContextMode ?? projected.agent_context_mode,
+      }),
+    }),
+    changed: true,
+  };
+}
+
 function stringArrayField(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return uniqueStrings(value.map((entry) => typeof entry === "string" ? entry : null));
@@ -2696,6 +2853,18 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       agentContext = merged.context;
       fullPowerExecutionContextMerged = merged.changed;
     }
+    const claimLedgerProjection = await buildProductGuideClaimLedgerProjection({
+      claimLedgerAccess,
+      scope,
+      queryText: parsed.query_text,
+    });
+    const claimLedgerContextProjection = applyClaimLedgerProjectionToAgentContext({
+      agentContext,
+      projection: claimLedgerProjection,
+      contextCharBudget: parsed.context_char_budget,
+      agentContextMode,
+    });
+    agentContext = claimLedgerContextProjection.context;
     const guideTraceId = buildGuideTraceId();
     let activeProjectionApplied = false;
     if (env.AIONIS_INSPECT_BEFORE_USE_MODE === "active") {
@@ -2742,6 +2911,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       scope,
       guide_trace_id: guideTraceId,
       agent_context: agentContext,
+      ...(claimLedgerProjection ? { claim_ledger_projection: claimLedgerProjection } : {}),
       ...(includePackets ? {
         memory_packet: memoryPacket,
         guide_packet: guidePacket,
@@ -2760,6 +2930,8 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
           ...(fullPowerRequested ? ["full_power_execution_context"] : []),
           ...(fullPowerStructuredMemoryMerged ? ["full_power_structured_execution_recall"] : []),
           ...(fullPowerExecutionContextMerged ? ["full_power_agent_context_merge"] : []),
+          ...(claimLedgerProjection ? ["claim_ledger_projection"] : []),
+          ...(claimLedgerContextProjection.changed ? ["claim_ledger_agent_context_projection"] : []),
           ...(agentContextMode === "compact_agent" ? ["compact_agent_context"] : []),
           ...(activeProjectionApplied ? ["inspect_before_use_active_projection"] : []),
           ...(memoryContractVisible ? ["memory_contract"] : []),
