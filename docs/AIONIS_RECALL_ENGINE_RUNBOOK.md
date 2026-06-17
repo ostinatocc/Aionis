@@ -186,6 +186,8 @@ Expected managed-server hybrid recall result:
 - failed/stale branches are not direct-use
 - recall source families include multiple sources
 - receipt/admission record/operator snapshot carry source traces
+- Agent Flight Recorder replays accepted, failed, and stale source traces
+  without including Agent prompt payload
 - source traces remain read-only and do not mutate admission
 
 ## When To Add ANN
@@ -197,4 +199,3 @@ sources are already measured.
 
 ANN remains candidate generation. SQLite remains the local fact source, and
 Aionis governance remains the memory authority.
-

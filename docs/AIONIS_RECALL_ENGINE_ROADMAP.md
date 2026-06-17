@@ -159,7 +159,8 @@ proxy metrics. Full product evaluations must measure them through `/v1/guide`.
      execution-native sources. Product recall paths now select the route-level
      candidate engine through `RECALL_ENGINE_MODE=semantic_scan|hybrid`: Lite
      defaults to `semantic_scan`, while Server defaults to `hybrid` after the
-     managed-server e2e proved source traces remain below governance.
+     managed-server e2e proved source traces remain below governance and are
+     replayable through Agent Flight Recorder without prompt payload leakage.
 
 6. **Recall source observability**
    - Report per-source candidate counts, p50/p95 latency, hybrid merge shape,

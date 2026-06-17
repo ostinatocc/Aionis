@@ -46,13 +46,16 @@ npm run -s runtime:e2e:managed-server-hybrid-recall
 
 The e2e starts a temporary Server Edition instance with API key auth, writes an
 execution history with accepted, failed, stale, lexical, and structured
-signals, calls `guide` through `createAionisClient`, then verifies:
+signals, calls `guide` and Agent Flight Recorder through `createAionisClient`,
+then verifies:
 
 1. accepted execution memory reaches `use_now`
 2. failed and stale branches do not enter direct use
 3. at least two recall source families are visible in trace
 4. `memory_use_receipt` and admission reasons are available for audit
 5. `operator_snapshot` includes the guide trace and receipt
+6. Agent Flight Recorder replays accepted, failed, and stale recall source
+   traces without including Agent prompt payload
 
 The committed example result lives at
 [`docs/examples/managed-server-hybrid-recall-result.json`](examples/managed-server-hybrid-recall-result.json).

@@ -32,7 +32,28 @@
     "memory_use_receipt_visible": true,
     "admission_record_visible": true,
     "operator_snapshot_trace_visible": true,
-    "operator_snapshot_receipt_visible": true
+    "operator_snapshot_receipt_visible": true,
+    "flight_recorder_replay_visible": true,
+    "flight_recorder_prompt_payload_excluded": true,
+    "flight_recorder_accepted_recall_sources": [
+      "execution_native",
+      "lexical",
+      "semantic",
+      "structured"
+    ],
+    "flight_recorder_failed_recall_sources": [
+      "execution_native",
+      "lexical",
+      "semantic",
+      "structured"
+    ],
+    "flight_recorder_stale_recall_sources": [
+      "execution_native",
+      "lexical",
+      "semantic",
+      "structured"
+    ],
+    "flight_recorder_failed_stale_not_direct_use": true
   },
-  "note": "This e2e starts Server Edition with API key auth, writes governed execution history, calls guide through the remote SDK, and verifies recall source traces remain below memory admission governance."
+  "note": "This e2e starts Server Edition with API key auth, writes governed execution history, calls guide and Agent Flight Recorder through the remote SDK, and verifies recall source traces remain below memory admission governance."
 }

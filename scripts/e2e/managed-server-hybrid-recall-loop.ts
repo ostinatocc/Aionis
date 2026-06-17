@@ -316,6 +316,27 @@ function collectRecallSourceKinds(value: unknown): Set<string> {
   return out;
 }
 
+function collectRecallSourceKindsForMemory(value: unknown, memoryId: string): Set<string> {
+  const out = new Set<string>();
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      for (const entry of value) visit(entry);
+      return;
+    }
+    const record = value as Record<string, unknown>;
+    if (record.memory_id === memoryId && Array.isArray(record.recall_sources)) {
+      for (const source of record.recall_sources) {
+        const sourceRecord = asRecord(source);
+        if (typeof sourceRecord?.kind === "string") out.add(sourceRecord.kind);
+      }
+    }
+    for (const child of Object.values(record)) visit(child);
+  };
+  visit(value);
+  return out;
+}
+
 function executionSlots(args: {
   status: "passed" | "failed" | "blocked";
   lifecycleState: "active" | "suppressed" | "contested";
@@ -617,6 +638,61 @@ async function main() {
     assertCondition(operatorGuideTrace !== null, "operator snapshot missing guide trace");
     assertCondition(operatorReceipt?.contract_version === "aionis_memory_use_receipt_v1", "operator snapshot missing memory use receipt");
 
+    const flightRecorder = await aionis.flightRecorder<Record<string, unknown>>({
+      run_id: `run:${runId}:flight-recorder`,
+      ...(typeof decisionTrace?.trace_id === "string" ? { guide_trace_id: decisionTrace.trace_id } : {}),
+      decision_time: "2026-06-17T00:00:00.000Z",
+      agent_context: afterContext,
+      memory_decision_trace: decisionTrace,
+      memory_use_receipt: receipt,
+      memory_admission_record: admissionRecord,
+      operator_snapshot: operatorSnapshot,
+      feedback_result: feedback,
+    });
+    const flightReport = asRecord(flightRecorder.agent_flight_recorder);
+    const flightAgentView = asRecord(flightReport?.agent_view);
+    const flightReplaySources = asRecord(flightReport?.replay_sources);
+    const flightBlockedRows = recordArray(flightReport?.blocked_or_suppressed);
+    const flightUseNowMemoryIds = textArray(flightAgentView?.use_now_memory_ids);
+    const flightDoNotUseMemoryIds = textArray(flightAgentView?.do_not_use_memory_ids);
+    const flightAcceptedSourceKinds = collectRecallSourceKindsForMemory(flightReport, acceptedMemoryId);
+    const flightFailedSourceKinds = collectRecallSourceKindsForMemory(flightReport, failedMemoryId);
+    const flightStaleSourceKinds = collectRecallSourceKindsForMemory(flightReport, staleMemoryId);
+
+    assertCondition(
+      flightRecorder.contract_version === "aionis_agent_flight_recorder_result_v1",
+      "flight recorder missing result contract",
+    );
+    assertCondition(
+      flightReport?.contract_version === "aionis_agent_flight_recorder_report_v1",
+      "flight recorder missing report contract",
+    );
+    assertCondition(flightReport?.agent_prompt_included === false, "flight recorder included Agent prompt payload");
+    assertCondition(flightReport?.runtime_mutation === false, "flight recorder mutated Runtime state");
+    assertCondition(flightAgentView?.prompt_text_included === false, "flight recorder agent_view included prompt text");
+    assertCondition(flightReplaySources?.has_agent_context === true, "flight recorder missed agent_context source");
+    assertCondition(flightReplaySources?.has_memory_decision_trace === true, "flight recorder missed decision trace source");
+    assertCondition(flightReplaySources?.has_memory_use_receipt === true, "flight recorder missed memory receipt source");
+    assertCondition(flightReplaySources?.has_memory_admission_record === true, "flight recorder missed admission record source");
+    assertCondition(flightReplaySources?.has_operator_snapshot === true, "flight recorder missed operator snapshot source");
+    assertCondition(flightReplaySources?.has_feedback_result === true, "flight recorder missed feedback source");
+    assertCondition(flightUseNowMemoryIds.includes(acceptedMemoryId), "flight recorder did not replay accepted direct-use memory");
+    assertCondition(!flightUseNowMemoryIds.includes(failedMemoryId), "flight recorder replayed failed memory as direct-use");
+    assertCondition(!flightUseNowMemoryIds.includes(staleMemoryId), "flight recorder replayed stale memory as direct-use");
+    assertCondition(
+      flightDoNotUseMemoryIds.includes(failedMemoryId)
+      || flightBlockedRows.some((entry) => entry.memory_id === failedMemoryId),
+      "flight recorder did not expose failed memory as blocked/suppressed",
+    );
+    assertCondition(
+      flightDoNotUseMemoryIds.includes(staleMemoryId)
+      || flightBlockedRows.some((entry) => entry.memory_id === staleMemoryId),
+      "flight recorder did not expose stale memory as blocked/suppressed",
+    );
+    assertCondition(flightAcceptedSourceKinds.size > 0, "flight recorder missed accepted recall sources");
+    assertCondition(flightFailedSourceKinds.size > 0, "flight recorder missed failed recall sources");
+    assertCondition(flightStaleSourceKinds.size > 0, "flight recorder missed stale recall sources");
+
     const output = {
       contract_version: "aionis_managed_server_hybrid_recall_e2e_result_v1",
       run_id: runId,
@@ -647,8 +723,16 @@ async function main() {
         admission_record_visible: admissionRecord.contract_version === "aionis_memory_admission_record_v1",
         operator_snapshot_trace_visible: operatorGuideTrace !== null,
         operator_snapshot_receipt_visible: operatorReceipt.contract_version === "aionis_memory_use_receipt_v1",
+        flight_recorder_replay_visible: flightReport?.contract_version === "aionis_agent_flight_recorder_report_v1",
+        flight_recorder_prompt_payload_excluded:
+          flightReport?.agent_prompt_included === false && flightAgentView?.prompt_text_included === false,
+        flight_recorder_accepted_recall_sources: Array.from(flightAcceptedSourceKinds).sort(),
+        flight_recorder_failed_recall_sources: Array.from(flightFailedSourceKinds).sort(),
+        flight_recorder_stale_recall_sources: Array.from(flightStaleSourceKinds).sort(),
+        flight_recorder_failed_stale_not_direct_use:
+          !flightUseNowMemoryIds.includes(failedMemoryId) && !flightUseNowMemoryIds.includes(staleMemoryId),
       },
-      note: "This e2e starts Server Edition with API key auth, writes governed execution history, calls guide through the remote SDK, and verifies recall source traces remain below memory admission governance.",
+      note: "This e2e starts Server Edition with API key auth, writes governed execution history, calls guide and Agent Flight Recorder through the remote SDK, and verifies recall source traces remain below memory admission governance.",
     };
 
     const outPath = outputPath();
