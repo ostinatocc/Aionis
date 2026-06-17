@@ -38,7 +38,8 @@ import {
   type AionisMemoryPacket,
 } from "../memory/product-output-contract.js";
 import { applyUnusedExposureLearningControlLite } from "../memory/lifecycle-lite.js";
-import type { ClaimLedgerAccess } from "../store/claim-ledger-access.js";
+import { AionisClaimWriteSchema } from "../memory/claim-ledger-contract.js";
+import type { ClaimLedgerAccess, ClaimLedgerRow } from "../store/claim-ledger-access.js";
 import type { LiteExecutionNativeNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
 import type { AuthPrincipal } from "../util/auth.js";
 import { createErrorResponse } from "../util/http.js";
@@ -110,6 +111,7 @@ const ProductObserveRequest = z.object({
   trigger_topic_cluster: z.boolean().optional(),
   topic_cluster_async: z.boolean().optional(),
   distill: LooseObject.optional(),
+  claims: z.array(AionisClaimWriteSchema).max(32).optional(),
   nodes: z.array(LooseObject).optional(),
   edges: z.array(LooseObject).optional(),
   memory: LooseObject.optional(),
@@ -544,6 +546,84 @@ function observeWritePayload(parsed: z.infer<typeof ProductObserveRequest>): {
   return {
     payload,
     structuring: structured.summary,
+  };
+}
+
+function parseStringListJson(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function firstWrittenMemoryNodeId(write: InternalDispatchResult | null): string | null {
+  if (!write?.ok) return null;
+  const body = objectValue(write.body);
+  const nodes = Array.isArray(body?.nodes) ? body.nodes : [];
+  for (const node of nodes) {
+    const record = objectValue(node);
+    if (typeof record?.id === "string" && record.id.trim().length > 0) return record.id;
+  }
+  return null;
+}
+
+function buildClaimObserveReceipt(rows: ClaimLedgerRow[]) {
+  const supersededClaimIds = uniqueStrings(rows.flatMap((row) => parseStringListJson(row.supersedes_claim_ids_json)));
+  const contestedClaimIds = rows
+    .filter((row) => row.status === "contested")
+    .map((row) => row.claim_id);
+  return {
+    contract_version: "aionis_claim_observe_receipt_v1",
+    written_count: rows.length,
+    claim_ids: rows.map((row) => row.claim_id),
+    superseded_claim_ids: supersededClaimIds,
+    contested_claim_ids: contestedClaimIds,
+    agent_prompt_included: false,
+    runtime_mutation: true,
+  };
+}
+
+async function writeProductObserveClaims(args: {
+  claimLedgerAccess: ClaimLedgerAccess | null | undefined;
+  parsed: z.infer<typeof ProductObserveRequest>;
+  write: InternalDispatchResult | null;
+  tenantId: string;
+  scope: string;
+}) {
+  const claims = args.parsed.claims ?? [];
+  if (claims.length === 0) return null;
+  if (!args.claimLedgerAccess) {
+    return {
+      ok: false as const,
+      statusCode: 503,
+      body: productErrorResponse({
+        status: 503,
+        error: "claim_ledger_unavailable",
+        message: "claim ledger is not available for this Runtime",
+      }),
+    };
+  }
+
+  const sourceMemoryId = firstWrittenMemoryNodeId(args.write);
+  const rows: ClaimLedgerRow[] = [];
+  for (const claim of claims) {
+    rows.push(await args.claimLedgerAccess.writeClaim({
+      scope: args.scope,
+      tenantId: args.tenantId,
+      claim: {
+        ...claim,
+        source_memory_id: claim.source_memory_id ?? sourceMemoryId ?? undefined,
+      },
+    }));
+  }
+  return {
+    ok: true as const,
+    receipt: buildClaimObserveReceipt(rows),
   };
 }
 
@@ -2445,6 +2525,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     app,
     env,
     liteWriteStore,
+    claimLedgerAccess,
     requireMemoryPrincipal,
     withIdentityFromRequest,
     enforceRateLimit,
@@ -2462,11 +2543,12 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     const writeBundle = observeWritePayload(parsed);
     const writePayload = writeBundle?.payload ?? null;
     const handoffPayload = parsed.handoff ? mergeProductScope(parsed, parsed.handoff) : null;
-    if (!writePayload && !handoffPayload) {
+    const hasClaims = (parsed.claims?.length ?? 0) > 0;
+    if (!writePayload && !handoffPayload && !hasClaims) {
       return reply.code(400).send(productErrorResponse({
         status: 400,
         error: "observe_requires_memory_or_handoff",
-        message: "observe requires memory input or handoff payload",
+        message: "observe requires memory input, handoff payload, or explicit claims",
       }));
     }
 
@@ -2483,19 +2565,34 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     if (handoff && !handoff.ok) return sendInternalFailure(reply, handoff);
     if (handoff) routesUsed.push("/v1/handoff/store");
 
+    const tenantId = parsed.tenant_id ?? env.MEMORY_TENANT_ID;
+    const scope = parsed.scope ?? env.MEMORY_SCOPE;
+    const claimLedger = await writeProductObserveClaims({
+      claimLedgerAccess,
+      parsed,
+      write,
+      tenantId,
+      scope,
+    });
+    if (claimLedger && !claimLedger.ok) {
+      return reply.code(claimLedger.statusCode).send(claimLedger.body);
+    }
+
     return reply.code(200).send({
       contract_version: "aionis_observe_result_v1",
-      tenant_id: parsed.tenant_id ?? env.MEMORY_TENANT_ID,
-      scope: parsed.scope ?? env.MEMORY_SCOPE,
+      tenant_id: tenantId,
+      scope,
       observed: {
         memory_written: !!write,
         handoff_stored: !!handoff,
+        ...(claimLedger ? { claim_count: claimLedger.receipt.written_count } : {}),
         general_memory_count: writeBundle?.structuring.general_memory_count ?? 0,
         execution_memory_count: writeBundle?.structuring.execution_workflow_count ?? 0,
         auto_text_memory_count: writeBundle?.structuring.auto_text_node_count ?? 0,
         execution_observation_count: writeBundle?.structuring.execution_observation_count ?? 0,
       },
       structured_memory: writeBundle?.structuring ?? null,
+      ...(claimLedger ? { claim_ledger: claimLedger.receipt } : {}),
       memory_write: write?.body ?? null,
       handoff: handoff?.body ?? null,
       source_map: {
@@ -2503,6 +2600,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
         internal_surfaces_used: [
           ...(write ? ["memory_write"] : []),
           ...(handoff ? ["handoff_store"] : []),
+          ...(claimLedger ? ["claim_ledger_write"] : []),
         ],
       },
     });
