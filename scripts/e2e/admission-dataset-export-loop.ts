@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import "dotenv/config";
+import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,6 +22,7 @@ import {
   openRuntime,
 } from "./multi-agent-execution-memory-loop.ts";
 import { formatE2eError } from "./e2e-error.ts";
+import { collectAdmissionDatasetRows } from "../../src/memory/admission-dataset-collector.ts";
 
 const AGENT_ID = "admission-dataset-agent";
 const ACTIVE_MARKER = "ADMISSION_DATASET_ACTIVE_ROUTE";
@@ -61,11 +63,49 @@ type AdmissionRoundResult = {
   rows: AionisMemoryAdmissionDatasetRow[];
 };
 
+type CliArgs = {
+  datasetDir: string | null;
+  chunkId: string | null;
+  outJsonl: string | null;
+};
+
 function apiKey(): string | null {
   return process.env.AIONIS_ADMISSION_DATASET_E2E_API_KEY?.trim()
     || process.env.AIONIS_PRODUCT_E2E_API_KEY?.trim()
     || process.env.AIONIS_API_KEY?.trim()
     || null;
+}
+
+function parseArgs(argv: string[]): CliArgs {
+  const out: CliArgs = {
+    datasetDir: process.env.AIONIS_ADMISSION_DATASET_DIR?.trim() || null,
+    chunkId: process.env.AIONIS_ADMISSION_DATASET_CHUNK_ID?.trim() || null,
+    outJsonl: process.env.AIONIS_ADMISSION_DATASET_OUT_JSONL?.trim() || null,
+  };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    const next = argv[i + 1];
+    if (arg === "--dataset-dir" && next) {
+      out.datasetDir = next;
+      i += 1;
+    } else if (arg === "--chunk-id" && next) {
+      out.chunkId = next;
+      i += 1;
+    } else if (arg === "--out-jsonl" && next) {
+      out.outJsonl = next;
+      i += 1;
+    } else if (arg === "--help" || arg === "-h") {
+      process.stdout.write([
+        "Usage: npm run -s runtime:e2e:admission-dataset-export -- [--dataset-dir admission-dataset] [--chunk-id run-001]",
+        "",
+        "Runs the real Runtime guide/feedback/measure loop. When --dataset-dir is set,",
+        "the exported admission rows are appended through admission:collect semantics.",
+        "",
+      ].join("\n"));
+      process.exit(0);
+    }
+  }
+  return out;
 }
 
 function textArray(value: unknown): string[] {
@@ -276,7 +316,9 @@ async function runAdmissionRound(args: {
 }
 
 async function main() {
+  const cli = parseArgs(process.argv.slice(2));
   const runId = `admission-dataset-${randomUUID().slice(0, 8)}`;
+  const chunkId = cli.chunkId ?? runId;
   const baseScope = `admission-dataset:${runId}`;
   const session = await openRuntime();
   try {
@@ -332,6 +374,34 @@ async function main() {
     assertCondition(!appendedJsonl.includes("legacy/billing/dead-end.ts"), "appendable admission dataset JSONL leaked billing suppressed payload");
     assertCondition(!appendedJsonl.includes("\"slots\""), "appendable admission dataset JSONL leaked raw slots");
 
+    let collectionResult: ReturnType<typeof collectAdmissionDatasetRows> | null = null;
+    let chunkPath: string | null = null;
+    if (cli.outJsonl) {
+      const outJsonlPath = path.resolve(cli.outJsonl);
+      fs.mkdirSync(path.dirname(outJsonlPath), { recursive: true });
+      fs.writeFileSync(outJsonlPath, appendedJsonl);
+      chunkPath = outJsonlPath;
+    }
+    if (cli.datasetDir) {
+      const datasetDir = path.resolve(cli.datasetDir);
+      const chunksDir = path.join(datasetDir, "chunks");
+      fs.mkdirSync(chunksDir, { recursive: true });
+      const collectorChunkPath = path.join(chunksDir, `${chunkId}.jsonl`);
+      fs.writeFileSync(collectorChunkPath, appendedJsonl);
+      chunkPath = collectorChunkPath;
+      collectionResult = collectAdmissionDatasetRows({
+        dataset_dir: datasetDir,
+        input_files: [collectorChunkPath],
+        chunk_id: chunkId,
+      });
+      assertCondition(collectionResult.appended_row_count === allRows.length, "collector appended row count mismatch");
+      assertCondition(collectionResult.total_row_count >= allRows.length, "collector total row count did not include current chunk");
+      assertCondition(collectionResult.checks.append_only, "collector append-only check failed");
+      assertCondition(collectionResult.checks.prompt_payload_excluded, "collector prompt payload check failed");
+      assertCondition(collectionResult.checks.raw_slots_excluded, "collector raw slots check failed");
+      assertCondition(collectionResult.checks.embeddings_excluded, "collector embeddings check failed");
+    }
+
     const result = {
       contract_version: "aionis_admission_dataset_export_e2e_result_v1",
       run_id: runId,
@@ -363,6 +433,8 @@ async function main() {
         raw_slots_excluded: !appendedJsonl.includes("\"slots\""),
         append_mode: "jsonl_append",
         append_chunk_count: rounds.length,
+        collected_to_dataset: !!collectionResult,
+        chunk_path: chunkPath,
         append_chunks: rounds.map((round, index) => ({
           round_id: round.round_id,
           run_id: round.run_id,
@@ -375,6 +447,23 @@ async function main() {
         })),
         example_jsonl_line: appendedJsonl.split("\n").find(Boolean) ?? null,
       },
+      collector: collectionResult
+        ? {
+          contract_version: collectionResult.contract_version,
+          dataset_dir: collectionResult.dataset_dir,
+          chunk_id: collectionResult.chunk_id,
+          rows_path: collectionResult.rows_path,
+          manifest_path: collectionResult.manifest_path,
+          summary_path: collectionResult.summary_path,
+          leaderboard_path: collectionResult.leaderboard_path,
+          policy_comparison_path: collectionResult.policy_comparison_path,
+          policy_comparison_markdown_path: collectionResult.policy_comparison_markdown_path,
+          appended_row_count: collectionResult.appended_row_count,
+          previous_row_count: collectionResult.previous_row_count,
+          total_row_count: collectionResult.total_row_count,
+          policy_comparison_leader: collectionResult.policy_comparison?.leaderboard[0]?.policy_id ?? null,
+        }
+        : null,
       rounds: rounds.map(({ rows: _rows, ...round }) => round),
       checks: {
         appendable_jsonl_line_count_matches_rows: appendedLineCount === allRows.length,
@@ -385,6 +474,8 @@ async function main() {
         raw_memory_payload_excluded: !appendedJsonl.includes("legacy/checkout/full-rewrite.ts")
           && !appendedJsonl.includes("legacy/billing/dead-end.ts"),
         raw_slots_excluded: !appendedJsonl.includes("\"slots\""),
+        collector_appendable: collectionResult ? collectionResult.checks.append_only : null,
+        collector_policy_comparison_generated: collectionResult ? !!collectionResult.policy_comparison_path : null,
       },
     };
 

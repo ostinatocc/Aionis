@@ -170,6 +170,31 @@ The script verifies that:
 See [admission-dataset-export-result.json](examples/admission-dataset-export-result.json)
 for a compact example report.
 
+To collect real e2e rows into the durable local dataset layout in one command,
+pass `--dataset-dir`:
+
+```bash
+npm run -s runtime:e2e:admission-dataset-export -- \
+  --dataset-dir admission-dataset \
+  --chunk-id local-runtime-smoke
+```
+
+This writes:
+
+```text
+admission-dataset/
+  chunks/local-runtime-smoke.jsonl
+  rows.jsonl
+  manifests/local-runtime-smoke.json
+  reports/latest/summary.json
+  reports/latest/leaderboard.md
+  reports/latest/policy_comparison.json
+  reports/latest/policy_comparison.md
+```
+
+The e2e still runs a real Runtime `guide -> feedback -> measure` loop first;
+the collector only appends the resulting rows and refreshes offline reports.
+
 For production append guidance, see
 [AIONIS_ADMISSION_DATASET_EXPORT_RUNBOOK.md](AIONIS_ADMISSION_DATASET_EXPORT_RUNBOOK.md).
 

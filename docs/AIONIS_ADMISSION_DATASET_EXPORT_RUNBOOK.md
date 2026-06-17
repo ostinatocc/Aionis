@@ -114,6 +114,18 @@ payloads, appends normalized rows to `rows.jsonl`, writes a manifest under
 `reports/latest/policy_comparison.md` so every append has a current baseline
 comparison.
 
+For a real Runtime smoke that generates rows and appends them in one step:
+
+```bash
+npm run -s runtime:e2e:admission-dataset-export -- \
+  --dataset-dir admission-dataset \
+  --chunk-id local-runtime-smoke
+```
+
+The e2e writes the raw exported chunk under `admission-dataset/chunks/` and then
+calls the collector. This proves the durable dataset path is connected to a
+real `guide -> feedback -> measure` loop instead of only static sample rows.
+
 ## Validation Command
 
 Run the product e2e:
