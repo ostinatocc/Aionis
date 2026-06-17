@@ -1444,6 +1444,8 @@ Keep old `stage1CandidatesAnn` available as compatibility wrapper.
 
 **Step 4: Update caller**
 
+**Status:** implemented.
+
 Where the recall path currently calls `stage1CandidatesAnn`, switch to `stage1HybridCandidates` only behind config:
 
 ```text
@@ -1454,6 +1456,14 @@ Default:
 
 - Lite: `semantic_scan` until eval proves stable.
 - Server: `hybrid` after Task 16 if tests pass.
+
+Implementation note: `RECALL_ENGINE_MODE=semantic_scan|hybrid` is now parsed in
+Runtime config. Lite keeps `semantic_scan` by default and can opt into hybrid.
+Server defaults to `hybrid`. `memoryRecallParsed` switches candidate generation
+only; governance/admission remains unchanged. `query_text` and
+`structured_recall_context` are carried from recall-text/planning/context
+surfaces into the candidate layer so lexical, structured, and execution-native
+sources can contribute route-level candidates.
 
 **Step 5: Run tests and eval**
 

@@ -141,6 +141,7 @@ export const MemoryWriteRequest = z
 export const MemoryRecallRequest = z.object({
   tenant_id: z.string().min(1).optional(),
   scope: z.string().min(1).optional(),
+  query_text: z.string().min(1).optional(),
   query_embedding: z.array(z.number()),
   recall_strategy: z.enum(["local", "balanced", "global"]).optional(),
   recall_mode: z.enum(["dense_edge"]).optional(),
@@ -171,6 +172,8 @@ export const MemoryRecallRequest = z.object({
   // Optional: evaluate SHADOW/ACTIVE rules alongside recall to produce an applied policy patch for the planner.
   // Use the normalized "Planner Context" shape (see docs/PLANNER_CONTEXT.md).
   rules_context: z.any().optional(),
+  // Optional structured recall signals. These only expand candidate generation; the admission gate still decides use.
+  structured_recall_context: z.any().optional(),
   // Default to ACTIVE-only for safety; callers can opt into SHADOW visibility explicitly.
   rules_include_shadow: z.boolean().optional().default(false),
   // Hard cap for how many rules the server may scan.
@@ -209,6 +212,7 @@ export const MemoryRecallTextRequest = z.object({
   memory_layer_preference: MemoryLayerPreference.optional(),
   // Optional: same as MemoryRecallRequest.rules_* but for recall_text.
   rules_context: z.any().optional(),
+  structured_recall_context: z.any().optional(),
   rules_include_shadow: z.boolean().optional().default(false),
   rules_limit: z.number().int().positive().max(200).optional().default(50),
 });

@@ -47,6 +47,7 @@ test("server edition accepts service mode with api key auth", async () => {
       assert.equal(env.MEMORY_AUTH_MODE, "api_key");
       assert.equal(env.TENANT_QUOTA_ENABLED, true);
       assert.equal(env.RATE_LIMIT_BYPASS_LOOPBACK, false);
+      assert.equal(env.RECALL_ENGINE_MODE, "hybrid");
     },
   );
 });
@@ -63,6 +64,43 @@ test("server edition rejects auth off by default", async () => {
       assert.throws(
         () => loadEnv(),
         /Aionis Server requires MEMORY_AUTH_MODE=api_key, jwt, or api_key_or_jwt/i,
+      );
+    },
+  );
+});
+
+test("server edition can explicitly keep semantic scan recall", async () => {
+  await withIsolatedEnv(
+    {
+      AIONIS_EDITION: "server",
+      AIONIS_MODE: "service",
+      MEMORY_AUTH_MODE: "api_key",
+      MEMORY_API_KEYS_JSON: apiKeysJson,
+      RECALL_ENGINE_MODE: "semantic_scan",
+      SANDBOX_ENABLED: "false",
+    },
+    () => {
+      const env = loadEnv();
+      assert.equal(env.AIONIS_EDITION, "server");
+      assert.equal(env.RECALL_ENGINE_MODE, "semantic_scan");
+    },
+  );
+});
+
+test("server edition rejects invalid recall engine mode", async () => {
+  await withIsolatedEnv(
+    {
+      AIONIS_EDITION: "server",
+      AIONIS_MODE: "service",
+      MEMORY_AUTH_MODE: "api_key",
+      MEMORY_API_KEYS_JSON: apiKeysJson,
+      RECALL_ENGINE_MODE: "vector_magic",
+      SANDBOX_ENABLED: "false",
+    },
+    () => {
+      assert.throws(
+        () => loadEnv(),
+        /RECALL_ENGINE_MODE/i,
       );
     },
   );

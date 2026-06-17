@@ -29,6 +29,7 @@ test("shipped source tree defaults to lite posture", async () => {
     assert.equal(env.AIONIS_INSPECT_BEFORE_USE_MODE, "shadow");
     assert.equal(env.MEMORY_AUTH_MODE, "off");
     assert.equal(env.TENANT_QUOTA_ENABLED, false);
+    assert.equal(env.RECALL_ENGINE_MODE, "semantic_scan");
   });
 });
 
@@ -40,6 +41,19 @@ test("inspect-before-use active projection is explicit opt-in", async () => {
     () => {
       const env = loadEnv();
       assert.equal(env.AIONIS_INSPECT_BEFORE_USE_MODE, "active");
+    },
+  );
+});
+
+test("lite recall engine can opt into hybrid explicitly", async () => {
+  await withIsolatedEnv(
+    {
+      RECALL_ENGINE_MODE: "hybrid",
+    },
+    () => {
+      const env = loadEnv();
+      assert.equal(env.AIONIS_EDITION, "lite");
+      assert.equal(env.RECALL_ENGINE_MODE, "hybrid");
     },
   );
 });

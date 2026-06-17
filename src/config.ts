@@ -8,6 +8,7 @@ const EditionSchema = z.enum(["lite", "server"]);
 const AbstractionPolicyProfileSchema = z.enum(["conservative", "balanced", "aggressive"]);
 const InspectBeforeUseModeSchema = z.enum(["shadow", "active"]);
 const RecallAnnProviderSchema = z.enum(["off", "local"]);
+const RecallEngineModeSchema = z.enum(["semantic_scan", "hybrid"]);
 
 function sandboxRemoteHostAllowed(hostname: string, allowlist: string[]): boolean {
   const host = hostname.trim().toLowerCase();
@@ -298,6 +299,7 @@ const EnvSchema = z.object({
     .pipe(z.enum(["true", "false"]))
     .transform((v) => v === "true"),
   // Optional local ANN sidecar. Default off: ANN only generates candidates and never decides admission.
+  RECALL_ENGINE_MODE: RecallEngineModeSchema.default("semantic_scan"),
   RECALL_ANN_PROVIDER: RecallAnnProviderSchema.default("off"),
   RECALL_ANN_REBUILD_ON_START: z
     .string()
@@ -671,7 +673,11 @@ function withEditionDefaults(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const parsed = EditionSchema.safeParse(editionInput);
   if (!parsed.success) return out;
   out.AIONIS_EDITION = parsed.data;
-  if (parsed.data !== "lite") return out;
+  if (parsed.data !== "lite") {
+    if (!out.RECALL_ENGINE_MODE || out.RECALL_ENGINE_MODE.trim().length === 0) out.RECALL_ENGINE_MODE = "hybrid";
+    return out;
+  }
+  if (!out.RECALL_ENGINE_MODE || out.RECALL_ENGINE_MODE.trim().length === 0) out.RECALL_ENGINE_MODE = "semantic_scan";
   if (!out.AIONIS_MODE || out.AIONIS_MODE.trim().length === 0) out.AIONIS_MODE = "local";
   out.MEMORY_AUTH_MODE = "off";
   out.TENANT_QUOTA_ENABLED = "false";

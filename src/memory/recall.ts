@@ -11,6 +11,7 @@ import {
   type RecallMemoryTier,
   type RecallNodeRow,
   type RecallStoreAccess,
+  type RecallStructuredParams,
 } from "../store/recall-access.js";
 import { MemoryRecallRequest, type MemoryRecallInput } from "./schemas.js";
 import { buildContext } from "./context.js";
@@ -45,9 +46,12 @@ export type RecallTelemetry = {
   timing?: (stage: string, ms: number) => void;
 };
 
+export type RecallEngineMode = "semantic_scan" | "hybrid";
+
 export type MemoryRecallOptions = {
   stage1_exact_recovery_on_empty?: boolean;
   recall_access?: RecallStoreAccess;
+  recall_engine_mode?: RecallEngineMode;
   unsafe_allow_drop_trust_anchors?: boolean;
   unsafe_apply_layer_policy_to_retrieval?: boolean;
   internal_allow_l4_selection?: boolean;
@@ -58,13 +62,17 @@ type EdgeRow = RecallEdgeRow;
 
 type Stage1TierBudgetDebug = {
   cold_policy: "exact_recovery_on_empty";
+  recall_engine_mode: RecallEngineMode;
   ann_allowed_tiers: RecallMemoryTier[];
   ann_scan_cap: number;
   exact_recovery_allowed_tiers: RecallMemoryTier[];
   exact_recovery_scan_cap: number | null;
   ann_seed_tier_counts: Record<RecallMemoryTier, number>;
+  hybrid_seed_tier_counts: Record<RecallMemoryTier, number> | null;
   final_seed_tier_counts: Record<RecallMemoryTier, number>;
 };
+
+type StructuredRecallSignals = Omit<RecallStructuredParams, "scope" | "limit" | "consumerAgentId" | "consumerTeamId">;
 
 function isActionRecallEndpoint(endpoint: "recall" | "recall_text" | "planning_context" | "context_assemble"): boolean {
   return endpoint === "planning_context" || endpoint === "context_assemble";
@@ -106,6 +114,87 @@ function compactProducerIds(nodes: Array<{ producer_agent_id?: string | null }>)
     out.push(id);
   }
   return out.slice(0, 24);
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function collectSignalRecords(value: unknown, out: Record<string, unknown>[] = [], depth = 0): Record<string, unknown>[] {
+  if (depth > 4 || out.length >= 64) return out;
+  const record = recordValue(value);
+  if (record) {
+    out.push(record);
+    for (const child of Object.values(record)) collectSignalRecords(child, out, depth + 1);
+    return out;
+  }
+  if (Array.isArray(value)) {
+    for (const child of value.slice(0, 32)) collectSignalRecords(child, out, depth + 1);
+  }
+  return out;
+}
+
+function firstStringSignal(records: Record<string, unknown>[], keys: string[]): string | null {
+  for (const record of records) {
+    for (const key of keys) {
+      const value = record[key];
+      if (typeof value !== "string") continue;
+      const normalized = value.trim();
+      if (normalized.length > 0) return normalized;
+    }
+  }
+  return null;
+}
+
+function stringArraySignal(records: Record<string, unknown>[], keys: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const record of records) {
+    for (const key of keys) {
+      const value = record[key];
+      const rawItems = Array.isArray(value)
+        ? value
+        : typeof value === "string" && key.endsWith("_text")
+          ? value.split(/[\n,]/)
+          : [];
+      for (const item of rawItems) {
+        if (typeof item !== "string") continue;
+        const normalized = item.trim();
+        if (!normalized || seen.has(normalized)) continue;
+        seen.add(normalized);
+        out.push(normalized);
+        if (out.length >= 64) return out;
+      }
+    }
+  }
+  return out;
+}
+
+function structuredRecallSignalsFromRequest(parsed: MemoryRecallInput): StructuredRecallSignals | null {
+  const records = [
+    ...collectSignalRecords(parsed.structured_recall_context),
+    ...collectSignalRecords(parsed.rules_context),
+  ];
+  if (records.length === 0) return null;
+  const signals: StructuredRecallSignals = {
+    taskSignature: firstStringSignal(records, ["task_signature", "taskSignature"]),
+    workflowSignature: firstStringSignal(records, ["workflow_signature", "workflowSignature"]),
+    errorSignature: firstStringSignal(records, ["error_signature", "errorSignature"]),
+    patternSignature: firstStringSignal(records, ["pattern_signature", "patternSignature"]),
+    taskFamily: firstStringSignal(records, ["task_family", "taskFamily"]),
+    repoSignature: firstStringSignal(records, ["repo_signature", "repoSignature"]),
+    fileCluster: firstStringSignal(records, ["file_cluster", "fileCluster"]),
+    toolChainSignature: firstStringSignal(records, ["tool_chain_signature", "toolChainSignature"]),
+    failureMode: firstStringSignal(records, ["failure_mode", "failureMode"]),
+    verificationSignature: firstStringSignal(records, ["verification_signature", "verificationSignature"]),
+    acceptanceCheckSignature: firstStringSignal(records, ["acceptance_check_signature", "acceptanceCheckSignature"]),
+    targetFiles: stringArraySignal(records, ["target_files", "targetFiles", "target_files_text"]),
+  };
+  const hasStringSignal = Object.entries(signals)
+    .filter(([key]) => key !== "targetFiles")
+    .some(([, value]) => typeof value === "string" && value.trim().length > 0);
+  if (hasStringSignal || (signals.targetFiles?.length ?? 0) > 0) return signals;
+  return null;
 }
 
 function enforceHardContract(parsed: MemoryRecallInput, auth: RecallAuth) {
@@ -168,27 +257,54 @@ export async function memoryRecallParsed(
   const annAllowedTiers = normalizeRecallAllowedTiers(DEFAULT_RECALL_STAGE1_ALLOWED_TIERS);
   const exactRecoveryAllowedTiers = normalizeRecallAllowedTiers(EXACT_RECOVERY_RECALL_STAGE1_ALLOWED_TIERS);
   const annScanCap = recallStage1BoundedScanLimit({ oversample, limit: parsed.limit });
+  const recallEngineMode: RecallEngineMode = options?.recall_engine_mode === "hybrid" ? "hybrid" : "semantic_scan";
+  const queryText = typeof parsed.query_text === "string" && parsed.query_text.trim().length > 0
+    ? parsed.query_text.trim()
+    : null;
+  const structuredRecallSignals = structuredRecallSignalsFromRequest(parsed);
 
-  // Stage 1 (primary): ANN kNN candidate fetch (fast path).
-  const stage1Ann = await timed("stage1_candidates_ann", () =>
-    recallAccess.stage1CandidatesAnn({
-      queryEmbedding: parsed.query_embedding,
-      scope,
-      oversample,
-      limit: parsed.limit,
-      allowedTiers: annAllowedTiers,
-      scanLimit: annScanCap,
-      consumerAgentId,
-      consumerTeamId,
-    }),
-  );
+  let stage1Ann: RecallCandidate[] = [];
+  let stage1Hybrid: RecallCandidate[] | null = null;
+  let seeds: RecallCandidate[];
+  let stage1Mode: "ann" | "hybrid" | "exact_recovery" = recallEngineMode === "hybrid" ? "hybrid" : "ann";
+  if (recallEngineMode === "hybrid") {
+    stage1Hybrid = await timed("stage1_candidates_hybrid", () =>
+      recallAccess.stage1HybridCandidates({
+        queryEmbedding: parsed.query_embedding,
+        queryText,
+        structured: structuredRecallSignals,
+        scope,
+        oversample,
+        limit: parsed.limit,
+        allowedTiers: annAllowedTiers,
+        scanLimit: annScanCap,
+        consumerAgentId,
+        consumerTeamId,
+      }),
+    );
+    seeds = stage1Hybrid;
+  } else {
+    // Stage 1 (primary): semantic/ANN-compatible candidate fetch (fast path).
+    stage1Ann = await timed("stage1_candidates_ann", () =>
+      recallAccess.stage1CandidatesAnn({
+        queryEmbedding: parsed.query_embedding,
+        scope,
+        oversample,
+        limit: parsed.limit,
+        allowedTiers: annAllowedTiers,
+        scanLimit: annScanCap,
+        consumerAgentId,
+        consumerTeamId,
+      }),
+    );
+    seeds = stage1Ann;
+  }
+  const stage1AnnSeedCount = stage1Ann.length;
+  const stage1HybridSeedCount = stage1Hybrid?.length ?? null;
+  const shouldAttemptExactRecovery = seeds.length === 0 && stage1ExactRecoveryOnEmpty;
+  const stage1ExactRecoveryAttempted = shouldAttemptExactRecovery;
 
-  let seeds = stage1Ann;
-  const stage1AnnSeedCount = seeds.length;
-  const stage1ExactRecoveryAttempted = stage1AnnSeedCount === 0 && stage1ExactRecoveryOnEmpty;
-  let stage1Mode: "ann" | "exact_recovery" = "ann";
-
-  if (stage1ExactRecoveryAttempted) {
+  if (shouldAttemptExactRecovery) {
     const stage1Exact = await timed("stage1_candidates_exact_recovery", () =>
       recallAccess.stage1CandidatesExactRecovery({
         queryEmbedding: parsed.query_embedding,
@@ -214,11 +330,13 @@ export async function memoryRecallParsed(
   const seedIds = seeds.map((s) => s.id);
   const stage1TierBudgetDebug: Stage1TierBudgetDebug = {
     cold_policy: "exact_recovery_on_empty",
+    recall_engine_mode: recallEngineMode,
     ann_allowed_tiers: annAllowedTiers,
     ann_scan_cap: annScanCap,
     exact_recovery_allowed_tiers: exactRecoveryAllowedTiers,
     exact_recovery_scan_cap: null,
     ann_seed_tier_counts: countCandidateTiers(stage1Ann),
+    hybrid_seed_tier_counts: stage1Hybrid ? countCandidateTiers(stage1Hybrid) : null,
     final_seed_tier_counts: countCandidateTiers(seeds),
   };
 
@@ -279,18 +397,20 @@ export async function memoryRecallParsed(
       aionis_memory_packet: aionisMemoryPacket,
       ...(parsed.return_debug
         ? {
-            debug: {
-              neighborhood_counts: { nodes: 0, edges: 0 },
-              embeddings: undefined,
-              stage1: {
-                mode: stage1Mode,
-                ann_seed_count: stage1AnnSeedCount,
-                final_seed_count: 0,
-                tier_budget: stage1TierBudgetDebug,
-                exact_recovery_enabled: stage1ExactRecoveryOnEmpty,
-                exact_recovery_attempted: stage1ExactRecoveryAttempted,
-              },
-            },
+	            debug: {
+	              neighborhood_counts: { nodes: 0, edges: 0 },
+	              embeddings: undefined,
+	              stage1: {
+	                mode: stage1Mode,
+	                recall_engine_mode: recallEngineMode,
+	                ann_seed_count: stage1AnnSeedCount,
+	                hybrid_seed_count: stage1HybridSeedCount,
+	                final_seed_count: 0,
+	                tier_budget: stage1TierBudgetDebug,
+	                exact_recovery_enabled: stage1ExactRecoveryOnEmpty,
+	                exact_recovery_attempted: stage1ExactRecoveryAttempted,
+	              },
+	            },
           }
         : {}),
     };
@@ -637,17 +757,19 @@ export async function memoryRecallParsed(
     ...(parsed.return_debug
       ? {
           debug: {
-            neighborhood_counts: { nodes: nodeMapAll.size, edges: edgesAll.length },
-            embeddings: embedding_debug,
-            context_compaction,
-            stage1: {
-              mode: stage1Mode,
-              ann_seed_count: stage1AnnSeedCount,
-              final_seed_count: seeds.length,
-              tier_budget: stage1TierBudgetDebug,
-              exact_recovery_enabled: stage1ExactRecoveryOnEmpty,
-              exact_recovery_attempted: stage1ExactRecoveryAttempted,
-            },
+	            neighborhood_counts: { nodes: nodeMapAll.size, edges: edgesAll.length },
+	            embeddings: embedding_debug,
+	            context_compaction,
+	            stage1: {
+	              mode: stage1Mode,
+	              recall_engine_mode: recallEngineMode,
+	              ann_seed_count: stage1AnnSeedCount,
+	              hybrid_seed_count: stage1HybridSeedCount,
+	              final_seed_count: seeds.length,
+	              tier_budget: stage1TierBudgetDebug,
+	              exact_recovery_enabled: stage1ExactRecoveryOnEmpty,
+	              exact_recovery_attempted: stage1ExactRecoveryAttempted,
+	            },
           },
         }
       : {}),

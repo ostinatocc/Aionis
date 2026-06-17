@@ -4,6 +4,7 @@
   "server": {
     "started_over_real_http": true,
     "auth_mode": "api_key",
+    "recall_engine_mode": "hybrid",
     "sdk_client": "createAionisClient",
     "tenant_id": "tenant-a",
     "scope": "tenant-a/default"
@@ -20,11 +21,14 @@
     "accepted_route_use_now": true,
     "failed_direct_use_blocked": true,
     "stale_direct_use_blocked": true,
-    "recall_source_family_count": 2,
+    "recall_source_family_count": 4,
     "recall_source_families": [
       "execution_native",
-      "semantic"
+      "lexical",
+      "semantic",
+      "structured"
     ],
+    "lexical_source_visible": true,
     "memory_use_receipt_visible": true,
     "admission_record_visible": true,
     "operator_snapshot_trace_visible": true,

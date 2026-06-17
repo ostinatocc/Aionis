@@ -313,6 +313,108 @@ test("memory recall expands to cold only through exact recovery and reports tier
   }
 });
 
+test("memory recall uses route-level hybrid mode only when requested", async () => {
+  const dbPath = tmpDbPath("route-level-hybrid-mode");
+  const writeStore = createLiteWriteStore(dbPath);
+  const recallStore = createLiteRecallStore(dbPath);
+  const queryEmbedding = [1, ...Array.from({ length: 1535 }, () => 0)];
+  const weakEmbedding = [0, 1, ...Array.from({ length: 1534 }, () => 0)];
+  const marker = "ROUTE_LEVEL_HYBRID_MARKER";
+  const semanticOnlyId = deterministicUuid(900);
+  const lexicalTargetId = deterministicUuid(901);
+  try {
+    await writeStore.withTx(async () => {
+      const commitId = await insertCommit(writeStore, "default", "route-level-hybrid-mode");
+      await insertReadyNode(writeStore, {
+        id: semanticOnlyId,
+        vector: queryEmbedding,
+        title: "semantic-only route memory",
+        summary: "Semantically close but missing the route-level hybrid marker.",
+        commitId,
+      });
+      await insertReadyNode(writeStore, {
+        id: lexicalTargetId,
+        vector: weakEmbedding,
+        title: `${marker} lexical target`,
+        summary: `${marker}: this target should be recovered by route-level hybrid recall.`,
+        slots: {
+          target_files: ["src/route-level-hybrid.ts"],
+          failure_mode: "route-level-hybrid-regression",
+        },
+        commitId,
+      });
+    });
+
+    const semanticOnly = await memoryRecallParsed(
+      MemoryRecallRequest.parse({
+        tenant_id: "default",
+        scope: "default",
+        query_text: marker,
+        query_embedding: queryEmbedding,
+        structured_recall_context: {
+          target_files: ["src/route-level-hybrid.ts"],
+          failure_mode: "route-level-hybrid-regression",
+        },
+        limit: 2,
+        neighborhood_hops: 1,
+        max_nodes: 5,
+        max_edges: 5,
+        ranked_limit: 5,
+        return_debug: true,
+      }),
+      "default",
+      "default",
+      { allow_debug_embeddings: false },
+      undefined,
+      "recall",
+      {
+        recall_access: recallStore.createRecallAccess(),
+        recall_engine_mode: "semantic_scan",
+      },
+    );
+    assert.equal(semanticOnly.seeds[0]?.id, semanticOnlyId);
+    assert.equal((semanticOnly as any).debug.stage1.mode, "ann");
+    assert.equal((semanticOnly as any).debug.stage1.recall_engine_mode, "semantic_scan");
+
+    const hybrid = await memoryRecallParsed(
+      MemoryRecallRequest.parse({
+        tenant_id: "default",
+        scope: "default",
+        query_text: marker,
+        query_embedding: queryEmbedding,
+        structured_recall_context: {
+          target_files: ["src/route-level-hybrid.ts"],
+          failure_mode: "route-level-hybrid-regression",
+        },
+        limit: 2,
+        neighborhood_hops: 1,
+        max_nodes: 5,
+        max_edges: 5,
+        ranked_limit: 5,
+        return_debug: true,
+      }),
+      "default",
+      "default",
+      { allow_debug_embeddings: false },
+      undefined,
+      "recall",
+      {
+        recall_access: recallStore.createRecallAccess(),
+        recall_engine_mode: "hybrid",
+      },
+    );
+
+    assert.equal(hybrid.seeds[0]?.id, lexicalTargetId);
+    assert.equal((hybrid as any).debug.stage1.mode, "hybrid");
+    assert.equal((hybrid as any).debug.stage1.recall_engine_mode, "hybrid");
+    assert.ok((hybrid as any).debug.stage1.hybrid_seed_count > 0);
+    assert.ok(hybrid.seeds[0]?.sources?.some((source) => source.kind === "lexical"));
+  } finally {
+    await recallStore.close();
+    await writeStore.close();
+  }
+});
+
 test("stage1 SQL visibility preserves shared owner-agent semantics", async () => {
   const dbPath = tmpDbPath("stage1-visibility");
   const writeStore = createLiteWriteStore(dbPath);

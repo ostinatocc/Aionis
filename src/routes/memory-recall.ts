@@ -182,13 +182,14 @@ export function registerMemoryRecallRoutes(args: RegisterMemoryRecallRoutesArgs)
         timing: (stage, ms) => {
           timings[stage] = (timings[stage] ?? 0) + ms;
         },
-      },
-      "recall",
-      {
-        stage1_exact_recovery_on_empty: env.MEMORY_RECALL_STAGE1_EXACT_RECOVERY_ON_EMPTY,
-        recall_access: liteRecallAccess,
-      },
-    );
+	      },
+	      "recall",
+	      {
+	        stage1_exact_recovery_on_empty: env.MEMORY_RECALL_STAGE1_EXACT_RECOVERY_ON_EMPTY,
+	        recall_access: liteRecallAccess,
+	        recall_engine_mode: env.RECALL_ENGINE_MODE,
+	      },
+	    );
 
     if (parsed.rules_context === undefined || parsed.rules_context === null) {
       return base;
@@ -296,15 +297,18 @@ export function registerMemoryRecallRoutes(args: RegisterMemoryRecallRoutesArgs)
           rules: out.rules ? { considered: out.rules.considered, matched: out.rules.matched } : null,
           context_chars: contextChars,
           context_est_tokens: contextEstTokens,
-          context_token_budget: parsed.context_token_budget ?? null,
-          context_char_budget: parsed.context_char_budget ?? null,
-          context_compaction_profile: parsed.context_compaction_profile ?? "balanced",
-          stage1_exact_recovery_enabled: env.MEMORY_RECALL_STAGE1_EXACT_RECOVERY_ON_EMPTY,
-          stage1_exact_recovery_used: Number.isFinite(timings["stage1_candidates_exact_recovery"]),
-          stage1_ann_seed_count: out.debug?.stage1?.ann_seed_count ?? null,
-          stage1_ann_ms: timings["stage1_candidates_ann"] ?? null,
-          stage1_exact_recovery_ms: timings["stage1_candidates_exact_recovery"] ?? null,
-          profile: adaptiveProfile.profile,
+	          context_token_budget: parsed.context_token_budget ?? null,
+	          context_char_budget: parsed.context_char_budget ?? null,
+	          context_compaction_profile: parsed.context_compaction_profile ?? "balanced",
+	          stage1_exact_recovery_enabled: env.MEMORY_RECALL_STAGE1_EXACT_RECOVERY_ON_EMPTY,
+	          stage1_exact_recovery_used: Number.isFinite(timings["stage1_candidates_exact_recovery"]),
+	          recall_engine_mode: env.RECALL_ENGINE_MODE,
+	          stage1_ann_seed_count: out.debug?.stage1?.ann_seed_count ?? null,
+	          stage1_ann_ms: timings["stage1_candidates_ann"] ?? null,
+	          stage1_hybrid_seed_count: out.debug?.stage1?.hybrid_seed_count ?? null,
+	          stage1_hybrid_ms: timings["stage1_candidates_hybrid"] ?? null,
+	          stage1_exact_recovery_ms: timings["stage1_candidates_exact_recovery"] ?? null,
+	          profile: adaptiveProfile.profile,
           profile_source: baseProfile.source,
           recall_mode: explicitMode.mode,
           recall_mode_profile: explicitMode.profile,

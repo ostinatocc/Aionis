@@ -423,13 +423,15 @@ export function buildRecallObservability(args: {
     profile?: string;
     applied?: boolean;
     reason?: string;
-    signals?: string[];
-    enabled?: boolean;
-    source?: string;
+	    signals?: string[];
+	    enabled?: boolean;
+	    source?: string;
   } | null;
   stage1?: {
-    mode?: "ann" | "exact_recovery";
+    mode?: "ann" | "hybrid" | "exact_recovery";
+    recall_engine_mode?: "semantic_scan" | "hybrid";
     ann_seed_count?: number;
+    hybrid_seed_count?: number | null;
     final_seed_count?: number;
     exact_recovery_enabled?: boolean;
     exact_recovery_attempted?: boolean;
@@ -438,6 +440,7 @@ export function buildRecallObservability(args: {
 }) {
   const stageTimings = {
     stage1_candidates_ann_ms: args.timings["stage1_candidates_ann"] ?? 0,
+    stage1_candidates_hybrid_ms: args.timings["stage1_candidates_hybrid"] ?? 0,
     stage1_candidates_exact_recovery_ms: args.timings["stage1_candidates_exact_recovery"] ?? 0,
     stage2_edges_ms: args.timings["stage2_edges"] ?? 0,
     stage2_nodes_ms: args.timings["stage2_nodes"] ?? 0,

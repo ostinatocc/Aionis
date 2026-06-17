@@ -251,6 +251,7 @@ async function startManagedServer(): Promise<ManagedServerSession> {
   const writePath = tmpDbPath(tmpDir, "write");
   const replayPath = tmpDbPath(tmpDir, "replay");
   const env = await serverEnv(writePath, replayPath);
+  assertCondition(env.RECALL_ENGINE_MODE === "hybrid", "managed server e2e must run route-level hybrid recall");
   const app = Fastify();
   const stores = registerManagedServerApp({ app, env, writePath, replayPath });
   await app.listen({ host: "127.0.0.1", port: 0 });
@@ -546,6 +547,7 @@ async function main() {
     assertCondition(!useNowText.includes(STALE_MARKER), "stale memory leaked into direct use text");
 
     const sourceKinds = collectRecallSourceKinds(afterGuide);
+    assertCondition(sourceKinds.has("lexical"), "route-level hybrid recall did not surface lexical source traces");
     if (sourceKinds.size < 2) {
       const relevant = recordArray(asRecord(afterGuide.memory_packet)?.relevant_memories).map((entry) => ({
         memory_id: entry.memory_id,
@@ -621,6 +623,7 @@ async function main() {
       server: {
         started_over_real_http: true,
         auth_mode: "api_key",
+        recall_engine_mode: "hybrid",
         sdk_client: "createAionisClient",
         tenant_id: TENANT_ID,
         scope: SCOPE,
@@ -639,6 +642,7 @@ async function main() {
         stale_direct_use_blocked: !useNowMemoryIds.includes(staleMemoryId) && !useNowText.includes(STALE_MARKER),
         recall_source_family_count: sourceKinds.size,
         recall_source_families: Array.from(sourceKinds).sort(),
+        lexical_source_visible: sourceKinds.has("lexical"),
         memory_use_receipt_visible: receipt.contract_version === "aionis_memory_use_receipt_v1",
         admission_record_visible: admissionRecord.contract_version === "aionis_memory_admission_record_v1",
         operator_snapshot_trace_visible: operatorGuideTrace !== null,

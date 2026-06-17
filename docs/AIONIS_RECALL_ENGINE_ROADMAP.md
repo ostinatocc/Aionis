@@ -137,8 +137,10 @@ proxy metrics. Full product evaluations must measure them through `/v1/guide`.
    - Prefer RRF or a simple weighted merge before learned ranking.
    - Current status: first RRF hybrid merge is implemented for
      `stage1HybridCandidates` over semantic, lexical, structured, and
-     execution-native sources. Existing product recall paths still keep their
-     semantic-scan default until a separate config-gated rollout lands.
+     execution-native sources. Product recall paths now select the route-level
+     candidate engine through `RECALL_ENGINE_MODE=semantic_scan|hybrid`: Lite
+     defaults to `semantic_scan`, while Server defaults to `hybrid` after the
+     managed-server e2e proved source traces remain below governance.
 
 6. **Recall source observability**
    - Report per-source candidate counts, p50/p95 latency, hybrid merge shape,
@@ -162,6 +164,10 @@ proxy metrics. Full product evaluations must measure them through `/v1/guide`.
      IDs against SQLite scope, tier, visibility, and surface gates before
      returning `ann` source traces. Empty or unusable sidecar results fall back
      to the existing bounded SQLite scan.
+   - Route-level status: ANN remains one semantic source within the recall
+     engine. Hybrid mode changes candidate generation breadth only; Aionis
+     admission still decides `use_now`, `inspect_before_use`, `do_not_use`, and
+     `rehydrate`.
    - Backend evaluation status: USearch, sqlite-vec, and LanceDB are documented
      in `docs/research/2026-06-16-ann-backend-evaluation.md`. No backend
      dependency is committed yet. `scripts/research/ann-backend-probe.mjs`
