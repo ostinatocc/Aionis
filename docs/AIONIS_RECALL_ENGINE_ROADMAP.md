@@ -177,6 +177,14 @@ proxy metrics. Full product evaluations must measure them through `/v1/guide`.
      and the checked-in baseline is at `recall_at_50=1` and
      `candidate_source_coverage=1`.
 
+   - Product-level status: `npm run -s runtime:e2e:recall-source-governance`
+     starts Managed Server Edition over real HTTP, writes accepted, failed,
+     stale, lexical, graph-linked, and recent working-set memories, then calls
+     guide, measure, snapshot, and Flight Recorder through the SDK. The checked
+     result verifies all hybrid source families are visible while only the
+     accepted execution route enters `use_now`; failed and stale execution
+     memories remain blocked from direct-use.
+
 7. **Local ANN sidecar**
    - Add a local ANN adapter only after source-aware metrics exist.
    - SQLite remains the fact source. ANN is candidate generation only.

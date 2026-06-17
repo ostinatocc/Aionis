@@ -30,7 +30,15 @@
       "semantic",
       "structured"
     ],
+    "required_hybrid_source_families_visible": true,
     "lexical_source_visible": true,
+    "graph_source_visible": true,
+    "recent_source_visible": true,
+    "governed_execution_direct_use_ids": [
+      "d8cdc7c2-e71e-540d-9ef5-94a08d52bbb8"
+    ],
+    "unsafe_direct_use_ids": [],
+    "source_level_admission_preserved": true,
     "memory_use_receipt_visible": true,
     "admission_record_visible": true,
     "operator_snapshot_trace_visible": true,

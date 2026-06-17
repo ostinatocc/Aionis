@@ -170,6 +170,7 @@ Before changing recall behavior, run the focused retrieval and product checks:
 
 ```bash
 npm run -s recall:eval -- --deterministic-latency
+npm run -s runtime:e2e:recall-source-governance
 npm run -s runtime:e2e:managed-server-hybrid-recall
 npm run -s test:focused
 ```
@@ -193,7 +194,10 @@ Expected managed-server hybrid recall result:
 
 - accepted route reaches `use_now`
 - failed/stale branches are not direct-use
-- recall source families include multiple sources
+- recall source families include semantic, lexical, structured,
+  execution-native, graph, and recent
+- source-level admission is preserved: stronger candidate coverage does not
+  promote failed or stale execution memory into `use_now`
 - receipt/admission record/operator snapshot carry source traces
 - Agent Flight Recorder replays accepted, failed, and stale source traces
   without including Agent prompt payload

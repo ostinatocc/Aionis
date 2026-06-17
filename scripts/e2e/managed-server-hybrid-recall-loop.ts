@@ -54,6 +54,14 @@ const LEXICAL_MARKER = "MANAGED_SERVER_E2E_BURIED_LEXICAL";
 const FAILURE_MODE = "managed-server-legacy-route-regression";
 const VERIFICATION_SIGNATURE = "unit:managed-server-checkout-route";
 const ACCEPTANCE_CHECK_SIGNATURE = "accept:managed-server-checkout-route";
+const REQUIRED_HYBRID_SOURCE_FAMILIES = [
+  "semantic",
+  "lexical",
+  "structured",
+  "execution_native",
+  "graph",
+  "recent",
+] as const;
 
 function tmpDbPath(tmpDir: string, name: string): string {
   return path.join(tmpDir, `${name}.sqlite`);
@@ -337,6 +345,10 @@ function collectRecallSourceKindsForMemory(value: unknown, memoryId: string): Se
   return out;
 }
 
+function missingSourceFamilies(sourceKinds: ReadonlySet<string>): string[] {
+  return REQUIRED_HYBRID_SOURCE_FAMILIES.filter((kind) => !sourceKinds.has(kind));
+}
+
 function executionSlots(args: {
   status: "passed" | "failed" | "blocked";
   lifecycleState: "active" | "suppressed" | "contested";
@@ -568,20 +580,28 @@ async function main() {
     assertCondition(!useNowText.includes(STALE_MARKER), "stale memory leaked into direct use text");
 
     const sourceKinds = collectRecallSourceKinds(afterGuide);
-    assertCondition(sourceKinds.has("lexical"), "route-level hybrid recall did not surface lexical source traces");
-    if (sourceKinds.size < 2) {
+    const missingSources = missingSourceFamilies(sourceKinds);
+    if (missingSources.length > 0) {
       const relevant = recordArray(asRecord(afterGuide.memory_packet)?.relevant_memories).map((entry) => ({
         memory_id: entry.memory_id,
         title: entry.title,
         recall_sources: entry.recall_sources,
       }));
-      throw new Error(`expected at least two recall source families, got ${Array.from(sourceKinds).join(", ")}; guide_debug=${
+      throw new Error(`missing required hybrid source families ${missingSources.join(", ")}, got ${Array.from(sourceKinds).join(", ")}; guide_debug=${
         JSON.stringify({
           source_map: afterGuide.source_map,
           relevant,
         })
       }`);
     }
+    const governedExecutionCandidateIds = [acceptedMemoryId, failedMemoryId, staleMemoryId];
+    const directUseGovernedExecutionIds = governedExecutionCandidateIds.filter((id) => useNowMemoryIds.includes(id));
+    const unsafeDirectUseIds = [failedMemoryId, staleMemoryId].filter((id) => useNowMemoryIds.includes(id));
+    assertCondition(
+      directUseGovernedExecutionIds.length === 1 && directUseGovernedExecutionIds[0] === acceptedMemoryId,
+      `hybrid recall polluted direct-use execution admission: ${directUseGovernedExecutionIds.join(", ")}`,
+    );
+    assertCondition(unsafeDirectUseIds.length === 0, `unsafe hybrid candidates leaked into direct use: ${unsafeDirectUseIds.join(", ")}`);
 
     const feedback = await aionis.feedback<Record<string, unknown>>(feedbackFromGuide({
       guide: afterGuide,
@@ -692,6 +712,10 @@ async function main() {
     assertCondition(flightAcceptedSourceKinds.size > 0, "flight recorder missed accepted recall sources");
     assertCondition(flightFailedSourceKinds.size > 0, "flight recorder missed failed recall sources");
     assertCondition(flightStaleSourceKinds.size > 0, "flight recorder missed stale recall sources");
+    assertCondition(
+      missingSourceFamilies(flightAcceptedSourceKinds).length === 0,
+      `flight recorder accepted route missed required source families: ${missingSourceFamilies(flightAcceptedSourceKinds).join(", ")}`,
+    );
 
     const output = {
       contract_version: "aionis_managed_server_hybrid_recall_e2e_result_v1",
@@ -718,7 +742,16 @@ async function main() {
         stale_direct_use_blocked: !useNowMemoryIds.includes(staleMemoryId) && !useNowText.includes(STALE_MARKER),
         recall_source_family_count: sourceKinds.size,
         recall_source_families: Array.from(sourceKinds).sort(),
+        required_hybrid_source_families_visible: missingSources.length === 0,
         lexical_source_visible: sourceKinds.has("lexical"),
+        graph_source_visible: sourceKinds.has("graph"),
+        recent_source_visible: sourceKinds.has("recent"),
+        governed_execution_direct_use_ids: directUseGovernedExecutionIds,
+        unsafe_direct_use_ids: unsafeDirectUseIds,
+        source_level_admission_preserved:
+          directUseGovernedExecutionIds.length === 1
+          && directUseGovernedExecutionIds[0] === acceptedMemoryId
+          && unsafeDirectUseIds.length === 0,
         memory_use_receipt_visible: receipt.contract_version === "aionis_memory_use_receipt_v1",
         admission_record_visible: admissionRecord.contract_version === "aionis_memory_admission_record_v1",
         operator_snapshot_trace_visible: operatorGuideTrace !== null,
