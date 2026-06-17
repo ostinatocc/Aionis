@@ -355,6 +355,10 @@ export type AionisMemoryAdmissionDatasetRow = {
   source: "memory_admission_record";
   agent_prompt_included: false;
   runtime_mutation: false;
+  policy_id: string;
+  policy_version: string;
+  policy_mode: string;
+  runtime_version: string | null;
   tenant_id: string | null;
   scope: string | null;
   guide_trace_id: string | null;
@@ -389,7 +393,15 @@ export type AionisMemoryAdmissionDatasetExportOptions = {
   run_id?: string | null;
   task_id?: string | null;
   task_signature?: string | null;
+  policy_id?: string | null;
+  policy_version?: string | null;
+  policy_mode?: string | null;
+  runtime_version?: string | null;
 };
+
+export const AIONIS_ADMISSION_POLICY_ID = "AIONIS_ADMISSION_POLICY_V1";
+export const AIONIS_ADMISSION_POLICY_VERSION = "2026-06-17";
+export const AIONIS_ADMISSION_POLICY_MODE = "deterministic_admission";
 
 export type AionisExecutionContextBudgetProfile = "compact" | "balanced" | "high_recall";
 
@@ -2039,6 +2051,10 @@ export function memoryAdmissionDatasetRowsFromRecord(
     source: "memory_admission_record",
     agent_prompt_included: false,
     runtime_mutation: false,
+    policy_id: admissionDatasetString(options.policy_id) ?? AIONIS_ADMISSION_POLICY_ID,
+    policy_version: admissionDatasetString(options.policy_version) ?? AIONIS_ADMISSION_POLICY_VERSION,
+    policy_mode: admissionDatasetString(options.policy_mode) ?? AIONIS_ADMISSION_POLICY_MODE,
+    runtime_version: admissionDatasetString(options.runtime_version),
     tenant_id: admissionDatasetString(record.tenant_id),
     scope: admissionDatasetString(record.scope),
     guide_trace_id: admissionDatasetString(record.guide_trace_id),

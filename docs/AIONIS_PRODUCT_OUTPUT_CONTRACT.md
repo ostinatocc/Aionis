@@ -323,6 +323,8 @@ Dataset rows include:
 
 - candidate memory ID, domain, type, lifecycle, and authority
 - admission action and decision kind
+- policy metadata: `policy_id`, `policy_version`, `policy_mode`, and optional
+  `runtime_version`
 - prompt exposure and agent-used flags
 - feedback outcome, attribution strength, and derived outcome label
 - reason codes, evidence IDs, guide trace, task/run IDs, and prompt character count

@@ -29,6 +29,10 @@ Each row should keep:
 - `run_id`
 - `task_id`
 - `task_signature`
+- `policy_id`
+- `policy_version`
+- `policy_mode`
+- `runtime_version`
 - `scope`
 - `memory_id`
 - `admission_action`
@@ -112,6 +116,36 @@ The e2e currently proves:
 - row count matches JSONL line count
 - prompt text, raw memory payloads, and raw slots are excluded
 
+## Evaluate A Dataset
+
+After appending rows, run the offline evaluator before changing any Runtime gate:
+
+```bash
+npm run -s admission:evaluate -- \
+  --input admission-dataset/rows.jsonl \
+  --out-dir admission-dataset/reports/latest
+```
+
+The evaluator writes:
+
+- `summary.json`: machine-readable policy metrics and bucket counts
+- `leaderboard.md`: compact human-readable report
+
+Core metrics:
+
+| Metric | Meaning |
+|---|---|
+| `use_now_positive_rate` | Attributed positive `use_now` rows divided by all `use_now` rows. |
+| `use_now_negative_rate` | Attributed negative `use_now` rows divided by all `use_now` rows. |
+| `use_now_unused_rate` | Exposed `use_now` rows not attributed as used. |
+| `unused_exposed_rate` | Prompt-included rows that received no usage attribution. |
+| `blocked_or_suppressed_count` | Rows that train the hard suppression / firewall boundary. |
+| `rehydrate_requested_count` | Rows that train payload sufficiency and on-demand recovery. |
+
+This is an audit and calibration input only. It must not mutate memory, promote a
+learned policy, or override lifecycle, scope, source, suppression, authority, or
+rehydrate gates.
+
 ## Production Guardrails
 
 Keep these checks in any host exporter:
@@ -130,7 +164,7 @@ Keep these checks in any host exporter:
 This dataset is the evidence spine for admission-policy calibration:
 
 ```text
-admission rows -> bucket metrics -> policy comparison -> learned candidate ranking
+admission rows -> dataset evaluator -> bucket metrics -> policy comparison -> learned candidate ranking
 ```
 
 It is not sufficient by itself to deploy a learned policy. A learned admission

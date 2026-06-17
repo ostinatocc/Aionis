@@ -13,6 +13,10 @@
   },
   "admission_dataset_export": {
     "row_contract_version": "aionis_memory_admission_dataset_row_v1",
+    "policy_id": "AIONIS_ADMISSION_POLICY_V1",
+    "policy_version": "2026-06-17",
+    "policy_mode": "deterministic_admission",
+    "runtime_version": null,
     "row_count": 4,
     "jsonl_line_count": 4,
     "positive_use_count": 1,
@@ -46,7 +50,7 @@
         "jsonl_line_count": 2
       }
     ],
-    "example_jsonl_line": "{\"contract_version\":\"aionis_memory_admission_dataset_row_v1\",\"intended_use\":\"memory_admission_policy_training_or_audit\",\"source\":\"memory_admission_record\",\"agent_prompt_included\":false,\"runtime_mutation\":false,\"tenant_id\":\"default\",\"scope\":\"admission-dataset:example:positive-supported\",\"guide_trace_id\":\"guide-example\",\"run_id\":\"run:admission-dataset-example:positive-supported\",\"task_id\":\"task:admission-dataset-example:positive-supported\",\"task_signature\":\"admission-dataset-export:positive-supported\",\"row_index\":0,\"memory_id\":\"mem_active_positive_example\",\"title\":\"Admission dataset active route positive-supported\",\"memory_origin\":\"aionis\",\"source_backend\":\"aionis\",\"domain\":\"general\",\"memory_type\":\"project_context\",\"lifecycle_state\":\"active\",\"authority\":\"advisory\",\"admission_action\":\"use_now\",\"decision_kind\":\"used\",\"actionable\":true,\"prompt_included\":true,\"agent_used\":true,\"feedback_outcome\":\"positive\",\"attribution_strength\":null,\"outcome_label\":\"positive_use\",\"reason_codes\":[\"available_for_agent_use\"],\"evidence_ids\":[],\"prompt_char_count\":953,\"history_used\":true,\"actionable_history_used\":true}"
+    "example_jsonl_line": "{\"contract_version\":\"aionis_memory_admission_dataset_row_v1\",\"intended_use\":\"memory_admission_policy_training_or_audit\",\"source\":\"memory_admission_record\",\"agent_prompt_included\":false,\"runtime_mutation\":false,\"policy_id\":\"AIONIS_ADMISSION_POLICY_V1\",\"policy_version\":\"2026-06-17\",\"policy_mode\":\"deterministic_admission\",\"runtime_version\":null,\"tenant_id\":\"default\",\"scope\":\"admission-dataset:example:positive-supported\",\"guide_trace_id\":\"guide-example\",\"run_id\":\"run:admission-dataset-example:positive-supported\",\"task_id\":\"task:admission-dataset-example:positive-supported\",\"task_signature\":\"admission-dataset-export:positive-supported\",\"row_index\":0,\"memory_id\":\"mem_active_positive_example\",\"title\":\"Admission dataset active route positive-supported\",\"memory_origin\":\"aionis\",\"source_backend\":\"aionis\",\"domain\":\"general\",\"memory_type\":\"project_context\",\"lifecycle_state\":\"active\",\"authority\":\"advisory\",\"admission_action\":\"use_now\",\"decision_kind\":\"used\",\"actionable\":true,\"prompt_included\":true,\"agent_used\":true,\"feedback_outcome\":\"positive\",\"attribution_strength\":null,\"outcome_label\":\"positive_use\",\"reason_codes\":[\"available_for_agent_use\"],\"evidence_ids\":[],\"prompt_char_count\":953,\"history_used\":true,\"actionable_history_used\":true}"
   },
   "rounds": [
     {

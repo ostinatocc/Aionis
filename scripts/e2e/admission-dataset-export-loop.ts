@@ -347,6 +347,10 @@ async function main() {
       },
       admission_dataset_export: {
         row_contract_version: "aionis_memory_admission_dataset_row_v1",
+        policy_id: allRows[0]?.policy_id ?? null,
+        policy_version: allRows[0]?.policy_version ?? null,
+        policy_mode: allRows[0]?.policy_mode ?? null,
+        runtime_version: allRows[0]?.runtime_version ?? null,
         row_count: allRows.length,
         jsonl_line_count: appendedLineCount,
         positive_use_count: positiveUseCount,

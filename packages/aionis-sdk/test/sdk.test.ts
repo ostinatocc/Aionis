@@ -653,6 +653,8 @@ test("@aionis/sdk exports admission dataset rows and JSONL without prompt payloa
   assert.equal(rows[0]?.scope, "scope-a");
   assert.equal(rows[0]?.run_id, "run-1");
   assert.equal(rows[0]?.task_signature, "dataset-export");
+  assert.equal(rows[0]?.policy_id, "AIONIS_ADMISSION_POLICY_V1");
+  assert.equal(rows[0]?.policy_mode, "deterministic_admission");
   assert.equal(rows[0]?.agent_prompt_included, false);
   assert.equal(rows[0]?.runtime_mutation, false);
 
