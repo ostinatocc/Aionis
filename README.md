@@ -146,6 +146,12 @@ Recall Engine roadmap:
 Aionis is improving candidate retrieval underneath the product surface, but
 retrieval still cannot bypass state admission.
 
+Recall Engine runbook:
+[docs/AIONIS_RECALL_ENGINE_RUNBOOK.md](docs/AIONIS_RECALL_ENGINE_RUNBOOK.md).
+Use it to diagnose whether a missing or surprising memory outcome came from
+candidate retrieval, admission, rehydration, host prompt integration, or Agent
+compliance.
+
 ## Aionis vs Recall Memory
 
 | Approach | Default behavior | Aionis behavior |

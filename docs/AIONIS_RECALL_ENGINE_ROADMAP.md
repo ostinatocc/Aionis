@@ -47,6 +47,25 @@ two limits:
 The first step is therefore not "install ANN". The first step is to measure
 candidate retrieval quality and source coverage before changing behavior.
 
+## Product Operating Mode
+
+Route-level recall is selected by `RECALL_ENGINE_MODE`:
+
+| Mode | Product meaning | Default |
+|---|---|---|
+| `semantic_scan` | Keep the current bounded semantic candidate path. | Lite |
+| `hybrid` | Merge semantic, lexical, structured, and execution-native candidates before governance. | Server |
+
+Hybrid mode changes candidate breadth only. It does not grant prompt authority,
+does not change lifecycle state, and does not decide `use_now`,
+`inspect_before_use`, `do_not_use`, or `rehydrate`.
+
+Operational diagnostics live in
+[AIONIS_RECALL_ENGINE_RUNBOOK.md](AIONIS_RECALL_ENGINE_RUNBOOK.md). Use the
+runbook to classify a memory issue as candidate retrieval, admission,
+rehydration, host prompt integration, or Agent compliance before changing
+Runtime behavior.
+
 ## Candidate Source Model
 
 Recall Engine v3 should expose candidate sources explicitly.

@@ -10,6 +10,8 @@ current Runtime implementation and adapters.
 For route-level request and response details, see
 [AIONIS_PRODUCT_API_USAGE.md](AIONIS_PRODUCT_API_USAGE.md). For stable output
 schemas, see [AIONIS_PRODUCT_OUTPUT_CONTRACT.md](AIONIS_PRODUCT_OUTPUT_CONTRACT.md).
+For recall source diagnostics, mode selection, and guide troubleshooting, see
+[AIONIS_RECALL_ENGINE_RUNBOOK.md](AIONIS_RECALL_ENGINE_RUNBOOK.md).
 
 ## Runtime Editions
 
@@ -29,6 +31,11 @@ must not turn recall into admission: semantic, lexical, structured,
 execution-native, ANN, graph, and recent sources can propose candidates, while
 the product layer still decides `use_now`, `inspect_before_use`, `do_not_use`,
 and `rehydrate`.
+
+`RECALL_ENGINE_MODE=hybrid` is the Server default. Lite keeps
+`RECALL_ENGINE_MODE=semantic_scan` by default and can opt into hybrid for local
+testing. The mode controls candidate retrieval only; hosts should still rely on
+the compiled guide surfaces rather than raw recall hits.
 
 Run the managed-server hybrid recall e2e when changing Server registration,
 SDK auth, recall sources, source tracing, or product admission output:

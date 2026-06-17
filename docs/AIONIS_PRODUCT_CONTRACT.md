@@ -92,7 +92,9 @@ use_now | inspect_before_use | do_not_use | rehydrate
 This keeps Aionis different from recall-only memory systems. Better retrieval
 raises the ceiling for what governance can inspect; governance still controls
 what reaches the Agent. The implementation roadmap is
-[AIONIS_RECALL_ENGINE_ROADMAP.md](AIONIS_RECALL_ENGINE_ROADMAP.md).
+[AIONIS_RECALL_ENGINE_ROADMAP.md](AIONIS_RECALL_ENGINE_ROADMAP.md), and the
+operator runbook is
+[AIONIS_RECALL_ENGINE_RUNBOOK.md](AIONIS_RECALL_ENGINE_RUNBOOK.md).
 
 ## Multi-Agent Execution Memory Position
 
