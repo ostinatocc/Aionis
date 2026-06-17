@@ -1,5 +1,6 @@
 import {
   AionisAgentContextSchema,
+  AionisClaimLedgerProjectionSchema,
   AionisMemoryAdmissionRecordSchema,
   AionisMemoryDecisionTraceSchema,
   AionisMemoryUseReceiptSchema,
@@ -7,6 +8,7 @@ import {
   parseAionisAgentFlightRecorderReport,
   type AionisAgentContext,
   type AionisAgentFlightRecorderReport,
+  type AionisClaimLedgerProjection,
   type AionisMemoryAdmissionRecord,
   type AionisMemoryDecisionTrace,
   type AionisMemoryUseReceipt,
@@ -22,6 +24,7 @@ export type BuildAionisAgentFlightRecorderReportArgs = {
   memory_decision_trace?: unknown;
   memory_use_receipt?: unknown;
   memory_admission_record?: unknown;
+  claim_ledger_projection?: unknown;
   operator_snapshot?: unknown;
   feedback_result?: unknown;
   now?: string | null;
@@ -91,6 +94,13 @@ function parseSnapshot(value: unknown): AionisOperatorSnapshot | null {
   const direct = AionisOperatorSnapshotSchema.safeParse(value);
   if (direct.success) return direct.data;
   const nested = AionisOperatorSnapshotSchema.safeParse(asRecord(value).operator_snapshot);
+  return nested.success ? nested.data : null;
+}
+
+function parseClaimLedgerProjection(value: unknown): AionisClaimLedgerProjection | null {
+  const direct = AionisClaimLedgerProjectionSchema.safeParse(value);
+  if (direct.success) return direct.data;
+  const nested = AionisClaimLedgerProjectionSchema.safeParse(asRecord(value).claim_ledger_projection);
   return nested.success ? nested.data : null;
 }
 
@@ -330,6 +340,7 @@ function sourceMapForReport(args: {
   supplied: Partial<AionisAgentFlightRecorderReport["source_map"]> | undefined;
   trace: AionisMemoryDecisionTrace | null;
   snapshot: AionisOperatorSnapshot | null;
+  claimLedgerProjection: AionisClaimLedgerProjection | null;
 }): AionisAgentFlightRecorderReport["source_map"] {
   return {
     routes_used: compactStrings([
@@ -344,6 +355,7 @@ function sourceMapForReport(args: {
       ...(args.trace?.memory_use_receipt ? ["memory_use_receipt"] : []),
       ...(args.trace?.admission_record ? ["memory_admission_record"] : []),
       ...(args.snapshot ? ["operator_snapshot"] : []),
+      ...(args.claimLedgerProjection ? ["claim_ledger_projection"] : []),
     ]),
     omitted_internal_surfaces: compactStrings([
       ...(args.supplied?.omitted_internal_surfaces ?? []),
@@ -360,6 +372,12 @@ export function buildAionisAgentFlightRecorderReport(
 ): AionisAgentFlightRecorderReport {
   const trace = parseTrace(args.memory_decision_trace);
   const snapshot = parseSnapshot(args.operator_snapshot);
+  const claimLedgerProjection = parseClaimLedgerProjection(args.claim_ledger_projection)
+    ?? parseClaimLedgerProjection(args.agent_context)
+    ?? parseClaimLedgerProjection(args.memory_decision_trace)
+    ?? parseClaimLedgerProjection(args.operator_snapshot)
+    ?? snapshot?.claim_ledger_projection
+    ?? null;
   const agent = parseAgentContext(args.agent_context) ?? parseAgentContext(args.memory_decision_trace);
   const receipt = receiptFromInputs({
     supplied: args.memory_use_receipt,
@@ -400,6 +418,7 @@ export function buildAionisAgentFlightRecorderReport(
     supplied: args.source_map,
     trace,
     snapshot,
+    claimLedgerProjection,
   });
   return parseAionisAgentFlightRecorderReport({
     contract_version: "aionis_agent_flight_recorder_report_v1",
@@ -413,6 +432,7 @@ export function buildAionisAgentFlightRecorderReport(
     decision_time: args.now ?? new Date().toISOString(),
     agent_view: agentView,
     blocked_or_suppressed: blockedOrSuppressed,
+    claim_ledger_projection: claimLedgerProjection ?? undefined,
     attribution,
     replay_sources: replaySources,
     claims: [
@@ -432,6 +452,13 @@ export function buildAionisAgentFlightRecorderReport(
         evidence: `${blockedOrSuppressed.length} blocked or suppressed memories are visible.`,
       },
       {
+        claim: "claim_ledger_projection_replayable",
+        status: claimLedgerProjection ? "pass" : "warn",
+        evidence: claimLedgerProjection
+          ? `Claim Ledger projection replayed ${claimLedgerProjection.use_now.length} use_now, ${claimLedgerProjection.inspect_before_use.length} inspect, ${claimLedgerProjection.do_not_use.length} do_not_use, and ${claimLedgerProjection.audit_only.length} audit_only claims.`
+          : "No Claim Ledger projection was supplied.",
+      },
+      {
         claim: "feedback_attribution_replayable",
         status: attribution.present ? "pass" : "warn",
         evidence: attribution.present
@@ -445,6 +472,6 @@ export function buildAionisAgentFlightRecorderReport(
       },
     ],
     source_map: sourceMap,
-    summary: `Agent Flight Recorder reconstructed ${agentView.exposed_memory_ids.length} exposed memories, ${agentView.use_now_memory_ids.length} direct-use memories, ${blockedOrSuppressed.length} blocked/suppressed memories, and feedback attribution=${attribution.present}.`,
+    summary: `Agent Flight Recorder reconstructed ${agentView.exposed_memory_ids.length} exposed memories, ${agentView.use_now_memory_ids.length} direct-use memories, ${blockedOrSuppressed.length} blocked/suppressed memories, ${claimLedgerProjection ? claimLedgerProjection.use_now.length + claimLedgerProjection.inspect_before_use.length + claimLedgerProjection.do_not_use.length + claimLedgerProjection.audit_only.length : 0} claim-ledger decisions, and feedback attribution=${attribution.present}.`,
   });
 }

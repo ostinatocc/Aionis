@@ -395,6 +395,7 @@ const ProductFlightRecorderRequest = z.object({
   memory_decision_trace: z.unknown().optional(),
   memory_use_receipt: z.unknown().optional(),
   memory_admission_record: z.unknown().optional(),
+  claim_ledger_projection: z.unknown().optional(),
   operator_snapshot: z.unknown().optional(),
   feedback_result: z.unknown().optional(),
   decision_time: z.string().datetime().optional(),
@@ -3169,6 +3170,10 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
             routes_used: ["/v1/audit/flight-recorder"],
           })
         : null;
+      const traceClaimLedgerProjection = parsed.product_trace
+        ? (parsed.product_trace.after_guide as Record<string, unknown>).claim_ledger_projection
+        : undefined;
+      const claimLedgerProjectionInput = parsed.claim_ledger_projection ?? traceClaimLedgerProjection;
       const derivedOperatorSnapshot = parsed.product_trace
         ? buildAionisOperatorSnapshot({
             tenant_id: tenantId,
@@ -3178,10 +3183,15 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
             guide_packet: parsed.product_trace.after_guide.guide_packet ?? undefined,
             memory_decision_trace: decisionOutputs?.memoryDecisionTrace,
             memory_decision_audit: decisionOutputs?.memoryDecisionAudit,
+            claim_ledger_projection: claimLedgerProjectionInput,
             guide_trace_id: parsed.guide_trace_id ?? null,
             source_map: {
               routes_used: ["/v1/audit/flight-recorder"],
-              internal_surfaces_used: ["product_trace_projection", "memory_decision_trace"],
+              internal_surfaces_used: [
+                "product_trace_projection",
+                "memory_decision_trace",
+                ...(claimLedgerProjectionInput ? ["claim_ledger_projection"] : []),
+              ],
             },
           })
         : null;
@@ -3194,6 +3204,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
         memory_decision_trace: parsed.memory_decision_trace ?? decisionOutputs?.memoryDecisionTrace,
         memory_use_receipt: parsed.memory_use_receipt,
         memory_admission_record: parsed.memory_admission_record,
+        claim_ledger_projection: claimLedgerProjectionInput,
         operator_snapshot: parsed.operator_snapshot ?? derivedOperatorSnapshot,
         feedback_result: parsed.feedback_result ?? parsed.product_trace?.forget_result,
         now: parsed.decision_time,
@@ -3202,6 +3213,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
           internal_surfaces_used: [
             ...(parsed.product_trace ? ["product_trace_projection"] : []),
             ...(decisionOutputs ? ["memory_decision_trace", "memory_decision_audit_report"] : []),
+            ...(claimLedgerProjectionInput ? ["claim_ledger_projection"] : []),
             ...(derivedOperatorSnapshot ? ["operator_snapshot_contract"] : []),
           ],
         },
@@ -3217,6 +3229,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
             "agent_flight_recorder",
             ...(parsed.product_trace ? ["product_trace_projection"] : []),
             ...(decisionOutputs ? ["memory_decision_trace", "memory_use_receipt", "memory_admission_record", "memory_decision_audit_report"] : []),
+            ...(claimLedgerProjectionInput ? ["claim_ledger_projection"] : []),
             ...(derivedOperatorSnapshot || parsed.operator_snapshot ? ["operator_snapshot_contract"] : []),
           ],
           omitted_internal_surfaces: [

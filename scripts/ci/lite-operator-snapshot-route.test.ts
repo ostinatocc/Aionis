@@ -128,8 +128,56 @@ function executionContext() {
   };
 }
 
+function claimLedgerProjection() {
+  return {
+    contract_version: "aionis_claim_ledger_projection_v1",
+    use_now: [{
+      claim_id: "claim-current-target",
+      slot_key: "project:checkout.active_execution_target",
+      subject_key: "project:checkout",
+      predicate: "active_execution_target",
+      surface: "use_now",
+      reason_code: "claim_ledger_live_singleton",
+      value_text: "The current accepted target is src/current-target.ts.",
+      authority: "trusted",
+      status: "active",
+      confidence: 0.94,
+      evidence_refs: ["run:claim-current"],
+      source_memory_id: null,
+      valid_from: "2026-06-17T00:00:00.000Z",
+      valid_until: null,
+      superseded_by_claim_id: null,
+    }],
+    inspect_before_use: [],
+    do_not_use: [{
+      claim_id: "claim-old-target",
+      slot_key: "project:checkout.active_execution_target",
+      subject_key: "project:checkout",
+      predicate: "active_execution_target",
+      surface: "do_not_use",
+      reason_code: "claim_ledger_superseded",
+      value_text: "The old target was src/legacy-target.ts.",
+      authority: "advisory",
+      status: "superseded",
+      confidence: 0.72,
+      evidence_refs: ["run:claim-old"],
+      source_memory_id: null,
+      valid_from: "2026-06-16T00:00:00.000Z",
+      valid_until: "2026-06-17T00:00:00.000Z",
+      superseded_by_claim_id: "claim-current-target",
+    }],
+    audit_only: [],
+    blocked_superseded_count: 1,
+    live_claim_count: 1,
+    contested_claim_count: 0,
+    agent_prompt_included: false,
+    runtime_mutation: false,
+  };
+}
+
 test("operator snapshot route reports branch isolation and markdown without mutating runtime", async () => {
   const app = registerApp();
+  const projection = claimLedgerProjection();
   const response = await app.inject({
     method: "POST",
     url: "/v1/operator/snapshot",
@@ -142,6 +190,7 @@ test("operator snapshot route reports branch isolation and markdown without muta
       workflow_signature: "planner-worker-verifier-reviewer",
       agent_context: agentContext(),
       execution_context: executionContext(),
+      claim_ledger_projection: projection,
       guide_trace_id: "guide_trace:snapshot",
       include_markdown: true,
     },
@@ -182,6 +231,11 @@ test("operator snapshot route reports branch isolation and markdown without muta
   assert.ok(body.operator_snapshot.trace_to_procedure.source_surfaces.includes("promotion_evidence"));
   assert.ok(body.operator_snapshot.trace_to_procedure.procedure_memory_ids.includes("mem-passed"));
   assert.ok(body.operator_snapshot.trace_to_procedure.workflow_ids.includes("wf-checkout-reviewer"));
+  assert.equal(body.operator_snapshot.claim_ledger_projection.contract_version, "aionis_claim_ledger_projection_v1");
+  assert.equal(body.operator_snapshot.claim_ledger_projection.use_now[0].claim_id, "claim-current-target");
+  assert.equal(body.operator_snapshot.claim_ledger_projection.do_not_use[0].claim_id, "claim-old-target");
+  assert.equal(body.operator_snapshot.claim_ledger_projection.agent_prompt_included, false);
+  assert.equal(body.operator_snapshot.claim_ledger_projection.runtime_mutation, false);
   assert.ok(body.operator_snapshot.claims.some((claim: Record<string, unknown>) =>
     claim.claim === "memory_use_receipt_visible"
     && claim.status === "pass"
@@ -194,10 +248,17 @@ test("operator snapshot route reports branch isolation and markdown without muta
     claim.claim === "trace_to_procedure_visible"
     && claim.status === "pass"
   ));
+  assert.ok(body.operator_snapshot.claims.some((claim: Record<string, unknown>) =>
+    claim.claim === "claim_ledger_projection_visible"
+    && claim.status === "pass"
+  ));
   assert.ok(body.source_map.internal_surfaces_used.includes("memory_use_receipt"));
   assert.ok(body.source_map.internal_surfaces_used.includes("trace_to_procedure_projection"));
+  assert.ok(body.source_map.internal_surfaces_used.includes("claim_ledger_projection"));
   assert.match(body.markdown, /Aionis Operator Snapshot/);
   assert.match(body.markdown, /Memory Use Receipt/);
+  assert.match(body.markdown, /Claim Ledger Projection/);
+  assert.match(body.markdown, /claim-current-target/);
   assert.match(body.markdown, /Judgment Calibration/);
   assert.match(body.markdown, /Trace to Procedure/);
   assert.match(body.markdown, /MULTI_AGENT_SNAPSHOT_FAILED/);

@@ -2242,6 +2242,7 @@ export const AionisOperatorSnapshotSchema = z
     judgment_calibration: AionisJudgmentCalibrationSummarySchema.default(DEFAULT_AIONIS_JUDGMENT_CALIBRATION_SUMMARY),
     memory_use_receipt: AionisMemoryUseReceiptSchema,
     memory_admission_record: AionisMemoryAdmissionRecordSchema.optional(),
+    claim_ledger_projection: AionisClaimLedgerProjectionSchema.optional(),
     memory_lifecycle: z
       .object({
         used_count: z.number().int().nonnegative(),
@@ -2296,6 +2297,7 @@ export const AionisOperatorSnapshotSchema = z
               "memory_use_receipt_visible",
               "judgment_calibration_visible",
               "trace_to_procedure_visible",
+              "claim_ledger_projection_visible",
               "runtime_read_only",
               "effect_measured",
             ]),
@@ -2396,6 +2398,7 @@ export const AionisAgentFlightRecorderReportSchema = z
           .strict(),
       )
       .default([]),
+    claim_ledger_projection: AionisClaimLedgerProjectionSchema.optional(),
     attribution: z
       .object({
         present: z.boolean(),
@@ -2426,6 +2429,7 @@ export const AionisAgentFlightRecorderReportSchema = z
               "agent_view_reconstructable",
               "prompt_payload_excluded",
               "blocked_memory_visible",
+              "claim_ledger_projection_replayable",
               "feedback_attribution_replayable",
               "runtime_read_only",
             ]),

@@ -47,6 +47,7 @@ const OperatorSnapshotRequestSchema = z
     memory_decision_trace: z.unknown().optional(),
     memory_decision_audit: z.unknown().optional(),
     effect_report: z.unknown().optional(),
+    claim_ledger_projection: z.unknown().optional(),
     execution_context: z.unknown().optional(),
     guide_trace_id: z.string().trim().min(1).optional(),
     include_markdown: z.boolean().optional(),
@@ -88,6 +89,7 @@ export function registerOperatorSnapshotRoutes(args: OperatorSnapshotRouteArgs) 
         memory_decision_trace: parsed.memory_decision_trace,
         memory_decision_audit: parsed.memory_decision_audit,
         effect_report: parsed.effect_report,
+        claim_ledger_projection: parsed.claim_ledger_projection,
         execution_context: parsed.execution_context,
         guide_trace_id: parsed.guide_trace_id ?? null,
         source_map: {
@@ -115,6 +117,7 @@ export function registerOperatorSnapshotRoutes(args: OperatorSnapshotRouteArgs) 
             "memory_use_receipt",
             "memory_admission_record",
             "trace_to_procedure_projection",
+            ...(parsed.claim_ledger_projection ? ["claim_ledger_projection"] : []),
             "operator_snapshot_markdown_renderer",
           ],
           omitted_internal_surfaces: [

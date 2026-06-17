@@ -2325,6 +2325,35 @@ test("product measure derives closed-loop effect from guide packets", async () =
       body.memory_decision_audit.decision_reviews,
     );
 
+    const claimLedgerProjection = {
+      contract_version: "aionis_claim_ledger_projection_v1",
+      use_now: [{
+        claim_id: "claim-product-current",
+        slot_key: "project:product.current_target",
+        subject_key: "project:product",
+        predicate: "current_target",
+        surface: "use_now",
+        reason_code: "claim_ledger_live_singleton",
+        value_text: "The current product route uses the accepted guide target.",
+        authority: "trusted",
+        status: "active",
+        confidence: 0.9,
+        evidence_refs: ["guide:product-current"],
+        source_memory_id: null,
+        valid_from: "2026-06-13T00:00:00.000Z",
+        valid_until: null,
+        superseded_by_claim_id: null,
+      }],
+      inspect_before_use: [],
+      do_not_use: [],
+      audit_only: [],
+      blocked_superseded_count: 0,
+      live_claim_count: 1,
+      contested_claim_count: 0,
+      agent_prompt_included: false,
+      runtime_mutation: false,
+    };
+
     const flightRecorder = await app.inject({
       method: "POST",
       url: "/v1/audit/flight-recorder",
@@ -2338,6 +2367,7 @@ test("product measure derives closed-loop effect from guide packets", async () =
           before_guide: beforeGuide.json(),
           after_guide: afterGuideBody,
         },
+        claim_ledger_projection: claimLedgerProjection,
         feedback_result: {
           run_id: "run:product-measure-trace",
           outcome: "positive",
@@ -2359,6 +2389,12 @@ test("product measure derives closed-loop effect from guide packets", async () =
     assert.equal(flightBody.agent_flight_recorder.replay_sources.has_agent_context, true);
     assert.equal(flightBody.agent_flight_recorder.replay_sources.has_memory_decision_trace, true);
     assert.equal(flightBody.agent_flight_recorder.replay_sources.has_operator_snapshot, true);
+    assert.equal(flightBody.agent_flight_recorder.claim_ledger_projection.use_now[0].claim_id, "claim-product-current");
+    assert.ok(flightBody.agent_flight_recorder.claims.some((claim: Record<string, unknown>) =>
+      claim.claim === "claim_ledger_projection_replayable"
+      && claim.status === "pass"
+    ));
+    assert.ok(flightBody.source_map.internal_surfaces_used.includes("claim_ledger_projection"));
     assert.equal(String(JSON.stringify(flightBody.agent_flight_recorder)).includes(afterGuideBody.agent_context.prompt_text), false);
     assert.deepEqual(flightBody.source_map.routes_used, ["/v1/audit/flight-recorder"]);
     assert.ok(flightBody.source_map.internal_surfaces_used.includes("agent_flight_recorder"));

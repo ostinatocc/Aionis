@@ -115,6 +115,53 @@ function validAgentContext() {
   });
 }
 
+function claimLedgerProjection() {
+  return {
+    contract_version: "aionis_claim_ledger_projection_v1",
+    use_now: [{
+      claim_id: "claim-current-target",
+      slot_key: "project:checkout.active_execution_target",
+      subject_key: "project:checkout",
+      predicate: "active_execution_target",
+      surface: "use_now",
+      reason_code: "claim_ledger_live_singleton",
+      value_text: "The current accepted target is src/index.ts.",
+      authority: "trusted",
+      status: "active",
+      confidence: 0.94,
+      evidence_refs: ["run:claim-current"],
+      source_memory_id: null,
+      valid_from: "2026-06-17T00:00:00.000Z",
+      valid_until: null,
+      superseded_by_claim_id: null,
+    }],
+    inspect_before_use: [],
+    do_not_use: [{
+      claim_id: "claim-old-target",
+      slot_key: "project:checkout.active_execution_target",
+      subject_key: "project:checkout",
+      predicate: "active_execution_target",
+      surface: "do_not_use",
+      reason_code: "claim_ledger_superseded",
+      value_text: "The old target was src/legacy.ts.",
+      authority: "advisory",
+      status: "superseded",
+      confidence: 0.72,
+      evidence_refs: ["run:claim-old"],
+      source_memory_id: null,
+      valid_from: "2026-06-16T00:00:00.000Z",
+      valid_until: "2026-06-17T00:00:00.000Z",
+      superseded_by_claim_id: "claim-current-target",
+    }],
+    audit_only: [],
+    blocked_superseded_count: 1,
+    live_claim_count: 1,
+    contested_claim_count: 0,
+    agent_prompt_included: false,
+    runtime_mutation: false,
+  };
+}
+
 test("agent flight recorder builds read-only replay from context, trace, receipt, and feedback", () => {
   const agentContext = validAgentContext();
   const trace = buildAionisMemoryDecisionTrace({
@@ -199,6 +246,7 @@ test("agent flight recorder builds read-only replay from context, trace, receipt
     memory_decision_trace: trace,
     memory_use_receipt: trace.memory_use_receipt,
     memory_admission_record: admissionRecord,
+    claim_ledger_projection: claimLedgerProjection(),
     feedback_result: {
       run_id: "run-1",
       outcome: "positive",
@@ -224,5 +272,14 @@ test("agent flight recorder builds read-only replay from context, trace, receipt
   assert.equal(report.replay_sources.has_memory_decision_trace, true);
   assert.equal(report.replay_sources.has_memory_use_receipt, true);
   assert.equal(report.replay_sources.has_memory_admission_record, true);
+  assert.equal(report.claim_ledger_projection?.use_now[0]?.claim_id, "claim-current-target");
+  assert.equal(report.claim_ledger_projection?.do_not_use[0]?.claim_id, "claim-old-target");
+  assert.equal(report.claim_ledger_projection?.agent_prompt_included, false);
+  assert.equal(report.claim_ledger_projection?.runtime_mutation, false);
+  assert.ok(report.claims.some((claim) =>
+    claim.claim === "claim_ledger_projection_replayable"
+    && claim.status === "pass"
+  ));
+  assert.ok(report.source_map.internal_surfaces_used.includes("claim_ledger_projection"));
   assert.equal(JSON.stringify(report).includes("AIONIS_AGENT_CONTEXT v1"), false);
 });

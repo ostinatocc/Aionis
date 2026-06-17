@@ -2,12 +2,14 @@ import {
   AionisAgentContextSchema,
   AionisEffectReportSchema,
   AionisGuidePacketSchema,
+  AionisClaimLedgerProjectionSchema,
   AionisMemoryDecisionAuditReportSchema,
   AionisMemoryDecisionTraceSchema,
   parseAionisMemoryAdmissionRecord,
   parseAionisMemoryUseReceipt,
   parseAionisOperatorSnapshot,
   type AionisAgentContext,
+  type AionisClaimLedgerProjection,
   type AionisEffectReport,
   type AionisGuidePacket,
   type AionisMemoryAdmissionRecord,
@@ -33,6 +35,7 @@ export type BuildAionisOperatorSnapshotArgs = {
   memory_decision_trace?: unknown;
   memory_decision_audit?: unknown;
   effect_report?: unknown;
+  claim_ledger_projection?: unknown;
   execution_context?: unknown;
   guide_trace_id?: string | null;
   source_map?: Partial<AionisOperatorSnapshot["source_map"]>;
@@ -119,6 +122,13 @@ function parseEffect(value: unknown): AionisEffectReport | null {
   const direct = AionisEffectReportSchema.safeParse(value);
   if (direct.success) return direct.data;
   const nested = AionisEffectReportSchema.safeParse(asRecord(value).effect_report);
+  return nested.success ? nested.data : null;
+}
+
+function parseClaimLedgerProjection(value: unknown): AionisClaimLedgerProjection | null {
+  const direct = AionisClaimLedgerProjectionSchema.safeParse(value);
+  if (direct.success) return direct.data;
+  const nested = AionisClaimLedgerProjectionSchema.safeParse(asRecord(value).claim_ledger_projection);
   return nested.success ? nested.data : null;
 }
 
@@ -241,6 +251,7 @@ function sourceMapFromInputs(args: {
   trace: AionisMemoryDecisionTrace | null;
   audit: AionisMemoryDecisionAuditReport | null;
   traceToProcedurePresent?: boolean;
+  claimLedgerProjectionPresent?: boolean;
 }) {
   return {
     routes_used: uniqueStrings([
@@ -262,6 +273,7 @@ function sourceMapFromInputs(args: {
         ? ["judgment_calibration_summary"]
         : []),
       ...(args.traceToProcedurePresent ? ["trace_to_procedure_projection"] : []),
+      ...(args.claimLedgerProjectionPresent ? ["claim_ledger_projection"] : []),
     ]),
     omitted_internal_surfaces: uniqueStrings([
       ...(args.source_map?.omitted_internal_surfaces ?? []),
@@ -419,6 +431,7 @@ function buildClaims(args: {
   memoryUseReceipt: AionisMemoryUseReceipt;
   judgmentCalibration?: AionisOperatorSnapshot["judgment_calibration"] | null;
   traceToProcedure: AionisOperatorSnapshot["trace_to_procedure"];
+  claimLedgerProjection: AionisClaimLedgerProjection | null;
   effect: AionisEffectReport | null;
 }): AionisOperatorSnapshot["claims"] {
   return [
@@ -466,6 +479,13 @@ function buildClaims(args: {
       evidence: args.traceToProcedure.present
         ? `Trace-to-procedure projection sees ${args.traceToProcedure.source_surfaces.join(", ")}; promotion_status=${args.traceToProcedure.promotion_status}.`
         : "No trace-to-procedure source surfaces were supplied.",
+    },
+    {
+      claim: "claim_ledger_projection_visible",
+      status: args.claimLedgerProjection ? "pass" : "not_applicable",
+      evidence: args.claimLedgerProjection
+        ? `Claim Ledger projection exposes ${args.claimLedgerProjection.use_now.length} use_now, ${args.claimLedgerProjection.inspect_before_use.length} inspect, ${args.claimLedgerProjection.do_not_use.length} do_not_use, and ${args.claimLedgerProjection.audit_only.length} audit_only claims.`
+        : "No Claim Ledger projection was supplied.",
     },
     {
       claim: "runtime_read_only",
@@ -553,6 +573,9 @@ export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArg
   const effect = parseEffect(args.effect_report);
   const trace = parseTrace(args.memory_decision_trace);
   const audit = parseAudit(args.memory_decision_audit);
+  const claimLedgerProjection = parseClaimLedgerProjection(args.claim_ledger_projection)
+    ?? parseClaimLedgerProjection(args.agent_context)
+    ?? parseClaimLedgerProjection(args.guide_packet);
   const executionContext = asRecord(args.execution_context);
   const agent = parseAgentContext(args.agent_context) ?? parseAgentContext(executionContext);
   const activePathEntries = currentActivePathEntries(executionContext, agent);
@@ -683,6 +706,7 @@ export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArg
     judgment_calibration: judgmentCalibration ?? undefined,
     memory_use_receipt: memoryUseReceipt,
     memory_admission_record: memoryAdmissionRecord,
+    claim_ledger_projection: claimLedgerProjection ?? undefined,
     memory_lifecycle: {
       used_count: directUseCount,
       inspect_before_use_count: inspectCount,
@@ -730,6 +754,7 @@ export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArg
       memoryUseReceipt,
       judgmentCalibration,
       traceToProcedure,
+      claimLedgerProjection,
       effect,
     }),
     risks: {
@@ -752,6 +777,7 @@ export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArg
       trace,
       audit,
       traceToProcedurePresent: traceToProcedure.present,
+      claimLedgerProjectionPresent: claimLedgerProjection !== null,
     }),
   });
 }
@@ -760,6 +786,15 @@ export function renderAionisOperatorSnapshotMarkdown(snapshot: AionisOperatorSna
   const claimLines = snapshot.claims.map((claim) => `- ${claim.claim}: ${claim.status} - ${claim.evidence}`);
   const active = snapshot.execution_state.active_path.entries.slice(0, 5).map((entry) => `- ${entry.summary}`);
   const failed = snapshot.execution_state.failed_branches.entries.slice(0, 5).map((entry) => `- ${entry.summary}`);
+  const claimLedger = snapshot.claim_ledger_projection
+    ? [
+        `contract_version: ${snapshot.claim_ledger_projection.contract_version}`,
+        `use_now: ${snapshot.claim_ledger_projection.use_now.map((entry) => entry.claim_id).join(", ") || "none"}`,
+        `inspect_before_use: ${snapshot.claim_ledger_projection.inspect_before_use.map((entry) => entry.claim_id).join(", ") || "none"}`,
+        `do_not_use: ${snapshot.claim_ledger_projection.do_not_use.map((entry) => entry.claim_id).join(", ") || "none"}`,
+        `audit_only: ${snapshot.claim_ledger_projection.audit_only.map((entry) => entry.claim_id).join(", ") || "none"}`,
+      ]
+    : ["- none"];
   return [
     `# Aionis Operator Snapshot`,
     ``,
@@ -808,6 +843,9 @@ export function renderAionisOperatorSnapshotMarkdown(snapshot: AionisOperatorSna
     `source_surfaces: ${snapshot.trace_to_procedure.source_surfaces.join(", ") || "none"}`,
     `workflow_ids: ${snapshot.trace_to_procedure.workflow_ids.join(", ") || "none"}`,
     `procedure_memory_ids: ${snapshot.trace_to_procedure.procedure_memory_ids.join(", ") || "none"}`,
+    ``,
+    `## Claim Ledger Projection`,
+    ...claimLedger,
     ``,
     `## Learning Control`,
     `visible: ${snapshot.learning_control.visible}`,
