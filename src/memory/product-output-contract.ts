@@ -147,6 +147,51 @@ export function parseAionisMemoryFirewallSummary(value: unknown): AionisMemoryFi
   return AionisMemoryFirewallSummarySchema.parse(value);
 }
 
+export const AionisClaimLedgerProjectionSurfaceSchema = z.enum([
+  "use_now",
+  "inspect_before_use",
+  "do_not_use",
+  "audit_only",
+]);
+export type AionisClaimLedgerProjectionSurface = z.infer<typeof AionisClaimLedgerProjectionSurfaceSchema>;
+
+export const AionisClaimLedgerProjectionItemSchema = z
+  .object({
+    claim_id: z.string().min(1),
+    slot_key: z.string().min(1).nullable(),
+    subject_key: z.string().min(1),
+    predicate: z.string().min(1),
+    surface: AionisClaimLedgerProjectionSurfaceSchema,
+    reason_code: z.string().min(1),
+    value_text: z.string().min(1),
+    authority: z.enum(["evidence_only", "advisory", "trusted", "blocked"]),
+    status: z.enum(["active", "contested", "superseded", "retired", "redacted"]),
+    confidence: ConfidenceSchema,
+    evidence_refs: z.array(z.string().min(1)).max(32).default([]),
+    source_memory_id: z.string().min(1).nullable(),
+    valid_from: z.string().min(1),
+    valid_until: z.string().min(1).nullable(),
+    superseded_by_claim_id: z.string().min(1).nullable(),
+  })
+  .strict();
+export type AionisClaimLedgerProjectionItem = z.infer<typeof AionisClaimLedgerProjectionItemSchema>;
+
+export const AionisClaimLedgerProjectionSchema = z
+  .object({
+    contract_version: z.literal("aionis_claim_ledger_projection_v1"),
+    use_now: z.array(AionisClaimLedgerProjectionItemSchema).default([]),
+    inspect_before_use: z.array(AionisClaimLedgerProjectionItemSchema).default([]),
+    do_not_use: z.array(AionisClaimLedgerProjectionItemSchema).default([]),
+    audit_only: z.array(AionisClaimLedgerProjectionItemSchema).default([]),
+    blocked_superseded_count: z.number().int().nonnegative(),
+    live_claim_count: z.number().int().nonnegative(),
+    contested_claim_count: z.number().int().nonnegative(),
+    agent_prompt_included: z.literal(false),
+    runtime_mutation: z.literal(false),
+  })
+  .strict();
+export type AionisClaimLedgerProjection = z.infer<typeof AionisClaimLedgerProjectionSchema>;
+
 export const AionisLifecycleCandidateSignalSchema = z
   .object({
     memory_id: z.string().min(1),
