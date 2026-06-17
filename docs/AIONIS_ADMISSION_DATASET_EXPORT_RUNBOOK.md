@@ -77,9 +77,11 @@ A simple local layout is enough:
 admission-dataset/
   rows.jsonl
   manifests/
-    2026-06-17T120000Z.json
+    run-001.json
   reports/
-    latest-summary.json
+    latest/
+      summary.json
+      leaderboard.md
 ```
 
 Append rows to `rows.jsonl`. Write a manifest per export job with:
@@ -94,6 +96,20 @@ Append rows to `rows.jsonl`. Write a manifest per export job with:
   "chunk_count": 2
 }
 ```
+
+Use the offline collector for normal appends:
+
+```bash
+npm run -s admission:collect -- \
+  --dataset-dir admission-dataset \
+  --input chunks/run-001.jsonl \
+  --chunk-id run-001
+```
+
+The collector validates every input chunk, rejects raw prompt/slot/embedding
+payloads, appends normalized rows to `rows.jsonl`, writes a manifest under
+`manifests/`, and refreshes `reports/latest/summary.json` plus
+`reports/latest/leaderboard.md`.
 
 ## Validation Command
 
