@@ -12,6 +12,11 @@ import {
   type AionisAdmissionDatasetEvaluatorOptions,
   type AionisAdmissionDatasetEvaluationReport,
 } from "./admission-dataset-evaluator.js";
+import {
+  compareAdmissionPoliciesJsonl,
+  formatAdmissionPolicyComparisonMarkdown,
+  type AionisAdmissionPolicyComparisonReport,
+} from "./admission-policy-comparison.js";
 
 export type AionisAdmissionDatasetCollectorInput = {
   path: string;
@@ -28,11 +33,14 @@ export type AionisAdmissionDatasetCollectorResult = {
   manifest_path: string;
   summary_path: string | null;
   leaderboard_path: string | null;
+  policy_comparison_path: string | null;
+  policy_comparison_markdown_path: string | null;
   appended_row_count: number;
   previous_row_count: number;
   total_row_count: number;
   input_files: AionisAdmissionDatasetCollectorInput[];
   evaluation: AionisAdmissionDatasetEvaluationReport | null;
+  policy_comparison: AionisAdmissionPolicyComparisonReport | null;
   checks: {
     append_only: boolean;
     row_count_matches_jsonl: boolean;
@@ -210,14 +218,23 @@ export function collectAdmissionDatasetRows(args: CollectAdmissionDatasetArgs): 
   validateNoForbiddenPayload(finalJsonl, rowsPath);
   const totalRowCount = lineCount(finalJsonl);
   const evaluation = args.evaluate === false ? null : evaluateAdmissionDatasetJsonl(finalJsonl, policyOptions);
+  const policyComparison = args.evaluate === false ? null : compareAdmissionPoliciesJsonl(finalJsonl, policyOptions);
   let summaryPath: string | null = null;
   let leaderboardPath: string | null = null;
+  let policyComparisonPath: string | null = null;
+  let policyComparisonMarkdownPath: string | null = null;
   if (evaluation) {
     fs.mkdirSync(reportsDir, { recursive: true });
     summaryPath = path.join(reportsDir, "summary.json");
     leaderboardPath = path.join(reportsDir, "leaderboard.md");
     writeJson(summaryPath, evaluation);
     fs.writeFileSync(leaderboardPath, formatAdmissionDatasetEvaluationMarkdown(evaluation));
+    if (policyComparison) {
+      policyComparisonPath = path.join(reportsDir, "policy_comparison.json");
+      policyComparisonMarkdownPath = path.join(reportsDir, "policy_comparison.md");
+      writeJson(policyComparisonPath, policyComparison);
+      fs.writeFileSync(policyComparisonMarkdownPath, formatAdmissionPolicyComparisonMarkdown(policyComparison));
+    }
   }
   const manifestPath = path.join(manifestsDir, `${chunkId}.json`);
   const manifest = {
@@ -245,6 +262,8 @@ export function collectAdmissionDatasetRows(args: CollectAdmissionDatasetArgs): 
     reports: {
       summary_path: summaryPath,
       leaderboard_path: leaderboardPath,
+      policy_comparison_path: policyComparisonPath,
+      policy_comparison_markdown_path: policyComparisonMarkdownPath,
     },
   };
   writeJson(manifestPath, manifest);
@@ -256,11 +275,14 @@ export function collectAdmissionDatasetRows(args: CollectAdmissionDatasetArgs): 
     manifest_path: manifestPath,
     summary_path: summaryPath,
     leaderboard_path: leaderboardPath,
+    policy_comparison_path: policyComparisonPath,
+    policy_comparison_markdown_path: policyComparisonMarkdownPath,
     appended_row_count: appendedRows.length,
     previous_row_count: previousRowCount,
     total_row_count: totalRowCount,
     input_files: inputFiles.map(({ rows: _rows, ...file }) => file),
     evaluation,
+    policy_comparison: policyComparison,
     checks: {
       append_only: totalRowCount === previousRowCount + appendedRows.length,
       row_count_matches_jsonl: totalRowCount === lineCount(finalJsonl),

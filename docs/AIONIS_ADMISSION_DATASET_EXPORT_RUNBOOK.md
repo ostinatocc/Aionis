@@ -109,7 +109,10 @@ npm run -s admission:collect -- \
 The collector validates every input chunk, rejects raw prompt/slot/embedding
 payloads, appends normalized rows to `rows.jsonl`, writes a manifest under
 `manifests/`, and refreshes `reports/latest/summary.json` plus
-`reports/latest/leaderboard.md`.
+`reports/latest/leaderboard.md`. It also writes
+`reports/latest/policy_comparison.json` and
+`reports/latest/policy_comparison.md` so every append has a current baseline
+comparison.
 
 ## Validation Command
 
@@ -186,3 +189,32 @@ admission rows -> dataset evaluator -> bucket metrics -> policy comparison -> le
 It is not sufficient by itself to deploy a learned policy. A learned admission
 policy must first prove that it improves holdout admission quality and cannot
 bypass lifecycle, scope, source, suppression, authority, or rehydrate gates.
+
+## Compare Policy Baselines
+
+Use the offline policy comparator to compare the recorded Aionis admission
+actions against simple proxy baselines:
+
+```bash
+npm run -s admission:compare -- \
+  --input admission-dataset/rows.jsonl \
+  --out-dir admission-dataset/reports/latest
+```
+
+It writes:
+
+- `policy_comparison.json`: machine-readable comparison across policy arms
+- `policy_comparison.md`: markdown leaderboard
+
+The first comparison arms are:
+
+| Arm | Meaning |
+|---|---|
+| `aionis_recorded_policy` | Uses each row's recorded `admission_action`. |
+| `raw_retrieval_prompt_proxy` | Treats every prompt-included candidate as direct-use memory. |
+| `always_use` | Routes every candidate to `use_now`. |
+| `always_block` | Routes every candidate to `do_not_use`. |
+
+This comparison is an offline proxy over exported rows. It is useful for policy
+calibration and obvious baseline sanity checks, but it is not a counterfactual
+Agent rerun and must not mutate Runtime gates by itself.
