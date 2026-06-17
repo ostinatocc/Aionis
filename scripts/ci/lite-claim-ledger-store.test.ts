@@ -175,6 +175,60 @@ test("duplicate client id is idempotent", async () => {
   }
 });
 
+test("concurrent singleton writes across access objects serialize into one live claim", async () => {
+  const store = createLiteClaimLedgerStore(tmpDbPath("concurrent"));
+  const firstAccess = store.createClaimLedgerAccess();
+  const secondAccess = store.createClaimLedgerAccess();
+  try {
+    const seed = await firstAccess.writeClaim({
+      scope: "claim-ledger:concurrent",
+      tenantId: "public",
+      claim: locationClaim({ clientId: "claim:concurrent:seed", city: "Shanghai" }),
+      now: "2026-06-16T01:00:00.000Z",
+    });
+
+    const [first, second] = await Promise.all([
+      firstAccess.writeClaim({
+        scope: "claim-ledger:concurrent",
+        tenantId: "public",
+        claim: locationClaim({ clientId: "claim:concurrent:first", city: "Beijing" }),
+        now: "2026-06-16T02:00:00.000Z",
+      }),
+      secondAccess.writeClaim({
+        scope: "claim-ledger:concurrent",
+        tenantId: "public",
+        claim: locationClaim({ clientId: "claim:concurrent:second", city: "Shenzhen" }),
+        now: "2026-06-16T03:00:00.000Z",
+      }),
+    ]);
+
+    const live = await firstAccess.findLiveClaims({
+      scope: "claim-ledger:concurrent",
+      subjectKey: "user:self",
+      slotKey: "user:self.current_location",
+      limit: 10,
+    });
+    assert.equal(live.rows.length, 1);
+    const liveClaimId = live.rows[0]?.claim_id;
+    assert.ok(liveClaimId);
+    assert.ok([first.claim_id, second.claim_id].includes(liveClaimId));
+
+    const superseded = await firstAccess.findSupersededClaims({
+      scope: "claim-ledger:concurrent",
+      slotKey: "user:self.current_location",
+      limit: 10,
+    });
+    const nonLiveConcurrentClaimId = first.claim_id === liveClaimId ? second.claim_id : first.claim_id;
+    assert.equal(superseded.rows.length, 2);
+    assert.deepEqual(
+      new Set(superseded.rows.map((row) => row.claim_id)),
+      new Set([seed.claim_id, nonLiveConcurrentClaimId]),
+    );
+  } finally {
+    await store.close();
+  }
+});
+
 test("query by scope never leaks across scopes", async () => {
   const store = createLiteClaimLedgerStore(tmpDbPath("scope"));
   const access = store.createClaimLedgerAccess();
@@ -205,4 +259,3 @@ test("query by scope never leaks across scopes", async () => {
     await store.close();
   }
 });
-

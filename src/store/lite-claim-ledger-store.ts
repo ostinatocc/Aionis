@@ -9,6 +9,7 @@ import type {
   ClaimLedgerStatus,
 } from "./claim-ledger-access.js";
 import { createSqliteDatabase, type SqliteDatabase } from "./sqlite.js";
+import { createSqliteTransactionRunner, type SqliteTransactionRunner } from "./sqlite-transaction-runner.js";
 
 export type LiteClaimLedgerStore = {
   createClaimLedgerAccess(): ClaimLedgerAccess;
@@ -126,7 +127,7 @@ function migrate(db: SqliteDatabase): void {
   `);
 }
 
-function claimAccessForDb(db: SqliteDatabase): ClaimLedgerAccess {
+function claimAccessForDb(db: SqliteDatabase, transaction: SqliteTransactionRunner): ClaimLedgerAccess {
   const getByScopeClientStmt = db.prepare(`
     SELECT * FROM lite_claim_ledger_claims
     WHERE scope = ? AND client_id = ?
@@ -203,19 +204,18 @@ function claimAccessForDb(db: SqliteDatabase): ClaimLedgerAccess {
       const validFrom = parsed.valid_from ?? at;
       const clientId = parsed.client_id ?? null;
 
-      if (clientId) {
-        const existing = getByScopeClientStmt.get(args.scope, clientId);
-        if (existing) return rowFromUnknown(existing);
-      }
+      return await transaction.run(async () => {
+        if (clientId) {
+          const existing = getByScopeClientStmt.get(args.scope, clientId);
+          if (existing) return rowFromUnknown(existing);
+        }
 
-      const claimId = claimIdFor({ scope: args.scope, clientId });
-      const status = statusForClaim(parsed);
-      const supersededRows = parsed.conflict_policy === "singleton_latest" && parsed.slot_key && status === "active"
-        ? supersedableStmt.all(args.scope, parsed.slot_key).map(rowFromUnknown)
-        : [];
+        const claimId = claimIdFor({ scope: args.scope, clientId });
+        const status = statusForClaim(parsed);
+        const supersededRows = parsed.conflict_policy === "singleton_latest" && parsed.slot_key && status === "active"
+          ? supersedableStmt.all(args.scope, parsed.slot_key).map(rowFromUnknown)
+          : [];
 
-      db.exec("BEGIN IMMEDIATE");
-      try {
         for (const row of supersededRows) {
           updateSupersededStmt.run(at, claimId, at, args.scope, row.claim_id);
           insertEvent({
@@ -267,15 +267,11 @@ function claimAccessForDb(db: SqliteDatabase): ClaimLedgerAccess {
           },
           at,
         });
-        db.exec("COMMIT");
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      }
 
-      const inserted = getByIdStmt.get(args.scope, claimId);
-      if (!inserted) throw new Error("claim ledger write did not return inserted claim");
-      return rowFromUnknown(inserted);
+        const inserted = getByIdStmt.get(args.scope, claimId);
+        if (!inserted) throw new Error("claim ledger write did not return inserted claim");
+        return rowFromUnknown(inserted);
+      });
     },
 
     async findLiveClaims(args): Promise<{ rows: ClaimLedgerRow[] }> {
@@ -341,9 +337,14 @@ export function createLiteClaimLedgerStore(path: string): LiteClaimLedgerStore {
   mkdirSync(dirname(path), { recursive: true });
   const db = createSqliteDatabase(path);
   migrate(db);
+  const transaction = createSqliteTransactionRunner({
+    begin: () => db.exec("BEGIN IMMEDIATE"),
+    commit: () => db.exec("COMMIT"),
+    rollback: () => db.exec("ROLLBACK"),
+  });
   return {
     createClaimLedgerAccess(): ClaimLedgerAccess {
-      return claimAccessForDb(db);
+      return claimAccessForDb(db, transaction);
     },
     async close(): Promise<void> {
       db.close();
@@ -353,4 +354,3 @@ export function createLiteClaimLedgerStore(path: string): LiteClaimLedgerStore {
     },
   };
 }
-
