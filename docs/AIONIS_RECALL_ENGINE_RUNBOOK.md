@@ -180,6 +180,15 @@ For config posture and route-level mode regressions:
 npx tsx --test scripts/ci/lite-config-posture.test.ts scripts/ci/server-config-posture.test.ts scripts/ci/lite-recall-store-access.test.ts
 ```
 
+For a no-key product troubleshooting example:
+
+```bash
+npm run -s runtime:e2e:recall-troubleshooting
+```
+
+The committed example result is
+[examples/recall-engine-troubleshooting-result.json](examples/recall-engine-troubleshooting-result.json).
+
 Expected managed-server hybrid recall result:
 
 - accepted route reaches `use_now`
