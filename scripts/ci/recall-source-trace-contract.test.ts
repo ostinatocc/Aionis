@@ -65,7 +65,7 @@ async function insertReadyConcept(args: {
   });
 }
 
-test("RecallStoreAccess v3 exposes candidate source traces without changing candidate admission", async () => {
+test("RecallStoreAccess v4 exposes candidate source traces without changing candidate admission", async () => {
   const dbPath = tmpDbPath("v3-source-contract");
   const writeStore = createLiteWriteStore(dbPath);
   const recallStore = createLiteRecallStore(dbPath);
@@ -82,7 +82,7 @@ test("RecallStoreAccess v3 exposes candidate source traces without changing cand
     const access = recallStore.createRecallAccess();
     assertRecallStoreAccessContract(access);
     assert.equal(access.capability_version, RECALL_STORE_ACCESS_CAPABILITY_VERSION);
-    assert.equal(access.capability_version, 3);
+    assert.equal(access.capability_version, 4);
 
     const semantic = await access.stage1SemanticCandidates({
       queryEmbedding: [1, 0, 0],
@@ -122,6 +122,23 @@ test("RecallStoreAccess v3 exposes candidate source traces without changing cand
     });
     assert.equal(hybrid[0]?.id, "semantic-target");
     assert.equal(hybrid[0]?.sources?.[0]?.kind, "semantic");
+
+    const recent = await access.stage1RecentCandidates({
+      scope: "source-trace/default",
+      limit: 5,
+      consumerAgentId: null,
+      consumerTeamId: null,
+    });
+    assert.equal(recent[0]?.id, "semantic-target");
+    assert.equal(recent[0]?.sources?.[0]?.kind, "recent");
+
+    assert.deepEqual(await access.stage1GraphCandidates({
+      scope: "source-trace/default",
+      seedIds: ["semantic-target"],
+      limit: 5,
+      consumerAgentId: null,
+      consumerTeamId: null,
+    }), []);
 
     const lexical = await access.stage1LexicalCandidates({
       queryText: "semantic-target",

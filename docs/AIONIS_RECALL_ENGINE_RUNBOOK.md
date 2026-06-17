@@ -27,7 +27,7 @@ candidate into `use_now`, `inspect_before_use`, `do_not_use`, or `rehydrate`.
 | Mode | Behavior | Default |
 |---|---|---|
 | `semantic_scan` | Uses the existing bounded semantic candidate path, including exact recovery and optional ANN-sidecar behavior when configured. | Lite |
-| `hybrid` | Merges semantic, lexical, structured, and execution-native candidates with source traces before governance. | Server |
+| `hybrid` | Merges semantic, lexical, structured, execution-native, graph, and recent candidates with source traces before governance. | Server |
 
 Use `semantic_scan` when you want the smallest local Lite posture. Use `hybrid`
 when the Runtime is serving SDK/MCP clients and should recover candidates from
@@ -56,10 +56,10 @@ about candidate generation.
 | `lexical` | Keyword, path, symbol, command, or phrase matching found it. |
 | `structured` | Structured task, workflow, repo, target file, failure, verifier, or acceptance-check fields matched. |
 | `execution_native` | Execution-native index fields linked the candidate to an active, failed, stale, or accepted branch. |
+| `graph` | Existing memory edges linked the candidate to an already retrieved seed. |
+| `recent` | Hot working-set or recently activated state kept a selected candidate visible. In hybrid mode this augments primary candidates, or acts as fallback when no primary seed exists. |
 | `exact_recovery` | Cold or low-salience exact recovery found a candidate missed by bounded semantic scan. |
 | `ann` | Optional ANN sidecar proposed the candidate, then SQLite scope and visibility checks re-admitted the ID as a candidate. |
-| `graph` | Future graph-neighbor expansion. |
-| `recent` | Future hot working-set or recent-state expansion. |
 
 These source traces can appear in:
 

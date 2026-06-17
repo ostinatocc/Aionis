@@ -254,7 +254,7 @@ test("hybrid recall merges semantic lexical structured and execution-native sour
     assert.equal(hybrid[0]?.id, "hybrid-target");
     assert.deepEqual(
       hybrid[0]?.sources?.map((source) => source.kind).sort(),
-      ["execution_native", "lexical", "semantic", "structured"],
+      ["execution_native", "lexical", "recent", "semantic", "structured"],
     );
     assert.ok((hybrid[0]?.similarity ?? 0) <= 1);
     assert.ok((hybrid[0]?.similarity ?? 0) > (hybrid[1]?.similarity ?? 0));

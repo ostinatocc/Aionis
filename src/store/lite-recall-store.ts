@@ -16,11 +16,13 @@ import type {
   RecallAuditInsertParams,
   RecallCandidate,
   RecallExecutionNativeParams,
+  RecallGraphParams,
   RecallHybridParams,
   RecallLexicalParams,
   RecallDebugEmbeddingRow,
   RecallEdgeRow,
   RecallNodeRow,
+  RecallRecentParams,
   RecallRuleDefRow,
   RecallStructuredParams,
   RecallStage1Params,
@@ -139,6 +141,7 @@ type StructuredSignal = {
 
 const STAGE1_RECALL_TYPES = ["event", "topic", "concept", "entity", "rule", "procedure", "self_model"] as const;
 const SQLITE_IN_CHUNK_SIZE = 800;
+const DEFAULT_RECALL_ALLOWED_TIERS_FOR_RECENT = ["hot", "warm"] as const;
 
 export type LiteRecallStore = {
   createRecallAccess(): RecallStoreAccess;
@@ -716,6 +719,60 @@ export function createLiteRecallStore(
     return rows;
   };
 
+  const rowsForCandidateIds = (
+    params: {
+      scope: string;
+      ids: string[];
+      allowedTiers?: string[];
+      consumerAgentId: string | null;
+      consumerTeamId: string | null;
+    },
+  ): LiteRecallNodeRow[] => {
+    const ids = Array.from(new Set(params.ids.map((id) => id.trim()).filter(Boolean)));
+    if (ids.length === 0) return [];
+    const allowedTiers = params.allowedTiers ?? [...DEFAULT_RECALL_ALLOWED_TIERS_FOR_RECENT];
+    const rows: LiteRecallNodeRow[] = [];
+    for (let i = 0; i < ids.length; i += SQLITE_IN_CHUNK_SIZE) {
+      const chunk = ids.slice(i, i + SQLITE_IN_CHUNK_SIZE);
+      const where = [
+        "scope = ?",
+        `id IN (${placeholders(chunk.length)})`,
+        `tier IN (${placeholders(allowedTiers.length)})`,
+        `type IN (${placeholders(STAGE1_RECALL_TYPES.length)})`,
+      ];
+      const values: unknown[] = [params.scope, ...chunk, ...allowedTiers, ...STAGE1_RECALL_TYPES];
+      appendRecallVisibilityWhere(where, values, params.consumerAgentId, params.consumerTeamId);
+      rows.push(...db.prepare(`
+        SELECT
+          id,
+          scope,
+          type,
+          tier,
+          memory_lane,
+          producer_agent_id,
+          owner_agent_id,
+          owner_team_id,
+          title,
+          text_summary,
+          slots_json,
+          raw_ref,
+          evidence_ref,
+          embedding_vector_json,
+          embedding_model,
+          embedding_status,
+          salience,
+          importance,
+          confidence,
+          created_at,
+          commit_id
+        FROM lite_memory_nodes
+        WHERE ${where.join("\n          AND ")}
+      `).all(...values) as LiteRecallNodeRow[]);
+    }
+    const rank = new Map(ids.map((id, index) => [id, index]));
+    return rows.sort((a, b) => (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER));
+  };
+
   const stage1CandidatesFromAnnSidecar = async (params: RecallStage1Params): Promise<RecallCandidate[] | null> => {
     if (!ann || params.limit <= 0) return null;
     await ensureAnnReady();
@@ -1098,6 +1155,160 @@ export function createLiteRecallStore(
     stage1StructuredLikeCandidates(params, "structured");
   const stage1ExecutionNativeCandidates = async (params: RecallExecutionNativeParams): Promise<RecallCandidate[]> =>
     stage1StructuredLikeCandidates(params, "execution_native");
+  const stage1GraphCandidates = async (params: RecallGraphParams): Promise<RecallCandidate[]> => {
+    const seedIds = Array.from(new Set(params.seedIds.map((id) => id.trim()).filter(Boolean)));
+    if (params.limit <= 0 || seedIds.length === 0) return [];
+    const allowedTiers = normalizeRecallAllowedTiers(params.allowedTiers, DEFAULT_RECALL_ALLOWED_TIERS_FOR_RECENT);
+    const edgeBudget = Math.max(params.limit * 8, params.limit);
+    const edges = fetchHopEdges(new Set(seedIds), {
+      seedIds,
+      scope: params.scope,
+      neighborhoodHops: params.neighborhoodHops ?? 1,
+      minEdgeWeight: params.minEdgeWeight ?? 0.1,
+      minEdgeConfidence: params.minEdgeConfidence ?? 0.1,
+      hop1Budget: edgeBudget,
+      hop2Budget: edgeBudget,
+      edgeFetchBudget: edgeBudget,
+    }, edgeBudget);
+    if (edges.length === 0) return [];
+    const scores = new Map<string, { score: number; fields: Set<string> }>();
+    for (const edge of edges) {
+      const score = Math.max(0, Math.min(1, (edge.weight + edge.confidence) / 2));
+      for (const id of [edge.src_id, edge.dst_id]) {
+        const prev = scores.get(id);
+        if (!prev || score > prev.score) {
+          scores.set(id, {
+            score,
+            fields: new Set([`edge:${edge.type}`, seedIds.includes(edge.src_id) ? "src_id" : "dst_id"]),
+          });
+        } else {
+          prev.fields.add(`edge:${edge.type}`);
+        }
+      }
+    }
+    const rows = rowsForCandidateIds({
+      scope: params.scope,
+      ids: Array.from(scores.keys()),
+      allowedTiers,
+      consumerAgentId: params.consumerAgentId,
+      consumerTeamId: params.consumerTeamId,
+    });
+    const out: RecallCandidate[] = [];
+    for (const row of rows) {
+      if (!candidateVisible(row, params.consumerAgentId, params.consumerTeamId)) continue;
+      const slots = parseJsonObject(row.slots_json);
+      if (!recallSurfaceAllowed({ db, scope: params.scope, row, slots })) continue;
+      const scoreInfo = scores.get(row.id);
+      if (!scoreInfo) continue;
+      const score = adjustRecallCandidateSimilarityForTrust({
+        type: row.type,
+        slots,
+        similarity: scoreInfo.score,
+      });
+      out.push({
+        id: row.id,
+        type: row.type,
+        title: row.title,
+        text_summary: row.text_summary,
+        tier: row.tier,
+        salience: row.salience,
+        confidence: row.confidence,
+        similarity: score,
+        sources: [{
+          kind: "graph",
+          score,
+          reason: "edge_neighbor_expansion",
+          matched_fields: Array.from(scoreInfo.fields).sort(),
+          index_name: "lite_memory_edges",
+        }],
+      });
+    }
+    return out
+      .sort((a, b) =>
+        b.similarity - a.similarity
+        || b.salience - a.salience
+        || b.confidence - a.confidence
+        || a.id.localeCompare(b.id))
+      .slice(0, params.limit);
+  };
+  const stage1RecentCandidates = async (params: RecallRecentParams): Promise<RecallCandidate[]> => {
+    if (params.limit <= 0) return [];
+    const allowedTiers = normalizeRecallAllowedTiers(params.allowedTiers, DEFAULT_RECALL_ALLOWED_TIERS_FOR_RECENT);
+    const where = [
+      "scope = ?",
+      `tier IN (${placeholders(allowedTiers.length)})`,
+      `type IN (${placeholders(STAGE1_RECALL_TYPES.length)})`,
+    ];
+    const values: unknown[] = [params.scope, ...allowedTiers, ...STAGE1_RECALL_TYPES];
+    appendRecallVisibilityWhere(where, values, params.consumerAgentId, params.consumerTeamId);
+    const rows = db.prepare(`
+      SELECT
+        id,
+        scope,
+        type,
+        tier,
+        memory_lane,
+        producer_agent_id,
+        owner_agent_id,
+        owner_team_id,
+        title,
+        text_summary,
+        slots_json,
+        raw_ref,
+        evidence_ref,
+        embedding_vector_json,
+        embedding_model,
+        embedding_status,
+        salience,
+        importance,
+        confidence,
+        created_at,
+        commit_id
+      FROM lite_memory_nodes
+      WHERE ${where.join("\n        AND ")}
+      ORDER BY
+        COALESCE(json_extract(slots_json, '$.last_activated_at'), created_at) DESC,
+        salience DESC,
+        confidence DESC,
+        id DESC
+      LIMIT ?
+    `).all(...values, Math.max(params.limit * 4, params.limit)) as LiteRecallNodeRow[];
+    const out: RecallCandidate[] = [];
+    for (const row of rows) {
+      if (!candidateVisible(row, params.consumerAgentId, params.consumerTeamId)) continue;
+      const slots = parseJsonObject(row.slots_json);
+      if (!recallSurfaceAllowed({ db, scope: params.scope, row, slots })) continue;
+      const score = adjustRecallCandidateSimilarityForTrust({
+        type: row.type,
+        slots,
+        similarity: Math.max(0, Math.min(1, 0.45 + row.salience * 0.3 + row.confidence * 0.25)),
+      });
+      out.push({
+        id: row.id,
+        type: row.type,
+        title: row.title,
+        text_summary: row.text_summary,
+        tier: row.tier,
+        salience: row.salience,
+        confidence: row.confidence,
+        similarity: score,
+        sources: [{
+          kind: "recent",
+          score,
+          reason: "hot_working_set",
+          matched_fields: ["last_activated_at", "created_at", "tier", "salience"],
+          index_name: "lite_memory_nodes_scope_created",
+        }],
+      });
+    }
+    return out
+      .sort((a, b) =>
+        b.similarity - a.similarity
+        || b.salience - a.salience
+        || b.confidence - a.confidence
+        || a.id.localeCompare(b.id))
+      .slice(0, params.limit);
+  };
   const stage1SemanticCandidates = async (params: RecallStage1Params): Promise<RecallCandidate[]> => {
     const annCandidates = await stage1CandidatesFromAnnSidecar(params);
     if (annCandidates && annCandidates.length > 0) return annCandidates;
@@ -1143,11 +1354,40 @@ export function createLiteRecallStore(
       : null;
     const structured = structuredParams ? await stage1StructuredCandidates(structuredParams) : [];
     const executionNative = structuredParams ? await stage1ExecutionNativeCandidates(structuredParams) : [];
+    const seedIds = Array.from(new Set([
+      ...(params.graphSeedIds ?? []),
+      ...semantic.map((candidate) => candidate.id),
+      ...lexical.map((candidate) => candidate.id),
+      ...structured.map((candidate) => candidate.id),
+      ...executionNative.map((candidate) => candidate.id),
+    ])).slice(0, perSourceLimit);
+    const graph = seedIds.length > 0
+      ? await stage1GraphCandidates({
+          scope: params.scope,
+          seedIds,
+          limit: perSourceLimit,
+          allowedTiers: params.allowedTiers,
+          consumerAgentId: params.consumerAgentId,
+          consumerTeamId: params.consumerTeamId,
+        })
+      : [];
+    const recent = await stage1RecentCandidates({
+      scope: params.scope,
+      limit: perSourceLimit,
+      allowedTiers: params.allowedTiers,
+      consumerAgentId: params.consumerAgentId,
+      consumerTeamId: params.consumerTeamId,
+    });
+    const recentForHybrid = seedIds.length > 0
+      ? recent.filter((candidate) => seedIds.includes(candidate.id))
+      : recent;
     return mergeRecallCandidatesByRrf({
       semantic,
       lexical,
       structured,
       executionNative,
+      graph,
+      recent: recentForHybrid,
       limit: params.limit,
     });
   };
@@ -1168,6 +1408,8 @@ export function createLiteRecallStore(
         stage1LexicalCandidates,
         stage1StructuredCandidates,
         stage1ExecutionNativeCandidates,
+        stage1GraphCandidates,
+        stage1RecentCandidates,
         stage1HybridCandidates,
         async stage2Edges(params: RecallStage2EdgesParams): Promise<RecallEdgeRow[]> {
           const seedSet = new Set(params.seedIds);

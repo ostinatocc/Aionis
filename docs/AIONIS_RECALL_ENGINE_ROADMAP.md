@@ -28,12 +28,11 @@ lifecycle state, bypass source/scope gates, or decide `use_now`,
 The current Lite Runtime exposes `RecallStoreAccess` as the store abstraction.
 That is the right seam to evolve.
 
-`RecallStoreAccess` capability v3 exposes candidate source traces. The current
+`RecallStoreAccess` capability v4 exposes candidate source traces. The current
 Lite implementation fills source traces for semantic bounded scans, exact
-recovery, the first keyword lexical source, and a first structured /
-execution-native signature source backed by `lite_memory_execution_native_index`.
-Graph, recent, and ANN source methods remain contract-visible future work until
-their dedicated implementation phases land.
+recovery, keyword lexical recall, structured and execution-native signatures,
+graph neighbor expansion, and recent hot working-set recall. ANN remains behind
+the opt-in sidecar provider.
 
 Today, `stage1CandidatesAnn` is still not a true ANN index. It is a bounded
 SQLite candidate fetch followed by JavaScript vector parsing and cosine
@@ -155,12 +154,16 @@ proxy metrics. Full product evaluations must measure them through `/v1/guide`.
      exact-recovery candidates with source tracing.
    - Prefer RRF or a simple weighted merge before learned ranking.
    - Current status: first RRF hybrid merge is implemented for
-     `stage1HybridCandidates` over semantic, lexical, structured, and
-     execution-native sources. Product recall paths now select the route-level
-     candidate engine through `RECALL_ENGINE_MODE=semantic_scan|hybrid`: Lite
-     defaults to `semantic_scan`, while Server defaults to `hybrid` after the
-     managed-server e2e proved source traces remain below governance and are
-     replayable through Agent Flight Recorder without prompt payload leakage.
+     `stage1HybridCandidates` over semantic, lexical, structured,
+     execution-native, graph, and recent sources. Recent candidates are used as
+     a source-trace augment for already selected primary candidates, or as a
+     fallback when no primary seeds exist; this keeps the hot working set from
+     outranking semantic or structured evidence. Product recall paths select
+     the route-level candidate engine through
+     `RECALL_ENGINE_MODE=semantic_scan|hybrid`: Lite defaults to
+     `semantic_scan`, while Server defaults to `hybrid` after the managed-server
+     e2e proved source traces remain below governance and are replayable through
+     Agent Flight Recorder without prompt payload leakage.
 
 6. **Recall source observability**
    - Report per-source candidate counts, p50/p95 latency, hybrid merge shape,
@@ -168,7 +171,11 @@ proxy metrics. Full product evaluations must measure them through `/v1/guide`.
    - Current status: `src/app/recall-observability.ts` exposes reusable source
      metrics helpers; `scripts/e2e/recall-engine-eval.ts` emits
      `source_observability` over real Lite stores. Deterministic eval runs fix
-     `generated_at` and null latency fields for stable docs examples.
+     `generated_at` and null latency fields for stable docs examples. The
+     baseline fixture now requires source-family coverage for semantic,
+     lexical, structured, execution-native, graph, recent, and exact recovery,
+     and the checked-in baseline is at `recall_at_50=1` and
+     `candidate_source_coverage=1`.
 
 7. **Local ANN sidecar**
    - Add a local ANN adapter only after source-aware metrics exist.

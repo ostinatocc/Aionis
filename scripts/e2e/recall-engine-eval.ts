@@ -40,6 +40,7 @@ type RecallEngineCase = {
     required_sources: string[];
   };
   memories: RecallEngineMemory[];
+  edges?: RecallEngineEdge[];
 };
 
 type RecallEngineMemory = {
@@ -63,6 +64,15 @@ type RecallEngineMemory = {
   acceptance_check_signature?: string;
   execution_outcome_role?: string;
   requires_rehydrate?: boolean;
+};
+
+type RecallEngineEdge = {
+  id: string;
+  type: string;
+  src_id: string;
+  dst_id: string;
+  weight?: number;
+  confidence?: number;
 };
 
 type CandidateSource = RecallCandidateSourceKind;
@@ -96,7 +106,9 @@ type RecallEngineSummary = {
     lexical_path: "lite_keyword_index_like_match";
     structured_path: "lite_execution_native_index_signature_match";
     execution_native_path: "lite_execution_native_index_anchor_match";
-    hybrid_path: "rrf_merge_over_semantic_lexical_structured_execution_native";
+    graph_path: "lite_memory_edges_neighbor_expansion";
+    recent_path: "lite_hot_working_set_created_at_scan";
+    hybrid_path: "rrf_merge_over_semantic_lexical_structured_execution_native_graph_recent";
     exact_recovery_path: "unbounded_lite_exact_recovery_with_source_trace";
     governance_admission: "out_of_scope_for_recall_only_baseline";
   };
@@ -275,6 +287,23 @@ async function insertFixtureCase(args: {
       commitId,
     });
   }
+  for (const edge of args.testCase.edges ?? []) {
+    await args.writeStore.upsertEdge({
+      id: edge.id,
+      scope,
+      type: edge.type,
+      srcId: edge.src_id,
+      dstId: edge.dst_id,
+      weight: edge.weight ?? 0.8,
+      confidence: edge.confidence ?? 0.8,
+      decayRate: 0,
+      metadataJson: {
+        source: "recall_engine_fixture",
+        case_id: args.testCase.case_id,
+      },
+      commitId,
+    });
+  }
 }
 
 function collectCoveredRequiredSources(sourceMap: Map<string, Set<CandidateSource>>, requiredSources: string[]): {
@@ -433,12 +462,38 @@ async function evaluateCase(args: {
     deterministicLatency: args.deterministicLatency,
     run: () => args.access.stage1ExecutionNativeCandidates(structuredParams),
   });
+  const graphSeedIds = Array.from(new Set([
+    ...semantic.candidates.map((candidate) => candidate.id),
+    ...lexical.candidates.map((candidate) => candidate.id),
+    ...structured.candidates.map((candidate) => candidate.id),
+    ...executionNative.candidates.map((candidate) => candidate.id),
+  ]));
+  const graph = await timedCandidates({
+    deterministicLatency: args.deterministicLatency,
+    run: () => args.access.stage1GraphCandidates({
+      scope,
+      seedIds: graphSeedIds,
+      limit: 50,
+      consumerAgentId: null,
+      consumerTeamId: null,
+    }),
+  });
+  const recent = await timedCandidates({
+    deterministicLatency: args.deterministicLatency,
+    run: () => args.access.stage1RecentCandidates({
+      scope,
+      limit: 50,
+      consumerAgentId: null,
+      consumerTeamId: null,
+    }),
+  });
   const hybrid = await timedCandidates({
     deterministicLatency: args.deterministicLatency,
     run: () => args.access.stage1HybridCandidates({
       queryEmbedding: args.testCase.query_vector,
       queryText: args.testCase.query_text ?? args.testCase.description,
       structured: structuredHybridInputForCase(args.testCase),
+      graphSeedIds,
       scope,
       limit: 50,
       consumerAgentId: null,
@@ -464,6 +519,8 @@ async function evaluateCase(args: {
       { kind: "lexical", candidates: lexical.candidates, elapsed_ms: lexical.elapsed_ms },
       { kind: "structured", candidates: structured.candidates, elapsed_ms: structured.elapsed_ms },
       { kind: "execution_native", candidates: executionNative.candidates, elapsed_ms: executionNative.elapsed_ms },
+      { kind: "graph", candidates: graph.candidates, elapsed_ms: graph.elapsed_ms },
+      { kind: "recent", candidates: recent.candidates, elapsed_ms: recent.elapsed_ms },
       { kind: "exact_recovery", candidates: exact.candidates, elapsed_ms: exact.elapsed_ms },
     ],
     hybrid_merge: {
@@ -472,6 +529,8 @@ async function evaluateCase(args: {
         ...lexical.candidates,
         ...structured.candidates,
         ...executionNative.candidates,
+        ...graph.candidates,
+        ...recent.candidates,
       ],
       output_candidates: hybrid.candidates,
       elapsed_ms: hybrid.elapsed_ms,
@@ -594,7 +653,9 @@ export async function runRecallEngineEval(options: {
         lexical_path: "lite_keyword_index_like_match",
         structured_path: "lite_execution_native_index_signature_match",
         execution_native_path: "lite_execution_native_index_anchor_match",
-        hybrid_path: "rrf_merge_over_semantic_lexical_structured_execution_native",
+        graph_path: "lite_memory_edges_neighbor_expansion",
+        recent_path: "lite_hot_working_set_created_at_scan",
+        hybrid_path: "rrf_merge_over_semantic_lexical_structured_execution_native_graph_recent",
         exact_recovery_path: "unbounded_lite_exact_recovery_with_source_trace",
         governance_admission: "out_of_scope_for_recall_only_baseline",
       },

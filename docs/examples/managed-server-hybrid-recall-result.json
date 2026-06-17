@@ -21,10 +21,12 @@
     "accepted_route_use_now": true,
     "failed_direct_use_blocked": true,
     "stale_direct_use_blocked": true,
-    "recall_source_family_count": 4,
+    "recall_source_family_count": 6,
     "recall_source_families": [
       "execution_native",
+      "graph",
       "lexical",
+      "recent",
       "semantic",
       "structured"
     ],
@@ -37,19 +39,23 @@
     "flight_recorder_prompt_payload_excluded": true,
     "flight_recorder_accepted_recall_sources": [
       "execution_native",
+      "graph",
       "lexical",
+      "recent",
       "semantic",
       "structured"
     ],
     "flight_recorder_failed_recall_sources": [
       "execution_native",
       "lexical",
+      "recent",
       "semantic",
       "structured"
     ],
     "flight_recorder_stale_recall_sources": [
       "execution_native",
       "lexical",
+      "recent",
       "semantic",
       "structured"
     ],

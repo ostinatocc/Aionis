@@ -5,7 +5,7 @@ import {
   resolveNodePatternExecutionSurface,
 } from "../memory/node-execution-surface.js";
 
-export const RECALL_STORE_ACCESS_CAPABILITY_VERSION = 3 as const;
+export const RECALL_STORE_ACCESS_CAPABILITY_VERSION = 4 as const;
 
 export type RecallCandidateSourceKind =
   | "semantic"
@@ -119,9 +119,30 @@ export type RecallHybridParams = {
   queryEmbedding?: number[] | null;
   queryText?: string | null;
   structured?: Omit<RecallStructuredParams, "scope" | "limit" | "consumerAgentId" | "consumerTeamId"> | null;
+  graphSeedIds?: string[] | null;
   oversample?: number;
   allowedTiers?: RecallMemoryTier[];
   scanLimit?: number | null;
+  consumerAgentId: string | null;
+  consumerTeamId: string | null;
+};
+
+export type RecallGraphParams = {
+  scope: string;
+  seedIds: string[];
+  limit: number;
+  allowedTiers?: RecallMemoryTier[];
+  neighborhoodHops?: 1 | 2;
+  minEdgeWeight?: number;
+  minEdgeConfidence?: number;
+  consumerAgentId: string | null;
+  consumerTeamId: string | null;
+};
+
+export type RecallRecentParams = {
+  scope: string;
+  limit: number;
+  allowedTiers?: RecallMemoryTier[];
   consumerAgentId: string | null;
   consumerTeamId: string | null;
 };
@@ -246,6 +267,8 @@ export interface RecallStoreAccess {
   stage1LexicalCandidates(params: RecallLexicalParams): Promise<RecallCandidate[]>;
   stage1StructuredCandidates(params: RecallStructuredParams): Promise<RecallCandidate[]>;
   stage1ExecutionNativeCandidates(params: RecallExecutionNativeParams): Promise<RecallCandidate[]>;
+  stage1GraphCandidates(params: RecallGraphParams): Promise<RecallCandidate[]>;
+  stage1RecentCandidates(params: RecallRecentParams): Promise<RecallCandidate[]>;
   stage1HybridCandidates(params: RecallHybridParams): Promise<RecallCandidate[]>;
   stage2Edges(params: RecallStage2EdgesParams): Promise<RecallEdgeRow[]>;
   stage2Nodes(params: RecallStage2NodesParams): Promise<RecallNodeRow[]>;
@@ -308,6 +331,8 @@ export function assertRecallStoreAccessContract(access: RecallStoreAccess): void
     "stage1LexicalCandidates",
     "stage1StructuredCandidates",
     "stage1ExecutionNativeCandidates",
+    "stage1GraphCandidates",
+    "stage1RecentCandidates",
     "stage1HybridCandidates",
     "stage2Edges",
     "stage2Nodes",
