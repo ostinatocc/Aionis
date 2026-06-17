@@ -331,6 +331,12 @@ Dataset rows exclude raw memory body payloads, raw prompt text, raw slots,
 embeddings, hidden trace internals, and Runtime mutation authority. Memory title
 metadata may appear so operators can identify admitted candidates.
 
+Rows are designed for append-only export. A host should append one chunk after
+each completed `guide -> feedback -> measure` loop, preserving `guide_trace_id`,
+`run_id`, `task_id`, and `task_signature` so future admission-policy evaluation
+can compare positive use, negative use, unused exposure, blocked memories, and
+rehydrate requests without replaying prompt payloads.
+
 ## AionisJudgmentCalibrationSummary
 
 The judgment calibration summary is the first implemented Judgment Ledger

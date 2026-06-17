@@ -162,12 +162,16 @@ The output contract is `aionis_admission_dataset_export_e2e_result_v1`.
 The script verifies that:
 
 - a directly used memory becomes `positive_use` after host feedback
+- a directly used memory can become `negative_use` after negative host feedback
 - a suppressed memory becomes `blocked_or_suppressed`
 - JSONL line count matches row count
 - prompt text, raw memory payloads, and raw slots are excluded
 
 See [admission-dataset-export-result.json](examples/admission-dataset-export-result.json)
 for a compact example report.
+
+For production append guidance, see
+[AIONIS_ADMISSION_DATASET_EXPORT_RUNBOOK.md](AIONIS_ADMISSION_DATASET_EXPORT_RUNBOOK.md).
 
 Run the SDK quickstart against a real local Runtime:
 
