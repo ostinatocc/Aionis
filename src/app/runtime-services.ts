@@ -12,6 +12,7 @@ import { createLiteReplayStore } from "../store/lite-replay-store.js";
 import { createLiteRuntimeStore } from "../store/lite-runtime-store.js";
 import { createSandboxStore } from "../store/sandbox-access.js";
 import { createLiteWriteStore } from "../store/lite-write-store.js";
+import { createLiteClaimLedgerStore } from "../store/lite-claim-ledger-store.js";
 import { createLocalAnnIndex } from "../store/ann/local-ann-index.js";
 import { createLiteExecutionStateStore } from "../execution/state-store.js";
 import { createLiteExecutionTreeStore } from "../execution/tree-store.js";
@@ -106,6 +107,8 @@ export async function createRuntimeServices(env: Env) {
   const liteReplayStore = createLiteReplayStore(env.LITE_REPLAY_SQLITE_PATH);
   const liteReplayAccess = liteReplayStore?.createReplayAccess() ?? null;
   const liteWriteStore = createLiteWriteStore(env.LITE_WRITE_SQLITE_PATH);
+  const liteClaimLedgerStore = createLiteClaimLedgerStore(env.LITE_WRITE_SQLITE_PATH);
+  const claimLedgerAccess = liteClaimLedgerStore.createClaimLedgerAccess();
   const executionStateStore = createLiteExecutionStateStore(env.LITE_WRITE_SQLITE_PATH);
   const executionTreeStore = createLiteExecutionTreeStore(env.LITE_WRITE_SQLITE_PATH);
   const annIndex = env.RECALL_ANN_PROVIDER === "local" ? createLocalAnnIndex() : null;
@@ -241,6 +244,8 @@ export async function createRuntimeServices(env: Env) {
     liteReplayStore,
     liteReplayAccess,
     liteWriteStore,
+    liteClaimLedgerStore,
+    claimLedgerAccess,
     executionStateStore,
     executionTreeStore,
     embedder,

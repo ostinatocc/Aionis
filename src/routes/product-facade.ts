@@ -38,6 +38,7 @@ import {
   type AionisMemoryPacket,
 } from "../memory/product-output-contract.js";
 import { applyUnusedExposureLearningControlLite } from "../memory/lifecycle-lite.js";
+import type { ClaimLedgerAccess } from "../store/claim-ledger-access.js";
 import type { LiteExecutionNativeNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
 import type { AuthPrincipal } from "../util/auth.js";
 import { createErrorResponse } from "../util/http.js";
@@ -53,6 +54,7 @@ type ProductFacadeArgs = {
   app: FastifyInstance;
   env: Env;
   liteWriteStore: LiteWriteStore;
+  claimLedgerAccess?: ClaimLedgerAccess | null;
   requireMemoryPrincipal: (req: FastifyRequest) => Promise<AuthPrincipal | null>;
   withIdentityFromRequest: (
     req: FastifyRequest,

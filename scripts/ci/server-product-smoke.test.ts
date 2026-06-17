@@ -259,10 +259,12 @@ test("server edition can construct local-store Runtime services", async () => {
     assert.ok(services.liteWriteStore);
     assert.ok(services.liteRecallAccess);
     assert.ok(services.liteReplayAccess);
+    assert.ok(services.claimLedgerAccess);
     assert.equal(services.embeddingSurfacePolicy.provider_configured, false);
   } finally {
     await services.executionTreeStore.close();
     await services.executionStateStore.close();
+    await services.liteClaimLedgerStore.close();
     await services.liteRecallStore.close();
     await services.liteReplayStore.close();
     await services.liteWriteStore.close();

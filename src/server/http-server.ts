@@ -21,6 +21,7 @@ import { registerOperatorSnapshotRoutes } from "../routes/operator-snapshot.js";
 import { registerRuntimeBoundaryInventoryRoutes } from "../routes/runtime-boundary-inventory.js";
 import type { ExecutionStateStore } from "../execution/state-store.js";
 import type { ExecutionTreeStore } from "../execution/tree-store.js";
+import type { ClaimLedgerAccess } from "../store/claim-ledger-access.js";
 import { buildLiteRouteMatrix, registerLiteServerOnlyRoutes } from "./lite-runtime-boundary.js";
 import { createErrorResponse, HttpError } from "../util/http.js";
 
@@ -218,6 +219,7 @@ export function registerHealthRoute(args: {
   liteReplayStore?: HealthSnapshotProvider | null;
   liteRecallStore?: { healthSnapshot: () => unknown } | null;
   liteWriteStore?: { healthSnapshot: () => unknown } | null;
+  liteClaimLedgerStore?: { healthSnapshot: () => unknown } | null;
   executionStateStore?: { healthSnapshot: () => unknown } | null;
   executionTreeStore?: { healthSnapshot: () => unknown } | null;
   sandboxExecutor: HealthSnapshotProvider;
@@ -230,6 +232,7 @@ export function registerHealthRoute(args: {
     liteReplayStore,
     liteRecallStore,
     liteWriteStore,
+    liteClaimLedgerStore,
     executionStateStore,
     executionTreeStore,
     sandboxExecutor,
@@ -243,6 +246,7 @@ export function registerHealthRoute(args: {
     const checks = {
       recall_store: readinessCheck(liteRecallStore),
       write_store: readinessCheck(liteWriteStore),
+      ...(liteClaimLedgerStore ? { claim_ledger_store: readinessCheck(liteClaimLedgerStore) } : {}),
       execution_state_store: readinessCheck(executionStateStore),
       execution_tree_store: readinessCheck(executionTreeStore),
       replay_store: readinessCheck(liteReplayStore),
@@ -283,6 +287,7 @@ export function registerHealthRoute(args: {
             stores: {
               recall: storeHealthSnapshot(liteRecallStore),
               write: storeHealthSnapshot(liteWriteStore),
+              claim_ledger: storeHealthSnapshot(liteClaimLedgerStore),
               execution_state: storeHealthSnapshot(executionStateStore),
               execution_tree: storeHealthSnapshot(executionTreeStore),
               replay: storeHealthSnapshot(liteReplayStore),
@@ -351,6 +356,7 @@ export type RegisterApplicationRoutesArgs = {
   liteReplayAccess: RuntimeLiteReplayAccess;
   liteReplayStore: RuntimeLiteReplayStore;
   liteWriteStore: RuntimeLiteWriteStore;
+  claimLedgerAccess?: ClaimLedgerAccess | null;
   executionStateStore: ExecutionStateStore;
   executionTreeStore: ExecutionTreeStore;
   recallTextEmbedBatcher: unknown;
@@ -392,6 +398,7 @@ type ProductFacadeRouteRegistrationArgs = Pick<
   | "app"
   | "env"
   | "liteWriteStore"
+  | "claimLedgerAccess"
   | "requireMemoryPrincipal"
   | "withIdentityFromRequest"
   | "enforceRateLimit"
@@ -737,6 +744,7 @@ function registerProductRoutes(args: ProductFacadeRouteRegistrationArgs) {
     app: args.app,
     env: args.env,
     liteWriteStore: args.liteWriteStore,
+    claimLedgerAccess: args.claimLedgerAccess ?? null,
     requireMemoryPrincipal: args.requireMemoryPrincipal,
     withIdentityFromRequest: args.withIdentityFromRequest,
     enforceRateLimit: args.enforceRateLimit,
