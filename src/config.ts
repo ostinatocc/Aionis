@@ -7,6 +7,7 @@ const RuntimeModeSchema = z.enum(["local", "service", "cloud"]);
 const EditionSchema = z.enum(["lite", "server"]);
 const AbstractionPolicyProfileSchema = z.enum(["conservative", "balanced", "aggressive"]);
 const InspectBeforeUseModeSchema = z.enum(["shadow", "active"]);
+const AdmissionCandidatePolicyModeSchema = z.enum(["off", "active"]);
 const RecallAnnProviderSchema = z.enum(["off", "local"]);
 const RecallEngineModeSchema = z.enum(["semantic_scan", "hybrid"]);
 
@@ -123,6 +124,7 @@ const EnvSchema = z.object({
   AIONIS_RUNTIME_PACKAGE_VERSION: z.string().default(""),
   AIONIS_RUNTIME_STARTED_AT: z.string().default(""),
   AIONIS_INSPECT_BEFORE_USE_MODE: InspectBeforeUseModeSchema.default("shadow"),
+  AIONIS_ADMISSION_CANDIDATE_POLICY_MODE: AdmissionCandidatePolicyModeSchema.default("off"),
   APP_ENV: z.enum(["dev", "ci", "prod"]).default("dev"),
   AIONIS_LISTEN_HOST: z.string().default(""),
   AIONIS_ALLOW_UNAUTHENTICATED_REMOTE: z

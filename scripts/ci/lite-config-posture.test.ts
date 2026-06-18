@@ -27,6 +27,7 @@ test("shipped source tree defaults to lite posture", async () => {
     assert.equal(env.AIONIS_EDITION, "lite");
     assert.equal(env.AIONIS_MODE, "local");
     assert.equal(env.AIONIS_INSPECT_BEFORE_USE_MODE, "shadow");
+    assert.equal(env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE, "off");
     assert.equal(env.MEMORY_AUTH_MODE, "off");
     assert.equal(env.TENANT_QUOTA_ENABLED, false);
     assert.equal(env.RECALL_ENGINE_MODE, "semantic_scan");
@@ -41,6 +42,18 @@ test("inspect-before-use active projection is explicit opt-in", async () => {
     () => {
       const env = loadEnv();
       assert.equal(env.AIONIS_INSPECT_BEFORE_USE_MODE, "active");
+    },
+  );
+});
+
+test("admission candidate policy active projection is explicit opt-in", async () => {
+  await withIsolatedEnv(
+    {
+      AIONIS_ADMISSION_CANDIDATE_POLICY_MODE: "active",
+    },
+    () => {
+      const env = loadEnv();
+      assert.equal(env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE, "active");
     },
   );
 });

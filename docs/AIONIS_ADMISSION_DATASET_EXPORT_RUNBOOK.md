@@ -348,3 +348,29 @@ split now contains supported candidate action changes. The report therefore
 sets `eligible_for_manual_review=true`. This means manual review is allowed. It
 still does not authorize Runtime admission changes; the next gate is a
 counterfactual Agent rerun.
+
+## Runtime Gray Projection
+
+Candidate policies stay offline by default. After a candidate has passed
+holdout evaluation, counterfactual rerun, and real-Agent rerun, operators can
+run a local gray experiment by enabling:
+
+```bash
+AIONIS_ADMISSION_CANDIDATE_POLICY_MODE=active
+```
+
+The active mode is intentionally narrow:
+
+- default is `off`;
+- it only applies inside `/v1/guide`;
+- it only downgrades current `use_now` memories to `inspect_before_use`;
+- it never upgrades `inspect_before_use`, `do_not_use`, `rehydrate`, or
+  `not_agent_facing` decisions into `use_now`;
+- it does not mutate stored memory rows, lifecycle state, authority state, or
+  feedback counters;
+- the source map includes `admission_candidate_policy_active_projection` only
+  when the Agent prompt surface was actually changed.
+
+This is a gray projection gate, not a learned-policy deployment. If it improves
+real task behavior without positive-capture or completion regression, the next
+step is a separately reviewed Runtime policy promotion.

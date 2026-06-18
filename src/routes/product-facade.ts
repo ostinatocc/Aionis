@@ -21,6 +21,10 @@ import {
   type BuildAionisMemoryPacketArgs,
 } from "../memory/product-output-assembler.js";
 import { buildAionisAgentFlightRecorderReport } from "../memory/agent-flight-recorder.js";
+import {
+  AIONIS_ADMISSION_CANDIDATE_POLICY_ACTIVE_PROJECTION_REASON,
+  resolveAionisAdmissionCandidatePolicyActiveProjection,
+} from "../memory/admission-policy-active-projection.js";
 import { buildClaimLedgerProjection } from "../memory/claim-ledger-projection.js";
 import { governExternalMemoryCandidates } from "../memory/external-candidate-admission.js";
 import { buildAionisOperatorSnapshot } from "../memory/operator-snapshot.js";
@@ -1934,6 +1938,47 @@ async function resolveInspectBeforeUseActiveProjectionIds(args: {
   return uniqueStrings([...repeatedUnusedIds, ...timeDecayIds]);
 }
 
+async function resolveAdmissionCandidatePolicyActiveProjectionIds(args: {
+  app: FastifyInstance;
+  req: FastifyRequest;
+  env: Env;
+  parsed: z.infer<typeof ProductGuideRequest>;
+  tenant_id: string;
+  scope: string;
+  memoryPacket: AionisMemoryPacket | null;
+  agentContext: AionisAgentContext;
+}): Promise<string[]> {
+  const currentUseNowIds = uniqueStrings(args.agentContext.use_now_memory_ids);
+  if (currentUseNowIds.length === 0 || !args.memoryPacket) return [];
+  const actor = args.parsed.consumer_agent_id ?? args.env.LITE_LOCAL_ACTOR_ID;
+  const slotByMemoryId = new Map<string, Record<string, unknown>>();
+  for (const memoryId of currentUseNowIds) {
+    try {
+      slotByMemoryId.set(
+        memoryId,
+        await findMemoryNodeSlots({
+          app: args.app,
+          req: args.req,
+          tenant_id: args.tenant_id,
+          scope: args.scope,
+          memory_id: memoryId,
+          actor,
+          consumerTeamId: args.parsed.consumer_team_id ?? null,
+        }),
+      );
+    } catch {
+      slotByMemoryId.set(memoryId, {});
+    }
+  }
+  const projection = resolveAionisAdmissionCandidatePolicyActiveProjection({
+    agent_context: args.agentContext,
+    memory_packet: args.memoryPacket,
+    slot_by_memory_id: slotByMemoryId,
+  });
+  if (projection.hard_boundary_upgrade_count > 0) return [];
+  return projection.downgraded_memory_ids;
+}
+
 async function buildUnusedExposureObservation(args: {
   app: FastifyInstance;
   req: FastifyRequest;
@@ -2891,6 +2936,29 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       activeProjectionApplied = projectedContext !== agentContext;
       agentContext = projectedContext;
     }
+    let admissionCandidatePolicyProjectionApplied = false;
+    if (env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE === "active") {
+      const candidatePolicyProjectionIds = await resolveAdmissionCandidatePolicyActiveProjectionIds({
+        app,
+        req,
+        env,
+        parsed,
+        tenant_id: tenantId,
+        scope,
+        memoryPacket,
+        agentContext,
+      });
+      const projectedContext = applyAionisInspectBeforeUseActiveProjection({
+        agent_context: agentContext,
+        memory_packet: memoryPacket,
+        candidate_memory_ids: candidatePolicyProjectionIds,
+        reason: AIONIS_ADMISSION_CANDIDATE_POLICY_ACTIVE_PROJECTION_REASON,
+        context_char_budget: parsed.context_char_budget,
+        context_compaction_profile: parsed.context_compaction_profile ?? parsed.context_optimization_profile ?? null,
+      });
+      admissionCandidatePolicyProjectionApplied = projectedContext !== agentContext;
+      agentContext = projectedContext;
+    }
     const exposureWrite = await writeGuideExposureLedger({
       app,
       req,
@@ -2935,6 +3003,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
           ...(claimLedgerContextProjection.changed ? ["claim_ledger_agent_context_projection"] : []),
           ...(agentContextMode === "compact_agent" ? ["compact_agent_context"] : []),
           ...(activeProjectionApplied ? ["inspect_before_use_active_projection"] : []),
+          ...(admissionCandidatePolicyProjectionApplied ? ["admission_candidate_policy_active_projection"] : []),
           ...(memoryContractVisible ? ["memory_contract"] : []),
           ...(premiseFirewallVisible ? ["premise_firewall"] : []),
           "guide_exposure_ledger",
