@@ -183,6 +183,7 @@ async function callLlm(args: {
     model: args.llm.model,
     temperature: 0,
     max_tokens: args.llm.maxTokens,
+    response_format: { type: "json_object" },
     stream: false,
     messages: [
       {
@@ -193,6 +194,8 @@ async function callLlm(args: {
           "Do not infer hidden outcome labels, hidden feedback, or hidden raw memory payload.",
           "Return only compact JSON with keys: selected_memory_id, action, used_memory_ids, rationale.",
           "Allowed action values: direct_use, inspect_memory, avoid_memory, no_action, unknown.",
+          "The JSON must be complete, valid, and one object. Do not use Markdown.",
+          "Keep rationale under 80 characters.",
         ].join("\n"),
       },
       {
