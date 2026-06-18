@@ -13,16 +13,17 @@ the default Runtime path.
 | Field | Value |
 |---|---|
 | Candidate policy | `candidate_project_context_closed_loop_inspect` |
-| Current status | `eligible_for_multi_profile_isolated_active_gray_with_two_tool_e2e_pilots` |
+| Current status | `eligible_for_isolated_active_gray_only_blocked_for_broad_rollout` |
 | Default Runtime status | `not_default_active` |
 | External backend status | `shadow_only` |
-| Full tool-executing Agent E2E status | `pilot_passed_two_base_traps` |
+| Full tool-executing Agent E2E status | `crossrepo_paired27_regressed` |
 
 The selected candidate is a closed-loop admission policy. Its current evidence
 supports isolated active gray testing on the `closed-loop-prior-fresh-2` and
 `closed-loop-prior-fresh` internal Runtime guide profiles. Two small
-tool-executing external Agent pilots also passed on two base trap families. This
-does not
+tool-executing external Agent pilots also passed on two Vite base trap families,
+but the first paired cross-repository tool E2E regressed on Next.js/Turbopack
+trap families. This does not
 authorize:
 
 - default active mode;
@@ -46,6 +47,7 @@ authorize:
 | Second guide active gray real-Agent rerun | `docs/research/2026-06-18-admission-second-guide-active-gray-real-agent-rerun.md` | Real LLM rerun preserved accepted action rate and reduced negative direct risk for the second guide profile. |
 | Tool-executing Agent E2E pilot | `docs/research/2026-06-18-admission-active-tool-executing-agent-e2e.md` | Active mode preserved 0% wrong writes, 0% wrong attention, 100% accepted direction, and 100% action completion on one base trap across four hygiene levels. |
 | Second tool-executing Agent E2E pilot | `docs/research/2026-06-18-admission-active-tool-executing-agent-e2e-second-base.md` | Active mode preserved the same hard gates on a second base trap family, including a missing active target continuation case. |
+| Cross-repository tool-executing Agent E2E paired27 | `docs/research/2026-06-18-admission-active-crossrepo-tool-e2e-paired27.md` | Active mode regressed on the paired cross-repository set: wrong writes increased from 2 / 27 to 7 / 27, accepted direction dropped from 25 / 27 to 17 / 27, and total tokens increased slightly. |
 
 ## Gate Results
 
@@ -192,6 +194,28 @@ authorize default active rollout because they are still Aionis-only,
 Vite-family, file-choice Agent pilots rather than a broad cross-repository or
 five-arm comparison.
 
+### Cross-Repository Tool-Executing Agent E2E
+
+The first cross-repository active-vs-off tool-executing run attempted 10 base
+trap families across 4 hygiene levels. The off-mode run stopped at one
+Next.js buried record because of a harness/worktree checkout failure, so the
+valid comparison uses the 27 trap IDs that completed in off mode and reruns the
+same paired IDs in active mode.
+
+| Metric | Policy off | Policy active |
+|---|---:|---:|
+| Paired records | 27 | 27 |
+| Wrong-write records | 2 | 7 |
+| Wrong-attention records | 2 | 7 |
+| Accepted-direction records | 25 | 17 |
+| Action-completion records | 26 | 25 |
+| Report-conflict records | 0 | 2 |
+| Total tokens | 388,590 | 396,433 |
+
+This is a negative promotion gate. The regression is concentrated in
+Next.js/Turbopack trap families; the earlier Vite pilots remain valid but are
+not broad enough for default activation.
+
 ## Required Gates Before Default Active
 
 Do not promote the candidate to default active mode until all of these gates are
@@ -203,8 +227,8 @@ closed:
    passed.
 2. A real tool-executing Agent E2E shows no completion regression and no
    hard-boundary regression across more than one base trap family. As of
-   2026-06-18, two Vite-family base trap pilots have passed; a cross-repository
-   or five-arm run is still required before default active rollout.
+   2026-06-18, two Vite-family base trap pilots passed, but the paired
+   cross-repository run regressed on Next.js/Turbopack. This gate is blocked.
 3. External backend candidates have task-level completion evidence, not only
    admission-row shadow evidence.
 4. Protocol compatibility is documented for the chosen real-Agent model.
