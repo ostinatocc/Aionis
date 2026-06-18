@@ -207,6 +207,24 @@ function validatePolicyDefinitions(policies: PolicyDefinition[]): void {
   }
 }
 
+function findPolicyDefinition(policyId: AionisAdmissionCandidatePolicyId): PolicyDefinition {
+  const policy = POLICY_DEFINITIONS.find((entry) => entry.policy_id === policyId);
+  if (!policy) throw new Error(`Unknown admission candidate policy: ${policyId}`);
+  validatePolicyDefinitions(POLICY_DEFINITIONS);
+  return policy;
+}
+
+export function decideAdmissionCandidatePolicyActionForEvaluation(
+  row: AionisAdmissionDatasetParsedRow,
+  policyId: AionisAdmissionCandidatePolicyId,
+): AdmissionAction {
+  return findPolicyDefinition(policyId).decide(row);
+}
+
+export function admissionCandidatePolicyUsedFieldsForEvaluation(policyId: AionisAdmissionCandidatePolicyId): string[] {
+  return [...findPolicyDefinition(policyId).used_fields];
+}
+
 function roundRate(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.round(value * 10_000) / 10_000;
