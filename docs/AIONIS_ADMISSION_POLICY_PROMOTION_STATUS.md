@@ -20,7 +20,9 @@ the default Runtime path.
 
 The selected candidate is a closed-loop admission policy. Its current evidence
 supports isolated active gray testing on the `closed-loop-prior-fresh-2`
-internal Runtime profile. It does not authorize:
+internal Runtime profile. The neighboring `closed-loop-prior-fresh` profile has
+passed shadow, but has not yet passed active gray or real-Agent rerun gates. It
+does not authorize:
 
 - default active mode;
 - external-backend active rollout;
@@ -35,6 +37,7 @@ internal Runtime profile. It does not authorize:
 | Counterfactual rerun | Admission rerun reports under `admission-dataset/reports/latest/` | Candidate preserved hard-boundary and positive-capture gates under deterministic replay. |
 | Real LLM admission rerun | `docs/research/2026-06-18-admission-current-runid-real-agent.md` | Candidate preserved accepted action rate and hard-boundary gates on the accumulated dataset. |
 | Online guide shadow | `docs/research/2026-06-18-admission-online-shadow-100gate.md` | Shadow projection reached 120 rows and 12 task signatures without prompt inclusion or Runtime mutation. |
+| Second guide shadow | `docs/research/2026-06-18-admission-second-guide-shadow-100gate.md` | A neighboring `/v1/guide` profile reached 120 rows and 8 task signatures with the same bounded shadow behavior. |
 | External targeted shadow | `docs/research/2026-06-18-admission-targeted-external-shadow-100gate.md` | External candidates stayed shadow-only; direct-use dropped, but this is not guide-path active evidence. |
 | Isolated active gray | `docs/research/2026-06-18-admission-active-gray-closed-loop-100gate.md` | Active projection changed prompt-facing guide output in the bounded downgrade path only. |
 | Active gray real-Agent rerun | `docs/research/2026-06-18-admission-active-gray-real-agent-rerun.md` | Real LLM rerun preserved accepted action rate and reduced negative direct risk for this profile. |
@@ -57,6 +60,23 @@ The 100-row shadow gate for `closed-loop-prior-fresh-2` produced:
 
 This is sufficient to start isolated active gray testing for the same profile.
 It is not evidence for default active mode.
+
+### Second `/v1/guide` Shadow
+
+The neighboring `closed-loop-prior-fresh` shadow gate produced:
+
+- `120` admission rows;
+- `8` task signatures;
+- `120 / 120` guide calls with a shadow projection;
+- `24` proposed downgrades from `use_now` to `inspect_before_use`;
+- `0` Agent-prompt inclusions;
+- `0` Runtime mutations;
+- `0` hard-boundary upgrades;
+- negative direct count reduced from `48` to `24`;
+- missed positive delta stayed `0`.
+
+This closes the second guide-profile shadow gate. It does not close the second
+guide-profile active gray gate.
 
 ### External Targeted Shadow
 
@@ -118,7 +138,9 @@ Do not promote the candidate to default active mode until all of these gates are
 closed:
 
 1. A second `/v1/guide` online profile, or a mixed profile, passes the same
-   shadow and active gray checks.
+   shadow and active gray checks. As of 2026-06-18, the second guide-profile
+   shadow gate has passed; its isolated active gray and real-Agent rerun gates
+   are still pending.
 2. A real tool-executing Agent E2E shows no completion regression and no
    hard-boundary regression.
 3. External backend candidates have task-level completion evidence, not only
@@ -143,4 +165,3 @@ The current product claim is not:
 
 > Aionis has replaced its default admission policy with a learned or tuned
 > candidate policy across all memory backends.
-
