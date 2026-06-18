@@ -188,11 +188,76 @@ claims.
 
 ## Next Step
 
-The next stage is holdout-aware candidate policy evaluation:
+## Candidate Policy Evaluation
 
-1. evaluate a candidate tuned rule or lightweight classifier against the
-   disjoint holdout split;
-2. keep lifecycle, authority, source, suppression, and rehydrate gates as hard
+Report:
+
+```text
+admission-dataset/reports/latest/candidate_policy.md
+```
+
+Command:
+
+```bash
+npm run -s admission:candidate-policy -- \
+  --input admission-dataset/rows.jsonl \
+  --out-dir admission-dataset/reports/latest \
+  --split-by task_signature \
+  --holdout-ratio 0.5
+```
+
+Selected candidate:
+
+| Field | Value |
+|---|---:|
+| Policy | `candidate_aionis_project_context_only` |
+| Train rows | 148 |
+| Train groups | 6 |
+| Holdout rows | 227 |
+| Holdout groups | 7 |
+| Holdout calibration score | 0.8062 |
+| Recorded holdout calibration score | 0.7875 |
+| Eligible for manual review | no |
+
+Promotion gates:
+
+| Gate | Result |
+|---|---:|
+| No hard-boundary regression | yes |
+| Train candidate supported | no |
+| Train calibration score not worse | yes |
+| No negative-use count regression | yes |
+| No positive-capture regression | yes |
+| Calibration score improved | yes |
+| Changed actions on holdout | yes |
+
+Interpretation:
+
+The offline candidate discovered a plausible bucket: external current
+context-like rows in holdout were direct-use under the recorded policy but could
+be downgraded to inspect-first without losing positive capture. However, the
+same candidate made no action changes on train, so this is not promotion
+evidence. It is a data-collection signal: add more train-side examples of this
+bucket before considering any policy update.
+
+The important discipline is that candidate evaluation remains read-only:
+
+1. candidates use label-safe feature fields only;
+2. candidates cannot upgrade `do_not_use` or `rehydrate` rows into direct use;
+3. train support is required before a holdout improvement can become eligible
+   for manual review;
+4. even an eligible candidate would still need counterfactual Agent reruns
+   before Runtime behavior changes.
+
+## Next Step
+
+The next stage is dataset expansion targeted at the discovered bucket:
+
+1. collect more external-current and project-context rows across train-side task
+   signatures, not only holdout;
+2. rerun candidate-policy evaluation and require `train_candidate_supported=yes`
+   before manual review;
+3. keep lifecycle, authority, source, suppression, and rehydrate gates as hard
    boundaries;
-3. require holdout improvement before any candidate policy can affect
-   Runtime behavior.
+4. only after offline eligibility, run a counterfactual Agent rerun to check
+   whether the candidate improves real downstream behavior.

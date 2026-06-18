@@ -10,7 +10,7 @@ import {
   type AionisAdmissionPolicyComparisonReport,
 } from "./admission-policy-comparison.js";
 
-type AdmissionDatasetRow = ReturnType<typeof parseAdmissionDatasetJsonl>[number];
+export type AionisAdmissionDatasetParsedRow = ReturnType<typeof parseAdmissionDatasetJsonl>[number];
 
 export type AionisAdmissionDatasetHoldoutSplitBy = "task_signature" | "run_id";
 
@@ -82,22 +82,22 @@ function stableHash(seed: string, key: string): number {
   return Number.parseInt(hex, 16);
 }
 
-function groupKey(row: AdmissionDatasetRow, splitBy: AionisAdmissionDatasetHoldoutSplitBy, index: number): string {
+function groupKey(row: AionisAdmissionDatasetParsedRow, splitBy: AionisAdmissionDatasetHoldoutSplitBy, index: number): string {
   return stringValue(row[splitBy]) ?? `missing:${splitBy}:${stringValue(row.task_id) ?? stringValue(row.memory_id) ?? index}`;
 }
 
-function splitRows(args: {
-  rows: AdmissionDatasetRow[];
+export function splitAdmissionDatasetRows(args: {
+  rows: AionisAdmissionDatasetParsedRow[];
   splitBy: AionisAdmissionDatasetHoldoutSplitBy;
   holdoutRatio: number;
   seed: string;
 }): {
-  trainRows: AdmissionDatasetRow[];
-  holdoutRows: AdmissionDatasetRow[];
+  trainRows: AionisAdmissionDatasetParsedRow[];
+  holdoutRows: AionisAdmissionDatasetParsedRow[];
   trainGroups: string[];
   holdoutGroups: string[];
 } {
-  const groups = new Map<string, AdmissionDatasetRow[]>();
+  const groups = new Map<string, AionisAdmissionDatasetParsedRow[]>();
   args.rows.forEach((row, index) => {
     const key = groupKey(row, args.splitBy, index);
     const current = groups.get(key) ?? [];
@@ -142,8 +142,8 @@ function leadingPolicy(report: AionisAdmissionPolicyComparisonReport): string | 
 
 function buildCaveats(args: {
   splitBy: AionisAdmissionDatasetHoldoutSplitBy;
-  trainRows: AdmissionDatasetRow[];
-  holdoutRows: AdmissionDatasetRow[];
+  trainRows: AionisAdmissionDatasetParsedRow[];
+  holdoutRows: AionisAdmissionDatasetParsedRow[];
   trainGroups: string[];
   holdoutGroups: string[];
   holdoutEvaluation: AionisAdmissionDatasetEvaluationReport;
@@ -171,13 +171,13 @@ function buildCaveats(args: {
 }
 
 export function evaluateAdmissionDatasetHoldoutRows(
-  rows: AdmissionDatasetRow[],
+  rows: AionisAdmissionDatasetParsedRow[],
   options: AionisAdmissionDatasetHoldoutOptions = {},
 ): AionisAdmissionDatasetHoldoutReport {
   const splitBy = normalizedSplitBy(options.split_by);
   const holdoutRatio = normalizedHoldoutRatio(options.holdout_ratio);
   const seed = normalizedSeed(options.seed);
-  const { trainRows, holdoutRows, trainGroups, holdoutGroups } = splitRows({
+  const { trainRows, holdoutRows, trainGroups, holdoutGroups } = splitAdmissionDatasetRows({
     rows,
     splitBy,
     holdoutRatio,

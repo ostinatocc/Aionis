@@ -94,6 +94,8 @@ admission-dataset/
       policy_comparison.md
       holdout.json
       holdout.md
+      candidate_policy.json
+      candidate_policy.md
 ```
 
 Append rows to `rows.jsonl`. Write a manifest per export job with:
@@ -293,3 +295,39 @@ Holdout reports are still offline validation. They must not mutate Runtime
 gates, and they do not replace counterfactual Agent reruns. A policy change is
 not promotion-ready unless it improves holdout quality while preserving hard
 lifecycle, scope, source, suppression, authority, and rehydrate boundaries.
+
+## Evaluate Candidate Policies
+
+After the dataset clears holdout row and task-signature gates, evaluate any
+tuned rule or lightweight classifier candidate offline:
+
+```bash
+npm run -s admission:candidate-policy -- \
+  --input admission-dataset/rows.jsonl \
+  --out-dir admission-dataset/reports/latest \
+  --split-by task_signature \
+  --holdout-ratio 0.5
+```
+
+It writes:
+
+- `candidate_policy.json`: machine-readable candidate leaderboard, guards, and promotion gates
+- `candidate_policy.md`: compact human-readable report
+
+Candidate evaluation is intentionally stricter than baseline comparison:
+
+- candidates may only use label-safe feature fields;
+- `outcome_label`, `feedback_outcome`, `agent_used`, IDs, titles, task
+  signatures, and prompt-cost fields are forbidden decision inputs;
+- candidates cannot upgrade `do_not_use`, `rehydrate`, or other non-direct hard
+  actions into `use_now`;
+- candidates can only become eligible for manual review if they improve holdout
+  quality without hard-boundary, negative-use, or positive-capture regression;
+- candidates must also make supported action changes on train, so a holdout-only
+  surprise is treated as a discovery, not as promotion evidence.
+
+As of the 2026-06-18 batch baseline, the selected offline candidate improved
+holdout calibration score from `0.7875` to `0.8062`, but made no action changes
+on train. The report therefore sets `eligible_for_manual_review=false`. This is
+the correct product posture: it identifies a possible bucket to collect more
+evidence for, but it must not change Runtime admission behavior.

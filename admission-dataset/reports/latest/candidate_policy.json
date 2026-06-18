@@ -1,0 +1,507 @@
+{
+  "contract_version": "aionis_admission_candidate_policy_evaluation_report_v1",
+  "intended_use": "offline_admission_candidate_policy_validation",
+  "runtime_mutation": false,
+  "agent_prompt_included": false,
+  "policy": {
+    "policy_id": null,
+    "policy_version": null,
+    "policy_mode": null,
+    "runtime_version": null
+  },
+  "split": {
+    "split_by": "task_signature",
+    "seed": "aionis-admission-holdout-v1",
+    "holdout_ratio": 0.5,
+    "train_row_count": 148,
+    "holdout_row_count": 227,
+    "train_group_count": 6,
+    "holdout_group_count": 7,
+    "train_groups": [
+      "admission-dataset-export:positive-cache-boundary",
+      "admission-dataset-export:negative-migration-candidate",
+      "admission-dataset-export:negative-permission-shortcut",
+      "admission-dataset-export:negative-secret-rotation",
+      "admission-dataset-export:positive-sdk-contract",
+      "admission-dataset-export:positive-supported"
+    ],
+    "holdout_groups": [
+      "admission-dataset-export:external-rehydrate-raw-trace",
+      "admission-dataset-export:positive-reviewer-handoff",
+      "admission-dataset-export:negative-retry-loop",
+      "admission-dataset-export:positive-observability-route",
+      "admission-dataset-export:negative-test-stabilization",
+      "admission-dataset-export:negative-attributed",
+      "admission-dataset-export:positive-feature-flag"
+    ]
+  },
+  "dataset": {
+    "row_count": 375,
+    "train_row_count": 148,
+    "holdout_row_count": 227
+  },
+  "guards": {
+    "no_runtime_mutation": true,
+    "label_leakage_guard": true,
+    "forbidden_decision_fields": [
+      "outcome_label",
+      "feedback_outcome",
+      "attribution_strength",
+      "agent_used",
+      "title",
+      "task_signature",
+      "run_id",
+      "task_id",
+      "guide_trace_id",
+      "memory_id",
+      "prompt_char_count"
+    ],
+    "hard_actions_preserved": true
+  },
+  "train_leaderboard": [
+    {
+      "policy_id": "candidate_aionis_project_context_only",
+      "display_name": "Aionis project-context direct-use only",
+      "description": "Keeps Runtime hard boundaries, but direct-uses only Aionis project_context candidates.",
+      "used_fields": [
+        "admission_action",
+        "source_backend",
+        "memory_type"
+      ],
+      "label_leakage_guard": true,
+      "row_count": 148,
+      "changed_action_count": 0,
+      "predicted_action_counts": {
+        "use_now": 74,
+        "do_not_use": 74
+      },
+      "direct_use_count": 74,
+      "positive_use_direct_count": 37,
+      "negative_use_direct_count": 37,
+      "blocked_or_suppressed_direct_count": 0,
+      "rehydrate_direct_count": 0,
+      "hard_boundary_direct_count": 0,
+      "unused_exposed_direct_count": 0,
+      "missed_positive_use_count": 0,
+      "positive_capture_rate": 1,
+      "direct_use_positive_precision_proxy": 0.5,
+      "direct_use_negative_rate": 0.5,
+      "hard_boundary_direct_rate": 0,
+      "direct_use_unused_rate": 0,
+      "negative_use_per_row": 0.25,
+      "hard_boundary_per_row": 0,
+      "unused_exposed_per_row": 0,
+      "calibration_score": 0.75,
+      "rank": 1
+    },
+    {
+      "policy_id": "candidate_external_current_inspect",
+      "display_name": "External current inspect-first",
+      "description": "Keeps Runtime hard boundaries, but downgrades external direct-use candidates to inspect_before_use.",
+      "used_fields": [
+        "admission_action",
+        "memory_origin"
+      ],
+      "label_leakage_guard": true,
+      "row_count": 148,
+      "changed_action_count": 0,
+      "predicted_action_counts": {
+        "use_now": 74,
+        "do_not_use": 74
+      },
+      "direct_use_count": 74,
+      "positive_use_direct_count": 37,
+      "negative_use_direct_count": 37,
+      "blocked_or_suppressed_direct_count": 0,
+      "rehydrate_direct_count": 0,
+      "hard_boundary_direct_count": 0,
+      "unused_exposed_direct_count": 0,
+      "missed_positive_use_count": 0,
+      "positive_capture_rate": 1,
+      "direct_use_positive_precision_proxy": 0.5,
+      "direct_use_negative_rate": 0.5,
+      "hard_boundary_direct_rate": 0,
+      "direct_use_unused_rate": 0,
+      "negative_use_per_row": 0.25,
+      "hard_boundary_per_row": 0,
+      "unused_exposed_per_row": 0,
+      "calibration_score": 0.75,
+      "rank": 2
+    },
+    {
+      "policy_id": "recorded_policy_baseline",
+      "display_name": "Recorded policy baseline",
+      "description": "Uses the Runtime-recorded admission action without candidate changes.",
+      "used_fields": [
+        "admission_action"
+      ],
+      "label_leakage_guard": true,
+      "row_count": 148,
+      "changed_action_count": 0,
+      "predicted_action_counts": {
+        "use_now": 74,
+        "do_not_use": 74
+      },
+      "direct_use_count": 74,
+      "positive_use_direct_count": 37,
+      "negative_use_direct_count": 37,
+      "blocked_or_suppressed_direct_count": 0,
+      "rehydrate_direct_count": 0,
+      "hard_boundary_direct_count": 0,
+      "unused_exposed_direct_count": 0,
+      "missed_positive_use_count": 0,
+      "positive_capture_rate": 1,
+      "direct_use_positive_precision_proxy": 0.5,
+      "direct_use_negative_rate": 0.5,
+      "hard_boundary_direct_rate": 0,
+      "direct_use_unused_rate": 0,
+      "negative_use_per_row": 0.25,
+      "hard_boundary_per_row": 0,
+      "unused_exposed_per_row": 0,
+      "calibration_score": 0.75,
+      "rank": 3
+    },
+    {
+      "policy_id": "candidate_advisory_inspect",
+      "display_name": "Advisory inspect-first",
+      "description": "Keeps Runtime hard boundaries, but downgrades advisory direct-use candidates to inspect_before_use.",
+      "used_fields": [
+        "admission_action",
+        "authority"
+      ],
+      "label_leakage_guard": true,
+      "row_count": 148,
+      "changed_action_count": 74,
+      "predicted_action_counts": {
+        "inspect_before_use": 74,
+        "do_not_use": 74
+      },
+      "direct_use_count": 0,
+      "positive_use_direct_count": 0,
+      "negative_use_direct_count": 0,
+      "blocked_or_suppressed_direct_count": 0,
+      "rehydrate_direct_count": 0,
+      "hard_boundary_direct_count": 0,
+      "unused_exposed_direct_count": 0,
+      "missed_positive_use_count": 37,
+      "positive_capture_rate": 0,
+      "direct_use_positive_precision_proxy": 0,
+      "direct_use_negative_rate": 0,
+      "hard_boundary_direct_rate": 0,
+      "direct_use_unused_rate": 0,
+      "negative_use_per_row": 0,
+      "hard_boundary_per_row": 0,
+      "unused_exposed_per_row": 0,
+      "calibration_score": 0,
+      "rank": 4
+    }
+  ],
+  "holdout_scores": [
+    {
+      "policy_id": "candidate_aionis_project_context_only",
+      "display_name": "Aionis project-context direct-use only",
+      "description": "Keeps Runtime hard boundaries, but direct-uses only Aionis project_context candidates.",
+      "used_fields": [
+        "admission_action",
+        "source_backend",
+        "memory_type"
+      ],
+      "label_leakage_guard": true,
+      "row_count": 227,
+      "changed_action_count": 17,
+      "predicted_action_counts": {
+        "inspect_before_use": 17,
+        "do_not_use": 105,
+        "rehydrate": 17,
+        "use_now": 88
+      },
+      "direct_use_count": 88,
+      "positive_use_direct_count": 44,
+      "negative_use_direct_count": 44,
+      "blocked_or_suppressed_direct_count": 0,
+      "rehydrate_direct_count": 0,
+      "hard_boundary_direct_count": 0,
+      "unused_exposed_direct_count": 0,
+      "missed_positive_use_count": 0,
+      "positive_capture_rate": 1,
+      "direct_use_positive_precision_proxy": 0.5,
+      "direct_use_negative_rate": 0.5,
+      "hard_boundary_direct_rate": 0,
+      "direct_use_unused_rate": 0,
+      "negative_use_per_row": 0.1938,
+      "hard_boundary_per_row": 0,
+      "unused_exposed_per_row": 0,
+      "calibration_score": 0.8062,
+      "rank": 1
+    },
+    {
+      "policy_id": "candidate_external_current_inspect",
+      "display_name": "External current inspect-first",
+      "description": "Keeps Runtime hard boundaries, but downgrades external direct-use candidates to inspect_before_use.",
+      "used_fields": [
+        "admission_action",
+        "memory_origin"
+      ],
+      "label_leakage_guard": true,
+      "row_count": 227,
+      "changed_action_count": 17,
+      "predicted_action_counts": {
+        "inspect_before_use": 17,
+        "do_not_use": 105,
+        "rehydrate": 17,
+        "use_now": 88
+      },
+      "direct_use_count": 88,
+      "positive_use_direct_count": 44,
+      "negative_use_direct_count": 44,
+      "blocked_or_suppressed_direct_count": 0,
+      "rehydrate_direct_count": 0,
+      "hard_boundary_direct_count": 0,
+      "unused_exposed_direct_count": 0,
+      "missed_positive_use_count": 0,
+      "positive_capture_rate": 1,
+      "direct_use_positive_precision_proxy": 0.5,
+      "direct_use_negative_rate": 0.5,
+      "hard_boundary_direct_rate": 0,
+      "direct_use_unused_rate": 0,
+      "negative_use_per_row": 0.1938,
+      "hard_boundary_per_row": 0,
+      "unused_exposed_per_row": 0,
+      "calibration_score": 0.8062,
+      "rank": 2
+    },
+    {
+      "policy_id": "recorded_policy_baseline",
+      "display_name": "Recorded policy baseline",
+      "description": "Uses the Runtime-recorded admission action without candidate changes.",
+      "used_fields": [
+        "admission_action"
+      ],
+      "label_leakage_guard": true,
+      "row_count": 227,
+      "changed_action_count": 0,
+      "predicted_action_counts": {
+        "use_now": 105,
+        "do_not_use": 105,
+        "rehydrate": 17
+      },
+      "direct_use_count": 105,
+      "positive_use_direct_count": 44,
+      "negative_use_direct_count": 44,
+      "blocked_or_suppressed_direct_count": 0,
+      "rehydrate_direct_count": 0,
+      "hard_boundary_direct_count": 0,
+      "unused_exposed_direct_count": 17,
+      "missed_positive_use_count": 0,
+      "positive_capture_rate": 1,
+      "direct_use_positive_precision_proxy": 0.419,
+      "direct_use_negative_rate": 0.419,
+      "hard_boundary_direct_rate": 0,
+      "direct_use_unused_rate": 0.1619,
+      "negative_use_per_row": 0.1938,
+      "hard_boundary_per_row": 0,
+      "unused_exposed_per_row": 0.0749,
+      "calibration_score": 0.7875,
+      "rank": 3
+    },
+    {
+      "policy_id": "candidate_advisory_inspect",
+      "display_name": "Advisory inspect-first",
+      "description": "Keeps Runtime hard boundaries, but downgrades advisory direct-use candidates to inspect_before_use.",
+      "used_fields": [
+        "admission_action",
+        "authority"
+      ],
+      "label_leakage_guard": true,
+      "row_count": 227,
+      "changed_action_count": 88,
+      "predicted_action_counts": {
+        "use_now": 17,
+        "do_not_use": 105,
+        "rehydrate": 17,
+        "inspect_before_use": 88
+      },
+      "direct_use_count": 17,
+      "positive_use_direct_count": 0,
+      "negative_use_direct_count": 0,
+      "blocked_or_suppressed_direct_count": 0,
+      "rehydrate_direct_count": 0,
+      "hard_boundary_direct_count": 0,
+      "unused_exposed_direct_count": 17,
+      "missed_positive_use_count": 44,
+      "positive_capture_rate": 0,
+      "direct_use_positive_precision_proxy": 0,
+      "direct_use_negative_rate": 0,
+      "hard_boundary_direct_rate": 0,
+      "direct_use_unused_rate": 1,
+      "negative_use_per_row": 0,
+      "hard_boundary_per_row": 0,
+      "unused_exposed_per_row": 0.0749,
+      "calibration_score": -0.0187,
+      "rank": 4
+    }
+  ],
+  "selected_policy_id": "candidate_aionis_project_context_only",
+  "selected_policy": {
+    "train": {
+      "policy_id": "candidate_aionis_project_context_only",
+      "display_name": "Aionis project-context direct-use only",
+      "description": "Keeps Runtime hard boundaries, but direct-uses only Aionis project_context candidates.",
+      "used_fields": [
+        "admission_action",
+        "source_backend",
+        "memory_type"
+      ],
+      "label_leakage_guard": true,
+      "row_count": 148,
+      "changed_action_count": 0,
+      "predicted_action_counts": {
+        "use_now": 74,
+        "do_not_use": 74
+      },
+      "direct_use_count": 74,
+      "positive_use_direct_count": 37,
+      "negative_use_direct_count": 37,
+      "blocked_or_suppressed_direct_count": 0,
+      "rehydrate_direct_count": 0,
+      "hard_boundary_direct_count": 0,
+      "unused_exposed_direct_count": 0,
+      "missed_positive_use_count": 0,
+      "positive_capture_rate": 1,
+      "direct_use_positive_precision_proxy": 0.5,
+      "direct_use_negative_rate": 0.5,
+      "hard_boundary_direct_rate": 0,
+      "direct_use_unused_rate": 0,
+      "negative_use_per_row": 0.25,
+      "hard_boundary_per_row": 0,
+      "unused_exposed_per_row": 0,
+      "calibration_score": 0.75,
+      "rank": 1
+    },
+    "holdout": {
+      "policy_id": "candidate_aionis_project_context_only",
+      "display_name": "Aionis project-context direct-use only",
+      "description": "Keeps Runtime hard boundaries, but direct-uses only Aionis project_context candidates.",
+      "used_fields": [
+        "admission_action",
+        "source_backend",
+        "memory_type"
+      ],
+      "label_leakage_guard": true,
+      "row_count": 227,
+      "changed_action_count": 17,
+      "predicted_action_counts": {
+        "inspect_before_use": 17,
+        "do_not_use": 105,
+        "rehydrate": 17,
+        "use_now": 88
+      },
+      "direct_use_count": 88,
+      "positive_use_direct_count": 44,
+      "negative_use_direct_count": 44,
+      "blocked_or_suppressed_direct_count": 0,
+      "rehydrate_direct_count": 0,
+      "hard_boundary_direct_count": 0,
+      "unused_exposed_direct_count": 0,
+      "missed_positive_use_count": 0,
+      "positive_capture_rate": 1,
+      "direct_use_positive_precision_proxy": 0.5,
+      "direct_use_negative_rate": 0.5,
+      "hard_boundary_direct_rate": 0,
+      "direct_use_unused_rate": 0,
+      "negative_use_per_row": 0.1938,
+      "hard_boundary_per_row": 0,
+      "unused_exposed_per_row": 0,
+      "calibration_score": 0.8062,
+      "rank": 1
+    }
+  },
+  "recorded_policy": {
+    "train": {
+      "policy_id": "recorded_policy_baseline",
+      "display_name": "Recorded policy baseline",
+      "description": "Uses the Runtime-recorded admission action without candidate changes.",
+      "used_fields": [
+        "admission_action"
+      ],
+      "label_leakage_guard": true,
+      "row_count": 148,
+      "changed_action_count": 0,
+      "predicted_action_counts": {
+        "use_now": 74,
+        "do_not_use": 74
+      },
+      "direct_use_count": 74,
+      "positive_use_direct_count": 37,
+      "negative_use_direct_count": 37,
+      "blocked_or_suppressed_direct_count": 0,
+      "rehydrate_direct_count": 0,
+      "hard_boundary_direct_count": 0,
+      "unused_exposed_direct_count": 0,
+      "missed_positive_use_count": 0,
+      "positive_capture_rate": 1,
+      "direct_use_positive_precision_proxy": 0.5,
+      "direct_use_negative_rate": 0.5,
+      "hard_boundary_direct_rate": 0,
+      "direct_use_unused_rate": 0,
+      "negative_use_per_row": 0.25,
+      "hard_boundary_per_row": 0,
+      "unused_exposed_per_row": 0,
+      "calibration_score": 0.75,
+      "rank": 3
+    },
+    "holdout": {
+      "policy_id": "recorded_policy_baseline",
+      "display_name": "Recorded policy baseline",
+      "description": "Uses the Runtime-recorded admission action without candidate changes.",
+      "used_fields": [
+        "admission_action"
+      ],
+      "label_leakage_guard": true,
+      "row_count": 227,
+      "changed_action_count": 0,
+      "predicted_action_counts": {
+        "use_now": 105,
+        "do_not_use": 105,
+        "rehydrate": 17
+      },
+      "direct_use_count": 105,
+      "positive_use_direct_count": 44,
+      "negative_use_direct_count": 44,
+      "blocked_or_suppressed_direct_count": 0,
+      "rehydrate_direct_count": 0,
+      "hard_boundary_direct_count": 0,
+      "unused_exposed_direct_count": 17,
+      "missed_positive_use_count": 0,
+      "positive_capture_rate": 1,
+      "direct_use_positive_precision_proxy": 0.419,
+      "direct_use_negative_rate": 0.419,
+      "hard_boundary_direct_rate": 0,
+      "direct_use_unused_rate": 0.1619,
+      "negative_use_per_row": 0.1938,
+      "hard_boundary_per_row": 0,
+      "unused_exposed_per_row": 0.0749,
+      "calibration_score": 0.7875,
+      "rank": 3
+    }
+  },
+  "promotion_gate": {
+    "eligible_for_manual_review": false,
+    "train_candidate_supported": false,
+    "train_calibration_score_not_worse": true,
+    "no_hard_boundary_regression": true,
+    "no_negative_use_count_regression": true,
+    "no_positive_capture_regression": true,
+    "calibration_score_improved": true,
+    "changed_actions_on_holdout": true
+  },
+  "caveats": [
+    "This is an offline candidate-policy evaluation over exported admission rows, not a counterfactual Agent rerun.",
+    "Candidate decisions are restricted to label-safe fields and cannot upgrade do_not_use or rehydrate rows to direct use.",
+    "A candidate marked eligible is eligible for manual review only; it must not mutate Runtime gates by itself.",
+    "Selected candidate made no action changes on train; treat holdout improvement as a discovery, not a promotion signal.",
+    "Selected candidate did not pass all holdout promotion gates.",
+    "Selected candidate did not reduce negative_use direct count; negative_use remains weak run-level supervision."
+  ],
+  "summary": "Selected candidate_aionis_project_context_only on train; holdout calibration_score=0.8062, recorded=0.7875, eligible_for_manual_review=false."
+}
