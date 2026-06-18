@@ -29,6 +29,14 @@ test("admission shadow policy downgrades unsafe direct-use candidates without ru
         recorded_action: "use_now",
       },
       {
+        memory_id: "mem-current-execution",
+        title: "Accepted execution continuation",
+        memory_origin: "aionis",
+        source_backend: "aionis",
+        memory_type: "execution_memory",
+        recorded_action: "use_now",
+      },
+      {
         memory_id: "mem-mem0",
         title: "External memory",
         memory_origin: "external",
@@ -46,6 +54,15 @@ test("admission shadow policy downgrades unsafe direct-use candidates without ru
         closed_loop_effect_state: "mixed",
         repeated_negative_posture: true,
       },
+      {
+        memory_id: "mem-execution-prior-negative",
+        title: "Contradicted execution continuation",
+        memory_origin: "aionis",
+        source_backend: "aionis",
+        memory_type: "execution_memory",
+        recorded_action: "use_now",
+        closed_loop_effect_state: "contradicted",
+      },
     ],
   });
 
@@ -55,11 +72,20 @@ test("admission shadow policy downgrades unsafe direct-use candidates without ru
   assert.equal(report.runtime_mutation, false);
   assert.equal(report.agent_prompt_included, false);
   assert.equal(report.hard_boundary_upgrade_count, 0);
-  assert.equal(report.direct_use_recorded_count, 4);
-  assert.equal(report.direct_use_shadow_count, 1);
-  assert.deepEqual(report.downgraded_memory_ids, ["mem-procedure", "mem-mem0", "mem-prior-negative"]);
+  assert.equal(report.direct_use_recorded_count, 6);
+  assert.equal(report.direct_use_shadow_count, 2);
+  assert.deepEqual(report.downgraded_memory_ids, [
+    "mem-procedure",
+    "mem-mem0",
+    "mem-prior-negative",
+    "mem-execution-prior-negative",
+  ]);
   assert.equal(
     report.decisions.find((entry) => entry.memory_id === "mem-current-project")?.shadow_action,
+    "use_now",
+  );
+  assert.equal(
+    report.decisions.find((entry) => entry.memory_id === "mem-current-execution")?.shadow_action,
     "use_now",
   );
   assert.equal(

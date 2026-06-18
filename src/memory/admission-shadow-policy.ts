@@ -65,13 +65,17 @@ function priorStateAvailable(entry: AionisMemoryAdmissionShadowPolicyEntryInput)
     || entry.repeated_negative_posture === true;
 }
 
+function directUseCandidateMemoryType(entry: AionisMemoryAdmissionShadowPolicyEntryInput): boolean {
+  return entry.memory_type === "project_context" || entry.memory_type === "execution_memory";
+}
+
 function shadowActionForEntry(entry: AionisMemoryAdmissionShadowPolicyEntryInput): AionisMemoryDecisionSurface {
   if (entry.recorded_action !== "use_now") return entry.recorded_action;
   const backend = sourceBackendValue(entry);
   const closedLoopEffectState = closedLoopEffectStateValue(entry);
   const admitsDirectUse =
     backend === "aionis"
-    && entry.memory_type === "project_context"
+    && directUseCandidateMemoryType(entry)
     && closedLoopEffectState !== "contradicted"
     && closedLoopEffectState !== "mixed"
     && entry.repeated_negative_posture !== true;
@@ -85,10 +89,10 @@ function shadowReasonCodes(
   if (entry.recorded_action !== "use_now") {
     return ["hard_boundary_preserved", `recorded_action:${entry.recorded_action}`];
   }
-  if (shadowAction === "use_now") return ["aionis_project_context_shadow_use_now"];
+  if (shadowAction === "use_now") return ["aionis_project_or_execution_context_shadow_use_now"];
   const reasons: string[] = [];
   if (sourceBackendValue(entry) !== "aionis") reasons.push("non_aionis_backend_shadow_inspect");
-  if (entry.memory_type !== "project_context") reasons.push("non_project_context_shadow_inspect");
+  if (!directUseCandidateMemoryType(entry)) reasons.push("non_project_or_execution_memory_shadow_inspect");
   const closedLoopEffectState = closedLoopEffectStateValue(entry);
   if (closedLoopEffectState === "contradicted" || closedLoopEffectState === "mixed") {
     reasons.push("closed_loop_counter_signal_shadow_inspect");

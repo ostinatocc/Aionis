@@ -38,6 +38,32 @@ test("admission candidate active projection only downgrades current use-now entr
         created_at: "2026-06-01T00:00:00.000Z",
       },
       {
+        id: "mem-execution-current",
+        type: "topic",
+        title: "Accepted execution continuation",
+        text_summary: "Verifier accepted this execution branch as the active continuation state.",
+        tier: "warm",
+        confidence: 0.9,
+        salience: 0.9,
+        created_at: "2026-06-01T00:00:00.000Z",
+        slots: {
+          execution_kind: "handoff",
+        },
+      },
+      {
+        id: "mem-execution-contradicted",
+        type: "topic",
+        title: "Contradicted execution continuation",
+        text_summary: "Execution continuation with later negative feedback should be inspected.",
+        tier: "warm",
+        confidence: 0.88,
+        salience: 0.88,
+        created_at: "2026-06-01T00:00:00.000Z",
+        slots: {
+          execution_kind: "handoff",
+        },
+      },
+      {
         id: "mem-project-contradicted",
         type: "topic",
         title: "Contradicted project context",
@@ -60,6 +86,7 @@ test("admission candidate active projection only downgrades current use-now entr
     slot_by_memory_id: new Map([
       ["mem-project-supported", { positive_attributed_use_count: 2 }],
       ["mem-project-contradicted", { strong_counter_signal_count: 2 }],
+      ["mem-execution-contradicted", { strong_counter_signal_count: 2 }],
     ]),
   });
 
@@ -68,10 +95,15 @@ test("admission candidate active projection only downgrades current use-now entr
   assert.equal(projection.hard_boundary_upgrade_count, 0);
   assert.deepEqual(projection.downgraded_memory_ids, [
     "mem-procedure-candidate",
+    "mem-execution-contradicted",
     "mem-project-contradicted",
   ]);
   assert.equal(
     projection.shadow_policy_report.decisions.find((entry) => entry.memory_id === "mem-project-supported")?.shadow_action,
+    "use_now",
+  );
+  assert.equal(
+    projection.shadow_policy_report.decisions.find((entry) => entry.memory_id === "mem-execution-current")?.shadow_action,
     "use_now",
   );
   assert.equal(

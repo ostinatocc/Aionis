@@ -49,6 +49,14 @@ authorize:
 | Second tool-executing Agent E2E pilot | `docs/research/2026-06-18-admission-active-tool-executing-agent-e2e-second-base.md` | Active mode preserved the same hard gates on a second base trap family, including a missing active target continuation case. |
 | Cross-repository tool-executing Agent E2E paired27 | `docs/research/2026-06-18-admission-active-crossrepo-tool-e2e-paired27.md` | Active mode regressed on the paired cross-repository set: wrong writes increased from 2 / 27 to 7 / 27, accepted direction dropped from 25 / 27 to 17 / 27, and total tokens increased slightly. |
 
+Follow-up inspection found the paired27 regression root cause: the active
+projection over-downgraded Aionis `execution_memory` accepted-continuation
+entries because the candidate direct-use path only allowed `project_context`.
+The code patch now preserves direct use for Aionis `execution_memory` unless
+closed-loop counter-signal evidence exists. This is a correction to the active
+projection, not a promotion. The full tool-executing Agent E2E status remains
+`crossrepo_paired27_regressed` until the same paired27 set is rerun and passes.
+
 ## Gate Results
 
 ### Online `/v1/guide` Shadow

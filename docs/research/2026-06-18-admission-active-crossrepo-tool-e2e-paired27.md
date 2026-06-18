@@ -102,6 +102,24 @@ The result should not trigger a Runtime core rule change by itself. It should
 feed the admission-policy evaluation loop as a task-level tool-executing
 counterexample.
 
+## Root-Cause Follow-Up
+
+Follow-up inspection found a projection bug in the candidate policy, not a new
+task-specific execution rule. The active projection treated Aionis
+`execution_memory` accepted-continuation entries as non-project context and
+downgraded them from `use_now` to `inspect_before_use`. Once downgraded, the
+projection rebuilt the command posture and route contract, removing
+`should_continue` / `active_targets` and moving the same targets into
+reference-only context.
+
+The code patch preserves direct use for Aionis `execution_memory` entries
+alongside `project_context` entries, while still downgrading entries with
+closed-loop counter-signals such as `contradicted`, `mixed`, or repeated
+negative posture.
+
+This does not reopen the broad rollout gate. The paired27 set must be rerun
+before changing promotion status.
+
 ## Product Decision
 
 - Keep `candidate_project_context_closed_loop_inspect` out of default active
