@@ -13,16 +13,15 @@ the default Runtime path.
 | Field | Value |
 |---|---|
 | Candidate policy | `candidate_project_context_closed_loop_inspect` |
-| Current status | `eligible_for_isolated_active_gray` |
+| Current status | `eligible_for_multi_profile_isolated_active_gray` |
 | Default Runtime status | `not_default_active` |
 | External backend status | `shadow_only` |
 | Full tool-executing Agent E2E status | `not_yet_validated` |
 
 The selected candidate is a closed-loop admission policy. Its current evidence
-supports isolated active gray testing on the `closed-loop-prior-fresh-2`
-internal Runtime profile. The neighboring `closed-loop-prior-fresh` profile has
-passed shadow, but has not yet passed active gray or real-Agent rerun gates. It
-does not authorize:
+supports isolated active gray testing on the `closed-loop-prior-fresh-2` and
+`closed-loop-prior-fresh` internal Runtime guide profiles. It does not
+authorize:
 
 - default active mode;
 - external-backend active rollout;
@@ -41,6 +40,8 @@ does not authorize:
 | External targeted shadow | `docs/research/2026-06-18-admission-targeted-external-shadow-100gate.md` | External candidates stayed shadow-only; direct-use dropped, but this is not guide-path active evidence. |
 | Isolated active gray | `docs/research/2026-06-18-admission-active-gray-closed-loop-100gate.md` | Active projection changed prompt-facing guide output in the bounded downgrade path only. |
 | Active gray real-Agent rerun | `docs/research/2026-06-18-admission-active-gray-real-agent-rerun.md` | Real LLM rerun preserved accepted action rate and reduced negative direct risk for this profile. |
+| Second guide active gray | `docs/research/2026-06-18-admission-second-guide-active-gray.md` | The neighboring `/v1/guide` profile passed isolated active gray with bounded downgrade-only behavior. |
+| Second guide active gray real-Agent rerun | `docs/research/2026-06-18-admission-second-guide-active-gray-real-agent-rerun.md` | Real LLM rerun preserved accepted action rate and reduced negative direct risk for the second guide profile. |
 
 ## Gate Results
 
@@ -75,8 +76,33 @@ The neighboring `closed-loop-prior-fresh` shadow gate produced:
 - negative direct count reduced from `48` to `24`;
 - missed positive delta stayed `0`.
 
-This closes the second guide-profile shadow gate. It does not close the second
-guide-profile active gray gate.
+This closed the second guide-profile shadow gate and authorized an isolated
+active gray check for the same profile. The active gray result is recorded
+below.
+
+### Second `/v1/guide` Active Gray
+
+The neighboring `closed-loop-prior-fresh` active gray gate produced:
+
+- `120` admission rows;
+- `8` task signatures;
+- `120 / 120` guide calls with an active projection;
+- `48` active source-map entries;
+- `48` applied downgrades from `use_now` to `inspect_before_use`;
+- `120` expected Agent-prompt inclusions;
+- `0` Runtime mutations;
+- `0` hard-boundary upgrades.
+
+After active projection, the exported rows had:
+
+- `72` direct-use rows;
+- `48` inspect-before-use rows;
+- `48` positive direct rows;
+- `24` negative direct rows;
+- `33.3%` direct-use negative rate.
+
+The offline candidate had no additional changes to propose over the active
+surface, which confirms that active projection reached the second guide output.
 
 ### External Targeted Shadow
 
@@ -132,6 +158,21 @@ The real LLM rerun over the isolated active gray dataset produced:
 This supports continued isolated active gray testing. It does not close the
 full tool-executing Agent E2E gate.
 
+### Second Guide Active Gray Real-Agent Rerun
+
+The real LLM rerun over the second guide active gray dataset produced:
+
+| Metric | Recorded Runtime policy | Candidate policy |
+|---|---:|---:|
+| Accepted action rate | 50.0% | 50.0% |
+| Hard-boundary direct-use rate | 0.0% | 0.0% |
+| Negative direct-risk rate | 50.0% | 37.5% |
+| Missed actionable rate | 0.0% | 0.0% |
+| Boundary ignored | 0 | 0 |
+
+This closes the second guide-profile real-Agent admission rerun gate. It still
+does not close the full tool-executing Agent E2E gate.
+
 ## Required Gates Before Default Active
 
 Do not promote the candidate to default active mode until all of these gates are
@@ -139,8 +180,8 @@ closed:
 
 1. A second `/v1/guide` online profile, or a mixed profile, passes the same
    shadow and active gray checks. As of 2026-06-18, the second guide-profile
-   shadow gate has passed; its isolated active gray and real-Agent rerun gates
-   are still pending.
+   shadow, isolated active gray, and real-Agent admission rerun gates have
+   passed.
 2. A real tool-executing Agent E2E shows no completion regression and no
    hard-boundary regression.
 3. External backend candidates have task-level completion evidence, not only
@@ -158,8 +199,8 @@ closed:
 The current product claim is:
 
 > Aionis can run the selected closed-loop admission candidate in isolated active
-> gray mode for the internal `closed-loop-prior-fresh-2` profile, with bounded
-> downgrade-only behavior and real-Agent admission rerun evidence.
+> gray mode for two internal `/v1/guide` profiles, with bounded downgrade-only
+> behavior and real-Agent admission rerun evidence.
 
 The current product claim is not:
 
