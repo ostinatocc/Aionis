@@ -355,6 +355,11 @@ Candidate policies stay offline by default. After a candidate has passed
 holdout evaluation, counterfactual rerun, and real-Agent rerun, operators should
 first run an online shadow experiment:
 
+For the current candidate status and exact active gray operating procedure, see:
+
+- `docs/AIONIS_ADMISSION_POLICY_PROMOTION_STATUS.md`
+- `docs/AIONIS_ADMISSION_ACTIVE_GRAY_RUNBOOK.md`
+
 ```bash
 AIONIS_ADMISSION_CANDIDATE_POLICY_MODE=shadow
 ```

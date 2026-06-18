@@ -1,0 +1,146 @@
+# Aionis Admission Policy Promotion Status
+
+Status: product evidence register
+Last updated: 2026-06-18
+
+This document records the current promotion state for the selected admission
+candidate policy. It is intentionally conservative: evidence can make a policy
+eligible for a narrower gate, but it does not silently promote the policy into
+the default Runtime path.
+
+## Candidate
+
+| Field | Value |
+|---|---|
+| Candidate policy | `candidate_project_context_closed_loop_inspect` |
+| Current status | `eligible_for_isolated_active_gray` |
+| Default Runtime status | `not_default_active` |
+| External backend status | `shadow_only` |
+| Full tool-executing Agent E2E status | `not_yet_validated` |
+
+The selected candidate is a closed-loop admission policy. Its current evidence
+supports isolated active gray testing on the `closed-loop-prior-fresh-2`
+internal Runtime profile. It does not authorize:
+
+- default active mode;
+- external-backend active rollout;
+- broad product claims across all memory lanes;
+- claims about full coding-Agent task completion.
+
+## Evidence Chain
+
+| Stage | Evidence | Result |
+|---|---|---|
+| Offline dataset and holdout | `docs/research/2026-06-18-admission-dataset-batch-baseline.md` | Candidate beat recorded policy on holdout calibration and became eligible for manual review. |
+| Counterfactual rerun | Admission rerun reports under `admission-dataset/reports/latest/` | Candidate preserved hard-boundary and positive-capture gates under deterministic replay. |
+| Real LLM admission rerun | `docs/research/2026-06-18-admission-current-runid-real-agent.md` | Candidate preserved accepted action rate and hard-boundary gates on the accumulated dataset. |
+| Online guide shadow | `docs/research/2026-06-18-admission-online-shadow-100gate.md` | Shadow projection reached 120 rows and 12 task signatures without prompt inclusion or Runtime mutation. |
+| External targeted shadow | `docs/research/2026-06-18-admission-targeted-external-shadow-100gate.md` | External candidates stayed shadow-only; direct-use dropped, but this is not guide-path active evidence. |
+| Isolated active gray | `docs/research/2026-06-18-admission-active-gray-closed-loop-100gate.md` | Active projection changed prompt-facing guide output in the bounded downgrade path only. |
+| Active gray real-Agent rerun | `docs/research/2026-06-18-admission-active-gray-real-agent-rerun.md` | Real LLM rerun preserved accepted action rate and reduced negative direct risk for this profile. |
+
+## Gate Results
+
+### Online `/v1/guide` Shadow
+
+The 100-row shadow gate for `closed-loop-prior-fresh-2` produced:
+
+- `120` admission rows;
+- `12` task signatures;
+- `120 / 120` guide calls with a shadow projection;
+- `24` proposed downgrades from `use_now` to `inspect_before_use`;
+- `0` Agent-prompt inclusions;
+- `0` Runtime mutations;
+- `0` hard-boundary upgrades;
+- negative direct count reduced from `48` to `24`;
+- missed positive delta stayed `0`.
+
+This is sufficient to start isolated active gray testing for the same profile.
+It is not evidence for default active mode.
+
+### External Targeted Shadow
+
+The targeted external profile produced:
+
+- `144` admission rows;
+- external `governMemory` candidate coverage only;
+- direct-use reduced from `48` to `0`;
+- unused direct attention reduced from `48` to `0`;
+- `0` hard-boundary upgrades;
+- missed positive delta stayed `0`.
+
+This remains `shadow_only`. It does not prove online `/v1/guide` active
+behavior, and it may be over-conservative for external current memories until
+task-level completion evidence exists.
+
+### Isolated Active Gray
+
+The active gray run for `closed-loop-prior-fresh-2` produced:
+
+- `120` admission rows;
+- `12` task signatures;
+- `120 / 120` guide calls with an active projection;
+- `48` active source-map entries;
+- `48` applied downgrades from `use_now` to `inspect_before_use`;
+- `120` expected Agent-prompt inclusions;
+- `0` Runtime mutations;
+- `0` hard-boundary upgrades.
+
+After active projection, the exported rows had:
+
+- `72` direct-use rows;
+- `48` inspect-before-use rows;
+- `48` positive direct rows;
+- `24` negative direct rows;
+- `33.3%` direct-use negative rate.
+
+The offline candidate had no additional changes to propose over the active
+surface, which confirms that active projection reached the guide output.
+
+### Active Gray Real-Agent Rerun
+
+The real LLM rerun over the isolated active gray dataset produced:
+
+| Metric | Recorded Runtime policy | Candidate policy |
+|---|---:|---:|
+| Accepted action rate | 50.0% | 50.0% |
+| Hard-boundary direct-use rate | 0.0% | 0.0% |
+| Negative direct-risk rate | 50.0% | 33.3% |
+| Missed actionable rate | 0.0% | 0.0% |
+| Boundary ignored | 0 | 0 |
+
+This supports continued isolated active gray testing. It does not close the
+full tool-executing Agent E2E gate.
+
+## Required Gates Before Default Active
+
+Do not promote the candidate to default active mode until all of these gates are
+closed:
+
+1. A second `/v1/guide` online profile, or a mixed profile, passes the same
+   shadow and active gray checks.
+2. A real tool-executing Agent E2E shows no completion regression and no
+   hard-boundary regression.
+3. External backend candidates have task-level completion evidence, not only
+   admission-row shadow evidence.
+4. Protocol compatibility is documented for the chosen real-Agent model.
+   `deepseek-chat` returned strict JSON in the current rerun. The attempted
+   `deepseek-v4-flash` run returned only `reasoning_content` and hit the
+   completion limit, so it is not currently suitable for this strict JSON rerun
+   without protocol handling work.
+5. The policy has a rollback plan and an operator-visible record in the Flight
+   Recorder / admission reports.
+
+## Product Boundary
+
+The current product claim is:
+
+> Aionis can run the selected closed-loop admission candidate in isolated active
+> gray mode for the internal `closed-loop-prior-fresh-2` profile, with bounded
+> downgrade-only behavior and real-Agent admission rerun evidence.
+
+The current product claim is not:
+
+> Aionis has replaced its default admission policy with a learned or tuned
+> candidate policy across all memory backends.
+
