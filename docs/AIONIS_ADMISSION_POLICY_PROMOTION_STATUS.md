@@ -13,15 +13,15 @@ the default Runtime path.
 | Field | Value |
 |---|---|
 | Candidate policy | `candidate_project_context_closed_loop_inspect` |
-| Current status | `eligible_for_multi_profile_isolated_active_gray_with_tool_e2e_pilot` |
+| Current status | `eligible_for_multi_profile_isolated_active_gray_with_two_tool_e2e_pilots` |
 | Default Runtime status | `not_default_active` |
 | External backend status | `shadow_only` |
-| Full tool-executing Agent E2E status | `pilot_passed_single_base_trap` |
+| Full tool-executing Agent E2E status | `pilot_passed_two_base_traps` |
 
 The selected candidate is a closed-loop admission policy. Its current evidence
 supports isolated active gray testing on the `closed-loop-prior-fresh-2` and
-`closed-loop-prior-fresh` internal Runtime guide profiles. A first
-tool-executing external Agent pilot also passed on one base trap family. This
+`closed-loop-prior-fresh` internal Runtime guide profiles. Two small
+tool-executing external Agent pilots also passed on two base trap families. This
 does not
 authorize:
 
@@ -45,6 +45,7 @@ authorize:
 | Second guide active gray | `docs/research/2026-06-18-admission-second-guide-active-gray.md` | The neighboring `/v1/guide` profile passed isolated active gray with bounded downgrade-only behavior. |
 | Second guide active gray real-Agent rerun | `docs/research/2026-06-18-admission-second-guide-active-gray-real-agent-rerun.md` | Real LLM rerun preserved accepted action rate and reduced negative direct risk for the second guide profile. |
 | Tool-executing Agent E2E pilot | `docs/research/2026-06-18-admission-active-tool-executing-agent-e2e.md` | Active mode preserved 0% wrong writes, 0% wrong attention, 100% accepted direction, and 100% action completion on one base trap across four hygiene levels. |
+| Second tool-executing Agent E2E pilot | `docs/research/2026-06-18-admission-active-tool-executing-agent-e2e-second-base.md` | Active mode preserved the same hard gates on a second base trap family, including a missing active target continuation case. |
 
 ## Gate Results
 
@@ -176,25 +177,20 @@ The real LLM rerun over the second guide active gray dataset produced:
 This closes the second guide-profile real-Agent admission rerun gate. It still
 does not close the full tool-executing Agent E2E gate.
 
-### Tool-Executing Agent E2E Pilot
+### Tool-Executing Agent E2E Pilots
 
-The first active-vs-off tool-executing pilot used the external Agent E2E Phase 2
-gradient runner on one base trap family across four hygiene levels.
+The active-vs-off tool-executing pilots used the external Agent E2E Phase 2
+gradient runner across two base trap families and four hygiene levels each.
 
-| Metric | Policy off | Policy active |
-|---|---:|---:|
-| Completed records | 4 / 4 | 4 / 4 |
-| Wrong-branch write rate | 0.0% | 0.0% |
-| Wrong-branch attention rate | 0.0% | 0.0% |
-| Accepted-direction rate | 100.0% | 100.0% |
-| Action-completion rate | 100.0% | 100.0% |
-| Report-conflict rate | 0.0% | 0.0% |
-| Terminal-inspect rate | 0.0% | 0.0% |
-| Prompt tokens | 19,336 | 18,047 |
+| Base trap family | Policy off | Policy active | Result |
+|---|---:|---:|---|
+| `vitejs-vite-4551a4b-banner-legacy-script` | 4 / 4 completed | 4 / 4 completed | Active preserved 0% wrong writes, 0% wrong attention, 100% accepted direction, and 100% action completion. |
+| `vitejs-vite-5edd1d5-bundled-dev-refactor` | 4 / 4 completed | 4 / 4 completed | Active preserved the same hard gates and created/restored the missing active target instead of falling back to the retired route. |
 
-This closes a narrow pilot gate for real tool execution. It does not authorize
-default active rollout because it is one base trap, one Aionis arm, and one
-file-choice Agent profile.
+These close two narrow pilot gates for real tool execution. They do not
+authorize default active rollout because they are still Aionis-only,
+Vite-family, file-choice Agent pilots rather than a broad cross-repository or
+five-arm comparison.
 
 ## Required Gates Before Default Active
 
@@ -207,7 +203,8 @@ closed:
    passed.
 2. A real tool-executing Agent E2E shows no completion regression and no
    hard-boundary regression across more than one base trap family. As of
-   2026-06-18, the first one-base-trap pilot passed.
+   2026-06-18, two Vite-family base trap pilots have passed; a cross-repository
+   or five-arm run is still required before default active rollout.
 3. External backend candidates have task-level completion evidence, not only
    admission-row shadow evidence.
 4. Protocol compatibility is documented for the chosen real-Agent model.
@@ -224,8 +221,8 @@ The current product claim is:
 
 > Aionis can run the selected closed-loop admission candidate in isolated active
 > gray mode for two internal `/v1/guide` profiles, with bounded downgrade-only
-> behavior, real-Agent admission rerun evidence, and a first small
-> tool-executing Agent E2E pilot.
+> behavior, real-Agent admission rerun evidence, and two small tool-executing
+> Agent E2E pilots.
 
 The current product claim is not:
 
