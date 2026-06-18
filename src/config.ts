@@ -7,7 +7,7 @@ const RuntimeModeSchema = z.enum(["local", "service", "cloud"]);
 const EditionSchema = z.enum(["lite", "server"]);
 const AbstractionPolicyProfileSchema = z.enum(["conservative", "balanced", "aggressive"]);
 const InspectBeforeUseModeSchema = z.enum(["shadow", "active"]);
-const AdmissionCandidatePolicyModeSchema = z.enum(["off", "active"]);
+const AdmissionCandidatePolicyModeSchema = z.enum(["off", "shadow", "active"]);
 const RecallAnnProviderSchema = z.enum(["off", "local"]);
 const RecallEngineModeSchema = z.enum(["semantic_scan", "hybrid"]);
 

@@ -49,6 +49,15 @@ test("inspect-before-use active projection is explicit opt-in", async () => {
 test("admission candidate policy active projection is explicit opt-in", async () => {
   await withIsolatedEnv(
     {
+      AIONIS_ADMISSION_CANDIDATE_POLICY_MODE: "shadow",
+    },
+    () => {
+      const env = loadEnv();
+      assert.equal(env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE, "shadow");
+    },
+  );
+  await withIsolatedEnv(
+    {
       AIONIS_ADMISSION_CANDIDATE_POLICY_MODE: "active",
     },
     () => {

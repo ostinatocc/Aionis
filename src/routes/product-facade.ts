@@ -24,6 +24,7 @@ import { buildAionisAgentFlightRecorderReport } from "../memory/agent-flight-rec
 import {
   AIONIS_ADMISSION_CANDIDATE_POLICY_ACTIVE_PROJECTION_REASON,
   resolveAionisAdmissionCandidatePolicyActiveProjection,
+  type AionisAdmissionCandidatePolicyActiveProjection,
 } from "../memory/admission-policy-active-projection.js";
 import { buildClaimLedgerProjection } from "../memory/claim-ledger-projection.js";
 import { governExternalMemoryCandidates } from "../memory/external-candidate-admission.js";
@@ -1938,7 +1939,7 @@ async function resolveInspectBeforeUseActiveProjectionIds(args: {
   return uniqueStrings([...repeatedUnusedIds, ...timeDecayIds]);
 }
 
-async function resolveAdmissionCandidatePolicyActiveProjectionIds(args: {
+async function resolveAdmissionCandidatePolicyGuideProjection(args: {
   app: FastifyInstance;
   req: FastifyRequest;
   env: Env;
@@ -1947,9 +1948,10 @@ async function resolveAdmissionCandidatePolicyActiveProjectionIds(args: {
   scope: string;
   memoryPacket: AionisMemoryPacket | null;
   agentContext: AionisAgentContext;
-}): Promise<string[]> {
+  mode: "shadow" | "active";
+}): Promise<AionisAdmissionCandidatePolicyActiveProjection | null> {
   const currentUseNowIds = uniqueStrings(args.agentContext.use_now_memory_ids);
-  if (currentUseNowIds.length === 0 || !args.memoryPacket) return [];
+  if (!args.memoryPacket) return null;
   const actor = args.parsed.consumer_agent_id ?? args.env.LITE_LOCAL_ACTOR_ID;
   const slotByMemoryId = new Map<string, Record<string, unknown>>();
   for (const memoryId of currentUseNowIds) {
@@ -1974,9 +1976,10 @@ async function resolveAdmissionCandidatePolicyActiveProjectionIds(args: {
     agent_context: args.agentContext,
     memory_packet: args.memoryPacket,
     slot_by_memory_id: slotByMemoryId,
+    mode: args.mode,
   });
-  if (projection.hard_boundary_upgrade_count > 0) return [];
-  return projection.downgraded_memory_ids;
+  if (projection.hard_boundary_upgrade_count > 0) return null;
+  return projection;
 }
 
 async function buildUnusedExposureObservation(args: {
@@ -2936,9 +2939,13 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       activeProjectionApplied = projectedContext !== agentContext;
       agentContext = projectedContext;
     }
+    let admissionCandidatePolicyProjection: AionisAdmissionCandidatePolicyActiveProjection | null = null;
     let admissionCandidatePolicyProjectionApplied = false;
-    if (env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE === "active") {
-      const candidatePolicyProjectionIds = await resolveAdmissionCandidatePolicyActiveProjectionIds({
+    if (
+      env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE === "shadow"
+      || env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE === "active"
+    ) {
+      admissionCandidatePolicyProjection = await resolveAdmissionCandidatePolicyGuideProjection({
         app,
         req,
         env,
@@ -2947,17 +2954,20 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
         scope,
         memoryPacket,
         agentContext,
+        mode: env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE,
       });
-      const projectedContext = applyAionisInspectBeforeUseActiveProjection({
-        agent_context: agentContext,
-        memory_packet: memoryPacket,
-        candidate_memory_ids: candidatePolicyProjectionIds,
-        reason: AIONIS_ADMISSION_CANDIDATE_POLICY_ACTIVE_PROJECTION_REASON,
-        context_char_budget: parsed.context_char_budget,
-        context_compaction_profile: parsed.context_compaction_profile ?? parsed.context_optimization_profile ?? null,
-      });
-      admissionCandidatePolicyProjectionApplied = projectedContext !== agentContext;
-      agentContext = projectedContext;
+      if (env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE === "active" && admissionCandidatePolicyProjection) {
+        const projectedContext = applyAionisInspectBeforeUseActiveProjection({
+          agent_context: agentContext,
+          memory_packet: memoryPacket,
+          candidate_memory_ids: admissionCandidatePolicyProjection.downgraded_memory_ids,
+          reason: AIONIS_ADMISSION_CANDIDATE_POLICY_ACTIVE_PROJECTION_REASON,
+          context_char_budget: parsed.context_char_budget,
+          context_compaction_profile: parsed.context_compaction_profile ?? parsed.context_optimization_profile ?? null,
+        });
+        admissionCandidatePolicyProjectionApplied = projectedContext !== agentContext;
+        agentContext = projectedContext;
+      }
     }
     const exposureWrite = await writeGuideExposureLedger({
       app,
@@ -2983,6 +2993,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       guide_trace_id: guideTraceId,
       agent_context: agentContext,
       ...(claimLedgerProjection ? { claim_ledger_projection: claimLedgerProjection } : {}),
+      ...(admissionCandidatePolicyProjection ? { admission_candidate_policy_projection: admissionCandidatePolicyProjection } : {}),
       ...(includePackets ? {
         memory_packet: memoryPacket,
         guide_packet: guidePacket,
@@ -3005,6 +3016,9 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
           ...(claimLedgerContextProjection.changed ? ["claim_ledger_agent_context_projection"] : []),
           ...(agentContextMode === "compact_agent" ? ["compact_agent_context"] : []),
           ...(activeProjectionApplied ? ["inspect_before_use_active_projection"] : []),
+          ...(admissionCandidatePolicyProjection && env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE === "shadow"
+            ? ["admission_candidate_policy_shadow_projection"]
+            : []),
           ...(admissionCandidatePolicyProjectionApplied ? ["admission_candidate_policy_active_projection"] : []),
           ...(memoryContractVisible ? ["memory_contract"] : []),
           ...(premiseFirewallVisible ? ["premise_firewall"] : []),

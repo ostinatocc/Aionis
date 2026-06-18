@@ -349,11 +349,27 @@ sets `eligible_for_manual_review=true`. This means manual review is allowed. It
 still does not authorize Runtime admission changes; the next gate is a
 counterfactual Agent rerun.
 
-## Runtime Gray Projection
+## Runtime Shadow And Gray Projection
 
 Candidate policies stay offline by default. After a candidate has passed
-holdout evaluation, counterfactual rerun, and real-Agent rerun, operators can
-run a local gray experiment by enabling:
+holdout evaluation, counterfactual rerun, and real-Agent rerun, operators should
+first run an online shadow experiment:
+
+```bash
+AIONIS_ADMISSION_CANDIDATE_POLICY_MODE=shadow
+```
+
+Shadow mode is read-only:
+
+- default is `off`;
+- it only applies inside `/v1/guide`;
+- it emits `admission_candidate_policy_projection` on the guide response;
+- it records `admission_candidate_policy_shadow_projection` in the source map;
+- it does not change `agent_context`, prompt contents, stored memory rows,
+  lifecycle state, authority state, or feedback counters.
+
+Only after shadow evidence has been reviewed should operators run a local gray
+experiment by enabling:
 
 ```bash
 AIONIS_ADMISSION_CANDIDATE_POLICY_MODE=active
@@ -361,8 +377,8 @@ AIONIS_ADMISSION_CANDIDATE_POLICY_MODE=active
 
 The active mode is intentionally narrow:
 
-- default is `off`;
 - it only applies inside `/v1/guide`;
+- it emits the same `admission_candidate_policy_projection` audit object;
 - it only downgrades current `use_now` memories to `inspect_before_use`;
 - it never upgrades `inspect_before_use`, `do_not_use`, `rehydrate`, or
   `not_agent_facing` decisions into `use_now`;

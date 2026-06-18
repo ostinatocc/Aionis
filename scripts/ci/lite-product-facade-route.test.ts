@@ -814,6 +814,115 @@ test("product memory admission route governs external backend candidates without
   }
 });
 
+test("product guide can opt into admission candidate policy shadow projection without changing agent context", async () => {
+  const app = Fastify();
+  const env = {
+    ...liteEnv(),
+    AIONIS_ADMISSION_CANDIDATE_POLICY_MODE: "shadow",
+  };
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("admission-candidate-policy-shadow");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+    const observe = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        actor: "local-user",
+        auto_embed: true,
+        nodes: [
+          {
+            client_id: "admission-shadow-project",
+            type: "topic",
+            title: "ADMISSION_SHADOW_POLICY_ROUTE project context",
+            text_summary: "ADMISSION_SHADOW_POLICY_ROUTE accepted target is src/current-route.ts.",
+            tier: "warm",
+            slots: {
+              positive_attributed_use_count: 1,
+            },
+            confidence: 0.95,
+            salience: 0.95,
+          },
+          {
+            client_id: "admission-shadow-fact",
+            type: "concept",
+            title: "ADMISSION_SHADOW_POLICY_ROUTE fact candidate",
+            text_summary: "ADMISSION_SHADOW_POLICY_ROUTE related fact should remain recorded as use_now in shadow mode.",
+            tier: "warm",
+            confidence: 0.94,
+            salience: 0.94,
+          },
+        ],
+      },
+    });
+    assert.equal(observe.statusCode, 200);
+    const writtenNodes = observe.json().memory_write.nodes;
+    const projectMemoryId = writtenNodes.find((entry: Record<string, unknown>) =>
+      entry.client_id === "admission-shadow-project"
+    )?.id;
+    const factMemoryId = writtenNodes.find((entry: Record<string, unknown>) =>
+      entry.client_id === "admission-shadow-fact"
+    )?.id;
+    assert.equal(typeof projectMemoryId, "string");
+    assert.equal(typeof factMemoryId, "string");
+
+    const guide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "Continue ADMISSION_SHADOW_POLICY_ROUTE using current route context.",
+        consumer_agent_id: "local-user",
+        limit: 8,
+      },
+    });
+
+    assert.equal(guide.statusCode, 200);
+    const body = guide.json();
+    assert.equal(
+      body.source_map.internal_surfaces_used.includes("admission_candidate_policy_shadow_projection"),
+      true,
+    );
+    assert.equal(
+      body.source_map.internal_surfaces_used.includes("admission_candidate_policy_active_projection"),
+      false,
+    );
+    assert.equal(body.admission_candidate_policy_projection.mode, "shadow");
+    assert.equal(body.admission_candidate_policy_projection.agent_prompt_included, false);
+    assert.equal(body.admission_candidate_policy_projection.runtime_mutation, false);
+    assert.equal(body.admission_candidate_policy_projection.shadow_policy_report.mode, "shadow_only");
+    assert.equal(
+      body.admission_candidate_policy_projection.shadow_policy_report.hard_boundary_upgrade_count,
+      0,
+    );
+    assert.equal(
+      body.agent_context.use_now_memory_ids.includes(projectMemoryId),
+      true,
+    );
+    assert.equal(
+      body.agent_context.use_now_memory_ids.includes(factMemoryId),
+      true,
+    );
+    assert.equal(
+      body.agent_context.inspect_before_use_memory_ids.includes(factMemoryId),
+      false,
+    );
+    assert.equal(
+      body.admission_candidate_policy_projection.downgraded_memory_ids.includes(factMemoryId),
+      true,
+    );
+  } finally {
+    await liteWriteStore.close();
+    await liteRecallStore.close();
+    await app.close();
+  }
+});
+
 test("product guide can opt into admission candidate policy active projection", async () => {
   const app = Fastify();
   const env = {

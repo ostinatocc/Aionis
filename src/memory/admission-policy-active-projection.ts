@@ -17,9 +17,10 @@ export const AIONIS_ADMISSION_CANDIDATE_POLICY_ACTIVE_PROJECTION_REASON =
   "admission_candidate_policy_active_projection";
 
 export type AionisAdmissionCandidatePolicyActiveProjection = {
-  contract_version: "aionis_admission_candidate_policy_active_projection_v1";
-  intended_use: "guide_active_projection_gate";
-  agent_prompt_included: true;
+  contract_version: "aionis_admission_candidate_policy_guide_projection_v1";
+  intended_use: "guide_shadow_projection_audit" | "guide_active_projection_gate";
+  mode: "shadow" | "active";
+  agent_prompt_included: boolean;
   runtime_mutation: false;
   authority_mutation: false;
   shadow_policy_report: AionisMemoryAdmissionShadowPolicyReport;
@@ -115,7 +116,9 @@ export function resolveAionisAdmissionCandidatePolicyActiveProjection(args: {
   agent_context: AionisAgentContext;
   memory_packet: AionisMemoryPacket | null;
   slot_by_memory_id?: RuntimeSlotMap | null;
+  mode?: "shadow" | "active" | null;
 }): AionisAdmissionCandidatePolicyActiveProjection {
+  const mode = args.mode === "shadow" ? "shadow" : "active";
   const slotByMemoryId = args.slot_by_memory_id ?? new Map<string, Record<string, unknown>>();
   const report = buildAionisMemoryAdmissionShadowPolicyReport({
     source: "memory_decision_trace",
@@ -132,9 +135,10 @@ export function resolveAionisAdmissionCandidatePolicyActiveProjection(args: {
     currentUseNowIds.has(memoryId)
   );
   return {
-    contract_version: "aionis_admission_candidate_policy_active_projection_v1",
-    intended_use: "guide_active_projection_gate",
-    agent_prompt_included: true,
+    contract_version: "aionis_admission_candidate_policy_guide_projection_v1",
+    intended_use: mode === "active" ? "guide_active_projection_gate" : "guide_shadow_projection_audit",
+    mode,
+    agent_prompt_included: mode === "active",
     runtime_mutation: false,
     authority_mutation: false,
     shadow_policy_report: report,
