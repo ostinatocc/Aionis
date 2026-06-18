@@ -539,6 +539,10 @@ await aionis.feedback(feedbackFromGuide({
 }));
 ```
 
+`feedbackFromGuide()` inherits the guide consumer identity when available, so
+private Agent memory feedback is attributed to the same Agent that received the
+guide. Your host still supplies only the memory IDs the Agent actually used.
+
 Full SDK guide: [docs/AIONIS_SDK_QUICKSTART.md](docs/AIONIS_SDK_QUICKSTART.md).
 
 For token-sensitive Agent calls, opt into compact prompt rendering:

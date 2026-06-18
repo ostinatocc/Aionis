@@ -243,6 +243,7 @@ test("@aionis/sdk builds plan asset observe events", () => {
 test("@aionis/sdk guide helpers keep Agent prompt and feedback attribution bounded", () => {
   const guide = {
     guide_trace_id: "guide-1",
+    consumer_agent_id: "sdk-agent",
     agent_context: {
       contract_version: "aionis_agent_context_v1",
       prompt_text: "AIONIS_CTX v2\ncurrent: n=Use scoped memory.",
@@ -370,13 +371,15 @@ test("@aionis/sdk guide helpers keep Agent prompt and feedback attribution bound
       evidence_use: "counter_evidence_only",
     },
   ]);
-  assert.deepEqual(feedbackFromGuide({
+  const feedback = feedbackFromGuide({
     guide,
     reason: "Agent used mem-1.",
     run_id: "run-1",
     outcome: "positive",
     used_memory_ids: ["mem-1"],
-  }).guide_trace_id, "guide-1");
+  });
+  assert.equal(feedback.guide_trace_id, "guide-1");
+  assert.equal(feedback.actor, "sdk-agent");
   assert.throws(
     () => feedbackFromGuide({
       guide,

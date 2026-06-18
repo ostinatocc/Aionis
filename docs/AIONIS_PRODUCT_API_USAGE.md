@@ -577,6 +577,7 @@ required for normal product use.
 | Field | Consumer | Meaning |
 |---|---|---|
 | `guide_trace_id` | Host / measure / audit | Stable id for the persisted guide exposure ledger. Pass it back during feedback attribution. |
+| `consumer_agent_id` / `consumer_team_id` | Host / SDK helper | Consumer identity used for private/team memory visibility and feedback attribution. `consumer_team_id` is present only when supplied. |
 | `agent_context` | Agent / host prompt builder | Default product output. |
 | `memory_packet` | Host / measure / audit | Returned only with `include_packets: true`. |
 | `guide_packet` | Host / measure / audit | Returned only with `include_packets: true`. |
@@ -612,8 +613,10 @@ admission.
 
 Do not pass `memory_packet`, `guide_packet`, `memory_decision_trace`,
 `memory_decision_audit`, raw rows, or raw slots to the Agent by default.
-Keep `guide_trace_id` in the host run record. It is not agent-facing; it lets
-Aionis later know exactly which memories were exposed by that guide call.
+Keep `guide_trace_id` and the guide consumer identity in the host run record.
+They are not agent-facing; they let Aionis later know exactly which memories
+were exposed by that guide call and which private/team memory boundary should
+receive feedback attribution.
 
 ### Example
 

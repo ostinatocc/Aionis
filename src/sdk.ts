@@ -2269,6 +2269,18 @@ export function memoryIdsFromGuide(guide: unknown): string[] {
   return Array.from(new Set(ids));
 }
 
+function actorFromGuide(guide: unknown): string | undefined {
+  const record = asRecord(guide);
+  const topLevel = coerceString(record?.consumer_agent_id);
+  if (topLevel) return topLevel;
+  const memoryPacketActor = asRecord(asRecord(record?.memory_packet)?.actor);
+  const memoryPacketAgent = coerceString(memoryPacketActor?.consumer_agent_id);
+  if (memoryPacketAgent) return memoryPacketAgent;
+  const guidePacketActor = asRecord(asRecord(record?.guide_packet)?.actor);
+  const guidePacketAgent = coerceString(guidePacketActor?.consumer_agent_id);
+  return guidePacketAgent ?? undefined;
+}
+
 export function routeContractFromGuide(guide: unknown): AionisRouteContract | null {
   const contract = asRecord(asRecord(agentContextFromGuide(guide))?.route_contract);
   if (!contract) return null;
@@ -2504,7 +2516,7 @@ export function feedbackFromGuide(input: AionisFeedbackFromGuideInput): AionisFe
     run_id: input.run_id,
     outcome: input.outcome,
     used_surface: input.used_surface ?? "use_now",
-    actor: input.actor,
+    actor: input.actor ?? actorFromGuide(input.guide),
     guide_trace_id: guideTraceId,
     used_memory_ids: input.used_memory_ids,
     verifier_status: input.verifier_status,

@@ -148,7 +148,8 @@ Agent by default.
 For a focused JSONL export path, see
 [AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md](AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md).
 `feedbackFromGuide()` still requires the host to provide the memory IDs the
-Agent actually used; it only validates that those IDs were exposed by the guide.
+Agent actually used; it inherits the guide consumer identity when available and
+validates that those IDs were exposed by the guide.
 `measureInputFromGuideLoop()` and `snapshotInputFromGuideLoop()` keep the
 normal product trace and operator snapshot payloads out of handwritten app code.
 

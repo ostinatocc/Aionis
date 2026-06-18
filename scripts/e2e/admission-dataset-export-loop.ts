@@ -202,6 +202,18 @@ function textArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
+function rehydrateMemoryIdsFromContext(context: Record<string, unknown>): string[] {
+  return recordArray(context.rehydrate_hints)
+    .map((entry) => entry.memory_id)
+    .filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+}
+
+function feedbackChangedCount(feedback: unknown): number {
+  const effect = asRecord(asRecord(feedback)?.forget_effect);
+  const parsed = Number(effect?.changed_count);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function recordArray(value: unknown): Array<Record<string, unknown>> {
   return Array.isArray(value)
     ? value.map((entry) => asRecord(entry)).filter((entry): entry is Record<string, unknown> => !!entry)
@@ -367,6 +379,7 @@ async function runAdmissionRound(args: {
     outcome: args.spec.outcome,
     used_memory_ids: [activeMemoryId],
   }));
+  assertCondition(feedbackChangedCount(feedback) > 0, `${args.spec.round_id} feedback did not update the active memory node`);
   const taskId = `task:${args.runId}:${args.spec.round_id}`;
   const measure = await client.measure<Record<string, unknown>>(measureInputFromGuideLoop({
     task: {
@@ -615,7 +628,54 @@ async function runClosedLoopPriorRound(args: {
     const promptText = String(context.prompt_text);
     assertPromptBoundary(promptText, `${args.spec.round_id} closed-loop prior step ${step}`);
     const useNowIds = textArray(context.use_now_memory_ids);
-    assertCondition(useNowIds.includes(activeMemoryId), `${args.spec.round_id} step ${step} active memory did not reach use_now`);
+    const inspectBeforeUseIds = textArray(context.inspect_before_use_memory_ids);
+    const doNotUseIds = textArray(context.do_not_use_memory_ids);
+    const rehydrateIds = rehydrateMemoryIdsFromContext(context);
+    const activeMemoryReachedAgent =
+      useNowIds.includes(activeMemoryId)
+      || inspectBeforeUseIds.includes(activeMemoryId)
+      || doNotUseIds.includes(activeMemoryId)
+      || rehydrateIds.includes(activeMemoryId);
+    assertCondition(activeMemoryReachedAgent, `${args.spec.round_id} step ${step} active memory did not reach an agent-facing surface`);
+
+    const taskId = `task:${args.runId}:${args.spec.round_id}:step-${step}`;
+    const taskSignature = `admission-dataset-export:${args.spec.round_id}`;
+    if (!useNowIds.includes(activeMemoryId)) {
+      assertCondition(outcome === "negative", `${args.spec.round_id} step ${step} non-negative memory was gated before direct use`);
+      const measure = await client.measure<Record<string, unknown>>(measureInputFromGuideLoop({
+        task: {
+          task_id: taskId,
+          run_id: `run:${args.runId}:${args.spec.round_id}:step-${step}`,
+          task_signature: taskSignature,
+          task_family: "memory_admission_dataset_closed_loop_prior",
+        },
+        before_guide: guide,
+        after_guide: guide,
+        sufficient_evidence: true,
+        evidence_ids: [
+          `memory:${activeMemoryId}`,
+          `gate:${args.runId}:${args.spec.round_id}:step-${step}`,
+        ],
+      }));
+      const admissionRecord = asRecord(asRecord(measure.memory_decision_trace)?.admission_record);
+      assertCondition(measure.contract_version === "aionis_measure_result_v1", `${args.spec.round_id} step ${step} gated measure did not return measure result v1`);
+      assertCondition(
+        admissionRecord?.contract_version === "aionis_memory_admission_record_v1",
+        `${args.spec.round_id} step ${step} gated measure missing memory admission record`,
+      );
+      const stepRows = memoryAdmissionDatasetRowsFromRecord(admissionRecord as unknown as AionisMemoryAdmissionRecord, {
+        run_id: `run:${args.runId}:${args.spec.round_id}:step-${step}`,
+        task_id: taskId,
+        task_signature: taskSignature,
+      });
+      const activeRow = stepRows.find((entry) => entry.memory_id === activeMemoryId);
+      assertCondition(
+        activeRow?.admission_action !== "use_now",
+        `${args.spec.round_id} step ${step} gated active row still exported use_now`,
+      );
+      rows.push(...stepRows);
+      continue;
+    }
 
     const feedback = await client.feedback<Record<string, unknown>>(feedbackFromGuide({
       guide,
@@ -624,8 +684,7 @@ async function runClosedLoopPriorRound(args: {
       outcome,
       used_memory_ids: [activeMemoryId],
     }));
-    const taskId = `task:${args.runId}:${args.spec.round_id}:step-${step}`;
-    const taskSignature = `admission-dataset-export:${args.spec.round_id}`;
+    assertCondition(feedbackChangedCount(feedback) > 0, `${args.spec.round_id} step ${step} feedback did not update the active memory node`);
     const measure = await client.measure<Record<string, unknown>>(measureInputFromGuideLoop({
       task: {
         task_id: taskId,
@@ -664,8 +723,12 @@ async function runClosedLoopPriorRound(args: {
     lastActiveRow?.closed_loop_effect_state === args.spec.expected_state_on_last_row,
     `${args.spec.round_id} closed-loop prior state did not reach ${args.spec.expected_state_on_last_row}`,
   );
+  const activeProjectionEnabled = process.env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE === "active";
+  const expectedRepeatedNegativePosture = activeProjectionEnabled && args.spec.outcomes.every((entry) => entry === "negative")
+    ? false
+    : args.spec.expected_repeated_negative_posture_on_last_row;
   assertCondition(
-    lastActiveRow?.repeated_negative_posture === args.spec.expected_repeated_negative_posture_on_last_row,
+    lastActiveRow?.repeated_negative_posture === expectedRepeatedNegativePosture,
     `${args.spec.round_id} repeated negative posture mismatch`,
   );
   const jsonl = memoryAdmissionDatasetJsonlFromRows(enrichedRows);

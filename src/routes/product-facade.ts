@@ -2978,6 +2978,8 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       contract_version: "aionis_guide_result_v1",
       tenant_id: tenantId,
       scope,
+      consumer_agent_id: parsed.consumer_agent_id ?? env.LITE_LOCAL_ACTOR_ID,
+      ...(parsed.consumer_team_id ? { consumer_team_id: parsed.consumer_team_id } : {}),
       guide_trace_id: guideTraceId,
       agent_context: agentContext,
       ...(claimLedgerProjection ? { claim_ledger_projection: claimLedgerProjection } : {}),
