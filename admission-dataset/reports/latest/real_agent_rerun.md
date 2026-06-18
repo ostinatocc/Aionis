@@ -8,15 +8,15 @@ Real Agent rerun candidate_project_context_closed_loop_inspect: accepted_action_
 - LLM model: `deepseek-chat`
 - Evaluated split: `holdout`
 - Groups: 28
-- Rows: 332 / 626
+- Rows: 467 / 776
 - Candidate: `candidate_project_context_closed_loop_inspect`
 
 ## Arms
 
 | Arm | Accepted action | Hard-boundary direct-use | Negative direct risk | Non-actionable direct attention | Missed actionable | Boundary ignored | Request chars |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Recorded Runtime policy | 42.9% | 0.0% | 25.0% | 4 | 0.0% | 0 | 432574 |
-| Candidate policy: candidate_project_context_closed_loop_inspect | 42.9% | 0.0% | 10.7% | 0 | 0.0% | 0 | 434561 |
+| Recorded Runtime policy | 42.9% | 0.0% | 21.4% | 4 | 0.0% | 0 | 575901 |
+| Candidate policy: candidate_project_context_closed_loop_inspect | 42.9% | 0.0% | 10.7% | 0 | 0.0% | 0 | 578438 |
 
 ## Checks
 

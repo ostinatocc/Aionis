@@ -1,18 +1,18 @@
 # Aionis Admission Candidate Policy Evaluation
 
-Selected candidate_project_context_closed_loop_inspect on train; holdout calibration_score=0.7952, recorded=0.6356, eligible_for_manual_review=true.
+Selected candidate_project_context_closed_loop_inspect on train; holdout calibration_score=0.8009, recorded=0.5803, eligible_for_manual_review=true.
 
 | Split | Rows | Groups |
 |---|---:|---:|
-| Train | 294 | 27 |
-| Holdout | 332 | 28 |
+| Train | 309 | 27 |
+| Holdout | 467 | 28 |
 
 ## Selected Policy
 
 - Policy: `candidate_project_context_closed_loop_inspect`
 - Eligible for manual review: yes
-- Holdout calibration score: 0.7952
-- Recorded holdout calibration score: 0.6356
+- Holdout calibration score: 0.8009
+- Recorded holdout calibration score: 0.5803
 
 ## Holdout Promotion Gate
 
@@ -30,23 +30,23 @@ Selected candidate_project_context_closed_loop_inspect on train; holdout calibra
 
 | Rank | Policy | Score | Positive capture | Negative direct | Hard-boundary direct | Unused direct | Changed | Missed positive |
 |---:|---|---:|---:|---:|---:|---:|---:|---:|
-| 1 | Project context + closed-loop inspect-first | 0.8095 | 100.0% | 56 | 0 | 0 | 47 | 0 |
-| 2 | Closed-loop contradicted inspect-first | 0.8018 | 100.0% | 56 | 0 | 9 | 38 | 0 |
-| 3 | Aionis project-context direct-use only | 0.6803 | 100.0% | 94 | 0 | 0 | 9 | 0 |
-| 4 | External current inspect-first | 0.6803 | 100.0% | 94 | 0 | 0 | 9 | 0 |
-| 5 | Recorded policy baseline | 0.6727 | 100.0% | 94 | 0 | 9 | 0 | 0 |
-| 6 | Advisory inspect-first | -0.0076 | 0.0% | 0 | 0 | 9 | 176 | 82 |
+| 1 | Project context + closed-loop inspect-first | 0.8026 | 100.0% | 61 | 0 | 0 | 57 | 0 |
+| 2 | Closed-loop contradicted inspect-first | 0.7953 | 100.0% | 61 | 0 | 9 | 48 | 0 |
+| 3 | Aionis project-context direct-use only | 0.6472 | 100.0% | 109 | 0 | 0 | 9 | 0 |
+| 4 | External current inspect-first | 0.6472 | 100.0% | 109 | 0 | 0 | 9 | 0 |
+| 5 | Recorded policy baseline | 0.6399 | 100.0% | 109 | 0 | 9 | 0 | 0 |
+| 6 | Advisory inspect-first | -0.0073 | 0.0% | 0 | 0 | 9 | 191 | 82 |
 
 ## Holdout Scores
 
 | Rank | Policy | Score | Positive capture | Negative direct | Hard-boundary direct | Unused direct | Changed | Missed positive |
 |---:|---|---:|---:|---:|---:|---:|---:|---:|
-| 1 | Project context + closed-loop inspect-first | 0.7952 | 100.0% | 68 | 0 | 0 | 68 | 0 |
-| 2 | Closed-loop contradicted inspect-first | 0.7802 | 100.0% | 68 | 0 | 20 | 48 | 0 |
-| 3 | Aionis project-context direct-use only | 0.6506 | 100.0% | 116 | 0 | 0 | 20 | 0 |
-| 4 | External current inspect-first | 0.6506 | 100.0% | 116 | 0 | 0 | 20 | 0 |
-| 5 | Recorded policy baseline | 0.6356 | 100.0% | 116 | 0 | 20 | 0 | 0 |
-| 6 | Advisory inspect-first | -0.0150 | 0.0% | 0 | 0 | 20 | 201 | 85 |
+| 1 | Project context + closed-loop inspect-first | 0.8009 | 100.0% | 93 | 0 | 0 | 118 | 0 |
+| 2 | Closed-loop contradicted inspect-first | 0.7902 | 100.0% | 93 | 0 | 20 | 98 | 0 |
+| 3 | Aionis project-context direct-use only | 0.5910 | 100.0% | 191 | 0 | 0 | 20 | 0 |
+| 4 | External current inspect-first | 0.5910 | 100.0% | 191 | 0 | 0 | 20 | 0 |
+| 5 | Recorded policy baseline | 0.5803 | 100.0% | 191 | 0 | 20 | 0 | 0 |
+| 6 | Advisory inspect-first | -0.0107 | 0.0% | 0 | 0 | 20 | 336 | 145 |
 
 ## Guards
 

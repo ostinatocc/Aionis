@@ -1,0 +1,38 @@
+{
+  "contract_version": "aionis_admission_dataset_collect_manifest_v1",
+  "source": "admission_dataset_jsonl",
+  "append_mode": "jsonl_append",
+  "runtime_mutation": false,
+  "agent_prompt_included": false,
+  "dataset_dir": "/Volumes/ziel/AionisRuntime-focused/admission-dataset",
+  "rows_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/rows.jsonl",
+  "chunk_id": "shadow-runtime-20260618-003",
+  "collected_at": "2026-06-18T07:58:10.260Z",
+  "row_offset_start": 686,
+  "row_offset_end": 716,
+  "appended_row_count": 30,
+  "previous_row_count": 686,
+  "total_row_count": 716,
+  "input_files": [
+    {
+      "path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/chunks/shadow-runtime-20260618-003.jsonl",
+      "row_count": 30,
+      "jsonl_line_count": 30,
+      "sha256": "a641c0403d0aa61c27a791dd0b187756a470f2c96f801163d092fc7e804cd76d"
+    }
+  ],
+  "policy": {
+    "policy_id": "AIONIS_ADMISSION_POLICY_V1",
+    "policy_version": "2026-06-17",
+    "policy_mode": "deterministic_admission",
+    "runtime_version": null
+  },
+  "reports": {
+    "summary_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/reports/latest/summary.json",
+    "leaderboard_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/reports/latest/leaderboard.md",
+    "policy_comparison_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/reports/latest/policy_comparison.json",
+    "policy_comparison_markdown_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/reports/latest/policy_comparison.md",
+    "shadow_policy_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/reports/latest/shadow_policy.json",
+    "shadow_policy_markdown_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/reports/latest/shadow_policy.md"
+  }
+}

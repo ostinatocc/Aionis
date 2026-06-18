@@ -6,7 +6,7 @@ Counterfactual candidate_project_context_closed_loop_inspect on holdout: accepte
 
 - Agent mode: `deterministic_action_proxy`
 - Evaluation split: `holdout`
-- Rows: 332 / 626
+- Rows: 467 / 776
 - Groups: 28
 - Candidate: `candidate_project_context_closed_loop_inspect`
 
@@ -14,8 +14,8 @@ Counterfactual candidate_project_context_closed_loop_inspect on holdout: accepte
 
 | Arm | Accepted action | Hard-boundary direct-use | Negative direct risk | Non-actionable direct attention | Positive capture | Direct-use rows | Changed actions | Missed actionable |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Recorded Runtime policy | 42.9% | 0.0% | 42.9% | 4 | 100.0% | 221 | 0 | 0 |
-| Candidate policy: candidate_project_context_closed_loop_inspect | 42.9% | 0.0% | 42.9% | 0 | 100.0% | 153 | 68 | 0 |
+| Recorded Runtime policy | 42.9% | 0.0% | 42.9% | 4 | 100.0% | 356 | 0 | 0 |
+| Candidate policy: candidate_project_context_closed_loop_inspect | 42.9% | 0.0% | 42.9% | 0 | 100.0% | 238 | 118 | 0 |
 
 ## Gate
 
