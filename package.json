@@ -36,6 +36,7 @@
     "admission:holdout": "npx tsx scripts/e2e/admission-dataset-holdout.ts",
     "admission:candidate-policy": "npx tsx scripts/e2e/admission-candidate-policy-evaluator.ts",
     "admission:counterfactual-rerun": "npx tsx scripts/e2e/admission-counterfactual-rerun.ts",
+    "admission:real-agent-rerun": "npx tsx scripts/e2e/admission-real-agent-rerun.ts",
     "admission:batch-collect": "npx tsx scripts/e2e/admission-batch-collect.ts",
     "test:focused": "npm run -s typecheck && npm run -s sdk:source-sync && npm run -s packages:build && npm run -s packages:test && npm run -s lite:test",
     "test:lite": "npm run -s lite:test",
