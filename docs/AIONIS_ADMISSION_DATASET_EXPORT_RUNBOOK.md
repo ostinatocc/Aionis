@@ -368,8 +368,24 @@ Shadow mode is read-only:
 - it does not change `agent_context`, prompt contents, stored memory rows,
   lifecycle state, authority state, or feedback counters.
 
-Only after shadow evidence has been reviewed should operators run a local gray
-experiment by enabling:
+Shadow evidence is promotion evidence only when all of these gates pass:
+
+- at least `100` admission dataset rows;
+- at least `6` task signatures;
+- `agent_prompt_included_count = 0` in shadow;
+- `runtime_mutation_count = 0` in shadow;
+- `hard_boundary_upgrade_count = 0` in shadow;
+- `missed_positive_delta = 0`;
+- `negative_direct_delta < 0`;
+- real-Agent rerun shows no hard-boundary, positive-capture, or completion
+  regression.
+
+These gates allow an active gray run to begin; they do not authorize a default
+Runtime policy change. A shadow result from one profile is evidence for that
+profile only. Repeat the gate on another profile before broadening the rollout.
+
+Only after shadow evidence has been reviewed against those gates should
+operators run a local gray experiment by enabling:
 
 ```bash
 AIONIS_ADMISSION_CANDIDATE_POLICY_MODE=active
