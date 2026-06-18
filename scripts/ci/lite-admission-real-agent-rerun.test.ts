@@ -26,13 +26,19 @@ function preparedGroups() {
   });
 }
 
+function positiveUseNowGroup() {
+  const prepared = preparedGroups();
+  return prepared.groups.find((entry) =>
+    entry.rows.some((row) => row.outcome_label === "positive_use" && row.admission_action === "use_now"),
+  );
+}
+
 function json(value: unknown): string {
   return JSON.stringify(value);
 }
 
 test("admission real-agent rerun prompt pack is label-safe over real holdout rows", () => {
-  const prepared = preparedGroups();
-  const group = prepared.groups.find((entry) => entry.group_id === "admission-dataset-export:positive-feature-flag");
+  const group = positiveUseNowGroup();
   assert.ok(group);
 
   const pack = buildAdmissionRealAgentPromptPack({
@@ -54,8 +60,7 @@ test("admission real-agent rerun prompt pack is label-safe over real holdout row
 });
 
 test("admission real-agent scorer accepts direct use of real positive memory", () => {
-  const prepared = preparedGroups();
-  const group = prepared.groups.find((entry) => entry.group_id === "admission-dataset-export:positive-feature-flag");
+  const group = positiveUseNowGroup();
   assert.ok(group);
   const positive = group.rows.find((row) => row.outcome_label === "positive_use" && row.admission_action === "use_now");
   assert.ok(positive);

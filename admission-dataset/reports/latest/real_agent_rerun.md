@@ -1,22 +1,22 @@
 # Aionis Admission Real Agent Rerun
 
-Real Agent rerun candidate_project_context_closed_loop_inspect: accepted_action_rate=0.3636, hard_boundary_direct_use_rate=0, negative_direct_risk_rate=0.1818, non_actionable_direct_attention=0 vs recorded 6.
+Real Agent rerun candidate_project_context_closed_loop_inspect: accepted_action_rate=0.4286, hard_boundary_direct_use_rate=0, negative_direct_risk_rate=0.1071, non_actionable_direct_attention=0 vs recorded 4.
 
 ## Scope
 
 - LLM provider: `deepseek`
 - LLM model: `deepseek-chat`
 - Evaluated split: `holdout`
-- Groups: 22
-- Rows: 345 / 536
+- Groups: 28
+- Rows: 332 / 626
 - Candidate: `candidate_project_context_closed_loop_inspect`
 
 ## Arms
 
 | Arm | Accepted action | Hard-boundary direct-use | Negative direct risk | Non-actionable direct attention | Missed actionable | Boundary ignored | Request chars |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Recorded Runtime policy | 36.4% | 0.0% | 22.7% | 6 | 0.0% | 0 | 434432 |
-| Candidate policy: candidate_project_context_closed_loop_inspect | 36.4% | 0.0% | 18.2% | 0 | 0.0% | 0 | 435824 |
+| Recorded Runtime policy | 42.9% | 0.0% | 25.0% | 4 | 0.0% | 0 | 432574 |
+| Candidate policy: candidate_project_context_closed_loop_inspect | 42.9% | 0.0% | 10.7% | 0 | 0.0% | 0 | 434561 |
 
 ## Checks
 

@@ -10,7 +10,7 @@ type CliArgs = {
   iterations: number;
   chunkPrefix: string;
   stopOnFailure: boolean;
-  profile: "standard" | "targeted-external-current" | "closed-loop-prior" | "closed-loop-prior-fresh";
+  profile: "standard" | "targeted-external-current" | "closed-loop-prior" | "closed-loop-prior-fresh" | "closed-loop-prior-fresh-2";
 };
 
 type BatchChunk = {
@@ -41,6 +41,7 @@ function parseArgs(argv: string[]): CliArgs {
     profile: envProfile === "targeted-external-current"
       || envProfile === "closed-loop-prior"
       || envProfile === "closed-loop-prior-fresh"
+      || envProfile === "closed-loop-prior-fresh-2"
       ? envProfile
       : "standard",
   };
@@ -62,12 +63,13 @@ function parseArgs(argv: string[]): CliArgs {
       out.profile = next === "targeted-external-current"
         || next === "closed-loop-prior"
         || next === "closed-loop-prior-fresh"
+        || next === "closed-loop-prior-fresh-2"
         ? next
         : "standard";
       i += 1;
     } else if (arg === "--help" || arg === "-h") {
       process.stdout.write([
-        "Usage: npm run -s admission:batch-collect -- --dataset-dir admission-dataset [--iterations 25] [--profile standard|targeted-external-current|closed-loop-prior|closed-loop-prior-fresh]",
+        "Usage: npm run -s admission:batch-collect -- --dataset-dir admission-dataset [--iterations 25] [--profile standard|targeted-external-current|closed-loop-prior|closed-loop-prior-fresh|closed-loop-prior-fresh-2]",
         "",
         "Runs the real admission dataset Runtime e2e repeatedly and appends each chunk",
         "to the same durable admission dataset.",

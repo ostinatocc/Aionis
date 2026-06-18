@@ -6,10 +6,10 @@ Found 1 positive/negative direct-use feature collision signature(s); negative_di
 
 | Metric | Value |
 |---|---:|
-| rows | 536 |
-| use_now rows | 316 |
-| prior-state signal rows | 75 |
-| repeated-negative posture rows | 25 |
+| rows | 626 |
+| use_now rows | 406 |
+| prior-state signal rows | 129 |
+| repeated-negative posture rows | 43 |
 | label-safe signatures | 5 |
 | mixed-outcome signatures | 1 |
 | positive/negative collision signatures | 1 |
@@ -24,7 +24,7 @@ Found 1 positive/negative direct-use feature collision signature(s); negative_di
 
 | Rows | Positive | Negative | Unused | Outcomes | Sample task signatures |
 |---:|---:|---:|---:|---|---|
-| 212 | 106 | 106 | 0 | `negative_use`, `positive_use` | `admission-dataset-export:positive-supported`, `admission-dataset-export:negative-attributed`, `admission-dataset-export:positive-feature-flag`, `admission-dataset-export:negative-migration-candidate`, `admission-dataset-export:positive-reviewer-handoff`, `admission-dataset-export:negative-test-stabilization`, `admission-dataset-export:positive-cache-boundary`, `admission-dataset-export:negative-secret-rotation` |
+| 248 | 124 | 124 | 0 | `negative_use`, `positive_use` | `admission-dataset-export:positive-supported`, `admission-dataset-export:negative-attributed`, `admission-dataset-export:positive-feature-flag`, `admission-dataset-export:negative-migration-candidate`, `admission-dataset-export:positive-reviewer-handoff`, `admission-dataset-export:negative-test-stabilization`, `admission-dataset-export:positive-cache-boundary`, `admission-dataset-export:negative-secret-rotation` |
 
 ## Signature Features
 
