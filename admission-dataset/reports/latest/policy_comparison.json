@@ -1,0 +1,228 @@
+{
+  "contract_version": "aionis_admission_policy_comparison_report_v1",
+  "intended_use": "offline_admission_policy_baseline_comparison",
+  "runtime_mutation": false,
+  "agent_prompt_included": false,
+  "policy": {
+    "policy_id": "AIONIS_ADMISSION_POLICY_V1",
+    "policy_version": "2026-06-17",
+    "policy_mode": "deterministic_admission",
+    "runtime_version": null
+  },
+  "dataset": {
+    "row_count": 105,
+    "positive_use_count": 21,
+    "negative_use_count": 21,
+    "blocked_or_suppressed_count": 49,
+    "rehydrate_requested_count": 7,
+    "unused_exposed_count": 7
+  },
+  "sample_quality": {
+    "minimum_rows_for_policy_claim": 100,
+    "current_row_count": 105,
+    "has_minimum_rows_for_policy_claim": true,
+    "not_enough_rows_for_policy_claim": false,
+    "minimum_task_signatures_for_diversity_claim": 6,
+    "current_task_signature_count": 7,
+    "has_minimum_task_signatures_for_diversity_claim": true,
+    "not_enough_task_signatures_for_diversity_claim": false
+  },
+  "arms": [
+    {
+      "policy_id": "aionis_recorded_policy",
+      "display_name": "Aionis recorded policy",
+      "description": "Uses the admission_action recorded by the Runtime admission record.",
+      "row_count": 105,
+      "predicted_action_counts": {
+        "use_now": 49,
+        "do_not_use": 49,
+        "rehydrate": 7
+      },
+      "direct_use_count": 49,
+      "positive_use_direct_count": 21,
+      "negative_use_direct_count": 21,
+      "blocked_or_suppressed_direct_count": 0,
+      "rehydrate_direct_count": 0,
+      "unused_exposed_direct_count": 7,
+      "missed_positive_use_count": 0,
+      "positive_capture_rate": 1,
+      "direct_use_positive_precision_proxy": 0.4286,
+      "direct_use_risk_rate": 0.4286,
+      "blocked_or_suppressed_direct_rate": 0,
+      "rehydrate_bypass_rate": 0,
+      "utility_minus_risk_score": 0.5714,
+      "rank": 1
+    },
+    {
+      "policy_id": "always_use",
+      "display_name": "Always use",
+      "description": "Routes every dataset candidate to direct use.",
+      "row_count": 105,
+      "predicted_action_counts": {
+        "use_now": 105
+      },
+      "direct_use_count": 105,
+      "positive_use_direct_count": 21,
+      "negative_use_direct_count": 21,
+      "blocked_or_suppressed_direct_count": 49,
+      "rehydrate_direct_count": 7,
+      "unused_exposed_direct_count": 7,
+      "missed_positive_use_count": 0,
+      "positive_capture_rate": 1,
+      "direct_use_positive_precision_proxy": 0.2,
+      "direct_use_risk_rate": 0.7333,
+      "blocked_or_suppressed_direct_rate": 1,
+      "rehydrate_bypass_rate": 1,
+      "utility_minus_risk_score": 0.2667,
+      "rank": 2
+    },
+    {
+      "policy_id": "raw_retrieval_prompt_proxy",
+      "display_name": "Raw retrieval prompt proxy",
+      "description": "Treats every prompt-included candidate as direct-use memory, ignoring lifecycle and authority routing.",
+      "row_count": 105,
+      "predicted_action_counts": {
+        "use_now": 105
+      },
+      "direct_use_count": 105,
+      "positive_use_direct_count": 21,
+      "negative_use_direct_count": 21,
+      "blocked_or_suppressed_direct_count": 49,
+      "rehydrate_direct_count": 7,
+      "unused_exposed_direct_count": 7,
+      "missed_positive_use_count": 0,
+      "positive_capture_rate": 1,
+      "direct_use_positive_precision_proxy": 0.2,
+      "direct_use_risk_rate": 0.7333,
+      "blocked_or_suppressed_direct_rate": 1,
+      "rehydrate_bypass_rate": 1,
+      "utility_minus_risk_score": 0.2667,
+      "rank": 3
+    },
+    {
+      "policy_id": "always_block",
+      "display_name": "Always block",
+      "description": "Routes every dataset candidate to do_not_use.",
+      "row_count": 105,
+      "predicted_action_counts": {
+        "do_not_use": 105
+      },
+      "direct_use_count": 0,
+      "positive_use_direct_count": 0,
+      "negative_use_direct_count": 0,
+      "blocked_or_suppressed_direct_count": 0,
+      "rehydrate_direct_count": 0,
+      "unused_exposed_direct_count": 0,
+      "missed_positive_use_count": 21,
+      "positive_capture_rate": 0,
+      "direct_use_positive_precision_proxy": 0,
+      "direct_use_risk_rate": 0,
+      "blocked_or_suppressed_direct_rate": 0,
+      "rehydrate_bypass_rate": 0,
+      "utility_minus_risk_score": 0,
+      "rank": 4
+    }
+  ],
+  "leaderboard": [
+    {
+      "policy_id": "aionis_recorded_policy",
+      "display_name": "Aionis recorded policy",
+      "description": "Uses the admission_action recorded by the Runtime admission record.",
+      "row_count": 105,
+      "predicted_action_counts": {
+        "use_now": 49,
+        "do_not_use": 49,
+        "rehydrate": 7
+      },
+      "direct_use_count": 49,
+      "positive_use_direct_count": 21,
+      "negative_use_direct_count": 21,
+      "blocked_or_suppressed_direct_count": 0,
+      "rehydrate_direct_count": 0,
+      "unused_exposed_direct_count": 7,
+      "missed_positive_use_count": 0,
+      "positive_capture_rate": 1,
+      "direct_use_positive_precision_proxy": 0.4286,
+      "direct_use_risk_rate": 0.4286,
+      "blocked_or_suppressed_direct_rate": 0,
+      "rehydrate_bypass_rate": 0,
+      "utility_minus_risk_score": 0.5714,
+      "rank": 1
+    },
+    {
+      "policy_id": "always_use",
+      "display_name": "Always use",
+      "description": "Routes every dataset candidate to direct use.",
+      "row_count": 105,
+      "predicted_action_counts": {
+        "use_now": 105
+      },
+      "direct_use_count": 105,
+      "positive_use_direct_count": 21,
+      "negative_use_direct_count": 21,
+      "blocked_or_suppressed_direct_count": 49,
+      "rehydrate_direct_count": 7,
+      "unused_exposed_direct_count": 7,
+      "missed_positive_use_count": 0,
+      "positive_capture_rate": 1,
+      "direct_use_positive_precision_proxy": 0.2,
+      "direct_use_risk_rate": 0.7333,
+      "blocked_or_suppressed_direct_rate": 1,
+      "rehydrate_bypass_rate": 1,
+      "utility_minus_risk_score": 0.2667,
+      "rank": 2
+    },
+    {
+      "policy_id": "raw_retrieval_prompt_proxy",
+      "display_name": "Raw retrieval prompt proxy",
+      "description": "Treats every prompt-included candidate as direct-use memory, ignoring lifecycle and authority routing.",
+      "row_count": 105,
+      "predicted_action_counts": {
+        "use_now": 105
+      },
+      "direct_use_count": 105,
+      "positive_use_direct_count": 21,
+      "negative_use_direct_count": 21,
+      "blocked_or_suppressed_direct_count": 49,
+      "rehydrate_direct_count": 7,
+      "unused_exposed_direct_count": 7,
+      "missed_positive_use_count": 0,
+      "positive_capture_rate": 1,
+      "direct_use_positive_precision_proxy": 0.2,
+      "direct_use_risk_rate": 0.7333,
+      "blocked_or_suppressed_direct_rate": 1,
+      "rehydrate_bypass_rate": 1,
+      "utility_minus_risk_score": 0.2667,
+      "rank": 3
+    },
+    {
+      "policy_id": "always_block",
+      "display_name": "Always block",
+      "description": "Routes every dataset candidate to do_not_use.",
+      "row_count": 105,
+      "predicted_action_counts": {
+        "do_not_use": 105
+      },
+      "direct_use_count": 0,
+      "positive_use_direct_count": 0,
+      "negative_use_direct_count": 0,
+      "blocked_or_suppressed_direct_count": 0,
+      "rehydrate_direct_count": 0,
+      "unused_exposed_direct_count": 0,
+      "missed_positive_use_count": 21,
+      "positive_capture_rate": 0,
+      "direct_use_positive_precision_proxy": 0,
+      "direct_use_risk_rate": 0,
+      "blocked_or_suppressed_direct_rate": 0,
+      "rehydrate_bypass_rate": 0,
+      "utility_minus_risk_score": 0,
+      "rank": 4
+    }
+  ],
+  "caveats": [
+    "This is an offline proxy comparison over admission dataset rows, not a counterfactual Agent rerun.",
+    "Raw retrieval prompt proxy treats prompt-included candidates as direct-use memory because candidate ranks are not preserved in the dataset.",
+    "Do not use this report to mutate Runtime gates without holdout validation."
+  ],
+  "summary": "Compared 4 admission policies over 105 rows; Aionis score=0.5714, raw retrieval proxy score=0.2667."
+}

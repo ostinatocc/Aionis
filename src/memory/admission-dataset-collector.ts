@@ -211,7 +211,7 @@ export function collectAdmissionDatasetRows(args: CollectAdmissionDatasetArgs): 
     throw new Error(`Admission dataset append mismatch: rows=${appendedRows.length} jsonl_lines=${appendedLineCount}`);
   }
   if (appendedRows.length > 0) {
-    const prefix = previousRowsJsonl.trim().length > 0 ? "\n" : "";
+    const prefix = previousRowsJsonl.trim().length > 0 && !previousRowsJsonl.endsWith("\n") ? "\n" : "";
     fs.appendFileSync(rowsPath, `${prefix}${appendedJsonl.trimEnd()}\n`);
   }
   const finalJsonl = fs.readFileSync(rowsPath, "utf8");

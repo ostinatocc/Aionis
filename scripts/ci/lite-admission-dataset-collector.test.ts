@@ -15,6 +15,10 @@ function jsonLineCount(file: string): number {
   return fs.readFileSync(file, "utf8").split(/\r?\n/).filter((line) => line.trim().length > 0).length;
 }
 
+function rawLineCount(file: string): number {
+  return fs.readFileSync(file, "utf8").trimEnd().split(/\r?\n/).length;
+}
+
 test("admission dataset collector appends chunks, writes manifest, and refreshes evaluation", () => {
   const datasetDir = tempDir();
   const first = collectAdmissionDatasetRows({
@@ -62,6 +66,7 @@ test("admission dataset collector appends chunks, writes manifest, and refreshes
   assert.equal(second.evaluation?.dataset.row_count, 8);
   assert.equal(second.policy_comparison?.dataset.row_count, 8);
   assert.equal(jsonLineCount(second.rows_path), 8);
+  assert.equal(rawLineCount(second.rows_path), 8);
 });
 
 test("admission dataset collector rejects forbidden raw payload keys", () => {
