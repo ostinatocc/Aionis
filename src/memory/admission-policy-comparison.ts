@@ -6,6 +6,7 @@ import {
 } from "../sdk.js";
 import {
   AIONIS_ADMISSION_DATASET_MIN_ROWS_FOR_POLICY_CLAIM,
+  AIONIS_ADMISSION_DATASET_MIN_TASK_SIGNATURES_FOR_DIVERSITY_CLAIM,
   parseAdmissionDatasetJsonl,
   type AionisAdmissionDatasetEvaluatorOptions,
 } from "./admission-dataset-evaluator.js";
@@ -66,6 +67,10 @@ export type AionisAdmissionPolicyComparisonReport = {
     current_row_count: number;
     has_minimum_rows_for_policy_claim: boolean;
     not_enough_rows_for_policy_claim: boolean;
+    minimum_task_signatures_for_diversity_claim: number;
+    current_task_signature_count: number;
+    has_minimum_task_signatures_for_diversity_claim: boolean;
+    not_enough_task_signatures_for_diversity_claim: boolean;
   };
   arms: AionisAdmissionPolicyComparisonArm[];
   leaderboard: AionisAdmissionPolicyComparisonArm[];
@@ -95,6 +100,10 @@ function rate(numerator: number, denominator: number): number {
 
 function increment(map: Record<string, number>, key: string): void {
   map[key] = (map[key] ?? 0) + 1;
+}
+
+function uniqueStringCount(rows: AdmissionDatasetRow[], field: keyof AdmissionDatasetRow): number {
+  return new Set(rows.map((row) => stringValue(row[field])).filter((value): value is string => !!value)).size;
 }
 
 function normalizedPolicy(options: AionisAdmissionDatasetEvaluatorOptions): {
@@ -217,6 +226,8 @@ export function compareAdmissionPoliciesForRows(
   const rehydrateRequestedCount = rows.filter((row) => row.outcome_label === "rehydrate_requested").length;
   const unusedExposedCount = rows.filter((row) => row.outcome_label === "unused_exposed").length;
   const hasMinimumRowsForPolicyClaim = rows.length >= AIONIS_ADMISSION_DATASET_MIN_ROWS_FOR_POLICY_CLAIM;
+  const taskSignatureCount = uniqueStringCount(rows, "task_signature");
+  const hasMinimumTaskSignaturesForDiversityClaim = taskSignatureCount >= AIONIS_ADMISSION_DATASET_MIN_TASK_SIGNATURES_FOR_DIVERSITY_CLAIM;
   const arms = rankArms(POLICY_DEFINITIONS.map((policy) => scoreArm({
     policy,
     rows,
@@ -249,6 +260,10 @@ export function compareAdmissionPoliciesForRows(
       current_row_count: rows.length,
       has_minimum_rows_for_policy_claim: hasMinimumRowsForPolicyClaim,
       not_enough_rows_for_policy_claim: !hasMinimumRowsForPolicyClaim,
+      minimum_task_signatures_for_diversity_claim: AIONIS_ADMISSION_DATASET_MIN_TASK_SIGNATURES_FOR_DIVERSITY_CLAIM,
+      current_task_signature_count: taskSignatureCount,
+      has_minimum_task_signatures_for_diversity_claim: hasMinimumTaskSignaturesForDiversityClaim,
+      not_enough_task_signatures_for_diversity_claim: !hasMinimumTaskSignaturesForDiversityClaim,
     },
     arms,
     leaderboard: arms,
@@ -257,6 +272,9 @@ export function compareAdmissionPoliciesForRows(
       "Raw retrieval prompt proxy treats prompt-included candidates as direct-use memory because candidate ranks are not preserved in the dataset.",
       !hasMinimumRowsForPolicyClaim
         ? `Do not claim policy quality until the dataset reaches at least ${AIONIS_ADMISSION_DATASET_MIN_ROWS_FOR_POLICY_CLAIM} rows.`
+        : null,
+      !hasMinimumTaskSignaturesForDiversityClaim
+        ? `Do not claim policy diversity until the dataset reaches at least ${AIONIS_ADMISSION_DATASET_MIN_TASK_SIGNATURES_FOR_DIVERSITY_CLAIM} task signatures.`
         : null,
       "Do not use this report to mutate Runtime gates without holdout validation.",
     ].filter((caveat): caveat is string => Boolean(caveat)),
@@ -303,6 +321,8 @@ export function formatAdmissionPolicyComparisonMarkdown(report: AionisAdmissionP
     `- Rows: ${report.dataset.row_count}`,
     `- Minimum rows for policy claim: ${report.sample_quality.minimum_rows_for_policy_claim}`,
     `- Enough rows for policy claim: ${report.sample_quality.has_minimum_rows_for_policy_claim ? "yes" : "no"}`,
+    `- Minimum task signatures for diversity claim: ${report.sample_quality.minimum_task_signatures_for_diversity_claim}`,
+    `- Enough task signatures for diversity claim: ${report.sample_quality.has_minimum_task_signatures_for_diversity_claim ? "yes" : "no"}`,
     `- Positive use rows: ${report.dataset.positive_use_count}`,
     `- Negative use rows: ${report.dataset.negative_use_count}`,
     `- Blocked or suppressed rows: ${report.dataset.blocked_or_suppressed_count}`,

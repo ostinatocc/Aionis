@@ -200,12 +200,14 @@ To collect enough rows for policy-comparison work, run the batch collector:
 ```bash
 npm run -s admission:batch-collect -- \
   --dataset-dir admission-dataset \
-  --iterations 25
+  --iterations 9
 ```
 
-With the current validation loop, each iteration exports four rows. Reports
-remain marked `not_enough_rows_for_policy_claim=true` until the dataset reaches
-100 rows.
+With the default diverse validation loop, each iteration exports 12 rows across
+six task signatures. Reports remain marked
+`not_enough_rows_for_policy_claim=true` until the dataset reaches 100 rows, and
+`not_enough_task_signatures_for_diversity_claim=true` until enough task
+signatures are represented.
 
 For production append guidance, see
 [AIONIS_ADMISSION_DATASET_EXPORT_RUNBOOK.md](AIONIS_ADMISSION_DATASET_EXPORT_RUNBOOK.md).

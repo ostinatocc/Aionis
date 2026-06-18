@@ -142,10 +142,17 @@ function runIteration(args: {
 
 function markdownReport(result: Record<string, unknown>): string {
   const chunks = Array.isArray(result.chunks) ? result.chunks as BatchChunk[] : [];
+  const sampleQuality = nestedRecord(result.sample_quality);
   const lines = [
     "# Aionis Admission Batch Collect",
     "",
     String(result.summary ?? ""),
+    "",
+    "| Gate | Value |",
+    "|---|---:|",
+    `| Final rows | ${String(result.final_row_count ?? "")} |`,
+    `| Enough rows for policy claim | ${sampleQuality?.has_minimum_rows_for_policy_claim === true ? "yes" : "no"} |`,
+    `| Enough task signatures for diversity claim | ${sampleQuality?.has_minimum_task_signatures_for_diversity_claim === true ? "yes" : "no"} |`,
     "",
     "| Iteration | Chunk | Rows | Total rows |",
     "|---:|---|---:|---:|",
@@ -198,6 +205,8 @@ function main() {
       completed_all_iterations: chunks.length === args.iterations,
       not_enough_rows_for_policy_claim: sampleQuality?.not_enough_rows_for_policy_claim === true,
       has_minimum_rows_for_policy_claim: sampleQuality?.has_minimum_rows_for_policy_claim === true,
+      not_enough_task_signatures_for_diversity_claim: sampleQuality?.not_enough_task_signatures_for_diversity_claim === true,
+      has_minimum_task_signatures_for_diversity_claim: sampleQuality?.has_minimum_task_signatures_for_diversity_claim === true,
     },
     summary: `Collected ${rowCount} admission dataset rows across ${chunks.length}/${args.iterations} real Runtime e2e iterations.`,
   };

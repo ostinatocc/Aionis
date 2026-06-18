@@ -16,6 +16,7 @@ export type AionisAdmissionDatasetEvaluatorOptions = {
 export type AionisAdmissionDatasetBucketDimension =
   | "admission_action"
   | "outcome_label"
+  | "task_signature"
   | "lifecycle_state"
   | "authority"
   | "memory_type"
@@ -55,6 +56,7 @@ export type AionisAdmissionDatasetEvaluationReport = {
     row_count: number;
     run_count: number;
     task_count: number;
+    task_signature_count: number;
     guide_trace_count: number;
     scope_count: number;
     source_backends: string[];
@@ -64,6 +66,10 @@ export type AionisAdmissionDatasetEvaluationReport = {
     current_row_count: number;
     has_minimum_rows_for_policy_claim: boolean;
     not_enough_rows_for_policy_claim: boolean;
+    minimum_task_signatures_for_diversity_claim: number;
+    current_task_signature_count: number;
+    has_minimum_task_signatures_for_diversity_claim: boolean;
+    not_enough_task_signatures_for_diversity_claim: boolean;
   };
   metrics: {
     prompt_char_total: number;
@@ -118,6 +124,7 @@ type NormalizedAdmissionDatasetRow = Omit<
 const BUCKET_DIMENSIONS: AionisAdmissionDatasetBucketDimension[] = [
   "admission_action",
   "outcome_label",
+  "task_signature",
   "lifecycle_state",
   "authority",
   "memory_type",
@@ -128,6 +135,7 @@ const BUCKET_DIMENSIONS: AionisAdmissionDatasetBucketDimension[] = [
 ];
 
 export const AIONIS_ADMISSION_DATASET_MIN_ROWS_FOR_POLICY_CLAIM = 100;
+export const AIONIS_ADMISSION_DATASET_MIN_TASK_SIGNATURES_FOR_DIVERSITY_CLAIM = 6;
 
 function roundRate(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -305,6 +313,9 @@ function buildRecommendations(args: {
 }): string[] {
   return compactStrings([
     args.rows.length < AIONIS_ADMISSION_DATASET_MIN_ROWS_FOR_POLICY_CLAIM ? "collect_at_least_100_rows_before_claiming_policy_quality" : null,
+    uniqueCount(args.rows, "task_signature") < AIONIS_ADMISSION_DATASET_MIN_TASK_SIGNATURES_FOR_DIVERSITY_CLAIM
+      ? "collect_at_least_6_task_signatures_before_claiming_policy_diversity"
+      : null,
     args.rowPolicyCoverage < 1 ? "backfill_policy_metadata_before_policy_version_comparison" : null,
     args.useNowNegativeCount > 0 ? "inspect_negative_use_rows_before_policy_change" : null,
     args.unusedExposedRate > 0.5 ? "review_high_unused_exposure_for_candidate_noise_or_missing_feedback" : null,
@@ -340,6 +351,8 @@ export function evaluateAdmissionDatasetRows(
   const unusedExposedRate = rate(unusedExposedCount, promptIncludedRows.length);
   const promptCharTotal = rows.reduce((sum, row) => sum + row.prompt_char_count, 0);
   const hasMinimumRowsForPolicyClaim = rows.length >= AIONIS_ADMISSION_DATASET_MIN_ROWS_FOR_POLICY_CLAIM;
+  const taskSignatureCount = uniqueCount(rows, "task_signature");
+  const hasMinimumTaskSignaturesForDiversityClaim = taskSignatureCount >= AIONIS_ADMISSION_DATASET_MIN_TASK_SIGNATURES_FOR_DIVERSITY_CLAIM;
   return {
     contract_version: "aionis_admission_dataset_evaluation_report_v1",
     intended_use: "offline_admission_policy_audit",
@@ -353,6 +366,7 @@ export function evaluateAdmissionDatasetRows(
       row_count: rows.length,
       run_count: uniqueCount(rows, "run_id"),
       task_count: uniqueCount(rows, "task_id"),
+      task_signature_count: taskSignatureCount,
       guide_trace_count: uniqueCount(rows, "guide_trace_id"),
       scope_count: uniqueCount(rows, "scope"),
       source_backends: compactStrings(rows.map((row) => row.source_backend ?? row.memory_origin ?? null)),
@@ -362,6 +376,10 @@ export function evaluateAdmissionDatasetRows(
       current_row_count: rows.length,
       has_minimum_rows_for_policy_claim: hasMinimumRowsForPolicyClaim,
       not_enough_rows_for_policy_claim: !hasMinimumRowsForPolicyClaim,
+      minimum_task_signatures_for_diversity_claim: AIONIS_ADMISSION_DATASET_MIN_TASK_SIGNATURES_FOR_DIVERSITY_CLAIM,
+      current_task_signature_count: taskSignatureCount,
+      has_minimum_task_signatures_for_diversity_claim: hasMinimumTaskSignaturesForDiversityClaim,
+      not_enough_task_signatures_for_diversity_claim: !hasMinimumTaskSignaturesForDiversityClaim,
     },
     metrics: {
       prompt_char_total: promptCharTotal,
@@ -391,6 +409,7 @@ export function evaluateAdmissionDatasetRows(
       rowPolicyCoverage < 1 ? "policy_metadata_incomplete" : null,
       !hasMinimumRowsForPolicyClaim ? "not_enough_rows_for_policy_claim" : null,
       !hasMinimumRowsForPolicyClaim ? "small_dataset_do_not_claim_policy_quality" : null,
+      !hasMinimumTaskSignaturesForDiversityClaim ? "not_enough_task_signatures_for_diversity_claim" : null,
     ]),
     recommendations: buildRecommendations({
       rows,
@@ -429,8 +448,11 @@ export function formatAdmissionDatasetEvaluationMarkdown(report: AionisAdmission
     `| Rows | ${report.dataset.row_count} |`,
     `| Runs | ${report.dataset.run_count} |`,
     `| Tasks | ${report.dataset.task_count} |`,
+    `| Task signatures | ${report.dataset.task_signature_count} |`,
     `| minimum rows for policy claim | ${report.sample_quality.minimum_rows_for_policy_claim} |`,
     `| enough rows for policy claim | ${report.sample_quality.has_minimum_rows_for_policy_claim ? "yes" : "no"} |`,
+    `| minimum task signatures for diversity claim | ${report.sample_quality.minimum_task_signatures_for_diversity_claim} |`,
+    `| enough task signatures for diversity claim | ${report.sample_quality.has_minimum_task_signatures_for_diversity_claim ? "yes" : "no"} |`,
     `| use_now positive rate | ${formatPercent(report.metrics.use_now_positive_rate)} |`,
     `| use_now negative rate | ${formatPercent(report.metrics.use_now_negative_rate)} |`,
     `| use_now unused rate | ${formatPercent(report.metrics.use_now_unused_rate)} |`,

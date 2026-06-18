@@ -40,6 +40,8 @@ type AdmissionRoundSpec = {
   active_text: string;
   suppressed_text: string;
   suppressed_payload_marker: string;
+  query_text: string;
+  target_files: string[];
   outcome: AdmissionOutcome;
   expected_outcome_label: AdmissionOutcomeLabel;
   reason: string;
@@ -133,6 +135,10 @@ function agentContext(guide: unknown, label: string): Record<string, unknown> {
   return context;
 }
 
+function excludesAll(text: string, values: string[]): boolean {
+  return values.every((value) => !text.includes(value));
+}
+
 function assertPromptBoundary(promptText: string, label: string): void {
   for (const forbidden of [
     "memory_decision_trace",
@@ -194,7 +200,7 @@ async function runAdmissionRound(args: {
   await client.health();
 
   const beforeGuide = await client.guide<Record<string, unknown>>({
-    query_text: `${args.spec.active_marker} ${args.spec.suppressed_marker} before admission dataset export evidence`,
+    query_text: `${args.spec.active_marker} ${args.spec.suppressed_marker} before admission dataset export evidence for ${args.spec.query_text}`,
     consumer_agent_id: AGENT_ID,
     limit: 8,
     include_packets: true,
@@ -209,7 +215,7 @@ async function runAdmissionRound(args: {
     text: args.spec.active_text,
     memory_lane: "private",
     owner_agent_id: AGENT_ID,
-    target_files: ["packages/api/src/current-checkout.ts"],
+    target_files: args.spec.target_files,
     confidence: 0.94,
     slots: {
       source: "admission_dataset_export_e2e",
@@ -228,7 +234,7 @@ async function runAdmissionRound(args: {
   });
 
   const afterGuide = await client.guide<Record<string, unknown>>({
-    query_text: `${args.spec.active_marker} ${args.spec.suppressed_marker} continue checkout integration without unsafe route reuse`,
+    query_text: `${args.spec.active_marker} ${args.spec.suppressed_marker} ${args.spec.query_text}`,
     consumer_agent_id: AGENT_ID,
     limit: 12,
     include_packets: true,
@@ -331,6 +337,8 @@ async function main() {
         active_text: `${ACTIVE_MARKER}: accepted route is packages/api/src/current-checkout.ts; use this route for the next implementation step.`,
         suppressed_text: `${SUPPRESSED_MARKER}: rejected route says to extend legacy/checkout/full-rewrite.ts; this is suppressed and must not be direct-use.`,
         suppressed_payload_marker: "legacy/checkout/full-rewrite.ts",
+        query_text: "continue checkout integration without unsafe route reuse",
+        target_files: ["packages/api/src/current-checkout.ts"],
         outcome: "positive",
         expected_outcome_label: "positive_use",
         reason: "Agent used the accepted route and avoided the suppressed route.",
@@ -343,9 +351,67 @@ async function main() {
         active_text: "ADMISSION_DATASET_NEGATIVE_ROUTE: candidate route is packages/api/src/billing-adapter.ts; expose it so negative feedback can be attributed.",
         suppressed_text: "ADMISSION_DATASET_SUPPRESSED_OLD_API: rejected route says to extend legacy/billing/dead-end.ts; this is suppressed and must not be direct-use.",
         suppressed_payload_marker: "legacy/billing/dead-end.ts",
+        query_text: "resume billing adapter work while preserving failed old-api evidence",
+        target_files: ["packages/api/src/billing-adapter.ts"],
         outcome: "negative",
         expected_outcome_label: "negative_use",
         reason: "Agent used the exposed candidate route but verifier outcome was negative.",
+      },
+      {
+        round_id: "positive-feature-flag",
+        scope: `${baseScope}:positive-feature-flag`,
+        active_marker: "ADMISSION_DATASET_ACTIVE_FLAG_ROUTE",
+        suppressed_marker: "ADMISSION_DATASET_SUPPRESSED_FLAG_ROUTE",
+        active_text: "ADMISSION_DATASET_ACTIVE_FLAG_ROUTE: accepted route is packages/web/src/flags/checkout-rollout.ts; update the typed rollout gate there.",
+        suppressed_text: "ADMISSION_DATASET_SUPPRESSED_FLAG_ROUTE: rejected route says to patch legacy/flags/runtime-global.ts; this is suppressed and must not be direct-use.",
+        suppressed_payload_marker: "legacy/flags/runtime-global.ts",
+        query_text: "continue feature flag rollout using the current typed flag route",
+        target_files: ["packages/web/src/flags/checkout-rollout.ts"],
+        outcome: "positive",
+        expected_outcome_label: "positive_use",
+        reason: "Agent used the typed feature flag route and avoided the legacy global flag route.",
+      },
+      {
+        round_id: "negative-migration-candidate",
+        scope: `${baseScope}:negative-migration-candidate`,
+        active_marker: "ADMISSION_DATASET_NEGATIVE_MIGRATION_ROUTE",
+        suppressed_marker: "ADMISSION_DATASET_SUPPRESSED_MIGRATION_ROUTE",
+        active_text: "ADMISSION_DATASET_NEGATIVE_MIGRATION_ROUTE: candidate route is packages/db/migrations/20260618_expand_checkout.sql; expose it so rollback feedback can be attributed.",
+        suppressed_text: "ADMISSION_DATASET_SUPPRESSED_MIGRATION_ROUTE: rejected route says to reuse legacy/db/manual-patch.sql; this is suppressed and must not be direct-use.",
+        suppressed_payload_marker: "legacy/db/manual-patch.sql",
+        query_text: "resume database migration planning with rollback evidence attached",
+        target_files: ["packages/db/migrations/20260618_expand_checkout.sql"],
+        outcome: "negative",
+        expected_outcome_label: "negative_use",
+        reason: "Agent used the exposed migration candidate but rollback verification was negative.",
+      },
+      {
+        round_id: "positive-reviewer-handoff",
+        scope: `${baseScope}:positive-reviewer-handoff`,
+        active_marker: "ADMISSION_DATASET_ACTIVE_REVIEW_ROUTE",
+        suppressed_marker: "ADMISSION_DATASET_SUPPRESSED_REVIEW_ROUTE",
+        active_text: "ADMISSION_DATASET_ACTIVE_REVIEW_ROUTE: accepted reviewer handoff is docs/review/checkout-boundary.md; follow that boundary checklist.",
+        suppressed_text: "ADMISSION_DATASET_SUPPRESSED_REVIEW_ROUTE: rejected handoff says to approve legacy/review/skip-boundary.md; this is suppressed and must not be direct-use.",
+        suppressed_payload_marker: "legacy/review/skip-boundary.md",
+        query_text: "continue reviewer handoff using accepted boundary checklist",
+        target_files: ["docs/review/checkout-boundary.md"],
+        outcome: "positive",
+        expected_outcome_label: "positive_use",
+        reason: "Agent followed the accepted reviewer boundary checklist and avoided the suppressed approval shortcut.",
+      },
+      {
+        round_id: "negative-test-stabilization",
+        scope: `${baseScope}:negative-test-stabilization`,
+        active_marker: "ADMISSION_DATASET_NEGATIVE_TEST_ROUTE",
+        suppressed_marker: "ADMISSION_DATASET_SUPPRESSED_TEST_ROUTE",
+        active_text: "ADMISSION_DATASET_NEGATIVE_TEST_ROUTE: candidate route is packages/tests/checkout-flake.spec.ts; expose it so flaky-verifier feedback can be attributed.",
+        suppressed_text: "ADMISSION_DATASET_SUPPRESSED_TEST_ROUTE: rejected route says to disable legacy/tests/checkout-suite.spec.ts; this is suppressed and must not be direct-use.",
+        suppressed_payload_marker: "legacy/tests/checkout-suite.spec.ts",
+        query_text: "resume test stabilization without reusing disabled-suite shortcuts",
+        target_files: ["packages/tests/checkout-flake.spec.ts"],
+        outcome: "negative",
+        expected_outcome_label: "negative_use",
+        reason: "Agent used the exposed test stabilization candidate but verifier outcome was negative.",
       },
     ];
 
@@ -365,13 +431,14 @@ async function main() {
     const positiveUseCount = allRows.filter((entry) => entry.outcome_label === "positive_use").length;
     const negativeUseCount = allRows.filter((entry) => entry.outcome_label === "negative_use").length;
     const blockedOrSuppressedCount = allRows.filter((entry) => entry.outcome_label === "blocked_or_suppressed").length;
+    const expectedPositiveUseCount = specs.filter((spec) => spec.expected_outcome_label === "positive_use").length;
+    const expectedNegativeUseCount = specs.filter((spec) => spec.expected_outcome_label === "negative_use").length;
     assertCondition(appendedLineCount === allRows.length, "appendable admission dataset JSONL line count mismatch");
-    assertCondition(positiveUseCount >= 1, "appendable admission dataset missing positive_use row");
-    assertCondition(negativeUseCount >= 1, "appendable admission dataset missing negative_use row");
-    assertCondition(blockedOrSuppressedCount >= 2, "appendable admission dataset missing blocked_or_suppressed rows");
+    assertCondition(positiveUseCount >= expectedPositiveUseCount, "appendable admission dataset missing positive_use rows");
+    assertCondition(negativeUseCount >= expectedNegativeUseCount, "appendable admission dataset missing negative_use rows");
+    assertCondition(blockedOrSuppressedCount >= specs.length, "appendable admission dataset missing blocked_or_suppressed rows");
     assertCondition(!appendedJsonl.includes("prompt_text"), "appendable admission dataset JSONL leaked prompt_text");
-    assertCondition(!appendedJsonl.includes("legacy/checkout/full-rewrite.ts"), "appendable admission dataset JSONL leaked checkout suppressed payload");
-    assertCondition(!appendedJsonl.includes("legacy/billing/dead-end.ts"), "appendable admission dataset JSONL leaked billing suppressed payload");
+    assertCondition(excludesAll(appendedJsonl, specs.map((spec) => spec.suppressed_payload_marker)), "appendable admission dataset JSONL leaked suppressed payload");
     assertCondition(!appendedJsonl.includes("\"slots\""), "appendable admission dataset JSONL leaked raw slots");
 
     let collectionResult: ReturnType<typeof collectAdmissionDatasetRows> | null = null;
@@ -428,11 +495,12 @@ async function main() {
         blocked_or_suppressed_count: blockedOrSuppressedCount,
         unused_exposed_count: allRows.filter((entry) => entry.outcome_label === "unused_exposed").length,
         prompt_payload_excluded: !appendedJsonl.includes("prompt_text"),
-        raw_memory_payload_excluded: !appendedJsonl.includes("legacy/checkout/full-rewrite.ts")
-          && !appendedJsonl.includes("legacy/billing/dead-end.ts"),
+        raw_memory_payload_excluded: excludesAll(appendedJsonl, specs.map((spec) => spec.suppressed_payload_marker)),
         raw_slots_excluded: !appendedJsonl.includes("\"slots\""),
         append_mode: "jsonl_append",
         append_chunk_count: rounds.length,
+        scenario_count: specs.length,
+        task_signature_count: new Set(rounds.map((round) => round.task_signature)).size,
         collected_to_dataset: !!collectionResult,
         chunk_path: chunkPath,
         append_chunks: rounds.map((round, index) => ({
@@ -467,12 +535,11 @@ async function main() {
       rounds: rounds.map(({ rows: _rows, ...round }) => round),
       checks: {
         appendable_jsonl_line_count_matches_rows: appendedLineCount === allRows.length,
-        positive_use_exported: positiveUseCount >= 1,
-        negative_use_exported: negativeUseCount >= 1,
-        blocked_or_suppressed_exported: blockedOrSuppressedCount >= 2,
+        positive_use_exported: positiveUseCount >= expectedPositiveUseCount,
+        negative_use_exported: negativeUseCount >= expectedNegativeUseCount,
+        blocked_or_suppressed_exported: blockedOrSuppressedCount >= specs.length,
         prompt_payload_excluded: !appendedJsonl.includes("prompt_text"),
-        raw_memory_payload_excluded: !appendedJsonl.includes("legacy/checkout/full-rewrite.ts")
-          && !appendedJsonl.includes("legacy/billing/dead-end.ts"),
+        raw_memory_payload_excluded: excludesAll(appendedJsonl, specs.map((spec) => spec.suppressed_payload_marker)),
         raw_slots_excluded: !appendedJsonl.includes("\"slots\""),
         collector_appendable: collectionResult ? collectionResult.checks.append_only : null,
         collector_policy_comparison_generated: collectionResult ? !!collectionResult.policy_comparison_path : null,

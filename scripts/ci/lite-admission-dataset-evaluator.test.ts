@@ -78,8 +78,11 @@ test("admission dataset evaluator computes policy and admission bucket metrics",
   assert.equal(report.dataset.row_count, 5);
   assert.equal(report.sample_quality.minimum_rows_for_policy_claim, 100);
   assert.equal(report.sample_quality.not_enough_rows_for_policy_claim, true);
+  assert.equal(report.sample_quality.minimum_task_signatures_for_diversity_claim, 6);
+  assert.equal(report.sample_quality.not_enough_task_signatures_for_diversity_claim, true);
   assert.equal(report.policy.policy_id, AIONIS_ADMISSION_POLICY_ID);
   assert.equal(report.policy.row_policy_metadata_coverage, 1);
+  assert.equal(report.dataset.task_signature_count, 1);
   assert.equal(report.metrics.use_now_count, 2);
   assert.equal(report.metrics.use_now_positive_rate, 0.5);
   assert.equal(report.metrics.use_now_negative_rate, 0.5);
@@ -87,8 +90,11 @@ test("admission dataset evaluator computes policy and admission bucket metrics",
   assert.equal(report.metrics.rehydrate_requested_count, 1);
   assert.ok(report.risk_flags.includes("use_now_negative_use_present"));
   assert.ok(report.risk_flags.includes("not_enough_rows_for_policy_claim"));
+  assert.ok(report.risk_flags.includes("not_enough_task_signatures_for_diversity_claim"));
   assert.ok(report.recommendations.includes("inspect_negative_use_rows_before_policy_change"));
+  assert.ok(report.recommendations.includes("collect_at_least_6_task_signatures_before_claiming_policy_diversity"));
   assert.ok(report.buckets.some((bucket) => bucket.dimension === "admission_action" && bucket.key === "use_now" && bucket.row_count === 2));
+  assert.ok(report.buckets.some((bucket) => bucket.dimension === "task_signature" && bucket.key === "admission-evaluator" && bucket.row_count === 5));
 });
 
 test("admission dataset evaluator reads JSONL and backfills missing policy metadata", () => {
@@ -122,5 +128,6 @@ test("admission dataset evaluator formats markdown report", () => {
   assert.match(markdown, /Aionis Admission Dataset Evaluation/);
   assert.match(markdown, /use_now positive rate/);
   assert.match(markdown, /enough rows for policy claim/);
+  assert.match(markdown, /enough task signatures for diversity claim/);
   assert.match(markdown, /collect_at_least_100_rows_before_claiming_policy_quality/);
 });
