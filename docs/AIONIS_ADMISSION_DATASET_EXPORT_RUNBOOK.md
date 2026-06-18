@@ -12,6 +12,11 @@ remember / observe
   -> measure
   -> memoryAdmissionDatasetRowsFromRecord(...)
   -> append JSONL
+
+external memory candidates
+  -> governMemory(mode=firewall)
+  -> memoryAdmissionDatasetRowsFromRecord(...)
+  -> append JSONL
 ```
 
 The export is a read-only projection. It does not train a policy, mutate memory
@@ -19,9 +24,12 @@ authority, or enter the Agent prompt.
 
 ## What To Append
 
-Append one JSONL chunk after each completed `guide -> feedback -> measure` loop.
-Use the `memory_decision_trace.admission_record` returned by `/v1/measure` as
-the source record.
+Append one JSONL chunk after each completed `guide -> feedback -> measure` loop
+or Memory Firewall `governMemory(mode=firewall)` pass. Use the
+`memory_decision_trace.admission_record` returned by `/v1/measure` for internal
+Runtime memory, and the `memory_admission_records` returned by
+`/v1/memory/govern` for external backend candidates. Both paths use the same
+`aionis_memory_admission_record_v1` contract.
 
 Each row should keep:
 
@@ -131,15 +139,16 @@ For repeated real Runtime collection, use the batch collector:
 ```bash
 npm run -s admission:batch-collect -- \
   --dataset-dir admission-dataset \
-  --iterations 9
+  --iterations 7
 ```
 
 Each iteration runs the same real Runtime e2e, writes one chunk under
 `admission-dataset/chunks/`, appends it to `rows.jsonl`, and refreshes the
 latest evaluator, comparison, and batch reports. The default diverse loop emits
-12 rows per iteration across six task signatures; nine iterations reaches the
-minimum 100-row policy-claim gate. Use more iterations when you want repeated
-measurements within the same task-signature set.
+15 rows per iteration across seven task signatures, including a pointer-only
+`rehydrate_requested` row; seven iterations reaches the minimum 100-row
+policy-claim gate. Use more iterations when you want repeated measurements
+within the same task-signature set.
 
 ## Validation Command
 
@@ -159,6 +168,7 @@ The e2e currently proves:
 - multiple loops can be appended into one JSONL export
 - `positive_use` and `negative_use` are both represented
 - suppressed memory exports as `blocked_or_suppressed`
+- pointer-only raw evidence exports as `rehydrate_requested`
 - row count matches JSONL line count
 - prompt text, raw memory payloads, and raw slots are excluded
 
@@ -183,10 +193,10 @@ Core metrics:
 |---|---|
 | `use_now_positive_rate` | Attributed positive `use_now` rows divided by all `use_now` rows. |
 | `use_now_negative_rate` | Attributed negative `use_now` rows divided by all `use_now` rows. |
+| `blocked_or_suppressed_count` | Rows that train the hard suppression / firewall boundary. |
+| `rehydrate_requested_count` | Pointer-only rows that train payload sufficiency and on-demand recovery. |
 | `use_now_unused_rate` | Exposed `use_now` rows not attributed as used. |
 | `unused_exposed_rate` | Prompt-included rows that received no usage attribution. |
-| `blocked_or_suppressed_count` | Rows that train the hard suppression / firewall boundary. |
-| `rehydrate_requested_count` | Rows that train payload sufficiency and on-demand recovery. |
 
 Small-sample protection is explicit. Reports include `sample_quality`; fewer
 than 100 rows sets `not_enough_rows_for_policy_claim=true`, and fewer than six
