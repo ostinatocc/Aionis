@@ -13,20 +13,22 @@ the default Runtime path.
 | Field | Value |
 |---|---|
 | Candidate policy | `candidate_project_context_closed_loop_inspect` |
-| Current status | `eligible_for_multi_profile_isolated_active_gray` |
+| Current status | `eligible_for_multi_profile_isolated_active_gray_with_tool_e2e_pilot` |
 | Default Runtime status | `not_default_active` |
 | External backend status | `shadow_only` |
-| Full tool-executing Agent E2E status | `not_yet_validated` |
+| Full tool-executing Agent E2E status | `pilot_passed_single_base_trap` |
 
 The selected candidate is a closed-loop admission policy. Its current evidence
 supports isolated active gray testing on the `closed-loop-prior-fresh-2` and
-`closed-loop-prior-fresh` internal Runtime guide profiles. It does not
+`closed-loop-prior-fresh` internal Runtime guide profiles. A first
+tool-executing external Agent pilot also passed on one base trap family. This
+does not
 authorize:
 
 - default active mode;
 - external-backend active rollout;
 - broad product claims across all memory lanes;
-- claims about full coding-Agent task completion.
+- broad claims about full coding-Agent task completion.
 
 ## Evidence Chain
 
@@ -42,6 +44,7 @@ authorize:
 | Active gray real-Agent rerun | `docs/research/2026-06-18-admission-active-gray-real-agent-rerun.md` | Real LLM rerun preserved accepted action rate and reduced negative direct risk for this profile. |
 | Second guide active gray | `docs/research/2026-06-18-admission-second-guide-active-gray.md` | The neighboring `/v1/guide` profile passed isolated active gray with bounded downgrade-only behavior. |
 | Second guide active gray real-Agent rerun | `docs/research/2026-06-18-admission-second-guide-active-gray-real-agent-rerun.md` | Real LLM rerun preserved accepted action rate and reduced negative direct risk for the second guide profile. |
+| Tool-executing Agent E2E pilot | `docs/research/2026-06-18-admission-active-tool-executing-agent-e2e.md` | Active mode preserved 0% wrong writes, 0% wrong attention, 100% accepted direction, and 100% action completion on one base trap across four hygiene levels. |
 
 ## Gate Results
 
@@ -173,6 +176,26 @@ The real LLM rerun over the second guide active gray dataset produced:
 This closes the second guide-profile real-Agent admission rerun gate. It still
 does not close the full tool-executing Agent E2E gate.
 
+### Tool-Executing Agent E2E Pilot
+
+The first active-vs-off tool-executing pilot used the external Agent E2E Phase 2
+gradient runner on one base trap family across four hygiene levels.
+
+| Metric | Policy off | Policy active |
+|---|---:|---:|
+| Completed records | 4 / 4 | 4 / 4 |
+| Wrong-branch write rate | 0.0% | 0.0% |
+| Wrong-branch attention rate | 0.0% | 0.0% |
+| Accepted-direction rate | 100.0% | 100.0% |
+| Action-completion rate | 100.0% | 100.0% |
+| Report-conflict rate | 0.0% | 0.0% |
+| Terminal-inspect rate | 0.0% | 0.0% |
+| Prompt tokens | 19,336 | 18,047 |
+
+This closes a narrow pilot gate for real tool execution. It does not authorize
+default active rollout because it is one base trap, one Aionis arm, and one
+file-choice Agent profile.
+
 ## Required Gates Before Default Active
 
 Do not promote the candidate to default active mode until all of these gates are
@@ -183,7 +206,8 @@ closed:
    shadow, isolated active gray, and real-Agent admission rerun gates have
    passed.
 2. A real tool-executing Agent E2E shows no completion regression and no
-   hard-boundary regression.
+   hard-boundary regression across more than one base trap family. As of
+   2026-06-18, the first one-base-trap pilot passed.
 3. External backend candidates have task-level completion evidence, not only
    admission-row shadow evidence.
 4. Protocol compatibility is documented for the chosen real-Agent model.
@@ -200,7 +224,8 @@ The current product claim is:
 
 > Aionis can run the selected closed-loop admission candidate in isolated active
 > gray mode for two internal `/v1/guide` profiles, with bounded downgrade-only
-> behavior and real-Agent admission rerun evidence.
+> behavior, real-Agent admission rerun evidence, and a first small
+> tool-executing Agent E2E pilot.
 
 The current product claim is not:
 
