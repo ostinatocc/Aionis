@@ -121,11 +121,60 @@ The accepted interpretation is narrow:
 4. The dataset is generated from controlled product scenarios. It is valid for
    admission flywheel plumbing and calibration, not for broad market claims.
 
+## Holdout Split
+
+Report:
+
+```text
+admission-dataset/reports/latest/holdout.md
+```
+
+Command:
+
+```bash
+npm run -s admission:holdout -- \
+  --input admission-dataset/rows.jsonl \
+  --out-dir admission-dataset/reports/latest \
+  --split-by task_signature \
+  --holdout-ratio 0.3
+```
+
+Split result:
+
+| Split | Rows | Task-signature groups |
+|---|---:|---:|
+| Train | 70 | 5 |
+| Holdout | 35 | 2 |
+
+Holdout checks:
+
+| Check | Result |
+|---|---:|
+| Disjoint groups | yes |
+| Recorded Aionis policy is holdout leader | yes |
+| Holdout enough rows for policy claim | no |
+| Holdout enough task signatures for diversity claim | no |
+
+Holdout metrics:
+
+| Metric | Value |
+|---|---:|
+| `use_now_positive_rate` | 50.0% |
+| `use_now_negative_rate` | 0.0% |
+| `unused_exposed_rate` | 20.0% |
+| `blocked_or_suppressed_count` | 14 |
+| `rehydrate_requested_count` | 7 |
+
+The holdout split is useful as a promotion discipline: future tuned rules or
+learned classifiers must be evaluated on rows they were not tuned against. This
+specific holdout is still small, so it is pipeline validation and policy
+regression protection, not a broad policy-quality claim.
+
 ## Next Step
 
-The next stage is holdout-aware policy evaluation:
+The next stage is holdout-aware candidate policy evaluation:
 
-1. split rows by chunk or task signature into train and holdout sets;
+1. keep collecting rows until the holdout itself reaches the row/signature gates;
 2. keep lifecycle, authority, source, suppression, and rehydrate gates as hard
    boundaries;
 3. evaluate any tuned rule or learned classifier on holdout before it can affect

@@ -90,6 +90,10 @@ admission-dataset/
     latest/
       summary.json
       leaderboard.md
+      policy_comparison.json
+      policy_comparison.md
+      holdout.json
+      holdout.md
 ```
 
 Append rows to `rows.jsonl`. Write a manifest per export job with:
@@ -260,3 +264,31 @@ The first comparison arms are:
 This comparison is an offline proxy over exported rows. It is useful for policy
 calibration and obvious baseline sanity checks, but it is not a counterfactual
 Agent rerun and must not mutate Runtime gates by itself.
+
+## Holdout Validation
+
+Before tuning rules or training a learned admission policy, split the dataset
+into train and holdout groups:
+
+```bash
+npm run -s admission:holdout -- \
+  --input admission-dataset/rows.jsonl \
+  --out-dir admission-dataset/reports/latest \
+  --split-by task_signature \
+  --holdout-ratio 0.3
+```
+
+It writes:
+
+- `holdout.json`: machine-readable train/holdout evaluator and policy-comparison reports
+- `holdout.md`: compact human-readable holdout report
+
+The default split is by `task_signature`, not by individual row. This prevents
+the same task from leaking into both train and holdout. `--split-by run_id` is
+also available for chunk-like validation, but the current dataset row contract
+does not yet include a true `chunk_id`.
+
+Holdout reports are still offline validation. They must not mutate Runtime
+gates, and they do not replace counterfactual Agent reruns. A policy change is
+not promotion-ready unless it improves holdout quality while preserving hard
+lifecycle, scope, source, suppression, authority, and rehydrate boundaries.
