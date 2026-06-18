@@ -5,10 +5,10 @@
   "agent_prompt_included": false,
   "label_leakage_guard": true,
   "dataset": {
-    "row_count": 436,
-    "use_now_row_count": 216,
-    "prior_state_signal_row_count": 15,
-    "repeated_negative_posture_row_count": 5,
+    "row_count": 536,
+    "use_now_row_count": 316,
+    "prior_state_signal_row_count": 75,
+    "repeated_negative_posture_row_count": 25,
     "signature_count": 5,
     "mixed_outcome_signature_count": 1,
     "positive_negative_collision_signature_count": 1
@@ -63,10 +63,10 @@
   "top_collisions": [
     {
       "signature": "{\"admission_action\":\"use_now\",\"memory_origin\":\"aionis\",\"source_backend\":\"aionis\",\"domain\":\"general\",\"memory_type\":\"project_context\",\"lifecycle_state\":\"active\",\"authority\":\"advisory\",\"decision_kind\":\"used\",\"actionable\":true,\"prompt_included\":true,\"history_used\":true,\"actionable_history_used\":true,\"reason_codes\":[\"agent_context_projection_checked\",\"authority_advisory\",\"available_for_agent_use\",\"lifecycle_active\",\"memory_contract_direct_use\"],\"evidence_count\":1,\"prior_supported_use_count\":0,\"prior_contradicted_use_count\":0,\"prior_rehydrate_requested_count\":0,\"closed_loop_effect_state\":\"no_prior\",\"repeated_negative_posture\":false}",
-      "row_count": 172,
-      "use_now_count": 172,
-      "positive_use_count": 86,
-      "negative_use_count": 86,
+      "row_count": 212,
+      "use_now_count": 212,
+      "positive_use_count": 106,
+      "negative_use_count": 106,
       "unused_exposed_count": 0,
       "blocked_or_suppressed_count": 0,
       "rehydrate_requested_count": 0,

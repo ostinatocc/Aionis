@@ -4,20 +4,32 @@
   "runtime_mutation": false,
   "agent_prompt_included": false,
   "dataset_dir": "/Volumes/ziel/AionisRuntime-focused/admission-dataset",
-  "profile": "targeted-external-current",
-  "iterations_requested": 1,
-  "iterations_completed": 1,
+  "profile": "closed-loop-prior-fresh",
+  "iterations_requested": 2,
+  "iterations_completed": 2,
   "failure_count": 0,
   "chunks": [
     {
       "iteration": 1,
-      "chunk_id": "targeted-external-current-001",
-      "run_id": "admission-dataset-aa4fce37",
-      "row_count": 36,
-      "appended_row_count": 36,
-      "total_row_count": 411,
-      "chunk_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/chunks/targeted-external-current-001.jsonl",
-      "manifest_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/manifests/targeted-external-current-001.json",
+      "chunk_id": "closed-loop-prior-fresh-001",
+      "run_id": "admission-dataset-32261ead",
+      "row_count": 20,
+      "appended_row_count": 20,
+      "total_row_count": 516,
+      "chunk_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/chunks/closed-loop-prior-fresh-001.jsonl",
+      "manifest_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/manifests/closed-loop-prior-fresh-001.json",
+      "summary_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/reports/latest/summary.json",
+      "policy_comparison_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/reports/latest/policy_comparison.json"
+    },
+    {
+      "iteration": 2,
+      "chunk_id": "closed-loop-prior-fresh-002",
+      "run_id": "admission-dataset-4ea62967",
+      "row_count": 20,
+      "appended_row_count": 20,
+      "total_row_count": 536,
+      "chunk_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/chunks/closed-loop-prior-fresh-002.jsonl",
+      "manifest_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/manifests/closed-loop-prior-fresh-002.json",
       "summary_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/reports/latest/summary.json",
       "policy_comparison_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/reports/latest/policy_comparison.json"
     }
@@ -26,14 +38,14 @@
   "rows_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/rows.jsonl",
   "summary_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/reports/latest/summary.json",
   "policy_comparison_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/reports/latest/policy_comparison.json",
-  "final_row_count": 411,
+  "final_row_count": 536,
   "sample_quality": {
     "minimum_rows_for_policy_claim": 100,
-    "current_row_count": 411,
+    "current_row_count": 536,
     "has_minimum_rows_for_policy_claim": true,
     "not_enough_rows_for_policy_claim": false,
     "minimum_task_signatures_for_diversity_claim": 6,
-    "current_task_signature_count": 25,
+    "current_task_signature_count": 43,
     "has_minimum_task_signatures_for_diversity_claim": true,
     "not_enough_task_signatures_for_diversity_claim": false
   },
@@ -45,5 +57,5 @@
     "not_enough_task_signatures_for_diversity_claim": false,
     "has_minimum_task_signatures_for_diversity_claim": true
   },
-  "summary": "Collected 411 admission dataset rows across 1/1 real Runtime e2e iterations."
+  "summary": "Collected 536 admission dataset rows across 2/2 real Runtime e2e iterations."
 }

@@ -32,7 +32,11 @@ const SUPPRESSED_MARKER = "ADMISSION_DATASET_SUPPRESSED_ROUTE";
 type AionisClient = ReturnType<typeof createAionisClient>;
 type AdmissionOutcome = "positive" | "negative";
 type AdmissionOutcomeLabel = "positive_use" | "negative_use";
-type AdmissionDatasetExportProfile = "standard" | "targeted-external-current" | "closed-loop-prior";
+type AdmissionDatasetExportProfile =
+  | "standard"
+  | "targeted-external-current"
+  | "closed-loop-prior"
+  | "closed-loop-prior-fresh";
 
 type AdmissionRoundSpec = {
   round_id: string;
@@ -116,7 +120,11 @@ function parseArgs(argv: string[]): CliArgs {
     datasetDir: process.env.AIONIS_ADMISSION_DATASET_DIR?.trim() || null,
     chunkId: process.env.AIONIS_ADMISSION_DATASET_CHUNK_ID?.trim() || null,
     outJsonl: process.env.AIONIS_ADMISSION_DATASET_OUT_JSONL?.trim() || null,
-    profile: envProfile === "targeted-external-current" || envProfile === "closed-loop-prior" ? envProfile : "standard",
+    profile: envProfile === "targeted-external-current"
+      || envProfile === "closed-loop-prior"
+      || envProfile === "closed-loop-prior-fresh"
+      ? envProfile
+      : "standard",
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -131,11 +139,15 @@ function parseArgs(argv: string[]): CliArgs {
       out.outJsonl = next;
       i += 1;
     } else if (arg === "--profile" && next) {
-      out.profile = next === "targeted-external-current" || next === "closed-loop-prior" ? next : "standard";
+      out.profile = next === "targeted-external-current"
+        || next === "closed-loop-prior"
+        || next === "closed-loop-prior-fresh"
+        ? next
+        : "standard";
       i += 1;
     } else if (arg === "--help" || arg === "-h") {
       process.stdout.write([
-        "Usage: npm run -s runtime:e2e:admission-dataset-export -- [--dataset-dir admission-dataset] [--chunk-id run-001] [--profile standard|targeted-external-current|closed-loop-prior]",
+        "Usage: npm run -s runtime:e2e:admission-dataset-export -- [--dataset-dir admission-dataset] [--chunk-id run-001] [--profile standard|targeted-external-current|closed-loop-prior|closed-loop-prior-fresh]",
         "",
         "Runs the real Runtime guide/feedback/measure loop. When --dataset-dir is set,",
         "the exported admission rows are appended through admission:collect semantics.",
@@ -773,6 +785,101 @@ function admissionDatasetClosedLoopPriorSpecs(args: {
   ];
 }
 
+function admissionDatasetFreshClosedLoopPriorSpecs(args: {
+  baseScope: string;
+}): AdmissionClosedLoopPriorSpec[] {
+  return [
+    {
+      round_id: "closed-loop-prior-supported-data-migration",
+      scope: `${args.baseScope}:closed-loop-prior-supported-data-migration`,
+      marker: "ADMISSION_DATASET_CLOSED_LOOP_SUPPORTED_DATA_MIGRATION_ROUTE",
+      text: "ADMISSION_DATASET_CLOSED_LOOP_SUPPORTED_DATA_MIGRATION_ROUTE: accepted route is packages/data/src/idempotent-migration-plan.ts; reuse only when prior feedback supports it.",
+      query_text: "continue supported data migration route with prior feedback visible",
+      target_files: ["packages/data/src/idempotent-migration-plan.ts"],
+      outcomes: ["positive", "positive"],
+      expected_state_on_last_row: "supported",
+      expected_repeated_negative_posture_on_last_row: false,
+    },
+    {
+      round_id: "closed-loop-prior-contradicted-data-migration",
+      scope: `${args.baseScope}:closed-loop-prior-contradicted-data-migration`,
+      marker: "ADMISSION_DATASET_CLOSED_LOOP_CONTRADICTED_DATA_MIGRATION_ROUTE",
+      text: "ADMISSION_DATASET_CLOSED_LOOP_CONTRADICTED_DATA_MIGRATION_ROUTE: candidate route is packages/data/src/drop-and-reseed-shortcut.ts; keep prior negative feedback visible before direct reuse.",
+      query_text: "continue contradicted data migration shortcut route with prior negative feedback visible",
+      target_files: ["packages/data/src/drop-and-reseed-shortcut.ts"],
+      outcomes: ["negative", "negative", "negative"],
+      expected_state_on_last_row: "contradicted",
+      expected_repeated_negative_posture_on_last_row: true,
+    },
+    {
+      round_id: "closed-loop-prior-supported-webhook",
+      scope: `${args.baseScope}:closed-loop-prior-supported-webhook`,
+      marker: "ADMISSION_DATASET_CLOSED_LOOP_SUPPORTED_WEBHOOK_ROUTE",
+      text: "ADMISSION_DATASET_CLOSED_LOOP_SUPPORTED_WEBHOOK_ROUTE: accepted route is packages/integrations/src/webhook-signature-verifier.ts; reuse only when prior feedback supports it.",
+      query_text: "continue supported webhook verifier route with prior feedback visible",
+      target_files: ["packages/integrations/src/webhook-signature-verifier.ts"],
+      outcomes: ["positive", "positive"],
+      expected_state_on_last_row: "supported",
+      expected_repeated_negative_posture_on_last_row: false,
+    },
+    {
+      round_id: "closed-loop-prior-contradicted-webhook",
+      scope: `${args.baseScope}:closed-loop-prior-contradicted-webhook`,
+      marker: "ADMISSION_DATASET_CLOSED_LOOP_CONTRADICTED_WEBHOOK_ROUTE",
+      text: "ADMISSION_DATASET_CLOSED_LOOP_CONTRADICTED_WEBHOOK_ROUTE: candidate route is packages/integrations/src/trust-forwarded-signature.ts; keep prior negative feedback visible before direct reuse.",
+      query_text: "continue contradicted webhook trust-forwarded route with prior negative feedback visible",
+      target_files: ["packages/integrations/src/trust-forwarded-signature.ts"],
+      outcomes: ["negative", "negative", "negative"],
+      expected_state_on_last_row: "contradicted",
+      expected_repeated_negative_posture_on_last_row: true,
+    },
+    {
+      round_id: "closed-loop-prior-supported-schema",
+      scope: `${args.baseScope}:closed-loop-prior-supported-schema`,
+      marker: "ADMISSION_DATASET_CLOSED_LOOP_SUPPORTED_SCHEMA_ROUTE",
+      text: "ADMISSION_DATASET_CLOSED_LOOP_SUPPORTED_SCHEMA_ROUTE: accepted route is packages/schema/src/versioned-contract-reader.ts; reuse only when prior feedback supports it.",
+      query_text: "continue supported versioned schema route with prior feedback visible",
+      target_files: ["packages/schema/src/versioned-contract-reader.ts"],
+      outcomes: ["positive", "positive"],
+      expected_state_on_last_row: "supported",
+      expected_repeated_negative_posture_on_last_row: false,
+    },
+    {
+      round_id: "closed-loop-prior-contradicted-schema",
+      scope: `${args.baseScope}:closed-loop-prior-contradicted-schema`,
+      marker: "ADMISSION_DATASET_CLOSED_LOOP_CONTRADICTED_SCHEMA_ROUTE",
+      text: "ADMISSION_DATASET_CLOSED_LOOP_CONTRADICTED_SCHEMA_ROUTE: candidate route is packages/schema/src/unversioned-any-parser.ts; keep prior negative feedback visible before direct reuse.",
+      query_text: "continue contradicted unversioned schema parser route with prior negative feedback visible",
+      target_files: ["packages/schema/src/unversioned-any-parser.ts"],
+      outcomes: ["negative", "negative", "negative"],
+      expected_state_on_last_row: "contradicted",
+      expected_repeated_negative_posture_on_last_row: true,
+    },
+    {
+      round_id: "closed-loop-prior-supported-scheduler",
+      scope: `${args.baseScope}:closed-loop-prior-supported-scheduler`,
+      marker: "ADMISSION_DATASET_CLOSED_LOOP_SUPPORTED_SCHEDULER_ROUTE",
+      text: "ADMISSION_DATASET_CLOSED_LOOP_SUPPORTED_SCHEDULER_ROUTE: accepted route is packages/jobs/src/deduped-scheduler-window.ts; reuse only when prior feedback supports it.",
+      query_text: "continue supported deduped scheduler route with prior feedback visible",
+      target_files: ["packages/jobs/src/deduped-scheduler-window.ts"],
+      outcomes: ["positive", "positive"],
+      expected_state_on_last_row: "supported",
+      expected_repeated_negative_posture_on_last_row: false,
+    },
+    {
+      round_id: "closed-loop-prior-contradicted-scheduler",
+      scope: `${args.baseScope}:closed-loop-prior-contradicted-scheduler`,
+      marker: "ADMISSION_DATASET_CLOSED_LOOP_CONTRADICTED_SCHEDULER_ROUTE",
+      text: "ADMISSION_DATASET_CLOSED_LOOP_CONTRADICTED_SCHEDULER_ROUTE: candidate route is packages/jobs/src/fire-every-worker-loop.ts; keep prior negative feedback visible before direct reuse.",
+      query_text: "continue contradicted fire-every-worker scheduler route with prior negative feedback visible",
+      target_files: ["packages/jobs/src/fire-every-worker-loop.ts"],
+      outcomes: ["negative", "negative", "negative"],
+      expected_state_on_last_row: "contradicted",
+      expected_repeated_negative_posture_on_last_row: true,
+    },
+  ];
+}
+
 async function main() {
   const cli = parseArgs(process.argv.slice(2));
   const runId = `admission-dataset-${randomUUID().slice(0, 8)}`;
@@ -971,10 +1078,12 @@ async function main() {
       externalRehydrateSpecs = admissionDatasetTargetedExternalCurrentSpecs({ runId, baseScope });
     }
     let closedLoopPriorSpecs: AdmissionClosedLoopPriorSpec[] = [];
-    if (cli.profile === "closed-loop-prior") {
+    if (cli.profile === "closed-loop-prior" || cli.profile === "closed-loop-prior-fresh") {
       memorySpecs = [];
       externalRehydrateSpecs = [];
-      closedLoopPriorSpecs = admissionDatasetClosedLoopPriorSpecs({ baseScope });
+      closedLoopPriorSpecs = cli.profile === "closed-loop-prior-fresh"
+        ? admissionDatasetFreshClosedLoopPriorSpecs({ baseScope })
+        : admissionDatasetClosedLoopPriorSpecs({ baseScope });
     }
 
     const rounds: AdmissionRoundResult[] = [];

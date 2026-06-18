@@ -10,7 +10,7 @@ type CliArgs = {
   iterations: number;
   chunkPrefix: string;
   stopOnFailure: boolean;
-  profile: "standard" | "targeted-external-current" | "closed-loop-prior";
+  profile: "standard" | "targeted-external-current" | "closed-loop-prior" | "closed-loop-prior-fresh";
 };
 
 type BatchChunk = {
@@ -38,7 +38,11 @@ function parseArgs(argv: string[]): CliArgs {
     iterations: positiveInteger(process.env.AIONIS_ADMISSION_BATCH_ITERATIONS, 25),
     chunkPrefix: process.env.AIONIS_ADMISSION_BATCH_CHUNK_PREFIX?.trim() || "runtime-batch",
     stopOnFailure: true,
-    profile: envProfile === "targeted-external-current" || envProfile === "closed-loop-prior" ? envProfile : "standard",
+    profile: envProfile === "targeted-external-current"
+      || envProfile === "closed-loop-prior"
+      || envProfile === "closed-loop-prior-fresh"
+      ? envProfile
+      : "standard",
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -55,11 +59,15 @@ function parseArgs(argv: string[]): CliArgs {
     } else if (arg === "--continue-on-failure") {
       out.stopOnFailure = false;
     } else if (arg === "--profile" && next) {
-      out.profile = next === "targeted-external-current" || next === "closed-loop-prior" ? next : "standard";
+      out.profile = next === "targeted-external-current"
+        || next === "closed-loop-prior"
+        || next === "closed-loop-prior-fresh"
+        ? next
+        : "standard";
       i += 1;
     } else if (arg === "--help" || arg === "-h") {
       process.stdout.write([
-        "Usage: npm run -s admission:batch-collect -- --dataset-dir admission-dataset [--iterations 25] [--profile standard|targeted-external-current|closed-loop-prior]",
+        "Usage: npm run -s admission:batch-collect -- --dataset-dir admission-dataset [--iterations 25] [--profile standard|targeted-external-current|closed-loop-prior|closed-loop-prior-fresh]",
         "",
         "Runs the real admission dataset Runtime e2e repeatedly and appends each chunk",
         "to the same durable admission dataset.",
