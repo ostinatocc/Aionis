@@ -37,6 +37,12 @@ test("external candidate admission routes trusted current memory to use_now", ()
   assert.equal(result.memory_admission_records.entries[0]?.memory_origin, "external");
   assert.equal(result.memory_admission_records.entries[0]?.source_backend, "mem0");
   assert.equal(result.memory_admission_records.entries[0]?.admission_action, "use_now");
+  assert.equal(result.memory_admission_records.shadow_policy_report?.runtime_mutation, false);
+  assert.equal(result.memory_admission_records.shadow_policy_report?.direct_use_recorded_count, 1);
+  assert.equal(result.memory_admission_records.shadow_policy_report?.direct_use_shadow_count, 0);
+  assert.deepEqual(result.memory_admission_records.shadow_policy_report?.downgraded_memory_ids, [
+    "mem0:current-checkout",
+  ]);
   assert.equal(result.agent_context.prompt_text.includes("memory_admission_record"), false);
   assert.equal(result.memory_firewall, undefined);
 });

@@ -1801,11 +1801,27 @@ test("product memory decision trace explains lifecycle and agent-context surface
   assert.equal(trace.admission_record.runtime_mutation, false);
   assert.equal(trace.admission_record.candidate_memory_count, 2);
   assert.equal(trace.admission_record.prompt_included_memory_count, 2);
+  assert.equal(trace.admission_record.shadow_policy_report?.runtime_mutation, false);
+  assert.equal(trace.admission_record.shadow_policy_report?.agent_prompt_included, false);
+  assert.equal(trace.admission_record.shadow_policy_report?.hard_boundary_upgrade_count, 0);
+  assert.equal(trace.admission_record.shadow_policy_report?.direct_use_recorded_count, 1);
+  assert.equal(trace.admission_record.shadow_policy_report?.would_downgrade_use_now_count, 1);
   assert.deepEqual(
     trace.admission_record.entries.map((entry) => [entry.memory_id, entry.admission_action, entry.prompt_included]),
     [
       ["mem-current-route", "use_now", true],
       ["mem-old-route", "inspect_before_use", true],
+    ],
+  );
+  assert.deepEqual(
+    trace.admission_record.shadow_policy_report?.decisions.map((entry) => [
+      entry.memory_id,
+      entry.recorded_action,
+      entry.shadow_action,
+    ]),
+    [
+      ["mem-current-route", "use_now", "inspect_before_use"],
+      ["mem-old-route", "inspect_before_use", "inspect_before_use"],
     ],
   );
   assert.equal(trace.relation_decisions[0]?.memory_id, "mem-old-route");

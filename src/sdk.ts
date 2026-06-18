@@ -179,6 +179,7 @@ export type AionisMemoryAdmissionRecord = {
   prompt_included_memory_count: number;
   agent_used_memory_count: number;
   entries: AionisMemoryAdmissionRecordEntry[];
+  shadow_policy_report?: AionisMemoryAdmissionShadowPolicyReport;
   summary: string;
 };
 
@@ -355,6 +356,47 @@ export type AionisMemoryAdmissionClosedLoopEffectState =
   | "contradicted"
   | "mixed"
   | "rehydrate_requested";
+
+export type AionisMemoryAdmissionShadowPolicyId = "candidate_project_context_closed_loop_inspect";
+
+export type AionisMemoryAdmissionShadowPolicyDecision = {
+  memory_id: string;
+  title: string | null;
+  recorded_action: AionisMemoryAdmissionRecordEntry["admission_action"];
+  shadow_action: AionisMemoryAdmissionRecordEntry["admission_action"];
+  would_change_action: boolean;
+  memory_origin: AionisMemoryAdmissionRecordEntry["memory_origin"];
+  source_backend: string;
+  memory_type: AionisMemoryAdmissionRecordEntry["memory_type"];
+  closed_loop_effect_state: AionisMemoryAdmissionClosedLoopEffectState;
+  repeated_negative_posture: boolean;
+  prior_state_available: boolean;
+  used_fields: string[];
+  reason_codes: string[];
+};
+
+export type AionisMemoryAdmissionShadowPolicyReport = {
+  contract_version: "aionis_memory_admission_shadow_policy_report_v1";
+  intended_use: "admission_policy_shadow_audit";
+  policy_id: AionisMemoryAdmissionShadowPolicyId;
+  policy_version: string;
+  mode: "shadow_only";
+  source: "memory_admission_record" | "memory_decision_trace" | "external_candidate_admission";
+  agent_prompt_included: false;
+  runtime_mutation: false;
+  hard_boundary_policy: "preserve_recorded_non_use_now";
+  decision_count: number;
+  changed_count: number;
+  would_downgrade_use_now_count: number;
+  hard_boundary_upgrade_count: number;
+  direct_use_recorded_count: number;
+  direct_use_shadow_count: number;
+  policy_changed_memory_ids: string[];
+  downgraded_memory_ids: string[];
+  hard_boundary_preserved_memory_ids: string[];
+  decisions: AionisMemoryAdmissionShadowPolicyDecision[];
+  summary: string;
+};
 
 export type AionisMemoryAdmissionDatasetRow = {
   contract_version: "aionis_memory_admission_dataset_row_v1";

@@ -3,6 +3,7 @@ import {
   inferLifecycleCandidateSignals,
   lifecycleCandidateDirectUseUnsafe,
 } from "./lifecycle-candidate-inference.js";
+import { buildAionisMemoryAdmissionShadowPolicyReportFromRecord } from "./admission-shadow-policy.js";
 import {
   parseAionisAgentContext,
   AionisExternalMemoryCandidateSchema,
@@ -611,7 +612,7 @@ export function governExternalMemoryCandidates(
     ]).slice(0, 64),
     summary: `Aionis routed ${entries.length} external memory candidates into ${useNow.length} use_now, ${inspect.length} inspect_before_use, ${doNotUse.length} do_not_use, and ${rehydrate.length} rehydrate decisions; receipt is read-only and excluded from the Agent prompt.`,
   });
-  const admissionRecord = parseAionisMemoryAdmissionRecord({
+  const baseAdmissionRecord = parseAionisMemoryAdmissionRecord({
     contract_version: "aionis_memory_admission_record_v1",
     intended_use: "memory_admission_audit_dataset",
     source: "external_candidate_admission",
@@ -646,6 +647,13 @@ export function governExternalMemoryCandidates(
       evidence_ids: entry.candidate.evidence_refs,
     })),
     summary: `Aionis recorded ${entries.length} external memory admission decisions; record is read-only, backend-agnostic, and excluded from the Agent prompt.`,
+  });
+  const admissionRecord = parseAionisMemoryAdmissionRecord({
+    ...baseAdmissionRecord,
+    shadow_policy_report: buildAionisMemoryAdmissionShadowPolicyReportFromRecord(
+      baseAdmissionRecord,
+      "external_candidate_admission",
+    ),
   });
   const memoryFirewall = mode === "firewall" ? buildMemoryFirewallSummary(entries) : undefined;
   return {

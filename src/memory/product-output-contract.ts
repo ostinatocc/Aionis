@@ -1232,6 +1232,82 @@ export function parseAionisMemoryUseReceipt(value: unknown): AionisMemoryUseRece
   return AionisMemoryUseReceiptSchema.parse(value);
 }
 
+export const AionisMemoryAdmissionClosedLoopEffectStateSchema = z.enum([
+  "no_prior",
+  "supported",
+  "contradicted",
+  "mixed",
+  "rehydrate_requested",
+]);
+export type AionisMemoryAdmissionClosedLoopEffectState = z.infer<
+  typeof AionisMemoryAdmissionClosedLoopEffectStateSchema
+>;
+
+export const AionisMemoryAdmissionShadowPolicyReportSchema = z
+  .object({
+    contract_version: z.literal("aionis_memory_admission_shadow_policy_report_v1"),
+    intended_use: z.literal("admission_policy_shadow_audit"),
+    policy_id: z.literal("candidate_project_context_closed_loop_inspect"),
+    policy_version: z.string().min(1),
+    mode: z.literal("shadow_only"),
+    source: z.enum(["memory_admission_record", "memory_decision_trace", "external_candidate_admission"]),
+    agent_prompt_included: z.literal(false),
+    runtime_mutation: z.literal(false),
+    hard_boundary_policy: z.literal("preserve_recorded_non_use_now"),
+    decision_count: z.number().int().nonnegative(),
+    changed_count: z.number().int().nonnegative(),
+    would_downgrade_use_now_count: z.number().int().nonnegative(),
+    hard_boundary_upgrade_count: z.number().int().nonnegative(),
+    direct_use_recorded_count: z.number().int().nonnegative(),
+    direct_use_shadow_count: z.number().int().nonnegative(),
+    policy_changed_memory_ids: z.array(z.string().min(1)).default([]),
+    downgraded_memory_ids: z.array(z.string().min(1)).default([]),
+    hard_boundary_preserved_memory_ids: z.array(z.string().min(1)).default([]),
+    decisions: z
+      .array(
+        z
+          .object({
+            memory_id: z.string().min(1),
+            title: z.string().min(1).nullable(),
+            recorded_action: AionisMemoryDecisionSurfaceSchema,
+            shadow_action: AionisMemoryDecisionSurfaceSchema,
+            would_change_action: z.boolean(),
+            memory_origin: z.enum(["aionis", "external"]),
+            source_backend: z.string().min(1),
+            memory_type: z.enum([
+              "fact",
+              "preference",
+              "project_context",
+              "procedure",
+              "event",
+              "evidence",
+              "rule",
+              "execution_memory",
+              "unknown",
+            ]),
+            closed_loop_effect_state: AionisMemoryAdmissionClosedLoopEffectStateSchema,
+            repeated_negative_posture: z.boolean(),
+            prior_state_available: z.boolean(),
+            used_fields: z.array(z.string().min(1)).default([]),
+            reason_codes: z.array(z.string().min(1)).default([]),
+          })
+          .strict(),
+      )
+      .default([]),
+    summary: z.string().min(1),
+  })
+  .strict();
+
+export type AionisMemoryAdmissionShadowPolicyReport = z.infer<
+  typeof AionisMemoryAdmissionShadowPolicyReportSchema
+>;
+
+export function parseAionisMemoryAdmissionShadowPolicyReport(
+  value: unknown,
+): AionisMemoryAdmissionShadowPolicyReport {
+  return AionisMemoryAdmissionShadowPolicyReportSchema.parse(value);
+}
+
 export const AionisMemoryAdmissionRecordSchema = z
   .object({
     contract_version: z.literal("aionis_memory_admission_record_v1"),
@@ -1293,6 +1369,7 @@ export const AionisMemoryAdmissionRecordSchema = z
           .strict(),
       )
       .default([]),
+    shadow_policy_report: AionisMemoryAdmissionShadowPolicyReportSchema.optional(),
     summary: z.string().min(1),
   })
   .strict();

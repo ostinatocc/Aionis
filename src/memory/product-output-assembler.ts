@@ -68,6 +68,7 @@ import {
   lifecycleCandidateDirectUseUnsafe,
   lifecycleCandidateRuntimeOwnedProducer,
 } from "./lifecycle-candidate-inference.js";
+import { buildAionisMemoryAdmissionShadowPolicyReportFromRecord } from "./admission-shadow-policy.js";
 
 type ProductTask = AionisGuidePacket["task"];
 type ProductActor = NonNullable<AionisGuidePacket["actor"]>;
@@ -5203,7 +5204,7 @@ export function buildAionisMemoryAdmissionRecordFromDecisionTrace(
   });
   const promptIncludedCount = entries.filter((entry) => entry.prompt_included).length;
   const agentUsedCount = entries.filter((entry) => entry.agent_used).length;
-  return parseAionisMemoryAdmissionRecord({
+  const baseRecord = parseAionisMemoryAdmissionRecord({
     contract_version: "aionis_memory_admission_record_v1",
     intended_use: "memory_admission_audit_dataset",
     source: "memory_decision_trace",
@@ -5220,6 +5221,13 @@ export function buildAionisMemoryAdmissionRecordFromDecisionTrace(
     agent_used_memory_count: agentUsedCount,
     entries,
     summary: `Aionis recorded ${entries.length} memory admission decisions, ${promptIncludedCount} agent-facing exposures, and ${agentUsedCount} host-attributed uses; record is read-only and excluded from the Agent prompt.`,
+  });
+  return parseAionisMemoryAdmissionRecord({
+    ...baseRecord,
+    shadow_policy_report: buildAionisMemoryAdmissionShadowPolicyReportFromRecord(
+      baseRecord,
+      "memory_decision_trace",
+    ),
   });
 }
 
