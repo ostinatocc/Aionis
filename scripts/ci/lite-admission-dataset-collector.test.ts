@@ -45,7 +45,11 @@ test("admission dataset collector appends chunks, writes manifest, and refreshes
   assert.ok(first.leaderboard_path && fs.existsSync(first.leaderboard_path));
   assert.ok(first.policy_comparison_path && fs.existsSync(first.policy_comparison_path));
   assert.ok(first.policy_comparison_markdown_path && fs.existsSync(first.policy_comparison_markdown_path));
+  assert.ok(first.shadow_policy_path && fs.existsSync(first.shadow_policy_path));
+  assert.ok(first.shadow_policy_markdown_path && fs.existsSync(first.shadow_policy_markdown_path));
   assert.equal(first.policy_comparison?.contract_version, "aionis_admission_policy_comparison_report_v1");
+  assert.equal(first.shadow_policy?.contract_version, "aionis_admission_shadow_policy_report_v1");
+  assert.equal(first.shadow_policy?.guards.hard_actions_preserved, true);
   assert.equal(jsonLineCount(first.rows_path), 4);
 
   const manifest = JSON.parse(fs.readFileSync(first.manifest_path, "utf8")) as Record<string, unknown>;
@@ -65,6 +69,7 @@ test("admission dataset collector appends chunks, writes manifest, and refreshes
   assert.equal(second.total_row_count, 8);
   assert.equal(second.evaluation?.dataset.row_count, 8);
   assert.equal(second.policy_comparison?.dataset.row_count, 8);
+  assert.equal(second.shadow_policy?.dataset.row_count, 8);
   assert.equal(jsonLineCount(second.rows_path), 8);
   assert.equal(rawLineCount(second.rows_path), 8);
 });

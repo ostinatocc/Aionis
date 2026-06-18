@@ -17,6 +17,11 @@ import {
   formatAdmissionPolicyComparisonMarkdown,
   type AionisAdmissionPolicyComparisonReport,
 } from "./admission-policy-comparison.js";
+import {
+  evaluateAdmissionShadowPolicyJsonl,
+  formatAdmissionShadowPolicyMarkdown,
+  type AionisAdmissionShadowPolicyReport,
+} from "./admission-shadow-policy-report.js";
 
 export type AionisAdmissionDatasetCollectorInput = {
   path: string;
@@ -35,12 +40,15 @@ export type AionisAdmissionDatasetCollectorResult = {
   leaderboard_path: string | null;
   policy_comparison_path: string | null;
   policy_comparison_markdown_path: string | null;
+  shadow_policy_path: string | null;
+  shadow_policy_markdown_path: string | null;
   appended_row_count: number;
   previous_row_count: number;
   total_row_count: number;
   input_files: AionisAdmissionDatasetCollectorInput[];
   evaluation: AionisAdmissionDatasetEvaluationReport | null;
   policy_comparison: AionisAdmissionPolicyComparisonReport | null;
+  shadow_policy: AionisAdmissionShadowPolicyReport | null;
   checks: {
     append_only: boolean;
     row_count_matches_jsonl: boolean;
@@ -224,10 +232,13 @@ export function collectAdmissionDatasetRows(args: CollectAdmissionDatasetArgs): 
   const totalRowCount = lineCount(finalJsonl);
   const evaluation = args.evaluate === false ? null : evaluateAdmissionDatasetJsonl(finalJsonl, policyOptions);
   const policyComparison = args.evaluate === false ? null : compareAdmissionPoliciesJsonl(finalJsonl, policyOptions);
+  const shadowPolicy = args.evaluate === false ? null : evaluateAdmissionShadowPolicyJsonl(finalJsonl, policyOptions);
   let summaryPath: string | null = null;
   let leaderboardPath: string | null = null;
   let policyComparisonPath: string | null = null;
   let policyComparisonMarkdownPath: string | null = null;
+  let shadowPolicyPath: string | null = null;
+  let shadowPolicyMarkdownPath: string | null = null;
   if (evaluation) {
     fs.mkdirSync(reportsDir, { recursive: true });
     summaryPath = path.join(reportsDir, "summary.json");
@@ -239,6 +250,12 @@ export function collectAdmissionDatasetRows(args: CollectAdmissionDatasetArgs): 
       policyComparisonMarkdownPath = path.join(reportsDir, "policy_comparison.md");
       writeJson(policyComparisonPath, policyComparison);
       fs.writeFileSync(policyComparisonMarkdownPath, formatAdmissionPolicyComparisonMarkdown(policyComparison));
+    }
+    if (shadowPolicy) {
+      shadowPolicyPath = path.join(reportsDir, "shadow_policy.json");
+      shadowPolicyMarkdownPath = path.join(reportsDir, "shadow_policy.md");
+      writeJson(shadowPolicyPath, shadowPolicy);
+      fs.writeFileSync(shadowPolicyMarkdownPath, formatAdmissionShadowPolicyMarkdown(shadowPolicy));
     }
   }
   const manifestPath = path.join(manifestsDir, `${chunkId}.json`);
@@ -269,6 +286,8 @@ export function collectAdmissionDatasetRows(args: CollectAdmissionDatasetArgs): 
       leaderboard_path: leaderboardPath,
       policy_comparison_path: policyComparisonPath,
       policy_comparison_markdown_path: policyComparisonMarkdownPath,
+      shadow_policy_path: shadowPolicyPath,
+      shadow_policy_markdown_path: shadowPolicyMarkdownPath,
     },
   };
   writeJson(manifestPath, manifest);
@@ -282,12 +301,15 @@ export function collectAdmissionDatasetRows(args: CollectAdmissionDatasetArgs): 
     leaderboard_path: leaderboardPath,
     policy_comparison_path: policyComparisonPath,
     policy_comparison_markdown_path: policyComparisonMarkdownPath,
+    shadow_policy_path: shadowPolicyPath,
+    shadow_policy_markdown_path: shadowPolicyMarkdownPath,
     appended_row_count: appendedRows.length,
     previous_row_count: previousRowCount,
     total_row_count: totalRowCount,
     input_files: inputFiles.map(({ rows: _rows, ...file }) => file),
     evaluation,
     policy_comparison: policyComparison,
+    shadow_policy: shadowPolicy,
     checks: {
       append_only: totalRowCount === previousRowCount + appendedRows.length,
       row_count_matches_jsonl: totalRowCount === lineCount(finalJsonl),

@@ -24,6 +24,7 @@ type BatchChunk = {
   manifest_path: string | null;
   summary_path: string | null;
   policy_comparison_path: string | null;
+  shadow_policy_path: string | null;
 };
 
 function positiveInteger(value: string | undefined, fallback: number): number {
@@ -157,12 +158,16 @@ function runIteration(args: {
     manifest_path: stringValue(collector?.manifest_path),
     summary_path: stringValue(collector?.summary_path),
     policy_comparison_path: stringValue(collector?.policy_comparison_path),
+    shadow_policy_path: stringValue(collector?.shadow_policy_path),
   };
 }
 
 function markdownReport(result: Record<string, unknown>): string {
   const chunks = Array.isArray(result.chunks) ? result.chunks as BatchChunk[] : [];
   const sampleQuality = nestedRecord(result.sample_quality);
+  const shadow = nestedRecord(result.shadow_policy);
+  const shadowDelta = nestedRecord(shadow?.delta);
+  const shadowGuards = nestedRecord(shadow?.guards);
   const lines = [
     "# Aionis Admission Batch Collect",
     "",
@@ -174,6 +179,10 @@ function markdownReport(result: Record<string, unknown>): string {
     `| Final rows | ${String(result.final_row_count ?? "")} |`,
     `| Enough rows for policy claim | ${sampleQuality?.has_minimum_rows_for_policy_claim === true ? "yes" : "no"} |`,
     `| Enough task signatures for diversity claim | ${sampleQuality?.has_minimum_task_signatures_for_diversity_claim === true ? "yes" : "no"} |`,
+    `| Shadow hard actions preserved | ${shadowGuards?.hard_actions_preserved === true ? "yes" : "no"} |`,
+    `| Shadow changed actions | ${String(shadowDelta?.changed_action_count ?? "")} |`,
+    `| Shadow would downgrade use_now | ${String(shadowDelta?.would_downgrade_use_now_count ?? "")} |`,
+    `| Shadow negative direct delta | ${String(shadowDelta?.negative_direct_delta ?? "")} |`,
     "",
     "| Iteration | Chunk | Rows | Total rows |",
     "|---:|---|---:|---:|",
@@ -201,8 +210,10 @@ function main() {
   }
   const latestSummaryPath = path.join(datasetDir, "reports", "latest", "summary.json");
   const latestComparisonPath = path.join(datasetDir, "reports", "latest", "policy_comparison.json");
+  const latestShadowPolicyPath = path.join(datasetDir, "reports", "latest", "shadow_policy.json");
   const latestSummary = readJson(latestSummaryPath);
   const latestComparison = readJson(latestComparisonPath);
+  const latestShadowPolicy = readJson(latestShadowPolicyPath);
   const sampleQuality = nestedRecord(latestSummary?.sample_quality);
   const rowCount = numberValue(nestedRecord(latestSummary?.dataset)?.row_count) ?? chunks.at(-1)?.total_row_count ?? 0;
   const result = {
@@ -220,9 +231,11 @@ function main() {
     rows_path: path.join(datasetDir, "rows.jsonl"),
     summary_path: latestSummaryPath,
     policy_comparison_path: latestComparisonPath,
+    shadow_policy_path: latestShadowPolicyPath,
     final_row_count: rowCount,
     sample_quality: sampleQuality,
     policy_comparison_leader: stringValue(nestedRecord((Array.isArray(latestComparison?.leaderboard) ? latestComparison?.leaderboard[0] : null))?.policy_id),
+    shadow_policy: latestShadowPolicy,
     checks: {
       completed_all_iterations: chunks.length === args.iterations,
       not_enough_rows_for_policy_claim: sampleQuality?.not_enough_rows_for_policy_claim === true,
