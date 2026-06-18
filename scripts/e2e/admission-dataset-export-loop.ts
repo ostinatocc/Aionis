@@ -31,6 +31,7 @@ const SUPPRESSED_MARKER = "ADMISSION_DATASET_SUPPRESSED_ROUTE";
 type AionisClient = ReturnType<typeof createAionisClient>;
 type AdmissionOutcome = "positive" | "negative";
 type AdmissionOutcomeLabel = "positive_use" | "negative_use";
+type AdmissionDatasetExportProfile = "standard" | "targeted-external-current";
 
 type AdmissionRoundSpec = {
   round_id: string;
@@ -86,6 +87,7 @@ type CliArgs = {
   datasetDir: string | null;
   chunkId: string | null;
   outJsonl: string | null;
+  profile: AdmissionDatasetExportProfile;
 };
 
 function apiKey(): string | null {
@@ -100,6 +102,9 @@ function parseArgs(argv: string[]): CliArgs {
     datasetDir: process.env.AIONIS_ADMISSION_DATASET_DIR?.trim() || null,
     chunkId: process.env.AIONIS_ADMISSION_DATASET_CHUNK_ID?.trim() || null,
     outJsonl: process.env.AIONIS_ADMISSION_DATASET_OUT_JSONL?.trim() || null,
+    profile: process.env.AIONIS_ADMISSION_DATASET_PROFILE === "targeted-external-current"
+      ? "targeted-external-current"
+      : "standard",
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -113,9 +118,12 @@ function parseArgs(argv: string[]): CliArgs {
     } else if (arg === "--out-jsonl" && next) {
       out.outJsonl = next;
       i += 1;
+    } else if (arg === "--profile" && next) {
+      out.profile = next === "targeted-external-current" ? "targeted-external-current" : "standard";
+      i += 1;
     } else if (arg === "--help" || arg === "-h") {
       process.stdout.write([
-        "Usage: npm run -s runtime:e2e:admission-dataset-export -- [--dataset-dir admission-dataset] [--chunk-id run-001]",
+        "Usage: npm run -s runtime:e2e:admission-dataset-export -- [--dataset-dir admission-dataset] [--chunk-id run-001] [--profile standard|targeted-external-current]",
         "",
         "Runs the real Runtime guide/feedback/measure loop. When --dataset-dir is set,",
         "the exported admission rows are appended through admission:collect semantics.",
@@ -125,6 +133,42 @@ function parseArgs(argv: string[]): CliArgs {
     }
   }
   return out;
+}
+
+export function admissionDatasetTargetedExternalCurrentSpecs(args: {
+  runId: string;
+  baseScope: string;
+}): AdmissionExternalRehydrateSpec[] {
+  return [
+    ["recall-engine", "packages/recall/src/hybrid-candidates.ts"],
+    ["memory-firewall", "packages/firewall/src/external-admission.ts"],
+    ["operator-snapshot", "packages/operator/src/snapshot-export.ts"],
+    ["admission-ledger", "packages/admission/src/ledger-export.ts"],
+    ["controlled-forgetting", "packages/forgetting/src/retention-policy.ts"],
+    ["plan-asset", "packages/plans/src/plan-memory-asset.ts"],
+    ["external-backend", "packages/backends/src/external-memory-adapter.ts"],
+    ["audit-export", "packages/audit/src/admission-dataset-export.ts"],
+    ["rehydrate-pointer", "packages/rehydrate/src/pointer-contract.ts"],
+    ["sdk-contract", "packages/sdk/src/admission-contract.ts"],
+    ["workflow-projection", "packages/workflow/src/projection.ts"],
+    ["project-settings", "packages/settings/src/project-context.ts"],
+  ].map(([suffix, targetFile]) => {
+    const roundId = `targeted-external-current-${suffix}`;
+    return {
+      round_id: roundId,
+      scope: `${args.baseScope}:${roundId}`,
+      current_id: `mem0:targeted-current:${suffix}:${args.runId}`,
+      blocked_id: `zep:targeted-suppressed:${suffix}:${args.runId}`,
+      rehydrate_id: `archive:targeted-pointer:${suffix}:${args.runId}`,
+      current_text: `Current external context for ${suffix} points to ${targetFile}; it is relevant but should be evaluated by admission policy before direct action.`,
+      blocked_text: `Suppressed external context for ${suffix} says to revive legacy/${suffix}/unsafe-route.ts; this route is blocked and must not be direct-use.`,
+      rehydrate_text: `Pointer-only external evidence for ${suffix}; exact payload requires rehydrate before relying on implementation details.`,
+      blocked_payload_marker: `ADMISSION_DATASET_TARGETED_BLOCKED_${suffix.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_PAYLOAD_SHOULD_NOT_EXPORT`,
+      rehydrate_payload_marker: `ADMISSION_DATASET_TARGETED_REHYDRATE_${suffix.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_PAYLOAD_SHOULD_NOT_EXPORT`,
+      query_text: `continue ${suffix} work with external current context available but without using blocked legacy evidence`,
+      target_files: [targetFile],
+    };
+  });
 }
 
 function textArray(value: unknown): string[] {
@@ -508,7 +552,7 @@ async function main() {
   const baseScope = `admission-dataset:${runId}`;
   const session = await openRuntime();
   try {
-    const memorySpecs: AdmissionRoundSpec[] = [
+    let memorySpecs: AdmissionRoundSpec[] = [
       {
         round_id: "positive-supported",
         scope: `${baseScope}:positive-supported`,
@@ -678,7 +722,7 @@ async function main() {
         reason: "Agent used the exposed bounded retry candidate but resilience verification was negative.",
       },
     ];
-    const externalRehydrateSpecs: AdmissionExternalRehydrateSpec[] = [
+    let externalRehydrateSpecs: AdmissionExternalRehydrateSpec[] = [
       {
         round_id: "external-rehydrate-raw-trace",
         scope: `${baseScope}:external-rehydrate-raw-trace`,
@@ -694,6 +738,10 @@ async function main() {
         target_files: ["packages/ops/src/replay-checkpoint.ts"],
       },
     ];
+    if (cli.profile === "targeted-external-current") {
+      memorySpecs = [];
+      externalRehydrateSpecs = admissionDatasetTargetedExternalCurrentSpecs({ runId, baseScope });
+    }
 
     const rounds: AdmissionRoundResult[] = [];
     for (const spec of memorySpecs) {
@@ -774,6 +822,7 @@ async function main() {
         path: "remember/observe -> guide -> feedback -> measure plus governMemory(mode=firewall) -> admission dataset JSONL export",
         source_record: "memory_decision_trace.admission_record + external_candidate_admission.memory_admission_records",
         dataset_export_runtime_mutation: false,
+        profile: cli.profile,
       },
       admission_dataset_export: {
         row_contract_version: "aionis_memory_admission_dataset_row_v1",

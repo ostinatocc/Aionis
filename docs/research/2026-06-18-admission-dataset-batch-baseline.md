@@ -4,7 +4,7 @@ Date: 2026-06-18
 
 Runtime workspace: `/Volumes/ziel/AionisRuntime-focused`
 
-Runtime base before this baseline artifact commit: `e83e317`
+Runtime base before this baseline artifact series: `e83e317`
 
 Dataset directory:
 
@@ -16,14 +16,14 @@ admission-dataset/
 
 This baseline checks whether Aionis can turn real product admission decisions
 into an append-only JSONL dataset for future admission-policy audit,
-calibration, and holdout work.
+calibration, holdout validation, and candidate-policy comparison.
 
 It measures the data flywheel path, not an external Agent rerun:
 
 ```text
 remember / observe -> guide -> feedback -> measure
 external candidates -> governMemory(mode=firewall)
-admission records -> JSONL rows -> collector -> evaluator -> policy comparison
+admission records -> JSONL rows -> collector -> evaluator -> holdout -> candidate policy comparison
 ```
 
 The export is read-only. It does not train a policy, mutate memory authority, or
@@ -50,55 +50,71 @@ npm run -s admission:batch-collect -- \
   --dataset-dir admission-dataset \
   --iterations 1 \
   --chunk-prefix runtime-batch-expanded-retry
+
+# Targeted train-support batch after candidate-policy evaluation found a missing bucket
+npm run -s admission:batch-collect -- \
+  --dataset-dir admission-dataset \
+  --iterations 1 \
+  --chunk-prefix targeted-external-current \
+  --profile targeted-external-current
+```
+
+The expanded batch hit one upstream embedding 429. The retry succeeded. The
+targeted batch appended real `governMemory(mode=firewall)` external-current
+rows so candidate-policy evaluation had train-side support for the discovered
+bucket.
+
+## Dataset
+
+Report:
+
+```text
+admission-dataset/reports/latest/leaderboard.md
 ```
 
 Result:
 
 | Metric | Value |
 |---|---:|
-| Rows | 375 |
-| Runs | 179 |
-| Tasks | 179 |
-| Task signatures | 13 |
+| Rows | 411 |
+| Runs | 191 |
+| Tasks | 191 |
+| Task signatures | 25 |
 | Source backends | `aionis`, `mem0`, `zep`, `archive` |
-
-One expanded-batch iteration hit an upstream embedding 429. The successful retry
-appended another 27-row chunk. The final cumulative dataset and latest reports
-are based on 375 rows.
 
 Sample-quality gates:
 
 | Gate | Result |
 |---|---:|
 | Minimum rows for policy claim | 100 |
-| Current rows | 375 |
+| Current rows | 411 |
 | Enough rows | yes |
 | Minimum task signatures | 6 |
-| Current task signatures | 13 |
+| Current task signatures | 25 |
 | Enough task signatures | yes |
 
-## Dataset Composition
+Dataset composition:
 
 | Label | Count |
 |---|---:|
 | `positive_use` | 81 |
 | `negative_use` | 81 |
-| `blocked_or_suppressed` | 179 |
-| `rehydrate_requested` | 17 |
-| `unused_exposed` | 17 |
+| `blocked_or_suppressed` | 191 |
+| `rehydrate_requested` | 29 |
+| `unused_exposed` | 29 |
 
 Admission actions:
 
 | Action | Count |
 |---|---:|
-| `use_now` | 179 |
-| `do_not_use` | 179 |
-| `rehydrate` | 17 |
+| `use_now` | 191 |
+| `do_not_use` | 191 |
+| `rehydrate` | 29 |
 
-The current loop intentionally includes positive use, negative attributed use,
-hard suppression, and pointer-only rehydrate rows. This makes the dataset useful
-for admission-policy calibration, but it is still a controlled product loop, not
-a broad external benchmark.
+The loop intentionally includes positive use, negative attributed use, hard
+suppression, pointer-only rehydrate rows, and external-current unused exposure.
+This makes the dataset useful for admission-policy calibration, but it is still
+a controlled product loop, not a broad external benchmark.
 
 ## Policy Comparison
 
@@ -110,30 +126,18 @@ admission-dataset/reports/latest/policy_comparison.md
 
 | Rank | Policy | Score | Positive capture | Direct-use risk | Direct-use precision proxy | Direct use | Missed positive |
 |---:|---|---:|---:|---:|---:|---:|---:|
-| 1 | Aionis recorded policy | 0.5475 | 100.0% | 45.3% | 45.3% | 179 | 0 |
-| 2 | Always use | 0.2613 | 100.0% | 73.9% | 21.6% | 375 | 0 |
-| 3 | Raw retrieval prompt proxy | 0.2613 | 100.0% | 73.9% | 21.6% | 375 | 0 |
+| 1 | Aionis recorded policy | 0.5759 | 100.0% | 42.4% | 42.4% | 191 | 0 |
+| 2 | Always use | 0.2676 | 100.0% | 73.2% | 19.7% | 411 | 0 |
+| 3 | Raw retrieval prompt proxy | 0.2676 | 100.0% | 73.2% | 19.7% | 411 | 0 |
 | 4 | Always block | 0.0000 | 0.0% | 0.0% | 0.0% | 0 | 81 |
 
-The accepted interpretation is narrow:
+Accepted interpretation:
 
 > On this controlled real Runtime admission dataset, Aionis recorded admission
 > keeps all positive-use rows while preventing `blocked_or_suppressed` and
 > `rehydrate_requested` rows from becoming direct-use memory. The offline proxy
 > baseline shows why admission routing matters, but it is not a substitute for a
 > counterfactual Agent rerun.
-
-## Caveats
-
-1. `raw_retrieval_prompt_proxy` is a weak offline baseline. It treats every
-   prompt-included candidate as direct-use memory because candidate ranks are
-   not preserved in the dataset.
-2. `negative_use` is weak supervision from host feedback attribution. It is not
-   yet per-memory counterfactual causality.
-3. This baseline should not mutate Runtime gates by itself. Future admission
-   policy changes need holdout validation.
-4. The dataset is generated from controlled product scenarios. It is valid for
-   admission flywheel plumbing and calibration, not for broad market claims.
 
 ## Holdout Split
 
@@ -157,8 +161,8 @@ Split result:
 
 | Split | Rows | Task-signature groups |
 |---|---:|---:|
-| Train | 148 | 6 |
-| Holdout | 227 | 7 |
+| Train | 118 | 12 |
+| Holdout | 293 | 13 |
 
 Holdout checks:
 
@@ -173,20 +177,18 @@ Holdout metrics:
 
 | Metric | Value |
 |---|---:|
-| `use_now_positive_rate` | 41.9% |
-| `use_now_negative_rate` | 41.9% |
-| `unused_exposed_rate` | 7.5% |
-| `blocked_or_suppressed_count` | 105 |
-| `rehydrate_requested_count` | 17 |
+| `use_now_positive_rate` | 39.7% |
+| `use_now_negative_rate` | 44.9% |
+| `unused_exposed_rate` | 7.2% |
+| `blocked_or_suppressed_count` | 136 |
+| `rehydrate_requested_count` | 21 |
 
 The holdout split is useful as a promotion discipline: future tuned rules or
 learned classifiers must be evaluated on rows they were not tuned against. This
-specific holdout now clears the row/signature gates, so it is usable for
-offline policy regression and candidate-policy comparison. It is still not a
+specific holdout clears the row/signature gates, so it is usable for offline
+policy regression and candidate-policy comparison. It is still not a
 counterfactual Agent rerun and should not be used by itself for broad market
 claims.
-
-## Next Step
 
 ## Candidate Policy Evaluation
 
@@ -211,20 +213,22 @@ Selected candidate:
 | Field | Value |
 |---|---:|
 | Policy | `candidate_aionis_project_context_only` |
-| Train rows | 148 |
-| Train groups | 6 |
-| Holdout rows | 227 |
-| Holdout groups | 7 |
-| Holdout calibration score | 0.8062 |
-| Recorded holdout calibration score | 0.7875 |
-| Eligible for manual review | no |
+| Train rows | 118 |
+| Train groups | 12 |
+| Holdout rows | 293 |
+| Holdout groups | 13 |
+| Train calibration score | 0.8305 |
+| Recorded train calibration score | 0.8136 |
+| Holdout calibration score | 0.7918 |
+| Recorded holdout calibration score | 0.7739 |
+| Eligible for manual review | yes |
 
 Promotion gates:
 
 | Gate | Result |
 |---|---:|
 | No hard-boundary regression | yes |
-| Train candidate supported | no |
+| Train candidate supported | yes |
 | Train calibration score not worse | yes |
 | No negative-use count regression | yes |
 | No positive-capture regression | yes |
@@ -233,31 +237,39 @@ Promotion gates:
 
 Interpretation:
 
-The offline candidate discovered a plausible bucket: external current
-context-like rows in holdout were direct-use under the recorded policy but could
-be downgraded to inspect-first without losing positive capture. However, the
-same candidate made no action changes on train, so this is not promotion
-evidence. It is a data-collection signal: add more train-side examples of this
-bucket before considering any policy update.
+The offline candidate found a stable bucket: external current context-like rows
+can be downgraded from direct use to inspect-first without losing positive
+capture in this controlled dataset. The targeted batch added train-side support,
+so the candidate is now eligible for manual review.
 
-The important discipline is that candidate evaluation remains read-only:
+This is not a Runtime policy change. Candidate evaluation remains read-only:
 
 1. candidates use label-safe feature fields only;
 2. candidates cannot upgrade `do_not_use` or `rehydrate` rows into direct use;
-3. train support is required before a holdout improvement can become eligible
-   for manual review;
-4. even an eligible candidate would still need counterfactual Agent reruns
-   before Runtime behavior changes.
+3. manual-review eligibility is an offline gate, not deployment authority;
+4. any Runtime behavior change still requires counterfactual Agent reruns.
+
+## Caveats
+
+1. `raw_retrieval_prompt_proxy` is a weak offline baseline. It treats every
+   prompt-included candidate as direct-use memory because candidate ranks are
+   not preserved in the dataset.
+2. `negative_use` is weak supervision from host feedback attribution. It is not
+   yet per-memory counterfactual causality.
+3. Candidate-policy comparison should not mutate Runtime gates by itself.
+4. The dataset is generated from controlled product scenarios. It is valid for
+   admission flywheel plumbing and calibration, not for broad market claims.
 
 ## Next Step
 
-The next stage is dataset expansion targeted at the discovered bucket:
+The next stage is counterfactual Agent validation for the manual-review
+candidate:
 
-1. collect more external-current and project-context rows across train-side task
-   signatures, not only holdout;
-2. rerun candidate-policy evaluation and require `train_candidate_supported=yes`
-   before manual review;
+1. run a small external Agent rerun with recorded policy vs candidate
+   inspect-first policy;
+2. measure downstream action quality, wrong direct-use, completion, and token
+   cost;
 3. keep lifecycle, authority, source, suppression, and rehydrate gates as hard
    boundaries;
-4. only after offline eligibility, run a counterfactual Agent rerun to check
-   whether the candidate improves real downstream behavior.
+4. only consider Runtime policy integration after the candidate improves real
+   downstream behavior, not only offline calibration score.

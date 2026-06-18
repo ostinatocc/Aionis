@@ -157,6 +157,22 @@ policy-claim gate and the task-signature gate. Use more iterations when you want
 repeated measurements within the same task-signature set or a larger holdout
 split.
 
+When candidate-policy evaluation discovers a missing train-side bucket, collect
+targeted rows without changing Runtime admission behavior:
+
+```bash
+npm run -s admission:batch-collect -- \
+  --dataset-dir admission-dataset \
+  --iterations 1 \
+  --chunk-prefix targeted-external-current \
+  --profile targeted-external-current
+```
+
+The `targeted-external-current` profile emits real `governMemory(mode=firewall)`
+external-current candidates across multiple task signatures. It is meant to add
+train-side support for offline candidate-policy validation; it is not a Runtime
+policy change.
+
 ## Validation Command
 
 Run the product e2e:
@@ -326,8 +342,9 @@ Candidate evaluation is intentionally stricter than baseline comparison:
 - candidates must also make supported action changes on train, so a holdout-only
   surprise is treated as a discovery, not as promotion evidence.
 
-As of the 2026-06-18 batch baseline, the selected offline candidate improved
-holdout calibration score from `0.7875` to `0.8062`, but made no action changes
-on train. The report therefore sets `eligible_for_manual_review=false`. This is
-the correct product posture: it identifies a possible bucket to collect more
-evidence for, but it must not change Runtime admission behavior.
+As of the 2026-06-18 targeted batch baseline, the selected offline candidate
+improved holdout calibration score from `0.7739` to `0.7918`, and the train
+split now contains supported candidate action changes. The report therefore
+sets `eligible_for_manual_review=true`. This means manual review is allowed. It
+still does not authorize Runtime admission changes; the next gate is a
+counterfactual Agent rerun.

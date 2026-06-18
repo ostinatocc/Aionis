@@ -4,19 +4,20 @@
   "runtime_mutation": false,
   "agent_prompt_included": false,
   "dataset_dir": "/Volumes/ziel/AionisRuntime-focused/admission-dataset",
+  "profile": "targeted-external-current",
   "iterations_requested": 1,
   "iterations_completed": 1,
   "failure_count": 0,
   "chunks": [
     {
       "iteration": 1,
-      "chunk_id": "runtime-batch-expanded-retry-001",
-      "run_id": "admission-dataset-5579b4c7",
-      "row_count": 27,
-      "appended_row_count": 27,
-      "total_row_count": 375,
-      "chunk_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/chunks/runtime-batch-expanded-retry-001.jsonl",
-      "manifest_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/manifests/runtime-batch-expanded-retry-001.json",
+      "chunk_id": "targeted-external-current-001",
+      "run_id": "admission-dataset-aa4fce37",
+      "row_count": 36,
+      "appended_row_count": 36,
+      "total_row_count": 411,
+      "chunk_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/chunks/targeted-external-current-001.jsonl",
+      "manifest_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/manifests/targeted-external-current-001.json",
       "summary_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/reports/latest/summary.json",
       "policy_comparison_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/reports/latest/policy_comparison.json"
     }
@@ -25,14 +26,14 @@
   "rows_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/rows.jsonl",
   "summary_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/reports/latest/summary.json",
   "policy_comparison_path": "/Volumes/ziel/AionisRuntime-focused/admission-dataset/reports/latest/policy_comparison.json",
-  "final_row_count": 375,
+  "final_row_count": 411,
   "sample_quality": {
     "minimum_rows_for_policy_claim": 100,
-    "current_row_count": 375,
+    "current_row_count": 411,
     "has_minimum_rows_for_policy_claim": true,
     "not_enough_rows_for_policy_claim": false,
     "minimum_task_signatures_for_diversity_claim": 6,
-    "current_task_signature_count": 13,
+    "current_task_signature_count": 25,
     "has_minimum_task_signatures_for_diversity_claim": true,
     "not_enough_task_signatures_for_diversity_claim": false
   },
@@ -44,5 +45,5 @@
     "not_enough_task_signatures_for_diversity_claim": false,
     "has_minimum_task_signatures_for_diversity_claim": true
   },
-  "summary": "Collected 375 admission dataset rows across 1/1 real Runtime e2e iterations."
+  "summary": "Collected 411 admission dataset rows across 1/1 real Runtime e2e iterations."
 }

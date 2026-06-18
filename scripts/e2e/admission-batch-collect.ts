@@ -10,6 +10,7 @@ type CliArgs = {
   iterations: number;
   chunkPrefix: string;
   stopOnFailure: boolean;
+  profile: "standard" | "targeted-external-current";
 };
 
 type BatchChunk = {
@@ -36,6 +37,9 @@ function parseArgs(argv: string[]): CliArgs {
     iterations: positiveInteger(process.env.AIONIS_ADMISSION_BATCH_ITERATIONS, 25),
     chunkPrefix: process.env.AIONIS_ADMISSION_BATCH_CHUNK_PREFIX?.trim() || "runtime-batch",
     stopOnFailure: true,
+    profile: process.env.AIONIS_ADMISSION_DATASET_PROFILE === "targeted-external-current"
+      ? "targeted-external-current"
+      : "standard",
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -51,9 +55,12 @@ function parseArgs(argv: string[]): CliArgs {
       i += 1;
     } else if (arg === "--continue-on-failure") {
       out.stopOnFailure = false;
+    } else if (arg === "--profile" && next) {
+      out.profile = next === "targeted-external-current" ? "targeted-external-current" : "standard";
+      i += 1;
     } else if (arg === "--help" || arg === "-h") {
       process.stdout.write([
-        "Usage: npm run -s admission:batch-collect -- --dataset-dir admission-dataset [--iterations 25]",
+        "Usage: npm run -s admission:batch-collect -- --dataset-dir admission-dataset [--iterations 25] [--profile standard|targeted-external-current]",
         "",
         "Runs the real admission dataset Runtime e2e repeatedly and appends each chunk",
         "to the same durable admission dataset.",
@@ -102,15 +109,19 @@ function runIteration(args: {
   datasetDir: string;
   iteration: number;
   chunkId: string;
+  profile: CliArgs["profile"];
 }): BatchChunk {
-  const child = spawnSync("npx", [
+  const childArgs = [
     "tsx",
     "scripts/e2e/admission-dataset-export-loop.ts",
     "--dataset-dir",
     args.datasetDir,
     "--chunk-id",
     args.chunkId,
-  ], {
+    "--profile",
+    args.profile,
+  ];
+  const child = spawnSync("npx", childArgs, {
     cwd: process.cwd(),
     env: process.env,
     encoding: "utf8",
@@ -150,6 +161,7 @@ function markdownReport(result: Record<string, unknown>): string {
     "",
     "| Gate | Value |",
     "|---|---:|",
+    `| Profile | ${String(result.profile ?? "")} |`,
     `| Final rows | ${String(result.final_row_count ?? "")} |`,
     `| Enough rows for policy claim | ${sampleQuality?.has_minimum_rows_for_policy_claim === true ? "yes" : "no"} |`,
     `| Enough task signatures for diversity claim | ${sampleQuality?.has_minimum_task_signatures_for_diversity_claim === true ? "yes" : "no"} |`,
@@ -172,7 +184,7 @@ function main() {
     const iteration = index + 1;
     const chunkId = `${args.chunkPrefix}-${String(iteration).padStart(3, "0")}`;
     try {
-      chunks.push(runIteration({ datasetDir, iteration, chunkId }));
+      chunks.push(runIteration({ datasetDir, iteration, chunkId, profile: args.profile }));
     } catch (err) {
       failures.push({ iteration, error: (err as Error).message });
       if (args.stopOnFailure) break;
@@ -190,6 +202,7 @@ function main() {
     runtime_mutation: false,
     agent_prompt_included: false,
     dataset_dir: datasetDir,
+    profile: args.profile,
     iterations_requested: args.iterations,
     iterations_completed: chunks.length,
     failure_count: failures.length,

@@ -31,17 +31,19 @@ test("admission candidate policy evaluator selects and validates a label-safe ho
       assert.equal(report.guards.forbidden_decision_fields.includes(field), false);
     }
   }
-  assert.equal(report.split.holdout_row_count, 227);
-  assert.equal(report.split.holdout_group_count, 7);
+  assert.equal(report.split.train_row_count, 118);
+  assert.equal(report.split.holdout_row_count, 293);
+  assert.equal(report.split.train_group_count, 12);
+  assert.equal(report.split.holdout_group_count, 13);
   assert.notEqual(report.selected_policy_id, "recorded_policy_baseline");
   assert.equal(report.promotion_gate.no_hard_boundary_regression, true);
   assert.equal(report.promotion_gate.no_positive_capture_regression, true);
   assert.equal(report.promotion_gate.changed_actions_on_holdout, true);
-  assert.equal(report.promotion_gate.train_candidate_supported, false);
-  assert.equal(report.promotion_gate.eligible_for_manual_review, false);
+  assert.equal(report.promotion_gate.train_candidate_supported, true);
+  assert.equal(report.promotion_gate.eligible_for_manual_review, true);
   assert.equal(report.selected_policy.holdout.hard_boundary_direct_count, 0);
   assert.ok(report.selected_policy.holdout.calibration_score >= report.recorded_policy.holdout.calibration_score);
-  assert.ok(report.caveats.some((caveat) => caveat.includes("made no action changes on train")));
+  assert.ok(report.caveats.some((caveat) => caveat.includes("manual review only")));
 });
 
 test("admission candidate policy evaluator keeps hard boundaries from being upgraded", () => {
