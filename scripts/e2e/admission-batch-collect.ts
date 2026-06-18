@@ -25,6 +25,7 @@ type BatchChunk = {
   summary_path: string | null;
   policy_comparison_path: string | null;
   shadow_policy_path: string | null;
+  online_projection: Record<string, unknown> | null;
 };
 
 function positiveInteger(value: string | undefined, fallback: number): number {
@@ -104,6 +105,10 @@ function numberValue(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function summedNumber(records: Array<Record<string, unknown> | null>, field: string): number {
+  return records.reduce((sum, record) => sum + (numberValue(record?.[field]) ?? 0), 0);
+}
+
 function readJson(file: string): Record<string, unknown> | null {
   if (!fs.existsSync(file)) return null;
   const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
@@ -147,6 +152,7 @@ function runIteration(args: {
   const result = lastJsonObject(child.stdout);
   const exportResult = nestedRecord(result.admission_dataset_export);
   const collector = nestedRecord(result.collector);
+  const onlineProjection = nestedRecord(result.admission_candidate_policy_online_projection);
   return {
     iteration: args.iteration,
     chunk_id: args.chunkId,
@@ -159,6 +165,24 @@ function runIteration(args: {
     summary_path: stringValue(collector?.summary_path),
     policy_comparison_path: stringValue(collector?.policy_comparison_path),
     shadow_policy_path: stringValue(collector?.shadow_policy_path),
+    online_projection: onlineProjection,
+  };
+}
+
+function onlineProjectionBatchSummary(chunks: BatchChunk[]): Record<string, unknown> {
+  const projections = chunks.map((chunk) => chunk.online_projection).filter((entry): entry is Record<string, unknown> => !!entry);
+  return {
+    mode: process.env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE?.trim() || "off",
+    chunk_count: chunks.length,
+    chunk_count_with_projection_report: projections.length,
+    guide_count: summedNumber(projections, "guide_count"),
+    projection_present_count: summedNumber(projections, "projection_present_count"),
+    agent_prompt_included_count: summedNumber(projections, "agent_prompt_included_count"),
+    runtime_mutation_count: summedNumber(projections, "runtime_mutation_count"),
+    shadow_projection_source_count: summedNumber(projections, "shadow_projection_source_count"),
+    active_projection_source_count: summedNumber(projections, "active_projection_source_count"),
+    downgraded_memory_count: summedNumber(projections, "downgraded_memory_count"),
+    hard_boundary_upgrade_count: summedNumber(projections, "hard_boundary_upgrade_count"),
   };
 }
 
@@ -168,6 +192,7 @@ function markdownReport(result: Record<string, unknown>): string {
   const shadow = nestedRecord(result.shadow_policy);
   const shadowDelta = nestedRecord(shadow?.delta);
   const shadowGuards = nestedRecord(shadow?.guards);
+  const onlineProjection = nestedRecord(result.admission_candidate_policy_online_projection);
   const lines = [
     "# Aionis Admission Batch Collect",
     "",
@@ -183,6 +208,13 @@ function markdownReport(result: Record<string, unknown>): string {
     `| Shadow changed actions | ${String(shadowDelta?.changed_action_count ?? "")} |`,
     `| Shadow would downgrade use_now | ${String(shadowDelta?.would_downgrade_use_now_count ?? "")} |`,
     `| Shadow negative direct delta | ${String(shadowDelta?.negative_direct_delta ?? "")} |`,
+    `| Online projection mode | ${String(onlineProjection?.mode ?? "")} |`,
+    `| Online projection present | ${String(onlineProjection?.projection_present_count ?? "")} |`,
+    `| Online shadow source count | ${String(onlineProjection?.shadow_projection_source_count ?? "")} |`,
+    `| Online active source count | ${String(onlineProjection?.active_projection_source_count ?? "")} |`,
+    `| Online prompt-included count | ${String(onlineProjection?.agent_prompt_included_count ?? "")} |`,
+    `| Online runtime mutation count | ${String(onlineProjection?.runtime_mutation_count ?? "")} |`,
+    `| Online hard-boundary upgrade count | ${String(onlineProjection?.hard_boundary_upgrade_count ?? "")} |`,
     "",
     "| Iteration | Chunk | Rows | Total rows |",
     "|---:|---|---:|---:|",
@@ -216,6 +248,7 @@ function main() {
   const latestShadowPolicy = readJson(latestShadowPolicyPath);
   const sampleQuality = nestedRecord(latestSummary?.sample_quality);
   const rowCount = numberValue(nestedRecord(latestSummary?.dataset)?.row_count) ?? chunks.at(-1)?.total_row_count ?? 0;
+  const onlineProjection = onlineProjectionBatchSummary(chunks);
   const result = {
     contract_version: "aionis_admission_batch_collect_result_v1",
     intended_use: "real_runtime_admission_dataset_batch_collection",
@@ -236,12 +269,16 @@ function main() {
     sample_quality: sampleQuality,
     policy_comparison_leader: stringValue(nestedRecord((Array.isArray(latestComparison?.leaderboard) ? latestComparison?.leaderboard[0] : null))?.policy_id),
     shadow_policy: latestShadowPolicy,
+    admission_candidate_policy_online_projection: onlineProjection,
     checks: {
       completed_all_iterations: chunks.length === args.iterations,
       not_enough_rows_for_policy_claim: sampleQuality?.not_enough_rows_for_policy_claim === true,
       has_minimum_rows_for_policy_claim: sampleQuality?.has_minimum_rows_for_policy_claim === true,
       not_enough_task_signatures_for_diversity_claim: sampleQuality?.not_enough_task_signatures_for_diversity_claim === true,
       has_minimum_task_signatures_for_diversity_claim: sampleQuality?.has_minimum_task_signatures_for_diversity_claim === true,
+      online_projection_did_not_mutate_runtime: onlineProjection.runtime_mutation_count === 0,
+      online_projection_did_not_enter_agent_prompt: onlineProjection.agent_prompt_included_count === 0,
+      online_projection_preserved_hard_boundaries: onlineProjection.hard_boundary_upgrade_count === 0,
     },
     summary: `Collected ${rowCount} admission dataset rows across ${chunks.length}/${args.iterations} real Runtime e2e iterations.`,
   };

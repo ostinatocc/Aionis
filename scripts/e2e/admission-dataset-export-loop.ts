@@ -81,6 +81,17 @@ type AdmissionClosedLoopPriorSpec = {
   expected_repeated_negative_posture_on_last_row: boolean;
 };
 
+type AdmissionGuideProjectionSummary = {
+  projection_present: boolean;
+  mode: string | null;
+  agent_prompt_included: boolean;
+  runtime_mutation: boolean;
+  downgraded_memory_count: number;
+  hard_boundary_upgrade_count: number;
+  source_map_shadow_projection: boolean;
+  source_map_active_projection: boolean;
+};
+
 type AdmissionRoundResult = {
   round_id: string;
   scope: string;
@@ -98,6 +109,7 @@ type AdmissionRoundResult = {
   prompt_payload_excluded: boolean;
   raw_memory_payload_excluded: boolean;
   raw_slots_excluded: boolean;
+  guide_projection_summaries: AdmissionGuideProjectionSummary[];
   rows: AionisMemoryAdmissionDatasetRow[];
 };
 
@@ -202,6 +214,11 @@ function textArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
+function finiteNumber(value: unknown, fallback = 0): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function rehydrateMemoryIdsFromContext(context: Record<string, unknown>): string[] {
   return recordArray(context.rehydrate_hints)
     .map((entry) => entry.memory_id)
@@ -233,6 +250,47 @@ function agentContext(guide: unknown, label: string): Record<string, unknown> {
   assertCondition(context?.contract_version === "aionis_agent_context_v1", `${label} missing agent_context v1`);
   assertCondition(typeof context.prompt_text === "string" && context.prompt_text.length > 0, `${label} missing prompt_text`);
   return context;
+}
+
+function guideProjectionSummary(guide: unknown): AdmissionGuideProjectionSummary {
+  const root = asRecord(guide);
+  const sourceMap = asRecord(root?.source_map);
+  const internalSurfaces = textArray(sourceMap?.internal_surfaces_used);
+  const projection = asRecord(root?.admission_candidate_policy_projection);
+  return {
+    projection_present: !!projection,
+    mode: typeof projection?.mode === "string" ? projection.mode : null,
+    agent_prompt_included: projection?.agent_prompt_included === true,
+    runtime_mutation: projection?.runtime_mutation === true,
+    downgraded_memory_count: textArray(projection?.downgraded_memory_ids).length,
+    hard_boundary_upgrade_count: finiteNumber(projection?.hard_boundary_upgrade_count),
+    source_map_shadow_projection: internalSurfaces.includes("admission_candidate_policy_shadow_projection"),
+    source_map_active_projection: internalSurfaces.includes("admission_candidate_policy_active_projection"),
+  };
+}
+
+function summarizeOnlineProjection(rounds: AdmissionRoundResult[]): Record<string, unknown> {
+  const entries = rounds.flatMap((round) => round.guide_projection_summaries);
+  return {
+    mode: process.env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE?.trim() || "off",
+    guide_count: entries.length,
+    projection_present_count: entries.filter((entry) => entry.projection_present).length,
+    agent_prompt_included_count: entries.filter((entry) => entry.agent_prompt_included).length,
+    runtime_mutation_count: entries.filter((entry) => entry.runtime_mutation).length,
+    shadow_projection_source_count: entries.filter((entry) => entry.source_map_shadow_projection).length,
+    active_projection_source_count: entries.filter((entry) => entry.source_map_active_projection).length,
+    downgraded_memory_count: entries.reduce((sum, entry) => sum + entry.downgraded_memory_count, 0),
+    hard_boundary_upgrade_count: entries.reduce((sum, entry) => sum + entry.hard_boundary_upgrade_count, 0),
+    rounds_with_projection: rounds
+      .filter((round) => round.guide_projection_summaries.some((entry) => entry.projection_present))
+      .map((round) => ({
+        round_id: round.round_id,
+        projection_present_count: round.guide_projection_summaries.filter((entry) => entry.projection_present).length,
+        downgraded_memory_count: round.guide_projection_summaries.reduce((sum, entry) => sum + entry.downgraded_memory_count, 0),
+        shadow_projection_source_count: round.guide_projection_summaries.filter((entry) => entry.source_map_shadow_projection).length,
+        active_projection_source_count: round.guide_projection_summaries.filter((entry) => entry.source_map_active_projection).length,
+      })),
+  };
 }
 
 function excludesAll(text: string, values: string[]): boolean {
@@ -441,6 +499,7 @@ async function runAdmissionRound(args: {
     prompt_payload_excluded: !jsonl.includes("prompt_text"),
     raw_memory_payload_excluded: !jsonl.includes(args.spec.suppressed_payload_marker),
     raw_slots_excluded: !jsonl.includes("\"slots\""),
+    guide_projection_summaries: [guideProjectionSummary(afterGuide)],
     rows,
   };
 }
@@ -581,6 +640,7 @@ async function runExternalRehydrateRound(args: {
     raw_memory_payload_excluded: !jsonl.includes(args.spec.blocked_payload_marker)
       && !jsonl.includes(args.spec.rehydrate_payload_marker),
     raw_slots_excluded: !jsonl.includes("\"slots\""),
+    guide_projection_summaries: [],
     rows,
   };
 }
@@ -615,6 +675,7 @@ async function runClosedLoopPriorRound(args: {
   });
   const activeMemoryId = firstNodeId(activeMemory, `Admission closed-loop prior route ${args.spec.round_id}`);
   const rows: AionisMemoryAdmissionDatasetRow[] = [];
+  const guideProjectionSummaries: AdmissionGuideProjectionSummary[] = [];
 
   for (const [index, outcome] of args.spec.outcomes.entries()) {
     const step = index + 1;
@@ -624,6 +685,7 @@ async function runClosedLoopPriorRound(args: {
       limit: 8,
       include_packets: true,
     });
+    guideProjectionSummaries.push(guideProjectionSummary(guide));
     const context = agentContext(guide, `${args.spec.round_id} closed-loop prior step ${step}`);
     const promptText = String(context.prompt_text);
     assertPromptBoundary(promptText, `${args.spec.round_id} closed-loop prior step ${step}`);
@@ -752,6 +814,7 @@ async function runClosedLoopPriorRound(args: {
     prompt_payload_excluded: !jsonl.includes("prompt_text"),
     raw_memory_payload_excluded: true,
     raw_slots_excluded: !jsonl.includes("\"slots\""),
+    guide_projection_summaries: guideProjectionSummaries,
     rows: enrichedRows,
   };
 }
@@ -1431,6 +1494,7 @@ async function main() {
         })),
         example_jsonl_line: appendedJsonl.split("\n").find(Boolean) ?? null,
       },
+      admission_candidate_policy_online_projection: summarizeOnlineProjection(rounds),
       collector: collectionResult
         ? {
           contract_version: collectionResult.contract_version,
