@@ -31,55 +31,69 @@ enter the Agent prompt.
 
 ## Run
 
-Command:
+Commands:
 
 ```bash
+# Initial batch
 npm run -s admission:batch-collect -- \
   --dataset-dir admission-dataset \
   --iterations 7
+
+# Expanded signature batch
+npm run -s admission:batch-collect -- \
+  --dataset-dir admission-dataset \
+  --iterations 10 \
+  --chunk-prefix runtime-batch-expanded
+
+# Retry after one provider rate-limit failure
+npm run -s admission:batch-collect -- \
+  --dataset-dir admission-dataset \
+  --iterations 1 \
+  --chunk-prefix runtime-batch-expanded-retry
 ```
 
 Result:
 
 | Metric | Value |
 |---|---:|
-| Iterations requested | 7 |
-| Iterations completed | 7 |
-| Failures | 0 |
-| Rows | 105 |
-| Runs | 49 |
-| Tasks | 49 |
-| Task signatures | 7 |
+| Rows | 375 |
+| Runs | 179 |
+| Tasks | 179 |
+| Task signatures | 13 |
 | Source backends | `aionis`, `mem0`, `zep`, `archive` |
+
+One expanded-batch iteration hit an upstream embedding 429. The successful retry
+appended another 27-row chunk. The final cumulative dataset and latest reports
+are based on 375 rows.
 
 Sample-quality gates:
 
 | Gate | Result |
 |---|---:|
 | Minimum rows for policy claim | 100 |
-| Current rows | 105 |
+| Current rows | 375 |
 | Enough rows | yes |
 | Minimum task signatures | 6 |
-| Current task signatures | 7 |
+| Current task signatures | 13 |
 | Enough task signatures | yes |
 
 ## Dataset Composition
 
 | Label | Count |
 |---|---:|
-| `positive_use` | 21 |
-| `negative_use` | 21 |
-| `blocked_or_suppressed` | 49 |
-| `rehydrate_requested` | 7 |
-| `unused_exposed` | 7 |
+| `positive_use` | 81 |
+| `negative_use` | 81 |
+| `blocked_or_suppressed` | 179 |
+| `rehydrate_requested` | 17 |
+| `unused_exposed` | 17 |
 
 Admission actions:
 
 | Action | Count |
 |---|---:|
-| `use_now` | 49 |
-| `do_not_use` | 49 |
-| `rehydrate` | 7 |
+| `use_now` | 179 |
+| `do_not_use` | 179 |
+| `rehydrate` | 17 |
 
 The current loop intentionally includes positive use, negative attributed use,
 hard suppression, and pointer-only rehydrate rows. This makes the dataset useful
@@ -96,10 +110,10 @@ admission-dataset/reports/latest/policy_comparison.md
 
 | Rank | Policy | Score | Positive capture | Direct-use risk | Direct-use precision proxy | Direct use | Missed positive |
 |---:|---|---:|---:|---:|---:|---:|---:|
-| 1 | Aionis recorded policy | 0.5714 | 100.0% | 42.9% | 42.9% | 49 | 0 |
-| 2 | Always use | 0.2667 | 100.0% | 73.3% | 20.0% | 105 | 0 |
-| 3 | Raw retrieval prompt proxy | 0.2667 | 100.0% | 73.3% | 20.0% | 105 | 0 |
-| 4 | Always block | 0.0000 | 0.0% | 0.0% | 0.0% | 0 | 21 |
+| 1 | Aionis recorded policy | 0.5475 | 100.0% | 45.3% | 45.3% | 179 | 0 |
+| 2 | Always use | 0.2613 | 100.0% | 73.9% | 21.6% | 375 | 0 |
+| 3 | Raw retrieval prompt proxy | 0.2613 | 100.0% | 73.9% | 21.6% | 375 | 0 |
+| 4 | Always block | 0.0000 | 0.0% | 0.0% | 0.0% | 0 | 81 |
 
 The accepted interpretation is narrow:
 
@@ -136,15 +150,15 @@ npm run -s admission:holdout -- \
   --input admission-dataset/rows.jsonl \
   --out-dir admission-dataset/reports/latest \
   --split-by task_signature \
-  --holdout-ratio 0.3
+  --holdout-ratio 0.5
 ```
 
 Split result:
 
 | Split | Rows | Task-signature groups |
 |---|---:|---:|
-| Train | 70 | 5 |
-| Holdout | 35 | 2 |
+| Train | 148 | 6 |
+| Holdout | 227 | 7 |
 
 Holdout checks:
 
@@ -152,30 +166,33 @@ Holdout checks:
 |---|---:|
 | Disjoint groups | yes |
 | Recorded Aionis policy is holdout leader | yes |
-| Holdout enough rows for policy claim | no |
-| Holdout enough task signatures for diversity claim | no |
+| Holdout enough rows for policy claim | yes |
+| Holdout enough task signatures for diversity claim | yes |
 
 Holdout metrics:
 
 | Metric | Value |
 |---|---:|
-| `use_now_positive_rate` | 50.0% |
-| `use_now_negative_rate` | 0.0% |
-| `unused_exposed_rate` | 20.0% |
-| `blocked_or_suppressed_count` | 14 |
-| `rehydrate_requested_count` | 7 |
+| `use_now_positive_rate` | 41.9% |
+| `use_now_negative_rate` | 41.9% |
+| `unused_exposed_rate` | 7.5% |
+| `blocked_or_suppressed_count` | 105 |
+| `rehydrate_requested_count` | 17 |
 
 The holdout split is useful as a promotion discipline: future tuned rules or
 learned classifiers must be evaluated on rows they were not tuned against. This
-specific holdout is still small, so it is pipeline validation and policy
-regression protection, not a broad policy-quality claim.
+specific holdout now clears the row/signature gates, so it is usable for
+offline policy regression and candidate-policy comparison. It is still not a
+counterfactual Agent rerun and should not be used by itself for broad market
+claims.
 
 ## Next Step
 
 The next stage is holdout-aware candidate policy evaluation:
 
-1. keep collecting rows until the holdout itself reaches the row/signature gates;
+1. evaluate a candidate tuned rule or lightweight classifier against the
+   disjoint holdout split;
 2. keep lifecycle, authority, source, suppression, and rehydrate gates as hard
    boundaries;
-3. evaluate any tuned rule or learned classifier on holdout before it can affect
+3. require holdout improvement before any candidate policy can affect
    Runtime behavior.

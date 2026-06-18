@@ -143,16 +143,17 @@ For repeated real Runtime collection, use the batch collector:
 ```bash
 npm run -s admission:batch-collect -- \
   --dataset-dir admission-dataset \
-  --iterations 7
+  --iterations 4
 ```
 
 Each iteration runs the same real Runtime e2e, writes one chunk under
 `admission-dataset/chunks/`, appends it to `rows.jsonl`, and refreshes the
 latest evaluator, comparison, and batch reports. The default diverse loop emits
-15 rows per iteration across seven task signatures, including a pointer-only
-`rehydrate_requested` row; seven iterations reaches the minimum 100-row
-policy-claim gate. Use more iterations when you want repeated measurements
-within the same task-signature set.
+27 rows per iteration across 13 task signatures, including a pointer-only
+`rehydrate_requested` row. Four iterations reaches the minimum 100-row
+policy-claim gate and the task-signature gate. Use more iterations when you want
+repeated measurements within the same task-signature set or a larger holdout
+split.
 
 ## Validation Command
 
@@ -275,7 +276,7 @@ npm run -s admission:holdout -- \
   --input admission-dataset/rows.jsonl \
   --out-dir admission-dataset/reports/latest \
   --split-by task_signature \
-  --holdout-ratio 0.3
+  --holdout-ratio 0.5
 ```
 
 It writes:
