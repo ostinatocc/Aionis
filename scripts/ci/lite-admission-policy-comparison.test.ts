@@ -15,6 +15,9 @@ test("admission policy comparison ranks recorded Aionis admission against raw re
   assert.equal(report.runtime_mutation, false);
   assert.equal(report.agent_prompt_included, false);
   assert.equal(report.dataset.row_count, 4);
+  assert.equal(report.sample_quality.minimum_rows_for_policy_claim, 100);
+  assert.equal(report.sample_quality.not_enough_rows_for_policy_claim, true);
+  assert.ok(report.caveats.some((caveat) => caveat.includes("Do not claim policy quality")));
   assert.equal(report.arms.length, 4);
 
   const byId = new Map(report.arms.map((arm) => [arm.policy_id, arm]));
@@ -48,5 +51,6 @@ test("admission policy comparison formats markdown leaderboard", () => {
   const markdown = formatAdmissionPolicyComparisonMarkdown(report);
   assert.match(markdown, /Aionis Admission Policy Comparison/);
   assert.match(markdown, /Raw retrieval prompt proxy/);
+  assert.match(markdown, /Enough rows for policy claim: no/);
   assert.match(markdown, /This is an offline proxy comparison/);
 });

@@ -59,6 +59,12 @@ export type AionisAdmissionDatasetEvaluationReport = {
     scope_count: number;
     source_backends: string[];
   };
+  sample_quality: {
+    minimum_rows_for_policy_claim: number;
+    current_row_count: number;
+    has_minimum_rows_for_policy_claim: boolean;
+    not_enough_rows_for_policy_claim: boolean;
+  };
   metrics: {
     prompt_char_total: number;
     prompt_char_average: number;
@@ -120,6 +126,8 @@ const BUCKET_DIMENSIONS: AionisAdmissionDatasetBucketDimension[] = [
   "domain",
   "policy_id",
 ];
+
+export const AIONIS_ADMISSION_DATASET_MIN_ROWS_FOR_POLICY_CLAIM = 100;
 
 function roundRate(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -296,7 +304,7 @@ function buildRecommendations(args: {
   rehydrateRequestedCount: number;
 }): string[] {
   return compactStrings([
-    args.rows.length < 100 ? "collect_at_least_100_rows_before_claiming_policy_quality" : null,
+    args.rows.length < AIONIS_ADMISSION_DATASET_MIN_ROWS_FOR_POLICY_CLAIM ? "collect_at_least_100_rows_before_claiming_policy_quality" : null,
     args.rowPolicyCoverage < 1 ? "backfill_policy_metadata_before_policy_version_comparison" : null,
     args.useNowNegativeCount > 0 ? "inspect_negative_use_rows_before_policy_change" : null,
     args.unusedExposedRate > 0.5 ? "review_high_unused_exposure_for_candidate_noise_or_missing_feedback" : null,
@@ -331,6 +339,7 @@ export function evaluateAdmissionDatasetRows(
   const rowPolicyCoverage = rate(rowsWithPolicyMetadata, rows.length);
   const unusedExposedRate = rate(unusedExposedCount, promptIncludedRows.length);
   const promptCharTotal = rows.reduce((sum, row) => sum + row.prompt_char_count, 0);
+  const hasMinimumRowsForPolicyClaim = rows.length >= AIONIS_ADMISSION_DATASET_MIN_ROWS_FOR_POLICY_CLAIM;
   return {
     contract_version: "aionis_admission_dataset_evaluation_report_v1",
     intended_use: "offline_admission_policy_audit",
@@ -347,6 +356,12 @@ export function evaluateAdmissionDatasetRows(
       guide_trace_count: uniqueCount(rows, "guide_trace_id"),
       scope_count: uniqueCount(rows, "scope"),
       source_backends: compactStrings(rows.map((row) => row.source_backend ?? row.memory_origin ?? null)),
+    },
+    sample_quality: {
+      minimum_rows_for_policy_claim: AIONIS_ADMISSION_DATASET_MIN_ROWS_FOR_POLICY_CLAIM,
+      current_row_count: rows.length,
+      has_minimum_rows_for_policy_claim: hasMinimumRowsForPolicyClaim,
+      not_enough_rows_for_policy_claim: !hasMinimumRowsForPolicyClaim,
     },
     metrics: {
       prompt_char_total: promptCharTotal,
@@ -374,7 +389,8 @@ export function evaluateAdmissionDatasetRows(
       useNowNegativeCount > 0 ? "use_now_negative_use_present" : null,
       unusedExposedRate > 0.5 ? "high_unused_exposed_rate" : null,
       rowPolicyCoverage < 1 ? "policy_metadata_incomplete" : null,
-      rows.length < 100 ? "small_dataset_do_not_claim_policy_quality" : null,
+      !hasMinimumRowsForPolicyClaim ? "not_enough_rows_for_policy_claim" : null,
+      !hasMinimumRowsForPolicyClaim ? "small_dataset_do_not_claim_policy_quality" : null,
     ]),
     recommendations: buildRecommendations({
       rows,
@@ -413,6 +429,8 @@ export function formatAdmissionDatasetEvaluationMarkdown(report: AionisAdmission
     `| Rows | ${report.dataset.row_count} |`,
     `| Runs | ${report.dataset.run_count} |`,
     `| Tasks | ${report.dataset.task_count} |`,
+    `| minimum rows for policy claim | ${report.sample_quality.minimum_rows_for_policy_claim} |`,
+    `| enough rows for policy claim | ${report.sample_quality.has_minimum_rows_for_policy_claim ? "yes" : "no"} |`,
     `| use_now positive rate | ${formatPercent(report.metrics.use_now_positive_rate)} |`,
     `| use_now negative rate | ${formatPercent(report.metrics.use_now_negative_rate)} |`,
     `| use_now unused rate | ${formatPercent(report.metrics.use_now_unused_rate)} |`,

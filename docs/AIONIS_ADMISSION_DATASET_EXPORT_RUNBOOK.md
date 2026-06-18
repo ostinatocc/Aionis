@@ -126,6 +126,18 @@ The e2e writes the raw exported chunk under `admission-dataset/chunks/` and then
 calls the collector. This proves the durable dataset path is connected to a
 real `guide -> feedback -> measure` loop instead of only static sample rows.
 
+For repeated real Runtime collection, use the batch collector:
+
+```bash
+npm run -s admission:batch-collect -- \
+  --dataset-dir admission-dataset \
+  --iterations 25
+```
+
+Each iteration runs the same real Runtime e2e, writes one chunk under
+`admission-dataset/chunks/`, appends it to `rows.jsonl`, and refreshes the
+latest evaluator, comparison, and batch reports.
+
 ## Validation Command
 
 Run the product e2e:
@@ -172,6 +184,11 @@ Core metrics:
 | `unused_exposed_rate` | Prompt-included rows that received no usage attribution. |
 | `blocked_or_suppressed_count` | Rows that train the hard suppression / firewall boundary. |
 | `rehydrate_requested_count` | Rows that train payload sufficiency and on-demand recovery. |
+
+Small-sample protection is explicit. Reports include `sample_quality`; fewer
+than 100 rows sets `not_enough_rows_for_policy_claim=true` and emits the
+`not_enough_rows_for_policy_claim` risk flag. Treat those reports as pipeline
+validation, not policy-quality evidence.
 
 This is an audit and calibration input only. It must not mutate memory, promote a
 learned policy, or override lifecycle, scope, source, suppression, authority, or

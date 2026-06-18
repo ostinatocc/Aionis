@@ -33,6 +33,7 @@
     "admission:evaluate": "npx tsx scripts/e2e/admission-dataset-evaluator.ts",
     "admission:collect": "npx tsx scripts/e2e/admission-dataset-collector.ts",
     "admission:compare": "npx tsx scripts/e2e/admission-policy-comparison.ts",
+    "admission:batch-collect": "npx tsx scripts/e2e/admission-batch-collect.ts",
     "test:focused": "npm run -s typecheck && npm run -s sdk:source-sync && npm run -s packages:build && npm run -s packages:test && npm run -s lite:test",
     "test:lite": "npm run -s lite:test",
     "smoke:lite": "npm run -s lite:smoke",

@@ -195,6 +195,18 @@ admission-dataset/
 The e2e still runs a real Runtime `guide -> feedback -> measure` loop first;
 the collector only appends the resulting rows and refreshes offline reports.
 
+To collect enough rows for policy-comparison work, run the batch collector:
+
+```bash
+npm run -s admission:batch-collect -- \
+  --dataset-dir admission-dataset \
+  --iterations 25
+```
+
+With the current validation loop, each iteration exports four rows. Reports
+remain marked `not_enough_rows_for_policy_claim=true` until the dataset reaches
+100 rows.
+
 For production append guidance, see
 [AIONIS_ADMISSION_DATASET_EXPORT_RUNBOOK.md](AIONIS_ADMISSION_DATASET_EXPORT_RUNBOOK.md).
 

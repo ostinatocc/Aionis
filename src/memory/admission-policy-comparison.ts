@@ -5,6 +5,7 @@ import {
   type AionisMemoryAdmissionRecordEntry,
 } from "../sdk.js";
 import {
+  AIONIS_ADMISSION_DATASET_MIN_ROWS_FOR_POLICY_CLAIM,
   parseAdmissionDatasetJsonl,
   type AionisAdmissionDatasetEvaluatorOptions,
 } from "./admission-dataset-evaluator.js";
@@ -59,6 +60,12 @@ export type AionisAdmissionPolicyComparisonReport = {
     blocked_or_suppressed_count: number;
     rehydrate_requested_count: number;
     unused_exposed_count: number;
+  };
+  sample_quality: {
+    minimum_rows_for_policy_claim: number;
+    current_row_count: number;
+    has_minimum_rows_for_policy_claim: boolean;
+    not_enough_rows_for_policy_claim: boolean;
   };
   arms: AionisAdmissionPolicyComparisonArm[];
   leaderboard: AionisAdmissionPolicyComparisonArm[];
@@ -209,6 +216,7 @@ export function compareAdmissionPoliciesForRows(
   const blockedOrSuppressedCount = rows.filter((row) => row.outcome_label === "blocked_or_suppressed").length;
   const rehydrateRequestedCount = rows.filter((row) => row.outcome_label === "rehydrate_requested").length;
   const unusedExposedCount = rows.filter((row) => row.outcome_label === "unused_exposed").length;
+  const hasMinimumRowsForPolicyClaim = rows.length >= AIONIS_ADMISSION_DATASET_MIN_ROWS_FOR_POLICY_CLAIM;
   const arms = rankArms(POLICY_DEFINITIONS.map((policy) => scoreArm({
     policy,
     rows,
@@ -236,13 +244,22 @@ export function compareAdmissionPoliciesForRows(
       rehydrate_requested_count: rehydrateRequestedCount,
       unused_exposed_count: unusedExposedCount,
     },
+    sample_quality: {
+      minimum_rows_for_policy_claim: AIONIS_ADMISSION_DATASET_MIN_ROWS_FOR_POLICY_CLAIM,
+      current_row_count: rows.length,
+      has_minimum_rows_for_policy_claim: hasMinimumRowsForPolicyClaim,
+      not_enough_rows_for_policy_claim: !hasMinimumRowsForPolicyClaim,
+    },
     arms,
     leaderboard: arms,
     caveats: [
       "This is an offline proxy comparison over admission dataset rows, not a counterfactual Agent rerun.",
       "Raw retrieval prompt proxy treats prompt-included candidates as direct-use memory because candidate ranks are not preserved in the dataset.",
+      !hasMinimumRowsForPolicyClaim
+        ? `Do not claim policy quality until the dataset reaches at least ${AIONIS_ADMISSION_DATASET_MIN_ROWS_FOR_POLICY_CLAIM} rows.`
+        : null,
       "Do not use this report to mutate Runtime gates without holdout validation.",
-    ],
+    ].filter((caveat): caveat is string => Boolean(caveat)),
     summary,
   };
 }
@@ -284,6 +301,8 @@ export function formatAdmissionPolicyComparisonMarkdown(report: AionisAdmissionP
     "## Dataset",
     "",
     `- Rows: ${report.dataset.row_count}`,
+    `- Minimum rows for policy claim: ${report.sample_quality.minimum_rows_for_policy_claim}`,
+    `- Enough rows for policy claim: ${report.sample_quality.has_minimum_rows_for_policy_claim ? "yes" : "no"}`,
     `- Positive use rows: ${report.dataset.positive_use_count}`,
     `- Negative use rows: ${report.dataset.negative_use_count}`,
     `- Blocked or suppressed rows: ${report.dataset.blocked_or_suppressed_count}`,
