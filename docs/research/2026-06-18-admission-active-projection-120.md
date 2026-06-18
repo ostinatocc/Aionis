@@ -144,6 +144,69 @@ memory is harmful before any feedback exists. The later rows for the same
 memory were correctly downgraded to `inspect_before_use` once contradiction
 evidence existed.
 
+## Time-Sliced Real Agent Rerun
+
+After the task-signature grouped run, the rerun harness was extended to report
+prior-state slices. The real LLM rerun was then repeated with:
+
+```bash
+npm run -s admission:real-agent-rerun -- \
+  --input .tmp/admission-projection-active-120/rows.jsonl \
+  --out-dir .tmp/admission-real-agent-active-120-runid \
+  --candidate-policy candidate_project_context_closed_loop_inspect \
+  --evaluation-split all \
+  --split-by run_id
+
+npm run -s admission:real-agent-rerun -- \
+  --input .tmp/admission-projection-off-120/rows.jsonl \
+  --out-dir .tmp/admission-real-agent-off-120-runid \
+  --candidate-policy candidate_project_context_closed_loop_inspect \
+  --evaluation-split all \
+  --split-by run_id
+```
+
+This uses one time-slice per `run_id`, so the first-use exploration step is no
+longer mixed with later prior-aware steps.
+
+Recorded Runtime policy:
+
+| Arm | Trials | Accepted | Overall negative direct risk | First-use negative direct risk | Prior-aware negative direct risk |
+|---|---:|---:|---:|---:|---:|
+| Off | 120 | 48 | 44 | 24 | 20 |
+| Active | 120 | 48 | 24 | 24 | 0 |
+
+Rates:
+
+| Arm | Accepted rate | Overall negative direct risk rate | First-use negative direct risk rate | Prior-aware negative direct risk rate |
+|---|---:|---:|---:|---:|
+| Off | 40.0% | 36.7% | 50.0% | 29.0% |
+| Active | 40.0% | 20.0% | 50.0% | 0.0% |
+
+Request character totals:
+
+| Arm | Recorded Runtime request chars |
+|---|---:|
+| Off | 433,596 |
+| Active | 430,092 |
+
+Time-sliced interpretation:
+
+This is the promotion-relevant read. The active Runtime projection does not try
+to prevent first-use exploration negatives; those rows have no contradiction
+evidence yet. It does prevent prior-aware contradicted rows from being selected
+for direct use in the real LLM rerun:
+
+```text
+off recorded prior-aware negative direct risk: 20
+active recorded prior-aware negative direct risk: 0
+```
+
+The offline candidate policy also reaches 0 prior-aware negative direct risk on
+the off dataset, but on the active dataset it slightly underperforms recorded
+Runtime policy on accepted actions (`47` vs `48`). That means the active
+Runtime surface is already the better promotion target here; the offline
+candidate should remain an analysis arm, not an automatic replacement.
+
 ## Conclusion
 
 The 120-row active/off baseline supports one claim:
@@ -151,22 +214,23 @@ The 120-row active/off baseline supports one claim:
 > The active closed-loop projection reaches the real exported admission surface
 > and reduces direct-use negative rows without losing positive-use rows.
 
-It does not yet support a stronger claim that the active projection improves a
-task-signature grouped real Agent rerun. The current rerun grouping is too broad
-for that conclusion because it collapses different loop times into one prompt.
+The time-sliced rerun supports a stronger, narrower claim:
+
+> Once feedback creates prior contradiction evidence, the active Runtime
+> projection prevents prior-aware negative direct-use in the real LLM rerun
+> without reducing accepted actions.
+
+It does not claim that Aionis can prevent first-use exploration failures before
+feedback exists. Those failures remain expected evidence-generation events.
 
 ## Next Step
 
-Run the real Agent rerun in a time-sliced mode before using it for promotion:
+Use this run as a promotion baseline for the active projection, then broaden it:
 
-1. evaluate by `run_id` or `guide_trace_id`, not only `task_signature`;
-2. report first-use exploration negatives separately from prior-aware
-   contradicted negatives;
-3. require the active recorded Runtime surface to preserve positive capture and
-   reduce prior-aware negative direct risk;
-4. only then compare against the offline candidate policy.
-
-The existing CLI already supports `--split-by run_id`, but a full 120-row run
-would require substantially more LLM calls than the task-signature grouped run.
-That should be scheduled as the next validation step rather than folded into
-this baseline.
+1. run the same `run_id` prior-slice report on the larger 411-row admission
+   dataset;
+2. keep first-use and prior-aware risk separated in every report;
+3. only promote policy changes that improve prior-aware risk without reducing
+   accepted actions;
+4. keep the offline candidate policy as a comparison arm until it beats recorded
+   Runtime policy on the time-sliced real Agent rerun.

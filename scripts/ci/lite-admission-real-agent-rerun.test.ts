@@ -137,6 +137,78 @@ test("admission real-agent scorer marks direct use of candidate-inspect row as b
   assert.equal(trial.selected_admission_action, "inspect_before_use");
 });
 
+test("admission real-agent report separates first-use and prior-aware negative risk", () => {
+  const prepared = preparedGroups();
+  const group = prepared.groups.find((entry) =>
+    entry.rows.some((row) => row.outcome_label === "negative_use" && row.admission_action === "use_now"),
+  );
+  assert.ok(group);
+  const negative = group.rows.find((row) => row.outcome_label === "negative_use" && row.admission_action === "use_now");
+  assert.ok(negative);
+  const noPriorNegative = {
+    ...negative,
+    prior_supported_use_count: 0,
+    prior_contradicted_use_count: 0,
+    prior_rehydrate_requested_count: 0,
+    closed_loop_effect_state: "no_prior" as const,
+    repeated_negative_posture: false,
+  };
+  const priorAwareNegative = {
+    ...negative,
+    memory_id: `${negative.memory_id}:prior-aware`,
+    prior_contradicted_use_count: 1,
+    closed_loop_effect_state: "contradicted" as const,
+  };
+  const noPriorTrial = scoreAdmissionRealAgentDecision({
+    arm_id: "recorded_policy_baseline",
+    group_id: "no-prior",
+    rows: [noPriorNegative],
+    decision: normalizeAdmissionRealAgentDecision({
+      action: "direct_use",
+      selected_memory_id: noPriorNegative.memory_id,
+      used_memory_ids: [noPriorNegative.memory_id],
+    }),
+    prompt_char_count: 100,
+    request_char_count: 200,
+    completion_char_count: 50,
+  });
+  const priorAwareTrial = scoreAdmissionRealAgentDecision({
+    arm_id: "recorded_policy_baseline",
+    group_id: "prior-aware",
+    rows: [priorAwareNegative],
+    decision: normalizeAdmissionRealAgentDecision({
+      action: "direct_use",
+      selected_memory_id: priorAwareNegative.memory_id,
+      used_memory_ids: [priorAwareNegative.memory_id],
+    }),
+    prompt_char_count: 100,
+    request_char_count: 200,
+    completion_char_count: 50,
+  });
+
+  const report = buildAdmissionRealAgentRerunReport({
+    rows: [noPriorNegative, priorAwareNegative],
+    options: {
+      split_by: "run_id",
+      evaluation_split: "all",
+      candidate_policy_id: "recorded_policy_baseline",
+    },
+    llm: {
+      provider: "deepseek",
+      model: "deepseek-chat",
+      base_url_host: "api.deepseek.com",
+    },
+    recorded_trials: [noPriorTrial, priorAwareTrial],
+    candidate_trials: [noPriorTrial, priorAwareTrial],
+  });
+
+  assert.equal(noPriorTrial.selected_prior_bucket, "no_prior");
+  assert.equal(priorAwareTrial.selected_prior_bucket, "prior_aware");
+  assert.equal(report.recorded_arm.prior_slices.first_use_negative_direct_risk_count, 1);
+  assert.equal(report.recorded_arm.prior_slices.prior_aware_negative_direct_risk_count, 1);
+  assert.match(formatAdmissionRealAgentRerunMarkdown(report), /Prior-State Slices/);
+});
+
 test("admission real-agent rerun report formats real-trial summaries without prompt payloads", () => {
   const rows = baselineRows();
   const prepared = prepareAdmissionRealAgentGroups(rows, {

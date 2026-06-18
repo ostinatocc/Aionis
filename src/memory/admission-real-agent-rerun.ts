@@ -35,6 +35,11 @@ export type AionisAdmissionRealAgentOutcome =
   | "no_actionable_memory"
   | "unknown";
 
+export type AionisAdmissionRealAgentSelectedPriorBucket =
+  | "none"
+  | "no_prior"
+  | "prior_aware";
+
 export type AionisAdmissionRealAgentPromptMemory = {
   memory_id: string;
   title: string | null;
@@ -86,8 +91,23 @@ export type AionisAdmissionRealAgentScoredTrial = {
   outcome: AionisAdmissionRealAgentOutcome;
   selected_admission_action: AdmissionAction | null;
   selected_outcome_label: string | null;
+  selected_prior_bucket: AionisAdmissionRealAgentSelectedPriorBucket;
+  selected_closed_loop_effect_state: string | null;
+  selected_prior_supported_use_count: number;
+  selected_prior_contradicted_use_count: number;
+  selected_prior_rehydrate_requested_count: number;
+  selected_repeated_negative_posture: boolean;
   positive_memory_available: boolean;
   changed_action_count: number;
+};
+
+export type AionisAdmissionRealAgentPriorSliceSummary = {
+  selected_no_prior_count: number;
+  selected_prior_aware_count: number;
+  first_use_negative_direct_risk_count: number;
+  prior_aware_negative_direct_risk_count: number;
+  first_use_negative_direct_risk_rate: number;
+  prior_aware_negative_direct_risk_rate: number;
 };
 
 export type AionisAdmissionRealAgentArmSummary = {
@@ -109,6 +129,7 @@ export type AionisAdmissionRealAgentArmSummary = {
   request_char_total: number;
   completion_char_total: number;
   changed_action_count: number;
+  prior_slices: AionisAdmissionRealAgentPriorSliceSummary;
   trials: AionisAdmissionRealAgentScoredTrial[];
 };
 
@@ -217,6 +238,20 @@ function normalizedMaxGroups(value: number | null | undefined): number | null {
 function roundRate(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.round(value * 10_000) / 10_000;
+}
+
+function hasClosedLoopPrior(row: AionisAdmissionDatasetParsedRow | null): boolean {
+  if (!row) return false;
+  return row.prior_supported_use_count > 0
+    || row.prior_contradicted_use_count > 0
+    || row.prior_rehydrate_requested_count > 0
+    || row.closed_loop_effect_state !== "no_prior"
+    || row.repeated_negative_posture;
+}
+
+function selectedPriorBucket(row: AionisAdmissionDatasetParsedRow | null): AionisAdmissionRealAgentSelectedPriorBucket {
+  if (!row) return "none";
+  return hasClosedLoopPrior(row) ? "prior_aware" : "no_prior";
 }
 
 function rate(numerator: number, denominator: number): number {
@@ -399,6 +434,12 @@ export function scoreAdmissionRealAgentDecision(args: {
     outcome,
     selected_admission_action: selectedAction,
     selected_outcome_label: selectedOutcome,
+    selected_prior_bucket: selectedPriorBucket(selected),
+    selected_closed_loop_effect_state: selected?.closed_loop_effect_state ?? null,
+    selected_prior_supported_use_count: selected?.prior_supported_use_count ?? 0,
+    selected_prior_contradicted_use_count: selected?.prior_contradicted_use_count ?? 0,
+    selected_prior_rehydrate_requested_count: selected?.prior_rehydrate_requested_count ?? 0,
+    selected_repeated_negative_posture: selected?.repeated_negative_posture ?? false,
     positive_memory_available: positiveMemoryAvailable,
     changed_action_count: changedActionCount,
   };
@@ -481,6 +522,14 @@ function summarizeArm(args: {
   const nonActionableDirectAttentionCount = count("non_actionable_direct_attention");
   const missedActionableMemoryCount = count("missed_actionable_memory");
   const boundaryIgnoredCount = count("boundary_ignored");
+  const selectedNoPriorCount = args.trials.filter((trial) => trial.selected_prior_bucket === "no_prior").length;
+  const selectedPriorAwareCount = args.trials.filter((trial) => trial.selected_prior_bucket === "prior_aware").length;
+  const firstUseNegativeDirectRiskCount = args.trials.filter((trial) =>
+    trial.outcome === "negative_direct_risk" && trial.selected_prior_bucket === "no_prior"
+  ).length;
+  const priorAwareNegativeDirectRiskCount = args.trials.filter((trial) =>
+    trial.outcome === "negative_direct_risk" && trial.selected_prior_bucket === "prior_aware"
+  ).length;
   return {
     arm_id: args.arm_id,
     display_name: args.display_name,
@@ -500,6 +549,14 @@ function summarizeArm(args: {
     request_char_total: args.trials.reduce((sum, trial) => sum + trial.request_char_count, 0),
     completion_char_total: args.trials.reduce((sum, trial) => sum + trial.completion_char_count, 0),
     changed_action_count: args.trials.reduce((sum, trial) => sum + trial.changed_action_count, 0),
+    prior_slices: {
+      selected_no_prior_count: selectedNoPriorCount,
+      selected_prior_aware_count: selectedPriorAwareCount,
+      first_use_negative_direct_risk_count: firstUseNegativeDirectRiskCount,
+      prior_aware_negative_direct_risk_count: priorAwareNegativeDirectRiskCount,
+      first_use_negative_direct_risk_rate: rate(firstUseNegativeDirectRiskCount, selectedNoPriorCount),
+      prior_aware_negative_direct_risk_rate: rate(priorAwareNegativeDirectRiskCount, selectedPriorAwareCount),
+    },
     trials: args.trials,
   };
 }
@@ -624,6 +681,18 @@ export function formatAdmissionRealAgentRerunMarkdown(report: AionisAdmissionRea
     "| Arm | Accepted action | Hard-boundary direct-use | Negative direct risk | Non-actionable direct attention | Missed actionable | Boundary ignored | Request chars |",
     "|---|---:|---:|---:|---:|---:|---:|---:|",
     ...report.arms.map(armRow),
+    "",
+    "## Prior-State Slices",
+    "",
+    "| Arm | Selected no-prior | Selected prior-aware | First-use negative direct risk | Prior-aware negative direct risk |",
+    "|---|---:|---:|---:|---:|",
+    ...report.arms.map((arm) => [
+      `| ${arm.display_name}`,
+      String(arm.prior_slices.selected_no_prior_count),
+      String(arm.prior_slices.selected_prior_aware_count),
+      `${arm.prior_slices.first_use_negative_direct_risk_count} (${pct(arm.prior_slices.first_use_negative_direct_risk_rate)})`,
+      `${arm.prior_slices.prior_aware_negative_direct_risk_count} (${pct(arm.prior_slices.prior_aware_negative_direct_risk_rate)}) |`,
+    ].join(" | ")),
     "",
     "## Checks",
     "",
