@@ -1,23 +1,23 @@
 # Aionis Admission Policy Comparison
 
-Compared 4 admission policies over 411 rows; Aionis score=0.5759, raw retrieval proxy score=0.2676.
+Compared 4 admission policies over 436 rows; Aionis score=0.5556, raw retrieval proxy score=0.2752.
 
 | Rank | Policy | Score | Positive capture | Direct-use risk | Direct-use precision proxy | Direct use | Missed positive |
 |---:|---|---:|---:|---:|---:|---:|---:|
-| 1 | Aionis recorded policy | 0.5759 | 100.0% | 42.4% | 42.4% | 191 | 0 |
-| 2 | Always use | 0.2676 | 100.0% | 73.2% | 19.7% | 411 | 0 |
-| 3 | Raw retrieval prompt proxy | 0.2676 | 100.0% | 73.2% | 19.7% | 411 | 0 |
-| 4 | Always block | 0.0000 | 0.0% | 0.0% | 0.0% | 0 | 81 |
+| 1 | Aionis recorded policy | 0.5556 | 100.0% | 44.4% | 42.1% | 216 | 0 |
+| 2 | Always use | 0.2752 | 100.0% | 72.5% | 20.9% | 436 | 0 |
+| 3 | Raw retrieval prompt proxy | 0.2752 | 100.0% | 72.5% | 20.9% | 436 | 0 |
+| 4 | Always block | 0.0000 | 0.0% | 0.0% | 0.0% | 0 | 91 |
 
 ## Dataset
 
-- Rows: 411
+- Rows: 436
 - Minimum rows for policy claim: 100
 - Enough rows for policy claim: yes
 - Minimum task signatures for diversity claim: 6
 - Enough task signatures for diversity claim: yes
-- Positive use rows: 81
-- Negative use rows: 81
+- Positive use rows: 91
+- Negative use rows: 96
 - Blocked or suppressed rows: 191
 - Rehydrate requested rows: 29
 

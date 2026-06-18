@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AIONIS_ADMISSION_POLICY_ID,
+  memoryAdmissionDatasetJsonlFromRows,
+  memoryAdmissionDatasetRowsWithClosedLoopPrior,
   type AionisMemoryAdmissionDatasetRow,
 } from "../../src/sdk.js";
 import {
@@ -61,6 +63,11 @@ function row(input: Partial<AionisMemoryAdmissionDatasetRow> & {
     prompt_char_count: 1200,
     history_used: true,
     actionable_history_used: input.admission_action === "use_now",
+    prior_supported_use_count: 0,
+    prior_contradicted_use_count: 0,
+    prior_rehydrate_requested_count: 0,
+    closed_loop_effect_state: "no_prior",
+    repeated_negative_posture: false,
     ...input,
   };
 }
@@ -117,6 +124,11 @@ test("admission dataset evaluator reads JSONL and backfills missing policy metad
   });
   assert.equal(report.policy.row_policy_metadata_coverage, 0);
   assert.ok(report.risk_flags.includes("policy_metadata_incomplete"));
+  assert.equal(rows[0]?.prior_supported_use_count, 0);
+  assert.equal(rows[0]?.prior_contradicted_use_count, 0);
+  assert.equal(rows[0]?.prior_rehydrate_requested_count, 0);
+  assert.equal(rows[0]?.closed_loop_effect_state, "no_prior");
+  assert.equal(rows[0]?.repeated_negative_posture, false);
 });
 
 test("admission dataset evaluator formats markdown report", () => {
@@ -130,4 +142,29 @@ test("admission dataset evaluator formats markdown report", () => {
   assert.match(markdown, /enough rows for policy claim/);
   assert.match(markdown, /enough task signatures for diversity claim/);
   assert.match(markdown, /collect_at_least_100_rows_before_claiming_policy_quality/);
+});
+
+test("admission dataset prior-state features use only earlier rows for the same memory", () => {
+  const rows = [
+    row({ memory_id: "mem-loop", admission_action: "use_now", outcome_label: "positive_use" }),
+    row({ memory_id: "mem-loop", admission_action: "use_now", outcome_label: "negative_use" }),
+    row({ memory_id: "mem-loop", admission_action: "use_now", outcome_label: "negative_use" }),
+    row({ memory_id: "mem-other", admission_action: "use_now", outcome_label: "negative_use" }),
+  ];
+  const enriched = memoryAdmissionDatasetRowsWithClosedLoopPrior(rows);
+
+  assert.equal(enriched[0]?.closed_loop_effect_state, "no_prior");
+  assert.equal(enriched[0]?.prior_supported_use_count, 0);
+  assert.equal(enriched[1]?.closed_loop_effect_state, "supported");
+  assert.equal(enriched[1]?.prior_supported_use_count, 1);
+  assert.equal(enriched[1]?.prior_contradicted_use_count, 0);
+  assert.equal(enriched[2]?.closed_loop_effect_state, "mixed");
+  assert.equal(enriched[2]?.prior_supported_use_count, 1);
+  assert.equal(enriched[2]?.prior_contradicted_use_count, 1);
+  assert.equal(enriched[2]?.repeated_negative_posture, false);
+  assert.equal(enriched[3]?.closed_loop_effect_state, "no_prior");
+
+  const parsed = parseAdmissionDatasetJsonl(memoryAdmissionDatasetJsonlFromRows(rows));
+  assert.equal(parsed[2]?.prior_contradicted_use_count, 1);
+  assert.equal(parsed[2]?.closed_loop_effect_state, "mixed");
 });

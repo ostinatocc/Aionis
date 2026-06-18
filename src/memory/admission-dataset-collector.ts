@@ -157,6 +157,11 @@ function normalizeDatasetRow(row: AionisMemoryAdmissionDatasetRow): AionisMemory
     prompt_char_count: row.prompt_char_count,
     history_used: row.history_used,
     actionable_history_used: row.actionable_history_used,
+    prior_supported_use_count: row.prior_supported_use_count ?? 0,
+    prior_contradicted_use_count: row.prior_contradicted_use_count ?? 0,
+    prior_rehydrate_requested_count: row.prior_rehydrate_requested_count ?? 0,
+    closed_loop_effect_state: row.closed_loop_effect_state ?? "no_prior",
+    repeated_negative_posture: row.repeated_negative_posture ?? false,
   };
 }
 

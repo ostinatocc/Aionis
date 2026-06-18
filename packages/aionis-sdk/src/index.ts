@@ -349,6 +349,13 @@ export type AionisMemoryAdmissionDatasetOutcomeLabel =
   | "not_agent_facing"
   | "unknown";
 
+export type AionisMemoryAdmissionClosedLoopEffectState =
+  | "no_prior"
+  | "supported"
+  | "contradicted"
+  | "mixed"
+  | "rehydrate_requested";
+
 export type AionisMemoryAdmissionDatasetRow = {
   contract_version: "aionis_memory_admission_dataset_row_v1";
   intended_use: "memory_admission_policy_training_or_audit";
@@ -387,6 +394,11 @@ export type AionisMemoryAdmissionDatasetRow = {
   prompt_char_count: number;
   history_used: boolean;
   actionable_history_used: boolean;
+  prior_supported_use_count: number;
+  prior_contradicted_use_count: number;
+  prior_rehydrate_requested_count: number;
+  closed_loop_effect_state: AionisMemoryAdmissionClosedLoopEffectState;
+  repeated_negative_posture: boolean;
 };
 
 export type AionisMemoryAdmissionDatasetExportOptions = {
@@ -2041,7 +2053,68 @@ function admissionDatasetString(value: string | null | undefined): string | null
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-export function memoryAdmissionDatasetRowsFromRecord(
+type AdmissionDatasetPriorCounters = {
+  supported: number;
+  contradicted: number;
+  rehydrateRequested: number;
+};
+
+function emptyAdmissionDatasetPriorCounters(): AdmissionDatasetPriorCounters {
+  return {
+    supported: 0,
+    contradicted: 0,
+    rehydrateRequested: 0,
+  };
+}
+
+function closedLoopEffectStateFromPrior(
+  prior: AdmissionDatasetPriorCounters,
+): AionisMemoryAdmissionClosedLoopEffectState {
+  if (prior.supported > 0 && prior.contradicted > 0) return "mixed";
+  if (prior.contradicted > 0) return "contradicted";
+  if (prior.supported > 0) return "supported";
+  if (prior.rehydrateRequested > 0) return "rehydrate_requested";
+  return "no_prior";
+}
+
+function admissionDatasetPriorKey(row: Pick<AionisMemoryAdmissionDatasetRow, "memory_id">): string | null {
+  return admissionDatasetString(row.memory_id);
+}
+
+function updateAdmissionDatasetPriorCounters(
+  prior: AdmissionDatasetPriorCounters,
+  row: Pick<AionisMemoryAdmissionDatasetRow, "outcome_label">,
+): AdmissionDatasetPriorCounters {
+  const next = { ...prior };
+  if (row.outcome_label === "positive_use") next.supported += 1;
+  if (row.outcome_label === "negative_use") next.contradicted += 1;
+  if (row.outcome_label === "rehydrate_requested") next.rehydrateRequested += 1;
+  return next;
+}
+
+export function memoryAdmissionDatasetRowsWithClosedLoopPrior(
+  rows: AionisMemoryAdmissionDatasetRow[],
+): AionisMemoryAdmissionDatasetRow[] {
+  const priorByMemoryId = new Map<string, AdmissionDatasetPriorCounters>();
+  return rows.map((row) => {
+    const key = admissionDatasetPriorKey(row);
+    const prior = key ? (priorByMemoryId.get(key) ?? emptyAdmissionDatasetPriorCounters()) : emptyAdmissionDatasetPriorCounters();
+    const enriched: AionisMemoryAdmissionDatasetRow = {
+      ...row,
+      prior_supported_use_count: prior.supported,
+      prior_contradicted_use_count: prior.contradicted,
+      prior_rehydrate_requested_count: prior.rehydrateRequested,
+      closed_loop_effect_state: closedLoopEffectStateFromPrior(prior),
+      repeated_negative_posture: prior.contradicted >= 2,
+    };
+    if (key) {
+      priorByMemoryId.set(key, updateAdmissionDatasetPriorCounters(prior, row));
+    }
+    return enriched;
+  });
+}
+
+function baseMemoryAdmissionDatasetRowsFromRecord(
   record: AionisMemoryAdmissionRecord,
   options: AionisMemoryAdmissionDatasetExportOptions = {},
 ): AionisMemoryAdmissionDatasetRow[] {
@@ -2083,14 +2156,28 @@ export function memoryAdmissionDatasetRowsFromRecord(
     prompt_char_count: record.prompt_char_count,
     history_used: record.history_used,
     actionable_history_used: record.actionable_history_used,
+    prior_supported_use_count: 0,
+    prior_contradicted_use_count: 0,
+    prior_rehydrate_requested_count: 0,
+    closed_loop_effect_state: "no_prior",
+    repeated_negative_posture: false,
   }));
+}
+
+export function memoryAdmissionDatasetRowsFromRecord(
+  record: AionisMemoryAdmissionRecord,
+  options: AionisMemoryAdmissionDatasetExportOptions = {},
+): AionisMemoryAdmissionDatasetRow[] {
+  return memoryAdmissionDatasetRowsWithClosedLoopPrior(baseMemoryAdmissionDatasetRowsFromRecord(record, options));
 }
 
 export function memoryAdmissionDatasetRowsFromRecords(
   records: AionisMemoryAdmissionRecord[],
   options: AionisMemoryAdmissionDatasetExportOptions = {},
 ): AionisMemoryAdmissionDatasetRow[] {
-  return records.flatMap((record) => memoryAdmissionDatasetRowsFromRecord(record, options));
+  return memoryAdmissionDatasetRowsWithClosedLoopPrior(
+    records.flatMap((record) => baseMemoryAdmissionDatasetRowsFromRecord(record, options)),
+  );
 }
 
 export function memoryAdmissionDatasetRowsFromGuide(
@@ -2101,7 +2188,8 @@ export function memoryAdmissionDatasetRowsFromGuide(
 }
 
 export function memoryAdmissionDatasetJsonlFromRows(rows: AionisMemoryAdmissionDatasetRow[]): string {
-  return rows.length > 0 ? `${rows.map((row) => JSON.stringify(row)).join("\n")}\n` : "";
+  const enrichedRows = memoryAdmissionDatasetRowsWithClosedLoopPrior(rows);
+  return enrichedRows.length > 0 ? `${enrichedRows.map((row) => JSON.stringify(row)).join("\n")}\n` : "";
 }
 
 export function memoryAdmissionDatasetJsonlFromRecord(

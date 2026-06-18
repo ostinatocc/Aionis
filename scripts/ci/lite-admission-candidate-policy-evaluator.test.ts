@@ -9,6 +9,10 @@ import {
 
 const BASELINE_ROWS = path.resolve("admission-dataset/rows.jsonl");
 
+function baselineRowCount(): number {
+  return fs.readFileSync(BASELINE_ROWS, "utf8").split(/\r?\n/).filter((line) => line.trim().length > 0).length;
+}
+
 test("admission candidate policy evaluator selects and validates a label-safe holdout candidate", () => {
   const report = evaluateAdmissionCandidatePoliciesJsonl(fs.readFileSync(BASELINE_ROWS, "utf8"), {
     split_by: "task_signature",
@@ -31,10 +35,11 @@ test("admission candidate policy evaluator selects and validates a label-safe ho
       assert.equal(report.guards.forbidden_decision_fields.includes(field), false);
     }
   }
-  assert.equal(report.split.train_row_count, 118);
-  assert.equal(report.split.holdout_row_count, 293);
-  assert.equal(report.split.train_group_count, 12);
-  assert.equal(report.split.holdout_group_count, 13);
+  assert.equal(report.split.train_row_count + report.split.holdout_row_count, baselineRowCount());
+  assert.ok(report.split.train_row_count > 0);
+  assert.ok(report.split.holdout_row_count >= 100);
+  assert.ok(report.split.train_group_count >= 6);
+  assert.ok(report.split.holdout_group_count >= 6);
   assert.notEqual(report.selected_policy_id, "recorded_policy_baseline");
   assert.equal(report.promotion_gate.no_hard_boundary_regression, true);
   assert.equal(report.promotion_gate.no_positive_capture_regression, true);

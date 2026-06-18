@@ -2,6 +2,7 @@ import {
   AIONIS_ADMISSION_POLICY_ID,
   AIONIS_ADMISSION_POLICY_MODE,
   AIONIS_ADMISSION_POLICY_VERSION,
+  type AionisMemoryAdmissionClosedLoopEffectState,
   type AionisMemoryAdmissionDatasetOutcomeLabel,
   type AionisMemoryAdmissionDatasetRow,
 } from "../sdk.js";
@@ -158,6 +159,21 @@ function numberValue(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+function nonNegativeIntValue(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Math.max(0, Math.trunc(value));
+}
+
+function closedLoopEffectStateValue(value: unknown): AionisMemoryAdmissionClosedLoopEffectState {
+  return value === "supported"
+    || value === "contradicted"
+    || value === "mixed"
+    || value === "rehydrate_requested"
+    || value === "no_prior"
+    ? value
+    : "no_prior";
+}
+
 function increment(map: Record<string, number>, key: string): void {
   map[key] = (map[key] ?? 0) + 1;
 }
@@ -226,6 +242,11 @@ function normalizeRow(
     evidence_ids: Array.isArray(row.evidence_ids) ? row.evidence_ids.filter((entry): entry is string => typeof entry === "string") : [],
     history_used: booleanValue(row.history_used),
     actionable_history_used: booleanValue(row.actionable_history_used),
+    prior_supported_use_count: nonNegativeIntValue(row.prior_supported_use_count),
+    prior_contradicted_use_count: nonNegativeIntValue(row.prior_contradicted_use_count),
+    prior_rehydrate_requested_count: nonNegativeIntValue(row.prior_rehydrate_requested_count),
+    closed_loop_effect_state: closedLoopEffectStateValue(row.closed_loop_effect_state),
+    repeated_negative_posture: booleanValue(row.repeated_negative_posture),
   };
 }
 

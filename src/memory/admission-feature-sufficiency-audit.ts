@@ -25,6 +25,8 @@ export type AionisAdmissionFeatureSufficiencyAuditReport = {
   dataset: {
     row_count: number;
     use_now_row_count: number;
+    prior_state_signal_row_count: number;
+    repeated_negative_posture_row_count: number;
     signature_count: number;
     mixed_outcome_signature_count: number;
     positive_negative_collision_signature_count: number;
@@ -60,6 +62,11 @@ const SIGNATURE_FEATURES = [
   "actionable_history_used",
   "reason_codes",
   "evidence_count",
+  "prior_supported_use_count",
+  "prior_contradicted_use_count",
+  "prior_rehydrate_requested_count",
+  "closed_loop_effect_state",
+  "repeated_negative_posture",
 ] as const;
 
 const FORBIDDEN_OR_EXCLUDED_FEATURES = [
@@ -114,6 +121,11 @@ function featureValues(row: AionisAdmissionDatasetParsedRow): Record<string, unk
     actionable_history_used: row.actionable_history_used,
     reason_codes: [...row.reason_codes].sort(),
     evidence_count: row.evidence_ids.length,
+    prior_supported_use_count: row.prior_supported_use_count,
+    prior_contradicted_use_count: row.prior_contradicted_use_count,
+    prior_rehydrate_requested_count: row.prior_rehydrate_requested_count,
+    closed_loop_effect_state: row.closed_loop_effect_state,
+    repeated_negative_posture: row.repeated_negative_posture,
   };
 }
 
@@ -144,6 +156,13 @@ export function auditAdmissionFeatureSufficiencyRows(
   rows: AionisAdmissionDatasetParsedRow[],
 ): AionisAdmissionFeatureSufficiencyAuditReport {
   const useNowRows = rows.filter((row) => row.admission_action === "use_now");
+  const priorStateSignalRows = rows.filter((row) =>
+    row.prior_supported_use_count > 0
+    || row.prior_contradicted_use_count > 0
+    || row.prior_rehydrate_requested_count > 0
+    || row.closed_loop_effect_state !== "no_prior"
+    || row.repeated_negative_posture
+  );
   const groups = new Map<string, AionisAdmissionDatasetParsedRow[]>();
   for (const row of useNowRows) {
     const signature = signatureForRow(row);
@@ -170,6 +189,8 @@ export function auditAdmissionFeatureSufficiencyRows(
     dataset: {
       row_count: rows.length,
       use_now_row_count: useNowRows.length,
+      prior_state_signal_row_count: priorStateSignalRows.length,
+      repeated_negative_posture_row_count: rows.filter((row) => row.repeated_negative_posture).length,
       signature_count: signatures.length,
       mixed_outcome_signature_count: mixed.length,
       positive_negative_collision_signature_count: positiveNegative.length,
@@ -193,7 +214,9 @@ export function auditAdmissionFeatureSufficiencyRows(
     recommendations: hasCollision
       ? [
         "Do not add task-name or title based rules to reduce negative_direct_risk; that would overfit the dataset.",
-        "Collect a next-decision prior-state feature such as prior_supported_use_count, prior_contradicted_use_count, closed_loop_effect_state, or repeated_negative_posture.",
+        priorStateSignalRows.length > 0
+          ? "Increase closed-loop-prior coverage across fresh task signatures; prior-state signal is present but still too sparse to break the dominant no_prior collision."
+          : "Collect a next-decision prior-state feature such as prior_supported_use_count, prior_contradicted_use_count, closed_loop_effect_state, or repeated_negative_posture.",
         "Keep current candidate policies at manual-review/eval level until the added feature is observed on fresh holdout groups.",
       ]
       : [
@@ -223,6 +246,8 @@ export function formatAdmissionFeatureSufficiencyAuditMarkdown(
     "|---|---:|",
     `| rows | ${report.dataset.row_count} |`,
     `| use_now rows | ${report.dataset.use_now_row_count} |`,
+    `| prior-state signal rows | ${report.dataset.prior_state_signal_row_count} |`,
+    `| repeated-negative posture rows | ${report.dataset.repeated_negative_posture_row_count} |`,
     `| label-safe signatures | ${report.dataset.signature_count} |`,
     `| mixed-outcome signatures | ${report.dataset.mixed_outcome_signature_count} |`,
     `| positive/negative collision signatures | ${report.dataset.positive_negative_collision_signature_count} |`,

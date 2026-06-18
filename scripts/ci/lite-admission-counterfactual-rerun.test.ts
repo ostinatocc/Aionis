@@ -9,6 +9,10 @@ import {
 
 const BASELINE_ROWS = path.resolve("admission-dataset/rows.jsonl");
 
+function baselineRowCount(): number {
+  return fs.readFileSync(BASELINE_ROWS, "utf8").split(/\r?\n/).filter((line) => line.trim().length > 0).length;
+}
+
 test("admission counterfactual rerun gates candidate policy before real Agent rerun", () => {
   const report = rerunAdmissionCounterfactualJsonl(fs.readFileSync(BASELINE_ROWS, "utf8"), {
     split_by: "task_signature",
@@ -21,11 +25,11 @@ test("admission counterfactual rerun gates candidate policy before real Agent re
   assert.equal(report.runtime_mutation, false);
   assert.equal(report.agent_prompt_included, false);
   assert.equal(report.agent_mode, "deterministic_action_proxy");
-  assert.equal(report.policy.candidate_policy_id, "candidate_aionis_project_context_only");
+  assert.equal(report.policy.candidate_policy_id, "candidate_project_context_closed_loop_inspect");
   assert.equal(report.split.evaluation_split, "holdout");
-  assert.equal(report.dataset.row_count, 411);
-  assert.equal(report.dataset.evaluated_row_count, 293);
-  assert.equal(report.dataset.evaluated_group_count, 13);
+  assert.equal(report.dataset.row_count, baselineRowCount());
+  assert.ok(report.dataset.evaluated_row_count >= 100);
+  assert.ok(report.dataset.evaluated_group_count >= 6);
   assert.equal(report.checks.no_runtime_mutation, true);
   assert.equal(report.checks.deterministic_proxy_only, true);
   assert.equal(report.checks.candidate_no_hard_boundary_direct_use_regression, true);

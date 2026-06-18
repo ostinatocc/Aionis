@@ -47,6 +47,13 @@ export type AionisAdmissionRealAgentPromptMemory = {
   authority: string;
   actionable: boolean;
   reason_codes: string[];
+  prior_state: {
+    supported_use_count: number;
+    contradicted_use_count: number;
+    rehydrate_requested_count: number;
+    closed_loop_effect_state: string;
+    repeated_negative_posture: boolean;
+  };
 };
 
 export type AionisAdmissionRealAgentPromptPack = {
@@ -248,6 +255,13 @@ function promptMemory(row: AionisAdmissionDatasetParsedRow, action: AdmissionAct
     authority: row.authority,
     actionable: row.actionable,
     reason_codes: compactReasonCodes(row.reason_codes),
+    prior_state: {
+      supported_use_count: row.prior_supported_use_count,
+      contradicted_use_count: row.prior_contradicted_use_count,
+      rehydrate_requested_count: row.prior_rehydrate_requested_count,
+      closed_loop_effect_state: row.closed_loop_effect_state,
+      repeated_negative_posture: row.repeated_negative_posture,
+    },
   };
 }
 

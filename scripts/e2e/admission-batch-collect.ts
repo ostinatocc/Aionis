@@ -10,7 +10,7 @@ type CliArgs = {
   iterations: number;
   chunkPrefix: string;
   stopOnFailure: boolean;
-  profile: "standard" | "targeted-external-current";
+  profile: "standard" | "targeted-external-current" | "closed-loop-prior";
 };
 
 type BatchChunk = {
@@ -32,14 +32,13 @@ function positiveInteger(value: string | undefined, fallback: number): number {
 }
 
 function parseArgs(argv: string[]): CliArgs {
+  const envProfile = process.env.AIONIS_ADMISSION_DATASET_PROFILE;
   const out: CliArgs = {
     datasetDir: process.env.AIONIS_ADMISSION_DATASET_DIR?.trim() || null,
     iterations: positiveInteger(process.env.AIONIS_ADMISSION_BATCH_ITERATIONS, 25),
     chunkPrefix: process.env.AIONIS_ADMISSION_BATCH_CHUNK_PREFIX?.trim() || "runtime-batch",
     stopOnFailure: true,
-    profile: process.env.AIONIS_ADMISSION_DATASET_PROFILE === "targeted-external-current"
-      ? "targeted-external-current"
-      : "standard",
+    profile: envProfile === "targeted-external-current" || envProfile === "closed-loop-prior" ? envProfile : "standard",
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -56,11 +55,11 @@ function parseArgs(argv: string[]): CliArgs {
     } else if (arg === "--continue-on-failure") {
       out.stopOnFailure = false;
     } else if (arg === "--profile" && next) {
-      out.profile = next === "targeted-external-current" ? "targeted-external-current" : "standard";
+      out.profile = next === "targeted-external-current" || next === "closed-loop-prior" ? next : "standard";
       i += 1;
     } else if (arg === "--help" || arg === "-h") {
       process.stdout.write([
-        "Usage: npm run -s admission:batch-collect -- --dataset-dir admission-dataset [--iterations 25] [--profile standard|targeted-external-current]",
+        "Usage: npm run -s admission:batch-collect -- --dataset-dir admission-dataset [--iterations 25] [--profile standard|targeted-external-current|closed-loop-prior]",
         "",
         "Runs the real admission dataset Runtime e2e repeatedly and appends each chunk",
         "to the same durable admission dataset.",

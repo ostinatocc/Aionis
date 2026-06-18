@@ -16,7 +16,9 @@ export type AionisAdmissionCandidatePolicyId =
   | "recorded_policy_baseline"
   | "candidate_external_current_inspect"
   | "candidate_aionis_project_context_only"
-  | "candidate_advisory_inspect";
+  | "candidate_advisory_inspect"
+  | "candidate_closed_loop_contradicted_inspect"
+  | "candidate_project_context_closed_loop_inspect";
 
 export type AionisAdmissionCandidatePolicyScore = {
   policy_id: AionisAdmissionCandidatePolicyId;
@@ -194,6 +196,42 @@ const POLICY_DEFINITIONS: PolicyDefinition[] = [
     description: "Keeps Runtime hard boundaries, but downgrades advisory direct-use candidates to inspect_before_use.",
     used_fields: ["admission_action", "authority"],
     decide: (row) => preserveHardActions(row, row.authority === "advisory" ? "inspect_before_use" : "use_now"),
+  },
+  {
+    policy_id: "candidate_closed_loop_contradicted_inspect",
+    display_name: "Closed-loop contradicted inspect-first",
+    description: "Keeps Runtime hard boundaries, but downgrades direct-use candidates with prior contradicted or mixed closed-loop effect state.",
+    used_fields: ["admission_action", "closed_loop_effect_state", "repeated_negative_posture"],
+    decide: (row) => preserveHardActions(
+      row,
+      row.closed_loop_effect_state === "contradicted"
+        || row.closed_loop_effect_state === "mixed"
+        || row.repeated_negative_posture
+        ? "inspect_before_use"
+        : "use_now",
+    ),
+  },
+  {
+    policy_id: "candidate_project_context_closed_loop_inspect",
+    display_name: "Project context + closed-loop inspect-first",
+    description: "Keeps Runtime hard boundaries, direct-uses only Aionis project_context candidates, and downgrades prior-contradicted or repeated-negative candidates to inspect_before_use.",
+    used_fields: [
+      "admission_action",
+      "source_backend",
+      "memory_type",
+      "closed_loop_effect_state",
+      "repeated_negative_posture",
+    ],
+    decide: (row) => preserveHardActions(
+      row,
+      row.source_backend === "aionis"
+        && row.memory_type === "project_context"
+        && row.closed_loop_effect_state !== "contradicted"
+        && row.closed_loop_effect_state !== "mixed"
+        && !row.repeated_negative_posture
+        ? "use_now"
+        : "inspect_before_use",
+    ),
   },
 ];
 

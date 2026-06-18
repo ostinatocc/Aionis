@@ -9,6 +9,7 @@ import {
   feedbackFromGuide,
   memoryAdmissionDatasetJsonlFromRows,
   memoryAdmissionDatasetRowsFromRecord,
+  memoryAdmissionDatasetRowsWithClosedLoopPrior,
   measureInputFromGuideLoop,
   type AionisMemoryAdmissionRecord,
   type AionisMemoryAdmissionDatasetRow,
@@ -31,7 +32,7 @@ const SUPPRESSED_MARKER = "ADMISSION_DATASET_SUPPRESSED_ROUTE";
 type AionisClient = ReturnType<typeof createAionisClient>;
 type AdmissionOutcome = "positive" | "negative";
 type AdmissionOutcomeLabel = "positive_use" | "negative_use";
-type AdmissionDatasetExportProfile = "standard" | "targeted-external-current";
+type AdmissionDatasetExportProfile = "standard" | "targeted-external-current" | "closed-loop-prior";
 
 type AdmissionRoundSpec = {
   round_id: string;
@@ -61,6 +62,18 @@ type AdmissionExternalRehydrateSpec = {
   rehydrate_payload_marker: string;
   query_text: string;
   target_files: string[];
+};
+
+type AdmissionClosedLoopPriorSpec = {
+  round_id: string;
+  scope: string;
+  marker: string;
+  text: string;
+  query_text: string;
+  target_files: string[];
+  outcomes: AdmissionOutcome[];
+  expected_state_on_last_row: AionisMemoryAdmissionDatasetRow["closed_loop_effect_state"];
+  expected_repeated_negative_posture_on_last_row: boolean;
 };
 
 type AdmissionRoundResult = {
@@ -98,13 +111,12 @@ function apiKey(): string | null {
 }
 
 function parseArgs(argv: string[]): CliArgs {
+  const envProfile = process.env.AIONIS_ADMISSION_DATASET_PROFILE;
   const out: CliArgs = {
     datasetDir: process.env.AIONIS_ADMISSION_DATASET_DIR?.trim() || null,
     chunkId: process.env.AIONIS_ADMISSION_DATASET_CHUNK_ID?.trim() || null,
     outJsonl: process.env.AIONIS_ADMISSION_DATASET_OUT_JSONL?.trim() || null,
-    profile: process.env.AIONIS_ADMISSION_DATASET_PROFILE === "targeted-external-current"
-      ? "targeted-external-current"
-      : "standard",
+    profile: envProfile === "targeted-external-current" || envProfile === "closed-loop-prior" ? envProfile : "standard",
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -119,11 +131,11 @@ function parseArgs(argv: string[]): CliArgs {
       out.outJsonl = next;
       i += 1;
     } else if (arg === "--profile" && next) {
-      out.profile = next === "targeted-external-current" ? "targeted-external-current" : "standard";
+      out.profile = next === "targeted-external-current" || next === "closed-loop-prior" ? next : "standard";
       i += 1;
     } else if (arg === "--help" || arg === "-h") {
       process.stdout.write([
-        "Usage: npm run -s runtime:e2e:admission-dataset-export -- [--dataset-dir admission-dataset] [--chunk-id run-001] [--profile standard|targeted-external-current]",
+        "Usage: npm run -s runtime:e2e:admission-dataset-export -- [--dataset-dir admission-dataset] [--chunk-id run-001] [--profile standard|targeted-external-current|closed-loop-prior]",
         "",
         "Runs the real Runtime guide/feedback/measure loop. When --dataset-dir is set,",
         "the exported admission rows are appended through admission:collect semantics.",
@@ -545,6 +557,222 @@ async function runExternalRehydrateRound(args: {
   };
 }
 
+async function runClosedLoopPriorRound(args: {
+  baseUrl: string;
+  apiKey: string | null;
+  runId: string;
+  spec: AdmissionClosedLoopPriorSpec;
+}): Promise<AdmissionRoundResult> {
+  const client = createAionisClient({
+    baseUrl: args.baseUrl,
+    apiKey: args.apiKey ?? undefined,
+    tenant_id: "default",
+    scope: args.spec.scope,
+  });
+  await client.health();
+
+  const activeMemory = await client.remember<Record<string, unknown>>({
+    kind: "project_context",
+    client_id: `${args.spec.round_id}:closed-loop-memory:${args.runId}`,
+    title: `Admission closed-loop prior route ${args.spec.round_id}`,
+    text: args.spec.text,
+    memory_lane: "private",
+    owner_agent_id: AGENT_ID,
+    target_files: args.spec.target_files,
+    confidence: 0.94,
+    slots: {
+      source: "admission_dataset_closed_loop_prior_e2e",
+      admission_round_id: args.spec.round_id,
+    },
+  });
+  const activeMemoryId = firstNodeId(activeMemory, `Admission closed-loop prior route ${args.spec.round_id}`);
+  const rows: AionisMemoryAdmissionDatasetRow[] = [];
+
+  for (const [index, outcome] of args.spec.outcomes.entries()) {
+    const step = index + 1;
+    const guide = await client.guide<Record<string, unknown>>({
+      query_text: `${args.spec.marker} ${args.spec.query_text} closed-loop prior step ${step}`,
+      consumer_agent_id: AGENT_ID,
+      limit: 8,
+      include_packets: true,
+    });
+    const context = agentContext(guide, `${args.spec.round_id} closed-loop prior step ${step}`);
+    const promptText = String(context.prompt_text);
+    assertPromptBoundary(promptText, `${args.spec.round_id} closed-loop prior step ${step}`);
+    const useNowIds = textArray(context.use_now_memory_ids);
+    assertCondition(useNowIds.includes(activeMemoryId), `${args.spec.round_id} step ${step} active memory did not reach use_now`);
+
+    const feedback = await client.feedback<Record<string, unknown>>(feedbackFromGuide({
+      guide,
+      reason: `Closed-loop prior step ${step} ${outcome} outcome for ${args.spec.round_id}.`,
+      run_id: `run:${args.runId}:${args.spec.round_id}:step-${step}`,
+      outcome,
+      used_memory_ids: [activeMemoryId],
+    }));
+    const taskId = `task:${args.runId}:${args.spec.round_id}:step-${step}`;
+    const taskSignature = `admission-dataset-export:${args.spec.round_id}`;
+    const measure = await client.measure<Record<string, unknown>>(measureInputFromGuideLoop({
+      task: {
+        task_id: taskId,
+        run_id: `run:${args.runId}:${args.spec.round_id}:step-${step}`,
+        task_signature: taskSignature,
+        task_family: "memory_admission_dataset_closed_loop_prior",
+      },
+      before_guide: guide,
+      after_guide: guide,
+      feedback_result: feedback,
+      sufficient_evidence: true,
+      evidence_ids: [
+        `memory:${activeMemoryId}`,
+        `feedback:${args.runId}:${args.spec.round_id}:step-${step}`,
+      ],
+    }));
+    const admissionRecord = asRecord(asRecord(measure.memory_decision_trace)?.admission_record);
+    assertCondition(measure.contract_version === "aionis_measure_result_v1", `${args.spec.round_id} step ${step} measure did not return measure result v1`);
+    assertCondition(
+      admissionRecord?.contract_version === "aionis_memory_admission_record_v1",
+      `${args.spec.round_id} step ${step} measure missing memory admission record`,
+    );
+    const stepRows = memoryAdmissionDatasetRowsFromRecord(admissionRecord as unknown as AionisMemoryAdmissionRecord, {
+      run_id: `run:${args.runId}:${args.spec.round_id}:step-${step}`,
+      task_id: taskId,
+      task_signature: taskSignature,
+    });
+    const activeRow = stepRows.find((entry) => entry.memory_id === activeMemoryId);
+    assertCondition(activeRow?.outcome_label === `${outcome}_use`, `${args.spec.round_id} step ${step} active row did not join ${outcome}_use`);
+    rows.push(...stepRows);
+  }
+
+  const enrichedRows = memoryAdmissionDatasetRowsWithClosedLoopPrior(rows);
+  const lastActiveRow = [...enrichedRows].reverse().find((entry) => entry.memory_id === activeMemoryId);
+  assertCondition(
+    lastActiveRow?.closed_loop_effect_state === args.spec.expected_state_on_last_row,
+    `${args.spec.round_id} closed-loop prior state did not reach ${args.spec.expected_state_on_last_row}`,
+  );
+  assertCondition(
+    lastActiveRow?.repeated_negative_posture === args.spec.expected_repeated_negative_posture_on_last_row,
+    `${args.spec.round_id} repeated negative posture mismatch`,
+  );
+  const jsonl = memoryAdmissionDatasetJsonlFromRows(enrichedRows);
+  assertCondition(!jsonl.includes("prompt_text"), `${args.spec.round_id} closed-loop prior JSONL leaked prompt_text`);
+  assertCondition(!jsonl.includes("\"slots\""), `${args.spec.round_id} closed-loop prior JSONL leaked raw slots`);
+
+  return {
+    round_id: args.spec.round_id,
+    scope: args.spec.scope,
+    run_id: `run:${args.runId}:${args.spec.round_id}`,
+    task_id: `task:${args.runId}:${args.spec.round_id}`,
+    task_signature: `admission-dataset-export:${args.spec.round_id}`,
+    active_memory_id: activeMemoryId,
+    suppressed_memory_id: null,
+    rehydrate_memory_id: null,
+    row_count: enrichedRows.length,
+    jsonl_line_count: jsonl.split("\n").filter(Boolean).length,
+    outcome_label_count: enrichedRows.filter((entry) => entry.memory_id === activeMemoryId).length,
+    blocked_or_suppressed_count: 0,
+    rehydrate_requested_count: 0,
+    prompt_payload_excluded: !jsonl.includes("prompt_text"),
+    raw_memory_payload_excluded: true,
+    raw_slots_excluded: !jsonl.includes("\"slots\""),
+    rows: enrichedRows,
+  };
+}
+
+function admissionDatasetClosedLoopPriorSpecs(args: {
+  baseScope: string;
+}): AdmissionClosedLoopPriorSpec[] {
+  return [
+    {
+      round_id: "closed-loop-prior-supported-cache",
+      scope: `${args.baseScope}:closed-loop-prior-supported-cache`,
+      marker: "ADMISSION_DATASET_CLOSED_LOOP_SUPPORTED_CACHE_ROUTE",
+      text: "ADMISSION_DATASET_CLOSED_LOOP_SUPPORTED_CACHE_ROUTE: accepted route is packages/runtime/src/request-cache-boundary.ts; reuse only when prior feedback supports it.",
+      query_text: "continue supported cache-boundary route with prior feedback visible",
+      target_files: ["packages/runtime/src/request-cache-boundary.ts"],
+      outcomes: ["positive", "positive"],
+      expected_state_on_last_row: "supported",
+      expected_repeated_negative_posture_on_last_row: false,
+    },
+    {
+      round_id: "closed-loop-prior-contradicted-cache",
+      scope: `${args.baseScope}:closed-loop-prior-contradicted-cache`,
+      marker: "ADMISSION_DATASET_CLOSED_LOOP_CONTRADICTED_CACHE_ROUTE",
+      text: "ADMISSION_DATASET_CLOSED_LOOP_CONTRADICTED_CACHE_ROUTE: candidate route is packages/runtime/src/global-cache-shortcut.ts; keep prior negative feedback visible before direct reuse.",
+      query_text: "continue contradicted cache shortcut route with prior negative feedback visible",
+      target_files: ["packages/runtime/src/global-cache-shortcut.ts"],
+      outcomes: ["negative", "negative", "negative"],
+      expected_state_on_last_row: "contradicted",
+      expected_repeated_negative_posture_on_last_row: true,
+    },
+    {
+      round_id: "closed-loop-prior-supported-auth",
+      scope: `${args.baseScope}:closed-loop-prior-supported-auth`,
+      marker: "ADMISSION_DATASET_CLOSED_LOOP_SUPPORTED_AUTH_ROUTE",
+      text: "ADMISSION_DATASET_CLOSED_LOOP_SUPPORTED_AUTH_ROUTE: accepted route is packages/auth/src/scoped-authorizer.ts; reuse only when prior feedback supports it.",
+      query_text: "continue supported scoped-authorizer route with prior feedback visible",
+      target_files: ["packages/auth/src/scoped-authorizer.ts"],
+      outcomes: ["positive", "positive"],
+      expected_state_on_last_row: "supported",
+      expected_repeated_negative_posture_on_last_row: false,
+    },
+    {
+      round_id: "closed-loop-prior-contradicted-auth",
+      scope: `${args.baseScope}:closed-loop-prior-contradicted-auth`,
+      marker: "ADMISSION_DATASET_CLOSED_LOOP_CONTRADICTED_AUTH_ROUTE",
+      text: "ADMISSION_DATASET_CLOSED_LOOP_CONTRADICTED_AUTH_ROUTE: candidate route is packages/auth/src/implicit-admin-bypass.ts; keep prior negative feedback visible before direct reuse.",
+      query_text: "continue contradicted auth bypass route with prior negative feedback visible",
+      target_files: ["packages/auth/src/implicit-admin-bypass.ts"],
+      outcomes: ["negative", "negative", "negative"],
+      expected_state_on_last_row: "contradicted",
+      expected_repeated_negative_posture_on_last_row: true,
+    },
+    {
+      round_id: "closed-loop-prior-supported-sdk",
+      scope: `${args.baseScope}:closed-loop-prior-supported-sdk`,
+      marker: "ADMISSION_DATASET_CLOSED_LOOP_SUPPORTED_SDK_ROUTE",
+      text: "ADMISSION_DATASET_CLOSED_LOOP_SUPPORTED_SDK_ROUTE: accepted route is packages/sdk/src/admission-prior-state.ts; reuse only when prior feedback supports it.",
+      query_text: "continue supported SDK admission-prior route with prior feedback visible",
+      target_files: ["packages/sdk/src/admission-prior-state.ts"],
+      outcomes: ["positive", "positive"],
+      expected_state_on_last_row: "supported",
+      expected_repeated_negative_posture_on_last_row: false,
+    },
+    {
+      round_id: "closed-loop-prior-contradicted-sdk",
+      scope: `${args.baseScope}:closed-loop-prior-contradicted-sdk`,
+      marker: "ADMISSION_DATASET_CLOSED_LOOP_CONTRADICTED_SDK_ROUTE",
+      text: "ADMISSION_DATASET_CLOSED_LOOP_CONTRADICTED_SDK_ROUTE: candidate route is packages/sdk/src/raw-memory-replay.ts; keep prior negative feedback visible before direct reuse.",
+      query_text: "continue contradicted SDK raw replay route with prior negative feedback visible",
+      target_files: ["packages/sdk/src/raw-memory-replay.ts"],
+      outcomes: ["negative", "negative", "negative"],
+      expected_state_on_last_row: "contradicted",
+      expected_repeated_negative_posture_on_last_row: true,
+    },
+    {
+      round_id: "closed-loop-prior-supported-observability",
+      scope: `${args.baseScope}:closed-loop-prior-supported-observability`,
+      marker: "ADMISSION_DATASET_CLOSED_LOOP_SUPPORTED_OBSERVABILITY_ROUTE",
+      text: "ADMISSION_DATASET_CLOSED_LOOP_SUPPORTED_OBSERVABILITY_ROUTE: accepted route is packages/observability/src/admission-trace-export.ts; reuse only when prior feedback supports it.",
+      query_text: "continue supported observability trace route with prior feedback visible",
+      target_files: ["packages/observability/src/admission-trace-export.ts"],
+      outcomes: ["positive", "positive"],
+      expected_state_on_last_row: "supported",
+      expected_repeated_negative_posture_on_last_row: false,
+    },
+    {
+      round_id: "closed-loop-prior-contradicted-observability",
+      scope: `${args.baseScope}:closed-loop-prior-contradicted-observability`,
+      marker: "ADMISSION_DATASET_CLOSED_LOOP_CONTRADICTED_OBSERVABILITY_ROUTE",
+      text: "ADMISSION_DATASET_CLOSED_LOOP_CONTRADICTED_OBSERVABILITY_ROUTE: candidate route is packages/observability/src/raw-log-dump.ts; keep prior negative feedback visible before direct reuse.",
+      query_text: "continue contradicted observability raw-log route with prior negative feedback visible",
+      target_files: ["packages/observability/src/raw-log-dump.ts"],
+      outcomes: ["negative", "negative", "negative"],
+      expected_state_on_last_row: "contradicted",
+      expected_repeated_negative_posture_on_last_row: true,
+    },
+  ];
+}
+
 async function main() {
   const cli = parseArgs(process.argv.slice(2));
   const runId = `admission-dataset-${randomUUID().slice(0, 8)}`;
@@ -742,6 +970,12 @@ async function main() {
       memorySpecs = [];
       externalRehydrateSpecs = admissionDatasetTargetedExternalCurrentSpecs({ runId, baseScope });
     }
+    let closedLoopPriorSpecs: AdmissionClosedLoopPriorSpec[] = [];
+    if (cli.profile === "closed-loop-prior") {
+      memorySpecs = [];
+      externalRehydrateSpecs = [];
+      closedLoopPriorSpecs = admissionDatasetClosedLoopPriorSpecs({ baseScope });
+    }
 
     const rounds: AdmissionRoundResult[] = [];
     for (const spec of memorySpecs) {
@@ -760,8 +994,16 @@ async function main() {
         spec,
       }));
     }
+    for (const spec of closedLoopPriorSpecs) {
+      rounds.push(await runClosedLoopPriorRound({
+        baseUrl: session.baseUrl,
+        apiKey: apiKey(),
+        runId,
+        spec,
+      }));
+    }
 
-    const allRows = rounds.flatMap((round) => round.rows);
+    const allRows = memoryAdmissionDatasetRowsWithClosedLoopPrior(rounds.flatMap((round) => round.rows));
     const appendedJsonl = memoryAdmissionDatasetJsonlFromRows(allRows);
     const appendedLineCount = appendedJsonl.split("\n").filter(Boolean).length;
     const positiveUseCount = allRows.filter((entry) => entry.outcome_label === "positive_use").length;
@@ -772,12 +1014,20 @@ async function main() {
     const expectedNegativeUseCount = memorySpecs.filter((spec) => spec.expected_outcome_label === "negative_use").length;
     const expectedBlockedOrSuppressedCount = memorySpecs.length + externalRehydrateSpecs.length;
     const expectedRehydrateRequestedCount = externalRehydrateSpecs.length;
+    const expectedPriorStateRows = closedLoopPriorSpecs.reduce(
+      (sum, spec) => sum + Math.max(0, spec.outcomes.length - 1),
+      0,
+    );
     const forbiddenPayloadMarkers = rawPayloadMarkers({ memorySpecs, rehydrateSpecs: externalRehydrateSpecs });
     assertCondition(appendedLineCount === allRows.length, "appendable admission dataset JSONL line count mismatch");
     assertCondition(positiveUseCount >= expectedPositiveUseCount, "appendable admission dataset missing positive_use rows");
     assertCondition(negativeUseCount >= expectedNegativeUseCount, "appendable admission dataset missing negative_use rows");
     assertCondition(blockedOrSuppressedCount >= expectedBlockedOrSuppressedCount, "appendable admission dataset missing blocked_or_suppressed rows");
     assertCondition(rehydrateRequestedCount >= expectedRehydrateRequestedCount, "appendable admission dataset missing rehydrate_requested rows");
+    assertCondition(
+      allRows.filter((entry) => entry.closed_loop_effect_state !== "no_prior").length >= expectedPriorStateRows,
+      "appendable admission dataset missing closed-loop prior-state rows",
+    );
     assertCondition(!appendedJsonl.includes("prompt_text"), "appendable admission dataset JSONL leaked prompt_text");
     assertCondition(excludesAll(appendedJsonl, forbiddenPayloadMarkers), "appendable admission dataset JSONL leaked raw payload marker");
     assertCondition(!appendedJsonl.includes("\"slots\""), "appendable admission dataset JSONL leaked raw slots");
@@ -836,13 +1086,14 @@ async function main() {
         negative_use_count: negativeUseCount,
         blocked_or_suppressed_count: blockedOrSuppressedCount,
         rehydrate_requested_count: rehydrateRequestedCount,
+        closed_loop_prior_state_count: allRows.filter((entry) => entry.closed_loop_effect_state !== "no_prior").length,
         unused_exposed_count: allRows.filter((entry) => entry.outcome_label === "unused_exposed").length,
         prompt_payload_excluded: !appendedJsonl.includes("prompt_text"),
         raw_memory_payload_excluded: excludesAll(appendedJsonl, forbiddenPayloadMarkers),
         raw_slots_excluded: !appendedJsonl.includes("\"slots\""),
         append_mode: "jsonl_append",
         append_chunk_count: rounds.length,
-        scenario_count: memorySpecs.length + externalRehydrateSpecs.length,
+        scenario_count: memorySpecs.length + externalRehydrateSpecs.length + closedLoopPriorSpecs.length,
         task_signature_count: new Set(rounds.map((round) => round.task_signature)).size,
         collected_to_dataset: !!collectionResult,
         chunk_path: chunkPath,
@@ -882,6 +1133,7 @@ async function main() {
         negative_use_exported: negativeUseCount >= expectedNegativeUseCount,
         blocked_or_suppressed_exported: blockedOrSuppressedCount >= expectedBlockedOrSuppressedCount,
         rehydrate_requested_exported: rehydrateRequestedCount >= expectedRehydrateRequestedCount,
+        closed_loop_prior_state_exported: allRows.filter((entry) => entry.closed_loop_effect_state !== "no_prior").length >= expectedPriorStateRows,
         prompt_payload_excluded: !appendedJsonl.includes("prompt_text"),
         raw_memory_payload_excluded: excludesAll(appendedJsonl, forbiddenPayloadMarkers),
         raw_slots_excluded: !appendedJsonl.includes("\"slots\""),

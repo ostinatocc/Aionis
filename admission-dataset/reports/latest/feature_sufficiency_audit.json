@@ -5,9 +5,11 @@
   "agent_prompt_included": false,
   "label_leakage_guard": true,
   "dataset": {
-    "row_count": 411,
-    "use_now_row_count": 191,
-    "signature_count": 2,
+    "row_count": 436,
+    "use_now_row_count": 216,
+    "prior_state_signal_row_count": 15,
+    "repeated_negative_posture_row_count": 5,
+    "signature_count": 5,
     "mixed_outcome_signature_count": 1,
     "positive_negative_collision_signature_count": 1
   },
@@ -27,7 +29,12 @@
       "history_used",
       "actionable_history_used",
       "reason_codes",
-      "evidence_count"
+      "evidence_count",
+      "prior_supported_use_count",
+      "prior_contradicted_use_count",
+      "prior_rehydrate_requested_count",
+      "closed_loop_effect_state",
+      "repeated_negative_posture"
     ],
     "forbidden_or_excluded_features": [
       "outcome_label",
@@ -55,11 +62,11 @@
   },
   "top_collisions": [
     {
-      "signature": "{\"admission_action\":\"use_now\",\"memory_origin\":\"aionis\",\"source_backend\":\"aionis\",\"domain\":\"general\",\"memory_type\":\"project_context\",\"lifecycle_state\":\"active\",\"authority\":\"advisory\",\"decision_kind\":\"used\",\"actionable\":true,\"prompt_included\":true,\"history_used\":true,\"actionable_history_used\":true,\"reason_codes\":[\"agent_context_projection_checked\",\"authority_advisory\",\"available_for_agent_use\",\"lifecycle_active\",\"memory_contract_direct_use\"],\"evidence_count\":1}",
-      "row_count": 162,
-      "use_now_count": 162,
-      "positive_use_count": 81,
-      "negative_use_count": 81,
+      "signature": "{\"admission_action\":\"use_now\",\"memory_origin\":\"aionis\",\"source_backend\":\"aionis\",\"domain\":\"general\",\"memory_type\":\"project_context\",\"lifecycle_state\":\"active\",\"authority\":\"advisory\",\"decision_kind\":\"used\",\"actionable\":true,\"prompt_included\":true,\"history_used\":true,\"actionable_history_used\":true,\"reason_codes\":[\"agent_context_projection_checked\",\"authority_advisory\",\"available_for_agent_use\",\"lifecycle_active\",\"memory_contract_direct_use\"],\"evidence_count\":1,\"prior_supported_use_count\":0,\"prior_contradicted_use_count\":0,\"prior_rehydrate_requested_count\":0,\"closed_loop_effect_state\":\"no_prior\",\"repeated_negative_posture\":false}",
+      "row_count": 172,
+      "use_now_count": 172,
+      "positive_use_count": 86,
+      "negative_use_count": 86,
       "unused_exposed_count": 0,
       "blocked_or_suppressed_count": 0,
       "rehydrate_requested_count": 0,
@@ -107,7 +114,12 @@
           "lifecycle_active",
           "memory_contract_direct_use"
         ],
-        "evidence_count": 1
+        "evidence_count": 1,
+        "prior_supported_use_count": 0,
+        "prior_contradicted_use_count": 0,
+        "prior_rehydrate_requested_count": 0,
+        "closed_loop_effect_state": "no_prior",
+        "repeated_negative_posture": false
       }
     }
   ],
@@ -118,7 +130,7 @@
   ],
   "recommendations": [
     "Do not add task-name or title based rules to reduce negative_direct_risk; that would overfit the dataset.",
-    "Collect a next-decision prior-state feature such as prior_supported_use_count, prior_contradicted_use_count, closed_loop_effect_state, or repeated_negative_posture.",
+    "Increase closed-loop-prior coverage across fresh task signatures; prior-state signal is present but still too sparse to break the dominant no_prior collision.",
     "Keep current candidate policies at manual-review/eval level until the added feature is observed on fresh holdout groups."
   ],
   "summary": "Found 1 positive/negative direct-use feature collision signature(s); negative_direct_risk cannot be reduced safely with the current label-safe feature set without a positive-capture tradeoff."

@@ -40,6 +40,8 @@ function parseCandidatePolicyId(value: string | undefined): AionisAdmissionCandi
     || value === "candidate_external_current_inspect"
     || value === "candidate_aionis_project_context_only"
     || value === "candidate_advisory_inspect"
+    || value === "candidate_closed_loop_contradicted_inspect"
+    || value === "candidate_project_context_closed_loop_inspect"
   ) {
     return value;
   }
@@ -92,6 +94,8 @@ function parseArgs(argv: string[]): CliArgs {
         "  --holdout-ratio 0.5",
         "  --seed aionis-admission-holdout-v1",
         "  --candidate-policy candidate_aionis_project_context_only",
+        "  --candidate-policy candidate_closed_loop_contradicted_inspect",
+        "  --candidate-policy candidate_project_context_closed_loop_inspect",
         "  --evaluation-split holdout|train|all",
         "",
       ].join("\n"));

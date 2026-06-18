@@ -1,21 +1,21 @@
 # Aionis Admission Counterfactual Rerun
 
-Counterfactual candidate_aionis_project_context_only on holdout: accepted_action_rate=0.3077, hard_boundary_direct_use_rate=0, negative_direct_risk_rate=0.3077, non_actionable_direct_attention=0 vs recorded 5, eligible_for_real_agent_rerun=true.
+Counterfactual candidate_project_context_closed_loop_inspect on holdout: accepted_action_rate=0.3889, hard_boundary_direct_use_rate=0, negative_direct_risk_rate=0.3333, non_actionable_direct_attention=0 vs recorded 5, eligible_for_real_agent_rerun=true.
 
 ## Scope
 
 - Agent mode: `deterministic_action_proxy`
 - Evaluation split: `holdout`
-- Rows: 293 / 411
-- Groups: 13
-- Candidate: `candidate_aionis_project_context_only`
+- Rows: 305 / 436
+- Groups: 18
+- Candidate: `candidate_project_context_closed_loop_inspect`
 
 ## Arms
 
 | Arm | Accepted action | Hard-boundary direct-use | Negative direct risk | Non-actionable direct attention | Positive capture | Direct-use rows | Changed actions | Missed actionable |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Recorded Runtime policy | 30.8% | 0.0% | 30.8% | 5 | 100.0% | 136 | 0 | 0 |
-| Candidate policy: candidate_aionis_project_context_only | 30.8% | 0.0% | 30.8% | 0 | 100.0% | 115 | 21 | 0 |
+| Recorded Runtime policy | 38.9% | 0.0% | 33.3% | 5 | 100.0% | 148 | 0 | 0 |
+| Candidate policy: candidate_project_context_closed_loop_inspect | 38.9% | 0.0% | 33.3% | 0 | 100.0% | 123 | 25 | 0 |
 
 ## Gate
 

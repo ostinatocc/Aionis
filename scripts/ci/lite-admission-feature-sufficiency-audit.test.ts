@@ -9,6 +9,10 @@ import {
 
 const BASELINE_ROWS = path.resolve("admission-dataset/rows.jsonl");
 
+function baselineRowCount(): number {
+  return fs.readFileSync(BASELINE_ROWS, "utf8").split(/\r?\n/).filter((line) => line.trim().length > 0).length;
+}
+
 test("admission feature sufficiency audit detects positive negative direct-use collision in real dataset", () => {
   const report = auditAdmissionFeatureSufficiencyJsonl(fs.readFileSync(BASELINE_ROWS, "utf8"));
 
@@ -16,8 +20,10 @@ test("admission feature sufficiency audit detects positive negative direct-use c
   assert.equal(report.runtime_mutation, false);
   assert.equal(report.agent_prompt_included, false);
   assert.equal(report.label_leakage_guard, true);
-  assert.equal(report.dataset.row_count, 411);
+  assert.equal(report.dataset.row_count, baselineRowCount());
   assert.ok(report.dataset.use_now_row_count > 150);
+  assert.ok(report.dataset.prior_state_signal_row_count >= 3);
+  assert.ok(report.dataset.repeated_negative_posture_row_count >= 1);
   assert.ok(report.dataset.positive_negative_collision_signature_count >= 1);
   assert.equal(report.findings.has_positive_negative_collision, true);
   assert.equal(report.findings.negative_direct_risk_is_not_separable_with_current_label_safe_features, true);
@@ -29,6 +35,11 @@ test("admission feature sufficiency audit detects positive negative direct-use c
   assert.ok(report.audit_scope.forbidden_or_excluded_features.includes("memory_id"));
   assert.equal(report.audit_scope.signature_features.includes("reason_codes"), true);
   assert.equal(report.audit_scope.signature_features.includes("evidence_count"), true);
+  assert.equal(report.audit_scope.signature_features.includes("prior_supported_use_count"), true);
+  assert.equal(report.audit_scope.signature_features.includes("prior_contradicted_use_count"), true);
+  assert.equal(report.audit_scope.signature_features.includes("prior_rehydrate_requested_count"), true);
+  assert.equal(report.audit_scope.signature_features.includes("closed_loop_effect_state"), true);
+  assert.equal(report.audit_scope.signature_features.includes("repeated_negative_posture"), true);
 
   const top = report.top_collisions[0];
   assert.ok(top);
@@ -38,6 +49,8 @@ test("admission feature sufficiency audit detects positive negative direct-use c
   assert.equal(top.feature_values.memory_type, "project_context");
   assert.equal(top.feature_values.lifecycle_state, "active");
   assert.equal(top.feature_values.authority, "advisory");
+  assert.equal(top.feature_values.closed_loop_effect_state, "no_prior");
+  assert.equal(top.feature_values.repeated_negative_posture, false);
 });
 
 test("admission feature sufficiency audit formats markdown with recommendations", () => {
@@ -46,6 +59,7 @@ test("admission feature sufficiency audit formats markdown with recommendations"
 
   assert.match(markdown, /Aionis Admission Feature Sufficiency Audit/);
   assert.match(markdown, /positive\/negative collision signatures/);
+  assert.match(markdown, /prior-state signal rows/);
   assert.match(markdown, /Do not add task-name or title based rules/);
   assert.match(markdown, /closed_loop_effect_state/);
 });

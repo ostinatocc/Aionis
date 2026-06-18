@@ -11,7 +11,7 @@
     "base_url_host": "api.deepseek.com"
   },
   "policy": {
-    "candidate_policy_id": "candidate_aionis_project_context_only",
+    "candidate_policy_id": "candidate_project_context_closed_loop_inspect",
     "selected_by_candidate_evaluator": true
   },
   "split": {
@@ -19,53 +19,206 @@
     "seed": "aionis-admission-holdout-v1",
     "holdout_ratio": 0.5,
     "evaluation_split": "holdout",
-    "train_row_count": 118,
-    "holdout_row_count": 293,
-    "train_group_count": 12,
-    "holdout_group_count": 13
+    "train_row_count": 131,
+    "holdout_row_count": 305,
+    "train_group_count": 17,
+    "holdout_group_count": 18
   },
   "dataset": {
-    "row_count": 411,
-    "evaluated_group_count": 13,
-    "evaluated_row_count": 293
+    "row_count": 436,
+    "evaluated_group_count": 18,
+    "evaluated_row_count": 305
   },
   "arms": [
     {
       "arm_id": "recorded_policy_baseline",
       "display_name": "Recorded Runtime policy",
-      "trial_count": 13,
-      "accepted_action_count": 4,
+      "trial_count": 18,
+      "accepted_action_count": 7,
       "hard_boundary_direct_use_count": 0,
       "negative_direct_risk_count": 4,
       "non_actionable_direct_attention_count": 5,
       "missed_actionable_memory_count": 0,
       "boundary_ignored_count": 0,
-      "accepted_action_rate": 0.3077,
+      "accepted_action_rate": 0.3889,
       "hard_boundary_direct_use_rate": 0,
-      "negative_direct_risk_rate": 0.3077,
-      "non_actionable_direct_attention_rate": 0.3846,
+      "negative_direct_risk_rate": 0.2222,
+      "non_actionable_direct_attention_rate": 0.2778,
       "missed_actionable_memory_rate": 0,
       "boundary_ignored_rate": 0,
-      "request_char_total": 273520,
-      "completion_char_total": 3521,
+      "request_char_total": 381529,
+      "completion_char_total": 4612,
       "changed_action_count": 0,
       "trials": [
         {
           "arm_id": "recorded_policy_baseline",
+          "group_id": "admission-dataset-export:closed-loop-prior-contradicted",
+          "row_count": 3,
+          "prompt_char_count": 3304,
+          "request_char_count": 5638,
+          "completion_char_count": 176,
+          "usage": {
+            "prompt_tokens": 1286,
+            "completion_tokens": 49,
+            "total_tokens": 1335,
+            "prompt_tokens_details": {
+              "cached_tokens": 1280
+            },
+            "prompt_cache_hit_tokens": 1280,
+            "prompt_cache_miss_tokens": 6
+          },
+          "decision": {
+            "selected_memory_id": null,
+            "action": "no_action",
+            "used_memory_ids": [],
+            "rationale": "All use_now memories are same ID with contradicted state; avoid direct use."
+          },
+          "outcome": "no_actionable_memory",
+          "selected_admission_action": null,
+          "selected_outcome_label": null,
+          "positive_memory_available": false,
+          "changed_action_count": 0
+        },
+        {
+          "arm_id": "recorded_policy_baseline",
+          "group_id": "admission-dataset-export:closed-loop-prior-contradicted-auth",
+          "row_count": 3,
+          "prompt_char_count": 3324,
+          "request_char_count": 5663,
+          "completion_char_count": 195,
+          "usage": {
+            "prompt_tokens": 1297,
+            "completion_tokens": 67,
+            "total_tokens": 1364,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 1297
+          },
+          "decision": {
+            "selected_memory_id": "f3f4bac0-8f97-5618-864b-7c719757c629",
+            "action": "avoid_memory",
+            "used_memory_ids": [
+              "f3f4bac0-8f97-5618-864b-7c719757c629"
+            ],
+            "rationale": "Memory has repeated contradictions; avoid direct use."
+          },
+          "outcome": "no_actionable_memory",
+          "selected_admission_action": "use_now",
+          "selected_outcome_label": "negative_use",
+          "positive_memory_available": false,
+          "changed_action_count": 0
+        },
+        {
+          "arm_id": "recorded_policy_baseline",
+          "group_id": "admission-dataset-export:closed-loop-prior-supported",
+          "row_count": 2,
+          "prompt_char_count": 2646,
+          "request_char_count": 4568,
+          "completion_char_count": 250,
+          "usage": {
+            "prompt_tokens": 1039,
+            "completion_tokens": 96,
+            "total_tokens": 1135,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 1039
+          },
+          "decision": {
+            "selected_memory_id": "447ce61f-c8e6-5c9b-85be-b3e5689401ed",
+            "action": "direct_use",
+            "used_memory_ids": [
+              "447ce61f-c8e6-5c9b-85be-b3e5689401ed"
+            ],
+            "rationale": "Trusted project-context memory, actionable and advisory, with prior support."
+          },
+          "outcome": "accepted_action",
+          "selected_admission_action": "use_now",
+          "selected_outcome_label": "positive_use",
+          "positive_memory_available": true,
+          "changed_action_count": 0
+        },
+        {
+          "arm_id": "recorded_policy_baseline",
+          "group_id": "admission-dataset-export:closed-loop-prior-supported-observability",
+          "row_count": 2,
+          "prompt_char_count": 2688,
+          "request_char_count": 4624,
+          "completion_char_count": 258,
+          "usage": {
+            "prompt_tokens": 1051,
+            "completion_tokens": 96,
+            "total_tokens": 1147,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 1051
+          },
+          "decision": {
+            "selected_memory_id": "398d46d8-5cf5-51c4-92ab-55facdc4751e",
+            "action": "direct_use",
+            "used_memory_ids": [
+              "398d46d8-5cf5-51c4-92ab-55facdc4751e"
+            ],
+            "rationale": "Trusted project context memory, actionable, advisory authority, supported prior use."
+          },
+          "outcome": "accepted_action",
+          "selected_admission_action": "use_now",
+          "selected_outcome_label": "positive_use",
+          "positive_memory_available": true,
+          "changed_action_count": 0
+        },
+        {
+          "arm_id": "recorded_policy_baseline",
+          "group_id": "admission-dataset-export:closed-loop-prior-supported-sdk",
+          "row_count": 2,
+          "prompt_char_count": 2658,
+          "request_char_count": 4584,
+          "completion_char_count": 254,
+          "usage": {
+            "prompt_tokens": 1043,
+            "completion_tokens": 91,
+            "total_tokens": 1134,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 1043
+          },
+          "decision": {
+            "selected_memory_id": "a4af16fa-c432-5422-b558-02970a6e4b93",
+            "action": "direct_use",
+            "used_memory_ids": [
+              "a4af16fa-c432-5422-b558-02970a6e4b93"
+            ],
+            "rationale": "Trusted project context memory, actionable and advisory, direct use appropriate."
+          },
+          "outcome": "accepted_action",
+          "selected_admission_action": "use_now",
+          "selected_outcome_label": "positive_use",
+          "positive_memory_available": true,
+          "changed_action_count": 0
+        },
+        {
+          "arm_id": "recorded_policy_baseline",
           "group_id": "admission-dataset-export:external-rehydrate-raw-trace",
           "row_count": 51,
-          "prompt_char_count": 30077,
-          "request_char_count": 48690,
-          "completion_char_count": 296,
+          "prompt_char_count": 38696,
+          "request_char_count": 63124,
+          "completion_char_count": 297,
           "usage": {
-            "prompt_tokens": 10774,
-            "completion_tokens": 87,
-            "total_tokens": 10861,
+            "prompt_tokens": 14191,
+            "completion_tokens": 89,
+            "total_tokens": 14280,
             "prompt_tokens_details": {
-              "cached_tokens": 10752
+              "cached_tokens": 0
             },
-            "prompt_cache_hit_tokens": 10752,
-            "prompt_cache_miss_tokens": 22
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 14191
           },
           "decision": {
             "selected_memory_id": "mem0:admission-current-trace:admission-dataset-933e33e6",
@@ -73,7 +226,7 @@
             "used_memory_ids": [
               "mem0:admission-current-trace:admission-dataset-933e33e6"
             ],
-            "rationale": "Trusted, actionable execution memory with current lifecycle; direct use appropriate."
+            "rationale": "Trusted, actionable execution memory with no prior issues; direct use is appropriate."
           },
           "outcome": "non_actionable_direct_attention",
           "selected_admission_action": "use_now",
@@ -85,18 +238,18 @@
           "arm_id": "recorded_policy_baseline",
           "group_id": "admission-dataset-export:negative-attributed",
           "row_count": 34,
-          "prompt_char_count": 17710,
-          "request_char_count": 29115,
+          "prompt_char_count": 23456,
+          "request_char_count": 38738,
           "completion_char_count": 241,
           "usage": {
-            "prompt_tokens": 6657,
+            "prompt_tokens": 8935,
             "completion_tokens": 88,
-            "total_tokens": 6745,
+            "total_tokens": 9023,
             "prompt_tokens_details": {
-              "cached_tokens": 6656
+              "cached_tokens": 0
             },
-            "prompt_cache_hit_tokens": 6656,
-            "prompt_cache_miss_tokens": 1
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 8935
           },
           "decision": {
             "selected_memory_id": "c43f1ecd-b41a-56d2-a226-08e06664463a",
@@ -116,18 +269,18 @@
           "arm_id": "recorded_policy_baseline",
           "group_id": "admission-dataset-export:negative-migration-candidate",
           "row_count": 34,
-          "prompt_char_count": 18025,
-          "request_char_count": 29439,
-          "completion_char_count": 238,
+          "prompt_char_count": 23771,
+          "request_char_count": 39062,
+          "completion_char_count": 240,
           "usage": {
-            "prompt_tokens": 6730,
-            "completion_tokens": 94,
-            "total_tokens": 6824,
+            "prompt_tokens": 9008,
+            "completion_tokens": 92,
+            "total_tokens": 9100,
             "prompt_tokens_details": {
-              "cached_tokens": 6656
+              "cached_tokens": 0
             },
-            "prompt_cache_hit_tokens": 6656,
-            "prompt_cache_miss_tokens": 74
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 9008
           },
           "decision": {
             "selected_memory_id": "4e7be8c4-3787-542d-bab2-c05dcd773b45",
@@ -135,7 +288,7 @@
             "used_memory_ids": [
               "4e7be8c4-3787-542d-bab2-c05dcd773b45"
             ],
-            "rationale": "Multiple use_now project_context memories; direct_use the first."
+            "rationale": "Trusted actionable project context memory, direct use appropriate."
           },
           "outcome": "negative_direct_risk",
           "selected_admission_action": "use_now",
@@ -147,18 +300,18 @@
           "arm_id": "recorded_policy_baseline",
           "group_id": "admission-dataset-export:negative-retry-loop",
           "row_count": 20,
-          "prompt_char_count": 10976,
-          "request_char_count": 18139,
-          "completion_char_count": 262,
+          "prompt_char_count": 14356,
+          "request_char_count": 23800,
+          "completion_char_count": 240,
           "usage": {
-            "prompt_tokens": 4173,
-            "completion_tokens": 93,
-            "total_tokens": 4266,
+            "prompt_tokens": 5513,
+            "completion_tokens": 90,
+            "total_tokens": 5603,
             "prompt_tokens_details": {
-              "cached_tokens": 4096
+              "cached_tokens": 0
             },
-            "prompt_cache_hit_tokens": 4096,
-            "prompt_cache_miss_tokens": 77
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 5513
           },
           "decision": {
             "selected_memory_id": "4382a51f-41bd-5208-9d07-65b98f806513",
@@ -166,7 +319,7 @@
             "used_memory_ids": [
               "4382a51f-41bd-5208-9d07-65b98f806513"
             ],
-            "rationale": "Multiple active, actionable project context memories; using first as direct instruction."
+            "rationale": "Trusted actionable project context memory, direct use appropriate."
           },
           "outcome": "negative_direct_risk",
           "selected_admission_action": "use_now",
@@ -178,18 +331,18 @@
           "arm_id": "recorded_policy_baseline",
           "group_id": "admission-dataset-export:negative-test-stabilization",
           "row_count": 34,
-          "prompt_char_count": 17990,
-          "request_char_count": 29403,
-          "completion_char_count": 249,
+          "prompt_char_count": 23736,
+          "request_char_count": 39026,
+          "completion_char_count": 241,
           "usage": {
-            "prompt_tokens": 6733,
-            "completion_tokens": 98,
-            "total_tokens": 6831,
+            "prompt_tokens": 9011,
+            "completion_tokens": 94,
+            "total_tokens": 9105,
             "prompt_tokens_details": {
-              "cached_tokens": 6656
+              "cached_tokens": 0
             },
-            "prompt_cache_hit_tokens": 6656,
-            "prompt_cache_miss_tokens": 77
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 9011
           },
           "decision": {
             "selected_memory_id": "bbb6b578-561a-5762-8a7c-6ddc2a183c38",
@@ -197,7 +350,7 @@
             "used_memory_ids": [
               "bbb6b578-561a-5762-8a7c-6ddc2a183c38"
             ],
-            "rationale": "Multiple active, actionable project-context memories; direct_use the first."
+            "rationale": "Trusted actionable project context memory available for direct use."
           },
           "outcome": "negative_direct_risk",
           "selected_admission_action": "use_now",
@@ -209,18 +362,18 @@
           "arm_id": "recorded_policy_baseline",
           "group_id": "admission-dataset-export:positive-cache-boundary",
           "row_count": 20,
-          "prompt_char_count": 11360,
-          "request_char_count": 18687,
-          "completion_char_count": 271,
+          "prompt_char_count": 14740,
+          "request_char_count": 24348,
+          "completion_char_count": 241,
           "usage": {
-            "prompt_tokens": 4312,
-            "completion_tokens": 108,
-            "total_tokens": 4420,
+            "prompt_tokens": 5652,
+            "completion_tokens": 100,
+            "total_tokens": 5752,
             "prompt_tokens_details": {
-              "cached_tokens": 4224
+              "cached_tokens": 0
             },
-            "prompt_cache_hit_tokens": 4224,
-            "prompt_cache_miss_tokens": 88
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 5652
           },
           "decision": {
             "selected_memory_id": "b63d5dac-ea2b-5e58-958c-8e43abc4b9a5",
@@ -228,7 +381,7 @@
             "used_memory_ids": [
               "b63d5dac-ea2b-5e58-958c-8e43abc4b9a5"
             ],
-            "rationale": "Multiple use_now project_context memories; direct_use the first as it is actionable and advisory."
+            "rationale": "Trusted actionable project context memory available for direct use."
           },
           "outcome": "accepted_action",
           "selected_admission_action": "use_now",
@@ -240,18 +393,18 @@
           "arm_id": "recorded_policy_baseline",
           "group_id": "admission-dataset-export:positive-feature-flag",
           "row_count": 34,
-          "prompt_char_count": 18290,
-          "request_char_count": 29969,
-          "completion_char_count": 241,
+          "prompt_char_count": 24036,
+          "request_char_count": 39592,
+          "completion_char_count": 236,
           "usage": {
-            "prompt_tokens": 6930,
+            "prompt_tokens": 9208,
             "completion_tokens": 90,
-            "total_tokens": 7020,
+            "total_tokens": 9298,
             "prompt_tokens_details": {
-              "cached_tokens": 6912
+              "cached_tokens": 0
             },
-            "prompt_cache_hit_tokens": 6912,
-            "prompt_cache_miss_tokens": 18
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 9208
           },
           "decision": {
             "selected_memory_id": "58b37112-39b1-5583-bbcb-d9aaba8765e5",
@@ -259,7 +412,7 @@
             "used_memory_ids": [
               "58b37112-39b1-5583-bbcb-d9aaba8765e5"
             ],
-            "rationale": "Trusted actionable project context memory available for direct use."
+            "rationale": "Trusted actionable project context memory, direct use allowed."
           },
           "outcome": "accepted_action",
           "selected_admission_action": "use_now",
@@ -271,18 +424,18 @@
           "arm_id": "recorded_policy_baseline",
           "group_id": "admission-dataset-export:positive-observability-route",
           "row_count": 20,
-          "prompt_char_count": 11465,
-          "request_char_count": 18797,
-          "completion_char_count": 259,
+          "prompt_char_count": 14845,
+          "request_char_count": 24458,
+          "completion_char_count": 240,
           "usage": {
-            "prompt_tokens": 4334,
-            "completion_tokens": 95,
-            "total_tokens": 4429,
+            "prompt_tokens": 5674,
+            "completion_tokens": 90,
+            "total_tokens": 5764,
             "prompt_tokens_details": {
               "cached_tokens": 0
             },
             "prompt_cache_hit_tokens": 0,
-            "prompt_cache_miss_tokens": 4334
+            "prompt_cache_miss_tokens": 5674
           },
           "decision": {
             "selected_memory_id": "ce1ffa76-b49e-5f9c-a8de-fea0eed17503",
@@ -290,7 +443,7 @@
             "used_memory_ids": [
               "ce1ffa76-b49e-5f9c-a8de-fea0eed17503"
             ],
-            "rationale": "Multiple active, advisory, actionable project context memories; direct_use the first."
+            "rationale": "Trusted actionable project context memory, direct use appropriate."
           },
           "outcome": "accepted_action",
           "selected_admission_action": "use_now",
@@ -302,18 +455,18 @@
           "arm_id": "recorded_policy_baseline",
           "group_id": "admission-dataset-export:positive-reviewer-handoff",
           "row_count": 34,
-          "prompt_char_count": 18430,
-          "request_char_count": 30113,
-          "completion_char_count": 241,
+          "prompt_char_count": 24176,
+          "request_char_count": 39736,
+          "completion_char_count": 252,
           "usage": {
-            "prompt_tokens": 6922,
-            "completion_tokens": 92,
-            "total_tokens": 7014,
+            "prompt_tokens": 9200,
+            "completion_tokens": 95,
+            "total_tokens": 9295,
             "prompt_tokens_details": {
               "cached_tokens": 0
             },
             "prompt_cache_hit_tokens": 0,
-            "prompt_cache_miss_tokens": 6922
+            "prompt_cache_miss_tokens": 9200
           },
           "decision": {
             "selected_memory_id": "9454f086-3d3c-5990-af57-94f06ac947c4",
@@ -321,7 +474,7 @@
             "used_memory_ids": [
               "9454f086-3d3c-5990-af57-94f06ac947c4"
             ],
-            "rationale": "Trusted actionable project context memory available for direct use."
+            "rationale": "Trusted actionable project context memory for positive-reviewer-handoff route."
           },
           "outcome": "accepted_action",
           "selected_admission_action": "use_now",
@@ -333,18 +486,18 @@
           "arm_id": "recorded_policy_baseline",
           "group_id": "admission-dataset-export:targeted-external-current-plan-asset",
           "row_count": 3,
-          "prompt_char_count": 3101,
-          "request_char_count": 5258,
-          "completion_char_count": 304,
+          "prompt_char_count": 3608,
+          "request_char_count": 6108,
+          "completion_char_count": 305,
           "usage": {
-            "prompt_tokens": 1172,
-            "completion_tokens": 91,
-            "total_tokens": 1263,
+            "prompt_tokens": 1373,
+            "completion_tokens": 93,
+            "total_tokens": 1466,
             "prompt_tokens_details": {
               "cached_tokens": 0
             },
             "prompt_cache_hit_tokens": 0,
-            "prompt_cache_miss_tokens": 1172
+            "prompt_cache_miss_tokens": 1373
           },
           "decision": {
             "selected_memory_id": "mem0:targeted-current:plan-asset:admission-dataset-aa4fce37",
@@ -352,7 +505,7 @@
             "used_memory_ids": [
               "mem0:targeted-current:plan-asset:admission-dataset-aa4fce37"
             ],
-            "rationale": "Trusted, actionable execution memory with current lifecycle; direct use appropriate."
+            "rationale": "Trusted, actionable execution memory with no prior issues; direct use is appropriate."
           },
           "outcome": "non_actionable_direct_attention",
           "selected_admission_action": "use_now",
@@ -364,18 +517,18 @@
           "arm_id": "recorded_policy_baseline",
           "group_id": "admission-dataset-export:targeted-external-current-project-settings",
           "row_count": 3,
-          "prompt_char_count": 3143,
-          "request_char_count": 5306,
+          "prompt_char_count": 3650,
+          "request_char_count": 6156,
           "completion_char_count": 316,
           "usage": {
-            "prompt_tokens": 1172,
+            "prompt_tokens": 1373,
             "completion_tokens": 91,
-            "total_tokens": 1263,
+            "total_tokens": 1464,
             "prompt_tokens_details": {
               "cached_tokens": 0
             },
             "prompt_cache_hit_tokens": 0,
-            "prompt_cache_miss_tokens": 1172
+            "prompt_cache_miss_tokens": 1373
           },
           "decision": {
             "selected_memory_id": "mem0:targeted-current:project-settings:admission-dataset-aa4fce37",
@@ -395,18 +548,18 @@
           "arm_id": "recorded_policy_baseline",
           "group_id": "admission-dataset-export:targeted-external-current-sdk-contract",
           "row_count": 3,
-          "prompt_char_count": 3115,
-          "request_char_count": 5274,
-          "completion_char_count": 281,
+          "prompt_char_count": 3622,
+          "request_char_count": 6124,
+          "completion_char_count": 308,
           "usage": {
-            "prompt_tokens": 1177,
-            "completion_tokens": 88,
-            "total_tokens": 1265,
+            "prompt_tokens": 1378,
+            "completion_tokens": 91,
+            "total_tokens": 1469,
             "prompt_tokens_details": {
               "cached_tokens": 0
             },
             "prompt_cache_hit_tokens": 0,
-            "prompt_cache_miss_tokens": 1177
+            "prompt_cache_miss_tokens": 1378
           },
           "decision": {
             "selected_memory_id": "mem0:targeted-current:sdk-contract:admission-dataset-aa4fce37",
@@ -414,7 +567,7 @@
             "used_memory_ids": [
               "mem0:targeted-current:sdk-contract:admission-dataset-aa4fce37"
             ],
-            "rationale": "Trusted, actionable execution memory; direct use allowed."
+            "rationale": "Trusted, actionable execution memory with current lifecycle; direct use appropriate."
           },
           "outcome": "non_actionable_direct_attention",
           "selected_admission_action": "use_now",
@@ -426,18 +579,18 @@
           "arm_id": "recorded_policy_baseline",
           "group_id": "admission-dataset-export:targeted-external-current-workflow-projection",
           "row_count": 3,
-          "prompt_char_count": 3164,
-          "request_char_count": 5330,
+          "prompt_char_count": 3671,
+          "request_char_count": 6180,
           "completion_char_count": 322,
           "usage": {
-            "prompt_tokens": 1180,
+            "prompt_tokens": 1381,
             "completion_tokens": 93,
-            "total_tokens": 1273,
+            "total_tokens": 1474,
             "prompt_tokens_details": {
               "cached_tokens": 0
             },
             "prompt_cache_hit_tokens": 0,
-            "prompt_cache_miss_tokens": 1180
+            "prompt_cache_miss_tokens": 1381
           },
           "decision": {
             "selected_memory_id": "mem0:targeted-current:workflow-projection:admission-dataset-aa4fce37",
@@ -456,47 +609,202 @@
       ]
     },
     {
-      "arm_id": "candidate_aionis_project_context_only",
-      "display_name": "Candidate policy: candidate_aionis_project_context_only",
-      "trial_count": 13,
-      "accepted_action_count": 4,
+      "arm_id": "candidate_project_context_closed_loop_inspect",
+      "display_name": "Candidate policy: candidate_project_context_closed_loop_inspect",
+      "trial_count": 18,
+      "accepted_action_count": 7,
       "hard_boundary_direct_use_count": 0,
       "negative_direct_risk_count": 4,
       "non_actionable_direct_attention_count": 0,
       "missed_actionable_memory_count": 0,
       "boundary_ignored_count": 0,
-      "accepted_action_rate": 0.3077,
+      "accepted_action_rate": 0.3889,
       "hard_boundary_direct_use_rate": 0,
-      "negative_direct_risk_rate": 0.3077,
+      "negative_direct_risk_rate": 0.2222,
       "non_actionable_direct_attention_rate": 0,
       "missed_actionable_memory_rate": 0,
       "boundary_ignored_rate": 0,
-      "request_char_total": 274089,
-      "completion_char_total": 3016,
-      "changed_action_count": 21,
+      "request_char_total": 382574,
+      "completion_char_total": 4358,
+      "changed_action_count": 25,
       "trials": [
         {
-          "arm_id": "candidate_aionis_project_context_only",
+          "arm_id": "candidate_project_context_closed_loop_inspect",
+          "group_id": "admission-dataset-export:closed-loop-prior-contradicted",
+          "row_count": 3,
+          "prompt_char_count": 3346,
+          "request_char_count": 5709,
+          "completion_char_count": 252,
+          "usage": {
+            "prompt_tokens": 1302,
+            "completion_tokens": 90,
+            "total_tokens": 1392,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 1302
+          },
+          "decision": {
+            "selected_memory_id": "b731580d-3566-5985-8332-9645e4ba988f",
+            "action": "inspect_memory",
+            "used_memory_ids": [
+              "b731580d-3566-5985-8332-9645e4ba988f"
+            ],
+            "rationale": "Memory has prior contradictions; inspect before use to verify reliability."
+          },
+          "outcome": "no_actionable_memory",
+          "selected_admission_action": "use_now",
+          "selected_outcome_label": "negative_use",
+          "positive_memory_available": false,
+          "changed_action_count": 2
+        },
+        {
+          "arm_id": "candidate_project_context_closed_loop_inspect",
+          "group_id": "admission-dataset-export:closed-loop-prior-contradicted-auth",
+          "row_count": 3,
+          "prompt_char_count": 3366,
+          "request_char_count": 5734,
+          "completion_char_count": 230,
+          "usage": {
+            "prompt_tokens": 1313,
+            "completion_tokens": 91,
+            "total_tokens": 1404,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 1313
+          },
+          "decision": {
+            "selected_memory_id": "f3f4bac0-8f97-5618-864b-7c719757c629",
+            "action": "inspect_memory",
+            "used_memory_ids": [
+              "f3f4bac0-8f97-5618-864b-7c719757c629"
+            ],
+            "rationale": "Memory has prior contradictions; inspect before use."
+          },
+          "outcome": "no_actionable_memory",
+          "selected_admission_action": "use_now",
+          "selected_outcome_label": "negative_use",
+          "positive_memory_available": false,
+          "changed_action_count": 2
+        },
+        {
+          "arm_id": "candidate_project_context_closed_loop_inspect",
+          "group_id": "admission-dataset-export:closed-loop-prior-supported",
+          "row_count": 2,
+          "prompt_char_count": 2667,
+          "request_char_count": 4610,
+          "completion_char_count": 260,
+          "usage": {
+            "prompt_tokens": 1045,
+            "completion_tokens": 96,
+            "total_tokens": 1141,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 1045
+          },
+          "decision": {
+            "selected_memory_id": "447ce61f-c8e6-5c9b-85be-b3e5689401ed",
+            "action": "direct_use",
+            "used_memory_ids": [
+              "447ce61f-c8e6-5c9b-85be-b3e5689401ed"
+            ],
+            "rationale": "Trusted project context memory, actionable, advisory authority, closed-loop supported."
+          },
+          "outcome": "accepted_action",
+          "selected_admission_action": "use_now",
+          "selected_outcome_label": "positive_use",
+          "positive_memory_available": true,
+          "changed_action_count": 0
+        },
+        {
+          "arm_id": "candidate_project_context_closed_loop_inspect",
+          "group_id": "admission-dataset-export:closed-loop-prior-supported-observability",
+          "row_count": 2,
+          "prompt_char_count": 2709,
+          "request_char_count": 4666,
+          "completion_char_count": 231,
+          "usage": {
+            "prompt_tokens": 1057,
+            "completion_tokens": 91,
+            "total_tokens": 1148,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 1057
+          },
+          "decision": {
+            "selected_memory_id": "398d46d8-5cf5-51c4-92ab-55facdc4751e",
+            "action": "direct_use",
+            "used_memory_ids": [
+              "398d46d8-5cf5-51c4-92ab-55facdc4751e"
+            ],
+            "rationale": "Trusted project context memory, actionable and supported."
+          },
+          "outcome": "accepted_action",
+          "selected_admission_action": "use_now",
+          "selected_outcome_label": "positive_use",
+          "positive_memory_available": true,
+          "changed_action_count": 0
+        },
+        {
+          "arm_id": "candidate_project_context_closed_loop_inspect",
+          "group_id": "admission-dataset-export:closed-loop-prior-supported-sdk",
+          "row_count": 2,
+          "prompt_char_count": 2679,
+          "request_char_count": 4626,
+          "completion_char_count": 256,
+          "usage": {
+            "prompt_tokens": 1049,
+            "completion_tokens": 91,
+            "total_tokens": 1140,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 1049
+          },
+          "decision": {
+            "selected_memory_id": "a4af16fa-c432-5422-b558-02970a6e4b93",
+            "action": "direct_use",
+            "used_memory_ids": [
+              "a4af16fa-c432-5422-b558-02970a6e4b93"
+            ],
+            "rationale": "Trusted project context memory, actionable, advisory authority, no contradictions."
+          },
+          "outcome": "accepted_action",
+          "selected_admission_action": "use_now",
+          "selected_outcome_label": "positive_use",
+          "positive_memory_available": true,
+          "changed_action_count": 0
+        },
+        {
+          "arm_id": "candidate_project_context_closed_loop_inspect",
           "group_id": "admission-dataset-export:external-rehydrate-raw-trace",
           "row_count": 51,
-          "prompt_char_count": 30277,
-          "request_char_count": 48903,
-          "completion_char_count": 202,
+          "prompt_char_count": 38904,
+          "request_char_count": 63353,
+          "completion_char_count": 208,
           "usage": {
-            "prompt_tokens": 10844,
+            "prompt_tokens": 14265,
             "completion_tokens": 59,
-            "total_tokens": 10903,
+            "total_tokens": 14324,
             "prompt_tokens_details": {
-              "cached_tokens": 10752
+              "cached_tokens": 0
             },
-            "prompt_cache_hit_tokens": 10752,
-            "prompt_cache_miss_tokens": 92
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 14265
           },
           "decision": {
             "selected_memory_id": null,
             "action": "no_action",
             "used_memory_ids": [],
-            "rationale": "No direct_use memories; inspect_before_use cannot drive action; do_not_use and rehydrate are blocked."
+            "rationale": "No direct_use memories; inspect_before_use not actionable; do_not_use blocked; rehydrate requires recovery."
           },
           "outcome": "no_actionable_memory",
           "selected_admission_action": null,
@@ -505,27 +813,58 @@
           "changed_action_count": 17
         },
         {
-          "arm_id": "candidate_aionis_project_context_only",
+          "arm_id": "candidate_project_context_closed_loop_inspect",
           "group_id": "admission-dataset-export:negative-attributed",
           "row_count": 34,
-          "prompt_char_count": 17723,
-          "request_char_count": 29141,
-          "completion_char_count": 236,
+          "prompt_char_count": 23477,
+          "request_char_count": 38780,
+          "completion_char_count": 241,
           "usage": {
-            "prompt_tokens": 6659,
+            "prompt_tokens": 8941,
             "completion_tokens": 88,
-            "total_tokens": 6747,
+            "total_tokens": 9029,
             "prompt_tokens_details": {
-              "cached_tokens": 6656
+              "cached_tokens": 0
             },
-            "prompt_cache_hit_tokens": 6656,
-            "prompt_cache_miss_tokens": 3
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 8941
           },
           "decision": {
             "selected_memory_id": "c43f1ecd-b41a-56d2-a226-08e06664463a",
             "action": "direct_use",
             "used_memory_ids": [
               "c43f1ecd-b41a-56d2-a226-08e06664463a"
+            ],
+            "rationale": "Trusted actionable project context memory available for direct use."
+          },
+          "outcome": "negative_direct_risk",
+          "selected_admission_action": "use_now",
+          "selected_outcome_label": "negative_use",
+          "positive_memory_available": false,
+          "changed_action_count": 0
+        },
+        {
+          "arm_id": "candidate_project_context_closed_loop_inspect",
+          "group_id": "admission-dataset-export:negative-migration-candidate",
+          "row_count": 34,
+          "prompt_char_count": 23792,
+          "request_char_count": 39104,
+          "completion_char_count": 236,
+          "usage": {
+            "prompt_tokens": 9014,
+            "completion_tokens": 92,
+            "total_tokens": 9106,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 9014
+          },
+          "decision": {
+            "selected_memory_id": "4e7be8c4-3787-542d-bab2-c05dcd773b45",
+            "action": "direct_use",
+            "used_memory_ids": [
+              "4e7be8c4-3787-542d-bab2-c05dcd773b45"
             ],
             "rationale": "Trusted actionable project context memory, direct use allowed."
           },
@@ -536,52 +875,21 @@
           "changed_action_count": 0
         },
         {
-          "arm_id": "candidate_aionis_project_context_only",
-          "group_id": "admission-dataset-export:negative-migration-candidate",
-          "row_count": 34,
-          "prompt_char_count": 18038,
-          "request_char_count": 29465,
-          "completion_char_count": 270,
-          "usage": {
-            "prompt_tokens": 6732,
-            "completion_tokens": 100,
-            "total_tokens": 6832,
-            "prompt_tokens_details": {
-              "cached_tokens": 6656
-            },
-            "prompt_cache_hit_tokens": 6656,
-            "prompt_cache_miss_tokens": 76
-          },
-          "decision": {
-            "selected_memory_id": "4e7be8c4-3787-542d-bab2-c05dcd773b45",
-            "action": "direct_use",
-            "used_memory_ids": [
-              "4e7be8c4-3787-542d-bab2-c05dcd773b45"
-            ],
-            "rationale": "Multiple active project-context memories; direct_use the first as it is actionable and advisory."
-          },
-          "outcome": "negative_direct_risk",
-          "selected_admission_action": "use_now",
-          "selected_outcome_label": "negative_use",
-          "positive_memory_available": false,
-          "changed_action_count": 0
-        },
-        {
-          "arm_id": "candidate_aionis_project_context_only",
+          "arm_id": "candidate_project_context_closed_loop_inspect",
           "group_id": "admission-dataset-export:negative-retry-loop",
           "row_count": 20,
-          "prompt_char_count": 10989,
-          "request_char_count": 18165,
-          "completion_char_count": 247,
+          "prompt_char_count": 14377,
+          "request_char_count": 23842,
+          "completion_char_count": 241,
           "usage": {
-            "prompt_tokens": 4175,
-            "completion_tokens": 93,
-            "total_tokens": 4268,
+            "prompt_tokens": 5519,
+            "completion_tokens": 91,
+            "total_tokens": 5610,
             "prompt_tokens_details": {
-              "cached_tokens": 4096
+              "cached_tokens": 0
             },
-            "prompt_cache_hit_tokens": 4096,
-            "prompt_cache_miss_tokens": 79
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 5519
           },
           "decision": {
             "selected_memory_id": "4382a51f-41bd-5208-9d07-65b98f806513",
@@ -589,7 +897,7 @@
             "used_memory_ids": [
               "4382a51f-41bd-5208-9d07-65b98f806513"
             ],
-            "rationale": "Multiple active project-context memories available; direct_use the first."
+            "rationale": "Trusted actionable project-context memory available for direct use."
           },
           "outcome": "negative_direct_risk",
           "selected_admission_action": "use_now",
@@ -598,21 +906,21 @@
           "changed_action_count": 0
         },
         {
-          "arm_id": "candidate_aionis_project_context_only",
+          "arm_id": "candidate_project_context_closed_loop_inspect",
           "group_id": "admission-dataset-export:negative-test-stabilization",
           "row_count": 34,
-          "prompt_char_count": 18003,
-          "request_char_count": 29429,
-          "completion_char_count": 270,
+          "prompt_char_count": 23757,
+          "request_char_count": 39068,
+          "completion_char_count": 240,
           "usage": {
-            "prompt_tokens": 6735,
-            "completion_tokens": 102,
-            "total_tokens": 6837,
+            "prompt_tokens": 9017,
+            "completion_tokens": 94,
+            "total_tokens": 9111,
             "prompt_tokens_details": {
-              "cached_tokens": 6656
+              "cached_tokens": 0
             },
-            "prompt_cache_hit_tokens": 6656,
-            "prompt_cache_miss_tokens": 79
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 9017
           },
           "decision": {
             "selected_memory_id": "bbb6b578-561a-5762-8a7c-6ddc2a183c38",
@@ -620,7 +928,7 @@
             "used_memory_ids": [
               "bbb6b578-561a-5762-8a7c-6ddc2a183c38"
             ],
-            "rationale": "Multiple active project-context memories; direct_use the first as it is actionable and advisory."
+            "rationale": "Trusted actionable project context memory, direct use appropriate."
           },
           "outcome": "negative_direct_risk",
           "selected_admission_action": "use_now",
@@ -629,27 +937,89 @@
           "changed_action_count": 0
         },
         {
-          "arm_id": "candidate_aionis_project_context_only",
+          "arm_id": "candidate_project_context_closed_loop_inspect",
           "group_id": "admission-dataset-export:positive-cache-boundary",
           "row_count": 20,
-          "prompt_char_count": 11373,
-          "request_char_count": 18713,
-          "completion_char_count": 241,
+          "prompt_char_count": 14761,
+          "request_char_count": 24390,
+          "completion_char_count": 236,
           "usage": {
-            "prompt_tokens": 4314,
-            "completion_tokens": 100,
-            "total_tokens": 4414,
+            "prompt_tokens": 5658,
+            "completion_tokens": 101,
+            "total_tokens": 5759,
             "prompt_tokens_details": {
-              "cached_tokens": 4224
+              "cached_tokens": 0
             },
-            "prompt_cache_hit_tokens": 4224,
-            "prompt_cache_miss_tokens": 90
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 5658
           },
           "decision": {
             "selected_memory_id": "b63d5dac-ea2b-5e58-958c-8e43abc4b9a5",
             "action": "direct_use",
             "used_memory_ids": [
               "b63d5dac-ea2b-5e58-958c-8e43abc4b9a5"
+            ],
+            "rationale": "Trusted actionable project-context memory, direct use allowed."
+          },
+          "outcome": "accepted_action",
+          "selected_admission_action": "use_now",
+          "selected_outcome_label": "positive_use",
+          "positive_memory_available": true,
+          "changed_action_count": 0
+        },
+        {
+          "arm_id": "candidate_project_context_closed_loop_inspect",
+          "group_id": "admission-dataset-export:positive-feature-flag",
+          "row_count": 34,
+          "prompt_char_count": 24057,
+          "request_char_count": 39634,
+          "completion_char_count": 240,
+          "usage": {
+            "prompt_tokens": 9214,
+            "completion_tokens": 90,
+            "total_tokens": 9304,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 9214
+          },
+          "decision": {
+            "selected_memory_id": "58b37112-39b1-5583-bbcb-d9aaba8765e5",
+            "action": "direct_use",
+            "used_memory_ids": [
+              "58b37112-39b1-5583-bbcb-d9aaba8765e5"
+            ],
+            "rationale": "Trusted actionable project context memory, direct use appropriate."
+          },
+          "outcome": "accepted_action",
+          "selected_admission_action": "use_now",
+          "selected_outcome_label": "positive_use",
+          "positive_memory_available": true,
+          "changed_action_count": 0
+        },
+        {
+          "arm_id": "candidate_project_context_closed_loop_inspect",
+          "group_id": "admission-dataset-export:positive-observability-route",
+          "row_count": 20,
+          "prompt_char_count": 14866,
+          "request_char_count": 24500,
+          "completion_char_count": 241,
+          "usage": {
+            "prompt_tokens": 5680,
+            "completion_tokens": 90,
+            "total_tokens": 5770,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 5680
+          },
+          "decision": {
+            "selected_memory_id": "ce1ffa76-b49e-5f9c-a8de-fea0eed17503",
+            "action": "direct_use",
+            "used_memory_ids": [
+              "ce1ffa76-b49e-5f9c-a8de-fea0eed17503"
             ],
             "rationale": "Trusted actionable project context memory available for direct use."
           },
@@ -660,83 +1030,21 @@
           "changed_action_count": 0
         },
         {
-          "arm_id": "candidate_aionis_project_context_only",
-          "group_id": "admission-dataset-export:positive-feature-flag",
-          "row_count": 34,
-          "prompt_char_count": 18303,
-          "request_char_count": 29995,
-          "completion_char_count": 270,
-          "usage": {
-            "prompt_tokens": 6932,
-            "completion_tokens": 98,
-            "total_tokens": 7030,
-            "prompt_tokens_details": {
-              "cached_tokens": 6912
-            },
-            "prompt_cache_hit_tokens": 6912,
-            "prompt_cache_miss_tokens": 20
-          },
-          "decision": {
-            "selected_memory_id": "58b37112-39b1-5583-bbcb-d9aaba8765e5",
-            "action": "direct_use",
-            "used_memory_ids": [
-              "58b37112-39b1-5583-bbcb-d9aaba8765e5"
-            ],
-            "rationale": "Multiple active project-context memories; direct_use the first as it is actionable and advisory."
-          },
-          "outcome": "accepted_action",
-          "selected_admission_action": "use_now",
-          "selected_outcome_label": "positive_use",
-          "positive_memory_available": true,
-          "changed_action_count": 0
-        },
-        {
-          "arm_id": "candidate_aionis_project_context_only",
-          "group_id": "admission-dataset-export:positive-observability-route",
-          "row_count": 20,
-          "prompt_char_count": 11478,
-          "request_char_count": 18823,
-          "completion_char_count": 236,
-          "usage": {
-            "prompt_tokens": 4336,
-            "completion_tokens": 90,
-            "total_tokens": 4426,
-            "prompt_tokens_details": {
-              "cached_tokens": 0
-            },
-            "prompt_cache_hit_tokens": 0,
-            "prompt_cache_miss_tokens": 4336
-          },
-          "decision": {
-            "selected_memory_id": "ce1ffa76-b49e-5f9c-a8de-fea0eed17503",
-            "action": "direct_use",
-            "used_memory_ids": [
-              "ce1ffa76-b49e-5f9c-a8de-fea0eed17503"
-            ],
-            "rationale": "Trusted actionable project context memory, direct use allowed."
-          },
-          "outcome": "accepted_action",
-          "selected_admission_action": "use_now",
-          "selected_outcome_label": "positive_use",
-          "positive_memory_available": true,
-          "changed_action_count": 0
-        },
-        {
-          "arm_id": "candidate_aionis_project_context_only",
+          "arm_id": "candidate_project_context_closed_loop_inspect",
           "group_id": "admission-dataset-export:positive-reviewer-handoff",
           "row_count": 34,
-          "prompt_char_count": 18443,
-          "request_char_count": 30139,
-          "completion_char_count": 274,
+          "prompt_char_count": 24197,
+          "request_char_count": 39778,
+          "completion_char_count": 241,
           "usage": {
-            "prompt_tokens": 6924,
-            "completion_tokens": 99,
-            "total_tokens": 7023,
+            "prompt_tokens": 9206,
+            "completion_tokens": 92,
+            "total_tokens": 9298,
             "prompt_tokens_details": {
               "cached_tokens": 0
             },
             "prompt_cache_hit_tokens": 0,
-            "prompt_cache_miss_tokens": 6924
+            "prompt_cache_miss_tokens": 9206
           },
           "decision": {
             "selected_memory_id": "9454f086-3d3c-5990-af57-94f06ac947c4",
@@ -744,7 +1052,7 @@
             "used_memory_ids": [
               "9454f086-3d3c-5990-af57-94f06ac947c4"
             ],
-            "rationale": "Multiple active project-context memories with direct_use flag; selecting first for immediate action."
+            "rationale": "Trusted actionable project context memory available for direct use."
           },
           "outcome": "accepted_action",
           "selected_admission_action": "use_now",
@@ -753,27 +1061,27 @@
           "changed_action_count": 0
         },
         {
-          "arm_id": "candidate_aionis_project_context_only",
+          "arm_id": "candidate_project_context_closed_loop_inspect",
           "group_id": "admission-dataset-export:targeted-external-current-plan-asset",
           "row_count": 3,
-          "prompt_char_count": 3125,
-          "request_char_count": 5295,
+          "prompt_char_count": 3640,
+          "request_char_count": 6161,
           "completion_char_count": 191,
           "usage": {
-            "prompt_tokens": 1178,
-            "completion_tokens": 57,
-            "total_tokens": 1235,
+            "prompt_tokens": 1383,
+            "completion_tokens": 56,
+            "total_tokens": 1439,
             "prompt_tokens_details": {
               "cached_tokens": 0
             },
             "prompt_cache_hit_tokens": 0,
-            "prompt_cache_miss_tokens": 1178
+            "prompt_cache_miss_tokens": 1383
           },
           "decision": {
             "selected_memory_id": null,
             "action": "no_action",
             "used_memory_ids": [],
-            "rationale": "No direct_use memory; inspect_before_use not actionable; do_not_use and rehydrate blocked."
+            "rationale": "No direct-use memory; inspect_before_use not actionable; do_not_use and rehydrate blocked."
           },
           "outcome": "no_actionable_memory",
           "selected_admission_action": null,
@@ -782,27 +1090,27 @@
           "changed_action_count": 1
         },
         {
-          "arm_id": "candidate_aionis_project_context_only",
+          "arm_id": "candidate_project_context_closed_loop_inspect",
           "group_id": "admission-dataset-export:targeted-external-current-project-settings",
           "row_count": 3,
-          "prompt_char_count": 3167,
-          "request_char_count": 5343,
-          "completion_char_count": 200,
+          "prompt_char_count": 3682,
+          "request_char_count": 6209,
+          "completion_char_count": 191,
           "usage": {
-            "prompt_tokens": 1178,
-            "completion_tokens": 58,
-            "total_tokens": 1236,
+            "prompt_tokens": 1383,
+            "completion_tokens": 56,
+            "total_tokens": 1439,
             "prompt_tokens_details": {
               "cached_tokens": 0
             },
             "prompt_cache_hit_tokens": 0,
-            "prompt_cache_miss_tokens": 1178
+            "prompt_cache_miss_tokens": 1383
           },
           "decision": {
             "selected_memory_id": null,
             "action": "no_action",
             "used_memory_ids": [],
-            "rationale": "No direct-use memory; inspect_before_use cannot drive action; do_not_use and rehydrate are blocked."
+            "rationale": "No direct-use memory; inspect_before_use not actionable; do_not_use and rehydrate blocked."
           },
           "outcome": "no_actionable_memory",
           "selected_admission_action": null,
@@ -811,60 +1119,64 @@
           "changed_action_count": 1
         },
         {
-          "arm_id": "candidate_aionis_project_context_only",
+          "arm_id": "candidate_project_context_closed_loop_inspect",
           "group_id": "admission-dataset-export:targeted-external-current-sdk-contract",
           "row_count": 3,
-          "prompt_char_count": 3139,
-          "request_char_count": 5311,
-          "completion_char_count": 203,
+          "prompt_char_count": 3654,
+          "request_char_count": 6177,
+          "completion_char_count": 315,
           "usage": {
-            "prompt_tokens": 1183,
-            "completion_tokens": 59,
-            "total_tokens": 1242,
+            "prompt_tokens": 1388,
+            "completion_tokens": 98,
+            "total_tokens": 1486,
             "prompt_tokens_details": {
               "cached_tokens": 0
             },
             "prompt_cache_hit_tokens": 0,
-            "prompt_cache_miss_tokens": 1183
+            "prompt_cache_miss_tokens": 1388
           },
           "decision": {
-            "selected_memory_id": null,
-            "action": "no_action",
-            "used_memory_ids": [],
-            "rationale": "No direct_use memory; inspect_before_use cannot drive action; do_not_use and rehydrate are prohibited."
+            "selected_memory_id": "mem0:targeted-current:sdk-contract:admission-dataset-aa4fce37",
+            "action": "inspect_memory",
+            "used_memory_ids": [
+              "mem0:targeted-current:sdk-contract:admission-dataset-aa4fce37"
+            ],
+            "rationale": "Only inspect_before_use memory available; cannot direct_use. Inspect to gather context."
           },
           "outcome": "no_actionable_memory",
-          "selected_admission_action": null,
-          "selected_outcome_label": null,
+          "selected_admission_action": "inspect_before_use",
+          "selected_outcome_label": "unused_exposed",
           "positive_memory_available": false,
           "changed_action_count": 1
         },
         {
-          "arm_id": "candidate_aionis_project_context_only",
+          "arm_id": "candidate_project_context_closed_loop_inspect",
           "group_id": "admission-dataset-export:targeted-external-current-workflow-projection",
           "row_count": 3,
-          "prompt_char_count": 3188,
-          "request_char_count": 5367,
-          "completion_char_count": 176,
+          "prompt_char_count": 3703,
+          "request_char_count": 6233,
+          "completion_char_count": 308,
           "usage": {
-            "prompt_tokens": 1186,
-            "completion_tokens": 50,
-            "total_tokens": 1236,
+            "prompt_tokens": 1391,
+            "completion_tokens": 93,
+            "total_tokens": 1484,
             "prompt_tokens_details": {
               "cached_tokens": 0
             },
             "prompt_cache_hit_tokens": 0,
-            "prompt_cache_miss_tokens": 1186
+            "prompt_cache_miss_tokens": 1391
           },
           "decision": {
-            "selected_memory_id": null,
-            "action": "no_action",
-            "used_memory_ids": [],
-            "rationale": "No direct_use memory available; inspect_before_use cannot be used directly."
+            "selected_memory_id": "mem0:targeted-current:workflow-projection:admission-dataset-aa4fce37",
+            "action": "inspect_memory",
+            "used_memory_ids": [
+              "mem0:targeted-current:workflow-projection:admission-dataset-aa4fce37"
+            ],
+            "rationale": "Only inspect_before_use memory available; inspect before deciding."
           },
           "outcome": "no_actionable_memory",
-          "selected_admission_action": null,
-          "selected_outcome_label": null,
+          "selected_admission_action": "inspect_before_use",
+          "selected_outcome_label": "unused_exposed",
           "positive_memory_available": false,
           "changed_action_count": 1
         }
@@ -874,39 +1186,192 @@
   "recorded_arm": {
     "arm_id": "recorded_policy_baseline",
     "display_name": "Recorded Runtime policy",
-    "trial_count": 13,
-    "accepted_action_count": 4,
+    "trial_count": 18,
+    "accepted_action_count": 7,
     "hard_boundary_direct_use_count": 0,
     "negative_direct_risk_count": 4,
     "non_actionable_direct_attention_count": 5,
     "missed_actionable_memory_count": 0,
     "boundary_ignored_count": 0,
-    "accepted_action_rate": 0.3077,
+    "accepted_action_rate": 0.3889,
     "hard_boundary_direct_use_rate": 0,
-    "negative_direct_risk_rate": 0.3077,
-    "non_actionable_direct_attention_rate": 0.3846,
+    "negative_direct_risk_rate": 0.2222,
+    "non_actionable_direct_attention_rate": 0.2778,
     "missed_actionable_memory_rate": 0,
     "boundary_ignored_rate": 0,
-    "request_char_total": 273520,
-    "completion_char_total": 3521,
+    "request_char_total": 381529,
+    "completion_char_total": 4612,
     "changed_action_count": 0,
     "trials": [
       {
         "arm_id": "recorded_policy_baseline",
+        "group_id": "admission-dataset-export:closed-loop-prior-contradicted",
+        "row_count": 3,
+        "prompt_char_count": 3304,
+        "request_char_count": 5638,
+        "completion_char_count": 176,
+        "usage": {
+          "prompt_tokens": 1286,
+          "completion_tokens": 49,
+          "total_tokens": 1335,
+          "prompt_tokens_details": {
+            "cached_tokens": 1280
+          },
+          "prompt_cache_hit_tokens": 1280,
+          "prompt_cache_miss_tokens": 6
+        },
+        "decision": {
+          "selected_memory_id": null,
+          "action": "no_action",
+          "used_memory_ids": [],
+          "rationale": "All use_now memories are same ID with contradicted state; avoid direct use."
+        },
+        "outcome": "no_actionable_memory",
+        "selected_admission_action": null,
+        "selected_outcome_label": null,
+        "positive_memory_available": false,
+        "changed_action_count": 0
+      },
+      {
+        "arm_id": "recorded_policy_baseline",
+        "group_id": "admission-dataset-export:closed-loop-prior-contradicted-auth",
+        "row_count": 3,
+        "prompt_char_count": 3324,
+        "request_char_count": 5663,
+        "completion_char_count": 195,
+        "usage": {
+          "prompt_tokens": 1297,
+          "completion_tokens": 67,
+          "total_tokens": 1364,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 1297
+        },
+        "decision": {
+          "selected_memory_id": "f3f4bac0-8f97-5618-864b-7c719757c629",
+          "action": "avoid_memory",
+          "used_memory_ids": [
+            "f3f4bac0-8f97-5618-864b-7c719757c629"
+          ],
+          "rationale": "Memory has repeated contradictions; avoid direct use."
+        },
+        "outcome": "no_actionable_memory",
+        "selected_admission_action": "use_now",
+        "selected_outcome_label": "negative_use",
+        "positive_memory_available": false,
+        "changed_action_count": 0
+      },
+      {
+        "arm_id": "recorded_policy_baseline",
+        "group_id": "admission-dataset-export:closed-loop-prior-supported",
+        "row_count": 2,
+        "prompt_char_count": 2646,
+        "request_char_count": 4568,
+        "completion_char_count": 250,
+        "usage": {
+          "prompt_tokens": 1039,
+          "completion_tokens": 96,
+          "total_tokens": 1135,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 1039
+        },
+        "decision": {
+          "selected_memory_id": "447ce61f-c8e6-5c9b-85be-b3e5689401ed",
+          "action": "direct_use",
+          "used_memory_ids": [
+            "447ce61f-c8e6-5c9b-85be-b3e5689401ed"
+          ],
+          "rationale": "Trusted project-context memory, actionable and advisory, with prior support."
+        },
+        "outcome": "accepted_action",
+        "selected_admission_action": "use_now",
+        "selected_outcome_label": "positive_use",
+        "positive_memory_available": true,
+        "changed_action_count": 0
+      },
+      {
+        "arm_id": "recorded_policy_baseline",
+        "group_id": "admission-dataset-export:closed-loop-prior-supported-observability",
+        "row_count": 2,
+        "prompt_char_count": 2688,
+        "request_char_count": 4624,
+        "completion_char_count": 258,
+        "usage": {
+          "prompt_tokens": 1051,
+          "completion_tokens": 96,
+          "total_tokens": 1147,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 1051
+        },
+        "decision": {
+          "selected_memory_id": "398d46d8-5cf5-51c4-92ab-55facdc4751e",
+          "action": "direct_use",
+          "used_memory_ids": [
+            "398d46d8-5cf5-51c4-92ab-55facdc4751e"
+          ],
+          "rationale": "Trusted project context memory, actionable, advisory authority, supported prior use."
+        },
+        "outcome": "accepted_action",
+        "selected_admission_action": "use_now",
+        "selected_outcome_label": "positive_use",
+        "positive_memory_available": true,
+        "changed_action_count": 0
+      },
+      {
+        "arm_id": "recorded_policy_baseline",
+        "group_id": "admission-dataset-export:closed-loop-prior-supported-sdk",
+        "row_count": 2,
+        "prompt_char_count": 2658,
+        "request_char_count": 4584,
+        "completion_char_count": 254,
+        "usage": {
+          "prompt_tokens": 1043,
+          "completion_tokens": 91,
+          "total_tokens": 1134,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 1043
+        },
+        "decision": {
+          "selected_memory_id": "a4af16fa-c432-5422-b558-02970a6e4b93",
+          "action": "direct_use",
+          "used_memory_ids": [
+            "a4af16fa-c432-5422-b558-02970a6e4b93"
+          ],
+          "rationale": "Trusted project context memory, actionable and advisory, direct use appropriate."
+        },
+        "outcome": "accepted_action",
+        "selected_admission_action": "use_now",
+        "selected_outcome_label": "positive_use",
+        "positive_memory_available": true,
+        "changed_action_count": 0
+      },
+      {
+        "arm_id": "recorded_policy_baseline",
         "group_id": "admission-dataset-export:external-rehydrate-raw-trace",
         "row_count": 51,
-        "prompt_char_count": 30077,
-        "request_char_count": 48690,
-        "completion_char_count": 296,
+        "prompt_char_count": 38696,
+        "request_char_count": 63124,
+        "completion_char_count": 297,
         "usage": {
-          "prompt_tokens": 10774,
-          "completion_tokens": 87,
-          "total_tokens": 10861,
+          "prompt_tokens": 14191,
+          "completion_tokens": 89,
+          "total_tokens": 14280,
           "prompt_tokens_details": {
-            "cached_tokens": 10752
+            "cached_tokens": 0
           },
-          "prompt_cache_hit_tokens": 10752,
-          "prompt_cache_miss_tokens": 22
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 14191
         },
         "decision": {
           "selected_memory_id": "mem0:admission-current-trace:admission-dataset-933e33e6",
@@ -914,7 +1379,7 @@
           "used_memory_ids": [
             "mem0:admission-current-trace:admission-dataset-933e33e6"
           ],
-          "rationale": "Trusted, actionable execution memory with current lifecycle; direct use appropriate."
+          "rationale": "Trusted, actionable execution memory with no prior issues; direct use is appropriate."
         },
         "outcome": "non_actionable_direct_attention",
         "selected_admission_action": "use_now",
@@ -926,18 +1391,18 @@
         "arm_id": "recorded_policy_baseline",
         "group_id": "admission-dataset-export:negative-attributed",
         "row_count": 34,
-        "prompt_char_count": 17710,
-        "request_char_count": 29115,
+        "prompt_char_count": 23456,
+        "request_char_count": 38738,
         "completion_char_count": 241,
         "usage": {
-          "prompt_tokens": 6657,
+          "prompt_tokens": 8935,
           "completion_tokens": 88,
-          "total_tokens": 6745,
+          "total_tokens": 9023,
           "prompt_tokens_details": {
-            "cached_tokens": 6656
+            "cached_tokens": 0
           },
-          "prompt_cache_hit_tokens": 6656,
-          "prompt_cache_miss_tokens": 1
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 8935
         },
         "decision": {
           "selected_memory_id": "c43f1ecd-b41a-56d2-a226-08e06664463a",
@@ -957,18 +1422,18 @@
         "arm_id": "recorded_policy_baseline",
         "group_id": "admission-dataset-export:negative-migration-candidate",
         "row_count": 34,
-        "prompt_char_count": 18025,
-        "request_char_count": 29439,
-        "completion_char_count": 238,
+        "prompt_char_count": 23771,
+        "request_char_count": 39062,
+        "completion_char_count": 240,
         "usage": {
-          "prompt_tokens": 6730,
-          "completion_tokens": 94,
-          "total_tokens": 6824,
+          "prompt_tokens": 9008,
+          "completion_tokens": 92,
+          "total_tokens": 9100,
           "prompt_tokens_details": {
-            "cached_tokens": 6656
+            "cached_tokens": 0
           },
-          "prompt_cache_hit_tokens": 6656,
-          "prompt_cache_miss_tokens": 74
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 9008
         },
         "decision": {
           "selected_memory_id": "4e7be8c4-3787-542d-bab2-c05dcd773b45",
@@ -976,7 +1441,7 @@
           "used_memory_ids": [
             "4e7be8c4-3787-542d-bab2-c05dcd773b45"
           ],
-          "rationale": "Multiple use_now project_context memories; direct_use the first."
+          "rationale": "Trusted actionable project context memory, direct use appropriate."
         },
         "outcome": "negative_direct_risk",
         "selected_admission_action": "use_now",
@@ -988,18 +1453,18 @@
         "arm_id": "recorded_policy_baseline",
         "group_id": "admission-dataset-export:negative-retry-loop",
         "row_count": 20,
-        "prompt_char_count": 10976,
-        "request_char_count": 18139,
-        "completion_char_count": 262,
+        "prompt_char_count": 14356,
+        "request_char_count": 23800,
+        "completion_char_count": 240,
         "usage": {
-          "prompt_tokens": 4173,
-          "completion_tokens": 93,
-          "total_tokens": 4266,
+          "prompt_tokens": 5513,
+          "completion_tokens": 90,
+          "total_tokens": 5603,
           "prompt_tokens_details": {
-            "cached_tokens": 4096
+            "cached_tokens": 0
           },
-          "prompt_cache_hit_tokens": 4096,
-          "prompt_cache_miss_tokens": 77
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 5513
         },
         "decision": {
           "selected_memory_id": "4382a51f-41bd-5208-9d07-65b98f806513",
@@ -1007,7 +1472,7 @@
           "used_memory_ids": [
             "4382a51f-41bd-5208-9d07-65b98f806513"
           ],
-          "rationale": "Multiple active, actionable project context memories; using first as direct instruction."
+          "rationale": "Trusted actionable project context memory, direct use appropriate."
         },
         "outcome": "negative_direct_risk",
         "selected_admission_action": "use_now",
@@ -1019,18 +1484,18 @@
         "arm_id": "recorded_policy_baseline",
         "group_id": "admission-dataset-export:negative-test-stabilization",
         "row_count": 34,
-        "prompt_char_count": 17990,
-        "request_char_count": 29403,
-        "completion_char_count": 249,
+        "prompt_char_count": 23736,
+        "request_char_count": 39026,
+        "completion_char_count": 241,
         "usage": {
-          "prompt_tokens": 6733,
-          "completion_tokens": 98,
-          "total_tokens": 6831,
+          "prompt_tokens": 9011,
+          "completion_tokens": 94,
+          "total_tokens": 9105,
           "prompt_tokens_details": {
-            "cached_tokens": 6656
+            "cached_tokens": 0
           },
-          "prompt_cache_hit_tokens": 6656,
-          "prompt_cache_miss_tokens": 77
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 9011
         },
         "decision": {
           "selected_memory_id": "bbb6b578-561a-5762-8a7c-6ddc2a183c38",
@@ -1038,7 +1503,7 @@
           "used_memory_ids": [
             "bbb6b578-561a-5762-8a7c-6ddc2a183c38"
           ],
-          "rationale": "Multiple active, actionable project-context memories; direct_use the first."
+          "rationale": "Trusted actionable project context memory available for direct use."
         },
         "outcome": "negative_direct_risk",
         "selected_admission_action": "use_now",
@@ -1050,18 +1515,18 @@
         "arm_id": "recorded_policy_baseline",
         "group_id": "admission-dataset-export:positive-cache-boundary",
         "row_count": 20,
-        "prompt_char_count": 11360,
-        "request_char_count": 18687,
-        "completion_char_count": 271,
+        "prompt_char_count": 14740,
+        "request_char_count": 24348,
+        "completion_char_count": 241,
         "usage": {
-          "prompt_tokens": 4312,
-          "completion_tokens": 108,
-          "total_tokens": 4420,
+          "prompt_tokens": 5652,
+          "completion_tokens": 100,
+          "total_tokens": 5752,
           "prompt_tokens_details": {
-            "cached_tokens": 4224
+            "cached_tokens": 0
           },
-          "prompt_cache_hit_tokens": 4224,
-          "prompt_cache_miss_tokens": 88
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 5652
         },
         "decision": {
           "selected_memory_id": "b63d5dac-ea2b-5e58-958c-8e43abc4b9a5",
@@ -1069,7 +1534,7 @@
           "used_memory_ids": [
             "b63d5dac-ea2b-5e58-958c-8e43abc4b9a5"
           ],
-          "rationale": "Multiple use_now project_context memories; direct_use the first as it is actionable and advisory."
+          "rationale": "Trusted actionable project context memory available for direct use."
         },
         "outcome": "accepted_action",
         "selected_admission_action": "use_now",
@@ -1081,18 +1546,18 @@
         "arm_id": "recorded_policy_baseline",
         "group_id": "admission-dataset-export:positive-feature-flag",
         "row_count": 34,
-        "prompt_char_count": 18290,
-        "request_char_count": 29969,
-        "completion_char_count": 241,
+        "prompt_char_count": 24036,
+        "request_char_count": 39592,
+        "completion_char_count": 236,
         "usage": {
-          "prompt_tokens": 6930,
+          "prompt_tokens": 9208,
           "completion_tokens": 90,
-          "total_tokens": 7020,
+          "total_tokens": 9298,
           "prompt_tokens_details": {
-            "cached_tokens": 6912
+            "cached_tokens": 0
           },
-          "prompt_cache_hit_tokens": 6912,
-          "prompt_cache_miss_tokens": 18
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 9208
         },
         "decision": {
           "selected_memory_id": "58b37112-39b1-5583-bbcb-d9aaba8765e5",
@@ -1100,7 +1565,7 @@
           "used_memory_ids": [
             "58b37112-39b1-5583-bbcb-d9aaba8765e5"
           ],
-          "rationale": "Trusted actionable project context memory available for direct use."
+          "rationale": "Trusted actionable project context memory, direct use allowed."
         },
         "outcome": "accepted_action",
         "selected_admission_action": "use_now",
@@ -1112,18 +1577,18 @@
         "arm_id": "recorded_policy_baseline",
         "group_id": "admission-dataset-export:positive-observability-route",
         "row_count": 20,
-        "prompt_char_count": 11465,
-        "request_char_count": 18797,
-        "completion_char_count": 259,
+        "prompt_char_count": 14845,
+        "request_char_count": 24458,
+        "completion_char_count": 240,
         "usage": {
-          "prompt_tokens": 4334,
-          "completion_tokens": 95,
-          "total_tokens": 4429,
+          "prompt_tokens": 5674,
+          "completion_tokens": 90,
+          "total_tokens": 5764,
           "prompt_tokens_details": {
             "cached_tokens": 0
           },
           "prompt_cache_hit_tokens": 0,
-          "prompt_cache_miss_tokens": 4334
+          "prompt_cache_miss_tokens": 5674
         },
         "decision": {
           "selected_memory_id": "ce1ffa76-b49e-5f9c-a8de-fea0eed17503",
@@ -1131,7 +1596,7 @@
           "used_memory_ids": [
             "ce1ffa76-b49e-5f9c-a8de-fea0eed17503"
           ],
-          "rationale": "Multiple active, advisory, actionable project context memories; direct_use the first."
+          "rationale": "Trusted actionable project context memory, direct use appropriate."
         },
         "outcome": "accepted_action",
         "selected_admission_action": "use_now",
@@ -1143,18 +1608,18 @@
         "arm_id": "recorded_policy_baseline",
         "group_id": "admission-dataset-export:positive-reviewer-handoff",
         "row_count": 34,
-        "prompt_char_count": 18430,
-        "request_char_count": 30113,
-        "completion_char_count": 241,
+        "prompt_char_count": 24176,
+        "request_char_count": 39736,
+        "completion_char_count": 252,
         "usage": {
-          "prompt_tokens": 6922,
-          "completion_tokens": 92,
-          "total_tokens": 7014,
+          "prompt_tokens": 9200,
+          "completion_tokens": 95,
+          "total_tokens": 9295,
           "prompt_tokens_details": {
             "cached_tokens": 0
           },
           "prompt_cache_hit_tokens": 0,
-          "prompt_cache_miss_tokens": 6922
+          "prompt_cache_miss_tokens": 9200
         },
         "decision": {
           "selected_memory_id": "9454f086-3d3c-5990-af57-94f06ac947c4",
@@ -1162,7 +1627,7 @@
           "used_memory_ids": [
             "9454f086-3d3c-5990-af57-94f06ac947c4"
           ],
-          "rationale": "Trusted actionable project context memory available for direct use."
+          "rationale": "Trusted actionable project context memory for positive-reviewer-handoff route."
         },
         "outcome": "accepted_action",
         "selected_admission_action": "use_now",
@@ -1174,18 +1639,18 @@
         "arm_id": "recorded_policy_baseline",
         "group_id": "admission-dataset-export:targeted-external-current-plan-asset",
         "row_count": 3,
-        "prompt_char_count": 3101,
-        "request_char_count": 5258,
-        "completion_char_count": 304,
+        "prompt_char_count": 3608,
+        "request_char_count": 6108,
+        "completion_char_count": 305,
         "usage": {
-          "prompt_tokens": 1172,
-          "completion_tokens": 91,
-          "total_tokens": 1263,
+          "prompt_tokens": 1373,
+          "completion_tokens": 93,
+          "total_tokens": 1466,
           "prompt_tokens_details": {
             "cached_tokens": 0
           },
           "prompt_cache_hit_tokens": 0,
-          "prompt_cache_miss_tokens": 1172
+          "prompt_cache_miss_tokens": 1373
         },
         "decision": {
           "selected_memory_id": "mem0:targeted-current:plan-asset:admission-dataset-aa4fce37",
@@ -1193,7 +1658,7 @@
           "used_memory_ids": [
             "mem0:targeted-current:plan-asset:admission-dataset-aa4fce37"
           ],
-          "rationale": "Trusted, actionable execution memory with current lifecycle; direct use appropriate."
+          "rationale": "Trusted, actionable execution memory with no prior issues; direct use is appropriate."
         },
         "outcome": "non_actionable_direct_attention",
         "selected_admission_action": "use_now",
@@ -1205,18 +1670,18 @@
         "arm_id": "recorded_policy_baseline",
         "group_id": "admission-dataset-export:targeted-external-current-project-settings",
         "row_count": 3,
-        "prompt_char_count": 3143,
-        "request_char_count": 5306,
+        "prompt_char_count": 3650,
+        "request_char_count": 6156,
         "completion_char_count": 316,
         "usage": {
-          "prompt_tokens": 1172,
+          "prompt_tokens": 1373,
           "completion_tokens": 91,
-          "total_tokens": 1263,
+          "total_tokens": 1464,
           "prompt_tokens_details": {
             "cached_tokens": 0
           },
           "prompt_cache_hit_tokens": 0,
-          "prompt_cache_miss_tokens": 1172
+          "prompt_cache_miss_tokens": 1373
         },
         "decision": {
           "selected_memory_id": "mem0:targeted-current:project-settings:admission-dataset-aa4fce37",
@@ -1236,18 +1701,18 @@
         "arm_id": "recorded_policy_baseline",
         "group_id": "admission-dataset-export:targeted-external-current-sdk-contract",
         "row_count": 3,
-        "prompt_char_count": 3115,
-        "request_char_count": 5274,
-        "completion_char_count": 281,
+        "prompt_char_count": 3622,
+        "request_char_count": 6124,
+        "completion_char_count": 308,
         "usage": {
-          "prompt_tokens": 1177,
-          "completion_tokens": 88,
-          "total_tokens": 1265,
+          "prompt_tokens": 1378,
+          "completion_tokens": 91,
+          "total_tokens": 1469,
           "prompt_tokens_details": {
             "cached_tokens": 0
           },
           "prompt_cache_hit_tokens": 0,
-          "prompt_cache_miss_tokens": 1177
+          "prompt_cache_miss_tokens": 1378
         },
         "decision": {
           "selected_memory_id": "mem0:targeted-current:sdk-contract:admission-dataset-aa4fce37",
@@ -1255,7 +1720,7 @@
           "used_memory_ids": [
             "mem0:targeted-current:sdk-contract:admission-dataset-aa4fce37"
           ],
-          "rationale": "Trusted, actionable execution memory; direct use allowed."
+          "rationale": "Trusted, actionable execution memory with current lifecycle; direct use appropriate."
         },
         "outcome": "non_actionable_direct_attention",
         "selected_admission_action": "use_now",
@@ -1267,18 +1732,18 @@
         "arm_id": "recorded_policy_baseline",
         "group_id": "admission-dataset-export:targeted-external-current-workflow-projection",
         "row_count": 3,
-        "prompt_char_count": 3164,
-        "request_char_count": 5330,
+        "prompt_char_count": 3671,
+        "request_char_count": 6180,
         "completion_char_count": 322,
         "usage": {
-          "prompt_tokens": 1180,
+          "prompt_tokens": 1381,
           "completion_tokens": 93,
-          "total_tokens": 1273,
+          "total_tokens": 1474,
           "prompt_tokens_details": {
             "cached_tokens": 0
           },
           "prompt_cache_hit_tokens": 0,
-          "prompt_cache_miss_tokens": 1180
+          "prompt_cache_miss_tokens": 1381
         },
         "decision": {
           "selected_memory_id": "mem0:targeted-current:workflow-projection:admission-dataset-aa4fce37",
@@ -1297,47 +1762,202 @@
     ]
   },
   "candidate_arm": {
-    "arm_id": "candidate_aionis_project_context_only",
-    "display_name": "Candidate policy: candidate_aionis_project_context_only",
-    "trial_count": 13,
-    "accepted_action_count": 4,
+    "arm_id": "candidate_project_context_closed_loop_inspect",
+    "display_name": "Candidate policy: candidate_project_context_closed_loop_inspect",
+    "trial_count": 18,
+    "accepted_action_count": 7,
     "hard_boundary_direct_use_count": 0,
     "negative_direct_risk_count": 4,
     "non_actionable_direct_attention_count": 0,
     "missed_actionable_memory_count": 0,
     "boundary_ignored_count": 0,
-    "accepted_action_rate": 0.3077,
+    "accepted_action_rate": 0.3889,
     "hard_boundary_direct_use_rate": 0,
-    "negative_direct_risk_rate": 0.3077,
+    "negative_direct_risk_rate": 0.2222,
     "non_actionable_direct_attention_rate": 0,
     "missed_actionable_memory_rate": 0,
     "boundary_ignored_rate": 0,
-    "request_char_total": 274089,
-    "completion_char_total": 3016,
-    "changed_action_count": 21,
+    "request_char_total": 382574,
+    "completion_char_total": 4358,
+    "changed_action_count": 25,
     "trials": [
       {
-        "arm_id": "candidate_aionis_project_context_only",
+        "arm_id": "candidate_project_context_closed_loop_inspect",
+        "group_id": "admission-dataset-export:closed-loop-prior-contradicted",
+        "row_count": 3,
+        "prompt_char_count": 3346,
+        "request_char_count": 5709,
+        "completion_char_count": 252,
+        "usage": {
+          "prompt_tokens": 1302,
+          "completion_tokens": 90,
+          "total_tokens": 1392,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 1302
+        },
+        "decision": {
+          "selected_memory_id": "b731580d-3566-5985-8332-9645e4ba988f",
+          "action": "inspect_memory",
+          "used_memory_ids": [
+            "b731580d-3566-5985-8332-9645e4ba988f"
+          ],
+          "rationale": "Memory has prior contradictions; inspect before use to verify reliability."
+        },
+        "outcome": "no_actionable_memory",
+        "selected_admission_action": "use_now",
+        "selected_outcome_label": "negative_use",
+        "positive_memory_available": false,
+        "changed_action_count": 2
+      },
+      {
+        "arm_id": "candidate_project_context_closed_loop_inspect",
+        "group_id": "admission-dataset-export:closed-loop-prior-contradicted-auth",
+        "row_count": 3,
+        "prompt_char_count": 3366,
+        "request_char_count": 5734,
+        "completion_char_count": 230,
+        "usage": {
+          "prompt_tokens": 1313,
+          "completion_tokens": 91,
+          "total_tokens": 1404,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 1313
+        },
+        "decision": {
+          "selected_memory_id": "f3f4bac0-8f97-5618-864b-7c719757c629",
+          "action": "inspect_memory",
+          "used_memory_ids": [
+            "f3f4bac0-8f97-5618-864b-7c719757c629"
+          ],
+          "rationale": "Memory has prior contradictions; inspect before use."
+        },
+        "outcome": "no_actionable_memory",
+        "selected_admission_action": "use_now",
+        "selected_outcome_label": "negative_use",
+        "positive_memory_available": false,
+        "changed_action_count": 2
+      },
+      {
+        "arm_id": "candidate_project_context_closed_loop_inspect",
+        "group_id": "admission-dataset-export:closed-loop-prior-supported",
+        "row_count": 2,
+        "prompt_char_count": 2667,
+        "request_char_count": 4610,
+        "completion_char_count": 260,
+        "usage": {
+          "prompt_tokens": 1045,
+          "completion_tokens": 96,
+          "total_tokens": 1141,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 1045
+        },
+        "decision": {
+          "selected_memory_id": "447ce61f-c8e6-5c9b-85be-b3e5689401ed",
+          "action": "direct_use",
+          "used_memory_ids": [
+            "447ce61f-c8e6-5c9b-85be-b3e5689401ed"
+          ],
+          "rationale": "Trusted project context memory, actionable, advisory authority, closed-loop supported."
+        },
+        "outcome": "accepted_action",
+        "selected_admission_action": "use_now",
+        "selected_outcome_label": "positive_use",
+        "positive_memory_available": true,
+        "changed_action_count": 0
+      },
+      {
+        "arm_id": "candidate_project_context_closed_loop_inspect",
+        "group_id": "admission-dataset-export:closed-loop-prior-supported-observability",
+        "row_count": 2,
+        "prompt_char_count": 2709,
+        "request_char_count": 4666,
+        "completion_char_count": 231,
+        "usage": {
+          "prompt_tokens": 1057,
+          "completion_tokens": 91,
+          "total_tokens": 1148,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 1057
+        },
+        "decision": {
+          "selected_memory_id": "398d46d8-5cf5-51c4-92ab-55facdc4751e",
+          "action": "direct_use",
+          "used_memory_ids": [
+            "398d46d8-5cf5-51c4-92ab-55facdc4751e"
+          ],
+          "rationale": "Trusted project context memory, actionable and supported."
+        },
+        "outcome": "accepted_action",
+        "selected_admission_action": "use_now",
+        "selected_outcome_label": "positive_use",
+        "positive_memory_available": true,
+        "changed_action_count": 0
+      },
+      {
+        "arm_id": "candidate_project_context_closed_loop_inspect",
+        "group_id": "admission-dataset-export:closed-loop-prior-supported-sdk",
+        "row_count": 2,
+        "prompt_char_count": 2679,
+        "request_char_count": 4626,
+        "completion_char_count": 256,
+        "usage": {
+          "prompt_tokens": 1049,
+          "completion_tokens": 91,
+          "total_tokens": 1140,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 1049
+        },
+        "decision": {
+          "selected_memory_id": "a4af16fa-c432-5422-b558-02970a6e4b93",
+          "action": "direct_use",
+          "used_memory_ids": [
+            "a4af16fa-c432-5422-b558-02970a6e4b93"
+          ],
+          "rationale": "Trusted project context memory, actionable, advisory authority, no contradictions."
+        },
+        "outcome": "accepted_action",
+        "selected_admission_action": "use_now",
+        "selected_outcome_label": "positive_use",
+        "positive_memory_available": true,
+        "changed_action_count": 0
+      },
+      {
+        "arm_id": "candidate_project_context_closed_loop_inspect",
         "group_id": "admission-dataset-export:external-rehydrate-raw-trace",
         "row_count": 51,
-        "prompt_char_count": 30277,
-        "request_char_count": 48903,
-        "completion_char_count": 202,
+        "prompt_char_count": 38904,
+        "request_char_count": 63353,
+        "completion_char_count": 208,
         "usage": {
-          "prompt_tokens": 10844,
+          "prompt_tokens": 14265,
           "completion_tokens": 59,
-          "total_tokens": 10903,
+          "total_tokens": 14324,
           "prompt_tokens_details": {
-            "cached_tokens": 10752
+            "cached_tokens": 0
           },
-          "prompt_cache_hit_tokens": 10752,
-          "prompt_cache_miss_tokens": 92
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 14265
         },
         "decision": {
           "selected_memory_id": null,
           "action": "no_action",
           "used_memory_ids": [],
-          "rationale": "No direct_use memories; inspect_before_use cannot drive action; do_not_use and rehydrate are blocked."
+          "rationale": "No direct_use memories; inspect_before_use not actionable; do_not_use blocked; rehydrate requires recovery."
         },
         "outcome": "no_actionable_memory",
         "selected_admission_action": null,
@@ -1346,27 +1966,58 @@
         "changed_action_count": 17
       },
       {
-        "arm_id": "candidate_aionis_project_context_only",
+        "arm_id": "candidate_project_context_closed_loop_inspect",
         "group_id": "admission-dataset-export:negative-attributed",
         "row_count": 34,
-        "prompt_char_count": 17723,
-        "request_char_count": 29141,
-        "completion_char_count": 236,
+        "prompt_char_count": 23477,
+        "request_char_count": 38780,
+        "completion_char_count": 241,
         "usage": {
-          "prompt_tokens": 6659,
+          "prompt_tokens": 8941,
           "completion_tokens": 88,
-          "total_tokens": 6747,
+          "total_tokens": 9029,
           "prompt_tokens_details": {
-            "cached_tokens": 6656
+            "cached_tokens": 0
           },
-          "prompt_cache_hit_tokens": 6656,
-          "prompt_cache_miss_tokens": 3
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 8941
         },
         "decision": {
           "selected_memory_id": "c43f1ecd-b41a-56d2-a226-08e06664463a",
           "action": "direct_use",
           "used_memory_ids": [
             "c43f1ecd-b41a-56d2-a226-08e06664463a"
+          ],
+          "rationale": "Trusted actionable project context memory available for direct use."
+        },
+        "outcome": "negative_direct_risk",
+        "selected_admission_action": "use_now",
+        "selected_outcome_label": "negative_use",
+        "positive_memory_available": false,
+        "changed_action_count": 0
+      },
+      {
+        "arm_id": "candidate_project_context_closed_loop_inspect",
+        "group_id": "admission-dataset-export:negative-migration-candidate",
+        "row_count": 34,
+        "prompt_char_count": 23792,
+        "request_char_count": 39104,
+        "completion_char_count": 236,
+        "usage": {
+          "prompt_tokens": 9014,
+          "completion_tokens": 92,
+          "total_tokens": 9106,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 9014
+        },
+        "decision": {
+          "selected_memory_id": "4e7be8c4-3787-542d-bab2-c05dcd773b45",
+          "action": "direct_use",
+          "used_memory_ids": [
+            "4e7be8c4-3787-542d-bab2-c05dcd773b45"
           ],
           "rationale": "Trusted actionable project context memory, direct use allowed."
         },
@@ -1377,52 +2028,21 @@
         "changed_action_count": 0
       },
       {
-        "arm_id": "candidate_aionis_project_context_only",
-        "group_id": "admission-dataset-export:negative-migration-candidate",
-        "row_count": 34,
-        "prompt_char_count": 18038,
-        "request_char_count": 29465,
-        "completion_char_count": 270,
-        "usage": {
-          "prompt_tokens": 6732,
-          "completion_tokens": 100,
-          "total_tokens": 6832,
-          "prompt_tokens_details": {
-            "cached_tokens": 6656
-          },
-          "prompt_cache_hit_tokens": 6656,
-          "prompt_cache_miss_tokens": 76
-        },
-        "decision": {
-          "selected_memory_id": "4e7be8c4-3787-542d-bab2-c05dcd773b45",
-          "action": "direct_use",
-          "used_memory_ids": [
-            "4e7be8c4-3787-542d-bab2-c05dcd773b45"
-          ],
-          "rationale": "Multiple active project-context memories; direct_use the first as it is actionable and advisory."
-        },
-        "outcome": "negative_direct_risk",
-        "selected_admission_action": "use_now",
-        "selected_outcome_label": "negative_use",
-        "positive_memory_available": false,
-        "changed_action_count": 0
-      },
-      {
-        "arm_id": "candidate_aionis_project_context_only",
+        "arm_id": "candidate_project_context_closed_loop_inspect",
         "group_id": "admission-dataset-export:negative-retry-loop",
         "row_count": 20,
-        "prompt_char_count": 10989,
-        "request_char_count": 18165,
-        "completion_char_count": 247,
+        "prompt_char_count": 14377,
+        "request_char_count": 23842,
+        "completion_char_count": 241,
         "usage": {
-          "prompt_tokens": 4175,
-          "completion_tokens": 93,
-          "total_tokens": 4268,
+          "prompt_tokens": 5519,
+          "completion_tokens": 91,
+          "total_tokens": 5610,
           "prompt_tokens_details": {
-            "cached_tokens": 4096
+            "cached_tokens": 0
           },
-          "prompt_cache_hit_tokens": 4096,
-          "prompt_cache_miss_tokens": 79
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 5519
         },
         "decision": {
           "selected_memory_id": "4382a51f-41bd-5208-9d07-65b98f806513",
@@ -1430,7 +2050,7 @@
           "used_memory_ids": [
             "4382a51f-41bd-5208-9d07-65b98f806513"
           ],
-          "rationale": "Multiple active project-context memories available; direct_use the first."
+          "rationale": "Trusted actionable project-context memory available for direct use."
         },
         "outcome": "negative_direct_risk",
         "selected_admission_action": "use_now",
@@ -1439,21 +2059,21 @@
         "changed_action_count": 0
       },
       {
-        "arm_id": "candidate_aionis_project_context_only",
+        "arm_id": "candidate_project_context_closed_loop_inspect",
         "group_id": "admission-dataset-export:negative-test-stabilization",
         "row_count": 34,
-        "prompt_char_count": 18003,
-        "request_char_count": 29429,
-        "completion_char_count": 270,
+        "prompt_char_count": 23757,
+        "request_char_count": 39068,
+        "completion_char_count": 240,
         "usage": {
-          "prompt_tokens": 6735,
-          "completion_tokens": 102,
-          "total_tokens": 6837,
+          "prompt_tokens": 9017,
+          "completion_tokens": 94,
+          "total_tokens": 9111,
           "prompt_tokens_details": {
-            "cached_tokens": 6656
+            "cached_tokens": 0
           },
-          "prompt_cache_hit_tokens": 6656,
-          "prompt_cache_miss_tokens": 79
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 9017
         },
         "decision": {
           "selected_memory_id": "bbb6b578-561a-5762-8a7c-6ddc2a183c38",
@@ -1461,7 +2081,7 @@
           "used_memory_ids": [
             "bbb6b578-561a-5762-8a7c-6ddc2a183c38"
           ],
-          "rationale": "Multiple active project-context memories; direct_use the first as it is actionable and advisory."
+          "rationale": "Trusted actionable project context memory, direct use appropriate."
         },
         "outcome": "negative_direct_risk",
         "selected_admission_action": "use_now",
@@ -1470,27 +2090,89 @@
         "changed_action_count": 0
       },
       {
-        "arm_id": "candidate_aionis_project_context_only",
+        "arm_id": "candidate_project_context_closed_loop_inspect",
         "group_id": "admission-dataset-export:positive-cache-boundary",
         "row_count": 20,
-        "prompt_char_count": 11373,
-        "request_char_count": 18713,
-        "completion_char_count": 241,
+        "prompt_char_count": 14761,
+        "request_char_count": 24390,
+        "completion_char_count": 236,
         "usage": {
-          "prompt_tokens": 4314,
-          "completion_tokens": 100,
-          "total_tokens": 4414,
+          "prompt_tokens": 5658,
+          "completion_tokens": 101,
+          "total_tokens": 5759,
           "prompt_tokens_details": {
-            "cached_tokens": 4224
+            "cached_tokens": 0
           },
-          "prompt_cache_hit_tokens": 4224,
-          "prompt_cache_miss_tokens": 90
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 5658
         },
         "decision": {
           "selected_memory_id": "b63d5dac-ea2b-5e58-958c-8e43abc4b9a5",
           "action": "direct_use",
           "used_memory_ids": [
             "b63d5dac-ea2b-5e58-958c-8e43abc4b9a5"
+          ],
+          "rationale": "Trusted actionable project-context memory, direct use allowed."
+        },
+        "outcome": "accepted_action",
+        "selected_admission_action": "use_now",
+        "selected_outcome_label": "positive_use",
+        "positive_memory_available": true,
+        "changed_action_count": 0
+      },
+      {
+        "arm_id": "candidate_project_context_closed_loop_inspect",
+        "group_id": "admission-dataset-export:positive-feature-flag",
+        "row_count": 34,
+        "prompt_char_count": 24057,
+        "request_char_count": 39634,
+        "completion_char_count": 240,
+        "usage": {
+          "prompt_tokens": 9214,
+          "completion_tokens": 90,
+          "total_tokens": 9304,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 9214
+        },
+        "decision": {
+          "selected_memory_id": "58b37112-39b1-5583-bbcb-d9aaba8765e5",
+          "action": "direct_use",
+          "used_memory_ids": [
+            "58b37112-39b1-5583-bbcb-d9aaba8765e5"
+          ],
+          "rationale": "Trusted actionable project context memory, direct use appropriate."
+        },
+        "outcome": "accepted_action",
+        "selected_admission_action": "use_now",
+        "selected_outcome_label": "positive_use",
+        "positive_memory_available": true,
+        "changed_action_count": 0
+      },
+      {
+        "arm_id": "candidate_project_context_closed_loop_inspect",
+        "group_id": "admission-dataset-export:positive-observability-route",
+        "row_count": 20,
+        "prompt_char_count": 14866,
+        "request_char_count": 24500,
+        "completion_char_count": 241,
+        "usage": {
+          "prompt_tokens": 5680,
+          "completion_tokens": 90,
+          "total_tokens": 5770,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 5680
+        },
+        "decision": {
+          "selected_memory_id": "ce1ffa76-b49e-5f9c-a8de-fea0eed17503",
+          "action": "direct_use",
+          "used_memory_ids": [
+            "ce1ffa76-b49e-5f9c-a8de-fea0eed17503"
           ],
           "rationale": "Trusted actionable project context memory available for direct use."
         },
@@ -1501,83 +2183,21 @@
         "changed_action_count": 0
       },
       {
-        "arm_id": "candidate_aionis_project_context_only",
-        "group_id": "admission-dataset-export:positive-feature-flag",
-        "row_count": 34,
-        "prompt_char_count": 18303,
-        "request_char_count": 29995,
-        "completion_char_count": 270,
-        "usage": {
-          "prompt_tokens": 6932,
-          "completion_tokens": 98,
-          "total_tokens": 7030,
-          "prompt_tokens_details": {
-            "cached_tokens": 6912
-          },
-          "prompt_cache_hit_tokens": 6912,
-          "prompt_cache_miss_tokens": 20
-        },
-        "decision": {
-          "selected_memory_id": "58b37112-39b1-5583-bbcb-d9aaba8765e5",
-          "action": "direct_use",
-          "used_memory_ids": [
-            "58b37112-39b1-5583-bbcb-d9aaba8765e5"
-          ],
-          "rationale": "Multiple active project-context memories; direct_use the first as it is actionable and advisory."
-        },
-        "outcome": "accepted_action",
-        "selected_admission_action": "use_now",
-        "selected_outcome_label": "positive_use",
-        "positive_memory_available": true,
-        "changed_action_count": 0
-      },
-      {
-        "arm_id": "candidate_aionis_project_context_only",
-        "group_id": "admission-dataset-export:positive-observability-route",
-        "row_count": 20,
-        "prompt_char_count": 11478,
-        "request_char_count": 18823,
-        "completion_char_count": 236,
-        "usage": {
-          "prompt_tokens": 4336,
-          "completion_tokens": 90,
-          "total_tokens": 4426,
-          "prompt_tokens_details": {
-            "cached_tokens": 0
-          },
-          "prompt_cache_hit_tokens": 0,
-          "prompt_cache_miss_tokens": 4336
-        },
-        "decision": {
-          "selected_memory_id": "ce1ffa76-b49e-5f9c-a8de-fea0eed17503",
-          "action": "direct_use",
-          "used_memory_ids": [
-            "ce1ffa76-b49e-5f9c-a8de-fea0eed17503"
-          ],
-          "rationale": "Trusted actionable project context memory, direct use allowed."
-        },
-        "outcome": "accepted_action",
-        "selected_admission_action": "use_now",
-        "selected_outcome_label": "positive_use",
-        "positive_memory_available": true,
-        "changed_action_count": 0
-      },
-      {
-        "arm_id": "candidate_aionis_project_context_only",
+        "arm_id": "candidate_project_context_closed_loop_inspect",
         "group_id": "admission-dataset-export:positive-reviewer-handoff",
         "row_count": 34,
-        "prompt_char_count": 18443,
-        "request_char_count": 30139,
-        "completion_char_count": 274,
+        "prompt_char_count": 24197,
+        "request_char_count": 39778,
+        "completion_char_count": 241,
         "usage": {
-          "prompt_tokens": 6924,
-          "completion_tokens": 99,
-          "total_tokens": 7023,
+          "prompt_tokens": 9206,
+          "completion_tokens": 92,
+          "total_tokens": 9298,
           "prompt_tokens_details": {
             "cached_tokens": 0
           },
           "prompt_cache_hit_tokens": 0,
-          "prompt_cache_miss_tokens": 6924
+          "prompt_cache_miss_tokens": 9206
         },
         "decision": {
           "selected_memory_id": "9454f086-3d3c-5990-af57-94f06ac947c4",
@@ -1585,7 +2205,7 @@
           "used_memory_ids": [
             "9454f086-3d3c-5990-af57-94f06ac947c4"
           ],
-          "rationale": "Multiple active project-context memories with direct_use flag; selecting first for immediate action."
+          "rationale": "Trusted actionable project context memory available for direct use."
         },
         "outcome": "accepted_action",
         "selected_admission_action": "use_now",
@@ -1594,27 +2214,27 @@
         "changed_action_count": 0
       },
       {
-        "arm_id": "candidate_aionis_project_context_only",
+        "arm_id": "candidate_project_context_closed_loop_inspect",
         "group_id": "admission-dataset-export:targeted-external-current-plan-asset",
         "row_count": 3,
-        "prompt_char_count": 3125,
-        "request_char_count": 5295,
+        "prompt_char_count": 3640,
+        "request_char_count": 6161,
         "completion_char_count": 191,
         "usage": {
-          "prompt_tokens": 1178,
-          "completion_tokens": 57,
-          "total_tokens": 1235,
+          "prompt_tokens": 1383,
+          "completion_tokens": 56,
+          "total_tokens": 1439,
           "prompt_tokens_details": {
             "cached_tokens": 0
           },
           "prompt_cache_hit_tokens": 0,
-          "prompt_cache_miss_tokens": 1178
+          "prompt_cache_miss_tokens": 1383
         },
         "decision": {
           "selected_memory_id": null,
           "action": "no_action",
           "used_memory_ids": [],
-          "rationale": "No direct_use memory; inspect_before_use not actionable; do_not_use and rehydrate blocked."
+          "rationale": "No direct-use memory; inspect_before_use not actionable; do_not_use and rehydrate blocked."
         },
         "outcome": "no_actionable_memory",
         "selected_admission_action": null,
@@ -1623,27 +2243,27 @@
         "changed_action_count": 1
       },
       {
-        "arm_id": "candidate_aionis_project_context_only",
+        "arm_id": "candidate_project_context_closed_loop_inspect",
         "group_id": "admission-dataset-export:targeted-external-current-project-settings",
         "row_count": 3,
-        "prompt_char_count": 3167,
-        "request_char_count": 5343,
-        "completion_char_count": 200,
+        "prompt_char_count": 3682,
+        "request_char_count": 6209,
+        "completion_char_count": 191,
         "usage": {
-          "prompt_tokens": 1178,
-          "completion_tokens": 58,
-          "total_tokens": 1236,
+          "prompt_tokens": 1383,
+          "completion_tokens": 56,
+          "total_tokens": 1439,
           "prompt_tokens_details": {
             "cached_tokens": 0
           },
           "prompt_cache_hit_tokens": 0,
-          "prompt_cache_miss_tokens": 1178
+          "prompt_cache_miss_tokens": 1383
         },
         "decision": {
           "selected_memory_id": null,
           "action": "no_action",
           "used_memory_ids": [],
-          "rationale": "No direct-use memory; inspect_before_use cannot drive action; do_not_use and rehydrate are blocked."
+          "rationale": "No direct-use memory; inspect_before_use not actionable; do_not_use and rehydrate blocked."
         },
         "outcome": "no_actionable_memory",
         "selected_admission_action": null,
@@ -1652,60 +2272,64 @@
         "changed_action_count": 1
       },
       {
-        "arm_id": "candidate_aionis_project_context_only",
+        "arm_id": "candidate_project_context_closed_loop_inspect",
         "group_id": "admission-dataset-export:targeted-external-current-sdk-contract",
         "row_count": 3,
-        "prompt_char_count": 3139,
-        "request_char_count": 5311,
-        "completion_char_count": 203,
+        "prompt_char_count": 3654,
+        "request_char_count": 6177,
+        "completion_char_count": 315,
         "usage": {
-          "prompt_tokens": 1183,
-          "completion_tokens": 59,
-          "total_tokens": 1242,
+          "prompt_tokens": 1388,
+          "completion_tokens": 98,
+          "total_tokens": 1486,
           "prompt_tokens_details": {
             "cached_tokens": 0
           },
           "prompt_cache_hit_tokens": 0,
-          "prompt_cache_miss_tokens": 1183
+          "prompt_cache_miss_tokens": 1388
         },
         "decision": {
-          "selected_memory_id": null,
-          "action": "no_action",
-          "used_memory_ids": [],
-          "rationale": "No direct_use memory; inspect_before_use cannot drive action; do_not_use and rehydrate are prohibited."
+          "selected_memory_id": "mem0:targeted-current:sdk-contract:admission-dataset-aa4fce37",
+          "action": "inspect_memory",
+          "used_memory_ids": [
+            "mem0:targeted-current:sdk-contract:admission-dataset-aa4fce37"
+          ],
+          "rationale": "Only inspect_before_use memory available; cannot direct_use. Inspect to gather context."
         },
         "outcome": "no_actionable_memory",
-        "selected_admission_action": null,
-        "selected_outcome_label": null,
+        "selected_admission_action": "inspect_before_use",
+        "selected_outcome_label": "unused_exposed",
         "positive_memory_available": false,
         "changed_action_count": 1
       },
       {
-        "arm_id": "candidate_aionis_project_context_only",
+        "arm_id": "candidate_project_context_closed_loop_inspect",
         "group_id": "admission-dataset-export:targeted-external-current-workflow-projection",
         "row_count": 3,
-        "prompt_char_count": 3188,
-        "request_char_count": 5367,
-        "completion_char_count": 176,
+        "prompt_char_count": 3703,
+        "request_char_count": 6233,
+        "completion_char_count": 308,
         "usage": {
-          "prompt_tokens": 1186,
-          "completion_tokens": 50,
-          "total_tokens": 1236,
+          "prompt_tokens": 1391,
+          "completion_tokens": 93,
+          "total_tokens": 1484,
           "prompt_tokens_details": {
             "cached_tokens": 0
           },
           "prompt_cache_hit_tokens": 0,
-          "prompt_cache_miss_tokens": 1186
+          "prompt_cache_miss_tokens": 1391
         },
         "decision": {
-          "selected_memory_id": null,
-          "action": "no_action",
-          "used_memory_ids": [],
-          "rationale": "No direct_use memory available; inspect_before_use cannot be used directly."
+          "selected_memory_id": "mem0:targeted-current:workflow-projection:admission-dataset-aa4fce37",
+          "action": "inspect_memory",
+          "used_memory_ids": [
+            "mem0:targeted-current:workflow-projection:admission-dataset-aa4fce37"
+          ],
+          "rationale": "Only inspect_before_use memory available; inspect before deciding."
         },
         "outcome": "no_actionable_memory",
-        "selected_admission_action": null,
-        "selected_outcome_label": null,
+        "selected_admission_action": "inspect_before_use",
+        "selected_outcome_label": "unused_exposed",
         "positive_memory_available": false,
         "changed_action_count": 1
       }
@@ -1725,5 +2349,5 @@
     "Prompt packs exclude outcome labels, feedback outcomes, attribution strength, prompt text, and raw memory payloads.",
     "Scoring uses admission dataset labels after the LLM decision; negative_use remains weak run-level supervision."
   ],
-  "summary": "Real Agent rerun candidate_aionis_project_context_only: accepted_action_rate=0.3077, hard_boundary_direct_use_rate=0, negative_direct_risk_rate=0.3077, non_actionable_direct_attention=0 vs recorded 5."
+  "summary": "Real Agent rerun candidate_project_context_closed_loop_inspect: accepted_action_rate=0.3889, hard_boundary_direct_use_rate=0, negative_direct_risk_rate=0.2222, non_actionable_direct_attention=0 vs recorded 5."
 }

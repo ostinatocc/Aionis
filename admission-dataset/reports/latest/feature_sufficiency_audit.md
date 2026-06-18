@@ -6,9 +6,11 @@ Found 1 positive/negative direct-use feature collision signature(s); negative_di
 
 | Metric | Value |
 |---|---:|
-| rows | 411 |
-| use_now rows | 191 |
-| label-safe signatures | 2 |
+| rows | 436 |
+| use_now rows | 216 |
+| prior-state signal rows | 15 |
+| repeated-negative posture rows | 5 |
+| label-safe signatures | 5 |
 | mixed-outcome signatures | 1 |
 | positive/negative collision signatures | 1 |
 
@@ -22,7 +24,7 @@ Found 1 positive/negative direct-use feature collision signature(s); negative_di
 
 | Rows | Positive | Negative | Unused | Outcomes | Sample task signatures |
 |---:|---:|---:|---:|---|---|
-| 162 | 81 | 81 | 0 | `negative_use`, `positive_use` | `admission-dataset-export:positive-supported`, `admission-dataset-export:negative-attributed`, `admission-dataset-export:positive-feature-flag`, `admission-dataset-export:negative-migration-candidate`, `admission-dataset-export:positive-reviewer-handoff`, `admission-dataset-export:negative-test-stabilization`, `admission-dataset-export:positive-cache-boundary`, `admission-dataset-export:negative-secret-rotation` |
+| 172 | 86 | 86 | 0 | `negative_use`, `positive_use` | `admission-dataset-export:positive-supported`, `admission-dataset-export:negative-attributed`, `admission-dataset-export:positive-feature-flag`, `admission-dataset-export:negative-migration-candidate`, `admission-dataset-export:positive-reviewer-handoff`, `admission-dataset-export:negative-test-stabilization`, `admission-dataset-export:positive-cache-boundary`, `admission-dataset-export:negative-secret-rotation` |
 
 ## Signature Features
 
@@ -40,6 +42,11 @@ Found 1 positive/negative direct-use feature collision signature(s); negative_di
 - `actionable_history_used`
 - `reason_codes`
 - `evidence_count`
+- `prior_supported_use_count`
+- `prior_contradicted_use_count`
+- `prior_rehydrate_requested_count`
+- `closed_loop_effect_state`
+- `repeated_negative_posture`
 
 ## Excluded Fields
 
@@ -63,7 +70,7 @@ Found 1 positive/negative direct-use feature collision signature(s); negative_di
 ## Recommendations
 
 - Do not add task-name or title based rules to reduce negative_direct_risk; that would overfit the dataset.
-- Collect a next-decision prior-state feature such as prior_supported_use_count, prior_contradicted_use_count, closed_loop_effect_state, or repeated_negative_posture.
+- Increase closed-loop-prior coverage across fresh task signatures; prior-state signal is present but still too sparse to break the dominant no_prior collision.
 - Keep current candidate policies at manual-review/eval level until the added feature is observed on fresh holdout groups.
 
 ## Caveats
