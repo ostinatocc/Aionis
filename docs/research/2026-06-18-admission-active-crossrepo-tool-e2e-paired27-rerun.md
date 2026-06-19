@@ -2,7 +2,7 @@
 
 Date: 2026-06-18
 
-Status: product evidence report, wrong-write regression resolved; route-adherence and attention-scope issues remain
+Status: product evidence report, wrong-write regression resolved; attention split completed; one buried route-adherence issue remains
 
 ## Purpose
 
@@ -30,6 +30,8 @@ Reports:
   `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/admission-tool-e2e-crossrepo-active-paired27-rerun-execmem-2026-06-18/summary.md`
 - active rerun after file-choice normalizer fix:
   `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/admission-tool-e2e-crossrepo-active-paired27-rerun-normalizer-2026-06-18/summary.md`
+- active rerun after attention-scope rescore:
+  `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/admission-tool-e2e-crossrepo-active-paired27-rerun-normalizer-2026-06-18/summary.md`
 
 ## Paired Result
 
@@ -56,8 +58,35 @@ The `wrong-attention` column is not directly comparable between the execution
 memory patch run and the normalizer-fix run. The normalizer now preserves
 `evidence_source` for edit/create decisions, which exposes cases where the Agent
 correctly writes the active target while using the retired path as reference
-evidence. Those records should be split into `reference_attention` vs
-`direction_attention` before they are used as a rollout blocker.
+evidence.
+
+## Attention-Scope Rescore
+
+The normalizer-fix report was rescored with attention split into:
+
+- `direction_attention`: retired path selected as route / primary action;
+- `reference_attention`: retired path used only as source evidence while
+  writing the active route;
+- `other_attention`: retired path mentioned in context / reason without route
+  or source-evidence role.
+
+| Metric | Active after normalizer fix |
+|---|---:|
+| Paired records | 27 |
+| Wrong-write records | 0 |
+| Wrong-attention records | 13 |
+| Direction-attention records | 1 |
+| Reference-attention records | 12 |
+| Other-attention records | 0 |
+| Accepted-direction records | 26 |
+| Action-completion records | 26 |
+| Terminal-inspect records | 1 |
+
+By level, all tidy / separated / implicit attention hits are reference-only.
+The single direction-attention hit is the buried terminal-inspect case described
+below. This means the remaining rollout blocker is not broad safety leakage. It
+is one route-adherence failure where the Agent abandoned the accepted active
+route under buried context.
 
 ## Normalizer Artifact Resolved
 
@@ -101,22 +130,18 @@ route-adherence failure under buried context.
 - The prior active projection wrong-write regression is fixed in the paired27
   rerun after the harness normalizer correction.
 - The candidate should remain out of default active Runtime mode.
-- The broad rollout gate stays blocked until route-adherence and attention-scope
-  semantics are separated and retested.
+- The broad rollout gate stays blocked by one buried route-adherence /
+  direction-attention failure, not by the reference-only attention hits.
 - Do not add a task-specific rule for `noop_kv.rs` or this repository.
 - Feed the remaining buried terminal-inspect case into the admission dataset
   and route-adherence analysis as counter-evidence.
 
 ## Next Work
 
-1. Split the E2E attention metric into:
-   - reference attention: retired path used as source evidence while writing the
-     active route;
-   - direction attention: retired path selected as the route or primary action.
-2. Inspect the buried terminal-inspect case to determine whether the guide
+1. Inspect the buried terminal-inspect case to determine whether the guide
    omitted active-route evidence or the Agent ignored it.
-3. If a general fix is justified, keep it at the product-contract level:
+2. If a general fix is justified, keep it at the product-contract level:
    improve route-adherence wording for buried contexts without encoding
    repository-specific file names or task solutions.
-4. Rerun paired27 after the attention metric split before changing promotion
+3. Rerun paired27 after any route-adherence change before changing promotion
    status.
