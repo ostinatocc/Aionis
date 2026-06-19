@@ -137,14 +137,27 @@ the Aionis arm is present. It must not include full prompt payloads.
 
 ### Exit Standard
 
-Phase 0 is successful only if the report can truthfully state:
+Phase 0 is successful only if the report can truthfully state a concrete
+Aionis-owned advantage under hard episode cuts. The original target statement
+was:
 
 > In hard episode cuts with failed execution history, unmanaged memory transfer
 > reuses wrong history more often than Aionis, while Aionis preserves accepted
 > direction and keeps context cost controlled.
 
-If the evidence does not support that statement, do not proceed to learned
-admission policy work. Bucket the failure first.
+The 2026-06-19 five-arm external-agent rerun refined that claim. It did not
+show that Aionis uniquely prevents wrong-branch writes: `full_history`,
+`bm25_retrieval`, `mem0`, and `aionis` all reached 0% wrong writes in that run.
+It did show a stronger and more stable product claim:
+
+> Aionis preserves the accepted execution route with full-history-level safety
+> while using far less prompt context than full-history transfer or generic
+> memory retrieval.
+
+Treat route-safe context compression as the current Phase 0 evidence win. If a
+future run does not preserve accepted direction, does not reduce context cost,
+or leaks failed/stale branch targets into direct-use context, bucket the failure
+before changing Runtime behavior.
 
 ## Phase 1: Admission Judgment Dataset
 
@@ -282,4 +295,3 @@ until admission quality is already credible.
 5. Produce one five-arm report before changing Runtime policy.
 6. Separately fix low-risk correctness issues, such as unifying claim-ledger
    transaction handling with the existing SQLite transaction runner.
-
