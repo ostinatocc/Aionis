@@ -2171,6 +2171,8 @@ test("full-power product guide merges structured execution control memory into p
 
     const taskSignature = "structured-execution-control-guide";
     const workflowSignature = "workflow:structured-execution-control-guide";
+    const tenantId = "structured-control-tenant";
+    const scope = "structured-control-scope";
     const executionSlots = (
       id: string,
       lifecycle_state: string,
@@ -2208,12 +2210,31 @@ test("full-power product guide merges structured execution control memory into p
       method: "POST",
       url: "/v1/memory/write",
       payload: {
-        tenant_id: "default",
-        scope: "default",
+        tenant_id: tenantId,
+        scope,
         actor: "local-user",
         input_text: "Structured full-power execution control evidence.",
         auto_embed: false,
         nodes: [
+          {
+            client_id: "structured-control-passed-workflow",
+            type: "evidence",
+            tier: "warm",
+            memory_lane: "private",
+            owner_agent_id: "control-agent",
+            owner_team_id: "control-team",
+            title: "STRUCTURED_CONTROL_PASSED_WORKFLOW",
+            text_summary: "STRUCTURED_CONTROL_PASSED_WORKFLOW is the accepted workflow route and should be reused directly.",
+            slots: executionSlots("passed", "active", "passed", {
+              summary_kind: "workflow_anchor",
+              execution_kind: "workflow_anchor",
+              execution_outcome_role: "passed_solution",
+              anchor_kind: "workflow",
+              file_path: "src/passed.ts",
+              target_files: ["src/passed.ts", "src/passed-helper.ts"],
+              next_action: "Continue STRUCTURED_CONTROL_PASSED_WORKFLOW through src/passed.ts.",
+            }),
+          },
           {
             client_id: "structured-control-failed",
             type: "evidence",
@@ -2278,17 +2299,50 @@ test("full-power product guide merges structured execution control memory into p
     assert.equal(write.statusCode, 200, write.body);
     const writtenNodes = arrayValue(write.json().nodes, "write.nodes");
     const idByClientId = new Map(writtenNodes.map((entry) => [entry.client_id, entry.id]));
+    const passedWorkflowNodeId = String(idByClientId.get("structured-control-passed-workflow"));
     const failedNodeId = String(idByClientId.get("structured-control-failed"));
     const contestedNodeId = String(idByClientId.get("structured-control-contested"));
     const rehydrateNodeId = String(idByClientId.get("structured-control-rehydrate"));
     const otherNodeId = String(idByClientId.get("structured-control-other-task"));
 
+    const noiseWrite = await app.inject({
+      method: "POST",
+      url: "/v1/memory/write",
+      payload: {
+        tenant_id: tenantId,
+        scope,
+        actor: "local-user",
+        input_text: "Structured full-power execution control recency noise.",
+        auto_embed: false,
+        nodes: Array.from({ length: 48 }, (_, index) => ({
+          client_id: `structured-control-background-${index}`,
+          type: "evidence",
+          tier: "warm",
+          memory_lane: "private",
+          owner_agent_id: "control-agent",
+          owner_team_id: "control-team",
+          title: `STRUCTURED_CONTROL_BACKGROUND_${index}`,
+          text_summary: `STRUCTURED_CONTROL_BACKGROUND_${index} is unrelated workflow volume and must not replace accepted route evidence.`,
+          slots: executionSlots(`background-${index}`, "active", "passed", {
+            execution_kind: "workflow_anchor",
+            summary_kind: "workflow_anchor",
+            anchor_kind: "workflow",
+            file_path: `internal/noise/${index}.txt`,
+            target_files: [`internal/noise/${index}.txt`],
+            next_action: `Background noise ${index}; do not treat as accepted route.`,
+          }),
+        })),
+        edges: [],
+      },
+    });
+    assert.equal(noiseWrite.statusCode, 200, noiseWrite.body);
+
     const guide = await app.inject({
       method: "POST",
       url: "/v1/guide",
       payload: {
-        tenant_id: "default",
-        scope: "default",
+        tenant_id: tenantId,
+        scope,
         mode: "full_power",
         query_text: "Continue the structured execution control task without repeating bad branches; request exact raw failed trace detail if a payload pointer is available.",
         agent_role: "worker",
@@ -2306,15 +2360,20 @@ test("full-power product guide merges structured execution control memory into p
     const guideBody = guide.json();
     const agentContext = guideBody.agent_context;
     const memoryPacket = guideBody.memory_packet;
+    assert.equal(guideBody.scope, scope);
+    assert.equal(memoryPacket.scope, scope);
     assert.equal(guideBody.source_map.internal_surfaces_used.includes("full_power_structured_execution_recall"), true);
+    assert.equal(agentContext.use_now_memory_ids.includes(passedWorkflowNodeId), true);
     assert.equal(agentContext.do_not_use_memory_ids.includes(failedNodeId), true);
     assert.equal(agentContext.inspect_before_use_memory_ids.includes(contestedNodeId), true);
     assert.equal(agentContext.rehydrate_hints.some((hint: Record<string, unknown>) => hint.memory_id === rehydrateNodeId), true);
+    assert.equal(agentContext.use_now.some((entry: string) => entry.includes("STRUCTURED_CONTROL_PASSED_WORKFLOW")), true);
     assert.equal(agentContext.do_not_use.some((entry: string) => entry.includes("STRUCTURED_CONTROL_FAILED_BRANCH")), true);
     assert.equal(agentContext.inspect_before_use.some((entry: string) => entry.includes("STRUCTURED_CONTROL_CONTESTED_BRANCH")), true);
     assert.equal(agentContext.prompt_text.includes("STRUCTURED_CONTROL_OTHER_TASK"), false);
     const packetMemoryIds = arrayValue(memoryPacket.relevant_memories, "memory_packet.relevant_memories")
       .map((entry) => entry.memory_id);
+    assert.equal(packetMemoryIds.includes(passedWorkflowNodeId), true);
     assert.equal(packetMemoryIds.includes(failedNodeId), true);
     assert.equal(packetMemoryIds.includes(contestedNodeId), true);
     assert.equal(packetMemoryIds.includes(rehydrateNodeId), true);

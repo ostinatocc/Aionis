@@ -142,6 +142,8 @@ type StructuredSignal = {
 const STAGE1_RECALL_TYPES = ["event", "topic", "concept", "entity", "rule", "procedure", "self_model"] as const;
 const SQLITE_IN_CHUNK_SIZE = 800;
 const DEFAULT_RECALL_ALLOWED_TIERS_FOR_RECENT = ["hot", "warm"] as const;
+const STRUCTURED_RECALL_PREFETCH_FLOOR = 256;
+const STRUCTURED_RECALL_PREFETCH_MULTIPLIER = 32;
 
 export type LiteRecallStore = {
   createRecallAccess(): RecallStoreAccess;
@@ -389,6 +391,14 @@ function structuredScore(row: LiteRecallStructuredRow, matchedFields: string[], 
     + Math.min(0.08, Math.max(0, row.salience) * 0.08)
     + Math.min(0.06, Math.max(0, row.confidence) * 0.06);
   return Math.max(0, Math.min(1, raw));
+}
+
+function structuredRecallPrefetchLimit(limit: number): number {
+  return Math.max(
+    STRUCTURED_RECALL_PREFETCH_FLOOR,
+    Math.max(0, limit) * STRUCTURED_RECALL_PREFETCH_MULTIPLIER,
+    Math.max(0, limit),
+  );
 }
 
 function cosineDistance(a: number[], b: number[]): number {
@@ -1109,7 +1119,7 @@ export function createLiteRecallStore(
         n.created_at DESC,
         n.id DESC
       LIMIT ?
-    `).all(...values, Math.max(params.limit * 10, params.limit)) as LiteRecallStructuredRow[];
+    `).all(...values, structuredRecallPrefetchLimit(params.limit)) as LiteRecallStructuredRow[];
 
     const out: RecallCandidate[] = [];
     for (const row of rows) {

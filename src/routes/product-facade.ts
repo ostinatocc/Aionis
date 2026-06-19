@@ -47,6 +47,7 @@ import {
 } from "../memory/product-output-contract.js";
 import { applyUnusedExposureLearningControlLite } from "../memory/lifecycle-lite.js";
 import { AionisClaimWriteSchema } from "../memory/claim-ledger-contract.js";
+import { resolveTenantScope } from "../memory/tenant.js";
 import type { ClaimLedgerAccess, ClaimLedgerRow } from "../store/claim-ledger-access.js";
 import type { LiteExecutionNativeNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
 import type { AuthPrincipal } from "../util/auth.js";
@@ -186,6 +187,9 @@ const ProductGuideRequest = z.object({
   execution_tree_v1: z.unknown().optional(),
   include_packets: z.boolean().optional(),
 }).strict();
+
+const PRODUCT_GUIDE_STRUCTURED_EXECUTION_PREFETCH_LIMIT = 256;
+const PRODUCT_GUIDE_STRUCTURED_EXECUTION_PACKET_LIMIT = 16;
 
 const ProductMemoryAdmissionRequest = z.object({
   tenant_id: z.string().trim().min(1).optional(),
@@ -880,6 +884,33 @@ function structuredRecallExecutionStatus(row: LiteExecutionNativeNodeRow): strin
   );
 }
 
+function structuredRecallExecutionOutcomeRole(row: LiteExecutionNativeNodeRow): string | null {
+  const executionNative = row.execution_native as Record<string, unknown>;
+  return firstStringValue(
+    executionNative.execution_outcome_role,
+    executionNative.outcome_role,
+    objectValue(row.slots.execution_observation_v1)?.execution_outcome_role,
+    objectValue(row.slots.execution_observation_v1)?.outcome_role,
+    objectValue(row.slots.execution_result_summary)?.execution_outcome_role,
+  );
+}
+
+function productGuideStructuredReusableWorkflowAnchor(row: LiteExecutionNativeNodeRow): boolean {
+  const executionNative = row.execution_native as Record<string, unknown>;
+  const outcomeRole = structuredRecallExecutionOutcomeRole(row);
+  const trust = firstStringValue(executionNative.contract_trust, row.slots.contract_trust);
+  const layer = firstStringValue(executionNative.compression_layer, row.slots.compression_layer);
+  const summaryKind = firstStringValue(executionNative.summary_kind, row.slots.summary_kind);
+  const targetFiles = Array.isArray(executionNative.target_files) ? executionNative.target_files : [];
+  const hasTargetSurface = targetFiles.some((entry) => typeof entry === "string" && entry.trim().length > 0)
+    || !!firstStringValue(executionNative.file_path);
+  return summaryKind === "workflow_anchor"
+    && outcomeRole === "passed_solution"
+    && hasTargetSurface
+    && (trust === "authoritative" || trust === "advisory")
+    && (layer === "L2" || layer === "L3" || layer === "L4" || layer === "L5" || layer === null);
+}
+
 function productGuideStructuredControlNode(row: LiteExecutionNativeNodeRow): boolean {
   const executionNative = row.execution_native as Record<string, unknown>;
   const lifecycle = firstStringValue(row.slots.lifecycle_state);
@@ -889,6 +920,7 @@ function productGuideStructuredControlNode(row: LiteExecutionNativeNodeRow): boo
   const trust = firstStringValue(executionNative.contract_trust, row.slots.contract_trust);
   const layer = firstStringValue(executionNative.compression_layer, row.slots.compression_layer);
   const summaryKind = firstStringValue(executionNative.summary_kind, row.slots.summary_kind);
+  const reusableWorkflowAnchor = productGuideStructuredReusableWorkflowAnchor(row);
   const currentStateKind =
     summaryKind === "current_state"
     || summaryKind === "current_active_path"
@@ -910,6 +942,7 @@ function productGuideStructuredControlNode(row: LiteExecutionNativeNodeRow): boo
     || !!rehydrationMode
     || tier === "cold"
     || tier === "archive"
+    || reusableWorkflowAnchor
     || activeStateCarrier;
 }
 
@@ -918,12 +951,17 @@ function productGuideStructuredControlSlots(row: LiteExecutionNativeNodeRow): Re
   const lifecycle = firstStringValue(slots.lifecycle_state);
   const status = structuredRecallExecutionStatus(row);
   const rehydrationMode = structuredRecallRehydrationMode(row);
+  const reusableWorkflowAnchor = productGuideStructuredReusableWorkflowAnchor(row);
   const executionNative: Record<string, unknown> = objectValue(slots.execution_native_v1)
     ? { ...(objectValue(slots.execution_native_v1) as Record<string, unknown>) }
     : { ...row.execution_native };
 
   if (!firstStringValue(executionNative.rehydration_default_mode) && rehydrationMode) {
     executionNative.rehydration_default_mode = rehydrationMode;
+  }
+  if (reusableWorkflowAnchor) {
+    executionNative.summary_kind = "current_state";
+    executionNative.guide_projection_kind = "passed_workflow_anchor_active_route";
   }
   slots.execution_native_v1 = executionNative;
 
@@ -1112,7 +1150,8 @@ async function buildProductGuideStructuredExecutionPacket(args: {
   liteWriteStore: LiteWriteStore;
   parsed: z.infer<typeof ProductGuideRequest>;
   tenant_id: string;
-  scope: string;
+  public_scope: string;
+  store_scope: string;
 }): Promise<AionisMemoryPacket | null> {
   const { taskSignature, workflowSignature } = productGuideExecutionSignatures(args.parsed);
   if (!taskSignature && !workflowSignature) return null;
@@ -1120,21 +1159,21 @@ async function buildProductGuideStructuredExecutionPacket(args: {
   const batches = await Promise.all([
     taskSignature
       ? args.liteWriteStore.findExecutionNativeNodes({
-          scope: args.scope,
+          scope: args.store_scope,
           taskSignature,
           consumerAgentId: args.parsed.consumer_agent_id ?? null,
           consumerTeamId: args.parsed.consumer_team_id ?? null,
-          limit: 24,
+          limit: PRODUCT_GUIDE_STRUCTURED_EXECUTION_PREFETCH_LIMIT,
           offset: 0,
         })
       : Promise.resolve({ rows: [] as LiteExecutionNativeNodeRow[], has_more: false }),
     workflowSignature
       ? args.liteWriteStore.findExecutionNativeNodes({
-          scope: args.scope,
+          scope: args.store_scope,
           workflowSignature,
           consumerAgentId: args.parsed.consumer_agent_id ?? null,
           consumerTeamId: args.parsed.consumer_team_id ?? null,
-          limit: 24,
+          limit: PRODUCT_GUIDE_STRUCTURED_EXECUTION_PREFETCH_LIMIT,
           offset: 0,
         })
       : Promise.resolve({ rows: [] as LiteExecutionNativeNodeRow[], has_more: false }),
@@ -1145,7 +1184,7 @@ async function buildProductGuideStructuredExecutionPacket(args: {
   }
   const rows = Array.from(rowsById.values())
     .filter(productGuideStructuredControlNode)
-    .slice(0, 16);
+    .slice(0, PRODUCT_GUIDE_STRUCTURED_EXECUTION_PACKET_LIMIT);
   if (rows.length === 0) return null;
 
   const nodes: BuildAionisMemoryPacketArgs["nodes"] = rows.map((row) => ({
@@ -1173,7 +1212,7 @@ async function buildProductGuideStructuredExecutionPacket(args: {
 
   return buildAionisMemoryPacket({
     tenant_id: args.tenant_id,
-    scope: args.scope,
+    scope: args.public_scope,
     actor: {
       consumer_agent_id: args.parsed.consumer_agent_id ?? null,
       consumer_team_id: args.parsed.consumer_team_id ?? null,
@@ -2842,6 +2881,10 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     const agentRole = productGuideAgentRole(parsed);
     const tenantId = String(guideBody.tenant_id ?? parsed.tenant_id ?? env.MEMORY_TENANT_ID);
     const scope = String(guideBody.scope ?? parsed.scope ?? env.MEMORY_SCOPE);
+    const tenancy = resolveTenantScope(
+      { tenant_id: tenantId, scope },
+      { defaultTenantId: env.MEMORY_TENANT_ID, defaultScope: env.MEMORY_SCOPE },
+    );
     const fullPowerRequested = productGuideFullPowerRequested(parsed);
     const agentContextMode = productGuideAgentContextMode(parsed);
     let fullPowerStructuredMemoryMerged = false;
@@ -2850,7 +2893,8 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
         liteWriteStore,
         parsed,
         tenant_id: tenantId,
-        scope,
+        public_scope: scope,
+        store_scope: tenancy.scope_key,
       });
       const mergedPacket = mergeAionisMemoryPackets(memoryPacket, structuredExecutionPacket);
       memoryPacket = mergedPacket.packet;

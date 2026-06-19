@@ -32,7 +32,9 @@ function workflowSlots(args: {
   failureMode?: string | null;
   verificationSignature?: string | null;
   acceptanceCheckSignature?: string | null;
+  executionOutcomeRole?: string | null;
 }): Record<string, unknown> {
+  const executionOutcomeRole = args.executionOutcomeRole ?? "passed_solution";
   return {
     summary_kind: "workflow_anchor",
     task_family: "family:structured-runtime",
@@ -57,7 +59,7 @@ function workflowSlots(args: {
       failure_mode: args.failureMode ?? "legacy-route-regression",
       verification_signature: args.verificationSignature ?? "unit:adapter-boundary",
       acceptance_check_signature: args.acceptanceCheckSignature ?? "accept:adapter-boundary",
-      execution_outcome_role: "passed_solution",
+      execution_outcome_role: executionOutcomeRole,
     },
     anchor_v1: {
       schema_version: "anchor_v1",
@@ -80,6 +82,8 @@ async function insertProcedure(
     slots: Record<string, unknown>;
     embeddingVector?: number[] | null;
     commitId: string;
+    salience?: number;
+    confidence?: number;
   },
 ): Promise<void> {
   await store.insertNode({
@@ -101,9 +105,9 @@ async function insertProcedure(
     ownerTeamId: null,
     embeddingStatus: args.embeddingVector ? "ready" : "pending",
     embeddingLastError: null,
-    salience: 0.9,
+    salience: args.salience ?? 0.9,
     importance: 0.5,
-    confidence: 0.9,
+    confidence: args.confidence ?? 0.9,
     redactionVersion: 0,
     commitId: args.commitId,
   });
@@ -191,6 +195,97 @@ test("structured recall finds execution-native signatures without ready embeddin
     assert.equal(executionNative[0]?.sources?.[0]?.kind, "execution_native");
     assert.ok(executionNative[0]?.sources?.[0]?.matched_fields?.includes("failure_mode"));
     assert.ok(executionNative[0]?.sources?.[0]?.matched_fields?.includes("verification_signature"));
+  } finally {
+    await recallStore.close();
+    await writeStore.close();
+  }
+});
+
+test("execution-native workflow recall keeps accepted route evidence under noisy workflow history", async () => {
+  const dbPath = tmpDbPath("workflow-noise");
+  const writeStore = createLiteWriteStore(dbPath);
+  const recallStore = createLiteRecallStore(dbPath);
+  const scope = "structured/workflow-noise";
+  const workflowSignature = "workflow:buried-route";
+  try {
+    await writeStore.withTx(async () => {
+      const commitId = await insertCommit(writeStore, scope, "workflow-noise");
+      await insertProcedure(writeStore, {
+        id: "accepted-route-evidence",
+        scope,
+        title: "Accepted route recovery",
+        textSummary: "Verifier accepted the continuation route through vc/raw.rs and backend wiring.",
+        slots: workflowSlots({
+          taskSignature: "task:buried-route:accepted",
+          workflowSignature,
+          targetFiles: [
+            "turbopack/crates/turbo-tasks/src/vc/raw.rs",
+            "turbopack/crates/turbo-tasks/src/vc/mod.rs",
+            "turbopack/crates/turbo-tasks/src/backend.rs",
+          ],
+          verificationSignature: "verifier:accepted-route",
+          acceptanceCheckSignature: "accept:turbo-vc-route",
+          executionOutcomeRole: "passed_solution",
+        }),
+        commitId,
+      });
+
+      for (let index = 0; index < 180; index += 1) {
+        await insertProcedure(writeStore, {
+          id: `workflow-noise-${String(index).padStart(3, "0")}`,
+          scope,
+          title: `Workflow background note ${index}`,
+          textSummary: "Background event from the same workflow; not an accepted continuation route.",
+          slots: workflowSlots({
+            taskSignature: `task:buried-route:noise:${index}`,
+            workflowSignature,
+            targetFiles: [`internal/e2e-noise/next.js/note-${index}.md`],
+            failureMode: null,
+            verificationSignature: null,
+            acceptanceCheckSignature: null,
+            executionOutcomeRole: "unknown",
+          }),
+          commitId,
+          salience: 0.95,
+          confidence: 0.95,
+        });
+      }
+
+      await insertProcedure(writeStore, {
+        id: "late-legacy-reference",
+        scope,
+        title: "Legacy route reference",
+        textSummary: "Old raw_vc.rs route may be readable as background but is not the accepted branch.",
+        slots: workflowSlots({
+          taskSignature: "task:buried-route:legacy-reference",
+          workflowSignature,
+          targetFiles: ["turbopack/crates/turbo-tasks/src/raw_vc.rs"],
+          failureMode: "legacy-route",
+          verificationSignature: null,
+          acceptanceCheckSignature: null,
+          executionOutcomeRole: "unknown",
+        }),
+        commitId,
+        salience: 0.95,
+        confidence: 0.95,
+      });
+    });
+
+    const candidates = await recallStore.createRecallAccess().stage1ExecutionNativeCandidates({
+      scope,
+      limit: 10,
+      workflowSignature,
+      consumerAgentId: null,
+      consumerTeamId: null,
+    });
+    const ids = candidates.map((candidate) => candidate.id);
+    assert.ok(ids.includes("accepted-route-evidence"), "accepted workflow route evidence should survive workflow noise prefetch");
+    assert.ok(ids.includes("late-legacy-reference"), "late legacy references may still be inspected as structured candidates");
+    assert.ok(
+      ids.indexOf("accepted-route-evidence") < ids.indexOf("late-legacy-reference"),
+      "accepted route evidence should outrank same-workflow legacy references",
+    );
+    assert.equal(candidates[0]?.id, "accepted-route-evidence");
   } finally {
     await recallStore.close();
     await writeStore.close();
