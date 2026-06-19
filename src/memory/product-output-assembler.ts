@@ -1577,6 +1577,24 @@ function pushUniqueRouteTarget<T extends { target: string }>(
   rows.push({ ...row, target });
 }
 
+function routeTargetMatchesExplicitTarget(target: string, explicitTargets: Set<string>): boolean {
+  if (explicitTargets.size === 0) return true;
+  const normalizedTarget = normalizePathTarget(target)?.toLowerCase();
+  if (!normalizedTarget) return false;
+  for (const explicit of explicitTargets) {
+    const normalizedExplicit = normalizePathTarget(explicit)?.toLowerCase();
+    if (!normalizedExplicit) continue;
+    if (normalizedTarget === normalizedExplicit) return true;
+    if (normalizedTarget.startsWith(`${normalizedExplicit}/`)) return true;
+    if (normalizedExplicit.startsWith(`${normalizedTarget}/`)) return true;
+    if (
+      normalizedExplicit.includes("/")
+      && normalizedTarget.includes(`/${normalizedExplicit}/`)
+    ) return true;
+  }
+  return false;
+}
+
 function buildAgentRouteContract(args: {
   targetFiles: string[];
   commandPosture: AionisAgentContext["command_posture"];
@@ -1599,7 +1617,7 @@ function buildAgentRouteContract(args: {
   );
   const routeEntries = shouldContinueEntries.filter((entry) =>
     explicitTargetSet.size === 0
-    || entry.target_files.some((target) => explicitTargetSet.has(target.trim().toLowerCase()))
+    || entry.target_files.some((target) => routeTargetMatchesExplicitTarget(target, explicitTargetSet))
   );
 
   for (const entry of routeEntries) {
@@ -2440,6 +2458,14 @@ function workflowUseNowLine(text: string): boolean {
   return /^\s*Workflow\s+(trusted|advisory):/i.test(text);
 }
 
+function backgroundWorkflowUseNowLine(text: string): boolean {
+  return workflowUseNowLine(text)
+    && (
+      /\bbackground\s+repository\s+activity\b/i.test(text)
+      || /\bunrelated\s+continuation\s+context\b/i.test(text)
+    );
+}
+
 function executionEvidenceUseNowLine(text: string): boolean {
   return /^\s*(Passed solution|Current active path):/i.test(text);
 }
@@ -3206,6 +3232,7 @@ function compileAgentContextSurfaces(args: {
     && !memoryContractInspectIds.has(entry.memory_id)
   );
   const directUseMemoryIdSet = new Set(directUseMemoryEntries.map((entry) => entry.memory_id));
+  const deniedNormalizedPathTargets = new Set(compactStrings([...deniedPathTargets].map(normalizePathTarget)));
   const optionalContextEntries = usableEntries.filter((entry) =>
     !directUseMemoryIdSet.has(entry.memory_id)
     && !trustedWorkflowConflictInspectIds.has(entry.memory_id)
@@ -3221,6 +3248,14 @@ function compileAgentContextSurfaces(args: {
   );
   const memoryUseNow = compactStrings(directUseMemoryEntries.map((entry) => memoryEntryUseNowLine(entry, deniedPathTargets)));
   const memoryUseNowPathTargets = compactStrings(memoryUseNow.flatMap(extractPathTargets));
+  const memoryUseNowStructuredTargets = compactStrings(
+    directUseMemoryEntries
+      .flatMap(memoryEntryPathTargets)
+      .filter((target) => {
+        const normalized = normalizePathTarget(target);
+        return !normalized || !deniedNormalizedPathTargets.has(normalized);
+      }),
+  );
   const memoryUseNowPathTargetSet = new Set(memoryUseNowPathTargets);
 
   const movedToInspect: string[] = [];
@@ -3279,6 +3314,7 @@ function compileAgentContextSurfaces(args: {
       return false;
     }
     if (executionEvidenceUseNowLine(entry)) return true;
+    if (backgroundWorkflowUseNowLine(entry)) return false;
     if (workflowUseNowLine(entry)) return directUseMemoryEntries.length > 0 || args.rawTargetFiles.length > 0;
     return directUseMemoryEntries.length > 0 || args.rawTargetFiles.length > 0 || args.memoryEntries.length === 0;
   });
@@ -3287,8 +3323,9 @@ function compileAgentContextSurfaces(args: {
     !deniedPathTargets.has(target) || memoryUseNowPathTargetSet.has(target)
   );
   const targetFiles = hasUsableMemory || rawTargetFiles.length > 0
-    ? compactStrings([
+      ? compactStrings([
         ...rawTargetFiles,
+        ...memoryUseNowStructuredTargets,
         ...memoryUseNowPathTargets,
       ]).slice(0, 8)
     : [];

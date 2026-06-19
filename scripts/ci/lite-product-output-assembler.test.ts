@@ -807,6 +807,39 @@ test("product agent context contract renderer preserves execution state surfaces
 });
 
 test("product agent route contract does not promote background execution events to active route", () => {
+  const guidePacket = buildAionisGuidePacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    task: {
+      task_id: "task-1",
+      run_id: "run-1",
+      task_signature: "checkout-contract-renderer",
+      task_family: "coding",
+    },
+    planning: planningSummaryFixture(),
+    source_map: {
+      routes_used: ["/v1/memory/context/assemble"],
+      internal_surfaces_used: ["planning_summary"],
+    },
+  });
+  const noisyGuidePacket = {
+    ...guidePacket,
+    recovered_state: {
+      ...guidePacket.recovered_state,
+      target_files: ["src/checkout/adapter.ts"],
+    },
+    guide_brief: {
+      ...guidePacket.guide_brief,
+      recommended_posture: "reuse_supported_history" as const,
+      authority: "trusted" as const,
+      use_now: [
+        "Workflow trusted: Background repository activity 57",
+        "Workflow trusted: Background repository activity 58 command: background inspection Unrelated continuation context item.",
+      ],
+      inspect_before_use: [],
+      do_not_use: [],
+    },
+  };
   const memoryPacket = buildAionisMemoryPacket({
     tenant_id: "tenant-local",
     scope: "repo-a",
@@ -878,6 +911,7 @@ test("product agent route contract does not promote background execution events 
     tenant_id: "tenant-local",
     scope: "repo-a",
     memory_packet: memoryPacket,
+    guide_packet: noisyGuidePacket,
   });
 
   assert.equal(context.use_now_memory_ids.includes("mem-background-event"), false);
@@ -910,6 +944,104 @@ test("product agent route contract does not promote background execution events 
     ),
     false,
   );
+});
+
+test("product agent route contract expands coarse recovered target to concrete active execution files", () => {
+  const guidePacket = buildAionisGuidePacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    task: {
+      task_id: "task-1",
+      run_id: "run-1",
+      task_signature: "next-well-known-split",
+      task_family: "coding",
+    },
+    planning: planningSummaryFixture(),
+    source_map: {
+      routes_used: ["/v1/memory/context/assemble"],
+      internal_surfaces_used: ["planning_summary"],
+    },
+  });
+  const coarseGuidePacket = {
+    ...guidePacket,
+    recovered_state: {
+      ...guidePacket.recovered_state,
+      target_files: ["src/analyzer"],
+    },
+    guide_brief: {
+      ...guidePacket.guide_brief,
+      recommended_posture: "reuse_supported_history" as const,
+      authority: "trusted" as const,
+      use_now: [
+        "Workflow trusted: Recovered to accepted branch: Continue the replacement route for src/analyzer mod.",
+      ],
+      inspect_before_use: [],
+      do_not_use: [],
+    },
+  };
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "Continue the accepted src/analyzer module split.",
+    },
+    nodes: [
+      {
+        id: "mem-next-accepted-route",
+        type: "procedure",
+        title: "Recovered to accepted branch: Continue the replacement route for src/analyzer mod.",
+        text_summary: "Current valid state: continue through analyzer/mod.rs plus the well_known module split.",
+        tier: "hot",
+        slots: {
+          memory_kind: "execution_memory",
+          lifecycle_state: "active",
+          compression_layer: "L2",
+          contract_trust: "authoritative",
+          execution_native_v1: {
+            schema_version: "execution_native_v1",
+            execution_kind: "workflow_anchor",
+            summary_kind: "current_state",
+            compression_layer: "L2",
+            contract_trust: "authoritative",
+            task_signature: "next-well-known-split",
+            workflow_signature: "next-well-known-split:accepted",
+            anchor_kind: "execution",
+            anchor_level: "L2",
+            transition_kind: "resume_current_state",
+            target_files: [
+              "turbopack/crates/turbopack-ecmascript/src/analyzer/mod.rs",
+              "turbopack/crates/turbopack-ecmascript/src/analyzer/well_known/kinds.rs",
+              "turbopack/crates/turbopack-ecmascript/src/analyzer/well_known/mod.rs",
+            ],
+          },
+        },
+        confidence: 0.96,
+        salience: 0.94,
+      },
+    ],
+  });
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    guide_packet: coarseGuidePacket,
+  });
+
+  assert.deepEqual(context.target_files, [
+    "src/analyzer",
+    "turbopack/crates/turbopack-ecmascript/src/analyzer/mod.rs",
+    "turbopack/crates/turbopack-ecmascript/src/analyzer/well_known/kinds.rs",
+    "turbopack/crates/turbopack-ecmascript/src/analyzer/well_known/mod.rs",
+  ]);
+  assert.deepEqual(context.route_contract.active_targets.map((entry) => entry.target), [
+    "turbopack/crates/turbopack-ecmascript/src/analyzer/mod.rs",
+    "turbopack/crates/turbopack-ecmascript/src/analyzer/well_known/kinds.rs",
+    "turbopack/crates/turbopack-ecmascript/src/analyzer/well_known/mod.rs",
+  ]);
+  assert.ok(context.prompt_text.includes("active_targets="));
+  assert.equal(context.route_contract.active_targets.some((entry) => entry.target.endsWith("well_known.rs")), false);
 });
 
 test("product agent context keeps explicit rehydrate hints out of use and inspect surfaces", () => {
