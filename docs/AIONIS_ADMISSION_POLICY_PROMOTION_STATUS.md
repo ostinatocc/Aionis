@@ -16,14 +16,17 @@ the default Runtime path.
 | Current status | `eligible_for_isolated_active_gray_only_blocked_for_broad_rollout` |
 | Default Runtime status | `not_default_active` |
 | External backend status | `shadow_only` |
-| Full tool-executing Agent E2E status | `crossrepo_paired27_regressed` |
+| Full tool-executing Agent E2E status | `crossrepo_paired27_wrong_write_resolved_attention_scope_open` |
 
 The selected candidate is a closed-loop admission policy. Its current evidence
 supports isolated active gray testing on the `closed-loop-prior-fresh-2` and
 `closed-loop-prior-fresh` internal Runtime guide profiles. Two small
 tool-executing external Agent pilots also passed on two Vite base trap families,
 but the first paired cross-repository tool E2E regressed on Next.js/Turbopack
-trap families. This does not
+trap families. A follow-up code patch recovered the prompt-facing route
+contract, and a file-choice normalizer fix resolved the apparent residual
+wrong-write as a harness artifact. One buried route-adherence failure and a
+broader attention-scope metric issue remain. This does not
 authorize:
 
 - default active mode;
@@ -48,14 +51,18 @@ authorize:
 | Tool-executing Agent E2E pilot | `docs/research/2026-06-18-admission-active-tool-executing-agent-e2e.md` | Active mode preserved 0% wrong writes, 0% wrong attention, 100% accepted direction, and 100% action completion on one base trap across four hygiene levels. |
 | Second tool-executing Agent E2E pilot | `docs/research/2026-06-18-admission-active-tool-executing-agent-e2e-second-base.md` | Active mode preserved the same hard gates on a second base trap family, including a missing active target continuation case. |
 | Cross-repository tool-executing Agent E2E paired27 | `docs/research/2026-06-18-admission-active-crossrepo-tool-e2e-paired27.md` | Active mode regressed on the paired cross-repository set: wrong writes increased from 2 / 27 to 7 / 27, accepted direction dropped from 25 / 27 to 17 / 27, and total tokens increased slightly. |
+| Cross-repository tool-executing Agent E2E paired27 rerun | `docs/research/2026-06-18-admission-active-crossrepo-tool-e2e-paired27-rerun.md` | The execution-memory direct-use patch recovered most of the regression: wrong writes dropped from 7 / 27 to 1 / 27, accepted direction rose from 17 / 27 to 26 / 27, and action completion reached 27 / 27. |
+| Cross-repository paired27 rerun after file-choice normalizer fix | `docs/research/2026-06-18-admission-active-crossrepo-tool-e2e-paired27-rerun.md` | Wrong writes dropped to 0 / 27 and the prior residual separated-context case was confirmed as a harness normalization artifact. One buried route-adherence failure remains, and attention-scope metrics now expose reference evidence hits that must be separated from direction adoption. |
 
 Follow-up inspection found the paired27 regression root cause: the active
 projection over-downgraded Aionis `execution_memory` accepted-continuation
 entries because the candidate direct-use path only allowed `project_context`.
 The code patch now preserves direct use for Aionis `execution_memory` unless
 closed-loop counter-signal evidence exists. This is a correction to the active
-projection, not a promotion. The full tool-executing Agent E2E status remains
-`crossrepo_paired27_regressed` until the same paired27 set is rerun and passes.
+projection, not a promotion. The paired27 rerun after the file-choice normalizer
+fix shows the wrong-write regression is resolved, but one buried
+route-adherence failure remains and the attention metric still conflates
+reference evidence with direction adoption; broad rollout stays blocked.
 
 ## Gate Results
 
@@ -210,19 +217,24 @@ Next.js buried record because of a harness/worktree checkout failure, so the
 valid comparison uses the 27 trap IDs that completed in off mode and reruns the
 same paired IDs in active mode.
 
-| Metric | Policy off | Policy active |
-|---|---:|---:|
-| Paired records | 27 | 27 |
-| Wrong-write records | 2 | 7 |
-| Wrong-attention records | 2 | 7 |
-| Accepted-direction records | 25 | 17 |
-| Action-completion records | 26 | 25 |
-| Report-conflict records | 0 | 2 |
-| Total tokens | 388,590 | 396,433 |
+| Metric | Policy off | Active before patch | Active after execution-memory patch | Active after normalizer fix |
+|---|---:|---:|---:|---:|
+| Paired records | 27 | 27 | 27 | 27 |
+| Wrong-write records | 2 | 7 | 1 | 0 |
+| Wrong-attention records | 2 | 7 | 1 | 13 |
+| Accepted-direction records | 25 | 17 | 26 | 26 |
+| Action-completion records | 26 | 25 | 27 | 26 |
+| Report-conflict records | 0 | 2 | 0 | 0 |
+| Terminal-inspect records | 1 | 0 | 0 | 1 |
+| Total tokens | 388,590 | 396,433 | 388,563 | 386,660 |
 
-This is a negative promotion gate. The regression is concentrated in
-Next.js/Turbopack trap families; the earlier Vite pilots remain valid but are
-not broad enough for default activation.
+The original active run was a negative promotion gate. The execution-memory
+patch fixed the prompt-facing route-contract regression. The file-choice
+normalizer fix then cleared the apparent residual wrong-write by preserving safe
+non-candidate create/restore paths. Broad rollout is still blocked because the
+latest run has one buried route-adherence failure and because the
+wrong-attention metric now includes reference evidence hits that must be split
+from direction adoption before it can serve as a hard gate.
 
 ## Required Gates Before Default Active
 
@@ -235,15 +247,15 @@ closed:
    passed.
 2. A real tool-executing Agent E2E shows no completion regression and no
    hard-boundary regression across more than one base trap family. As of
-   2026-06-18, two Vite-family base trap pilots passed, but the paired
-   cross-repository run regressed on Next.js/Turbopack. This gate is blocked.
+   2026-06-18, two Vite-family base trap pilots passed, and the paired
+   cross-repository rerun after the normalizer fix has `0 / 27` wrong writes.
+   This gate remains blocked by one buried route-adherence failure and unresolved
+   attention-scope semantics.
 3. External backend candidates have task-level completion evidence, not only
    admission-row shadow evidence.
-4. Protocol compatibility is documented for the chosen real-Agent model.
-   `deepseek-chat` returned strict JSON in the current rerun. The attempted
-   `deepseek-v4-flash` run returned only `reasoning_content` and hit the
-   completion limit, so it is not currently suitable for this strict JSON rerun
-   without protocol handling work.
+4. Protocol compatibility is documented for the chosen real-Agent model. The
+   current paired27 rerun used `deepseek-v4-flash` with strict JSON parsing plus
+   `reasoning_content` fallback in the file-choice harness.
 5. The policy has a rollback plan and an operator-visible record in the Flight
    Recorder / admission reports.
 
