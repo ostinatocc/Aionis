@@ -1,11 +1,13 @@
 # External Agent E2E Five-Arm Full Run
 
-Date: 2026-06-19
+Date: 2026-06-20
 
-Latest stable run ID: `phase2-gradient-five-arm-route-contract-rerun-2026-06-19`
+Latest stable run ID:
+`phase2-gradient-five-arm-glm52-exec-evidence-policy-combined-2026-06-20`
 
-This document records the current 40-record, five-arm external-agent evidence
-baseline after the route-contract target projection fix in commit `bc1f081`.
+This document records the 40-record, five-arm external-agent evidence baseline:
+the DeepSeek route-contract target projection run after commit `bc1f081`, plus
+the GLM executable-evidence policy rerun after commit `202f89c`.
 
 Reports:
 
@@ -22,16 +24,34 @@ Second-model rerun:
 - Machine summary: `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/phase2-gradient-five-arm-glm52-json-no-think-2026-06-19/summary.json`
 - Per-trap JSONL: `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/phase2-gradient-five-arm-glm52-json-no-think-2026-06-19/phase2-gradient-results.jsonl`
 
+Executable-evidence GLM rerun:
+
+- Combined run ID:
+  `phase2-gradient-five-arm-glm52-exec-evidence-policy-combined-2026-06-20`
+- Model: `glm-5.2`
+- Provider endpoint: Volcano Ark OpenAI-compatible coding endpoint
+- Composition:
+  - non-Playwright rows from
+    `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/phase2-gradient-five-arm-glm52-exec-evidence-policy-2026-06-20`
+  - complete Playwright rerun rows from
+    `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/phase2-gradient-five-arm-glm52-exec-evidence-policy-playwright-2026-06-20`
+- Combined summary:
+  `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/phase2-gradient-five-arm-glm52-exec-evidence-policy-combined-2026-06-20/summary.md`
+- Machine summary:
+  `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/phase2-gradient-five-arm-glm52-exec-evidence-policy-combined-2026-06-20/summary.json`
+- Combined JSONL:
+  `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/phase2-gradient-five-arm-glm52-exec-evidence-policy-combined-2026-06-20/combined-results.jsonl`
+
 Previous pre-fix run:
 
 - Run ID: `phase2-gradient-five-arm-scopekey-fixed-2026-06-19`
 - Summary: `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/phase2-gradient-five-arm-scopekey-fixed-2026-06-19/summary.md`
 - Machine summary: `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/phase2-gradient-five-arm-scopekey-fixed-2026-06-19/summary.json`
 
-## Setup
+## DeepSeek Route-Contract Setup
 
-The latest run used the full 40-record phase-2 gradient manifest across five
-arms:
+The DeepSeek route-contract run used the full 40-record phase-2 gradient
+manifest across five arms:
 
 - `no_memory`
 - `full_history`
@@ -65,7 +85,7 @@ Evaluation boundary:
   avoids wrong branch attention/write, and controls prompt-token cost under
   hard episode cuts.
 
-## Latest Headline Results
+## DeepSeek Route-Contract Headline Results
 
 | Arm | Runs | Wrong write | Wrong attention | Accepted direction | Prompt tokens | Completion tokens |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -132,6 +152,66 @@ This is useful product evidence because it separates two layers:
 - Route safety: Aionis stays on the accepted route with the shortest context.
 - Executable action sufficiency: some models still need stronger rehydrate or
   patch evidence to act immediately.
+
+## GLM-5.2 Executable-Evidence Policy Rerun
+
+The 2026-06-20 GLM rerun used the same 40-record manifest and five arms, but
+with the executable-evidence route policy and the agent configured to continue
+after rehydrate when the accepted route and concrete patch evidence are
+consistent.
+
+The first full run stopped after 33 appended records when the local Runtime was
+no longer listening during the Playwright segment. The Playwright subset was
+rerun separately after restarting Runtime, then the report was composed as:
+
+- `32` non-Playwright rows from the first run
+- `8` complete Playwright rows from the Playwright rerun
+
+This composition is explicit in the combined report. The composed report should
+be read as the current GLM executable-evidence result; the interrupted raw run
+should not be used directly for final metrics.
+
+| Arm | Runs | Wrong write | Wrong attention | Accepted direction | Action completion | Prompt tokens | Completion tokens |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `no_memory` | 40 | 20% | 100% | 2.5% | 20% | 497,365 | 13,729 |
+| `full_history` | 40 | 0% | 0% | 100% | 100% | 1,923,735 | 16,694 |
+| `bm25_retrieval` | 40 | 0% | 0% | 100% | 100% | 702,308 | 15,956 |
+| `mem0` | 40 | 0% | 0% | 97.5% | 100% | 1,303,033 | 16,154 |
+| `aionis` | 40 | 0% | 0% | 100% | 100% | 617,609 | 16,948 |
+
+Compared with the previous GLM rerun, Aionis changed from route-safe but
+over-conservative to executable:
+
+- wrong write stayed at `0%`;
+- wrong attention stayed at `0%`;
+- accepted direction stayed at `100%`;
+- action completion improved from `2.5%` to `100%`.
+
+This is not an Aionis-only improvement claim. In this run, `full_history`,
+`bm25_retrieval`, and `mem0` also reached `100%` action completion. The fair
+interpretation is:
+
+> Under the executable-evidence / rehydrate-continue setting, Aionis reaches the
+> same task-action completion as full-history and retrieval baselines while
+> preserving 0% wrong attention and using substantially less context than
+> `full_history` and `mem0`.
+
+Prompt-token reduction for Aionis in this GLM rerun:
+
+- 67.9% lower than `full_history`
+- 12.1% lower than `bm25_retrieval`
+- 52.6% lower than `mem0`
+
+Total-token reduction for Aionis:
+
+- 67.3% lower than `full_history`
+- 11.7% lower than `bm25_retrieval`
+- 51.9% lower than `mem0`
+
+The tradeoff is also clear: Aionis used more prompt tokens than the previous
+GLM run because it exposed stronger executable evidence, but that extra
+evidence converted GLM from conservative route acceptance into concrete
+create/edit actions.
 
 ## Buried Level
 
@@ -218,6 +298,13 @@ Also supported:
 > Aionis can carry route state through hard episode cuts without exposing failed
 > or stale branch targets as direct action context.
 
+Also supported by the 2026-06-20 GLM executable-evidence rerun:
+
+> Aionis can make route-safe compact context executable for a conservative model
+> when rehydrate results contain concrete patch evidence and the prompt contract
+> tells the agent to continue consistent accepted-route work rather than report
+> conflict.
+
 Not supported by this run:
 
 > Aionis uniquely prevents wrong-branch writes.
@@ -228,11 +315,15 @@ prevention; it is full-history-level route safety at much lower context cost.
 
 ## Next Checks
 
-1. Repeat the second-model run with one more non-DeepSeek model or seed to
-   quantify how much action completion depends on model conservatism.
-2. Re-run Mem0 with its optional NLP dependencies installed before making
+1. Repeat the executable-evidence run with DeepSeek under the same
+   rehydrate-continue contract to separate Runtime contract effects from
+   model-specific behavior.
+2. Harden the Phase 2 runner so interrupted reports cannot leave partial
+   one-arm Playwright summaries outside the appended JSONL without an explicit
+   failure row.
+3. Re-run Mem0 with its optional NLP dependencies installed before making
    public comparative claims about Mem0 itself.
-3. Add another real repository family to test whether the route-safe compression
+4. Add another real repository family to test whether the route-safe compression
    result generalizes beyond the current manifest.
-4. Keep single-case failures in eval reports and candidate analysis. Do not turn
+5. Keep single-case failures in eval reports and candidate analysis. Do not turn
    individual trap behavior into hard Runtime rules.
