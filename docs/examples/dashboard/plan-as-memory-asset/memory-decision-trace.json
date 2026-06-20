@@ -1,0 +1,1148 @@
+{
+  "contract_version": "aionis_memory_decision_trace_v1",
+  "tenant_id": "default",
+  "scope": "plan-as-memory-asset:plan-asset-534ee681",
+  "intended_use": "measure_debug_audit",
+  "agent_prompt_included": false,
+  "runtime_mutation": false,
+  "input": {
+    "before_guide_present": true,
+    "after_guide_present": true,
+    "memory_packet_present": true,
+    "guide_packet_present": true,
+    "agent_context_present": true,
+    "forget_result_present": true
+  },
+  "summary": {
+    "total_memory_count": 3,
+    "direct_use_count": 0,
+    "inspect_before_use_count": 0,
+    "do_not_use_count": 0,
+    "rehydrate_count": 3,
+    "relation_count": 1,
+    "contradiction_warning_count": 1,
+    "feedback_attribution_count": 1,
+    "feedback_threshold_met_count": 0,
+    "unattributed_recalled_memory_count": 2,
+    "prompt_char_count": 718,
+    "history_used": true,
+    "actionable_history_used": true,
+    "recommended_posture": "inspect_before_use",
+    "authority": "advisory",
+    "negative_transfer_risk": "medium",
+    "learning_control_visible": true
+  },
+  "memory_decisions": [
+    {
+      "memory_id": "e5f23eef-c84e-55f8-97f2-467c026b7a21",
+      "title": "PLAN_AS_MEMORY_ASSET_PASSED_BRANCH deterministic bucket implementation accepted",
+      "domain": "execution",
+      "memory_type": "execution_memory",
+      "lifecycle_state": "active",
+      "authority": "advisory",
+      "agent_surface": "rehydrate",
+      "decision_kind": "rehydrate",
+      "reason_codes": [
+        "lifecycle_active",
+        "authority_advisory",
+        "lifecycle_candidate_signal",
+        "lifecycle_candidate_current",
+        "memory_contract_direct_use",
+        "requires_differential_rehydration",
+        "agent_context_projection_checked",
+        "guide_history_used"
+      ],
+      "evidence_ids": [
+        "evidence://plan-as-memory-asset/plan-asset-534ee681/verifier-passed",
+        "e1026b8a-3625-557f-ab39-211ae630e3a2"
+      ],
+      "recall_sources": [
+        {
+          "kind": "semantic",
+          "score": 1,
+          "reason": "bounded_embedding_scan",
+          "matched_fields": [
+            "embedding_vector_json"
+          ],
+          "index_name": "lite_embedding_json_scan"
+        },
+        {
+          "kind": "execution_native",
+          "score": 0.99,
+          "reason": "structured_execution_signature_recall",
+          "matched_fields": [
+            "task_signature",
+            "workflow_signature"
+          ],
+          "index_name": "lite_memory_execution_native_index"
+        }
+      ],
+      "used_detail": null,
+      "downgraded_detail": null,
+      "blocked_detail": null,
+      "feedback_detail": {
+        "run_id": "run:plan-asset-534ee681:feedback",
+        "outcome": "positive",
+        "used_surface": "use_now",
+        "verifier_status": "passed",
+        "tool_status": "succeeded",
+        "runtime_signal_refs": [
+          "evidence://plan-as-memory-asset/plan-asset-534ee681/worker-followed-plan"
+        ],
+        "attribution_strength": "positive_attribution",
+        "weak_counter_signal_count": 0,
+        "strong_counter_signal_count": 0,
+        "threshold_state": "positive_attribution",
+        "threshold_met": false,
+        "host_marked_used": true,
+        "reason": "Positive host attribution supports continued direct use for this memory."
+      },
+      "rehydrate_detail": {
+        "mode": "differential",
+        "reason": "Differential rehydration candidate from the planning summary.",
+        "required": false,
+        "payload_status": "unknown"
+      }
+    },
+    {
+      "memory_id": "687f1d6b-ad63-5705-b027-3eb28279a955",
+      "title": "PLAN_AS_MEMORY_ASSET_E2E feature flag service plan",
+      "domain": "execution",
+      "memory_type": "execution_memory",
+      "lifecycle_state": "contested",
+      "authority": "candidate",
+      "agent_surface": "rehydrate",
+      "decision_kind": "rehydrate",
+      "reason_codes": [
+        "lifecycle_contested",
+        "candidate_authority",
+        "lifecycle_relation_evidence",
+        "contradiction_warning",
+        "premise_firewall_query_risk",
+        "lifecycle_candidate_signal",
+        "lifecycle_candidate_negative",
+        "lifecycle_candidate_direct_use_gated",
+        "memory_contract_inspect_before_use",
+        "memory_contract_confirmation_required",
+        "requires_differential_rehydration",
+        "agent_context_projection_checked",
+        "guide_history_used"
+      ],
+      "evidence_ids": [
+        "60b9d67b-e2da-5fa0-98f8-08d374feef16"
+      ],
+      "recall_sources": [
+        {
+          "kind": "semantic",
+          "score": 0.934712,
+          "reason": "bounded_embedding_scan",
+          "matched_fields": [
+            "embedding_vector_json"
+          ],
+          "index_name": "lite_embedding_json_scan"
+        },
+        {
+          "kind": "execution_native",
+          "score": 0.97,
+          "reason": "structured_execution_signature_recall",
+          "matched_fields": [
+            "task_signature",
+            "workflow_signature"
+          ],
+          "index_name": "lite_memory_execution_native_index"
+        }
+      ],
+      "used_detail": null,
+      "downgraded_detail": null,
+      "blocked_detail": null,
+      "feedback_detail": null,
+      "rehydrate_detail": {
+        "mode": "differential",
+        "reason": "Differential rehydration candidate from the planning summary.",
+        "required": false,
+        "payload_status": "unknown"
+      }
+    },
+    {
+      "memory_id": "7a19c748-3341-538a-bb56-05f23668068f",
+      "title": "Rejected plan branch: failed:random-rollout",
+      "domain": "execution",
+      "memory_type": "execution_memory",
+      "lifecycle_state": "active",
+      "authority": "advisory",
+      "agent_surface": "rehydrate",
+      "decision_kind": "rehydrate",
+      "reason_codes": [
+        "lifecycle_active",
+        "authority_advisory",
+        "premise_firewall_query_risk",
+        "lifecycle_candidate_signal",
+        "lifecycle_candidate_negative",
+        "lifecycle_candidate_direct_use_gated",
+        "memory_contract_direct_use",
+        "requires_differential_rehydration",
+        "agent_context_projection_checked",
+        "guide_history_used"
+      ],
+      "evidence_ids": [
+        "a6f42ecf-1212-5dd3-a507-b7718d770713"
+      ],
+      "recall_sources": [
+        {
+          "kind": "semantic",
+          "score": 0.408976,
+          "reason": "bounded_embedding_scan",
+          "matched_fields": [
+            "embedding_vector_json"
+          ],
+          "index_name": "lite_embedding_json_scan"
+        },
+        {
+          "kind": "execution_native",
+          "score": 0.98,
+          "reason": "structured_execution_signature_recall",
+          "matched_fields": [
+            "task_signature",
+            "workflow_signature"
+          ],
+          "index_name": "lite_memory_execution_native_index"
+        }
+      ],
+      "used_detail": null,
+      "downgraded_detail": null,
+      "blocked_detail": null,
+      "feedback_detail": null,
+      "rehydrate_detail": {
+        "mode": "differential",
+        "reason": "Differential rehydration candidate from the planning summary.",
+        "required": false,
+        "payload_status": "unknown"
+      }
+    }
+  ],
+  "relation_decisions": [
+    {
+      "evidence_id": "memory_relation:7a19c748-3341-538a-bb56-05f23668068f:687f1d6b-ad63-5705-b027-3eb28279a955",
+      "memory_id": "687f1d6b-ad63-5705-b027-3eb28279a955",
+      "relation": "contradicts",
+      "source_memory_id": "7a19c748-3341-538a-bb56-05f23668068f",
+      "target_memory_id": "687f1d6b-ad63-5705-b027-3eb28279a955",
+      "lifecycle_relation": "contradicts",
+      "confidence": 0.84,
+      "producer": "rule_cue",
+      "candidate_confidence": null,
+      "signals": {
+        "source_cues": [
+          "counter-evidence",
+          "do not use",
+          "failed"
+        ],
+        "prior_cues": [],
+        "topic_overlap": 11,
+        "shared_target_paths": 0,
+        "target_path_conflict": false,
+        "same_domain": true,
+        "source_newer": true
+      },
+      "gate": {
+        "source_admissible": true,
+        "target_admissible": true,
+        "source_newer": true,
+        "candidate_confidence_passed": null,
+        "relation_supported": true,
+        "confidence_threshold_passed": true,
+        "accepted": true
+      },
+      "reason": "Newer related memory 7a19c748-3341-538a-bb56-05f23668068f contradicts this memory; persisted_lifecycle_relation; edge_id=983358a0-2494-5de8-818d-69f0ce2504c7; source_cues=counter-evidence,do not use,failed; topic_overlap=11.",
+      "reasons": [
+        "source_cues=counter-evidence,do not use,failed",
+        "topic_overlap=11"
+      ]
+    }
+  ],
+  "lifecycle_candidate_summary": {
+    "present": true,
+    "contract_version": "aionis_lifecycle_candidate_summary_v1",
+    "mode": "rule_gated",
+    "authority_mutation": false,
+    "agent_prompt_included": false,
+    "signal_payload_prompt_included": false,
+    "surface_effect_prompt_included": true,
+    "candidate_count": 4,
+    "gated_count": 2,
+    "shadow_only_count": 1,
+    "candidate_memory_ids": [
+      "e5f23eef-c84e-55f8-97f2-467c026b7a21",
+      "687f1d6b-ad63-5705-b027-3eb28279a955",
+      "7a19c748-3341-538a-bb56-05f23668068f"
+    ],
+    "gated_memory_ids": [
+      "687f1d6b-ad63-5705-b027-3eb28279a955",
+      "7a19c748-3341-538a-bb56-05f23668068f"
+    ],
+    "shadow_only_memory_ids": [
+      "e5f23eef-c84e-55f8-97f2-467c026b7a21"
+    ],
+    "signals": [
+      {
+        "memory_id": "e5f23eef-c84e-55f8-97f2-467c026b7a21",
+        "signal_type": "current",
+        "confidence": 0.78,
+        "evidence_span": {
+          "source_field": "title",
+          "quote": "ORY_ASSET_PASSED_BRANCH deterministic bucket implementation accepted"
+        },
+        "producer": "rule_v1",
+        "reason": "Title carries a current or active continuation cue."
+      },
+      {
+        "memory_id": "687f1d6b-ad63-5705-b027-3eb28279a955",
+        "signal_type": "negative",
+        "confidence": 0.92,
+        "evidence_span": {
+          "source_field": "text_summary",
+          "quote": "hould preserve users already enabled by a lower percentage. Rejected alternative: random per-request rollout assignment PLAN_ACCEPTANCE_CHECK 1: sam"
+        },
+        "producer": "rule_v1",
+        "reason": "Summary marks this memory as failed, rejected, or counter-evidence."
+      },
+      {
+        "memory_id": "7a19c748-3341-538a-bb56-05f23668068f",
+        "signal_type": "negative",
+        "confidence": 0.9,
+        "evidence_span": {
+          "source_field": "title",
+          "quote": "Rejected plan branch: failed:random-rollout"
+        },
+        "producer": "rule_v1",
+        "reason": "Title carries a failed or counter-evidence cue."
+      },
+      {
+        "memory_id": "7a19c748-3341-538a-bb56-05f23668068f",
+        "signal_type": "negative",
+        "confidence": 0.92,
+        "evidence_span": {
+          "source_field": "text_summary",
+          "quote": "an:plan-asset-534ee681:feature-flags failed:random-rollout: rejected branch. Reason: It violates sticky rollout and failed verifier checks. counter-"
+        },
+        "producer": "rule_v1",
+        "reason": "Summary marks this memory as failed, rejected, or counter-evidence."
+      }
+    ],
+    "reason": "Lifecycle candidate signal payloads were not injected into the Agent prompt, but their gated surface effect may appear through inspect/rehydrate context; memory rows were not mutated."
+  },
+  "feedback_attribution": {
+    "present": true,
+    "guide_trace_id": "guide_trace:573c0454-1e13-4220-a15a-c1d1e3f0cb84",
+    "run_id": "run:plan-asset-534ee681:feedback",
+    "outcome": "positive",
+    "used_surface": "use_now",
+    "verifier_status": "passed",
+    "tool_status": "succeeded",
+    "runtime_signal_refs": [
+      "evidence://plan-as-memory-asset/plan-asset-534ee681/worker-followed-plan"
+    ],
+    "affected_memory_ids": [
+      "e5f23eef-c84e-55f8-97f2-467c026b7a21"
+    ],
+    "exposed_memory_count": 3,
+    "attributed_memory_count": 1,
+    "unattributed_recalled_memory_count": 2,
+    "attributed_memory_ids": [
+      "e5f23eef-c84e-55f8-97f2-467c026b7a21"
+    ],
+    "unattributed_recalled_memory_ids": [
+      "687f1d6b-ad63-5705-b027-3eb28279a955",
+      "7a19c748-3341-538a-bb56-05f23668068f"
+    ],
+    "unattributed_use_now_memory_ids": [],
+    "unattributed_inspect_before_use_memory_ids": [
+      "687f1d6b-ad63-5705-b027-3eb28279a955",
+      "7a19c748-3341-538a-bb56-05f23668068f"
+    ],
+    "unattributed_do_not_use_memory_ids": [],
+    "unattributed_rehydrate_memory_ids": [],
+    "unused_exposure_observation": {
+      "present": true,
+      "contract_version": "aionis_unused_exposure_observation_v1",
+      "mode": "read_only_measure",
+      "exposure_threshold": 2,
+      "guide_trace_count": 1,
+      "tracked_memory_count": 3,
+      "repeated_unattributed_memory_ids": [],
+      "repeated_unattributed_without_positive_memory_ids": [],
+      "memory_stats": [
+        {
+          "memory_id": "e5f23eef-c84e-55f8-97f2-467c026b7a21",
+          "current_unattributed": false,
+          "exposure_count": 1,
+          "use_now_exposure_count": 1,
+          "inspect_before_use_exposure_count": 0,
+          "do_not_use_exposure_count": 0,
+          "rehydrate_exposure_count": 0,
+          "positive_attributed_use_count": 1,
+          "feedback_positive_count": 1,
+          "feedback_negative_count": 0,
+          "repeated_without_positive_attribution": false
+        },
+        {
+          "memory_id": "687f1d6b-ad63-5705-b027-3eb28279a955",
+          "current_unattributed": true,
+          "exposure_count": 1,
+          "use_now_exposure_count": 0,
+          "inspect_before_use_exposure_count": 1,
+          "do_not_use_exposure_count": 0,
+          "rehydrate_exposure_count": 0,
+          "positive_attributed_use_count": 0,
+          "feedback_positive_count": 0,
+          "feedback_negative_count": 0,
+          "repeated_without_positive_attribution": false
+        },
+        {
+          "memory_id": "7a19c748-3341-538a-bb56-05f23668068f",
+          "current_unattributed": true,
+          "exposure_count": 1,
+          "use_now_exposure_count": 0,
+          "inspect_before_use_exposure_count": 1,
+          "do_not_use_exposure_count": 0,
+          "rehydrate_exposure_count": 0,
+          "positive_attributed_use_count": 0,
+          "feedback_positive_count": 0,
+          "feedback_negative_count": 0,
+          "repeated_without_positive_attribution": false
+        }
+      ],
+      "reason": "Repeated exposure without host positive attribution is reported as read-only evidence; it does not lower authority or suppress memory."
+    },
+    "sparse_feedback_signal_summary": {
+      "present": true,
+      "mode": "read_only_measure",
+      "authority_mutation": false,
+      "positive_attributed_memory_ids": [
+        "e5f23eef-c84e-55f8-97f2-467c026b7a21"
+      ],
+      "weak_counter_signal_memory_ids": [],
+      "strong_counter_signal_memory_ids": [],
+      "relation_counter_signal_memory_ids": [],
+      "contradiction_warning_memory_ids": [
+        "687f1d6b-ad63-5705-b027-3eb28279a955"
+      ],
+      "repeated_unattributed_memory_ids": [],
+      "repeated_unattributed_without_positive_memory_ids": [],
+      "read_only_signal_memory_ids": [
+        "e5f23eef-c84e-55f8-97f2-467c026b7a21",
+        "687f1d6b-ad63-5705-b027-3eb28279a955"
+      ],
+      "candidate_learning_control_summary": {
+        "present": false,
+        "contract_version": null,
+        "mode": null,
+        "authority_mutation": false,
+        "candidate_inspect_before_use_memory_ids": [],
+        "candidate_from_threshold_met_memory_ids": [],
+        "candidate_from_repeated_unused_without_positive_memory_ids": [],
+        "blocked_by_positive_attribution_memory_ids": [],
+        "reason": "No sparse feedback signal crossed the candidate learning-control gate."
+      },
+      "reason": "Sparse feedback, repeated exposure, and relation-derived counter signals are summarized for measure/debug/audit only; this summary does not lower authority or suppress memory."
+    },
+    "weak_counter_signal_memory_ids": [],
+    "strong_counter_signal_memory_ids": [],
+    "threshold_met_memory_ids": [],
+    "reason": "Activate feedback is attributed only to host-reported used memory ids; recalled but unreported memories remain unattributed."
+  },
+  "judgment_calibration_summary": {
+    "contract_version": "aionis_judgment_calibration_summary_v1",
+    "intended_use": "judgment_calibration_audit",
+    "source": "memory_decision_trace",
+    "agent_prompt_included": false,
+    "runtime_mutation": false,
+    "authority": "read_only",
+    "window": {
+      "record_count": 3,
+      "anchored_count": 1,
+      "weak_count": 0,
+      "unused_count": 2,
+      "inconclusive_count": 0
+    },
+    "supported_memory_ids": [
+      "e5f23eef-c84e-55f8-97f2-467c026b7a21"
+    ],
+    "contradicted_memory_ids": [],
+    "weak_memory_ids": [],
+    "unused_memory_ids": [
+      "687f1d6b-ad63-5705-b027-3eb28279a955",
+      "7a19c748-3341-538a-bb56-05f23668068f"
+    ],
+    "inconclusive_memory_ids": [],
+    "buckets": [
+      {
+        "bucket": "domain:execution",
+        "record_count": 3,
+        "supported_count": 1,
+        "contradicted_count": 0,
+        "weak_count": 0,
+        "unused_count": 2,
+        "inconclusive_count": 0,
+        "memory_ids": [
+          "e5f23eef-c84e-55f8-97f2-467c026b7a21",
+          "687f1d6b-ad63-5705-b027-3eb28279a955",
+          "7a19c748-3341-538a-bb56-05f23668068f"
+        ],
+        "recommended_adjustment": "needs_more_evidence",
+        "authority": "read_only",
+        "reason": "Read-only calibration bucket domain:execution: 1 supported, 0 contradicted, 2 unused, 0 inconclusive."
+      },
+      {
+        "bucket": "domain:execution_memory",
+        "record_count": 3,
+        "supported_count": 1,
+        "contradicted_count": 0,
+        "weak_count": 0,
+        "unused_count": 2,
+        "inconclusive_count": 0,
+        "memory_ids": [
+          "e5f23eef-c84e-55f8-97f2-467c026b7a21",
+          "687f1d6b-ad63-5705-b027-3eb28279a955",
+          "7a19c748-3341-538a-bb56-05f23668068f"
+        ],
+        "recommended_adjustment": "needs_more_evidence",
+        "authority": "read_only",
+        "reason": "Read-only calibration bucket domain:execution_memory: 1 supported, 0 contradicted, 2 unused, 0 inconclusive."
+      },
+      {
+        "bucket": "signal:feedback_positive",
+        "record_count": 1,
+        "supported_count": 1,
+        "contradicted_count": 0,
+        "weak_count": 0,
+        "unused_count": 0,
+        "inconclusive_count": 0,
+        "memory_ids": [
+          "e5f23eef-c84e-55f8-97f2-467c026b7a21"
+        ],
+        "recommended_adjustment": "keep",
+        "authority": "read_only",
+        "reason": "Read-only calibration bucket signal:feedback_positive: 1 supported, 0 contradicted, 0 unused, 0 inconclusive."
+      },
+      {
+        "bucket": "signal:lifecycle_current",
+        "record_count": 1,
+        "supported_count": 1,
+        "contradicted_count": 0,
+        "weak_count": 0,
+        "unused_count": 0,
+        "inconclusive_count": 0,
+        "memory_ids": [
+          "e5f23eef-c84e-55f8-97f2-467c026b7a21"
+        ],
+        "recommended_adjustment": "keep",
+        "authority": "read_only",
+        "reason": "Read-only calibration bucket signal:lifecycle_current: 1 supported, 0 contradicted, 0 unused, 0 inconclusive."
+      },
+      {
+        "bucket": "signal:lifecycle_negative",
+        "record_count": 2,
+        "supported_count": 0,
+        "contradicted_count": 0,
+        "weak_count": 0,
+        "unused_count": 2,
+        "inconclusive_count": 0,
+        "memory_ids": [
+          "687f1d6b-ad63-5705-b027-3eb28279a955",
+          "7a19c748-3341-538a-bb56-05f23668068f"
+        ],
+        "recommended_adjustment": "needs_more_evidence",
+        "authority": "read_only",
+        "reason": "Read-only calibration bucket signal:lifecycle_negative: 0 supported, 0 contradicted, 2 unused, 0 inconclusive."
+      },
+      {
+        "bucket": "signal:relation_contradicts",
+        "record_count": 1,
+        "supported_count": 0,
+        "contradicted_count": 0,
+        "weak_count": 0,
+        "unused_count": 1,
+        "inconclusive_count": 0,
+        "memory_ids": [
+          "687f1d6b-ad63-5705-b027-3eb28279a955"
+        ],
+        "recommended_adjustment": "needs_more_evidence",
+        "authority": "read_only",
+        "reason": "Read-only calibration bucket signal:relation_contradicts: 0 supported, 0 contradicted, 1 unused, 0 inconclusive."
+      },
+      {
+        "bucket": "surface:rehydrate",
+        "record_count": 3,
+        "supported_count": 1,
+        "contradicted_count": 0,
+        "weak_count": 0,
+        "unused_count": 2,
+        "inconclusive_count": 0,
+        "memory_ids": [
+          "e5f23eef-c84e-55f8-97f2-467c026b7a21",
+          "687f1d6b-ad63-5705-b027-3eb28279a955",
+          "7a19c748-3341-538a-bb56-05f23668068f"
+        ],
+        "recommended_adjustment": "needs_more_evidence",
+        "authority": "read_only",
+        "reason": "Read-only calibration bucket surface:rehydrate: 1 supported, 0 contradicted, 2 unused, 0 inconclusive."
+      }
+    ],
+    "reason": "Memory judgment calibration was derived from decision trace surfaces and feedback attribution only; it is read-only and does not mutate authority."
+  },
+  "neighborhood_drift_observation": {
+    "present": false,
+    "contract_version": null,
+    "mode": null,
+    "authority_mutation": false,
+    "growth_threshold": 2,
+    "directional_drift_threshold": 2,
+    "isolation_threshold": 1,
+    "signal_memory_ids": [],
+    "candidate_count": 0,
+    "candidates": [],
+    "reason": "No isolated memory met the conservative growth, directional-drift, and isolation thresholds."
+  },
+  "confidence_decay_candidate_summary": {
+    "present": false,
+    "contract_version": null,
+    "mode": null,
+    "authority_mutation": false,
+    "agent_prompt_included": false,
+    "time_decay_age_threshold_days": 90,
+    "decay_candidate_memory_ids": [],
+    "candidate_from_learning_control_memory_ids": [],
+    "candidate_from_time_decay_memory_ids": [],
+    "supported_by_neighborhood_drift_memory_ids": [],
+    "drift_only_observation_memory_ids": [],
+    "blocked_by_positive_attribution_memory_ids": [],
+    "blocked_by_recent_validation_memory_ids": [],
+    "time_decay_candidate_details": [],
+    "reason": "No confidence decay shadow candidate crossed the read-only gate."
+  },
+  "inspect_before_use_shadow_delta": {
+    "present": false,
+    "contract_version": null,
+    "mode": null,
+    "enabled": false,
+    "authority_mutation": false,
+    "agent_prompt_included": false,
+    "simulated_surface": "inspect_before_use",
+    "candidate_memory_ids": [],
+    "would_move_to_inspect_before_use_memory_ids": [],
+    "already_inspect_before_use_memory_ids": [],
+    "blocked_by_positive_attribution_memory_ids": [],
+    "blocked_by_recent_validation_memory_ids": [],
+    "drift_only_observation_memory_ids": [],
+    "entries": [],
+    "reason": "Inspect-before-use shadow delta is disabled and no confidence-decay candidates were supplied."
+  },
+  "context_decision": {
+    "prompt_char_count": 718,
+    "target_files": [],
+    "use_now_count": 1,
+    "inspect_before_use_count": 3,
+    "do_not_use_count": 0,
+    "rehydrate_hint_count": 0,
+    "actionable_history_used": true,
+    "memory_ids": [
+      "e5f23eef-c84e-55f8-97f2-467c026b7a21",
+      "687f1d6b-ad63-5705-b027-3eb28279a955",
+      "7a19c748-3341-538a-bb56-05f23668068f"
+    ]
+  },
+  "memory_use_receipt": {
+    "contract_version": "aionis_memory_use_receipt_v1",
+    "intended_use": "memory_use_audit",
+    "agent_prompt_included": false,
+    "runtime_mutation": false,
+    "guide_trace_id": "guide_trace:573c0454-1e13-4220-a15a-c1d1e3f0cb84",
+    "history_used": true,
+    "actionable_history_used": true,
+    "prompt_char_count": 718,
+    "exposed_memory_ids": [
+      "e5f23eef-c84e-55f8-97f2-467c026b7a21",
+      "687f1d6b-ad63-5705-b027-3eb28279a955",
+      "7a19c748-3341-538a-bb56-05f23668068f"
+    ],
+    "use_now_memory_ids": [],
+    "inspect_before_use_memory_ids": [],
+    "do_not_use_memory_ids": [],
+    "rehydrate_memory_ids": [
+      "e5f23eef-c84e-55f8-97f2-467c026b7a21",
+      "687f1d6b-ad63-5705-b027-3eb28279a955",
+      "7a19c748-3341-538a-bb56-05f23668068f"
+    ],
+    "attributed_memory_ids": [
+      "e5f23eef-c84e-55f8-97f2-467c026b7a21"
+    ],
+    "unattributed_recalled_memory_ids": [
+      "687f1d6b-ad63-5705-b027-3eb28279a955",
+      "7a19c748-3341-538a-bb56-05f23668068f"
+    ],
+    "read_only_signal_memory_ids": [
+      "e5f23eef-c84e-55f8-97f2-467c026b7a21",
+      "687f1d6b-ad63-5705-b027-3eb28279a955"
+    ],
+    "decision_summaries": [
+      {
+        "memory_id": "e5f23eef-c84e-55f8-97f2-467c026b7a21",
+        "agent_surface": "rehydrate",
+        "decision_kind": "rehydrate",
+        "actionable": false,
+        "reason_codes": [
+          "lifecycle_active",
+          "authority_advisory",
+          "lifecycle_candidate_signal",
+          "lifecycle_candidate_current",
+          "memory_contract_direct_use",
+          "requires_differential_rehydration",
+          "agent_context_projection_checked",
+          "guide_history_used"
+        ],
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 1,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          },
+          {
+            "kind": "execution_native",
+            "score": 0.99,
+            "reason": "structured_execution_signature_recall",
+            "matched_fields": [
+              "task_signature",
+              "workflow_signature"
+            ],
+            "index_name": "lite_memory_execution_native_index"
+          }
+        ]
+      },
+      {
+        "memory_id": "687f1d6b-ad63-5705-b027-3eb28279a955",
+        "agent_surface": "rehydrate",
+        "decision_kind": "rehydrate",
+        "actionable": false,
+        "reason_codes": [
+          "lifecycle_contested",
+          "candidate_authority",
+          "lifecycle_relation_evidence",
+          "contradiction_warning",
+          "premise_firewall_query_risk",
+          "lifecycle_candidate_signal",
+          "lifecycle_candidate_negative",
+          "lifecycle_candidate_direct_use_gated",
+          "memory_contract_inspect_before_use",
+          "memory_contract_confirmation_required",
+          "requires_differential_rehydration",
+          "agent_context_projection_checked"
+        ],
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 0.934712,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          },
+          {
+            "kind": "execution_native",
+            "score": 0.97,
+            "reason": "structured_execution_signature_recall",
+            "matched_fields": [
+              "task_signature",
+              "workflow_signature"
+            ],
+            "index_name": "lite_memory_execution_native_index"
+          }
+        ]
+      },
+      {
+        "memory_id": "7a19c748-3341-538a-bb56-05f23668068f",
+        "agent_surface": "rehydrate",
+        "decision_kind": "rehydrate",
+        "actionable": false,
+        "reason_codes": [
+          "lifecycle_active",
+          "authority_advisory",
+          "premise_firewall_query_risk",
+          "lifecycle_candidate_signal",
+          "lifecycle_candidate_negative",
+          "lifecycle_candidate_direct_use_gated",
+          "memory_contract_direct_use",
+          "requires_differential_rehydration",
+          "agent_context_projection_checked",
+          "guide_history_used"
+        ],
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 0.408976,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          },
+          {
+            "kind": "execution_native",
+            "score": 0.98,
+            "reason": "structured_execution_signature_recall",
+            "matched_fields": [
+              "task_signature",
+              "workflow_signature"
+            ],
+            "index_name": "lite_memory_execution_native_index"
+          }
+        ]
+      }
+    ],
+    "risk_flags": [
+      "negative_transfer_risk:medium",
+      "lifecycle_active",
+      "authority_advisory",
+      "lifecycle_candidate_signal",
+      "lifecycle_candidate_current",
+      "memory_contract_direct_use",
+      "requires_differential_rehydration",
+      "agent_context_projection_checked",
+      "guide_history_used",
+      "lifecycle_contested",
+      "candidate_authority",
+      "lifecycle_relation_evidence",
+      "contradiction_warning",
+      "premise_firewall_query_risk",
+      "lifecycle_candidate_negative",
+      "lifecycle_candidate_direct_use_gated",
+      "memory_contract_inspect_before_use",
+      "memory_contract_confirmation_required",
+      "relation:contradicts",
+      "contradiction_warning:687f1d6b-ad63-5705-b027-3eb28279a955"
+    ],
+    "summary": "Aionis compiled memory into 0 use_now, 0 inspect_before_use, 0 do_not_use, and 3 rehydrate decisions; receipt is read-only and excluded from the Agent prompt."
+  },
+  "admission_record": {
+    "contract_version": "aionis_memory_admission_record_v1",
+    "intended_use": "memory_admission_audit_dataset",
+    "source": "memory_decision_trace",
+    "agent_prompt_included": false,
+    "runtime_mutation": false,
+    "tenant_id": "default",
+    "scope": "plan-as-memory-asset:plan-asset-534ee681",
+    "guide_trace_id": "guide_trace:573c0454-1e13-4220-a15a-c1d1e3f0cb84",
+    "prompt_char_count": 718,
+    "history_used": true,
+    "actionable_history_used": true,
+    "candidate_memory_count": 3,
+    "prompt_included_memory_count": 3,
+    "agent_used_memory_count": 1,
+    "entries": [
+      {
+        "memory_id": "e5f23eef-c84e-55f8-97f2-467c026b7a21",
+        "title": "PLAN_AS_MEMORY_ASSET_PASSED_BRANCH deterministic bucket implementation accepted",
+        "memory_origin": "aionis",
+        "source_backend": "aionis",
+        "domain": "execution",
+        "memory_type": "execution_memory",
+        "lifecycle_state": "active",
+        "authority": "advisory",
+        "admission_action": "rehydrate",
+        "decision_kind": "rehydrate",
+        "actionable": false,
+        "prompt_included": true,
+        "agent_used": true,
+        "feedback_outcome": "positive",
+        "attribution_strength": "positive_attribution",
+        "reason_codes": [
+          "lifecycle_active",
+          "authority_advisory",
+          "lifecycle_candidate_signal",
+          "lifecycle_candidate_current",
+          "memory_contract_direct_use",
+          "requires_differential_rehydration",
+          "agent_context_projection_checked",
+          "guide_history_used"
+        ],
+        "evidence_ids": [
+          "evidence://plan-as-memory-asset/plan-asset-534ee681/verifier-passed",
+          "e1026b8a-3625-557f-ab39-211ae630e3a2"
+        ],
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 1,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          },
+          {
+            "kind": "execution_native",
+            "score": 0.99,
+            "reason": "structured_execution_signature_recall",
+            "matched_fields": [
+              "task_signature",
+              "workflow_signature"
+            ],
+            "index_name": "lite_memory_execution_native_index"
+          }
+        ]
+      },
+      {
+        "memory_id": "687f1d6b-ad63-5705-b027-3eb28279a955",
+        "title": "PLAN_AS_MEMORY_ASSET_E2E feature flag service plan",
+        "memory_origin": "aionis",
+        "source_backend": "aionis",
+        "domain": "execution",
+        "memory_type": "execution_memory",
+        "lifecycle_state": "contested",
+        "authority": "candidate",
+        "admission_action": "rehydrate",
+        "decision_kind": "rehydrate",
+        "actionable": false,
+        "prompt_included": true,
+        "agent_used": false,
+        "feedback_outcome": null,
+        "attribution_strength": null,
+        "reason_codes": [
+          "lifecycle_contested",
+          "candidate_authority",
+          "lifecycle_relation_evidence",
+          "contradiction_warning",
+          "premise_firewall_query_risk",
+          "lifecycle_candidate_signal",
+          "lifecycle_candidate_negative",
+          "lifecycle_candidate_direct_use_gated",
+          "memory_contract_inspect_before_use",
+          "memory_contract_confirmation_required",
+          "requires_differential_rehydration",
+          "agent_context_projection_checked",
+          "guide_history_used"
+        ],
+        "evidence_ids": [
+          "60b9d67b-e2da-5fa0-98f8-08d374feef16"
+        ],
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 0.934712,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          },
+          {
+            "kind": "execution_native",
+            "score": 0.97,
+            "reason": "structured_execution_signature_recall",
+            "matched_fields": [
+              "task_signature",
+              "workflow_signature"
+            ],
+            "index_name": "lite_memory_execution_native_index"
+          }
+        ]
+      },
+      {
+        "memory_id": "7a19c748-3341-538a-bb56-05f23668068f",
+        "title": "Rejected plan branch: failed:random-rollout",
+        "memory_origin": "aionis",
+        "source_backend": "aionis",
+        "domain": "execution",
+        "memory_type": "execution_memory",
+        "lifecycle_state": "active",
+        "authority": "advisory",
+        "admission_action": "rehydrate",
+        "decision_kind": "rehydrate",
+        "actionable": false,
+        "prompt_included": true,
+        "agent_used": false,
+        "feedback_outcome": null,
+        "attribution_strength": null,
+        "reason_codes": [
+          "lifecycle_active",
+          "authority_advisory",
+          "premise_firewall_query_risk",
+          "lifecycle_candidate_signal",
+          "lifecycle_candidate_negative",
+          "lifecycle_candidate_direct_use_gated",
+          "memory_contract_direct_use",
+          "requires_differential_rehydration",
+          "agent_context_projection_checked",
+          "guide_history_used"
+        ],
+        "evidence_ids": [
+          "a6f42ecf-1212-5dd3-a507-b7718d770713"
+        ],
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 0.408976,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          },
+          {
+            "kind": "execution_native",
+            "score": 0.98,
+            "reason": "structured_execution_signature_recall",
+            "matched_fields": [
+              "task_signature",
+              "workflow_signature"
+            ],
+            "index_name": "lite_memory_execution_native_index"
+          }
+        ]
+      }
+    ],
+    "shadow_policy_report": {
+      "contract_version": "aionis_memory_admission_shadow_policy_report_v1",
+      "intended_use": "admission_policy_shadow_audit",
+      "policy_id": "candidate_project_context_closed_loop_inspect",
+      "policy_version": "2026-06-18",
+      "mode": "shadow_only",
+      "source": "memory_decision_trace",
+      "agent_prompt_included": false,
+      "runtime_mutation": false,
+      "hard_boundary_policy": "preserve_recorded_non_use_now",
+      "decision_count": 3,
+      "changed_count": 0,
+      "would_downgrade_use_now_count": 0,
+      "hard_boundary_upgrade_count": 0,
+      "direct_use_recorded_count": 0,
+      "direct_use_shadow_count": 0,
+      "policy_changed_memory_ids": [],
+      "downgraded_memory_ids": [],
+      "hard_boundary_preserved_memory_ids": [
+        "e5f23eef-c84e-55f8-97f2-467c026b7a21",
+        "687f1d6b-ad63-5705-b027-3eb28279a955",
+        "7a19c748-3341-538a-bb56-05f23668068f"
+      ],
+      "decisions": [
+        {
+          "memory_id": "e5f23eef-c84e-55f8-97f2-467c026b7a21",
+          "title": "PLAN_AS_MEMORY_ASSET_PASSED_BRANCH deterministic bucket implementation accepted",
+          "recorded_action": "rehydrate",
+          "shadow_action": "rehydrate",
+          "would_change_action": false,
+          "memory_origin": "aionis",
+          "source_backend": "aionis",
+          "memory_type": "execution_memory",
+          "closed_loop_effect_state": "no_prior",
+          "repeated_negative_posture": false,
+          "prior_state_available": false,
+          "used_fields": [
+            "admission_action",
+            "source_backend",
+            "memory_type",
+            "closed_loop_effect_state",
+            "repeated_negative_posture"
+          ],
+          "reason_codes": [
+            "hard_boundary_preserved",
+            "recorded_action:rehydrate"
+          ]
+        },
+        {
+          "memory_id": "687f1d6b-ad63-5705-b027-3eb28279a955",
+          "title": "PLAN_AS_MEMORY_ASSET_E2E feature flag service plan",
+          "recorded_action": "rehydrate",
+          "shadow_action": "rehydrate",
+          "would_change_action": false,
+          "memory_origin": "aionis",
+          "source_backend": "aionis",
+          "memory_type": "execution_memory",
+          "closed_loop_effect_state": "no_prior",
+          "repeated_negative_posture": false,
+          "prior_state_available": false,
+          "used_fields": [
+            "admission_action",
+            "source_backend",
+            "memory_type",
+            "closed_loop_effect_state",
+            "repeated_negative_posture"
+          ],
+          "reason_codes": [
+            "hard_boundary_preserved",
+            "recorded_action:rehydrate"
+          ]
+        },
+        {
+          "memory_id": "7a19c748-3341-538a-bb56-05f23668068f",
+          "title": "Rejected plan branch: failed:random-rollout",
+          "recorded_action": "rehydrate",
+          "shadow_action": "rehydrate",
+          "would_change_action": false,
+          "memory_origin": "aionis",
+          "source_backend": "aionis",
+          "memory_type": "execution_memory",
+          "closed_loop_effect_state": "no_prior",
+          "repeated_negative_posture": false,
+          "prior_state_available": false,
+          "used_fields": [
+            "admission_action",
+            "source_backend",
+            "memory_type",
+            "closed_loop_effect_state",
+            "repeated_negative_posture"
+          ],
+          "reason_codes": [
+            "hard_boundary_preserved",
+            "recorded_action:rehydrate"
+          ]
+        }
+      ],
+      "summary": "Shadow policy candidate_project_context_closed_loop_inspect evaluated 3 admission decisions without mutating Runtime guide surfaces or Agent prompt context."
+    },
+    "summary": "Aionis recorded 3 memory admission decisions, 3 agent-facing exposures, and 1 host-attributed uses; record is read-only and excluded from the Agent prompt."
+  },
+  "forget_decisions": [
+    {
+      "action": "activate",
+      "target": "memory",
+      "changed_count": 1,
+      "affected_memory_ids": [
+        "e5f23eef-c84e-55f8-97f2-467c026b7a21"
+      ],
+      "reason": "Plan asset context preserved decisions and prevented rejected branch reuse."
+    }
+  ],
+  "source_map": {
+    "routes_used": [
+      "/v1/measure"
+    ],
+    "internal_surfaces_used": [
+      "memory_packet_lifecycle",
+      "guide_packet_posture",
+      "agent_context_surface_projection",
+      "recall_source_trace",
+      "memory_contract",
+      "memory_lifecycle_relation_graph",
+      "lifecycle_candidate_inference",
+      "feedback_attribution_trace",
+      "judgment_calibration_summary",
+      "premise_firewall",
+      "forget_result_projection",
+      "memory_decision_trace",
+      "memory_use_receipt",
+      "memory_admission_record"
+    ],
+    "omitted_internal_surfaces": [
+      "raw_memory_rows",
+      "raw_slots",
+      "raw_embedding_vectors",
+      "agent_prompt_injection"
+    ]
+  }
+}

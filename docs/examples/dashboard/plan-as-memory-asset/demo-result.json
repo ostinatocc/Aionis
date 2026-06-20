@@ -60,24 +60,5 @@
     "flight_recorder_replayable": true,
     "prompt_payload_excluded_from_audit": true
   },
-  "boundary": "This demo does not route models or execute tools. It proves Aionis can preserve a planner artifact as governed execution memory for a later worker.",
-  "dashboard_artifacts": {
-    "contract_version": "aionis_dashboard_artifact_manifest_v1",
-    "demo_name": "plan-as-memory-asset",
-    "run_id": "plan-asset-534ee681",
-    "generated_at": "2026-06-20T11:30:30.498Z",
-    "output_dir": "/Volumes/ziel/AionisRuntime-focused/docs/examples/dashboard/plan-as-memory-asset",
-    "files": {
-      "operator_snapshot": "operator-snapshot.json",
-      "memory_decision_trace": "memory-decision-trace.json",
-      "measure": "measure.json",
-      "flight_recorder": "flight-recorder.json",
-      "demo_result": "demo-result.json"
-    },
-    "prompt_payload_policy": {
-      "prompt_text_excluded": true,
-      "agent_prompt_excluded": true,
-      "product_trace_excluded_by_default": true
-    }
-  }
+  "boundary": "This demo does not route models or execute tools. It proves Aionis can preserve a planner artifact as governed execution memory for a later worker."
 }

@@ -21,6 +21,7 @@ import {
   textArray,
 } from "./multi-agent-execution-memory-loop.ts";
 import { formatE2eError } from "./e2e-error.ts";
+import { writeDashboardArtifacts } from "./dashboard-artifacts.ts";
 
 const TASK_FAMILY = "plan_as_memory_asset";
 const WORKFLOW_SIGNATURE = "planner-worker-plan-asset";
@@ -396,9 +397,25 @@ async function main() {
         "This demo does not route models or execute tools. It proves Aionis can preserve a planner artifact as governed execution memory for a later worker.",
     };
 
+    const dashboardArtifactDir = path.join(repoRoot, "docs/examples/dashboard/plan-as-memory-asset");
+    const dashboardArtifacts = writeDashboardArtifacts({
+      outputDir: dashboardArtifactDir,
+      demoName: "plan-as-memory-asset",
+      runId,
+      result,
+      operatorSnapshot,
+      measureResult: measure,
+      flightRecorder,
+    });
+
+    const finalResult = {
+      ...result,
+      dashboard_artifacts: dashboardArtifacts,
+    };
+
     const outputPath = path.join(repoRoot, "docs/examples/plan-as-memory-asset-result.json");
-    fs.writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`);
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    fs.writeFileSync(outputPath, `${JSON.stringify(finalResult, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify(finalResult, null, 2)}\n`);
   } finally {
     closeRuntime(session);
   }
