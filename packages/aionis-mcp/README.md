@@ -5,10 +5,21 @@ MCP stdio bridge for Aionis execution memory.
 Docs: [https://docs.aionis.work/integrations/mcp](https://docs.aionis.work/integrations/mcp)
 
 Use this package when you want Claude Code, Cursor, or another MCP client to
-try Aionis without rewriting the host Agent loop first.
+try Aionis without rewriting the host Agent loop first. MCP is the fastest
+public trial path for Aionis Execution Memory: connect the bridge, call
+`aionis_context`, and let the Agent continue from governed state instead of raw
+chat history.
 
 ```bash
 npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope my-project
+```
+
+Start a local Runtime first:
+
+```bash
+npx @aionis/create@latest
+cd Aionis
+npm run -s lite:start
 ```
 
 Environment form:
@@ -48,7 +59,13 @@ Runtime guide, and `budget_profile`, `max_prompt_chars`, `repo_state`, and
 For example, pass `repo_state.missing_files` so Aionis can tell the Agent that a
 missing active target is pending work rather than stale memory.
 
-For Claude Code or Cursor demos, the recommended flow is:
+For Claude Code or Cursor demos, the recommended first loop is:
+
+```text
+aionis_context -> Agent action -> aionis_record_step -> aionis_flight_recorder
+```
+
+Use this flow:
 
 1. Use `aionis_record_step` as a planner to record the accepted plan,
    active targets, acceptance checks, and execution boundary.
@@ -77,8 +94,10 @@ The tool returns these structured fields in `structuredContent`:
 | `inspect_first_memory_ids` | Candidate or contested memories that require inspection before action. |
 | `rehydrate_first_memory_ids` | Compact pointers that need raw payload recovery before exact use. |
 
-Use `aionis_govern_memory` when an MCP client already has memories from another
-backend and needs Aionis to decide which ones may direct the Agent:
+Use `aionis_govern_memory` when an MCP client already has memories from Mem0,
+Zep, Supermemory, Pinecone, pgvector, Chroma, Weaviate, LangGraph Store,
+markdown, logs, or another backend and needs Aionis to decide which ones may
+direct the Agent:
 
 ```json
 {

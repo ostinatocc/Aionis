@@ -24,13 +24,20 @@ billing, org management, hosted multi-tenant control plane, and fleet
 operations remain outside this Runtime package.
 
 MCP is the fastest way to try Aionis inside coding agents such as Claude Code,
-Cursor, or any MCP-compatible host.
+Cursor, or any MCP-compatible host. It lets an existing Agent ask for governed
+execution context before you write a custom adapter.
 
 ```bash
 npx @aionis/create@latest
 ```
 
-Then add Aionis to Claude Code:
+Then start the local Runtime from the generated checkout and add Aionis to
+Claude Code:
+
+```bash
+cd Aionis
+npm run -s lite:start
+```
 
 ```bash
 claude mcp add --transport stdio --scope project aionis -- \
@@ -49,6 +56,15 @@ The default install runs the no-key first-value demo: raw retrieved history is
 turned into governed execution context. Aionis admits the current route, keeps
 unsafe or stale history out of direct use, leaves archived evidence
 pointer-only, and prints a memory-use receipt.
+
+For Claude Code or Cursor, the first useful loop is:
+
+```text
+aionis_context -> Agent action -> aionis_record_step -> aionis_flight_recorder
+```
+
+Start context-only if you want the smallest trial. Add feedback, measure, and
+snapshot once the host loop is ready.
 
 Already using Mem0, Zep, Supermemory, Pinecone, pgvector, Chroma, Weaviate,
 LangGraph Store, markdown memory, logs, or a custom vector store? Keep it for
@@ -183,7 +199,8 @@ This lets teams keep their current storage while adding a memory firewall layer:
 failed, stale, contested, suppressed, blocked, or rehydrate-required candidates
 cannot silently become Agent instructions.
 
-For Mem0 users, the default shape is:
+For any backend, use `governMemory()` with external candidates. For Mem0 users,
+the drop-in helper is:
 
 ```ts
 const mem0Results = await mem0.search("continue the task", { user_id, top_k: 10 });

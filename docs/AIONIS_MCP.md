@@ -11,6 +11,10 @@ The fastest way to try Aionis is not a custom SDK integration. It is a local
 MCP server that lets an existing coding agent ask Aionis for context before it
 continues work.
 
+This should be the first public trial path for Claude Code and Cursor users:
+they can connect Aionis to an existing Agent loop, see route-safe execution
+context, then add feedback attribution later.
+
 The bridge keeps Aionis's product boundary intact:
 
 1. MCP tools call `@aionis/sdk`.
@@ -21,7 +25,13 @@ The bridge keeps Aionis's product boundary intact:
 
 ## Install
 
-Start Runtime:
+Install Runtime, SDK, and MCP bridge:
+
+```bash
+npx @aionis/create@latest
+```
+
+Start Runtime from the generated checkout:
 
 ```bash
 cd Aionis
@@ -69,6 +79,21 @@ Inspect the server with:
 claude mcp list
 claude mcp get aionis
 ```
+
+The smallest useful trial is context-first:
+
+```text
+aionis_context -> Claude Code action
+```
+
+The stronger coding-agent loop is:
+
+```text
+aionis_context -> Claude Code action -> aionis_record_step -> aionis_flight_recorder
+```
+
+The full loop adds `aionis_measure` and `aionis_snapshot` once the host can
+report outcome and used memory IDs.
 
 Full Claude Code demo:
 [AIONIS_CLAUDE_CODE_DEMO.md](AIONIS_CLAUDE_CODE_DEMO.md).
@@ -121,6 +146,11 @@ npm run -s runtime:quickstart:claude-code-mcp
 | `aionis_snapshot` | Returns read-only operator/audit state. |
 | `aionis_flight_recorder` | Replays what memory the Agent could see at decision time. |
 | `aionis_health` | Checks Runtime reachability. |
+
+The primary tool is `aionis_context`. It exposes Aionis's core product surface:
+Execution Memory compiled into a route-safe Agent context. The Memory Firewall
+tool is for MCP hosts that already have candidates from Mem0, Zep, vector DBs,
+markdown, logs, or another recall backend.
 
 ## Context Output
 

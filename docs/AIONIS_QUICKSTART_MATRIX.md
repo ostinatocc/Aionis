@@ -13,8 +13,9 @@ The fastest path is the published installer:
 npx @aionis/create@latest
 ```
 
-This runs the no-key first-value demo. Use the SDK quickstart after you are
-ready to configure an embedding provider:
+This runs the no-key first-value demo. If you use Claude Code, Cursor, or
+another MCP-compatible coding Agent, connect MCP next. Use the SDK quickstart
+after you are ready to wire Aionis into your own application loop:
 
 ```bash
 OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart sdk
@@ -23,9 +24,9 @@ OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quicksta
 | If you are building... | Run this | Transport | Main API path | Result contract |
 |---|---|---|---|---|
 | You want the fastest first proof | `npm run -s runtime:demo:first-value` | SDK facade over local API | `governMemory(mode=firewall)` over dirty external candidates | `aionis_first_value_demo_result_v1` |
-| A TypeScript or Node Agent | `npm run -s runtime:quickstart:sdk` | SDK facade | `remember -> guide -> feedback -> measure -> snapshot` | `aionis_sdk_quickstart_result_v1` |
 | Claude Code external demo | `npm run -s runtime:quickstart:claude-code-mcp` | MCP stdio + SDK facade | `aionis_health -> aionis_record_step -> aionis_context -> aionis_flight_recorder` | `aionis_claude_code_mcp_demo_result_v1` |
 | Cursor or another MCP client | `npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope my-project` | MCP stdio | `aionis_context -> agent action -> aionis_record_step` | MCP tool result JSON |
+| A TypeScript or Node Agent | `npm run -s runtime:quickstart:sdk` | SDK facade | `remember -> guide -> feedback -> measure -> snapshot` | `aionis_sdk_quickstart_result_v1` |
 | A service that calls Aionis over HTTP | `npm run -s runtime:quickstart:http` | Raw HTTP | `observe -> guide -> feedback -> measure -> snapshot -> rehydrate` | `aionis_http_quickstart_result_v1` |
 | A planner/worker/verifier/reviewer system | `npm run -s runtime:quickstart:multi-agent` | SDK + execution memory adapter | `observe -> guide -> feedback -> measure -> snapshot` with shared team memory | `aionis_multi_agent_quickstart_result_v1` |
 | A host with Mem0/Zep/vector/markdown memories | `npm run -s runtime:quickstart:memory-firewall` | SDK facade | `governMemory(mode=firewall)` over external candidates | `aionis_memory_firewall_quickstart_result_v1` |
