@@ -43,13 +43,13 @@ npm run -s lite:start
 claude mcp add --transport stdio --scope project aionis -- \
   npx -y @aionis/mcp@latest \
   --base-url http://127.0.0.1:3001 \
-  --scope my-project
+  --scope-from workspace
 ```
 
 Generic MCP clients can run the bridge directly:
 
 ```bash
-npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope my-project
+npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope-from workspace
 ```
 
 The default install runs the no-key first-value demo: raw retrieved history is
@@ -598,7 +598,7 @@ Claude Code local project setup:
 claude mcp add --transport stdio --scope project aionis -- \
   npx -y @aionis/mcp@latest \
   --base-url http://127.0.0.1:3001 \
-  --scope my-project
+  --scope-from workspace
 ```
 
 ```json
@@ -611,8 +611,8 @@ claude mcp add --transport stdio --scope project aionis -- \
         "@aionis/mcp@latest",
         "--base-url",
         "http://127.0.0.1:3001",
-        "--scope",
-        "my-project"
+        "--scope-from",
+        "workspace"
       ],
       "env": {
         "AIONIS_TENANT_ID": "default"

@@ -41,7 +41,7 @@ npm run -s lite:start
 Run MCP over stdio:
 
 ```bash
-npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope my-project
+npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope-from workspace
 ```
 
 Or configure through env:
@@ -49,9 +49,18 @@ Or configure through env:
 ```bash
 AIONIS_BASE_URL=http://127.0.0.1:3001 \
 AIONIS_TENANT_ID=default \
-AIONIS_SCOPE=my-project \
+AIONIS_SCOPE_FROM=workspace \
 npx @aionis/mcp@latest
 ```
+
+`--scope` is still supported and has the highest priority. Use it when the host
+already knows the exact Aionis memory boundary. Use `--scope-from workspace` for
+MCP-first coding agents where the bridge should create or reuse a stable
+workspace identity in `.aionis/workspace.json`. If the MCP host starts the
+server from a different working directory, add
+`--repo-root /absolute/path/to/repo`. Git root, git remote, and cwd identities
+are stored as aliases for the same workspace; they do not replace the primary
+`ws:<name>:<id>` scope.
 
 ## Claude Code
 
@@ -61,7 +70,7 @@ Add Aionis to the current Claude Code project:
 claude mcp add --transport stdio --scope project aionis -- \
   npx -y @aionis/mcp@latest \
   --base-url http://127.0.0.1:3001 \
-  --scope my-project
+  --scope-from workspace
 ```
 
 Use local scope for a private machine-only config:
@@ -70,7 +79,7 @@ Use local scope for a private machine-only config:
 claude mcp add --transport stdio --scope local aionis -- \
   npx -y @aionis/mcp@latest \
   --base-url http://127.0.0.1:3001 \
-  --scope my-project
+  --scope-from workspace
 ```
 
 Inspect the server with:
@@ -112,6 +121,8 @@ npm run -s runtime:quickstart:claude-code-mcp
 
 ## MCP Client Config
 
+Claude Code, Cursor, and most MCP clients use the common `mcpServers` shape:
+
 ```json
 {
   "mcpServers": {
@@ -122,8 +133,8 @@ npm run -s runtime:quickstart:claude-code-mcp
         "@aionis/mcp@latest",
         "--base-url",
         "http://127.0.0.1:3001",
-        "--scope",
-        "my-project"
+        "--scope-from",
+        "workspace"
       ],
       "env": {
         "AIONIS_TENANT_ID": "default"
@@ -132,6 +143,58 @@ npm run -s runtime:quickstart:claude-code-mcp
   }
 }
 ```
+
+Zed/Zcode-style clients use `context_servers` instead:
+
+```json
+{
+  "context_servers": {
+    "aionis": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@aionis/mcp@latest",
+        "--base-url",
+        "http://127.0.0.1:3001",
+        "--scope-from",
+        "workspace"
+      ],
+      "env": {
+        "AIONIS_TENANT_ID": "default"
+      }
+    }
+  }
+}
+```
+
+If Zed/Zcode launches the MCP process outside the project root, use:
+
+```json
+{
+  "context_servers": {
+    "aionis": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@aionis/mcp@latest",
+        "--base-url",
+        "http://127.0.0.1:3001",
+        "--scope-from",
+        "workspace",
+        "--repo-root",
+        "/absolute/path/to/your/repo"
+      ]
+    }
+  }
+}
+```
+
+The derived scope is a stable project boundary such as
+`ws:checkout-service:<id>`. Planner, worker, verifier, reviewer, and external
+Agent sessions that use the same derived scope share execution memory while
+still preserving run/task/role metadata inside that project boundary. If the
+directory later becomes a git repo or gains a remote, Aionis keeps the same
+workspace scope and adds the new git identity as an alias.
 
 ## Tools
 

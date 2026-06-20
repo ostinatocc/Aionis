@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { parseAionisMcpConfig } from "../src/config.ts";
+import { AIONIS_WORKSPACE_IDENTITY_PATH, parseAionisMcpConfig, type AionisMcpWorkspaceIdentity } from "../src/config.ts";
 import { createAionisMcpServer } from "../src/server.ts";
 import { AIONIS_MCP_TOOL_NAMES, handleAionisMcpTool, type AionisMcpClient } from "../src/tools.ts";
 
@@ -175,6 +179,117 @@ test("@aionis/mcp parses env and cli config", () => {
   });
 });
 
+test("@aionis/mcp derives stable default scope from git repo metadata", () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-mcp-git-scope-"));
+  execFileSync("git", ["init"], { cwd: repoDir, stdio: "ignore" });
+  execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/checkout-service.git"], { cwd: repoDir });
+
+  const config = parseAionisMcpConfig([
+    "--scope-from",
+    "git",
+    "--repo-root",
+    repoDir,
+  ], {}, { cwd: repoDir });
+
+  assert.match(config.scope ?? "", /^git:checkout-service:[a-f0-9]{12}$/);
+  assert.equal(config.scope_from, "git");
+  assert.equal(config.repo_root, repoDir);
+
+  const explicitScope = parseAionisMcpConfig([
+    "--scope",
+    "explicit-project",
+    "--scope-from",
+    "git",
+    "--repo-root",
+    repoDir,
+  ], {}, { cwd: repoDir });
+  assert.equal(explicitScope.scope, "explicit-project");
+});
+
+test("@aionis/mcp creates stable workspace scope and keeps it after git init", () => {
+  const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-mcp-workspace-scope-"));
+  const first = parseAionisMcpConfig([
+    "--scope-from",
+    "workspace",
+    "--repo-root",
+    workspaceDir,
+  ], {}, { cwd: workspaceDir });
+
+  assert.match(first.scope ?? "", /^ws:aionis-mcp-workspace-scope-[A-Za-z0-9._-]+:[a-f0-9]{12}$/);
+  assert.equal(first.scope_from, "workspace");
+
+  const identityPath = path.join(workspaceDir, AIONIS_WORKSPACE_IDENTITY_PATH);
+  const initialIdentity = JSON.parse(fs.readFileSync(identityPath, "utf8")) as AionisMcpWorkspaceIdentity;
+  assert.equal(initialIdentity.scope, first.scope);
+  assert.equal(initialIdentity.aliases.some((alias) => alias.startsWith("cwd:")), true);
+  assert.equal(initialIdentity.aliases.some((alias) => alias.startsWith("git:")), false);
+
+  execFileSync("git", ["init"], { cwd: workspaceDir, stdio: "ignore" });
+  execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/workspace-demo.git"], { cwd: workspaceDir });
+
+  const second = parseAionisMcpConfig([
+    "--scope-from",
+    "workspace",
+    "--repo-root",
+    workspaceDir,
+  ], {}, { cwd: workspaceDir });
+  const updatedIdentity = JSON.parse(fs.readFileSync(identityPath, "utf8")) as AionisMcpWorkspaceIdentity;
+
+  assert.equal(second.scope, first.scope);
+  assert.equal(updatedIdentity.scope, first.scope);
+  assert.equal(updatedIdentity.aliases.some((alias) => alias.startsWith("cwd:")), true);
+  assert.equal(updatedIdentity.aliases.some((alias) => /^git:workspace-demo:[a-f0-9]{12}$/.test(alias)), true);
+});
+
+test("@aionis/mcp rejects invalid workspace identity files", () => {
+  const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-mcp-invalid-workspace-"));
+  const identityPath = path.join(workspaceDir, AIONIS_WORKSPACE_IDENTITY_PATH);
+  fs.mkdirSync(path.dirname(identityPath), { recursive: true });
+  fs.writeFileSync(identityPath, JSON.stringify({
+    contract_version: "aionis_mcp_workspace_identity_v1",
+    workspace_id: "abc123",
+    scope: "ws:broken:abc123",
+    created_at: new Date().toISOString(),
+    aliases: [],
+  }));
+
+  assert.throws(
+    () => parseAionisMcpConfig([
+      "--scope-from",
+      "workspace",
+      "--repo-root",
+      workspaceDir,
+    ], {}, { cwd: workspaceDir }),
+    /Invalid Aionis workspace identity file/,
+  );
+});
+
+test("@aionis/mcp derives cwd scope when git metadata is unavailable", () => {
+  const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-mcp-cwd-scope-"));
+  const config = parseAionisMcpConfig([
+    "--scope-from",
+    "cwd",
+    "--repo-root",
+    workspaceDir,
+  ], {}, { cwd: workspaceDir });
+
+  assert.match(config.scope ?? "", /^cwd:aionis-mcp-cwd-scope-[A-Za-z0-9._-]+:[a-f0-9]{12}$/);
+  assert.equal(config.scope_from, "cwd");
+});
+
+test("@aionis/mcp falls back to cwd scope when git scope is requested outside a repo", () => {
+  const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-mcp-nongit-scope-"));
+  const config = parseAionisMcpConfig([
+    "--scope-from",
+    "git",
+    "--repo-root",
+    workspaceDir,
+  ], {}, { cwd: workspaceDir });
+
+  assert.match(config.scope ?? "", /^cwd:aionis-mcp-nongit-scope-[A-Za-z0-9._-]+:[a-f0-9]{12}$/);
+  assert.equal(config.scope_from, "git");
+});
+
 test("@aionis/mcp exposes stable product tools", () => {
   assert.deepEqual(AIONIS_MCP_TOOL_NAMES, [
     "aionis_context",
@@ -247,6 +362,53 @@ test("@aionis/mcp context tool records optional observation then compiles prompt
   assert.equal((calls[0]?.input as { outcome?: string }).outcome, "unknown");
   assert.equal((calls[1]?.input as { context_mode?: string }).context_mode, "compact_agent");
   assert.equal((calls[1]?.input as { context_char_budget?: number }).context_char_budget, 3000);
+});
+
+test("@aionis/mcp preserves cross-agent continuity through shared scope", async () => {
+  const calls: Array<{ method: string; input?: unknown; options?: unknown }> = [];
+  const client = fakeClient(calls);
+  const sharedScope = "git:checkout-service:abc123def456";
+
+  await handleAionisMcpTool(client, "aionis_record_step", {
+    run_id: "run-multi-agent",
+    task_signature: "checkout-migration",
+    scope: sharedScope,
+    role: "planner",
+    title: "Planner accepted scoped checkout route",
+    summary: "Plan asset says continue packages/api/src/checkout.ts and avoid the broad legacy rewrite.",
+    outcome: "succeeded",
+    target_files: ["packages/api/src/checkout.ts"],
+    acceptance_checks: ["unit tests pass", "no unrelated module changes"],
+    feedback: false,
+  });
+
+  await handleAionisMcpTool(client, "aionis_context", {
+    run_id: "run-multi-agent",
+    task_signature: "checkout-migration",
+    scope: sharedScope,
+    role: "worker",
+    query_text: "Continue implementation from the accepted plan.",
+  });
+
+  await handleAionisMcpTool(client, "aionis_record_step", {
+    run_id: "run-multi-agent",
+    task_signature: "checkout-migration",
+    scope: sharedScope,
+    role: "verifier",
+    title: "Verifier rejected broad rewrite",
+    summary: "The broad rewrite touched unrelated modules and must stay blocked.",
+    outcome: "failed",
+    target_files: ["packages/api/src/legacy.ts"],
+    feedback: false,
+  });
+
+  assert.deepEqual(calls.map((call) => call.method), ["observeOutcome", "guideForRole", "observeOutcome"]);
+  assert.equal((calls[0]?.input as { role?: string; scope?: string }).role, "planner");
+  assert.equal((calls[1]?.input as { role?: string; scope?: string }).role, "worker");
+  assert.equal((calls[2]?.input as { role?: string; scope?: string }).role, "verifier");
+  assert.equal((calls[0]?.input as { scope?: string }).scope, sharedScope);
+  assert.equal((calls[1]?.input as { scope?: string }).scope, sharedScope);
+  assert.equal((calls[2]?.input as { scope?: string }).scope, sharedScope);
 });
 
 test("@aionis/mcp governs external memory through Memory Firewall mode", async () => {

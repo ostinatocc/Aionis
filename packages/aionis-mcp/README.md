@@ -11,7 +11,7 @@ public trial path for Aionis Execution Memory: connect the bridge, call
 chat history.
 
 ```bash
-npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope my-project
+npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope-from workspace
 ```
 
 Start a local Runtime first:
@@ -27,9 +27,17 @@ Environment form:
 ```bash
 AIONIS_BASE_URL=http://127.0.0.1:3001 \
 AIONIS_TENANT_ID=default \
-AIONIS_SCOPE=my-project \
+AIONIS_SCOPE_FROM=workspace \
 npx @aionis/mcp@latest
 ```
+
+Use `--scope my-project` when your host already knows the exact memory boundary.
+Use `--scope-from workspace` for coding-agent clients so Aionis derives a stable
+project scope from `.aionis/workspace.json`. If the MCP client launches outside
+the repo, add `--repo-root /absolute/path/to/repo`. Git root, git remote, and cwd
+identities are stored as aliases for the same `ws:<name>:<id>` scope, so
+starting from a non-git directory and running `git init` later does not split
+the execution memory boundary.
 
 ## Tools
 
@@ -137,8 +145,8 @@ Use the MCP client's command/args configuration:
         "@aionis/mcp@latest",
         "--base-url",
         "http://127.0.0.1:3001",
-        "--scope",
-        "my-project"
+        "--scope-from",
+        "workspace"
       ],
       "env": {
         "AIONIS_TENANT_ID": "default"
@@ -147,6 +155,41 @@ Use the MCP client's command/args configuration:
   }
 }
 ```
+
+Zed/Zcode-style clients use `context_servers`:
+
+```json
+{
+  "context_servers": {
+    "aionis": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@aionis/mcp@latest",
+        "--base-url",
+        "http://127.0.0.1:3001",
+        "--scope-from",
+        "workspace"
+      ],
+      "env": {
+        "AIONIS_TENANT_ID": "default"
+      }
+    }
+  }
+}
+```
+
+When the host starts MCP from a non-repo cwd, add:
+
+```json
+"--repo-root",
+"/absolute/path/to/your/repo"
+```
+
+All Agent roles that use the same derived scope can share Aionis execution
+memory across sessions: planner records plan assets, worker asks
+`aionis_context`, verifier records outcomes, and reviewer can inspect the run via
+`aionis_flight_recorder`.
 
 Start a local Runtime first:
 
