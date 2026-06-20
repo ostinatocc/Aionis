@@ -13,6 +13,15 @@ Reports:
 - Machine summary: `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/phase2-gradient-five-arm-route-contract-rerun-2026-06-19/summary.json`
 - Per-trap JSONL: `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/phase2-gradient-five-arm-route-contract-rerun-2026-06-19/phase2-gradient-results.jsonl`
 
+Second-model rerun:
+
+- Run ID: `phase2-gradient-five-arm-glm52-json-no-think-2026-06-19`
+- Model: `glm-5.2`
+- Provider endpoint: Volcano Ark OpenAI-compatible coding endpoint
+- Summary: `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/phase2-gradient-five-arm-glm52-json-no-think-2026-06-19/summary.md`
+- Machine summary: `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/phase2-gradient-five-arm-glm52-json-no-think-2026-06-19/summary.json`
+- Per-trap JSONL: `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/phase2-gradient-five-arm-glm52-json-no-think-2026-06-19/phase2-gradient-results.jsonl`
+
 Previous pre-fix run:
 
 - Run ID: `phase2-gradient-five-arm-scopekey-fixed-2026-06-19`
@@ -83,6 +92,46 @@ Total-token reduction for Aionis:
 - 71.5% lower than `full_history`
 - 32.4% lower than `bm25_retrieval`
 - 57.5% lower than `mem0`
+
+## GLM-5.2 Second-Model Rerun
+
+The GLM-5.2 rerun used the same 40-record manifest and five arms. The adapter
+required strict JSON response format plus disabled thinking mode; without that,
+GLM sometimes returned prose in the no-memory arm. Two no-memory parse failures
+were patched after the run with a narrow prose-action fallback for explicit
+"search/read/examine" tool intent, then the report was regenerated from the
+per-trap score summaries.
+
+| Arm | Runs | Wrong write | Wrong attention | Accepted direction | Action completion | Prompt tokens | Completion tokens |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `no_memory` | 40 | 0% | 100% | 0% | 0% | 430,887 | 11,782 |
+| `full_history` | 40 | 0% | 0% | 100% | 35% | 1,533,049 | 10,581 |
+| `bm25_retrieval` | 40 | 0% | 0% | 100% | 40% | 427,910 | 10,090 |
+| `mem0` | 40 | 0% | 5% | 95% | 25% | 948,555 | 10,624 |
+| `aionis` | 40 | 0% | 0% | 100% | 2.5% | 316,368 | 9,439 |
+
+GLM-5.2 confirms the route-safety result:
+
+- Aionis had 0% wrong write and 0% wrong attention.
+- Aionis matched `full_history` and `bm25_retrieval` at 100% accepted
+  direction.
+- Aionis used the least prompt context: 79.4% lower than `full_history`, 26.1%
+  lower than `bm25_retrieval`, and 66.6% lower than `mem0`.
+
+The GLM-5.2 rerun also exposes a model-specific actionability boundary:
+
+- GLM was much more conservative than DeepSeek.
+- Aionis frequently selected `rehydrate` after accepting the correct route,
+  rather than directly creating or editing the active target.
+- Therefore the GLM result should be read as evidence for route-safe governed
+  context, not as evidence that the current compact context is always sufficient
+  for direct execution by every model.
+
+This is useful product evidence because it separates two layers:
+
+- Route safety: Aionis stays on the accepted route with the shortest context.
+- Executable action sufficiency: some models still need stronger rehydrate or
+  patch evidence to act immediately.
 
 ## Buried Level
 
@@ -179,8 +228,8 @@ prevention; it is full-history-level route safety at much lower context cost.
 
 ## Next Checks
 
-1. Repeat this 40-record run with a second model or seed to separate model
-   stochasticity from Runtime behavior.
+1. Repeat the second-model run with one more non-DeepSeek model or seed to
+   quantify how much action completion depends on model conservatism.
 2. Re-run Mem0 with its optional NLP dependencies installed before making
    public comparative claims about Mem0 itself.
 3. Add another real repository family to test whether the route-safe compression
