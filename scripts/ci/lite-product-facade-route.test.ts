@@ -1858,6 +1858,7 @@ test("product observe turns execution input into recallable execution memory", a
     assert.equal(guideBody.agent_context.route_contract.fallback_policy, "do_not_promote_reference_or_blocked_targets");
     assert.deepEqual(guideBody.agent_context.route_contract.action_policy.missing_active_target_preferred_order, ["create", "restore", "rehydrate", "report_conflict"]);
     assert.equal(guideBody.agent_context.route_contract.action_policy.terminal_inspect_allowed, false);
+    assert.equal(guideBody.agent_context.route_contract.action_policy.after_rehydrate_policy, "continue_allowed_action_if_task_consistent");
     assert.ok(guideBody.source_map.internal_surfaces_used.includes("role_aware_agent_context"));
     assert.ok(guideBody.agent_context.prompt_text.length < JSON.stringify({
       memory_packet: guideBody.memory_packet,
@@ -1914,6 +1915,7 @@ test("product observe turns execution input into recallable execution memory", a
     assert.equal(compactBody.agent_context.route_contract.fallback_policy, "do_not_promote_reference_or_blocked_targets");
     assert.deepEqual(compactBody.agent_context.route_contract.action_policy.missing_active_target_preferred_order, ["create", "restore", "rehydrate", "report_conflict"]);
     assert.equal(compactBody.agent_context.route_contract.action_policy.terminal_inspect_allowed, false);
+    assert.equal(compactBody.agent_context.route_contract.action_policy.after_rehydrate_policy, "continue_allowed_action_if_task_consistent");
     assert.ok(compactBody.source_map.omitted_internal_surfaces.includes("memory_packet"));
     assert.ok(compactBody.source_map.omitted_internal_surfaces.includes("guide_packet"));
   } finally {

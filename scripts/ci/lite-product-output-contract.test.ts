@@ -900,6 +900,9 @@ test("AionisAgentContext accepts compact agent-facing output", () => {
   assert.deepEqual(parsed.route_contract.pending_artifacts[0]?.allowed_actions, ["create", "restore", "rehydrate", "report_conflict"]);
   assert.deepEqual(parsed.route_contract.pending_artifacts[0]?.preferred_action_order, ["create", "restore", "rehydrate", "report_conflict"]);
   assert.equal(parsed.route_contract.pending_artifacts[0]?.terminal_inspect_allowed, false);
+  assert.equal(parsed.route_contract.pending_artifacts[0]?.executable_evidence_policy, "route_safe_but_patch_may_require_rehydrate");
+  assert.equal(parsed.route_contract.pending_artifacts[0]?.after_rehydrate_policy, "continue_allowed_action_if_task_consistent");
+  assert.equal(parsed.route_contract.pending_artifacts[0]?.report_conflict_requires, "rehydrate_unavailable_or_evidence_conflict");
   assert.deepEqual(parsed.route_contract.evidence_sources, [
     {
       target: "src/reference.ts",
@@ -923,6 +926,9 @@ test("AionisAgentContext accepts compact agent-facing output", () => {
   assert.deepEqual(parsed.route_contract.action_policy.missing_active_target_preferred_order, ["create", "restore", "rehydrate", "report_conflict"]);
   assert.equal(parsed.route_contract.action_policy.terminal_inspect_allowed, false);
   assert.equal(parsed.route_contract.action_policy.reference_fallback_requires, "explicit_raw_evidence_or_operator_confirmation");
+  assert.equal(parsed.route_contract.action_policy.executable_evidence_policy, "route_safe_but_patch_may_require_rehydrate");
+  assert.equal(parsed.route_contract.action_policy.after_rehydrate_policy, "continue_allowed_action_if_task_consistent");
+  assert.equal(parsed.route_contract.action_policy.report_conflict_requires, "rehydrate_unavailable_or_evidence_conflict");
   assert.equal(parsed.risk.negative_transfer_risk, "medium");
 
   const compactParsed = AionisAgentContextSchema.parse({
@@ -948,6 +954,7 @@ test("AionisAgentContext accepts compact agent-facing output", () => {
   assert.deepEqual(defaultRouteParsed.route_contract.blocked_routes, []);
   assert.equal(defaultRouteParsed.route_contract.conflict_policy, "do_not_treat_missing_active_target_as_superseded");
   assert.deepEqual(defaultRouteParsed.route_contract.action_policy.missing_active_target_preferred_order, ["create", "restore", "rehydrate", "report_conflict"]);
+  assert.equal(defaultRouteParsed.route_contract.action_policy.after_rehydrate_policy, "continue_allowed_action_if_task_consistent");
 });
 
 test("AionisAgentContext rejects packet leakage and loose fields", () => {

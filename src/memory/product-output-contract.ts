@@ -671,12 +671,24 @@ const AionisRouteContractActionPolicySchema = z
     reference_fallback_requires: z
       .literal("explicit_raw_evidence_or_operator_confirmation")
       .default("explicit_raw_evidence_or_operator_confirmation"),
+    executable_evidence_policy: z
+      .literal("route_safe_but_patch_may_require_rehydrate")
+      .default("route_safe_but_patch_may_require_rehydrate"),
+    after_rehydrate_policy: z
+      .literal("continue_allowed_action_if_task_consistent")
+      .default("continue_allowed_action_if_task_consistent"),
+    report_conflict_requires: z
+      .literal("rehydrate_unavailable_or_evidence_conflict")
+      .default("rehydrate_unavailable_or_evidence_conflict"),
   })
   .strict()
   .default({
     missing_active_target_preferred_order: [...AionisRouteContractMissingActiveActionOrder],
     terminal_inspect_allowed: false,
     reference_fallback_requires: "explicit_raw_evidence_or_operator_confirmation",
+    executable_evidence_policy: "route_safe_but_patch_may_require_rehydrate",
+    after_rehydrate_policy: "continue_allowed_action_if_task_consistent",
+    report_conflict_requires: "rehydrate_unavailable_or_evidence_conflict",
   });
 
 const AionisRouteContractSchema = z
@@ -703,6 +715,15 @@ const AionisRouteContractSchema = z
             .array(AionisRouteContractMissingActiveActionSchema)
             .default([...AionisRouteContractMissingActiveActionOrder]),
           terminal_inspect_allowed: z.literal(false).default(false),
+          executable_evidence_policy: z
+            .literal("route_safe_but_patch_may_require_rehydrate")
+            .default("route_safe_but_patch_may_require_rehydrate"),
+          after_rehydrate_policy: z
+            .literal("continue_allowed_action_if_task_consistent")
+            .default("continue_allowed_action_if_task_consistent"),
+          report_conflict_requires: z
+            .literal("rehydrate_unavailable_or_evidence_conflict")
+            .default("rehydrate_unavailable_or_evidence_conflict"),
         }).strict(),
       )
       .default([]),
@@ -732,6 +753,9 @@ const AionisRouteContractSchema = z
       missing_active_target_preferred_order: [...AionisRouteContractMissingActiveActionOrder],
       terminal_inspect_allowed: false,
       reference_fallback_requires: "explicit_raw_evidence_or_operator_confirmation",
+      executable_evidence_policy: "route_safe_but_patch_may_require_rehydrate",
+      after_rehydrate_policy: "continue_allowed_action_if_task_consistent",
+      report_conflict_requires: "rehydrate_unavailable_or_evidence_conflict",
     },
   });
 

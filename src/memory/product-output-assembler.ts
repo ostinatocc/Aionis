@@ -1544,10 +1544,10 @@ function commandPosturePriorityLine(args: {
         hasContinue && hasInspect ? "go>chk" : null,
         hasContinue ? "go=primary_next_route" : null,
         hasContinue ? "missing_go=create_restore_raw_or_report_conflict_no_old" : null,
+        hasRehydrate ? "raw_then_continue=1" : null,
         hasContinue && (hasInspect || hasMustNot) ? "old_ref_not_supersede_go=1" : null,
         hasInspect ? "chk=reference_only_not_primary" : null,
         hasMustNot ? "no=blocked_direction" : null,
-        hasRehydrate ? "raw=rehydrate_before_exact_use" : null,
       ])
     : compactStrings([
         hasContinue ? "SHOULD_CONTINUE is the primary next route when present" : null,
@@ -1555,7 +1555,7 @@ function commandPosturePriorityLine(args: {
         hasContinue && (hasInspect || hasMustNot) ? "Existing INSPECT_FIRST/MUST_NOT targets do not supersede SHOULD_CONTINUE just because they exist" : null,
         hasInspect ? "INSPECT_FIRST is reference-only evidence and must not replace SHOULD_CONTINUE" : null,
         hasMustNot ? "MUST_NOT blocks direction; inspect only as counter-evidence when necessary" : null,
-        hasRehydrate ? "REHYDRATE_FIRST requires raw evidence before exact use" : null,
+        hasRehydrate ? "REHYDRATE_FIRST recovers raw evidence before exact use, then continue the consistent active route" : null,
       ]);
   if (parts.length === 0) return null;
   const prefix = args.compact ? "priority:" : "execution_contract:";
@@ -1654,7 +1654,10 @@ function buildAgentRouteContract(args: {
       allowed_actions: ["create", "restore", "rehydrate", "report_conflict"],
       preferred_action_order: ["create", "restore", "rehydrate", "report_conflict"],
       terminal_inspect_allowed: false,
-      reason: "If the active route target is absent, absence alone is not stale proof; create, restore, rehydrate, or report conflict before falling back.",
+      executable_evidence_policy: "route_safe_but_patch_may_require_rehydrate",
+      after_rehydrate_policy: "continue_allowed_action_if_task_consistent",
+      report_conflict_requires: "rehydrate_unavailable_or_evidence_conflict",
+      reason: "If the active route target is absent, absence alone is not stale proof; create, restore, or rehydrate before reporting conflict or falling back.",
     }, 6);
   }
 
@@ -1706,6 +1709,9 @@ function buildAgentRouteContract(args: {
       missing_active_target_preferred_order: ["create", "restore", "rehydrate", "report_conflict"],
       terminal_inspect_allowed: false,
       reference_fallback_requires: "explicit_raw_evidence_or_operator_confirmation",
+      executable_evidence_policy: "route_safe_but_patch_may_require_rehydrate",
+      after_rehydrate_policy: "continue_allowed_action_if_task_consistent",
+      report_conflict_requires: "rehydrate_unavailable_or_evidence_conflict",
     },
   };
 }
@@ -1727,6 +1733,8 @@ function routeContractLine(args: {
     ? compactStrings([
         active.length > 0 ? "conflict=missing_active_not_superseded" : null,
         active.length > 0 ? "missing_action=create/restore/rehydrate/report" : null,
+        active.length > 0 ? "exec=route_safe_patch_raw_if_needed" : null,
+        active.length > 0 ? "after_raw=continue_if_consistent" : null,
         active.length > 0 ? "old_ref_not_supersede=1" : null,
         active.length > 0 ? `active=${active.join(",")}` : null,
         reference.length > 0 ? `ref_only=${reference.join(",")}` : null,
@@ -1736,6 +1744,8 @@ function routeContractLine(args: {
     : compactStrings([
         active.length > 0 ? "conflict_policy=do_not_treat_missing_active_target_as_superseded" : null,
         active.length > 0 ? "if_active_target_missing=create_or_restore_or_rehydrate_or_report_conflict_before_fallback" : null,
+        active.length > 0 ? "executable_evidence=route_safe_but_patch_may_require_rehydrate" : null,
+        active.length > 0 ? "after_rehydrate=continue_allowed_action_if_task_consistent" : null,
         active.length > 0 ? "old_or_reference_target_presence_does_not_supersede_active_route" : null,
         active.length > 0 || reference.length > 0 || blocked.length > 0 ? "fallback_policy=do_not_promote_reference_or_blocked_targets" : null,
         active.length > 0 ? `active_targets=${active.join(",")}` : null,
@@ -1754,8 +1764,8 @@ function routeActionPolicyLine(args: {
   if (args.maxChars <= 0 || args.routeContract.active_targets.length === 0) return null;
   const order = args.routeContract.action_policy.missing_active_target_preferred_order.join(">");
   const line = args.compact
-    ? `action missing_active=${order} terminal_inspect=0 ref_fallback_raw_or_confirm=1`
-    : `action_policy: missing_active_target_order=${order}; terminal_inspect_allowed=false; reference_fallback_requires=explicit_raw_evidence_or_operator_confirmation`;
+    ? `action missing_active=${order} terminal_inspect=0 raw_then_continue=1 conflict_after_raw_only=1 ref_fallback_raw_or_confirm=1`
+    : `action_policy: missing_active_target_order=${order}; terminal_inspect_allowed=false; executable_evidence_policy=route_safe_but_patch_may_require_rehydrate; after_rehydrate_policy=continue_allowed_action_if_task_consistent; report_conflict_requires=rehydrate_unavailable_or_evidence_conflict; reference_fallback_requires=explicit_raw_evidence_or_operator_confirmation`;
   return shortenPromptText(line, args.maxChars);
 }
 
@@ -1805,11 +1815,11 @@ function renderAgentContextPrompt(args: {
     routeContractLine({
       routeContract: args.routeContract,
       maxItems: 4,
-      maxChars: 560,
+      maxChars: 720,
     }),
     routeActionPolicyLine({
       routeContract: args.routeContract,
-      maxChars: 260,
+      maxChars: 520,
     }),
     `summary: ${shortenPromptText(args.summary, args.profile.summaryChars)}`,
     inline("target_files", args.targetFiles, args.profile.targetFileItems, args.profile.targetFileChars),
@@ -2214,18 +2224,18 @@ function renderExecutionStateContractPrompt(args: {
     commandPosturePriorityLine({
       commandPosture: args.commandPosture,
       compact: true,
-      maxChars: 180,
+      maxChars: 240,
     }),
     routeContractLine({
       routeContract: args.routeContract,
       compact: true,
       maxItems: Math.max(args.profile.targetFileItems, 1),
-      maxChars: 220,
+      maxChars: 320,
     }),
     routeActionPolicyLine({
       routeContract: args.routeContract,
       compact: true,
-      maxChars: 120,
+      maxChars: 190,
     }),
     contractNextActionLine({
       entry: nextActionEntry,

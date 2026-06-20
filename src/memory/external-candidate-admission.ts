@@ -460,6 +460,9 @@ function routeContractForExternal(entries: AdmittedCandidate[]): AionisAgentCont
       allowed_actions: ["create", "restore", "rehydrate", "report_conflict"] as const,
       preferred_action_order: ["create", "restore", "rehydrate", "report_conflict"] as const,
       terminal_inspect_allowed: false as const,
+      executable_evidence_policy: "route_safe_but_patch_may_require_rehydrate" as const,
+      after_rehydrate_policy: "continue_allowed_action_if_task_consistent" as const,
+      report_conflict_requires: "rehydrate_unavailable_or_evidence_conflict" as const,
     })),
     reference_only_targets: referenceOnlyTargets,
     blocked_direction_targets: blockedDirectionTargets,
@@ -479,6 +482,9 @@ function routeContractForExternal(entries: AdmittedCandidate[]): AionisAgentCont
       missing_active_target_preferred_order: ["create", "restore", "rehydrate", "report_conflict"] as const,
       terminal_inspect_allowed: false as const,
       reference_fallback_requires: "explicit_raw_evidence_or_operator_confirmation" as const,
+      executable_evidence_policy: "route_safe_but_patch_may_require_rehydrate" as const,
+      after_rehydrate_policy: "continue_allowed_action_if_task_consistent" as const,
+      report_conflict_requires: "rehydrate_unavailable_or_evidence_conflict" as const,
     },
   };
 }

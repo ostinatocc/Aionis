@@ -1336,6 +1336,55 @@ function renderProductCommandPostureLine(args: {
   return compactProductPromptText(`${args.compactAgent ? "cmd" : "command_posture:"} ${parts.join(" ")}`, args.compactAgent ? 180 : 320);
 }
 
+function renderProductRouteContractLine(args: {
+  routeContract: AionisAgentContext["route_contract"];
+  compactAgent: boolean;
+}): string | null {
+  const activeTargets = args.routeContract.active_targets
+    .slice(0, args.compactAgent ? 2 : 4)
+    .map((entry) => compactProductPromptText(entry.target, args.compactAgent ? 34 : 48));
+  const referenceTargets = args.routeContract.reference_only_targets
+    .slice(0, args.compactAgent ? 1 : 3)
+    .map((entry) => compactProductPromptText(entry.target, args.compactAgent ? 28 : 42));
+  const blockedTargets = args.routeContract.blocked_direction_targets
+    .slice(0, args.compactAgent ? 1 : 3)
+    .map((entry) => compactProductPromptText(entry.target, args.compactAgent ? 28 : 42));
+  if (activeTargets.length === 0 && referenceTargets.length === 0 && blockedTargets.length === 0) return null;
+  const parts = args.compactAgent
+    ? mergeGuideStrings([
+        activeTargets.length > 0 ? "conflict=missing_active_not_superseded" : null,
+        activeTargets.length > 0 ? "exec=route_safe_patch_raw_if_needed" : null,
+        activeTargets.length > 0 ? "after_raw=continue_if_consistent" : null,
+        activeTargets.length > 0 ? `active=${activeTargets.join(",")}` : null,
+        referenceTargets.length > 0 ? `ref_only=${referenceTargets.join(",")}` : null,
+        blockedTargets.length > 0 ? `block_dir=${blockedTargets.join(",")}` : null,
+        activeTargets.length > 0 || referenceTargets.length > 0 || blockedTargets.length > 0 ? "no_fallback_to_ref=1" : null,
+      ].filter((entry): entry is string => !!entry), 8)
+    : mergeGuideStrings([
+        activeTargets.length > 0 ? "conflict_policy=do_not_treat_missing_active_target_as_superseded" : null,
+        activeTargets.length > 0 ? "executable_evidence=route_safe_but_patch_may_require_rehydrate" : null,
+        activeTargets.length > 0 ? "after_rehydrate=continue_allowed_action_if_task_consistent" : null,
+        activeTargets.length > 0 ? `active_targets=${activeTargets.join(",")}` : null,
+        referenceTargets.length > 0 ? `reference_only_targets=${referenceTargets.join(",")}` : null,
+        blockedTargets.length > 0 ? `blocked_direction_targets=${blockedTargets.join(",")}` : null,
+        activeTargets.length > 0 || referenceTargets.length > 0 || blockedTargets.length > 0 ? "fallback_policy=do_not_promote_reference_or_blocked_targets" : null,
+      ].filter((entry): entry is string => !!entry), 8);
+  if (parts.length === 0) return null;
+  return compactProductPromptText(`${args.compactAgent ? "route" : "route_contract:"} ${parts.join(args.compactAgent ? " " : "; ")}`, args.compactAgent ? 300 : 560);
+}
+
+function renderProductRouteActionLine(args: {
+  routeContract: AionisAgentContext["route_contract"];
+  compactAgent: boolean;
+}): string | null {
+  if (args.routeContract.active_targets.length === 0) return null;
+  const order = args.routeContract.action_policy.missing_active_target_preferred_order.join(">");
+  const line = args.compactAgent
+    ? `action missing_active=${order} terminal_inspect=0 raw_then_continue=1 conflict_after_raw_only=1`
+    : `action_policy: missing_active_target_order=${order}; terminal_inspect_allowed=false; executable_evidence_policy=route_safe_but_patch_may_require_rehydrate; after_rehydrate_policy=continue_allowed_action_if_task_consistent; report_conflict_requires=rehydrate_unavailable_or_evidence_conflict`;
+  return compactProductPromptText(line, args.compactAgent ? 190 : 520);
+}
+
 function renderMergedAgentPrompt(args: {
   context: AionisAgentContext;
   contextCharBudget?: number | null;
@@ -1356,6 +1405,14 @@ function renderMergedAgentPrompt(args: {
     `state r=${ctx.agent_role} h=${ctx.history_used ? 1 : 0} a=${ctx.actionable_history_used ? 1 : 0} p=${productPromptPostureLabel(ctx.recommended_posture)} auth=${productPromptAuthorityLabel(ctx.authority)} risk=${productPromptRiskLabel(ctx.risk.negative_transfer_risk)}`,
     renderProductCommandPostureLine({
       commandPosture: ctx.command_posture,
+      compactAgent,
+    }),
+    renderProductRouteContractLine({
+      routeContract: ctx.route_contract,
+      compactAgent,
+    }),
+    renderProductRouteActionLine({
+      routeContract: ctx.route_contract,
       compactAgent,
     }),
     ctx.actionable_history_used

@@ -57,6 +57,9 @@ export type AionisRouteContractPendingArtifact = AionisRouteContractTarget & {
   allowed_actions: AionisRouteContractMissingActiveAction[];
   preferred_action_order: AionisRouteContractMissingActiveAction[];
   terminal_inspect_allowed: false;
+  executable_evidence_policy: "route_safe_but_patch_may_require_rehydrate";
+  after_rehydrate_policy: "continue_allowed_action_if_task_consistent";
+  report_conflict_requires: "rehydrate_unavailable_or_evidence_conflict";
 };
 export type AionisRouteContractEvidenceSource = AionisRouteContractTarget & {
   evidence_use: "reference_only";
@@ -70,6 +73,9 @@ export type AionisRouteContractActionPolicy = {
   missing_active_target_preferred_order: AionisRouteContractMissingActiveAction[];
   terminal_inspect_allowed: false;
   reference_fallback_requires: "explicit_raw_evidence_or_operator_confirmation";
+  executable_evidence_policy: "route_safe_but_patch_may_require_rehydrate";
+  after_rehydrate_policy: "continue_allowed_action_if_task_consistent";
+  report_conflict_requires: "rehydrate_unavailable_or_evidence_conflict";
 };
 export type AionisRouteContract = {
   active_targets: AionisRouteContractActiveTarget[];
@@ -1091,6 +1097,9 @@ function routeContractPendingArtifactArray(value: unknown): AionisRouteContractP
       allowed_actions: actions.length > 0 ? actions : ["create", "restore", "rehydrate", "report_conflict"],
       preferred_action_order: preferred.length > 0 ? preferred : ["create", "restore", "rehydrate", "report_conflict"],
       terminal_inspect_allowed: false,
+      executable_evidence_policy: "route_safe_but_patch_may_require_rehydrate",
+      after_rehydrate_policy: "continue_allowed_action_if_task_consistent",
+      report_conflict_requires: "rehydrate_unavailable_or_evidence_conflict",
     };
   });
 }
@@ -1120,6 +1129,9 @@ function routeContractActionPolicy(value: unknown): AionisRouteContractActionPol
     missing_active_target_preferred_order: preferred.length > 0 ? preferred : ["create", "restore", "rehydrate", "report_conflict"],
     terminal_inspect_allowed: false,
     reference_fallback_requires: "explicit_raw_evidence_or_operator_confirmation",
+    executable_evidence_policy: "route_safe_but_patch_may_require_rehydrate",
+    after_rehydrate_policy: "continue_allowed_action_if_task_consistent",
+    report_conflict_requires: "rehydrate_unavailable_or_evidence_conflict",
   };
 }
 

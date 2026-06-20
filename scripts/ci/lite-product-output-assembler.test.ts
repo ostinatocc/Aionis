@@ -680,14 +680,19 @@ test("product agent context contract renderer preserves execution state surfaces
   assert.ok(context.prompt_text.includes("priority: go>chk"));
   assert.ok(context.prompt_text.includes("go=primary_next_route"));
   assert.ok(context.prompt_text.includes("missing_go=create_restore_raw_or_report_conflict_no_old"));
+  assert.ok(context.prompt_text.includes("raw_then_continue=1"));
   assert.ok(context.prompt_text.includes("old_ref_not_supersede_go=1"));
   assert.ok(context.prompt_text.includes("chk=reference_only_not_primary"));
   assert.ok(context.prompt_text.includes("no=blocked_direction"));
   assert.ok(context.prompt_text.includes("active=src/checkout/adapter.ts"));
   assert.ok(context.prompt_text.includes("conflict=missing_active_not_superseded"));
   assert.ok(context.prompt_text.includes("missing_action=create/restore/rehydrate/report"));
+  assert.ok(context.prompt_text.includes("exec=route_safe_patch_raw_if_needed"));
+  assert.ok(context.prompt_text.includes("after_raw=continue_if_consistent"));
   assert.ok(context.prompt_text.includes("old_ref_not_supersede=1"));
   assert.ok(context.prompt_text.includes("action missing_active=create>restore>rehydrate>report_conflict"));
+  assert.ok(context.prompt_text.includes("raw_then_continue=1"));
+  assert.ok(context.prompt_text.includes("conflict_after_raw_only=1"));
   assert.ok(context.prompt_text.includes("terminal_inspect=0"));
   assert.ok(context.prompt_text.includes("ref_only=src/checkout/candidate.ts"));
   assert.ok(context.prompt_text.includes("block_dir=src/legacy/search.ts"));
@@ -755,6 +760,9 @@ test("product agent context contract renderer preserves execution state surfaces
   assert.deepEqual(context.route_contract.pending_artifacts[0]?.allowed_actions, ["create", "restore", "rehydrate", "report_conflict"]);
   assert.deepEqual(context.route_contract.pending_artifacts[0]?.preferred_action_order, ["create", "restore", "rehydrate", "report_conflict"]);
   assert.equal(context.route_contract.pending_artifacts[0]?.terminal_inspect_allowed, false);
+  assert.equal(context.route_contract.pending_artifacts[0]?.executable_evidence_policy, "route_safe_but_patch_may_require_rehydrate");
+  assert.equal(context.route_contract.pending_artifacts[0]?.after_rehydrate_policy, "continue_allowed_action_if_task_consistent");
+  assert.equal(context.route_contract.pending_artifacts[0]?.report_conflict_requires, "rehydrate_unavailable_or_evidence_conflict");
   assert.deepEqual(context.route_contract.reference_only_targets.map((entry) => entry.target), ["src/checkout/candidate.ts"]);
   assert.deepEqual(context.route_contract.blocked_direction_targets.map((entry) => entry.target), ["src/legacy/search.ts"]);
   assert.deepEqual(context.route_contract.evidence_sources, [
@@ -782,6 +790,9 @@ test("product agent context contract renderer preserves execution state surfaces
   assert.deepEqual(context.route_contract.action_policy.missing_active_target_preferred_order, ["create", "restore", "rehydrate", "report_conflict"]);
   assert.equal(context.route_contract.action_policy.terminal_inspect_allowed, false);
   assert.equal(context.route_contract.action_policy.reference_fallback_requires, "explicit_raw_evidence_or_operator_confirmation");
+  assert.equal(context.route_contract.action_policy.executable_evidence_policy, "route_safe_but_patch_may_require_rehydrate");
+  assert.equal(context.route_contract.action_policy.after_rehydrate_policy, "continue_allowed_action_if_task_consistent");
+  assert.equal(context.route_contract.action_policy.report_conflict_requires, "rehydrate_unavailable_or_evidence_conflict");
 
   const standardContext = buildAionisAgentContext({
     tenant_id: "tenant-local",
@@ -791,11 +802,14 @@ test("product agent context contract renderer preserves execution state surfaces
   assert.ok(standardContext.prompt_text.includes("AIONIS_AGENT_CONTEXT v1"));
   assert.ok(standardContext.prompt_text.includes("execution_contract: SHOULD_CONTINUE is the primary next route when present"));
   assert.ok(standardContext.prompt_text.includes("Missing SHOULD_CONTINUE target is not stale proof"));
+  assert.ok(standardContext.prompt_text.includes("REHYDRATE_FIRST recovers raw evidence before exact use"));
   assert.ok(standardContext.prompt_text.includes("Existing INSPECT_FIRST/MUST_NOT targets do not supersede SHOULD_CONTINUE"));
   assert.ok(standardContext.prompt_text.includes("INSPECT_FIRST is reference-only evidence and must not replace SHOULD_CONTINUE"));
   assert.ok(standardContext.prompt_text.includes("MUST_NOT blocks direction"));
   assert.ok(standardContext.prompt_text.includes("route_contract: conflict_policy=do_not_treat_missing_active_target_as_superseded"));
   assert.ok(standardContext.prompt_text.includes("if_active_target_missing=create_or_restore_or_rehydrate_or_report_conflict_before_fallback"));
+  assert.ok(standardContext.prompt_text.includes("executable_evidence=route_safe_but_patch_may_require_rehydrate"));
+  assert.ok(standardContext.prompt_text.includes("after_rehydrate=continue_allowed_action_if_task_consistent"));
   assert.ok(standardContext.prompt_text.includes("old_or_reference_target_presence_does_not_supersede_active_route"));
   assert.ok(standardContext.prompt_text.includes("active_targets=src/checkout/adapter.ts"));
   assert.ok(standardContext.prompt_text.includes("reference_only_targets=src/checkout/candidate.ts"));
@@ -803,6 +817,8 @@ test("product agent context contract renderer preserves execution state surfaces
   assert.ok(standardContext.prompt_text.includes("fallback_policy=do_not_promote_reference_or_blocked_targets"));
   assert.ok(standardContext.prompt_text.includes("action_policy: missing_active_target_order=create>restore>rehydrate>report_conflict"));
   assert.ok(standardContext.prompt_text.includes("terminal_inspect_allowed=false"));
+  assert.ok(standardContext.prompt_text.includes("after_rehydrate_policy=continue_allowed_action_if_task_consistent"));
+  assert.ok(standardContext.prompt_text.includes("report_conflict_requires=rehydrate_unavailable_or_evidence_conflict"));
   assert.ok(standardContext.prompt_text.includes("reference_fallback_requires=explicit_raw_evidence_or_operator_confirmation"));
 });
 

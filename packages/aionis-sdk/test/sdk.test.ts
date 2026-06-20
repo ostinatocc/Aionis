@@ -349,6 +349,11 @@ test("@aionis/sdk guide helpers keep Agent prompt and feedback attribution bound
   assert.equal(routeContractFromGuide(guide)?.fallback_policy, "do_not_promote_reference_or_blocked_targets");
   assert.deepEqual(routeContractFromGuide(guide)?.action_policy.missing_active_target_preferred_order, ["create", "restore", "rehydrate", "report_conflict"]);
   assert.equal(routeContractFromGuide(guide)?.pending_artifacts[0]?.terminal_inspect_allowed, false);
+  assert.equal(routeContractFromGuide(guide)?.pending_artifacts[0]?.after_rehydrate_policy, "continue_allowed_action_if_task_consistent");
+  assert.equal(routeContractFromGuide(guide)?.pending_artifacts[0]?.report_conflict_requires, "rehydrate_unavailable_or_evidence_conflict");
+  assert.equal(routeContractFromGuide(guide)?.action_policy.executable_evidence_policy, "route_safe_but_patch_may_require_rehydrate");
+  assert.equal(routeContractFromGuide(guide)?.action_policy.after_rehydrate_policy, "continue_allowed_action_if_task_consistent");
+  assert.equal(routeContractFromGuide(guide)?.action_policy.report_conflict_requires, "rehydrate_unavailable_or_evidence_conflict");
   assert.deepEqual(activeRouteTargetsFromGuide(guide), ["src/a.ts"]);
   assert.deepEqual(pendingArtifactTargetsFromGuide(guide), ["src/a.ts"]);
   assert.deepEqual(referenceOnlyRouteTargetsFromGuide(guide), ["src/candidate.ts"]);
