@@ -1,17 +1,19 @@
 # Aionis
 
-**Stop coding agents from retrying paths they already proved wrong.**
+**Execution memory that keeps coding agents on route with far less context.**
 
-Failed branches should become counter-evidence, not future instructions.
-Aionis is the state-adjudicated memory runtime that keeps Agent execution state
-usable across sessions, roles, plans, and model boundaries.
+Aionis is the state-adjudicated memory runtime that turns plans, decisions,
+outcomes, failed attempts, and rehydrate pointers into compact Agent context
+that survives sessions, roles, plans, and model boundaries.
 Memory is not recall. Memory is state.
 
 Docs: [docs.aionis.work](https://docs.aionis.work)
 
 Aionis sits between your Agent and its history. It decides whether memory is
 current, stale, contested, failed, reusable, or worth rehydrating, then compiles
-only the admitted execution state into the next Agent context.
+only the admitted execution state into the next Agent context. Failed branches
+still matter, but as governed counter-evidence rather than the headline product
+claim.
 
 Current distribution: Aionis ships as a local-first Lite Runtime plus SDK and
 MCP bridge. Lite is built for developer machines and local agent hosts; it
@@ -43,10 +45,10 @@ Generic MCP clients can run the bridge directly:
 npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope my-project
 ```
 
-The default install runs the no-key first-value demo: raw retrieved history
-would put failed and stale routes into direct Agent context; Aionis admits the
-current route, blocks unsafe branches, keeps archived evidence pointer-only, and
-prints a memory-use receipt.
+The default install runs the no-key first-value demo: raw retrieved history is
+turned into governed execution context. Aionis admits the current route, keeps
+unsafe or stale history out of direct use, leaves archived evidence
+pointer-only, and prints a memory-use receipt.
 
 Already using Mem0, Zep, Supermemory, Pinecone, pgvector, Chroma, Weaviate,
 LangGraph Store, markdown memory, logs, or a custom vector store? Keep it for
@@ -84,9 +86,10 @@ Most memory systems retrieve text. Aionis governs state.
 
 | You need | Aionis gives you |
 |---|---|
-| Agents that stop repeating old mistakes | Failed branches become counter-evidence instead of future instructions. |
 | Shorter context without losing the task | Execution history is compressed into current state, reusable procedures, and rehydrate pointers. |
+| Execution continuity across sessions | The next Agent receives the accepted route and action boundary without replaying full history. |
 | Safer memory than raw RAG | Memories are gated into `use_now`, `inspect_before_use`, `do_not_use`, or `rehydrate`. |
+| Failed-branch governance | Failed branches remain available as counter-evidence instead of future instructions. |
 | Admission for any memory backend | Mem0, Zep, Supermemory, Pinecone, pgvector, Chroma, Weaviate, LangGraph Store, markdown, logs, or custom memory candidates can be routed through Aionis before prompt use. |
 | Memory Firewall for retrieval systems | Use your memory backend for recall, then prevent failed, stale, contested, unknown, or rehydrate-required memories from becoming Agent instructions. |
 | Plans that survive model and session boundaries | Strong planners can create plans; Aionis keeps their decisions, checks, failed branches, and boundaries executable for later workers. |
@@ -185,7 +188,7 @@ For Mem0 users, the default shape is:
 ```ts
 const mem0Results = await mem0.search("continue the task", { user_id, top_k: 10 });
 const governed = await aionis.governMem0SearchResults({
-  query_text: "Continue without repeating failed branches.",
+  query_text: "Continue on the verified route and inspect risky history first.",
   mem0_results: mem0Results,
 });
 
@@ -554,7 +557,7 @@ const compactGuide = await aionis.execution.guideForRole({
   role: "reviewer",
   run_id: "run-001",
   task_signature: "checkout-migration",
-  query_text: "Continue the verified branch without repeating failed work.",
+  query_text: "Continue the verified branch with compact execution context.",
   context_mode: "compact_agent",
 });
 

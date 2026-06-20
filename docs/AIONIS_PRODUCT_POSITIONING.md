@@ -15,9 +15,9 @@ Memory is not recall. Memory is state.
 
 ## Short Pitch
 
-Aionis turns agent history into governed execution state. It remembers what
-worked, keeps failed or stale branches from leaking back into prompts, compiles
-shorter Agent context, and gives operators a receipt for every memory decision.
+Aionis turns agent history into governed execution state. It keeps the accepted
+route, action boundary, reusable procedures, and rehydrate pointers available
+as shorter Agent context, with a receipt for every memory decision.
 
 Aionis turns plans, decisions, failures, and acceptance checks into reusable
 execution memory.
@@ -34,8 +34,8 @@ worth rehydrating. Then it compiles the result into clear Agent-facing surfaces:
 The strongest Aionis surface is execution memory: branch-aware memory of plans,
 actions, verifier outcomes, failed attempts, passed continuations, handoffs, and
 feedback attribution. This makes Aionis especially useful for long-running
-agents and multi-agent systems where the next Agent must inherit state without
-repeating old mistakes.
+agents and multi-agent systems where the next Agent must inherit actionable
+state without replaying full history.
 
 ## Category
 
@@ -103,6 +103,11 @@ preserving:
 
 Aionis should describe context compression as state-preserving context
 compilation, not generic summarization.
+
+Wrong-branch handling is part of this safety model, not the primary comparative
+claim. Failed branches should be retained as governed counter-evidence, but the
+stronger current product claim is route-safe, execution-ready context at much
+lower context cost than full-history transfer.
 
 ### 4. Auditable Memory Use
 
@@ -200,12 +205,13 @@ Use this language:
 2. `Memory is not recall. Memory is state.`
 3. `govern memory state before compiling context`
 4. `execution memory for long-running and multi-agent agents`
-5. `failed branches become counter-evidence, not prompt pollution`
+5. `route-safe context compression`
 6. `auditable memory use receipts`
 7. `state-preserving context compilation`
 8. `use Mem0 for retrieval, use Aionis as the Memory Firewall`
 9. `plans, decisions, failures, and acceptance checks become reusable execution memory`
 10. `strong models make better plans; Aionis keeps those plans executable across cheaper agents and future sessions`
+11. `failed branches become counter-evidence, not prompt pollution`
 
 Avoid this language:
 
@@ -225,9 +231,9 @@ Use this when space is limited:
 
 ```text
 Aionis is a state-adjudicated memory runtime for agents that need to keep
-working. It remembers what worked, blocks failed or stale branches from leaking
-back into prompts, compiles shorter Agent context, and gives operators a
-receipt for every memory decision.
+working. It turns long execution history into route-safe, auditable Agent
+context: current state, reusable procedures, risk surfaces, and rehydrate
+pointers without replaying full history.
 ```
 
 ## Website-Sized Copy
@@ -241,8 +247,9 @@ Before the next Agent sees context, Aionis decides what is current, stale,
 contested, failed, reusable, or worth rehydrating. Then it compiles the result
 into a compact Agent contract and records a memory use receipt for operators.
 
-For long-running and multi-agent systems, this means fewer repeated mistakes,
-shorter context, safer handoffs, and auditable execution memory.
+For long-running and multi-agent systems, this means execution state survives
+session cuts, context stays shorter, handoffs are safer, and memory use remains
+auditable.
 ```
 
 ## Product Claim Boundary
@@ -251,10 +258,10 @@ Aionis can claim:
 
 1. state-governed memory before context compilation
 2. branch-aware execution memory
-3. failed-branch isolation in product quickstarts and e2es
+3. route-safe context compression with recorded baselines
 4. feedback attribution to exposed memory IDs
 5. read-only memory use receipt and operator snapshot surfaces
-6. state-preserving context compression baselines recorded in docs
+6. failed-branch isolation as a safety mechanism in product quickstarts and e2es
 7. backend-agnostic Memory Firewall for retrieved external candidates
 
 Aionis should not claim:
