@@ -132,8 +132,9 @@ The smoke creates a temporary project and runs the same path a new user takes:
 Use overrides when validating a candidate package or branch:
 
 ```bash
-AIONIS_FRESH_INSTALL_CREATE_SPEC=@aionis/create@0.1.9 \
-AIONIS_FRESH_INSTALL_MCP_SPEC=@aionis/mcp@0.1.10 \
+AIONIS_FRESH_INSTALL_CREATE_SPEC=@aionis/create@0.2.0 \
+AIONIS_FRESH_INSTALL_SDK_SPEC=@aionis/sdk@0.2.22 \
+AIONIS_FRESH_INSTALL_MCP_SPEC=@aionis/mcp@0.2.0 \
 AIONIS_FRESH_INSTALL_REPO=https://github.com/ostinatocc/Aionis.git \
 npm run -s runtime:smoke:fresh-install
 ```

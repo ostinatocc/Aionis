@@ -24,10 +24,6 @@ function npmCommand(): string {
   return process.platform === "win32" ? "npm.cmd" : "npm";
 }
 
-function npxCommand(): string {
-  return process.platform === "win32" ? "npx.cmd" : "npx";
-}
-
 function cleanNoKeyEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.EMBEDDING_PROVIDER;
@@ -182,26 +178,38 @@ async function runPublishedMcpContextSmoke(input: {
   tmpRoot: string;
   baseUrl: string;
   mcpSpec: string;
+  sdkSpec: string | null;
   runId: string;
 }): Promise<Record<string, unknown>> {
   const projectDir = path.join(input.tmpRoot, "demo-project");
   fs.mkdirSync(projectDir, { recursive: true });
 
+  const execArgs = [
+    "exec",
+    "--yes",
+    "--package",
+    input.mcpSpec,
+  ];
+  if (input.sdkSpec) {
+    execArgs.push("--package", input.sdkSpec);
+  }
+  execArgs.push(
+    "--",
+    "aionis-mcp",
+    "--base-url",
+    input.baseUrl,
+    "--tenant",
+    "default",
+    "--scope-from",
+    "workspace",
+    "--repo-root",
+    projectDir,
+  );
+
   const client = new Client({ name: "aionis-fresh-install-smoke", version: "0.0.0" });
   const transport = new StdioClientTransport({
-    command: npxCommand(),
-    args: [
-      "-y",
-      input.mcpSpec,
-      "--base-url",
-      input.baseUrl,
-      "--tenant",
-      "default",
-      "--scope-from",
-      "workspace",
-      "--repo-root",
-      projectDir,
-    ],
+    command: npmCommand(),
+    args: execArgs,
   });
 
   await client.connect(transport);
@@ -276,6 +284,7 @@ async function main(): Promise<void> {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-fresh-install-smoke-"));
   const createSpec = process.env.AIONIS_FRESH_INSTALL_CREATE_SPEC?.trim() || DEFAULT_CREATE_SPEC;
   const mcpSpec = process.env.AIONIS_FRESH_INSTALL_MCP_SPEC?.trim() || DEFAULT_MCP_SPEC;
+  const sdkSpec = process.env.AIONIS_FRESH_INSTALL_SDK_SPEC?.trim() || null;
   const repoOverride = process.env.AIONIS_FRESH_INSTALL_REPO?.trim() || null;
 
   const install = installFreshRuntime({ tmpRoot, createSpec, repoOverride });
@@ -288,6 +297,7 @@ async function main(): Promise<void> {
       tmpRoot,
       baseUrl: runtime.baseUrl,
       mcpSpec,
+      sdkSpec,
       runId,
     });
 
@@ -307,6 +317,9 @@ async function main(): Promise<void> {
         embedding_provider: "none",
       },
       mcp,
+      sdk: {
+        sdk_spec: sdkSpec,
+      },
       checks: {
         installer_completed: true,
         no_key_env_written: installedEnv.EMBEDDING_PROVIDER === "none",

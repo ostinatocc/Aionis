@@ -9,6 +9,10 @@ Memory is not recall. Memory is state.
 
 Docs: [docs.aionis.work](https://docs.aionis.work)
 
+Current release: **v0.2.0 public beta**. Use it today as a local Runtime,
+MCP bridge, TypeScript SDK, Memory Firewall, and self-managed server beta for
+agent execution memory. It is not yet a hosted Cloud SaaS.
+
 Aionis sits between your Agent and its history. It decides whether memory is
 current, stale, contested, failed, reusable, or worth rehydrating, then compiles
 only the admitted execution state into the next Agent context. Failed branches
