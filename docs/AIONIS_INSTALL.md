@@ -112,6 +112,32 @@ npx tsx packages/create-aionis/src/index.ts ./Aionis-local \
   --quickstart none
 ```
 
+## Fresh Install Smoke
+
+After publishing `@aionis/create`, run the release smoke against the public npm
+entrypoint:
+
+```bash
+npm run -s runtime:smoke:fresh-install
+```
+
+The smoke creates a temporary project and runs the same path a new user takes:
+
+1. `npm exec --package @aionis/create@latest -- create-aionis FreshRuntime --quickstart none`
+2. assert the generated `.env` uses `EMBEDDING_PROVIDER=none`
+3. start the installed Runtime without any embedding key
+4. run `@aionis/mcp@latest` over stdio
+5. call `aionis_record_step -> aionis_context`
+
+Use overrides when validating a candidate package or branch:
+
+```bash
+AIONIS_FRESH_INSTALL_CREATE_SPEC=@aionis/create@0.1.9 \
+AIONIS_FRESH_INSTALL_MCP_SPEC=@aionis/mcp@0.1.9 \
+AIONIS_FRESH_INSTALL_REPO=https://github.com/ostinatocc/Aionis.git \
+npm run -s runtime:smoke:fresh-install
+```
+
 ## SDK Package
 
 For hosts that already have an Aionis Runtime URL:

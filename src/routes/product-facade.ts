@@ -469,6 +469,15 @@ type InternalDispatchResult =
   | { ok: true; statusCode: number; body: unknown }
   | { ok: false; statusCode: number; body: unknown };
 
+function isPlanningContextNoEmbeddingProvider(result: InternalDispatchResult): boolean {
+  if (result.ok) return false;
+  const body = objectValue(result.body);
+  const details = objectValue(body?.details);
+  return result.statusCode === 400
+    && body?.error === "no_embedding_provider"
+    && details?.surface === "planning_context";
+}
+
 function stripUndefined<T extends Record<string, unknown>>(value: T): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 }
@@ -2922,7 +2931,8 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       path: "/v1/memory/planning/context",
       payload,
     });
-    if (!guide.ok) return sendInternalFailure(reply, guide);
+    const planningContextEmbeddingUnavailable = isPlanningContextNoEmbeddingProvider(guide);
+    if (!guide.ok && !planningContextEmbeddingUnavailable) return sendInternalFailure(reply, guide);
     const guideBody = guide.body && typeof guide.body === "object" && !Array.isArray(guide.body)
       ? guide.body as Record<string, unknown>
       : {};
@@ -3106,7 +3116,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
           "/v1/memory/write",
         ],
         internal_surfaces_used: [
-          "recall",
+          ...(planningContextEmbeddingUnavailable ? ["planning_context_embedding_unavailable"] : ["recall"]),
           "product_packets",
           "agent_context_compiler",
           ...(agentRole !== "agent" ? ["role_aware_agent_context"] : []),
@@ -3137,6 +3147,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
             "full_power_trace",
           ] : []),
           ...(includePackets ? [] : ["memory_packet", "guide_packet"]),
+          ...(planningContextEmbeddingUnavailable ? ["semantic_planning_recall"] : []),
         ],
       },
     });

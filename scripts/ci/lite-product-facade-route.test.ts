@@ -589,12 +589,14 @@ function registerFullProductMemoryApp(args: {
   guards: ReturnType<typeof requestGuards>;
   liteWriteStore: ReturnType<typeof createLiteWriteStore>;
   liteRecallStore: ReturnType<typeof createLiteRecallStore>;
+  embedder?: typeof DeterministicEmbeddingProvider | null;
 }) {
+  const routeEmbedder = args.embedder === undefined ? DeterministicEmbeddingProvider : args.embedder;
   registerRuntimeErrorHandler(args.app);
   registerMemoryWriteRoutes({
     app: args.app,
     env: args.env,
-    embedder: DeterministicEmbeddingProvider,
+    embedder: routeEmbedder,
     liteWriteStore: args.liteWriteStore,
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
@@ -607,7 +609,7 @@ function registerFullProductMemoryApp(args: {
   registerHandoffRoutes({
     app: args.app,
     env: args.env,
-    embedder: DeterministicEmbeddingProvider,
+    embedder: routeEmbedder,
     liteWriteStore: args.liteWriteStore,
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest as any,
@@ -620,7 +622,7 @@ function registerFullProductMemoryApp(args: {
   registerMemoryAccessRoutes({
     app: args.app,
     env: args.env,
-    embedder: DeterministicEmbeddingProvider,
+    embedder: routeEmbedder,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
     executionStateStore: null,
@@ -634,7 +636,7 @@ function registerFullProductMemoryApp(args: {
   registerMemoryContextRuntimeRoutes({
     app: args.app,
     env: args.env,
-    embedder: DeterministicEmbeddingProvider,
+    embedder: routeEmbedder,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
     recallTextEmbedBatcher: { stats: () => null },
@@ -704,7 +706,7 @@ function registerFullProductMemoryApp(args: {
   registerMemoryFeedbackToolRoutes({
     app: args.app,
     env: args.env,
-    embedder: DeterministicEmbeddingProvider,
+    embedder: routeEmbedder,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
@@ -810,6 +812,65 @@ test("product memory admission route governs external backend candidates without
     const nodes = await liteWriteStore.findNodes({ scope: "default", limit: 10, offset: 0 });
     assert.equal(nodes.rows.length, 0);
   } finally {
+    await app.close();
+  }
+});
+
+test("product guide returns an empty agent context when semantic planning recall has no embedding provider", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, null);
+  const dbPath = tmpDbPath("product-guide-no-embedding-provider");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({
+      app,
+      env,
+      guards,
+      liteWriteStore,
+      liteRecallStore,
+      embedder: null,
+    });
+
+    const guide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "Continue the fresh install no-key Runtime smoke.",
+        agent_role: "worker",
+        consumer_agent_id: "fresh-install-worker",
+        run_id: "run-fresh-install-no-embedding",
+        context: {
+          task_signature: "fresh-install-mcp-context",
+          task_family: "fresh_install_ci",
+        },
+        mode: "full_power",
+        context_mode: "compact_agent",
+        include_packets: true,
+      },
+    });
+
+    assert.equal(guide.statusCode, 200, guide.body);
+    const body = guide.json();
+    assert.equal(body.agent_context.contract_version, "aionis_agent_context_v1");
+    assert.equal(body.agent_context.history_used, false);
+    assert.equal(body.agent_context.recommended_posture, "ignore_history");
+    assert.equal(body.memory_packet, null);
+    assert.equal(body.guide_packet, null);
+    assert.equal(
+      body.source_map.internal_surfaces_used.includes("planning_context_embedding_unavailable"),
+      true,
+    );
+    assert.equal(
+      body.source_map.omitted_internal_surfaces.includes("semantic_planning_recall"),
+      true,
+    );
+  } finally {
+    await liteWriteStore.close();
+    await liteRecallStore.close();
     await app.close();
   }
 });
