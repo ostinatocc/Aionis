@@ -23,7 +23,7 @@ OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quicksta
 Install without running any quickstart:
 
 ```bash
-npx @aionis/create@latest my-aionis --provider openai --skip-quickstart
+npx @aionis/create@latest my-aionis --skip-quickstart
 ```
 
 The installer clones the Runtime repo, installs dependencies and workspace
@@ -31,10 +31,12 @@ packages, writes `.env`, builds the publishable packages, then optionally runs a
 quickstart. The installed repo includes `@aionis/sdk` for application
 integration and `@aionis/mcp` for Claude Code / Cursor style MCP clients.
 
-Runtime startup needs the selected embedding provider key. If you install
-without a key or skip the quickstart, set `OPENAI_API_KEY` in the generated
-`.env` before running `npm run -s lite:start`. MiniMax remains supported with
-`--provider minimax` and `MINIMAX_API_KEY`.
+If no embedding key is detected, the installer writes `EMBEDDING_PROVIDER=none`
+so the local Runtime can start immediately. That no-key mode is enough for the
+first-value demo, MCP wiring, execution-memory smoke tests, and Memory Firewall
+candidate governance. Configure semantic recall later by setting
+`EMBEDDING_PROVIDER=openai` plus `OPENAI_API_KEY`, or
+`EMBEDDING_PROVIDER=minimax` plus `MINIMAX_API_KEY`, in the generated `.env`.
 
 Common first runs:
 

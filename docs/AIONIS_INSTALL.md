@@ -70,15 +70,22 @@ The installer does not change Runtime core. It performs product setup:
 
 1. clone `https://github.com/ostinatocc/Aionis.git`
 2. run `npm install`
-3. write `.env` with the selected embedding provider
+3. write `.env` with `EMBEDDING_PROVIDER=none` unless a provider/key is selected
 4. build `@aionis/sdk`, `@aionis/mcp`, and `@aionis/create`
 5. run the selected quickstart; `first-value` can run without an API key, while
    recall-backed quickstarts require the selected embedding key
 
-Runtime startup needs the selected embedding provider key. If you install with
-`--skip-quickstart` or without an API key, set the required key in the generated
-`.env` before running `npm run -s lite:start`. The default provider is OpenAI;
-for `--provider openai`, that key is `OPENAI_API_KEY`.
+Runtime startup does not require an embedding provider in no-key mode. If no key
+is detected, the generated `.env` keeps `EMBEDDING_PROVIDER=none`, so this works:
+
+```bash
+cd Aionis
+npm run -s lite:start
+```
+
+Enable semantic recall and recall-backed quickstarts later by setting a provider
+and matching key in `.env`. For `EMBEDDING_PROVIDER=openai`, that key is
+`OPENAI_API_KEY`.
 
 MiniMax remains supported with `--provider minimax` and `MINIMAX_API_KEY`.
 MiniMax embeddings default to separate surfaces: stored memory is embedded with

@@ -32,7 +32,7 @@ Options:
   --dir <path>              Install directory. Defaults to ./Aionis.
   --repo <url>              Runtime git repo. Defaults to ${DEFAULT_REPO}
   --branch <name>           Git branch or tag to clone.
-  --provider <name>         Embedding provider. Defaults to EMBEDDING_PROVIDER or openai.
+  --provider <name>         Embedding provider. Defaults to EMBEDDING_PROVIDER, a detected key, or none.
   --api-key <key>           Provider API key. Prefer env vars for shell history safety.
   --quickstart <name>       first-value, sdk, http, multi-agent, or none. Defaults to first-value.
   --skip-install            Clone and write env, but do not run npm install.
@@ -53,9 +53,18 @@ function readFlagValue(argv: string[], index: number, flag: string): string {
 
 export function providerEnvKey(provider: string): string {
   const normalized = provider.trim().toLowerCase();
+  if (normalized === "none") return "";
   if (normalized === "openai") return "OPENAI_API_KEY";
   if (normalized === "minimax") return "MINIMAX_API_KEY";
   return `${normalized.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_API_KEY`;
+}
+
+export function defaultEmbeddingProvider(env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = env.EMBEDDING_PROVIDER?.trim();
+  if (explicit) return explicit;
+  if (env.OPENAI_API_KEY?.trim()) return "openai";
+  if (env.MINIMAX_API_KEY?.trim()) return "minimax";
+  return "none";
 }
 
 export function quickstartScriptName(quickstart: AionisQuickstart): string | null {
@@ -83,7 +92,7 @@ export function parseCreateAionisArgs(argv: string[], env: NodeJS.ProcessEnv = p
   let dir = DEFAULT_DIR;
   let repo = DEFAULT_REPO;
   let branch: string | null = null;
-  let provider = env.EMBEDDING_PROVIDER?.trim() || "openai";
+  let provider = defaultEmbeddingProvider(env);
   let apiKey: string | null = null;
   let quickstart: AionisQuickstart = "first-value";
   let skipInstall = false;
@@ -217,9 +226,10 @@ function upsertEnvLine(source: string, key: string, value: string): string {
   return next.join(os.EOL).replace(/\n{3,}$/g, `${os.EOL}${os.EOL}`);
 }
 
-function writeRuntimeEnv(targetDir: string, options: CreateAionisOptions): {
+export function writeRuntimeEnv(targetDir: string, options: CreateAionisOptions): {
   providerKey: string;
   apiKey: string | null;
+  embeddingProvider: string;
 } {
   const envPath = path.join(targetDir, ".env");
   const examplePath = path.join(targetDir, ".env.example");
@@ -231,11 +241,11 @@ function writeRuntimeEnv(targetDir: string, options: CreateAionisOptions): {
   }
 
   const providerKey = providerEnvKey(options.provider);
-  const apiKey = options.apiKey ?? process.env[providerKey]?.trim() ?? null;
+  const apiKey = providerKey ? options.apiKey ?? process.env[providerKey]?.trim() ?? null : null;
   source = upsertEnvLine(source, "EMBEDDING_PROVIDER", options.provider);
   if (apiKey) source = upsertEnvLine(source, providerKey, apiKey);
   fs.writeFileSync(envPath, source.endsWith(os.EOL) ? source : `${source}${os.EOL}`);
-  return { providerKey, apiKey };
+  return { providerKey, apiKey, embeddingProvider: options.provider };
 }
 
 export function createInstallPlan(options: CreateAionisOptions): string[] {
@@ -254,25 +264,39 @@ export function createCompletionMessage(input: {
   apiKey: string | null;
   quickstartScript: string | null;
   quickstartRequiresEmbeddingKey?: boolean;
+  embeddingProvider?: string;
 }): string {
   if (!input.apiKey) {
     const quickstartNeedsKey = input.quickstartRequiresEmbeddingKey ?? true;
+    const noKeyRuntimeReady = input.embeddingProvider === "none";
     const lines = [
       "",
-      quickstartNeedsKey
+      noKeyRuntimeReady
+        ? "Aionis is installed. Runtime can start now in no-key mode; semantic recall can be enabled later with an embedding key."
+        : quickstartNeedsKey
         ? "Aionis is installed. Set your embedding key before starting Runtime."
         : "Aionis is installed. The first-value demo can run without an embedding key.",
       `Runtime directory: ${input.targetDir}`,
-      `Required key: ${input.providerKey}`,
-      `Set it in: ${path.join(input.targetDir, ".env")}`,
-      `Example: ${input.providerKey}="your-key"`,
-      `Start Runtime after the key is set: cd ${input.targetDir} && npm run -s lite:start`,
-      "Run the SDK quickstart after the key is set: npm run -s runtime:quickstart:sdk",
+      noKeyRuntimeReady
+        ? `Start Runtime: cd ${input.targetDir} && npm run -s lite:start`
+        : `Required key: ${input.providerKey}`,
+      noKeyRuntimeReady
+        ? "Enable semantic recall later by setting EMBEDDING_PROVIDER=openai or minimax plus the matching API key in .env."
+        : `Set it in: ${path.join(input.targetDir, ".env")}`,
+      ...(noKeyRuntimeReady ? [] : [
+        `Example: ${input.providerKey}="your-key"`,
+        `Start Runtime after the key is set: cd ${input.targetDir} && npm run -s lite:start`,
+        "Run the SDK quickstart after the key is set: npm run -s runtime:quickstart:sdk",
+      ]),
       "SDK package: @aionis/sdk",
       "MCP package: @aionis/mcp",
     ];
     if (input.quickstartScript && quickstartNeedsKey) {
-      lines.push(`Run quickstart after the key is set: npm run -s ${input.quickstartScript}`);
+      lines.push(
+        noKeyRuntimeReady
+          ? `Run selected quickstart after semantic recall is configured: npm run -s ${input.quickstartScript}`
+          : `Run quickstart after the key is set: npm run -s ${input.quickstartScript}`,
+      );
     }
     return `${lines.join(os.EOL)}${os.EOL}`;
   }
@@ -333,6 +357,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
         targetDir,
         providerKey,
         apiKey,
+        embeddingProvider: options.provider,
         quickstartScript: quickstart,
         quickstartRequiresEmbeddingKey: quickstartNeedsKey,
       }));
@@ -350,6 +375,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     targetDir,
     providerKey,
     apiKey,
+    embeddingProvider: options.provider,
     quickstartScript: options.skipQuickstart ? null : quickstart,
     quickstartRequiresEmbeddingKey: quickstartRequiresEmbeddingKey(options.quickstart),
   }));
