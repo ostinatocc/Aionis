@@ -14,8 +14,8 @@ the raw stream dump.
 - Runtime: focused local Runtime over Lite SQLite
 - Runtime URL: `http://127.0.0.1:34118`
 - Embedding provider: `EMBEDDING_PROVIDER=minimax`
-- MCP package: `@aionis/mcp@latest` -> `0.1.5`
-- SDK package: `@aionis/sdk@latest` -> `0.1.8`
+- MCP package: `@aionis/mcp@latest` -> `0.1.9`
+- SDK package: `@aionis/sdk@latest` -> `0.1.10`
 - Scope: `claude-code-real-demo-pass`
 - Raw local stream: `/tmp/aionis-claude-code-real-demo-pass2.stream.jsonl`
 
@@ -112,11 +112,11 @@ Admission details:
 
 A previous run connected MCP and recorded steps, but `aionis_context` failed
 with `400 /v1/guide` because the Runtime was started without a configured
-embedding provider. `aionis_govern_memory` can still operate on explicit
-candidates without embeddings, but the guide/context path needs retrieval and
-planning context.
+embedding provider. Current Runtime builds a no-key agent context by omitting
+semantic planning recall when `EMBEDDING_PROVIDER=none`; configure an embedding
+provider when the demo needs semantic recall over stored memory.
 
-For local demos, start the Runtime with:
+For local demos with semantic recall, start the Runtime with:
 
 ```bash
 export EMBEDDING_PROVIDER=minimax

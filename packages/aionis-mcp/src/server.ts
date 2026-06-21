@@ -1,6 +1,20 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import fs from "node:fs";
 import { z } from "zod/v3";
 import { handleAionisMcpTool, type AionisMcpClient, type AionisMcpToolName } from "./tools.js";
+
+function packageVersion(): string {
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+      version?: unknown;
+    };
+    return typeof packageJson.version === "string" && packageJson.version.trim()
+      ? packageJson.version
+      : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
 
 const role = z.enum(["agent", "planner", "worker", "verifier", "reviewer"]).optional();
 const outcome = z.enum(["succeeded", "failed", "blocked", "interrupted", "unknown"]).optional();
@@ -71,7 +85,7 @@ function register(
 export function createAionisMcpServer(client: AionisMcpClient): McpServer {
   const server = new McpServer({
     name: "aionis-mcp",
-    version: "0.1.8",
+    version: packageVersion(),
   });
 
   register(server, client, "aionis_context", {
