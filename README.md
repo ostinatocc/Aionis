@@ -5,27 +5,22 @@
 Aionis is the state-adjudicated memory runtime that turns plans, decisions,
 outcomes, failed attempts, and rehydrate pointers into compact Agent context
 that survives sessions, roles, plans, and model boundaries.
-Memory is not recall. Memory is state.
+Memory becomes state before context.
 
 Docs: [docs.aionis.work](https://docs.aionis.work)
 
 Current release: **v0.2.0 public beta**. Use it today as a local Runtime,
-MCP bridge, TypeScript SDK, Memory Firewall, and self-managed server beta for
-agent execution memory. It is not yet a hosted Cloud SaaS.
+MCP bridge, TypeScript SDK, Memory Firewall, and managed-server-ready Runtime
+for agent execution memory.
 
 Aionis sits between your Agent and its history. It decides whether memory is
 current, stale, contested, failed, reusable, or worth rehydrating, then compiles
-only the admitted execution state into the next Agent context. Failed branches
-still matter, but as governed counter-evidence rather than the headline product
-claim.
+the admitted execution state into the next Agent context. Failed branches still
+matter: they become governed counter-evidence instead of future instructions.
 
-Current distribution: Aionis ships as a local-first Lite Runtime plus SDK and
-MCP bridge. Lite is built for developer machines and local agent hosts; it
-defaults to loopback and unauthenticated local use. The codebase is now adding
-a Managed Server Edition for remote SDK/MCP clients with explicit API-key/JWT
-auth and request controls. Managed Server is not the same as Cloud: Cloud-style
-billing, org management, hosted multi-tenant control plane, and fleet
-operations remain outside this Runtime package.
+Aionis ships with a local-first Lite Runtime plus SDK and MCP bridge. The
+Runtime can also be configured for managed server deployments with API-key/JWT
+auth and request controls when teams want remote SDK or MCP clients.
 
 MCP is the fastest way to try Aionis inside coding agents such as Claude Code,
 Cursor, or any MCP-compatible host. It lets an existing Agent ask for governed
@@ -119,8 +114,7 @@ Most memory systems retrieve text. Aionis governs state.
 
 ## Architecture Overview
 
-Aionis is not a prompt-stuffing layer. It is a Runtime that turns raw history
-into external Agent context.
+Aionis turns raw history into compact, governed Agent context.
 
 ```mermaid
 flowchart LR
@@ -166,8 +160,8 @@ Full architecture guide:
 
 Recall Engine roadmap:
 [docs/AIONIS_RECALL_ENGINE_ROADMAP.md](docs/AIONIS_RECALL_ENGINE_ROADMAP.md).
-Aionis is improving candidate retrieval underneath the product surface, but
-retrieval still cannot bypass state admission.
+Aionis is improving candidate retrieval underneath the product surface while
+state admission remains the final control plane for Agent-facing context.
 
 Recall Engine runbook:
 [docs/AIONIS_RECALL_ENGINE_RUNBOOK.md](docs/AIONIS_RECALL_ENGINE_RUNBOOK.md).
@@ -201,7 +195,8 @@ use_now | inspect_before_use | do_not_use | rehydrate
 
 This lets teams keep their current storage while adding a memory firewall layer:
 failed, stale, contested, suppressed, blocked, or rehydrate-required candidates
-cannot silently become Agent instructions.
+are routed away from direct Agent instructions and kept available as audit or
+rehydration evidence.
 
 For any backend, use `governMemory()` with external candidates. For Mem0 users,
 the drop-in helper is:
@@ -235,8 +230,8 @@ Aionis also exposes an Agent Flight Recorder. After a run, call
 memories entered direct use, which were blocked, which required rehydration, and
 how feedback was attributed.
 
-It answers the operator question production Agent systems usually cannot answer:
-what did the Agent know when it made that decision?
+It answers the operator question every production Agent system needs: what did
+the Agent know when it made that decision?
 
 Guide:
 [docs/AIONIS_AGENT_FLIGHT_RECORDER.md](docs/AIONIS_AGENT_FLIGHT_RECORDER.md).
@@ -257,9 +252,8 @@ npm run -s runtime:e2e:loop-engineering-profile
 
 ## Plan As Memory Asset
 
-Aionis is not a model router. It is the execution memory layer that preserves
-the decisions made by strong planners and makes them usable by future workers,
-reviewers, and cheaper models.
+Aionis preserves the decisions made by strong planners and makes them usable by
+future workers, reviewers, and cheaper models.
 
 Plans become governed execution memory when they carry:
 
@@ -363,8 +357,8 @@ npm run -s runtime:quickstart:memory-firewall
 ```
 
 That loop passes Mem0/Zep/vector/markdown-style candidates through
-`/v1/memory/govern` and proves unsafe external memories cannot enter
-direct-use.
+`/v1/memory/govern` and proves Aionis routes unsafe external memories away from
+direct use.
 
 For the Memory Firewall A/B demo:
 
@@ -471,8 +465,8 @@ Full example outputs:
 
 ## What The Agent Gets
 
-Aionis does not ask you to dump raw traces into the prompt. The Agent gets a
-compiled contract:
+Aionis compiles raw traces, decisions, and memory state into an Agent-facing
+contract:
 
 ```text
 AIONIS_CTX v2
@@ -588,8 +582,8 @@ const compactContext = compileExecutionAgentContext({
 });
 ```
 
-Compact mode shortens the Agent prompt. It does not remove external memory
-buckets, memory IDs, feedback attribution, receipts, or operator audit surfaces.
+Compact mode shortens the Agent prompt while preserving external memory
+buckets, memory IDs, feedback attribution, receipts, and operator audit surfaces.
 
 ## MCP For Claude Code And Cursor
 
@@ -810,7 +804,7 @@ Official docs: [https://docs.aionis.work](https://docs.aionis.work)
 | [AIONIS_SDK_QUICKSTART.md](docs/AIONIS_SDK_QUICKSTART.md) | Smallest SDK product loop. |
 | [AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md](docs/AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md) | Short observe, guide, and audit path. |
 | [AIONIS_HOST_INTEGRATION.md](docs/AIONIS_HOST_INTEGRATION.md) | Single-agent, multi-agent, and coding-agent host integration. |
-| [AIONIS_PRODUCT_CONTRACT.md](docs/AIONIS_PRODUCT_CONTRACT.md) | Product contract and boundaries. |
+| [AIONIS_PRODUCT_CONTRACT.md](docs/AIONIS_PRODUCT_CONTRACT.md) | Product contract, state surfaces, and host loop. |
 | [AIONIS_PRODUCT_POSITIONING.md](docs/AIONIS_PRODUCT_POSITIONING.md) | External product positioning, claims, and comparison language. |
 | [AIONIS_STATE_MODEL.md](docs/AIONIS_STATE_MODEL.md) | Implemented memory and execution state model. |
 | [AIONIS_CONTEXT_COMPRESSION_BASELINE.md](docs/AIONIS_CONTEXT_COMPRESSION_BASELINE.md) | Current state-preserving context compression baseline. |
@@ -843,15 +837,15 @@ or leaking raw audit fields into the Agent prompt.
 
 The current package is the focused local Runtime. It keeps Runtime kernel,
 routes, Lite store contracts, SDK quickstarts, and product e2es in one repo.
-Internal architecture boundaries live in:
+Internal architecture notes live in:
 
 1. [docs/FOCUS.md](docs/FOCUS.md)
 2. [docs/ARCHITECTURE_BOUNDARY.md](docs/ARCHITECTURE_BOUNDARY.md)
 3. [docs/AIONIS_CAPABILITY_DECISION_MATRIX.md](docs/AIONIS_CAPABILITY_DECISION_MATRIX.md)
 
-External benchmark runners, UI playgrounds, cloud control planes, and
-project-specific repair rules are intentionally outside this focused Runtime
-tree.
+Deployment notes: Lite is optimized for local developer machines and same-host
+Agent clients. Managed Server settings add API-key/JWT auth and request
+controls for remote SDK/MCP clients.
 
 ## License
 

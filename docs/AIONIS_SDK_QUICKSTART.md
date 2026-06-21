@@ -8,8 +8,8 @@ This quickstart shows the smallest SDK product loop:
 remember -> guide -> compileExecutionAgentContext -> agent prompt -> feedback -> measure -> snapshot
 ```
 
-It does not add a new Runtime mechanism, external Agent framework, UI, or
-benchmark runner. It uses the existing product facade through `src/sdk.ts`.
+It uses the existing product facade through `src/sdk.ts` and the published
+`@aionis/sdk` package.
 
 ## Start Runtime
 
@@ -139,12 +139,11 @@ await aionis.snapshot(snapshotInputFromGuideLoop({
 }));
 ```
 
-For coding and multi-agent hosts, give only `agentContext.agent_prompt` from
+For coding and multi-agent hosts, give `agentContext.agent_prompt` from
 `compileExecutionAgentContext()` to the Agent. Keep `guide_trace_id`,
 `use_now_memory_ids`, and `agentContext.memory_use_receipt` in host state for
-attribution and audit. Do not pass `memory_packet`, `guide_packet`,
-`memory_decision_trace`, `memory_decision_audit`, raw rows, or raw slots to the
-Agent by default.
+attribution and audit. Packets, traces, admission records, raw rows, and raw
+slots are host/operator surfaces.
 For a focused JSONL export path, see
 [AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md](AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md).
 `feedbackFromGuide()` still requires the host to provide the memory IDs the
@@ -155,8 +154,8 @@ normal product trace and operator snapshot payloads out of handwritten app code.
 
 ## Memory Firewall For Mem0
 
-If your app already uses Mem0, do not write Mem0 results into Aionis first. Keep
-Mem0 as retrieval, then let Aionis govern admission:
+If your app already uses Mem0, keep Mem0 as retrieval and let Aionis govern
+admission:
 
 ```ts
 const mem0Results = await mem0.search("Continue checkout migration", {
@@ -182,15 +181,15 @@ log.write({
 ```
 
 `governMem0SearchResults()` defaults to firewall mode, compact Agent context,
-and admission records. It accepts plain Mem0 JSON, so `@aionis/sdk` does not add
-Mem0 as a dependency. Unlabeled Mem0 rows are inspect-first by default; direct
-use requires trusted authority metadata plus `lifecycle_hint: "current"` or
+and admission records. It accepts plain Mem0 JSON and keeps Mem0 as the
+retrieval backend. Unlabeled Mem0 rows are inspect-first by default; direct use
+requires trusted authority metadata plus `lifecycle_hint: "current"` or
 `"procedure"`.
 
 ## Execution Helper Loop
 
-For execution memory, use `aionis.execution` so the host does not need to build
-execution payloads by hand:
+For execution memory, use `aionis.execution` so the host gets typed helpers for
+execution payloads, guide calls, feedback, measure, and snapshot:
 
 ```ts
 await aionis.execution.observeStep({
@@ -248,8 +247,7 @@ For a complete minimal loop, see
 JSON showing:
 
 1. a fresh guide starts without actionable history
-2. `remember(kind: "preference")` creates ordinary preference memory, not an
-   executable policy rule
+2. `remember(kind: "preference")` creates ordinary preference memory
 3. `remember(kind: "project_context")` creates ordinary project memory
 4. `guide()` returns compact `agent_context` with direct-use memory IDs
 5. `compileExecutionAgentContext()` renders the SDK execution contract prompt

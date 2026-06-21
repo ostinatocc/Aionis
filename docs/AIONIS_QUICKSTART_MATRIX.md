@@ -71,9 +71,9 @@ surfaces.
 | Raw HTTP | You want the smallest language-neutral contract and explicit request bodies. | You prefer helper functions for feedback attribution, measure input, and snapshot input. |
 | Execution memory adapter | You run multi-agent or long-horizon workflows and need role, team, branch, and handoff state carried consistently. | You only need ordinary preference/fact memory for one Agent. |
 
-## Stable Product Boundary
+## Stable Product Contract
 
-All quickstarts follow the same boundary:
+All quickstarts follow the same contract:
 
 1. The Agent receives `agent_context.prompt_text` or selected `agent_context`
    fields.

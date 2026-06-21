@@ -16,14 +16,14 @@ Install Runtime plus SDK/MCP packages and run the first-value demo:
 npx @aionis/create@latest
 ```
 
-The default quickstart does not require an embedding or LLM API key. It starts a
-temporary Lite Runtime with `EMBEDDING_PROVIDER=none` and shows Aionis blocking
-failed/stale memory before prompt use.
+The default quickstart works without an embedding or LLM API key. It starts a
+Lite Runtime with `EMBEDDING_PROVIDER=none` and shows Aionis turning raw
+retrieved history into governed Agent context.
 
 This installs the local-first Lite Runtime. Lite is designed for developer
-machines and local agent hosts. It is not a hosted multi-tenant production
-service: Lite defaults to loopback, `MEMORY_AUTH_MODE=off`, and
-`TENANT_QUOTA_ENABLED=false`.
+machines, same-host coding agents, and first-value MCP/SDK trials. It defaults
+to loopback and local development settings so a new user can see Aionis work
+immediately.
 
 Runtime editions:
 
@@ -31,7 +31,7 @@ Runtime editions:
 |---|---|---|
 | `lite` | Default | Local developer Runtime for first-value demos, local agents, SDK quickstarts, and MCP on the same machine. |
 | `server` | Managed Server path | Remote SDK/MCP endpoint with explicit auth and request controls. Use `AIONIS_EDITION=server`, `AIONIS_MODE=service`, and `MEMORY_AUTH_MODE=api_key`, `jwt`, or `api_key_or_jwt`. |
-| `cloud` | Reserved | Future SaaS control plane. Billing, org management, hosted multi-tenancy, and fleet operations are not implemented in this Runtime package. |
+| `cloud` | Reserved label | Product roadmap label for future hosted packaging; the install path here focuses on Lite and Server deployments. |
 
 Managed Server exposes hosted-safe probes:
 
@@ -66,7 +66,7 @@ For multi-agent execution memory:
 OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart multi-agent
 ```
 
-The installer does not change Runtime core. It performs product setup:
+The installer performs product setup:
 
 1. clone `https://github.com/ostinatocc/Aionis.git`
 2. run `npm install`
@@ -75,8 +75,8 @@ The installer does not change Runtime core. It performs product setup:
 5. run the selected quickstart; `first-value` can run without an API key, while
    recall-backed quickstarts require the selected embedding key
 
-Runtime startup does not require an embedding provider in no-key mode. If no key
-is detected, the generated `.env` keeps `EMBEDDING_PROVIDER=none`, so this works:
+Runtime startup works in no-key mode. If no key is detected, the generated
+`.env` keeps `EMBEDDING_PROVIDER=none`, so this works:
 
 ```bash
 cd Aionis

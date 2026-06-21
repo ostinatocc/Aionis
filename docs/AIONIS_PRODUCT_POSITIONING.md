@@ -5,13 +5,13 @@ Status: external product positioning guide
 Aionis is a state-adjudicated memory runtime for agents that need to keep
 working.
 
-It is not recall-only memory. It is not a vector database wrapper. It is not a
-benchmark runner. Aionis is the Runtime layer that decides which memory state is
-safe and useful before compiling the next Agent context.
+Aionis is the Runtime layer that decides which memory state is safe and useful
+before compiling the next Agent context. It brings lifecycle, authority,
+feedback attribution, and audit to agent memory.
 
 ## One-Line Pitch
 
-Memory is not recall. Memory is state.
+Memory becomes state before context.
 
 ## Short Pitch
 
@@ -44,15 +44,6 @@ Aionis should define itself as:
 ```text
 state-adjudicated memory runtime
 ```
-
-Not:
-
-1. recall memory
-2. vector memory
-3. RAG framework
-4. agent framework
-5. benchmark system
-6. prompt compression library
 
 Aionis can work with Agent frameworks and retrieval systems, but its product
 job is different: govern memory state, compile context, attribute feedback, and
@@ -102,12 +93,12 @@ preserving:
 5. audit evidence
 
 Aionis should describe context compression as state-preserving context
-compilation, not generic summarization.
+compilation.
 
-Wrong-branch handling is part of this safety model, not the primary comparative
-claim. Failed branches should be retained as governed counter-evidence, but the
-stronger current product claim is route-safe, execution-ready context at much
-lower context cost than full-history transfer.
+Wrong-branch handling is part of this safety model. Failed branches are retained
+as governed counter-evidence, while the strongest current product claim is
+route-safe, execution-ready context at much lower context cost than
+full-history transfer.
 
 ### 4. Auditable Memory Use
 
@@ -123,14 +114,13 @@ operator snapshots so hosts can see:
 
 ### 5. Memory Firewall For Existing Backends
 
-Aionis does not need to replace a team's memory store. It can sit in front of
-Mem0, Zep, vector databases, markdown notes, logs, or internal memory stores as
-the admission layer.
+Aionis can sit in front of a team's existing memory store. Mem0, Zep, vector
+databases, markdown notes, logs, and internal memory stores can all provide
+candidates while Aionis provides admission.
 
 Memory Firewall protects the context boundary. Plan-as-memory is the execution
 memory asset that crosses sessions, agents, and models. The two product surfaces
-share the same admission gates, but they should not be positioned as the same
-job.
+share the same admission gates and solve different jobs.
 
 The product framing is:
 
@@ -145,9 +135,8 @@ Mem0 search -> Aionis governMem0SearchResults -> governed Agent context
 ```
 
 This lets Aionis enter teams that already have a memory backend. The value is
-not "store memories better than Mem0"; the value is preventing failed, stale,
-contested, untrusted, suppressed, or rehydrate-required memories from becoming
-direct Agent instructions.
+state-governed admission: failed, stale, contested, untrusted, suppressed, or
+rehydrate-required memories are routed away from direct Agent instructions.
 
 ## Aionis vs Alternatives
 
@@ -189,20 +178,16 @@ Aionis is a strong fit for:
 5. products that need memory audit trails
 6. agent hosts that want feedback attribution and controlled forgetting
 
-Aionis is not the best first tool for:
-
-1. one-shot chat
-2. simple document Q&A
-3. pure vector search
-4. systems where the Agent should see every raw trace
-5. products that do not need memory lifecycle or auditability
+For simple one-shot chat or document Q&A, teams can start with ordinary recall.
+Aionis becomes valuable when memory affects future actions, carries lifecycle
+state, or needs auditability.
 
 ## Messaging Guidelines
 
 Use this language:
 
 1. `state-adjudicated memory runtime`
-2. `Memory is not recall. Memory is state.`
+2. `Memory becomes state before context.`
 3. `govern memory state before compiling context`
 4. `execution memory for long-running and multi-agent agents`
 5. `route-safe context compression`
@@ -211,16 +196,14 @@ Use this language:
 8. `use Mem0 for retrieval, use Aionis as the Memory Firewall`
 9. `plans, decisions, failures, and acceptance checks become reusable execution memory`
 10. `strong models make better plans; Aionis keeps those plans executable across cheaper agents and future sessions`
-11. `failed branches become counter-evidence, not prompt pollution`
+11. `failed branches become counter-evidence`
 
-Avoid this language:
+Reserve absolute claims for validated reports:
 
 1. `best memory system`
 2. `guarantees task success`
 3. `beats all baselines`
 4. `solves long-horizon agents`
-5. `just RAG`
-6. `just prompt compression`
 
 The product should sound ambitious without claiming benchmark dominance that
 has not been proven.
@@ -252,7 +235,7 @@ session cuts, context stays shorter, handoffs are safer, and memory use remains
 auditable.
 ```
 
-## Product Claim Boundary
+## Product Claims
 
 Aionis can claim:
 
@@ -264,12 +247,11 @@ Aionis can claim:
 6. failed-branch isolation as a safety mechanism in product quickstarts and e2es
 7. backend-agnostic Memory Firewall for retrieved external candidates
 
-Aionis should not claim:
+Keep these as research roadmap claims until further evidence exists:
 
 1. guaranteed external task success
 2. universal benchmark superiority
 3. model-level reasoning improvements independent of host behavior
 4. automatic promotion of one task's repair into global rules
 
-The right claim is category definition plus implemented product proof, not
-unbounded benchmark marketing.
+The right claim is category definition plus implemented product proof.

@@ -3,9 +3,8 @@
 Status: product integration guide for external Agent hosts
 
 This document explains how an external Agent host should wire Aionis into a
-real execution loop. It does not define a new Runtime mechanism, benchmark
-runner, UI, or host framework. It documents the supported product path over the
-current Runtime implementation and adapters.
+real execution loop. It documents the supported product path over the current
+Runtime implementation and adapters.
 
 For route-level request and response details, see
 [AIONIS_PRODUCT_API_USAGE.md](AIONIS_PRODUCT_API_USAGE.md). For stable output
@@ -19,18 +18,18 @@ Use the right deployment posture before wiring an Agent host:
 
 | Edition | Host shape | Boundary |
 |---|---|---|
-| `lite` | Local SDK/MCP clients on the same developer machine | Defaults to `AIONIS_MODE=local`, loopback, `MEMORY_AUTH_MODE=off`, and no tenant quota. Do not expose Lite as an unauthenticated remote service. |
+| `lite` | Local SDK/MCP clients on the same developer machine | Defaults to `AIONIS_MODE=local`, loopback, `MEMORY_AUTH_MODE=off`, and no tenant quota for same-machine developer flows. |
 | `server` | Remote SDK/MCP clients connecting to a managed endpoint | Requires `AIONIS_MODE=service` and authenticated access with `api_key`, `jwt`, or `api_key_or_jwt` unless an explicit development override is set. |
-| `cloud` | SaaS control plane | Reserved. Billing, organization management, hosted multi-tenancy, and fleet operations are not implemented by this Runtime package. |
+| `cloud` | Future hosted packaging label | Reserved for future hosted packaging; this guide focuses on Lite and Server integration. |
 
 ### Managed Server Hybrid Recall Check
 
-Server Edition keeps the same governance contract as Lite, but exposes it to
+Server Edition keeps the same governance contract as Lite and exposes it to
 remote SDK or MCP clients behind an authenticated endpoint. The Server path
-must not turn recall into admission: semantic, lexical, structured,
-execution-native, ANN, graph, and recent sources can propose candidates, while
-the product layer still decides `use_now`, `inspect_before_use`, `do_not_use`,
-and `rehydrate`.
+keeps recall and admission separated: semantic, lexical, structured,
+execution-native, ANN, graph, and recent sources propose candidates, while the
+product layer decides `use_now`, `inspect_before_use`, `do_not_use`, and
+`rehydrate`.
 
 `RECALL_ENGINE_MODE=hybrid` is the Server default. Lite keeps
 `RECALL_ENGINE_MODE=semantic_scan` by default and can opt into hybrid for local
@@ -50,7 +49,7 @@ signals, calls `guide` and Agent Flight Recorder through `createAionisClient`,
 then verifies:
 
 1. accepted execution memory reaches `use_now`
-2. failed and stale branches do not enter direct use
+2. failed and stale branches stay out of direct use
 3. at least two recall source families are visible in trace
 4. `memory_use_receipt` and admission reasons are available for audit
 5. `operator_snapshot` includes the guide trace and receipt
@@ -62,10 +61,10 @@ The committed example result lives at
 
 ## Integration Contract
 
-Aionis is a memory and execution-learning Runtime. The host still owns task
-orchestration, tool execution, model calls, retries, and final task success.
-Aionis owns memory visibility, compact guidance, controlled lifecycle changes,
-feedback attribution, and measurement.
+Aionis is a memory and execution-learning Runtime. The host runs task
+orchestration, tool execution, model calls, retries, and final task completion.
+Aionis provides memory visibility, compact guidance, controlled lifecycle
+changes, feedback attribution, and measurement.
 
 The standard host loop is:
 
@@ -79,15 +78,15 @@ Use the product routes directly when integrating over HTTP:
 |---|---|---|---|
 | `observe` | `POST /v1/observe` | Report real memory, execution, outcome, or handoff evidence. | Persist scoped evidence and execution memory. |
 | `guide` | `POST /v1/guide` | Ask for context before the next Agent acts. | Return compact `agent_context`. |
-| `agent action` | Host-owned | Give the Agent only `agent_context.prompt_text` or selected `agent_context` fields. | No action execution. |
+| `agent action` | Host-owned | Give the Agent `agent_context.prompt_text` or selected `agent_context` fields. | Preserve memory/action separation while the host executes tools. |
 | `outcome feedback` | SDK `feedback()`, adapter `afterRun`, or raw `POST /v1/feedback` | Report which exposed memory IDs were actually used and what happened. | Attribute feedback only to exposed and reported memory. |
 | `measure` | `POST /v1/measure` | Provide before/after guide packets or product trace. | Report whether history helped or hurt. |
 | `snapshot` | `POST /v1/operator/snapshot` | Ask for read-only operator state. | Summarize active context, attribution, and measured effect. |
 
-Low-level `POST /v1/memory/write` is still available for internal adapters and
-advanced hosts. A `200` response does not by itself mean a recallable memory was
-created: check `recallable_node_count`. If it is `0`, the response will include
-a `write_no_nodes` warning and the request did not add new recallable memory.
+Low-level `POST /v1/memory/write` remains available for internal adapters and
+advanced hosts. For recallable writes, check `recallable_node_count`; `0` means
+the request was accepted as a low-level event or warning surface rather than a
+new recallable memory.
 
 ## Agent Surface
 
@@ -96,7 +95,7 @@ The Agent should receive one of these:
 1. `guide.agent_context.prompt_text`
 2. a host-rendered prompt built only from `agent_context`
 
-Do not pass these to the Agent by default:
+Keep these surfaces for host logs, measurement, and operator inspection:
 
 1. `memory_packet`
 2. `guide_packet`
@@ -106,14 +105,15 @@ Do not pass these to the Agent by default:
 6. raw rows or raw slots
 7. operator snapshot markdown
 
-Those surfaces are for host measurement, developer debugging, and operator
-inspection.
+They are designed for host measurement, developer debugging, and operator
+inspection rather than direct Agent instruction.
 
 `memory_use_receipt` is the host-facing audit receipt for memory use. It is
 returned inside `memory_decision_trace` and `operator_snapshot`, and records
 the memory IDs exposed as `use_now`, `inspect_before_use`, `do_not_use`, or
 `rehydrate`, plus feedback attribution and read-only risk flags. It is useful
-for logs, dashboards, and support diagnostics, but it is not prompt content.
+for logs, dashboards, and support diagnostics as the audit companion to the
+Agent prompt.
 
 Premise Firewall warnings are delivered through the same guide boundary. If a
 user query carries a stale or blocked premise and Aionis has newer/current
@@ -124,9 +124,8 @@ counter-evidence, `POST /v1/guide` adds `premise_firewall_*` entries to
 
 Memory Contract is also delivered through `POST /v1/guide` and
 `memory_packet.relevant_memories[].memory_contract` when packets are included.
-Hosts should not re-derive this contract from raw rows. Use the compiled
-`agent_context` fields for prompts and use contract reason codes or receipt
-risk flags for audit logs.
+Use the compiled `agent_context` fields for prompts and use contract reason
+codes or receipt risk flags for audit logs.
 
 Execution transition intent is delivered through
 `memory_packet.relevant_memories[].execution_state.transition_kind` when packets
@@ -137,8 +136,8 @@ as continuation, `avoid_failed_branch` as counter-evidence only, and
 same line may use short labels such as `tr=accept_handoff`, `act=...`,
 `role=...`, and `to=...`. The current `agent_role` matches the handoff target
 when `tr=accept_handoff`, but the lifecycle gate still applies. Full memory IDs
-remain in `agent_context` structured fields; hosts should not require the Agent
-prompt to carry UUIDs for attribution.
+remain in `agent_context` structured fields, so hosts can attribute memory use
+without making the Agent prompt carry UUIDs.
 
 Hosts that need a shorter Agent prompt can request
 `context_mode: "compact_agent"` on `/v1/guide`, SDK `guide()`, SDK
@@ -146,24 +145,21 @@ Hosts that need a shorter Agent prompt can request
 templates that pass through guide input, or MCP `aionis_context`. This keeps
 the same governed `use_now`, `inspect_before_use`, `do_not_use`,
 `rehydrate_hints`, `command_posture`, and memory ID fields, but renders a
-tighter contract-style prompt for the Agent. Do not use compact mode as an
-audit substitute; receipts, traces, packets, and operator snapshots still
-belong in host logs.
+tighter contract-style prompt for the Agent. Receipts, traces, packets, and
+operator snapshots remain available for host logs.
 
 `command_posture` is the host-readable instruction posture for the same
 governed surfaces. Use `must_not` to block failed/stale branches,
 `should_continue` to bias the Agent toward a current active state or accepted
 procedure, `inspect_first` for contested/candidate history, `rehydrate_first`
 for raw evidence pointers, and `optional_context` for ordinary context. It is a
-policy-safe control hint, not an autonomous scheduler; hosts still own tool
-execution and escalation.
+policy-safe control hint while hosts own tool execution and escalation.
 
 Trace-to-Procedure readiness is delivered through
 `operator_snapshot.trace_to_procedure`, not through the Agent prompt. Hosts can
 use it for run logs, dashboards, support diagnostics, or workflow review: it
 shows which existing execution-memory surfaces are visible and whether reuse is
-stable, candidate-only, blocked, or still insufficient. It does not compile,
-promote, or run a playbook.
+stable, candidate-only, blocked, or still insufficient.
 
 ## `history_used` vs `actionable_history_used`
 
@@ -201,17 +197,14 @@ Aionis visibility depends on producer, owner, consumer, team, and lane.
 | Multi-Agent team memory | `memory_lane: "shared"` with `owner_team_id` | `owner_team_id` on writes; `consumer_team_id` on guide | Planner, worker, verifier, and reviewer share memory inside one team. |
 | Feedback attribution | Any | `guide_trace_id`, `used_memory_ids`, `run_id`, `outcome`, `used_surface` | Aionis attributes feedback only to memory exposed by that guide and reported as used. |
 
-Important boundary:
+Recommended identity setup:
 
-1. Do not use shared memory without a team boundary for team-private
-   multi-agent state.
-2. Do not use agent-private memory for a handoff that a different Agent must read.
-   Use team-private or team-owned shared memory when multiple Agents in one
-   team must read it.
-3. Do not claim feedback for all recalled memories. Report only memory IDs the
-   host knows were used.
-4. Keep `guide_trace_id` and `last_use_now_memory_ids` in host state. They are
-   not prompt content.
+1. Use team boundaries for team-private multi-agent state.
+2. Use team-private or team-owned shared memory when multiple Agents in one team
+   must read the same handoff.
+3. Report feedback for memory IDs the host knows were used.
+4. Keep `guide_trace_id` and `last_use_now_memory_ids` in host state for
+   attribution and audit.
 
 ## Adapter Path
 
@@ -251,10 +244,9 @@ guide/feedback state between hooks.
 
 ## Host Templates
 
-Host templates sit on top of `createExecutionMemoryAdapter`. They do not add a
-new Runtime feature. They provide hook names and preserve `HostRunState` so the
-next hook can attribute feedback to the exact guide trace and `use_now` memory
-IDs the Agent saw.
+Host templates sit on top of `createExecutionMemoryAdapter`. They provide hook
+names and preserve `HostRunState` so the next hook can attribute feedback to
+the exact guide trace and `use_now` memory IDs the Agent saw.
 
 Template contract version: `aionis_host_integration_template_v1`.
 
@@ -265,7 +257,7 @@ Template contract version: `aionis_host_integration_template_v1`.
 | `createCodingAgentHostTemplate` | A coding Agent needs repository and target-file context around patch execution. | `beforePatch`, `afterPatch`, `measure`, `snapshot` |
 
 `HostRunState` belongs in the host runtime, database, queue job, or
-orchestration state. Do not put it into the Agent prompt.
+orchestration state for attribution and replay.
 
 ## Single-Agent Template
 
@@ -506,14 +498,14 @@ await hostMemory.afterPatch({
 });
 ```
 
-The coding template is a host integration convenience. It must not become a
-repository-specific repair system. Repository-specific fixes and verifier
-expectations belong in observed evidence, not in Aionis source behavior.
+The coding template is a host integration convenience. Repository-specific fixes
+and verifier expectations belong in observed evidence, while Aionis keeps the
+template generic and reusable across coding hosts.
 
 ## Direct HTTP Feedback Attribution
 
-If a host does not use the adapter or templates, it should still preserve the
-same attribution contract.
+Hosts integrating directly over HTTP should preserve the same attribution
+contract.
 
 After `/v1/guide`, store:
 
@@ -561,7 +553,7 @@ The snapshot is read-only. It should show:
 5. measured effect direction
 6. trace-to-procedure readiness for reusable workflow/procedure memory
 
-It is not Agent prompt content.
+It belongs to host/operator inspection, incident review, and product metrics.
 
 ## Release Checklist
 
@@ -591,5 +583,5 @@ an already running Runtime.
 `AIONIS_AGENT_E2E_API_KEY`, `DEEPSEEK_API_KEY`, or `OPENROUTER_API_KEY`. It is
 the product-level downstream Agent demo: it verifies that Aionis gives a real
 LLM shorter execution context, restores the verified active path, blocks failed
-branch leakage, and records evidence-backed feedback. It does not make Aionis
-responsible for external task execution.
+branch leakage, and records evidence-backed feedback while the host remains the
+execution environment.

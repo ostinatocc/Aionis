@@ -7,21 +7,21 @@ MCP clients can use governed execution memory without a custom host adapter.
 
 ## Why MCP
 
-The fastest way to try Aionis is not a custom SDK integration. It is a local
-MCP server that lets an existing coding agent ask Aionis for context before it
-continues work.
+MCP is the fastest way to try Aionis inside a coding agent. The bridge runs as
+a local stdio server and lets an existing agent ask Aionis for governed
+execution context before it continues work.
 
 This should be the first public trial path for Claude Code and Cursor users:
 they can connect Aionis to an existing Agent loop, see route-safe execution
 context, then add feedback attribution later.
 
-The bridge keeps Aionis's product boundary intact:
+The bridge uses the same product path as the SDK:
 
 1. MCP tools call `@aionis/sdk`.
 2. The SDK calls product APIs such as `/v1/observe`, `/v1/guide`, `/v1/feedback`,
    `/v1/measure`, and `/v1/operator/snapshot`.
-3. Runtime core still owns lifecycle, authority, scope, source, execution tree,
-   context compilation, and audit.
+3. Runtime core returns lifecycle, authority, scope, source, execution tree,
+   context compilation, and audit surfaces.
 
 ## Install
 
@@ -53,14 +53,14 @@ AIONIS_SCOPE_FROM=workspace \
 npx @aionis/mcp@latest
 ```
 
-`--scope` is still supported and has the highest priority. Use it when the host
+`--scope` has the highest priority. Use it when the host
 already knows the exact Aionis memory boundary. Use `--scope-from workspace` for
 MCP-first coding agents where the bridge should create or reuse a stable
 workspace identity in `.aionis/workspace.json`. If the MCP host starts the
 server from a different working directory, add
 `--repo-root /absolute/path/to/repo`. Git root, git remote, and cwd identities
-are stored as aliases for the same workspace; they do not replace the primary
-`ws:<name>:<id>` scope.
+are stored as aliases for the same workspace, while the primary
+`ws:<name>:<id>` scope remains stable.
 
 ## Claude Code
 
@@ -236,8 +236,8 @@ also returns `structuredContent.execution_context` with contract version
 
 MCP hosts can pass `repo_state` with `existing_files`, `missing_files`, or
 per-file `{ target, exists }` entries. Aionis uses that observation to mark
-missing active targets as pending work, not as proof that the accepted route is
-stale. Hosts can also set `budget_profile`, `max_prompt_chars`,
+missing active targets as pending work so the accepted route remains actionable.
+Hosts can also set `budget_profile`, `max_prompt_chars`,
 `include_base_prompt`, and `additional_instructions`.
 
 ## Memory Firewall

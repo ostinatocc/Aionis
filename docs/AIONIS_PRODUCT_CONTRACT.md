@@ -2,7 +2,9 @@
 
 Status: focused product contract for the current Runtime implementation
 
-This document defines the product boundary that Aionis should converge toward. It is not a new mechanism proposal. It is the contract that keeps existing Runtime capabilities understandable, useful, and hard to drift.
+This document defines the product contract Aionis exposes to hosts,
+integrators, and operators. It keeps the Runtime capabilities understandable,
+useful, and consistent across SDK, MCP, HTTP, and operator surfaces.
 
 ## Product Definition
 
@@ -10,22 +12,22 @@ Aionis is an evidence-gated Cognitive Memory and Execution Learning Runtime for 
 
 It helps an Agent recall ordinary memory with evidence, remember real execution, learn what worked, forget what hurts, and let historical evidence shape future behavior under controlled authority.
 
-Aionis is not a recall-only memory system. It is a state-adjudicated memory
-runtime: it governs memory authority, lifecycle, scope, attribution, and risk
-before compiling bounded context for an Agent.
+Aionis is a state-adjudicated memory runtime: it governs memory authority,
+lifecycle, scope, attribution, and risk before compiling bounded context for an
+Agent.
 
-Forget is a core Aionis capability, not a compatibility feature. Controlled
-forgetting means stale, harmful, weak, contradicted, or over-exposed memory can
+Forget is a core Aionis capability. Controlled forgetting means stale, harmful,
+weak, contradicted, or over-exposed memory can
 be suppressed, demoted, archived, rehydrated, or restored with evidence and
 auditability instead of being blindly recalled forever or silently deleted.
 
 The implemented state model is documented in [AIONIS_STATE_MODEL.md](AIONIS_STATE_MODEL.md).
-Aionis does not own a global Agent orchestration state machine. It owns the
-state governance planes under memory and execution: execution state, execution
-tree branches, lifecycle/forgetting, workflow promotion, learning-control gates,
-and read-only operator projections.
+Aionis owns the state governance planes under memory and execution: execution
+state, execution tree branches, lifecycle/forgetting, workflow promotion,
+learning-control gates, and read-only operator projections.
 
-The product is not "cross-thread handoff" alone. Cross-thread, cross-Agent, and cross-LLM continuity are proof surfaces for a larger product promise:
+Cross-thread, cross-Agent, and cross-LLM continuity are proof surfaces for the
+larger product promise:
 
 History should change future behavior in a measurable, positive, and controllable way.
 
@@ -46,7 +48,8 @@ An Agent using Aionis should:
 
 The HTTP product surface should collapse around a small set of verbs that match
 the host loop. Advanced lifecycle controls stay available, but ordinary hosts
-should not have to understand internal route names or lifecycle operation codes.
+can use product verbs without learning internal route names or lifecycle
+operation codes.
 
 | Product Action | User Meaning | Current Runtime Capabilities |
 |---|---|---|
@@ -58,7 +61,15 @@ should not have to understand internal route names or lifecycle operation codes.
 | `measure` | Prove whether history changed the run positively or negatively. | runtime effect summary, promotion quality, runtime signal trends, maintenance reports, paired eval reports |
 | `snapshot` | Inspect memory use, branch isolation, and effect without mutating Runtime state. | operator snapshot, memory use receipt, trace-to-procedure readiness |
 
-Internal mechanisms may remain richer than these verbs, but product docs, demos, and user-facing integrations should not expose every internal route as a product concept. Concrete product API usage is defined in [AIONIS_PRODUCT_API_USAGE.md](AIONIS_PRODUCT_API_USAGE.md), host integration templates are defined in [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md), capability routing and deletion decisions are tracked in [AIONIS_CAPABILITY_DECISION_MATRIX.md](AIONIS_CAPABILITY_DECISION_MATRIX.md), and stable user-facing outputs are defined in [AIONIS_PRODUCT_OUTPUT_CONTRACT.md](AIONIS_PRODUCT_OUTPUT_CONTRACT.md).
+Internal mechanisms may remain richer than these verbs. Product docs, demos, and
+user-facing integrations should center these verbs so users can adopt Aionis
+without learning internal route names. Concrete product API usage is defined in
+[AIONIS_PRODUCT_API_USAGE.md](AIONIS_PRODUCT_API_USAGE.md), host integration
+templates are defined in [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md),
+capability routing and deletion decisions are tracked in
+[AIONIS_CAPABILITY_DECISION_MATRIX.md](AIONIS_CAPABILITY_DECISION_MATRIX.md), and
+stable user-facing outputs are defined in
+[AIONIS_PRODUCT_OUTPUT_CONTRACT.md](AIONIS_PRODUCT_OUTPUT_CONTRACT.md).
 
 The shortest no-key value demo is [AIONIS_FIRST_VALUE_DEMO.md](AIONIS_FIRST_VALUE_DEMO.md). It demonstrates external memory admission and audit without an embedding provider, LLM, Agent harness, or benchmark runner. The shortest write-and-guide product flow is [AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md](AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md). It demonstrates `observe -> guide -> audit`. External Agent hosts should use [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md) for the full `observe -> guide -> agent action -> feedback -> measure -> snapshot` loop.
 
@@ -78,8 +89,8 @@ Aionis can improve recall without changing its product contract.
 
 The Recall Engine finds candidate memories from semantic, lexical, structured,
 execution-native, graph, recent, exact-recovery, and future ANN sources. It may
-explain why a candidate was found and how strong the retrieval signal was. It
-must not decide whether that memory is safe to use.
+explain why a candidate was found and how strong the retrieval signal was.
+Admission decides whether that memory is safe to use.
 
 Admission remains governed by lifecycle, authority, scope, source, risk,
 feedback attribution, and rehydration state. A recalled memory becomes useful
@@ -89,21 +100,19 @@ only after the Runtime places it into one of the product surfaces:
 use_now | inspect_before_use | do_not_use | rehydrate
 ```
 
-This keeps Aionis different from recall-only memory systems. Better retrieval
-raises the ceiling for what governance can inspect; governance still controls
-what reaches the Agent. The implementation roadmap is
+This is the Aionis difference from recall-only memory systems. Better retrieval
+raises the ceiling for what governance can inspect; governance controls what
+reaches the Agent. The implementation roadmap is
 [AIONIS_RECALL_ENGINE_ROADMAP.md](AIONIS_RECALL_ENGINE_ROADMAP.md), and the
 operator runbook is
 [AIONIS_RECALL_ENGINE_RUNBOOK.md](AIONIS_RECALL_ENGINE_RUNBOOK.md).
 
 ## Multi-Agent Execution Memory Position
 
-Aionis should be a Multi-Agent execution memory backend, not a Multi-Agent
-orchestrator.
-
-External hosts decide which Agent acts next. Aionis records what each Agent did,
-compiles branch-aware execution state, controls which history can be reused, and
-measures whether that shared history helped.
+Aionis is a Multi-Agent execution memory backend. External hosts decide which
+Agent acts next; Aionis records what each Agent did, compiles branch-aware
+execution state, controls which history can be reused, and measures whether
+that shared history helped.
 
 The product contract for Multi-Agent execution memory is:
 
@@ -145,13 +154,15 @@ branch outcomes, reviewer inherits the active path, feedback is attributed to
 the guide trace, and `measure` reports whether history changed future behavior.
 
 The negative e2e proves the isolation side of the same product contract:
-team-owned shared memory does not leak across teams, private memory does not
-leak across agents, cross-team attribution is rejected, and failed execution
-branches do not enter `use_now`.
+team-owned shared memory stays team-scoped, private memory stays agent-scoped,
+cross-team attribution is rejected, and failed execution branches stay out of
+`use_now`.
 
 ## Observe Input Contract
 
-`POST /v1/observe` is the product entry for writing history. Users should not need to know the internal node and slot schema for common writes.
+`POST /v1/observe` is the product entry for writing history. Common writes use
+product-level fields while the Runtime handles the internal node and slot
+projection.
 
 Supported product inputs:
 
@@ -162,21 +173,31 @@ Supported product inputs:
 | `execution` | One observed execution experience, with task/run identity, outcome, workflow steps, tools, evidence, and continuation hint. | Auto-structured into an execution workflow memory candidate with evidence and advisory authority. |
 | `handoff` | Resumable state for future continuation. | Stored through the handoff continuity engine. |
 
-This facade is a product input adapter only. It must not add host-specific behavior, benchmark-specific actions, or single-task repair rules. Internal routes may still use richer schemas after the facade has normalized user input.
+This facade keeps product input generic: host-specific behavior,
+benchmark-specific actions, and single-task repair rules belong in observed
+evidence. Internal routes may still use richer schemas after the facade has
+normalized user input.
 
 ### Execution State Tree Default
 
-Execution-tree state is a default internal product path for execution continuity, not a replacement for ordinary memory.
+Execution-tree state is a default internal product path for execution continuity.
+Ordinary facts, preferences, and general memory continue to use the ordinary
+memory path.
 
 Default tree construction applies when `POST /v1/handoff/store` or `POST /v1/memory/write` carries execution continuity slots such as `execution_state_v1`, `execution_packet_v1`, `execution_result_summary`, `execution_artifacts`, or `execution_evidence`. The Runtime records the current execution branch, compressed progress, validation outcome, and failed/alternate branch hints so later `guide`, planning, context assembly, and recover surfaces can use the current branch without promoting failed branches as next-action context.
 
-This default path must stay scoped to execution state. Plain facts, preferences, and general cognitive memory must not be auto-converted into execution trees. Callers can disable only the automatic tree side effect by setting `execution_tree_disabled: true` or `execution_tree_default_disabled: true` on handoff/write requests; explicit `execution_tree_v1` and `execution_tree_operations_v1` remain caller-owned state and are still applied. Operators can disable the default globally with `EXECUTION_TREE_DEFAULT_ENABLED=false`.
+This default path stays scoped to execution state. Plain facts, preferences, and
+general cognitive memory stay on the ordinary memory path. Callers can disable
+only the automatic tree side effect by setting `execution_tree_disabled: true` or
+`execution_tree_default_disabled: true` on handoff/write requests; explicit
+`execution_tree_v1` and `execution_tree_operations_v1` remain caller-owned state
+and are still applied. Operators can disable the default globally with
+`EXECUTION_TREE_DEFAULT_ENABLED=false`.
 
 ### Trace-to-Procedure Product Surface
 
-Trace-to-Procedure is not a new Runtime subsystem. It is the product-visible
-projection that explains how existing execution evidence can become reusable
-procedure memory.
+Trace-to-Procedure is the product-visible projection that explains how existing
+execution evidence can become reusable procedure memory.
 
 Current implementation surface:
 
@@ -188,10 +209,10 @@ Current implementation surface:
 | `stable_reuse_visible` | Stable workflow/procedure reuse is visible through trusted authority or promoted workflow evidence. |
 | `promotion_status` | `stable_ready`, `candidate_only`, `blocked`, `insufficient_evidence`, or `not_applicable`. |
 
-This surface is read-only. It must not promote a candidate, mutate authority,
-compile a new playbook, or enter the Agent prompt. It lets hosts and operators
-see whether Aionis has enough evidence to reuse operational experience without
-turning one run into a hard rule.
+This surface is read-only. Promotion, authority mutation, playbook compilation,
+and Agent prompt rendering stay on their dedicated paths. This lets hosts and
+operators see whether Aionis has enough evidence to reuse operational experience
+without turning one run into a hard rule.
 
 ## Guide Output Contract
 
@@ -215,13 +236,14 @@ The SDK defaults `guide()` calls to `mode: "full_power"` because that is the
 recommended product adapter path. Raw HTTP callers may still omit mode for the
 legacy standard route behavior or set `mode: "standard"` explicitly.
 
-The default Agent surface must not be the full `memory_packet + guide_packet`. Full packets remain available for audit and `measure`, but they are not the default prompt surface.
+The default Agent surface is the compiled `agent_context`. Full packets remain
+available for audit and `measure` as operator/developer surfaces.
 
 Full-power guide mode must preserve the same Agent boundary: raw evidence,
 gated abstractions, selection trace, and audit prompt text are internal or
 operator surfaces. Only the safe merged `agent_context` reaches the Agent.
 
-Compact Agent context is an Agent-facing rendering choice, not a different
+Compact Agent context is an Agent-facing rendering choice on the same governed
 memory decision path. When requested, `agent_context.agent_context_mode` is
 `compact_agent`; the prompt may start with `AIONIS_CTX compact_agent`, while
 the governed memory buckets, attribution IDs, lifecycle decisions, and audit
@@ -232,8 +254,8 @@ Decision trace and audit surfaces are separate operator/debug outputs. The usage
 Generated `memory_decision_trace` and `operator_snapshot` outputs include
 `memory_use_receipt`, a compact read-only receipt of the memory IDs exposed as
 `use_now`, `inspect_before_use`, `do_not_use`, or `rehydrate`, plus feedback
-attribution and risk flags. It is for host/operator audit only and must not be
-used as Agent prompt content.
+attribution and risk flags. It is a host/operator audit surface paired with the
+Agent-facing `agent_context`.
 
 Generated `memory_decision_trace`, `memory_decision_audit`, and
 `operator_snapshot` outputs also include `judgment_calibration_summary`, a
@@ -246,35 +268,37 @@ The guide path also includes a Premise Firewall projection. When the current
 query appears to reuse a stale, blocked, contested, or superseded premise and
 Aionis has accepted current-state counter-evidence, the product exposes the
 risk through existing `agent_context.risk.reasons`, `inspect_before_use`, and
-`do_not_use` fields. This is state governance before context compilation; it
-does not rewrite the task or mutate memory by itself.
+`do_not_use` fields. This is state governance before context compilation, with
+task execution and memory mutation still handled by their dedicated host and
+Runtime paths.
 
 Memory Contract is now explicit on each relevant memory. Aionis derives a
 read-only `memory_contract` from existing authority, lifecycle, scope hint,
 source layer, and evidence IDs before compiling context. Hosts should treat
 `use_policy: "direct_use"` as eligible for `use_now`, and should treat
 `inspect_before_use`, `do_not_use`, and `evidence_only` as governed surfaces
-rather than raw recall results. The contract does not create execution trees,
-promote memory, or mutate authority by itself.
+rather than raw recall results. The contract is a read-only admission view; tree
+creation, promotion, and authority mutation remain on their dedicated Runtime
+paths.
 
 ## Feedback, Rehydrate, And Forget Input Contract
 
 `POST /v1/feedback` is the normal HTTP product entry for attributing run
 outcomes to memory actually exposed by a guide. It maps to controlled
-activation feedback internally, but callers do not need to pass
-`operation: "activate"`.
+activation feedback internally while callers use the product-level feedback
+shape.
 
 `POST /v1/rehydrate` is the normal HTTP product entry for expanding archived
-memory or anchor payload on demand. It maps to controlled rehydration
-internally, but callers do not need to pass `operation: "rehydrate"`.
+memory or anchor payload on demand. It maps to controlled rehydration internally
+while callers use the product-level rehydrate shape.
 
 `POST /v1/forget` is the explicit lifecycle-control API for controlled
 forgetting: suppressing stale or harmful memory, unsuppressing reviewed memory,
 activating directly attributed memory, moving archived memory, and rehydrating
 payloads. SDK users should prefer `client.feedback()` and `client.rehydrate()`
-for the common feedback and pointer-expansion paths, but `/v1/forget` remains a
-first-class product surface for deliberate lifecycle control. Users should not
-need to know the internal lifecycle route names.
+for the common feedback and pointer-expansion paths, while `/v1/forget` remains
+a first-class product surface for deliberate lifecycle control. The Runtime maps
+these product verbs onto the internal lifecycle route names.
 
 Supported product operations:
 
@@ -294,7 +318,11 @@ Supported targets:
 | `payload` | The payload behind an anchor, rehydrated by `anchor_id` or `anchor_uri` only when requested. |
 | `pattern` | A learned pattern controlled by suppression or unsuppression through `anchor_id`. |
 
-This facade may return an internal `source_map` for auditability, but user integrations should consume `forget_effect`: action, target, reason, changed count, reversibility, affected IDs, and anchor identity. Forget operations must control memory lifecycle and authority; they must not delete source evidence silently or add task-specific behavior.
+This facade may return an internal `source_map` for auditability, while user
+integrations should consume `forget_effect`: action, target, reason, changed
+count, reversibility, affected IDs, and anchor identity. Forget operations
+control memory lifecycle and authority while preserving source evidence and
+keeping task-specific behavior in observed evidence.
 
 ## Measure Input Contract
 
@@ -309,14 +337,18 @@ Supported measurement inputs:
 | `product_trace.baseline` + `product_trace.after_guide` | Caller supplies a direct baseline plus one active Aionis guide output. | Uses the direct baseline and packet-derived Aionis observation. |
 | `product_trace.forget_result` | Caller supplies the product forget result used between guide snapshots. | Counts suppression or rehydration effect without exposing internal lifecycle route schemas. |
 
-Product trace measurement proves packet-level Aionis effects: history used, repeated-discovery reduction signal, useful context ratio, stale-memory suppression, rehydration, workflow candidate reuse, and authority blocking. It must not be described as proof that an external Agent completed a task unless an external validation layer supplies that outcome as separate evidence.
+Product trace measurement proves packet-level Aionis effects: history used,
+repeated-discovery reduction signal, useful context ratio, stale-memory
+suppression, rehydration, workflow candidate reuse, and authority blocking.
+External task-completion claims use an external validation layer as separate
+evidence.
 
 `npm run -s runtime:e2e:agent-suite` is the focused downstream Agent-context
 demo. It supplies that separate external validation layer with a real LLM and
 compares `baseline`, `long_context`, and `aionis` contexts. Its product gates
 are scoped to Aionis-owned effects: active-path recovery, failed-branch leakage
-blocking, execution-context compression, and evidence-backed feedback. The
-demo does not turn the external Agent's task behavior into a Runtime rule.
+blocking, execution-context compression, and evidence-backed feedback. External
+Agent task behavior remains observed evidence rather than a Runtime rule.
 
 ## Core Capabilities
 
@@ -344,9 +376,9 @@ Aionis owns:
 8. measurement of positive transfer, negative transfer, token/context savings, and repeated discovery reduction
 9. distillation of memory and execution traces into training-candidate records
 
-## What Aionis Must Not Own
+## Host-Owned Execution Surfaces
 
-Aionis must not own:
+External hosts and models own:
 
 1. external host framework product behavior
 2. semantic patch generation for a specific task
@@ -354,7 +386,7 @@ Aionis must not own:
 4. benchmark-specific action semantics
 5. single-run hard rules
 6. model fine-tuning execution as part of the core Runtime
-7. cloud control plane, admin console, playground, or docs product
+7. deployment-specific control planes and product shells
 
 External hosts and LLMs propose actions. Aionis remembers, guides, gates, forgets, and measures.
 
@@ -372,21 +404,19 @@ Historical execution may shape future behavior only through these controlled sur
 | forgetting lifecycle | Demote, retire, archive, or rehydrate memory based on quality and use. |
 | effect report | Show whether this history actually helped or hurt. |
 
-Historical execution must not directly become source-code rules, task-specific fixes, or hard Runtime behavior.
+Historical execution shapes future behavior through these controlled surfaces
+rather than direct source-code rules, task-specific fixes, or hard Runtime
+behavior.
 
 ## Replay Position
 
-Replay is not the product face.
-
-Replay is an internal evidence engine. It proves what happened, supplies workflow learning evidence, supports promotion/demotion, and helps measure whether a reused path worked.
+Replay is the internal evidence engine behind the product face. It proves what
+happened, supplies workflow learning evidence, supports promotion/demotion, and
+helps measure whether a reused path worked.
 
 The product should say:
 
 Aionis learns from real execution traces.
-
-It should not lead with:
-
-Aionis is a playbook repair system.
 
 ## Training Data Position
 
@@ -400,7 +430,8 @@ Aionis execution memory can become a training data asset, but only after distill
 | promotion/demotion records | Train trust and transfer judgment. | Must include authority and lifecycle labels. |
 | forgetting/suppression records | Train memory hygiene. | Must include why the memory stopped helping. |
 
-Raw traces and raw chat are not training-ready data. Aionis should export distilled, evidence-labeled execution examples first.
+Raw traces and raw chat become training-ready through distillation and evidence
+labeling. Aionis exports distilled, evidence-labeled execution examples first.
 
 The first training candidates should be:
 
@@ -409,11 +440,15 @@ The first training candidates should be:
 3. workflow-selector examples
 4. forgetting/suppression examples
 
-LoRA or adapter training is a downstream consolidation path, not the core Runtime product.
+LoRA or adapter training is a downstream consolidation path built on top of the
+core Runtime evidence pipeline.
 
 ## Product Proof Contract
 
-Aionis should not primarily try to prove generic Agent issue success-rate lift first. That is too entangled with Agent quality, model quality, repo difficulty, provider stability, and verifier quality.
+The first product proof should focus on Aionis-owned effects before broad
+external Agent issue-success claims, because generic issue success combines
+Agent quality, model quality, repo difficulty, provider stability, and verifier
+quality.
 
 The first product proof should measure Aionis-owned effects:
 

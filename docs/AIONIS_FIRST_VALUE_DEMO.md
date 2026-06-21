@@ -11,9 +11,9 @@ It compares two prompt paths over the same retrieved history:
 2. **Aionis Admission**: the same candidates pass through
    `governMemory(mode="firewall")` before prompt use.
 
-The demo does not require an LLM or embedding API key. It starts a temporary
-Lite Runtime with `EMBEDDING_PROVIDER=none`, sends external memory candidates to
-the product API, prints the result, and refreshes
+The demo works without an LLM or embedding API key. It starts a temporary Lite
+Runtime with `EMBEDDING_PROVIDER=none`, sends external memory candidates to the
+product API, prints the result, and refreshes
 `docs/examples/first-value-demo-result.json`.
 
 ## Run
@@ -46,7 +46,7 @@ Aionis should compile the context so that:
 - unknown note stays `inspect_before_use`
 - archived trace stays pointer-only under `rehydrate`
 - memory-use receipt and admission record are visible to the host/operator
-- audit records do not enter the Agent prompt
+- audit records remain host/operator evidence
 
 ## Why This Exists
 
@@ -56,8 +56,8 @@ The full Aionis loop is:
 observe -> guide -> agent action -> feedback -> measure -> snapshot
 ```
 
-That is the production integration path. But a new developer should not need to
-wire the whole loop before seeing the product value.
+That is the production integration path. A new developer can see the first value
+before wiring the whole loop.
 
 This demo isolates the first adoption moment:
 
@@ -69,10 +69,11 @@ This demo isolates the first adoption moment:
 See:
 [examples/first-value-demo-result.json](examples/first-value-demo-result.json).
 
-## Boundary
+## What This Demonstrates
 
-This demo proves admission and audit behavior. It does not claim final Agent
-task success, better vector retrieval, or learned policy improvement.
+This demo proves the first adoption moment: Aionis can turn raw retrieved
+history into governed Agent context and produce an audit receipt for that
+decision.
 
 After this demo, run the SDK quickstart with an embedding provider:
 

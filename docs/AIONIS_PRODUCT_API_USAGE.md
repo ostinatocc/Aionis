@@ -5,9 +5,7 @@ Status: product API usage guide for the focused Runtime
 This document explains how a host should use the product actions:
 `observe`, `guide`, `feedback`, `measure`, `rehydrate`, and `snapshot`.
 
-It is not a new mechanism proposal. It does not define an Agent framework,
-benchmark runner, repair system, or host-specific adapter. It describes the
-stable product path over the current Runtime implementation.
+It describes the stable product path over the current Runtime implementation.
 
 For host template wiring and runnable single-agent, multi-agent, and coding
 Agent examples, see [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md).
@@ -47,10 +45,9 @@ Optional read-only operator route:
 |---|---|---|---|---|
 | `POST /v1/operator/snapshot` | inspect | Host or operator after guide/feedback/measure | Operator / host observability | `operator_snapshot`, optional markdown |
 
-The Agent should consume only `agent_context.prompt_text` or selected
-`agent_context` fields. Full packets, decision traces, audit reports, raw rows,
-memory admission records, and raw slots are operator surfaces, not Agent prompt
-surfaces.
+The Agent consumes `agent_context.prompt_text` or selected `agent_context`
+fields. Full packets, decision traces, audit reports, raw rows, memory
+admission records, and raw slots are operator surfaces.
 
 For host decisions, distinguish these two fields:
 
@@ -80,9 +77,8 @@ For host decisions, distinguish these two fields:
 ## SDK Product Path
 
 The focused Runtime also exposes a small TypeScript client for the product
-actions. The SDK is intentionally a facade over the product routes; it does not
-wrap debug, audit, benchmark, or host-specific adapter APIs. `feedback()` posts
-to `/v1/feedback`, `rehydrate()` posts to `/v1/rehydrate`, and `snapshot()` is a
+actions. The SDK is a facade over the product routes. `feedback()` posts to
+`/v1/feedback`, `rehydrate()` posts to `/v1/rehydrate`, and `snapshot()` is a
 short alias for `/v1/operator/snapshot`. The lower-level `/v1/forget` route
 remains available for explicit suppress/unsuppress lifecycle control.
 
@@ -204,10 +200,9 @@ await aionis.rehydrate({
 
 For coding and multi-agent hosts, the Agent should receive
 `agentContext.agent_prompt` from `compileExecutionAgentContext()`. Simpler hosts
-may still pass selected `agent_context` fields directly. The Agent should not
-receive `memory_packet`, `guide_packet`,
-`memory_decision_trace`, `memory_decision_audit`, `memory_admission_record`, or
-raw rows by default.
+may still pass selected `agent_context` fields directly. Keep `memory_packet`,
+`guide_packet`, `memory_decision_trace`, `memory_decision_audit`,
+`memory_admission_record`, and raw rows on host/operator surfaces by default.
 `feedbackFromGuide()` validates attribution against the guide exposure ledger,
 while `measureInputFromGuideLoop()` and `snapshotInputFromGuideLoop()` hide the
 internal `product_trace` and operator snapshot wiring from normal app code.
@@ -216,8 +211,7 @@ internal `product_trace` and operator snapshot wiring from normal app code.
 `AionisMemoryAdmissionRecord`: one row per candidate memory with the admission
 action, prompt exposure flag, and feedback attribution. It is the product path
 for future admission dataset export, Memory Firewall analysis, and Agent Flight
-Recorder replay. It does not mutate memory authority and should stay in host or
-operator storage.
+Recorder replay. It is read-only and belongs in host or operator storage.
 
 `memoryAdmissionDatasetJsonlFromGuide()` turns that record into JSONL rows that
 can be appended to the host's own logs or data lake. The exported rows include
@@ -290,7 +284,7 @@ stale or contradicted facts stay inspect-first, and receipt decision summaries
 make the use/suppress reason visible without becoming prompt content. Its
 holdout coverage includes active project notes, candidate memory,
 suppressed memory, private visibility boundaries, and a negative control that
-ordinary memory writes do not produce execution-tree state.
+ordinary memory writes stay on the ordinary-memory path.
 
 The golden product loop exercises the full product path:
 
@@ -303,10 +297,10 @@ Agent context, isolates failed branches, and gives operators a read-only memory
 use receipt plus trace-to-procedure readiness.
 
 The agent-suite e2e is the real LLM downstream demo. It compares `baseline`,
-`long_context`, and `aionis` groups, then fails if Aionis does not recover the
-verified active path, suppress failed branch direct use, provide evidence-backed
-feedback, and keep execution context shorter than raw long history. This
-validates Agent-context behavior; it is not an external task-success benchmark.
+`long_context`, and `aionis` groups, then verifies that Aionis recovers the
+verified active path, suppresses failed branch direct use, provides
+evidence-backed feedback, and keeps execution context shorter than raw long
+history. This validates Agent-context behavior with a real LLM.
 
 ## Multi-Agent Execution Memory
 
@@ -355,15 +349,15 @@ Adapter contract version: `aionis_execution_memory_adapter_v1`.
 | `operatorSnapshotRun` | `run_id`, `task_signature` | `agent_context`, `execution_context`, `measure_result`, `guide_trace_id`, `include_markdown` |
 
 The adapter rejects shared writes or guides without a team boundary. Use
-`default_memory_lane: "private"` for single-Agent memory that should not require
+`default_memory_lane: "private"` for single-Agent memory that runs without a
 `team_id`.
 
 ### Recommended Host Integration Templates
 
 Hosts that want a ready-to-wire lifecycle should use the host integration
-templates on top of `createExecutionMemoryAdapter`. These templates do not add a
-new Runtime feature. They preserve host state across hooks so the next hook can
-attribute feedback to the exact guide trace and `use_now` memories the Agent saw.
+templates on top of `createExecutionMemoryAdapter`. These templates preserve
+host state across hooks so the next hook can attribute feedback to the exact
+guide trace and `use_now` memories the Agent saw.
 
 Template contract version: `aionis_host_integration_template_v1`.
 
@@ -373,8 +367,8 @@ Template contract version: `aionis_host_integration_template_v1`.
 | `createMultiAgentHostTemplate` | Planner, worker, verifier, and reviewer share execution memory under one `team_id` | `plannerStart`, `workerStep`, `verifierStep`, `reviewerGuide`, `reviewerOutcome`, `measure`, `snapshot` | `HostRunState` plus role/team identity |
 | `createCodingAgentHostTemplate` | A coding Agent needs repository and file-scope context around patch execution | `beforePatch`, `afterPatch`, `measure`, `snapshot` | `HostRunState` plus `repo_root` and `target_files` |
 
-Only pass `agent_context` to the Agent. Keep `HostRunState` in the host runtime,
-database, job state, or orchestration state; it is not prompt content.
+Pass `agent_context` to the Agent. Keep `HostRunState` in the host runtime,
+database, job state, or orchestration state.
 
 ```ts
 import { createAionisClient } from "@aionis/sdk";
@@ -501,8 +495,8 @@ The positive e2e validates the Multi-Agent contract:
 The negative e2e validates the safety contract:
 
 1. scope-wide shared memory remains visible
-2. team-owned shared memory does not cross `consumer_team_id`
-3. private Agent memory does not cross `consumer_agent_id`
+2. team-owned shared memory stays inside `consumer_team_id`
+3. private Agent memory stays inside `consumer_agent_id`
 4. `guide_trace_id` feedback rejects memory IDs not exposed by that guide
 5. failed execution branches stay out of `use_now`
 
@@ -537,8 +531,8 @@ At least one of `input_text`, `memory`, `execution`, or `handoff` is required.
 | `handoff` | Advanced host / audit | Internal handoff result. |
 | `source_map` | Developer | Routes and surfaces used. |
 
-The Agent should not consume the raw observe response. The observe response is
-write confirmation, not guidance.
+The raw observe response is write confirmation. The Agent receives guidance from
+`/v1/guide`.
 
 ### Example
 
@@ -607,16 +601,16 @@ fields:
 `command_posture` is the external instruction layer for hosts and Agents. It
 uses `must_not`, `should_continue`, `inspect_first`, `rehydrate_first`, and
 `optional_context` after Aionis has already applied lifecycle, authority,
-premise, and rehydration gates. It is safer than asking the Agent to infer
-control flow from a free-form summary, and it does not bypass Runtime
-admission.
+premise, and rehydration gates. It gives the Agent a bounded control layer
+instead of a free-form summary while preserving Runtime admission.
 
-Do not pass `memory_packet`, `guide_packet`, `memory_decision_trace`,
-`memory_decision_audit`, raw rows, or raw slots to the Agent by default.
+Keep `memory_packet`, `guide_packet`, `memory_decision_trace`,
+`memory_decision_audit`, raw rows, and raw slots on host/operator surfaces by
+default.
 Keep `guide_trace_id` and the guide consumer identity in the host run record.
-They are not agent-facing; they let Aionis later know exactly which memories
-were exposed by that guide call and which private/team memory boundary should
-receive feedback attribution.
+They let Aionis later know exactly which memories were exposed by that guide
+call and which private/team memory boundary should receive feedback
+attribution.
 
 ### Example
 
@@ -674,10 +668,10 @@ audit:
 5. `rehydrate_hints`
 6. optional packets and receipt/trace surfaces when requested
 
-Compact mode must not change memory authority. If a memory is stale, failed,
+Compact mode preserves memory authority. If a memory is stale, failed,
 contested, or rehydratable, it still belongs in `inspect_before_use`,
 `do_not_use`, `rehydrate_hints`, or the corresponding `command_posture`;
-compact mode only changes how the safe Agent prompt is rendered.
+compact mode changes how the safe Agent prompt is rendered.
 
 Example:
 
@@ -715,9 +709,9 @@ Example:
 ## Advanced Execution Context Assembly
 
 `POST /v1/execution/context/assemble` is the execution-tree-first context
-surface used by advanced hosts and adapters. It is not the default product
-guide facade, but it is the right path when a host already has an execution
-tree, handoff tree id, or explicit execution evidence filters.
+surface used by advanced hosts and adapters. Use it when a host already has an
+execution tree, handoff tree id, or explicit execution evidence filters; use
+`/v1/guide` as the standard product guide facade.
 
 Default mode preserves the compact execution evidence contract:
 
@@ -742,8 +736,8 @@ When `include_prompt_text: true`, the prompt text adds these sections:
 The contract is evidence-first:
 
 1. `PASSED_SOLUTIONS` are reusable only when validated or evidence-backed.
-2. `FAILED_BRANCHES` are counter-evidence and must not be copied as answers.
-3. `RAW_EVIDENCE` is first-class source material, not a passed solution.
+2. `FAILED_BRANCHES` are counter-evidence and stay out of answer reuse.
+3. `RAW_EVIDENCE` is first-class source material and is separate from passed solutions.
 4. `GATED_ABSTRACTIONS` are advisory and bounded by `applies_when`,
    `does_not_apply_when`, `counterexamples`, and source episode refs.
 5. Summary-only execution memory remains blocked from promotion by the
@@ -776,9 +770,9 @@ Example:
 ### Purpose
 
 Govern candidate memories from any backend before they reach an Agent prompt.
-This is the backend-agnostic admission gateway: Aionis does not require these
-candidates to be stored in Aionis first, and the route does not write Runtime
-memory nodes.
+This is the backend-agnostic admission gateway: candidates can come from an
+external store first, and the route returns governed Agent context plus audit
+surfaces.
 
 Use this when a host already has memory candidates from Mem0, Zep, Pinecone,
 Qdrant, pgvector, markdown, logs, or a company-specific memory store, but still
@@ -820,8 +814,8 @@ Each candidate uses:
 
 `authority` defaults to unknown source trust and `inspect_before_use`.
 `lifecycle_hint` defaults to `unknown`. That means unlabeled external memory is
-safe by default: it can be shown for inspection, but it does not direct the
-Agent without stronger trust and lifecycle evidence.
+safe by default: it can be shown for inspection, while direct Agent guidance
+requires stronger trust and lifecycle evidence.
 
 ### Main Response Fields
 
@@ -844,10 +838,10 @@ output:
 3. `do_not_use`
 4. `rehydrate`
 
-External memory cannot enter `use_now` merely because it is semantically
-similar. It must be trusted or known, marked `current` or `procedure`, and have
-`evidence_requirement: "none"`. Failed, stale, contested, suppressed, archived,
-blocked, or rehydrate-required candidates cannot direct the Agent.
+External memory enters `use_now` when semantic relevance is paired with trust,
+current/procedure lifecycle, and `evidence_requirement: "none"`. Failed, stale,
+contested, suppressed, archived, blocked, or rehydrate-required candidates are
+routed away from direct Agent guidance.
 
 `mode: "firewall"` is stricter than the standard gateway mode:
 
@@ -866,7 +860,7 @@ Use `governMem0SearchResults()` after a Mem0 search:
 
 ```ts
 const governed = await aionis.governMem0SearchResults({
-  query_text: "Continue from the current route; do not reuse failed memories.",
+  query_text: "Continue from the current route while avoiding failed memories.",
   mem0_results: await mem0.search("current route", {
     user_id: "project-a",
     top_k: 10,
@@ -874,8 +868,8 @@ const governed = await aionis.governMem0SearchResults({
 });
 ```
 
-The adapter does not depend on the Mem0 package at runtime; it accepts the JSON
-shape Mem0 returns. It preserves common metadata fields:
+The adapter accepts the JSON shape Mem0 returns and keeps the Mem0 package
+outside the Runtime dependency graph. It preserves common metadata fields:
 
 - `external_memory_id` or row `id`
 - `target_files` / `target_files_json`
@@ -948,8 +942,8 @@ The report reconstructs:
 - feedback attribution when supplied
 - source coverage for trace, receipt, admission record, and operator snapshot
 
-It does not include `agent_context.prompt_text`, raw memory rows, raw slots, or
-embedding vectors.
+It includes memory IDs and governance surfaces while excluding raw prompt text,
+raw memory rows, raw slots, and embedding vectors.
 
 ### Request
 
@@ -1081,8 +1075,8 @@ silently.
 
 Normal host loops can use `/v1/feedback` for run attribution and
 `/v1/rehydrate` for payload or archive expansion. Those are productized
-forgetting/lifecycle paths; they do not replace `/v1/forget` when the host or
-operator needs explicit lifecycle control.
+forgetting/lifecycle paths. Use `/v1/forget` when the host or operator needs
+explicit lifecycle control.
 
 ### Minimal Request Fields
 
@@ -1110,8 +1104,8 @@ operator needs explicit lifecycle control.
 | `result` | Advanced host / audit | Internal route result. |
 | `source_map` | Developer | Routes and omitted internal surfaces. |
 
-The host should consume `forget_effect`. It should not ask the Agent to reason
-over internal lifecycle rows or raw slots.
+The host should consume `forget_effect` and keep internal lifecycle rows or raw
+slots on host/operator surfaces.
 
 For sparse-feedback attribution, prefer `/v1/feedback`. The explicit
 `operation: "activate"` form remains available for advanced callers. In either
@@ -1128,14 +1122,13 @@ host already has a precise attribution source, but `guide_trace_id` is the
 product path for normal guide-to-feedback loops.
 
 A single negative outcome without aligned verifier/tool/runtime evidence is
-stored as a weak counter-signal. It does not immediately lower authority. Aionis
-lowers authority or moves a memory to `inspect_before_use` only after repeated
-weak counter-signals, or after one negative outcome backed by aligned evidence
-such as `verifier_status: "failed"`, `tool_status: "failed"`, or concrete
+stored as a weak counter-signal. Authority changes require repeated weak
+counter-signals, or one negative outcome backed by aligned evidence such as
+`verifier_status: "failed"`, `tool_status: "failed"`, or concrete
 `runtime_signal_refs`.
 
-Aionis does not infer that every recalled memory caused a run outcome unless the
-host reports it as used.
+Aionis attributes run outcomes to recalled memory when the host reports that
+memory as used.
 
 ### Example
 
@@ -1194,13 +1187,14 @@ When `product_trace.forget_result` contains `operation: "activate"` feedback,
 which memory ids were host-marked as used, whether the signal was weak or
 strong, whether the threshold was met, and which recalled memory ids stayed
 unattributed. Per-memory `feedback_detail` explains why a single weak negative
-does not lower authority, and why repeated weak or verifier/tool/runtime-aligned
-negative feedback moves memory to `inspect_before_use`.
+is stored as weak evidence, and why repeated weak or
+verifier/tool/runtime-aligned negative feedback moves memory to
+`inspect_before_use`.
 When feedback is tied to a `guide_trace_id`, the trace also reports exposure
 counts and surface-level `unattributed_*_memory_ids` so developers can audit
-which shown memories were not used. These fields are read-only observability:
-they do not lower authority, suppress memories, or write feedback slots by
-themselves.
+which shown memories were unused by that run. These fields are read-only
+observability; authority, suppression, and feedback-slot writes stay on their
+dedicated lifecycle paths.
 `unused_exposure_observation` adds the repeated-exposure view: it identifies
 memories that were shown across multiple guide traces but not host-marked as
 used in the current activation, and separately lists the subset with no positive
@@ -1208,9 +1202,9 @@ attributed use recorded. The observation object is still read-only evidence for
 product debugging. When the repeated-unused-without-positive gate passes,
 `forget_effect.guide_trace.feedback_learning_control` records the separate persistence
 action that set `feedback_learning_control_posture=inspect_before_use` on the affected
-memory ids. This is not suppression, archive, deletion, or task-rule learning; it
-only prevents direct reuse until the Agent or host inspects/revalidates the
-memory. A later positive attributed use clears this feedback-learning control posture.
+memory ids. This is direct-reuse control until the Agent or host
+inspects/revalidates the memory. A later positive attributed use clears this
+feedback-learning control posture.
 `sparse_feedback_signal_summary` rolls positive attribution, weak/strong
 counter-signals, and repeated unused exposure into one read-only debug summary.
 It sets `authority_mutation: false` to make the boundary explicit.
@@ -1226,7 +1220,7 @@ shown-but-unreported memory becomes unused. The summary is read-only and does
 not mutate authority, ranking, suppression, or lifecycle state.
 `memory_decision_audit.feedback_signal_review` exposes the same buckets in a
 more operator-readable shape, with memory ids, titles, and reasons. It is for
-measure/debug/audit surfaces only and must not be appended to the Agent prompt.
+measure/debug/audit surfaces.
 `effect_report.feedback_signal_summary` gives the same signal ids in product
 summary form, so product dashboards can show positive attribution, weak/strong
 counter-signals, and repeated unused exposure without parsing the full trace.
@@ -1237,7 +1231,7 @@ memories that may deserve lower future reliance, memories protected by positive
 attribution, drift-only observations, and temporal staleness candidates. Time
 decay is based on old active trusted/advisory memory still exposed to the Agent,
 relative to the freshest scoped observed memory. It is still measure/debug/audit
-only; it does not demote, suppress, archive, or rewrite guide authority.
+only; lifecycle changes remain on dedicated feedback and forgetting paths.
 `inspect_before_use_shadow_delta` is the disabled product-flag preview for the
 same candidate set. It reports which memories would move to
 `inspect_before_use` if the flag were enabled, which memories are already on
@@ -1291,11 +1285,11 @@ validation. It always reports `enabled: false`, `authority_mutation: false`, and
 2. The Agent or host still owns task reasoning, tool execution, and semantic
    repair.
 3. `agent_context` is the only default Agent-facing output.
-4. Debug and audit outputs explain Aionis decisions; they are not prompts.
+4. Debug and audit outputs explain Aionis decisions for host/operator review.
 5. Full packets are available for advanced integration, measurement, and audit,
-   but they are not the default prompt payload.
-6. Product API usage must not depend on a specific external Agent framework.
-7. Runtime behavior must not be changed because of one task result.
+   while `agent_context` stays the standard prompt payload.
+6. Product API usage stays independent of any specific external Agent framework.
+7. Runtime behavior changes through evidence-backed product paths.
 
 ## Related Documents
 

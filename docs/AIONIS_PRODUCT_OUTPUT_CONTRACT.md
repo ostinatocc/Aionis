@@ -2,11 +2,11 @@
 
 Status: implemented product output contract
 
-This document defines the stable product outputs Aionis should converge toward. It does not add routes, mechanisms, or tests by itself.
+This document defines the stable product outputs Aionis exposes across guide,
+audit, measurement, snapshot, SDK, and MCP surfaces.
 
-Aionis is not recall memory; it is a state-adjudicated memory runtime. It does
-not push history straight into the LLM: it governs memory state first, then
-compiles bounded context. Its core moat is execution memory: auditable,
+Aionis is a state-adjudicated memory runtime. It governs memory state first,
+then compiles bounded context. Its core moat is execution memory: auditable,
 forgettable, and reusable operational experience for Agents.
 
 The executable schema contract lives in `src/memory/product-output-contract.ts`.
@@ -61,9 +61,15 @@ The goal is to stop exposing dozens of internal Runtime routes as product concep
 | `AionisJudgmentCalibrationSummary` | `debug` / `measure` / `audit` / `snapshot` | Summarize whether exposed memory judgments were supported, contradicted, unused, weak, or inconclusive without changing authority. |
 | `AionisOperatorSnapshot` | `snapshot` | Show read-only execution state, trace-to-procedure readiness, judgment calibration, learning control, effect, and claims for hosts/operators. |
 
-`POST /v1/guide` defaults to `AionisAgentContext` only. Callers that need audit or measurement data must set `include_packets: true` to include `memory_packet` and `guide_packet`. Full packets are not the default Agent prompt surface.
+`POST /v1/guide` defaults to `AionisAgentContext`. Callers that need audit or
+measurement data can set `include_packets: true` to include `memory_packet` and
+`guide_packet`.
 
-The prompt/debug boundary is defined in [AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md](AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md). `memory_decision_trace`, `memory_decision_audit`, `memory_use_receipt`, `memory_admission_record`, and `judgment_calibration_summary` are never Agent prompt surfaces.
+The Agent/audit surface split is defined in
+[AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md](AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md).
+`memory_decision_trace`, `memory_decision_audit`, `memory_use_receipt`,
+`memory_admission_record`, and `judgment_calibration_summary` are host/operator
+audit surfaces.
 
 Concrete product API usage for `observe`, `guide`, `feedback`, `measure`,
 `rehydrate`, and `snapshot` is defined in
@@ -85,8 +91,7 @@ changes guide authority or memory lifecycle by itself.
 The memory use receipt is the stable audit projection for "what Aionis actually
 did with memory in this run." It is derived from `memory_decision_trace` when a
 trace exists, and from `agent_context`/`guide_packet` when an operator snapshot
-is built without a trace. It is not an Agent prompt surface and cannot mutate
-runtime state.
+is built without a trace. It is read-only and host/operator-facing.
 
 The receipt maps directly onto existing Runtime concepts:
 
@@ -162,11 +167,10 @@ decision trace that powers the receipt. It records one row per candidate memory
 for a guide/context run: what Aionis did with it, whether that decision reached
 the Agent-facing context, and whether later feedback attributed use to it.
 
-It is a read-only product surface. It does not add a new gate, does not train a
-model by itself, does not enter the Agent prompt, and does not mutate memory
-authority. Its purpose is to make the future Memory Firewall, Agent Flight
-Recorder, and Admission Dataset Export possible without changing the current
-Runtime decision path.
+It is a read-only product surface. Its purpose is to make the Memory Firewall,
+Agent Flight Recorder, and Admission Dataset Export possible while preserving
+the current Runtime decision path, Agent prompt boundary, and memory authority
+path.
 
 Current surfaces:
 
@@ -239,9 +243,9 @@ decision trace, receipt, admission record, and operator snapshot surfaces. It
 answers the operator question: what memory could the Agent see at decision time,
 what was blocked, and how later feedback was attributed.
 
-It is not an Agent prompt and not a mutation path. The report includes
-`prompt_char_count` and memory IDs, but it excludes `agent_context.prompt_text`,
-raw memory rows, raw slots, and embedding vectors.
+It is a host/operator replay report. The report includes `prompt_char_count` and
+memory IDs while excluding `agent_context.prompt_text`, raw memory rows, raw
+slots, and embedding vectors.
 
 Current surface:
 
@@ -306,9 +310,9 @@ type AionisAgentFlightRecorderReport = {
 
 Admission Dataset Export v1 is an SDK-side read-only projection from
 `AionisMemoryAdmissionRecord` into JSONL rows. It is for host logs, data lakes,
-offline auditing, and future learned admission-policy training. It is not a
-Runtime route, not a persistence table, not an Agent prompt surface, and not a
-learned policy by itself.
+offline auditing, and future learned admission-policy training. It is an export
+format that keeps Runtime routing, persistence, Agent prompt rendering, and
+learned policy promotion on their dedicated paths.
 
 Current SDK helpers:
 
@@ -343,8 +347,8 @@ rehydrate requests without replaying prompt payloads.
 
 The judgment calibration summary is the first implemented Judgment Ledger
 projection. It is derived from `memory_decision_trace`, not from a new store. It
-does not persist new authority, does not change ranking, and does not enter the
-Agent prompt.
+is read-only and leaves authority, ranking, and Agent prompt rendering on their
+existing product paths.
 
 Current surfaces:
 
@@ -408,18 +412,17 @@ type AionisJudgmentCalibrationSummary = {
 | recalled memory not marked as used in feedback | `unused_memory_ids` |
 | no feedback attribution | `inconclusive_memory_ids` |
 
-`unused` is not negative feedback. Weak negative feedback is not authority
-mutation. The summary may recommend `inspect_first` or `needs_more_evidence`,
-but those are read-only audit recommendations until existing lifecycle,
-authority, and learning-control gates accept separate evidence.
+`unused` is recorded separately from negative feedback. Weak negative feedback
+stays below authority-mutation threshold. The summary may recommend
+`inspect_first` or `needs_more_evidence`; existing lifecycle, authority, and
+learning-control gates accept separate evidence before state changes.
 
 ## Premise Firewall
 
-The first implemented Premise Firewall is a guide-stage projection, not a new
-Runtime subsystem and not a hard Agent interceptor. It checks the current guide
-query against recalled memory and accepted lifecycle relation evidence. When
-the query appears to carry an old, blocked, contested, or superseded premise,
-Aionis keeps the warning on existing product surfaces:
+The first implemented Premise Firewall is a guide-stage projection. It checks
+the current guide query against recalled memory and accepted lifecycle relation
+evidence. When the query appears to carry an old, blocked, contested, or
+superseded premise, Aionis keeps the warning on existing product surfaces:
 
 1. `agent_context.risk.reasons`
 2. `agent_context.inspect_before_use`
@@ -437,15 +440,15 @@ Current implemented reason codes:
 | `premise_firewall_query_mentions_uncertain_memory` | The query mentions candidate, contested, demoted, or rehydration-candidate memory. | `inspect_before_use` |
 
 The product behavior is advisory. The Agent is told to inspect or avoid the
-premise, but Aionis does not rewrite the task, execute a repair, or mutate
-memory lifecycle from this signal alone.
+premise, while task repair and lifecycle mutation remain on their dedicated host
+and Runtime paths.
 
 ## Memory Contract
 
 The implemented Memory Contract is a read-only projection on each
-`AionisMemoryPacket.relevant_memories[]` entry. It does not replace existing
-authority, lifecycle, scope, or evidence gates. It makes those gates explicit
-before `agent_context` is compiled.
+`AionisMemoryPacket.relevant_memories[]` entry. It makes existing authority,
+lifecycle, scope, and evidence gates explicit before `agent_context` is
+compiled.
 
 Current contract fields:
 
@@ -486,8 +489,8 @@ audit and receipt visibility.
 
 `operator_snapshot.trace_to_procedure` is the product-facing summary of how
 Aionis turns traces into reusable procedure candidates. It is assembled from
-existing Runtime state and does not add a writer, promotion path, or Agent
-prompt content.
+existing Runtime state while writer, promotion, and Agent prompt paths remain
+separate product surfaces.
 
 ```ts
 type AionisTraceToProcedureProjection = {
@@ -528,14 +531,14 @@ type AionisTraceToProcedureProjection = {
 | procedure/execution memory IDs from decision trace | broad claim that a single trace is reusable everywhere |
 
 `promotion_status` reports readiness only. `blocked` means Aionis has procedure
-evidence but the existing learning-control or consolidation gates did not allow
-stable reuse. `candidate_only` means the trace can inform inspection or
-advisory workflow reuse. `stable_ready` requires trusted/promoted workflow or
-procedure evidence already visible through current Runtime surfaces.
+evidence while existing learning-control or consolidation gates keep stable
+reuse closed. `candidate_only` means the trace can inform inspection or advisory
+workflow reuse. `stable_ready` requires trusted/promoted workflow or procedure
+evidence already visible through current Runtime surfaces.
 
-## Non-Goals
+## Internal Boundary
 
-These outputs must not become:
+These outputs stay separate from:
 
 1. a facade over every internal route
 2. a semantic patch generator
@@ -547,11 +550,12 @@ These outputs must not become:
 
 ## AionisAgentContext
 
-The agent context is the default product-facing output for `POST /v1/guide`. It should answer:
+The agent context is the default product-facing output for `POST /v1/guide`. It
+should answer:
 
 1. What should the Agent use now?
 2. What should be inspected before use?
-3. What should not be used?
+3. What should be avoided?
 4. Which target files and memory IDs were recovered?
 5. What is the authority and negative-transfer risk?
 6. Which memory can be rehydrated if more detail is needed?
@@ -704,9 +708,8 @@ IDs in the structured fields (`use_now_memory_ids`,
 attribute memory use without making the Agent carry UUIDs in prompt context.
 
 `command_posture` is the Agent-facing command posture compiled after lifecycle,
-authority, premise, and rehydration gates. It does not let an LLM candidate
-override Runtime governance. Hosts should treat it as a bounded instruction
-layer:
+authority, premise, and rehydration gates. It keeps LLM candidates inside
+Runtime governance. Hosts should treat it as a bounded instruction layer:
 
 | Posture | Meaning |
 |---|---|
@@ -714,7 +717,7 @@ layer:
 | `should_continue` | Prefer continuing this active state or accepted execution procedure before widening discovery. |
 | `inspect_first` | Check current code, evidence, or operator state before acting from the memory. |
 | `rehydrate_first` | Recover raw payload or trace before relying on exact details. |
-| `optional_context` | Useful context only; it must not override current evidence or higher-authority state. |
+| `optional_context` | Useful context only; current evidence and higher-authority state keep priority. |
 
 `route_contract` is the machine-readable continuation contract behind the
 prompt. `active_targets` are governed continuation targets. `pending_artifacts`
@@ -722,15 +725,15 @@ tell a host that an active target may need to be created, restored, or
 rehydrated if local observation says it is absent. `action_policy` orders the
 safe next decisions for missing active targets: create, restore, rehydrate, then
 report conflict. `terminal_inspect_allowed=false` means inspection may gather
-evidence, but must not be the final answer when an active route is clear. The
-conflict policy means absence alone must not silently supersede the active
-route; the Agent should create, restore, rehydrate, or report the conflict
-before falling back to an old or reference-only route.
+evidence, while an active route should still drive the final action when clear.
+The conflict policy means absence alone keeps the active route in force; the
+Agent should create, restore, rehydrate, or report the conflict before falling
+back to an old or reference-only route.
 
 `evidence_sources` and `blocked_routes` are structured aliases over the same
 governed surfaces. `evidence_sources` are readable reference evidence, not
 primary execution routes. `blocked_routes` are blocked directions; they may be
-useful as counter-evidence but must not be revived as the active route. These
+useful as counter-evidence while staying separate from the active route. These
 fields exist for SDK, MCP, and host adapters that want explicit
 `active_target` / `evidence_source` / `blocked_route` semantics without parsing
 prompt text.
@@ -749,7 +752,7 @@ The memory packet is the product-facing output for ordinary recall and mixed rec
 3. What evidence supports each memory?
 4. What is active, candidate, contested, stale, suppressed, archived, or rehydratable?
 5. How may these memories shape the next answer or action?
-6. What should not be trusted because of contradiction or negative-transfer risk?
+6. Which memory requires distrust because of contradiction or negative-transfer risk?
 
 ### Shape
 
@@ -899,8 +902,8 @@ type AionisMemoryPacket = {
 ### Execution Transition Semantics
 
 `relevant_memories[].execution_state.transition_kind` is the product-facing
-execution intent compiled from the state-governed memory entry. It is not a host
-scheduler and it does not mutate Runtime state by itself.
+execution intent compiled from the state-governed memory entry. Host scheduling
+and Runtime mutation stay on their dedicated paths.
 
 | Value | Meaning |
 |---|---|
@@ -1103,7 +1106,8 @@ The learning packet is the product-facing output for self-learning control. It s
 
 The route field name is `aionis_learning_packet`.
 
-Route-level LearningPacket output is not a training runner. It must not claim LoRA/export readiness from a single context route. Training export readiness belongs to measured EffectReport evidence.
+Route-level LearningPacket output is a context signal. Training export readiness
+belongs to measured EffectReport evidence rather than a single context route.
 
 ### Shape
 
@@ -1226,7 +1230,11 @@ The effect report is the main product proof output. It should answer:
 | `baseline` + `aionis` | Advanced measurement where the caller supplies direct continuity, learning, forgetting, and learning-control observations. |
 | `product_trace` | Product measurement where the caller supplies `before_guide`, `after_guide`, and optional `forget_result` outputs from the facade. |
 
-`product_trace` is projected into the same effect evaluator. The projection uses only product packets and product forget effects: relevant memories, workflow candidates, proven facts, rehydration hints, stale/suppressed counts, and authority visibility. It is a packet-level product measurement, not a claim that an external Agent solved a task.
+`product_trace` is projected into the same effect evaluator. The projection uses
+only product packets and product forget effects: relevant memories, workflow
+candidates, proven facts, rehydration hints, stale/suppressed counts, and
+authority visibility. It is packet-level product measurement; external Agent
+task completion uses separate validation evidence.
 
 ### Shape
 
@@ -1360,7 +1368,8 @@ type AionisEffectReport = {
 
 ## Internal Surfaces Not Product Outputs
 
-These may feed the four product outputs, but should not become product-facing outputs themselves.
+These may feed the four product outputs while staying behind the product-facing
+surfaces.
 
 | Internal Surface | Product Treatment |
 |---|---|
@@ -1377,6 +1386,7 @@ Before any route, SDK, CLI, or demo is implemented against these outputs:
 
 1. This document must be accepted as the product output contract.
 2. The guide/effect fields must be mapped only to `product-core`, `product-support`, `internal-evidence`, or `internal-guidance` capabilities from the decision matrix.
-3. Routes marked `operator_support`, `internal_control`, or `eval-only` must not be surfaced as first-class product actions.
+3. Routes marked `operator_support`, `internal_control`, or `eval-only` stay
+   behind first-class product actions.
 4. A demo must show the outputs, not raw internal route dumps.
 5. An effect report must be allowed to say `insufficient_evidence` instead of forcing a positive claim.
