@@ -16,7 +16,8 @@ SCOPE_FROM="${AIONIS_SCOPE_FROM:-workspace}"
 GUIDE_MODE="${AIONIS_GUIDE_MODE:-full_power}"
 printf 'AIONIS_BASE_URL=%s\nAIONIS_SCOPE_FROM=%s\nAIONIS_GUIDE_MODE=%s\n' "$BASE_URL" "$SCOPE_FROM" "$GUIDE_MODE"
 claude plugin list 2>/dev/null | grep -A4 'aionis@aionis' || true
-claude mcp list 2>/dev/null | grep -E 'plugin:aionis:aionis|aionis-local' || true
+claude plugin list 2>/dev/null | grep -A4 'aionis@aionis-claude-code' || true
+claude mcp list 2>/dev/null | grep -E 'plugin:aionis-claude-code:aionis|plugin:aionis:aionis|aionis-local' || true
 ```
 
 Then summarize:

@@ -10,10 +10,14 @@ This plugin gives Claude Code Aionis execution memory through two paths:
 From Claude Code:
 
 ```text
-/plugin marketplace add https://github.com/ostinatocc/Aionis
-/plugin install aionis@aionis
+/plugin marketplace add https://github.com/ostinatocc/aionis-claude-code
+/plugin install aionis@aionis-claude-code
 /aionis:onboard
 ```
+
+This is the standalone public marketplace repo for the Claude Code adapter.
+The copy under the Runtime repository is kept for compatibility and local
+development.
 
 Runtime should be reachable before you run the doctor command. For the
 recommended isolated Claude Code Runtime, install with:

@@ -8,8 +8,8 @@ pass through Aionis automatically.
 Recommended Claude Code plugin setup:
 
 ```text
-/plugin marketplace add https://github.com/ostinatocc/Aionis
-/plugin install aionis@aionis
+/plugin marketplace add https://github.com/ostinatocc/aionis-claude-code
+/plugin install aionis@aionis-claude-code
 /aionis:onboard
 ```
 

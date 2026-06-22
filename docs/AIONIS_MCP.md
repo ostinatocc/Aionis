@@ -74,13 +74,15 @@ npm run -s lite:start
 ```
 
 ```text
-/plugin marketplace add https://github.com/ostinatocc/Aionis
-/plugin install aionis@aionis
+/plugin marketplace add https://github.com/ostinatocc/aionis-claude-code
+/plugin install aionis@aionis-claude-code
 /aionis:doctor
 ```
 
 The Claude Code plugin defaults to `http://127.0.0.1:3101`, matching the
 `@aionis/create --with-claude-code` Runtime port.
+Its standalone adapter repo is
+[ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code).
 
 Add Aionis as raw MCP only when you are configuring another MCP client or you do
 not want lifecycle hooks:

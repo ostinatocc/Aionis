@@ -61,10 +61,15 @@ npm run -s lite:start
 Claude Code plugin path:
 
 ```text
-/plugin marketplace add https://github.com/ostinatocc/Aionis
-/plugin install aionis@aionis
+/plugin marketplace add https://github.com/ostinatocc/aionis-claude-code
+/plugin install aionis@aionis-claude-code
 /aionis:onboard
 ```
+
+The Claude Code plugin is maintained in the dedicated
+[ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code)
+adapter repo. This Runtime repo keeps a bundled copy for compatibility and
+local development.
 
 The plugin installs user-level Aionis MCP plus lifecycle hooks. It uses stable
 workspace scopes without writing hook files into every project. After that, run
@@ -648,8 +653,8 @@ npm run -s lite:start
 ```
 
 ```text
-/plugin marketplace add https://github.com/ostinatocc/Aionis
-/plugin install aionis@aionis
+/plugin marketplace add https://github.com/ostinatocc/aionis-claude-code
+/plugin install aionis@aionis-claude-code
 /aionis:doctor
 ```
 

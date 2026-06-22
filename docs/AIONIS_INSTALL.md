@@ -118,10 +118,13 @@ after Bash/Edit/Write tool use, and at compact/session boundaries.
 If you prefer the Claude Code plugin path after installing Runtime:
 
 ```text
-/plugin marketplace add https://github.com/ostinatocc/Aionis
-/plugin install aionis@aionis
+/plugin marketplace add https://github.com/ostinatocc/aionis-claude-code
+/plugin install aionis@aionis-claude-code
 /aionis:doctor
 ```
+
+The Claude Code plugin marketplace is maintained separately at
+[ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code).
 
 The installer performs product setup:
 

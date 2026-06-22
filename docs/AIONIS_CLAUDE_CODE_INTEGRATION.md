@@ -16,10 +16,15 @@ npm run -s lite:start
 Then in Claude Code:
 
 ```text
-/plugin marketplace add https://github.com/ostinatocc/Aionis
-/plugin install aionis@aionis
+/plugin marketplace add https://github.com/ostinatocc/aionis-claude-code
+/plugin install aionis@aionis-claude-code
 /aionis:onboard
 ```
+
+The official Claude Code plugin lives in
+[ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code).
+The Runtime repository keeps a bundled copy so existing local installs and
+Runtime development remain stable.
 
 The plugin loads:
 
