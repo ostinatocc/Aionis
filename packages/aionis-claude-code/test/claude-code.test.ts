@@ -105,6 +105,15 @@ test("@aionis/claude-code onboard defaults to user-level hooks and MCP", () => {
   assert.equal(parsed.scope_from, "workspace");
 });
 
+test("@aionis/claude-code doctor defaults to the same user-level posture as onboard", () => {
+  const parsed = parseAionisClaudeCodeArgs(["doctor"], {});
+
+  assert.equal(parsed.command, "doctor");
+  assert.equal(parsed.settings, "user");
+  assert.equal(parsed.claude_scope, "user");
+  assert.equal(parsed.workspace_identity_store, "user");
+});
+
 test("@aionis/claude-code writes idempotent Claude Code hook settings", () => {
   const current = {
     hooks: {

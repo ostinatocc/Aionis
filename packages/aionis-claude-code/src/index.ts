@@ -155,7 +155,7 @@ export function parseAionisClaudeCodeArgs(
   }
   const command = commandArg;
   const rest = commandArg === argv[0] ? argv.slice(1) : argv;
-  const onboardDefaults = command === "onboard";
+  const userLevelDefaults = command === "onboard" || command === "doctor";
 
   const options: AionisClaudeCodeOptions = {
     command,
@@ -166,13 +166,13 @@ export function parseAionisClaudeCodeArgs(
     scope_from: parseScopeSource(env.AIONIS_SCOPE_FROM?.trim() || "workspace"),
     repo_root: env.AIONIS_REPO_ROOT?.trim() || undefined,
     mode: parseGuideMode(env.AIONIS_GUIDE_MODE?.trim() || "full_power"),
-    settings: onboardDefaults ? "user" : "local",
+    settings: userLevelDefaults ? "user" : "local",
     mcp_name: "aionis-local",
-    claude_scope: onboardDefaults ? "user" : "local",
+    claude_scope: userLevelDefaults ? "user" : "local",
     package_spec: DEFAULT_PACKAGE_SPEC,
     mcp_package_spec: DEFAULT_MCP_PACKAGE_SPEC,
     workspace_identity_store: parseWorkspaceIdentityStore(
-      env.AIONIS_WORKSPACE_ID_STORE?.trim() || (onboardDefaults ? "user" : "project"),
+      env.AIONIS_WORKSPACE_ID_STORE?.trim() || (userLevelDefaults ? "user" : "project"),
     ),
     skip_mcp: false,
     dry_run: false,
