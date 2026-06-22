@@ -10,7 +10,7 @@ Status: public Runtime, npm, MCP, SDK, and Docker release path
 | Docker image | `ghcr.io/ostinatocc/aionis:<tag>` | Local-first Aionis Runtime container with persistent SQLite state under `/data`. |
 | `@aionis/create` | npm latest | One-command installer for Runtime plus SDK/MCP packages. |
 | `@aionis/sdk` | npm latest | TypeScript facade over Aionis product APIs. |
-| `@aionis/mcp` | npm latest | MCP stdio bridge for Claude Code, Cursor, and other MCP clients. |
+| `@aionis/mcp` | npm latest / [repo](https://github.com/ostinatocc/aionis-mcp) | MCP stdio bridge for Claude Code, Cursor, and other MCP clients. |
 
 Release tags are immutable. If the release surface changes after a tag, create a
 new patch tag instead of moving the old one.
@@ -115,4 +115,3 @@ The Docker workflow publishes:
 ghcr.io/ostinatocc/aionis:v0.2.1
 ghcr.io/ostinatocc/aionis:latest
 ```
-

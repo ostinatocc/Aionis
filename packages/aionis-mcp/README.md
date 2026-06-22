@@ -4,6 +4,8 @@ MCP stdio bridge for Aionis execution memory.
 
 Docs: [https://docs.aionis.work/integrations/mcp](https://docs.aionis.work/integrations/mcp)
 
+Source: [https://github.com/ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp)
+
 Use this package when you want Claude Code, Cursor, or another MCP client to
 try Aionis without rewriting the host Agent loop first. MCP is the fastest
 public trial path for Aionis Execution Memory: connect the bridge, call

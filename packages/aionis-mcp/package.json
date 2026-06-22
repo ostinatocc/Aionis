@@ -6,8 +6,7 @@
   "homepage": "https://docs.aionis.work/integrations/mcp",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ostinatocc/Aionis.git",
-    "directory": "packages/aionis-mcp"
+    "url": "https://github.com/ostinatocc/aionis-mcp.git"
   },
   "type": "module",
   "bin": {

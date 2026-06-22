@@ -102,6 +102,10 @@ Generic MCP clients can run the bridge directly:
 npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope-from workspace
 ```
 
+The MCP bridge is maintained in the dedicated
+[ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) adapter repo.
+This Runtime repo keeps a bundled copy for compatibility and local development.
+
 The default install runs the no-key first-value demo: raw retrieved history is
 turned into governed execution context. Aionis admits the current route, keeps
 unsafe or stale history out of direct use, leaves archived evidence

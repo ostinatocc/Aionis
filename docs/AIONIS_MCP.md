@@ -5,6 +5,11 @@ Status: drop-in MCP bridge for coding agents
 `@aionis/mcp` exposes Aionis through MCP stdio so Claude Code, Cursor, and other
 MCP clients can use governed execution memory without a custom host adapter.
 
+Standalone adapter repo:
+[ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp).
+The Runtime repository keeps a bundled copy for compatibility, tests, and
+local development.
+
 ## Why MCP
 
 MCP is the fastest way to try Aionis inside a coding agent. The bridge runs as

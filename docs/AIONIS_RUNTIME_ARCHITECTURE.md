@@ -240,7 +240,7 @@ into the Agent prompt.
 |---|---|
 | Product facade routes | `src/routes/product-facade.ts` |
 | SDK facade | `src/sdk.ts`, `packages/aionis-sdk/src/index.ts` |
-| MCP bridge | `packages/aionis-mcp/src/index.ts`, `packages/aionis-mcp/src/server.ts`, `packages/aionis-mcp/src/tools.ts` |
+| MCP bridge | standalone adapter repo [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp); bundled compatibility copy at `packages/aionis-mcp/src/index.ts`, `packages/aionis-mcp/src/server.ts`, `packages/aionis-mcp/src/tools.ts` |
 | Product output contracts | `src/memory/product-output-contract.ts` |
 | Product output assembly | `src/memory/product-output-assembler.ts` |
 | Lifecycle adjudication | `src/memory/memory-lifecycle-adjudicator.ts`, `src/memory/lifecycle-candidate-inference.ts` |
