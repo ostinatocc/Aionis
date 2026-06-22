@@ -2,6 +2,7 @@ import type { AionisClientOptions, AionisGuideMode } from "@aionis/sdk";
 import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 export type AionisMcpConfig = {
@@ -10,11 +11,13 @@ export type AionisMcpConfig = {
   tenant_id?: string;
   scope?: string;
   scope_from?: AionisMcpScopeSource;
+  workspace_identity_store?: AionisMcpWorkspaceIdentityStore;
   repo_root?: string;
   default_guide_mode?: AionisGuideMode | null;
 };
 
 export type AionisMcpScopeSource = "workspace" | "git" | "cwd" | "none";
+export type AionisMcpWorkspaceIdentityStore = "project" | "user";
 
 export type AionisMcpConfigParseOptions = {
   cwd?: string;
@@ -31,6 +34,7 @@ export type AionisMcpWorkspaceIdentity = {
 
 export const DEFAULT_AIONIS_BASE_URL = "http://127.0.0.1:3001";
 export const AIONIS_WORKSPACE_IDENTITY_PATH = ".aionis/workspace.json";
+export const AIONIS_USER_WORKSPACE_IDENTITY_DIR = path.join(".aionis", "claude-code", "workspaces");
 
 function readFlagValue(argv: string[], index: number, flag: string): string {
   const value = argv[index + 1];
@@ -48,6 +52,12 @@ function parseScopeSource(value: string | undefined): AionisMcpScopeSource | und
   if (!value) return undefined;
   if (value === "workspace" || value === "git" || value === "cwd" || value === "none") return value;
   throw new Error(`Unsupported scope source "${value}". Use workspace, git, cwd, or none.`);
+}
+
+function parseWorkspaceIdentityStore(value: string | undefined): AionisMcpWorkspaceIdentityStore | undefined {
+  if (!value) return undefined;
+  if (value === "project" || value === "user") return value;
+  throw new Error(`Unsupported workspace id store "${value}". Use project or user.`);
 }
 
 function shortHash(value: string): string {
@@ -108,7 +118,14 @@ function deriveCwdScope(root: string): string {
   return `cwd:${slugifyScopePart(directoryBasename(workspaceRoot))}:${shortHash(workspaceRoot)}`;
 }
 
-function workspaceIdentityFile(root: string): string {
+function workspaceIdentityFile(root: string, store: AionisMcpWorkspaceIdentityStore = "project"): string {
+  if (store === "user") {
+    return path.join(
+      os.homedir(),
+      AIONIS_USER_WORKSPACE_IDENTITY_DIR,
+      `${shortHash(resolveRepoRoot(root, process.cwd()))}.json`,
+    );
+  }
   return path.join(root, AIONIS_WORKSPACE_IDENTITY_PATH);
 }
 
@@ -157,8 +174,8 @@ function createWorkspaceIdentity(root: string, now = new Date().toISOString()): 
   };
 }
 
-function deriveWorkspaceScope(root: string): string {
-  const file = workspaceIdentityFile(root);
+function deriveWorkspaceScope(root: string, store: AionisMcpWorkspaceIdentityStore = "project"): string {
+  const file = workspaceIdentityFile(root, store);
   const now = new Date().toISOString();
   const existing = readWorkspaceIdentity(file);
   if (!existing) {
@@ -183,11 +200,12 @@ export function deriveAionisMcpScope(input: {
   source: AionisMcpScopeSource;
   repoRoot?: string;
   cwd?: string;
+  workspaceIdentityStore?: AionisMcpWorkspaceIdentityStore;
 }): string | undefined {
   if (input.source === "none") return undefined;
   const cwd = input.cwd ? resolveRepoRoot(input.cwd, process.cwd()) : process.cwd();
   const root = input.repoRoot ? resolveRepoRoot(input.repoRoot, cwd) : cwd;
-  if (input.source === "workspace") return deriveWorkspaceScope(root);
+  if (input.source === "workspace") return deriveWorkspaceScope(root, input.workspaceIdentityStore ?? "project");
   if (input.source === "git") return deriveGitScope(root);
   return deriveCwdScope(root);
 }
@@ -205,6 +223,10 @@ Options:
                             Derive default scope when --scope is not set.
                             workspace persists .aionis/workspace.json and keeps git/cwd aliases stable.
                             Defaults to AIONIS_SCOPE_FROM, or none.
+  --workspace-id-store <project|user>
+                            Where workspace scope ids are stored when --scope-from workspace is used.
+                            project writes .aionis/workspace.json. user writes ~/.aionis/claude-code/workspaces.
+                            Defaults to AIONIS_WORKSPACE_ID_STORE, or project.
   --repo-root <path>         Workspace/repo root used by --scope-from. Defaults to AIONIS_REPO_ROOT or cwd.
   --mode <name>             full_power, standard, or none. Defaults to AIONIS_GUIDE_MODE or full_power.
   -h, --help                Show help.
@@ -214,6 +236,7 @@ Examples:
   npx @aionis/mcp --base-url http://127.0.0.1:3001 --scope-from workspace
   npx @aionis/mcp --base-url http://127.0.0.1:3001 --scope-from git
   npx @aionis/mcp --base-url http://127.0.0.1:3001 --scope-from workspace --repo-root /path/to/repo
+  npx @aionis/mcp --base-url http://127.0.0.1:3001 --scope-from workspace --workspace-id-store user
   AIONIS_BASE_URL=http://127.0.0.1:3001 AIONIS_SCOPE=my-project npx @aionis/mcp
 `;
 }
@@ -228,6 +251,7 @@ export function parseAionisMcpConfig(
   let tenantId = env.AIONIS_TENANT_ID?.trim() || env.AIONIS_TENANT?.trim() || undefined;
   let scope = env.AIONIS_SCOPE?.trim() || undefined;
   let scopeFrom = parseScopeSource(env.AIONIS_SCOPE_FROM?.trim());
+  let workspaceIdentityStore = parseWorkspaceIdentityStore(env.AIONIS_WORKSPACE_ID_STORE?.trim()) ?? "project";
   let repoRoot = env.AIONIS_REPO_ROOT?.trim() || undefined;
   let defaultGuideMode = parseGuideMode(env.AIONIS_GUIDE_MODE?.trim() || "full_power");
 
@@ -262,6 +286,11 @@ export function parseAionisMcpConfig(
       i += 1;
       continue;
     }
+    if (arg === "--workspace-id-store") {
+      workspaceIdentityStore = parseWorkspaceIdentityStore(readFlagValue(argv, i, arg)) ?? "project";
+      i += 1;
+      continue;
+    }
     if (arg === "--repo-root") {
       repoRoot = readFlagValue(argv, i, arg);
       i += 1;
@@ -280,6 +309,7 @@ export function parseAionisMcpConfig(
       source: scopeFrom,
       repoRoot,
       cwd: options.cwd,
+      workspaceIdentityStore,
     });
   }
 
@@ -289,6 +319,7 @@ export function parseAionisMcpConfig(
     tenant_id: tenantId,
     scope,
     ...(scopeFrom ? { scope_from: scopeFrom } : {}),
+    ...(scopeFrom === "workspace" ? { workspace_identity_store: workspaceIdentityStore } : {}),
     ...(repoRoot ? { repo_root: repoRoot } : {}),
     default_guide_mode: defaultGuideMode,
   };

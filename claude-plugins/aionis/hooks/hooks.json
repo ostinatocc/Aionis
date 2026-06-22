@@ -1,0 +1,85 @@
+{
+  "description": "Aionis lifecycle hooks for Claude Code execution memory.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @aionis/claude-code@latest hook --base-url \"${user_config.base_url}\" --tenant \"${user_config.tenant_id}\" --scope-from \"${user_config.scope_from}\" --workspace-id-store user --mode \"${user_config.guide_mode}\" --max-prompt-chars \"${user_config.max_prompt_chars}\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @aionis/claude-code@latest hook --base-url \"${user_config.base_url}\" --tenant \"${user_config.tenant_id}\" --scope-from \"${user_config.scope_from}\" --workspace-id-store user --mode \"${user_config.guide_mode}\" --max-prompt-chars \"${user_config.max_prompt_chars}\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @aionis/claude-code@latest hook --base-url \"${user_config.base_url}\" --tenant \"${user_config.tenant_id}\" --scope-from \"${user_config.scope_from}\" --workspace-id-store user --mode \"${user_config.guide_mode}\" --max-prompt-chars \"${user_config.max_prompt_chars}\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @aionis/claude-code@latest hook --base-url \"${user_config.base_url}\" --tenant \"${user_config.tenant_id}\" --scope-from \"${user_config.scope_from}\" --workspace-id-store user --mode \"${user_config.guide_mode}\" --max-prompt-chars \"${user_config.max_prompt_chars}\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @aionis/claude-code@latest hook --base-url \"${user_config.base_url}\" --tenant \"${user_config.tenant_id}\" --scope-from \"${user_config.scope_from}\" --workspace-id-store user --mode \"${user_config.guide_mode}\" --max-prompt-chars \"${user_config.max_prompt_chars}\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @aionis/claude-code@latest hook --base-url \"${user_config.base_url}\" --tenant \"${user_config.tenant_id}\" --scope-from \"${user_config.scope_from}\" --workspace-id-store user --mode \"${user_config.guide_mode}\" --max-prompt-chars \"${user_config.max_prompt_chars}\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @aionis/claude-code@latest hook --base-url \"${user_config.base_url}\" --tenant \"${user_config.tenant_id}\" --scope-from \"${user_config.scope_from}\" --workspace-id-store user --mode \"${user_config.guide_mode}\" --max-prompt-chars \"${user_config.max_prompt_chars}\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

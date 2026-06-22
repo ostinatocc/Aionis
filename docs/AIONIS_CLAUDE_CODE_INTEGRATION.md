@@ -1,6 +1,24 @@
 # Aionis Claude Code Integration
 
-Aionis has two Claude Code integration levels.
+Aionis has three Claude Code integration levels.
+
+## Plugin Path
+
+For the normal Claude Code path, install the Aionis plugin:
+
+```text
+/plugin marketplace add https://github.com/ostinatocc/Aionis
+/plugin install aionis@aionis
+/aionis:onboard
+```
+
+The plugin loads:
+
+- Aionis MCP server `aionis`.
+- Aionis lifecycle hooks.
+- User-level workspace identity storage for stable cross-project scopes.
+
+Use `/aionis:doctor` to verify Runtime connectivity.
 
 ## MCP Only
 
@@ -14,9 +32,9 @@ MCP exposes Aionis tools to Claude Code:
 
 This is useful, but the Agent still has to decide to call the tools.
 
-## MCP + Lifecycle Hooks
+## CLI Fallback: MCP + Lifecycle Hooks
 
-For a stronger integration, onboard Claude Code once:
+If you do not want to use Claude Code plugins, onboard Claude Code once:
 
 ```bash
 npx @aionis/claude-code@latest onboard --base-url http://127.0.0.1:3101
@@ -54,6 +72,8 @@ Check everything:
 npx @aionis/claude-code@latest doctor \
   --base-url http://127.0.0.1:3101
 ```
+
+For the plugin path, set the plugin `base_url` option to the same Runtime URL.
 
 For a deliberately isolated project-only install, use:
 

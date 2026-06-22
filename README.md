@@ -49,19 +49,28 @@ cd Aionis
 npm run -s lite:start
 ```
 
-Strong Claude Code integration:
+Claude Code plugin path:
 
-```bash
-npx @aionis/claude-code@latest onboard --base-url http://127.0.0.1:3001
+```text
+/plugin marketplace add https://github.com/ostinatocc/Aionis
+/plugin install aionis@aionis
+/aionis:onboard
 ```
 
-This installs user-level `@aionis/mcp` and Claude Code hooks, then verifies the
-Runtime connection. After that, run `claude` from any project:
+The plugin installs user-level Aionis MCP plus lifecycle hooks. It uses stable
+workspace scopes without writing hook files into every project. After that, run
+`claude` from any project:
 
 ```text
 UserPromptSubmit -> Aionis guide -> injected execution context
 PostToolUse / PostToolUseFailure -> Aionis observe
 PostCompact / SessionEnd -> Aionis handoff
+```
+
+CLI fallback if you do not want to use Claude Code plugins:
+
+```bash
+npx @aionis/claude-code@latest onboard --base-url http://127.0.0.1:3001
 ```
 
 MCP-only setup is still available for hosts that do not support hooks:
@@ -621,13 +630,25 @@ buckets, memory IDs, feedback attribution, receipts, and operator audit surfaces
 `@aionis/mcp` is the drop-in path for coding agents. It exposes Aionis as MCP
 tools without asking the host to implement the full feedback loop on day one.
 
-Claude Code local project setup:
+Claude Code plugin setup:
+
+```text
+/plugin marketplace add https://github.com/ostinatocc/Aionis
+/plugin install aionis@aionis
+/aionis:doctor
+```
+
+This plugin path gives Claude Code both Aionis MCP tools and lifecycle hooks.
+Use the raw MCP command below for Cursor, Zcode, or MCP-only hosts.
+
+Claude Code / MCP client setup:
 
 ```bash
 claude mcp add --transport stdio --scope project aionis -- \
   npx -y @aionis/mcp@latest \
   --base-url http://127.0.0.1:3001 \
-  --scope-from workspace
+  --scope-from workspace \
+  --workspace-id-store user
 ```
 
 ```json
@@ -641,7 +662,9 @@ claude mcp add --transport stdio --scope project aionis -- \
         "--base-url",
         "http://127.0.0.1:3001",
         "--scope-from",
-        "workspace"
+        "workspace",
+        "--workspace-id-store",
+        "user"
       ],
       "env": {
         "AIONIS_TENANT_ID": "default"

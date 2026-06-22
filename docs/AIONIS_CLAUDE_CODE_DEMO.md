@@ -54,7 +54,8 @@ In the project where you run Claude Code:
 claude mcp add --transport stdio --scope project aionis -- \
   npx -y @aionis/mcp@latest \
   --base-url http://127.0.0.1:3001 \
-  --scope my-project
+  --scope-from workspace \
+  --workspace-id-store user
 ```
 
 Use `--scope local` instead of `--scope project` when the config should stay on

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -6,7 +7,12 @@ import path from "node:path";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { AIONIS_WORKSPACE_IDENTITY_PATH, parseAionisMcpConfig, type AionisMcpWorkspaceIdentity } from "../src/config.ts";
+import {
+  AIONIS_USER_WORKSPACE_IDENTITY_DIR,
+  AIONIS_WORKSPACE_IDENTITY_PATH,
+  parseAionisMcpConfig,
+  type AionisMcpWorkspaceIdentity,
+} from "../src/config.ts";
 import { createAionisMcpServer } from "../src/server.ts";
 import { AIONIS_MCP_TOOL_NAMES, handleAionisMcpTool, type AionisMcpClient } from "../src/tools.ts";
 
@@ -239,6 +245,58 @@ test("@aionis/mcp creates stable workspace scope and keeps it after git init", (
   assert.equal(updatedIdentity.scope, first.scope);
   assert.equal(updatedIdentity.aliases.some((alias) => alias.startsWith("cwd:")), true);
   assert.equal(updatedIdentity.aliases.some((alias) => /^git:workspace-demo:[a-f0-9]{12}$/.test(alias)), true);
+});
+
+test("@aionis/mcp can persist workspace scope in the user identity store", () => {
+  const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-mcp-user-workspace-scope-"));
+  const realRoot = fs.realpathSync(workspaceDir);
+  const expectedIdentityPath = path.join(
+    os.homedir(),
+    AIONIS_USER_WORKSPACE_IDENTITY_DIR,
+    `${crypto.createHash("sha256").update(realRoot).digest("hex").slice(0, 12)}.json`,
+  );
+
+  try {
+    fs.rmSync(expectedIdentityPath, { force: true });
+    const first = parseAionisMcpConfig([
+      "--scope-from",
+      "workspace",
+      "--workspace-id-store",
+      "user",
+      "--repo-root",
+      workspaceDir,
+    ], {}, { cwd: workspaceDir });
+    const second = parseAionisMcpConfig([
+      "--scope-from",
+      "workspace",
+      "--workspace-id-store",
+      "user",
+      "--repo-root",
+      workspaceDir,
+    ], {}, { cwd: workspaceDir });
+
+    assert.equal(first.scope, second.scope);
+    assert.equal(first.workspace_identity_store, "user");
+    assert.equal(fs.existsSync(path.join(workspaceDir, AIONIS_WORKSPACE_IDENTITY_PATH)), false);
+    assert.equal(fs.existsSync(expectedIdentityPath), true);
+    const identity = JSON.parse(fs.readFileSync(expectedIdentityPath, "utf8")) as AionisMcpWorkspaceIdentity;
+    assert.equal(identity.scope, first.scope);
+  } finally {
+    fs.rmSync(expectedIdentityPath, { force: true });
+  }
+});
+
+test("@aionis/mcp parses workspace identity store from env and cli", () => {
+  assert.equal(parseAionisMcpConfig([], {
+    AIONIS_SCOPE: "scope-a",
+    AIONIS_SCOPE_FROM: "workspace",
+    AIONIS_WORKSPACE_ID_STORE: "user",
+  }).workspace_identity_store, "user");
+
+  assert.throws(
+    () => parseAionisMcpConfig(["--workspace-id-store", "global"], {}),
+    /Unsupported workspace id store/,
+  );
 });
 
 test("@aionis/mcp rejects invalid workspace identity files", () => {

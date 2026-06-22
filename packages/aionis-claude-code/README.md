@@ -5,16 +5,26 @@ Claude Code lifecycle integration for Aionis execution memory.
 Use this package when MCP-only is not enough and you want Claude Code turns to
 pass through Aionis automatically.
 
-Recommended one-step setup:
+Recommended Claude Code plugin setup:
+
+```text
+/plugin marketplace add https://github.com/ostinatocc/Aionis
+/plugin install aionis@aionis
+/aionis:onboard
+```
+
+The plugin loads user-level lifecycle hooks, an Aionis MCP server, and slash
+commands. After that, run `claude` from any project. Aionis derives a stable
+workspace scope per project without requiring manual project setup.
+
+CLI fallback:
 
 ```bash
 npx @aionis/claude-code@latest onboard --base-url http://127.0.0.1:3101
 ```
 
-`onboard` installs user-level Claude Code hooks, adds a user-level Aionis MCP
-server, and verifies the Runtime connection. After that, run `claude` from any
-project. Aionis derives a stable workspace scope per project without requiring
-manual project setup.
+`onboard` installs the same hook + MCP integration through user-level Claude
+Code settings when you do not want to use plugins.
 
 Hooks call Aionis through the SDK:
 

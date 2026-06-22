@@ -64,13 +64,24 @@ are stored as aliases for the same workspace, while the primary
 
 ## Claude Code
 
-Add Aionis to the current Claude Code project:
+For Claude Code, prefer the plugin path because it installs both MCP and
+lifecycle hooks:
+
+```text
+/plugin marketplace add https://github.com/ostinatocc/Aionis
+/plugin install aionis@aionis
+/aionis:doctor
+```
+
+Add Aionis as raw MCP only when you are configuring another MCP client or you do
+not want lifecycle hooks:
 
 ```bash
 claude mcp add --transport stdio --scope project aionis -- \
   npx -y @aionis/mcp@latest \
   --base-url http://127.0.0.1:3001 \
-  --scope-from workspace
+  --scope-from workspace \
+  --workspace-id-store user
 ```
 
 Use local scope for a private machine-only config:
@@ -79,7 +90,8 @@ Use local scope for a private machine-only config:
 claude mcp add --transport stdio --scope local aionis -- \
   npx -y @aionis/mcp@latest \
   --base-url http://127.0.0.1:3001 \
-  --scope-from workspace
+  --scope-from workspace \
+  --workspace-id-store user
 ```
 
 Inspect the server with:

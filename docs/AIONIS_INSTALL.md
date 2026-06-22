@@ -182,7 +182,7 @@ Use overrides when validating a candidate package or branch:
 ```bash
 AIONIS_FRESH_INSTALL_CREATE_SPEC=@aionis/create@0.2.0 \
 AIONIS_FRESH_INSTALL_SDK_SPEC=@aionis/sdk@0.2.22 \
-AIONIS_FRESH_INSTALL_MCP_SPEC=@aionis/mcp@0.2.0 \
+AIONIS_FRESH_INSTALL_MCP_SPEC=@aionis/mcp@0.2.1 \
 AIONIS_FRESH_INSTALL_REPO=https://github.com/ostinatocc/Aionis.git \
 npm run -s runtime:smoke:fresh-install
 ```
@@ -223,7 +223,10 @@ npm install -g @aionis/mcp
 Or use it directly:
 
 ```bash
-npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope my-project
+npx @aionis/mcp@latest \
+  --base-url http://127.0.0.1:3001 \
+  --scope-from workspace \
+  --workspace-id-store user
 ```
 
 For Claude Code:
@@ -232,7 +235,8 @@ For Claude Code:
 claude mcp add --transport stdio --scope project aionis -- \
   npx -y @aionis/mcp@latest \
   --base-url http://127.0.0.1:3001 \
-  --scope my-project
+  --scope-from workspace \
+  --workspace-id-store user
 ```
 
 MCP integration guide: [AIONIS_MCP.md](AIONIS_MCP.md).
