@@ -742,7 +742,6 @@ git commit -m "feat: add server request control posture"
 - Create: `scripts/e2e/managed-server-mcp-smoke.ts`
 - Modify: `package.json`
 - Modify: `docs/AIONIS_HOST_INTEGRATION.md`
-- Modify: `docs/AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md`
 
 **Step 1: Add package scripts**
 
@@ -822,7 +821,7 @@ npm run -s runtime:smoke:external-packages
 **Step 5: Commit**
 
 ```bash
-git add package.json packages/aionis-sdk/src/index.ts src/sdk.ts packages/aionis-mcp/src/server.ts scripts/e2e/managed-server-sdk-smoke.ts scripts/e2e/managed-server-mcp-smoke.ts docs/AIONIS_HOST_INTEGRATION.md docs/AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md
+git add package.json packages/aionis-sdk/src/index.ts src/sdk.ts packages/aionis-mcp/src/server.ts scripts/e2e/managed-server-sdk-smoke.ts scripts/e2e/managed-server-mcp-smoke.ts docs/AIONIS_HOST_INTEGRATION.md
 git commit -m "feat: add managed server sdk and mcp smoke"
 ```
 
@@ -1962,7 +1961,7 @@ Run:
 ```bash
 npm run -s test:focused
 npm run -s runtime:demo:first-value
-npm run -s runtime:quickstart:claude-code-mcp
+npm run -w @aionis/claude-code -s test
 npm run -s runtime:e2e:managed-server-sdk
 npm run -s runtime:e2e:managed-server-mcp
 npm run -s runtime:e2e:managed-server-hybrid-recall

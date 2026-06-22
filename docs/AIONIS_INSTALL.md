@@ -272,4 +272,5 @@ claude mcp add --transport stdio --scope project aionis -- \
 
 MCP integration guide: [AIONIS_MCP.md](AIONIS_MCP.md).
 
-Claude Code demo: [AIONIS_CLAUDE_CODE_DEMO.md](AIONIS_CLAUDE_CODE_DEMO.md).
+Claude Code plugin integration:
+[AIONIS_CLAUDE_CODE_INTEGRATION.md](AIONIS_CLAUDE_CODE_INTEGRATION.md).

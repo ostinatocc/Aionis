@@ -146,20 +146,9 @@ aionis_context -> Claude Code action -> aionis_record_step -> aionis_flight_reco
 The full loop adds `aionis_measure` and `aionis_snapshot` once the host can
 report outcome and used memory IDs.
 
-Full Claude Code demo:
-[AIONIS_CLAUDE_CODE_DEMO.md](AIONIS_CLAUDE_CODE_DEMO.md).
-
-Real Claude Code transcript:
-[examples/claude-code-real-demo-transcript.md](examples/claude-code-real-demo-transcript.md).
-
-Project config example:
-[examples/claude-code-aionis-mcp.project.json](examples/claude-code-aionis-mcp.project.json).
-
-Runtime smoke:
-
-```bash
-npm run -s runtime:quickstart:claude-code-mcp
-```
+For native Claude Code hooks, use the official plugin integration instead of
+the MCP-only bridge:
+[AIONIS_CLAUDE_CODE_INTEGRATION.md](AIONIS_CLAUDE_CODE_INTEGRATION.md).
 
 ## MCP Client Config
 

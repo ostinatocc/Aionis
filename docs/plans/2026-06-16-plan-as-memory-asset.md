@@ -6,7 +6,7 @@
 
 **Architecture:** Reuse the existing product loop instead of building a model router: `/v1/observe` records plan and execution evidence, `/v1/guide` compiles governed execution context, `/v1/feedback` attributes outcome to exposed memory, `/v1/measure` scores effect, and `/v1/operator/snapshot` plus Flight Recorder expose audit state. The first implementation should be a product profile and SDK/MCP/demo layer on top of the current Runtime, with only small schema/doc strengthening if current fields cannot express plan assets cleanly.
 
-**Tech Stack:** TypeScript, Fastify product routes, Zod product contracts, Lite SQLite Runtime, `@aionis/sdk`, `@aionis/mcp`, Node test runner, `tsx`, Claude Code MCP demo scripts, Markdown docs.
+**Tech Stack:** TypeScript, Fastify product routes, Zod product contracts, Lite SQLite Runtime, `@aionis/sdk`, `@aionis/mcp`, `@aionis/claude-code`, Node test runner, `tsx`, Claude Code lifecycle integration, Markdown docs.
 
 ---
 
@@ -36,7 +36,7 @@ feedback attribution, measurement, and replay.
 - Product positioning: `README.md`, `docs/AIONIS_PRODUCT_POSITIONING.md`
 - Product contracts: `docs/AIONIS_PRODUCT_CONTRACT.md`, `docs/AIONIS_PRODUCT_OUTPUT_CONTRACT.md`
 - Loop profile: `docs/AIONIS_LOOP_ENGINEERING.md`
-- Claude Code MCP demo pack: `docs/AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md`
+- Claude Code plugin integration: `docs/AIONIS_CLAUDE_CODE_INTEGRATION.md`
 - MCP guide: `docs/AIONIS_MCP.md`
 - SDK guide: `docs/AIONIS_SDK_QUICKSTART.md`
 - Runtime architecture: `docs/AIONIS_RUNTIME_ARCHITECTURE.md`
@@ -46,7 +46,6 @@ feedback attribution, measurement, and replay.
 - MCP tests: `packages/aionis-mcp/test/mcp.test.ts`
 - Existing e2e demos:
   - `scripts/e2e/loop-engineering-profile.ts`
-  - `scripts/e2e/developer-claude-code-mcp-demo.ts`
   - `scripts/e2e/multi-agent-execution-memory-loop.ts`
   - `scripts/e2e/flight-recorder-incident-demo.ts`
 
@@ -104,7 +103,7 @@ Aionis gates decide what can enter actionable context.
 **Files:**
 - Read: `README.md`
 - Read: `docs/AIONIS_LOOP_ENGINEERING.md`
-- Read: `docs/AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md`
+- Read: `docs/AIONIS_CLAUDE_CODE_INTEGRATION.md`
 - Read: `packages/aionis-sdk/src/index.ts`
 - Read: `packages/aionis-mcp/src/server.ts`
 
@@ -136,7 +135,6 @@ Run:
 
 ```bash
 npm run -s runtime:e2e:loop-engineering-profile
-npm run -s runtime:quickstart:claude-code-mcp
 npm run -s runtime:e2e:flight-recorder-incident
 ```
 
@@ -480,87 +478,6 @@ git commit -m "docs: define plan asset output contract"
 
 ---
 
-## Phase 4: MCP And Claude Code Demo
-
-### Task 4.1: Add Plan Asset To The Claude Code MCP Demo Pack
-
-**Files:**
-- Modify: `docs/AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md`
-- Modify: `docs/examples/claude-code-aionis-demo-prompt.md`
-- Modify: `scripts/e2e/developer-claude-code-mcp-demo.ts`
-- Test: `packages/aionis-mcp/test/mcp.test.ts`
-
-**Step 1: Update demo narrative**
-
-In the demo pack, add a "planner-worker split" scene:
-
-```text
-1. Planner produces plan.md with decisions and acceptance checks.
-2. Aionis records the plan as execution memory.
-3. Worker continues from Aionis context.
-4. Aionis blocks or downgrades rejected plan branches.
-5. Flight Recorder proves what the worker saw.
-```
-
-**Step 2: Extend e2e demo inputs**
-
-In `scripts/e2e/developer-claude-code-mcp-demo.ts`, add one planner step before
-failed/passed worker evidence:
-
-```ts
-const planStep = await callTool("aionis_record_step", {
-  run_id: runId,
-  task_signature: TASK_SIGNATURE,
-  task_family: TASK_FAMILY,
-  workflow_signature: WORKFLOW_SIGNATURE,
-  agent_id: "claude-code-planner",
-  role: "planner",
-  title: "Plan asset: checkout migration route",
-  summary: [
-    "PLAN_AS_MEMORY_ASSET",
-    "Decision: continue the scoped checkout adapter route.",
-    "Acceptance check: verifier must reject broad legacy rewrites.",
-    "Execution boundary: do not revive src/legacy/checkout.ts as primary route."
-  ].join("\\n"),
-  outcome: "succeeded",
-  target_files: [PASSED_TARGET],
-  acceptance_checks: [
-    "verifier accepts scoped checkout route",
-    "legacy broad route remains reference-only"
-  ],
-  continuation_hint: `Treat this plan as governed execution memory for ${PASSED_TARGET}.`
-});
-```
-
-**Step 3: Add assertions**
-
-Assert:
-
-- context mentions the accepted plan target
-- failed legacy route is not direct-use
-- `memory_use_receipt` is present
-- `memory_admission_record` is present
-- Flight Recorder excludes raw prompt payload
-
-**Step 4: Run tests and demo**
-
-```bash
-npm run -s packages:build
-node --import tsx --test packages/aionis-mcp/test/mcp.test.ts
-npm run -s runtime:quickstart:claude-code-mcp
-```
-
-Expected: pass.
-
-**Step 5: Commit**
-
-```bash
-git add docs/AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md docs/examples/claude-code-aionis-demo-prompt.md scripts/e2e/developer-claude-code-mcp-demo.ts packages/aionis-mcp/test/mcp.test.ts docs/examples/claude-code-mcp-demo-result.json
-git commit -m "demo: show plans as Claude Code execution memory"
-```
-
----
-
 ## Phase 5: Plan Adherence And Wrong-Branch Measurement
 
 ### Task 5.1: Add A Plan Asset E2E
@@ -851,7 +768,7 @@ The plan is successful when all of these are true:
 - README and product docs clearly say Aionis turns plans into execution memory.
 - Memory Firewall remains a product surface, but no longer overshadows Execution Memory.
 - SDK exposes a simple, deterministic way to record a plan asset without requiring users to understand internal memory rows.
-- Claude Code MCP demo proves a planner/worker split can flow through Aionis.
+- Claude Code lifecycle integration is documented as a plugin/hook product path.
 - New e2e proves:
   - plan decisions enter governed context
   - acceptance checks are preserved
@@ -866,10 +783,10 @@ The plan is successful when all of these are true:
 1. Phase 1: product language
 2. Phase 2: SDK profile
 3. Phase 5: deterministic e2e
-4. Phase 4: Claude Code MCP demo update
+4. Phase 4: Claude Code lifecycle integration docs
 5. Phase 6: docs site page
 6. Phase 8: package docs/version bump
 7. Phase 7: optional Fusion docs later
 
 This order keeps the feature anchored in Aionis' existing Runtime and gives a
-credible public demo before adding optional third-party model-review language.
+credible public product loop before adding optional third-party model-review language.

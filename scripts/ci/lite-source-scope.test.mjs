@@ -185,10 +185,6 @@ test("focused package exposes developer quickstarts through the Runtime e2e surf
     "npx tsx scripts/e2e/developer-flight-recorder-quickstart.ts",
   );
   assert.equal(
-    packageJson.scripts?.["runtime:quickstart:claude-code-mcp"],
-    "npm run -s packages:build && npx tsx scripts/e2e/developer-claude-code-mcp-demo.ts",
-  );
-  assert.equal(
     packageJson.scripts?.["runtime:smoke:external-packages"],
     "npm run -s packages:build && npx tsx scripts/e2e/external-package-entrypoint-smoke.ts",
   );
@@ -221,10 +217,6 @@ test("focused package exposes developer quickstarts through the Runtime e2e surf
     true,
   );
   assert.equal(
-    fs.existsSync(path.join(ROOT, "scripts", "e2e", "developer-claude-code-mcp-demo.ts")),
-    true,
-  );
-  assert.equal(
     fs.existsSync(path.join(ROOT, "scripts", "e2e", "external-package-entrypoint-smoke.ts")),
     true,
   );
@@ -251,7 +243,6 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.match(readme, /npm run -s runtime:quickstart:multi-agent/);
   assert.match(readme, /npm run -s runtime:quickstart:memory-firewall/);
   assert.match(readme, /npm run -s runtime:quickstart:flight-recorder/);
-  assert.match(readme, /npm run -s runtime:quickstart:claude-code-mcp/);
   assert.match(readme, /npm run -s runtime:smoke:external-packages/);
   assert.match(readme, /npm run -s runtime:e2e:memory-firewall-ab/);
   assert.match(readme, /npm run -s runtime:e2e:flight-recorder-incident/);
@@ -266,13 +257,11 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.match(readme, /docs\/examples\/flight-recorder-quickstart-result\.json/);
   assert.match(readme, /docs\/examples\/flight-recorder-incident-demo-result\.json/);
   assert.match(readme, /docs\/examples\/loop-engineering-profile-result\.json/);
-  assert.match(readme, /docs\/examples\/claude-code-mcp-demo-result\.json/);
-  assert.match(readme, /docs\/examples\/claude-code-real-demo-transcript\.md/);
   assert.match(readme, /docs\/examples\/judgment-calibration-product-loop-result\.json/);
   assert.match(readme, /docs\/AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART\.md/);
   assert.match(readme, /@aionis\/mcp@latest/);
   assert.match(readme, /docs\/AIONIS_MCP\.md/);
-  assert.match(readme, /docs\/AIONIS_CLAUDE_CODE_DEMO\.md/);
+  assert.match(readme, /docs\/AIONIS_CLAUDE_CODE_INTEGRATION\.md/);
   assert.match(readme, /claude mcp add --transport stdio/);
   assert.match(readme, /aionis_context/);
   assert.equal(packageJson.scripts?.["runtime:quickstart:sdk"], "npx tsx scripts/e2e/developer-sdk-quickstart.ts");
@@ -291,10 +280,6 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.equal(
     packageJson.scripts?.["runtime:quickstart:flight-recorder"],
     "npx tsx scripts/e2e/developer-flight-recorder-quickstart.ts",
-  );
-  assert.equal(
-    packageJson.scripts?.["runtime:quickstart:claude-code-mcp"],
-    "npm run -s packages:build && npx tsx scripts/e2e/developer-claude-code-mcp-demo.ts",
   );
   assert.equal(
     packageJson.scripts?.["runtime:e2e:judgment-calibration"],
@@ -402,30 +387,6 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.equal(loopProfile.checks?.failed_iteration_avoided, true);
   assert.equal(loopProfile.checks?.prompt_payload_excluded_from_audit, true);
 
-  const claudeCode = readJson("docs/examples/claude-code-mcp-demo-result.json");
-  const claudeCodeTranscript = fs.readFileSync(
-    path.join(ROOT, "docs", "examples", "claude-code-real-demo-transcript.md"),
-    "utf8",
-  );
-  assert.equal(claudeCode.contract_version, "aionis_claude_code_mcp_demo_result_v1");
-  assert.equal(claudeCode.claude_code_mcp?.transport, "stdio");
-  assert.match(claudeCode.claude_code_mcp?.add_command, /claude mcp add --transport stdio/);
-  assert.equal(claudeCode.execution_memory?.feedback_required, false);
-  assert.equal(claudeCode.flight_recorder?.contract_version, "aionis_agent_flight_recorder_report_v1");
-  assert.equal(claudeCode.flight_recorder?.prompt_payload_excluded, true);
-  assert.equal(claudeCode.flight_recorder?.runtime_mutation, false);
-  assert.equal(claudeCode.checks?.context_compiled, true);
-  assert.equal(claudeCode.checks?.failed_branch_guard_present, true);
-  assert.equal(claudeCode.checks?.memory_use_receipt_visible, true);
-  assert.equal(claudeCode.checks?.memory_admission_record_visible, true);
-  assert.match(claudeCodeTranscript, /Claude Code Real MCP Demo Transcript/);
-  assert.match(claudeCodeTranscript, /EMBEDDING_PROVIDER=minimax/);
-  assert.match(claudeCodeTranscript, /aionis_context/);
-  assert.match(claudeCodeTranscript, /aionis_memory_use_receipt_v1/);
-  assert.match(claudeCodeTranscript, /aionis_memory_admission_record_v1/);
-  assert.match(claudeCodeTranscript, /400 \/v1\/guide/);
-  assert.match(claudeCodeTranscript, /claude-code-real-demo-pass/);
-
   const calibration = readJson("docs/examples/judgment-calibration-product-loop-result.json");
   assert.equal(calibration.contract_version, "aionis_judgment_calibration_product_loop_result_v1");
   assert.deepEqual(calibration.judgment_calibration?.supported_memory_ids, ["mem_supported_example"]);
@@ -441,7 +402,6 @@ test("README quickstart examples stay aligned with product result contracts", ()
     "npm run -s runtime:quickstart:multi-agent",
     "npm run -s runtime:quickstart:memory-firewall",
     "npm run -s runtime:quickstart:flight-recorder",
-    "npm run -s runtime:quickstart:claude-code-mcp",
     "npm run -s runtime:smoke:external-packages",
     "npm run -s runtime:e2e:memory-firewall-ab",
     "npm run -s runtime:e2e:flight-recorder-incident",
@@ -460,7 +420,6 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.match(matrix, /aionis_flight_recorder_quickstart_result_v1/);
   assert.match(matrix, /aionis_flight_recorder_incident_demo_result_v1/);
   assert.match(matrix, /aionis_loop_engineering_profile_result_v1/);
-  assert.match(matrix, /aionis_claude_code_mcp_demo_result_v1/);
   assert.match(matrix, /SDK facade/);
   assert.match(matrix, /AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART\.md/);
   assert.match(matrix, /Raw HTTP/);
@@ -502,7 +461,10 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   const productContract = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_PRODUCT_CONTRACT.md"), "utf8");
   const installDoc = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_INSTALL.md"), "utf8");
   const mcpDoc = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_MCP.md"), "utf8");
-  const claudeCodeDemo = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_CLAUDE_CODE_DEMO.md"), "utf8");
+  const claudeCodeIntegration = fs.readFileSync(
+    path.join(ROOT, "docs", "AIONIS_CLAUDE_CODE_INTEGRATION.md"),
+    "utf8",
+  );
   const quickstartMatrix = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_QUICKSTART_MATRIX.md"), "utf8");
   const sdkQuickstart = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_SDK_QUICKSTART.md"), "utf8");
   const httpQuickstart = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_HTTP_QUICKSTART.md"), "utf8");
@@ -523,8 +485,7 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(readme, /npx @aionis\/mcp@latest/);
   assert.match(readme, /claude mcp add --transport stdio/);
   assert.match(readme, /docs\/AIONIS_MCP\.md/);
-  assert.match(readme, /docs\/AIONIS_CLAUDE_CODE_DEMO\.md/);
-  assert.match(readme, /docs\/examples\/claude-code-real-demo-transcript\.md/);
+  assert.match(readme, /docs\/AIONIS_CLAUDE_CODE_INTEGRATION\.md/);
   assert.match(readme, /aionis_context/);
   assert.match(readme, /from "@aionis\/sdk"/);
   assert.match(readme, /aionis\.execution\.observeStep/);
@@ -564,7 +525,7 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(installDoc, /@aionis\/mcp/);
   assert.match(installDoc, /AIONIS_MCP\.md/);
   assert.match(installDoc, /claude mcp add --transport stdio/);
-  assert.match(installDoc, /AIONIS_CLAUDE_CODE_DEMO\.md/);
+  assert.match(installDoc, /AIONIS_CLAUDE_CODE_INTEGRATION\.md/);
   assert.match(mcpDoc, /aionis_context/);
   assert.match(mcpDoc, /aionis_record_step/);
   assert.match(mcpDoc, /aionis_flight_recorder/);
@@ -572,19 +533,18 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(mcpDoc, /@aionis\/sdk/);
   assert.match(mcpDoc, /Claude Code/);
   assert.match(mcpDoc, /claude mcp add --transport stdio/);
-  assert.match(mcpDoc, /runtime:quickstart:claude-code-mcp/);
-  assert.match(mcpDoc, /AIONIS_CLAUDE_CODE_DEMO\.md/);
-  assert.match(mcpDoc, /claude-code-real-demo-transcript\.md/);
-  assert.match(claudeCodeDemo, /claude mcp add --transport stdio/);
-  assert.match(claudeCodeDemo, /runtime:quickstart:claude-code-mcp/);
-  assert.match(claudeCodeDemo, /aionis_health/);
-  assert.match(claudeCodeDemo, /aionis_record_step/);
-  assert.match(claudeCodeDemo, /aionis_context/);
-  assert.match(claudeCodeDemo, /aionis_flight_recorder/);
-  assert.match(claudeCodeDemo, /claude-code-aionis-mcp\.project\.json/);
-  assert.match(claudeCodeDemo, /claude-code-aionis-demo-prompt\.md/);
-  assert.match(claudeCodeDemo, /claude-code-real-demo-transcript\.md/);
-  assert.match(claudeCodeDemo, /400 \/v1\/guide/);
+  assert.match(mcpDoc, /AIONIS_CLAUDE_CODE_INTEGRATION\.md/);
+  assert.match(claudeCodeIntegration, /@aionis\/create@latest \.aionis-runtime --with-claude-code/);
+  assert.match(claudeCodeIntegration, /\/plugin marketplace add https:\/\/github\.com\/ostinatocc\/aionis-claude-code/);
+  assert.match(claudeCodeIntegration, /\/plugin install aionis@aionis-claude-code/);
+  assert.match(claudeCodeIntegration, /\/aionis:onboard/);
+  assert.match(claudeCodeIntegration, /SessionStart/);
+  assert.match(claudeCodeIntegration, /UserPromptSubmit/);
+  assert.match(claudeCodeIntegration, /PostToolUse/);
+  assert.match(claudeCodeIntegration, /PostCompact/);
+  assert.match(claudeCodeIntegration, /aionis_context/);
+  assert.match(claudeCodeIntegration, /aionis_record_step/);
+  assert.match(claudeCodeIntegration, /aionis_flight_recorder/);
   assert.doesNotMatch(sdkQuickstart, /`operatorSnapshot\(\)` exposes/);
   assert.match(minimalAgentExample, /from "@aionis\/sdk"/);
   assert.match(minimalAgentExample, /aionis\.execution\.observeStep/);

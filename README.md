@@ -166,8 +166,6 @@ External proof paths:
   [docs/AIONIS_CLAUDE_CODE_INTEGRATION.md](docs/AIONIS_CLAUDE_CODE_INTEGRATION.md)
 - Claude Code / Cursor over MCP:
   [docs.aionis.work/integrations/mcp](https://docs.aionis.work/integrations/mcp)
-- 3-5 minute Claude Code demo pack:
-  [docs/AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md](docs/AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md)
 - Memory Firewall for existing backends:
   [docs.aionis.work/products/memory-firewall](https://docs.aionis.work/products/memory-firewall)
 - Runnable examples and generated proof artifacts:
@@ -471,14 +469,8 @@ That loop replays a healthy run, a blocked-memory misuse incident, and a missing
 feedback-attribution case. See
 [docs/AIONIS_FLIGHT_RECORDER_INCIDENT_DEMO.md](docs/AIONIS_FLIGHT_RECORDER_INCIDENT_DEMO.md).
 
-For Claude Code over MCP:
-
-```bash
-npm run -s runtime:quickstart:claude-code-mcp
-```
-
-That loop verifies the same MCP tool path Claude Code uses:
-`aionis_health -> aionis_record_step -> aionis_context -> aionis_flight_recorder`.
+For Claude Code lifecycle integration, use the official plugin and setup guide:
+[docs/AIONIS_CLAUDE_CODE_INTEGRATION.md](docs/AIONIS_CLAUDE_CODE_INTEGRATION.md).
 
 Before publishing or after changing package entrypoints, run the external package
 smoke:
@@ -542,7 +534,6 @@ Full example outputs:
 10. [Flight Recorder incident demo result](docs/examples/flight-recorder-incident-demo-result.json)
 11. [Loop Engineering profile result](docs/examples/loop-engineering-profile-result.json)
 12. [Plan as Memory Asset result](docs/examples/plan-as-memory-asset-result.json)
-13. [Claude Code MCP demo result](docs/examples/claude-code-mcp-demo-result.json)
 
 ## What The Agent Gets
 
@@ -729,17 +720,8 @@ is optional; teams can start with context-only use and later add
 Set `context_mode: "compact_agent"` on `aionis_context` when the Agent needs a
 shorter prompt while the host keeps structured IDs and audit fields.
 
-Claude Code walkthrough:
-[docs/AIONIS_CLAUDE_CODE_DEMO.md](docs/AIONIS_CLAUDE_CODE_DEMO.md).
-
-3-5 minute demo pack:
-[docs/AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md](docs/AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md).
-
-Example Claude Code result:
-[docs/examples/claude-code-mcp-demo-result.json](docs/examples/claude-code-mcp-demo-result.json).
-
-Real Claude Code transcript:
-[docs/examples/claude-code-real-demo-transcript.md](docs/examples/claude-code-real-demo-transcript.md).
+Claude Code lifecycle hooks:
+[docs/AIONIS_CLAUDE_CODE_INTEGRATION.md](docs/AIONIS_CLAUDE_CODE_INTEGRATION.md).
 
 Full MCP guide:
 [docs/AIONIS_MCP.md](docs/AIONIS_MCP.md).
@@ -899,7 +881,7 @@ Official docs: [https://docs.aionis.work](https://docs.aionis.work)
 | [AIONIS_INSTALL.md](docs/AIONIS_INSTALL.md) | One-command install path for Runtime plus SDK and MCP packages. |
 | [AIONIS_RELEASES.md](docs/AIONIS_RELEASES.md) | GitHub release, Docker image, npm package, SDK, and MCP artifact map. |
 | [AIONIS_MCP.md](docs/AIONIS_MCP.md) | MCP bridge for Claude Code, Cursor, and other coding-agent clients. |
-| [AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md](docs/AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md) | 3-5 minute Claude Code + Aionis MCP demo script and proof checklist. |
+| [AIONIS_CLAUDE_CODE_INTEGRATION.md](docs/AIONIS_CLAUDE_CODE_INTEGRATION.md) | Official Claude Code plugin and lifecycle hook integration. |
 | [AIONIS_LOOP_ENGINEERING.md](docs/AIONIS_LOOP_ENGINEERING.md) | Memory governance profile for loop-engineered Agents. |
 | [AIONIS_OPENROUTER_FUSION.md](docs/AIONIS_OPENROUTER_FUSION.md) | Boundary for optional multi-model plan review without turning Aionis into a model router. |
 | [AIONIS_RUNTIME_ARCHITECTURE.md](docs/AIONIS_RUNTIME_ARCHITECTURE.md) | Product architecture, memory layers, execution memory, context compiler, and source map. |
