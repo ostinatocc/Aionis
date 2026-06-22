@@ -4,6 +4,8 @@ TypeScript SDK facade for Aionis Runtime.
 
 Docs: [https://docs.aionis.work/integrations/sdk](https://docs.aionis.work/integrations/sdk)
 
+Source: [https://github.com/ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk)
+
 ```bash
 npm install @aionis/sdk
 ```

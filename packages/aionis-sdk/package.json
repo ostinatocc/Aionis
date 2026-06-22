@@ -6,8 +6,7 @@
   "homepage": "https://docs.aionis.work/integrations/sdk",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ostinatocc/Aionis.git",
-    "directory": "packages/aionis-sdk"
+    "url": "https://github.com/ostinatocc/aionis-sdk.git"
   },
   "type": "module",
   "sideEffects": false,

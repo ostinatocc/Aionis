@@ -9,7 +9,7 @@ Status: public Runtime, npm, MCP, SDK, and Docker release path
 | GitHub Runtime source | `v0.2.x` tags | Source release for the Runtime, docs, examples, SDK workspace, MCP bridge, and installer workspace. |
 | Docker image | `ghcr.io/ostinatocc/aionis:<tag>` | Local-first Aionis Runtime container with persistent SQLite state under `/data`. |
 | `@aionis/create` | npm latest | One-command installer for Runtime plus SDK/MCP packages. |
-| `@aionis/sdk` | npm latest | TypeScript facade over Aionis product APIs. |
+| `@aionis/sdk` | npm latest / [repo](https://github.com/ostinatocc/aionis-sdk) | TypeScript facade over Aionis product APIs. |
 | `@aionis/mcp` | npm latest / [repo](https://github.com/ostinatocc/aionis-mcp) | MCP stdio bridge for Claude Code, Cursor, and other MCP clients. |
 
 Release tags are immutable. If the release surface changes after a tag, create a
