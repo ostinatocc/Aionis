@@ -1,0 +1,30 @@
+services:
+  aionis:
+    build:
+      context: .
+    image: ghcr.io/ostinatocc/aionis:local
+    ports:
+      - "127.0.0.1:3001:3001"
+    environment:
+      AIONIS_EDITION: lite
+      AIONIS_MODE: local
+      APP_ENV: dev
+      AIONIS_LISTEN_HOST: 0.0.0.0
+      AIONIS_ALLOW_UNAUTHENTICATED_REMOTE: "true"
+      MEMORY_AUTH_MODE: off
+      TENANT_QUOTA_ENABLED: "false"
+      RATE_LIMIT_BYPASS_LOOPBACK: "true"
+      LITE_WRITE_SQLITE_PATH: /data/aionis-lite-write.sqlite
+      LITE_REPLAY_SQLITE_PATH: /data/aionis-lite-replay.sqlite
+      LITE_LOCAL_ACTOR_ID: local-docker
+    volumes:
+      - aionis-data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || '3001') + '/healthz').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  aionis-data:

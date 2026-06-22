@@ -45,6 +45,9 @@ Aionis should define itself as:
 state-adjudicated memory runtime
 ```
 
+Aionis is not recall-only memory. It is the Runtime boundary that turns memory
+into governed state before the next Agent context is compiled.
+
 Aionis can work with Agent frameworks and retrieval systems, but its product
 job is different: govern memory state, compile context, attribute feedback, and
 make memory use auditable.

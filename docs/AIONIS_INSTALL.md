@@ -20,6 +20,29 @@ The default quickstart works without an embedding or LLM API key. It starts a
 Lite Runtime with `EMBEDDING_PROVIDER=none` and shows Aionis turning raw
 retrieved history into governed Agent context.
 
+## Docker
+
+Run the local-first Runtime in Docker:
+
+```bash
+docker run --rm \
+  -p 127.0.0.1:3001:3001 \
+  -v aionis-data:/data \
+  ghcr.io/ostinatocc/aionis:v0.2.1
+```
+
+Then check readiness:
+
+```bash
+curl http://127.0.0.1:3001/healthz
+curl http://127.0.0.1:3001/readyz
+```
+
+Docker stores Lite Runtime SQLite state under `/data`. Bind the host port to
+loopback for local use. For remote SDK/MCP clients, switch to Server mode with
+API-key or JWT auth. Full release and Docker notes:
+[AIONIS_RELEASES.md](AIONIS_RELEASES.md).
+
 This installs the local-first Lite Runtime. Lite is designed for developer
 machines, same-host coding agents, and first-value MCP/SDK trials. It defaults
 to loopback and local development settings so a new user can see Aionis work

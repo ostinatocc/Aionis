@@ -11,6 +11,8 @@
     ]
   },
   "release": {
-    "github_repo": "ostinatocc/Aionis"
+    "version": "0.2.1",
+    "github_repo": "ostinatocc/Aionis",
+    "docker_image": "ghcr.io/ostinatocc/aionis"
   }
 }

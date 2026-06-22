@@ -5,11 +5,11 @@
 Aionis is the state-adjudicated memory runtime that turns plans, decisions,
 outcomes, failed attempts, and rehydrate pointers into compact Agent context
 that survives sessions, roles, plans, and model boundaries.
-Memory becomes state before context.
+Memory is not recall. Memory is state.
 
 Docs: [docs.aionis.work](https://docs.aionis.work)
 
-Current release: **v0.2.0 public beta**. Use it today as a local Runtime,
+Current release: **v0.2.1 public beta**. Use it today as a local Runtime,
 MCP bridge, TypeScript SDK, Memory Firewall, and managed-server-ready Runtime
 for agent execution memory.
 
@@ -28,6 +28,15 @@ execution context before you write a custom adapter.
 
 ```bash
 npx @aionis/create@latest
+```
+
+Docker users can run the Runtime directly:
+
+```bash
+docker run --rm \
+  -p 127.0.0.1:3001:3001 \
+  -v aionis-data:/data \
+  ghcr.io/ostinatocc/aionis:v0.2.1
 ```
 
 Then start the local Runtime from the generated checkout and add Aionis to
@@ -779,6 +788,8 @@ API usage guide:
 [docs/AIONIS_PRODUCT_API_USAGE.md](docs/AIONIS_PRODUCT_API_USAGE.md).
 Install guide:
 [docs/AIONIS_INSTALL.md](docs/AIONIS_INSTALL.md).
+Release and Docker artifacts:
+[docs/AIONIS_RELEASES.md](docs/AIONIS_RELEASES.md).
 HTTP quickstart:
 [docs/AIONIS_HTTP_QUICKSTART.md](docs/AIONIS_HTTP_QUICKSTART.md).
 
@@ -793,6 +804,7 @@ Official docs: [https://docs.aionis.work](https://docs.aionis.work)
 |---|---|
 | [AIONIS_FIRST_VALUE_DEMO.md](docs/AIONIS_FIRST_VALUE_DEMO.md) | No-key first run that shows unsafe retrieved memory blocked before prompt use. |
 | [AIONIS_INSTALL.md](docs/AIONIS_INSTALL.md) | One-command install path for Runtime plus SDK and MCP packages. |
+| [AIONIS_RELEASES.md](docs/AIONIS_RELEASES.md) | GitHub release, Docker image, npm package, SDK, and MCP artifact map. |
 | [AIONIS_MCP.md](docs/AIONIS_MCP.md) | MCP bridge for Claude Code, Cursor, and other coding-agent clients. |
 | [AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md](docs/AIONIS_CLAUDE_CODE_MCP_DEMO_PACK.md) | 3-5 minute Claude Code + Aionis MCP demo script and proof checklist. |
 | [AIONIS_LOOP_ENGINEERING.md](docs/AIONIS_LOOP_ENGINEERING.md) | Memory governance profile for loop-engineered Agents. |

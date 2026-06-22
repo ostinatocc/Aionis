@@ -77,10 +77,11 @@ For host decisions, distinguish these two fields:
 ## SDK Product Path
 
 The focused Runtime also exposes a small TypeScript client for the product
-actions. The SDK is a facade over the product routes. `feedback()` posts to
-`/v1/feedback`, `rehydrate()` posts to `/v1/rehydrate`, and `snapshot()` is a
-short alias for `/v1/operator/snapshot`. The lower-level `/v1/forget` route
-remains available for explicit suppress/unsuppress lifecycle control.
+actions. The SDK is a facade over the product routes.
+`feedback()` posts to `/v1/feedback`. `rehydrate()` posts to `/v1/rehydrate`.
+`snapshot()` is a short alias for `/v1/operator/snapshot`. The lower-level
+`/v1/forget` route remains available for explicit suppress/unsuppress lifecycle
+control.
 
 ```ts
 import {
