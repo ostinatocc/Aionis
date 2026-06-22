@@ -4,11 +4,12 @@ Status: product install path for Runtime plus SDK and MCP packages
 
 ## One Command
 
-Aionis publishes three npm packages:
+Aionis publishes four npm packages:
 
 - `@aionis/create`: one-command Runtime installer
 - `@aionis/sdk`: TypeScript SDK facade for product routes
 - `@aionis/mcp`: MCP stdio bridge for Claude Code, Cursor, and other MCP clients
+- `@aionis/claude-code`: Claude Code MCP + lifecycle hook installer
 
 Install Runtime plus SDK/MCP packages and run the first-value demo:
 
@@ -89,14 +90,37 @@ For multi-agent execution memory:
 OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart multi-agent
 ```
 
+For Claude Code, install Runtime into a side directory and install lifecycle
+hooks into your current project:
+
+```bash
+npx @aionis/create@latest .aionis-runtime \
+  --with-claude-code \
+  --claude-code-dir . \
+  --claude-code-base-url http://127.0.0.1:3001
+```
+
+Then start Runtime and run Claude Code from the project:
+
+```bash
+cd .aionis-runtime
+npm run -s lite:start
+cd ..
+claude
+```
+
+The Claude Code integration installs MCP plus hooks. Hooks call Aionis before
+user prompts, after Bash/Edit/Write tool use, and at compact/session boundaries.
+
 The installer performs product setup:
 
 1. clone `https://github.com/ostinatocc/Aionis.git`
 2. run `npm install`
 3. write `.env` with `EMBEDDING_PROVIDER=none` unless a provider/key is selected
-4. build `@aionis/sdk`, `@aionis/mcp`, and `@aionis/create`
+4. build `@aionis/sdk`, `@aionis/mcp`, `@aionis/create`, and `@aionis/claude-code`
 5. run the selected quickstart; `first-value` can run without an API key, while
    recall-backed quickstarts require the selected embedding key
+6. optionally install Claude Code lifecycle hooks when `--with-claude-code` is set
 
 Runtime startup works in no-key mode. If no key is detected, the generated
 `.env` keeps `EMBEDDING_PROVIDER=none`, so this works:

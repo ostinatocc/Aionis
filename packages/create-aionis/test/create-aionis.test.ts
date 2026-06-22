@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 import {
+  createClaudeCodeInstallCommand,
   createCompletionMessage,
   createInstallPlan,
   defaultEmbeddingProvider,
@@ -24,6 +25,12 @@ test("@aionis/create parses defaults for the one-command installer", () => {
   assert.equal(options.quickstart, "first-value");
   assert.equal(options.skipInstall, false);
   assert.equal(options.skipQuickstart, false);
+  assert.equal(options.withClaudeCode, false);
+  assert.equal(options.claudeCodeDir, null);
+  assert.equal(options.claudeCodeBaseUrl, "http://127.0.0.1:3001");
+  assert.equal(options.claudeCodeScopeFrom, "workspace");
+  assert.equal(options.claudeCodeMcpName, "aionis-local");
+  assert.equal(options.claudeCodeSkipMcp, false);
 });
 
 test("@aionis/create selects embedding provider from explicit env or available keys", () => {
@@ -60,6 +67,30 @@ test("@aionis/create parses explicit Runtime, SDK, and quickstart options", () =
   assert.equal(options.apiKey, "sk-test");
   assert.equal(options.quickstart, "http");
   assert.equal(options.skipInstall, true);
+});
+
+test("@aionis/create parses Claude Code lifecycle integration options", () => {
+  const options = parseCreateAionisArgs([
+    "my-aionis",
+    "--with-claude-code",
+    "--claude-code-dir",
+    "../checkout-service",
+    "--claude-code-base-url",
+    "http://127.0.0.1:3101",
+    "--claude-code-scope-from",
+    "git",
+    "--claude-code-mcp-name",
+    "aionis-dev",
+    "--claude-code-skip-mcp",
+  ]);
+
+  assert.equal(options.withClaudeCode, true);
+  assert.equal(options.claudeCodeDir, "../checkout-service");
+  assert.equal(options.claudeCodeBaseUrl, "http://127.0.0.1:3101");
+  assert.equal(options.claudeCodeScopeFrom, "git");
+  assert.equal(options.claudeCodeMcpName, "aionis-dev");
+  assert.equal(options.claudeCodeSkipMcp, true);
+  assert.throws(() => parseCreateAionisArgs(["--claude-code-scope-from", "bad"]), /Unsupported Claude Code scope source/);
 });
 
 test("@aionis/create exposes stable provider and quickstart mappings", () => {
@@ -145,6 +176,7 @@ test("@aionis/create install plan includes Runtime install, SDK build, and selec
     "npm install",
     "npm run -s packages:build",
     "npm run -s runtime:quickstart:multi-agent",
+    `skip Claude Code hooks`,
   ]);
   assert.throws(() => parseCreateAionisArgs(["--quickstart", "bad"]), /Unsupported quickstart/);
 });
@@ -156,7 +188,42 @@ test("@aionis/create default install plan runs the no-key first-value demo", () 
     "npm install",
     "npm run -s packages:build",
     "npm run -s runtime:demo:first-value",
+    `skip Claude Code hooks`,
   ]);
+});
+
+test("@aionis/create plans and builds Claude Code lifecycle hook command", () => {
+  const options = parseCreateAionisArgs([
+    "runtime",
+    "--with-claude-code",
+    "--claude-code-dir",
+    "agent-project",
+    "--claude-code-base-url",
+    "http://127.0.0.1:3101",
+    "--claude-code-scope-from",
+    "workspace",
+    "--claude-code-mcp-name",
+    "aionis-local",
+    "--claude-code-skip-mcp",
+  ]);
+  const plan = createInstallPlan(options);
+  assert.equal(plan.at(-1), `install Claude Code hooks in agent-project -> http://127.0.0.1:3101`);
+
+  const command = createClaudeCodeInstallCommand(options, "/tmp/workspace");
+  assert.equal(command.command, "npx");
+  assert.deepEqual(command.args, [
+    "-y",
+    "@aionis/claude-code@latest",
+    "install",
+    "--base-url",
+    "http://127.0.0.1:3101",
+    "--scope-from",
+    "workspace",
+    "--mcp-name",
+    "aionis-local",
+    "--skip-mcp",
+  ]);
+  assert.equal(command.cwd, path.join("/tmp/workspace", "agent-project"));
 });
 
 test("@aionis/create completion message blocks misleading ready state without an embedding key", () => {
@@ -216,6 +283,7 @@ test("@aionis/create completion message keeps the ready state when a key is conf
 
   assert.match(message, /Aionis is ready/);
   assert.match(message, /Start Runtime: cd \/tmp\/Aionis && npm run -s lite:start/);
+  assert.match(message, /Claude Code hooks package: @aionis\/claude-code/);
   assert.doesNotMatch(message, /Set your embedding key/);
 });
 

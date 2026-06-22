@@ -61,6 +61,20 @@ npx @aionis/claude-code@latest status \
 The default settings target is local, so the hook config goes into
 `.claude/settings.local.json` and does not need to be committed.
 
+## Runtime Installer Shortcut
+
+If you are installing Runtime and Claude Code integration together, use:
+
+```bash
+npx @aionis/create@latest .aionis-runtime \
+  --with-claude-code \
+  --claude-code-dir . \
+  --claude-code-base-url http://127.0.0.1:3001
+```
+
+`--claude-code-dir` should point at the project where you run `claude`. This is
+usually not the same directory as the Runtime checkout.
+
 ## Scope
 
 Use `--scope-from workspace` for coding agents. Aionis writes

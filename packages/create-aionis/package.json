@@ -1,7 +1,7 @@
 {
   "name": "@aionis/create",
-  "version": "0.2.0",
-  "description": "One-command installer for Aionis Runtime, SDK, and MCP bridge.",
+  "version": "0.2.1",
+  "description": "One-command installer for Aionis Runtime, SDK, MCP bridge, and Claude Code hooks.",
   "license": "Apache-2.0",
   "homepage": "https://docs.aionis.work/get-started/install",
   "repository": {

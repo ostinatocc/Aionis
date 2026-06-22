@@ -17,6 +17,12 @@ export type CreateAionisOptions = {
   quickstart: AionisQuickstart;
   skipInstall: boolean;
   skipQuickstart: boolean;
+  withClaudeCode: boolean;
+  claudeCodeDir: string | null;
+  claudeCodeBaseUrl: string;
+  claudeCodeScopeFrom: "workspace" | "git" | "cwd" | "none";
+  claudeCodeMcpName: string;
+  claudeCodeSkipMcp: boolean;
 };
 
 const DEFAULT_REPO = "https://github.com/ostinatocc/Aionis.git";
@@ -35,6 +41,15 @@ Options:
   --provider <name>         Embedding provider. Defaults to EMBEDDING_PROVIDER, a detected key, or none.
   --api-key <key>           Provider API key. Prefer env vars for shell history safety.
   --quickstart <name>       first-value, sdk, http, multi-agent, or none. Defaults to first-value.
+  --with-claude-code        Install Claude Code MCP + lifecycle hooks for the current project.
+  --claude-code-dir <path>  Project directory for Claude Code hooks. Defaults to current directory.
+  --claude-code-base-url <url>
+                            Runtime URL used by Claude Code hooks. Defaults to http://127.0.0.1:3001.
+  --claude-code-scope-from <workspace|git|cwd|none>
+                            Scope strategy for Claude Code hooks. Defaults to workspace.
+  --claude-code-mcp-name <name>
+                            Claude MCP server name. Defaults to aionis-local.
+  --claude-code-skip-mcp    Install hooks without running claude mcp add.
   --skip-install            Clone and write env, but do not run npm install.
   --skip-quickstart         Do not run the selected quickstart after install.
   -h, --help                Show help.
@@ -42,6 +57,7 @@ Options:
 Examples:
   npx @aionis/create
   OPENAI_API_KEY=... npx @aionis/create my-aionis --provider openai --quickstart sdk
+  npx @aionis/create .aionis-runtime --with-claude-code --claude-code-dir .
 `;
 }
 
@@ -88,6 +104,11 @@ function parseQuickstart(value: string): AionisQuickstart {
   throw new Error(`Unsupported quickstart "${value}". Use first-value, sdk, http, multi-agent, or none.`);
 }
 
+function parseClaudeCodeScopeFrom(value: string): CreateAionisOptions["claudeCodeScopeFrom"] {
+  if (value === "workspace" || value === "git" || value === "cwd" || value === "none") return value;
+  throw new Error(`Unsupported Claude Code scope source "${value}". Use workspace, git, cwd, or none.`);
+}
+
 export function parseCreateAionisArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): CreateAionisOptions {
   let dir = DEFAULT_DIR;
   let repo = DEFAULT_REPO;
@@ -97,6 +118,14 @@ export function parseCreateAionisArgs(argv: string[], env: NodeJS.ProcessEnv = p
   let quickstart: AionisQuickstart = "first-value";
   let skipInstall = false;
   let skipQuickstart = false;
+  let withClaudeCode = false;
+  let claudeCodeDir: string | null = null;
+  let claudeCodeBaseUrl = env.AIONIS_CLAUDE_CODE_BASE_URL?.trim() || "http://127.0.0.1:3001";
+  let claudeCodeScopeFrom: CreateAionisOptions["claudeCodeScopeFrom"] = parseClaudeCodeScopeFrom(
+    env.AIONIS_CLAUDE_CODE_SCOPE_FROM?.trim() || "workspace",
+  );
+  let claudeCodeMcpName = env.AIONIS_CLAUDE_CODE_MCP_NAME?.trim() || "aionis-local";
+  let claudeCodeSkipMcp = false;
   let positionalDirSet = false;
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -135,6 +164,34 @@ export function parseCreateAionisArgs(argv: string[], env: NodeJS.ProcessEnv = p
       i += 1;
       continue;
     }
+    if (arg === "--with-claude-code") {
+      withClaudeCode = true;
+      continue;
+    }
+    if (arg === "--claude-code-dir") {
+      claudeCodeDir = readFlagValue(argv, i, arg);
+      i += 1;
+      continue;
+    }
+    if (arg === "--claude-code-base-url") {
+      claudeCodeBaseUrl = readFlagValue(argv, i, arg);
+      i += 1;
+      continue;
+    }
+    if (arg === "--claude-code-scope-from") {
+      claudeCodeScopeFrom = parseClaudeCodeScopeFrom(readFlagValue(argv, i, arg));
+      i += 1;
+      continue;
+    }
+    if (arg === "--claude-code-mcp-name") {
+      claudeCodeMcpName = readFlagValue(argv, i, arg);
+      i += 1;
+      continue;
+    }
+    if (arg === "--claude-code-skip-mcp") {
+      claudeCodeSkipMcp = true;
+      continue;
+    }
     if (arg === "--skip-install") {
       skipInstall = true;
       continue;
@@ -158,6 +215,12 @@ export function parseCreateAionisArgs(argv: string[], env: NodeJS.ProcessEnv = p
     quickstart,
     skipInstall,
     skipQuickstart,
+    withClaudeCode,
+    claudeCodeDir,
+    claudeCodeBaseUrl,
+    claudeCodeScopeFrom,
+    claudeCodeMcpName,
+    claudeCodeSkipMcp,
   };
 }
 
@@ -255,7 +318,31 @@ export function createInstallPlan(options: CreateAionisOptions): string[] {
     options.skipInstall ? "skip npm install" : "npm install",
     options.skipInstall ? "skip package build" : "npm run -s packages:build",
     options.skipQuickstart || !quickstart ? "skip quickstart" : `npm run -s ${quickstart}`,
+    options.withClaudeCode
+      ? `install Claude Code hooks in ${options.claudeCodeDir ?? process.cwd()} -> ${options.claudeCodeBaseUrl}`
+      : "skip Claude Code hooks",
   ];
+}
+
+export function createClaudeCodeInstallCommand(options: CreateAionisOptions, cwd = process.cwd()): {
+  command: string;
+  args: string[];
+  cwd: string;
+} {
+  const targetCwd = path.resolve(cwd, options.claudeCodeDir ?? ".");
+  const args = [
+    "-y",
+    "@aionis/claude-code@latest",
+    "install",
+    "--base-url",
+    options.claudeCodeBaseUrl,
+    "--scope-from",
+    options.claudeCodeScopeFrom,
+    "--mcp-name",
+    options.claudeCodeMcpName,
+  ];
+  if (options.claudeCodeSkipMcp) args.push("--skip-mcp");
+  return { command: "npx", args, cwd: targetCwd };
 }
 
 export function createCompletionMessage(input: {
@@ -290,6 +377,7 @@ export function createCompletionMessage(input: {
       ]),
       "SDK package: @aionis/sdk",
       "MCP package: @aionis/mcp",
+      "Claude Code hooks package: @aionis/claude-code",
     ];
     if (input.quickstartScript && quickstartNeedsKey) {
       lines.push(
@@ -308,6 +396,7 @@ export function createCompletionMessage(input: {
     `Start Runtime: cd ${input.targetDir} && npm run -s lite:start`,
     "SDK package: @aionis/sdk",
     "MCP package: @aionis/mcp",
+    "Claude Code hooks package: @aionis/claude-code",
   ].join(os.EOL)}${os.EOL}`;
 }
 
@@ -369,6 +458,11 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     };
     if (apiKey) quickstartEnv[providerKey] = apiKey;
     run("npm", ["run", "-s", quickstart], targetDir, quickstartEnv);
+  }
+
+  if (options.withClaudeCode) {
+    const hookInstall = createClaudeCodeInstallCommand(options);
+    run(hookInstall.command, hookInstall.args, hookInstall.cwd);
   }
 
   process.stdout.write(createCompletionMessage({

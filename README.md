@@ -18,13 +18,15 @@ current, stale, contested, failed, reusable, or worth rehydrating, then compiles
 the admitted execution state into the next Agent context. Failed branches still
 matter: they become governed counter-evidence instead of future instructions.
 
-Aionis ships with a local-first Lite Runtime plus SDK and MCP bridge. The
-Runtime can also be configured for managed server deployments with API-key/JWT
-auth and request controls when teams want remote SDK or MCP clients.
+Aionis ships with a local-first Lite Runtime plus SDK, MCP bridge, and Claude
+Code lifecycle integration. The Runtime can also be configured for managed
+server deployments with API-key/JWT auth and request controls when teams want
+remote SDK or MCP clients.
 
-MCP is the fastest way to try Aionis inside coding agents such as Claude Code,
-Cursor, or any MCP-compatible host. It lets an existing Agent ask for governed
-execution context before you write a custom adapter.
+For Claude Code, the strongest path is MCP plus lifecycle hooks: Aionis injects
+governed execution context before each user prompt and records Bash/Edit/Write
+evidence after tool use. MCP remains available for explicit tools such as
+Flight Recorder and operator snapshots.
 
 ```bash
 npx @aionis/create@latest
@@ -47,6 +49,24 @@ cd Aionis
 npm run -s lite:start
 ```
 
+Strong Claude Code integration:
+
+```bash
+npx @aionis/claude-code@latest install \
+  --base-url http://127.0.0.1:3001 \
+  --scope-from workspace
+```
+
+This installs `@aionis/mcp` and Claude Code hooks:
+
+```text
+UserPromptSubmit -> Aionis guide -> injected execution context
+PostToolUse / PostToolUseFailure -> Aionis observe
+PostCompact / SessionEnd -> Aionis handoff
+```
+
+MCP-only setup is still available for hosts that do not support hooks:
+
 ```bash
 claude mcp add --transport stdio --scope project aionis -- \
   npx -y @aionis/mcp@latest \
@@ -68,11 +88,12 @@ pointer-only, and prints a memory-use receipt.
 For Claude Code or Cursor, the first useful loop is:
 
 ```text
-aionis_context -> Agent action -> aionis_record_step -> aionis_flight_recorder
+Claude Code hooks -> Aionis context -> Agent action -> Aionis observe/handoff
 ```
 
-Start context-only if you want the smallest trial. Add feedback, measure, and
-snapshot once the host loop is ready.
+Start with hooks for Claude Code. Use MCP-only when you want a manual tool
+trial or when the host does not support lifecycle hooks. Add feedback, measure,
+and snapshot once the host loop is ready.
 
 Already using Mem0, Zep, Supermemory, Pinecone, pgvector, Chroma, Weaviate,
 LangGraph Store, markdown memory, logs, or a custom vector store? Keep it for
@@ -92,6 +113,8 @@ recall while reducing wrong direct-use from 83.3% to 0%.
 
 External proof paths:
 
+- Claude Code lifecycle hooks:
+  [docs/AIONIS_CLAUDE_CODE_INTEGRATION.md](docs/AIONIS_CLAUDE_CODE_INTEGRATION.md)
 - Claude Code / Cursor over MCP:
   [docs.aionis.work/integrations/mcp](https://docs.aionis.work/integrations/mcp)
 - 3-5 minute Claude Code demo pack:
