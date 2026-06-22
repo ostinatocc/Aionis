@@ -5,6 +5,13 @@ Code lifecycle hooks.
 
 Docs: [https://docs.aionis.work/get-started/install](https://docs.aionis.work/get-started/install)
 
+Source repositories:
+
+- Runtime and installer: [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis)
+- SDK package: [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk)
+- MCP package: [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp)
+- Claude Code plugin: [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code)
+
 Run:
 
 ```bash

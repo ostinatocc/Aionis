@@ -11,6 +11,10 @@ remember -> guide -> compileExecutionAgentContext -> agent prompt -> feedback ->
 It uses the existing product facade through `src/sdk.ts` and the published
 `@aionis/sdk` package.
 
+SDK source: [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk).
+The Runtime source in [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis)
+owns the product HTTP APIs that the SDK calls.
+
 ## Start Runtime
 
 `guide()` uses semantic recall, so configure an embedding provider before

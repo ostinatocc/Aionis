@@ -28,6 +28,15 @@ governed execution context before each user prompt and records Bash/Edit/Write
 evidence after tool use. MCP remains available for explicit tools such as
 Flight Recorder and operator snapshots.
 
+## Choose Your Entry Point
+
+| Goal | Use | First command | Source |
+|---|---|---|---|
+| Install the Runtime locally | `@aionis/create` | `npx @aionis/create@latest` | [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) |
+| Integrate from a TypeScript host | `@aionis/sdk` | `npm install @aionis/sdk` | [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) |
+| Connect any MCP client | `@aionis/mcp` | `npx @aionis/mcp@latest --base-url http://127.0.0.1:3001` | [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) |
+| Give Claude Code automatic memory hooks | Claude Code plugin | `/plugin marketplace add https://github.com/ostinatocc/aionis-claude-code` | [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code) |
+
 ```bash
 npx @aionis/create@latest
 ```
@@ -110,6 +119,15 @@ development.
 The MCP bridge is maintained in the dedicated
 [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) adapter repo.
 This Runtime repo keeps a bundled copy for compatibility and local development.
+
+Package boundary:
+
+| Repository | Owns |
+|---|---|
+| [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) | Runtime core, product APIs, docs, examples, Docker image, installer workspace, and compatibility copies used for contract tests. |
+| [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) | Published TypeScript SDK package. |
+| [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) | Published MCP stdio bridge package. |
+| [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code) | Claude Code plugin manifest, lifecycle hooks, and helper package. |
 
 The default install runs the no-key first-value demo: raw retrieved history is
 turned into governed execution context. Aionis admits the current route, keeps

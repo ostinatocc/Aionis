@@ -11,6 +11,15 @@ Aionis publishes four npm packages:
 - `@aionis/mcp`: MCP stdio bridge for Claude Code, Cursor, and other MCP clients
 - `@aionis/claude-code`: Claude Code MCP + lifecycle hook installer
 
+Choose the entry point by what you are connecting:
+
+| Goal | Package or plugin | Source |
+|---|---|---|
+| Install and run Aionis Runtime | `@aionis/create` | [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) |
+| Call Runtime APIs from an app or agent host | `@aionis/sdk` | [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) |
+| Add Aionis tools to an MCP-capable client | `@aionis/mcp` | [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) |
+| Give Claude Code automatic before/after hooks | Claude Code plugin or `@aionis/claude-code` | [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code) |
+
 Install Runtime plus SDK/MCP packages and run the first-value demo:
 
 ```bash
@@ -136,6 +145,15 @@ The installer performs product setup:
    recall-backed quickstarts require the selected embedding key
 6. optionally run Claude Code onboarding when `--with-claude-code` is set
 
+Repository boundary:
+
+| Repository | Role |
+|---|---|
+| [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) | Runtime core, product HTTP APIs, docs, examples, Docker image, installer workspace, and compatibility copies for contract tests. |
+| [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) | Published `@aionis/sdk` package source. |
+| [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) | Published `@aionis/mcp` package source. |
+| [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code) | Claude Code plugin and `@aionis/claude-code` helper package source. |
+
 Runtime startup works in no-key mode. If no key is detected, the generated
 `.env` keeps `EMBEDDING_PROVIDER=none`, so this works:
 
@@ -193,9 +211,9 @@ The smoke creates a temporary project and runs the same path a new user takes:
 Use overrides when validating a candidate package or branch:
 
 ```bash
-AIONIS_FRESH_INSTALL_CREATE_SPEC=@aionis/create@0.2.0 \
-AIONIS_FRESH_INSTALL_SDK_SPEC=@aionis/sdk@0.2.22 \
-AIONIS_FRESH_INSTALL_MCP_SPEC=@aionis/mcp@0.2.1 \
+AIONIS_FRESH_INSTALL_CREATE_SPEC=@aionis/create@latest \
+AIONIS_FRESH_INSTALL_SDK_SPEC=@aionis/sdk@0.2.23 \
+AIONIS_FRESH_INSTALL_MCP_SPEC=@aionis/mcp@0.2.2 \
 AIONIS_FRESH_INSTALL_REPO=https://github.com/ostinatocc/Aionis.git \
 npm run -s runtime:smoke:fresh-install
 ```
