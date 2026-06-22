@@ -4,7 +4,16 @@ Aionis has three Claude Code integration levels.
 
 ## Plugin Path
 
-For the normal Claude Code path, install the Aionis plugin:
+For the normal Claude Code path, use an isolated local Runtime on `3101` and
+install the Aionis plugin:
+
+```bash
+npx @aionis/create@latest .aionis-runtime --with-claude-code
+cd .aionis-runtime
+npm run -s lite:start
+```
+
+Then in Claude Code:
 
 ```text
 /plugin marketplace add https://github.com/ostinatocc/Aionis
@@ -19,6 +28,10 @@ The plugin loads:
 - User-level workspace identity storage for stable cross-project scopes.
 
 Use `/aionis:doctor` to verify Runtime connectivity.
+
+The plugin defaults to `http://127.0.0.1:3101`. A plain Runtime still defaults
+to `http://127.0.0.1:3001`; the `@aionis/create --with-claude-code` path writes
+`PORT=3101` so the plugin and local Runtime match.
 
 ## MCP Only
 
@@ -90,14 +103,13 @@ If you are installing Runtime and Claude Code integration together, use:
 
 ```bash
 npx @aionis/create@latest .aionis-runtime \
-  --with-claude-code \
-  --claude-code-dir . \
-  --claude-code-base-url http://127.0.0.1:3001
+  --with-claude-code
 ```
 
-`--claude-code-dir` should point at the project where you run `claude`. The
-installer calls `@aionis/claude-code onboard`, so hooks and MCP are user-level
-by default while Runtime stays in the side directory.
+This writes `PORT=3101` into the installed Runtime `.env` and runs the
+`@aionis/claude-code onboard` fallback. You can then also install the Claude
+Code plugin from the marketplace; the plugin uses the same Runtime URL and
+user-level workspace identity model.
 
 ## Scope
 

@@ -27,7 +27,7 @@ test("@aionis/create parses defaults for the one-command installer", () => {
   assert.equal(options.skipQuickstart, false);
   assert.equal(options.withClaudeCode, false);
   assert.equal(options.claudeCodeDir, null);
-  assert.equal(options.claudeCodeBaseUrl, "http://127.0.0.1:3001");
+  assert.equal(options.claudeCodeBaseUrl, "http://127.0.0.1:3101");
   assert.equal(options.claudeCodeScopeFrom, "workspace");
   assert.equal(options.claudeCodeMcpName, "aionis-local");
   assert.equal(options.claudeCodeSkipMcp, false);
@@ -167,6 +167,44 @@ test("@aionis/create writes MiniMax env when explicitly selected with a key", ()
   assert.equal(result.apiKey, "sk-minimax");
   assert.match(env, /EMBEDDING_PROVIDER="minimax"/);
   assert.match(env, /MINIMAX_API_KEY="sk-minimax"/);
+});
+
+test("@aionis/create aligns local Runtime port with Claude Code base URL", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-create-env-claude-code-"));
+  fs.writeFileSync(path.join(dir, ".env.example"), [
+    "PORT=3001",
+    "EMBEDDING_PROVIDER=none",
+    "",
+  ].join(os.EOL));
+
+  writeRuntimeEnv(dir, parseCreateAionisArgs([
+    "--with-claude-code",
+    "--claude-code-base-url",
+    "http://127.0.0.1:3101",
+  ], {}));
+  const env = fs.readFileSync(path.join(dir, ".env"), "utf8");
+
+  assert.match(env, /PORT="3101"/);
+  assert.match(env, /EMBEDDING_PROVIDER="none"/);
+});
+
+test("@aionis/create does not rewrite Runtime port for remote Claude Code endpoints", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-create-env-claude-code-remote-"));
+  fs.writeFileSync(path.join(dir, ".env.example"), [
+    "PORT=3001",
+    "EMBEDDING_PROVIDER=none",
+    "",
+  ].join(os.EOL));
+
+  writeRuntimeEnv(dir, parseCreateAionisArgs([
+    "--with-claude-code",
+    "--claude-code-base-url",
+    "https://aionis.example.test",
+  ], {}));
+  const env = fs.readFileSync(path.join(dir, ".env"), "utf8");
+
+  assert.match(env, /PORT=3001/);
+  assert.doesNotMatch(env, /PORT="443"/);
 });
 
 test("@aionis/create install plan includes Runtime install, SDK build, and selected quickstart", () => {

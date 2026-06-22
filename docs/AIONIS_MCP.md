@@ -67,11 +67,20 @@ are stored as aliases for the same workspace, while the primary
 For Claude Code, prefer the plugin path because it installs both MCP and
 lifecycle hooks:
 
+```bash
+npx @aionis/create@latest .aionis-runtime --with-claude-code
+cd .aionis-runtime
+npm run -s lite:start
+```
+
 ```text
 /plugin marketplace add https://github.com/ostinatocc/Aionis
 /plugin install aionis@aionis
 /aionis:doctor
 ```
+
+The Claude Code plugin defaults to `http://127.0.0.1:3101`, matching the
+`@aionis/create --with-claude-code` Runtime port.
 
 Add Aionis as raw MCP only when you are configuring another MCP client or you do
 not want lifecycle hooks:

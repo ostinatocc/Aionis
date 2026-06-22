@@ -57,3 +57,13 @@ test("Claude Code plugin wrapper scripts provide defaults without required userC
     assert.match(script, /"user"/);
   }
 });
+
+test("Claude Code plugin commands use concrete fallback checks", () => {
+  const doctor = fs.readFileSync(path.join(root, "claude-plugins/aionis/skills/doctor/SKILL.md"), "utf8");
+  const status = fs.readFileSync(path.join(root, "claude-plugins/aionis/skills/status/SKILL.md"), "utf8");
+  for (const command of [doctor, status]) {
+    assert.doesNotMatch(command, /\$\{user_config\./);
+    assert.match(command, /http:\/\/127\.0\.0\.1:3101/);
+    assert.match(command, /claude mcp list/);
+  }
+});

@@ -27,6 +27,7 @@ export type CreateAionisOptions = {
 
 const DEFAULT_REPO = "https://github.com/ostinatocc/Aionis.git";
 const DEFAULT_DIR = "Aionis";
+const DEFAULT_CLAUDE_CODE_BASE_URL = "http://127.0.0.1:3101";
 const MIN_NODE_VERSION = "22.5.0";
 const require = createRequire(import.meta.url);
 
@@ -44,7 +45,7 @@ Options:
   --with-claude-code        Run Claude Code onboarding after Runtime install.
   --claude-code-dir <path>  Directory used as onboarding cwd. Defaults to current directory.
   --claude-code-base-url <url>
-                            Runtime URL used by Claude Code hooks. Defaults to http://127.0.0.1:3001.
+                            Runtime URL used by Claude Code hooks. Defaults to ${DEFAULT_CLAUDE_CODE_BASE_URL}.
   --claude-code-scope-from <workspace|git|cwd|none>
                             Scope strategy for Claude Code hooks. Defaults to workspace.
   --claude-code-mcp-name <name>
@@ -120,7 +121,7 @@ export function parseCreateAionisArgs(argv: string[], env: NodeJS.ProcessEnv = p
   let skipQuickstart = false;
   let withClaudeCode = false;
   let claudeCodeDir: string | null = null;
-  let claudeCodeBaseUrl = env.AIONIS_CLAUDE_CODE_BASE_URL?.trim() || "http://127.0.0.1:3001";
+  let claudeCodeBaseUrl = env.AIONIS_CLAUDE_CODE_BASE_URL?.trim() || DEFAULT_CLAUDE_CODE_BASE_URL;
   let claudeCodeScopeFrom: CreateAionisOptions["claudeCodeScopeFrom"] = parseClaudeCodeScopeFrom(
     env.AIONIS_CLAUDE_CODE_SCOPE_FROM?.trim() || "workspace",
   );
@@ -289,6 +290,21 @@ function upsertEnvLine(source: string, key: string, value: string): string {
   return next.join(os.EOL).replace(/\n{3,}$/g, `${os.EOL}${os.EOL}`);
 }
 
+function localPortFromUrl(rawUrl: string): string | null {
+  try {
+    const url = new URL(rawUrl);
+    const host = url.hostname.toLowerCase();
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") return null;
+    if (url.port) return url.port;
+    if (url.protocol === "http:") return "80";
+    if (url.protocol === "https:") return "443";
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function writeRuntimeEnv(targetDir: string, options: CreateAionisOptions): {
   providerKey: string;
   apiKey: string | null;
@@ -306,6 +322,10 @@ export function writeRuntimeEnv(targetDir: string, options: CreateAionisOptions)
   const providerKey = providerEnvKey(options.provider);
   const apiKey = providerKey ? options.apiKey ?? process.env[providerKey]?.trim() ?? null : null;
   source = upsertEnvLine(source, "EMBEDDING_PROVIDER", options.provider);
+  if (options.withClaudeCode) {
+    const port = localPortFromUrl(options.claudeCodeBaseUrl);
+    if (port) source = upsertEnvLine(source, "PORT", port);
+  }
   if (apiKey) source = upsertEnvLine(source, providerKey, apiKey);
   fs.writeFileSync(envPath, source.endsWith(os.EOL) ? source : `${source}${os.EOL}`);
   return { providerKey, apiKey, embeddingProvider: options.provider };

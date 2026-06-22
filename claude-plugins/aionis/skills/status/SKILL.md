@@ -8,10 +8,15 @@ allowed-tools: [Bash]
 
 Use this when the user runs `/aionis:status`.
 
-Run:
+Run this exact Bash command first:
 
 ```bash
-printf 'AIONIS_BASE_URL=%s\nAIONIS_SCOPE_FROM=%s\nAIONIS_GUIDE_MODE=%s\n' "${user_config.base_url}" "${user_config.scope_from}" "${user_config.guide_mode}"
+BASE_URL="${AIONIS_BASE_URL:-http://127.0.0.1:3101}"
+SCOPE_FROM="${AIONIS_SCOPE_FROM:-workspace}"
+GUIDE_MODE="${AIONIS_GUIDE_MODE:-full_power}"
+printf 'AIONIS_BASE_URL=%s\nAIONIS_SCOPE_FROM=%s\nAIONIS_GUIDE_MODE=%s\n' "$BASE_URL" "$SCOPE_FROM" "$GUIDE_MODE"
+claude plugin list 2>/dev/null | grep -A4 'aionis@aionis' || true
+claude mcp list 2>/dev/null | grep -E 'plugin:aionis:aionis|aionis-local' || true
 ```
 
 Then summarize:
@@ -19,7 +24,9 @@ Then summarize:
 - Runtime URL.
 - Scope strategy.
 - Guide mode.
-- Plugin path: lifecycle hooks plus MCP tools.
+- Plugin status.
+- MCP status.
+- Product path: lifecycle hooks plus MCP tools.
 
 Recommended next command:
 

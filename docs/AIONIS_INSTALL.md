@@ -95,9 +95,7 @@ onboarding:
 
 ```bash
 npx @aionis/create@latest .aionis-runtime \
-  --with-claude-code \
-  --claude-code-dir . \
-  --claude-code-base-url http://127.0.0.1:3001
+  --with-claude-code
 ```
 
 Then start Runtime and run Claude Code from the project:
@@ -109,9 +107,21 @@ cd ..
 claude
 ```
 
+The Claude Code path uses `http://127.0.0.1:3101` by default and writes
+`PORT=3101` into `.aionis-runtime/.env`. A plain Runtime install without
+`--with-claude-code` still defaults to `http://127.0.0.1:3001`.
+
 The Claude Code integration runs `@aionis/claude-code onboard`: it installs
 user-level MCP plus user-level hooks. Hooks call Aionis before user prompts,
 after Bash/Edit/Write tool use, and at compact/session boundaries.
+
+If you prefer the Claude Code plugin path after installing Runtime:
+
+```text
+/plugin marketplace add https://github.com/ostinatocc/Aionis
+/plugin install aionis@aionis
+/aionis:doctor
+```
 
 The installer performs product setup:
 

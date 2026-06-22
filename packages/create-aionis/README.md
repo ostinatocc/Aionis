@@ -30,10 +30,15 @@ npx @aionis/create@latest my-aionis --skip-quickstart
 Install Runtime into a side directory and onboard Claude Code globally:
 
 ```bash
-npx @aionis/create@latest .aionis-runtime \
-  --with-claude-code \
-  --claude-code-dir . \
-  --claude-code-base-url http://127.0.0.1:3001
+npx @aionis/create@latest .aionis-runtime --with-claude-code
+```
+
+This writes `PORT=3101` into `.aionis-runtime/.env`, matching the Claude Code
+plugin default `http://127.0.0.1:3101`. Start Runtime with:
+
+```bash
+cd .aionis-runtime
+npm run -s lite:start
 ```
 
 The installer clones the Runtime repo, installs dependencies and workspace

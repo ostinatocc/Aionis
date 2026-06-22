@@ -8,19 +8,21 @@ allowed-tools: [Bash]
 
 Use this when the user runs `/aionis:doctor`.
 
-## Runtime Check
-
-Run:
+Run this exact Bash check first:
 
 ```bash
-curl -fsS "${user_config.base_url}/health"
+BASE_URL="${AIONIS_BASE_URL:-http://127.0.0.1:3101}"
+printf 'Aionis Runtime: %s\n' "$BASE_URL"
+curl -fsS "$BASE_URL/health" >/tmp/aionis-claude-code-health.json
+node -e 'const fs=require("fs"); const h=JSON.parse(fs.readFileSync("/tmp/aionis-claude-code-health.json","utf8")); console.log(`Runtime reachable: ${h.ok === true ? "yes" : "no"}`); console.log(`Edition: ${h.runtime?.edition ?? "unknown"}`); console.log(`Mode: ${h.runtime?.mode ?? "unknown"}`);'
+claude mcp list 2>/dev/null | grep -E 'plugin:aionis:aionis|aionis-local' || true
 ```
 
-Report:
+Then report only:
 
 - Runtime URL.
 - Whether `/health` responded.
-- The effective scope strategy: `${user_config.scope_from}`.
-- That the plugin uses user-level workspace identity storage for stable cross-agent continuity.
+- Whether Aionis MCP appears connected.
+- That Aionis lifecycle hooks inject governed execution memory before prompts and record tool outcomes.
 
-If available in the current Claude Code session, also use the Aionis MCP health/context tool to verify MCP connectivity. If the MCP tool is not visible yet, tell the user to restart Claude Code after plugin install.
+If `plugin:aionis:aionis` is not visible, tell the user to restart Claude Code after plugin install or run `claude plugin list && claude mcp list`.

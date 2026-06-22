@@ -41,11 +41,20 @@ docker run --rm \
   ghcr.io/ostinatocc/aionis:v0.2.1
 ```
 
-Then start the local Runtime from the generated checkout and add Aionis to
-Claude Code:
+Then start the local Runtime from the generated checkout:
 
 ```bash
 cd Aionis
+npm run -s lite:start
+```
+
+For the recommended isolated Claude Code path, install Runtime into a side
+directory. This uses `http://127.0.0.1:3101` and keeps it separate from any
+Runtime you use for Aionis development:
+
+```bash
+npx @aionis/create@latest .aionis-runtime --with-claude-code
+cd .aionis-runtime
 npm run -s lite:start
 ```
 
@@ -70,7 +79,7 @@ PostCompact / SessionEnd -> Aionis handoff
 CLI fallback if you do not want to use Claude Code plugins:
 
 ```bash
-npx @aionis/claude-code@latest onboard --base-url http://127.0.0.1:3001
+npx @aionis/claude-code@latest onboard --base-url http://127.0.0.1:3101
 ```
 
 MCP-only setup is still available for hosts that do not support hooks:
@@ -632,6 +641,12 @@ tools without asking the host to implement the full feedback loop on day one.
 
 Claude Code plugin setup:
 
+```bash
+npx @aionis/create@latest .aionis-runtime --with-claude-code
+cd .aionis-runtime
+npm run -s lite:start
+```
+
 ```text
 /plugin marketplace add https://github.com/ostinatocc/Aionis
 /plugin install aionis@aionis
@@ -639,7 +654,8 @@ Claude Code plugin setup:
 ```
 
 This plugin path gives Claude Code both Aionis MCP tools and lifecycle hooks.
-Use the raw MCP command below for Cursor, Zcode, or MCP-only hosts.
+It defaults to `http://127.0.0.1:3101`. Use the raw MCP command below for
+Cursor, Zcode, or MCP-only hosts.
 
 Claude Code / MCP client setup:
 
