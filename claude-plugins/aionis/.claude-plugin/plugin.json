@@ -1,6 +1,6 @@
 {
   "name": "aionis",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Execution memory, Memory Firewall, and Agent Flight Recorder for Claude Code.",
   "author": {
     "name": "Aionis"
@@ -21,8 +21,7 @@
       "type": "string",
       "title": "Aionis Runtime URL",
       "description": "Local or remote Aionis Runtime endpoint.",
-      "default": "http://127.0.0.1:3101",
-      "required": true
+      "default": "http://127.0.0.1:3101"
     },
     "tenant_id": {
       "type": "string",

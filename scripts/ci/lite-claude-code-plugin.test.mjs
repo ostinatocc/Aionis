@@ -30,12 +30,9 @@ test("Claude Code plugin MCP uses shared user-level workspace identity", () => {
   const mcp = readJson("claude-plugins/aionis/.mcp.json");
   const server = mcp.mcpServers.aionis;
   assert.equal(server.type, "stdio");
-  assert.equal(server.command, "npx");
-  assert.deepEqual(server.args.slice(0, 3), ["-y", "@aionis/mcp@latest", "--base-url"]);
-  assert.equal(server.args.includes("--workspace-id-store"), true);
-  assert.equal(server.args[server.args.indexOf("--workspace-id-store") + 1], "user");
+  assert.equal(server.command, "node");
+  assert.deepEqual(server.args, ["${CLAUDE_PLUGIN_ROOT}/hooks/aionis-mcp.mjs"]);
   assert.equal(server.args.includes("${AIONIS_BASE_URL:-http://127.0.0.1:3101}"), false);
-  assert.equal(server.env.AIONIS_WORKSPACE_ID_STORE, "user");
 });
 
 test("Claude Code plugin hooks use plugin config and user workspace store", () => {
@@ -44,10 +41,19 @@ test("Claude Code plugin hooks use plugin config and user workspace store", () =
   for (const event of events) {
     assert.ok(Array.isArray(hooks[event]), `${event} hook is missing`);
     const command = hooks[event][0].hooks[0].command;
-    assert.match(command, /@aionis\/claude-code@latest hook/);
-    assert.match(command, /--base-url "\$\{user_config\.base_url\}"/);
-    assert.match(command, /--workspace-id-store user/);
-    assert.match(command, /--max-prompt-chars "\$\{user_config\.max_prompt_chars\}"/);
+    assert.equal(command, "node \"${CLAUDE_PLUGIN_ROOT}/hooks/aionis-hook.mjs\"");
     assert.doesNotMatch(command, /\$\{AIONIS_[^}]+:-/);
+  }
+});
+
+test("Claude Code plugin wrapper scripts provide defaults without required userConfig", () => {
+  const hookScript = fs.readFileSync(path.join(root, "claude-plugins/aionis/hooks/aionis-hook.mjs"), "utf8");
+  const mcpScript = fs.readFileSync(path.join(root, "claude-plugins/aionis/hooks/aionis-mcp.mjs"), "utf8");
+  for (const script of [hookScript, mcpScript]) {
+    assert.match(script, /CLAUDE_PLUGIN_OPTION_\$\{name\}/);
+    assert.match(script, /option\("base_url", "AIONIS_BASE_URL"/);
+    assert.match(script, /http:\/\/127\.0\.0\.1:3101/);
+    assert.match(script, /--workspace-id-store/);
+    assert.match(script, /"user"/);
   }
 });

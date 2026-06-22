@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @aionis/claude-code@latest hook --base-url \"${user_config.base_url}\" --tenant \"${user_config.tenant_id}\" --scope-from \"${user_config.scope_from}\" --workspace-id-store user --mode \"${user_config.guide_mode}\" --max-prompt-chars \"${user_config.max_prompt_chars}\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/aionis-hook.mjs\"",
             "timeout": 30
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @aionis/claude-code@latest hook --base-url \"${user_config.base_url}\" --tenant \"${user_config.tenant_id}\" --scope-from \"${user_config.scope_from}\" --workspace-id-store user --mode \"${user_config.guide_mode}\" --max-prompt-chars \"${user_config.max_prompt_chars}\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/aionis-hook.mjs\"",
             "timeout": 30
           }
         ]
@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @aionis/claude-code@latest hook --base-url \"${user_config.base_url}\" --tenant \"${user_config.tenant_id}\" --scope-from \"${user_config.scope_from}\" --workspace-id-store user --mode \"${user_config.guide_mode}\" --max-prompt-chars \"${user_config.max_prompt_chars}\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/aionis-hook.mjs\"",
             "timeout": 30
           }
         ]
@@ -42,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @aionis/claude-code@latest hook --base-url \"${user_config.base_url}\" --tenant \"${user_config.tenant_id}\" --scope-from \"${user_config.scope_from}\" --workspace-id-store user --mode \"${user_config.guide_mode}\" --max-prompt-chars \"${user_config.max_prompt_chars}\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/aionis-hook.mjs\"",
             "timeout": 30
           }
         ]
@@ -53,7 +53,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @aionis/claude-code@latest hook --base-url \"${user_config.base_url}\" --tenant \"${user_config.tenant_id}\" --scope-from \"${user_config.scope_from}\" --workspace-id-store user --mode \"${user_config.guide_mode}\" --max-prompt-chars \"${user_config.max_prompt_chars}\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/aionis-hook.mjs\"",
             "timeout": 30
           }
         ]
@@ -64,7 +64,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @aionis/claude-code@latest hook --base-url \"${user_config.base_url}\" --tenant \"${user_config.tenant_id}\" --scope-from \"${user_config.scope_from}\" --workspace-id-store user --mode \"${user_config.guide_mode}\" --max-prompt-chars \"${user_config.max_prompt_chars}\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/aionis-hook.mjs\"",
             "timeout": 30
           }
         ]
@@ -75,7 +75,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @aionis/claude-code@latest hook --base-url \"${user_config.base_url}\" --tenant \"${user_config.tenant_id}\" --scope-from \"${user_config.scope_from}\" --workspace-id-store user --mode \"${user_config.guide_mode}\" --max-prompt-chars \"${user_config.max_prompt_chars}\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/aionis-hook.mjs\"",
             "timeout": 30
           }
         ]
