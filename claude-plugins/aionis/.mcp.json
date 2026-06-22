@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "aionis": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/hooks/aionis-mcp.mjs"
+      ]
+    }
+  }
+}
