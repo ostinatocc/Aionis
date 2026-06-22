@@ -9,7 +9,8 @@
   "workspaces": [
     "packages/aionis-sdk",
     "packages/aionis-mcp",
-    "packages/create-aionis"
+    "packages/create-aionis",
+    "packages/aionis-claude-code"
   ],
   "repository": {
     "type": "git",
@@ -44,8 +45,8 @@
     "smoke:lite": "npm run -s lite:smoke",
     "build": "npm run -s typecheck && npm run -s packages:build",
     "core:build": "npm run -s typecheck",
-    "packages:build": "npm run -w @aionis/sdk -s build && npm run -w @aionis/mcp -s build && npm run -w @aionis/create -s build",
-    "packages:test": "npm run -w @aionis/sdk -s test && npm run -w @aionis/mcp -s test && npm run -w @aionis/create -s test",
+    "packages:build": "npm run -w @aionis/sdk -s build && npm run -w @aionis/mcp -s build && npm run -w @aionis/create -s build && npm run -w @aionis/claude-code -s build",
+    "packages:test": "npm run -w @aionis/sdk -s test && npm run -w @aionis/mcp -s test && npm run -w @aionis/create -s test && npm run -w @aionis/claude-code -s test",
     "runtime:e2e:product-loop": "npx tsx scripts/e2e/product-four-api-loop.ts",
     "runtime:e2e:admission-dataset-export": "npx tsx scripts/e2e/admission-dataset-export-loop.ts",
     "runtime:quickstart:sdk": "npx tsx scripts/e2e/developer-sdk-quickstart.ts",

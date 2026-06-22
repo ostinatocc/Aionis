@@ -2,6 +2,8 @@
 .env
 .env.bak*
 .mcp.json
+.claude/aionis-instructions.md
+.claude/settings.local.json
 !packages/aionis-codex-plugin/.mcp.json
 tmp/
 node_modules

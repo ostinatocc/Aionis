@@ -95,6 +95,21 @@ The smallest useful trial is context-first:
 aionis_context -> Claude Code action
 ```
 
+For enforced Claude Code lifecycle integration, install the hook pack:
+
+```bash
+npx @aionis/claude-code@latest install \
+  --base-url http://127.0.0.1:3001 \
+  --scope-from workspace
+```
+
+MCP-only gives Claude Code tools. The hook pack adds `SessionStart`,
+`UserPromptSubmit`, `PostToolUse`, `PostToolUseFailure`, `PostCompact`, and
+`SessionEnd` automation so Aionis context is injected and execution evidence is
+recorded even when the Agent does not proactively call MCP tools.
+
+See [AIONIS_CLAUDE_CODE_INTEGRATION.md](AIONIS_CLAUDE_CODE_INTEGRATION.md).
+
 The stronger coding-agent loop is:
 
 ```text

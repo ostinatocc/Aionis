@@ -38,6 +38,7 @@ const ALLOWED_JOB_FILES = [
 ];
 
 const ALLOWED_PACKAGE_DIRS = [
+  "aionis-claude-code",
   "aionis-mcp",
   "aionis-sdk",
   "create-aionis",
@@ -98,9 +99,10 @@ test("workspace packages stay product-entrypoint only and do not import Runtime 
     "packages/aionis-sdk",
     "packages/aionis-mcp",
     "packages/create-aionis",
+    "packages/aionis-claude-code",
   ]);
-  assert.equal(packageJson.scripts?.["packages:build"], "npm run -w @aionis/sdk -s build && npm run -w @aionis/mcp -s build && npm run -w @aionis/create -s build");
-  assert.equal(packageJson.scripts?.["packages:test"], "npm run -w @aionis/sdk -s test && npm run -w @aionis/mcp -s test && npm run -w @aionis/create -s test");
+  assert.equal(packageJson.scripts?.["packages:build"], "npm run -w @aionis/sdk -s build && npm run -w @aionis/mcp -s build && npm run -w @aionis/create -s build && npm run -w @aionis/claude-code -s build");
+  assert.equal(packageJson.scripts?.["packages:test"], "npm run -w @aionis/sdk -s test && npm run -w @aionis/mcp -s test && npm run -w @aionis/create -s test && npm run -w @aionis/claude-code -s test");
 
   const sdkPackage = readJson("packages/aionis-sdk/package.json");
   assert.equal(sdkPackage.name, "@aionis/sdk");
@@ -121,6 +123,13 @@ test("workspace packages stay product-entrypoint only and do not import Runtime 
   assert.equal(createPackage.private, undefined);
   assert.equal(createPackage.bin?.["create-aionis"], "dist/index.js");
   assert.equal(createPackage.publishConfig?.access, "public");
+
+  const claudeCodePackage = readJson("packages/aionis-claude-code/package.json");
+  assert.equal(claudeCodePackage.name, "@aionis/claude-code");
+  assert.equal(claudeCodePackage.private, undefined);
+  assert.equal(claudeCodePackage.bin?.["aionis-claude-code"], "dist/index.js");
+  assert.equal(claudeCodePackage.dependencies?.["@aionis/sdk"], `^${sdkPackage.version}`);
+  assert.equal(claudeCodePackage.publishConfig?.access, "public");
 
   const runtimeSdk = fs.readFileSync(path.join(ROOT, "src", "sdk.ts"), "utf8");
   const packageSdk = fs.readFileSync(path.join(ROOT, "packages", "aionis-sdk", "src", "index.ts"), "utf8");
