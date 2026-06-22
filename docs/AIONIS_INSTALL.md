@@ -90,8 +90,8 @@ For multi-agent execution memory:
 OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart multi-agent
 ```
 
-For Claude Code, install Runtime into a side directory and install lifecycle
-hooks into your current project:
+For Claude Code, install Runtime into a side directory and run Claude Code
+onboarding:
 
 ```bash
 npx @aionis/create@latest .aionis-runtime \
@@ -109,8 +109,9 @@ cd ..
 claude
 ```
 
-The Claude Code integration installs MCP plus hooks. Hooks call Aionis before
-user prompts, after Bash/Edit/Write tool use, and at compact/session boundaries.
+The Claude Code integration runs `@aionis/claude-code onboard`: it installs
+user-level MCP plus user-level hooks. Hooks call Aionis before user prompts,
+after Bash/Edit/Write tool use, and at compact/session boundaries.
 
 The installer performs product setup:
 
@@ -120,7 +121,7 @@ The installer performs product setup:
 4. build `@aionis/sdk`, `@aionis/mcp`, `@aionis/create`, and `@aionis/claude-code`
 5. run the selected quickstart; `first-value` can run without an API key, while
    recall-backed quickstarts require the selected embedding key
-6. optionally install Claude Code lifecycle hooks when `--with-claude-code` is set
+6. optionally run Claude Code onboarding when `--with-claude-code` is set
 
 Runtime startup works in no-key mode. If no key is detected, the generated
 `.env` keeps `EMBEDDING_PROVIDER=none`, so this works:

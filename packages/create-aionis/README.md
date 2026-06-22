@@ -27,8 +27,7 @@ Install without running any quickstart:
 npx @aionis/create@latest my-aionis --skip-quickstart
 ```
 
-Install Runtime into a side directory and wire Claude Code hooks into the
-current project:
+Install Runtime into a side directory and onboard Claude Code globally:
 
 ```bash
 npx @aionis/create@latest .aionis-runtime \
@@ -39,7 +38,7 @@ npx @aionis/create@latest .aionis-runtime \
 
 The installer clones the Runtime repo, installs dependencies and workspace
 packages, writes `.env`, builds the publishable packages, then optionally runs a
-quickstart and installs Claude Code hooks. The installed repo includes
+quickstart and runs Claude Code onboarding. The installed repo includes
 `@aionis/sdk` for application integration, `@aionis/mcp` for MCP clients, and
 `@aionis/claude-code` for Claude Code lifecycle integration.
 

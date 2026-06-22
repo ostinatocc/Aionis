@@ -41,8 +41,8 @@ Options:
   --provider <name>         Embedding provider. Defaults to EMBEDDING_PROVIDER, a detected key, or none.
   --api-key <key>           Provider API key. Prefer env vars for shell history safety.
   --quickstart <name>       first-value, sdk, http, multi-agent, or none. Defaults to first-value.
-  --with-claude-code        Install Claude Code MCP + lifecycle hooks for the current project.
-  --claude-code-dir <path>  Project directory for Claude Code hooks. Defaults to current directory.
+  --with-claude-code        Run Claude Code onboarding after Runtime install.
+  --claude-code-dir <path>  Directory used as onboarding cwd. Defaults to current directory.
   --claude-code-base-url <url>
                             Runtime URL used by Claude Code hooks. Defaults to http://127.0.0.1:3001.
   --claude-code-scope-from <workspace|git|cwd|none>
@@ -333,7 +333,7 @@ export function createClaudeCodeInstallCommand(options: CreateAionisOptions, cwd
   const args = [
     "-y",
     "@aionis/claude-code@latest",
-    "install",
+    "onboard",
     "--base-url",
     options.claudeCodeBaseUrl,
     "--scope-from",

@@ -9,6 +9,7 @@ import {
   installAionisClaudeCode,
   installPlan,
   nextClaudeCodeSettings,
+  onboardAionisClaudeCode,
   parseAionisClaudeCodeArgs,
   statusAionisClaudeCode,
   type AionisClaudeCodeOptions,
@@ -27,6 +28,7 @@ function baseOptions(overrides: Partial<AionisClaudeCodeOptions> = {}): AionisCl
     claude_scope: "local",
     package_spec: "@aionis/claude-code@latest",
     mcp_package_spec: "@aionis/mcp@latest",
+    workspace_identity_store: "project",
     skip_mcp: true,
     dry_run: false,
     max_prompt_chars: 4000,
@@ -93,6 +95,16 @@ test("@aionis/claude-code parses install options", () => {
   assert.equal(parsed.skip_mcp, true);
 });
 
+test("@aionis/claude-code onboard defaults to user-level hooks and MCP", () => {
+  const parsed = parseAionisClaudeCodeArgs(["onboard"], {});
+
+  assert.equal(parsed.command, "onboard");
+  assert.equal(parsed.settings, "user");
+  assert.equal(parsed.claude_scope, "user");
+  assert.equal(parsed.workspace_identity_store, "user");
+  assert.equal(parsed.scope_from, "workspace");
+});
+
 test("@aionis/claude-code writes idempotent Claude Code hook settings", () => {
   const current = {
     hooks: {
@@ -122,7 +134,19 @@ test("@aionis/claude-code writes idempotent Claude Code hook settings", () => {
   assert.equal(hooks.PostCompact.length, 1);
   const aionisHook = (hooks.SessionStart[0] as { hooks: Array<{ command: string; args?: string[] }> }).hooks[0];
   assert.match(aionisHook.command, /^npx '-y' '@aionis\/claude-code@latest' 'hook'/);
+  assert.match(aionisHook.command, /'--workspace-id-store' 'project'/);
   assert.equal(aionisHook.args, undefined);
+});
+
+test("@aionis/claude-code global install shortcut targets user settings", () => {
+  const options = parseAionisClaudeCodeArgs(["install", "--global"], {});
+  assert.equal(options.settings, "user");
+  assert.equal(options.claude_scope, "user");
+  assert.equal(options.workspace_identity_store, "user");
+
+  const settings = nextClaudeCodeSettings({}, options);
+  const hooks = settings.hooks as Record<string, Array<{ hooks: Array<{ command: string; args?: string[] }> }>>;
+  assert.match(hooks.UserPromptSubmit[0].hooks[0].command, /'--workspace-id-store' 'user'/);
 });
 
 test("@aionis/claude-code uses direct node hook command for file package installs", () => {
@@ -144,6 +168,26 @@ test("@aionis/claude-code derives stable workspace scope", () => {
   assert.equal(first, second);
   assert.match(first ?? "", /^ws:aionis-claude-code-scope-[A-Za-z0-9._-]+:[a-f0-9]{12}$/);
   assert.ok(fs.existsSync(path.join(dir, ".aionis", "workspace.json")));
+});
+
+test("@aionis/claude-code can keep workspace identity outside the project", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-claude-code-user-scope-"));
+  const first = deriveAionisClaudeCodeScope({
+    source: "workspace",
+    cwd: dir,
+    repoRoot: dir,
+    workspaceIdentityStore: "user",
+  });
+  const second = deriveAionisClaudeCodeScope({
+    source: "workspace",
+    cwd: dir,
+    repoRoot: dir,
+    workspaceIdentityStore: "user",
+  });
+
+  assert.equal(first, second);
+  assert.match(first ?? "", /^ws:aionis-claude-code-user-scope-[A-Za-z0-9._-]+:[a-f0-9]{12}$/);
+  assert.equal(fs.existsSync(path.join(dir, ".aionis", "workspace.json")), false);
 });
 
 test("@aionis/claude-code install writes local settings and instructions", async () => {
@@ -268,5 +312,39 @@ test("@aionis/claude-code install is idempotent when MCP already exists", async 
     assert.equal(result.mcp_error, undefined);
   } finally {
     process.env.PATH = previousPath;
+  }
+});
+
+test("@aionis/claude-code onboard returns a ready bundle when local fake Claude and Runtime pass", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-claude-code-onboard-"));
+  const script = path.join(dir, "claude");
+  fs.writeFileSync(script, [
+    "#!/usr/bin/env bash",
+    "if [ \"$1\" = \"mcp\" ] && [ \"$2\" = \"add\" ]; then exit 0; fi",
+    "if [ \"$1\" = \"mcp\" ] && [ \"$2\" = \"list\" ]; then echo 'aionis-local - ✓ Connected'; exit 0; fi",
+    "exit 0",
+    "",
+  ].join("\n"), { mode: 0o755 });
+  const previousPath = process.env.PATH;
+  const originalFetch = globalThis.fetch;
+  process.env.PATH = `${dir}${path.delimiter}${previousPath ?? ""}`;
+  globalThis.fetch = (async () => new Response(JSON.stringify({ ok: true }), { status: 200 })) as typeof fetch;
+  try {
+    const result = await onboardAionisClaudeCode(baseOptions({
+      command: "onboard",
+      repo_root: dir,
+      baseUrl: "http://runtime.test",
+      settings: "local",
+      claude_scope: "local",
+      workspace_identity_store: "project",
+      skip_mcp: false,
+    }), dir);
+    assert.equal(result.ready, true);
+    assert.equal(result.install.mcp_status, "installed");
+    assert.equal(result.doctor.ready, true);
+    assert.ok(result.next.some((line) => /claude/.test(line)));
+  } finally {
+    process.env.PATH = previousPath;
+    globalThis.fetch = originalFetch;
   }
 });

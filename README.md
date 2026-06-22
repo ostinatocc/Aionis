@@ -52,12 +52,11 @@ npm run -s lite:start
 Strong Claude Code integration:
 
 ```bash
-npx @aionis/claude-code@latest install \
-  --base-url http://127.0.0.1:3001 \
-  --scope-from workspace
+npx @aionis/claude-code@latest onboard --base-url http://127.0.0.1:3001
 ```
 
-This installs `@aionis/mcp` and Claude Code hooks:
+This installs user-level `@aionis/mcp` and Claude Code hooks, then verifies the
+Runtime connection. After that, run `claude` from any project:
 
 ```text
 UserPromptSubmit -> Aionis guide -> injected execution context

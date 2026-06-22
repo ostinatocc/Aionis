@@ -214,7 +214,7 @@ test("@aionis/create plans and builds Claude Code lifecycle hook command", () =>
   assert.deepEqual(command.args, [
     "-y",
     "@aionis/claude-code@latest",
-    "install",
+    "onboard",
     "--base-url",
     "http://127.0.0.1:3101",
     "--scope-from",

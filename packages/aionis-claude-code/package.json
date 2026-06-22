@@ -1,7 +1,7 @@
 {
   "name": "@aionis/claude-code",
-  "version": "0.1.0",
-  "description": "Claude Code lifecycle integration for Aionis execution memory.",
+  "version": "0.2.0",
+  "description": "One-step Claude Code lifecycle integration for Aionis execution memory.",
   "license": "Apache-2.0",
   "homepage": "https://docs.aionis.work/integrations/claude-code",
   "repository": {

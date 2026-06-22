@@ -14,9 +14,10 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export type AionisClaudeCodeCommand = "install" | "status" | "hook";
+export type AionisClaudeCodeCommand = "install" | "onboard" | "doctor" | "status" | "hook";
 export type AionisClaudeCodeSettingsTarget = "local" | "project" | "user";
 export type AionisClaudeCodeScopeSource = "workspace" | "git" | "cwd" | "none";
+export type AionisClaudeCodeWorkspaceIdentityStore = "project" | "user";
 
 export type AionisClaudeCodeOptions = {
   command: AionisClaudeCodeCommand;
@@ -32,6 +33,7 @@ export type AionisClaudeCodeOptions = {
   claude_scope: "local" | "project" | "user";
   package_spec: string;
   mcp_package_spec: string;
+  workspace_identity_store: AionisClaudeCodeWorkspaceIdentityStore;
   skip_mcp: boolean;
   dry_run: boolean;
   max_prompt_chars: number;
@@ -72,10 +74,13 @@ export const DEFAULT_AIONIS_BASE_URL = "http://127.0.0.1:3001";
 export const DEFAULT_PACKAGE_SPEC = "@aionis/claude-code@latest";
 export const DEFAULT_MCP_PACKAGE_SPEC = "@aionis/mcp@latest";
 export const AIONIS_WORKSPACE_IDENTITY_PATH = ".aionis/workspace.json";
+export const AIONIS_USER_WORKSPACE_IDENTITY_DIR = path.join(".aionis", "claude-code", "workspaces");
 
 function usage(): string {
   return `Usage:
+  npx @aionis/claude-code onboard [options]
   npx @aionis/claude-code install [options]
+  npx @aionis/claude-code doctor [options]
   npx @aionis/claude-code status [options]
   npx @aionis/claude-code hook [options]
 
@@ -88,10 +93,15 @@ Options:
   --repo-root <path>        Workspace root for install/status. Hooks use Claude's cwd by default.
   --mode <name>             full_power, standard, or none. Defaults to full_power.
   --settings <target>       local, project, or user. Defaults to local (.claude/settings.local.json).
+                            onboard defaults to user-level hooks.
   --mcp-name <name>         Claude MCP server name. Defaults to aionis-local.
   --claude-scope <scope>    MCP config scope: local, project, or user. Defaults to local.
+                            onboard defaults to user.
+  --global                  Shortcut for --settings user --claude-scope user --workspace-id-store user.
   --package <spec>          Hook package spec written to settings. Defaults to ${DEFAULT_PACKAGE_SPEC}
   --mcp-package <spec>      MCP package spec. Defaults to ${DEFAULT_MCP_PACKAGE_SPEC}
+  --workspace-id-store <project|user>
+                            Where stable workspace ids are stored. onboard defaults to user.
   --skip-mcp               Write hooks but do not run claude mcp add.
   --dry-run                Print planned changes without writing files or running claude mcp add.
   --max-prompt-chars <n>   Maximum injected Aionis prompt chars. Defaults to 8000.
@@ -126,6 +136,11 @@ function parseClaudeScope(value: string): "local" | "project" | "user" {
   throw new Error(`Unsupported Claude MCP scope "${value}". Use local, project, or user.`);
 }
 
+function parseWorkspaceIdentityStore(value: string): AionisClaudeCodeWorkspaceIdentityStore {
+  if (value === "project" || value === "user") return value;
+  throw new Error(`Unsupported workspace id store "${value}". Use project or user.`);
+}
+
 export function parseAionisClaudeCodeArgs(
   argv: string[],
   env: NodeJS.ProcessEnv = process.env,
@@ -135,11 +150,12 @@ export function parseAionisClaudeCodeArgs(
     process.stdout.write(usage());
     process.exit(0);
   }
-  if (commandArg !== "install" && commandArg !== "status" && commandArg !== "hook") {
-    throw new Error(`Unknown command "${commandArg}". Use install, status, or hook.`);
+  if (commandArg !== "install" && commandArg !== "onboard" && commandArg !== "doctor" && commandArg !== "status" && commandArg !== "hook") {
+    throw new Error(`Unknown command "${commandArg}". Use install, onboard, doctor, status, or hook.`);
   }
   const command = commandArg;
   const rest = commandArg === argv[0] ? argv.slice(1) : argv;
+  const onboardDefaults = command === "onboard";
 
   const options: AionisClaudeCodeOptions = {
     command,
@@ -150,11 +166,14 @@ export function parseAionisClaudeCodeArgs(
     scope_from: parseScopeSource(env.AIONIS_SCOPE_FROM?.trim() || "workspace"),
     repo_root: env.AIONIS_REPO_ROOT?.trim() || undefined,
     mode: parseGuideMode(env.AIONIS_GUIDE_MODE?.trim() || "full_power"),
-    settings: "local",
+    settings: onboardDefaults ? "user" : "local",
     mcp_name: "aionis-local",
-    claude_scope: "local",
+    claude_scope: onboardDefaults ? "user" : "local",
     package_spec: DEFAULT_PACKAGE_SPEC,
     mcp_package_spec: DEFAULT_MCP_PACKAGE_SPEC,
+    workspace_identity_store: parseWorkspaceIdentityStore(
+      env.AIONIS_WORKSPACE_ID_STORE?.trim() || (onboardDefaults ? "user" : "project"),
+    ),
     skip_mcp: false,
     dry_run: false,
     max_prompt_chars: Number.parseInt(env.AIONIS_CLAUDE_CODE_MAX_PROMPT_CHARS || "8000", 10),
@@ -206,6 +225,12 @@ export function parseAionisClaudeCodeArgs(
       i += 1;
       continue;
     }
+    if (arg === "--global") {
+      options.settings = "user";
+      options.claude_scope = "user";
+      options.workspace_identity_store = "user";
+      continue;
+    }
     if (arg === "--mcp-name") {
       options.mcp_name = readFlagValue(rest, i, arg);
       i += 1;
@@ -223,6 +248,11 @@ export function parseAionisClaudeCodeArgs(
     }
     if (arg === "--mcp-package") {
       options.mcp_package_spec = readFlagValue(rest, i, arg);
+      i += 1;
+      continue;
+    }
+    if (arg === "--workspace-id-store") {
+      options.workspace_identity_store = parseWorkspaceIdentityStore(readFlagValue(rest, i, arg));
       i += 1;
       continue;
     }
@@ -302,7 +332,14 @@ function deriveCwdScope(root: string): string {
   return `cwd:${slugifyScopePart(directoryBasename(root))}:${shortHash(root)}`;
 }
 
-function workspaceIdentityFile(root: string): string {
+function workspaceIdentityFile(root: string, store: AionisClaudeCodeWorkspaceIdentityStore = "project"): string {
+  if (store === "user") {
+    return path.join(
+      os.homedir(),
+      AIONIS_USER_WORKSPACE_IDENTITY_DIR,
+      `${shortHash(resolveRoot(root, process.cwd()))}.json`,
+    );
+  }
   return path.join(root, AIONIS_WORKSPACE_IDENTITY_PATH);
 }
 
@@ -349,8 +386,8 @@ function createWorkspaceIdentity(root: string, now = new Date().toISOString()): 
   };
 }
 
-function deriveWorkspaceScope(root: string): string {
-  const file = workspaceIdentityFile(root);
+function deriveWorkspaceScope(root: string, store: AionisClaudeCodeWorkspaceIdentityStore = "project"): string {
+  const file = workspaceIdentityFile(root, store);
   const now = new Date().toISOString();
   const existing = readWorkspaceIdentity(file);
   if (!existing) {
@@ -374,13 +411,14 @@ export function deriveAionisClaudeCodeScope(input: {
   source: AionisClaudeCodeScopeSource;
   repoRoot?: string;
   cwd?: string;
+  workspaceIdentityStore?: AionisClaudeCodeWorkspaceIdentityStore;
 }): string | undefined {
   const explicit = input.explicitScope?.trim();
   if (explicit) return explicit;
   if (input.source === "none") return undefined;
   const cwd = resolveRoot(input.cwd, process.cwd());
   const root = resolveRoot(input.repoRoot, cwd);
-  if (input.source === "workspace") return deriveWorkspaceScope(root);
+  if (input.source === "workspace") return deriveWorkspaceScope(root, input.workspaceIdentityStore ?? "project");
   if (input.source === "git") return deriveGitScopeStrict(root) ?? deriveCwdScope(root);
   return deriveCwdScope(root);
 }
@@ -444,6 +482,8 @@ function hookCommand(options: AionisClaudeCodeOptions): string {
     options.baseUrl,
     "--scope-from",
     options.scope_from,
+    "--workspace-id-store",
+    options.workspace_identity_store,
     "--mode",
     options.mode ?? "none",
     "--max-prompt-chars",
@@ -499,8 +539,13 @@ export function nextClaudeCodeSettings(
   return next;
 }
 
-function writeInstructions(root: string, dryRun: boolean): string {
-  const instructionsPath = path.join(root, ".claude", "aionis-instructions.md");
+function instructionsPath(options: AionisClaudeCodeOptions, root: string): string {
+  if (options.settings === "user") return path.join(os.homedir(), ".claude", "aionis-instructions.md");
+  return path.join(root, ".claude", "aionis-instructions.md");
+}
+
+function writeInstructions(options: AionisClaudeCodeOptions, root: string, dryRun: boolean): string {
+  const instructionsPathValue = instructionsPath(options, root);
   const body = `# Aionis Claude Code Integration
 
 Aionis is active for this workspace.
@@ -512,10 +557,10 @@ Aionis is active for this workspace.
 - Preserve important decisions, failed branches, acceptance checks, and handoff state through Aionis tools when useful.
 `;
   if (!dryRun) {
-    fs.mkdirSync(path.dirname(instructionsPath), { recursive: true });
-    fs.writeFileSync(instructionsPath, body, "utf8");
+    fs.mkdirSync(path.dirname(instructionsPathValue), { recursive: true });
+    fs.writeFileSync(instructionsPathValue, body, "utf8");
   }
-  return instructionsPath;
+  return instructionsPathValue;
 }
 
 export function installPlan(options: AionisClaudeCodeOptions, cwd = process.cwd()): {
@@ -551,7 +596,7 @@ export function installPlan(options: AionisClaudeCodeOptions, cwd = process.cwd(
   return {
     root,
     settings_file: settingsPath(options.settings, root),
-    instructions_file: path.join(root, ".claude", "aionis-instructions.md"),
+    instructions_file: instructionsPath(options, root),
     mcp_command: mcpCommand,
   };
 }
@@ -583,7 +628,7 @@ export async function installAionisClaudeCode(options: AionisClaudeCodeOptions, 
     fs.mkdirSync(path.dirname(plan.settings_file), { recursive: true });
     fs.writeFileSync(plan.settings_file, `${JSON.stringify(next, null, 2)}\n`, "utf8");
   }
-  const instructionsFile = writeInstructions(plan.root, options.dry_run);
+  const instructionsFile = writeInstructions(options, plan.root, options.dry_run);
   let mcpStatus: "skipped" | "planned" | "installed" | "failed" = options.skip_mcp ? "skipped" : options.dry_run ? "planned" : "installed";
   let mcpError: string | undefined;
   if (plan.mcp_command && !options.dry_run) {
@@ -606,6 +651,109 @@ export async function installAionisClaudeCode(options: AionisClaudeCodeOptions, 
     instructions_file: instructionsFile,
     mcp_status: mcpStatus,
     mcp_error: mcpError,
+  };
+}
+
+function hooksInstalledForTarget(target: AionisClaudeCodeSettingsTarget, root: string): {
+  target: AionisClaudeCodeSettingsTarget;
+  settings_file: string;
+  hooks_installed: boolean;
+} {
+  const file = settingsPath(target, root);
+  const settings = readJsonFile(file);
+  const hooks = isRecord(settings.hooks) ? settings.hooks : {};
+  return {
+    target,
+    settings_file: file,
+    hooks_installed: Object.values(hooks).some((groups) => Array.isArray(groups) && groups.some(isAionisHookGroup)),
+  };
+}
+
+export async function doctorAionisClaudeCode(options: AionisClaudeCodeOptions, cwd = process.cwd()): Promise<{
+  ready: boolean;
+  runtime_ok: boolean;
+  base_url: string;
+  scope?: string;
+  workspace_identity_store: AionisClaudeCodeWorkspaceIdentityStore;
+  hooks: Array<ReturnType<typeof hooksInstalledForTarget>>;
+  mcp: {
+    checked: boolean;
+    installed: boolean;
+    command: string;
+    error?: string;
+  };
+  recommendation: string;
+}> {
+  const root = resolveRoot(options.repo_root, cwd);
+  const scope = deriveAionisClaudeCodeScope({
+    explicitScope: options.scope,
+    source: options.scope_from,
+    repoRoot: root,
+    cwd: root,
+    workspaceIdentityStore: options.workspace_identity_store,
+  });
+  const client = createAionisClient({
+    baseUrl: options.baseUrl,
+    apiKey: options.apiKey,
+    tenant_id: options.tenant_id,
+    scope,
+  });
+  let runtimeOk = false;
+  try {
+    await client.health();
+    runtimeOk = true;
+  } catch {
+    runtimeOk = false;
+  }
+
+  const hooks = [
+    hooksInstalledForTarget("user", root),
+    hooksInstalledForTarget("project", root),
+    hooksInstalledForTarget("local", root),
+  ];
+  const mcpResult = run("claude", ["mcp", "list"], root);
+  const mcpOutput = `${mcpResult.stdout}\n${mcpResult.stderr}`;
+  const mcpInstalled = mcpResult.status === 0
+    && mcpOutput.includes(options.mcp_name)
+    && /Connected|✓/i.test(mcpOutput);
+  const hooksReady = hooks.some((entry) => entry.hooks_installed);
+  const ready = runtimeOk && hooksReady && mcpInstalled;
+  const recommendation = ready
+    ? "Aionis is ready for Claude Code. Run claude from any project."
+    : "Run: npx @aionis/claude-code@latest onboard --base-url <runtime-url>";
+
+  return {
+    ready,
+    runtime_ok: runtimeOk,
+    base_url: options.baseUrl,
+    scope,
+    workspace_identity_store: options.workspace_identity_store,
+    hooks,
+    mcp: {
+      checked: mcpResult.status !== null,
+      installed: mcpInstalled,
+      command: `claude mcp list`,
+      ...(mcpResult.status === 0 ? {} : { error: mcpOutput.trim() || `claude mcp list exited with ${mcpResult.status ?? "unknown"}` }),
+    },
+    recommendation,
+  };
+}
+
+export async function onboardAionisClaudeCode(options: AionisClaudeCodeOptions, cwd = process.cwd()): Promise<{
+  ready: boolean;
+  install: Awaited<ReturnType<typeof installAionisClaudeCode>>;
+  doctor: Awaited<ReturnType<typeof doctorAionisClaudeCode>>;
+  next: string[];
+}> {
+  const install = await installAionisClaudeCode(options, cwd);
+  const doctor = await doctorAionisClaudeCode(options, cwd);
+  return {
+    ready: doctor.ready && install.mcp_status !== "failed",
+    install,
+    doctor,
+    next: doctor.ready
+      ? ["Open any project directory.", "Run: claude", "Aionis will inject governed execution memory automatically."]
+      : [doctor.recommendation],
   };
 }
 
@@ -741,6 +889,7 @@ export async function handleAionisClaudeCodeHook(
     source: options.scope_from,
     repoRoot: root,
     cwd: root,
+    workspaceIdentityStore: options.workspace_identity_store,
   });
   const hookClient = client ?? createAionisClient({
     baseUrl: options.baseUrl,
@@ -888,6 +1037,7 @@ export async function statusAionisClaudeCode(options: AionisClaudeCodeOptions, c
     source: options.scope_from,
     repoRoot: root,
     cwd: root,
+    workspaceIdentityStore: options.workspace_identity_store,
   });
   const client = createAionisClient({
     baseUrl: options.baseUrl,
@@ -913,6 +1063,18 @@ export async function statusAionisClaudeCode(options: AionisClaudeCodeOptions, c
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   const options = parseAionisClaudeCodeArgs(argv);
+  if (options.command === "onboard") {
+    const result = await onboardAionisClaudeCode(options);
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    if (!result.ready) process.exitCode = 1;
+    return;
+  }
+  if (options.command === "doctor") {
+    const result = await doctorAionisClaudeCode(options);
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    if (!result.ready) process.exitCode = 1;
+    return;
+  }
   if (options.command === "install") {
     const result = await installAionisClaudeCode(options);
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

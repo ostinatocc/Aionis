@@ -16,16 +16,14 @@ This is useful, but the Agent still has to decide to call the tools.
 
 ## MCP + Lifecycle Hooks
 
-For a stronger integration, install the Claude Code lifecycle pack:
+For a stronger integration, onboard Claude Code once:
 
 ```bash
-npx @aionis/claude-code@latest install \
-  --base-url http://127.0.0.1:3101 \
-  --scope-from workspace
+npx @aionis/claude-code@latest onboard --base-url http://127.0.0.1:3101
 ```
 
-This writes `.claude/settings.local.json` and installs hooks that call Aionis
-through the SDK:
+This installs user-level Claude Code hooks plus a user-level Aionis MCP server.
+After that, run `claude` from any project. Hooks call Aionis through the SDK:
 
 | Hook | Aionis action |
 |---|---|
@@ -45,21 +43,26 @@ the Claude Code lifecycle even when the Agent does not proactively call a tool.
 If Runtime is running on a non-default port:
 
 ```bash
-npx @aionis/claude-code@latest install \
+npx @aionis/claude-code@latest onboard \
   --base-url http://127.0.0.1:3101 \
-  --scope-from workspace \
   --mcp-name aionis-local
 ```
 
-Check status:
+Check everything:
 
 ```bash
-npx @aionis/claude-code@latest status \
+npx @aionis/claude-code@latest doctor \
   --base-url http://127.0.0.1:3101
 ```
 
-The default settings target is local, so the hook config goes into
-`.claude/settings.local.json` and does not need to be committed.
+For a deliberately isolated project-only install, use:
+
+```bash
+npx @aionis/claude-code@latest install \
+  --settings local \
+  --claude-scope local \
+  --base-url http://127.0.0.1:3101
+```
 
 ## Runtime Installer Shortcut
 
@@ -72,14 +75,15 @@ npx @aionis/create@latest .aionis-runtime \
   --claude-code-base-url http://127.0.0.1:3001
 ```
 
-`--claude-code-dir` should point at the project where you run `claude`. This is
-usually not the same directory as the Runtime checkout.
+`--claude-code-dir` should point at the project where you run `claude`. The
+installer calls `@aionis/claude-code onboard`, so hooks and MCP are user-level
+by default while Runtime stays in the side directory.
 
 ## Scope
 
-Use `--scope-from workspace` for coding agents. Aionis writes
-`.aionis/workspace.json` and keeps a stable project scope even if the directory
-later becomes a git repo or gets a remote.
+Use `--scope-from workspace` for coding agents. `onboard` stores stable
+workspace identities under the user's Aionis Claude Code cache, so new projects
+do not need manual hook files before they can use Aionis.
 
 Use `--scope <scope>` only when the host already owns scope assignment.
 
