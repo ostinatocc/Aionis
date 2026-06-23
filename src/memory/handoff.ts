@@ -645,6 +645,9 @@ export function buildHandoffWriteBody(input: unknown): MemoryWriteInput {
         type: "event",
         title: parsed.title ?? `Handoff ${parsed.anchor}`,
         text_summary: parsed.summary,
+        salience: parsed.salience,
+        importance: parsed.importance,
+        confidence: parsed.confidence,
         slots: {
           summary_kind: "handoff",
           handoff_kind: parsed.handoff_kind,
