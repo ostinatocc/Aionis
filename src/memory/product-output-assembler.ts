@@ -1950,6 +1950,16 @@ function contractEntryIsHandoff(entry: MemoryPacketEntry): boolean {
   return kind.includes("handoff") || !!entry.execution_state?.handoff_target;
 }
 
+function verifiedRecoveredHandoffDirectUseEligible(entry: MemoryPacketEntry, verifiedHandoffMemoryIds: Set<string>): boolean {
+  return verifiedHandoffMemoryIds.has(entry.memory_id)
+    && !memoryEntryBlocked(entry)
+    && entry.lifecycle_state !== "contested"
+    && entry.lifecycle_state !== "rehydration_candidate"
+    && memoryEntryIsExecutionScoped(entry)
+    && contractEntryIsHandoff(entry)
+    && entry.target_files.length > 0;
+}
+
 function contractInspectPriority(entry: MemoryPacketEntry): number {
   if (contractEntryIsCurrentState(entry)) return 0;
   if (contractEntryIsHandoff(entry)) return 1;
@@ -2418,12 +2428,14 @@ function memoryEntryIsExecutionScoped(entry: MemoryPacketEntry): boolean {
 function memoryEntryDirectUseEligible(args: {
   entry: MemoryPacketEntry;
   lifecycleCandidateAdmitted: boolean;
+  verifiedRecoveredHandoff: boolean;
 }): boolean {
-  if (!memoryEntryUsable(args.entry) && !args.lifecycleCandidateAdmitted) return false;
+  if (!memoryEntryUsable(args.entry) && !args.lifecycleCandidateAdmitted && !args.verifiedRecoveredHandoff) return false;
   if (!memoryEntryIsExecutionScoped(args.entry)) return true;
   return contractEntryIsCurrentState(args.entry)
     || contractEntryIsProcedure(args.entry)
-    || args.lifecycleCandidateAdmitted;
+    || args.lifecycleCandidateAdmitted
+    || args.verifiedRecoveredHandoff;
 }
 
 function memoryEntryLabel(entry: MemoryPacketEntry): string {
@@ -3136,6 +3148,7 @@ function compileAgentContextSurfaces(args: {
   rehydrateHints: AionisAgentContext["rehydrate_hints"];
   premiseFirewall: PremiseFirewallProjection;
   lifecycleCandidateSignals: AionisLifecycleCandidateSignal[];
+  verifiedHandoffMemoryIds: Set<string>;
 }): {
   historyUsed: boolean;
   actionableHistoryUsed: boolean;
@@ -3177,12 +3190,17 @@ function compileAgentContextSurfaces(args: {
   const inspectEntries = args.memoryEntries.filter((entry) =>
     !rehydrateSurfaceIds.has(entry.memory_id)
     && !memoryEntryBlocked(entry)
+    && !verifiedRecoveredHandoffDirectUseEligible(entry, args.verifiedHandoffMemoryIds)
     && memoryEntryInspectBeforeUse(entry)
     && !lifecycleCandidateAdmittedUseNowIds.has(entry.memory_id)
   );
   const usableEntries = args.memoryEntries.filter((entry) =>
     !rehydrateSurfaceIds.has(entry.memory_id)
-    && (memoryEntryUsable(entry) || lifecycleCandidateAdmittedUseNowIds.has(entry.memory_id))
+    && (
+      memoryEntryUsable(entry)
+      || lifecycleCandidateAdmittedUseNowIds.has(entry.memory_id)
+      || verifiedRecoveredHandoffDirectUseEligible(entry, args.verifiedHandoffMemoryIds)
+    )
   );
   const deniedPathTargets = deniedAgentActionPathTargets(args.memoryEntries);
   const hasUsableMemory = usableEntries.length > 0;
@@ -3190,6 +3208,7 @@ function compileAgentContextSurfaces(args: {
     memoryEntryDirectUseEligible({
       entry,
       lifecycleCandidateAdmitted: lifecycleCandidateAdmittedUseNowIds.has(entry.memory_id),
+      verifiedRecoveredHandoff: verifiedRecoveredHandoffDirectUseEligible(entry, args.verifiedHandoffMemoryIds),
     })
   );
   const hasRawGuideSurface =
@@ -3217,7 +3236,10 @@ function compileAgentContextSurfaces(args: {
       ? args.premiseFirewall.riskReasons
       : [];
   const lifecycleCandidateInspectIds = new Set(lifecycleCandidateInspectMemoryIds(args.lifecycleCandidateSignals));
-  const memoryContractInspectEntries = usableEntries.filter(memoryContractInspectBeforeUse);
+  const memoryContractInspectEntries = usableEntries.filter((entry) =>
+    !verifiedRecoveredHandoffDirectUseEligible(entry, args.verifiedHandoffMemoryIds)
+    && memoryContractInspectBeforeUse(entry)
+  );
   const memoryContractInspectIds = new Set(memoryContractInspectEntries.map((entry) => entry.memory_id));
   const memoryContractRiskReasonList = memoryContractRiskReasons(args.memoryEntries);
   if (trustedConflict.hasConflict) {
@@ -3533,6 +3555,24 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     ...(memory?.lifecycle.used_memory_ids ?? []),
     ...rehydrateHints.map((entry) => entry.memory_id),
   ]).slice(0, 10);
+  const recoveredStateHasVerifiedHandoff =
+    guide?.recovered_state.resumable === true
+    && rawTargetFiles.length > 0
+    && (guide?.recovered_state.acceptance_checks.length ?? 0) > 0;
+  const verifiedHandoffMemoryIds = new Set<string>();
+  if (recoveredStateHasVerifiedHandoff) {
+    for (const memoryId of guide?.recovered_state.handoff_ids ?? []) {
+      if (memoryId) verifiedHandoffMemoryIds.add(memoryId);
+    }
+    const rawTargetSet = new Set(rawTargetFiles.map((target) => target.trim().toLowerCase()).filter(Boolean));
+    const recoveredMemoryIdSet = new Set(memoryIds);
+    for (const entry of memory?.relevant_memories ?? []) {
+      if (!recoveredMemoryIdSet.has(entry.memory_id)) continue;
+      if (!contractEntryIsHandoff(entry)) continue;
+      if (!entry.target_files.some((target) => routeTargetMatchesExplicitTarget(target, rawTargetSet))) continue;
+      verifiedHandoffMemoryIds.add(entry.memory_id);
+    }
+  }
   const workflowIds = compactStrings(
     guide?.guidance.workflow_candidates.map((entry) => entry.workflow_id) ?? [],
   ).slice(0, 10);
@@ -3581,6 +3621,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
       evidenceTrail: memory?.evidence_trail ?? [],
     }),
     lifecycleCandidateSignals,
+    verifiedHandoffMemoryIds,
   });
   const summary = surfaces.historyUsed
     ? rawSummary

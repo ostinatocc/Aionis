@@ -1413,6 +1413,110 @@ test("product agent context contract renderer prioritizes inspect-gated current 
   assert.ok(context.memory_ids.includes("mem-inspect-procedure"));
 });
 
+test("product agent context admits verified recovered handoff as should_continue", () => {
+  const guidePacket = buildAionisGuidePacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    task: {
+      task_id: "task-verified-handoff",
+      run_id: "run-verified-handoff",
+      task_signature: "verified-handoff-context",
+      task_family: "coding",
+    },
+    planning: planningSummaryFixture(),
+    source_map: {
+      routes_used: ["/v1/guide"],
+      internal_surfaces_used: ["planning_summary"],
+    },
+  });
+  const verifiedGuidePacket = {
+    ...guidePacket,
+    guide_brief: {
+      ...guidePacket.guide_brief,
+      summary: "Recovered verified handoff with a passed validation command.",
+      history_used: true,
+      actionable_history_used: true,
+      recommended_posture: "reuse_supported_history" as const,
+      authority: "advisory" as const,
+      use_now: ["Continue verified handoff for src/total.ts; npm test passed."],
+      inspect_before_use: [],
+      do_not_use: [],
+    },
+    recovered_state: {
+      ...guidePacket.recovered_state,
+      state_summary: "Continue the verified route on src/total.ts.",
+      resumable: true,
+      handoff_ids: ["mem-verified-handoff"],
+      target_files: ["src/total.ts"],
+      acceptance_checks: ["npm test"],
+    },
+    memory_lifecycle: {
+      ...guidePacket.memory_lifecycle,
+      used_memory_ids: ["mem-verified-handoff"],
+    },
+  };
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "Continue the previous verified implementation route.",
+    },
+    nodes: [
+      {
+        id: "mem-verified-handoff",
+        type: "concept",
+        title: "Claude Code verified session handoff",
+        text_summary: "Verified continuation route: edit src/total.ts. Acceptance check passed: npm test.",
+        tier: "hot",
+        slots: {
+          memory_kind: "execution_memory",
+          lifecycle_state: "candidate",
+          compression_layer: "L2",
+          contract_trust: "advisory",
+          target_files: ["src/total.ts"],
+          acceptance_checks: ["npm test"],
+          execution_native_v1: {
+            schema_version: "execution_native_v1",
+            execution_kind: "execution_native",
+            summary_kind: "handoff",
+            compression_layer: "L2",
+            contract_trust: "advisory",
+            task_signature: "verified-handoff-context",
+            workflow_signature: "verified-handoff-context:workspace",
+            anchor_kind: "execution",
+            anchor_level: "L2",
+            target_files: ["src/total.ts"],
+            next_action: "Continue the verified route on src/total.ts.",
+          },
+        },
+        confidence: 0.72,
+        salience: 0.92,
+      },
+    ],
+  });
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    guide_packet: verifiedGuidePacket,
+    memory_packet: memoryPacket,
+    context_compaction_profile: "aggressive",
+  });
+
+  assert.ok(context.use_now_memory_ids.includes("mem-verified-handoff"));
+  assert.equal(context.inspect_before_use_memory_ids.includes("mem-verified-handoff"), false);
+  assert.ok(context.command_posture.some((entry) =>
+    entry.memory_id === "mem-verified-handoff"
+    && entry.posture === "should_continue"
+    && entry.surface === "current"
+  ));
+  assert.deepEqual(context.route_contract.active_targets.map((entry) => entry.target), ["src/total.ts"]);
+  assert.deepEqual(context.route_contract.pending_artifacts.map((entry) => entry.target), ["src/total.ts"]);
+  assert.match(context.prompt_text, /cmd .*go=m1/);
+  assert.match(context.prompt_text, /current: id=m1 .*k=handoff/);
+});
+
 test("execution transition classifier does not treat negated structured kind as failed", () => {
   const memoryPacket = buildAionisMemoryPacket({
     tenant_id: "tenant-local",
