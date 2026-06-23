@@ -34,7 +34,7 @@ Run the published image:
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.2.1
+  ghcr.io/ostinatocc/aionis:v0.2.2
 ```
 
 Check the Runtime:
@@ -87,7 +87,7 @@ docker run --rm \
   -e MEMORY_AUTH_MODE=api_key \
   -e MEMORY_API_KEYS_JSON='{"local-dev":"replace-me"}' \
   -e AIONIS_LISTEN_HOST=0.0.0.0 \
-  ghcr.io/ostinatocc/aionis:v0.2.1
+  ghcr.io/ostinatocc/aionis:v0.2.2
 ```
 
 Then call product routes with either `Authorization: Bearer <key>` or
@@ -112,17 +112,17 @@ docker rm -f aionis-release-smoke
 Create a release:
 
 ```bash
-git tag -a v0.2.1 -m "Aionis v0.2.1"
-git push origin main v0.2.1
-gh release create v0.2.1 \
+git tag -a v0.2.2 -m "Aionis v0.2.2"
+git push origin main v0.2.2
+gh release create v0.2.2 \
   --repo ostinatocc/Aionis \
-  --title "Aionis v0.2.1" \
-  --notes-file docs/releases/v0.2.1.md
+  --title "Aionis v0.2.2" \
+  --notes-file docs/releases/v0.2.2.md
 ```
 
 The Docker workflow publishes:
 
 ```text
-ghcr.io/ostinatocc/aionis:v0.2.1
+ghcr.io/ostinatocc/aionis:v0.2.2
 ghcr.io/ostinatocc/aionis:latest
 ```

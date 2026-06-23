@@ -7,8 +7,8 @@ MCP clients can use governed execution memory without a custom host adapter.
 
 Standalone adapter repo:
 [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp).
-The Runtime repository keeps a bundled copy for compatibility, tests, and
-local development.
+The Runtime repository owns the product API contract and validates the
+published MCP bridge through external package smoke tests.
 
 ## Why MCP
 

@@ -9,7 +9,7 @@ Memory is not recall. Memory is state.
 
 Docs: [docs.aionis.work](https://docs.aionis.work)
 
-Current release: **v0.2.1 public beta**. Use it today as a local Runtime,
+Current release: **v0.2.2 public beta**. Use it today as a local Runtime,
 MCP bridge, TypeScript SDK, Memory Firewall, and managed-server-ready Runtime
 for agent execution memory.
 
@@ -47,7 +47,7 @@ Docker users can run the Runtime directly:
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.2.1
+  ghcr.io/ostinatocc/aionis:v0.2.2
 ```
 
 Then start the local Runtime from the generated checkout:
@@ -77,8 +77,8 @@ Claude Code plugin path:
 
 The Claude Code plugin is maintained in the dedicated
 [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code)
-adapter repo. This Runtime repo keeps a bundled copy for compatibility and
-local development.
+adapter repo. This Runtime repo owns the product APIs, execution-memory
+semantics, and validation loops that the plugin calls.
 
 The plugin installs user-level Aionis MCP plus lifecycle hooks. It uses stable
 workspace scopes without writing hook files into every project. After that, run

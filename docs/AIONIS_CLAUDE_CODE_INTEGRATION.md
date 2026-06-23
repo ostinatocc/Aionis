@@ -23,8 +23,8 @@ Then in Claude Code:
 
 The official Claude Code plugin lives in
 [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code).
-The Runtime repository keeps a bundled copy so existing local installs and
-Runtime development remain stable.
+The Runtime repository owns the product API contract, execution-memory
+semantics, and validation loops that the plugin calls.
 
 The plugin loads:
 
