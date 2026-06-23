@@ -19,9 +19,6 @@ import {
   createGenericAgentHostTemplate,
 } from "../../src/adapters/host-integration.ts";
 import {
-  handleAionisMcpTool,
-} from "../../packages/aionis-mcp/src/tools.ts";
-import {
   asRecord,
   assertCondition,
 } from "./runtime-agent-loop.ts";
@@ -314,29 +311,6 @@ async function main() {
       standardPrompt.includes("INSPECT_FIRST is reference-only evidence and must not replace SHOULD_CONTINUE"),
       "standard command posture prompt missing inspect-only priority contract",
     );
-
-    const mcpOutput = await handleAionisMcpTool(aionis, "aionis_context", {
-      run_id: `${runId}:mcp`,
-      task_signature: TASK_SIGNATURE,
-      workflow_signature: WORKFLOW_SIGNATURE,
-      query_text: queryText,
-      agent_id: AGENT_ID,
-      team_id: TEAM_ID,
-      role: "reviewer",
-      context: {
-        task_signature: TASK_SIGNATURE,
-        workflow_signature: WORKFLOW_SIGNATURE,
-      },
-      mode: "full_power",
-      context_mode: "compact_agent",
-      limit: 10,
-    });
-    const mcpStructured = asRecord(mcpOutput.structuredContent);
-    assertCondition(!!mcpStructured, "MCP aionis_context missing structuredContent");
-    stringSetIncludes(textArray(mcpStructured.should_continue_memory_ids), currentId, "MCP should_continue ids");
-    stringSetIncludes(textArray(mcpStructured.must_not_memory_ids), failedId, "MCP must_not ids");
-    stringSetIncludes(textArray(mcpStructured.inspect_first_memory_ids), contestedId, "MCP inspect_first ids");
-    stringSetIncludes(textArray(mcpStructured.rehydrate_first_memory_ids), rehydrateId, "MCP rehydrate_first ids");
 
     const adapter = createExecutionMemoryAdapter({
       client: aionis,

@@ -4,7 +4,6 @@ import fs from "node:fs";
 import path from "node:path";
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
-const ALLOWED_PRODUCT_PACKAGES = ["aionis-claude-code", "aionis-mcp", "aionis-sdk", "create-aionis"];
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -21,13 +20,12 @@ test("root scripts start the focused Runtime directly", () => {
   assert.equal(rootPkg.scripts["runtime:pack:dry-run"], undefined);
 });
 
-test("focused Runtime keeps only product package entrypoints outside core startup", () => {
+test("focused Runtime does not vendor adapter package entrypoints outside core startup", () => {
   assert.equal(fs.existsSync(path.join(ROOT, "apps")), false, "apps wrapper should be deleted");
   assert.equal(fs.existsSync(path.join(ROOT, "examples")), false, "example wrappers should be deleted");
 
   const packagesDir = path.join(ROOT, "packages");
-  assert.equal(fs.existsSync(packagesDir), true, "publishable SDK and installer packages should exist");
-  assert.deepEqual(fs.readdirSync(packagesDir).sort(), ALLOWED_PRODUCT_PACKAGES);
+  assert.equal(fs.existsSync(packagesDir), false, "publishable SDK, MCP, installer, and plugin packages live in standalone repos");
 });
 
 test("root startup script owns local Runtime env", () => {

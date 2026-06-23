@@ -32,7 +32,7 @@ Flight Recorder and operator snapshots.
 
 | Goal | Use | First command | Source |
 |---|---|---|---|
-| Install the Runtime locally | `@aionis/create` | `npx @aionis/create@latest` | [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) |
+| Install the Runtime locally | `@aionis/create` | `npx @aionis/create@latest` | [ostinatocc/aionis-create](https://github.com/ostinatocc/aionis-create) |
 | Integrate from a TypeScript host | `@aionis/sdk` | `npm install @aionis/sdk` | [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) |
 | Connect any MCP client | `@aionis/mcp` | `npx @aionis/mcp@latest --base-url http://127.0.0.1:3001` | [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) |
 | Give Claude Code automatic memory hooks | Claude Code plugin | `/plugin marketplace add https://github.com/ostinatocc/aionis-claude-code` | [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code) |
@@ -113,18 +113,15 @@ npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope-from workspace
 
 The TypeScript SDK is maintained in the dedicated
 [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) package repo.
-This Runtime repo keeps a bundled copy for API contract tests and local
-development.
-
 The MCP bridge is maintained in the dedicated
 [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) adapter repo.
-This Runtime repo keeps a bundled copy for compatibility and local development.
 
 Package boundary:
 
 | Repository | Owns |
 |---|---|
-| [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) | Runtime core, product APIs, docs, examples, Docker image, installer workspace, and compatibility copies used for contract tests. |
+| [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) | Runtime core, product APIs, docs, examples, Docker image, and Runtime validation loops. |
+| [ostinatocc/aionis-create](https://github.com/ostinatocc/aionis-create) | Published one-command Runtime installer package. |
 | [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) | Published TypeScript SDK package. |
 | [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) | Published MCP stdio bridge package. |
 | [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code) | Claude Code plugin manifest, lifecycle hooks, and helper package. |
@@ -365,8 +362,8 @@ Install the Runtime, SDK, and MCP bridge with one command:
 npx @aionis/create@latest
 ```
 
-This clones the Runtime, installs dependencies, writes `.env`, builds the
-workspace packages, and runs the no-key first-value demo.
+This clones the Runtime, installs dependencies, writes `.env`, and runs the
+no-key first-value demo.
 
 For full SDK integration with recall-backed guide output:
 
@@ -479,10 +476,12 @@ smoke:
 npm run -s runtime:smoke:external-packages
 ```
 
-That loop packs `@aionis/sdk`, `@aionis/mcp`, and `@aionis/create`, installs
-them into a temporary external Node project, then verifies the SDK product loop,
-the MCP stdio tool path, and the installer/MCP CLI entrypoints against a real
-Runtime.
+That loop installs the published `@aionis/sdk`, `@aionis/mcp`, and
+`@aionis/create` package specs into a temporary external Node project, then
+verifies the SDK product loop, the MCP stdio tool path, and the installer/MCP
+CLI entrypoints against a real Runtime. Override the package specs with
+`AIONIS_EXTERNAL_SMOKE_SDK_SPEC`, `AIONIS_EXTERNAL_SMOKE_MCP_SPEC`, and
+`AIONIS_EXTERNAL_SMOKE_CREATE_SPEC` when validating prerelease tarballs.
 
 Not sure which entrypoint to use? See the
 [quickstart matrix](docs/AIONIS_QUICKSTART_MATRIX.md).

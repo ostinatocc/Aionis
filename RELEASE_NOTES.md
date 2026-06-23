@@ -94,9 +94,6 @@ Before publishing this release, run:
 
 ```bash
 npm run -s typecheck
-npm run -s sdk:source-sync
-npm run -s packages:build
-npm run -s packages:test
 npm run -s lite:test
 npm run -s runtime:smoke:external-packages
 npm run -s runtime:smoke:fresh-install
@@ -106,30 +103,30 @@ If an embedding-backed quickstart is needed, provide `OPENAI_API_KEY` or
 `MINIMAX_API_KEY`. The default fresh install path intentionally supports
 `EMBEDDING_PROVIDER=none`.
 
-For pre-publish candidate validation, pack all three workspaces and pass them
-to the fresh install smoke:
+For pre-publish candidate validation of external packages, pass explicit package
+specs or tarballs to the fresh install smoke:
 
 ```bash
-tmpdir=$(mktemp -d /tmp/aionis-v020-pack-XXXXXX)
-npm pack --workspace @aionis/create --pack-destination "$tmpdir"
-npm pack --workspace @aionis/sdk --pack-destination "$tmpdir"
-npm pack --workspace @aionis/mcp --pack-destination "$tmpdir"
-
-AIONIS_FRESH_INSTALL_CREATE_SPEC="$tmpdir/aionis-create-0.2.0.tgz" \
-AIONIS_FRESH_INSTALL_SDK_SPEC="$tmpdir/aionis-sdk-0.2.22.tgz" \
-AIONIS_FRESH_INSTALL_MCP_SPEC="$tmpdir/aionis-mcp-0.2.0.tgz" \
+AIONIS_FRESH_INSTALL_CREATE_SPEC="@aionis/create@latest" \
+AIONIS_FRESH_INSTALL_SDK_SPEC="@aionis/sdk@latest" \
+AIONIS_FRESH_INSTALL_MCP_SPEC="@aionis/mcp@latest" \
 AIONIS_FRESH_INSTALL_REPO="file:///absolute/path/to/Aionis" \
 npm run -s runtime:smoke:fresh-install
 ```
 
 ## Publish Order
 
-Publish packages in dependency order:
+Publish packages from their standalone repositories in dependency order:
 
 ```bash
-npm publish --workspace @aionis/sdk --access public
-npm publish --workspace @aionis/mcp --access public
-npm publish --workspace @aionis/create --access public
+# in ostinatocc/aionis-sdk
+npm publish --access public
+
+# in ostinatocc/aionis-mcp
+npm publish --access public
+
+# in the installer package repository
+npm publish --access public
 ```
 
 Then create a GitHub release/tag:

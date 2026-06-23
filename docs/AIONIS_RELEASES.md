@@ -6,9 +6,9 @@ Status: public Runtime, npm, MCP, SDK, and Docker release path
 
 | Artifact | Current channel | Purpose |
 |---|---:|---|
-| GitHub Runtime source | `v0.2.x` tags | Source release for the Runtime, product APIs, docs, examples, Docker build, installer workspace, and compatibility copies used by contract tests. |
+| GitHub Runtime source | `v0.2.x` tags | Source release for the Runtime, product APIs, docs, examples, Docker build, and Runtime validation loops. |
 | Docker image | `ghcr.io/ostinatocc/aionis:<tag>` | Local-first Aionis Runtime container with persistent SQLite state under `/data`. |
-| `@aionis/create` | npm latest | One-command installer for Runtime plus SDK/MCP packages. |
+| `@aionis/create` | npm latest / [repo](https://github.com/ostinatocc/aionis-create) | One-command installer for Runtime plus SDK/MCP packages. |
 | `@aionis/sdk` | npm latest / [repo](https://github.com/ostinatocc/aionis-sdk) | TypeScript facade over Aionis product APIs. |
 | `@aionis/mcp` | npm latest / [repo](https://github.com/ostinatocc/aionis-mcp) | MCP stdio bridge for Claude Code, Cursor, and other MCP clients. |
 | `@aionis/claude-code` and Claude Code plugin | npm latest / [repo](https://github.com/ostinatocc/aionis-claude-code) | Claude Code lifecycle hooks plus plugin marketplace manifest. |
@@ -20,7 +20,8 @@ new patch tag instead of moving the old one.
 
 | Repository | Release responsibility |
 |---|---|
-| [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) | Runtime source tags, Docker image, product docs, examples, installer workspace, and API-contract compatibility copies. |
+| [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) | Runtime source tags, Docker image, product docs, examples, and Runtime validation loops. |
+| [ostinatocc/aionis-create](https://github.com/ostinatocc/aionis-create) | `@aionis/create` npm package and installer releases. |
 | [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) | `@aionis/sdk` npm package and SDK releases. |
 | [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) | `@aionis/mcp` npm package and MCP adapter releases. |
 | [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code) | Claude Code plugin releases and `@aionis/claude-code` npm helper releases. |

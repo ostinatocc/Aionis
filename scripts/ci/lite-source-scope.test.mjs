@@ -37,13 +37,6 @@ const ALLOWED_JOB_FILES = [
   "associative-linking-lib.ts",
 ];
 
-const ALLOWED_PACKAGE_DIRS = [
-  "aionis-claude-code",
-  "aionis-mcp",
-  "aionis-sdk",
-  "create-aionis",
-];
-
 function listSourceFiles(dir) {
   const out = [];
   for (const name of fs.readdirSync(dir)) {
@@ -85,62 +78,30 @@ test("lite repo keeps only kernel-linked job helpers", () => {
   assert.equal(fs.existsSync(path.join(jobsDir, "fixtures")), false, "src/jobs/fixtures should be absent in lite repo");
 });
 
-test("focused repo keeps only publishable SDK and installer package surfaces", () => {
+test("focused repo keeps Runtime source only and does not vendor adapter package sources", () => {
   assert.equal(fs.existsSync(path.join(ROOT, "apps")), false, "apps wrapper surface should be absent");
   assert.equal(fs.existsSync(path.join(ROOT, "examples")), false, "example wrapper surface should be absent");
-  const packagesDir = path.join(ROOT, "packages");
-  assert.equal(fs.existsSync(packagesDir), true, "packages should contain publishable product entrypoints");
-  assert.deepEqual(fs.readdirSync(packagesDir).sort(), ALLOWED_PACKAGE_DIRS);
+  assert.equal(fs.existsSync(path.join(ROOT, "packages")), false, "package sources belong in split package repos");
+  assert.equal(fs.existsSync(path.join(ROOT, "claude-plugins")), false, "Claude Code plugin source belongs in the split plugin repo");
+  assert.equal(fs.existsSync(path.join(ROOT, ".claude-plugin")), false, "Claude plugin marketplace metadata belongs in the split plugin repo");
 });
 
-test("workspace packages stay product-entrypoint only and do not import Runtime core", () => {
+test("root package stays Runtime-only and delegates adapters to external packages", () => {
   const packageJson = readJson("package.json");
-  assert.deepEqual(packageJson.workspaces, [
-    "packages/aionis-sdk",
-    "packages/aionis-mcp",
-    "packages/create-aionis",
-    "packages/aionis-claude-code",
-  ]);
-  assert.equal(packageJson.scripts?.["packages:build"], "npm run -w @aionis/sdk -s build && npm run -w @aionis/mcp -s build && npm run -w @aionis/create -s build && npm run -w @aionis/claude-code -s build");
-  assert.equal(packageJson.scripts?.["packages:test"], "npm run -w @aionis/sdk -s test && npm run -w @aionis/mcp -s test && npm run -w @aionis/create -s test && npm run -w @aionis/claude-code -s test");
-
-  const sdkPackage = readJson("packages/aionis-sdk/package.json");
-  assert.equal(sdkPackage.name, "@aionis/sdk");
-  assert.equal(sdkPackage.private, undefined);
-  assert.equal(sdkPackage.exports?.["."]?.import, "./dist/index.js");
-  assert.equal(sdkPackage.exports?.["."]?.types, "./dist/index.d.ts");
-  assert.equal(sdkPackage.publishConfig?.access, "public");
-
-  const mcpPackage = readJson("packages/aionis-mcp/package.json");
-  assert.equal(mcpPackage.name, "@aionis/mcp");
-  assert.equal(mcpPackage.private, undefined);
-  assert.equal(mcpPackage.bin?.["aionis-mcp"], "dist/index.js");
-  assert.equal(mcpPackage.dependencies?.["@aionis/sdk"], `^${sdkPackage.version}`);
-  assert.equal(mcpPackage.publishConfig?.access, "public");
-
-  const createPackage = readJson("packages/create-aionis/package.json");
-  assert.equal(createPackage.name, "@aionis/create");
-  assert.equal(createPackage.private, undefined);
-  assert.equal(createPackage.bin?.["create-aionis"], "dist/index.js");
-  assert.equal(createPackage.publishConfig?.access, "public");
-
-  const claudeCodePackage = readJson("packages/aionis-claude-code/package.json");
-  assert.equal(claudeCodePackage.name, "@aionis/claude-code");
-  assert.equal(claudeCodePackage.private, undefined);
-  assert.equal(claudeCodePackage.bin?.["aionis-claude-code"], "dist/index.js");
-  assert.equal(claudeCodePackage.dependencies?.["@aionis/sdk"], `^${sdkPackage.version}`);
-  assert.equal(claudeCodePackage.publishConfig?.access, "public");
-
-  const runtimeSdk = fs.readFileSync(path.join(ROOT, "src", "sdk.ts"), "utf8");
-  const packageSdk = fs.readFileSync(path.join(ROOT, "packages", "aionis-sdk", "src", "index.ts"), "utf8");
-  assert.equal(packageSdk, runtimeSdk, "@aionis/sdk source should stay in sync with src/sdk.ts until SDK becomes canonical");
-
-  for (const packageDir of ALLOWED_PACKAGE_DIRS) {
-    for (const file of listSourceFiles(path.join(ROOT, "packages", packageDir, "src"))) {
-      const source = fs.readFileSync(file, "utf8");
-      assert.doesNotMatch(source, /from\s+["']\.\.\/\.\.\/\.\.\/src\/(?:routes|memory|execution|store|kernel)\//, `${path.relative(ROOT, file)} should not import Runtime core`);
-    }
-  }
+  assert.equal(packageJson.workspaces, undefined);
+  assert.equal(packageJson.scripts?.["sdk:source-sync"], undefined);
+  assert.equal(packageJson.scripts?.["packages:build"], undefined);
+  assert.equal(packageJson.scripts?.["packages:test"], undefined);
+  assert.equal(packageJson.scripts?.["test:focused"], "npm run -s typecheck && npm run -s lite:test");
+  assert.equal(packageJson.scripts?.["build"], "npm run -s typecheck");
+  assert.equal(
+    packageJson.scripts?.["runtime:smoke:external-packages"],
+    "npx tsx scripts/e2e/external-package-entrypoint-smoke.ts",
+  );
+  assert.equal(
+    packageJson.scripts?.["runtime:e2e:command-posture"],
+    "npx tsx scripts/e2e/command-posture-product-loop.ts",
+  );
 });
 
 test("focused package does not expose external eval or demo runner entrypoints", () => {
@@ -186,7 +147,7 @@ test("focused package exposes developer quickstarts through the Runtime e2e surf
   );
   assert.equal(
     packageJson.scripts?.["runtime:smoke:external-packages"],
-    "npm run -s packages:build && npx tsx scripts/e2e/external-package-entrypoint-smoke.ts",
+    "npx tsx scripts/e2e/external-package-entrypoint-smoke.ts",
   );
   assert.equal(
     packageJson.scripts?.["runtime:e2e:memory-firewall-ab"],

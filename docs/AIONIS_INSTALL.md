@@ -15,7 +15,7 @@ Choose the entry point by what you are connecting:
 
 | Goal | Package or plugin | Source |
 |---|---|---|
-| Install and run Aionis Runtime | `@aionis/create` | [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) |
+| Install and run Aionis Runtime | `@aionis/create` | [ostinatocc/aionis-create](https://github.com/ostinatocc/aionis-create) |
 | Call Runtime APIs from an app or agent host | `@aionis/sdk` | [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) |
 | Add Aionis tools to an MCP-capable client | `@aionis/mcp` | [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) |
 | Give Claude Code automatic before/after hooks | Claude Code plugin or `@aionis/claude-code` | [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code) |
@@ -140,19 +140,19 @@ The installer performs product setup:
 1. clone `https://github.com/ostinatocc/Aionis.git`
 2. run `npm install`
 3. write `.env` with `EMBEDDING_PROVIDER=none` unless a provider/key is selected
-4. build `@aionis/sdk`, `@aionis/mcp`, `@aionis/create`, and `@aionis/claude-code`
-5. run the selected quickstart; `first-value` can run without an API key, while
+4. run the selected quickstart; `first-value` can run without an API key, while
    recall-backed quickstarts require the selected embedding key
-6. optionally run Claude Code onboarding when `--with-claude-code` is set
+5. optionally run Claude Code onboarding when `--with-claude-code` is set
 
 Repository boundary:
 
 | Repository | Role |
 |---|---|
-| [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) | Runtime core, product HTTP APIs, docs, examples, Docker image, installer workspace, and compatibility copies for contract tests. |
-| [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) | Published `@aionis/sdk` package source. |
-| [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) | Published `@aionis/mcp` package source. |
-| [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code) | Claude Code plugin and `@aionis/claude-code` helper package source. |
+| [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) | Runtime core, product HTTP APIs, docs, examples, Docker image, and product validation loops. |
+| [ostinatocc/aionis-create](https://github.com/ostinatocc/aionis-create) | Standalone published `@aionis/create` installer package repo. |
+| [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) | Standalone published `@aionis/sdk` package repo. |
+| [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) | Standalone published `@aionis/mcp` package repo. |
+| [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code) | Standalone Claude Code plugin and `@aionis/claude-code` helper repo. |
 
 Runtime startup works in no-key mode. If no key is detected, the generated
 `.env` keeps `EMBEDDING_PROVIDER=none`, so this works:
@@ -179,17 +179,12 @@ From this repo:
 ```bash
 node --version   # must be >= 22.5.0 and include node:sqlite
 npm install
-npm run -s packages:build
-npm run -s packages:test
+npm run -s typecheck
+npm run -s lite:test
 ```
 
-Run the installer locally:
-
-```bash
-npx tsx packages/create-aionis/src/index.ts ./Aionis-local \
-  --provider openai \
-  --quickstart none
-```
+The installer source lives outside this repo. Use published `@aionis/create`
+for install-path validation.
 
 ## Fresh Install Smoke
 

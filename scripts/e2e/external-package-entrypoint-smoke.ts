@@ -7,27 +7,23 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { asRecord, assertCondition, repoRoot } from "./runtime-agent-loop.ts";
+import { asRecord, assertCondition } from "./runtime-agent-loop.ts";
 import { closeRuntime, openRuntime } from "./multi-agent-execution-memory-loop.ts";
 import { formatE2eError } from "./e2e-error.ts";
 
-type PackResult = {
-  name: string;
-  version: string;
-  filename: string;
-};
-
 type ExternalPackageInstall = {
   tmpRoot: string;
-  packDir: string;
   appDir: string;
-  sdkTarball: string;
-  mcpTarball: string;
-  createTarball: string;
+  sdkSpec: string;
+  mcpSpec: string;
+  createSpec: string;
 };
 
 const SDK_MARKER = "EXTERNAL_PACKAGE_SMOKE_SDK_MEMORY";
 const MCP_MARKER = "EXTERNAL_PACKAGE_SMOKE_MCP_MEMORY";
+const DEFAULT_SDK_SPEC = "@aionis/sdk@latest";
+const DEFAULT_MCP_SPEC = "@aionis/mcp@latest";
+const DEFAULT_CREATE_SPEC = "@aionis/create@latest";
 
 function run(command: string, args: string[], options: {
   cwd: string;
@@ -58,43 +54,17 @@ function nodeModulesBin(appDir: string, binName: string): string {
     : path.join(appDir, "node_modules", ".bin", binName);
 }
 
-function parsePackResult(raw: string, label: string): PackResult {
-  const parsed = JSON.parse(raw.trim()) as unknown;
-  const row = Array.isArray(parsed) ? asRecord(parsed[0]) : asRecord(parsed);
-  assertCondition(row, `${label} npm pack did not return JSON`);
-  assertCondition(typeof row.name === "string", `${label} pack result missing name`);
-  assertCondition(typeof row.version === "string", `${label} pack result missing version`);
-  assertCondition(typeof row.filename === "string", `${label} pack result missing filename`);
-  return row as PackResult;
-}
-
-function packWorkspacePackage(packageDir: string, packDir: string): string {
-  const raw = run(npmCommand(), [
-    "pack",
-    "--json",
-    "--pack-destination",
-    packDir,
-    packageDir,
-  ], {
-    cwd: repoRoot,
-    label: `npm pack ${packageDir}`,
-  });
-  const packed = parsePackResult(raw, packageDir);
-  const tarball = path.join(packDir, packed.filename);
-  assertCondition(fs.existsSync(tarball), `${packed.name} tarball was not created`);
-  return tarball;
+function packageSpecFromEnv(envName: string, fallback: string): string {
+  return process.env[envName]?.trim() || fallback;
 }
 
 function prepareExternalInstall(): ExternalPackageInstall {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-external-package-smoke-"));
-  const packDir = path.join(tmpRoot, "packs");
   const appDir = path.join(tmpRoot, "external-app");
-  fs.mkdirSync(packDir, { recursive: true });
   fs.mkdirSync(appDir, { recursive: true });
-
-  const sdkTarball = packWorkspacePackage("./packages/aionis-sdk", packDir);
-  const mcpTarball = packWorkspacePackage("./packages/aionis-mcp", packDir);
-  const createTarball = packWorkspacePackage("./packages/create-aionis", packDir);
+  const sdkSpec = packageSpecFromEnv("AIONIS_EXTERNAL_SMOKE_SDK_SPEC", DEFAULT_SDK_SPEC);
+  const mcpSpec = packageSpecFromEnv("AIONIS_EXTERNAL_SMOKE_MCP_SPEC", DEFAULT_MCP_SPEC);
+  const createSpec = packageSpecFromEnv("AIONIS_EXTERNAL_SMOKE_CREATE_SPEC", DEFAULT_CREATE_SPEC);
 
   fs.writeFileSync(
     path.join(appDir, "package.json"),
@@ -110,16 +80,16 @@ function prepareExternalInstall(): ExternalPackageInstall {
     "--silent",
     "--no-audit",
     "--fund=false",
-    sdkTarball,
-    mcpTarball,
-    createTarball,
+    sdkSpec,
+    mcpSpec,
+    createSpec,
   ], {
     cwd: appDir,
     label: "external npm install",
     maxOutputChars: 10_000,
   });
 
-  return { tmpRoot, packDir, appDir, sdkTarball, mcpTarball, createTarball };
+  return { tmpRoot, appDir, sdkSpec, mcpSpec, createSpec };
 }
 
 function writeExternalSdkSmoke(appDir: string): string {
@@ -422,9 +392,9 @@ async function main() {
       },
       package_install: {
         app_dir: install.appDir,
-        sdk_tarball: path.basename(install.sdkTarball),
-        mcp_tarball: path.basename(install.mcpTarball),
-        create_tarball: path.basename(install.createTarball),
+        sdk_spec: install.sdkSpec,
+        mcp_spec: install.mcpSpec,
+        create_spec: install.createSpec,
       },
       cli_entrypoints: cli,
       sdk_entrypoint: sdk,

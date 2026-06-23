@@ -239,9 +239,9 @@ into the Agent prompt.
 | Area | Main files |
 |---|---|
 | Product facade routes | `src/routes/product-facade.ts` |
-| SDK facade | standalone package repo [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk); Runtime API-contract mirror at `src/sdk.ts` and bundled compatibility copy at `packages/aionis-sdk/src/index.ts` |
-| MCP bridge | standalone adapter repo [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp); bundled compatibility copy at `packages/aionis-mcp/src/index.ts`, `packages/aionis-mcp/src/server.ts`, `packages/aionis-mcp/src/tools.ts` |
-| Claude Code lifecycle integration | standalone plugin repo [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code); Runtime compatibility copy at `claude-plugins/aionis` and helper workspace `packages/aionis-claude-code` |
+| SDK facade | standalone package repo [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk); Runtime keeps only the API-contract mirror at `src/sdk.ts` for local product tests |
+| MCP bridge | standalone adapter repo [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp); Runtime verifies the published package through external package smoke tests |
+| Claude Code lifecycle integration | standalone plugin repo [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code); Runtime documents the integration but does not vendor plugin source |
 | Product output contracts | `src/memory/product-output-contract.ts` |
 | Product output assembly | `src/memory/product-output-assembler.ts` |
 | Lifecycle adjudication | `src/memory/memory-lifecycle-adjudicator.ts`, `src/memory/lifecycle-candidate-inference.ts` |
