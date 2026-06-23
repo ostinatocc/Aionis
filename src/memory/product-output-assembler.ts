@@ -1951,14 +1951,34 @@ function contractEntryIsHandoff(entry: MemoryPacketEntry): boolean {
   return kind.includes("handoff") || !!entry.execution_state?.handoff_target;
 }
 
-function verifiedRecoveredHandoffDirectUseEligible(entry: MemoryPacketEntry, verifiedHandoffMemoryIds: Set<string>): boolean {
-  return verifiedHandoffMemoryIds.has(entry.memory_id)
+function selfVerifiedActiveHandoffDirectUseEligible(entry: MemoryPacketEntry): boolean {
+  if (memoryEntryBlocked(entry)) return false;
+  if (entry.lifecycle_state === "contested" || entry.lifecycle_state === "rehydration_candidate") return false;
+  if (!memoryEntryIsExecutionScoped(entry)) return false;
+  if (!contractEntryIsHandoff(entry) && !contractEntryIsCurrentState(entry)) return false;
+  if (entry.target_files.length === 0) return false;
+  if (!entry.execution_state?.next_action_hint) return false;
+  if (entry.confidence < 0.7) return false;
+  const text = `${entry.title ?? ""} ${entry.summary} ${entry.execution_state.execution_kind ?? ""} ${entry.execution_state.next_action_hint}`.toLowerCase();
+  const activeContinuationKind =
+    /\bactive[_ -]?continuation[_ -]?handoff\b/.test(text)
+    || /\bverified[_ -]?session[_ -]?handoff\b/.test(text);
+  const verifiedOutcome =
+    /\bverified\b.{0,120}\b(?:passed|validation|acceptance|route|handoff|implementation)\b/.test(text)
+    || /\b(?:acceptance check|validation command|validation)\b.{0,80}\bpassed\b/.test(text)
+    || /\bpassed\b.{0,80}\b(?:acceptance check|validation command|validation)\b/.test(text);
+  return activeContinuationKind && verifiedOutcome;
+}
+
+function verifiedHandoffDirectUseEligible(entry: MemoryPacketEntry, verifiedHandoffMemoryIds: Set<string>): boolean {
+  const recoveredVerified = verifiedHandoffMemoryIds.has(entry.memory_id)
     && !memoryEntryBlocked(entry)
     && entry.lifecycle_state !== "contested"
     && entry.lifecycle_state !== "rehydration_candidate"
     && memoryEntryIsExecutionScoped(entry)
     && contractEntryIsHandoff(entry)
     && entry.target_files.length > 0;
+  return recoveredVerified || selfVerifiedActiveHandoffDirectUseEligible(entry);
 }
 
 function contractInspectPriority(entry: MemoryPacketEntry): number {
@@ -3188,10 +3208,15 @@ function compileAgentContextSurfaces(args: {
       }))
       .map((entry) => entry.memory_id),
   );
+  const verifiedHandoffDirectUseIds = new Set(
+    args.memoryEntries
+      .filter((entry) => verifiedHandoffDirectUseEligible(entry, args.verifiedHandoffMemoryIds))
+      .map((entry) => entry.memory_id),
+  );
   const inspectEntries = args.memoryEntries.filter((entry) =>
     !rehydrateSurfaceIds.has(entry.memory_id)
     && !memoryEntryBlocked(entry)
-    && !verifiedRecoveredHandoffDirectUseEligible(entry, args.verifiedHandoffMemoryIds)
+    && !verifiedHandoffDirectUseEligible(entry, args.verifiedHandoffMemoryIds)
     && memoryEntryInspectBeforeUse(entry)
     && !lifecycleCandidateAdmittedUseNowIds.has(entry.memory_id)
   );
@@ -3200,7 +3225,7 @@ function compileAgentContextSurfaces(args: {
     && (
       memoryEntryUsable(entry)
       || lifecycleCandidateAdmittedUseNowIds.has(entry.memory_id)
-      || verifiedRecoveredHandoffDirectUseEligible(entry, args.verifiedHandoffMemoryIds)
+      || verifiedHandoffDirectUseEligible(entry, args.verifiedHandoffMemoryIds)
     )
   );
   const deniedPathTargets = deniedAgentActionPathTargets(args.memoryEntries);
@@ -3209,7 +3234,7 @@ function compileAgentContextSurfaces(args: {
     memoryEntryDirectUseEligible({
       entry,
       lifecycleCandidateAdmitted: lifecycleCandidateAdmittedUseNowIds.has(entry.memory_id),
-      verifiedRecoveredHandoff: verifiedRecoveredHandoffDirectUseEligible(entry, args.verifiedHandoffMemoryIds),
+      verifiedRecoveredHandoff: verifiedHandoffDirectUseEligible(entry, args.verifiedHandoffMemoryIds),
     })
   );
   const hasRawGuideSurface =
@@ -3223,11 +3248,13 @@ function compileAgentContextSurfaces(args: {
   const trustedWorkflowConflictInspectIds = new Set<string>();
   const premiseInspectIds = new Set(args.premiseFirewall.inspectBeforeUseMemoryIds.filter((memoryId) =>
     !lifecycleCandidateDirectUseProtectedIds.has(memoryId)
+    && !verifiedHandoffDirectUseIds.has(memoryId)
   ));
   const premiseDoNotUseIds = new Set(args.premiseFirewall.doNotUseMemoryIds);
   const premiseInspectBeforeUse = args.premiseFirewall.inspectBeforeUse.filter((line) =>
     !args.memoryEntries.some((entry) =>
-      lifecycleCandidateDirectUseProtectedIds.has(entry.memory_id) && textMatchesMemoryEntry(line, entry)
+      (lifecycleCandidateDirectUseProtectedIds.has(entry.memory_id) || verifiedHandoffDirectUseIds.has(entry.memory_id))
+      && textMatchesMemoryEntry(line, entry)
     )
   );
   const premiseRiskReasons = premiseInspectIds.size > 0
@@ -3236,9 +3263,12 @@ function compileAgentContextSurfaces(args: {
     || args.premiseFirewall.doNotUse.length > 0
       ? args.premiseFirewall.riskReasons
       : [];
-  const lifecycleCandidateInspectIds = new Set(lifecycleCandidateInspectMemoryIds(args.lifecycleCandidateSignals));
+  const lifecycleCandidateInspectIds = new Set(lifecycleCandidateInspectMemoryIds(args.lifecycleCandidateSignals).filter((memoryId) =>
+    !lifecycleCandidateDirectUseProtectedIds.has(memoryId)
+    && !verifiedHandoffDirectUseIds.has(memoryId)
+  ));
   const memoryContractInspectEntries = usableEntries.filter((entry) =>
-    !verifiedRecoveredHandoffDirectUseEligible(entry, args.verifiedHandoffMemoryIds)
+    !verifiedHandoffDirectUseEligible(entry, args.verifiedHandoffMemoryIds)
     && memoryContractInspectBeforeUse(entry)
   );
   const memoryContractInspectIds = new Set(memoryContractInspectEntries.map((entry) => entry.memory_id));

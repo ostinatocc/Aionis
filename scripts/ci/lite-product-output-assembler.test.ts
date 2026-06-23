@@ -1517,6 +1517,87 @@ test("product agent context admits verified recovered handoff as should_continue
   assert.match(context.prompt_text, /current: id=m1 .*k=handoff/);
 });
 
+test("product agent context admits self-verified active handoff without recovered_state membership", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "Continue the previous verified implementation route.",
+    },
+    nodes: [
+      {
+        id: "mem-self-verified-handoff",
+        type: "concept",
+        title: "Claude Code verified session handoff",
+        text_summary: "Claude Code completed a verified implementation route. npm test passed.",
+        tier: "hot",
+        slots: {
+          lifecycle_state: "candidate",
+          summary_kind: "handoff",
+          execution_kind: "active_continuation_handoff",
+          contract_trust: "advisory",
+          target_files: ["src/total.ts"],
+          next_action: "Continue through the verified Claude Code route in src/total.ts.",
+          acceptance_checks: ["npm test passed"],
+          execution_native_v1: {
+            summary_kind: "handoff",
+            execution_kind: "active_continuation_handoff",
+            contract_trust: "advisory",
+            target_files: ["src/total.ts"],
+            next_action: "Continue through the verified Claude Code route in src/total.ts.",
+            acceptance_checks: ["npm test passed"],
+          },
+        },
+        confidence: 0.95,
+        salience: 0.92,
+      },
+      {
+        id: "mem-unverified-handoff",
+        type: "concept",
+        title: "Unverified candidate handoff",
+        text_summary: "Continue the candidate handoff later.",
+        tier: "hot",
+        slots: {
+          lifecycle_state: "candidate",
+          summary_kind: "handoff",
+          target_files: ["src/other.ts"],
+          next_action: "Continue the candidate handoff.",
+          execution_native_v1: {
+            summary_kind: "handoff",
+            execution_kind: "candidate_handoff",
+            target_files: ["src/other.ts"],
+            next_action: "Continue the candidate handoff.",
+          },
+        },
+        confidence: 0.95,
+        salience: 0.9,
+      },
+    ],
+  });
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    context_compaction_profile: "aggressive",
+  });
+
+  assert.ok(context.use_now_memory_ids.includes("mem-self-verified-handoff"));
+  assert.equal(context.inspect_before_use_memory_ids.includes("mem-self-verified-handoff"), false);
+  assert.equal(context.use_now_memory_ids.includes("mem-unverified-handoff"), false);
+  assert.ok(context.inspect_before_use_memory_ids.includes("mem-unverified-handoff"));
+  assert.ok(context.command_posture.some((entry) =>
+    entry.memory_id === "mem-self-verified-handoff"
+    && entry.posture === "should_continue"
+    && entry.surface === "current"
+  ));
+  assert.ok(context.command_posture.some((entry) =>
+    entry.memory_id === "mem-unverified-handoff"
+    && entry.posture === "inspect_first"
+  ));
+});
+
 test("execution transition classifier does not treat negated structured kind as failed", () => {
   const memoryPacket = buildAionisMemoryPacket({
     tenant_id: "tenant-local",
