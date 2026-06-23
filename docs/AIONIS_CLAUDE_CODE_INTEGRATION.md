@@ -32,6 +32,13 @@ The plugin loads:
 - Aionis lifecycle hooks.
 - User-level workspace identity storage for stable cross-project scopes.
 
+With `@aionis/claude-code@0.2.7` or newer, Claude Code session end also writes
+a verified handoff when the session touched files and a validation command
+passed. That handoff includes target files, acceptance checks, the successful
+validation command, and failed commands as counter-evidence. The Runtime then
+compiles that verified handoff into the next `guide` as active execution
+context instead of leaving it as a vague session marker.
+
 Use `/aionis:doctor` to verify Runtime connectivity.
 
 The plugin defaults to `http://127.0.0.1:3101`. A plain Runtime still defaults
@@ -69,7 +76,7 @@ After that, run `claude` from any project. Hooks call Aionis through the SDK:
 | `PostToolUseFailure` | Record failed Bash/Edit/Write execution evidence. |
 | `PreCompact` | Record a compaction boundary marker. |
 | `PostCompact` | Record compacted summary as handoff evidence. |
-| `SessionEnd` | Record a session-end handoff marker. |
+| `SessionEnd` | Record a verified session handoff when files changed and validation passed; otherwise record a neutral session boundary. |
 
 MCP stays installed for explicit interactive actions. Hooks make Aionis part of
 the Claude Code lifecycle even when the Agent does not proactively call a tool.

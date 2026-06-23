@@ -90,6 +90,11 @@ PostToolUse / PostToolUseFailure -> Aionis observe
 PostCompact / SessionEnd -> Aionis handoff
 ```
 
+`@aionis/claude-code@0.2.7` and newer record verified session handoffs when
+Claude Code changed files and validation passed. The next run receives those
+target files, acceptance checks, and failed-command counter-evidence as active
+execution context.
+
 CLI fallback if you do not want to use Claude Code plugins:
 
 ```bash
@@ -676,8 +681,9 @@ npm run -s lite:start
 ```
 
 This plugin path gives Claude Code both Aionis MCP tools and lifecycle hooks.
-It defaults to `http://127.0.0.1:3101`. Use the raw MCP command below for
-Cursor, Zcode, or MCP-only hosts.
+It defaults to `http://127.0.0.1:3101` and records verified session handoffs
+after successful file changes. Use the raw MCP command below for Cursor, Zcode,
+or MCP-only hosts.
 
 Claude Code / MCP client setup:
 
