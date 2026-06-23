@@ -4441,6 +4441,19 @@ test("product effect assembler converts evaluator proof into measurable EffectRe
   assert.equal(productReport.feedback_signal_summary.source, "not_supplied");
   assert.equal(productReport.feedback_signal_summary.authority_mutation, false);
   assert.ok(productReport.training_candidates.some((candidate) => candidate.label === "positive"));
+  const traceSkillCandidate = productReport.training_candidates.find((candidate) =>
+    candidate.candidate_type === "trace_derived_skill"
+  );
+  assert.ok(traceSkillCandidate);
+  assert.equal(traceSkillCandidate.export_ready, true);
+  assert.ok(traceSkillCandidate.source_ids.includes("effect_kernel:continuity"));
+  assert.ok(traceSkillCandidate.source_ids.includes("run:run-aionis"));
+  assert.equal(traceSkillCandidate.trace_derived_skill?.contract_version, "aionis_trace_derived_skill_candidate_v1");
+  assert.equal(traceSkillCandidate.trace_derived_skill?.authority_state, "candidate");
+  assert.equal(traceSkillCandidate.trace_derived_skill?.export_policy.agent_prompt_included, false);
+  assert.equal(traceSkillCandidate.trace_derived_skill?.export_policy.runtime_mutation, false);
+  assert.ok(traceSkillCandidate.trace_derived_skill?.applies_when.includes("task_signature:runtime-continuation"));
+  assert.ok(traceSkillCandidate.trace_derived_skill?.procedure_steps.some((step) => /verified active path/i.test(step)));
   assert.ok(productReport.evidence.evidence_ids.includes("effect_kernel:continuity"));
 });
 

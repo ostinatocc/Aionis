@@ -36,6 +36,7 @@ import {
   type AionisRecallSourceTrace,
   type AionisMemoryUseReceipt,
   type AionisRiskLevel,
+  type AionisTraceDerivedSkillCandidate,
 } from "./product-output-contract.js";
 import {
   AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD,
@@ -6117,8 +6118,10 @@ function labelForKernel(score: EffectKernelComparison, sufficientEvidence: boole
 function buildTrainingCandidates(args: {
   report: KernelEffectReport;
   sufficientEvidence: boolean;
+  task?: ProductTask;
+  evidenceIds?: string[];
 }): AionisEffectReport["training_candidates"] {
-  return args.report.kernel_scores
+  const kernelCandidates = args.report.kernel_scores
     .filter((score) => score.delta !== 0 || score.status === "fail")
     .map((score) => {
       const label = labelForKernel(score, args.sufficientEvidence);
@@ -6132,6 +6135,131 @@ function buildTrainingCandidates(args: {
           ...score.regressions,
           `${score.capability_id} delta ${score.delta}`,
         ]).join("; "),
+      };
+    });
+  return [
+    ...kernelCandidates,
+    ...buildTraceDerivedSkillTrainingCandidates(args),
+  ];
+}
+
+function taskApplicabilityConditions(task: ProductTask | undefined): string[] {
+  return compactStrings([
+    task?.task_signature ? `task_signature:${task.task_signature}` : null,
+    task?.task_family ? `task_family:${task.task_family}` : null,
+    task?.task_id ? `task_id:${task.task_id}` : null,
+  ]);
+}
+
+function traceDerivedSkillName(score: EffectKernelComparison): string {
+  if (score.capability_id === "continuity") return "Continue verified execution state across sessions";
+  if (score.capability_id === "learning") return "Reuse verified workflow with feedback attribution";
+  return "Apply trace-derived execution lesson through Aionis gates";
+}
+
+function traceDerivedSkillSteps(score: EffectKernelComparison): string[] {
+  if (score.capability_id === "continuity") {
+    return [
+      "Recover the current Aionis guide before continuing the task.",
+      "Continue from the verified active path instead of rediscovering prior state.",
+      "Keep failed commands and abandoned branches as counter-evidence, not as routes.",
+      "Run the recorded acceptance checks before treating the continuation as reusable.",
+    ];
+  }
+  return [
+    "Use the workflow only when the task matches the recorded applicability conditions.",
+    "Inspect current repository state before applying the procedure.",
+    "Preserve counter-evidence from failed or demoted memories.",
+    "Send feedback attribution after the workflow succeeds or fails.",
+  ];
+}
+
+function traceDerivedSkillDoesNotApply(score: EffectKernelComparison): string[] {
+  return [
+    "No validation evidence is available for the source trace.",
+    "The current task is outside the recorded scope or task family.",
+    "A newer memory contests, suppresses, or supersedes the source trace.",
+    ...(score.regressions.length > 0 ? score.regressions.map((entry) => `regression:${entry}`) : []),
+  ];
+}
+
+function buildTraceDerivedSkillPayload(args: {
+  score: EffectKernelComparison;
+  task?: ProductTask;
+  evidenceIds?: string[];
+  exportReady: boolean;
+}): AionisTraceDerivedSkillCandidate {
+  const sourceTraceIds = compactStrings([
+    `effect_kernel:${args.score.capability_id}`,
+    args.task?.run_id ? `run:${args.task.run_id}` : null,
+    args.task?.task_signature ? `task_signature:${args.task.task_signature}` : null,
+    ...(args.evidenceIds ?? []),
+  ]);
+  const appliesWhen = compactStrings([
+    ...taskApplicabilityConditions(args.task),
+    args.score.capability_id === "continuity" ? "future_session_needs_verified_continuation" : null,
+    args.score.capability_id === "learning" ? "future_task_matches_verified_workflow_shape" : null,
+    ...args.score.signals.map((entry) => `signal:${entry}`),
+  ]);
+  const acceptanceChecks = compactStrings([
+    ...args.score.signals,
+    args.score.status === "pass" ? "effect_kernel_passed" : null,
+    args.exportReady ? "comparison_evidence_sufficient" : null,
+  ]);
+  return {
+    contract_version: "aionis_trace_derived_skill_candidate_v1",
+    skill_name: traceDerivedSkillName(args.score),
+    source_trace_ids: sourceTraceIds.length > 0 ? sourceTraceIds : [`effect_kernel:${args.score.capability_id}`],
+    source_signal_ids: args.score.signals,
+    applies_when: appliesWhen.length > 0 ? appliesWhen : [`capability:${args.score.capability_id}`],
+    does_not_apply_when: traceDerivedSkillDoesNotApply(args.score),
+    procedure_steps: traceDerivedSkillSteps(args.score),
+    target_files: [],
+    acceptance_checks: acceptanceChecks,
+    failure_counterexamples: args.score.regressions,
+    evidence_refs: compactStrings([
+      ...args.score.signals,
+      ...(args.evidenceIds ?? []),
+    ]),
+    authority_state: "candidate",
+    promotion_status: args.exportReady ? "promotion_ready" : "needs_feedback_attribution",
+    export_policy: {
+      agent_prompt_included: false,
+      runtime_mutation: false,
+      required_gate: "admission_and_promotion_gate",
+    },
+  };
+}
+
+function buildTraceDerivedSkillTrainingCandidates(args: {
+  report: KernelEffectReport;
+  sufficientEvidence: boolean;
+  task?: ProductTask;
+  evidenceIds?: string[];
+}): AionisEffectReport["training_candidates"] {
+  return args.report.kernel_scores
+    .filter((score) =>
+      (score.capability_id === "continuity" || score.capability_id === "learning")
+      && labelForKernel(score, args.sufficientEvidence) === "positive"
+    )
+    .map((score) => {
+      const exportReady = args.sufficientEvidence && args.report.status === "pass" && score.status !== "fail";
+      const traceDerivedSkill = buildTraceDerivedSkillPayload({
+        score,
+        task: args.task,
+        evidenceIds: args.evidenceIds,
+        exportReady,
+      });
+      return {
+        candidate_type: "trace_derived_skill",
+        source_ids: traceDerivedSkill.source_trace_ids,
+        label: "positive",
+        export_ready: exportReady,
+        reason: [
+          `Trace-derived skill candidate from ${score.capability_id} effect.`,
+          "Candidate is exportable only as controlled training material; direct use still requires admission and promotion gates.",
+        ].join(" "),
+        trace_derived_skill: traceDerivedSkill,
       };
     });
 }
@@ -6281,6 +6409,8 @@ export function buildAionisEffectReport(args: BuildAionisEffectReportArgs): Aion
   const trainingCandidates = buildTrainingCandidates({
     report: args.report,
     sufficientEvidence,
+    task: args.task,
+    evidenceIds: args.evidence_ids,
   });
 
   return parseAionisEffectReport({

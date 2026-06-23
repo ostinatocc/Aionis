@@ -2087,8 +2087,63 @@ export const AionisTrainingCandidateTypeSchema = z.enum([
   "workflow_selector",
   "forgetting_suppression",
   "authority_judgment",
+  "trace_derived_skill",
 ]);
 export type AionisTrainingCandidateType = z.infer<typeof AionisTrainingCandidateTypeSchema>;
+
+export const AionisTraceDerivedSkillCandidateSchema = z
+  .object({
+    contract_version: z.literal("aionis_trace_derived_skill_candidate_v1"),
+    skill_name: z.string().min(1).max(160),
+    source_trace_ids: z.array(z.string().min(1).max(256)).min(1).max(64),
+    source_signal_ids: z.array(z.string().min(1).max(256)).default([]),
+    applies_when: z.array(z.string().min(1).max(512)).min(1).max(16),
+    does_not_apply_when: z.array(z.string().min(1).max(512)).default([]),
+    procedure_steps: z.array(z.string().min(1).max(1024)).min(1).max(16),
+    target_files: z.array(z.string().min(1).max(512)).default([]),
+    acceptance_checks: z.array(z.string().min(1).max(512)).default([]),
+    failure_counterexamples: z.array(z.string().min(1).max(512)).default([]),
+    evidence_refs: z.array(z.string().min(1).max(256)).default([]),
+    authority_state: z.literal("candidate"),
+    promotion_status: z.enum(["candidate_only", "needs_feedback_attribution", "promotion_ready"]),
+    export_policy: z
+      .object({
+        agent_prompt_included: z.literal(false),
+        runtime_mutation: z.literal(false),
+        required_gate: z.literal("admission_and_promotion_gate"),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type AionisTraceDerivedSkillCandidate = z.infer<typeof AionisTraceDerivedSkillCandidateSchema>;
+
+const AionisTrainingCandidateSchema = z
+  .object({
+    candidate_type: AionisTrainingCandidateTypeSchema,
+    source_ids: z.array(z.string().min(1)).min(1),
+    label: z.enum(["positive", "negative", "neutral", "blocked", "insufficient_evidence"]),
+    export_ready: z.boolean(),
+    reason: z.string().min(1),
+    trace_derived_skill: AionisTraceDerivedSkillCandidateSchema.optional(),
+  })
+  .strict()
+  .superRefine((candidate, ctx) => {
+    if (candidate.candidate_type === "trace_derived_skill" && !candidate.trace_derived_skill) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["trace_derived_skill"],
+        message: "trace_derived_skill payload is required for trace_derived_skill candidates",
+      });
+    }
+    if (candidate.candidate_type !== "trace_derived_skill" && candidate.trace_derived_skill) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["trace_derived_skill"],
+        message: "trace_derived_skill payload is only allowed for trace_derived_skill candidates",
+      });
+    }
+  });
 
 const AionisEffectFeedbackSignalSummarySchema = z
   .object({
@@ -2192,17 +2247,7 @@ export const AionisEffectReportSchema = z
       explanation: "No memory decision audit confidence decay review was supplied for this effect report.",
     }),
     training_candidates: z
-      .array(
-        z
-          .object({
-            candidate_type: AionisTrainingCandidateTypeSchema,
-            source_ids: z.array(z.string().min(1)).min(1),
-            label: z.enum(["positive", "negative", "neutral", "blocked", "insufficient_evidence"]),
-            export_ready: z.boolean(),
-            reason: z.string().min(1),
-          })
-          .strict(),
-      )
+      .array(AionisTrainingCandidateSchema)
       .default([]),
     evidence: z
       .object({

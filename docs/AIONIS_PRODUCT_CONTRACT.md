@@ -214,6 +214,28 @@ and Agent prompt rendering stay on their dedicated paths. This lets hosts and
 operators see whether Aionis has enough evidence to reuse operational experience
 without turning one run into a hard rule.
 
+### Trace-Derived Skill Candidates
+
+Aionis can project measured execution traces into `trace_derived_skill`
+training candidates. This is the Runtime-facing version of "plans, failures,
+validation, and repair patterns become reusable skill assets." A candidate
+contains applicability conditions, non-applicability conditions, procedure
+steps, acceptance checks, failure counterexamples, and source trace/evidence
+ids.
+
+The first implementation is deliberately conservative:
+
+| Property | Contract |
+|---|---|
+| Source | Positive continuity or workflow-reuse effect evidence from `AionisEffectReport`. |
+| Authority | Always `authority_state: candidate`; never direct authority. |
+| Prompt behavior | `agent_prompt_included: false`; candidates do not enter Agent context by themselves. |
+| Runtime mutation | `runtime_mutation: false`; no memory row is promoted or rewritten by the projection. |
+| Promotion path | `required_gate: admission_and_promotion_gate`; later use must pass normal admission, feedback, and promotion gates. |
+
+This gives Aionis a product path for trace-to-skill learning without turning the
+Runtime into an autonomous training loop.
+
 ## Guide Output Contract
 
 `POST /v1/guide` is the product entry for giving an Agent usable historical context.

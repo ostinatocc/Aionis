@@ -1321,11 +1321,32 @@ type AionisEffectReport = {
       | "transfer_judge"
       | "workflow_selector"
       | "forgetting_suppression"
-      | "authority_judgment";
+      | "authority_judgment"
+      | "trace_derived_skill";
     source_ids: string[];
     label: "positive" | "negative" | "neutral" | "blocked" | "insufficient_evidence";
     export_ready: boolean;
     reason: string;
+    trace_derived_skill?: {
+      contract_version: "aionis_trace_derived_skill_candidate_v1";
+      skill_name: string;
+      source_trace_ids: string[];
+      source_signal_ids: string[];
+      applies_when: string[];
+      does_not_apply_when: string[];
+      procedure_steps: string[];
+      target_files: string[];
+      acceptance_checks: string[];
+      failure_counterexamples: string[];
+      evidence_refs: string[];
+      authority_state: "candidate";
+      promotion_status: "candidate_only" | "needs_feedback_attribution" | "promotion_ready";
+      export_policy: {
+        agent_prompt_included: false;
+        runtime_mutation: false;
+        required_gate: "admission_and_promotion_gate";
+      };
+    };
   }>;
   evidence: {
     evidence_ids: string[];
@@ -1350,7 +1371,7 @@ type AionisEffectReport = {
 | `feedback_signal_summary` | product-level read-only feedback signal summary | `src/memory/product-output-assembler.ts`, `memory_decision_audit.feedback_signal_review` |
 | `feedback_learning_control` | `/v1/feedback` or advanced `/v1/forget activate` persistence result for repeated-unused-without-positive inspect-before-use posture | `src/routes/product-facade.ts`, `src/memory/lifecycle-lite.ts`, `src/memory/node-feedback-state.ts` |
 | `inspect_before_use_shadow_delta` | disabled preview of confidence-decay candidates that would move to inspect-before-use | `src/memory/product-output-assembler.ts`, `memory_decision_trace.inspect_before_use_shadow_delta` |
-| `training_candidates` | execution evidence, handoff, replay, promotion/demotion, forgetting | `src/memory/execution-evidence.ts`, `src/memory/handoff.ts`, `src/memory/replay*.ts`, `src/memory/promotion-quality-summary.ts` |
+| `training_candidates` | execution evidence, handoff, replay, promotion/demotion, forgetting, trace-derived skill candidates | `src/memory/execution-evidence.ts`, `src/memory/handoff.ts`, `src/memory/replay*.ts`, `src/memory/promotion-quality-summary.ts`, `src/memory/product-output-assembler.ts` |
 | `evidence` | replay, runtime signals, promotion quality | `src/memory/replay*.ts`, `src/memory/runtime-signal-*.ts`, `src/memory/promotion-quality-summary.ts` |
 
 ### Effect Inclusion Rules
@@ -1365,6 +1386,7 @@ type AionisEffectReport = {
 | `feedback_learning_control_posture=inspect_before_use` only after repeated-unused-without-positive gate passes | converting unused exposure into suppression, archive, deletion, or task-specific behavior |
 | disabled inspect-before-use deltas with `enabled: false` | claiming automatic downgrade or prompt behavior |
 | training candidate labels | actual LoRA training execution |
+| `trace_derived_skill` candidates with `agent_prompt_included: false` and `runtime_mutation: false` | turning one positive trace into an automatic skill, rule, or direct-use instruction |
 
 ## Internal Surfaces Not Product Outputs
 
