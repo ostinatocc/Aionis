@@ -56,6 +56,7 @@ import {
   memoryAdmissionDatasetRowsFromRecord,
   measureInputFromGuideLoop,
   snapshotInputFromGuideLoop,
+  traceDerivedSkillCandidatesFromMeasure,
   type AionisMemoryAdmissionRecord,
 } from "@aionis/sdk";
 
@@ -122,6 +123,12 @@ const measure = await aionis.measure(measureInputFromGuideLoop({
   evidence_ids: ["feedback:run-001"],
 }));
 
+const traceSkillCandidates = traceDerivedSkillCandidatesFromMeasure(measure);
+for (const candidate of traceSkillCandidates) {
+  // Review/export only. This payload is not Agent prompt context.
+  console.log(candidate.trace_derived_skill.skill_name);
+}
+
 const admissionRows = memoryAdmissionDatasetRowsFromRecord(
   measure.memory_decision_trace.admission_record as AionisMemoryAdmissionRecord,
   {
@@ -155,6 +162,9 @@ Agent actually used; it inherits the guide consumer identity when available and
 validates that those IDs were exposed by the guide.
 `measureInputFromGuideLoop()` and `snapshotInputFromGuideLoop()` keep the
 normal product trace and operator snapshot payloads out of handwritten app code.
+`traceDerivedSkillCandidatesFromMeasure()` exposes positive execution traces as
+controlled skill candidates for review or later procedure promotion; candidates
+remain `agent_prompt_included: false` and `runtime_mutation: false`.
 
 ## Memory Firewall For Mem0
 
