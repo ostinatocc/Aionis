@@ -117,6 +117,13 @@ function closeRuntime(session: RuntimeSession): void {
   if (session.handle?.child.exitCode === null) session.handle.child.kill("SIGTERM");
 }
 
+function outputPath(): string | null {
+  const configured = process.env.AIONIS_FIRST_VALUE_DEMO_OUTPUT_PATH?.trim();
+  if (configured && configured.toLowerCase() === "none") return null;
+  if (configured) return path.resolve(configured);
+  return path.join(repoRoot, "docs/examples/first-value-demo-result.json");
+}
+
 function apiKey(): string | null {
   return process.env.AIONIS_FIRST_VALUE_DEMO_API_KEY?.trim()
     || process.env.AIONIS_PRODUCT_E2E_API_KEY?.trim()
@@ -332,8 +339,11 @@ async function main() {
         "This demo does not require embeddings or an LLM. It proves Aionis admission and audit behavior on the first local run, not final Agent task success.",
     };
 
-    const outputPath = path.join(repoRoot, "docs/examples/first-value-demo-result.json");
-    fs.writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`);
+    const targetOutputPath = outputPath();
+    if (targetOutputPath) {
+      fs.mkdirSync(path.dirname(targetOutputPath), { recursive: true });
+      fs.writeFileSync(targetOutputPath, `${JSON.stringify(result, null, 2)}\n`);
+    }
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } finally {
     closeRuntime(session);
