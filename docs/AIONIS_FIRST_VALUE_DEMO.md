@@ -22,10 +22,10 @@ product API, prints the result, and refreshes
 npm run -s runtime:demo:first-value
 ```
 
-The default installer runs the same demo:
+The guided setup runs the same demo by default:
 
 ```bash
-npx @aionis/create@latest
+npx aionis setup
 ```
 
 ## What You Should See

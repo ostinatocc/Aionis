@@ -8,6 +8,7 @@ Status: public Runtime, npm, MCP, SDK, and Docker release path
 |---|---:|---|
 | GitHub Runtime source | `v0.2.x` tags | Source release for the Runtime, product APIs, docs, examples, Docker build, and Runtime validation loops. |
 | Docker image | `ghcr.io/ostinatocc/aionis:<tag>` | Local-first Aionis Runtime container with persistent SQLite state under `/data`. |
+| `aionis` | npm latest / [repo](https://github.com/ostinatocc/aionis-cli) | Top-level product CLI. Owns `npx aionis setup` and delegates Runtime install to `@aionis/create`. |
 | `@aionis/create` | npm latest / [repo](https://github.com/ostinatocc/aionis-create) | One-command installer for Runtime plus SDK/MCP packages. |
 | `@aionis/sdk` | npm latest / [repo](https://github.com/ostinatocc/aionis-sdk) | TypeScript facade over Aionis product APIs. |
 | `@aionis/mcp` | npm latest / [repo](https://github.com/ostinatocc/aionis-mcp) | MCP stdio bridge for Claude Code, Cursor, and other MCP clients. |
@@ -21,6 +22,7 @@ new patch tag instead of moving the old one.
 | Repository | Release responsibility |
 |---|---|
 | [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) | Runtime source tags, Docker image, product docs, examples, and Runtime validation loops. |
+| [ostinatocc/aionis-cli](https://github.com/ostinatocc/aionis-cli) | `aionis` npm package and guided product setup releases. |
 | [ostinatocc/aionis-create](https://github.com/ostinatocc/aionis-create) | `@aionis/create` npm package and installer releases. |
 | [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) | `@aionis/sdk` npm package and SDK releases. |
 | [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) | `@aionis/mcp` npm package and MCP adapter releases. |

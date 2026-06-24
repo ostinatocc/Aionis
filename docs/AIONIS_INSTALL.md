@@ -4,8 +4,9 @@ Status: product install path for Runtime plus SDK and MCP packages
 
 ## One Command
 
-Aionis publishes four npm packages:
+Aionis publishes a top-level product CLI plus focused integration packages:
 
+- `aionis`: guided product CLI; `npx aionis setup`
 - `@aionis/create`: one-command Runtime installer
 - `@aionis/sdk`: TypeScript SDK facade for product routes
 - `@aionis/mcp`: MCP stdio bridge for Claude Code, Cursor, and other MCP clients
@@ -15,12 +16,31 @@ Choose the entry point by what you are connecting:
 
 | Goal | Package or plugin | Source |
 |---|---|---|
+| Guided local setup | `aionis` | [ostinatocc/aionis-cli](https://github.com/ostinatocc/aionis-cli) |
 | Install and run Aionis Runtime | `@aionis/create` | [ostinatocc/aionis-create](https://github.com/ostinatocc/aionis-create) |
 | Call Runtime APIs from an app or agent host | `@aionis/sdk` | [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) |
 | Add Aionis tools to an MCP-capable client | `@aionis/mcp` | [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) |
 | Give Claude Code automatic before/after hooks | Claude Code plugin or `@aionis/claude-code` | [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code) |
 
-Install Runtime plus SDK/MCP packages and run the first-value demo:
+Guided setup:
+
+```bash
+npx aionis setup
+```
+
+The setup command asks for the install directory, quickstart, provider, and
+optional Claude Code hooks. If you choose OpenAI, MiniMax, or another provider,
+it asks for the matching API key with hidden terminal input, then writes the
+generated Runtime `.env` for you. You do not need to manually edit `.env` for
+the first install path.
+
+Non-interactive setup:
+
+```bash
+OPENAI_API_KEY="your-key" npx aionis setup --provider openai --quickstart sdk --yes
+```
+
+Direct installer path:
 
 ```bash
 npx @aionis/create@latest
@@ -149,6 +169,7 @@ Repository boundary:
 | Repository | Role |
 |---|---|
 | [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) | Runtime core, product HTTP APIs, docs, examples, Docker image, and product validation loops. |
+| [ostinatocc/aionis-cli](https://github.com/ostinatocc/aionis-cli) | Top-level `aionis` product CLI. It owns `npx aionis setup` and delegates actual Runtime install to `@aionis/create`. |
 | [ostinatocc/aionis-create](https://github.com/ostinatocc/aionis-create) | Standalone published `@aionis/create` installer package repo. |
 | [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) | Standalone published `@aionis/sdk` package repo. |
 | [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) | Standalone published `@aionis/mcp` package repo. |

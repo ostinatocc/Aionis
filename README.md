@@ -29,13 +29,25 @@ plugin clients.
 
 | Goal | Use | First command | Source |
 |---|---|---|---|
+| Guided local setup | `aionis` | `npx aionis setup` | [ostinatocc/aionis-cli](https://github.com/ostinatocc/aionis-cli) |
 | Install the Runtime locally | `@aionis/create` | `npx @aionis/create@latest` | [ostinatocc/aionis-create](https://github.com/ostinatocc/aionis-create) |
 | Integrate from a TypeScript host | `@aionis/sdk` | `npm install @aionis/sdk` | [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) |
 | Connect any MCP client | `@aionis/mcp` | `npx @aionis/mcp@latest --base-url http://127.0.0.1:3001` | [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) |
 | Give Claude Code automatic memory hooks | Claude Code plugin | `/plugin marketplace add https://github.com/ostinatocc/aionis-claude-code` | [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code) |
 
 ```bash
-npx @aionis/create@latest
+npx aionis setup
+```
+
+`aionis setup` is the product installer shell. It asks for the install
+directory, provider, quickstart, and optional Claude Code hooks, collects API
+keys with hidden terminal input, writes the generated Runtime `.env`, and then
+delegates the actual install to `@aionis/create`.
+
+For non-interactive installs, set the provider key in the environment:
+
+```bash
+OPENAI_API_KEY="your-key" npx aionis setup --provider openai --quickstart sdk --yes
 ```
 
 Docker users can run the Runtime directly:
@@ -123,6 +135,7 @@ Package boundary:
 | Repository | Owns |
 |---|---|
 | [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) | Runtime core, product APIs, docs, examples, Docker image, and Runtime validation loops. |
+| [ostinatocc/aionis-cli](https://github.com/ostinatocc/aionis-cli) | Published top-level `aionis` product CLI, including `npx aionis setup`. |
 | [ostinatocc/aionis-create](https://github.com/ostinatocc/aionis-create) | Published one-command Runtime installer package. |
 | [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) | Published TypeScript SDK package. |
 | [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) | Published MCP stdio bridge package. |
@@ -361,16 +374,16 @@ Guide:
 Install the Runtime, SDK, and MCP bridge with one command:
 
 ```bash
-npx @aionis/create@latest
+npx aionis setup
 ```
 
-This clones the Runtime, installs dependencies, writes `.env`, and runs the
-no-key first-value demo.
+This prompts for the install path and provider, writes `.env`, delegates the
+install to `@aionis/create`, and runs the no-key first-value demo.
 
 For full SDK integration with recall-backed guide output:
 
 ```bash
-OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart sdk
+OPENAI_API_KEY="your-key" npx aionis setup --provider openai --quickstart sdk --yes
 ```
 
 For local development from this repo, install dependencies, then run the

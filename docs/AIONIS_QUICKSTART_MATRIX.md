@@ -7,24 +7,29 @@ starts or targets a real Runtime and verifies a concrete product contract.
 
 ## Start Here
 
-The fastest path is the published installer:
+The fastest path is the guided product setup:
 
 ```bash
-npx @aionis/create@latest
+npx aionis setup
 ```
 
-This runs the no-key first-value demo. If you use Claude Code, Cursor, or
-another MCP-compatible coding Agent, connect MCP next. Use the SDK quickstart
-after you are ready to wire Aionis into your own application loop:
+This prompts for the install directory, provider, quickstart, and optional
+Claude Code hooks, writes the generated Runtime `.env`, and runs the no-key
+first-value demo by default. If you use Claude Code, Cursor, or another
+MCP-compatible coding Agent, connect MCP next. Use the SDK quickstart after you
+are ready to wire Aionis into your own application loop:
 
 ```bash
-OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart sdk
+OPENAI_API_KEY="your-key" npx aionis setup --provider openai --quickstart sdk --yes
 ```
+
+If you want the lower-level installer without prompts, use
+`npx @aionis/create@latest` directly.
 
 | If you are building... | Run this | Transport | Main API path | Result contract |
 |---|---|---|---|---|
 | You want the fastest first proof | `npm run -s runtime:demo:first-value` | SDK facade over local API | `governMemory(mode=firewall)` over dirty external candidates | `aionis_first_value_demo_result_v1` |
-| Claude Code lifecycle integration | `npx @aionis/create@latest .aionis-runtime --with-claude-code` | Claude Code plugin + hooks + MCP | `SessionStart -> UserPromptSubmit -> agent action -> PostToolUse/PostCompact` | [AIONIS_CLAUDE_CODE_INTEGRATION.md](AIONIS_CLAUDE_CODE_INTEGRATION.md) |
+| Claude Code lifecycle integration | `npx aionis setup --with-claude-code` | Claude Code plugin + hooks + MCP | `SessionStart -> UserPromptSubmit -> agent action -> PostToolUse/PostCompact` | [AIONIS_CLAUDE_CODE_INTEGRATION.md](AIONIS_CLAUDE_CODE_INTEGRATION.md) |
 | Cursor, Zed/Zcode, or another MCP client | `npx @aionis/mcp@latest --base-url http://127.0.0.1:3001 --scope-from workspace` | MCP stdio | `aionis_context -> agent action -> aionis_record_step` | MCP tool result JSON |
 | A TypeScript or Node Agent | `npm run -s runtime:quickstart:sdk` | SDK facade | `remember -> guide -> feedback -> measure -> snapshot` | `aionis_sdk_quickstart_result_v1` |
 | A service that calls Aionis over HTTP | `npm run -s runtime:quickstart:http` | Raw HTTP | `observe -> guide -> feedback -> measure -> snapshot -> rehydrate` | `aionis_http_quickstart_result_v1` |
