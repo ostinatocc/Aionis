@@ -1,0 +1,1384 @@
+{
+  "contract_version": "aionis_operator_snapshot_v1",
+  "tenant_id": "default",
+  "scope": "long-flow-product-demo:long-flow-2823e434",
+  "intended_use": "operator_snapshot",
+  "agent_prompt_included": false,
+  "runtime_mutation": false,
+  "task": {
+    "run_id": "long-flow-2823e434",
+    "task_signature": "checkout-price-rules:long-flow-2823e434",
+    "task_family": "long_flow_product_demo",
+    "workflow_signature": "planner-worker-verifier-reviewer-continuation",
+    "agent_role": "worker"
+  },
+  "execution_state": {
+    "history_used": true,
+    "actionable_history_used": true,
+    "recommended_posture": "inspect_before_use",
+    "authority": "advisory",
+    "active_path": {
+      "count": 3,
+      "entries": [
+        {
+          "entry_id": "active-1",
+          "title": null,
+          "summary": "Passed solution: Continue LONG_FLOW_DEMO_ACCEPTED_ROUTE with LONG_FLOW_DEMO_FOLLOWUP_REQUIREMENT; keep LONG_FLOW_DEMO_FAILED_ROUTE as blocked evidence. node=8f12312a-20ba-5aeb-bc63-cd5a526ec656",
+          "source": "agent_context",
+          "memory_ids": [
+            "8f12312a-20ba-5aeb-bc63-cd5a526ec656"
+          ],
+          "evidence_refs": []
+        },
+        {
+          "entry_id": "active-2",
+          "title": null,
+          "summary": "Passed solution: LONG_FLOW_DEMO_FOLLOWUP_REQUIREMENT: route remains active; add regression test next. node=d99238bc-b440-5b81-af33-e27f2c7a0bae",
+          "source": "agent_context",
+          "memory_ids": [
+            "d99238bc-b440-5b81-af33-e27f2c7a0bae"
+          ],
+          "evidence_refs": []
+        },
+        {
+          "entry_id": "active-3",
+          "title": null,
+          "summary": "Passed solution: LONG_FLOW_DEMO_ACCEPTED_ROUTE: active route passed and should be reused for continuation. node=d565e222-0f44-52f2-881a-3f31b2839f16",
+          "source": "agent_context",
+          "memory_ids": [
+            "d565e222-0f44-52f2-881a-3f31b2839f16"
+          ],
+          "evidence_refs": []
+        }
+      ]
+    },
+    "passed_solutions": {
+      "count": 3,
+      "entries": [
+        {
+          "entry_id": "passed-1",
+          "title": null,
+          "summary": "Passed solution: Continue LONG_FLOW_DEMO_ACCEPTED_ROUTE with LONG_FLOW_DEMO_FOLLOWUP_REQUIREMENT; keep LONG_FLOW_DEMO_FAILED_ROUTE as blocked evidence. node=8f12312a-20ba-5aeb-bc63-cd5a526ec656",
+          "source": "agent_context",
+          "memory_ids": [
+            "8f12312a-20ba-5aeb-bc63-cd5a526ec656"
+          ],
+          "evidence_refs": []
+        },
+        {
+          "entry_id": "passed-2",
+          "title": null,
+          "summary": "Passed solution: LONG_FLOW_DEMO_FOLLOWUP_REQUIREMENT: route remains active; add regression test next. node=d99238bc-b440-5b81-af33-e27f2c7a0bae",
+          "source": "agent_context",
+          "memory_ids": [
+            "d99238bc-b440-5b81-af33-e27f2c7a0bae"
+          ],
+          "evidence_refs": []
+        },
+        {
+          "entry_id": "passed-3",
+          "title": null,
+          "summary": "Passed solution: LONG_FLOW_DEMO_ACCEPTED_ROUTE: active route passed and should be reused for continuation. node=d565e222-0f44-52f2-881a-3f31b2839f16",
+          "source": "agent_context",
+          "memory_ids": [
+            "d565e222-0f44-52f2-881a-3f31b2839f16"
+          ],
+          "evidence_refs": []
+        }
+      ]
+    },
+    "failed_branches": {
+      "count": 1,
+      "entries": [
+        {
+          "entry_id": "failed-1",
+          "title": null,
+          "summary": "Avoid failed branch: LONG_FLOW_DEMO_FAILED_ROUTE: failed route is counter-evidence, not reusable procedure. node=47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+          "source": "agent_context",
+          "memory_ids": [
+            "47fb0e94-bd65-57a2-968a-3cbcbe2538be"
+          ],
+          "evidence_refs": []
+        }
+      ]
+    },
+    "branch_isolation": {
+      "active_path_visible": true,
+      "passed_solution_visible": true,
+      "failed_branch_visible_in_do_not_use": true,
+      "failed_branch_leaked_to_use_now": true,
+      "status": "fail",
+      "reason": "A failed branch was either missing from do_not_use or appeared in direct-use context."
+    }
+  },
+  "trace_to_procedure": {
+    "present": true,
+    "runtime_mutation": false,
+    "source_surfaces": [
+      "execution_tree",
+      "workflow_projection",
+      "replay_playbook",
+      "execution_contract",
+      "memory_decision_trace",
+      "promotion_evidence"
+    ],
+    "procedure_memory_ids": [
+      "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+      "4025e47e-ef47-52db-9ad1-e21dc45414ef",
+      "d565e222-0f44-52f2-881a-3f31b2839f16",
+      "47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+      "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+      "8f12312a-20ba-5aeb-bc63-cd5a526ec656"
+    ],
+    "workflow_ids": [
+      "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+      "4025e47e-ef47-52db-9ad1-e21dc45414ef",
+      "d565e222-0f44-52f2-881a-3f31b2839f16",
+      "47fb0e94-bd65-57a2-968a-3cbcbe2538be"
+    ],
+    "evidence_refs": [
+      "evidence://long-flow/long-flow-2823e434/reviewer-followup",
+      "0e518c28-9619-5a65-8d22-59ed7dd94b7b",
+      "evidence://long-flow/long-flow-2823e434/planner-plan",
+      "4fb9b8f0-20a8-5384-a8c2-25e998f0ad62",
+      "evidence://long-flow/long-flow-2823e434/passed-scoped-route",
+      "trace://long-flow/long-flow-2823e434/passed-scoped-route/raw",
+      "ba67c859-1cf7-5cae-9a39-a458f19d85b8",
+      "evidence://long-flow/long-flow-2823e434/failed-legacy-route",
+      "trace://long-flow/long-flow-2823e434/failed-legacy-route/raw",
+      "4f433fd7-6e2d-5149-8ff9-d396e224586b",
+      "77f6f01f-6d87-53c2-9722-ffa24661dd59",
+      "memory:4025e47e-ef47-52db-9ad1-e21dc45414ef",
+      "memory:47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+      "memory:d565e222-0f44-52f2-881a-3f31b2839f16",
+      "memory:d99238bc-b440-5b81-af33-e27f2c7a0bae",
+      "feedback:long-flow-2823e434",
+      "after:d99238bc-b440-5b81-af33-e27f2c7a0bae",
+      "after:4025e47e-ef47-52db-9ad1-e21dc45414ef",
+      "after:d565e222-0f44-52f2-881a-3f31b2839f16",
+      "after:47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+      "after:c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+      "after:8f12312a-20ba-5aeb-bc63-cd5a526ec656",
+      "workflow:d99238bc-b440-5b81-af33-e27f2c7a0bae",
+      "workflow:4025e47e-ef47-52db-9ad1-e21dc45414ef",
+      "workflow:d565e222-0f44-52f2-881a-3f31b2839f16",
+      "workflow:47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+      "forget:d565e222-0f44-52f2-881a-3f31b2839f16",
+      "forget:d99238bc-b440-5b81-af33-e27f2c7a0bae",
+      "effect_kernel:continuity",
+      "effect_kernel:learning",
+      "effect_kernel:forgetting",
+      "effect_kernel:learning_control",
+      "continuity_guidance_matches_expected",
+      "execution_state_recovered",
+      "verified_facts_carried",
+      "workflow_reused",
+      "stable_workflow_reused",
+      "trusted_memory_promoted",
+      "context_precision_good",
+      "weak_evidence_blocked",
+      "authority_requires_evidence",
+      "blocked_authority_visible",
+      "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+      "4025e47e-ef47-52db-9ad1-e21dc45414ef",
+      "d565e222-0f44-52f2-881a-3f31b2839f16",
+      "47fb0e94-bd65-57a2-968a-3cbcbe2538be"
+    ],
+    "candidate_visible": true,
+    "stable_reuse_visible": true,
+    "promotion_status": "blocked",
+    "promotion_blocked_count": 1,
+    "reason": "Procedure evidence is visible, but stable promotion remains blocked by learning-control or consolidation evidence gates."
+  },
+  "guide_trace": {
+    "present": true,
+    "guide_trace_id": "guide_trace:b25c3611-79f2-4e39-8e9e-198d6f6dddf4",
+    "exposed_memory_ids": [
+      "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+      "4025e47e-ef47-52db-9ad1-e21dc45414ef",
+      "d565e222-0f44-52f2-881a-3f31b2839f16",
+      "47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+      "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+      "8f12312a-20ba-5aeb-bc63-cd5a526ec656"
+    ],
+    "use_now_memory_ids": [
+      "8f12312a-20ba-5aeb-bc63-cd5a526ec656",
+      "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+      "d565e222-0f44-52f2-881a-3f31b2839f16"
+    ],
+    "inspect_before_use_memory_ids": [
+      "47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+      "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+      "8f12312a-20ba-5aeb-bc63-cd5a526ec656",
+      "d565e222-0f44-52f2-881a-3f31b2839f16"
+    ],
+    "do_not_use_memory_ids": [
+      "47fb0e94-bd65-57a2-968a-3cbcbe2538be"
+    ],
+    "attributed_memory_ids": [
+      "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+      "d565e222-0f44-52f2-881a-3f31b2839f16"
+    ],
+    "unattributed_memory_ids": [
+      "4025e47e-ef47-52db-9ad1-e21dc45414ef",
+      "47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+      "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+      "8f12312a-20ba-5aeb-bc63-cd5a526ec656"
+    ],
+    "feedback_attribution_present": true,
+    "feedback_outcome": "positive",
+    "reason": "Feedback attribution is tied to an exposed guide trace."
+  },
+  "judgment_calibration": {
+    "contract_version": "aionis_judgment_calibration_summary_v1",
+    "intended_use": "judgment_calibration_audit",
+    "source": "memory_decision_trace",
+    "agent_prompt_included": false,
+    "runtime_mutation": false,
+    "authority": "read_only",
+    "window": {
+      "record_count": 6,
+      "anchored_count": 2,
+      "weak_count": 0,
+      "unused_count": 4,
+      "inconclusive_count": 0
+    },
+    "supported_memory_ids": [
+      "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+      "d565e222-0f44-52f2-881a-3f31b2839f16"
+    ],
+    "contradicted_memory_ids": [],
+    "weak_memory_ids": [],
+    "unused_memory_ids": [
+      "4025e47e-ef47-52db-9ad1-e21dc45414ef",
+      "47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+      "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+      "8f12312a-20ba-5aeb-bc63-cd5a526ec656"
+    ],
+    "inconclusive_memory_ids": [],
+    "buckets": [
+      {
+        "bucket": "domain:execution",
+        "record_count": 6,
+        "supported_count": 2,
+        "contradicted_count": 0,
+        "weak_count": 0,
+        "unused_count": 4,
+        "inconclusive_count": 0,
+        "memory_ids": [
+          "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+          "4025e47e-ef47-52db-9ad1-e21dc45414ef",
+          "d565e222-0f44-52f2-881a-3f31b2839f16",
+          "47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+          "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+          "8f12312a-20ba-5aeb-bc63-cd5a526ec656"
+        ],
+        "recommended_adjustment": "needs_more_evidence",
+        "authority": "read_only",
+        "reason": "Read-only calibration bucket domain:execution: 2 supported, 0 contradicted, 4 unused, 0 inconclusive."
+      },
+      {
+        "bucket": "domain:execution_memory",
+        "record_count": 6,
+        "supported_count": 2,
+        "contradicted_count": 0,
+        "weak_count": 0,
+        "unused_count": 4,
+        "inconclusive_count": 0,
+        "memory_ids": [
+          "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+          "4025e47e-ef47-52db-9ad1-e21dc45414ef",
+          "d565e222-0f44-52f2-881a-3f31b2839f16",
+          "47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+          "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+          "8f12312a-20ba-5aeb-bc63-cd5a526ec656"
+        ],
+        "recommended_adjustment": "needs_more_evidence",
+        "authority": "read_only",
+        "reason": "Read-only calibration bucket domain:execution_memory: 2 supported, 0 contradicted, 4 unused, 0 inconclusive."
+      },
+      {
+        "bucket": "signal:feedback_positive",
+        "record_count": 2,
+        "supported_count": 2,
+        "contradicted_count": 0,
+        "weak_count": 0,
+        "unused_count": 0,
+        "inconclusive_count": 0,
+        "memory_ids": [
+          "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+          "d565e222-0f44-52f2-881a-3f31b2839f16"
+        ],
+        "recommended_adjustment": "keep",
+        "authority": "read_only",
+        "reason": "Read-only calibration bucket signal:feedback_positive: 2 supported, 0 contradicted, 0 unused, 0 inconclusive."
+      },
+      {
+        "bucket": "signal:lifecycle_contested",
+        "record_count": 2,
+        "supported_count": 1,
+        "contradicted_count": 0,
+        "weak_count": 0,
+        "unused_count": 1,
+        "inconclusive_count": 0,
+        "memory_ids": [
+          "d565e222-0f44-52f2-881a-3f31b2839f16",
+          "47fb0e94-bd65-57a2-968a-3cbcbe2538be"
+        ],
+        "recommended_adjustment": "keep",
+        "authority": "read_only",
+        "reason": "Read-only calibration bucket signal:lifecycle_contested: 1 supported, 0 contradicted, 1 unused, 0 inconclusive."
+      },
+      {
+        "bucket": "signal:lifecycle_current",
+        "record_count": 5,
+        "supported_count": 2,
+        "contradicted_count": 0,
+        "weak_count": 0,
+        "unused_count": 3,
+        "inconclusive_count": 0,
+        "memory_ids": [
+          "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+          "4025e47e-ef47-52db-9ad1-e21dc45414ef",
+          "d565e222-0f44-52f2-881a-3f31b2839f16",
+          "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+          "8f12312a-20ba-5aeb-bc63-cd5a526ec656"
+        ],
+        "recommended_adjustment": "needs_more_evidence",
+        "authority": "read_only",
+        "reason": "Read-only calibration bucket signal:lifecycle_current: 2 supported, 0 contradicted, 3 unused, 0 inconclusive."
+      },
+      {
+        "bucket": "signal:lifecycle_negative",
+        "record_count": 1,
+        "supported_count": 0,
+        "contradicted_count": 0,
+        "weak_count": 0,
+        "unused_count": 1,
+        "inconclusive_count": 0,
+        "memory_ids": [
+          "47fb0e94-bd65-57a2-968a-3cbcbe2538be"
+        ],
+        "recommended_adjustment": "needs_more_evidence",
+        "authority": "read_only",
+        "reason": "Read-only calibration bucket signal:lifecycle_negative: 0 supported, 0 contradicted, 1 unused, 0 inconclusive."
+      },
+      {
+        "bucket": "signal:lifecycle_procedure",
+        "record_count": 2,
+        "supported_count": 1,
+        "contradicted_count": 0,
+        "weak_count": 0,
+        "unused_count": 1,
+        "inconclusive_count": 0,
+        "memory_ids": [
+          "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+          "8f12312a-20ba-5aeb-bc63-cd5a526ec656"
+        ],
+        "recommended_adjustment": "keep",
+        "authority": "read_only",
+        "reason": "Read-only calibration bucket signal:lifecycle_procedure: 1 supported, 0 contradicted, 1 unused, 0 inconclusive."
+      },
+      {
+        "bucket": "signal:lifecycle_stale",
+        "record_count": 1,
+        "supported_count": 0,
+        "contradicted_count": 0,
+        "weak_count": 0,
+        "unused_count": 1,
+        "inconclusive_count": 0,
+        "memory_ids": [
+          "47fb0e94-bd65-57a2-968a-3cbcbe2538be"
+        ],
+        "recommended_adjustment": "needs_more_evidence",
+        "authority": "read_only",
+        "reason": "Read-only calibration bucket signal:lifecycle_stale: 0 supported, 0 contradicted, 1 unused, 0 inconclusive."
+      },
+      {
+        "bucket": "surface:do_not_use",
+        "record_count": 1,
+        "supported_count": 0,
+        "contradicted_count": 0,
+        "weak_count": 0,
+        "unused_count": 1,
+        "inconclusive_count": 0,
+        "memory_ids": [
+          "47fb0e94-bd65-57a2-968a-3cbcbe2538be"
+        ],
+        "recommended_adjustment": "needs_more_evidence",
+        "authority": "read_only",
+        "reason": "Read-only calibration bucket surface:do_not_use: 0 supported, 0 contradicted, 1 unused, 0 inconclusive."
+      },
+      {
+        "bucket": "surface:inspect_before_use",
+        "record_count": 2,
+        "supported_count": 0,
+        "contradicted_count": 0,
+        "weak_count": 0,
+        "unused_count": 2,
+        "inconclusive_count": 0,
+        "memory_ids": [
+          "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+          "8f12312a-20ba-5aeb-bc63-cd5a526ec656"
+        ],
+        "recommended_adjustment": "needs_more_evidence",
+        "authority": "read_only",
+        "reason": "Read-only calibration bucket surface:inspect_before_use: 0 supported, 0 contradicted, 2 unused, 0 inconclusive."
+      },
+      {
+        "bucket": "surface:rehydrate",
+        "record_count": 3,
+        "supported_count": 2,
+        "contradicted_count": 0,
+        "weak_count": 0,
+        "unused_count": 1,
+        "inconclusive_count": 0,
+        "memory_ids": [
+          "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+          "4025e47e-ef47-52db-9ad1-e21dc45414ef",
+          "d565e222-0f44-52f2-881a-3f31b2839f16"
+        ],
+        "recommended_adjustment": "keep",
+        "authority": "read_only",
+        "reason": "Read-only calibration bucket surface:rehydrate: 2 supported, 0 contradicted, 1 unused, 0 inconclusive."
+      }
+    ],
+    "reason": "Memory judgment calibration was derived from decision trace surfaces and feedback attribution only; it is read-only and does not mutate authority."
+  },
+  "memory_use_receipt": {
+    "contract_version": "aionis_memory_use_receipt_v1",
+    "intended_use": "memory_use_audit",
+    "agent_prompt_included": false,
+    "runtime_mutation": false,
+    "guide_trace_id": "guide_trace:b25c3611-79f2-4e39-8e9e-198d6f6dddf4",
+    "history_used": true,
+    "actionable_history_used": true,
+    "prompt_char_count": 882,
+    "exposed_memory_ids": [
+      "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+      "4025e47e-ef47-52db-9ad1-e21dc45414ef",
+      "d565e222-0f44-52f2-881a-3f31b2839f16",
+      "47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+      "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+      "8f12312a-20ba-5aeb-bc63-cd5a526ec656"
+    ],
+    "use_now_memory_ids": [],
+    "inspect_before_use_memory_ids": [
+      "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+      "8f12312a-20ba-5aeb-bc63-cd5a526ec656"
+    ],
+    "do_not_use_memory_ids": [
+      "47fb0e94-bd65-57a2-968a-3cbcbe2538be"
+    ],
+    "rehydrate_memory_ids": [
+      "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+      "4025e47e-ef47-52db-9ad1-e21dc45414ef",
+      "d565e222-0f44-52f2-881a-3f31b2839f16"
+    ],
+    "attributed_memory_ids": [
+      "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+      "d565e222-0f44-52f2-881a-3f31b2839f16"
+    ],
+    "unattributed_recalled_memory_ids": [
+      "4025e47e-ef47-52db-9ad1-e21dc45414ef",
+      "47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+      "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+      "8f12312a-20ba-5aeb-bc63-cd5a526ec656"
+    ],
+    "read_only_signal_memory_ids": [
+      "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+      "d565e222-0f44-52f2-881a-3f31b2839f16",
+      "47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+      "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+      "8f12312a-20ba-5aeb-bc63-cd5a526ec656"
+    ],
+    "decision_summaries": [
+      {
+        "memory_id": "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+        "agent_surface": "rehydrate",
+        "decision_kind": "rehydrate",
+        "actionable": false,
+        "reason_codes": [
+          "lifecycle_active",
+          "authority_advisory",
+          "lifecycle_candidate_signal",
+          "lifecycle_candidate_current",
+          "lifecycle_candidate_procedure",
+          "memory_contract_direct_use",
+          "requires_differential_rehydration",
+          "agent_context_projection_checked",
+          "guide_history_used"
+        ],
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 1,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          },
+          {
+            "kind": "execution_native",
+            "score": 0.99,
+            "reason": "structured_execution_signature_recall",
+            "matched_fields": [
+              "task_signature",
+              "workflow_signature"
+            ],
+            "index_name": "lite_memory_execution_native_index"
+          }
+        ]
+      },
+      {
+        "memory_id": "4025e47e-ef47-52db-9ad1-e21dc45414ef",
+        "agent_surface": "rehydrate",
+        "decision_kind": "rehydrate",
+        "actionable": false,
+        "reason_codes": [
+          "lifecycle_active",
+          "authority_advisory",
+          "lifecycle_candidate_signal",
+          "lifecycle_candidate_current",
+          "memory_contract_direct_use",
+          "requires_differential_rehydration",
+          "agent_context_projection_checked",
+          "guide_history_used"
+        ],
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 0.953227,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          },
+          {
+            "kind": "execution_native",
+            "score": 0.96,
+            "reason": "structured_execution_signature_recall",
+            "matched_fields": [
+              "task_signature",
+              "workflow_signature"
+            ],
+            "index_name": "lite_memory_execution_native_index"
+          }
+        ]
+      },
+      {
+        "memory_id": "d565e222-0f44-52f2-881a-3f31b2839f16",
+        "agent_surface": "rehydrate",
+        "decision_kind": "rehydrate",
+        "actionable": false,
+        "reason_codes": [
+          "lifecycle_active",
+          "authority_advisory",
+          "premise_firewall_query_risk",
+          "lifecycle_candidate_signal",
+          "lifecycle_candidate_current",
+          "lifecycle_candidate_contested",
+          "lifecycle_candidate_direct_use_gated",
+          "memory_contract_direct_use",
+          "requires_differential_rehydration",
+          "agent_context_projection_checked",
+          "guide_history_used"
+        ],
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 0.820589,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          },
+          {
+            "kind": "execution_native",
+            "score": 0.98,
+            "reason": "structured_execution_signature_recall",
+            "matched_fields": [
+              "task_signature",
+              "workflow_signature"
+            ],
+            "index_name": "lite_memory_execution_native_index"
+          }
+        ]
+      },
+      {
+        "memory_id": "47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+        "agent_surface": "do_not_use",
+        "decision_kind": "blocked",
+        "actionable": false,
+        "reason_codes": [
+          "lifecycle_candidate",
+          "candidate_authority",
+          "contradiction_warning",
+          "premise_firewall_query_risk",
+          "lifecycle_candidate_signal",
+          "lifecycle_candidate_negative",
+          "lifecycle_candidate_stale",
+          "lifecycle_candidate_contested",
+          "lifecycle_candidate_direct_use_gated",
+          "memory_contract_inspect_before_use",
+          "memory_contract_confirmation_required",
+          "blocked_from_agent_use"
+        ],
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 0.247323,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          },
+          {
+            "kind": "execution_native",
+            "score": 0.97,
+            "reason": "structured_execution_signature_recall",
+            "matched_fields": [
+              "task_signature",
+              "workflow_signature"
+            ],
+            "index_name": "lite_memory_execution_native_index"
+          }
+        ]
+      },
+      {
+        "memory_id": "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+        "agent_surface": "inspect_before_use",
+        "decision_kind": "downgraded",
+        "actionable": false,
+        "reason_codes": [
+          "lifecycle_candidate",
+          "candidate_authority",
+          "contradiction_warning",
+          "premise_firewall_query_risk",
+          "lifecycle_candidate_signal",
+          "lifecycle_candidate_current",
+          "memory_contract_inspect_before_use",
+          "memory_contract_confirmation_required",
+          "memory_contract_supporting_evidence_only",
+          "kept_out_of_direct_use",
+          "agent_context_projection_checked",
+          "guide_history_used"
+        ],
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 0.892728,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          }
+        ]
+      },
+      {
+        "memory_id": "8f12312a-20ba-5aeb-bc63-cd5a526ec656",
+        "agent_surface": "inspect_before_use",
+        "decision_kind": "downgraded",
+        "actionable": false,
+        "reason_codes": [
+          "lifecycle_demoted",
+          "candidate_authority",
+          "contradiction_warning",
+          "premise_firewall_query_risk",
+          "lifecycle_candidate_signal",
+          "lifecycle_candidate_current",
+          "lifecycle_candidate_procedure",
+          "memory_contract_inspect_before_use",
+          "memory_contract_confirmation_required",
+          "memory_contract_supporting_evidence_only",
+          "kept_out_of_direct_use",
+          "agent_context_projection_checked"
+        ],
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 0.730069,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          }
+        ]
+      }
+    ],
+    "risk_flags": [
+      "negative_transfer_risk:medium",
+      "lifecycle_active",
+      "authority_advisory",
+      "lifecycle_candidate_signal",
+      "lifecycle_candidate_current",
+      "lifecycle_candidate_procedure",
+      "memory_contract_direct_use",
+      "requires_differential_rehydration",
+      "agent_context_projection_checked",
+      "guide_history_used",
+      "premise_firewall_query_risk",
+      "lifecycle_candidate_contested",
+      "lifecycle_candidate_direct_use_gated",
+      "lifecycle_candidate",
+      "candidate_authority",
+      "contradiction_warning",
+      "lifecycle_candidate_negative",
+      "lifecycle_candidate_stale",
+      "memory_contract_inspect_before_use",
+      "memory_contract_confirmation_required",
+      "blocked_from_agent_use",
+      "memory_contract_supporting_evidence_only",
+      "kept_out_of_direct_use",
+      "lifecycle_demoted",
+      "contradiction_warning:47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+      "contradiction_warning:c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+      "contradiction_warning:8f12312a-20ba-5aeb-bc63-cd5a526ec656"
+    ],
+    "summary": "Aionis compiled memory into 0 use_now, 2 inspect_before_use, 1 do_not_use, and 3 rehydrate decisions; receipt is read-only and excluded from the Agent prompt."
+  },
+  "memory_admission_record": {
+    "contract_version": "aionis_memory_admission_record_v1",
+    "intended_use": "memory_admission_audit_dataset",
+    "source": "memory_decision_trace",
+    "agent_prompt_included": false,
+    "runtime_mutation": false,
+    "tenant_id": "default",
+    "scope": "long-flow-product-demo:long-flow-2823e434",
+    "guide_trace_id": "guide_trace:b25c3611-79f2-4e39-8e9e-198d6f6dddf4",
+    "prompt_char_count": 882,
+    "history_used": true,
+    "actionable_history_used": true,
+    "candidate_memory_count": 6,
+    "prompt_included_memory_count": 6,
+    "agent_used_memory_count": 2,
+    "entries": [
+      {
+        "memory_id": "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+        "title": "LONG_FLOW_DEMO_FOLLOWUP_REQUIREMENT add regression coverage before final handoff",
+        "memory_origin": "aionis",
+        "source_backend": "aionis",
+        "domain": "execution",
+        "memory_type": "execution_memory",
+        "lifecycle_state": "active",
+        "authority": "advisory",
+        "admission_action": "rehydrate",
+        "decision_kind": "rehydrate",
+        "actionable": false,
+        "prompt_included": true,
+        "agent_used": true,
+        "feedback_outcome": "positive",
+        "attribution_strength": "positive_attribution",
+        "reason_codes": [
+          "lifecycle_active",
+          "authority_advisory",
+          "lifecycle_candidate_signal",
+          "lifecycle_candidate_current",
+          "lifecycle_candidate_procedure",
+          "memory_contract_direct_use",
+          "requires_differential_rehydration",
+          "agent_context_projection_checked",
+          "guide_history_used"
+        ],
+        "evidence_ids": [
+          "evidence://long-flow/long-flow-2823e434/reviewer-followup",
+          "0e518c28-9619-5a65-8d22-59ed7dd94b7b"
+        ],
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 1,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          },
+          {
+            "kind": "execution_native",
+            "score": 0.99,
+            "reason": "structured_execution_signature_recall",
+            "matched_fields": [
+              "task_signature",
+              "workflow_signature"
+            ],
+            "index_name": "lite_memory_execution_native_index"
+          }
+        ]
+      },
+      {
+        "memory_id": "4025e47e-ef47-52db-9ad1-e21dc45414ef",
+        "title": "LONG_FLOW_DEMO_PLAN checkout pricing route plan",
+        "memory_origin": "aionis",
+        "source_backend": "aionis",
+        "domain": "execution",
+        "memory_type": "execution_memory",
+        "lifecycle_state": "active",
+        "authority": "advisory",
+        "admission_action": "rehydrate",
+        "decision_kind": "rehydrate",
+        "actionable": false,
+        "prompt_included": true,
+        "agent_used": false,
+        "feedback_outcome": null,
+        "attribution_strength": null,
+        "reason_codes": [
+          "lifecycle_active",
+          "authority_advisory",
+          "lifecycle_candidate_signal",
+          "lifecycle_candidate_current",
+          "memory_contract_direct_use",
+          "requires_differential_rehydration",
+          "agent_context_projection_checked",
+          "guide_history_used"
+        ],
+        "evidence_ids": [
+          "evidence://long-flow/long-flow-2823e434/planner-plan",
+          "4fb9b8f0-20a8-5384-a8c2-25e998f0ad62"
+        ],
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 0.953227,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          },
+          {
+            "kind": "execution_native",
+            "score": 0.96,
+            "reason": "structured_execution_signature_recall",
+            "matched_fields": [
+              "task_signature",
+              "workflow_signature"
+            ],
+            "index_name": "lite_memory_execution_native_index"
+          }
+        ]
+      },
+      {
+        "memory_id": "d565e222-0f44-52f2-881a-3f31b2839f16",
+        "title": "LONG_FLOW_DEMO_ACCEPTED_ROUTE scoped pricing route accepted",
+        "memory_origin": "aionis",
+        "source_backend": "aionis",
+        "domain": "execution",
+        "memory_type": "execution_memory",
+        "lifecycle_state": "active",
+        "authority": "advisory",
+        "admission_action": "rehydrate",
+        "decision_kind": "rehydrate",
+        "actionable": false,
+        "prompt_included": true,
+        "agent_used": true,
+        "feedback_outcome": "positive",
+        "attribution_strength": "positive_attribution",
+        "reason_codes": [
+          "lifecycle_active",
+          "authority_advisory",
+          "premise_firewall_query_risk",
+          "lifecycle_candidate_signal",
+          "lifecycle_candidate_current",
+          "lifecycle_candidate_contested",
+          "lifecycle_candidate_direct_use_gated",
+          "memory_contract_direct_use",
+          "requires_differential_rehydration",
+          "agent_context_projection_checked",
+          "guide_history_used"
+        ],
+        "evidence_ids": [
+          "evidence://long-flow/long-flow-2823e434/passed-scoped-route",
+          "trace://long-flow/long-flow-2823e434/passed-scoped-route/raw",
+          "ba67c859-1cf7-5cae-9a39-a458f19d85b8"
+        ],
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 0.820589,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          },
+          {
+            "kind": "execution_native",
+            "score": 0.98,
+            "reason": "structured_execution_signature_recall",
+            "matched_fields": [
+              "task_signature",
+              "workflow_signature"
+            ],
+            "index_name": "lite_memory_execution_native_index"
+          }
+        ]
+      },
+      {
+        "memory_id": "47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+        "title": "LONG_FLOW_DEMO_FAILED_ROUTE legacy discount route rejected",
+        "memory_origin": "aionis",
+        "source_backend": "aionis",
+        "domain": "execution",
+        "memory_type": "execution_memory",
+        "lifecycle_state": "candidate",
+        "authority": "candidate",
+        "admission_action": "do_not_use",
+        "decision_kind": "blocked",
+        "actionable": false,
+        "prompt_included": true,
+        "agent_used": false,
+        "feedback_outcome": null,
+        "attribution_strength": null,
+        "reason_codes": [
+          "lifecycle_candidate",
+          "candidate_authority",
+          "contradiction_warning",
+          "premise_firewall_query_risk",
+          "lifecycle_candidate_signal",
+          "lifecycle_candidate_negative",
+          "lifecycle_candidate_stale",
+          "lifecycle_candidate_contested",
+          "lifecycle_candidate_direct_use_gated",
+          "memory_contract_inspect_before_use",
+          "memory_contract_confirmation_required",
+          "blocked_from_agent_use",
+          "agent_context_projection_checked",
+          "guide_history_used"
+        ],
+        "evidence_ids": [
+          "evidence://long-flow/long-flow-2823e434/failed-legacy-route",
+          "trace://long-flow/long-flow-2823e434/failed-legacy-route/raw",
+          "4f433fd7-6e2d-5149-8ff9-d396e224586b"
+        ],
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 0.247323,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          },
+          {
+            "kind": "execution_native",
+            "score": 0.97,
+            "reason": "structured_execution_signature_recall",
+            "matched_fields": [
+              "task_signature",
+              "workflow_signature"
+            ],
+            "index_name": "lite_memory_execution_native_index"
+          }
+        ]
+      },
+      {
+        "memory_id": "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+        "title": "Continue LONG_FLOW_DEMO_ACCEPTED_ROUTE with LONG_FLOW_DEMO_FOLLOWUP_REQUIREMENT; keep LONG_FLOW_DEMO_FAILED_ROUTE as blocked evidence.",
+        "memory_origin": "aionis",
+        "source_backend": "aionis",
+        "domain": "execution",
+        "memory_type": "execution_memory",
+        "lifecycle_state": "candidate",
+        "authority": "candidate",
+        "admission_action": "inspect_before_use",
+        "decision_kind": "downgraded",
+        "actionable": false,
+        "prompt_included": true,
+        "agent_used": false,
+        "feedback_outcome": null,
+        "attribution_strength": null,
+        "reason_codes": [
+          "lifecycle_candidate",
+          "candidate_authority",
+          "contradiction_warning",
+          "premise_firewall_query_risk",
+          "lifecycle_candidate_signal",
+          "lifecycle_candidate_current",
+          "memory_contract_inspect_before_use",
+          "memory_contract_confirmation_required",
+          "memory_contract_supporting_evidence_only",
+          "kept_out_of_direct_use",
+          "agent_context_projection_checked",
+          "guide_history_used"
+        ],
+        "evidence_ids": [
+          "77f6f01f-6d87-53c2-9722-ffa24661dd59"
+        ],
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 0.892728,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          }
+        ]
+      },
+      {
+        "memory_id": "8f12312a-20ba-5aeb-bc63-cd5a526ec656",
+        "title": "Long-flow execution handoff",
+        "memory_origin": "aionis",
+        "source_backend": "aionis",
+        "domain": "execution",
+        "memory_type": "execution_memory",
+        "lifecycle_state": "demoted",
+        "authority": "candidate",
+        "admission_action": "inspect_before_use",
+        "decision_kind": "downgraded",
+        "actionable": false,
+        "prompt_included": true,
+        "agent_used": false,
+        "feedback_outcome": null,
+        "attribution_strength": null,
+        "reason_codes": [
+          "lifecycle_demoted",
+          "candidate_authority",
+          "contradiction_warning",
+          "premise_firewall_query_risk",
+          "lifecycle_candidate_signal",
+          "lifecycle_candidate_current",
+          "lifecycle_candidate_procedure",
+          "memory_contract_inspect_before_use",
+          "memory_contract_confirmation_required",
+          "memory_contract_supporting_evidence_only",
+          "kept_out_of_direct_use",
+          "agent_context_projection_checked",
+          "guide_history_used"
+        ],
+        "evidence_ids": [
+          "77f6f01f-6d87-53c2-9722-ffa24661dd59"
+        ],
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 0.730069,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          }
+        ]
+      }
+    ],
+    "shadow_policy_report": {
+      "contract_version": "aionis_memory_admission_shadow_policy_report_v1",
+      "intended_use": "admission_policy_shadow_audit",
+      "policy_id": "candidate_project_context_closed_loop_inspect",
+      "policy_version": "2026-06-18",
+      "mode": "shadow_only",
+      "source": "memory_decision_trace",
+      "agent_prompt_included": false,
+      "runtime_mutation": false,
+      "hard_boundary_policy": "preserve_recorded_non_use_now",
+      "decision_count": 6,
+      "changed_count": 0,
+      "would_downgrade_use_now_count": 0,
+      "hard_boundary_upgrade_count": 0,
+      "direct_use_recorded_count": 0,
+      "direct_use_shadow_count": 0,
+      "policy_changed_memory_ids": [],
+      "downgraded_memory_ids": [],
+      "hard_boundary_preserved_memory_ids": [
+        "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+        "4025e47e-ef47-52db-9ad1-e21dc45414ef",
+        "d565e222-0f44-52f2-881a-3f31b2839f16",
+        "47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+        "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+        "8f12312a-20ba-5aeb-bc63-cd5a526ec656"
+      ],
+      "decisions": [
+        {
+          "memory_id": "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+          "title": "LONG_FLOW_DEMO_FOLLOWUP_REQUIREMENT add regression coverage before final handoff",
+          "recorded_action": "rehydrate",
+          "shadow_action": "rehydrate",
+          "would_change_action": false,
+          "memory_origin": "aionis",
+          "source_backend": "aionis",
+          "memory_type": "execution_memory",
+          "closed_loop_effect_state": "no_prior",
+          "repeated_negative_posture": false,
+          "prior_state_available": false,
+          "used_fields": [
+            "admission_action",
+            "source_backend",
+            "memory_type",
+            "closed_loop_effect_state",
+            "repeated_negative_posture"
+          ],
+          "reason_codes": [
+            "hard_boundary_preserved",
+            "recorded_action:rehydrate"
+          ]
+        },
+        {
+          "memory_id": "4025e47e-ef47-52db-9ad1-e21dc45414ef",
+          "title": "LONG_FLOW_DEMO_PLAN checkout pricing route plan",
+          "recorded_action": "rehydrate",
+          "shadow_action": "rehydrate",
+          "would_change_action": false,
+          "memory_origin": "aionis",
+          "source_backend": "aionis",
+          "memory_type": "execution_memory",
+          "closed_loop_effect_state": "no_prior",
+          "repeated_negative_posture": false,
+          "prior_state_available": false,
+          "used_fields": [
+            "admission_action",
+            "source_backend",
+            "memory_type",
+            "closed_loop_effect_state",
+            "repeated_negative_posture"
+          ],
+          "reason_codes": [
+            "hard_boundary_preserved",
+            "recorded_action:rehydrate"
+          ]
+        },
+        {
+          "memory_id": "d565e222-0f44-52f2-881a-3f31b2839f16",
+          "title": "LONG_FLOW_DEMO_ACCEPTED_ROUTE scoped pricing route accepted",
+          "recorded_action": "rehydrate",
+          "shadow_action": "rehydrate",
+          "would_change_action": false,
+          "memory_origin": "aionis",
+          "source_backend": "aionis",
+          "memory_type": "execution_memory",
+          "closed_loop_effect_state": "no_prior",
+          "repeated_negative_posture": false,
+          "prior_state_available": false,
+          "used_fields": [
+            "admission_action",
+            "source_backend",
+            "memory_type",
+            "closed_loop_effect_state",
+            "repeated_negative_posture"
+          ],
+          "reason_codes": [
+            "hard_boundary_preserved",
+            "recorded_action:rehydrate"
+          ]
+        },
+        {
+          "memory_id": "47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+          "title": "LONG_FLOW_DEMO_FAILED_ROUTE legacy discount route rejected",
+          "recorded_action": "do_not_use",
+          "shadow_action": "do_not_use",
+          "would_change_action": false,
+          "memory_origin": "aionis",
+          "source_backend": "aionis",
+          "memory_type": "execution_memory",
+          "closed_loop_effect_state": "no_prior",
+          "repeated_negative_posture": false,
+          "prior_state_available": false,
+          "used_fields": [
+            "admission_action",
+            "source_backend",
+            "memory_type",
+            "closed_loop_effect_state",
+            "repeated_negative_posture"
+          ],
+          "reason_codes": [
+            "hard_boundary_preserved",
+            "recorded_action:do_not_use"
+          ]
+        },
+        {
+          "memory_id": "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+          "title": "Continue LONG_FLOW_DEMO_ACCEPTED_ROUTE with LONG_FLOW_DEMO_FOLLOWUP_REQUIREMENT; keep LONG_FLOW_DEMO_FAILED_ROUTE as blocked evidence.",
+          "recorded_action": "inspect_before_use",
+          "shadow_action": "inspect_before_use",
+          "would_change_action": false,
+          "memory_origin": "aionis",
+          "source_backend": "aionis",
+          "memory_type": "execution_memory",
+          "closed_loop_effect_state": "no_prior",
+          "repeated_negative_posture": false,
+          "prior_state_available": false,
+          "used_fields": [
+            "admission_action",
+            "source_backend",
+            "memory_type",
+            "closed_loop_effect_state",
+            "repeated_negative_posture"
+          ],
+          "reason_codes": [
+            "hard_boundary_preserved",
+            "recorded_action:inspect_before_use"
+          ]
+        },
+        {
+          "memory_id": "8f12312a-20ba-5aeb-bc63-cd5a526ec656",
+          "title": "Long-flow execution handoff",
+          "recorded_action": "inspect_before_use",
+          "shadow_action": "inspect_before_use",
+          "would_change_action": false,
+          "memory_origin": "aionis",
+          "source_backend": "aionis",
+          "memory_type": "execution_memory",
+          "closed_loop_effect_state": "no_prior",
+          "repeated_negative_posture": false,
+          "prior_state_available": false,
+          "used_fields": [
+            "admission_action",
+            "source_backend",
+            "memory_type",
+            "closed_loop_effect_state",
+            "repeated_negative_posture"
+          ],
+          "reason_codes": [
+            "hard_boundary_preserved",
+            "recorded_action:inspect_before_use"
+          ]
+        }
+      ],
+      "summary": "Shadow policy candidate_project_context_closed_loop_inspect evaluated 6 admission decisions without mutating Runtime guide surfaces or Agent prompt context."
+    },
+    "summary": "Aionis recorded 6 memory admission decisions, 6 agent-facing exposures, and 2 host-attributed uses; record is read-only and excluded from the Agent prompt."
+  },
+  "memory_lifecycle": {
+    "used_count": 0,
+    "inspect_before_use_count": 2,
+    "do_not_use_count": 1,
+    "rehydrate_count": 3,
+    "controlled_memory_count": 6,
+    "blocked_or_suppressed_count": 1,
+    "stale_memory_count": 0,
+    "learning_control_visible": true,
+    "consolidation_guard": {
+      "supporting_only_count": 0,
+      "candidate_only_count": 0,
+      "promotion_blocked_count": 0,
+      "reason": "No consolidation guard intervention was visible in the supplied snapshot inputs."
+    }
+  },
+  "learning_control": {
+    "visible": true,
+    "runtime_mutation": false,
+    "stable_promotion_allowed": false,
+    "candidate_count": 0,
+    "blocked_authority_count": 0,
+    "promotion_denied_reasons": [
+      "improve_context_precision_and_stale_memory_suppression"
+    ],
+    "reason": "Learning-control state is visible without granting runtime mutation authority."
+  },
+  "effect": {
+    "present": true,
+    "impact_direction": "negative",
+    "changed_future_behavior": true,
+    "token_delta": null,
+    "context_size_delta": null,
+    "repeated_discovery_delta": -4,
+    "reason": "History produced a measured regression or failing focused Runtime capability."
+  },
+  "claims": [
+    {
+      "claim": "active_path_visible",
+      "status": "pass",
+      "evidence": "3 active path entries and 3 passed solution entries are visible."
+    },
+    {
+      "claim": "failed_branch_isolated",
+      "status": "fail",
+      "evidence": "1 failed branch entries; leaked_to_use_now=true."
+    },
+    {
+      "claim": "feedback_attribution_visible",
+      "status": "pass",
+      "evidence": "Guide trace feedback attribution is present."
+    },
+    {
+      "claim": "learning_control_visible",
+      "status": "pass",
+      "evidence": "Memory decision trace or audit reports learning-control-visible state."
+    },
+    {
+      "claim": "memory_use_receipt_visible",
+      "status": "pass",
+      "evidence": "Receipt exposes 6 memory ids; agent_prompt_included=false."
+    },
+    {
+      "claim": "judgment_calibration_visible",
+      "status": "pass",
+      "evidence": "Judgment calibration summarizes 6 read-only records; authority=read_only."
+    },
+    {
+      "claim": "trace_to_procedure_visible",
+      "status": "pass",
+      "evidence": "Trace-to-procedure projection sees execution_tree, workflow_projection, replay_playbook, execution_contract, memory_decision_trace, promotion_evidence; promotion_status=blocked."
+    },
+    {
+      "claim": "claim_ledger_projection_visible",
+      "status": "not_applicable",
+      "evidence": "No Claim Ledger projection was supplied."
+    },
+    {
+      "claim": "runtime_read_only",
+      "status": "pass",
+      "evidence": "Operator snapshot is a read-only projection and does not mutate runtime state."
+    },
+    {
+      "claim": "effect_measured",
+      "status": "pass",
+      "evidence": "Effect report impact_direction=negative."
+    }
+  ],
+  "risks": {
+    "negative_transfer_risk": "medium",
+    "blocked_or_suppressed_count": 1,
+    "unresolved_inspection_count": 2,
+    "reasons": [
+      "lifecycle_active",
+      "authority_advisory",
+      "lifecycle_candidate_signal",
+      "lifecycle_candidate_current",
+      "lifecycle_candidate_procedure",
+      "memory_contract_direct_use",
+      "requires_differential_rehydration",
+      "agent_context_projection_checked",
+      "guide_history_used",
+      "premise_firewall_query_risk",
+      "lifecycle_candidate_contested",
+      "lifecycle_candidate_direct_use_gated",
+      "candidate_or_contested_memory_kept_out_of_use_now",
+      "lifecycle_candidate_kept_out_of_use_now",
+      "memory_contract_requires_inspection",
+      "premise_firewall_query_mentions_uncertain_memory"
+    ]
+  },
+  "source_map": {
+    "routes_used": [
+      "/v1/operator/snapshot",
+      "/v1/memory/planning/context",
+      "/v1/measure"
+    ],
+    "internal_surfaces_used": [
+      "operator_snapshot",
+      "guide_packet",
+      "memory_decision_trace",
+      "memory_use_receipt",
+      "memory_admission_record",
+      "memory_decision_audit_report",
+      "judgment_calibration_summary",
+      "trace_to_procedure_projection"
+    ],
+    "omitted_internal_surfaces": [
+      "raw_memory_rows",
+      "raw_slots",
+      "raw_embedding_vectors",
+      "agent_prompt_injection"
+    ]
+  }
+}

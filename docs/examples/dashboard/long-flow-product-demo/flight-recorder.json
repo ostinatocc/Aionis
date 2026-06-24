@@ -1,0 +1,305 @@
+{
+  "contract_version": "aionis_agent_flight_recorder_report_v1",
+  "tenant_id": "default",
+  "scope": "long-flow-product-demo:long-flow-2823e434",
+  "intended_use": "incident_replay_audit",
+  "agent_prompt_included": false,
+  "runtime_mutation": false,
+  "guide_trace_id": "guide_trace:b25c3611-79f2-4e39-8e9e-198d6f6dddf4",
+  "run_id": "long-flow-2823e434",
+  "decision_time": "2026-06-24T00:00:00.000Z",
+  "agent_view": {
+    "history_used": true,
+    "actionable_history_used": true,
+    "recommended_posture": "inspect_before_use",
+    "authority": "advisory",
+    "prompt_char_count": 882,
+    "prompt_text_included": false,
+    "exposed_memory_ids": [
+      "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+      "4025e47e-ef47-52db-9ad1-e21dc45414ef",
+      "d565e222-0f44-52f2-881a-3f31b2839f16",
+      "47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+      "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+      "8f12312a-20ba-5aeb-bc63-cd5a526ec656"
+    ],
+    "use_now_memory_ids": [
+      "8f12312a-20ba-5aeb-bc63-cd5a526ec656",
+      "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+      "d565e222-0f44-52f2-881a-3f31b2839f16"
+    ],
+    "inspect_before_use_memory_ids": [
+      "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+      "8f12312a-20ba-5aeb-bc63-cd5a526ec656",
+      "47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+      "d565e222-0f44-52f2-881a-3f31b2839f16"
+    ],
+    "do_not_use_memory_ids": [
+      "47fb0e94-bd65-57a2-968a-3cbcbe2538be"
+    ],
+    "rehydrate_memory_ids": [
+      "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+      "4025e47e-ef47-52db-9ad1-e21dc45414ef",
+      "d565e222-0f44-52f2-881a-3f31b2839f16"
+    ],
+    "target_files": [],
+    "recall_sources_by_memory_id": [
+      {
+        "memory_id": "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 1,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          },
+          {
+            "kind": "execution_native",
+            "score": 0.99,
+            "reason": "structured_execution_signature_recall",
+            "matched_fields": [
+              "task_signature",
+              "workflow_signature"
+            ],
+            "index_name": "lite_memory_execution_native_index"
+          }
+        ]
+      },
+      {
+        "memory_id": "4025e47e-ef47-52db-9ad1-e21dc45414ef",
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 0.953227,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          },
+          {
+            "kind": "execution_native",
+            "score": 0.96,
+            "reason": "structured_execution_signature_recall",
+            "matched_fields": [
+              "task_signature",
+              "workflow_signature"
+            ],
+            "index_name": "lite_memory_execution_native_index"
+          }
+        ]
+      },
+      {
+        "memory_id": "d565e222-0f44-52f2-881a-3f31b2839f16",
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 0.820589,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          },
+          {
+            "kind": "execution_native",
+            "score": 0.98,
+            "reason": "structured_execution_signature_recall",
+            "matched_fields": [
+              "task_signature",
+              "workflow_signature"
+            ],
+            "index_name": "lite_memory_execution_native_index"
+          }
+        ]
+      },
+      {
+        "memory_id": "47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 0.247323,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          },
+          {
+            "kind": "execution_native",
+            "score": 0.97,
+            "reason": "structured_execution_signature_recall",
+            "matched_fields": [
+              "task_signature",
+              "workflow_signature"
+            ],
+            "index_name": "lite_memory_execution_native_index"
+          }
+        ]
+      },
+      {
+        "memory_id": "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 0.892728,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          }
+        ]
+      },
+      {
+        "memory_id": "8f12312a-20ba-5aeb-bc63-cd5a526ec656",
+        "recall_sources": [
+          {
+            "kind": "semantic",
+            "score": 0.730069,
+            "reason": "bounded_embedding_scan",
+            "matched_fields": [
+              "embedding_vector_json"
+            ],
+            "index_name": "lite_embedding_json_scan"
+          }
+        ]
+      }
+    ]
+  },
+  "blocked_or_suppressed": [
+    {
+      "memory_id": "47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+      "title": "LONG_FLOW_DEMO_FAILED_ROUTE legacy discount route rejected",
+      "lifecycle_state": "candidate",
+      "authority": "candidate",
+      "agent_surface": "do_not_use",
+      "reason_codes": [
+        "lifecycle_candidate",
+        "candidate_authority",
+        "contradiction_warning",
+        "premise_firewall_query_risk",
+        "lifecycle_candidate_signal",
+        "lifecycle_candidate_negative",
+        "lifecycle_candidate_stale",
+        "lifecycle_candidate_contested",
+        "lifecycle_candidate_direct_use_gated",
+        "memory_contract_inspect_before_use",
+        "memory_contract_confirmation_required",
+        "blocked_from_agent_use",
+        "agent_context_projection_checked",
+        "guide_history_used"
+      ],
+      "recall_sources": [
+        {
+          "kind": "semantic",
+          "score": 0.247323,
+          "reason": "bounded_embedding_scan",
+          "matched_fields": [
+            "embedding_vector_json"
+          ],
+          "index_name": "lite_embedding_json_scan"
+        },
+        {
+          "kind": "execution_native",
+          "score": 0.97,
+          "reason": "structured_execution_signature_recall",
+          "matched_fields": [
+            "task_signature",
+            "workflow_signature"
+          ],
+          "index_name": "lite_memory_execution_native_index"
+        }
+      ]
+    }
+  ],
+  "attribution": {
+    "present": true,
+    "outcome": "positive",
+    "used_memory_ids": [
+      "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+      "d565e222-0f44-52f2-881a-3f31b2839f16"
+    ],
+    "attributed_memory_ids": [
+      "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+      "d565e222-0f44-52f2-881a-3f31b2839f16"
+    ],
+    "unattributed_memory_ids": [
+      "4025e47e-ef47-52db-9ad1-e21dc45414ef",
+      "47fb0e94-bd65-57a2-968a-3cbcbe2538be",
+      "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
+      "8f12312a-20ba-5aeb-bc63-cd5a526ec656"
+    ],
+    "supported_memory_ids": [
+      "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+      "d565e222-0f44-52f2-881a-3f31b2839f16"
+    ],
+    "contradicted_memory_ids": [],
+    "reason": "Activate feedback is attributed only to host-reported used memory ids; recalled but unreported memories remain unattributed."
+  },
+  "replay_sources": {
+    "has_agent_context": false,
+    "has_memory_decision_trace": true,
+    "has_memory_use_receipt": true,
+    "has_memory_admission_record": true,
+    "has_operator_snapshot": true,
+    "has_feedback_result": true
+  },
+  "claims": [
+    {
+      "claim": "agent_view_reconstructable",
+      "status": "pass",
+      "evidence": "6 exposed memory ids reconstructed."
+    },
+    {
+      "claim": "prompt_payload_excluded",
+      "status": "pass",
+      "evidence": "Report includes prompt_char_count but excludes prompt_text."
+    },
+    {
+      "claim": "blocked_memory_visible",
+      "status": "pass",
+      "evidence": "1 blocked or suppressed memories are visible."
+    },
+    {
+      "claim": "claim_ledger_projection_replayable",
+      "status": "warn",
+      "evidence": "No Claim Ledger projection was supplied."
+    },
+    {
+      "claim": "feedback_attribution_replayable",
+      "status": "pass",
+      "evidence": "2 used memory ids replayed."
+    },
+    {
+      "claim": "runtime_read_only",
+      "status": "pass",
+      "evidence": "Agent Flight Recorder is a read-only projection over supplied artifacts."
+    }
+  ],
+  "source_map": {
+    "routes_used": [
+      "/v1/audit/flight-recorder",
+      "/v1/measure",
+      "/v1/operator/snapshot",
+      "/v1/memory/planning/context"
+    ],
+    "internal_surfaces_used": [
+      "agent_flight_recorder",
+      "memory_decision_trace",
+      "memory_use_receipt",
+      "memory_admission_record",
+      "operator_snapshot"
+    ],
+    "omitted_internal_surfaces": [
+      "agent_prompt_text",
+      "raw_memory_rows",
+      "raw_slots",
+      "raw_embedding_vectors"
+    ]
+  },
+  "summary": "Agent Flight Recorder reconstructed 6 exposed memories, 3 direct-use memories, 1 blocked/suppressed memories, 0 claim-ledger decisions, and feedback attribution=true."
+}

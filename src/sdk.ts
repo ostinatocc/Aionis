@@ -603,6 +603,7 @@ export type AionisProductTask = {
   run_id: string;
   task_signature: string;
   task_family?: string;
+  workflow_signature?: string;
 };
 
 export type AionisFeedbackFromGuideInput = {
@@ -1890,6 +1891,7 @@ export class AionisExecutionClient {
         run_id: input.run_id,
         task_signature: input.task_signature,
         task_family: input.task_family,
+        workflow_signature: input.workflow_signature,
       },
       before_guide: input.before_guide,
       after_guide: input.after_guide,
@@ -1898,10 +1900,7 @@ export class AionisExecutionClient {
       evidence_ids: input.evidence_ids,
       tenant_id: input.tenant_id,
       scope: input.scope,
-      product_trace: {
-        workflow_signature: input.workflow_signature,
-        ...(input.product_trace ?? {}),
-      },
+      product_trace: input.product_trace,
     }), options);
   }
 
@@ -2546,6 +2545,7 @@ export function measureInputFromGuideLoop(input: AionisMeasureFromGuideLoopInput
       run_id: input.task.run_id,
       task_signature: input.task.task_signature,
       task_family: input.task.task_family,
+      workflow_signature: input.task.workflow_signature,
     }),
     product_trace: stripUndefined({
       before_guide: input.before_guide,

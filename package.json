@@ -54,6 +54,7 @@
     "runtime:e2e:flight-recorder-incident": "npx tsx scripts/e2e/flight-recorder-incident-demo.ts",
     "runtime:e2e:loop-engineering-profile": "npx tsx scripts/e2e/loop-engineering-profile.ts",
     "runtime:e2e:plan-as-memory-asset": "npx tsx scripts/e2e/plan-as-memory-asset-demo.ts",
+    "runtime:e2e:long-flow-demo": "npx tsx scripts/e2e/long-flow-product-demo.ts",
     "runtime:e2e:managed-server-hybrid-recall": "npx tsx scripts/e2e/managed-server-hybrid-recall-loop.ts",
     "runtime:e2e:recall-source-governance": "npx tsx scripts/e2e/managed-server-hybrid-recall-loop.ts",
     "runtime:e2e:recall-troubleshooting": "npx tsx scripts/e2e/recall-engine-troubleshooting-demo.ts",
