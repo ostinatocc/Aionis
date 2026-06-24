@@ -411,7 +411,7 @@ test("README and positioning docs keep the external product language stable", ()
   assert.match(positioning, /state-adjudicated memory runtime/);
   assert.match(positioning, /not recall-only memory/i);
   assert.match(positioning, /execution memory/i);
-  assert.match(positioning, /failed branches become counter-evidence/i);
+  assert.match(positioning, /state-preserving, execution-ready context/i);
   assert.match(positioning, /auditable memory use receipts/i);
   assert.match(positioning, /guaranteed external task success/);
 });

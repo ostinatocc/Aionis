@@ -1984,6 +1984,71 @@ test("product observe turns execution input into recallable execution memory", a
   }
 });
 
+test("product observe gives repeated execution observations distinct default ids when run anchors differ", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("observe-execution-distinct-run-anchors");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const baseExecution = {
+      task_signature: "claude-code:diagnostic:workspace",
+      title: "Claude Code Bash completed",
+      summary: "Bash: npm test 2>&1 completed. Response excerpt: tests passed",
+      outcome: "succeeded",
+      tool_set: ["Bash"],
+      confidence: 0.8,
+    };
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        memory_lane: "shared",
+        producer_agent_id: "claude-code",
+        owner_team_id: "team:diagnostic",
+        execution: {
+          ...baseExecution,
+          run_id: "claude:session-one",
+          raw_ref: "tool-use-one",
+        },
+      },
+    });
+    assert.equal(first.statusCode, 200, first.body);
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        memory_lane: "shared",
+        producer_agent_id: "claude-code",
+        owner_team_id: "team:diagnostic",
+        execution: {
+          ...baseExecution,
+          run_id: "claude:session-two",
+          raw_ref: "tool-use-two",
+        },
+      },
+    });
+    assert.equal(second.statusCode, 200, second.body);
+
+    const firstClientId = first.json().structured_memory.structured_nodes[0].client_id;
+    const secondClientId = second.json().structured_memory.structured_nodes[0].client_id;
+    assert.equal(typeof firstClientId, "string");
+    assert.equal(typeof secondClientId, "string");
+    assert.notEqual(firstClientId, secondClientId);
+  } finally {
+    await app.close();
+  }
+});
+
 test("product guide full_power merges semantic memory with safe execution context", async () => {
   const app = Fastify();
   const env = liteEnv();

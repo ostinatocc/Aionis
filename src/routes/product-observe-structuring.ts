@@ -225,6 +225,11 @@ function executionObservationAsNode(parsed: ProductObserveMemoryInput): Record<s
   const evidence = productRecordList(execution.evidence, 32);
   const artifacts = productRecordList(execution.artifacts, 32);
   const signatureBase = [
+    productFirstString(execution.client_id),
+    productFirstString(execution.raw_ref),
+    productFirstString(execution.run_id),
+    productFirstString(slots.raw_ref),
+    productFirstString(slots.run_id),
     productFirstString(execution.task_signature),
     productFirstString(execution.workflow_signature),
     title,
