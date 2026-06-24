@@ -3,30 +3,27 @@
 **Execution memory that keeps coding agents on route with far less context.**
 
 Aionis is the state-adjudicated memory runtime that turns plans, decisions,
-outcomes, failed attempts, and rehydrate pointers into compact Agent context
-that survives sessions, roles, plans, and model boundaries.
+outcomes, validation evidence, and rehydrate pointers into compact Agent
+context that survives sessions, roles, plans, and model boundaries.
 Memory is not recall. Memory is state.
 
 Docs: [docs.aionis.work](https://docs.aionis.work)
 
 Current release: **v0.2.2 public beta**. Use it today as a local Runtime,
-MCP bridge, TypeScript SDK, Memory Firewall, and managed-server-ready Runtime
-for agent execution memory.
+TypeScript SDK, HTTP API, MCP bridge, AIFS file surface, Memory Firewall, and
+managed-server-ready Runtime for agent execution memory.
 
 Aionis sits between your Agent and its history. It decides whether memory is
-current, stale, contested, failed, reusable, or worth rehydrating, then compiles
-the admitted execution state into the next Agent context. Failed branches still
-matter: they become governed counter-evidence instead of future instructions.
+current, stale, contested, invalidated, reusable, or worth rehydrating, then
+compiles the admitted execution state into the next Agent context. The main
+claim is state-preserving, execution-ready context at lower context cost than
+full-history transfer.
 
-Aionis ships with a local-first Lite Runtime plus SDK, MCP bridge, and Claude
-Code lifecycle integration. The Runtime can also be configured for managed
-server deployments with API-key/JWT auth and request controls when teams want
-remote SDK or MCP clients.
-
-For Claude Code, the strongest path is MCP plus lifecycle hooks: Aionis injects
-governed execution context before each user prompt and records Bash/Edit/Write
-evidence after tool use. MCP remains available for explicit tools such as
-Flight Recorder and operator snapshots.
+Aionis ships with a local-first Lite Runtime plus SDK, HTTP API, MCP bridge,
+AIFS, and optional native plugins such as Claude Code lifecycle integration.
+The Runtime can also be configured for managed server deployments with
+API-key/JWT auth and request controls when teams want remote SDK, HTTP, MCP, or
+plugin clients.
 
 ## Choose Your Entry Point
 
@@ -185,10 +182,10 @@ Most memory systems retrieve text. Aionis governs state.
 | Shorter context without losing the task | Execution history is compressed into current state, reusable procedures, and rehydrate pointers. |
 | Execution continuity across sessions | The next Agent receives the accepted route and action boundary without replaying full history. |
 | Safer memory than raw RAG | Memories are gated into `use_now`, `inspect_before_use`, `do_not_use`, or `rehydrate`. |
-| Failed-branch governance | Failed branches remain available as counter-evidence instead of future instructions. |
+| Governed alternatives | Invalidated or low-authority history remains available as evidence without becoming future instruction. |
 | Admission for any memory backend | Mem0, Zep, Supermemory, Pinecone, pgvector, Chroma, Weaviate, LangGraph Store, markdown, logs, or custom memory candidates can be routed through Aionis before prompt use. |
 | Memory Firewall for retrieval systems | Use your memory backend for recall, then prevent failed, stale, contested, unknown, or rehydrate-required memories from becoming Agent instructions. |
-| Plans that survive model and session boundaries | Strong planners can create plans; Aionis keeps their decisions, checks, failed branches, and boundaries executable for later workers. |
+| Plans that survive model and session boundaries | Strong planners can create plans; Aionis keeps their decisions, checks, validation boundaries, and handoff state executable for later workers. |
 | Multi-agent execution continuity | Planner, worker, verifier, and reviewer share branch-aware execution memory. |
 | Memory that can be controlled | Stale or harmful memory can be suppressed, archived, restored, or rehydrated. |
 | Operator confidence | Every guide can produce memory use receipts, decision traces, and read-only snapshots. |
@@ -214,7 +211,7 @@ flowchart LR
   Forget --> Admission
 
   Admission <--> Store["Memory Store\nordinary memory + execution traces + archives"]
-  Admission --> Exec["Execution Memory\nactive path + failed branches + procedures"]
+  Admission --> Exec["Execution Memory\nactive path + validation boundaries + procedures"]
 
   Store --> Compiler["Context Compiler\nuse_now + inspect + do_not_use + rehydrate"]
   Exec --> Compiler
@@ -255,9 +252,9 @@ compliance.
 | Approach | Default behavior | Aionis behavior |
 |---|---|---|
 | Long context | Pass everything to the model. | Compile only external memory state into Agent context. |
-| Vector recall / RAG | Retrieve related text. | Decide whether memory is current, stale, contested, failed, or rehydratable before use. |
+| Vector recall / RAG | Retrieve related text. | Decide whether memory is current, stale, contested, invalidated, or rehydratable before use. |
 | Recall memory | Return relevant memories. | Split memory into `use_now`, `inspect_before_use`, `do_not_use`, and `rehydrate`. |
-| Workflow memory | Store successful procedures. | Preserve passed paths and failed branches so mistakes become counter-evidence. |
+| Workflow memory | Store successful procedures. | Preserve passed paths, validation boundaries, and active state. |
 
 Full positioning guide:
 [docs/AIONIS_PRODUCT_POSITIONING.md](docs/AIONIS_PRODUCT_POSITIONING.md).
@@ -340,7 +337,7 @@ Plans become governed execution memory when they carry:
 
 - resolved decisions
 - acceptance checks
-- failed branches
+- rejected alternatives
 - active targets
 - execution boundaries
 - evidence and feedback attribution
@@ -800,7 +797,7 @@ Reviewer receives compact context and continues the active path.
 Aionis keeps the useful execution state alive:
 
 1. passed solutions can be reused
-2. failed branches stay visible as counter-evidence
+2. rejected alternatives stay governed as evidence
 3. active path is separated from stale or contested memory
 4. handoff state can survive across Agents, sessions, and runs
 5. operator snapshots explain what was used, blocked, and measured

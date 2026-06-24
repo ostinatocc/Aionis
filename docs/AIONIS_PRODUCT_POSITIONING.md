@@ -27,13 +27,13 @@ execution memory.
 Most agent memory systems retrieve related history and hope the model handles
 the rest. Aionis adds a Runtime decision layer before the Agent sees memory.
 
-It adjudicates whether memory is current, stale, contested, failed, reusable, or
-worth rehydrating. Then it compiles the result into clear Agent-facing surfaces:
+It adjudicates whether memory is current, stale, contested, invalidated,
+reusable, or worth rehydrating. Then it compiles the result into clear Agent-facing surfaces:
 `use_now`, `inspect_before_use`, `do_not_use`, and `rehydrate`.
 
-The strongest Aionis surface is execution memory: branch-aware memory of plans,
-actions, verifier outcomes, failed attempts, passed continuations, handoffs, and
-feedback attribution. This makes Aionis especially useful for long-running
+The strongest Aionis surface is execution memory: state-aware memory of plans,
+actions, verifier outcomes, accepted continuations, rejected alternatives,
+handoffs, and feedback attribution. This makes Aionis especially useful for long-running
 agents and multi-agent systems where the next Agent must inherit actionable
 state without replaying full history.
 
@@ -67,7 +67,7 @@ The product value is the state gate before context compilation.
 Execution memory is not just a summary of prior work. It carries branch state:
 
 1. passed paths
-2. failed branches
+2. rejected alternatives
 3. current active path
 4. verifier outcomes
 5. handoff boundaries
@@ -79,7 +79,7 @@ multi-agent systems, coding agents, workflow agents, and long-running
 automation.
 
 High-quality plans are execution memory assets when they preserve resolved
-decisions, acceptance checks, failed branches, active targets, execution
+decisions, acceptance checks, active targets, rejected alternatives, execution
 boundaries, and evidence attribution. A strong planner can create the plan, but
 Aionis keeps that plan executable across cheaper workers, future sessions, and
 other Agent roles.
@@ -98,10 +98,10 @@ preserving:
 Aionis should describe context compression as state-preserving context
 compilation.
 
-Wrong-branch handling is part of this safety model. Failed branches are retained
-as governed counter-evidence, while the strongest current product claim is
-route-safe, execution-ready context at much lower context cost than
-full-history transfer.
+Invalidated-route handling is part of this safety model, but it is not the
+headline. Rejected, stale, or low-authority evidence remains governed, while the
+strongest current product claim is state-preserving, execution-ready context at
+much lower context cost than full-history transfer.
 
 ### 4. Auditable Memory Use
 
@@ -146,10 +146,10 @@ rehydrate-required memories are routed away from direct Agent instructions.
 | Approach | What it does | What Aionis adds |
 |---|---|---|
 | Long context | Passes more history to the model. | Compiles only governed memory state into the Agent surface. |
-| Vector recall / RAG | Retrieves related text. | Separates current, stale, contested, failed, and rehydratable memory before use. |
+| Vector recall / RAG | Retrieves related text. | Separates current, stale, contested, invalidated, and rehydratable memory before use. |
 | Recall memory products | Store and retrieve user or task memories. | Adds lifecycle, authority, feedback attribution, and operator audit. |
 | Mem0 / Zep-style memory backends | Retrieve useful memory candidates. | Governs candidate admission before prompt use without replacing the backend. |
-| Workflow memory | Stores successful procedures. | Also keeps failed branches as counter-evidence and tracks active path state. |
+| Workflow memory | Stores successful procedures. | Also preserves validation boundaries and tracks active path state. |
 | Prompt summarization | Compresses text. | Preserves execution state, negative memory, rehydration pointers, and receipts. |
 | Agent frameworks | Orchestrate tools, roles, and model calls. | Supplies governed memory context without owning orchestration. |
 
@@ -197,9 +197,9 @@ Use this language:
 6. `auditable memory use receipts`
 7. `state-preserving context compilation`
 8. `use Mem0 for retrieval, use Aionis as the Memory Firewall`
-9. `plans, decisions, failures, and acceptance checks become reusable execution memory`
+9. `plans, decisions, validation evidence, and acceptance checks become reusable execution memory`
 10. `strong models make better plans; Aionis keeps those plans executable across cheaper agents and future sessions`
-11. `failed branches become counter-evidence`
+11. `invalidated routes stay governed evidence`
 
 Reserve absolute claims for validated reports:
 
