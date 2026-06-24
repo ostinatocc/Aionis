@@ -40,7 +40,7 @@ authorize:
 | Stage | Evidence | Result |
 |---|---|---|
 | Offline dataset and holdout | `docs/research/2026-06-18-admission-dataset-batch-baseline.md` | Candidate beat recorded policy on holdout calibration and became eligible for manual review. |
-| Counterfactual rerun | Admission rerun reports under `admission-dataset/reports/latest/` | Candidate preserved hard-boundary and positive-capture gates under deterministic replay. |
+| Counterfactual rerun | Admission rerun reports under the local/private `admission-dataset/reports/latest/` workspace | Candidate preserved hard-boundary and positive-capture gates under deterministic replay. |
 | Real LLM admission rerun | `docs/research/2026-06-18-admission-current-runid-real-agent.md` | Candidate preserved accepted action rate and hard-boundary gates on the accumulated dataset. |
 | Online guide shadow | `docs/research/2026-06-18-admission-online-shadow-100gate.md` | Shadow projection reached 120 rows and 12 task signatures without prompt inclusion or Runtime mutation. |
 | Second guide shadow | `docs/research/2026-06-18-admission-second-guide-shadow-100gate.md` | A neighboring `/v1/guide` profile reached 120 rows and 8 task signatures with the same bounded shadow behavior. |

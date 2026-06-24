@@ -2,15 +2,19 @@
 
 Date: 2026-06-18
 
-Runtime workspace: `/Volumes/ziel/AionisRuntime-focused`
+Runtime repository: Aionis public Runtime
 
 Runtime base before this baseline artifact series: `e83e317`
 
-Dataset directory:
+Dataset workspace:
 
 ```text
 admission-dataset/
 ```
+
+The full dataset is a private/local data asset and is not included in the public
+Runtime source tree. Public Runtime keeps the exporter/evaluator code and small
+sanitized examples.
 
 ## Scope
 
@@ -66,7 +70,7 @@ bucket.
 
 ## Dataset
 
-Report:
+Private/local report path:
 
 ```text
 admission-dataset/reports/latest/leaderboard.md

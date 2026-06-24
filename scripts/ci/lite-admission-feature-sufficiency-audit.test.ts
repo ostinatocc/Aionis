@@ -1,20 +1,19 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
 import test from "node:test";
+import { admissionCandidatePolicyFixtureJsonl } from "./admission-dataset-fixture.ts";
 import {
   auditAdmissionFeatureSufficiencyJsonl,
   formatAdmissionFeatureSufficiencyAuditMarkdown,
 } from "../../src/memory/admission-feature-sufficiency-audit.js";
 
-const BASELINE_ROWS = path.resolve("admission-dataset/rows.jsonl");
+const BASELINE_JSONL = admissionCandidatePolicyFixtureJsonl();
 
 function baselineRowCount(): number {
-  return fs.readFileSync(BASELINE_ROWS, "utf8").split(/\r?\n/).filter((line) => line.trim().length > 0).length;
+  return BASELINE_JSONL.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
 }
 
 test("admission feature sufficiency audit detects positive negative direct-use collision in real dataset", () => {
-  const report = auditAdmissionFeatureSufficiencyJsonl(fs.readFileSync(BASELINE_ROWS, "utf8"));
+  const report = auditAdmissionFeatureSufficiencyJsonl(BASELINE_JSONL);
 
   assert.equal(report.contract_version, "aionis_admission_feature_sufficiency_audit_report_v1");
   assert.equal(report.runtime_mutation, false);
@@ -54,7 +53,7 @@ test("admission feature sufficiency audit detects positive negative direct-use c
 });
 
 test("admission feature sufficiency audit formats markdown with recommendations", () => {
-  const report = auditAdmissionFeatureSufficiencyJsonl(fs.readFileSync(BASELINE_ROWS, "utf8"));
+  const report = auditAdmissionFeatureSufficiencyJsonl(BASELINE_JSONL);
   const markdown = formatAdmissionFeatureSufficiencyAuditMarkdown(report);
 
   assert.match(markdown, /Aionis Admission Feature Sufficiency Audit/);

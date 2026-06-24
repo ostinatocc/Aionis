@@ -2,6 +2,12 @@
 
 Status: product runbook for append-only admission evidence exports
 
+Dataset boundary: `admission-dataset/` is a local or private data workspace. It
+is intentionally ignored by the public Runtime repository. Public Runtime source
+keeps the exporter, evaluator, policy-comparison code, and small sanitized
+examples under `docs/examples/`; full admission rows should live in a private
+data repository or another controlled data store.
+
 This runbook turns Aionis' existing product loop into a durable JSONL dataset:
 
 ```text
@@ -79,7 +85,7 @@ Only `agent_used=true` with host feedback should become attributed use.
 
 ## File Layout
 
-A simple local layout is enough:
+A simple local/private layout is enough:
 
 ```text
 admission-dataset/
@@ -111,7 +117,9 @@ Append rows to `rows.jsonl`. Write a manifest per export job with:
 }
 ```
 
-Use the offline collector for normal appends:
+Use the offline collector for normal appends. The target directory may be a
+gitignored local `admission-dataset/` directory or an external private data
+checkout:
 
 ```bash
 npm run -s admission:collect -- \
@@ -229,6 +237,9 @@ Treat those reports as pipeline validation, not policy-quality evidence.
 This is an audit and calibration input only. It must not mutate memory, promote a
 learned policy, or override lifecycle, scope, source, suppression, authority, or
 rehydrate gates.
+
+Do not commit full generated datasets to the public Runtime repository. Commit a
+small sanitized sample only when it is needed to document the contract.
 
 ## Production Guardrails
 

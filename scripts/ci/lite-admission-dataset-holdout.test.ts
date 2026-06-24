@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
 import test from "node:test";
+import { admissionCandidatePolicyFixtureJsonl } from "./admission-dataset-fixture.ts";
 import {
   evaluateAdmissionDatasetHoldoutJsonl,
   formatAdmissionDatasetHoldoutMarkdown,
 } from "../../src/memory/admission-dataset-holdout.js";
 
-const BASELINE_ROWS = path.resolve("admission-dataset/rows.jsonl");
+const BASELINE_JSONL = admissionCandidatePolicyFixtureJsonl();
 
 function parseRows(jsonl: string): Array<Record<string, unknown>> {
   return jsonl.trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>);
@@ -18,7 +17,7 @@ function uniqueCount(rows: Array<Record<string, unknown>>, field: string): numbe
 }
 
 test("admission dataset holdout splits real Runtime rows by task signature", () => {
-  const jsonl = fs.readFileSync(BASELINE_ROWS, "utf8");
+  const jsonl = BASELINE_JSONL;
   const rows = parseRows(jsonl);
   const report = evaluateAdmissionDatasetHoldoutJsonl(jsonl, {
     split_by: "task_signature",
@@ -41,7 +40,7 @@ test("admission dataset holdout splits real Runtime rows by task signature", () 
 });
 
 test("admission dataset holdout split is deterministic for the same seed", () => {
-  const jsonl = fs.readFileSync(BASELINE_ROWS, "utf8");
+  const jsonl = BASELINE_JSONL;
   const first = evaluateAdmissionDatasetHoldoutJsonl(jsonl, {
     split_by: "task_signature",
     holdout_ratio: 0.3,
@@ -58,7 +57,7 @@ test("admission dataset holdout split is deterministic for the same seed", () =>
 });
 
 test("admission dataset holdout can split by run id for chunk-like validation", () => {
-  const jsonl = fs.readFileSync(BASELINE_ROWS, "utf8");
+  const jsonl = BASELINE_JSONL;
   const rows = parseRows(jsonl);
   const report = evaluateAdmissionDatasetHoldoutJsonl(jsonl, {
     split_by: "run_id",
@@ -74,7 +73,7 @@ test("admission dataset holdout can split by run id for chunk-like validation", 
 });
 
 test("admission dataset holdout formats markdown report", () => {
-  const jsonl = fs.readFileSync(BASELINE_ROWS, "utf8");
+  const jsonl = BASELINE_JSONL;
   const report = evaluateAdmissionDatasetHoldoutJsonl(jsonl, {
     split_by: "task_signature",
     holdout_ratio: 0.3,

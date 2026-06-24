@@ -2,7 +2,7 @@
 
 Date: 2026-06-18
 
-Runtime workspace: `/Volumes/ziel/AionisRuntime-focused`
+Runtime repository: Aionis public Runtime
 
 Runtime base: `7de04f2`
 

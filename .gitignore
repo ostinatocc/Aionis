@@ -16,6 +16,7 @@ dist
 packages/aionis-doc/dist/
 .aionis
 .aionisgo
+admission-dataset/
 *.tsbuildinfo
 .eslintcache
 .pytest_cache

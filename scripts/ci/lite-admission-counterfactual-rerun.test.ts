@@ -1,20 +1,19 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
 import test from "node:test";
+import { admissionCandidatePolicyFixtureJsonl } from "./admission-dataset-fixture.ts";
 import {
   formatAdmissionCounterfactualRerunMarkdown,
   rerunAdmissionCounterfactualJsonl,
 } from "../../src/memory/admission-counterfactual-rerun.js";
 
-const BASELINE_ROWS = path.resolve("admission-dataset/rows.jsonl");
+const BASELINE_JSONL = admissionCandidatePolicyFixtureJsonl();
 
 function baselineRowCount(): number {
-  return fs.readFileSync(BASELINE_ROWS, "utf8").split(/\r?\n/).filter((line) => line.trim().length > 0).length;
+  return BASELINE_JSONL.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
 }
 
 test("admission counterfactual rerun gates candidate policy before real Agent rerun", () => {
-  const report = rerunAdmissionCounterfactualJsonl(fs.readFileSync(BASELINE_ROWS, "utf8"), {
+  const report = rerunAdmissionCounterfactualJsonl(BASELINE_JSONL, {
     split_by: "task_signature",
     holdout_ratio: 0.5,
     seed: "aionis-admission-holdout-v1",
@@ -46,7 +45,7 @@ test("admission counterfactual rerun gates candidate policy before real Agent re
 });
 
 test("admission counterfactual rerun preserves explicit candidate selection", () => {
-  const report = rerunAdmissionCounterfactualJsonl(fs.readFileSync(BASELINE_ROWS, "utf8"), {
+  const report = rerunAdmissionCounterfactualJsonl(BASELINE_JSONL, {
     split_by: "task_signature",
     holdout_ratio: 0.5,
     seed: "aionis-admission-holdout-v1",
@@ -59,7 +58,7 @@ test("admission counterfactual rerun preserves explicit candidate selection", ()
 });
 
 test("admission counterfactual rerun formats markdown", () => {
-  const report = rerunAdmissionCounterfactualJsonl(fs.readFileSync(BASELINE_ROWS, "utf8"), {
+  const report = rerunAdmissionCounterfactualJsonl(BASELINE_JSONL, {
     split_by: "task_signature",
     holdout_ratio: 0.5,
     seed: "aionis-admission-holdout-v1",

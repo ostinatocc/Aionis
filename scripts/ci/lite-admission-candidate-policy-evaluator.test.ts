@@ -1,20 +1,19 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
 import test from "node:test";
+import { admissionCandidatePolicyFixtureJsonl } from "./admission-dataset-fixture.ts";
 import {
   evaluateAdmissionCandidatePoliciesJsonl,
   formatAdmissionCandidatePolicyEvaluationMarkdown,
 } from "../../src/memory/admission-candidate-policy-evaluator.js";
 
-const BASELINE_ROWS = path.resolve("admission-dataset/rows.jsonl");
+const BASELINE_JSONL = admissionCandidatePolicyFixtureJsonl();
 
 function baselineRowCount(): number {
-  return fs.readFileSync(BASELINE_ROWS, "utf8").split(/\r?\n/).filter((line) => line.trim().length > 0).length;
+  return BASELINE_JSONL.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
 }
 
 test("admission candidate policy evaluator selects and validates a label-safe holdout candidate", () => {
-  const report = evaluateAdmissionCandidatePoliciesJsonl(fs.readFileSync(BASELINE_ROWS, "utf8"), {
+  const report = evaluateAdmissionCandidatePoliciesJsonl(BASELINE_JSONL, {
     split_by: "task_signature",
     holdout_ratio: 0.5,
     seed: "aionis-admission-holdout-v1",
@@ -52,7 +51,7 @@ test("admission candidate policy evaluator selects and validates a label-safe ho
 });
 
 test("admission candidate policy evaluator keeps hard boundaries from being upgraded", () => {
-  const report = evaluateAdmissionCandidatePoliciesJsonl(fs.readFileSync(BASELINE_ROWS, "utf8"), {
+  const report = evaluateAdmissionCandidatePoliciesJsonl(BASELINE_JSONL, {
     split_by: "task_signature",
     holdout_ratio: 0.5,
     seed: "aionis-admission-holdout-v1",
@@ -66,7 +65,7 @@ test("admission candidate policy evaluator keeps hard boundaries from being upgr
 });
 
 test("admission candidate policy evaluator formats markdown", () => {
-  const report = evaluateAdmissionCandidatePoliciesJsonl(fs.readFileSync(BASELINE_ROWS, "utf8"), {
+  const report = evaluateAdmissionCandidatePoliciesJsonl(BASELINE_JSONL, {
     split_by: "task_signature",
     holdout_ratio: 0.5,
     seed: "aionis-admission-holdout-v1",

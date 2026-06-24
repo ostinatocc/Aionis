@@ -1,16 +1,13 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
 import test from "node:test";
 import { admissionDatasetTargetedExternalCurrentSpecs } from "../e2e/admission-dataset-export-loop.ts";
+import { admissionCandidatePolicyFixtureJsonl } from "./admission-dataset-fixture.ts";
 import { evaluateAdmissionCandidatePoliciesRows } from "../../src/memory/admission-candidate-policy-evaluator.js";
 import { parseAdmissionDatasetJsonl } from "../../src/memory/admission-dataset-evaluator.js";
 import { splitAdmissionDatasetRows } from "../../src/memory/admission-dataset-holdout.js";
 
-const BASELINE_ROWS = path.resolve("admission-dataset/rows.jsonl");
-
 test("targeted external-current profile adds train-side support for candidate policy evaluation", () => {
-  const baselineRows = parseAdmissionDatasetJsonl(fs.readFileSync(BASELINE_ROWS, "utf8"));
+  const baselineRows = parseAdmissionDatasetJsonl(admissionCandidatePolicyFixtureJsonl());
   const externalTemplate = baselineRows.find((row) =>
     row.memory_origin === "external"
     && row.admission_action === "use_now"

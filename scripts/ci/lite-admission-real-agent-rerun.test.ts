@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
 import test from "node:test";
+import { admissionCandidatePolicyFixtureJsonl } from "./admission-dataset-fixture.ts";
 import {
   buildAdmissionRealAgentPromptPack,
   buildAdmissionRealAgentRerunReport,
@@ -12,10 +11,8 @@ import {
   scoreAdmissionRealAgentDecision,
 } from "../../src/memory/admission-real-agent-rerun.js";
 
-const BASELINE_ROWS = path.resolve("admission-dataset/rows.jsonl");
-
 function baselineRows() {
-  return parseAdmissionRealAgentDatasetJsonl(fs.readFileSync(BASELINE_ROWS, "utf8"));
+  return parseAdmissionRealAgentDatasetJsonl(admissionCandidatePolicyFixtureJsonl());
 }
 
 function preparedGroups() {
@@ -87,7 +84,9 @@ test("admission real-agent scorer accepts direct use of real positive memory", (
 
 test("admission real-agent scorer catches non-actionable direct attention from real rows", () => {
   const prepared = preparedGroups();
-  const group = prepared.groups.find((entry) => entry.group_id === "admission-dataset-export:targeted-external-current-sdk-contract");
+  const group = prepared.groups.find((entry) =>
+    entry.rows.some((row) => row.outcome_label === "unused_exposed" && row.admission_action === "use_now")
+  );
   assert.ok(group);
   const unused = group.rows.find((row) => row.outcome_label === "unused_exposed" && row.admission_action === "use_now");
   assert.ok(unused);
@@ -113,7 +112,9 @@ test("admission real-agent scorer catches non-actionable direct attention from r
 
 test("admission real-agent scorer marks direct use of candidate-inspect row as boundary ignored", () => {
   const prepared = preparedGroups();
-  const group = prepared.groups.find((entry) => entry.group_id === "admission-dataset-export:targeted-external-current-sdk-contract");
+  const group = prepared.groups.find((entry) =>
+    entry.rows.some((row) => row.outcome_label === "unused_exposed" && row.admission_action === "use_now")
+  );
   assert.ok(group);
   const unused = group.rows.find((row) => row.outcome_label === "unused_exposed" && row.admission_action === "use_now");
   assert.ok(unused);
