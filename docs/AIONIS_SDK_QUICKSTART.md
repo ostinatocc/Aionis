@@ -5,7 +5,7 @@ Status: developer-facing SDK quickstart for the focused local Runtime
 This quickstart shows the smallest SDK product loop:
 
 ```text
-remember -> guide -> compileExecutionAgentContext -> agent prompt -> feedback -> measure -> snapshot
+remember/observe -> guide -> compileExecutionAgentContext -> agent prompt -> feedback -> measure -> snapshot
 ```
 
 It uses the existing product facade through `src/sdk.ts` and the published
@@ -57,6 +57,7 @@ import {
   measureInputFromGuideLoop,
   snapshotInputFromGuideLoop,
   traceDerivedSkillCandidatesFromMeasure,
+  traceDerivedSkillReviewItemsFromMeasure,
   type AionisMemoryAdmissionRecord,
 } from "@aionis/sdk";
 
@@ -129,6 +130,12 @@ for (const candidate of traceSkillCandidates) {
   console.log(candidate.trace_derived_skill.skill_name);
 }
 
+const traceSkillReviewItems = traceDerivedSkillReviewItemsFromMeasure(measure);
+for (const item of traceSkillReviewItems) {
+  // Compact review queue item. Still read-only and candidate-only.
+  console.log(item.skill_name, item.review_action, item.safety.required_gate);
+}
+
 const admissionRows = memoryAdmissionDatasetRowsFromRecord(
   measure.memory_decision_trace.admission_record as AionisMemoryAdmissionRecord,
   {
@@ -163,8 +170,10 @@ validates that those IDs were exposed by the guide.
 `measureInputFromGuideLoop()` and `snapshotInputFromGuideLoop()` keep the
 normal product trace and operator snapshot payloads out of handwritten app code.
 `traceDerivedSkillCandidatesFromMeasure()` exposes positive execution traces as
-controlled skill candidates for review or later procedure promotion; candidates
-remain `agent_prompt_included: false` and `runtime_mutation: false`.
+raw controlled skill candidates. `traceDerivedSkillReviewItemsFromMeasure()`
+projects the same data into compact review queue items. Both remain
+`agent_prompt_included: false` and `runtime_mutation: false`; later use must
+pass the normal admission and promotion gates.
 
 ## Memory Firewall For Mem0
 

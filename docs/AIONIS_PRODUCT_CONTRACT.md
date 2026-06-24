@@ -223,6 +223,16 @@ contains applicability conditions, non-applicability conditions, procedure
 steps, acceptance checks, failure counterexamples, and source trace/evidence
 ids.
 
+The product path is intentionally review-first:
+
+```text
+agent execution trace -> feedback attribution -> measure -> trace-derived skill candidate -> review -> promotion gate
+```
+
+This makes Trace-Derived Skill Candidates a learning surface inside Execution
+Memory. They help operators and hosts identify reusable execution lessons, but
+they are not current route state and are not prompt instructions by default.
+
 The first implementation is deliberately conservative:
 
 | Property | Contract |
