@@ -7,7 +7,7 @@ import {
   parseAllowedSandboxCommands,
 } from "../memory/sandbox.js";
 import { type RecallStoreCapabilities } from "../store/recall-access.js";
-import { createLiteRecallStore } from "../store/lite-recall-store.js";
+import { createLiteRecallStore, type LiteRecallStore } from "../store/lite-recall-store.js";
 import { createLiteReplayStore } from "../store/lite-replay-store.js";
 import { createLiteRuntimeStore } from "../store/lite-runtime-store.js";
 import { createSandboxStore } from "../store/sandbox-access.js";
@@ -107,11 +107,6 @@ export async function createRuntimeServices(env: Env) {
   const store = createLiteRuntimeStore(env.LITE_WRITE_SQLITE_PATH);
   const liteReplayStore = createLiteReplayStore(env.LITE_REPLAY_SQLITE_PATH);
   const liteReplayAccess = liteReplayStore?.createReplayAccess() ?? null;
-  const liteWriteStore = createLiteWriteStore(env.LITE_WRITE_SQLITE_PATH);
-  const liteClaimLedgerStore = createLiteClaimLedgerStore(env.LITE_WRITE_SQLITE_PATH);
-  const claimLedgerAccess = liteClaimLedgerStore.createClaimLedgerAccess();
-  const executionStateStore = createLiteExecutionStateStore(env.LITE_WRITE_SQLITE_PATH);
-  const executionTreeStore = createLiteExecutionTreeStore(env.LITE_WRITE_SQLITE_PATH);
   const annIndex =
     env.RECALL_ANN_PROVIDER === "local"
       ? createLocalAnnIndex()
@@ -120,6 +115,23 @@ export async function createRuntimeServices(env: Env) {
             path: env.RECALL_ZVEC_PATH.trim() || `${env.LITE_WRITE_SQLITE_PATH}.zvec-ann`,
           })
         : null;
+  let annSyncedRecallStore: LiteRecallStore | null = null;
+  const liteWriteStore = createLiteWriteStore(env.LITE_WRITE_SQLITE_PATH, {
+    annSync: annIndex
+      ? {
+          syncNode: async (scope, nodeId) => {
+            await annSyncedRecallStore?.syncAnnNode(scope, nodeId);
+          },
+          deleteNode: async (nodeId) => {
+            await annSyncedRecallStore?.deleteAnnNode(nodeId);
+          },
+        }
+      : null,
+  });
+  const liteClaimLedgerStore = createLiteClaimLedgerStore(env.LITE_WRITE_SQLITE_PATH);
+  const claimLedgerAccess = liteClaimLedgerStore.createClaimLedgerAccess();
+  const executionStateStore = createLiteExecutionStateStore(env.LITE_WRITE_SQLITE_PATH);
+  const executionTreeStore = createLiteExecutionTreeStore(env.LITE_WRITE_SQLITE_PATH);
   const liteRecallStore = createLiteRecallStore(env.LITE_WRITE_SQLITE_PATH, {
     ann: annIndex
       ? {
@@ -131,6 +143,7 @@ export async function createRuntimeServices(env: Env) {
         }
       : null,
   });
+  annSyncedRecallStore = liteRecallStore;
   if (annIndex && env.RECALL_ANN_REBUILD_ON_START) {
     await liteRecallStore.rebuildAnnIndex();
   }

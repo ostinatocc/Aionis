@@ -148,8 +148,15 @@ const STRUCTURED_RECALL_PREFETCH_MULTIPLIER = 32;
 export type LiteRecallStore = {
   createRecallAccess(): RecallStoreAccess;
   rebuildAnnIndex(): Promise<{ indexed: number; skipped: number }>;
+  syncAnnNode(scope: string, nodeId: string): Promise<LiteRecallAnnNodeSyncResult>;
+  deleteAnnNode(nodeId: string): Promise<LiteRecallAnnNodeSyncResult>;
   close(): Promise<void>;
   healthSnapshot(): { path: string; mode: "sqlite_recall_v1" };
+};
+
+export type LiteRecallAnnNodeSyncResult = {
+  action: "disabled" | "upserted" | "deleted";
+  reason?: string;
 };
 
 type LiteRecallAnnOptions = {
@@ -263,6 +270,32 @@ function annVectorRecordFromRow(row: LiteRecallAnnRebuildRow): { record: AnnVect
     vector,
   };
 }
+
+const LITE_RECALL_ANN_NODE_SELECT_SQL = `
+  SELECT
+    id,
+    scope,
+    type,
+    tier,
+    memory_lane,
+    producer_agent_id,
+    owner_agent_id,
+    owner_team_id,
+    title,
+    text_summary,
+    slots_json,
+    raw_ref,
+    evidence_ref,
+    embedding_vector_json,
+    embedding_model,
+    embedding_status,
+    salience,
+    importance,
+    confidence,
+    created_at,
+    commit_id
+  FROM lite_memory_nodes
+`;
 
 function lexicalTerms(queryText: string): string[] {
   const tokens = queryText
@@ -606,29 +639,7 @@ export function createLiteRecallStore(
     let indexed = 0;
     let skipped = 0;
     const rows = db.prepare(`
-      SELECT
-        id,
-        scope,
-        type,
-        tier,
-        memory_lane,
-        producer_agent_id,
-        owner_agent_id,
-        owner_team_id,
-        title,
-        text_summary,
-        slots_json,
-        raw_ref,
-        evidence_ref,
-        embedding_vector_json,
-        embedding_model,
-        embedding_status,
-        salience,
-        importance,
-        confidence,
-        created_at,
-        commit_id
-      FROM lite_memory_nodes
+      ${LITE_RECALL_ANN_NODE_SELECT_SQL}
       WHERE embedding_status = 'ready'
         AND embedding_vector_json IS NOT NULL
         AND embedding_model IS NOT NULL
@@ -649,6 +660,33 @@ export function createLiteRecallStore(
     await ann.index.rebuild(records());
     annRebuilt = true;
     return { indexed, skipped };
+  };
+
+  const deleteAnnNode = async (nodeId: string, reason = "deleted_from_sqlite_truth"): Promise<LiteRecallAnnNodeSyncResult> => {
+    if (!ann) return { action: "disabled", reason: "ann_disabled" };
+    await ann.index.delete(nodeId);
+    return { action: "deleted", reason };
+  };
+
+  const syncAnnNode = async (scope: string, nodeId: string): Promise<LiteRecallAnnNodeSyncResult> => {
+    if (!ann) return { action: "disabled", reason: "ann_disabled" };
+    const row = db.prepare(`
+      ${LITE_RECALL_ANN_NODE_SELECT_SQL}
+      WHERE scope = ?
+        AND id = ?
+      LIMIT 1
+    `).get(scope, nodeId) as (LiteRecallAnnRebuildRow & {
+      embedding_vector_json: string | null;
+      embedding_model: string | null;
+    }) | undefined;
+    if (!row) return await deleteAnnNode(nodeId, "missing_sqlite_row");
+    if (row.embedding_status !== "ready" || !row.embedding_vector_json || !row.embedding_model) {
+      return await deleteAnnNode(nodeId, "embedding_not_ready");
+    }
+    const item = annVectorRecordFromRow(row as LiteRecallAnnRebuildRow);
+    if (!item) return await deleteAnnNode(nodeId, "invalid_embedding_vector");
+    await ann.index.upsert(item.record, item.vector);
+    return { action: "upserted" };
   };
 
   const ensureAnnReady = async (): Promise<void> => {
@@ -1542,6 +1580,8 @@ export function createLiteRecallStore(
     },
 
     rebuildAnnIndex,
+    syncAnnNode,
+    deleteAnnNode,
 
     async close(): Promise<void> {
       await ann?.index.close?.();

@@ -209,6 +209,124 @@ test("stage1 local ANN sidecar is opt-in and still verifies candidates through S
   }
 });
 
+test("local ANN sidecar syncs ready embedding mutations after SQLite commit", async () => {
+  const dbPath = tmpDbPath("stage1-local-ann-post-commit-sync");
+  let recallStore: ReturnType<typeof createLiteRecallStore> | null = null;
+  const writeStore = createLiteWriteStore(dbPath, {
+    annSync: {
+      syncNode: async (scope, nodeId) => {
+        await recallStore?.syncAnnNode(scope, nodeId);
+      },
+      deleteNode: async (nodeId) => {
+        await recallStore?.deleteAnnNode(nodeId);
+      },
+    },
+  });
+  recallStore = createLiteRecallStore(dbPath, {
+    ann: {
+      index: createLocalAnnIndex(),
+      rebuildOnStart: false,
+      maxCandidates: 16,
+      sourceReason: "local_ann_index",
+      indexName: "aionis_local_ann",
+    },
+  });
+  const queryEmbedding = [1, ...Array.from({ length: 1535 }, () => 0)];
+  const weakEmbedding = [0, 1, ...Array.from({ length: 1534 }, () => 0)];
+  try {
+    await writeStore.withTx(async () => {
+      const commitId = await insertCommit(writeStore, "default", "stage1-local-ann-post-commit-sync");
+      await writeStore.insertNode({
+        id: "fresh-pending-target",
+        scope: "default",
+        clientId: null,
+        type: "concept",
+        tier: "hot",
+        title: "fresh pending target",
+        textSummary: "fresh memory should appear after embedding ready",
+        slotsJson: JSON.stringify({ lifecycle_state: "active" }),
+        rawRef: null,
+        evidenceRef: null,
+        embeddingVector: null,
+        embeddingModel: null,
+        memoryLane: "shared",
+        producerAgentId: null,
+        ownerAgentId: null,
+        ownerTeamId: null,
+        embeddingStatus: "pending",
+        embeddingLastError: null,
+        salience: 0.9,
+        importance: 0.5,
+        confidence: 0.9,
+        redactionVersion: 0,
+        commitId,
+      });
+      await insertReadyNode(writeStore, {
+        id: "weak-ready-distractor",
+        vector: weakEmbedding,
+        title: "weak ready distractor",
+        summary: "this row proves the ANN path is already populated before the target becomes ready",
+        commitId,
+      });
+    });
+
+    const access = recallStore.createRecallAccess();
+    const beforeReady = await access.stage1CandidatesAnn({
+      queryEmbedding,
+      scope: "default",
+      oversample: 1,
+      limit: 2,
+      consumerAgentId: null,
+      consumerTeamId: null,
+    });
+    assert.ok(!beforeReady.some((candidate) => candidate.id === "fresh-pending-target"));
+    assert.ok(beforeReady.some((candidate) => candidate.id === "weak-ready-distractor"));
+    assert.equal(beforeReady[0]?.sources?.[0]?.reason, "local_ann_index");
+
+    await writeStore.withTx(async () => {
+      await writeStore.setNodeEmbeddingReady({
+        scope: "default",
+        id: "fresh-pending-target",
+        embedding: queryEmbedding,
+        embeddingModel: "test",
+      });
+    });
+
+    const afterReady = await access.stage1CandidatesAnn({
+      queryEmbedding,
+      scope: "default",
+      oversample: 1,
+      limit: 2,
+      consumerAgentId: null,
+      consumerTeamId: null,
+    });
+    assert.equal(afterReady[0]?.id, "fresh-pending-target");
+    assert.equal(afterReady[0]?.sources?.[0]?.kind, "ann");
+    assert.equal(afterReady[0]?.sources?.[0]?.reason, "local_ann_index");
+
+    await writeStore.withTx(async () => {
+      await writeStore.setNodeEmbeddingFailed({
+        scope: "default",
+        id: "fresh-pending-target",
+        error: "test failure",
+      });
+    });
+
+    const afterFailed = await access.stage1CandidatesAnn({
+      queryEmbedding,
+      scope: "default",
+      oversample: 1,
+      limit: 2,
+      consumerAgentId: null,
+      consumerTeamId: null,
+    });
+    assert.ok(!afterFailed.some((candidate) => candidate.id === "fresh-pending-target"));
+  } finally {
+    await recallStore?.close();
+    await writeStore.close();
+  }
+});
+
 test("stage1 Zvec ANN sidecar is optional and still verifies candidates through SQLite facts", async (t) => {
   try {
     await import("@zvec/zvec");

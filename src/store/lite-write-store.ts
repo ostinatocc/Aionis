@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { ExecutionNativeV1 } from "../memory/schemas.js";
 import {
   resolveNodeAnchorKind,
@@ -365,6 +366,19 @@ export type LiteWriteStore = WriteStoreAccess & {
   }): Promise<void>;
   close(): Promise<void>;
   healthSnapshot(): { path: string; mode: "sqlite_write_v1" };
+};
+
+export type LiteWriteAnnSync = {
+  syncNode(scope: string, nodeId: string): Promise<unknown>;
+  deleteNode(nodeId: string): Promise<unknown>;
+};
+
+export type LiteWriteStoreOptions = {
+  annSync?: LiteWriteAnnSync | null;
+};
+
+type LiteWritePostCommitContext = {
+  callbacks: Array<() => Promise<void>>;
 };
 
 function nowIso(): string {
@@ -859,14 +873,49 @@ function buildLiteMemoryKeywordSlotsText(slots: Record<string, unknown>): string
   return Array.from(new Set(out.map((value) => value.trim()).filter(Boolean))).join("\n");
 }
 
-export function createLiteWriteStore(path: string): LiteWriteStore {
+export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions = {}): LiteWriteStore {
   mkdirSync(dirname(path), { recursive: true });
   const db = createSqliteDatabase(path);
+  const annSync = opts.annSync ?? null;
+  const postCommitStorage = new AsyncLocalStorage<LiteWritePostCommitContext>();
   const transaction = createSqliteTransactionRunner({
     begin: () => db.exec("BEGIN IMMEDIATE"),
     commit: () => db.exec("COMMIT"),
     rollback: () => db.exec("ROLLBACK"),
   });
+
+  const runAnnSideEffect = async (callback: () => Promise<void>): Promise<void> => {
+    try {
+      await callback();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      process.emitWarning(`Aionis ANN sidecar sync failed: ${message}`, {
+        code: "AIONIS_ANN_SYNC_FAILED",
+      });
+    }
+  };
+
+  const scheduleAnnSideEffect = async (callback: () => Promise<void>): Promise<void> => {
+    if (!annSync) return;
+    const context = postCommitStorage.getStore();
+    if (context) {
+      context.callbacks.push(callback);
+      return;
+    }
+    await runAnnSideEffect(callback);
+  };
+
+  const scheduleAnnNodeSync = async (scope: string, nodeId: string): Promise<void> => {
+    await scheduleAnnSideEffect(() => annSync!.syncNode(scope, nodeId).then(() => undefined));
+  };
+
+  const scheduleAnnNodeDelete = async (nodeId: string): Promise<void> => {
+    await scheduleAnnSideEffect(() => annSync!.deleteNode(nodeId).then(() => undefined));
+  };
+
+  const flushPostCommitSideEffects = async (callbacks: Array<() => Promise<void>>): Promise<void> => {
+    for (const callback of callbacks) await runAnnSideEffect(callback);
+  };
   db.exec(`
     PRAGMA journal_mode = WAL;
 
@@ -1296,7 +1345,13 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
     capability_version: WRITE_STORE_ACCESS_CAPABILITY_VERSION,
 
     async withTx<T>(fn: () => Promise<T>): Promise<T> {
-      return await transaction.run(fn);
+      const existingContext = postCommitStorage.getStore();
+      if (existingContext) return await transaction.run(fn);
+
+      const context: LiteWritePostCommitContext = { callbacks: [] };
+      const out = await postCommitStorage.run(context, () => transaction.run(fn));
+      await flushPostCommitSideEffects(context.callbacks);
+      return out;
     },
 
     async findNodes(args): Promise<{ rows: LiteFindNodeRow[]; has_more: boolean }> {
@@ -2271,6 +2326,7 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
       );
       syncExecutionNativeIndexFromNode(args.scope, args.id);
       syncKeywordIndexFromNode(args.scope, args.id);
+      await scheduleAnnNodeSync(args.scope, args.id);
     },
 
     async insertRuleDef(args: WriteRuleDefInsertArgs): Promise<void> {
@@ -2537,6 +2593,7 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
         args.scope,
         args.id,
       );
+      await scheduleAnnNodeSync(args.scope, args.id);
     },
 
     async updateNodeAnchorState(args): Promise<LiteFindNodeRow | null> {
@@ -2569,6 +2626,7 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
       ).run(...params);
       syncExecutionNativeIndexFromNode(args.scope, args.id);
       syncKeywordIndexFromNode(args.scope, args.id);
+      await scheduleAnnNodeSync(args.scope, args.id);
       const { rows } = await this.findNodes({
         scope: args.scope,
         id: args.id,
@@ -2590,6 +2648,7 @@ export function createLiteWriteStore(path: string): LiteWriteStore {
         args.scope,
         args.id,
       );
+      await scheduleAnnNodeDelete(args.id);
     },
 
     async close(): Promise<void> {
