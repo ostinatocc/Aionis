@@ -40,6 +40,17 @@ Non-interactive setup:
 OPENAI_API_KEY="your-key" npx aionis setup --provider openai --quickstart sdk --yes
 ```
 
+Optional local ANN candidate index:
+
+```bash
+npx aionis setup --with-zvec-ann
+```
+
+This keeps SQLite as the Runtime fact source and enables Zvec only as a local
+candidate-retrieval sidecar. Aionis still applies scope, lifecycle, authority,
+admission, and rehydrate governance after candidates are loaded back from
+SQLite.
+
 Direct installer path:
 
 ```bash
@@ -160,9 +171,23 @@ The installer performs product setup:
 1. clone `https://github.com/ostinatocc/Aionis.git`
 2. run `npm install`
 3. write `.env` with `EMBEDDING_PROVIDER=none` unless a provider/key is selected
-4. run the selected quickstart; `first-value` can run without an API key, while
+4. optionally write `RECALL_ANN_PROVIDER=zvec` when `--with-zvec-ann` is set
+5. run the selected quickstart; `first-value` can run without an API key, while
    recall-backed quickstarts require the selected embedding key
-5. optionally run Claude Code onboarding when `--with-claude-code` is set
+6. optionally run Claude Code onboarding when `--with-claude-code` is set
+
+The equivalent low-level installer command is:
+
+```bash
+npx @aionis/create@latest .aionis-runtime --with-zvec-ann
+```
+
+After install, validate the local ANN sidecar from the Runtime directory:
+
+```bash
+cd .aionis-runtime
+npm run -s recall:ann:scale
+```
 
 Repository boundary:
 

@@ -197,6 +197,14 @@ npm run -s recall:ann:compare -- --deterministic-latency
 npm run -s recall:ann:scale
 ```
 
+For a fresh local install with the optional persisted Zvec candidate sidecar:
+
+```bash
+npx aionis setup --with-zvec-ann
+# or
+npx @aionis/create@latest .aionis-runtime --with-zvec-ann
+```
+
 The committed scale diagnostic is
 [examples/zvec-recall-scale-comparison/summary.md](examples/zvec-recall-scale-comparison/summary.md).
 It isolates candidate retrieval only: Zvec/local ANN can recover a low-salience

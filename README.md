@@ -50,6 +50,16 @@ For non-interactive installs, set the provider key in the environment:
 OPENAI_API_KEY="your-key" npx aionis setup --provider openai --quickstart sdk --yes
 ```
 
+Optional local ANN candidate retrieval:
+
+```bash
+npx aionis setup --with-zvec-ann
+```
+
+This enables Zvec as a persisted candidate index while keeping SQLite as the
+Runtime fact source. Aionis still performs final scope, lifecycle, authority,
+admission, and rehydrate governance after candidates are loaded.
+
 Docker users can run the Runtime directly:
 
 ```bash

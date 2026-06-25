@@ -26,6 +26,17 @@ OPENAI_API_KEY="your-key" npx aionis setup --provider openai --quickstart sdk --
 If you want the lower-level installer without prompts, use
 `npx @aionis/create@latest` directly.
 
+If semantic candidate coverage or local recall latency becomes the bottleneck,
+enable the optional Zvec sidecar during setup:
+
+```bash
+npx aionis setup --with-zvec-ann
+```
+
+Zvec only expands candidate retrieval. SQLite remains the fact source, and the
+normal Aionis admission/governance path still decides `use_now`,
+`inspect_before_use`, `do_not_use`, and `rehydrate`.
+
 | If you are building... | Run this | Transport | Main API path | Result contract |
 |---|---|---|---|---|
 | You want the fastest first proof | `npm run -s runtime:demo:first-value` | SDK facade over local API | `governMemory(mode=firewall)` over dirty external candidates | `aionis_first_value_demo_result_v1` |
@@ -59,6 +70,7 @@ surfaces.
 | First-value demo | `npm run -s runtime:demo:first-value` | Demonstrates memory admission and audit without an embedding key or LLM. Produces `aionis_first_value_demo_result_v1`; see [first-value-demo-result.json](examples/first-value-demo-result.json). |
 | External package smoke | `npm run -s runtime:smoke:external-packages` | Installs published or env-selected `@aionis/sdk`, `@aionis/mcp`, and `@aionis/create` package specs into a temporary external project, then verifies SDK, MCP stdio, and CLI entrypoints against a real Runtime. |
 | Published fresh install smoke | `npm run -s runtime:smoke:fresh-install` | Uses `@aionis/create@latest` from npm to install a clean Runtime, verifies no-key startup with `EMBEDDING_PROVIDER=none`, then runs `@aionis/mcp@latest` through `aionis_record_step -> aionis_context`. |
+| Zvec ANN scale diagnostic | `npm run -s recall:ann:scale` | Compares bounded SQLite scan, local in-memory ANN, and optional Zvec sidecar on a low-salience semantic needle. Verifies candidate coverage without changing admission/governance semantics. |
 | Memory Firewall A/B demo | `npm run -s runtime:e2e:memory-firewall-ab` | Compares raw retrieved external memory against Aionis-governed memory for unsafe direct-use, current/procedure recall, and audit coverage. Produces `aionis_memory_firewall_ab_demo_result_v1`; see [memory-firewall-ab-demo-result.json](examples/memory-firewall-ab-demo-result.json). |
 | Flight Recorder incident demo | `npm run -s runtime:e2e:flight-recorder-incident` | Replays healthy attribution, blocked-memory misuse, and missing feedback attribution without exposing prompt text. Produces `aionis_flight_recorder_incident_demo_result_v1`; see [flight-recorder-incident-demo-result.json](examples/flight-recorder-incident-demo-result.json). |
 | Admission Dataset Export | `npm run -s runtime:e2e:admission-dataset-export` | Exports multi-run guide/feedback/measure admission rows as appendable JSONL for audit or future learned policy training. Produces `aionis_admission_dataset_export_e2e_result_v1`; see [admission-dataset-export-result.json](examples/admission-dataset-export-result.json). |
