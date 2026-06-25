@@ -190,6 +190,19 @@ npm run -s runtime:e2e:recall-troubleshooting
 The committed example result is
 [examples/recall-engine-troubleshooting-result.json](examples/recall-engine-troubleshooting-result.json).
 
+For ANN provider comparison:
+
+```bash
+npm run -s recall:ann:compare -- --deterministic-latency
+npm run -s recall:ann:scale
+```
+
+The committed scale diagnostic is
+[examples/zvec-recall-scale-comparison/summary.md](examples/zvec-recall-scale-comparison/summary.md).
+It isolates candidate retrieval only: Zvec/local ANN can recover a low-salience
+semantic needle that bounded SQLite scan misses, while SQLite remains the fact
+source and admission/governance stay out of scope.
+
 Expected managed-server hybrid recall result:
 
 - accepted route reaches `use_now`

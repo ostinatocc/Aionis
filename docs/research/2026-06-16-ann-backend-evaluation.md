@@ -166,6 +166,29 @@ Risks:
 6. Defer LanceDB to Managed Server Edition research unless Lite recall evals show
    a strong need for a heavier persistent vector store.
 
+## Current Aionis Scale Diagnostic
+
+Command:
+
+```bash
+npm run -s recall:ann:scale
+```
+
+Committed report:
+
+- [examples/zvec-recall-scale-comparison/summary.md](../examples/zvec-recall-scale-comparison/summary.md)
+
+The diagnostic uses 4,096 real Lite SQLite memory rows and compares semantic
+candidate generation only. It intentionally places a semantically exact,
+low-salience target outside the bounded SQLite prefetch window. In the committed
+run, bounded SQLite scan misses the target (`Recall@10 = 0.0000`), while local
+ANN and Zvec recover it (`Recall@10 = 1.0000`) and still load final candidates
+from SQLite truth.
+
+This is evidence for Zvec as an optional candidate retrieval sidecar. It is not
+an admission benchmark, not a governance benchmark, and not a reason to make
+Zvec the default.
+
 ## Dependency Gate
 
 Do not promote any ANN backend to default until all three are true:

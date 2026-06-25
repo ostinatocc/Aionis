@@ -25,6 +25,7 @@
     "runtime:e2e:agent-suite": "npx tsx scripts/e2e/runtime-agent-loop-suite.ts",
     "recall:eval": "npx tsx scripts/e2e/recall-engine-eval.ts",
     "recall:ann:compare": "npx tsx scripts/e2e/recall-ann-provider-comparison.ts",
+    "recall:ann:scale": "npx tsx scripts/e2e/zvec-recall-scale-comparison.ts",
     "admission:evaluate": "npx tsx scripts/e2e/admission-dataset-evaluator.ts",
     "admission:collect": "npx tsx scripts/e2e/admission-dataset-collector.ts",
     "admission:compare": "npx tsx scripts/e2e/admission-policy-comparison.ts",
