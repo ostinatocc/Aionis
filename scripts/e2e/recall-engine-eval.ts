@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
+import { createLocalAnnIndex } from "../../src/store/ann/local-ann-index.ts";
+import { createZvecAnnIndex } from "../../src/store/ann/zvec-ann-index.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import {
@@ -76,6 +78,7 @@ type RecallEngineEdge = {
 };
 
 type CandidateSource = RecallCandidateSourceKind;
+type RecallEvalAnnProvider = "off" | "local" | "zvec";
 
 type RecallEngineCaseResult = {
   case_id: string;
@@ -102,7 +105,9 @@ type RecallEngineSummary = {
   case_count: number;
   recall_access_capability_version: number;
   candidate_generation: {
-    semantic_path: "bounded_sqlite_scan_plus_js_cosine_with_source_trace";
+    ann_provider: RecallEvalAnnProvider;
+    ann_index_name: string | null;
+    semantic_path: string;
     lexical_path: "lite_keyword_index_like_match";
     structured_path: "lite_execution_native_index_signature_match";
     execution_native_path: "lite_execution_native_index_anchor_match";
@@ -134,10 +139,23 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const DEFAULT_FIXTURE_PATH = path.join(ROOT, "scripts/e2e/fixtures/recall-engine-cases.json");
 const DEFAULT_OUTPUT_PATH = path.join(ROOT, "docs/examples/recall-engine-baseline-summary.json");
 
-function parseArgs(argv: string[]): { fixturePath: string; outputPath: string; deterministicLatency: boolean } {
+function parseAnnProvider(raw: string | undefined): RecallEvalAnnProvider {
+  if (raw === "local" || raw === "zvec" || raw === "off") return raw;
+  throw new Error(`invalid --ann-provider ${String(raw)}; expected off, local, or zvec`);
+}
+
+function parseArgs(argv: string[]): {
+  fixturePath: string;
+  outputPath: string;
+  deterministicLatency: boolean;
+  annProvider: RecallEvalAnnProvider;
+  zvecPath: string | null;
+} {
   let fixturePath = DEFAULT_FIXTURE_PATH;
   let outputPath = DEFAULT_OUTPUT_PATH;
   let deterministicLatency = false;
+  let annProvider: RecallEvalAnnProvider = "off";
+  let zvecPath: string | null = null;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--fixture") {
@@ -148,9 +166,15 @@ function parseArgs(argv: string[]): { fixturePath: string; outputPath: string; d
       i += 1;
     } else if (arg === "--deterministic-latency") {
       deterministicLatency = true;
+    } else if (arg === "--ann-provider") {
+      annProvider = parseAnnProvider(argv[i + 1]);
+      i += 1;
+    } else if (arg === "--zvec-path") {
+      zvecPath = path.resolve(argv[i + 1] ?? "");
+      i += 1;
     }
   }
-  return { fixturePath, outputPath, deterministicLatency };
+  return { fixturePath, outputPath, deterministicLatency, annProvider, zvecPath };
 }
 
 function readFixture(fixturePath: string): RecallEngineFixture {
@@ -314,6 +338,7 @@ function collectCoveredRequiredSources(sourceMap: Map<string, Set<CandidateSourc
   for (const sources of sourceMap.values()) {
     for (const source of sources) {
       available.add(source);
+      if (source === "ann") available.add("semantic");
     }
   }
   const covered: string[] = [];
@@ -607,13 +632,35 @@ export async function runRecallEngineEval(options: {
   fixturePath?: string;
   outputPath?: string;
   deterministicLatency?: boolean;
+  annProvider?: RecallEvalAnnProvider;
+  zvecPath?: string | null;
 } = {}): Promise<RecallEngineSummary> {
   const fixturePath = options.fixturePath ?? DEFAULT_FIXTURE_PATH;
   const outputPath = options.outputPath ?? DEFAULT_OUTPUT_PATH;
+  const annProvider = options.annProvider ?? "off";
   const fixture = readFixture(fixturePath);
   const dbPath = tmpDbPath();
   const writeStore = createLiteWriteStore(dbPath);
-  const recallStore = createLiteRecallStore(dbPath);
+  const zvecPath = options.zvecPath ?? `${dbPath}.zvec-ann`;
+  const ann =
+    annProvider === "local"
+      ? {
+          index: createLocalAnnIndex(),
+          rebuildOnStart: true,
+          maxCandidates: 200,
+          sourceReason: "local_ann_index",
+          indexName: "aionis_local_ann",
+        }
+      : annProvider === "zvec"
+        ? {
+            index: createZvecAnnIndex({ path: zvecPath }),
+            rebuildOnStart: true,
+            maxCandidates: 200,
+            sourceReason: "zvec_ann_index",
+            indexName: "aionis_zvec_ann",
+          }
+        : null;
+  const recallStore = createLiteRecallStore(dbPath, { ann });
   try {
     await writeStore.withTx(async () => {
       for (const testCase of fixture.cases) {
@@ -649,7 +696,15 @@ export async function runRecallEngineEval(options: {
       case_count: fixture.cases.length,
       recall_access_capability_version: access.capability_version,
       candidate_generation: {
-        semantic_path: "bounded_sqlite_scan_plus_js_cosine_with_source_trace",
+        ann_provider: annProvider,
+        ann_index_name: annProvider === "local"
+          ? "aionis_local_ann"
+          : annProvider === "zvec"
+            ? "aionis_zvec_ann"
+            : null,
+        semantic_path: annProvider === "off"
+          ? "bounded_sqlite_scan_plus_js_cosine_with_source_trace"
+          : `${annProvider}_ann_sidecar_then_sqlite_fact_verification`,
         lexical_path: "lite_keyword_index_like_match",
         structured_path: "lite_execution_native_index_signature_match",
         execution_native_path: "lite_execution_native_index_anchor_match",

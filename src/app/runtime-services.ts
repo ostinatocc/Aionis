@@ -14,6 +14,7 @@ import { createSandboxStore } from "../store/sandbox-access.js";
 import { createLiteWriteStore } from "../store/lite-write-store.js";
 import { createLiteClaimLedgerStore } from "../store/lite-claim-ledger-store.js";
 import { createLocalAnnIndex } from "../store/ann/local-ann-index.js";
+import { createZvecAnnIndex } from "../store/ann/zvec-ann-index.js";
 import { createLiteExecutionStateStore } from "../execution/state-store.js";
 import { createLiteExecutionTreeStore } from "../execution/tree-store.js";
 import { EmbedQueryBatcher } from "../util/embed_query_batcher.js";
@@ -111,13 +112,22 @@ export async function createRuntimeServices(env: Env) {
   const claimLedgerAccess = liteClaimLedgerStore.createClaimLedgerAccess();
   const executionStateStore = createLiteExecutionStateStore(env.LITE_WRITE_SQLITE_PATH);
   const executionTreeStore = createLiteExecutionTreeStore(env.LITE_WRITE_SQLITE_PATH);
-  const annIndex = env.RECALL_ANN_PROVIDER === "local" ? createLocalAnnIndex() : null;
+  const annIndex =
+    env.RECALL_ANN_PROVIDER === "local"
+      ? createLocalAnnIndex()
+      : env.RECALL_ANN_PROVIDER === "zvec"
+        ? createZvecAnnIndex({
+            path: env.RECALL_ZVEC_PATH.trim() || `${env.LITE_WRITE_SQLITE_PATH}.zvec-ann`,
+          })
+        : null;
   const liteRecallStore = createLiteRecallStore(env.LITE_WRITE_SQLITE_PATH, {
     ann: annIndex
       ? {
           index: annIndex,
           rebuildOnStart: env.RECALL_ANN_REBUILD_ON_START,
           maxCandidates: env.RECALL_ANN_MAX_CANDIDATES,
+          sourceReason: env.RECALL_ANN_PROVIDER === "zvec" ? "zvec_ann_index" : "local_ann_index",
+          indexName: env.RECALL_ANN_PROVIDER === "zvec" ? "aionis_zvec_ann" : "aionis_local_ann",
         }
       : null,
   });

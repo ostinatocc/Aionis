@@ -156,6 +156,8 @@ type LiteRecallAnnOptions = {
   index: AionisLocalAnnIndex;
   rebuildOnStart?: boolean;
   maxCandidates?: number;
+  sourceReason?: string;
+  indexName?: string;
 };
 
 function resolveRecallCapabilities(partial?: Partial<RecallStoreCapabilities>): RecallStoreCapabilities {
@@ -518,6 +520,8 @@ export function createLiteRecallStore(
   const capabilities = resolveRecallCapabilities(opts.capabilities);
   const ann = opts.ann ?? null;
   const annMaxCandidates = Math.max(1, Math.min(10000, Math.trunc(ann?.maxCandidates ?? 200)));
+  const annSourceReason = ann?.sourceReason ?? "local_ann_index";
+  const annIndexName = ann?.indexName ?? "aionis_local_ann";
   let annRebuilt = false;
   let annRebuildPromise: Promise<{ indexed: number; skipped: number }> | null = null;
 
@@ -833,9 +837,9 @@ export function createLiteRecallStore(
         sources: [{
           kind: "ann",
           score: similarity,
-          reason: "local_ann_index",
+          reason: annSourceReason,
           matched_fields: ["embedding_vector_json"],
-          index_name: "aionis_local_ann",
+          index_name: annIndexName,
         }],
       });
     }
@@ -1540,6 +1544,7 @@ export function createLiteRecallStore(
     rebuildAnnIndex,
 
     async close(): Promise<void> {
+      await ann?.index.close?.();
       db.close();
     },
 

@@ -1,8 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { AnnIndexDimensionError, type AnnVectorRecord } from "../../src/store/ann/ann-index.ts";
 import { createLocalAnnIndex } from "../../src/store/ann/local-ann-index.ts";
 import { createNoopAnnIndex } from "../../src/store/ann/noop-ann-index.ts";
+import { createZvecAnnIndex } from "../../src/store/ann/zvec-ann-index.ts";
 import { loadEnv } from "../../src/config.ts";
 
 function record(id: string, overrides: Partial<AnnVectorRecord> = {}): AnnVectorRecord {
@@ -140,10 +144,86 @@ test("local ANN rebuild is atomic on validation failure", async () => {
   assert.deepEqual(results.map((item) => item.node_id), ["existing"]);
 });
 
-test("ANN sidecar config defaults off and accepts local provider", async () => {
+test("zvec ANN index is optional and returns scoped vector candidates when available", async (t) => {
+  try {
+    await import("@zvec/zvec");
+  } catch {
+    t.skip("@zvec/zvec optional dependency is not available on this platform");
+    return;
+  }
+
+  const root = mkdtempSync(join(tmpdir(), "aionis-zvec-ann-"));
+  const index = createZvecAnnIndex({ path: join(root, "index") });
+  try {
+    await index.upsert(record("near"), [1, 0, 0]);
+    await index.upsert(record("far"), [0, 1, 0]);
+    await index.upsert(record("other-scope", { scope: "project-b" }), [1, 0, 0]);
+    await index.upsert(record("other-model", { embedding_model: "other-embed" }), [1, 0, 0]);
+    await index.upsert(record("cold-private", { tier: "cold", memory_lane: "private" }), [1, 0, 0]);
+
+    const results = await index.search({
+      scope: "project-a",
+      embeddingModel: "test-embed",
+      vector: [0.99, 0.01, 0],
+      limit: 10,
+      filters: { tier: ["hot", "warm"], memory_lane: "shared" },
+    });
+
+    assert.deepEqual(results.map((item) => item.node_id), ["near", "far"]);
+    assert.ok(results[0].score > results[1].score);
+
+    await index.delete("near");
+    const afterDelete = await index.search({
+      scope: "project-a",
+      embeddingModel: "test-embed",
+      vector: [1, 0, 0],
+      limit: 10,
+      filters: { tier: ["hot", "warm"], memory_lane: "shared" },
+    });
+    assert.deepEqual(afterDelete.map((item) => item.node_id), ["far"]);
+  } finally {
+    await index.close?.();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("zvec ANN rebuild keeps previous index when validation fails", async (t) => {
+  try {
+    await import("@zvec/zvec");
+  } catch {
+    t.skip("@zvec/zvec optional dependency is not available on this platform");
+    return;
+  }
+
+  const root = mkdtempSync(join(tmpdir(), "aionis-zvec-ann-rebuild-"));
+  const index = createZvecAnnIndex({ path: join(root, "index") });
+  try {
+    await index.upsert(record("existing"), [1, 0, 0]);
+    await assert.rejects(
+      () => index.rebuild(vectorRecords([
+        { record: record("replacement"), vector: [0, 1, 0] },
+        { record: record("bad"), vector: [0, 1] },
+      ])),
+      AnnIndexDimensionError,
+    );
+    const results = await index.search({
+      scope: "project-a",
+      embeddingModel: "test-embed",
+      vector: [1, 0, 0],
+      limit: 10,
+    });
+    assert.deepEqual(results.map((item) => item.node_id), ["existing"]);
+  } finally {
+    await index.close?.();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("ANN sidecar config defaults off and accepts local and zvec providers", async () => {
   await withIsolatedEnv({}, () => {
     const env = loadEnv();
     assert.equal(env.RECALL_ANN_PROVIDER, "off");
+    assert.equal(env.RECALL_ZVEC_PATH, "");
     assert.equal(env.RECALL_ANN_REBUILD_ON_START, false);
     assert.equal(env.RECALL_ANN_MAX_CANDIDATES, 200);
   });
@@ -158,6 +238,17 @@ test("ANN sidecar config defaults off and accepts local provider", async () => {
       assert.equal(env.RECALL_ANN_PROVIDER, "local");
       assert.equal(env.RECALL_ANN_REBUILD_ON_START, true);
       assert.equal(env.RECALL_ANN_MAX_CANDIDATES, 64);
+    },
+  );
+  await withIsolatedEnv(
+    {
+      RECALL_ANN_PROVIDER: "zvec",
+      RECALL_ZVEC_PATH: "/tmp/aionis-zvec-ann",
+    },
+    () => {
+      const env = loadEnv();
+      assert.equal(env.RECALL_ANN_PROVIDER, "zvec");
+      assert.equal(env.RECALL_ZVEC_PATH, "/tmp/aionis-zvec-ann");
     },
   );
 });

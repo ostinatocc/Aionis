@@ -1,8 +1,10 @@
 # ANN Backend Evaluation for Aionis Recall Engine
 
 Date: 2026-06-16
+Updated: 2026-06-25
 
-Status: research note. No dependency has been added to Runtime.
+Status: Zvec is now available as an optional Runtime ANN provider. Other
+backends remain research candidates.
 
 ## Decision Context
 
@@ -21,13 +23,46 @@ against the SQLite fact source before governance.
 
 Current opt-in implementation:
 
-- `RECALL_ANN_PROVIDER=off|local`
+- `RECALL_ANN_PROVIDER=off|local|zvec`
 - `off` remains the default
 - `local` uses the in-memory exact sidecar behind the stable
   `AionisLocalAnnIndex` contract
+- `zvec` uses the optional `@zvec/zvec` in-process vector database as a
+  persisted local candidate index
 - source trace: `ann / local_ann_index / aionis_local_ann`
+- Zvec source trace: `ann / zvec_ann_index / aionis_zvec_ann`
 
 ## Candidates
+
+### Zvec
+
+Official sources:
+
+- GitHub: https://github.com/alibaba/zvec
+- Docs: https://zvec.org/en/docs/db/
+- npm package: `@zvec/zvec`
+- npm snapshot checked on 2026-06-25: `@zvec/zvec@0.5.0`
+
+Fit:
+
+- Best first persisted local sidecar for the Lite Runtime.
+- Runs in-process, so it preserves Aionis's local-first install shape better
+  than a separate vector server.
+- Supports vector search, scalar filters, full-text search, hybrid retrieval,
+  WAL persistence, and concurrent reads.
+- Lets SQLite remain the Aionis fact source while Zvec only accelerates
+  candidate generation.
+
+Risks:
+
+- Native optional dependency must keep working across the supported Node,
+  macOS/Linux, and CPU matrix.
+- Zvec score semantics differ from Aionis ANN semantics for cosine search:
+  Zvec returns distance, while Aionis expects higher-is-better similarity. The
+  adapter normalizes this.
+- Current Aionis integration intentionally uses Zvec for semantic vector
+  candidates first. Native Zvec FTS/hybrid should be added only after recall
+  source tracing proves the need.
 
 ### USearch
 
@@ -107,39 +142,41 @@ Risks:
 
 ## Criteria Matrix
 
-| Criterion | USearch | sqlite-vec | LanceDB |
-|---|---|---|---|
-| Node.js compatibility | JavaScript package exists; must verify Node 22.x native install. | JS package exists; runtime depends on SQLite extension loading. | JS package exists; Server fit looks better than Lite fit. |
-| Native build reliability | Unknown until matrix probe; likely main risk. | Extension loading/package compatibility is main risk. | Lower build concern than raw native addon, but storage/runtime footprint must be tested. |
-| Local install size | Medium; npm snapshot ~21.5 MB unpacked. | Small JS package metadata, but native artifact path must be checked. | Medium-light npm metadata, but actual storage/runtime deps need probe. |
-| Filter support | Can use external predicates, but Aionis should verify in SQLite anyway. | SQL filtering can be close to fact source. | Has richer search/table semantics; scope filters need explicit design. |
-| Persistence model | Index file or memory-mapped index. | SQLite extension/vector tables. | Lance table/database directory. |
-| Rebuild speed | Likely good; must measure with 1536-d vectors. | Must measure insert/build and query speed inside SQLite. | Must measure create table/index and query speed. |
-| Deletion/update support | Supports delete/update style index operations; verify JS API. | SQL row deletion/update possible; vector table behavior must be verified. | Table row management likely strongest, but needs storage policy. |
-| Production maturity | Stronger than sqlite-vec for local ANN sidecar. | Promising but pre-v1 risk. | Stronger hosted-store candidate, larger operational surface. |
-| License | Apache 2.0. | MIT OR Apache. | Apache-2.0. |
-| Operational complexity | Moderate. | Low if extension loading is reliable; high if packaging is brittle. | Highest for Lite; acceptable later for Managed Server. |
+| Criterion | Zvec | USearch | sqlite-vec | LanceDB |
+|---|---|---|---|---|
+| Node.js compatibility | Official Node package; verified locally on 2026-06-25. | JavaScript package exists; must verify Node 22.x native install. | JS package exists; runtime depends on SQLite extension loading. | JS package exists; Server fit looks better than Lite fit. |
+| Native build reliability | Optional dependency; still needs wider platform matrix. | Unknown until matrix probe; likely main risk. | Extension loading/package compatibility is main risk. | Lower build concern than raw native addon, but storage/runtime footprint must be tested. |
+| Local install size | Medium; acceptable as optional Lite accelerator. | Medium; npm snapshot ~21.5 MB unpacked. | Small JS package metadata, but native artifact path must be checked. | Medium-light npm metadata, but actual storage/runtime deps need probe. |
+| Filter support | SQL-like scalar filters; Aionis still verifies in SQLite. | Can use external predicates, but Aionis should verify in SQLite anyway. | SQL filtering can be close to fact source. | Has richer search/table semantics; scope filters need explicit design. |
+| Persistence model | Zvec collection directory per embedding dimension. | Index file or memory-mapped index. | SQLite extension/vector tables. | Lance table/database directory. |
+| Rebuild speed | Implemented as optional sidecar rebuild from SQLite fact source; needs larger eval. | Likely good; must measure with 1536-d vectors. | Must measure insert/build and query speed inside SQLite. | Must measure create table/index and query speed. |
+| Deletion/update support | Upsert/delete/filter available through Node binding. | Supports delete/update style index operations; verify JS API. | SQL row deletion/update possible; vector table behavior must be verified. | Table row management likely strongest, but needs storage policy. |
+| Production maturity | Good first local persisted sidecar, but still optional. | Stronger than sqlite-vec for local ANN sidecar. | Promising but pre-v1 risk. | Stronger hosted-store candidate, larger operational surface. |
+| License | Apache 2.0. | Apache 2.0. | MIT OR Apache. | Apache-2.0. |
+| Operational complexity | Moderate-low for local; no daemon. | Moderate. | Low if extension loading is reliable; high if packaging is brittle. | Highest for Lite; acceptable later for Managed Server. |
 
 ## Current Recommendation
 
 1. Keep `RECALL_ANN_PROVIDER=off` as the default.
 2. Keep the current local exact provider as the contract test bed.
-3. Evaluate USearch first as the production local sidecar backend.
+3. Use `RECALL_ANN_PROVIDER=zvec` as the first optional persisted local ANN
+   backend.
 4. Keep sqlite-vec as a SQLite-native backup, gated by extension-loading proof.
-5. Defer LanceDB to Managed Server Edition research unless Lite recall evals show
+5. Keep USearch as a future performance comparison candidate.
+6. Defer LanceDB to Managed Server Edition research unless Lite recall evals show
    a strong need for a heavier persistent vector store.
 
 ## Dependency Gate
 
-Do not add any ANN dependency to Runtime until all three are true:
+Do not promote any ANN backend to default until all three are true:
 
 1. Recall eval or production trace shows bounded scan is a bottleneck.
 2. Source tracing proves candidate loss from scan caps or unacceptable recall
    latency, not governance blocking.
 3. Install/build risk is acceptable on the supported Node/macOS/Linux matrix.
 
-The first dependency should remain optional and provider-gated. Aionis should
-continue to boot and pass tests with no ANN backend installed.
+The dependency must remain optional and provider-gated. Aionis should continue
+to boot and pass tests with no ANN backend enabled.
 
 ## Probe Procedure
 
@@ -154,6 +191,9 @@ Optional provider probes after local package installation:
 ```bash
 npm install --no-save usearch
 node scripts/research/ann-backend-probe.mjs --provider usearch --vectors 10000 --dim 1536
+
+npm install --no-save @zvec/zvec
+node scripts/research/ann-backend-probe.mjs --provider zvec --vectors 10000 --dim 1536
 
 npm install --no-save sqlite-vec
 node scripts/research/ann-backend-probe.mjs --provider sqlite-vec --vectors 10000 --dim 1536

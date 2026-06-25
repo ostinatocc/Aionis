@@ -190,23 +190,31 @@ proxy metrics. Full product evaluations must measure them through `/v1/guide`.
    - SQLite remains the fact source. ANN is candidate generation only.
    - Candidate IDs must be checked against SQLite authority/scope/lifecycle
      facts before governance.
-   - Current status: the first sidecar contract is implemented behind
-     `RECALL_ANN_PROVIDER=off|local`. `off` is the default. The local
-     implementation is an in-memory exact sidecar used to stabilize the adapter
-     contract and tests before wiring a production ANN backend. When
-     `RECALL_ANN_PROVIDER=local` is passed into Runtime services, semantic
-     candidate generation can use the sidecar first and then re-check candidate
-     IDs against SQLite scope, tier, visibility, and surface gates before
-     returning `ann` source traces. Empty or unusable sidecar results fall back
-     to the existing bounded SQLite scan.
+   - Current status: the sidecar contract is implemented behind
+     `RECALL_ANN_PROVIDER=off|local|zvec`. `off` is the default. `local` is an
+     in-memory exact sidecar used to stabilize the adapter contract and tests.
+     `zvec` is an optional in-process Zvec sidecar for persisted local vector
+     candidate generation. When an ANN provider is enabled, semantic candidate
+     generation can use the sidecar first and then re-check candidate IDs
+     against SQLite scope, tier, visibility, and surface gates before returning
+     `ann` source traces. Empty or unusable sidecar results fall back to the
+     existing bounded SQLite scan.
+   - Zvec configuration:
+     - `RECALL_ANN_PROVIDER=zvec`
+     - `RECALL_ZVEC_PATH=/path/to/index` (optional; defaults to
+       `${LITE_WRITE_SQLITE_PATH}.zvec-ann`)
+     - `RECALL_ANN_REBUILD_ON_START=true` for deterministic cold-start rebuilds
+       from the SQLite fact source
+     - Zvec source trace: `ann / zvec_ann_index / aionis_zvec_ann`
    - Route-level status: ANN remains one semantic source within the recall
      engine. Hybrid mode changes candidate generation breadth only; Aionis
      admission still decides `use_now`, `inspect_before_use`, `do_not_use`, and
      `rehydrate`.
-   - Backend evaluation status: USearch, sqlite-vec, and LanceDB are documented
-     in `docs/research/2026-06-16-ann-backend-evaluation.md`. No backend
-     dependency is committed yet. `scripts/research/ann-backend-probe.mjs`
-     provides a manual, dependency-optional probe for local measurements.
+   - Backend evaluation status: Zvec is the first optional persisted local ANN
+     backend. USearch, sqlite-vec, and LanceDB remain documented in
+     `docs/research/2026-06-16-ann-backend-evaluation.md` as future candidates.
+     `scripts/research/ann-backend-probe.mjs` provides a manual,
+     dependency-optional probe for local measurements.
 
 8. **Flight Recorder and operator visibility**
    - Include recall source traces in operator snapshots and Flight Recorder.

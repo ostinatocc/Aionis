@@ -9,6 +9,7 @@ import {
   EXACT_RECOVERY_RECALL_STAGE1_ALLOWED_TIERS,
 } from "../../src/store/recall-access.ts";
 import { createLocalAnnIndex } from "../../src/store/ann/local-ann-index.ts";
+import { createZvecAnnIndex } from "../../src/store/ann/zvec-ann-index.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 
@@ -205,6 +206,76 @@ test("stage1 local ANN sidecar is opt-in and still verifies candidates through S
   } finally {
     await recallStore.close();
     await writeStore.close();
+  }
+});
+
+test("stage1 Zvec ANN sidecar is optional and still verifies candidates through SQLite facts", async (t) => {
+  try {
+    await import("@zvec/zvec");
+  } catch {
+    t.skip("@zvec/zvec optional dependency is not available on this platform");
+    return;
+  }
+
+  const dbPath = tmpDbPath("stage1-zvec-ann-sidecar");
+  const zvecPath = `${dbPath}.zvec-ann`;
+  const writeStore = createLiteWriteStore(dbPath);
+  const recallStore = createLiteRecallStore(dbPath, {
+    ann: {
+      index: createZvecAnnIndex({ path: zvecPath }),
+      rebuildOnStart: true,
+      maxCandidates: 16,
+      sourceReason: "zvec_ann_index",
+      indexName: "aionis_zvec_ann",
+    },
+  });
+  try {
+    await writeStore.withTx(async () => {
+      const commitId = await insertCommit(writeStore, "default", "stage1-zvec-ann-sidecar");
+      for (let i = 0; i < 128; i += 1) {
+        await insertReadyNode(writeStore, {
+          id: `zvec-distractor-${String(i).padStart(4, "0")}`,
+          vector: [0, 1, 0],
+          salience: 1,
+          confidence: 1,
+          commitId,
+        });
+      }
+      await insertReadyNode(writeStore, {
+        id: "zvec-private-exact-match",
+        vector: [1, 0, 0],
+        salience: 0,
+        confidence: 1,
+        ownerTeamId: "other-team",
+        commitId,
+      });
+      await insertReadyNode(writeStore, {
+        id: "zvec-visible-exact-match",
+        vector: [1, 0, 0],
+        salience: 0,
+        confidence: 0.5,
+        commitId,
+      });
+    });
+
+    const candidates = await recallStore.createRecallAccess().stage1CandidatesAnn({
+      queryEmbedding: [1, 0, 0],
+      scope: "default",
+      oversample: 1,
+      limit: 2,
+      consumerAgentId: null,
+      consumerTeamId: null,
+    });
+
+    assert.equal(candidates[0]?.id, "zvec-visible-exact-match");
+    assert.ok(!candidates.some((candidate) => candidate.id === "zvec-private-exact-match"));
+    assert.equal(candidates[0]?.sources?.[0]?.kind, "ann");
+    assert.equal(candidates[0]?.sources?.[0]?.reason, "zvec_ann_index");
+    assert.equal(candidates[0]?.sources?.[0]?.index_name, "aionis_zvec_ann");
+  } finally {
+    await recallStore.close();
+    await writeStore.close();
+    fs.rmSync(zvecPath, { recursive: true, force: true });
   }
 });
 

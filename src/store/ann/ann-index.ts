@@ -1,4 +1,4 @@
-export type AnnProvider = "off" | "local";
+export type AnnProvider = "off" | "local" | "zvec";
 
 export type AnnVectorRecord = {
   node_id: string;
@@ -34,6 +34,7 @@ export interface AionisLocalAnnIndex {
   delete(nodeId: string): Promise<void>;
   search(params: AnnSearchParams): Promise<AnnSearchResult[]>;
   rebuild(records: AsyncIterable<{ record: AnnVectorRecord; vector: number[] }>): Promise<void>;
+  close?(): Promise<void>;
 }
 
 export class AnnIndexDimensionError extends Error {

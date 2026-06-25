@@ -8,7 +8,7 @@ const EditionSchema = z.enum(["lite", "server"]);
 const AbstractionPolicyProfileSchema = z.enum(["conservative", "balanced", "aggressive"]);
 const InspectBeforeUseModeSchema = z.enum(["shadow", "active"]);
 const AdmissionCandidatePolicyModeSchema = z.enum(["off", "shadow", "active"]);
-const RecallAnnProviderSchema = z.enum(["off", "local"]);
+const RecallAnnProviderSchema = z.enum(["off", "local", "zvec"]);
 const RecallEngineModeSchema = z.enum(["semantic_scan", "hybrid"]);
 
 function sandboxRemoteHostAllowed(hostname: string, allowlist: string[]): boolean {
@@ -303,6 +303,7 @@ const EnvSchema = z.object({
   // Optional local ANN sidecar. Default off: ANN only generates candidates and never decides admission.
   RECALL_ENGINE_MODE: RecallEngineModeSchema.default("semantic_scan"),
   RECALL_ANN_PROVIDER: RecallAnnProviderSchema.default("off"),
+  RECALL_ZVEC_PATH: z.string().default(""),
   RECALL_ANN_REBUILD_ON_START: z
     .string()
     .optional()
