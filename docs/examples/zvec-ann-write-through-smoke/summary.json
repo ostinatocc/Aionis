@@ -1,0 +1,142 @@
+{
+  "contract_version": "aionis_zvec_ann_write_through_smoke_v1",
+  "generated_at": "2026-06-25T10:14:48.266Z",
+  "provider": "zvec",
+  "rebuild_on_start": false,
+  "sqlite_truth_source": true,
+  "runtime_http_routes": [
+    "/v1/memory/write",
+    "/v1/memory/recall"
+  ],
+  "checks": {
+    "weak_write_inline_embedding_updated": true,
+    "before_target_uses_ann_without_exact_recovery": true,
+    "target_visible_after_running_write_without_restart": true,
+    "target_removed_after_embedding_failed_mutation": true
+  },
+  "stage1": {
+    "before_target": {
+      "mode": "ann",
+      "recall_engine_mode": "semantic_scan",
+      "ann_seed_count": 1,
+      "hybrid_seed_count": null,
+      "final_seed_count": 1,
+      "tier_budget": {
+        "cold_policy": "exact_recovery_on_empty",
+        "recall_engine_mode": "semantic_scan",
+        "ann_allowed_tiers": [
+          "hot",
+          "warm"
+        ],
+        "ann_scan_cap": 2048,
+        "exact_recovery_allowed_tiers": [
+          "hot",
+          "warm",
+          "cold"
+        ],
+        "exact_recovery_scan_cap": null,
+        "ann_seed_tier_counts": {
+          "hot": 1,
+          "warm": 0,
+          "cold": 0,
+          "archive": 0
+        },
+        "hybrid_seed_tier_counts": null,
+        "final_seed_tier_counts": {
+          "hot": 1,
+          "warm": 0,
+          "cold": 0,
+          "archive": 0
+        }
+      },
+      "exact_recovery_enabled": true,
+      "exact_recovery_attempted": false
+    },
+    "after_target": {
+      "mode": "ann",
+      "recall_engine_mode": "semantic_scan",
+      "ann_seed_count": 2,
+      "hybrid_seed_count": null,
+      "final_seed_count": 2,
+      "tier_budget": {
+        "cold_policy": "exact_recovery_on_empty",
+        "recall_engine_mode": "semantic_scan",
+        "ann_allowed_tiers": [
+          "hot",
+          "warm"
+        ],
+        "ann_scan_cap": 2048,
+        "exact_recovery_allowed_tiers": [
+          "hot",
+          "warm",
+          "cold"
+        ],
+        "exact_recovery_scan_cap": null,
+        "ann_seed_tier_counts": {
+          "hot": 2,
+          "warm": 0,
+          "cold": 0,
+          "archive": 0
+        },
+        "hybrid_seed_tier_counts": null,
+        "final_seed_tier_counts": {
+          "hot": 2,
+          "warm": 0,
+          "cold": 0,
+          "archive": 0
+        }
+      },
+      "exact_recovery_enabled": true,
+      "exact_recovery_attempted": false
+    },
+    "after_failed": {
+      "mode": "ann",
+      "recall_engine_mode": "semantic_scan",
+      "ann_seed_count": 1,
+      "hybrid_seed_count": null,
+      "final_seed_count": 1,
+      "tier_budget": {
+        "cold_policy": "exact_recovery_on_empty",
+        "recall_engine_mode": "semantic_scan",
+        "ann_allowed_tiers": [
+          "hot",
+          "warm"
+        ],
+        "ann_scan_cap": 2048,
+        "exact_recovery_allowed_tiers": [
+          "hot",
+          "warm",
+          "cold"
+        ],
+        "exact_recovery_scan_cap": null,
+        "ann_seed_tier_counts": {
+          "hot": 1,
+          "warm": 0,
+          "cold": 0,
+          "archive": 0
+        },
+        "hybrid_seed_tier_counts": null,
+        "final_seed_tier_counts": {
+          "hot": 1,
+          "warm": 0,
+          "cold": 0,
+          "archive": 0
+        }
+      },
+      "exact_recovery_enabled": true,
+      "exact_recovery_attempted": false
+    }
+  },
+  "seed_ids": {
+    "before_target": [
+      "00000000-0000-4000-8000-00000000a222"
+    ],
+    "after_target": [
+      "00000000-0000-4000-8000-00000000a111",
+      "00000000-0000-4000-8000-00000000a222"
+    ],
+    "after_failed": [
+      "00000000-0000-4000-8000-00000000a222"
+    ]
+  }
+}

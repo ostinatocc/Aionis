@@ -59,6 +59,7 @@
     "runtime:e2e:managed-server-hybrid-recall": "npx tsx scripts/e2e/managed-server-hybrid-recall-loop.ts",
     "runtime:e2e:recall-source-governance": "npx tsx scripts/e2e/managed-server-hybrid-recall-loop.ts",
     "runtime:e2e:recall-troubleshooting": "npx tsx scripts/e2e/recall-engine-troubleshooting-demo.ts",
+    "runtime:e2e:zvec-ann-write-through": "npx tsx scripts/e2e/zvec-ann-write-through-smoke.ts",
     "runtime:demo:first-value": "npx tsx scripts/e2e/first-value-demo.ts",
     "runtime:e2e:command-posture": "npx tsx scripts/e2e/command-posture-product-loop.ts",
     "runtime:e2e:single-agent-host-template": "npx tsx scripts/e2e/single-agent-host-template-loop.ts",
