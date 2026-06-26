@@ -5,9 +5,6 @@ FROM node:22-bookworm-slim AS deps
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-COPY packages/aionis-sdk/package.json packages/aionis-sdk/package.json
-COPY packages/aionis-mcp/package.json packages/aionis-mcp/package.json
-COPY packages/create-aionis/package.json packages/create-aionis/package.json
 
 RUN npm ci
 
