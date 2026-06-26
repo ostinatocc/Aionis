@@ -1,7 +1,9 @@
-# Aionis v0.3.0 Release Notes
+# Aionis v0.3 Stable Release Notes
 
-Aionis v0.3.0 is the first stable baseline release train for the public Aionis
-Runtime and integration packages.
+Aionis v0.3 is the first stable baseline release train for the public Aionis
+Runtime and integration packages. The Runtime source patch documented here is
+`v0.3.1`; npm packages may carry different `0.3.x` patch numbers because they
+release from standalone repositories.
 
 ## Headline
 
@@ -15,16 +17,16 @@ what to keep out of direct use, and what raw evidence can be restored on demand.
 
 ## Stable Baseline Package Train
 
-Publish these packages as one v0.3.0 train:
+Current public patch versions for the v0.3 train:
 
-- `@aionis/sdk@0.3.0`
-- `@aionis/create@0.3.0`
-- `aionis@0.3.0`
-- `@aionis/mcp@0.3.0`
+- `aionis@0.3.4`
+- `@aionis/create@0.3.2`
+- `@aionis/sdk@0.3.1`
+- `@aionis/mcp@0.3.2`
 - `@aionis/aifs@0.3.0`
-- `@aionis/claude-code@0.3.0`
-- Runtime source tag `v0.3.0`
-- Docker image `ghcr.io/ostinatocc/aionis:v0.3.0`
+- `@aionis/claude-code@0.3.1`
+- Runtime source tag `v0.3.1`
+- Docker image `ghcr.io/ostinatocc/aionis:v0.3.1`
 
 `@aionis/substrate` remains an experimental sidecar/research package at
 `0.1.0`; it is not part of this stable release train.
@@ -87,7 +89,7 @@ Docker:
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.0
+  ghcr.io/ostinatocc/aionis:v0.3.1
 ```
 
 Optional Zvec candidate index:
@@ -138,8 +140,8 @@ cd /Volumes/ziel/aionis-mcp
 npm publish --access public
 cd /Volumes/ziel/aionis-aifs
 npm publish --access public
-cd /Volumes/ziel/aionis-claude-code
-npm publish --workspace @aionis/claude-code --access public
+cd /Volumes/ziel/aionis-claude-code/packages/aionis-claude-code
+npm publish --access public
 
 # 3. Installer and top-level CLI
 cd /Volumes/ziel/aionis-create
@@ -151,10 +153,10 @@ npm publish --access public
 Then tag Runtime and publish Docker:
 
 ```bash
-git tag -a v0.3.0 -m "Aionis v0.3.0"
-git push origin main v0.3.0
-gh release create v0.3.0 \
+git tag -a v0.3.1 -m "Aionis v0.3.1"
+git push origin main v0.3.1
+gh release create v0.3.1 \
   --repo ostinatocc/Aionis \
-  --title "Aionis v0.3.0" \
-  --notes-file docs/releases/v0.3.0.md
+  --title "Aionis v0.3.1" \
+  --notes-file docs/releases/v0.3.1.md
 ```

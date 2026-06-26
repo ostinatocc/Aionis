@@ -1,22 +1,23 @@
 # Aionis Releases
 
-Status: v0.3.0 stable baseline for Runtime, npm packages, Docker, MCP, SDK, AIFS,
+Status: v0.3 stable baseline for Runtime, npm packages, Docker, MCP, SDK, AIFS,
 and native adapter release paths.
 
 ## Current Public Artifacts
 
 | Artifact | Current channel | Purpose |
 |---|---:|---|
-| GitHub Runtime source | `v0.3.0` tag | Runtime source, product APIs, docs, examples, Docker build, and Runtime validation loops. |
-| Docker image | `ghcr.io/ostinatocc/aionis:v0.3.0` | Local-first Runtime container with persistent SQLite state under `/data`. |
-| `aionis` | `0.3.0` npm / [repo](https://github.com/ostinatocc/aionis-cli) | Top-level product CLI. Owns `npx aionis setup` and delegates Runtime install to `@aionis/create`. |
-| `@aionis/create` | `0.3.0` npm / [repo](https://github.com/ostinatocc/aionis-create) | One-command Runtime installer. |
-| `@aionis/sdk` | `0.3.0` npm / [repo](https://github.com/ostinatocc/aionis-sdk) | TypeScript facade over Aionis product APIs. |
-| `@aionis/mcp` | `0.3.0` npm / [repo](https://github.com/ostinatocc/aionis-mcp) | MCP stdio bridge for Claude Code, Cursor, Codex-style tools, and other MCP clients. |
+| GitHub Runtime source | `v0.3.1` tag | Runtime source, product APIs, docs, Docker build, and Runtime validation loops. |
+| Docker image | `ghcr.io/ostinatocc/aionis:v0.3.1` | Local-first Runtime container with persistent SQLite state under `/data`. |
+| `aionis` | `0.3.4` npm / [repo](https://github.com/ostinatocc/aionis-cli) | Top-level product CLI. Owns `npx aionis setup` and delegates Runtime install to `@aionis/create`. |
+| `@aionis/create` | `0.3.2` npm / [repo](https://github.com/ostinatocc/aionis-create) | One-command Runtime installer. |
+| `@aionis/sdk` | `0.3.1` npm / [repo](https://github.com/ostinatocc/aionis-sdk) | TypeScript facade over Aionis product APIs. |
+| `@aionis/mcp` | `0.3.2` npm / [repo](https://github.com/ostinatocc/aionis-mcp) | MCP stdio bridge for Claude Code, Cursor, Codex-style tools, and other MCP clients. |
 | `@aionis/aifs` | `0.3.0` npm / [repo](https://github.com/ostinatocc/aionis-aifs) | Aionis File Surface for file-aware Agent context. |
-| `@aionis/claude-code` and Claude Code plugin | `0.3.0` npm / [repo](https://github.com/ostinatocc/aionis-claude-code) | Claude Code lifecycle hooks plus plugin marketplace manifest. |
+| `@aionis/claude-code` and Claude Code plugin | `0.3.1` npm / [repo](https://github.com/ostinatocc/aionis-claude-code) | Claude Code lifecycle hooks plus plugin marketplace manifest. |
 
 Fresh-install verification: [v0.3.0 release verification](./releases/v0.3.0-verification.md).
+Runtime patch notes: [v0.3.1 release notes](./releases/v0.3.1.md).
 
 Release tags are immutable. If the release surface changes after a tag, create a
 new patch tag instead of moving the old one.
@@ -25,7 +26,7 @@ new patch tag instead of moving the old one.
 
 | Repository | Release responsibility |
 |---|---|
-| [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) | Runtime source tags, Docker image, product docs, examples, and Runtime validation loops. |
+| [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) | Runtime source tags, Docker image, product docs, release artifacts, and Runtime validation loops. |
 | [ostinatocc/aionis-cli](https://github.com/ostinatocc/aionis-cli) | `aionis` npm package and guided product setup releases. |
 | [ostinatocc/aionis-create](https://github.com/ostinatocc/aionis-create) | `@aionis/create` npm package and installer releases. |
 | [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) | `@aionis/sdk` npm package and SDK releases. |
@@ -34,7 +35,7 @@ new patch tag instead of moving the old one.
 | [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code) | Claude Code plugin releases and `@aionis/claude-code` npm helper releases. |
 
 `@aionis/substrate` is tracked separately as an experimental sidecar/research
-package. Do not include it in the v0.3.0 stable package train.
+package. Do not include it in the v0.3 stable package train.
 
 ## Docker Quickstart
 
@@ -44,7 +45,7 @@ Run the published image:
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.0
+  ghcr.io/ostinatocc/aionis:v0.3.1
 ```
 
 Check the Runtime:
@@ -96,7 +97,7 @@ docker run --rm \
   -e MEMORY_AUTH_MODE=api_key \
   -e MEMORY_API_KEYS_JSON='{"local-dev":"replace-me"}' \
   -e AIONIS_LISTEN_HOST=0.0.0.0 \
-  ghcr.io/ostinatocc/aionis:v0.3.0
+  ghcr.io/ostinatocc/aionis:v0.3.1
 ```
 
 Then call product routes with either `Authorization: Bearer <key>` or
@@ -123,17 +124,17 @@ docker rm -f aionis-release-smoke
 Create a Runtime release:
 
 ```bash
-git tag -a v0.3.0 -m "Aionis v0.3.0"
-git push origin main v0.3.0
-gh release create v0.3.0 \
+git tag -a v0.3.1 -m "Aionis v0.3.1"
+git push origin main v0.3.1
+gh release create v0.3.1 \
   --repo ostinatocc/Aionis \
-  --title "Aionis v0.3.0" \
-  --notes-file docs/releases/v0.3.0.md
+  --title "Aionis v0.3.1" \
+  --notes-file docs/releases/v0.3.1.md
 ```
 
 The Docker workflow publishes:
 
 ```text
-ghcr.io/ostinatocc/aionis:v0.3.0
+ghcr.io/ostinatocc/aionis:v0.3.1
 ghcr.io/ostinatocc/aionis:latest
 ```

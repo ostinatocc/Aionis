@@ -66,7 +66,7 @@ Run the local-first Runtime in Docker:
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.0
+  ghcr.io/ostinatocc/aionis:v0.3.1
 ```
 
 Then check readiness:
@@ -92,7 +92,6 @@ Runtime editions:
 |---|---|---|
 | `lite` | Default | Local developer Runtime for local agents, SDK/HTTP integrations, and MCP on the same machine. |
 | `server` | Managed Server path | Remote SDK/MCP endpoint with explicit auth and request controls. Use `AIONIS_EDITION=server`, `AIONIS_MODE=service`, and `MEMORY_AUTH_MODE=api_key`, `jwt`, or `api_key_or_jwt`. |
-| `cloud` | Reserved label | Product roadmap label for future hosted packaging; the install path here focuses on Lite and Server deployments. |
 
 Managed Server exposes hosted-safe probes:
 
@@ -194,6 +193,7 @@ Repository boundary:
 | [ostinatocc/aionis-create](https://github.com/ostinatocc/aionis-create) | Standalone published `@aionis/create` installer package repo. |
 | [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) | Standalone published `@aionis/sdk` package repo. |
 | [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) | Standalone published `@aionis/mcp` package repo. |
+| [ostinatocc/aionis-aifs](https://github.com/ostinatocc/aionis-aifs) | Standalone published `@aionis/aifs` file-surface package repo. |
 | [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code) | Standalone Claude Code plugin and `@aionis/claude-code` helper repo. |
 
 Runtime startup works in no-key mode. If no key is detected, the generated
@@ -250,8 +250,8 @@ Use overrides when validating a candidate package or branch:
 
 ```bash
 AIONIS_FRESH_INSTALL_CREATE_SPEC=@aionis/create@latest \
-AIONIS_FRESH_INSTALL_SDK_SPEC=@aionis/sdk@0.3.0 \
-AIONIS_FRESH_INSTALL_MCP_SPEC=@aionis/mcp@0.3.0 \
+AIONIS_FRESH_INSTALL_SDK_SPEC=@aionis/sdk@latest \
+AIONIS_FRESH_INSTALL_MCP_SPEC=@aionis/mcp@latest \
 AIONIS_FRESH_INSTALL_REPO=https://github.com/ostinatocc/Aionis.git \
 npm run -s runtime:smoke:fresh-install
 ```

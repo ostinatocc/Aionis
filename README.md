@@ -71,7 +71,7 @@ Docker users can run the Runtime directly:
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.0
+  ghcr.io/ostinatocc/aionis:v0.3.1
 ```
 
 Then start the local Runtime from the generated checkout:
@@ -149,7 +149,7 @@ Package boundary:
 
 | Repository | Owns |
 |---|---|
-| [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) | Runtime core, product APIs, docs, output contracts, Docker image, and Runtime validation loops. |
+| [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) | Runtime core, product APIs, docs, output contracts, Docker image, and validation loops. |
 | [ostinatocc/aionis-cli](https://github.com/ostinatocc/aionis-cli) | Published top-level `aionis` product CLI, including `npx aionis setup`. |
 | [ostinatocc/aionis-create](https://github.com/ostinatocc/aionis-create) | Published one-command Runtime installer package. |
 | [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) | Published TypeScript SDK package. |
@@ -905,7 +905,6 @@ Official docs: [https://docs.aionis.work](https://docs.aionis.work)
 
 | Document | Purpose |
 |---|---|
-| [AIONIS_FIRST_VALUE_DEMO.md](docs/AIONIS_FIRST_VALUE_DEMO.md) | No-key first run that shows unsafe retrieved memory blocked before prompt use. |
 | [AIONIS_INSTALL.md](docs/AIONIS_INSTALL.md) | One-command install path for Runtime plus SDK and MCP packages. |
 | [AIONIS_RELEASES.md](docs/AIONIS_RELEASES.md) | GitHub release, Docker image, npm package, SDK, and MCP artifact map. |
 | [AIONIS_MCP.md](docs/AIONIS_MCP.md) | MCP bridge for Claude Code, Cursor, and other coding-agent clients. |

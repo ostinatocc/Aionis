@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.3.1 - Stable Patch
+
+Release date: 2026-06-26
+
+v0.3.1 is the Runtime patch release for the v0.3 stable train. It keeps the
+same public product surface while aligning the Runtime source with the latest
+published v0.3 package patches.
+
+### Added
+
+- Cross-plane adjudication contract for resolving lifecycle, tier, policy,
+  credibility, learning-control, execution, and rehydrate signals into one
+  Agent Context surface.
+- Regression coverage for conservative plane precedence:
+  `use_now`, `inspect_before_use`, `do_not_use`, `rehydrate`, and
+  `command_posture`.
+
+### Changed
+
+- Explicit archived and retired policy memory now win over hot/trusted/stable
+  direct-use signals during Agent Context assembly.
+- Contested policy or credibility state now routes to inspection before use.
+- Release docs now distinguish immutable Runtime source tags from patch-level
+  npm package versions in the v0.3 stable train.
+
+### Verified
+
+- Runtime typecheck.
+- Product output regression tests.
+- Full Lite test suite: 687/687.
+
 ## v0.3.0 - Stable Baseline
 
 Release date: 2026-06-26
