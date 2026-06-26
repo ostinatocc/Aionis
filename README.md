@@ -9,7 +9,7 @@ Memory is not recall. Memory is state.
 
 Docs: [docs.aionis.work](https://docs.aionis.work)
 
-Current release: **v0.2.2 public beta**. Use it today as a local Runtime,
+Current release: **v0.3.0 stable baseline**. Use it today as a local Runtime,
 TypeScript SDK, HTTP API, MCP bridge, AIFS file surface, Memory Firewall, and
 managed-server-ready Runtime for agent execution memory.
 
@@ -33,6 +33,7 @@ plugin clients.
 | Install the Runtime locally | `@aionis/create` | `npx @aionis/create@latest` | [ostinatocc/aionis-create](https://github.com/ostinatocc/aionis-create) |
 | Integrate from a TypeScript host | `@aionis/sdk` | `npm install @aionis/sdk` | [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) |
 | Connect any MCP client | `@aionis/mcp` | `npx @aionis/mcp@latest --base-url http://127.0.0.1:3001` | [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) |
+| Mirror governed context into files | `@aionis/aifs` | `npx aionis setup --with-aifs` | [ostinatocc/aionis-aifs](https://github.com/ostinatocc/aionis-aifs) |
 | Give Claude Code automatic memory hooks | Claude Code plugin | `/plugin marketplace add https://github.com/ostinatocc/aionis-claude-code` | [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code) |
 
 ```bash
@@ -68,7 +69,7 @@ Docker users can run the Runtime directly:
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.2.2
+  ghcr.io/ostinatocc/aionis:v0.3.0
 ```
 
 Then start the local Runtime from the generated checkout:
@@ -111,9 +112,9 @@ PostToolUse / PostToolUseFailure -> Aionis observe
 PostCompact / SessionEnd -> Aionis handoff
 ```
 
-`@aionis/claude-code@0.2.7` and newer record verified session handoffs when
-Claude Code changed files and validation passed. The next run receives those
-target files, acceptance checks, and failed-command counter-evidence as active
+The Claude Code adapter records verified session handoffs when Claude Code
+changes files and validation passes. The next run receives target files,
+acceptance checks, validation evidence, and execution-boundary notes as active
 execution context.
 
 CLI fallback if you do not want to use Claude Code plugins:
@@ -151,6 +152,7 @@ Package boundary:
 | [ostinatocc/aionis-create](https://github.com/ostinatocc/aionis-create) | Published one-command Runtime installer package. |
 | [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) | Published TypeScript SDK package. |
 | [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) | Published MCP stdio bridge package. |
+| [ostinatocc/aionis-aifs](https://github.com/ostinatocc/aionis-aifs) | Published AIFS file-surface package. |
 | [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code) | Claude Code plugin manifest, lifecycle hooks, and helper package. |
 
 The default guided install does not run a demo. After setup, start the Runtime
@@ -160,14 +162,14 @@ retrieved history is turned into governed execution context, unsafe or stale
 history is kept out of direct use, archived evidence remains pointer-only, and a
 memory-use receipt is printed.
 
-For Claude Code or Cursor, the first useful loop is:
+For coding agents and MCP-capable hosts, the first useful loop is:
 
 ```text
 Claude Code hooks -> Aionis context -> Agent action -> Aionis observe/handoff
 ```
 
-Start with hooks for Claude Code. Use MCP-only when you want a manual tool
-trial or when the host does not support lifecycle hooks. Add feedback, measure,
+Use lifecycle hooks when the host supports them. Use MCP when you want a
+portable bridge or when the host does not support lifecycle hooks. Add feedback, measure,
 and snapshot once the host loop is ready.
 
 Already using Mem0, Zep, Supermemory, Pinecone, pgvector, Chroma, Weaviate,

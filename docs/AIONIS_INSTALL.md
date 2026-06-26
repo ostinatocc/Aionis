@@ -10,6 +10,7 @@ Aionis publishes a top-level product CLI plus focused integration packages:
 - `@aionis/create`: one-command Runtime installer
 - `@aionis/sdk`: TypeScript SDK facade for product routes
 - `@aionis/mcp`: MCP stdio bridge for Claude Code, Cursor, and other MCP clients
+- `@aionis/aifs`: file surface for `.aionis` execution context snapshots
 - `@aionis/claude-code`: Claude Code MCP + lifecycle hook installer
 
 Choose the entry point by what you are connecting:
@@ -71,7 +72,7 @@ Run the local-first Runtime in Docker:
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.2.2
+  ghcr.io/ostinatocc/aionis:v0.3.0
 ```
 
 Then check readiness:
@@ -254,8 +255,8 @@ Use overrides when validating a candidate package or branch:
 
 ```bash
 AIONIS_FRESH_INSTALL_CREATE_SPEC=@aionis/create@latest \
-AIONIS_FRESH_INSTALL_SDK_SPEC=@aionis/sdk@0.2.23 \
-AIONIS_FRESH_INSTALL_MCP_SPEC=@aionis/mcp@0.2.2 \
+AIONIS_FRESH_INSTALL_SDK_SPEC=@aionis/sdk@0.3.0 \
+AIONIS_FRESH_INSTALL_MCP_SPEC=@aionis/mcp@0.3.0 \
 AIONIS_FRESH_INSTALL_REPO=https://github.com/ostinatocc/Aionis.git \
 npm run -s runtime:smoke:fresh-install
 ```

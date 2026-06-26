@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.3.0 - Stable Baseline
+
+Release date: 2026-06-26
+
+v0.3.0 is the first stable baseline release train for the Runtime and public
+integration packages. It is the version to point new users at when they want to
+install Aionis locally, connect an Agent through SDK/API/MCP/AIFS/native
+adapters, or run the Docker Runtime.
+
+### Added
+
+- Unified v0.3.0 package train for Runtime, SDK, CLI, create installer, MCP,
+  AIFS, and Claude Code adapter.
+- Zvec optional ANN candidate sidecar path while keeping SQLite as the Runtime
+  fact source and Aionis governance as the final admission layer.
+- Runtime release documentation for Docker, GitHub Releases, npm publish order,
+  and package boundaries.
+- Stable installer posture through `npx aionis setup`, with local smoke demo
+  optional instead of required.
+
+### Changed
+
+- Updated public positioning around state-preserving execution context:
+  shorter, cleaner, auditable context that carries across sessions, agents,
+  models, and devices.
+- Kept Claude Code as one native adapter path instead of the product center.
+  Runtime, SDK/API, MCP, AIFS, and host-built adapters remain first-class.
+- Aligned external package dependency declarations on `@aionis/sdk@^0.3.0`.
+
+### Verified
+
+- Runtime typecheck and Lite test suite.
+- External package build/test paths for SDK, MCP, create, CLI, AIFS, and Claude
+  Code adapter.
+- Fresh install and external package smoke paths.
+- Docker build path for the Runtime image.
+
 ## v0.2.0 - Public Beta
 
 Release date: 2026-06-21
@@ -34,10 +71,10 @@ agent execution memory, memory admission, and audit replay.
 
 - Repositioned the public product language around governed execution context:
   shorter context, safer admission, and auditable memory influence.
-- Made MCP the fastest recommended path for external users to try Aionis before
-  writing a custom host adapter.
-- Clarified the product boundary between Lite Runtime, Managed Server beta, and
-  future Cloud.
+- Added MCP as a portable adapter path alongside SDK, HTTP, and host-built
+  integrations.
+- Clarified how Lite Runtime and Managed Server deployments map to local and
+  remote Agent integration.
 
 ### Verified
 
@@ -49,13 +86,11 @@ agent execution memory, memory admission, and audit replay.
 - Product e2e coverage for Memory Firewall, Flight Recorder, Managed Server
   hybrid recall, and golden observe-guide-feedback-measure loop.
 
-### Known Boundaries
+### Scope Notes
 
-- Aionis v0.2.0 is not a hosted Cloud SaaS. Billing, org management, hosted
-  multi-tenant control plane, and fleet operations are not included.
-- Local recall has hybrid semantic/lexical/structured/execution-native
-  candidate generation, but true large-scale ANN/vector backend work remains
-  future roadmap.
-- Admission candidate policies are evaluated and can be shadowed, but the
-  learned admission-policy flywheel is not yet a fully automated production
-  policy.
+- v0.2.0 focused on Runtime, SDK, MCP, installer, product APIs, and audit
+  surfaces.
+- Local recall included hybrid semantic/lexical/structured/execution-native
+  candidate generation.
+- Admission candidate policies were evaluable and shadowable, setting up the
+  later admission-data flywheel work.
