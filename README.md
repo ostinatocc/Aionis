@@ -39,15 +39,17 @@ plugin clients.
 npx aionis setup
 ```
 
-`aionis setup` is the product installer shell. It asks for the install
-directory, provider, quickstart, and optional Claude Code hooks, collects API
-keys with hidden terminal input, writes the generated Runtime `.env`, and then
-delegates the actual install to `@aionis/create`.
+`aionis setup` is the product installer shell and the recommended first entry
+point. It asks for the install directory, provider, optional AIFS/Zvec/Claude
+Code setup, and whether to run a local smoke demo. API keys are collected with
+hidden terminal input. The command writes the generated Runtime `.env`,
+delegates the install to `@aionis/create`, then prints the next Runtime start
+and SDK/API/MCP connection commands.
 
 For non-interactive installs, set the provider key in the environment:
 
 ```bash
-OPENAI_API_KEY="your-key" npx aionis setup --provider openai --quickstart sdk --yes
+OPENAI_API_KEY="your-key" npx aionis setup --provider openai --demo sdk --yes
 ```
 
 Optional local ANN candidate retrieval:
@@ -81,7 +83,7 @@ directory. This uses `http://127.0.0.1:3101` and keeps it separate from any
 Runtime you use for Aionis development:
 
 ```bash
-npx @aionis/create@latest .aionis-runtime --with-claude-code
+npx aionis setup .aionis-runtime --with-claude-code
 cd .aionis-runtime
 npm run -s lite:start
 ```
@@ -151,10 +153,12 @@ Package boundary:
 | [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) | Published MCP stdio bridge package. |
 | [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code) | Claude Code plugin manifest, lifecycle hooks, and helper package. |
 
-The default install runs the no-key first-value demo: raw retrieved history is
-turned into governed execution context. Aionis admits the current route, keeps
-unsafe or stale history out of direct use, leaves archived evidence
-pointer-only, and prints a memory-use receipt.
+The default guided install does not run a demo. After setup, start the Runtime
+and connect your Agent host through SDK, HTTP, MCP, AIFS, or a native plugin.
+When you want a first-value proof, run the no-key first-value demo: raw
+retrieved history is turned into governed execution context, unsafe or stale
+history is kept out of direct use, archived evidence remains pointer-only, and a
+memory-use receipt is printed.
 
 For Claude Code or Cursor, the first useful loop is:
 
@@ -381,19 +385,20 @@ Guide:
 
 ## Quickstart
 
-Install the Runtime, SDK, and MCP bridge with one command:
+Install the Runtime with one guided command:
 
 ```bash
 npx aionis setup
 ```
 
 This prompts for the install path and provider, writes `.env`, delegates the
-install to `@aionis/create`, and runs the no-key first-value demo.
+install to `@aionis/create`, and prints the next commands to start the Runtime
+and connect an Agent host. The local smoke demo is optional and defaults to no.
 
 For full SDK integration with recall-backed guide output:
 
 ```bash
-OPENAI_API_KEY="your-key" npx aionis setup --provider openai --quickstart sdk --yes
+OPENAI_API_KEY="your-key" npx aionis setup --provider openai --demo sdk --yes
 ```
 
 For local development from this repo, install dependencies, then run the
@@ -689,7 +694,7 @@ tools without asking the host to implement the full feedback loop on day one.
 Claude Code plugin setup:
 
 ```bash
-npx @aionis/create@latest .aionis-runtime --with-claude-code
+npx aionis setup .aionis-runtime --with-claude-code
 cd .aionis-runtime
 npm run -s lite:start
 ```

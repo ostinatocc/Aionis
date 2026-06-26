@@ -244,10 +244,10 @@ Aionis can claim:
 
 1. state-governed memory before context compilation
 2. branch-aware execution memory
-3. route-safe context compression with recorded baselines
+3. state-preserving context compression with recorded baselines
 4. feedback attribution to exposed memory IDs
 5. read-only memory use receipt and operator snapshot surfaces
-6. failed-branch isolation as a safety mechanism in product quickstarts and e2es
+6. invalidated-route governance as a safety mechanism in product quickstarts and e2es
 7. backend-agnostic Memory Firewall for retrieved external candidates
 
 Keep these as research roadmap claims until further evidence exists:

@@ -28,16 +28,18 @@ Guided setup:
 npx aionis setup
 ```
 
-The setup command asks for the install directory, quickstart, provider, and
-optional Claude Code hooks. If you choose OpenAI, MiniMax, or another provider,
-it asks for the matching API key with hidden terminal input, then writes the
-generated Runtime `.env` for you. You do not need to manually edit `.env` for
-the first install path.
+The setup command asks for the install directory, provider, optional
+AIFS/Zvec/Claude Code setup, and whether to run a local smoke demo. Demo runs
+default to no, so users can install Aionis without being forced into a test
+flow. If you choose OpenAI, MiniMax, or another provider, it asks for the
+matching API key with hidden terminal input, then writes the generated Runtime
+`.env` for you. You do not need to manually edit `.env` for the first install
+path.
 
 Non-interactive setup:
 
 ```bash
-OPENAI_API_KEY="your-key" npx aionis setup --provider openai --quickstart sdk --yes
+OPENAI_API_KEY="your-key" npx aionis setup --provider openai --demo sdk --yes
 ```
 
 Optional local ANN candidate index:
@@ -51,15 +53,15 @@ candidate-retrieval sidecar. Aionis still applies scope, lifecycle, authority,
 admission, and rehydrate governance after candidates are loaded back from
 SQLite.
 
-Direct installer path:
+Direct low-level installer path:
 
 ```bash
 npx @aionis/create@latest
 ```
 
-The default quickstart works without an embedding or LLM API key. It starts a
-Lite Runtime with `EMBEDDING_PROVIDER=none` and shows Aionis turning raw
-retrieved history into governed Agent context.
+Use this when you want to call the installer package directly. Most users
+should start with `npx aionis setup`, which wraps this path and prints Runtime
+start and integration next steps.
 
 ## Docker
 
@@ -112,30 +114,29 @@ Runtime requirement: Node.js `>=22.5.0` with the built-in experimental
 `node:sqlite` module available. The installer checks both the version and the
 SQLite feature because Lite stores local memory state in SQLite.
 
-For full SDK integration with OpenAI-compatible embeddings:
+For full SDK demo with OpenAI-compatible embeddings:
 
 ```bash
-OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart sdk
+OPENAI_API_KEY="your-key" npx aionis setup --provider openai --demo sdk --yes
 ```
 
-For raw HTTP users:
+For raw HTTP demo:
 
 ```bash
-OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart http
+OPENAI_API_KEY="your-key" npx aionis setup --provider openai --demo http --yes
 ```
 
-For multi-agent execution memory:
+For multi-agent execution memory demo:
 
 ```bash
-OPENAI_API_KEY="your-key" npx @aionis/create@latest --provider openai --quickstart multi-agent
+OPENAI_API_KEY="your-key" npx aionis setup --provider openai --demo multi-agent --yes
 ```
 
 For Claude Code, install Runtime into a side directory and run Claude Code
 onboarding:
 
 ```bash
-npx @aionis/create@latest .aionis-runtime \
-  --with-claude-code
+npx aionis setup .aionis-runtime --with-claude-code
 ```
 
 Then start Runtime and run Claude Code from the project:
@@ -172,8 +173,8 @@ The installer performs product setup:
 2. run `npm install`
 3. write `.env` with `EMBEDDING_PROVIDER=none` unless a provider/key is selected
 4. optionally write `RECALL_ANN_PROVIDER=zvec` when `--with-zvec-ann` is set
-5. run the selected quickstart; `first-value` can run without an API key, while
-   recall-backed quickstarts require the selected embedding key
+5. optionally run the selected demo; `first-value` can run without an API key,
+   while recall-backed demos require the selected embedding key
 6. optionally run Claude Code onboarding when `--with-claude-code` is set
 
 The equivalent low-level installer command is:
