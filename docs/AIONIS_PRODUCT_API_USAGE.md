@@ -36,6 +36,10 @@ For incident replay, see
 | `POST /v1/feedback` | `feedback` | Host after the Agent acts | Feedback attribution | `forget_effect` with `operation: "activate"` |
 | `POST /v1/rehydrate` | `rehydrate` | Host when compact context needs original evidence or payload | Payload / archive lifecycle controller | `forget_effect` with `operation: "rehydrate"` |
 | `POST /v1/measure` | `measure` | Host, operator, or product evaluator | Product diagnostics | `effect_report`, optional decision trace and audit |
+| `POST /v1/skills/candidates` | queue skill candidates | Host or operator after measure | Trace-derived skill review ledger | queued candidate rows |
+| `GET /v1/skills/candidates` | list skill candidates | Host or operator | Trace-derived skill review ledger | pending/promoted/rejected candidate rows |
+| `POST /v1/skills/candidates/:id/promote` | review skill candidate | Operator or host review workflow | Trace-derived skill review ledger | promoted review row |
+| `POST /v1/skills/candidates/:id/reject` | review skill candidate | Operator or host review workflow | Trace-derived skill review ledger | rejected review row |
 | `POST /v1/audit/flight-recorder` | incident replay | Host or operator after a run | Agent Flight Recorder | `agent_flight_recorder` |
 | `POST /v1/forget` | controlled forgetting | Host, operator, or product policy | Explicit lifecycle controller | `forget_effect` |
 
@@ -70,7 +74,10 @@ For host decisions, distinguish these two fields:
    or anchor payload needs to be expanded.
 6. Call `POST /v1/measure` with before/after guide packets or direct
    observations when the product needs to prove whether history helped or hurt.
-7. Call `POST /v1/operator/snapshot` when a host or operator needs a read-only
+7. Queue trace-derived skill candidates with `POST /v1/skills/candidates` when
+   `measure.effect_report.training_candidates` contains reusable execution
+   lessons that should enter operator review.
+8. Call `POST /v1/operator/snapshot` when a host or operator needs a read-only
    summary of actionable history, feedback attribution, branch isolation, and
    measured effect.
 

@@ -22,6 +22,7 @@ import { registerRuntimeBoundaryInventoryRoutes } from "../routes/runtime-bounda
 import type { ExecutionStateStore } from "../execution/state-store.js";
 import type { ExecutionTreeStore } from "../execution/tree-store.js";
 import type { ClaimLedgerAccess } from "../store/claim-ledger-access.js";
+import type { SkillCandidateReviewAccess } from "../store/skill-candidate-review-access.js";
 import { buildLiteRouteMatrix, registerLiteServerOnlyRoutes } from "./lite-runtime-boundary.js";
 import { createErrorResponse, HttpError } from "../util/http.js";
 
@@ -357,6 +358,7 @@ export type RegisterApplicationRoutesArgs = {
   liteReplayStore: RuntimeLiteReplayStore;
   liteWriteStore: RuntimeLiteWriteStore;
   claimLedgerAccess?: ClaimLedgerAccess | null;
+  skillCandidateReviewAccess?: SkillCandidateReviewAccess | null;
   executionStateStore: ExecutionStateStore;
   executionTreeStore: ExecutionTreeStore;
   recallTextEmbedBatcher: unknown;
@@ -399,6 +401,7 @@ type ProductFacadeRouteRegistrationArgs = Pick<
   | "env"
   | "liteWriteStore"
   | "claimLedgerAccess"
+  | "skillCandidateReviewAccess"
   | "requireMemoryPrincipal"
   | "withIdentityFromRequest"
   | "enforceRateLimit"
@@ -745,6 +748,7 @@ function registerProductRoutes(args: ProductFacadeRouteRegistrationArgs) {
     env: args.env,
     liteWriteStore: args.liteWriteStore,
     claimLedgerAccess: args.claimLedgerAccess ?? null,
+    skillCandidateReviewAccess: args.skillCandidateReviewAccess ?? null,
     requireMemoryPrincipal: args.requireMemoryPrincipal,
     withIdentityFromRequest: args.withIdentityFromRequest,
     enforceRateLimit: args.enforceRateLimit,

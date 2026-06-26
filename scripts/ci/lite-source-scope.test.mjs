@@ -394,8 +394,8 @@ test("README and positioning docs keep the external product language stable", ()
   const positioning = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_PRODUCT_POSITIONING.md"), "utf8");
   const architecture = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_RUNTIME_ARCHITECTURE.md"), "utf8");
 
-  assert.match(readme, /state-adjudicated memory runtime/);
-  assert.match(readme, /Memory is not recall\. Memory is state\./);
+  assert.match(readme, /Compact, governed execution memory/);
+  assert.match(readme, /Memory is not recall\. Memory is executable state\./);
   assert.match(readme, /Why Teams Use Aionis/);
   assert.match(readme, /Architecture Overview/);
   assert.match(readme, /docs\/AIONIS_RUNTIME_ARCHITECTURE\.md/);
@@ -442,7 +442,7 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(readme, /docs\/AIONIS_QUICKSTART_MATRIX\.md/);
   assert.match(readme, /docs\/AIONIS_INSTALL\.md/);
   assert.match(readme, /docs\/AIONIS_MCP\.md/);
-  assert.match(readme, /npx @aionis\/create/);
+  assert.match(readme, /npx aionis setup/);
   assert.match(readme, /npx @aionis\/mcp@latest/);
   assert.match(readme, /claude mcp add --transport stdio/);
   assert.match(readme, /docs\/AIONIS_MCP\.md/);
@@ -471,7 +471,8 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(productContract, /Forget is a core Aionis capability/);
   assert.match(productContract, /`POST \/v1\/forget` is the explicit lifecycle-control API/);
   assert.match(quickstartMatrix, /Stable Product Boundary/);
-  assert.match(quickstartMatrix, /npx @aionis\/create/);
+  assert.match(quickstartMatrix, /npx aionis setup/);
+  assert.match(quickstartMatrix, /@aionis\/create/);
   assert.match(quickstartMatrix, /npx @aionis\/mcp@latest/);
   assert.match(quickstartMatrix, /MCP stdio/);
   assert.match(quickstartMatrix, /Measure and operator snapshot are read-only product surfaces/);
@@ -495,7 +496,7 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(mcpDoc, /Claude Code/);
   assert.match(mcpDoc, /claude mcp add --transport stdio/);
   assert.match(mcpDoc, /AIONIS_CLAUDE_CODE_INTEGRATION\.md/);
-  assert.match(claudeCodeIntegration, /@aionis\/create@latest \.aionis-runtime --with-claude-code/);
+  assert.match(claudeCodeIntegration, /npx aionis setup \.aionis-runtime[\s\S]*--with-claude-code/);
   assert.match(claudeCodeIntegration, /\/plugin marketplace add https:\/\/github\.com\/ostinatocc\/aionis-claude-code/);
   assert.match(claudeCodeIntegration, /\/plugin install aionis@aionis-claude-code/);
   assert.match(claudeCodeIntegration, /\/aionis:onboard/);

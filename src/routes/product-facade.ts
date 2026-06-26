@@ -36,6 +36,7 @@ import {
   AionisExternalMemoryCandidateSchema,
   AionisGuidePacketSchema,
   AionisMemoryPacketSchema,
+  type AionisEffectReport,
   type AionisAgentContext,
   type AionisAgentRole,
   type AionisClaimLedgerProjection,
@@ -50,6 +51,11 @@ import { AionisClaimWriteSchema } from "../memory/claim-ledger-contract.js";
 import { resolveTenantScope } from "../memory/tenant.js";
 import type { ClaimLedgerAccess, ClaimLedgerRow } from "../store/claim-ledger-access.js";
 import type { LiteExecutionNativeNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
+import type {
+  SkillCandidateReviewAccess,
+  SkillCandidateReviewStatus,
+  TraceDerivedSkillTrainingCandidate,
+} from "../store/skill-candidate-review-access.js";
 import type { AuthPrincipal } from "../util/auth.js";
 import { createErrorResponse } from "../util/http.js";
 import type { InflightGateToken } from "../util/inflight_gate.js";
@@ -59,6 +65,8 @@ import {
 } from "./product-observe-structuring.js";
 
 type ProductFacadeRequest = FastifyRequest<{ Body: unknown }>;
+type ProductFacadeQueryRequest = FastifyRequest<{ Querystring: unknown }>;
+type ProductFacadeParamsRequest = FastifyRequest<{ Params: unknown; Body: unknown }>;
 
 const CLAIM_LEDGER_GUIDE_LIVE_LIMIT = 12;
 const CLAIM_LEDGER_GUIDE_SUPERSEDED_SLOT_LIMIT = 8;
@@ -69,6 +77,7 @@ type ProductFacadeArgs = {
   env: Env;
   liteWriteStore: LiteWriteStore;
   claimLedgerAccess?: ClaimLedgerAccess | null;
+  skillCandidateReviewAccess?: SkillCandidateReviewAccess | null;
   requireMemoryPrincipal: (req: FastifyRequest) => Promise<AuthPrincipal | null>;
   withIdentityFromRequest: (
     req: FastifyRequest,
@@ -464,6 +473,41 @@ const ProductMeasureRequest = z.object({
     });
   }
 });
+
+const ProductSkillCandidateReviewStatusSchema = z.enum(["pending_review", "promoted", "rejected", "all"]);
+
+const ProductSkillCandidateListQuery = z.object({
+  tenant_id: z.string().trim().min(1).optional(),
+  scope: z.string().trim().min(1).optional(),
+  status: ProductSkillCandidateReviewStatusSchema.default("pending_review"),
+  limit: z.coerce.number().int().positive().max(500).default(50),
+}).strict();
+
+const ProductSkillCandidateEnqueueRequest = z.object({
+  tenant_id: z.string().trim().min(1).optional(),
+  scope: z.string().trim().min(1).optional(),
+  effect_report: z.unknown().optional(),
+  measure_result: z.unknown().optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.effect_report === undefined && value.measure_result === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["effect_report"],
+      message: "skill candidate enqueue requires effect_report or measure_result",
+    });
+  }
+});
+
+const ProductSkillCandidateParams = z.object({
+  id: z.string().trim().min(1),
+}).strict();
+
+const ProductSkillCandidateReviewRequest = z.object({
+  tenant_id: z.string().trim().min(1).optional(),
+  scope: z.string().trim().min(1).optional(),
+  reviewer_id: z.string().trim().min(1).optional(),
+  reason: z.string().trim().min(1).max(2048).optional(),
+}).strict();
 
 type InternalDispatchResult =
   | { ok: true; statusCode: number; body: unknown }
@@ -2792,6 +2836,57 @@ function productMeasureInputs(parsed: ProductMeasureInput): {
   };
 }
 
+function productSkillCandidateEffectReportFromRequest(parsed: z.infer<typeof ProductSkillCandidateEnqueueRequest>): AionisEffectReport {
+  if (parsed.effect_report !== undefined) {
+    return AionisEffectReportSchema.parse(parsed.effect_report);
+  }
+  const measure = objectValue(parsed.measure_result);
+  return AionisEffectReportSchema.parse(measure?.effect_report);
+}
+
+function productTraceDerivedSkillCandidates(report: AionisEffectReport): TraceDerivedSkillTrainingCandidate[] {
+  return report.training_candidates.filter((candidate): candidate is TraceDerivedSkillTrainingCandidate => {
+    const skill = candidate.trace_derived_skill;
+    return candidate.candidate_type === "trace_derived_skill"
+      && !!skill
+      && skill.contract_version === "aionis_trace_derived_skill_candidate_v1";
+  });
+}
+
+function productSkillCandidateReviewResponse(args: {
+  route: string;
+  tenantId: string;
+  scope: string;
+  rows: unknown[];
+  inserted?: number;
+  updated?: number;
+}) {
+  return {
+    contract_version: "aionis_trace_derived_skill_review_result_v1",
+    tenant_id: args.tenantId,
+    scope: args.scope,
+    candidates: args.rows,
+    candidate_count: args.rows.length,
+    inserted_count: args.inserted ?? undefined,
+    updated_count: args.updated ?? undefined,
+    safety: {
+      agent_prompt_included: false,
+      memory_runtime_mutation: false,
+      required_gate: "admission_and_promotion_gate",
+    },
+    source_map: {
+      routes_used: [args.route],
+      internal_surfaces_used: ["trace_derived_skill_candidate_review"],
+      omitted_internal_surfaces: [
+        "agent_prompt_text",
+        "raw_memory_rows",
+        "raw_slots",
+        "raw_embedding_vectors",
+      ],
+    },
+  };
+}
+
 function compactProductMeasureEvidenceIds(parsed: ProductMeasureInput, trace: ProductMeasureTraceInput): string[] {
   return uniqueStrings([
     ...(parsed.evidence_ids ?? []),
@@ -2837,6 +2932,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     env,
     liteWriteStore,
     claimLedgerAccess,
+    skillCandidateReviewAccess,
     requireMemoryPrincipal,
     withIdentityFromRequest,
     enforceRateLimit,
@@ -3505,4 +3601,144 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       gate.release();
     }
   });
+
+  app.post("/v1/skills/candidates", async (req: ProductFacadeRequest, reply: FastifyReply) => {
+    const principal = await requireMemoryPrincipal(req);
+    const body = withIdentityFromRequest(req, req.body, principal, "recall");
+    const parsed = ProductSkillCandidateEnqueueRequest.parse(body);
+    await enforceRateLimit(req, reply, "recall");
+    await enforceTenantQuota(req, reply, "recall", tenantFromBody(parsed));
+    if (!skillCandidateReviewAccess) {
+      return reply.code(503).send(productErrorResponse({
+        status: 503,
+        error: "skill_candidate_review_unavailable",
+        message: "trace-derived skill candidate review store is not available for this Runtime",
+      }));
+    }
+    const gate = await acquireInflightSlot("recall");
+    try {
+      const report = productSkillCandidateEffectReportFromRequest(parsed);
+      const tenantId = parsed.tenant_id ?? report.tenant_id ?? env.MEMORY_TENANT_ID;
+      const scope = parsed.scope ?? report.scope ?? env.MEMORY_SCOPE;
+      const candidates = productTraceDerivedSkillCandidates(report);
+      const queued = await skillCandidateReviewAccess.enqueueTraceDerivedSkillCandidates({
+        tenantId,
+        scope,
+        candidates,
+        source: parsed.measure_result !== undefined ? "measure_result" : "effect_report",
+      });
+      return reply.code(200).send(productSkillCandidateReviewResponse({
+        route: "/v1/skills/candidates",
+        tenantId,
+        scope,
+        rows: queued.rows,
+        inserted: queued.inserted,
+        updated: queued.updated,
+      }));
+    } finally {
+      gate.release();
+    }
+  });
+
+  app.get("/v1/skills/candidates", async (req: ProductFacadeQueryRequest, reply: FastifyReply) => {
+    const principal = await requireMemoryPrincipal(req);
+    const parsed = ProductSkillCandidateListQuery.parse(req.query ?? {});
+    await enforceRateLimit(req, reply, "recall");
+    const tenantId = parsed.tenant_id ?? env.MEMORY_TENANT_ID;
+    const scope = parsed.scope ?? env.MEMORY_SCOPE;
+    await enforceTenantQuota(req, reply, "recall", tenantId);
+    if (!skillCandidateReviewAccess) {
+      return reply.code(503).send(productErrorResponse({
+        status: 503,
+        error: "skill_candidate_review_unavailable",
+        message: "trace-derived skill candidate review store is not available for this Runtime",
+      }));
+    }
+    const gate = await acquireInflightSlot("recall");
+    try {
+      void principal;
+      const listed = await skillCandidateReviewAccess.listTraceDerivedSkillCandidates({
+        tenantId,
+        scope,
+        reviewStatus: parsed.status as SkillCandidateReviewStatus | "all",
+        limit: parsed.limit,
+      });
+      return reply.code(200).send(productSkillCandidateReviewResponse({
+        route: "/v1/skills/candidates",
+        tenantId,
+        scope,
+        rows: listed.rows,
+      }));
+    } finally {
+      gate.release();
+    }
+  });
+
+  async function reviewSkillCandidate(args: {
+    req: ProductFacadeParamsRequest;
+    reply: FastifyReply;
+    reviewStatus: Exclude<SkillCandidateReviewStatus, "pending_review">;
+    route: string;
+  }) {
+    const principal = await requireMemoryPrincipal(args.req);
+    const body = withIdentityFromRequest(args.req, args.req.body ?? {}, principal, "recall");
+    const params = ProductSkillCandidateParams.parse(args.req.params ?? {});
+    const parsed = ProductSkillCandidateReviewRequest.parse(body);
+    await enforceRateLimit(args.req, args.reply, "recall");
+    const tenantId = parsed.tenant_id ?? env.MEMORY_TENANT_ID;
+    const scope = parsed.scope ?? env.MEMORY_SCOPE;
+    await enforceTenantQuota(args.req, args.reply, "recall", tenantId);
+    if (!skillCandidateReviewAccess) {
+      return args.reply.code(503).send(productErrorResponse({
+        status: 503,
+        error: "skill_candidate_review_unavailable",
+        message: "trace-derived skill candidate review store is not available for this Runtime",
+      }));
+    }
+    const gate = await acquireInflightSlot("recall");
+    try {
+      const row = await skillCandidateReviewAccess.reviewTraceDerivedSkillCandidate({
+        tenantId,
+        scope,
+        candidateId: params.id,
+        reviewStatus: args.reviewStatus,
+        reviewerId: parsed.reviewer_id ?? null,
+        reason: parsed.reason ?? null,
+      });
+      if (!row) {
+        return args.reply.code(404).send(productErrorResponse({
+          status: 404,
+          error: "skill_candidate_not_found",
+          message: "trace-derived skill candidate was not found in this tenant/scope",
+          details: { candidate_id: params.id },
+        }));
+      }
+      return args.reply.code(200).send(productSkillCandidateReviewResponse({
+        route: args.route,
+        tenantId,
+        scope,
+        rows: [row],
+      }));
+    } finally {
+      gate.release();
+    }
+  }
+
+  app.post("/v1/skills/candidates/:id/promote", async (req: ProductFacadeParamsRequest, reply: FastifyReply) =>
+    reviewSkillCandidate({
+      req,
+      reply,
+      reviewStatus: "promoted",
+      route: "/v1/skills/candidates/:id/promote",
+    })
+  );
+
+  app.post("/v1/skills/candidates/:id/reject", async (req: ProductFacadeParamsRequest, reply: FastifyReply) =>
+    reviewSkillCandidate({
+      req,
+      reply,
+      reviewStatus: "rejected",
+      route: "/v1/skills/candidates/:id/reject",
+    })
+  );
 }

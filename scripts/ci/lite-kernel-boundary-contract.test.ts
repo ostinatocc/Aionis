@@ -98,6 +98,7 @@ test("Lite route capability matrix maps public routes to focused product capabil
 
   assert.deepEqual(routeKeys, [
     "GET /v1/runtime/boundary-inventory",
+    "GET /v1/skills/candidates",
     "POST /v1/audit/memory-decision-report",
     "POST /v1/debug/memory-decision-trace",
     "POST /v1/execution/context/assemble",
@@ -163,6 +164,9 @@ test("Lite route capability matrix maps public routes to focused product capabil
     "POST /v1/observe",
     "POST /v1/operator/snapshot",
     "POST /v1/rehydrate",
+    "POST /v1/skills/candidates",
+    "POST /v1/skills/candidates/:id/promote",
+    "POST /v1/skills/candidates/:id/reject",
   ]);
 
   assert.equal(new Set(routeKeys).size, routeKeys.length, "route capability matrix must not duplicate routes");

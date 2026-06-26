@@ -24,6 +24,7 @@ import { registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
+import { createLiteSkillCandidateReviewStore } from "../../src/store/lite-skill-candidate-review-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
 
@@ -427,12 +428,14 @@ function registerProductFacade(args: {
   app: ReturnType<typeof Fastify>;
   env: ReturnType<typeof liteEnv>;
   guards: ReturnType<typeof requestGuards>;
-  liteWriteStore: ReturnType<typeof createLiteWriteStore>;
+  liteWriteStore?: ReturnType<typeof createLiteWriteStore>;
+  skillCandidateReviewAccess?: ReturnType<ReturnType<typeof createLiteSkillCandidateReviewStore>["createSkillCandidateReviewAccess"]>;
 }) {
   registerProductFacadeRoutes({
     app: args.app,
     env: args.env,
-    liteWriteStore: args.liteWriteStore,
+    liteWriteStore: args.liteWriteStore ?? ({} as ReturnType<typeof createLiteWriteStore>),
+    skillCandidateReviewAccess: args.skillCandidateReviewAccess,
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,
@@ -1301,6 +1304,143 @@ test("product measure facade returns a product effect report without external ev
     assert.equal(body.effect_report.neighborhood_drift_summary.authority_mutation, false);
     assert.deepEqual(body.source_map.routes_used, ["/v1/measure"]);
   } finally {
+    await app.close();
+  }
+});
+
+test("product skills candidates routes queue and review trace-derived skill candidates", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env);
+  const reviewStore = createLiteSkillCandidateReviewStore(tmpDbPath("skill-candidates"));
+  try {
+    registerRuntimeErrorHandler(app);
+    registerProductFacade({
+      app,
+      env,
+      guards,
+      skillCandidateReviewAccess: reviewStore.createSkillCandidateReviewAccess(),
+    });
+
+    const measure = await app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: {
+        task: {
+          run_id: "run:skill-candidate-route",
+          task_signature: "skill-candidate-route",
+          task_family: "runtime_learning",
+        },
+        baseline: {
+          continuity: {
+            repeatedDiscoverySteps: 4,
+            continuityGuidanceCorrect: false,
+            recoveredStateFacts: 1,
+            expectedStateFacts: 4,
+          },
+          learning: {
+            workflowReused: false,
+            provisionalMemoriesWritten: 1,
+          },
+          forgetting: {
+            contextItems: 8,
+            usefulContextItems: 2,
+          },
+          learning_control: {
+            authorityRequiresEvidence: true,
+            blockedAuthorityVisible: true,
+            unverifiedAuthorityApplied: 0,
+          },
+        },
+        aionis: {
+          continuity: {
+            repeatedDiscoverySteps: 1,
+            continuityGuidanceCorrect: true,
+            recoveredStateFacts: 4,
+            expectedStateFacts: 4,
+          },
+          learning: {
+            workflowReused: true,
+            stableWorkflowReused: true,
+            trustedPromotions: 1,
+            weakEvidencePromoted: 0,
+          },
+          forgetting: {
+            contextItems: 4,
+            usefulContextItems: 4,
+            staleMemorySuppressed: 2,
+          },
+          learning_control: {
+            weakEvidenceBlocked: 2,
+            authorityRequiresEvidence: true,
+            blockedAuthorityVisible: true,
+            unverifiedAuthorityApplied: 0,
+          },
+        },
+        comparison: {
+          mode: "baseline_vs_aionis",
+          sufficient_evidence: true,
+        },
+        evidence_ids: ["effect-run:skill-candidate-route"],
+      },
+    });
+    assert.equal(measure.statusCode, 200);
+    const measureBody = measure.json();
+    assert.ok(measureBody.effect_report.training_candidates.some((candidate: any) =>
+      candidate.candidate_type === "trace_derived_skill"
+    ));
+
+    const queued = await app.inject({
+      method: "POST",
+      url: "/v1/skills/candidates",
+      payload: {
+        measure_result: measureBody,
+      },
+    });
+    assert.equal(queued.statusCode, 200);
+    const queuedBody = queued.json();
+    assert.equal(queuedBody.contract_version, "aionis_trace_derived_skill_review_result_v1");
+    assert.equal(queuedBody.safety.agent_prompt_included, false);
+    assert.equal(queuedBody.safety.memory_runtime_mutation, false);
+    assert.equal(queuedBody.inserted_count, 2);
+    assert.equal(queuedBody.candidate_count, 2);
+    const firstId = queuedBody.candidates[0].candidate_id;
+    const secondId = queuedBody.candidates[1].candidate_id;
+    assert.ok(firstId);
+    assert.ok(secondId);
+
+    const listed = await app.inject({
+      method: "GET",
+      url: "/v1/skills/candidates?status=pending_review&limit=10",
+    });
+    assert.equal(listed.statusCode, 200);
+    assert.equal(listed.json().candidate_count, 2);
+
+    const promoted = await app.inject({
+      method: "POST",
+      url: `/v1/skills/candidates/${firstId}/promote`,
+      payload: {
+        reviewer_id: "operator-1",
+        reason: "Strong continuity evidence.",
+      },
+    });
+    assert.equal(promoted.statusCode, 200);
+    assert.equal(promoted.json().candidates[0].review_status, "promoted");
+    assert.equal(promoted.json().candidates[0].candidate.trace_derived_skill.authority_state, "candidate");
+    assert.equal(promoted.json().safety.memory_runtime_mutation, false);
+
+    const rejected = await app.inject({
+      method: "POST",
+      url: `/v1/skills/candidates/${secondId}/reject`,
+      payload: {
+        reviewer_id: "operator-1",
+        reason: "Needs more repeated evidence.",
+      },
+    });
+    assert.equal(rejected.statusCode, 200);
+    assert.equal(rejected.json().candidates[0].review_status, "rejected");
+  } finally {
+    await reviewStore.close();
     await app.close();
   }
 });

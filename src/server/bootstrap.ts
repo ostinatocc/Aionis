@@ -41,6 +41,7 @@ export function registerBootstrapLifecycle(args: {
   liteReplayStore?: CloseableRuntimeStore | null;
   liteWriteStore?: CloseableRuntimeStore | null;
   liteClaimLedgerStore?: CloseableRuntimeStore | null;
+  liteSkillCandidateReviewStore?: CloseableRuntimeStore | null;
   executionStateStore?: CloseableRuntimeStore | null;
   executionTreeStore?: CloseableRuntimeStore | null;
 }) {
@@ -52,6 +53,7 @@ export function registerBootstrapLifecycle(args: {
     liteReplayStore,
     liteWriteStore,
     liteClaimLedgerStore,
+    liteSkillCandidateReviewStore,
     executionStateStore,
     executionTreeStore,
   } = args;
@@ -59,6 +61,7 @@ export function registerBootstrapLifecycle(args: {
     sandboxExecutor.shutdown();
     if (executionTreeStore) await executionTreeStore.close();
     if (executionStateStore) await executionStateStore.close();
+    if (liteSkillCandidateReviewStore) await liteSkillCandidateReviewStore.close();
     if (liteClaimLedgerStore) await liteClaimLedgerStore.close();
     if (liteRecallStore) await liteRecallStore.close();
     if (liteReplayStore) await liteReplayStore.close();

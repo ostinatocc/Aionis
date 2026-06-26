@@ -13,6 +13,7 @@ import { createLiteRuntimeStore } from "../store/lite-runtime-store.js";
 import { createSandboxStore } from "../store/sandbox-access.js";
 import { createLiteWriteStore } from "../store/lite-write-store.js";
 import { createLiteClaimLedgerStore } from "../store/lite-claim-ledger-store.js";
+import { createLiteSkillCandidateReviewStore } from "../store/lite-skill-candidate-review-store.js";
 import { createLocalAnnIndex } from "../store/ann/local-ann-index.js";
 import { createZvecAnnIndex } from "../store/ann/zvec-ann-index.js";
 import { createLiteExecutionStateStore } from "../execution/state-store.js";
@@ -130,6 +131,8 @@ export async function createRuntimeServices(env: Env) {
   });
   const liteClaimLedgerStore = createLiteClaimLedgerStore(env.LITE_WRITE_SQLITE_PATH);
   const claimLedgerAccess = liteClaimLedgerStore.createClaimLedgerAccess();
+  const liteSkillCandidateReviewStore = createLiteSkillCandidateReviewStore(env.LITE_WRITE_SQLITE_PATH);
+  const skillCandidateReviewAccess = liteSkillCandidateReviewStore.createSkillCandidateReviewAccess();
   const executionStateStore = createLiteExecutionStateStore(env.LITE_WRITE_SQLITE_PATH);
   const executionTreeStore = createLiteExecutionTreeStore(env.LITE_WRITE_SQLITE_PATH);
   const liteRecallStore = createLiteRecallStore(env.LITE_WRITE_SQLITE_PATH, {
@@ -269,6 +272,8 @@ export async function createRuntimeServices(env: Env) {
     liteWriteStore,
     liteClaimLedgerStore,
     claimLedgerAccess,
+    liteSkillCandidateReviewStore,
+    skillCandidateReviewAccess,
     executionStateStore,
     executionTreeStore,
     embedder,

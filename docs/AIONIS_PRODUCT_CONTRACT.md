@@ -243,6 +243,23 @@ The first implementation is deliberately conservative:
 | Runtime mutation | `runtime_mutation: false`; no memory row is promoted or rewritten by the projection. |
 | Promotion path | `required_gate: admission_and_promotion_gate`; later use must pass normal admission, feedback, and promotion gates. |
 
+#### Review API
+
+Aionis exposes a review ledger for trace-derived skill candidates:
+
+| Endpoint | Role |
+|---|---|
+| `POST /v1/skills/candidates` | Queue trace-derived skill candidates from a `measure_result` or `effect_report`. |
+| `GET /v1/skills/candidates` | List queued, promoted, rejected, or all trace-derived skill candidates for a tenant/scope. |
+| `POST /v1/skills/candidates/:id/promote` | Record an operator promotion review decision. |
+| `POST /v1/skills/candidates/:id/reject` | Record an operator rejection review decision. |
+
+These routes are review surfaces. A `promote` decision records operator intent in
+the candidate ledger; it does not rewrite memory rows, inject the candidate into
+Agent context, or bypass admission. Turning a candidate into active procedure
+memory remains a separate promotion path behind the normal admission and
+promotion gates.
+
 This gives Aionis a product path for trace-to-skill learning without turning the
 Runtime into an autonomous training loop.
 
