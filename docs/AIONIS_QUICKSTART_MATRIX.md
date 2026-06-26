@@ -2,8 +2,8 @@
 
 Status: public entrypoint selection guide for the focused Runtime
 
-Use this matrix to choose the first Aionis product loop to run. Every command
-starts or targets a real Runtime and verifies a concrete product contract.
+Use this matrix to choose the Aionis integration surface for your Agent. Setup
+installs and configures the Runtime first; verification loops are optional.
 
 ## Start Here
 
@@ -13,14 +13,14 @@ The fastest path is the guided product setup:
 npx aionis setup
 ```
 
-This prompts for the install directory, provider, quickstart, and optional
-Claude Code hooks, writes the generated Runtime `.env`, and runs the no-key
-first-value demo by default. If you use Claude Code, Cursor, or another
-MCP-compatible coding Agent, connect MCP next. Use the SDK quickstart after you
-are ready to wire Aionis into your own application loop:
+This prompts for the install directory, provider, and optional AIFS/Zvec/native
+adapter setup, writes the generated Runtime `.env`, and prints the start and
+integration commands. It does not run a demo by default. If you use Claude Code,
+Cursor, or another MCP-compatible coding Agent, connect MCP next. If you are
+building your own Agent loop, use the SDK or HTTP product API path:
 
 ```bash
-OPENAI_API_KEY="your-key" npx aionis setup --provider openai --quickstart sdk --yes
+OPENAI_API_KEY="your-key" npx aionis setup --provider openai --yes
 ```
 
 If you want the lower-level installer without prompts, use

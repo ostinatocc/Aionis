@@ -42,15 +42,15 @@ npx aionis setup
 
 `aionis setup` is the product installer shell and the recommended first entry
 point. It asks for the install directory, provider, optional AIFS/Zvec/Claude
-Code setup, and whether to run a local smoke demo. API keys are collected with
-hidden terminal input. The command writes the generated Runtime `.env`,
-delegates the install to `@aionis/create`, then prints the next Runtime start
-and SDK/API/MCP connection commands.
+Code setup. API keys are collected with hidden terminal input. The command
+writes the generated Runtime `.env`, delegates the install to `@aionis/create`,
+then prints the next Runtime start and SDK/API/MCP/AIFS connection commands.
+It does not run a demo by default.
 
 For non-interactive installs, set the provider key in the environment:
 
 ```bash
-OPENAI_API_KEY="your-key" npx aionis setup --provider openai --demo sdk --yes
+OPENAI_API_KEY="your-key" npx aionis setup --provider openai --yes
 ```
 
 Optional local ANN candidate retrieval:
@@ -395,20 +395,23 @@ npx aionis setup
 
 This prompts for the install path and provider, writes `.env`, delegates the
 install to `@aionis/create`, and prints the next commands to start the Runtime
-and connect an Agent host. The local smoke demo is optional and defaults to no.
+and connect an Agent host.
 
 For full SDK integration with recall-backed guide output:
 
 ```bash
-OPENAI_API_KEY="your-key" npx aionis setup --provider openai --demo sdk --yes
+OPENAI_API_KEY="your-key" npx aionis setup --provider openai --yes
 ```
 
-For local development from this repo, install dependencies, then run the
-first-value demo without an embedding key:
+For local development from this repo, install dependencies:
 
 ```bash
 npm install
+```
 
+Optional verification without an embedding key:
+
+```bash
 npm run -s runtime:demo:first-value
 ```
 

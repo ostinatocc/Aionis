@@ -30,17 +30,16 @@ npx aionis setup
 ```
 
 The setup command asks for the install directory, provider, optional
-AIFS/Zvec/Claude Code setup, and whether to run a local smoke demo. Demo runs
-default to no, so users can install Aionis without being forced into a test
-flow. If you choose OpenAI, MiniMax, or another provider, it asks for the
-matching API key with hidden terminal input, then writes the generated Runtime
-`.env` for you. You do not need to manually edit `.env` for the first install
-path.
+AIFS/Zvec/Claude Code setup. If you choose OpenAI, MiniMax, or another
+provider, it asks for the matching API key with hidden terminal input, then
+writes the generated Runtime `.env` for you. It does not run a demo by default;
+the completion output shows how to start Runtime and connect SDK, HTTP, MCP,
+AIFS, or native adapter surfaces.
 
 Non-interactive setup:
 
 ```bash
-OPENAI_API_KEY="your-key" npx aionis setup --provider openai --demo sdk --yes
+OPENAI_API_KEY="your-key" npx aionis setup --provider openai --yes
 ```
 
 Optional local ANN candidate index:
@@ -115,22 +114,23 @@ Runtime requirement: Node.js `>=22.5.0` with the built-in experimental
 `node:sqlite` module available. The installer checks both the version and the
 SQLite feature because Lite stores local memory state in SQLite.
 
-For full SDK demo with OpenAI-compatible embeddings:
+For a non-interactive OpenAI-compatible install:
 
 ```bash
-OPENAI_API_KEY="your-key" npx aionis setup --provider openai --demo sdk --yes
+OPENAI_API_KEY="your-key" npx aionis setup --provider openai --yes
 ```
 
-For raw HTTP demo:
+Optional post-install SDK verification:
 
 ```bash
-OPENAI_API_KEY="your-key" npx aionis setup --provider openai --demo http --yes
+cd .aionis-runtime
+npm run -s runtime:quickstart:sdk
 ```
 
-For multi-agent execution memory demo:
+Optional post-install raw HTTP verification:
 
 ```bash
-OPENAI_API_KEY="your-key" npx aionis setup --provider openai --demo multi-agent --yes
+npm run -s runtime:quickstart:http
 ```
 
 For Claude Code, install Runtime into a side directory and run Claude Code
