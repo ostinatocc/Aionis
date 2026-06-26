@@ -46,9 +46,11 @@ import {
   resolveNodeAnchorKind,
   resolveNodeArchiveRelocationSurface,
   resolveNodeCompressionLayer,
+  resolveNodeCredibilityState,
   resolveNodeExecutionContractTrust,
   resolveNodeExecutionKind,
   resolveNodeNextAction,
+  resolveNodePolicyMemoryState,
   resolveNodeRehydrationDefaultMode,
   resolveNodeSemanticForgettingSurface,
   resolveNodeSummaryKind,
@@ -397,13 +399,21 @@ function memoryLifecycleState(args: {
   const weakCounterSignals = nonNegativeIntegerValue(args.slots?.weak_counter_signal_count);
   const strongCounterSignals = nonNegativeIntegerValue(args.slots?.strong_counter_signal_count);
   const feedbackLearningControlPosture = stringValue(args.slots?.feedback_learning_control_posture);
+  const policyMemoryState = resolveNodePolicyMemoryState(args.slots);
+  const credibilityState = resolveNodeCredibilityState(args.slots);
   const tier = args.tier ?? "";
-  if (archiveRelocation.relocation_state === "cold_archive" || semanticForgetting.action === "archive" || tier === "archive") {
+  if (
+    archiveRelocation.relocation_state === "cold_archive"
+    || semanticForgetting.action === "archive"
+    || lifecycle === "archived"
+    || policyMemoryState === "retired"
+    || tier === "archive"
+  ) {
     return "archived";
   }
   if (lifecycle === "rehydration_candidate") return "rehydration_candidate";
   if (semanticForgetting.action === "demote") return "demoted";
-  if (semanticForgetting.action === "review") return "contested";
+  if (semanticForgetting.action === "review" || policyMemoryState === "contested" || credibilityState === "contested") return "contested";
   if (lifecycle === "suppressed" || lifecycle === "disabled") return "suppressed";
   if (strongCounterSignals > 0 || weakCounterSignals >= 2) return "contested";
   if (feedbackLearningControlPosture === "inspect_before_use") return "candidate";
