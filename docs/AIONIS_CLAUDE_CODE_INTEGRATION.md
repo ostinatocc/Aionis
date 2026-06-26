@@ -32,7 +32,7 @@ The plugin loads:
 - Aionis lifecycle hooks.
 - User-level workspace identity storage for stable cross-project scopes.
 
-With `@aionis/claude-code@0.2.7` or newer, Claude Code session end also writes
+With `@aionis/claude-code@0.3.0` or newer, Claude Code session end also writes
 a verified handoff when the session touched files and a validation command
 passed. That handoff includes target files, acceptance checks, the successful
 validation command, and failed commands as counter-evidence. The Runtime then
