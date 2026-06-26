@@ -16,6 +16,8 @@ and native adapter release paths.
 | `@aionis/aifs` | `0.3.0` npm / [repo](https://github.com/ostinatocc/aionis-aifs) | Aionis File Surface for file-aware Agent context. |
 | `@aionis/claude-code` and Claude Code plugin | `0.3.0` npm / [repo](https://github.com/ostinatocc/aionis-claude-code) | Claude Code lifecycle hooks plus plugin marketplace manifest. |
 
+Fresh-install verification: [v0.3.0 release verification](./releases/v0.3.0-verification.md).
+
 Release tags are immutable. If the release surface changes after a tag, create a
 new patch tag instead of moving the old one.
 
