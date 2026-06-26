@@ -1,23 +1,24 @@
 # Aionis
 
-**Execution memory that keeps coding agents on route with far less context.**
+**Compact, governed execution memory for agents that need clean state instead of
+more history.**
 
-Aionis is the state-adjudicated memory runtime that turns plans, decisions,
-outcomes, validation evidence, and rehydrate pointers into compact Agent
-context that survives sessions, roles, plans, and model boundaries.
-Memory is not recall. Memory is state.
+Aionis turns messy Agent history into auditable execution state: the accepted
+route, blocked alternatives, reusable procedures, rehydrate pointers, and
+feedback evidence that survive sessions, agents, devices, and model switches.
+Memory is not recall. Memory is executable state.
 
 Docs: [docs.aionis.work](https://docs.aionis.work)
 
-Current release: **v0.3.0 stable baseline**. Use it today as a local Runtime,
-TypeScript SDK, HTTP API, MCP bridge, AIFS file surface, Memory Firewall, and
-managed-server-ready Runtime for agent execution memory.
+Current release: **v0.3.x stable baseline**. Use it today as a local Runtime,
+TypeScript SDK, HTTP API, MCP bridge, AIFS file surface, Memory Firewall, Agent
+Flight Recorder, and managed-server-ready Runtime for agent execution memory.
 
-Aionis sits between your Agent and its history. It decides whether memory is
-current, stale, contested, invalidated, reusable, or worth rehydrating, then
-compiles the admitted execution state into the next Agent context. The main
-claim is state-preserving, execution-ready context at lower context cost than
-full-history transfer.
+Aionis sits between your Agent and its history. It decides what can be used now,
+what needs inspection, what must stay blocked, and what should remain a
+rehydrate pointer, then compiles that admitted state into the next Agent
+context. The main claim is state-preserving, execution-ready context at lower
+context cost than full-history transfer.
 
 Aionis ships with a local-first Lite Runtime plus SDK, HTTP API, MCP bridge,
 AIFS, and optional native plugins such as Claude Code lifecycle integration.
