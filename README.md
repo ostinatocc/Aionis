@@ -30,7 +30,7 @@ plugin clients.
 | Goal | Use | First command | Source |
 |---|---|---|---|
 | Guided local setup | `aionis` | `npx aionis setup` | [ostinatocc/aionis-cli](https://github.com/ostinatocc/aionis-cli) |
-| Install the Runtime locally | `@aionis/create` | `npx @aionis/create@latest` | [ostinatocc/aionis-create](https://github.com/ostinatocc/aionis-create) |
+| Install the Runtime locally | `aionis` | `npx aionis setup` | [ostinatocc/aionis-cli](https://github.com/ostinatocc/aionis-cli) |
 | Integrate from a TypeScript host | `@aionis/sdk` | `npm install @aionis/sdk` | [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) |
 | Connect any MCP client | `@aionis/mcp` | `npx @aionis/mcp@latest --base-url http://127.0.0.1:3001` | [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) |
 | Mirror governed context into files | `@aionis/aifs` | `npx aionis setup --with-aifs` | [ostinatocc/aionis-aifs](https://github.com/ostinatocc/aionis-aifs) |
@@ -158,9 +158,8 @@ Package boundary:
 
 The default guided install is Agent-first. After setup, start the Runtime
 and connect your Agent host through SDK, HTTP, MCP, AIFS, or a native plugin.
-For a first-value proof, Aionis turns raw retrieved history into governed
-execution context: unsafe or stale history is kept out of direct use, archived
-evidence remains pointer-only, and a memory-use receipt is printed.
+The low-level `@aionis/create` package remains the installer backend; most users
+should enter through `npx aionis setup`.
 
 For coding agents and MCP-capable hosts, the first useful loop is:
 
@@ -196,8 +195,8 @@ External proof paths:
   [docs.aionis.work/integrations/mcp](https://docs.aionis.work/integrations/mcp)
 - Memory Firewall for existing backends:
   [docs.aionis.work/products/memory-firewall](https://docs.aionis.work/products/memory-firewall)
-- Generated proof artifacts:
-  [docs.aionis.work/examples](https://docs.aionis.work/examples)
+- Public benchmark and proof artifacts:
+  [docs.aionis.work/mgbench](https://docs.aionis.work/mgbench)
 
 Use Aionis when your Agents must continue real work across sessions, roles,
 handoffs, and mistakes.
@@ -409,13 +408,7 @@ For local development from this repo, install dependencies:
 npm install
 ```
 
-Optional local verification without an embedding key:
-
-```bash
-npm run -s runtime:demo:first-value
-```
-
-Then configure an embedding provider and run the SDK quickstart:
+Configure an embedding provider and run the SDK verification flow:
 
 ```bash
 export EMBEDDING_PROVIDER="openai"
@@ -432,7 +425,7 @@ export MINIMAX_API_KEY="your-minimax-key"
 npm run -s runtime:quickstart:sdk
 ```
 
-The SDK quickstart runs a real local Runtime and verifies:
+The SDK verification flow runs a real local Runtime and verifies:
 
 1. a fresh guide starts without actionable history
 2. ordinary preference and project memory become reusable context
@@ -480,7 +473,7 @@ npm run -s runtime:e2e:memory-firewall-ab
 That loop compares raw retrieved memory against Aionis-governed memory using the
 same Mem0/Zep/vector/log-style candidates. It shows unsafe direct-use,
 current/procedure recall, and audit coverage side by side. See
-[docs/AIONIS_MEMORY_FIREWALL_AB_DEMO.md](docs/AIONIS_MEMORY_FIREWALL_AB_DEMO.md).
+[Memory Firewall A/B notes](docs/AIONIS_MEMORY_FIREWALL_AB_DEMO.md).
 
 For Agent Flight Recorder:
 
@@ -499,7 +492,7 @@ npm run -s runtime:e2e:flight-recorder-incident
 
 That loop replays a healthy run, a blocked-memory misuse incident, and a missing
 feedback-attribution case. See
-[docs/AIONIS_FLIGHT_RECORDER_INCIDENT_DEMO.md](docs/AIONIS_FLIGHT_RECORDER_INCIDENT_DEMO.md).
+[Flight Recorder incident notes](docs/AIONIS_FLIGHT_RECORDER_INCIDENT_DEMO.md).
 
 For Claude Code lifecycle integration, use the official plugin and setup guide:
 [docs/AIONIS_CLAUDE_CODE_INTEGRATION.md](docs/AIONIS_CLAUDE_CODE_INTEGRATION.md).
@@ -531,7 +524,7 @@ The SDK product loop prints a compact result like this:
   "agent_context": {
     "before_actionable_history_used": false,
     "after_actionable_history_used": true,
-    "use_now_memory_ids": ["mem_preference_example", "mem_project_fact_example"]
+    "use_now_memory_ids": ["mem_preference", "mem_project_fact"]
   },
   "execution_context_compiler": {
     "contract_version": "aionis_execution_agent_context_v1",
@@ -554,20 +547,19 @@ The SDK product loop prints a compact result like this:
 }
 ```
 
-Full output artifacts:
+Committed verification artifacts:
 
-1. [First-value proof result](docs/examples/first-value-demo-result.json)
-2. [SDK quickstart result](docs/examples/sdk-quickstart-result.json)
-3. [HTTP quickstart result](docs/examples/http-quickstart-result.json)
-4. [Multi-agent quickstart result](docs/examples/multi-agent-quickstart-result.json)
-5. [Golden product loop result](docs/examples/golden-product-loop-result.json)
-6. [Judgment calibration product loop result](docs/examples/judgment-calibration-product-loop-result.json)
-7. [Memory Firewall quickstart result](docs/examples/memory-firewall-quickstart-result.json)
-8. [Memory Firewall A/B verification result](docs/examples/memory-firewall-ab-demo-result.json)
-9. [Flight Recorder quickstart result](docs/examples/flight-recorder-quickstart-result.json)
-10. [Flight Recorder incident verification result](docs/examples/flight-recorder-incident-demo-result.json)
-11. [Loop Engineering profile result](docs/examples/loop-engineering-profile-result.json)
-12. [Plan as Memory Asset result](docs/examples/plan-as-memory-asset-result.json)
+1. [SDK verification result](docs/examples/sdk-quickstart-result.json)
+2. [HTTP verification result](docs/examples/http-quickstart-result.json)
+3. [Multi-agent verification result](docs/examples/multi-agent-quickstart-result.json)
+4. [Golden product loop result](docs/examples/golden-product-loop-result.json)
+5. [Judgment calibration product loop result](docs/examples/judgment-calibration-product-loop-result.json)
+6. [Memory Firewall verification result](docs/examples/memory-firewall-quickstart-result.json)
+7. [Memory Firewall A/B verification result](docs/examples/memory-firewall-ab-demo-result.json)
+8. [Flight Recorder verification result](docs/examples/flight-recorder-quickstart-result.json)
+9. [Flight Recorder incident verification result](docs/examples/flight-recorder-incident-demo-result.json)
+10. [Loop Engineering profile result](docs/examples/loop-engineering-profile-result.json)
+11. [Plan as Memory Asset result](docs/examples/plan-as-memory-asset-result.json)
 
 ## What The Agent Gets
 

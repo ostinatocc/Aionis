@@ -8,7 +8,7 @@ For the normal Claude Code path, use an isolated local Runtime on `3101` and
 install the Aionis plugin:
 
 ```bash
-npx @aionis/create@latest .aionis-runtime --with-claude-code
+npx aionis setup .aionis-runtime --with-claude-code
 cd .aionis-runtime
 npm run -s lite:start
 ```
@@ -114,7 +114,7 @@ npx @aionis/claude-code@latest install \
 If you are installing Runtime and Claude Code integration together, use:
 
 ```bash
-npx @aionis/create@latest .aionis-runtime \
+npx aionis setup .aionis-runtime \
   --with-claude-code
 ```
 

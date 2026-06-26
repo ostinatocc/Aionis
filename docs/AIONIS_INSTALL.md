@@ -32,9 +32,9 @@ npx aionis setup
 The setup command asks for the install directory, provider, optional
 AIFS/Zvec/Claude Code setup. If you choose OpenAI, MiniMax, or another
 provider, it asks for the matching API key with hidden terminal input, then
-writes the generated Runtime `.env` for you. It does not run a demo by default;
-the completion output shows how to start Runtime and connect SDK, HTTP, MCP,
-AIFS, or native adapter surfaces.
+writes the generated Runtime `.env` for you. Verification flows are disabled by
+default; the completion output shows how to start Runtime and connect SDK,
+HTTP, MCP, AIFS, or native adapter surfaces.
 
 Non-interactive setup:
 
@@ -53,15 +53,10 @@ candidate-retrieval sidecar. Aionis still applies scope, lifecycle, authority,
 admission, and rehydrate governance after candidates are loaded back from
 SQLite.
 
-Direct low-level installer path:
-
-```bash
-npx @aionis/create@latest
-```
-
-Use this when you want to call the installer package directly. Most users
-should start with `npx aionis setup`, which wraps this path and prints Runtime
-start and integration next steps.
+Low-level installer package:
+[`@aionis/create`](https://github.com/ostinatocc/aionis-create).
+Most users should start with `npx aionis setup`, which wraps that package and
+prints Runtime start and integration next steps.
 
 ## Docker
 
@@ -87,15 +82,15 @@ API-key or JWT auth. Full release and Docker notes:
 [AIONIS_RELEASES.md](AIONIS_RELEASES.md).
 
 This installs the local-first Lite Runtime. Lite is designed for developer
-machines, same-host coding agents, and first-value MCP/SDK trials. It defaults
-to loopback and local development settings so a new user can see Aionis work
+machines, same-host coding agents, and SDK/MCP verification. It defaults to
+loopback and local development settings so a new user can connect an Agent
 immediately.
 
 Runtime editions:
 
 | Edition | Status | Intended use |
 |---|---|---|
-| `lite` | Default | Local developer Runtime for first-value demos, local agents, SDK quickstarts, and MCP on the same machine. |
+| `lite` | Default | Local developer Runtime for local agents, SDK/HTTP integrations, and MCP on the same machine. |
 | `server` | Managed Server path | Remote SDK/MCP endpoint with explicit auth and request controls. Use `AIONIS_EDITION=server`, `AIONIS_MODE=service`, and `MEMORY_AUTH_MODE=api_key`, `jwt`, or `api_key_or_jwt`. |
 | `cloud` | Reserved label | Product roadmap label for future hosted packaging; the install path here focuses on Lite and Server deployments. |
 
@@ -174,14 +169,13 @@ The installer performs product setup:
 2. run `npm install`
 3. write `.env` with `EMBEDDING_PROVIDER=none` unless a provider/key is selected
 4. optionally write `RECALL_ANN_PROVIDER=zvec` when `--with-zvec-ann` is set
-5. optionally run the selected demo; `first-value` can run without an API key,
-   while recall-backed demos require the selected embedding key
+5. optionally run the selected verification flow when explicitly requested
 6. optionally run Claude Code onboarding when `--with-claude-code` is set
 
-The equivalent low-level installer command is:
+The equivalent guided setup command is:
 
 ```bash
-npx @aionis/create@latest .aionis-runtime --with-zvec-ann
+npx aionis setup .aionis-runtime --with-zvec-ann --yes
 ```
 
 After install, validate the local ANN sidecar from the Runtime directory:
@@ -195,7 +189,7 @@ Repository boundary:
 
 | Repository | Role |
 |---|---|
-| [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) | Runtime core, product HTTP APIs, docs, examples, Docker image, and product validation loops. |
+| [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) | Runtime core, product HTTP APIs, docs, Docker image, and product validation loops. |
 | [ostinatocc/aionis-cli](https://github.com/ostinatocc/aionis-cli) | Top-level `aionis` product CLI. It owns `npx aionis setup` and delegates actual Runtime install to `@aionis/create`. |
 | [ostinatocc/aionis-create](https://github.com/ostinatocc/aionis-create) | Standalone published `@aionis/create` installer package repo. |
 | [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) | Standalone published `@aionis/sdk` package repo. |
@@ -210,7 +204,7 @@ cd Aionis
 npm run -s lite:start
 ```
 
-Enable semantic recall and recall-backed quickstarts later by setting a provider
+Enable semantic recall and recall-backed verification later by setting a provider
 and matching key in `.env`. For `EMBEDDING_PROVIDER=openai`, that key is
 `OPENAI_API_KEY`.
 
@@ -236,16 +230,17 @@ for install-path validation.
 
 ## Fresh Install Smoke
 
-After publishing `@aionis/create`, run the release smoke against the public npm
+After publishing installer packages, run the release smoke against the public npm
 entrypoint:
 
 ```bash
 npm run -s runtime:smoke:fresh-install
 ```
 
-The smoke creates a temporary project and runs the same path a new user takes:
+The smoke creates a temporary project and runs the same install path a new user
+takes:
 
-1. `npm exec --package @aionis/create@latest -- create-aionis FreshRuntime --quickstart none`
+1. install a clean Runtime through the published installer package
 2. assert the generated `.env` uses `EMBEDDING_PROVIDER=none`
 3. start the installed Runtime without any embedding key
 4. run `@aionis/mcp@latest` over stdio

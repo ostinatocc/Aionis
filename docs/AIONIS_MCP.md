@@ -30,10 +30,10 @@ The bridge uses the same product path as the SDK:
 
 ## Install
 
-Install Runtime, SDK, and MCP bridge:
+Install Runtime and print MCP connection commands:
 
 ```bash
-npx @aionis/create@latest
+npx aionis setup
 ```
 
 Start Runtime from the generated checkout:
@@ -73,7 +73,7 @@ For Claude Code, prefer the plugin path because it installs both MCP and
 lifecycle hooks:
 
 ```bash
-npx @aionis/create@latest .aionis-runtime --with-claude-code
+npx aionis setup .aionis-runtime --with-claude-code
 cd .aionis-runtime
 npm run -s lite:start
 ```
