@@ -45,7 +45,8 @@ point. It asks for the install directory, provider, optional AIFS/Zvec/Claude
 Code setup. API keys are collected with hidden terminal input. The command
 writes the generated Runtime `.env`, delegates the install to `@aionis/create`,
 then prints the next Runtime start and SDK/API/MCP/AIFS connection commands.
-It does not run a demo by default.
+It installs for real Agent integration without running optional verification
+flows by default.
 
 For non-interactive installs, set the provider key in the environment:
 
@@ -147,7 +148,7 @@ Package boundary:
 
 | Repository | Owns |
 |---|---|
-| [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) | Runtime core, product APIs, docs, examples, Docker image, and Runtime validation loops. |
+| [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis) | Runtime core, product APIs, docs, output contracts, Docker image, and Runtime validation loops. |
 | [ostinatocc/aionis-cli](https://github.com/ostinatocc/aionis-cli) | Published top-level `aionis` product CLI, including `npx aionis setup`. |
 | [ostinatocc/aionis-create](https://github.com/ostinatocc/aionis-create) | Published one-command Runtime installer package. |
 | [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) | Published TypeScript SDK package. |
@@ -155,12 +156,11 @@ Package boundary:
 | [ostinatocc/aionis-aifs](https://github.com/ostinatocc/aionis-aifs) | Published AIFS file-surface package. |
 | [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code) | Claude Code plugin manifest, lifecycle hooks, and helper package. |
 
-The default guided install does not run a demo. After setup, start the Runtime
+The default guided install is Agent-first. After setup, start the Runtime
 and connect your Agent host through SDK, HTTP, MCP, AIFS, or a native plugin.
-When you want a first-value proof, run the no-key first-value demo: raw
-retrieved history is turned into governed execution context, unsafe or stale
-history is kept out of direct use, archived evidence remains pointer-only, and a
-memory-use receipt is printed.
+For a first-value proof, Aionis turns raw retrieved history into governed
+execution context: unsafe or stale history is kept out of direct use, archived
+evidence remains pointer-only, and a memory-use receipt is printed.
 
 For coding agents and MCP-capable hosts, the first useful loop is:
 
@@ -180,7 +180,7 @@ retrieval. Put Aionis in front of the Agent as the Memory Firewall:
 external memory search -> Aionis governMemory / governMem0SearchResults -> safe Agent context
 ```
 
-In a backend-agnostic local demo, raw retrieval direct-uses failed, stale, and
+In a backend-agnostic local verification run, raw retrieval direct-uses failed, stale, and
 unknown memory; Aionis keeps the current route in `use_now`, moves failed/stale
 memory to `do_not_use`, leaves unknown memory `inspect_before_use`, and keeps
 archived evidence pointer-only under `rehydrate`. For Mem0 specifically, a
@@ -196,7 +196,7 @@ External proof paths:
   [docs.aionis.work/integrations/mcp](https://docs.aionis.work/integrations/mcp)
 - Memory Firewall for existing backends:
   [docs.aionis.work/products/memory-firewall](https://docs.aionis.work/products/memory-firewall)
-- Runnable examples and generated proof artifacts:
+- Generated proof artifacts:
   [docs.aionis.work/examples](https://docs.aionis.work/examples)
 
 Use Aionis when your Agents must continue real work across sessions, roles,
@@ -409,7 +409,7 @@ For local development from this repo, install dependencies:
 npm install
 ```
 
-Optional verification without an embedding key:
+Optional local verification without an embedding key:
 
 ```bash
 npm run -s runtime:demo:first-value
@@ -471,7 +471,7 @@ That loop passes Mem0/Zep/vector/markdown-style candidates through
 `/v1/memory/govern` and proves Aionis routes unsafe external memories away from
 direct use.
 
-For the Memory Firewall A/B demo:
+For the Memory Firewall A/B verification run:
 
 ```bash
 npm run -s runtime:e2e:memory-firewall-ab
@@ -491,7 +491,7 @@ npm run -s runtime:quickstart:flight-recorder
 That loop replays what memory the Agent could see at decision time without
 including prompt text or mutating Runtime state.
 
-For the Agent Flight Recorder incident demo:
+For the Agent Flight Recorder incident verification run:
 
 ```bash
 npm run -s runtime:e2e:flight-recorder-incident
@@ -521,9 +521,9 @@ CLI entrypoints against a real Runtime. Override the package specs with
 Not sure which entrypoint to use? See the
 [quickstart matrix](docs/AIONIS_QUICKSTART_MATRIX.md).
 
-## Example Output
+## Output Contract
 
-The SDK quickstart prints a compact product result like this:
+The SDK product loop prints a compact result like this:
 
 ```json
 {
@@ -554,18 +554,18 @@ The SDK quickstart prints a compact product result like this:
 }
 ```
 
-Full example outputs:
+Full output artifacts:
 
-1. [First-value demo result](docs/examples/first-value-demo-result.json)
+1. [First-value proof result](docs/examples/first-value-demo-result.json)
 2. [SDK quickstart result](docs/examples/sdk-quickstart-result.json)
 3. [HTTP quickstart result](docs/examples/http-quickstart-result.json)
 4. [Multi-agent quickstart result](docs/examples/multi-agent-quickstart-result.json)
 5. [Golden product loop result](docs/examples/golden-product-loop-result.json)
 6. [Judgment calibration product loop result](docs/examples/judgment-calibration-product-loop-result.json)
 7. [Memory Firewall quickstart result](docs/examples/memory-firewall-quickstart-result.json)
-8. [Memory Firewall A/B demo result](docs/examples/memory-firewall-ab-demo-result.json)
+8. [Memory Firewall A/B verification result](docs/examples/memory-firewall-ab-demo-result.json)
 9. [Flight Recorder quickstart result](docs/examples/flight-recorder-quickstart-result.json)
-10. [Flight Recorder incident demo result](docs/examples/flight-recorder-incident-demo-result.json)
+10. [Flight Recorder incident verification result](docs/examples/flight-recorder-incident-demo-result.json)
 11. [Loop Engineering profile result](docs/examples/loop-engineering-profile-result.json)
 12. [Plan as Memory Asset result](docs/examples/plan-as-memory-asset-result.json)
 
@@ -810,7 +810,7 @@ const context = compileExecutionAgentContext({
 // Your host runs the Agent with context.agent_prompt.
 ```
 
-Full minimal Agent example:
+Full minimal Agent integration file:
 [docs/examples/minimal-agent.ts](docs/examples/minimal-agent.ts).
 
 ## Multi-Agent Execution Memory
