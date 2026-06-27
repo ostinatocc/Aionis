@@ -15,6 +15,7 @@ and native adapter release paths.
 | `@aionis/mcp` | `0.3.2` npm / [repo](https://github.com/ostinatocc/aionis-mcp) | MCP stdio bridge for Claude Code, Cursor, Codex-style tools, and other MCP clients. |
 | `@aionis/aifs` | `0.3.0` npm / [repo](https://github.com/ostinatocc/aionis-aifs) | Aionis File Surface for file-aware Agent context. |
 | `@aionis/claude-code` and Claude Code plugin | `0.3.1` npm / [repo](https://github.com/ostinatocc/aionis-claude-code) | Claude Code lifecycle hooks plus plugin marketplace manifest. |
+| `@aionis/substrate` | `0.1.9` npm / [repo](https://github.com/ostinatocc/AionisSubstrate) | External durable evidence sidecar for Runtime mirror, audit, backup, preview, and migration planning. Requires Node 24+. |
 
 Fresh-install verification: [v0.3.0 release verification](./releases/v0.3.0-verification.md).
 Runtime patch notes: [v0.3.1 release notes](./releases/v0.3.1.md).
@@ -33,9 +34,11 @@ new patch tag instead of moving the old one.
 | [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) | `@aionis/mcp` npm package and MCP adapter releases. |
 | [ostinatocc/aionis-aifs](https://github.com/ostinatocc/aionis-aifs) | `@aionis/aifs` npm package and file-surface releases. |
 | [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code) | Claude Code plugin releases and `@aionis/claude-code` npm helper releases. |
+| [ostinatocc/AionisSubstrate](https://github.com/ostinatocc/AionisSubstrate) | `@aionis/substrate` npm package and external sidecar releases. |
 
-`@aionis/substrate` is tracked separately as an experimental sidecar/research
-package. Do not include it in the v0.3 stable package train.
+`@aionis/substrate` is tracked separately from the Runtime stable package train.
+It is an external sidecar package, not a Runtime dependency or storage
+replacement.
 
 ## Docker Quickstart
 

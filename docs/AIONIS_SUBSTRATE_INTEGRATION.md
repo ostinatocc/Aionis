@@ -49,6 +49,9 @@ Lite Runtime defaults to local SQLite files under `.tmp/`:
 .tmp/aionis-lite-replay.sqlite
 ```
 
+`@aionis/substrate` is a separate Node 24+ sidecar package. Runtime can still run
+on its own Node baseline; only the external Substrate CLI/process needs Node 24+.
+
 For the first sidecar path, mirror the write store:
 
 ```bash
