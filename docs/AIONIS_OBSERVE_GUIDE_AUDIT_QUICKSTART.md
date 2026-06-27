@@ -32,6 +32,14 @@ export OPENAI_EMBED_BASE_URL="https://api.openai.com/v1"
 export OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
 ```
 
+DashScope `text-embedding-v4` example:
+
+```bash
+export EMBEDDING_PROVIDER="dashscope"
+export DASHSCOPE_API_KEY="your-dashscope-key"
+export DASHSCOPE_EMBEDDING_MODEL="text-embedding-v4"
+```
+
 MiniMax example:
 
 ```bash

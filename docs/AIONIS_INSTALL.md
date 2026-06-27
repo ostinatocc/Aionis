@@ -30,7 +30,7 @@ npx aionis setup
 ```
 
 The setup command asks for the install directory, provider, optional
-AIFS/Zvec/Claude Code setup. If you choose OpenAI, MiniMax, or another
+AIFS/Zvec/Claude Code setup. If you choose OpenAI, DashScope, MiniMax, or another
 provider, it asks for the matching API key with hidden terminal input, then
 writes the generated Runtime `.env` for you. Verification flows are disabled by
 default; the completion output shows how to start Runtime and connect SDK,
@@ -40,6 +40,7 @@ Non-interactive setup:
 
 ```bash
 OPENAI_API_KEY="your-key" npx aionis setup --provider openai --yes
+DASHSCOPE_API_KEY="your-key" npx aionis setup --provider dashscope --yes
 ```
 
 Optional local ANN candidate index:
@@ -112,6 +113,12 @@ For a non-interactive OpenAI-compatible install:
 
 ```bash
 OPENAI_API_KEY="your-key" npx aionis setup --provider openai --yes
+```
+
+For DashScope text-embedding-v4:
+
+```bash
+DASHSCOPE_API_KEY="your-key" npx aionis setup --provider dashscope --yes
 ```
 
 Optional post-install SDK verification:
@@ -207,6 +214,10 @@ npm run -s lite:start
 Enable semantic recall and recall-backed verification later by setting a provider
 and matching key in `.env`. For `EMBEDDING_PROVIDER=openai`, that key is
 `OPENAI_API_KEY`.
+
+DashScope text-embedding-v4 is supported with `EMBEDDING_PROVIDER=dashscope`
+and `DASHSCOPE_API_KEY`. Runtime uses the DashScope OpenAI-compatible embedding
+endpoint and requests the configured `EMBEDDING_DIM` value.
 
 MiniMax remains supported with `--provider minimax` and `MINIMAX_API_KEY`.
 MiniMax embeddings default to separate surfaces: stored memory is embedded with

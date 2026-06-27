@@ -403,6 +403,14 @@ For full SDK integration with recall-backed guide output:
 OPENAI_API_KEY="your-key" npx aionis setup --provider openai --yes
 ```
 
+DashScope `text-embedding-v4` is supported as a first-class embedding provider:
+
+```bash
+export EMBEDDING_PROVIDER="dashscope"
+export DASHSCOPE_API_KEY="your-dashscope-key"
+export DASHSCOPE_EMBEDDING_MODEL="text-embedding-v4"
+```
+
 For local development from this repo, install dependencies:
 
 ```bash

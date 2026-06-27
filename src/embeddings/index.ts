@@ -5,12 +5,17 @@ import type { EmbeddingProvider } from "./types.js";
 import type { EmbedHttpConfig } from "./http.js";
 
 const ProviderEnvSchema = z.object({
-  EMBEDDING_PROVIDER: z.enum(["none", "openai", "minimax"]).default("none"),
+  EMBEDDING_PROVIDER: z.enum(["none", "openai", "minimax", "dashscope"]).default("none"),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_EMBED_BASE_URL: z.string().default("https://api.openai.com/v1"),
   OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
   OPENAI_EMBED_BATCH_SIZE: z.coerce.number().int().positive().max(256).default(32),
   EMBEDDING_DIM: z.coerce.number().int().positive().default(1536),
+
+  DASHSCOPE_API_KEY: z.string().optional(),
+  DASHSCOPE_EMBED_BASE_URL: z.string().default("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+  DASHSCOPE_EMBEDDING_MODEL: z.string().default("text-embedding-v4"),
+  DASHSCOPE_EMBED_BATCH_SIZE: z.coerce.number().int().positive().max(10).default(10),
 
   MINIMAX_API_KEY: z.string().optional(),
   MINIMAX_GROUP_ID: z.string().optional(),
@@ -74,6 +79,22 @@ export function createEmbeddingProvidersFromEnv(env: Record<string, string | und
         http: httpCfg,
       }),
     };
+  }
+
+  if (parsed.EMBEDDING_PROVIDER === "dashscope") {
+    if (!parsed.DASHSCOPE_API_KEY) throw new Error("EMBEDDING_PROVIDER=dashscope requires DASHSCOPE_API_KEY");
+    const provider = createOpenAIEmbeddingProvider({
+      apiKey: parsed.DASHSCOPE_API_KEY,
+      baseUrl: parsed.DASHSCOPE_EMBED_BASE_URL,
+      model: parsed.DASHSCOPE_EMBEDDING_MODEL,
+      dim: parsed.EMBEDDING_DIM,
+      dimensions: parsed.EMBEDDING_DIM,
+      encodingFormat: "float",
+      batchSize: parsed.DASHSCOPE_EMBED_BATCH_SIZE,
+      providerLabel: "dashscope",
+      http: httpCfg,
+    });
+    return { write: provider, query: provider };
   }
 
   if (!parsed.OPENAI_API_KEY) {

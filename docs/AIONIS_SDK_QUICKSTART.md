@@ -27,6 +27,14 @@ export EMBEDDING_PROVIDER="openai"
 export OPENAI_API_KEY="your-openai-key"
 ```
 
+DashScope `text-embedding-v4` example:
+
+```bash
+export EMBEDDING_PROVIDER="dashscope"
+export DASHSCOPE_API_KEY="your-dashscope-key"
+export DASHSCOPE_EMBEDDING_MODEL="text-embedding-v4"
+```
+
 MiniMax example:
 
 ```bash

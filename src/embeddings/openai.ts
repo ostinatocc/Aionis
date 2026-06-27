@@ -7,24 +7,30 @@ type OpenAIEmbeddingProviderOptions = {
   dim: number;
   batchSize: number;
   baseUrl: string;
+  dimensions?: number;
+  encodingFormat?: "float";
+  providerLabel?: string;
   http: EmbedHttpConfig;
 };
 
 export function createOpenAIEmbeddingProvider(opts: OpenAIEmbeddingProviderOptions): EmbeddingProvider {
-  const { apiKey, model, dim, batchSize, baseUrl, http } = opts;
+  const { apiKey, model, dim, batchSize, baseUrl, dimensions, encodingFormat, providerLabel, http } = opts;
   const poster = createEmbedJsonPoster(http);
   const endpoint = `${baseUrl.trim().replace(/\/+$/, "")}/embeddings`;
   return {
-    name: `openai:${model}`,
+    name: `${providerLabel ?? "openai"}:${model}`,
     dim,
     async embed(texts: string[]): Promise<number[][]> {
       const out: number[][] = [];
       for (let i = 0; i < texts.length; i += batchSize) {
         const chunk = texts.slice(i, i + batchSize);
+        const body: Record<string, unknown> = { model, input: chunk };
+        if (dimensions !== undefined) body.dimensions = dimensions;
+        if (encodingFormat !== undefined) body.encoding_format = encodingFormat;
         const json = await poster.postJson<any>(
           endpoint,
           { authorization: `Bearer ${apiKey}` },
-          { model, input: chunk },
+          body,
         );
         const data = Array.isArray(json?.data) ? json.data : [];
         // Expect the API to preserve order by index; we sort defensively.
