@@ -118,10 +118,10 @@ npx aionis setup .aionis-runtime \
   --with-claude-code
 ```
 
-This writes `PORT=3101` into the installed Runtime `.env` and runs the
-`@aionis/claude-code onboard` fallback. You can then also install the Claude
-Code plugin from the marketplace; the plugin uses the same Runtime URL and
-user-level workspace identity model.
+This writes `PORT=3101` into the installed Runtime `.env` and runs
+`@aionis/claude-code onboard`. You can then install the Claude Code plugin from
+the marketplace; the plugin uses the same Runtime URL and user-level workspace
+identity model.
 
 ## Scope
 

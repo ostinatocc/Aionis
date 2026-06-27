@@ -119,13 +119,13 @@ changes files and validation passes. The next run receives target files,
 acceptance checks, validation evidence, and execution-boundary notes as active
 execution context.
 
-CLI fallback if you do not want to use Claude Code plugins:
+CLI onboarding path:
 
 ```bash
 npx @aionis/claude-code@latest onboard --base-url http://127.0.0.1:3101
 ```
 
-MCP-only setup is still available for hosts that do not support hooks:
+MCP bridge setup for MCP-capable hosts:
 
 ```bash
 claude mcp add --transport stdio --scope project aionis -- \
@@ -168,9 +168,9 @@ For coding agents and MCP-capable hosts, the first useful loop is:
 Claude Code hooks -> Aionis context -> Agent action -> Aionis observe/handoff
 ```
 
-Use lifecycle hooks when the host supports them. Use MCP when you want a
-portable bridge or when the host does not support lifecycle hooks. Add feedback, measure,
-and snapshot once the host loop is ready.
+Use lifecycle hooks when the host supports them. Use MCP when a host exposes
+tools through the Model Context Protocol. Add feedback, measure, and snapshot
+once the host loop is ready.
 
 Already using Mem0, Zep, Supermemory, Pinecone, pgvector, Chroma, Weaviate,
 LangGraph Store, markdown memory, logs, or a custom vector store? Keep it for
@@ -714,8 +714,8 @@ npm run -s lite:start
 
 This plugin path gives Claude Code both Aionis MCP tools and lifecycle hooks.
 It defaults to `http://127.0.0.1:3101` and records verified session handoffs
-after successful file changes. Use the raw MCP command below for Cursor, Zcode,
-or MCP-only hosts.
+after successful file changes. Use the MCP command below for Cursor, Zcode,
+or other MCP-capable hosts.
 
 Claude Code / MCP client setup:
 
