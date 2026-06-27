@@ -1,0 +1,132 @@
+{
+  "contract_version": "aionis_external_claude_code_longflow_case_v1",
+  "generated_at": "2026-06-27T04:34:05.566Z",
+  "case_dir": "/Volumes/ziel/aionis-claude-external-longflow-20260627-121522",
+  "runtime": {
+    "base_url": "http://127.0.0.1:3197",
+    "runtime_source": "/Volumes/ziel/AionisRuntime-focused",
+    "runtime_head": "4d906a2 Prepare v0.3.1 runtime release"
+  },
+  "claude_code": {
+    "version": "2.1.107 (Claude Code)",
+    "hook_package": "@aionis/claude-code@latest",
+    "doctor_ready": true,
+    "doctor": {
+      "ready": true,
+      "runtime_ok": true,
+      "base_url": "http://127.0.0.1:3197",
+      "scope": "ws:aionis-claude-external-longflow-20260627-121522:c20b464f224b",
+      "workspace_identity_store": "project",
+      "hooks": [
+        {
+          "target": "user",
+          "settings_file": "/Users/lucio/.claude/settings.json",
+          "hooks_installed": true
+        },
+        {
+          "target": "project",
+          "settings_file": "/Volumes/ziel/aionis-claude-external-longflow-20260627-121522/.claude/settings.json",
+          "hooks_installed": false
+        },
+        {
+          "target": "local",
+          "settings_file": "/Volumes/ziel/aionis-claude-external-longflow-20260627-121522/.claude/settings.local.json",
+          "hooks_installed": true
+        }
+      ],
+      "mcp": {
+        "checked": true,
+        "installed": true,
+        "command": "claude mcp list"
+      },
+      "recommendation": "Aionis is ready for Claude Code. Run claude from any project."
+    }
+  },
+  "episodes": [
+    {
+      "name": "episode_1_fix_route_state",
+      "session_id": "f0e79dfe-8ae8-468a-80e8-fbdb279203dd",
+      "terminal_reason": "completed",
+      "duration_ms": 63150,
+      "num_turns": 10,
+      "total_cost_usd": 0.32257199999999997,
+      "hook_counts": {
+        "SessionStart:hook_started": 1,
+        "SessionStart:hook_response": 1,
+        "UserPromptSubmit:hook_started": 1,
+        "UserPromptSubmit:hook_response": 1,
+        "PostToolUse:hook_started": 3,
+        "PostToolUse:hook_response": 3,
+        "PostToolUseFailure:hook_started": 1,
+        "PostToolUseFailure:hook_response": 1
+      },
+      "aionis_context_injected": true,
+      "validation": "npm test passed after Claude Code edit"
+    },
+    {
+      "name": "episode_2_continue_with_tax",
+      "session_id": "684e757a-7f4b-4f73-872b-706c30edcabd",
+      "terminal_reason": "completed",
+      "duration_ms": 181898,
+      "num_turns": 17,
+      "total_cost_usd": 0.44231299999999996,
+      "hook_counts": {
+        "SessionStart:hook_started": 1,
+        "SessionStart:hook_response": 1,
+        "UserPromptSubmit:hook_started": 1,
+        "UserPromptSubmit:hook_response": 1,
+        "PostToolUse:hook_started": 4,
+        "PostToolUse:hook_response": 4
+      },
+      "aionis_context_injected": true,
+      "aionis_context_carried_prior_state": {
+        "active_target_route_state": true,
+        "should_continue_present": true,
+        "do_not_use_present": true,
+        "validation_route_present": true,
+        "verified_route_present": true
+      },
+      "validation": "npm test passed after second Claude Code session"
+    }
+  ],
+  "runtime_guide_after_episode_2": {
+    "history_used": true,
+    "actionable_history_used": true,
+    "recommended_posture": "inspect_before_use",
+    "authority": "advisory",
+    "target_files": [
+      "/Volumes/ziel/aionis-claude-external-longflow-20260627-121522/test/routeState.test.js",
+      "/Volumes/ziel/aionis-claude-external-longflow-20260627-121522/src/routeState.js"
+    ],
+    "use_now_memory_ids": [
+      "12c5ab8c-44d0-563d-bd23-23a4904ec1a0",
+      "f588a287-6828-54ac-8d9f-c90388fa8088",
+      "8af5e41e-b06a-5f7c-af46-78cb979f8273",
+      "04a6c80a-e341-5145-bbbf-c19b05a90212"
+    ],
+    "do_not_use_memory_ids": [
+      "04062dd2-e0e4-561a-ab68-d459bad1955c"
+    ]
+  },
+  "repository_result": {
+    "commits": [
+      "4039c37 Episode 2 adds route tax continuation",
+      "d03eb9c Episode 1 fixes route state flow",
+      "8a8081f Initial route state fixture"
+    ],
+    "diff_stat": "src/routeState.js       | 18 ++++++++++++++++--\n test/routeState.test.js | 23 ++++++++++++++++++-----\n 2 files changed, 34 insertions(+), 7 deletions(-)",
+    "test_output": "> aionis-claude-external-longflow@0.1.0 test\n> node --test\n\n✔ route state applies subtotal, bounded discount, tax, and audit trail (2.902ms)\n✔ route state finalizes only after pricing is non-negative (0.092ms)\n✔ tax rounds to nearest cent after applying to subtotal minus discount (0.055167ms)\nℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 56.215292",
+    "legacy_file_unchanged": true
+  },
+  "conclusion": {
+    "external_host": "Claude Code",
+    "result": "passed",
+    "evidence": [
+      "Claude Code hooks were ready and connected to Aionis Runtime.",
+      "Episode 1 injected Aionis context and recorded tool outcomes while Claude Code fixed failing tests.",
+      "Episode 2 was a separate Claude Code session; Aionis injected prior active route state before the prompt.",
+      "Episode 2 continued src/routeState.js, kept legacyRouteState.js unchanged, and passed npm test.",
+      "Runtime guide after episode 2 recovered actionable history with use_now and do_not_use memory ids."
+    ]
+  }
+}

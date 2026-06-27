@@ -561,6 +561,7 @@ Committed verification artifacts:
 9. [Flight Recorder incident verification result](docs/examples/flight-recorder-incident-demo-result.json)
 10. [Loop Engineering profile result](docs/examples/loop-engineering-profile-result.json)
 11. [Plan as Memory Asset result](docs/examples/plan-as-memory-asset-result.json)
+12. [External Claude Code long-flow result](docs/examples/external-claude-code-longflow-result.json)
 
 ## What The Agent Gets
 
