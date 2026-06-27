@@ -1,9 +1,9 @@
 {
   "contract_version": "aionis_long_flow_product_demo_result_v1",
-  "run_id": "long-flow-2823e434",
+  "run_id": "long-flow-afc840ca",
   "runtime": {
     "mode": "spawned",
-    "base_url": "http://127.0.0.1:57282",
+    "base_url": "http://127.0.0.1:55054",
     "embedding_provider": "minimax"
   },
   "scenario": {
@@ -23,10 +23,10 @@
     ]
   },
   "memory_ids": {
-    "planner": "4025e47e-ef47-52db-9ad1-e21dc45414ef",
-    "failed_route": "47fb0e94-bd65-57a2-968a-3cbcbe2538be",
-    "passed_route": "d565e222-0f44-52f2-881a-3f31b2839f16",
-    "followup": "d99238bc-b440-5b81-af33-e27f2c7a0bae",
+    "planner": "a936a56e-f7b1-5d08-8ddd-c306cffe9de2",
+    "failed_route": "523e9b8a-8025-5c1e-943f-a46ac5d9def3",
+    "passed_route": "34e922a2-2aa4-5e35-9a78-740f451c6f2b",
+    "followup": "b296a447-97b0-5e93-ab23-15e9ae7db30f",
     "handoff": null
   },
   "context_compression": {
@@ -46,18 +46,18 @@
       "tests/checkout/priceRules.test.ts"
     ],
     "use_now_memory_ids": [
-      "8f12312a-20ba-5aeb-bc63-cd5a526ec656",
-      "d99238bc-b440-5b81-af33-e27f2c7a0bae",
-      "d565e222-0f44-52f2-881a-3f31b2839f16"
+      "3cda5d42-09ff-53c9-b959-931d97460742",
+      "b296a447-97b0-5e93-ab23-15e9ae7db30f",
+      "34e922a2-2aa4-5e35-9a78-740f451c6f2b"
     ],
     "inspect_before_use_memory_ids": [
-      "47fb0e94-bd65-57a2-968a-3cbcbe2538be",
-      "c13dbd4b-353e-5e41-a0f1-9d35300519ab",
-      "8f12312a-20ba-5aeb-bc63-cd5a526ec656",
-      "d565e222-0f44-52f2-881a-3f31b2839f16"
+      "523e9b8a-8025-5c1e-943f-a46ac5d9def3",
+      "b59e2f9a-239b-575c-9392-58f81beafa62",
+      "3cda5d42-09ff-53c9-b959-931d97460742",
+      "34e922a2-2aa4-5e35-9a78-740f451c6f2b"
     ],
     "do_not_use_memory_ids": [
-      "47fb0e94-bd65-57a2-968a-3cbcbe2538be"
+      "523e9b8a-8025-5c1e-943f-a46ac5d9def3"
     ],
     "failed_route_direct_use": false,
     "memory_use_receipt_present": true,
@@ -104,24 +104,5 @@
     "flight_recorder_replayable": true,
     "prompt_payload_excluded_from_audit": true
   },
-  "boundary": "This is a reproducible Runtime product demo, not an external benchmark. It verifies Aionis-owned continuity, context compression, memory admission, feedback attribution, and audit surfaces.",
-  "dashboard_artifacts": {
-    "contract_version": "aionis_dashboard_artifact_manifest_v1",
-    "demo_name": "long-flow-product-demo",
-    "run_id": "long-flow-2823e434",
-    "generated_at": "2026-06-24T13:45:55.926Z",
-    "output_dir": "/Volumes/ziel/AionisRuntime-focused/docs/examples/dashboard/long-flow-product-demo",
-    "files": {
-      "operator_snapshot": "operator-snapshot.json",
-      "memory_decision_trace": "memory-decision-trace.json",
-      "measure": "measure.json",
-      "flight_recorder": "flight-recorder.json",
-      "demo_result": "demo-result.json"
-    },
-    "prompt_payload_policy": {
-      "prompt_text_excluded": true,
-      "agent_prompt_excluded": true,
-      "product_trace_excluded_by_default": true
-    }
-  }
+  "boundary": "This is a reproducible Runtime product demo, not an external benchmark. It verifies Aionis-owned continuity, context compression, memory admission, feedback attribution, and audit surfaces."
 }

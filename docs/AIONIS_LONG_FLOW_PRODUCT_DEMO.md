@@ -49,7 +49,6 @@ The run writes:
 
 ```text
 docs/examples/long-flow-product-demo-result.json
-docs/examples/dashboard/long-flow-product-demo/
 ```
 
 The JSON report includes:

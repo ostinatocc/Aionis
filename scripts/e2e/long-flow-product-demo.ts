@@ -23,7 +23,6 @@ import {
 } from "./runtime-agent-loop.ts";
 import { agentContext, textArray } from "./multi-agent-execution-memory-loop.ts";
 import { formatE2eError } from "./e2e-error.ts";
-import { writeDashboardArtifacts } from "./dashboard-artifacts.ts";
 
 type RuntimeSession = {
   baseUrl: string;
@@ -748,20 +747,9 @@ async function main() {
         "This is a reproducible Runtime product demo, not an external benchmark. It verifies Aionis-owned continuity, context compression, memory admission, feedback attribution, and audit surfaces.",
     };
 
-    const dashboardArtifactDir = path.join(repoRoot, "docs/examples/dashboard/long-flow-product-demo");
-    const dashboardArtifacts = writeDashboardArtifacts({
-      outputDir: dashboardArtifactDir,
-      demoName: "long-flow-product-demo",
-      runId,
-      result,
-      operatorSnapshot,
-      measureResult: measure,
-      flightRecorder,
-    });
-    const finalResult = { ...result, dashboard_artifacts: dashboardArtifacts };
     const outputPath = path.join(repoRoot, "docs/examples/long-flow-product-demo-result.json");
-    fs.writeFileSync(outputPath, `${JSON.stringify(finalResult, null, 2)}\n`);
-    process.stdout.write(`${JSON.stringify(finalResult, null, 2)}\n`);
+    fs.writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } finally {
     closeRuntime(session);
   }

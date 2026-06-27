@@ -931,6 +931,7 @@ Official docs: [https://docs.aionis.work](https://docs.aionis.work)
 | [AIONIS_PRODUCT_POSITIONING.md](docs/AIONIS_PRODUCT_POSITIONING.md) | External product positioning, claims, and comparison language. |
 | [AIONIS_STATE_MODEL.md](docs/AIONIS_STATE_MODEL.md) | Implemented memory and execution state model. |
 | [AIONIS_CONTEXT_COMPRESSION_BASELINE.md](docs/AIONIS_CONTEXT_COMPRESSION_BASELINE.md) | Current state-preserving context compression baseline. |
+| [AIONIS_SUBSTRATE_INTEGRATION.md](docs/AIONIS_SUBSTRATE_INTEGRATION.md) | External durable evidence sidecar: mirror Runtime SQLite read-only into Substrate for audit, backup, preview, and migration planning. |
 | [Admission Dataset Batch Baseline](docs/research/2026-06-18-admission-dataset-batch-baseline.md) | First 105-row real Runtime admission dataset and offline policy comparison baseline. |
 | [External Agent E2E Five-Arm Full Run](docs/research/2026-06-19-external-agent-e2e-five-arm-full.md) | 40-record, five-arm external-agent evidence for route-safe context compression. |
 
