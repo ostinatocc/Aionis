@@ -44,7 +44,7 @@ Default thresholds:
 | Report-conflict exits | `0` |
 | Accepted-route rate | `1.0` |
 | Action-completion rate | `1.0` |
-| Prompt ratio versus Full History | `<= 0.75` when Full History is present |
+| Prompt ratio versus Full History | `<= 0.75` when Full History is present and completion rates are comparable |
 | Candidate policy mode | explicitly declared `active` |
 
 Reference-only attention is informational. It is not a blocker by itself
@@ -76,14 +76,28 @@ The command writes next to `summary.json` unless `--out-dir` is set:
 
 The latest closed-loop admission shadow gate passed and supports isolated
 active gray review. The current 40-record cross-repository active-mode
-tool-E2E report also passed this gate and is ready for human default-active
-review.
+tool-E2E report passed the route/completion portion of this gate and is ready
+for human review on execution correctness.
 
 Current passing report:
 
 - `docs/research/2026-06-28-admission-active-crossrepo-tool-e2e-40gate.md`
 - local gate artifact:
   `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/admission-tool-e2e-active40-current-2026-06-28/tool_e2e_gate.md`
+
+Same-manifest Full History comparison:
+
+- paired report:
+  `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/admission-tool-e2e-active-vs-fullhistory40-current-2026-06-28/summary.md`
+- paired gate artifact:
+  `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/admission-tool-e2e-active-vs-fullhistory40-current-2026-06-28/tool_e2e_gate.md`
+
+The paired gate is blocked by `context_budget_not_better_than_full_history`.
+This should be treated as a budget-metric issue: Full History completed only
+`9 / 40` records, so total prompt tokens are not comparable with Aionis
+completing `40 / 40`. Before using this gate for context-budget claims, replace
+the raw total-token comparison with initial context size, first-step prompt
+size, or prompt cost over comparable completed actions.
 
 The previous paired27 run after the execution-memory and file-choice-normalizer
 fixes removed route write violations, but one buried route-adherence case still
@@ -99,8 +113,9 @@ not pass this admission-candidate gate unless the run explicitly used candidate
 
 1. Keep the Runtime default unchanged unless human default-active review
    explicitly approves a named guide profile.
-2. If the product claim includes context-budget superiority, run the same
-   manifest with a Full History arm and require the prompt ratio gate.
+2. If the product claim includes context-budget superiority, use a revised
+   budget metric. Do not use raw total prompt tokens when one arm completes far
+   fewer actions.
 3. Keep active-mode projections visible in admission reports and Flight
    Recorder surfaces.
 4. Re-run this gate before changing the default after material changes to

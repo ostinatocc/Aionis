@@ -13,18 +13,22 @@ the default Runtime path.
 | Field | Value |
 |---|---|
 | Candidate policy | `candidate_project_context_closed_loop_inspect` |
-| Current status | `eligible_for_default_active_review_pending_human_approval` |
+| Current status | `eligible_for_default_active_review_on_route_completion_pending_budget_metric_revision` |
 | Default Runtime status | `not_default_active` |
 | External backend status | `shadow_only` |
-| Full tool-executing Agent E2E status | `crossrepo_active40_passed_default_active_review_gate` |
-| Next gate | `human_default_active_review_and_context_budget_baseline` |
+| Full tool-executing Agent E2E status | `crossrepo_active40_route_completion_passed_full_history_budget_blocked` |
+| Next gate | `human_default_active_review_and_context_budget_metric_revision` |
 
 The selected candidate is a closed-loop admission policy. Its current evidence
-supports default-active review for the validated `/v1/guide` path. Shadow,
-isolated active gray, real-Agent admission rerun, and cross-repository
-tool-executing E2E gates have passed. The latest cross-repository tool E2E
-covered 10 base trap families across four context hygiene levels and preserved
-accepted-route recognition and action completion on all 40 records.
+supports default-active review for route preservation and action completion on
+the validated `/v1/guide` path. Shadow, isolated active gray, real-Agent
+admission rerun, and the cross-repository route/completion tool E2E gate have
+passed. The latest cross-repository tool E2E covered 10 base trap families
+across four context hygiene levels and preserved accepted-route recognition and
+action completion on all 40 records. The same-manifest Full History comparison
+did not close the context-budget gate because Full History completed only
+`9 / 40` records, making raw total prompt-token ratio an invalid standalone
+budget comparison.
 
 This does not authorize:
 
@@ -34,8 +38,8 @@ This does not authorize:
 - broad claims about full coding-Agent task completion.
 
 The Runtime default remains explicit opt-in. A human default-active review is
-still required, and broad context-budget claims require a same-run Full History
-baseline.
+still required, and broad context-budget claims require a revised budget metric
+that compares initial context size or comparable completed actions.
 
 ## Evidence Chain
 
@@ -57,7 +61,7 @@ baseline.
 | Cross-repository tool-executing Agent E2E paired27 | `docs/research/2026-06-18-admission-active-crossrepo-tool-e2e-paired27.md` | Active mode regressed on the paired cross-repository set: wrong writes increased from 2 / 27 to 7 / 27, accepted direction dropped from 25 / 27 to 17 / 27, and total tokens increased slightly. |
 | Cross-repository tool-executing Agent E2E paired27 rerun | `docs/research/2026-06-18-admission-active-crossrepo-tool-e2e-paired27-rerun.md` | The execution-memory direct-use patch recovered most of the regression: wrong writes dropped from 7 / 27 to 1 / 27, accepted direction rose from 17 / 27 to 26 / 27, and action completion reached 27 / 27. |
 | Cross-repository paired27 rerun after file-choice normalizer fix and attention split | `docs/research/2026-06-18-admission-active-crossrepo-tool-e2e-paired27-rerun.md` | Wrong writes dropped to 0 / 27 and the prior residual separated-context case was confirmed as a harness normalization artifact. Attention split shows 1 / 27 direction-attention hit, 12 / 27 reference-only attention hits, and 0 / 27 other attention hits. One buried route-adherence failure remains. |
-| Cross-repository tool-executing Agent E2E 40-gate | `docs/research/2026-06-28-admission-active-crossrepo-tool-e2e-40gate.md` | Active mode completed 40 / 40 records across 10 base trap families and four hygiene levels, with 100% accepted-route rate, 100% action-completion rate, no terminal inspect, no report conflict, and no route violations. The tool-E2E gate returned `eligible_for_default_active_review=true`. |
+| Cross-repository tool-executing Agent E2E 40-gate | `docs/research/2026-06-28-admission-active-crossrepo-tool-e2e-40gate.md` | Active mode completed 40 / 40 records across 10 base trap families and four hygiene levels, with 100% accepted-route rate, 100% action-completion rate, no terminal inspect, no report conflict, and no route violations. A same-manifest Full History run completed only 9 / 40 records; the paired gate is blocked on the old total-token budget metric. |
 
 Follow-up inspection found the paired27 regression root cause: the active
 projection over-downgraded Aionis `execution_memory` accepted-continuation
@@ -85,14 +89,17 @@ requires the cross-repository tool-executing Agent E2E gate.
 
 The cross-repository tool-executing Agent gate described in
 [AIONIS_ADMISSION_TOOL_E2E_GATE_RUNBOOK.md](AIONIS_ADMISSION_TOOL_E2E_GATE_RUNBOOK.md).
-has passed for the current 40-record active-mode run. It requires full route
-adherence, full action completion, no terminal-inspect or report-conflict exits,
-and better prompt context budget than Full History when that baseline is
-present.
+has passed for route adherence and action completion in the current 40-record
+active-mode run. The paired Full History budget check is blocked under the old
+total-token metric because Full History failed most records and therefore
+stopped early. It requires full route adherence, full action completion, no
+terminal-inspect or report-conflict exits, and a revised context-budget
+comparison before broad context-cost claims.
 
-The next gate is human default-active review. That review must decide whether
-the candidate remains explicit active mode, becomes default for a named guide
-profile, or needs a same-manifest Full History budget comparison first.
+The next gate is human default-active review plus budget-metric revision. That
+review must decide whether the candidate remains explicit active mode, becomes
+default for a named guide profile, or needs a revised same-manifest budget
+comparison first.
 
 ## Gate Results
 
@@ -308,7 +315,7 @@ The current 40-record active-mode run produced:
 | Report-conflict records | 0 |
 | Prompt tokens | 602,291 |
 
-The tool-E2E gate returned:
+The Aionis-only route/completion gate returned:
 
 - `eligible_for_default_active_review=true`;
 - `status=passes_cross_repository_tool_e2e_gate_ready_for_default_active_review`;
@@ -317,6 +324,29 @@ The tool-E2E gate returned:
 The run did not include a Full History arm, so prompt ratio versus Full History
 was not assessed in this gate. This is acceptable for default-active review
 eligibility, but it is not enough for a broad context-budget claim.
+
+A follow-up same-manifest Full History run produced:
+
+| Metric | Aionis active | Full History |
+|---|---:|---:|
+| Records | 40 | 40 |
+| Accepted-route records | 40 / 40 | 9 / 40 |
+| Action-completion records | 40 / 40 | 9 / 40 |
+| Route write violations | 0 | 0 |
+| Direction-attention violations | 0 | 0 |
+| Prompt tokens | 602,291 | 375,207 |
+
+The derived paired gate returned:
+
+- `eligible_for_default_active_review=false`;
+- `status=blocked_for_default_active_review`;
+- blocking reason: `context_budget_not_better_than_full_history`.
+
+This is a metric-definition blocker, not an execution-correctness regression:
+Full History failed most records before producing parseable action JSON, so raw
+total prompt tokens are not comparable. The next budget gate should compare
+initial context size, first-step prompt size, or prompt cost over comparable
+completed actions.
 
 ## Required Gates Before Default Active
 
@@ -338,8 +368,9 @@ decision on these items:
    multi-step tool Agent harness.
 5. The policy has a rollback plan and an operator-visible record in the Flight
    Recorder / admission reports.
-6. If the release claim includes context-budget superiority, a same-manifest
-   Full History comparison is required.
+6. If the release claim includes context-budget superiority, use a revised
+   same-manifest budget metric. Raw total prompt tokens are not sufficient when
+   one arm completes far fewer actions.
 
 ## Product Boundary
 
@@ -348,7 +379,9 @@ The current product claim is:
 > Aionis can run the selected closed-loop admission candidate in explicit active
 > mode for the validated `/v1/guide` path, with shadow, active-gray,
 > real-Agent admission rerun, and cross-repository tool-executing E2E evidence.
-> The candidate is ready for human default-active review.
+> The candidate is ready for human review on default-active route/completion
+> behavior. Context-budget superiority remains unproven until the budget metric
+> is revised.
 
 The current product claim is not:
 
