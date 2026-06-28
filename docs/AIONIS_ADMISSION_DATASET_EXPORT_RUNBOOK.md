@@ -422,3 +422,10 @@ The active mode is intentionally narrow:
 This is a gray projection gate, not a learned-policy deployment. If it improves
 real task behavior without positive-capture or completion regression, the next
 step is a separately reviewed Runtime policy promotion.
+
+As of 2026-06-28, the selected closed-loop candidate has passed the
+cross-repository tool-executing Agent gate for default-active review. That makes
+`active` a validated operator-controlled review path for the current guide
+surface. It still does not make active mode the Runtime default; see
+`docs/AIONIS_ADMISSION_POLICY_PROMOTION_STATUS.md` for the current promotion
+state and required review items.

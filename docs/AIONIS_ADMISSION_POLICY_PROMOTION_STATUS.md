@@ -13,28 +13,29 @@ the default Runtime path.
 | Field | Value |
 |---|---|
 | Candidate policy | `candidate_project_context_closed_loop_inspect` |
-| Current status | `eligible_for_isolated_active_gray_only_blocked_for_broad_rollout` |
+| Current status | `eligible_for_default_active_review_pending_human_approval` |
 | Default Runtime status | `not_default_active` |
 | External backend status | `shadow_only` |
-| Full tool-executing Agent E2E status | `crossrepo_paired27_wrong_write_resolved_route_adherence_open` |
-| Next gate | `cross_repository_tool_e2e_default_active_review` |
+| Full tool-executing Agent E2E status | `crossrepo_active40_passed_default_active_review_gate` |
+| Next gate | `human_default_active_review_and_context_budget_baseline` |
 
 The selected candidate is a closed-loop admission policy. Its current evidence
-supports isolated active gray testing on the `closed-loop-prior-fresh-2` and
-`closed-loop-prior-fresh` internal Runtime guide profiles. Two small
-tool-executing external Agent pilots also passed on two Vite base trap families,
-but the first paired cross-repository tool E2E regressed on Next.js/Turbopack
-trap families. A follow-up code patch recovered the prompt-facing route
-contract, and a file-choice normalizer fix resolved the apparent residual
-wrong-write as a harness artifact. The attention metric has since been split:
-12 of 13 latest attention hits are reference-only, while one buried
-direction-attention / route-adherence failure remains. This does not
-authorize:
+supports default-active review for the validated `/v1/guide` path. Shadow,
+isolated active gray, real-Agent admission rerun, and cross-repository
+tool-executing E2E gates have passed. The latest cross-repository tool E2E
+covered 10 base trap families across four context hygiene levels and preserved
+accepted-route recognition and action completion on all 40 records.
+
+This does not authorize:
 
 - default active mode;
 - external-backend active rollout;
 - broad product claims across all memory lanes;
 - broad claims about full coding-Agent task completion.
+
+The Runtime default remains explicit opt-in. A human default-active review is
+still required, and broad context-budget claims require a same-run Full History
+baseline.
 
 ## Evidence Chain
 
@@ -56,6 +57,7 @@ authorize:
 | Cross-repository tool-executing Agent E2E paired27 | `docs/research/2026-06-18-admission-active-crossrepo-tool-e2e-paired27.md` | Active mode regressed on the paired cross-repository set: wrong writes increased from 2 / 27 to 7 / 27, accepted direction dropped from 25 / 27 to 17 / 27, and total tokens increased slightly. |
 | Cross-repository tool-executing Agent E2E paired27 rerun | `docs/research/2026-06-18-admission-active-crossrepo-tool-e2e-paired27-rerun.md` | The execution-memory direct-use patch recovered most of the regression: wrong writes dropped from 7 / 27 to 1 / 27, accepted direction rose from 17 / 27 to 26 / 27, and action completion reached 27 / 27. |
 | Cross-repository paired27 rerun after file-choice normalizer fix and attention split | `docs/research/2026-06-18-admission-active-crossrepo-tool-e2e-paired27-rerun.md` | Wrong writes dropped to 0 / 27 and the prior residual separated-context case was confirmed as a harness normalization artifact. Attention split shows 1 / 27 direction-attention hit, 12 / 27 reference-only attention hits, and 0 / 27 other attention hits. One buried route-adherence failure remains. |
+| Cross-repository tool-executing Agent E2E 40-gate | `docs/research/2026-06-28-admission-active-crossrepo-tool-e2e-40gate.md` | Active mode completed 40 / 40 records across 10 base trap families and four hygiene levels, with 100% accepted-route rate, 100% action-completion rate, no terminal inspect, no report conflict, and no route violations. The tool-E2E gate returned `eligible_for_default_active_review=true`. |
 
 Follow-up inspection found the paired27 regression root cause: the active
 projection over-downgraded Aionis `execution_memory` accepted-continuation
@@ -63,9 +65,10 @@ entries because the candidate direct-use path only allowed `project_context`.
 The code patch now preserves direct use for Aionis `execution_memory` unless
 closed-loop counter-signal evidence exists. This is a correction to the active
 projection, not a promotion. The paired27 rerun after the file-choice normalizer
-fix shows the wrong-write regression is resolved. The attention split then
-showed that latest attention hits are mostly reference-only; broad rollout stays
-blocked by the remaining buried route-adherence / direction-attention failure.
+fix showed the route-write regression was resolved, while one buried
+route-adherence failure remained. The 2026-06-28 40-record cross-repository gate
+retested the current Runtime and closed that blocker for the validated guide
+path.
 
 ## Next Production Gate
 
@@ -80,11 +83,16 @@ Passing this gate can authorize another isolated active gray review for the
 same guide profile. It does not authorize default active mode; that still
 requires the cross-repository tool-executing Agent E2E gate.
 
-The next gate is the cross-repository tool-executing Agent gate described in
+The cross-repository tool-executing Agent gate described in
 [AIONIS_ADMISSION_TOOL_E2E_GATE_RUNBOOK.md](AIONIS_ADMISSION_TOOL_E2E_GATE_RUNBOOK.md).
-It requires full route adherence, full action completion, no terminal-inspect or
-report-conflict exits, and better prompt context budget than Full History when
-that baseline is present.
+has passed for the current 40-record active-mode run. It requires full route
+adherence, full action completion, no terminal-inspect or report-conflict exits,
+and better prompt context budget than Full History when that baseline is
+present.
+
+The next gate is human default-active review. That review must decide whether
+the candidate remains explicit active mode, becomes default for a named guide
+profile, or needs a same-manifest Full History budget comparison first.
 
 ## Gate Results
 
@@ -276,15 +284,44 @@ same paired IDs in active mode.
 The original active run was a negative promotion gate. The execution-memory
 patch fixed the prompt-facing route-contract regression. The file-choice
 normalizer fix then cleared the apparent residual wrong-write by preserving safe
-non-candidate create/restore paths. Broad rollout is still blocked because the
-latest run has one buried route-adherence failure. The attention-scope rescore
-separates this from reference-only evidence use: latest direction attention is
-`1 / 27`, while reference-only attention is `12 / 27`.
+non-candidate create/restore paths. At that point, broad rollout remained
+blocked because the paired27 rerun still had one buried route-adherence failure.
+The attention-scope rescore separated this from reference-only evidence use:
+direction attention was `1 / 27`, while reference-only attention was `12 / 27`.
+
+### Cross-Repository Tool-Executing Agent E2E 40-Gate
+
+The current 40-record active-mode run produced:
+
+| Metric | Active mode |
+|---|---:|
+| Records | 40 |
+| Base trap families | 10 |
+| Context hygiene levels | 4 |
+| Completed records | 40 / 40 |
+| Accepted-route records | 40 / 40 |
+| Action-completion records | 40 / 40 |
+| Route write violations | 0 |
+| Route action violations | 0 |
+| Direction-attention violations | 0 |
+| Terminal-inspect records | 0 |
+| Report-conflict records | 0 |
+| Prompt tokens | 602,291 |
+
+The tool-E2E gate returned:
+
+- `eligible_for_default_active_review=true`;
+- `status=passes_cross_repository_tool_e2e_gate_ready_for_default_active_review`;
+- no blocking reasons.
+
+The run did not include a Full History arm, so prompt ratio versus Full History
+was not assessed in this gate. This is acceptable for default-active review
+eligibility, but it is not enough for a broad context-budget claim.
 
 ## Required Gates Before Default Active
 
-Do not promote the candidate to default active mode until all of these gates are
-closed:
+Do not promote the candidate to default active mode until review records a
+decision on these items:
 
 1. A second `/v1/guide` online profile, or a mixed profile, passes the same
    shadow and active gray checks. As of 2026-06-18, the second guide-profile
@@ -292,26 +329,26 @@ closed:
    passed.
 2. A real tool-executing Agent E2E shows no completion regression and no
    hard-boundary regression across more than one base trap family. As of
-   2026-06-18, two Vite-family base trap pilots passed, and the paired
-   cross-repository rerun after the normalizer fix has `0 / 27` wrong writes.
-   This gate remains blocked by one buried route-adherence / direction-attention
-   failure.
+   2026-06-28, the active 40-gate passed across 10 base trap families and four
+   context hygiene levels.
 3. External backend candidates have task-level completion evidence, not only
    admission-row shadow evidence.
 4. Protocol compatibility is documented for the chosen real-Agent model. The
-   current paired27 rerun used `deepseek-v4-flash` with strict JSON parsing plus
-   `reasoning_content` fallback in the file-choice harness.
+   current 40-gate used `deepseek-v4-flash` with strict JSON output in the
+   multi-step tool Agent harness.
 5. The policy has a rollback plan and an operator-visible record in the Flight
    Recorder / admission reports.
+6. If the release claim includes context-budget superiority, a same-manifest
+   Full History comparison is required.
 
 ## Product Boundary
 
 The current product claim is:
 
-> Aionis can run the selected closed-loop admission candidate in isolated active
-> gray mode for two internal `/v1/guide` profiles, with bounded downgrade-only
-> behavior, real-Agent admission rerun evidence, and two small tool-executing
-> Agent E2E pilots.
+> Aionis can run the selected closed-loop admission candidate in explicit active
+> mode for the validated `/v1/guide` path, with shadow, active-gray,
+> real-Agent admission rerun, and cross-repository tool-executing E2E evidence.
+> The candidate is ready for human default-active review.
 
 The current product claim is not:
 

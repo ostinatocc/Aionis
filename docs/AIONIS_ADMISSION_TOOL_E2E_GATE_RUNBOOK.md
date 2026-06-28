@@ -75,13 +75,21 @@ The command writes next to `summary.json` unless `--out-dir` is set:
 ## Known Current Status
 
 The latest closed-loop admission shadow gate passed and supports isolated
-active gray review. Broad default-active review remains blocked until this
-tool-E2E gate passes on a cross-repository report.
+active gray review. The current 40-record cross-repository active-mode
+tool-E2E report also passed this gate and is ready for human default-active
+review.
+
+Current passing report:
+
+- `docs/research/2026-06-28-admission-active-crossrepo-tool-e2e-40gate.md`
+- local gate artifact:
+  `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/admission-tool-e2e-active40-current-2026-06-28/tool_e2e_gate.md`
 
 The previous paired27 run after the execution-memory and file-choice-normalizer
 fixes removed route write violations, but one buried route-adherence case still
-produced a terminal inspect and missed the accepted route. That is a blocker
-for default-active review.
+produced a terminal inspect and missed the accepted route. The 2026-06-28
+40-record report retested the current Runtime and closed that blocker for the
+validated guide path.
 
 General Aionis product context-stability runs are useful evidence, but they do
 not pass this admission-candidate gate unless the run explicitly used candidate
@@ -89,10 +97,12 @@ not pass this admission-candidate gate unless the run explicitly used candidate
 
 ## Next Work
 
-1. Run or evaluate a cross-repository report with the current Runtime.
-2. Require full completion and accepted-route preservation.
-3. Require context budget improvement when a Full History baseline is present.
-4. If the gate passes, update
-   [AIONIS_ADMISSION_POLICY_PROMOTION_STATUS.md](AIONIS_ADMISSION_POLICY_PROMOTION_STATUS.md)
-   from isolated active gray review to default-active review pending human
-   approval.
+1. Keep the Runtime default unchanged unless human default-active review
+   explicitly approves a named guide profile.
+2. If the product claim includes context-budget superiority, run the same
+   manifest with a Full History arm and require the prompt ratio gate.
+3. Keep active-mode projections visible in admission reports and Flight
+   Recorder surfaces.
+4. Re-run this gate before changing the default after material changes to
+   guide rendering, lifecycle inference, execution memory rendering, or
+   candidate-policy evaluation.
