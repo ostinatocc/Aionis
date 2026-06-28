@@ -1,7 +1,7 @@
 # Aionis Admission Tool-E2E Gate Runbook
 
 Status: operator runbook
-Last updated: 2026-06-28
+Last updated: 2026-06-29
 
 This runbook defines the cross-repository, tool-executing Agent gate for the
 closed-loop admission candidate policy:
@@ -44,7 +44,8 @@ Default thresholds:
 | Report-conflict exits | `0` |
 | Accepted-route rate | `1.0` |
 | Action-completion rate | `1.0` |
-| Prompt ratio versus Full History | `<= 0.75` when Full History is present and completion rates are comparable |
+| Initial context ratio versus Full History | `<= 0.75` when Full History is present |
+| Legacy prompt-token ratio versus Full History | fallback only for older reports without initial-context stats |
 | Candidate policy mode | explicitly declared `active` |
 
 Reference-only attention is informational. It is not a blocker by itself
@@ -57,7 +58,8 @@ still writing the accepted active route.
 npm run -s admission:tool-e2e-gate -- \
   --summary /path/to/external-agent-e2e/reports/<run>/summary.json \
   --results /path/to/external-agent-e2e/reports/<run>/phase2-gradient-results.jsonl \
-  --policy-mode active
+  --policy-mode active \
+  --max-initial-context-ratio-vs-full-history 0.75
 ```
 
 The command writes next to `summary.json` unless `--out-dir` is set:
@@ -92,12 +94,16 @@ Same-manifest Full History comparison:
 - paired gate artifact:
   `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/admission-tool-e2e-active-vs-fullhistory40-current-2026-06-28/tool_e2e_gate.md`
 
-The paired gate is blocked by `context_budget_not_better_than_full_history`.
-This should be treated as a budget-metric issue: Full History completed only
-`9 / 40` records, so total prompt tokens are not comparable with Aionis
-completing `40 / 40`. Before using this gate for context-budget claims, replace
-the raw total-token comparison with initial context size, first-step prompt
-size, or prompt cost over comparable completed actions.
+The paired gate is blocked by `context_budget_not_better_than_full_history`
+under the legacy total-prompt-token fallback. This should be treated as a
+historical budget-metric issue: Full History completed only `9 / 40` records,
+so total prompt tokens are not comparable with Aionis completing `40 / 40`.
+
+The gate now prefers `initial_context_chars` when reports include it. Updated
+external Agent reports must record the initial context size for each arm before
+the first tool step. Only when that field is absent does the gate fall back to
+legacy total prompt tokens, and fallback results should not be used for broad
+context-budget claims when completion rates differ sharply.
 
 The previous paired27 run after the execution-memory and file-choice-normalizer
 fixes removed route write violations, but one buried route-adherence case still
@@ -113,9 +119,9 @@ not pass this admission-candidate gate unless the run explicitly used candidate
 
 1. Keep the Runtime default unchanged unless human default-active review
    explicitly approves a named guide profile.
-2. If the product claim includes context-budget superiority, use a revised
-   budget metric. Do not use raw total prompt tokens when one arm completes far
-   fewer actions.
+2. If the product claim includes context-budget superiority, rerun the same
+   manifest with report instrumentation that records `initial_context_chars`.
+   Do not use raw total prompt tokens when one arm completes far fewer actions.
 3. Keep active-mode projections visible in admission reports and Flight
    Recorder surfaces.
 4. Re-run this gate before changing the default after material changes to

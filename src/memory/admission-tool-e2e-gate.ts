@@ -10,6 +10,7 @@ export type AionisAdmissionToolE2EGateThresholds = {
   max_report_conflict: number;
   min_accepted_route_rate: number;
   min_action_completion_rate: number;
+  max_initial_context_ratio_vs_full_history: number;
   max_prompt_ratio_vs_full_history: number;
 };
 
@@ -50,9 +51,13 @@ export type AionisAdmissionToolE2EGateReport = {
     action_completion_rate: number;
     terminal_inspect_count: number;
     report_conflict_count: number;
+    initial_context_chars: number | null;
+    full_history_initial_context_chars: number | null;
+    initial_context_ratio_vs_full_history: number | null;
     prompt_tokens: number;
     completion_tokens: number;
     prompt_ratio_vs_full_history: number | null;
+    context_budget_metric: "initial_context_chars" | "total_prompt_tokens" | "not_assessed";
   };
   checks: {
     enough_runs: boolean;
@@ -87,6 +92,7 @@ const DEFAULT_THRESHOLDS: AionisAdmissionToolE2EGateThresholds = {
   max_report_conflict: 0,
   min_accepted_route_rate: 1,
   min_action_completion_rate: 1,
+  max_initial_context_ratio_vs_full_history: 0.75,
   max_prompt_ratio_vs_full_history: 0.75,
 };
 
@@ -144,6 +150,8 @@ function mergeThresholds(
       ?? DEFAULT_THRESHOLDS.min_accepted_route_rate,
     min_action_completion_rate: optionalNumber(thresholds?.min_action_completion_rate)
       ?? DEFAULT_THRESHOLDS.min_action_completion_rate,
+    max_initial_context_ratio_vs_full_history: optionalNumber(thresholds?.max_initial_context_ratio_vs_full_history)
+      ?? DEFAULT_THRESHOLDS.max_initial_context_ratio_vs_full_history,
     max_prompt_ratio_vs_full_history: optionalNumber(thresholds?.max_prompt_ratio_vs_full_history)
       ?? DEFAULT_THRESHOLDS.max_prompt_ratio_vs_full_history,
   };
@@ -160,6 +168,33 @@ function uniqueResultCount(results: unknown[], field: string): number {
       .map((entry) => stringValue(entry?.[field]))
       .filter((entry): entry is string => !!entry),
   ).size;
+}
+
+function resultArmRows(results: unknown[], arm: string): UnknownRecord[] {
+  return results
+    .map(recordValue)
+    .flatMap((entry) => arrayValue(recordValue(entry?.summary)?.arms).map(recordValue))
+    .filter((entry): entry is UnknownRecord => entry?.arm === arm);
+}
+
+function nestedNumber(record: UnknownRecord | null, path: string[]): number {
+  let current: unknown = record;
+  for (const key of path) {
+    current = recordValue(current)?.[key];
+  }
+  return numberValue(current);
+}
+
+function sumResultArmNestedNumber(results: unknown[], arm: string, path: string[]): number {
+  return resultArmRows(results, arm).reduce((sum, row) => sum + nestedNumber(row, path), 0);
+}
+
+function armInitialContextChars(summary: UnknownRecord, results: unknown[], arm: string): number | null {
+  const armSummary = findArmSummary(summary, arm);
+  const summaryValue = optionalNumber(armSummary?.initial_context_chars);
+  if (summaryValue !== null && summaryValue > 0) return summaryValue;
+  const resultValue = sumResultArmNestedNumber(results, arm, ["context", "initial_context_chars"]);
+  return resultValue > 0 ? resultValue : null;
 }
 
 function blockingReasons(report: Pick<AionisAdmissionToolE2EGateReport, "checks">): string[] {
@@ -196,6 +231,16 @@ export function evaluateAdmissionToolE2EGate(input: AionisAdmissionToolE2EGateIn
   const aionisPromptTokens = numberValue(armSummary.prompt_tokens);
   const fullHistoryPromptTokens = fullHistory ? numberValue(fullHistory.prompt_tokens) : 0;
   const promptRatio = fullHistoryPromptTokens > 0 ? aionisPromptTokens / fullHistoryPromptTokens : null;
+  const initialContextChars = armInitialContextChars(summary, results, arm);
+  const fullHistoryInitialContextChars = armInitialContextChars(summary, results, "full_history");
+  const initialContextRatio = initialContextChars !== null && fullHistoryInitialContextChars !== null && fullHistoryInitialContextChars > 0
+    ? initialContextChars / fullHistoryInitialContextChars
+    : null;
+  const contextBudgetMetric: AionisAdmissionToolE2EGateReport["metrics"]["context_budget_metric"] = initialContextRatio !== null
+    ? "initial_context_chars"
+    : promptRatio !== null
+      ? "total_prompt_tokens"
+      : "not_assessed";
   const runs = numberValue(armSummary.runs);
   const metrics = {
     runs,
@@ -209,9 +254,13 @@ export function evaluateAdmissionToolE2EGate(input: AionisAdmissionToolE2EGateIn
     action_completion_rate: boundedRate(armSummary.action_completion_rate, runs > 0 ? numberValue(armSummary.action_completion_hits) / runs : 0),
     terminal_inspect_count: numberValue(armSummary.terminal_inspect_hits),
     report_conflict_count: numberValue(armSummary.report_conflict_hits),
+    initial_context_chars: initialContextChars,
+    full_history_initial_context_chars: fullHistoryInitialContextChars,
+    initial_context_ratio_vs_full_history: initialContextRatio,
     prompt_tokens: aionisPromptTokens,
     completion_tokens: numberValue(armSummary.completion_tokens),
     prompt_ratio_vs_full_history: promptRatio,
+    context_budget_metric: contextBudgetMetric,
   };
   const difficultyLevelCount = results.length > 0
     ? uniqueResultCount(results, "difficulty_level")
@@ -226,7 +275,11 @@ export function evaluateAdmissionToolE2EGate(input: AionisAdmissionToolE2EGateIn
     no_report_conflict: metrics.report_conflict_count <= thresholds.max_report_conflict,
     accepted_route_rate_pass: metrics.accepted_route_rate >= thresholds.min_accepted_route_rate,
     action_completion_rate_pass: metrics.action_completion_rate >= thresholds.min_action_completion_rate,
-    context_budget_pass: promptRatio === null ? null : promptRatio <= thresholds.max_prompt_ratio_vs_full_history,
+    context_budget_pass: initialContextRatio !== null
+      ? initialContextRatio <= thresholds.max_initial_context_ratio_vs_full_history
+      : promptRatio === null
+        ? null
+        : promptRatio <= thresholds.max_prompt_ratio_vs_full_history,
     active_policy_mode_declared: policyMode === "active",
   };
   const reasons = blockingReasons({ checks });
@@ -311,8 +364,12 @@ export function formatAdmissionToolE2EGateMarkdown(report: AionisAdmissionToolE2
     `| Action-completion rate | ${report.metrics.action_completion_rate.toFixed(3)} | >= ${report.thresholds.min_action_completion_rate} |`,
     `| Terminal inspect | ${report.metrics.terminal_inspect_count} | <= ${report.thresholds.max_terminal_inspect} |`,
     `| Report conflict | ${report.metrics.report_conflict_count} | <= ${report.thresholds.max_report_conflict} |`,
+    `| Initial context chars | ${report.metrics.initial_context_chars ?? "not assessed"} | informational |`,
+    `| Full History initial context chars | ${report.metrics.full_history_initial_context_chars ?? "not assessed"} | informational |`,
+    `| Initial context ratio vs Full History | ${ratio(report.metrics.initial_context_ratio_vs_full_history)} | <= ${report.thresholds.max_initial_context_ratio_vs_full_history} |`,
     `| Prompt tokens | ${report.metrics.prompt_tokens} | informational |`,
-    `| Prompt ratio vs Full History | ${ratio(report.metrics.prompt_ratio_vs_full_history)} | <= ${report.thresholds.max_prompt_ratio_vs_full_history} |`,
+    `| Legacy prompt ratio vs Full History | ${ratio(report.metrics.prompt_ratio_vs_full_history)} | <= ${report.thresholds.max_prompt_ratio_vs_full_history} |`,
+    `| Context budget metric | ${report.metrics.context_budget_metric} | initial context preferred |`,
     "",
     "## Checks",
     "",

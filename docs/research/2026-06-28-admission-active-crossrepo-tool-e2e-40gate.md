@@ -2,7 +2,7 @@
 
 Date: 2026-06-28
 
-Status: product evidence report, route/completion gate passed; context-budget gate blocked pending metric revision
+Status: product evidence report, route/completion gate passed; context-budget gate requires instrumented rerun
 
 ## Purpose
 
@@ -84,7 +84,8 @@ Base trap families:
 | Report-conflict exits | 0 | `<= 0` |
 | Prompt tokens | 602,291 | informational |
 | Completion tokens | 95,891 | informational |
-| Prompt ratio vs Full History | not assessed | `<= 0.75` when Full History is present |
+| Initial context ratio vs Full History | not assessed | `<= 0.75` when Full History is present |
+| Legacy prompt-token ratio vs Full History | not assessed | fallback only for older reports |
 
 Gate decision:
 
@@ -107,10 +108,10 @@ A follow-up run executed the same 40 records with the `full_history` arm:
 - paired gate:
   `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/admission-tool-e2e-active-vs-fullhistory40-current-2026-06-28/tool_e2e_gate.md`
 
-| Arm | Runs | Accepted route | Action completion | Route write violations | Direction-attention violations | Prompt tokens |
-|---|---:|---:|---:|---:|---:|---:|
-| Aionis active | 40 | 100.0% | 100.0% | 0 | 0 | 602,291 |
-| Full History | 40 | 22.5% | 22.5% | 0 | 0 | 375,207 |
+| Arm | Runs | Accepted route | Action completion | Route write violations | Direction-attention violations | Prompt tokens | Initial context chars |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Aionis active | 40 | 100.0% | 100.0% | 0 | 0 | 602,291 | not recorded |
+| Full History | 40 | 22.5% | 22.5% | 0 | 0 | 375,207 | not recorded |
 
 The paired gate was blocked by:
 
@@ -119,11 +120,13 @@ The paired gate was blocked by:
 That blocker should not be interpreted as Full History being the better
 execution context. In this run, Full History completed only `9 / 40` records;
 most failed before producing parseable action JSON for the tool Agent. The
-current gate compares total prompt tokens over the whole run, so a baseline
-that fails early can look cheaper because it stops executing. This exposes a
-gate-definition issue: context budget should be measured as initial context
-size, first-step prompt size, or prompt cost over comparable completed actions,
-not as raw total prompt tokens when completion rates differ sharply.
+legacy gate compared total prompt tokens over the whole run, so a baseline that
+fails early can look cheaper because it stops executing.
+
+The gate code now prefers initial context size when the report records
+`initial_context_chars` for each arm, and uses total prompt tokens only as a
+legacy fallback. This report pair predates that instrumentation, so it must be
+rerun before it can support a context-budget claim.
 
 ## Per-Level Result
 
@@ -138,10 +141,10 @@ not as raw total prompt tokens when completion rates differ sharply.
 
 This closes the current cross-repository tool-executing route/completion gate
 for the selected closed-loop admission candidate. The same-manifest Full
-History comparison did not close the existing total-token budget gate because
+History comparison did not close the legacy total-token budget fallback because
 the baseline failed most records. The candidate remains suitable for human
 default-active review only if that review treats context-budget superiority as
-unproven until the budget metric is revised.
+unproven until the same manifest is rerun with initial-context instrumentation.
 
 This result does not mean the Runtime default should be changed automatically.
 The current product position remains:
@@ -149,17 +152,16 @@ The current product position remains:
 - active candidate mode is an explicit operator-controlled mode;
 - default Runtime mode remains `off`;
 - external backend candidates remain shadow-only unless separately validated;
-- broad context-budget superiority is not established by this gate; the
-  current total-token budget metric needs a comparable-step or initial-context
-  replacement.
+- broad context-budget superiority is not established by this gate; the same
+  manifest needs to be rerun with `initial_context_chars` recorded for each arm.
 
 ## Product Decision
 
 - The previous paired27 route-adherence blocker is resolved by the current
   40-record run.
 - The selected candidate is ready for human review on execution correctness.
-- The selected candidate is not ready for a broad context-budget claim under
-  the current gate definition.
+- The selected candidate is not ready for a broad context-budget claim until
+  the same manifest is rerun with initial-context budget instrumentation.
 - Do not silently enable default active mode in the Runtime.
 - Do not turn individual trap content into Runtime rules.
 - Keep context-budget claims tied to reports that include a Full History arm.
@@ -168,7 +170,7 @@ The current product position remains:
 
 1. Review whether `AIONIS_ADMISSION_CANDIDATE_POLICY_MODE=active` should remain
    explicit-only or become default for a named guide profile.
-2. Replace the raw total-prompt budget gate with an initial-context-size or
-   comparable-completed-action metric.
+2. Rerun the same manifest with the instrumented runner so the gate can compare
+   initial context size instead of legacy total prompt tokens.
 3. If enabled beyond explicit active mode, ship rollback instructions and make
    the active projection visible in Flight Recorder and admission reports.

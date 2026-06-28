@@ -82,6 +82,9 @@ function parseArgs(argv: string[]): CliArgs {
     } else if (arg === "--min-action-completion-rate" && next) {
       out.thresholds.min_action_completion_rate = parseNumber(next);
       index += 1;
+    } else if (arg === "--max-initial-context-ratio-vs-full-history" && next) {
+      out.thresholds.max_initial_context_ratio_vs_full_history = parseNumber(next);
+      index += 1;
     } else if (arg === "--max-prompt-ratio-vs-full-history" && next) {
       out.thresholds.max_prompt_ratio_vs_full_history = parseNumber(next);
       index += 1;
@@ -109,6 +112,7 @@ function parseArgs(argv: string[]): CliArgs {
         "  --max-report-conflict 0",
         "  --min-accepted-route-rate 1",
         "  --min-action-completion-rate 1",
+        "  --max-initial-context-ratio-vs-full-history 0.75",
         "  --max-prompt-ratio-vs-full-history 0.75",
         "",
       ].join("\n"));
