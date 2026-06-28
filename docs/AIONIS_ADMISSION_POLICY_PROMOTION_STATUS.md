@@ -17,6 +17,7 @@ the default Runtime path.
 | Default Runtime status | `not_default_active` |
 | External backend status | `shadow_only` |
 | Full tool-executing Agent E2E status | `crossrepo_paired27_wrong_write_resolved_route_adherence_open` |
+| Next gate | `production_active_gray_then_crossrepo_tool_e2e` |
 
 The selected candidate is a closed-loop admission policy. Its current evidence
 supports isolated active gray testing on the `closed-loop-prior-fresh-2` and
@@ -45,6 +46,7 @@ authorize:
 | Online guide shadow | `docs/research/2026-06-18-admission-online-shadow-100gate.md` | Shadow projection reached 120 rows and 12 task signatures without prompt inclusion or Runtime mutation. |
 | Second guide shadow | `docs/research/2026-06-18-admission-second-guide-shadow-100gate.md` | A neighboring `/v1/guide` profile reached 120 rows and 8 task signatures with the same bounded shadow behavior. |
 | External targeted shadow | `docs/research/2026-06-18-admission-targeted-external-shadow-100gate.md` | External candidates stayed shadow-only; direct-use dropped, but this is not guide-path active evidence. |
+| Default-guide shadow production gate | `/Volumes/ziel/aionis-admission-data/admission-dataset/reports/latest/production_gate.md` | Shadow expansion reached 2036 rows, 55 task signatures, 1020 guide shadow projections, and passed isolated active-gray review gates without prompt inclusion or Runtime mutation. |
 | Isolated active gray | `docs/research/2026-06-18-admission-active-gray-closed-loop-100gate.md` | Active projection changed prompt-facing guide output in the bounded downgrade path only. |
 | Active gray real-Agent rerun | `docs/research/2026-06-18-admission-active-gray-real-agent-rerun.md` | Real LLM rerun preserved accepted action rate and reduced negative direct risk for this profile. |
 | Second guide active gray | `docs/research/2026-06-18-admission-second-guide-active-gray.md` | The neighboring `/v1/guide` profile passed isolated active gray with bounded downgrade-only behavior. |
@@ -64,6 +66,18 @@ projection, not a promotion. The paired27 rerun after the file-choice normalizer
 fix shows the wrong-write regression is resolved. The attention split then
 showed that latest attention hits are mostly reference-only; broad rollout stays
 blocked by the remaining buried route-adherence / direction-attention failure.
+
+## Next Production Gate
+
+The next admission-policy gate is the default-guide shadow expansion described
+in [AIONIS_ADMISSION_PRODUCTION_GATE_RUNBOOK.md](AIONIS_ADMISSION_PRODUCTION_GATE_RUNBOOK.md).
+It requires at least `1000` admission rows, `30` task signatures, `5` scopes,
+shadow projection coverage, zero prompt inclusion, zero Runtime mutation, zero
+hard-boundary upgrades, and a passing candidate-policy holdout report.
+
+Passing this gate can authorize another isolated active gray review for the
+same guide profile. It does not authorize default active mode; that still
+requires the cross-repository tool-executing Agent E2E gate.
 
 ## Gate Results
 
@@ -140,6 +154,26 @@ The targeted external profile produced:
 This remains `shadow_only`. It does not prove online `/v1/guide` active
 behavior, and it may be over-conservative for external current memories until
 task-level completion evidence exists.
+
+### Default-Guide Shadow Production Gate
+
+The default-guide shadow expansion gate produced:
+
+- `2036` admission rows;
+- `55` task signatures;
+- `841` scopes;
+- `1020` guide shadow projections;
+- `0` Agent-prompt inclusions;
+- `0` Runtime mutations;
+- `0` hard-boundary upgrades;
+- selected candidate policy: `candidate_project_context_closed_loop_inspect`;
+- holdout calibration score improved from `0.6153` recorded to `0.8107`
+  candidate;
+- no hard-boundary, negative-use, or positive-capture regression.
+
+This passes the production shadow gate for isolated active gray review. It does
+not authorize default active mode; that still requires the cross-repository
+tool-executing Agent E2E gate.
 
 ### Isolated Active Gray
 

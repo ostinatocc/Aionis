@@ -35,6 +35,7 @@
     "admission:real-agent-rerun": "npx tsx scripts/e2e/admission-real-agent-rerun.ts",
     "admission:feature-audit": "npx tsx scripts/e2e/admission-feature-sufficiency-audit.ts",
     "admission:batch-collect": "npx tsx scripts/e2e/admission-batch-collect.ts",
+    "admission:production-gate": "npx tsx scripts/e2e/admission-production-gate.ts",
     "test:focused": "npm run -s typecheck && npm run -s lite:test",
     "test:lite": "npm run -s lite:test",
     "smoke:lite": "npm run -s lite:smoke",
