@@ -77,33 +77,31 @@ The command writes next to `summary.json` unless `--out-dir` is set:
 ## Known Current Status
 
 The latest closed-loop admission shadow gate passed and supports isolated
-active gray review. The current 40-record cross-repository active-mode
-tool-E2E report passed the route/completion portion of this gate and is ready
-for human review on execution correctness.
+active gray review. The current instrumented 40-record cross-repository
+active-mode tool-E2E rerun passed route, completion, and initial-context budget
+gates and is ready for human default-active review.
 
 Current passing report:
 
-- `docs/research/2026-06-28-admission-active-crossrepo-tool-e2e-40gate.md`
+- `docs/research/2026-06-29-admission-active-crossrepo-tool-e2e-initial-context-rerun.md`
 - local gate artifact:
-  `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/admission-tool-e2e-active40-current-2026-06-28/tool_e2e_gate.md`
+  `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/admission-tool-e2e-active-vs-fullhistory40-initialctx-arkglm52-2026-06-29T00-49-09/tool_e2e_gate.md`
 
 Same-manifest Full History comparison:
 
 - paired report:
-  `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/admission-tool-e2e-active-vs-fullhistory40-current-2026-06-28/summary.md`
+  `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/admission-tool-e2e-active-vs-fullhistory40-initialctx-arkglm52-2026-06-29T00-49-09/summary.json`
 - paired gate artifact:
-  `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/admission-tool-e2e-active-vs-fullhistory40-current-2026-06-28/tool_e2e_gate.md`
+  `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/admission-tool-e2e-active-vs-fullhistory40-initialctx-arkglm52-2026-06-29T00-49-09/tool_e2e_gate.md`
 
-The paired gate is blocked by `context_budget_not_better_than_full_history`
-under the legacy total-prompt-token fallback. This should be treated as a
-historical budget-metric issue: Full History completed only `9 / 40` records,
-so total prompt tokens are not comparable with Aionis completing `40 / 40`.
+Both arms completed `40 / 40` records. Aionis used `203,242` initial-context
+chars versus Full History `1,352,256` initial-context chars (`15.0%` of Full
+History) while preserving 100% accepted-route and action-completion rates.
 
-The gate now prefers `initial_context_chars` when reports include it. Updated
-external Agent reports must record the initial context size for each arm before
-the first tool step. Only when that field is absent does the gate fall back to
-legacy total prompt tokens, and fallback results should not be used for broad
-context-budget claims when completion rates differ sharply.
+The gate prefers `initial_context_chars` when reports include it. Only when
+that field is absent does the gate fall back to legacy total prompt tokens, and
+fallback results should not be used for broad context-budget claims when
+completion rates differ sharply.
 
 The previous paired27 run after the execution-memory and file-choice-normalizer
 fixes removed route write violations, but one buried route-adherence case still
@@ -119,9 +117,9 @@ not pass this admission-candidate gate unless the run explicitly used candidate
 
 1. Keep the Runtime default unchanged unless human default-active review
    explicitly approves a named guide profile.
-2. If the product claim includes context-budget superiority, rerun the same
-   manifest with report instrumentation that records `initial_context_chars`.
-   Do not use raw total prompt tokens when one arm completes far fewer actions.
+2. Treat the 2026-06-29 initial-context rerun as the current budget evidence
+   for this gate. Do not use older fallback-only prompt-token reports for
+   budget claims.
 3. Keep active-mode projections visible in admission reports and Flight
    Recorder surfaces.
 4. Re-run this gate before changing the default after material changes to

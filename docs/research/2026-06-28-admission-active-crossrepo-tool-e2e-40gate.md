@@ -2,7 +2,13 @@
 
 Date: 2026-06-28
 
-Status: product evidence report, route/completion gate passed; context-budget gate requires instrumented rerun
+Status: product evidence report, route/completion gate passed; context-budget
+gap superseded by the 2026-06-29 instrumented rerun
+
+Update: the required instrumented rerun is recorded in
+`docs/research/2026-06-29-admission-active-crossrepo-tool-e2e-initial-context-rerun.md`.
+That rerun completed `40 / 40` records for both Aionis and Full History and
+passed the context-budget gate using `initial_context_chars`.
 
 ## Purpose
 
