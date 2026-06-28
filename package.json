@@ -36,6 +36,7 @@
     "admission:feature-audit": "npx tsx scripts/e2e/admission-feature-sufficiency-audit.ts",
     "admission:batch-collect": "npx tsx scripts/e2e/admission-batch-collect.ts",
     "admission:production-gate": "npx tsx scripts/e2e/admission-production-gate.ts",
+    "admission:tool-e2e-gate": "npx tsx scripts/e2e/admission-tool-e2e-gate.ts",
     "test:focused": "npm run -s typecheck && npm run -s lite:test",
     "test:lite": "npm run -s lite:test",
     "smoke:lite": "npm run -s lite:smoke",

@@ -1,7 +1,7 @@
 # Aionis Admission Policy Promotion Status
 
 Status: product evidence register
-Last updated: 2026-06-19
+Last updated: 2026-06-28
 
 This document records the current promotion state for the selected admission
 candidate policy. It is intentionally conservative: evidence can make a policy
@@ -17,7 +17,7 @@ the default Runtime path.
 | Default Runtime status | `not_default_active` |
 | External backend status | `shadow_only` |
 | Full tool-executing Agent E2E status | `crossrepo_paired27_wrong_write_resolved_route_adherence_open` |
-| Next gate | `production_active_gray_then_crossrepo_tool_e2e` |
+| Next gate | `cross_repository_tool_e2e_default_active_review` |
 
 The selected candidate is a closed-loop admission policy. Its current evidence
 supports isolated active gray testing on the `closed-loop-prior-fresh-2` and
@@ -69,8 +69,9 @@ blocked by the remaining buried route-adherence / direction-attention failure.
 
 ## Next Production Gate
 
-The next admission-policy gate is the default-guide shadow expansion described
-in [AIONIS_ADMISSION_PRODUCTION_GATE_RUNBOOK.md](AIONIS_ADMISSION_PRODUCTION_GATE_RUNBOOK.md).
+The default-guide shadow expansion gate described in
+[AIONIS_ADMISSION_PRODUCTION_GATE_RUNBOOK.md](AIONIS_ADMISSION_PRODUCTION_GATE_RUNBOOK.md)
+has passed.
 It requires at least `1000` admission rows, `30` task signatures, `5` scopes,
 shadow projection coverage, zero prompt inclusion, zero Runtime mutation, zero
 hard-boundary upgrades, and a passing candidate-policy holdout report.
@@ -78,6 +79,12 @@ hard-boundary upgrades, and a passing candidate-policy holdout report.
 Passing this gate can authorize another isolated active gray review for the
 same guide profile. It does not authorize default active mode; that still
 requires the cross-repository tool-executing Agent E2E gate.
+
+The next gate is the cross-repository tool-executing Agent gate described in
+[AIONIS_ADMISSION_TOOL_E2E_GATE_RUNBOOK.md](AIONIS_ADMISSION_TOOL_E2E_GATE_RUNBOOK.md).
+It requires full route adherence, full action completion, no terminal-inspect or
+report-conflict exits, and better prompt context budget than Full History when
+that baseline is present.
 
 ## Gate Results
 
