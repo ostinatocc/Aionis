@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.3.2 - Runtime Profile Activation Patch
+
+Release date: 2026-06-29
+
+v0.3.2 is a Runtime patch release for the v0.3 stable train. It records the
+profile-scoped admission activation path, updates the current Runtime release
+artifacts, and keeps the global Runtime admission default explicit.
+
+### Added
+
+- Profile-scoped admission policy rules for bounded active rollout through
+  `AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON`.
+- Tool-E2E gate support for requiring `profile_rule` source attribution and a
+  selected profile id.
+- Selected-profile activation quickstart and `.env` template for
+  `external-agent-e2e-worker-full-power`.
+- External messaging and Substrate sidecar boundary documentation.
+- DashScope `text-embedding-v4` provider path.
+
+### Changed
+
+- Recorded the selected admission candidate as approved for selected-profile
+  activation, not global Runtime default activation.
+- Updated Runtime release docs and Docker examples to `v0.3.2`.
+- Kept npm package patch versions independent from the Runtime source tag.
+
+### Verified
+
+- Global active cross-repository tool-E2E gate: 40 / 40 accepted-route and
+  40 / 40 action-completion with initial-context budget comparison.
+- Profile-rule multi-step tool-E2E gate: 40 / 40 accepted-route,
+  40 / 40 action-completion, zero route write/action violations, zero terminal
+  inspect exits, zero report-conflict exits, and 40 / 40 matching profile-rule
+  guide source records.
+- Runtime typecheck before release preparation.
+
 ## v0.3.1 - Stable Patch
 
 Release date: 2026-06-26

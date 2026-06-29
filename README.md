@@ -71,7 +71,7 @@ Docker users can run the Runtime directly:
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.1
+  ghcr.io/ostinatocc/aionis:v0.3.2
 ```
 
 Then start the local Runtime from the generated checkout:
