@@ -11,6 +11,37 @@ const AdmissionCandidatePolicyModeSchema = z.enum(["off", "shadow", "active"]);
 const RecallAnnProviderSchema = z.enum(["off", "local", "zvec"]);
 const RecallEngineModeSchema = z.enum(["semantic_scan", "hybrid"]);
 
+const AdmissionCandidatePolicyProfileRuleSchema = z.object({
+  profile_id: z.string().trim().min(1).max(120),
+  mode: z.enum(["shadow", "active"]).default("active"),
+  scopes: z.array(z.string().trim().min(1).max(512)).max(100).optional(),
+  scope_prefixes: z.array(z.string().trim().min(1).max(512)).max(100).optional(),
+  task_families: z.array(z.string().trim().min(1).max(256)).max(100).optional(),
+  task_signatures: z.array(z.string().trim().min(1).max(512)).max(100).optional(),
+  agent_roles: z.array(z.enum(["agent", "planner", "worker", "verifier", "reviewer"])).max(16).optional(),
+  context_modes: z.array(z.enum(["standard", "full_power", "compact_agent"])).max(16).optional(),
+  guide_modes: z.array(z.enum(["standard", "full_power"])).max(16).optional(),
+}).strict().superRefine((rule, ctx) => {
+  const selectorCount = [
+    rule.scopes,
+    rule.scope_prefixes,
+    rule.task_families,
+    rule.task_signatures,
+    rule.agent_roles,
+    rule.context_modes,
+    rule.guide_modes,
+  ].filter((value) => Array.isArray(value) && value.length > 0).length;
+  if (selectorCount === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "profile rule must include at least one selector",
+      path: ["profile_id"],
+    });
+  }
+});
+
+const AdmissionCandidatePolicyProfileRulesSchema = z.array(AdmissionCandidatePolicyProfileRuleSchema).max(100);
+
 function sandboxRemoteHostAllowed(hostname: string, allowlist: string[]): boolean {
   const host = hostname.trim().toLowerCase();
   if (!host) return false;
@@ -125,6 +156,7 @@ const EnvSchema = z.object({
   AIONIS_RUNTIME_STARTED_AT: z.string().default(""),
   AIONIS_INSPECT_BEFORE_USE_MODE: InspectBeforeUseModeSchema.default("shadow"),
   AIONIS_ADMISSION_CANDIDATE_POLICY_MODE: AdmissionCandidatePolicyModeSchema.default("off"),
+  AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON: z.string().default("[]"),
   APP_ENV: z.enum(["dev", "ci", "prod"]).default("dev"),
   AIONIS_LISTEN_HOST: z.string().default(""),
   AIONIS_ALLOW_UNAUTHENTICATED_REMOTE: z
@@ -574,6 +606,23 @@ const EnvSchema = z.object({
 });
 
 export type Env = z.infer<typeof EnvSchema>;
+export type AionisAdmissionCandidatePolicyProfileRule = z.infer<typeof AdmissionCandidatePolicyProfileRuleSchema>;
+
+export function parseAdmissionCandidatePolicyProfileRules(raw: string): AionisAdmissionCandidatePolicyProfileRule[] {
+  let parsed: unknown;
+  try {
+    const input = raw.trim();
+    parsed = input.length === 0 ? [] : JSON.parse(input);
+  } catch {
+    throw new Error("AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON must be valid JSON array");
+  }
+  const result = AdmissionCandidatePolicyProfileRulesSchema.safeParse(parsed);
+  if (!result.success) {
+    const msg = result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("\n");
+    throw new Error(`Invalid AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON:\n${msg}`);
+  }
+  return result.data;
+}
 
 const MODE_PRESETS: Record<z.infer<typeof RuntimeModeSchema>, Record<string, string>> = {
   local: {
@@ -734,6 +783,7 @@ export function loadEnv(): Env {
   }
   const trustedProxyCidrs = parseTrustedProxyCidrs(parsed.data.TRUSTED_PROXY_CIDRS);
   parsed.data.TRUSTED_PROXY_CIDRS = trustedProxyCidrs.join(",");
+  parseAdmissionCandidatePolicyProfileRules(parsed.data.AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON);
   validateEditionPosture(parsed.data);
   if (parsed.data.AIONIS_EDITION === "lite" && parsed.data.APP_ENV === "prod") {
     throw new Error("Lite runtime does not currently support APP_ENV=prod; use APP_ENV=dev/ci.");

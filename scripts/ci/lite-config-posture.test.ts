@@ -28,6 +28,7 @@ test("shipped source tree defaults to lite posture", async () => {
     assert.equal(env.AIONIS_MODE, "local");
     assert.equal(env.AIONIS_INSPECT_BEFORE_USE_MODE, "shadow");
     assert.equal(env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE, "off");
+    assert.equal(env.AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON, "[]");
     assert.equal(env.MEMORY_AUTH_MODE, "off");
     assert.equal(env.TENANT_QUOTA_ENABLED, false);
     assert.equal(env.RECALL_ENGINE_MODE, "semantic_scan");
@@ -63,6 +64,43 @@ test("admission candidate policy active projection is explicit opt-in", async ()
     () => {
       const env = loadEnv();
       assert.equal(env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE, "active");
+    },
+  );
+});
+
+test("admission candidate policy profile rules are explicit and scoped", async () => {
+  await withIsolatedEnv(
+    {
+      AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON: JSON.stringify([
+        {
+          profile_id: "validated-coding-worker",
+          mode: "active",
+          task_families: ["validated_coding_continuation"],
+          agent_roles: ["worker"],
+          context_modes: ["compact_agent"],
+        },
+      ]),
+    },
+    () => {
+      const env = loadEnv();
+      assert.equal(env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE, "off");
+      assert.match(env.AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON, /validated-coding-worker/);
+    },
+  );
+  await withIsolatedEnv(
+    {
+      AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON: JSON.stringify([
+        {
+          profile_id: "unsafe-catch-all",
+          mode: "active",
+        },
+      ]),
+    },
+    () => {
+      assert.throws(
+        () => loadEnv(),
+        /profile rule must include at least one selector/,
+      );
     },
   );
 });

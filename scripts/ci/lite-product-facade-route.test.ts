@@ -1085,6 +1085,137 @@ test("product guide can opt into admission candidate policy active projection", 
   }
 });
 
+test("product guide can scope admission candidate policy active projection to a guide profile", async () => {
+  const app = Fastify();
+  const env = {
+    ...liteEnv(),
+    AIONIS_ADMISSION_CANDIDATE_POLICY_MODE: "off",
+    AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON: JSON.stringify([
+      {
+        profile_id: "validated-worker-continuation",
+        mode: "active",
+        task_families: ["validated_worker_continuation"],
+        agent_roles: ["worker"],
+        context_modes: ["compact_agent"],
+      },
+    ]),
+  };
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("admission-candidate-policy-profile-active");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+    const observe = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        actor: "local-user",
+        auto_embed: true,
+        nodes: [
+          {
+            client_id: "admission-profile-project",
+            type: "topic",
+            title: "ADMISSION_PROFILE_POLICY_ROUTE project context",
+            text_summary: "ADMISSION_PROFILE_POLICY_ROUTE accepted target is src/current-route.ts.",
+            tier: "warm",
+            slots: {
+              positive_attributed_use_count: 1,
+            },
+            confidence: 0.95,
+            salience: 0.95,
+          },
+          {
+            client_id: "admission-profile-fact",
+            type: "concept",
+            title: "ADMISSION_PROFILE_POLICY_ROUTE fact candidate",
+            text_summary: "ADMISSION_PROFILE_POLICY_ROUTE related fact should be inspected before direct execution by the candidate policy.",
+            tier: "warm",
+            confidence: 0.94,
+            salience: 0.94,
+          },
+        ],
+      },
+    });
+    assert.equal(observe.statusCode, 200);
+    const writtenNodes = observe.json().memory_write.nodes;
+    const projectMemoryId = writtenNodes.find((entry: Record<string, unknown>) =>
+      entry.client_id === "admission-profile-project"
+    )?.id;
+    const factMemoryId = writtenNodes.find((entry: Record<string, unknown>) =>
+      entry.client_id === "admission-profile-fact"
+    )?.id;
+    assert.equal(typeof projectMemoryId, "string");
+    assert.equal(typeof factMemoryId, "string");
+
+    const nonMatchingGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "Continue ADMISSION_PROFILE_POLICY_ROUTE using current route context.",
+        agent_role: "worker",
+        consumer_agent_id: "local-user",
+        context_mode: "compact_agent",
+        context: {
+          task_family: "unvalidated_worker_continuation",
+        },
+        limit: 8,
+      },
+    });
+    assert.equal(nonMatchingGuide.statusCode, 200);
+    const nonMatchingBody = nonMatchingGuide.json();
+    assert.equal(
+      nonMatchingBody.source_map.internal_surfaces_used.includes("admission_candidate_policy_active_projection"),
+      false,
+    );
+    assert.equal(nonMatchingBody.source_map.admission_candidate_policy.mode, "off");
+    assert.equal(nonMatchingBody.source_map.admission_candidate_policy.source, "off");
+    assert.equal(nonMatchingBody.agent_context.use_now_memory_ids.includes(factMemoryId), true);
+
+    const matchingGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "Continue ADMISSION_PROFILE_POLICY_ROUTE using current route context.",
+        agent_role: "worker",
+        consumer_agent_id: "local-user",
+        context_mode: "compact_agent",
+        context: {
+          task_family: "validated_worker_continuation",
+        },
+        limit: 8,
+      },
+    });
+
+    assert.equal(matchingGuide.statusCode, 200);
+    const matchingBody = matchingGuide.json();
+    assert.equal(matchingBody.source_map.admission_candidate_policy.mode, "active");
+    assert.equal(matchingBody.source_map.admission_candidate_policy.source, "profile_rule");
+    assert.equal(matchingBody.source_map.admission_candidate_policy.profile_id, "validated-worker-continuation");
+    assert.equal(
+      matchingBody.source_map.internal_surfaces_used.includes("admission_candidate_policy_active_projection"),
+      true,
+    );
+    assert.equal(
+      matchingBody.source_map.internal_surfaces_used.includes("admission_candidate_policy_profile_active_projection"),
+      true,
+    );
+    assert.equal(matchingBody.agent_context.use_now_memory_ids.includes(projectMemoryId), true);
+    assert.equal(matchingBody.agent_context.use_now_memory_ids.includes(factMemoryId), false);
+    assert.equal(matchingBody.agent_context.inspect_before_use_memory_ids.includes(factMemoryId), true);
+  } finally {
+    await liteWriteStore.close();
+    await liteRecallStore.close();
+    await app.close();
+  }
+});
+
 test("product memory admission route exposes Memory Firewall summary in firewall mode", async () => {
   const app = Fastify();
   const env = liteEnv();
@@ -1995,10 +2126,15 @@ test("product observe turns execution input into recallable execution memory", a
       "source_map",
     ]);
     assertProductSourceMap(guideBody.source_map, [
+      "admission_candidate_policy",
       "internal_surfaces_used",
       "omitted_internal_surfaces",
       "routes_used",
     ]);
+    assert.deepEqual(guideBody.source_map.admission_candidate_policy, {
+      mode: "off",
+      source: "off",
+    });
     assertExactKeys(guideBody.guide_packet.guide_brief, [
       "summary",
       "history_used",

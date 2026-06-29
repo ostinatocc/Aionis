@@ -19,8 +19,8 @@ gate recorded in
 |---|---|
 | Candidate policy | `candidate_project_context_closed_loop_inspect` |
 | Default Runtime global mode | keep `off` |
-| Approved product path | profile-scoped default-active design |
-| Current operator mode | explicit `AIONIS_ADMISSION_CANDIDATE_POLICY_MODE=active` |
+| Approved product path | profile-scoped default-active rollout |
+| Current operator mode | explicit global active or profile-scoped rules |
 | External backend path | remains `shadow_only` |
 | Runtime mutation | not allowed |
 | Stored memory mutation | not allowed |
@@ -30,9 +30,8 @@ The candidate is approved for a profile-scoped default-active product path. It
 is not approved as a global Runtime default.
 
 Reason: the evidence supports the candidate on the validated `/v1/guide`
-admission surface, but the current code switch is global. A profile-scoped
-default requires a narrower configuration surface before it should become a
-default behavior.
+admission surface. Runtime global mode must stay `off`; profile-scoped rules
+provide the narrower configuration surface for bounded product rollout.
 
 ## Evidence Reviewed
 
@@ -71,8 +70,9 @@ Not approved:
 
 ## Rollout Shape
 
-The next implementation step should be a profile-scoped switch, not a global
-default flip.
+Aionis supports a profile-scoped switch through
+`AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON`. The global default
+remains `off`; profile rules are only considered when global mode is `off`.
 
 Recommended shape:
 
@@ -87,8 +87,22 @@ rollback:
   profile active -> shadow/off
 ```
 
-Until that profile-scoped switch exists, the supported operator path remains
-explicit active mode:
+Example profile rule:
+
+```bash
+export AIONIS_ADMISSION_CANDIDATE_POLICY_MODE=off
+export AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON='[
+  {
+    "profile_id": "validated-worker-continuation",
+    "mode": "active",
+    "task_families": ["validated_worker_continuation"],
+    "agent_roles": ["worker"],
+    "context_modes": ["compact_agent"]
+  }
+]'
+```
+
+The global operator override remains available for isolated active gray runs:
 
 ```bash
 export AIONIS_ADMISSION_CANDIDATE_POLICY_MODE=active
@@ -100,6 +114,7 @@ Rollback remains immediate:
 unset AIONIS_ADMISSION_CANDIDATE_POLICY_MODE
 # or
 export AIONIS_ADMISSION_CANDIDATE_POLICY_MODE=off
+export AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON='[]'
 ```
 
 ## Required Monitoring
@@ -135,5 +150,6 @@ Run this review again before widening the profile if any of these change:
 ## Outcome
 
 The candidate is ready for a profile-scoped default-active implementation plan.
-The Runtime global default remains `off` until that narrower switch exists and
-passes the same tool-E2E gate.
+The Runtime global default remains `off`. The profile-scoped switch exists and
+must pass the same tool-E2E gate under the selected profile before any product
+guide path treats it as a default.

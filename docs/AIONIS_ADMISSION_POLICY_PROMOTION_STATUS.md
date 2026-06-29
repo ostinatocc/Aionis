@@ -66,7 +66,7 @@ for a global Runtime default.
 | Cross-repository paired27 rerun after file-choice normalizer fix and attention split | `docs/research/2026-06-18-admission-active-crossrepo-tool-e2e-paired27-rerun.md` | Wrong writes dropped to 0 / 27 and the prior residual separated-context case was confirmed as a harness normalization artifact. Attention split shows 1 / 27 direction-attention hit, 12 / 27 reference-only attention hits, and 0 / 27 other attention hits. One buried route-adherence failure remains. |
 | Cross-repository tool-executing Agent E2E 40-gate | `docs/research/2026-06-28-admission-active-crossrepo-tool-e2e-40gate.md` | Active mode completed 40 / 40 records across 10 base trap families and four hygiene levels, with 100% accepted-route rate, 100% action-completion rate, no terminal inspect, no report conflict, and no route violations. A same-manifest Full History run completed only 9 / 40 records; the paired gate is blocked only under the legacy total-prompt-token fallback. |
 | Cross-repository tool-executing Agent E2E initial-context rerun | `docs/research/2026-06-29-admission-active-crossrepo-tool-e2e-initial-context-rerun.md` | Active mode and Full History both completed 40 / 40 records. Aionis preserved 100% accepted-route and action-completion rates with 15.0% of the Full History initial context size. The tool-E2E gate passed with `context_budget_metric=initial_context_chars`. |
-| Human default-active review | `docs/AIONIS_ADMISSION_DEFAULT_ACTIVE_REVIEW.md` | Candidate approved for profile-scoped default-active design. Global Runtime default remains `off`; external backend path remains `shadow_only`. |
+| Human default-active review | `docs/AIONIS_ADMISSION_DEFAULT_ACTIVE_REVIEW.md` | Candidate approved for profile-scoped default-active rollout. Global Runtime default remains `off`; external backend path remains `shadow_only`. |
 
 Follow-up inspection found the paired27 regression root cause: the active
 projection over-downgraded Aionis `execution_memory` accepted-continuation
@@ -99,10 +99,11 @@ in the current 40-record active-mode rerun. The paired Full History arm also
 completed all 40 records, so the budget comparison is no longer relying on the
 legacy total-token fallback.
 
-The next gate is profile-scoped default switch design. The current Runtime
-switch is global (`AIONIS_ADMISSION_CANDIDATE_POLICY_MODE=active`), so the
-candidate should not become a default until a narrower named-profile switch
-exists.
+The next gate is profile-scoped default switch validation. The Runtime now
+supports `AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON`, while the
+global default remains `off`. The candidate should not widen beyond a named
+profile until the selected profile passes the same tool-executing Agent E2E
+gate and keeps profile routing visible in guide source maps.
 
 ## Gate Results
 

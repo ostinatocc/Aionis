@@ -3,7 +3,11 @@ import { randomUUID } from "node:crypto";
 import stableStringify from "fast-json-stable-stringify";
 import { z } from "zod";
 import { assertLocalStoreRuntimeEdition } from "../app/edition.js";
-import type { Env } from "../config.js";
+import {
+  parseAdmissionCandidatePolicyProfileRules,
+  type AionisAdmissionCandidatePolicyProfileRule,
+  type Env,
+} from "../config.js";
 import type { IdentityRequestKind } from "../app/request-guards.js";
 import {
   evaluateAionisEffect,
@@ -865,6 +869,81 @@ function productGuideFullPowerRequested(parsed: z.infer<typeof ProductGuideReque
 
 function productGuideAgentContextMode(parsed: z.infer<typeof ProductGuideRequest>): AionisAgentContext["agent_context_mode"] {
   return parsed.context_mode === "compact_agent" ? "compact_agent" : "standard";
+}
+
+type AdmissionCandidatePolicyGuideModeResolution = {
+  mode: "off" | "shadow" | "active";
+  source: "global_env" | "profile_rule" | "off";
+  profile_id?: string;
+};
+
+function selectorMatches(ruleValues: readonly string[] | undefined, actual: string | null): boolean {
+  if (!ruleValues || ruleValues.length === 0) return true;
+  if (!actual) return false;
+  return ruleValues.includes(actual);
+}
+
+function prefixSelectorMatches(prefixes: readonly string[] | undefined, actual: string | null): boolean {
+  if (!prefixes || prefixes.length === 0) return true;
+  if (!actual) return false;
+  return prefixes.some((prefix) => actual.startsWith(prefix));
+}
+
+function stringFromContext(context: Record<string, unknown> | null, key: string): string | null {
+  const value = context?.[key];
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function admissionCandidatePolicyProfileRuleMatches(args: {
+  rule: AionisAdmissionCandidatePolicyProfileRule;
+  parsed: z.infer<typeof ProductGuideRequest>;
+  scope: string;
+  agentRole: AionisAgentRole;
+}): boolean {
+  const context = objectValue(args.parsed.context);
+  const contextMode = args.parsed.context_mode ?? "standard";
+  const guideMode = args.parsed.mode ?? "standard";
+  return selectorMatches(args.rule.scopes, args.scope)
+    && prefixSelectorMatches(args.rule.scope_prefixes, args.scope)
+    && selectorMatches(args.rule.task_families, stringFromContext(context, "task_family"))
+    && selectorMatches(args.rule.task_signatures, stringFromContext(context, "task_signature"))
+    && selectorMatches(args.rule.agent_roles, args.agentRole)
+    && selectorMatches(args.rule.context_modes, contextMode)
+    && selectorMatches(args.rule.guide_modes, guideMode);
+}
+
+function resolveAdmissionCandidatePolicyGuideMode(args: {
+  env: Env;
+  parsed: z.infer<typeof ProductGuideRequest>;
+  scope: string;
+  agentRole: AionisAgentRole;
+}): AdmissionCandidatePolicyGuideModeResolution {
+  if (args.env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE === "shadow"
+    || args.env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE === "active") {
+    return {
+      mode: args.env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE,
+      source: "global_env",
+    };
+  }
+  const rules = parseAdmissionCandidatePolicyProfileRules(
+    args.env.AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON ?? "[]",
+  );
+  const matched = rules.find((rule) =>
+    admissionCandidatePolicyProfileRuleMatches({
+      rule,
+      parsed: args.parsed,
+      scope: args.scope,
+      agentRole: args.agentRole,
+    })
+  );
+  if (!matched) return { mode: "off", source: "off" };
+  return {
+    mode: matched.mode,
+    source: "profile_rule",
+    profile_id: matched.profile_id,
+  };
 }
 
 function firstStringValue(...values: unknown[]): string | null {
@@ -3148,10 +3227,13 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     }
     let admissionCandidatePolicyProjection: AionisAdmissionCandidatePolicyActiveProjection | null = null;
     let admissionCandidatePolicyProjectionApplied = false;
-    if (
-      env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE === "shadow"
-      || env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE === "active"
-    ) {
+    const admissionCandidatePolicyMode = resolveAdmissionCandidatePolicyGuideMode({
+      env,
+      parsed,
+      scope,
+      agentRole,
+    });
+    if (admissionCandidatePolicyMode.mode === "shadow" || admissionCandidatePolicyMode.mode === "active") {
       admissionCandidatePolicyProjection = await resolveAdmissionCandidatePolicyGuideProjection({
         app,
         req,
@@ -3161,9 +3243,9 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
         scope,
         memoryPacket,
         agentContext,
-        mode: env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE,
+        mode: admissionCandidatePolicyMode.mode,
       });
-      if (env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE === "active" && admissionCandidatePolicyProjection) {
+      if (admissionCandidatePolicyMode.mode === "active" && admissionCandidatePolicyProjection) {
         const projectedContext = applyAionisInspectBeforeUseActiveProjection({
           agent_context: agentContext,
           memory_packet: memoryPacket,
@@ -3223,10 +3305,13 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
           ...(claimLedgerContextProjection.changed ? ["claim_ledger_agent_context_projection"] : []),
           ...(agentContextMode === "compact_agent" ? ["compact_agent_context"] : []),
           ...(activeProjectionApplied ? ["inspect_before_use_active_projection"] : []),
-          ...(admissionCandidatePolicyProjection && env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE === "shadow"
+          ...(admissionCandidatePolicyProjection && admissionCandidatePolicyMode.mode === "shadow"
             ? ["admission_candidate_policy_shadow_projection"]
             : []),
           ...(admissionCandidatePolicyProjectionApplied ? ["admission_candidate_policy_active_projection"] : []),
+          ...(admissionCandidatePolicyProjection && admissionCandidatePolicyMode.source === "profile_rule"
+            ? [`admission_candidate_policy_profile_${admissionCandidatePolicyMode.mode}_projection`]
+            : []),
           ...(memoryContractVisible ? ["memory_contract"] : []),
           ...(premiseFirewallVisible ? ["premise_firewall"] : []),
           "guide_exposure_ledger",
@@ -3245,6 +3330,11 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
           ...(includePackets ? [] : ["memory_packet", "guide_packet"]),
           ...(planningContextEmbeddingUnavailable ? ["semantic_planning_recall"] : []),
         ],
+        admission_candidate_policy: {
+          mode: admissionCandidatePolicyMode.mode,
+          source: admissionCandidatePolicyMode.source,
+          ...(admissionCandidatePolicyMode.profile_id ? { profile_id: admissionCandidatePolicyMode.profile_id } : {}),
+        },
       },
     });
   });
