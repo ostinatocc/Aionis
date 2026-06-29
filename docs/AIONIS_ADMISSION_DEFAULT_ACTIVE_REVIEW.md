@@ -1,6 +1,6 @@
 # Aionis Admission Default-Active Review
 
-Status: human review record
+Status: operator activation review record
 Last updated: 2026-06-29
 
 This document records the human review decision for the closed-loop admission
@@ -9,9 +9,11 @@ candidate policy:
 `candidate_project_context_closed_loop_inspect`
 
 The review is based on the production shadow gate, active gray evidence,
-real-Agent admission reruns, and the cross-repository tool-executing Agent E2E
-gate recorded in
-`docs/research/2026-06-29-admission-active-crossrepo-tool-e2e-initial-context-rerun.md`.
+real-Agent admission reruns, the global-active cross-repository tool-executing
+Agent E2E gate recorded in
+`docs/research/2026-06-29-admission-active-crossrepo-tool-e2e-initial-context-rerun.md`,
+and the profile-scoped multi-step tool-E2E gate recorded locally under
+`/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/profile-rule-multistep-aionis40-arkglm52-2026-06-29T14-09-42/`.
 
 ## Decision
 
@@ -19,19 +21,21 @@ gate recorded in
 |---|---|
 | Candidate policy | `candidate_project_context_closed_loop_inspect` |
 | Default Runtime global mode | keep `off` |
-| Approved product path | profile-scoped default-active rollout |
-| Current operator mode | explicit global active or profile-scoped rules |
+| Approved product path | selected profile-scoped default-active rollout |
+| Selected profile id | `external-agent-e2e-worker-full-power` |
+| Current operator mode | profile-scoped rules; explicit global active only for isolated tests |
 | External backend path | remains `shadow_only` |
 | Runtime mutation | not allowed |
 | Stored memory mutation | not allowed |
 | Hard-boundary upgrade | not allowed |
 
-The candidate is approved for a profile-scoped default-active product path. It
-is not approved as a global Runtime default.
+The candidate is approved for the selected profile-scoped default-active
+product path. It is not approved as a global Runtime default.
 
 Reason: the evidence supports the candidate on the validated `/v1/guide`
-admission surface. Runtime global mode must stay `off`; profile-scoped rules
-provide the narrower configuration surface for bounded product rollout.
+admission surface and on the selected profile-rule path. Runtime global mode
+must stay `off`; profile-scoped rules provide the narrower configuration
+surface for bounded product rollout.
 
 ## Evidence Reviewed
 
@@ -42,6 +46,13 @@ provide the narrower configuration surface for bounded product rollout.
 | Real-Agent admission reruns | Preserved accepted action rate while reducing prior-aware direct-use risk in the validated profile. |
 | Cross-repository tool-executing Agent E2E | Passed 40 / 40 records across 10 base trap families and 4 context hygiene levels. |
 | Initial-context budget rerun | Aionis used 203,242 initial-context chars versus Full History 1,352,256 chars while both arms completed 40 / 40 records. |
+| Profile-rule source gate | Passed 40 / 40 guide source checks for `profile_rule` and 40 / 40 guide profile checks for `external-agent-e2e-worker-full-power`. |
+| Profile-rule multi-step tool E2E | Passed 40 / 40 accepted-route and 40 / 40 action-completion records with zero route write/action violations, zero terminal inspect exits, and zero report-conflict exits. |
+
+The final profile-rule multi-step gate used the Aionis arm only, so it did not
+produce a same-run Full History budget comparison. The earlier same-manifest
+profile-rule two-arm run remains informational budget context: Aionis used
+165,421 initial-context chars versus Full History 1,352,256 chars.
 
 ## Approved Behavior
 
@@ -81,26 +92,29 @@ global default:
   AIONIS_ADMISSION_CANDIDATE_POLICY_MODE=off
 
 named profile:
-  validated guide profile -> candidate active projection
+  external-agent-e2e-worker-full-power -> candidate active projection
 
 rollback:
   profile active -> shadow/off
 ```
 
-Example profile rule:
+Example profile rule shape:
 
 ```bash
 export AIONIS_ADMISSION_CANDIDATE_POLICY_MODE=off
 export AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON='[
   {
-    "profile_id": "validated-worker-continuation",
+    "profile_id": "external-agent-e2e-worker-full-power",
     "mode": "active",
-    "task_families": ["validated_worker_continuation"],
     "agent_roles": ["worker"],
-    "context_modes": ["compact_agent"]
+    "context_modes": ["compact_agent"],
+    "guide_modes": ["full_power"]
   }
 ]'
 ```
+
+Use selectors that match the host's real `/v1/guide` request shape. A profile id
+labels the rule and is emitted in `source_map`; it is not a selector by itself.
 
 The global operator override remains available for isolated active gray runs:
 
@@ -149,7 +163,9 @@ Run this review again before widening the profile if any of these change:
 
 ## Outcome
 
-The candidate is ready for a profile-scoped default-active implementation plan.
-The Runtime global default remains `off`. The profile-scoped switch exists and
-must pass the same tool-E2E gate under the selected profile before any product
-guide path treats it as a default.
+The candidate is approved for selected-profile activation through
+`AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON`.
+
+The Runtime global default remains `off`. The external backend path remains
+`shadow_only`. Any additional profile must pass the same profile-source and
+tool-E2E gate before it is treated as a default product guide path.
