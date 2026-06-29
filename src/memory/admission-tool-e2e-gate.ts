@@ -19,6 +19,15 @@ export type AionisAdmissionToolE2EGateInput = {
   results?: unknown[];
   arm?: string;
   policy_mode?: "active" | "off" | "recorded" | "shadow" | "unspecified";
+  policy_source?: "global_env" | "profile_rule" | "off" | "mixed" | "unspecified";
+  required_policy_source?: "global_env" | "profile_rule";
+  required_policy_profile_id?: string;
+  policy_source_audit?: {
+    guide_count: number;
+    matching_source_count: number;
+    profile_id?: string | null;
+    matching_profile_id_count?: number;
+  };
   thresholds?: Partial<AionisAdmissionToolE2EGateThresholds>;
 };
 
@@ -30,6 +39,15 @@ export type AionisAdmissionToolE2EGateReport = {
   gate_scope: "cross_repository_tool_executing_agent_e2e";
   arm: string;
   policy_mode: "active" | "off" | "recorded" | "shadow" | "unspecified";
+  policy_source: "global_env" | "profile_rule" | "off" | "mixed" | "unspecified";
+  required_policy_source: "global_env" | "profile_rule" | null;
+  required_policy_profile_id: string | null;
+  policy_source_audit: {
+    guide_count: number;
+    matching_source_count: number;
+    profile_id: string | null;
+    matching_profile_id_count: number | null;
+  } | null;
   thresholds: AionisAdmissionToolE2EGateThresholds;
   dataset: {
     run_id: string | null;
@@ -71,6 +89,8 @@ export type AionisAdmissionToolE2EGateReport = {
     action_completion_rate_pass: boolean;
     context_budget_pass: boolean | null;
     active_policy_mode_declared: boolean;
+    required_policy_source_pass: boolean | null;
+    required_policy_profile_id_pass: boolean | null;
   };
   decision: {
     eligible_for_default_active_review: boolean;
@@ -210,6 +230,8 @@ function blockingReasons(report: Pick<AionisAdmissionToolE2EGateReport, "checks"
   if (!report.checks.action_completion_rate_pass) reasons.push("action_completion_rate_below_threshold");
   if (report.checks.context_budget_pass === false) reasons.push("context_budget_not_better_than_full_history");
   if (!report.checks.active_policy_mode_declared) reasons.push("candidate_active_policy_mode_not_declared");
+  if (report.checks.required_policy_source_pass === false) reasons.push("candidate_policy_source_requirement_not_met");
+  if (report.checks.required_policy_profile_id_pass === false) reasons.push("candidate_policy_profile_requirement_not_met");
   return reasons;
 }
 
@@ -217,6 +239,9 @@ export function evaluateAdmissionToolE2EGate(input: AionisAdmissionToolE2EGateIn
   const thresholds = mergeThresholds(input.thresholds);
   const arm = input.arm ?? "aionis";
   const policyMode = input.policy_mode ?? "unspecified";
+  const policySource = input.policy_source ?? "unspecified";
+  const requiredPolicySource = input.required_policy_source ?? null;
+  const requiredPolicyProfileId = input.required_policy_profile_id ?? null;
   const summary = recordValue(input.summary);
   if (!summary) {
     throw new Error("summary must be an external-agent phase2 summary object");
@@ -281,6 +306,17 @@ export function evaluateAdmissionToolE2EGate(input: AionisAdmissionToolE2EGateIn
         ? null
         : promptRatio <= thresholds.max_prompt_ratio_vs_full_history,
     active_policy_mode_declared: policyMode === "active",
+    required_policy_source_pass: requiredPolicySource === null
+      ? null
+      : policySource === requiredPolicySource
+        && !!input.policy_source_audit
+        && input.policy_source_audit.guide_count > 0
+        && input.policy_source_audit.matching_source_count === input.policy_source_audit.guide_count,
+    required_policy_profile_id_pass: requiredPolicyProfileId === null
+      ? null
+      : !!input.policy_source_audit
+        && input.policy_source_audit.guide_count > 0
+        && input.policy_source_audit.matching_profile_id_count === input.policy_source_audit.guide_count,
   };
   const reasons = blockingReasons({ checks });
   const eligible = reasons.length === 0;
@@ -292,6 +328,19 @@ export function evaluateAdmissionToolE2EGate(input: AionisAdmissionToolE2EGateIn
     gate_scope: "cross_repository_tool_executing_agent_e2e",
     arm,
     policy_mode: policyMode,
+    policy_source: policySource,
+    required_policy_source: requiredPolicySource,
+    required_policy_profile_id: requiredPolicyProfileId,
+    policy_source_audit: input.policy_source_audit
+      ? {
+          guide_count: input.policy_source_audit.guide_count,
+          matching_source_count: input.policy_source_audit.matching_source_count,
+          profile_id: input.policy_source_audit.profile_id ?? null,
+          matching_profile_id_count: typeof input.policy_source_audit.matching_profile_id_count === "number"
+            ? input.policy_source_audit.matching_profile_id_count
+            : null,
+        }
+      : null,
     thresholds,
     dataset: {
       run_id: stringValue(summary.run_id),
@@ -345,6 +394,17 @@ export function formatAdmissionToolE2EGateMarkdown(report: AionisAdmissionToolE2
     "|---|---:|",
     `| Run ID | ${report.dataset.run_id ?? "(missing)"} |`,
     `| Policy mode | ${report.policy_mode} |`,
+    `| Policy source | ${report.policy_source} |`,
+    `| Required policy source | ${report.required_policy_source ?? "not required"} |`,
+    `| Required policy profile id | ${report.required_policy_profile_id ?? "not required"} |`,
+    ...(report.policy_source_audit
+      ? [
+          `| Policy-source guide count | ${report.policy_source_audit.guide_count} |`,
+          `| Policy-source matching guides | ${report.policy_source_audit.matching_source_count} |`,
+          `| Policy-source profile id | ${report.policy_source_audit.profile_id ?? "not required"} |`,
+          `| Policy-source profile-id matches | ${report.policy_source_audit.matching_profile_id_count ?? "not assessed"} |`,
+        ]
+      : []),
     `| Requested records | ${report.dataset.requested_count ?? "(missing)"} |`,
     `| Completed records | ${report.dataset.completed_count ?? "(missing)"} |`,
     `| Parsed result records | ${report.dataset.result_count} |`,
@@ -386,6 +446,8 @@ export function formatAdmissionToolE2EGateMarkdown(report: AionisAdmissionToolE2
     `| Action-completion rate | ${bool(report.checks.action_completion_rate_pass)} |`,
     `| Context budget | ${bool(report.checks.context_budget_pass)} |`,
     `| Active candidate policy mode declared | ${bool(report.checks.active_policy_mode_declared)} |`,
+    `| Required policy source | ${bool(report.checks.required_policy_source_pass)} |`,
+    `| Required policy profile id | ${bool(report.checks.required_policy_profile_id_pass)} |`,
     "",
     "## Decision",
     "",

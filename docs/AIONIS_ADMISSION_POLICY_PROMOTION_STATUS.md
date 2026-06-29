@@ -17,7 +17,7 @@ the default Runtime path.
 | Default Runtime status | `not_default_active` |
 | External backend status | `shadow_only` |
 | Full tool-executing Agent E2E status | `crossrepo_active40_route_completion_and_initial_context_budget_passed` |
-| Next gate | `profile_scoped_default_switch_design` |
+| Next gate | `profile_scoped_tool_e2e_validation` |
 
 The selected candidate is a closed-loop admission policy. Its current evidence
 supports default-active review for route preservation and action completion on
@@ -99,11 +99,12 @@ in the current 40-record active-mode rerun. The paired Full History arm also
 completed all 40 records, so the budget comparison is no longer relying on the
 legacy total-token fallback.
 
-The next gate is profile-scoped default switch validation. The Runtime now
-supports `AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON`, while the
-global default remains `off`. The candidate should not widen beyond a named
-profile until the selected profile passes the same tool-executing Agent E2E
-gate and keeps profile routing visible in guide source maps.
+The next gate is profile-scoped tool-E2E validation. The Runtime now supports
+`AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON`, while the global
+default remains `off`. The selected profile must pass the same tool-executing
+Agent E2E gate with `--require-policy-source profile_rule` and the selected
+`--require-policy-profile-id`, proving that the report came from a bounded
+profile rule rather than the global environment switch.
 
 ## Gate Results
 

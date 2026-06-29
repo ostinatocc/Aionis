@@ -47,6 +47,8 @@ Default thresholds:
 | Initial context ratio versus Full History | `<= 0.75` when Full History is present |
 | Legacy prompt-token ratio versus Full History | fallback only for older reports without initial-context stats |
 | Candidate policy mode | explicitly declared `active` |
+| Profile-scoped rollout source | `profile_rule` when validating profile default activation |
+| Profile id | every readable Aionis guide must match the selected rollout profile |
 
 Reference-only attention is informational. It is not a blocker by itself
 because the Agent may read old implementation files as reference evidence while
@@ -59,8 +61,15 @@ npm run -s admission:tool-e2e-gate -- \
   --summary /path/to/external-agent-e2e/reports/<run>/summary.json \
   --results /path/to/external-agent-e2e/reports/<run>/phase2-gradient-results.jsonl \
   --policy-mode active \
+  --require-policy-source profile_rule \
+  --require-policy-profile-id external-agent-e2e-worker-full-power \
   --max-initial-context-ratio-vs-full-history 0.75
 ```
+
+When `--results` is present, the gate reads each result's
+`bundle_path/../contexts/aionis/guide.json` and audits
+`source_map.admission_candidate_policy`. A profile-scoped default validation
+must prove that the report did not come from the global environment switch.
 
 The command writes next to `summary.json` unless `--out-dir` is set:
 
@@ -131,8 +140,9 @@ not pass this admission-candidate gate unless the run explicitly used candidate
    profile rollout. The selected guide profile must expose
    `source_map.admission_candidate_policy.source = "profile_rule"` before it
    counts as profile-default evidence.
-5. Re-run this gate with the profile-scoped rule before making the candidate
-   default for any product guide path.
+5. Re-run this gate with `--require-policy-source profile_rule` and the selected
+   `--require-policy-profile-id` before making the candidate default for any
+   product guide path.
 6. Re-run this gate before changing the default after material changes to
    guide rendering, lifecycle inference, execution memory rendering, or
    candidate-policy evaluation.

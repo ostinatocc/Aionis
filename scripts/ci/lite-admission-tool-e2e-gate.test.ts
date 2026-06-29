@@ -142,3 +142,60 @@ test("tool e2e gate blocks reports that do not declare active candidate mode", (
   assert.equal(report.decision.eligible_for_default_active_review, false);
   assert.ok(report.decision.blocking_reasons.includes("candidate_active_policy_mode_not_declared"));
 });
+
+test("tool e2e gate can require profile-scoped active source", () => {
+  const report = evaluateAdmissionToolE2EGate({
+    summary: summary(),
+    policy_mode: "active",
+    policy_source: "profile_rule",
+    required_policy_source: "profile_rule",
+    required_policy_profile_id: "external-agent-e2e-worker-full-power",
+    policy_source_audit: {
+      guide_count: 40,
+      matching_source_count: 40,
+      profile_id: "external-agent-e2e-worker-full-power",
+      matching_profile_id_count: 40,
+    },
+  });
+
+  assert.equal(report.decision.eligible_for_default_active_review, true);
+  assert.equal(report.checks.required_policy_source_pass, true);
+  assert.equal(report.checks.required_policy_profile_id_pass, true);
+  assert.equal(report.required_policy_source, "profile_rule");
+  assert.equal(report.required_policy_profile_id, "external-agent-e2e-worker-full-power");
+});
+
+test("tool e2e gate blocks when required profile-scoped source is not proven", () => {
+  const report = evaluateAdmissionToolE2EGate({
+    summary: summary(),
+    policy_mode: "active",
+    policy_source: "global_env",
+    required_policy_source: "profile_rule",
+    required_policy_profile_id: "external-agent-e2e-worker-full-power",
+    policy_source_audit: {
+      guide_count: 40,
+      matching_source_count: 0,
+      profile_id: "external-agent-e2e-worker-full-power",
+      matching_profile_id_count: 0,
+    },
+  });
+
+  assert.equal(report.decision.eligible_for_default_active_review, false);
+  assert.equal(report.checks.required_policy_source_pass, false);
+  assert.equal(report.checks.required_policy_profile_id_pass, false);
+  assert.ok(report.decision.blocking_reasons.includes("candidate_policy_source_requirement_not_met"));
+  assert.ok(report.decision.blocking_reasons.includes("candidate_policy_profile_requirement_not_met"));
+});
+
+test("tool e2e gate does not accept manual profile source without guide audit", () => {
+  const report = evaluateAdmissionToolE2EGate({
+    summary: summary(),
+    policy_mode: "active",
+    policy_source: "profile_rule",
+    required_policy_source: "profile_rule",
+  });
+
+  assert.equal(report.decision.eligible_for_default_active_review, false);
+  assert.equal(report.checks.required_policy_source_pass, false);
+  assert.ok(report.decision.blocking_reasons.includes("candidate_policy_source_requirement_not_met"));
+});

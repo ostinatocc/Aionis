@@ -15,7 +15,22 @@ type CliArgs = {
   outDir: string | null;
   arm: string;
   policyMode: "active" | "off" | "recorded" | "shadow" | "unspecified";
+  policySource: "global_env" | "profile_rule" | "off" | "mixed" | "unspecified" | null;
+  requiredPolicySource: "global_env" | "profile_rule" | null;
+  requiredPolicyProfileId: string | null;
   thresholds: Partial<AionisAdmissionToolE2EGateThresholds>;
+};
+
+type PolicySource = NonNullable<CliArgs["policySource"]>;
+
+type PolicyGuideAudit = {
+  policy_source: PolicySource;
+  policy_source_audit?: {
+    guide_count: number;
+    matching_source_count: number;
+    profile_id?: string | null;
+    matching_profile_id_count?: number;
+  };
 };
 
 function parsePositiveInteger(value: string | undefined): number | undefined {
@@ -35,6 +50,9 @@ function parseArgs(argv: string[]): CliArgs {
     outDir: null,
     arm: "aionis",
     policyMode: "unspecified",
+    policySource: null,
+    requiredPolicySource: null,
+    requiredPolicyProfileId: null,
     thresholds: {},
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -54,6 +72,15 @@ function parseArgs(argv: string[]): CliArgs {
       index += 1;
     } else if (arg === "--policy-mode" && next && ["active", "off", "recorded", "shadow", "unspecified"].includes(next)) {
       out.policyMode = next as CliArgs["policyMode"];
+      index += 1;
+    } else if (arg === "--policy-source" && next && ["global_env", "profile_rule", "off", "mixed", "unspecified"].includes(next)) {
+      out.policySource = next as CliArgs["policySource"];
+      index += 1;
+    } else if (arg === "--require-policy-source" && next && ["global_env", "profile_rule"].includes(next)) {
+      out.requiredPolicySource = next as CliArgs["requiredPolicySource"];
+      index += 1;
+    } else if ((arg === "--require-policy-profile-id" || arg === "--policy-profile-id") && next) {
+      out.requiredPolicyProfileId = next;
       index += 1;
     } else if (arg === "--min-runs" && next) {
       out.thresholds.min_runs = parsePositiveInteger(next);
@@ -101,6 +128,9 @@ function parseArgs(argv: string[]): CliArgs {
         "  --out-dir DIR                          writes tool_e2e_gate.json/.md",
         "  --arm aionis",
         "  --policy-mode active                   required for candidate default-active review",
+        "  --policy-source profile_rule           optional manual source declaration",
+        "  --require-policy-source profile_rule   require every readable guide to use this source",
+        "  --require-policy-profile-id ID         require every readable guide to use this profile",
         "",
         "Threshold overrides:",
         "  --min-runs 40",
@@ -126,6 +156,77 @@ function readJson(file: string): unknown {
   return JSON.parse(fs.readFileSync(path.resolve(file), "utf8")) as unknown;
 }
 
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function isPolicySource(value: string | null): value is PolicySource {
+  return value === "global_env"
+    || value === "profile_rule"
+    || value === "off"
+    || value === "mixed"
+    || value === "unspecified";
+}
+
+function resultBundlePaths(results: unknown[]): string[] {
+  const paths = new Set<string>();
+  for (const result of results) {
+    const bundlePath = stringValue(recordValue(result)?.bundle_path);
+    if (bundlePath) paths.add(path.resolve(bundlePath));
+  }
+  return [...paths].sort();
+}
+
+function guidePolicyRecord(guide: unknown): { source: PolicySource | null; profile_id: string | null } {
+  const sourceMap = recordValue(recordValue(guide)?.source_map);
+  const admission = recordValue(sourceMap?.admission_candidate_policy);
+  const source = stringValue(admission?.source);
+  return {
+    source: isPolicySource(source) ? source : null,
+    profile_id: stringValue(admission?.profile_id),
+  };
+}
+
+function inferPolicySource(sources: PolicySource[]): PolicySource {
+  if (sources.length === 0) return "unspecified";
+  const unique = new Set(sources);
+  return unique.size === 1 ? sources[0] : "mixed";
+}
+
+function collectPolicyGuideAudit(args: CliArgs, results: unknown[]): PolicyGuideAudit {
+  const records: Array<{ source: PolicySource; profile_id: string | null }> = [];
+  for (const bundlePath of resultBundlePaths(results)) {
+    const guidePath = path.join(path.dirname(bundlePath), "contexts", args.arm, "guide.json");
+    if (!fs.existsSync(guidePath)) continue;
+    const record = guidePolicyRecord(readJson(guidePath));
+    if (record.source) records.push({ source: record.source, profile_id: record.profile_id });
+  }
+  const inferredSource = inferPolicySource(records.map((record) => record.source));
+  const policySource = args.policySource ?? inferredSource;
+  if (records.length === 0) {
+    return { policy_source: policySource };
+  }
+  const sourceToMatch = args.requiredPolicySource ?? args.policySource ?? (inferredSource === "mixed" ? null : inferredSource);
+  const profileId = args.requiredPolicyProfileId;
+  return {
+    policy_source: policySource,
+    policy_source_audit: {
+      guide_count: records.length,
+      matching_source_count: sourceToMatch
+        ? records.filter((record) => record.source === sourceToMatch).length
+        : 0,
+      profile_id: profileId,
+      matching_profile_id_count: profileId
+        ? records.filter((record) => record.profile_id === profileId).length
+        : undefined,
+    },
+  };
+}
+
 function writeJson(file: string, value: unknown): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
@@ -138,11 +239,17 @@ function main() {
   if (!fs.existsSync(summaryPath)) throw new Error(`summary not found: ${summaryPath}`);
   const resultsPath = args.results ? path.resolve(args.results) : null;
   if (resultsPath && !fs.existsSync(resultsPath)) throw new Error(`results not found: ${resultsPath}`);
+  const results = resultsPath ? parseJsonlLines(fs.readFileSync(resultsPath, "utf8")) : undefined;
+  const policyGuideAudit = collectPolicyGuideAudit(args, results ?? []);
   const report = evaluateAdmissionToolE2EGate({
     summary: readJson(summaryPath),
-    results: resultsPath ? parseJsonlLines(fs.readFileSync(resultsPath, "utf8")) : undefined,
+    results,
     arm: args.arm,
     policy_mode: args.policyMode,
+    policy_source: policyGuideAudit.policy_source,
+    required_policy_source: args.requiredPolicySource ?? undefined,
+    required_policy_profile_id: args.requiredPolicyProfileId ?? undefined,
+    policy_source_audit: policyGuideAudit.policy_source_audit,
     thresholds: args.thresholds,
   });
   const outDir = path.resolve(args.outDir ?? path.dirname(summaryPath));
