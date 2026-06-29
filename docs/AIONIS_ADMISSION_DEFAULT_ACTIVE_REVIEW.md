@@ -84,6 +84,8 @@ Not approved:
 Aionis supports a profile-scoped switch through
 `AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON`. The global default
 remains `off`; profile rules are only considered when global mode is `off`.
+For a copyable template and guide request check, see
+[AIONIS_ADMISSION_PROFILE_ACTIVATION_QUICKSTART.md](AIONIS_ADMISSION_PROFILE_ACTIVATION_QUICKSTART.md).
 
 Recommended shape:
 

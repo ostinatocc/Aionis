@@ -45,6 +45,7 @@ normal Aionis admission/governance path still decides `use_now`,
 | A service that calls Aionis over HTTP | `npm run -s runtime:quickstart:http` | Raw HTTP | `observe -> guide -> feedback -> measure -> snapshot -> rehydrate` | `aionis_http_quickstart_result_v1` |
 | A planner/worker/verifier/reviewer system | `npm run -s runtime:quickstart:multi-agent` | SDK + execution memory adapter | `observe -> guide -> feedback -> measure -> snapshot` with shared team memory | `aionis_multi_agent_quickstart_result_v1` |
 | A host with Mem0/Zep/vector/markdown memories | `npm run -s runtime:quickstart:memory-firewall` | SDK facade | `governMemory(mode=firewall)` over external candidates | `aionis_memory_firewall_quickstart_result_v1` |
+| A host enabling the reviewed admission profile | Configure `AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON` | Runtime env + `/v1/guide` | selected profile only; global mode remains `off` | [AIONIS_ADMISSION_PROFILE_ACTIVATION_QUICKSTART.md](AIONIS_ADMISSION_PROFILE_ACTIVATION_QUICKSTART.md) |
 | An operator debugging an Agent decision | `npm run -s runtime:quickstart:flight-recorder` | SDK facade | `flightRecorder` over agent context, receipt, admission record, and feedback | `aionis_flight_recorder_quickstart_result_v1` |
 
 ## What Each Verification Flow Proves

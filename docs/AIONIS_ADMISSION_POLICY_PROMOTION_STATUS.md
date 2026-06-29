@@ -13,11 +13,11 @@ the default Runtime path.
 | Field | Value |
 |---|---|
 | Candidate policy | `candidate_project_context_closed_loop_inspect` |
-| Current status | `eligible_for_profile_scoped_default_active_review` |
+| Current status | `approved_for_selected_profile_activation` |
 | Default Runtime status | `not_default_active` |
 | External backend status | `shadow_only` |
 | Full tool-executing Agent E2E status | `profile_rule_multistep40_route_action_gate_passed` |
-| Next gate | `operator_profile_default_activation_review` |
+| Next gate | `additional_profile_tool_e2e_gate_before_expansion` |
 
 The selected candidate is a closed-loop admission policy. Its current evidence
 supports default-active review design for route preservation and action
@@ -57,11 +57,12 @@ This does not authorize:
 - broad product claims across all memory lanes;
 - broad claims about full coding-Agent task completion.
 
-The Runtime default remains explicit opt-in. The human default-active review is
+The Runtime default remains explicit opt-in. The operator activation review is
 recorded in
 [AIONIS_ADMISSION_DEFAULT_ACTIVE_REVIEW.md](AIONIS_ADMISSION_DEFAULT_ACTIVE_REVIEW.md):
-the candidate is approved for a profile-scoped default-active product path, not
-for a global Runtime default.
+the candidate is approved for selected-profile activation, not for a global
+Runtime default. A copyable activation template is available in
+[AIONIS_ADMISSION_PROFILE_ACTIVATION_QUICKSTART.md](AIONIS_ADMISSION_PROFILE_ACTIVATION_QUICKSTART.md).
 
 ## Evidence Chain
 
@@ -88,7 +89,8 @@ for a global Runtime default.
 | Profile-rule cross-repository tool-executing Agent E2E 40-gate | Local report `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/admission-tool-e2e-profile-rule-vs-fullhistory40-arkglm52-2026-06-29T11-06-14/tool_e2e_gate.md` | Profile attribution passed on 40 / 40 guides, but the gate is blocked for default-active review: accepted-route rate 39 / 40 and action-completion rate 33 / 40. Initial context ratio versus Full History was 12.2%. |
 | Profile-rule rehydrate continuation focused rerun | Local report `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/profile-rule-rehydrate-loop-playwright4-2026-06-29T13-46-05/summary.json` | The largest rehydrate-first failure cluster recovered with the multi-step Agent: accepted-route 4 / 4, action-completion 4 / 4, terminal inspect 0 / 4, report conflict 0 / 4, route write violations 0 / 4. |
 | Profile-rule multi-step tool-executing Agent E2E 40-gate | Local report `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/profile-rule-multistep-aionis40-arkglm52-2026-06-29T14-09-42/tool_e2e_gate.md` | Aionis-only profile-rule multi-step run passed the route/action/profile-source gate: completed 40 / 40, accepted-route 40 / 40, action-completion 40 / 40, route write/action violations 0, terminal inspect 0, report conflict 0, matching profile-rule source 40 / 40. Budget was not assessed in this Aionis-only gate. |
-| Human default-active review | `docs/AIONIS_ADMISSION_DEFAULT_ACTIVE_REVIEW.md` | Candidate approved for profile-scoped default-active rollout. Global Runtime default remains `off`; external backend path remains `shadow_only`. |
+| Operator selected-profile activation review | `docs/AIONIS_ADMISSION_DEFAULT_ACTIVE_REVIEW.md` | Candidate approved for selected-profile activation. Global Runtime default remains `off`; external backend path remains `shadow_only`. |
+| Selected-profile activation quickstart | `docs/AIONIS_ADMISSION_PROFILE_ACTIVATION_QUICKSTART.md` | Copyable `.env` profile rule, matching `/v1/guide` request, source-map verification, and rollback path. |
 
 Follow-up inspection found the paired27 regression root cause: the active
 projection over-downgraded Aionis `execution_memory` accepted-continuation
@@ -130,10 +132,10 @@ after `rehydrate_first`. This proves that the report came from a bounded
 profile rule rather than the global environment switch and that executable
 evidence rehydration is handled by the Agent loop.
 
-The next decision is operator activation review for this specific profile.
-That review may choose to activate only the selected profile path, keep the
-global default `off`, keep the external backend path `shadow_only`, and require
-another gate run before expanding to any additional profile.
+The selected profile is approved for activation through
+`AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON`. The global default
+remains `off`, the external backend path remains `shadow_only`, and another
+gate run is required before expanding to any additional profile.
 
 ## Gate Results
 
@@ -419,9 +421,9 @@ The current product claim is:
 > real-Agent admission rerun, and cross-repository tool-executing E2E evidence.
 > The global active path passed route/completion and initial-context budget
 > gates. The profile-scoped path proved bounded `profile_rule` source
-> attribution and passed the 40-record multi-step route/action gate. Default
-> activation remains an explicit operator decision for the selected profile,
-> not a global Runtime default.
+> attribution and passed the 40-record multi-step route/action gate. The
+> selected profile is approved for activation through profile rules; this is not
+> a global Runtime default.
 
 The current product claim is not:
 

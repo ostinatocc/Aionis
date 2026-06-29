@@ -198,6 +198,8 @@ External proof paths:
   [docs.aionis.work/products/memory-firewall](https://docs.aionis.work/products/memory-firewall)
 - Public benchmark and proof artifacts:
   [docs.aionis.work/mgbench](https://docs.aionis.work/mgbench)
+- Profile-scoped admission activation:
+  [docs/AIONIS_ADMISSION_PROFILE_ACTIVATION_QUICKSTART.md](docs/AIONIS_ADMISSION_PROFILE_ACTIVATION_QUICKSTART.md)
 
 Use Aionis when your Agents must continue real work across sessions, roles,
 handoffs, and mistakes.
