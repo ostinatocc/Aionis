@@ -20,7 +20,7 @@ what to keep out of direct use, and what raw evidence can be restored on demand.
 Current public patch versions for the v0.3 train:
 
 - `aionis@0.3.4`
-- `@aionis/create@0.3.2`
+- `@aionis/create@0.3.3`
 - `@aionis/sdk@0.3.1`
 - `@aionis/mcp@0.3.2`
 - `@aionis/aifs@0.3.0`
