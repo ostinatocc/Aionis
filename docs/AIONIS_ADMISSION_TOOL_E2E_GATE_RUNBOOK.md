@@ -86,9 +86,9 @@ The command writes next to `summary.json` unless `--out-dir` is set:
 ## Known Current Status
 
 The latest closed-loop admission shadow gate passed and supports isolated
-active gray review. The current instrumented 40-record cross-repository
-active-mode tool-E2E rerun passed route, completion, and initial-context budget
-gates and is ready for human default-active review.
+active gray review. The global active-mode, instrumented 40-record
+cross-repository tool-E2E rerun also passed route, completion, and
+initial-context budget gates on the validated guide path.
 
 Human review outcome:
 
@@ -96,7 +96,7 @@ Human review outcome:
 - approved product path: profile-scoped default-active rollout;
 - global Runtime default remains `off`.
 
-Current passing report:
+Current global-active passing report:
 
 - `docs/research/2026-06-29-admission-active-crossrepo-tool-e2e-initial-context-rerun.md`
 - local gate artifact:
@@ -113,36 +113,119 @@ Both arms completed `40 / 40` records. Aionis used `203,242` initial-context
 chars versus Full History `1,352,256` initial-context chars (`15.0%` of Full
 History) while preserving 100% accepted-route and action-completion rates.
 
+The profile-scoped validation is stricter than the global-active run because it
+requires every guide to expose
+`source_map.admission_candidate_policy.source = "profile_rule"` and the
+selected profile id. The first profile-scoped 40-record report proved profile
+source attribution on all guides, but it was blocked for default-active review
+under the single-step Agent:
+
+- local gate artifact:
+  `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/admission-tool-e2e-profile-rule-vs-fullhistory40-arkglm52-2026-06-29T11-06-14/tool_e2e_gate.md`
+- profile source audit: `40 / 40` guides from `profile_rule`;
+- profile id audit: `40 / 40` guides matched
+  `external-agent-e2e-worker-full-power`;
+- accepted-route rate: `39 / 40`;
+- action-completion rate: `33 / 40`;
+- initial context ratio versus Full History: `12.2%`;
+- blocking reasons: `accepted_route_rate_below_threshold`,
+  `action_completion_rate_below_threshold`.
+
+Focused inspection showed the largest completion cluster was not a Runtime
+policy-source failure. Four Playwright cases selected `rehydrate_first` for the
+accepted route, but the single-step file-choice Agent treated rehydrate as a
+terminal decision. Re-running the same four records with the multi-step Agent
+and `AIONIS_E2E_REHYDRATE_CONTINUES=1` produced:
+
+- local report:
+  `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/profile-rule-rehydrate-loop-playwright4-2026-06-29T13-46-05/summary.json`
+- accepted-route rate: `4 / 4`;
+- action-completion rate: `4 / 4`;
+- terminal inspect exits: `0 / 4`;
+- report-conflict exits: `0 / 4`;
+- route write violations: `0 / 4`.
+
+The full profile-scoped multi-step Aionis rerun then closed the route/action
+gate:
+
+- local gate artifact:
+  `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/profile-rule-multistep-aionis40-arkglm52-2026-06-29T14-09-42/tool_e2e_gate.md`
+- profile source audit: `40 / 40` guides from `profile_rule`;
+- profile id audit: `40 / 40` guides matched
+  `external-agent-e2e-worker-full-power`;
+- accepted-route rate: `40 / 40`;
+- action-completion rate: `40 / 40`;
+- route write violations: `0 / 40`;
+- route action violations: `0 / 40`;
+- direction-attention violations: `0 / 40`;
+- terminal inspect exits: `0 / 40`;
+- report-conflict exits: `0 / 40`;
+- gate status:
+  `passes_cross_repository_tool_e2e_gate_ready_for_default_active_review`.
+
+This full profile-scoped rerun used only the Aionis arm, so its gate report
+sets `context_budget_metric = "not_assessed"`. The same manifest already has a
+Full History initial-context comparison from the earlier profile-scoped
+two-arm run: Aionis `165,421` initial-context chars versus Full History
+`1,352,256` initial-context chars (`12.2%`). Treat that as informational
+budget context unless a future paired multi-step Full History rerun is needed
+for a stricter budget-only claim.
+
 The gate prefers `initial_context_chars` when reports include it. Only when
 that field is absent does the gate fall back to legacy total prompt tokens, and
 fallback results should not be used for broad context-budget claims when
 completion rates differ sharply.
 
-The previous paired27 run after the execution-memory and file-choice-normalizer
-fixes removed route write violations, but one buried route-adherence case still
-produced a terminal inspect and missed the accepted route. The 2026-06-28
-40-record report retested the current Runtime and closed that blocker for the
-validated guide path.
-
 General Aionis product context-stability runs are useful evidence, but they do
 not pass this admission-candidate gate unless the run explicitly used candidate
-`active` mode.
+`active` mode and, for profile-default validation, `profile_rule` source
+attribution.
 
 ## Next Work
 
 1. Keep the Runtime global default unchanged.
-2. Treat the 2026-06-29 initial-context rerun as the current budget evidence
-   for this gate. Do not use older fallback-only prompt-token reports for
-   budget claims.
+2. Treat the 2026-06-29 global-active initial-context rerun as current budget
+   evidence for the validated guide path. Do not use older fallback-only
+   prompt-token reports for budget claims.
 3. Keep active-mode projections visible in admission reports and Flight
    Recorder surfaces.
 4. Use `AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON` for bounded
    profile rollout. The selected guide profile must expose
    `source_map.admission_candidate_policy.source = "profile_rule"` before it
    counts as profile-default evidence.
-5. Re-run this gate with `--require-policy-source profile_rule` and the selected
-   `--require-policy-profile-id` before making the candidate default for any
-   product guide path.
-6. Re-run this gate before changing the default after material changes to
+5. Use the full profile-scoped multi-step Aionis rerun as the current
+   route/action/profile-source evidence for the selected product guide path.
+6. If a release claim needs a same-run budget ratio, rerun with a Full History
+   arm. Otherwise keep the existing same-manifest Full History initial-context
+   comparison as informational budget evidence.
+7. Re-run this gate before changing the default after material changes to
    guide rendering, lifecycle inference, execution memory rendering, or
    candidate-policy evaluation.
+
+## Profile-Scoped Multi-Step Command
+
+Use the same 40-record manifest and report gate, but run the Agent path that
+can continue after `rehydrate_first` instead of treating rehydrate as a final
+answer:
+
+```bash
+AIONIS_E2E_AGENT_MAX_STEPS=6 \
+AIONIS_E2E_REHYDRATE_CONTINUES=1 \
+AIONIS_E2E_EXECUTABLE_PATCH_GATE=1 \
+AIONIS_E2E_REHYDRATE_PAYLOAD_MODE=patch_plan_first \
+AIONIS_E2E_REHYDRATE_REPEAT_MODE=compact_after_first \
+npm run -s external-agent-e2e:phase2-gradient -- \
+  --manifest /path/to/phase2-gradient-traps.jsonl \
+  --work-root /path/to/work-root \
+  --report-dir /path/to/report-dir \
+  --arms aionis,full_history \
+  --base-url http://127.0.0.1:<runtime-port> \
+  --episode2-source base \
+  --command 'node /path/to/deepseek-multistep-agent.mjs' \
+  --force \
+  --continue-on-error
+```
+
+Then run the gate command from this document with
+`--require-policy-source profile_rule` and
+`--require-policy-profile-id external-agent-e2e-worker-full-power`.

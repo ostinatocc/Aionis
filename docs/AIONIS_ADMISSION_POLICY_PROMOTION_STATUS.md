@@ -13,23 +13,42 @@ the default Runtime path.
 | Field | Value |
 |---|---|
 | Candidate policy | `candidate_project_context_closed_loop_inspect` |
-| Current status | `approved_for_profile_scoped_default_active_design` |
+| Current status | `eligible_for_profile_scoped_default_active_review` |
 | Default Runtime status | `not_default_active` |
 | External backend status | `shadow_only` |
-| Full tool-executing Agent E2E status | `crossrepo_active40_route_completion_and_initial_context_budget_passed` |
-| Next gate | `profile_scoped_tool_e2e_validation` |
+| Full tool-executing Agent E2E status | `profile_rule_multistep40_route_action_gate_passed` |
+| Next gate | `operator_profile_default_activation_review` |
 
 The selected candidate is a closed-loop admission policy. Its current evidence
-supports default-active review for route preservation and action completion on
-the validated `/v1/guide` path. Shadow, isolated active gray, real-Agent
-admission rerun, and the cross-repository route/completion tool E2E gate have
-passed. The latest cross-repository tool E2E covered 10 base trap families
-across four context hygiene levels and preserved accepted-route recognition and
-action completion on all 40 records. The instrumented same-manifest Full
-History comparison recorded initial context size before the first tool step:
-Aionis used `203,242` initial-context chars versus Full History `1,352,256`
+supports default-active review design for route preservation and action
+completion on the validated `/v1/guide` path. Shadow, isolated active gray,
+real-Agent admission rerun, and the global active cross-repository
+route/completion tool E2E gate have passed. The latest global active
+cross-repository tool E2E covered 10 base trap families across four context
+hygiene levels and preserved accepted-route recognition and action completion
+on all 40 records. The instrumented same-manifest Full History comparison
+recorded initial context size before the first tool step: Aionis used
+`203,242` initial-context chars versus Full History `1,352,256`
 initial-context chars (`15.0%` of Full History) while both arms completed
 `40 / 40` records.
+
+The stricter profile-rule validation has now passed for route/action behavior.
+The first profile-rule 40-record report proved that every Aionis guide came
+from the selected `profile_rule`, but the single-step Agent used in that run
+treated `rehydrate_first` as a terminal answer. A focused four-record rerun
+over the largest rehydrate failure cluster, using the multi-step Agent with
+rehydrate continuation, recovered `4 / 4` accepted-route and `4 / 4` action
+completion. The full Aionis-only profile-rule multi-step rerun then completed
+`40 / 40` records with `40 / 40` accepted-route, `40 / 40`
+action-completion, zero route write/action violations, zero terminal inspect
+exits, zero report-conflict exits, and `40 / 40` matching profile-rule guide
+source records.
+
+That final profile-rule gate did not include a Full History arm, so
+`context_budget_metric = "not_assessed"` in its gate report. The same manifest
+already has an informational Full History initial-context comparison from the
+earlier profile-rule two-arm run: Aionis `165,421` chars versus Full History
+`1,352,256` chars (`12.2%`).
 
 This does not authorize:
 
@@ -65,7 +84,10 @@ for a global Runtime default.
 | Cross-repository tool-executing Agent E2E paired27 rerun | `docs/research/2026-06-18-admission-active-crossrepo-tool-e2e-paired27-rerun.md` | The execution-memory direct-use patch recovered most of the regression: wrong writes dropped from 7 / 27 to 1 / 27, accepted direction rose from 17 / 27 to 26 / 27, and action completion reached 27 / 27. |
 | Cross-repository paired27 rerun after file-choice normalizer fix and attention split | `docs/research/2026-06-18-admission-active-crossrepo-tool-e2e-paired27-rerun.md` | Wrong writes dropped to 0 / 27 and the prior residual separated-context case was confirmed as a harness normalization artifact. Attention split shows 1 / 27 direction-attention hit, 12 / 27 reference-only attention hits, and 0 / 27 other attention hits. One buried route-adherence failure remains. |
 | Cross-repository tool-executing Agent E2E 40-gate | `docs/research/2026-06-28-admission-active-crossrepo-tool-e2e-40gate.md` | Active mode completed 40 / 40 records across 10 base trap families and four hygiene levels, with 100% accepted-route rate, 100% action-completion rate, no terminal inspect, no report conflict, and no route violations. A same-manifest Full History run completed only 9 / 40 records; the paired gate is blocked only under the legacy total-prompt-token fallback. |
-| Cross-repository tool-executing Agent E2E initial-context rerun | `docs/research/2026-06-29-admission-active-crossrepo-tool-e2e-initial-context-rerun.md` | Active mode and Full History both completed 40 / 40 records. Aionis preserved 100% accepted-route and action-completion rates with 15.0% of the Full History initial context size. The tool-E2E gate passed with `context_budget_metric=initial_context_chars`. |
+| Cross-repository tool-executing Agent E2E initial-context rerun | `docs/research/2026-06-29-admission-active-crossrepo-tool-e2e-initial-context-rerun.md` | Global active mode and Full History both completed 40 / 40 records. Aionis preserved 100% accepted-route and action-completion rates with 15.0% of the Full History initial context size. The tool-E2E gate passed with `context_budget_metric=initial_context_chars`. |
+| Profile-rule cross-repository tool-executing Agent E2E 40-gate | Local report `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/admission-tool-e2e-profile-rule-vs-fullhistory40-arkglm52-2026-06-29T11-06-14/tool_e2e_gate.md` | Profile attribution passed on 40 / 40 guides, but the gate is blocked for default-active review: accepted-route rate 39 / 40 and action-completion rate 33 / 40. Initial context ratio versus Full History was 12.2%. |
+| Profile-rule rehydrate continuation focused rerun | Local report `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/profile-rule-rehydrate-loop-playwright4-2026-06-29T13-46-05/summary.json` | The largest rehydrate-first failure cluster recovered with the multi-step Agent: accepted-route 4 / 4, action-completion 4 / 4, terminal inspect 0 / 4, report conflict 0 / 4, route write violations 0 / 4. |
+| Profile-rule multi-step tool-executing Agent E2E 40-gate | Local report `/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/profile-rule-multistep-aionis40-arkglm52-2026-06-29T14-09-42/tool_e2e_gate.md` | Aionis-only profile-rule multi-step run passed the route/action/profile-source gate: completed 40 / 40, accepted-route 40 / 40, action-completion 40 / 40, route write/action violations 0, terminal inspect 0, report conflict 0, matching profile-rule source 40 / 40. Budget was not assessed in this Aionis-only gate. |
 | Human default-active review | `docs/AIONIS_ADMISSION_DEFAULT_ACTIVE_REVIEW.md` | Candidate approved for profile-scoped default-active rollout. Global Runtime default remains `off`; external backend path remains `shadow_only`. |
 
 Follow-up inspection found the paired27 regression root cause: the active
@@ -93,18 +115,25 @@ same guide profile. It does not authorize default active mode; that still
 requires the cross-repository tool-executing Agent E2E gate.
 
 The cross-repository tool-executing Agent gate described in
-[AIONIS_ADMISSION_TOOL_E2E_GATE_RUNBOOK.md](AIONIS_ADMISSION_TOOL_E2E_GATE_RUNBOOK.md).
+[AIONIS_ADMISSION_TOOL_E2E_GATE_RUNBOOK.md](AIONIS_ADMISSION_TOOL_E2E_GATE_RUNBOOK.md)
 has passed for route adherence, action completion, and initial-context budget
-in the current 40-record active-mode rerun. The paired Full History arm also
+in the global active 40-record rerun. The paired Full History arm also
 completed all 40 records, so the budget comparison is no longer relying on the
 legacy total-token fallback.
 
-The next gate is profile-scoped tool-E2E validation. The Runtime now supports
-`AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON`, while the global
-default remains `off`. The selected profile must pass the same tool-executing
-Agent E2E gate with `--require-policy-source profile_rule` and the selected
-`--require-policy-profile-id`, proving that the report came from a bounded
-profile rule rather than the global environment switch.
+The profile-scoped multi-step tool-E2E route/action gate has passed. The
+Runtime supports `AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON`, while
+the global default remains `off`. The selected profile has now passed the
+tool-executing Agent E2E gate with `--require-policy-source profile_rule`, the
+selected `--require-policy-profile-id`, and an Agent command that continues
+after `rehydrate_first`. This proves that the report came from a bounded
+profile rule rather than the global environment switch and that executable
+evidence rehydration is handled by the Agent loop.
+
+The next decision is operator activation review for this specific profile.
+That review may choose to activate only the selected profile path, keep the
+global default `off`, keep the external backend path `shadow_only`, and require
+another gate run before expanding to any additional profile.
 
 ## Gate Results
 
@@ -301,9 +330,9 @@ blocked because the paired27 rerun still had one buried route-adherence failure.
 The attention-scope rescore separated this from reference-only evidence use:
 direction attention was `1 / 27`, while reference-only attention was `12 / 27`.
 
-### Cross-Repository Tool-Executing Agent E2E 40-Gate
+### Historical Global-Active Cross-Repository Tool-Executing Agent E2E 40-Gate
 
-The current 40-record active-mode run produced:
+The 40-record global active-mode run produced:
 
 | Metric | Active mode |
 |---|---:|
@@ -364,14 +393,16 @@ decision on these items:
    shadow, isolated active gray, and real-Agent admission rerun gates have
    passed.
 2. A real tool-executing Agent E2E shows no completion regression and no
-   hard-boundary regression across more than one base trap family. As of
-   2026-06-28, the active 40-gate passed across 10 base trap families and four
-   context hygiene levels.
+   hard-boundary regression across more than one base trap family. The global
+   active 40-gate passed across 10 base trap families and four context hygiene
+   levels. The stricter profile-rule 40-gate also passed after rerunning with
+   the multi-step rehydrate-continuation Agent path.
 3. External backend candidates have task-level completion evidence, not only
    admission-row shadow evidence.
 4. Protocol compatibility is documented for the chosen real-Agent model. The
-   current 40-gate used `deepseek-v4-flash` with strict JSON output in the
-   multi-step tool Agent harness.
+   profile-rule 40-gate used the multi-step tool Agent harness so
+   `rehydrate_first` could continue into an executable edit instead of becoming
+   a terminal answer.
 5. The policy has a rollback plan and an operator-visible record in the Flight
    Recorder / admission reports.
 6. If the release claim includes context-budget superiority, use a same-manifest
@@ -386,9 +417,11 @@ The current product claim is:
 > Aionis can run the selected closed-loop admission candidate in explicit active
 > mode for the validated `/v1/guide` path, with shadow, active-gray,
 > real-Agent admission rerun, and cross-repository tool-executing E2E evidence.
-> The candidate is ready for human review on default-active route/completion
-> behavior. Context-budget superiority remains unproven until the same manifest
-> is rerun with initial-context budget instrumentation.
+> The global active path passed route/completion and initial-context budget
+> gates. The profile-scoped path proved bounded `profile_rule` source
+> attribution and passed the 40-record multi-step route/action gate. Default
+> activation remains an explicit operator decision for the selected profile,
+> not a global Runtime default.
 
 The current product claim is not:
 
