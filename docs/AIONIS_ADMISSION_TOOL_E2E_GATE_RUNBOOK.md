@@ -81,6 +81,12 @@ active gray review. The current instrumented 40-record cross-repository
 active-mode tool-E2E rerun passed route, completion, and initial-context budget
 gates and is ready for human default-active review.
 
+Human review outcome:
+
+- `docs/AIONIS_ADMISSION_DEFAULT_ACTIVE_REVIEW.md`
+- approved product path: profile-scoped default-active design;
+- global Runtime default remains `off`.
+
 Current passing report:
 
 - `docs/research/2026-06-29-admission-active-crossrepo-tool-e2e-initial-context-rerun.md`
@@ -115,13 +121,14 @@ not pass this admission-candidate gate unless the run explicitly used candidate
 
 ## Next Work
 
-1. Keep the Runtime default unchanged unless human default-active review
-   explicitly approves a named guide profile.
+1. Keep the Runtime global default unchanged.
 2. Treat the 2026-06-29 initial-context rerun as the current budget evidence
    for this gate. Do not use older fallback-only prompt-token reports for
    budget claims.
 3. Keep active-mode projections visible in admission reports and Flight
    Recorder surfaces.
-4. Re-run this gate before changing the default after material changes to
+4. Design a profile-scoped default switch before making the candidate default
+   for any product guide path.
+5. Re-run this gate before changing the default after material changes to
    guide rendering, lifecycle inference, execution memory rendering, or
    candidate-policy evaluation.
