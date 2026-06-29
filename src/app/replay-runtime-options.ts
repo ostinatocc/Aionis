@@ -161,7 +161,8 @@ export function createReplayRuntimeOptionBuilders(args: {
     args.learningControlRuntimeProviderBuilderOptions,
   );
 
-  function buildReplayRepairReviewOptions() {
+  function buildReplayRepairReviewOptions(options: { allowSandboxExecution?: boolean } = {}) {
+    const allowSandboxExecution = options.allowSandboxExecution !== false;
     const localExecutorMode = env.SANDBOX_ENABLED && env.SANDBOX_EXECUTOR_MODE === "local_process"
       ? "local_process" as const
       : "disabled" as const;
@@ -176,7 +177,7 @@ export function createReplayRuntimeOptionBuilders(args: {
       replayAccess: liteReplayAccess,
       replayMirror: liteReplayStore,
       localExecutor: {
-        enabled: env.SANDBOX_ENABLED && env.SANDBOX_EXECUTOR_MODE === "local_process",
+        enabled: allowSandboxExecution && env.SANDBOX_ENABLED && env.SANDBOX_EXECUTOR_MODE === "local_process",
         mode: localExecutorMode,
         allowedCommands: sandboxAllowedCommands,
         workdir: env.SANDBOX_EXECUTOR_WORKDIR,
@@ -201,16 +202,23 @@ export function createReplayRuntimeOptionBuilders(args: {
         episodeTtlDays: env.EPISODE_GC_TTL_DAYS,
       }),
       learningControlReviewProviders: learningControlProviders.replayRepairReview,
-      sandboxValidationExecutor: createSandboxRunExecutor({
-        env,
-        sandboxStore,
-        sandboxExecutor,
-        source: "replay_shadow_validation",
-      }),
+      sandboxValidationExecutor: allowSandboxExecution
+        ? createSandboxRunExecutor({
+            env,
+            sandboxStore,
+            sandboxExecutor,
+            source: "replay_shadow_validation",
+          })
+        : undefined,
     };
   }
 
-  function buildReplayPlaybookRunOptions(reply: any, source: string) {
+  function buildReplayPlaybookRunOptions(
+    reply: any,
+    source: string,
+    options: { allowSandboxExecution?: boolean } = {},
+  ) {
+    const allowSandboxExecution = options.allowSandboxExecution !== false;
     const localExecutorMode = env.SANDBOX_ENABLED && env.SANDBOX_EXECUTOR_MODE === "local_process"
       ? "local_process" as const
       : "disabled" as const;
@@ -230,7 +238,7 @@ export function createReplayRuntimeOptionBuilders(args: {
         replayMirror: liteReplayStore,
       },
       localExecutor: {
-        enabled: env.SANDBOX_ENABLED && env.SANDBOX_EXECUTOR_MODE === "local_process",
+        enabled: allowSandboxExecution && env.SANDBOX_ENABLED && env.SANDBOX_EXECUTOR_MODE === "local_process",
         mode: localExecutorMode,
         allowedCommands: sandboxAllowedCommands,
         workdir: env.SANDBOX_EXECUTOR_WORKDIR,
@@ -244,12 +252,14 @@ export function createReplayRuntimeOptionBuilders(args: {
       sandboxBudgetGuard: async (input: { tenant_id: string; scope: string; project_id: string | null }) => {
         await enforceSandboxTenantBudget(reply, input.tenant_id, input.scope, input.project_id);
       },
-      sandboxExecutor: createSandboxRunExecutor({
-        env,
-        sandboxStore,
-        sandboxExecutor,
-        source,
-      }),
+      sandboxExecutor: allowSandboxExecution
+        ? createSandboxRunExecutor({
+            env,
+            sandboxStore,
+            sandboxExecutor,
+            source,
+          })
+        : undefined,
     };
   }
 

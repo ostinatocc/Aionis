@@ -250,6 +250,30 @@ test("server edition product routes require auth and run observe to guide throug
   }
 });
 
+test("server edition skill candidate list rejects cross-tenant query identity", async () => {
+  const app = Fastify();
+  const writePath = tmpDbPath("skill-candidates-write");
+  const replayPath = tmpDbPath("skill-candidates-replay");
+  const env = await serverEnv(writePath, replayPath);
+  const stores = registerServerProductApp({ app, env, writePath, replayPath });
+  try {
+    const res = await app.inject({
+      method: "GET",
+      url: "/v1/skills/candidates?tenant_id=tenant-b&scope=tenant-b/default",
+      headers: { "x-api-key": "tenant-a-key" },
+    });
+    assert.equal(res.statusCode, 403, res.body);
+    assert.equal(res.json().error, "tenant_forbidden");
+  } finally {
+    await app.close();
+    await stores.executionTreeStore.close();
+    await stores.executionStateStore.close();
+    await stores.liteRecallStore.close();
+    await stores.liteReplayStore.close();
+    await stores.liteWriteStore.close();
+  }
+});
+
 test("server edition can construct local-store Runtime services", async () => {
   const writePath = tmpDbPath("services-write");
   const replayPath = tmpDbPath("services-replay");

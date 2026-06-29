@@ -9,6 +9,7 @@ import {
   isReplayExecutionPassed,
   resolveReplayExecutionFailureReason,
 } from "../../src/memory/replay-run-results.ts";
+import { normalizeReplayExecutionBackend } from "../../src/memory/replay-execution-helpers.ts";
 
 const execution = {
   ok: true,
@@ -59,6 +60,12 @@ test("replay run result helpers classify pass and failure reasons", () => {
     }),
     "non_zero_exit",
   );
+});
+
+test("replay execution backend defaults to sandbox sync", () => {
+  assert.equal(normalizeReplayExecutionBackend(null), "sandbox_sync");
+  assert.equal(normalizeReplayExecutionBackend("unknown"), "sandbox_sync");
+  assert.equal(normalizeReplayExecutionBackend("local_process"), "local_process");
 });
 
 test("replay run result helpers build stable output signature envelopes", () => {

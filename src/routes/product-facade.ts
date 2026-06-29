@@ -89,10 +89,10 @@ type ProductFacadeArgs = {
     principal: AuthPrincipal | null,
     kind: IdentityRequestKind,
   ) => unknown;
-  enforceRateLimit: (req: FastifyRequest, reply: FastifyReply, kind: "recall") => Promise<void>;
-  enforceTenantQuota: (req: FastifyRequest, reply: FastifyReply, kind: "recall", tenantId: string) => Promise<void>;
+  enforceRateLimit: (req: FastifyRequest, reply: FastifyReply, kind: "recall" | "write") => Promise<void>;
+  enforceTenantQuota: (req: FastifyRequest, reply: FastifyReply, kind: "recall" | "write", tenantId: string) => Promise<void>;
   tenantFromBody: (body: unknown) => string;
-  acquireInflightSlot: (kind: "recall") => Promise<InflightGateToken>;
+  acquireInflightSlot: (kind: "recall" | "write") => Promise<InflightGateToken>;
 };
 
 function productErrorResponse(args: {
@@ -1738,11 +1738,13 @@ function renderClaimLedgerAgentLine(item: AionisClaimLedgerProjectionItem): stri
 
 async function buildProductGuideClaimLedgerProjection(args: {
   claimLedgerAccess: ClaimLedgerAccess | null | undefined;
+  tenantId: string;
   scope: string;
   queryText?: string | null;
 }): Promise<AionisClaimLedgerProjection | null> {
   if (!args.claimLedgerAccess) return null;
   const live = await args.claimLedgerAccess.findLiveClaims({
+    tenantId: args.tenantId,
     scope: args.scope,
     limit: CLAIM_LEDGER_GUIDE_LIVE_LIMIT,
   });
@@ -1754,6 +1756,7 @@ async function buildProductGuideClaimLedgerProjection(args: {
   const supersededIds = new Set<string>();
   for (const slotKey of slotKeys) {
     const superseded = await args.claimLedgerAccess.findSupersededClaims({
+      tenantId: args.tenantId,
       scope: args.scope,
       slotKey,
       limit: CLAIM_LEDGER_GUIDE_SUPERSEDED_PER_SLOT_LIMIT,
@@ -3053,13 +3056,24 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
 
     const tenantId = parsed.tenant_id ?? env.MEMORY_TENANT_ID;
     const scope = parsed.scope ?? env.MEMORY_SCOPE;
-    const claimLedger = await writeProductObserveClaims({
-      claimLedgerAccess,
-      parsed,
-      write,
-      tenantId,
-      scope,
-    });
+    const claimOnlyWrite = hasClaims && !writePayload && !handoffPayload;
+    const claimOnlyGate = claimOnlyWrite ? await acquireInflightSlot("write") : null;
+    let claimLedger: Awaited<ReturnType<typeof writeProductObserveClaims>> = null;
+    try {
+      if (claimOnlyWrite) {
+        await enforceRateLimit(req, reply, "write");
+        await enforceTenantQuota(req, reply, "write", tenantId);
+      }
+      claimLedger = await writeProductObserveClaims({
+        claimLedgerAccess,
+        parsed,
+        write,
+        tenantId,
+        scope,
+      });
+    } finally {
+      claimOnlyGate?.release();
+    }
     if (claimLedger && !claimLedger.ok) {
       return reply.code(claimLedger.statusCode).send(claimLedger.body);
     }
@@ -3190,6 +3204,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     }
     const claimLedgerProjection = await buildProductGuideClaimLedgerProjection({
       claimLedgerAccess,
+      tenantId,
       scope,
       queryText: parsed.query_text,
     });
@@ -3733,9 +3748,11 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
   app.get("/v1/skills/candidates", async (req: ProductFacadeQueryRequest, reply: FastifyReply) => {
     const principal = await requireMemoryPrincipal(req);
     const parsed = ProductSkillCandidateListQuery.parse(req.query ?? {});
+    const identifiedQuery = withIdentityFromRequest(req, parsed, principal, "recall");
+    const identityParsed = ProductSkillCandidateListQuery.parse(identifiedQuery);
     await enforceRateLimit(req, reply, "recall");
-    const tenantId = parsed.tenant_id ?? env.MEMORY_TENANT_ID;
-    const scope = parsed.scope ?? env.MEMORY_SCOPE;
+    const tenantId = identityParsed.tenant_id ?? env.MEMORY_TENANT_ID;
+    const scope = identityParsed.scope ?? env.MEMORY_SCOPE;
     await enforceTenantQuota(req, reply, "recall", tenantId);
     if (!skillCandidateReviewAccess) {
       return reply.code(503).send(productErrorResponse({
@@ -3746,12 +3763,11 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     }
     const gate = await acquireInflightSlot("recall");
     try {
-      void principal;
       const listed = await skillCandidateReviewAccess.listTraceDerivedSkillCandidates({
         tenantId,
         scope,
-        reviewStatus: parsed.status as SkillCandidateReviewStatus | "all",
-        limit: parsed.limit,
+        reviewStatus: identityParsed.status as SkillCandidateReviewStatus | "all",
+        limit: identityParsed.limit,
       });
       return reply.code(200).send(productSkillCandidateReviewResponse({
         route: "/v1/skills/candidates",

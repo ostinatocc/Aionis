@@ -110,7 +110,7 @@ function asStringArray(input: unknown): string[] {
 
 export function normalizeReplayExecutionBackend(raw: string | null): ReplayExecutionBackend {
   if (raw === "sandbox_sync" || raw === "sandbox_async" || raw === "local_process") return raw;
-  return "local_process";
+  return "sandbox_sync";
 }
 
 export function normalizeReplaySensitiveReviewMode(raw: string | null): ReplaySensitiveReviewMode {

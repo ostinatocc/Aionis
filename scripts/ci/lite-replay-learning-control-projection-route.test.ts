@@ -110,6 +110,7 @@ async function seedPendingReviewPlaybook(args: {
   replayDbPath: string;
   playbookId: string;
   workflowSignature?: string | null;
+  stepsTemplate?: unknown[];
 }) {
   const liteWriteStore = createLiteWriteStore(args.writeDbPath);
   const liteReplayStore = createLiteReplayStore(args.replayDbPath);
@@ -150,7 +151,7 @@ async function seedPendingReviewPlaybook(args: {
             },
             policy_constraints: {},
             ...(args.workflowSignature ? { workflow_signature: args.workflowSignature } : {}),
-            steps_template: [
+            steps_template: args.stepsTemplate ?? [
               {
                 step_index: 1,
                 tool_name: "edit",
@@ -197,6 +198,7 @@ function registerReplayReviewRoute(args: {
   liteReplayStore: ReturnType<typeof createLiteReplayStore>;
   liteRecallStore?: ReturnType<typeof createLiteRecallStore> | null;
   envOverrides?: Record<string, unknown>;
+  sandboxAllowedCommands?: Set<string> | string[];
 }) {
   const env = buildEnv(args.envOverrides);
   const app = Fastify();
@@ -223,7 +225,7 @@ function registerReplayReviewRoute(args: {
     liteWriteStore: args.liteWriteStore,
     liteReplayAccess: args.liteReplayStore.createReplayAccess(),
     liteReplayStore: args.liteReplayStore,
-    sandboxAllowedCommands: [],
+    sandboxAllowedCommands: args.sandboxAllowedCommands ?? [],
     sandboxExecutor: {
       enqueue: () => {},
       executeSync: async () => {},
@@ -365,6 +367,72 @@ test("lite replay runtime defaults force sync_inline learning projection deliver
     assert.equal(runtimeOptions.buildReplayRepairReviewOptions().learningProjectionDefaults?.delivery, "sync_inline");
   } finally {
     await testSandbox.close();
+  }
+});
+
+test("replay playbook run requires admin token when sandbox admin-only execution is enabled", async () => {
+  const dbPath = tmpDbPath("sandbox-admin-only-run");
+  const playbookId = randomUUID();
+  const { liteWriteStore, liteReplayStore } = await seedPendingReviewPlaybook({
+    writeDbPath: dbPath,
+    replayDbPath: tmpDbPath("sandbox-admin-only-run-replay"),
+    playbookId,
+    stepsTemplate: [
+      {
+        step_index: 1,
+        tool_name: "command",
+        tool_input_template: { argv: ["echo", "aionis-admin-only"] },
+        preconditions: [],
+        postconditions: [],
+        safety_level: "auto_ok",
+      },
+    ],
+  });
+  const { app } = registerReplayReviewRoute({
+    liteWriteStore,
+    liteReplayStore,
+    envOverrides: {
+      SANDBOX_ENABLED: true,
+      SANDBOX_ADMIN_ONLY: true,
+      ADMIN_TOKEN: "admin-secret",
+      SANDBOX_EXECUTOR_MODE: "local_process",
+    },
+    sandboxAllowedCommands: new Set(["echo"]),
+  });
+  const payload = {
+    tenant_id: "default",
+    scope: "default",
+    playbook_id: playbookId,
+    mode: "strict",
+    deterministic_gate: { enabled: false },
+    params: {
+      allow_local_exec: true,
+      execution_backend: "local_process",
+      allowed_commands: ["echo"],
+      record_run: false,
+    },
+  };
+  try {
+    const denied = await app.inject({
+      method: "POST",
+      url: "/v1/memory/replay/playbooks/run",
+      payload,
+    });
+    assert.equal(denied.statusCode, 400, denied.body);
+    assert.equal(denied.json().error, "replay_executor_not_enabled");
+
+    const allowed = await app.inject({
+      method: "POST",
+      url: "/v1/memory/replay/playbooks/run",
+      headers: { "x-admin-token": "admin-secret" },
+      payload,
+    });
+    assert.equal(allowed.statusCode, 200, allowed.body);
+    assert.equal(allowed.json().mode, "strict");
+  } finally {
+    await app.close();
+    await liteReplayStore.close();
+    await liteWriteStore.close();
   }
 });
 

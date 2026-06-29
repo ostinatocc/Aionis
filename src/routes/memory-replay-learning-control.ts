@@ -4,6 +4,7 @@ import { ReplayPlaybookDispatchRequest, ReplayPlaybookRunRequest } from "../memo
 import { replayPlaybookDispatch, replayPlaybookRepairReview, replayPlaybookRun } from "../memory/replay.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
 import type { AuthPrincipal } from "../util/auth.js";
+import { secretTokensEqual } from "../util/admin_auth.js";
 import type { InflightGateToken } from "../util/inflight_gate.js";
 
 type ReplayLearningControlRequest = FastifyRequest<{ Body: unknown }>;
@@ -17,7 +18,12 @@ type ReplayLearningControlRateKind = "write" | "recall";
 
 export function registerMemoryReplayLearningControlRoutes(args: {
   app: FastifyInstance;
-  env: { AIONIS_EDITION?: string };
+  env: {
+    AIONIS_EDITION?: string;
+    SANDBOX_ENABLED?: boolean;
+    SANDBOX_ADMIN_ONLY?: boolean;
+    ADMIN_TOKEN?: string;
+  };
   liteWriteStore: LiteWriteStore;
   requireMemoryPrincipal: (req: FastifyRequest) => Promise<AuthPrincipal | null>;
   withIdentityFromRequest: (
@@ -31,8 +37,12 @@ export function registerMemoryReplayLearningControlRoutes(args: {
   tenantFromBody: (body: unknown) => string;
   acquireInflightSlot: (kind: ReplayLearningControlRateKind) => Promise<InflightGateToken>;
   withReplayRepairReviewDefaults: (body: unknown) => { body: Record<string, unknown>; resolution: unknown };
-  buildReplayRepairReviewOptions: () => ReplayPlaybookReviewOptionsLike;
-  buildReplayPlaybookRunOptions: (reply: FastifyReply, source: string) => ReplayPlaybookRunOptionsLike;
+  buildReplayRepairReviewOptions: (options?: { allowSandboxExecution?: boolean }) => ReplayPlaybookReviewOptionsLike;
+  buildReplayPlaybookRunOptions: (
+    reply: FastifyReply,
+    source: string,
+    options?: { allowSandboxExecution?: boolean },
+  ) => ReplayPlaybookRunOptionsLike;
 }) {
   const {
     app,
@@ -79,6 +89,13 @@ export function registerMemoryReplayLearningControlRoutes(args: {
     return deterministicPossible ? "write" : "recall";
   };
 
+  const requestAllowsSandboxExecution = (req: FastifyRequest): boolean => {
+    if (!env.SANDBOX_ENABLED || !env.SANDBOX_ADMIN_ONLY) return true;
+    const raw = req.headers?.["x-admin-token"];
+    const headerToken = typeof raw === "string" ? raw : Array.isArray(raw) ? String(raw[0] ?? "") : "";
+    return secretTokensEqual(headerToken, env.ADMIN_TOKEN);
+  };
+
   const runLearningControlRoute = async <TResult>(args: {
     req: ReplayLearningControlRequest;
     reply: FastifyReply;
@@ -123,7 +140,9 @@ export function registerMemoryReplayLearningControlRoutes(args: {
         return body;
       },
       execute: (body) => {
-        const reviewOptions = buildReplayRepairReviewOptions();
+        const reviewOptions = buildReplayRepairReviewOptions({
+          allowSandboxExecution: requestAllowsSandboxExecution(req),
+        });
         reviewOptions.writeAccess = liteWriteStore;
         return executeLearningControlWrite(body, (requestBody) =>
           replayPlaybookRepairReview(requestBody, reviewOptions),
@@ -146,7 +165,9 @@ export function registerMemoryReplayLearningControlRoutes(args: {
       requestKind: "replay_playbook_run",
       rateKind,
       execute: (requestBody) => {
-        const runOptions = buildReplayPlaybookRunOptions(reply, "replay_playbook_run");
+        const runOptions = buildReplayPlaybookRunOptions(reply, "replay_playbook_run", {
+          allowSandboxExecution: requestAllowsSandboxExecution(req),
+        });
         if (runOptions.writeOptions) {
           runOptions.writeOptions.writeAccess = liteWriteStore;
         }
@@ -166,7 +187,9 @@ export function registerMemoryReplayLearningControlRoutes(args: {
       requestKind: "replay_playbook_dispatch",
       rateKind,
       execute: (requestBody) => {
-        const runOptions = buildReplayPlaybookRunOptions(reply, "replay_playbook_dispatch");
+        const runOptions = buildReplayPlaybookRunOptions(reply, "replay_playbook_dispatch", {
+          allowSandboxExecution: requestAllowsSandboxExecution(req),
+        });
         if (runOptions.writeOptions) {
           runOptions.writeOptions.writeAccess = liteWriteStore;
         }

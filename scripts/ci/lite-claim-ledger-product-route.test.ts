@@ -62,7 +62,13 @@ async function liteEnv(writePath: string, replayPath: string): Promise<Env> {
   );
 }
 
-async function setupClaimLedgerProductApp() {
+async function setupClaimLedgerProductApp(args: {
+  productGuardOverrides?: {
+    enforceRateLimit?: (...args: any[]) => Promise<void>;
+    enforceTenantQuota?: (...args: any[]) => Promise<void>;
+    acquireInflightSlot?: (...args: any[]) => Promise<{ release: () => void }>;
+  };
+} = {}) {
   const writePath = tmpDbPath("product-write");
   const replayPath = tmpDbPath("product-replay");
   const env = await liteEnv(writePath, replayPath);
@@ -209,10 +215,10 @@ async function setupClaimLedgerProductApp() {
     claimLedgerAccess: services.claimLedgerAccess,
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
-    enforceRateLimit: guards.enforceRateLimit,
-    enforceTenantQuota: guards.enforceTenantQuota,
+    enforceRateLimit: args.productGuardOverrides?.enforceRateLimit ?? guards.enforceRateLimit,
+    enforceTenantQuota: args.productGuardOverrides?.enforceTenantQuota ?? guards.enforceTenantQuota,
     tenantFromBody: guards.tenantFromBody,
-    acquireInflightSlot: guards.acquireInflightSlot,
+    acquireInflightSlot: args.productGuardOverrides?.acquireInflightSlot ?? guards.acquireInflightSlot,
   });
   registerBootstrapLifecycle({
     app,
@@ -349,6 +355,53 @@ test("product observe persists explicit claim ledger claims without requiring me
     });
     assert.equal(claim?.value_text, "User current location is Shanghai.");
     assert.equal(claim?.source_memory_id, null);
+  } finally {
+    await app.close();
+  }
+});
+
+test("product observe claim-only writes use write limiter and inflight gate", async () => {
+  const calls: string[] = [];
+  const { app } = await setupClaimLedgerProductApp({
+    productGuardOverrides: {
+      enforceRateLimit: async (_req, _reply, kind) => {
+        calls.push(`rate:${kind}`);
+      },
+      enforceTenantQuota: async (_req, _reply, kind) => {
+        calls.push(`quota:${kind}`);
+      },
+      acquireInflightSlot: async (kind) => {
+        calls.push(`gate:${kind}`);
+        return {
+          release: () => calls.push(`release:${kind}`),
+        };
+      },
+    },
+  });
+  try {
+    const observe = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        claims: [{
+          contract_version: "aionis_claim_write_v1",
+          client_id: "claim-only-rate-gate",
+          subject_key: "user:self",
+          predicate: "timezone",
+          value: { name: "Asia/Shanghai" },
+          value_text: "User timezone is Asia/Shanghai.",
+          slot_key: "user:self.timezone",
+          conflict_policy: "singleton_latest",
+          claim_kind: "ordinary_fact",
+          authority: "advisory",
+          confidence: 0.9,
+          evidence_refs: ["observe://claim-only-rate-gate"],
+        }],
+      },
+    });
+
+    assert.equal(observe.statusCode, 200, observe.body);
+    assert.deepEqual(calls, ["gate:write", "rate:write", "quota:write", "release:write"]);
   } finally {
     await app.close();
   }

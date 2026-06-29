@@ -45,13 +45,13 @@ export type ClaimLedgerAccess = {
   writeClaim(args: { scope: string; tenantId: string; claim: AionisClaimWrite; now?: string }): Promise<ClaimLedgerRow>;
   findLiveClaims(args: {
     scope: string;
+    tenantId?: string;
     subjectKey?: string;
     slotKey?: string;
     limit: number;
   }): Promise<{ rows: ClaimLedgerRow[] }>;
-  findSupersededClaims(args: { scope: string; slotKey: string; limit: number }): Promise<{ rows: ClaimLedgerRow[] }>;
-  getClaim(args: { scope: string; claimId: string }): Promise<ClaimLedgerRow | null>;
-  listEvents(args: { scope: string; claimId?: string; limit: number }): Promise<{ rows: ClaimLedgerEventRow[] }>;
+  findSupersededClaims(args: { scope: string; tenantId?: string; slotKey: string; limit: number }): Promise<{ rows: ClaimLedgerRow[] }>;
+  getClaim(args: { scope: string; tenantId?: string; claimId: string }): Promise<ClaimLedgerRow | null>;
+  listEvents(args: { scope: string; tenantId?: string; claimId?: string; limit: number }): Promise<{ rows: ClaimLedgerEventRow[] }>;
   close(): Promise<void>;
 };
-

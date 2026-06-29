@@ -175,6 +175,55 @@ test("duplicate client id is idempotent", async () => {
   }
 });
 
+test("same scope claim ledger rows stay isolated by tenant", async () => {
+  const store = createLiteClaimLedgerStore(tmpDbPath("tenant-isolation"));
+  const access = store.createClaimLedgerAccess();
+  try {
+    const tenantA = await access.writeClaim({
+      scope: "claim-ledger:shared-scope",
+      tenantId: "tenant-a",
+      claim: locationClaim({ clientId: "claim:shared-client", city: "Shanghai" }),
+      now: "2026-06-16T01:00:00.000Z",
+    });
+    const tenantB = await access.writeClaim({
+      scope: "claim-ledger:shared-scope",
+      tenantId: "tenant-b",
+      claim: locationClaim({ clientId: "claim:shared-client", city: "Beijing" }),
+      now: "2026-06-16T02:00:00.000Z",
+    });
+
+    assert.notEqual(tenantA.claim_id, tenantB.claim_id);
+    assert.equal(tenantA.status, "active");
+    assert.equal(tenantB.status, "active");
+
+    const liveA = await access.findLiveClaims({
+      tenantId: "tenant-a",
+      scope: "claim-ledger:shared-scope",
+      slotKey: "user:self.current_location",
+      limit: 10,
+    });
+    const liveB = await access.findLiveClaims({
+      tenantId: "tenant-b",
+      scope: "claim-ledger:shared-scope",
+      slotKey: "user:self.current_location",
+      limit: 10,
+    });
+
+    assert.deepEqual(liveA.rows.map((row) => row.claim_id), [tenantA.claim_id]);
+    assert.deepEqual(liveB.rows.map((row) => row.claim_id), [tenantB.claim_id]);
+    assert.equal(
+      await access.getClaim({
+        tenantId: "tenant-a",
+        scope: "claim-ledger:shared-scope",
+        claimId: tenantB.claim_id,
+      }),
+      null,
+    );
+  } finally {
+    await store.close();
+  }
+});
+
 test("concurrent singleton writes across access objects serialize into one live claim", async () => {
   const store = createLiteClaimLedgerStore(tmpDbPath("concurrent"));
   const firstAccess = store.createClaimLedgerAccess();

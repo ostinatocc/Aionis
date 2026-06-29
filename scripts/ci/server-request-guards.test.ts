@@ -117,3 +117,29 @@ test("server request guards allow auth-off only under explicit development postu
   const principal = await guards.requireMemoryPrincipal({ headers: {} });
   assert.equal(principal, null);
 });
+
+test("server request guards enforce tenant quota by tenant id", async () => {
+  const env = await makeServerEnv({
+    TENANT_RECALL_RATE_LIMIT_RPS: "0.001",
+    TENANT_RECALL_RATE_LIMIT_BURST: "1",
+  });
+  const guards = makeGuards(env);
+  const reply = {
+    headers: new Map<string, unknown>(),
+    header(name: string, value: unknown) {
+      this.headers.set(name, value);
+    },
+  };
+
+  await guards.enforceTenantQuota({}, reply, "recall", "tenant-a");
+  await assert.rejects(
+    () => guards.enforceTenantQuota({}, reply, "recall", "tenant-a"),
+    (err: unknown) => {
+      assert.ok(err instanceof HttpError);
+      assert.equal(err.statusCode, 429);
+      assert.equal(err.code, "tenant_quota_exceeded_recall");
+      return true;
+    },
+  );
+  await guards.enforceTenantQuota({}, reply, "recall", "tenant-b");
+});

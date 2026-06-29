@@ -54,6 +54,13 @@ test(".env.example exposes local Runtime knobs", () => {
   assert.match(envExample, /^# LITE_SANDBOX_PROFILE=local_process_echo$/m);
 });
 
+test("Docker image defaults do not opt into unauthenticated remote Lite", () => {
+  const dockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf8");
+  assert.match(dockerfile, /AIONIS_LISTEN_HOST=127\.0\.0\.1/);
+  assert.match(dockerfile, /AIONIS_ALLOW_UNAUTHENTICATED_REMOTE=false/);
+  assert.doesNotMatch(dockerfile, /AIONIS_ALLOW_UNAUTHENTICATED_REMOTE=true/);
+});
+
 test("runtime manifest points at the focused Runtime startup command", () => {
   const manifest = readJson(path.join(ROOT, "runtime-manifest.json"));
   assert.equal(manifest.runtime_id, "aionis-runtime-focused");

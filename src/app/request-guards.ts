@@ -6,6 +6,7 @@ import { sha256Hex } from "../util/crypto.js";
 import { HttpError } from "../util/http.js";
 import { parseTrustedProxyCidrs, resolveTrustedClientIp } from "../util/ip-guard.js";
 import { InflightGate, InflightGateError, type InflightGateToken } from "../util/inflight_gate.js";
+import { TokenBucketLimiter } from "../util/ratelimit.js";
 
 type RateLimitResult =
   | { allowed: true; remaining: number }
@@ -235,7 +236,41 @@ export function createRequestGuards({
     apiKeysJson: env.MEMORY_API_KEYS_JSON,
     jwtHs256Secret: env.MEMORY_JWT_HS256_SECRET,
     jwtClockSkewSec: env.MEMORY_JWT_CLOCK_SKEW_SEC,
+    jwtRequireExp: env.MEMORY_JWT_REQUIRE_EXP,
   });
+
+  const tenantRecallLimiter = env.TENANT_QUOTA_ENABLED
+    ? new TokenBucketLimiter({
+        rate_per_sec: env.TENANT_RECALL_RATE_LIMIT_RPS,
+        burst: env.TENANT_RECALL_RATE_LIMIT_BURST,
+        ttl_ms: env.RATE_LIMIT_TTL_MS,
+        sweep_every_n: 500,
+      })
+    : null;
+  const tenantDebugEmbedLimiter = env.TENANT_QUOTA_ENABLED
+    ? new TokenBucketLimiter({
+        rate_per_sec: env.TENANT_DEBUG_EMBED_RATE_LIMIT_RPS,
+        burst: env.TENANT_DEBUG_EMBED_RATE_LIMIT_BURST,
+        ttl_ms: env.RATE_LIMIT_TTL_MS,
+        sweep_every_n: 500,
+      })
+    : null;
+  const tenantWriteLimiter = env.TENANT_QUOTA_ENABLED
+    ? new TokenBucketLimiter({
+        rate_per_sec: env.TENANT_WRITE_RATE_LIMIT_RPS,
+        burst: env.TENANT_WRITE_RATE_LIMIT_BURST,
+        ttl_ms: env.RATE_LIMIT_TTL_MS,
+        sweep_every_n: 500,
+      })
+    : null;
+  const tenantRecallTextEmbedLimiter = env.TENANT_QUOTA_ENABLED
+    ? new TokenBucketLimiter({
+        rate_per_sec: env.TENANT_RECALL_TEXT_EMBED_RATE_LIMIT_RPS,
+        burst: env.TENANT_RECALL_TEXT_EMBED_RATE_LIMIT_BURST,
+        ttl_ms: env.RATE_LIMIT_TTL_MS,
+        sweep_every_n: 500,
+      })
+    : null;
 
   const trustedProxyCidrs = parseTrustedProxyCidrs(env.TRUSTED_PROXY_CIDRS);
   const requestClientIp = (req: any): string => {
@@ -323,7 +358,6 @@ export function createRequestGuards({
   };
 
   const enforceRecallTextEmbedQuota = async (req: any, reply: any, tenantId: string) => {
-    void tenantId;
     if (!embedder) return;
     if (!env.RATE_LIMIT_ENABLED || !recallTextEmbedLimiter) return;
 
@@ -469,13 +503,59 @@ export function createRequestGuards({
     return null;
   };
 
-  const enforceTenantQuota = async (_req: any, _reply: any, _kind: TenantQuotaKind, _tenantId: string) => {};
+  const tenantQuotaKey = (kind: string, tenantId: string): string => {
+    const normalized = tenantId.trim() || env.MEMORY_TENANT_ID;
+    return `tenant:${kind}:${normalized}`;
+  };
+
+  const enforceTenantLimiter = async (reply: any, kind: TenantQuotaKind | "recall_text_embed", tenantId: string) => {
+    if (!env.TENANT_QUOTA_ENABLED) return;
+    const limiter =
+      kind === "debug_embeddings"
+        ? tenantDebugEmbedLimiter
+        : kind === "write"
+          ? tenantWriteLimiter
+          : kind === "recall_text_embed"
+            ? tenantRecallTextEmbedLimiter
+            : tenantRecallLimiter;
+    if (!limiter) return;
+    const waitLimitMs =
+      kind === "write"
+        ? env.TENANT_WRITE_RATE_LIMIT_MAX_WAIT_MS
+        : kind === "recall_text_embed"
+          ? env.TENANT_RECALL_TEXT_EMBED_RATE_LIMIT_MAX_WAIT_MS
+          : 0;
+    let waitedMs = 0;
+    let res = limiter.check(tenantQuotaKey(kind, tenantId), 1);
+    if (!res.allowed && waitLimitMs > 0) {
+      waitedMs = Math.min(waitLimitMs, Math.max(1, res.retry_after_ms));
+      await sleep(waitedMs);
+      res = limiter.check(tenantQuotaKey(kind, tenantId), 1);
+    }
+    if (res.allowed) return;
+    reply.header("retry-after", Math.ceil(res.retry_after_ms / 1000));
+    throw new HttpError(429, `tenant_quota_exceeded_${kind}`, `tenant quota exceeded (${kind}); retry later`, {
+      tenant_id: tenantId.trim() || env.MEMORY_TENANT_ID,
+      retry_after_ms: res.retry_after_ms,
+      waited_ms: waitedMs,
+    });
+  };
+
+  const originalEnforceRecallTextEmbedQuota = enforceRecallTextEmbedQuota;
+  const enforceRecallTextEmbedQuotaWithTenant = async (req: any, reply: any, tenantId: string) => {
+    await originalEnforceRecallTextEmbedQuota(req, reply, tenantId);
+    await enforceTenantLimiter(reply, "recall_text_embed", tenantId);
+  };
+
+  const enforceTenantQuota = async (_req: any, reply: any, kind: TenantQuotaKind, tenantId: string) => {
+    await enforceTenantLimiter(reply, kind, tenantId);
+  };
 
   return {
     buildRecallAuth,
     acquireInflightSlot,
     enforceRateLimit,
-    enforceRecallTextEmbedQuota,
+    enforceRecallTextEmbedQuota: enforceRecallTextEmbedQuotaWithTenant,
     requireMemoryPrincipal,
     withIdentityFromRequest,
     tenantFromBody,

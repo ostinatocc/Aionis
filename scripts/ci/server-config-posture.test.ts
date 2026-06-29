@@ -106,6 +106,41 @@ test("server edition rejects invalid recall engine mode", async () => {
   );
 });
 
+test("server prod jwt auth requires exp and a strong HS256 secret", async () => {
+  await withIsolatedEnv(
+    {
+      AIONIS_EDITION: "server",
+      AIONIS_MODE: "service",
+      MEMORY_AUTH_MODE: "jwt",
+      MEMORY_JWT_HS256_SECRET: "jwt-secret-with-at-least-32-bytes",
+      MEMORY_JWT_REQUIRE_EXP: "false",
+      SANDBOX_ENABLED: "false",
+    },
+    () => {
+      assert.throws(
+        () => loadEnv(),
+        /MEMORY_JWT_REQUIRE_EXP=false is not allowed/i,
+      );
+    },
+  );
+
+  await withIsolatedEnv(
+    {
+      AIONIS_EDITION: "server",
+      AIONIS_MODE: "service",
+      MEMORY_AUTH_MODE: "jwt",
+      MEMORY_JWT_HS256_SECRET: "short-secret",
+      SANDBOX_ENABLED: "false",
+    },
+    () => {
+      assert.throws(
+        () => loadEnv(),
+        /MEMORY_JWT_HS256_SECRET must be at least 32 bytes/i,
+      );
+    },
+  );
+});
+
 test("server edition allows auth off only for explicit dev posture", async () => {
   await withIsolatedEnv(
     {

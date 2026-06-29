@@ -32,10 +32,10 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value ?? null);
 }
 
-function claimIdFor(args: { scope: string; clientId?: string | null }): string {
+function claimIdFor(args: { tenantId: string; scope: string; clientId?: string | null }): string {
   if (!args.clientId) return `claim_${randomUUID()}`;
   const hash = createHash("sha256")
-    .update(JSON.stringify({ scope: args.scope, client_id: args.clientId }))
+    .update(JSON.stringify({ tenant_id: args.tenantId, scope: args.scope, client_id: args.clientId }))
     .digest("hex")
     .slice(0, 32);
   return `claim_${hash}`;
@@ -101,15 +101,17 @@ function migrate(db: SqliteDatabase): void {
       updated_at TEXT NOT NULL
     );
 
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_lite_claim_ledger_scope_client
-      ON lite_claim_ledger_claims(scope, client_id)
+    DROP INDEX IF EXISTS idx_lite_claim_ledger_scope_client;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_lite_claim_ledger_tenant_scope_client
+      ON lite_claim_ledger_claims(tenant_id, scope, client_id)
       WHERE client_id IS NOT NULL;
 
     CREATE INDEX IF NOT EXISTS idx_lite_claim_ledger_live_slot
-      ON lite_claim_ledger_claims(scope, slot_key, status, valid_until, created_at DESC);
+      ON lite_claim_ledger_claims(tenant_id, scope, slot_key, status, valid_until, created_at DESC);
 
     CREATE INDEX IF NOT EXISTS idx_lite_claim_ledger_subject
-      ON lite_claim_ledger_claims(scope, subject_key, status, created_at DESC);
+      ON lite_claim_ledger_claims(tenant_id, scope, subject_key, status, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS lite_claim_ledger_events (
       event_id TEXT PRIMARY KEY,
@@ -130,17 +132,18 @@ function migrate(db: SqliteDatabase): void {
 function claimAccessForDb(db: SqliteDatabase, transaction: SqliteTransactionRunner): ClaimLedgerAccess {
   const getByScopeClientStmt = db.prepare(`
     SELECT * FROM lite_claim_ledger_claims
-    WHERE scope = ? AND client_id = ?
+    WHERE tenant_id = ? AND scope = ? AND client_id = ?
     LIMIT 1
   `);
   const getByIdStmt = db.prepare(`
     SELECT * FROM lite_claim_ledger_claims
-    WHERE scope = ? AND claim_id = ?
+    WHERE tenant_id = ? AND scope = ? AND claim_id = ?
     LIMIT 1
   `);
   const supersedableStmt = db.prepare(`
     SELECT * FROM lite_claim_ledger_claims
-    WHERE scope = ?
+    WHERE tenant_id = ?
+      AND scope = ?
       AND slot_key = ?
       AND status IN ('active', 'contested')
       AND valid_until IS NULL
@@ -206,14 +209,14 @@ function claimAccessForDb(db: SqliteDatabase, transaction: SqliteTransactionRunn
 
       return await transaction.run(async () => {
         if (clientId) {
-          const existing = getByScopeClientStmt.get(args.scope, clientId);
+          const existing = getByScopeClientStmt.get(args.tenantId, args.scope, clientId);
           if (existing) return rowFromUnknown(existing);
         }
 
-        const claimId = claimIdFor({ scope: args.scope, clientId });
+        const claimId = claimIdFor({ tenantId: args.tenantId, scope: args.scope, clientId });
         const status = statusForClaim(parsed);
         const supersededRows = parsed.conflict_policy === "singleton_latest" && parsed.slot_key && status === "active"
-          ? supersedableStmt.all(args.scope, parsed.slot_key).map(rowFromUnknown)
+          ? supersedableStmt.all(args.tenantId, args.scope, parsed.slot_key).map(rowFromUnknown)
           : [];
 
         for (const row of supersededRows) {
@@ -268,7 +271,7 @@ function claimAccessForDb(db: SqliteDatabase, transaction: SqliteTransactionRunn
           at,
         });
 
-        const inserted = getByIdStmt.get(args.scope, claimId);
+        const inserted = getByIdStmt.get(args.tenantId, args.scope, claimId);
         if (!inserted) throw new Error("claim ledger write did not return inserted claim");
         return rowFromUnknown(inserted);
       });
@@ -277,6 +280,10 @@ function claimAccessForDb(db: SqliteDatabase, transaction: SqliteTransactionRunn
     async findLiveClaims(args): Promise<{ rows: ClaimLedgerRow[] }> {
       const where = ["scope = ?", "status IN ('active', 'contested')", "valid_until IS NULL"];
       const values: unknown[] = [args.scope];
+      if (args.tenantId) {
+        where.unshift("tenant_id = ?");
+        values.unshift(args.tenantId);
+      }
       if (args.subjectKey) {
         where.push("subject_key = ?");
         values.push(args.subjectKey);
@@ -295,35 +302,50 @@ function claimAccessForDb(db: SqliteDatabase, transaction: SqliteTransactionRunn
     },
 
     async findSupersededClaims(args): Promise<{ rows: ClaimLedgerRow[] }> {
+      const where = ["scope = ?", "slot_key = ?", "status = 'superseded'"];
+      const values: unknown[] = [args.scope, args.slotKey];
+      if (args.tenantId) {
+        where.unshift("tenant_id = ?");
+        values.unshift(args.tenantId);
+      }
       const rows = db.prepare(`
         SELECT * FROM lite_claim_ledger_claims
-        WHERE scope = ? AND slot_key = ? AND status = 'superseded'
+        WHERE ${where.join(" AND ")}
         ORDER BY valid_until DESC, created_at DESC
         LIMIT ?
-      `).all(args.scope, args.slotKey, normalizeLimit(args.limit)).map(rowFromUnknown);
+      `).all(...values, normalizeLimit(args.limit)).map(rowFromUnknown);
       return { rows };
     },
 
     async getClaim(args): Promise<ClaimLedgerRow | null> {
-      const row = getByIdStmt.get(args.scope, args.claimId);
+      const row = args.tenantId
+        ? getByIdStmt.get(args.tenantId, args.scope, args.claimId)
+        : db.prepare(`
+          SELECT * FROM lite_claim_ledger_claims
+          WHERE scope = ? AND claim_id = ?
+          LIMIT 1
+        `).get(args.scope, args.claimId);
       return row ? rowFromUnknown(row) : null;
     },
 
     async listEvents(args): Promise<{ rows: ClaimLedgerEventRow[] }> {
       const limit = normalizeLimit(args.limit);
-      const rows = args.claimId
-        ? db.prepare(`
-          SELECT * FROM lite_claim_ledger_events
-          WHERE scope = ? AND claim_id = ?
-          ORDER BY created_at ASC
-          LIMIT ?
-        `).all(args.scope, args.claimId, limit).map(eventFromUnknown)
-        : db.prepare(`
-          SELECT * FROM lite_claim_ledger_events
-          WHERE scope = ?
-          ORDER BY created_at ASC
-          LIMIT ?
-        `).all(args.scope, limit).map(eventFromUnknown);
+      const where = ["scope = ?"];
+      const values: unknown[] = [args.scope];
+      if (args.tenantId) {
+        where.unshift("tenant_id = ?");
+        values.unshift(args.tenantId);
+      }
+      if (args.claimId) {
+        where.push("claim_id = ?");
+        values.push(args.claimId);
+      }
+      const rows = db.prepare(`
+        SELECT * FROM lite_claim_ledger_events
+        WHERE ${where.join(" AND ")}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `).all(...values, limit).map(eventFromUnknown);
       return { rows };
     },
 

@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { createAuthResolver } from "../../src/util/auth.ts";
 
 const apiKeysJson = JSON.stringify({
@@ -10,6 +11,17 @@ const apiKeysJson = JSON.stringify({
     role: "developer",
   },
 });
+
+function base64urlJson(value: unknown): string {
+  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+}
+
+function signJwt(payload: Record<string, unknown>, secret: string): string {
+  const header = base64urlJson({ alg: "HS256", typ: "JWT" });
+  const body = base64urlJson(payload);
+  const signature = createHmac("sha256", secret).update(`${header}.${body}`).digest("base64url");
+  return `${header}.${body}.${signature}`;
+}
 
 test("api key auth accepts x-api-key", () => {
   const resolver = createAuthResolver({
@@ -56,4 +68,25 @@ test("api key auth rejects unknown bearer token", () => {
 
   const principal = resolver.resolve({ authorization: "Bearer unknown-key" });
   assert.equal(principal, null);
+});
+
+test("jwt auth requires exp by default", () => {
+  const secret = "jwt-secret-with-at-least-32-bytes";
+  const resolver = createAuthResolver({
+    mode: "jwt",
+    apiKeysJson,
+    jwtHs256Secret: secret,
+  });
+
+  const withoutExp = signJwt({ tenant_id: "tenant-a", sub: "agent-a" }, secret);
+  assert.equal(resolver.resolve({ authorization: `Bearer ${withoutExp}` }), null);
+
+  const withExp = signJwt({
+    tenant_id: "tenant-a",
+    sub: "agent-a",
+    exp: Math.floor(Date.now() / 1000) + 300,
+  }, secret);
+  const principal = resolver.resolve({ authorization: `Bearer ${withExp}` });
+  assert.equal(principal?.tenant_id, "tenant-a");
+  assert.equal(principal?.source, "jwt");
 });

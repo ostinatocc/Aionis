@@ -185,7 +185,7 @@ export function createAuthResolver(args: {
     mode === "api_key" || mode === "api_key_or_jwt" ? parseApiKeys(args.apiKeysJson) : new Map<string, ApiKeyRecord>();
   const jwtSecret = mode === "jwt" || mode === "api_key_or_jwt" ? String(args.jwtHs256Secret ?? "") : "";
   const skewSec = Number.isFinite(args.jwtClockSkewSec) ? Math.max(0, Math.trunc(args.jwtClockSkewSec!)) : 30;
-  const jwtRequireExp = args.jwtRequireExp === true;
+  const jwtRequireExp = args.jwtRequireExp !== false;
 
   const required_header_hint: AuthResolver["required_header_hint"] =
     mode === "off"

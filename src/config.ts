@@ -198,6 +198,12 @@ const EnvSchema = z.object({
   MEMORY_API_KEYS_JSON: z.string().default("{}"),
   MEMORY_JWT_HS256_SECRET: z.string().default(""),
   MEMORY_JWT_CLOCK_SKEW_SEC: z.coerce.number().int().min(0).default(30),
+  MEMORY_JWT_REQUIRE_EXP: z
+    .string()
+    .optional()
+    .transform((v) => (v ?? "true").toLowerCase())
+    .pipe(z.enum(["true", "false"]))
+    .transform((v) => v === "true"),
   // Optional hard guard: reject /v1/memory/write when no nodes are provided.
   // This prevents commit-only writes from being mistaken as recallable memory writes.
   MEMORY_WRITE_REQUIRE_NODES: z
@@ -1023,6 +1029,14 @@ export function loadEnv(): Env {
       const keys = parsedKeys && typeof parsedKeys === "object" && !Array.isArray(parsedKeys) ? Object.keys(parsedKeys as Record<string, unknown>) : [];
       if (keys.length === 0) {
         throw new Error("MEMORY_API_KEYS_JSON must contain at least one key when APP_ENV=prod and auth uses api keys");
+      }
+    }
+    if (parsed.data.MEMORY_AUTH_MODE === "jwt" || parsed.data.MEMORY_AUTH_MODE === "api_key_or_jwt") {
+      if (!parsed.data.MEMORY_JWT_REQUIRE_EXP) {
+        throw new Error("MEMORY_JWT_REQUIRE_EXP=false is not allowed when APP_ENV=prod and auth uses jwt");
+      }
+      if (Buffer.byteLength(parsed.data.MEMORY_JWT_HS256_SECRET, "utf8") < 32) {
+        throw new Error("MEMORY_JWT_HS256_SECRET must be at least 32 bytes when APP_ENV=prod and auth uses jwt");
       }
     }
     if (parsed.data.SANDBOX_ENABLED && parsed.data.SANDBOX_EXECUTOR_MODE === "local_process" && !parsed.data.SANDBOX_LOCAL_PROCESS_ALLOW_IN_PROD) {
