@@ -321,6 +321,7 @@ const AIONIS_RECALL_SOURCE_KINDS = new Set<AionisRecallSourceTrace["kind"]>([
   "recent",
   "exact_recovery",
   "ann",
+  "substrate",
 ]);
 
 function recallSourceTraceValue(value: unknown): AionisRecallSourceTrace | null {

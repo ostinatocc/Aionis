@@ -150,6 +150,16 @@ test("RecallStoreAccess v4 exposes candidate source traces without changing cand
     assert.equal(lexical[0]?.id, "semantic-target");
     assert.equal(lexical[0]?.sources?.[0]?.kind, "lexical");
     assert.equal(lexical[0]?.sources?.[0]?.reason, "keyword_index_match");
+    const semanticSources = [
+      ...(semantic[0]!.sources ?? []),
+      {
+        kind: "substrate" as const,
+        score: 0.91,
+        reason: "substrate_sidecar_search",
+        matched_fields: ["query_match"],
+        index_name: "aionis_substrate_sidecar",
+      },
+    ];
 
     const sourceRows = await access.stage2Nodes({
       scope: "source-trace/default",
@@ -169,7 +179,7 @@ test("RecallStoreAccess v4 exposes candidate source traces without changing cand
       context_items: [],
       ranked: [{ id: "semantic-target", score: semantic[0]!.similarity }],
       recall_sources_by_memory_id: {
-        "semantic-target": semantic[0]!.sources,
+        "semantic-target": semanticSources,
       },
       source_map: {
         routes_used: ["/v1/memory/recall"],
@@ -177,6 +187,7 @@ test("RecallStoreAccess v4 exposes candidate source traces without changing cand
     });
     assert.equal(memoryPacket.relevant_memories[0]?.recall_sources[0]?.kind, "semantic");
     assert.equal(memoryPacket.relevant_memories[0]?.recall_sources[0]?.index_name, "lite_embedding_json_scan");
+    assert.ok(memoryPacket.relevant_memories[0]?.recall_sources.some((source) => source.kind === "substrate"));
 
     const decisionTrace = buildAionisMemoryDecisionTrace({
       tenant_id: "default",
@@ -188,12 +199,16 @@ test("RecallStoreAccess v4 exposes candidate source traces without changing cand
       },
     });
     assert.equal(decisionTrace.memory_decisions[0]?.recall_sources[0]?.kind, "semantic");
+    assert.ok(decisionTrace.memory_decisions[0]?.recall_sources.some((source) => source.kind === "substrate"));
     assert.ok(decisionTrace.source_map.internal_surfaces_used.includes("recall_source_trace"));
     assert.equal(decisionTrace.memory_use_receipt.decision_summaries[0]?.recall_sources[0]?.kind, "semantic");
+    assert.ok(decisionTrace.memory_use_receipt.decision_summaries[0]?.recall_sources.some((source) => source.kind === "substrate"));
     assert.equal(decisionTrace.admission_record.entries[0]?.recall_sources[0]?.kind, "semantic");
+    assert.ok(decisionTrace.admission_record.entries[0]?.recall_sources.some((source) => source.kind === "substrate"));
 
     const receipt = buildAionisMemoryUseReceiptFromDecisionTrace(decisionTrace);
     assert.equal(receipt.decision_summaries[0]?.recall_sources[0]?.reason, "bounded_embedding_scan");
+    assert.ok(receipt.decision_summaries[0]?.recall_sources.some((source) => source.kind === "substrate"));
 
     const flightRecorder = buildAionisAgentFlightRecorderReport({
       tenant_id: "default",
@@ -205,6 +220,9 @@ test("RecallStoreAccess v4 exposes candidate source traces without changing cand
     assert.equal(
       flightRecorder.agent_view.recall_sources_by_memory_id[0]?.recall_sources[0]?.kind,
       "semantic",
+    );
+    assert.ok(
+      flightRecorder.agent_view.recall_sources_by_memory_id[0]?.recall_sources.some((source) => source.kind === "substrate"),
     );
 
     assert.deepEqual(await access.stage1StructuredCandidates({

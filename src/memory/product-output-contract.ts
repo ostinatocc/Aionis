@@ -54,6 +54,7 @@ export const AionisRecallSourceKindSchema = z.enum([
   "recent",
   "exact_recovery",
   "ann",
+  "substrate",
 ]);
 export type AionisRecallSourceKind = z.infer<typeof AionisRecallSourceKindSchema>;
 
