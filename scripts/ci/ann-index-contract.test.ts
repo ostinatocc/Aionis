@@ -226,6 +226,10 @@ test("ANN sidecar config defaults off and accepts local and zvec providers", asy
     assert.equal(env.RECALL_ZVEC_PATH, "");
     assert.equal(env.RECALL_ANN_REBUILD_ON_START, false);
     assert.equal(env.RECALL_ANN_MAX_CANDIDATES, 200);
+    assert.equal(env.RECALL_SUBSTRATE_SIDECAR_ENABLED, false);
+    assert.equal(env.RECALL_SUBSTRATE_PATH, "");
+    assert.equal(env.RECALL_SUBSTRATE_MAX_CANDIDATES, 200);
+    assert.equal(env.RECALL_SUBSTRATE_FAIL_OPEN, true);
   });
   await withIsolatedEnv(
     {
@@ -244,11 +248,19 @@ test("ANN sidecar config defaults off and accepts local and zvec providers", asy
     {
       RECALL_ANN_PROVIDER: "zvec",
       RECALL_ZVEC_PATH: "/tmp/aionis-zvec-ann",
+      RECALL_SUBSTRATE_SIDECAR_ENABLED: "true",
+      RECALL_SUBSTRATE_PATH: "/tmp/aionis-substrate.sqlite",
+      RECALL_SUBSTRATE_MAX_CANDIDATES: "96",
+      RECALL_SUBSTRATE_FAIL_OPEN: "false",
     },
     () => {
       const env = loadEnv();
       assert.equal(env.RECALL_ANN_PROVIDER, "zvec");
       assert.equal(env.RECALL_ZVEC_PATH, "/tmp/aionis-zvec-ann");
+      assert.equal(env.RECALL_SUBSTRATE_SIDECAR_ENABLED, true);
+      assert.equal(env.RECALL_SUBSTRATE_PATH, "/tmp/aionis-substrate.sqlite");
+      assert.equal(env.RECALL_SUBSTRATE_MAX_CANDIDATES, 96);
+      assert.equal(env.RECALL_SUBSTRATE_FAIL_OPEN, false);
     },
   );
 });

@@ -15,7 +15,8 @@ export type RecallCandidateSourceKind =
   | "graph"
   | "recent"
   | "exact_recovery"
-  | "ann";
+  | "ann"
+  | "substrate";
 
 export type RecallCandidateSource = {
   kind: RecallCandidateSourceKind;

@@ -27,9 +27,9 @@ Use the right deployment posture before wiring an Agent host:
 Server Edition keeps the same governance contract as Lite and exposes it to
 remote SDK or MCP clients behind an authenticated endpoint. The Server path
 keeps recall and admission separated: semantic, lexical, structured,
-execution-native, ANN, graph, and recent sources propose candidates, while the
-product layer decides `use_now`, `inspect_before_use`, `do_not_use`, and
-`rehydrate`.
+execution-native, ANN, Substrate sidecar, graph, and recent sources propose
+candidates, while the product layer decides `use_now`, `inspect_before_use`,
+`do_not_use`, and `rehydrate`.
 
 `RECALL_ENGINE_MODE=hybrid` is the Server default. Lite keeps
 `RECALL_ENGINE_MODE=semantic_scan` by default and can opt into hybrid for local

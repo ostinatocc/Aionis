@@ -35,7 +35,7 @@ surfaces.
 | Guide/admission | Owns `/v1/guide`, Memory Firewall, admission receipts, rehydrate pointers, and Agent context. | Can preview governed buckets over mirrored evidence, but does not replace Runtime guide authority. |
 | Learning policy | Owns admission policy, learning-control, promotion, feedback attribution, and measure. | Stores evidence and decision receipts for audit and migration. |
 | Storage truth | Runtime Lite SQLite remains the Runtime fact source. | Substrate target is an external evidence mirror. |
-| Candidate index | Runtime may use SQLite scan or optional Runtime Zvec for candidate preselection. | Substrate may use optional Zvec for sidecar search, then reloads truth nodes from Substrate. |
+| Candidate index | Runtime may use SQLite scan, optional Runtime Zvec, or optional Substrate sidecar candidate IDs for preselection. Runtime reloads final candidate rows from Runtime SQLite. | Substrate may use optional Zvec for sidecar search, then reloads truth nodes from Substrate before returning search results. |
 
 Substrate must not mutate Runtime SQLite, Runtime source files, Runtime guide
 behavior, Runtime learning policy, or Runtime admission outputs.
@@ -115,6 +115,46 @@ npx @aionis/substrate@latest preview-context \
 
 Preview is for operator review, backup validation, and external observability.
 The Agent-facing guide path remains Runtime `/v1/guide`.
+
+## Optional Runtime Candidate Source
+
+Runtime can optionally use a mirrored Substrate store as an additional hybrid
+recall candidate source. Install the optional Substrate package inside the
+Runtime directory first, because the Runtime process dynamically loads it when
+the sidecar is enabled:
+
+```bash
+cd .aionis-runtime
+npm install --save-dev @aionis/substrate@latest
+```
+
+Then start Runtime with:
+
+```env
+RECALL_ENGINE_MODE=hybrid
+RECALL_SUBSTRATE_SIDECAR_ENABLED=true
+RECALL_SUBSTRATE_PATH=.aionis-substrate/substrate.sqlite
+RECALL_SUBSTRATE_MAX_CANDIDATES=200
+RECALL_SUBSTRATE_FAIL_OPEN=true
+```
+
+This path is candidate-only:
+
+```text
+Substrate search proposes memory IDs
+  -> Runtime reloads those IDs from Runtime Lite SQLite
+  -> Runtime applies scope, visibility, recall-surface, lifecycle, authority, admission, and rehydrate governance
+```
+
+The recall source trace is:
+
+```text
+substrate / substrate_sidecar_search / aionis_substrate_sidecar
+```
+
+Use this when Substrate has been mirrored from the same Runtime SQLite and you
+want its durable evidence/search layer to improve candidate coverage. Do not use
+it as a write path, admission override, or guide replacement.
 
 ## Backup And Restore Planning
 

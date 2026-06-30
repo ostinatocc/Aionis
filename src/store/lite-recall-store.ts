@@ -6,6 +6,7 @@ import { hasNodeWorkflowAnchorSurface } from "../memory/node-execution-surface.j
 import { mergeRecallCandidatesByRrf } from "../memory/recall-hybrid-merge.js";
 import { memoryNodeVisible } from "./memory-visibility.js";
 import { AnnIndexDimensionError, type AionisLocalAnnIndex, type AnnSearchResult, type AnnVectorRecord } from "./ann/ann-index.js";
+import type { SubstrateSidecarCandidateProvider } from "./substrate-sidecar-recall.js";
 import {
   RECALL_STORE_ACCESS_CAPABILITY_VERSION,
   adjustRecallCandidateSimilarityForTrust,
@@ -166,6 +167,14 @@ type LiteRecallAnnOptions = {
   maxCandidates?: number;
   sourceReason?: string;
   indexName?: string;
+};
+
+export type LiteRecallSubstrateSidecarOptions = {
+  provider: SubstrateSidecarCandidateProvider;
+  maxCandidates?: number;
+  sourceReason?: string;
+  indexName?: string;
+  failOpen?: boolean;
 };
 
 function resolveRecallCapabilities(partial?: Partial<RecallStoreCapabilities>): RecallStoreCapabilities {
@@ -692,7 +701,11 @@ function recallSurfaceAllowed(args: {
 
 export function createLiteRecallStore(
   path: string,
-  opts: { capabilities?: Partial<RecallStoreCapabilities>; ann?: LiteRecallAnnOptions | null } = {},
+  opts: {
+    capabilities?: Partial<RecallStoreCapabilities>;
+    ann?: LiteRecallAnnOptions | null;
+    substrateSidecar?: LiteRecallSubstrateSidecarOptions | null;
+  } = {},
 ): LiteRecallStore {
   mkdirSync(dirname(path), { recursive: true });
   const db = createSqliteDatabase(path);
@@ -701,6 +714,11 @@ export function createLiteRecallStore(
   const annMaxCandidates = Math.max(1, Math.min(10000, Math.trunc(ann?.maxCandidates ?? 200)));
   const annSourceReason = ann?.sourceReason ?? "local_ann_index";
   const annIndexName = ann?.indexName ?? "aionis_local_ann";
+  const substrateSidecar = opts.substrateSidecar ?? null;
+  const substrateMaxCandidates = Math.max(1, Math.min(10000, Math.trunc(substrateSidecar?.maxCandidates ?? 200)));
+  const substrateSourceReason = substrateSidecar?.sourceReason ?? "substrate_sidecar_search";
+  const substrateIndexName = substrateSidecar?.indexName ?? "aionis_substrate_sidecar";
+  const substrateFailOpen = substrateSidecar?.failOpen ?? true;
   let annRebuilt = false;
   let annRebuildPromise: Promise<{ indexed: number; skipped: number }> | null = null;
 
@@ -1024,6 +1042,74 @@ export function createLiteRecallStore(
           reason: annSourceReason,
           matched_fields: ["embedding_vector_json"],
           index_name: annIndexName,
+        }],
+      });
+    }
+    return out
+      .sort((a, b) =>
+        b.similarity - a.similarity
+        || (byId.get(b.id)?.score ?? 0) - (byId.get(a.id)?.score ?? 0)
+        || b.confidence - a.confidence
+        || a.id.localeCompare(b.id))
+      .slice(0, params.limit);
+  };
+
+  const stage1SubstrateSidecarCandidates = async (params: RecallHybridParams): Promise<RecallCandidate[]> => {
+    const queryText = params.queryText?.trim();
+    if (!substrateSidecar || !queryText || params.limit <= 0) return [];
+    const perQueryLimit = Math.max(params.limit, Math.min(substrateMaxCandidates, Math.max(params.limit * 8, 32)));
+    let sidecarCandidates: Awaited<ReturnType<SubstrateSidecarCandidateProvider["searchCandidates"]>>;
+    try {
+      sidecarCandidates = await substrateSidecar.provider.searchCandidates({
+        scope: params.scope,
+        queryText,
+        limit: perQueryLimit,
+        candidateLimit: substrateMaxCandidates,
+        consumerAgentId: params.consumerAgentId,
+        consumerTeamId: params.consumerTeamId,
+      });
+    } catch (err) {
+      if (substrateFailOpen) return [];
+      throw err;
+    }
+    if (sidecarCandidates.length === 0) return [];
+    const byId = new Map(sidecarCandidates.map((candidate) => [candidate.id, candidate]));
+    const rows = rowsForCandidateIds({
+      scope: params.scope,
+      ids: sidecarCandidates.map((candidate) => candidate.id),
+      allowedTiers: normalizeRecallAllowedTiers(params.allowedTiers),
+      consumerAgentId: params.consumerAgentId,
+      consumerTeamId: params.consumerTeamId,
+    });
+    const out: RecallCandidate[] = [];
+    for (const row of rows) {
+      const sidecarCandidate = byId.get(row.id);
+      if (!sidecarCandidate) continue;
+      if (!candidateVisible(row, params.consumerAgentId, params.consumerTeamId)) continue;
+      const slots = parseJsonObject(row.slots_json);
+      if (!recallSurfaceAllowed({ db, scope: params.scope, row, slots })) continue;
+      const score = adjustRecallCandidateSimilarityForTrust({
+        type: row.type,
+        slots,
+        similarity: Math.max(0, Math.min(1, sidecarCandidate.score)),
+      });
+      out.push({
+        id: row.id,
+        type: row.type,
+        title: row.title,
+        text_summary: row.text_summary,
+        tier: row.tier,
+        salience: row.salience,
+        confidence: row.confidence,
+        similarity: score,
+        sources: [{
+          kind: "substrate",
+          score,
+          reason: substrateSourceReason,
+          matched_fields: sidecarCandidate.matchedFields?.length
+            ? sidecarCandidate.matchedFields
+            : [sidecarCandidate.reason],
+          index_name: substrateIndexName,
         }],
       });
     }
@@ -1559,12 +1645,14 @@ export function createLiteRecallStore(
       : null;
     const structured = structuredParams ? await stage1StructuredCandidates(structuredParams) : [];
     const executionNative = structuredParams ? await stage1ExecutionNativeCandidates(structuredParams) : [];
+    const substrate = await stage1SubstrateSidecarCandidates(params);
     const seedIds = Array.from(new Set([
       ...(params.graphSeedIds ?? []),
       ...semantic.map((candidate) => candidate.id),
       ...lexical.map((candidate) => candidate.id),
       ...structured.map((candidate) => candidate.id),
       ...executionNative.map((candidate) => candidate.id),
+      ...substrate.map((candidate) => candidate.id),
     ])).slice(0, perSourceLimit);
     const graph = seedIds.length > 0
       ? await stage1GraphCandidates({
@@ -1593,6 +1681,7 @@ export function createLiteRecallStore(
       executionNative,
       graph,
       recent: recentForHybrid,
+      substrate,
       limit: perSourceLimit,
     });
     return protectHighConfidenceLexicalLeaders({
@@ -1743,6 +1832,7 @@ export function createLiteRecallStore(
 
     async close(): Promise<void> {
       await ann?.index.close?.();
+      await substrateSidecar?.provider.close?.();
       db.close();
     },
 

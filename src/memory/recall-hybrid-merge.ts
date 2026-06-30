@@ -8,6 +8,7 @@ export type RecallHybridSourceBuckets = {
   graph?: RecallCandidate[];
   recent?: RecallCandidate[];
   exactRecovery?: RecallCandidate[];
+  substrate?: RecallCandidate[];
 };
 
 export function reciprocalRankFusion(rank: number, k = 60): number {
@@ -50,6 +51,7 @@ export function mergeRecallCandidatesByRrf(args: RecallHybridSourceBuckets & {
     ["graph", args.graph],
     ["recent", args.recent],
     ["exactRecovery", args.exactRecovery],
+    ["substrate", args.substrate],
   ];
   const merged = new Map<string, {
     candidate: RecallCandidate;

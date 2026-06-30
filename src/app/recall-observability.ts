@@ -9,6 +9,7 @@ const RECALL_SOURCE_KINDS: readonly RecallCandidateSourceKind[] = [
   "recent",
   "exact_recovery",
   "ann",
+  "substrate",
 ];
 
 function normalizeAionisUri(v: unknown): string | null {

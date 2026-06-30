@@ -16,6 +16,7 @@ import { createLiteClaimLedgerStore } from "../store/lite-claim-ledger-store.js"
 import { createLiteSkillCandidateReviewStore } from "../store/lite-skill-candidate-review-store.js";
 import { createLocalAnnIndex } from "../store/ann/local-ann-index.js";
 import { createZvecAnnIndex } from "../store/ann/zvec-ann-index.js";
+import { createSubstrateSidecarCandidateProvider } from "../store/substrate-sidecar-recall.js";
 import { createLiteExecutionStateStore } from "../execution/state-store.js";
 import { createLiteExecutionTreeStore } from "../execution/tree-store.js";
 import { EmbedQueryBatcher } from "../util/embed_query_batcher.js";
@@ -116,6 +117,11 @@ export async function createRuntimeServices(env: Env) {
             path: env.RECALL_ZVEC_PATH.trim() || `${env.LITE_WRITE_SQLITE_PATH}.zvec-ann`,
           })
         : null;
+  const substrateSidecarProvider = env.RECALL_SUBSTRATE_SIDECAR_ENABLED
+    ? createSubstrateSidecarCandidateProvider({
+        path: env.RECALL_SUBSTRATE_PATH.trim(),
+      })
+    : null;
   let annSyncedRecallStore: LiteRecallStore | null = null;
   const liteWriteStore = createLiteWriteStore(env.LITE_WRITE_SQLITE_PATH, {
     annSync: annIndex
@@ -143,6 +149,15 @@ export async function createRuntimeServices(env: Env) {
           maxCandidates: env.RECALL_ANN_MAX_CANDIDATES,
           sourceReason: env.RECALL_ANN_PROVIDER === "zvec" ? "zvec_ann_index" : "local_ann_index",
           indexName: env.RECALL_ANN_PROVIDER === "zvec" ? "aionis_zvec_ann" : "aionis_local_ann",
+        }
+      : null,
+    substrateSidecar: substrateSidecarProvider
+      ? {
+          provider: substrateSidecarProvider,
+          maxCandidates: env.RECALL_SUBSTRATE_MAX_CANDIDATES,
+          sourceReason: "substrate_sidecar_search",
+          indexName: "aionis_substrate_sidecar",
+          failOpen: env.RECALL_SUBSTRATE_FAIL_OPEN,
         }
       : null,
   });

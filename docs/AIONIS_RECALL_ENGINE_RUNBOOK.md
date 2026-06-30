@@ -60,6 +60,7 @@ about candidate generation.
 | `recent` | Hot working-set or recently activated state kept a selected candidate visible. In hybrid mode this augments primary candidates, or acts as fallback when no primary seed exists. |
 | `exact_recovery` | Cold or low-salience exact recovery found a candidate missed by bounded semantic scan. |
 | `ann` | Optional ANN sidecar proposed the candidate, then SQLite scope and visibility checks re-admitted the ID as a candidate. |
+| `substrate` | Optional Substrate sidecar proposed the candidate ID from mirrored durable evidence, then Runtime SQLite scope, visibility, and governance reloaded the candidate. |
 
 These source traces can appear in:
 
@@ -211,12 +212,30 @@ It isolates candidate retrieval only: Zvec/local ANN can recover a low-salience
 semantic needle that bounded SQLite scan misses, while SQLite remains the fact
 source and admission/governance stay out of scope.
 
+For optional Substrate sidecar candidate recall, first mirror Runtime evidence
+with `@aionis/substrate`, install the optional package inside the Runtime
+directory, then start Runtime with:
+
+```bash
+npm install --save-dev @aionis/substrate@latest
+```
+
+```bash
+RECALL_ENGINE_MODE=hybrid \
+RECALL_SUBSTRATE_SIDECAR_ENABLED=true \
+RECALL_SUBSTRATE_PATH=.aionis-substrate/substrate.sqlite \
+npm run -s lite:start
+```
+
+Substrate only proposes candidate IDs. Runtime reloads them from Runtime SQLite
+before any guide/admission output is compiled.
+
 Expected managed-server hybrid recall result:
 
 - accepted route reaches `use_now`
 - failed/stale branches are not direct-use
 - recall source families include semantic, lexical, structured,
-  execution-native, graph, and recent
+  execution-native, graph, recent, and optional sidecar sources
 - source-level admission is preserved: stronger candidate coverage does not
   promote failed or stale execution memory into `use_now`
 - receipt/admission record/operator snapshot carry source traces

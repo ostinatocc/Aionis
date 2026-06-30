@@ -349,6 +349,22 @@ const EnvSchema = z.object({
     .pipe(z.enum(["true", "false"]))
     .transform((v) => v === "true"),
   RECALL_ANN_MAX_CANDIDATES: z.coerce.number().int().positive().max(10000).default(200),
+  // Optional durable Substrate sidecar candidate source. It only proposes candidates;
+  // Runtime SQLite remains the fact source and admission policy still decides.
+  RECALL_SUBSTRATE_SIDECAR_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => (v ?? "false").toLowerCase())
+    .pipe(z.enum(["true", "false"]))
+    .transform((v) => v === "true"),
+  RECALL_SUBSTRATE_PATH: z.string().default(""),
+  RECALL_SUBSTRATE_MAX_CANDIDATES: z.coerce.number().int().positive().max(10000).default(200),
+  RECALL_SUBSTRATE_FAIL_OPEN: z
+    .string()
+    .optional()
+    .transform((v) => (v ?? "true").toLowerCase())
+    .pipe(z.enum(["true", "false"]))
+    .transform((v) => v === "true"),
   // Optional default compaction budget for recall_text context output. 0 disables.
   MEMORY_RECALL_TEXT_CONTEXT_TOKEN_BUDGET_DEFAULT: z.coerce.number().int().min(0).max(256000).default(0),
   MEMORY_PLANNING_CONTEXT_OPTIMIZATION_PROFILE_DEFAULT: z.enum(["off", "balanced", "aggressive"]).default("off"),

@@ -88,9 +88,10 @@ and trace-to-procedure readiness.
 Aionis can improve recall without changing its product contract.
 
 The Recall Engine finds candidate memories from semantic, lexical, structured,
-execution-native, graph, recent, exact-recovery, and future ANN sources. It may
-explain why a candidate was found and how strong the retrieval signal was.
-Admission decides whether that memory is safe to use.
+execution-native, graph, recent, exact-recovery, optional ANN, and optional
+Substrate sidecar sources. It may explain why a candidate was found and how
+strong the retrieval signal was. Admission decides whether that memory is safe
+to use.
 
 Admission remains governed by lifecycle, authority, scope, source, risk,
 feedback attribution, and rehydration state. A recalled memory becomes useful

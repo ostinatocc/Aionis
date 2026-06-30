@@ -209,6 +209,106 @@ test("stage1 local ANN sidecar is opt-in and still verifies candidates through S
   }
 });
 
+test("stage1 Substrate sidecar contributes only SQLite-verified Runtime candidates", async () => {
+  const dbPath = tmpDbPath("stage1-substrate-sidecar");
+  const writeStore = createLiteWriteStore(dbPath);
+  let providerClosed = false;
+  const recallStore = createLiteRecallStore(dbPath, {
+    substrateSidecar: {
+      maxCandidates: 16,
+      indexName: "test_substrate_sidecar",
+      sourceReason: "test_substrate_search",
+      failOpen: false,
+      provider: {
+        async searchCandidates(params) {
+          assert.equal(params.scope, "default");
+          assert.equal(params.queryText, "question asks for alpha bridge evidence");
+          return [
+            {
+              id: "private-sidecar-target",
+              score: 0.99,
+              reason: "sidecar_private_candidate",
+              matchedFields: ["summary"],
+            },
+            {
+              id: "missing-sidecar-target",
+              score: 0.98,
+              reason: "sidecar_missing_candidate",
+              matchedFields: ["summary"],
+            },
+            {
+              id: "visible-sidecar-target",
+              score: 0.97,
+              reason: "sidecar_visible_candidate",
+              matchedFields: ["summary"],
+            },
+          ];
+        },
+        async close() {
+          providerClosed = true;
+        },
+      },
+    },
+  });
+  try {
+    await writeStore.withTx(async () => {
+      const commitId = await insertCommit(writeStore, "default", "stage1-substrate-sidecar");
+      for (let i = 0; i < 80; i += 1) {
+        await insertReadyNode(writeStore, {
+          id: `sidecar-distractor-${String(i).padStart(3, "0")}`,
+          vector: [1, 0, 0],
+          title: `semantic distractor ${i}`,
+          summary: `semantic distractor ${i}`,
+          salience: 1,
+          confidence: 1,
+          commitId,
+        });
+      }
+      await insertReadyNode(writeStore, {
+        id: "private-sidecar-target",
+        vector: [0, 1, 0],
+        title: "private alpha bridge evidence",
+        summary: "private target returned by sidecar must not be exposed",
+        ownerTeamId: "other-team",
+        commitId,
+      });
+      await insertReadyNode(writeStore, {
+        id: "visible-sidecar-target",
+        vector: [0, 1, 0],
+        title: "visible alpha bridge evidence",
+        summary: "visible target returned by sidecar should be merged as a candidate",
+        salience: 0.1,
+        confidence: 0.9,
+        commitId,
+      });
+    });
+
+    const access = recallStore.createRecallAccess();
+    const hybrid = await access.stage1HybridCandidates({
+      queryEmbedding: [1, 0, 0],
+      queryText: "question asks for alpha bridge evidence",
+      scope: "default",
+      limit: 5,
+      consumerAgentId: null,
+      consumerTeamId: null,
+    });
+
+    const target = hybrid.find((candidate) => candidate.id === "visible-sidecar-target");
+    assert.ok(target);
+    assert.ok(!hybrid.some((candidate) => candidate.id === "private-sidecar-target"));
+    assert.ok(!hybrid.some((candidate) => candidate.id === "missing-sidecar-target"));
+    assert.ok(target.sources?.some((source) =>
+      source.kind === "substrate"
+      && source.reason === "test_substrate_search"
+      && source.index_name === "test_substrate_sidecar",
+    ));
+  } finally {
+    await recallStore.close();
+    await writeStore.close();
+  }
+  assert.equal(providerClosed, true);
+});
+
 test("local ANN sidecar syncs ready embedding mutations after SQLite commit", async () => {
   const dbPath = tmpDbPath("stage1-local-ann-post-commit-sync");
   let recallStore: ReturnType<typeof createLiteRecallStore> | null = null;
