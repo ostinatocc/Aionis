@@ -11,6 +11,7 @@ import {
   normalizeExecutionNativeSlots,
   restoreStableSystemSlots,
 } from "./write-execution-native.js";
+import { enrichOrdinaryMemorySlots } from "./ordinary-memory-construction.js";
 import {
   resolveWriteRefId,
   resolveWriteScope,
@@ -147,6 +148,14 @@ export function prepareWriteBatch(
     slots = normalizeExecutionNativeSlots(node.type, slots, title ?? null, text_summary ?? null, {
       raw_ref: node.raw_ref ?? null,
       evidence_ref: node.evidence_ref ?? null,
+    });
+    slots = enrichOrdinaryMemorySlots({
+      type: node.type,
+      title: title ?? null,
+      textSummary: text_summary ?? null,
+      slots,
+      rawRef: node.raw_ref ?? null,
+      evidenceRef: node.evidence_ref ?? null,
     });
 
     const lane = node.memory_lane ?? defaultLane;

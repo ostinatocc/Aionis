@@ -31,7 +31,7 @@ test("shipped source tree defaults to lite posture", async () => {
     assert.equal(env.AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON, "[]");
     assert.equal(env.MEMORY_AUTH_MODE, "off");
     assert.equal(env.TENANT_QUOTA_ENABLED, false);
-    assert.equal(env.RECALL_ENGINE_MODE, "semantic_scan");
+    assert.equal(env.RECALL_ENGINE_MODE, "hybrid");
   });
 });
 

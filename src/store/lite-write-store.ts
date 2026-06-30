@@ -826,10 +826,23 @@ const LITE_MEMORY_KEYWORD_NESTED_SLOT_KEYS = [
   "execution_contract_v1",
   "execution_native_v1",
   "execution_observation_v1",
+  "ordinary_memory_v1",
   "execution_result_summary",
   "recovery_contract_v1",
   "runtime_signal_ledger_v1",
 ] as const;
+
+function skipSearchableNestedKey(key: string): boolean {
+  const lower = key.toLowerCase();
+  return lower.includes("secret")
+    || lower.includes("token")
+    || lower === "key"
+    || lower.endsWith("_key")
+    || lower.includes("api_key")
+    || lower.includes("apikey")
+    || lower.includes("access_key")
+    || lower.includes("private_key");
+}
 
 function collectSearchableStrings(value: unknown, out: string[], limit = 96): void {
   if (out.length >= limit) return;
@@ -851,7 +864,7 @@ function collectSearchableStrings(value: unknown, out: string[], limit = 96): vo
   }
   if (value && typeof value === "object") {
     for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
-      if (key.toLowerCase().includes("secret") || key.toLowerCase().includes("token") || key.toLowerCase().includes("key")) {
+      if (skipSearchableNestedKey(key)) {
         continue;
       }
       collectSearchableStrings(nested, out, limit);

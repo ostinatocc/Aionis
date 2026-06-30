@@ -735,7 +735,7 @@ function withEditionDefaults(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     if (!out.RECALL_ENGINE_MODE || out.RECALL_ENGINE_MODE.trim().length === 0) out.RECALL_ENGINE_MODE = "hybrid";
     return out;
   }
-  if (!out.RECALL_ENGINE_MODE || out.RECALL_ENGINE_MODE.trim().length === 0) out.RECALL_ENGINE_MODE = "semantic_scan";
+  if (!out.RECALL_ENGINE_MODE || out.RECALL_ENGINE_MODE.trim().length === 0) out.RECALL_ENGINE_MODE = "hybrid";
   if (!out.AIONIS_MODE || out.AIONIS_MODE.trim().length === 0) out.AIONIS_MODE = "local";
   out.MEMORY_AUTH_MODE = "off";
   out.TENANT_QUOTA_ENABLED = "false";

@@ -1,0 +1,268 @@
+{
+  "contract_version": "aionis_ordinary_memory_retrieval_baseline_v1",
+  "generated_at": "2026-06-30T02:10:38.380Z",
+  "case_count": 7,
+  "candidate_generation": {
+    "write_path": "prepareMemoryWrite_applyMemoryWrite_real_lite_store",
+    "construction_path": "ordinary_memory_v1_deterministic_runtime_write",
+    "lexical_path": "lite_keyword_index_slots_text",
+    "hybrid_path": "rrf_merge_with_high_confidence_lexical_leader_protection_without_embedding",
+    "governance_admission": "out_of_scope_for_recall_only_eval"
+  },
+  "metrics": {
+    "ordinary_construction_coverage": 1,
+    "lexical_evidence_hit_at_5": 1,
+    "hybrid_evidence_hit_at_5": 1,
+    "lexical_evidence_top1": 1,
+    "hybrid_evidence_top1": 1,
+    "lexical_mean_reciprocal_rank": 1,
+    "hybrid_mean_reciprocal_rank": 1,
+    "slots_text_source_hit_rate": 1
+  },
+  "metric_notes": [
+    "This is a recall-only eval for ordinary memory construction and candidate retrieval.",
+    "It does not evaluate answer generation, guide admission, lifecycle governance, or downstream task success.",
+    "All writes use the real Lite write path so ordinary_memory_v1 is produced by Runtime construction, not by direct fixture insertion."
+  ],
+  "cases": [
+    {
+      "case_id": "ordinary_alias_recall",
+      "description": "Alias-only query should hit the ordinary memory slots text.",
+      "query_text": "bluebird-runtime-service",
+      "expected_client_id": "ordinary:runtime-alias",
+      "expected_node_id": "d113f5bd-0578-5365-9f6b-418ecfacdcf6",
+      "lexical_top_ids": [
+        "d113f5bd-0578-5365-9f6b-418ecfacdcf6"
+      ],
+      "hybrid_top_ids": [
+        "d113f5bd-0578-5365-9f6b-418ecfacdcf6"
+      ],
+      "lexical_rank": 1,
+      "hybrid_rank": 1,
+      "lexical_top1": true,
+      "hybrid_top1": true,
+      "lexical_hit_at_5": true,
+      "hybrid_hit_at_5": true,
+      "matched_fields_for_expected": [
+        "ordinary_memory_v1.aliases",
+        "slots_text"
+      ],
+      "source_kinds_for_expected": [
+        "lexical"
+      ],
+      "ordinary_fields_present": [
+        "aliases",
+        "answerable_facts",
+        "source_spans"
+      ],
+      "missing_ordinary_fields": [],
+      "slots_text_source_hit": true
+    },
+    {
+      "case_id": "ordinary_answerable_fact_recall",
+      "description": "Fact-only query should hit answerable_facts inside ordinary_memory_v1.",
+      "query_text": "qaret-45d",
+      "expected_client_id": "ordinary:payment-retention",
+      "expected_node_id": "9bc4e831-c4e3-5a12-a7b1-b1bdc51ba7f3",
+      "lexical_top_ids": [
+        "9bc4e831-c4e3-5a12-a7b1-b1bdc51ba7f3"
+      ],
+      "hybrid_top_ids": [
+        "9bc4e831-c4e3-5a12-a7b1-b1bdc51ba7f3"
+      ],
+      "lexical_rank": 1,
+      "hybrid_rank": 1,
+      "lexical_top1": true,
+      "hybrid_top1": true,
+      "lexical_hit_at_5": true,
+      "hybrid_hit_at_5": true,
+      "matched_fields_for_expected": [
+        "ordinary_memory_v1.answerable_facts",
+        "slots_text"
+      ],
+      "source_kinds_for_expected": [
+        "lexical"
+      ],
+      "ordinary_fields_present": [
+        "answerable_facts",
+        "source_spans"
+      ],
+      "missing_ordinary_fields": [],
+      "slots_text_source_hit": true
+    },
+    {
+      "case_id": "ordinary_source_span_recall",
+      "description": "Source-span-only query should hit nested source span text.",
+      "query_text": "guide-trace-884",
+      "expected_client_id": "ordinary:guide-ledger",
+      "expected_node_id": "c481948c-f6fd-5a08-add6-eb2bf3ead1b5",
+      "lexical_top_ids": [
+        "c481948c-f6fd-5a08-add6-eb2bf3ead1b5"
+      ],
+      "hybrid_top_ids": [
+        "c481948c-f6fd-5a08-add6-eb2bf3ead1b5"
+      ],
+      "lexical_rank": 1,
+      "hybrid_rank": 1,
+      "lexical_top1": true,
+      "hybrid_top1": true,
+      "lexical_hit_at_5": true,
+      "hybrid_hit_at_5": true,
+      "matched_fields_for_expected": [
+        "ordinary_memory_v1.source_spans",
+        "slots_text"
+      ],
+      "source_kinds_for_expected": [
+        "lexical"
+      ],
+      "ordinary_fields_present": [
+        "source_spans",
+        "answerable_facts"
+      ],
+      "missing_ordinary_fields": [],
+      "slots_text_source_hit": true
+    },
+    {
+      "case_id": "ordinary_topic_key_recall",
+      "description": "Topic-key query should hit ordinary memory topic keys.",
+      "query_text": "handoff-continuity-omega",
+      "expected_client_id": "ordinary:handoff-topic",
+      "expected_node_id": "c0fb1b70-91d2-5db7-babb-46074e6dfdbf",
+      "lexical_top_ids": [
+        "c0fb1b70-91d2-5db7-babb-46074e6dfdbf"
+      ],
+      "hybrid_top_ids": [
+        "c0fb1b70-91d2-5db7-babb-46074e6dfdbf"
+      ],
+      "lexical_rank": 1,
+      "hybrid_rank": 1,
+      "lexical_top1": true,
+      "hybrid_top1": true,
+      "lexical_hit_at_5": true,
+      "hybrid_hit_at_5": true,
+      "matched_fields_for_expected": [
+        "ordinary_memory_v1.topic_keys",
+        "slots_text"
+      ],
+      "source_kinds_for_expected": [
+        "lexical"
+      ],
+      "ordinary_fields_present": [
+        "topic_keys",
+        "answerable_facts"
+      ],
+      "missing_ordinary_fields": [],
+      "slots_text_source_hit": true
+    },
+    {
+      "case_id": "ordinary_entity_recall",
+      "description": "Entity-only query should hit ordinary memory entity hints.",
+      "query_text": "CrimsonLedger9000",
+      "expected_client_id": "ordinary:entity-marker",
+      "expected_node_id": "ddcddba3-42ab-5e92-b0d5-ca7d64857eb5",
+      "lexical_top_ids": [
+        "ddcddba3-42ab-5e92-b0d5-ca7d64857eb5"
+      ],
+      "hybrid_top_ids": [
+        "ddcddba3-42ab-5e92-b0d5-ca7d64857eb5"
+      ],
+      "lexical_rank": 1,
+      "hybrid_rank": 1,
+      "lexical_top1": true,
+      "hybrid_top1": true,
+      "lexical_hit_at_5": true,
+      "hybrid_hit_at_5": true,
+      "matched_fields_for_expected": [
+        "ordinary_memory_v1.entities",
+        "slots_text"
+      ],
+      "source_kinds_for_expected": [
+        "lexical"
+      ],
+      "ordinary_fields_present": [
+        "entities",
+        "answerable_facts"
+      ],
+      "missing_ordinary_fields": [],
+      "slots_text_source_hit": true
+    },
+    {
+      "case_id": "ordinary_time_validity_recall",
+      "description": "Time-validity query should hit nested validity metadata.",
+      "query_text": "window-ruby-2026q2",
+      "expected_client_id": "ordinary:validity-window",
+      "expected_node_id": "febcd9eb-de6d-5564-84e6-8108fe2c4b85",
+      "lexical_top_ids": [
+        "febcd9eb-de6d-5564-84e6-8108fe2c4b85"
+      ],
+      "hybrid_top_ids": [
+        "febcd9eb-de6d-5564-84e6-8108fe2c4b85"
+      ],
+      "lexical_rank": 1,
+      "hybrid_rank": 1,
+      "lexical_top1": true,
+      "hybrid_top1": true,
+      "lexical_hit_at_5": true,
+      "hybrid_hit_at_5": true,
+      "matched_fields_for_expected": [
+        "ordinary_memory_v1.time_validity",
+        "slots_text"
+      ],
+      "source_kinds_for_expected": [
+        "lexical"
+      ],
+      "ordinary_fields_present": [
+        "time_validity",
+        "answerable_facts"
+      ],
+      "missing_ordinary_fields": [],
+      "slots_text_source_hit": true
+    },
+    {
+      "case_id": "ordinary_rank_under_noise",
+      "description": "Full evidence coverage should outrank many high-salience partial lexical decoys.",
+      "query_text": "saffron invoice retention delta",
+      "expected_client_id": "ordinary:rank-noise-gold",
+      "expected_node_id": "50e21e51-61dc-51a8-8353-77347de719ef",
+      "lexical_top_ids": [
+        "50e21e51-61dc-51a8-8353-77347de719ef",
+        "0fabb8ee-1784-5774-9da7-af51ed506d67",
+        "108316c1-51b7-52d9-9ac5-81a30c21dda1",
+        "10c1d498-8608-51c4-8a53-b00a945b3395",
+        "131e1f83-f63a-5fd8-a0ad-8a6da47e3711"
+      ],
+      "hybrid_top_ids": [
+        "50e21e51-61dc-51a8-8353-77347de719ef",
+        "0fabb8ee-1784-5774-9da7-af51ed506d67",
+        "108316c1-51b7-52d9-9ac5-81a30c21dda1",
+        "10c1d498-8608-51c4-8a53-b00a945b3395",
+        "131e1f83-f63a-5fd8-a0ad-8a6da47e3711"
+      ],
+      "lexical_rank": 1,
+      "hybrid_rank": 1,
+      "lexical_top1": true,
+      "hybrid_top1": true,
+      "lexical_hit_at_5": true,
+      "hybrid_hit_at_5": true,
+      "matched_fields_for_expected": [
+        "ordinary_memory_v1.answerable_facts",
+        "ordinary_memory_v1.entities",
+        "ordinary_memory_v1.source_spans",
+        "ordinary_memory_v1.topic_keys",
+        "slots_text",
+        "text_summary",
+        "title"
+      ],
+      "source_kinds_for_expected": [
+        "lexical"
+      ],
+      "ordinary_fields_present": [
+        "answerable_facts",
+        "source_spans",
+        "topic_keys"
+      ],
+      "missing_ordinary_fields": [],
+      "slots_text_source_hit": true
+    }
+  ]
+}

@@ -91,6 +91,7 @@ type LiteRecallKeywordRow = LiteRecallNodeRow & {
   lexical_text_summary: string | null;
   lexical_slots_text: string | null;
   lexical_searchable_text: string;
+  lexical_match_count: number;
 };
 
 type LiteRecallStructuredRow = LiteRecallNodeRow & {
@@ -139,7 +140,7 @@ type StructuredSignal = {
   like: boolean;
 };
 
-const STAGE1_RECALL_TYPES = ["event", "topic", "concept", "entity", "rule", "procedure", "self_model"] as const;
+const STAGE1_RECALL_TYPES = ["event", "topic", "concept", "entity", "rule", "procedure", "evidence", "self_model"] as const;
 const SQLITE_IN_CHUNK_SIZE = 800;
 const DEFAULT_RECALL_ALLOWED_TIERS_FOR_RECENT = ["hot", "warm"] as const;
 const STRUCTURED_RECALL_PREFETCH_FLOOR = 256;
@@ -298,11 +299,42 @@ const LITE_RECALL_ANN_NODE_SELECT_SQL = `
 `;
 
 function lexicalTerms(queryText: string): string[] {
+  const stopwords = new Set([
+    "about",
+    "after",
+    "also",
+    "and",
+    "are",
+    "can",
+    "could",
+    "did",
+    "does",
+    "for",
+    "from",
+    "has",
+    "have",
+    "how",
+    "into",
+    "its",
+    "the",
+    "their",
+    "this",
+    "was",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "whose",
+    "why",
+    "with",
+    "would",
+  ]);
   const tokens = queryText
     .toLowerCase()
     .split(/[^a-z0-9_./-]+/g)
     .map((value) => value.trim())
-    .filter((value) => value.length >= 3);
+    .filter((value) => value.length >= 3 && !stopwords.has(value));
   const out: string[] = [];
   const seen = new Set<string>();
   for (const token of tokens) {
@@ -328,16 +360,130 @@ function lexicalMatchFields(row: Pick<LiteRecallKeywordRow, "lexical_title" | "l
   return matched;
 }
 
+function collectRecallStrings(value: unknown, out: string[], limit = 96): void {
+  if (out.length >= limit) return;
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (normalized) out.push(normalized);
+    return;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    out.push(String(value));
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectRecallStrings(item, out, limit);
+      if (out.length >= limit) break;
+    }
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const nested of Object.values(value as Record<string, unknown>)) {
+      collectRecallStrings(nested, out, limit);
+      if (out.length >= limit) break;
+    }
+  }
+}
+
+function ordinaryMemoryMatchedFields(slots: Record<string, unknown>, terms: string[]): string[] {
+  const ordinary = slots.ordinary_memory_v1;
+  if (!ordinary || typeof ordinary !== "object" || Array.isArray(ordinary)) return [];
+  const out: string[] = [];
+  for (const field of [
+    "answerable_facts",
+    "aliases",
+    "entities",
+    "topic_keys",
+    "question_keys",
+    "relation_facts",
+    "source_ids",
+    "source_spans",
+    "time_validity",
+  ]) {
+    const values: string[] = [];
+    collectRecallStrings((ordinary as Record<string, unknown>)[field], values);
+    const lower = values.join("\n").toLowerCase();
+    if (lower && terms.some((term) => lower.includes(term))) out.push(`ordinary_memory_v1.${field}`);
+  }
+  return out;
+}
+
+function lexicalMatchFieldsForCandidate(
+  row: Pick<LiteRecallKeywordRow, "lexical_title" | "lexical_text_summary" | "lexical_slots_text">,
+  terms: string[],
+  slots: Record<string, unknown>,
+): string[] {
+  return Array.from(new Set([
+    ...lexicalMatchFields(row, terms),
+    ...ordinaryMemoryMatchedFields(slots, terms),
+  ]));
+}
+
+function termFrequency(text: string, term: string): number {
+  if (!text || !term) return 0;
+  let count = 0;
+  let offset = 0;
+  while (offset < text.length) {
+    const next = text.indexOf(term, offset);
+    if (next < 0) break;
+    count += 1;
+    offset = next + term.length;
+    if (count >= 8) break;
+  }
+  return count;
+}
+
 function lexicalScore(row: LiteRecallKeywordRow, terms: string[], matchedFields: string[]): number {
+  const title = (row.lexical_title ?? "").toLowerCase();
+  const summary = (row.lexical_text_summary ?? "").toLowerCase();
+  const slotsText = (row.lexical_slots_text ?? "").toLowerCase();
   const searchable = row.lexical_searchable_text.toLowerCase();
   const matchedTermCount = terms.filter((term) => searchable.includes(term)).length;
-  const fieldBonus = matchedFields.includes("title") ? 0.18 : matchedFields.includes("text_summary") ? 0.1 : 0;
-  const raw = 0.35
-    + Math.min(0.35, matchedTermCount * 0.08)
+  const termCoverage = terms.length > 0 ? matchedTermCount / terms.length : 0;
+  const frequency = terms.reduce((sum, term) =>
+    sum
+      + termFrequency(title, term) * 1.5
+      + termFrequency(summary, term)
+      + termFrequency(slotsText, term) * 1.25,
+  0);
+  const ordinaryFieldMatches = matchedFields.filter((field) => field.startsWith("ordinary_memory_v1.")).length;
+  const fieldBonus =
+    (matchedFields.includes("title") ? 0.1 : 0)
+    + (matchedFields.includes("text_summary") ? 0.08 : 0)
+    + (matchedFields.includes("slots_text") ? 0.12 : 0)
+    + Math.min(0.14, ordinaryFieldMatches * 0.04);
+  const phraseBonus = terms.length > 1 && (title.includes(terms.join(" ")) || summary.includes(terms.join(" ")) || slotsText.includes(terms.join(" ")))
+    ? 0.08
+    : 0;
+  const raw = 0.2
+    + Math.min(0.42, termCoverage * 0.42)
+    + Math.min(0.16, Math.log1p(frequency) * 0.05)
     + fieldBonus
-    + Math.min(0.08, Math.max(0, row.salience) * 0.08)
-    + Math.min(0.04, Math.max(0, row.confidence) * 0.04);
+    + phraseBonus
+    + Math.min(0.04, Math.max(0, row.salience) * 0.04)
+    + Math.min(0.03, Math.max(0, row.confidence) * 0.03);
   return Math.max(0, Math.min(1, raw));
+}
+
+function protectHighConfidenceLexicalLeaders(args: {
+  merged: RecallCandidate[];
+  lexical: RecallCandidate[];
+  limit: number;
+}): RecallCandidate[] {
+  if (args.limit <= 0 || args.lexical.length === 0) return args.merged.slice(0, args.limit);
+  const mergedById = new Map(args.merged.map((candidate) => [candidate.id, candidate]));
+  const leaders = args.lexical
+    .filter((candidate) => candidate.similarity >= 0.78)
+    .map((candidate) => mergedById.get(candidate.id) ?? candidate)
+    .slice(0, Math.min(2, args.limit));
+  if (leaders.length === 0) return args.merged.slice(0, args.limit);
+  const leaderIds = new Set(leaders.map((candidate) => candidate.id));
+  const out = [
+    ...leaders,
+    ...args.merged.filter((candidate) => !leaderIds.has(candidate.id)),
+  ];
+  return out.slice(0, args.limit);
 }
 
 function nonEmptyString(value: unknown): string | null {
@@ -997,15 +1143,20 @@ export function createLiteRecallStore(
   const stage1LexicalCandidates = async (params: RecallLexicalParams): Promise<RecallCandidate[]> => {
     const terms = lexicalTerms(params.queryText);
     if (terms.length === 0 || params.limit <= 0) return [];
+    const termPatterns = terms.map((term) => `%${escapeSqlLike(term)}%`);
+    const matchCountSql = terms
+      .map(() => "CASE WHEN LOWER(k.searchable_text) LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END")
+      .join(" + ");
     const where = [
       "k.scope = ?",
       `n.type IN (${placeholders(STAGE1_RECALL_TYPES.length)})`,
       `(${terms.map(() => "LOWER(k.searchable_text) LIKE ? ESCAPE '\\'").join(" OR ")})`,
     ];
     const values: unknown[] = [
+      ...termPatterns,
       params.scope,
       ...STAGE1_RECALL_TYPES,
-      ...terms.map((term) => `%${escapeSqlLike(term)}%`),
+      ...termPatterns,
     ];
     appendRecallVisibilityWhere(where, values, params.consumerAgentId, params.consumerTeamId);
     const rows = db.prepare(`
@@ -1034,26 +1185,28 @@ export function createLiteRecallStore(
         k.title AS lexical_title,
         k.text_summary AS lexical_text_summary,
         k.slots_text AS lexical_slots_text,
-        k.searchable_text AS lexical_searchable_text
+        k.searchable_text AS lexical_searchable_text,
+        (${matchCountSql}) AS lexical_match_count
       FROM lite_memory_keyword_index k
       JOIN lite_memory_nodes n
         ON n.scope = k.scope
        AND n.id = k.node_id
       WHERE ${where.join("\n        AND ")}
       ORDER BY
+        lexical_match_count DESC,
         n.salience DESC,
         n.confidence DESC,
         n.created_at DESC,
         n.id DESC
       LIMIT ?
-    `).all(...values, Math.max(params.limit * 8, params.limit)) as LiteRecallKeywordRow[];
+    `).all(...values, Math.max(params.limit * 16, 80, params.limit)) as LiteRecallKeywordRow[];
 
     const out: RecallCandidate[] = [];
     for (const row of rows) {
       if (!candidateVisible(row, params.consumerAgentId, params.consumerTeamId)) continue;
       const slots = parseJsonObject(row.slots_json);
       if (!recallSurfaceAllowed({ db, scope: params.scope, row, slots })) continue;
-      const matchedFields = lexicalMatchFields(row, terms);
+      const matchedFields = lexicalMatchFieldsForCandidate(row, terms, slots);
       if (matchedFields.length === 0) continue;
       const score = adjustRecallCandidateSimilarityForTrust({
         type: row.type,
@@ -1433,13 +1586,18 @@ export function createLiteRecallStore(
     const recentForHybrid = seedIds.length > 0
       ? recent.filter((candidate) => seedIds.includes(candidate.id))
       : recent;
-    return mergeRecallCandidatesByRrf({
+    const merged = mergeRecallCandidatesByRrf({
       semantic,
       lexical,
       structured,
       executionNative,
       graph,
       recent: recentForHybrid,
+      limit: perSourceLimit,
+    });
+    return protectHighConfidenceLexicalLeaders({
+      merged,
+      lexical,
       limit: params.limit,
     });
   };

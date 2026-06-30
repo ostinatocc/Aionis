@@ -5,6 +5,10 @@ Status: implementation roadmap for the Candidate Retrieval Engine below Aionis g
 Aionis does not win by being another vector database. It wins by separating
 candidate retrieval from memory admission.
 
+For ordinary long-context QA and MemoryData-style factual recall, see the
+focused plan in
+[`docs/plans/2026-06-29-ordinary-memory-retrieval-roadmap.md`](plans/2026-06-29-ordinary-memory-retrieval-roadmap.md).
+
 The Recall Engine answers:
 
 ```text
@@ -139,6 +143,11 @@ proxy metrics. Full product evaluations must measure them through `/v1/guide`.
    - Current status: first Lite structured source is implemented over the
      execution-native index. It is deterministic candidate generation only; it
      does not decide memory admission.
+   - Ordinary-memory status: Lite lexical recall now indexes
+     `ordinary_memory_v1` construction fields and uses coverage-aware scoring
+     for answerable facts, aliases, entities, topic keys, time validity, and
+     source spans. The ordinary-memory retrieval eval records top-k and top-1
+     evidence-hit metrics before guide admission.
 
 4. **Execution-native recall**
    - Strengthen execution-native candidate generation with task family, repo
@@ -164,6 +173,11 @@ proxy metrics. Full product evaluations must measure them through `/v1/guide`.
      `semantic_scan`, while Server defaults to `hybrid` after the managed-server
      e2e proved source traces remain below governance and are replayable through
      Agent Flight Recorder without prompt payload leakage.
+   - Hybrid recall protects high-confidence lexical leaders from being
+     displaced by recent working-set or semantic noise. When a protected lexical
+     leader is also present in the merged hybrid result, Aionis promotes the
+     merged candidate object so semantic, structured, execution-native, graph,
+     and recent source traces remain intact.
 
 6. **Recall source observability**
    - Report per-source candidate counts, p50/p95 latency, hybrid merge shape,
