@@ -9,6 +9,7 @@ const ProviderEnvSchema = z.object({
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_EMBED_BASE_URL: z.string().default("https://api.openai.com/v1"),
   OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
+  OPENAI_EMBED_DIMENSIONS: z.coerce.number().int().positive().optional(),
   OPENAI_EMBED_BATCH_SIZE: z.coerce.number().int().positive().max(256).default(32),
   EMBEDDING_DIM: z.coerce.number().int().positive().default(1536),
 
@@ -105,10 +106,19 @@ export function createEmbeddingProvidersFromEnv(env: Record<string, string | und
     baseUrl: parsed.OPENAI_EMBED_BASE_URL,
     model: parsed.OPENAI_EMBEDDING_MODEL,
     dim: parsed.EMBEDDING_DIM,
+    dimensions: openAiEmbeddingDimensions(parsed.OPENAI_EMBEDDING_MODEL, parsed.OPENAI_EMBED_DIMENSIONS, parsed.EMBEDDING_DIM),
     batchSize: parsed.OPENAI_EMBED_BATCH_SIZE,
     http: httpCfg,
   });
   return { write: provider, query: provider };
+}
+
+function openAiEmbeddingDimensions(model: string, configured: number | undefined, dim: number): number | undefined {
+  if (configured !== undefined) return configured;
+  const normalized = model.trim().toLowerCase();
+  if (normalized === "text-embedding-3-small" || normalized === "text-embedding-3-large") return dim;
+  if (normalized.endsWith("/text-embedding-3-small") || normalized.endsWith("/text-embedding-3-large")) return dim;
+  return undefined;
 }
 
 export function createEmbeddingProviderFromEnv(env: Record<string, string | undefined>): EmbeddingProvider | null {

@@ -23,6 +23,7 @@
     "lite:smoke:local-process": "LITE_SANDBOX_PROFILE=local_process_echo bash scripts/lite-smoke.sh",
     "runtime:e2e:agent": "npx tsx scripts/e2e/runtime-agent-loop.ts",
     "runtime:e2e:agent-suite": "npx tsx scripts/e2e/runtime-agent-loop-suite.ts",
+    "runtime:perf:baseline": "npx tsx scripts/e2e/runtime-performance-baseline.ts",
     "recall:eval": "npx tsx scripts/e2e/recall-engine-eval.ts",
     "recall:ordinary-memory": "npx tsx scripts/e2e/ordinary-memory-retrieval-eval.ts",
     "recall:ann:compare": "npx tsx scripts/e2e/recall-ann-provider-comparison.ts",
@@ -82,6 +83,7 @@
     "fast-uri": "3.1.2"
   },
   "devDependencies": {
+    "@aionis/substrate": "^0.1.10",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/node": "^22.10.2",
     "tsx": "^4.22.4",

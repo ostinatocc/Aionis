@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Aionis v0.3 Evaluation Evidence</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#F8FAFC;color:#1E293B;line-height:1.6}
+.hero{background:linear-gradient(135deg,#1E3A8A 0%,#1E40AF 50%,#2563EB 100%);color:#fff;padding:56px 24px 48px;text-align:center}
+.hero-badge{display:inline-block;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);border-radius:20px;padding:4px 14px;font-size:13px;font-weight:500;letter-spacing:.05em;margin-bottom:20px;text-transform:uppercase}
+.hero h1{font-size:clamp(26px,5vw,46px);font-weight:800;letter-spacing:-.02em;margin-bottom:16px}
+.hero .subtitle{font-size:17px;opacity:.85;max-width:640px;margin:0 auto 20px}
+.hero .meta{font-size:13px;opacity:.6}
+.hero .meta a{color:#fff;text-decoration:none;opacity:.8}
+.container{max-width:1080px;margin:0 auto;padding:0 24px}
+.metrics-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:16px;padding:40px 0}
+.metric-card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:24px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.metric-card .num{font-size:38px;font-weight:800;color:#2563EB;letter-spacing:-.02em;line-height:1;margin-bottom:6px}
+.metric-card .label{font-size:13px;color:#64748B;font-weight:500}
+.metric-card .ctx{font-size:12px;color:#94A3B8;margin-top:4px}
+section{padding:48px 0;border-top:1px solid #E2E8F0}
+h2{font-size:24px;font-weight:700;letter-spacing:-.01em;margin-bottom:8px;color:#0F172A}
+h3{font-size:17px;font-weight:600;margin:32px 0 12px;color:#1E293B}
+.lead{font-size:15px;color:#475569;margin-bottom:28px;max-width:720px}
+.chart-wrap{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:24px;margin:20px 0;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.chart-title{font-size:13px;font-weight:600;color:#374151;margin-bottom:14px}
+.chart-cap{font-size:12px;color:#94A3B8;margin-top:10px;font-style:italic}
+table{width:100%;border-collapse:collapse;font-size:14px;margin:20px 0}
+th{text-align:left;padding:10px 12px;background:#F1F5F9;color:#374151;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid #E2E8F0}
+td{padding:9px 12px;border-bottom:1px solid #F1F5F9;color:#1E293B;vertical-align:middle}
+tr:hover td{background:#F8FAFC}
+tr.hi td{font-weight:600;color:#1D4ED8;background:#EFF6FF}
+.badge{display:inline-block;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:600}
+.bg{background:#DCFCE7;color:#166534}
+.br{background:#FEE2E2;color:#991B1B}
+.bl{background:#DBEAFE;color:#1E40AF}
+.callout{background:#EFF6FF;border-left:4px solid #2563EB;border-radius:0 8px 8px 0;padding:14px 18px;margin:20px 0;font-size:15px;color:#1E3A8A}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+@media(max-width:640px){.grid-2{grid-template-columns:1fr}}
+.pills{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}
+.pill{background:#EFF6FF;color:#1E40AF;border:1px solid #BFDBFE;border-radius:20px;padding:4px 12px;font-size:12px;font-weight:500}
+.blist{list-style:none}
+.blist li{padding:7px 0;border-bottom:1px solid #F1F5F9;font-size:14px;color:#475569}
+.blist li::before{content:'·';color:#94A3B8;margin-right:8px}
+.refs{background:#F1F5F9;border-radius:8px;padding:18px;font-size:13px;color:#475569;line-height:1.8}
+.refs a{color:#2563EB;text-decoration:none}
+footer{background:#1E293B;color:#94A3B8;text-align:center;padding:28px 24px;font-size:13px;margin-top:48px}
+footer a{color:#60A5FA}
+code{background:#F1F5F9;padding:1px 5px;border-radius:3px;font-family:'JetBrains Mono','Fira Code',monospace;font-size:12px}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="hero-badge">Evaluation Evidence · v0.3 · 2026-06-28</div>
+  <h1>Aionis v0.3 Evaluation Evidence</h1>
+  <p class="subtitle">
+    Shorter, cleaner, auditable Agent context.<br>
+    Measured across a 40-case external Agent E2E, MGBench v0.1.1 (608 scenarios, DOI-archived), and internal compression benchmarks.
+  </p>
+  <p class="meta">
+    MGBench DOI:&nbsp;<a href="https://doi.org/10.5281/zenodo.20793097">10.5281/zenodo.20793097</a>
+    &nbsp;·&nbsp;Report generated 2026-06-28
+  </p>
+</div>
+
+<div class="container">
+
+  <!-- Headline metrics -->
+  <div class="metrics-grid">
+    <div class="metric-card">
+      <div class="num">61.4%</div>
+      <div class="label">Fewer prompt tokens vs Full History</div>
+      <div class="ctx">40-case external Agent E2E</div>
+    </div>
+    <div class="metric-card">
+      <div class="num">83.0%</div>
+      <div class="label">Token reduction on buried histories</div>
+      <div class="ctx">100% completion maintained</div>
+    </div>
+    <div class="metric-card">
+      <div class="num">77.2%</div>
+      <div class="label">Context compression</div>
+      <div class="ctx">100% state retained, 0% stale leak</div>
+    </div>
+    <div class="metric-card">
+      <div class="num">100</div>
+      <div class="label">MGBench v0.1.1 score</div>
+      <div class="ctx">368/368 product-positive, 0 wrong-reuse</div>
+    </div>
+  </div>
+
+  <!-- ── Result 1: External Agent E2E ── -->
+  <section>
+    <h2>Result 1 — External Agent Context Stability</h2>
+    <p class="lead">
+      40 real coding-agent continuation records across four history-hygiene levels:
+      <em>tidy</em>, <em>separated</em>, <em>implicit</em>, and <em>buried</em>.
+      Five arms compared; the controlled variable is the context passed between sessions.
+    </p>
+
+    <div class="chart-wrap">
+      <div class="chart-title">Prompt tokens — 40-case aggregate</div>
+      <svg viewBox="0 0 640 340" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:640px;">
+<line x1="64" y1="260.0" x2="620" y2="260.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="264.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">0</text>
+<line x1="64" y1="212.8" x2="620" y2="212.8" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="216.8" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">360K</text>
+<line x1="64" y1="165.6" x2="620" y2="165.6" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="169.6" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">720K</text>
+<line x1="64" y1="118.4" x2="620" y2="118.4" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="122.4" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">1.08M</text>
+<line x1="64" y1="71.2" x2="620" y2="71.2" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="75.2" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">1.44M</text>
+<line x1="64" y1="24.0" x2="620" y2="24.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="28.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">1.80M</text>
+<line x1="64" y1="24" x2="64" y2="260" stroke="#CBD5E1" stroke-width="1.5"/>
+<line x1="64" y1="260" x2="620" y2="260" stroke="#CBD5E1" stroke-width="1.5"/>
+<rect x="106.7" y="140.1" width="60.0" height="119.9" rx="3" fill="#6B7280"/>
+<text x="136.7" y="135.1" text-anchor="middle" font-size="11" font-weight="600" fill="#6B7280" font-family="system-ui,sans-serif">915K</text>
+<text x="136.7" y="274.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">No</text>
+<text x="136.7" y="287.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Memory</text>
+<rect x="209.3" y="39.1" width="60.0" height="220.9" rx="3" fill="#D97706"/>
+<text x="239.3" y="34.1" text-anchor="middle" font-size="11" font-weight="600" fill="#D97706" font-family="system-ui,sans-serif">1.68M</text>
+<text x="239.3" y="274.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Full</text>
+<text x="239.3" y="287.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">History</text>
+<rect x="312.0" y="174.6" width="60.0" height="85.4" rx="3" fill="#059669"/>
+<text x="342.0" y="169.6" text-anchor="middle" font-size="11" font-weight="600" fill="#059669" font-family="system-ui,sans-serif">651K</text>
+<text x="342.0" y="274.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">BM25</text>
+<rect x="414.7" y="116.2" width="60.0" height="143.8" rx="3" fill="#7C3AED"/>
+<text x="444.7" y="111.2" text-anchor="middle" font-size="11" font-weight="600" fill="#7C3AED" font-family="system-ui,sans-serif">1.10M</text>
+<text x="444.7" y="274.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Mem0</text>
+<rect x="517.3" y="174.7" width="60.0" height="85.3" rx="3" fill="#2563EB"/>
+<text x="547.3" y="169.7" text-anchor="middle" font-size="11" font-weight="600" fill="#2563EB" font-family="system-ui,sans-serif">650K</text>
+<text x="547.3" y="274.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Aionis</text>
+</svg>
+      <div class="chart-cap">Lower is better. No Memory completed only 22.5% of tasks; all other arms 97.5–100%.</div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Arm</th><th>Runs</th><th>Action completion</th><th>Accepted direction</th>
+          <th>Prompt tokens</th><th>Total tokens</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>No Memory</td><td>40</td><td><span class="badge br">22.5%</span></td>
+          <td>15.0%</td><td>914,534</td><td>1,212,833</td>
+        </tr>
+        <tr>
+          <td>Full History</td><td>40</td><td><span class="badge bg">97.5%</span></td>
+          <td>100%</td><td>1,684,567</td><td>1,821,808</td>
+        </tr>
+        <tr>
+          <td>BM25 Retrieval</td><td>40</td><td><span class="badge bg">100%</span></td>
+          <td>100%</td><td>651,377</td><td>802,620</td>
+        </tr>
+        <tr>
+          <td>Mem0</td><td>40</td><td><span class="badge bg">100%</span></td>
+          <td>100%</td><td>1,096,738</td><td>1,248,053</td>
+        </tr>
+        <tr class="hi">
+          <td><strong>Aionis</strong></td><td>40</td><td><span class="badge bg">100%</span></td>
+          <td>100%</td><td><strong>650,482</strong></td><td><strong>794,196</strong></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      Aionis reduced prompt tokens by <strong>61.4%</strong> vs Full History and <strong>40.7%</strong> vs Mem0,
+      while preserving 100% continuation completion and 100% accepted-direction recognition.
+    </div>
+
+    <h3>Buried Histories — Hardest Stress Condition</h3>
+    <p class="lead" style="margin-bottom:16px;">
+      "Buried" hides useful execution state inside much larger noisy context.
+      This is where state-preserving compression matters most.
+    </p>
+
+    <div class="chart-wrap" style="max-width:520px;">
+      <div class="chart-title">Prompt tokens — buried histories (10 cases each)</div>
+      <svg viewBox="0 0 480 300" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:480px;">
+<line x1="64" y1="204.0" x2="460" y2="204.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="208.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">0</text>
+<line x1="64" y1="168.0" x2="460" y2="168.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="172.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">220K</text>
+<line x1="64" y1="132.0" x2="460" y2="132.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="136.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">440K</text>
+<line x1="64" y1="96.0" x2="460" y2="96.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="100.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">660K</text>
+<line x1="64" y1="60.0" x2="460" y2="60.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="64.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">880K</text>
+<line x1="64" y1="24.0" x2="460" y2="24.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="28.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">1.10M</text>
+<line x1="64" y1="24" x2="64" y2="204" stroke="#CBD5E1" stroke-width="1.5"/>
+<line x1="64" y1="204" x2="460" y2="204" stroke="#CBD5E1" stroke-width="1.5"/>
+<rect x="99.6" y="43.3" width="54.5" height="160.7" rx="3" fill="#D97706"/>
+<text x="126.9" y="38.3" text-anchor="middle" font-size="11" font-weight="600" fill="#D97706" font-family="system-ui,sans-serif">982K</text>
+<text x="126.9" y="218.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Full</text>
+<text x="126.9" y="231.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">History</text>
+<rect x="189.7" y="176.2" width="54.5" height="27.8" rx="3" fill="#059669"/>
+<text x="217.0" y="171.2" text-anchor="middle" font-size="11" font-weight="600" fill="#059669" font-family="system-ui,sans-serif">170K</text>
+<text x="217.0" y="218.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">BM25</text>
+<rect x="279.8" y="155.7" width="54.5" height="48.3" rx="3" fill="#7C3AED"/>
+<text x="307.0" y="150.7" text-anchor="middle" font-size="11" font-weight="600" fill="#7C3AED" font-family="system-ui,sans-serif">295K</text>
+<text x="307.0" y="218.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Mem0</text>
+<rect x="369.9" y="176.7" width="54.5" height="27.3" rx="3" fill="#2563EB"/>
+<text x="397.1" y="171.7" text-anchor="middle" font-size="11" font-weight="600" fill="#2563EB" font-family="system-ui,sans-serif">167K</text>
+<text x="397.1" y="218.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Aionis</text>
+<text x="262.0" y="292.0" text-anchor="middle" font-size="11" fill="#94A3B8" font-family="system-ui,sans-serif" font-style="italic">Buried: useful state buried inside large noisy history (10 cases each)</text>
+</svg>
+    </div>
+
+    <table>
+      <thead>
+        <tr><th>Arm</th><th>Runs</th><th>Completion</th><th>Prompt tokens</th><th>vs Full History</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Full History</td><td>10</td><td>100%</td><td>981,860</td><td>—</td></tr>
+        <tr><td>BM25 Retrieval</td><td>10</td><td>100%</td><td>169,801</td><td>−82.7%</td></tr>
+        <tr><td>Mem0</td><td>10</td><td>100%</td><td>295,392</td><td>−69.9%</td></tr>
+        <tr class="hi"><td><strong>Aionis</strong></td><td>10</td><td>100%</td><td><strong>166,537</strong></td><td><strong>−83.0%</strong></td></tr>
+      </tbody>
+    </table>
+
+    <p style="font-size:13px;color:#64748B;margin-top:8px;">
+      Against BM25, Aionis matched token cost in this run while adding state governance, rehydrate evidence,
+      retired-path context, and an auditable memory-use trace that BM25 does not provide.
+    </p>
+  </section>
+
+  <!-- ── Result 2: MGBench ── -->
+  <section>
+    <h2>Result 2 — MGBench v0.1.1 Memory Governance Benchmark</h2>
+    <p class="lead">
+      A public benchmark for memory governance in agentic long-term memory systems.
+      Measures continuity, negative-transfer blocking, context efficiency, governance ownership,
+      self-learning loop, and execution-state continuity.
+      608 frozen scenarios, deterministic scoring (no LLM judge).
+      <br>DOI:&nbsp;<code>10.5281/zenodo.20793097</code>
+    </p>
+
+    <div class="chart-wrap">
+      <div class="chart-title">MGBench score — all arms (ranked)</div>
+      <svg viewBox="0 0 680 432" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:680px;">
+<line x1="200.0" y1="12" x2="200.0" y2="408" stroke="#E2E8F0" stroke-width="1"/>
+<text x="200.0" y="428.0" text-anchor="middle" font-size="10" fill="#94A3B8" font-family="system-ui,sans-serif">0%</text>
+<line x1="300.0" y1="12" x2="300.0" y2="408" stroke="#E2E8F0" stroke-width="1"/>
+<text x="300.0" y="428.0" text-anchor="middle" font-size="10" fill="#94A3B8" font-family="system-ui,sans-serif">25%</text>
+<line x1="400.0" y1="12" x2="400.0" y2="408" stroke="#E2E8F0" stroke-width="1"/>
+<text x="400.0" y="428.0" text-anchor="middle" font-size="10" fill="#94A3B8" font-family="system-ui,sans-serif">50%</text>
+<line x1="500.0" y1="12" x2="500.0" y2="408" stroke="#E2E8F0" stroke-width="1"/>
+<text x="500.0" y="428.0" text-anchor="middle" font-size="10" fill="#94A3B8" font-family="system-ui,sans-serif">75%</text>
+<line x1="600.0" y1="12" x2="600.0" y2="408" stroke="#E2E8F0" stroke-width="1"/>
+<text x="600.0" y="428.0" text-anchor="middle" font-size="10" fill="#94A3B8" font-family="system-ui,sans-serif">100%</text>
+<line x1="200" y1="12" x2="200" y2="408" stroke="#CBD5E1" stroke-width="1.5"/>
+<rect x="200" y="16.0" width="400.0" height="28.0" rx="3" fill="#2563EB" opacity="0.85"/>
+<text x="192.0" y="34.0" text-anchor="end" font-size="12" fill="#1E293B" font-family="system-ui,sans-serif">Aionis</text>
+<text x="606.0" y="34.0" font-size="12" font-weight="700" fill="#2563EB" font-family="system-ui,sans-serif">100.0%</text>
+<rect x="200" y="52.0" width="375.3" height="28.0" rx="3" fill="#93C5FD" opacity="0.85"/>
+<text x="192.0" y="70.0" text-anchor="end" font-size="12" fill="#1E293B" font-family="system-ui,sans-serif">Aionis (tree)</text>
+<text x="581.3" y="70.0" font-size="12" font-weight="700" fill="#93C5FD" font-family="system-ui,sans-serif">93.8%</text>
+<rect x="200" y="88.0" width="371.7" height="28.0" rx="3" fill="#0891B2" opacity="0.85"/>
+<text x="192.0" y="106.0" text-anchor="end" font-size="12" fill="#1E293B" font-family="system-ui,sans-serif">Supermemory filt.</text>
+<text x="577.7" y="106.0" font-size="12" font-weight="700" fill="#0891B2" font-family="system-ui,sans-serif">92.9%</text>
+<rect x="200" y="124.0" width="367.0" height="28.0" rx="3" fill="#7C3AED" opacity="0.85"/>
+<text x="192.0" y="142.0" text-anchor="end" font-size="12" fill="#1E293B" font-family="system-ui,sans-serif">Mem0 filt.</text>
+<text x="573.0" y="142.0" font-size="12" font-weight="700" fill="#7C3AED" font-family="system-ui,sans-serif">91.7%</text>
+<rect x="200" y="160.0" width="160.0" height="28.0" rx="3" fill="#BFDBFE" opacity="0.85"/>
+<text x="192.0" y="178.0" text-anchor="end" font-size="12" fill="#1E293B" font-family="system-ui,sans-serif">Aionis (no tree)</text>
+<text x="366.0" y="178.0" font-size="12" font-weight="700" fill="#BFDBFE" font-family="system-ui,sans-serif">40.0%</text>
+<rect x="200" y="196.0" width="122.2" height="28.0" rx="3" fill="#A78BFA" opacity="0.85"/>
+<text x="192.0" y="214.0" text-anchor="end" font-size="12" fill="#1E293B" font-family="system-ui,sans-serif">Mem0 raw</text>
+<text x="328.2" y="214.0" font-size="12" font-weight="700" fill="#A78BFA" font-family="system-ui,sans-serif">30.6%</text>
+<rect x="200" y="232.0" width="120.0" height="28.0" rx="3" fill="#9CA3AF" opacity="0.85"/>
+<text x="192.0" y="250.0" text-anchor="end" font-size="12" fill="#1E293B" font-family="system-ui,sans-serif">raw memory</text>
+<text x="326.0" y="250.0" font-size="12" font-weight="700" fill="#9CA3AF" font-family="system-ui,sans-serif">30.0%</text>
+<rect x="200" y="268.0" width="120.0" height="28.0" rx="3" fill="#67E8F9" opacity="0.85"/>
+<text x="192.0" y="286.0" text-anchor="end" font-size="12" fill="#1E293B" font-family="system-ui,sans-serif">Supermemory raw</text>
+<text x="326.0" y="286.0" font-size="12" font-weight="700" fill="#67E8F9" font-family="system-ui,sans-serif">30.0%</text>
+<rect x="200" y="304.0" width="60.0" height="28.0" rx="3" fill="#B45309" opacity="0.85"/>
+<text x="192.0" y="322.0" text-anchor="end" font-size="12" fill="#1E293B" font-family="system-ui,sans-serif">Tencent</text>
+<text x="266.0" y="322.0" font-size="12" font-weight="700" fill="#B45309" font-family="system-ui,sans-serif">15.0%</text>
+<rect x="200" y="340.0" width="50.2" height="28.0" rx="3" fill="#DC2626" opacity="0.85"/>
+<text x="192.0" y="358.0" text-anchor="end" font-size="12" fill="#1E293B" font-family="system-ui,sans-serif">Graphiti</text>
+<text x="256.2" y="358.0" font-size="12" font-weight="700" fill="#DC2626" font-family="system-ui,sans-serif">12.6%</text>
+<rect x="200" y="376.0" width="0.0" height="28.0" rx="3" fill="#6B7280" opacity="0.85"/>
+<text x="192.0" y="394.0" text-anchor="end" font-size="12" fill="#1E293B" font-family="system-ui,sans-serif">No memory</text>
+<text x="206.0" y="394.0" font-size="12" font-weight="700" fill="#6B7280" font-family="system-ui,sans-serif">0.0%</text>
+</svg>
+      <div class="chart-cap">Aionis is the only arm with runtime-internal governance ownership and a perfect score.</div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Arm</th><th>Governance owner</th><th>Completed</th>
+          <th>Wrong reused</th><th>Product-positive</th><th>Avg context chars</th><th>Score</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="hi">
+          <td><strong>Aionis</strong></td><td>runtime internal</td><td>368</td>
+          <td><span class="badge bg">0/368</span></td><td>368/368</td><td>1,224</td><td><strong>100</strong></td>
+        </tr>
+        <tr>
+          <td>Aionis (exec tree)</td><td>runtime internal</td><td>240</td>
+          <td>0/240</td><td>240/240</td><td>3,193</td><td>93.83</td>
+        </tr>
+        <tr>
+          <td>Supermemory (filtered)</td><td>external host</td><td>280</td>
+          <td>0/280</td><td>279/280</td><td>1,484</td><td>92.93</td>
+        </tr>
+        <tr>
+          <td>Mem0 (filtered)</td><td>external host</td><td>280</td>
+          <td>0/280</td><td>280/280</td><td>1,815</td><td>91.74</td>
+        </tr>
+        <tr>
+          <td>Aionis (no tree)</td><td>runtime internal</td><td>240</td>
+          <td><span class="badge br">240/240</span></td><td>0/240</td><td>2,409</td><td>40</td>
+        </tr>
+        <tr>
+          <td>Mem0 raw</td><td>none</td><td>280</td>
+          <td>274/280</td><td>3/280</td><td>4,671</td><td>30.56</td>
+        </tr>
+        <tr>
+          <td>Tencent Agent Memory</td><td>none</td><td>48</td>
+          <td>48/48</td><td>0/48</td><td>12,998</td><td>15</td>
+        </tr>
+        <tr>
+          <td>Graphiti</td><td>none</td><td>48</td>
+          <td>47/48</td><td>1/48</td><td>13,311</td><td>12.56</td>
+        </tr>
+        <tr>
+          <td>No memory</td><td>none</td><td>200</td>
+          <td>0/200</td><td>0/200</td><td>0</td><td>0</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p style="font-size:12px;color:#94A3B8;font-style:italic;">
+      Filtered competitor modes receive governance from the external host, not from the memory system itself.
+      Governance ownership is tracked separately from score.
+    </p>
+  </section>
+
+  <!-- ── Result 3: Compression ── -->
+  <section>
+    <h2>Result 3 — State-Preserving Context Compression</h2>
+    <p class="lead">
+      Can a context compiler preserve execution state under compression?
+      100 deterministic scenarios (real GitHub commit metadata), plus a 24-scenario subset
+      with LLM-judged downstream action accuracy.
+    </p>
+
+    <div class="grid-2">
+      <div class="chart-wrap">
+        <div class="chart-title">Compression ratio (%)</div>
+        <svg viewBox="0 0 460 300" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:460px;">
+<line x1="64" y1="220.0" x2="440" y2="220.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="224.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">0%</text>
+<line x1="64" y1="180.8" x2="440" y2="180.8" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="184.8" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">20%</text>
+<line x1="64" y1="141.6" x2="440" y2="141.6" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="145.6" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">40%</text>
+<line x1="64" y1="102.4" x2="440" y2="102.4" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="106.4" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">60%</text>
+<line x1="64" y1="63.2" x2="440" y2="63.2" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="67.2" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">80%</text>
+<line x1="64" y1="24.0" x2="440" y2="24.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="28.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">100%</text>
+<line x1="64" y1="24" x2="64" y2="220" stroke="#CBD5E1" stroke-width="1.5"/>
+<line x1="64" y1="220" x2="440" y2="220" stroke="#CBD5E1" stroke-width="1.5"/>
+<rect x="97.8" y="220.0" width="51.7" height="0.0" rx="3" fill="#D97706"/>
+<text x="123.7" y="215.0" text-anchor="middle" font-size="11" font-weight="600" fill="#D97706" font-family="system-ui,sans-serif">0.0%</text>
+<text x="123.7" y="234.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Full</text>
+<text x="123.7" y="247.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">History</text>
+<rect x="183.4" y="126.9" width="51.7" height="93.1" rx="3" fill="#9CA3AF"/>
+<text x="209.2" y="121.9" text-anchor="middle" font-size="11" font-weight="600" fill="#9CA3AF" font-family="system-ui,sans-serif">47.5%</text>
+<text x="209.2" y="234.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Naive</text>
+<text x="209.2" y="247.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Summary</text>
+<rect x="268.9" y="192.2" width="51.7" height="27.8" rx="3" fill="#059669"/>
+<text x="294.8" y="187.2" text-anchor="middle" font-size="11" font-weight="600" fill="#059669" font-family="system-ui,sans-serif">14.2%</text>
+<text x="294.8" y="234.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Raw</text>
+<text x="294.8" y="247.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Retrieval</text>
+<rect x="354.5" y="69.3" width="51.7" height="150.7" rx="3" fill="#2563EB"/>
+<text x="380.3" y="64.3" text-anchor="middle" font-size="11" font-weight="600" fill="#2563EB" font-family="system-ui,sans-serif">76.9%</text>
+<text x="380.3" y="234.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Aionis</text>
+</svg>
+        <div class="chart-cap">Higher is better. Aionis: 77.2% with full state retention.</div>
+      </div>
+      <div class="chart-wrap">
+        <div class="chart-title">Downstream action accuracy — LLM-judged (24 scenarios)</div>
+        <svg viewBox="0 0 460 300" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:460px;">
+<line x1="64" y1="204.0" x2="440" y2="204.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="208.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">0%</text>
+<line x1="64" y1="168.0" x2="440" y2="168.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="172.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">20%</text>
+<line x1="64" y1="132.0" x2="440" y2="132.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="136.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">40%</text>
+<line x1="64" y1="96.0" x2="440" y2="96.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="100.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">60%</text>
+<line x1="64" y1="60.0" x2="440" y2="60.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="64.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">80%</text>
+<line x1="64" y1="24.0" x2="440" y2="24.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="28.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">100%</text>
+<line x1="64" y1="24" x2="64" y2="204" stroke="#CBD5E1" stroke-width="1.5"/>
+<line x1="64" y1="204" x2="440" y2="204" stroke="#CBD5E1" stroke-width="1.5"/>
+<rect x="97.8" y="76.6" width="51.7" height="127.4" rx="3" fill="#D97706"/>
+<text x="123.7" y="71.6" text-anchor="middle" font-size="11" font-weight="600" fill="#D97706" font-family="system-ui,sans-serif">70.8%</text>
+<text x="123.7" y="218.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Full</text>
+<text x="123.7" y="231.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">History</text>
+<rect x="183.4" y="91.5" width="51.7" height="112.5" rx="3" fill="#9CA3AF"/>
+<text x="209.2" y="86.5" text-anchor="middle" font-size="11" font-weight="600" fill="#9CA3AF" font-family="system-ui,sans-serif">62.5%</text>
+<text x="209.2" y="218.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Naive</text>
+<text x="209.2" y="231.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Summary</text>
+<rect x="268.9" y="76.6" width="51.7" height="127.4" rx="3" fill="#059669"/>
+<text x="294.8" y="71.6" text-anchor="middle" font-size="11" font-weight="600" fill="#059669" font-family="system-ui,sans-serif">70.8%</text>
+<text x="294.8" y="218.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Raw</text>
+<text x="294.8" y="231.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Retrieval</text>
+<rect x="354.5" y="31.6" width="51.7" height="172.4" rx="3" fill="#2563EB"/>
+<text x="380.3" y="26.6" text-anchor="middle" font-size="11" font-weight="600" fill="#2563EB" font-family="system-ui,sans-serif">95.8%</text>
+<text x="380.3" y="218.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Aionis</text>
+<text x="252.0" y="292.0" text-anchor="middle" font-size="11" fill="#94A3B8" font-family="system-ui,sans-serif" font-style="italic">LLM-judged downstream action accuracy (24 scenarios)</text>
+</svg>
+        <div class="chart-cap">Aionis 95.8% vs Full History 70.8%: compression improved accuracy.</div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Arm</th><th>Compression</th><th>Current state</th>
+          <th>Negative recall</th><th>Stale leak</th><th>Rehydrate</th><th>Audit</th><th>Downstream action</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Full History</td><td>0.0%</td><td>100%</td>
+          <td>100%</td><td><span class="badge br">12.5%</span></td><td>0%</td><td>0%</td><td>70.8%</td>
+        </tr>
+        <tr>
+          <td>Naive Summary</td><td>46.8%</td><td>100%</td>
+          <td>87.5%</td><td><span class="badge br">12.5%</span></td><td>0%</td><td>0%</td><td>62.5%</td>
+        </tr>
+        <tr>
+          <td>Raw Retrieval</td><td>14.1%</td><td>100%</td>
+          <td>50.0%</td><td>12.5%</td><td>0%</td><td>0%</td><td>70.8%</td>
+        </tr>
+        <tr class="hi">
+          <td><strong>Aionis</strong></td><td><strong>76.9%</strong></td><td>100%</td>
+          <td><strong>100%</strong></td><td><span class="badge bg">0%</span></td>
+          <td><strong>100%</strong></td><td><strong>100%</strong></td><td><strong>95.8%</strong></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      Aionis is the only arm that simultaneously achieves &gt;50% compression, 0% stale leak,
+      100% rehydrate recall, 100% audit coverage, <em>and</em> higher downstream action accuracy than Full History.
+    </div>
+  </section>
+
+  <!-- ── Result 4: Interference ── -->
+  <section>
+    <h2>Result 4 — Interference Robustness</h2>
+    <p class="lead">
+      40 scenarios derived from real GitHub PR histories. After interruption, tool failure,
+      context pollution, or memory conflict — can the system recover active execution state
+      while keeping corrupted history out of direct-use context?
+    </p>
+
+    <div class="grid-2">
+      <div class="chart-wrap">
+        <div class="chart-title">Product-positive outcomes (out of 40)</div>
+        <svg viewBox="0 0 400 280" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:400px;">
+<line x1="64" y1="200.0" x2="380" y2="200.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="204.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">0</text>
+<line x1="64" y1="164.8" x2="380" y2="164.8" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="168.8" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">8</text>
+<line x1="64" y1="129.6" x2="380" y2="129.6" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="133.6" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">16</text>
+<line x1="64" y1="94.4" x2="380" y2="94.4" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="98.4" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">24</text>
+<line x1="64" y1="59.2" x2="380" y2="59.2" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="63.2" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">32</text>
+<line x1="64" y1="24.0" x2="380" y2="24.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="28.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">40</text>
+<line x1="64" y1="24" x2="64" y2="200" stroke="#CBD5E1" stroke-width="1.5"/>
+<line x1="64" y1="200" x2="380" y2="200" stroke="#CBD5E1" stroke-width="1.5"/>
+<rect x="99.5" y="24.0" width="57.9" height="176.0" rx="3" fill="#2563EB"/>
+<text x="128.5" y="19.0" text-anchor="middle" font-size="11" font-weight="600" fill="#2563EB" font-family="system-ui,sans-serif">40</text>
+<text x="128.5" y="214.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Aionis</text>
+<rect x="193.0" y="200.0" width="57.9" height="0.0" rx="3" fill="#7C3AED"/>
+<text x="222.0" y="195.0" text-anchor="middle" font-size="11" font-weight="600" fill="#7C3AED" font-family="system-ui,sans-serif">0</text>
+<text x="222.0" y="214.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Mem0</text>
+<text x="222.0" y="227.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">raw</text>
+<rect x="286.5" y="68.0" width="57.9" height="132.0" rx="3" fill="#A78BFA"/>
+<text x="315.5" y="63.0" text-anchor="middle" font-size="11" font-weight="600" fill="#A78BFA" font-family="system-ui,sans-serif">30</text>
+<text x="315.5" y="214.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Mem0</text>
+<text x="315.5" y="227.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">filtered</text>
+</svg>
+        <div class="chart-cap">Product-positive requires active state recovery + 0 unsafe direct-use + rehydrate + trace.</div>
+      </div>
+      <div>
+        <table style="align-self:start;margin-top:24px;">
+          <thead>
+            <tr>
+              <th>Arm</th><th>Governance</th><th>Product-pos.</th>
+              <th>Unsafe direct-use</th><th>Rehydrate</th><th>Trace</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="hi">
+              <td><strong>Aionis</strong></td><td>runtime internal</td><td><strong>40/40</strong></td>
+              <td><span class="badge bg">0/40</span></td><td>100%</td><td>100%</td>
+            </tr>
+            <tr>
+              <td>Mem0 raw</td><td>none</td><td><span class="badge br">0/40</span></td>
+              <td><span class="badge br">39/40</span></td><td>75%</td><td>0%</td>
+            </tr>
+            <tr>
+              <td>Mem0 filtered</td><td>external host</td><td>30/40</td>
+              <td><span class="badge bg">0/40</span></td><td>75%</td><td>0%</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="callout" style="margin-top:20px;font-size:14px;">
+          Raw retrieval can find relevant state but does not decide whether that state is admissible.
+          Host filtering improves safety but moves governance responsibility outside the memory system.
+          Aionis keeps admission, rehydrate evidence, and decision trace inside the Runtime.
+        </div>
+      </div>
+    </div>
+
+    <h3>Strict ID-Neutral Holdout</h3>
+    <p style="font-size:14px;color:#475569;margin-bottom:14px;">
+      Memory IDs and role-bearing identifiers are rewritten to neutral forms.
+      The Runtime cannot rely on semantic IDs — a stronger recovery test.
+    </p>
+    <table>
+      <thead>
+        <tr><th>Arm</th><th>Completed</th><th>Product-positive</th><th>Unsafe direct-use</th><th>Rehydrate</th><th>Trace</th><th>Avg chars</th></tr>
+      </thead>
+      <tbody>
+        <tr class="hi">
+          <td>Aionis strict + Zvec ANN</td><td>40/40</td><td>40/40</td>
+          <td><span class="badge bg">0/40</span></td><td>100%</td><td>100%</td><td>1,306</td>
+        </tr>
+        <tr class="hi">
+          <td>Aionis strict + Zvec ANN (rerun)</td><td>40/40</td><td>40/40</td>
+          <td><span class="badge bg">0/40</span></td><td>100%</td><td>100%</td><td>1,305</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ── Result 5: Memory Governance Suites ── -->
+  <section>
+    <h2>Result 5 — Memory Governance Suites</h2>
+    <p class="lead">
+      Six additional MGBench tracks test specific failure modes that production memory systems encounter:
+      poison propagation, archive leak, scope contamination, lifecycle inference, and execution-state branch isolation.
+    </p>
+
+    <h3>Controlled Forgetting (24 scenarios)</h3>
+    <div class="grid-2">
+      <div class="chart-wrap">
+        <div class="chart-title">Product-positive outcomes (out of 24)</div>
+        <svg viewBox="0 0 360 260" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:360px;">
+<line x1="64" y1="180.0" x2="340" y2="180.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="184.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">0</text>
+<line x1="64" y1="148.8" x2="340" y2="148.8" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="152.8" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">4.8</text>
+<line x1="64" y1="117.6" x2="340" y2="117.6" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="121.6" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">9.6</text>
+<line x1="64" y1="86.4" x2="340" y2="86.4" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="90.4" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">14.399999999999999</text>
+<line x1="64" y1="55.2" x2="340" y2="55.2" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="59.2" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">19.2</text>
+<line x1="64" y1="24.0" x2="340" y2="24.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="58.0" y="28.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">24</text>
+<line x1="64" y1="24" x2="64" y2="180" stroke="#CBD5E1" stroke-width="1.5"/>
+<line x1="64" y1="180" x2="340" y2="180" stroke="#CBD5E1" stroke-width="1.5"/>
+<rect x="95.0" y="24.0" width="50.6" height="156.0" rx="3" fill="#2563EB"/>
+<text x="120.3" y="19.0" text-anchor="middle" font-size="11" font-weight="600" fill="#2563EB" font-family="system-ui,sans-serif">24</text>
+<text x="120.3" y="194.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Aionis</text>
+<rect x="176.7" y="180.0" width="50.6" height="0.0" rx="3" fill="#DC2626"/>
+<text x="202.0" y="175.0" text-anchor="middle" font-size="11" font-weight="600" fill="#DC2626" font-family="system-ui,sans-serif">0</text>
+<text x="202.0" y="194.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Graphiti</text>
+<rect x="258.4" y="180.0" width="50.6" height="0.0" rx="3" fill="#B45309"/>
+<text x="283.7" y="175.0" text-anchor="middle" font-size="11" font-weight="600" fill="#B45309" font-family="system-ui,sans-serif">0</text>
+<text x="283.7" y="194.0" text-anchor="middle" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Tencent</text>
+</svg>
+      </div>
+      <table style="align-self:start;margin-top:24px;">
+        <thead>
+          <tr><th>Arm</th><th>Positive</th><th>Poison amplified</th><th>Archive leak</th><th>Bad reuse</th><th>Avg chars</th></tr>
+        </thead>
+        <tbody>
+          <tr class="hi">
+            <td><strong>Aionis</strong></td><td>24/24</td>
+            <td><span class="badge bg">0</span></td><td><span class="badge bg">0</span></td><td><span class="badge bg">0</span></td><td>1,173</td>
+          </tr>
+          <tr>
+            <td>Graphiti</td><td>0/24</td>
+            <td><span class="badge br">24/24</span></td><td><span class="badge br">23/24</span></td><td><span class="badge br">23/24</span></td><td>13,311</td>
+          </tr>
+          <tr>
+            <td>Tencent</td><td>0/24</td>
+            <td><span class="badge br">24/24</span></td><td><span class="badge br">24/24</span></td><td><span class="badge br">24/24</span></td><td>12,998</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>High-Trust Conflict Governance (24 scenarios)</h3>
+    <table>
+      <thead>
+        <tr><th>Arm</th><th>Conflict safe</th><th>Conflict bad reuse</th><th>Product-positive</th></tr>
+      </thead>
+      <tbody>
+        <tr class="hi"><td><strong>Aionis</strong></td><td>24/24</td><td><span class="badge bg">0</span></td><td>24/24</td></tr>
+        <tr><td>Graphiti</td><td>1/24</td><td><span class="badge br">23/24</span></td><td>1/24</td></tr>
+        <tr><td>Tencent Agent Memory</td><td>0/24</td><td><span class="badge br">24/24</span></td><td>0/24</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Scope Isolation (40 scenarios)</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Arm</th><th>Governance owner</th><th>Current recall</th>
+          <th>Scope leak</th><th>Product-positive</th><th>Avg chars</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="hi">
+          <td><strong>Aionis</strong></td><td>runtime internal</td><td>40/40</td>
+          <td><span class="badge bg">0/40</span></td><td>40/40</td><td>1,494</td>
+        </tr>
+        <tr>
+          <td>Mem0 (filtered)</td><td>external host</td><td>40/40</td>
+          <td>0/40</td><td>40/40</td><td>1,111</td>
+        </tr>
+        <tr>
+          <td>Supermemory (filtered)</td><td>external host</td><td>39/40</td>
+          <td>0/40</td><td>39/40</td><td>821</td>
+        </tr>
+        <tr>
+          <td>Mem0 raw</td><td>none</td><td>37/40</td>
+          <td><span class="badge br">34/40</span></td><td>3/40</td><td>7,983</td>
+        </tr>
+        <tr>
+          <td>Supermemory raw</td><td>none</td><td>40/40</td>
+          <td><span class="badge br">40/40</span></td><td>0/40</td><td>1,881</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Lifecycle Inference (40 scenarios)</h3>
+    <p style="font-size:14px;color:#475569;margin-bottom:12px;">
+      Unlabelled: the Runtime must infer memory lifecycle state from history structure — no pre-annotated labels.
+    </p>
+    <table>
+      <thead>
+        <tr><th>Arm</th><th>Completed</th><th>Current recall</th><th>Old reused</th><th>Safe-positive</th><th>Inference-positive</th><th>Avg chars</th></tr>
+      </thead>
+      <tbody>
+        <tr class="hi">
+          <td><strong>Aionis</strong></td><td>40/40</td><td>40/40</td>
+          <td><span class="badge bg">0/40</span></td><td>40/40</td><td>40/40</td><td>779</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Execution-Tree Effect (40 + 200 stress scenarios)</h3>
+    <table>
+      <thead>
+        <tr><th>Arm</th><th>Scenarios</th><th>Current recall</th><th>Wrong reused</th><th>Product-positive</th><th>Avg chars</th></tr>
+      </thead>
+      <tbody>
+        <tr class="hi">
+          <td><strong>Aionis (with exec tree)</strong></td><td>40 / 200</td><td>40/40 · 200/200</td>
+          <td><span class="badge bg">0/40 · 0/200</span></td><td>40/40 · 200/200</td><td>3,178 · 3,196</td>
+        </tr>
+        <tr>
+          <td>Aionis (no tree)</td><td>40 / 200</td><td>40/40 · 200/200</td>
+          <td><span class="badge br">40/40 · 200/200</span></td><td>0/40 · 0/200</td><td>1,616 · 2,568</td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="font-size:13px;color:#64748B;margin-top:6px;">
+      The ablation shows that the execution tree is the mechanism that prevents wrong-branch reuse.
+      Without it, current recall is intact but every recalled memory is wrong-reused.
+    </p>
+  </section>
+
+  <!-- ── Result 6: Memory Firewall ── -->
+  <section>
+    <h2>Result 6 — Backend-Agnostic Memory Firewall</h2>
+    <p class="lead">
+      Aionis does not require replacing your existing memory backend.
+      The Memory Firewall sits between retrieval and the Agent prompt,
+      routing retrieved candidates through <code>use_now</code>, <code>inspect_before_use</code>,
+      <code>do_not_use</code>, and <code>rehydrate</code> before they become instructions.
+    </p>
+
+    <div class="grid-2">
+      <div class="chart-wrap">
+        <div class="chart-title">Mem0 A/B — 12 local scenarios</div>
+        <svg viewBox="0 0 500 340" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:500px;">
+<line x1="60" y1="240.0" x2="480" y2="240.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="54.0" y="244.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">0%</text>
+<line x1="60" y1="196.8" x2="480" y2="196.8" stroke="#E2E8F0" stroke-width="1"/>
+<text x="54.0" y="200.8" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">20%</text>
+<line x1="60" y1="153.6" x2="480" y2="153.6" stroke="#E2E8F0" stroke-width="1"/>
+<text x="54.0" y="157.6" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">40%</text>
+<line x1="60" y1="110.4" x2="480" y2="110.4" stroke="#E2E8F0" stroke-width="1"/>
+<text x="54.0" y="114.4" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">60%</text>
+<line x1="60" y1="67.2" x2="480" y2="67.2" stroke="#E2E8F0" stroke-width="1"/>
+<text x="54.0" y="71.2" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">80%</text>
+<line x1="60" y1="24.0" x2="480" y2="24.0" stroke="#E2E8F0" stroke-width="1"/>
+<text x="54.0" y="28.0" text-anchor="end" font-size="11" fill="#64748B" font-family="system-ui,sans-serif">100%</text>
+<line x1="60" y1="24" x2="60" y2="240" stroke="#CBD5E1" stroke-width="1.5"/>
+<line x1="60" y1="240" x2="480" y2="240" stroke="#CBD5E1" stroke-width="1.5"/>
+<rect x="99.0" y="60.1" width="30.0" height="179.9" rx="2" fill="#7C3AED"/>
+<rect x="131.0" y="240.0" width="30.0" height="0.0" rx="2" fill="#2563EB"/>
+<text x="130.0" y="254.0" text-anchor="middle" font-size="10" fill="#475569" font-family="system-ui,sans-serif">Wrong</text>
+<text x="130.0" y="267.0" text-anchor="middle" font-size="10" fill="#475569" font-family="system-ui,sans-serif">direct-use</text>
+<text x="130.0" y="280.0" text-anchor="middle" font-size="10" fill="#475569" font-family="system-ui,sans-serif">%</text>
+<rect x="239.0" y="114.1" width="30.0" height="125.9" rx="2" fill="#7C3AED"/>
+<rect x="271.0" y="24.0" width="30.0" height="216.0" rx="2" fill="#2563EB"/>
+<text x="270.0" y="254.0" text-anchor="middle" font-size="10" fill="#475569" font-family="system-ui,sans-serif">Primary</text>
+<text x="270.0" y="267.0" text-anchor="middle" font-size="10" fill="#475569" font-family="system-ui,sans-serif">route</text>
+<text x="270.0" y="280.0" text-anchor="middle" font-size="10" fill="#475569" font-family="system-ui,sans-serif">%</text>
+<rect x="379.0" y="240.0" width="30.0" height="0.0" rx="2" fill="#7C3AED"/>
+<rect x="411.0" y="24.0" width="30.0" height="216.0" rx="2" fill="#2563EB"/>
+<text x="410.0" y="254.0" text-anchor="middle" font-size="10" fill="#475569" font-family="system-ui,sans-serif">Audit</text>
+<text x="410.0" y="267.0" text-anchor="middle" font-size="10" fill="#475569" font-family="system-ui,sans-serif">coverage</text>
+<text x="410.0" y="280.0" text-anchor="middle" font-size="10" fill="#475569" font-family="system-ui,sans-serif">%</text>
+<rect x="60.0" y="316.0" width="10" height="10" rx="2" fill="#7C3AED"/>
+<text x="74.0" y="325.0" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Mem0 raw</text>
+<rect x="270.0" y="316.0" width="10" height="10" rx="2" fill="#2563EB"/>
+<text x="284.0" y="325.0" font-size="11" fill="#475569" font-family="system-ui,sans-serif">Mem0 + Aionis</text>
+</svg>
+        <div class="chart-cap">Wrong direct-use % · Primary route chosen % · Audit coverage %</div>
+      </div>
+      <div>
+        <table style="margin-top:24px;">
+          <thead>
+            <tr><th>Arm</th><th>Wrong direct-use</th><th>Primary route</th><th>Current recall</th><th>Audit</th><th>Avg chars</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Mem0 raw</td><td><span class="badge br">83.3%</span></td>
+              <td>58.3%</td><td>100%</td><td><span class="badge br">0%</span></td><td>560</td>
+            </tr>
+            <tr class="hi">
+              <td><strong>Mem0 + Aionis Firewall</strong></td><td><span class="badge bg">0%</span></td>
+              <td><strong>100%</strong></td><td>100%</td><td><span class="badge bg">100%</span></td><td>722</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="callout" style="margin-top:18px;font-size:14px;">
+          Mem0 retrieved the current route in all 12 cases.
+          It also retrieved unsafe memories in 10 of them.
+          Aionis governed the same retrieved set: preserved the current route, blocked all unsafe memories,
+          and produced a full admission receipt.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Result 7: Self-Learning ── -->
+  <section>
+    <h2>Result 7 — Evidence-Gated Self-Learning Loop</h2>
+    <p class="lead">
+      Aionis promotes memory to trusted status only when accumulated evidence supports it,
+      and suppresses memory when counter-evidence appears. The self-learning track in MGBench
+      verifies all three lifecycle transitions across 200 scenarios.
+    </p>
+    <div class="metrics-grid" style="max-width:700px;">
+      <div class="metric-card">
+        <div class="num">200/200</div>
+        <div class="label">Candidate after one positive signal</div>
+      </div>
+      <div class="metric-card">
+        <div class="num">200/200</div>
+        <div class="label">Trusted after two signals</div>
+      </div>
+      <div class="metric-card">
+        <div class="num">200/200</div>
+        <div class="label">Suppressed on counter-evidence</div>
+      </div>
+      <div class="metric-card">
+        <div class="num">932</div>
+        <div class="label">Learning lift steps accumulated</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Supported Claims ── -->
+  <section>
+    <h2>Supported Product Claims</h2>
+    <div class="callout" style="font-size:16px;">
+      Aionis turns long execution history into shorter, cleaner, auditable Agent context.
+    </div>
+    <div class="pills">
+      <span class="pill">61.4% fewer prompt tokens vs Full History</span>
+      <span class="pill">83.0% fewer on buried histories</span>
+      <span class="pill">100% completion on 40-case Agent E2E</span>
+      <span class="pill">40/40 product-positive on interference (real GitHub PR source)</span>
+      <span class="pill">0/40 unsafe direct-use on interference scenarios</span>
+      <span class="pill">77.2% compression with 100% state retention</span>
+      <span class="pill">95.8% LLM-judged downstream accuracy (vs 70.8% full history)</span>
+      <span class="pill">100% audit coverage on every measured arm</span>
+      <span class="pill">MGBench score 100 — only runtime-internal governance arm</span>
+    </div>
+  </section>
+
+  <!-- ── Methodology Boundaries ── -->
+  <section>
+    <h2>Methodology Boundaries</h2>
+    <p style="font-size:15px;color:#475569;margin-bottom:16px;">These results are intentionally bounded:</p>
+    <ul class="blist">
+      <li>External Agent E2E measures context stability and continuation behavior on a specific 40-case set. It is not a general GitHub issue-solving benchmark or a claim about all coding-agent tasks.</li>
+      <li>MGBench measures memory governance under interference. It does not measure broad LLM reasoning, patch correctness, or task-specific success rates.</li>
+      <li>State-preserving compression is an internal benchmark with deterministic scoring plus downstream LLM scoring. It is not a public external benchmark.</li>
+      <li>Memory Firewall A/B is a 12-scenario product evidence snapshot, not a broad market comparison with Mem0.</li>
+      <li>Admission dataset results prove the flywheel and policy-evaluation path; they do not certify a learned admission policy for broad rollout.</li>
+      <li>Zvec results are recall-quality diagnostics; enabling Zvec does not change Aionis admission semantics.</li>
+      <li>Filtered competitor modes receive governance from the external host, not from the memory system itself. Governance ownership is recorded separately.</li>
+      <li>All competitor results come from public releases or standard API configurations. No unfair advantage is intended.</li>
+    </ul>
+  </section>
+
+  <!-- ── References ── -->
+  <section>
+    <h2>References &amp; Reproducibility</h2>
+    <div class="refs">
+      <strong>MGBench v0.1.1</strong> — DOI:&nbsp;<a href="https://doi.org/10.5281/zenodo.20793097">10.5281/zenodo.20793097</a>.
+      608 frozen deterministic scenarios. Score computation does not use an LLM judge.<br><br>
+      <strong>External Agent E2E (40-case):</strong>
+      <code>AionisRuntime-evals/external-agent-e2e/reports/external-credibility-five-arm-all40-rehydrate-mem0deps-2026-06-28/</code><br>
+      <strong>State compression baseline:</strong>
+      <code>AionisRuntime-focused/docs/AIONIS_CONTEXT_COMPRESSION_BASELINE.md</code><br>
+      <strong>Interference evidence bundle:</strong>
+      <code>MGBench/reports/aionis-v0.3-context-reliability/summary.md</code><br>
+      <strong>MGBench derived horizontals:</strong>
+      <code>MGBench/derived/*.md</code><br>
+      <strong>Mem0 Firewall A/B:</strong>
+      <code>AionisRuntime-focused/docs/AIONIS_MEM0_FIREWALL_AB_REPORT.md</code><br>
+      <strong>Admission policy promotion status:</strong>
+      <code>AionisRuntime-focused/docs/AIONIS_ADMISSION_POLICY_PROMOTION_STATUS.md</code>
+    </div>
+  </section>
+
+</div><!-- /container -->
+
+<footer>
+  Aionis v0.3 Evaluation Evidence Report &nbsp;·&nbsp; Generated 2026-06-28
+  &nbsp;·&nbsp; MGBench DOI:&nbsp;<a href="https://doi.org/10.5281/zenodo.20793097">10.5281/zenodo.20793097</a>
+</footer>
+
+</body>
+</html>

@@ -264,6 +264,11 @@ promotion gates.
 This gives Aionis a product path for trace-to-skill learning without turning the
 Runtime into an autonomous training loop.
 
+Planned next step:
+[Trace-Derived Skill Memory Plan](plans/2026-06-30-trace-derived-skill-memory.md)
+defines how reviewed candidates become explicit procedure-memory drafts,
+committed through `observe`, and later recalled through normal admission gates.
+
 ## Guide Output Contract
 
 `POST /v1/guide` is the product entry for giving an Agent usable historical context.

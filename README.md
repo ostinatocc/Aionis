@@ -918,8 +918,10 @@ Official docs: [https://docs.aionis.work](https://docs.aionis.work)
 |---|---|
 | [AIONIS_INSTALL.md](docs/AIONIS_INSTALL.md) | One-command install path for Runtime plus SDK and MCP packages. |
 | [AIONIS_RELEASES.md](docs/AIONIS_RELEASES.md) | GitHub release, Docker image, npm package, SDK, and MCP artifact map. |
+| [AIONIS_EVIDENCE_INDEX.md](docs/AIONIS_EVIDENCE_INDEX.md) | Current evidence map for context stability, MGBench, compression, MemoryData, performance, and external Agent cases. |
 | [AIONIS_MCP.md](docs/AIONIS_MCP.md) | MCP bridge for Claude Code, Cursor, and other coding-agent clients. |
 | [AIONIS_CLAUDE_CODE_INTEGRATION.md](docs/AIONIS_CLAUDE_CODE_INTEGRATION.md) | Official Claude Code plugin and lifecycle hook integration. |
+| [AIONIS_EXTERNAL_AGENT_CASE_RUNBOOK.md](docs/AIONIS_EXTERNAL_AGENT_CASE_RUNBOOK.md) | Repeatable protocol for real external Agent cases with isolated Runtime, evidence capture, and pass criteria. |
 | [AIONIS_LOOP_ENGINEERING.md](docs/AIONIS_LOOP_ENGINEERING.md) | Memory governance profile for loop-engineered Agents. |
 | [AIONIS_OPENROUTER_FUSION.md](docs/AIONIS_OPENROUTER_FUSION.md) | Boundary for optional multi-model plan review without turning Aionis into a model router. |
 | [AIONIS_RUNTIME_ARCHITECTURE.md](docs/AIONIS_RUNTIME_ARCHITECTURE.md) | Product architecture, memory layers, execution memory, context compiler, and source map. |
