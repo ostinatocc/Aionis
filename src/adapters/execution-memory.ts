@@ -5,6 +5,8 @@ import type {
 import type {
   AionisGuideContextMode,
   AionisGuideMode,
+  AionisGuideAgentContextOptions,
+  AionisGuideAgentContextResult,
   AionisGuideRequestOptions,
   AionisJsonObject,
   AionisRequestOptions,
@@ -54,6 +56,11 @@ export const EXECUTION_MEMORY_ADAPTER_CONTRACT = {
 export type ExecutionMemoryClient = {
   observe<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T>;
   guide<T = unknown>(body: AionisJsonObject, options?: AionisGuideRequestOptions): Promise<T>;
+  guideAgentContext?<TGuide = unknown>(
+    body: AionisJsonObject,
+    options?: AionisGuideRequestOptions,
+    contextOptions?: AionisGuideAgentContextOptions,
+  ): Promise<AionisGuideAgentContextResult<TGuide>>;
   forget<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T>;
   feedback?<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T>;
   rehydrate?<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T>;
@@ -174,6 +181,10 @@ export type ExecutionMemoryGuideInput = ExecutionMemoryRunRef & ExecutionMemoryA
   mode?: AionisGuideMode;
   context_mode?: AionisGuideContextMode;
   guide?: AionisJsonObject;
+};
+
+export type ExecutionMemoryGuideAgentContextInput = ExecutionMemoryGuideInput & {
+  agent_context_options?: AionisGuideAgentContextOptions;
 };
 
 export type ExecutionMemoryOutcomeInput = ExecutionMemoryStepInput & {
@@ -376,6 +387,48 @@ export class AionisExecutionMemoryAdapter {
       ...(input.guide ?? {}),
     }, this.requestOptions(input));
     this.rememberGuide(input.run_id, response);
+    return response;
+  }
+
+  async guideAgentContext<TGuide = unknown>(
+    input: ExecutionMemoryGuideAgentContextInput,
+  ): Promise<AionisGuideAgentContextResult<TGuide>> {
+    if (!this.client.guideAgentContext) {
+      throw new Error("ExecutionMemoryAdapter guideAgentContext requires an Aionis SDK client with guideAgentContext().");
+    }
+    const teamId = this.teamId(input);
+    this.assertSharedTeamBoundary(this.defaults.default_memory_lane ?? "shared", teamId);
+    const legacyContextModeAsGuideMode =
+      input.context_mode === "standard" || input.context_mode === "full_power" ? input.context_mode : undefined;
+    const agentContextMode = input.context_mode === "compact_agent" ? "compact_agent" : undefined;
+    const response = await this.client.guideAgentContext<TGuide>({
+      query_text: input.query_text,
+      agent_role: this.role(input),
+      consumer_agent_id: this.agentId(input),
+      consumer_team_id: teamId,
+      context: {
+        task_signature: input.task_signature,
+        ...(input.task_family ? { task_family: input.task_family } : {}),
+        ...(input.workflow_signature ? { workflow_signature: input.workflow_signature } : {}),
+        ...(input.context ?? {}),
+      },
+      execution_tree_v1: input.execution_tree_v1 ?? this.currentExecutionTree ?? undefined,
+      tool_candidates: input.tool_candidates,
+      limit: input.limit ?? this.defaults.default_limit,
+      include_packets: input.include_packets ?? this.defaults.include_packets_by_default,
+      mode: input.mode ?? legacyContextModeAsGuideMode ?? this.defaults.default_guide_mode ?? "full_power",
+      ...(agentContextMode ? { context_mode: agentContextMode } : {}),
+      ...(input.guide ?? {}),
+    }, this.requestOptions(input), {
+      task: input.agent_context_options?.task ?? {
+        task_id: input.task_id,
+        run_id: input.run_id,
+        task_signature: input.task_signature,
+        query_text: input.query_text,
+      },
+      ...input.agent_context_options,
+    });
+    this.rememberGuide(input.run_id, response.guide);
     return response;
   }
 

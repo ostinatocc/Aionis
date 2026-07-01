@@ -610,7 +610,6 @@ and observability.
 
 ```ts
 import {
-  compileExecutionAgentContext,
   createAionisClient,
   feedbackFromGuide,
 } from "@aionis/sdk";
@@ -629,7 +628,7 @@ await aionis.remember({
   owner_agent_id: "agent-1",
 });
 
-const guide = await aionis.execution.guideForRole<{
+const context = await aionis.execution.guideAgentContextForRole<{
   guide_trace_id: string;
   agent_context: {
     prompt_text: string;
@@ -646,24 +645,14 @@ const guide = await aionis.execution.guideForRole<{
   context_mode: "compact_agent",
 });
 
-const context = compileExecutionAgentContext({
-  guide,
-  task: {
-    run_id: "run-001",
-    task_signature: "product-update",
-    query_text: "Continue the product update.",
-  },
-  budget_profile: "balanced",
-});
-
 // Your host runs the Agent with context.agent_prompt.
 
 await aionis.feedback(feedbackFromGuide({
-  guide,
+  guide: context.guide,
   reason: "Agent used the exposed memory successfully.",
   run_id: "run-001",
   outcome: "positive",
-  used_memory_ids: guide.agent_context.use_now_memory_ids.slice(0, 1),
+  used_memory_ids: context.guide.agent_context.use_now_memory_ids.slice(0, 1),
 }));
 ```
 
@@ -676,7 +665,7 @@ Full SDK guide: [docs/AIONIS_SDK_QUICKSTART.md](docs/AIONIS_SDK_QUICKSTART.md).
 For token-sensitive Agent calls, opt into compact prompt rendering:
 
 ```ts
-const compactGuide = await aionis.execution.guideForRole({
+const compactContext = await aionis.execution.guideAgentContextForRole({
   agent_id: "reviewer-1",
   team_id: "checkout-team",
   role: "reviewer",
@@ -684,16 +673,14 @@ const compactGuide = await aionis.execution.guideForRole({
   task_signature: "checkout-migration",
   query_text: "Continue the verified branch with compact execution context.",
   context_mode: "compact_agent",
-});
-
-const compactContext = compileExecutionAgentContext({
-  guide: compactGuide,
+}, undefined, {
   budget_profile: "compact",
 });
 ```
 
-Compact mode shortens the Agent prompt while preserving external memory
-buckets, memory IDs, feedback attribution, receipts, and operator audit surfaces.
+Compact mode shortens the Agent prompt while preserving governed memory buckets,
+memory IDs, feedback attribution, receipts, operator audit surfaces, and resolved
+evidence for `inspect_before_use` or `rehydrate` pointers.
 
 ## MCP For Claude Code And Cursor
 
@@ -771,7 +758,7 @@ For long-running or multi-agent work, use the execution helpers instead of
 hand-writing execution memory payloads:
 
 ```ts
-import { compileExecutionAgentContext, createAionisClient } from "@aionis/sdk";
+import { createAionisClient } from "@aionis/sdk";
 
 const aionis = createAionisClient({
   baseUrl: process.env.AIONIS_URL ?? "http://127.0.0.1:3001",
@@ -788,7 +775,7 @@ await aionis.execution.observeStep({
   target_files: ["src/checkout.ts"],
 });
 
-const guide = await aionis.execution.guideForRole({
+const context = await aionis.execution.guideAgentContextForRole({
   agent_id: "reviewer-1",
   team_id: "checkout-team",
   role: "reviewer",
@@ -796,15 +783,7 @@ const guide = await aionis.execution.guideForRole({
   task_signature: "checkout-migration",
   query_text: "Continue from the current verified execution path.",
   context_mode: "compact_agent",
-});
-
-const context = compileExecutionAgentContext({
-  guide,
-  task: {
-    run_id: "run-001",
-    task_signature: "checkout-migration",
-    query_text: "Continue from the current verified execution path.",
-  },
+}, undefined, {
   repo_state: {
     existing_files: ["src/checkout.ts"],
   },

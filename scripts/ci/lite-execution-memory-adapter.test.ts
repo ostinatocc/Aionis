@@ -273,6 +273,94 @@ test("execution memory adapter passes compact agent context as guide rendering m
   assert.equal(guideCall.body.context_mode, "compact_agent");
 });
 
+test("execution memory adapter exposes full SDK Agent context path", async () => {
+  const calls: Array<{ method: string; body: Record<string, unknown>; options: unknown }> = [];
+  const client: ExecutionMemoryClient = {
+    async observe(body, options) {
+      calls.push({ method: "observe", body, options });
+      return { memory_write: { nodes: [{ id: "memory-observed" }] } };
+    },
+    async guide(body, options) {
+      calls.push({ method: "guide", body, options });
+      return { guide_trace_id: "guide-fallback", agent_context: { use_now_memory_ids: [] } };
+    },
+    async guideAgentContext(body, options, contextOptions) {
+      calls.push({ method: "guideAgentContext", body, options: { options, contextOptions } });
+      return {
+        contract_version: "aionis_sdk_agent_context_with_evidence_v1",
+        guide_trace_id: "guide-agent-context",
+        guide: {
+          guide_trace_id: "guide-agent-context",
+          agent_context: { use_now_memory_ids: ["memory-current"] },
+        },
+        agent_context: { prompt_text: "compact guide" },
+        compiled_context: {
+          contract_version: "aionis_sdk_execution_agent_context_v1",
+          agent_prompt: "compiled prompt",
+          sections: [],
+          memory_use_receipt: { contract_version: "aionis_memory_use_receipt_v1" },
+          memory_admission_record: { contract_version: "aionis_memory_admission_record_v1" },
+          warnings: [],
+        },
+        agent_prompt: "compiled prompt\nAIONIS_RESOLVED_EVIDENCE v1",
+        resolved_evidence: [{
+          memory_id: "memory-current",
+          surface: "inspect_before_use",
+          uri: "aionis://tenant-agent-context/scope-agent-context/event/memory-current",
+          type: "event",
+          text: "resolved evidence",
+        }],
+        unresolved_memory_ids: [],
+      };
+    },
+    async forget(body, options) {
+      calls.push({ method: "forget", body, options });
+      return { operation: "activate" };
+    },
+    async measure(body, options) {
+      calls.push({ method: "measure", body, options });
+      return { contract_version: "aionis_measure_result_v1" };
+    },
+    async operatorSnapshot(body, options) {
+      calls.push({ method: "operatorSnapshot", body, options });
+      return { contract_version: "aionis_operator_snapshot_result_v1" };
+    },
+  };
+  const adapter = createExecutionMemoryAdapter({
+    client,
+    tenant_id: "tenant-agent-context",
+    scope: "scope-agent-context",
+    team_id: "team-agent-context",
+    default_agent_id: "worker-agent-context",
+    default_agent_role: "worker",
+  });
+
+  const result = await adapter.guideAgentContext({
+    run_id: "run-agent-context",
+    task_signature: "agent-context",
+    query_text: "Continue with resolved evidence.",
+    context_mode: "compact_agent",
+    agent_context_options: {
+      budget_profile: "balanced",
+      repo_state: { existing_files: ["src/worker.ts"] },
+    },
+  });
+
+  assert.match(result.agent_prompt, /AIONIS_RESOLVED_EVIDENCE/);
+  assert.deepEqual(exposedUseNowMemoryIds(result.guide), ["memory-current"]);
+  const guideCall = calls.find((call) => call.method === "guideAgentContext");
+  assert.ok(guideCall);
+  assert.equal(guideCall.body.mode, "full_power");
+  assert.equal(guideCall.body.context_mode, "compact_agent");
+  assert.equal(guideCall.body.consumer_agent_id, "worker-agent-context");
+  assert.equal(guideCall.body.consumer_team_id, "team-agent-context");
+  assert.equal((guideCall.body.context as Record<string, unknown>).task_signature, "agent-context");
+  assert.equal((guideCall.options as { options?: Record<string, unknown> }).options?.tenant_id, "tenant-agent-context");
+  const contextOptions = (guideCall.options as { contextOptions?: Record<string, unknown> }).contextOptions ?? {};
+  assert.equal(contextOptions.budget_profile, "balanced");
+  assert.deepEqual(contextOptions.repo_state, { existing_files: ["src/worker.ts"] });
+});
+
 test("execution memory adapter prefers first-class SDK feedback when available", async () => {
   const calls: Array<{ method: string; body: Record<string, unknown>; options: unknown }> = [];
   const client: ExecutionMemoryClient = {

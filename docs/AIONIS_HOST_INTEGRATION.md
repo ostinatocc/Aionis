@@ -77,7 +77,7 @@ Use the product routes directly when integrating over HTTP:
 | Step | Route | Host Responsibility | Aionis Responsibility |
 |---|---|---|---|
 | `observe` | `POST /v1/observe` | Report real memory, execution, outcome, or handoff evidence. | Persist scoped evidence and execution memory. |
-| `guide` | `POST /v1/guide` | Ask for context before the next Agent acts. | Return compact `agent_context`. |
+| `guide` | `POST /v1/guide`, SDK `guideAgentContext()` | Ask for context before the next Agent acts. | Return compact `agent_context`; SDK full path can also resolve `inspect_before_use` and `rehydrate` evidence into the compiled prompt. |
 | `agent action` | Host-owned | Give the Agent `agent_context.prompt_text` or selected `agent_context` fields. | Preserve memory/action separation while the host executes tools. |
 | `outcome feedback` | SDK `feedback()`, adapter `afterRun`, or raw `POST /v1/feedback` | Report which exposed memory IDs were actually used and what happened. | Attribute feedback only to exposed and reported memory. |
 | `measure` | `POST /v1/measure` | Provide before/after guide packets or product trace. | Report whether history helped or hurt. |
@@ -92,8 +92,9 @@ new recallable memory.
 
 The Agent should receive one of these:
 
-1. `guide.agent_context.prompt_text`
-2. a host-rendered prompt built only from `agent_context`
+1. SDK `guideAgentContext().agent_prompt` when using the TypeScript SDK.
+2. `guide.agent_context.prompt_text` when integrating directly over HTTP.
+3. a host-rendered prompt built only from `agent_context`.
 
 Keep these surfaces for host logs, measurement, and operator inspection:
 
@@ -140,13 +141,14 @@ remain in `agent_context` structured fields, so hosts can attribute memory use
 without making the Agent prompt carry UUIDs.
 
 Hosts that need a shorter Agent prompt can request
-`context_mode: "compact_agent"` on `/v1/guide`, SDK `guide()`, SDK
-`execution.guideForRole()`, `createExecutionMemoryAdapter().guideNext()`, host
-templates that pass through guide input, or MCP `aionis_context`. This keeps
-the same governed `use_now`, `inspect_before_use`, `do_not_use`,
+`context_mode: "compact_agent"` on `/v1/guide`, SDK `guideAgentContext()`, SDK
+`execution.guideAgentContextForRole()`, `createExecutionMemoryAdapter().guideAgentContext()`,
+host templates that pass through guide input, or MCP `aionis_context`. This
+keeps the same governed `use_now`, `inspect_before_use`, `do_not_use`,
 `rehydrate_hints`, `command_posture`, and memory ID fields, but renders a
-tighter contract-style prompt for the Agent. Receipts, traces, packets, and
-operator snapshots remain available for host logs.
+tighter contract-style prompt for the Agent. The SDK full path resolves
+recoverable evidence pointers before compiling the final prompt. Receipts,
+traces, packets, and operator snapshots remain available for host logs.
 
 `command_posture` is the host-readable instruction posture for the same
 governed surfaces. Use `must_not` to block failed/stale branches,

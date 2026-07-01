@@ -1,3 +1,6 @@
+// Canonical Aionis TypeScript SDK source.
+// Sync this file to the standalone @aionis/sdk package with `npm run sdk:sync`.
+
 export type AionisJsonObject = Record<string, unknown>;
 
 export type AionisGuideMode = "standard" | "full_power";
@@ -477,7 +480,7 @@ export type AionisExecutionRepoState = {
   files?: AionisExecutionFilePresence[];
 };
 
-export type AionisExecutionContextTask = {
+export type AionisAgentPromptTaskInput = {
   task_id?: string;
   run_id?: string;
   task_signature?: string;
@@ -485,9 +488,18 @@ export type AionisExecutionContextTask = {
   goal?: string;
 };
 
+export type AionisExecutionContextTask = AionisAgentPromptTaskInput;
+
+export type AionisGuideExecutionContextInput = AionisJsonObject & {
+  task_id?: string;
+  task_signature?: string;
+  task_family?: string;
+  workflow_signature?: string;
+};
+
 export type AionisExecutionAgentContextCompileInput = {
   guide: unknown;
-  task?: string | AionisExecutionContextTask;
+  task?: string | AionisAgentPromptTaskInput;
   repo_state?: AionisExecutionRepoState;
   budget_profile?: AionisExecutionContextBudgetProfile;
   max_prompt_chars?: number;
@@ -526,6 +538,70 @@ export type AionisCompiledExecutionAgentContext = {
   reference_only_targets: string[];
   blocked_direction_targets: string[];
   execution_warnings: AionisExecutionContextWarning[];
+};
+
+export type AionisMemoryResolveType =
+  | "event"
+  | "entity"
+  | "topic"
+  | "rule"
+  | "evidence"
+  | "concept"
+  | "procedure"
+  | "self_model";
+
+export type AionisMemoryResolveRequest = AionisJsonObject & {
+  uri: string;
+  consumer_agent_id?: string;
+  consumer_team_id?: string;
+  include_meta?: boolean;
+  include_slots?: boolean;
+  include_slots_preview?: boolean;
+  slots_preview_keys?: number;
+};
+
+export type AionisResolvedAgentEvidenceSurface = "inspect_before_use" | "rehydrate";
+
+export type AionisResolvedAgentEvidence = {
+  memory_id: string;
+  surface: AionisResolvedAgentEvidenceSurface;
+  uri: string | null;
+  resolved_type: AionisMemoryResolveType | null;
+  resolved: boolean;
+  source: "handoff_text" | "text_summary" | "slots_json" | "node_title" | "unresolved";
+  evidence_text: string;
+  response?: unknown;
+  error?: {
+    message: string;
+    status?: number;
+  };
+};
+
+export type AionisGuideAgentContextOptions = {
+  task?: AionisExecutionAgentContextCompileInput["task"];
+  repo_state?: AionisExecutionAgentContextCompileInput["repo_state"];
+  budget_profile?: AionisExecutionContextBudgetProfile;
+  max_prompt_chars?: number;
+  evidence_limit?: number;
+  evidence_char_budget?: number;
+  include_inspect_before_use?: boolean;
+  include_rehydrate?: boolean;
+  resolve_types?: AionisMemoryResolveType[];
+  on_resolve_error?: "include_placeholder" | "skip" | "throw";
+  additional_instructions?: string[];
+};
+
+export type AionisGuideAgentContextResult<TGuide = unknown> = {
+  contract_version: "aionis_sdk_agent_context_with_evidence_v1";
+  guide: TGuide;
+  compiled_context: AionisCompiledExecutionAgentContext;
+  agent_context: unknown | null;
+  agent_prompt: string;
+  resolved_evidence: AionisResolvedAgentEvidence[];
+  unresolved_memory_ids: string[];
+  evidence_char_count: number;
+  prompt_char_count: number;
+  guide_trace_id: string | null;
 };
 
 export type AionisClientOptions = {
@@ -606,6 +682,137 @@ export type AionisProductTask = {
   workflow_signature?: string;
 };
 
+export type AionisTrainingCandidateLabel =
+  | "positive"
+  | "negative"
+  | "neutral"
+  | "blocked"
+  | "insufficient_evidence";
+
+export type AionisTrainingCandidateType =
+  | "handoff_distillation"
+  | "transfer_judge"
+  | "workflow_selector"
+  | "forgetting_suppression"
+  | "authority_judgment"
+  | "trace_derived_skill";
+
+export type AionisTraceDerivedSkillCandidate = {
+  contract_version: "aionis_trace_derived_skill_candidate_v1";
+  skill_name: string;
+  source_trace_ids: string[];
+  source_signal_ids: string[];
+  applies_when: string[];
+  does_not_apply_when: string[];
+  procedure_steps: string[];
+  target_files: string[];
+  acceptance_checks: string[];
+  failure_counterexamples: string[];
+  evidence_refs: string[];
+  authority_state: "candidate";
+  promotion_status: "candidate_only" | "needs_feedback_attribution" | "promotion_ready";
+  export_policy: {
+    agent_prompt_included: false;
+    runtime_mutation: false;
+    required_gate: "admission_and_promotion_gate";
+  };
+};
+
+export type AionisGenericTrainingCandidate = {
+  candidate_type: Exclude<AionisTrainingCandidateType, "trace_derived_skill">;
+  source_ids: string[];
+  label: AionisTrainingCandidateLabel;
+  export_ready: boolean;
+  reason: string;
+};
+
+export type AionisTraceDerivedSkillTrainingCandidate = {
+  candidate_type: "trace_derived_skill";
+  source_ids: string[];
+  label: AionisTrainingCandidateLabel;
+  export_ready: boolean;
+  reason: string;
+  trace_derived_skill: AionisTraceDerivedSkillCandidate;
+};
+
+export type AionisTrainingCandidate =
+  | AionisGenericTrainingCandidate
+  | AionisTraceDerivedSkillTrainingCandidate;
+
+export type AionisTraceDerivedSkillReviewItem = {
+  candidate_type: "trace_derived_skill";
+  review_action: "review_for_promotion";
+  skill_name: string;
+  label: AionisTrainingCandidateLabel;
+  export_ready: boolean;
+  promotion_status: AionisTraceDerivedSkillCandidate["promotion_status"];
+  reason: string;
+  source_ids: string[];
+  source_trace_ids: string[];
+  source_signal_ids: string[];
+  applies_when: string[];
+  does_not_apply_when: string[];
+  procedure_steps: string[];
+  target_files: string[];
+  acceptance_checks: string[];
+  failure_counterexamples: string[];
+  evidence_refs: string[];
+  safety: {
+    authority_state: "candidate";
+    agent_prompt_included: false;
+    runtime_mutation: false;
+    required_gate: "admission_and_promotion_gate";
+  };
+  candidate: AionisTraceDerivedSkillTrainingCandidate;
+};
+
+export type AionisEffectReport = AionisJsonObject & {
+  contract_version: "aionis_effect_report_v1";
+  tenant_id: string;
+  scope: string;
+  task: {
+    task_id?: string | null;
+    run_id?: string | null;
+    task_signature?: string | null;
+    task_family?: string | null;
+  };
+  comparison: {
+    mode: "baseline_vs_aionis" | "observe_only_vs_active" | "single_run_history_impact";
+    baseline_run_id?: string | null;
+    aionis_run_id?: string | null;
+    sufficient_evidence: boolean;
+  };
+  history_impact: {
+    changed_future_behavior: boolean;
+    impact_direction: "positive" | "negative" | "neutral" | "insufficient_evidence";
+    changed_fields: string[];
+    explanation: string;
+  };
+  training_candidates: AionisTrainingCandidate[];
+  evidence: {
+    evidence_ids: string[];
+    replay_run_ids: string[];
+    signal_summary_ids: string[];
+    promotion_quality_summary_ids: string[];
+  };
+};
+
+export type AionisMeasureResult = AionisJsonObject & {
+  contract_version: "aionis_measure_result_v1";
+  tenant_id: string;
+  scope: string;
+  measurement_input: {
+    source: string;
+    baseline: AionisJsonObject;
+    aionis: AionisJsonObject;
+  };
+  effect_report: AionisEffectReport;
+  memory_decision_trace?: AionisJsonObject;
+  memory_decision_audit?: AionisJsonObject;
+  kernel_report?: AionisJsonObject;
+  source_map: AionisJsonObject;
+};
+
 export type AionisFeedbackFromGuideInput = {
   guide: unknown;
   reason: string;
@@ -675,6 +882,8 @@ export type AionisExecutionStepInput = AionisExecutionBaseInput & {
   continuation_hint?: string;
   resume_hint?: string;
   reuse_hint?: string;
+  salience?: number;
+  importance?: number;
   confidence?: number;
   raw_ref?: string;
   evidence_ref?: string;
@@ -757,7 +966,7 @@ export type AionisExecutionGuideForRoleInput = AionisExecutionRunRef & AionisExe
   tenant_id?: string;
   scope?: string;
   query_text: string;
-  context?: AionisJsonObject;
+  context?: AionisGuideExecutionContextInput;
   execution_tree_v1?: AionisJsonObject | null;
   tool_candidates?: string[];
   limit?: number;
@@ -1549,6 +1758,8 @@ function executionPayload(input: AionisExecutionStepInput): AionisJsonObject {
     continuation_hint: input.continuation_hint,
     resume_hint: input.resume_hint,
     reuse_hint: input.reuse_hint,
+    salience: input.salience,
+    importance: input.importance,
     confidence: input.confidence,
     raw_ref: input.raw_ref,
     evidence_ref: input.evidence_ref,
@@ -1586,6 +1797,9 @@ function executionHandoffPayload(input: AionisExecutionHandoffInput): AionisJson
     title: input.title,
     summary: input.summary,
     handoff_text: input.handoff_text ?? input.continuation_hint ?? input.summary,
+    salience: input.salience,
+    importance: input.importance,
+    confidence: input.confidence,
     risk: input.risk,
     acceptance_checks: input.acceptance_checks,
     tags: input.tags,
@@ -1621,6 +1835,132 @@ async function readResponseBody(response: Response): Promise<unknown> {
   }
 }
 
+const AIONIS_MEMORY_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DEFAULT_RESOLVE_TYPES: AionisMemoryResolveType[] = ["event", "procedure", "evidence", "concept", "rule", "entity", "topic", "self_model"];
+
+function buildClientAionisUri(args: {
+  tenant_id: string;
+  scope: string;
+  type: AionisMemoryResolveType;
+  id: string;
+}): string {
+  return `aionis://${encodeURIComponent(args.tenant_id)}/${encodeURIComponent(args.scope)}/${args.type}/${encodeURIComponent(args.id)}`;
+}
+
+function guideTenantScope(guide: unknown, fallback: { tenant_id?: string; scope?: string }): { tenant_id: string; scope: string } {
+  const record = asRecord(guide);
+  return {
+    tenant_id: coerceString(record?.tenant_id) ?? fallback.tenant_id ?? "default",
+    scope: coerceString(record?.scope) ?? fallback.scope ?? "default",
+  };
+}
+
+function guideTraceIdValue(guide: unknown): string | null {
+  return coerceString(asRecord(guide)?.guide_trace_id);
+}
+
+function resolveEvidenceIds(guide: unknown, options: AionisGuideAgentContextOptions): Array<{
+  memory_id: string;
+  surface: AionisResolvedAgentEvidenceSurface;
+}> {
+  const receipt = memoryUseReceiptFromGuide(guide);
+  const rows: Array<{ memory_id: string; surface: AionisResolvedAgentEvidenceSurface }> = [];
+  if (options.include_inspect_before_use !== false) {
+    for (const memoryId of receipt.inspect_before_use_memory_ids) {
+      rows.push({ memory_id: memoryId, surface: "inspect_before_use" });
+    }
+  }
+  if (options.include_rehydrate !== false) {
+    for (const memoryId of receipt.rehydrate_memory_ids) {
+      rows.push({ memory_id: memoryId, surface: "rehydrate" });
+    }
+  }
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    const key = `${row.surface}:${row.memory_id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function nodeEvidenceText(response: unknown): {
+  text: string;
+  source: AionisResolvedAgentEvidence["source"];
+} {
+  const node = asRecord(asRecord(response)?.node);
+  if (!node) return { text: "", source: "unresolved" };
+  const slots = asRecord(node.slots);
+  const handoffText = coerceString(slots?.handoff_text)
+    ?? coerceString(slots?.continuation_hint)
+    ?? coerceString(slots?.next_action);
+  if (handoffText) return { text: handoffText, source: "handoff_text" };
+  const textSummary = coerceString(node.text_summary);
+  if (textSummary) return { text: textSummary, source: "text_summary" };
+  if (slots && Object.keys(slots).length > 0) return { text: JSON.stringify(slots), source: "slots_json" };
+  const title = coerceString(node.title);
+  if (title) return { text: title, source: "node_title" };
+  return { text: "", source: "unresolved" };
+}
+
+function renderResolvedEvidenceBlock(
+  evidence: AionisResolvedAgentEvidence[],
+  maxChars: number,
+): { text: string; evidence_char_count: number } {
+  const resolved = evidence.filter((entry) => entry.resolved && entry.evidence_text.trim().length > 0);
+  if (resolved.length === 0) return { text: "", evidence_char_count: 0 };
+  const sections = [
+    "AIONIS_RESOLVED_EVIDENCE v1",
+    "Resolved evidence below was explicitly surfaced by Aionis as inspect_before_use or rehydrate. Use it as evidence, not as a bypass around the admission decision.",
+    "",
+    ...resolved.flatMap((entry, index) => [
+      `[${index + 1}] memory_id=${entry.memory_id} surface=${entry.surface} source=${entry.source}${entry.uri ? ` uri=${entry.uri}` : ""}`,
+      truncateText(entry.evidence_text, Math.max(400, Math.floor(maxChars / Math.max(1, resolved.length)))),
+      "",
+    ]),
+  ];
+  const text = truncateText(sections.join("\n").trim(), maxChars);
+  return { text, evidence_char_count: text.length };
+}
+
+function mergeCompiledContextWithEvidence(args: {
+  guide: unknown;
+  resolvedEvidence: AionisResolvedAgentEvidence[];
+  options: AionisGuideAgentContextOptions;
+}): {
+  compiled_context: AionisCompiledExecutionAgentContext;
+  agent_prompt: string;
+  evidence_char_count: number;
+} {
+  const maxPromptChars = args.options.max_prompt_chars ?? 50_000;
+  const evidenceBudget = args.options.evidence_char_budget ?? Math.min(20_000, Math.max(4_000, Math.floor(maxPromptChars * 0.4)));
+  const { text: evidenceBlock, evidence_char_count: evidenceCharCount } = renderResolvedEvidenceBlock(
+    args.resolvedEvidence,
+    evidenceBudget,
+  );
+  const compiled = compileExecutionAgentContext({
+    guide: args.guide,
+    task: args.options.task,
+    repo_state: args.options.repo_state,
+    budget_profile: args.options.budget_profile ?? "balanced",
+    max_prompt_chars: evidenceBlock ? Math.max(4_000, maxPromptChars - evidenceBlock.length - 2) : maxPromptChars,
+    include_base_prompt: true,
+    additional_instructions: args.options.additional_instructions,
+  });
+  const agentPrompt = evidenceBlock
+    ? truncateText(`${compiled.agent_prompt}\n\n${evidenceBlock}`, maxPromptChars)
+    : compiled.agent_prompt;
+  return {
+    compiled_context: {
+      ...compiled,
+      agent_prompt: agentPrompt,
+      prompt_char_count: agentPrompt.length,
+    },
+    agent_prompt: agentPrompt,
+    evidence_char_count: evidenceCharCount,
+  };
+}
+
 export class AionisClient {
   readonly execution: AionisExecutionClient;
 
@@ -1653,6 +1993,129 @@ export class AionisClient {
 
   async guide<T = unknown>(body: AionisJsonObject, options?: AionisGuideRequestOptions): Promise<T> {
     return this.post<T>("/v1/guide", this.guideBody(body, options), options);
+  }
+
+  async resolveMemory<T = unknown>(body: AionisMemoryResolveRequest, options?: AionisRequestOptions): Promise<T> {
+    return this.post<T>("/v1/memory/resolve", body, options);
+  }
+
+  async guideAgentContext<TGuide = unknown>(
+    body: AionisJsonObject,
+    options?: AionisGuideRequestOptions,
+    contextOptions: AionisGuideAgentContextOptions = {},
+  ): Promise<AionisGuideAgentContextResult<TGuide>> {
+    const guide = await this.guide<TGuide>(body, options);
+    const bodyRecord = asRecord(body) ?? {};
+    const { tenant_id: tenantId, scope } = guideTenantScope(guide, {
+      tenant_id: options?.tenant_id ?? coerceString(bodyRecord.tenant_id) ?? this.tenantId ?? undefined,
+      scope: options?.scope ?? coerceString(bodyRecord.scope) ?? this.scope ?? undefined,
+    });
+    const evidenceLimit = contextOptions.evidence_limit ?? 6;
+    const resolveTypes = contextOptions.resolve_types ?? DEFAULT_RESOLVE_TYPES;
+    const onResolveError = contextOptions.on_resolve_error ?? "include_placeholder";
+    const evidenceRows = resolveEvidenceIds(guide, contextOptions).slice(0, evidenceLimit);
+    const resolvedEvidence: AionisResolvedAgentEvidence[] = [];
+    const consumerAgentId = coerceString(bodyRecord.consumer_agent_id);
+    const consumerTeamId = coerceString(bodyRecord.consumer_team_id);
+
+    for (const row of evidenceRows) {
+      if (!AIONIS_MEMORY_ID_RE.test(row.memory_id)) {
+        if (onResolveError === "throw") {
+          throw new Error(`Cannot resolve non-Aionis memory id: ${row.memory_id}`);
+        }
+        if (onResolveError === "include_placeholder") {
+          resolvedEvidence.push({
+            memory_id: row.memory_id,
+            surface: row.surface,
+            uri: null,
+            resolved_type: null,
+            resolved: false,
+            source: "unresolved",
+            evidence_text: "",
+            error: { message: "memory id is not an Aionis UUID; external memory ids are adjudicated but not resolvable through /v1/memory/resolve" },
+          });
+        }
+        continue;
+      }
+
+      let lastError: unknown = null;
+      let resolved = false;
+      for (const type of resolveTypes) {
+        const uri = buildClientAionisUri({ tenant_id: tenantId, scope, type, id: row.memory_id });
+        try {
+          const response = await this.resolveMemory<unknown>({
+            uri,
+            include_meta: true,
+            include_slots: true,
+            ...(consumerAgentId ? { consumer_agent_id: consumerAgentId } : {}),
+            ...(consumerTeamId ? { consumer_team_id: consumerTeamId } : {}),
+          }, options);
+          const extracted = nodeEvidenceText(response);
+          resolvedEvidence.push({
+            memory_id: row.memory_id,
+            surface: row.surface,
+            uri,
+            resolved_type: type,
+            resolved: true,
+            source: extracted.source,
+            evidence_text: extracted.text,
+            response,
+          });
+          resolved = true;
+          break;
+        } catch (error) {
+          lastError = error;
+          if (error instanceof AionisClientError && error.status === 404) continue;
+          if (onResolveError === "throw") throw error;
+          break;
+        }
+      }
+      if (!resolved && onResolveError !== "skip") {
+        resolvedEvidence.push({
+          memory_id: row.memory_id,
+          surface: row.surface,
+          uri: null,
+          resolved_type: null,
+          resolved: false,
+          source: "unresolved",
+          evidence_text: "",
+          error: {
+            message: lastError instanceof Error ? lastError.message : "memory resolve failed",
+            ...(lastError instanceof AionisClientError ? { status: lastError.status } : {}),
+          },
+        });
+      }
+    }
+
+    const merged = mergeCompiledContextWithEvidence({
+      guide,
+      resolvedEvidence,
+      options: contextOptions,
+    });
+    const unresolvedMemoryIds = resolvedEvidence
+      .filter((entry) => !entry.resolved)
+      .map((entry) => entry.memory_id);
+
+    return {
+      contract_version: "aionis_sdk_agent_context_with_evidence_v1",
+      guide,
+      compiled_context: merged.compiled_context,
+      agent_context: asRecord(guide)?.agent_context ?? null,
+      agent_prompt: merged.agent_prompt,
+      resolved_evidence: resolvedEvidence,
+      unresolved_memory_ids: unresolvedMemoryIds,
+      evidence_char_count: merged.evidence_char_count,
+      prompt_char_count: merged.agent_prompt.length,
+      guide_trace_id: guideTraceIdValue(guide),
+    };
+  }
+
+  async guideWithEvidence<TGuide = unknown>(
+    body: AionisJsonObject,
+    options?: AionisGuideRequestOptions,
+    contextOptions?: AionisGuideAgentContextOptions,
+  ): Promise<AionisGuideAgentContextResult<TGuide>> {
+    return this.guideAgentContext<TGuide>(body, options, contextOptions);
   }
 
   async governMemory<T = AionisMemoryAdmissionGatewayResponse>(
@@ -1693,7 +2156,7 @@ export class AionisClient {
     return this.post<T>("/v1/rehydrate", body, options);
   }
 
-  async measure<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {
+  async measure<T = AionisMeasureResult>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {
     return this.post<T>("/v1/measure", body, options);
   }
 
@@ -1833,6 +2296,50 @@ export class AionisExecutionClient {
     });
   }
 
+  async guideAgentContextForRole<TGuide = unknown>(
+    input: AionisExecutionGuideForRoleInput,
+    options?: AionisGuideRequestOptions,
+    contextOptions: AionisGuideAgentContextOptions = {},
+  ): Promise<AionisGuideAgentContextResult<TGuide>> {
+    const agentId = executionAgentId(input);
+    return this.client.guideAgentContext<TGuide>({
+      query_text: input.query_text,
+      agent_role: executionRole(input),
+      consumer_agent_id: agentId,
+      consumer_team_id: input.team_id,
+      run_id: input.run_id,
+      context: {
+        task_id: input.task_id,
+        task_signature: input.task_signature,
+        task_family: input.task_family,
+        workflow_signature: input.workflow_signature,
+        ...(input.context ?? {}),
+      },
+      execution_tree_v1: input.execution_tree_v1 ?? undefined,
+      tool_candidates: input.tool_candidates,
+      limit: input.limit ?? 10,
+      include_packets: input.include_packets ?? true,
+      mode: input.mode,
+      context_mode: input.context_mode,
+      context_char_budget: input.context_char_budget,
+      context_token_budget: input.context_token_budget,
+      context_compaction_profile: input.context_compaction_profile,
+      context_optimization_profile: input.context_optimization_profile,
+      ...(input.guide ?? {}),
+    }, {
+      ...executionScopeOptions(input),
+      ...(options ?? {}),
+    }, {
+      task: contextOptions.task ?? {
+        task_id: input.task_id,
+        run_id: input.run_id,
+        task_signature: input.task_signature,
+        query_text: input.query_text,
+      },
+      ...contextOptions,
+    });
+  }
+
   async observeOutcome<TObserve = unknown, TFeedback = unknown>(
     input: AionisExecutionOutcomeInput,
     options?: AionisRequestOptions,
@@ -1884,7 +2391,7 @@ export class AionisExecutionClient {
     });
   }
 
-  async measureRun<T = unknown>(input: AionisExecutionMeasureRunInput, options?: AionisRequestOptions): Promise<T> {
+  async measureRun<T = AionisMeasureResult>(input: AionisExecutionMeasureRunInput, options?: AionisRequestOptions): Promise<T> {
     return this.client.measure<T>(measureInputFromGuideLoop({
       task: {
         task_id: input.task_id ?? input.run_id,
@@ -2264,6 +2771,60 @@ export function memoryAdmissionDatasetJsonlFromGuide(
   options: AionisMemoryAdmissionDatasetExportOptions = {},
 ): string {
   return memoryAdmissionDatasetJsonlFromRows(memoryAdmissionDatasetRowsFromGuide(guide, options));
+}
+
+export function effectReportFromMeasure(measure: unknown): AionisEffectReport {
+  const effectReport = asRecord(asRecord(measure)?.effect_report);
+  if (!effectReport) {
+    throw new Error("Aionis measure response is missing effect_report");
+  }
+  return effectReport as AionisEffectReport;
+}
+
+export function traceDerivedSkillCandidatesFromMeasure(
+  measure: unknown,
+): AionisTraceDerivedSkillTrainingCandidate[] {
+  const candidates = asRecord(effectReportFromMeasure(measure))?.training_candidates;
+  if (!Array.isArray(candidates)) return [];
+  return candidates.filter((candidate): candidate is AionisTraceDerivedSkillTrainingCandidate => {
+    const record = asRecord(candidate);
+    return record?.candidate_type === "trace_derived_skill"
+      && asRecord(record.trace_derived_skill)?.contract_version === "aionis_trace_derived_skill_candidate_v1";
+  });
+}
+
+export function traceDerivedSkillReviewItemsFromMeasure(
+  measure: unknown,
+): AionisTraceDerivedSkillReviewItem[] {
+  return traceDerivedSkillCandidatesFromMeasure(measure).map((candidate) => {
+    const skill = candidate.trace_derived_skill;
+    return {
+      candidate_type: "trace_derived_skill",
+      review_action: "review_for_promotion",
+      skill_name: skill.skill_name,
+      label: candidate.label,
+      export_ready: candidate.export_ready,
+      promotion_status: skill.promotion_status,
+      reason: candidate.reason,
+      source_ids: candidate.source_ids,
+      source_trace_ids: skill.source_trace_ids,
+      source_signal_ids: skill.source_signal_ids,
+      applies_when: skill.applies_when,
+      does_not_apply_when: skill.does_not_apply_when,
+      procedure_steps: skill.procedure_steps,
+      target_files: skill.target_files,
+      acceptance_checks: skill.acceptance_checks,
+      failure_counterexamples: skill.failure_counterexamples,
+      evidence_refs: skill.evidence_refs,
+      safety: {
+        authority_state: skill.authority_state,
+        agent_prompt_included: skill.export_policy.agent_prompt_included,
+        runtime_mutation: skill.export_policy.runtime_mutation,
+        required_gate: skill.export_policy.required_gate,
+      },
+      candidate,
+    };
+  });
 }
 
 export function memoryIdsFromGuide(guide: unknown): string[] {

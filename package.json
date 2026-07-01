@@ -14,6 +14,8 @@
     "node": ">=22.5.0"
   },
   "scripts": {
+    "sdk:sync": "node scripts/sdk-source.mjs sync",
+    "sdk:check": "node scripts/sdk-source.mjs check",
     "typecheck": "npx tsc --noEmit",
     "lite:build": "npm run -s typecheck",
     "lite:start": "bash scripts/start-lite.sh",
