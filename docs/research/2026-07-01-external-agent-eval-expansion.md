@@ -103,6 +103,22 @@ Preflight result:
 | ---: | ---: | ---: |
 | 13 | 13 | 0 |
 
+The 52-record prepare-only pass also completed across all five arms:
+
+```text
+/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/external-credibility-expanded52-audited-prepare-2026-07-01/
+```
+
+Prepare-only result:
+
+| Requested | Prepared | Failed | Pending |
+| ---: | ---: | ---: | ---: |
+| 52 | 52 | 0 | 0 |
+
+This validates the audited manifest, repository checkout, detector bundle
+generation, and context construction for No Memory, Full History, BM25/RAG,
+Mem0, and Aionis before spending on real Agent model calls.
+
 ## Metrics For The Expansion
 
 Lead metrics:
@@ -136,6 +152,19 @@ npm run -s external-agent-e2e:phase2-gradient -- \
   --report-dir external-agent-e2e/reports/external-credibility-expanded52-audited-plan-2026-07-01 \
   --arms no_memory,full_history,bm25_retrieval,mem0,aionis \
   --check-only
+```
+
+Prepare every arm context without running the Agent model:
+
+```bash
+cd /Volumes/ziel/AionisRuntime-evals
+npm run -s external-agent-e2e:phase2-gradient -- \
+  --manifest external-agent-e2e/fixtures/phase2-gradient-expanded52-audited.jsonl \
+  --report-dir external-agent-e2e/reports/external-credibility-expanded52-audited-prepare-2026-07-01 \
+  --arms no_memory,full_history,bm25_retrieval,mem0,aionis \
+  --base-url "$AIONIS_BASE_URL" \
+  --prepare-only \
+  --continue-on-error
 ```
 
 Run the existing 40-record ready-control batch:
