@@ -35,25 +35,25 @@ Full History.
 
 ## Expansion Batch
 
-The next batch is a 52-record candidate expansion:
+The next batch is a 52-record audited expansion:
 
 ```text
-/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/fixtures/phase2-gradient-expanded52-candidate.jsonl
+/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/fixtures/phase2-gradient-expanded52-audited.jsonl
 ```
 
-It was generated from the Phase 1 trap manifest with candidate records included:
+It was generated from an audited Phase 1 manifest:
 
 ```bash
 cd /Volumes/ziel/AionisRuntime-evals
 npm run -s external-agent-e2e:generate-phase2-gradient -- \
-  --include-candidates \
-  --output external-agent-e2e/fixtures/phase2-gradient-expanded52-candidate.jsonl
+  --manifest external-agent-e2e/fixtures/phase1-traps-expanded13-audited.jsonl \
+  --output external-agent-e2e/fixtures/phase2-gradient-expanded52-audited.jsonl
 ```
 
 The check-only plan is:
 
 ```text
-/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/external-credibility-expanded52-plan-2026-07-01/
+/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/external-credibility-expanded52-audited-plan-2026-07-01/
 ```
 
 Plan status:
@@ -62,8 +62,8 @@ Plan status:
 | --- | ---: |
 | Planned records | 52 |
 | Base traps | 13 |
-| Ready base traps | 10 |
-| Candidate base traps | 3 |
+| Ready base traps | 13 |
+| Candidate base traps | 0 |
 | Repositories | 3 |
 | History levels | 4 |
 | Arms | 5 |
@@ -76,11 +76,8 @@ Repository mix:
 | `vercel/next.js` | 7 |
 | `microsoft/playwright` | 3 |
 
-The three candidate base traps are not public-claim evidence yet. They must pass
-source audit and detector review before the expanded run is used as an external
-product claim.
-
-Initial source audit was run for the three candidate base traps:
+Three candidate base traps were promoted into the audited manifest after source
+audit, local detector triage, and preflight:
 
 | Candidate base trap | Source audit status | Blockers |
 | --- | --- | ---: |
@@ -88,9 +85,23 @@ Initial source audit was run for the three candidate base traps:
 | `vercel-next.js-dc856d6c337e-source-trap-4` | `manual_review_required` | 0 |
 | `microsoft-playwright-c758b15077ef-source-trap-3` | `manual_review_required` | 0 |
 
-The source audit result only proves that the referenced GitHub evidence commit
-and target-file changes are structurally plausible. It does not promote these
-candidate traps to public evidence by itself.
+The expanded audited manifest passed validation with 13 ready traps:
+
+```text
+/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/fixtures/phase1-traps-expanded13-audited.jsonl
+```
+
+Full preflight passed against GitHub source commits:
+
+```text
+/Volumes/ziel/AionisRuntime-evals/external-agent-e2e/reports/trap-preflight-2026-07-01T06-17-11-629Z/
+```
+
+Preflight result:
+
+| Checked | OK | Failed |
+| ---: | ---: | ---: |
+| 13 | 13 | 0 |
 
 ## Metrics For The Expansion
 
@@ -121,8 +132,8 @@ Check the planned 52 records without paid model calls:
 ```bash
 cd /Volumes/ziel/AionisRuntime-evals
 npm run -s external-agent-e2e:phase2-gradient -- \
-  --manifest external-agent-e2e/fixtures/phase2-gradient-expanded52-candidate.jsonl \
-  --report-dir external-agent-e2e/reports/external-credibility-expanded52-plan-2026-07-01 \
+  --manifest external-agent-e2e/fixtures/phase2-gradient-expanded52-audited.jsonl \
+  --report-dir external-agent-e2e/reports/external-credibility-expanded52-audited-plan-2026-07-01 \
   --arms no_memory,full_history,bm25_retrieval,mem0,aionis \
   --check-only
 ```
@@ -143,7 +154,7 @@ Run the 52-record expanded batch after candidate audit:
 ```bash
 cd /Volumes/ziel/AionisRuntime-evals
 npm run -s external-agent-e2e:phase2-gradient -- \
-  --manifest external-agent-e2e/fixtures/phase2-gradient-expanded52-candidate.jsonl \
+  --manifest external-agent-e2e/fixtures/phase2-gradient-expanded52-audited.jsonl \
   --report-dir external-agent-e2e/reports/<run-id> \
   --arms no_memory,full_history,bm25_retrieval,mem0,aionis \
   --base-url "$AIONIS_BASE_URL"
@@ -151,11 +162,11 @@ npm run -s external-agent-e2e:phase2-gradient -- \
 
 ## Next Step
 
-The immediate next step is not another Runtime change. It is candidate audit:
+The immediate next step is not another Runtime change. It is the 52-record
+five-arm run:
 
-1. Review the 3 candidate base traps.
-2. Confirm deterministic detectors and source evidence.
-3. Promote them to ready only if they pass audit.
-4. Run 5-arm on the expanded set.
-5. Generate a context-stability report with the same tables as the 40-case
+1. Start Runtime with the current release build.
+2. Ensure the Mem0 dependency environment is available.
+3. Run the 52-record five-arm batch.
+4. Generate a context-stability report with the same tables as the 40-case
    baseline.
