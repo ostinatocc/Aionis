@@ -993,6 +993,7 @@ export type AionisExecutionGuideForRoleInput = AionisExecutionRunRef & AionisExe
   include_packets?: boolean;
   mode?: AionisGuideMode;
   context_mode?: AionisGuideContextMode;
+  task_context_profile?: AionisTaskContextProfile;
   context_char_budget?: number;
   context_token_budget?: number;
   context_compaction_profile?: "balanced" | "aggressive";
@@ -2310,6 +2311,7 @@ export class AionisExecutionClient {
       context_compaction_profile: input.context_compaction_profile,
       context_optimization_profile: input.context_optimization_profile,
       ...(input.guide ?? {}),
+      ...(input.task_context_profile ? { task_context_profile: input.task_context_profile } : {}),
     }, {
       ...executionScopeOptions(input),
       ...(options ?? {}),
@@ -2346,6 +2348,7 @@ export class AionisExecutionClient {
       context_compaction_profile: input.context_compaction_profile,
       context_optimization_profile: input.context_optimization_profile,
       ...(input.guide ?? {}),
+      ...(input.task_context_profile ? { task_context_profile: input.task_context_profile } : {}),
     }, {
       ...executionScopeOptions(input),
       ...(options ?? {}),
