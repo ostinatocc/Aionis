@@ -11,7 +11,7 @@ and native adapter release paths.
 | Docker image | `ghcr.io/ostinatocc/aionis:v0.3.2` | Local-first Runtime container with persistent SQLite state under `/data`. |
 | `aionis` | `0.3.4` npm / [repo](https://github.com/ostinatocc/aionis-cli) | Top-level product CLI. Owns `npx aionis setup` and delegates Runtime install to `@aionis/create`. |
 | `@aionis/create` | `0.3.3` npm / [repo](https://github.com/ostinatocc/aionis-create) | One-command Runtime installer. |
-| `@aionis/sdk` | `0.3.1` npm / [repo](https://github.com/ostinatocc/aionis-sdk) | TypeScript facade over Aionis product APIs. |
+| `@aionis/sdk` | `0.3.6` npm / [repo](https://github.com/ostinatocc/aionis-sdk) | TypeScript facade over Aionis product APIs, including typed task context profiles for `/v1/guide`. |
 | `@aionis/mcp` | `0.3.2` npm / [repo](https://github.com/ostinatocc/aionis-mcp) | MCP stdio bridge for Claude Code, Cursor, Codex-style tools, and other MCP clients. |
 | `@aionis/aifs` | `0.3.0` npm / [repo](https://github.com/ostinatocc/aionis-aifs) | Aionis File Surface for file-aware Agent context. |
 | `@aionis/claude-code` and Claude Code plugin | `0.3.1` npm / [repo](https://github.com/ostinatocc/aionis-claude-code) | Claude Code lifecycle hooks plus plugin marketplace manifest. |
@@ -19,6 +19,10 @@ and native adapter release paths.
 
 Fresh-install verification: [v0.3.0 release verification](./releases/v0.3.0-verification.md).
 Runtime patch notes: [v0.3.2 release notes](./releases/v0.3.2.md).
+
+Latest SDK patch: `@aionis/sdk@0.3.6` exposes typed
+`task_context_profile` guide requests for host adapters that want task-specific
+Agent context rendering without changing Runtime governance.
 
 Release tags are immutable. If the release surface changes after a tag, create a
 new patch tag instead of moving the old one.
