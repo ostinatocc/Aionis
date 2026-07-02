@@ -7,7 +7,7 @@ thin Agent-facing compilation layer on top of that Runtime.
 
 They do not change memory admission, lifecycle adjudication, authority gates,
 feedback attribution, or Runtime storage. They only tell the context compiler how
-to phrase the governed context for the current kind of Agent work.
+to budget and phrase the governed context for the current kind of Agent work.
 
 ## Why profiles exist
 
@@ -47,16 +47,36 @@ The returned `agent_context` includes the selected profile:
 If omitted, the profile is `general`, and no profile-specific prompt line is
 added.
 
+If `context_char_budget` is supplied, it wins over profile defaults. Without an
+explicit budget, each profile chooses a conservative default budget and prompt
+allocation for its task posture.
+
 ## Profiles
 
-| Profile | Use when | Agent-facing emphasis |
-|---|---|---|
-| `general` | Default product path | No extra task-specific context line. |
-| `coding_verifier` | Coding tasks with tests, verifiers, build checks, or acceptance criteria | Keep non-excluded acceptance checks visible; do not complete by skipping or narrowing required checks. |
-| `document_integrity` | Document classification, migration, extraction, archiving, or movement | Preserve original file bytes, names, and identity unless transformation is explicitly required. |
-| `long_qa` | Long-memory QA, fact retrieval, source-grounded answering | Answer from covered evidence; prefer answerable facts, aliases, dates, and source spans; rehydrate missing evidence. |
-| `multi_agent_handoff` | Planner/worker/verifier/reviewer handoff | Preserve role ownership, current handoff state, and verifier/reviewer boundaries. |
-| `loop_engineering` | Plan-execute-validate-repair loops | Preserve plan, iteration, validator result, repair attempt, and stop reason. |
+| Profile | Use when | Agent-facing emphasis | Default compact budget |
+|---|---|---|---|
+| `general` | Default product path | No extra task-specific context line. | Host supplied or Runtime default |
+| `coding_verifier` | Coding tasks with tests, verifiers, build checks, or acceptance criteria | Keep target files, patch anchors, and non-excluded acceptance checks visible; do not complete by skipping or narrowing required checks. | 4k chars |
+| `document_integrity` | Document classification, migration, extraction, archiving, or movement | Keep file identity, source references, and rehydrate hints visible. | 6k chars |
+| `long_qa` | Long-memory QA, fact retrieval, source-grounded answering | Preserve more evidence spans and rehydrate hints before final answers. | 8k chars |
+| `multi_agent_handoff` | Planner/worker/verifier/reviewer handoff | Preserve role ownership, current handoff state, and verifier/reviewer boundaries. | 4k chars |
+| `loop_engineering` | Plan-execute-validate-repair loops | Preserve plan, iteration, validator result, repair attempt, and stop reason. | 4k chars |
+
+## Compiler behavior
+
+Profiles currently control:
+
+- the default `agent_context.prompt_text` character budget when the host does not
+  pass `context_char_budget`;
+- the budget used by full-power execution-context assembly;
+- the number of current state, procedure, inspect, avoid, rehydrate, and file
+  lines rendered into the final Agent prompt;
+- the profile posture line that tells the Agent how to treat the governed
+  context.
+
+Profiles do not directly decide whether a memory becomes `use_now`,
+`inspect_before_use`, `do_not_use`, or `rehydrate`. Those decisions still come
+from Aionis governance.
 
 ## Boundary
 
@@ -92,4 +112,3 @@ one Runtime
 
 That lets Aionis support coding agents, document workflows, long-QA memory,
 multi-agent handoff, and loop-engineered agents without fragmenting the Runtime.
-

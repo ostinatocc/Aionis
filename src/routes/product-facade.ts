@@ -881,6 +881,114 @@ function productGuideTaskContextProfile(parsed: z.infer<typeof ProductGuideReque
   return parsedContextProfile.success ? parsedContextProfile.data : "general";
 }
 
+type ProductTaskContextProfileCompilerPolicy = {
+  contextCharBudget: number | null;
+  executionContextCharBudget: number;
+  filesLimit: number;
+  currentLimit: number;
+  procedureLimit: number;
+  inspectLimit: number;
+  avoidLimit: number;
+  rehydrateLimit: number;
+  currentMaxChars: number;
+  procedureMaxChars: number;
+  inspectMaxChars: number;
+  avoidMaxChars: number;
+  rehydrateReasonMaxChars: number;
+};
+
+function productGuideTaskContextProfileCompilerPolicy(args: {
+  profile: AionisTaskContextProfile;
+  agentContextMode: AionisAgentContext["agent_context_mode"];
+  explicitContextCharBudget?: number | null;
+}): ProductTaskContextProfileCompilerPolicy {
+  const compactAgent = args.agentContextMode === "compact_agent";
+  const explicitBudget =
+    typeof args.explicitContextCharBudget === "number" && args.explicitContextCharBudget > 0
+      ? Math.trunc(args.explicitContextCharBudget)
+      : null;
+  const base: ProductTaskContextProfileCompilerPolicy = {
+    contextCharBudget: explicitBudget,
+    executionContextCharBudget: Math.min(explicitBudget ?? 4096, 50_000),
+    filesLimit: compactAgent ? 2 : 4,
+    currentLimit: compactAgent ? 1 : 2,
+    procedureLimit: compactAgent ? 1 : 3,
+    inspectLimit: compactAgent ? 1 : 3,
+    avoidLimit: 3,
+    rehydrateLimit: compactAgent ? 2 : 3,
+    currentMaxChars: compactAgent ? 90 : 160,
+    procedureMaxChars: compactAgent ? 90 : 130,
+    inspectMaxChars: compactAgent ? 70 : 100,
+    avoidMaxChars: compactAgent ? 90 : 100,
+    rehydrateReasonMaxChars: compactAgent ? 50 : 70,
+  };
+
+  switch (args.profile) {
+    case "coding_verifier":
+      return {
+        ...base,
+        contextCharBudget: explicitBudget ?? (compactAgent ? 4096 : 6144),
+        executionContextCharBudget: Math.min(explicitBudget ?? 4096, 50_000),
+        filesLimit: compactAgent ? 4 : 6,
+        procedureLimit: compactAgent ? 1 : 2,
+        inspectLimit: compactAgent ? 2 : 3,
+        avoidLimit: compactAgent ? 2 : 3,
+        procedureMaxChars: compactAgent ? 110 : 150,
+        inspectMaxChars: compactAgent ? 95 : 130,
+      };
+    case "document_integrity":
+      return {
+        ...base,
+        contextCharBudget: explicitBudget ?? (compactAgent ? 6144 : 8192),
+        executionContextCharBudget: Math.min(explicitBudget ?? 6144, 50_000),
+        filesLimit: compactAgent ? 5 : 8,
+        procedureLimit: compactAgent ? 2 : 3,
+        inspectLimit: compactAgent ? 3 : 4,
+        avoidLimit: compactAgent ? 2 : 3,
+        rehydrateLimit: compactAgent ? 3 : 4,
+        inspectMaxChars: compactAgent ? 95 : 130,
+      };
+    case "long_qa":
+      return {
+        ...base,
+        contextCharBudget: explicitBudget ?? (compactAgent ? 8192 : 12000),
+        executionContextCharBudget: Math.min(explicitBudget ?? 8192, 50_000),
+        currentLimit: compactAgent ? 1 : 2,
+        procedureLimit: compactAgent ? 2 : 3,
+        inspectLimit: compactAgent ? 4 : 6,
+        avoidLimit: compactAgent ? 2 : 3,
+        rehydrateLimit: compactAgent ? 4 : 6,
+        currentMaxChars: compactAgent ? 120 : 180,
+        procedureMaxChars: compactAgent ? 120 : 160,
+        inspectMaxChars: compactAgent ? 120 : 180,
+        rehydrateReasonMaxChars: compactAgent ? 75 : 100,
+      };
+    case "multi_agent_handoff":
+      return {
+        ...base,
+        contextCharBudget: explicitBudget ?? (compactAgent ? 4096 : 6144),
+        executionContextCharBudget: Math.min(explicitBudget ?? 4096, 50_000),
+        currentLimit: compactAgent ? 2 : 3,
+        procedureLimit: compactAgent ? 2 : 3,
+        inspectLimit: compactAgent ? 1 : 2,
+        avoidLimit: compactAgent ? 2 : 3,
+      };
+    case "loop_engineering":
+      return {
+        ...base,
+        contextCharBudget: explicitBudget ?? (compactAgent ? 4096 : 6144),
+        executionContextCharBudget: Math.min(explicitBudget ?? 4096, 50_000),
+        currentLimit: compactAgent ? 2 : 3,
+        procedureLimit: compactAgent ? 2 : 4,
+        inspectLimit: compactAgent ? 2 : 3,
+        avoidLimit: compactAgent ? 2 : 3,
+        procedureMaxChars: compactAgent ? 110 : 150,
+      };
+    case "general":
+      return base;
+  }
+}
+
 type AdmissionCandidatePolicyGuideModeResolution = {
   mode: "off" | "shadow" | "active";
   source: "global_env" | "profile_rule" | "off";
@@ -1558,9 +1666,15 @@ function renderMergedAgentPrompt(args: {
   context: AionisAgentContext;
   contextCharBudget?: number | null;
   agentContextMode?: AionisAgentContext["agent_context_mode"];
+  compilerPolicy?: ProductTaskContextProfileCompilerPolicy;
 }): string {
   const ctx = args.context;
   const compactAgent = args.agentContextMode === "compact_agent";
+  const compilerPolicy = args.compilerPolicy ?? productGuideTaskContextProfileCompilerPolicy({
+    profile: ctx.task_context_profile,
+    agentContextMode: args.agentContextMode ?? ctx.agent_context_mode,
+    explicitContextCharBudget: args.contextCharBudget,
+  });
   const currentLines = ctx.use_now.filter((entry) => entry.startsWith("Current active path:"));
   const procedureLines = ctx.use_now.filter((entry) => !entry.startsWith("Current active path:"));
   const nextActionSource = currentLines[0] ?? ctx.use_now[0] ?? ctx.inspect_before_use[0] ?? null;
@@ -1589,20 +1703,25 @@ function renderMergedAgentPrompt(args: {
       ? `next ${nextAction ? `action=${compactProductPromptText(nextAction, 130)} ` : ""}actor_role=${ctx.agent_role}`
       : null,
     compactAgent ? null : `summary ${compactProductPromptText(ctx.summary, 160)}`,
-    ctx.target_files.length > 0 ? `files ${ctx.target_files.slice(0, compactAgent ? 2 : 4).join(",")}` : null,
-    ...line("current", currentLines.length > 0 ? currentLines : ctx.use_now.slice(0, 1), compactAgent ? 1 : 2, compactAgent ? 90 : 160),
-    ...line("procedure", procedureLines, compactAgent ? 1 : 3, compactAgent ? 90 : 130),
-    ...line("inspect", ctx.inspect_before_use, compactAgent ? 1 : 3, compactAgent ? 70 : 100),
-    ...line("avoid", ctx.do_not_use, compactAgent ? 3 : 3, compactAgent ? 90 : 100),
+    ctx.target_files.length > 0 ? `files ${ctx.target_files.slice(0, compilerPolicy.filesLimit).join(",")}` : null,
+    ...line(
+      "current",
+      currentLines.length > 0 ? currentLines : ctx.use_now.slice(0, 1),
+      compilerPolicy.currentLimit,
+      compilerPolicy.currentMaxChars,
+    ),
+    ...line("procedure", procedureLines, compilerPolicy.procedureLimit, compilerPolicy.procedureMaxChars),
+    ...line("inspect", ctx.inspect_before_use, compilerPolicy.inspectLimit, compilerPolicy.inspectMaxChars),
+    ...line("avoid", ctx.do_not_use, compilerPolicy.avoidLimit, compilerPolicy.avoidMaxChars),
     ctx.rehydrate_hints.length > 0
       ? `rehydrate: ${ctx.rehydrate_hints
-        .slice(0, compactAgent ? 2 : 3)
-        .map((entry) => `id=${entry.memory_id}${entry.required ? " req=1" : ""} n=${compactProductPromptText(entry.reason, compactAgent ? 50 : 70)}`)
+        .slice(0, compilerPolicy.rehydrateLimit)
+        .map((entry) => `id=${entry.memory_id}${entry.required ? " req=1" : ""} n=${compactProductPromptText(entry.reason, compilerPolicy.rehydrateReasonMaxChars)}`)
         .join(" | ")}`
       : null,
     !compactAgent && ctx.memory_ids.length > 0 ? `ids ${ctx.memory_ids.slice(0, 8).join(",")}` : null,
   ]).join("\n");
-  const budget = args.contextCharBudget && args.contextCharBudget > 0 ? Math.trunc(args.contextCharBudget) : null;
+  const budget = compilerPolicy.contextCharBudget && compilerPolicy.contextCharBudget > 0 ? Math.trunc(compilerPolicy.contextCharBudget) : null;
   if (!budget || prompt.length <= budget) return prompt;
   return `${prompt.slice(0, Math.max(0, budget - 3)).trimEnd()}...`;
 }
@@ -1612,6 +1731,7 @@ function mergeProductGuideAgentContexts(args: {
   execution: AionisAgentContext | null;
   contextCharBudget?: number | null;
   agentContextMode?: AionisAgentContext["agent_context_mode"];
+  compilerPolicy?: ProductTaskContextProfileCompilerPolicy;
 }): { context: AionisAgentContext; changed: boolean } {
   const execution = args.execution;
   if (!execution) return { context: args.base, changed: false };
@@ -1727,6 +1847,7 @@ function mergeProductGuideAgentContexts(args: {
         context: merged,
         contextCharBudget: args.contextCharBudget,
         agentContextMode: args.agentContextMode ?? merged.agent_context_mode,
+        compilerPolicy: args.compilerPolicy,
       }),
     }),
     changed: true,
@@ -1819,6 +1940,7 @@ function applyClaimLedgerProjectionToAgentContext(args: {
   projection: AionisClaimLedgerProjection | null;
   contextCharBudget?: number | null;
   agentContextMode?: AionisAgentContext["agent_context_mode"];
+  compilerPolicy?: ProductTaskContextProfileCompilerPolicy;
 }): { context: AionisAgentContext; changed: boolean } {
   if (!claimLedgerProjectionHasPromptSurface(args.projection)) {
     return { context: args.agentContext, changed: false };
@@ -1880,6 +2002,7 @@ function applyClaimLedgerProjectionToAgentContext(args: {
         context: projected,
         contextCharBudget: args.contextCharBudget,
         agentContextMode: args.agentContextMode ?? projected.agent_context_mode,
+        compilerPolicy: args.compilerPolicy,
       }),
     }),
     changed: true,
@@ -3182,6 +3305,11 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     const fullPowerRequested = productGuideFullPowerRequested(parsed);
     const agentContextMode = productGuideAgentContextMode(parsed);
     const taskContextProfile = productGuideTaskContextProfile(parsed);
+    const taskContextProfilePolicy = productGuideTaskContextProfileCompilerPolicy({
+      profile: taskContextProfile,
+      agentContextMode,
+      explicitContextCharBudget: parsed.context_char_budget,
+    });
     let fullPowerStructuredMemoryMerged = false;
     if (fullPowerRequested) {
       const structuredExecutionPacket = await buildProductGuideStructuredExecutionPacket({
@@ -3203,7 +3331,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       guide_packet: guidePacket,
       query_intent_override: parsed.query_text,
       agent_context_mode: agentContextMode,
-      context_char_budget: parsed.context_char_budget,
+      context_char_budget: taskContextProfilePolicy.contextCharBudget,
       context_compaction_profile: parsed.context_compaction_profile ?? parsed.context_optimization_profile ?? null,
       task_context_profile: taskContextProfile,
     });
@@ -3224,7 +3352,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
           include_memory_evidence: true,
           include_prompt_text: false,
           include_agent_context: true,
-          agent_context_char_budget: Math.min(parsed.context_char_budget ?? 4096, 50_000),
+          agent_context_char_budget: taskContextProfilePolicy.executionContextCharBudget,
           memory_filters: productGuideExecutionMemoryFilters(parsed),
         }),
       });
@@ -3236,8 +3364,9 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       const merged = mergeProductGuideAgentContexts({
         base: agentContext,
         execution: executionAgentContext,
-        contextCharBudget: parsed.context_char_budget,
+        contextCharBudget: taskContextProfilePolicy.contextCharBudget,
         agentContextMode,
+        compilerPolicy: taskContextProfilePolicy,
       });
       agentContext = merged.context;
       fullPowerExecutionContextMerged = merged.changed;
@@ -3251,8 +3380,9 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     const claimLedgerContextProjection = applyClaimLedgerProjectionToAgentContext({
       agentContext,
       projection: claimLedgerProjection,
-      contextCharBudget: parsed.context_char_budget,
+      contextCharBudget: taskContextProfilePolicy.contextCharBudget,
       agentContextMode,
+      compilerPolicy: taskContextProfilePolicy,
     });
     agentContext = claimLedgerContextProjection.context;
     const guideTraceId = buildGuideTraceId();
@@ -3274,7 +3404,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
         memory_packet: memoryPacket,
         candidate_memory_ids: activeProjectionMemoryIds,
         reason: "inspect_before_use_active_projection",
-        context_char_budget: parsed.context_char_budget,
+        context_char_budget: taskContextProfilePolicy.contextCharBudget,
         context_compaction_profile: parsed.context_compaction_profile ?? parsed.context_optimization_profile ?? null,
       });
       activeProjectionApplied = projectedContext !== agentContext;
@@ -3306,7 +3436,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
           memory_packet: memoryPacket,
           candidate_memory_ids: admissionCandidatePolicyProjection.downgraded_memory_ids,
           reason: AIONIS_ADMISSION_CANDIDATE_POLICY_ACTIVE_PROJECTION_REASON,
-          context_char_budget: parsed.context_char_budget,
+          context_char_budget: taskContextProfilePolicy.contextCharBudget,
           context_compaction_profile: parsed.context_compaction_profile ?? parsed.context_optimization_profile ?? null,
         });
         admissionCandidatePolicyProjectionApplied = projectedContext !== agentContext;

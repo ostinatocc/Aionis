@@ -2482,6 +2482,7 @@ test("product guide full_power merges semantic memory with safe execution contex
         ].join(" "),
         agent_role: "reviewer",
         consumer_agent_id: "local-user",
+        task_context_profile: "coding_verifier",
         context: {
           task_signature: "full-power-guide-contract",
         },
@@ -2541,6 +2542,7 @@ test("product guide full_power merges semantic memory with safe execution contex
         ].join(" "),
         agent_role: "reviewer",
         consumer_agent_id: "local-user",
+        task_context_profile: "coding_verifier",
         context: {
           task_signature: "full-power-guide-contract",
         },
@@ -2552,9 +2554,17 @@ test("product guide full_power merges semantic memory with safe execution contex
     const compactGuideBody = compactGuide.json();
     const compactAgentContext = compactGuideBody.agent_context;
     assert.equal(compactAgentContext.agent_context_mode, "compact_agent");
+    assert.equal(compactAgentContext.task_context_profile, "coding_verifier");
     assert.equal(compactGuideBody.source_map.routes_used.includes("/v1/execution/context/assemble"), true);
     assert.equal(compactGuideBody.source_map.internal_surfaces_used.includes("compact_agent_context"), true);
     assert.equal(compactAgentContext.prompt_text.includes("AIONIS_CTX compact_agent"), true);
+    assert.equal(compactAgentContext.prompt_text.includes("task coding_verifier:"), true);
+    assert.equal(compactAgentContext.prompt_text.length <= 4096, true);
+    const compactInspectLines = compactAgentContext.prompt_text
+      .split("\n")
+      .filter((line: string) => line.startsWith("inspect:"));
+    assert.equal(new Set(compactInspectLines).size, compactInspectLines.length);
+    assert.equal(compactInspectLines.length <= 2, true);
     assert.equal(compactAgentContext.prompt_text.length < agentContext.prompt_text.length, true);
     assert.equal(compactAgentContext.use_now.some((entry: string) => entry.includes("FULL_POWER_GUIDE_PASSED_BRANCH")), true);
     assert.equal(compactAgentContext.do_not_use.some((entry: string) => entry.includes("FULL_POWER_GUIDE_FAILED_BRANCH")), true);
