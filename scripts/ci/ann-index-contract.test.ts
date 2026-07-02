@@ -187,6 +187,43 @@ test("zvec ANN index is optional and returns scoped vector candidates when avail
   }
 });
 
+test("zvec ANN index serializes concurrent collection access", async (t) => {
+  try {
+    await import("@zvec/zvec");
+  } catch {
+    t.skip("@zvec/zvec optional dependency is not available on this platform");
+    return;
+  }
+
+  const root = mkdtempSync(join(tmpdir(), "aionis-zvec-ann-concurrent-"));
+  const path = join(root, "index");
+  const seed = createZvecAnnIndex({ path });
+  try {
+    await seed.upsert(record("near"), [1, 0, 0]);
+    await seed.upsert(record("far"), [0, 1, 0]);
+    await seed.close?.();
+
+    const index = createZvecAnnIndex({ path });
+    try {
+      const searches = Array.from({ length: 8 }, () => index.search({
+        scope: "project-a",
+        embeddingModel: "test-embed",
+        vector: [0.99, 0.01, 0],
+        limit: 2,
+      }));
+      const results = await Promise.all(searches);
+      for (const result of results) {
+        assert.deepEqual(result.map((item) => item.node_id), ["near", "far"]);
+      }
+    } finally {
+      await index.close?.();
+    }
+  } finally {
+    await seed.close?.();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("zvec ANN rebuild keeps previous index when validation fails", async (t) => {
   try {
     await import("@zvec/zvec");

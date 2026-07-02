@@ -170,6 +170,7 @@ function recordToDoc(record: AnnVectorRecord, vector: number[]) {
 export class ZvecAnnIndex implements AionisLocalAnnIndex {
   private zvecPromise: Promise<ZvecModule> | null = null;
   private readonly collections = new Map<number, OpenCollection>();
+  private operationQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: ZvecAnnIndexOptions) {
     if (!options.path.trim()) throw new Error("Zvec ANN path is required");
@@ -193,39 +194,59 @@ export class ZvecAnnIndex implements AionisLocalAnnIndex {
     return collection;
   }
 
-  async upsert(record: AnnVectorRecord, vector: number[]): Promise<void> {
-    assertAnnVector(record, vector);
-    const collection = await this.collectionForDimension(record.embedding_dim);
-    assertStatus(collection.upsertSync(recordToDoc(record, vector)), "upsert");
-  }
-
-  async delete(nodeId: string): Promise<void> {
-    const normalized = nodeId.trim();
-    if (!normalized) return;
-    for (const dimension of this.knownDimensions()) {
-      const collection = await this.collectionForDimension(dimension);
-      assertStatus(collection.deleteByFilterSync(`node_id = ${stringLiteral(normalized)}`), "delete");
+  private async runExclusive<T>(operation: () => Promise<T> | T): Promise<T> {
+    const previous = this.operationQueue.catch(() => undefined);
+    let release!: () => void;
+    this.operationQueue = previous.then(() => new Promise<void>((resolve) => {
+      release = resolve;
+    }));
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
     }
   }
 
-  async search(params: AnnSearchParams): Promise<AnnSearchResult[]> {
-    assertAnnSearchParams(params);
-    const collection = await this.collectionForDimension(params.vector.length);
-    const rows = collection.querySync({
-      fieldName: VECTOR_FIELD,
-      vector: params.vector,
-      topk: params.limit,
-      filter: filterExpression(params),
-      includeVector: false,
-      outputFields: ["node_id"],
+  async upsert(record: AnnVectorRecord, vector: number[]): Promise<void> {
+    await this.runExclusive(async () => {
+      assertAnnVector(record, vector);
+      const collection = await this.collectionForDimension(record.embedding_dim);
+      assertStatus(collection.upsertSync(recordToDoc(record, vector)), "upsert");
     });
-    return rows
-      .map((row) => ({
-        node_id: typeof row.fields.node_id === "string" ? row.fields.node_id : row.id,
-        score: normalizeScore(row.score),
-      }))
-      .sort((a, b) => b.score - a.score || a.node_id.localeCompare(b.node_id))
-      .slice(0, params.limit);
+  }
+
+  async delete(nodeId: string): Promise<void> {
+    await this.runExclusive(async () => {
+      const normalized = nodeId.trim();
+      if (!normalized) return;
+      for (const dimension of this.knownDimensions()) {
+        const collection = await this.collectionForDimension(dimension);
+        assertStatus(collection.deleteByFilterSync(`node_id = ${stringLiteral(normalized)}`), "delete");
+      }
+    });
+  }
+
+  async search(params: AnnSearchParams): Promise<AnnSearchResult[]> {
+    return await this.runExclusive(async () => {
+      assertAnnSearchParams(params);
+      const collection = await this.collectionForDimension(params.vector.length);
+      const rows = collection.querySync({
+        fieldName: VECTOR_FIELD,
+        vector: params.vector,
+        topk: params.limit,
+        filter: filterExpression(params),
+        includeVector: false,
+        outputFields: ["node_id"],
+      });
+      return rows
+        .map((row) => ({
+          node_id: typeof row.fields.node_id === "string" ? row.fields.node_id : row.id,
+          score: normalizeScore(row.score),
+        }))
+        .sort((a, b) => b.score - a.score || a.node_id.localeCompare(b.node_id))
+        .slice(0, params.limit);
+    });
   }
 
   async rebuild(records: AsyncIterable<{ record: AnnVectorRecord; vector: number[] }>): Promise<void> {
@@ -238,26 +259,34 @@ export class ZvecAnnIndex implements AionisLocalAnnIndex {
       });
     }
 
-    const tmpPath = `${this.options.path}.rebuild-${process.pid}-${Date.now()}`;
-    rmSync(tmpPath, { recursive: true, force: true });
-    const next = new ZvecAnnIndex({ path: tmpPath });
-    try {
-      for (const item of buffered) {
-        await next.upsert(item.record, item.vector);
-      }
-      await next.close();
-      await this.close();
-      rmSync(this.options.path, { recursive: true, force: true });
-      renameSync(tmpPath, this.options.path);
-      mkdirSync(this.options.path, { recursive: true });
-    } catch (err) {
-      await next.close().catch(() => undefined);
+    await this.runExclusive(async () => {
+      const tmpPath = `${this.options.path}.rebuild-${process.pid}-${Date.now()}`;
       rmSync(tmpPath, { recursive: true, force: true });
-      throw err;
-    }
+      const next = new ZvecAnnIndex({ path: tmpPath });
+      try {
+        for (const item of buffered) {
+          await next.upsert(item.record, item.vector);
+        }
+        await next.close();
+        this.closeOpenCollections();
+        rmSync(this.options.path, { recursive: true, force: true });
+        renameSync(tmpPath, this.options.path);
+        mkdirSync(this.options.path, { recursive: true });
+      } catch (err) {
+        await next.close().catch(() => undefined);
+        rmSync(tmpPath, { recursive: true, force: true });
+        throw err;
+      }
+    });
   }
 
   async close(): Promise<void> {
+    await this.runExclusive(() => {
+      this.closeOpenCollections();
+    });
+  }
+
+  private closeOpenCollections(): void {
     for (const { collection } of this.collections.values()) {
       collection.closeSync();
     }
