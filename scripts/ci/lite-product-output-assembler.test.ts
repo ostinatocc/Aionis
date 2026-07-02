@@ -496,6 +496,64 @@ test("product agent context assembler enforces explicit prompt character budget"
   assert.ok(budgetedContext.use_now_memory_ids.length > 0);
 });
 
+test("product agent context assembler renders task context profiles without changing governance surfaces", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      text: "Continue task-profile context",
+      intent: "execution",
+    },
+    nodes: [
+      {
+        id: "mem-task-profile-current",
+        type: "procedure",
+        title: "Verifier-backed current route",
+        text_summary: "Continue the verifier-backed route in src/profile.ts.",
+        tier: "hot",
+        slots: {
+          memory_kind: "execution_memory",
+          lifecycle_state: "active",
+          compression_layer: "L2",
+          target_files: ["src/profile.ts"],
+          task_signature: "task-profile-context",
+          workflow_signature: "task-profile-workflow",
+        },
+        confidence: 0.91,
+        salience: 0.92,
+      },
+    ],
+    source_map: {
+      routes_used: ["/v1/memory/recall_text"],
+      internal_surfaces_used: ["recall"],
+    },
+  });
+
+  const standardContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    task_context_profile: "coding_verifier",
+  });
+  const compactContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    agent_context_mode: "compact_agent",
+    task_context_profile: "document_integrity",
+  });
+
+  assert.equal(standardContext.task_context_profile, "coding_verifier");
+  assert.equal(compactContext.task_context_profile, "document_integrity");
+  assert.match(standardContext.prompt_text, /task_profile: coding_verifier/);
+  assert.match(standardContext.prompt_text, /do not skip, deselect, or ignore non-excluded checks/i);
+  assert.match(compactContext.prompt_text, /task document_integrity/);
+  assert.match(compactContext.prompt_text, /preserve original file bytes\/names|preserve original file identity/i);
+  assert.deepEqual(standardContext.use_now_memory_ids, compactContext.use_now_memory_ids);
+  assert.deepEqual(standardContext.inspect_before_use_memory_ids, compactContext.inspect_before_use_memory_ids);
+  assert.deepEqual(standardContext.do_not_use_memory_ids, compactContext.do_not_use_memory_ids);
+});
+
 test("product agent context contract renderer preserves execution state surfaces", () => {
   const memoryPacket = buildAionisMemoryPacket({
     tenant_id: "tenant-local",

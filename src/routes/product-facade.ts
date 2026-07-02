@@ -36,6 +36,7 @@ import { buildAionisOperatorSnapshot } from "../memory/operator-snapshot.js";
 import {
   AionisAgentRoleSchema,
   AionisAgentContextSchema,
+  AionisTaskContextProfileSchema,
   AionisEffectReportSchema,
   AionisExternalMemoryCandidateSchema,
   AionisGuidePacketSchema,
@@ -43,6 +44,7 @@ import {
   type AionisEffectReport,
   type AionisAgentContext,
   type AionisAgentRole,
+  type AionisTaskContextProfile,
   type AionisClaimLedgerProjection,
   type AionisClaimLedgerProjectionItem,
   type AionisMemoryDecisionAuditReport,
@@ -190,6 +192,7 @@ const ProductGuideRequest = z.object({
   context_char_budget: z.number().int().positive().max(1000000).optional(),
   context_compaction_profile: z.enum(["balanced", "aggressive"]).optional(),
   context_optimization_profile: z.enum(["balanced", "aggressive"]).optional(),
+  task_context_profile: AionisTaskContextProfileSchema.optional(),
   memory_layer_preference: z.unknown().optional(),
   execution_state_v1: z.unknown().optional(),
   execution_packet_v1: z.unknown().optional(),
@@ -871,6 +874,13 @@ function productGuideAgentContextMode(parsed: z.infer<typeof ProductGuideRequest
   return parsed.context_mode === "compact_agent" ? "compact_agent" : "standard";
 }
 
+function productGuideTaskContextProfile(parsed: z.infer<typeof ProductGuideRequest>): AionisTaskContextProfile {
+  if (parsed.task_context_profile) return parsed.task_context_profile;
+  const context = objectValue(parsed.context);
+  const parsedContextProfile = AionisTaskContextProfileSchema.safeParse(context?.task_context_profile);
+  return parsedContextProfile.success ? parsedContextProfile.data : "general";
+}
+
 type AdmissionCandidatePolicyGuideModeResolution = {
   mode: "off" | "shadow" | "active";
   source: "global_env" | "profile_rule" | "off";
@@ -1517,6 +1527,33 @@ function renderProductRouteActionLine(args: {
   return compactProductPromptText(line, args.compactAgent ? 190 : 520);
 }
 
+function renderProductTaskContextProfileLine(profile: AionisTaskContextProfile, compactAgent: boolean): string | null {
+  switch (profile) {
+    case "coding_verifier":
+      return compactAgent
+        ? "task coding_verifier: run non-excluded acceptance checks; no skip/deselect unless task says so"
+        : "task_profile: coding_verifier; tests and verifiers are acceptance evidence; do not skip, deselect, or ignore non-excluded checks.";
+    case "document_integrity":
+      return compactAgent
+        ? "task document_integrity: preserve original file identity; verify moved/copied documents"
+        : "task_profile: document_integrity; preserve original file bytes, names, and identity unless transformation is explicitly required.";
+    case "long_qa":
+      return compactAgent
+        ? "task long_qa: answer from covered evidence; rehydrate missing source spans"
+        : "task_profile: long_qa; answer from covered evidence and rehydrate missing source spans before finalizing.";
+    case "multi_agent_handoff":
+      return compactAgent
+        ? "task multi_agent_handoff: preserve owner/role/current handoff"
+        : "task_profile: multi_agent_handoff; preserve role ownership, current handoff state, and verifier/reviewer boundaries.";
+    case "loop_engineering":
+      return compactAgent
+        ? "task loop_engineering: preserve plan/iteration/validator/repair/stop reason"
+        : "task_profile: loop_engineering; preserve plan, iteration, validation result, repair attempt, and stop reason.";
+    case "general":
+      return null;
+  }
+}
+
 function renderMergedAgentPrompt(args: {
   context: AionisAgentContext;
   contextCharBudget?: number | null;
@@ -1535,6 +1572,7 @@ function renderMergedAgentPrompt(args: {
   const prompt = uniqueStrings([
     compactAgent ? "AIONIS_CTX compact_agent" : "AIONIS_CTX v2",
     `state r=${ctx.agent_role} h=${ctx.history_used ? 1 : 0} a=${ctx.actionable_history_used ? 1 : 0} p=${productPromptPostureLabel(ctx.recommended_posture)} auth=${productPromptAuthorityLabel(ctx.authority)} risk=${productPromptRiskLabel(ctx.risk.negative_transfer_risk)}`,
+    renderProductTaskContextProfileLine(ctx.task_context_profile, compactAgent),
     renderProductCommandPostureLine({
       commandPosture: ctx.command_posture,
       compactAgent,
@@ -3143,6 +3181,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     );
     const fullPowerRequested = productGuideFullPowerRequested(parsed);
     const agentContextMode = productGuideAgentContextMode(parsed);
+    const taskContextProfile = productGuideTaskContextProfile(parsed);
     let fullPowerStructuredMemoryMerged = false;
     if (fullPowerRequested) {
       const structuredExecutionPacket = await buildProductGuideStructuredExecutionPacket({
@@ -3166,6 +3205,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       agent_context_mode: agentContextMode,
       context_char_budget: parsed.context_char_budget,
       context_compaction_profile: parsed.context_compaction_profile ?? parsed.context_optimization_profile ?? null,
+      task_context_profile: taskContextProfile,
     });
     let fullPowerExecutionContextMerged = false;
     if (fullPowerRequested) {

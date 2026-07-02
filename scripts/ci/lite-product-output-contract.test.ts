@@ -889,6 +889,7 @@ test("AionisAgentContext accepts compact agent-facing output", () => {
   assert.equal(parsed.actionable_history_used, true);
   assert.equal(parsed.agent_role, "reviewer");
   assert.equal(parsed.agent_context_mode, "standard");
+  assert.equal(parsed.task_context_profile, "general");
   assert.equal(parsed.authority, "advisory");
   assert.deepEqual(parsed.target_files, ["src/index.ts"]);
   assert.deepEqual(parsed.use_now_memory_ids, ["mem-1"]);

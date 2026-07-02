@@ -36,6 +36,7 @@ import {
   type AionisRecallSourceTrace,
   type AionisMemoryUseReceipt,
   type AionisRiskLevel,
+  type AionisTaskContextProfile,
   type AionisTraceDerivedSkillCandidate,
 } from "./product-output-contract.js";
 import {
@@ -145,6 +146,7 @@ export type BuildAionisAgentContextArgs = {
   agent_context_mode?: "standard" | "compact_agent" | null;
   context_char_budget?: number | null;
   context_compaction_profile?: "balanced" | "aggressive" | null;
+  task_context_profile?: AionisTaskContextProfile | null;
 };
 
 export type ApplyAionisInspectBeforeUseActiveProjectionArgs = {
@@ -1505,6 +1507,33 @@ function agentRoleFocusLine(role: AionisAgentRole): string | null {
   }
 }
 
+function taskContextProfileLine(profile: AionisTaskContextProfile, compact = false): string | null {
+  switch (profile) {
+    case "coding_verifier":
+      return compact
+        ? "task coding_verifier: run non-excluded acceptance checks; no skip/deselect unless task names exclusion"
+        : "task_profile: coding_verifier; treat tests/verifiers as acceptance evidence; do not skip, deselect, or ignore non-excluded checks; fix dependencies or code paths instead of declaring completion by narrowing the verifier.";
+    case "document_integrity":
+      return compact
+        ? "task document_integrity: preserve original file bytes/names unless transform is explicit; verify identity"
+        : "task_profile: document_integrity; preserve original file bytes, names, and identity unless the task explicitly asks for transformation; move/copy evidence without rewriting source documents; verify counts or hashes when available.";
+    case "long_qa":
+      return compact
+        ? "task long_qa: answer from covered evidence; rehydrate missing source spans before final"
+        : "task_profile: long_qa; answer only from covered evidence; prefer answerable facts, aliases, dates, and source spans; rehydrate missing evidence before finalizing when coverage is incomplete.";
+    case "multi_agent_handoff":
+      return compact
+        ? "task multi_agent_handoff: preserve owner/role/current handoff; unresolved work is not complete"
+        : "task_profile: multi_agent_handoff; preserve role ownership, current handoff state, and reviewer/verifier boundaries; do not treat another agent's unresolved work as complete without receipt or verification evidence.";
+    case "loop_engineering":
+      return compact
+        ? "task loop_engineering: preserve plan/iteration/validator/repair/stop reason"
+        : "task_profile: loop_engineering; preserve plan, iteration index, validator result, repair attempt, and stop reason so the next loop can continue from measured state instead of replaying raw history.";
+    case "general":
+      return null;
+  }
+}
+
 function commandPostureLine(args: {
   commandPosture: AionisAgentContext["command_posture"];
   maxItems: number;
@@ -1801,6 +1830,7 @@ function renderAgentContextPrompt(args: {
   doNotUseMemoryIds: string[];
   commandPosture: AionisAgentContext["command_posture"];
   routeContract: AionisAgentContext["route_contract"];
+  taskContextProfile: AionisTaskContextProfile;
   profile: AgentContextPromptProfile;
 }): string {
   if (args.profile.style === "contract") return renderExecutionStateContractPrompt(args);
@@ -1815,6 +1845,7 @@ function renderAgentContextPrompt(args: {
     "AIONIS_AGENT_CONTEXT v1",
     `state: role=${args.agentRole} history=${args.historyUsed ? "yes" : "no"} actionable_history=${args.actionableHistoryUsed ? "yes" : "no"} posture=${args.recommendedPosture} authority=${args.authority} risk=${args.negativeTransferRisk}`,
     agentRoleFocusLine(args.agentRole),
+    taskContextProfileLine(args.taskContextProfile),
     commandPostureLine({
       commandPosture: args.commandPosture,
       maxItems: 4,
@@ -2200,6 +2231,7 @@ function renderExecutionStateContractPrompt(args: {
   doNotUseMemoryIds: string[];
   commandPosture: AionisAgentContext["command_posture"];
   routeContract: AionisAgentContext["route_contract"];
+  taskContextProfile: AionisTaskContextProfile;
   profile: AgentContextPromptProfile;
 }): string {
   const entries = entryById(args.memoryEntries);
@@ -2256,6 +2288,7 @@ function renderExecutionStateContractPrompt(args: {
   const sections = compactStrings([
     "AIONIS_CTX v2",
     `state r=${args.agentRole} h=${args.historyUsed ? 1 : 0} a=${args.actionableHistoryUsed ? 1 : 0} p=${contractPostureLabel(args.recommendedPosture)} auth=${contractAuthorityLabel(args.authority)} risk=${contractRiskLabel(args.negativeTransferRisk)}`,
+    taskContextProfileLine(args.taskContextProfile, true),
     commandPostureLine({
       commandPosture: args.commandPosture,
       aliases,
@@ -2372,6 +2405,7 @@ type BuildAgentContextPromptInput = {
   doNotUseMemoryIds: string[];
   commandPosture: AionisAgentContext["command_posture"];
   routeContract: AionisAgentContext["route_contract"];
+  taskContextProfile: AionisTaskContextProfile;
   contextCharBudget?: number | null;
   agentContextMode?: "standard" | "compact_agent" | null;
   contextCompactionProfile?: "balanced" | "aggressive" | null;
@@ -3700,6 +3734,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     doNotUseMemoryIds: surfaces.doNotUseMemoryIds,
     commandPosture,
     routeContract,
+    taskContextProfile: args.task_context_profile ?? "general",
     agentContextMode,
     contextCharBudget: args.context_char_budget,
     contextCompactionProfile: args.context_compaction_profile,
@@ -3711,6 +3746,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     scope: guide?.scope ?? memory?.scope ?? args.scope,
     agent_role: agentRole,
     agent_context_mode: agentContextMode,
+    task_context_profile: args.task_context_profile ?? "general",
     prompt_text: promptResult.promptText,
     summary,
     history_used: surfaces.historyUsed,
@@ -3820,6 +3856,7 @@ export function applyAionisInspectBeforeUseActiveProjection(
     doNotUseMemoryIds: args.agent_context.do_not_use_memory_ids,
     commandPosture,
     routeContract,
+    taskContextProfile: args.agent_context.task_context_profile,
     agentContextMode: args.agent_context.agent_context_mode,
     contextCharBudget: args.context_char_budget,
     contextCompactionProfile: args.context_compaction_profile,

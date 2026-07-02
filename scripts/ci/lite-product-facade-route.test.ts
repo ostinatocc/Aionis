@@ -2159,6 +2159,7 @@ test("product observe turns execution input into recallable execution memory", a
       "scope",
       "agent_role",
       "agent_context_mode",
+      "task_context_profile",
       "prompt_text",
       "summary",
       "history_used",
@@ -2183,6 +2184,7 @@ test("product observe turns execution input into recallable execution memory", a
     assert.equal(guideBody.agent_context.contract_version, "aionis_agent_context_v1");
     assert.equal(guideBody.agent_context.agent_role, "reviewer");
     assert.equal(guideBody.agent_context.agent_context_mode, "standard");
+    assert.equal(guideBody.agent_context.task_context_profile, "general");
     assert.equal(typeof guideBody.guide_trace_id, "string");
     assert.ok(guideBody.guide_trace_id.startsWith("guide_trace:"));
     assert.equal(guideBody.agent_context.history_used, true);

@@ -570,6 +570,7 @@ Return compact historical context for the next Agent run.
 | `limit` | No | Maximum recall breadth. |
 | `include_packets` | No | Adds `memory_packet` and `guide_packet` for audit or measure. |
 | `context_mode` | No | `full_power` for full product guide mode, or `compact_agent` for the same external path with a shorter Agent prompt. |
+| `task_context_profile` | No | Agent-facing task posture for the compiled prompt. Supported values: `general`, `coding_verifier`, `document_integrity`, `long_qa`, `multi_agent_handoff`, `loop_engineering`. |
 
 `POST /v1/guide` uses semantic recall, so a configured embedding provider is
 required for normal product use.
@@ -681,6 +682,24 @@ contested, or rehydratable, it still belongs in `inspect_before_use`,
 `do_not_use`, `rehydrate_hints`, or the corresponding `command_posture`;
 compact mode changes how the safe Agent prompt is rendered.
 
+`task_context_profile` gives the Agent a task-specific execution posture without
+changing recall, lifecycle, authority, storage, or admission decisions. Use it
+when the same Runtime needs to serve different host loops:
+
+- `coding_verifier`: preserve acceptance checks, verifier output, and tested
+  execution boundaries.
+- `document_integrity`: preserve file identity, filenames, original bytes, and
+  requested output format.
+- `long_qa`: prioritize covered evidence and source spans; rehydrate when the
+  answer evidence is missing.
+- `multi_agent_handoff`: preserve role ownership, current handoff state, and
+  reviewer/verifier boundaries.
+- `loop_engineering`: preserve loop plan, iteration state, validator result,
+  repair attempt, and stop reason.
+
+See [AIONIS_TASK_CONTEXT_PROFILES.md](AIONIS_TASK_CONTEXT_PROFILES.md) for the
+full contract.
+
 Example:
 
 ```json
@@ -688,7 +707,8 @@ Example:
   "tenant_id": "default",
   "scope": "payments-service",
   "context_mode": "compact_agent",
-  "query_text": "Continue checkout migration and avoid failed legacy branches.",
+  "task_context_profile": "coding_verifier",
+  "query_text": "Continue checkout migration with verifier-backed acceptance checks.",
   "consumer_agent_id": "reviewer-1",
   "agent_role": "reviewer",
   "context": {

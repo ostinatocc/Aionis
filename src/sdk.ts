@@ -5,6 +5,13 @@ export type AionisJsonObject = Record<string, unknown>;
 
 export type AionisGuideMode = "standard" | "full_power";
 export type AionisGuideContextMode = AionisGuideMode | "compact_agent";
+export type AionisTaskContextProfile =
+  | "general"
+  | "coding_verifier"
+  | "document_integrity"
+  | "long_qa"
+  | "multi_agent_handoff"
+  | "loop_engineering";
 export type AionisFeedbackOutcome = "positive" | "negative" | "neutral";
 export type AionisFeedbackUsedSurface = "use_now" | "inspect_before_use" | "do_not_use" | "explicit_host_assertion";
 export type AionisFeedbackStatus = "passed" | "failed" | "not_run" | "unknown";
@@ -622,6 +629,19 @@ export type AionisRequestOptions = {
 
 export type AionisGuideRequestOptions = AionisRequestOptions & {
   guide_mode?: AionisGuideMode | null;
+};
+
+export type AionisGuideRequest = AionisJsonObject & {
+  query_text: string;
+  mode?: AionisGuideMode;
+  context_mode?: AionisGuideContextMode;
+  task_context_profile?: AionisTaskContextProfile;
+  agent_role?: AionisExecutionAgentRole;
+  run_id?: string;
+  consumer_agent_id?: string;
+  consumer_team_id?: string;
+  context_char_budget?: number;
+  context_compaction_profile?: "balanced" | "aggressive";
 };
 
 export type AionisRememberRequest = AionisJsonObject & {
@@ -1991,7 +2011,7 @@ export class AionisClient {
     return this.observe<T>(rememberBody(body), options);
   }
 
-  async guide<T = unknown>(body: AionisJsonObject, options?: AionisGuideRequestOptions): Promise<T> {
+  async guide<T = unknown>(body: AionisGuideRequest, options?: AionisGuideRequestOptions): Promise<T> {
     return this.post<T>("/v1/guide", this.guideBody(body, options), options);
   }
 
@@ -2000,7 +2020,7 @@ export class AionisClient {
   }
 
   async guideAgentContext<TGuide = unknown>(
-    body: AionisJsonObject,
+    body: AionisGuideRequest,
     options?: AionisGuideRequestOptions,
     contextOptions: AionisGuideAgentContextOptions = {},
   ): Promise<AionisGuideAgentContextResult<TGuide>> {
@@ -2111,7 +2131,7 @@ export class AionisClient {
   }
 
   async guideWithEvidence<TGuide = unknown>(
-    body: AionisJsonObject,
+    body: AionisGuideRequest,
     options?: AionisGuideRequestOptions,
     contextOptions?: AionisGuideAgentContextOptions,
   ): Promise<AionisGuideAgentContextResult<TGuide>> {

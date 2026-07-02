@@ -12,6 +12,16 @@ export type AionisRiskLevel = z.infer<typeof AionisRiskLevelSchema>;
 export const AionisAgentRoleSchema = z.enum(["agent", "planner", "worker", "verifier", "reviewer"]);
 export type AionisAgentRole = z.infer<typeof AionisAgentRoleSchema>;
 
+export const AionisTaskContextProfileSchema = z.enum([
+  "general",
+  "coding_verifier",
+  "document_integrity",
+  "long_qa",
+  "multi_agent_handoff",
+  "loop_engineering",
+]);
+export type AionisTaskContextProfile = z.infer<typeof AionisTaskContextProfileSchema>;
+
 export const AionisExecutionTransitionKindSchema = z.enum([
   "resume_current_state",
   "handoff_to_actor",
@@ -767,6 +777,7 @@ export const AionisAgentContextSchema = z
     scope: z.string().min(1),
     agent_role: AionisAgentRoleSchema.default("agent"),
     agent_context_mode: z.enum(["standard", "compact_agent"]).default("standard"),
+    task_context_profile: AionisTaskContextProfileSchema.default("general"),
     prompt_text: z.string().min(1),
     summary: z.string().min(1),
     history_used: z.boolean(),
