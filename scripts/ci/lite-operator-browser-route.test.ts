@@ -34,6 +34,44 @@ function guideExposureNode(slots: Record<string, unknown>): LiteFindNodeRow {
   };
 }
 
+function memoryNode(id: string): LiteFindNodeRow {
+  return {
+    id,
+    type: "execution_memory",
+    client_id: "client-mem-1",
+    title: "Checkout migration route",
+    text_summary: "Continue with the bundledDev route and inspect old adapter before use.",
+    slots: {
+      lifecycle_state: "current",
+      authority_state: "trusted",
+      source_kind: "runtime",
+      target_files: ["src/bundledDev.ts"],
+      task_signature: "checkout-migration",
+      workflow_signature: "checkout-migration-v4",
+      raw_prompt_text: "must not leak",
+      api_key: "must not leak",
+    },
+    tier: "semantic",
+    memory_lane: "shared",
+    producer_agent_id: "claude-code",
+    owner_agent_id: null,
+    owner_team_id: "checkout",
+    embedding_status: "ready",
+    embedding_model: "minimax:embo-01",
+    raw_ref: "raw://mem-1",
+    evidence_ref: "evidence://mem-1",
+    salience: 0.8,
+    importance: 0.7,
+    confidence: 0.9,
+    last_activated: "2026-07-03T00:00:00.000Z",
+    created_at: "2026-07-03T00:00:00.000Z",
+    updated_at: "2026-07-03T00:00:00.000Z",
+    commit_id: "commit-1",
+    topic_state: "active",
+    member_count: 2,
+  };
+}
+
 function createTestStore(): LiteWriteStore {
   return {
     listOperatorScopes: async (args) => {
@@ -112,6 +150,11 @@ function createTestStore(): LiteWriteStore {
       latest_feedback_at: "2026-07-03T00:02:00.000Z",
       rows: [],
     }),
+    findNodes: async (args) => {
+      assert.equal(args.scope, "ws:checkout-migration:abc123");
+      if (args.id === "mem-1") return { rows: [memoryNode("mem-1")], has_more: false };
+      return { rows: [], has_more: false };
+    },
   } as unknown as LiteWriteStore;
 }
 
@@ -176,4 +219,19 @@ test("operator browser routes expose workspaces, runs, and run detail without ra
   assert.equal(detailPayload.guide_traces[0].guide_trace_id, "guide-1");
   assert.equal(detailPayload.guide_traces[0].prompt_char_count, 2048);
   assert.equal("slots" in detailPayload.guide_traces[0], false);
+
+  const memory = await app.inject({
+    method: "GET",
+    url: "/v1/operator/memories/mem-1?scope=ws%3Acheckout-migration%3Aabc123",
+  });
+  assert.equal(memory.statusCode, 200);
+  const memoryPayload = memory.json();
+  assert.equal(memoryPayload.contract_version, "aionis_operator_memory_detail_result_v1");
+  assert.equal(memoryPayload.memory.id, "mem-1");
+  assert.equal(memoryPayload.memory.lifecycle_state, "current");
+  assert.equal(memoryPayload.memory.authority_state, "trusted");
+  assert.deepEqual(memoryPayload.memory.target_files, ["src/bundledDev.ts"]);
+  assert.equal("slots" in memoryPayload.memory, false);
+  assert.equal("raw_prompt_text" in memoryPayload.memory.slot_summary, false);
+  assert.equal("api_key" in memoryPayload.memory.slot_summary, false);
 });

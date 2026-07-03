@@ -16,6 +16,10 @@ type OperatorRunDetailRequest = FastifyRequest<{
   Params: { run_id: string };
   Querystring: unknown;
 }>;
+type OperatorMemoryDetailRequest = FastifyRequest<{
+  Params: { memory_id: string };
+  Querystring: unknown;
+}>;
 
 type OperatorSnapshotRouteArgs = {
   app: FastifyInstance;
@@ -86,6 +90,13 @@ const OperatorRunDetailQuerySchema = z
   })
   .strict();
 
+const OperatorMemoryDetailQuerySchema = z
+  .object({
+    tenant_id: z.string().trim().min(1).optional(),
+    scope: z.string().trim().min(1).optional(),
+  })
+  .strict();
+
 type ParsedGuideExposure = {
   guide_trace_id: string;
   tenant_id: string;
@@ -128,6 +139,103 @@ function stringArrayValue(value: unknown): string[] {
     out.push(text);
   }
   return out;
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function firstStringValue(...values: unknown[]): string | null {
+  for (const value of values) {
+    const text = stringValue(value);
+    if (text) return text;
+  }
+  return null;
+}
+
+function firstStringArrayValue(...values: unknown[]): string[] {
+  for (const value of values) {
+    const items = stringArrayValue(value);
+    if (items.length > 0) return items;
+  }
+  return [];
+}
+
+function summarizeSlotValue(value: unknown, depth = 0): unknown {
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.slice(0, 12).map((entry) => summarizeSlotValue(entry, depth + 1));
+  }
+  if (typeof value === "object") {
+    const record = objectValue(value);
+    if (depth >= 1) {
+      return { keys: Object.keys(record).sort().slice(0, 24) };
+    }
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(record).slice(0, 24)) {
+      if (/prompt|embedding|raw|secret|token|api[_-]?key/i.test(key)) continue;
+      out[key] = summarizeSlotValue(entry, depth + 1);
+    }
+    return out;
+  }
+  return String(value);
+}
+
+function summarizeMemoryRow(row: LiteFindNodeRow, tenantId: string, scope: string) {
+  const slots = objectValue(row.slots);
+  const executionNative = objectValue(slots.execution_native_v1);
+  const lifecycle = objectValue(slots.lifecycle);
+  const authority = objectValue(slots.authority);
+  const source = objectValue(slots.source);
+  const slotSummary: Record<string, unknown> = {};
+  for (const key of Object.keys(slots).sort()) {
+    if (/prompt|embedding|raw|secret|token|api[_-]?key/i.test(key)) continue;
+    slotSummary[key] = summarizeSlotValue(slots[key]);
+  }
+  return {
+    id: row.id,
+    tenant_id: tenantId,
+    scope,
+    type: row.type,
+    client_id: row.client_id,
+    title: row.title,
+    text_summary: row.text_summary,
+    tier: row.tier,
+    memory_lane: row.memory_lane,
+    producer_agent_id: row.producer_agent_id,
+    owner_agent_id: row.owner_agent_id,
+    owner_team_id: row.owner_team_id,
+    embedding_status: row.embedding_status,
+    embedding_model: row.embedding_model,
+    raw_ref: row.raw_ref,
+    evidence_ref: row.evidence_ref,
+    salience: row.salience,
+    importance: row.importance,
+    confidence: row.confidence,
+    last_activated: row.last_activated,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    commit_id: row.commit_id,
+    topic_state: row.topic_state,
+    member_count: row.member_count,
+    lifecycle_state: firstStringValue(slots.lifecycle_state, slots.memory_lifecycle_state, lifecycle.state),
+    authority_state: firstStringValue(slots.authority_state, slots.memory_authority_state, authority.state),
+    source_kind: firstStringValue(slots.source_kind, source.kind),
+    target_files: firstStringArrayValue(slots.target_files, executionNative.target_files),
+    task_signature: firstStringValue(slots.task_signature, executionNative.task_signature),
+    workflow_signature: firstStringValue(slots.workflow_signature, executionNative.workflow_signature),
+    error_signature: firstStringValue(slots.error_signature, executionNative.error_signature),
+    acceptance_check_signature: firstStringValue(slots.acceptance_check_signature, executionNative.acceptance_check_signature),
+    slot_keys: Object.keys(slots).sort(),
+    slot_summary: slotSummary,
+    score_summary: {
+      salience: numberValue(row.salience),
+      importance: numberValue(row.importance),
+      confidence: numberValue(row.confidence),
+    },
+  };
 }
 
 function parseScopeKey(scopeKey: string, defaultTenantId: string): { tenant_id: string; scope: string; scope_key: string } {
@@ -488,6 +596,48 @@ export function registerOperatorSnapshotRoutes(args: OperatorSnapshotRouteArgs) 
           routes_used: ["/v1/operator/runs/:run_id"],
           internal_surfaces_used: ["guide_exposure_ledger", "execution_decisions", "rule_feedback"],
           omitted_internal_surfaces: ["raw_slots", "raw_embedding_vectors"],
+        },
+      });
+    } finally {
+      gate.release();
+    }
+  });
+
+  app.get("/v1/operator/memories/:memory_id", async (req: OperatorMemoryDetailRequest, reply: FastifyReply) => {
+    const principal = await requireMemoryPrincipal(req);
+    const query = withIdentityFromRequest(req, req.query, principal, "recall");
+    const parsed = OperatorMemoryDetailQuerySchema.parse(query);
+    await enforceRateLimit(req, reply, "recall");
+    const tenantScope = resolveTenantScope(
+      { tenant_id: parsed.tenant_id, scope: parsed.scope },
+      { defaultScope: env.MEMORY_SCOPE, defaultTenantId: env.MEMORY_TENANT_ID },
+    );
+    await enforceTenantQuota(req, reply, "recall", tenantScope.tenant_id);
+    const gate = await acquireInflightSlot("recall");
+    try {
+      const { rows } = await liteWriteStore.findNodes({
+        scope: tenantScope.scope_key,
+        id: req.params.memory_id,
+        limit: 1,
+        offset: 0,
+      });
+      const row = rows[0] ?? null;
+      if (!row) {
+        return reply.code(404).send({
+          error: "memory_not_found",
+          message: "Memory was not found in the selected tenant/scope.",
+        });
+      }
+      return reply.code(200).send({
+        contract_version: "aionis_operator_memory_detail_result_v1",
+        tenant_id: tenantScope.tenant_id,
+        scope: tenantScope.scope,
+        scope_key: tenantScope.scope_key,
+        memory: summarizeMemoryRow(row, tenantScope.tenant_id, tenantScope.scope),
+        source_map: {
+          routes_used: ["/v1/operator/memories/:memory_id"],
+          internal_surfaces_used: ["lite_memory_nodes"],
+          omitted_internal_surfaces: ["raw_slots", "raw_embedding_vectors", "raw_prompt_text"],
         },
       });
     } finally {
