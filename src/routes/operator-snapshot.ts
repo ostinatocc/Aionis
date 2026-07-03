@@ -286,6 +286,21 @@ function addToSet(set: Set<string>, values: readonly string[]): void {
   for (const value of values) set.add(value);
 }
 
+function resolveOperatorRunLookup(value: string): { run_id: string | null; guide_trace_id: string | null } {
+  if (value.startsWith("guide:")) {
+    const guideTraceId = value.slice("guide:".length);
+    return { run_id: null, guide_trace_id: guideTraceId || null };
+  }
+  if (value.startsWith("run:")) {
+    const runId = value.slice("run:".length);
+    return { run_id: runId || null, guide_trace_id: null };
+  }
+  if (value.startsWith("guide_trace:")) {
+    return { run_id: null, guide_trace_id: value };
+  }
+  return { run_id: value || null, guide_trace_id: null };
+}
+
 function latestIso(left: string | null, right: string | null): string | null {
   if (!left) return right;
   if (!right) return left;
@@ -390,10 +405,15 @@ function summarizeOperatorRuns(args: {
       consumer_agent_id: item.consumer_agent_id,
       consumer_team_id: item.consumer_team_id,
       memory_count: item.memory_ids.size,
+      memory_ids: Array.from(item.memory_ids),
       use_now_count: item.use_now_memory_ids.size,
+      use_now_memory_ids: Array.from(item.use_now_memory_ids),
       inspect_before_use_count: item.inspect_before_use_memory_ids.size,
+      inspect_before_use_memory_ids: Array.from(item.inspect_before_use_memory_ids),
       do_not_use_count: item.do_not_use_memory_ids.size,
+      do_not_use_memory_ids: Array.from(item.do_not_use_memory_ids),
       rehydrate_count: item.rehydrate_memory_ids.size,
+      rehydrate_memory_ids: Array.from(item.rehydrate_memory_ids),
       history_used: item.history_used,
       actionable_history_used: item.actionable_history_used,
       recommended_posture: item.latest_recommended_posture,
@@ -540,23 +560,43 @@ export function registerOperatorSnapshotRoutes(args: OperatorSnapshotRouteArgs) 
     await enforceTenantQuota(req, reply, "recall", tenantScope.tenant_id);
     const gate = await acquireInflightSlot("recall");
     try {
-      const runId = req.params.run_id;
+      const requestedId = req.params.run_id;
+      const lookup = resolveOperatorRunLookup(requestedId);
+      const runId = lookup.run_id;
       const [exposureRows, decisionSummary, feedbackSummary] = await Promise.all([
-        liteWriteStore.listOperatorGuideExposures({ scope: tenantScope.scope_key, runId, limit: parsed.limit }),
-        liteWriteStore.listExecutionDecisionsByRun({ scope: tenantScope.scope_key, runId, limit: parsed.limit }),
-        liteWriteStore.listRuleFeedbackByRun({ scope: tenantScope.scope_key, runId, limit: parsed.limit }),
+        liteWriteStore.listOperatorGuideExposures({
+          scope: tenantScope.scope_key,
+          runId: lookup.run_id ?? undefined,
+          guideTraceId: lookup.guide_trace_id ?? undefined,
+          limit: parsed.limit,
+        }),
+        runId
+          ? liteWriteStore.listExecutionDecisionsByRun({ scope: tenantScope.scope_key, runId, limit: parsed.limit })
+          : Promise.resolve({ count: 0, latest_created_at: null, rows: [] }),
+        runId
+          ? liteWriteStore.listRuleFeedbackByRun({ scope: tenantScope.scope_key, runId, limit: parsed.limit })
+          : Promise.resolve({
+              total: 0,
+              positive: 0,
+              negative: 0,
+              neutral: 0,
+              linked_decision_count: 0,
+              tools_feedback_count: 0,
+              latest_feedback_at: null,
+              rows: [],
+            }),
       ]);
       const exposures = exposureRows.map(parseGuideExposure).filter((value): value is ParsedGuideExposure => value !== null);
       const run = summarizeOperatorRuns({
         exposures,
-        executionRuns: [{
+        executionRuns: runId ? [{
           run_id: runId,
           decision_count: decisionSummary.count,
           latest_decision_at: decisionSummary.latest_created_at ?? "",
           latest_selected_tool: decisionSummary.rows[0]?.selected_tool ?? null,
           feedback_total: feedbackSummary.total,
           latest_feedback_at: feedbackSummary.latest_feedback_at,
-        }],
+        }] : [],
         limit: 1,
       })[0] ?? null;
       return reply.code(200).send({
@@ -564,7 +604,7 @@ export function registerOperatorSnapshotRoutes(args: OperatorSnapshotRouteArgs) 
         tenant_id: tenantScope.tenant_id,
         scope: tenantScope.scope,
         scope_key: tenantScope.scope_key,
-        run_id: runId,
+        run_id: requestedId,
         run,
         guide_traces: exposures.map((exposure) => ({
           guide_trace_id: exposure.guide_trace_id,
@@ -618,6 +658,7 @@ export function registerOperatorSnapshotRoutes(args: OperatorSnapshotRouteArgs) 
       const { rows } = await liteWriteStore.findNodes({
         scope: tenantScope.scope_key,
         id: req.params.memory_id,
+        operatorView: true,
         limit: 1,
         offset: 0,
       });

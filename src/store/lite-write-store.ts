@@ -211,6 +211,7 @@ export type LiteWriteStore = WriteStoreAccess & {
     slotsContains?: Record<string, unknown> | null;
     consumerAgentId?: string | null;
     consumerTeamId?: string | null;
+    operatorView?: boolean;
     limit: number;
     offset: number;
   }): Promise<{ rows: LiteFindNodeRow[]; has_more: boolean }>;
@@ -1483,9 +1484,11 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
         where.push("memory_lane = ?");
         params.push(args.memoryLane);
       }
-      const consumerAgentId = args.consumerAgentId ?? null;
-      const consumerTeamId = args.consumerTeamId ?? null;
-      appendVisibilityWhere({ where, params, consumerAgentId, consumerTeamId });
+      if (!args.operatorView) {
+        const consumerAgentId = args.consumerAgentId ?? null;
+        const consumerTeamId = args.consumerTeamId ?? null;
+        appendVisibilityWhere({ where, params, consumerAgentId, consumerTeamId });
+      }
       const slotsSql = buildSimpleSlotsSqlFilters(args.slotsContains);
       where.push(...slotsSql.where);
       params.push(...slotsSql.params);
