@@ -1,30 +1,48 @@
 # Aionis
 
-**Compact, governed execution memory for agents that need clean state instead of
-more history.**
+**Execution memory for Agents whose context gets noisy, stale, oversized, or
+lost across sessions.**
 
-Aionis turns messy Agent history into auditable execution state: the accepted
-route, blocked alternatives, reusable procedures, rehydrate pointers, and
-feedback evidence that survive sessions, agents, devices, and model switches.
-Memory is not recall. Memory is executable state.
+Long-running Agents do not fail only because they forget. They fail because
+their context drifts, old facts compete with current state, irrelevant history
+bloats the prompt, and handoff state disappears across sessions, threads,
+agents, devices, and model switches.
 
-Docs: [docs.aionis.work](https://docs.aionis.work)
+Aionis turns plans, decisions, source evidence, feedback, handoff state, and
+memory candidates into shorter, cleaner, auditable Agent context.
+
+## Results at a Glance
+
+| Evaluation | Result | Why it matters |
+|---|---:|---|
+| External Agent E2E, 40 continuations | **40/40 completion** with **56.4% fewer total tokens** than Full History | Keeps long-task state usable without replaying everything. |
+| Buried-history stress | **100% completion** with **83.0% fewer prompt tokens** than Full History | Preserves the active state when useful evidence is buried in noisy history. |
+| MGBench v0.1.1 strict holdout | **40/40 product-positive**, **100% active-state recovery**, **100% trace coverage** | Recovers governed execution state without semantic fixture IDs. |
+| MemoryData 50-sample replay | Exact answer **43/50 -> 48/50**, evidence coverage **47/50 -> 50/50** | Ordinary factual memory recall is now backed by source-span coverage. |
+| Zvec ANN candidate retrieval | **100% recall@10**, **100% recall@50**, p50 **5.70 ms** on 4,096 nodes | Scales candidate retrieval while SQLite remains the governed truth source. |
+
+See the evidence map:
+[docs/AIONIS_EVIDENCE_INDEX.md](docs/AIONIS_EVIDENCE_INDEX.md) and
+[docs/research/2026-06-28-aionis-evaluation-evidence-report.md](docs/research/2026-06-28-aionis-evaluation-evidence-report.md).
+
+## The Claim
+
+Memory is not about storing more text.
+
+Memory is about preserving executable state: what is current, what should be
+used now, what needs inspection, what should stay blocked, what can be
+rehydrated later, and why each decision was made.
+
+```bash
+npx aionis setup
+```
 
 Current release: **v0.3.x stable baseline**. Use it today as a local Runtime,
 TypeScript SDK, HTTP API, MCP bridge, AIFS file surface, Memory Firewall, Agent
-Flight Recorder, and managed-server-ready Runtime for agent execution memory.
+Flight Recorder, optional Zvec candidate retrieval, and Substrate evidence
+sidecar.
 
-Aionis sits between your Agent and its history. It decides what can be used now,
-what needs inspection, what must stay blocked, and what should remain a
-rehydrate pointer, then compiles that admitted state into the next Agent
-context. The main claim is state-preserving, execution-ready context at lower
-context cost than full-history transfer.
-
-Aionis ships with a local-first Lite Runtime plus SDK, HTTP API, MCP bridge,
-AIFS, and optional native plugins such as Claude Code lifecycle integration.
-The Runtime can also be configured for managed server deployments with
-API-key/JWT auth and request controls when teams want remote SDK, HTTP, MCP, or
-plugin clients.
+Docs: [docs.aionis.work](https://docs.aionis.work)
 
 ## Choose Your Entry Point
 
