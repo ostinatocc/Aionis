@@ -70,6 +70,11 @@ capability routing and deletion decisions are tracked in
 [AIONIS_CAPABILITY_DECISION_MATRIX.md](AIONIS_CAPABILITY_DECISION_MATRIX.md), and
 stable user-facing outputs are defined in
 [AIONIS_PRODUCT_OUTPUT_CONTRACT.md](AIONIS_PRODUCT_OUTPUT_CONTRACT.md).
+The governance decision table is defined in
+[AIONIS_GOVERNANCE_POLICY_V1.md](AIONIS_GOVERNANCE_POLICY_V1.md), the rehydrate
+contract is defined in [AIONIS_REHYDRATE_CONTRACT.md](AIONIS_REHYDRATE_CONTRACT.md),
+and multi-Agent scope boundaries are defined in
+[AIONIS_MULTI_AGENT_SCOPE_MODEL.md](AIONIS_MULTI_AGENT_SCOPE_MODEL.md).
 
 The shortest no-key value demo is [AIONIS_FIRST_VALUE_DEMO.md](AIONIS_FIRST_VALUE_DEMO.md). It demonstrates external memory admission and audit without an embedding provider, LLM, Agent harness, or benchmark runner. The shortest write-and-guide product flow is [AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md](AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md). It demonstrates `observe -> guide -> audit`. External Agent hosts should use [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md) for the full `observe -> guide -> agent action -> feedback -> measure -> snapshot` loop.
 
@@ -106,7 +111,8 @@ raises the ceiling for what governance can inspect; governance controls what
 reaches the Agent. The implementation roadmap is
 [AIONIS_RECALL_ENGINE_ROADMAP.md](AIONIS_RECALL_ENGINE_ROADMAP.md), and the
 operator runbook is
-[AIONIS_RECALL_ENGINE_RUNBOOK.md](AIONIS_RECALL_ENGINE_RUNBOOK.md).
+[AIONIS_RECALL_ENGINE_RUNBOOK.md](AIONIS_RECALL_ENGINE_RUNBOOK.md). The
+versioned admission policy is [AIONIS_GOVERNANCE_POLICY_V1.md](AIONIS_GOVERNANCE_POLICY_V1.md).
 
 ## Multi-Agent Execution Memory Position
 
@@ -116,6 +122,9 @@ execution state, controls which history can be reused, and measures whether
 that shared history helped.
 
 The product contract for Multi-Agent execution memory is:
+
+The full scope, lane, team, and identity contract is
+[AIONIS_MULTI_AGENT_SCOPE_MODEL.md](AIONIS_MULTI_AGENT_SCOPE_MODEL.md).
 
 | Field / Surface | Meaning |
 |---|---|
@@ -345,7 +354,9 @@ shape.
 
 `POST /v1/rehydrate` is the normal HTTP product entry for expanding archived
 memory or anchor payload on demand. It maps to controlled rehydration internally
-while callers use the product-level rehydrate shape.
+while callers use the product-level rehydrate shape. The host-visible lifecycle,
+payload mode, and merge policy is defined in
+[AIONIS_REHYDRATE_CONTRACT.md](AIONIS_REHYDRATE_CONTRACT.md).
 
 `POST /v1/forget` is the explicit lifecycle-control API for controlled
 forgetting: suppressing stale or harmful memory, unsuppressing reviewed memory,

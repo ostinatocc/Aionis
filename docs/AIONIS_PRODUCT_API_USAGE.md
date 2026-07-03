@@ -23,6 +23,12 @@ For admission dataset JSONL export, see
 [AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md](AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md).
 For backend-agnostic Memory Firewall, see
 [AIONIS_MEMORY_FIREWALL.md](AIONIS_MEMORY_FIREWALL.md).
+For the versioned external memory governance decision table, see
+[AIONIS_GOVERNANCE_POLICY_V1.md](AIONIS_GOVERNANCE_POLICY_V1.md).
+For the rehydrate lifecycle and payload expansion contract, see
+[AIONIS_REHYDRATE_CONTRACT.md](AIONIS_REHYDRATE_CONTRACT.md).
+For multi-Agent scope, lane, team, and identity boundaries, see
+[AIONIS_MULTI_AGENT_SCOPE_MODEL.md](AIONIS_MULTI_AGENT_SCOPE_MODEL.md).
 For incident replay, see
 [AIONIS_AGENT_FLIGHT_RECORDER.md](AIONIS_AGENT_FLIGHT_RECORDER.md).
 
@@ -806,6 +812,9 @@ Use this when a host already has memory candidates from Mem0, Zep, Pinecone,
 Qdrant, pgvector, markdown, logs, or a company-specific memory store, but still
 wants Aionis to decide which memories may direct the Agent.
 
+The versioned decision table for this gateway is
+[AIONIS_GOVERNANCE_POLICY_V1.md](AIONIS_GOVERNANCE_POLICY_V1.md).
+
 ### Minimal Request Fields
 
 | Field | Required | Meaning |
@@ -1070,6 +1079,9 @@ used. This is the normal product path after `guide -> agent action`.
 
 Expand archived memory or anchor payload only when the compact context says the
 Agent needs the colder evidence or payload.
+
+The product lifecycle and merge contract for rehydration is
+[AIONIS_REHYDRATE_CONTRACT.md](AIONIS_REHYDRATE_CONTRACT.md).
 
 ### Minimal Request Fields
 

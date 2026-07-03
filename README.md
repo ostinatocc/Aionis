@@ -933,6 +933,9 @@ Official docs: [https://docs.aionis.work](https://docs.aionis.work)
 | [AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md](docs/AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md) | Short observe, guide, and audit path. |
 | [AIONIS_HOST_INTEGRATION.md](docs/AIONIS_HOST_INTEGRATION.md) | Single-agent, multi-agent, and coding-agent host integration. |
 | [AIONIS_PRODUCT_CONTRACT.md](docs/AIONIS_PRODUCT_CONTRACT.md) | Product contract, state surfaces, and host loop. |
+| [AIONIS_GOVERNANCE_POLICY_V1.md](docs/AIONIS_GOVERNANCE_POLICY_V1.md) | Versioned governance decision table for external memory admission and audit reasons. |
+| [AIONIS_REHYDRATE_CONTRACT.md](docs/AIONIS_REHYDRATE_CONTRACT.md) | Rehydrate lifecycle, payload expansion modes, boundedness, and host merge policy. |
+| [AIONIS_MULTI_AGENT_SCOPE_MODEL.md](docs/AIONIS_MULTI_AGENT_SCOPE_MODEL.md) | Tenant, scope, lane, team, and Agent visibility model for multi-Agent memory. |
 | [AIONIS_PRODUCT_POSITIONING.md](docs/AIONIS_PRODUCT_POSITIONING.md) | External product positioning, claims, and comparison language. |
 | [AIONIS_STATE_MODEL.md](docs/AIONIS_STATE_MODEL.md) | Implemented memory and execution state model. |
 | [AIONIS_CONTEXT_COMPRESSION_BASELINE.md](docs/AIONIS_CONTEXT_COMPRESSION_BASELINE.md) | Current state-preserving context compression baseline. |

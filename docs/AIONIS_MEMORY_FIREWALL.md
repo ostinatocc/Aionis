@@ -20,6 +20,9 @@ Memory Firewall is exposed through the backend-agnostic gateway:
 POST /v1/memory/govern
 ```
 
+The exact external admission decision table is versioned in
+[AIONIS_GOVERNANCE_POLICY_V1.md](AIONIS_GOVERNANCE_POLICY_V1.md).
+
 Runnable SDK quickstart:
 
 ```bash
