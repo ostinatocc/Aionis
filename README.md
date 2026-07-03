@@ -3,6 +3,10 @@
 **Execution memory for Agents whose context gets noisy, stale, oversized, or
 lost across sessions.**
 
+**Compact, governed execution memory.**
+
+Memory is not recall. Memory is executable state.
+
 Long-running Agents do not fail only because they forget. They fail because
 their context drifts, old facts compete with current state, irrelevant history
 bloats the prompt, and handoff state disappears across sessions, threads,

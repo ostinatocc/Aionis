@@ -759,6 +759,7 @@ function registerProductRoutes(args: ProductFacadeRouteRegistrationArgs) {
   registerOperatorSnapshotRoutes({
     app: args.app,
     env: args.env,
+    liteWriteStore: args.liteWriteStore,
     requireMemoryPrincipal: args.requireMemoryPrincipal,
     withIdentityFromRequest: args.withIdentityFromRequest,
     enforceRateLimit: args.enforceRateLimit,
