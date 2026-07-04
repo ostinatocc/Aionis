@@ -31,6 +31,8 @@ For multi-Agent scope, lane, team, and identity boundaries, see
 [AIONIS_MULTI_AGENT_SCOPE_MODEL.md](AIONIS_MULTI_AGENT_SCOPE_MODEL.md).
 For incident replay, see
 [AIONIS_AGENT_FLIGHT_RECORDER.md](AIONIS_AGENT_FLIGHT_RECORDER.md).
+For trace-derived skill candidate review and the planned skill-memory path, see
+[AIONIS_TRACE_DERIVED_SKILL_MEMORY.md](AIONIS_TRACE_DERIVED_SKILL_MEMORY.md).
 
 ## Route Summary
 
@@ -82,7 +84,9 @@ For host decisions, distinguish these two fields:
    observations when the product needs to prove whether history helped or hurt.
 7. Queue trace-derived skill candidates with `POST /v1/skills/candidates` when
    `measure.effect_report.training_candidates` contains reusable execution
-   lessons that should enter operator review.
+   lessons that should enter operator review. The current review ledger does
+   not mutate memory or inject prompt context; see
+   [AIONIS_TRACE_DERIVED_SKILL_MEMORY.md](AIONIS_TRACE_DERIVED_SKILL_MEMORY.md).
 8. Call `POST /v1/operator/snapshot` when a host or operator needs a read-only
    summary of actionable history, feedback attribution, branch isolation, and
    measured effect.

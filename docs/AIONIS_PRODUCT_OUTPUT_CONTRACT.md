@@ -80,6 +80,8 @@ Sparse feedback confidence decay boundaries are defined in
 [SPARSE_FEEDBACK_CONFIDENCE_DECAY_GATE.md](SPARSE_FEEDBACK_CONFIDENCE_DECAY_GATE.md).
 That surface can expose read-only temporal staleness candidates, but it never
 changes guide authority or memory lifecycle by itself.
+Trace-derived skill candidate boundaries are defined in
+[AIONIS_TRACE_DERIVED_SKILL_MEMORY.md](AIONIS_TRACE_DERIVED_SKILL_MEMORY.md).
 
 `observe` and `forget` remain product actions, but their first product-visible value should flow into these outputs:
 

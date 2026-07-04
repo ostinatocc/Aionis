@@ -73,8 +73,10 @@ stable user-facing outputs are defined in
 The governance decision table is defined in
 [AIONIS_GOVERNANCE_POLICY_V1.md](AIONIS_GOVERNANCE_POLICY_V1.md), the rehydrate
 contract is defined in [AIONIS_REHYDRATE_CONTRACT.md](AIONIS_REHYDRATE_CONTRACT.md),
-and multi-Agent scope boundaries are defined in
-[AIONIS_MULTI_AGENT_SCOPE_MODEL.md](AIONIS_MULTI_AGENT_SCOPE_MODEL.md).
+multi-Agent scope boundaries are defined in
+[AIONIS_MULTI_AGENT_SCOPE_MODEL.md](AIONIS_MULTI_AGENT_SCOPE_MODEL.md), and
+trace-derived skill learning is defined in
+[AIONIS_TRACE_DERIVED_SKILL_MEMORY.md](AIONIS_TRACE_DERIVED_SKILL_MEMORY.md).
 
 The shortest no-key value demo is [AIONIS_FIRST_VALUE_DEMO.md](AIONIS_FIRST_VALUE_DEMO.md). It demonstrates external memory admission and audit without an embedding provider, LLM, Agent harness, or benchmark runner. The shortest write-and-guide product flow is [AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md](AIONIS_OBSERVE_GUIDE_AUDIT_QUICKSTART.md). It demonstrates `observe -> guide -> audit`. External Agent hosts should use [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md) for the full `observe -> guide -> agent action -> feedback -> measure -> snapshot` loop.
 
@@ -273,7 +275,9 @@ promotion gates.
 This gives Aionis a product path for trace-to-skill learning without turning the
 Runtime into an autonomous training loop.
 
-Planned next step:
+Detailed Runtime boundary:
+[AIONIS_TRACE_DERIVED_SKILL_MEMORY.md](AIONIS_TRACE_DERIVED_SKILL_MEMORY.md).
+Implementation plan:
 [Trace-Derived Skill Memory Plan](plans/2026-06-30-trace-derived-skill-memory.md)
 defines how reviewed candidates become explicit procedure-memory drafts,
 committed through `observe`, and later recalled through normal admission gates.
