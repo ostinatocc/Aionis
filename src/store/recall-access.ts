@@ -273,6 +273,8 @@ export interface RecallStoreAccess {
   stage1HybridCandidates(params: RecallHybridParams): Promise<RecallCandidate[]>;
   stage2Edges(params: RecallStage2EdgesParams): Promise<RecallEdgeRow[]>;
   stage2Nodes(params: RecallStage2NodesParams): Promise<RecallNodeRow[]>;
+  listAssociativeNodesByIds(scope: string, nodeIds: string[]): Promise<RecallAssociativeNodeRow[]>;
+  listAssociativeCandidatePool(scope: string, excludeNodeIds: string[], limit: number): Promise<RecallAssociativeNodeRow[]>;
   ruleDefs(scope: string, ruleIds: string[]): Promise<RecallRuleDefRow[]>;
   debugEmbeddings(scope: string, ids: string[]): Promise<RecallDebugEmbeddingRow[]>;
   insertRecallAudit(params: RecallAuditInsertParams): Promise<void>;
@@ -337,6 +339,8 @@ export function assertRecallStoreAccessContract(access: RecallStoreAccess): void
     "stage1HybridCandidates",
     "stage2Edges",
     "stage2Nodes",
+    "listAssociativeNodesByIds",
+    "listAssociativeCandidatePool",
     "ruleDefs",
     "debugEmbeddings",
     "insertRecallAudit",

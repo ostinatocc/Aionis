@@ -10,7 +10,6 @@ import type {
 } from "../memory/associative-candidate-store.js";
 import {
   AssociativeLinkTriggerPayloadSchema,
-  DeferredAssociativeLinkFollowupSchema,
   type AssociativeLinkTriggerPayload,
 } from "../memory/associative-linking-types.js";
 import type { RecallAssociativeNodeRow } from "../store/recall-access.js";
@@ -222,30 +221,6 @@ export function buildAssociativeLinkOutboxInsert(args: {
     payloadSha256: payloadSha,
     payloadJson: JSON.stringify(payload),
   };
-}
-
-export async function enqueueDeferredAssociativeLinkFollowup(args: {
-  scope: string;
-  commitId: string;
-  embedPayload: unknown;
-  writeAccess: {
-    insertOutboxEvent(params: AssociativeLinkOutboxInsertArgs): Promise<void>;
-  };
-}): Promise<boolean> {
-  const payloadObj = asObject(args.embedPayload);
-  const parsed = DeferredAssociativeLinkFollowupSchema.safeParse(payloadObj?.after_associative_link);
-  if (!parsed.success) return false;
-  await args.writeAccess.insertOutboxEvent(
-    buildAssociativeLinkOutboxInsert({
-      scope: args.scope,
-      commitId: args.commitId,
-      payload: {
-        ...parsed.data,
-        scope: args.scope,
-      },
-    }),
-  );
-  return true;
 }
 
 function toNonEmptyString(value: unknown): string | null {

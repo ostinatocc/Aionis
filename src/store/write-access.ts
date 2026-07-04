@@ -100,9 +100,6 @@ export type WriteOutboxInsertArgs = {
 };
 
 export type WriteOutboxEventType =
-  | "embed_nodes"
-  | "topic_cluster"
-  | "replay_learning_projection"
   | "associative_link";
 
 export interface WriteStoreAccess extends AssociativeCandidateStoreAccess {
@@ -117,7 +114,6 @@ export interface WriteStoreAccess extends AssociativeCandidateStoreAccess {
   upsertEdge(args: WriteEdgeUpsertArgs): Promise<void>;
   readyEmbeddingNodeIds(scope: string, ids: string[]): Promise<Set<string>>;
   insertOutboxEvent(args: WriteOutboxInsertArgs): Promise<void>;
-  appendAfterTopicClusterEventIds(scope: string, commitId: string, eventIdsJson: string): Promise<void>;
 }
 
 function parseJsonForFingerprint(raw: string | null): unknown {
@@ -177,7 +173,6 @@ export function assertWriteStoreAccessContract(access: WriteStoreAccess): void {
     "listAssociationCandidatesForSource",
     "markAssociationCandidatePromoted",
     "updateAssociationCandidateStatus",
-    "appendAfterTopicClusterEventIds",
   ] as const;
   for (const method of requiredMethods) {
     if (typeof (access as any)[method] !== "function") {

@@ -78,7 +78,7 @@ function buildEnv(overrides: Record<string, unknown> = {}) {
     REPLAY_REPAIR_REVIEW_POLICY_JSON: "{}",
     REPLAY_LEARNING_PROJECTION_ENABLED: true,
     REPLAY_LEARNING_PROJECTION_MODE: "rule_and_episode",
-    REPLAY_LEARNING_PROJECTION_DELIVERY: "async_outbox",
+    REPLAY_LEARNING_PROJECTION_DELIVERY: "sync_inline",
     REPLAY_LEARNING_TARGET_RULE_STATE: "draft",
     REPLAY_LEARNING_MIN_TOTAL_STEPS: 1,
     REPLAY_LEARNING_MIN_SUCCESS_RATIO: 1,
@@ -344,8 +344,8 @@ function registerReplayReviewRoute(args: {
   return { app, runtimeOptions };
 }
 
-test("lite replay runtime defaults force sync_inline learning projection delivery", async () => {
-  const env = buildEnv({ REPLAY_LEARNING_PROJECTION_DELIVERY: "async_outbox" });
+test("lite replay runtime defaults use sync_inline learning projection delivery", async () => {
+  const env = buildEnv();
   const testSandbox = createTestSandboxStore();
   try {
     const runtimeOptions = createReplayRuntimeOptionBuilders({
@@ -754,43 +754,6 @@ test("lite replay repair review preserves explicit target_rule_state over learni
     assert.equal(body.learning_control_preview?.promote_memory.decision_trace?.admissible, true);
     assert.equal(body.learning_control_preview?.promote_memory.decision_trace?.policy_effect_applies, false);
     assert.equal(body.learning_control_preview?.promote_memory.decision_trace?.runtime_apply_changed_target_rule_state, false);
-  } finally {
-    await app.close();
-    await liteReplayStore.close();
-    await liteWriteStore.close();
-  }
-});
-
-test("lite replay repair review rejects async_outbox learning projection delivery", async () => {
-  const dbPath = tmpDbPath("repair-review-async-reject");
-  const playbookId = randomUUID();
-  const { liteWriteStore, liteReplayStore } = await seedPendingReviewPlaybook({
-    writeDbPath: dbPath,
-    replayDbPath: tmpDbPath("repair-review-async-reject-replay"),
-    playbookId,
-  });
-  const { app } = registerReplayReviewRoute({ liteWriteStore, liteReplayStore });
-  try {
-    const res = await app.inject({
-      method: "POST",
-      url: "/v1/memory/replay/playbooks/repair/review",
-      payload: {
-        tenant_id: "default",
-        scope: "default",
-        playbook_id: playbookId,
-        action: "approve",
-        auto_shadow_validate: false,
-        target_status_on_approve: "shadow",
-        learning_projection: {
-          enabled: true,
-          delivery: "async_outbox",
-        },
-      },
-    });
-
-    assert.equal(res.statusCode, 400);
-    const body = res.json();
-    assert.equal(body.error, "replay_learning_async_outbox_unsupported_in_lite");
   } finally {
     await app.close();
     await liteReplayStore.close();

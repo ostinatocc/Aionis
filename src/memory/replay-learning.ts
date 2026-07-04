@@ -27,7 +27,7 @@ export {
 } from "./replay-learning-artifacts.js";
 
 type ReplayLearningProjectionMode = "rule_and_episode" | "episode_only";
-type ReplayLearningProjectionDelivery = "async_outbox" | "sync_inline";
+type ReplayLearningProjectionDelivery = "sync_inline";
 type ReplayLearningProjectionTargetRuleState = "draft" | "shadow";
 
 export type ReplayLearningProjectionResolvedConfig = {
@@ -51,9 +51,8 @@ export type ReplayLearningWarning = {
 export type ReplayLearningProjectionResult = {
   triggered: boolean;
   delivery: ReplayLearningProjectionDelivery;
-  status: "queued" | "applied" | "skipped" | "failed";
+  status: "applied" | "skipped" | "failed";
   reason?: string;
-  job_key?: string;
   generated_rule_node_id?: string;
   generated_rule_uri?: string;
   generated_episode_node_id?: string;
@@ -104,7 +103,6 @@ function asLiteReplayLearningStore(writeAccess?: WriteStoreAccess | null): LiteW
     !writeAccess
     || typeof (writeAccess as LiteWriteStore).findNodes !== "function"
     || typeof (writeAccess as LiteWriteStore).getRuleDef !== "function"
-    || typeof (writeAccess as LiteWriteStore).insertOutboxEvent !== "function"
     || typeof (writeAccess as LiteWriteStore).updateNodeAnchorState !== "function"
   ) {
     return null;
@@ -289,39 +287,6 @@ export function classifyReplayLearningProjectionError(err: unknown): {
     return { error_class: "fatal", error_code: "replay_learning_invalid_payload", message };
   }
   return { error_class: "retryable", error_code: "replay_learning_projection_failed", message };
-}
-
-export async function enqueueReplayLearningProjectionOutbox(
-  input: {
-    scopeKey: string;
-    commitId: string;
-    payload: ReplayLearningProjectionPayload;
-    writeAccess?: WriteStoreAccess | null;
-  },
-): Promise<{ job_key: string }> {
-  const payloadJson = stableStringify(input.payload);
-  const payloadSha = sha256Hex(payloadJson);
-  const jobKey = sha256Hex(
-    stableStringify({
-      v: 1,
-      scope: input.scopeKey,
-      event_type: "replay_learning_projection",
-      playbook_id: input.payload.playbook_id,
-      playbook_version: input.payload.playbook_version,
-      source_commit_id: input.payload.source_commit_id ?? "",
-      payload_sha256: payloadSha,
-    }),
-  );
-  if (!input.writeAccess) throw new Error("enqueueReplayLearningProjectionOutbox requires writeAccess");
-  await input.writeAccess.insertOutboxEvent({
-    scope: input.scopeKey,
-    commitId: input.commitId,
-    eventType: "replay_learning_projection",
-    jobKey,
-    payloadSha256: payloadSha,
-    payloadJson,
-  });
-  return { job_key: jobKey };
 }
 
 async function loadReplayPlaybookNode(

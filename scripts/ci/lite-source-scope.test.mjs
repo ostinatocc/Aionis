@@ -35,6 +35,7 @@ const FORBIDDEN_PATHS = [
 
 const ALLOWED_JOB_FILES = [
   "associative-linking-lib.ts",
+  "associative-linking-worker.ts",
 ];
 
 function listSourceFiles(dir) {
@@ -76,6 +77,27 @@ test("lite repo keeps only kernel-linked job helpers", () => {
     .sort();
   assert.deepEqual(jobFiles, ALLOWED_JOB_FILES);
   assert.equal(fs.existsSync(path.join(jobsDir, "fixtures")), false, "src/jobs/fixtures should be absent in lite repo");
+});
+
+test("lite outbox is reserved for associative-link worker only", () => {
+  const writeAccessFile = fs.readFileSync(path.join(ROOT, "src", "store", "write-access.ts"), "utf8");
+  const writePostCommitFile = fs.readFileSync(path.join(ROOT, "src", "memory", "write-post-commit.ts"), "utf8");
+  const runtimeEntryFile = fs.readFileSync(path.join(ROOT, "src", "runtime-entry.ts"), "utf8");
+  const workerFile = fs.readFileSync(path.join(ROOT, "src", "jobs", "associative-linking-worker.ts"), "utf8");
+  const removedOutboxEvents = [
+    "embed" + "_nodes",
+    "topic" + "_cluster",
+    "replay_learning" + "_projection",
+  ];
+  for (const eventType of removedOutboxEvents) {
+    assert.equal(writeAccessFile.includes(eventType), false, `write access should not expose removed outbox event ${eventType}`);
+    assert.equal(writePostCommitFile.includes(eventType), false, `post-commit writes should not enqueue removed outbox event ${eventType}`);
+  }
+  assert.equal(writePostCommitFile.includes("after_" + "associative_link"), false, "post-commit writes should not keep embed follow-up payloads");
+  assert.match(writeAccessFile, /export type WriteOutboxEventType =\s*\|\s*"associative_link"/);
+  assert.match(workerFile, /drainLiteAssociativeLinkOutbox/);
+  assert.match(workerFile, /eventType: "associative_link"/);
+  assert.match(runtimeEntryFile, /startLiteAssociativeLinkWorker/);
 });
 
 test("focused repo keeps Runtime source only and does not vendor adapter package sources", () => {

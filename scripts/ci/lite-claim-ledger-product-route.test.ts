@@ -55,7 +55,6 @@ async function liteEnv(writePath: string, replayPath: string): Promise<Env> {
       LITE_REPLAY_SQLITE_PATH: replayPath,
       SANDBOX_ENABLED: "false",
       RATE_LIMIT_ENABLED: "false",
-      AUTO_TOPIC_CLUSTER_ON_WRITE: "false",
       WORKFLOW_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: "false",
     },
     () => loadEnv(),

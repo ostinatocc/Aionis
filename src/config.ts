@@ -444,7 +444,7 @@ const EnvSchema = z.object({
     .pipe(z.enum(["true", "false"]))
     .transform((v) => v === "true"),
   REPLAY_LEARNING_PROJECTION_MODE: z.enum(["rule_and_episode", "episode_only"]).default("rule_and_episode"),
-  REPLAY_LEARNING_PROJECTION_DELIVERY: z.enum(["async_outbox", "sync_inline"]).default("async_outbox"),
+  REPLAY_LEARNING_PROJECTION_DELIVERY: z.enum(["sync_inline"]).default("sync_inline"),
   REPLAY_LEARNING_TARGET_RULE_STATE: z.enum(["draft", "shadow"]).default("draft"),
   REPLAY_LEARNING_MIN_TOTAL_STEPS: z.coerce.number().int().min(0).max(500).default(1),
   REPLAY_LEARNING_MIN_SUCCESS_RATIO: z.coerce.number().min(0).max(1).default(1),
@@ -550,32 +550,11 @@ const EnvSchema = z.object({
   // Optional tenant/route/scope scoped replay auto-promotion policy map.
   REPLAY_REPAIR_REVIEW_POLICY_JSON: z.string().default("{}"),
 
-  // Abstraction policy profile: coarse operating mode for topic clustering + compression rollup defaults.
+  // Abstraction policy profile: coarse operating mode for compression rollup defaults.
   MEMORY_ABSTRACTION_POLICY_PROFILE: AbstractionPolicyProfileSchema.default("balanced"),
-
-  TOPIC_SIM_THRESHOLD: z.coerce.number().min(-1).max(1).default(0.78),
-  TOPIC_MIN_EVENTS_PER_TOPIC: z.coerce.number().int().positive().default(5),
-  TOPIC_CLUSTER_BATCH_SIZE: z.coerce.number().int().positive().max(1000).default(200),
-  TOPIC_MAX_CANDIDATES_PER_EVENT: z.coerce.number().int().positive().max(50).default(5),
-  TOPIC_CLUSTER_STRATEGY: z.enum(["online_knn"]).default("online_knn"),
-
-  AUTO_TOPIC_CLUSTER_ON_WRITE: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "true").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  TOPIC_CLUSTER_ASYNC_ON_WRITE: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "true").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
 
   OUTBOX_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(1000),
   OUTBOX_BATCH_SIZE: z.coerce.number().int().positive().max(200).default(20),
-  OUTBOX_CLAIM_TIMEOUT_MS: z.coerce.number().int().positive().default(5 * 60 * 1000),
-  OUTBOX_MAX_ATTEMPTS: z.coerce.number().int().positive().default(25),
   // Long-term memory tiering policy (Phase 1).
   MEMORY_TIER_WARM_BELOW: z.coerce.number().min(0).max(1).default(0.35),
   MEMORY_TIER_COLD_BELOW: z.coerce.number().min(0).max(1).default(0.12),
@@ -675,10 +654,6 @@ const MODE_PRESETS: Record<z.infer<typeof RuntimeModeSchema>, Record<string, str
 
 const ABSTRACTION_POLICY_PRESETS: Record<z.infer<typeof AbstractionPolicyProfileSchema>, Record<string, string>> = {
   conservative: {
-    TOPIC_SIM_THRESHOLD: "0.84",
-    TOPIC_MIN_EVENTS_PER_TOPIC: "6",
-    TOPIC_CLUSTER_BATCH_SIZE: "120",
-    TOPIC_MAX_CANDIDATES_PER_EVENT: "3",
     MEMORY_COMPRESSION_LOOKBACK_DAYS: "14",
     MEMORY_COMPRESSION_TOPIC_MIN_EVENTS: "6",
     MEMORY_COMPRESSION_MAX_TOPICS_PER_RUN: "30",
@@ -686,10 +661,6 @@ const ABSTRACTION_POLICY_PRESETS: Record<z.infer<typeof AbstractionPolicyProfile
     MEMORY_COMPRESSION_MAX_TEXT_LEN: "1400",
   },
   balanced: {
-    TOPIC_SIM_THRESHOLD: "0.78",
-    TOPIC_MIN_EVENTS_PER_TOPIC: "5",
-    TOPIC_CLUSTER_BATCH_SIZE: "200",
-    TOPIC_MAX_CANDIDATES_PER_EVENT: "5",
     MEMORY_COMPRESSION_LOOKBACK_DAYS: "30",
     MEMORY_COMPRESSION_TOPIC_MIN_EVENTS: "4",
     MEMORY_COMPRESSION_MAX_TOPICS_PER_RUN: "50",
@@ -697,10 +668,6 @@ const ABSTRACTION_POLICY_PRESETS: Record<z.infer<typeof AbstractionPolicyProfile
     MEMORY_COMPRESSION_MAX_TEXT_LEN: "1800",
   },
   aggressive: {
-    TOPIC_SIM_THRESHOLD: "0.72",
-    TOPIC_MIN_EVENTS_PER_TOPIC: "4",
-    TOPIC_CLUSTER_BATCH_SIZE: "400",
-    TOPIC_MAX_CANDIDATES_PER_EVENT: "8",
     MEMORY_COMPRESSION_LOOKBACK_DAYS: "45",
     MEMORY_COMPRESSION_TOPIC_MIN_EVENTS: "3",
     MEMORY_COMPRESSION_MAX_TOPICS_PER_RUN: "100",

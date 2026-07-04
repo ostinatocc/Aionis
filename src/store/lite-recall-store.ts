@@ -15,6 +15,7 @@ import {
 } from "./recall-access.js";
 import type {
   RecallAuditInsertParams,
+  RecallAssociativeNodeRow,
   RecallCandidate,
   RecallExecutionNativeParams,
   RecallGraphParams,
@@ -665,6 +666,24 @@ function nodeToRecallRow(row: LiteRecallNodeRow, includeSlots: boolean): RecallN
     importance: row.importance,
     confidence: row.confidence,
     last_activated: null,
+    created_at: row.created_at,
+    updated_at: row.created_at,
+    commit_id: row.commit_id,
+  };
+}
+
+function nodeToAssociativeRow(row: LiteRecallNodeRow): RecallAssociativeNodeRow {
+  return {
+    id: row.id,
+    scope: row.scope,
+    type: row.type,
+    memory_lane: row.memory_lane,
+    owner_agent_id: row.owner_agent_id,
+    owner_team_id: row.owner_team_id,
+    title: row.title,
+    text_summary: row.text_summary,
+    slots: parseJsonObject(row.slots_json),
+    embedding_text: row.embedding_vector_json,
     created_at: row.created_at,
     updated_at: row.created_at,
     commit_id: row.commit_id,
@@ -1760,6 +1779,90 @@ export function createLiteRecallStore(
           return rows
             .filter((row) => candidateVisible(row, params.consumerAgentId, params.consumerTeamId))
             .map((row) => nodeToRecallRow(row, params.includeSlots));
+        },
+        async listAssociativeNodesByIds(scope: string, nodeIds: string[]): Promise<RecallAssociativeNodeRow[]> {
+          const ids = Array.from(new Set(nodeIds.map((id) => id.trim()).filter(Boolean)));
+          if (ids.length === 0) return [];
+          const rows = db.prepare(`
+            SELECT
+              id,
+              scope,
+              type,
+              tier,
+              memory_lane,
+              producer_agent_id,
+              owner_agent_id,
+              owner_team_id,
+              title,
+              text_summary,
+              slots_json,
+              raw_ref,
+              evidence_ref,
+              embedding_vector_json,
+              embedding_model,
+              embedding_status,
+              salience,
+              importance,
+              confidence,
+              created_at,
+              commit_id
+            FROM lite_memory_nodes
+            WHERE scope = ?
+              AND id IN (${placeholders(ids.length)})
+          `).all(scope, ...ids) as LiteRecallNodeRow[];
+          return rows
+            .filter((row) => recallSurfaceAllowed({ db, scope, row, slots: parseJsonObject(row.slots_json) }))
+            .map(nodeToAssociativeRow);
+        },
+        async listAssociativeCandidatePool(
+          scope: string,
+          excludeNodeIds: string[],
+          limit: number,
+        ): Promise<RecallAssociativeNodeRow[]> {
+          const excluded = Array.from(new Set(excludeNodeIds.map((id) => id.trim()).filter(Boolean)));
+          const boundedLimit = Math.max(1, Math.min(1000, Math.trunc(limit)));
+          const where = [
+            "scope = ?",
+            `type IN (${placeholders(STAGE1_RECALL_TYPES.length)})`,
+          ];
+          const values: unknown[] = [scope, ...STAGE1_RECALL_TYPES];
+          if (excluded.length > 0) {
+            where.push(`id NOT IN (${placeholders(excluded.length)})`);
+            values.push(...excluded);
+          }
+          values.push(Math.max(boundedLimit * 4, boundedLimit));
+          const rows = db.prepare(`
+            SELECT
+              id,
+              scope,
+              type,
+              tier,
+              memory_lane,
+              producer_agent_id,
+              owner_agent_id,
+              owner_team_id,
+              title,
+              text_summary,
+              slots_json,
+              raw_ref,
+              evidence_ref,
+              embedding_vector_json,
+              embedding_model,
+              embedding_status,
+              salience,
+              importance,
+              confidence,
+              created_at,
+              commit_id
+            FROM lite_memory_nodes
+            WHERE ${where.join("\n              AND ")}
+            ORDER BY salience DESC, confidence DESC, created_at DESC, id DESC
+            LIMIT ?
+          `).all(...values) as LiteRecallNodeRow[];
+          return rows
+            .filter((row) => recallSurfaceAllowed({ db, scope, row, slots: parseJsonObject(row.slots_json) }))
+            .map(nodeToAssociativeRow)
+            .slice(0, boundedLimit);
         },
         async ruleDefs(scope: string, ruleIds: string[]): Promise<RecallRuleDefRow[]> {
           if (ruleIds.length === 0) return [];

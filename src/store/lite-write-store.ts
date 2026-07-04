@@ -31,6 +31,7 @@ import type {
   WriteEdgeUpsertArgs,
   WriteNodeInsertArgs,
   WriteOutboxInsertArgs,
+  WriteOutboxEventType,
   WriteRuleDefInsertArgs,
   WriteStoreAccess,
   WriteExistingNodeFingerprint,
@@ -185,6 +186,17 @@ export type LiteOperatorScopeSummaryRow = {
   run_count: number;
   actor_count: number;
   latest_memory_at: string | null;
+};
+
+export type LiteOutboxEventRow = {
+  row_id: number;
+  scope: string;
+  commit_id: string;
+  event_type: WriteOutboxEventType;
+  job_key: string;
+  payload_sha256: string;
+  payload_json: string;
+  created_at: string;
 };
 
 export type LiteWriteStore = WriteStoreAccess & {
@@ -385,6 +397,11 @@ export type LiteWriteStore = WriteStoreAccess & {
     id: string;
     error: string;
   }): Promise<void>;
+  listOutboxEvents(args: {
+    eventType: WriteOutboxEventType;
+    limit: number;
+  }): Promise<LiteOutboxEventRow[]>;
+  deleteOutboxEvent(rowId: number): Promise<void>;
   close(): Promise<void>;
   healthSnapshot(): { path: string; mode: "sqlite_write_v1" };
 };
@@ -1134,6 +1151,7 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
       UNIQUE(scope, event_type, job_key)
     );
     CREATE INDEX IF NOT EXISTS idx_lite_memory_outbox_scope_commit ON lite_memory_outbox(scope, commit_id);
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_outbox_event_created ON lite_memory_outbox(event_type, created_at, row_id);
 
     CREATE TABLE IF NOT EXISTS lite_memory_execution_decisions (
       id TEXT PRIMARY KEY,
@@ -2511,6 +2529,24 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
       );
     },
 
+    async listOutboxEvents(args): Promise<LiteOutboxEventRow[]> {
+      const limit = Math.max(1, Math.min(200, Math.trunc(args.limit)));
+      const rows = db.prepare(
+        `SELECT row_id, scope, commit_id, event_type, job_key, payload_sha256, payload_json, created_at
+         FROM lite_memory_outbox
+         WHERE event_type = ?
+         ORDER BY created_at ASC, row_id ASC
+         LIMIT ?`,
+      ).all(args.eventType, limit) as LiteOutboxEventRow[];
+      return rows;
+    },
+
+    async deleteOutboxEvent(rowId: number): Promise<void> {
+      db.prepare(
+        `DELETE FROM lite_memory_outbox WHERE row_id = ?`,
+      ).run(rowId);
+    },
+
     async upsertAssociationCandidates(args: UpsertAssociationCandidateArgs[]): Promise<void> {
       if (args.length === 0) return;
       const stmt = db.prepare(
@@ -2656,30 +2692,6 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
         args.dst_id,
         args.relation_kind,
       );
-    },
-
-    async appendAfterTopicClusterEventIds(scope: string, commitId: string, eventIdsJson: string): Promise<void> {
-      let nextIds: unknown[] = [];
-      try {
-        const parsed = JSON.parse(eventIdsJson);
-        nextIds = Array.isArray(parsed) ? parsed : [];
-      } catch {
-        nextIds = [];
-      }
-      const rows = db.prepare(
-        `SELECT row_id, payload_json
-         FROM lite_memory_outbox
-         WHERE scope = ? AND commit_id = ? AND event_type = 'embed_nodes'`,
-      ).all(scope, commitId) as Array<{ row_id: number; payload_json: string }>;
-      for (const row of rows) {
-        const payload = parseJsonObject(row.payload_json);
-        const current = Array.isArray(payload.after_topic_cluster_event_ids) ? payload.after_topic_cluster_event_ids : [];
-        const merged = [...new Set([...current, ...nextIds])];
-        payload.after_topic_cluster_event_ids = merged;
-        db.prepare(
-          `UPDATE lite_memory_outbox SET payload_json = ? WHERE row_id = ?`,
-        ).run(stringifyJson(payload), row.row_id);
-      }
     },
 
     async setNodeEmbeddingReady(args): Promise<void> {

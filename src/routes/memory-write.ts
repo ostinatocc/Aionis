@@ -16,9 +16,7 @@ import {
 } from "../app/learning-control-runtime-providers.js";
 import { collectExecutionWriteOverlaySlots } from "../memory/execution-slot-surface.js";
 import {
-  computeEffectiveWritePolicy,
   prepareMemoryWrite,
-  type EffectiveWritePolicy,
   type PreparedWrite,
   type WriteResult,
 } from "../memory/write.js";
@@ -31,13 +29,13 @@ import type { InflightGateToken } from "../util/inflight_gate.js";
 
 type MemoryWriteRequest = FastifyRequest<{ Body: unknown }>;
 
-type PreparedWriteRouteState = PreparedWrite & {
-  trigger_topic_cluster?: boolean;
-  topic_cluster_async?: boolean;
-};
-
 type WriteWarningLike = { code: string; message: string; details?: Record<string, unknown> };
-type LiteInlineEmbeddingResultLike = { updated: number; failed: number; error?: string | null } | null;
+type LiteInlineEmbeddingResultLike = {
+  attempted: number;
+  updated: number;
+  failed: number;
+  error?: string | null;
+} | null;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
@@ -45,10 +43,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function isExecutionTreeDefaultDisabledRequest(body: unknown): boolean {
   return isExecutionTreeDefaultDisabled(asRecord(body));
-}
-
-function isEnqueuedTopicCluster(result: WriteResult["topic_cluster"]): result is { enqueued: true } {
-  return !!result && "enqueued" in result && result.enqueued === true;
 }
 
 function resolveWriteScopeTenant(args: {
@@ -118,24 +112,13 @@ export function registerMemoryWriteRoutes(args: {
             : undefined;
         })()
       : undefined;
-  const topicClusterSurfaceEnabled = embeddingSurfacePolicy.isEnabled("topic_cluster");
-  const resolveWritePolicy = (computedPolicy: EffectiveWritePolicy): EffectiveWritePolicy => ({
-    ...computedPolicy,
-    trigger_topic_cluster: computedPolicy.trigger_topic_cluster && topicClusterSurfaceEnabled,
-  });
   const runCommittedMemoryWrite = async (args: {
-    prepared: PreparedWriteRouteState;
-    policy: EffectiveWritePolicy;
+    prepared: PreparedWrite;
   }): Promise<{
     out: WriteResult;
-    forcedLiteTopicClusterAsync: boolean;
     liteInlineEmbedding: LiteInlineEmbeddingResultLike;
   }> => {
-    const { prepared, policy } = args;
-    const forcedLiteTopicClusterAsync = policy.trigger_topic_cluster && !policy.topic_cluster_async;
-    prepared.trigger_topic_cluster = policy.trigger_topic_cluster;
-    // Lite write path cannot safely run sync clustering inside the SQLite write transaction.
-    prepared.topic_cluster_async = policy.trigger_topic_cluster ? true : policy.topic_cluster_async;
+    const { prepared } = args;
     const committed = await commitLitePreparedWriteWithProjection({
       prepared,
       liteWriteStore,
@@ -150,18 +133,28 @@ export function registerMemoryWriteRoutes(args: {
           : {}),
       },
     });
+    if (committed.liteInlineEmbedding?.updated) {
+      committed.out.embedding_backfill = {
+        completed_inline: true,
+        attempted_nodes: committed.liteInlineEmbedding.attempted,
+        updated_nodes: committed.liteInlineEmbedding.updated,
+      };
+    } else if ((committed.liteInlineEmbedding?.failed ?? 0) > 0) {
+      committed.out.embedding_backfill = {
+        failed_inline: true,
+        attempted_nodes: committed.liteInlineEmbedding?.attempted ?? 0,
+        failed_nodes: committed.liteInlineEmbedding?.failed ?? 0,
+        ...(committed.liteInlineEmbedding?.error ? { error: committed.liteInlineEmbedding.error } : {}),
+      };
+    }
     return {
       out: committed.out,
-      forcedLiteTopicClusterAsync,
       liteInlineEmbedding: committed.liteInlineEmbedding,
     };
   };
   const collectWriteWarnings = (args: {
     out: WriteResult;
     prepared: PreparedWrite;
-    computedPolicy: EffectiveWritePolicy;
-    policy: EffectiveWritePolicy;
-    forcedLiteTopicClusterAsync: boolean;
     liteInlineEmbedding: LiteInlineEmbeddingResultLike;
   }): WriteWarningLike[] => {
     const { scope, tenantId } = resolveWriteScopeTenant({
@@ -170,29 +163,6 @@ export function registerMemoryWriteRoutes(args: {
       env,
     });
     const warnings: WriteWarningLike[] = [];
-    if (args.forcedLiteTopicClusterAsync) {
-      warnings.push({
-        code: "lite_topic_cluster_forced_async",
-        message: "lite edition forces topic clustering to async mode during memory write",
-        details: {
-          scope,
-          tenant_id: tenantId,
-          requested_async: false,
-          applied_async: true,
-        },
-      });
-    }
-    if (args.computedPolicy.trigger_topic_cluster && !args.policy.trigger_topic_cluster) {
-      warnings.push({
-        code: "embedding_surface_disabled_topic_cluster",
-        message: "topic clustering requested but disabled by embedding surface policy",
-        details: {
-          scope,
-          tenant_id: tenantId,
-          surface: "topic_cluster",
-        },
-      });
-    }
     if (args.liteInlineEmbedding?.updated) {
       warnings.push({
         code: "lite_embedding_backfill_completed_inline",
@@ -230,7 +200,7 @@ export function registerMemoryWriteRoutes(args: {
     return warnings;
   };
   const applyWriteSideEffects = async (args: {
-    prepared: PreparedWriteRouteState;
+    prepared: PreparedWrite;
     out: WriteResult;
     executionOverlays: ReturnType<typeof collectExecutionWriteOverlaySlots> | null;
     executionTreeDefaultDisabled: boolean;
@@ -281,9 +251,12 @@ export function registerMemoryWriteRoutes(args: {
     commit_id: args.out.commit_id,
     nodes: args.out.nodes?.length ?? 0,
     edges: args.out.edges?.length ?? 0,
-    embedding_backfill_enqueued: !!args.out.embedding_backfill?.enqueued,
-    embedding_pending_nodes: args.out.embedding_backfill?.pending_nodes ?? 0,
-    topic_cluster_enqueued: isEnqueuedTopicCluster(args.out.topic_cluster),
+    embedding_backfill_completed_inline: args.out.embedding_backfill && "completed_inline" in args.out.embedding_backfill
+      ? args.out.embedding_backfill.updated_nodes
+      : 0,
+    embedding_backfill_failed_inline: args.out.embedding_backfill && "failed_inline" in args.out.embedding_backfill
+      ? args.out.embedding_backfill.failed_nodes
+      : 0,
     distillation_enabled: args.out.distillation?.enabled === true,
     distillation_sources: args.out.distillation?.sources_considered ?? 0,
     distilled_evidence_nodes: args.out.distillation?.generated_evidence_nodes ?? 0,
@@ -303,9 +276,8 @@ export function registerMemoryWriteRoutes(args: {
       },
       writeEmbedder,
     );
-    const preparedForRoute: PreparedWriteRouteState = prepared;
     const executionOverlays = executionStateStore || executionTreeStore
-      ? collectExecutionWriteOverlaySlots(preparedForRoute.nodes)
+      ? collectExecutionWriteOverlaySlots(prepared.nodes)
       : null;
     if (env.MEMORY_WRITE_REQUIRE_NODES && prepared.nodes.length === 0) {
       throw new HttpError(
@@ -321,38 +293,23 @@ export function registerMemoryWriteRoutes(args: {
       );
     }
 
-    const computedPolicy = computeEffectiveWritePolicy(preparedForRoute, {
-      autoTopicClusterOnWrite: env.AUTO_TOPIC_CLUSTER_ON_WRITE,
-      topicClusterAsyncOnWrite: env.TOPIC_CLUSTER_ASYNC_ON_WRITE,
-    });
-
     return {
       prepared,
-      preparedForRoute,
       executionOverlays,
-      computedPolicy,
-      policy: resolveWritePolicy(computedPolicy),
     };
   };
   const finalizeWriteRoute = async (args: {
     req: MemoryWriteRequest;
     prepared: PreparedWrite;
-    preparedForRoute: PreparedWriteRouteState;
     executionOverlays: ReturnType<typeof collectExecutionWriteOverlaySlots> | null;
     out: WriteResult;
-    computedPolicy: EffectiveWritePolicy;
-    policy: EffectiveWritePolicy;
     executionTreeDefaultDisabled: boolean;
-    forcedLiteTopicClusterAsync: boolean;
     liteInlineEmbedding: LiteInlineEmbeddingResultLike;
     ms: number;
   }) => {
     const warnings = collectWriteWarnings({
       out: args.out,
       prepared: args.prepared,
-      computedPolicy: args.computedPolicy,
-      policy: args.policy,
-      forcedLiteTopicClusterAsync: args.forcedLiteTopicClusterAsync,
       liteInlineEmbedding: args.liteInlineEmbedding,
     });
     const response = {
@@ -363,7 +320,7 @@ export function registerMemoryWriteRoutes(args: {
     };
 
     await applyWriteSideEffects({
-      prepared: args.preparedForRoute,
+      prepared: args.prepared,
       out: args.out,
       executionOverlays: args.executionOverlays,
       executionTreeDefaultDisabled: args.executionTreeDefaultDisabled,
@@ -398,22 +355,15 @@ export function registerMemoryWriteRoutes(args: {
     await enforceTenantQuota(req, reply, "write", tenantFromBody(body));
     const gate = await acquireInflightSlot("write");
     try {
-      const { prepared, preparedForRoute, executionOverlays, computedPolicy, policy } = await prepareWriteRouteState(body);
+      const { prepared, executionOverlays } = await prepareWriteRouteState(body);
       const executionTreeDefaultDisabled = isExecutionTreeDefaultDisabledRequest(body);
-      const { out, forcedLiteTopicClusterAsync, liteInlineEmbedding } = await runCommittedMemoryWrite({
-        prepared: preparedForRoute,
-        policy,
-      });
+      const { out, liteInlineEmbedding } = await runCommittedMemoryWrite({ prepared });
       const response = await finalizeWriteRoute({
         req,
         prepared,
-        preparedForRoute,
         out,
         executionOverlays,
-        computedPolicy,
-        policy,
         executionTreeDefaultDisabled,
-        forcedLiteTopicClusterAsync,
         liteInlineEmbedding,
         ms: performance.now() - t0,
       });

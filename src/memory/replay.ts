@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type { EmbeddingProvider } from "../embeddings/types.js";
-import type { LiteWriteStore } from "../store/lite-write-store.js";
 import {
   type ReplayNodeRow,
   type ReplayVisibilityArgs,
@@ -11,7 +10,6 @@ import { HttpError } from "../util/http.js";
 import { stableUuid } from "../util/uuid.js";
 import {
   applyReplayLearningProjection,
-  enqueueReplayLearningProjectionOutbox,
   type ReplayLearningProjectionResolvedConfig,
   type ReplayLearningProjectionResult,
 } from "./replay-learning.js";
@@ -589,16 +587,6 @@ function requireReplayAccess(opts?: ReplayReadOptions | ReplayWriteOptions): Rep
 }
 
 const UUID_V4_OR_VX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-function asLiteReplayWriteStore(writeAccess?: WriteStoreAccess | null): LiteWriteStore | null {
-  if (
-    !writeAccess
-    || typeof (writeAccess as LiteWriteStore).withTx !== "function"
-    || typeof (writeAccess as LiteWriteStore).findNodes !== "function"
-  ) {
-    return null;
-  }
-  return writeAccess as LiteWriteStore;
-}
 
 export async function replayRunStart(body: unknown, opts: ReplayWriteOptions) {
   const parsed = parseRunStartInput(body);
@@ -2067,16 +2055,6 @@ export async function replayPlaybookRepairReview(body: unknown, opts: ReplayPlay
       status: "skipped",
       reason: "learning_projection_disabled",
     };
-  } else if (effectiveLearningProjectionConfig.delivery === "async_outbox" && asLiteReplayWriteStore(opts.writeAccess)) {
-    throw new HttpError(
-      400,
-      "replay_learning_async_outbox_unsupported_in_lite",
-      "lite replay repair review requires sync_inline learning projection delivery",
-      {
-        delivery: effectiveLearningProjectionConfig.delivery,
-        supported_delivery: "sync_inline",
-      },
-    );
   } else {
     const gateMetrics = extractShadowValidationGateMetrics(shadowValidation);
     const inferredTotalSteps = Array.isArray((reviewedSlots as any).steps_template)
@@ -2099,49 +2077,15 @@ export async function replayPlaybookRepairReview(body: unknown, opts: ReplayPlay
         success_ratio: gateMetrics?.success_ratio ?? 1,
       },
     };
-    if (effectiveLearningProjectionConfig.delivery === "sync_inline") {
-      try {
-        learningProjectionResult = await applyReplayLearningProjection(projectionSource, effectiveLearningProjectionConfig, opts);
-      } catch (err: any) {
-        learningProjectionResult = {
-          triggered: true,
-          delivery: effectiveLearningProjectionConfig.delivery,
-          status: "failed",
-          reason: String(err?.code ?? err?.message ?? err),
-        };
-      }
-    } else {
-      try {
-        const payload = {
-          tenant_id: tenancy.tenant_id,
-          scope: tenancy.scope,
-          scope_key: tenancy.scope_key,
-          actor: parsed.actor ?? "replay_review",
-          playbook_id: parsed.playbook_id,
-          playbook_version: finalVersion,
-          source_commit_id: finalCommitId ?? null,
-          config: effectiveLearningProjectionConfig,
-        };
-        const enq = await enqueueReplayLearningProjectionOutbox({
-          scopeKey: tenancy.scope_key,
-          commitId: finalCommitId,
-          payload,
-          writeAccess: opts.writeAccess,
-        });
-        learningProjectionResult = {
-          triggered: true,
-          delivery: effectiveLearningProjectionConfig.delivery,
-          status: "queued",
-          job_key: enq.job_key,
-        };
-      } catch (err: any) {
-        learningProjectionResult = {
-          triggered: true,
-          delivery: effectiveLearningProjectionConfig.delivery,
-          status: "failed",
-          reason: String(err?.code ?? err?.message ?? err),
-        };
-      }
+    try {
+      learningProjectionResult = await applyReplayLearningProjection(projectionSource, effectiveLearningProjectionConfig, opts);
+    } catch (err: any) {
+      learningProjectionResult = {
+        triggered: true,
+        delivery: effectiveLearningProjectionConfig.delivery,
+        status: "failed",
+        reason: String(err?.code ?? err?.message ?? err),
+      };
     }
   }
   if (learningProjectionResult) {

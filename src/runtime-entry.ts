@@ -21,6 +21,7 @@ import { createReplayRepairReviewPolicy } from "./app/replay-repair-review-polic
 import { createReplayRuntimeOptionBuilders } from "./app/replay-runtime-options.js";
 import { createSandboxBudgetService } from "./app/sandbox-budget.js";
 import { createRuntimeServices } from "./app/runtime-services.js";
+import { startLiteAssociativeLinkWorker } from "./jobs/associative-linking-worker.js";
 import { loadEnv } from "./config.js";
 
 export async function startAionisRuntime(): Promise<void> {
@@ -181,6 +182,15 @@ export async function startAionisRuntime(): Promise<void> {
     buildRecallTrajectory(args as Parameters<typeof buildRecallTrajectory>[0]);
 
   const app = createHttpApp(env);
+  const associativeLinkWorker = liteRecallAccess
+    ? startLiteAssociativeLinkWorker({
+        writeStore: liteWriteStore,
+        recallAccess: liteRecallAccess,
+        intervalMs: env.OUTBOX_POLL_INTERVAL_MS,
+        batchSize: env.OUTBOX_BATCH_SIZE,
+        logger: app.log,
+      })
+    : null;
 
   registerRuntimeErrorHandler(app);
   logMemoryApiConfig({
@@ -263,6 +273,7 @@ export async function startAionisRuntime(): Promise<void> {
     liteRecallStore,
     liteReplayStore,
     liteWriteStore,
+    associativeLinkWorker,
     liteClaimLedgerStore,
     liteSkillCandidateReviewStore,
     executionStateStore,

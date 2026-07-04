@@ -40,6 +40,7 @@ export function registerBootstrapLifecycle(args: {
   liteRecallStore?: CloseableRuntimeStore | null;
   liteReplayStore?: CloseableRuntimeStore | null;
   liteWriteStore?: CloseableRuntimeStore | null;
+  associativeLinkWorker?: SandboxLifecycle | null;
   liteClaimLedgerStore?: CloseableRuntimeStore | null;
   liteSkillCandidateReviewStore?: CloseableRuntimeStore | null;
   executionStateStore?: CloseableRuntimeStore | null;
@@ -52,12 +53,14 @@ export function registerBootstrapLifecycle(args: {
     liteRecallStore,
     liteReplayStore,
     liteWriteStore,
+    associativeLinkWorker,
     liteClaimLedgerStore,
     liteSkillCandidateReviewStore,
     executionStateStore,
     executionTreeStore,
   } = args;
   app.addHook("onClose", async () => {
+    associativeLinkWorker?.shutdown();
     sandboxExecutor.shutdown();
     if (executionTreeStore) await executionTreeStore.close();
     if (executionStateStore) await executionStateStore.close();

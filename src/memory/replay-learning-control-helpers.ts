@@ -30,7 +30,7 @@ export function resolveReplayLearningProjectionConfig(
   const base: ReplayLearningProjectionResolvedConfig = defaults ?? {
     enabled: false,
     mode: "rule_and_episode",
-    delivery: "async_outbox",
+    delivery: "sync_inline",
     target_rule_state: "draft",
     min_total_steps: 1,
     min_success_ratio: 1,
@@ -52,9 +52,7 @@ export function resolveReplayLearningProjectionConfig(
     delivery:
       deliveryRaw == null
         ? base.delivery
-        : deliveryRaw === "sync_inline"
-          ? "sync_inline"
-          : "async_outbox",
+        : "sync_inline",
     target_rule_state:
       stateRaw == null
         ? base.target_rule_state

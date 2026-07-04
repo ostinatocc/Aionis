@@ -113,10 +113,7 @@ export const MemoryWriteRequest = z
     owner_agent_id: z.string().min(1).optional(),
     owner_team_id: z.string().min(1).optional(),
     // If true, re-embed nodes even if they already have READY embeddings (for model upgrades).
-    // This never blocks /write; it only affects the derived embed backfill job behavior.
     force_reembed: z.boolean().optional(),
-    trigger_topic_cluster: z.boolean().optional(),
-    topic_cluster_async: z.boolean().optional(),
     execution_tree_disabled: z.boolean().optional(),
     execution_tree_default_disabled: z.boolean().optional(),
     distill: z
@@ -3941,10 +3938,9 @@ export type ToolsSelectRouteContract = z.infer<typeof ToolsSelectRouteContractSc
 
 export const ReplayLearningProjectionResultContractSchema = z.object({
   triggered: z.boolean(),
-  delivery: z.enum(["async_outbox", "sync_inline"]),
-  status: z.enum(["queued", "applied", "skipped", "failed"]),
+  delivery: z.enum(["sync_inline"]),
+  status: z.enum(["applied", "skipped", "failed"]),
   reason: z.string().nullable().optional(),
-  job_key: z.string().nullable().optional(),
   generated_rule_node_id: z.string().nullable().optional(),
   generated_episode_node_id: z.string().nullable().optional(),
 }).passthrough();
@@ -5099,7 +5095,7 @@ export type ReplayPlaybookRepairInput = z.infer<typeof ReplayPlaybookRepairReque
 export const ReplayLearningProjectionRequest = z.object({
   enabled: z.boolean().optional(),
   mode: z.enum(["rule_and_episode", "episode_only"]).optional(),
-  delivery: z.enum(["async_outbox", "sync_inline"]).optional(),
+  delivery: z.enum(["sync_inline"]).optional(),
   target_rule_state: z.enum(["draft", "shadow"]).optional(),
   min_total_steps: z.number().int().min(0).max(500).optional(),
   min_success_ratio: z.number().min(0).max(1).optional(),

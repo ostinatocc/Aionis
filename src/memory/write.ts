@@ -51,21 +51,9 @@ export type WriteResult = {
   edges: Array<{ id: string; uri?: string; type: string; src_id: string; dst_id: string }>;
   recallable_node_count?: number;
   edge_count?: number;
-  embedding_backfill?: { enqueued: true; pending_nodes: number };
-  topic_cluster?:
-    | {
-        topic_commit_id: string | null;
-        topic_commit_hash: string | null;
-        processed_events: number;
-        assigned: number;
-        created_topics: number;
-        promoted: number;
-        strategy_requested: "online_knn";
-        strategy_executed: "online_knn";
-        strategy_note: string | null;
-        quality: { cohesion: number; coverage: number; orphan_rate_after: number; merge_rate_30d: number };
-      }
-    | { enqueued: true };
+  embedding_backfill?:
+    | { completed_inline: true; attempted_nodes: number; updated_nodes: number }
+    | { failed_inline: true; attempted_nodes: number; failed_nodes: number; error?: string };
   warnings?: Array<{ code: string; message: string; details?: Record<string, unknown> }>;
   distillation?: WriteDistillationSummary;
 };
@@ -317,26 +305,8 @@ export type PreparedWrite = {
   force_reembed: boolean;
   nodes: PreparedNode[];
   edges: PreparedEdge[];
-  requested_trigger_topic_cluster?: boolean;
-  requested_topic_cluster_async?: boolean;
   distillation?: WriteDistillationSummary;
 };
-
-export type EffectiveWritePolicy = {
-  trigger_topic_cluster: boolean;
-  topic_cluster_async: boolean;
-};
-
-export function computeEffectiveWritePolicy(
-  prepared: PreparedWrite,
-  defaults: { autoTopicClusterOnWrite: boolean; topicClusterAsyncOnWrite: boolean },
-): EffectiveWritePolicy {
-  const hasEvents = prepared.nodes.some((n) => n.type === "event");
-  const trigger =
-    (prepared.requested_trigger_topic_cluster ?? defaults.autoTopicClusterOnWrite) && hasEvents;
-  const asyncMode = prepared.requested_topic_cluster_async ?? defaults.topicClusterAsyncOnWrite;
-  return { trigger_topic_cluster: trigger, topic_cluster_async: asyncMode };
-}
 
 export async function prepareMemoryWrite(
   body: unknown,
@@ -433,8 +403,6 @@ export async function prepareMemoryWrite(
     force_reembed: parsed.force_reembed ?? false,
     nodes,
     edges,
-    requested_trigger_topic_cluster: parsed.trigger_topic_cluster,
-    requested_topic_cluster_async: parsed.topic_cluster_async,
     distillation,
   };
 }

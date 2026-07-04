@@ -5,7 +5,6 @@ export const EMBEDDING_ALLOWED_SURFACES = [
   "recall_text",
   "planning_context",
   "context_assemble",
-  "topic_cluster",
 ] as const;
 
 export const EMBEDDING_FORBIDDEN_SURFACES = [
@@ -24,7 +23,6 @@ export const DEFAULT_ENABLED_EMBEDDING_SURFACES: readonly EmbeddingAllowedSurfac
   "recall_text",
   "planning_context",
   "context_assemble",
-  "topic_cluster",
 ];
 
 const ALLOWED_SET = new Set<string>(EMBEDDING_ALLOWED_SURFACES);
