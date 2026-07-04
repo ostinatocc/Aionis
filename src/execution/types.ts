@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ExecutionStringListSchema } from "./schema-limits.js";
 
 export const ExecutionStage = z.enum(["triage", "patch", "review", "resume"]);
 export type ExecutionStage = z.infer<typeof ExecutionStage>;
@@ -6,7 +7,7 @@ export type ExecutionStage = z.infer<typeof ExecutionStage>;
 export const ExecutionRole = z.enum(["orchestrator", "triage", "patch", "review", "resume"]);
 export type ExecutionRole = z.infer<typeof ExecutionRole>;
 
-const StringList = z.array(z.string().min(1)).default([]);
+const StringList = ExecutionStringListSchema;
 
 export const ServiceLifecycleKind = z.enum(["generic", "http", "tcp", "process"]);
 export type ServiceLifecycleKind = z.infer<typeof ServiceLifecycleKind>;

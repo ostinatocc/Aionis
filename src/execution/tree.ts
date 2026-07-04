@@ -1,6 +1,7 @@
 import { z } from "zod";
+import { ExecutionStringListSchema } from "./schema-limits.js";
 
-const StringList = z.array(z.string().trim().min(1)).default([]);
+const StringList = ExecutionStringListSchema;
 
 export const ExecutionTreeLayer = z.enum(["raw", "summary"]);
 export type ExecutionTreeLayer = z.infer<typeof ExecutionTreeLayer>;

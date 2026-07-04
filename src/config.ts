@@ -218,6 +218,12 @@ const EnvSchema = z.object({
     .transform((v) => (v ?? "true").toLowerCase())
     .pipe(z.enum(["true", "false"]))
     .transform((v) => v === "true"),
+  RUNTIME_VERIFIER_EXECUTION_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => (v ?? "false").toLowerCase())
+    .pipe(z.enum(["true", "false"]))
+    .transform((v) => v === "true"),
   EMBEDDING_ENABLED_SURFACES_JSON: z
     .string()
     .default("")
@@ -997,6 +1003,9 @@ export function loadEnv(): Env {
     }
     if (!parsed.data.TENANT_QUOTA_ENABLED) {
       throw new Error("TENANT_QUOTA_ENABLED=false is not allowed when APP_ENV=prod");
+    }
+    if (parsed.data.RUNTIME_VERIFIER_EXECUTION_ENABLED) {
+      throw new Error("RUNTIME_VERIFIER_EXECUTION_ENABLED=true is not allowed when APP_ENV=prod");
     }
     if (parsed.data.MEMORY_AUTH_MODE === "api_key" || parsed.data.MEMORY_AUTH_MODE === "api_key_or_jwt") {
       let parsedKeys: unknown;

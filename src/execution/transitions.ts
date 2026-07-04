@@ -7,8 +7,9 @@ import {
   ReviewerContractSchema,
   type ExecutionStateV1,
 } from "./types.js";
+import { ExecutionStringListSchema } from "./schema-limits.js";
 
-const StringList = z.array(z.string().trim().min(1)).default([]);
+const StringList = ExecutionStringListSchema;
 
 export const ExecutionTransitionType = z.enum([
   "stage_started",

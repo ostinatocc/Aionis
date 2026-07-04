@@ -72,6 +72,7 @@ function buildEnv(overrides: Record<string, unknown> = {}) {
     MEMORY_PLANNING_CONTEXT_OPTIMIZATION_PROFILE_DEFAULT: "balanced",
     MEMORY_CONTEXT_ASSEMBLE_OPTIMIZATION_PROFILE_DEFAULT: "balanced",
     WORKFLOW_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: false,
+    RUNTIME_VERIFIER_EXECUTION_ENABLED: false,
     ...overrides,
   } as any;
 }
@@ -494,7 +495,7 @@ async function runtimeVerifierEvidenceFromPlanning(args: {
   const body = PlanningContextRouteContractSchema.parse(response.json());
   const runtimeVerification = body.execution_kernel.runtime_verification;
   assert.ok(runtimeVerification);
-  assert.equal(runtimeVerification.execution_state, "executed");
+  assert.equal(runtimeVerification.execution_state, "executed", JSON.stringify(runtimeVerification.blocked_requests));
   assert.equal(runtimeVerification.summary.authoritative_evidence_ready, true);
   assert.ok(runtimeVerification.evidence_for_trust_gate);
   return runtimeVerification.evidence_for_trust_gate as Record<string, unknown>;
@@ -1157,7 +1158,12 @@ test("memory/write consumes runtime verifier evidence from planning_context for 
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
   try {
-    registerApp({ app, liteWriteStore, liteRecallStore });
+    registerApp({
+      app,
+      liteWriteStore,
+      liteRecallStore,
+      envOverrides: { RUNTIME_VERIFIER_EXECUTION_ENABLED: true },
+    });
 
     const command = runtimeVerifierCommand();
     const serviceConstraint = runtimeVerifierServiceConstraint(command);

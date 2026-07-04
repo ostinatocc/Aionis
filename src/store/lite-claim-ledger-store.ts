@@ -28,7 +28,7 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function stableJson(value: unknown): string {
+function jsonColumnValue(value: unknown): string {
   return JSON.stringify(value ?? null);
 }
 
@@ -195,7 +195,7 @@ function claimAccessForDb(db: SqliteDatabase, transaction: SqliteTransactionRunn
       args.claimId,
       args.eventType,
       args.reasonCode,
-      stableJson(args.details),
+      jsonColumnValue(args.details),
       args.at,
     );
   }
@@ -240,7 +240,7 @@ function claimAccessForDb(db: SqliteDatabase, transaction: SqliteTransactionRunn
           parsed.subject_key,
           parsed.predicate,
           parsed.slot_key ?? null,
-          stableJson(parsed.value),
+          jsonColumnValue(parsed.value),
           parsed.value_text ?? null,
           parsed.claim_kind,
           parsed.conflict_policy,
@@ -250,10 +250,10 @@ function claimAccessForDb(db: SqliteDatabase, transaction: SqliteTransactionRunn
           validFrom,
           null,
           parsed.source_memory_id ?? null,
-          stableJson(parsed.evidence_refs),
-          stableJson(supersededRows.map((row) => row.claim_id)),
+          jsonColumnValue(parsed.evidence_refs),
+          jsonColumnValue(supersededRows.map((row) => row.claim_id)),
           null,
-          stableJson(parsed.metadata),
+          jsonColumnValue(parsed.metadata),
           at,
           at,
         );

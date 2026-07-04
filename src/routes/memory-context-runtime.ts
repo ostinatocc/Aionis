@@ -1640,6 +1640,10 @@ export function registerMemoryContextRuntimeRoutes(args: {
   }): Promise<RuntimeVerificationSurfaceV1 | null> => {
     if (!args.executionKernel.packet) return null;
     const control = args.parsed.runtime_verification ?? { version: 1, mode: "plan" as const };
+    const verifierExecutionEnabled = env.APP_ENV !== "prod" && env.RUNTIME_VERIFIER_EXECUTION_ENABLED;
+    const executionBlockedReason = env.APP_ENV === "prod"
+      ? "runtime_verifier_execution_blocked_in_prod"
+      : "runtime_verifier_execution_disabled";
     return runRuntimeVerificationSurfaceV1(
       args.executionKernel.packet,
       {
@@ -1647,8 +1651,8 @@ export function registerMemoryContextRuntimeRoutes(args: {
         validation_boundary: "runtime_orchestrator",
       },
       {
-        allowExecution: env.APP_ENV !== "prod",
-        executionBlockedReason: "runtime_verifier_execution_blocked_in_prod",
+        allowExecution: verifierExecutionEnabled,
+        executionBlockedReason,
       },
     );
   };

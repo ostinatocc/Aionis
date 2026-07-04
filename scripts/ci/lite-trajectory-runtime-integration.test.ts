@@ -21,7 +21,7 @@ function tmpDbPath(name: string): string {
   return path.join(dir, `${name}.sqlite`);
 }
 
-function buildEnv() {
+function buildEnv(overrides: Record<string, unknown> = {}) {
   return {
     AIONIS_EDITION: "lite",
     MEMORY_AUTH_MODE: "off",
@@ -46,14 +46,16 @@ function buildEnv() {
     MEMORY_PLANNING_CONTEXT_OPTIMIZATION_PROFILE_DEFAULT: "balanced",
     MEMORY_CONTEXT_ASSEMBLE_OPTIMIZATION_PROFILE_DEFAULT: "balanced",
     MEMORY_WRITE_REQUIRE_NODES: false,
+    RUNTIME_VERIFIER_EXECUTION_ENABLED: false,
+    ...overrides,
   } as any;
 }
 
-async function buildApp() {
+async function buildApp(envOverrides: Record<string, unknown> = {}) {
   const dbPath = tmpDbPath("runtime");
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
-  const env = buildEnv();
+  const env = buildEnv(envOverrides);
   const guards = createRequestGuards({
     env,
     embedder: DeterministicEmbeddingProvider,
@@ -494,8 +496,47 @@ test("planning/context applies runtime entropy verifier defaults without executi
   }
 });
 
-test("planning/context blocks after-exit runtime verifier execution until agent exit is confirmed", async () => {
+test("planning/context blocks runtime verifier execution unless explicitly enabled", async () => {
   const app = await buildApp();
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/memory/planning/context",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "Verify the detached service from the runtime parent after the agent exits.",
+        context: {},
+        tool_candidates: ["bash", "test"],
+        execution_packet_v1: runtimeVerifierExecutionPacket(),
+        runtime_verification: {
+          mode: "execute",
+          agent_lifecycle_state: "agent_exited",
+          agent_claimed_success: true,
+          timeout_ms: 10_000,
+        },
+      },
+    });
+
+    assert.equal(response.statusCode, 200, response.body);
+    const body = PlanningContextRouteContractSchema.parse(JSON.parse(response.body));
+    const runtimeVerification = body.execution_kernel.runtime_verification;
+    assert.ok(runtimeVerification);
+    assert.equal(runtimeVerification.execution_state, "blocked");
+    assert.equal(runtimeVerification.request_count, 1);
+    assert.equal(runtimeVerification.executable_request_count, 0);
+    assert.equal(runtimeVerification.blocked_request_count, 1);
+    assert.equal(runtimeVerification.result_count, 0);
+    assert.equal(runtimeVerification.evidence_for_trust_gate, null);
+    assert.equal(runtimeVerification.blocked_requests[0]?.reason, "runtime_verifier_execution_disabled");
+    assert.ok(runtimeVerification.summary.reason_codes.includes("runtime_verifier_execution_disabled"));
+  } finally {
+    await app.close();
+  }
+});
+
+test("planning/context blocks after-exit runtime verifier execution until agent exit is confirmed", async () => {
+  const app = await buildApp({ RUNTIME_VERIFIER_EXECUTION_ENABLED: true });
   try {
     const response = await app.inject({
       method: "POST",
@@ -534,7 +575,7 @@ test("planning/context blocks after-exit runtime verifier execution until agent 
 });
 
 test("planning/context executes runtime verifier after confirmed agent exit and feeds evidence to execution side outputs", async () => {
-  const app = await buildApp();
+  const app = await buildApp({ RUNTIME_VERIFIER_EXECUTION_ENABLED: true });
   try {
     const response = await app.inject({
       method: "POST",

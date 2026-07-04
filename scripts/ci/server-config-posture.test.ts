@@ -48,6 +48,26 @@ test("server edition accepts service mode with api key auth", async () => {
       assert.equal(env.TENANT_QUOTA_ENABLED, true);
       assert.equal(env.RATE_LIMIT_BYPASS_LOOPBACK, false);
       assert.equal(env.RECALL_ENGINE_MODE, "hybrid");
+      assert.equal(env.RUNTIME_VERIFIER_EXECUTION_ENABLED, false);
+    },
+  );
+});
+
+test("server prod rejects runtime verifier command execution", async () => {
+  await withIsolatedEnv(
+    {
+      AIONIS_EDITION: "server",
+      AIONIS_MODE: "service",
+      MEMORY_AUTH_MODE: "api_key",
+      MEMORY_API_KEYS_JSON: apiKeysJson,
+      SANDBOX_ENABLED: "false",
+      RUNTIME_VERIFIER_EXECUTION_ENABLED: "true",
+    },
+    () => {
+      assert.throws(
+        () => loadEnv(),
+        /RUNTIME_VERIFIER_EXECUTION_ENABLED=true is not allowed when APP_ENV=prod/i,
+      );
     },
   );
 });

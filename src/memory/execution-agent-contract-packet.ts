@@ -5,8 +5,9 @@ import {
   type ExecutionContractV1,
 } from "./execution-contract.js";
 import { type ServiceLifecycleConstraintV1 } from "../execution/types.js";
+import { ExecutionStringListSchema } from "../execution/schema-limits.js";
 
-const StringList = z.array(z.string().trim().min(1)).default([]);
+const StringList = ExecutionStringListSchema;
 
 export const ExecutionAgentContractPacketModeSchema = z.enum(["contract_only", "workflow_expanded"]);
 export type ExecutionAgentContractPacketMode = z.infer<typeof ExecutionAgentContractPacketModeSchema>;
