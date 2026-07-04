@@ -109,6 +109,65 @@ test("action recall demotes failed workflow anchors out of recommended workflows
   assert.equal(packet.candidate_workflows[0]?.promotion_ready, false);
 });
 
+test("action recall packet drops invalid lifecycle enum values from slots", () => {
+  const baseSlots = workflowAnchorSlots("passed_solution");
+  const packet = buildActionRecallPacket({
+    tenant_id: "default",
+    scope: "default",
+    nodes: [
+      recallNode({
+        ...baseSlots,
+        execution_native_v1: {
+          ...(baseSlots.execution_native_v1 as Record<string, unknown>),
+          workflow_promotion: {
+            promotion_state: "unexpected_state",
+            promotion_origin: "unexpected_origin",
+            last_transition: "unexpected_transition",
+          },
+          distillation: {
+            preferred_promotion_target: "unexpected_target",
+          },
+          rehydration: {
+            default_mode: "unexpected_mode",
+          },
+          maintenance: {
+            maintenance_state: "unexpected_maintenance",
+            offline_priority: "unexpected_priority",
+          },
+        },
+      }),
+    ],
+    runtimeToolHints: [],
+    contextItems: [
+      {
+        node_id: "supporting-node",
+        semantic_forgetting_action: "unexpected_action",
+        archive_relocation_state: "unexpected_archive",
+        archive_relocation_target: "unexpected_target",
+        archive_payload_scope: "unexpected_scope",
+        rehydration_default_mode: "unexpected_rehydration",
+      },
+    ],
+  });
+
+  assert.equal(packet.recommended_workflows.length, 1);
+  const workflow = packet.recommended_workflows[0];
+  assert.equal(workflow?.promotion_state, null);
+  assert.equal(workflow?.promotion_origin, null);
+  assert.equal(workflow?.last_transition, null);
+  assert.equal(workflow?.preferred_promotion_target, null);
+  assert.equal(workflow?.rehydration_default_mode, null);
+  assert.equal(workflow?.maintenance_state, null);
+  assert.equal(workflow?.offline_priority, null);
+
+  const supporting = packet.supporting_knowledge[0];
+  assert.equal(supporting?.semantic_forgetting_action, null);
+  assert.equal(supporting?.archive_relocation_state, null);
+  assert.equal(supporting?.archive_relocation_target, null);
+  assert.equal(supporting?.archive_payload_scope, null);
+  assert.equal(supporting?.rehydration_default_mode, null);
+});
+
 test("execution introspection does not recommend failed workflow anchors", async () => {
   const dbPath = tmpDbPath("failed-workflow-anchor");
   const liteWriteStore = createLiteWriteStore(dbPath);

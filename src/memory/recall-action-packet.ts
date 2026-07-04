@@ -58,6 +58,8 @@ export type ActionRecallWorkflow = {
     | "replay_stable_normalization"
     | "replay_learning_episode"
     | "replay_learning_auto_promotion"
+    | "execution_write_projection"
+    | "execution_write_auto_promotion"
     | null;
   required_observations: number | null;
   observed_count: number | null;
@@ -167,6 +169,43 @@ function firstFinite(value: unknown): number | null {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
+
+function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | null {
+  const next = firstString(value);
+  return next ? (allowed.includes(next as T) ? next as T : null) : null;
+}
+
+const WORKFLOW_PROMOTION_STATES = ["candidate", "stable"] as const;
+const WORKFLOW_PREFERRED_PROMOTION_TARGETS = ["workflow", "pattern", "policy"] as const;
+const WORKFLOW_PROMOTION_ORIGINS = [
+  "replay_compile_from_run",
+  "replay_promote",
+  "replay_stable_normalization",
+  "replay_learning_episode",
+  "replay_learning_auto_promotion",
+  "execution_write_projection",
+  "execution_write_auto_promotion",
+] as const;
+const WORKFLOW_TRANSITIONS = ["candidate_observed", "promoted_to_stable", "normalized_latest_stable"] as const;
+const REHYDRATION_DEFAULT_MODES = ["summary_only", "partial", "full", "differential"] as const;
+const MAINTENANCE_STATES = ["observe", "retain", "review"] as const;
+const WORKFLOW_OFFLINE_PRIORITIES = [
+  "none",
+  "promote_candidate",
+  "review_counter_evidence",
+  "retain_trusted",
+  "retain_workflow",
+] as const;
+const PATTERN_OFFLINE_PRIORITIES = [
+  "none",
+  "promote_candidate",
+  "review_counter_evidence",
+  "retain_trusted",
+] as const;
+const SEMANTIC_FORGETTING_ACTIONS = ["retain", "demote", "archive", "review"] as const;
+const ARCHIVE_RELOCATION_STATES = ["none", "candidate", "cold_archive"] as const;
+const ARCHIVE_RELOCATION_TARGETS = ["none", "local_cold_store", "external_object_store"] as const;
+const ARCHIVE_PAYLOAD_SCOPES = ["none", "anchor_payload", "node"] as const;
 
 export function recallAnchorMeta(node: NodeRow): {
   slots: Record<string, unknown> | null;
@@ -314,21 +353,21 @@ export function buildActionRecallPacket(args: {
         execution_contract_v1: meta.executionContract,
         contract_trust: meta.contractTrust,
         execution_outcome_role: meta.executionOutcomeRole,
-        promotion_state: firstString(meta.workflowPromotion?.promotion_state) as any,
+        promotion_state: oneOf(meta.workflowPromotion?.promotion_state, WORKFLOW_PROMOTION_STATES),
         source_kind: meta.workflowSourceKind,
         distillation_origin: firstString(distillation?.distillation_origin),
-        preferred_promotion_target: firstString(distillation?.preferred_promotion_target) as any,
-        promotion_origin: firstString(meta.workflowPromotion?.promotion_origin) as any,
+        preferred_promotion_target: oneOf(distillation?.preferred_promotion_target, WORKFLOW_PREFERRED_PROMOTION_TARGETS),
+        promotion_origin: oneOf(meta.workflowPromotion?.promotion_origin, WORKFLOW_PROMOTION_ORIGINS),
         required_observations: firstFinite(meta.workflowPromotion?.required_observations),
         observed_count: firstFinite(meta.workflowPromotion?.observed_count),
         promotion_ready: isWorkflowPromotionReady(meta.workflowPromotion) && !authorityState.blocks_promotion_readiness && !outcomeBlocksDirectUse,
         workflow_signature: meta.workflowSignature,
-        last_transition: firstString(meta.workflowPromotion?.last_transition) as any,
+        last_transition: oneOf(meta.workflowPromotion?.last_transition, WORKFLOW_TRANSITIONS),
         last_transition_at: firstString(meta.workflowPromotion?.last_transition_at),
-        rehydration_default_mode: firstString(meta.rehydration?.default_mode) as any,
+        rehydration_default_mode: oneOf(meta.rehydration?.default_mode, REHYDRATION_DEFAULT_MODES),
         tool_set: meta.toolSet,
-        maintenance_state: firstString(meta.maintenance?.maintenance_state) as any,
-        offline_priority: firstString(meta.maintenance?.offline_priority) as any,
+        maintenance_state: oneOf(meta.maintenance?.maintenance_state, MAINTENANCE_STATES),
+        offline_priority: oneOf(meta.maintenance?.offline_priority, WORKFLOW_OFFLINE_PRIORITIES),
         last_maintenance_at: firstString(meta.maintenance?.last_maintenance_at),
         confidence: firstFinite(node.confidence),
         lifecycle_state: resolveNodeLifecycleState(meta.slots),
@@ -367,8 +406,8 @@ export function buildActionRecallPacket(args: {
         required_distinct_runs: firstFinite(meta.promotion?.required_distinct_runs),
         counter_evidence_open: meta.counterEvidenceOpen,
         last_transition: firstString(meta.promotion?.last_transition),
-        maintenance_state: firstString(meta.maintenance?.maintenance_state) as any,
-        offline_priority: firstString(meta.maintenance?.offline_priority) as any,
+        maintenance_state: oneOf(meta.maintenance?.maintenance_state, MAINTENANCE_STATES),
+        offline_priority: oneOf(meta.maintenance?.offline_priority, PATTERN_OFFLINE_PRIORITIES),
         last_maintenance_at: firstString(meta.maintenance?.last_maintenance_at),
         confidence: firstFinite(node.confidence),
       };
@@ -445,16 +484,11 @@ export function buildActionRecallPacket(args: {
       tier: firstString(item?.tier),
       salience: firstFinite(item?.salience),
       lifecycle_state: firstString(item?.lifecycle_state),
-      semantic_forgetting_action:
-        firstString(item?.semantic_forgetting_action) as "retain" | "demote" | "archive" | "review" | null,
-      archive_relocation_state:
-        firstString(item?.archive_relocation_state) as "none" | "candidate" | "cold_archive" | null,
-      archive_relocation_target:
-        firstString(item?.archive_relocation_target) as "none" | "local_cold_store" | "external_object_store" | null,
-      archive_payload_scope:
-        firstString(item?.archive_payload_scope) as "none" | "anchor_payload" | "node" | null,
-      rehydration_default_mode:
-        firstString(item?.rehydration_default_mode) as "summary_only" | "partial" | "full" | "differential" | null,
+      semantic_forgetting_action: oneOf(item?.semantic_forgetting_action, SEMANTIC_FORGETTING_ACTIONS),
+      archive_relocation_state: oneOf(item?.archive_relocation_state, ARCHIVE_RELOCATION_STATES),
+      archive_relocation_target: oneOf(item?.archive_relocation_target, ARCHIVE_RELOCATION_TARGETS),
+      archive_payload_scope: oneOf(item?.archive_payload_scope, ARCHIVE_PAYLOAD_SCOPES),
+      rehydration_default_mode: oneOf(item?.rehydration_default_mode, REHYDRATION_DEFAULT_MODES),
     });
     if (supportingKnowledge.length >= 16) break;
   }

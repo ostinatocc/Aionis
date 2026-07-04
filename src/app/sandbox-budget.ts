@@ -16,6 +16,10 @@ type ResolvedSandboxTenantBudget = {
   source: "env_tenant_default" | "env_global_default";
 };
 
+type ReplyWithHeader = {
+  header: (name: string, value: unknown) => unknown;
+};
+
 async function resolveSandboxTenantBudget(args: {
   env: Env;
   sandboxTenantBudgetPolicy: Map<string, SandboxTenantBudgetPolicy>;
@@ -61,7 +65,7 @@ export function createSandboxBudgetService(args: {
   const { env, sandboxTenantBudgetPolicy, usageStore } = args;
 
   const enforceSandboxTenantBudget = async (
-    reply: any,
+    reply: ReplyWithHeader,
     tenantIdRaw: string,
     scopeRaw: string,
     projectIdRaw?: string | null,
@@ -89,8 +93,10 @@ export function createSandboxBudgetService(args: {
         projectFilter: resolved.project_filter,
       };
       usage = await usageStore.withClient((access) => readSandboxBudgetUsage(access, readArgs));
-    } catch (err: any) {
-      const code = String(err?.code ?? "");
+    } catch (err: unknown) {
+      const code = err && typeof err === "object" && "code" in err
+        ? String((err as { code?: unknown }).code ?? "")
+        : "";
       if (code === "42P01" || code === "42703") {
         throw new HttpError(503, "sandbox_budget_unavailable", "sandbox budget table is unavailable", {
           tenant_id: tenantId,

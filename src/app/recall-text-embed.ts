@@ -1,4 +1,5 @@
 import { EmbedHttpError } from "../embeddings/http.js";
+import { MinimaxEmbeddingApiError } from "../embeddings/minimax.js";
 import { sha256Hex } from "../util/crypto.js";
 import { EmbedQueryBatcherError } from "../util/embed_query_batcher.js";
 
@@ -100,20 +101,26 @@ export function createRecallTextEmbedRuntime(args: {
       };
     }
 
-    const msg = String((err as any)?.message ?? err ?? "");
+    const msg = err instanceof Error ? err.message : String(err ?? "");
     const msgLc = msg.toLowerCase();
     const isRateLimit =
       (err instanceof EmbedHttpError && err.status === 429) ||
+      (err instanceof MinimaxEmbeddingApiError && err.statusCode === 1002) ||
       msgLc.includes("rate limit") ||
-      msgLc.includes("too many requests") ||
-      msgLc.includes("status_code\":1002");
+      msgLc.includes("too many requests");
     if (isRateLimit) {
       return {
         statusCode: 429,
         code: "upstream_embedding_rate_limited",
         message: "embedding provider is rate limited; retry later",
         retry_after_sec: 2,
-        details: { provider_status: err instanceof EmbedHttpError ? err.status : null },
+        details: {
+          provider_status: err instanceof EmbedHttpError
+            ? err.status
+            : err instanceof MinimaxEmbeddingApiError
+              ? err.statusCode
+              : null,
+        },
       };
     }
 

@@ -86,6 +86,9 @@ type CreateRequestGuardsArgs = {
   writeInflightGate: InflightGate;
 };
 
+const TENANT_SLOT_SCAN_MAX_DEPTH = 32;
+const TENANT_SLOT_SCAN_MAX_NODES = 20000;
+
 function assertLiteRequestGuardPosture(env: Env): void {
   if (env.MEMORY_AUTH_MODE !== "off") {
     throw new Error("aionis-lite request guards only support MEMORY_AUTH_MODE=off");
@@ -149,25 +152,63 @@ function assertNoTenantOverrideInSlots(args: {
   value: unknown;
   principal: AuthPrincipal;
 }): void {
-  const visit = (value: unknown, path: string[], insideSlots: boolean) => {
-    if (!value || typeof value !== "object") return;
-    if (Array.isArray(value)) {
-      value.forEach((item, idx) => visit(item, [...path, String(idx)], insideSlots));
-      return;
+  const seen = new WeakSet<object>();
+  const stack: Array<{ value: unknown; path: string; insideSlots: boolean; depth: number }> = [
+    { value: args.value, path: "", insideSlots: false, depth: 0 },
+  ];
+  let visitedNodes = 0;
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+    const { value, path, insideSlots, depth } = current;
+    if (!value || typeof value !== "object") continue;
+    if (depth > TENANT_SLOT_SCAN_MAX_DEPTH) {
+      throw new HttpError(400, "request_nesting_too_deep", "request body nesting exceeds the supported limit", {
+        max_depth: TENANT_SLOT_SCAN_MAX_DEPTH,
+        source: path,
+      });
     }
+    if (seen.has(value)) continue;
+    seen.add(value);
+    visitedNodes += 1;
+    if (visitedNodes > TENANT_SLOT_SCAN_MAX_NODES) {
+      throw new HttpError(400, "request_body_too_complex", "request body object graph exceeds the supported limit", {
+        max_nodes: TENANT_SLOT_SCAN_MAX_NODES,
+      });
+    }
+
+    if (Array.isArray(value)) {
+      for (let idx = value.length - 1; idx >= 0; idx -= 1) {
+        const child = value[idx];
+        if (!child || typeof child !== "object") continue;
+        stack.push({
+          value: child,
+          path: path ? `${path}.${idx}` : String(idx),
+          insideSlots,
+          depth: depth + 1,
+        });
+      }
+      continue;
+    }
+
     const record = value as Record<string, unknown>;
-    for (const [key, child] of Object.entries(record)) {
-      const childPath = [...path, key];
+    const entries = Object.entries(record);
+    for (let idx = entries.length - 1; idx >= 0; idx -= 1) {
+      const [key, child] = entries[idx] ?? ["", undefined];
+      if (!key) continue;
+      const childPath = path ? `${path}.${key}` : key;
       const childInsideSlots = insideSlots || key === "slots";
       if (childInsideSlots && key === "tenant_id" && typeof child === "string" && child.trim() && child.trim() !== args.principal.tenant_id) {
         throw new HttpError(403, "tenant_forbidden", "tenant is not allowed for this principal", {
-          source: childPath.join("."),
+          source: childPath,
         });
       }
-      visit(child, childPath, childInsideSlots);
+      if (child && typeof child === "object") {
+        stack.push({ value: child, path: childPath, insideSlots: childInsideSlots, depth: depth + 1 });
+      }
     }
-  };
-  visit(args.value, [], false);
+  }
 }
 
 function isLoopbackIp(ip: string | undefined): boolean {

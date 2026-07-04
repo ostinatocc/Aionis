@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import Fastify from "fastify";
 
 import { createEmbeddingProviderFromEnv, createEmbeddingProvidersFromEnv } from "../../src/embeddings/index.ts";
+import { MinimaxEmbeddingApiError } from "../../src/embeddings/minimax.ts";
+import { createRecallTextEmbedRuntime } from "../../src/app/recall-text-embed.ts";
 
 const DIM = 1536;
 
@@ -91,6 +93,51 @@ test("minimax embedding providers separate write db vectors from query vectors b
     await providers.query.embed(["current query"]);
 
     assert.deepEqual(seenTypes, ["db", "query"]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("minimax status_code 1002 maps to recall_text upstream rate limit", async () => {
+  const app = Fastify();
+
+  app.post("/v1/embeddings", async () => ({
+    base_resp: {
+      status_code: 1002,
+      status_msg: "rate limit exceeded",
+    },
+  }));
+
+  const address = await app.listen({ host: "127.0.0.1", port: 0 });
+  try {
+    const provider = createEmbeddingProviderFromEnv({
+      EMBEDDING_PROVIDER: "minimax",
+      MINIMAX_API_KEY: "test-minimax-key",
+      MINIMAX_EMBED_ENDPOINT: `${address}/v1/embeddings`,
+      MINIMAX_EMBED_MODEL: "embo-01",
+      MINIMAX_EMBED_TYPE: "query",
+    });
+    assert.ok(provider);
+
+    let thrown: unknown = null;
+    try {
+      await provider.embed(["current query"]);
+    } catch (err) {
+      thrown = err;
+    }
+
+    assert.ok(thrown instanceof MinimaxEmbeddingApiError);
+    assert.equal(thrown.statusCode, 1002);
+
+    const recallTextEmbed = createRecallTextEmbedRuntime({
+      recallTextEmbedCache: null,
+      recallTextEmbedInflight: new Map(),
+      recallTextEmbedBatcher: null,
+    });
+    const mapped = recallTextEmbed.mapRecallTextEmbeddingError(thrown);
+    assert.equal(mapped.statusCode, 429);
+    assert.equal(mapped.code, "upstream_embedding_rate_limited");
+    assert.equal(mapped.details?.provider_status, 1002);
   } finally {
     await app.close();
   }

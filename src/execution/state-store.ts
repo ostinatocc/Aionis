@@ -12,6 +12,7 @@ import {
   type ExecutionTransitionType,
 } from "./transitions.js";
 import { createSqliteDatabase, type SqliteDatabase } from "../store/sqlite.js";
+import { stableJson } from "../util/stable-json.js";
 
 export const StoredExecutionStateV1Schema = z.object({
   state: ExecutionStateV1Schema,
@@ -44,17 +45,6 @@ type LiteExecutionStateRow = {
 type LiteExecutionTransitionRow = {
   transition_json: string;
 };
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(stableJson).join(",")}]`;
-  }
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
 
 function transitionIntent(value: ExecutionStateTransitionV1): Record<string, unknown> {
   const intent = { ...value } as Record<string, unknown>;

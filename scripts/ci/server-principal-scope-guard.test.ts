@@ -76,6 +76,17 @@ async function authorizedBody(input: Record<string, unknown>, headers: Record<st
   return guards.withIdentityFromRequest(req, input, principal, "recall") as Record<string, unknown>;
 }
 
+function deeplyNestedSlots(depth: number): Record<string, unknown> {
+  const root: Record<string, unknown> = {};
+  let current = root;
+  for (let idx = 0; idx < depth; idx += 1) {
+    const next: Record<string, unknown> = {};
+    current.child = next;
+    current = next;
+  }
+  return root;
+}
+
 test("server principal injects tenant and default scope when omitted", async () => {
   const body = await authorizedBody({ query_text: "continue" });
   assert.equal(body.tenant_id, "tenant-a");
@@ -142,6 +153,23 @@ test("server principal rejects tenant override inside slots", async () => {
       assert.ok(err instanceof HttpError);
       assert.equal(err.statusCode, 403);
       assert.equal(err.code, "tenant_forbidden");
+      return true;
+    },
+  );
+});
+
+test("server principal rejects excessively nested slots without recursive stack traversal", async () => {
+  await assert.rejects(
+    () => authorizedBody({
+      tenant_id: "tenant-a",
+      scope: "tenant-a/project-1",
+      query_text: "continue",
+      slots: deeplyNestedSlots(48),
+    }),
+    (err: unknown) => {
+      assert.ok(err instanceof HttpError);
+      assert.equal(err.statusCode, 400);
+      assert.equal(err.code, "request_nesting_too_deep");
       return true;
     },
   );

@@ -9,6 +9,7 @@ import {
   type ExecutionTreeOperationV1,
   type ExecutionTreeV1,
 } from "./tree.js";
+import { stableJson } from "../util/stable-json.js";
 
 export const StoredExecutionTreeV1Schema = z.object({
   tree: ExecutionTreeV1Schema,
@@ -42,17 +43,6 @@ type LiteExecutionTreeRow = {
 type LiteExecutionTreeOperationRow = {
   operation_json: string;
 };
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(stableJson).join(",")}]`;
-  }
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
 
 function operationIntent(value: ExecutionTreeOperationV1): Record<string, unknown> {
   const intent = { ...value } as Record<string, unknown>;

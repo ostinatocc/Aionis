@@ -19,6 +19,22 @@ type MinimaxEmbeddingResponse = {
   };
 };
 
+export class MinimaxEmbeddingApiError extends Error {
+  readonly statusCode: number;
+  readonly statusMessage: string | null;
+  readonly baseResp: Record<string, unknown>;
+
+  constructor(baseResp: Record<string, unknown>) {
+    const statusCode = Number(baseResp.status_code);
+    const statusMessage = typeof baseResp.status_msg === "string" ? baseResp.status_msg : null;
+    super(`MiniMax embeddings API returned status_code=${Number.isFinite(statusCode) ? statusCode : "unknown"}${statusMessage ? ` status_msg=${statusMessage}` : ""}`);
+    this.name = "MinimaxEmbeddingApiError";
+    this.statusCode = Number.isFinite(statusCode) ? statusCode : -1;
+    this.statusMessage = statusMessage;
+    this.baseResp = baseResp;
+  }
+}
+
 export function createMinimaxEmbeddingProvider(opts: MinimaxEmbeddingProviderOptions): EmbeddingProvider {
   const { apiKey, groupId, model, endpointUrl, embedType, dim, http } = opts;
   const poster = createEmbedJsonPoster(http);
@@ -43,7 +59,7 @@ export function createMinimaxEmbeddingProvider(opts: MinimaxEmbeddingProviderOpt
       );
       const status = json.base_resp?.status_code ?? -1;
       if (status !== 0) {
-        throw new Error(`MiniMax embeddings API returned error: ${JSON.stringify(json.base_resp ?? {})}`);
+        throw new MinimaxEmbeddingApiError(json.base_resp ?? {});
       }
 
       const vectors = json.vectors;
