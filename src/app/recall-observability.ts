@@ -19,6 +19,10 @@ function normalizeAionisUri(v: unknown): string | null {
   return s;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
 function selectedMemoryLayers(items: unknown): string[] {
   if (!Array.isArray(items)) return [];
   const out = new Set<string>();
@@ -301,7 +305,7 @@ export function summarizeRecallSourceObservabilityMetrics(metrics: readonly Reca
   };
 }
 
-export function collectRecallTrajectoryUriLinks(args: { recall: any; tools?: any; max_per_type?: number }) {
+export function collectRecallTrajectoryUriLinks(args: { recall: unknown; tools?: unknown; max_per_type?: number }) {
   const cap = Math.max(1, Math.min(200, Number(args.max_per_type ?? 32)));
   const out = {
     nodes: [] as string[],
@@ -332,36 +336,41 @@ export function collectRecallTrajectoryUriLinks(args: { recall: any; tools?: any
     out[kind].push(uri);
   };
 
-  const recall = args.recall ?? {};
-  const seeds = Array.isArray(recall?.seeds) ? recall.seeds : [];
-  for (const seed of seeds) add("nodes", (seed as any)?.uri);
+  const recall = asRecord(args.recall) ?? {};
+  const seeds = Array.isArray(recall.seeds) ? recall.seeds : [];
+  for (const seed of seeds) add("nodes", asRecord(seed)?.uri);
 
-  const ranked = Array.isArray(recall?.ranked) ? recall.ranked : [];
-  for (const node of ranked) add("nodes", (node as any)?.uri);
+  const ranked = Array.isArray(recall.ranked) ? recall.ranked : [];
+  for (const node of ranked) add("nodes", asRecord(node)?.uri);
 
-  const subgraphNodes = Array.isArray(recall?.subgraph?.nodes) ? recall.subgraph.nodes : [];
-  for (const node of subgraphNodes) add("nodes", (node as any)?.uri);
+  const subgraph = asRecord(recall.subgraph);
+  const subgraphNodes = Array.isArray(subgraph?.nodes) ? subgraph.nodes : [];
+  for (const node of subgraphNodes) add("nodes", asRecord(node)?.uri);
 
-  const subgraphEdges = Array.isArray(recall?.subgraph?.edges) ? recall.subgraph.edges : [];
+  const subgraphEdges = Array.isArray(subgraph?.edges) ? subgraph.edges : [];
   for (const edge of subgraphEdges) {
-    add("edges", (edge as any)?.uri);
-    add("commits", (edge as any)?.commit_uri);
+    const edgeRecord = asRecord(edge);
+    add("edges", edgeRecord?.uri);
+    add("commits", edgeRecord?.commit_uri);
   }
 
-  const contextItems = Array.isArray(recall?.context?.items) ? recall.context.items : [];
-  for (const item of contextItems) add("nodes", (item as any)?.uri);
+  const context = asRecord(recall.context);
+  const contextItems = Array.isArray(context?.items) ? context.items : [];
+  for (const item of contextItems) add("nodes", asRecord(item)?.uri);
 
-  const citations = Array.isArray(recall?.context?.citations) ? recall.context.citations : [];
+  const citations = Array.isArray(context?.citations) ? context.citations : [];
   for (const citation of citations) {
-    add("nodes", (citation as any)?.uri);
-    add("commits", (citation as any)?.commit_uri);
+    const citationRecord = asRecord(citation);
+    add("nodes", citationRecord?.uri);
+    add("commits", citationRecord?.commit_uri);
   }
 
-  const tools = args.tools ?? {};
-  add("decisions", tools?.decision?.decision_uri);
-  add("decisions", tools?.decision_uri);
-  add("commits", tools?.decision?.commit_uri);
-  add("commits", tools?.commit_uri);
+  const tools = asRecord(args.tools) ?? {};
+  const decision = asRecord(tools.decision);
+  add("decisions", decision?.decision_uri);
+  add("decisions", tools.decision_uri);
+  add("commits", decision?.commit_uri);
+  add("commits", tools.commit_uri);
 
   const chainDecision = out.decisions[0];
   const chainCommit = out.commits[0];

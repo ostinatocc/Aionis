@@ -32,6 +32,12 @@ export function summarizePacketEntryLabels(entries: Array<Record<string, unknown
   );
 }
 
+function stringProp(value: unknown, key: string): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = (value as Record<string, unknown>)[key];
+  return typeof raw === "string" ? raw : null;
+}
+
 function collectPatternEntriesFromSurface(surface: PlannerPacketSummarySurface) {
   const packet =
     surface.action_recall_packet && typeof surface.action_recall_packet === "object"
@@ -111,11 +117,11 @@ export function summarizePatternSignalSurface(surface: PlannerPacketSummarySurfa
   ) {
     return {
       candidate_pattern_count: candidatePatterns.length,
-      candidate_pattern_tools: uniqueStrings(candidatePatterns.map((entry: any) => entry?.selected_tool)),
+      candidate_pattern_tools: uniqueStrings(candidatePatterns.map((entry) => stringProp(entry, "selected_tool"))),
       trusted_pattern_count: trustedPatterns.length,
       contested_pattern_count: contestedPatterns.length,
-      trusted_pattern_tools: uniqueStrings(trustedPatterns.map((entry: any) => entry?.selected_tool)),
-      contested_pattern_tools: uniqueStrings(contestedPatterns.map((entry: any) => entry?.selected_tool)),
+      trusted_pattern_tools: uniqueStrings(trustedPatterns.map((entry) => stringProp(entry, "selected_tool"))),
+      contested_pattern_tools: uniqueStrings(contestedPatterns.map((entry) => stringProp(entry, "selected_tool"))),
     };
   }
   const patternSignals = Array.isArray(surface.pattern_signals) && surface.pattern_signals.length > 0
@@ -124,11 +130,11 @@ export function summarizePatternSignalSurface(surface: PlannerPacketSummarySurfa
   if (!patternSignals) {
     return {
       candidate_pattern_count: candidatePatterns.length,
-      candidate_pattern_tools: uniqueStrings(candidatePatterns.map((entry: any) => entry?.selected_tool)),
+      candidate_pattern_tools: uniqueStrings(candidatePatterns.map((entry) => stringProp(entry, "selected_tool"))),
       trusted_pattern_count: trustedPatterns.length,
       contested_pattern_count: contestedPatterns.length,
-      trusted_pattern_tools: uniqueStrings(trustedPatterns.map((entry: any) => entry?.selected_tool)),
-      contested_pattern_tools: uniqueStrings(contestedPatterns.map((entry: any) => entry?.selected_tool)),
+      trusted_pattern_tools: uniqueStrings(trustedPatterns.map((entry) => stringProp(entry, "selected_tool"))),
+      contested_pattern_tools: uniqueStrings(contestedPatterns.map((entry) => stringProp(entry, "selected_tool"))),
     };
   }
   const mergedSignals = patternSignals.filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === "object");
@@ -457,12 +463,12 @@ export function summarizeActionRecallPacketSurface(surface: PlannerPacketSummary
     contested_pattern_count: contestedPatterns.length,
     rehydration_candidate_count: rehydrationCandidates.length,
     supporting_knowledge_count: supportingKnowledge.length,
-    workflow_anchor_ids: uniqueStrings(recommendedWorkflows.map((entry: any) => entry?.anchor_id)),
-    candidate_workflow_anchor_ids: uniqueStrings(candidateWorkflows.map((entry: any) => entry?.anchor_id)),
-    candidate_pattern_anchor_ids: uniqueStrings(candidatePatterns.map((entry: any) => entry?.anchor_id)),
-    trusted_pattern_anchor_ids: uniqueStrings(trustedPatterns.map((entry: any) => entry?.anchor_id)),
-    contested_pattern_anchor_ids: uniqueStrings(contestedPatterns.map((entry: any) => entry?.anchor_id)),
-    rehydration_anchor_ids: uniqueStrings(rehydrationCandidates.map((entry: any) => entry?.anchor_id)),
+    workflow_anchor_ids: uniqueStrings(recommendedWorkflows.map((entry) => stringProp(entry, "anchor_id"))),
+    candidate_workflow_anchor_ids: uniqueStrings(candidateWorkflows.map((entry) => stringProp(entry, "anchor_id"))),
+    candidate_pattern_anchor_ids: uniqueStrings(candidatePatterns.map((entry) => stringProp(entry, "anchor_id"))),
+    trusted_pattern_anchor_ids: uniqueStrings(trustedPatterns.map((entry) => stringProp(entry, "anchor_id"))),
+    contested_pattern_anchor_ids: uniqueStrings(contestedPatterns.map((entry) => stringProp(entry, "anchor_id"))),
+    rehydration_anchor_ids: uniqueStrings(rehydrationCandidates.map((entry) => stringProp(entry, "anchor_id"))),
   };
 }
 

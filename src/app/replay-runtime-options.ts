@@ -1,5 +1,9 @@
 import type { Env } from "../config.js";
 import type { EmbeddingSurfacePolicy } from "../embeddings/surface-policy.js";
+import type { EmbeddingProvider } from "../embeddings/types.js";
+import type { LiteReplayStore } from "../store/lite-replay-store.js";
+import type { LiteWriteStore } from "../store/lite-write-store.js";
+import type { ReplayStoreAccess } from "../store/replay-access.js";
 import {
   buildLiteLearningControlRuntimeProviders,
   type LiteLearningControlRuntimeProviderBuilderOptions,
@@ -11,6 +15,10 @@ import type { SandboxStore } from "../store/sandbox-access.js";
 type SandboxExecutorLike = {
   enqueue: (runId: string) => void;
   executeSync: (runId: string) => Promise<void>;
+};
+
+type ReplyWithHeader = {
+  header: (name: string, value: unknown) => unknown;
 };
 
 function createSandboxRunExecutor(args: {
@@ -131,14 +139,19 @@ function createSandboxRunExecutor(args: {
 export function createReplayRuntimeOptionBuilders(args: {
   env: Env;
   sandboxStore: SandboxStore;
-  embedder: any;
+  embedder: EmbeddingProvider | null;
   embeddingSurfacePolicy?: EmbeddingSurfacePolicy;
-  liteWriteStore?: any;
-  liteReplayAccess?: any;
-  liteReplayStore?: any;
-  sandboxAllowedCommands: any;
+  liteWriteStore?: LiteWriteStore | null;
+  liteReplayAccess?: ReplayStoreAccess | null;
+  liteReplayStore?: LiteReplayStore | null;
+  sandboxAllowedCommands: Set<string>;
   sandboxExecutor: SandboxExecutorLike;
-  enforceSandboxTenantBudget: (reply: any, tenantId: string, scope: string, projectId: string | null) => Promise<void>;
+  enforceSandboxTenantBudget: (
+    reply: ReplyWithHeader,
+    tenantId: string,
+    scope: string,
+    projectId: string | null,
+  ) => Promise<void>;
   learningControlRuntimeProviderBuilderOptions?: LiteLearningControlRuntimeProviderBuilderOptions;
 }) {
   const {
@@ -214,7 +227,7 @@ export function createReplayRuntimeOptionBuilders(args: {
   }
 
   function buildReplayPlaybookRunOptions(
-    reply: any,
+    reply: ReplyWithHeader,
     source: string,
     options: { allowSandboxExecution?: boolean } = {},
   ) {

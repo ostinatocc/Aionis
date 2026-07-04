@@ -16,6 +16,26 @@ type Limiter = {
   check: (key: string, cost?: number) => RateLimitResult;
 };
 
+type RequestHeaders = Record<string, unknown>;
+
+type RequestSocketLike = {
+  remoteAddress?: string | null;
+};
+
+type RequestLike = {
+  headers?: RequestHeaders;
+  raw?: { socket?: RequestSocketLike | null } | null;
+  socket?: RequestSocketLike | null;
+  ip?: string | null;
+  aionis_client_ip?: string;
+  aionis_tenant_id?: string;
+  aionis_scope?: string;
+};
+
+type ReplyWithHeader = {
+  header: (name: string, value: unknown) => unknown;
+};
+
 export type RateLimitKind = "recall" | "debug_embeddings" | "write";
 export type TenantQuotaKind = "recall" | "debug_embeddings" | "write";
 export type InflightKind = "recall" | "write";
@@ -113,6 +133,10 @@ function firstHeaderValue(v: unknown): string {
 function stringField(record: Record<string, unknown>, key: string): string {
   const value = record[key];
   return typeof value === "string" ? value.trim() : "";
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 function serverDefaultScopeForPrincipal(env: Env, principal: AuthPrincipal): string {
@@ -314,21 +338,21 @@ export function createRequestGuards({
     : null;
 
   const trustedProxyCidrs = parseTrustedProxyCidrs(env.TRUSTED_PROXY_CIDRS);
-  const requestClientIp = (req: any): string => {
-    const cached = typeof req?.aionis_client_ip === "string" ? req.aionis_client_ip : "";
+  const requestClientIp = (req: RequestLike): string => {
+    const cached = typeof req.aionis_client_ip === "string" ? req.aionis_client_ip : "";
     if (cached) return cached;
     const ip = env.TRUST_PROXY
       ? resolveTrustedClientIp({
-          remoteAddress: String(req?.raw?.socket?.remoteAddress ?? req?.socket?.remoteAddress ?? ""),
-          headers: req?.headers ?? {},
+          remoteAddress: String(req.raw?.socket?.remoteAddress ?? req.socket?.remoteAddress ?? ""),
+          headers: req.headers ?? {},
           trustedProxyCidrs,
         })
-      : String(req?.raw?.socket?.remoteAddress ?? req?.socket?.remoteAddress ?? req?.ip ?? "");
-    (req as any).aionis_client_ip = ip;
+      : String(req.raw?.socket?.remoteAddress ?? req.socket?.remoteAddress ?? req.ip ?? "");
+    req.aionis_client_ip = ip;
     return ip;
   };
 
-  const buildRecallAuth = (req: any, wantDebugEmbeddings: boolean): RecallAuth => {
+  const buildRecallAuth = (req: RequestLike, wantDebugEmbeddings: boolean): RecallAuth => {
     if (!wantDebugEmbeddings) return { allow_debug_embeddings: false };
 
     const headerToken = String(req.headers?.["x-admin-token"] ?? "");
@@ -340,7 +364,7 @@ export function createRequestGuards({
     return { allow_debug_embeddings: false };
   };
 
-  const rateLimitKey = (req: any, category: string): string => {
+  const rateLimitKey = (req: RequestLike, category: string): string => {
     const headerToken = String(req.headers?.["x-admin-token"] ?? "");
     if (secretTokensEqual(headerToken, env.ADMIN_TOKEN)) {
       return `${category}:admin:${sha256Hex(headerToken).slice(0, 16)}`;
@@ -362,7 +386,7 @@ export function createRequestGuards({
     }
   };
 
-  const enforceRateLimit = async (req: any, reply: any, kind: RateLimitKind) => {
+  const enforceRateLimit = async (req: RequestLike, reply: ReplyWithHeader, kind: RateLimitKind) => {
     if (!env.RATE_LIMIT_ENABLED) return;
     const limiter =
       kind === "debug_embeddings"
@@ -398,7 +422,7 @@ export function createRequestGuards({
     });
   };
 
-  const enforceRecallTextEmbedQuota = async (req: any, reply: any, tenantId: string) => {
+  const enforceRecallTextEmbedQuota = async (req: RequestLike, reply: ReplyWithHeader, tenantId: string) => {
     if (!embedder) return;
     if (!env.RATE_LIMIT_ENABLED || !recallTextEmbedLimiter) return;
 
@@ -419,9 +443,9 @@ export function createRequestGuards({
     });
   };
 
-  const requireMemoryPrincipal = async (req: any): Promise<AuthPrincipal | null> => {
+  const requireMemoryPrincipal = async (req: RequestLike): Promise<AuthPrincipal | null> => {
     if (env.MEMORY_AUTH_MODE === "off") return null;
-    const principal = authResolver.resolve(req?.headers ?? {});
+    const principal = authResolver.resolve(req.headers ?? {});
     if (principal) return principal;
     throw new HttpError(401, "unauthorized", "missing or invalid memory credentials", {
       required_header: authResolver.required_header_hint,
@@ -429,14 +453,14 @@ export function createRequestGuards({
   };
 
   const withIdentityFromRequest = (
-    req: any,
+    req: RequestLike,
     body: unknown,
     principal: AuthPrincipal | null,
     kind: IdentityRequestKind,
   ): unknown => {
     if (!body || typeof body !== "object" || Array.isArray(body)) return body;
-    const obj = { ...(body as Record<string, any>) };
-    const headerTenantRaw = req?.headers?.["x-tenant-id"];
+    const obj = { ...(body as Record<string, unknown>) };
+    const headerTenantRaw = req.headers?.["x-tenant-id"];
     const headerTenant = firstHeaderValue(headerTenantRaw);
     const bodyTenant = typeof obj.tenant_id === "string" ? obj.tenant_id.trim() : "";
 
@@ -448,19 +472,19 @@ export function createRequestGuards({
       assertScopeAllowedForPrincipal({ principal, scope: requestedScope });
       obj.tenant_id = principal.tenant_id;
       obj.scope = requestedScope;
-      (req as any).aionis_tenant_id = principal.tenant_id;
-      (req as any).aionis_scope = requestedScope;
+      req.aionis_tenant_id = principal.tenant_id;
+      req.aionis_scope = requestedScope;
     } else {
       if (!bodyTenant && headerTenant) {
         obj.tenant_id = headerTenant;
       }
       if (typeof obj.tenant_id === "string" && obj.tenant_id.trim().length > 0) {
-        (req as any).aionis_tenant_id = obj.tenant_id.trim();
+        req.aionis_tenant_id = obj.tenant_id.trim();
       } else if (headerTenant) {
-        (req as any).aionis_tenant_id = headerTenant;
+        req.aionis_tenant_id = headerTenant;
       }
       if (typeof obj.scope === "string" && obj.scope.trim().length > 0) {
-        (req as any).aionis_scope = obj.scope.trim();
+        req.aionis_scope = obj.scope.trim();
       }
     }
 
@@ -509,8 +533,10 @@ export function createRequestGuards({
     }
 
     if (kind === "rules_evaluate" || kind === "tools_select" || kind === "tools_feedback" || kind === "planning_context" || kind === "context_assemble" || kind === "experience_intelligence") {
-      const ctx = obj.context && typeof obj.context === "object" && !Array.isArray(obj.context) ? { ...obj.context } : {};
-      const agent = ctx.agent && typeof ctx.agent === "object" && !Array.isArray(ctx.agent) ? { ...ctx.agent } : {};
+      const ctxRecord = asRecord(obj.context);
+      const ctx = ctxRecord ? { ...ctxRecord } : {};
+      const agentRecord = asRecord(ctx.agent);
+      const agent = agentRecord ? { ...agentRecord } : {};
       if (!agent.id) agent.id = env.LITE_LOCAL_ACTOR_ID;
       if (!ctx.agent_id) ctx.agent_id = env.LITE_LOCAL_ACTOR_ID;
       if (Object.keys(agent).length > 0) ctx.agent = agent;
@@ -521,24 +547,27 @@ export function createRequestGuards({
   };
 
   const tenantFromBody = (body: unknown): string => {
-    if (body && typeof body === "object" && !Array.isArray(body)) {
-      const tenantId = (body as any).tenant_id;
+    const record = asRecord(body);
+    if (record) {
+      const tenantId = record.tenant_id;
       if (typeof tenantId === "string" && tenantId.trim().length > 0) return tenantId.trim();
     }
     return env.MEMORY_TENANT_ID;
   };
 
   const scopeFromBody = (body: unknown): string => {
-    if (body && typeof body === "object" && !Array.isArray(body)) {
-      const scope = (body as any).scope;
+    const record = asRecord(body);
+    if (record) {
+      const scope = record.scope;
       if (typeof scope === "string" && scope.trim().length > 0) return scope.trim();
     }
     return env.MEMORY_SCOPE;
   };
 
   const projectFromBody = (body: unknown): string | null => {
-    if (body && typeof body === "object" && !Array.isArray(body)) {
-      const projectId = (body as any).project_id;
+    const record = asRecord(body);
+    if (record) {
+      const projectId = record.project_id;
       if (typeof projectId === "string" && projectId.trim().length > 0) return projectId.trim();
     }
     return null;
@@ -549,7 +578,7 @@ export function createRequestGuards({
     return `tenant:${kind}:${normalized}`;
   };
 
-  const enforceTenantLimiter = async (reply: any, kind: TenantQuotaKind | "recall_text_embed", tenantId: string) => {
+  const enforceTenantLimiter = async (reply: ReplyWithHeader, kind: TenantQuotaKind | "recall_text_embed", tenantId: string) => {
     if (!env.TENANT_QUOTA_ENABLED) return;
     const limiter =
       kind === "debug_embeddings"
@@ -583,12 +612,12 @@ export function createRequestGuards({
   };
 
   const originalEnforceRecallTextEmbedQuota = enforceRecallTextEmbedQuota;
-  const enforceRecallTextEmbedQuotaWithTenant = async (req: any, reply: any, tenantId: string) => {
+  const enforceRecallTextEmbedQuotaWithTenant = async (req: RequestLike, reply: ReplyWithHeader, tenantId: string) => {
     await originalEnforceRecallTextEmbedQuota(req, reply, tenantId);
     await enforceTenantLimiter(reply, "recall_text_embed", tenantId);
   };
 
-  const enforceTenantQuota = async (_req: any, reply: any, kind: TenantQuotaKind, tenantId: string) => {
+  const enforceTenantQuota = async (_req: RequestLike, reply: ReplyWithHeader, kind: TenantQuotaKind, tenantId: string) => {
     await enforceTenantLimiter(reply, kind, tenantId);
   };
 

@@ -58,8 +58,9 @@ function parseApiKeys(rawJson: string): Map<string, ApiKeyRecord> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawJson);
-  } catch (e: any) {
-    throw new Error(`MEMORY_API_KEYS_JSON must be valid JSON: ${String(e?.message ?? e)}`);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`MEMORY_API_KEYS_JSON must be valid JSON: ${message}`);
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("MEMORY_API_KEYS_JSON must be a JSON object");

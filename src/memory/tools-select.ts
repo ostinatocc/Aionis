@@ -117,6 +117,14 @@ function firstString(values: unknown[]): string | null {
   return null;
 }
 
+function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | null {
+  const next = typeof value === "string" ? value.trim() : "";
+  return next ? (allowed.includes(next as T) ? next as T : null) : null;
+}
+
+const PATTERN_MAINTENANCE_STATES = ["observe", "retain", "review"] as const;
+const PATTERN_OFFLINE_PRIORITIES = ["none", "promote_candidate", "review_counter_evidence", "retain_trusted"] as const;
+
 function uniqueStrings(values: Array<string | null | undefined>, limit = 16): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -306,8 +314,8 @@ async function recallToolSelectionPatterns(args: {
       suppressed_until: operatorOverride?.until ?? null,
       counter_evidence_open: counterEvidenceOpen,
       last_transition: patternSurface.promotion.last_transition,
-      maintenance_state: firstString([maintenance?.maintenance_state]) as any,
-      offline_priority: firstString([maintenance?.offline_priority]) as any,
+      maintenance_state: oneOf(maintenance?.maintenance_state, PATTERN_MAINTENANCE_STATES),
+      offline_priority: oneOf(maintenance?.offline_priority, PATTERN_OFFLINE_PRIORITIES),
       distinct_run_count: Number.isFinite(distinctRunCount) ? distinctRunCount : 0,
       required_distinct_runs: requiredDistinctRuns,
       confidence: Number(row.confidence ?? 0),
@@ -391,13 +399,15 @@ export function applyControlProfileCandidateFilter(
   return { filteredCandidates, deniedByProfile };
 }
 
-function summarizeToolConflicts(explain: any): string[] {
-  const conflicts = Array.isArray(explain?.conflicts) ? explain.conflicts : [];
+function summarizeToolConflicts(explain: unknown): string[] {
+  const explainRecord = asRecord(explain);
+  const conflicts = Array.isArray(explainRecord?.conflicts) ? explainRecord.conflicts : [];
   const out: string[] = [];
   for (const c of conflicts) {
-    const code = String(c?.code ?? "conflict");
-    const msg = String(c?.message ?? "");
-    const winner = c?.winner_rule_node_id ? String(c.winner_rule_node_id) : "";
+    const conflict = asRecord(c);
+    const code = String(conflict?.code ?? "conflict");
+    const msg = String(conflict?.message ?? "");
+    const winner = conflict?.winner_rule_node_id ? String(conflict.winner_rule_node_id) : "";
     let line = `[${code}] ${msg}`;
     if (winner) line += ` (winner=${winner})`;
     // Hard cap per line to keep logs/UI safe.
@@ -467,8 +477,11 @@ export async function selectTools(
     filteredCandidates.length,
   );
 
-  const explicitPreferred = Array.isArray((rules.applied as any)?.policy?.tool?.prefer)
-    ? ((rules.applied as any).policy.tool.prefer as string[])
+  const applied = asRecord(rules.applied) ?? {};
+  const appliedPolicy = asRecord(applied.policy) ?? {};
+  const appliedToolPolicy = asRecord(appliedPolicy.tool);
+  const explicitPreferred = Array.isArray(appliedToolPolicy?.prefer)
+    ? appliedToolPolicy.prefer.filter((tool): tool is string => typeof tool === "string" && tool.trim().length > 0)
     : [];
   const mergedPreferred = uniqueStrings([...explicitPreferred, ...patternPreferred], filteredCandidates.length);
   const preferredOrderedCandidates = prioritizeExplicitPreferred(filteredCandidates, mergedPreferred);
@@ -480,22 +493,24 @@ export async function selectTools(
     selection.denied = deniedByProfile.concat(selection.denied);
   }
 
-  let shadow_selection: any = undefined;
+  let shadow_selection: ReturnType<typeof applyToolPolicy> | undefined = undefined;
   if (parsed.include_shadow) {
-    shadow_selection = applyToolPolicy(filteredCandidates, (rules.applied as any).shadow_policy ?? {}, { strict: false });
+    const shadowPolicy = asRecord(applied.shadow_policy) ?? {};
+    shadow_selection = applyToolPolicy(filteredCandidates, shadowPolicy, { strict: false });
     if (deniedByProfile.length > 0) {
       shadow_selection.denied = deniedByProfile.concat(shadow_selection.denied);
     }
   }
 
-  const tool_conflicts_summary = summarizeToolConflicts((rules.applied as any)?.tool_explain);
+  const tool_conflicts_summary = summarizeToolConflicts(applied.tool_explain);
   const shadow_tool_conflicts_summary = parsed.include_shadow
-    ? summarizeToolConflicts((rules.applied as any)?.shadow_tool_explain)
+    ? summarizeToolConflicts(applied.shadow_tool_explain)
     : undefined;
-  const source_rule_ids = uniqueRuleIds((((rules.applied as any)?.sources as any[]) ?? []).map((s: any) => String(s?.rule_node_id)));
+  const appliedSources = Array.isArray(applied.sources) ? applied.sources : [];
+  const source_rule_ids = uniqueRuleIds(appliedSources.map((source) => String(asRecord(source)?.rule_node_id ?? "")));
   const decision_id = randomUUID();
   const context_sha256 = hashExecutionContext(evaluationContext);
-  const policy_sha256 = hashPolicy((rules.applied as any)?.policy ?? {});
+  const policy_sha256 = hashPolicy(applied.policy ?? {});
   const selectedTool = selection.selected ?? null;
   const usedTrustedPatterns = selectedTool
     ? trustedPatterns.filter((pattern) => pattern.selected_tool === selectedTool)
@@ -574,7 +589,7 @@ export async function selectTools(
       matched: rules.matched,
       skipped_invalid_then: rules.skipped_invalid_then,
       invalid_then_sample: rules.invalid_then_sample,
-      agent_visibility_summary: (rules as any).agent_visibility_summary,
+      agent_visibility_summary: rules.agent_visibility_summary,
       applied: rules.applied,
       tool_conflicts_summary,
       ...(parsed.include_shadow ? { shadow_selection } : {}),

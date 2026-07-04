@@ -71,6 +71,10 @@ type ExperienceRecommendationProjection = {
   authority_primary_blocker: string | null;
 };
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
 function readActionRetrievalUncertainty(
   experienceIntelligence: unknown,
 ): ActionRetrievalUncertaintySummary | null {
@@ -550,6 +554,7 @@ export function buildPlanningSummary(args: {
       ? (experienceRecommendation.path as Record<string, unknown>)
       : null;
   const experienceAuthorityState = authorityConsumptionStateFromValue(experiencePath);
+  const experienceRecommendationTool = asRecord(experienceRecommendation?.tool);
   const experiencePolicyContract =
     args.experience_intelligence && typeof args.experience_intelligence === "object"
       ? ((args.experience_intelligence as Record<string, unknown>).policy_contract as Record<string, unknown> | undefined)
@@ -564,8 +569,8 @@ export function buildPlanningSummary(args: {
         execution_contract_v1: experienceExecutionContract,
         selected_tool: typeof experienceExecutionContract?.selected_tool === "string"
           ? experienceExecutionContract.selected_tool
-          : typeof experienceRecommendation.tool === "object" && experienceRecommendation.tool && typeof (experienceRecommendation.tool as any).selected_tool === "string"
-          ? (experienceRecommendation.tool as any).selected_tool
+          : typeof experienceRecommendationTool?.selected_tool === "string"
+          ? experienceRecommendationTool.selected_tool
           : null,
         task_family:
           typeof experienceExecutionContract?.task_family === "string"
@@ -613,10 +618,8 @@ export function buildPlanningSummary(args: {
         authority_primary_blocker: experienceAuthorityState.primary_blocker,
       }
     : null;
-  const selectedTool =
-    typeof tools.selection === "object" && tools.selection && typeof (tools.selection as any).selected === "string"
-      ? (tools.selection as any).selected
-      : null;
+  const toolsSelection = asRecord(tools.selection);
+  const selectedTool = typeof toolsSelection?.selected === "string" ? toolsSelection.selected : null;
   const continuityGuidance = buildContinuityGuidanceSummary({
     selectedTool,
     experienceSummary,

@@ -75,9 +75,29 @@ function normalizeLayerOrder(enabled?: ContextLayerName[]): ContextLayerName[] {
   return out.length > 0 ? out : [...DEFAULT_LAYER_ORDER];
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function stringField(value: unknown, key: string): string {
+  const record = asRecord(value);
+  return String(record?.[key] ?? "").trim();
+}
+
+function recordField(value: unknown, key: string): Record<string, unknown> | null {
+  const record = asRecord(value);
+  return asRecord(record?.[key]);
+}
+
+function arrayField(value: unknown, key: string): unknown[] {
+  const record = asRecord(value);
+  const raw = record?.[key];
+  return Array.isArray(raw) ? raw : [];
+}
+
 function firstText(v: unknown): string {
-  if (!v || typeof v !== "object") return "";
-  const obj = v as Record<string, unknown>;
+  const obj = asRecord(v);
+  if (!obj) return "";
   const candidates = [obj.summary, obj.text, obj.content, obj.title, obj.raw_ref, obj.evidence_ref];
   for (const c of candidates) {
     const s = String(c ?? "").trim();
@@ -187,20 +207,21 @@ export type PlannerPacketSurface = {
   authority_visibility_summary?: unknown;
 };
 
-function collectPatternSignals(recall: any): PatternSignal[] {
-  const runtimeToolHints = Array.isArray(recall?.runtime_tool_hints) ? recall.runtime_tool_hints : [];
+function collectPatternSignals(recall: unknown): PatternSignal[] {
+  const runtimeToolHints = arrayField(recall, "runtime_tool_hints");
   const out: PatternSignal[] = [];
   const seen = new Set<string>();
   for (const hint of runtimeToolHints.slice(0, 16)) {
-    const anchorKind = String(hint?.anchor?.anchor_kind || "").trim();
+    const anchor = recordField(hint, "anchor") ?? {};
+    const anchorKind = stringField(anchor, "anchor_kind");
     if (anchorKind !== "pattern") continue;
-    const anchorId = String(hint?.anchor?.id || "").trim();
+    const anchorId = stringField(anchor, "id");
     if (!anchorId || seen.has(anchorId)) continue;
     seen.add(anchorId);
-    const patternState = String(hint?.anchor?.pattern_state || "").trim() === "stable" ? "stable" : "provisional";
-    const counterEvidenceOpen = firstBoolean(hint?.anchor?.counter_evidence_open) === true;
-    const trusted = firstBoolean(hint?.anchor?.trusted) === true;
-    const credibilityStateRaw = String(hint?.anchor?.credibility_state || "").trim();
+    const patternState = stringField(anchor, "pattern_state") === "stable" ? "stable" : "provisional";
+    const counterEvidenceOpen = firstBoolean(anchor.counter_evidence_open) === true;
+    const trusted = firstBoolean(anchor.trusted) === true;
+    const credibilityStateRaw = stringField(anchor, "credibility_state");
     const credibilityState =
       credibilityStateRaw === "trusted" || credibilityStateRaw === "contested" || credibilityStateRaw === "candidate"
         ? credibilityStateRaw
@@ -211,17 +232,17 @@ function collectPatternSignals(recall: any): PatternSignal[] {
             : "candidate";
     out.push({
       anchor_id: anchorId,
-      anchor_level: String(hint?.anchor?.anchor_level || "").trim() || null,
-      selected_tool: String(hint?.anchor?.selected_tool || "").trim() || null,
+      anchor_level: stringField(anchor, "anchor_level") || null,
+      selected_tool: stringField(anchor, "selected_tool") || null,
       pattern_state: patternState,
       credibility_state: credibilityState,
       trusted,
-      distinct_run_count: firstFiniteNumber(hint?.anchor?.distinct_run_count),
-      required_distinct_runs: firstFiniteNumber(hint?.anchor?.required_distinct_runs),
-      counter_evidence_count: firstFiniteNumber(hint?.anchor?.counter_evidence_count),
+      distinct_run_count: firstFiniteNumber(anchor.distinct_run_count),
+      required_distinct_runs: firstFiniteNumber(anchor.required_distinct_runs),
+      counter_evidence_count: firstFiniteNumber(anchor.counter_evidence_count),
       counter_evidence_open: counterEvidenceOpen,
-      last_transition: String(hint?.anchor?.last_transition || "").trim() || null,
-      summary: String(hint?.anchor?.summary || "").trim() || null,
+      last_transition: stringField(anchor, "last_transition") || null,
+      summary: stringField(anchor, "summary") || null,
     });
   }
   return out;
@@ -229,36 +250,38 @@ function collectPatternSignals(recall: any): PatternSignal[] {
 
 function collectWorkflowSignals(packet: ReturnType<typeof normalizeActionRecallPacket>) {
   const stable = packet.recommended_workflows
-    .filter((entry: any) => !!entry && typeof entry === "object")
-    .map((entry: any) => {
-      const observedCount = firstFiniteNumber(entry?.observed_count);
-      const requiredObservations = firstFiniteNumber(entry?.required_observations);
+    .map((raw) => {
+      const entry = asRecord(raw);
+      if (!entry) return null;
+      const observedCount = firstFiniteNumber(entry.observed_count);
+      const requiredObservations = firstFiniteNumber(entry.required_observations);
       return {
-        anchor_id: String(entry?.anchor_id || "").trim(),
-        anchor_level: String(entry?.anchor_level || "").trim() || null,
-        title: String(entry?.title || "").trim() || null,
-        summary: String(entry?.summary || "").trim() || null,
+        anchor_id: stringField(entry, "anchor_id"),
+        anchor_level: stringField(entry, "anchor_level") || null,
+        title: stringField(entry, "title") || null,
+        summary: stringField(entry, "summary") || null,
         promotion_state: "stable" as const,
         promotion_ready: false,
         observed_count: observedCount,
         required_observations: requiredObservations,
-        source_kind: String(entry?.source_kind || "").trim() || null,
-        promotion_origin: String(entry?.promotion_origin || "").trim() || null,
-        last_transition: String(entry?.last_transition || "").trim() || null,
-        maintenance_state: String(entry?.maintenance_state || "").trim() || null,
-        offline_priority: String(entry?.offline_priority || "").trim() || null,
-        last_maintenance_at: String(entry?.last_maintenance_at || "").trim() || null,
-        authority_visibility: entry?.authority_visibility ?? null,
+        source_kind: stringField(entry, "source_kind") || null,
+        promotion_origin: stringField(entry, "promotion_origin") || null,
+        last_transition: stringField(entry, "last_transition") || null,
+        maintenance_state: stringField(entry, "maintenance_state") || null,
+        offline_priority: stringField(entry, "offline_priority") || null,
+        last_maintenance_at: stringField(entry, "last_maintenance_at") || null,
+        authority_visibility: entry.authority_visibility ?? null,
       };
     })
-    .filter((entry: any) => entry.anchor_id);
+    .filter((entry): entry is NonNullable<typeof entry> => !!entry && entry.anchor_id.length > 0);
   const candidate = packet.candidate_workflows
-    .filter((entry: any) => !!entry && typeof entry === "object")
-    .map((entry: any) => {
-      const observedCount = firstFiniteNumber(entry?.observed_count);
-      const requiredObservations = firstFiniteNumber(entry?.required_observations);
+    .map((raw) => {
+      const entry = asRecord(raw);
+      if (!entry) return null;
+      const observedCount = firstFiniteNumber(entry.observed_count);
+      const requiredObservations = firstFiniteNumber(entry.required_observations);
       const promotionReady = (
-        entry?.promotion_ready === true
+        entry.promotion_ready === true
         || (
           Number.isFinite(observedCount)
           && Number.isFinite(requiredObservations)
@@ -267,33 +290,43 @@ function collectWorkflowSignals(packet: ReturnType<typeof normalizeActionRecallP
         )
       ) && !authorityConsumptionBlocksPromotionReadiness(entry);
       return {
-        anchor_id: String(entry?.anchor_id || "").trim(),
-        anchor_level: String(entry?.anchor_level || "").trim() || null,
-        title: String(entry?.title || "").trim() || null,
-        summary: String(entry?.summary || "").trim() || null,
-        promotion_state: String(entry?.promotion_state || "").trim() || "candidate",
+        anchor_id: stringField(entry, "anchor_id"),
+        anchor_level: stringField(entry, "anchor_level") || null,
+        title: stringField(entry, "title") || null,
+        summary: stringField(entry, "summary") || null,
+        promotion_state: stringField(entry, "promotion_state") || "candidate",
         promotion_ready: promotionReady,
         observed_count: observedCount,
         required_observations: requiredObservations,
-        source_kind: String(entry?.source_kind || "").trim() || null,
-        promotion_origin: String(entry?.promotion_origin || "").trim() || null,
-        last_transition: String(entry?.last_transition || "").trim() || null,
-        maintenance_state: String(entry?.maintenance_state || "").trim() || null,
-        offline_priority: String(entry?.offline_priority || "").trim() || null,
-        last_maintenance_at: String(entry?.last_maintenance_at || "").trim() || null,
-        authority_visibility: entry?.authority_visibility ?? null,
+        source_kind: stringField(entry, "source_kind") || null,
+        promotion_origin: stringField(entry, "promotion_origin") || null,
+        last_transition: stringField(entry, "last_transition") || null,
+        maintenance_state: stringField(entry, "maintenance_state") || null,
+        offline_priority: stringField(entry, "offline_priority") || null,
+        last_maintenance_at: stringField(entry, "last_maintenance_at") || null,
+        authority_visibility: entry.authority_visibility ?? null,
       };
     })
-    .filter((entry) => entry.anchor_id);
+    .filter((entry): entry is NonNullable<typeof entry> => !!entry && entry.anchor_id.length > 0);
   return [...stable, ...candidate];
 }
 
-function normalizeActionRecallPacket(recall: any) {
-  const packet =
-    recall?.action_recall_packet && typeof recall.action_recall_packet === "object"
-      ? (recall.action_recall_packet as Record<string, unknown>)
-      : null;
-  const runtimeToolHints = Array.isArray(recall?.runtime_tool_hints) ? recall.runtime_tool_hints : [];
+type ContextLayerAssembly = {
+  items: string[];
+  source_count: number;
+  forgotten_count: number;
+  kept_count: number;
+  dropped_count: number;
+  budget_chars: number;
+  used_chars: number;
+  max_items: number;
+  pattern_signals?: PatternSignal[];
+  workflow_signals?: ReturnType<typeof collectWorkflowSignals>;
+};
+
+function normalizeActionRecallPacket(recall: unknown) {
+  const packet = recordField(recall, "action_recall_packet");
+  const runtimeToolHints = arrayField(recall, "runtime_tool_hints");
   const recommendedWorkflows = Array.isArray(packet?.recommended_workflows) ? packet.recommended_workflows : [];
   const candidateWorkflows = Array.isArray(packet?.candidate_workflows) ? packet.candidate_workflows : [];
   const candidatePatterns = Array.isArray(packet?.candidate_patterns) ? packet.candidate_patterns : [];
@@ -302,109 +335,123 @@ function normalizeActionRecallPacket(recall: any) {
   const rehydrationCandidates = Array.isArray(packet?.rehydration_candidates) ? packet.rehydration_candidates : [];
   const supportingKnowledge = Array.isArray(packet?.supporting_knowledge) ? packet.supporting_knowledge : [];
   const workflowHints = runtimeToolHints
-    .filter((hint: any) => String(hint?.anchor?.anchor_kind || "").trim() === "workflow")
-    .map((hint: any) => ({
-      anchor_id: String(hint?.anchor?.id || "").trim(),
-      uri: null,
-      type: "procedure",
-      title: null,
-      summary: String(hint?.anchor?.summary || "").trim() || null,
-      anchor_level: String(hint?.anchor?.anchor_level || "").trim() || null,
-      tool_set: [],
-      confidence: null,
-    }))
-    .filter((entry: any) => entry.anchor_id);
+    .map((hint) => {
+      const anchor = recordField(hint, "anchor") ?? {};
+      if (stringField(anchor, "anchor_kind") !== "workflow") return null;
+      return {
+        anchor_id: stringField(anchor, "id"),
+        uri: null,
+        type: "procedure",
+        title: null,
+        summary: stringField(anchor, "summary") || null,
+        anchor_level: stringField(anchor, "anchor_level") || null,
+        tool_set: [],
+        confidence: null,
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => !!entry && entry.anchor_id.length > 0);
   const trustedPatternHints = runtimeToolHints
-    .filter(
-      (hint: any) =>
-        String(hint?.anchor?.anchor_kind || "").trim() === "pattern"
-        && String(hint?.anchor?.pattern_state || "").trim() === "stable",
-    )
-    .map((hint: any) => ({
-      anchor_id: String(hint?.anchor?.id || "").trim(),
-      uri: null,
-      type: "concept",
-      title: null,
-      summary: String(hint?.anchor?.summary || "").trim() || null,
-      anchor_level: String(hint?.anchor?.anchor_level || "").trim() || null,
-      selected_tool: String(hint?.anchor?.selected_tool || "").trim() || null,
-      pattern_state: "stable",
-      credibility_state: "trusted",
-      distinct_run_count: firstFiniteNumber(hint?.anchor?.distinct_run_count),
-      required_distinct_runs: firstFiniteNumber(hint?.anchor?.required_distinct_runs),
-      trusted: firstBoolean(hint?.anchor?.trusted) === true,
-      last_transition: String(hint?.anchor?.last_transition || "").trim() || null,
-      confidence: null,
-    }))
-    .filter((entry: any) => entry.anchor_id);
+    .map((hint) => {
+      const anchor = recordField(hint, "anchor") ?? {};
+      if (stringField(anchor, "anchor_kind") !== "pattern" || stringField(anchor, "pattern_state") !== "stable") {
+        return null;
+      }
+      return {
+        anchor_id: stringField(anchor, "id"),
+        uri: null,
+        type: "concept",
+        title: null,
+        summary: stringField(anchor, "summary") || null,
+        anchor_level: stringField(anchor, "anchor_level") || null,
+        selected_tool: stringField(anchor, "selected_tool") || null,
+        pattern_state: "stable",
+        credibility_state: "trusted",
+        distinct_run_count: firstFiniteNumber(anchor.distinct_run_count),
+        required_distinct_runs: firstFiniteNumber(anchor.required_distinct_runs),
+        trusted: firstBoolean(anchor.trusted) === true,
+        last_transition: stringField(anchor, "last_transition") || null,
+        confidence: null,
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => !!entry && entry.anchor_id.length > 0);
   const candidatePatternHints = runtimeToolHints
-    .filter(
-      (hint: any) =>
-        String(hint?.anchor?.anchor_kind || "").trim() === "pattern"
-        && String(hint?.anchor?.credibility_state || "").trim() === "candidate",
-    )
-    .map((hint: any) => ({
-      anchor_id: String(hint?.anchor?.id || "").trim(),
-      uri: null,
-      type: "concept",
-      title: null,
-      summary: String(hint?.anchor?.summary || "").trim() || null,
-      anchor_level: String(hint?.anchor?.anchor_level || "").trim() || null,
-      selected_tool: String(hint?.anchor?.selected_tool || "").trim() || null,
-      pattern_state: "provisional",
-      credibility_state: firstBoolean(hint?.anchor?.counter_evidence_open) === true ? "contested" : "candidate",
-      distinct_run_count: firstFiniteNumber(hint?.anchor?.distinct_run_count),
-      required_distinct_runs: firstFiniteNumber(hint?.anchor?.required_distinct_runs),
-      trusted: false,
-      counter_evidence_open: firstBoolean(hint?.anchor?.counter_evidence_open) === true,
-      last_transition: String(hint?.anchor?.last_transition || "").trim() || null,
-      confidence: null,
-    }))
-    .filter((entry: any) => entry.anchor_id);
+    .map((hint) => {
+      const anchor = recordField(hint, "anchor") ?? {};
+      if (stringField(anchor, "anchor_kind") !== "pattern" || stringField(anchor, "credibility_state") !== "candidate") {
+        return null;
+      }
+      const counterEvidenceOpen = firstBoolean(anchor.counter_evidence_open) === true;
+      return {
+        anchor_id: stringField(anchor, "id"),
+        uri: null,
+        type: "concept",
+        title: null,
+        summary: stringField(anchor, "summary") || null,
+        anchor_level: stringField(anchor, "anchor_level") || null,
+        selected_tool: stringField(anchor, "selected_tool") || null,
+        pattern_state: "provisional",
+        credibility_state: counterEvidenceOpen ? "contested" : "candidate",
+        distinct_run_count: firstFiniteNumber(anchor.distinct_run_count),
+        required_distinct_runs: firstFiniteNumber(anchor.required_distinct_runs),
+        trusted: false,
+        counter_evidence_open: counterEvidenceOpen,
+        last_transition: stringField(anchor, "last_transition") || null,
+        confidence: null,
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => !!entry && entry.anchor_id.length > 0);
   const contestedPatternHints = runtimeToolHints
-    .filter(
-      (hint: any) =>
-        String(hint?.anchor?.anchor_kind || "").trim() === "pattern"
-        && (
-          String(hint?.anchor?.credibility_state || "").trim() === "contested"
-          || firstBoolean(hint?.anchor?.counter_evidence_open) === true
-        ),
-    )
-    .map((hint: any) => ({
-      anchor_id: String(hint?.anchor?.id || "").trim(),
-      uri: null,
-      type: "concept",
-      title: null,
-      summary: String(hint?.anchor?.summary || "").trim() || null,
-      anchor_level: String(hint?.anchor?.anchor_level || "").trim() || null,
-      selected_tool: String(hint?.anchor?.selected_tool || "").trim() || null,
-      pattern_state: String(hint?.anchor?.pattern_state || "").trim() === "stable" ? "stable" : "provisional",
-      credibility_state: "contested",
-      distinct_run_count: firstFiniteNumber(hint?.anchor?.distinct_run_count),
-      required_distinct_runs: firstFiniteNumber(hint?.anchor?.required_distinct_runs),
-      trusted: false,
-      counter_evidence_open: true,
-      last_transition: String(hint?.anchor?.last_transition || "").trim() || null,
-      confidence: null,
-    }))
-    .filter((entry: any) => entry.anchor_id);
+    .map((hint) => {
+      const anchor = recordField(hint, "anchor") ?? {};
+      if (
+        stringField(anchor, "anchor_kind") !== "pattern"
+        || (
+          stringField(anchor, "credibility_state") !== "contested"
+          && firstBoolean(anchor.counter_evidence_open) !== true
+        )
+      ) {
+        return null;
+      }
+      return {
+        anchor_id: stringField(anchor, "id"),
+        uri: null,
+        type: "concept",
+        title: null,
+        summary: stringField(anchor, "summary") || null,
+        anchor_level: stringField(anchor, "anchor_level") || null,
+        selected_tool: stringField(anchor, "selected_tool") || null,
+        pattern_state: stringField(anchor, "pattern_state") === "stable" ? "stable" : "provisional",
+        credibility_state: "contested",
+        distinct_run_count: firstFiniteNumber(anchor.distinct_run_count),
+        required_distinct_runs: firstFiniteNumber(anchor.required_distinct_runs),
+        trusted: false,
+        counter_evidence_open: true,
+        last_transition: stringField(anchor, "last_transition") || null,
+        confidence: null,
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => !!entry && entry.anchor_id.length > 0);
   const rehydrationHintCandidates = runtimeToolHints
-    .filter((hint: any) => String(hint?.tool_name || "").trim() === "rehydrate_payload")
-    .map((hint: any) => ({
-      anchor_id: String(hint?.anchor?.id || "").trim(),
-      anchor_uri: null,
-      anchor_kind: String(hint?.anchor?.anchor_kind || "").trim() || null,
-      anchor_level: String(hint?.anchor?.anchor_level || "").trim() || null,
-      title: null,
-      summary: String(hint?.anchor?.summary || "").trim() || null,
-      mode: String(hint?.invocation?.mode || "").trim() || null,
-      payload_cost_hint: String(hint?.payload_cost_hint || "").trim() || null,
-      recommended_when: [],
-      trusted: firstBoolean(hint?.anchor?.trusted) === true,
-      selected_tool: String(hint?.anchor?.selected_tool || "").trim() || null,
-      example_call: String(hint?.invocation?.example_call || "").trim() || null,
-    }))
-    .filter((entry: any) => entry.anchor_id);
+    .map((hint) => {
+      if (stringField(hint, "tool_name") !== "rehydrate_payload") return null;
+      const anchor = recordField(hint, "anchor") ?? {};
+      const invocation = recordField(hint, "invocation") ?? {};
+      return {
+        anchor_id: stringField(anchor, "id"),
+        anchor_uri: null,
+        anchor_kind: stringField(anchor, "anchor_kind") || null,
+        anchor_level: stringField(anchor, "anchor_level") || null,
+        title: null,
+        summary: stringField(anchor, "summary") || null,
+        mode: stringField(invocation, "mode") || null,
+        payload_cost_hint: stringField(hint, "payload_cost_hint") || null,
+        recommended_when: [],
+        trusted: firstBoolean(anchor.trusted) === true,
+        selected_tool: stringField(anchor, "selected_tool") || null,
+        example_call: stringField(invocation, "example_call") || null,
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => !!entry && entry.anchor_id.length > 0);
   return {
     packet_version: "action_recall_v1" as const,
     recommended_workflows: recommendedWorkflows.length > 0 ? recommendedWorkflows : workflowHints,
@@ -486,88 +533,97 @@ function plannerPacketLine(kind: string, parts: Array<string | null | undefined>
 }
 
 function buildPlannerPacketText(packet: ReturnType<typeof normalizeActionRecallPacket>): PlannerPacketTextSurface {
-  const recommendedWorkflows = packet.recommended_workflows.slice(0, 6).map((entry: any) =>
-    plannerPacketLine("recommended workflow", [
-      String(entry?.title || "").trim() || String(entry?.summary || "").trim() || null,
-      String(entry?.anchor_id || "").trim() ? `anchor=${String(entry.anchor_id).trim()}` : null,
-      String(entry?.source_kind || "").trim() ? `source=${String(entry.source_kind).trim()}` : null,
-      String(entry?.distillation_origin || "").trim() ? `distillation=${String(entry.distillation_origin).trim()}` : null,
-      Array.isArray(entry?.tool_set) && entry.tool_set.length > 0 ? `tools=${entry.tool_set.join(", ")}` : null,
-      String(entry?.anchor_level || "").trim() ? `level=${String(entry.anchor_level).trim()}` : null,
-      String(entry?.last_transition || "").trim() ? `transition=${String(entry.last_transition).trim()}` : null,
-      String(entry?.maintenance_state || "").trim() ? `maintenance=${String(entry.maintenance_state).trim()}` : null,
-      String(entry?.offline_priority || "").trim() ? `priority=${String(entry.offline_priority).trim()}` : null,
+  const recommendedWorkflows = packet.recommended_workflows.slice(0, 6).map((raw) => {
+    const entry = asRecord(raw) ?? {};
+    const toolSet = Array.isArray(entry.tool_set) ? entry.tool_set.map((tool) => String(tool).trim()).filter(Boolean) : [];
+    return plannerPacketLine("recommended workflow", [
+      stringField(entry, "title") || stringField(entry, "summary") || null,
+      stringField(entry, "anchor_id") ? `anchor=${stringField(entry, "anchor_id")}` : null,
+      stringField(entry, "source_kind") ? `source=${stringField(entry, "source_kind")}` : null,
+      stringField(entry, "distillation_origin") ? `distillation=${stringField(entry, "distillation_origin")}` : null,
+      toolSet.length > 0 ? `tools=${toolSet.join(", ")}` : null,
+      stringField(entry, "anchor_level") ? `level=${stringField(entry, "anchor_level")}` : null,
+      stringField(entry, "last_transition") ? `transition=${stringField(entry, "last_transition")}` : null,
+      stringField(entry, "maintenance_state") ? `maintenance=${stringField(entry, "maintenance_state")}` : null,
+      stringField(entry, "offline_priority") ? `priority=${stringField(entry, "offline_priority")}` : null,
       authorityConsumptionBlockerLabel(entry)
         ? `authority_requires_inspection=${authorityConsumptionBlockerLabel(entry)}`
         : null,
-    ])
-  );
-  const candidateWorkflows = packet.candidate_workflows.slice(0, 6).map((entry: any) =>
-    plannerPacketLine("candidate workflow", [
-      String(entry?.title || "").trim() || String(entry?.summary || "").trim() || null,
-      String(entry?.anchor_id || "").trim() ? `anchor=${String(entry.anchor_id).trim()}` : null,
-      String(entry?.source_kind || "").trim() ? `source=${String(entry.source_kind).trim()}` : null,
-      String(entry?.distillation_origin || "").trim() ? `distillation=${String(entry.distillation_origin).trim()}` : null,
-      Array.isArray(entry?.tool_set) && entry.tool_set.length > 0 ? `tools=${entry.tool_set.join(", ")}` : null,
-      String(entry?.anchor_level || "").trim() ? `level=${String(entry.anchor_level).trim()}` : null,
-      Number.isFinite(Number(entry?.observed_count)) && Number.isFinite(Number(entry?.required_observations))
+    ]);
+  });
+  const candidateWorkflows = packet.candidate_workflows.slice(0, 6).map((raw) => {
+    const entry = asRecord(raw) ?? {};
+    const toolSet = Array.isArray(entry.tool_set) ? entry.tool_set.map((tool) => String(tool).trim()).filter(Boolean) : [];
+    return plannerPacketLine("candidate workflow", [
+      stringField(entry, "title") || stringField(entry, "summary") || null,
+      stringField(entry, "anchor_id") ? `anchor=${stringField(entry, "anchor_id")}` : null,
+      stringField(entry, "source_kind") ? `source=${stringField(entry, "source_kind")}` : null,
+      stringField(entry, "distillation_origin") ? `distillation=${stringField(entry, "distillation_origin")}` : null,
+      toolSet.length > 0 ? `tools=${toolSet.join(", ")}` : null,
+      stringField(entry, "anchor_level") ? `level=${stringField(entry, "anchor_level")}` : null,
+      Number.isFinite(Number(entry.observed_count)) && Number.isFinite(Number(entry.required_observations))
         ? `observed=${Math.trunc(Number(entry.observed_count))}/${Math.trunc(Number(entry.required_observations))}`
         : null,
-      entry?.promotion_ready === true ? "promotion=ready" : null,
-      String(entry?.last_transition || "").trim() ? `transition=${String(entry.last_transition).trim()}` : null,
-      String(entry?.maintenance_state || "").trim() ? `maintenance=${String(entry.maintenance_state).trim()}` : null,
-      String(entry?.offline_priority || "").trim() ? `priority=${String(entry.offline_priority).trim()}` : null,
+      entry.promotion_ready === true ? "promotion=ready" : null,
+      stringField(entry, "last_transition") ? `transition=${stringField(entry, "last_transition")}` : null,
+      stringField(entry, "maintenance_state") ? `maintenance=${stringField(entry, "maintenance_state")}` : null,
+      stringField(entry, "offline_priority") ? `priority=${stringField(entry, "offline_priority")}` : null,
       authorityConsumptionBlockerLabel(entry)
         ? `authority_requires_inspection=${authorityConsumptionBlockerLabel(entry)}`
         : null,
-    ])
-  );
-  const candidatePatterns = packet.candidate_patterns.slice(0, 6).map((entry: any) =>
-    plannerPacketLine("candidate pattern", [
-      String(entry?.selected_tool || "").trim() ? `prefer ${String(entry.selected_tool).trim()}` : null,
-      String(entry?.summary || "").trim() || String(entry?.title || "").trim() || null,
-      String(entry?.anchor_id || "").trim() ? `anchor=${String(entry.anchor_id).trim()}` : null,
-      String(entry?.pattern_state || "").trim() ? `state=${String(entry.pattern_state).trim()}` : null,
-      String(entry?.credibility_state || "").trim() ? `credibility=${String(entry.credibility_state).trim()}` : null,
-      String(entry?.last_transition || "").trim() ? `transition=${String(entry.last_transition).trim()}` : null,
-    ])
-  );
-  const trustedPatterns = packet.trusted_patterns.slice(0, 6).map((entry: any) =>
-    plannerPacketLine("trusted pattern", [
-      String(entry?.selected_tool || "").trim() ? `prefer ${String(entry.selected_tool).trim()}` : null,
-      String(entry?.summary || "").trim() || String(entry?.title || "").trim() || null,
-      String(entry?.anchor_id || "").trim() ? `anchor=${String(entry.anchor_id).trim()}` : null,
-      String(entry?.pattern_state || "").trim() ? `state=${String(entry.pattern_state).trim()}` : null,
-      String(entry?.credibility_state || "").trim() ? `credibility=${String(entry.credibility_state).trim()}` : null,
-      String(entry?.last_transition || "").trim() ? `transition=${String(entry.last_transition).trim()}` : null,
-    ])
-  );
-  const contestedPatterns = packet.contested_patterns.slice(0, 6).map((entry: any) =>
-    plannerPacketLine("contested pattern", [
-      String(entry?.selected_tool || "").trim() ? `prefer ${String(entry.selected_tool).trim()}` : null,
-      String(entry?.summary || "").trim() || String(entry?.title || "").trim() || null,
-      String(entry?.anchor_id || "").trim() ? `anchor=${String(entry.anchor_id).trim()}` : null,
-      String(entry?.pattern_state || "").trim() ? `state=${String(entry.pattern_state).trim()}` : null,
-      String(entry?.credibility_state || "").trim() ? `credibility=${String(entry.credibility_state).trim()}` : null,
-      String(entry?.last_transition || "").trim() ? `transition=${String(entry.last_transition).trim()}` : null,
-      entry?.counter_evidence_open === true ? "counter_evidence_open=true" : null,
-    ])
-  );
-  const rehydrationCandidates = packet.rehydration_candidates.slice(0, 6).map((entry: any) =>
-    plannerPacketLine("rehydration candidate", [
-      String(entry?.title || "").trim() || String(entry?.summary || "").trim() || null,
-      String(entry?.anchor_id || "").trim() ? `anchor=${String(entry.anchor_id).trim()}` : null,
-      String(entry?.mode || "").trim() ? `mode=${String(entry.mode).trim()}` : null,
-      String(entry?.payload_cost_hint || "").trim() ? `cost=${String(entry.payload_cost_hint).trim()}` : null,
-    ])
-  );
-  const supportingKnowledge = packet.supporting_knowledge.slice(0, 8).map((entry: any) =>
-    plannerPacketLine("supporting knowledge", [
-      String(entry?.title || "").trim() || String(entry?.summary || "").trim() || null,
-      String(entry?.id || "").trim() ? `id=${String(entry.id).trim()}` : null,
-      String(entry?.type || "").trim() ? `type=${String(entry.type).trim()}` : null,
-    ])
-  );
+    ]);
+  });
+  const candidatePatterns = packet.candidate_patterns.slice(0, 6).map((raw) => {
+    const entry = asRecord(raw) ?? {};
+    return plannerPacketLine("candidate pattern", [
+      stringField(entry, "selected_tool") ? `prefer ${stringField(entry, "selected_tool")}` : null,
+      stringField(entry, "summary") || stringField(entry, "title") || null,
+      stringField(entry, "anchor_id") ? `anchor=${stringField(entry, "anchor_id")}` : null,
+      stringField(entry, "pattern_state") ? `state=${stringField(entry, "pattern_state")}` : null,
+      stringField(entry, "credibility_state") ? `credibility=${stringField(entry, "credibility_state")}` : null,
+      stringField(entry, "last_transition") ? `transition=${stringField(entry, "last_transition")}` : null,
+    ]);
+  });
+  const trustedPatterns = packet.trusted_patterns.slice(0, 6).map((raw) => {
+    const entry = asRecord(raw) ?? {};
+    return plannerPacketLine("trusted pattern", [
+      stringField(entry, "selected_tool") ? `prefer ${stringField(entry, "selected_tool")}` : null,
+      stringField(entry, "summary") || stringField(entry, "title") || null,
+      stringField(entry, "anchor_id") ? `anchor=${stringField(entry, "anchor_id")}` : null,
+      stringField(entry, "pattern_state") ? `state=${stringField(entry, "pattern_state")}` : null,
+      stringField(entry, "credibility_state") ? `credibility=${stringField(entry, "credibility_state")}` : null,
+      stringField(entry, "last_transition") ? `transition=${stringField(entry, "last_transition")}` : null,
+    ]);
+  });
+  const contestedPatterns = packet.contested_patterns.slice(0, 6).map((raw) => {
+    const entry = asRecord(raw) ?? {};
+    return plannerPacketLine("contested pattern", [
+      stringField(entry, "selected_tool") ? `prefer ${stringField(entry, "selected_tool")}` : null,
+      stringField(entry, "summary") || stringField(entry, "title") || null,
+      stringField(entry, "anchor_id") ? `anchor=${stringField(entry, "anchor_id")}` : null,
+      stringField(entry, "pattern_state") ? `state=${stringField(entry, "pattern_state")}` : null,
+      stringField(entry, "credibility_state") ? `credibility=${stringField(entry, "credibility_state")}` : null,
+      stringField(entry, "last_transition") ? `transition=${stringField(entry, "last_transition")}` : null,
+      entry.counter_evidence_open === true ? "counter_evidence_open=true" : null,
+    ]);
+  });
+  const rehydrationCandidates = packet.rehydration_candidates.slice(0, 6).map((raw) => {
+    const entry = asRecord(raw) ?? {};
+    return plannerPacketLine("rehydration candidate", [
+      stringField(entry, "title") || stringField(entry, "summary") || null,
+      stringField(entry, "anchor_id") ? `anchor=${stringField(entry, "anchor_id")}` : null,
+      stringField(entry, "mode") ? `mode=${stringField(entry, "mode")}` : null,
+      stringField(entry, "payload_cost_hint") ? `cost=${stringField(entry, "payload_cost_hint")}` : null,
+    ]);
+  });
+  const supportingKnowledge = packet.supporting_knowledge.slice(0, 8).map((raw) => {
+    const entry = asRecord(raw) ?? {};
+    return plannerPacketLine("supporting knowledge", [
+      stringField(entry, "title") || stringField(entry, "summary") || null,
+      stringField(entry, "id") ? `id=${stringField(entry, "id")}` : null,
+      stringField(entry, "type") ? `type=${stringField(entry, "type")}` : null,
+    ]);
+  });
 
   const sections = {
     recommended_workflows: recommendedWorkflows,
@@ -602,7 +658,7 @@ function buildPlannerPacketText(packet: ReturnType<typeof normalizeActionRecallP
   };
 }
 
-function collectLayerCandidates(recall: any, rules: any, tools: any): Record<ContextLayerName, LayerCandidateLine[]> {
+function collectLayerCandidates(recall: unknown, rules: unknown, tools: unknown): Record<ContextLayerName, LayerCandidateLine[]> {
   const out: Record<ContextLayerName, LayerCandidateLine[]> = {
     facts: [],
     episodes: [],
@@ -612,19 +668,24 @@ function collectLayerCandidates(recall: any, rules: any, tools: any): Record<Con
     tools: [],
     citations: [],
   };
+  const recallContext = recordField(recall, "context") ?? {};
+  const toolsSelection = recordField(tools, "selection") ?? {};
+  const toolsDecision = recordField(tools, "decision");
 
-  const recallItems = Array.isArray(recall?.context?.items) ? recall.context.items : [];
+  const recallItems = arrayField(recallContext, "items");
   for (const item of recallItems) {
-    const kind = String((item as any)?.kind || "").trim().toLowerCase();
+    const itemRecord = asRecord(item);
+    if (!itemRecord) continue;
+    const kind = stringField(itemRecord, "kind").toLowerCase();
     const layer = classifyRecallItemKind(kind);
-    const nodeId = String((item as any)?.node_id || "").trim();
-    const uri = String((item as any)?.uri || "").trim();
-    const summary = firstText(item);
+    const nodeId = stringField(itemRecord, "node_id");
+    const uri = stringField(itemRecord, "uri");
+    const summary = firstText(itemRecord);
     if (!summary) continue;
     const meta = {
-      tier: String((item as any)?.tier || "").trim() || null,
-      salience: firstFiniteNumber((item as any)?.salience),
-      lifecycle_state: String((item as any)?.lifecycle_state || "").trim() || null,
+      tier: stringField(itemRecord, "tier") || null,
+      salience: firstFiniteNumber(itemRecord.salience),
+      lifecycle_state: stringField(itemRecord, "lifecycle_state") || null,
     };
     if (uri) {
       pushCandidate(out[layer], `${summary} (uri:${uri})`, meta);
@@ -633,36 +694,38 @@ function collectLayerCandidates(recall: any, rules: any, tools: any): Record<Con
     }
   }
 
-  const activeRules = Array.isArray(rules?.active) ? rules.active : [];
-  const shadowRules = Array.isArray(rules?.shadow) ? rules.shadow : [];
+  const activeRules = arrayField(rules, "active");
+  const shadowRules = arrayField(rules, "shadow");
   for (const r of activeRules.slice(0, 24)) {
     const summary = firstText(r);
-    const id = String((r as any)?.rule_node_id || "").trim();
+    const id = stringField(r, "rule_node_id");
     pushCandidate(out.rules, id ? `[active] ${summary || id} (${id})` : `[active] ${summary}`);
   }
   for (const r of shadowRules.slice(0, 16)) {
     const summary = firstText(r);
-    const id = String((r as any)?.rule_node_id || "").trim();
+    const id = stringField(r, "rule_node_id");
     pushCandidate(out.rules, id ? `[shadow] ${summary || id} (${id})` : `[shadow] ${summary}`);
   }
 
-  const selectedTool = String(tools?.selection?.selected || "").trim();
-  const orderedTools = Array.isArray(tools?.selection?.ordered) ? tools.selection.ordered : [];
+  const selectedTool = stringField(toolsSelection, "selected");
+  const orderedTools = arrayField(toolsSelection, "ordered");
   if (selectedTool) pushCandidate(out.tools, `selected tool: ${selectedTool}`);
   if (orderedTools.length > 0) pushCandidate(out.tools, `tool ranking: ${orderedTools.join(", ")}`);
-  const runtimeToolHints = Array.isArray(recall?.runtime_tool_hints) ? recall.runtime_tool_hints : [];
+  const runtimeToolHints = arrayField(recall, "runtime_tool_hints");
   for (const hint of runtimeToolHints.slice(0, 6)) {
-    const toolName = String(hint?.tool_name || "").trim();
-    const anchorId = String(hint?.anchor?.id || "").trim();
-    const anchorKind = String(hint?.anchor?.anchor_kind || "").trim();
-    const anchorLevel = String(hint?.anchor?.anchor_level || "").trim();
-    const patternState = String(hint?.anchor?.pattern_state || "").trim();
-    const credibilityState = String(hint?.anchor?.credibility_state || "").trim();
-    const selectedPatternTool = String(hint?.anchor?.selected_tool || "").trim();
-    const mode = String(hint?.invocation?.mode || "").trim();
-    const payloadCostHint = String(hint?.payload_cost_hint || "").trim();
-    const summary = String(hint?.anchor?.summary || "").trim();
-    const exampleCall = String(hint?.invocation?.example_call || "").trim();
+    const anchor = recordField(hint, "anchor") ?? {};
+    const invocation = recordField(hint, "invocation") ?? {};
+    const toolName = stringField(hint, "tool_name");
+    const anchorId = stringField(anchor, "id");
+    const anchorKind = stringField(anchor, "anchor_kind");
+    const anchorLevel = stringField(anchor, "anchor_level");
+    const patternState = stringField(anchor, "pattern_state");
+    const credibilityState = stringField(anchor, "credibility_state");
+    const selectedPatternTool = stringField(anchor, "selected_tool");
+    const mode = stringField(invocation, "mode");
+    const payloadCostHint = stringField(hint, "payload_cost_hint");
+    const summary = stringField(anchor, "summary");
+    const exampleCall = stringField(invocation, "example_call");
     if (anchorKind === "pattern" && selectedPatternTool) {
       const patternPieces = [
         `${credibilityState === "trusted" ? "validated" : credibilityState === "contested" ? "contested" : "candidate"} tool pattern: prefer ${selectedPatternTool}`,
@@ -687,26 +750,28 @@ function collectLayerCandidates(recall: any, rules: any, tools: any): Record<Con
     pushCandidate(out.tools, pieces.join("; "));
   }
 
-  const decisionId = String(tools?.decision?.decision_id || tools?.decision_id || "").trim();
-  const runId = String(tools?.decision?.run_id || tools?.run_id || "").trim();
+  const decisionId = stringField(toolsDecision, "decision_id") || stringField(tools, "decision_id");
+  const runId = stringField(toolsDecision, "run_id") || stringField(tools, "run_id");
   if (decisionId) pushCandidate(out.decisions, `decision_id: ${decisionId}`);
   if (runId) pushCandidate(out.decisions, `run_id: ${runId}`);
   if (selectedTool) pushCandidate(out.decisions, `decision selected_tool: ${selectedTool}`);
 
-  const citations = Array.isArray(recall?.context?.citations) ? recall.context.citations : [];
+  const citations = arrayField(recallContext, "citations");
   for (const c of citations.slice(0, 64)) {
-    const nodeId = String((c as any)?.node_id || "").trim();
-    const uri = String((c as any)?.uri || "").trim();
-    const commitUri = String((c as any)?.commit_uri || "").trim();
-    const commitId = String((c as any)?.commit_id || "").trim();
+    const citation = asRecord(c);
+    if (!citation) continue;
+    const nodeId = stringField(citation, "node_id");
+    const uri = stringField(citation, "uri");
+    const commitUri = stringField(citation, "commit_uri");
+    const commitId = stringField(citation, "commit_id");
     if (!nodeId && !uri && !commitUri && !commitId) continue;
     pushCandidate(
       out.citations,
       `citation uri=${uri || "-"} node=${nodeId || "-"} commit=${commitId || "-"} commit_uri=${commitUri || "-"}`,
       {
-        tier: String((c as any)?.tier || "").trim() || null,
-        salience: firstFiniteNumber((c as any)?.salience),
-        lifecycle_state: String((c as any)?.lifecycle_state || "").trim() || null,
+        tier: stringField(citation, "tier") || null,
+        salience: firstFiniteNumber(citation.salience),
+        lifecycle_state: stringField(citation, "lifecycle_state") || null,
       },
     );
   }
@@ -943,9 +1008,9 @@ function collectStaticContextCandidates(args: {
 }
 
 export function assembleLayeredContext(args: {
-  recall: any;
-  rules: any;
-  tools: any;
+  recall: unknown;
+  rules: unknown;
+  tools: unknown;
   query_text?: string | null;
   execution_context?: unknown;
   tool_candidates?: string[] | null;
@@ -977,7 +1042,7 @@ export function assembleLayeredContext(args: {
   const workflowSignals = collectWorkflowSignals(actionRecallPacket);
   const plannerPacket = buildPlannerPacketText(actionRecallPacket);
 
-  const layers: Record<string, any> = {};
+  const layers: Partial<Record<ContextLayerName, ContextLayerAssembly>> = {};
   const mergeTrace: Array<Record<string, unknown>> = [];
   const droppedReasons: string[] = [];
   const mergedParts: string[] = [];

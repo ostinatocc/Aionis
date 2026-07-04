@@ -563,7 +563,7 @@ async function dispatchProductInternalRoute(args: {
     url: args.path,
     headers: forwardedHeaders(args.req),
     payload: args.payload as Record<string, unknown>,
-  } as any) as { statusCode: number; payload: string };
+  });
   const body = parsePayload(response.payload);
   if (response.statusCode >= 200 && response.statusCode < 300) {
     return { ok: true, statusCode: response.statusCode, body };
