@@ -46,6 +46,7 @@ import {
   type ExecutionContractV1,
 } from "./execution-contract.js";
 import { HttpError } from "../util/http.js";
+import { stableJson } from "../util/stable-json.js";
 
 type HandoffNode = {
   id: string;
@@ -143,17 +144,6 @@ function uniqueStrings(values: Array<string | null | undefined>, limit = 12): st
     if (out.length >= limit) break;
   }
   return out;
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(stableJson).join(",")}]`;
-  }
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
 }
 
 function transitionPayloadDigest(value: unknown): string {

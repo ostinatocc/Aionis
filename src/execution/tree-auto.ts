@@ -13,6 +13,7 @@ import {
 } from "./tree.js";
 import type { ExecutionTreeStore } from "./tree-store.js";
 import { buildExecutionPacketV1 } from "./packet.js";
+import { stableJson } from "../util/stable-json.js";
 
 export type AutoExecutionTreeApplyResult = {
   tree: ExecutionTreeV1;
@@ -66,17 +67,6 @@ function uniqueStrings(values: Array<string | null | undefined>, limit = 24): st
     if (out.length >= limit) break;
   }
   return out;
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(stableJson).join(",")}]`;
-  }
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
 }
 
 function digest(value: unknown): string {
