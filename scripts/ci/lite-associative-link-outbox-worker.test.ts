@@ -6,6 +6,7 @@ import path from "node:path";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { applyPreparedMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
+import { buildAionisMemoryPacket } from "../../src/memory/product-output-assembler.ts";
 import { drainLiteAssociativeLinkOutbox } from "../../src/jobs/associative-linking-worker.ts";
 
 function tmpDbPath(): string {
@@ -13,11 +14,16 @@ function tmpDbPath(): string {
   return path.join(dir, "write.sqlite");
 }
 
+function vectorAt(index: number): number[] {
+  return Array.from({ length: 1536 }, (_, i) => (i === index ? 1 : 0));
+}
+
 async function writeExecutionEvent(args: {
   liteWriteStore: ReturnType<typeof createLiteWriteStore>;
   clientId: string;
   title: string;
   summary: string;
+  embedding: number[];
 }) {
   const prepared = await prepareMemoryWrite(
     {
@@ -31,6 +37,8 @@ async function writeExecutionEvent(args: {
         type: "event",
         title: args.title,
         text_summary: args.summary,
+        embedding: args.embedding,
+        embedding_model: "assoc-worker-test",
         memory_lane: "shared",
         slots: {
           execution_state_v1: {
@@ -72,14 +80,16 @@ test("lite associative_link outbox drains into shadow candidates", async () => {
     const firstWrite = await writeExecutionEvent({
       liteWriteStore,
       clientId: "assoc:first",
-      title: "Checkout renderer baseline passed",
+      title: "Checkout renderer baseline BEACON_ASSOC_SOURCE passed",
       summary: "Renderer path validated checkout contract and typecheck.",
+      embedding: vectorAt(0),
     });
     const secondWrite = await writeExecutionEvent({
       liteWriteStore,
       clientId: "assoc:second",
-      title: "Checkout renderer continuation passed",
-      summary: "Continuation reused the checkout renderer contract and validations.",
+      title: "Related renderer continuation passed",
+      summary: "Continuation reused the renderer contract and validations.",
+      embedding: vectorAt(1),
     });
     const firstId = firstWrite.nodes[0]?.id;
     const secondId = secondWrite.nodes[0]?.id;
@@ -109,6 +119,50 @@ test("lite associative_link outbox drains into shadow candidates", async () => {
       limit: 10,
     });
     assert.ok(candidates.some((candidate) => candidate.dst_id === firstId));
+
+    const recallAccess = liteRecallStore.createRecallAccess();
+    const graphSeeds = await recallAccess.stage1GraphCandidates({
+      scope: "default",
+      seedIds: [firstId],
+      limit: 10,
+      consumerAgentId: null,
+      consumerTeamId: null,
+    });
+    const relatedSeed = graphSeeds.find((seed) => seed.id === secondId);
+    assert.ok(relatedSeed);
+    assert.ok(relatedSeed.sources?.some((source) =>
+      source.kind === "associative_shadow"
+      && source.reason === "shadow_association_candidate"
+      && source.index_name === "lite_memory_association_candidates"
+      && source.matched_fields.includes("handoff_anchor_match")
+    ));
+    const relatedRows = await recallAccess.stage2Nodes({
+      scope: "default",
+      nodeIds: [secondId],
+      consumerAgentId: null,
+      consumerTeamId: null,
+      includeSlots: true,
+    });
+    const memoryPacket = buildAionisMemoryPacket({
+      tenant_id: "default",
+      scope: "default",
+      query: {
+        source: "text",
+        embedding_dims: 1536,
+      },
+      nodes: relatedRows,
+      context_items: [],
+      ranked: [{ id: secondId, score: relatedSeed.similarity }],
+      recall_sources_by_memory_id: {
+        [secondId]: relatedSeed.sources ?? [],
+      },
+      source_map: {
+        routes_used: ["/v1/memory/planning/context"],
+      },
+    });
+    const relatedPacketMemory = memoryPacket.relevant_memories.find((entry) => entry.memory_id === secondId);
+    assert.ok(relatedPacketMemory);
+    assert.ok(relatedPacketMemory.recall_sources.some((source) => source.kind === "associative_shadow"));
   } finally {
     await liteRecallStore.close();
     await liteWriteStore.close();

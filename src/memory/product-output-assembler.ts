@@ -320,6 +320,7 @@ const AIONIS_RECALL_SOURCE_KINDS = new Set<AionisRecallSourceTrace["kind"]>([
   "structured",
   "execution_native",
   "graph",
+  "associative_shadow",
   "recent",
   "exact_recovery",
   "ann",

@@ -17,6 +17,7 @@ import type {
   RecallAuditInsertParams,
   RecallAssociativeNodeRow,
   RecallCandidate,
+  RecallCandidateSource,
   RecallExecutionNativeParams,
   RecallGraphParams,
   RecallHybridParams,
@@ -71,6 +72,22 @@ type LiteRecallEdgeSourceRow = {
   metadata_json: string | null;
   created_at: string;
   commit_id: string | null;
+};
+
+type LiteRecallAssociationCandidateSourceRow = {
+  id: string;
+  scope: string;
+  src_id: string;
+  dst_id: string;
+  relation_kind: string;
+  status: string;
+  score: number;
+  confidence: number;
+  feature_summary_json: string | null;
+  evidence_json: string | null;
+  source_commit_id: string | null;
+  updated_at: string;
+  direction: "outbound" | "inbound";
 };
 
 type LiteRecallRuleRow = {
@@ -147,6 +164,8 @@ const SQLITE_IN_CHUNK_SIZE = 800;
 const DEFAULT_RECALL_ALLOWED_TIERS_FOR_RECENT = ["hot", "warm"] as const;
 const STRUCTURED_RECALL_PREFETCH_FLOOR = 256;
 const STRUCTURED_RECALL_PREFETCH_MULTIPLIER = 32;
+const ASSOCIATIVE_SHADOW_RECALL_MIN_SCORE = 0.5;
+const ASSOCIATIVE_SHADOW_RECALL_MIN_CONFIDENCE = 0.5;
 
 export type LiteRecallStore = {
   createRecallAccess(): RecallStoreAccess;
@@ -640,6 +659,67 @@ function edgeToRecallRow(e: LiteRecallEdgeSourceRow): RecallEdgeRow {
   };
 }
 
+function positiveFeatureMatchedFields(features: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  for (const key of [
+    "embedding_similarity",
+    "text_overlap",
+    "file_overlap",
+    "symbol_overlap",
+    "validation_overlap",
+    "rollback_overlap",
+    "handoff_anchor_match",
+    "recency_boost",
+  ]) {
+    const value = Number(features[key]);
+    if (Number.isFinite(value) && value > 0) out.push(key);
+  }
+  for (const key of ["repo_root", "file_path", "symbol"]) {
+    if (typeof features[key] === "string" && features[key].trim().length > 0) out.push(key);
+  }
+  return out;
+}
+
+function associativeShadowSource(row: LiteRecallAssociationCandidateSourceRow): RecallCandidateSource {
+  const features = parseJsonObject(row.feature_summary_json);
+  const matched = [
+    `association:${row.relation_kind}`,
+    `direction:${row.direction}`,
+    ...positiveFeatureMatchedFields(features),
+  ];
+  return {
+    kind: "associative_shadow",
+    score: Math.max(0, Math.min(1, row.score)),
+    reason: "shadow_association_candidate",
+    matched_fields: Array.from(new Set(matched)).slice(0, 16),
+    index_name: "lite_memory_association_candidates",
+  };
+}
+
+function mergeRecallSource(existing: RecallCandidateSource[], next: RecallCandidateSource): RecallCandidateSource[] {
+  const key = `${next.kind}:${next.reason}:${next.index_name ?? ""}:${(next.matched_fields ?? []).join(",")}`;
+  const seen = new Set(existing.map((source) =>
+    `${source.kind}:${source.reason}:${source.index_name ?? ""}:${(source.matched_fields ?? []).join(",")}`,
+  ));
+  return seen.has(key) ? existing : [...existing, next];
+}
+
+function addStage1GraphScore(
+  scores: Map<string, { score: number; sources: RecallCandidateSource[] }>,
+  id: string,
+  score: number,
+  source: RecallCandidateSource,
+): void {
+  const normalizedScore = Math.max(0, Math.min(1, score));
+  const prev = scores.get(id);
+  if (!prev) {
+    scores.set(id, { score: normalizedScore, sources: [source] });
+    return;
+  }
+  prev.score = Math.max(prev.score, normalizedScore);
+  prev.sources = mergeRecallSource(prev.sources, source);
+}
+
 function nodeToRecallRow(row: LiteRecallNodeRow, includeSlots: boolean): RecallNodeRow {
   const slots = parseJsonObject(row.slots_json);
   const topicState = row.type === "topic" ? String(slots.topic_state ?? "active") : null;
@@ -770,6 +850,29 @@ export function createLiteRecallStore(
     );
     CREATE INDEX IF NOT EXISTS idx_lite_memory_keyword_scope_node
       ON lite_memory_keyword_index(scope, node_id);
+
+    CREATE TABLE IF NOT EXISTS lite_memory_association_candidates (
+      id TEXT PRIMARY KEY,
+      scope TEXT NOT NULL,
+      src_id TEXT NOT NULL,
+      dst_id TEXT NOT NULL,
+      relation_kind TEXT NOT NULL,
+      status TEXT NOT NULL,
+      score REAL NOT NULL,
+      confidence REAL NOT NULL,
+      feature_summary_json TEXT NOT NULL,
+      evidence_json TEXT NOT NULL,
+      source_commit_id TEXT,
+      worker_run_id TEXT,
+      promoted_edge_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(scope, src_id, dst_id, relation_kind)
+    );
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_association_candidates_scope_src_score
+      ON lite_memory_association_candidates(scope, src_id, score DESC, confidence DESC);
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_association_candidates_scope_dst_score
+      ON lite_memory_association_candidates(scope, dst_id, score DESC, confidence DESC);
   `);
 
   const fetchEdgesForNodeColumn = (
@@ -815,6 +918,81 @@ export function createLiteRecallStore(
     const merged = new Map<string, LiteRecallEdgeSourceRow>();
     for (const edge of fromSrc.concat(fromDst)) merged.set(edge.id, edge);
     return Array.from(merged.values()).sort(edgeSortDesc);
+  };
+
+  const fetchAssociationCandidatesForNodeColumn = (
+    column: "src_id" | "dst_id",
+    ids: string[],
+    scope: string,
+    budget: number,
+  ): LiteRecallAssociationCandidateSourceRow[] => {
+    if (ids.length === 0 || budget <= 0) return [];
+    const rows: LiteRecallAssociationCandidateSourceRow[] = [];
+    const direction = column === "src_id" ? "outbound" : "inbound";
+    for (let i = 0; i < ids.length; i += SQLITE_IN_CHUNK_SIZE) {
+      const chunk = ids.slice(i, i + SQLITE_IN_CHUNK_SIZE);
+      rows.push(...db.prepare(`
+        SELECT
+          id,
+          scope,
+          src_id,
+          dst_id,
+          relation_kind,
+          status,
+          score,
+          confidence,
+          feature_summary_json,
+          evidence_json,
+          source_commit_id,
+          updated_at,
+          ? AS direction
+        FROM lite_memory_association_candidates
+        WHERE scope = ?
+          AND status = 'shadow'
+          AND score >= ?
+          AND confidence >= ?
+          AND ${column} IN (${placeholders(chunk.length)})
+        ORDER BY score DESC, confidence DESC, updated_at DESC, id ASC
+        LIMIT ?
+      `).all(
+        direction,
+        scope,
+        ASSOCIATIVE_SHADOW_RECALL_MIN_SCORE,
+        ASSOCIATIVE_SHADOW_RECALL_MIN_CONFIDENCE,
+        ...chunk,
+        budget,
+      ) as LiteRecallAssociationCandidateSourceRow[]);
+    }
+    return rows
+      .sort((a, b) =>
+        b.score - a.score
+        || b.confidence - a.confidence
+        || b.updated_at.localeCompare(a.updated_at)
+        || a.id.localeCompare(b.id))
+      .slice(0, budget);
+  };
+
+  const fetchAssociativeShadowCandidates = (
+    seedIds: string[],
+    scope: string,
+    budget: number,
+  ): LiteRecallAssociationCandidateSourceRow[] => {
+    if (seedIds.length === 0 || budget <= 0) return [];
+    const uniqueSeedIds = Array.from(new Set(seedIds.map((id) => id.trim()).filter(Boolean)));
+    const merged = new Map<string, LiteRecallAssociationCandidateSourceRow>();
+    for (const row of fetchAssociationCandidatesForNodeColumn("src_id", uniqueSeedIds, scope, budget)) {
+      merged.set(`${row.id}:${row.direction}`, row);
+    }
+    for (const row of fetchAssociationCandidatesForNodeColumn("dst_id", uniqueSeedIds, scope, budget)) {
+      merged.set(`${row.id}:${row.direction}`, row);
+    }
+    return Array.from(merged.values())
+      .sort((a, b) =>
+        b.score - a.score
+        || b.confidence - a.confidence
+        || b.updated_at.localeCompare(a.updated_at)
+        || a.id.localeCompare(b.id))
+      .slice(0, budget);
   };
 
   const rebuildAnnIndex = async (): Promise<{ indexed: number; skipped: number }> => {
@@ -1480,21 +1658,27 @@ export function createLiteRecallStore(
       hop2Budget: edgeBudget,
       edgeFetchBudget: edgeBudget,
     }, edgeBudget);
-    if (edges.length === 0) return [];
-    const scores = new Map<string, { score: number; fields: Set<string> }>();
+    const associations = fetchAssociativeShadowCandidates(seedIds, params.scope, edgeBudget);
+    if (edges.length === 0 && associations.length === 0) return [];
+    const scores = new Map<string, { score: number; sources: RecallCandidateSource[] }>();
     for (const edge of edges) {
       const score = Math.max(0, Math.min(1, (edge.weight + edge.confidence) / 2));
       for (const id of [edge.src_id, edge.dst_id]) {
-        const prev = scores.get(id);
-        if (!prev || score > prev.score) {
-          scores.set(id, {
-            score,
-            fields: new Set([`edge:${edge.type}`, seedIds.includes(edge.src_id) ? "src_id" : "dst_id"]),
-          });
-        } else {
-          prev.fields.add(`edge:${edge.type}`);
-        }
+        addStage1GraphScore(scores, id, score, {
+          kind: "graph",
+          score,
+          reason: "edge_neighbor_expansion",
+          matched_fields: [`edge:${edge.type}`, seedIds.includes(edge.src_id) ? "src_id" : "dst_id"],
+          index_name: "lite_memory_edges",
+        });
       }
+    }
+    const seedSet = new Set(seedIds);
+    for (const association of associations) {
+      const neighborId = association.direction === "outbound" ? association.dst_id : association.src_id;
+      if (!neighborId || seedSet.has(neighborId)) continue;
+      const score = Math.max(0, Math.min(1, (association.score + association.confidence) / 2));
+      addStage1GraphScore(scores, neighborId, score, associativeShadowSource(association));
     }
     const rows = rowsForCandidateIds({
       scope: params.scope,
@@ -1524,13 +1708,7 @@ export function createLiteRecallStore(
         salience: row.salience,
         confidence: row.confidence,
         similarity: score,
-        sources: [{
-          kind: "graph",
-          score,
-          reason: "edge_neighbor_expansion",
-          matched_fields: Array.from(scoreInfo.fields).sort(),
-          index_name: "lite_memory_edges",
-        }],
+        sources: scoreInfo.sources,
       });
     }
     return out

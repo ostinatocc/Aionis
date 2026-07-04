@@ -61,6 +61,7 @@ export const AionisRecallSourceKindSchema = z.enum([
   "structured",
   "execution_native",
   "graph",
+  "associative_shadow",
   "recent",
   "exact_recovery",
   "ann",

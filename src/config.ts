@@ -583,7 +583,6 @@ const EnvSchema = z.object({
 
   // Compression rollup policy (Phase 2 MVP).
   MEMORY_COMPRESSION_LOOKBACK_DAYS: z.coerce.number().int().positive().default(30),
-  MEMORY_COMPRESSION_TOPIC_MIN_EVENTS: z.coerce.number().int().positive().default(4),
   MEMORY_COMPRESSION_MAX_TOPICS_PER_RUN: z.coerce.number().int().positive().max(500).default(50),
   MEMORY_COMPRESSION_MAX_EVENTS_PER_TOPIC: z.coerce.number().int().positive().max(100).default(12),
   MEMORY_COMPRESSION_MAX_TEXT_LEN: z.coerce.number().int().positive().default(1800),
@@ -655,21 +654,18 @@ const MODE_PRESETS: Record<z.infer<typeof RuntimeModeSchema>, Record<string, str
 const ABSTRACTION_POLICY_PRESETS: Record<z.infer<typeof AbstractionPolicyProfileSchema>, Record<string, string>> = {
   conservative: {
     MEMORY_COMPRESSION_LOOKBACK_DAYS: "14",
-    MEMORY_COMPRESSION_TOPIC_MIN_EVENTS: "6",
     MEMORY_COMPRESSION_MAX_TOPICS_PER_RUN: "30",
     MEMORY_COMPRESSION_MAX_EVENTS_PER_TOPIC: "8",
     MEMORY_COMPRESSION_MAX_TEXT_LEN: "1400",
   },
   balanced: {
     MEMORY_COMPRESSION_LOOKBACK_DAYS: "30",
-    MEMORY_COMPRESSION_TOPIC_MIN_EVENTS: "4",
     MEMORY_COMPRESSION_MAX_TOPICS_PER_RUN: "50",
     MEMORY_COMPRESSION_MAX_EVENTS_PER_TOPIC: "12",
     MEMORY_COMPRESSION_MAX_TEXT_LEN: "1800",
   },
   aggressive: {
     MEMORY_COMPRESSION_LOOKBACK_DAYS: "45",
-    MEMORY_COMPRESSION_TOPIC_MIN_EVENTS: "3",
     MEMORY_COMPRESSION_MAX_TOPICS_PER_RUN: "100",
     MEMORY_COMPRESSION_MAX_EVENTS_PER_TOPIC: "20",
     MEMORY_COMPRESSION_MAX_TEXT_LEN: "2200",

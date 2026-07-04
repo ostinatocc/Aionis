@@ -13,6 +13,7 @@ export type RecallCandidateSourceKind =
   | "structured"
   | "execution_native"
   | "graph"
+  | "associative_shadow"
   | "recent"
   | "exact_recovery"
   | "ann"

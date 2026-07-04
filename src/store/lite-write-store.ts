@@ -1138,6 +1138,8 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
     );
     CREATE INDEX IF NOT EXISTS idx_lite_memory_association_candidates_scope_src_score
       ON lite_memory_association_candidates(scope, src_id, score DESC, confidence DESC);
+    CREATE INDEX IF NOT EXISTS idx_lite_memory_association_candidates_scope_dst_score
+      ON lite_memory_association_candidates(scope, dst_id, score DESC, confidence DESC);
 
     CREATE TABLE IF NOT EXISTS lite_memory_outbox (
       row_id INTEGER PRIMARY KEY AUTOINCREMENT,
