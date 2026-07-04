@@ -38,6 +38,11 @@ const ALLOWED_JOB_FILES = [
   "associative-linking-worker.ts",
 ];
 
+const BOUNDED_STABLE_JSON_SOURCE_DIRS = [
+  "src/execution",
+  "src/memory",
+];
+
 function listSourceFiles(dir) {
   const out = [];
   for (const name of fs.readdirSync(dir)) {
@@ -67,6 +72,19 @@ test("focused lite source never constructs placeholder postgres clients", () => 
     const source = fs.readFileSync(file, "utf8");
     assert.equal(source.includes("{} as pg.PoolClient"), false, `${path.relative(ROOT, file)} should not use a placeholder pg client`);
     assert.equal(source.includes("client ?? ({} as pg.PoolClient)"), false, `${path.relative(ROOT, file)} should not derive a placeholder pg client`);
+  }
+});
+
+test("execution and memory source use the bounded stableJson helper", () => {
+  for (const relDir of BOUNDED_STABLE_JSON_SOURCE_DIRS) {
+    for (const file of listSourceFiles(path.join(ROOT, relDir))) {
+      const source = fs.readFileSync(file, "utf8");
+      assert.equal(
+        /function\s+stableJson\s*\(/.test(source),
+        false,
+        `${path.relative(ROOT, file)} should import util/stable-json instead of defining a local recursive stableJson`,
+      );
+    }
   }
 });
 
