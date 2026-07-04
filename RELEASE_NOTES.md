@@ -19,9 +19,9 @@ what to keep out of direct use, and what raw evidence can be restored on demand.
 
 Current public patch versions for the v0.3 train:
 
-- `aionis@0.3.4`
-- `@aionis/create@0.3.3`
-- `@aionis/sdk@0.3.1`
+- `aionis@0.3.5`
+- `@aionis/create@0.3.4`
+- `@aionis/sdk@0.3.7`
 - `@aionis/mcp@0.3.2`
 - `@aionis/aifs@0.3.0`
 - `@aionis/claude-code@0.3.1`
@@ -29,7 +29,7 @@ Current public patch versions for the v0.3 train:
 - Docker image `ghcr.io/ostinatocc/aionis:v0.3.2`
 
 `@aionis/substrate` remains an experimental sidecar/research package at
-`0.1.0`; it is not part of this stable release train.
+`0.1.10`; it is not part of this stable release train.
 
 ## What Ships
 
