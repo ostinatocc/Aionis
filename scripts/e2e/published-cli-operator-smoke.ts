@@ -26,14 +26,14 @@ function npmCommand(): string {
   return process.platform === "win32" ? "npm.cmd" : "npm";
 }
 
-function npxCommand(): string {
-  return process.platform === "win32" ? "npx.cmd" : "npx";
-}
-
 function binPath(appDir: string, binName: string): string {
   return process.platform === "win32"
     ? path.join(appDir, "node_modules", ".bin", `${binName}.cmd`)
     : path.join(appDir, "node_modules", ".bin", binName);
+}
+
+function logStep(message: string): void {
+  process.stderr.write(`[published-cli-smoke] ${message}\n`);
 }
 
 function cleanNoKeyEnv(): NodeJS.ProcessEnv {
@@ -56,16 +56,24 @@ function run(command: string, args: string[], options: {
   env?: NodeJS.ProcessEnv;
   label: string;
   maxOutputChars?: number;
+  timeoutMs?: number;
 }): RunResult {
   const result = spawnSync(command, args, {
     cwd: options.cwd,
     env: options.env ?? process.env,
     encoding: "utf8",
+    timeout: options.timeoutMs ?? 120_000,
   });
   const stdout = result.stdout ?? "";
   const stderr = result.stderr ?? "";
   const output = `${stdout}${stderr}`;
-  if (result.error) throw result.error;
+  if (result.error) {
+    const code = "code" in result.error ? String(result.error.code) : "";
+    if (code === "ETIMEDOUT") {
+      throw new Error(`${options.label} timed out after ${options.timeoutMs ?? 120_000}ms\n${output.slice(-(options.maxOutputChars ?? 8_000))}`);
+    }
+    throw result.error;
+  }
   if (result.status !== 0) {
     throw new Error(`${options.label} failed with exit code ${result.status ?? "unknown"}\n${output.slice(-(options.maxOutputChars ?? 8_000))}`);
   }
@@ -85,6 +93,7 @@ function runCli(cli: string, args: string[], options: {
     cwd: options.cwd,
     label: options.label,
     maxOutputChars: 12_000,
+    timeoutMs: 60_000,
   });
 }
 
@@ -146,7 +155,9 @@ async function openRuntime(runtimeDir: string): Promise<RuntimeSession> {
 
   const port = await findFreePort();
   const logs: string[] = [];
-  const child = spawn(npxCommand(), ["tsx", "src/index.ts"], {
+  const tsxBin = binPath(repoRoot, "tsx");
+  assertCondition(fs.existsSync(tsxBin), `tsx binary missing after npm install: ${tsxBin}`);
+  const child = spawn(tsxBin, ["src/index.ts"], {
     cwd: repoRoot,
     env: {
       ...cleanNoKeyEnv(),
@@ -205,19 +216,23 @@ async function closeRuntime(session: RuntimeSession): Promise<void> {
 }
 
 function installPublishedCli(appDir: string, cliSpec: string): string {
+  logStep(`installing published CLI ${cliSpec}`);
   run(npmCommand(), ["init", "-y"], {
     cwd: appDir,
     env: cleanNoKeyEnv(),
     label: "published CLI smoke npm init",
+    timeoutMs: 30_000,
   });
   run(npmCommand(), ["install", "--silent", "--no-audit", "--fund=false", cliSpec], {
     cwd: appDir,
     env: cleanNoKeyEnv(),
     label: `published CLI smoke install ${cliSpec}`,
     maxOutputChars: 12_000,
+    timeoutMs: 180_000,
   });
   const cli = binPath(appDir, "aionis");
   assertCondition(fs.existsSync(cli), `published CLI binary missing after install: ${cli}`);
+  logStep(`installed published CLI ${cliSpec}`);
   return cli;
 }
 
@@ -246,6 +261,7 @@ async function main(): Promise<void> {
   const checks: Record<string, boolean> = {};
   const cli = installPublishedCli(appDir, cliSpec);
 
+  logStep("checking CLI command surface");
   const help = runCli(cli, ["--help"], {
     cwd: appDir,
     label: "published CLI help",
@@ -255,6 +271,7 @@ async function main(): Promise<void> {
   }
   checks.operator_commands_exposed = true;
 
+  logStep("checking local forget preview");
   const localPreview = runCli(cli, [
     "forget",
     "rehydrate",
@@ -270,8 +287,11 @@ async function main(): Promise<void> {
   assertPreviewOutput(localPreview.stdout, "published CLI local forget preview");
   checks.local_forget_preview_non_mutating = true;
 
+  logStep("starting isolated Runtime");
   const runtime = await openRuntime(runtimeDir);
   try {
+    logStep(`Runtime healthy at ${runtime.baseUrl}`);
+    logStep("checking health");
     const health = runCli(cli, ["health"], {
       cwd: appDir,
       label: "published CLI health",
@@ -281,6 +301,7 @@ async function main(): Promise<void> {
     assertContains(health.stdout, "Runtime health", "published CLI health");
     checks.health = true;
 
+    logStep("checking boundary inventory");
     const boundary = runCli(cli, ["boundary", "--json"], {
       cwd: appDir,
       label: "published CLI boundary",
@@ -290,6 +311,7 @@ async function main(): Promise<void> {
     assertCondition(!!asRecord(JSON.parse(boundary.stdout) as unknown), "published CLI boundary did not return JSON object");
     checks.boundary = true;
 
+    logStep("checking doctor");
     const doctor = runCli(cli, ["doctor"], {
       cwd: appDir,
       label: "published CLI doctor",
@@ -299,6 +321,7 @@ async function main(): Promise<void> {
     assertContains(doctor.stdout, "Runtime doctor", "published CLI doctor");
     checks.doctor = true;
 
+    logStep("checking operator snapshot");
     const snapshot = runCli(cli, [
       "snapshot",
       "--run-id",
@@ -316,6 +339,7 @@ async function main(): Promise<void> {
     assertCondition(operatorSnapshot?.contract_version === "aionis_operator_snapshot_v1", "published CLI snapshot missing operator snapshot contract");
     checks.snapshot = true;
 
+    logStep("checking Agent Flight Recorder audit");
     const flightInputPath = path.join(appDir, "flight-recorder-input.json");
     fs.writeFileSync(flightInputPath, JSON.stringify({
       tenant_id: "default",
@@ -337,6 +361,7 @@ async function main(): Promise<void> {
     assertContains(flight.stdout, "Agent Flight Recorder", "published CLI audit flight-recorder");
     checks.flight_recorder = true;
 
+    logStep("checking runtime forget preview");
     const runtimePreview = runCli(cli, [
       "forget",
       "rehydrate",
@@ -366,6 +391,7 @@ async function main(): Promise<void> {
     };
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } finally {
+    logStep("stopping isolated Runtime");
     await closeRuntime(runtime);
   }
 }
