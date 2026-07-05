@@ -21,7 +21,7 @@ Current public patch versions for the v0.3 train:
 
 - `aionis@0.3.5`
 - `@aionis/create@0.3.4`
-- `@aionis/sdk@0.3.7`
+- `@aionis/sdk@0.3.8`
 - `@aionis/mcp@0.3.2`
 - `@aionis/aifs@0.3.0`
 - `@aionis/claude-code@0.3.1`
@@ -29,7 +29,7 @@ Current public patch versions for the v0.3 train:
 - Docker image `ghcr.io/ostinatocc/aionis:v0.3.2`
 
 `@aionis/substrate` remains an experimental sidecar/research package at
-`0.1.10`; it is not part of this stable release train.
+`0.1.11`; it is not part of this stable release train.
 
 ## What Ships
 

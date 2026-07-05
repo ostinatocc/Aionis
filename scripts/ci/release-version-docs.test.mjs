@@ -13,7 +13,7 @@ const dockerImage = `ghcr.io/ostinatocc/aionis:${runtimeTag}`;
 const CURRENT_RELEASE_TRAIN = [
   { name: "aionis", version: "0.3.5", releaseNotesToken: "aionis@0.3.5" },
   { name: "@aionis/create", version: "0.3.4", releaseNotesToken: "@aionis/create@0.3.4" },
-  { name: "@aionis/sdk", version: "0.3.7", releaseNotesToken: "@aionis/sdk@0.3.7" },
+  { name: "@aionis/sdk", version: "0.3.8", releaseNotesToken: "@aionis/sdk@0.3.8" },
   { name: "@aionis/mcp", version: "0.3.2", releaseNotesToken: "@aionis/mcp@0.3.2" },
   { name: "@aionis/aifs", version: "0.3.0", releaseNotesToken: "@aionis/aifs@0.3.0" },
   {
@@ -24,8 +24,8 @@ const CURRENT_RELEASE_TRAIN = [
   },
   {
     name: "@aionis/substrate",
-    version: "0.1.10",
-    releaseNotesToken: "@aionis/substrate` remains an experimental sidecar/research package at\n`0.1.10`",
+    version: "0.1.11",
+    releaseNotesToken: "@aionis/substrate` remains an experimental sidecar/research package at\n`0.1.11`",
   },
 ];
 
