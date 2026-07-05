@@ -226,6 +226,7 @@ export function registerMemoryRecallRoutes(args: RegisterMemoryRecallRoutesArgs)
     const t0 = performance.now();
     const timings: Record<string, number> = {};
     const principal = await requireMemoryPrincipal(req);
+    await enforceRateLimit(req, reply, "recall");
     const bodyRaw = withIdentityFromRequest(req, req.body, principal, "recall");
     const explicitRecallKnobs = hasExplicitRecallKnobs(bodyRaw);
     const baseProfile = resolveRecallProfile("recall", tenantFromBody(bodyRaw));
@@ -253,7 +254,6 @@ export function registerMemoryRecallRoutes(args: RegisterMemoryRecallRoutesArgs)
     body = runtimeEntropyRecallDefaults.body;
     let parsed = MemoryRecallRequest.parse(body);
     const wantDebugEmbeddings = parsed.return_debug && parsed.include_embeddings;
-    await enforceRateLimit(req, reply, "recall");
     await enforceTenantQuota(req, reply, "recall", parsed.tenant_id ?? env.MEMORY_TENANT_ID);
     if (wantDebugEmbeddings) await enforceRateLimit(req, reply, "debug_embeddings");
     if (wantDebugEmbeddings) {

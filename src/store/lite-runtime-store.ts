@@ -9,7 +9,7 @@ import type {
   SandboxRunTelemetryInsertArgs,
   SandboxStoreAccess,
 } from "./sandbox-access.js";
-import { createSqliteDatabase, type SqliteDatabase } from "./sqlite.js";
+import { createSqliteDatabase, ignoreSqliteDuplicateColumnError, type SqliteDatabase } from "./sqlite.js";
 import { createSqliteTransactionRunner } from "./sqlite-transaction-runner.js";
 
 type SandboxSessionRecord = {
@@ -595,8 +595,8 @@ function initialize(db: SqliteDatabase) {
   for (const sql of telemetryMigrations) {
     try {
       db.exec(sql);
-    } catch {
-      // Column already exists in initialized databases.
+    } catch (err) {
+      ignoreSqliteDuplicateColumnError(err);
     }
   }
 }

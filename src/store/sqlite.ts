@@ -49,3 +49,12 @@ export function createSqliteDatabase(path: string): SqliteDatabase {
   `);
   return db;
 }
+
+export function isSqliteDuplicateColumnError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /duplicate column name/i.test(message);
+}
+
+export function ignoreSqliteDuplicateColumnError(err: unknown): void {
+  if (!isSqliteDuplicateColumnError(err)) throw err;
+}

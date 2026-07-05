@@ -39,7 +39,7 @@ import type {
 } from "./write-access.js";
 import { WRITE_STORE_ACCESS_CAPABILITY_VERSION, writeNodeFingerprint } from "./write-access.js";
 import { memoryNodeVisible } from "./memory-visibility.js";
-import { createSqliteDatabase, type SqliteDatabase } from "./sqlite.js";
+import { createSqliteDatabase, ignoreSqliteDuplicateColumnError, type SqliteDatabase } from "./sqlite.js";
 
 type LiteLatestNodeView = {
   id: string;
@@ -1195,23 +1195,23 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
   `);
   try {
     db.exec("ALTER TABLE lite_memory_rule_defs ADD COLUMN positive_count INTEGER NOT NULL DEFAULT 0");
-  } catch {
-    // Column already exists in initialized databases.
+  } catch (err) {
+    ignoreSqliteDuplicateColumnError(err);
   }
   try {
     db.exec("ALTER TABLE lite_memory_rule_defs ADD COLUMN negative_count INTEGER NOT NULL DEFAULT 0");
-  } catch {
-    // Column already exists in initialized databases.
+  } catch (err) {
+    ignoreSqliteDuplicateColumnError(err);
   }
   try {
     db.exec(`ALTER TABLE lite_memory_rule_defs ADD COLUMN updated_at TEXT NOT NULL DEFAULT '${nowIso()}'`);
-  } catch {
-    // Column already exists in initialized databases.
+  } catch (err) {
+    ignoreSqliteDuplicateColumnError(err);
   }
   try {
     db.exec("ALTER TABLE lite_memory_edges ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'");
-  } catch {
-    // Column already exists in initialized databases.
+  } catch (err) {
+    ignoreSqliteDuplicateColumnError(err);
   }
   const executionNativeAddedColumns = [
     "task_family TEXT",
@@ -1226,8 +1226,8 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
   for (const columnDef of executionNativeAddedColumns) {
     try {
       db.exec(`ALTER TABLE lite_memory_execution_native_index ADD COLUMN ${columnDef}`);
-    } catch {
-      // Column already exists in initialized databases.
+    } catch (err) {
+      ignoreSqliteDuplicateColumnError(err);
     }
   }
   db.exec(`

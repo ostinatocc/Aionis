@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
+import { createSqliteDatabase, ignoreSqliteDuplicateColumnError } from "../../src/store/sqlite.ts";
 import { createSqliteTransactionRunner } from "../../src/store/sqlite-transaction-runner.ts";
+
+function tmpDbPath(name: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-sqlite-"));
+  return path.join(dir, `${name}.sqlite`);
+}
 
 function deferred() {
   let resolve!: () => void;
@@ -126,4 +135,33 @@ test("sqlite transaction runner releases queue when begin fails", async () => {
 
   assert.equal(out, "second");
   assert.deepEqual(events, ["begin", "begin", "second:start", "commit"]);
+});
+
+test("sqlite duplicate-column migration guard rethrows real ALTER failures", () => {
+  const db = createSqliteDatabase(tmpDbPath("duplicate-column-guard"));
+  try {
+    db.exec("CREATE TABLE migration_guard (id TEXT PRIMARY KEY)");
+    db.exec("ALTER TABLE migration_guard ADD COLUMN value TEXT");
+
+    assert.doesNotThrow(() => {
+      try {
+        db.exec("ALTER TABLE migration_guard ADD COLUMN value TEXT");
+      } catch (err) {
+        ignoreSqliteDuplicateColumnError(err);
+      }
+    });
+
+    assert.throws(
+      () => {
+        try {
+          db.exec("ALTER TABLE missing_migration_guard ADD COLUMN value TEXT");
+        } catch (err) {
+          ignoreSqliteDuplicateColumnError(err);
+        }
+      },
+      /missing_migration_guard|no such table/i,
+    );
+  } finally {
+    db.close();
+  }
 });
