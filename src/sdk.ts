@@ -786,6 +786,57 @@ export type AionisTraceDerivedSkillReviewItem = {
   candidate: AionisTraceDerivedSkillTrainingCandidate;
 };
 
+export type AionisProcedureMemoryDraftV1 = {
+  contract_version: "aionis_procedure_memory_draft_v1";
+  source_candidate_id: string;
+  source: "trace_derived_skill";
+  memory_kind: "procedure";
+  authority_state: "reviewed_candidate";
+  skill_name: string;
+  title: string;
+  summary: string;
+  source_trace_ids: string[];
+  source_signal_ids: string[];
+  applies_when: string[];
+  does_not_apply_when: string[];
+  procedure_steps: string[];
+  target_files: string[];
+  acceptance_checks: string[];
+  failure_counterexamples: string[];
+  evidence_refs: string[];
+  review: {
+    review_status: "promoted";
+    reviewer_id: string | null;
+    review_reason: string | null;
+    reviewed_at: string | null;
+    candidate_reason: string;
+    label: AionisTrainingCandidateLabel;
+    promotion_status: "promotion_ready";
+    export_ready: true;
+  };
+  write_policy: {
+    requires_observe_commit: true;
+    agent_prompt_included: false;
+    runtime_mutation: false;
+    required_gate: "observe_commit_and_admission_gate";
+  };
+};
+
+export type AionisSkillCandidateMaterializeResult = AionisJsonObject & {
+  contract_version: "aionis_skill_candidate_materialize_result_v1";
+  tenant_id: string;
+  scope: string;
+  candidate_id: string;
+  draft: AionisProcedureMemoryDraftV1;
+  recommended_observe_payload: AionisJsonObject;
+  safety: {
+    agent_prompt_included: false;
+    memory_runtime_mutation: false;
+    requires_observe_commit: true;
+    required_gate: "observe_commit_and_admission_gate";
+  };
+};
+
 export type AionisEffectReport = AionisJsonObject & {
   contract_version: "aionis_effect_report_v1";
   tenant_id: string;
@@ -2179,6 +2230,23 @@ export class AionisClient {
 
   async measure<T = AionisMeasureResult>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {
     return this.post<T>("/v1/measure", body, options);
+  }
+
+  async materializeSkillCandidate<T = AionisSkillCandidateMaterializeResult>(
+    candidateId: string,
+    body: AionisJsonObject = {},
+    options?: AionisRequestOptions,
+  ): Promise<T> {
+    const id = candidateId.trim();
+    if (!id) throw new Error("candidateId is required");
+    return this.post<T>(`/v1/skills/candidates/${encodeURIComponent(id)}/materialize`, body, options);
+  }
+
+  async observeMaterializedSkillCandidate<T = unknown>(
+    materialized: AionisSkillCandidateMaterializeResult,
+    options?: AionisRequestOptions,
+  ): Promise<T> {
+    return this.observe<T>(materialized.recommended_observe_payload, options);
   }
 
   async operatorSnapshot<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {

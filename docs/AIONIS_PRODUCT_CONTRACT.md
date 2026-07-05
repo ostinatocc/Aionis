@@ -238,7 +238,7 @@ ids.
 The product path is intentionally review-first:
 
 ```text
-agent execution trace -> feedback attribution -> measure -> trace-derived skill candidate -> review -> promotion gate
+agent execution trace -> feedback attribution -> measure -> trace-derived skill candidate -> review -> draft -> explicit observe commit
 ```
 
 This makes Trace-Derived Skill Candidates a learning surface inside Execution
@@ -253,7 +253,7 @@ The first implementation is deliberately conservative:
 | Authority | Always `authority_state: candidate`; never direct authority. |
 | Prompt behavior | `agent_prompt_included: false`; candidates do not enter Agent context by themselves. |
 | Runtime mutation | `runtime_mutation: false`; no memory row is promoted or rewritten by the projection. |
-| Promotion path | `required_gate: admission_and_promotion_gate`; later use must pass normal admission, feedback, and promotion gates. |
+| Promotion path | `required_gate: admission_and_promotion_gate`; later use must pass materialization, explicit observe commit, normal admission, feedback, and promotion gates. |
 
 #### Review API
 
@@ -265,12 +265,14 @@ Aionis exposes a review ledger for trace-derived skill candidates:
 | `GET /v1/skills/candidates` | List queued, promoted, rejected, or all trace-derived skill candidates for a tenant/scope. |
 | `POST /v1/skills/candidates/:id/promote` | Record an operator promotion review decision. |
 | `POST /v1/skills/candidates/:id/reject` | Record an operator rejection review decision. |
+| `POST /v1/skills/candidates/:id/materialize` | Return an `aionis_procedure_memory_draft_v1` and recommended `/v1/observe` payload for a promoted, export-ready positive candidate. |
 
 These routes are review surfaces. A `promote` decision records operator intent in
 the candidate ledger; it does not rewrite memory rows, inject the candidate into
-Agent context, or bypass admission. Turning a candidate into active procedure
-memory remains a separate promotion path behind the normal admission and
-promotion gates.
+Agent context, or bypass admission. `materialize` also does not write memory; it
+returns a draft and recommended observe payload. The host must explicitly commit
+that payload through `POST /v1/observe` before future `guide` calls can recall
+the procedure through normal admission and lifecycle gates.
 
 This gives Aionis a product path for trace-to-skill learning without turning the
 Runtime into an autonomous training loop.

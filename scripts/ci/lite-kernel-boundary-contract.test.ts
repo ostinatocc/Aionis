@@ -165,6 +165,7 @@ test("Lite route capability matrix maps public routes to focused product capabil
     "POST /v1/operator/snapshot",
     "POST /v1/rehydrate",
     "POST /v1/skills/candidates",
+    "POST /v1/skills/candidates/:id/materialize",
     "POST /v1/skills/candidates/:id/promote",
     "POST /v1/skills/candidates/:id/reject",
   ]);

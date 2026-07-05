@@ -1359,6 +1359,53 @@ type AionisEffectReport = {
 };
 ```
 
+### Procedure Memory Draft
+
+`POST /v1/skills/candidates/:id/materialize` returns a reviewed draft without
+writing memory:
+
+```ts
+type AionisProcedureMemoryDraftV1 = {
+  contract_version: "aionis_procedure_memory_draft_v1";
+  source_candidate_id: string;
+  source: "trace_derived_skill";
+  memory_kind: "procedure";
+  authority_state: "reviewed_candidate";
+  skill_name: string;
+  title: string;
+  summary: string;
+  source_trace_ids: string[];
+  source_signal_ids: string[];
+  applies_when: string[];
+  does_not_apply_when: string[];
+  procedure_steps: string[];
+  target_files: string[];
+  acceptance_checks: string[];
+  failure_counterexamples: string[];
+  evidence_refs: string[];
+  review: {
+    review_status: "promoted";
+    reviewer_id: string | null;
+    review_reason: string | null;
+    reviewed_at: string | null;
+    candidate_reason: string;
+    label: "positive" | "negative" | "neutral" | "blocked" | "insufficient_evidence";
+    promotion_status: "promotion_ready";
+    export_ready: true;
+  };
+  write_policy: {
+    requires_observe_commit: true;
+    agent_prompt_included: false;
+    runtime_mutation: false;
+    required_gate: "observe_commit_and_admission_gate";
+  };
+};
+```
+
+The materialize response also includes `recommended_observe_payload`, which the
+host may submit to `POST /v1/observe` after inspecting the draft. The materialize
+route itself has `memory_runtime_mutation: false`.
+
 ### Field Mapping
 
 | Effect Field | Current Capabilities | Current Code Surfaces |
@@ -1388,7 +1435,7 @@ type AionisEffectReport = {
 | `feedback_learning_control_posture=inspect_before_use` only after repeated-unused-without-positive gate passes | converting unused exposure into suppression, archive, deletion, or task-specific behavior |
 | disabled inspect-before-use deltas with `enabled: false` | claiming automatic downgrade or prompt behavior |
 | training candidate labels | actual LoRA training execution |
-| `trace_derived_skill` candidates with `agent_prompt_included: false` and `runtime_mutation: false` | turning one positive trace into an automatic skill, rule, or direct-use instruction |
+| `trace_derived_skill` candidates and procedure drafts with `agent_prompt_included: false` and `runtime_mutation: false` | turning one positive trace into an automatic skill, rule, or direct-use instruction |
 
 ## Internal Surfaces Not Product Outputs
 

@@ -591,6 +591,7 @@ function registerFullProductMemoryApp(args: {
   liteWriteStore: ReturnType<typeof createLiteWriteStore>;
   liteRecallStore: ReturnType<typeof createLiteRecallStore>;
   embedder?: typeof DeterministicEmbeddingProvider | null;
+  skillCandidateReviewAccess?: ReturnType<ReturnType<typeof createLiteSkillCandidateReviewStore>["createSkillCandidateReviewAccess"]>;
 }) {
   const routeEmbedder = args.embedder === undefined ? DeterministicEmbeddingProvider : args.embedder;
   registerRuntimeErrorHandler(args.app);
@@ -1533,8 +1534,14 @@ test("product skills candidates routes queue and review trace-derived skill cand
     assert.equal(queuedBody.safety.memory_runtime_mutation, false);
     assert.equal(queuedBody.inserted_count, 2);
     assert.equal(queuedBody.candidate_count, 2);
-    const firstId = queuedBody.candidates[0].candidate_id;
-    const secondId = queuedBody.candidates[1].candidate_id;
+    const materializableCandidate = queuedBody.candidates.find((candidate: Record<string, unknown>) =>
+      candidate.label === "positive"
+      && candidate.export_ready === true
+      && candidate.promotion_status === "promotion_ready"
+    );
+    assert.ok(materializableCandidate);
+    const firstId = materializableCandidate.candidate_id;
+    const secondId = queuedBody.candidates.find((candidate: Record<string, unknown>) => candidate.candidate_id !== firstId).candidate_id;
     assert.ok(firstId);
     assert.ok(secondId);
 
@@ -1544,6 +1551,14 @@ test("product skills candidates routes queue and review trace-derived skill cand
     });
     assert.equal(listed.statusCode, 200);
     assert.equal(listed.json().candidate_count, 2);
+
+    const pendingMaterialize = await app.inject({
+      method: "POST",
+      url: `/v1/skills/candidates/${firstId}/materialize`,
+      payload: {},
+    });
+    assert.equal(pendingMaterialize.statusCode, 409);
+    assert.equal(pendingMaterialize.json().error, "skill_candidate_not_promoted");
 
     const promoted = await app.inject({
       method: "POST",
@@ -1558,6 +1573,25 @@ test("product skills candidates routes queue and review trace-derived skill cand
     assert.equal(promoted.json().candidates[0].candidate.trace_derived_skill.authority_state, "candidate");
     assert.equal(promoted.json().safety.memory_runtime_mutation, false);
 
+    const materialized = await app.inject({
+      method: "POST",
+      url: `/v1/skills/candidates/${firstId}/materialize`,
+      payload: {},
+    });
+    assert.equal(materialized.statusCode, 200);
+    const materializedBody = materialized.json();
+    assert.equal(materializedBody.contract_version, "aionis_skill_candidate_materialize_result_v1");
+    assert.equal(materializedBody.draft.contract_version, "aionis_procedure_memory_draft_v1");
+    assert.equal(materializedBody.draft.source_candidate_id, firstId);
+    assert.equal(materializedBody.draft.write_policy.requires_observe_commit, true);
+    assert.equal(materializedBody.safety.memory_runtime_mutation, false);
+    assert.equal(materializedBody.recommended_observe_payload.auto_embed, true);
+    assert.equal(materializedBody.recommended_observe_payload.memory_kind, "execution_workflow");
+    assert.deepEqual(
+      materializedBody.recommended_observe_payload.execution.workflow_steps,
+      materializedBody.draft.procedure_steps,
+    );
+
     const rejected = await app.inject({
       method: "POST",
       url: `/v1/skills/candidates/${secondId}/reject`,
@@ -1568,6 +1602,218 @@ test("product skills candidates routes queue and review trace-derived skill cand
     });
     assert.equal(rejected.statusCode, 200);
     assert.equal(rejected.json().candidates[0].review_status, "rejected");
+
+    const rejectedMaterialize = await app.inject({
+      method: "POST",
+      url: `/v1/skills/candidates/${secondId}/materialize`,
+      payload: {},
+    });
+    assert.equal(rejectedMaterialize.statusCode, 409);
+    assert.equal(rejectedMaterialize.json().error, "skill_candidate_not_promoted");
+  } finally {
+    await reviewStore.close();
+    await app.close();
+  }
+});
+
+test("trace-derived skill materialize requires explicit observe before guide can use it", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("skill-candidate-materialize-loop");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const reviewStore = createLiteSkillCandidateReviewStore(tmpDbPath("skill-candidate-materialize-review"));
+  const queryMarker = "AIONIS_TDS_QUERY_MARKER_7FA4";
+  const stepMarker = "AIONIS_TDS_STEP_MARKER_7FA4";
+  try {
+    registerFullProductMemoryApp({
+      app,
+      env,
+      guards,
+      liteWriteStore,
+      liteRecallStore,
+      skillCandidateReviewAccess: reviewStore.createSkillCandidateReviewAccess(),
+    });
+
+    const beforeGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: `Continue work that matches ${queryMarker}`,
+        consumer_agent_id: "local-user",
+        tool_candidates: ["read", "edit", "test"],
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(beforeGuide.statusCode, 200);
+    assert.equal(String(beforeGuide.json().agent_context.prompt_text).includes(stepMarker), false);
+
+    const measure = await app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: {
+        task: {
+          run_id: "run:skill-candidate-materialize-loop",
+          task_signature: "skill-candidate-materialize-loop",
+          task_family: "runtime_learning",
+        },
+        baseline: {
+          continuity: {
+            repeatedDiscoverySteps: 4,
+            continuityGuidanceCorrect: false,
+            recoveredStateFacts: 1,
+            expectedStateFacts: 4,
+          },
+          learning: {
+            workflowReused: false,
+            provisionalMemoriesWritten: 1,
+          },
+        },
+        aionis: {
+          continuity: {
+            repeatedDiscoverySteps: 1,
+            continuityGuidanceCorrect: true,
+            recoveredStateFacts: 4,
+            expectedStateFacts: 4,
+          },
+          learning: {
+            workflowReused: true,
+            stableWorkflowReused: true,
+            trustedPromotions: 1,
+            weakEvidencePromoted: 0,
+          },
+        },
+        comparison: {
+          mode: "baseline_vs_aionis",
+          sufficient_evidence: true,
+        },
+        evidence_ids: ["effect-run:skill-candidate-materialize-loop"],
+      },
+    });
+    assert.equal(measure.statusCode, 200);
+    const effectReport = measure.json().effect_report;
+    effectReport.training_candidates = [{
+      candidate_type: "trace_derived_skill",
+      source_ids: ["effect-run:skill-candidate-materialize-loop"],
+      label: "positive",
+      export_ready: true,
+      reason: "Repeated trace evidence shows this procedure improves continuity for the marked workflow.",
+      trace_derived_skill: {
+        contract_version: "aionis_trace_derived_skill_candidate_v1",
+        skill_name: "AIONIS TDS materialized procedure loop",
+        source_trace_ids: ["trace:skill-candidate-materialize-loop"],
+        source_signal_ids: ["signal:continuity-improved"],
+        applies_when: [`Task includes ${queryMarker} and needs reviewed trace reuse.`],
+        does_not_apply_when: ["The task is unrelated to the marked workflow."],
+        procedure_steps: [
+          `Read the existing target before broad discovery and record ${stepMarker}.`,
+          "Apply only the scoped change from the reviewed trace.",
+          "Run the focused verifier before broadening search.",
+        ],
+        target_files: ["src/aionis-tds-materialized-target.ts"],
+        acceptance_checks: [`Focused verifier includes ${stepMarker}.`],
+        failure_counterexamples: ["Do not reuse this procedure when the marker is absent."],
+        evidence_refs: ["effect-run:skill-candidate-materialize-loop"],
+        authority_state: "candidate",
+        promotion_status: "promotion_ready",
+        export_policy: {
+          agent_prompt_included: false,
+          runtime_mutation: false,
+          required_gate: "admission_and_promotion_gate",
+        },
+      },
+    }];
+
+    const queued = await app.inject({
+      method: "POST",
+      url: "/v1/skills/candidates",
+      payload: {
+        effect_report: effectReport,
+      },
+    });
+    assert.equal(queued.statusCode, 200);
+    const candidateId = queued.json().candidates[0].candidate_id;
+    assert.ok(candidateId);
+
+    const promoted = await app.inject({
+      method: "POST",
+      url: `/v1/skills/candidates/${candidateId}/promote`,
+      payload: {
+        reviewer_id: "operator-1",
+        reason: "Procedure is narrow, positive, and verifier-backed.",
+      },
+    });
+    assert.equal(promoted.statusCode, 200);
+
+    const materialized = await app.inject({
+      method: "POST",
+      url: `/v1/skills/candidates/${candidateId}/materialize`,
+      payload: {},
+    });
+    assert.equal(materialized.statusCode, 200);
+    const materializedBody = materialized.json();
+    assert.equal(materializedBody.safety.memory_runtime_mutation, false);
+    assert.equal(materializedBody.draft.write_policy.requires_observe_commit, true);
+    assert.equal(String(materializedBody.draft.summary).includes(stepMarker), true);
+
+    const afterMaterializeGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: `Continue work that matches ${queryMarker}`,
+        consumer_agent_id: "local-user",
+        tool_candidates: ["read", "edit", "test"],
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(afterMaterializeGuide.statusCode, 200);
+    assert.equal(String(afterMaterializeGuide.json().agent_context.prompt_text).includes(stepMarker), false);
+
+    const observe = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: materializedBody.recommended_observe_payload,
+    });
+    assert.equal(observe.statusCode, 200);
+    assert.equal(observe.json().observed.execution_memory_count, 1);
+    assert.equal(observe.json().structured_memory.structured_nodes[0].source, "execution");
+
+    const afterObserveGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: `Continue work that matches ${queryMarker}`,
+        consumer_agent_id: "local-user",
+        tool_candidates: ["read", "edit", "test"],
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(afterObserveGuide.statusCode, 200);
+    const afterObserveBody = afterObserveGuide.json();
+    assert.equal(afterObserveBody.agent_context.history_used, true);
+    assert.equal(afterObserveBody.agent_context.actionable_history_used, true);
+    assert.ok(
+      afterObserveBody.memory_packet.relevant_memories.some((entry: Record<string, unknown>) =>
+        entry.domain === "execution"
+        && entry.memory_type === "execution_memory"
+        && String(entry.summary).includes(stepMarker),
+      ),
+    );
+    assert.ok(
+      afterObserveBody.guide_packet.guidance.workflow_candidates.some((entry: Record<string, unknown>) =>
+        String(entry.title).includes("AIONIS TDS materialized procedure loop"),
+      ),
+    );
   } finally {
     await reviewStore.close();
     await app.close();

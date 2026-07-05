@@ -202,6 +202,15 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
+    path: "/v1/skills/candidates/:id/materialize",
+    route_group: "product-facade",
+    capabilities: ["learning", "learning_control"],
+    product_effects: ["history_shaped_future_behavior"],
+    surface_kind: "operator_review",
+    product_role: "materializes a promoted trace-derived skill candidate into a procedure memory draft and recommended observe payload without mutating memory",
+  },
+  {
+    method: "POST",
     path: "/v1/operator/snapshot",
     route_group: "product-facade",
     capabilities: ["continuity", "learning", "forgetting", "learning_control"],

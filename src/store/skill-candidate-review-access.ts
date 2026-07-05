@@ -55,6 +55,11 @@ export type SkillCandidateReviewAccess = {
     reviewStatus?: SkillCandidateReviewStatus | "all";
     limit: number;
   }): Promise<{ rows: SkillCandidateReviewRow[] }>;
+  getTraceDerivedSkillCandidate(args: {
+    tenantId: string;
+    scope: string;
+    candidateId: string;
+  }): Promise<SkillCandidateReviewRow | null>;
   reviewTraceDerivedSkillCandidate(args: {
     tenantId: string;
     scope: string;

@@ -14,6 +14,7 @@ import {
   AionisMemoryUseReceiptSchema,
   AionisMemoryPacketSchema,
   AionisOperatorSnapshotSchema,
+  AionisProcedureMemoryDraftV1Schema,
 } from "../../src/memory/product-output-contract.ts";
 
 function validGuidePacket() {
@@ -1084,6 +1085,63 @@ test("AionisEffectReport validates trace-derived skill training candidates", () 
         ],
       }),
     /trace_derived_skill payload is required/,
+  );
+});
+
+test("AionisProcedureMemoryDraftV1 validates explicit observe-commit policy", () => {
+  const parsed = AionisProcedureMemoryDraftV1Schema.parse({
+    contract_version: "aionis_procedure_memory_draft_v1",
+    source_candidate_id: "skillcand_123",
+    source: "trace_derived_skill",
+    memory_kind: "procedure",
+    authority_state: "reviewed_candidate",
+    skill_name: "Continue verified execution state across sessions",
+    title: "Trace-derived procedure: Continue verified execution state",
+    summary: "Apply only after the host accepts the reviewed trace-derived procedure draft.",
+    source_trace_ids: ["trace-1"],
+    source_signal_ids: ["signal-1"],
+    applies_when: ["future session needs verified continuation"],
+    does_not_apply_when: ["source trace evidence is absent"],
+    procedure_steps: [
+      "Recover the current Aionis guide before continuing the task.",
+      "Run recorded acceptance checks before treating the continuation as reusable.",
+    ],
+    target_files: ["src/runtime.ts"],
+    acceptance_checks: ["npm test passed"],
+    failure_counterexamples: ["legacy route failed verifier"],
+    evidence_refs: ["ev-1"],
+    review: {
+      review_status: "promoted",
+      reviewer_id: "operator-1",
+      review_reason: "Evidence is narrow and verifier-backed.",
+      reviewed_at: "2026-07-05T00:00:00.000Z",
+      candidate_reason: "Positive continuity evidence produced a governed trace-derived skill candidate.",
+      label: "positive",
+      promotion_status: "promotion_ready",
+      export_ready: true,
+    },
+    write_policy: {
+      requires_observe_commit: true,
+      agent_prompt_included: false,
+      runtime_mutation: false,
+      required_gate: "observe_commit_and_admission_gate",
+    },
+  });
+
+  assert.equal(parsed.contract_version, "aionis_procedure_memory_draft_v1");
+  assert.equal(parsed.write_policy.requires_observe_commit, true);
+  assert.equal(parsed.write_policy.runtime_mutation, false);
+
+  assert.throws(
+    () =>
+      AionisProcedureMemoryDraftV1Schema.parse({
+        ...parsed,
+        write_policy: {
+          ...parsed.write_policy,
+          runtime_mutation: true,
+        },
+      }),
+    /Invalid literal value/,
   );
 });
 

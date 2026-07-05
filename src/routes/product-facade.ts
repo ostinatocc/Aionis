@@ -41,6 +41,7 @@ import {
   AionisExternalMemoryCandidateSchema,
   AionisGuidePacketSchema,
   AionisMemoryPacketSchema,
+  AionisProcedureMemoryDraftV1Schema,
   type AionisEffectReport,
   type AionisAgentContext,
   type AionisAgentRole,
@@ -51,6 +52,7 @@ import {
   type AionisMemoryDecisionTrace,
   type AionisGuidePacket,
   type AionisMemoryPacket,
+  type AionisProcedureMemoryDraftV1,
 } from "../memory/product-output-contract.js";
 import { applyUnusedExposureLearningControlLite } from "../memory/lifecycle-lite.js";
 import { AionisClaimWriteSchema } from "../memory/claim-ledger-contract.js";
@@ -59,6 +61,7 @@ import type { ClaimLedgerAccess, ClaimLedgerRow } from "../store/claim-ledger-ac
 import type { LiteExecutionNativeNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
 import type {
   SkillCandidateReviewAccess,
+  SkillCandidateReviewRow,
   SkillCandidateReviewStatus,
   TraceDerivedSkillTrainingCandidate,
 } from "../store/skill-candidate-review-access.js";
@@ -512,6 +515,11 @@ const ProductSkillCandidateReviewRequest = z.object({
   scope: z.string().trim().min(1).optional(),
   reviewer_id: z.string().trim().min(1).optional(),
   reason: z.string().trim().min(1).max(2048).optional(),
+}).strict();
+
+const ProductSkillCandidateMaterializeRequest = z.object({
+  tenant_id: z.string().trim().min(1).optional(),
+  scope: z.string().trim().min(1).optional(),
 }).strict();
 
 type InternalDispatchResult =
@@ -3126,6 +3134,148 @@ function productSkillCandidateReviewResponse(args: {
   };
 }
 
+function productTraceDerivedProcedureSummary(row: SkillCandidateReviewRow): string {
+  return compactProductPromptText([
+    `Trace-derived procedure candidate: ${row.skill_name}.`,
+    row.applies_when.length > 0 ? `Applies when: ${row.applies_when.join("; ")}.` : null,
+    row.does_not_apply_when.length > 0 ? `Do not apply when: ${row.does_not_apply_when.join("; ")}.` : null,
+    `Procedure: ${row.procedure_steps.map((step, index) => `${index + 1}. ${step}`).join(" ")}`,
+    row.acceptance_checks.length > 0 ? `Acceptance checks: ${row.acceptance_checks.join("; ")}.` : null,
+    row.failure_counterexamples.length > 0 ? `Counterexamples: ${row.failure_counterexamples.join("; ")}.` : null,
+  ].filter((entry): entry is string => !!entry).join("\n"), 4096);
+}
+
+function productTraceDerivedProcedureTitle(skillName: string): string {
+  return compactProductPromptText(`Trace-derived procedure: ${skillName}`, 200);
+}
+
+function productTraceDerivedSkillProcedureDraft(row: SkillCandidateReviewRow): AionisProcedureMemoryDraftV1 {
+  return AionisProcedureMemoryDraftV1Schema.parse({
+    contract_version: "aionis_procedure_memory_draft_v1",
+    source_candidate_id: row.candidate_id,
+    source: "trace_derived_skill",
+    memory_kind: "procedure",
+    authority_state: "reviewed_candidate",
+    skill_name: row.skill_name,
+    title: productTraceDerivedProcedureTitle(row.skill_name),
+    summary: productTraceDerivedProcedureSummary(row),
+    source_trace_ids: row.source_trace_ids,
+    source_signal_ids: row.source_signal_ids,
+    applies_when: row.applies_when,
+    does_not_apply_when: row.does_not_apply_when,
+    procedure_steps: row.procedure_steps,
+    target_files: row.target_files,
+    acceptance_checks: row.acceptance_checks,
+    failure_counterexamples: row.failure_counterexamples,
+    evidence_refs: row.evidence_refs,
+    review: {
+      review_status: "promoted",
+      reviewer_id: row.reviewer_id,
+      review_reason: row.review_reason,
+      reviewed_at: row.reviewed_at,
+      candidate_reason: compactProductPromptText(row.reason, 2048),
+      label: row.label,
+      promotion_status: "promotion_ready",
+      export_ready: true,
+    },
+    write_policy: {
+      requires_observe_commit: true,
+      agent_prompt_included: false,
+      runtime_mutation: false,
+      required_gate: "observe_commit_and_admission_gate",
+    },
+  });
+}
+
+function productTraceDerivedSkillObservePayload(args: {
+  tenantId: string;
+  scope: string;
+  draft: AionisProcedureMemoryDraftV1;
+}): Record<string, unknown> {
+  const taskSignature = `trace_derived_skill:${sha256Hex(args.draft.skill_name).slice(0, 16)}`;
+  const workflowSignature = `trace_derived_skill:${args.draft.source_candidate_id}`;
+  return {
+    tenant_id: args.tenantId,
+    scope: args.scope,
+    auto_embed: true,
+    memory_kind: "execution_workflow",
+    input_text: args.draft.summary,
+    execution: {
+      client_id: `trace-derived-skill:${args.draft.source_candidate_id}`,
+      task_family: "trace_derived_skill",
+      task_signature: taskSignature,
+      workflow_signature: workflowSignature,
+      title: args.draft.title,
+      summary: args.draft.summary,
+      workflow_steps: args.draft.procedure_steps,
+      target_files: args.draft.target_files,
+      acceptance_checks: args.draft.acceptance_checks,
+      continuation_hint: args.draft.procedure_steps[0],
+      confidence: 0.72,
+      evidence_ref: args.draft.evidence_refs[0] ?? args.draft.source_trace_ids[0],
+      raw_ref: args.draft.source_candidate_id,
+      slots: {
+        contract_trust: "advisory",
+        trace_derived_skill_memory_v1: {
+          contract_version: "trace_derived_skill_memory_v1",
+          source_candidate_id: args.draft.source_candidate_id,
+          skill_name: args.draft.skill_name,
+          source_trace_ids: args.draft.source_trace_ids,
+          source_signal_ids: args.draft.source_signal_ids,
+          applies_when: args.draft.applies_when,
+          does_not_apply_when: args.draft.does_not_apply_when,
+          failure_counterexamples: args.draft.failure_counterexamples,
+          evidence_refs: args.draft.evidence_refs,
+          reviewed_at: args.draft.review.reviewed_at,
+        },
+        applies_when: args.draft.applies_when,
+        does_not_apply_when: args.draft.does_not_apply_when,
+        failure_counterexamples: args.draft.failure_counterexamples,
+        evidence_refs: args.draft.evidence_refs,
+        source_trace_ids: args.draft.source_trace_ids,
+        source_signal_ids: args.draft.source_signal_ids,
+      },
+    },
+  };
+}
+
+function productSkillCandidateMaterializeResponse(args: {
+  tenantId: string;
+  scope: string;
+  candidateId: string;
+  draft: AionisProcedureMemoryDraftV1;
+  observePayload: Record<string, unknown>;
+}) {
+  return {
+    contract_version: "aionis_skill_candidate_materialize_result_v1",
+    tenant_id: args.tenantId,
+    scope: args.scope,
+    candidate_id: args.candidateId,
+    draft: args.draft,
+    recommended_observe_payload: args.observePayload,
+    safety: {
+      agent_prompt_included: false,
+      memory_runtime_mutation: false,
+      requires_observe_commit: true,
+      required_gate: "observe_commit_and_admission_gate",
+    },
+    source_map: {
+      routes_used: ["/v1/skills/candidates/:id/materialize"],
+      internal_surfaces_used: [
+        "trace_derived_skill_candidate_review",
+        "procedure_memory_draft",
+        "recommended_observe_payload",
+      ],
+      omitted_internal_surfaces: [
+        "memory_write",
+        "agent_prompt_text",
+        "raw_memory_rows",
+        "raw_embedding_vectors",
+      ],
+    },
+  };
+}
+
 function compactProductMeasureEvidenceIds(parsed: ProductMeasureInput, trace: ProductMeasureTraceInput): string[] {
   return uniqueStrings([
     ...(parsed.evidence_ids ?? []),
@@ -4013,4 +4163,73 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       route: "/v1/skills/candidates/:id/reject",
     })
   );
+
+  app.post("/v1/skills/candidates/:id/materialize", async (req: ProductFacadeParamsRequest, reply: FastifyReply) => {
+    const principal = await requireMemoryPrincipal(req);
+    const body = withIdentityFromRequest(req, req.body ?? {}, principal, "recall");
+    const params = ProductSkillCandidateParams.parse(req.params ?? {});
+    const parsed = ProductSkillCandidateMaterializeRequest.parse(body);
+    await enforceRateLimit(req, reply, "recall");
+    const tenantId = parsed.tenant_id ?? env.MEMORY_TENANT_ID;
+    const scope = parsed.scope ?? env.MEMORY_SCOPE;
+    await enforceTenantQuota(req, reply, "recall", tenantId);
+    if (!skillCandidateReviewAccess) {
+      return reply.code(503).send(productErrorResponse({
+        status: 503,
+        error: "skill_candidate_review_unavailable",
+        message: "trace-derived skill candidate review store is not available for this Runtime",
+      }));
+    }
+    const gate = await acquireInflightSlot("recall");
+    try {
+      const row = await skillCandidateReviewAccess.getTraceDerivedSkillCandidate({
+        tenantId,
+        scope,
+        candidateId: params.id,
+      });
+      if (!row) {
+        return reply.code(404).send(productErrorResponse({
+          status: 404,
+          error: "skill_candidate_not_found",
+          message: "trace-derived skill candidate was not found in this tenant/scope",
+          details: { candidate_id: params.id },
+        }));
+      }
+      if (row.review_status !== "promoted") {
+        return reply.code(409).send(productErrorResponse({
+          status: 409,
+          error: "skill_candidate_not_promoted",
+          message: "trace-derived skill candidate must be promoted before materialization",
+          details: {
+            candidate_id: params.id,
+            review_status: row.review_status,
+          },
+        }));
+      }
+      if (!row.export_ready || row.promotion_status !== "promotion_ready" || row.label !== "positive") {
+        return reply.code(409).send(productErrorResponse({
+          status: 409,
+          error: "skill_candidate_not_materializable",
+          message: "trace-derived skill candidate is promoted but is not export-ready positive procedure evidence",
+          details: {
+            candidate_id: params.id,
+            export_ready: row.export_ready,
+            promotion_status: row.promotion_status,
+            label: row.label,
+          },
+        }));
+      }
+      const draft = productTraceDerivedSkillProcedureDraft(row);
+      const observePayload = productTraceDerivedSkillObservePayload({ tenantId, scope, draft });
+      return reply.code(200).send(productSkillCandidateMaterializeResponse({
+        tenantId,
+        scope,
+        candidateId: params.id,
+        draft,
+        observePayload,
+      }));
+    } finally {
+      gate.release();
+    }
+  });
 }

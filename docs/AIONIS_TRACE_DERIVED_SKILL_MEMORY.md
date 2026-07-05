@@ -21,8 +21,10 @@ Agent execution trace
 -> feedback and measure prove reuse
 ```
 
-The current Runtime implements the first half of this loop. The second half is
-planned and must remain explicitly gated.
+The current Runtime implements this loop through an explicit draft-and-observe
+path. Review and materialization do not mutate memory; only the host's explicit
+`observe` commit can make the procedure recallable through normal `guide`
+admission.
 
 ## Current Implementation
 
@@ -31,9 +33,10 @@ planned and must remain explicitly gated.
 | Candidate schema | `aionis_trace_derived_skill_candidate_v1` is part of `AionisEffectReport.training_candidates`. |
 | Candidate generation | `POST /v1/measure` projects positive continuity or workflow-reuse evidence into `trace_derived_skill` candidates. |
 | Review ledger | `POST /v1/skills/candidates`, `GET /v1/skills/candidates`, `POST /v1/skills/candidates/:id/promote`, and `POST /v1/skills/candidates/:id/reject`. |
+| Materialization | `POST /v1/skills/candidates/:id/materialize` returns an `aionis_procedure_memory_draft_v1` and a recommended `/v1/observe` payload for promoted, export-ready positive candidates only. |
 | Persistence | Lite Runtime stores review rows in `lite_skill_candidate_reviews`. |
-| SDK helpers | `traceDerivedSkillCandidatesFromMeasure()` and `traceDerivedSkillReviewItemsFromMeasure()` expose candidate and review-item projections. |
-| Agent behavior | Candidates do not enter `agent_context`, do not mutate memory, and do not influence `guide` by themselves. |
+| SDK helpers | `traceDerivedSkillCandidatesFromMeasure()`, `traceDerivedSkillReviewItemsFromMeasure()`, `materializeSkillCandidate()`, and `observeMaterializedSkillCandidate()` expose the host flow. |
+| Agent behavior | Candidates and drafts do not enter `agent_context`, do not mutate memory, and do not influence `guide` by themselves. A committed observe payload can later be recalled as governed execution memory. |
 
 Current source of truth:
 
@@ -91,10 +94,13 @@ The review ledger is intentionally separate from Agent behavior.
 | `GET /v1/skills/candidates` | List pending, promoted, rejected, or all candidates for a tenant/scope. | None. |
 | `POST /v1/skills/candidates/:id/promote` | Record operator or host approval intent. | Updates review status only. |
 | `POST /v1/skills/candidates/:id/reject` | Record operator or host rejection. | Updates review status only. |
+| `POST /v1/skills/candidates/:id/materialize` | Return a reviewed procedure-memory draft and recommended observe payload. | None. |
 
 `promote` is not prompt admission. It records that a human or host workflow
 approved the candidate for the next controlled step. It does not create
 procedure memory, change memory authority, or affect future guide output.
+`materialize` also does not write memory; it only prepares a draft that the host
+may explicitly inspect and submit to `POST /v1/observe`.
 
 ## Recommended Host Flow
 
@@ -106,37 +112,43 @@ procedure memory, change memory authority, or affect future guide output.
 5. Queue candidates with `POST /v1/skills/candidates`.
 6. Review candidates out of band.
 7. Promote or reject each candidate.
-8. Wait for the planned materialization path before making promoted candidates
-   recallable.
+8. Materialize promoted, export-ready positive candidates with
+   `POST /v1/skills/candidates/:id/materialize`.
+9. Inspect the returned `aionis_procedure_memory_draft_v1`.
+10. Submit `recommended_observe_payload` to `POST /v1/observe` only when the
+    host/operator accepts the draft.
+11. Future `guide` calls can recall the committed procedure through normal
+    admission, lifecycle, authority, and scope gates.
 
 The Agent should receive only `agent_context.prompt_text` or selected
 `agent_context` fields from `guide`. Candidate payloads, review rows, measure
 reports, and decision traces are host/operator surfaces.
 
-## Planned Materialization Path
+## Materialization Path
 
-The planned next step is an explicit materialization surface:
+The explicit materialization surface is:
 
 ```text
 POST /v1/skills/candidates/:id/materialize
 ```
 
-This endpoint should:
+This endpoint:
 
 - require an existing promoted candidate
 - reject pending and rejected candidates
+- reject non-positive, non-export-ready, or non-`promotion_ready` candidates
 - return an `aionis_procedure_memory_draft_v1`
 - not write memory
 - not include the draft in Agent prompt context
 - preserve source trace, evidence, applicability, procedure, acceptance, and
   counterexample fields
 
-The draft should then be committed through the normal `observe` path only after
-explicit host/operator action. A committed procedure memory must still pass
-scope, lifecycle, authority, source, and rehydrate gates before it can influence
-future `guide` output.
+The draft is committed through the normal `observe` path only after explicit
+host/operator action. A committed procedure memory must still pass scope,
+lifecycle, authority, source, and rehydrate gates before it can influence future
+`guide` output.
 
-Expected future route:
+Implemented route:
 
 ```text
 promoted candidate
@@ -168,7 +180,7 @@ sharing, or model-router behavior into this path.
 ## Release Gate
 
 This capability is complete enough to call "Trace-Derived Skill Memory" when
-all of the following are true:
+all of the following remain true:
 
 - materialize endpoint exists and validates `aionis_procedure_memory_draft_v1`
 - promoted candidates can produce drafts
@@ -176,21 +188,12 @@ all of the following are true:
 - observe commit writes governed procedure memory
 - guide can recall committed procedure memory
 - guide still applies normal admission gates
-- a Runtime E2E proves reuse in a fresh run
+- a Runtime E2E proves explicit observe is required before guide reuse
 - docs explain the safety contract without implying automatic self-modification
-
-Until that gate passes, the implemented feature should be described as
-Trace-Derived Skill Candidates plus a review ledger.
 
 ## Product Claim
 
 Current accurate claim:
-
-> Aionis can project measured successful execution traces into reviewable
-> trace-derived skill candidates without adding them to Agent prompts or
-> mutating memory authority.
-
-Post-release-gate claim:
 
 > Aionis turns verified execution traces into reviewed, governed procedure
 > memory that can be reused across future Agent sessions without bypassing

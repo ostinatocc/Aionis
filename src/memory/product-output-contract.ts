@@ -2131,6 +2131,50 @@ export const AionisTraceDerivedSkillCandidateSchema = z
 
 export type AionisTraceDerivedSkillCandidate = z.infer<typeof AionisTraceDerivedSkillCandidateSchema>;
 
+export const AionisProcedureMemoryDraftV1Schema = z
+  .object({
+    contract_version: z.literal("aionis_procedure_memory_draft_v1"),
+    source_candidate_id: z.string().min(1).max(256),
+    source: z.literal("trace_derived_skill"),
+    memory_kind: z.literal("procedure"),
+    authority_state: z.literal("reviewed_candidate"),
+    skill_name: z.string().min(1).max(160),
+    title: z.string().min(1).max(200),
+    summary: z.string().min(1).max(4096),
+    source_trace_ids: z.array(z.string().min(1).max(256)).min(1).max(64),
+    source_signal_ids: z.array(z.string().min(1).max(256)).default([]),
+    applies_when: z.array(z.string().min(1).max(512)).min(1).max(16),
+    does_not_apply_when: z.array(z.string().min(1).max(512)).default([]),
+    procedure_steps: z.array(z.string().min(1).max(1024)).min(1).max(16),
+    target_files: z.array(z.string().min(1).max(512)).default([]),
+    acceptance_checks: z.array(z.string().min(1).max(512)).default([]),
+    failure_counterexamples: z.array(z.string().min(1).max(512)).default([]),
+    evidence_refs: z.array(z.string().min(1).max(256)).default([]),
+    review: z
+      .object({
+        review_status: z.literal("promoted"),
+        reviewer_id: z.string().min(1).max(256).nullable(),
+        review_reason: z.string().min(1).max(2048).nullable(),
+        reviewed_at: z.string().datetime().nullable(),
+        candidate_reason: z.string().min(1).max(2048),
+        label: z.enum(["positive", "negative", "neutral", "blocked", "insufficient_evidence"]),
+        promotion_status: z.literal("promotion_ready"),
+        export_ready: z.literal(true),
+      })
+      .strict(),
+    write_policy: z
+      .object({
+        requires_observe_commit: z.literal(true),
+        agent_prompt_included: z.literal(false),
+        runtime_mutation: z.literal(false),
+        required_gate: z.literal("observe_commit_and_admission_gate"),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type AionisProcedureMemoryDraftV1 = z.infer<typeof AionisProcedureMemoryDraftV1Schema>;
+
 const AionisTrainingCandidateSchema = z
   .object({
     candidate_type: AionisTrainingCandidateTypeSchema,

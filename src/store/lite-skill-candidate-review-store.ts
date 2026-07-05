@@ -311,6 +311,11 @@ function reviewAccessForDb(db: SqliteDatabase): SkillCandidateReviewAccess {
       return { rows: rows.map(rowFromRecord) };
     },
 
+    async getTraceDerivedSkillCandidate(args) {
+      const row = getByIdStmt.get(args.tenantId, args.scope, args.candidateId) as SkillCandidateReviewRecord | undefined;
+      return row ? rowFromRecord(row) : null;
+    },
+
     async reviewTraceDerivedSkillCandidate(args) {
       const at = args.now ?? nowIso();
       reviewStmt.run(

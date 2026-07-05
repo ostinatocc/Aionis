@@ -144,6 +144,13 @@ for (const item of traceSkillReviewItems) {
   console.log(item.skill_name, item.review_action, item.safety.required_gate);
 }
 
+// After the host queues and promotes a candidate through the review API, the
+// SDK can materialize it into a draft and explicitly commit the recommended
+// observe payload. Materialize itself does not write memory.
+const materialized = await aionis.materializeSkillCandidate("skillcand_...");
+console.log(materialized.draft.contract_version);
+await aionis.observeMaterializedSkillCandidate(materialized);
+
 const admissionRows = memoryAdmissionDatasetRowsFromRecord(
   measure.memory_decision_trace.admission_record as AionisMemoryAdmissionRecord,
   {

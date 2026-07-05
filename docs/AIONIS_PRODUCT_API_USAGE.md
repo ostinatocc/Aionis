@@ -31,7 +31,7 @@ For multi-Agent scope, lane, team, and identity boundaries, see
 [AIONIS_MULTI_AGENT_SCOPE_MODEL.md](AIONIS_MULTI_AGENT_SCOPE_MODEL.md).
 For incident replay, see
 [AIONIS_AGENT_FLIGHT_RECORDER.md](AIONIS_AGENT_FLIGHT_RECORDER.md).
-For trace-derived skill candidate review and the planned skill-memory path, see
+For trace-derived skill candidate review and the explicit skill-memory path, see
 [AIONIS_TRACE_DERIVED_SKILL_MEMORY.md](AIONIS_TRACE_DERIVED_SKILL_MEMORY.md).
 
 ## Route Summary
@@ -48,6 +48,7 @@ For trace-derived skill candidate review and the planned skill-memory path, see
 | `GET /v1/skills/candidates` | list skill candidates | Host or operator | Trace-derived skill review ledger | pending/promoted/rejected candidate rows |
 | `POST /v1/skills/candidates/:id/promote` | review skill candidate | Operator or host review workflow | Trace-derived skill review ledger | promoted review row |
 | `POST /v1/skills/candidates/:id/reject` | review skill candidate | Operator or host review workflow | Trace-derived skill review ledger | rejected review row |
+| `POST /v1/skills/candidates/:id/materialize` | materialize reviewed skill candidate | Host or operator after promotion | Procedure memory draft gate | draft and recommended observe payload |
 | `POST /v1/audit/flight-recorder` | incident replay | Host or operator after a run | Agent Flight Recorder | `agent_flight_recorder` |
 | `POST /v1/forget` | controlled forgetting | Host, operator, or product policy | Explicit lifecycle controller | `forget_effect` |
 
@@ -84,8 +85,12 @@ For host decisions, distinguish these two fields:
    observations when the product needs to prove whether history helped or hurt.
 7. Queue trace-derived skill candidates with `POST /v1/skills/candidates` when
    `measure.effect_report.training_candidates` contains reusable execution
-   lessons that should enter operator review. The current review ledger does
-   not mutate memory or inject prompt context; see
+   lessons that should enter operator review. Promote or reject each candidate.
+   To make a promoted candidate recallable, call
+   `POST /v1/skills/candidates/:id/materialize`, inspect the returned draft,
+   then explicitly submit `recommended_observe_payload` to `POST /v1/observe`.
+   Candidate review and materialize do not mutate memory or inject prompt
+   context by themselves; see
    [AIONIS_TRACE_DERIVED_SKILL_MEMORY.md](AIONIS_TRACE_DERIVED_SKILL_MEMORY.md).
 8. Call `POST /v1/operator/snapshot` when a host or operator needs a read-only
    summary of actionable history, feedback attribution, branch isolation, and
