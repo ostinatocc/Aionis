@@ -86,7 +86,7 @@
     "fast-uri": "3.1.2"
   },
   "devDependencies": {
-    "@aionis/substrate": "^0.1.10",
+    "@aionis/substrate": "^0.1.11",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/node": "^22.10.2",
     "tsx": "^4.22.4",
