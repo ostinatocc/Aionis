@@ -19,7 +19,7 @@ what to keep out of direct use, and what raw evidence can be restored on demand.
 
 Current public patch versions for the v0.3 train:
 
-- `aionis@0.3.5`
+- `aionis@0.3.6`
 - `@aionis/create@0.3.4`
 - `@aionis/sdk@0.3.8`
 - `@aionis/mcp@0.3.2`
@@ -60,7 +60,10 @@ replayable record of what memory was shown, suppressed, restored, or acted on.
 
 ### AIFS, MCP, SDK, CLI, and Native Adapters
 
-- `npx aionis setup` is the guided product installer.
+- `npx aionis setup` is the guided product installer; `npx aionis doctor`,
+  `npx aionis health`, `npx aionis boundary`, and `npx aionis skills ...`
+  provide focused operator entry points for Runtime inspection and
+  trace-derived skill review.
 - `@aionis/create` installs the Runtime and writes the Runtime `.env`.
 - `@aionis/sdk` is the TypeScript host integration facade.
 - `@aionis/mcp` gives MCP clients a portable Aionis bridge.
