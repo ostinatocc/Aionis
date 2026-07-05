@@ -116,6 +116,7 @@ npm run -s typecheck
 npm run -s lite:test
 npm run -s runtime:smoke:external-packages
 npm run -s runtime:smoke:fresh-install
+npm run -s runtime:smoke:published-cli
 docker build -t aionis:release-smoke .
 ```
 
@@ -128,6 +129,14 @@ AIONIS_FRESH_INSTALL_SDK_SPEC="@aionis/sdk@latest" \
 AIONIS_FRESH_INSTALL_MCP_SPEC="@aionis/mcp@latest" \
 AIONIS_FRESH_INSTALL_REPO="file:///absolute/path/to/Aionis" \
 npm run -s runtime:smoke:fresh-install
+```
+
+After publishing a top-level CLI patch, verify the npm artifact against a real
+Runtime before announcing it:
+
+```bash
+AIONIS_PUBLISHED_CLI_SMOKE_SPEC="aionis@0.3.7" \
+npm run -s runtime:smoke:published-cli
 ```
 
 ## Publish Order

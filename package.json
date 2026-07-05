@@ -56,6 +56,7 @@
     "runtime:smoke:external-packages": "npx tsx scripts/e2e/external-package-entrypoint-smoke.ts",
     "runtime:smoke:task-context-profiles": "npx tsx scripts/e2e/task-context-profile-smoke.ts",
     "runtime:smoke:fresh-install": "npx tsx scripts/e2e/fresh-install-smoke.ts",
+    "runtime:smoke:published-cli": "npx tsx scripts/e2e/published-cli-operator-smoke.ts",
     "runtime:e2e:ordinary-memory": "npx tsx scripts/e2e/ordinary-memory-product-loop.ts",
     "runtime:e2e:golden-product-loop": "npx tsx scripts/e2e/golden-product-loop.ts",
     "runtime:e2e:judgment-calibration": "npx tsx scripts/e2e/judgment-calibration-product-loop.ts",

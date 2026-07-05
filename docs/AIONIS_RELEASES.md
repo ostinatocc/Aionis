@@ -125,6 +125,7 @@ npm run -s typecheck
 npm run -s lite:test
 npm run -s runtime:smoke:external-packages
 npm run -s runtime:smoke:fresh-install
+npm run -s runtime:smoke:published-cli
 docker build -t aionis:release-smoke .
 docker run -d --rm --name aionis-release-smoke \
   -p 127.0.0.1:3001:3001 \
@@ -132,6 +133,14 @@ docker run -d --rm --name aionis-release-smoke \
   aionis:release-smoke
 curl -fsS http://127.0.0.1:3001/healthz
 docker rm -f aionis-release-smoke
+```
+
+After publishing the top-level CLI, pin the just-published npm version in the
+published CLI smoke:
+
+```bash
+AIONIS_PUBLISHED_CLI_SMOKE_SPEC="aionis@0.3.7" \
+npm run -s runtime:smoke:published-cli
 ```
 
 Create a Runtime release:
