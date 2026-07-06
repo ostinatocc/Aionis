@@ -43,6 +43,36 @@ test("buildRuntimeToolHintsFromAnchorNodes derives rehydrate hints from anchor_v
   assert.match(hints[0]?.invocation.example_call ?? "", new RegExp(`rehydrate_payload\\(anchor_id='${anchorId}', mode='partial'\\)`));
 });
 
+test("buildRuntimeToolHintsFromAnchorNodes skips low-cost summary-only anchors", () => {
+  const hints = buildRuntimeToolHintsFromAnchorNodes({
+    tenant_id: "default",
+    scope: "default",
+    nodes: [
+      {
+        id: "44444444-4444-4444-8444-444444444444",
+        type: "procedure",
+        title: "Reviewed procedure",
+        text_summary: "Procedure summary is directly usable without raw payload expansion",
+        confidence: 0.88,
+        slots: {
+          anchor_v1: {
+            anchor_kind: "workflow",
+            anchor_level: "L2",
+            summary: "Procedure summary is directly usable without raw payload expansion",
+            rehydration: {
+              default_mode: "summary_only",
+              payload_cost_hint: "low",
+              recommended_when: [],
+            },
+          },
+        },
+      },
+    ],
+  });
+
+  assert.deepEqual(hints, []);
+});
+
 test("buildRuntimeToolHintsFromAnchorNodes prefers execution_native_v1 trust fields when present", () => {
   const hints = buildRuntimeToolHintsFromAnchorNodes({
     tenant_id: "default",

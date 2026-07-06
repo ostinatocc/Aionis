@@ -630,6 +630,16 @@ function observeWritePayload(parsed: z.infer<typeof ProductObserveRequest>): {
   };
 }
 
+function productObservedExecutionMemoryCount(summary: ProductObserveStructuringSummary | null | undefined): number {
+  if (!summary) return 0;
+  const alreadyStructuredExecutionCount = summary.structured_nodes.filter((node) =>
+    node.classification === "already_structured"
+    && node.source === "execution"
+    && !!node.execution_kind
+  ).length;
+  return summary.execution_workflow_count + alreadyStructuredExecutionCount;
+}
+
 function parseStringListJson(value: string | null | undefined): string[] {
   if (!value) return [];
   try {
@@ -1666,6 +1676,23 @@ function renderProductTaskContextProfileLine(profile: AionisTaskContextProfile, 
   }
 }
 
+function productProcedureLinePriority(value: string): number {
+  if (/^\s*(Execution memory|Passed solution):/i.test(value)) return 0;
+  if (/^\s*Workflow\s+(?:trusted|advisory):/i.test(value)) return 1;
+  if (/^\s*Tool\s+/i.test(value)) return 2;
+  if (/^\s*Relevant target files:/i.test(value)) return 3;
+  if (/^\s*Recovered state:/i.test(value)) return 4;
+  return 5;
+}
+
+function productProcedureLines(values: string[]): string[] {
+  return values
+    .filter((entry) => !entry.startsWith("Current active path:"))
+    .map((entry, index) => ({ entry, index, priority: productProcedureLinePriority(entry) }))
+    .sort((left, right) => left.priority - right.priority || left.index - right.index)
+    .map((item) => item.entry);
+}
+
 function renderMergedAgentPrompt(args: {
   context: AionisAgentContext;
   contextCharBudget?: number | null;
@@ -1680,7 +1707,7 @@ function renderMergedAgentPrompt(args: {
     explicitContextCharBudget: args.contextCharBudget,
   });
   const currentLines = ctx.use_now.filter((entry) => entry.startsWith("Current active path:"));
-  const procedureLines = ctx.use_now.filter((entry) => !entry.startsWith("Current active path:"));
+  const procedureLines = productProcedureLines(ctx.use_now);
   const nextActionSource = currentLines[0] ?? ctx.use_now[0] ?? ctx.inspect_before_use[0] ?? null;
   const nextAction = nextActionSource
     ? nextActionSource.replace(/^(?:Current active path|Passed solution|Candidate workflow|Inspect gated abstraction before use):\s*/i, "")
@@ -3136,17 +3163,17 @@ function productSkillCandidateReviewResponse(args: {
 
 function productTraceDerivedProcedureSummary(row: SkillCandidateReviewRow): string {
   return compactProductPromptText([
-    `Trace-derived procedure candidate: ${row.skill_name}.`,
+    `Procedure: ${row.procedure_steps.map((step, index) => `${index + 1}. ${step}`).join(" ")}`,
+    `Reviewed procedure candidate: ${row.skill_name}.`,
+    row.acceptance_checks.length > 0 ? `Acceptance checks: ${row.acceptance_checks.join("; ")}.` : null,
     row.applies_when.length > 0 ? `Applies when: ${row.applies_when.join("; ")}.` : null,
     row.does_not_apply_when.length > 0 ? `Do not apply when: ${row.does_not_apply_when.join("; ")}.` : null,
-    `Procedure: ${row.procedure_steps.map((step, index) => `${index + 1}. ${step}`).join(" ")}`,
-    row.acceptance_checks.length > 0 ? `Acceptance checks: ${row.acceptance_checks.join("; ")}.` : null,
     row.failure_counterexamples.length > 0 ? `Counterexamples: ${row.failure_counterexamples.join("; ")}.` : null,
   ].filter((entry): entry is string => !!entry).join("\n"), 4096);
 }
 
 function productTraceDerivedProcedureTitle(skillName: string): string {
-  return compactProductPromptText(`Trace-derived procedure: ${skillName}`, 200);
+  return compactProductPromptText(`Reviewed procedure: ${skillName}`, 200);
 }
 
 function productTraceDerivedSkillProcedureDraft(row: SkillCandidateReviewRow): AionisProcedureMemoryDraftV1 {
@@ -3216,6 +3243,32 @@ function productTraceDerivedSkillObservePayload(args: {
       raw_ref: args.draft.source_candidate_id,
       slots: {
         contract_trust: "advisory",
+        summary_kind: "reviewed_procedure",
+        compression_layer: "L2",
+        target_files: args.draft.target_files,
+        workflow_steps: args.draft.procedure_steps,
+        next_action: args.draft.procedure_steps[0] ?? null,
+        execution_native_v1: {
+          schema_version: "execution_native_v1",
+          execution_kind: "workflow_anchor",
+          execution_outcome_role: "passed_solution",
+          summary_kind: "reviewed_procedure",
+          compression_layer: "L2",
+          contract_trust: "advisory",
+          task_family: "trace_derived_skill",
+          task_signature: taskSignature,
+          workflow_signature: workflowSignature,
+          anchor_kind: "workflow",
+          anchor_level: "L2",
+          target_files: args.draft.target_files,
+          next_action: args.draft.procedure_steps[0] ?? null,
+          workflow_steps: args.draft.procedure_steps,
+          rehydration: {
+            default_mode: "summary_only",
+            payload_cost_hint: "low",
+            recommended_when: [],
+          },
+        },
         trace_derived_skill_memory_v1: {
           contract_version: "trace_derived_skill_memory_v1",
           source_candidate_id: args.draft.source_candidate_id,
@@ -3394,7 +3447,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
         handoff_stored: !!handoff,
         ...(claimLedger ? { claim_count: claimLedger.receipt.written_count } : {}),
         general_memory_count: writeBundle?.structuring.general_memory_count ?? 0,
-        execution_memory_count: writeBundle?.structuring.execution_workflow_count ?? 0,
+        execution_memory_count: productObservedExecutionMemoryCount(writeBundle?.structuring),
         auto_text_memory_count: writeBundle?.structuring.auto_text_node_count ?? 0,
         execution_observation_count: writeBundle?.structuring.execution_observation_count ?? 0,
       },

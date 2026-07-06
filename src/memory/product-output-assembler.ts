@@ -1811,6 +1811,26 @@ function routeActionPolicyLine(args: {
   return shortenPromptText(line, args.maxChars);
 }
 
+function agentContextUseNowPromptPriority(value: string): number {
+  if (/^\s*(Execution memory|Passed solution|Current active path):/i.test(value)) return 0;
+  if (/^\s*Workflow\s+(?:trusted|advisory):/i.test(value)) return 1;
+  if (/^\s*Tool\s+/i.test(value)) return 2;
+  if (/^\s*Relevant target files:/i.test(value)) return 3;
+  if (/^\s*Recovered state:/i.test(value)) return 4;
+  return 5;
+}
+
+function agentContextUseNowPromptLines(values: string[]): string[] {
+  return values
+    .map((entry, index) => ({
+      entry,
+      index,
+      priority: agentContextUseNowPromptPriority(entry),
+    }))
+    .sort((left, right) => left.priority - right.priority || left.index - right.index)
+    .map((item) => item.entry);
+}
+
 function renderAgentContextPrompt(args: {
   agentRole: AionisAgentRole;
   summary: string;
@@ -1842,6 +1862,7 @@ function renderAgentContextPrompt(args: {
       .map((entry) => shortenPromptText(entry, maxChars));
     return entries.length > 0 ? `${label}: ${entries.join(" | ")}` : null;
   };
+  const promptUseNow = agentContextUseNowPromptLines(args.useNow);
   const sections = compactStrings([
     "AIONIS_AGENT_CONTEXT v1",
     `state: role=${args.agentRole} history=${args.historyUsed ? "yes" : "no"} actionable_history=${args.actionableHistoryUsed ? "yes" : "no"} posture=${args.recommendedPosture} authority=${args.authority} risk=${args.negativeTransferRisk}`,
@@ -1867,7 +1888,7 @@ function renderAgentContextPrompt(args: {
     }),
     `summary: ${shortenPromptText(args.summary, args.profile.summaryChars)}`,
     inline("target_files", args.targetFiles, args.profile.targetFileItems, args.profile.targetFileChars),
-    inline("use_now", args.useNow, args.profile.useNowItems, args.profile.useNowChars),
+    inline("use_now", promptUseNow, args.profile.useNowItems, args.profile.useNowChars),
     inline("inspect_before_use", args.inspectBeforeUse, args.profile.inspectItems, args.profile.inspectChars),
     inline("do_not_use", args.doNotUse, args.profile.doNotUseItems, args.profile.doNotUseChars),
     args.rehydrateHints.length > 0 && args.profile.rehydrateItems > 0

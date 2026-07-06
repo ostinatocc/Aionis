@@ -113,6 +113,7 @@ export function buildRuntimeToolHintsFromAnchorNodes(args: {
       const payloadCostHint = payloadCostHintRaw === "low" || payloadCostHintRaw === "medium" || payloadCostHintRaw === "high"
         ? payloadCostHintRaw
         : null;
+      if (mode === "summary_only" && payloadCostHint === "low") return null;
       const toolSet = resolveNodeToolSet({ slots }).slice(0, 8);
       const patternState = patternSurface.pattern_state;
       const distinctRunCount = patternSurface.promotion.distinct_run_count;

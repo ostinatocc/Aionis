@@ -1803,6 +1803,14 @@ test("trace-derived skill materialize requires explicit observe before guide can
     assert.equal(afterObserveBody.agent_context.history_used, true);
     assert.equal(afterObserveBody.agent_context.actionable_history_used, true);
     assert.ok(
+      afterObserveBody.agent_context.use_now.some((entry: string) =>
+        entry.includes(stepMarker)
+      ),
+    );
+    assert.ok(
+      String(afterObserveBody.agent_context.prompt_text).includes(stepMarker),
+    );
+    assert.ok(
       afterObserveBody.memory_packet.relevant_memories.some((entry: Record<string, unknown>) =>
         entry.domain === "execution"
         && entry.memory_type === "execution_memory"
