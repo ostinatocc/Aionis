@@ -7,8 +7,8 @@ and native adapter release paths.
 
 | Artifact | Current channel | Purpose |
 |---|---:|---|
-| GitHub Runtime source | `v0.3.2` tag | Runtime source, product APIs, docs, Docker build, and Runtime validation loops. |
-| Docker image | `ghcr.io/ostinatocc/aionis:v0.3.2` | Local-first Runtime container with persistent SQLite state under `/data`. |
+| GitHub Runtime source | `v0.3.3` tag | Runtime source, product APIs, docs, Docker build, and Runtime validation loops. |
+| Docker image | `ghcr.io/ostinatocc/aionis:v0.3.3` | Local-first Runtime container with persistent SQLite state under `/data`. |
 | `aionis` | `0.3.7` npm / [repo](https://github.com/ostinatocc/aionis-cli) | Top-level product CLI. Owns `npx aionis setup`, read-only `doctor`/`health`/`boundary`/`snapshot` inspection, Agent Flight Recorder audit, explicit `forget` lifecycle control, and trace-derived skill candidate review commands. |
 | `@aionis/create` | `0.3.4` npm / [repo](https://github.com/ostinatocc/aionis-create) | One-command Runtime installer. |
 | `@aionis/sdk` | `0.3.8` npm / [repo](https://github.com/ostinatocc/aionis-sdk) | TypeScript facade over Aionis product APIs, including trace-derived skill materialization helpers and typed task context profiles for `/v1/guide`. |
@@ -18,7 +18,7 @@ and native adapter release paths.
 | `@aionis/substrate` | `0.1.11` npm / [repo](https://github.com/ostinatocc/AionisSubstrate) | External durable evidence sidecar for Runtime mirror, audit, backup, preview, and migration planning. Requires Node 24+. |
 
 Fresh-install verification: [v0.3.0 release verification](./releases/v0.3.0-verification.md).
-Runtime patch notes: [v0.3.2 release notes](./releases/v0.3.2.md).
+Runtime patch notes: [v0.3.3 release notes](./releases/v0.3.3.md).
 
 Latest SDK patch: `@aionis/sdk@0.3.8` exposes
 `materializeSkillCandidate()` and `observeMaterializedSkillCandidate()` for the
@@ -58,7 +58,7 @@ Run the published image:
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.2
+  ghcr.io/ostinatocc/aionis:v0.3.3
 ```
 
 Check the Runtime:
@@ -110,7 +110,7 @@ docker run --rm \
   -e MEMORY_AUTH_MODE=api_key \
   -e MEMORY_API_KEYS_JSON='{"local-dev":"replace-me"}' \
   -e AIONIS_LISTEN_HOST=0.0.0.0 \
-  ghcr.io/ostinatocc/aionis:v0.3.2
+  ghcr.io/ostinatocc/aionis:v0.3.3
 ```
 
 Then call product routes with either `Authorization: Bearer <key>` or
@@ -146,17 +146,17 @@ npm run -s runtime:smoke:published-cli
 Create a Runtime release:
 
 ```bash
-git tag -a v0.3.2 -m "Aionis v0.3.2"
-git push origin main v0.3.2
-gh release create v0.3.2 \
+git tag -a v0.3.3 -m "Aionis v0.3.3"
+git push origin main v0.3.3
+gh release create v0.3.3 \
   --repo ostinatocc/Aionis \
-  --title "Aionis v0.3.2" \
-  --notes-file docs/releases/v0.3.2.md
+  --title "Aionis v0.3.3" \
+  --notes-file docs/releases/v0.3.3.md
 ```
 
 The Docker workflow publishes:
 
 ```text
-ghcr.io/ostinatocc/aionis:v0.3.2
+ghcr.io/ostinatocc/aionis:v0.3.3
 ghcr.io/ostinatocc/aionis:latest
 ```

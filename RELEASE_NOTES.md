@@ -2,7 +2,7 @@
 
 Aionis v0.3 is the first stable baseline release train for the public Aionis
 Runtime and integration packages. The Runtime source patch documented here is
-`v0.3.2`; npm packages may carry different `0.3.x` patch numbers because they
+`v0.3.3`; npm packages may carry different `0.3.x` patch numbers because they
 release from standalone repositories.
 
 ## Headline
@@ -25,8 +25,8 @@ Current public patch versions for the v0.3 train:
 - `@aionis/mcp@0.3.2`
 - `@aionis/aifs@0.3.0`
 - `@aionis/claude-code@0.3.1`
-- Runtime source tag `v0.3.2`
-- Docker image `ghcr.io/ostinatocc/aionis:v0.3.2`
+- Runtime source tag `v0.3.3`
+- Docker image `ghcr.io/ostinatocc/aionis:v0.3.3`
 
 `@aionis/substrate` remains an experimental sidecar/research package at
 `0.1.11`; it is not part of this stable release train.
@@ -93,7 +93,7 @@ Docker:
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.2
+  ghcr.io/ostinatocc/aionis:v0.3.3
 ```
 
 Optional Zvec candidate index:
@@ -166,10 +166,10 @@ npm publish --access public
 Then tag Runtime and publish Docker:
 
 ```bash
-git tag -a v0.3.2 -m "Aionis v0.3.2"
-git push origin main v0.3.2
-gh release create v0.3.2 \
+git tag -a v0.3.3 -m "Aionis v0.3.3"
+git push origin main v0.3.3
+gh release create v0.3.3 \
   --repo ostinatocc/Aionis \
-  --title "Aionis v0.3.2" \
-  --notes-file docs/releases/v0.3.2.md
+  --title "Aionis v0.3.3" \
+  --notes-file docs/releases/v0.3.3.md
 ```
