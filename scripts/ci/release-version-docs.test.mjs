@@ -47,6 +47,7 @@ function assertReleaseTableCell(source, artifact, expectedToken) {
 test("current release docs stay aligned with the package train", () => {
   const releaseNotes = read("RELEASE_NOTES.md");
   const releaseDocs = read("docs/AIONIS_RELEASES.md");
+  const runtimeManifest = JSON.parse(read("runtime-manifest.json"));
 
   for (const entry of CURRENT_RELEASE_TRAIN) {
     assert.ok(releaseNotes.includes(entry.releaseNotesToken), `RELEASE_NOTES.md should mention ${entry.releaseNotesToken}`);
@@ -57,4 +58,6 @@ test("current release docs stay aligned with the package train", () => {
   assert.ok(releaseNotes.includes(`Docker image \`${dockerImage}\``), "RELEASE_NOTES.md Docker image should match package.json version");
   assertReleaseTableCell(releaseDocs, "GitHub Runtime source", `\`${runtimeTag}\``);
   assertReleaseTableCell(releaseDocs, "Docker image", `\`${dockerImage}\``);
+  assert.equal(runtimeManifest.release?.version, runtimeVersion, "runtime-manifest release version should match package.json");
+  assert.equal(runtimeManifest.release?.docker_image, "ghcr.io/ostinatocc/aionis", "runtime-manifest Docker repository should stay aligned with release docs");
 });
