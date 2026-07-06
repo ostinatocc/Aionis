@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { sealAuthorityReceiptsForPreparedWrite } from "./authority-fixture-helpers.ts";
 import { buildPromotionEvidenceLedgerV1 } from "../../src/memory/promotion-evidence-ledger.ts";
 import { scanPromotionQualitySummaryLite } from "../../src/memory/promotion-quality-summary.ts";
 import { runRuntimeMaintenanceLite } from "../../src/memory/runtime-maintenance.ts";
@@ -229,6 +230,7 @@ test("promotion quality summary aggregates persisted promotion ledgers across sq
       null,
     );
 
+    sealAuthorityReceiptsForPreparedWrite(prepared);
     await store.withTx(() =>
       applyMemoryWrite(prepared, {
         maxTextLen: writeOpts.maxTextLen,

@@ -29,6 +29,12 @@ const apiKeysJson = JSON.stringify({
     role: "developer",
   },
 });
+const prodAuthorityReceiptEnv = {
+  AIONIS_AUTHORITY_RECEIPT_HMAC_ACTIVE_KEY_ID: "authority-test-current",
+  AIONIS_AUTHORITY_RECEIPT_HMAC_KEYS_JSON: JSON.stringify({
+    "authority-test-current": "authority-test-current-secret-with-at-least-32-bytes",
+  }),
+};
 
 test("server edition accepts service mode with api key auth", async () => {
   await withIsolatedEnv(
@@ -38,6 +44,7 @@ test("server edition accepts service mode with api key auth", async () => {
       MEMORY_AUTH_MODE: "api_key",
       MEMORY_API_KEYS_JSON: apiKeysJson,
       SANDBOX_ENABLED: "false",
+      ...prodAuthorityReceiptEnv,
     },
     () => {
       const env = loadEnv();
@@ -61,6 +68,7 @@ test("server prod rejects runtime verifier command execution", async () => {
       MEMORY_AUTH_MODE: "api_key",
       MEMORY_API_KEYS_JSON: apiKeysJson,
       SANDBOX_ENABLED: "false",
+      ...prodAuthorityReceiptEnv,
       RUNTIME_VERIFIER_EXECUTION_ENABLED: "true",
     },
     () => {
@@ -98,6 +106,7 @@ test("server edition can explicitly keep semantic scan recall", async () => {
       MEMORY_API_KEYS_JSON: apiKeysJson,
       RECALL_ENGINE_MODE: "semantic_scan",
       SANDBOX_ENABLED: "false",
+      ...prodAuthorityReceiptEnv,
     },
     () => {
       const env = loadEnv();
@@ -135,6 +144,7 @@ test("server prod jwt auth requires exp and a strong HS256 secret", async () => 
       MEMORY_JWT_HS256_SECRET: "jwt-secret-with-at-least-32-bytes",
       MEMORY_JWT_REQUIRE_EXP: "false",
       SANDBOX_ENABLED: "false",
+      ...prodAuthorityReceiptEnv,
     },
     () => {
       assert.throws(
@@ -151,6 +161,7 @@ test("server prod jwt auth requires exp and a strong HS256 secret", async () => 
       MEMORY_AUTH_MODE: "jwt",
       MEMORY_JWT_HS256_SECRET: "short-secret",
       SANDBOX_ENABLED: "false",
+      ...prodAuthorityReceiptEnv,
     },
     () => {
       assert.throws(
@@ -190,11 +201,30 @@ test("server edition rejects local mode posture", async () => {
       AIONIS_MODE: "local",
       MEMORY_AUTH_MODE: "api_key",
       MEMORY_API_KEYS_JSON: apiKeysJson,
+      ...prodAuthorityReceiptEnv,
     },
     () => {
       assert.throws(
         () => loadEnv(),
         /Aionis Server requires AIONIS_MODE=service/i,
+      );
+    },
+  );
+});
+
+test("server prod requires explicit authority receipt HMAC key material", async () => {
+  await withIsolatedEnv(
+    {
+      AIONIS_EDITION: "server",
+      AIONIS_MODE: "service",
+      MEMORY_AUTH_MODE: "api_key",
+      MEMORY_API_KEYS_JSON: apiKeysJson,
+      SANDBOX_ENABLED: "false",
+    },
+    () => {
+      assert.throws(
+        () => loadEnv(),
+        /AIONIS_AUTHORITY_RECEIPT_HMAC_ACTIVE_KEY_ID.*APP_ENV=prod/i,
       );
     },
   );

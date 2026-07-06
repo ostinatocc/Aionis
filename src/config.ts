@@ -1,6 +1,12 @@
 import { isIP } from "node:net";
 import { z } from "zod";
 import { parseEmbeddingEnabledSurfacesJson } from "./embeddings/surface-policy.js";
+import {
+  AUTHORITY_RECEIPT_HMAC_ACTIVE_KEY_ID_ENV,
+  AUTHORITY_RECEIPT_HMAC_KEYS_JSON_ENV,
+  AUTHORITY_RECEIPT_HMAC_SECRET_ENV,
+  resolveAuthorityReceiptKeyring,
+} from "./util/authority-receipt-keys.js";
 import { parseTrustedProxyCidrs } from "./util/ip-guard.js";
 
 const RuntimeModeSchema = z.enum(["local", "service", "cloud"]);
@@ -157,6 +163,9 @@ const EnvSchema = z.object({
   AIONIS_INSPECT_BEFORE_USE_MODE: InspectBeforeUseModeSchema.default("shadow"),
   AIONIS_ADMISSION_CANDIDATE_POLICY_MODE: AdmissionCandidatePolicyModeSchema.default("off"),
   AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON: z.string().default("[]"),
+  AIONIS_AUTHORITY_RECEIPT_HMAC_ACTIVE_KEY_ID: z.string().default(""),
+  AIONIS_AUTHORITY_RECEIPT_HMAC_KEYS_JSON: z.string().default(""),
+  AIONIS_AUTHORITY_RECEIPT_HMAC_SECRET: z.string().default(""),
   APP_ENV: z.enum(["dev", "ci", "prod"]).default("dev"),
   AIONIS_LISTEN_HOST: z.string().default(""),
   AIONIS_ALLOW_UNAUTHENTICATED_REMOTE: z
@@ -229,6 +238,7 @@ const EnvSchema = z.object({
     .default("")
     .transform((v) => parseEmbeddingEnabledSurfacesJson(v)),
   EMBEDDING_DIM: z.coerce.number().int().positive().default(1536),
+  LITE_INLINE_EMBEDDING_TIMEOUT_MS: z.coerce.number().int().positive().max(60_000).default(12_000),
   ADMIN_TOKEN: z.string().optional(),
   RATE_LIMIT_ENABLED: z
     .string()
@@ -763,6 +773,29 @@ function validateEditionPosture(env: Env): void {
   }
 }
 
+function validateAuthorityReceiptKeyringPosture(env: Env): void {
+  const keyring = resolveAuthorityReceiptKeyring(env);
+  if (env.APP_ENV !== "prod") return;
+
+  if (!keyring.configured || keyring.ephemeral) {
+    throw new Error(
+      `${AUTHORITY_RECEIPT_HMAC_ACTIVE_KEY_ID_ENV} and ${AUTHORITY_RECEIPT_HMAC_KEYS_JSON_ENV} or ${AUTHORITY_RECEIPT_HMAC_SECRET_ENV} are required when APP_ENV=prod`,
+    );
+  }
+  if (env.AIONIS_AUTHORITY_RECEIPT_HMAC_ACTIVE_KEY_ID.trim().length === 0) {
+    throw new Error(`${AUTHORITY_RECEIPT_HMAC_ACTIVE_KEY_ID_ENV} is required when APP_ENV=prod`);
+  }
+  const activeKey = keyring.keys.get(keyring.activeKeyId);
+  if (!activeKey || activeKey.length < 32) {
+    throw new Error(`${AUTHORITY_RECEIPT_HMAC_ACTIVE_KEY_ID_ENV} must reference a secret of at least 32 bytes when APP_ENV=prod`);
+  }
+  for (const [keyId, secret] of keyring.keys.entries()) {
+    if (secret.length < 32) {
+      throw new Error(`${AUTHORITY_RECEIPT_HMAC_KEYS_JSON_ENV}.${keyId} must be at least 32 bytes when APP_ENV=prod`);
+    }
+  }
+}
+
 export function loadEnv(): Env {
   const modeApplied = withModeDefaults(process.env);
   const editionApplied = withEditionDefaults(modeApplied);
@@ -779,6 +812,7 @@ export function loadEnv(): Env {
   if (parsed.data.AIONIS_EDITION === "lite" && parsed.data.APP_ENV === "prod") {
     throw new Error("Lite runtime does not currently support APP_ENV=prod; use APP_ENV=dev/ci.");
   }
+  resolveAuthorityReceiptKeyring(parsed.data);
   if (
     parsed.data.AIONIS_EDITION === "lite"
     && parsed.data.MEMORY_AUTH_MODE === "off"
@@ -1071,6 +1105,7 @@ export function loadEnv(): Env {
         );
       }
     }
+    validateAuthorityReceiptKeyringPosture(parsed.data);
   }
   return parsed.data;
 }

@@ -12,6 +12,10 @@ import {
   type ExecutionTreeStateV1,
   type ExecutionTreeV1,
 } from "./tree.js";
+import {
+  classifyExecutionOutcomeFromSlots,
+  type ExecutionOutcomeClass,
+} from "./outcome-classifier.js";
 import type { ExecutionTreeStore } from "./tree-store.js";
 
 const NodeType = z.enum(["event", "entity", "topic", "rule", "evidence", "concept", "procedure", "self_model"]);
@@ -80,7 +84,7 @@ type MemoryNodeDTO = {
   confidence?: number;
 };
 
-type OutcomeClass = "passed" | "failed" | "unknown";
+type OutcomeClass = ExecutionOutcomeClass;
 
 type RawEvidenceEntry = {
   source: "execution_tree_raw" | "memory";
@@ -94,6 +98,7 @@ type RawEvidenceEntry = {
   observation?: string | null;
   status?: string | null;
   outcome?: OutcomeClass;
+  conflict?: boolean;
   refs: string[];
   raw_ref?: string | null;
   evidence_ref?: string | null;
@@ -181,52 +186,6 @@ function uniqueStrings(values: Array<string | null | undefined>, max: number): s
     if (out.length >= max) break;
   }
   return out;
-}
-
-function classifyOutcomeText(text: string | null): OutcomeClass {
-  if (!text) return "unknown";
-  const normalized = text.toLowerCase();
-  const negatedFailure =
-    /\bnot\s+(?:failed|failing|failure)\b/.test(normalized)
-    || /\bno\s+(?:known\s+)?(?:failure|failures|failed|failing|error|errors|regression|regressions|blocker|blockers)\b/.test(normalized)
-    || /\bwithout\s+(?:failure|failures|error|errors|regression|regressions)\b/.test(normalized)
-    || /\b(?:failed|failing|failure|failures|error|errors)\s*[:=]\s*(?:false|no|0)\b/.test(normalized);
-  const negatedSuccess =
-    /\bnot\s+(?:passed|passing|accepted|valid|verified|successful|success|succeeded|resolved|fixed)\b/.test(normalized)
-    || /\bno\s+(?:success|accepted|valid|verified|resolution|fix)\b/.test(normalized);
-  const hasSuccess =
-    /\b(?:passed|passing|accepted|valid|verified|successful|success|succeeded|resolved|fixed|completed|ok)\b/.test(normalized);
-  const hasFailure =
-    /\b(?:failed|failing|failure|failures|error|errors|wrong|invalid|rejected|blocked|blocker|blockers|regression|regressions|timeout|crash|crashed)\b/.test(normalized);
-
-  if (hasSuccess && !negatedSuccess) return "passed";
-  if (hasFailure && !negatedFailure) return "failed";
-  return "unknown";
-}
-
-function classifyExecutionOutcome(slots: unknown): OutcomeClass {
-  const slotRecord = asRecord(slots);
-  if (!slotRecord) return "unknown";
-  const result = asRecord(slotRecord.execution_result_summary);
-  if (!result) return "unknown";
-
-  for (const key of ["passed", "success", "ok", "validated", "failed", "failure"] as const) {
-    const value = result[key];
-    if (typeof value !== "boolean") continue;
-    if (key === "failed" || key === "failure") return value ? "failed" : "unknown";
-    if (value) return "passed";
-  }
-
-  for (const key of ["status", "outcome", "result", "verdict", "state"] as const) {
-    const classified = classifyOutcomeText(stringValue(result[key]));
-    if (classified !== "unknown") return classified;
-  }
-
-  for (const key of ["summary", "message", "diagnostic_note", "diagnostic", "notes"] as const) {
-    const classified = classifyOutcomeText(stringValue(result[key]));
-    if (classified !== "unknown") return classified;
-  }
-  return "unknown";
 }
 
 function evidenceSummary(node: MemoryNodeDTO, budget: Budget): string | null {
@@ -761,7 +720,8 @@ function buildMemoryEvidence(args: {
   const supporting = [];
   const consolidationGuardBlockedNodeIds: string[] = [];
   for (const node of args.nodes) {
-    const outcome = classifyExecutionOutcome(node.slots);
+    const outcomeClassification = classifyExecutionOutcomeFromSlots(node.slots);
+    const outcome = outcomeClassification.outcome;
     const rehydrationRefs = memoryRehydrationRefs(node);
     const sourceEvidenceRefs = memorySourceEvidenceRefs(node);
     const hasExecutionOutcome = outcome !== "unknown";
@@ -777,6 +737,7 @@ function buildMemoryEvidence(args: {
       title: node.title,
       summary: evidenceSummary(node, args.budget),
       outcome,
+      conflict: outcomeClassification.conflict,
       confidence: node.confidence ?? null,
       created_at: node.created_at ?? null,
       rehydration_refs: rehydrationRefs,
@@ -902,6 +863,7 @@ function rawEvidenceFromTreeAndMemory(args: {
     if (node.type !== "event" && node.type !== "evidence" && refs.length === 0) continue;
     const slots = asRecord(node.slots);
     const result = asRecord(slots?.execution_result_summary);
+    const outcomeClassification = classifyExecutionOutcomeFromSlots(node.slots);
     remember({
       source: "memory",
       node_id: node.id,
@@ -909,7 +871,8 @@ function rawEvidenceFromTreeAndMemory(args: {
       type: node.type,
       title: node.title,
       summary: firstString(result?.summary, result?.solution_summary, result?.message, node.text_summary),
-      outcome: classifyExecutionOutcome(node.slots),
+      outcome: outcomeClassification.outcome,
+      conflict: outcomeClassification.conflict,
       refs,
       raw_ref: node.raw_ref ?? null,
       evidence_ref: node.evidence_ref ?? null,

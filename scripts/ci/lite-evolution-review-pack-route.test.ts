@@ -6,6 +6,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
+import { sealAuthorityReceiptsForPreparedWrite } from "./authority-fixture-helpers.ts";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { buildPolicyLearningControlContract } from "../../src/memory/evolution-inspect.ts";
@@ -357,6 +358,7 @@ async function seedEvolutionFixture(dbPath: string) {
     },
     null,
   );
+  sealAuthorityReceiptsForPreparedWrite(prepared);
   await liteWriteStore.withTx(() =>
     applyMemoryWrite(prepared, {
       maxTextLen: 10000,
@@ -656,7 +658,10 @@ test("memory evolution review-pack route exposes stable workflow and reviewer-fr
     const authoritySummary = (parsed.evolution_review_pack as any).authority_visibility_summary;
     assert.equal(authoritySummary.authoritative_blocked_count, 1);
     assert.equal(authoritySummary.execution_evidence_failed_count, 1);
-    assert.deepEqual(authoritySummary.top_blockers, ["execution_evidence:after_exit_revalidation_failed"]);
+    assert.deepEqual(authoritySummary.top_blockers, [
+      "execution_evidence:after_exit_revalidation_failed",
+      "outcome_contract:missing_verifiable_success_outcome",
+    ]);
     const authorityBlockers = (parsed.evolution_review_pack as any).authority_blockers as Array<Record<string, unknown>>;
     assert.equal(authorityBlockers.length, 1);
     assert.equal(authorityBlockers[0]?.primary_blocker, "execution_evidence:after_exit_revalidation_failed");

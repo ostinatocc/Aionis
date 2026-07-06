@@ -55,6 +55,7 @@ test("admission production gate passes the default-guide shadow expansion gate",
   assert.equal(report.checks.enough_rows, true);
   assert.equal(report.checks.enough_task_signatures, true);
   assert.equal(report.checks.enough_scopes, true);
+  assert.equal(report.checks.input_integrity_pass, true);
   assert.equal(report.checks.shadow_projection_present, true);
   assert.equal(report.checks.shadow_mode, true);
   assert.equal(report.checks.no_prompt_inclusion, true);
@@ -67,6 +68,51 @@ test("admission production gate passes the default-guide shadow expansion gate",
   assert.deepEqual(report.decision.blocking_reasons, [
     "default_active_still_requires_cross_repository_tool_e2e_gate",
   ]);
+  assert.ok(report.input_integrity.trusted_zero_count_fields.some((field) => field.endsWith(".runtime_mutation_count")));
+});
+
+test("admission production gate blocks missing required zero-count fields", () => {
+  const batch = shadowBatchCollect();
+  const projection = batch.admission_candidate_policy_online_projection as Record<string, unknown>;
+  delete projection.runtime_mutation_count;
+  const report = evaluateAdmissionProductionGateJsonl(FIXTURE_JSONL, {
+    thresholds: {
+      min_rows: 400,
+      min_task_signatures: 12,
+      min_scopes: 12,
+      min_projection_present_count: 400,
+    },
+    batch_collect: batch,
+    candidate_policy: candidatePolicyReport(),
+  });
+
+  assert.equal(report.checks.input_integrity_pass, false);
+  assert.equal(report.checks.no_runtime_mutation, false);
+  assert.equal(report.decision.eligible_for_isolated_active_gray_review, false);
+  assert.ok(report.input_integrity.missing_required_fields.some((field) => field.endsWith(".runtime_mutation_count")));
+  assert.ok(report.decision.blocking_reasons.includes("missing_required_input_fields"));
+  assert.ok(report.decision.blocking_reasons.includes("shadow_projection_mutated_runtime"));
+});
+
+test("admission production gate blocks invalid required zero-count fields", () => {
+  const report = evaluateAdmissionProductionGateJsonl(FIXTURE_JSONL, {
+    thresholds: {
+      min_rows: 400,
+      min_task_signatures: 12,
+      min_scopes: 12,
+      min_projection_present_count: 400,
+    },
+    batch_collect: shadowBatchCollect({
+      runtime_mutation_count: -1,
+    }),
+    candidate_policy: candidatePolicyReport(),
+  });
+
+  assert.equal(report.checks.input_integrity_pass, false);
+  assert.equal(report.checks.no_runtime_mutation, false);
+  assert.equal(report.decision.eligible_for_isolated_active_gray_review, false);
+  assert.ok(report.input_integrity.invalid_required_fields.some((field) => field.endsWith(".runtime_mutation_count")));
+  assert.ok(report.decision.blocking_reasons.includes("invalid_required_input_fields"));
 });
 
 test("admission production gate blocks shadow runs that enter prompt or upgrade boundaries", () => {

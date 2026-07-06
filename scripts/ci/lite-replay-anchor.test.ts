@@ -13,6 +13,9 @@ import {
   replayStepAfter,
   replayStepBefore,
 } from "../../src/memory/replay.ts";
+import { buildRuntimeAuthorityGate } from "../../src/memory/authority-gate.ts";
+import { issueRuntimeAuthorityReceiptForNode } from "../../src/memory/authority-receipt.ts";
+import { ExecutionContractV1Schema } from "../../src/memory/execution-contract.ts";
 import { buildExecutionMemoryIntrospectionLite } from "../../src/memory/execution-introspection.ts";
 import { applyReplayMemoryWrite } from "../../src/memory/replay-write.ts";
 import { memoryRecallParsed } from "../../src/memory/recall.ts";
@@ -46,6 +49,72 @@ function authoritativeReplaySlotOverrides(label: string): Record<string, unknown
       evidence_refs: [`test:${label}:explicit-execution-evidence`],
     },
   };
+}
+
+function sealStableWorkflowFixtureAuthority(prepared: Awaited<ReturnType<typeof prepareMemoryWrite>>, clientId: string): void {
+  const node = prepared.nodes.find((entry) => entry.client_id === clientId);
+  assert.ok(node, `fixture node ${clientId} must exist`);
+  const executionContract = ExecutionContractV1Schema.parse({
+    schema_version: "execution_contract_v1",
+    contract_trust: "advisory",
+    task_family: "replay_export_repair",
+    task_signature: "workflow-validation-recovery-node-tests",
+    workflow_signature: "replay-learning-candidate-export-fix",
+    policy_memory_id: null,
+    selected_tool: null,
+    file_path: null,
+    target_files: [],
+    next_action: "Reuse the stable replay workflow when task and workflow signatures match.",
+    workflow_steps: [],
+    pattern_hints: [],
+    service_lifecycle_constraints: [],
+    outcome: {
+      acceptance_checks: ["deterministic replay anchor fixture"],
+      success_invariants: ["stable workflow fixture is recallable"],
+      dependency_requirements: [],
+      environment_assumptions: [],
+      must_hold_after_exit: [],
+      external_visibility_requirements: [],
+    },
+    provenance: {
+      source_kind: "workflow_projection",
+      source_summary_version: "lite-replay-anchor-test",
+      source_anchor: clientId,
+      evidence_refs: ["test:stable-workflow-fixture"],
+      notes: ["stable workflow fixture authority receipt"],
+    },
+  });
+  const executionEvidence = {
+    schema_version: "execution_evidence_v1",
+    validation_passed: true,
+    validation_boundary: "runtime_orchestrator",
+    evidence_refs: ["test:stable-workflow-fixture"],
+  };
+  const slots = {
+    ...node.slots,
+    execution_contract_v1: executionContract,
+    execution_evidence_v1: executionEvidence,
+  };
+  const authority = buildRuntimeAuthorityGate({
+    executionContract,
+    requestedTrust: "advisory",
+    slots,
+    evidence: executionEvidence,
+  });
+  node.slots = {
+    ...slots,
+    outcome_contract_gate: authority.outcomeContractGate,
+    execution_evidence_assessment: authority.executionEvidenceAssessment,
+    authority_gate_v1: authority.authorityGate,
+  };
+  const receipt = issueRuntimeAuthorityReceiptForNode({
+    node,
+    slots: node.slots,
+    authorityGate: authority.authorityGate,
+    issuedAt: "2026-03-20T00:00:00.000Z",
+  });
+  assert.ok(receipt, "stable workflow fixture must produce an authority receipt");
+  node.slots.authority_receipt_v1 = receipt;
 }
 
 async function seedDraftPlaybook(args: {
@@ -937,18 +1006,17 @@ test("planning recall treats execution_native_v1 workflow procedures as action m
           },
         ],
         edges: [],
-      },
-      "default",
-      "default",
-      {
-        maxTextLen: 10000,
-        piiRedaction: false,
-        allowCrossScopeEdges: false,
-      },
-      null,
-    );
-
-    const writeOut = await liteWriteStore.withTx(() =>
+        },
+        "default",
+        "default",
+        {
+          maxTextLen: 10000,
+          piiRedaction: false,
+          allowCrossScopeEdges: false,
+        },
+        null,
+      );
+      const writeOut = await liteWriteStore.withTx(() =>
       applyMemoryWrite(prepared, {
         maxTextLen: 10000,
         piiRedaction: false,
@@ -1058,15 +1126,14 @@ test("planning recall surfaces execution_native_v1 workflow candidates separatel
       },
       "default",
       "default",
-      {
-        maxTextLen: 10000,
-        piiRedaction: false,
-        allowCrossScopeEdges: false,
-      },
-      null,
-    );
-
-    const writeOut = await liteWriteStore.withTx(() =>
+        {
+          maxTextLen: 10000,
+          piiRedaction: false,
+          allowCrossScopeEdges: false,
+        },
+        null,
+      );
+      const writeOut = await liteWriteStore.withTx(() =>
       applyMemoryWrite(prepared, {
         maxTextLen: 10000,
         piiRedaction: false,
@@ -1210,15 +1277,14 @@ test("planning recall prioritizes promotion-ready workflow candidates ahead of n
       },
       "default",
       "default",
-      {
-        maxTextLen: 10000,
-        piiRedaction: false,
-        allowCrossScopeEdges: false,
-      },
-      null,
-    );
-
-    const writeOut = await liteWriteStore.withTx(() =>
+        {
+          maxTextLen: 10000,
+          piiRedaction: false,
+          allowCrossScopeEdges: false,
+        },
+        null,
+      );
+      const writeOut = await liteWriteStore.withTx(() =>
       applyMemoryWrite(prepared, {
         maxTextLen: 10000,
         piiRedaction: false,
@@ -1321,9 +1387,9 @@ test("planning recall suppresses candidate workflows when a stable workflow with
               },
             },
           },
-          {
-            client_id: "event:workflow-candidate-duplicate",
-            type: "event",
+            {
+              client_id: "event:workflow-candidate-duplicate",
+              type: "event",
             title: "Replay Episode: Recover workflow validation failure",
             text_summary: "Replay repair learning episode for validation failure",
             embedding: sharedEmbedding,
@@ -1361,18 +1427,19 @@ test("planning recall suppresses candidate workflows when a stable workflow with
           },
         ],
         edges: [],
-      },
-      "default",
-      "default",
-      {
-        maxTextLen: 10000,
-        piiRedaction: false,
-        allowCrossScopeEdges: false,
-      },
-      null,
-    );
+        },
+        "default",
+        "default",
+        {
+          maxTextLen: 10000,
+          piiRedaction: false,
+          allowCrossScopeEdges: false,
+        },
+        null,
+      );
+    sealStableWorkflowFixtureAuthority(prepared, "procedure:workflow-stable");
 
-    const writeOut = await liteWriteStore.withTx(() =>
+      const writeOut = await liteWriteStore.withTx(() =>
       applyMemoryWrite(prepared, {
         maxTextLen: 10000,
         piiRedaction: false,

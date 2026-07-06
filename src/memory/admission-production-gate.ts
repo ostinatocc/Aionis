@@ -16,6 +16,13 @@ export type AionisAdmissionProductionGateInput = {
   candidate_policy?: unknown;
 };
 
+export type AionisAdmissionGateInputIntegrity = {
+  missing_required_fields: string[];
+  invalid_required_fields: string[];
+  missing_optional_fields: string[];
+  trusted_zero_count_fields: string[];
+};
+
 export type AionisAdmissionProductionGateReport = {
   contract_version: "aionis_admission_production_gate_report_v1";
   intended_use: "closed_loop_admission_policy_promotion_gate";
@@ -29,6 +36,7 @@ export type AionisAdmissionProductionGateReport = {
     task_signature_count: number;
     scope_count: number;
   };
+  input_integrity: AionisAdmissionGateInputIntegrity;
   online_projection: {
     report_present: boolean;
     mode: string | null;
@@ -53,6 +61,7 @@ export type AionisAdmissionProductionGateReport = {
     changed_actions_on_holdout: boolean | null;
   };
   checks: {
+    input_integrity_pass: boolean;
     enough_rows: boolean;
     enough_task_signatures: boolean;
     enough_scopes: boolean;
@@ -136,24 +145,145 @@ function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [value];
 }
 
-function onlineProjectionFromBatch(batchCollect: unknown): Omit<AionisAdmissionProductionGateReport["online_projection"], "report_present"> | null {
-  const batch = recordValue(batchCollect);
-  const projection = nestedRecord(batch, "admission_candidate_policy_online_projection");
-  if (!projection) return null;
+function createInputIntegrity(): AionisAdmissionGateInputIntegrity {
   return {
-    mode: stringValue(projection?.mode),
-    guide_count: numberValue(projection?.guide_count),
-    projection_present_count: numberValue(projection?.projection_present_count),
-    agent_prompt_included_count: numberValue(projection?.agent_prompt_included_count),
-    runtime_mutation_count: numberValue(projection?.runtime_mutation_count),
-    hard_boundary_upgrade_count: numberValue(projection?.hard_boundary_upgrade_count),
-    shadow_projection_source_count: numberValue(projection?.shadow_projection_source_count),
-    active_projection_source_count: numberValue(projection?.active_projection_source_count),
+    missing_required_fields: [],
+    invalid_required_fields: [],
+    missing_optional_fields: [],
+    trusted_zero_count_fields: [],
   };
 }
 
-function onlineProjectionSummary(batchCollect: unknown): AionisAdmissionProductionGateReport["online_projection"] {
-  const projections = asArray(batchCollect).map(onlineProjectionFromBatch).filter((entry): entry is NonNullable<typeof entry> => !!entry);
+function pushUnique(list: string[], value: string): void {
+  if (!list.includes(value)) list.push(value);
+}
+
+function inputIntegrityPass(integrity: AionisAdmissionGateInputIntegrity): boolean {
+  return integrity.missing_required_fields.length === 0 && integrity.invalid_required_fields.length === 0;
+}
+
+function fieldIntegrityPass(integrity: AionisAdmissionGateInputIntegrity, field: string): boolean {
+  return !integrity.missing_required_fields.some((entry) => entry.endsWith(`.${field}`))
+    && !integrity.invalid_required_fields.some((entry) => entry.endsWith(`.${field}`));
+}
+
+function requiredStringField(
+  record: Record<string, unknown>,
+  field: string,
+  path: string,
+  integrity: AionisAdmissionGateInputIntegrity,
+): string | null {
+  if (!Object.prototype.hasOwnProperty.call(record, field)) {
+    pushUnique(integrity.missing_required_fields, path);
+    return null;
+  }
+  const value = stringValue(record[field]);
+  if (!value) {
+    pushUnique(integrity.invalid_required_fields, path);
+    return null;
+  }
+  return value;
+}
+
+function requiredNonNegativeInteger(
+  record: Record<string, unknown>,
+  field: string,
+  path: string,
+  integrity: AionisAdmissionGateInputIntegrity,
+  trackTrustedZero = false,
+): number {
+  if (!Object.prototype.hasOwnProperty.call(record, field)) {
+    pushUnique(integrity.missing_required_fields, path);
+    return 0;
+  }
+  const value = record[field];
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || !Number.isInteger(value)) {
+    pushUnique(integrity.invalid_required_fields, path);
+    return 0;
+  }
+  if (trackTrustedZero && value === 0) pushUnique(integrity.trusted_zero_count_fields, path);
+  return value;
+}
+
+function optionalNonNegativeInteger(
+  record: Record<string, unknown>,
+  field: string,
+  path: string,
+  integrity: AionisAdmissionGateInputIntegrity,
+): number {
+  if (!Object.prototype.hasOwnProperty.call(record, field)) {
+    pushUnique(integrity.missing_optional_fields, path);
+    return 0;
+  }
+  const value = record[field];
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || !Number.isInteger(value)) {
+    pushUnique(integrity.missing_optional_fields, path);
+    return 0;
+  }
+  return value;
+}
+
+function onlineProjectionFromBatch(
+  batchCollect: unknown,
+  index: number,
+  integrity: AionisAdmissionGateInputIntegrity,
+): Omit<AionisAdmissionProductionGateReport["online_projection"], "report_present"> | null {
+  const batch = recordValue(batchCollect);
+  const projection = nestedRecord(batch, "admission_candidate_policy_online_projection");
+  if (!projection) return null;
+  const path = `batch_collect[${index}].admission_candidate_policy_online_projection`;
+  return {
+    mode: requiredStringField(projection, "mode", `${path}.mode`, integrity),
+    guide_count: requiredNonNegativeInteger(projection, "guide_count", `${path}.guide_count`, integrity),
+    projection_present_count: requiredNonNegativeInteger(
+      projection,
+      "projection_present_count",
+      `${path}.projection_present_count`,
+      integrity,
+    ),
+    agent_prompt_included_count: requiredNonNegativeInteger(
+      projection,
+      "agent_prompt_included_count",
+      `${path}.agent_prompt_included_count`,
+      integrity,
+      true,
+    ),
+    runtime_mutation_count: requiredNonNegativeInteger(
+      projection,
+      "runtime_mutation_count",
+      `${path}.runtime_mutation_count`,
+      integrity,
+      true,
+    ),
+    hard_boundary_upgrade_count: requiredNonNegativeInteger(
+      projection,
+      "hard_boundary_upgrade_count",
+      `${path}.hard_boundary_upgrade_count`,
+      integrity,
+      true,
+    ),
+    shadow_projection_source_count: optionalNonNegativeInteger(
+      projection,
+      "shadow_projection_source_count",
+      `${path}.shadow_projection_source_count`,
+      integrity,
+    ),
+    active_projection_source_count: optionalNonNegativeInteger(
+      projection,
+      "active_projection_source_count",
+      `${path}.active_projection_source_count`,
+      integrity,
+    ),
+  };
+}
+
+function onlineProjectionSummary(
+  batchCollect: unknown,
+  integrity: AionisAdmissionGateInputIntegrity,
+): AionisAdmissionProductionGateReport["online_projection"] {
+  const projections = asArray(batchCollect)
+    .map((entry, index) => onlineProjectionFromBatch(entry, index, integrity))
+    .filter((entry): entry is NonNullable<typeof entry> => !!entry);
   const modes = new Set(projections.map((entry) => entry.mode ?? "(missing)"));
   return {
     report_present: projections.length > 0,
@@ -189,8 +319,13 @@ function candidatePolicySummary(candidatePolicy: unknown): AionisAdmissionProduc
   };
 }
 
-function blockingReasons(checks: AionisAdmissionProductionGateReport["checks"]): string[] {
+function blockingReasons(
+  checks: AionisAdmissionProductionGateReport["checks"],
+  integrity: AionisAdmissionGateInputIntegrity,
+): string[] {
   const reasons: string[] = [];
+  if (integrity.missing_required_fields.length > 0) reasons.push("missing_required_input_fields");
+  if (integrity.invalid_required_fields.length > 0) reasons.push("invalid_required_input_fields");
   if (!checks.enough_rows) reasons.push("collect_more_rows");
   if (!checks.enough_task_signatures) reasons.push("collect_more_task_signatures");
   if (!checks.enough_scopes) reasons.push("collect_more_scopes");
@@ -223,20 +358,28 @@ export function evaluateAdmissionProductionGate(
     task_signature_count: uniqueStringCount(rows, "task_signature"),
     scope_count: uniqueStringCount(rows, "scope"),
   };
-  const onlineProjection = onlineProjectionSummary(input.batch_collect);
+  const inputIntegrity = createInputIntegrity();
+  const onlineProjection = onlineProjectionSummary(input.batch_collect, inputIntegrity);
   const candidatePolicy = candidatePolicySummary(input.candidate_policy);
+  const integrityPass = inputIntegrityPass(inputIntegrity);
   const checks = {
+    input_integrity_pass: integrityPass,
     enough_rows: dataset.row_count >= thresholds.min_rows,
     enough_task_signatures: dataset.task_signature_count >= thresholds.min_task_signatures,
     enough_scopes: dataset.scope_count >= thresholds.min_scopes,
     shadow_projection_report_present: onlineProjection.report_present,
-    enough_shadow_projection_coverage: onlineProjection.projection_present_count >= thresholds.min_projection_present_count,
+    enough_shadow_projection_coverage: fieldIntegrityPass(inputIntegrity, "projection_present_count")
+      && onlineProjection.projection_present_count >= thresholds.min_projection_present_count,
     shadow_projection_present: onlineProjection.report_present
+      && fieldIntegrityPass(inputIntegrity, "projection_present_count")
       && onlineProjection.projection_present_count >= thresholds.min_projection_present_count,
     shadow_mode: onlineProjection.mode === "shadow",
-    no_prompt_inclusion: onlineProjection.agent_prompt_included_count === 0,
-    no_runtime_mutation: onlineProjection.runtime_mutation_count === 0,
-    no_hard_boundary_upgrade: onlineProjection.hard_boundary_upgrade_count === 0,
+    no_prompt_inclusion: fieldIntegrityPass(inputIntegrity, "agent_prompt_included_count")
+      && onlineProjection.agent_prompt_included_count === 0,
+    no_runtime_mutation: fieldIntegrityPass(inputIntegrity, "runtime_mutation_count")
+      && onlineProjection.runtime_mutation_count === 0,
+    no_hard_boundary_upgrade: fieldIntegrityPass(inputIntegrity, "hard_boundary_upgrade_count")
+      && onlineProjection.hard_boundary_upgrade_count === 0,
     candidate_policy_selected: candidatePolicy.selected_policy_id === "candidate_project_context_closed_loop_inspect",
     candidate_policy_manual_review_eligible: candidatePolicy.eligible_for_manual_review === true,
     candidate_policy_no_hard_boundary_regression: candidatePolicy.no_hard_boundary_regression === true,
@@ -245,7 +388,7 @@ export function evaluateAdmissionProductionGate(
     candidate_policy_calibration_improved: candidatePolicy.calibration_score_improved === true,
     candidate_policy_changed_actions: candidatePolicy.changed_actions_on_holdout === true,
   };
-  const reasons = blockingReasons(checks);
+  const reasons = blockingReasons(checks, inputIntegrity);
   const eligibleForActiveGray = reasons.length === 0;
   const status = eligibleForActiveGray
     ? "passes_shadow_production_gate_ready_for_isolated_active_gray_review"
@@ -258,6 +401,7 @@ export function evaluateAdmissionProductionGate(
     gate_scope: "default_guide_shadow_expansion",
     thresholds,
     dataset,
+    input_integrity: inputIntegrity,
     online_projection: onlineProjection,
     candidate_policy: candidatePolicy,
     checks,
@@ -289,6 +433,10 @@ function bool(value: boolean): string {
   return value ? "yes" : "no";
 }
 
+function listValue(values: string[]): string {
+  return values.length > 0 ? values.map((value) => `\`${value}\``).join(", ") : "none";
+}
+
 export function formatAdmissionProductionGateMarkdown(report: AionisAdmissionProductionGateReport): string {
   return [
     "# Aionis Admission Production Gate",
@@ -303,6 +451,16 @@ export function formatAdmissionProductionGateMarkdown(report: AionisAdmissionPro
     `| Task signatures | ${report.dataset.task_signature_count} | ${report.thresholds.min_task_signatures} |`,
     `| Scopes | ${report.dataset.scope_count} | ${report.thresholds.min_scopes} |`,
     `| Runs | ${report.dataset.run_count} | - |`,
+    "",
+    "## Input Integrity",
+    "",
+    "| Check | Value |",
+    "|---|---|",
+    `| Pass | ${bool(report.checks.input_integrity_pass)} |`,
+    `| Missing required fields | ${listValue(report.input_integrity.missing_required_fields)} |`,
+    `| Invalid required fields | ${listValue(report.input_integrity.invalid_required_fields)} |`,
+    `| Missing optional fields | ${listValue(report.input_integrity.missing_optional_fields)} |`,
+    `| Trusted zero count fields | ${listValue(report.input_integrity.trusted_zero_count_fields)} |`,
     "",
     "## Online Shadow Projection",
     "",

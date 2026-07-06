@@ -13,6 +13,7 @@ import {
 } from "./tree.js";
 import type { ExecutionTreeStore } from "./tree-store.js";
 import { buildExecutionPacketV1 } from "./packet.js";
+import { classifyExecutionOutcomeRecord } from "./outcome-classifier.js";
 import { stableJson } from "../util/stable-json.js";
 
 export type AutoExecutionTreeApplyResult = {
@@ -257,34 +258,9 @@ function hasCompressionSignal(source: AutoExecutionTreeSource): boolean {
     || stringList(source.state?.completed_validations).length > 0;
 }
 
-function classifyOutcomeText(value: string): "passed" | "failed" | null {
-  const statusText = value.toLowerCase();
-  const failed = /\b(failed|failure|failures|error|errors|errored|blocked|rejected|invalid|unsuccessful)\b/.test(statusText);
-  const passed = /\b(passed|pass|success|successful|succeeded|ok|complete|completed|accepted)\b/.test(statusText);
-  const negatedFailure =
-    /\b(not|no|without|never)\s+(failed|failure|failures|error|errors|errored|blocked|rejected|invalid|unsuccessful)\b/.test(statusText)
-    || /\b(failed|failure|failures|error|errors|errored|blocked|rejected|invalid|unsuccessful)\s+(not|never)\s+(observed|found|detected|present)\b/.test(statusText);
-  const negatedSuccess =
-    /\b(not|no|without|never)\s+(passed|pass|success|successful|succeeded|ok|complete|completed|accepted)\b/.test(statusText)
-    || /\b(passed|pass|success|successful|succeeded|ok|complete|completed|accepted)\s+(not|never)\s+(observed|found|detected|present)\b/.test(statusText);
-  if (failed && !negatedFailure) return "failed";
-  if (passed && !negatedSuccess) return "passed";
-  return null;
-}
-
 function readOutcomeFromRecord(record: Record<string, unknown> | null): "passed" | "failed" | null {
-  if (!record) return null;
-  const statusText = firstString(record.status, record.outcome, record.result, record.verdict, record.state)?.toLowerCase() ?? "";
-  const textOutcome = statusText ? classifyOutcomeText(statusText) : null;
-  if (textOutcome) return textOutcome;
-  for (const [key, value] of Object.entries(record)) {
-    const normalizedKey = key.toLowerCase();
-    if (typeof value !== "boolean") continue;
-    if (normalizedKey.includes("passed") || normalizedKey.includes("success") || normalizedKey === "ok") {
-      return value ? "passed" : "failed";
-    }
-  }
-  return null;
+  const outcome = classifyExecutionOutcomeRecord(record).outcome;
+  return outcome === "unknown" ? null : outcome;
 }
 
 function deriveOutcome(source: AutoExecutionTreeSource): "passed" | "failed" | null {

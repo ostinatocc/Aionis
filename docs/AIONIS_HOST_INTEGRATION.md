@@ -22,6 +22,29 @@ Use the right deployment posture before wiring an Agent host:
 | `server` | Remote SDK/MCP clients connecting to a managed endpoint | Requires `AIONIS_MODE=service` and authenticated access with `api_key`, `jwt`, or `api_key_or_jwt` unless an explicit development override is set. |
 | `cloud` | Future hosted packaging label | Reserved for future hosted packaging; this guide focuses on Lite and Server integration. |
 
+For `APP_ENV=prod`, Server also requires authority receipt HMAC key material.
+Use `AIONIS_AUTHORITY_RECEIPT_HMAC_ACTIVE_KEY_ID` for the signing key and
+`AIONIS_AUTHORITY_RECEIPT_HMAC_KEYS_JSON` as a keyring. During rotation, add the
+new key, switch the active key id, and keep the old key until existing
+authority receipts no longer need verification.
+
+The keyring is a Runtime/operator secret, not an Agent API key. It signs
+`authority_receipt_v1` after the Runtime has evaluated the authority gate, and
+write guards verify that receipt before accepting authority-bearing memory such
+as `contract_trust: "authoritative"` or stable promotions. Generate secrets
+outside the repository, keep them in the host secret manager, and use at least
+32 bytes of entropy. The Runtime allows an ephemeral key only outside
+production, so a Server process can run locally without provisioning key
+material while production remains fail-closed.
+
+Recommended rotation:
+
+1. Add the new key to `AIONIS_AUTHORITY_RECEIPT_HMAC_KEYS_JSON`.
+2. Point `AIONIS_AUTHORITY_RECEIPT_HMAC_ACTIVE_KEY_ID` at the new key.
+3. Deploy all Runtime instances with both old and new keys.
+4. Remove the old key only after old authority receipts no longer need to be
+   verified.
+
 ### Managed Server Hybrid Recall Check
 
 Server Edition keeps the same governance contract as Lite and exposes it to

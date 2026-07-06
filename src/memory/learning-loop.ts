@@ -43,6 +43,10 @@ import {
 } from "./node-execution-surface.js";
 import { applyPolicyMemoryLearningControlLite } from "./policy-memory.js";
 import { buildPromotionEvidenceLedgerV1 } from "./promotion-evidence-ledger.js";
+import {
+  runtimeAuthorityGateFromValue,
+  sealRuntimeAuthorityEffectReceipt,
+} from "./authority-effect-broker.js";
 import { applyPreparedMemoryWrite, prepareMemoryWrite } from "./write.js";
 import { resolveTenantScope } from "./tenant.js";
 import type { LiteFindNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
@@ -768,6 +772,21 @@ async function processWorkflowCandidate(args: {
     },
     null,
   );
+  const preparedStableNode = prepared.nodes[0];
+  const preparedAuthorityGate = preparedStableNode
+    ? runtimeAuthorityGateFromValue(preparedStableNode.slots.authority_gate_v1)
+    : null;
+  if (preparedStableNode && preparedAuthorityGate) {
+    sealRuntimeAuthorityEffectReceipt({
+      effectKind: "stable_workflow_projection",
+      node: preparedStableNode,
+      slots: preparedStableNode.slots,
+      authorityGate: preparedAuthorityGate,
+      issuedAt: args.now,
+      mutate: true,
+      requireAuthorityClaims: true,
+    });
+  }
   const out = await args.liteWriteStore.withTx(() =>
     applyPreparedMemoryWrite(args.liteWriteStore, prepared, {
       maxTextLen: args.opts.maxTextLen,

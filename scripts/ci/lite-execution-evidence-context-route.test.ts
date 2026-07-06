@@ -259,6 +259,22 @@ test("execution context assemble separates passed solutions, failed branches, an
         },
       },
       {
+        client_id: "conflict-branch-context-route",
+        type: "event",
+        title: "Conflict branch evidence",
+        text_summary: "CONFLICT_MEMORY_MARKER verifier found contradictory evidence.",
+        evidence_ref: "evidence://conflict-branch",
+        slots: {
+          task_signature: "execution-context-route",
+          execution_result_summary: {
+            status: "passed",
+            summary: "CONFLICT_MEMORY_MARKER passed wording but conflicts with canonical branch.",
+            diagnostic_note: "CONFLICT_MEMORY_MARKER conflict must remain counter-evidence.",
+            evidence_refs: ["trace://conflict-branch/verifier"],
+          },
+        },
+      },
+      {
         client_id: "negated-failure-boundary-context-route",
         type: "event",
         title: "Negated failure wording",
@@ -305,6 +321,11 @@ test("execution context assemble separates passed solutions, failed branches, an
   assert.match(failedSerialized, /FAILED_TREE_MARKER/);
   assert.match(failedSerialized, /trace:\/\/candidate-a\/raw/);
   assert.match(failedSerialized, /FAILED_MEMORY_MARKER/);
+  assert.match(failedSerialized, /CONFLICT_MEMORY_MARKER/);
+  assert.ok(body.failed_branches.some((entry: any) =>
+    entry.conflict === true
+    && String(entry.summary).includes("CONFLICT_MEMORY_MARKER")
+  ));
   assert.doesNotMatch(failedSerialized, /NEGATED_FAILURE_MARKER/);
   assert.match(body.prompt_text, /CURRENT_ACTIVE_PATH/);
   assert.match(body.prompt_text, /PASSED_SOLUTIONS/);

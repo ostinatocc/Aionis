@@ -16,11 +16,14 @@ import {
 import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
 import { buildAionisUri } from "../../src/memory/uri.ts";
 import { registerHandoffRoutes } from "../../src/routes/handoff.ts";
-import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
+import {
+  registerMemoryContextRuntimeRoutes,
+  type MemoryPlanningContextRouteService,
+} from "../../src/routes/memory-context-runtime.ts";
 import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
 import { registerMemoryFeedbackToolRoutes } from "../../src/routes/memory-feedback-tools.ts";
 import { registerLiteMemoryLifecycleRoutes } from "../../src/routes/memory-lifecycle-lite.ts";
-import { registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
+import { createMemoryWriteRouteService, registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
@@ -427,12 +430,16 @@ function registerProductFacade(args: {
   env: ReturnType<typeof liteEnv>;
   guards: ReturnType<typeof requestGuards>;
   liteWriteStore?: ReturnType<typeof createLiteWriteStore>;
+  memoryWriteService?: ReturnType<typeof createMemoryWriteRouteService> | null;
+  planningContextService?: MemoryPlanningContextRouteService | null;
   skillCandidateReviewAccess?: ReturnType<ReturnType<typeof createLiteSkillCandidateReviewStore>["createSkillCandidateReviewAccess"]>;
 }) {
   registerProductFacadeRoutes({
     app: args.app,
     env: args.env,
     liteWriteStore: args.liteWriteStore ?? ({} as ReturnType<typeof createLiteWriteStore>),
+    memoryWriteService: args.memoryWriteService,
+    planningContextService: args.planningContextService,
     skillCandidateReviewAccess: args.skillCandidateReviewAccess,
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
@@ -442,6 +449,151 @@ function registerProductFacade(args: {
     acquireInflightSlot: args.guards.acquireInflightSlot,
   });
 }
+
+test("product facade sanitizes failed internal route bodies", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env);
+  app.post("/v1/memory/write", async (_req, reply) => {
+    return reply.code(500).send({
+      error: "sqlite_internal_failure",
+      message: "SECRET_RUNTIME_STACK should never leave an internal product route",
+      details: {
+        internal_route: "/v1/memory/write",
+        stack: "Error: SECRET_RUNTIME_STACK\n    at internal.ts:1:1",
+      },
+    });
+  });
+  registerRuntimeErrorHandler(app);
+  registerProductFacade({ app, env, guards });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/v1/observe",
+    payload: {
+      tenant_id: "default",
+      scope: "default",
+      actor: "local-user",
+      input_text: "Trigger a product observe memory write.",
+    },
+  });
+  const body = response.json();
+
+  assert.equal(response.statusCode, 500);
+  assert.equal(body.error, "internal_route_failed");
+  assert.equal(body.message, "An internal product facade dependency failed.");
+  assert.equal(body.details.contract, "error_v1");
+  assert.equal(body.details.surface, "/v1/memory/write");
+  assert.equal(body.details.upstream_status, 500);
+  assert.equal(body.details.retryable, true);
+  assert.equal(response.payload.includes("SECRET_RUNTIME_STACK"), false);
+  assert.equal(response.payload.includes("sqlite_internal_failure"), false);
+  assertNoForbiddenProductFields(body);
+});
+
+test("product observe writes through direct memory write service when supplied", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const liteWriteStore = createLiteWriteStore(tmpDbPath("direct-product-observe-write"));
+  try {
+    app.post("/v1/memory/write", async (_req, reply) => {
+      return reply.code(500).send({
+        error: "fallback_route_used",
+        message: "product observe should not inject this route when direct service is available",
+      });
+    });
+    registerRuntimeErrorHandler(app);
+    registerProductFacade({
+      app,
+      env,
+      guards,
+      liteWriteStore,
+      memoryWriteService: createMemoryWriteRouteService({
+        env,
+        embedder: DeterministicEmbeddingProvider,
+        liteWriteStore,
+        executionStateStore: null,
+      }),
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        actor: "local-user",
+        input_text: "DIRECT_PRODUCT_OBSERVE_WRITE_MARKER",
+        auto_embed: false,
+      },
+    });
+    const body = response.json();
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.observed.memory_written, true);
+    assert.equal(body.memory_write.nodes.length, 1);
+    assert.match(response.payload, /direct_product_observe_write_marker/);
+    assert.doesNotMatch(response.payload, /fallback_route_used/);
+  } finally {
+    await liteWriteStore.close();
+  }
+});
+
+test("product guide uses direct planning context service when supplied", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const liteWriteStore = createLiteWriteStore(tmpDbPath("direct-product-guide-planning"));
+  try {
+    app.post("/v1/memory/planning/context", async (_req, reply) => {
+      return reply.code(500).send({
+        error: "fallback_planning_route_used",
+        message: "product guide should not inject this route when direct planning service is available",
+      });
+    });
+    registerRuntimeErrorHandler(app);
+    registerProductFacade({
+      app,
+      env,
+      guards,
+      liteWriteStore,
+      memoryWriteService: createMemoryWriteRouteService({
+        env,
+        embedder: DeterministicEmbeddingProvider,
+        liteWriteStore,
+        executionStateStore: null,
+      }),
+      planningContextService: {
+        async assemble() {
+          return {
+            tenant_id: "default",
+            scope: "default",
+            recall: {},
+            direct_planning_service_marker: true,
+          };
+        },
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "DIRECT_PRODUCT_GUIDE_PLANNING_MARKER",
+      },
+    });
+    const body = response.json();
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.source_map.routes_used.includes("/v1/memory/planning/context"), true);
+    assert.doesNotMatch(response.payload, /fallback_planning_route_used/);
+  } finally {
+    await liteWriteStore.close();
+  }
+});
 
 async function seedProductFacadeMemory(args: {
   liteWriteStore: ReturnType<typeof createLiteWriteStore>;
@@ -635,7 +787,7 @@ function registerFullProductMemoryApp(args: {
     tenantFromBody: args.guards.tenantFromBody,
     acquireInflightSlot: args.guards.acquireInflightSlot,
   });
-  registerMemoryContextRuntimeRoutes({
+  const contextRuntimeRoutes = registerMemoryContextRuntimeRoutes({
     app: args.app,
     env: args.env,
     embedder: routeEmbedder,
@@ -718,7 +870,16 @@ function registerFullProductMemoryApp(args: {
     tenantFromBody: args.guards.tenantFromBody,
     acquireInflightSlot: args.guards.acquireInflightSlot,
   });
-  registerProductFacade(args);
+  registerProductFacade({
+    ...args,
+    memoryWriteService: createMemoryWriteRouteService({
+      env: args.env,
+      embedder: routeEmbedder,
+      liteWriteStore: args.liteWriteStore,
+      executionStateStore: null,
+    }),
+    planningContextService: contextRuntimeRoutes.planningContextService,
+  });
 }
 
 test("product memory admission route governs external backend candidates without writing Runtime memory", async () => {

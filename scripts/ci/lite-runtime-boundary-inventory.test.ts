@@ -64,6 +64,7 @@ test("runtime boundary inventory exposes cross-cutting boundary files and summar
 
   const files = runtimeBoundaryInventoryFiles();
   for (const file of [
+    "src/memory/authority-effect-broker.ts",
     "src/memory/authority-producer-registry.ts",
     "src/memory/workflow-write-projection.ts",
   ]) {

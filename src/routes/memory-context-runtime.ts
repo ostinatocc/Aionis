@@ -81,6 +81,17 @@ import type { AionisGuidePacket } from "../memory/product-output-contract.js";
 type ContextRuntimeRequest = FastifyRequest<{ Body: unknown }>;
 type ContextRuntimeSurface = "recall_text" | "planning_context" | "context_assemble";
 type ContextRuntimeRequestKind = ContextRuntimeSurface;
+export type MemoryPlanningContextRouteService = {
+  assemble: (
+    req: ContextRuntimeRequest,
+    reply: FastifyReply,
+    options?: {
+      body?: unknown;
+      principal?: AuthPrincipal | null;
+      principalAlreadyChecked?: boolean;
+    },
+  ) => Promise<unknown>;
+};
 type ExecutionContinuityStaticBlockLike = ReturnType<typeof executionPacketToStaticBlocks>[number];
 type ContextRuntimeRecallKnobs = {
   limit: number;
@@ -937,6 +948,9 @@ export function registerMemoryContextRuntimeRoutes(args: {
     requestKind: ContextRuntimeRequestKind;
     surface: ContextRuntimeSurface;
     parse: (input: unknown) => TParsed;
+    body?: unknown;
+    principal?: AuthPrincipal | null;
+    principalAlreadyChecked?: boolean;
   }): Promise<{
     parsed: TParsed;
     explicitRecallKnobs: boolean;
@@ -951,8 +965,8 @@ export function registerMemoryContextRuntimeRoutes(args: {
     q: string;
   }> => {
     const { req, requestKind, surface, parse } = args;
-    const principal = await requireMemoryPrincipal(req);
-    const bodyRaw = withIdentityFromRequest(req, req.body, principal, requestKind);
+    const principal = args.principalAlreadyChecked ? (args.principal ?? null) : await requireMemoryPrincipal(req);
+    const bodyRaw = withIdentityFromRequest(req, args.body ?? req.body, principal, requestKind);
     const explicitRecallKnobs = hasExplicitRecallKnobs(bodyRaw);
     const baseProfile = resolveRecallProfile("recall_text", tenantFromBody(bodyRaw));
     const explicitMode = resolveExplicitRecallMode(bodyRaw, baseProfile.profile, explicitRecallKnobs);
@@ -1972,7 +1986,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
     });
   });
 
-  app.post("/v1/memory/planning/context", async (req: ContextRuntimeRequest, reply: FastifyReply) => {
+  const assemblePlanningContext: MemoryPlanningContextRouteService["assemble"] = async (req, reply, options = {}) => {
     const surfaceEmbedder = resolveSurfaceEmbedder("planning_context");
 
     const t0 = performance.now();
@@ -1982,6 +1996,9 @@ export function registerMemoryContextRuntimeRoutes(args: {
       requestKind: "planning_context",
       surface: "planning_context",
       parse: PlanningContextRequest.parse,
+      body: options.body,
+      principal: options.principal,
+      principalAlreadyChecked: options.principalAlreadyChecked,
     });
     let parsed = preparedRequest.parsed;
     const explicitRecallKnobs = preparedRequest.explicitRecallKnobs;
@@ -2263,7 +2280,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
       selectionPolicy: recallOut?.context?.selection_policy ?? null,
     });
 
-    return reply.code(200).send({
+    return {
       tenant_id: tenantIdOut,
       scope: recallOut.scope,
       execution_kernel: buildExecutionKernelResponse(
@@ -2317,7 +2334,15 @@ export function registerMemoryContextRuntimeRoutes(args: {
       execution_evidence_context: executionEvidenceContext,
       layered_context: layeredContext,
       cost_signals: costSignals,
-    });
+    };
+  };
+  const planningContextService: MemoryPlanningContextRouteService = {
+    assemble: assemblePlanningContext,
+  };
+
+  app.post("/v1/memory/planning/context", async (req: ContextRuntimeRequest, reply: FastifyReply) => {
+    const response = await planningContextService.assemble(req, reply);
+    return reply.code(200).send(response);
   });
 
   app.post("/v1/memory/context/assemble", async (req: ContextRuntimeRequest, reply: FastifyReply) => {
@@ -2672,4 +2697,8 @@ export function registerMemoryContextRuntimeRoutes(args: {
       cost_signals: costSignals,
     });
   });
+
+  return {
+    planningContextService,
+  };
 }

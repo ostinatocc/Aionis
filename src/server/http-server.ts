@@ -8,14 +8,17 @@ import type { IdentityRequestKind, InflightKind, RateLimitKind, TenantQuotaKind 
 import type { AuthPrincipal } from "../util/auth.js";
 import type { InflightGateToken } from "../util/inflight_gate.js";
 import { registerMemoryAccessRoutes } from "../routes/memory-access.js";
-import { registerMemoryContextRuntimeRoutes } from "../routes/memory-context-runtime.js";
+import {
+  registerMemoryContextRuntimeRoutes,
+  type MemoryPlanningContextRouteService,
+} from "../routes/memory-context-runtime.js";
 import { registerMemoryFeedbackToolRoutes } from "../routes/memory-feedback-tools.js";
 import { registerLiteMemoryLifecycleRoutes } from "../routes/memory-lifecycle-lite.js";
 import { registerHandoffRoutes } from "../routes/handoff.js";
 import { registerMemoryRecallRoutes } from "../routes/memory-recall.js";
 import { registerMemoryReplayCoreRoutes } from "../routes/memory-replay-core.js";
 import { registerMemoryReplayLearningControlRoutes } from "../routes/memory-replay-learning-control.js";
-import { registerMemoryWriteRoutes } from "../routes/memory-write.js";
+import { createMemoryWriteRouteService, registerMemoryWriteRoutes } from "../routes/memory-write.js";
 import { registerProductFacadeRoutes } from "../routes/product-facade.js";
 import { registerOperatorSnapshotRoutes } from "../routes/operator-snapshot.js";
 import { registerRuntimeBoundaryInventoryRoutes } from "../routes/runtime-boundary-inventory.js";
@@ -399,7 +402,11 @@ type ProductFacadeRouteRegistrationArgs = Pick<
   RegisterApplicationRoutesArgs,
   | "app"
   | "env"
+  | "embedder"
+  | "embeddingSurfacePolicy"
   | "liteWriteStore"
+  | "executionStateStore"
+  | "executionTreeStore"
   | "claimLedgerAccess"
   | "skillCandidateReviewAccess"
   | "requireMemoryPrincipal"
@@ -408,7 +415,9 @@ type ProductFacadeRouteRegistrationArgs = Pick<
   | "enforceTenantQuota"
   | "tenantFromBody"
   | "acquireInflightSlot"
->;
+> & {
+  planningContextService?: MemoryPlanningContextRouteService | null;
+};
 
 type RuntimeWriteRouteRegistrationArgs = Pick<
   RegisterApplicationRoutesArgs,
@@ -637,7 +646,7 @@ function registerRuntimeRecallRoutes(args: RuntimeRecallRouteRegistrationArgs) {
     buildRecallAuth,
   });
 
-  registerMemoryContextRuntimeRoutes({
+  const contextRuntimeRoutes = registerMemoryContextRuntimeRoutes({
     app,
     env,
     embedder: queryEmbedder,
@@ -682,6 +691,10 @@ function registerRuntimeRecallRoutes(args: RuntimeRecallRouteRegistrationArgs) {
     tenantFromBody,
     acquireInflightSlot,
   });
+
+  return {
+    planningContextService: contextRuntimeRoutes.planningContextService,
+  };
 }
 
 function registerRuntimeReplayRoutes(args: RuntimeReplayRouteRegistrationArgs) {
@@ -738,8 +751,9 @@ function registerRuntimeReplayRoutes(args: RuntimeReplayRouteRegistrationArgs) {
 }
 function registerRuntimeKernelRoutes(args: RuntimeKernelRouteRegistrationArgs) {
   registerRuntimeWriteRoutes(args);
-  registerRuntimeRecallRoutes(args);
+  const recallRoutes = registerRuntimeRecallRoutes(args);
   registerRuntimeReplayRoutes(args);
+  return recallRoutes;
 }
 
 function registerProductRoutes(args: ProductFacadeRouteRegistrationArgs) {
@@ -747,6 +761,15 @@ function registerProductRoutes(args: ProductFacadeRouteRegistrationArgs) {
     app: args.app,
     env: args.env,
     liteWriteStore: args.liteWriteStore,
+    memoryWriteService: createMemoryWriteRouteService({
+      env: args.env,
+      embedder: args.embedder,
+      embeddingSurfacePolicy: args.embeddingSurfacePolicy,
+      liteWriteStore: args.liteWriteStore,
+      executionStateStore: args.executionStateStore,
+      executionTreeStore: args.executionTreeStore,
+    }),
+    planningContextService: args.planningContextService ?? null,
     claimLedgerAccess: args.claimLedgerAccess ?? null,
     skillCandidateReviewAccess: args.skillCandidateReviewAccess ?? null,
     requireMemoryPrincipal: args.requireMemoryPrincipal,
@@ -775,6 +798,9 @@ export function registerApplicationRoutes(args: RegisterApplicationRoutesArgs) {
     registerRuntimeBoundaryRoutes(args);
     registerAdminRoutes(args);
   }
-  registerRuntimeKernelRoutes(args);
-  registerProductRoutes(args);
+  const runtimeKernelRoutes = registerRuntimeKernelRoutes(args);
+  registerProductRoutes({
+    ...args,
+    planningContextService: runtimeKernelRoutes.planningContextService,
+  });
 }

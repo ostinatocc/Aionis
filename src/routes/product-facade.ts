@@ -33,6 +33,7 @@ import {
 import { buildClaimLedgerProjection } from "../memory/claim-ledger-projection.js";
 import { governExternalMemoryCandidates } from "../memory/external-candidate-admission.js";
 import { buildAionisOperatorSnapshot } from "../memory/operator-snapshot.js";
+import { buildExecutionEvidenceContextLite } from "../execution/evidence-context.js";
 import {
   AionisAgentRoleSchema,
   AionisAgentContextSchema,
@@ -59,6 +60,7 @@ import { AionisClaimWriteSchema } from "../memory/claim-ledger-contract.js";
 import { resolveTenantScope } from "../memory/tenant.js";
 import type { ClaimLedgerAccess, ClaimLedgerRow } from "../store/claim-ledger-access.js";
 import type { LiteExecutionNativeNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
+import type { ExecutionTreeStore } from "../execution/tree-store.js";
 import type {
   SkillCandidateReviewAccess,
   SkillCandidateReviewRow,
@@ -66,8 +68,10 @@ import type {
   TraceDerivedSkillTrainingCandidate,
 } from "../store/skill-candidate-review-access.js";
 import type { AuthPrincipal } from "../util/auth.js";
-import { createErrorResponse } from "../util/http.js";
+import { createErrorResponse, HttpError } from "../util/http.js";
 import type { InflightGateToken } from "../util/inflight_gate.js";
+import type { MemoryPlanningContextRouteService } from "./memory-context-runtime.js";
+import type { MemoryWriteRouteService } from "./memory-write.js";
 import {
   structureProductObserveMemoryInput,
   type ProductObserveStructuringSummary,
@@ -85,6 +89,9 @@ type ProductFacadeArgs = {
   app: FastifyInstance;
   env: Env;
   liteWriteStore: LiteWriteStore;
+  memoryWriteService?: MemoryWriteRouteService | null;
+  planningContextService?: MemoryPlanningContextRouteService | null;
+  executionTreeStore?: ExecutionTreeStore | null;
   claimLedgerAccess?: ClaimLedgerAccess | null;
   skillCandidateReviewAccess?: SkillCandidateReviewAccess | null;
   requireMemoryPrincipal: (req: FastifyRequest) => Promise<AuthPrincipal | null>;
@@ -523,8 +530,8 @@ const ProductSkillCandidateMaterializeRequest = z.object({
 }).strict();
 
 type InternalDispatchResult =
-  | { ok: true; statusCode: number; body: unknown }
-  | { ok: false; statusCode: number; body: unknown };
+  | { ok: true; statusCode: number; path: string; body: unknown }
+  | { ok: false; statusCode: number; path: string; body: unknown };
 
 function isPlanningContextNoEmbeddingProvider(result: InternalDispatchResult): boolean {
   if (result.ok) return false;
@@ -574,13 +581,186 @@ async function dispatchProductInternalRoute(args: {
   });
   const body = parsePayload(response.payload);
   if (response.statusCode >= 200 && response.statusCode < 300) {
-    return { ok: true, statusCode: response.statusCode, body };
+    return { ok: true, statusCode: response.statusCode, path: args.path, body };
   }
-  return { ok: false, statusCode: response.statusCode, body };
+  return { ok: false, statusCode: response.statusCode, path: args.path, body };
+}
+
+function internalDispatchErrorResult(path: string, err: unknown): InternalDispatchResult {
+  if (err instanceof HttpError) {
+    return {
+      ok: false,
+      statusCode: err.statusCode,
+      path,
+      body: productErrorResponse({
+        status: err.statusCode,
+        error: err.code,
+        message: err.message,
+        details: objectValue(err.details) ?? undefined,
+      }),
+    };
+  }
+  if (err instanceof z.ZodError) {
+    const issues = err.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }));
+    return {
+      ok: false,
+      statusCode: 400,
+      path,
+      body: productErrorResponse({
+        status: 400,
+        error: "invalid_request",
+        message: "invalid request",
+        details: { issues },
+      }),
+    };
+  }
+  return {
+    ok: false,
+    statusCode: 500,
+    path,
+    body: productErrorResponse({
+      status: 500,
+      error: "internal_error",
+      message: err instanceof Error ? err.message : String(err),
+    }),
+  };
+}
+
+async function dispatchProductMemoryWrite(args: {
+  app: FastifyInstance;
+  req: FastifyRequest;
+  reply: FastifyReply;
+  payload: unknown;
+  memoryWriteService?: MemoryWriteRouteService | null;
+  enforceRateLimit: (req: FastifyRequest, reply: FastifyReply, kind: "write") => Promise<void>;
+  enforceTenantQuota: (req: FastifyRequest, reply: FastifyReply, kind: "write", tenantId: string) => Promise<void>;
+  tenantFromBody: (body: unknown) => string;
+  acquireInflightSlot: (kind: "write") => Promise<InflightGateToken>;
+}): Promise<InternalDispatchResult> {
+  const path = "/v1/memory/write";
+  if (!args.memoryWriteService) {
+    return dispatchProductInternalRoute({
+      app: args.app,
+      req: args.req,
+      path,
+      payload: args.payload,
+    });
+  }
+  let gate: InflightGateToken | null = null;
+  try {
+    await args.enforceRateLimit(args.req, args.reply, "write");
+    await args.enforceTenantQuota(args.req, args.reply, "write", args.tenantFromBody(args.payload));
+    gate = await args.acquireInflightSlot("write");
+    const committed = await args.memoryWriteService.commit(args.payload, {
+      log: args.req.log,
+      executionTreeDefaultDisabled: false,
+      startedAt: performance.now(),
+    });
+    return {
+      ok: true,
+      statusCode: 200,
+      path,
+      body: committed.response,
+    };
+  } catch (err) {
+    return internalDispatchErrorResult(path, err);
+  } finally {
+    gate?.release();
+  }
+}
+
+async function dispatchProductPlanningContext(args: {
+  app: FastifyInstance;
+  req: ProductFacadeRequest;
+  reply: FastifyReply;
+  payload: unknown;
+  principal: AuthPrincipal | null;
+  planningContextService?: MemoryPlanningContextRouteService | null;
+}): Promise<InternalDispatchResult> {
+  const path = "/v1/memory/planning/context";
+  if (!args.planningContextService) {
+    return dispatchProductInternalRoute({
+      app: args.app,
+      req: args.req,
+      path,
+      payload: args.payload,
+    });
+  }
+  try {
+    const body = await args.planningContextService.assemble(args.req, args.reply, {
+      body: args.payload,
+      principal: args.principal,
+      principalAlreadyChecked: true,
+    });
+    return {
+      ok: true,
+      statusCode: 200,
+      path,
+      body,
+    };
+  } catch (err) {
+    return internalDispatchErrorResult(path, err);
+  }
+}
+
+async function dispatchProductExecutionContextAssemble(args: {
+  req: FastifyRequest;
+  reply: FastifyReply;
+  payload: unknown;
+  principal: AuthPrincipal | null;
+  env: Env;
+  liteWriteStore: LiteWriteStore;
+  executionTreeStore?: ExecutionTreeStore | null;
+  withIdentityFromRequest: (
+    req: FastifyRequest,
+    body: unknown,
+    principal: AuthPrincipal | null,
+    kind: IdentityRequestKind,
+  ) => unknown;
+  enforceRateLimit: (req: FastifyRequest, reply: FastifyReply, kind: "recall") => Promise<void>;
+  enforceTenantQuota: (req: FastifyRequest, reply: FastifyReply, kind: "recall", tenantId: string) => Promise<void>;
+  tenantFromBody: (body: unknown) => string;
+  acquireInflightSlot: (kind: "recall") => Promise<InflightGateToken>;
+}): Promise<InternalDispatchResult> {
+  const path = "/v1/execution/context/assemble";
+  let gate: InflightGateToken | null = null;
+  try {
+    const body = args.withIdentityFromRequest(args.req, args.payload, args.principal, "execution_context_assemble");
+    await args.enforceRateLimit(args.req, args.reply, "recall");
+    await args.enforceTenantQuota(args.req, args.reply, "recall", args.tenantFromBody(body));
+    gate = await args.acquireInflightSlot("recall");
+    const result = await buildExecutionEvidenceContextLite({
+      liteWriteStore: args.liteWriteStore,
+      executionTreeStore: args.executionTreeStore ?? null,
+      body,
+      defaultScope: args.env.MEMORY_SCOPE,
+      defaultTenantId: args.env.MEMORY_TENANT_ID,
+    });
+    return {
+      ok: true,
+      statusCode: 200,
+      path,
+      body: result,
+    };
+  } catch (err) {
+    return internalDispatchErrorResult(path, err);
+  } finally {
+    gate?.release();
+  }
 }
 
 function sendInternalFailure(reply: FastifyReply, result: InternalDispatchResult): FastifyReply {
-  return reply.code(result.statusCode).send(result.body);
+  const status = result.statusCode >= 400 && result.statusCode < 600 ? result.statusCode : 502;
+  return reply.code(status).send(productErrorResponse({
+    status,
+    error: "internal_route_failed",
+    message: "An internal product facade dependency failed.",
+    details: {
+      surface: result.path,
+      upstream_status: result.statusCode,
+      retryable: result.statusCode === 429 || result.statusCode >= 500,
+    },
+  }));
 }
 
 function mergeProductScope(parsed: {
@@ -2536,12 +2716,18 @@ async function persistUnusedExposureLearningControl(args: {
 async function writeGuideExposureLedger(args: {
   app: FastifyInstance;
   req: FastifyRequest;
+  reply: FastifyReply;
   parsed: z.infer<typeof ProductGuideRequest>;
   tenant_id: string;
   scope: string;
   env: Env;
   agentContext: AionisAgentContext;
   guideTraceId: string;
+  memoryWriteService?: MemoryWriteRouteService | null;
+  enforceRateLimit: (req: FastifyRequest, reply: FastifyReply, kind: "write") => Promise<void>;
+  enforceTenantQuota: (req: FastifyRequest, reply: FastifyReply, kind: "write", tenantId: string) => Promise<void>;
+  tenantFromBody: (body: unknown) => string;
+  acquireInflightSlot: (kind: "write") => Promise<InflightGateToken>;
 }): Promise<InternalDispatchResult> {
   const ledger = buildGuideExposureLedger({
     parsed: args.parsed,
@@ -2551,10 +2737,15 @@ async function writeGuideExposureLedger(args: {
     guideTraceId: args.guideTraceId,
   });
   const ledgerSha = sha256Hex(stableStringify(ledger));
-  return dispatchProductInternalRoute({
+  return dispatchProductMemoryWrite({
     app: args.app,
     req: args.req,
-    path: "/v1/memory/write",
+    reply: args.reply,
+    memoryWriteService: args.memoryWriteService,
+    enforceRateLimit: args.enforceRateLimit,
+    enforceTenantQuota: args.enforceTenantQuota,
+    tenantFromBody: args.tenantFromBody,
+    acquireInflightSlot: args.acquireInflightSlot,
     payload: {
       tenant_id: args.tenant_id,
       scope: args.scope,
@@ -3373,6 +3564,9 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     app,
     env,
     liteWriteStore,
+    memoryWriteService,
+    planningContextService,
+    executionTreeStore,
     claimLedgerAccess,
     skillCandidateReviewAccess,
     requireMemoryPrincipal,
@@ -3403,7 +3597,17 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
 
     const routesUsed: string[] = [];
     const write = writePayload
-      ? await dispatchProductInternalRoute({ app, req, path: "/v1/memory/write", payload: writePayload })
+      ? await dispatchProductMemoryWrite({
+          app,
+          req,
+          reply,
+          payload: writePayload,
+          memoryWriteService,
+          enforceRateLimit,
+          enforceTenantQuota,
+          tenantFromBody,
+          acquireInflightSlot,
+        })
       : null;
     if (write && !write.ok) return sendInternalFailure(reply, write);
     if (write) routesUsed.push("/v1/memory/write");
@@ -3474,10 +3678,12 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       ...parsed,
       context: parsed.context ?? {},
     };
-    const guide = await dispatchProductInternalRoute({
+    const guide = await dispatchProductPlanningContext({
       app,
       req,
-      path: "/v1/memory/planning/context",
+      reply,
+      principal,
+      planningContextService,
       payload,
     });
     const planningContextEmbeddingUnavailable = isPlanningContextNoEmbeddingProvider(guide);
@@ -3536,10 +3742,18 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     });
     let fullPowerExecutionContextMerged = false;
     if (fullPowerRequested) {
-      const executionContextResult = await dispatchProductInternalRoute({
-        app,
+      const executionContextResult = await dispatchProductExecutionContextAssemble({
         req,
-        path: "/v1/execution/context/assemble",
+        reply,
+        principal,
+        env,
+        liteWriteStore,
+        executionTreeStore,
+        withIdentityFromRequest,
+        enforceRateLimit,
+        enforceTenantQuota,
+        tenantFromBody,
+        acquireInflightSlot,
         payload: stripUndefined({
           tenant_id: tenantId,
           scope,
@@ -3645,12 +3859,18 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     const exposureWrite = await writeGuideExposureLedger({
       app,
       req,
+      reply,
       parsed,
       tenant_id: tenantId,
       scope,
       env,
       agentContext,
       guideTraceId,
+      memoryWriteService,
+      enforceRateLimit,
+      enforceTenantQuota,
+      tenantFromBody,
+      acquireInflightSlot,
     });
     if (!exposureWrite.ok) return sendInternalFailure(reply, exposureWrite);
     const includePackets = parsed.include_packets === true;

@@ -94,6 +94,34 @@ Runtime editions:
 | `lite` | Default | Local developer Runtime for local agents, SDK/HTTP integrations, and MCP on the same machine. |
 | `server` | Managed Server path | Remote SDK/MCP endpoint with explicit auth and request controls. Use `AIONIS_EDITION=server`, `AIONIS_MODE=service`, and `MEMORY_AUTH_MODE=api_key`, `jwt`, or `api_key_or_jwt`. |
 
+Server production deployments must configure authority receipt signing keys.
+The Runtime signs authority-bearing memory receipts with the active key and
+verifies older receipts by their `key_id`, so keep previous keys in the keyring
+until stored receipts no longer need to be accepted:
+
+```env
+AIONIS_AUTHORITY_RECEIPT_HMAC_ACTIVE_KEY_ID=authority-2026-07
+AIONIS_AUTHORITY_RECEIPT_HMAC_KEYS_JSON={"authority-2026-07":"current-32-byte-or-longer-secret","authority-2026-06":"previous-32-byte-or-longer-secret"}
+```
+
+Generate these secrets outside the repository with a high-entropy source, for
+example `openssl rand -base64 48`, and store them in the deployment secret
+manager. The JSON value may map key ids directly to secret strings or to
+objects with a `secret` field. `AIONIS_AUTHORITY_RECEIPT_HMAC_SECRET` is
+accepted for single-key deployments, but the JSON keyring is preferred because
+it supports safe rotation.
+
+Rotation procedure:
+
+1. Add the new key id and secret to `AIONIS_AUTHORITY_RECEIPT_HMAC_KEYS_JSON`.
+2. Set `AIONIS_AUTHORITY_RECEIPT_HMAC_ACTIVE_KEY_ID` to the new key id.
+3. Keep the previous key in the JSON until all receipts signed with it are no
+   longer present or no longer need verification.
+4. Remove the retired key only after that retention window has passed.
+
+`APP_ENV=prod` rejects ephemeral authority receipt keys and rejects active
+secrets shorter than 32 bytes.
+
 Managed Server exposes hosted-safe probes:
 
 ```bash

@@ -64,8 +64,13 @@ test("tool e2e gate passes a clean cross-repository summary", () => {
   assert.equal(report.agent_prompt_included, false);
   assert.equal(report.decision.eligible_for_default_active_review, true);
   assert.deepEqual(report.decision.blocking_reasons, []);
+  assert.equal(report.checks.input_integrity_pass, true);
+  assert.equal(report.checks.accepted_route_rate_consistent, true);
+  assert.equal(report.checks.action_completion_rate_consistent, true);
+  assert.equal(report.checks.context_budget_assessed, true);
   assert.equal(report.checks.context_budget_pass, true);
   assert.equal(report.metrics.context_budget_metric, "initial_context_chars");
+  assert.ok(report.input_integrity.trusted_zero_count_fields.some((field) => field.endsWith(".wrong_branch_write_hits")));
 });
 
 test("tool e2e gate uses initial context budget before total prompt budget", () => {
@@ -104,6 +109,58 @@ test("tool e2e gate falls back to legacy prompt budget for old reports", () => {
   assert.equal(report.metrics.prompt_ratio_vs_full_history, 1.5);
   assert.equal(report.checks.context_budget_pass, false);
   assert.ok(report.decision.blocking_reasons.includes("context_budget_not_better_than_full_history"));
+});
+
+test("tool e2e gate blocks missing required safety count fields", () => {
+  const cleanSummary = summary();
+  const byArm = cleanSummary.by_arm as Array<Record<string, unknown>>;
+  delete byArm[1].wrong_branch_write_hits;
+  const report = evaluateAdmissionToolE2EGate({
+    summary: cleanSummary,
+    policy_mode: "active",
+  });
+
+  assert.equal(report.checks.input_integrity_pass, false);
+  assert.equal(report.checks.no_route_write_violations, false);
+  assert.equal(report.decision.eligible_for_default_active_review, false);
+  assert.ok(report.input_integrity.missing_required_fields.some((field) => field.endsWith(".wrong_branch_write_hits")));
+  assert.ok(report.decision.blocking_reasons.includes("missing_required_input_fields"));
+  assert.ok(report.decision.blocking_reasons.includes("route_write_violation_present"));
+});
+
+test("tool e2e gate blocks when no context budget evidence is available", () => {
+  const noContextSummary = summary();
+  const byArm = noContextSummary.by_arm as Array<Record<string, unknown>>;
+  delete byArm[0].initial_context_chars;
+  delete byArm[0].prompt_tokens;
+  delete byArm[1].initial_context_chars;
+  delete byArm[1].prompt_tokens;
+  const report = evaluateAdmissionToolE2EGate({
+    summary: noContextSummary,
+    policy_mode: "active",
+  });
+
+  assert.equal(report.checks.input_integrity_pass, true);
+  assert.equal(report.checks.context_budget_assessed, false);
+  assert.equal(report.checks.context_budget_pass, null);
+  assert.equal(report.metrics.context_budget_metric, "not_assessed");
+  assert.equal(report.decision.eligible_for_default_active_review, false);
+  assert.ok(report.decision.blocking_reasons.includes("context_budget_not_assessed"));
+});
+
+test("tool e2e gate blocks inconsistent accepted route rates", () => {
+  const report = evaluateAdmissionToolE2EGate({
+    summary: summary({
+      accepted_direction_hits: 40,
+      accepted_direction_rate: 0.5,
+    }),
+    policy_mode: "active",
+  });
+
+  assert.equal(report.checks.input_integrity_pass, true);
+  assert.equal(report.checks.accepted_route_rate_consistent, false);
+  assert.equal(report.decision.eligible_for_default_active_review, false);
+  assert.ok(report.decision.blocking_reasons.includes("accepted_route_rate_inconsistent"));
 });
 
 test("tool e2e gate blocks route-adherence and completion regressions", () => {

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { sealAuthorityReceiptsForPreparedWrite } from "./authority-fixture-helpers.ts";
 import { buildRuntimeAuthorityGate } from "../../src/memory/authority-gate.ts";
 import { buildExecutionEvidenceFromValidation } from "../../src/memory/execution-evidence.ts";
 import { ExecutionContractV1Schema } from "../../src/memory/execution-contract.ts";
@@ -155,6 +156,7 @@ test("learning loop promotes evidence-gated workflow candidates into stable work
       },
       null,
     );
+    sealAuthorityReceiptsForPreparedWrite(prepared);
     await applyPreparedMemoryWrite(store, prepared, {
       maxTextLen: writeOpts.maxTextLen,
       piiRedaction: writeOpts.piiRedaction,
@@ -288,6 +290,7 @@ test("learning loop applies controlled forgetting tier transitions without delet
       },
       null,
     );
+    sealAuthorityReceiptsForPreparedWrite(prepared);
     await applyPreparedMemoryWrite(store, prepared, {
       maxTextLen: writeOpts.maxTextLen,
       piiRedaction: writeOpts.piiRedaction,

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import Fastify from "fastify";
+import { sealAuthorityReceiptsForPreparedWrite } from "./authority-fixture-helpers.ts";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { runRuntimeMaintenanceLite } from "../../src/memory/runtime-maintenance.ts";
@@ -226,6 +227,7 @@ test("runtime maintenance reports before and after learning, reuse, and forgetti
       },
       null,
     );
+    sealAuthorityReceiptsForPreparedWrite(prepared);
     await applyPreparedMemoryWrite(store, prepared, {
       maxTextLen: writeOpts.maxTextLen,
       piiRedaction: writeOpts.piiRedaction,
@@ -355,6 +357,7 @@ test("runtime maintenance profiles apply different low-level forgetting horizons
       },
       null,
     );
+    sealAuthorityReceiptsForPreparedWrite(prepared);
     await applyPreparedMemoryWrite(store, prepared, {
       maxTextLen: writeOpts.maxTextLen,
       piiRedaction: writeOpts.piiRedaction,

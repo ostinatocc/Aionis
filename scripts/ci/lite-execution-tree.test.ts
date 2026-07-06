@@ -285,6 +285,36 @@ test("execution tree auto operation helper revises failed execution result branc
   }
 });
 
+test("execution tree auto operation helper treats conflict summaries as failed branches", async () => {
+  const dbPath = tmpDbPath("auto-conflict");
+  const store = createLiteExecutionTreeStore(dbPath);
+  const state = sampleExecutionState({
+    stateId: "state:auto-conflict",
+    updatedAt: "2026-06-08T00:13:00.000Z",
+    completedValidations: ["verifier reported conflict"],
+  });
+  try {
+    const result = applyAutoExecutionTreeFromSlots({
+      executionTreeStore: store,
+      slots: {
+        execution_state_v1: state,
+        execution_result_summary: {
+          status: "passed",
+          summary: "Verifier reported a conflict with the canonical branch.",
+        },
+      },
+      title: "Conflict auto execution tree",
+      textSummary: "Capture conflict branch",
+    });
+    assert.equal(result?.operations.length, 4);
+    assert.equal(result!.operations.some((operation) => operation.type === "maintain" && operation.passed === false), true);
+    assert.equal(result!.operations.some((operation) => operation.type === "revise"), true);
+    assert.equal(result!.tree.current_summary_node_id, result!.tree.root_summary_node_id);
+  } finally {
+    await store.close();
+  }
+});
+
 test("execution tree auto operation helper does not treat negated failure text as a failed outcome", async () => {
   const dbPath = tmpDbPath("auto-negated-failure");
   const store = createLiteExecutionTreeStore(dbPath);

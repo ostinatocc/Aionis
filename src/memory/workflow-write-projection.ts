@@ -38,7 +38,10 @@ import {
   buildPolicyMutationFromWorkflowPromotion,
 } from "../kernel/policy-mutation-loop.js";
 import { buildOutcomeContractGate } from "./contract-trust.js";
-import { buildRuntimeAuthorityGate } from "./authority-gate.js";
+import {
+  buildRuntimeAuthorityEffect,
+  sealRuntimeAuthorityEffectReceipt,
+} from "./authority-effect-broker.js";
 
 type WriteProjectionSourceNode = {
   id: string;
@@ -863,7 +866,8 @@ export async function projectWorkflowCandidatesFromPreparedWrite(args: {
       outcomeContractGate,
       executionEvidence,
       executionEvidenceAssessment,
-    } = buildRuntimeAuthorityGate({
+    } = buildRuntimeAuthorityEffect({
+      effectKind: "workflow_candidate_projection",
       executionContract,
       requestedTrust: contractTrust,
       slots: source.slots,
@@ -1040,7 +1044,8 @@ export async function projectWorkflowCandidatesFromPreparedWrite(args: {
         outcomeContractGate: stableOutcomeContractGate,
         executionEvidence: stableExecutionEvidence,
         executionEvidenceAssessment: stableExecutionEvidenceAssessment,
-      } = buildRuntimeAuthorityGate({
+      } = buildRuntimeAuthorityEffect({
+        effectKind: "stable_workflow_projection",
         executionContract: stableExecutionContract,
         requestedTrust: contractTrust,
         slots: source.slots,
@@ -1127,6 +1132,84 @@ export async function projectWorkflowCandidatesFromPreparedWrite(args: {
         ...stableAnchor,
         promotion_evidence_ledger_v1: promotionEvidenceLedger,
       });
+      const stableSlots: Record<string, unknown> = {
+        summary_kind: "workflow_anchor",
+        compression_layer: "L2",
+        anchor_v1: stableAnchorWithPromotionLedger,
+        execution_contract_v1: stableExecutionContract,
+        outcome_contract_gate: stableOutcomeContractGate,
+        ...(stableExecutionEvidence ? { execution_evidence_v1: stableExecutionEvidence } : {}),
+        execution_evidence_assessment: stableExecutionEvidenceAssessment,
+        authority_gate_v1: stableAuthorityGate,
+        policy_mutation_v1: policyMutation,
+        policy_mutation_adjudication_v1: policyMutationAdjudication,
+        promotion_evidence_ledger_v1: promotionEvidenceLedger,
+        execution_native_v1: {
+          schema_version: "execution_native_v1",
+          execution_kind: "workflow_anchor",
+          summary_kind: "workflow_anchor",
+          compression_layer: "L2",
+          ...(contractTrust ? { contract_trust: contractTrust } : {}),
+          task_signature: stableAnchor.task_signature,
+          ...(stableAnchor.task_family ? { task_family: stableAnchor.task_family } : {}),
+          workflow_signature: stableAnchor.workflow_signature,
+          anchor_kind: "workflow",
+          anchor_level: "L2",
+          tool_set: stableAnchor.tool_set,
+          file_path: stableAnchor.file_path ?? null,
+          target_files: stableAnchor.target_files ?? [],
+          next_action: stableAnchor.next_action ?? null,
+          ...(stableAnchor.key_steps && stableAnchor.key_steps.length > 0 ? { workflow_steps: stableAnchor.key_steps } : {}),
+          ...(stableAnchor.pattern_hints && stableAnchor.pattern_hints.length > 0 ? { pattern_hints: stableAnchor.pattern_hints } : {}),
+          ...(stableAnchor.service_lifecycle_constraints && stableAnchor.service_lifecycle_constraints.length > 0
+            ? { service_lifecycle_constraints: stableAnchor.service_lifecycle_constraints }
+            : {}),
+          outcome_contract_gate: stableOutcomeContractGate,
+          workflow_promotion: stableAnchor.workflow_promotion,
+          maintenance: stableAnchor.maintenance,
+          rehydration: stableAnchor.rehydration,
+          promotion_evidence_ledger_v1: promotionEvidenceLedger,
+          distillation: buildDistillationMetadata({
+            source_kind: distillationSourceKind,
+            distillation_kind: "workflow_candidate",
+            at: now,
+            source_node_id: source.id,
+          }),
+        },
+        workflow_write_projection: {
+          generated_by: "execution_write_projection_v1",
+          source_node_id: source.id,
+          source_client_id: source.client_id ?? null,
+          source_observation_id: projectionObservationId,
+          generated_at: now,
+          workflow_signature: workflowSignature,
+          auto_promoted: true,
+          observed_count: observedCount,
+          ...(contractTrust ? { contract_trust: contractTrust } : {}),
+          ...(learningControlPreview.runtime_apply.promotion_state_override
+            ? { learning_control_promotion_state_override: learningControlPreview.runtime_apply.promotion_state_override }
+            : {}),
+          learning_control_preview: {
+            promote_memory: learningControlPreview.promote_memory,
+          },
+        },
+      };
+      sealRuntimeAuthorityEffectReceipt({
+        effectKind: "stable_workflow_projection",
+        node: {
+          id: stableNodeId,
+          client_id: stableClientId,
+          scope: args.scope,
+          type: "procedure",
+          slots: stableSlots,
+        },
+        slots: stableSlots,
+        authorityGate: stableAuthorityGate,
+        issuedAt: now,
+        mutate: true,
+        requireAuthorityClaims: true,
+      });
+
       nodes.push({
         id: stableNodeId,
         client_id: stableClientId,
@@ -1139,68 +1222,7 @@ export async function projectWorkflowCandidatesFromPreparedWrite(args: {
         title,
         text_summary: stableAnchor.summary,
         embed_text: buildCandidateEmbedText(title, stableAnchor.summary),
-        slots: {
-          summary_kind: "workflow_anchor",
-          compression_layer: "L2",
-          anchor_v1: stableAnchorWithPromotionLedger,
-          execution_contract_v1: stableExecutionContract,
-          outcome_contract_gate: stableOutcomeContractGate,
-          ...(stableExecutionEvidence ? { execution_evidence_v1: stableExecutionEvidence } : {}),
-          execution_evidence_assessment: stableExecutionEvidenceAssessment,
-          authority_gate_v1: stableAuthorityGate,
-          policy_mutation_v1: policyMutation,
-          policy_mutation_adjudication_v1: policyMutationAdjudication,
-          promotion_evidence_ledger_v1: promotionEvidenceLedger,
-          execution_native_v1: {
-            schema_version: "execution_native_v1",
-            execution_kind: "workflow_anchor",
-            summary_kind: "workflow_anchor",
-            compression_layer: "L2",
-            ...(contractTrust ? { contract_trust: contractTrust } : {}),
-            task_signature: stableAnchor.task_signature,
-            ...(stableAnchor.task_family ? { task_family: stableAnchor.task_family } : {}),
-            workflow_signature: stableAnchor.workflow_signature,
-            anchor_kind: "workflow",
-            anchor_level: "L2",
-            tool_set: stableAnchor.tool_set,
-            file_path: stableAnchor.file_path ?? null,
-            target_files: stableAnchor.target_files ?? [],
-            next_action: stableAnchor.next_action ?? null,
-            ...(stableAnchor.key_steps && stableAnchor.key_steps.length > 0 ? { workflow_steps: stableAnchor.key_steps } : {}),
-            ...(stableAnchor.pattern_hints && stableAnchor.pattern_hints.length > 0 ? { pattern_hints: stableAnchor.pattern_hints } : {}),
-            ...(stableAnchor.service_lifecycle_constraints && stableAnchor.service_lifecycle_constraints.length > 0
-              ? { service_lifecycle_constraints: stableAnchor.service_lifecycle_constraints }
-              : {}),
-            outcome_contract_gate: stableOutcomeContractGate,
-            workflow_promotion: stableAnchor.workflow_promotion,
-            maintenance: stableAnchor.maintenance,
-            rehydration: stableAnchor.rehydration,
-            promotion_evidence_ledger_v1: promotionEvidenceLedger,
-            distillation: buildDistillationMetadata({
-              source_kind: distillationSourceKind,
-              distillation_kind: "workflow_candidate",
-              at: now,
-              source_node_id: source.id,
-            }),
-          },
-          workflow_write_projection: {
-            generated_by: "execution_write_projection_v1",
-            source_node_id: source.id,
-            source_client_id: source.client_id ?? null,
-            source_observation_id: projectionObservationId,
-            generated_at: now,
-            workflow_signature: workflowSignature,
-            auto_promoted: true,
-            observed_count: observedCount,
-            ...(contractTrust ? { contract_trust: contractTrust } : {}),
-            ...(learningControlPreview.runtime_apply.promotion_state_override
-              ? { learning_control_promotion_state_override: learningControlPreview.runtime_apply.promotion_state_override }
-              : {}),
-            learning_control_preview: {
-              promote_memory: learningControlPreview.promote_memory,
-            },
-          },
-        },
+        slots: stableSlots,
       });
       edges.push({
         id: stableUuid(`${args.scope}:edge:workflow_write_projection:derived_from:${stableNodeId}:${source.id}`),

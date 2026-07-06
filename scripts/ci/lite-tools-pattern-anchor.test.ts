@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
+import { sealAuthorityReceiptsForPreparedWrite } from "./authority-fixture-helpers.ts";
 import { updateRuleState } from "../../src/memory/rules.ts";
 import { MemoryAnchorV1Schema, MemoryRecallRequest, ToolsFeedbackResponseSchema } from "../../src/memory/schemas.ts";
 import { suppressPatternAnchorLite } from "../../src/memory/pattern-operator-override.ts";
@@ -80,6 +81,7 @@ async function insertAndActivateRule(
     },
     null,
   );
+  sealAuthorityReceiptsForPreparedWrite(prepared);
   const out = await liteWriteStore.withTx(() =>
     applyMemoryWrite(prepared, {
       maxTextLen: 10_000,
@@ -336,6 +338,7 @@ test("selectTools resolves trusted pattern identity from canonical execution con
       },
       null,
     );
+    sealAuthorityReceiptsForPreparedWrite(prepared);
     await liteWriteStore.withTx(() =>
       applyMemoryWrite(prepared, {
         maxTextLen: 10_000,
@@ -505,6 +508,7 @@ test("recall ranking prefers stable pattern anchors over counter-evidence-open c
       },
       null,
     );
+    sealAuthorityReceiptsForPreparedWrite(prepared);
     const out = await liteWriteStore.withTx(() =>
       applyMemoryWrite(prepared, {
         maxTextLen: 10_000,
@@ -1610,6 +1614,7 @@ test("selectTools keeps explicit tool.prefer ahead of trusted pattern preference
       },
       null,
     );
+    sealAuthorityReceiptsForPreparedWrite(prepared);
     await liteWriteStore.withTx(() =>
       applyMemoryWrite(prepared, {
         maxTextLen: 10_000,

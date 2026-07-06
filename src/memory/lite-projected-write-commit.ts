@@ -46,6 +46,32 @@ export type LiteInlineEmbeddingStore = {
 
 export type LiteProjectedWriteStore = WriteStoreAccess & LiteWorkflowProjectionStore & LiteInlineEmbeddingStore;
 
+class LiteInlineEmbeddingTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`inline embedding timed out after ${timeoutMs}ms`);
+    this.name = "LiteInlineEmbeddingTimeoutError";
+  }
+}
+
+async function embedWithDeadline(
+  embedder: EmbeddingProvider,
+  texts: string[],
+  timeoutMs: number | null | undefined,
+): Promise<number[][]> {
+  if (!timeoutMs || !Number.isFinite(timeoutMs) || timeoutMs <= 0) return embedder.embed(texts);
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      embedder.embed(texts),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new LiteInlineEmbeddingTimeoutError(Math.trunc(timeoutMs))), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function appendLiteWorkflowProjection(args: {
   prepared: PreparedWrite;
   liteWriteStore: LiteWorkflowProjectionStore;
@@ -69,6 +95,7 @@ async function completeLiteInlineEmbeddings(args: {
   prepared: PreparedWrite;
   embedder: EmbeddingProvider | null;
   liteWriteStore: LiteInlineEmbeddingStore;
+  timeoutMs?: number | null;
 }): Promise<{
   attempted: number;
   updated: number;
@@ -98,7 +125,7 @@ async function completeLiteInlineEmbeddings(args: {
 
   let vectors: number[][];
   try {
-    vectors = await embedder.embed(pending.map((node) => node.text));
+    vectors = await embedWithDeadline(embedder, pending.map((node) => node.text), args.timeoutMs);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await liteWriteStore.withTx(async () => {
@@ -158,6 +185,7 @@ export async function commitLitePreparedWriteWithProjection(args: {
   prepared: PreparedWrite;
   liteWriteStore: LiteProjectedWriteStore;
   embedder: EmbeddingProvider | null;
+  inlineEmbeddingTimeoutMs?: number | null;
   learningControlReviewProviders?: Parameters<typeof projectWorkflowCandidatesFromPreparedWrite>[0]["learningControlReviewProviders"];
   writeOptions: {
     maxTextLen: number;
@@ -189,6 +217,7 @@ export async function commitLitePreparedWriteWithProjection(args: {
     prepared: args.prepared,
     embedder: args.embedder,
     liteWriteStore: args.liteWriteStore,
+    timeoutMs: args.inlineEmbeddingTimeoutMs,
   });
   return {
     out,

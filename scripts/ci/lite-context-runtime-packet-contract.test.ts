@@ -6,6 +6,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
+import { sealAuthorityReceiptsForPreparedWrite } from "./authority-fixture-helpers.ts";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
@@ -1480,6 +1481,7 @@ async function seedContextRuntimeFixture(dbPath: string) {
     null,
   );
 
+  sealAuthorityReceiptsForPreparedWrite(prepared);
   const out = await liteWriteStore.withTx(() =>
     applyMemoryWrite(prepared, {
       maxTextLen: 10_000,
@@ -1604,6 +1606,7 @@ async function seedPrivateWorkflowFixture(dbPath: string) {
     null,
   );
 
+  sealAuthorityReceiptsForPreparedWrite(prepared);
   await liteWriteStore.withTx(() =>
     applyMemoryWrite(prepared, {
       maxTextLen: 10_000,
@@ -1690,6 +1693,7 @@ async function seedExecutionNativeOnlyPrivateWorkflowFixture(dbPath: string) {
     null,
   );
 
+  sealAuthorityReceiptsForPreparedWrite(prepared);
   await liteWriteStore.withTx(() =>
     applyMemoryWrite(prepared, {
       maxTextLen: 10_000,

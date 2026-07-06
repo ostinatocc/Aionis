@@ -16,9 +16,11 @@ import {
   type ReplayWorkflowContract,
 } from "./replay-workflow-contract.js";
 import {
-  buildRuntimeAuthorityGate,
-  downgradeAuthoritativeTrust,
-} from "./authority-gate.js";
+  buildRuntimeAuthorityEffect,
+  sealRuntimeAuthorityEffectReceipt,
+} from "./authority-effect-broker.js";
+import { downgradeAuthoritativeTrust } from "./authority-gate.js";
+import { assertAuthorityWriteReceipts } from "./authority-write-guard.js";
 import { resolveNodeDistillationSurface } from "./node-execution-surface.js";
 
 function asObject(v: unknown): Record<string, unknown> | null {
@@ -140,7 +142,8 @@ function authorityGatedReplayWorkflowContract(args: {
     notes: args.notes,
     provenance_source_kind: args.provenanceSourceKind,
   });
-  const initialAuthority = buildRuntimeAuthorityGate({
+  const initialAuthority = buildRuntimeAuthorityEffect({
+    effectKind: "stable_replay_playbook_anchor",
     executionContract: initialExecutionContract,
     requestedTrust: args.base.contract_trust,
     slots: args.slots,
@@ -172,7 +175,8 @@ function authorityGatedReplayWorkflowContract(args: {
     notes: [...args.notes, "runtime_authority_gate_downgraded_authoritative_contract"],
     provenance_source_kind: args.provenanceSourceKind,
   });
-  const finalAuthority = buildRuntimeAuthorityGate({
+  const finalAuthority = buildRuntimeAuthorityEffect({
+    effectKind: "stable_replay_playbook_anchor",
     executionContract,
     requestedTrust: workflowContract.contract_trust,
     slots: args.slots,
@@ -326,6 +330,8 @@ export async function buildReplayPlaybookWorkflowNodeFields(args: {
   title: string;
   textSummary: string;
   clientId: string;
+  nodeId?: string;
+  nodeType?: string;
   commitId: string | null;
   sourceNodeId: string | null;
   sourceCommitId: string | null;
@@ -407,7 +413,7 @@ export async function buildReplayPlaybookWorkflowNodeFields(args: {
     rehydration: anchor.rehydration,
     ...(existingDistillation ? { distillation: existingDistillation } : {}),
   });
-  const slots = {
+  const slots: Record<string, unknown> = {
     ...args.slots,
     summary_kind: summaryKind,
     compression_layer: compressionLayer,
@@ -419,6 +425,19 @@ export async function buildReplayPlaybookWorkflowNodeFields(args: {
     execution_evidence_assessment: executionEvidenceAssessment,
     authority_gate_v1: authorityGate,
   };
+  sealRuntimeAuthorityEffectReceipt({
+    effectKind: "stable_replay_playbook_anchor",
+    node: {
+      id: args.nodeId ?? replayWriteNodeId(args.scopeKey, args.clientId),
+      client_id: args.clientId,
+      scope: args.scopeKey,
+      type: args.nodeType ?? "procedure",
+      slots,
+    },
+    slots,
+    authorityGate,
+    mutate: true,
+  });
   const embedText = `${args.title}\n${anchor.summary}\n${anchor.tool_set.join(" ")}\n${anchor.task_signature}`;
   if (!args.embedder) {
     return { slots };
@@ -441,6 +460,8 @@ export async function buildStablePlaybookNodeFields(args: {
   title: string;
   textSummary: string;
   clientId: string;
+  nodeId?: string;
+  nodeType?: string;
   commitId: string | null;
   sourceNodeId: string | null;
   sourceCommitId: string | null;
@@ -505,6 +526,8 @@ export async function ensureStablePlaybookAnchorOnLatestNode(args: {
     title: desiredTitle,
     textSummary: desiredTextSummary,
     clientId: playbookClientId(args.playbookId, args.latest.version_num),
+    nodeId: latestNode.id,
+    nodeType: latestNode.type,
     commitId: latestNode.commit_id ?? null,
     sourceNodeId: args.latest.id,
     sourceCommitId: latestNode.commit_id ?? null,
@@ -532,6 +555,13 @@ export async function ensureStablePlaybookAnchorOnLatestNode(args: {
     raw_ref: latestNode.raw_ref ?? null,
     evidence_ref: latestNode.evidence_ref ?? null,
   });
+  assertAuthorityWriteReceipts([{
+    id: latestNode.id,
+    client_id: latestNode.client_id ?? undefined,
+    scope: args.tenancy.scope_key,
+    type: latestNode.type,
+    slots: lifecycle.slots,
+  }]);
 
   const updatedNode = await liteWriteStore.updateNodeAnchorState({
     scope: args.tenancy.scope_key,

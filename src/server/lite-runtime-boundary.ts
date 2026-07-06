@@ -22,7 +22,7 @@ export type LiteRouteProductExposure =
   | "internal_control"
   | "operator_support";
 
-export const LITE_ROUTE_CAPABILITY_MATRIX_VERSION = "lite_route_capability_matrix_v5";
+export const LITE_ROUTE_CAPABILITY_MATRIX_VERSION = "lite_route_capability_matrix_v6";
 
 const LITE_PRODUCT_ENTRY_ROUTES = new Set([
   "POST /v1/observe",
@@ -217,6 +217,15 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
     product_effects: ["history_shaped_future_behavior"],
     surface_kind: "operator_review",
     product_role: "read-only operator snapshot summarizing active paths, failed branches, guide attribution, learning-control posture, and measured effect",
+  },
+  {
+    method: "GET",
+    path: "/v1/operator/authority-effect-audit",
+    route_group: "product-facade",
+    capabilities: ["learning_control"],
+    product_effects: [],
+    surface_kind: "operator_debug",
+    product_role: "read-only audit of authority effect broker receipts, gate hashes, key ids, and claim paths",
   },
   {
     method: "POST",

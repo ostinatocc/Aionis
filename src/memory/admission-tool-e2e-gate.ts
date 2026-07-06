@@ -31,6 +31,13 @@ export type AionisAdmissionToolE2EGateInput = {
   thresholds?: Partial<AionisAdmissionToolE2EGateThresholds>;
 };
 
+export type AionisAdmissionToolE2EGateInputIntegrity = {
+  missing_required_fields: string[];
+  invalid_required_fields: string[];
+  missing_optional_fields: string[];
+  trusted_zero_count_fields: string[];
+};
+
 export type AionisAdmissionToolE2EGateReport = {
   contract_version: "aionis_admission_tool_e2e_gate_report_v1";
   intended_use: "closed_loop_admission_policy_default_active_gate";
@@ -57,6 +64,7 @@ export type AionisAdmissionToolE2EGateReport = {
     base_trap_count: number;
     difficulty_level_count: number;
   };
+  input_integrity: AionisAdmissionToolE2EGateInputIntegrity;
   metrics: {
     runs: number;
     route_write_violation_count: number;
@@ -72,12 +80,13 @@ export type AionisAdmissionToolE2EGateReport = {
     initial_context_chars: number | null;
     full_history_initial_context_chars: number | null;
     initial_context_ratio_vs_full_history: number | null;
-    prompt_tokens: number;
-    completion_tokens: number;
+    prompt_tokens: number | null;
+    completion_tokens: number | null;
     prompt_ratio_vs_full_history: number | null;
     context_budget_metric: "initial_context_chars" | "total_prompt_tokens" | "not_assessed";
   };
   checks: {
+    input_integrity_pass: boolean;
     enough_runs: boolean;
     enough_difficulty_levels: boolean;
     no_route_write_violations: boolean;
@@ -85,8 +94,11 @@ export type AionisAdmissionToolE2EGateReport = {
     no_direction_attention_violations: boolean;
     no_terminal_inspect: boolean;
     no_report_conflict: boolean;
+    accepted_route_rate_consistent: boolean;
     accepted_route_rate_pass: boolean;
+    action_completion_rate_consistent: boolean;
     action_completion_rate_pass: boolean;
+    context_budget_assessed: boolean;
     context_budget_pass: boolean | null;
     active_policy_mode_declared: boolean;
     required_policy_source_pass: boolean | null;
@@ -134,6 +146,93 @@ function numberValue(value: unknown): number {
 
 function optionalNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function createInputIntegrity(): AionisAdmissionToolE2EGateInputIntegrity {
+  return {
+    missing_required_fields: [],
+    invalid_required_fields: [],
+    missing_optional_fields: [],
+    trusted_zero_count_fields: [],
+  };
+}
+
+function pushUnique(list: string[], value: string): void {
+  if (!list.includes(value)) list.push(value);
+}
+
+function inputIntegrityPass(integrity: AionisAdmissionToolE2EGateInputIntegrity): boolean {
+  return integrity.missing_required_fields.length === 0 && integrity.invalid_required_fields.length === 0;
+}
+
+function fieldIntegrityPass(integrity: AionisAdmissionToolE2EGateInputIntegrity, field: string): boolean {
+  return !integrity.missing_required_fields.some((entry) => entry.endsWith(`.${field}`))
+    && !integrity.invalid_required_fields.some((entry) => entry.endsWith(`.${field}`));
+}
+
+function hasOwn(record: UnknownRecord | null, field: string): record is UnknownRecord {
+  return !!record && Object.prototype.hasOwnProperty.call(record, field);
+}
+
+function requiredNonNegativeInteger(
+  record: UnknownRecord,
+  field: string,
+  path: string,
+  integrity: AionisAdmissionToolE2EGateInputIntegrity,
+  trackTrustedZero = false,
+): number {
+  if (!hasOwn(record, field)) {
+    pushUnique(integrity.missing_required_fields, path);
+    return 0;
+  }
+  const value = record[field];
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || !Number.isInteger(value)) {
+    pushUnique(integrity.invalid_required_fields, path);
+    return 0;
+  }
+  if (trackTrustedZero && value === 0) pushUnique(integrity.trusted_zero_count_fields, path);
+  return value;
+}
+
+function optionalNonNegativeInteger(
+  record: UnknownRecord | null,
+  field: string,
+  path: string,
+  integrity: AionisAdmissionToolE2EGateInputIntegrity,
+): number | null {
+  if (!hasOwn(record, field)) {
+    pushUnique(integrity.missing_optional_fields, path);
+    return null;
+  }
+  const value = record[field];
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || !Number.isInteger(value)) {
+    pushUnique(integrity.missing_optional_fields, path);
+    return null;
+  }
+  return value;
+}
+
+function requiredRate(
+  record: UnknownRecord,
+  field: string,
+  path: string,
+  integrity: AionisAdmissionToolE2EGateInputIntegrity,
+): number {
+  if (!hasOwn(record, field)) {
+    pushUnique(integrity.missing_required_fields, path);
+    return 0;
+  }
+  const value = record[field];
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+    pushUnique(integrity.invalid_required_fields, path);
+    return 0;
+  }
+  return value;
+}
+
+function rateConsistent(hits: number, runs: number, rate: number): boolean {
+  if (runs === 0) return hits === 0 && rate === 0;
+  return Math.abs(hits / runs - rate) <= 0.000001;
 }
 
 function positiveInteger(value: unknown, fallback: number): number {
@@ -217,21 +316,31 @@ function armInitialContextChars(summary: UnknownRecord, results: unknown[], arm:
   return resultValue > 0 ? resultValue : null;
 }
 
-function blockingReasons(report: Pick<AionisAdmissionToolE2EGateReport, "checks">): string[] {
+function blockingReasons(
+  checks: AionisAdmissionToolE2EGateReport["checks"],
+  integrity: AionisAdmissionToolE2EGateInputIntegrity,
+): string[] {
   const reasons: string[] = [];
-  if (!report.checks.enough_runs) reasons.push("collect_more_tool_e2e_runs");
-  if (!report.checks.enough_difficulty_levels) reasons.push("cover_more_context_hygiene_levels");
-  if (!report.checks.no_route_write_violations) reasons.push("route_write_violation_present");
-  if (!report.checks.no_route_action_violations) reasons.push("route_action_violation_present");
-  if (!report.checks.no_direction_attention_violations) reasons.push("direction_attention_violation_present");
-  if (!report.checks.no_terminal_inspect) reasons.push("terminal_inspect_present");
-  if (!report.checks.no_report_conflict) reasons.push("report_conflict_present");
-  if (!report.checks.accepted_route_rate_pass) reasons.push("accepted_route_rate_below_threshold");
-  if (!report.checks.action_completion_rate_pass) reasons.push("action_completion_rate_below_threshold");
-  if (report.checks.context_budget_pass === false) reasons.push("context_budget_not_better_than_full_history");
-  if (!report.checks.active_policy_mode_declared) reasons.push("candidate_active_policy_mode_not_declared");
-  if (report.checks.required_policy_source_pass === false) reasons.push("candidate_policy_source_requirement_not_met");
-  if (report.checks.required_policy_profile_id_pass === false) reasons.push("candidate_policy_profile_requirement_not_met");
+  if (integrity.missing_required_fields.length > 0) reasons.push("missing_required_input_fields");
+  if (integrity.invalid_required_fields.length > 0) reasons.push("invalid_required_input_fields");
+  if (!checks.enough_runs) reasons.push("collect_more_tool_e2e_runs");
+  if (!checks.enough_difficulty_levels) reasons.push("cover_more_context_hygiene_levels");
+  if (!checks.no_route_write_violations) reasons.push("route_write_violation_present");
+  if (!checks.no_route_action_violations) reasons.push("route_action_violation_present");
+  if (!checks.no_direction_attention_violations) reasons.push("direction_attention_violation_present");
+  if (!checks.no_terminal_inspect) reasons.push("terminal_inspect_present");
+  if (!checks.no_report_conflict) reasons.push("report_conflict_present");
+  if (!checks.accepted_route_rate_consistent) reasons.push("accepted_route_rate_inconsistent");
+  if (!checks.accepted_route_rate_pass) reasons.push("accepted_route_rate_below_threshold");
+  if (!checks.action_completion_rate_consistent) reasons.push("action_completion_rate_inconsistent");
+  if (!checks.action_completion_rate_pass) reasons.push("action_completion_rate_below_threshold");
+  if (!checks.context_budget_assessed) reasons.push("context_budget_not_assessed");
+  if (checks.context_budget_assessed && checks.context_budget_pass === false) {
+    reasons.push("context_budget_not_better_than_full_history");
+  }
+  if (!checks.active_policy_mode_declared) reasons.push("candidate_active_policy_mode_not_declared");
+  if (checks.required_policy_source_pass === false) reasons.push("candidate_policy_source_requirement_not_met");
+  if (checks.required_policy_profile_id_pass === false) reasons.push("candidate_policy_profile_requirement_not_met");
   return reasons;
 }
 
@@ -253,9 +362,25 @@ export function evaluateAdmissionToolE2EGate(input: AionisAdmissionToolE2EGateIn
   const fullHistory = findArmSummary(summary, "full_history");
   const results = input.results ?? [];
   const aggregate = recordValue(summary.aggregate);
-  const aionisPromptTokens = numberValue(armSummary.prompt_tokens);
-  const fullHistoryPromptTokens = fullHistory ? numberValue(fullHistory.prompt_tokens) : 0;
-  const promptRatio = fullHistoryPromptTokens > 0 ? aionisPromptTokens / fullHistoryPromptTokens : null;
+  const inputIntegrity = createInputIntegrity();
+  const armPath = `summary.by_arm[${arm}]`;
+  const aionisPromptTokens = optionalNonNegativeInteger(
+    armSummary,
+    "prompt_tokens",
+    `${armPath}.prompt_tokens`,
+    inputIntegrity,
+  );
+  const fullHistoryPromptTokens = fullHistory
+    ? optionalNonNegativeInteger(
+        fullHistory,
+        "prompt_tokens",
+        "summary.by_arm[full_history].prompt_tokens",
+        inputIntegrity,
+      )
+    : null;
+  const promptRatio = aionisPromptTokens !== null && fullHistoryPromptTokens !== null && fullHistoryPromptTokens > 0
+    ? aionisPromptTokens / fullHistoryPromptTokens
+    : null;
   const initialContextChars = armInitialContextChars(summary, results, arm);
   const fullHistoryInitialContextChars = armInitialContextChars(summary, results, "full_history");
   const initialContextRatio = initialContextChars !== null && fullHistoryInitialContextChars !== null && fullHistoryInitialContextChars > 0
@@ -266,40 +391,127 @@ export function evaluateAdmissionToolE2EGate(input: AionisAdmissionToolE2EGateIn
     : promptRatio !== null
       ? "total_prompt_tokens"
       : "not_assessed";
-  const runs = numberValue(armSummary.runs);
+  const runs = requiredNonNegativeInteger(armSummary, "runs", `${armPath}.runs`, inputIntegrity);
+  const routeWriteViolationCount = requiredNonNegativeInteger(
+    armSummary,
+    "wrong_branch_write_hits",
+    `${armPath}.wrong_branch_write_hits`,
+    inputIntegrity,
+    true,
+  );
+  const routeActionViolationCount = requiredNonNegativeInteger(
+    armSummary,
+    "wrong_branch_action_hits",
+    `${armPath}.wrong_branch_action_hits`,
+    inputIntegrity,
+    true,
+  );
+  const directionAttentionViolationCount = requiredNonNegativeInteger(
+    armSummary,
+    "wrong_branch_direction_attention_hits",
+    `${armPath}.wrong_branch_direction_attention_hits`,
+    inputIntegrity,
+    true,
+  );
+  const referenceAttentionCount = optionalNonNegativeInteger(
+    armSummary,
+    "wrong_branch_reference_attention_hits",
+    `${armPath}.wrong_branch_reference_attention_hits`,
+    inputIntegrity,
+  ) ?? 0;
+  const acceptedRouteHits = requiredNonNegativeInteger(
+    armSummary,
+    "accepted_direction_hits",
+    `${armPath}.accepted_direction_hits`,
+    inputIntegrity,
+  );
+  const acceptedRouteRate = requiredRate(
+    armSummary,
+    "accepted_direction_rate",
+    `${armPath}.accepted_direction_rate`,
+    inputIntegrity,
+  );
+  const actionCompletionHits = requiredNonNegativeInteger(
+    armSummary,
+    "action_completion_hits",
+    `${armPath}.action_completion_hits`,
+    inputIntegrity,
+  );
+  const actionCompletionRate = requiredRate(
+    armSummary,
+    "action_completion_rate",
+    `${armPath}.action_completion_rate`,
+    inputIntegrity,
+  );
+  const terminalInspectCount = requiredNonNegativeInteger(
+    armSummary,
+    "terminal_inspect_hits",
+    `${armPath}.terminal_inspect_hits`,
+    inputIntegrity,
+    true,
+  );
+  const reportConflictCount = requiredNonNegativeInteger(
+    armSummary,
+    "report_conflict_hits",
+    `${armPath}.report_conflict_hits`,
+    inputIntegrity,
+    true,
+  );
   const metrics = {
     runs,
-    route_write_violation_count: numberValue(armSummary.wrong_branch_write_hits),
-    route_action_violation_count: numberValue(armSummary.wrong_branch_action_hits),
-    direction_attention_violation_count: numberValue(armSummary.wrong_branch_direction_attention_hits),
-    reference_attention_count: numberValue(armSummary.wrong_branch_reference_attention_hits),
-    accepted_route_hits: numberValue(armSummary.accepted_direction_hits),
-    accepted_route_rate: boundedRate(armSummary.accepted_direction_rate, runs > 0 ? numberValue(armSummary.accepted_direction_hits) / runs : 0),
-    action_completion_hits: numberValue(armSummary.action_completion_hits),
-    action_completion_rate: boundedRate(armSummary.action_completion_rate, runs > 0 ? numberValue(armSummary.action_completion_hits) / runs : 0),
-    terminal_inspect_count: numberValue(armSummary.terminal_inspect_hits),
-    report_conflict_count: numberValue(armSummary.report_conflict_hits),
+    route_write_violation_count: routeWriteViolationCount,
+    route_action_violation_count: routeActionViolationCount,
+    direction_attention_violation_count: directionAttentionViolationCount,
+    reference_attention_count: referenceAttentionCount,
+    accepted_route_hits: acceptedRouteHits,
+    accepted_route_rate: acceptedRouteRate,
+    action_completion_hits: actionCompletionHits,
+    action_completion_rate: actionCompletionRate,
+    terminal_inspect_count: terminalInspectCount,
+    report_conflict_count: reportConflictCount,
     initial_context_chars: initialContextChars,
     full_history_initial_context_chars: fullHistoryInitialContextChars,
     initial_context_ratio_vs_full_history: initialContextRatio,
     prompt_tokens: aionisPromptTokens,
-    completion_tokens: numberValue(armSummary.completion_tokens),
+    completion_tokens: optionalNonNegativeInteger(
+      armSummary,
+      "completion_tokens",
+      `${armPath}.completion_tokens`,
+      inputIntegrity,
+    ),
     prompt_ratio_vs_full_history: promptRatio,
     context_budget_metric: contextBudgetMetric,
   };
   const difficultyLevelCount = results.length > 0
     ? uniqueResultCount(results, "difficulty_level")
     : uniqueResultCount(arrayValue(summary.by_level_arm).filter((entry) => recordValue(entry)?.arm === arm), "difficulty_level");
+  const integrityPass = inputIntegrityPass(inputIntegrity);
+  const contextBudgetAssessed = initialContextRatio !== null || promptRatio !== null;
   const checks = {
-    enough_runs: metrics.runs >= thresholds.min_runs,
+    input_integrity_pass: integrityPass,
+    enough_runs: fieldIntegrityPass(inputIntegrity, "runs") && metrics.runs >= thresholds.min_runs,
     enough_difficulty_levels: difficultyLevelCount >= thresholds.min_difficulty_levels,
-    no_route_write_violations: metrics.route_write_violation_count <= thresholds.max_route_write_violations,
-    no_route_action_violations: metrics.route_action_violation_count <= thresholds.max_route_action_violations,
-    no_direction_attention_violations: metrics.direction_attention_violation_count <= thresholds.max_direction_attention_violations,
-    no_terminal_inspect: metrics.terminal_inspect_count <= thresholds.max_terminal_inspect,
-    no_report_conflict: metrics.report_conflict_count <= thresholds.max_report_conflict,
-    accepted_route_rate_pass: metrics.accepted_route_rate >= thresholds.min_accepted_route_rate,
-    action_completion_rate_pass: metrics.action_completion_rate >= thresholds.min_action_completion_rate,
+    no_route_write_violations: fieldIntegrityPass(inputIntegrity, "wrong_branch_write_hits")
+      && metrics.route_write_violation_count <= thresholds.max_route_write_violations,
+    no_route_action_violations: fieldIntegrityPass(inputIntegrity, "wrong_branch_action_hits")
+      && metrics.route_action_violation_count <= thresholds.max_route_action_violations,
+    no_direction_attention_violations: fieldIntegrityPass(inputIntegrity, "wrong_branch_direction_attention_hits")
+      && metrics.direction_attention_violation_count <= thresholds.max_direction_attention_violations,
+    no_terminal_inspect: fieldIntegrityPass(inputIntegrity, "terminal_inspect_hits")
+      && metrics.terminal_inspect_count <= thresholds.max_terminal_inspect,
+    no_report_conflict: fieldIntegrityPass(inputIntegrity, "report_conflict_hits")
+      && metrics.report_conflict_count <= thresholds.max_report_conflict,
+    accepted_route_rate_consistent: integrityPass
+      ? rateConsistent(metrics.accepted_route_hits, metrics.runs, metrics.accepted_route_rate)
+      : true,
+    accepted_route_rate_pass: fieldIntegrityPass(inputIntegrity, "accepted_direction_rate")
+      && metrics.accepted_route_rate >= thresholds.min_accepted_route_rate,
+    action_completion_rate_consistent: integrityPass
+      ? rateConsistent(metrics.action_completion_hits, metrics.runs, metrics.action_completion_rate)
+      : true,
+    action_completion_rate_pass: fieldIntegrityPass(inputIntegrity, "action_completion_rate")
+      && metrics.action_completion_rate >= thresholds.min_action_completion_rate,
+    context_budget_assessed: contextBudgetAssessed,
     context_budget_pass: initialContextRatio !== null
       ? initialContextRatio <= thresholds.max_initial_context_ratio_vs_full_history
       : promptRatio === null
@@ -318,7 +530,7 @@ export function evaluateAdmissionToolE2EGate(input: AionisAdmissionToolE2EGateIn
         && input.policy_source_audit.guide_count > 0
         && input.policy_source_audit.matching_profile_id_count === input.policy_source_audit.guide_count,
   };
-  const reasons = blockingReasons({ checks });
+  const reasons = blockingReasons(checks, inputIntegrity);
   const eligible = reasons.length === 0;
   return {
     contract_version: "aionis_admission_tool_e2e_gate_report_v1",
@@ -350,6 +562,7 @@ export function evaluateAdmissionToolE2EGate(input: AionisAdmissionToolE2EGateIn
       base_trap_count: results.length > 0 ? uniqueResultCount(results, "base_trap_id") : 0,
       difficulty_level_count: difficultyLevelCount,
     },
+    input_integrity: inputIntegrity,
     metrics,
     checks,
     decision: {
@@ -382,6 +595,10 @@ function ratio(value: number | null): string {
   return value === null ? "not assessed" : value.toFixed(3);
 }
 
+function listValue(values: string[]): string {
+  return values.length > 0 ? values.map((value) => `\`${value}\``).join(", ") : "none";
+}
+
 export function formatAdmissionToolE2EGateMarkdown(report: AionisAdmissionToolE2EGateReport): string {
   return [
     "# Aionis Admission Tool-E2E Gate",
@@ -411,6 +628,16 @@ export function formatAdmissionToolE2EGateMarkdown(report: AionisAdmissionToolE2
     `| Base trap count | ${report.dataset.base_trap_count || "not assessed"} |`,
     `| Difficulty levels | ${report.dataset.difficulty_level_count} |`,
     "",
+    "## Input Integrity",
+    "",
+    "| Check | Value |",
+    "|---|---|",
+    `| Pass | ${bool(report.checks.input_integrity_pass)} |`,
+    `| Missing required fields | ${listValue(report.input_integrity.missing_required_fields)} |`,
+    `| Invalid required fields | ${listValue(report.input_integrity.invalid_required_fields)} |`,
+    `| Missing optional fields | ${listValue(report.input_integrity.missing_optional_fields)} |`,
+    `| Trusted zero count fields | ${listValue(report.input_integrity.trusted_zero_count_fields)} |`,
+    "",
     "## Tool-E2E Metrics",
     "",
     "| Metric | Value | Required |",
@@ -427,7 +654,7 @@ export function formatAdmissionToolE2EGateMarkdown(report: AionisAdmissionToolE2
     `| Initial context chars | ${report.metrics.initial_context_chars ?? "not assessed"} | informational |`,
     `| Full History initial context chars | ${report.metrics.full_history_initial_context_chars ?? "not assessed"} | informational |`,
     `| Initial context ratio vs Full History | ${ratio(report.metrics.initial_context_ratio_vs_full_history)} | <= ${report.thresholds.max_initial_context_ratio_vs_full_history} |`,
-    `| Prompt tokens | ${report.metrics.prompt_tokens} | informational |`,
+    `| Prompt tokens | ${report.metrics.prompt_tokens ?? "not assessed"} | informational |`,
     `| Legacy prompt ratio vs Full History | ${ratio(report.metrics.prompt_ratio_vs_full_history)} | <= ${report.thresholds.max_prompt_ratio_vs_full_history} |`,
     `| Context budget metric | ${report.metrics.context_budget_metric} | initial context preferred |`,
     "",
@@ -435,6 +662,7 @@ export function formatAdmissionToolE2EGateMarkdown(report: AionisAdmissionToolE2
     "",
     "| Check | Pass |",
     "|---|---|",
+    `| Input integrity | ${bool(report.checks.input_integrity_pass)} |`,
     `| Enough runs | ${bool(report.checks.enough_runs)} |`,
     `| Enough difficulty levels | ${bool(report.checks.enough_difficulty_levels)} |`,
     `| No route write violations | ${bool(report.checks.no_route_write_violations)} |`,
@@ -442,8 +670,11 @@ export function formatAdmissionToolE2EGateMarkdown(report: AionisAdmissionToolE2
     `| No direction-attention violations | ${bool(report.checks.no_direction_attention_violations)} |`,
     `| No terminal inspect | ${bool(report.checks.no_terminal_inspect)} |`,
     `| No report conflict | ${bool(report.checks.no_report_conflict)} |`,
+    `| Accepted-route rate consistent | ${bool(report.checks.accepted_route_rate_consistent)} |`,
     `| Accepted-route rate | ${bool(report.checks.accepted_route_rate_pass)} |`,
+    `| Action-completion rate consistent | ${bool(report.checks.action_completion_rate_consistent)} |`,
     `| Action-completion rate | ${bool(report.checks.action_completion_rate_pass)} |`,
+    `| Context budget assessed | ${bool(report.checks.context_budget_assessed)} |`,
     `| Context budget | ${bool(report.checks.context_budget_pass)} |`,
     `| Active candidate policy mode declared | ${bool(report.checks.active_policy_mode_declared)} |`,
     `| Required policy source | ${bool(report.checks.required_policy_source_pass)} |`,

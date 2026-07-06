@@ -25,7 +25,12 @@ import {
 import {
   buildExecutionContractFromProjection,
 } from "./execution-contract.js";
-import { buildRuntimeAuthorityGate } from "./authority-gate.js";
+import {
+  buildRuntimeAuthorityEffect,
+  runtimeAuthorityGateFromValue,
+  sealRuntimeAuthorityEffectReceipt,
+} from "./authority-effect-broker.js";
+import { assertAuthorityWriteReceipts } from "./authority-write-guard.js";
 import { resolveNodeLifecycleSignals } from "./lifecycle-signals.js";
 import {
   resolveNodeErrorSignature,
@@ -135,6 +140,41 @@ function firstString(...values: unknown[]): string | null {
     if (trimmed) return trimmed;
   }
   return null;
+}
+
+function sealPolicyAuthoritySlots(args: {
+  scope: string;
+  id: string;
+  clientId: string | null;
+  slots: Record<string, unknown>;
+  issuedAt?: string | null;
+}): Record<string, unknown> {
+  const sealed = { ...args.slots };
+  const authorityGate = runtimeAuthorityGateFromValue(sealed.authority_gate_v1);
+  if (authorityGate) {
+    sealRuntimeAuthorityEffectReceipt({
+      effectKind: "policy_memory_authority",
+      node: {
+        id: args.id,
+        client_id: args.clientId ?? undefined,
+        scope: args.scope,
+        type: "concept",
+        slots: sealed,
+      },
+      slots: sealed,
+      authorityGate,
+      issuedAt: firstString(args.issuedAt) ?? undefined,
+      mutate: true,
+    });
+  }
+  assertAuthorityWriteReceipts([{
+    id: args.id,
+    client_id: args.clientId ?? undefined,
+    scope: args.scope,
+    type: "concept",
+    slots: sealed,
+  }]);
+  return sealed;
 }
 
 function normalizeContractTrust(value: unknown): ContractTrust | null {
@@ -324,16 +364,14 @@ function buildPolicyAuthoritySurfaces(args: {
   contract: PolicyContract;
   executionContract: Record<string, unknown>;
 }) {
-  const authority = buildRuntimeAuthorityGate({
+  const authority = buildRuntimeAuthorityEffect({
+    effectKind: "policy_memory_authority",
     executionContract: args.executionContract,
     requestedTrust: normalizeContractTrust(args.contract.contract_trust),
     slots: args.contract as unknown as Record<string, unknown>,
   });
   return {
-    outcome_contract_gate: authority.outcomeContractGate,
-    ...(authority.executionEvidence ? { execution_evidence_v1: authority.executionEvidence } : {}),
-    execution_evidence_assessment: authority.executionEvidenceAssessment,
-    authority_gate_v1: authority.authorityGate,
+    ...authority.slotsPatch,
   };
 }
 
@@ -562,6 +600,7 @@ async function updateExistingPolicyMemoryLite(
   args: {
     scope: string;
     id: string;
+    clientId?: string | null;
     slots: Record<string, unknown>;
     textSummary: string;
     salience: number;
@@ -570,10 +609,16 @@ async function updateExistingPolicyMemoryLite(
     commitId: string | null;
   },
 ): Promise<void> {
+  const slots = sealPolicyAuthoritySlots({
+    scope: args.scope,
+    id: args.id,
+    clientId: args.clientId ?? null,
+    slots: args.slots,
+  });
   await liteWriteStore.updateNodeAnchorState({
     scope: args.scope,
     id: args.id,
-    slots: args.slots,
+    slots,
     textSummary: args.textSummary,
     salience: args.salience,
     importance: args.importance,
@@ -630,7 +675,8 @@ function normalizePolicyContractLifecycle(args: {
     contract: args.contract,
     source: "materialization",
   });
-  const authority = buildRuntimeAuthorityGate({
+  const authority = buildRuntimeAuthorityEffect({
+    effectKind: "policy_memory_authority",
     executionContract,
     requestedTrust: normalizeContractTrust(args.contract.contract_trust),
     slots: args.contract as unknown as Record<string, unknown>,
@@ -651,10 +697,7 @@ function normalizePolicyContractLifecycle(args: {
     activation_mode: shouldDegrade ? "hint" : args.contract.activation_mode,
     materialization_state: "persisted",
     policy_memory_id: args.nodeId ?? null,
-    outcome_contract_gate: authority.outcomeContractGate,
-    ...(authority.executionEvidence ? { execution_evidence_v1: authority.executionEvidence } : {}),
-    execution_evidence_assessment: authority.executionEvidenceAssessment,
-    authority_gate_v1: authority.authorityGate,
+    ...authority.slotsPatch,
   });
 }
 
@@ -955,6 +998,7 @@ export async function applyPolicyMemoryFeedbackLite(
     updateNode: (node, next) => updateExistingPolicyMemoryLite(liteWriteStore, {
       scope: args.scope,
       id: node.id,
+      clientId: node.client_id,
       slots: next.slots,
       textSummary: next.textSummary,
       salience: next.salience,
@@ -1293,6 +1337,7 @@ export async function applyPolicyMemoryLearningControlLite(
     updateNode: (currentNode, next) => updateExistingPolicyMemoryLite(liteWriteStore, {
       scope: args.scope,
       id: currentNode.id,
+      clientId: currentNode.client_id,
       slots: next.slots,
       textSummary: next.textSummary,
       salience: next.salience,
@@ -1385,6 +1430,7 @@ export async function writePolicyMemorySnapshot(
     await updateExistingPolicyMemoryLite(opts.liteWriteStore, {
       scope: args.scope,
       id: existingNode.id,
+      clientId: existingNode.client_id,
       slots: lifecycle.slots,
       textSummary: summary,
       salience: lifecycle.salience,
@@ -1433,9 +1479,19 @@ export async function writePolicyMemorySnapshot(
       piiRedaction: opts.piiRedaction,
       allowCrossScopeEdges: opts.allowCrossScopeEdges ?? false,
     },
-    opts.embedder,
-  );
-  if (opts.embedder) {
+	    opts.embedder,
+	  );
+  const preparedPolicyNode = prepared.nodes[0];
+  if (preparedPolicyNode) {
+    preparedPolicyNode.slots = sealPolicyAuthoritySlots({
+      scope: preparedPolicyNode.scope,
+      id: preparedPolicyNode.id,
+      clientId: preparedPolicyNode.client_id ?? null,
+      slots: preparedPolicyNode.slots,
+      issuedAt: materializedAt,
+    });
+  }
+	  if (opts.embedder) {
     const planned = prepared.nodes.filter((node) => !node.embedding && typeof node.embed_text === "string" && node.embed_text.trim());
     if (planned.length > 0) {
       const vectors = await opts.embedder.embed(planned.map((node) => String(node.embed_text)));

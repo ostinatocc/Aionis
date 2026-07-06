@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
+import { sealAuthorityReceiptsForPreparedWrite } from "./authority-fixture-helpers.ts";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { CognitiveStructureV1Schema } from "../../src/kernel/cognitive-structure.ts";
@@ -558,6 +559,7 @@ async function seedExecutionIntrospectionFixture(dbPath: string) {
     null,
   );
 
+  sealAuthorityReceiptsForPreparedWrite(prepared);
   await liteWriteStore.withTx(() =>
     applyMemoryWrite(prepared, {
       maxTextLen: 10_000,
@@ -640,6 +642,7 @@ async function seedExecutionNativeOnlyWorkflowIntrospectionFixture(dbPath: strin
     null,
   );
 
+  sealAuthorityReceiptsForPreparedWrite(prepared);
   await liteWriteStore.withTx(() =>
     applyMemoryWrite(prepared, {
       maxTextLen: 10_000,
@@ -770,6 +773,7 @@ async function seedCanonicalContractPrecedenceIntrospectionFixture(dbPath: strin
     null,
   );
 
+  sealAuthorityReceiptsForPreparedWrite(prepared);
   await liteWriteStore.withTx(() =>
     applyMemoryWrite(prepared, {
       maxTextLen: 10_000,

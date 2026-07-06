@@ -1,5 +1,9 @@
 import type { EmbeddingProvider } from "../embeddings/types.js";
 import type { WriteStoreAccess } from "../store/write-access.js";
+import {
+  runtimeAuthorityGateFromValue,
+  sealRuntimeAuthorityEffectReceipt,
+} from "./authority-effect-broker.js";
 import { toTenantScopeKey } from "./tenant.js";
 import { applyPreparedMemoryWrite, prepareMemoryWrite, type WriteResult } from "./write.js";
 
@@ -59,6 +63,20 @@ function toIntOrNull(value: unknown): number | null {
     if (Number.isFinite(parsed)) return Math.trunc(parsed);
   }
   return null;
+}
+
+function sealReplayPreparedAuthorityReceipts(prepared: Awaited<ReturnType<typeof prepareMemoryWrite>>): void {
+  for (const node of prepared.nodes) {
+    const authorityGate = runtimeAuthorityGateFromValue(node.slots.authority_gate_v1);
+    if (!authorityGate) continue;
+    sealRuntimeAuthorityEffectReceipt({
+      effectKind: "prepared_replay_write_authority",
+      node,
+      slots: node.slots,
+      authorityGate,
+      mutate: true,
+    });
+  }
 }
 
 function replayWriteAccessForOptions(opts: ReplayMemoryWriteOptions): WriteStoreAccess {
@@ -147,6 +165,7 @@ export async function applyReplayMemoryWrite(
     },
     opts.embedder,
   );
+  sealReplayPreparedAuthorityReceipts(prepared);
   const out = await applyPreparedMemoryWrite(replayWriteAccessForOptions(opts), prepared, {
     maxTextLen: opts.maxTextLen,
     piiRedaction: opts.piiRedaction,

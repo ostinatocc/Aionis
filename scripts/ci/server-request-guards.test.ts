@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { TEST_AUTHORITY_RECEIPT_ENV } from "./authority-fixture-helpers.ts";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
 import { loadEnv, type Env } from "../../src/config.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
@@ -56,6 +57,7 @@ async function makeServerEnv(overrides: Record<string, string | undefined> = {})
         },
       }),
       SANDBOX_ENABLED: "false",
+      ...TEST_AUTHORITY_RECEIPT_ENV,
       ...overrides,
     },
     () => loadEnv(),

@@ -37,6 +37,39 @@ type LiteInlineEmbeddingResultLike = {
   error?: string | null;
 } | null;
 
+export type MemoryWriteRouteServiceResult = {
+  response: WriteResult & {
+    recallable_node_count: number;
+    edge_count: number;
+    warnings?: WriteWarningLike[];
+  };
+  out: WriteResult;
+  prepared: PreparedWrite;
+  executionOverlays: ReturnType<typeof collectExecutionWriteOverlaySlots> | null;
+  liteInlineEmbedding: LiteInlineEmbeddingResultLike;
+};
+
+export type MemoryWriteRouteService = {
+  commit: (
+    body: unknown,
+    options?: {
+      log?: FastifyRequest["log"];
+      executionTreeDefaultDisabled?: boolean;
+      startedAt?: number;
+    },
+  ) => Promise<MemoryWriteRouteServiceResult>;
+};
+
+export type MemoryWriteRouteServiceArgs = {
+  env: Env;
+  embedder: EmbeddingProvider | null;
+  embeddingSurfacePolicy?: EmbeddingSurfacePolicy;
+  liteWriteStore: LiteWriteStore;
+  executionStateStore?: ExecutionStateStore | null;
+  executionTreeStore?: ExecutionTreeStore | null;
+  learningControlRuntimeProviderBuilderOptions?: LiteLearningControlRuntimeProviderBuilderOptions;
+};
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
@@ -77,18 +110,42 @@ export function registerMemoryWriteRoutes(args: {
   executionTreeStore?: ExecutionTreeStore | null;
   learningControlRuntimeProviderBuilderOptions?: LiteLearningControlRuntimeProviderBuilderOptions;
 }) {
+  const service = createMemoryWriteRouteService(args);
   const {
     app,
-    env,
-    embedder,
-    embeddingSurfacePolicy: embeddingSurfacePolicyArg,
-    liteWriteStore,
     requireMemoryPrincipal,
     withIdentityFromRequest,
     enforceRateLimit,
     enforceTenantQuota,
     tenantFromBody,
     acquireInflightSlot,
+  } = args;
+  app.post("/v1/memory/write", async (req: MemoryWriteRequest, reply: FastifyReply) => {
+    const t0 = performance.now();
+    const principal = await requireMemoryPrincipal(req);
+    const body = withIdentityFromRequest(req, req.body, principal, "write");
+    await enforceRateLimit(req, reply, "write");
+    await enforceTenantQuota(req, reply, "write", tenantFromBody(body));
+    const gate = await acquireInflightSlot("write");
+    try {
+      const result = await service.commit(body, {
+        log: req.log,
+        executionTreeDefaultDisabled: isExecutionTreeDefaultDisabledRequest(body),
+        startedAt: t0,
+      });
+      return reply.code(200).send(result.response);
+    } finally {
+      gate.release();
+    }
+  });
+}
+
+export function createMemoryWriteRouteService(args: MemoryWriteRouteServiceArgs): MemoryWriteRouteService {
+  const {
+    env,
+    embedder,
+    embeddingSurfacePolicy: embeddingSurfacePolicyArg,
+    liteWriteStore,
     executionStateStore,
     executionTreeStore,
   } = args;
@@ -123,6 +180,9 @@ export function registerMemoryWriteRoutes(args: {
       prepared,
       liteWriteStore,
       embedder: writeEmbedder,
+      inlineEmbeddingTimeoutMs: typeof env.LITE_INLINE_EMBEDDING_TIMEOUT_MS === "number"
+        ? env.LITE_INLINE_EMBEDDING_TIMEOUT_MS
+        : 12_000,
       learningControlReviewProviders: learningControlProviders.workflowProjection,
       writeOptions: {
         maxTextLen: env.MAX_TEXT_LEN,
@@ -299,7 +359,7 @@ export function registerMemoryWriteRoutes(args: {
     };
   };
   const finalizeWriteRoute = async (args: {
-    req: MemoryWriteRequest;
+    log?: FastifyRequest["log"];
     prepared: PreparedWrite;
     executionOverlays: ReturnType<typeof collectExecutionWriteOverlaySlots> | null;
     out: WriteResult;
@@ -331,7 +391,7 @@ export function registerMemoryWriteRoutes(args: {
       prepared: args.prepared,
       env,
     });
-    args.req.log.info(
+    args.log?.info(
       {
         write: buildWriteLogPayload({
           out: args.out,
@@ -347,29 +407,29 @@ export function registerMemoryWriteRoutes(args: {
     return response;
   };
 
-  app.post("/v1/memory/write", async (req: MemoryWriteRequest, reply: FastifyReply) => {
-    const t0 = performance.now();
-    const principal = await requireMemoryPrincipal(req);
-    const body = withIdentityFromRequest(req, req.body, principal, "write");
-    await enforceRateLimit(req, reply, "write");
-    await enforceTenantQuota(req, reply, "write", tenantFromBody(body));
-    const gate = await acquireInflightSlot("write");
-    try {
+  return {
+    async commit(body: unknown, options: Parameters<MemoryWriteRouteService["commit"]>[1] = {}) {
+      const startedAt = options.startedAt ?? performance.now();
       const { prepared, executionOverlays } = await prepareWriteRouteState(body);
-      const executionTreeDefaultDisabled = isExecutionTreeDefaultDisabledRequest(body);
+      const executionTreeDefaultDisabled =
+        options.executionTreeDefaultDisabled ?? isExecutionTreeDefaultDisabledRequest(body);
       const { out, liteInlineEmbedding } = await runCommittedMemoryWrite({ prepared });
       const response = await finalizeWriteRoute({
-        req,
+        log: options.log,
         prepared,
         out,
         executionOverlays,
         executionTreeDefaultDisabled,
         liteInlineEmbedding,
-        ms: performance.now() - t0,
+        ms: performance.now() - startedAt,
       });
-      return reply.code(200).send(response);
-    } finally {
-      gate.release();
-    }
-  });
+      return {
+        response,
+        out,
+        prepared,
+        executionOverlays,
+        liteInlineEmbedding,
+      };
+    },
+  };
 }

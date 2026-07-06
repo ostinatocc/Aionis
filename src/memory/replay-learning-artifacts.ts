@@ -12,9 +12,10 @@ import {
   deriveReplayWorkflowContractFromSlots,
 } from "./replay-workflow-contract.js";
 import {
-  buildRuntimeAuthorityGate,
-  downgradeAuthoritativeTrust,
-} from "./authority-gate.js";
+  buildRuntimeAuthorityEffect,
+  sealRuntimeAuthorityEffectReceipt,
+} from "./authority-effect-broker.js";
+import { downgradeAuthoritativeTrust } from "./authority-gate.js";
 import {
   adjudicatePolicyMutationV1,
   buildPolicyMutationFromWorkflowPromotion,
@@ -245,7 +246,8 @@ export function buildReplayLearningProjectionArtifacts(args: {
     source_anchor: episodeClientId,
     notes: ["replay_learning_candidate_projection"],
   });
-  const initialAuthority = buildRuntimeAuthorityGate({
+  const initialAuthority = buildRuntimeAuthorityEffect({
+    effectKind: "replay_learning_candidate_projection",
     executionContract: initialCandidateExecutionContract,
     requestedTrust: rawWorkflowContract.contract_trust,
     slots: args.source.playbook_slots,
@@ -276,7 +278,8 @@ export function buildReplayLearningProjectionArtifacts(args: {
       });
   const finalAuthority = workflowContract === rawWorkflowContract
     ? initialAuthority
-    : buildRuntimeAuthorityGate({
+    : buildRuntimeAuthorityEffect({
+        effectKind: "replay_learning_candidate_projection",
         executionContract: candidateExecutionContract,
         requestedTrust: workflowContract.contract_trust,
         slots: args.source.playbook_slots,
@@ -447,7 +450,8 @@ export function buildReplayLearningProjectionArtifacts(args: {
       outcomeContractGate: stableOutcomeContractGate,
       executionEvidence: stableExecutionEvidence,
       executionEvidenceAssessment: stableExecutionEvidenceAssessment,
-    } = buildRuntimeAuthorityGate({
+    } = buildRuntimeAuthorityEffect({
+      effectKind: "replay_learning_stable_projection",
       executionContract: stableExecutionContract,
       requestedTrust: workflowContract.contract_trust,
       slots: args.source.playbook_slots,
@@ -471,62 +475,79 @@ export function buildReplayLearningProjectionArtifacts(args: {
       execution_evidence_refs: stableExecutionEvidence?.evidence_refs ?? [],
     });
     const policyMutationAdjudication = adjudicatePolicyMutationV1(policyMutation);
+    const stableWorkflowSlots: Record<string, unknown> = {
+      summary_kind: "workflow_anchor",
+      compression_layer: "L2",
+      anchor_v1: workflowAnchor,
+      execution_contract_v1: stableExecutionContract,
+      outcome_contract_gate: stableOutcomeContractGate,
+      ...(stableExecutionEvidence ? { execution_evidence_v1: stableExecutionEvidence } : {}),
+      execution_evidence_assessment: stableExecutionEvidenceAssessment,
+      authority_gate_v1: stableAuthorityGate,
+      policy_mutation_v1: policyMutation,
+      policy_mutation_adjudication_v1: policyMutationAdjudication,
+      execution_native_v1: ExecutionNativeV1Schema.parse({
+        schema_version: "execution_native_v1",
+        execution_kind: "workflow_anchor",
+        summary_kind: "workflow_anchor",
+        compression_layer: "L2",
+        ...(workflowContract.contract_trust ? { contract_trust: workflowContract.contract_trust } : {}),
+        task_signature: workflowAnchor.task_signature,
+        ...(workflowAnchor.task_family ? { task_family: workflowAnchor.task_family } : {}),
+        workflow_signature: workflowAnchor.workflow_signature,
+        anchor_kind: "workflow",
+        anchor_level: "L2",
+        ...(workflowAnchor.target_files ? { target_files: workflowAnchor.target_files } : {}),
+        ...(workflowAnchor.next_action !== undefined ? { next_action: workflowAnchor.next_action } : {}),
+        ...(workflowAnchor.key_steps ? { workflow_steps: workflowAnchor.key_steps } : {}),
+        ...(workflowAnchor.pattern_hints ? { pattern_hints: workflowAnchor.pattern_hints } : {}),
+        ...(workflowAnchor.service_lifecycle_constraints
+          ? { service_lifecycle_constraints: workflowAnchor.service_lifecycle_constraints }
+          : {}),
+        outcome_contract_gate: stableOutcomeContractGate,
+        workflow_promotion: workflowAnchor.workflow_promotion,
+        maintenance: workflowAnchor.maintenance,
+        rehydration: workflowAnchor.rehydration,
+        distillation: buildDistillationMetadata({
+          source_kind: "replay_learning",
+          distillation_kind: "workflow_candidate",
+          at: args.projectedAt,
+          source_node_id: args.source.playbook_node_id,
+        }),
+      }),
+      replay_learning: {
+        generated_by: "replay_learning_v1",
+        source_playbook_id: args.source.playbook_id,
+        promoted_from_playbook_version: args.source.playbook_version,
+        source_playbook_node_id: args.source.playbook_node_id,
+        source_commit_id: args.source.source_commit_id,
+        workflow_signature: args.workflowSignature,
+        observed_count: args.observedWorkflowCount,
+        promoted_at: args.projectedAt,
+      },
+    };
+    sealRuntimeAuthorityEffectReceipt({
+      effectKind: "replay_learning_stable_projection",
+      node: {
+        id: stableWorkflowNodeId,
+        client_id: workflowClientId,
+        scope: args.source.scope_key,
+        type: "procedure",
+        slots: stableWorkflowSlots,
+      },
+      slots: stableWorkflowSlots,
+      authorityGate: stableAuthorityGate,
+      issuedAt: args.projectedAt,
+      mutate: true,
+      requireAuthorityClaims: true,
+    });
+
     nodes.push({
       client_id: workflowClientId,
       type: "procedure",
       title: args.source.playbook_title ? `Replay Learned Workflow: ${args.source.playbook_title}` : `Replay Learned Workflow ${args.source.playbook_id.slice(0, 8)}`,
       text_summary: workflowAnchor.summary,
-      slots: {
-        summary_kind: "workflow_anchor",
-        compression_layer: "L2",
-        anchor_v1: workflowAnchor,
-        execution_contract_v1: stableExecutionContract,
-        outcome_contract_gate: stableOutcomeContractGate,
-        ...(stableExecutionEvidence ? { execution_evidence_v1: stableExecutionEvidence } : {}),
-        execution_evidence_assessment: stableExecutionEvidenceAssessment,
-        authority_gate_v1: stableAuthorityGate,
-        policy_mutation_v1: policyMutation,
-        policy_mutation_adjudication_v1: policyMutationAdjudication,
-        execution_native_v1: ExecutionNativeV1Schema.parse({
-          schema_version: "execution_native_v1",
-          execution_kind: "workflow_anchor",
-          summary_kind: "workflow_anchor",
-          compression_layer: "L2",
-          ...(workflowContract.contract_trust ? { contract_trust: workflowContract.contract_trust } : {}),
-          task_signature: workflowAnchor.task_signature,
-          ...(workflowAnchor.task_family ? { task_family: workflowAnchor.task_family } : {}),
-          workflow_signature: workflowAnchor.workflow_signature,
-          anchor_kind: "workflow",
-          anchor_level: "L2",
-          ...(workflowAnchor.target_files ? { target_files: workflowAnchor.target_files } : {}),
-          ...(workflowAnchor.next_action !== undefined ? { next_action: workflowAnchor.next_action } : {}),
-          ...(workflowAnchor.key_steps ? { workflow_steps: workflowAnchor.key_steps } : {}),
-          ...(workflowAnchor.pattern_hints ? { pattern_hints: workflowAnchor.pattern_hints } : {}),
-          ...(workflowAnchor.service_lifecycle_constraints
-            ? { service_lifecycle_constraints: workflowAnchor.service_lifecycle_constraints }
-            : {}),
-          outcome_contract_gate: stableOutcomeContractGate,
-          workflow_promotion: workflowAnchor.workflow_promotion,
-          maintenance: workflowAnchor.maintenance,
-          rehydration: workflowAnchor.rehydration,
-          distillation: buildDistillationMetadata({
-            source_kind: "replay_learning",
-            distillation_kind: "workflow_candidate",
-            at: args.projectedAt,
-            source_node_id: args.source.playbook_node_id,
-          }),
-        }),
-        replay_learning: {
-          generated_by: "replay_learning_v1",
-          source_playbook_id: args.source.playbook_id,
-          promoted_from_playbook_version: args.source.playbook_version,
-          source_playbook_node_id: args.source.playbook_node_id,
-          source_commit_id: args.source.source_commit_id,
-          workflow_signature: args.workflowSignature,
-          observed_count: args.observedWorkflowCount,
-          promoted_at: args.projectedAt,
-        },
-      },
+      slots: stableWorkflowSlots,
     });
     edges.push({
       type: "derived_from",

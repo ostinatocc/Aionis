@@ -72,12 +72,74 @@ test("authority-producing Runtime surfaces use the unified authority gate", () =
     .filter((producer) => producer.capabilities.may_use_runtime_authority_gate);
   assert.ok(producers.length > 0, "authority boundary inventory must declare gate-backed producers");
 
+  const broker = runtimeBoundaryInventoryAuthorityEntries().find((entry) => entry.source_id === "authority_effect_broker");
+  assert.ok(broker, "authority effect broker must be declared");
+  const brokerText = read(broker.file);
+  assertContains(brokerText, "buildRuntimeAuthorityGate", "authority effect broker must call the unified authority gate");
+  assertContains(brokerText, "issueRuntimeAuthorityReceiptForNode", "authority effect broker must issue authority receipts");
+  assertContains(brokerText, "authority_gate_v1", "authority effect broker must understand authority gate slots");
+  assertContains(brokerText, "authority_receipt_v1", "authority effect broker must seal authority receipts");
+
   for (const producer of producers) {
     const text = read(producer.file);
-    assertContains(text, "buildRuntimeAuthorityGate", `${producer.file} must build runtime authority gates`);
+    assertContains(text, "authority-effect-broker.js", `${producer.file} must route authority effects through the broker`);
     assertContains(text, "authority_gate_v1", `${producer.file} must persist authority gate state`);
     for (const token of producer.required_source_markers) {
       assertContains(text, token, `${producer.file} must keep ${producer.source_id} backed by ${token}`);
+    }
+  }
+});
+
+test("declared authority capabilities are backed by source evidence tokens", () => {
+  const capabilityEvidence: Array<{
+    capability: keyof ReturnType<typeof runtimeBoundaryInventoryAuthorityEntries>[number]["capabilities"];
+    tokens: string[];
+  }> = [
+    {
+      capability: "may_use_runtime_authority_gate",
+      tokens: ["buildRuntimeAuthorityGate", "buildRuntimeAuthorityEffect", "sealRuntimeAuthorityEffectReceipt", "authority_gate_v1", "allows_authoritative", "allows_stable_promotion"],
+    },
+    {
+      capability: "may_use_outcome_contract_gate",
+      tokens: ["buildOutcomeContractGate", "outcomeContractGate", "outcome_contract_gate_v1"],
+    },
+    {
+      capability: "may_assess_execution_evidence",
+      tokens: ["assessExecutionEvidence", "executionEvidenceAssessment", "execution_evidence_assessment"],
+    },
+    {
+      capability: "may_read_raw_authority_surface",
+      tokens: [
+        "authority_gate_v1",
+        "execution_evidence_assessment",
+        "stable_promotion_blocked",
+        "authority_visibility",
+        "authorityConsumptionStateFromValue",
+      ],
+    },
+    {
+      capability: "may_use_stable_workflow_literal",
+      tokens: [
+        "promotion_state: \"stable\"",
+        "promotion_state_override === \"stable\"",
+        "promotion_state === \"stable\"",
+        "\"stable_workflow\"",
+      ],
+    },
+    {
+      capability: "may_use_stable_pattern_literal",
+      tokens: ["pattern_state: \"stable\"", "targetPatternState = \"stable\"", "target_level !== \"L3\"", "\"stable_pattern\""],
+    },
+  ];
+
+  for (const entry of runtimeBoundaryInventoryAuthorityEntries()) {
+    const text = read(entry.file);
+    for (const evidence of capabilityEvidence) {
+      if (entry.capabilities[evidence.capability] !== true) continue;
+      assert.ok(
+        evidence.tokens.some((token) => text.includes(token)),
+        `${entry.source_id} declares ${evidence.capability} but ${entry.file} has none of: ${evidence.tokens.join(", ")}`,
+      );
     }
   }
 });

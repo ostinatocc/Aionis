@@ -33,6 +33,7 @@ import {
   type AdjudicableMemoryEntry,
   type MemoryLifecycleRelationCandidateProducer,
 } from "./memory-lifecycle-adjudicator.js";
+import { assertAuthorityWriteReceipts } from "./authority-write-guard.js";
 import {
   assertSingleScopeWrite,
   nodeEmbedText,
@@ -443,6 +444,7 @@ export async function applyPreparedMemoryWrite(
   }
 
   await appendLifecycleRelationEdges(writeAccess, prepared, opts.lifecycleRelationCandidateProducer);
+  assertAuthorityWriteReceipts(nodes);
 
   const referencedExistingIds = Array.from(
     new Set(edges.flatMap((e) => [e.src_id, e.dst_id]).filter((id) => !localNodeScope.has(id))),

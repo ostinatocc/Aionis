@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
+import { sealAuthorityReceiptsForPreparedWrite } from "./authority-fixture-helpers.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import {
   buildAgentMemoryHandoffPackLite,
@@ -289,6 +290,7 @@ async function seedEvolutionFixture(store: ReturnType<typeof createLiteWriteStor
     allowCrossScopeEdges: false,
   }, null);
 
+  sealAuthorityReceiptsForPreparedWrite(prepared);
   await store.withTx(() => applyMemoryWrite(prepared, {
     ...writeOptions,
     write_access: store,
@@ -334,6 +336,7 @@ async function seedHandoffFixture(store: ReturnType<typeof createLiteWriteStore>
     null,
   );
 
+  sealAuthorityReceiptsForPreparedWrite(prepared);
   await store.withTx(() => applyMemoryWrite(prepared, {
     ...writeOptions,
     write_access: store,
@@ -391,6 +394,7 @@ async function seedConflictingCanonicalHandoffFixture(store: ReturnType<typeof c
     null,
   );
 
+  sealAuthorityReceiptsForPreparedWrite(prepared);
   await store.withTx(() => applyMemoryWrite(prepared, {
     ...writeOptions,
     write_access: store,
