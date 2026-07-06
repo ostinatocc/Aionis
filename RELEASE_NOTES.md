@@ -19,8 +19,8 @@ what to keep out of direct use, and what raw evidence can be restored on demand.
 
 Current public patch versions for the v0.3 train:
 
-- `aionis@0.3.7`
-- `@aionis/create@0.3.4`
+- `aionis@0.3.8`
+- `@aionis/create@0.3.5`
 - `@aionis/sdk@0.3.8`
 - `@aionis/mcp@0.3.2`
 - `@aionis/aifs@0.3.0`
@@ -135,7 +135,7 @@ After publishing a top-level CLI patch, verify the npm artifact against a real
 Runtime before announcing it:
 
 ```bash
-AIONIS_PUBLISHED_CLI_SMOKE_SPEC="aionis@0.3.7" \
+AIONIS_PUBLISHED_CLI_SMOKE_SPEC="aionis@0.3.8" \
 npm run -s runtime:smoke:published-cli
 ```
 

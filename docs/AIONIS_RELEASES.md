@@ -9,8 +9,8 @@ and native adapter release paths.
 |---|---:|---|
 | GitHub Runtime source | `v0.3.3` tag | Runtime source, product APIs, docs, Docker build, and Runtime validation loops. |
 | Docker image | `ghcr.io/ostinatocc/aionis:v0.3.3` | Local-first Runtime container with persistent SQLite state under `/data`. |
-| `aionis` | `0.3.7` npm / [repo](https://github.com/ostinatocc/aionis-cli) | Top-level product CLI. Owns `npx aionis setup`, read-only `doctor`/`health`/`boundary`/`snapshot` inspection, Agent Flight Recorder audit, explicit `forget` lifecycle control, and trace-derived skill candidate review commands. |
-| `@aionis/create` | `0.3.4` npm / [repo](https://github.com/ostinatocc/aionis-create) | One-command Runtime installer. |
+| `aionis` | `0.3.8` npm / [repo](https://github.com/ostinatocc/aionis-cli) | Top-level product CLI. Owns `npx aionis setup`, read-only `doctor`/`health`/`boundary`/`snapshot` inspection, Agent Flight Recorder audit, explicit `forget` lifecycle control, and trace-derived skill candidate review commands. |
+| `@aionis/create` | `0.3.5` npm / [repo](https://github.com/ostinatocc/aionis-create) | One-command Runtime installer. |
 | `@aionis/sdk` | `0.3.8` npm / [repo](https://github.com/ostinatocc/aionis-sdk) | TypeScript facade over Aionis product APIs, including trace-derived skill materialization helpers and typed task context profiles for `/v1/guide`. |
 | `@aionis/mcp` | `0.3.2` npm / [repo](https://github.com/ostinatocc/aionis-mcp) | MCP stdio bridge for Claude Code, Cursor, Codex-style tools, and other MCP clients. |
 | `@aionis/aifs` | `0.3.0` npm / [repo](https://github.com/ostinatocc/aionis-aifs) | Aionis File Surface for file-aware Agent context. |
@@ -26,9 +26,10 @@ reviewed trace-derived skill memory loop, while keeping typed
 `task_context_profile` guide requests for host adapters that want task-specific
 Agent context rendering without changing Runtime governance.
 
-Latest CLI patch: `aionis@0.3.7` adds operator `snapshot`,
-`audit flight-recorder`, and explicit `forget` lifecycle commands on top of the
-existing trace-derived skill review and read-only Runtime inspection commands.
+Latest CLI patch: `aionis@0.3.8` adds the `--profile full-local` setup profile
+on top of operator `snapshot`, `audit flight-recorder`, explicit `forget`
+lifecycle commands, trace-derived skill review, and read-only Runtime
+inspection commands.
 
 Release tags are immutable. If the release surface changes after a tag, create a
 new patch tag instead of moving the old one.
@@ -139,7 +140,7 @@ After publishing the top-level CLI, pin the just-published npm version in the
 published CLI smoke:
 
 ```bash
-AIONIS_PUBLISHED_CLI_SMOKE_SPEC="aionis@0.3.7" \
+AIONIS_PUBLISHED_CLI_SMOKE_SPEC="aionis@0.3.8" \
 npm run -s runtime:smoke:published-cli
 ```
 
