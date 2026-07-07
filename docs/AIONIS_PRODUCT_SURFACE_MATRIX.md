@@ -6,6 +6,8 @@ Scope: Runtime product, SDK/API contracts, and public integration boundaries.
 This is the engineering maintenance matrix for Aionis public and semi-public
 surfaces. It is intentionally more implementation-oriented than the public docs
 page in `aionis-docs/content/api-reference/surface-matrix.mdx`.
+For the Agent-facing context contract, see
+[AIONIS_AGENT_CONTEXT_CONTRACT.md](AIONIS_AGENT_CONTEXT_CONTRACT.md).
 
 ## Rule
 
@@ -20,6 +22,11 @@ first. The primary final Agent context path already exists:
 `POST /v1/guide -> agent_context.prompt_text` remains the lower-level Runtime
 guide contract. New integrations should use the SDK AgentContext helpers unless
 they have a specific reason to manage compilation themselves.
+
+Execution-scoped memory that reaches the final Agent prompt must match the
+current exact `task_signature` when one is present. Same `workflow_signature`
+evidence may remain in `memory_packet` for audit, measurement, and later
+analysis, but it is not by itself direct prompt admission.
 
 ## Status Labels
 

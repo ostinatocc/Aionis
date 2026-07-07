@@ -28,6 +28,8 @@ memory candidates into shorter, cleaner, auditable Agent context.
 See the evidence map:
 [docs/AIONIS_EVIDENCE_INDEX.md](docs/AIONIS_EVIDENCE_INDEX.md) and
 [docs/research/2026-06-28-aionis-evaluation-evidence-report.md](docs/research/2026-06-28-aionis-evaluation-evidence-report.md).
+For the Agent-facing context contract, see
+[docs/AIONIS_AGENT_CONTEXT_CONTRACT.md](docs/AIONIS_AGENT_CONTEXT_CONTRACT.md).
 
 ## The Claim
 
@@ -624,9 +626,10 @@ type AgentContext = {
 };
 ```
 
-Give the Agent `agent_context.prompt_text` or selected `agent_context` fields.
-Keep packets, traces, receipts, raw slots, and operator snapshots for host logs
-and observability.
+Give the Agent SDK `agent_prompt`. Direct HTTP hosts may pass only
+`agent_context.prompt_text` or selected `agent_context` fields. Keep packets,
+traces, receipts, raw slots, and operator snapshots for host logs and
+observability.
 
 ## SDK Usage
 

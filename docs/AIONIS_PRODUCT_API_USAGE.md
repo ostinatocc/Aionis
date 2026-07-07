@@ -19,6 +19,8 @@ For choosing SDK, raw HTTP, or multi-agent first-run commands, see
 [AIONIS_QUICKSTART_MATRIX.md](AIONIS_QUICKSTART_MATRIX.md).
 For one-command Runtime plus SDK installation, see
 [AIONIS_INSTALL.md](AIONIS_INSTALL.md).
+For the final Agent-facing context contract, see
+[AIONIS_AGENT_CONTEXT_CONTRACT.md](AIONIS_AGENT_CONTEXT_CONTRACT.md).
 For admission dataset JSONL export, see
 [AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md](AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md).
 For backend-agnostic Memory Firewall, see
@@ -63,6 +65,11 @@ or `execution.guideAgentContextForRole().agent_prompt`. Direct HTTP hosts may
 consume only `agent_context.prompt_text` or selected `agent_context` fields.
 Full packets, decision traces, audit reports, raw rows, memory admission
 records, and raw slots are operator surfaces.
+
+Execution-scoped memory follows exact-task prompt admission. With a current
+`task_signature`, same-workflow but different-task execution evidence can remain
+in `memory_packet`; it must not become `agent_prompt` / `agent_context.prompt_text`
+unless it also matches the current task.
 
 For host decisions, distinguish these two fields:
 

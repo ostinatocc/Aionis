@@ -11,6 +11,8 @@ For the full product API usage boundary, see
 [AIONIS_PRODUCT_API_USAGE.md](AIONIS_PRODUCT_API_USAGE.md).
 For external host wiring, see
 [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md).
+For the stable Agent-facing context contract, see
+[AIONIS_AGENT_CONTEXT_CONTRACT.md](AIONIS_AGENT_CONTEXT_CONTRACT.md).
 For the execution-contract roadmap between governed context and Agent action,
 see
 [AIONIS_AGENT_CONTEXT_EXECUTION_CONTRACT_ROADMAP.md](AIONIS_AGENT_CONTEXT_EXECUTION_CONTRACT_ROADMAP.md).
@@ -64,6 +66,10 @@ This keeps Aionis useful without turning memory internals into a rule wall.
 `command_posture` is the governed instruction posture: `must_not`,
 `should_continue`, `inspect_first`, `rehydrate_first`, or `optional_context`.
 It is compiled after lifecycle, authority, premise, and rehydration gates.
+For execution memory, Agent prompt admission is additionally scoped to the
+current exact `task_signature` when one is present. Same-workflow evidence can
+remain visible in packets or audit surfaces without becoming current action
+text.
 When `should_continue` points to an active target that is not present yet, the
 Agent should not treat absence alone as stale proof or fall back to a blocked
 path. The active target should be restored or created when task-consistent, or

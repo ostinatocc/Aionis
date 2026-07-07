@@ -13,14 +13,14 @@ const dockerImage = `ghcr.io/ostinatocc/aionis:${runtimeTag}`;
 const CURRENT_RELEASE_TRAIN = [
   { name: "aionis", version: "0.3.8", releaseNotesToken: "aionis@0.3.8" },
   { name: "@aionis/create", version: "0.3.5", releaseNotesToken: "@aionis/create@0.3.5" },
-  { name: "@aionis/sdk", version: "0.3.8", releaseNotesToken: "@aionis/sdk@0.3.8" },
-  { name: "@aionis/mcp", version: "0.3.2", releaseNotesToken: "@aionis/mcp@0.3.2" },
-  { name: "@aionis/aifs", version: "0.3.0", releaseNotesToken: "@aionis/aifs@0.3.0" },
+  { name: "@aionis/sdk", version: "0.3.10", releaseNotesToken: "@aionis/sdk@0.3.10" },
+  { name: "@aionis/mcp", version: "0.3.5", releaseNotesToken: "@aionis/mcp@0.3.5" },
+  { name: "@aionis/aifs", version: "0.3.2", releaseNotesToken: "@aionis/aifs@0.3.2" },
   {
     name: "@aionis/claude-code",
     releaseDocsArtifact: "`@aionis/claude-code` and Claude Code plugin",
-    version: "0.3.1",
-    releaseNotesToken: "@aionis/claude-code@0.3.1",
+    version: "0.3.3",
+    releaseNotesToken: "@aionis/claude-code@0.3.3",
   },
   {
     name: "@aionis/substrate",

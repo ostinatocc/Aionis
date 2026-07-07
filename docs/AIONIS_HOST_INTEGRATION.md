@@ -9,6 +9,8 @@ Runtime implementation and adapters.
 For route-level request and response details, see
 [AIONIS_PRODUCT_API_USAGE.md](AIONIS_PRODUCT_API_USAGE.md). For stable output
 schemas, see [AIONIS_PRODUCT_OUTPUT_CONTRACT.md](AIONIS_PRODUCT_OUTPUT_CONTRACT.md).
+For the final Agent-facing context contract, see
+[AIONIS_AGENT_CONTEXT_CONTRACT.md](AIONIS_AGENT_CONTEXT_CONTRACT.md).
 For recall source diagnostics, mode selection, and guide troubleshooting, see
 [AIONIS_RECALL_ENGINE_RUNBOOK.md](AIONIS_RECALL_ENGINE_RUNBOOK.md).
 
@@ -132,6 +134,13 @@ Keep these surfaces for host logs, measurement, and operator inspection:
 
 They are designed for host measurement, developer debugging, and operator
 inspection rather than direct Agent instruction.
+
+Execution memory has a stricter prompt boundary than packet evidence. If the
+guide request includes a `task_signature`, execution-scoped memory can enter
+SDK `agent_prompt` or HTTP `agent_context.prompt_text` only when it matches that
+exact task. Same `workflow_signature` evidence can still appear in
+`memory_packet` for audit, measurement, and future learning, but it is not
+current action guidance by itself.
 
 `memory_use_receipt` is the host-facing audit receipt for memory use. It is
 returned inside `memory_decision_trace` and `operator_snapshot`, and records

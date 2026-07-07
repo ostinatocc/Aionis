@@ -21,10 +21,10 @@ Current public patch versions for the v0.3 train:
 
 - `aionis@0.3.8`
 - `@aionis/create@0.3.5`
-- `@aionis/sdk@0.3.8`
-- `@aionis/mcp@0.3.2`
-- `@aionis/aifs@0.3.0`
-- `@aionis/claude-code@0.3.1`
+- `@aionis/sdk@0.3.10`
+- `@aionis/mcp@0.3.5`
+- `@aionis/aifs@0.3.2`
+- `@aionis/claude-code@0.3.3`
 - Runtime source tag `v0.3.3`
 - Docker image `ghcr.io/ostinatocc/aionis:v0.3.3`
 
