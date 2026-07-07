@@ -285,7 +285,7 @@ async function main() {
       },
       integration_path: {
         sdk_client: "createAionisClient",
-        product_loop: "remember -> guide -> compileExecutionAgentContext -> agent prompt -> feedback -> measure -> snapshot",
+        product_loop: "remember -> guideAgentContext -> agent_prompt -> feedback -> measure -> snapshot",
         execution_context_compiler: "aionis.execution.compileAgentContext",
       },
       agent_context: {
@@ -298,8 +298,7 @@ async function main() {
       execution_context_compiler: {
         contract_version: compiledContext.contract_version,
         budget_profile: compiledContext.budget_profile,
-        prompt_char_count: compiledContext.prompt_char_count,
-        prompt_preview: compiledContext.agent_prompt.slice(0, 800),
+        metadata_prompt_char_count: compiledContext.prompt_char_count,
         route_contract_present: compiledContext.route_contract !== null,
         active_targets: compiledContext.active_targets,
         missing_active_targets: compiledContext.missing_active_targets,

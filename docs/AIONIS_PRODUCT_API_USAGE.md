@@ -591,7 +591,7 @@ Return compact historical context for the next Agent run.
 | `limit` | No | Maximum recall breadth. |
 | `include_packets` | No | Adds `memory_packet` and `guide_packet` for audit or measure. |
 | `context_mode` | No | `full_power` for full product guide mode, or `compact_agent` for the same external path with a shorter Agent prompt. |
-| `task_context_profile` | No | Agent-facing task posture for the compiled prompt. Supported values: `general`, `coding_verifier`, `document_integrity`, `long_qa`, `multi_agent_handoff`, `loop_engineering`. |
+| `task_context_profile` | No | Agent-facing task posture for Runtime `agent_context.prompt_text`. Supported values: `general`, `coding_verifier`, `document_integrity`, `long_qa`, `multi_agent_handoff`, `loop_engineering`. |
 
 `POST /v1/guide` uses semantic recall, so a configured embedding provider is
 required for normal product use.

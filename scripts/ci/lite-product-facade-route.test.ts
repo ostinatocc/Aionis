@@ -3243,6 +3243,27 @@ test("full-power product guide merges structured execution control memory into p
             slots: executionSlots("failed", "suppressed", "failed"),
           },
           {
+            client_id: "structured-control-same-workflow-other-task",
+            type: "evidence",
+            tier: "warm",
+            memory_lane: "private",
+            owner_agent_id: "control-agent",
+            owner_team_id: "control-team",
+            title: "STRUCTURED_CONTROL_SAME_WORKFLOW_OTHER_TASK",
+            text_summary: "STRUCTURED_CONTROL_SAME_WORKFLOW_OTHER_TASK is useful workflow evidence but not the current task route.",
+            slots: executionSlots("same-workflow-other-task", "active", "passed", {
+              task_signature: "another-structured-control-guide",
+              workflow_signature: workflowSignature,
+              summary_kind: "workflow_anchor",
+              execution_kind: "workflow_anchor",
+              execution_outcome_role: "passed_solution",
+              anchor_kind: "workflow",
+              file_path: "src/same-workflow-other-task.ts",
+              target_files: ["src/same-workflow-other-task.ts"],
+              next_action: "Keep this as workflow evidence only unless the task signature matches.",
+            }),
+          },
+          {
             client_id: "structured-control-contested",
             type: "evidence",
             tier: "warm",
@@ -3296,6 +3317,7 @@ test("full-power product guide merges structured execution control memory into p
     const writtenNodes = arrayValue(write.json().nodes, "write.nodes");
     const idByClientId = new Map(writtenNodes.map((entry) => [entry.client_id, entry.id]));
     const passedWorkflowNodeId = String(idByClientId.get("structured-control-passed-workflow"));
+    const sameWorkflowOtherTaskNodeId = String(idByClientId.get("structured-control-same-workflow-other-task"));
     const failedNodeId = String(idByClientId.get("structured-control-failed"));
     const contestedNodeId = String(idByClientId.get("structured-control-contested"));
     const rehydrateNodeId = String(idByClientId.get("structured-control-rehydrate"));
@@ -3360,16 +3382,25 @@ test("full-power product guide merges structured execution control memory into p
     assert.equal(memoryPacket.scope, scope);
     assert.equal(guideBody.source_map.internal_surfaces_used.includes("full_power_structured_execution_recall"), true);
     assert.equal(agentContext.use_now_memory_ids.includes(passedWorkflowNodeId), true);
+    assert.equal(agentContext.use_now_memory_ids.includes(sameWorkflowOtherTaskNodeId), false);
+    assert.equal(agentContext.inspect_before_use_memory_ids.includes(sameWorkflowOtherTaskNodeId), true);
     assert.equal(agentContext.do_not_use_memory_ids.includes(failedNodeId), true);
     assert.equal(agentContext.inspect_before_use_memory_ids.includes(contestedNodeId), true);
     assert.equal(agentContext.rehydrate_hints.some((hint: Record<string, unknown>) => hint.memory_id === rehydrateNodeId), true);
     assert.equal(agentContext.use_now.some((entry: string) => entry.includes("STRUCTURED_CONTROL_PASSED_WORKFLOW")), true);
+    assert.equal(agentContext.use_now.some((entry: string) => entry.includes("STRUCTURED_CONTROL_SAME_WORKFLOW_OTHER_TASK")), false);
+    assert.equal(agentContext.inspect_before_use.some((entry: string) => entry.includes("STRUCTURED_CONTROL_SAME_WORKFLOW_OTHER_TASK")), true);
     assert.equal(agentContext.do_not_use.some((entry: string) => entry.includes("STRUCTURED_CONTROL_FAILED_BRANCH")), true);
     assert.equal(agentContext.inspect_before_use.some((entry: string) => entry.includes("STRUCTURED_CONTROL_CONTESTED_BRANCH")), true);
+    const sameWorkflowPostures = arrayValue(agentContext.command_posture, "agent_context.command_posture")
+      .filter((entry) => entry.memory_id === sameWorkflowOtherTaskNodeId);
+    assert.equal(sameWorkflowPostures.some((entry) => entry.posture === "should_continue"), false);
+    assert.equal(sameWorkflowPostures.some((entry) => entry.posture === "inspect_first"), true);
     assert.equal(agentContext.prompt_text.includes("STRUCTURED_CONTROL_OTHER_TASK"), false);
     const packetMemoryIds = arrayValue(memoryPacket.relevant_memories, "memory_packet.relevant_memories")
       .map((entry) => entry.memory_id);
     assert.equal(packetMemoryIds.includes(passedWorkflowNodeId), true);
+    assert.equal(packetMemoryIds.includes(sameWorkflowOtherTaskNodeId), true);
     assert.equal(packetMemoryIds.includes(failedNodeId), true);
     assert.equal(packetMemoryIds.includes(contestedNodeId), true);
     assert.equal(packetMemoryIds.includes(rehydrateNodeId), true);

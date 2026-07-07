@@ -1418,12 +1418,10 @@ function productGuideExecutionSignatures(parsed: z.infer<typeof ProductGuideRequ
 }
 
 function productGuideExecutionMemoryFilters(parsed: z.infer<typeof ProductGuideRequest>): Array<Record<string, unknown>> {
-  const { taskSignature, taskFamily, workflowSignature } = productGuideExecutionSignatures(parsed);
+  const { taskSignature } = productGuideExecutionSignatures(parsed);
   const filters: Array<Record<string, unknown>> = [];
   if (taskSignature) filters.push({ slots_contains: { task_signature: taskSignature }, limit: 20 });
-  if (taskFamily) filters.push({ slots_contains: { task_family: taskFamily }, limit: 20 });
-  if (workflowSignature) filters.push({ slots_contains: { workflow_signature: workflowSignature }, limit: 20 });
-  return filters.slice(0, 3);
+  return filters;
 }
 
 function nestedObjectField(value: unknown, key: string): Record<string, unknown> | null {
@@ -1510,12 +1508,16 @@ function productGuideStructuredControlNode(row: LiteExecutionNativeNodeRow): boo
     || activeStateCarrier;
 }
 
-function productGuideStructuredControlSlots(row: LiteExecutionNativeNodeRow): Record<string, unknown> {
+function productGuideStructuredControlSlots(
+  row: LiteExecutionNativeNodeRow,
+  args: { directExecutionMatch: boolean },
+): Record<string, unknown> {
   const slots: Record<string, unknown> = { ...row.slots };
   const lifecycle = firstStringValue(slots.lifecycle_state);
   const status = structuredRecallExecutionStatus(row);
   const rehydrationMode = structuredRecallRehydrationMode(row);
-  const reusableWorkflowAnchor = productGuideStructuredReusableWorkflowAnchor(row);
+  const reusableWorkflowAnchor = args.directExecutionMatch && productGuideStructuredReusableWorkflowAnchor(row);
+  const referenceOnlyWorkflowAnchor = !args.directExecutionMatch && productGuideStructuredReusableWorkflowAnchor(row);
   const executionNative: Record<string, unknown> = objectValue(slots.execution_native_v1)
     ? { ...(objectValue(slots.execution_native_v1) as Record<string, unknown>) }
     : { ...row.execution_native };
@@ -1526,11 +1528,15 @@ function productGuideStructuredControlSlots(row: LiteExecutionNativeNodeRow): Re
   if (reusableWorkflowAnchor) {
     executionNative.summary_kind = "current_state";
     executionNative.guide_projection_kind = "passed_workflow_anchor_active_route";
+  } else if (referenceOnlyWorkflowAnchor) {
+    executionNative.guide_projection_kind = "workflow_anchor_reference_only";
   }
   slots.execution_native_v1 = executionNative;
 
   if (status === "failed" || status === "blocked" || lifecycle === "disabled") {
     slots.lifecycle_state = "suppressed";
+  } else if (referenceOnlyWorkflowAnchor) {
+    slots.lifecycle_state = "candidate";
   } else if (status === "contested" && !lifecycle) {
     slots.lifecycle_state = "contested";
   } else if (rehydrationMode && !lifecycle) {
@@ -1742,6 +1748,7 @@ async function buildProductGuideStructuredExecutionPacket(args: {
         })
       : Promise.resolve({ rows: [] as LiteExecutionNativeNodeRow[], has_more: false }),
   ]);
+  const taskMatchedIds = new Set(batches[0].rows.map((row) => row.id));
   const rowsById = new Map<string, LiteExecutionNativeNodeRow>();
   for (const row of batches.flatMap((batch) => batch.rows)) {
     if (!rowsById.has(row.id)) rowsById.set(row.id, row);
@@ -1757,7 +1764,9 @@ async function buildProductGuideStructuredExecutionPacket(args: {
     title: row.title,
     text_summary: row.text_summary,
     tier: row.tier,
-    slots: productGuideStructuredControlSlots(row),
+    slots: productGuideStructuredControlSlots(row, {
+      directExecutionMatch: taskMatchedIds.has(row.id),
+    }),
     raw_ref: row.raw_ref,
     evidence_ref: row.evidence_ref,
     commit_id: row.commit_id,

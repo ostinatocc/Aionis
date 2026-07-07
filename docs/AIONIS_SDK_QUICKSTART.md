@@ -281,7 +281,7 @@ JSON showing:
 2. `remember(kind: "preference")` creates ordinary preference memory
 3. `remember(kind: "project_context")` creates ordinary project memory
 4. `guideAgentContext()` returns compact `agent_prompt` plus the underlying guide
-5. the SDK AgentContext renderer produces the execution contract prompt
+5. `compiled_context` exposes route and receipt metadata for host/operator logic
 6. `feedback()` attributes outcome only to memory exposed by that guide trace
 7. `measure()` reports whether history changed the future context
 8. admission dataset JSONL export is produced without prompt payload

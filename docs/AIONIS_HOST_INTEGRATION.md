@@ -100,7 +100,7 @@ Use the product routes directly when integrating over HTTP:
 | Step | Route | Host Responsibility | Aionis Responsibility |
 |---|---|---|---|
 | `observe` | `POST /v1/observe` | Report real memory, execution, outcome, or handoff evidence. | Persist scoped evidence and execution memory. |
-| `guide` | `POST /v1/guide`, SDK `guideAgentContext()` | Ask for context before the next Agent acts. | Return compact `agent_context`; SDK full path can also resolve `inspect_before_use` and `rehydrate` evidence into the compiled prompt. |
+| `guide` | `POST /v1/guide`, SDK `guideAgentContext()` | Ask for context before the next Agent acts. | Return compact `agent_context`; SDK helpers return the same compact prompt by default and expose resolved evidence as structured host data. |
 | `agent action` | Host-owned | Give the Agent SDK `agent_prompt`; direct HTTP hosts may use only `agent_context.prompt_text` or selected `agent_context` fields. | Preserve memory/action separation while the host executes tools. |
 | `outcome feedback` | SDK `feedback()`, adapter `afterRun`, or raw `POST /v1/feedback` | Report which exposed memory IDs were actually used and what happened. | Attribute feedback only to exposed and reported memory. |
 | `measure` | `POST /v1/measure` | Provide before/after guide packets or product trace. | Report whether history helped or hurt. |

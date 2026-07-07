@@ -251,12 +251,12 @@ markdown, logs, or another recall backend.
 `aionis_context` is the MCP version of the SDK product path:
 
 ```text
-guide -> compileExecutionAgentContext -> agent_prompt + receipt + warnings
+guide -> Runtime compact AgentContext -> agent_prompt + receipt + warnings
 ```
 
 The tool keeps `agent_prompt` at the top level for drop-in MCP clients, but it
-also returns `structuredContent.execution_context` with contract version
-`aionis_execution_agent_context_v1`. That compiled context includes:
+also returns `structuredContent.execution_context` for host logic and audit.
+That structured context includes:
 
 - active targets and missing active targets
 - pending artifacts and blocked/reference-only targets
@@ -269,7 +269,9 @@ MCP hosts can pass `repo_state` with `existing_files`, `missing_files`, or
 per-file `{ target, exists }` entries. Aionis uses that observation to mark
 missing active targets as pending work so the accepted route remains actionable.
 Hosts can also set `budget_profile`, `max_prompt_chars`,
-`include_base_prompt`, and `additional_instructions`.
+and related SDK context options. Resolved evidence and compiled route metadata
+are host surfaces unless the host explicitly chooses to include them in the
+Agent prompt.
 
 ## Memory Firewall
 

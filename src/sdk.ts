@@ -590,6 +590,7 @@ export type AionisGuideAgentContextOptions = {
   budget_profile?: AionisExecutionContextBudgetProfile;
   max_prompt_chars?: number;
   include_base_prompt?: boolean;
+  include_resolved_evidence_in_prompt?: boolean;
   evidence_limit?: number;
   evidence_char_budget?: number;
   include_inspect_before_use?: boolean;
@@ -2015,18 +2016,20 @@ function mergeCompiledContextWithEvidence(args: {
     args.resolvedEvidence,
     evidenceBudget,
   );
+  const basePrompt = truncateText(safeAgentPromptFromGuide(args.guide), maxPromptChars);
   const compiled = compileExecutionAgentContext({
     guide: args.guide,
     task: args.options.task,
     repo_state: args.options.repo_state,
     budget_profile: args.options.budget_profile ?? "balanced",
-    max_prompt_chars: evidenceBlock ? Math.max(4_000, maxPromptChars - evidenceBlock.length - 2) : maxPromptChars,
-    include_base_prompt: args.options.include_base_prompt ?? true,
+    max_prompt_chars: maxPromptChars,
+    include_base_prompt: args.options.include_base_prompt ?? false,
     additional_instructions: args.options.additional_instructions,
   });
-  const agentPrompt = evidenceBlock
-    ? truncateText(`${compiled.agent_prompt}\n\n${evidenceBlock}`, maxPromptChars)
-    : compiled.agent_prompt;
+  const includeEvidence = args.options.include_resolved_evidence_in_prompt === true;
+  const agentPrompt = includeEvidence && evidenceBlock
+    ? truncateText(`${basePrompt}${basePrompt ? "\n\n" : ""}${evidenceBlock}`, maxPromptChars)
+    : basePrompt;
   return {
     compiled_context: {
       ...compiled,

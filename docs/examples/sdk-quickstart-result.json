@@ -8,7 +8,7 @@
   },
   "integration_path": {
     "sdk_client": "createAionisClient",
-    "product_loop": "remember -> guide -> compileExecutionAgentContext -> agent prompt -> feedback -> measure -> snapshot",
+    "product_loop": "remember -> guideAgentContext -> agent_prompt -> feedback -> measure -> snapshot",
     "execution_context_compiler": "aionis.execution.compileAgentContext"
   },
   "agent_context": {
@@ -24,8 +24,7 @@
   "execution_context_compiler": {
     "contract_version": "aionis_execution_agent_context_v1",
     "budget_profile": "balanced",
-    "prompt_char_count": 2711,
-    "prompt_preview": "AIONIS_EXECUTION_AGENT_CONTEXT v1\nTreat this as the SDK-compiled execution-memory contract.",
+    "metadata_prompt_char_count": 2711,
     "route_contract_present": true,
     "active_targets": [],
     "missing_active_targets": [],
