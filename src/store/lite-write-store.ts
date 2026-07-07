@@ -16,6 +16,7 @@ import {
   resolveNodeTaskSignature,
   resolveNodeWorkflowSignature,
 } from "../memory/node-execution-surface.js";
+import { assertAuthorityWriteReceipts } from "../memory/authority-write-guard.js";
 import type {
   AssociationCandidateRecord,
   ListAssociationCandidatesForSourceArgs,
@@ -2716,6 +2717,23 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
     },
 
     async updateNodeAnchorState(args): Promise<LiteFindNodeRow | null> {
+      const { rows: existingRows } = await this.findNodes({
+        scope: args.scope,
+        id: args.id,
+        operatorView: true,
+        limit: 1,
+        offset: 0,
+      });
+      const existing = existingRows[0];
+      if (!existing) return null;
+      assertAuthorityWriteReceipts([{
+        id: existing.id,
+        client_id: existing.client_id ?? undefined,
+        scope: args.scope,
+        type: existing.type,
+        slots: args.slots,
+      }]);
+
       const updates = [
         "slots_json = ?",
         "text_summary = ?",

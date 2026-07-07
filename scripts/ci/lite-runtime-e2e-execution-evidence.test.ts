@@ -13,10 +13,10 @@ import {
   type ExecutionTreeOperationV1,
   type ExecutionTreeV1,
 } from "../../src/execution/index.ts";
-import { registerHandoffRoutes } from "../../src/routes/handoff.ts";
+import { createHandoffRouteService, registerHandoffRoutes } from "../../src/routes/handoff.ts";
 import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
 import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
-import { registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
+import { createMemoryWriteRouteService, registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
@@ -138,7 +138,7 @@ function registerRuntimeE2EApp(args: {
     executionTreeStore: args.executionTreeStore,
   });
 
-  registerMemoryContextRuntimeRoutes({
+  const contextRuntimeRoutes = registerMemoryContextRuntimeRoutes({
     app: args.app,
     env: args.env,
     embedder: DeterministicEmbeddingProvider,
@@ -202,6 +202,21 @@ function registerRuntimeE2EApp(args: {
     app: args.app,
     env: args.env,
     liteWriteStore: args.liteWriteStore,
+    memoryWriteService: createMemoryWriteRouteService({
+      env: args.env,
+      embedder: DeterministicEmbeddingProvider,
+      liteWriteStore: args.liteWriteStore,
+      executionStateStore: null,
+      executionTreeStore: args.executionTreeStore,
+    }),
+    planningContextService: contextRuntimeRoutes.planningContextService,
+    handoffRouteService: createHandoffRouteService({
+      env: args.env,
+      embedder: DeterministicEmbeddingProvider,
+      liteWriteStore: args.liteWriteStore,
+      executionStateStore: null,
+      executionTreeStore: args.executionTreeStore,
+    }),
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,

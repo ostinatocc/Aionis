@@ -115,6 +115,85 @@ test("admission production gate blocks invalid required zero-count fields", () =
   assert.ok(report.decision.blocking_reasons.includes("invalid_required_input_fields"));
 });
 
+test("admission production gate inherits upstream projection input integrity", () => {
+  const report = evaluateAdmissionProductionGateJsonl(FIXTURE_JSONL, {
+    thresholds: {
+      min_rows: 400,
+      min_task_signatures: 12,
+      min_scopes: 12,
+      min_projection_present_count: 400,
+    },
+    batch_collect: shadowBatchCollect({
+      input_integrity: {
+        missing_required_fields: ["chunks[0].online_projection.runtime_mutation_count"],
+        invalid_required_fields: [],
+        missing_optional_fields: [],
+        trusted_zero_count_fields: [],
+      },
+    }),
+    candidate_policy: candidatePolicyReport(),
+  });
+
+  assert.equal(report.checks.input_integrity_pass, false);
+  assert.equal(report.checks.no_runtime_mutation, false);
+  assert.equal(report.decision.eligible_for_isolated_active_gray_review, false);
+  assert.ok(report.input_integrity.missing_required_fields.some((field) =>
+    field.endsWith(".runtime_mutation_count")
+  ));
+  assert.ok(report.decision.blocking_reasons.includes("missing_required_input_fields"));
+  assert.ok(report.decision.blocking_reasons.includes("shadow_projection_mutated_runtime"));
+});
+
+test("admission production gate blocks missing candidate policy promotion fields", () => {
+  const candidatePolicy = candidatePolicyReport() as any;
+  delete candidatePolicy.promotion_gate.eligible_for_manual_review;
+  const report = evaluateAdmissionProductionGateJsonl(FIXTURE_JSONL, {
+    thresholds: {
+      min_rows: 400,
+      min_task_signatures: 12,
+      min_scopes: 12,
+      min_projection_present_count: 400,
+    },
+    batch_collect: shadowBatchCollect(),
+    candidate_policy: candidatePolicy,
+  });
+
+  assert.equal(report.checks.input_integrity_pass, false);
+  assert.equal(report.checks.candidate_policy_manual_review_eligible, false);
+  assert.equal(report.decision.eligible_for_isolated_active_gray_review, false);
+  assert.ok(report.input_integrity.missing_required_fields.some((field) =>
+    field.endsWith(".eligible_for_manual_review")
+  ));
+  assert.ok(report.decision.blocking_reasons.includes("missing_required_input_fields"));
+  assert.ok(report.decision.blocking_reasons.includes("candidate_policy_not_manual_review_eligible"));
+});
+
+test("admission production gate reports missing candidate calibration scores as unknown, not zero", () => {
+  const candidatePolicy = candidatePolicyReport() as any;
+  delete candidatePolicy.selected_policy.holdout.calibration_score;
+  delete candidatePolicy.recorded_policy.holdout.calibration_score;
+  const report = evaluateAdmissionProductionGateJsonl(FIXTURE_JSONL, {
+    thresholds: {
+      min_rows: 400,
+      min_task_signatures: 12,
+      min_scopes: 12,
+      min_projection_present_count: 400,
+    },
+    batch_collect: shadowBatchCollect(),
+    candidate_policy: candidatePolicy,
+  });
+
+  assert.equal(report.checks.input_integrity_pass, true);
+  assert.equal(report.candidate_policy.holdout_calibration_score, null);
+  assert.equal(report.candidate_policy.recorded_holdout_calibration_score, null);
+  assert.ok(report.input_integrity.missing_optional_fields.some((field) =>
+    field.endsWith(".selected_policy.holdout.calibration_score")
+  ));
+  assert.ok(report.input_integrity.missing_optional_fields.some((field) =>
+    field.endsWith(".recorded_policy.holdout.calibration_score")
+  ));
+});
+
 test("admission production gate blocks shadow runs that enter prompt or upgrade boundaries", () => {
   const report = evaluateAdmissionProductionGateJsonl(FIXTURE_JSONL, {
     thresholds: {

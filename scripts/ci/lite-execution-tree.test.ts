@@ -285,6 +285,39 @@ test("execution tree auto operation helper revises failed execution result branc
   }
 });
 
+test("execution tree auto operation helper uses evidence-only outcome classification", async () => {
+  const dbPath = tmpDbPath("auto-evidence-only-failed");
+  const store = createLiteExecutionTreeStore(dbPath);
+  const state = sampleExecutionState({
+    stateId: "state:auto-evidence-only-failed",
+    updatedAt: "2026-06-08T00:12:30.000Z",
+    completedValidations: ["clean shell replay"],
+  });
+  try {
+    const result = applyAutoExecutionTreeFromSlots({
+      executionTreeStore: store,
+      slots: {
+        execution_state_v1: state,
+        execution_evidence: [
+          {
+            ref: "trace://auto-evidence-only-failed/verifier",
+            status: "failed",
+            summary: "Evidence-only replay failed validation.",
+          },
+        ],
+      },
+      title: "Evidence-only failed auto execution tree",
+      textSummary: "Capture evidence-only failed branch",
+    });
+    assert.equal(result?.operations.length, 4);
+    assert.equal(result!.operations.some((operation) => operation.type === "maintain" && operation.passed === false), true);
+    assert.equal(result!.operations.some((operation) => operation.type === "revise"), true);
+    assert.equal(result!.tree.current_summary_node_id, result!.tree.root_summary_node_id);
+  } finally {
+    await store.close();
+  }
+});
+
 test("execution tree auto operation helper treats conflict summaries as failed branches", async () => {
   const dbPath = tmpDbPath("auto-conflict");
   const store = createLiteExecutionTreeStore(dbPath);

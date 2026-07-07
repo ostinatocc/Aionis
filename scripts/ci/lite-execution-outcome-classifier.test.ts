@@ -58,3 +58,27 @@ test("execution outcome classifier normalizes boolean success and failure fields
     conflict: true,
   });
 });
+
+test("execution outcome classifier uses the same slots-level evidence sources", () => {
+  assert.deepEqual(classifyExecutionOutcomeFromSlots({
+    execution_evidence: [
+      {
+        status: "failed",
+        summary: "Verifier failed after clean-shell replay.",
+      },
+    ],
+  }), {
+    outcome: "failed",
+    conflict: false,
+  });
+  assert.deepEqual(classifyExecutionOutcomeFromSlots({
+    execution_evidence_v1: {
+      schema_version: "execution_evidence_v1",
+      validation_passed: false,
+      evidence_refs: ["test:classifier:evidence-v1"],
+    },
+  }), {
+    outcome: "failed",
+    conflict: false,
+  });
+});

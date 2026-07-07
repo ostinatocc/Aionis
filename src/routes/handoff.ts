@@ -46,12 +46,22 @@ type HandoffWriteBodyNodeLike = {
 type PreparedHandoffWrite = Awaited<ReturnType<typeof prepareMemoryWrite>>;
 type HandoffWriteResult = Awaited<ReturnType<typeof applyMemoryWrite>>;
 
-type RegisterHandoffRoutesArgs = {
-  app: FastifyInstance;
+export type HandoffRouteServiceArgs = {
   env: Env;
   embedder: EmbeddingProvider | null;
   embeddingSurfacePolicy?: EmbeddingSurfacePolicy;
   liteWriteStore: LiteWriteStore;
+  executionStateStore?: ExecutionStateStore | null;
+  executionTreeStore?: ExecutionTreeStore | null;
+};
+
+export type HandoffRouteService = {
+  store: (body: HandoffStoreInput, options?: { principal?: AuthPrincipal | null }) => Promise<unknown>;
+  recover: (body: HandoffRecoverInput, options?: { principal?: AuthPrincipal | null }) => Promise<unknown>;
+};
+
+type RegisterHandoffRoutesArgs = HandoffRouteServiceArgs & {
+  app: FastifyInstance;
   requireMemoryPrincipal: (req: FastifyRequest) => Promise<AuthPrincipal | null>;
   withIdentityFromRequest: (
     req: FastifyRequest,
@@ -63,8 +73,6 @@ type RegisterHandoffRoutesArgs = {
   enforceTenantQuota: (req: FastifyRequest, reply: FastifyReply, kind: "write" | "recall", tenantId: string) => Promise<void>;
   tenantFromBody: (body: unknown) => string;
   acquireInflightSlot: (kind: "write" | "recall") => Promise<InflightGateToken>;
-  executionStateStore?: ExecutionStateStore | null;
-  executionTreeStore?: ExecutionTreeStore | null;
 };
 
 function firstNode<T>(value: unknown): T | null {
@@ -75,23 +83,16 @@ function asSlots(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
-export function registerHandoffRoutes(args: RegisterHandoffRoutesArgs) {
+export function createHandoffRouteService(args: HandoffRouteServiceArgs): HandoffRouteService {
   const {
-    app,
     env,
     embedder,
     embeddingSurfacePolicy: embeddingSurfacePolicyArg,
     liteWriteStore,
-    requireMemoryPrincipal,
-    withIdentityFromRequest,
-    enforceRateLimit,
-    enforceTenantQuota,
-    tenantFromBody,
-    acquireInflightSlot,
     executionStateStore,
     executionTreeStore,
   } = args;
-  assertLocalStoreRuntimeEdition(env, "local-store handoff routes");
+  assertLocalStoreRuntimeEdition(env, "local-store handoff route service");
   const embeddingSurfacePolicy =
     embeddingSurfacePolicyArg ?? createEmbeddingSurfacePolicy({ providerConfigured: !!embedder });
   const writeEmbedder = embeddingSurfacePolicy.providerFor("write_auto_embed", embedder);
@@ -209,6 +210,70 @@ export function registerHandoffRoutes(args: RegisterHandoffRoutesArgs) {
       consumerTeamId: principal?.team_id ?? null,
     });
 
+  return {
+    async store(body, options = {}) {
+      const principal = options.principal ?? null;
+      const writeBody = buildPrincipalHandoffWriteBody(body, principal);
+      const prepared = await prepareMemoryWrite(
+        writeBody,
+        env.MEMORY_SCOPE,
+        env.MEMORY_TENANT_ID,
+        {
+          maxTextLen: env.MAX_TEXT_LEN,
+          piiRedaction: env.PII_REDACTION,
+          allowCrossScopeEdges: env.ALLOW_CROSS_SCOPE_EDGES,
+        },
+        writeEmbedder,
+      );
+      const out = await runCommittedHandoffWrite(prepared);
+
+      const writeNode = firstNode<HandoffWriteBodyNodeLike>(writeBody.nodes);
+      const writeSlots = asSlots(writeNode?.slots);
+      const appliedExecutionTransitions = applyExecutionContinuityTransitionsFromSlots({
+        executionStateStore,
+        writeSlots,
+      });
+      const appliedExecutionTreeOperations = applyExecutionTreeOperationsFromSlots({
+        executionTreeStore,
+        writeSlots,
+      });
+      const appliedAutoExecutionTree = env.EXECUTION_TREE_DEFAULT_ENABLED === false
+        ? null
+        : applyAutoExecutionTreeFromSlots({
+            executionTreeStore,
+            slots: writeSlots,
+            title: body.title ?? null,
+            textSummary: body.summary,
+          });
+      return buildHandoffStoreResponse({
+        body,
+        writeBody,
+        out,
+        appliedExecutionTransitions,
+        appliedExecutionTreeOperations,
+        appliedAutoExecutionTree,
+      });
+    },
+    async recover(body, options = {}) {
+      return runHandoffRecoverForPrincipal(body, options.principal ?? null);
+    },
+  };
+}
+
+export function registerHandoffRoutes(args: RegisterHandoffRoutesArgs) {
+  const {
+    app,
+    env,
+    requireMemoryPrincipal,
+    withIdentityFromRequest,
+    enforceRateLimit,
+    enforceTenantQuota,
+    tenantFromBody,
+    acquireInflightSlot,
+  } = args;
+  assertLocalStoreRuntimeEdition(env, "local-store handoff routes");
+  const service = createHandoffRouteService(args);
+
   const runHandoffRoute = async <TBody, TResult>(args: {
     req: HandoffRequest;
     reply: FastifyReply;
@@ -237,48 +302,7 @@ export function registerHandoffRoutes(args: RegisterHandoffRoutesArgs) {
       requestKind: "handoff_store",
       inflightKind: "write",
       parseBody: (input) => HandoffStoreRequest.parse(input),
-      execute: async (body, principal) => {
-        const writeBody = buildPrincipalHandoffWriteBody(body, principal);
-        const prepared = await prepareMemoryWrite(
-          writeBody,
-          env.MEMORY_SCOPE,
-          env.MEMORY_TENANT_ID,
-          {
-            maxTextLen: env.MAX_TEXT_LEN,
-            piiRedaction: env.PII_REDACTION,
-            allowCrossScopeEdges: env.ALLOW_CROSS_SCOPE_EDGES,
-          },
-          writeEmbedder,
-        );
-        const out = await runCommittedHandoffWrite(prepared);
-
-        const writeNode = firstNode<HandoffWriteBodyNodeLike>(writeBody.nodes);
-        const writeSlots = asSlots(writeNode?.slots);
-        const appliedExecutionTransitions = applyExecutionContinuityTransitionsFromSlots({
-          executionStateStore,
-          writeSlots,
-        });
-        const appliedExecutionTreeOperations = applyExecutionTreeOperationsFromSlots({
-          executionTreeStore,
-          writeSlots,
-        });
-        const appliedAutoExecutionTree = env.EXECUTION_TREE_DEFAULT_ENABLED === false
-          ? null
-          : applyAutoExecutionTreeFromSlots({
-              executionTreeStore,
-              slots: writeSlots,
-              title: body.title ?? null,
-              textSummary: body.summary,
-            });
-        return buildHandoffStoreResponse({
-          body,
-          writeBody,
-          out,
-          appliedExecutionTransitions,
-          appliedExecutionTreeOperations,
-          appliedAutoExecutionTree,
-        });
-      },
+      execute: (body, principal) => service.store(body, { principal }),
     });
     return reply.code(200).send(out);
   });
@@ -290,7 +314,7 @@ export function registerHandoffRoutes(args: RegisterHandoffRoutesArgs) {
       requestKind: "handoff_recover",
       inflightKind: "recall",
       parseBody: (input) => HandoffRecoverRequest.parse(input),
-      execute: (body, principal) => runHandoffRecoverForPrincipal(body, principal),
+      execute: (body, principal) => service.recover(body, { principal }),
     });
     return reply.code(200).send(out);
   });

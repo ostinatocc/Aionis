@@ -25,6 +25,7 @@ import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteReplayStore } from "../../src/store/lite-replay-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { AionisMemoryPacketSchema } from "../../src/memory/product-output-contract.ts";
+import { sealAuthorityReceiptsForPreparedWrite } from "./authority-fixture-helpers.ts";
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-replay-anchor-"));
@@ -1552,6 +1553,19 @@ test("replayPlaybookPromote normalizes latest stable playbooks onto workflow anc
         },
       },
     };
+    sealAuthorityReceiptsForPreparedWrite({
+      nodes: [{
+        id: seededNode.id,
+        client_id: seededNode.client_id ?? undefined,
+        scope: "default",
+        type: seededNode.type,
+        slots: seededSlots,
+      }],
+    }, {
+      effectKind: "stable_replay_playbook_anchor",
+      issuedAt: "2026-03-20T00:00:00.000Z",
+      evidenceRefs: ["test:normalize-latest-stable:authority-fixture"],
+    });
     const updatedSeed = await liteWriteStore.updateNodeAnchorState({
       scope: "default",
       id: sourceNodeId,

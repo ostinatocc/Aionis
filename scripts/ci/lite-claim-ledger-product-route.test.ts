@@ -6,12 +6,12 @@ import path from "node:path";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
 import { createRuntimeServices } from "../../src/app/runtime-services.ts";
 import { loadEnv, type Env } from "../../src/config.ts";
-import { registerHandoffRoutes } from "../../src/routes/handoff.ts";
+import { createHandoffRouteService, registerHandoffRoutes } from "../../src/routes/handoff.ts";
 import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
 import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
 import { registerMemoryFeedbackToolRoutes } from "../../src/routes/memory-feedback-tools.ts";
 import { registerLiteMemoryLifecycleRoutes } from "../../src/routes/memory-lifecycle-lite.ts";
-import { registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
+import { createMemoryWriteRouteService, registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
 import { createHttpApp, registerBootstrapLifecycle } from "../../src/server/bootstrap.ts";
 import { registerHealthRoute, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
@@ -124,7 +124,7 @@ async function setupClaimLedgerProductApp(args: {
     tenantFromBody: guards.tenantFromBody,
     acquireInflightSlot: guards.acquireInflightSlot,
   });
-  registerMemoryContextRuntimeRoutes({
+  const contextRuntimeRoutes = registerMemoryContextRuntimeRoutes({
     app,
     env,
     embedder: DeterministicEmbeddingProvider,
@@ -211,6 +211,21 @@ async function setupClaimLedgerProductApp(args: {
     app,
     env,
     liteWriteStore: services.liteWriteStore,
+    memoryWriteService: createMemoryWriteRouteService({
+      env,
+      embedder: DeterministicEmbeddingProvider,
+      liteWriteStore: services.liteWriteStore,
+      executionStateStore: services.executionStateStore,
+      executionTreeStore: services.executionTreeStore,
+    }),
+    planningContextService: contextRuntimeRoutes.planningContextService,
+    handoffRouteService: createHandoffRouteService({
+      env,
+      embedder: DeterministicEmbeddingProvider,
+      liteWriteStore: services.liteWriteStore,
+      executionStateStore: services.executionStateStore,
+      executionTreeStore: services.executionTreeStore,
+    }),
     claimLedgerAccess: services.claimLedgerAccess,
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,

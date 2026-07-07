@@ -128,6 +128,22 @@ test("tool e2e gate blocks missing required safety count fields", () => {
   assert.ok(report.decision.blocking_reasons.includes("route_write_violation_present"));
 });
 
+test("tool e2e gate blocks invalid required safety count fields", () => {
+  const report = evaluateAdmissionToolE2EGate({
+    summary: summary({
+      terminal_inspect_hits: "0",
+    }),
+    policy_mode: "active",
+  });
+
+  assert.equal(report.checks.input_integrity_pass, false);
+  assert.equal(report.checks.no_terminal_inspect, false);
+  assert.equal(report.decision.eligible_for_default_active_review, false);
+  assert.ok(report.input_integrity.invalid_required_fields.some((field) => field.endsWith(".terminal_inspect_hits")));
+  assert.ok(report.decision.blocking_reasons.includes("invalid_required_input_fields"));
+  assert.ok(report.decision.blocking_reasons.includes("terminal_inspect_present"));
+});
+
 test("tool e2e gate blocks when no context budget evidence is available", () => {
   const noContextSummary = summary();
   const byArm = noContextSummary.by_arm as Array<Record<string, unknown>>;

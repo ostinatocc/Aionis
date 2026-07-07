@@ -15,7 +15,7 @@ import {
 } from "../../src/execution/index.ts";
 import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
 import { buildAionisUri } from "../../src/memory/uri.ts";
-import { registerHandoffRoutes } from "../../src/routes/handoff.ts";
+import { createHandoffRouteService, registerHandoffRoutes } from "../../src/routes/handoff.ts";
 import {
   registerMemoryContextRuntimeRoutes,
   type MemoryPlanningContextRouteService,
@@ -432,14 +432,16 @@ function registerProductFacade(args: {
   liteWriteStore?: ReturnType<typeof createLiteWriteStore>;
   memoryWriteService?: ReturnType<typeof createMemoryWriteRouteService> | null;
   planningContextService?: MemoryPlanningContextRouteService | null;
+  handoffRouteService?: ReturnType<typeof createHandoffRouteService> | null;
   skillCandidateReviewAccess?: ReturnType<ReturnType<typeof createLiteSkillCandidateReviewStore>["createSkillCandidateReviewAccess"]>;
 }) {
   registerProductFacadeRoutes({
     app: args.app,
     env: args.env,
     liteWriteStore: args.liteWriteStore ?? ({} as ReturnType<typeof createLiteWriteStore>),
-    memoryWriteService: args.memoryWriteService,
-    planningContextService: args.planningContextService,
+    memoryWriteService: args.memoryWriteService ?? null,
+    planningContextService: args.planningContextService ?? null,
+    handoffRouteService: args.handoffRouteService ?? null,
     skillCandidateReviewAccess: args.skillCandidateReviewAccess,
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
@@ -450,11 +452,13 @@ function registerProductFacade(args: {
   });
 }
 
-test("product facade sanitizes failed internal route bodies", async () => {
+test("product facade fails closed instead of injecting an internal memory write route", async () => {
   const app = Fastify();
   const env = liteEnv();
   const guards = requestGuards(env);
+  let fallbackCalled = false;
   app.post("/v1/memory/write", async (_req, reply) => {
+    fallbackCalled = true;
     return reply.code(500).send({
       error: "sqlite_internal_failure",
       message: "SECRET_RUNTIME_STACK should never leave an internal product route",
@@ -480,12 +484,14 @@ test("product facade sanitizes failed internal route bodies", async () => {
   const body = response.json();
 
   assert.equal(response.statusCode, 500);
-  assert.equal(body.error, "internal_route_failed");
-  assert.equal(body.message, "An internal product facade dependency failed.");
+  assert.equal(body.error, "product_dependency_failed");
+  assert.equal(body.message, "A product facade dependency failed.");
   assert.equal(body.details.contract, "error_v1");
   assert.equal(body.details.surface, "/v1/memory/write");
   assert.equal(body.details.upstream_status, 500);
   assert.equal(body.details.retryable, true);
+  assert.equal(fallbackCalled, false);
+  assert.equal(body.details.error, undefined);
   assert.equal(response.payload.includes("SECRET_RUNTIME_STACK"), false);
   assert.equal(response.payload.includes("sqlite_internal_failure"), false);
   assertNoForbiddenProductFields(body);
@@ -590,6 +596,161 @@ test("product guide uses direct planning context service when supplied", async (
     assert.equal(response.statusCode, 200);
     assert.equal(body.source_map.routes_used.includes("/v1/memory/planning/context"), true);
     assert.doesNotMatch(response.payload, /fallback_planning_route_used/);
+  } finally {
+    await liteWriteStore.close();
+  }
+});
+
+test("product observe uses direct handoff store service when supplied", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const liteWriteStore = createLiteWriteStore(tmpDbPath("direct-product-observe-handoff"));
+  try {
+    app.post("/v1/handoff/store", async (_req, reply) => {
+      return reply.code(500).send({
+        error: "fallback_handoff_route_used",
+        message: "product observe should not inject this route when direct handoff service is available",
+      });
+    });
+    registerRuntimeErrorHandler(app);
+    registerProductFacade({
+      app,
+      env,
+      guards,
+      liteWriteStore,
+      handoffRouteService: createHandoffRouteService({
+        env,
+        embedder: DeterministicEmbeddingProvider,
+        liteWriteStore,
+        executionStateStore: null,
+      }),
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        actor: "local-user",
+        handoff: {
+          handoff_kind: "task_handoff",
+          anchor: "direct-product-observe-handoff",
+          title: "Direct product handoff service",
+          summary: "Store handoff through the direct product facade handoff service.",
+          handoff_text: "Continue from the direct handoff service test.",
+        },
+      },
+    });
+    const body = response.json();
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.observed.handoff_stored, true);
+    assert.equal(body.handoff.handoff.anchor, "direct-product-observe-handoff");
+    assert.doesNotMatch(response.payload, /fallback_handoff_route_used/);
+  } finally {
+    await liteWriteStore.close();
+  }
+});
+
+test("product observe sanitizes direct handoff service failures", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env);
+  registerRuntimeErrorHandler(app);
+  registerProductFacade({
+    app,
+    env,
+    guards,
+    handoffRouteService: {
+      async store() {
+        throw new Error("SECRET_HANDOFF_SERVICE_STACK should never leave product observe");
+      },
+      async recover() {
+        return {};
+      },
+    },
+  });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/v1/observe",
+    payload: {
+      tenant_id: "default",
+      scope: "default",
+      actor: "local-user",
+      handoff: {
+        handoff_kind: "task_handoff",
+        anchor: "failed-direct-product-handoff",
+        title: "Failed direct product handoff service",
+        summary: "Trigger a direct handoff service failure.",
+        handoff_text: "This text should not matter.",
+      },
+    },
+  });
+  const body = response.json();
+
+  assert.equal(response.statusCode, 500);
+  assert.equal(body.error, "product_dependency_failed");
+  assert.equal(body.message, "A product facade dependency failed.");
+  assert.equal(body.details.surface, "/v1/handoff/store");
+  assert.equal(body.details.upstream_status, 500);
+  assert.equal(response.payload.includes("SECRET_HANDOFF_SERVICE_STACK"), false);
+  assertNoForbiddenProductFields(body);
+});
+
+test("product lifecycle uses direct archive rehydrate implementation", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env);
+  const liteWriteStore = createLiteWriteStore(tmpDbPath("direct-product-lifecycle-rehydrate"));
+  try {
+    app.post("/v1/memory/archive/rehydrate", async (_req, reply) => {
+      return reply.code(500).send({
+        error: "fallback_lifecycle_route_used",
+        message: "product lifecycle should not inject this route when direct Runtime functions are available",
+      });
+    });
+    registerRuntimeErrorHandler(app);
+    registerProductFacade({
+      app,
+      env,
+      guards,
+      liteWriteStore,
+    });
+    await seedProductFacadeMemory({
+      liteWriteStore,
+      input_text: "DIRECT_PRODUCT_LIFECYCLE_REHYDRATE_MARKER archived memory",
+      nodes: [{
+        client_id: "direct-product-lifecycle-archive",
+        type: "concept",
+        title: "Direct product lifecycle archive",
+        text_summary: "DIRECT_PRODUCT_LIFECYCLE_REHYDRATE_MARKER archived memory.",
+        tier: "archive",
+        memory_lane: "private",
+        owner_agent_id: "local-user",
+        producer_agent_id: "local-user",
+      }],
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/rehydrate",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        actor: "local-user",
+        client_ids: ["direct-product-lifecycle-archive"],
+        reason: "Rehydrate through the direct product lifecycle dispatcher.",
+      },
+    });
+    const body = response.json();
+
+    assert.equal(response.statusCode, 200, response.payload);
+    assert.equal(body.result.rehydrated.moved_nodes, 1);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/memory/archive/rehydrate"]);
+    assert.doesNotMatch(response.payload, /fallback_lifecycle_route_used/);
   } finally {
     await liteWriteStore.close();
   }
@@ -879,6 +1040,12 @@ function registerFullProductMemoryApp(args: {
       executionStateStore: null,
     }),
     planningContextService: contextRuntimeRoutes.planningContextService,
+    handoffRouteService: createHandoffRouteService({
+      env: args.env,
+      embedder: routeEmbedder,
+      liteWriteStore: args.liteWriteStore,
+      executionStateStore: null,
+    }),
   });
 }
 

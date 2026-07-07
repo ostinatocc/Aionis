@@ -13,7 +13,7 @@ import {
 } from "./tree.js";
 import type { ExecutionTreeStore } from "./tree-store.js";
 import { buildExecutionPacketV1 } from "./packet.js";
-import { classifyExecutionOutcomeRecord } from "./outcome-classifier.js";
+import { classifyExecutionOutcomeFromSlots } from "./outcome-classifier.js";
 import { stableJson } from "../util/stable-json.js";
 
 export type AutoExecutionTreeApplyResult = {
@@ -258,19 +258,9 @@ function hasCompressionSignal(source: AutoExecutionTreeSource): boolean {
     || stringList(source.state?.completed_validations).length > 0;
 }
 
-function readOutcomeFromRecord(record: Record<string, unknown> | null): "passed" | "failed" | null {
-  const outcome = classifyExecutionOutcomeRecord(record).outcome;
-  return outcome === "unknown" ? null : outcome;
-}
-
 function deriveOutcome(source: AutoExecutionTreeSource): "passed" | "failed" | null {
-  const direct = readOutcomeFromRecord(asRecord(source.slots.execution_result_summary));
-  if (direct) return direct;
-  const evidence = Array.isArray(source.slots.execution_evidence) ? source.slots.execution_evidence : [];
-  for (const entry of evidence) {
-    const outcome = readOutcomeFromRecord(asRecord(entry));
-    if (outcome) return outcome;
-  }
+  const classified = classifyExecutionOutcomeFromSlots(source.slots).outcome;
+  if (classified !== "unknown") return classified;
   if (source.state?.unresolved_blockers.length) return "failed";
   if (source.state?.completed_validations.length && source.state.pending_validations.length === 0) return "passed";
   return null;

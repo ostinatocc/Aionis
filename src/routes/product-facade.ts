@@ -55,9 +55,20 @@ import {
   type AionisMemoryPacket,
   type AionisProcedureMemoryDraftV1,
 } from "../memory/product-output-contract.js";
-import { applyUnusedExposureLearningControlLite } from "../memory/lifecycle-lite.js";
+import {
+  activateMemoryNodesLite,
+  applyUnusedExposureLearningControlLite,
+  rehydrateArchiveNodesLite,
+} from "../memory/lifecycle-lite.js";
+import { memoryFindLite } from "../memory/find.js";
+import {
+  suppressAnchorLite,
+  unsuppressAnchorLite,
+} from "../memory/pattern-operator-override.js";
+import { rehydrateAnchorPayloadLite } from "../memory/rehydrate-anchor.js";
 import { AionisClaimWriteSchema } from "../memory/claim-ledger-contract.js";
 import { resolveTenantScope } from "../memory/tenant.js";
+import { HandoffStoreRequest } from "../memory/schemas.js";
 import type { ClaimLedgerAccess, ClaimLedgerRow } from "../store/claim-ledger-access.js";
 import type { LiteExecutionNativeNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
 import type { ExecutionTreeStore } from "../execution/tree-store.js";
@@ -72,6 +83,7 @@ import { createErrorResponse, HttpError } from "../util/http.js";
 import type { InflightGateToken } from "../util/inflight_gate.js";
 import type { MemoryPlanningContextRouteService } from "./memory-context-runtime.js";
 import type { MemoryWriteRouteService } from "./memory-write.js";
+import type { HandoffRouteService } from "./handoff.js";
 import {
   structureProductObserveMemoryInput,
   type ProductObserveStructuringSummary,
@@ -89,8 +101,9 @@ type ProductFacadeArgs = {
   app: FastifyInstance;
   env: Env;
   liteWriteStore: LiteWriteStore;
-  memoryWriteService?: MemoryWriteRouteService | null;
-  planningContextService?: MemoryPlanningContextRouteService | null;
+  memoryWriteService: MemoryWriteRouteService | null;
+  planningContextService: MemoryPlanningContextRouteService | null;
+  handoffRouteService: HandoffRouteService | null;
   executionTreeStore?: ExecutionTreeStore | null;
   claimLedgerAccess?: ClaimLedgerAccess | null;
   skillCandidateReviewAccess?: SkillCandidateReviewAccess | null;
@@ -546,46 +559,6 @@ function stripUndefined<T extends Record<string, unknown>>(value: T): Record<str
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 }
 
-function parsePayload(payload: string): unknown {
-  if (!payload) return null;
-  try {
-    return JSON.parse(payload);
-  } catch {
-    return {
-      error: "invalid_internal_json",
-      payload,
-    };
-  }
-}
-
-function forwardedHeaders(req: FastifyRequest): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const name of ["authorization", "x-api-key", "x-admin-token", "x-tenant-id"]) {
-    const value = req.headers[name];
-    if (typeof value === "string" && value.trim().length > 0) out[name] = value;
-  }
-  return out;
-}
-
-async function dispatchProductInternalRoute(args: {
-  app: FastifyInstance;
-  req: FastifyRequest;
-  path: string;
-  payload: unknown;
-}): Promise<InternalDispatchResult> {
-  const response = await args.app.inject({
-    method: "POST",
-    url: args.path,
-    headers: forwardedHeaders(args.req),
-    payload: args.payload as Record<string, unknown>,
-  });
-  const body = parsePayload(response.payload);
-  if (response.statusCode >= 200 && response.statusCode < 300) {
-    return { ok: true, statusCode: response.statusCode, path: args.path, body };
-  }
-  return { ok: false, statusCode: response.statusCode, path: args.path, body };
-}
-
 function internalDispatchErrorResult(path: string, err: unknown): InternalDispatchResult {
   if (err instanceof HttpError) {
     return {
@@ -626,12 +599,25 @@ function internalDispatchErrorResult(path: string, err: unknown): InternalDispat
   };
 }
 
+function productDependencyMissingResult(path: string, dependency: string): InternalDispatchResult {
+  return {
+    ok: false,
+    statusCode: 500,
+    path,
+    body: productErrorResponse({
+      status: 500,
+      error: "product_dependency_missing",
+      message: "required product facade dependency is not configured",
+      details: { dependency },
+    }),
+  };
+}
+
 async function dispatchProductMemoryWrite(args: {
-  app: FastifyInstance;
   req: FastifyRequest;
   reply: FastifyReply;
   payload: unknown;
-  memoryWriteService?: MemoryWriteRouteService | null;
+  memoryWriteService: MemoryWriteRouteService | null;
   enforceRateLimit: (req: FastifyRequest, reply: FastifyReply, kind: "write") => Promise<void>;
   enforceTenantQuota: (req: FastifyRequest, reply: FastifyReply, kind: "write", tenantId: string) => Promise<void>;
   tenantFromBody: (body: unknown) => string;
@@ -639,12 +625,7 @@ async function dispatchProductMemoryWrite(args: {
 }): Promise<InternalDispatchResult> {
   const path = "/v1/memory/write";
   if (!args.memoryWriteService) {
-    return dispatchProductInternalRoute({
-      app: args.app,
-      req: args.req,
-      path,
-      payload: args.payload,
-    });
+    return productDependencyMissingResult(path, "memory_write_service");
   }
   let gate: InflightGateToken | null = null;
   try {
@@ -669,22 +650,161 @@ async function dispatchProductMemoryWrite(args: {
   }
 }
 
+async function dispatchProductHandoffStore(args: {
+  req: FastifyRequest;
+  reply: FastifyReply;
+  payload: unknown;
+  principal: AuthPrincipal | null;
+  handoffRouteService: HandoffRouteService | null;
+  enforceRateLimit: (req: FastifyRequest, reply: FastifyReply, kind: "write") => Promise<void>;
+  enforceTenantQuota: (req: FastifyRequest, reply: FastifyReply, kind: "write", tenantId: string) => Promise<void>;
+  tenantFromBody: (body: unknown) => string;
+  acquireInflightSlot: (kind: "write") => Promise<InflightGateToken>;
+}): Promise<InternalDispatchResult> {
+  const path = "/v1/handoff/store";
+  if (!args.handoffRouteService) {
+    return productDependencyMissingResult(path, "handoff_route_service");
+  }
+  let gate: InflightGateToken | null = null;
+  try {
+    const body = HandoffStoreRequest.parse(args.payload);
+    await args.enforceRateLimit(args.req, args.reply, "write");
+    await args.enforceTenantQuota(args.req, args.reply, "write", args.tenantFromBody(body));
+    gate = await args.acquireInflightSlot("write");
+    const response = await args.handoffRouteService.store(body, {
+      principal: args.principal,
+    });
+    return {
+      ok: true,
+      statusCode: 200,
+      path,
+      body: response,
+    };
+  } catch (err) {
+    return internalDispatchErrorResult(path, err);
+  } finally {
+    gate?.release();
+  }
+}
+
+async function dispatchProductLifecycleDirect(args: {
+  req: FastifyRequest;
+  reply: FastifyReply;
+  env: Env;
+  liteWriteStore: LiteWriteStore;
+  path: string;
+  payload: unknown;
+  enforceRateLimit: (req: FastifyRequest, reply: FastifyReply, kind: "recall" | "write") => Promise<void>;
+  enforceTenantQuota: (req: FastifyRequest, reply: FastifyReply, kind: "recall" | "write", tenantId: string) => Promise<void>;
+  tenantFromBody: (body: unknown) => string;
+  acquireInflightSlot: (kind: "recall" | "write") => Promise<InflightGateToken>;
+}): Promise<InternalDispatchResult> {
+  const writeOptions = {
+    maxTextLen: args.env.MAX_TEXT_LEN,
+    piiRedaction: args.env.PII_REDACTION,
+    defaultActor: args.env.LITE_LOCAL_ACTOR_ID,
+  };
+  let gate: InflightGateToken | null = null;
+  try {
+    switch (args.path) {
+      case "/v1/memory/anchors/suppress": {
+        await args.enforceRateLimit(args.req, args.reply, "write");
+        await args.enforceTenantQuota(args.req, args.reply, "write", args.tenantFromBody(args.payload));
+        const body = await args.liteWriteStore.withTx(() =>
+          suppressAnchorLite({
+            body: args.payload,
+            defaultScope: args.env.MEMORY_SCOPE,
+            defaultTenantId: args.env.MEMORY_TENANT_ID,
+            liteWriteStore: args.liteWriteStore,
+          })
+        );
+        return { ok: true, statusCode: 200, path: args.path, body };
+      }
+      case "/v1/memory/anchors/unsuppress": {
+        await args.enforceRateLimit(args.req, args.reply, "write");
+        await args.enforceTenantQuota(args.req, args.reply, "write", args.tenantFromBody(args.payload));
+        const body = await args.liteWriteStore.withTx(() =>
+          unsuppressAnchorLite({
+            body: args.payload,
+            defaultScope: args.env.MEMORY_SCOPE,
+            defaultTenantId: args.env.MEMORY_TENANT_ID,
+            liteWriteStore: args.liteWriteStore,
+          })
+        );
+        return { ok: true, statusCode: 200, path: args.path, body };
+      }
+      case "/v1/memory/archive/rehydrate": {
+        await args.enforceRateLimit(args.req, args.reply, "write");
+        await args.enforceTenantQuota(args.req, args.reply, "write", args.tenantFromBody(args.payload));
+        gate = await args.acquireInflightSlot("write");
+        const body = await args.liteWriteStore.withTx(() =>
+          rehydrateArchiveNodesLite(
+            args.liteWriteStore,
+            args.payload,
+            args.env.MEMORY_SCOPE,
+            args.env.MEMORY_TENANT_ID,
+            writeOptions,
+          )
+        );
+        return { ok: true, statusCode: 200, path: args.path, body };
+      }
+      case "/v1/memory/nodes/activate": {
+        await args.enforceRateLimit(args.req, args.reply, "write");
+        await args.enforceTenantQuota(args.req, args.reply, "write", args.tenantFromBody(args.payload));
+        gate = await args.acquireInflightSlot("write");
+        const body = await args.liteWriteStore.withTx(() =>
+          activateMemoryNodesLite(
+            args.liteWriteStore,
+            args.payload,
+            args.env.MEMORY_SCOPE,
+            args.env.MEMORY_TENANT_ID,
+            writeOptions,
+          )
+        );
+        return { ok: true, statusCode: 200, path: args.path, body };
+      }
+      case "/v1/memory/anchors/rehydrate_payload": {
+        await args.enforceRateLimit(args.req, args.reply, "recall");
+        await args.enforceTenantQuota(args.req, args.reply, "recall", args.tenantFromBody(args.payload));
+        gate = await args.acquireInflightSlot("recall");
+        const body = await rehydrateAnchorPayloadLite(
+          args.liteWriteStore,
+          args.payload,
+          args.env.MEMORY_SCOPE,
+          args.env.MEMORY_TENANT_ID,
+          args.env.LITE_LOCAL_ACTOR_ID,
+        );
+        return { ok: true, statusCode: 200, path: args.path, body };
+      }
+      default:
+        return {
+          ok: false,
+          statusCode: 500,
+          path: args.path,
+          body: productErrorResponse({
+            status: 500,
+            error: "unsupported_product_lifecycle_route",
+            message: "unsupported product lifecycle dependency route",
+          }),
+        };
+    }
+  } catch (err) {
+    return internalDispatchErrorResult(args.path, err);
+  } finally {
+    gate?.release();
+  }
+}
+
 async function dispatchProductPlanningContext(args: {
-  app: FastifyInstance;
   req: ProductFacadeRequest;
   reply: FastifyReply;
   payload: unknown;
   principal: AuthPrincipal | null;
-  planningContextService?: MemoryPlanningContextRouteService | null;
+  planningContextService: MemoryPlanningContextRouteService | null;
 }): Promise<InternalDispatchResult> {
   const path = "/v1/memory/planning/context";
   if (!args.planningContextService) {
-    return dispatchProductInternalRoute({
-      app: args.app,
-      req: args.req,
-      path,
-      payload: args.payload,
-    });
+    return productDependencyMissingResult(path, "planning_context_service");
   }
   try {
     const body = await args.planningContextService.assemble(args.req, args.reply, {
@@ -753,8 +873,8 @@ function sendInternalFailure(reply: FastifyReply, result: InternalDispatchResult
   const status = result.statusCode >= 400 && result.statusCode < 600 ? result.statusCode : 502;
   return reply.code(status).send(productErrorResponse({
     status,
-    error: "internal_route_failed",
-    message: "An internal product facade dependency failed.",
+    error: "product_dependency_failed",
+    message: "A product facade dependency failed.",
     details: {
       surface: result.path,
       upstream_status: result.statusCode,
@@ -2334,39 +2454,39 @@ function guideExposureSurfaceIds(ledger: ProductGuideExposureLedger, surface: ke
 }
 
 async function findMemoryNodeSlots(args: {
-  app: FastifyInstance;
-  req: FastifyRequest;
+  liteWriteStore: LiteWriteStore;
+  env: Env;
   tenant_id: string;
   scope: string;
   memory_id: string;
   actor: string;
   consumerTeamId: string | null;
 }): Promise<Record<string, unknown>> {
-  const found = await dispatchProductInternalRoute({
-    app: args.app,
-    req: args.req,
-    path: "/v1/memory/find",
-    payload: {
-      tenant_id: args.tenant_id,
-      scope: args.scope,
-      id: args.memory_id,
-      consumer_agent_id: args.actor,
-      ...(args.consumerTeamId ? { consumer_team_id: args.consumerTeamId } : {}),
-      include_slots: true,
-      limit: 1,
-    },
-  });
-  if (!found.ok) {
+  try {
+    const found = await memoryFindLite(
+      args.liteWriteStore,
+      {
+        tenant_id: args.tenant_id,
+        scope: args.scope,
+        id: args.memory_id,
+        consumer_agent_id: args.actor,
+        ...(args.consumerTeamId ? { consumer_team_id: args.consumerTeamId } : {}),
+        include_slots: true,
+        limit: 1,
+      },
+      args.env.MEMORY_SCOPE,
+      args.env.MEMORY_TENANT_ID,
+    );
+    const node = Array.isArray(found.nodes) ? objectValue(found.nodes[0]) : null;
+    return objectValue(node?.slots) ?? {};
+  } catch {
     throw new Error(`unused exposure memory lookup failed for ${args.memory_id}`);
   }
-  const body = objectValue(found.body);
-  const node = Array.isArray(body?.nodes) ? objectValue(body.nodes[0]) : null;
-  return objectValue(node?.slots) ?? {};
 }
 
 async function findHistoricalGuideExposureLedgers(args: {
-  app: FastifyInstance;
-  req: FastifyRequest;
+  liteWriteStore: LiteWriteStore;
+  env: Env;
   tenant_id: string;
   scope: string;
   actor: string;
@@ -2374,11 +2494,9 @@ async function findHistoricalGuideExposureLedgers(args: {
 }): Promise<ProductGuideExposureLedger[]> {
   const ledgerRows: unknown[] = [];
   for (let offset = 0; offset < 1000; offset += 200) {
-    const ledgersResult = await dispatchProductInternalRoute({
-      app: args.app,
-      req: args.req,
-      path: "/v1/memory/find",
-      payload: {
+    const ledgersResult = await memoryFindLite(
+      args.liteWriteStore,
+      {
         tenant_id: args.tenant_id,
         scope: args.scope,
         type: "evidence",
@@ -2394,13 +2512,11 @@ async function findHistoricalGuideExposureLedgers(args: {
         limit: 200,
         offset,
       },
-    });
-    if (!ledgersResult.ok) {
-      throw new Error("guide exposure ledger lookup failed");
-    }
-    const body = objectValue(ledgersResult.body);
-    if (Array.isArray(body?.nodes)) ledgerRows.push(...body.nodes);
-    const page = objectValue(body?.page);
+      args.env.MEMORY_SCOPE,
+      args.env.MEMORY_TENANT_ID,
+    );
+    if (Array.isArray(ledgersResult.nodes)) ledgerRows.push(...ledgersResult.nodes);
+    const page = objectValue(ledgersResult.page);
     if (page?.has_more !== true) break;
   }
   return ledgerRows
@@ -2416,8 +2532,8 @@ function parseAgentContextObservedTime(value: unknown): number | null {
 }
 
 async function resolveRepeatedUnusedActiveProjectionIds(args: {
-  app: FastifyInstance;
-  req: FastifyRequest;
+  liteWriteStore: LiteWriteStore;
+  env: Env;
   tenant_id: string;
   scope: string;
   actor: string;
@@ -2438,8 +2554,8 @@ async function resolveRepeatedUnusedActiveProjectionIds(args: {
     }
     if (useNowExposureCount < exposureThreshold) continue;
     const slots = await findMemoryNodeSlots({
-      app: args.app,
-      req: args.req,
+      liteWriteStore: args.liteWriteStore,
+      env: args.env,
       tenant_id: args.tenant_id,
       scope: args.scope,
       memory_id: memoryId,
@@ -2453,8 +2569,8 @@ async function resolveRepeatedUnusedActiveProjectionIds(args: {
 }
 
 async function resolveTimeDecayActiveProjectionIds(args: {
-  app: FastifyInstance;
-  req: FastifyRequest;
+  liteWriteStore: LiteWriteStore;
+  env: Env;
   tenant_id: string;
   scope: string;
   actor: string;
@@ -2479,8 +2595,8 @@ async function resolveTimeDecayActiveProjectionIds(args: {
     const ageDays = Math.floor((referenceObservedTime - observedTime) / (24 * 60 * 60 * 1000));
     if (ageDays < AIONIS_CONFIDENCE_DECAY_TIME_THRESHOLD_DAYS) continue;
     const slots = await findMemoryNodeSlots({
-      app: args.app,
-      req: args.req,
+      liteWriteStore: args.liteWriteStore,
+      env: args.env,
       tenant_id: args.tenant_id,
       scope: args.scope,
       memory_id: entry.memory_id,
@@ -2494,8 +2610,7 @@ async function resolveTimeDecayActiveProjectionIds(args: {
 }
 
 async function resolveInspectBeforeUseActiveProjectionIds(args: {
-  app: FastifyInstance;
-  req: FastifyRequest;
+  liteWriteStore: LiteWriteStore;
   env: Env;
   parsed: z.infer<typeof ProductGuideRequest>;
   tenant_id: string;
@@ -2513,16 +2628,16 @@ async function resolveInspectBeforeUseActiveProjectionIds(args: {
     guideTraceId: args.guideTraceId,
   });
   const historicalLedgers = await findHistoricalGuideExposureLedgers({
-    app: args.app,
-    req: args.req,
+    liteWriteStore: args.liteWriteStore,
+    env: args.env,
     tenant_id: args.tenant_id,
     scope: args.scope,
     actor,
     consumerTeamId: args.parsed.consumer_team_id ?? null,
   });
   const repeatedUnusedIds = await resolveRepeatedUnusedActiveProjectionIds({
-    app: args.app,
-    req: args.req,
+    liteWriteStore: args.liteWriteStore,
+    env: args.env,
     tenant_id: args.tenant_id,
     scope: args.scope,
     actor,
@@ -2530,8 +2645,8 @@ async function resolveInspectBeforeUseActiveProjectionIds(args: {
     historicalLedgers,
   });
   const timeDecayIds = await resolveTimeDecayActiveProjectionIds({
-    app: args.app,
-    req: args.req,
+    liteWriteStore: args.liteWriteStore,
+    env: args.env,
     tenant_id: args.tenant_id,
     scope: args.scope,
     actor,
@@ -2543,8 +2658,7 @@ async function resolveInspectBeforeUseActiveProjectionIds(args: {
 }
 
 async function resolveAdmissionCandidatePolicyGuideProjection(args: {
-  app: FastifyInstance;
-  req: FastifyRequest;
+  liteWriteStore: LiteWriteStore;
   env: Env;
   parsed: z.infer<typeof ProductGuideRequest>;
   tenant_id: string;
@@ -2562,8 +2676,8 @@ async function resolveAdmissionCandidatePolicyGuideProjection(args: {
       slotByMemoryId.set(
         memoryId,
         await findMemoryNodeSlots({
-          app: args.app,
-          req: args.req,
+          liteWriteStore: args.liteWriteStore,
+          env: args.env,
           tenant_id: args.tenant_id,
           scope: args.scope,
           memory_id: memoryId,
@@ -2586,8 +2700,7 @@ async function resolveAdmissionCandidatePolicyGuideProjection(args: {
 }
 
 async function buildUnusedExposureObservation(args: {
-  app: FastifyInstance;
-  req: FastifyRequest;
+  liteWriteStore: LiteWriteStore;
   env: Env;
   parsed: ProductForgetInput;
   guideExposure: Extract<ProductGuideExposureResolution, { ok: true }>;
@@ -2597,8 +2710,8 @@ async function buildUnusedExposureObservation(args: {
   const consumerTeamId = ledger.consumer_team_id;
   const exposureThreshold = 2;
   const historicalLedgers = await findHistoricalGuideExposureLedgers({
-    app: args.app,
-    req: args.req,
+    liteWriteStore: args.liteWriteStore,
+    env: args.env,
     tenant_id: ledger.tenant_id,
     scope: ledger.scope,
     actor,
@@ -2618,8 +2731,8 @@ async function buildUnusedExposureObservation(args: {
   const stats: ProductUnusedExposureObservation["memory_stats"] = [];
   for (const memoryId of currentMemoryIds) {
     const slots = await findMemoryNodeSlots({
-      app: args.app,
-      req: args.req,
+      liteWriteStore: args.liteWriteStore,
+      env: args.env,
       tenant_id: ledger.tenant_id,
       scope: ledger.scope,
       memory_id: memoryId,
@@ -2714,7 +2827,6 @@ async function persistUnusedExposureLearningControl(args: {
 }
 
 async function writeGuideExposureLedger(args: {
-  app: FastifyInstance;
   req: FastifyRequest;
   reply: FastifyReply;
   parsed: z.infer<typeof ProductGuideRequest>;
@@ -2723,7 +2835,7 @@ async function writeGuideExposureLedger(args: {
   env: Env;
   agentContext: AionisAgentContext;
   guideTraceId: string;
-  memoryWriteService?: MemoryWriteRouteService | null;
+  memoryWriteService: MemoryWriteRouteService | null;
   enforceRateLimit: (req: FastifyRequest, reply: FastifyReply, kind: "write") => Promise<void>;
   enforceTenantQuota: (req: FastifyRequest, reply: FastifyReply, kind: "write", tenantId: string) => Promise<void>;
   tenantFromBody: (body: unknown) => string;
@@ -2738,7 +2850,6 @@ async function writeGuideExposureLedger(args: {
   });
   const ledgerSha = sha256Hex(stableStringify(ledger));
   return dispatchProductMemoryWrite({
-    app: args.app,
     req: args.req,
     reply: args.reply,
     memoryWriteService: args.memoryWriteService,
@@ -2778,8 +2889,7 @@ async function writeGuideExposureLedger(args: {
 }
 
 async function resolveGuideExposureForActivation(args: {
-  app: FastifyInstance;
-  req: FastifyRequest;
+  liteWriteStore: LiteWriteStore;
   parsed: ProductForgetInput;
   env: Env;
 }): Promise<ProductGuideExposureResolution | null> {
@@ -2787,33 +2897,34 @@ async function resolveGuideExposureForActivation(args: {
   const tenantId = args.parsed.tenant_id ?? args.env.MEMORY_TENANT_ID;
   const scope = args.parsed.scope ?? args.env.MEMORY_SCOPE;
   const actor = args.parsed.actor ?? args.env.LITE_LOCAL_ACTOR_ID;
-  const found = await dispatchProductInternalRoute({
-    app: args.app,
-    req: args.req,
-    path: "/v1/memory/find",
-    payload: {
-      tenant_id: tenantId,
-      scope,
-      client_id: args.parsed.guide_trace_id,
-      consumer_agent_id: actor,
-      include_slots: true,
-      limit: 1,
-    },
-  });
-  if (!found.ok) {
+  let found: Awaited<ReturnType<typeof memoryFindLite>>;
+  try {
+    found = await memoryFindLite(
+      args.liteWriteStore,
+      {
+        tenant_id: tenantId,
+        scope,
+        client_id: args.parsed.guide_trace_id,
+        consumer_agent_id: actor,
+        include_slots: true,
+        limit: 1,
+      },
+      args.env.MEMORY_SCOPE,
+      args.env.MEMORY_TENANT_ID,
+    );
+  } catch {
     return {
       ok: false,
-      statusCode: found.statusCode,
-      body: objectValue(found.body) ?? productErrorResponse({
-        status: found.statusCode,
+      statusCode: 500,
+      body: productErrorResponse({
+        status: 500,
         error: "guide_trace_lookup_failed",
         message: "guide trace lookup failed",
         details: { guide_trace_id: args.parsed.guide_trace_id },
       }),
     };
   }
-  const body = objectValue(found.body);
-  const node = Array.isArray(body?.nodes) ? objectValue(body.nodes[0]) : null;
+  const node = Array.isArray(found.nodes) ? objectValue(found.nodes[0]) : null;
   const slots = objectValue(node?.slots);
   const ledger = parseGuideExposureLedger(slots?.guide_exposure_v1);
   if (!ledger) {
@@ -3566,6 +3677,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     liteWriteStore,
     memoryWriteService,
     planningContextService,
+    handoffRouteService,
     executionTreeStore,
     claimLedgerAccess,
     skillCandidateReviewAccess,
@@ -3598,7 +3710,6 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     const routesUsed: string[] = [];
     const write = writePayload
       ? await dispatchProductMemoryWrite({
-          app,
           req,
           reply,
           payload: writePayload,
@@ -3613,7 +3724,17 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     if (write) routesUsed.push("/v1/memory/write");
 
     const handoff = handoffPayload
-      ? await dispatchProductInternalRoute({ app, req, path: "/v1/handoff/store", payload: handoffPayload })
+      ? await dispatchProductHandoffStore({
+          req,
+          reply,
+          principal,
+          payload: handoffPayload,
+          handoffRouteService,
+          enforceRateLimit,
+          enforceTenantQuota,
+          tenantFromBody,
+          acquireInflightSlot,
+        })
       : null;
     if (handoff && !handoff.ok) return sendInternalFailure(reply, handoff);
     if (handoff) routesUsed.push("/v1/handoff/store");
@@ -3679,7 +3800,6 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       context: parsed.context ?? {},
     };
     const guide = await dispatchProductPlanningContext({
-      app,
       req,
       reply,
       principal,
@@ -3802,8 +3922,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     let activeProjectionApplied = false;
     if (env.AIONIS_INSPECT_BEFORE_USE_MODE === "active") {
       const activeProjectionMemoryIds = await resolveInspectBeforeUseActiveProjectionIds({
-        app,
-        req,
+        liteWriteStore,
         env,
         parsed,
         tenant_id: tenantId,
@@ -3833,8 +3952,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     });
     if (admissionCandidatePolicyMode.mode === "shadow" || admissionCandidatePolicyMode.mode === "active") {
       admissionCandidatePolicyProjection = await resolveAdmissionCandidatePolicyGuideProjection({
-        app,
-        req,
+        liteWriteStore,
         env,
         parsed,
         tenant_id: tenantId,
@@ -3857,7 +3975,6 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       }
     }
     const exposureWrite = await writeGuideExposureLedger({
-      app,
       req,
       reply,
       parsed,
@@ -3986,22 +4103,28 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
     parsed: ProductForgetInput,
     surface: ProductLifecycleSurface,
   ) => {
-    const guideExposure = await resolveGuideExposureForActivation({ app, req, parsed, env });
+    const guideExposure = await resolveGuideExposureForActivation({ liteWriteStore, parsed, env });
     if (guideExposure && !guideExposure.ok) {
       return reply.code(guideExposure.statusCode).send(guideExposure.body);
     }
     const target = productForgetTarget(parsed);
     const route = productForgetRoute(parsed, target);
     const forgetPayload = productForgetPayload(parsed, target, guideExposure);
-    const result = await dispatchProductInternalRoute({
-      app,
+    const result = await dispatchProductLifecycleDirect({
       req,
+      reply,
+      env,
+      liteWriteStore,
       path: route,
       payload: forgetPayload,
+      enforceRateLimit,
+      enforceTenantQuota,
+      tenantFromBody,
+      acquireInflightSlot,
     });
     if (!result.ok) return sendInternalFailure(reply, result);
     const unusedExposureObservation = guideExposure?.ok
-      ? await buildUnusedExposureObservation({ app, req, env, parsed, guideExposure })
+      ? await buildUnusedExposureObservation({ liteWriteStore, env, parsed, guideExposure })
       : null;
     const feedbackLearningControlPersistence = guideExposure?.ok && unusedExposureObservation
       ? await persistUnusedExposureLearningControl({

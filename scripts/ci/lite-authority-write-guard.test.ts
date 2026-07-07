@@ -467,3 +467,66 @@ test("memory write still accepts advisory workflow anchors without stable promot
     await store.close();
   }
 });
+
+test("anchor state updates reject direct stable promotion mutations without authority receipts", async () => {
+  const store = createLiteWriteStore(tmpDbPath("anchor-update-stable-missing-receipt"));
+  try {
+    const initialSlots = {
+      summary_kind: "workflow_anchor",
+      execution_native_v1: {
+        schema_version: "execution_native_v1",
+        execution_kind: "workflow_anchor",
+        summary_kind: "workflow_anchor",
+        compression_layer: "L2",
+        contract_trust: "advisory",
+        task_signature: "task:anchor-update",
+        workflow_signature: "workflow:anchor-update",
+        anchor_kind: "workflow",
+        anchor_level: "L2",
+      },
+    };
+    const prepared = await preparedWriteWithSlots("authority:anchor-update-stable-missing-receipt", initialSlots);
+    const result = await applyPrepared(store, prepared);
+    assert.equal(result.nodes.length, 1);
+    const node = prepared.nodes[0];
+    assert.ok(node, "fixture write should prepare a node");
+
+    await assert.rejects(
+      () => store.updateNodeAnchorState({
+        scope: "default",
+        id: node.id,
+        slots: {
+          ...initialSlots,
+          workflow_promotion: {
+            promotion_state: "stable",
+            promotion_origin: "direct_anchor_update",
+          },
+        },
+        textSummary: "Attempted direct stable workflow promotion.",
+        salience: 0.9,
+        importance: 0.9,
+        confidence: 0.9,
+        commitId: null,
+      }),
+      (err: any) => {
+        assert.equal(err.statusCode, 400);
+        assert.equal(err.code, "authority_receipt_required");
+        assert.equal(err.details.violations[0].requirement, "stable_promotion_requires_passing_authority_gate");
+        assert.equal(err.details.violations[0].reason, "missing_authority_gate_receipt");
+        return true;
+      },
+    );
+
+    const { rows } = await store.findNodes({
+      scope: "default",
+      id: node.id,
+      operatorView: true,
+      limit: 1,
+      offset: 0,
+    });
+    assert.equal(rows[0]?.text_summary, "Authority write guard fixture.");
+    assert.equal((rows[0]?.slots.workflow_promotion as { promotion_state?: string } | undefined)?.promotion_state, undefined);
+  } finally {
+    await store.close();
+  }
+});

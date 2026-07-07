@@ -259,6 +259,23 @@ test("execution context assemble separates passed solutions, failed branches, an
         },
       },
       {
+        client_id: "evidence-only-failed-context-route",
+        type: "event",
+        title: "Evidence-only failed branch",
+        text_summary: "EVIDENCE_ONLY_FAILED_MARKER failed in execution evidence without a result summary.",
+        evidence_ref: "evidence://evidence-only-failed-branch",
+        slots: {
+          task_signature: "execution-context-route",
+          execution_evidence: [
+            {
+              status: "failed",
+              summary: "EVIDENCE_ONLY_FAILED_MARKER failed clean-shell replay.",
+              evidence_refs: ["trace://evidence-only-failed/verifier"],
+            },
+          ],
+        },
+      },
+      {
         client_id: "conflict-branch-context-route",
         type: "event",
         title: "Conflict branch evidence",
@@ -321,6 +338,7 @@ test("execution context assemble separates passed solutions, failed branches, an
   assert.match(failedSerialized, /FAILED_TREE_MARKER/);
   assert.match(failedSerialized, /trace:\/\/candidate-a\/raw/);
   assert.match(failedSerialized, /FAILED_MEMORY_MARKER/);
+  assert.match(failedSerialized, /EVIDENCE_ONLY_FAILED_MARKER/);
   assert.match(failedSerialized, /CONFLICT_MEMORY_MARKER/);
   assert.ok(body.failed_branches.some((entry: any) =>
     entry.conflict === true

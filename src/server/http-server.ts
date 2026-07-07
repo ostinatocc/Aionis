@@ -14,7 +14,7 @@ import {
 } from "../routes/memory-context-runtime.js";
 import { registerMemoryFeedbackToolRoutes } from "../routes/memory-feedback-tools.js";
 import { registerLiteMemoryLifecycleRoutes } from "../routes/memory-lifecycle-lite.js";
-import { registerHandoffRoutes } from "../routes/handoff.js";
+import { createHandoffRouteService, registerHandoffRoutes } from "../routes/handoff.js";
 import { registerMemoryRecallRoutes } from "../routes/memory-recall.js";
 import { registerMemoryReplayCoreRoutes } from "../routes/memory-replay-core.js";
 import { registerMemoryReplayLearningControlRoutes } from "../routes/memory-replay-learning-control.js";
@@ -770,6 +770,14 @@ function registerProductRoutes(args: ProductFacadeRouteRegistrationArgs) {
       executionTreeStore: args.executionTreeStore,
     }),
     planningContextService: args.planningContextService ?? null,
+    handoffRouteService: createHandoffRouteService({
+      env: args.env,
+      embedder: args.embedder,
+      embeddingSurfacePolicy: args.embeddingSurfacePolicy,
+      liteWriteStore: args.liteWriteStore,
+      executionStateStore: args.executionStateStore,
+      executionTreeStore: args.executionTreeStore,
+    }),
     claimLedgerAccess: args.claimLedgerAccess ?? null,
     skillCandidateReviewAccess: args.skillCandidateReviewAccess ?? null,
     requireMemoryPrincipal: args.requireMemoryPrincipal,

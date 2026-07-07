@@ -28,6 +28,33 @@ type BatchChunk = {
   online_projection: Record<string, unknown> | null;
 };
 
+type BatchInputIntegrity = {
+  missing_required_fields: string[];
+  invalid_required_fields: string[];
+  missing_optional_fields: string[];
+  trusted_zero_count_fields: string[];
+};
+
+const REQUIRED_ONLINE_PROJECTION_COUNT_FIELDS = [
+  "guide_count",
+  "projection_present_count",
+  "agent_prompt_included_count",
+  "runtime_mutation_count",
+  "hard_boundary_upgrade_count",
+] as const;
+
+const OPTIONAL_ONLINE_PROJECTION_COUNT_FIELDS = [
+  "shadow_projection_source_count",
+  "active_projection_source_count",
+  "downgraded_memory_count",
+] as const;
+
+const TRUSTED_ZERO_ONLINE_PROJECTION_FIELDS = new Set<string>([
+  "agent_prompt_included_count",
+  "runtime_mutation_count",
+  "hard_boundary_upgrade_count",
+]);
+
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -101,12 +128,68 @@ function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-function numberValue(value: unknown): number | null {
+function optionalNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function summedNumber(records: Array<Record<string, unknown> | null>, field: string): number {
-  return records.reduce((sum, record) => sum + (numberValue(record?.[field]) ?? 0), 0);
+function createInputIntegrity(): BatchInputIntegrity {
+  return {
+    missing_required_fields: [],
+    invalid_required_fields: [],
+    missing_optional_fields: [],
+    trusted_zero_count_fields: [],
+  };
+}
+
+function pushUnique(list: string[], value: string): void {
+  if (!list.includes(value)) list.push(value);
+}
+
+function hasOwn(record: Record<string, unknown> | null, field: string): record is Record<string, unknown> {
+  return !!record && Object.prototype.hasOwnProperty.call(record, field);
+}
+
+function requiredNonNegativeInteger(
+  record: Record<string, unknown> | null,
+  field: string,
+  path: string,
+  integrity: BatchInputIntegrity,
+): number {
+  if (!hasOwn(record, field)) {
+    pushUnique(integrity.missing_required_fields, path);
+    return 0;
+  }
+  const value = record[field];
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || !Number.isInteger(value)) {
+    pushUnique(integrity.invalid_required_fields, path);
+    return 0;
+  }
+  if (value === 0 && TRUSTED_ZERO_ONLINE_PROJECTION_FIELDS.has(field)) {
+    pushUnique(integrity.trusted_zero_count_fields, path);
+  }
+  return value;
+}
+
+function optionalNonNegativeInteger(
+  record: Record<string, unknown> | null,
+  field: string,
+  path: string,
+  integrity: BatchInputIntegrity,
+): number {
+  if (!hasOwn(record, field)) {
+    pushUnique(integrity.missing_optional_fields, path);
+    return 0;
+  }
+  const value = record[field];
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || !Number.isInteger(value)) {
+    pushUnique(integrity.missing_optional_fields, path);
+    return 0;
+  }
+  return value;
+}
+
+function inputIntegrityPass(integrity: BatchInputIntegrity): boolean {
+  return integrity.missing_required_fields.length === 0 && integrity.invalid_required_fields.length === 0;
 }
 
 function readJson(file: string): Record<string, unknown> | null {
@@ -157,9 +240,9 @@ function runIteration(args: {
     iteration: args.iteration,
     chunk_id: args.chunkId,
     run_id: stringValue(result.run_id),
-    row_count: numberValue(exportResult?.row_count) ?? 0,
-    appended_row_count: numberValue(collector?.appended_row_count),
-    total_row_count: numberValue(collector?.total_row_count),
+    row_count: optionalNumber(exportResult?.row_count) ?? 0,
+    appended_row_count: optionalNumber(collector?.appended_row_count),
+    total_row_count: optionalNumber(collector?.total_row_count),
     chunk_path: stringValue(exportResult?.chunk_path),
     manifest_path: stringValue(collector?.manifest_path),
     summary_path: stringValue(collector?.summary_path),
@@ -170,19 +253,44 @@ function runIteration(args: {
 }
 
 function onlineProjectionBatchSummary(chunks: BatchChunk[]): Record<string, unknown> {
-  const projections = chunks.map((chunk) => chunk.online_projection).filter((entry): entry is Record<string, unknown> => !!entry);
+  const integrity = createInputIntegrity();
+  const projections = chunks.map((chunk, index) => {
+    const projection = chunk.online_projection;
+    if (!projection) {
+      pushUnique(integrity.missing_required_fields, `chunks[${index}].online_projection`);
+      return null;
+    }
+    return { projection, index };
+  }).filter((entry): entry is { projection: Record<string, unknown>; index: number } => !!entry);
+  const sumRequired = (field: typeof REQUIRED_ONLINE_PROJECTION_COUNT_FIELDS[number]): number =>
+    projections.reduce((sum, entry) =>
+      sum + requiredNonNegativeInteger(
+        entry.projection,
+        field,
+        `chunks[${entry.index}].online_projection.${field}`,
+        integrity,
+      ), 0);
+  const sumOptional = (field: typeof OPTIONAL_ONLINE_PROJECTION_COUNT_FIELDS[number]): number =>
+    projections.reduce((sum, entry) =>
+      sum + optionalNonNegativeInteger(
+        entry.projection,
+        field,
+        `chunks[${entry.index}].online_projection.${field}`,
+        integrity,
+      ), 0);
   return {
     mode: process.env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE?.trim() || "off",
     chunk_count: chunks.length,
     chunk_count_with_projection_report: projections.length,
-    guide_count: summedNumber(projections, "guide_count"),
-    projection_present_count: summedNumber(projections, "projection_present_count"),
-    agent_prompt_included_count: summedNumber(projections, "agent_prompt_included_count"),
-    runtime_mutation_count: summedNumber(projections, "runtime_mutation_count"),
-    shadow_projection_source_count: summedNumber(projections, "shadow_projection_source_count"),
-    active_projection_source_count: summedNumber(projections, "active_projection_source_count"),
-    downgraded_memory_count: summedNumber(projections, "downgraded_memory_count"),
-    hard_boundary_upgrade_count: summedNumber(projections, "hard_boundary_upgrade_count"),
+    input_integrity: integrity,
+    guide_count: sumRequired("guide_count"),
+    projection_present_count: sumRequired("projection_present_count"),
+    agent_prompt_included_count: sumRequired("agent_prompt_included_count"),
+    runtime_mutation_count: sumRequired("runtime_mutation_count"),
+    shadow_projection_source_count: sumOptional("shadow_projection_source_count"),
+    active_projection_source_count: sumOptional("active_projection_source_count"),
+    downgraded_memory_count: sumOptional("downgraded_memory_count"),
+    hard_boundary_upgrade_count: sumRequired("hard_boundary_upgrade_count"),
   };
 }
 
@@ -193,6 +301,7 @@ function markdownReport(result: Record<string, unknown>): string {
   const shadowDelta = nestedRecord(shadow?.delta);
   const shadowGuards = nestedRecord(shadow?.guards);
   const onlineProjection = nestedRecord(result.admission_candidate_policy_online_projection);
+  const onlineProjectionIntegrity = nestedRecord(onlineProjection?.input_integrity);
   const lines = [
     "# Aionis Admission Batch Collect",
     "",
@@ -210,6 +319,14 @@ function markdownReport(result: Record<string, unknown>): string {
     `| Shadow negative direct delta | ${String(shadowDelta?.negative_direct_delta ?? "")} |`,
     `| Online projection mode | ${String(onlineProjection?.mode ?? "")} |`,
     `| Online projection present | ${String(onlineProjection?.projection_present_count ?? "")} |`,
+    `| Online projection input integrity pass | ${
+      Array.isArray(onlineProjectionIntegrity?.missing_required_fields)
+        && onlineProjectionIntegrity.missing_required_fields.length === 0
+        && Array.isArray(onlineProjectionIntegrity.invalid_required_fields)
+        && onlineProjectionIntegrity.invalid_required_fields.length === 0
+        ? "yes"
+        : "no"
+    } |`,
     `| Online shadow source count | ${String(onlineProjection?.shadow_projection_source_count ?? "")} |`,
     `| Online active source count | ${String(onlineProjection?.active_projection_source_count ?? "")} |`,
     `| Online prompt-included count | ${String(onlineProjection?.agent_prompt_included_count ?? "")} |`,
@@ -247,8 +364,19 @@ function main() {
   const latestComparison = readJson(latestComparisonPath);
   const latestShadowPolicy = readJson(latestShadowPolicyPath);
   const sampleQuality = nestedRecord(latestSummary?.sample_quality);
-  const rowCount = numberValue(nestedRecord(latestSummary?.dataset)?.row_count) ?? chunks.at(-1)?.total_row_count ?? 0;
+  const rowCount = optionalNumber(nestedRecord(latestSummary?.dataset)?.row_count) ?? chunks.at(-1)?.total_row_count ?? 0;
   const onlineProjection = onlineProjectionBatchSummary(chunks);
+  const onlineProjectionIntegrity = nestedRecord(onlineProjection.input_integrity);
+  const onlineProjectionIntegrityPass = inputIntegrityPass({
+    missing_required_fields: Array.isArray(onlineProjectionIntegrity?.missing_required_fields)
+      ? onlineProjectionIntegrity.missing_required_fields.filter((entry): entry is string => typeof entry === "string")
+      : [],
+    invalid_required_fields: Array.isArray(onlineProjectionIntegrity?.invalid_required_fields)
+      ? onlineProjectionIntegrity.invalid_required_fields.filter((entry): entry is string => typeof entry === "string")
+      : [],
+    missing_optional_fields: [],
+    trusted_zero_count_fields: [],
+  });
   const result = {
     contract_version: "aionis_admission_batch_collect_result_v1",
     intended_use: "real_runtime_admission_dataset_batch_collection",
@@ -276,9 +404,13 @@ function main() {
       has_minimum_rows_for_policy_claim: sampleQuality?.has_minimum_rows_for_policy_claim === true,
       not_enough_task_signatures_for_diversity_claim: sampleQuality?.not_enough_task_signatures_for_diversity_claim === true,
       has_minimum_task_signatures_for_diversity_claim: sampleQuality?.has_minimum_task_signatures_for_diversity_claim === true,
-      online_projection_did_not_mutate_runtime: onlineProjection.runtime_mutation_count === 0,
-      online_projection_did_not_enter_agent_prompt: onlineProjection.agent_prompt_included_count === 0,
-      online_projection_preserved_hard_boundaries: onlineProjection.hard_boundary_upgrade_count === 0,
+      online_projection_input_integrity_pass: onlineProjectionIntegrityPass,
+      online_projection_did_not_mutate_runtime: onlineProjectionIntegrityPass
+        && onlineProjection.runtime_mutation_count === 0,
+      online_projection_did_not_enter_agent_prompt: onlineProjectionIntegrityPass
+        && onlineProjection.agent_prompt_included_count === 0,
+      online_projection_preserved_hard_boundaries: onlineProjectionIntegrityPass
+        && onlineProjection.hard_boundary_upgrade_count === 0,
     },
     summary: `Collected ${rowCount} admission dataset rows across ${chunks.length}/${args.iterations} real Runtime e2e iterations.`,
   };

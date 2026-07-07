@@ -6,12 +6,15 @@ import path from "node:path";
 import Fastify from "fastify";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
-import { registerHandoffRoutes } from "../../src/routes/handoff.ts";
+import { createHandoffRouteService, registerHandoffRoutes } from "../../src/routes/handoff.ts";
 import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
-import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
+import {
+  registerMemoryContextRuntimeRoutes,
+  type MemoryPlanningContextRouteService,
+} from "../../src/routes/memory-context-runtime.ts";
 import { registerMemoryFeedbackToolRoutes } from "../../src/routes/memory-feedback-tools.ts";
 import { registerLiteMemoryLifecycleRoutes } from "../../src/routes/memory-lifecycle-lite.ts";
-import { registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
+import { createMemoryWriteRouteService, registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import {
@@ -76,11 +79,17 @@ function registerProductFacade(args: {
   env: ReturnType<typeof liteEnv>;
   guards: ReturnType<typeof requestGuards>;
   liteWriteStore: ReturnType<typeof createLiteWriteStore>;
+  memoryWriteService?: ReturnType<typeof createMemoryWriteRouteService> | null;
+  planningContextService?: MemoryPlanningContextRouteService | null;
+  handoffRouteService?: ReturnType<typeof createHandoffRouteService> | null;
 }) {
   registerProductFacadeRoutes({
     app: args.app,
     env: args.env,
     liteWriteStore: args.liteWriteStore,
+    memoryWriteService: args.memoryWriteService ?? null,
+    planningContextService: args.planningContextService ?? null,
+    handoffRouteService: args.handoffRouteService ?? null,
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,
@@ -138,7 +147,7 @@ function registerProductMemoryApp(args: {
     tenantFromBody: args.guards.tenantFromBody,
     acquireInflightSlot: args.guards.acquireInflightSlot,
   });
-  registerMemoryContextRuntimeRoutes({
+  const contextRuntimeRoutes = registerMemoryContextRuntimeRoutes({
     app: args.app,
     env: args.env,
     embedder: DeterministicEmbeddingProvider,
@@ -221,7 +230,22 @@ function registerProductMemoryApp(args: {
     tenantFromBody: args.guards.tenantFromBody,
     acquireInflightSlot: args.guards.acquireInflightSlot,
   });
-  registerProductFacade(args);
+  registerProductFacade({
+    ...args,
+    memoryWriteService: createMemoryWriteRouteService({
+      env: args.env,
+      embedder: DeterministicEmbeddingProvider,
+      liteWriteStore: args.liteWriteStore,
+      executionStateStore: null,
+    }),
+    planningContextService: contextRuntimeRoutes.planningContextService,
+    handoffRouteService: createHandoffRouteService({
+      env: args.env,
+      embedder: DeterministicEmbeddingProvider,
+      liteWriteStore: args.liteWriteStore,
+      executionStateStore: null,
+    }),
+  });
 }
 
 function setupProductApp(name: string, overrides: Partial<ReturnType<typeof liteEnv>> = {}) {

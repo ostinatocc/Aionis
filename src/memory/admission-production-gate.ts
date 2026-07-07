@@ -121,8 +121,16 @@ function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
-function numberValue(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+function optionalNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function booleanValue(value: unknown): boolean | null {
@@ -135,6 +143,10 @@ function recordValue(value: unknown): Record<string, unknown> | null {
 
 function nestedRecord(record: Record<string, unknown> | null, field: string): Record<string, unknown> | null {
   return recordValue(record?.[field]);
+}
+
+function hasOwn(record: Record<string, unknown> | null, field: string): record is Record<string, unknown> {
+  return !!record && Object.prototype.hasOwnProperty.call(record, field);
 }
 
 function uniqueStringCount(rows: AionisAdmissionDatasetParsedRow[], field: keyof AionisAdmissionDatasetParsedRow): number {
@@ -185,6 +197,43 @@ function requiredStringField(
   return value;
 }
 
+function requiredRecordField(
+  record: Record<string, unknown>,
+  field: string,
+  path: string,
+  integrity: AionisAdmissionGateInputIntegrity,
+): Record<string, unknown> | null {
+  if (!hasOwn(record, field)) {
+    pushUnique(integrity.missing_required_fields, path);
+    return null;
+  }
+  const value = recordValue(record[field]);
+  if (!value) {
+    pushUnique(integrity.invalid_required_fields, path);
+    return null;
+  }
+  return value;
+}
+
+function requiredBooleanField(
+  record: Record<string, unknown> | null,
+  field: string,
+  path: string,
+  integrity: AionisAdmissionGateInputIntegrity,
+): boolean | null {
+  if (!record) return null;
+  if (!hasOwn(record, field)) {
+    pushUnique(integrity.missing_required_fields, path);
+    return null;
+  }
+  const value = booleanValue(record[field]);
+  if (value === null) {
+    pushUnique(integrity.invalid_required_fields, path);
+    return null;
+  }
+  return value;
+}
+
 function requiredNonNegativeInteger(
   record: Record<string, unknown>,
   field: string,
@@ -223,6 +272,45 @@ function optionalNonNegativeInteger(
   return value;
 }
 
+function optionalFiniteNumber(
+  record: Record<string, unknown> | null,
+  field: string,
+  path: string,
+  integrity: AionisAdmissionGateInputIntegrity,
+): number | null {
+  if (!hasOwn(record, field)) {
+    pushUnique(integrity.missing_optional_fields, path);
+    return null;
+  }
+  const value = optionalNumber(record[field]);
+  if (value === null) {
+    pushUnique(integrity.missing_optional_fields, path);
+    return null;
+  }
+  return value;
+}
+
+function mergeUpstreamInputIntegrity(
+  projection: Record<string, unknown>,
+  path: string,
+  integrity: AionisAdmissionGateInputIntegrity,
+): void {
+  const upstream = nestedRecord(projection, "input_integrity");
+  if (!upstream) return;
+  for (const entry of stringList(upstream.missing_required_fields)) {
+    pushUnique(integrity.missing_required_fields, `${path}.${entry}`);
+  }
+  for (const entry of stringList(upstream.invalid_required_fields)) {
+    pushUnique(integrity.invalid_required_fields, `${path}.${entry}`);
+  }
+  for (const entry of stringList(upstream.missing_optional_fields)) {
+    pushUnique(integrity.missing_optional_fields, `${path}.${entry}`);
+  }
+  for (const entry of stringList(upstream.trusted_zero_count_fields)) {
+    pushUnique(integrity.trusted_zero_count_fields, `${path}.${entry}`);
+  }
+}
+
 function onlineProjectionFromBatch(
   batchCollect: unknown,
   index: number,
@@ -232,6 +320,7 @@ function onlineProjectionFromBatch(
   const projection = nestedRecord(batch, "admission_candidate_policy_online_projection");
   if (!projection) return null;
   const path = `batch_collect[${index}].admission_candidate_policy_online_projection`;
+  mergeUpstreamInputIntegrity(projection, path, integrity);
   return {
     mode: requiredStringField(projection, "mode", `${path}.mode`, integrity),
     guide_count: requiredNonNegativeInteger(projection, "guide_count", `${path}.guide_count`, integrity),
@@ -298,24 +387,82 @@ function onlineProjectionSummary(
   };
 }
 
-function candidatePolicySummary(candidatePolicy: unknown): AionisAdmissionProductionGateReport["candidate_policy"] {
-  const report = recordValue(candidatePolicy) as Partial<AionisAdmissionCandidatePolicyEvaluationReport> | null;
-  const promotionGate = recordValue(report?.promotion_gate);
+function candidatePolicySummary(
+  candidatePolicy: unknown,
+  integrity: AionisAdmissionGateInputIntegrity,
+): AionisAdmissionProductionGateReport["candidate_policy"] {
+  const report = recordValue(candidatePolicy) as (Partial<AionisAdmissionCandidatePolicyEvaluationReport> & Record<string, unknown>) | null;
+  if (!report) {
+    pushUnique(integrity.missing_required_fields, "candidate_policy");
+    return {
+      report_present: false,
+      selected_policy_id: null,
+      eligible_for_manual_review: null,
+      holdout_calibration_score: null,
+      recorded_holdout_calibration_score: null,
+      no_hard_boundary_regression: null,
+      no_negative_use_count_regression: null,
+      no_positive_capture_regression: null,
+      calibration_score_improved: null,
+      changed_actions_on_holdout: null,
+    };
+  }
+  const promotionGate = requiredRecordField(report, "promotion_gate", "candidate_policy.promotion_gate", integrity);
   const selectedPolicy = recordValue(report?.selected_policy);
   const selectedHoldout = nestedRecord(selectedPolicy, "holdout");
   const recordedPolicy = recordValue(report?.recorded_policy);
   const recordedHoldout = nestedRecord(recordedPolicy, "holdout");
   return {
-    report_present: !!report,
-    selected_policy_id: stringValue(report?.selected_policy_id),
-    eligible_for_manual_review: booleanValue(promotionGate?.eligible_for_manual_review),
-    holdout_calibration_score: report ? numberValue(selectedHoldout?.calibration_score) : null,
-    recorded_holdout_calibration_score: report ? numberValue(recordedHoldout?.calibration_score) : null,
-    no_hard_boundary_regression: booleanValue(promotionGate?.no_hard_boundary_regression),
-    no_negative_use_count_regression: booleanValue(promotionGate?.no_negative_use_count_regression),
-    no_positive_capture_regression: booleanValue(promotionGate?.no_positive_capture_regression),
-    calibration_score_improved: booleanValue(promotionGate?.calibration_score_improved),
-    changed_actions_on_holdout: booleanValue(promotionGate?.changed_actions_on_holdout),
+    report_present: true,
+    selected_policy_id: requiredStringField(report, "selected_policy_id", "candidate_policy.selected_policy_id", integrity),
+    eligible_for_manual_review: requiredBooleanField(
+      promotionGate,
+      "eligible_for_manual_review",
+      "candidate_policy.promotion_gate.eligible_for_manual_review",
+      integrity,
+    ),
+    holdout_calibration_score: optionalFiniteNumber(
+      selectedHoldout,
+      "calibration_score",
+      "candidate_policy.selected_policy.holdout.calibration_score",
+      integrity,
+    ),
+    recorded_holdout_calibration_score: optionalFiniteNumber(
+      recordedHoldout,
+      "calibration_score",
+      "candidate_policy.recorded_policy.holdout.calibration_score",
+      integrity,
+    ),
+    no_hard_boundary_regression: requiredBooleanField(
+      promotionGate,
+      "no_hard_boundary_regression",
+      "candidate_policy.promotion_gate.no_hard_boundary_regression",
+      integrity,
+    ),
+    no_negative_use_count_regression: requiredBooleanField(
+      promotionGate,
+      "no_negative_use_count_regression",
+      "candidate_policy.promotion_gate.no_negative_use_count_regression",
+      integrity,
+    ),
+    no_positive_capture_regression: requiredBooleanField(
+      promotionGate,
+      "no_positive_capture_regression",
+      "candidate_policy.promotion_gate.no_positive_capture_regression",
+      integrity,
+    ),
+    calibration_score_improved: requiredBooleanField(
+      promotionGate,
+      "calibration_score_improved",
+      "candidate_policy.promotion_gate.calibration_score_improved",
+      integrity,
+    ),
+    changed_actions_on_holdout: requiredBooleanField(
+      promotionGate,
+      "changed_actions_on_holdout",
+      "candidate_policy.promotion_gate.changed_actions_on_holdout",
+      integrity,
+    ),
   };
 }
 
@@ -360,7 +507,7 @@ export function evaluateAdmissionProductionGate(
   };
   const inputIntegrity = createInputIntegrity();
   const onlineProjection = onlineProjectionSummary(input.batch_collect, inputIntegrity);
-  const candidatePolicy = candidatePolicySummary(input.candidate_policy);
+  const candidatePolicy = candidatePolicySummary(input.candidate_policy, inputIntegrity);
   const integrityPass = inputIntegrityPass(inputIntegrity);
   const checks = {
     input_integrity_pass: integrityPass,

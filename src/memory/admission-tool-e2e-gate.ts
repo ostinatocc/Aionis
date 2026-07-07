@@ -140,10 +140,6 @@ function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
-function numberValue(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
 function optionalNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -239,12 +235,6 @@ function positiveInteger(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : fallback;
 }
 
-function boundedRate(value: unknown, fallback: number): number {
-  const num = numberValue(value);
-  if (!Number.isFinite(num)) return fallback;
-  return Math.max(0, Math.min(1, num));
-}
-
 function mergeThresholds(
   thresholds: Partial<AionisAdmissionToolE2EGateThresholds> | undefined,
 ): AionisAdmissionToolE2EGateThresholds {
@@ -301,7 +291,7 @@ function nestedNumber(record: UnknownRecord | null, path: string[]): number {
   for (const key of path) {
     current = recordValue(current)?.[key];
   }
-  return numberValue(current);
+  return optionalNumber(current) ?? 0;
 }
 
 function sumResultArmNestedNumber(results: unknown[], arm: string, path: string[]): number {
