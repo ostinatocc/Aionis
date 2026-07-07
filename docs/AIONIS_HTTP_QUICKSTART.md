@@ -22,6 +22,10 @@ It uses only public product routes:
 `/v1/forget` remains available for advanced lifecycle control, but it is not
 needed for the normal host loop.
 
+For production Agent integrations, prefer the SDK `guideAgentContext()` or
+`execution.guideAgentContextForRole()` helpers and pass their top-level
+`agent_prompt` to the Agent. This HTTP guide is the lower-level Runtime contract.
+
 ## Start Runtime
 
 `POST /v1/guide` uses semantic recall, so configure an embedding provider before
@@ -115,8 +119,9 @@ curl -sS -X POST "$AIONIS_URL/v1/observe" \
 
 ## 3. Guide After Memory
 
-Ask for context again. Pass only `agent_context.prompt_text` or selected
-`agent_context` fields to the Agent.
+Ask for context again. If you are integrating without the SDK, pass only
+`agent_context.prompt_text` or selected `agent_context` fields to the Agent.
+Do not pass packets, traces, receipts, snapshots, raw slots, or raw payloads.
 
 ```bash
 curl -sS -X POST "$AIONIS_URL/v1/guide" \

@@ -94,8 +94,8 @@ surfaces.
 
 All quickstarts follow the same contract:
 
-1. The Agent receives `agent_context.prompt_text` or selected `agent_context`
-   fields.
+1. The Agent receives SDK `agent_prompt`. Direct HTTP quickstarts may use only
+   `agent_context.prompt_text` or selected `agent_context` fields.
 2. The host keeps `guide_trace_id`, exposed memory IDs, packets, traces,
    receipts, and snapshots outside the Agent prompt.
 3. Feedback is attributed only to memory IDs the host reports as used.

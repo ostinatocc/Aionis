@@ -589,6 +589,7 @@ export type AionisGuideAgentContextOptions = {
   repo_state?: AionisExecutionAgentContextCompileInput["repo_state"];
   budget_profile?: AionisExecutionContextBudgetProfile;
   max_prompt_chars?: number;
+  include_base_prompt?: boolean;
   evidence_limit?: number;
   evidence_char_budget?: number;
   include_inspect_before_use?: boolean;
@@ -610,6 +611,10 @@ export type AionisGuideAgentContextResult<TGuide = unknown> = {
   prompt_char_count: number;
   guide_trace_id: string | null;
 };
+
+export type AionisAgentContext<TGuide = unknown> = AionisGuideAgentContextResult<TGuide>;
+export type AionisAgentContextOptions = AionisGuideAgentContextOptions;
+export type AionisAgentContextResult<TGuide = unknown> = AionisGuideAgentContextResult<TGuide>;
 
 export type AionisClientOptions = {
   baseUrl: string;
@@ -2016,7 +2021,7 @@ function mergeCompiledContextWithEvidence(args: {
     repo_state: args.options.repo_state,
     budget_profile: args.options.budget_profile ?? "balanced",
     max_prompt_chars: evidenceBlock ? Math.max(4_000, maxPromptChars - evidenceBlock.length - 2) : maxPromptChars,
-    include_base_prompt: true,
+    include_base_prompt: args.options.include_base_prompt ?? true,
     additional_instructions: args.options.additional_instructions,
   });
   const agentPrompt = evidenceBlock

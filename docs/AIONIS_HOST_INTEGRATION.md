@@ -101,7 +101,7 @@ Use the product routes directly when integrating over HTTP:
 |---|---|---|---|
 | `observe` | `POST /v1/observe` | Report real memory, execution, outcome, or handoff evidence. | Persist scoped evidence and execution memory. |
 | `guide` | `POST /v1/guide`, SDK `guideAgentContext()` | Ask for context before the next Agent acts. | Return compact `agent_context`; SDK full path can also resolve `inspect_before_use` and `rehydrate` evidence into the compiled prompt. |
-| `agent action` | Host-owned | Give the Agent `agent_context.prompt_text` or selected `agent_context` fields. | Preserve memory/action separation while the host executes tools. |
+| `agent action` | Host-owned | Give the Agent SDK `agent_prompt`; direct HTTP hosts may use only `agent_context.prompt_text` or selected `agent_context` fields. | Preserve memory/action separation while the host executes tools. |
 | `outcome feedback` | SDK `feedback()`, adapter `afterRun`, or raw `POST /v1/feedback` | Report which exposed memory IDs were actually used and what happened. | Attribute feedback only to exposed and reported memory. |
 | `measure` | `POST /v1/measure` | Provide before/after guide packets or product trace. | Report whether history helped or hurt. |
 | `snapshot` | `POST /v1/operator/snapshot` | Ask for read-only operator state. | Summarize active context, attribution, and measured effect. |
@@ -113,11 +113,12 @@ new recallable memory.
 
 ## Agent Surface
 
-The Agent should receive one of these:
+The Agent should receive one of these, in this order:
 
 1. SDK `guideAgentContext().agent_prompt` when using the TypeScript SDK.
-2. `guide.agent_context.prompt_text` when integrating directly over HTTP.
-3. a host-rendered prompt built only from `agent_context`.
+2. SDK `execution.guideAgentContextForRole().agent_prompt` for role-aware execution memory.
+3. Lower-level `guide.agent_context.prompt_text` only when integrating directly over HTTP.
+4. a host-rendered prompt built only from selected `agent_context` fields.
 
 Keep these surfaces for host logs, measurement, and operator inspection:
 

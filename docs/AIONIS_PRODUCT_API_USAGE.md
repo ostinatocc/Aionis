@@ -58,9 +58,11 @@ Optional read-only operator route:
 |---|---|---|---|---|
 | `POST /v1/operator/snapshot` | inspect | Host or operator after guide/feedback/measure | Operator / host observability | `operator_snapshot`, optional markdown |
 
-The Agent consumes `agent_context.prompt_text` or selected `agent_context`
-fields. Full packets, decision traces, audit reports, raw rows, memory
-admission records, and raw slots are operator surfaces.
+The recommended Agent-facing surface is SDK `guideAgentContext().agent_prompt`
+or `execution.guideAgentContextForRole().agent_prompt`. Direct HTTP hosts may
+consume only `agent_context.prompt_text` or selected `agent_context` fields.
+Full packets, decision traces, audit reports, raw rows, memory admission
+records, and raw slots are operator surfaces.
 
 For host decisions, distinguish these two fields:
 
@@ -74,8 +76,8 @@ For host decisions, distinguish these two fields:
 1. Call `POST /v1/observe` after real work, a user preference, a project fact,
    an execution trace, or a handoff should become memory.
 2. Call `POST /v1/guide` before the next Agent run.
-3. Pass only `agent_context.prompt_text` or selected `agent_context` fields to
-   the Agent.
+3. Pass SDK `agent_prompt` to the Agent. If integrating directly over HTTP, pass
+   only `agent_context.prompt_text` or selected `agent_context` fields.
 4. Call SDK `feedback()` or raw `POST /v1/feedback` after the Agent acts.
    Include `guide_trace_id`, `used_memory_ids`, `run_id`, `outcome`, and
    `used_surface`.
@@ -221,10 +223,11 @@ await aionis.rehydrate({
 });
 ```
 
-For coding and multi-agent hosts, the Agent should receive
-`agentContext.agent_prompt` from `compileExecutionAgentContext()`. Simpler hosts
-may still pass selected `agent_context` fields directly. Keep `memory_packet`,
-`guide_packet`, `memory_decision_trace`, `memory_decision_audit`,
+For coding and multi-agent hosts, the Agent should receive SDK
+`guideAgentContext().agent_prompt` or
+`execution.guideAgentContextForRole().agent_prompt`. Low-level hosts may still
+compile from a guide or pass selected `agent_context` fields directly. Keep
+`memory_packet`, `guide_packet`, `memory_decision_trace`, `memory_decision_audit`,
 `memory_admission_record`, and raw rows on host/operator surfaces by default.
 `feedbackFromGuide()` validates attribution against the guide exposure ledger,
 while `measureInputFromGuideLoop()` and `snapshotInputFromGuideLoop()` hide the
@@ -265,10 +268,13 @@ const governed = await aionis.governMem0SearchResults({
   mem0_results: mem0Results,
 });
 
-const promptForAgent = governed.agent_context.prompt_text;
+const firewallPromptForAgent = governed.agent_context.prompt_text;
 const firewallForOps = governed.memory_firewall;
 const receiptForLogs = governed.memory_use_receipt;
 ```
+
+This is the Memory Firewall prompt surface for externally retrieved memory. For
+normal task execution, prefer SDK `guideAgentContext().agent_prompt`.
 
 The SDK also exposes `mem0SearchResultsToAionisCandidates()` for hosts that want
 to inspect or enrich the mapped candidates before admission.
@@ -603,8 +609,8 @@ required for normal product use.
 
 ### Agent-Facing Fields
 
-Hosts may render `agent_context.prompt_text` directly, or use these structured
-fields:
+SDK hosts should pass top-level `agent_prompt`. Direct HTTP hosts may render
+`agent_context.prompt_text`, or use these structured fields:
 
 1. `agent_role`
 2. `summary`

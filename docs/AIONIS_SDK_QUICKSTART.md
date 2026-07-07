@@ -5,7 +5,7 @@ Status: developer-facing SDK quickstart for the focused local Runtime
 This quickstart shows the smallest SDK product loop:
 
 ```text
-remember/observe -> guide -> compileExecutionAgentContext -> agent prompt -> feedback -> measure -> snapshot
+remember/observe -> guideAgentContext -> agent_prompt -> feedback -> measure -> snapshot
 ```
 
 It uses the existing product facade through `src/sdk.ts` and the published
@@ -57,7 +57,6 @@ on a random port.
 
 ```ts
 import {
-  compileExecutionAgentContext,
   createAionisClient,
   feedbackFromGuide,
   memoryAdmissionDatasetJsonlFromRows,
@@ -83,7 +82,7 @@ await aionis.remember({
   owner_agent_id: "agent-1",
 });
 
-const guide = await aionis.execution.guideForRole<{
+const context = await aionis.execution.guideAgentContextForRole<{
   guide_trace_id: string;
   agent_context: {
     prompt_text: string;
@@ -97,19 +96,13 @@ const guide = await aionis.execution.guideForRole<{
   limit: 8,
   include_packets: true,
   context_mode: "compact_agent",
-});
-
-const agentContext = compileExecutionAgentContext({
-  guide,
-  task: {
-    run_id: "run-001",
-    task_signature: "product-update",
-    query_text: "Continue the product update.",
-  },
+}, undefined, {
   budget_profile: "balanced",
 });
 
-// Your host runs the Agent with agentContext.agent_prompt.
+const guide = context.guide;
+
+// Your host runs the Agent with context.agent_prompt.
 
 const feedback = await aionis.feedback(feedbackFromGuide({
   guide,
@@ -172,9 +165,10 @@ await aionis.snapshot(snapshotInputFromGuideLoop({
 }));
 ```
 
-For coding and multi-agent hosts, give `agentContext.agent_prompt` from
-`compileExecutionAgentContext()` to the Agent. Keep `guide_trace_id`,
-`use_now_memory_ids`, and `agentContext.memory_use_receipt` in host state for
+For coding and multi-agent hosts, give `context.agent_prompt` from
+`guideAgentContext()` or `execution.guideAgentContextForRole()` to the Agent.
+Keep `guide_trace_id`, `use_now_memory_ids`, and
+`context.compiled_context.memory_use_receipt` in host state for
 attribution and audit. Packets, traces, admission records, raw rows, and raw
 slots are host/operator surfaces.
 For a focused JSONL export path, see
@@ -207,7 +201,8 @@ const governed = await aionis.governMem0SearchResults({
   mem0_results: mem0Results,
 });
 
-// Give the Agent only the governed prompt/context.
+// This is the Memory Firewall prompt for external candidates only.
+// For normal task execution, prefer guideAgentContext().agent_prompt.
 await agent.run(governed.agent_context.prompt_text);
 
 // Keep these in host/operator logs.
@@ -240,17 +235,14 @@ await aionis.execution.observeStep({
   target_files: ["src/checkout.ts"],
 });
 
-const guide = await aionis.execution.guideForRole({
+const context = await aionis.execution.guideAgentContextForRole({
   agent_id: "reviewer-1",
   team_id: "checkout-team",
   role: "reviewer",
   run_id: "run-001",
   task_signature: "checkout-migration",
   query_text: "Continue from the current verified execution path.",
-});
-
-const context = aionis.execution.compileAgentContext({
-  guide,
+}, undefined, {
   task: {
     run_id: "run-001",
     task_signature: "checkout-migration",
@@ -263,6 +255,7 @@ const context = aionis.execution.compileAgentContext({
 });
 
 // Your host runs the Agent with context.agent_prompt.
+const guide = context.guide;
 
 const feedback = await aionis.execution.feedbackFromOutcome({
   agent_id: "reviewer-1",
@@ -287,8 +280,8 @@ JSON showing:
 1. a fresh guide starts without actionable history
 2. `remember(kind: "preference")` creates ordinary preference memory
 3. `remember(kind: "project_context")` creates ordinary project memory
-4. `guide()` returns compact `agent_context` with direct-use memory IDs
-5. `compileExecutionAgentContext()` renders the SDK execution contract prompt
+4. `guideAgentContext()` returns compact `agent_prompt` plus the underlying guide
+5. the SDK AgentContext renderer produces the execution contract prompt
 6. `feedback()` attributes outcome only to memory exposed by that guide trace
 7. `measure()` reports whether history changed the future context
 8. admission dataset JSONL export is produced without prompt payload

@@ -42,8 +42,10 @@ rehydrated memory. They must not become Agent prompt content.
 
 ## Agent-Facing Contract
 
-The Agent should receive only `agent_context.prompt_text`, or a host-rendered
-equivalent using these fields:
+The Agent should normally receive SDK `guideAgentContext().agent_prompt` or
+`execution.guideAgentContextForRole().agent_prompt`. Direct HTTP hosts may pass
+only `agent_context.prompt_text`, or a host-rendered equivalent using these
+fields:
 
 1. `agent_role`
 2. `summary`
@@ -138,9 +140,10 @@ The audit report is intentionally operator-facing. It is not a better prompt.
 Typical integration flow:
 
 1. Call `POST /v1/observe` after real work or memory input.
-2. Call `POST /v1/guide`.
-3. Pass only `guide.agent_context.prompt_text` or selected `agent_context`
-   fields to the Agent.
+2. Call SDK `guideAgentContext()` / `execution.guideAgentContextForRole()`, or
+   low-level `POST /v1/guide` for direct HTTP integrations.
+3. Pass SDK `agent_prompt` to the Agent. Direct HTTP hosts may pass only
+   `guide.agent_context.prompt_text` or selected `agent_context` fields.
 4. Call `POST /v1/feedback` after the Agent acts so outcome attribution is
    tied to exposed memory IDs.
 5. Call `POST /v1/rehydrate` only when compact context says colder evidence or

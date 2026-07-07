@@ -120,9 +120,11 @@ may explicitly inspect and submit to `POST /v1/observe`.
 11. Future `guide` calls can recall the committed procedure through normal
     admission, lifecycle, authority, and scope gates.
 
-The Agent should receive only `agent_context.prompt_text` or selected
-`agent_context` fields from `guide`. Candidate payloads, review rows, measure
-reports, and decision traces are host/operator surfaces.
+The Agent should receive SDK `agent_prompt` from `guideAgentContext()` /
+`execution.guideAgentContextForRole()`. Direct HTTP hosts may use only
+`agent_context.prompt_text` or selected `agent_context` fields from `guide`.
+Candidate payloads, review rows, measure reports, and decision traces are
+host/operator surfaces.
 
 ## Materialization Path
 

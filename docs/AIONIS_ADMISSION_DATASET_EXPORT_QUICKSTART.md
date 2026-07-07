@@ -66,7 +66,8 @@ const afterGuide = await aionis.guide<{
   include_packets: true,
 });
 
-// Your host runs the Agent with afterGuide.agent_context.prompt_text.
+// Prefer guideAgentContext().agent_prompt for real Agent runs.
+// This raw guide example keeps afterGuide.agent_context fields for attribution.
 // Keep the memory IDs in host state for feedback attribution.
 
 const feedback = await aionis.feedback(feedbackFromGuide({

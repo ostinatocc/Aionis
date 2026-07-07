@@ -187,9 +187,11 @@ avoid do_not_use=failed broad search branch
 inspect contested=older route note requires verification
 ```
 
-The host may pass `agent_context.prompt_text` or selected `agent_context` fields
-to the Agent. The host should keep packets, raw slots, receipts, decision traces,
-and operator snapshots outside the Agent prompt.
+SDK hosts should pass `guideAgentContext().agent_prompt` or
+`execution.guideAgentContextForRole().agent_prompt` to the Agent. Direct HTTP
+hosts may pass only `agent_context.prompt_text` or selected `agent_context`
+fields. The host should keep packets, raw slots, receipts, decision traces, and
+operator snapshots outside the Agent prompt.
 
 Token-sensitive hosts can request `context_mode: "compact_agent"` on the guide
 path. This does not create a new memory decision path; it reuses the governed
