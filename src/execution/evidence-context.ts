@@ -991,7 +991,8 @@ function admittedAbstractionLine(entry: GatedAbstractionEntry): string | null {
   const excludes = entry.does_not_apply_when.length > 0
     ? ` does_not_apply_when=${truncate(entry.does_not_apply_when.join(" | "), 180)}`
     : "";
-  return `Bounded guidance: ${summary} node=${entry.node_id}${applies}${excludes}`;
+  const label = entry.summary_kind === "handoff" ? "Continuity handoff" : "Bounded guidance";
+  return `${label}: ${summary} node=${entry.node_id}${applies}${excludes}`;
 }
 
 function gatedAbstractionInspectLine(entry: GatedAbstractionEntry): string {
@@ -1066,7 +1067,7 @@ function buildExecutionAgentPrompt(args: {
     const procedureLines = args.useNow.filter((value) => !value.startsWith("Current active path:"));
     const nextActionSource = currentLines[0] ?? args.useNow[0] ?? args.inspectBeforeUse[0] ?? null;
     const nextAction = nextActionSource
-      ? nextActionSource.replace(/^(?:Current active path|Passed solution|Admitted abstraction|Inspect gated abstraction before use):\s*/i, "")
+      ? nextActionSource.replace(/^(?:Current active path|Passed solution|Continuity handoff|Bounded guidance|Admitted abstraction|Inspect gated abstraction before use):\s*/i, "")
       : null;
     return uniqueStrings([
       "AIONIS_CTX v2",

@@ -1205,6 +1205,132 @@ test("product guide returns an empty agent context when semantic planning recall
   }
 });
 
+test("product guide merges task-signature handoff context without an embedding provider", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, null);
+  const dbPath = tmpDbPath("product-guide-handoff-no-embedding-provider");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({
+      app,
+      env,
+      guards,
+      liteWriteStore,
+      liteRecallStore,
+      embedder: null,
+    });
+
+    const alphaMarker = "AIONIS_GUIDE_ALPHA_HANDOFF_NO_EMBED";
+    const betaMarker = "AIONIS_GUIDE_BETA_HANDOFF_NO_EMBED";
+    const alpha = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        handoff: {
+          actor: "alpha-planner",
+          producer_agent_id: "alpha-planner",
+          owner_agent_id: "alpha-planner",
+          owner_team_id: "team-alpha",
+          memory_lane: "shared",
+          anchor: "alpha-no-embed:run-001:alpha-planner",
+          handoff_kind: "task_handoff",
+          task_family: "handoff_no_embedding",
+          task_signature: "alpha-no-embed-task",
+          title: `Alpha handoff ${alphaMarker}`,
+          summary: `Continue ${alphaMarker} through alpha-owned-file.ts only.`,
+          handoff_text: `Continue ${alphaMarker}; do not apply beta handoff.`,
+          target_files: ["alpha-owned-file.ts"],
+          next_action: `Continue ${alphaMarker}; do not apply beta handoff.`,
+          acceptance_checks: ["alpha handoff remains alpha-only"],
+        },
+      },
+    });
+    assert.equal(alpha.statusCode, 200, alpha.body);
+    const beta = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        handoff: {
+          actor: "beta-planner",
+          producer_agent_id: "beta-planner",
+          owner_agent_id: "beta-planner",
+          owner_team_id: "team-beta",
+          memory_lane: "shared",
+          anchor: "beta-no-embed:run-001:beta-planner",
+          handoff_kind: "task_handoff",
+          task_family: "handoff_no_embedding",
+          task_signature: "beta-no-embed-task",
+          title: `Beta handoff ${betaMarker}`,
+          summary: `Continue ${betaMarker} through beta-owned-file.ts only.`,
+          handoff_text: `Continue ${betaMarker}; do not apply alpha handoff.`,
+          target_files: ["beta-owned-file.ts"],
+          next_action: `Continue ${betaMarker}; do not apply alpha handoff.`,
+          acceptance_checks: ["beta handoff remains beta-only"],
+        },
+      },
+    });
+    assert.equal(beta.statusCode, 200, beta.body);
+
+    const alphaNodeId = alpha.json().handoff.handoff.id;
+    const storedAlpha = await liteWriteStore.findNodes({
+      scope: "default",
+      id: alphaNodeId,
+      consumerAgentId: "alpha-reviewer",
+      consumerTeamId: "team-alpha",
+      limit: 1,
+      offset: 0,
+    });
+    assert.equal(storedAlpha.rows[0]?.owner_team_id, "team-alpha");
+
+    const guide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: `Continue alpha no-embedding handoff ${alphaMarker}.`,
+        mode: "full_power",
+        context_mode: "compact_agent",
+        agent_role: "reviewer",
+        consumer_agent_id: "alpha-reviewer",
+        consumer_team_id: "team-alpha",
+        run_id: "run-alpha-no-embed-guide",
+        context: {
+          task_family: "handoff_no_embedding",
+          task_signature: "alpha-no-embed-task",
+        },
+        include_packets: true,
+        limit: 20,
+      },
+    });
+    assert.equal(guide.statusCode, 200, guide.body);
+    const body = guide.json();
+    assert.equal(body.agent_context.history_used, true);
+    assert.equal(body.agent_context.actionable_history_used, true);
+    assert.equal(body.agent_context.use_now.some((entry: string) => entry.includes(alphaMarker)), true);
+    assert.equal(body.agent_context.use_now.some((entry: string) => entry.includes(betaMarker)), false);
+    assert.equal(body.agent_context.memory_ids.includes(alphaNodeId), true);
+    assert.equal(body.agent_context.use_now_memory_ids.includes(alphaNodeId), true);
+    assert.match(body.agent_context.prompt_text, /AIONIS_CTX/);
+    assert.match(body.agent_context.prompt_text, new RegExp(alphaMarker));
+    assert.equal(body.agent_context.prompt_text.includes(betaMarker), false);
+    assert.equal(body.source_map.internal_surfaces_used.includes("full_power_agent_context_merge"), true);
+    assert.equal(body.source_map.internal_surfaces_used.includes("planning_context_embedding_unavailable"), true);
+  } finally {
+    await liteWriteStore.close();
+    await liteRecallStore.close();
+    await app.close();
+  }
+});
+
 test("product guide can opt into admission candidate policy shadow projection without changing agent context", async () => {
   const app = Fastify();
   const env = {

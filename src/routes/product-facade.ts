@@ -2019,7 +2019,7 @@ function renderMergedAgentPrompt(args: {
   const procedureLines = productProcedureLines(ctx.use_now);
   const nextActionSource = currentLines[0] ?? ctx.use_now[0] ?? ctx.inspect_before_use[0] ?? null;
   const nextAction = nextActionSource
-    ? nextActionSource.replace(/^(?:Current active path|Passed solution|Candidate workflow|Inspect gated abstraction before use):\s*/i, "")
+    ? nextActionSource.replace(/^(?:Current active path|Passed solution|Continuity handoff|Candidate workflow|Inspect gated abstraction before use):\s*/i, "")
     : null;
   const line = (label: string, values: string[], limit: number, maxChars: number): string[] =>
     values.slice(0, limit).map((entry) => `${label}: note=${compactProductPromptText(entry, maxChars)}`);
@@ -2078,6 +2078,7 @@ function mergeProductGuideAgentContexts(args: {
   const executionUseNow = productGuideSafeExecutionLines(execution.use_now, [
     "Current active path:",
     "Passed solution:",
+    "Continuity handoff:",
   ]);
   const executionInspectBeforeUse: string[] = [];
   const executionDoNotUse = productGuideSafeExecutionLines(execution.do_not_use, [
@@ -2089,11 +2090,19 @@ function mergeProductGuideAgentContexts(args: {
     || executionDoNotUse.length > 0;
   if (!executionHasSurface) return { context: args.base, changed: false };
 
-  const knownMemoryIds = new Set(args.base.memory_ids);
+  const executionSurfaceLines = [
+    ...executionUseNow,
+    ...executionInspectBeforeUse,
+    ...executionDoNotUse,
+  ];
+  const executionSurfaceMemoryIds = execution.memory_ids.filter((id) =>
+    executionSurfaceLines.some((line) => line.includes(id))
+  );
+  const knownMemoryIds = new Set([...args.base.memory_ids, ...executionSurfaceMemoryIds]);
   const useNow = mergeGuideStrings([...executionUseNow, ...args.base.use_now], 8);
   const inspectBeforeUse = mergeGuideStrings([...args.base.inspect_before_use, ...executionInspectBeforeUse], 8);
   const doNotUse = mergeGuideStrings([...executionDoNotUse, ...args.base.do_not_use], 8);
-  const memoryIds = mergeGuideStrings(args.base.memory_ids, 10);
+  const memoryIds = mergeGuideStrings([...executionSurfaceMemoryIds, ...args.base.memory_ids], 10);
   const useNowMemoryIds = mergeGuideStrings([
     ...args.base.use_now_memory_ids,
     ...execution.use_now_memory_ids.filter((id) => knownMemoryIds.has(id)),

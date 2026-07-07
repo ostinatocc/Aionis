@@ -522,7 +522,7 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(sdkQuickstart, /measureInputFromGuideLoop\(\)/);
   assert.match(sdkQuickstart, /snapshotInputFromGuideLoop\(\)/);
   assert.match(sdkQuickstart, /aionis\.execution\.observeStep/);
-  assert.match(sdkQuickstart, /aionis\.execution\.guideForRole/);
+  assert.match(sdkQuickstart, /aionis\.execution\.guideAgentContextForRole/);
   assert.match(sdkQuickstart, /examples\/minimal-agent\.ts/);
   assert.match(installDoc, /@aionis\/mcp/);
   assert.match(installDoc, /AIONIS_MCP\.md/);
