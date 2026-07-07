@@ -581,8 +581,8 @@ function structuredMatchedFields(row: LiteRecallStructuredRow, signals: Structur
 
 function structuredReason(signals: StructuredSignal[], matchedFields: string[]): string {
   const priority = [
-    "workflow_signature",
     "task_signature",
+    "workflow_signature",
     "target_files",
     "failure_mode",
     "verification_signature",

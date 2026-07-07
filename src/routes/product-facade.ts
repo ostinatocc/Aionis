@@ -3853,6 +3853,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       agentContextMode,
       explicitContextCharBudget: parsed.context_char_budget,
     });
+    const executionSignatures = productGuideExecutionSignatures(parsed);
     let fullPowerStructuredMemoryMerged = false;
     if (fullPowerRequested) {
       const structuredExecutionPacket = await buildProductGuideStructuredExecutionPacket({
@@ -3872,6 +3873,11 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       agent_role: agentRole,
       memory_packet: memoryPacket,
       guide_packet: guidePacket,
+      execution_scope: {
+        task_signature: executionSignatures.taskSignature,
+        task_family: executionSignatures.taskFamily,
+        workflow_signature: executionSignatures.workflowSignature,
+      },
       query_intent_override: parsed.query_text,
       agent_context_mode: agentContextMode,
       context_char_budget: taskContextProfilePolicy.contextCharBudget,

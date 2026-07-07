@@ -3509,19 +3509,21 @@ test("full-power product guide merges structured execution control memory into p
     assert.equal(guideBody.source_map.internal_surfaces_used.includes("full_power_structured_execution_recall"), true);
     assert.equal(agentContext.use_now_memory_ids.includes(passedWorkflowNodeId), true);
     assert.equal(agentContext.use_now_memory_ids.includes(sameWorkflowOtherTaskNodeId), false);
-    assert.equal(agentContext.inspect_before_use_memory_ids.includes(sameWorkflowOtherTaskNodeId), true);
+    assert.equal(agentContext.inspect_before_use_memory_ids.includes(sameWorkflowOtherTaskNodeId), false);
     assert.equal(agentContext.do_not_use_memory_ids.includes(failedNodeId), true);
     assert.equal(agentContext.inspect_before_use_memory_ids.includes(contestedNodeId), true);
     assert.equal(agentContext.rehydrate_hints.some((hint: Record<string, unknown>) => hint.memory_id === rehydrateNodeId), true);
     assert.equal(agentContext.use_now.some((entry: string) => entry.includes("STRUCTURED_CONTROL_PASSED_WORKFLOW")), true);
     assert.equal(agentContext.use_now.some((entry: string) => entry.includes("STRUCTURED_CONTROL_SAME_WORKFLOW_OTHER_TASK")), false);
-    assert.equal(agentContext.inspect_before_use.some((entry: string) => entry.includes("STRUCTURED_CONTROL_SAME_WORKFLOW_OTHER_TASK")), true);
+    assert.equal(agentContext.inspect_before_use.some((entry: string) => entry.includes("STRUCTURED_CONTROL_SAME_WORKFLOW_OTHER_TASK")), false);
     assert.equal(agentContext.do_not_use.some((entry: string) => entry.includes("STRUCTURED_CONTROL_FAILED_BRANCH")), true);
     assert.equal(agentContext.inspect_before_use.some((entry: string) => entry.includes("STRUCTURED_CONTROL_CONTESTED_BRANCH")), true);
     const sameWorkflowPostures = arrayValue(agentContext.command_posture, "agent_context.command_posture")
       .filter((entry) => entry.memory_id === sameWorkflowOtherTaskNodeId);
     assert.equal(sameWorkflowPostures.some((entry) => entry.posture === "should_continue"), false);
-    assert.equal(sameWorkflowPostures.some((entry) => entry.posture === "inspect_first"), true);
+    assert.equal(sameWorkflowPostures.some((entry) => entry.posture === "inspect_first"), false);
+    assert.equal(sameWorkflowPostures.length, 0);
+    assert.equal(agentContext.prompt_text.includes("STRUCTURED_CONTROL_SAME_WORKFLOW_OTHER_TASK"), false);
     assert.equal(agentContext.prompt_text.includes("STRUCTURED_CONTROL_OTHER_TASK"), false);
     const packetMemoryIds = arrayValue(memoryPacket.relevant_memories, "memory_packet.relevant_memories")
       .map((entry) => entry.memory_id);

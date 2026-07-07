@@ -142,11 +142,24 @@ export type BuildAionisAgentContextArgs = {
   agent_role?: AionisAgentRole | null;
   memory_packet?: AionisMemoryPacket | null;
   guide_packet?: AionisGuidePacket | null;
+  execution_scope?: AgentContextExecutionScope | null;
   query_intent_override?: string | null;
   agent_context_mode?: "standard" | "compact_agent" | null;
   context_char_budget?: number | null;
   context_compaction_profile?: "balanced" | "aggressive" | null;
   task_context_profile?: AionisTaskContextProfile | null;
+};
+
+export type AgentContextExecutionScope = {
+  task_signature?: string | null;
+  task_family?: string | null;
+  workflow_signature?: string | null;
+};
+
+type NormalizedAgentPromptExecutionScope = {
+  task_signature: string | null;
+  task_family: string | null;
+  workflow_signature: string | null;
 };
 
 export type ApplyAionisInspectBeforeUseActiveProjectionArgs = {
@@ -362,6 +375,16 @@ function asTask(task?: ProductTask): ProductTask {
     run_id: task?.run_id ?? null,
     task_signature: task?.task_signature ?? null,
     task_family: task?.task_family ?? null,
+  };
+}
+
+function normalizeAgentPromptExecutionScope(
+  scope?: AgentContextExecutionScope | null,
+): NormalizedAgentPromptExecutionScope {
+  return {
+    task_signature: stringValue(scope?.task_signature),
+    task_family: stringValue(scope?.task_family),
+    workflow_signature: stringValue(scope?.workflow_signature),
   };
 }
 
@@ -2513,6 +2536,48 @@ function memoryEntryIsExecutionScoped(entry: MemoryPacketEntry): boolean {
     || entry.memory_type === "procedure";
 }
 
+function memoryEntryHasExecutionScopeSignals(entry: MemoryPacketEntry): boolean {
+  return entry.domain === "execution"
+    || entry.memory_type === "execution_memory"
+    || !!entry.execution_state?.task_signature
+    || !!entry.execution_state?.workflow_signature;
+}
+
+function memoryEntryAgentPromptScopeAllowed(args: {
+  entry: MemoryPacketEntry;
+  executionScope: NormalizedAgentPromptExecutionScope;
+  verifiedHandoffMemoryIds: Set<string>;
+}): boolean {
+  if (!args.executionScope.task_signature) return true;
+  if (!memoryEntryHasExecutionScopeSignals(args.entry)) return true;
+  if (verifiedHandoffDirectUseEligible(args.entry, args.verifiedHandoffMemoryIds)) return true;
+  return args.entry.execution_state?.task_signature === args.executionScope.task_signature;
+}
+
+function filterMemoryEntriesForAgentPromptScope(args: {
+  memoryEntries: MemoryPacketEntry[];
+  executionScope: NormalizedAgentPromptExecutionScope;
+  verifiedHandoffMemoryIds: Set<string>;
+}): {
+  promptEntries: MemoryPacketEntry[];
+  excludedEntries: MemoryPacketEntry[];
+} {
+  const promptEntries: MemoryPacketEntry[] = [];
+  const excludedEntries: MemoryPacketEntry[] = [];
+  for (const entry of args.memoryEntries) {
+    if (memoryEntryAgentPromptScopeAllowed({
+      entry,
+      executionScope: args.executionScope,
+      verifiedHandoffMemoryIds: args.verifiedHandoffMemoryIds,
+    })) {
+      promptEntries.push(entry);
+    } else {
+      excludedEntries.push(entry);
+    }
+  }
+  return { promptEntries, excludedEntries };
+}
+
 function memoryEntryDirectUseEligible(args: {
   entry: MemoryPacketEntry;
   lifecycleCandidateAdmitted: boolean;
@@ -2574,6 +2639,54 @@ function backgroundWorkflowUseNowLine(text: string): boolean {
       /\bbackground\s+repository\s+activity\b/i.test(text)
       || /\bunrelated\s+continuation\s+context\b/i.test(text)
     );
+}
+
+function rawGuideLinePromptScopeAllowed(args: {
+  line: string;
+  surface: "use_now" | "inspect_before_use" | "do_not_use";
+  executionScope: NormalizedAgentPromptExecutionScope;
+  promptEntries: MemoryPacketEntry[];
+  excludedEntries: MemoryPacketEntry[];
+}): boolean {
+  if (!args.executionScope.task_signature) return true;
+  if (args.promptEntries.some((entry) => textMatchesMemoryEntry(args.line, entry))) return true;
+  if (args.excludedEntries.some((entry) => textMatchesMemoryEntry(args.line, entry))) return false;
+  if (args.surface !== "use_now") return false;
+  if (workflowUseNowLine(args.line) || backgroundWorkflowUseNowLine(args.line)) return false;
+  if (/^\s*Recovered state:/i.test(args.line)) return args.promptEntries.length > 0;
+  return false;
+}
+
+function filterRawGuideLinesForAgentPromptScope(args: {
+  lines: string[];
+  surface: "use_now" | "inspect_before_use" | "do_not_use";
+  executionScope: NormalizedAgentPromptExecutionScope;
+  promptEntries: MemoryPacketEntry[];
+  excludedEntries: MemoryPacketEntry[];
+}): string[] {
+  return args.lines.filter((line) => rawGuideLinePromptScopeAllowed({
+    line,
+    surface: args.surface,
+    executionScope: args.executionScope,
+    promptEntries: args.promptEntries,
+    excludedEntries: args.excludedEntries,
+  }));
+}
+
+function agentPromptMemoryIdAllowed(args: {
+  memoryId: string;
+  memoryEntriesById: Map<string, MemoryPacketEntry>;
+  executionScope: NormalizedAgentPromptExecutionScope;
+  verifiedHandoffMemoryIds: Set<string>;
+}): boolean {
+  if (!args.executionScope.task_signature) return true;
+  const entry = args.memoryEntriesById.get(args.memoryId);
+  if (!entry) return false;
+  return memoryEntryAgentPromptScopeAllowed({
+    entry,
+    executionScope: args.executionScope,
+    verifiedHandoffMemoryIds: args.verifiedHandoffMemoryIds,
+  });
 }
 
 function executionEvidenceUseNowLine(text: string): boolean {
@@ -3634,7 +3747,42 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     rehydrateHintIds.add(hint.memory_id);
     return true;
   }).slice(0, 6);
+  const rawMemoryIds = compactStrings([
+    ...(guide?.memory_lifecycle.used_memory_ids ?? []),
+    ...(memory?.lifecycle.used_memory_ids ?? []),
+    ...rawRehydrateHints.map((entry) => entry.memory_id),
+  ]).slice(0, 10);
+  const recoveredStateHasVerifiedHandoff =
+    guide?.recovered_state.resumable === true
+    && rawTargetFiles.length > 0
+    && (guide?.recovered_state.acceptance_checks.length ?? 0) > 0;
+  const verifiedHandoffMemoryIds = new Set<string>();
+  if (recoveredStateHasVerifiedHandoff) {
+    for (const memoryId of guide?.recovered_state.handoff_ids ?? []) {
+      if (memoryId) verifiedHandoffMemoryIds.add(memoryId);
+    }
+    const rawTargetSet = new Set(rawTargetFiles.map((target) => target.trim().toLowerCase()).filter(Boolean));
+    const recoveredMemoryIdSet = new Set(rawMemoryIds);
+    for (const entry of memory?.relevant_memories ?? []) {
+      if (!recoveredMemoryIdSet.has(entry.memory_id)) continue;
+      if (!contractEntryIsHandoff(entry)) continue;
+      if (!entry.target_files.some((target) => routeTargetMatchesExplicitTarget(target, rawTargetSet))) continue;
+      verifiedHandoffMemoryIds.add(entry.memory_id);
+    }
+  }
+  const executionScope = normalizeAgentPromptExecutionScope(args.execution_scope);
+  const { promptEntries, excludedEntries } = filterMemoryEntriesForAgentPromptScope({
+    memoryEntries: memory?.relevant_memories ?? [],
+    executionScope,
+    verifiedHandoffMemoryIds,
+  });
   const rehydrateHints = rawRehydrateHints.filter((hint) => {
+    if (!agentPromptMemoryIdAllowed({
+      memoryId: hint.memory_id,
+      memoryEntriesById,
+      executionScope,
+      verifiedHandoffMemoryIds,
+    })) return false;
     const entry = memoryEntriesById.get(hint.memory_id);
     const lifecycleSignals = lifecycleCandidateSignals.filter((signal) => signal.memory_id === hint.memory_id);
     return (!entry
@@ -3648,29 +3796,15 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
           : false)
       );
   });
-  const memoryIds = compactStrings([
-    ...(guide?.memory_lifecycle.used_memory_ids ?? []),
-    ...(memory?.lifecycle.used_memory_ids ?? []),
-    ...rehydrateHints.map((entry) => entry.memory_id),
-  ]).slice(0, 10);
-  const recoveredStateHasVerifiedHandoff =
-    guide?.recovered_state.resumable === true
-    && rawTargetFiles.length > 0
-    && (guide?.recovered_state.acceptance_checks.length ?? 0) > 0;
-  const verifiedHandoffMemoryIds = new Set<string>();
-  if (recoveredStateHasVerifiedHandoff) {
-    for (const memoryId of guide?.recovered_state.handoff_ids ?? []) {
-      if (memoryId) verifiedHandoffMemoryIds.add(memoryId);
-    }
-    const rawTargetSet = new Set(rawTargetFiles.map((target) => target.trim().toLowerCase()).filter(Boolean));
-    const recoveredMemoryIdSet = new Set(memoryIds);
-    for (const entry of memory?.relevant_memories ?? []) {
-      if (!recoveredMemoryIdSet.has(entry.memory_id)) continue;
-      if (!contractEntryIsHandoff(entry)) continue;
-      if (!entry.target_files.some((target) => routeTargetMatchesExplicitTarget(target, rawTargetSet))) continue;
-      verifiedHandoffMemoryIds.add(entry.memory_id);
-    }
-  }
+  const memoryIds = rawMemoryIds.filter((memoryId) => agentPromptMemoryIdAllowed({
+    memoryId,
+    memoryEntriesById,
+    executionScope,
+    verifiedHandoffMemoryIds,
+  })).slice(0, 10);
+  const promptTargetFiles = executionScope.task_signature && promptEntries.length === 0
+    ? []
+    : rawTargetFiles;
   const workflowIds = compactStrings(
     guide?.guidance.workflow_candidates.map((entry) => entry.workflow_id) ?? [],
   ).slice(0, 10);
@@ -3702,11 +3836,29 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     ?? (rawHistoryUsed ? "use_as_context" : "ignore_history");
   const rawAuthority = guideBrief?.authority ?? "candidate";
   const surfaces = compileAgentContextSurfaces({
-    rawUseNow: compactStrings(guideBrief?.use_now ?? []).slice(0, 8),
-    rawInspectBeforeUse: compactStrings(guideBrief?.inspect_before_use ?? []).slice(0, 8),
-    rawDoNotUse: compactStrings(guideBrief?.do_not_use ?? []).slice(0, 8),
-    rawTargetFiles,
-    memoryEntries: memory?.relevant_memories ?? [],
+    rawUseNow: filterRawGuideLinesForAgentPromptScope({
+      lines: compactStrings(guideBrief?.use_now ?? []).slice(0, 8),
+      surface: "use_now",
+      executionScope,
+      promptEntries,
+      excludedEntries,
+    }),
+    rawInspectBeforeUse: filterRawGuideLinesForAgentPromptScope({
+      lines: compactStrings(guideBrief?.inspect_before_use ?? []).slice(0, 8),
+      surface: "inspect_before_use",
+      executionScope,
+      promptEntries,
+      excludedEntries,
+    }),
+    rawDoNotUse: filterRawGuideLinesForAgentPromptScope({
+      lines: compactStrings(guideBrief?.do_not_use ?? []).slice(0, 8),
+      surface: "do_not_use",
+      executionScope,
+      promptEntries,
+      excludedEntries,
+    }),
+    rawTargetFiles: promptTargetFiles,
+    memoryEntries: promptEntries,
     rawHistoryUsed,
     rawActionableHistoryUsed,
     rawRecommendedPosture,
@@ -3715,17 +3867,24 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     rehydrateHints,
     premiseFirewall: buildPremiseFirewallProjection({
       queryIntent: args.query_intent_override ?? memory?.query.intent ?? null,
-      memoryEntries: memory?.relevant_memories ?? [],
+      memoryEntries: promptEntries,
       evidenceTrail: memory?.evidence_trail ?? [],
     }),
-    lifecycleCandidateSignals,
+    lifecycleCandidateSignals: lifecycleCandidateSignals.filter((signal) =>
+      agentPromptMemoryIdAllowed({
+        memoryId: signal.memory_id,
+        memoryEntriesById,
+        executionScope,
+        verifiedHandoffMemoryIds,
+      })
+    ),
     verifiedHandoffMemoryIds,
   });
   const summary = surfaces.historyUsed
     ? rawSummary
     : "No usable Aionis history was recovered for the Agent context.";
   const commandPosture = buildAgentContextCommandPostures({
-    memoryEntries: memory?.relevant_memories ?? [],
+    memoryEntries: promptEntries,
     useNowMemoryIds: surfaces.useNowMemoryIds,
     optionalContextMemoryIds: surfaces.optionalContextMemoryIds,
     inspectBeforeUseMemoryIds: surfaces.inspectBeforeUseMemoryIds,
@@ -3750,7 +3909,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     doNotUse: surfaces.doNotUse,
     memoryIds,
     rehydrateHints,
-    memoryEntries: memory?.relevant_memories ?? [],
+    memoryEntries: promptEntries,
     useNowMemoryIds: surfaces.useNowMemoryIds,
     inspectBeforeUseMemoryIds: surfaces.inspectBeforeUseMemoryIds,
     doNotUseMemoryIds: surfaces.doNotUseMemoryIds,
