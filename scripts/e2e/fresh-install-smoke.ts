@@ -256,7 +256,7 @@ async function runPublishedMcpContextSmoke(input: {
     });
     const payload = asRecord(context.structuredContent);
     assertCondition(payload?.ok === true, `fresh MCP context failed: ${JSON.stringify(context, null, 2)}`);
-    assertCondition(String(payload.agent_prompt ?? "").includes("AIONIS_EXECUTION_AGENT_CONTEXT"), "fresh MCP context did not compile execution prompt");
+    assertCondition(String(payload.agent_prompt ?? "").includes("AIONIS_CTX"), "fresh MCP context did not return compact AgentContext prompt");
     assertCondition(asRecord(payload.memory_use_receipt)?.contract_version === "aionis_memory_use_receipt_v1", "fresh MCP context missing memory use receipt");
 
     const identityPath = path.join(projectDir, ".aionis", "workspace.json");
