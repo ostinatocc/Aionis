@@ -159,7 +159,7 @@ async function listenLocal(app: ReturnType<typeof Fastify>): Promise<string> {
   return `http://127.0.0.1:${address.port}`;
 }
 
-test("SDK guideAgentContext over real Runtime HTTP gates execution memory to exact task", async () => {
+test("SDK guideAgentContext over real Runtime HTTP promotes accepted same-workflow execution memory", async () => {
   const app = Fastify();
   const env = liteEnv();
   const guards = requestGuards(env);
@@ -210,7 +210,7 @@ test("SDK guideAgentContext over real Runtime HTTP gates execution memory to exa
       outcome: "succeeded",
       target_files: ["src/other.ts"],
       tool_set: ["edit", "test"],
-      continuation_hint: "Keep SDK_OTHER_TASK_SUCCESS as workflow evidence only.",
+      continuation_hint: "Continue SDK_OTHER_TASK_SUCCESS when the workflow signature matches.",
       auto_embed: false,
       memory_lane: "private",
       slots: {
@@ -225,7 +225,7 @@ test("SDK guideAgentContext over real Runtime HTTP gates execution memory to exa
       task_id: "task-current",
       task_signature: currentTaskSignature,
       workflow_signature: workflowSignature,
-      query_text: "Continue the SDK current task using exact task execution memory.",
+      query_text: "Continue the SDK current task using exact task and accepted same-workflow execution memory.",
       context_mode: "compact_agent",
       include_packets: true,
       limit: 10,
@@ -237,7 +237,7 @@ test("SDK guideAgentContext over real Runtime HTTP gates execution memory to exa
 
     assert.equal(result.contract_version, "aionis_sdk_agent_context_with_evidence_v1");
     assert.match(result.agent_prompt, /SDK_CURRENT_TASK_ONLY/);
-    assert.doesNotMatch(result.agent_prompt, /SDK_OTHER_TASK_SUCCESS/);
+    assert.match(result.agent_prompt, /SDK_OTHER_TASK_SUCCESS/);
     assert.equal(result.resolved_evidence.length, 0);
 
     const guide = result.guide as Record<string, any>;
@@ -257,12 +257,26 @@ test("SDK guideAgentContext over real Runtime HTTP gates execution memory to exa
       true,
     );
     assert.equal(
-      [
-        ...(agentContext.use_now ?? []),
-        ...(agentContext.inspect_before_use ?? []),
-        ...(agentContext.do_not_use ?? []),
-      ].some((entry: string) => entry.includes("SDK_OTHER_TASK_SUCCESS")),
+      (agentContext.use_now ?? []).some((entry: string) => entry.includes("SDK_OTHER_TASK_SUCCESS")),
+      true,
+    );
+    assert.equal(
+      (agentContext.inspect_before_use ?? []).some((entry: string) => entry.includes("SDK_OTHER_TASK_SUCCESS")),
       false,
+    );
+    assert.equal(
+      (agentContext.command_posture ?? []).some((entry: Record<string, unknown>) =>
+        entry.posture === "should_continue"
+        && Array.isArray(entry.target_files)
+        && entry.target_files.includes("src/other.ts")
+      ),
+      true,
+    );
+    assert.equal(
+      (agentContext.route_contract?.active_targets ?? []).some((entry: Record<string, unknown>) =>
+        entry.target === "src/other.ts"
+      ),
+      true,
     );
   } finally {
     await app.close();

@@ -6,7 +6,7 @@ import {
   buildAionisMemoryPacket,
 } from "../../src/memory/product-output-assembler.ts";
 
-test("AgentContext prompt gates execution memory to exact task by default", () => {
+test("AgentContext keeps same-workflow execution memory visible but not direct-use by default", () => {
   const memoryPacket = buildAionisMemoryPacket({
     tenant_id: "tenant-local",
     scope: "repo-a",
@@ -117,11 +117,12 @@ test("AgentContext prompt gates execution memory to exact task by default", () =
     ...agentContext.command_posture.map((row) => `${row.instruction} ${row.reason}`),
   ].join("\n");
 
-  assert.match(promptSurface, /CURRENT_TASK_ONLY/);
-  assert.doesNotMatch(promptSurface, /OTHER_TASK_SUCCESS/);
-  assert.doesNotMatch(promptSurface, /OTHER_TASK_FAILURE/);
-  assert.deepEqual(agentContext.use_now_memory_ids, ["mem-current-task"]);
-  assert.equal(agentContext.inspect_before_use_memory_ids.includes("mem-other-task-success"), false);
-  assert.equal(agentContext.do_not_use_memory_ids.includes("mem-other-task-failure"), false);
-  assert.deepEqual(agentContext.target_files, ["src/current.ts"]);
+  assert.match(promptSurface, /Current task accepted path/);
+  assert.match(promptSurface, /Other task successful path/);
+  assert.match(promptSurface, /Other task failed path/);
+  assert.equal(agentContext.use_now_memory_ids.includes("mem-other-task-success"), false);
+  assert.equal(agentContext.inspect_before_use_memory_ids.includes("mem-current-task"), true);
+  assert.equal(agentContext.inspect_before_use_memory_ids.includes("mem-other-task-success"), true);
+  assert.equal(agentContext.do_not_use_memory_ids.includes("mem-other-task-failure"), true);
+  assert.deepEqual(agentContext.target_files, []);
 });

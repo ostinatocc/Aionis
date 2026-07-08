@@ -160,9 +160,9 @@ npm run -s runtime:quickstart:multi-agent
 
 This runs the SDK client, execution-memory adapter, and
 `createMultiAgentHostTemplate` over a real Runtime. It writes planner, worker,
-verifier, and reviewer execution evidence; gives the reviewer only compact
-`agent_context`; records feedback attribution; measures history impact; and
-returns a compact JSON summary with:
+verifier, and reviewer execution evidence; gives the reviewer the SDK
+`agent_prompt`; records feedback attribution; measures history impact; and
+returns a bounded JSON summary with:
 
 1. whether the fresh guide had actionable history
 2. whether the reviewer guide used actionable execution memory
@@ -177,7 +177,7 @@ Runtime and uses the embedding provider from the environment.
 
 ## Real Agent Downstream Demo
 
-To validate that compact Aionis execution context changes a real LLM Agent's
+To validate that governed Aionis execution context changes a real LLM Agent's
 next action, run:
 
 ```bash
@@ -244,10 +244,10 @@ curl -sS -X POST "$AIONIS_URL/v1/observe" \
 
 ## 3. Guide The Agent
 
-Ask Aionis for compact Agent context. `include_packets: true` is used here
-because the next audit call needs the full guide output. The Agent itself should
-still receive only `agent_context.prompt_text` or selected `agent_context`
-fields.
+Ask Aionis for governed Agent context. `include_packets: true` is used here
+because the next audit call needs the full guide output. SDK hosts should give
+the Agent `guideAgentContext().agent_prompt`; this direct HTTP example prints
+the lower-level Runtime `agent_context.prompt_text`.
 
 ```bash
 GUIDE_JSON="$(
@@ -272,7 +272,7 @@ printf "%s\n" "$GUIDE_JSON" | jq -r '.agent_context.prompt_text'
 
 Expected product behavior:
 
-1. The Agent sees compact context only.
+1. The Agent sees governed context only, not raw packets or traces.
 2. The old route should not be direct `use_now` guidance.
 3. The old route should be visible for inspection if it remains relevant.
 4. The prompt should not contain `memory_decision_trace`,

@@ -24,8 +24,9 @@ execution.guideAgentContextForRole().agent_prompt
 ```
 
 For direct HTTP integrations, `POST /v1/guide -> agent_context.prompt_text` is
-the lower-level guide contract. Direct HTTP hosts may pass that field, or a
-host-rendered prompt built only from selected `agent_context` fields.
+the lower-level Runtime guide contract. Direct HTTP hosts may pass that field,
+or a host-rendered prompt built only from selected `agent_context` fields, but
+the recommended default for product integrations is the SDK `agent_prompt`.
 
 Do not pass these surfaces directly to an Agent:
 
@@ -71,7 +72,8 @@ Aionis intentionally separates two levels:
 
 | Surface | Purpose | Agent-facing by default |
 |---|---|---|
-| `agent_prompt` / `agent_context.prompt_text` | Compact governed instructions for the next Agent action. | Yes |
+| `agent_prompt` | SDK-rendered execution contract and Runtime base guide for the next Agent action. | Yes |
+| `agent_context.prompt_text` | Runtime compact guide text; also the explicit compact-mode prompt. | Yes, only for direct HTTP or explicit compact mode |
 | `agent_context.use_now` | Structured direct-use memory lines already admitted for this turn. | Yes, through the prompt or selected fields |
 | `agent_context.inspect_before_use` | Candidate or contested evidence that needs host or Agent inspection before use. | Yes, as inspection posture |
 | `agent_context.do_not_use` | Blocked, stale, failed, or contradicted direction. | Yes, as negative guidance |
@@ -89,14 +91,13 @@ measurement that should not become current action text.
 Execution memory has stricter Agent prompt scope than ordinary memory.
 
 For role-aware execution context, if the current guide request carries a
-`task_signature`, execution-scoped memory can enter the Agent-facing prompt only
-when it matches the same exact `task_signature`.
+`task_signature`, the same exact `task_signature` is the only scope that can
+become direct current-action guidance (`use_now`) by default.
 
-Same `workflow_signature` evidence may still appear in `memory_packet` or other
-host/audit surfaces. It must not become `use_now`, `inspect_before_use`,
-`do_not_use`, command posture, target files, lifecycle prompt text, or rehydrate
-hints in the current Agent prompt unless it also matches the exact current
-`task_signature`.
+Same `task_family` or `workflow_signature` evidence may still appear as
+candidate, inspection, negative, or rehydrate guidance when governance admits it.
+It must not be promoted to direct current-action guidance just because it shares
+a broad workflow family.
 
 This rule prevents one task's successful or failed execution branch from
 becoming another task's direct instruction just because both tasks share a broad
@@ -127,15 +128,17 @@ prompt scope also matches exact `task_signature`.
 ## AIONIS_CTX v2
 
 `AIONIS_CTX v2` is the Runtime compact prompt format used by
-`agent_context.prompt_text` and, by default, SDK `agent_prompt`.
+`agent_context.prompt_text`.
 
-It is not a second AgentContext system. It is the compact rendering of the same
-governed AgentContext contract.
+It is not a second AgentContext system. It is the compact Runtime rendering of
+the same governed AgentContext contract. SDK `agent_prompt` defaults to the
+full SDK execution contract plus `BASE_AIONIS_CONTEXT`; `AIONIS_CTX v2` becomes
+the SDK final prompt only when a host explicitly requests compact mode.
 
 The supported relationship is:
 
 ```text
-Runtime /v1/guide -> agent_context.prompt_text -> SDK agent_prompt -> Agent
+Runtime /v1/guide -> SDK AgentContext renderer -> agent_prompt -> Agent
 ```
 
 MCP, AIFS, Claude Code hooks, and other integrations should call the SDK helper
@@ -161,10 +164,10 @@ Do not attribute success or failure to memory that was merely present in
 
 The current focused Runtime enforces this contract with tests that verify:
 
-1. same-workflow but different-task execution memory can remain in
-   `memory_packet`
-2. same-workflow but different-task execution memory does not enter
-   `AgentContext.agent_prompt`
+1. same-workflow but different-task execution memory can remain visible as
+   candidate or inspection context
+2. same-workflow but different-task execution memory does not become direct
+   `use_now` guidance by default
 3. SDK `execution.guideAgentContextForRole().agent_prompt` over real Runtime
    HTTP follows the same exact-task prompt boundary
 4. audit/debug packets stay out of the default Agent prompt

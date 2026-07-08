@@ -388,6 +388,7 @@ export const AionisMemoryPacketSchema = z
                 summary_kind: z.string().min(1).nullable().default(null),
                 execution_kind: z.string().min(1).nullable().default(null),
                 task_signature: z.string().min(1).nullable().default(null),
+                task_family: z.string().min(1).nullable().default(null),
                 workflow_signature: z.string().min(1).nullable().default(null),
                 next_action_hint: z.string().min(1).nullable().default(null),
                 transition_kind: AionisExecutionTransitionKindSchema.nullable().default(null),

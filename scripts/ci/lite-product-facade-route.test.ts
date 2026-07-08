@@ -3376,7 +3376,7 @@ test("full-power product guide merges structured execution control memory into p
             owner_agent_id: "control-agent",
             owner_team_id: "control-team",
             title: "STRUCTURED_CONTROL_SAME_WORKFLOW_OTHER_TASK",
-            text_summary: "STRUCTURED_CONTROL_SAME_WORKFLOW_OTHER_TASK is useful workflow evidence but not the current task route.",
+            text_summary: "STRUCTURED_CONTROL_SAME_WORKFLOW_OTHER_TASK is an accepted same-workflow continuation route.",
             slots: executionSlots("same-workflow-other-task", "active", "passed", {
               task_signature: "another-structured-control-guide",
               workflow_signature: workflowSignature,
@@ -3386,7 +3386,7 @@ test("full-power product guide merges structured execution control memory into p
               anchor_kind: "workflow",
               file_path: "src/same-workflow-other-task.ts",
               target_files: ["src/same-workflow-other-task.ts"],
-              next_action: "Keep this as workflow evidence only unless the task signature matches.",
+              next_action: "Continue this accepted same-workflow route before widening discovery.",
             }),
           },
           {
@@ -3508,22 +3508,31 @@ test("full-power product guide merges structured execution control memory into p
     assert.equal(memoryPacket.scope, scope);
     assert.equal(guideBody.source_map.internal_surfaces_used.includes("full_power_structured_execution_recall"), true);
     assert.equal(agentContext.use_now_memory_ids.includes(passedWorkflowNodeId), true);
-    assert.equal(agentContext.use_now_memory_ids.includes(sameWorkflowOtherTaskNodeId), false);
+    assert.equal(agentContext.use_now_memory_ids.includes(sameWorkflowOtherTaskNodeId), true);
     assert.equal(agentContext.inspect_before_use_memory_ids.includes(sameWorkflowOtherTaskNodeId), false);
     assert.equal(agentContext.do_not_use_memory_ids.includes(failedNodeId), true);
     assert.equal(agentContext.inspect_before_use_memory_ids.includes(contestedNodeId), true);
     assert.equal(agentContext.rehydrate_hints.some((hint: Record<string, unknown>) => hint.memory_id === rehydrateNodeId), true);
     assert.equal(agentContext.use_now.some((entry: string) => entry.includes("STRUCTURED_CONTROL_PASSED_WORKFLOW")), true);
-    assert.equal(agentContext.use_now.some((entry: string) => entry.includes("STRUCTURED_CONTROL_SAME_WORKFLOW_OTHER_TASK")), false);
+    assert.equal(agentContext.use_now.some((entry: string) => entry.includes("STRUCTURED_CONTROL_SAME_WORKFLOW_OTHER_TASK")), true);
     assert.equal(agentContext.inspect_before_use.some((entry: string) => entry.includes("STRUCTURED_CONTROL_SAME_WORKFLOW_OTHER_TASK")), false);
     assert.equal(agentContext.do_not_use.some((entry: string) => entry.includes("STRUCTURED_CONTROL_FAILED_BRANCH")), true);
     assert.equal(agentContext.inspect_before_use.some((entry: string) => entry.includes("STRUCTURED_CONTROL_CONTESTED_BRANCH")), true);
     const sameWorkflowPostures = arrayValue(agentContext.command_posture, "agent_context.command_posture")
       .filter((entry) => entry.memory_id === sameWorkflowOtherTaskNodeId);
-    assert.equal(sameWorkflowPostures.some((entry) => entry.posture === "should_continue"), false);
+    assert.equal(sameWorkflowPostures.some((entry) => entry.posture === "should_continue"), true);
     assert.equal(sameWorkflowPostures.some((entry) => entry.posture === "inspect_first"), false);
-    assert.equal(sameWorkflowPostures.length, 0);
-    assert.equal(agentContext.prompt_text.includes("STRUCTURED_CONTROL_SAME_WORKFLOW_OTHER_TASK"), false);
+    assert.equal(
+      arrayValue(agentContext.route_contract.active_targets, "agent_context.route_contract.active_targets")
+        .some((entry) => entry.target === "src/same-workflow-other-task.ts"),
+      true,
+    );
+    assert.equal(
+      arrayValue(agentContext.route_contract.reference_only_targets, "agent_context.route_contract.reference_only_targets")
+        .some((entry) => entry.target === "src/same-workflow-other-task.ts"),
+      false,
+    );
+    assert.equal(agentContext.prompt_text.includes("STRUCTURED_CONTROL_SAME_WORKFLOW_OTHER_TASK"), true);
     assert.equal(agentContext.prompt_text.includes("STRUCTURED_CONTROL_OTHER_TASK"), false);
     const packetMemoryIds = arrayValue(memoryPacket.relevant_memories, "memory_packet.relevant_memories")
       .map((entry) => entry.memory_id);
@@ -3565,6 +3574,155 @@ test("full-power product guide merges structured execution control memory into p
     assert.equal(receipt.do_not_use_memory_ids.includes(failedNodeId), true);
     assert.equal(receipt.inspect_before_use_memory_ids.includes(contestedNodeId), true);
     assert.equal(receipt.rehydrate_memory_ids.includes(rehydrateNodeId), true);
+  } finally {
+    await app.close();
+  }
+});
+
+test("structured execution guide promotes same-workflow anchors but keeps task-family-only anchors as reference", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("structured-execution-workflow-continuation");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const tenantId = "tenant-structured-execution-workflow-continuation";
+    const scope = "scope-structured-execution-workflow-continuation";
+    const taskFamily = "shared-workflow-family";
+    const currentTaskSignature = "task:current-route";
+    const currentWorkflowSignature = "workflow:current-route";
+    const slotsForAnchor = (args: {
+      id: string;
+      taskSignature: string;
+      workflowSignature: string;
+      filePath: string;
+    }) => ({
+      lifecycle_state: "active",
+      task_signature: args.taskSignature,
+      task_family: taskFamily,
+      workflow_signature: args.workflowSignature,
+      execution_result_summary: {
+        status: "passed",
+        execution_outcome_role: "passed_solution",
+        summary: `Accepted workflow anchor ${args.id}`,
+      },
+      execution_native_v1: {
+        schema_version: "execution_native_v1",
+        execution_kind: "workflow_anchor",
+        summary_kind: "workflow_anchor",
+        compression_layer: "L2",
+        contract_trust: "advisory",
+        task_signature: args.taskSignature,
+        task_family: taskFamily,
+        workflow_signature: args.workflowSignature,
+        execution_outcome_role: "passed_solution",
+        anchor_kind: "workflow",
+        file_path: args.filePath,
+        target_files: [args.filePath],
+        next_action: `Continue accepted route through ${args.filePath}.`,
+      },
+    });
+
+    const write = await app.inject({
+      method: "POST",
+      url: "/v1/memory/write",
+      payload: {
+        tenant_id: tenantId,
+        scope,
+        actor: "local-user",
+        input_text: "Structured workflow continuation anchor regression.",
+        auto_embed: false,
+        nodes: [
+          {
+            client_id: "same-workflow-anchor",
+            type: "evidence",
+            tier: "warm",
+            memory_lane: "private",
+            owner_agent_id: "continuation-agent",
+            owner_team_id: "continuation-team",
+            title: "SAME_WORKFLOW_ACCEPTED_ANCHOR",
+            text_summary: "Accepted same-workflow route should continue as the active route.",
+            slots: slotsForAnchor({
+              id: "same-workflow",
+              taskSignature: "task:previous-route",
+              workflowSignature: currentWorkflowSignature,
+              filePath: "src/current-workflow-target.ts",
+            }),
+          },
+          {
+            client_id: "family-only-anchor",
+            type: "evidence",
+            tier: "warm",
+            memory_lane: "private",
+            owner_agent_id: "continuation-agent",
+            owner_team_id: "continuation-team",
+            title: "FAMILY_ONLY_ACCEPTED_ANCHOR",
+            text_summary: "Accepted task-family-only route is related but not the active workflow route.",
+            slots: slotsForAnchor({
+              id: "family-only",
+              taskSignature: "task:other-route",
+              workflowSignature: "workflow:other-route",
+              filePath: "src/family-only-target.ts",
+            }),
+          },
+        ],
+        edges: [],
+      },
+    });
+    assert.equal(write.statusCode, 200, write.body);
+    const idByClientId = new Map(arrayValue(write.json().nodes, "write.nodes").map((entry) => [entry.client_id, entry.id]));
+    const sameWorkflowNodeId = String(idByClientId.get("same-workflow-anchor"));
+    const familyOnlyNodeId = String(idByClientId.get("family-only-anchor"));
+
+    const guide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: tenantId,
+        scope,
+        mode: "full_power",
+        query_text: "Continue the current route using accepted workflow memory, but do not promote related family-only routes.",
+        agent_role: "worker",
+        consumer_agent_id: "continuation-agent",
+        consumer_team_id: "continuation-team",
+        context: {
+          task_signature: currentTaskSignature,
+          task_family: taskFamily,
+          workflow_signature: currentWorkflowSignature,
+        },
+        include_packets: true,
+        context_char_budget: 4096,
+      },
+    });
+    assert.equal(guide.statusCode, 200, guide.body);
+    const agentContext = guide.json().agent_context;
+    assert.equal(agentContext.use_now_memory_ids.includes(sameWorkflowNodeId), true);
+    assert.equal(agentContext.inspect_before_use_memory_ids.includes(sameWorkflowNodeId), false);
+    assert.equal(agentContext.use_now_memory_ids.includes(familyOnlyNodeId), false);
+    assert.equal(agentContext.inspect_before_use_memory_ids.includes(familyOnlyNodeId), true);
+
+    const commandPosture = arrayValue(agentContext.command_posture, "agent_context.command_posture");
+    assert.equal(
+      commandPosture.some((entry) => entry.memory_id === sameWorkflowNodeId && entry.posture === "should_continue"),
+      true,
+    );
+    assert.equal(
+      commandPosture.some((entry) => entry.memory_id === familyOnlyNodeId && entry.posture === "inspect_first"),
+      true,
+    );
+    assert.equal(
+      arrayValue(agentContext.route_contract.active_targets, "agent_context.route_contract.active_targets")
+        .some((entry) => entry.target === "src/current-workflow-target.ts"),
+      true,
+    );
+    assert.equal(
+      arrayValue(agentContext.route_contract.reference_only_targets, "agent_context.route_contract.reference_only_targets")
+        .some((entry) => entry.target === "src/family-only-target.ts"),
+      true,
+    );
   } finally {
     await app.close();
   }

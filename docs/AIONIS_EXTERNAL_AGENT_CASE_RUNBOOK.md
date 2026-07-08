@@ -26,7 +26,7 @@ external Agent session 1
 The case should show:
 
 - prior active state is available in the later session
-- the Agent receives compact governed context, not raw full history
+- the Agent receives SDK `agent_prompt` governed context, not raw full history
 - tool outcomes and validation evidence are recorded
 - feedback can be attributed through `guide_trace_id` and memory IDs
 - Flight Recorder or operator artifacts can explain what memory influenced the run
@@ -232,4 +232,3 @@ For the next credible external case, keep the same protocol and vary one axis:
 
 Do not combine all axes in one run. Change one axis at a time so the evidence
 remains interpretable.
-

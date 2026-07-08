@@ -95,7 +95,6 @@ const context = await aionis.execution.guideAgentContextForRole<{
   query_text: "Continue the product update.",
   limit: 8,
   include_packets: true,
-  context_mode: "compact_agent",
 }, undefined, {
   budget_profile: "balanced",
 });
@@ -274,13 +273,13 @@ For a complete minimal loop, see
 
 ## What The Script Proves
 
-`npm run -s runtime:quickstart:sdk` runs a real Runtime loop and prints compact
+`npm run -s runtime:quickstart:sdk` runs a real Runtime loop and prints bounded
 JSON showing:
 
 1. a fresh guide starts without actionable history
 2. `remember(kind: "preference")` creates ordinary preference memory
 3. `remember(kind: "project_context")` creates ordinary project memory
-4. `guideAgentContext()` returns compact `agent_prompt` plus the underlying guide
+4. `guideAgentContext()` returns SDK `agent_prompt` plus the underlying guide
 5. `compiled_context` exposes route and receipt metadata for host/operator logic
 6. `feedback()` attributes outcome only to memory exposed by that guide trace
 7. `measure()` reports whether history changed the future context

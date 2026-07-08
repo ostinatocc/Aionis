@@ -234,6 +234,7 @@ export type LiteWriteStore = WriteStoreAccess & {
     anchorKind?: "execution" | "workflow" | "pattern" | "decision" | null;
     patternState?: "provisional" | "stable" | null;
     taskSignature?: string | null;
+    taskFamily?: string | null;
     errorSignature?: string | null;
     workflowSignature?: string | null;
     patternSignature?: string | null;
@@ -1554,6 +1555,10 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
       if (args.taskSignature) {
         where.push("i.task_signature = ?");
         params.push(args.taskSignature);
+      }
+      if (args.taskFamily) {
+        where.push("i.task_family = ?");
+        params.push(args.taskFamily);
       }
       if (args.errorSignature) {
         where.push("i.error_signature = ?");

@@ -1418,10 +1418,12 @@ function productGuideExecutionSignatures(parsed: z.infer<typeof ProductGuideRequ
 }
 
 function productGuideExecutionMemoryFilters(parsed: z.infer<typeof ProductGuideRequest>): Array<Record<string, unknown>> {
-  const { taskSignature } = productGuideExecutionSignatures(parsed);
+  const { taskSignature, taskFamily, workflowSignature } = productGuideExecutionSignatures(parsed);
   const filters: Array<Record<string, unknown>> = [];
   if (taskSignature) filters.push({ slots_contains: { task_signature: taskSignature }, limit: 20 });
-  return filters;
+  if (taskFamily) filters.push({ slots_contains: { task_family: taskFamily }, limit: 20 });
+  if (workflowSignature) filters.push({ slots_contains: { workflow_signature: workflowSignature }, limit: 20 });
+  return filters.slice(0, 3);
 }
 
 function nestedObjectField(value: unknown, key: string): Record<string, unknown> | null {
@@ -1508,16 +1510,22 @@ function productGuideStructuredControlNode(row: LiteExecutionNativeNodeRow): boo
     || activeStateCarrier;
 }
 
+type ProductGuideStructuredExecutionMatch = {
+  directTaskMatch: boolean;
+  workflowContinuationMatch: boolean;
+};
+
 function productGuideStructuredControlSlots(
   row: LiteExecutionNativeNodeRow,
-  args: { directExecutionMatch: boolean },
+  args: ProductGuideStructuredExecutionMatch,
 ): Record<string, unknown> {
   const slots: Record<string, unknown> = { ...row.slots };
   const lifecycle = firstStringValue(slots.lifecycle_state);
   const status = structuredRecallExecutionStatus(row);
   const rehydrationMode = structuredRecallRehydrationMode(row);
-  const reusableWorkflowAnchor = args.directExecutionMatch && productGuideStructuredReusableWorkflowAnchor(row);
-  const referenceOnlyWorkflowAnchor = !args.directExecutionMatch && productGuideStructuredReusableWorkflowAnchor(row);
+  const workflowAnchor = productGuideStructuredReusableWorkflowAnchor(row);
+  const activeWorkflowAnchor = workflowAnchor && (args.directTaskMatch || args.workflowContinuationMatch);
+  const referenceOnlyWorkflowAnchor = workflowAnchor && !activeWorkflowAnchor;
   const executionNative: Record<string, unknown> = objectValue(slots.execution_native_v1)
     ? { ...(objectValue(slots.execution_native_v1) as Record<string, unknown>) }
     : { ...row.execution_native };
@@ -1525,9 +1533,11 @@ function productGuideStructuredControlSlots(
   if (!firstStringValue(executionNative.rehydration_default_mode) && rehydrationMode) {
     executionNative.rehydration_default_mode = rehydrationMode;
   }
-  if (reusableWorkflowAnchor) {
+  if (activeWorkflowAnchor) {
     executionNative.summary_kind = "current_state";
-    executionNative.guide_projection_kind = "passed_workflow_anchor_active_route";
+    executionNative.guide_projection_kind = args.directTaskMatch
+      ? "passed_workflow_anchor_active_route"
+      : "passed_workflow_anchor_workflow_continuation";
   } else if (referenceOnlyWorkflowAnchor) {
     executionNative.guide_projection_kind = "workflow_anchor_reference_only";
   }
@@ -1723,14 +1733,24 @@ async function buildProductGuideStructuredExecutionPacket(args: {
   public_scope: string;
   store_scope: string;
 }): Promise<AionisMemoryPacket | null> {
-  const { taskSignature, workflowSignature } = productGuideExecutionSignatures(args.parsed);
-  if (!taskSignature && !workflowSignature) return null;
+  const { taskSignature, taskFamily, workflowSignature } = productGuideExecutionSignatures(args.parsed);
+  if (!taskSignature && !taskFamily && !workflowSignature) return null;
 
   const batches = await Promise.all([
     taskSignature
       ? args.liteWriteStore.findExecutionNativeNodes({
           scope: args.store_scope,
           taskSignature,
+          consumerAgentId: args.parsed.consumer_agent_id ?? null,
+          consumerTeamId: args.parsed.consumer_team_id ?? null,
+          limit: PRODUCT_GUIDE_STRUCTURED_EXECUTION_PREFETCH_LIMIT,
+          offset: 0,
+        })
+      : Promise.resolve({ rows: [] as LiteExecutionNativeNodeRow[], has_more: false }),
+    taskFamily
+      ? args.liteWriteStore.findExecutionNativeNodes({
+          scope: args.store_scope,
+          taskFamily,
           consumerAgentId: args.parsed.consumer_agent_id ?? null,
           consumerTeamId: args.parsed.consumer_team_id ?? null,
           limit: PRODUCT_GUIDE_STRUCTURED_EXECUTION_PREFETCH_LIMIT,
@@ -1749,6 +1769,7 @@ async function buildProductGuideStructuredExecutionPacket(args: {
       : Promise.resolve({ rows: [] as LiteExecutionNativeNodeRow[], has_more: false }),
   ]);
   const taskMatchedIds = new Set(batches[0].rows.map((row) => row.id));
+  const workflowMatchedIds = new Set(batches[2].rows.map((row) => row.id));
   const rowsById = new Map<string, LiteExecutionNativeNodeRow>();
   for (const row of batches.flatMap((batch) => batch.rows)) {
     if (!rowsById.has(row.id)) rowsById.set(row.id, row);
@@ -1758,15 +1779,21 @@ async function buildProductGuideStructuredExecutionPacket(args: {
     .slice(0, PRODUCT_GUIDE_STRUCTURED_EXECUTION_PACKET_LIMIT);
   if (rows.length === 0) return null;
 
+  const matchForRow = (row: LiteExecutionNativeNodeRow): ProductGuideStructuredExecutionMatch => {
+    const directTaskMatch = taskMatchedIds.has(row.id);
+    const workflowContinuationMatch = !directTaskMatch && workflowMatchedIds.has(row.id);
+    return {
+      directTaskMatch,
+      workflowContinuationMatch,
+    };
+  };
   const nodes: BuildAionisMemoryPacketArgs["nodes"] = rows.map((row) => ({
     id: row.id,
     type: row.type,
     title: row.title,
     text_summary: row.text_summary,
     tier: row.tier,
-    slots: productGuideStructuredControlSlots(row, {
-      directExecutionMatch: taskMatchedIds.has(row.id),
-    }),
+    slots: productGuideStructuredControlSlots(row, matchForRow(row)),
     raw_ref: row.raw_ref,
     evidence_ref: row.evidence_ref,
     commit_id: row.commit_id,
@@ -1780,6 +1807,7 @@ async function buildProductGuideStructuredExecutionPacket(args: {
   }));
   const matchedFields = uniqueStrings([
     taskSignature ? "task_signature" : null,
+    taskFamily ? "task_family" : null,
     workflowSignature ? "workflow_signature" : null,
   ]);
 

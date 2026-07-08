@@ -1480,6 +1480,11 @@ function safeAgentPromptFromGuide(guide: unknown): string {
   }
 }
 
+function guideAgentContextMode(guide: unknown): string | null {
+  const context = asRecord(asRecord(guide)?.agent_context);
+  return coerceString(context?.agent_context_mode);
+}
+
 function receiptFromGuideTrace(guide: unknown): AionisMemoryUseReceipt | null {
   const guideRecord = asRecord(guide);
   const candidates = [
@@ -2016,20 +2021,46 @@ function mergeCompiledContextWithEvidence(args: {
     args.resolvedEvidence,
     evidenceBudget,
   );
-  const basePrompt = truncateText(safeAgentPromptFromGuide(args.guide), maxPromptChars);
+  const runtimePrompt = truncateText(safeAgentPromptFromGuide(args.guide), maxPromptChars);
+  const compactRuntimePromptRequested =
+    guideAgentContextMode(args.guide) === "compact_agent"
+    && args.options.include_base_prompt !== true;
+  if (compactRuntimePromptRequested) {
+    const includeEvidence = args.options.include_resolved_evidence_in_prompt === true;
+    const agentPrompt = includeEvidence && evidenceBlock
+      ? truncateText(`${runtimePrompt}${runtimePrompt ? "\n\n" : ""}${evidenceBlock}`, maxPromptChars)
+      : runtimePrompt;
+    return {
+      compiled_context: {
+        ...compileExecutionAgentContext({
+          guide: args.guide,
+          task: args.options.task,
+          repo_state: args.options.repo_state,
+          budget_profile: args.options.budget_profile ?? "compact",
+          max_prompt_chars: maxPromptChars,
+          include_base_prompt: false,
+          additional_instructions: args.options.additional_instructions,
+        }),
+        agent_prompt: agentPrompt,
+        prompt_char_count: agentPrompt.length,
+      },
+      agent_prompt: agentPrompt,
+      evidence_char_count: evidenceCharCount,
+    };
+  }
   const compiled = compileExecutionAgentContext({
     guide: args.guide,
     task: args.options.task,
     repo_state: args.options.repo_state,
     budget_profile: args.options.budget_profile ?? "balanced",
-    max_prompt_chars: maxPromptChars,
-    include_base_prompt: args.options.include_base_prompt ?? false,
+    max_prompt_chars: evidenceBlock ? Math.max(4_000, maxPromptChars - evidenceBlock.length - 2) : maxPromptChars,
+    include_base_prompt: args.options.include_base_prompt ?? true,
     additional_instructions: args.options.additional_instructions,
   });
-  const includeEvidence = args.options.include_resolved_evidence_in_prompt === true;
+  const includeEvidence = args.options.include_resolved_evidence_in_prompt ?? true;
   const agentPrompt = includeEvidence && evidenceBlock
-    ? truncateText(`${basePrompt}${basePrompt ? "\n\n" : ""}${evidenceBlock}`, maxPromptChars)
-    : basePrompt;
+    ? truncateText(`${compiled.agent_prompt}\n\n${evidenceBlock}`, maxPromptChars)
+    : compiled.agent_prompt;
   return {
     compiled_context: {
       ...compiled,

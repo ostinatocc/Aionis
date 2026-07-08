@@ -600,14 +600,23 @@ Committed verification artifacts:
 ## What The Agent Gets
 
 Aionis compiles raw traces, decisions, and memory state into an Agent-facing
-contract:
+SDK contract:
 
 ```text
+AIONIS_EXECUTION_AGENT_CONTEXT v1
+ROLE_AND_TASK
+- role=reviewer
+- task=Continue the product update.
+
+CURRENT_ACTIVE_PATH
+- continue verified checkout branch
+
+BLOCKED_DIRECTION_TARGETS
+- failed broad search branch
+
+BASE_AIONIS_CONTEXT
 AIONIS_CTX v2
 state role=reviewer history=actionable
-current use_now=continue verified checkout branch
-avoid do_not_use=failed broad search branch
-inspect contested=older route note requires verification
 ```
 
 The structured context also carries memory IDs for attribution:
@@ -667,7 +676,6 @@ const context = await aionis.execution.guideAgentContextForRole<{
   query_text: "Continue the product update.",
   limit: 8,
   include_packets: true,
-  context_mode: "compact_agent",
 });
 
 // Your host runs the Agent with context.agent_prompt.
@@ -703,9 +711,9 @@ const compactContext = await aionis.execution.guideAgentContextForRole({
 });
 ```
 
-Compact mode shortens the Agent prompt while preserving governed memory buckets,
-memory IDs, feedback attribution, receipts, operator audit surfaces, and resolved
-evidence for `inspect_before_use` or `rehydrate` pointers.
+Compact mode switches the final Agent prompt to the Runtime compact guide text
+while preserving governed memory buckets, memory IDs, feedback attribution,
+receipts, operator audit surfaces, and resolved evidence for host logic.
 
 ## MCP For Claude Code And Cursor
 
@@ -807,7 +815,6 @@ const context = await aionis.execution.guideAgentContextForRole({
   run_id: "run-001",
   task_signature: "checkout-migration",
   query_text: "Continue from the current verified execution path.",
-  context_mode: "compact_agent",
 }, undefined, {
   repo_state: {
     existing_files: ["src/checkout.ts"],
@@ -858,7 +865,7 @@ Host integration guide:
 |---|---|
 | Ordinary Memory | Preferences, facts, project context, and notes that can guide future work. |
 | Execution Memory | Branch-aware memory of actions, outcomes, verifier evidence, handoffs, and reusable workflows. |
-| Agent Context | The compact prompt contract given to the Agent. |
+| Agent Context | The governed prompt contract given to the Agent. |
 | Memory Lifecycle | The external state of memory: active, candidate, contested, suppressed, demoted, archived, or rehydrated. |
 | Memory Use Receipt | A read-only record of which memories were used, inspected, blocked, or requested for rehydration. |
 | Feedback Attribution | Feedback is applied only to memory IDs actually exposed by a guide and reported as used. |

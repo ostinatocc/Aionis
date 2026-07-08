@@ -56,6 +56,7 @@ import {
   resolveNodeSemanticForgettingSurface,
   resolveNodeSummaryKind,
   resolveNodeTargetFiles,
+  resolveNodeTaskFamily,
   resolveNodeTaskSignature,
   resolveNodeWorkflowSignature,
 } from "./node-execution-surface.js";
@@ -664,6 +665,8 @@ function memoryExecutionStateProjection(args: {
   const executionKind = resolveNodeExecutionKind(args.slots) ?? stringValue(args.contextItem?.execution_kind);
   const taskSignature = resolveNodeTaskSignature({ slots: args.slots })
     ?? stringValue(args.contextItem?.task_signature);
+  const taskFamily = resolveNodeTaskFamily({ slots: args.slots })
+    ?? stringValue(args.contextItem?.task_family);
   const workflowSignature = resolveNodeWorkflowSignature({ slots: args.slots })
     ?? stringValue(args.contextItem?.workflow_signature);
   const nextActionHint = resolveNodeNextAction({ slots: args.slots })
@@ -693,6 +696,7 @@ function memoryExecutionStateProjection(args: {
     || !!summaryKind
     || !!executionKind
     || !!taskSignature
+    || !!taskFamily
     || !!workflowSignature
     || !!nextActionHint
     || !!actorRole
@@ -709,6 +713,7 @@ function memoryExecutionStateProjection(args: {
     summary_kind: summaryKind,
     execution_kind: executionKind,
     task_signature: taskSignature,
+    task_family: taskFamily,
     workflow_signature: workflowSignature,
     next_action_hint: nextActionHint,
     transition_kind: transitionKind,
@@ -2540,7 +2545,18 @@ function memoryEntryHasExecutionScopeSignals(entry: MemoryPacketEntry): boolean 
   return entry.domain === "execution"
     || entry.memory_type === "execution_memory"
     || !!entry.execution_state?.task_signature
+    || !!entry.execution_state?.task_family
     || !!entry.execution_state?.workflow_signature;
+}
+
+function executionScopeMatchesEntry(args: {
+  entry: MemoryPacketEntry;
+  executionScope: NormalizedAgentPromptExecutionScope;
+}): boolean {
+  const state = args.entry.execution_state;
+  return (!!args.executionScope.task_signature && state?.task_signature === args.executionScope.task_signature)
+    || (!!args.executionScope.task_family && state?.task_family === args.executionScope.task_family)
+    || (!!args.executionScope.workflow_signature && state?.workflow_signature === args.executionScope.workflow_signature);
 }
 
 function memoryEntryAgentPromptScopeAllowed(args: {
@@ -2548,10 +2564,13 @@ function memoryEntryAgentPromptScopeAllowed(args: {
   executionScope: NormalizedAgentPromptExecutionScope;
   verifiedHandoffMemoryIds: Set<string>;
 }): boolean {
-  if (!args.executionScope.task_signature) return true;
+  if (!args.executionScope.task_signature && !args.executionScope.task_family && !args.executionScope.workflow_signature) return true;
   if (!memoryEntryHasExecutionScopeSignals(args.entry)) return true;
   if (verifiedHandoffDirectUseEligible(args.entry, args.verifiedHandoffMemoryIds)) return true;
-  return args.entry.execution_state?.task_signature === args.executionScope.task_signature;
+  return executionScopeMatchesEntry({
+    entry: args.entry,
+    executionScope: args.executionScope,
+  });
 }
 
 function filterMemoryEntriesForAgentPromptScope(args: {
@@ -2648,7 +2667,7 @@ function rawGuideLinePromptScopeAllowed(args: {
   promptEntries: MemoryPacketEntry[];
   excludedEntries: MemoryPacketEntry[];
 }): boolean {
-  if (!args.executionScope.task_signature) return true;
+  if (!args.executionScope.task_signature && !args.executionScope.task_family && !args.executionScope.workflow_signature) return true;
   if (args.promptEntries.some((entry) => textMatchesMemoryEntry(args.line, entry))) return true;
   if (args.excludedEntries.some((entry) => textMatchesMemoryEntry(args.line, entry))) return false;
   if (args.surface !== "use_now") return false;
@@ -2679,7 +2698,7 @@ function agentPromptMemoryIdAllowed(args: {
   executionScope: NormalizedAgentPromptExecutionScope;
   verifiedHandoffMemoryIds: Set<string>;
 }): boolean {
-  if (!args.executionScope.task_signature) return true;
+  if (!args.executionScope.task_signature && !args.executionScope.task_family && !args.executionScope.workflow_signature) return true;
   const entry = args.memoryEntriesById.get(args.memoryId);
   if (!entry) return false;
   return memoryEntryAgentPromptScopeAllowed({
