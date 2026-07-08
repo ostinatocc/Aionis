@@ -1986,6 +1986,44 @@ function renderProductRouteActionLine(args: {
   return compactProductPromptText(line, args.compactAgent ? 190 : 520);
 }
 
+type ProductCommandEvidenceField = "workflow_steps" | "acceptance_checks" | "verification_summary" | "artifact_hints";
+
+function productCommandEvidenceValues(
+  row: AionisAgentContext["command_posture"][number],
+  field: ProductCommandEvidenceField,
+): string[] {
+  switch (field) {
+    case "workflow_steps": return row.workflow_steps;
+    case "acceptance_checks": return row.acceptance_checks;
+    case "verification_summary": return row.verification_summary;
+    case "artifact_hints": return row.artifact_hints;
+  }
+}
+
+function renderProductCommandEvidenceLines(args: {
+  commandPosture: AionisAgentContext["command_posture"];
+  field: ProductCommandEvidenceField;
+  label: "step" | "check" | "verify" | "artifact" | "avoid_verify";
+  postures: Set<AionisAgentContext["command_posture"][number]["posture"]>;
+  compactAgent: boolean;
+}): string[] {
+  const maxItems = args.compactAgent ? 2 : 4;
+  const maxChars = args.compactAgent ? 78 : 180;
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  for (const row of args.commandPosture) {
+    if (!args.postures.has(row.posture)) continue;
+    for (const value of productCommandEvidenceValues(row, args.field)) {
+      const note = compactProductPromptText(value, maxChars);
+      if (!note || seen.has(note)) continue;
+      seen.add(note);
+      lines.push(`${args.label}: id=${row.memory_id} n=${note}`);
+      if (lines.length >= maxItems) return lines;
+    }
+  }
+  return lines;
+}
+
 function renderProductTaskContextProfileLine(profile: AionisTaskContextProfile, compactAgent: boolean): string | null {
   switch (profile) {
     case "coding_verifier":
@@ -2065,6 +2103,41 @@ function renderMergedAgentPrompt(args: {
     }),
     renderProductRouteActionLine({
       routeContract: ctx.route_contract,
+      compactAgent,
+    }),
+    ...renderProductCommandEvidenceLines({
+      commandPosture: ctx.command_posture,
+      field: "workflow_steps",
+      label: "step",
+      postures: new Set(["should_continue"]),
+      compactAgent,
+    }),
+    ...renderProductCommandEvidenceLines({
+      commandPosture: ctx.command_posture,
+      field: "acceptance_checks",
+      label: "check",
+      postures: new Set(["should_continue"]),
+      compactAgent,
+    }),
+    ...renderProductCommandEvidenceLines({
+      commandPosture: ctx.command_posture,
+      field: "verification_summary",
+      label: "verify",
+      postures: new Set(["should_continue"]),
+      compactAgent,
+    }),
+    ...renderProductCommandEvidenceLines({
+      commandPosture: ctx.command_posture,
+      field: "artifact_hints",
+      label: "artifact",
+      postures: new Set(["should_continue"]),
+      compactAgent,
+    }),
+    ...renderProductCommandEvidenceLines({
+      commandPosture: ctx.command_posture,
+      field: "verification_summary",
+      label: "avoid_verify",
+      postures: new Set(["must_not"]),
       compactAgent,
     }),
     ctx.actionable_history_used

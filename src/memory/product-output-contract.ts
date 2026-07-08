@@ -396,6 +396,10 @@ export const AionisMemoryPacketSchema = z
                 handoff_target: z.string().min(1).nullable().default(null),
                 source_agent_id: z.string().min(1).nullable().default(null),
                 source_team_id: z.string().min(1).nullable().default(null),
+                workflow_steps: z.array(z.string().min(1).max(512)).default([]),
+                acceptance_checks: z.array(z.string().min(1).max(512)).default([]),
+                verification_summary: z.array(z.string().min(1).max(512)).default([]),
+                artifact_hints: z.array(z.string().min(1).max(512)).default([]),
               })
               .strict()
               .optional(),
@@ -824,6 +828,10 @@ export const AionisAgentContextSchema = z
             instruction: z.string().min(1),
             reason: z.string().min(1),
             target_files: z.array(z.string().min(1)).default([]),
+            workflow_steps: z.array(z.string().min(1).max(512)).default([]),
+            acceptance_checks: z.array(z.string().min(1).max(512)).default([]),
+            verification_summary: z.array(z.string().min(1).max(512)).default([]),
+            artifact_hints: z.array(z.string().min(1).max(512)).default([]),
           })
           .strict(),
       )

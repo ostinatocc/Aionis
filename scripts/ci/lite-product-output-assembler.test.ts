@@ -4707,6 +4707,103 @@ test("product effect assembler refuses to overclaim single-run evidence", () => 
   assert.ok(productReport.training_candidates.every((candidate) => candidate.export_ready === false));
 });
 
+test("agent context projects bounded execution evidence from active memories only", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "Continue a verifier-backed execution route.",
+    },
+    nodes: [
+      {
+        id: "active-execution-memory",
+        type: "procedure",
+        title: "Active verifier-backed route",
+        text_summary: "CURRENT_ACTIVE_PATH: continue the accepted implementation route.",
+        tier: "hot",
+        slots: {
+          memory_kind: "execution_workflow",
+          lifecycle_state: "active",
+          task_signature: "generic-execution-evidence-task",
+          workflow_signature: "generic-execution-evidence-workflow",
+          target_files: ["src/current.ts"],
+          summary_kind: "current_state",
+          compression_layer: "L2",
+          contract_trust: "authoritative",
+          workflow_steps: [
+            "Read the current target before editing.",
+            "Patch only the accepted implementation route.",
+          ],
+          acceptance_checks: [
+            "Focused verifier passes after the accepted route is applied.",
+            "No blocked route is used as the primary implementation.",
+          ],
+          verification: {
+            status: "passed",
+            summary: "accepted route passed focused verifier",
+          },
+          artifacts: [
+            { path: "artifacts/accepted-route.patch", summary: "accepted patch artifact" },
+          ],
+        },
+        confidence: 0.95,
+        salience: 0.95,
+      },
+      {
+        id: "failed-execution-memory",
+        type: "procedure",
+        title: "Failed execution branch",
+        text_summary: "FAILED_BRANCH: rejected route is counter-evidence only.",
+        tier: "warm",
+        slots: {
+          memory_kind: "execution_workflow",
+          lifecycle_state: "suppressed",
+          task_signature: "generic-execution-evidence-task",
+          workflow_signature: "generic-execution-evidence-workflow",
+          target_files: ["src/blocked.ts"],
+          summary_kind: "failed_branch",
+          compression_layer: "L2",
+          contract_trust: "authoritative",
+          acceptance_checks: [
+            "Rejected branch check must not become an active acceptance check.",
+          ],
+          verification: {
+            status: "failed",
+            summary: "rejected route failed focused verifier",
+          },
+        },
+        confidence: 0.9,
+        salience: 0.9,
+      },
+    ],
+  });
+
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    agent_context_mode: "standard",
+    execution_scope: {
+      task_signature: "generic-execution-evidence-task",
+      workflow_signature: "generic-execution-evidence-workflow",
+    },
+  });
+
+  assert.match(agentContext.prompt_text, /step:.*Read the current target before editing/);
+  assert.match(agentContext.prompt_text, /check:.*Focused verifier passes/);
+  assert.match(agentContext.prompt_text, /verify:.*accepted route passed focused verifier/);
+  assert.match(agentContext.prompt_text, /artifact:.*accepted patch artifact/);
+  assert.match(agentContext.prompt_text, /avoid_verify:.*rejected route failed focused verifier/);
+  assert.doesNotMatch(agentContext.prompt_text, /check:.*Rejected branch check must not become an active acceptance check/);
+  const activeRow = agentContext.command_posture.find((row) => row.memory_id === "active-execution-memory");
+  assert.deepEqual(activeRow?.workflow_steps.slice(0, 1), ["Read the current target before editing."]);
+  assert.deepEqual(activeRow?.acceptance_checks.slice(0, 1), ["Focused verifier passes after the accepted route is applied."]);
+  const failedRow = agentContext.command_posture.find((row) => row.memory_id === "failed-execution-memory");
+  assert.equal(failedRow?.posture, "must_not");
+  assert.deepEqual(failedRow?.verification_summary.slice(0, 1), ["failed: rejected route failed focused verifier"]);
+});
+
 test("product effect assembler honors explicit insufficient-evidence comparison", () => {
   const evaluatorReport = evaluateAionisEffect({
     baseline: {},

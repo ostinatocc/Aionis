@@ -47,6 +47,10 @@ export type AionisCommandPosture = {
   instruction: string;
   reason: string;
   target_files: string[];
+  workflow_steps?: string[];
+  acceptance_checks?: string[];
+  verification_summary?: string[];
+  artifact_hints?: string[];
 };
 
 export type AionisRouteContractSource = "target_files" | "should_continue" | "inspect_first" | "must_not";
@@ -1325,6 +1329,10 @@ function commandPostureArray(value: unknown): AionisCommandPosture[] {
       instruction,
       reason,
       target_files: stringArray(record.target_files),
+      workflow_steps: stringArray(record.workflow_steps),
+      acceptance_checks: stringArray(record.acceptance_checks),
+      verification_summary: stringArray(record.verification_summary),
+      artifact_hints: stringArray(record.artifact_hints),
     }];
   });
 }
@@ -1633,6 +1641,76 @@ function defaultExecutionPromptBudget(profile: AionisExecutionContextBudgetProfi
     case "high_recall": return 24_000;
     case "balanced": return 12_000;
   }
+}
+
+function executionEvidenceBudget(profile: AionisExecutionContextBudgetProfile): { items: number; chars: number } {
+  switch (profile) {
+    case "compact": return { items: 2, chars: 160 };
+    case "high_recall": return { items: 8, chars: 260 };
+    case "balanced": return { items: 4, chars: 220 };
+  }
+}
+
+type CommandPostureEvidenceField = "workflow_steps" | "acceptance_checks" | "verification_summary" | "artifact_hints";
+
+function commandPostureEvidenceValues(
+  entry: AionisCommandPosture,
+  field: CommandPostureEvidenceField,
+): string[] {
+  switch (field) {
+    case "workflow_steps": return entry.workflow_steps ?? [];
+    case "acceptance_checks": return entry.acceptance_checks ?? [];
+    case "verification_summary": return entry.verification_summary ?? [];
+    case "artifact_hints": return entry.artifact_hints ?? [];
+  }
+}
+
+function commandPostureEvidenceBullets(args: {
+  commandPosture: AionisCommandPosture[];
+  field: CommandPostureEvidenceField;
+  postures: Set<AionisCommandPostureKind>;
+  limit: number;
+  maxChars: number;
+}): string[] {
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of args.commandPosture) {
+    if (!args.postures.has(entry.posture)) continue;
+    for (const value of commandPostureEvidenceValues(entry, args.field)) {
+      const text = value.replace(/\s+/g, " ").trim();
+      if (!text || seen.has(text)) continue;
+      seen.add(text);
+      lines.push(`- ${truncateText(text, args.maxChars)}`);
+      if (lines.length >= args.limit) return lines;
+    }
+  }
+  return lines;
+}
+
+function agentContextTextBullets(args: {
+  guide: unknown;
+  field: "use_now" | "inspect_before_use" | "do_not_use";
+  limit: number;
+  maxChars: number;
+}): string[] {
+  if (args.limit <= 0 || args.maxChars <= 0) return [];
+  const context = asRecord(agentContextFromGuide(args.guide));
+  const values = stringArray(context?.[args.field]);
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const text = value.replace(/\s+/g, " ").trim();
+    if (/^Recovered state:\s+no prior execution history changed this packet\.?$/i.test(text)) continue;
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    lines.push(`- ${truncateText(text, args.maxChars)}`);
+    if (lines.length >= args.limit) return lines;
+  }
+  return lines;
+}
+
+function optionalPromptSection(title: string, lines: string[]): string[] {
+  return lines.length > 0 ? ["", title, ...lines] : [];
 }
 
 function taskLines(task: string | AionisExecutionContextTask | undefined): string[] {
@@ -2021,26 +2099,26 @@ function mergeCompiledContextWithEvidence(args: {
     args.resolvedEvidence,
     evidenceBudget,
   );
-  const runtimePrompt = truncateText(safeAgentPromptFromGuide(args.guide), maxPromptChars);
   const compactRuntimePromptRequested =
-    guideAgentContextMode(args.guide) === "compact_agent"
+    (guideAgentContextMode(args.guide) === "compact_agent" || args.options.include_base_prompt === false)
     && args.options.include_base_prompt !== true;
   if (compactRuntimePromptRequested) {
+    const compiled = compileExecutionAgentContext({
+      guide: args.guide,
+      task: args.options.task,
+      repo_state: args.options.repo_state,
+      budget_profile: args.options.budget_profile ?? "compact",
+      max_prompt_chars: evidenceBlock ? Math.max(4_000, maxPromptChars - evidenceBlock.length - 2) : maxPromptChars,
+      include_base_prompt: false,
+      additional_instructions: args.options.additional_instructions,
+    });
     const includeEvidence = args.options.include_resolved_evidence_in_prompt === true;
     const agentPrompt = includeEvidence && evidenceBlock
-      ? truncateText(`${runtimePrompt}${runtimePrompt ? "\n\n" : ""}${evidenceBlock}`, maxPromptChars)
-      : runtimePrompt;
+      ? truncateText(`${compiled.agent_prompt}\n\n${evidenceBlock}`, maxPromptChars)
+      : compiled.agent_prompt;
     return {
       compiled_context: {
-        ...compileExecutionAgentContext({
-          guide: args.guide,
-          task: args.options.task,
-          repo_state: args.options.repo_state,
-          budget_profile: args.options.budget_profile ?? "compact",
-          max_prompt_chars: maxPromptChars,
-          include_base_prompt: false,
-          additional_instructions: args.options.additional_instructions,
-        }),
+        ...compiled,
         agent_prompt: agentPrompt,
         prompt_char_count: agentPrompt.length,
       },
@@ -2117,14 +2195,18 @@ export class AionisClient {
   ): Promise<AionisGuideAgentContextResult<TGuide>> {
     const guide = await this.guide<TGuide>(body, options);
     const bodyRecord = asRecord(body) ?? {};
+    const effectiveContextOptions = { ...contextOptions };
+    if (effectiveContextOptions.include_base_prompt === undefined && bodyRecord.context_mode === "compact_agent") {
+      effectiveContextOptions.include_base_prompt = false;
+    }
     const { tenant_id: tenantId, scope } = guideTenantScope(guide, {
       tenant_id: options?.tenant_id ?? coerceString(bodyRecord.tenant_id) ?? this.tenantId ?? undefined,
       scope: options?.scope ?? coerceString(bodyRecord.scope) ?? this.scope ?? undefined,
     });
-    const evidenceLimit = contextOptions.evidence_limit ?? 6;
-    const resolveTypes = contextOptions.resolve_types ?? DEFAULT_RESOLVE_TYPES;
-    const onResolveError = contextOptions.on_resolve_error ?? "include_placeholder";
-    const evidenceRows = resolveEvidenceIds(guide, contextOptions).slice(0, evidenceLimit);
+    const evidenceLimit = effectiveContextOptions.evidence_limit ?? 6;
+    const resolveTypes = effectiveContextOptions.resolve_types ?? DEFAULT_RESOLVE_TYPES;
+    const onResolveError = effectiveContextOptions.on_resolve_error ?? "include_placeholder";
+    const evidenceRows = resolveEvidenceIds(guide, effectiveContextOptions).slice(0, evidenceLimit);
     const resolvedEvidence: AionisResolvedAgentEvidence[] = [];
     const consumerAgentId = coerceString(bodyRecord.consumer_agent_id);
     const consumerTeamId = coerceString(bodyRecord.consumer_team_id);
@@ -2201,7 +2283,7 @@ export class AionisClient {
     const merged = mergeCompiledContextWithEvidence({
       guide,
       resolvedEvidence,
-      options: contextOptions,
+      options: effectiveContextOptions,
     });
     const unresolvedMemoryIds = resolvedEvidence
       .filter((entry) => !entry.resolved)
@@ -3038,6 +3120,57 @@ export function compileExecutionAgentContext(
   const receipt = memoryUseReceiptFromGuide(input.guide);
   const admissionRecord = memoryAdmissionRecordFromGuide(input.guide);
   const rehydrateRequests = rehydrateHintsFromGuide(input.guide);
+  const evidenceBudget = executionEvidenceBudget(profile);
+  const activePostures = new Set<AionisCommandPostureKind>(["should_continue"]);
+  const blockedPostures = new Set<AionisCommandPostureKind>(["must_not"]);
+  const routeStepLines = commandPostureEvidenceBullets({
+    commandPosture,
+    field: "workflow_steps",
+    postures: activePostures,
+    limit: evidenceBudget.items,
+    maxChars: evidenceBudget.chars,
+  });
+  const acceptanceCheckLines = commandPostureEvidenceBullets({
+    commandPosture,
+    field: "acceptance_checks",
+    postures: activePostures,
+    limit: evidenceBudget.items,
+    maxChars: evidenceBudget.chars,
+  });
+  const verificationLines = commandPostureEvidenceBullets({
+    commandPosture,
+    field: "verification_summary",
+    postures: activePostures,
+    limit: Math.max(1, Math.min(3, evidenceBudget.items)),
+    maxChars: evidenceBudget.chars,
+  });
+  const artifactHintLines = commandPostureEvidenceBullets({
+    commandPosture,
+    field: "artifact_hints",
+    postures: activePostures,
+    limit: Math.max(1, Math.min(3, evidenceBudget.items)),
+    maxChars: evidenceBudget.chars,
+  });
+  const failedBranchLines = commandPostureEvidenceBullets({
+    commandPosture,
+    field: "verification_summary",
+    postures: blockedPostures,
+    limit: Math.max(1, Math.min(3, evidenceBudget.items)),
+    maxChars: evidenceBudget.chars,
+  });
+  const includeBasePrompt = input.include_base_prompt ?? true;
+  const activeContextLines = includeBasePrompt ? [] : agentContextTextBullets({
+    guide: input.guide,
+    field: "use_now",
+    limit: evidenceBudget.items,
+    maxChars: evidenceBudget.chars,
+  });
+  const blockedContextLines = includeBasePrompt ? [] : agentContextTextBullets({
+    guide: input.guide,
+    field: "do_not_use",
+    limit: Math.max(1, Math.min(3, evidenceBudget.items)),
+    maxChars: evidenceBudget.chars,
+  });
   const useNowMemoryIds = receipt.use_now_memory_ids;
   const inspectMemoryIds = receipt.inspect_before_use_memory_ids;
   const doNotUseMemoryIds = receipt.do_not_use_memory_ids;
@@ -3096,6 +3229,13 @@ export function compileExecutionAgentContext(
     "- Blocked, must_not, stale, failed, or retired routes are counter-evidence only.",
     "- If compact evidence is insufficient for a precise edit, request rehydrate instead of guessing.",
     ...(input.additional_instructions ?? []).map((entry) => `- ${entry}`),
+    ...optionalPromptSection("ROUTE_STEPS", routeStepLines),
+    ...optionalPromptSection("ACCEPTANCE_CHECKS", acceptanceCheckLines),
+    ...optionalPromptSection("VERIFY_BEFORE_DONE", verificationLines),
+    ...optionalPromptSection("ARTIFACT_HINTS", artifactHintLines),
+    ...optionalPromptSection("KNOWN_FAILED_BRANCHES", failedBranchLines),
+    ...optionalPromptSection("ACTIVE_CONTEXT", activeContextLines),
+    ...optionalPromptSection("BLOCKED_CONTEXT", blockedContextLines),
     "",
     "ACTIVE_TARGETS",
     ...bulletLines(activeTargets, "none"),
@@ -3127,7 +3267,6 @@ export function compileExecutionAgentContext(
       : ["- none"]),
   ];
   const contractPrompt = contractSections.join("\n");
-  const includeBasePrompt = input.include_base_prompt ?? true;
   const baseHeader = "\n\nBASE_AIONIS_CONTEXT\n";
   const baseBudget = includeBasePrompt ? Math.max(0, maxPromptChars - contractPrompt.length - baseHeader.length) : 0;
   const renderedBasePrompt = includeBasePrompt && basePrompt.length > 0 ? truncateText(basePrompt, baseBudget) : "";

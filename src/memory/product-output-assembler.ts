@@ -318,6 +318,67 @@ function stringArrayValue(value: unknown): string[] {
   return compactStrings(value.map((entry) => typeof entry === "string" ? entry : null));
 }
 
+function boundedExecutionEvidenceStrings(values: string[], limit: number): string[] {
+  return compactStrings(values)
+    .map((entry) => entry.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, limit)
+    .map((entry) => entry.slice(0, 512).trim());
+}
+
+function stringArrayFromSources(values: unknown[], limit: number): string[] {
+  return boundedExecutionEvidenceStrings(values.flatMap((value) => stringArrayValue(value)), limit);
+}
+
+function recordArrayValue(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const record = asRecord(entry);
+    return record ? [record] : [];
+  });
+}
+
+function verificationSummaryValue(value: unknown): string[] {
+  const direct = stringValue(value);
+  if (direct) return [direct];
+  const record = asRecord(value);
+  if (!record) return stringArrayValue(value);
+  const status = stringValue(record.status)
+    ?? stringValue(record.verifier_status)
+    ?? stringValue(record.result)
+    ?? stringValue(record.outcome);
+  const summary = stringValue(record.summary)
+    ?? stringValue(record.message)
+    ?? stringValue(record.reason)
+    ?? stringValue(record.failure_reason)
+    ?? stringValue(record.error);
+  const checks = recordArrayValue(record.checks)
+    .flatMap((check) => compactStrings([
+      stringValue(check.name),
+      stringValue(check.status),
+      stringValue(check.summary) ?? stringValue(check.message) ?? stringValue(check.reason),
+    ]).join(": "));
+  const failures = stringArrayValue(record.failures);
+  return compactStrings([
+    status && summary ? `${status}: ${summary}` : status ?? summary,
+    ...checks,
+    ...failures,
+  ]);
+}
+
+function artifactHintValue(value: unknown): string[] {
+  const direct = stringValue(value);
+  if (direct) return [direct];
+  return recordArrayValue(value).flatMap((record) => compactStrings([
+    stringValue(record.path)
+      ?? stringValue(record.file_path)
+      ?? stringValue(record.uri)
+      ?? stringValue(record.name)
+      ?? stringValue(record.id),
+    stringValue(record.summary) ?? stringValue(record.description),
+  ]).join(": "));
+}
+
 function contractTrustValue(value: unknown): ContractTrust | null {
   return value === "authoritative" || value === "advisory" || value === "observational" ? value : null;
 }
@@ -659,8 +720,14 @@ function memoryExecutionStateProjection(args: {
   domain: AionisMemoryDomain;
   lifecycleState: MemoryPacketLifecycleState;
 }): MemoryPacketEntry["execution_state"] | undefined {
+  const nodeRecord = args.node as Record<string, unknown>;
   const executionNative = asRecord(args.slots?.execution_native_v1);
   const executionState = asRecord(args.slots?.execution_state);
+  const executionObservation = asRecord(args.slots?.execution_observation_v1);
+  const executionPacket = asRecord(args.slots?.execution_packet_v1);
+  const executionPacketOutcome = asRecord(executionPacket?.outcome);
+  const executionContract = asRecord(args.slots?.execution_contract_v1);
+  const executionContractOutcome = asRecord(executionContract?.outcome);
   const summaryKind = resolveNodeSummaryKind(args.slots) ?? stringValue(args.contextItem?.summary_kind);
   const executionKind = resolveNodeExecutionKind(args.slots) ?? stringValue(args.contextItem?.execution_kind);
   const taskSignature = resolveNodeTaskSignature({ slots: args.slots })
@@ -691,6 +758,49 @@ function memoryExecutionStateProjection(args: {
     ?? stringValue(args.contextItem?.producer_agent_id);
   const sourceTeamId = stringValue(args.node.owner_team_id)
     ?? stringValue(args.contextItem?.owner_team_id);
+  const workflowSteps = stringArrayFromSources([
+    nodeRecord.workflow_steps,
+    args.slots?.workflow_steps,
+    args.contextItem?.workflow_steps,
+    executionNative?.workflow_steps,
+    executionState?.workflow_steps,
+    executionPacket?.workflow_steps,
+    executionContract?.workflow_steps,
+  ], 8);
+  const acceptanceChecks = stringArrayFromSources([
+    nodeRecord.acceptance_checks,
+    args.slots?.acceptance_checks,
+    args.contextItem?.acceptance_checks,
+    executionNative?.acceptance_checks,
+    executionState?.acceptance_checks,
+    executionObservation?.acceptance_checks,
+    executionPacket?.acceptance_checks,
+    executionPacketOutcome?.acceptance_checks,
+    executionContract?.acceptance_checks,
+    executionContractOutcome?.acceptance_checks,
+  ], 8);
+  const verificationSummary = boundedExecutionEvidenceStrings([
+    ...verificationSummaryValue(nodeRecord.verification),
+    ...verificationSummaryValue(args.slots?.verification),
+    ...verificationSummaryValue(args.contextItem?.verification),
+    ...verificationSummaryValue(executionNative?.verification),
+    ...verificationSummaryValue(executionState?.verification),
+    ...verificationSummaryValue(executionObservation?.verification),
+    ...verificationSummaryValue(executionPacket?.verification),
+    ...verificationSummaryValue(executionPacketOutcome?.verification),
+    ...verificationSummaryValue(executionContract?.verification),
+    ...verificationSummaryValue(executionContractOutcome?.verification),
+  ], 6);
+  const artifactHints = boundedExecutionEvidenceStrings([
+    ...artifactHintValue(nodeRecord.artifacts),
+    ...artifactHintValue(args.slots?.artifacts),
+    ...artifactHintValue(args.contextItem?.artifacts),
+    ...artifactHintValue(executionNative?.artifacts),
+    ...artifactHintValue(executionState?.artifacts),
+    ...artifactHintValue(executionObservation?.artifacts),
+    ...artifactHintValue(executionPacket?.artifacts),
+    ...artifactHintValue(executionContract?.artifacts),
+  ], 6);
   const hasExecutionSurface =
     args.domain === "execution"
     || !!summaryKind
@@ -700,7 +810,11 @@ function memoryExecutionStateProjection(args: {
     || !!workflowSignature
     || !!nextActionHint
     || !!actorRole
-    || !!handoffTarget;
+    || !!handoffTarget
+    || workflowSteps.length > 0
+    || acceptanceChecks.length > 0
+    || verificationSummary.length > 0
+    || artifactHints.length > 0;
   if (!hasExecutionSurface) return undefined;
   const transitionKind = executionTransitionKind({
     lifecycleState: args.lifecycleState,
@@ -721,6 +835,10 @@ function memoryExecutionStateProjection(args: {
     handoff_target: handoffTarget,
     source_agent_id: sourceAgentId,
     source_team_id: sourceTeamId,
+    workflow_steps: workflowSteps,
+    acceptance_checks: acceptanceChecks,
+    verification_summary: verificationSummary,
+    artifact_hints: artifactHints,
   };
 }
 
@@ -1891,6 +2009,12 @@ function renderAgentContextPrompt(args: {
     return entries.length > 0 ? `${label}: ${entries.join(" | ")}` : null;
   };
   const promptUseNow = agentContextUseNowPromptLines(args.useNow);
+  const activeCommandPostures = args.commandPosture.filter((row) => row.posture === "should_continue");
+  const blockedCommandPostures = args.commandPosture.filter((row) => row.posture === "must_not");
+  const activeEvidenceItemLimit = args.profile.style === "standard" ? 4 : 2;
+  const activeEvidenceChars = args.profile.style === "standard" ? 170 : 92;
+  const blockedEvidenceItemLimit = args.profile.style === "standard" ? 2 : 1;
+  const blockedEvidenceChars = args.profile.style === "standard" ? 150 : 88;
   const sections = compactStrings([
     "AIONIS_AGENT_CONTEXT v1",
     `state: role=${args.agentRole} history=${args.historyUsed ? "yes" : "no"} actionable_history=${args.actionableHistoryUsed ? "yes" : "no"} posture=${args.recommendedPosture} authority=${args.authority} risk=${args.negativeTransferRisk}`,
@@ -1917,8 +2041,43 @@ function renderAgentContextPrompt(args: {
     `summary: ${shortenPromptText(args.summary, args.profile.summaryChars)}`,
     inline("target_files", args.targetFiles, args.profile.targetFileItems, args.profile.targetFileChars),
     inline("use_now", promptUseNow, args.profile.useNowItems, args.profile.useNowChars),
+    ...commandPostureEvidenceLines({
+      label: "step",
+      rows: activeCommandPostures,
+      field: "workflow_steps",
+      maxItems: activeEvidenceItemLimit,
+      maxChars: activeEvidenceChars,
+    }),
+    ...commandPostureEvidenceLines({
+      label: "check",
+      rows: activeCommandPostures,
+      field: "acceptance_checks",
+      maxItems: activeEvidenceItemLimit,
+      maxChars: activeEvidenceChars,
+    }),
+    ...commandPostureEvidenceLines({
+      label: "verify",
+      rows: activeCommandPostures,
+      field: "verification_summary",
+      maxItems: Math.max(1, Math.min(2, activeEvidenceItemLimit)),
+      maxChars: activeEvidenceChars,
+    }),
+    ...commandPostureEvidenceLines({
+      label: "artifact",
+      rows: activeCommandPostures,
+      field: "artifact_hints",
+      maxItems: Math.max(1, Math.min(2, activeEvidenceItemLimit)),
+      maxChars: activeEvidenceChars,
+    }),
     inline("inspect_before_use", args.inspectBeforeUse, args.profile.inspectItems, args.profile.inspectChars),
     inline("do_not_use", args.doNotUse, args.profile.doNotUseItems, args.profile.doNotUseChars),
+    ...commandPostureEvidenceLines({
+      label: "avoid_verify",
+      rows: blockedCommandPostures,
+      field: "verification_summary",
+      maxItems: blockedEvidenceItemLimit,
+      maxChars: blockedEvidenceChars,
+    }),
     args.rehydrateHints.length > 0 && args.profile.rehydrateItems > 0
       ? `rehydrate_if_needed: ${args.rehydrateHints
         .slice(0, args.profile.rehydrateItems)
@@ -2261,6 +2420,79 @@ function contractEntryLine(args: {
   return `${args.label}:${id}${files}${gate}${surfaceConstraint}${meta}${note}`;
 }
 
+type ExecutionEvidenceField = "workflow_steps" | "acceptance_checks" | "verification_summary" | "artifact_hints";
+
+function executionStateEvidenceValues(
+  entry: MemoryPacketEntry | null | undefined,
+  field: ExecutionEvidenceField,
+): string[] {
+  if (!entry?.execution_state) return [];
+  switch (field) {
+    case "workflow_steps": return entry.execution_state.workflow_steps;
+    case "acceptance_checks": return entry.execution_state.acceptance_checks;
+    case "verification_summary": return entry.execution_state.verification_summary;
+    case "artifact_hints": return entry.execution_state.artifact_hints;
+  }
+}
+
+function contractEntryEvidenceLines(args: {
+  label: "step" | "check" | "verify" | "artifact" | "avoid_verify";
+  entries: MemoryPacketEntry[];
+  aliases: Map<string, string>;
+  field: ExecutionEvidenceField;
+  maxItems: number;
+  maxChars: number;
+}): string[] {
+  if (args.maxItems <= 0 || args.maxChars <= 0) return [];
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of args.entries) {
+    const id = args.aliases.get(entry.memory_id);
+    for (const value of executionStateEvidenceValues(entry, args.field)) {
+      const note = shortenPromptText(normalizeContractPromptNote(value) ?? "", args.maxChars);
+      if (!note || seen.has(note)) continue;
+      seen.add(note);
+      lines.push(`${args.label}:${id ? ` id=${id}` : ""} n=${note}`);
+      if (lines.length >= args.maxItems) return lines;
+    }
+  }
+  return lines;
+}
+
+function commandPostureEvidenceValues(
+  row: AionisAgentContext["command_posture"][number],
+  field: ExecutionEvidenceField,
+): string[] {
+  switch (field) {
+    case "workflow_steps": return row.workflow_steps;
+    case "acceptance_checks": return row.acceptance_checks;
+    case "verification_summary": return row.verification_summary;
+    case "artifact_hints": return row.artifact_hints;
+  }
+}
+
+function commandPostureEvidenceLines(args: {
+  label: "step" | "check" | "verify" | "artifact" | "avoid_verify";
+  rows: AionisAgentContext["command_posture"];
+  field: ExecutionEvidenceField;
+  maxItems: number;
+  maxChars: number;
+}): string[] {
+  if (args.maxItems <= 0 || args.maxChars <= 0) return [];
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  for (const row of args.rows) {
+    for (const value of commandPostureEvidenceValues(row, args.field)) {
+      const note = shortenPromptText(normalizeContractPromptNote(value) ?? "", args.maxChars);
+      if (!note || seen.has(note)) continue;
+      seen.add(note);
+      lines.push(`${args.label}: ${note}`);
+      if (lines.length >= args.maxItems) return lines;
+    }
+  }
+  return lines;
+}
+
 function renderExecutionStateContractPrompt(args: {
   agentRole: AionisAgentRole;
   summary: string;
@@ -2311,6 +2543,14 @@ function renderExecutionStateContractPrompt(args: {
     .slice(0, args.profile.inspectItems);
   const renderedAvoidEntries = avoidEntries.slice(0, args.profile.doNotUseItems);
   const renderedRehydrateHints = args.rehydrateHints.slice(0, args.profile.rehydrateItems);
+  const activeEvidenceEntries = compactStrings([
+    useCurrentEntry?.memory_id,
+    ...renderedProcedureEntries.map((entry) => entry.memory_id),
+  ]).map((id) => entries.get(id)).filter((entry): entry is MemoryPacketEntry => !!entry);
+  const activeEvidenceItemLimit = args.profile.style === "contract" ? 2 : 4;
+  const activeEvidenceChars = args.profile.style === "contract" ? 74 : 170;
+  const avoidEvidenceItemLimit = args.profile.style === "contract" ? 1 : 2;
+  const avoidEvidenceChars = args.profile.style === "contract" ? 72 : 150;
   const nextActionEntry = firstExecutionStateEntryWithNext(compactStrings([
     currentEntry?.memory_id,
     ...renderedProcedureEntries.map((entry) => entry.memory_id),
@@ -2397,6 +2637,38 @@ function renderExecutionStateContractPrompt(args: {
         maxFileChars: args.profile.targetFileChars,
         labelStyle: args.profile.contractLabels,
       })),
+    ...contractEntryEvidenceLines({
+      label: "step",
+      entries: activeEvidenceEntries,
+      aliases,
+      field: "workflow_steps",
+      maxItems: activeEvidenceItemLimit,
+      maxChars: activeEvidenceChars,
+    }),
+    ...contractEntryEvidenceLines({
+      label: "check",
+      entries: activeEvidenceEntries,
+      aliases,
+      field: "acceptance_checks",
+      maxItems: activeEvidenceItemLimit,
+      maxChars: activeEvidenceChars,
+    }),
+    ...contractEntryEvidenceLines({
+      label: "verify",
+      entries: activeEvidenceEntries,
+      aliases,
+      field: "verification_summary",
+      maxItems: Math.max(1, Math.min(2, activeEvidenceItemLimit)),
+      maxChars: activeEvidenceChars,
+    }),
+    ...contractEntryEvidenceLines({
+      label: "artifact",
+      entries: activeEvidenceEntries,
+      aliases,
+      field: "artifact_hints",
+      maxItems: Math.max(1, Math.min(2, activeEvidenceItemLimit)),
+      maxChars: activeEvidenceChars,
+    }),
     ...procedureFallbacks.map((entry) => `procedure: note=${shortenPromptText(entry, args.profile.useNowChars)}`),
     ...renderedInspectEntries.map((entry) => contractEntryLine({
       label: "inspect",
@@ -2406,8 +2678,8 @@ function renderExecutionStateContractPrompt(args: {
       maxChars: args.profile.inspectChars,
       maxFileItems: args.profile.targetFileItems,
       maxFileChars: args.profile.targetFileChars,
-      labelStyle: args.profile.contractLabels,
-    })),
+        labelStyle: args.profile.contractLabels,
+      })),
     ...inspectFallbacks.map((entry) => `inspect: note=${shortenPromptText(entry, args.profile.inspectChars)}`),
     ...renderedAvoidEntries.map((entry) => contractEntryLine({
       label: "avoid",
@@ -2417,8 +2689,16 @@ function renderExecutionStateContractPrompt(args: {
       maxChars: args.profile.doNotUseChars,
       maxFileItems: args.profile.targetFileItems,
       maxFileChars: args.profile.targetFileChars,
-      labelStyle: args.profile.contractLabels,
-    })),
+        labelStyle: args.profile.contractLabels,
+      })),
+    ...contractEntryEvidenceLines({
+      label: "avoid_verify",
+      entries: renderedAvoidEntries,
+      aliases,
+      field: "verification_summary",
+      maxItems: avoidEvidenceItemLimit,
+      maxChars: avoidEvidenceChars,
+    }),
     ...avoidFallbacks.map((entry) => `avoid: note=${shortenPromptText(entry, args.profile.doNotUseChars)}`),
     ...renderedRehydrateHints.map((hint) => {
       const entry = entries.get(hint.memory_id);
@@ -3239,10 +3519,20 @@ function buildAgentContextCommandPostures(args: {
     rows.push({
       ...row,
       target_files: compactStrings(row.target_files).slice(0, 6),
+      workflow_steps: compactStrings(row.workflow_steps).slice(0, 3),
+      acceptance_checks: compactStrings(row.acceptance_checks).slice(0, 3),
+      verification_summary: compactStrings(row.verification_summary).slice(0, 2),
+      artifact_hints: compactStrings(row.artifact_hints).slice(0, 2),
     });
   };
   const entryFiles = (entry: MemoryPacketEntry | null | undefined): string[] =>
     compactStrings(entry?.target_files ?? []).slice(0, 6);
+  const entryExecutionEvidence = (entry: MemoryPacketEntry | null | undefined) => ({
+    workflow_steps: compactStrings(entry?.execution_state?.workflow_steps ?? []).slice(0, 3),
+    acceptance_checks: compactStrings(entry?.execution_state?.acceptance_checks ?? []).slice(0, 3),
+    verification_summary: compactStrings(entry?.execution_state?.verification_summary ?? []).slice(0, 2),
+    artifact_hints: compactStrings(entry?.execution_state?.artifact_hints ?? []).slice(0, 2),
+  });
   const label = (memoryId: string): string => {
     const entry = entries.get(memoryId);
     return entry ? memoryEntryAuditLabel(entry) : memoryId;
@@ -3259,17 +3549,20 @@ function buildAgentContextCommandPostures(args: {
         ? `${memoryEntryAuditLabel(entry)} is classified as blocked, failed, stale, suppressed, or do-not-use history.`
         : `${memoryId} is classified as do-not-use history.`,
       target_files: entryFiles(entry),
+      ...entryExecutionEvidence(entry),
     });
   }
 
   for (const hint of args.rehydrateHints) {
+    const entry = entries.get(hint.memory_id);
     push({
       posture: "rehydrate_first",
       surface: "rehydrate",
       memory_id: hint.memory_id,
       instruction: "Recover the raw payload or execution trace before relying on exact details.",
       reason: hint.reason,
-      target_files: entryFiles(entries.get(hint.memory_id)),
+      target_files: entryFiles(entry),
+      ...entryExecutionEvidence(entry),
     });
   }
 
@@ -3283,6 +3576,7 @@ function buildAgentContextCommandPostures(args: {
       instruction: "Inspect only as risk or evidence; do not use as the primary implementation route or override should_continue guidance.",
       reason: `${label(memoryId)} is candidate, contested, stale-risk, or otherwise not direct-use safe.`,
       target_files: entryFiles(entry),
+      ...entryExecutionEvidence(entry),
     });
   }
 
@@ -3299,6 +3593,7 @@ function buildAgentContextCommandPostures(args: {
           : "Reuse this accepted execution procedure when the current task scope matches.",
         reason: `${memoryEntryAuditLabel(entry)} survived lifecycle, authority, and negative-transfer gates for direct use.`,
         target_files: entryFiles(entry),
+        ...entryExecutionEvidence(entry),
       });
       continue;
     }
@@ -3309,6 +3604,7 @@ function buildAgentContextCommandPostures(args: {
       instruction: "Use as contextual support only; do not override current evidence or higher-authority state.",
       reason: `${label(memoryId)} is available in use_now but is not an execution-state command.`,
       target_files: entryFiles(entry),
+      ...entryExecutionEvidence(entry),
     });
   }
 
@@ -3327,6 +3623,7 @@ function buildAgentContextCommandPostures(args: {
         ? `${memoryEntryAuditLabel(entry)} is active context but lacks current-state, procedure, accepted-route, or handoff evidence for direct action.`
         : `${memoryId} is optional context and lacks direct-action authority.`,
       target_files: entryFiles(entry),
+      ...entryExecutionEvidence(entry),
     });
   }
 
