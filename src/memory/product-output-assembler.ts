@@ -334,30 +334,53 @@ function stringArrayFromSources(values: unknown[], limit: number): string[] {
 
 const EXECUTION_ACCEPTANCE_CONSTRAINT_CUES = /\b(?:acceptance|accepted|assert|check|checksum|column|contain|contains|created|downloaded|exact|exist|exists|expected|extract|extracted|format|hash|include|includes|installed|invariant|layout|must|output|passed|preserve|required|requires|retain|saved|schema|source|structure|test|verifier|written)\b/i;
 const EXECUTION_ACCEPTANCE_GENERIC_REWARD = /^verifier\s+reward:?\s*1(?:\.0+)?$/i;
+const EXECUTION_ACCEPTANCE_MAX_CONSTRAINT_CHARS = 240;
 
 function executionAcceptanceConstraintChunks(value: string): string[] {
   const normalized = value.replace(/\r\n/g, "\n").trim();
   if (!normalized) return [];
-  const pipeChunks = normalized.split(/\s+\|\s+/g);
-  const lineChunks = normalized.split("\n").map((line) => line.replace(/^[-*]\s+/, "").trim());
-  const sentenceLikeChunks = normalized
-    .replace(/\s+/g, " ")
-    .split(/(?<=[.!?;])\s+|(?=\b\d+\.\s+\*\*)/g)
-    .map((chunk) => chunk.trim());
-  return compactStrings([...pipeChunks, ...lineChunks, ...sentenceLikeChunks]);
+  const numberedAsLines = normalized.replace(/\s+(?=\d+\.\s+)/g, "\n");
+  const chunks = numberedAsLines
+    .split(/\s+\|\s+/g)
+    .flatMap((entry) => entry.split("\n"))
+    .flatMap((entry) => entry.split(/(?<=[.!?])\s+/g))
+    .map((chunk) => chunk.replace(/^[-*]\s+/, "").replace(/^\d+\.\s+/, "").replace(/\s+/g, " ").trim())
+    .filter((chunk) => chunk.length > 0)
+    .map((chunk) => chunk.slice(0, EXECUTION_ACCEPTANCE_MAX_CONSTRAINT_CHARS).trim());
+  return compactStrings(chunks);
 }
 
 function executionAcceptanceConstraintScore(value: string): number {
   const text = value.replace(/\s+/g, " ").trim();
   if (!text || !EXECUTION_ACCEPTANCE_CONSTRAINT_CUES.test(text)) return -1;
+  const textWithoutPathLiterals = text.replace(/\/[A-Za-z0-9_./@+-]+|[A-Za-z0-9_.@+-]+\/[A-Za-z0-9_./@+-]+/g, " ");
+  const hasNormativeConstraint = /\b(?:must|required|requires|expected|exact|invariant|assert|checksum|hash|schema|format|layout|structure)\b/i.test(text);
+  const hasStateChangingEvidence = /\b(?:downloaded|extract|extracted|installed|created|written|saved)\b/i.test(text);
   let score = 0;
   if (/\/[A-Za-z0-9_./@+-]+|[A-Za-z0-9_.@+-]+\/[A-Za-z0-9_./@+-]+/.test(text)) score += 4;
-  if (/\b(?:must|required|requires|expected|exact|invariant|assert|checksum|hash|schema|format|layout|structure)\b/i.test(text)) score += 4;
-  if (/\b(?:source|downloaded|extract|extracted|installed|created|written|saved|preserve|retain|contain|contains|include|includes|exist|exists)\b/i.test(text)) score += 3;
+  if (hasNormativeConstraint) score += 4;
+  if (/\b(?:source|downloaded|extract|extracted|installed|created|written|saved|preserve|retain|contain|contains|include|includes|exist|exists)\b/i.test(textWithoutPathLiterals)) score += 5;
+  if (hasStateChangingEvidence) score += 3;
   if (/\b(?:verifier|test|check|passed|acceptance)\b/i.test(text)) score += 2;
   if (EXECUTION_ACCEPTANCE_GENERIC_REWARD.test(text)) score -= 4;
+  if (/\bpaths?:/i.test(text) && !hasNormativeConstraint && !hasStateChangingEvidence) score -= 3;
   if (text.length < 12) score -= 2;
   return score;
+}
+
+function executionAcceptanceOverlapKey(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[.!?:;,]+$/g, "")
+    .trim();
+}
+
+function executionAcceptanceConstraintsOverlap(left: string, right: string): boolean {
+  const leftKey = executionAcceptanceOverlapKey(left);
+  const rightKey = executionAcceptanceOverlapKey(right);
+  if (leftKey.length < 24 || rightKey.length < 24) return false;
+  return leftKey.includes(rightKey) || rightKey.includes(leftKey);
 }
 
 function inferredExecutionAcceptanceConstraints(entry: MemoryPacketEntry): string[] {
@@ -378,7 +401,13 @@ function inferredExecutionAcceptanceConstraints(entry: MemoryPacketEntry): strin
     }))
     .filter((entry) => entry.score >= 4)
     .sort((left, right) => right.score - left.score || left.index - right.index);
-  return boundedExecutionEvidenceStrings(scored.map((entry) => entry.value), 8);
+  const selected: string[] = [];
+  for (const entry of scored) {
+    if (selected.some((value) => executionAcceptanceConstraintsOverlap(value, entry.value))) continue;
+    selected.push(entry.value);
+    if (selected.length >= 8) break;
+  }
+  return boundedExecutionEvidenceStrings(selected, 8);
 }
 
 function executionAcceptanceChecksForCommandPosture(entry: MemoryPacketEntry | null | undefined): string[] {
