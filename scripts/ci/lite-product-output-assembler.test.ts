@@ -12,6 +12,7 @@ import {
   buildAionisMemoryDecisionTrace,
   buildAionisMemoryPacket,
 } from "../../src/memory/product-output-assembler.ts";
+import { compileExecutionAgentContext } from "../../src/sdk.ts";
 
 function planningSummaryFixture(): PlanningSummary {
   return {
@@ -5042,6 +5043,113 @@ test("agent context projects bounded execution evidence from active memories onl
   const failedRow = agentContext.command_posture.find((row) => row.memory_id === "failed-execution-memory");
   assert.equal(failedRow?.posture, "must_not");
   assert.deepEqual(failedRow?.verification_summary.slice(0, 1), ["failed: rejected route failed focused verifier"]);
+});
+
+test("agent context prioritizes concrete acceptance constraints from accepted execution evidence", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "Continue a previously accepted build route.",
+    },
+    nodes: [
+      {
+        id: "accepted-build-route",
+        type: "procedure",
+        title: "Accepted build route",
+        text_summary: [
+          "Prior execution outcome=succeeded and verifier reward=1.",
+          "Verifier/artifact evidence: Verifier reward: 1 | Verifier passed tests: render_output; correct_source_layout.",
+          "Agent final route summary: 1. Source downloaded from the official archive.",
+          "2. Extracted to `/workspace/pkg-root/` with structure: `source/`, `docs/include/`, and root metadata files.",
+          "3. Installed to `/usr/local/bin/example-tool` and verifier output was written under `artifacts/render.tga`.",
+        ].join(" "),
+        tier: "hot",
+        slots: {
+          memory_kind: "execution_workflow",
+          lifecycle_state: "active",
+          task_signature: "accepted-build-task",
+          workflow_signature: "accepted-build-workflow",
+          target_files: ["terminal task workspace"],
+          summary_kind: "current_state",
+          compression_layer: "L2",
+          contract_trust: "advisory",
+          workflow_steps: [
+            "Verifier-critical paths: /workspace/pkg-root/docs/include; /workspace/pkg-root",
+            "Source downloaded from the official archive.",
+            "Extracted to `/workspace/pkg-root/` with structure: `source/`, `docs/include/`, and root metadata files.",
+            "Installed to `/usr/local/bin/example-tool`.",
+          ],
+          acceptance_checks: [
+            "Verifier reward: 1",
+            "Verifier passed tests: render_output; correct_source_layout",
+          ],
+          verification: {
+            status: "passed",
+            summary: "accepted build route passed focused verifier",
+          },
+          execution_native_v1: {
+            schema_version: "execution_native_v1",
+            execution_kind: "workflow_anchor",
+            summary_kind: "current_state",
+            compression_layer: "L2",
+            contract_trust: "advisory",
+            task_signature: "accepted-build-task",
+            workflow_signature: "accepted-build-workflow",
+            execution_outcome_role: "passed_solution",
+            target_files: ["terminal task workspace"],
+            workflow_steps: [
+              "Verifier-critical paths: /workspace/pkg-root/docs/include; /workspace/pkg-root",
+              "Source downloaded from the official archive.",
+              "Extracted to `/workspace/pkg-root/` with structure: `source/`, `docs/include/`, and root metadata files.",
+              "Installed to `/usr/local/bin/example-tool`.",
+            ],
+            acceptance_checks: [
+              "Verifier reward: 1",
+              "Verifier passed tests: render_output; correct_source_layout",
+            ],
+          },
+        },
+        confidence: 0.9,
+        salience: 0.95,
+        evidence_ref: "evidence://accepted-build-route/verifier",
+      },
+    ],
+  });
+
+  const agentContext = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    execution_scope: {
+      task_signature: "accepted-build-task",
+      workflow_signature: "accepted-build-workflow",
+    },
+    query_intent_override: "Continue a previously accepted build route.",
+  });
+  const activeRow = agentContext.command_posture.find((row) => row.memory_id === "accepted-build-route");
+
+  assert.equal(activeRow?.posture, "should_continue");
+  assert.ok(activeRow?.acceptance_checks.some((entry) => entry.includes("Extracted to `/workspace/pkg-root/` with structure")));
+  assert.ok(activeRow?.acceptance_checks.some((entry) => entry.includes("Source downloaded from the official archive")));
+  assert.ok((activeRow?.acceptance_checks.length ?? 0) <= 3);
+
+  const compiled = compileExecutionAgentContext({
+    guide: {
+      tenant_id: "tenant-local",
+      scope: "repo-a",
+      guide_trace_id: "guide-accepted-build-route",
+      agent_context: agentContext,
+    },
+    max_prompt_chars: 20_000,
+  });
+
+  assert.match(compiled.agent_prompt, /AIONIS_EXECUTION_AGENT_CONTEXT v1/);
+  assert.match(compiled.agent_prompt, /ACCEPTANCE_CHECKS/);
+  assert.match(compiled.agent_prompt, /Extracted to `\/workspace\/pkg-root\/` with structure/);
+  assert.doesNotMatch(compiled.agent_prompt, /AIONIS_CTX v2/);
+  assert.equal(compiled.command_posture[0]?.acceptance_checks.length, activeRow?.acceptance_checks.length);
 });
 
 test("product effect assembler honors explicit insufficient-evidence comparison", () => {

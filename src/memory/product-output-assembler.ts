@@ -332,6 +332,69 @@ function stringArrayFromSources(values: unknown[], limit: number): string[] {
   return boundedExecutionEvidenceStrings(values.flatMap((value) => stringArrayValue(value)), limit);
 }
 
+const EXECUTION_ACCEPTANCE_CONSTRAINT_CUES = /\b(?:acceptance|accepted|assert|check|checksum|column|contain|contains|created|downloaded|exact|exist|exists|expected|extract|extracted|format|hash|include|includes|installed|invariant|layout|must|output|passed|preserve|required|requires|retain|saved|schema|source|structure|test|verifier|written)\b/i;
+const EXECUTION_ACCEPTANCE_GENERIC_REWARD = /^verifier\s+reward:?\s*1(?:\.0+)?$/i;
+
+function executionAcceptanceConstraintChunks(value: string): string[] {
+  const normalized = value.replace(/\r\n/g, "\n").trim();
+  if (!normalized) return [];
+  const pipeChunks = normalized.split(/\s+\|\s+/g);
+  const lineChunks = normalized.split("\n").map((line) => line.replace(/^[-*]\s+/, "").trim());
+  const sentenceLikeChunks = normalized
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?;])\s+|(?=\b\d+\.\s+\*\*)/g)
+    .map((chunk) => chunk.trim());
+  return compactStrings([...pipeChunks, ...lineChunks, ...sentenceLikeChunks]);
+}
+
+function executionAcceptanceConstraintScore(value: string): number {
+  const text = value.replace(/\s+/g, " ").trim();
+  if (!text || !EXECUTION_ACCEPTANCE_CONSTRAINT_CUES.test(text)) return -1;
+  let score = 0;
+  if (/\/[A-Za-z0-9_./@+-]+|[A-Za-z0-9_.@+-]+\/[A-Za-z0-9_./@+-]+/.test(text)) score += 4;
+  if (/\b(?:must|required|requires|expected|exact|invariant|assert|checksum|hash|schema|format|layout|structure)\b/i.test(text)) score += 4;
+  if (/\b(?:source|downloaded|extract|extracted|installed|created|written|saved|preserve|retain|contain|contains|include|includes|exist|exists)\b/i.test(text)) score += 3;
+  if (/\b(?:verifier|test|check|passed|acceptance)\b/i.test(text)) score += 2;
+  if (EXECUTION_ACCEPTANCE_GENERIC_REWARD.test(text)) score -= 4;
+  if (text.length < 12) score -= 2;
+  return score;
+}
+
+function inferredExecutionAcceptanceConstraints(entry: MemoryPacketEntry): string[] {
+  if (!executionEntryAccepted(entry)) return [];
+  const state = entry.execution_state;
+  const rawCandidates = compactStrings([
+    ...(state?.workflow_steps ?? []),
+    ...(state?.acceptance_checks ?? []),
+    ...(state?.verification_summary ?? []),
+    ...(state?.artifact_hints ?? []),
+    entry.summary,
+  ]).flatMap(executionAcceptanceConstraintChunks);
+  const scored = rawCandidates
+    .map((value, index) => ({
+      value: value.replace(/\s+/g, " ").trim(),
+      index,
+      score: executionAcceptanceConstraintScore(value),
+    }))
+    .filter((entry) => entry.score >= 4)
+    .sort((left, right) => right.score - left.score || left.index - right.index);
+  return boundedExecutionEvidenceStrings(scored.map((entry) => entry.value), 8);
+}
+
+function executionAcceptanceChecksForCommandPosture(entry: MemoryPacketEntry | null | undefined): string[] {
+  const explicit = boundedExecutionEvidenceStrings(entry?.execution_state?.acceptance_checks ?? [], 8);
+  if (!entry) return explicit;
+  const inferred = inferredExecutionAcceptanceConstraints(entry);
+  if (inferred.length === 0) return explicit;
+  const generic = explicit.filter((value) => EXECUTION_ACCEPTANCE_GENERIC_REWARD.test(value));
+  const specific = explicit.filter((value) => !EXECUTION_ACCEPTANCE_GENERIC_REWARD.test(value));
+  return boundedExecutionEvidenceStrings([
+    ...inferred,
+    ...specific,
+    ...generic,
+  ], 8);
+}
+
 function recordArrayValue(value: unknown): Array<Record<string, unknown>> {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry) => {
@@ -3751,7 +3814,7 @@ function buildAgentContextCommandPostures(args: {
     compactStrings(entry?.target_files ?? []).slice(0, 6);
   const entryExecutionEvidence = (entry: MemoryPacketEntry | null | undefined) => ({
     workflow_steps: compactStrings(entry?.execution_state?.workflow_steps ?? []).slice(0, 3),
-    acceptance_checks: compactStrings(entry?.execution_state?.acceptance_checks ?? []).slice(0, 3),
+    acceptance_checks: executionAcceptanceChecksForCommandPosture(entry).slice(0, 3),
     verification_summary: compactStrings(entry?.execution_state?.verification_summary ?? []).slice(0, 2),
     artifact_hints: compactStrings(entry?.execution_state?.artifact_hints ?? []).slice(0, 2),
   });
