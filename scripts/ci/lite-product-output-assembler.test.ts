@@ -398,6 +398,37 @@ test("product guide assembler does not promote failed workflow outcomes to trust
   assert.match(workflow?.reuse_reason ?? "", /failed|blocked/i);
 });
 
+test("product guide assembler merges duplicate workflow outcomes conservatively", () => {
+  const planning = planningSummaryFixture();
+  planning.action_packet_summary.workflow_anchor_ids = ["wf-shared-1"];
+  planning.action_packet_summary.candidate_workflow_anchor_ids = ["wf-shared-1"];
+  planning.action_packet_summary.workflow_anchor_last_outcomes = ["unknown"];
+  planning.action_packet_summary.candidate_workflow_anchor_last_outcomes = ["failure"];
+  planning.action_packet_summary.trusted_pattern_anchor_ids = [];
+  planning.action_packet_summary.trusted_pattern_count = 0;
+
+  const packet = buildAionisGuidePacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    task: {
+      task_id: "task-1",
+      run_id: "run-1",
+      task_signature: "runtime-continuation",
+      task_family: "coding",
+    },
+    planning,
+  });
+
+  const workflows = packet.guidance.workflow_candidates.filter((entry) => entry.workflow_id === "wf-shared-1");
+  assert.equal(workflows.length, 1);
+  assert.equal(workflows[0]?.last_outcome, "failure");
+  assert.equal(workflows[0]?.authority, "blocked");
+  assert.notEqual(packet.guide_brief.recommended_posture, "reuse_supported_history");
+  assert.equal(packet.guide_brief.use_now.some((entry) => /Workflow trusted/i.test(entry)), false);
+  assert.ok(packet.guide_brief.do_not_use.some((entry) => /Blocked workflow authority/i.test(entry)));
+  assert.doesNotMatch(packet.guide_brief.summary, /Trusted history can be reused/i);
+});
+
 test("product agent context assembler compacts GuidePacket for direct Agent use", () => {
   const guidePacket = buildAionisGuidePacket({
     tenant_id: "tenant-local",
@@ -522,6 +553,62 @@ test("compact agent context projects accepted execution evidence without promoti
   assert.ok(context.command_posture.some((row) =>
     row.memory_id === "mem-accepted-reference" && row.surface === "context"
   ));
+});
+
+test("compact agent context blocks failed execution outcome memory even when otherwise advisory", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      text: "Avoid failed prior route",
+      intent: "execution",
+    },
+    nodes: [{
+      id: "mem-failed-prior",
+      type: "procedure",
+      title: "Failed prior route",
+      text_summary: "Outcome=failed; verifier reward=0.0. The prior branch looked plausible but failed acceptance.",
+      tier: "hot",
+      authority: "advisory",
+      slots: {
+        memory_kind: "execution_workflow",
+        lifecycle_state: "active",
+        compression_layer: "L2",
+        execution_native_v1: {
+          schema_version: "execution_native_v1",
+          execution_kind: "workflow_anchor",
+          summary_kind: "workflow_anchor",
+          compression_layer: "L2",
+          contract_trust: "advisory",
+          execution_outcome_role: "failed_branch",
+          task_signature: "avoid-failed-route",
+          workflow_signature: "avoid-failed-route:wf",
+          anchor_kind: "workflow",
+          anchor_level: "L2",
+          target_files: ["output.txt"],
+        },
+      },
+      confidence: 0.78,
+      salience: 0.8,
+    }],
+  });
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    agent_context_mode: "compact_agent",
+    context_char_budget: 700,
+  });
+
+  assert.ok(context.do_not_use_memory_ids.includes("mem-failed-prior"));
+  assert.equal(context.use_now_memory_ids.includes("mem-failed-prior"), false);
+  assert.equal(context.inspect_before_use_memory_ids.includes("mem-failed-prior"), false);
+  assert.ok(context.command_posture.some((row) =>
+    row.memory_id === "mem-failed-prior" && row.posture === "must_not" && row.surface === "do_not_use"
+  ));
+  assert.match(context.prompt_text, /avoid:/);
+  assert.match(context.prompt_text, /failed|blocked/i);
 });
 
 test("product agent context assembler enforces explicit prompt character budget", () => {

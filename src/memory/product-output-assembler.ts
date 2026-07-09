@@ -1192,7 +1192,7 @@ function buildWorkflowCandidates(
       stable: true,
       fallback: "trusted",
     });
-    candidates.push({
+    mergeWorkflowCandidate(candidates, {
       workflow_id: workflowId,
       title: stableTitles[index] ?? workflowId,
       authority,
@@ -1213,7 +1213,7 @@ function buildWorkflowCandidates(
     if (!workflowId) continue;
     const outcome = workflowCandidateOutcomeAt(candidateOutcomes, index, "unknown");
     const fallbackAuthority = workflowAuthority(planning.continuity_guidance?.contract_trust, "candidate");
-    candidates.push({
+    mergeWorkflowCandidate(candidates, {
       workflow_id: workflowId,
       title: candidateTitles[index] ?? workflowId,
       authority: workflowCandidateAuthorityForOutcome({
@@ -1228,6 +1228,47 @@ function buildWorkflowCandidates(
   }
 
   return candidates.slice(0, 12);
+}
+
+function workflowOutcomePrecedence(outcome: WorkflowLastOutcome): number {
+  if (outcome === "failure") return 4;
+  if (outcome === "mixed") return 3;
+  if (outcome === "success") return 2;
+  return 1;
+}
+
+function workflowAuthorityPrecedence(authority: WorkflowAuthority): number {
+  if (authority === "blocked") return 4;
+  if (authority === "advisory") return 3;
+  if (authority === "candidate") return 2;
+  return 1;
+}
+
+function mergeWorkflowCandidate(
+  candidates: AionisGuidePacket["guidance"]["workflow_candidates"],
+  incoming: AionisGuidePacket["guidance"]["workflow_candidates"][number],
+): void {
+  const existing = candidates.find((entry) => entry.workflow_id === incoming.workflow_id);
+  if (!existing) {
+    candidates.push(incoming);
+    return;
+  }
+
+  const existingOutcome = existing.last_outcome ?? "unknown";
+  const incomingOutcome = incoming.last_outcome ?? "unknown";
+  const mergedOutcome = workflowOutcomePrecedence(incomingOutcome) > workflowOutcomePrecedence(existingOutcome)
+    ? incomingOutcome
+    : existingOutcome;
+  const mergedAuthority = workflowAuthorityPrecedence(incoming.authority) > workflowAuthorityPrecedence(existing.authority)
+    ? incoming.authority
+    : existing.authority;
+  existing.authority = mergedAuthority;
+  existing.last_outcome = mergedOutcome;
+  existing.evidence_count = Math.max(existing.evidence_count, incoming.evidence_count);
+  existing.title = existing.title === existing.workflow_id ? incoming.title : existing.title;
+  if (mergedOutcome === incoming.last_outcome || mergedAuthority === incoming.authority) {
+    existing.reuse_reason = incoming.reuse_reason;
+  }
 }
 
 function workflowCandidateOutcomeAt(
@@ -1416,7 +1457,7 @@ function guideBriefPosture(args: {
 }): AionisGuidePacket["guide_brief"]["recommended_posture"] {
   if (!args.actionableHistoryUsed) return "ignore_history";
   if (args.requiredRehydrationCount > 0) return "rehydrate_before_use";
-  if (args.negativeTransferRisk === "high" || args.blockedAuthorityCount > 0) return "inspect_before_use";
+  if (args.negativeTransferRisk === "high" || args.blockedAuthorityCount > 0 || args.authority === "blocked") return "inspect_before_use";
   if (args.authority === "trusted" || args.authority === "advisory") return "reuse_supported_history";
   return "use_as_context";
 }
@@ -2936,7 +2977,9 @@ function shortenPromptText(value: string, maxChars: number): string {
 function memoryEntryBlocked(entry: MemoryPacketEntry): boolean {
   return entry.authority === "blocked"
     || entry.lifecycle_state === "suppressed"
-    || entry.lifecycle_state === "archived";
+    || entry.lifecycle_state === "archived"
+    || entry.execution_state?.execution_outcome_role === "failed_branch"
+    || entry.execution_state?.execution_outcome_role === "blocked";
 }
 
 function memoryEntryInspectBeforeUse(entry: MemoryPacketEntry): boolean {
@@ -3878,6 +3921,7 @@ function compileAgentContextSurfaces(args: {
   );
   const usableEntries = args.memoryEntries.filter((entry) =>
     !rehydrateSurfaceIds.has(entry.memory_id)
+    && !memoryEntryBlocked(entry)
     && (
       memoryEntryUsable(entry)
       || lifecycleCandidateAdmittedUseNowIds.has(entry.memory_id)
