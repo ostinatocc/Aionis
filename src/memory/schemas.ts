@@ -2708,6 +2708,8 @@ export const WorkflowMaintenanceSummarySchema = z.object({
 
 export type WorkflowMaintenanceSummary = z.infer<typeof WorkflowMaintenanceSummarySchema>;
 
+export const WorkflowLastOutcomeSchema = z.enum(["success", "failure", "mixed", "unknown"]);
+
 export const AuthorityVisibilitySummarySchema = z.object({
   summary_version: z.literal("runtime_authority_visibility_summary_v1"),
   surface_count: z.number().int().min(0),
@@ -2802,6 +2804,8 @@ export const ActionPacketSummarySchema = z.object({
   supporting_knowledge_count: z.number().int().min(0),
   workflow_anchor_ids: z.array(z.string()),
   candidate_workflow_anchor_ids: z.array(z.string()),
+  workflow_anchor_last_outcomes: z.array(WorkflowLastOutcomeSchema).optional().default([]),
+  candidate_workflow_anchor_last_outcomes: z.array(WorkflowLastOutcomeSchema).optional().default([]),
   candidate_pattern_anchor_ids: z.array(z.string()),
   trusted_pattern_anchor_ids: z.array(z.string()),
   contested_pattern_anchor_ids: z.array(z.string()),

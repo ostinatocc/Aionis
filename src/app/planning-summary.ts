@@ -458,6 +458,8 @@ export type WorkflowSignalSummary = {
   observing_workflow_titles: string[];
 };
 
+export type WorkflowLastOutcome = "success" | "failure" | "mixed" | "unknown";
+
 export type PlannerPacketSummarySurface = {
   action_recall_packet?: unknown;
   pattern_signals?: unknown;
@@ -601,6 +603,8 @@ export type ActionPacketSummary = {
   supporting_knowledge_count: number;
   workflow_anchor_ids: string[];
   candidate_workflow_anchor_ids: string[];
+  workflow_anchor_last_outcomes: WorkflowLastOutcome[];
+  candidate_workflow_anchor_last_outcomes: WorkflowLastOutcome[];
   candidate_pattern_anchor_ids: string[];
   trusted_pattern_anchor_ids: string[];
   contested_pattern_anchor_ids: string[];

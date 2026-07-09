@@ -390,6 +390,7 @@ export const AionisMemoryPacketSchema = z
                 task_signature: z.string().min(1).nullable().default(null),
                 task_family: z.string().min(1).nullable().default(null),
                 workflow_signature: z.string().min(1).nullable().default(null),
+                execution_outcome_role: z.enum(["passed_solution", "failed_branch", "blocked", "unknown"]).nullable().default(null),
                 next_action_hint: z.string().min(1).nullable().default(null),
                 transition_kind: AionisExecutionTransitionKindSchema.nullable().default(null),
                 actor_role: z.string().min(1).nullable().default(null),

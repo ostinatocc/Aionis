@@ -165,6 +165,8 @@ function planningSummaryFixture(): PlanningSummary {
       supporting_knowledge_count: 0,
       workflow_anchor_ids: ["wf-stable-1"],
       candidate_workflow_anchor_ids: ["wf-candidate-1"],
+      workflow_anchor_last_outcomes: ["success"],
+      candidate_workflow_anchor_last_outcomes: ["unknown"],
       candidate_pattern_anchor_ids: [],
       trusted_pattern_anchor_ids: ["pat-trusted-1"],
       contested_pattern_anchor_ids: ["pat-contested-1"],
@@ -374,6 +376,28 @@ test("product guide assembler converts planning summary into stable GuidePacket"
   assert.ok(packet.source_map.omitted_internal_surfaces.includes("raw_find_resolve"));
 });
 
+test("product guide assembler does not promote failed workflow outcomes to trusted success", () => {
+  const planning = planningSummaryFixture();
+  planning.action_packet_summary.workflow_anchor_last_outcomes = ["failure"];
+
+  const packet = buildAionisGuidePacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    task: {
+      task_id: "task-1",
+      run_id: "run-1",
+      task_signature: "runtime-continuation",
+      task_family: "coding",
+    },
+    planning,
+  });
+
+  const workflow = packet.guidance.workflow_candidates.find((entry) => entry.workflow_id === "wf-stable-1");
+  assert.equal(workflow?.last_outcome, "failure");
+  assert.equal(workflow?.authority, "blocked");
+  assert.match(workflow?.reuse_reason ?? "", /failed|blocked/i);
+});
+
 test("product agent context assembler compacts GuidePacket for direct Agent use", () => {
   const guidePacket = buildAionisGuidePacket({
     tenant_id: "tenant-local",
@@ -439,6 +463,65 @@ test("product agent context assembler compacts GuidePacket for direct Agent use"
   assert.ok(context.prompt_text.length < JSON.stringify({ memoryPacket, guidePacket }).length);
   assert.equal("guide_packet" in context, false);
   assert.equal("memory_packet" in context, false);
+});
+
+test("compact agent context projects accepted execution evidence without promoting reference memory", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      text: "Continue accepted artifact contract",
+      intent: "execution",
+    },
+    nodes: [{
+      id: "mem-accepted-reference",
+      type: "procedure",
+      title: "Accepted artifact contract",
+      text_summary: [
+        "Outcome=succeeded; verifier reward=1.0.",
+        "- accepted file format: write output.csv with columns to,from.",
+        "- accepted verifier: official acceptance check passed.",
+      ].join("\n"),
+      tier: "hot",
+      authority: "candidate",
+      slots: {
+        memory_kind: "execution_workflow",
+        lifecycle_state: "active",
+        compression_layer: "L2",
+        execution_native_v1: {
+          schema_version: "execution_native_v1",
+          execution_kind: "workflow_anchor",
+          summary_kind: "workflow_anchor",
+          compression_layer: "L2",
+          contract_trust: "advisory",
+          execution_outcome_role: "passed_solution",
+          task_signature: "artifact-contract",
+          workflow_signature: "artifact-contract:wf",
+          anchor_kind: "workflow",
+          anchor_level: "L2",
+          target_files: ["output.csv"],
+        },
+      },
+      confidence: 0.88,
+      salience: 0.9,
+    }],
+  });
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    agent_context_mode: "compact_agent",
+    context_char_budget: 700,
+  });
+
+  assert.match(context.prompt_text, /accepted:/);
+  assert.match(context.prompt_text, /primary=0/);
+  assert.match(context.prompt_text, /to,from/);
+  assert.equal(context.use_now_memory_ids.includes("mem-accepted-reference"), false);
+  assert.ok(context.command_posture.some((row) =>
+    row.memory_id === "mem-accepted-reference" && row.surface === "context"
+  ));
 });
 
 test("product agent context assembler enforces explicit prompt character budget", () => {

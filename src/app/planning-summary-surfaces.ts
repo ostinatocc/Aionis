@@ -10,6 +10,7 @@ import type {
   PlannerPacketSummarySurface,
   PolicyLifecycleSummary,
   PolicyMaintenanceSummary,
+  WorkflowLastOutcome,
   WorkflowLifecycleSummary,
   WorkflowMaintenanceSummary,
   WorkflowSignalSummary,
@@ -36,6 +37,56 @@ function stringProp(value: unknown, key: string): string | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const raw = (value as Record<string, unknown>)[key];
   return typeof raw === "string" ? raw : null;
+}
+
+function numberProp(value: unknown, key: string): number | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = (value as Record<string, unknown>)[key];
+  const parsed = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function workflowLastOutcome(entry: unknown): WorkflowLastOutcome {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return "unknown";
+  const record = entry as Record<string, unknown>;
+  const role = stringProp(record, "execution_outcome_role")
+    ?? stringProp(record, "outcome_role");
+  if (role === "passed_solution") return "success";
+  if (role === "failed_branch" || role === "blocked") return "failure";
+
+  const explicit = stringProp(record, "last_outcome")
+    ?? stringProp(record, "outcome")
+    ?? stringProp(record, "status")
+    ?? stringProp(record, "result")
+    ?? stringProp(record, "verdict");
+  const normalized = explicit?.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  if (normalized && ["success", "succeeded", "passed", "pass", "accepted", "completed", "complete"].includes(normalized)) return "success";
+  if (normalized && ["failed", "failure", "fail", "rejected", "blocked", "timeout", "timed_out", "cancelled", "canceled"].includes(normalized)) return "failure";
+  if (normalized === "mixed") return "mixed";
+
+  const reuseSuccess = Math.max(0, numberProp(record, "reuse_success_count") ?? 0);
+  const reuseFailure = Math.max(0, numberProp(record, "reuse_failure_count") ?? 0);
+  if (reuseSuccess > 0 && reuseFailure > 0) return "mixed";
+  if (reuseSuccess > 0) return "success";
+  if (reuseFailure > 0) return "failure";
+  return "unknown";
+}
+
+function uniqueWorkflowAnchorsWithOutcomes(entries: unknown[]): {
+  anchorIds: string[];
+  lastOutcomes: WorkflowLastOutcome[];
+} {
+  const anchorIds: string[] = [];
+  const lastOutcomes: WorkflowLastOutcome[] = [];
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    const anchorId = stringProp(entry, "anchor_id");
+    if (!anchorId || seen.has(anchorId)) continue;
+    seen.add(anchorId);
+    anchorIds.push(anchorId);
+    lastOutcomes.push(workflowLastOutcome(entry));
+  }
+  return { anchorIds, lastOutcomes };
 }
 
 function collectPatternEntriesFromSurface(surface: PlannerPacketSummarySurface) {
@@ -455,6 +506,8 @@ export function summarizeActionRecallPacketSurface(surface: PlannerPacketSummary
     : Array.isArray(packet.supporting_knowledge)
       ? packet.supporting_knowledge
       : [];
+  const recommendedWorkflowAnchors = uniqueWorkflowAnchorsWithOutcomes(recommendedWorkflows);
+  const candidateWorkflowAnchors = uniqueWorkflowAnchorsWithOutcomes(candidateWorkflows);
   return {
     recommended_workflow_count: recommendedWorkflows.length,
     candidate_workflow_count: candidateWorkflows.length,
@@ -463,8 +516,10 @@ export function summarizeActionRecallPacketSurface(surface: PlannerPacketSummary
     contested_pattern_count: contestedPatterns.length,
     rehydration_candidate_count: rehydrationCandidates.length,
     supporting_knowledge_count: supportingKnowledge.length,
-    workflow_anchor_ids: uniqueStrings(recommendedWorkflows.map((entry) => stringProp(entry, "anchor_id"))),
-    candidate_workflow_anchor_ids: uniqueStrings(candidateWorkflows.map((entry) => stringProp(entry, "anchor_id"))),
+    workflow_anchor_ids: recommendedWorkflowAnchors.anchorIds,
+    candidate_workflow_anchor_ids: candidateWorkflowAnchors.anchorIds,
+    workflow_anchor_last_outcomes: recommendedWorkflowAnchors.lastOutcomes,
+    candidate_workflow_anchor_last_outcomes: candidateWorkflowAnchors.lastOutcomes,
     candidate_pattern_anchor_ids: uniqueStrings(candidatePatterns.map((entry) => stringProp(entry, "anchor_id"))),
     trusted_pattern_anchor_ids: uniqueStrings(trustedPatterns.map((entry) => stringProp(entry, "anchor_id"))),
     contested_pattern_anchor_ids: uniqueStrings(contestedPatterns.map((entry) => stringProp(entry, "anchor_id"))),

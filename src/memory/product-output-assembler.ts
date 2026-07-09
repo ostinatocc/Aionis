@@ -43,6 +43,7 @@ import {
   AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD,
   authorityConsumptionStablePromotionBlockedCount,
 } from "./authority-consumption.js";
+import { normalizeExecutionOutcomeRoleFromValue } from "./execution-outcome-role.js";
 import {
   resolveNodeAnchorKind,
   resolveNodeArchiveRelocationSurface,
@@ -79,6 +80,7 @@ type ProductTask = AionisGuidePacket["task"];
 type ProductActor = NonNullable<AionisGuidePacket["actor"]>;
 type GuideAuthority = AionisGuidanceAuthority;
 type WorkflowAuthority = AionisGuidePacket["guidance"]["workflow_candidates"][number]["authority"];
+type WorkflowLastOutcome = NonNullable<AionisGuidePacket["guidance"]["workflow_candidates"][number]["last_outcome"]>;
 type ProductImpactDirection = AionisEffectReport["history_impact"]["impact_direction"];
 type TrainingCandidateType = AionisEffectReport["training_candidates"][number]["candidate_type"];
 type TrainingCandidateLabel = AionisEffectReport["training_candidates"][number]["label"];
@@ -736,6 +738,14 @@ function memoryExecutionStateProjection(args: {
     ?? stringValue(args.contextItem?.task_family);
   const workflowSignature = resolveNodeWorkflowSignature({ slots: args.slots })
     ?? stringValue(args.contextItem?.workflow_signature);
+  const executionOutcomeRole =
+    normalizeExecutionOutcomeRoleFromValue(executionNative?.execution_outcome_role)
+    ?? normalizeExecutionOutcomeRoleFromValue(executionNative?.outcome)
+    ?? normalizeExecutionOutcomeRoleFromValue(executionObservation?.execution_outcome_role)
+    ?? normalizeExecutionOutcomeRoleFromValue(executionObservation?.outcome_role)
+    ?? normalizeExecutionOutcomeRoleFromValue(executionObservation?.outcome)
+    ?? normalizeExecutionOutcomeRoleFromValue(args.slots?.execution_outcome_role)
+    ?? normalizeExecutionOutcomeRoleFromValue(args.slots?.outcome);
   const nextActionHint = resolveNodeNextAction({ slots: args.slots })
     ?? stringValue(args.contextItem?.next_action);
   const actorRole = stringValue(executionNative?.actor_role)
@@ -808,6 +818,7 @@ function memoryExecutionStateProjection(args: {
     || !!taskSignature
     || !!taskFamily
     || !!workflowSignature
+    || !!executionOutcomeRole
     || !!nextActionHint
     || !!actorRole
     || !!handoffTarget
@@ -829,6 +840,7 @@ function memoryExecutionStateProjection(args: {
     task_signature: taskSignature,
     task_family: taskFamily,
     workflow_signature: workflowSignature,
+    execution_outcome_role: executionOutcomeRole ?? null,
     next_action_hint: nextActionHint,
     transition_kind: transitionKind,
     actor_role: actorRole,
@@ -1170,16 +1182,23 @@ function buildWorkflowCandidates(
   const candidates: AionisGuidePacket["guidance"]["workflow_candidates"] = [];
   const stableIds = planning.action_packet_summary.workflow_anchor_ids;
   const stableTitles = planning.workflow_signal_summary.stable_workflow_titles;
+  const stableOutcomes = planning.action_packet_summary.workflow_anchor_last_outcomes ?? [];
   for (let index = 0; index < stableIds.length; index += 1) {
     const workflowId = stableIds[index];
     if (!workflowId) continue;
+    const outcome = workflowCandidateOutcomeAt(stableOutcomes, index, "success");
+    const authority = workflowCandidateAuthorityForOutcome({
+      outcome,
+      stable: true,
+      fallback: "trusted",
+    });
     candidates.push({
       workflow_id: workflowId,
       title: stableTitles[index] ?? workflowId,
-      authority: "trusted",
+      authority,
       evidence_count: Math.max(1, planning.workflow_lifecycle_summary.stable_count),
-      last_outcome: "success",
-      reuse_reason: "Stable workflow memory is available for this scope.",
+      last_outcome: outcome,
+      reuse_reason: workflowCandidateReuseReason({ outcome, stable: true }),
     });
   }
 
@@ -1188,20 +1207,68 @@ function buildWorkflowCandidates(
     ...planning.workflow_signal_summary.promotion_ready_workflow_titles,
     ...planning.workflow_signal_summary.observing_workflow_titles,
   ];
+  const candidateOutcomes = planning.action_packet_summary.candidate_workflow_anchor_last_outcomes ?? [];
   for (let index = 0; index < candidateIds.length; index += 1) {
     const workflowId = candidateIds[index];
     if (!workflowId) continue;
+    const outcome = workflowCandidateOutcomeAt(candidateOutcomes, index, "unknown");
+    const fallbackAuthority = workflowAuthority(planning.continuity_guidance?.contract_trust, "candidate");
     candidates.push({
       workflow_id: workflowId,
       title: candidateTitles[index] ?? workflowId,
-      authority: workflowAuthority(planning.continuity_guidance?.contract_trust, "candidate"),
+      authority: workflowCandidateAuthorityForOutcome({
+        outcome,
+        stable: false,
+        fallback: fallbackAuthority,
+      }),
       evidence_count: Math.max(1, planning.workflow_lifecycle_summary.candidate_count),
-      last_outcome: "unknown",
-      reuse_reason: "Candidate workflow evidence is visible but not product-authoritative.",
+      last_outcome: outcome,
+      reuse_reason: workflowCandidateReuseReason({ outcome, stable: false }),
     });
   }
 
   return candidates.slice(0, 12);
+}
+
+function workflowCandidateOutcomeAt(
+  outcomes: readonly string[],
+  index: number,
+  fallback: WorkflowLastOutcome,
+): WorkflowLastOutcome {
+  const value = outcomes[index];
+  if (value === "success" || value === "failure" || value === "mixed" || value === "unknown") return value;
+  return fallback;
+}
+
+function workflowCandidateAuthorityForOutcome(args: {
+  outcome: WorkflowLastOutcome;
+  stable: boolean;
+  fallback: WorkflowAuthority;
+}): WorkflowAuthority {
+  if (args.outcome === "failure") return "blocked";
+  if (args.outcome === "mixed") return args.stable ? "advisory" : "candidate";
+  if (args.outcome === "unknown") return args.stable ? args.fallback : "candidate";
+  return args.fallback;
+}
+
+function workflowCandidateReuseReason(args: {
+  outcome: WorkflowLastOutcome;
+  stable: boolean;
+}): string {
+  if (args.outcome === "failure") {
+    return "Previous workflow outcome failed or was blocked; keep as counter-evidence, not a reusable route.";
+  }
+  if (args.outcome === "mixed") {
+    return "Workflow has mixed outcome evidence; inspect before relying on it.";
+  }
+  if (args.outcome === "unknown") {
+    return args.stable
+      ? "Stable workflow memory is available, but its explicit outcome was not exposed by the planning surface."
+      : "Candidate workflow evidence is visible but not product-authoritative.";
+  }
+  return args.stable
+    ? "Stable workflow memory is available for this scope."
+    : "Candidate workflow has successful outcome evidence but is not yet product-authoritative.";
 }
 
 function buildToolPreferences(
@@ -2435,6 +2502,62 @@ function executionStateEvidenceValues(
   }
 }
 
+function executionEntryAccepted(entry: MemoryPacketEntry): boolean {
+  const role = entry.execution_state?.execution_outcome_role;
+  if (role === "passed_solution") return true;
+  if (role === "failed_branch" || role === "blocked") return false;
+  const summary = entry.summary.toLowerCase();
+  if (/\b(?:outcome|status|result|verdict)\s*=\s*(?:failed|failure|blocked|rejected)\b/.test(summary)) return false;
+  if (/\b(?:verifier\s+)?reward\s*=\s*0(?:\.0+)?\b/.test(summary)) return false;
+  return /\b(?:outcome|status|result|verdict)\s*=\s*(?:succeeded|success|passed|accepted|completed)\b/.test(summary)
+    || /\b(?:verifier\s+)?reward\s*=\s*1(?:\.0+)?\b/.test(summary)
+    || /\b(?:all|focused|official)\s+(?:checks|tests|verifiers?)\s+passed\b/.test(summary);
+}
+
+function acceptedEvidenceNotes(entry: MemoryPacketEntry, maxNotes: number): string[] {
+  if (maxNotes <= 0 || !executionEntryAccepted(entry)) return [];
+  const notes: string[] = [];
+  const push = (value: string | null | undefined) => {
+    const note = normalizeContractPromptNote(value);
+    if (!note || notes.includes(note)) return;
+    notes.push(note);
+  };
+  for (const value of [
+    ...executionStateEvidenceValues(entry, "artifact_hints"),
+    ...executionStateEvidenceValues(entry, "verification_summary"),
+  ]) {
+    push(value);
+    if (notes.length >= maxNotes) return notes;
+  }
+
+  const rawLines = entry.summary.replace(/\r\n/g, "\n").split("\n").map((line) => line.trim()).filter(Boolean);
+  const bulletLines = rawLines
+    .filter((line) => /^[-*]\s+\S+/.test(line))
+    .map((line) => line.replace(/^[-*]\s+/, "").trim())
+    .filter((line) => !/^all output files are correctly saved\.?$/i.test(line));
+  if (bulletLines.length > 0) {
+    push(`accepted facts: ${bulletLines.slice(0, 6).join("; ")}`);
+    if (notes.length >= maxNotes) return notes;
+  }
+
+  const sentenceCandidates = rawLines
+    .join(" ")
+    .split(/(?<=[.!?])\s+/)
+    .map((line) => line.trim())
+    .filter((line) =>
+      /\b(?:accepted|passed|verifier|check|artifact|output|contract|format|column|file|saved|exact|invariant|must|should)\b/i.test(line)
+    );
+  for (const sentence of sentenceCandidates) {
+    push(sentence);
+    if (notes.length >= maxNotes) return notes;
+  }
+  for (const value of executionStateEvidenceValues(entry, "acceptance_checks")) {
+    push(value);
+    if (notes.length >= maxNotes) return notes;
+  }
+  return notes;
+}
+
 function contractEntryEvidenceLines(args: {
   label: "step" | "check" | "verify" | "artifact" | "avoid_verify";
   entries: MemoryPacketEntry[];
@@ -2453,6 +2576,28 @@ function contractEntryEvidenceLines(args: {
       if (!note || seen.has(note)) continue;
       seen.add(note);
       lines.push(`${args.label}:${id ? ` id=${id}` : ""} n=${note}`);
+      if (lines.length >= args.maxItems) return lines;
+    }
+  }
+  return lines;
+}
+
+function acceptedReferenceEvidenceLines(args: {
+  entries: MemoryPacketEntry[];
+  aliases: Map<string, string>;
+  maxItems: number;
+  maxChars: number;
+}): string[] {
+  if (args.maxItems <= 0 || args.maxChars <= 0) return [];
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of args.entries) {
+    const id = args.aliases.get(entry.memory_id);
+    for (const value of acceptedEvidenceNotes(entry, args.maxItems)) {
+      const note = shortenPromptText(value, args.maxChars);
+      if (!note || seen.has(note)) continue;
+      seen.add(note);
+      lines.push(`accepted:${id ? ` id=${id}` : ""} ref=1 primary=0 n=${note}`);
       if (lines.length >= args.maxItems) return lines;
     }
   }
@@ -2547,8 +2692,17 @@ function renderExecutionStateContractPrompt(args: {
     useCurrentEntry?.memory_id,
     ...renderedProcedureEntries.map((entry) => entry.memory_id),
   ]).map((id) => entries.get(id)).filter((entry): entry is MemoryPacketEntry => !!entry);
+  const acceptedReferenceEntries = compactStrings([
+    currentEntryGate === "inspect" ? currentEntry?.memory_id : null,
+    ...renderedInspectEntries.map((entry) => entry.memory_id),
+    ...args.commandPosture
+      .filter((row) => row.surface === "context" || row.surface === "inspect_before_use")
+      .map((row) => row.memory_id),
+  ]).map((id) => entries.get(id)).filter((entry): entry is MemoryPacketEntry => !!entry && executionEntryAccepted(entry));
   const activeEvidenceItemLimit = args.profile.style === "contract" ? 2 : 4;
   const activeEvidenceChars = args.profile.style === "contract" ? 74 : 170;
+  const acceptedReferenceItemLimit = args.profile.style === "contract" ? 2 : 4;
+  const acceptedReferenceChars = args.profile.style === "contract" ? 170 : 260;
   const avoidEvidenceItemLimit = args.profile.style === "contract" ? 1 : 2;
   const avoidEvidenceChars = args.profile.style === "contract" ? 72 : 150;
   const nextActionEntry = firstExecutionStateEntryWithNext(compactStrings([
@@ -2601,6 +2755,12 @@ function renderExecutionStateContractPrompt(args: {
       routeContract: args.routeContract,
       compact: true,
       maxChars: 190,
+    }),
+    ...acceptedReferenceEvidenceLines({
+      entries: acceptedReferenceEntries,
+      aliases,
+      maxItems: acceptedReferenceItemLimit,
+      maxChars: acceptedReferenceChars,
     }),
     contractNextActionLine({
       entry: nextActionEntry,

@@ -67,6 +67,7 @@ export type WorkflowEntry = {
   usage_count?: number | null;
   reuse_success_count?: number | null;
   reuse_failure_count?: number | null;
+  execution_outcome_role?: "passed_solution" | "failed_branch" | "blocked" | "unknown" | null;
 };
 
 function continuityCarrierToWorkflowEntry(value: unknown): WorkflowEntry | null {
