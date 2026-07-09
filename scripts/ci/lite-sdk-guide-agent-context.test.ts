@@ -19,7 +19,7 @@ test("SDK guideAgentContext renders execution contract and resolved evidence by 
         agent_context: {
           contract_version: "aionis_agent_context_v1",
           agent_context_mode: "standard",
-          prompt_text: "AIONIS_CTX v2\ninspect_before_use and rehydrate pointers are available.",
+          prompt_text: "AIONIS_AGENT_CONTEXT v1\nBASE_RUNTIME_STANDARD_CONTEXT should not be appended to SDK agent_prompt.",
           use_now_memory_ids: [],
           inspect_before_use_memory_ids: [INSPECT_ID],
           do_not_use_memory_ids: [],
@@ -81,8 +81,12 @@ test("SDK guideAgentContext renders execution contract and resolved evidence by 
   assert.match(String(calls[1]?.body.uri), /aionis:\/\/tenant-a\/scope-a\/event\//);
   assert.equal(result.resolved_evidence.length, 2);
   assert.deepEqual(result.resolved_evidence.map((entry) => entry.surface), ["inspect_before_use", "rehydrate"]);
+  assert.match(result.compiled_context.base_prompt, /AIONIS_AGENT_CONTEXT v1/);
+  assert.match(result.compiled_context.base_prompt, /BASE_RUNTIME_STANDARD_CONTEXT/);
   assert.match(result.agent_prompt, /AIONIS_EXECUTION_AGENT_CONTEXT/);
   assert.doesNotMatch(result.agent_prompt, /BASE_AIONIS_CONTEXT/);
+  assert.doesNotMatch(result.agent_prompt, /AIONIS_AGENT_CONTEXT v1/);
+  assert.doesNotMatch(result.agent_prompt, /BASE_RUNTIME_STANDARD_CONTEXT/);
   assert.doesNotMatch(result.agent_prompt, /AIONIS_CTX v2/);
   assert.match(result.agent_prompt, /AIONIS_RESOLVED_EVIDENCE v1/);
   assert.match(result.agent_prompt, /INSPECT_EVIDENCE/);
@@ -117,5 +121,6 @@ test("SDK guideAgentContext can return Runtime compact prompt without stacking S
   assert.equal(result.compiled_context.prompt_format, "runtime_compact");
   assert.equal(result.agent_prompt, runtimePrompt);
   assert.doesNotMatch(result.agent_prompt, /AIONIS_EXECUTION_AGENT_CONTEXT/);
+  assert.doesNotMatch(result.agent_prompt, /AIONIS_AGENT_CONTEXT v1/);
   assert.doesNotMatch(result.agent_prompt, /BASE_AIONIS_CONTEXT/);
 });

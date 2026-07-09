@@ -66,10 +66,27 @@ consume only `agent_context.prompt_text` or selected `agent_context` fields.
 Full packets, decision traces, audit reports, raw rows, memory admission
 records, and raw slots are operator surfaces.
 
+Do not concatenate SDK and Runtime prompt renderings. Pick exactly one final
+Agent prompt:
+
+| Host path | Final prompt | Header |
+|---|---|---|
+| Recommended SDK path | `guideAgentContext().agent_prompt` or `execution.guideAgentContextForRole().agent_prompt` | `AIONIS_EXECUTION_AGENT_CONTEXT v1` |
+| Raw HTTP path | `POST /v1/guide -> agent_context.prompt_text` | `AIONIS_AGENT_CONTEXT v1` by default; `AIONIS_CTX v2` in compact Runtime mode |
+| Explicit SDK low-token path | `guideAgentContext(..., { prompt_format: "runtime_compact" }).agent_prompt` | Runtime `agent_context.prompt_text` |
+
+`context_mode: "compact_agent"` requests compact Runtime base guide text. It
+does not by itself switch the SDK final prompt away from
+`AIONIS_EXECUTION_AGENT_CONTEXT v1`.
+
 Execution-scoped memory follows exact-task prompt admission. With a current
-`task_signature`, same-workflow but different-task execution evidence can remain
-in `memory_packet`; it must not become `agent_prompt` / `agent_context.prompt_text`
-unless it also matches the current task.
+`task_signature`, exact-task execution evidence and accepted / passed
+same-workflow continuation evidence can become `should_continue` / active
+route guidance when the route contract admits it. Broad family-only evidence,
+different-workflow evidence, rejected branches, failed branches, stale branches,
+and contested evidence can remain in `memory_packet` or inspection surfaces; they
+must not become `agent_prompt` / `agent_context.prompt_text` direct action text
+just because they are nearby.
 
 For host decisions, distinguish these two fields:
 
@@ -84,7 +101,8 @@ For host decisions, distinguish these two fields:
    an execution trace, or a handoff should become memory.
 2. Call `POST /v1/guide` before the next Agent run.
 3. Pass SDK `agent_prompt` to the Agent. If integrating directly over HTTP, pass
-   only `agent_context.prompt_text` or selected `agent_context` fields.
+   only `agent_context.prompt_text` or selected `agent_context` fields. Never
+   append `agent_context.prompt_text` to SDK `agent_prompt`.
 4. Call SDK `feedback()` or raw `POST /v1/feedback` after the Agent acts.
    Include `guide_trace_id`, `used_memory_ids`, `run_id`, `outcome`, and
    `used_surface`.

@@ -236,6 +236,9 @@ test("SDK guideAgentContext over real Runtime HTTP promotes accepted same-workfl
     });
 
     assert.equal(result.contract_version, "aionis_sdk_agent_context_with_evidence_v1");
+    assert.match(result.agent_prompt, /AIONIS_EXECUTION_AGENT_CONTEXT v1/);
+    assert.doesNotMatch(result.agent_prompt, /AIONIS_AGENT_CONTEXT v1/);
+    assert.doesNotMatch(result.agent_prompt, /AIONIS_CTX v2/);
     assert.match(result.agent_prompt, /SDK_CURRENT_TASK_ONLY/);
     assert.match(result.agent_prompt, /SDK_OTHER_TASK_SUCCESS/);
     assert.equal(result.resolved_evidence.length, 0);

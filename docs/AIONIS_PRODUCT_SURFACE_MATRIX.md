@@ -1,6 +1,6 @@
 # Aionis Product Surface Matrix
 
-Updated: 2026-07-06  
+Updated: 2026-07-09
 Scope: Runtime product, SDK/API contracts, and public integration boundaries.
 
 This is the engineering maintenance matrix for Aionis public and semi-public
@@ -23,10 +23,22 @@ first. The primary final Agent context path already exists:
 guide contract. New integrations should use the SDK AgentContext helpers unless
 they have a specific reason to manage compilation themselves.
 
-Execution-scoped memory that reaches the final Agent prompt must match the
-current exact `task_signature` when one is present. Same `workflow_signature`
-evidence may remain in `memory_packet` for audit, measurement, and later
-analysis, but it is not by itself direct prompt admission.
+There are three prompt renderings, but only one should be passed to an Agent for
+a given run:
+
+| Header | Owner | Use |
+|---|---|---|
+| `AIONIS_EXECUTION_AGENT_CONTEXT v1` | SDK | Default recommended final Agent prompt. |
+| `AIONIS_AGENT_CONTEXT v1` | Runtime | Standard raw HTTP `agent_context.prompt_text`. |
+| `AIONIS_CTX v2` | Runtime | Explicit compact Runtime prompt; SDK final prompt only with `prompt_format: "runtime_compact"`. |
+
+Execution-scoped memory that reaches the final Agent prompt must be admitted as
+current task execution state: exact `task_signature` evidence or accepted /
+passed same-`workflow_signature` continuation evidence promoted by the route
+contract. Broad task-family evidence, different-workflow evidence, rejected
+branches, failed branches, stale branches, and contested evidence may remain in
+`memory_packet` for audit, measurement, and later analysis, but they are not by
+themselves direct prompt admission.
 
 ## Status Labels
 

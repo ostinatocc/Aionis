@@ -15,6 +15,28 @@ SDK source: [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk).
 The Runtime source in [ostinatocc/Aionis](https://github.com/ostinatocc/Aionis)
 owns the product HTTP APIs that the SDK calls.
 
+## AgentContext Prompt Boundary
+
+The SDK default final Agent prompt is:
+
+```text
+AIONIS_EXECUTION_AGENT_CONTEXT v1
+```
+
+Runtime `POST /v1/guide -> agent_context.prompt_text` has its own renderings:
+
+| Runtime mode | Header | Use |
+|---|---|---|
+| standard | `AIONIS_AGENT_CONTEXT v1` | Raw HTTP hosts that pass Runtime guide text directly. |
+| compact | `AIONIS_CTX v2` | Explicit low-token Runtime prompt mode. |
+
+Do not append Runtime `agent_context.prompt_text` to SDK `agent_prompt`.
+`guideAgentContext()` and `execution.guideAgentContextForRole()` compile the
+Runtime fields into one SDK prompt by default. `context_mode: "compact_agent"`
+asks Runtime for compact base guide text; it does not change the SDK final
+prompt format. Set `prompt_format: "runtime_compact"` only when the host
+intentionally wants Runtime `agent_context.prompt_text` as the final prompt.
+
 ## Start Runtime
 
 `guide()` uses semantic recall, so configure an embedding provider before

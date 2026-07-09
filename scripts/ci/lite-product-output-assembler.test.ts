@@ -1050,6 +1050,76 @@ test("product agent context contract renderer preserves execution state surfaces
   assert.ok(standardContext.prompt_text.includes("reference_fallback_requires=explicit_raw_evidence_or_operator_confirmation"));
 });
 
+test("product agent context preserves passed exact execution route despite lifecycle stale evidence", () => {
+  const memoryPacket = buildAionisMemoryPacket({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    query: {
+      source: "text",
+      intent: "Continue the exact accepted execution task.",
+    },
+    nodes: [
+      {
+        id: "mem-passed-exact-route",
+        type: "concept",
+        title: "Accepted execution state",
+        text_summary: [
+          "Accepted continuation is current for this exact task.",
+          "Rehydrated prior execution evidence includes raw trace details and stale audit wording.",
+          "The verifier passed with reward 1.",
+        ].join(" "),
+        tier: "hot",
+        slots: {
+          memory_kind: "execution_memory",
+          compression_layer: "L2",
+          contract_trust: "advisory",
+          execution_native_v1: {
+            schema_version: "execution_native_v1",
+            execution_kind: "workflow_anchor",
+            summary_kind: "current_state",
+            compression_layer: "L2",
+            contract_trust: "advisory",
+            task_signature: "exact-execution-task",
+            task_family: "exact-execution",
+            workflow_signature: "exact-execution:wf",
+            execution_outcome_role: "passed_solution",
+            anchor_kind: "execution",
+            anchor_level: "L2",
+            target_files: ["src/exact-route.ts"],
+            next_action: "Continue the accepted exact task route.",
+            workflow_steps: ["Edit src/exact-route.ts"],
+            acceptance_checks: ["Verifier reward: 1"],
+          },
+        },
+        confidence: 0.9,
+        salience: 0.9,
+      },
+    ],
+  });
+
+  const context = buildAionisAgentContext({
+    tenant_id: "tenant-local",
+    scope: "repo-a",
+    memory_packet: memoryPacket,
+    execution_scope: {
+      task_signature: "exact-execution-task",
+      task_family: "exact-execution",
+      workflow_signature: "exact-execution:wf",
+    },
+    query_intent_override: "Continue the exact accepted execution task.",
+  });
+
+  assert.deepEqual(context.use_now_memory_ids, ["mem-passed-exact-route"]);
+  assert.equal(context.inspect_before_use_memory_ids.includes("mem-passed-exact-route"), false);
+  assert.ok(context.command_posture.some((entry) =>
+    entry.memory_id === "mem-passed-exact-route"
+    && entry.posture === "should_continue"
+    && entry.surface === "current"
+  ));
+  assert.deepEqual(context.route_contract.active_targets.map((entry) => entry.target), ["src/exact-route.ts"]);
+  assert.deepEqual(context.route_contract.reference_only_targets, []);
+});
+
 test("product agent route contract does not promote background execution events to active route", () => {
   const guidePacket = buildAionisGuidePacket({
     tenant_id: "tenant-local",

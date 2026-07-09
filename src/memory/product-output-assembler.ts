@@ -3618,6 +3618,22 @@ function lifecycleCandidateMemoryDirectUseUnsafe(signals: AionisLifecycleCandida
   });
 }
 
+function passedExecutionRouteDirectUseProtected(entry: MemoryPacketEntry): boolean {
+  return memoryEntryUsable(entry)
+    && memoryEntryIsExecutionScoped(entry)
+    && entry.memory_contract.use_policy === "direct_use"
+    && entry.execution_state?.execution_outcome_role === "passed_solution"
+    && (contractEntryIsCurrentState(entry) || contractEntryIsProcedure(entry))
+    && entry.target_files.length > 0;
+}
+
+function lifecycleCandidateHardUnsafeForPassedRoute(signals: AionisLifecycleCandidateSignal[]): boolean {
+  return signals.some((signal) =>
+    lifecycleCandidateDirectUseUnsafe(signal)
+    && (signal.signal_type === "negative" || signal.signal_type === "contested")
+  );
+}
+
 function lifecycleCandidateMemoryDirectUseAdmissible(args: {
   entry: MemoryPacketEntry;
   signals: AionisLifecycleCandidateSignal[];
@@ -3639,6 +3655,9 @@ function lifecycleCandidateMemoryDirectUseProtected(args: {
   entry: MemoryPacketEntry;
   signals: AionisLifecycleCandidateSignal[];
 }): boolean {
+  if (passedExecutionRouteDirectUseProtected(args.entry)) {
+    return !lifecycleCandidateHardUnsafeForPassedRoute(args.signals);
+  }
   if (lifecycleCandidateMemoryDirectUseUnsafe(args.signals)) return false;
   const hasCurrentOrProcedureSignal = args.signals.some((signal) =>
     lifecycleCandidateRuntimeOwnedProducer(signal)

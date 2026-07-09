@@ -2,7 +2,7 @@
 
 Status: stable product contract for Agent-facing context
 
-Updated: 2026-07-07
+Updated: 2026-07-09
 
 This document defines the single supported product meaning of "context given to
 an Agent". It describes current Runtime and SDK behavior; it does not introduce
@@ -66,14 +66,37 @@ type AgentContextResult = {
 default. The other fields exist for host logic, feedback attribution,
 rehydration, audit, and debugging.
 
+## Prompt Surface Registry
+
+Aionis currently has three named prompt renderings. They are not three
+different memory systems.
+
+| Header | Owner | How it is selected | Intended use |
+|---|---|---|---|
+| `AIONIS_EXECUTION_AGENT_CONTEXT v1` | SDK | Default output from `guideAgentContext()` and `execution.guideAgentContextForRole()` | Recommended final prompt for Agent hosts. |
+| `AIONIS_AGENT_CONTEXT v1` | Runtime | Default `POST /v1/guide -> agent_context.prompt_text` when Runtime `agent_context_mode` is standard | Lower-level HTTP guide text for hosts that do not use SDK compilation. |
+| `AIONIS_CTX v2` | Runtime | Runtime compact rendering when `agent_context_mode: "compact_agent"` is requested; SDK final prompt only when `prompt_format: "runtime_compact"` is explicitly set | Explicit low-token Runtime prompt mode. |
+
+Do not concatenate these prompt renderings. A host should pick exactly one final
+Agent prompt:
+
+1. SDK default: pass `AgentContext.agent_prompt`.
+2. Raw HTTP: pass `agent_context.prompt_text` or selected structured fields.
+3. Explicit low-token SDK mode: set `prompt_format: "runtime_compact"` and pass
+   the returned `agent_prompt`.
+
+`context_mode: "compact_agent"` only asks Runtime for compact base guide text.
+It does not by itself switch the SDK final prompt away from
+`AIONIS_EXECUTION_AGENT_CONTEXT v1`.
+
 ## Prompt And Evidence Separation
 
 Aionis intentionally separates two levels:
 
 | Surface | Purpose | Agent-facing by default |
 |---|---|---|
-| `agent_prompt` | SDK-rendered execution contract and Runtime base guide for the next Agent action. | Yes |
-| `agent_context.prompt_text` | Runtime compact guide text; also the explicit compact-mode prompt. | Yes, only for direct HTTP or explicit compact mode |
+| `agent_prompt` | SDK-rendered execution contract built from Runtime `agent_context`, command posture, route contract, and optional resolved evidence. It does not concatenate Runtime `prompt_text` by default. | Yes |
+| `agent_context.prompt_text` | Runtime guide text. Default standard mode renders `AIONIS_AGENT_CONTEXT v1`; compact mode renders `AIONIS_CTX v2`. | Yes, only for direct HTTP or explicit compact mode |
 | `agent_context.use_now` | Structured direct-use memory lines already admitted for this turn. | Yes, through the prompt or selected fields |
 | `agent_context.inspect_before_use` | Candidate or contested evidence that needs host or Agent inspection before use. | Yes, as inspection posture |
 | `agent_context.do_not_use` | Blocked, stale, failed, or contradicted direction. | Yes, as negative guidance |
@@ -90,18 +113,23 @@ measurement that should not become current action text.
 
 Execution memory has stricter Agent prompt scope than ordinary memory.
 
-For role-aware execution context, if the current guide request carries a
-`task_signature`, the same exact `task_signature` is the only scope that can
-become direct current-action guidance (`use_now`) by default.
+For role-aware execution context, direct current-action guidance (`use_now` /
+`should_continue`) is reserved for execution evidence that Runtime can treat as
+current for this task:
 
-Same `task_family` or `workflow_signature` evidence may still appear as
+1. exact `task_signature` matches
+2. accepted / passed same-`workflow_signature` continuation evidence that the
+   route contract promotes as an active continuation
+
+Broad `task_family` evidence, different-workflow evidence, rejected branches,
+failed branches, stale branches, and contested evidence may still appear as
 candidate, inspection, negative, or rehydrate guidance when governance admits it.
-It must not be promoted to direct current-action guidance just because it shares
-a broad workflow family.
+They must not become direct current-action guidance just because they are
+nearby.
 
-This rule prevents one task's successful or failed execution branch from
-becoming another task's direct instruction just because both tasks share a broad
-workflow family.
+This rule prevents unrelated execution branches from becoming current
+instructions while preserving the core execution-memory behavior: accepted
+continuations can remain executable state.
 
 Ordinary non-execution memory, such as user preferences and stable project
 facts, remains governed by the normal lifecycle, authority, scope, and premise
@@ -110,10 +138,12 @@ scope signals.
 
 ## Workflow Signature Role
 
-`workflow_signature` is still useful. It helps Runtime retrieve and audit
+`workflow_signature` is still useful. It helps Runtime retrieve, rank, and audit
 related continuity evidence across a broader work family.
 
-It is not sufficient by itself for current Agent action text.
+It is not sufficient by itself for current Agent action text. Direct prompt
+admission still requires accepted / passed continuation semantics and route
+contract admission.
 
 Use it for:
 
@@ -122,18 +152,20 @@ Use it for:
 3. finding related workflow evidence
 4. future feedback and learning analysis
 
-Do not use it as direct prompt admission for execution memory unless the current
-prompt scope also matches exact `task_signature`.
+Do not use it as direct prompt admission for execution memory merely because it
+matches. Same-workflow evidence becomes direct guidance only when the Runtime
+route contract admits it as an accepted / passed continuation.
 
 ## AIONIS_CTX v2
 
 `AIONIS_CTX v2` is the Runtime compact prompt format used by
-`agent_context.prompt_text`.
+`agent_context.prompt_text` only when compact Runtime rendering is selected.
 
 It is not a second AgentContext system. It is the compact Runtime rendering of
 the same governed AgentContext contract. SDK `agent_prompt` defaults to a
-single SDK execution contract. `AIONIS_CTX v2` becomes the SDK final prompt only
-when a host explicitly sets `prompt_format: "runtime_compact"`.
+single SDK execution contract. It must not append `AIONIS_AGENT_CONTEXT v1` or
+`AIONIS_CTX v2`. Runtime prompt text becomes the SDK final prompt only when a
+host explicitly sets `prompt_format: "runtime_compact"`.
 
 The supported relationship is:
 
@@ -164,13 +196,19 @@ Do not attribute success or failure to memory that was merely present in
 
 The current focused Runtime enforces this contract with tests that verify:
 
-1. same-workflow but different-task execution memory can remain visible as
-   candidate or inspection context
-2. same-workflow but different-task execution memory does not become direct
-   `use_now` guidance by default
-3. SDK `execution.guideAgentContextForRole().agent_prompt` over real Runtime
-   HTTP follows the same exact-task prompt boundary
-4. audit/debug packets stay out of the default Agent prompt
+1. accepted exact-task execution memory remains direct `use_now` /
+   `should_continue` guidance even when lifecycle text contains stale or
+   rehydrate wording
+2. accepted same-workflow continuation evidence can remain direct
+   `should_continue` guidance when the route contract admits it
+3. broad family-only, rejected, stale, failed, or contested evidence stays out
+   of direct current-action guidance
+4. SDK `guideAgentContext().agent_prompt` defaults to
+   `AIONIS_EXECUTION_AGENT_CONTEXT v1` and does not append Runtime
+   `AIONIS_AGENT_CONTEXT v1` or `AIONIS_CTX v2`
+5. SDK `execution.guideAgentContextForRole().agent_prompt` over real Runtime
+   HTTP follows the same AgentContext prompt-surface boundary
+6. audit/debug packets stay out of the default Agent prompt
 
 Relevant test coverage:
 
@@ -189,5 +227,5 @@ Do not add another final Agent-context output unless
 Do not make benchmark adapters, dashboard views, operator snapshots, or
 debug/audit reports into Agent prompt sources.
 
-Do not relax the exact-task execution prompt boundary based on a single task,
-single benchmark, or single Agent host run.
+Do not relax execution-memory prompt admission based on a single task, single
+benchmark, or single Agent host run.
