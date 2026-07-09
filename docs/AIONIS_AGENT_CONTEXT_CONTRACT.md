@@ -131,9 +131,9 @@ prompt scope also matches exact `task_signature`.
 `agent_context.prompt_text`.
 
 It is not a second AgentContext system. It is the compact Runtime rendering of
-the same governed AgentContext contract. SDK `agent_prompt` defaults to the
-full SDK execution contract plus `BASE_AIONIS_CONTEXT`; `AIONIS_CTX v2` becomes
-the SDK final prompt only when a host explicitly requests compact mode.
+the same governed AgentContext contract. SDK `agent_prompt` defaults to a
+single SDK execution contract. `AIONIS_CTX v2` becomes the SDK final prompt only
+when a host explicitly sets `prompt_format: "runtime_compact"`.
 
 The supported relationship is:
 

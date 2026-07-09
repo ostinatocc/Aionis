@@ -82,12 +82,40 @@ test("SDK guideAgentContext renders execution contract and resolved evidence by 
   assert.equal(result.resolved_evidence.length, 2);
   assert.deepEqual(result.resolved_evidence.map((entry) => entry.surface), ["inspect_before_use", "rehydrate"]);
   assert.match(result.agent_prompt, /AIONIS_EXECUTION_AGENT_CONTEXT/);
-  assert.match(result.agent_prompt, /BASE_AIONIS_CONTEXT/);
-  assert.match(result.agent_prompt, /AIONIS_CTX v2/);
+  assert.doesNotMatch(result.agent_prompt, /BASE_AIONIS_CONTEXT/);
+  assert.doesNotMatch(result.agent_prompt, /AIONIS_CTX v2/);
   assert.match(result.agent_prompt, /AIONIS_RESOLVED_EVIDENCE v1/);
   assert.match(result.agent_prompt, /INSPECT_EVIDENCE/);
   assert.match(result.agent_prompt, /REHYDRATE_EVIDENCE/);
   assert.equal(result.resolved_evidence.some((entry) => entry.evidence_text.includes("INSPECT_EVIDENCE")), true);
   assert.equal(result.resolved_evidence.some((entry) => entry.evidence_text.includes("REHYDRATE_EVIDENCE")), true);
   assert.equal(result.unresolved_memory_ids.length, 0);
+});
+
+test("SDK guideAgentContext can return Runtime compact prompt without stacking SDK contract", async () => {
+  const runtimePrompt = "AIONIS_CTX v2\nstate r=agent h=1 a=1 p=act auth=ok risk=lo\ncurrent: note=continue accepted route";
+  const fakeFetch: typeof fetch = async () =>
+    new Response(JSON.stringify({
+      ok: true,
+      guide_trace_id: "guide-compact-runtime",
+      agent_context: {
+        prompt_text: runtimePrompt,
+        memory_ids: [],
+      },
+    }), { status: 200 });
+  const client = createAionisClient({
+    baseUrl: "http://127.0.0.1:3001",
+    fetchImpl: fakeFetch,
+  });
+
+  const result = await client.guideAgentContext({
+    query_text: "Continue compact.",
+  }, undefined, {
+    prompt_format: "runtime_compact",
+  });
+
+  assert.equal(result.compiled_context.prompt_format, "runtime_compact");
+  assert.equal(result.agent_prompt, runtimePrompt);
+  assert.doesNotMatch(result.agent_prompt, /AIONIS_EXECUTION_AGENT_CONTEXT/);
+  assert.doesNotMatch(result.agent_prompt, /BASE_AIONIS_CONTEXT/);
 });

@@ -478,6 +478,7 @@ export const AIONIS_ADMISSION_POLICY_VERSION = "2026-06-17";
 export const AIONIS_ADMISSION_POLICY_MODE = "deterministic_admission";
 
 export type AionisExecutionContextBudgetProfile = "compact" | "balanced" | "high_recall";
+export type AionisAgentPromptFormat = "contract" | "runtime_compact";
 
 export type AionisExecutionFilePresence = {
   target: string;
@@ -514,7 +515,7 @@ export type AionisExecutionAgentContextCompileInput = {
   repo_state?: AionisExecutionRepoState;
   budget_profile?: AionisExecutionContextBudgetProfile;
   max_prompt_chars?: number;
-  include_base_prompt?: boolean;
+  prompt_format?: AionisAgentPromptFormat;
   additional_instructions?: string[];
 };
 
@@ -531,6 +532,7 @@ export type AionisExecutionContextWarning = {
 
 export type AionisCompiledExecutionAgentContext = {
   contract_version: "aionis_execution_agent_context_v1";
+  prompt_format: AionisAgentPromptFormat;
   budget_profile: AionisExecutionContextBudgetProfile;
   agent_prompt: string;
   base_prompt: string;
@@ -593,7 +595,7 @@ export type AionisGuideAgentContextOptions = {
   repo_state?: AionisExecutionAgentContextCompileInput["repo_state"];
   budget_profile?: AionisExecutionContextBudgetProfile;
   max_prompt_chars?: number;
-  include_base_prompt?: boolean;
+  prompt_format?: AionisAgentPromptFormat;
   include_resolved_evidence_in_prompt?: boolean;
   evidence_limit?: number;
   evidence_char_budget?: number;
@@ -1488,11 +1490,6 @@ function safeAgentPromptFromGuide(guide: unknown): string {
   }
 }
 
-function guideAgentContextMode(guide: unknown): string | null {
-  const context = asRecord(asRecord(guide)?.agent_context);
-  return coerceString(context?.agent_context_mode);
-}
-
 function receiptFromGuideTrace(guide: unknown): AionisMemoryUseReceipt | null {
   const guideRecord = asRecord(guide);
   const candidates = [
@@ -2099,20 +2096,23 @@ function mergeCompiledContextWithEvidence(args: {
     args.resolvedEvidence,
     evidenceBudget,
   );
-  const compactRuntimePromptRequested =
-    (guideAgentContextMode(args.guide) === "compact_agent" || args.options.include_base_prompt === false)
-    && args.options.include_base_prompt !== true;
-  if (compactRuntimePromptRequested) {
+  const promptFormat = args.options.prompt_format ?? "contract";
+  const includeEvidence = promptFormat === "runtime_compact"
+    ? args.options.include_resolved_evidence_in_prompt === true
+    : args.options.include_resolved_evidence_in_prompt ?? true;
+  const compiledMaxPromptChars = includeEvidence && evidenceBlock
+    ? Math.max(4_000, maxPromptChars - evidenceBlock.length - 2)
+    : maxPromptChars;
+  if (promptFormat === "runtime_compact") {
     const compiled = compileExecutionAgentContext({
       guide: args.guide,
       task: args.options.task,
       repo_state: args.options.repo_state,
       budget_profile: args.options.budget_profile ?? "compact",
-      max_prompt_chars: evidenceBlock ? Math.max(4_000, maxPromptChars - evidenceBlock.length - 2) : maxPromptChars,
-      include_base_prompt: false,
+      max_prompt_chars: compiledMaxPromptChars,
+      prompt_format: "runtime_compact",
       additional_instructions: args.options.additional_instructions,
     });
-    const includeEvidence = args.options.include_resolved_evidence_in_prompt === true;
     const agentPrompt = includeEvidence && evidenceBlock
       ? truncateText(`${compiled.agent_prompt}\n\n${evidenceBlock}`, maxPromptChars)
       : compiled.agent_prompt;
@@ -2131,11 +2131,10 @@ function mergeCompiledContextWithEvidence(args: {
     task: args.options.task,
     repo_state: args.options.repo_state,
     budget_profile: args.options.budget_profile ?? "balanced",
-    max_prompt_chars: evidenceBlock ? Math.max(4_000, maxPromptChars - evidenceBlock.length - 2) : maxPromptChars,
-    include_base_prompt: args.options.include_base_prompt ?? true,
+    max_prompt_chars: compiledMaxPromptChars,
+    prompt_format: "contract",
     additional_instructions: args.options.additional_instructions,
   });
-  const includeEvidence = args.options.include_resolved_evidence_in_prompt ?? true;
   const agentPrompt = includeEvidence && evidenceBlock
     ? truncateText(`${compiled.agent_prompt}\n\n${evidenceBlock}`, maxPromptChars)
     : compiled.agent_prompt;
@@ -2196,9 +2195,6 @@ export class AionisClient {
     const guide = await this.guide<TGuide>(body, options);
     const bodyRecord = asRecord(body) ?? {};
     const effectiveContextOptions = { ...contextOptions };
-    if (effectiveContextOptions.include_base_prompt === undefined && bodyRecord.context_mode === "compact_agent") {
-      effectiveContextOptions.include_base_prompt = false;
-    }
     const { tenant_id: tenantId, scope } = guideTenantScope(guide, {
       tenant_id: options?.tenant_id ?? coerceString(bodyRecord.tenant_id) ?? this.tenantId ?? undefined,
       scope: options?.scope ?? coerceString(bodyRecord.scope) ?? this.scope ?? undefined,
@@ -3113,6 +3109,7 @@ export function compileExecutionAgentContext(
   input: AionisExecutionAgentContextCompileInput,
 ): AionisCompiledExecutionAgentContext {
   const profile = input.budget_profile ?? "balanced";
+  const promptFormat = input.prompt_format ?? "contract";
   const maxPromptChars = input.max_prompt_chars ?? defaultExecutionPromptBudget(profile);
   const basePrompt = safeAgentPromptFromGuide(input.guide);
   const routeContract = routeContractFromGuide(input.guide);
@@ -3158,19 +3155,18 @@ export function compileExecutionAgentContext(
     limit: Math.max(1, Math.min(3, evidenceBudget.items)),
     maxChars: evidenceBudget.chars,
   });
-  const includeBasePrompt = input.include_base_prompt ?? true;
-  const activeContextLines = includeBasePrompt ? [] : agentContextTextBullets({
+  const activeContextLines = promptFormat === "contract" ? agentContextTextBullets({
     guide: input.guide,
     field: "use_now",
     limit: evidenceBudget.items,
     maxChars: evidenceBudget.chars,
-  });
-  const blockedContextLines = includeBasePrompt ? [] : agentContextTextBullets({
+  }) : [];
+  const blockedContextLines = promptFormat === "contract" ? agentContextTextBullets({
     guide: input.guide,
     field: "do_not_use",
     limit: Math.max(1, Math.min(3, evidenceBudget.items)),
     maxChars: evidenceBudget.chars,
-  });
+  }) : [];
   const useNowMemoryIds = receipt.use_now_memory_ids;
   const inspectMemoryIds = receipt.inspect_before_use_memory_ids;
   const doNotUseMemoryIds = receipt.do_not_use_memory_ids;
@@ -3267,15 +3263,13 @@ export function compileExecutionAgentContext(
       : ["- none"]),
   ];
   const contractPrompt = contractSections.join("\n");
-  const baseHeader = "\n\nBASE_AIONIS_CONTEXT\n";
-  const baseBudget = includeBasePrompt ? Math.max(0, maxPromptChars - contractPrompt.length - baseHeader.length) : 0;
-  const renderedBasePrompt = includeBasePrompt && basePrompt.length > 0 ? truncateText(basePrompt, baseBudget) : "";
-  const agentPrompt = renderedBasePrompt
-    ? truncateText(`${contractPrompt}${baseHeader}${renderedBasePrompt}`, maxPromptChars)
+  const agentPrompt = promptFormat === "runtime_compact"
+    ? truncateText(basePrompt, maxPromptChars)
     : truncateText(contractPrompt, maxPromptChars);
 
   return {
     contract_version: "aionis_execution_agent_context_v1",
+    prompt_format: promptFormat,
     budget_profile: profile,
     agent_prompt: agentPrompt,
     base_prompt: basePrompt,

@@ -613,10 +613,6 @@ CURRENT_ACTIVE_PATH
 
 BLOCKED_DIRECTION_TARGETS
 - failed broad search branch
-
-BASE_AIONIS_CONTEXT
-AIONIS_CTX v2
-state role=reviewer history=actionable
 ```
 
 The structured context also carries memory IDs for attribution:
