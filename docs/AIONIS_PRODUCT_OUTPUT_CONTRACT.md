@@ -927,7 +927,7 @@ answers how the execution context should treat it.
 | `memory_family` | distinguishes ordinary cognitive memory from execution memory | `src/memory/product-output-assembler.ts` |
 | `relevant_memories[].execution_state.transition_kind` | resume/handoff/inspect/avoid/rehydrate execution intent | `src/memory/product-output-assembler.ts`, `src/memory/schemas.ts` |
 | `evidence_trail` | node references, raw/evidence refs, commit refs | `src/memory/recall-serialization.ts`, Lite stores |
-| `lifecycle` | candidate, suppressed, archived, rehydration state | `src/memory/semantic-forgetting.ts`, `src/memory/archive-relocation.ts`, `src/memory/rehydrate-anchor.ts` |
+| `lifecycle` | candidate, suppressed, archived, rehydration state | `src/kernel/forgetting-kernel.ts`, `src/memory/semantic-forgetting.ts`, `src/memory/rehydrate-anchor.ts` |
 | `contradiction_warnings` | candidate/contested memory visibility | `src/memory/product-output-assembler.ts`, lifecycle and authority surfaces |
 | `behavior_impact` | answer style, fact recall, project context, workflow guidance | `src/memory/product-output-assembler.ts` |
 | `risk` | low confidence, stale memory, contradiction risk | `src/memory/product-output-assembler.ts` |
@@ -1416,7 +1416,7 @@ route itself has `memory_runtime_mutation: false`.
 | `quality` | verifier surface, workflow reuse, negative transfer | `src/execution/verification.ts`, `src/memory/replay*.ts`, `src/memory/runtime-signal-trends.ts` |
 | `history_contributions` | visible handoff/replay contribution attribution | `src/memory/product-output-assembler.ts` |
 | `learning_effect` | learning loop, promotion evidence, authority gates | `src/memory/learning-loop.ts`, `src/memory/promotion-evidence-ledger.ts`, `src/memory/authority-*.ts` |
-| `forgetting_effect` | semantic forgetting, archive, rehydrate, activation | `src/kernel/forgetting-kernel.ts`, `src/memory/lifecycle-lite.ts`, `src/memory/archive-relocation.ts` |
+| `forgetting_effect` | semantic forgetting, archive, rehydrate, activation | `src/kernel/forgetting-kernel.ts`, `src/memory/lifecycle-lite.ts` |
 | `feedback_signal_summary` | product-level read-only feedback signal summary | `src/memory/product-output-assembler.ts`, `memory_decision_audit.feedback_signal_review` |
 | `feedback_learning_control` | `/v1/feedback` or advanced `/v1/forget activate` persistence result for repeated-unused-without-positive inspect-before-use posture | `src/routes/product-facade.ts`, `src/memory/lifecycle-lite.ts`, `src/memory/node-feedback-state.ts` |
 | `inspect_before_use_shadow_delta` | disabled preview of confidence-decay candidates that would move to inspect-before-use | `src/memory/product-output-assembler.ts`, `memory_decision_trace.inspect_before_use_shadow_delta` |

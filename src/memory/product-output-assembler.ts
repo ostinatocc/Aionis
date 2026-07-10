@@ -37,9 +37,14 @@ import {
   type AionisTaskContextProfile,
   type AionisTraceDerivedSkillCandidate,
 } from "./product-output-contract.js";
-import type { AionisGuidanceAuthority, AionisMemoryDecisionSurface } from "./governance-contract.js";
+import type { AionisGuidanceAuthority, AionisMemoryDecisionSurface, GovernanceDecisionV1 } from "./governance-contract.js";
+import {
+  decideGovernedMemory,
+  type GovernanceRequestContext,
+} from "./governance-decision.js";
 import {
   AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD,
+  authorityConsumptionStateFromValue,
   authorityConsumptionStablePromotionBlockedCount,
 } from "./authority-consumption.js";
 import { normalizeExecutionOutcomeRoleFromValue } from "./execution-outcome-role.js";
@@ -62,6 +67,7 @@ import {
 } from "./node-execution-surface.js";
 import {
   adjudicateMemoryLifecycle,
+  lifecycleDecisionInputForMemory,
   memoryLifecycleRelationsFromEdges,
   type AdjudicableMemoryEntry,
   type MemoryLifecycleEdgeInput,
@@ -3100,34 +3106,29 @@ function shortenPromptText(value: string, maxChars: number): string {
   return `${compacted.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
 }
 
+function lifecycleDecisionForEntry(entry: MemoryPacketEntry) {
+  return lifecycleDecisionInputForMemory({
+    lifecycle_state: entry.lifecycle_state,
+    execution_outcome_role: entry.execution_state?.execution_outcome_role,
+    transition_kind: entry.execution_state?.transition_kind,
+  });
+}
+
 function memoryEntryBlocked(entry: MemoryPacketEntry): boolean {
-  return entry.authority === "blocked"
-    || entry.lifecycle_state === "suppressed"
-    || entry.lifecycle_state === "archived"
-    || entry.execution_state?.execution_outcome_role === "failed_branch"
-    || entry.execution_state?.execution_outcome_role === "blocked";
+  return entry.authority === "blocked" || lifecycleDecisionForEntry(entry).blocks_use;
 }
 
 function memoryEntryInspectBeforeUse(entry: MemoryPacketEntry): boolean {
-  return entry.authority === "candidate"
-    || entry.lifecycle_state === "candidate"
-    || entry.lifecycle_state === "contested"
-    || entry.lifecycle_state === "demoted"
-    || entry.lifecycle_state === "rehydration_candidate";
+  return entry.authority === "candidate" || lifecycleDecisionForEntry(entry).requires_inspection;
 }
 
 function memoryEntryRehydrateEligible(entry: MemoryPacketEntry): boolean {
-  return entry.lifecycle_state === "rehydration_candidate"
-    || entry.lifecycle_state === "archived"
+  return entry.lifecycle_state === "rehydration_candidate" || entry.lifecycle_state === "archived"
     || entry.execution_state?.transition_kind === "request_rehydrate";
 }
 
 function memoryEntryRehydrateSurface(entry: MemoryPacketEntry): boolean {
-  return !memoryEntryBlocked(entry)
-    && (
-      entry.lifecycle_state === "rehydration_candidate"
-      || entry.execution_state?.transition_kind === "request_rehydrate"
-    );
+  return lifecycleDecisionForEntry(entry).requires_rehydrate;
 }
 
 function queryRequestsRehydration(value: string | null | undefined): boolean {
@@ -3158,14 +3159,17 @@ function memoryEntryHasExecutionScopeSignals(entry: MemoryPacketEntry): boolean 
     || !!entry.execution_state?.workflow_signature;
 }
 
-function executionScopeMatchesEntry(args: {
+function governanceScopeMatchForEntry(args: {
   entry: MemoryPacketEntry;
   executionScope: NormalizedAgentPromptExecutionScope;
-}): boolean {
+}): GovernanceRequestContext["scope_match"] {
   const state = args.entry.execution_state;
-  return (!!args.executionScope.task_signature && state?.task_signature === args.executionScope.task_signature)
-    || (!!args.executionScope.task_family && state?.task_family === args.executionScope.task_family)
-    || (!!args.executionScope.workflow_signature && state?.workflow_signature === args.executionScope.workflow_signature);
+  if (!args.executionScope.task_signature && !args.executionScope.task_family && !args.executionScope.workflow_signature) return "unscoped";
+  if (!memoryEntryHasExecutionScopeSignals(args.entry)) return "unscoped";
+  if (args.executionScope.task_signature && state?.task_signature === args.executionScope.task_signature) return "exact_task";
+  if (args.executionScope.workflow_signature && state?.workflow_signature === args.executionScope.workflow_signature) return "workflow";
+  if (args.executionScope.task_family && state?.task_family === args.executionScope.task_family) return "task_family";
+  return "unrelated";
 }
 
 function memoryEntryAgentPromptScopeAllowed(args: {
@@ -3173,13 +3177,8 @@ function memoryEntryAgentPromptScopeAllowed(args: {
   executionScope: NormalizedAgentPromptExecutionScope;
   verifiedHandoffMemoryIds: Set<string>;
 }): boolean {
-  if (!args.executionScope.task_signature && !args.executionScope.task_family && !args.executionScope.workflow_signature) return true;
-  if (!memoryEntryHasExecutionScopeSignals(args.entry)) return true;
   if (verifiedHandoffDirectUseEligible(args.entry, args.verifiedHandoffMemoryIds)) return true;
-  return executionScopeMatchesEntry({
-    entry: args.entry,
-    executionScope: args.executionScope,
-  });
+  return governanceScopeMatchForEntry({ entry: args.entry, executionScope: args.executionScope }) !== "unrelated";
 }
 
 function filterMemoryEntriesForAgentPromptScope(args: {
@@ -3204,19 +3203,6 @@ function filterMemoryEntriesForAgentPromptScope(args: {
     }
   }
   return { promptEntries, excludedEntries };
-}
-
-function memoryEntryDirectUseEligible(args: {
-  entry: MemoryPacketEntry;
-  lifecycleCandidateAdmitted: boolean;
-  verifiedRecoveredHandoff: boolean;
-}): boolean {
-  if (!memoryEntryUsable(args.entry) && !args.lifecycleCandidateAdmitted && !args.verifiedRecoveredHandoff) return false;
-  if (!memoryEntryIsExecutionScoped(args.entry)) return true;
-  return contractEntryIsCurrentState(args.entry)
-    || contractEntryIsProcedure(args.entry)
-    || args.lifecycleCandidateAdmitted
-    || args.verifiedRecoveredHandoff;
 }
 
 function memoryEntryLabel(entry: MemoryPacketEntry): string {
@@ -3621,7 +3607,6 @@ function buildPremiseFirewallProjection(args: {
 
 function trustedWorkflowConflictAudit(entries: MemoryPacketEntry[]): {
   hasConflict: boolean;
-  moveAllWorkflowUseNow: boolean;
   conflictedEntries: MemoryPacketEntry[];
   reasons: string[];
 } {
@@ -3632,41 +3617,28 @@ function trustedWorkflowConflictAudit(entries: MemoryPacketEntry[]): {
     && entry.authority === "trusted",
   );
   if (workflowEntries.length < 2) {
-    return { hasConflict: false, moveAllWorkflowUseNow: false, conflictedEntries: [], reasons: [] };
+    return { hasConflict: false, conflictedEntries: [], reasons: [] };
   }
 
-  const selfDisclaimed = workflowEntries.filter((entry) => workflowConflictSignals(entry).length > 0);
+  const selfDisclaimed = workflowEntries.some((entry) => workflowConflictSignals(entry).length > 0);
   const entriesWithTargets = workflowEntries
-    .map((entry) => ({ entry, targets: memoryEntryPathTargets(entry) }))
-    .filter((item) => item.targets.length > 0);
-  const targetConflictEntries = new Set<MemoryPacketEntry>();
+    .map(memoryEntryPathTargets)
+    .filter((targets) => targets.length > 0);
+  let hasTargetConflict = false;
   for (let index = 0; index < entriesWithTargets.length; index += 1) {
     for (let next = index + 1; next < entriesWithTargets.length; next += 1) {
       const left = entriesWithTargets[index];
       const right = entriesWithTargets[next];
-      if (left && right && !sameTargetSet(left.targets, right.targets)) {
-        targetConflictEntries.add(left.entry);
-        targetConflictEntries.add(right.entry);
-      }
+      if (left && right && !sameTargetSet(left, right)) hasTargetConflict = true;
     }
   }
-
-  const conflictedEntries = [...new Set([...selfDisclaimed, ...targetConflictEntries])];
-  const hasTargetConflict = targetConflictEntries.size > 0;
-  const ambiguousMultipleWorkflows =
-    workflowEntries.length > 1
-    && selfDisclaimed.length === 0
-    && !hasTargetConflict;
-  const moveAllTrustedWorkflows = workflowEntries.length > 1;
   return {
-    hasConflict: conflictedEntries.length > 0 || moveAllTrustedWorkflows,
-    moveAllWorkflowUseNow: moveAllTrustedWorkflows,
-    conflictedEntries: moveAllTrustedWorkflows ? workflowEntries : conflictedEntries,
+    hasConflict: true,
+    conflictedEntries: workflowEntries,
     reasons: compactStrings([
-      selfDisclaimed.length > 0 ? "trusted_workflow_self_disclaimed_conflict" : null,
+      selfDisclaimed ? "trusted_workflow_self_disclaimed_conflict" : null,
       hasTargetConflict ? "trusted_workflow_target_conflict" : null,
-      ambiguousMultipleWorkflows ? "multiple_trusted_workflows_require_inspection" : null,
-      moveAllTrustedWorkflows && !ambiguousMultipleWorkflows ? "multiple_trusted_workflows_require_inspection" : null,
+      "multiple_trusted_workflows_require_inspection",
     ]),
   };
 }
@@ -3677,19 +3649,6 @@ function memoryContractInspectBeforeUse(entry: MemoryPacketEntry): boolean {
 
 function memoryContractInspectLine(entry: MemoryPacketEntry): string {
   return `Memory contract: ${memoryEntryAuditLabel(entry)} is ${entry.memory_contract.use_policy}; ${entry.memory_contract.allowed_scope}; inspect before direct reuse.`;
-}
-
-function memoryContractRiskReasons(entries: MemoryPacketEntry[]): string[] {
-  const hasEvidenceOnly = entries.some((entry) => entry.memory_contract.use_policy === "evidence_only");
-  const hasInspect = entries.some((entry) => entry.memory_contract.use_policy === "inspect_before_use");
-  const hasBlocked = entries.some((entry) => entry.memory_contract.use_policy === "do_not_use");
-  const needsMoreEvidence = entries.some((entry) => entry.memory_contract.evidence_requirement === "requires_more_evidence");
-  return compactStrings([
-    hasEvidenceOnly ? "memory_contract_evidence_only_kept_out_of_use_now" : null,
-    hasInspect ? "memory_contract_requires_inspection" : null,
-    hasBlocked ? "memory_contract_blocks_direct_use" : null,
-    needsMoreEvidence ? "memory_contract_requires_more_evidence" : null,
-  ]).slice(0, 4);
 }
 
 function lifecycleCandidateSignalsByMemoryId(
@@ -3846,6 +3805,48 @@ function lifecycleCandidateRehydrateHints(args: {
       required: args.rehydrationRequested,
     }))
     .slice(0, 6);
+}
+
+function governanceExecutionKind(
+  entry: MemoryPacketEntry,
+): "current_state" | "procedure" | "handoff" | "other" | null {
+  if (entry.domain !== "execution") return null;
+  if (contractEntryIsCurrentState(entry)) return "current_state";
+  if (contractEntryIsProcedure(entry)) return "procedure";
+  if (contractEntryIsHandoff(entry)) return "handoff";
+  return "other";
+}
+
+function governanceDecisionForMemoryEntry(args: {
+  entry: MemoryPacketEntry; executionScope: NormalizedAgentPromptExecutionScope;
+  premiseConflict?: GovernanceRequestContext["premise_conflict"]; trustedWorkflowConflict?: boolean;
+  verifiedRecoveredHandoff?: boolean; rehydrateRequested?: boolean;
+  lifecycleCandidate?: GovernanceRequestContext["lifecycle_candidate"]; projectedSurface?: AionisMemoryDecisionSurface | null;
+}): GovernanceDecisionV1 {
+  const entry = args.entry;
+  return decideGovernedMemory({
+    memory: {
+      memory_id: entry.memory_id,
+      authority: entry.authority,
+      lifecycle_state: entry.lifecycle_state,
+      domain: entry.domain,
+      execution_kind: governanceExecutionKind(entry),
+      memory_contract: entry.memory_contract.use_policy,
+      target_files: entry.target_files,
+    },
+    request: {
+      scope_match: governanceScopeMatchForEntry({ entry, executionScope: args.executionScope }),
+      premise_conflict: args.premiseConflict ?? "none",
+      trusted_workflow_conflict: args.trustedWorkflowConflict ?? false,
+      verified_recovered_handoff: args.verifiedRecoveredHandoff ?? false,
+      rehydrate_requested: args.rehydrateRequested ?? false,
+      lifecycle_candidate: args.lifecycleCandidate ?? "none",
+      projected_surface: args.projectedSurface ?? null,
+    },
+    lifecycle: lifecycleDecisionForEntry(entry),
+    authority: authorityConsumptionStateFromValue({ authority_blocked: entry.authority === "blocked" }),
+    feedback: { posture: "none" },
+  });
 }
 
 function buildAgentContextCommandPostures(args: {
@@ -4005,7 +4006,6 @@ function compileAgentContextSurfaces(args: {
   rawDoNotUse: string[];
   rawTargetFiles: string[];
   memoryEntries: MemoryPacketEntry[];
-  rawHistoryUsed: boolean;
   rawActionableHistoryUsed: boolean;
   rawRecommendedPosture: AionisAgentContext["recommended_posture"];
   rawAuthority: AionisAgentContext["authority"];
@@ -4014,6 +4014,7 @@ function compileAgentContextSurfaces(args: {
   premiseFirewall: PremiseFirewallProjection;
   lifecycleCandidateSignals: AionisLifecycleCandidateSignal[];
   verifiedHandoffMemoryIds: Set<string>;
+  executionScope: NormalizedAgentPromptExecutionScope;
 }): {
   historyUsed: boolean;
   actionableHistoryUsed: boolean;
@@ -4029,7 +4030,6 @@ function compileAgentContextSurfaces(args: {
   doNotUseMemoryIds: string[];
   risk: AionisAgentContext["risk"];
 } {
-  const blockedEntries = args.memoryEntries.filter(memoryEntryBlocked);
   const rehydrateHintIds = new Set(args.rehydrateHints.map((hint) => hint.memory_id));
   const rehydrateSurfaceIds = new Set([
     ...rehydrateHintIds,
@@ -4057,13 +4057,6 @@ function compileAgentContextSurfaces(args: {
       .filter((entry) => verifiedHandoffDirectUseEligible(entry, args.verifiedHandoffMemoryIds))
       .map((entry) => entry.memory_id),
   );
-  const inspectEntries = args.memoryEntries.filter((entry) =>
-    !rehydrateSurfaceIds.has(entry.memory_id)
-    && !memoryEntryBlocked(entry)
-    && !verifiedHandoffDirectUseEligible(entry, args.verifiedHandoffMemoryIds)
-    && memoryEntryInspectBeforeUse(entry)
-    && !lifecycleCandidateAdmittedUseNowIds.has(entry.memory_id)
-  );
   const usableEntries = args.memoryEntries.filter((entry) =>
     !rehydrateSurfaceIds.has(entry.memory_id)
     && !memoryEntryBlocked(entry)
@@ -4075,13 +4068,6 @@ function compileAgentContextSurfaces(args: {
   );
   const deniedPathTargets = deniedAgentActionPathTargets(args.memoryEntries);
   const hasUsableMemory = usableEntries.length > 0;
-  const directlyUsableEntries = usableEntries.filter((entry) =>
-    memoryEntryDirectUseEligible({
-      entry,
-      lifecycleCandidateAdmitted: lifecycleCandidateAdmittedUseNowIds.has(entry.memory_id),
-      verifiedRecoveredHandoff: verifiedHandoffDirectUseEligible(entry, args.verifiedHandoffMemoryIds),
-    })
-  );
   const hasRawGuideSurface =
     args.rawTargetFiles.length > 0
     || args.rawUseNow.length > 0
@@ -4089,8 +4075,9 @@ function compileAgentContextSurfaces(args: {
     || args.rawDoNotUse.length > 0
     || args.rehydrateHints.length > 0;
   const trustedConflict = trustedWorkflowConflictAudit(args.memoryEntries);
-  const trustedConflictIds = new Set(trustedConflict.conflictedEntries.map((entry) => entry.memory_id));
-  const trustedWorkflowConflictInspectIds = new Set<string>();
+  const trustedWorkflowConflictInspectIds = new Set(
+    trustedConflict.conflictedEntries.map((entry) => entry.memory_id),
+  );
   const premiseInspectIds = new Set(args.premiseFirewall.inspectBeforeUseMemoryIds.filter((memoryId) =>
     !lifecycleCandidateDirectUseProtectedIds.has(memoryId)
     && !verifiedHandoffDirectUseIds.has(memoryId)
@@ -4112,48 +4099,43 @@ function compileAgentContextSurfaces(args: {
     !lifecycleCandidateDirectUseProtectedIds.has(memoryId)
     && !verifiedHandoffDirectUseIds.has(memoryId)
   ));
-  const memoryContractInspectEntries = usableEntries.filter((entry) =>
-    !verifiedHandoffDirectUseEligible(entry, args.verifiedHandoffMemoryIds)
-    && memoryContractInspectBeforeUse(entry)
+  const memoryContractRiskReasonList = compactStrings([
+    args.memoryEntries.some((entry) => entry.memory_contract.use_policy === "evidence_only") ? "memory_contract_evidence_only_kept_out_of_use_now" : null,
+    args.memoryEntries.some((entry) => entry.memory_contract.use_policy === "inspect_before_use") ? "memory_contract_requires_inspection" : null,
+    args.memoryEntries.some((entry) => entry.memory_contract.use_policy === "do_not_use") ? "memory_contract_blocks_direct_use" : null,
+    args.memoryEntries.some((entry) => entry.memory_contract.evidence_requirement === "requires_more_evidence") ? "memory_contract_requires_more_evidence" : null,
+  ]).slice(0, 4);
+  const governanceDecisions = args.memoryEntries.map((entry) => governanceDecisionForMemoryEntry({
+    entry,
+    executionScope: args.executionScope,
+    premiseConflict: premiseDoNotUseIds.has(entry.memory_id)
+      ? "block"
+      : premiseInspectIds.has(entry.memory_id) ? "inspect" : "none",
+    trustedWorkflowConflict: trustedWorkflowConflictInspectIds.has(entry.memory_id),
+    verifiedRecoveredHandoff: verifiedHandoffDirectUseIds.has(entry.memory_id),
+    rehydrateRequested: rehydrateSurfaceIds.has(entry.memory_id),
+    projectedSurface: args.rawUseNow.some((line) =>
+      !backgroundWorkflowUseNowLine(line) && textMatchesMemoryEntry(line, entry)
+    ) ? "use_now" : null,
+    lifecycleCandidate: lifecycleCandidateRehydrateEligible({
+      entry,
+      signals: lifecycleCandidateSignalsById.get(entry.memory_id) ?? [],
+    })
+      ? "rehydrate"
+      : lifecycleCandidateAdmittedUseNowIds.has(entry.memory_id)
+        ? "direct_use"
+        : lifecycleCandidateInspectIds.has(entry.memory_id) ? "inspect_before_use" : "none",
+  }));
+  const decisionByMemoryId = new Map(governanceDecisions.map((decision) => [decision.memory_id, decision]));
+  const entriesForSurface = (surface: AionisMemoryDecisionSurface): MemoryPacketEntry[] =>
+    args.memoryEntries.filter((entry) => decisionByMemoryId.get(entry.memory_id)?.surface === surface);
+  const blockedEntries = entriesForSurface("do_not_use");
+  const inspectDecisionEntries = entriesForSurface("inspect_before_use");
+  const directUseMemoryEntries = entriesForSurface("use_now");
+  const optionalContextEntries = args.memoryEntries.filter((entry) =>
+    decisionByMemoryId.get(entry.memory_id)?.reason_codes.includes("optional_context_only")
   );
-  const memoryContractInspectIds = new Set(memoryContractInspectEntries.map((entry) => entry.memory_id));
-  const memoryContractRiskReasonList = memoryContractRiskReasons(args.memoryEntries);
-  if (trustedConflict.hasConflict) {
-    for (const entry of usableEntries) {
-      const trustedWorkflow =
-        entry.domain === "execution"
-        && (entry.memory_type === "execution_memory" || entry.memory_type === "procedure")
-        && entry.authority === "trusted";
-      if (
-        (trustedConflict.moveAllWorkflowUseNow && trustedWorkflow)
-        || trustedConflictIds.has(entry.memory_id)
-      ) {
-        trustedWorkflowConflictInspectIds.add(entry.memory_id);
-      }
-    }
-  }
-  const directUseMemoryEntries = directlyUsableEntries.filter((entry) =>
-    !trustedWorkflowConflictInspectIds.has(entry.memory_id)
-    && !premiseInspectIds.has(entry.memory_id)
-    && !premiseDoNotUseIds.has(entry.memory_id)
-    && !lifecycleCandidateInspectIds.has(entry.memory_id)
-    && !memoryContractInspectIds.has(entry.memory_id)
-  );
-  const directUseMemoryIdSet = new Set(directUseMemoryEntries.map((entry) => entry.memory_id));
   const deniedNormalizedPathTargets = new Set(compactStrings([...deniedPathTargets].map(normalizePathTarget)));
-  const optionalContextEntries = usableEntries.filter((entry) =>
-    !directUseMemoryIdSet.has(entry.memory_id)
-    && !trustedWorkflowConflictInspectIds.has(entry.memory_id)
-    && !premiseInspectIds.has(entry.memory_id)
-    && !premiseDoNotUseIds.has(entry.memory_id)
-    && !lifecycleCandidateInspectIds.has(entry.memory_id)
-    && !memoryContractInspectIds.has(entry.memory_id)
-  );
-  const conflictInspectMemoryEntries = usableEntries.filter((entry) =>
-    trustedWorkflowConflictInspectIds.has(entry.memory_id)
-    || premiseInspectIds.has(entry.memory_id)
-    || lifecycleCandidateInspectIds.has(entry.memory_id)
-  );
   const memoryUseNow = compactStrings(directUseMemoryEntries.map((entry) => memoryEntryUseNowLine(entry, deniedPathTargets)));
   const memoryUseNowPathTargets = compactStrings(memoryUseNow.flatMap(extractPathTargets));
   const memoryUseNowStructuredTargets = compactStrings(
@@ -4166,64 +4148,25 @@ function compileAgentContextSurfaces(args: {
   );
   const memoryUseNowPathTargetSet = new Set(memoryUseNowPathTargets);
 
+  const inspectLineForEntry = (entry: MemoryPacketEntry): string => {
+    if (memoryContractInspectBeforeUse(entry)) return memoryContractInspectLine(entry);
+    const signals = lifecycleCandidateSignalsById.get(entry.memory_id) ?? [];
+    if (lifecycleCandidateMemoryDirectUseUnsafe(signals)) return lifecycleCandidateInspectLine({ entry, signals });
+    if (trustedWorkflowConflictInspectIds.has(entry.memory_id)) {
+      return `Inspect conflicting trusted workflow: ${memoryEntryLabel(entry)}`;
+    }
+    return memoryEntryInspectLine(entry);
+  };
   const movedToInspect: string[] = [];
   const movedToDoNotUse: string[] = [];
-  const filteredUseNow = args.rawUseNow.filter((entry) => {
-    const blocked = blockedEntries.find((memory) => textMatchesMemoryEntry(entry, memory));
-    if (blocked) {
-      movedToDoNotUse.push(`Blocked memory: ${memoryEntryLabel(blocked)}`);
-      return false;
-    }
-    const premiseDoNotUse = args.memoryEntries.find((memory) =>
-      premiseDoNotUseIds.has(memory.memory_id) && textMatchesMemoryEntry(entry, memory)
-    );
-    if (premiseDoNotUse) {
-      movedToDoNotUse.push(`Premise risk: query mentions blocked memory ${memoryEntryAuditLabel(premiseDoNotUse)}; keep that premise out of direct use.`);
-      return false;
-    }
-    const inspect = inspectEntries.find((memory) => textMatchesMemoryEntry(entry, memory));
-    if (inspect) {
-      movedToInspect.push(`Inspect memory before use: ${memoryEntryLabel(inspect)}`);
-      return false;
-    }
-    const lifecycleCandidateInspect = args.memoryEntries.find((memory) =>
-      lifecycleCandidateInspectIds.has(memory.memory_id) && textMatchesMemoryEntry(entry, memory)
-    );
-    if (lifecycleCandidateInspect) {
-      movedToInspect.push(lifecycleCandidateInspectLine({
-        entry: lifecycleCandidateInspect,
-        signals: lifecycleCandidateSignalsById.get(lifecycleCandidateInspect.memory_id) ?? [],
-      }));
-      return false;
-    }
-    const premiseInspect = args.memoryEntries.find((memory) =>
-      premiseInspectIds.has(memory.memory_id) && textMatchesMemoryEntry(entry, memory)
-    );
-    if (premiseInspect) {
-      movedToInspect.push(`Premise risk: query mentions ${memoryEntryAuditLabel(premiseInspect)}; inspect before relying on that premise.`);
-      return false;
-    }
-    const memoryContractInspect = args.memoryEntries.find((memory) =>
-      memoryContractInspectIds.has(memory.memory_id) && textMatchesMemoryEntry(entry, memory)
-    );
-    if (memoryContractInspect) {
-      movedToInspect.push(memoryContractInspectLine(memoryContractInspect));
-      return false;
-    }
-    const conflicted = trustedConflict.conflictedEntries.find((memory) => textMatchesMemoryEntry(entry, memory));
-    if (
-      trustedConflict.hasConflict
-      && workflowUseNowLine(entry)
-      && (trustedConflict.moveAllWorkflowUseNow || conflicted)
-    ) {
-      movedToInspect.push(conflicted
-        ? `Inspect conflicting trusted workflow: ${memoryEntryLabel(conflicted)}`
-        : "Inspect trusted workflow conflict before reuse");
-      return false;
-    }
-    if (executionEvidenceUseNowLine(entry)) return true;
-    if (backgroundWorkflowUseNowLine(entry)) return false;
-    if (workflowUseNowLine(entry)) return directUseMemoryEntries.length > 0 || args.rawTargetFiles.length > 0;
+  const filteredUseNow = args.rawUseNow.filter((line) => {
+    const memory = args.memoryEntries.find((entry) => textMatchesMemoryEntry(line, entry));
+    const surface = memory ? decisionByMemoryId.get(memory.memory_id)?.surface : null;
+    if (memory && surface === "do_not_use") movedToDoNotUse.push(`Blocked memory: ${memoryEntryLabel(memory)}`);
+    if (memory && surface === "inspect_before_use") movedToInspect.push(inspectLineForEntry(memory));
+    if (surface && surface !== "use_now") return false;
+    if (executionEvidenceUseNowLine(line)) return true;
+    if (backgroundWorkflowUseNowLine(line)) return false;
     return directUseMemoryEntries.length > 0 || args.rawTargetFiles.length > 0 || args.memoryEntries.length === 0;
   });
 
@@ -4241,15 +4184,7 @@ function compileAgentContextSurfaces(args: {
     ...args.rawInspectBeforeUse,
     ...premiseInspectBeforeUse,
     ...movedToInspect,
-    ...memoryContractInspectEntries.map(memoryContractInspectLine),
-    ...inspectEntries.map(memoryEntryInspectLine),
-    ...conflictInspectMemoryEntries.map((entry) => {
-      const signals = lifecycleCandidateSignalsById.get(entry.memory_id) ?? [];
-      if (lifecycleCandidateMemoryDirectUseUnsafe(signals)) {
-        return lifecycleCandidateInspectLine({ entry, signals });
-      }
-      return `Inspect conflicting trusted workflow: ${memoryEntryLabel(entry)}`;
-    }),
+    ...inspectDecisionEntries.map(inspectLineForEntry),
   ]).slice(0, 5);
   const doNotUse = compactStrings([
     ...args.rawDoNotUse,
@@ -4260,35 +4195,19 @@ function compileAgentContextSurfaces(args: {
 
   const hasRiskSurface = inspectBeforeUse.length > args.rawInspectBeforeUse.length
     || doNotUse.length > args.rawDoNotUse.length
-    || inspectEntries.length > 0
+    || inspectDecisionEntries.length > 0
+    || blockedEntries.length > 0;
+  const historyUsed = hasUsableMemory
+    || inspectDecisionEntries.length > 0
     || blockedEntries.length > 0
-    || trustedConflict.hasConflict
-    || premiseRiskReasons.length > 0
-    || lifecycleCandidateInspectIds.size > 0
-    || memoryContractRiskReasonList.length > 0;
-  const historyUsed = (args.rawHistoryUsed || hasUsableMemory || inspectEntries.length > 0 || blockedEntries.length > 0 || hasRawGuideSurface) && (
-    hasUsableMemory
-    || inspectEntries.length > 0
-    || blockedEntries.length > 0
-    || hasRawGuideSurface
-  );
+    || hasRawGuideSurface;
   const actionableHistoryUsed =
     args.rawActionableHistoryUsed
-    || directUseMemoryEntries.length > 0
-    || conflictInspectMemoryEntries.length > 0
-    || inspectEntries.length > 0
-    || blockedEntries.length > 0
-    || premiseRiskReasons.length > 0
-    || lifecycleCandidateInspectIds.size > 0
-    || memoryContractInspectEntries.length > 0
+    || governanceDecisions.some((decision) => decision.surface !== "not_agent_facing")
     || args.rehydrateHints.length > 0;
   let negativeTransferRisk = args.rawRisk.negative_transfer_risk;
   if (blockedEntries.length > 0) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "high");
-  else if (inspectEntries.length > 0) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "medium");
-  if (trustedConflict.hasConflict) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "medium");
-  if (premiseRiskReasons.length > 0) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "medium");
-  if (lifecycleCandidateInspectIds.size > 0) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "medium");
-  if (memoryContractRiskReasonList.length > 0) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "medium");
+  else if (inspectDecisionEntries.length > 0) negativeTransferRisk = riskAtLeast(negativeTransferRisk, "medium");
 
   const requiredRehydration = args.rehydrateHints.some((hint) => hint.required);
   const recommendedPosture: AionisAgentContext["recommended_posture"] = !actionableHistoryUsed
@@ -4319,7 +4238,7 @@ function compileAgentContextSurfaces(args: {
       ? usableAuthority === "none" ? "advisory" : usableAuthority
       : blockedEntries.length > 0
         ? "blocked"
-        : inspectEntries.length > 0
+        : inspectDecisionEntries.length > 0
           ? "candidate"
           : args.rawAuthority;
 
@@ -4337,16 +4256,8 @@ function compileAgentContextSurfaces(args: {
     doNotUse,
     useNowMemoryIds: compactStrings(directUseMemoryEntries.map((entry) => entry.memory_id)).slice(0, 10),
     optionalContextMemoryIds: compactStrings(optionalContextEntries.map((entry) => entry.memory_id)).slice(0, 10),
-    inspectBeforeUseMemoryIds: compactStrings([
-      ...inspectEntries.map((entry) => entry.memory_id),
-      ...conflictInspectMemoryEntries.map((entry) => entry.memory_id),
-      ...memoryContractInspectEntries.map((entry) => entry.memory_id),
-      ...premiseInspectIds,
-    ]).slice(0, 10),
-    doNotUseMemoryIds: compactStrings([
-      ...blockedEntries.map((entry) => entry.memory_id),
-      ...args.premiseFirewall.doNotUseMemoryIds,
-    ]).slice(0, 10),
+    inspectBeforeUseMemoryIds: compactStrings(inspectDecisionEntries.map((entry) => entry.memory_id)).slice(0, 10),
+    doNotUseMemoryIds: compactStrings(blockedEntries.map((entry) => entry.memory_id)).slice(0, 10),
     risk: {
       negative_transfer_risk: negativeTransferRisk,
       blocked_authority_count: args.rawRisk.blocked_authority_count + blockedEntries.length,
@@ -4354,7 +4265,7 @@ function compileAgentContextSurfaces(args: {
       reasons: compactStrings([
         trustedConflict.hasConflict ? "trusted_workflow_conflict_requires_inspection" : null,
         ...trustedConflict.reasons,
-        inspectEntries.length > 0 ? "candidate_or_contested_memory_kept_out_of_use_now" : null,
+        inspectDecisionEntries.some(memoryEntryInspectBeforeUse) ? "candidate_or_contested_memory_kept_out_of_use_now" : null,
         lifecycleCandidateAdmittedUseNowIds.size > 0 ? "lifecycle_candidate_current_or_procedure_admitted" : null,
         blockedEntries.length > 0 ? "blocked_or_suppressed_memory_kept_out_of_use_now" : null,
         lifecycleCandidateInspectIds.size > 0 ? "lifecycle_candidate_kept_out_of_use_now" : null,
@@ -4524,7 +4435,6 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
     }),
     rawTargetFiles: promptTargetFiles,
     memoryEntries: promptEntries,
-    rawHistoryUsed,
     rawActionableHistoryUsed,
     rawRecommendedPosture,
     rawAuthority,
@@ -4544,6 +4454,7 @@ export function buildAionisAgentContext(args: BuildAionisAgentContextArgs): Aion
       })
     ),
     verifiedHandoffMemoryIds,
+    executionScope,
   });
   const summary = surfaces.historyUsed
     ? rawSummary
@@ -4728,100 +4639,63 @@ function traceTextMatchesEntry(values: string[], entry: MemoryPacketEntry): bool
   return values.some((value) => textMatchesMemoryEntry(value, entry));
 }
 
-function traceSurfaceForMemory(args: {
+function traceProjectedSurfaceForMemory(args: {
   entry: MemoryPacketEntry;
   guide: AionisGuidePacket | null;
   agentContext: AionisAgentContext | null;
-}): AionisMemoryDecisionSurface {
+}): AionisMemoryDecisionSurface | null {
   const guideBrief = args.guide?.guide_brief ?? null;
-  if (args.agentContext?.do_not_use_memory_ids.includes(args.entry.memory_id)) return "do_not_use";
+  if (
+    args.agentContext?.do_not_use_memory_ids.includes(args.entry.memory_id)
+    || traceTextMatchesEntry(args.agentContext?.do_not_use ?? [], args.entry)
+    || traceTextMatchesEntry(guideBrief?.do_not_use ?? [], args.entry)
+  ) return "do_not_use";
   const rehydrateIds = new Set([
     ...(args.agentContext?.rehydrate_hints ?? []).map((hint) => hint.memory_id),
     ...(guideBrief?.rehydrate ?? []).map((hint) => hint.memory_id),
   ]);
-  if (rehydrateIds.has(args.entry.memory_id) || memoryEntryRehydrateSurface(args.entry)) {
-    return "rehydrate";
-  }
-  if (args.agentContext?.inspect_before_use_memory_ids.includes(args.entry.memory_id)) return "inspect_before_use";
-  if (args.agentContext?.use_now_memory_ids.includes(args.entry.memory_id)) return "use_now";
+  if (rehydrateIds.has(args.entry.memory_id)) return "rehydrate";
   if (
-    traceTextMatchesEntry(args.agentContext?.do_not_use ?? [], args.entry)
-    || traceTextMatchesEntry(guideBrief?.do_not_use ?? [], args.entry)
-    || memoryEntryBlocked(args.entry)
-  ) {
-    return "do_not_use";
-  }
-  if (
-    traceTextMatchesEntry(args.agentContext?.inspect_before_use ?? [], args.entry)
+    args.agentContext?.inspect_before_use_memory_ids.includes(args.entry.memory_id)
+    || traceTextMatchesEntry(args.agentContext?.inspect_before_use ?? [], args.entry)
     || traceTextMatchesEntry(guideBrief?.inspect_before_use ?? [], args.entry)
-    || memoryEntryInspectBeforeUse(args.entry)
-  ) {
-    return "inspect_before_use";
-  }
+  ) return "inspect_before_use";
   if (
-    traceTextMatchesEntry(args.agentContext?.use_now ?? [], args.entry)
+    args.agentContext?.use_now_memory_ids.includes(args.entry.memory_id)
+    || traceTextMatchesEntry(args.agentContext?.use_now ?? [], args.entry)
     || traceTextMatchesEntry(guideBrief?.use_now ?? [], args.entry)
-    || memoryEntryUsable(args.entry)
-  ) {
-    return "use_now";
-  }
-  return "not_agent_facing";
+  ) return "use_now";
+  return null;
 }
 
 function traceReasonCodes(args: {
   entry: MemoryPacketEntry;
-  surface: AionisMemoryDecisionSurface;
   memory: AionisMemoryPacket | null;
   guide: AionisGuidePacket | null;
   agentContext: AionisAgentContext | null;
   lifecycleCandidateSignals: AionisLifecycleCandidateSignal[];
+  governanceReasonCodes: string[];
 }): string[] {
-  const hasRelationEvidence = args.memory?.evidence_trail.some((evidence) =>
-    evidence.source === "edge" && evidence.memory_id === args.entry.memory_id
-  ) === true;
-  const hasWarning = args.memory?.contradiction_warnings.some((warning) =>
-    warning.memory_id === args.entry.memory_id
-  ) === true;
   const premiseFirewallReasonVisible =
     args.agentContext?.risk.reasons.some((reason) => reason.startsWith("premise_firewall_")) === true
-    && (
-      args.agentContext.inspect_before_use_memory_ids.includes(args.entry.memory_id)
-      || args.agentContext.do_not_use_memory_ids.includes(args.entry.memory_id)
-      || traceTextMatchesEntry(args.agentContext.inspect_before_use, args.entry)
-      || traceTextMatchesEntry(args.agentContext.do_not_use, args.entry)
-    );
-  const lifecycleCandidateSignals = args.lifecycleCandidateSignals.filter((signal) =>
-    signal.memory_id === args.entry.memory_id
-  );
-  const unsafeLifecycleCandidateVisible =
-    lifecycleCandidateMemoryDirectUseUnsafe(lifecycleCandidateSignals)
-    && args.surface !== "use_now";
-  const lifecycleCandidateAdmittedDirectUse =
-    args.surface === "use_now"
-    && lifecycleCandidateMemoryDirectUseAdmissible({
-      entry: args.entry,
-      signals: lifecycleCandidateSignals,
-    });
+    && (args.agentContext.inspect_before_use_memory_ids.includes(args.entry.memory_id)
+      || args.agentContext.do_not_use_memory_ids.includes(args.entry.memory_id));
+  const lifecycleCandidateSignals = args.lifecycleCandidateSignals.filter((signal) => signal.memory_id === args.entry.memory_id);
   return compactStrings([
-    args.entry.lifecycle_state === "active" ? "lifecycle_active" : `lifecycle_${args.entry.lifecycle_state}`,
-    args.entry.authority === "trusted" || args.entry.authority === "advisory" ? `authority_${args.entry.authority}` : null,
-    args.entry.authority === "candidate" ? "candidate_authority" : null,
-    args.entry.authority === "blocked" ? "blocked_authority" : null,
-    hasRelationEvidence ? "lifecycle_relation_evidence" : null,
-    hasWarning ? "contradiction_warning" : null,
+    ...args.governanceReasonCodes,
+    args.memory?.evidence_trail.some((evidence) => evidence.source === "edge" && evidence.memory_id === args.entry.memory_id)
+      ? "lifecycle_relation_evidence" : null,
+    args.memory?.contradiction_warnings.some((warning) => warning.memory_id === args.entry.memory_id)
+      ? "contradiction_warning" : null,
     premiseFirewallReasonVisible ? "premise_firewall_query_risk" : null,
     lifecycleCandidateSignals.length > 0 ? "lifecycle_candidate_signal" : null,
     ...lifecycleCandidateSignals.map((signal) => `lifecycle_candidate_${signal.signal_type}`),
-    lifecycleCandidateAdmittedDirectUse ? "lifecycle_candidate_direct_use_admitted" : null,
-    unsafeLifecycleCandidateVisible ? "lifecycle_candidate_direct_use_gated" : null,
+    lifecycleCandidateMemoryDirectUseUnsafe(lifecycleCandidateSignals)
+      && !args.governanceReasonCodes.includes("available_for_agent_use") ? "lifecycle_candidate_direct_use_gated" : null,
     `memory_contract_${args.entry.memory_contract.use_policy}`,
     args.entry.memory_contract.confirmation_required ? "memory_contract_confirmation_required" : null,
     args.entry.memory_contract.evidence_requirement === "requires_more_evidence" ? "memory_contract_requires_more_evidence" : null,
     args.entry.memory_contract.allowed_scope === "supporting_evidence_only" ? "memory_contract_supporting_evidence_only" : null,
-    args.surface === "use_now" ? "available_for_agent_use" : null,
-    args.surface === "inspect_before_use" ? "kept_out_of_direct_use" : null,
-    args.surface === "do_not_use" ? "blocked_from_agent_use" : null,
-    args.surface === "rehydrate" ? "requires_differential_rehydration" : null,
     args.agentContext ? "agent_context_projection_checked" : null,
     args.guide?.guide_brief.history_used ? "guide_history_used" : null,
   ]);
@@ -6261,10 +6135,25 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
     shadow_signals: args.lifecycle_candidate_shadow_signals,
     memory_ids: new Set((memory?.relevant_memories ?? []).map((entry) => entry.memory_id)),
   });
+  const traceExecutionScope: NormalizedAgentPromptExecutionScope = { task_signature: null, task_family: null, workflow_signature: null };
   const memoryDecisions: AionisMemoryDecisionTrace["memory_decisions"] = (memory?.relevant_memories ?? [])
     .slice(0, 96)
     .map((entry) => {
-      const surface = traceSurfaceForMemory({ entry, guide, agentContext });
+      const projectedSurface = traceProjectedSurfaceForMemory({ entry, guide, agentContext });
+      const entryLifecycleSignals = lifecycleCandidateSignals.filter((signal) => signal.memory_id === entry.memory_id);
+      const governanceDecision = governanceDecisionForMemoryEntry({
+        entry,
+        executionScope: traceExecutionScope,
+        projectedSurface,
+        verifiedRecoveredHandoff: projectedSurface === "use_now" && contractEntryIsHandoff(entry),
+        rehydrateRequested: projectedSurface === "rehydrate",
+        lifecycleCandidate: lifecycleCandidateRehydrateEligible({ entry, signals: entryLifecycleSignals })
+          ? "rehydrate"
+          : lifecycleCandidateMemoryDirectUseAdmissible({ entry, signals: entryLifecycleSignals })
+            ? "direct_use"
+            : lifecycleCandidateMemoryDirectUseUnsafe(entryLifecycleSignals) ? "inspect_before_use" : "none",
+      });
+      const surface = governanceDecision.surface;
       const relationDecision = relationByTarget.get(entry.memory_id);
       return {
         memory_id: entry.memory_id,
@@ -6282,7 +6171,14 @@ export function buildAionisMemoryDecisionTrace(args: BuildAionisMemoryDecisionTr
         blocked_detail: traceBlockedDetail({ entry, surface }),
         feedback_detail: traceFeedbackDetail({ entry, feedbackInput }),
         rehydrate_detail: traceRehydrateDetail({ entry, surface, memory, guide, agentContext }),
-        reason_codes: traceReasonCodes({ entry, surface, memory, guide, agentContext, lifecycleCandidateSignals }),
+        reason_codes: traceReasonCodes({
+          entry,
+          memory,
+          guide,
+          agentContext,
+          lifecycleCandidateSignals,
+          governanceReasonCodes: governanceDecision.reason_codes,
+        }),
       };
     });
   const lifecycleCandidateSummary = buildLifecycleCandidateSummary({

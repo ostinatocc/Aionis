@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveArchiveRelocationPlan } from "../../src/memory/archive-relocation.ts";
+import { resolveArchiveRelocationPlan } from "../../src/kernel/forgetting-kernel.ts";
 import { resolveSemanticForgettingDecision } from "../../src/memory/semantic-forgetting.ts";
 
 test("archive relocation plans cold-store externalization when semantic forgetting archives anchor payload memory", () => {
