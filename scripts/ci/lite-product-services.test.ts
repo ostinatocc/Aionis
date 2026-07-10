@@ -6,7 +6,10 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
-import { ProductObserveRequest } from "../../src/product/product-services.ts";
+import {
+  ProductObserveRequest,
+  parseGuideExposureLedger,
+} from "../../src/product/product-services.ts";
 import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
 import {
@@ -55,6 +58,33 @@ test("Product Facade is a narrow HTTP adapter", () => {
   ]) {
     assert.doesNotMatch(facade, new RegExp(`\\bfunction\\s+${privateImplementation}\\b`));
   }
+});
+
+test("legacy guide exposure ledgers parse with no tool-selection receipt", () => {
+  const ledger = parseGuideExposureLedger({
+    contract_version: "aionis_guide_exposure_v1",
+    guide_trace_id: "guide_trace:legacy-ledger",
+    tenant_id: "default",
+    scope: "default",
+    run_id: "run:legacy-ledger",
+    consumer_agent_id: "local-user",
+    consumer_team_id: null,
+    query_sha256: "a".repeat(64),
+    context_sha256: "b".repeat(64),
+    memory_ids: [],
+    use_now_memory_ids: [],
+    inspect_before_use_memory_ids: [],
+    do_not_use_memory_ids: [],
+    rehydrate_memory_ids: [],
+    prompt_char_count: 0,
+    history_used: false,
+    actionable_history_used: false,
+    recommended_posture: "ignore_history",
+    authority: "none",
+  });
+
+  assert.ok(ledger);
+  assert.equal(ledger.tool_selection, null);
 });
 
 function parityEnv() {

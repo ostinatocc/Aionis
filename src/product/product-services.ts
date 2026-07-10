@@ -479,6 +479,20 @@ export function uniqueStrings(values: Array<string | null | undefined>): string[
   return out;
 }
 
+export const ProductToolSelectionReceiptSchema = z.object({
+  contract_version: z.literal("aionis_tool_selection_receipt_v1"),
+  decision_id: z.string().trim().min(1),
+  decision_uri: z.string().trim().min(1),
+  run_id: z.string().trim().min(1),
+  selected_tool: z.string().trim().min(1).nullable(),
+  candidates: z.array(z.string().trim().min(1)).min(1).max(256),
+  policy_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  source_rule_ids: z.array(z.string().trim().min(1)).max(256),
+  created_at: z.string().trim().min(1),
+}).strict();
+
+export type ProductToolSelectionReceipt = z.infer<typeof ProductToolSelectionReceiptSchema>;
+
 export type ProductGuideExposureLedger = {
   contract_version: "aionis_guide_exposure_v1";
   guide_trace_id: string;
@@ -499,6 +513,7 @@ export type ProductGuideExposureLedger = {
   actionable_history_used: boolean;
   recommended_posture: AionisAgentContext["recommended_posture"];
   authority: AionisAgentContext["authority"];
+  tool_selection: ProductToolSelectionReceipt | null;
 };
 
 export function objectValue(value: unknown): Record<string, unknown> | null {
@@ -537,6 +552,10 @@ export function parseGuideExposureLedger(value: unknown): ProductGuideExposureLe
     && authority !== "blocked"
     && authority !== "none"
   ) return null;
+  const toolSelection = record.tool_selection === undefined || record.tool_selection === null
+    ? null
+    : ProductToolSelectionReceiptSchema.safeParse(record.tool_selection);
+  if (toolSelection !== null && !toolSelection.success) return null;
   return {
     contract_version: "aionis_guide_exposure_v1",
     guide_trace_id: guideTraceId,
@@ -557,6 +576,7 @@ export function parseGuideExposureLedger(value: unknown): ProductGuideExposureLe
     actionable_history_used: record.actionable_history_used === true,
     recommended_posture: recommendedPosture,
     authority,
+    tool_selection: toolSelection === null ? null : toolSelection.data,
   };
 }
 

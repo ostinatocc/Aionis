@@ -71,6 +71,7 @@ import { resolveTenantScope } from "../memory/tenant.js";
 import {
   InternalDispatchResult,
   ProductGuideExposureLedger,
+  ProductToolSelectionReceiptSchema,
   ProductGuideRequest,
   findHistoricalGuideExposureLedgers,
   findMemoryNodeSlots,
@@ -88,6 +89,7 @@ import type {
   ProductMemoryAdmissionInput,
   ProductServiceResult,
   ProductServices,
+  ProductToolSelectionReceipt,
 } from "./product-services.js";
 
 import {
@@ -932,12 +934,47 @@ function buildGuideTraceId(): string {
   return `guide_trace:${randomUUID()}`;
 }
 
+function buildProductToolSelectionReceipt(args: {
+  parsed: ProductGuideInput;
+  guideBody: Record<string, unknown>;
+}): ProductToolSelectionReceipt | null {
+  if (!Array.isArray(args.parsed.tool_candidates) || args.parsed.tool_candidates.length === 0) return null;
+  const tools = objectValue(args.guideBody.tools);
+  const decision = objectValue(tools?.decision);
+  if (!tools || !decision) return null;
+  const runId = typeof decision.run_id === "string" ? decision.run_id.trim() : "";
+  if (!args.parsed.run_id || runId !== args.parsed.run_id) return null;
+  const candidates = uniqueStrings(
+    (Array.isArray(tools.candidates) ? tools.candidates : [])
+      .map((entry) => typeof entry === "string" ? entry : null),
+  );
+  const sourceRuleIds = uniqueStrings(
+    (Array.isArray(decision.source_rule_ids) ? decision.source_rule_ids : [])
+      .map((entry) => typeof entry === "string" ? entry : null),
+  );
+  const parsedReceipt = ProductToolSelectionReceiptSchema.safeParse({
+    contract_version: "aionis_tool_selection_receipt_v1",
+    decision_id: decision.decision_id,
+    decision_uri: decision.decision_uri,
+    run_id: runId,
+    selected_tool: typeof decision.selected_tool === "string" && decision.selected_tool.trim().length > 0
+      ? decision.selected_tool.trim()
+      : null,
+    candidates,
+    policy_sha256: decision.policy_sha256,
+    source_rule_ids: sourceRuleIds,
+    created_at: decision.created_at,
+  });
+  return parsedReceipt.success ? parsedReceipt.data : null;
+}
+
 function buildGuideExposureLedger(args: {
   parsed: z.infer<typeof ProductGuideRequest>;
   tenant_id: string;
   scope: string;
   agentContext: AionisAgentContext;
   guideTraceId: string;
+  toolSelection: ProductToolSelectionReceipt | null;
 }): ProductGuideExposureLedger {
   return {
     contract_version: "aionis_guide_exposure_v1",
@@ -959,6 +996,7 @@ function buildGuideExposureLedger(args: {
     actionable_history_used: args.agentContext.actionable_history_used,
     recommended_posture: args.agentContext.recommended_posture,
     authority: args.agentContext.authority,
+    tool_selection: args.toolSelection,
   };
 }
 
@@ -1070,6 +1108,7 @@ async function resolveInspectBeforeUseActiveProjectionIds(args: {
     scope: args.scope,
     agentContext: args.agentContext,
     guideTraceId: args.guideTraceId,
+    toolSelection: null,
   });
   const historicalLedgers = await findHistoricalGuideExposureLedgers({
     liteWriteStore: args.liteWriteStore,
@@ -1836,6 +1875,7 @@ async function persistGuideExposure(args: {
   scope: string;
   agentContext: AionisAgentContext;
   guideTraceId: string;
+  toolSelection: ProductToolSelectionReceipt | null;
 }): Promise<ProductServiceResult> {
   if (!args.dependencies.memoryWrite) {
     return productServiceDependencyFailure("memory_write_service");
@@ -1846,6 +1886,7 @@ async function persistGuideExposure(args: {
     scope: args.scope,
     agentContext: args.agentContext,
     guideTraceId: args.guideTraceId,
+    toolSelection: args.toolSelection,
   });
   const ledgerSha = sha256Hex(stableStringify(ledger));
   try {
@@ -1917,6 +1958,7 @@ async function executeProductGuide(args: {
   }
 
   const guideBody = objectValue(guideResult.body) ?? {};
+  const toolSelection = buildProductToolSelectionReceipt({ parsed, guideBody });
   const recall = objectValue(guideBody.recall) ?? {};
   let memoryPacket: AionisMemoryPacket | null = recall.aionis_memory_packet
     ? AionisMemoryPacketSchema.parse(recall.aionis_memory_packet)
@@ -2093,6 +2135,7 @@ async function executeProductGuide(args: {
     scope,
     agentContext,
     guideTraceId,
+    toolSelection,
   });
   if (!exposureWrite.ok) return exposureWrite;
 
@@ -2107,6 +2150,7 @@ async function executeProductGuide(args: {
     ...(parsed.consumer_team_id ? { consumer_team_id: parsed.consumer_team_id } : {}),
     guide_trace_id: guideTraceId,
     agent_context: agentContext,
+    ...(toolSelection ? { tool_selection: toolSelection } : {}),
     ...(claimLedgerProjection ? { claim_ledger_projection: claimLedgerProjection } : {}),
     ...(admissionCandidatePolicyProjection ? { admission_candidate_policy_projection: admissionCandidatePolicyProjection } : {}),
     ...(includePackets ? { memory_packet: memoryPacket, guide_packet: guidePacket } : {}),
@@ -2115,6 +2159,7 @@ async function executeProductGuide(args: {
       internal_surfaces_used: [
         ...(planningContextEmbeddingUnavailable ? ["planning_context_embedding_unavailable"] : ["recall"]),
         "planning_context_service",
+        ...(toolSelection ? ["tool_selection_receipt"] : []),
         "product_packets",
         "agent_context_compiler",
         ...(agentRole !== "agent" ? ["role_aware_agent_context"] : []),

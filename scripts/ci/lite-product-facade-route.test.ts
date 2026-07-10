@@ -605,6 +605,86 @@ test("product guide uses direct planning context service when supplied", async (
   }
 });
 
+test("product guide exposes the persisted tool decision as an attributed receipt", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("product-guide-tool-selection-receipt");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const guide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        run_id: "run:tool-selection-receipt",
+        consumer_agent_id: "local-user",
+        query_text: "Choose the safe tool for the recovered execution state.",
+        tool_candidates: ["read", "bash"],
+        context: { task_signature: "tool-selection-receipt" },
+        include_packets: true,
+      },
+    });
+    assert.equal(guide.statusCode, 200, guide.body);
+    const body = guide.json();
+    const receipt = objectValue(body.tool_selection, "guide.tool_selection");
+    assert.equal(receipt.contract_version, "aionis_tool_selection_receipt_v1");
+    assert.equal(receipt.run_id, "run:tool-selection-receipt");
+    assert.deepEqual(receipt.candidates, ["read", "bash"]);
+    assert.equal(typeof receipt.decision_id, "string");
+    assert.ok(receipt.decision_id.length > 0);
+    assert.equal(typeof receipt.decision_uri, "string");
+    assert.equal(typeof receipt.policy_sha256, "string");
+    assert.equal(receipt.policy_sha256.length, 64);
+    assert.ok(Array.isArray(receipt.source_rule_ids));
+    assert.equal(typeof receipt.created_at, "string");
+    assert.equal(body.source_map.internal_surfaces_used.includes("tool_selection_receipt"), true);
+
+    const persisted = await liteWriteStore.getExecutionDecision({
+      scope: "default",
+      id: receipt.decision_id,
+    });
+    assert.ok(persisted);
+    assert.equal(receipt.selected_tool, persisted.selected_tool);
+    assert.equal(receipt.run_id, persisted.run_id);
+    assert.equal(receipt.policy_sha256, persisted.policy_sha256);
+    assert.deepEqual(receipt.candidates, persisted.candidates_json);
+    assert.deepEqual(receipt.source_rule_ids, persisted.source_rule_ids ?? []);
+
+    const exposureRows = await liteWriteStore.findNodes({
+      scope: "default",
+      clientId: body.guide_trace_id,
+      consumerAgentId: "local-user",
+      consumerTeamId: null,
+      limit: 1,
+      offset: 0,
+    });
+    const ledger = exposureRows.rows[0]?.slots.guide_exposure_v1;
+    assert.ok(ledger);
+    assert.deepEqual(ledger.tool_selection, receipt);
+
+    const guideWithoutCandidates = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        run_id: "run:without-tool-selection-receipt",
+        consumer_agent_id: "local-user",
+        query_text: "Continue without selecting a tool.",
+      },
+    });
+    assert.equal(guideWithoutCandidates.statusCode, 200, guideWithoutCandidates.body);
+    assert.equal("tool_selection" in guideWithoutCandidates.json(), false);
+  } finally {
+    await app.close();
+  }
+});
+
 test("product observe uses direct handoff store service when supplied", async () => {
   const app = Fastify();
   const env = liteEnv();
