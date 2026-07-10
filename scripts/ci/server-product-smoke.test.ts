@@ -237,6 +237,10 @@ test("application registration exposes product routes but not replaced internal 
     "/v1/memory/recall_text",
     "/v1/memory/planning/context",
     "/v1/memory/context/assemble",
+    "/v1/memory/tools/select",
+    "/v1/memory/tools/decision",
+    "/v1/memory/tools/run",
+    "/v1/memory/tools/feedback",
     "/v1/memory/write",
     "/v1/memory/archive/rehydrate",
     "/v1/memory/nodes/activate",
@@ -289,19 +293,11 @@ test("application registration exposes product routes but not replaced internal 
     assert.equal(app.hasRoute({ method: "POST", url: "/v1/observe" }), true);
     assert.equal(app.hasRoute({ method: "POST", url: "/v1/operator/snapshot" }), true);
     assert.equal(app.hasRoute({ method: "POST", url: "/v1/memory/resolve" }), true);
-    for (const url of [
-      "/v1/memory/tools/select",
-      "/v1/memory/tools/decision",
-      "/v1/memory/tools/run",
-      "/v1/memory/tools/feedback",
-    ]) {
-      assert.equal(app.hasRoute({ method: "POST", url }), true, `${url} remains temporary for Manifest`);
-    }
     for (const url of removedRoutes) {
       assert.equal(app.hasRoute({ method: "POST", url }), false, `${url} must not be registered`);
     }
 
-    for (const url of removedRoutes.slice(0, 4)) {
+    for (const url of removedRoutes.slice(0, 8)) {
       const response = await app.inject({ method: "POST", url, payload: {} });
       assert.equal(response.statusCode, 404, `${url} must return 404`);
     }

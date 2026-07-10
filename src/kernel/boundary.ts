@@ -101,8 +101,9 @@ export const AIONIS_KERNEL_CAPABILITIES = [
     primary_runtime_surfaces: [
       "service:replay_evidence",
       "service:replay_playbook",
-      "/v1/memory/tools/feedback",
-      "/v1/memory/tools/select",
+      "/v1/guide",
+      "/v1/feedback",
+      "service:learning_kernel",
     ],
     success_signals: [
       "candidate memory stays provisional until gates pass",

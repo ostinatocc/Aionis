@@ -12,7 +12,6 @@ import {
   createMemoryPlanningContextService,
   type MemoryPlanningContextService,
 } from "../routes/memory-context-runtime.js";
-import { registerMemoryFeedbackToolRoutes } from "../routes/memory-feedback-tools.js";
 import { registerHandoffRoutes, type HandoffRouteService } from "../routes/handoff.js";
 import type { MemoryWriteRouteService } from "../routes/memory-write.js";
 import { registerProductFacadeRoutes } from "../routes/product-facade.js";
@@ -332,17 +331,13 @@ export function registerHealthRoute(args: {
 type HandoffRouteArgs = Parameters<typeof registerHandoffRoutes>[0];
 type MemoryAccessRouteArgs = Parameters<typeof registerMemoryAccessRoutes>[0];
 type MemoryContextServiceArgs = Parameters<typeof createMemoryPlanningContextService>[0];
-type MemoryFeedbackRouteArgs = Parameters<typeof registerMemoryFeedbackToolRoutes>[0];
 
 type RuntimeLiteWriteStore =
   & HandoffRouteArgs["liteWriteStore"]
   & MemoryAccessRouteArgs["liteWriteStore"]
-  & MemoryContextServiceArgs["liteWriteStore"]
-  & MemoryFeedbackRouteArgs["liteWriteStore"];
+  & MemoryContextServiceArgs["liteWriteStore"];
 
-type RuntimeLiteRecallAccess =
-  & MemoryContextServiceArgs["liteRecallAccess"]
-  & MemoryFeedbackRouteArgs["liteRecallAccess"];
+type RuntimeLiteRecallAccess = MemoryContextServiceArgs["liteRecallAccess"];
 
 export type RegisterApplicationRoutesArgs = {
   app: FastifyInstance;
@@ -422,11 +417,9 @@ type RuntimeWriteRouteRegistrationArgs = Pick<
   | "acquireInflightSlot"
 >;
 
-type RuntimeGuidanceRouteRegistrationArgs = Pick<
+type RuntimePlanningServiceArgs = Pick<
   RegisterApplicationRoutesArgs,
-  | "app"
   | "env"
-  | "embedder"
   | "queryEmbedder"
   | "embeddingSurfacePolicy"
   | "liteWriteStore"
@@ -457,7 +450,7 @@ type RuntimeGuidanceRouteRegistrationArgs = Pick<
 
 type RuntimeKernelRouteRegistrationArgs =
   & RuntimeWriteRouteRegistrationArgs
-  & RuntimeGuidanceRouteRegistrationArgs;
+  & RuntimePlanningServiceArgs;
 
 function registerRuntimeBoundaryRoutes(args: RuntimeBoundaryRouteRegistrationArgs) {
   registerRuntimeBoundaryInventoryRoutes({
@@ -521,11 +514,9 @@ function registerRuntimeWriteRoutes(args: RuntimeWriteRouteRegistrationArgs) {
   });
 }
 
-function registerRuntimeGuidanceRoutes(args: RuntimeGuidanceRouteRegistrationArgs) {
+function createRuntimePlanningServices(args: RuntimePlanningServiceArgs) {
   const {
-    app,
     env,
-    embedder,
     queryEmbedder,
     embeddingSurfacePolicy,
     liteWriteStore,
@@ -583,21 +574,6 @@ function registerRuntimeGuidanceRoutes(args: RuntimeGuidanceRouteRegistrationArg
     recordContextAssemblyTelemetryBestEffort,
   });
 
-  registerMemoryFeedbackToolRoutes({
-    app,
-    env,
-    embedder,
-    queryEmbedder,
-    liteRecallAccess,
-    liteWriteStore,
-    requireMemoryPrincipal,
-    withIdentityFromRequest,
-    enforceRateLimit,
-    enforceTenantQuota,
-    tenantFromBody,
-    acquireInflightSlot,
-  });
-
   return {
     planningContextService,
   };
@@ -605,7 +581,7 @@ function registerRuntimeGuidanceRoutes(args: RuntimeGuidanceRouteRegistrationArg
 
 function registerRuntimeKernelRoutes(args: RuntimeKernelRouteRegistrationArgs) {
   registerRuntimeWriteRoutes(args);
-  return registerRuntimeGuidanceRoutes(args);
+  return createRuntimePlanningServices(args);
 }
 
 function registerProductRoutes(args: ProductFacadeRouteRegistrationArgs) {

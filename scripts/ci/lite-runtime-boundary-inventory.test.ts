@@ -24,6 +24,30 @@ const HTTP_SURFACE_INVENTORY_PATH = path.join(
   ROOT,
   "docs/architecture/AIONIS_RUNTIME_SURFACE_INVENTORY.md",
 );
+const RETIRED_TEMPORARY_ROUTES = [
+  "/v1/memory/recall",
+  "/v1/memory/recall_text",
+  "/v1/memory/planning/context",
+  "/v1/memory/context/assemble",
+  "/v1/memory/tools/select",
+  "/v1/memory/tools/decision",
+  "/v1/memory/tools/run",
+  "/v1/memory/tools/feedback",
+] as const;
+
+function sourceFiles(root: string): string[] {
+  if (!fs.existsSync(root)) return [];
+  const out: string[] = [];
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const absolute = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...sourceFiles(absolute));
+    } else if (/\.(?:ts|js|mjs)$/.test(entry.name)) {
+      out.push(absolute);
+    }
+  }
+  return out;
+}
 
 function sourceIds(source: "authority"): string[] {
   return runtimeBoundaryInventoryEntriesBySource(source)
@@ -383,8 +407,14 @@ test("internal HTTP inventory distinguishes temporary adapters from completed re
   const removed = rows.filter((row) => row.public_http === "removed");
 
   assert.equal(required.length, 19);
-  assert.equal(temporary.length, 4);
-  assert.equal(removed.length, 49);
+  assert.equal(temporary.length, 0);
+  assert.equal(removed.length, 53);
+
+  assert.equal(
+    LITE_ROUTE_CAPABILITY_MATRIX.some((entry) => INTERNAL_EXPOSURES.has(entry.exposure)),
+    false,
+    "active route matrix must not expose internal HTTP adapters",
+  );
 
   for (const row of rows.filter((candidate) => INTERNAL_EXPOSURES.has(candidate.exposure))) {
     const key = `${row.method} ${row.path}`;
@@ -393,6 +423,27 @@ test("internal HTTP inventory distinguishes temporary adapters from completed re
     assert.match(row.public_http, /^(removed|temporary)$/, `${key} has invalid internal HTTP disposition`);
     const entry = LITE_ROUTE_CAPABILITY_MATRIX.find((candidate) => `${candidate.method} ${candidate.path}` === key);
     assert.equal(!!entry, row.public_http === "temporary", `${key} registration must match its inventory disposition`);
+  }
+});
+
+test("production and supported integration sources do not reference retired temporary routes", () => {
+  const workspaceRoot = path.resolve(ROOT, "../..");
+  const roots = [
+    path.join(ROOT, "src"),
+    path.join(ROOT, "scripts/e2e"),
+    path.join(workspaceRoot, "AionisManifest/src"),
+    path.join(workspaceRoot, "AionisRuntime-evals/memorydata-slices/scripts"),
+    path.join(workspaceRoot, "AionisRuntime-evals/product-guide-precision/scripts"),
+    path.join(workspaceRoot, "AionisRuntime-evals/product-guide-visibility/scripts"),
+    path.join(workspaceRoot, "AionisRuntime-evals/product-self-learning-loop/scripts"),
+    path.join(workspaceRoot, "AionisRuntime-evals/product-sparse-feedback/scripts"),
+  ];
+
+  for (const file of roots.flatMap(sourceFiles)) {
+    const source = fs.readFileSync(file, "utf8");
+    for (const route of RETIRED_TEMPORARY_ROUTES) {
+      assert.equal(source.includes(route), false, `${file} still references retired route ${route}`);
+    }
   }
 });
 

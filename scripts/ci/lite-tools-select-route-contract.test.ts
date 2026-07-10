@@ -29,6 +29,23 @@ import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
 
+type TestLearningKernel = ReturnType<typeof registerMemoryFeedbackToolRoutes>;
+
+async function invokeLearningKernel(
+  kernel: TestLearningKernel,
+  operation: "select" | "feedback",
+  payload: unknown,
+) {
+  const body = operation === "select"
+    ? await kernel.selectToolWithLearnedMemory(payload)
+    : await kernel.recordToolSelectionFeedback(payload);
+  return {
+    statusCode: 200,
+    body: JSON.stringify(body),
+    json: () => body,
+  };
+}
+
 const TOOLS_SELECT_ROUTE_KEYS = [
   "candidates",
   "decision",
@@ -754,13 +771,13 @@ async function seedPolicyMemoryLearningControlFixture(dbPath: string) {
   return { liteWriteStore, liteRecallStore, ruleNodeIds };
 }
 
-test("tools_select route returns the stable execution-memory contract surface", async () => {
+test("LearningKernel tool selection returns the stable execution-memory contract surface", async () => {
   const app = Fastify();
   const { liteWriteStore, liteRecallStore } = await seedToolsSelectFixture(tmpDbPath("route"));
   try {
     const guards = buildRequestGuards();
     registerRuntimeErrorHandler(app);
-    registerMemoryFeedbackToolRoutes({
+    const learningKernel = registerMemoryFeedbackToolRoutes({
       app,
       env: {
         AIONIS_EDITION: "lite",
@@ -781,10 +798,7 @@ test("tools_select route returns the stable execution-memory contract surface", 
       acquireInflightSlot: guards.acquireInflightSlot,
     });
 
-    const response = await app.inject({
-      method: "POST",
-      url: "/v1/memory/tools/select",
-      payload: {
+    const response = await invokeLearningKernel(learningKernel, "select", {
         tenant_id: "default",
         scope: "default",
         run_id: randomUUID(),
@@ -800,8 +814,7 @@ test("tools_select route returns the stable execution-memory contract surface", 
         rules_limit: 20,
         strict: true,
         reorder_candidates: true,
-      },
-    });
+      });
 
     assert.equal(response.statusCode, 200);
     const body = ToolsSelectRouteContractSchema.parse(response.json());
@@ -866,13 +879,13 @@ test("tools_select route returns the stable execution-memory contract surface", 
   }
 });
 
-test("tools_select keeps suppressed trusted patterns visible but excludes them from trusted reuse", async () => {
+test("LearningKernel selection keeps suppressed trusted patterns visible but excludes them from trusted reuse", async () => {
   const app = Fastify();
   const { liteWriteStore, liteRecallStore } = await seedToolsSelectFixture(tmpDbPath("suppressed"));
   try {
     const guards = buildRequestGuards();
     registerRuntimeErrorHandler(app);
-    registerMemoryFeedbackToolRoutes({
+    const learningKernel = registerMemoryFeedbackToolRoutes({
       app,
       env: {
         AIONIS_EDITION: "lite",
@@ -917,10 +930,7 @@ test("tools_select keeps suppressed trusted patterns visible but excludes them f
     assert.equal(suppressResponse.statusCode, 200);
     PatternSuppressResponseSchema.parse(suppressResponse.json());
 
-    const response = await app.inject({
-      method: "POST",
-      url: "/v1/memory/tools/select",
-      payload: {
+    const response = await invokeLearningKernel(learningKernel, "select", {
         tenant_id: "default",
         scope: "default",
         run_id: randomUUID(),
@@ -936,8 +946,7 @@ test("tools_select keeps suppressed trusted patterns visible but excludes them f
         rules_limit: 20,
         strict: true,
         reorder_candidates: true,
-      },
-    });
+      });
 
     assert.equal(response.statusCode, 200);
     const body = ToolsSelectRouteContractSchema.parse(response.json());
@@ -966,7 +975,7 @@ test("tools_select keeps suppressed trusted patterns visible but excludes them f
   }
 });
 
-test("tools feedback route can use internal evidence form_pattern provider without explicit review", async () => {
+test("LearningKernel feedback can use internal evidence form_pattern provider without explicit review", async () => {
   const app = Fastify();
   const dbPath = tmpDbPath("tools-feedback-provider-route");
   const { liteWriteStore } = await seedActiveRules(dbPath, ["edit", "edit"]);
@@ -974,7 +983,7 @@ test("tools feedback route can use internal evidence form_pattern provider witho
   try {
     const guards = buildRequestGuards();
     registerRuntimeErrorHandler(app);
-    registerMemoryFeedbackToolRoutes({
+    const learningKernel = registerMemoryFeedbackToolRoutes({
       app,
       env: buildLiteEnv({
         TOOLS_LEARNING_CONTROL_EVIDENCE_FORM_PATTERN_PROVIDER_ENABLED: true,
@@ -1041,10 +1050,7 @@ test("tools feedback route can use internal evidence form_pattern provider witho
       },
     };
 
-    const selectionResponse = await app.inject({
-      method: "POST",
-      url: "/v1/memory/tools/select",
-      payload: {
+    const selectionResponse = await invokeLearningKernel(learningKernel, "select", {
         tenant_id: "default",
         scope: "default",
         run_id: runId,
@@ -1054,15 +1060,11 @@ test("tools feedback route can use internal evidence form_pattern provider witho
         rules_limit: 20,
         strict: true,
         reorder_candidates: false,
-      },
-    });
+      });
     assert.equal(selectionResponse.statusCode, 200);
     const selection = ToolsSelectRouteContractSchema.parse(selectionResponse.json());
 
-    const feedbackResponse = await app.inject({
-      method: "POST",
-      url: "/v1/memory/tools/feedback",
-      payload: {
+    const feedbackResponse = await invokeLearningKernel(learningKernel, "feedback", {
         tenant_id: "default",
         scope: "default",
         actor: "local-user",
@@ -1075,8 +1077,7 @@ test("tools feedback route can use internal evidence form_pattern provider witho
         target: "tool",
         note: "Edit-based repair succeeded with grouped provider-backed evidence",
         input_text: "recover durable workflow from failed validation",
-      },
-    });
+      });
     assert.equal(feedbackResponse.statusCode, 200);
     const parsed = ToolsFeedbackResponseSchema.parse(feedbackResponse.json());
     assert.equal(parsed.pattern_anchor?.pattern_state, "stable");
@@ -1108,7 +1109,7 @@ test("policy learning_control apply route can retire and reactivate persisted po
   try {
     const guards = buildRequestGuards();
     registerRuntimeErrorHandler(app);
-    registerMemoryFeedbackToolRoutes({
+    const learningKernel = registerMemoryFeedbackToolRoutes({
       app,
       env: buildLiteEnv(),
       embedder: DeterministicEmbeddingProvider,
@@ -1183,10 +1184,7 @@ test("policy learning_control apply route can retire and reactivate persisted po
       },
     };
 
-    const selectionResponse = await app.inject({
-      method: "POST",
-      url: "/v1/memory/tools/select",
-      payload: {
+    const selectionResponse = await invokeLearningKernel(learningKernel, "select", {
         tenant_id: "default",
         scope: "default",
         run_id: runId,
@@ -1196,15 +1194,11 @@ test("policy learning_control apply route can retire and reactivate persisted po
         rules_limit: 20,
         strict: true,
         reorder_candidates: false,
-      },
-    });
+      });
     assert.equal(selectionResponse.statusCode, 200);
     const selection = ToolsSelectRouteContractSchema.parse(selectionResponse.json());
 
-    const feedbackResponse = await app.inject({
-      method: "POST",
-      url: "/v1/memory/tools/feedback",
-      payload: {
+    const feedbackResponse = await invokeLearningKernel(learningKernel, "feedback", {
         tenant_id: "default",
         scope: "default",
         actor: "local-user",
@@ -1217,8 +1211,7 @@ test("policy learning_control apply route can retire and reactivate persisted po
         target: "tool",
         note: "Edit produced the successful repair path and should become persisted policy memory.",
         input_text: "recover durable workflow from failed validation",
-      },
-    });
+      });
     assert.equal(feedbackResponse.statusCode, 200, feedbackResponse.body);
     const feedback = ToolsFeedbackResponseSchema.parse(feedbackResponse.json());
     assert.equal(feedback.policy_memory?.selected_tool, "edit");
@@ -1359,14 +1352,14 @@ test("policy learning_control apply route can retire and reactivate persisted po
   }
 });
 
-test("tools feedback does not materialize policy memory from observational trust", async () => {
+test("LearningKernel feedback does not materialize policy memory from observational trust", async () => {
   const app = Fastify();
   const dbPath = tmpDbPath("policy-materialization-observational");
   const { liteWriteStore, liteRecallStore } = await seedPolicyMemoryLearningControlFixture(dbPath);
   try {
     const guards = buildRequestGuards();
     registerRuntimeErrorHandler(app);
-    registerMemoryFeedbackToolRoutes({
+    const learningKernel = registerMemoryFeedbackToolRoutes({
       app,
       env: buildLiteEnv(),
       embedder: DeterministicEmbeddingProvider,
@@ -1404,10 +1397,7 @@ test("tools feedback does not materialize policy memory from observational trust
       },
     };
 
-    const selectionResponse = await app.inject({
-      method: "POST",
-      url: "/v1/memory/tools/select",
-      payload: {
+    const selectionResponse = await invokeLearningKernel(learningKernel, "select", {
         tenant_id: "default",
         scope: "default",
         run_id: runId,
@@ -1417,15 +1407,11 @@ test("tools feedback does not materialize policy memory from observational trust
         rules_limit: 20,
         strict: true,
         reorder_candidates: false,
-      },
-    });
+      });
     assert.equal(selectionResponse.statusCode, 200);
     const selection = ToolsSelectRouteContractSchema.parse(selectionResponse.json());
 
-    const feedbackResponse = await app.inject({
-      method: "POST",
-      url: "/v1/memory/tools/feedback",
-      payload: {
+    const feedbackResponse = await invokeLearningKernel(learningKernel, "feedback", {
         tenant_id: "default",
         scope: "default",
         actor: "local-user",
@@ -1438,8 +1424,7 @@ test("tools feedback does not materialize policy memory from observational trust
         target: "tool",
         note: "Observational continuity should not harden into persisted policy memory.",
         input_text: "recover durable workflow from failed validation",
-      },
-    });
+      });
     assert.equal(feedbackResponse.statusCode, 200, feedbackResponse.body);
     const feedback = ToolsFeedbackResponseSchema.parse(feedbackResponse.json());
     assert.equal(feedback.policy_memory ?? null, null);
@@ -1450,14 +1435,14 @@ test("tools feedback does not materialize policy memory from observational trust
   }
 });
 
-test("tools feedback materializes advisory trust as hint-only candidate policy memory", async () => {
+test("LearningKernel feedback materializes advisory trust as hint-only candidate policy memory", async () => {
   const app = Fastify();
   const dbPath = tmpDbPath("policy-materialization-advisory");
   const { liteWriteStore, liteRecallStore } = await seedPolicyMemoryLearningControlFixture(dbPath);
   try {
     const guards = buildRequestGuards();
     registerRuntimeErrorHandler(app);
-    registerMemoryFeedbackToolRoutes({
+    const learningKernel = registerMemoryFeedbackToolRoutes({
       app,
       env: buildLiteEnv(),
       embedder: DeterministicEmbeddingProvider,
@@ -1499,10 +1484,7 @@ test("tools feedback materializes advisory trust as hint-only candidate policy m
       },
     };
 
-    const selectionResponse = await app.inject({
-      method: "POST",
-      url: "/v1/memory/tools/select",
-      payload: {
+    const selectionResponse = await invokeLearningKernel(learningKernel, "select", {
         tenant_id: "default",
         scope: "default",
         run_id: runId,
@@ -1512,15 +1494,11 @@ test("tools feedback materializes advisory trust as hint-only candidate policy m
         rules_limit: 20,
         strict: true,
         reorder_candidates: false,
-      },
-    });
+      });
     assert.equal(selectionResponse.statusCode, 200);
     const selection = ToolsSelectRouteContractSchema.parse(selectionResponse.json());
 
-    const feedbackResponse = await app.inject({
-      method: "POST",
-      url: "/v1/memory/tools/feedback",
-      payload: {
+    const feedbackResponse = await invokeLearningKernel(learningKernel, "feedback", {
         tenant_id: "default",
         scope: "default",
         actor: "local-user",
@@ -1533,8 +1511,7 @@ test("tools feedback materializes advisory trust as hint-only candidate policy m
         target: "tool",
         note: "Advisory continuity may persist, but only as hint-level candidate policy memory.",
         input_text: "recover durable workflow from failed validation",
-      },
-    });
+      });
     assert.equal(feedbackResponse.statusCode, 200, feedbackResponse.body);
     const feedback = ToolsFeedbackResponseSchema.parse(feedbackResponse.json());
     assert.equal(feedback.policy_memory?.policy_contract.contract_trust, "advisory");
@@ -1563,14 +1540,14 @@ test("tools feedback materializes advisory trust as hint-only candidate policy m
   }
 });
 
-test("tools feedback downgrades authoritative trust without sufficient outcome contract", async () => {
+test("LearningKernel feedback downgrades authoritative trust without sufficient outcome contract", async () => {
   const app = Fastify();
   const dbPath = tmpDbPath("policy-materialization-authoritative-thin");
   const { liteWriteStore, liteRecallStore } = await seedPolicyMemoryLearningControlFixture(dbPath);
   try {
     const guards = buildRequestGuards();
     registerRuntimeErrorHandler(app);
-    registerMemoryFeedbackToolRoutes({
+    const learningKernel = registerMemoryFeedbackToolRoutes({
       app,
       env: buildLiteEnv(),
       embedder: DeterministicEmbeddingProvider,
@@ -1612,10 +1589,7 @@ test("tools feedback downgrades authoritative trust without sufficient outcome c
       },
     };
 
-    const selectionResponse = await app.inject({
-      method: "POST",
-      url: "/v1/memory/tools/select",
-      payload: {
+    const selectionResponse = await invokeLearningKernel(learningKernel, "select", {
         tenant_id: "default",
         scope: "default",
         run_id: runId,
@@ -1625,15 +1599,11 @@ test("tools feedback downgrades authoritative trust without sufficient outcome c
         rules_limit: 20,
         strict: true,
         reorder_candidates: false,
-      },
-    });
+      });
     assert.equal(selectionResponse.statusCode, 200);
     const selection = ToolsSelectRouteContractSchema.parse(selectionResponse.json());
 
-    const feedbackResponse = await app.inject({
-      method: "POST",
-      url: "/v1/memory/tools/feedback",
-      payload: {
+    const feedbackResponse = await invokeLearningKernel(learningKernel, "feedback", {
         tenant_id: "default",
         scope: "default",
         actor: "local-user",
@@ -1646,8 +1616,7 @@ test("tools feedback downgrades authoritative trust without sufficient outcome c
         target: "tool",
         note: "Thin authoritative continuity may persist only as hint-level policy memory.",
         input_text: "recover durable workflow from failed validation",
-      },
-    });
+      });
     assert.equal(feedbackResponse.statusCode, 200, feedbackResponse.body);
     const feedback = ToolsFeedbackResponseSchema.parse(feedbackResponse.json());
     assert.equal(feedback.policy_memory?.policy_contract.contract_trust, "advisory");
@@ -1680,7 +1649,7 @@ test("policy learning_control core keeps advisory policy memory contested until 
   try {
     const guards = buildRequestGuards();
     registerRuntimeErrorHandler(app);
-    registerMemoryFeedbackToolRoutes({
+    const learningKernel = registerMemoryFeedbackToolRoutes({
       app,
       env: buildLiteEnv(),
       embedder: DeterministicEmbeddingProvider,
@@ -1722,10 +1691,7 @@ test("policy learning_control core keeps advisory policy memory contested until 
       },
     };
 
-    const selectionResponse = await app.inject({
-      method: "POST",
-      url: "/v1/memory/tools/select",
-      payload: {
+    const selectionResponse = await invokeLearningKernel(learningKernel, "select", {
         tenant_id: "default",
         scope: "default",
         run_id: runId,
@@ -1735,15 +1701,11 @@ test("policy learning_control core keeps advisory policy memory contested until 
         rules_limit: 20,
         strict: true,
         reorder_candidates: false,
-      },
-    });
+      });
     assert.equal(selectionResponse.statusCode, 200);
     const selection = ToolsSelectRouteContractSchema.parse(selectionResponse.json());
 
-    const feedbackResponse = await app.inject({
-      method: "POST",
-      url: "/v1/memory/tools/feedback",
-      payload: {
+    const feedbackResponse = await invokeLearningKernel(learningKernel, "feedback", {
         tenant_id: "default",
         scope: "default",
         actor: "local-user",
@@ -1756,8 +1718,7 @@ test("policy learning_control core keeps advisory policy memory contested until 
         target: "tool",
         note: "Advisory continuity should persist for learning_control, but not reactivate as active policy memory.",
         input_text: "recover durable workflow from failed validation",
-      },
-    });
+      });
     assert.equal(feedbackResponse.statusCode, 200, feedbackResponse.body);
     const feedback = ToolsFeedbackResponseSchema.parse(feedbackResponse.json());
     const policyMemoryId = feedback.policy_memory?.node_id;

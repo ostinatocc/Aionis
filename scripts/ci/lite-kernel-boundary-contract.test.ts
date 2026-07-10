@@ -90,7 +90,7 @@ test("hard invariants stay small and evidence-centered", () => {
 });
 
 test("Lite route capability matrix maps public routes to focused product capabilities", () => {
-  assert.equal(LITE_ROUTE_CAPABILITY_MATRIX_VERSION, "lite_route_capability_matrix_v8");
+  assert.equal(LITE_ROUTE_CAPABILITY_MATRIX_VERSION, "lite_route_capability_matrix_v10");
 
   const capabilityIds = new Set(aionisKernelCapabilityIds());
   const matrix = buildLiteRouteMatrix().route_capability_matrix;
@@ -108,15 +108,7 @@ test("Lite route capability matrix maps public routes to focused product capabil
     "POST /v1/handoff/recover",
     "POST /v1/handoff/store",
     "POST /v1/measure",
-    "POST /v1/memory/context/assemble",
-    "POST /v1/memory/planning/context",
-    "POST /v1/memory/recall",
-    "POST /v1/memory/recall_text",
     "POST /v1/memory/resolve",
-    "POST /v1/memory/tools/decision",
-    "POST /v1/memory/tools/feedback",
-    "POST /v1/memory/tools/run",
-    "POST /v1/memory/tools/select",
     "POST /v1/observe",
     "POST /v1/operator/snapshot",
     "POST /v1/rehydrate",
@@ -176,11 +168,10 @@ test("Lite route capability matrix separates product entries from internal surfa
     assert.notEqual(exposureByRoute.get(route), "product_entry", `${route} must not be presented as a product entry`);
   }
 
-  assert.equal(exposureByRoute.get("POST /v1/memory/context/assemble"), "internal_guidance");
-  assert.equal(exposureByRoute.get("POST /v1/memory/tools/select"), "internal_guidance");
-  assert.equal(exposureByRoute.get("POST /v1/memory/tools/decision"), "internal_evidence");
-  assert.equal(exposureByRoute.get("POST /v1/memory/tools/run"), "internal_evidence");
-  assert.equal(exposureByRoute.get("POST /v1/memory/tools/feedback"), "internal_evidence");
+  assert.equal(
+    Array.from(exposureByRoute.values()).some((exposure) => exposure.startsWith("internal_")),
+    false,
+  );
   assert.equal(exposureByRoute.get("POST /v1/handoff/recover"), "product_support");
   assert.equal(exposureByRoute.get("POST /v1/memory/resolve"), "product_support");
   assert.equal(exposureByRoute.get("POST /v1/debug/memory-decision-trace"), "operator_support");

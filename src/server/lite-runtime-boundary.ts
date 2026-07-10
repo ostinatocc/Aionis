@@ -23,7 +23,7 @@ export type LiteRouteProductExposure =
   | "internal_control"
   | "operator_support";
 
-export const LITE_ROUTE_CAPABILITY_MATRIX_VERSION = "lite_route_capability_matrix_v9";
+export const LITE_ROUTE_CAPABILITY_MATRIX_VERSION = "lite_route_capability_matrix_v10";
 
 export const LITE_SERVER_ONLY_ROUTE_GROUPS = {
   admin_control: {
@@ -237,42 +237,6 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
     surface_kind: "operator_review",
     product_role: "resolve memory nodes, edges, commits, or decisions for inspection",
   },
-  {
-    method: "POST",
-    path: "/v1/memory/tools/select", exposure: "internal_guidance",
-    route_group: "memory-feedback-tools",
-    capabilities: ["learning", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "select tools from learned patterns while preserving trust boundaries",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/tools/decision", exposure: "internal_evidence",
-    route_group: "memory-feedback-tools",
-    capabilities: ["learning"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "persist tool decision evidence for later feedback and learning",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/tools/run", exposure: "internal_evidence",
-    route_group: "memory-feedback-tools",
-    capabilities: ["learning"],
-    product_effects: [],
-    surface_kind: "core_runtime",
-    product_role: "record tool run evidence without granting policy authority",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/tools/feedback", exposure: "internal_evidence",
-    route_group: "memory-feedback-tools",
-    capabilities: ["learning", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "turn tool feedback into learning-control learning candidates",
-  },
 ] as const satisfies readonly LiteRouteCapabilityMatrixEntry[];
 
 export function buildLiteProductBoundary() {
@@ -297,7 +261,6 @@ export function buildLiteRouteMatrix() {
       "product-facade",
       "memory-handoff",
       "memory-access-partial",
-      "memory-feedback-tools",
     ],
     optional_routes: [
       "runtime-boundary-inventory",
