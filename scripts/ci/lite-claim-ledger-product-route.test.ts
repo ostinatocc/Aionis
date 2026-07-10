@@ -9,7 +9,7 @@ import { loadEnv, type Env } from "../../src/config.ts";
 import { createRuntimeConfig } from "../../src/config/runtime-config.ts";
 import { createHandoffRouteService, registerHandoffRoutes } from "../../src/routes/handoff.ts";
 import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
-import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
+import { createMemoryPlanningContextService } from "../../src/routes/memory-context-runtime.ts";
 import { registerMemoryFeedbackToolRoutes } from "./support/register-memory-feedback-tool-test-routes.ts";
 import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
 import { registerMemoryWriteRoutes } from "./support/register-memory-write-test-route.ts";
@@ -125,13 +125,11 @@ async function setupClaimLedgerProductApp(args: {
     tenantFromBody: guards.tenantFromBody,
     acquireInflightSlot: guards.acquireInflightSlot,
   });
-  const contextRuntimeRoutes = registerMemoryContextRuntimeRoutes({
-    app,
+  const contextRuntimeRoutes = createMemoryPlanningContextService({
     env,
     embedder: DeterministicEmbeddingProvider,
     liteWriteStore: services.liteWriteStore,
     liteRecallAccess: services.liteRecallStore.createRecallAccess(),
-    recallTextEmbedBatcher: { stats: () => null },
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
     enforceRateLimit: guards.enforceRateLimit,
@@ -219,7 +217,7 @@ async function setupClaimLedgerProductApp(args: {
         executionTreeStore: services.executionTreeStore,
       }),
     }),
-    planningContextService: contextRuntimeRoutes.planningContextService,
+    planningContextService: contextRuntimeRoutes,
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
     enforceRateLimit: args.productGuardOverrides?.enforceRateLimit ?? guards.enforceRateLimit,

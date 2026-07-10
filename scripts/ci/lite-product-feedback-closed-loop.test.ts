@@ -9,8 +9,8 @@ import { createRequestGuards } from "./support/create-request-guards-test-config
 import { createHandoffRouteService, registerHandoffRoutes } from "../../src/routes/handoff.ts";
 import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
 import {
-  registerMemoryContextRuntimeRoutes,
-  type MemoryPlanningContextRouteService,
+  createMemoryPlanningContextService,
+  type MemoryPlanningContextService,
 } from "../../src/routes/memory-context-runtime.ts";
 import { registerMemoryFeedbackToolRoutes } from "./support/register-memory-feedback-tool-test-routes.ts";
 import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
@@ -84,7 +84,7 @@ function registerProductFacade(args: {
   liteRecallAccess?: ReturnType<ReturnType<typeof createLiteRecallStore>["createRecallAccess"]> | null;
   embedder?: typeof DeterministicEmbeddingProvider | null;
   memoryWriteService?: ReturnType<typeof createMemoryWriteRouteService> | null;
-  planningContextService?: MemoryPlanningContextRouteService | null;
+  planningContextService?: MemoryPlanningContextService | null;
   handoffRouteService?: ReturnType<typeof createHandoffRouteService> | null;
 }) {
   registerProductFacadeRoutes({
@@ -156,13 +156,11 @@ function registerProductMemoryApp(args: {
     tenantFromBody: args.guards.tenantFromBody,
     acquireInflightSlot: args.guards.acquireInflightSlot,
   });
-  const contextRuntimeRoutes = registerMemoryContextRuntimeRoutes({
-    app: args.app,
+  const contextRuntimeRoutes = createMemoryPlanningContextService({
     env: args.env,
     embedder: DeterministicEmbeddingProvider,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
-    recallTextEmbedBatcher: { stats: () => null },
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,
@@ -238,7 +236,7 @@ function registerProductMemoryApp(args: {
       liteWriteStore: args.liteWriteStore,
       executionStateStore: null,
     }),
-    planningContextService: contextRuntimeRoutes.planningContextService,
+    planningContextService: contextRuntimeRoutes,
     handoffRouteService: createHandoffRouteService({
       env: args.env,
       embedder: DeterministicEmbeddingProvider,

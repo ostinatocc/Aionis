@@ -1,9 +1,8 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyReply, FastifyRequest } from "fastify";
 import { assertLocalStoreRuntimeEdition } from "../app/edition.js";
 import { buildRecallObservability, collectRecallTrajectoryUriLinks } from "../app/recall-observability.js";
 import { applyContextOptimizationProfile } from "../app/context-optimization-profile.js";
 import {
-  buildAssemblySummary,
   buildExecutionSummarySurface,
   buildPlanningSummary,
 } from "../app/planning-summary-assembly.js";
@@ -38,10 +37,8 @@ import {
   type RuntimeEntropyVerifierDefaultsApplicationV1,
 } from "../memory/runtime-entropy-route-defaults.js";
 import {
-  ContextAssembleRequest,
   ExperienceIntelligenceRequest,
   MemoryRecallRequest,
-  MemoryRecallTextRequest,
   PlanningContextRequest,
   type ExperienceIntelligenceResponse,
   type StaticContextBlock,
@@ -82,9 +79,9 @@ import type { InflightGateToken } from "../util/inflight_gate.js";
 import type { AionisGuidePacket } from "../memory/product-output-contract.js";
 
 type ContextRuntimeRequest = FastifyRequest<{ Body: unknown }>;
-type ContextRuntimeSurface = "recall_text" | "planning_context" | "context_assemble";
+type ContextRuntimeSurface = "planning_context";
 type ContextRuntimeRequestKind = ContextRuntimeSurface;
-export type MemoryPlanningContextRouteService = {
+export type MemoryPlanningContextService = {
   assemble: (
     req: ContextRuntimeRequest,
     reply: FastifyReply,
@@ -150,33 +147,15 @@ type RecallAdaptiveHardCapLike = {
   reason: string;
 };
 
-type RecallTextEmbedBatcherLike = {
-  stats: () => unknown;
-};
-
 type ParsedMemoryRecall = ReturnType<typeof MemoryRecallRequest.parse>;
-type ParsedMemoryRecallText = ReturnType<typeof MemoryRecallTextRequest.parse>;
 type ParsedPlanningContext = ReturnType<typeof PlanningContextRequest.parse>;
-type ParsedContextAssemble = ReturnType<typeof ContextAssembleRequest.parse>;
-type ParsedContextRuntimeQuery = ParsedMemoryRecallText | ParsedPlanningContext | ParsedContextAssemble;
+type ParsedContextRuntimeQuery = ParsedPlanningContext;
 type MemoryRecallOutput = Awaited<ReturnType<typeof memoryRecallParsed>>;
 type RulesEvaluationLike = Awaited<ReturnType<typeof evaluateRules>>;
 type ToolSelectionLike = Awaited<ReturnType<typeof selectTools>>;
-type RecallRouteRules = Pick<
-  RulesEvaluationLike,
-  "scope" | "considered" | "matched" | "skipped_invalid_then" | "invalid_then_sample" | "applied"
->;
-type RecallTextRouteOutput = MemoryRecallOutput & {
-  rules?: RecallRouteRules;
-};
 type PlanningContextRouteOutput = {
   recall: MemoryRecallOutput;
   rules: RulesEvaluationLike;
-  tools: ToolSelectionLike | null;
-};
-type ContextAssembleRouteOutput = {
-  recall: MemoryRecallOutput;
-  rules: RulesEvaluationLike | null;
   tools: ToolSelectionLike | null;
 };
 type ContextRuntimeLiteStoreLike =
@@ -568,8 +547,7 @@ function buildPlannerPacketResponseSurface(
 function buildAionisGuidePacketForContextRoute(args: {
   tenantId: string;
   scope: string;
-  surface: "planning_context" | "context_assemble";
-  parsed: ParsedPlanningContext | ParsedContextAssemble;
+  parsed: ParsedPlanningContext;
   summary: Parameters<typeof buildAionisGuidePacket>[0]["planning"];
   executionEvidenceContext?: ExecutionEvidenceContextLite | null;
 }) {
@@ -589,11 +567,7 @@ function buildAionisGuidePacketForContextRoute(args: {
     },
     planning: args.summary,
     source_map: {
-      routes_used: [
-        args.surface === "planning_context"
-          ? "/v1/memory/planning/context"
-          : "/v1/memory/context/assemble",
-      ],
+      routes_used: ["/v1/guide"],
     },
   });
   return augmentGuidePacketWithExecutionEvidence(guide, args.executionEvidenceContext ?? null);
@@ -602,8 +576,7 @@ function buildAionisGuidePacketForContextRoute(args: {
 function buildAionisLearningPacketForContextRoute(args: {
   tenantId: string;
   scope: string;
-  surface: "planning_context" | "context_assemble";
-  parsed: ParsedPlanningContext | ParsedContextAssemble;
+  parsed: ParsedPlanningContext;
   summary: Parameters<typeof buildAionisLearningPacket>[0]["planning"];
 }) {
   return buildAionisLearningPacket({
@@ -622,31 +595,13 @@ function buildAionisLearningPacketForContextRoute(args: {
     },
     planning: args.summary,
     source_map: {
-      routes_used: [
-        args.surface === "planning_context"
-          ? "/v1/memory/planning/context"
-          : "/v1/memory/context/assemble",
-      ],
+      routes_used: ["/v1/guide"],
     },
   });
 }
 
-function attachRecallRules(base: MemoryRecallOutput, rulesRes: RulesEvaluationLike): RecallTextRouteOutput {
-  return {
-    ...base,
-    rules: {
-      scope: rulesRes.scope,
-      considered: rulesRes.considered,
-      matched: rulesRes.matched,
-      skipped_invalid_then: rulesRes.skipped_invalid_then,
-      invalid_then_sample: rulesRes.invalid_then_sample,
-      applied: rulesRes.applied,
-    },
-  };
-}
-
 function toRecallKnobs(
-  parsed: ParsedMemoryRecallText | ParsedPlanningContext | ParsedContextAssemble | ParsedMemoryRecall,
+  parsed: ParsedPlanningContext | ParsedMemoryRecall,
 ): ContextRuntimeRecallKnobs {
   return {
     limit: parsed.limit,
@@ -684,7 +639,7 @@ function applyDefaultContextBudget<T extends { context_token_budget?: number; co
 }
 
 function applyAdaptiveRecallTuning<
-  T extends ParsedMemoryRecallText | ParsedPlanningContext | ParsedContextAssemble | ParsedMemoryRecall,
+  T extends ParsedPlanningContext | ParsedMemoryRecall,
 >(args: {
   parsed: T;
   parse: (input: unknown) => T;
@@ -734,7 +689,7 @@ function applyAdaptiveRecallTuning<
 function buildRecallRequestFromQuery(args: {
   scope: string;
   queryEmbedding: number[];
-  parsed: ParsedMemoryRecallText | ParsedPlanningContext | ParsedContextAssemble;
+  parsed: ParsedPlanningContext;
   extras?: Partial<Pick<ParsedMemoryRecall, "rules_context" | "rules_include_shadow" | "rules_limit" | "structured_recall_context">>;
 }): ParsedMemoryRecall {
   const { scope, queryEmbedding, parsed, extras } = args;
@@ -772,14 +727,12 @@ function buildRecallRequestFromQuery(args: {
   });
 }
 
-export function registerMemoryContextRuntimeRoutes(args: {
-  app: FastifyInstance;
+export function createMemoryPlanningContextService(args: {
   env: Env;
   embedder: EmbeddingProvider | null;
   embeddingSurfacePolicy?: EmbeddingSurfacePolicy;
   liteWriteStore: ContextRuntimeLiteStoreLike;
   liteRecallAccess: RecallStoreAccess;
-  recallTextEmbedBatcher: unknown;
   requireMemoryPrincipal: (req: FastifyRequest) => Promise<AuthPrincipal | null>;
   withIdentityFromRequest: (
     req: FastifyRequest,
@@ -831,7 +784,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
     req: FastifyRequest;
     tenant_id: string;
     scope: string;
-    endpoint: "planning_context" | "context_assemble";
+    endpoint: "planning_context";
     latency_ms: number;
     layered_output: boolean;
     layered_context: unknown;
@@ -845,13 +798,11 @@ export function registerMemoryContextRuntimeRoutes(args: {
   }) => Promise<void>;
 }) {
   const {
-    app,
     env,
     embedder,
     embeddingSurfacePolicy: embeddingSurfacePolicyArg,
     liteWriteStore,
     liteRecallAccess,
-    recallTextEmbedBatcher,
     requireMemoryPrincipal,
     withIdentityFromRequest,
     enforceRateLimit,
@@ -874,14 +825,9 @@ export function registerMemoryContextRuntimeRoutes(args: {
     mapRecallTextEmbeddingError,
     recordContextAssemblyTelemetryBestEffort,
   } = args;
-  assertLocalStoreRuntimeEdition(env, "local-store memory-context-runtime routes");
+  assertLocalStoreRuntimeEdition(env, "local-store memory planning context service");
   const embeddingSurfacePolicy =
     embeddingSurfacePolicyArg ?? createEmbeddingSurfacePolicy({ providerConfigured: !!embedder });
-  const recallTextEmbedBatcherStats = () =>
-    recallTextEmbedBatcher && typeof recallTextEmbedBatcher === "object" && "stats" in recallTextEmbedBatcher
-    && typeof recallTextEmbedBatcher.stats === "function"
-      ? (recallTextEmbedBatcher as RecallTextEmbedBatcherLike).stats()
-      : null;
   const resolveSurfaceEmbedder = (
     surface: ContextRuntimeSurface,
   ) => {
@@ -998,7 +944,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
     const verifierDefaults = runtimeEntropyVerifierDefaultsApplication({
       body,
       explicitRuntimeVerification: hasExplicitRuntimeVerification(bodyRaw),
-      supportsRuntimeVerification: surface !== "recall_text",
+      supportsRuntimeVerification: true,
     });
     if (verifierDefaults.application.reason === "invalid_runtime_entropy_controls") {
       throw new HttpError(
@@ -1091,7 +1037,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
     await enforceRecallTextEmbedQuota(req, reply, tenantId);
   };
   const prepareAdaptiveRecallExecution = async <
-    TParsed extends ParsedMemoryRecallText | ParsedPlanningContext | ParsedContextAssemble | ParsedMemoryRecall,
+    TParsed extends ParsedPlanningContext | ParsedMemoryRecall,
   >(args: {
     parsed: TParsed;
     parse: (input: unknown) => TParsed;
@@ -1130,7 +1076,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
   });
   const buildContextToolsRequest = (args: {
     recallParsed: ParsedMemoryRecall;
-    parsed: ParsedPlanningContext | ParsedContextAssemble;
+    parsed: ParsedPlanningContext;
     context: unknown;
   }) => ({
     scope: args.recallParsed.scope ?? env.MEMORY_SCOPE,
@@ -1184,7 +1130,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
   };
   const maybeSelectContextTools = async (args: {
     recallParsed: ParsedMemoryRecall;
-    parsed: ParsedPlanningContext | ParsedContextAssemble;
+    parsed: ParsedPlanningContext;
     context: unknown;
   }): Promise<ToolSelectionLike | null> => {
     if (!Array.isArray(args.parsed.tool_candidates) || args.parsed.tool_candidates.length === 0) {
@@ -1205,7 +1151,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
     );
   };
   const maybeBuildContextExperienceIntelligence = async (args: {
-    parsed: ParsedPlanningContext | ParsedContextAssemble;
+    parsed: ParsedPlanningContext;
     tools: ToolSelectionLike | null;
   }): Promise<ExperienceIntelligenceResponse | null> => {
     if (!args.tools) return null;
@@ -1607,7 +1553,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
     };
   };
   const buildEffectiveStaticBlocks = (args: {
-    parsed: ParsedPlanningContext | ParsedContextAssemble;
+    parsed: ParsedPlanningContext;
     executionKernel: ReturnType<typeof resolveExecutionKernelContext>;
     executionEvidenceContext?: ExecutionEvidenceContextLite | null;
   }) => {
@@ -1631,7 +1577,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
         ];
   };
   const buildDefaultExecutionEvidenceContext = async (
-    parsed: ParsedPlanningContext | ParsedContextAssemble,
+    parsed: ParsedPlanningContext,
   ): Promise<ExecutionEvidenceContextLite | null> => {
     if (!parsed.execution_tree_v1) return null;
     return buildExecutionEvidenceContextLite({
@@ -1652,7 +1598,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
     });
   };
   const resolveContextRuntimeVerification = async (args: {
-    parsed: ParsedPlanningContext | ParsedContextAssemble;
+    parsed: ParsedPlanningContext;
     executionKernel: ReturnType<typeof resolveExecutionKernelContext>;
   }): Promise<RuntimeVerificationSurfaceV1 | null> => {
     if (!args.executionKernel.packet) return null;
@@ -1674,7 +1620,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
     );
   };
   const appendRuntimeVerificationEvidence = <
-    TParsed extends ParsedPlanningContext | ParsedContextAssemble,
+    TParsed extends ParsedPlanningContext,
   >(args: {
     parsed: TParsed;
     runtimeVerification: RuntimeVerificationSurfaceV1 | null;
@@ -1707,7 +1653,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
     req: ContextRuntimeRequest;
     tenantId: string;
     scope: string;
-    endpoint: "planning_context" | "context_assemble";
+    endpoint: "planning_context";
     latencyMs: number;
     layeredContext: unknown;
     costSignals: ReturnType<typeof buildLayeredContextCostSignals>;
@@ -1738,7 +1684,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
     }
   };
   const buildLayeredContextArtifacts = (args: {
-    parsed: ParsedPlanningContext | ParsedContextAssemble;
+    parsed: ParsedPlanningContext;
     recallParsed: ParsedMemoryRecall;
     recallOut: MemoryRecallOutput;
     rules: RulesEvaluationLike | null;
@@ -1783,213 +1729,8 @@ export function registerMemoryContextRuntimeRoutes(args: {
     };
   };
 
-  app.post("/v1/memory/recall_text", async (req: ContextRuntimeRequest, reply: FastifyReply) => {
-    const surfaceEmbedder = resolveSurfaceEmbedder("recall_text");
 
-    const t0 = performance.now();
-    const timings: Record<string, number> = {};
-    const preparedRequest = await prepareSurfaceRequest({
-      req,
-      requestKind: "recall_text",
-      surface: "recall_text",
-      parse: MemoryRecallTextRequest.parse,
-    });
-    let parsed = preparedRequest.parsed;
-    const explicitRecallKnobs = preparedRequest.explicitRecallKnobs;
-    const baseProfile = preparedRequest.baseProfile;
-    const explicitMode = preparedRequest.explicitMode;
-    const classAwareProfile = preparedRequest.classAwareProfile;
-    const contextBudgetDefaultApplied = preparedRequest.contextBudgetDefaultApplied;
-    const runtimeEntropyRecallDefaults = preparedRequest.runtimeEntropyRecallDefaults;
-    const runtimeEntropyVerifierDefaults = preparedRequest.runtimeEntropyVerifierDefaults;
-    const wantDebugEmbeddingsText = preparedRequest.wantDebugEmbeddings;
-    await enforceRecallSurfaceQuotas({
-      req,
-      reply,
-      tenantId: parsed.tenant_id ?? env.MEMORY_TENANT_ID,
-      wantDebugEmbeddings: wantDebugEmbeddingsText,
-    });
-    const scope = preparedRequest.scope;
-    const q = preparedRequest.q;
-    const internalAllowL4Selection = allowInternalL4Serving(req);
-
-    let vec: number[];
-    let embedMs = 0;
-    let embedCacheHit = false;
-    let embedSingleflightJoin = false;
-    let embedQueueWaitMs = 0;
-    let embedBatchSize = 1;
-    let recallParsed: ParsedMemoryRecall;
-    const adaptiveExecution = await prepareAdaptiveRecallExecution({
-      parsed,
-      parse: MemoryRecallTextRequest.parse,
-      profile: classAwareProfile.profile,
-      explicitRecallKnobs,
-      explicitMode,
-    });
-    const gate = adaptiveExecution.gate;
-    parsed = adaptiveExecution.parsed;
-    const adaptiveProfile = adaptiveExecution.adaptiveProfile;
-    const adaptiveHardCap = adaptiveExecution.adaptiveHardCap;
-    let out: RecallTextRouteOutput;
-    try {
-      const emb = await runRecallEmbedding({
-        endpoint: "recall_text",
-        req,
-        reply,
-        provider: surfaceEmbedder,
-        scope,
-        tenantId: parsed.tenant_id ?? env.MEMORY_TENANT_ID,
-        queryText: q,
-      });
-      vec = emb.vec;
-      ({ embedMs, embedCacheHit, embedSingleflightJoin, embedQueueWaitMs, embedBatchSize } = toRecallEmbedMetrics(emb));
-
-      recallParsed = buildRecallRequestFromQuery({
-        scope,
-        queryEmbedding: vec,
-        parsed,
-        extras: {
-          rules_context: parsed.rules_context,
-          rules_include_shadow: parsed.rules_include_shadow,
-          rules_limit: parsed.rules_limit,
-        },
-      });
-      const wantDebugEmbeddings = recallParsed.return_debug && recallParsed.include_embeddings;
-      const auth = buildRecallAuth(req, wantDebugEmbeddings);
-      out = await runRecallWithStore({
-        endpoint: "recall_text",
-        recallParsed,
-        auth,
-        timings,
-        buildRuntimeOptions: () =>
-          buildRecallRuntimeOptions({
-            internalAllowL4Selection,
-          }),
-        finalize: async (base) => {
-          if (recallParsed.rules_context === undefined || recallParsed.rules_context === null) {
-            return base;
-          }
-          const rulesRes = await evaluateRules(
-            {
-              scope: recallParsed.scope ?? env.MEMORY_SCOPE,
-              tenant_id: recallParsed.tenant_id ?? env.MEMORY_TENANT_ID,
-              context: recallParsed.rules_context,
-              include_shadow: recallParsed.rules_include_shadow,
-              limit: recallParsed.rules_limit,
-            },
-            env.MEMORY_SCOPE,
-            env.MEMORY_TENANT_ID,
-            { liteWriteStore },
-          );
-          return attachRecallRules(base, rulesRes);
-        },
-      });
-    } finally {
-      gate.release();
-    }
-    const ms = performance.now() - t0;
-    const diagnostics = buildRecallRouteDiagnostics({
-      recallParsed,
-      recallOut: out,
-      timings,
-      inflightWaitMs: gate.wait_ms,
-      explicitMode,
-      adaptiveProfile,
-      adaptiveHardCap,
-      runtimeEntropyRecallDefaults,
-      runtimeEntropyVerifierDefaults,
-      classAwareObservability: {
-        workload_class: classAwareProfile.workload_class,
-        profile: classAwareProfile.profile,
-        enabled: classAwareProfile.enabled,
-        applied: classAwareProfile.applied,
-        reason: classAwareProfile.reason,
-        source: classAwareProfile.source,
-        signals: classAwareProfile.signals,
-      },
-    });
-    const contextChars = diagnostics.contextChars;
-    const contextEstTokens = diagnostics.contextEstTokens;
-    req.log.info(
-      {
-        recall_text: {
-          scope: out.scope,
-          tenant_id: out.tenant_id ?? recallParsed.tenant_id ?? env.MEMORY_TENANT_ID,
-          limit: recallParsed.limit,
-          hops: recallParsed.neighborhood_hops,
-          embedding_provider: surfaceEmbedder.name,
-          embed_ms: embedMs,
-          embed_cache_hit: embedCacheHit,
-          embed_singleflight_join: embedSingleflightJoin,
-          embed_queue_wait_ms: embedQueueWaitMs,
-          embed_batch_size: embedBatchSize,
-          embed_batcher: recallTextEmbedBatcherStats(),
-          include_meta: !!recallParsed.include_meta,
-          include_slots: !!recallParsed.include_slots,
-          include_slots_preview: !!recallParsed.include_slots_preview,
-          consumer_agent_id: recallParsed.consumer_agent_id ?? null,
-          consumer_team_id: recallParsed.consumer_team_id ?? null,
-          seeds: out.seeds.length,
-          nodes: out.subgraph.nodes.length,
-          edges: out.subgraph.edges.length,
-          neighborhood_counts: out.debug?.neighborhood_counts ?? null,
-          rules: out.rules ? { considered: out.rules.considered, matched: out.rules.matched } : null,
-          context_chars: contextChars,
-          context_est_tokens: contextEstTokens,
-	          context_token_budget: recallParsed.context_token_budget ?? null,
-	          context_char_budget: recallParsed.context_char_budget ?? null,
-	          context_compaction_profile: recallParsed.context_compaction_profile ?? "balanced",
-	          context_budget_default_applied: contextBudgetDefaultApplied,
-	          stage1_exact_recovery_enabled: env.MEMORY_RECALL_STAGE1_EXACT_RECOVERY_ON_EMPTY,
-	          stage1_exact_recovery_used: Number.isFinite(timings["stage1_candidates_exact_recovery"]),
-	          recall_engine_mode: env.RECALL_ENGINE_MODE,
-	          stage1_ann_seed_count: out.debug?.stage1?.ann_seed_count ?? null,
-	          stage1_ann_ms: timings["stage1_candidates_ann"] ?? null,
-	          stage1_hybrid_seed_count: out.debug?.stage1?.hybrid_seed_count ?? null,
-	          stage1_hybrid_ms: timings["stage1_candidates_hybrid"] ?? null,
-	          stage1_exact_recovery_ms: timings["stage1_candidates_exact_recovery"] ?? null,
-	          profile: adaptiveProfile.profile,
-          profile_source: baseProfile.source,
-          recall_mode: explicitMode.mode,
-          recall_mode_profile: explicitMode.profile,
-          recall_mode_applied: explicitMode.applied,
-          recall_mode_reason: explicitMode.reason,
-          recall_mode_source: explicitMode.source,
-          class_aware_profile: classAwareProfile.profile,
-          class_aware_enabled: classAwareProfile.enabled,
-          class_aware_applied: classAwareProfile.applied,
-          class_aware_reason: classAwareProfile.reason,
-          class_aware_source: classAwareProfile.source,
-          class_aware_workload_class: classAwareProfile.workload_class,
-          class_aware_signals: classAwareProfile.signals,
-          adaptive_profile_applied: adaptiveProfile.applied,
-          adaptive_profile_reason: adaptiveProfile.reason,
-          adaptive_hard_cap_applied: adaptiveHardCap.applied,
-          adaptive_hard_cap_reason: adaptiveHardCap.reason,
-          runtime_entropy_defaults_applied: runtimeEntropyRecallDefaults.applied,
-          runtime_entropy_defaults_reason: runtimeEntropyRecallDefaults.reason,
-          runtime_entropy_defaults_breadth: runtimeEntropyRecallDefaults.recall_breadth,
-          runtime_entropy_verifier_defaults_applied: runtimeEntropyVerifierDefaults.applied,
-          runtime_entropy_verifier_defaults_reason: runtimeEntropyVerifierDefaults.reason,
-          runtime_entropy_verifier_defaults_schedule: runtimeEntropyVerifierDefaults.verifier_schedule,
-          adaptive_hard_cap_wait_ms: env.MEMORY_RECALL_ADAPTIVE_HARD_CAP_WAIT_MS,
-          inflight_wait_ms: gate.wait_ms,
-          ms,
-          timings_ms: timings,
-        },
-      },
-      "memory recall_text",
-    );
-    return reply.code(200).send({
-      ...out,
-      query: { text: q, embedding_provider: surfaceEmbedder.name },
-      trajectory: diagnostics.trajectory,
-      observability: diagnostics.observability,
-    });
-  });
-
-  const assemblePlanningContext: MemoryPlanningContextRouteService["assemble"] = async (req, reply, options = {}) => {
+  const assemblePlanningContext: MemoryPlanningContextService["assemble"] = async (req, reply, options = {}) => {
     const surfaceEmbedder = resolveSurfaceEmbedder("planning_context");
 
     const t0 = performance.now();
@@ -2321,7 +2062,6 @@ export function registerMemoryContextRuntimeRoutes(args: {
       aionis_guide_packet: buildAionisGuidePacketForContextRoute({
         tenantId: tenantIdOut,
         scope: recallOut.scope,
-        surface: "planning_context",
         parsed,
         summary: planningSummary,
         executionEvidenceContext,
@@ -2329,7 +2069,6 @@ export function registerMemoryContextRuntimeRoutes(args: {
       aionis_learning_packet: buildAionisLearningPacketForContextRoute({
         tenantId: tenantIdOut,
         scope: recallOut.scope,
-        surface: "planning_context",
         parsed,
         summary: planningSummary,
       }),
@@ -2339,369 +2078,9 @@ export function registerMemoryContextRuntimeRoutes(args: {
       cost_signals: costSignals,
     };
   };
-  const planningContextService: MemoryPlanningContextRouteService = {
+  const planningContextService: MemoryPlanningContextService = {
     assemble: assemblePlanningContext,
   };
 
-  app.post("/v1/memory/planning/context", async (req: ContextRuntimeRequest, reply: FastifyReply) => {
-    const response = await planningContextService.assemble(req, reply);
-    return reply.code(200).send(response);
-  });
-
-  app.post("/v1/memory/context/assemble", async (req: ContextRuntimeRequest, reply: FastifyReply) => {
-    const surfaceEmbedder = resolveSurfaceEmbedder("context_assemble");
-
-    const t0 = performance.now();
-    const timings: Record<string, number> = {};
-    const preparedRequest = await prepareSurfaceRequest({
-      req,
-      requestKind: "context_assemble",
-      surface: "context_assemble",
-      parse: ContextAssembleRequest.parse,
-    });
-    let parsed = preparedRequest.parsed;
-    const explicitRecallKnobs = preparedRequest.explicitRecallKnobs;
-    const baseProfile = preparedRequest.baseProfile;
-    const explicitMode = preparedRequest.explicitMode;
-    const classAwareProfile = preparedRequest.classAwareProfile;
-    const contextBudgetDefaultApplied = preparedRequest.contextBudgetDefaultApplied;
-    const runtimeEntropyRecallDefaults = preparedRequest.runtimeEntropyRecallDefaults;
-    const runtimeEntropyVerifierDefaults = preparedRequest.runtimeEntropyVerifierDefaults;
-    const wantDebugEmbeddings = preparedRequest.wantDebugEmbeddings;
-    await enforceRecallSurfaceQuotas({
-      req,
-      reply,
-      tenantId: parsed.tenant_id ?? env.MEMORY_TENANT_ID,
-      wantDebugEmbeddings,
-    });
-
-    const scope = preparedRequest.scope;
-    const q = preparedRequest.q;
-
-    let embedMs = 0;
-    let embedCacheHit = false;
-    let embedSingleflightJoin = false;
-    let embedQueueWaitMs = 0;
-    let embedBatchSize = 1;
-    let recallParsed: ParsedMemoryRecall;
-    const adaptiveExecution = await prepareAdaptiveRecallExecution({
-      parsed,
-      parse: ContextAssembleRequest.parse,
-      profile: classAwareProfile.profile,
-      explicitRecallKnobs,
-      explicitMode,
-    });
-    const gate = adaptiveExecution.gate;
-    parsed = adaptiveExecution.parsed;
-    const adaptiveProfile = adaptiveExecution.adaptiveProfile;
-    const adaptiveHardCap = adaptiveExecution.adaptiveHardCap;
-    const assembleOptimization = applyContextOptimizationProfile(
-      parsed,
-      env.MEMORY_CONTEXT_ASSEMBLE_OPTIMIZATION_PROFILE_DEFAULT === "off"
-        ? null
-        : env.MEMORY_CONTEXT_ASSEMBLE_OPTIMIZATION_PROFILE_DEFAULT,
-    );
-    parsed = ContextAssembleRequest.parse(assembleOptimization.parsed);
-    parsed = augmentTrajectoryAwareRequest({
-      parsed,
-      parse: ContextAssembleRequest.parse,
-      defaultScope: env.MEMORY_SCOPE,
-      defaultTenantId: env.MEMORY_TENANT_ID,
-    }).parsed;
-    const executionKernel = resolveExecutionKernelContext(parsed);
-    const runtimeVerification = await resolveContextRuntimeVerification({
-      parsed,
-      executionKernel,
-    });
-    parsed = appendRuntimeVerificationEvidence({
-      parsed,
-      runtimeVerification,
-      parse: ContextAssembleRequest.parse,
-    });
-    const executionContext = buildExecutionContinuityContext(parsed);
-    const executionEvidenceContext = await buildDefaultExecutionEvidenceContext(parsed);
-
-    let out: ContextAssembleRouteOutput;
-    try {
-      let vec: number[];
-      const emb = await runRecallEmbedding({
-        endpoint: "context_assemble",
-        req,
-        reply,
-        provider: surfaceEmbedder,
-        scope,
-        tenantId: parsed.tenant_id ?? env.MEMORY_TENANT_ID,
-        queryText: q,
-      });
-      vec = emb.vec;
-      ({ embedMs, embedCacheHit, embedSingleflightJoin, embedQueueWaitMs, embedBatchSize } = toRecallEmbedMetrics(emb));
-
-      recallParsed = buildRecallRequestFromQuery({
-        scope,
-        queryEmbedding: vec,
-        parsed,
-      });
-      const auth = buildRecallAuth(req, wantDebugEmbeddings);
-      const unsafeDropTrustAnchors = allowUnsafeDropTrustAnchors(req);
-      const applyLayerPolicyToRetrieval = allowLayerPolicyRetrievalFiltering(req);
-      const internalAllowL4Selection = allowInternalL4Serving(req);
-      out = await runRecallWithStore({
-        endpoint: "context_assemble",
-        recallParsed,
-        auth,
-        timings,
-        buildRuntimeOptions: () =>
-          buildRecallRuntimeOptions({
-            internalAllowL4Selection,
-            unsafeDropTrustAnchors,
-            applyLayerPolicyToRetrieval,
-          }),
-        finalize: async (recall) => {
-          const rules = await maybeEvaluateContextRules({
-            recallParsed,
-            context: executionContext,
-            includeShadow: parsed.include_shadow,
-            rulesLimit: parsed.rules_limit,
-            includeRules: parsed.include_rules,
-          });
-          const tools = await maybeSelectContextTools({
-            recallParsed,
-            parsed,
-            context: executionContext,
-          });
-          return { recall, rules, tools };
-        },
-      });
-    } finally {
-      gate.release();
-    }
-
-    const ms = performance.now() - t0;
-    const recallOut = out.recall;
-    const diagnostics = buildRecallRouteDiagnostics({
-      recallParsed,
-      recallOut,
-      tools: out.tools,
-      timings,
-      inflightWaitMs: gate.wait_ms,
-      explicitMode,
-      adaptiveProfile,
-      adaptiveHardCap,
-      runtimeEntropyRecallDefaults,
-      runtimeEntropyVerifierDefaults,
-      classAwareObservability: {
-        workload_class: classAwareProfile.workload_class,
-        profile: classAwareProfile.profile,
-        enabled: classAwareProfile.enabled,
-        applied: classAwareProfile.applied,
-        reason: classAwareProfile.reason,
-        source: classAwareProfile.source,
-        signals: classAwareProfile.signals,
-      },
-    });
-    const experienceIntelligence = await maybeBuildContextExperienceIntelligence({
-      parsed,
-      tools: out.tools,
-    });
-    const contextChars = diagnostics.contextChars;
-    const contextEstTokens = diagnostics.contextEstTokens;
-
-    const effectiveStaticBlocks = buildEffectiveStaticBlocks({
-      parsed,
-      executionKernel,
-      executionEvidenceContext,
-    });
-    const { layeredContext, costSignals } = buildLayeredContextArtifacts({
-      parsed,
-      recallParsed,
-      recallOut,
-      rules: out.rules,
-      tools: out.tools,
-      executionContext: parsed.context,
-      effectiveStaticBlocks,
-      contextEstTokens,
-      optimizationProfile: assembleOptimization.optimization_profile,
-    });
-    projectDelegationLearningToLayeredContext({
-      layeredContext,
-      experienceIntelligence,
-    });
-    const plannerSurface = extractPlannerPacketSurface({ layeredContext, recall: recallOut });
-    const persistedDelegationRecords = await loadPersistedDelegationRecordsForContext({
-      liteWriteStore,
-      scope: recallOut.scope,
-      runId: parsed.run_id ?? null,
-      executionPacket: executionKernel.packet,
-      executionState: parsed.execution_state_v1 ?? null,
-      consumerAgentId: parsed.consumer_agent_id ?? env.LITE_LOCAL_ACTOR_ID,
-      consumerTeamId: parsed.consumer_team_id ?? null,
-    });
-    const executionTreeEffectSummary = buildExecutionTreeEffectSummary({
-      executionTree: parsed.execution_tree_v1 ?? null,
-      layeredContext,
-    });
-    const assemblySummary = buildAssemblySummary({
-      rules: out.rules,
-      tools: out.tools,
-      layered_context: layeredContext,
-      planner_surface: plannerSurface,
-      cost_signals: costSignals,
-      context_est_tokens: contextEstTokens,
-      context_compaction_profile: recallParsed.context_compaction_profile ?? "balanced",
-      optimization_profile: assembleOptimization.optimization_profile.requested,
-      recall_mode: explicitMode.mode,
-      include_rules: parsed.include_rules,
-      experience_intelligence: experienceIntelligence,
-      edit_boundary_context: parsed.edit_boundary_context ?? null,
-      execution_evidence: parsed.execution_evidence,
-      execution_tree: parsed.execution_tree_v1 ?? null,
-    });
-    const operatorProjection = buildContextOperatorProjection({
-      returnLayeredContext: parsed.return_layered_context === true,
-      experienceIntelligence,
-      actionRetrievalGate:
-        assemblySummary.action_retrieval_gate && typeof assemblySummary.action_retrieval_gate === "object"
-          ? (assemblySummary.action_retrieval_gate as Record<string, unknown>)
-          : null,
-      continuityGuidance:
-        assemblySummary.continuity_guidance && typeof assemblySummary.continuity_guidance === "object"
-          ? (assemblySummary.continuity_guidance as Record<string, unknown>)
-          : null,
-    });
-    const tenantIdOut = recallOut.tenant_id ?? recallParsed.tenant_id ?? env.MEMORY_TENANT_ID;
-    await recordContextAssemblyTelemetrySafe({
-      req,
-      tenantId: tenantIdOut,
-      scope: recallOut.scope,
-      endpoint: "context_assemble",
-      latencyMs: ms,
-      layeredContext,
-      costSignals,
-      selectionPolicy: recallOut?.context?.selection_policy ?? null,
-    });
-
-    req.log.info(
-      {
-        context_assemble: {
-          scope: recallOut.scope,
-          tenant_id: tenantIdOut,
-          include_rules: parsed.include_rules,
-          include_shadow: parsed.include_shadow,
-          rules_limit: parsed.rules_limit,
-          has_tool_candidates: Array.isArray(parsed.tool_candidates) && parsed.tool_candidates.length > 0,
-          tool_candidates: parsed.tool_candidates?.length ?? 0,
-          return_layered_context: parsed.return_layered_context,
-          execution_kernel_packet_source_mode: executionKernel.source_mode,
-          execution_packet_v1_present: !!parsed.execution_packet_v1,
-          execution_state_v1_present: !!parsed.execution_state_v1,
-          embed_ms: embedMs,
-          embed_cache_hit: embedCacheHit,
-          embed_singleflight_join: embedSingleflightJoin,
-          embed_queue_wait_ms: embedQueueWaitMs,
-          embed_batch_size: embedBatchSize,
-          context_chars: contextChars,
-	          context_est_tokens: contextEstTokens,
-	          context_token_budget: recallParsed.context_token_budget ?? null,
-	          context_char_budget: recallParsed.context_char_budget ?? null,
-	          context_compaction_profile: recallParsed.context_compaction_profile ?? "balanced",
-	          context_optimization_profile: assembleOptimization.optimization_profile.requested,
-	          context_optimization_profile_source: assembleOptimization.optimization_profile.source,
-	          context_budget_default_applied: contextBudgetDefaultApplied,
-	          recall_engine_mode: env.RECALL_ENGINE_MODE,
-	          stage1_ann_seed_count: recallOut.debug?.stage1?.ann_seed_count ?? null,
-	          stage1_ann_ms: timings["stage1_candidates_ann"] ?? null,
-	          stage1_hybrid_seed_count: recallOut.debug?.stage1?.hybrid_seed_count ?? null,
-	          stage1_hybrid_ms: timings["stage1_candidates_hybrid"] ?? null,
-	          stage1_exact_recovery_used: Number.isFinite(timings["stage1_candidates_exact_recovery"]),
-	          stage1_exact_recovery_ms: timings["stage1_candidates_exact_recovery"] ?? null,
-	          profile: adaptiveProfile.profile,
-          profile_source: baseProfile.source,
-          recall_mode: explicitMode.mode,
-          recall_mode_profile: explicitMode.profile,
-          recall_mode_applied: explicitMode.applied,
-          recall_mode_reason: explicitMode.reason,
-          recall_mode_source: explicitMode.source,
-          class_aware_profile: classAwareProfile.profile,
-          class_aware_enabled: classAwareProfile.enabled,
-          class_aware_applied: classAwareProfile.applied,
-          class_aware_reason: classAwareProfile.reason,
-          class_aware_source: classAwareProfile.source,
-          class_aware_workload_class: classAwareProfile.workload_class,
-          class_aware_signals: classAwareProfile.signals,
-          runtime_entropy_defaults_applied: runtimeEntropyRecallDefaults.applied,
-          runtime_entropy_defaults_reason: runtimeEntropyRecallDefaults.reason,
-          runtime_entropy_defaults_breadth: runtimeEntropyRecallDefaults.recall_breadth,
-          runtime_entropy_verifier_defaults_applied: runtimeEntropyVerifierDefaults.applied,
-          runtime_entropy_verifier_defaults_reason: runtimeEntropyVerifierDefaults.reason,
-          runtime_entropy_verifier_defaults_schedule: runtimeEntropyVerifierDefaults.verifier_schedule,
-          rules_considered: out.rules?.considered ?? 0,
-          rules_matched: out.rules?.matched ?? 0,
-          tools_selected: out.tools?.selection?.selected ?? null,
-          ms,
-          timings_ms: timings,
-        },
-      },
-      "memory context_assemble",
-    );
-
-    return reply.code(200).send({
-      tenant_id: tenantIdOut,
-      scope: recallOut.scope,
-      execution_kernel: buildExecutionKernelResponse(
-        executionKernel.source_mode,
-        parsed,
-        runtimeVerification,
-        plannerSurface,
-        assemblySummary.execution_tree_effect_summary ?? executionTreeEffectSummary,
-      ),
-      query: { text: q, embedding_provider: surfaceEmbedder.name },
-      recall: {
-        ...recallOut,
-        trajectory: diagnostics.trajectory,
-        observability: diagnostics.observability,
-      },
-      rules: out.rules ?? undefined,
-      tools: out.tools ?? undefined,
-      runtime_tool_hints: Array.isArray(recallOut.runtime_tool_hints) ? recallOut.runtime_tool_hints : [],
-      ...buildPlannerPacketResponseSurface(plannerSurface, {
-        packet_source_mode: executionKernel.source_mode,
-        state_first_assembly: executionKernel.source_mode === "state_first",
-        execution_packet_v1_present: !!parsed.execution_packet_v1,
-        execution_state_v1_present: !!parsed.execution_state_v1,
-      }, {
-        tools: out.tools,
-        cost_signals: costSignals,
-        execution_packet: executionKernel.packet,
-        execution_artifacts: parsed.execution_artifacts,
-        execution_evidence: parsed.execution_evidence,
-        delegation_records: persistedDelegationRecords,
-        execution_tree: parsed.execution_tree_v1 ?? null,
-        layered_context: layeredContext,
-      }),
-      assembly_summary: assemblySummary,
-      aionis_guide_packet: buildAionisGuidePacketForContextRoute({
-        tenantId: tenantIdOut,
-        scope: recallOut.scope,
-        surface: "context_assemble",
-        parsed,
-        summary: assemblySummary,
-        executionEvidenceContext,
-      }),
-      aionis_learning_packet: buildAionisLearningPacketForContextRoute({
-        tenantId: tenantIdOut,
-        scope: recallOut.scope,
-        surface: "context_assemble",
-        parsed,
-        summary: assemblySummary,
-      }),
-      operator_projection: operatorProjection,
-      execution_evidence_context: executionEvidenceContext,
-      layered_context: layeredContext,
-      cost_signals: costSignals,
-    });
-  });
-
-  return {
-    planningContextService,
-  };
+  return planningContextService;
 }

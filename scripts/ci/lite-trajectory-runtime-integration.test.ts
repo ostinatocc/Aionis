@@ -10,7 +10,8 @@ import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { PlanningContextRequest, PlanningContextRouteContractSchema } from "../../src/memory/schemas.ts";
 import { buildTrajectoryCompileLite } from "../../src/memory/trajectory-compile.ts";
 import { applyTrajectoryCompileExecutionKernel, augmentTrajectoryAwareRequest } from "../../src/memory/trajectory-compile-runtime.ts";
-import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
+import { createMemoryPlanningContextService } from "../../src/routes/memory-context-runtime.ts";
+import { PLANNING_SERVICE_TEST_PATH, registerPlanningServiceTestAdapter } from "./support/register-planning-service-test-adapter.ts";
 import { registerHandoffRoutes } from "../../src/routes/handoff.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
@@ -70,13 +71,11 @@ async function buildApp(envOverrides: Record<string, unknown> = {}) {
   const app = Fastify();
   registerRuntimeErrorHandler(app);
 
-  registerMemoryContextRuntimeRoutes({
-    app,
+registerPlanningServiceTestAdapter(app, createMemoryPlanningContextService({
     env,
     embedder: DeterministicEmbeddingProvider,
     liteWriteStore,
     liteRecallAccess: liteRecallStore.createRecallAccess(),
-    recallTextEmbedBatcher: { stats: () => null },
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
     enforceRateLimit: guards.enforceRateLimit,
@@ -128,7 +127,7 @@ async function buildApp(envOverrides: Record<string, unknown> = {}) {
       message: "embedding failed",
     }),
     recordContextAssemblyTelemetryBestEffort: async () => {},
-  });
+  }));
 
   registerHandoffRoutes({
     app,
@@ -394,7 +393,7 @@ test("planning/context compiles trajectory into execution kernel inputs", async 
   try {
     const response = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -425,7 +424,7 @@ test("planning/context plans runtime verifier requests from execution packet wit
   try {
     const response = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -464,7 +463,7 @@ test("planning/context applies runtime entropy verifier defaults without executi
   try {
     const response = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -501,7 +500,7 @@ test("planning/context blocks runtime verifier execution unless explicitly enabl
   try {
     const response = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -540,7 +539,7 @@ test("planning/context blocks after-exit runtime verifier execution until agent 
   try {
     const response = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -579,7 +578,7 @@ test("planning/context executes runtime verifier after confirmed agent exit and 
   try {
     const response = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",

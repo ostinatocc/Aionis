@@ -79,10 +79,8 @@ function isActionRecallEndpoint(endpoint: "recall" | "recall_text" | "planning_c
 }
 
 function routeForRecallEndpoint(endpoint: "recall" | "recall_text" | "planning_context" | "context_assemble"): string {
-  if (endpoint === "recall_text") return "/v1/memory/recall_text";
-  if (endpoint === "planning_context") return "/v1/memory/planning/context";
-  if (endpoint === "context_assemble") return "/v1/memory/context/assemble";
-  return "/v1/memory/recall";
+  void endpoint;
+  return "/v1/guide";
 }
 
 function countCandidateTiers(candidates: RecallCandidate[]): Record<RecallMemoryTier, number> {

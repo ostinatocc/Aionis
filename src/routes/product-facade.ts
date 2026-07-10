@@ -25,7 +25,7 @@ import {
 import type { AuthPrincipal } from "../util/auth.js";
 import { HttpError } from "../util/http.js";
 import type { InflightGateToken } from "../util/inflight_gate.js";
-import type { MemoryPlanningContextRouteService } from "./memory-context-runtime.js";
+import type { MemoryPlanningContextService } from "./memory-context-runtime.js";
 
 type ProductFacadeRequest = FastifyRequest<{ Body: unknown }>;
 type ProductFacadeQueryRequest = FastifyRequest<{ Querystring: unknown }>;
@@ -35,7 +35,7 @@ type ProductGuardKind = "recall" | "write";
 export type ProductFacadeArgs = {
   app: FastifyInstance;
   services: ProductServices;
-  planningContextService: MemoryPlanningContextRouteService | null;
+  planningContextService: MemoryPlanningContextService | null;
   requireMemoryPrincipal: (req: FastifyRequest) => Promise<AuthPrincipal | null>;
   withIdentityFromRequest: (
     req: FastifyRequest,

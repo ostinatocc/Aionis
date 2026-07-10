@@ -383,8 +383,8 @@ test("internal HTTP inventory distinguishes temporary adapters from completed re
   const removed = rows.filter((row) => row.public_http === "removed");
 
   assert.equal(required.length, 19);
-  assert.equal(temporary.length, 8);
-  assert.equal(removed.length, 45);
+  assert.equal(temporary.length, 4);
+  assert.equal(removed.length, 49);
 
   for (const row of rows.filter((candidate) => INTERNAL_EXPOSURES.has(candidate.exposure))) {
     const key = `${row.method} ${row.path}`;

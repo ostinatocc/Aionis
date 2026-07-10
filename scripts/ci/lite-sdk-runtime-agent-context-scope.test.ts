@@ -6,7 +6,7 @@ import path from "node:path";
 import Fastify from "fastify";
 
 import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
-import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
+import { createMemoryPlanningContextService } from "../../src/routes/memory-context-runtime.ts";
 import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
 import { createRuntimeProductServices, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
@@ -72,13 +72,11 @@ function registerSdkRuntimeProductApp(args: {
   liteRecallStore: ReturnType<typeof createLiteRecallStore>;
 }) {
   registerRuntimeErrorHandler(args.app);
-  const contextRuntimeRoutes = registerMemoryContextRuntimeRoutes({
-    app: args.app,
+  const contextRuntimeRoutes = createMemoryPlanningContextService({
     env: args.env,
     embedder: DeterministicEmbeddingProvider,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
-    recallTextEmbedBatcher: { stats: () => null },
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,
@@ -146,7 +144,7 @@ function registerSdkRuntimeProductApp(args: {
       }),
       handoffRouteService: null,
     }),
-    planningContextService: contextRuntimeRoutes.planningContextService,
+    planningContextService: contextRuntimeRoutes,
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,

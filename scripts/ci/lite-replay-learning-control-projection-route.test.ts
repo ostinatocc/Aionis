@@ -16,7 +16,8 @@ import {
 } from "../../src/kernel/policy-mutation-loop.ts";
 import { PlanningContextRouteContractSchema, ReplayPlaybookRepairReviewResponseSchema } from "../../src/memory/schemas.ts";
 import { replayPlaybookRepairReview, replayPlaybookRun } from "../../src/memory/replay.ts";
-import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
+import { createMemoryPlanningContextService } from "../../src/routes/memory-context-runtime.ts";
+import { PLANNING_SERVICE_TEST_PATH, registerPlanningServiceTestAdapter } from "./support/register-planning-service-test-adapter.ts";
 import { applyReplayMemoryWrite } from "../../src/memory/replay-write.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteReplayStore } from "../../src/store/lite-replay-store.ts";
@@ -262,8 +263,7 @@ function registerReplayReviewRoute(args: {
   };
 
   if (args.liteRecallStore) {
-    registerMemoryContextRuntimeRoutes({
-      app,
+registerPlanningServiceTestAdapter(app, createMemoryPlanningContextService({
       env: {
         AIONIS_EDITION: "lite",
         APP_ENV: "test",
@@ -281,7 +281,6 @@ function registerReplayReviewRoute(args: {
       embedder: DeterministicEmbeddingProvider,
       liteWriteStore: args.liteWriteStore,
       liteRecallAccess: args.liteRecallStore.createRecallAccess(),
-      recallTextEmbedBatcher: { stats: () => null },
       requireMemoryPrincipal: guards.requireMemoryPrincipal,
       withIdentityFromRequest: guards.withIdentityFromRequest,
       enforceRateLimit: guards.enforceRateLimit,
@@ -346,7 +345,7 @@ function registerReplayReviewRoute(args: {
         message: "embed failed",
       }),
       recordContextAssemblyTelemetryBestEffort: async () => {},
-    });
+    }));
   }
 
   return { app, runtimeOptions, review, run };
@@ -763,7 +762,7 @@ test("lite replay repair review writes workflow memory that planning_context con
 
     const planningRes = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",

@@ -15,7 +15,7 @@ import {
 } from "../../src/execution/index.ts";
 import { createHandoffRouteService, registerHandoffRoutes } from "../../src/routes/handoff.ts";
 import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
-import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
+import { createMemoryPlanningContextService } from "../../src/routes/memory-context-runtime.ts";
 import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
 import { registerMemoryWriteRoutes } from "./support/register-memory-write-test-route.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
@@ -139,13 +139,11 @@ function registerRuntimeE2EApp(args: {
     executionTreeStore: args.executionTreeStore,
   });
 
-  const contextRuntimeRoutes = registerMemoryContextRuntimeRoutes({
-    app: args.app,
+  const contextRuntimeRoutes = createMemoryPlanningContextService({
     env: args.env,
     embedder: DeterministicEmbeddingProvider,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
-    recallTextEmbedBatcher: { stats: () => null },
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,
@@ -220,7 +218,7 @@ function registerRuntimeE2EApp(args: {
         executionTreeStore: args.executionTreeStore,
       }),
     }),
-    planningContextService: contextRuntimeRoutes.planningContextService,
+    planningContextService: contextRuntimeRoutes,
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,

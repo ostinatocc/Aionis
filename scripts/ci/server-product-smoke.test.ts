@@ -226,13 +226,17 @@ function registerServerProductApp(args: {
   };
 }
 
-test("application registration exposes product routes but not Task-10-replaced internal memory routes", async () => {
+test("application registration exposes product routes but not replaced internal memory routes", async () => {
   const app = Fastify();
   const writePath = tmpDbPath("route-removal-write");
   const replayPath = tmpDbPath("route-removal-replay");
   const env = await serverEnv(writePath, replayPath);
   const stores = registerServerProductApp({ app, env, writePath, replayPath });
   const removedRoutes = [
+    "/v1/memory/recall",
+    "/v1/memory/recall_text",
+    "/v1/memory/planning/context",
+    "/v1/memory/context/assemble",
     "/v1/memory/write",
     "/v1/memory/archive/rehydrate",
     "/v1/memory/nodes/activate",
@@ -284,7 +288,6 @@ test("application registration exposes product routes but not Task-10-replaced i
   try {
     assert.equal(app.hasRoute({ method: "POST", url: "/v1/observe" }), true);
     assert.equal(app.hasRoute({ method: "POST", url: "/v1/operator/snapshot" }), true);
-    assert.equal(app.hasRoute({ method: "POST", url: "/v1/memory/planning/context" }), true);
     assert.equal(app.hasRoute({ method: "POST", url: "/v1/memory/resolve" }), true);
     for (const url of [
       "/v1/memory/tools/select",
@@ -296,6 +299,11 @@ test("application registration exposes product routes but not Task-10-replaced i
     }
     for (const url of removedRoutes) {
       assert.equal(app.hasRoute({ method: "POST", url }), false, `${url} must not be registered`);
+    }
+
+    for (const url of removedRoutes.slice(0, 4)) {
+      const response = await app.inject({ method: "POST", url, payload: {} });
+      assert.equal(response.statusCode, 404, `${url} must return 404`);
     }
 
     const unsupported = await app.inject({

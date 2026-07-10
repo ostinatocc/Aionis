@@ -7,7 +7,7 @@ import Fastify from "fastify";
 
 import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import { createHandoffRouteService } from "../../src/routes/handoff.ts";
-import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
+import { createMemoryPlanningContextService } from "../../src/routes/memory-context-runtime.ts";
 import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
 import { createRuntimeProductServices, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
@@ -154,13 +154,11 @@ function registerParityRuntime(args: {
 }) {
   const guards = requestGuards(args.env);
   registerRuntimeErrorHandler(args.app);
-  const contextRuntimeRoutes = registerMemoryContextRuntimeRoutes({
-    app: args.app,
+  const contextRuntimeRoutes = createMemoryPlanningContextService({
     env: args.env,
     embedder: DeterministicEmbeddingProvider,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
-    recallTextEmbedBatcher: { stats: () => null },
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
     enforceRateLimit: guards.enforceRateLimit,
@@ -233,7 +231,7 @@ function registerParityRuntime(args: {
         executionStateStore: null,
       }),
     }),
-    planningContextService: contextRuntimeRoutes.planningContextService,
+    planningContextService: contextRuntimeRoutes,
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
     enforceRateLimit: guards.enforceRateLimit,

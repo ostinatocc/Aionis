@@ -23,7 +23,7 @@ export type LiteRouteProductExposure =
   | "internal_control"
   | "operator_support";
 
-export const LITE_ROUTE_CAPABILITY_MATRIX_VERSION = "lite_route_capability_matrix_v8";
+export const LITE_ROUTE_CAPABILITY_MATRIX_VERSION = "lite_route_capability_matrix_v9";
 
 export const LITE_SERVER_ONLY_ROUTE_GROUPS = {
   admin_control: {
@@ -230,42 +230,6 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/recall", exposure: "internal_guidance",
-    route_group: "memory-recall",
-    capabilities: ["continuity", "forgetting"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "retrieve scoped memory with lifecycle, trust, and compaction policy",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/recall_text", exposure: "internal_guidance",
-    route_group: "memory-context-runtime",
-    capabilities: ["continuity", "forgetting"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "embed text recall into the same lifecycle-aware recall path",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/planning/context", exposure: "internal_guidance",
-    route_group: "memory-context-runtime",
-    capabilities: ["continuity", "learning", "forgetting", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "assemble the agent-facing planning packet from continuity, recall, learning, and authority signals",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/context/assemble", exposure: "internal_guidance",
-    route_group: "memory-context-runtime",
-    capabilities: ["continuity", "learning", "forgetting", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "assemble internal context evidence behind the product guide facade",
-  },
-  {
-    method: "POST",
     path: "/v1/memory/resolve", exposure: "product_support",
     route_group: "memory-access-partial",
     capabilities: ["continuity", "forgetting"],
@@ -332,8 +296,6 @@ export function buildLiteRouteMatrix() {
     kernel_required_routes: [
       "product-facade",
       "memory-handoff",
-      "memory-recall",
-      "memory-context-runtime",
       "memory-access-partial",
       "memory-feedback-tools",
     ],

@@ -9,12 +9,11 @@ import type { AuthPrincipal } from "../util/auth.js";
 import type { InflightGateToken } from "../util/inflight_gate.js";
 import { registerMemoryAccessRoutes } from "../routes/memory-access.js";
 import {
-  registerMemoryContextRuntimeRoutes,
-  type MemoryPlanningContextRouteService,
+  createMemoryPlanningContextService,
+  type MemoryPlanningContextService,
 } from "../routes/memory-context-runtime.js";
 import { registerMemoryFeedbackToolRoutes } from "../routes/memory-feedback-tools.js";
 import { registerHandoffRoutes, type HandoffRouteService } from "../routes/handoff.js";
-import { registerMemoryRecallRoutes } from "../routes/memory-recall.js";
 import type { MemoryWriteRouteService } from "../routes/memory-write.js";
 import { registerProductFacadeRoutes } from "../routes/product-facade.js";
 import { createProductObserveService } from "../product/observe-service.js";
@@ -332,20 +331,17 @@ export function registerHealthRoute(args: {
 
 type HandoffRouteArgs = Parameters<typeof registerHandoffRoutes>[0];
 type MemoryAccessRouteArgs = Parameters<typeof registerMemoryAccessRoutes>[0];
-type MemoryRecallRouteArgs = Parameters<typeof registerMemoryRecallRoutes>[0];
-type MemoryContextRouteArgs = Parameters<typeof registerMemoryContextRuntimeRoutes>[0];
+type MemoryContextServiceArgs = Parameters<typeof createMemoryPlanningContextService>[0];
 type MemoryFeedbackRouteArgs = Parameters<typeof registerMemoryFeedbackToolRoutes>[0];
 
 type RuntimeLiteWriteStore =
   & HandoffRouteArgs["liteWriteStore"]
   & MemoryAccessRouteArgs["liteWriteStore"]
-  & MemoryRecallRouteArgs["liteWriteStore"]
-  & MemoryContextRouteArgs["liteWriteStore"]
+  & MemoryContextServiceArgs["liteWriteStore"]
   & MemoryFeedbackRouteArgs["liteWriteStore"];
 
 type RuntimeLiteRecallAccess =
-  & MemoryRecallRouteArgs["liteRecallAccess"]
-  & MemoryContextRouteArgs["liteRecallAccess"]
+  & MemoryContextServiceArgs["liteRecallAccess"]
   & MemoryFeedbackRouteArgs["liteRecallAccess"];
 
 export type RegisterApplicationRoutesArgs = {
@@ -372,22 +368,22 @@ export type RegisterApplicationRoutesArgs = {
   enforceRateLimit: (req: FastifyRequest, reply: FastifyReply, kind: RateLimitKind) => Promise<void>;
   enforceTenantQuota: (req: FastifyRequest, reply: FastifyReply, kind: TenantQuotaKind, tenantId: string) => Promise<void>;
   enforceRecallTextEmbedQuota: (req: FastifyRequest, reply: FastifyReply, tenantId: string) => Promise<void>;
-  buildRecallAuth: MemoryRecallRouteArgs["buildRecallAuth"] & MemoryContextRouteArgs["buildRecallAuth"];
+  buildRecallAuth: MemoryContextServiceArgs["buildRecallAuth"];
   tenantFromBody: (body: unknown) => string;
   acquireInflightSlot: (kind: InflightKind) => Promise<InflightGateToken>;
-  hasExplicitRecallKnobs: MemoryRecallRouteArgs["hasExplicitRecallKnobs"];
-  resolveRecallProfile: MemoryRecallRouteArgs["resolveRecallProfile"] & MemoryContextRouteArgs["resolveRecallProfile"];
-  resolveExplicitRecallMode: MemoryRecallRouteArgs["resolveExplicitRecallMode"] & MemoryContextRouteArgs["resolveExplicitRecallMode"];
-  resolveClassAwareRecallProfile: MemoryContextRouteArgs["resolveClassAwareRecallProfile"];
-  withRecallProfileDefaults: MemoryRecallRouteArgs["withRecallProfileDefaults"] & MemoryContextRouteArgs["withRecallProfileDefaults"];
-  resolveRecallStrategy: MemoryRecallRouteArgs["resolveRecallStrategy"] & MemoryContextRouteArgs["resolveRecallStrategy"];
-  resolveAdaptiveRecallProfile: MemoryRecallRouteArgs["resolveAdaptiveRecallProfile"] & MemoryContextRouteArgs["resolveAdaptiveRecallProfile"];
-  resolveAdaptiveRecallHardCap: MemoryRecallRouteArgs["resolveAdaptiveRecallHardCap"] & MemoryContextRouteArgs["resolveAdaptiveRecallHardCap"];
-  inferRecallStrategyFromKnobs: MemoryRecallRouteArgs["inferRecallStrategyFromKnobs"] & MemoryContextRouteArgs["inferRecallStrategyFromKnobs"];
-  buildRecallTrajectory: MemoryRecallRouteArgs["buildRecallTrajectory"] & MemoryContextRouteArgs["buildRecallTrajectory"];
-  embedRecallTextQuery: MemoryContextRouteArgs["embedRecallTextQuery"];
-  mapRecallTextEmbeddingError: MemoryContextRouteArgs["mapRecallTextEmbeddingError"];
-  recordContextAssemblyTelemetryBestEffort: MemoryContextRouteArgs["recordContextAssemblyTelemetryBestEffort"];
+  hasExplicitRecallKnobs: MemoryContextServiceArgs["hasExplicitRecallKnobs"];
+  resolveRecallProfile: MemoryContextServiceArgs["resolveRecallProfile"];
+  resolveExplicitRecallMode: MemoryContextServiceArgs["resolveExplicitRecallMode"];
+  resolveClassAwareRecallProfile: MemoryContextServiceArgs["resolveClassAwareRecallProfile"];
+  withRecallProfileDefaults: MemoryContextServiceArgs["withRecallProfileDefaults"];
+  resolveRecallStrategy: MemoryContextServiceArgs["resolveRecallStrategy"];
+  resolveAdaptiveRecallProfile: MemoryContextServiceArgs["resolveAdaptiveRecallProfile"];
+  resolveAdaptiveRecallHardCap: MemoryContextServiceArgs["resolveAdaptiveRecallHardCap"];
+  inferRecallStrategyFromKnobs: MemoryContextServiceArgs["inferRecallStrategyFromKnobs"];
+  buildRecallTrajectory: MemoryContextServiceArgs["buildRecallTrajectory"];
+  embedRecallTextQuery: MemoryContextServiceArgs["embedRecallTextQuery"];
+  mapRecallTextEmbeddingError: MemoryContextServiceArgs["mapRecallTextEmbeddingError"];
+  recordContextAssemblyTelemetryBestEffort: MemoryContextServiceArgs["recordContextAssemblyTelemetryBestEffort"];
 };
 
 type RuntimeBoundaryRouteRegistrationArgs = Pick<RegisterApplicationRoutesArgs, "app" | "env">;
@@ -405,7 +401,7 @@ type ProductFacadeRouteRegistrationArgs = Pick<
   | "tenantFromBody"
   | "acquireInflightSlot"
 > & {
-  planningContextService?: MemoryPlanningContextRouteService | null;
+  planningContextService?: MemoryPlanningContextService | null;
 };
 
 type RuntimeWriteRouteRegistrationArgs = Pick<
@@ -426,7 +422,7 @@ type RuntimeWriteRouteRegistrationArgs = Pick<
   | "acquireInflightSlot"
 >;
 
-type RuntimeRecallRouteRegistrationArgs = Pick<
+type RuntimeGuidanceRouteRegistrationArgs = Pick<
   RegisterApplicationRoutesArgs,
   | "app"
   | "env"
@@ -461,7 +457,7 @@ type RuntimeRecallRouteRegistrationArgs = Pick<
 
 type RuntimeKernelRouteRegistrationArgs =
   & RuntimeWriteRouteRegistrationArgs
-  & RuntimeRecallRouteRegistrationArgs;
+  & RuntimeGuidanceRouteRegistrationArgs;
 
 function registerRuntimeBoundaryRoutes(args: RuntimeBoundaryRouteRegistrationArgs) {
   registerRuntimeBoundaryInventoryRoutes({
@@ -525,7 +521,7 @@ function registerRuntimeWriteRoutes(args: RuntimeWriteRouteRegistrationArgs) {
   });
 }
 
-function registerRuntimeRecallRoutes(args: RuntimeRecallRouteRegistrationArgs) {
+function registerRuntimeGuidanceRoutes(args: RuntimeGuidanceRouteRegistrationArgs) {
   const {
     app,
     env,
@@ -558,37 +554,12 @@ function registerRuntimeRecallRoutes(args: RuntimeRecallRouteRegistrationArgs) {
     recordContextAssemblyTelemetryBestEffort,
   } = args;
 
-  registerMemoryRecallRoutes({
-    app,
-    env,
-    liteRecallAccess,
-    liteWriteStore,
-    requireMemoryPrincipal,
-    withIdentityFromRequest,
-    enforceRateLimit,
-    enforceTenantQuota,
-    tenantFromBody,
-    acquireInflightSlot,
-    hasExplicitRecallKnobs,
-    resolveRecallProfile,
-    resolveExplicitRecallMode,
-    withRecallProfileDefaults,
-    resolveRecallStrategy,
-    resolveAdaptiveRecallProfile,
-    resolveAdaptiveRecallHardCap,
-    inferRecallStrategyFromKnobs,
-    buildRecallTrajectory,
-    buildRecallAuth,
-  });
-
-  const contextRuntimeRoutes = registerMemoryContextRuntimeRoutes({
-    app,
+  const planningContextService = createMemoryPlanningContextService({
     env,
     embedder: queryEmbedder,
     embeddingSurfacePolicy,
     liteWriteStore,
     liteRecallAccess,
-    recallTextEmbedBatcher,
     requireMemoryPrincipal,
     withIdentityFromRequest,
     enforceRateLimit,
@@ -628,14 +599,13 @@ function registerRuntimeRecallRoutes(args: RuntimeRecallRouteRegistrationArgs) {
   });
 
   return {
-    planningContextService: contextRuntimeRoutes.planningContextService,
+    planningContextService,
   };
 }
 
 function registerRuntimeKernelRoutes(args: RuntimeKernelRouteRegistrationArgs) {
   registerRuntimeWriteRoutes(args);
-  const recallRoutes = registerRuntimeRecallRoutes(args);
-  return recallRoutes;
+  return registerRuntimeGuidanceRoutes(args);
 }
 
 function registerProductRoutes(args: ProductFacadeRouteRegistrationArgs) {

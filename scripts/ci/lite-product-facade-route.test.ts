@@ -17,8 +17,8 @@ import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts"
 import { buildAionisUri } from "../../src/memory/uri.ts";
 import { createHandoffRouteService, registerHandoffRoutes } from "../../src/routes/handoff.ts";
 import {
-  registerMemoryContextRuntimeRoutes,
-  type MemoryPlanningContextRouteService,
+  createMemoryPlanningContextService,
+  type MemoryPlanningContextService,
 } from "../../src/routes/memory-context-runtime.ts";
 import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
 import { registerMemoryFeedbackToolRoutes } from "./support/register-memory-feedback-tool-test-routes.ts";
@@ -433,7 +433,7 @@ function registerProductFacade(args: {
   liteRecallAccess?: ReturnType<ReturnType<typeof createLiteRecallStore>["createRecallAccess"]> | null;
   embedder?: typeof DeterministicEmbeddingProvider | null;
   memoryWriteService?: ReturnType<typeof createMemoryWriteRouteService> | null;
-  planningContextService?: MemoryPlanningContextRouteService | null;
+  planningContextService?: MemoryPlanningContextService | null;
   handoffRouteService?: ReturnType<typeof createHandoffRouteService> | null;
   skillCandidateReviewAccess?: ReturnType<ReturnType<typeof createLiteSkillCandidateReviewStore>["createSkillCandidateReviewAccess"]>;
 }) {
@@ -559,7 +559,7 @@ test("product guide uses direct planning context service when supplied", async (
   const guards = requestGuards(env, DeterministicEmbeddingProvider);
   const liteWriteStore = createLiteWriteStore(tmpDbPath("direct-product-guide-planning"));
   try {
-    app.post("/v1/memory/planning/context", async (_req, reply) => {
+    app.post("/__test/forbidden-fallback-planning-route", async (_req, reply) => {
       return reply.code(500).send({
         error: "fallback_planning_route_used",
         message: "product guide should not inject this route when direct planning service is available",
@@ -1036,13 +1036,11 @@ function registerFullProductMemoryApp(args: {
     tenantFromBody: args.guards.tenantFromBody,
     acquireInflightSlot: args.guards.acquireInflightSlot,
   });
-  const contextRuntimeRoutes = registerMemoryContextRuntimeRoutes({
-    app: args.app,
+  const contextRuntimeRoutes = createMemoryPlanningContextService({
     env: args.env,
     embedder: routeEmbedder,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
-    recallTextEmbedBatcher: { stats: () => null },
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,
@@ -1118,7 +1116,7 @@ function registerFullProductMemoryApp(args: {
       liteWriteStore: args.liteWriteStore,
       executionStateStore: null,
     }),
-    planningContextService: contextRuntimeRoutes.planningContextService,
+    planningContextService: contextRuntimeRoutes,
     handoffRouteService: createHandoffRouteService({
       env: args.env,
       embedder: routeEmbedder,

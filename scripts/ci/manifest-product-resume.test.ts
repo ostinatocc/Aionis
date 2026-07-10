@@ -12,7 +12,7 @@ import { updateRuleState } from "../../src/memory/rules.ts";
 import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 import { createHandoffRouteService, registerHandoffRoutes } from "../../src/routes/handoff.ts";
-import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
+import { createMemoryPlanningContextService } from "../../src/routes/memory-context-runtime.ts";
 import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
 import { createRuntimeProductServices, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
@@ -101,13 +101,11 @@ function registerRealManifestProductRuntime(args: {
     acquireInflightSlot: guards.acquireInflightSlot,
     executionStateStore: null,
   });
-  const contextRuntime = registerMemoryContextRuntimeRoutes({
-    app: args.app,
+  const contextRuntime = createMemoryPlanningContextService({
     env,
     embedder: DeterministicEmbeddingProvider,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: recallAccess,
-    recallTextEmbedBatcher: { stats: () => null },
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
     enforceRateLimit: guards.enforceRateLimit,
@@ -172,7 +170,7 @@ function registerRealManifestProductRuntime(args: {
       memoryWriteService,
       handoffRouteService: handoffService,
     }),
-    planningContextService: contextRuntime.planningContextService,
+    planningContextService: contextRuntime,
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
     enforceRateLimit: guards.enforceRateLimit,
