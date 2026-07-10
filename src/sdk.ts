@@ -1,5 +1,7 @@
-// Canonical Aionis TypeScript SDK source.
-// Sync this file to the standalone @aionis/sdk package with `npm run sdk:sync`.
+// Runtime reference SDK implementation.
+// Only named Runtime-owned regions are generated into the standalone SDK.
+
+// <aionis-runtime-owned:public-contracts>
 
 export type AionisJsonObject = Record<string, unknown>;
 
@@ -487,6 +489,32 @@ export const AIONIS_ADMISSION_POLICY_MODE = "deterministic_admission";
 
 export type AionisExecutionContextBudgetProfile = "compact" | "balanced" | "high_recall";
 export type AionisAgentPromptFormat = "contract" | "runtime_compact";
+
+export const AIONIS_EXECUTION_AGENT_CONTEXT_PROMPT_CONTRACT = {
+  contract_version: "aionis_execution_agent_context_v1",
+  header: "AIONIS_EXECUTION_AGENT_CONTEXT v1",
+  authority_boundary: "Treat this as the SDK-compiled execution-memory contract. Runtime remains the authority for memory admission.",
+  execution_contract_rules: [
+    "Follow active targets and should_continue memories as the current execution route.",
+    "If an active target is missing, treat it as pending work to create or restore when task-consistent; do not fall back to blocked or reference-only paths because they exist.",
+    "Reference-only targets may be read for evidence, but they are not valid primary routes without explicit host confirmation.",
+    "Blocked, must_not, stale, failed, or retired routes are counter-evidence only.",
+    "If compact evidence is insufficient for a precise edit, request rehydrate instead of guessing.",
+  ],
+  sections: {
+    task: "TASK",
+    execution_contract: "EXECUTION CONTRACT",
+    active_targets: "ACTIVE_TARGETS",
+    missing_active_targets: "MISSING_ACTIVE_TARGETS",
+    pending_artifacts: "PENDING_ARTIFACTS",
+    should_continue: "SHOULD_CONTINUE",
+    inspect_before_use: "INSPECT_BEFORE_USE",
+    do_not_use: "DO_NOT_USE",
+    reference_only_targets: "REFERENCE_ONLY_TARGETS",
+    blocked_direction_targets: "BLOCKED_DIRECTION_TARGETS",
+    rehydrate_requests: "REHYDRATE_REQUESTS",
+  },
+} as const;
 
 export type AionisExecutionFilePresence = {
   target: string;
@@ -1109,6 +1137,8 @@ export type AionisExecutionOutcomeResult<TObserve = unknown, TFeedback = unknown
   observe: TObserve;
   feedback: TFeedback | null;
 };
+
+// </aionis-runtime-owned:public-contracts>
 
 export class AionisClientError extends Error {
   readonly status: number;
@@ -3234,20 +3264,17 @@ export function compileExecutionAgentContext(
     });
   }
 
+  const promptContract = AIONIS_EXECUTION_AGENT_CONTEXT_PROMPT_CONTRACT;
   const contractSections = [
-    "AIONIS_EXECUTION_AGENT_CONTEXT v1",
-    "Treat this as the SDK-compiled execution-memory contract. Runtime remains the authority for memory admission.",
+    promptContract.header,
+    promptContract.authority_boundary,
     "",
-    "TASK",
+    promptContract.sections.task,
     ...taskLines(input.task),
     ...(taskLines(input.task).length === 0 ? ["- Continue the current host task."] : []),
     "",
-    "EXECUTION CONTRACT",
-    "- Follow active targets and should_continue memories as the current execution route.",
-    "- If an active target is missing, treat it as pending work to create or restore when task-consistent; do not fall back to blocked or reference-only paths because they exist.",
-    "- Reference-only targets may be read for evidence, but they are not valid primary routes without explicit host confirmation.",
-    "- Blocked, must_not, stale, failed, or retired routes are counter-evidence only.",
-    "- If compact evidence is insufficient for a precise edit, request rehydrate instead of guessing.",
+    promptContract.sections.execution_contract,
+    ...promptContract.execution_contract_rules.map((rule) => `- ${rule}`),
     ...(input.additional_instructions ?? []).map((entry) => `- ${entry}`),
     ...optionalPromptSection("ROUTE_STEPS", routeStepLines),
     ...optionalPromptSection("ACCEPTANCE_CHECKS", acceptanceCheckLines),
@@ -3257,31 +3284,31 @@ export function compileExecutionAgentContext(
     ...optionalPromptSection("ACTIVE_CONTEXT", activeContextLines),
     ...optionalPromptSection("BLOCKED_CONTEXT", blockedContextLines),
     "",
-    "ACTIVE_TARGETS",
+    promptContract.sections.active_targets,
     ...bulletLines(activeTargets, "none"),
     "",
-    "MISSING_ACTIVE_TARGETS",
+    promptContract.sections.missing_active_targets,
     ...bulletLines(missingActiveTargets, "none observed"),
     "",
-    "PENDING_ARTIFACTS",
+    promptContract.sections.pending_artifacts,
     ...bulletLines(pendingArtifacts, "none"),
     "",
-    "SHOULD_CONTINUE",
+    promptContract.sections.should_continue,
     ...postureLines(commandPosture, "should_continue", "none"),
     "",
-    "INSPECT_BEFORE_USE",
+    promptContract.sections.inspect_before_use,
     ...postureLines(commandPosture, "inspect_first", "none"),
     "",
-    "DO_NOT_USE",
+    promptContract.sections.do_not_use,
     ...postureLines(commandPosture, "must_not", "none"),
     "",
-    "REFERENCE_ONLY_TARGETS",
+    promptContract.sections.reference_only_targets,
     ...bulletLines(referenceOnlyTargets, "none"),
     "",
-    "BLOCKED_DIRECTION_TARGETS",
+    promptContract.sections.blocked_direction_targets,
     ...bulletLines(blockedDirectionTargets, "none"),
     "",
-    "REHYDRATE_REQUESTS",
+    promptContract.sections.rehydrate_requests,
     ...(rehydrateRequests.length > 0
       ? rehydrateRequests.map((entry) => `- ${entry.memory_id}${entry.reason ? `: ${entry.reason}` : ""}`)
       : ["- none"]),
@@ -3292,7 +3319,7 @@ export function compileExecutionAgentContext(
     : truncateText(contractPrompt, maxPromptChars);
 
   return {
-    contract_version: "aionis_execution_agent_context_v1",
+    contract_version: promptContract.contract_version,
     prompt_format: promptFormat,
     budget_profile: profile,
     agent_prompt: agentPrompt,

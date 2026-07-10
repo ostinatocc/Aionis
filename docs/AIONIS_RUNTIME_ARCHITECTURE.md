@@ -241,7 +241,7 @@ into the Agent prompt.
 | Area | Main files |
 |---|---|
 | Product facade routes | `src/routes/product-facade.ts` |
-| SDK facade | standalone package repo [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk); Runtime keeps only the API-contract mirror at `src/sdk.ts` for local product tests |
+| SDK facade | standalone package repo [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk); Runtime owns the named public-contract region and prompt contract in `src/sdk.ts`, while the package owns handwritten client behavior |
 | MCP bridge | standalone adapter repo [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp); Runtime verifies the published package through external package smoke tests |
 | Claude Code lifecycle integration | standalone plugin repo [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code); Runtime documents the integration but does not vendor plugin source |
 | Product output contracts | `src/memory/product-output-contract.ts` |
