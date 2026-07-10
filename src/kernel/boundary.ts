@@ -162,10 +162,10 @@ export const AIONIS_KERNEL_CAPABILITIES = [
       "cloud_platform_control",
     ],
     primary_runtime_surfaces: [
-      "/v1/memory/policies/learning-control/apply",
-      "/v1/memory/continuity/review-pack",
-      "/v1/memory/evolution/review-pack",
-      "/v1/runtime/boundary/inventory",
+      "service:learning_control_policy",
+      "service:continuity_review",
+      "service:evolution_review",
+      "/v1/runtime/boundary-inventory",
     ],
     success_signals: [
       "authority requires explicit outcome evidence",

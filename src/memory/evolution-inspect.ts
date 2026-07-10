@@ -376,8 +376,7 @@ export function buildPolicyLearningControlApplyPayload(args: {
   }
   return PolicyLearningControlApplyPayloadSchema.parse({
     payload_version: "policy_learning_control_apply_payload_v1",
-    route: "/v1/memory/policies/learning-control/apply",
-    method: "POST",
+    service: "policy_learning_control_service",
     action: contract.action,
     policy_memory_id: contract.policy_memory_id,
     selected_tool: contract.selected_tool,

@@ -1508,7 +1508,7 @@ export function registerMemoryContextRuntimeRoutes(args: {
       task_family: taskFamily,
       workflow_signature: workflowSignature,
       policy_memory_id: policyMemoryId,
-      tool_route: action === "rehydrate_payload" ? "/v1/memory/tools/rehydrate_payload" : null,
+      tool_route: action === "rehydrate_payload" ? "/v1/rehydrate" : null,
       tool_method: action === "rehydrate_payload" ? "POST" as const : null,
       example_call:
         action === "rehydrate_payload" && typeof preferredRehydration?.example_call === "string"
