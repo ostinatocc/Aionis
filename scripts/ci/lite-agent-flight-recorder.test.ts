@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildAionisAgentFlightRecorderReport } from "../../src/memory/agent-flight-recorder.ts";
-import { buildAionisMemoryDecisionTrace } from "../../src/memory/product-output-assembler.ts";
+import { buildAionisAgentFlightRecorderReport } from "../../src/memory/product-output/operator-projections.ts";
+import { buildAionisMemoryDecisionTrace } from "../../src/memory/product-output/decision-trace.ts";
 import { AionisAgentContextSchema } from "../../src/memory/product-output-contract.ts";
 
 function validAgentContext() {

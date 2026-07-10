@@ -19,7 +19,8 @@ import {
 import { createEmbeddingSurfacePolicy, type EmbeddingSurfacePolicy } from "../embeddings/surface-policy.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
 import { buildLayeredContextCostSignals } from "../memory/cost-signals.js";
-import { buildAionisGuidePacket, buildAionisLearningPacket } from "../memory/product-output-assembler.js";
+import { buildAionisGuidePacket } from "../memory/product-output/guide-packet.js";
+import { buildAionisLearningPacket } from "../memory/product-output/learning-effect.js";
 import {
   buildDelegationRecordLookup,
   findDelegationRecordNodeRowsLite,

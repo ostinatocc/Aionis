@@ -14,7 +14,7 @@ import {
   buildAionisMemoryPacket,
   buildAionisMemoryUseReceiptFromDecisionTrace,
 } from "../../src/memory/product-output-assembler.ts";
-import { buildAionisAgentFlightRecorderReport } from "../../src/memory/agent-flight-recorder.ts";
+import { buildAionisAgentFlightRecorderReport } from "../../src/memory/product-output/operator-projections.ts";
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-recall-source-trace-"));

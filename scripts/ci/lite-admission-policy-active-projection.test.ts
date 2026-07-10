@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   resolveAionisAdmissionCandidatePolicyActiveProjection,
-} from "../../src/memory/admission-policy-active-projection.js";
+} from "../../src/memory/product-output/operator-projections.js";
 import {
   buildAionisAgentContext,
-  buildAionisMemoryPacket,
-} from "../../src/memory/product-output-assembler.js";
+} from "../../src/memory/agent-context-compiler.js";
+import { buildAionisMemoryPacket } from "../../src/memory/product-output/memory-packet.js";
 
 test("admission candidate active projection only downgrades current use-now entries", () => {
   const memoryPacket = buildAionisMemoryPacket({

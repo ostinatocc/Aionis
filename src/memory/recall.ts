@@ -36,7 +36,7 @@ import {
   toRecallNodeDto,
 } from "./recall-serialization.js";
 import { buildRuntimeToolHintsFromAnchorNodes } from "./runtime-tool-hints.js";
-import { buildAionisMemoryPacket } from "./product-output-assembler.js";
+import { buildAionisMemoryPacket } from "./product-output/memory-packet.js";
 
 export type RecallAuth = {
   allow_debug_embeddings: boolean;

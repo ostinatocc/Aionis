@@ -15,24 +15,30 @@ import {
 } from "../kernel/effect-evaluator.js";
 import { sha256Hex } from "../util/crypto.js";
 import {
-  AIONIS_CONFIDENCE_DECAY_TIME_THRESHOLD_DAYS,
   applyAionisInspectBeforeUseActiveProjection,
   buildAionisAgentContext,
+} from "../memory/agent-context-compiler.js";
+import {
   buildAionisEffectReport,
+} from "../memory/product-output/learning-effect.js";
+import {
   buildAionisMemoryPacket,
+  type BuildAionisMemoryPacketArgs,
+} from "../memory/product-output/memory-packet.js";
+import {
+  AIONIS_CONFIDENCE_DECAY_TIME_THRESHOLD_DAYS,
   buildAionisMemoryDecisionAuditReport,
   buildAionisMemoryDecisionTrace,
-  type BuildAionisMemoryPacketArgs,
-} from "../memory/product-output-assembler.js";
-import { buildAionisAgentFlightRecorderReport } from "../memory/agent-flight-recorder.js";
+} from "../memory/product-output/decision-trace.js";
 import {
   AIONIS_ADMISSION_CANDIDATE_POLICY_ACTIVE_PROJECTION_REASON,
+  buildAionisAgentFlightRecorderReport,
+  buildAionisOperatorSnapshot,
+  buildClaimLedgerProjection,
   resolveAionisAdmissionCandidatePolicyActiveProjection,
   type AionisAdmissionCandidatePolicyActiveProjection,
-} from "../memory/admission-policy-active-projection.js";
-import { buildClaimLedgerProjection } from "../memory/claim-ledger-projection.js";
+} from "../memory/product-output/operator-projections.js";
 import { governExternalMemoryCandidates } from "../memory/external-candidate-admission.js";
-import { buildAionisOperatorSnapshot } from "../memory/operator-snapshot.js";
 import { buildExecutionEvidenceContextLite } from "../execution/evidence-context.js";
 import {
   AionisAgentRoleSchema,

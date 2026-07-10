@@ -3,7 +3,7 @@ import {
   inferLifecycleCandidateSignals,
   lifecycleCandidateDirectUseUnsafe,
 } from "./lifecycle-candidate-inference.js";
-import { buildAionisMemoryAdmissionShadowPolicyReportFromRecord } from "./admission-shadow-policy.js";
+import { buildAionisMemoryAdmissionShadowPolicyReportFromRecord } from "./product-output/decision-trace.js";
 import {
   parseAionisAgentContext,
   AionisExternalMemoryCandidateSchema,

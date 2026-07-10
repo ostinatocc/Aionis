@@ -4,7 +4,7 @@ import {
   AIONIS_ADMISSION_SHADOW_POLICY_ID,
   buildAionisMemoryAdmissionShadowPolicyReport,
   buildAionisMemoryAdmissionShadowPolicyReportFromRecord,
-} from "../../src/memory/admission-shadow-policy.js";
+} from "../../src/memory/product-output/decision-trace.js";
 import { parseAionisMemoryAdmissionRecord } from "../../src/memory/product-output-contract.js";
 
 test("admission shadow policy downgrades unsafe direct-use candidates without runtime mutation", () => {
