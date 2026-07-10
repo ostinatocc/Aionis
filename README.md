@@ -98,6 +98,12 @@ docker run --rm \
   ghcr.io/ostinatocc/aionis:v0.3.3
 ```
 
+The container process listens on `0.0.0.0` inside its network namespace so
+Docker port publishing can reach it. The host publish remains
+`127.0.0.1:3001`, so the unauthenticated Lite Runtime is reachable only from
+the local host. Direct host installs keep `AIONIS_LISTEN_HOST=127.0.0.1`; do
+not attach the unauthenticated Lite container to an untrusted shared network.
+
 Then start the local Runtime from the generated checkout:
 
 ```bash

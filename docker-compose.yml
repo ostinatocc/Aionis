@@ -4,6 +4,7 @@ services:
       context: .
     image: ghcr.io/ostinatocc/aionis:local
     ports:
+      # Host loopback -> all container interfaces; do not publish Lite on a public host address.
       - "127.0.0.1:3001:3001"
     environment:
       AIONIS_EDITION: lite

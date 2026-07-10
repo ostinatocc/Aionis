@@ -67,7 +67,7 @@ Run the local-first Runtime in Docker:
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.2
+  ghcr.io/ostinatocc/aionis:v0.3.3
 ```
 
 Then check readiness:
@@ -81,6 +81,15 @@ Docker stores Lite Runtime SQLite state under `/data`. Bind the host port to
 loopback for local use. For remote SDK/MCP clients, switch to Server mode with
 API-key or JWT auth. Full release and Docker notes:
 [AIONIS_RELEASES.md](AIONIS_RELEASES.md).
+
+The container process listens on `0.0.0.0` inside its isolated network
+namespace because Docker cannot publish a process bound only to the
+container's loopback device. The host mapping stays
+`127.0.0.1:3001:3001`, which keeps the unauthenticated Lite endpoint local to
+the host. A direct host install still defaults to
+`AIONIS_LISTEN_HOST=127.0.0.1`. Do not attach this Lite container to an
+untrusted shared Docker network; use authenticated Server mode for remote
+access.
 
 This installs the local-first Lite Runtime. Lite is designed for developer
 machines, same-host coding agents, and SDK/MCP verification. It defaults to

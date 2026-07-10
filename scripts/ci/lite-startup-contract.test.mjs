@@ -54,11 +54,10 @@ test(".env.example exposes local Runtime knobs", () => {
   assert.match(envExample, /^# LITE_SANDBOX_PROFILE=local_process_echo$/m);
 });
 
-test("Docker image defaults do not opt into unauthenticated remote Lite", () => {
+test("Docker image binds inside its namespace for loopback-only host publishing", () => {
   const dockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf8");
-  assert.match(dockerfile, /AIONIS_LISTEN_HOST=127\.0\.0\.1/);
-  assert.match(dockerfile, /AIONIS_ALLOW_UNAUTHENTICATED_REMOTE=false/);
-  assert.doesNotMatch(dockerfile, /AIONIS_ALLOW_UNAUTHENTICATED_REMOTE=true/);
+  assert.match(dockerfile, /AIONIS_LISTEN_HOST=0\.0\.0\.0/);
+  assert.match(dockerfile, /AIONIS_ALLOW_UNAUTHENTICATED_REMOTE=true/);
 });
 
 test("runtime manifest points at the focused Runtime startup command", () => {
