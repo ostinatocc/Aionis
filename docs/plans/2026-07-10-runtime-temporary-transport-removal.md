@@ -233,20 +233,21 @@ git commit -m "feat: route tool learning through product feedback"
 - Modify: `/Volumes/ziel/new.aionis/AionisManifest/README.md`
 - Modify: `/Volumes/ziel/new.aionis/AionisManifest/CHANGELOG.md`
 - Create: `/Volumes/ziel/new.aionis/AionisManifest/test/resume.test.ts`
+- Create: `scripts/ci/manifest-product-resume.test.ts`
 
-**Step 1: Write failing Manifest client tests**
+**Step 1: Write failing Manifest contract tests**
 
-Use a local real HTTP test server that records incoming paths and returns
-contract-valid guide/feedback responses. This tests the Manifest client, not
-Runtime behavior.
+Test the pure Manifest request builders and v2 result schemas without mocking
+Runtime responses. Assert that builders produce only public guide/feedback
+request contracts and that the v2 result preserves selected tool, decision id,
+run id, feedback update count, and lifecycle transition.
 
 Assert:
 
-- resume calls only `/v1/guide` when feedback is absent;
-- resume calls `/v1/guide` then `/v1/feedback` when feedback is present;
-- no request uses any `/v1/memory/*` path;
-- selected tool, decision id, run id, feedback update count, and lifecycle
-  transition survive in the v2 result.
+- the guide builder carries recovered continuity and candidates;
+- feedback cannot be built without a guide tool-selection receipt;
+- feedback is bound to guide trace, decision, run, selected tool, and candidates;
+- no exported request builder contains an internal `/v1/memory/*` path.
 
 **Step 2: Run Manifest tests and observe failure**
 
@@ -292,9 +293,11 @@ Expected: all tests and build pass.
 
 **Step 6: Run a real Runtime/Manifest resume loop**
 
-Start the focused Runtime with the existing real local SQLite configuration,
-publish/recover a Manifest handoff, and run resume with at least two tool
-candidates and positive feedback.
+Add `scripts/ci/manifest-product-resume.test.ts`. Start the real focused
+Runtime application on an ephemeral HTTP listener with SQLite, import the
+built Manifest client, publish/recover a Manifest handoff, and run resume with
+at least two tool candidates and positive feedback. Do not use a fake HTTP
+server or mocked Runtime response.
 
 Expected: only `/v1/guide` and `/v1/feedback` are used; stored decision and
 feedback-linked lifecycle are visible.
