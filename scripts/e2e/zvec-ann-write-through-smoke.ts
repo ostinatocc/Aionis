@@ -3,15 +3,12 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createRequestGuards } from "../../src/app/request-guards.js";
 import { createRuntimeServices } from "../../src/app/runtime-services.js";
 import { loadEnv, type Env } from "../../src/config.js";
 import { createRuntimeConfig } from "../../src/config/runtime-config.js";
-import { registerMemoryRecallRoutes } from "../../src/routes/memory-recall.js";
+import { memoryRecallParsed } from "../../src/memory/recall.js";
+import { MemoryRecallRequest } from "../../src/memory/schemas.js";
 import { createMemoryWriteRouteService } from "../../src/routes/memory-write.js";
-import { createHttpApp } from "../../src/server/bootstrap.js";
-import { registerRuntimeErrorHandler } from "../../src/server/http-server.js";
-import { InflightGate } from "../../src/util/inflight_gate.js";
 import {
   DeterministicEmbeddingProvider,
   deterministicEmbed,
@@ -144,19 +141,6 @@ async function main(): Promise<void> {
   const env = await buildEnv(paths);
   const runtimeConfig = createRuntimeConfig(env);
   const services = await createRuntimeServices(runtimeConfig);
-  const app = createHttpApp(env);
-  const guards = createRequestGuards({
-    config: runtimeConfig,
-    embedder: DeterministicEmbeddingProvider,
-    recallLimiter: services.recallLimiter,
-    debugEmbedLimiter: services.debugEmbedLimiter,
-    writeLimiter: services.writeLimiter,
-    recallTextEmbedLimiter: services.recallTextEmbedLimiter,
-    recallInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
-    writeInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
-  });
-
-  registerRuntimeErrorHandler(app);
   const memoryWriteService = createMemoryWriteRouteService({
     env,
     embedder: DeterministicEmbeddingProvider,
@@ -164,35 +148,7 @@ async function main(): Promise<void> {
     executionStateStore: services.executionStateStore,
     executionTreeStore: services.executionTreeStore,
   });
-  registerMemoryRecallRoutes({
-    app,
-    env,
-    liteRecallAccess: services.liteRecallStore.createRecallAccess(),
-    liteWriteStore: services.liteWriteStore,
-    requireMemoryPrincipal: guards.requireMemoryPrincipal,
-    withIdentityFromRequest: guards.withIdentityFromRequest,
-    enforceRateLimit: guards.enforceRateLimit,
-    enforceTenantQuota: guards.enforceTenantQuota,
-    tenantFromBody: guards.tenantFromBody,
-    acquireInflightSlot: guards.acquireInflightSlot,
-    hasExplicitRecallKnobs: () => false,
-    resolveRecallProfile: () => ({ profile: "balanced", source: "zvec_ann_write_through_smoke" }),
-    resolveExplicitRecallMode: () => ({
-      mode: null,
-      profile: "balanced",
-      defaults: {},
-      applied: false,
-      reason: "test_default",
-      source: "zvec_ann_write_through_smoke",
-    }),
-    withRecallProfileDefaults: (body) => ({ ...(body as JsonObject) }),
-    resolveRecallStrategy: () => ({ strategy: "local", defaults: {}, applied: false }),
-    resolveAdaptiveRecallProfile: (profile) => ({ profile, defaults: {}, applied: false, reason: "test_default" }),
-    resolveAdaptiveRecallHardCap: () => ({ defaults: {}, applied: false, reason: "test_default" }),
-    inferRecallStrategyFromKnobs: () => "local",
-    buildRecallTrajectory: () => ({ strategy: "local" }),
-    buildRecallAuth: guards.buildRecallAuth,
-  });
+  const recallAccess = services.liteRecallStore.createRecallAccess();
 
   try {
     const write = async (payload: JsonObject): Promise<JsonObject> => {
@@ -204,23 +160,24 @@ async function main(): Promise<void> {
     };
 
     const recall = async (): Promise<JsonObject> => {
-      const response = await app.inject({
-        method: "POST",
-        url: "/v1/memory/recall",
-        payload: {
-          tenant_id: TENANT_ID,
-          scope: SCOPE,
-          query_embedding: deterministicEmbed(TARGET_TITLE),
-          limit: 3,
-          neighborhood_hops: 1,
-          max_nodes: 3,
-          max_edges: 1,
-          ranked_limit: 3,
-          return_debug: true,
-        },
+      const request = MemoryRecallRequest.parse({
+        tenant_id: TENANT_ID,
+        scope: SCOPE,
+        query_embedding: deterministicEmbed(TARGET_TITLE),
+        limit: 3,
+        neighborhood_hops: 1,
+        max_nodes: 3,
+        max_edges: 1,
+        ranked_limit: 3,
+        return_debug: true,
       });
-      assert.equal(response.statusCode, 200, response.body);
-      return response.json() as JsonObject;
+      return await memoryRecallParsed(request, SCOPE, TENANT_ID, {
+        allow_debug_embeddings: false,
+      }, undefined, "recall", {
+        stage1_exact_recovery_on_empty: env.MEMORY_RECALL_STAGE1_EXACT_RECOVERY_ON_EMPTY,
+        recall_access: recallAccess,
+        recall_engine_mode: env.RECALL_ENGINE_MODE,
+      }) as JsonObject;
     };
 
     const weakWrite = await write({
@@ -294,7 +251,7 @@ async function main(): Promise<void> {
       provider: "zvec",
       rebuild_on_start: false,
       sqlite_truth_source: true,
-      runtime_surfaces: ["memory_write_service", "/v1/memory/recall"],
+      runtime_surfaces: ["memory_write_service", "memory_recall_service"],
       checks: {
         weak_write_inline_embedding_updated: inlineEmbeddingUpdatedNodes(weakWrite) === 1,
         before_target_uses_ann_without_exact_recovery: stage1(beforeTarget).mode === "ann" && stage1(beforeTarget).exact_recovery_attempted === false,
@@ -335,7 +292,6 @@ async function main(): Promise<void> {
 
     console.log(JSON.stringify({ ok: true, summary: summaryPath, markdown: markdownPath, checks: report.checks }, null, 2));
   } finally {
-    await app.close();
     await services.executionTreeStore.close();
     await services.executionStateStore.close();
     await services.liteClaimLedgerStore.close();
