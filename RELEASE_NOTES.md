@@ -17,19 +17,24 @@ what to keep out of direct use, and what raw evidence can be restored on demand.
 
 ## Stable Baseline Package Train
 
-Current public patch versions for the v0.3 train:
+Current release coordinates for the v0.3 train and tracked integrations:
 
+- Release status `stable`
 - `aionis@0.3.8`
 - `@aionis/create@0.3.5`
-- `@aionis/sdk@0.3.10`
-- `@aionis/mcp@0.3.5`
-- `@aionis/aifs@0.3.2`
-- `@aionis/claude-code@0.3.3`
+- `@aionis/sdk@0.3.13`
+- `@aionis/mcp@0.3.7`
+- `@aionis/aifs@0.3.4`
+- `@aionis/claude-code@0.3.5`
+- `@aionis/substrate@0.1.11`
+- `@aionis/manifest@0.1.0`
 - Runtime source tag `v0.3.3`
 - Docker image `ghcr.io/ostinatocc/aionis:v0.3.3`
+- Default installer Runtime ref `v0.3.3`
 
-`@aionis/substrate` remains an experimental sidecar/research package at
-`0.1.11`; it is not part of this stable release train.
+`@aionis/substrate` remains an experimental sidecar/research package and
+`@aionis/manifest` remains a source-distributed advanced integration. Their
+versions are tracked here without making either package Runtime authority.
 
 ## What Ships
 
@@ -85,6 +90,14 @@ Direct Runtime installer:
 
 ```bash
 npx @aionis/create@latest
+```
+
+Both setup paths clone the immutable Runtime tag `v0.3.3` by default. Mutable
+development installation is explicit:
+
+```bash
+npx aionis setup --branch main
+# or: npx @aionis/create@latest --branch main
 ```
 
 Docker:

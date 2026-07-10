@@ -1,26 +1,28 @@
 # Aionis Releases
 
 Status: v0.3 stable baseline for Runtime, npm packages, Docker, MCP, SDK, AIFS,
-and native adapter release paths.
+native adapter release paths, and tracked source integrations.
 
-## Current Public Artifacts
+## Current Release Coordinates
 
 | Artifact | Current channel | Purpose |
 |---|---:|---|
 | GitHub Runtime source | `v0.3.3` tag | Runtime source, product APIs, docs, Docker build, and Runtime validation loops. |
 | Docker image | `ghcr.io/ostinatocc/aionis:v0.3.3` | Local-first Runtime container with persistent SQLite state under `/data`. |
+| Default installer Runtime ref | `v0.3.3` | Immutable Runtime source selected by `aionis setup` and `@aionis/create` when no explicit branch override is supplied. |
 | `aionis` | `0.3.8` npm / [repo](https://github.com/ostinatocc/aionis-cli) | Top-level product CLI. Owns `npx aionis setup`, read-only `doctor`/`health`/`boundary`/`snapshot` inspection, Agent Flight Recorder audit, explicit `forget` lifecycle control, and trace-derived skill candidate review commands. |
 | `@aionis/create` | `0.3.5` npm / [repo](https://github.com/ostinatocc/aionis-create) | One-command Runtime installer. |
-| `@aionis/sdk` | `0.3.10` npm / [repo](https://github.com/ostinatocc/aionis-sdk) | TypeScript facade over Aionis product APIs, including canonical `AgentContext.agent_prompt`, trace-derived skill helpers, and typed task context profiles for `/v1/guide`. |
-| `@aionis/mcp` | `0.3.5` npm / [repo](https://github.com/ostinatocc/aionis-mcp) | MCP stdio bridge for Claude Code, Cursor, Codex-style tools, and other MCP clients. |
-| `@aionis/aifs` | `0.3.2` npm / [repo](https://github.com/ostinatocc/aionis-aifs) | Aionis File Surface for file-aware Agent context. |
-| `@aionis/claude-code` and Claude Code plugin | `0.3.3` npm / [repo](https://github.com/ostinatocc/aionis-claude-code) | Claude Code lifecycle hooks plus plugin marketplace manifest. |
+| `@aionis/sdk` | `0.3.13` npm / [repo](https://github.com/ostinatocc/aionis-sdk) | TypeScript facade over Aionis product APIs, including canonical `AgentContext.agent_prompt`, trace-derived skill helpers, and typed task context profiles for `/v1/guide`. |
+| `@aionis/mcp` | `0.3.7` npm / [repo](https://github.com/ostinatocc/aionis-mcp) | MCP stdio bridge for Claude Code, Cursor, Codex-style tools, and other MCP clients. |
+| `@aionis/aifs` | `0.3.4` npm / [repo](https://github.com/ostinatocc/aionis-aifs) | Aionis File Surface for file-aware Agent context. |
+| `@aionis/claude-code` | `0.3.5` npm / [repo](https://github.com/ostinatocc/aionis-claude-code) | Claude Code lifecycle hooks plus plugin marketplace manifest. |
 | `@aionis/substrate` | `0.1.11` npm / [repo](https://github.com/ostinatocc/AionisSubstrate) | External durable evidence sidecar for Runtime mirror, audit, backup, preview, and migration planning. Requires Node 24+. |
+| `@aionis/manifest` | `0.1.0` source / local package | Advanced executable workflow and handoff integration; not currently published on npm. |
 
 Fresh-install verification: [v0.3.0 release verification](./releases/v0.3.0-verification.md).
 Runtime patch notes: [v0.3.3 release notes](./releases/v0.3.3.md).
 
-Latest SDK patch: `@aionis/sdk@0.3.10` uses the Runtime compact
+Latest SDK patch: `@aionis/sdk@0.3.13` uses the Runtime compact
 `AgentContext.agent_prompt` by default and keeps structured receipts, command
 posture, resolved evidence, trace-derived skill helpers, and typed
 `task_context_profile` guide requests on host/audit surfaces.
@@ -32,6 +34,10 @@ inspection commands.
 
 Release tags are immutable. If the release surface changes after a tag, create a
 new patch tag instead of moving the old one.
+
+The default installer ref is also immutable: `npx aionis setup` delegates
+without a branch override, and `@aionis/create` selects `v0.3.3`. Development
+installs must explicitly pass `--branch main` (or another requested ref).
 
 ## Repository Boundary
 
