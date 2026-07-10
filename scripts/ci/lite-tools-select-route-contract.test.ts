@@ -24,7 +24,7 @@ import { applyPolicyMemoryLearningControlLite } from "../../src/memory/policy-me
 import { updateRuleState } from "../../src/memory/rules.ts";
 import { buildMaterializationContextFromFeedback } from "../../src/memory/tools-feedback.ts";
 import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
-import { registerMemoryFeedbackToolRoutes } from "../../src/routes/memory-feedback-tools.ts";
+import { registerMemoryFeedbackToolRoutes } from "./support/register-memory-feedback-tool-test-routes.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";

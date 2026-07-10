@@ -65,7 +65,10 @@ test("runtime complexity collector emits deterministic tracked-source metrics", 
     env: { ...process.env, GIT_GLOB_PATHSPECS: "1" },
   });
   assert.equal(tracked.status, 0, tracked.stderr);
-  const trackedCount = tracked.stdout.split(/\r?\n/).filter(Boolean).length;
+  const trackedCount = tracked.stdout
+    .split(/\r?\n/)
+    .filter((relativePath) => relativePath.length > 0 && fs.existsSync(path.join(ROOT, relativePath)))
+    .length;
   assert.equal(report.source_files, trackedCount);
 });
 

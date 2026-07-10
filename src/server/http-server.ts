@@ -340,7 +340,6 @@ type RuntimeLiteWriteStore =
   & MemoryFeedbackRouteArgs["liteWriteStore"];
 
 type RuntimeLiteRecallAccess =
-  & MemoryAccessRouteArgs["liteRecallAccess"]
   & MemoryRecallRouteArgs["liteRecallAccess"]
   & MemoryContextRouteArgs["liteRecallAccess"]
   & MemoryFeedbackRouteArgs["liteRecallAccess"];
@@ -512,19 +511,13 @@ function registerRuntimeWriteRoutes(args: RuntimeWriteRouteRegistrationArgs) {
   registerMemoryAccessRoutes({
     app,
     env,
-    embedder,
-    embeddingSurfacePolicy,
     liteWriteStore,
-    executionStateStore,
-    executionTreeStore,
-    liteRecallAccess,
     requireMemoryPrincipal,
     withIdentityFromRequest,
     enforceRateLimit,
     enforceTenantQuota,
     tenantFromBody,
     acquireInflightSlot,
-    routeExposure: "public",
   });
 }
 
@@ -628,7 +621,6 @@ function registerRuntimeRecallRoutes(args: RuntimeRecallRouteRegistrationArgs) {
     enforceTenantQuota,
     tenantFromBody,
     acquireInflightSlot,
-    routeExposure: "temporary",
   });
 
   return {

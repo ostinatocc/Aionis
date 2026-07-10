@@ -606,7 +606,6 @@ test("focused runtime entry layers do not expose postgres client types", () => {
     path.join(ROOT, "src", "server", "http-server.ts"),
     path.join(ROOT, "src", "routes", "handoff.ts"),
     path.join(ROOT, "src", "routes", "memory-context-runtime.ts"),
-    path.join(ROOT, "src", "routes", "memory-replay-core.ts"),
     path.join(ROOT, "src", "store", "memory-store.ts"),
     path.join(ROOT, "src", "memory", "replay.ts"),
     path.join(ROOT, "src", "memory", "replay-write.ts"),
@@ -855,7 +854,16 @@ test("lite memory-access routes do not keep alternate store branches", () => {
     assert.equal(memoryAccessFile.includes(symbol), false, `${symbol} should be absent from lite memory-access routes`);
   }
   assert.equal(serverFile.includes("registerMemoryAccessRoutes({\n    app,\n    env,\n    store,"), false, "lite runtime server should not pass store into memory-access routes");
-  assert.match(memoryAccessFile, /assertLocalStoreRuntimeEdition\(env, "local-store memory-access routes"\)/);
+  assert.match(memoryAccessFile, /assertLocalStoreRuntimeEdition\(args\.env, "local-store memory-access routes"\)/);
+  assert.match(memoryAccessFile, /\/v1\/memory\/resolve/);
+  for (const retiredPath of [
+    "/v1/memory/find",
+    "/v1/memory/agent/inspect",
+    "/v1/memory/action/retrieval",
+    "/v1/execution/context/assemble",
+  ]) {
+    assert.equal(memoryAccessFile.includes(retiredPath), false, `${retiredPath} must not remain in the production adapter`);
+  }
 });
 
 test("lite memory-access helper modules do not keep postgres alternate signatures", () => {
@@ -902,6 +910,22 @@ test("lite memory-feedback-tools routes do not keep alternate store branches", (
   }
   assert.equal(serverFile.includes("registerMemoryFeedbackToolRoutes({\n    app,\n    env,\n    store,"), false, "lite runtime server should not pass store into memory-feedback-tools routes");
   assert.match(memoryFeedbackToolsFile, /assertLocalStoreRuntimeEdition\(env, "local-store memory-feedback-tools routes"\)/);
+  for (const retainedPath of [
+    "/v1/memory/tools/select",
+    "/v1/memory/tools/decision",
+    "/v1/memory/tools/run",
+    "/v1/memory/tools/feedback",
+  ]) {
+    assert.match(memoryFeedbackToolsFile, new RegExp(retainedPath.replaceAll("/", "\\/")));
+  }
+  for (const retiredPath of [
+    "/v1/memory/feedback",
+    "/v1/memory/rules/state",
+    "/v1/memory/learning-loop/run",
+    "/v1/memory/runtime-maintenance/run",
+  ]) {
+    assert.equal(memoryFeedbackToolsFile.includes(retiredPath), false, `${retiredPath} must not remain in the production adapter`);
+  }
   assert.match(feedbackFile, /lite_write_store_required/);
 });
 
@@ -1011,6 +1035,10 @@ test("lite memory-write route does not keep server write alternate branches", ()
     assert.equal(memoryWriteFile.includes(symbol), false, `${symbol} should be absent from lite memory-write route`);
   }
   assert.equal(serverFile.includes("registerMemoryWriteRoutes({\n    app,\n    env,\n    store,"), false, "lite runtime server should not pass store into memory-write route");
+  assert.equal(serverFile.includes("registerMemoryWriteRoutes"), false, "Runtime must use MemoryWriteRouteService without registering its internal HTTP route");
+  assert.equal(memoryWriteFile.includes("registerMemoryWriteRoutes"), false, "production write module must not retain the retired HTTP adapter");
+  assert.equal(memoryWriteFile.includes("/v1/memory/write"), false, "production write module must expose only the typed service");
+  assert.equal(memoryWriteFile.includes("from \"fastify\""), false, "typed write service must not depend on Fastify");
   assert.equal(runtimeEntryFile.includes("runTopicClusterForEventIds"), false, "lite runtime-entry should not inject server topic clustering into write routes");
   assert.match(memoryWriteFile, /assertLocalStoreRuntimeEdition\(env, "local-store memory-write route"\)/);
 });
@@ -1024,57 +1052,36 @@ test("lite prepared write commit uses store access directly instead of a placeho
   assert.match(writeFile, /export async function applyPreparedMemoryWrite/);
 });
 
-test("lite server does not register PG-only memory lifecycle routes and keeps a Lite-native lifecycle surface", () => {
+test("product lifecycle service replaces internal memory lifecycle HTTP routes", () => {
   const serverFile = fs.readFileSync(path.join(ROOT, "src", "server", "http-server.ts"), "utf8");
   const liteEditionFile = fs.readFileSync(path.join(ROOT, "src", "server", "lite-runtime-boundary.ts"), "utf8");
-  const lifecycleRouteFile = fs.readFileSync(path.join(ROOT, "src", "routes", "memory-lifecycle-lite.ts"), "utf8");
+  const lifecycleServiceFile = fs.readFileSync(path.join(ROOT, "src", "product", "lifecycle-service.ts"), "utf8");
+  assert.equal(fs.existsSync(path.join(ROOT, "src", "routes", "memory-lifecycle-lite.ts")), false);
   assert.equal(serverFile.includes("registerMemoryLifecycleRoutes"), false, "lite runtime server should not register PG-only memory lifecycle routes");
-  assert.match(serverFile, /registerLiteMemoryLifecycleRoutes/);
-  assert.match(lifecycleRouteFile, /\/v1\/memory\/archive\/rehydrate/);
-  assert.match(lifecycleRouteFile, /\/v1\/memory\/nodes\/activate/);
-  assert.match(liteEditionFile, /\/v1\/memory\/archive\/rehydrate/);
-  assert.match(liteEditionFile, /\/v1\/memory\/nodes\/activate/);
+  assert.equal(serverFile.includes("registerLiteMemoryLifecycleRoutes"), false);
+  assert.equal(liteEditionFile.includes("/v1/memory/archive/rehydrate"), false);
+  assert.equal(liteEditionFile.includes("/v1/memory/nodes/activate"), false);
+  assert.match(lifecycleServiceFile, /rehydrateArchiveNodesLite/);
+  assert.match(lifecycleServiceFile, /activateMemoryNodesLite/);
 });
 
-test("lite memory-replay-learning-control routes do not keep alternate store branches", () => {
-  const replayLearningControlFile = fs.readFileSync(path.join(ROOT, "src", "routes", "memory-replay-learning-control.ts"), "utf8");
+test("retired memory-replay-learning-control HTTP adapter is absent while typed replay capabilities remain", () => {
   const serverFile = fs.readFileSync(path.join(ROOT, "src", "server", "http-server.ts"), "utf8");
-  const forbiddenSymbols = [
-    "type StoreLike",
-    "store.withTx",
-    "store.withClient",
-    "liteModeActive",
-    "pg.PoolClient",
-    "{} as pg.PoolClient",
-  ];
-  for (const symbol of forbiddenSymbols) {
-    assert.equal(replayLearningControlFile.includes(symbol), false, `${symbol} should be absent from lite memory-replay-learning-control routes`);
-  }
-  assert.equal(serverFile.includes("registerMemoryReplayLearningControlRoutes({\n    app,\n    env,\n    store,"), false, "lite runtime server should not pass store into memory-replay-learning-control routes");
-  assert.match(replayLearningControlFile, /assertLocalStoreRuntimeEdition\(env, "local-store memory-replay-learning-control routes"\)/);
+  const replayFile = fs.readFileSync(path.join(ROOT, "src", "memory", "replay.ts"), "utf8");
+  assert.equal(fs.existsSync(path.join(ROOT, "src", "routes", "memory-replay-learning-control.ts")), false);
+  assert.equal(serverFile.includes("registerMemoryReplayLearningControlRoutes"), false, "Runtime must not register retired replay learning-control HTTP routes");
+  assert.match(replayFile, /export async function replayPlaybookRepairReview/);
+  assert.match(replayFile, /export async function replayPlaybookRun/);
+  assert.match(replayFile, /export async function replayPlaybookDispatch/);
 });
 
-test("lite memory-replay-core routes do not keep alternate store branches", () => {
-  const replayCoreFile = fs.readFileSync(path.join(ROOT, "src", "routes", "memory-replay-core.ts"), "utf8");
+test("retired memory-replay-core HTTP adapter is absent while typed replay capabilities remain", () => {
   const serverFile = fs.readFileSync(path.join(ROOT, "src", "server", "http-server.ts"), "utf8");
-  const forbiddenSymbols = [
-    "type StoreLike",
-    "store.withTx",
-    "store.withClient",
-    "LiteRuntimeStoreClient",
-    "liteModeActive",
-    "liteReplayReadActive",
-    "operation: (client",
-    "operation(null",
-    "replayAccessForClient",
-    "pg.PoolClient",
-    "{} as pg.PoolClient",
-  ];
-  for (const symbol of forbiddenSymbols) {
-    assert.equal(replayCoreFile.includes(symbol), false, `${symbol} should be absent from lite memory-replay-core routes`);
-  }
-  assert.equal(serverFile.includes("registerMemoryReplayCoreRoutes({\n    app,\n    env,\n    store,"), false, "lite runtime server should not pass store into memory-replay-core routes");
-  assert.match(replayCoreFile, /assertLocalStoreRuntimeEdition\(env, "local-store replay core routes"\)/);
-  assert.match(replayCoreFile, /require liteReplayAccess/);
-  assert.match(replayCoreFile, /require liteWriteStore/);
+  const replayFile = fs.readFileSync(path.join(ROOT, "src", "memory", "replay.ts"), "utf8");
+  assert.equal(fs.existsSync(path.join(ROOT, "src", "routes", "memory-replay-core.ts")), false);
+  assert.equal(serverFile.includes("registerMemoryReplayCoreRoutes"), false, "Runtime must not register retired replay core HTTP routes");
+  assert.match(replayFile, /export async function replayRunStart/);
+  assert.match(replayFile, /export async function replayStepBefore/);
+  assert.match(replayFile, /export async function replayStepAfter/);
+  assert.match(replayFile, /export async function replayRunEnd/);
 });

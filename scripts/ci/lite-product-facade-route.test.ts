@@ -20,10 +20,10 @@ import {
   registerMemoryContextRuntimeRoutes,
   type MemoryPlanningContextRouteService,
 } from "../../src/routes/memory-context-runtime.ts";
-import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
-import { registerMemoryFeedbackToolRoutes } from "../../src/routes/memory-feedback-tools.ts";
-import { registerLiteMemoryLifecycleRoutes } from "../../src/routes/memory-lifecycle-lite.ts";
-import { createMemoryWriteRouteService, registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
+import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
+import { registerMemoryFeedbackToolRoutes } from "./support/register-memory-feedback-tool-test-routes.ts";
+import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
+import { registerMemoryWriteRoutes } from "./support/register-memory-write-test-route.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
 import { createRuntimeProductServices, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
@@ -1009,17 +1009,6 @@ function registerFullProductMemoryApp(args: {
       message: "embedding failed",
     }),
     recordContextAssemblyTelemetryBestEffort: async () => {},
-  });
-  registerLiteMemoryLifecycleRoutes({
-    app: args.app,
-    env: args.env,
-    liteWriteStore: args.liteWriteStore,
-    requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
-    withIdentityFromRequest: args.guards.withIdentityFromRequest as any,
-    enforceRateLimit: args.guards.enforceRateLimit,
-    enforceTenantQuota: args.guards.enforceTenantQuota,
-    tenantFromBody: args.guards.tenantFromBody,
-    acquireInflightSlot: args.guards.acquireInflightSlot,
   });
   registerMemoryFeedbackToolRoutes({
     app: args.app,

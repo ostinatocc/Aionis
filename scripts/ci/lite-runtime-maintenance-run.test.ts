@@ -9,7 +9,7 @@ import { createRequestGuards } from "../../src/app/request-guards.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { runRuntimeMaintenanceLite } from "../../src/memory/runtime-maintenance.ts";
 import { applyPreparedMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
-import { registerMemoryFeedbackToolRoutes } from "../../src/routes/memory-feedback-tools.ts";
+import { registerMemoryFeedbackToolRoutes } from "./support/register-memory-feedback-tool-test-routes.ts";
 import { createSqliteDatabase } from "../../src/store/sqlite.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";

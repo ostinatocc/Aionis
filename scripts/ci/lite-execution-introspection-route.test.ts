@@ -9,7 +9,7 @@ import { sealAuthorityReceiptsForPreparedWrite } from "./authority-fixture-helpe
 import { createRequestGuards } from "../../src/app/request-guards.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { CognitiveStructureV1Schema } from "../../src/kernel/cognitive-structure.ts";
-import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
+import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
 import { buildExecutionContractFromProjection } from "../../src/memory/execution-contract.ts";
 import {
   DelegationRecordsWriteResponseSchema,

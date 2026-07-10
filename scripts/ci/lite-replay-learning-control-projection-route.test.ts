@@ -15,8 +15,8 @@ import {
   PolicyMutationV1Schema,
 } from "../../src/kernel/policy-mutation-loop.ts";
 import { PlanningContextRouteContractSchema, ReplayPlaybookRepairReviewResponseSchema } from "../../src/memory/schemas.ts";
+import { replayPlaybookRepairReview, replayPlaybookRun } from "../../src/memory/replay.ts";
 import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
-import { registerMemoryReplayLearningControlRoutes } from "../../src/routes/memory-replay-learning-control.ts";
 import { applyReplayMemoryWrite } from "../../src/memory/replay-write.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteReplayStore } from "../../src/store/lite-replay-store.ts";
@@ -90,19 +90,6 @@ function buildEnv(overrides: Record<string, unknown> = {}) {
     REPLAY_GUIDED_REPAIR_MAX_ERROR_CHARS: 4000,
     ...overrides,
   } as any;
-}
-
-function buildRequestGuards(embedder: typeof DeterministicEmbeddingProvider | null = null) {
-  return createRequestGuards({
-    env: buildEnv(),
-    embedder,
-    recallLimiter: null,
-    debugEmbedLimiter: null,
-    writeLimiter: null,
-    recallTextEmbedLimiter: null,
-    recallInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
-    writeInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
-  });
 }
 
 async function seedPendingReviewPlaybook(args: {
@@ -237,21 +224,42 @@ function registerReplayReviewRoute(args: {
     tenantFromBody: guards.tenantFromBody,
     scopeFromBody: guards.scopeFromBody,
   });
-
-  registerMemoryReplayLearningControlRoutes({
-    app,
-    env,
-    liteWriteStore: args.liteWriteStore as any,
-    requireMemoryPrincipal: guards.requireMemoryPrincipal,
-    withIdentityFromRequest: guards.withIdentityFromRequest,
-    enforceRateLimit: guards.enforceRateLimit,
-    enforceTenantQuota: guards.enforceTenantQuota,
-    tenantFromBody: guards.tenantFromBody,
-    acquireInflightSlot: guards.acquireInflightSlot,
-    withReplayRepairReviewDefaults,
-    buildReplayRepairReviewOptions: runtimeOptions.buildReplayRepairReviewOptions,
-    buildReplayPlaybookRunOptions: runtimeOptions.buildReplayPlaybookRunOptions,
+  const withLocalReplayIdentity = (payload: Record<string, unknown>) => ({
+    actor: "local-user",
+    consumer_agent_id: "local-user",
+    memory_lane: "private",
+    producer_agent_id: "local-user",
+    owner_agent_id: "local-user",
+    ...payload,
   });
+
+  const review = async (payload: Record<string, unknown>) => {
+    const defaulted = withReplayRepairReviewDefaults(withLocalReplayIdentity(payload));
+    const metadata = defaulted.body.metadata && typeof defaulted.body.metadata === "object"
+      && !Array.isArray(defaulted.body.metadata)
+      ? { ...(defaulted.body.metadata as Record<string, unknown>) }
+      : {};
+    defaulted.body.metadata = {
+      ...metadata,
+      auto_promote_policy_resolution: defaulted.resolution,
+    };
+    const options = runtimeOptions.buildReplayRepairReviewOptions();
+    options.writeAccess = args.liteWriteStore;
+    const out = await args.liteWriteStore.withTx(() => replayPlaybookRepairReview(defaulted.body, options));
+    return {
+      ...out,
+      auto_promote_policy_resolution: defaulted.resolution,
+    };
+  };
+
+  const run = async (payload: Record<string, unknown>, allowSandboxExecution: boolean) => {
+    const reply = { header: () => undefined };
+    const options = runtimeOptions.buildReplayPlaybookRunOptions(reply, "direct_replay_playbook_run", {
+      allowSandboxExecution,
+    });
+    if (options.writeOptions) options.writeOptions.writeAccess = args.liteWriteStore;
+    return replayPlaybookRun(withLocalReplayIdentity(payload), options);
+  };
 
   if (args.liteRecallStore) {
     registerMemoryContextRuntimeRoutes({
@@ -341,7 +349,7 @@ function registerReplayReviewRoute(args: {
     });
   }
 
-  return { app, runtimeOptions };
+  return { app, runtimeOptions, review, run };
 }
 
 test("lite replay runtime defaults use sync_inline learning projection delivery", async () => {
@@ -388,7 +396,7 @@ test("replay playbook run requires admin token when sandbox admin-only execution
       },
     ],
   });
-  const { app } = registerReplayReviewRoute({
+  const { app, run } = registerReplayReviewRoute({
     liteWriteStore,
     liteReplayStore,
     envOverrides: {
@@ -413,22 +421,17 @@ test("replay playbook run requires admin token when sandbox admin-only execution
     },
   };
   try {
-    const denied = await app.inject({
-      method: "POST",
-      url: "/v1/memory/replay/playbooks/run",
-      payload,
-    });
-    assert.equal(denied.statusCode, 400, denied.body);
-    assert.equal(denied.json().error, "replay_executor_not_enabled");
+    await assert.rejects(
+      () => run(payload, false),
+      (error: any) => {
+        assert.equal(error.statusCode, 400);
+        assert.equal(error.code, "replay_executor_not_enabled");
+        return true;
+      },
+    );
 
-    const allowed = await app.inject({
-      method: "POST",
-      url: "/v1/memory/replay/playbooks/run",
-      headers: { "x-admin-token": "admin-secret" },
-      payload,
-    });
-    assert.equal(allowed.statusCode, 200, allowed.body);
-    assert.equal(allowed.json().mode, "strict");
+    const allowed = await run(payload, true);
+    assert.equal(allowed.mode, "strict");
   } finally {
     await app.close();
     await liteReplayStore.close();
@@ -444,12 +447,9 @@ test("lite replay repair review applies learning projection inline by default", 
     replayDbPath: tmpDbPath("repair-review-inline-replay"),
     playbookId,
   });
-  const { app } = registerReplayReviewRoute({ liteWriteStore, liteReplayStore });
+  const { app, review } = registerReplayReviewRoute({ liteWriteStore, liteReplayStore });
   try {
-    const res = await app.inject({
-      method: "POST",
-      url: "/v1/memory/replay/playbooks/repair/review",
-      payload: {
+    const body = ReplayPlaybookRepairReviewResponseSchema.parse(await review({
         tenant_id: "default",
         scope: "default",
         playbook_id: playbookId,
@@ -475,11 +475,7 @@ test("lite replay repair review applies learning projection inline by default", 
             },
           },
         },
-      },
-    });
-
-    assert.equal(res.statusCode, 200);
-    const body = ReplayPlaybookRepairReviewResponseSchema.parse(res.json());
+    }));
     assert.equal(body.learning_projection_result.delivery, "sync_inline");
     assert.equal(body.learning_projection_result.status, "applied");
     assert.equal(body.learning_projection_result.rule_state, "shadow");
@@ -591,7 +587,7 @@ test("lite replay repair review can use internal evidence learning_control provi
     playbookId,
     workflowSignature: "wf:replay:export-fix",
   });
-  const { app } = registerReplayReviewRoute({
+  const { app, review } = registerReplayReviewRoute({
     liteWriteStore,
     liteReplayStore,
     envOverrides: {
@@ -599,10 +595,7 @@ test("lite replay repair review can use internal evidence learning_control provi
     },
   });
   try {
-    const res = await app.inject({
-      method: "POST",
-      url: "/v1/memory/replay/playbooks/repair/review",
-      payload: {
+    const body = ReplayPlaybookRepairReviewResponseSchema.parse(await review({
         tenant_id: "default",
         scope: "default",
         playbook_id: playbookId,
@@ -612,11 +605,7 @@ test("lite replay repair review can use internal evidence learning_control provi
         learning_projection: {
           enabled: true,
         },
-      },
-    });
-
-    assert.equal(res.statusCode, 200);
-    const body = ReplayPlaybookRepairReviewResponseSchema.parse(res.json());
+    }));
     assert.equal(body.learning_projection_result.status, "applied");
     assert.equal(body.learning_projection_result.rule_state, "shadow");
     assert.equal(
@@ -644,12 +633,9 @@ test("lite replay repair review keeps low-confidence learning_control review non
     replayDbPath: tmpDbPath("repair-review-inline-low-confidence-replay"),
     playbookId,
   });
-  const { app } = registerReplayReviewRoute({ liteWriteStore, liteReplayStore });
+  const { app, review } = registerReplayReviewRoute({ liteWriteStore, liteReplayStore });
   try {
-    const res = await app.inject({
-      method: "POST",
-      url: "/v1/memory/replay/playbooks/repair/review",
-      payload: {
+    const body = ReplayPlaybookRepairReviewResponseSchema.parse(await review({
         tenant_id: "default",
         scope: "default",
         playbook_id: playbookId,
@@ -674,11 +660,7 @@ test("lite replay repair review keeps low-confidence learning_control review non
             },
           },
         },
-      },
-    });
-
-    assert.equal(res.statusCode, 200);
-    const body = ReplayPlaybookRepairReviewResponseSchema.parse(res.json());
+    }));
     assert.equal(body.learning_projection_result.status, "applied");
     assert.equal(body.learning_projection_result.rule_state, "draft");
     assert.equal(body.learning_control_preview?.promote_memory.admissibility?.admissible, false);
@@ -704,12 +686,9 @@ test("lite replay repair review preserves explicit target_rule_state over learni
     replayDbPath: tmpDbPath("repair-review-inline-explicit-target-state-replay"),
     playbookId,
   });
-  const { app } = registerReplayReviewRoute({ liteWriteStore, liteReplayStore });
+  const { app, review } = registerReplayReviewRoute({ liteWriteStore, liteReplayStore });
   try {
-    const res = await app.inject({
-      method: "POST",
-      url: "/v1/memory/replay/playbooks/repair/review",
-      payload: {
+    const body = ReplayPlaybookRepairReviewResponseSchema.parse(await review({
         tenant_id: "default",
         scope: "default",
         playbook_id: playbookId,
@@ -736,11 +715,7 @@ test("lite replay repair review preserves explicit target_rule_state over learni
             },
           },
         },
-      },
-    });
-
-    assert.equal(res.statusCode, 200);
-    const body = ReplayPlaybookRepairReviewResponseSchema.parse(res.json());
+    }));
     assert.equal(body.learning_projection_result.status, "applied");
     assert.equal(body.learning_projection_result.rule_state, "draft");
     assert.equal(body.learning_control_preview?.promote_memory.admissibility?.admissible, true);
@@ -771,12 +746,9 @@ test("lite replay repair review writes workflow memory that planning_context con
     playbookId,
   });
   const liteRecallStore = createLiteRecallStore(writeDbPath);
-  const { app } = registerReplayReviewRoute({ liteWriteStore, liteReplayStore, liteRecallStore });
+  const { app, review } = registerReplayReviewRoute({ liteWriteStore, liteReplayStore, liteRecallStore });
   try {
-    const reviewRes = await app.inject({
-      method: "POST",
-      url: "/v1/memory/replay/playbooks/repair/review",
-      payload: {
+    const reviewBody = ReplayPlaybookRepairReviewResponseSchema.parse(await review({
         tenant_id: "default",
         scope: "default",
         playbook_id: playbookId,
@@ -786,11 +758,7 @@ test("lite replay repair review writes workflow memory that planning_context con
         learning_projection: {
           enabled: true,
         },
-      },
-    });
-
-    assert.equal(reviewRes.statusCode, 200);
-    const reviewBody = ReplayPlaybookRepairReviewResponseSchema.parse(reviewRes.json());
+    }));
     assert.equal(reviewBody.learning_projection_result.status, "applied");
 
     const planningRes = await app.inject({

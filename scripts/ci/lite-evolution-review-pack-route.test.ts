@@ -11,7 +11,7 @@ import { createRequestGuards } from "../../src/app/request-guards.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { buildPolicyLearningControlContract } from "../../src/memory/evolution-inspect.ts";
 import { buildExecutionContractFromProjection } from "../../src/memory/execution-contract.ts";
-import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
+import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
 import {
   EvolutionReviewPackResponseSchema,
   MemoryAnchorV1Schema,

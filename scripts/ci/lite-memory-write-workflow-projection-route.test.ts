@@ -12,9 +12,9 @@ import {
   PolicyMutationAdjudicationV1Schema,
   PolicyMutationV1Schema,
 } from "../../src/kernel/policy-mutation-loop.ts";
-import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
+import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
 import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
-import { registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
+import { registerMemoryWriteRoutes } from "./support/register-memory-write-test-route.ts";
 import {
   ExecutionMemoryIntrospectionResponseSchema,
   PlanningContextRouteContractSchema,

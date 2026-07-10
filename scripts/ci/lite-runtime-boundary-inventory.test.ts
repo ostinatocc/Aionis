@@ -340,10 +340,11 @@ test("Lite route matrix declares explicit exposure on every unique route", () =>
 
 test("surface inventory covers every matrix route and stays aligned with explicit exposure", () => {
   const rows = readInventoryRows();
-  const rowsByKey = new Map(rows.map((row) => [`${row.method} ${row.path}`, row]));
+  const activeRows = rows.filter((row) => row.public_http !== "removed");
+  const rowsByKey = new Map(activeRows.map((row) => [`${row.method} ${row.path}`, row]));
 
-  assert.equal(rows.length, LITE_ROUTE_CAPABILITY_MATRIX.length);
-  assert.equal(rowsByKey.size, rows.length, "surface inventory must not duplicate route keys");
+  assert.equal(activeRows.length, LITE_ROUTE_CAPABILITY_MATRIX.length);
+  assert.equal(rowsByKey.size, activeRows.length, "active surface inventory must not duplicate route keys");
 
   for (const entry of LITE_ROUTE_CAPABILITY_MATRIX) {
     const key = `${entry.method} ${entry.path}`;
@@ -375,13 +376,22 @@ test("only audited product and operator routes remain non-internal HTTP", () => 
   }
 });
 
-test("internal HTTP routes name typed replacements and a deletion phase", () => {
+test("internal HTTP inventory distinguishes temporary adapters from completed removals", () => {
   const rows = readInventoryRows();
+  const required = rows.filter((row) => row.public_http === "required");
+  const temporary = rows.filter((row) => row.public_http === "temporary");
+  const removed = rows.filter((row) => row.public_http === "removed");
+
+  assert.equal(required.length, 19);
+  assert.equal(temporary.length, 8);
+  assert.equal(removed.length, 45);
 
   for (const row of rows.filter((candidate) => INTERNAL_EXPOSURES.has(candidate.exposure))) {
     const key = `${row.method} ${row.path}`;
     assert.notEqual(row.replacement_service, "none", `${key} must name a typed replacement service`);
     assert.match(row.deletion_phase, /^Task 11/, `${key} must be owned by the internal HTTP deletion phase`);
-    assert.match(row.public_http, /^(remove|temporary)$/, `${key} has invalid internal HTTP disposition`);
+    assert.match(row.public_http, /^(removed|temporary)$/, `${key} has invalid internal HTTP disposition`);
+    const entry = LITE_ROUTE_CAPABILITY_MATRIX.find((candidate) => `${candidate.method} ${candidate.path}` === key);
+    assert.equal(!!entry, row.public_http === "temporary", `${key} registration must match its inventory disposition`);
   }
 });

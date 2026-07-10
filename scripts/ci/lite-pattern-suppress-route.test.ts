@@ -15,7 +15,7 @@ import {
 } from "../../src/memory/schemas.ts";
 import { buildExecutionContractFromProjection } from "../../src/memory/execution-contract.ts";
 import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
-import { registerMemoryFeedbackToolRoutes } from "../../src/routes/memory-feedback-tools.ts";
+import { registerMemoryFeedbackToolRoutes } from "./support/register-memory-feedback-tool-test-routes.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";

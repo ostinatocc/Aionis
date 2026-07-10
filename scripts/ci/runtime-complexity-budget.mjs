@@ -24,7 +24,7 @@ function trackedSourceFiles() {
   return listed.stdout
     .split(/\r?\n/)
     .map((value) => value.trim())
-    .filter(Boolean)
+    .filter((value) => value.length > 0 && fs.existsSync(path.join(ROOT, value)))
     .sort();
 }
 

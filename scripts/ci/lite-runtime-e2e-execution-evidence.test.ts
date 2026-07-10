@@ -14,9 +14,10 @@ import {
   type ExecutionTreeV1,
 } from "../../src/execution/index.ts";
 import { createHandoffRouteService, registerHandoffRoutes } from "../../src/routes/handoff.ts";
-import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
+import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
 import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
-import { createMemoryWriteRouteService, registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
+import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
+import { registerMemoryWriteRoutes } from "./support/register-memory-write-test-route.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
 import { createRuntimeProductServices, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";

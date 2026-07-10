@@ -8,7 +8,7 @@ import Fastify from "fastify";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 import { createRequestGuards } from "../../src/app/request-guards.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
-import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
+import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
 import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
 import { registerHandoffRoutes } from "../../src/routes/handoff.ts";
 import {

@@ -9,7 +9,7 @@ import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { buildExecutionContractFromProjection } from "../../src/memory/execution-contract.ts";
 import { buildHandoffWriteBody } from "../../src/memory/handoff.ts";
 import { registerHandoffRoutes } from "../../src/routes/handoff.ts";
-import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
+import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
 import { ContinuityReviewPackResponseSchema } from "../../src/memory/schemas.ts";
 import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
