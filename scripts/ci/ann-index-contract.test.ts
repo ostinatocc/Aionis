@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AnnIndexDimensionError, type AnnVectorRecord } from "../../src/store/ann/ann-index.ts";
 import { createLocalAnnIndex } from "../../src/store/ann/local-ann-index.ts";
-import { createNoopAnnIndex } from "../../src/store/ann/noop-ann-index.ts";
 import { createZvecAnnIndex } from "../../src/store/ann/zvec-ann-index.ts";
 import { loadEnv } from "../../src/config.ts";
 
@@ -50,18 +49,6 @@ async function withIsolatedEnv(overrides: Record<string, string | undefined>, fn
     process.env = previous;
   }
 }
-
-test("noop ANN index validates inputs and returns no candidates", async () => {
-  const index = createNoopAnnIndex();
-  await index.upsert(record("mem-a"), [1, 0, 0]);
-  const results = await index.search({
-    scope: "project-a",
-    embeddingModel: "test-embed",
-    vector: [1, 0, 0],
-    limit: 10,
-  });
-  assert.deepEqual(results, []);
-});
 
 test("local ANN index returns nearest vectors within scope and model", async () => {
   const index = createLocalAnnIndex();

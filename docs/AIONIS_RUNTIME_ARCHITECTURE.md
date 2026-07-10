@@ -250,7 +250,7 @@ into the Agent prompt.
 | Authority governance | `src/memory/authority-gate.ts`, `src/memory/authority-consumption.ts` |
 | Execution tree and state | `src/execution/tree.ts`, `src/execution/tree-store.ts`, `src/execution/tree-auto.ts` |
 | Execution continuity | `src/kernel/execution-continuity-kernel.ts` |
-| Controlled forgetting | `src/kernel/forgetting-kernel.ts`, `src/memory/semantic-forgetting.ts` |
+| Controlled forgetting | `src/kernel/forgetting-kernel.ts` |
 | Operator snapshot | `src/memory/operator-snapshot.ts`, `src/routes/operator-snapshot.ts` |
 
 ## Related Documents

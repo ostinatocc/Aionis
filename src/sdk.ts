@@ -51,6 +51,14 @@ export type AionisCommandPosture = {
   acceptance_checks?: string[];
   verification_summary?: string[];
   artifact_hints?: string[];
+  execution_state?: {
+    summary_kind: string | null;
+    transition_kind: string | null;
+    actor_role: string | null;
+    handoff_target: string | null;
+    next_action_hint: string | null;
+    execution_outcome_role: "passed_solution" | "failed_branch" | "blocked" | "unknown" | null;
+  };
 };
 
 export type AionisRouteContractSource = "target_files" | "should_continue" | "inspect_first" | "must_not";
@@ -1324,6 +1332,21 @@ function commandPostureArray(value: unknown): AionisCommandPosture[] {
     ) {
       return [];
     }
+    const executionState = asRecord(record.execution_state);
+    const outcomeRole = executionState?.execution_outcome_role;
+    const parsedExecutionState: AionisCommandPosture["execution_state"] | null = executionState ? {
+      summary_kind: coerceString(executionState.summary_kind) ?? null,
+      transition_kind: coerceString(executionState.transition_kind) ?? null,
+      actor_role: coerceString(executionState.actor_role) ?? null,
+      handoff_target: coerceString(executionState.handoff_target) ?? null,
+      next_action_hint: coerceString(executionState.next_action_hint) ?? null,
+      execution_outcome_role: outcomeRole === "passed_solution"
+        || outcomeRole === "failed_branch"
+        || outcomeRole === "blocked"
+        || outcomeRole === "unknown"
+          ? outcomeRole
+          : null,
+    } : null;
     return [{
       posture,
       surface,
@@ -1335,6 +1358,7 @@ function commandPostureArray(value: unknown): AionisCommandPosture[] {
       acceptance_checks: stringArray(record.acceptance_checks),
       verification_summary: stringArray(record.verification_summary),
       artifact_hints: stringArray(record.artifact_hints),
+      ...(parsedExecutionState ? { execution_state: parsedExecutionState } : {}),
     }];
   });
 }

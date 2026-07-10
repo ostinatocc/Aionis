@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveSemanticForgettingDecision } from "../../src/memory/semantic-forgetting.ts";
+import { resolveSemanticForgettingDecision } from "../../src/kernel/forgetting-kernel.ts";
 
 test("semantic forgetting retains recent active workflow memory", () => {
   const out = resolveSemanticForgettingDecision({

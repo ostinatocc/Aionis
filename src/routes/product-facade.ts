@@ -48,7 +48,6 @@ import {
   type AionisAgentRole,
   type AionisTaskContextProfile,
   type AionisClaimLedgerProjection,
-  type AionisClaimLedgerProjectionItem,
   type AionisMemoryDecisionAuditReport,
   type AionisMemoryDecisionTrace,
   type AionisGuidePacket,
@@ -1065,34 +1064,6 @@ function compactProductPromptText(value: string, maxChars: number): string {
   return `${compacted.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
 }
 
-function productPromptPostureLabel(value: AionisAgentContext["recommended_posture"]): string {
-  switch (value) {
-    case "ignore_history": return "ignore";
-    case "rehydrate_before_use": return "rehydrate";
-    case "inspect_before_use": return "inspect";
-    case "reuse_supported_history": return "reuse";
-    case "use_as_context": return "context";
-  }
-}
-
-function productPromptAuthorityLabel(value: AionisAgentContext["authority"]): string {
-  switch (value) {
-    case "trusted": return "trust";
-    case "advisory": return "adv";
-    case "candidate": return "cand";
-    case "blocked": return "block";
-    case "none": return "none";
-  }
-}
-
-function productPromptRiskLabel(value: AionisAgentContext["risk"]["negative_transfer_risk"]): string {
-  switch (value) {
-    case "high": return "hi";
-    case "medium": return "med";
-    case "low": return "low";
-  }
-}
-
 type ProductGuideExposureLedger = {
   contract_version: "aionis_guide_exposure_v1";
   guide_trace_id: string;
@@ -1895,443 +1866,8 @@ function maxRisk(
   return riskRank(left) >= riskRank(right) ? left : right;
 }
 
-function authorityRank(value: AionisAgentContext["authority"]): number {
-  switch (value) {
-    case "trusted": return 4;
-    case "advisory": return 3;
-    case "candidate": return 2;
-    case "blocked": return 1;
-    case "none": return 0;
-  }
-}
-
-function conservativeAuthority(
-  base: AionisAgentContext,
-  executionHistoryUsed: boolean,
-  executionAuthority: AionisAgentContext["authority"],
-): AionisAgentContext["authority"] {
-  if (!base.actionable_history_used) return executionAuthority;
-  if (!executionHistoryUsed) return base.authority;
-  return authorityRank(base.authority) <= authorityRank(executionAuthority) ? base.authority : executionAuthority;
-}
-
 function mergeGuideStrings(values: string[], limit: number): string[] {
   return uniqueStrings(values).slice(0, limit);
-}
-
-function productGuideSafeExecutionLines(values: string[], allowedPrefixes: string[]): string[] {
-  return values.filter((entry) => allowedPrefixes.some((prefix) => entry.startsWith(prefix)));
-}
-
-function mergeCommandPostureRows(
-  values: AionisAgentContext["command_posture"],
-  limit: number,
-): AionisAgentContext["command_posture"] {
-  const seen = new Set<string>();
-  const rows: AionisAgentContext["command_posture"] = [];
-  for (const row of values) {
-    const key = `${row.posture}:${row.memory_id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    rows.push(row);
-    if (rows.length >= limit) break;
-  }
-  return rows;
-}
-
-function renderProductCommandPostureLine(args: {
-  commandPosture: AionisAgentContext["command_posture"];
-  compactAgent: boolean;
-}): string | null {
-  if (args.commandPosture.length === 0) return null;
-  const groups = new Map<AionisAgentContext["command_posture"][number]["posture"], string[]>();
-  for (const row of args.commandPosture) {
-    const values = groups.get(row.posture) ?? [];
-    values.push(row.memory_id);
-    groups.set(row.posture, values);
-  }
-  const labels: Array<[AionisAgentContext["command_posture"][number]["posture"], string]> = [
-    ["must_not", args.compactAgent ? "no" : "must_not"],
-    ["should_continue", args.compactAgent ? "go" : "should_continue"],
-    ["inspect_first", args.compactAgent ? "chk" : "inspect_first"],
-    ["rehydrate_first", args.compactAgent ? "raw" : "rehydrate_first"],
-    ["optional_context", args.compactAgent ? "ctx" : "optional_context"],
-  ];
-  const parts = labels
-    .map(([posture, label]) => {
-      const values = groups.get(posture)?.slice(0, args.compactAgent ? 3 : 5) ?? [];
-      return values.length > 0 ? `${label}=${values.join(",")}` : null;
-    })
-    .filter((entry): entry is string => !!entry);
-  if (parts.length === 0) return null;
-  return compactProductPromptText(`${args.compactAgent ? "cmd" : "command_posture:"} ${parts.join(" ")}`, args.compactAgent ? 180 : 320);
-}
-
-function renderProductRouteContractLine(args: {
-  routeContract: AionisAgentContext["route_contract"];
-  compactAgent: boolean;
-}): string | null {
-  const activeTargets = args.routeContract.active_targets
-    .slice(0, args.compactAgent ? 2 : 4)
-    .map((entry) => compactProductPromptText(entry.target, args.compactAgent ? 34 : 48));
-  const referenceTargets = args.routeContract.reference_only_targets
-    .slice(0, args.compactAgent ? 1 : 3)
-    .map((entry) => compactProductPromptText(entry.target, args.compactAgent ? 28 : 42));
-  const blockedTargets = args.routeContract.blocked_direction_targets
-    .slice(0, args.compactAgent ? 1 : 3)
-    .map((entry) => compactProductPromptText(entry.target, args.compactAgent ? 28 : 42));
-  if (activeTargets.length === 0 && referenceTargets.length === 0 && blockedTargets.length === 0) return null;
-  const parts = args.compactAgent
-    ? mergeGuideStrings([
-        activeTargets.length > 0 ? "conflict=missing_active_not_superseded" : null,
-        activeTargets.length > 0 ? "exec=route_safe_patch_raw_if_needed" : null,
-        activeTargets.length > 0 ? "after_raw=continue_if_consistent" : null,
-        activeTargets.length > 0 ? `active=${activeTargets.join(",")}` : null,
-        referenceTargets.length > 0 ? `ref_only=${referenceTargets.join(",")}` : null,
-        blockedTargets.length > 0 ? `block_dir=${blockedTargets.join(",")}` : null,
-        activeTargets.length > 0 || referenceTargets.length > 0 || blockedTargets.length > 0 ? "no_fallback_to_ref=1" : null,
-      ].filter((entry): entry is string => !!entry), 8)
-    : mergeGuideStrings([
-        activeTargets.length > 0 ? "conflict_policy=do_not_treat_missing_active_target_as_superseded" : null,
-        activeTargets.length > 0 ? "executable_evidence=route_safe_but_patch_may_require_rehydrate" : null,
-        activeTargets.length > 0 ? "after_rehydrate=continue_allowed_action_if_task_consistent" : null,
-        activeTargets.length > 0 ? `active_targets=${activeTargets.join(",")}` : null,
-        referenceTargets.length > 0 ? `reference_only_targets=${referenceTargets.join(",")}` : null,
-        blockedTargets.length > 0 ? `blocked_direction_targets=${blockedTargets.join(",")}` : null,
-        activeTargets.length > 0 || referenceTargets.length > 0 || blockedTargets.length > 0 ? "fallback_policy=do_not_promote_reference_or_blocked_targets" : null,
-      ].filter((entry): entry is string => !!entry), 8);
-  if (parts.length === 0) return null;
-  return compactProductPromptText(`${args.compactAgent ? "route" : "route_contract:"} ${parts.join(args.compactAgent ? " " : "; ")}`, args.compactAgent ? 300 : 560);
-}
-
-function renderProductRouteActionLine(args: {
-  routeContract: AionisAgentContext["route_contract"];
-  compactAgent: boolean;
-}): string | null {
-  if (args.routeContract.active_targets.length === 0) return null;
-  const order = args.routeContract.action_policy.missing_active_target_preferred_order.join(">");
-  const line = args.compactAgent
-    ? `action missing_active=${order} terminal_inspect=0 raw_then_continue=1 conflict_after_raw_only=1`
-    : `action_policy: missing_active_target_order=${order}; terminal_inspect_allowed=false; executable_evidence_policy=route_safe_but_patch_may_require_rehydrate; after_rehydrate_policy=continue_allowed_action_if_task_consistent; report_conflict_requires=rehydrate_unavailable_or_evidence_conflict`;
-  return compactProductPromptText(line, args.compactAgent ? 190 : 520);
-}
-
-type ProductCommandEvidenceField = "workflow_steps" | "acceptance_checks" | "verification_summary" | "artifact_hints";
-
-function productCommandEvidenceValues(
-  row: AionisAgentContext["command_posture"][number],
-  field: ProductCommandEvidenceField,
-): string[] {
-  switch (field) {
-    case "workflow_steps": return row.workflow_steps;
-    case "acceptance_checks": return row.acceptance_checks;
-    case "verification_summary": return row.verification_summary;
-    case "artifact_hints": return row.artifact_hints;
-  }
-}
-
-function renderProductCommandEvidenceLines(args: {
-  commandPosture: AionisAgentContext["command_posture"];
-  field: ProductCommandEvidenceField;
-  label: "step" | "check" | "verify" | "artifact" | "avoid_verify";
-  postures: Set<AionisAgentContext["command_posture"][number]["posture"]>;
-  compactAgent: boolean;
-}): string[] {
-  const maxItems = args.compactAgent ? 2 : 4;
-  const maxChars = args.compactAgent ? 78 : 180;
-  const lines: string[] = [];
-  const seen = new Set<string>();
-  for (const row of args.commandPosture) {
-    if (!args.postures.has(row.posture)) continue;
-    for (const value of productCommandEvidenceValues(row, args.field)) {
-      const note = compactProductPromptText(value, maxChars);
-      if (!note || seen.has(note)) continue;
-      seen.add(note);
-      lines.push(`${args.label}: id=${row.memory_id} n=${note}`);
-      if (lines.length >= maxItems) return lines;
-    }
-  }
-  return lines;
-}
-
-function renderProductTaskContextProfileLine(profile: AionisTaskContextProfile, compactAgent: boolean): string | null {
-  switch (profile) {
-    case "coding_verifier":
-      return compactAgent
-        ? "task coding_verifier: run non-excluded acceptance checks; no skip/deselect unless task says so"
-        : "task_profile: coding_verifier; tests and verifiers are acceptance evidence; do not skip, deselect, or ignore non-excluded checks.";
-    case "document_integrity":
-      return compactAgent
-        ? "task document_integrity: preserve original file identity; verify moved/copied documents"
-        : "task_profile: document_integrity; preserve original file bytes, names, and identity unless transformation is explicitly required.";
-    case "long_qa":
-      return compactAgent
-        ? "task long_qa: answer from covered evidence; rehydrate missing source spans"
-        : "task_profile: long_qa; answer from covered evidence and rehydrate missing source spans before finalizing.";
-    case "multi_agent_handoff":
-      return compactAgent
-        ? "task multi_agent_handoff: preserve owner/role/current handoff"
-        : "task_profile: multi_agent_handoff; preserve role ownership, current handoff state, and verifier/reviewer boundaries.";
-    case "loop_engineering":
-      return compactAgent
-        ? "task loop_engineering: preserve plan/iteration/validator/repair/stop reason"
-        : "task_profile: loop_engineering; preserve plan, iteration, validation result, repair attempt, and stop reason.";
-    case "general":
-      return null;
-  }
-}
-
-function productProcedureLinePriority(value: string): number {
-  if (/^\s*(Execution memory|Passed solution):/i.test(value)) return 0;
-  if (/^\s*Workflow\s+(?:trusted|advisory):/i.test(value)) return 1;
-  if (/^\s*Tool\s+/i.test(value)) return 2;
-  if (/^\s*Relevant target files:/i.test(value)) return 3;
-  if (/^\s*Recovered state:/i.test(value)) return 4;
-  return 5;
-}
-
-function productProcedureLines(values: string[]): string[] {
-  return values
-    .filter((entry) => !entry.startsWith("Current active path:"))
-    .map((entry, index) => ({ entry, index, priority: productProcedureLinePriority(entry) }))
-    .sort((left, right) => left.priority - right.priority || left.index - right.index)
-    .map((item) => item.entry);
-}
-
-function renderMergedAgentPrompt(args: {
-  context: AionisAgentContext;
-  contextCharBudget?: number | null;
-  agentContextMode?: AionisAgentContext["agent_context_mode"];
-  compilerPolicy?: ProductTaskContextProfileCompilerPolicy;
-}): string {
-  const ctx = args.context;
-  const compactAgent = args.agentContextMode === "compact_agent";
-  const compilerPolicy = args.compilerPolicy ?? productGuideTaskContextProfileCompilerPolicy({
-    profile: ctx.task_context_profile,
-    agentContextMode: args.agentContextMode ?? ctx.agent_context_mode,
-    explicitContextCharBudget: args.contextCharBudget,
-  });
-  const currentLines = ctx.use_now.filter((entry) => entry.startsWith("Current active path:"));
-  const procedureLines = productProcedureLines(ctx.use_now);
-  const nextActionSource = currentLines[0] ?? ctx.use_now[0] ?? ctx.inspect_before_use[0] ?? null;
-  const nextAction = nextActionSource
-    ? nextActionSource.replace(/^(?:Current active path|Passed solution|Continuity handoff|Candidate workflow|Inspect gated abstraction before use):\s*/i, "")
-    : null;
-  const line = (label: string, values: string[], limit: number, maxChars: number): string[] =>
-    values.slice(0, limit).map((entry) => `${label}: note=${compactProductPromptText(entry, maxChars)}`);
-  const prompt = uniqueStrings([
-    compactAgent ? "AIONIS_CTX compact_agent" : "AIONIS_CTX v2",
-    `state r=${ctx.agent_role} h=${ctx.history_used ? 1 : 0} a=${ctx.actionable_history_used ? 1 : 0} p=${productPromptPostureLabel(ctx.recommended_posture)} auth=${productPromptAuthorityLabel(ctx.authority)} risk=${productPromptRiskLabel(ctx.risk.negative_transfer_risk)}`,
-    renderProductTaskContextProfileLine(ctx.task_context_profile, compactAgent),
-    renderProductCommandPostureLine({
-      commandPosture: ctx.command_posture,
-      compactAgent,
-    }),
-    renderProductRouteContractLine({
-      routeContract: ctx.route_contract,
-      compactAgent,
-    }),
-    renderProductRouteActionLine({
-      routeContract: ctx.route_contract,
-      compactAgent,
-    }),
-    ...renderProductCommandEvidenceLines({
-      commandPosture: ctx.command_posture,
-      field: "workflow_steps",
-      label: "step",
-      postures: new Set(["should_continue"]),
-      compactAgent,
-    }),
-    ...renderProductCommandEvidenceLines({
-      commandPosture: ctx.command_posture,
-      field: "acceptance_checks",
-      label: "check",
-      postures: new Set(["should_continue"]),
-      compactAgent,
-    }),
-    ...renderProductCommandEvidenceLines({
-      commandPosture: ctx.command_posture,
-      field: "verification_summary",
-      label: "verify",
-      postures: new Set(["should_continue"]),
-      compactAgent,
-    }),
-    ...renderProductCommandEvidenceLines({
-      commandPosture: ctx.command_posture,
-      field: "artifact_hints",
-      label: "artifact",
-      postures: new Set(["should_continue"]),
-      compactAgent,
-    }),
-    ...renderProductCommandEvidenceLines({
-      commandPosture: ctx.command_posture,
-      field: "verification_summary",
-      label: "avoid_verify",
-      postures: new Set(["must_not"]),
-      compactAgent,
-    }),
-    ctx.actionable_history_used
-      ? `next ${nextAction ? `action=${compactProductPromptText(nextAction, 130)} ` : ""}actor_role=${ctx.agent_role}`
-      : null,
-    compactAgent ? null : `summary ${compactProductPromptText(ctx.summary, 160)}`,
-    ctx.target_files.length > 0 ? `files ${ctx.target_files.slice(0, compilerPolicy.filesLimit).join(",")}` : null,
-    ...line(
-      "current",
-      currentLines.length > 0 ? currentLines : ctx.use_now.slice(0, 1),
-      compilerPolicy.currentLimit,
-      compilerPolicy.currentMaxChars,
-    ),
-    ...line("procedure", procedureLines, compilerPolicy.procedureLimit, compilerPolicy.procedureMaxChars),
-    ...line("inspect", ctx.inspect_before_use, compilerPolicy.inspectLimit, compilerPolicy.inspectMaxChars),
-    ...line("avoid", ctx.do_not_use, compilerPolicy.avoidLimit, compilerPolicy.avoidMaxChars),
-    ctx.rehydrate_hints.length > 0
-      ? `rehydrate: ${ctx.rehydrate_hints
-        .slice(0, compilerPolicy.rehydrateLimit)
-        .map((entry) => `id=${entry.memory_id}${entry.required ? " req=1" : ""} n=${compactProductPromptText(entry.reason, compilerPolicy.rehydrateReasonMaxChars)}`)
-        .join(" | ")}`
-      : null,
-    !compactAgent && ctx.memory_ids.length > 0 ? `ids ${ctx.memory_ids.slice(0, 8).join(",")}` : null,
-  ]).join("\n");
-  const budget = compilerPolicy.contextCharBudget && compilerPolicy.contextCharBudget > 0 ? Math.trunc(compilerPolicy.contextCharBudget) : null;
-  if (!budget || prompt.length <= budget) return prompt;
-  return `${prompt.slice(0, Math.max(0, budget - 3)).trimEnd()}...`;
-}
-
-function mergeProductGuideAgentContexts(args: {
-  base: AionisAgentContext;
-  execution: AionisAgentContext | null;
-  contextCharBudget?: number | null;
-  agentContextMode?: AionisAgentContext["agent_context_mode"];
-  compilerPolicy?: ProductTaskContextProfileCompilerPolicy;
-}): { context: AionisAgentContext; changed: boolean } {
-  const execution = args.execution;
-  if (!execution) return { context: args.base, changed: false };
-  const executionUseNow = productGuideSafeExecutionLines(execution.use_now, [
-    "Current active path:",
-    "Passed solution:",
-    "Continuity handoff:",
-  ]);
-  const executionInspectBeforeUse: string[] = [];
-  const executionDoNotUse = productGuideSafeExecutionLines(execution.do_not_use, [
-    "Avoid failed branch:",
-  ]);
-  const executionHasSurface =
-    executionUseNow.length > 0
-    || executionInspectBeforeUse.length > 0
-    || executionDoNotUse.length > 0;
-  if (!executionHasSurface) return { context: args.base, changed: false };
-
-  const executionSurfaceLines = [
-    ...executionUseNow,
-    ...executionInspectBeforeUse,
-    ...executionDoNotUse,
-  ];
-  const executionSurfaceMemoryIds = execution.memory_ids.filter((id) =>
-    executionSurfaceLines.some((line) => line.includes(id))
-  );
-  const knownMemoryIds = new Set([...args.base.memory_ids, ...executionSurfaceMemoryIds]);
-  const useNow = mergeGuideStrings([...executionUseNow, ...args.base.use_now], 8);
-  const inspectBeforeUse = mergeGuideStrings([...args.base.inspect_before_use, ...executionInspectBeforeUse], 8);
-  const doNotUse = mergeGuideStrings([...executionDoNotUse, ...args.base.do_not_use], 8);
-  const memoryIds = mergeGuideStrings([...executionSurfaceMemoryIds, ...args.base.memory_ids], 10);
-  const useNowMemoryIds = mergeGuideStrings([
-    ...args.base.use_now_memory_ids,
-    ...execution.use_now_memory_ids.filter((id) => knownMemoryIds.has(id)),
-  ], 10);
-  const inspectBeforeUseMemoryIds = mergeGuideStrings([
-    ...args.base.inspect_before_use_memory_ids,
-    ...execution.inspect_before_use_memory_ids.filter((id) => knownMemoryIds.has(id)),
-  ], 10);
-  const doNotUseMemoryIds = mergeGuideStrings([
-    ...args.base.do_not_use_memory_ids,
-    ...execution.do_not_use_memory_ids.filter((id) => knownMemoryIds.has(id)),
-  ], 10);
-  const targetFiles = mergeGuideStrings([...execution.target_files, ...args.base.target_files], 8);
-  const rehydrateHints = [
-    ...args.base.rehydrate_hints,
-    ...execution.rehydrate_hints.filter((hint) => knownMemoryIds.has(hint.memory_id)),
-  ].slice(0, 6);
-  const commandPosture = mergeCommandPostureRows([
-    ...execution.command_posture.filter((row) => knownMemoryIds.has(row.memory_id)),
-    ...args.base.command_posture,
-  ], 14);
-  const historyUsed = args.base.history_used || execution.history_used;
-  const actionableHistoryUsed = args.base.actionable_history_used || execution.actionable_history_used;
-  const recommendedPosture: AionisAgentContext["recommended_posture"] = !actionableHistoryUsed
-    ? "ignore_history"
-    : (executionInspectBeforeUse.length > 0 || executionDoNotUse.length > 0)
-      ? "inspect_before_use"
-      : args.base.recommended_posture === "ignore_history"
-        ? execution.recommended_posture
-        : args.base.recommended_posture;
-  const safeExecutionAuthority: AionisAgentContext["authority"] =
-    executionUseNow.length > 0
-      ? "advisory"
-      : executionInspectBeforeUse.length > 0 || executionDoNotUse.length > 0
-        ? "candidate"
-        : "none";
-  const authority = conservativeAuthority(args.base, executionHasSurface, safeExecutionAuthority);
-  const safeExecutionRisk: AionisAgentContext["risk"]["negative_transfer_risk"] =
-    executionDoNotUse.length > 0 || executionInspectBeforeUse.length > 0 ? "medium" : "low";
-  const safeExecutionRiskReasons = execution.risk.reasons.filter((reason) =>
-    reason === "failed_execution_branches_kept_out_of_use_now"
-  );
-  const risk = {
-    negative_transfer_risk: maxRisk(args.base.risk.negative_transfer_risk, safeExecutionRisk),
-    blocked_authority_count: args.base.risk.blocked_authority_count,
-    stale_memory_count: Math.max(args.base.risk.stale_memory_count, execution.risk.stale_memory_count),
-    reasons: mergeGuideStrings([
-      ...args.base.risk.reasons,
-      ...safeExecutionRiskReasons,
-      "full_power_execution_context_merged",
-    ], 8),
-  };
-  const summary = args.base.history_used && execution.history_used
-    ? "Aionis recovered semantic memory and full-power execution context for this run."
-    : execution.history_used
-      ? execution.summary
-      : args.base.summary;
-  const merged = AionisAgentContextSchema.parse({
-    ...args.base,
-    agent_context_mode: args.agentContextMode ?? args.base.agent_context_mode,
-    prompt_text: args.base.prompt_text,
-    summary,
-    history_used: historyUsed,
-    actionable_history_used: actionableHistoryUsed,
-    recommended_posture: recommendedPosture,
-    authority,
-    target_files: targetFiles,
-    use_now: useNow,
-    inspect_before_use: inspectBeforeUse,
-    do_not_use: doNotUse,
-    memory_ids: memoryIds,
-    use_now_memory_ids: useNowMemoryIds,
-    inspect_before_use_memory_ids: inspectBeforeUseMemoryIds,
-    do_not_use_memory_ids: doNotUseMemoryIds,
-    command_posture: commandPosture,
-    rehydrate_hints: rehydrateHints,
-    risk,
-    evidence_refs: {
-      memory_ids: memoryIds,
-      workflow_ids: mergeGuideStrings([
-        ...args.base.evidence_refs.workflow_ids,
-        ...execution.evidence_refs.workflow_ids,
-      ], 10),
-      evidence_count: args.base.evidence_refs.evidence_count + execution.evidence_refs.evidence_count,
-    },
-  });
-  return {
-    context: AionisAgentContextSchema.parse({
-      ...merged,
-      prompt_text: renderMergedAgentPrompt({
-        context: merged,
-        contextCharBudget: args.contextCharBudget,
-        agentContextMode: args.agentContextMode ?? merged.agent_context_mode,
-        compilerPolicy: args.compilerPolicy,
-      }),
-    }),
-    changed: true,
-  };
 }
 
 function claimLedgerProjectionHasPromptSurface(projection: AionisClaimLedgerProjection | null): projection is AionisClaimLedgerProjection {
@@ -2339,39 +1875,6 @@ function claimLedgerProjectionHasPromptSurface(projection: AionisClaimLedgerProj
     projection.use_now.length > 0
     || projection.inspect_before_use.length > 0
     || projection.do_not_use.length > 0
-  );
-}
-
-function claimLedgerProjectionHasAnySurface(projection: AionisClaimLedgerProjection | null): projection is AionisClaimLedgerProjection {
-  return !!projection && (
-    projection.use_now.length > 0
-    || projection.inspect_before_use.length > 0
-    || projection.do_not_use.length > 0
-    || projection.audit_only.length > 0
-  );
-}
-
-function renderClaimLedgerAgentLine(item: AionisClaimLedgerProjectionItem): string {
-  const slot = item.slot_key ?? `${item.subject_key}.${item.predicate}`;
-  const evidence = item.evidence_refs.length > 0
-    ? ` evidence=${item.evidence_refs.slice(0, 2).join(",")}`
-    : "";
-  const supersededBy = item.superseded_by_claim_id
-    ? ` superseded_by=${item.superseded_by_claim_id}`
-    : "";
-  return compactProductPromptText(
-    [
-      `Claim ledger ${item.surface}:`,
-      `claim_id=${item.claim_id}`,
-      `slot=${slot}`,
-      `authority=${item.authority}`,
-      `status=${item.status}`,
-      `reason=${item.reason_code}`,
-      `value=${item.value_text}`,
-      evidence,
-      supersededBy,
-    ].filter((entry) => entry.trim().length > 0).join(" "),
-    360,
   );
 }
 
@@ -2413,80 +1916,6 @@ async function buildProductGuideClaimLedgerProjection(args: {
     queryText: args.queryText,
     limit: CLAIM_LEDGER_GUIDE_LIVE_LIMIT,
   });
-}
-
-function applyClaimLedgerProjectionToAgentContext(args: {
-  agentContext: AionisAgentContext;
-  projection: AionisClaimLedgerProjection | null;
-  contextCharBudget?: number | null;
-  agentContextMode?: AionisAgentContext["agent_context_mode"];
-  compilerPolicy?: ProductTaskContextProfileCompilerPolicy;
-}): { context: AionisAgentContext; changed: boolean } {
-  if (!claimLedgerProjectionHasPromptSurface(args.projection)) {
-    return { context: args.agentContext, changed: false };
-  }
-  const projection = args.projection;
-  const claimUseNow = projection.use_now.map(renderClaimLedgerAgentLine);
-  const claimInspect = projection.inspect_before_use.map(renderClaimLedgerAgentLine);
-  const claimDoNotUse = projection.do_not_use.map(renderClaimLedgerAgentLine);
-  const claimActionable = claimUseNow.length > 0;
-  const claimRequiresInspection = claimInspect.length > 0 || claimDoNotUse.length > 0;
-  const projectedAuthority: AionisAgentContext["authority"] = projection.use_now.some((item) => item.authority === "trusted")
-    ? "trusted"
-    : claimUseNow.length > 0
-      ? "advisory"
-      : claimRequiresInspection
-        ? "candidate"
-        : args.agentContext.authority;
-  const authority = authorityRank(args.agentContext.authority) >= authorityRank(projectedAuthority)
-    ? args.agentContext.authority
-    : projectedAuthority;
-  const recommendedPosture: AionisAgentContext["recommended_posture"] = claimRequiresInspection
-    ? "inspect_before_use"
-    : claimActionable && args.agentContext.recommended_posture === "ignore_history"
-      ? "use_as_context"
-      : args.agentContext.recommended_posture;
-  const risk = {
-    negative_transfer_risk: claimRequiresInspection
-      ? maxRisk(args.agentContext.risk.negative_transfer_risk, "medium")
-      : args.agentContext.risk.negative_transfer_risk,
-    blocked_authority_count: args.agentContext.risk.blocked_authority_count,
-    stale_memory_count: args.agentContext.risk.stale_memory_count,
-    reasons: mergeGuideStrings([
-      ...args.agentContext.risk.reasons,
-      "claim_ledger_projection_applied",
-      ...(projection.do_not_use.length > 0 ? ["claim_ledger_blocked_or_superseded_claims_kept_out_of_use_now"] : []),
-      ...(projection.inspect_before_use.length > 0 ? ["claim_ledger_contested_claims_require_inspection"] : []),
-    ], 8),
-  };
-  const projected = AionisAgentContextSchema.parse({
-    ...args.agentContext,
-    history_used: args.agentContext.history_used || claimLedgerProjectionHasAnySurface(projection),
-    actionable_history_used: args.agentContext.actionable_history_used || claimActionable,
-    recommended_posture: recommendedPosture,
-    authority,
-    summary: args.agentContext.history_used || claimLedgerProjectionHasAnySurface(projection)
-      ? args.agentContext.summary === "No reusable Aionis memory was found for this request."
-        ? "Aionis recovered claim-ledger state for this request."
-        : args.agentContext.summary
-      : args.agentContext.summary,
-    use_now: mergeGuideStrings([...claimUseNow, ...args.agentContext.use_now], 10),
-    inspect_before_use: mergeGuideStrings([...args.agentContext.inspect_before_use, ...claimInspect], 10),
-    do_not_use: mergeGuideStrings([...claimDoNotUse, ...args.agentContext.do_not_use], 10),
-    risk,
-  });
-  return {
-    context: AionisAgentContextSchema.parse({
-      ...projected,
-      prompt_text: renderMergedAgentPrompt({
-        context: projected,
-        contextCharBudget: args.contextCharBudget,
-        agentContextMode: args.agentContextMode ?? projected.agent_context_mode,
-        compilerPolicy: args.compilerPolicy,
-      }),
-    }),
-    changed: true,
-  };
 }
 
 function stringArrayField(value: unknown): string[] {
@@ -3998,23 +3427,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       memoryPacket = mergedPacket.packet;
       fullPowerStructuredMemoryMerged = mergedPacket.changed;
     }
-    let agentContext: AionisAgentContext = buildAionisAgentContext({
-      tenant_id: tenantId,
-      scope,
-      agent_role: agentRole,
-      memory_packet: memoryPacket,
-      guide_packet: guidePacket,
-      execution_scope: {
-        task_signature: executionSignatures.taskSignature,
-        task_family: executionSignatures.taskFamily,
-        workflow_signature: executionSignatures.workflowSignature,
-      },
-      query_intent_override: parsed.query_text,
-      agent_context_mode: agentContextMode,
-      context_char_budget: taskContextProfilePolicy.contextCharBudget,
-      context_compaction_profile: parsed.context_compaction_profile ?? parsed.context_optimization_profile ?? null,
-      task_context_profile: taskContextProfile,
-    });
+    let executionAgentContext: AionisAgentContext | null = null;
     let fullPowerExecutionContextMerged = false;
     if (fullPowerRequested) {
       const executionContextResult = await dispatchProductExecutionContextAssemble({
@@ -4046,18 +3459,17 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       });
       if (!executionContextResult.ok) return sendInternalFailure(reply, executionContextResult);
       const executionContextBody = objectValue(executionContextResult.body);
-      const executionAgentContext = executionContextBody?.agent_context
+      executionAgentContext = executionContextBody?.agent_context
         ? AionisAgentContextSchema.parse(executionContextBody.agent_context)
         : null;
-      const merged = mergeProductGuideAgentContexts({
-        base: agentContext,
-        execution: executionAgentContext,
-        contextCharBudget: taskContextProfilePolicy.contextCharBudget,
-        agentContextMode,
-        compilerPolicy: taskContextProfilePolicy,
-      });
-      agentContext = merged.context;
-      fullPowerExecutionContextMerged = merged.changed;
+      fullPowerExecutionContextMerged = !!executionAgentContext && (
+        executionAgentContext.use_now.some((line) =>
+          line.startsWith("Current active path:")
+          || line.startsWith("Passed solution:")
+          || line.startsWith("Continuity handoff:")
+        )
+        || executionAgentContext.do_not_use.some((line) => line.startsWith("Avoid failed branch:"))
+      );
     }
     const claimLedgerProjection = await buildProductGuideClaimLedgerProjection({
       claimLedgerAccess,
@@ -4065,14 +3477,29 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
       scope,
       queryText: parsed.query_text,
     });
-    const claimLedgerContextProjection = applyClaimLedgerProjectionToAgentContext({
-      agentContext,
-      projection: claimLedgerProjection,
-      contextCharBudget: taskContextProfilePolicy.contextCharBudget,
-      agentContextMode,
-      compilerPolicy: taskContextProfilePolicy,
+    const claimLedgerContextProjectionApplied = claimLedgerProjectionHasPromptSurface(claimLedgerProjection);
+    let agentContext: AionisAgentContext = buildAionisAgentContext({
+      tenant_id: tenantId,
+      scope,
+      agent_role: agentRole,
+      memory_packet: memoryPacket,
+      guide_packet: guidePacket,
+      execution_scope: {
+        task_signature: executionSignatures.taskSignature,
+        task_family: executionSignatures.taskFamily,
+        workflow_signature: executionSignatures.workflowSignature,
+      },
+      query_intent_override: parsed.query_text,
+      agent_context_mode: agentContextMode,
+      context_char_budget: taskContextProfilePolicy.contextCharBudget,
+      context_compaction_profile: parsed.context_compaction_profile ?? parsed.context_optimization_profile ?? null,
+      task_context_profile: taskContextProfile,
+      current_execution_state: executionAgentContext,
+      claim_projection: claimLedgerProjection,
+      render_detail: agentContextMode === "compact_agent"
+        ? "compact"
+        : fullPowerExecutionContextMerged || claimLedgerContextProjectionApplied ? "full_power" : "standard",
     });
-    agentContext = claimLedgerContextProjection.context;
     const guideTraceId = buildGuideTraceId();
     let activeProjectionApplied = false;
     if (env.AIONIS_INSPECT_BEFORE_USE_MODE === "active") {
@@ -4178,7 +3605,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs) {
           ...(fullPowerStructuredMemoryMerged ? ["full_power_structured_execution_recall"] : []),
           ...(fullPowerExecutionContextMerged ? ["full_power_agent_context_merge"] : []),
           ...(claimLedgerProjection ? ["claim_ledger_projection"] : []),
-          ...(claimLedgerContextProjection.changed ? ["claim_ledger_agent_context_projection"] : []),
+          ...(claimLedgerContextProjectionApplied ? ["claim_ledger_agent_context_projection"] : []),
           ...(agentContextMode === "compact_agent" ? ["compact_agent_context"] : []),
           ...(activeProjectionApplied ? ["inspect_before_use_active_projection"] : []),
           ...(admissionCandidatePolicyProjection && admissionCandidatePolicyMode.mode === "shadow"

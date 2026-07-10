@@ -144,7 +144,7 @@ flowchart TB
 | 27 | Tool selection memory | Selects tools from learned memory, stores decisions/runs/feedback. | `src/memory/tools-*.ts`, `src/memory/tool-*.ts` | Implemented. | Keep if framed as tool preference learning, not hard routing. |
 | 28 | Replay run lifecycle | Records replay run start, step before/after, run end, results. | `src/memory/replay*.ts`, `src/routes/memory-replay-core.ts` | Implemented. | Keep internal as evidence generator. |
 | 29 | Replay playbooks | Compile, inspect, candidate, promote, repair, run, dispatch playbooks through learning control. | `src/memory/replay*.ts`, `src/routes/memory-replay-core.ts`, `src/routes/memory-replay-learning-control.ts` | Implemented. | Keep but product wording should be "workflow reuse", not repair engine. |
-| 30 | Controlled semantic forgetting | Scores retain/demote/archive/review from salience, importance, confidence, feedback, lifecycle. | `src/kernel/forgetting-kernel.ts`, `src/memory/semantic-forgetting.ts` | Implemented. | Core product. |
+| 30 | Controlled semantic forgetting | Scores retain/demote/archive/review from salience, importance, confidence, feedback, lifecycle. | `src/kernel/forgetting-kernel.ts` | Implemented. | Core product. |
 | 31 | Archive relocation | Moves low/retired memory to cold archive and preserves payload refs. | `src/kernel/forgetting-kernel.ts` | Implemented. | Keep. Key difference from blind deletion. |
 | 32 | Rehydration | Rehydrates archived nodes/anchor payloads on demand with commits and lifecycle metadata. | `src/kernel/forgetting-kernel.ts`, `src/memory/lifecycle-lite.ts`, `src/memory/rehydrate-anchor.ts` | Implemented. | Core product, but needs better demo. |
 | 33 | Node activation feedback | Records memory use and keeps useful memory warm. | `src/memory/lifecycle-lite.ts`, `src/memory/node-feedback-state.ts` | Implemented. | Keep. Necessary for positive transfer. |
@@ -269,7 +269,7 @@ The executable route matrix now also emits `product_exposure` so retained intern
 | `src/memory/learning-control-*` | Model/evidence/http learning-control review/adjudication operations. | Internal governance; must not become task-specific solver. |
 | `src/memory/policy-*`, `pattern-*`, `authority-*` | Policy/pattern lifecycle, authority gates, suppression, visibility. | Core learning-control substrate. |
 | `src/memory/runtime-*` | Entropy, maintenance, effect, signal ledger/trends, boundary inventory/tool hints. | Internal `measure` and dynamic intervention support. |
-| `src/memory/semantic-forgetting.ts`, `archive-*`, `rehydrate-*`, `lifecycle-*` | Controlled forgetting, archive relocation, rehydration, activation feedback. | Core `forget`. |
+| `src/kernel/forgetting-kernel.ts`, `rehydrate-*`, `lifecycle-*` | Controlled forgetting, archive relocation, rehydration, activation feedback. | Core `forget`. |
 | `src/memory/tools-*`, `tool-*`, `rules-*` | Tool preference memory, tool run records, rule advisory state. | Keep internal/advisory. |
 | `src/memory/sandbox*`, `src/store/sandbox-access.ts` | Internal sandbox/session/run support used by replay execution/backends, without public product route. | Keep internal; not product-facing. |
 | `src/embeddings/*` | Embedding providers and surface policy. | Product support. |

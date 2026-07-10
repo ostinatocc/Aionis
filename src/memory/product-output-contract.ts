@@ -840,6 +840,17 @@ export const AionisAgentContextSchema = z
             acceptance_checks: z.array(z.string().min(1).max(512)).default([]),
             verification_summary: z.array(z.string().min(1).max(512)).default([]),
             artifact_hints: z.array(z.string().min(1).max(512)).default([]),
+            execution_state: z
+              .object({
+                summary_kind: z.string().min(1).nullable().default(null),
+                transition_kind: AionisExecutionTransitionKindSchema.nullable().default(null),
+                actor_role: z.string().min(1).nullable().default(null),
+                handoff_target: z.string().min(1).nullable().default(null),
+                next_action_hint: z.string().min(1).nullable().default(null),
+                execution_outcome_role: z.enum(["passed_solution", "failed_branch", "blocked", "unknown"]).nullable().default(null),
+              })
+              .strict()
+              .optional(),
           })
           .strict(),
       )
