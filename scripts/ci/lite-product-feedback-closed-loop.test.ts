@@ -629,6 +629,41 @@ test("product feedback attributes tool learning to the persisted guide decision"
   }
 });
 
+test("product feedback accepts the explicit memory discriminator without breaking legacy attribution", async () => {
+  const { app, liteWriteStore } = setupProductApp("product-memory-feedback-discriminator");
+  try {
+    const marker = "AIONIS_MEMORY_FEEDBACK_DISCRIMINATOR";
+    const memoryId = await observeMemory({
+      app,
+      clientId: "memory:feedback-discriminator",
+      title: "Memory feedback discriminator",
+      text: `${marker} retain the verified compact status format.`,
+    });
+    const guide = await guideForMarker({ app, marker });
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: {
+        feedback_kind: "memory",
+        tenant_id: "default",
+        scope: "default",
+        guide_trace_id: guide.guide_trace_id,
+        used_memory_ids: [memoryId],
+        run_id: "run:memory-feedback-discriminator",
+        outcome: "positive",
+        used_surface: "use_now",
+        verifier_status: "passed",
+        tool_status: "succeeded",
+        reason: "Host attributed a verified positive outcome to exposed memory.",
+      },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal((await slotsForMemory({ liteWriteStore, memoryId })).feedback_positive, 1);
+  } finally {
+    await app.close();
+  }
+});
+
 test("product tool feedback rejects forged guide and decision attribution without learning", async () => {
   const { app, liteWriteStore } = setupProductApp("product-tool-feedback-forgery");
   try {

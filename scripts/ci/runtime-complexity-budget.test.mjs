@@ -59,6 +59,8 @@ test("runtime complexity collector emits deterministic tracked-source metrics", 
 
   const report = JSON.parse(first.stdout);
   assertReportShape(report);
+  assert.equal(report.route_matrix_entries, 19, "transport-free Runtime must keep the audited 19-route matrix");
+  assert.deepEqual(report.import_cycles, [], "transport-free Runtime must remain acyclic");
   const tracked = spawnSync("git", ["ls-files", "src/**/*.ts"], {
     cwd: ROOT,
     encoding: "utf8",
@@ -73,6 +75,9 @@ test("runtime complexity collector emits deterministic tracked-source metrics", 
 });
 
 test("runtime complexity collector enforces the committed budget", () => {
+  const budget = JSON.parse(fs.readFileSync(BUDGET, "utf8"));
+  assert.equal(budget.thresholds.route_matrix_entries, 19);
+  assert.equal(budget.thresholds.import_cycles, 0);
   const checked = runCollector(["--check", BUDGET]);
   assert.equal(checked.status, 0, checked.stderr);
   assertReportShape(JSON.parse(checked.stdout));

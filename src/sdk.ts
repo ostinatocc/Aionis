@@ -688,8 +688,28 @@ export type AionisGuideRequest = AionisJsonObject & {
   run_id?: string;
   consumer_agent_id?: string;
   consumer_team_id?: string;
+  tool_candidates?: string[];
+  tool_strict?: boolean;
+  include_shadow?: boolean;
+  rules_limit?: number;
   context_char_budget?: number;
   context_compaction_profile?: "balanced" | "aggressive";
+};
+
+export type AionisToolSelectionReceipt = {
+  contract_version: "aionis_tool_selection_receipt_v1";
+  decision_id: string;
+  decision_uri: string;
+  run_id: string;
+  selected_tool: string | null;
+  candidates: string[];
+  policy_sha256: string;
+  source_rule_ids: string[];
+  created_at: string;
+};
+
+export type AionisGuideResult<TGuide extends AionisJsonObject = AionisJsonObject> = TGuide & {
+  tool_selection?: AionisToolSelectionReceipt;
 };
 
 export type AionisRememberRequest = AionisJsonObject & {
@@ -713,7 +733,8 @@ export type AionisRememberRequest = AionisJsonObject & {
   slots?: AionisJsonObject;
 };
 
-export type AionisFeedbackRequest = AionisJsonObject & {
+export type AionisMemoryFeedbackRequest = AionisJsonObject & {
+  feedback_kind?: "memory";
   reason: string;
   run_id: string;
   outcome: AionisFeedbackOutcome;
@@ -728,6 +749,29 @@ export type AionisFeedbackRequest = AionisJsonObject & {
   runtime_signal_refs?: string[];
   target?: "memory";
 };
+
+export type AionisToolSelectionFeedbackRequest = AionisJsonObject & {
+  feedback_kind: "tool_selection";
+  guide_trace_id: string;
+  decision_id: string;
+  run_id: string;
+  selected_tool: string;
+  candidates: string[];
+  outcome: AionisFeedbackOutcome;
+  context: AionisJsonObject;
+  actor?: string;
+  consumer_agent_id?: string;
+  consumer_team_id?: string;
+  include_shadow?: boolean;
+  rules_limit?: number;
+  target?: "tool" | "all";
+  note?: string;
+  input_text?: string;
+  input_sha256?: string;
+  learning_control_review?: AionisJsonObject;
+};
+
+export type AionisFeedbackRequest = AionisMemoryFeedbackRequest | AionisToolSelectionFeedbackRequest;
 
 export type AionisRehydrateRequest = AionisJsonObject & {
   reason: string;

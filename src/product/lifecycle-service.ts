@@ -49,8 +49,11 @@ import type {
 
 export function productFeedbackRequest(body: unknown): ProductForgetInput {
   const record = objectValue(body) ?? {};
+  const memoryFeedback = record.feedback_kind === "memory"
+    ? Object.fromEntries(Object.entries(record).filter(([key]) => key !== "feedback_kind"))
+    : record;
   return ProductForgetRequest.parse({
-    ...record,
+    ...memoryFeedback,
     operation: "activate",
     target: "memory",
   });
