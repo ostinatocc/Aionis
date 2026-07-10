@@ -20,7 +20,7 @@ import {
   PlanningContextRouteContractSchema,
 } from "../../src/memory/schemas.ts";
 import { AionisGuidePacketSchema, AionisLearningPacketSchema, AionisMemoryPacketSchema } from "../../src/memory/product-output-contract.ts";
-import { buildExecutionMemorySummaryBundle, summarizePatternSignals } from "../../src/app/planning-summary.ts";
+import { buildExecutionMemorySummaryBundle, summarizePatternSignals } from "../../src/app/planning-summary-surfaces.ts";
 import { updateRuleState } from "../../src/memory/rules.ts";
 import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";

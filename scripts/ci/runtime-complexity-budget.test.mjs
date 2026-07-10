@@ -78,6 +78,16 @@ test("runtime complexity collector enforces the committed budget", () => {
   assertReportShape(JSON.parse(checked.stdout));
 });
 
+test("runtime source imports remain acyclic", () => {
+  const collected = runCollector();
+  assert.equal(collected.status, 0, collected.stderr);
+  const report = JSON.parse(collected.stdout);
+  assert.deepEqual(report.import_cycles, []);
+
+  const budget = JSON.parse(fs.readFileSync(BUDGET, "utf8"));
+  assert.equal(budget.thresholds.import_cycles, 0);
+});
+
 test("runtime complexity collector writes the same deterministic report", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-runtime-complexity-"));
   const reportPath = path.join(tempDir, "report.json");

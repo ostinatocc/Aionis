@@ -1,13 +1,13 @@
 {
   "schema_version": "aionis_runtime_complexity_budget_v1",
-  "baseline_commit": "a75fd4f85e2dfb259f8b56c5d51aa0ff7e31ffbb",
+  "baseline_commit": "d0121d8aabba3517f87579ccc71a1b5b842ed4d9",
   "intent": "Structural growth guard only; this file is not Aionis product validation.",
   "thresholds": {
-    "source_files": 283,
-    "source_lines": 121588,
+    "source_files": 284,
+    "source_lines": 121577,
     "route_matrix_entries": 27,
     "env_schema_fields": 177,
-    "import_cycles": 3,
+    "import_cycles": 0,
     "largest_file_lines": 7405
   }
 }
