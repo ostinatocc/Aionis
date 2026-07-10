@@ -196,7 +196,13 @@ Execution-tree state is a default internal product path for execution continuity
 Ordinary facts, preferences, and general memory continue to use the ordinary
 memory path.
 
-Default tree construction applies when `POST /v1/handoff/store` or `POST /v1/memory/write` carries execution continuity slots such as `execution_state_v1`, `execution_packet_v1`, `execution_result_summary`, `execution_artifacts`, or `execution_evidence`. The Runtime records the current execution branch, compressed progress, validation outcome, and failed/alternate branch hints so later `guide`, planning, context assembly, and recover surfaces can use the current branch without promoting failed branches as next-action context.
+Default tree construction applies when `POST /v1/handoff/store` or
+`POST /v1/observe` carries execution continuity fields such as execution state,
+packet, result summary, artifacts, or evidence. The Runtime records the current
+execution branch, compressed progress, validation outcome, and failed/alternate
+branch hints so later guide, planning, context assembly, and recover surfaces
+can use the current branch without promoting failed branches as next-action
+context.
 
 This default path stays scoped to execution state. Plain facts, preferences, and
 general cognitive memory stay on the ordinary memory path. Callers can disable

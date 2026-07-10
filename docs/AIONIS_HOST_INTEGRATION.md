@@ -108,10 +108,9 @@ Use the product routes directly when integrating over HTTP:
 | `measure` | `POST /v1/measure` | Provide before/after guide packets or product trace. | Report whether history helped or hurt. |
 | `snapshot` | `POST /v1/operator/snapshot` | Ask for read-only operator state. | Summarize active context, attribution, and measured effect. |
 
-Low-level `POST /v1/memory/write` remains available for internal adapters and
-advanced hosts. For recallable writes, check `recallable_node_count`; `0` means
-the request was accepted as a low-level event or warning surface rather than a
-new recallable memory.
+Use `POST /v1/observe` for host writes. The former low-level
+`POST /v1/memory/write` adapter is no longer registered; Runtime-owned adapters
+compose the typed memory-write service in process.
 
 ## Agent Surface
 

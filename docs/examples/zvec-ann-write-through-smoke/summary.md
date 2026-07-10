@@ -4,7 +4,7 @@ This smoke verifies that Zvec is a candidate sidecar synchronized after SQLite c
 
 - Provider: `zvec`
 - Rebuild on start: `false`
-- Runtime routes: `/v1/memory/write`, `/v1/memory/recall`
+- Runtime routes: `/v1/observe`, `/v1/memory/recall`
 
 | Check | Result |
 |---|---:|
