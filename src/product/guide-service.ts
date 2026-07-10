@@ -163,6 +163,20 @@ function productGuideMemoryContractVisible(memoryPacket: AionisMemoryPacket | nu
   return memoryPacket?.relevant_memories.some((entry) => !!entry.memory_contract) === true;
 }
 
+function projectProductGuideSourceMap<T extends AionisMemoryPacket | AionisGuidePacket>(packet: T): T {
+  return {
+    ...packet,
+    source_map: {
+      ...packet.source_map,
+      routes_used: ["/v1/guide"],
+      internal_surfaces_used: uniqueStrings([
+        ...packet.source_map.internal_surfaces_used,
+        "planning_context_service",
+      ]),
+    },
+  };
+}
+
 function productGuideFullPowerRequested(parsed: z.infer<typeof ProductGuideRequest>): boolean {
   return parsed.mode === "full_power" || parsed.context_mode === "full_power" || parsed.context_mode === "compact_agent";
 }
@@ -1964,7 +1978,7 @@ async function executeProductGuide(args: {
     ? AionisMemoryPacketSchema.parse(recall.aionis_memory_packet)
     : null;
   const guidePacket: AionisGuidePacket | null = guideBody.aionis_guide_packet
-    ? AionisGuidePacketSchema.parse(guideBody.aionis_guide_packet)
+    ? projectProductGuideSourceMap(AionisGuidePacketSchema.parse(guideBody.aionis_guide_packet))
     : null;
   const agentRole = productGuideAgentRole(parsed);
   const tenantId = String(guideBody.tenant_id ?? parsed.tenant_id ?? env.MEMORY_TENANT_ID);
@@ -1995,6 +2009,7 @@ async function executeProductGuide(args: {
     memoryPacket = mergedPacket.packet;
     fullPowerStructuredMemoryMerged = mergedPacket.changed;
   }
+  if (memoryPacket) memoryPacket = projectProductGuideSourceMap(memoryPacket);
 
   let executionAgentContext: AionisAgentContext | null = null;
   let fullPowerExecutionContextMerged = false;

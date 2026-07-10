@@ -46,7 +46,7 @@ export function createProductToolFeedbackService(
       if (!learningKernel) return productServiceDependencyFailure("tool_feedback_service");
       const tenantId = parsed.tenant_id ?? env.MEMORY_TENANT_ID;
       const scope = parsed.scope ?? env.MEMORY_SCOPE;
-      const consumerAgentId = parsed.consumer_agent_id ?? parsed.actor ?? env.LITE_LOCAL_ACTOR_ID;
+      const consumerAgentId = parsed.consumer_agent_id ?? env.LITE_LOCAL_ACTOR_ID;
       const consumerTeamId = parsed.consumer_team_id ?? null;
       try {
         const ledger = await findGuideExposureLedger({
