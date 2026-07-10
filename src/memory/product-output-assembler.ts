@@ -23,13 +23,11 @@ import {
   type AionisAgentRole,
   type AionisEffectReport,
   type AionisGuidePacket,
-  type AionisGuidanceAuthority,
   type AionisJudgmentCalibrationSummary,
   type AionisLifecycleCandidateSignal,
   type AionisLearningPacket,
   type AionisMemoryAdmissionRecord,
   type AionisMemoryDecisionAuditReport,
-  type AionisMemoryDecisionSurface,
   type AionisMemoryDecisionTrace,
   type AionisMemoryDomain,
   type AionisMemoryPacket,
@@ -39,6 +37,7 @@ import {
   type AionisTaskContextProfile,
   type AionisTraceDerivedSkillCandidate,
 } from "./product-output-contract.js";
+import type { AionisGuidanceAuthority, AionisMemoryDecisionSurface } from "./governance-contract.js";
 import {
   AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD,
   authorityConsumptionStablePromotionBlockedCount,

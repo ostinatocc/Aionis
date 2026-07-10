@@ -6,9 +6,11 @@ import {
   AionisEffectReportSchema,
   AionisExternalMemoryCandidateSchema,
   AionisGuidePacketSchema,
+  AionisGuidanceAuthoritySchema,
   AionisLearningPacketSchema,
   AionisMemoryAdmissionRecordSchema,
   AionisMemoryDecisionAuditReportSchema,
+  AionisMemoryDecisionSurfaceSchema,
   AionisMemoryDecisionTraceSchema,
   AionisMemoryFirewallSummarySchema,
   AionisMemoryUseReceiptSchema,
@@ -16,6 +18,15 @@ import {
   AionisOperatorSnapshotSchema,
   AionisProcedureMemoryDraftV1Schema,
 } from "../../src/memory/product-output-contract.ts";
+import {
+  AionisGuidanceAuthoritySchema as CanonicalGuidanceAuthoritySchema,
+  AionisMemoryDecisionSurfaceSchema as CanonicalMemoryDecisionSurfaceSchema,
+} from "../../src/memory/governance-contract.ts";
+
+test("product output contract preserves governance schema re-exports", () => {
+  assert.equal(AionisGuidanceAuthoritySchema, CanonicalGuidanceAuthoritySchema);
+  assert.equal(AionisMemoryDecisionSurfaceSchema, CanonicalMemoryDecisionSurfaceSchema);
+});
 
 function validGuidePacket() {
   return {

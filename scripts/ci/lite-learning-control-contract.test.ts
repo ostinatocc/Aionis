@@ -83,20 +83,24 @@ test("controlled state runtime apply helper is the canonical promotion gate", ()
   });
 });
 
-test("focused runtime source has no stale learning-control boundary names", () => {
-  const staleControlToken = "govern" + "ance";
-  const staleControlledToken = "govern" + "ed";
+test("focused runtime reserves governance modules for memory decision boundaries", () => {
+  const governanceToken = "govern" + "ance";
+  const governedToken = "govern" + "ed";
   const files = [
     ...walkFiles(path.join(repoRoot, "src")),
   ].filter((file) => file.endsWith(".ts") || file.endsWith(".js") || file.endsWith(".mjs"));
-
-  for (const file of files) {
+  const governanceFiles = files.filter((file) => {
     const relative = path.relative(repoRoot, file);
+    return relative.includes(governanceToken) || relative.includes(governedToken);
+  });
+
+  assert.ok(governanceFiles.length > 0);
+  for (const file of governanceFiles) {
+    const relative = path.relative(repoRoot, file).split(path.sep).join("/");
     const content = fs.readFileSync(file, "utf8");
-    assert.equal(relative.includes(staleControlToken), false, `${relative} path should not use stale control vocabulary`);
-    assert.equal(relative.includes(staleControlledToken), false, `${relative} path should not use stale controlled vocabulary`);
-    assert.equal(content.includes(staleControlToken), false, `${relative} content should not use stale control vocabulary`);
-    assert.equal(content.includes(staleControlledToken), false, `${relative} content should not use stale controlled vocabulary`);
+    assert.match(relative, /^src\/memory\/govern(?:ance|ed)-[^/]+\.ts$/);
+    assert.equal(content.includes("admin_control_plane"), false);
+    assert.equal(content.includes("cloud_platform_control"), false);
   }
 });
 

@@ -1,10 +1,17 @@
 import { z } from "zod";
 import { AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD } from "./authority-consumption.js";
+import {
+  AionisGuidanceAuthoritySchema,
+  AionisMemoryDecisionSurfaceSchema,
+} from "./governance-contract.js";
+export {
+  AionisGuidanceAuthoritySchema,
+  AionisMemoryDecisionSurfaceSchema,
+  type AionisGuidanceAuthority,
+  type AionisMemoryDecisionSurface,
+} from "./governance-contract.js";
 
 const ConfidenceSchema = z.number().min(0).max(1);
-
-export const AionisGuidanceAuthoritySchema = z.enum(["trusted", "advisory", "candidate", "blocked", "none"]);
-export type AionisGuidanceAuthority = z.infer<typeof AionisGuidanceAuthoritySchema>;
 
 export const AionisRiskLevelSchema = z.enum(["low", "medium", "high"]);
 export type AionisRiskLevel = z.infer<typeof AionisRiskLevelSchema>;
@@ -883,15 +890,6 @@ export type AionisAgentContext = z.infer<typeof AionisAgentContextSchema>;
 export function parseAionisAgentContext(value: unknown): AionisAgentContext {
   return AionisAgentContextSchema.parse(value);
 }
-
-export const AionisMemoryDecisionSurfaceSchema = z.enum([
-  "use_now",
-  "inspect_before_use",
-  "do_not_use",
-  "rehydrate",
-  "not_agent_facing",
-]);
-export type AionisMemoryDecisionSurface = z.infer<typeof AionisMemoryDecisionSurfaceSchema>;
 
 const AionisMemoryDecisionKindSchema = z.enum([
   "used",
