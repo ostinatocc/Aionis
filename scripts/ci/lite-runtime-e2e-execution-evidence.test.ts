@@ -407,7 +407,7 @@ test("runtime e2e observes handoff tree operations, recovers latest tree, and gu
     });
 
     assert.equal(observed.observed.handoff_stored, true);
-    assert.deepEqual(observed.source_map.routes_used, ["/v1/handoff/store"]);
+    assert.deepEqual(observed.source_map.routes_used, ["/v1/observe"]);
     const observedTree = observed.handoff.execution_tree_v1;
     assert.equal(observedTree.tree_id, expectedTree.tree_id);
     assert.equal(observedTree.current_summary_node_id, expectedTree.current_summary_node_id);
