@@ -1,6 +1,6 @@
 {
   "schema_version": "aionis_runtime_complexity_budget_v1",
-  "baseline_commit": "e7022c9d4b3de06ee469ad9aeeee1105cd68b94c",
+  "baseline_commit": "3060ca1fdb5e77470f1c7b853eeeecc50c96c6e4",
   "intent": "Structural growth guard only; this file is not Aionis product validation.",
   "thresholds": {
     "source_files": 284,

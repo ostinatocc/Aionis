@@ -1,5 +1,56 @@
 # Changelog
 
+## Unreleased - Runtime Complexity Reduction
+
+This unreleased change set reduces accidental complexity in the focused
+Runtime while preserving continuity, evidence-gated learning, controlled
+forgetting, negative-transfer blocking, scope isolation, and auditability.
+
+### Added
+
+- One canonical governance decision, AgentContext compiler, and prompt
+  renderer pipeline.
+- Typed Runtime services for internal composition and structural CI budgets
+  for source size, routes, configuration, imports, and SDK ownership.
+- Public-product smoke and real SQLite/HTTP/SDK parity coverage for the
+  simplified Runtime path.
+
+### Changed
+
+- Kept Runtime Core as a modular monolith with SQLite as truth and zvec or
+  Substrate as governed candidate sources.
+- Reduced the active route matrix from 72 to 27 entries, environment schema
+  fields from 220 to 177, and import cycles from three to zero.
+- Reduced `product-output-assembler.ts` to a narrow 31-line facade and
+  `product-facade.ts` to a 279-line HTTP adapter.
+- Replaced internal route-to-route composition with typed service calls and
+  aligned Runtime, SDK, smoke, and end-to-end source metadata with the public
+  product surface.
+
+### Removed
+
+- Forty-five retired internal HTTP adapters from active registration.
+- Sixteen replaced Runtime source modules, including the legacy lifecycle,
+  replay-route, projection, ANN no-op, and access-wrapper implementations.
+- Duplicate AgentContext classification/rendering ownership and Runtime import
+  cycles.
+
+### Verified
+
+- Runtime typecheck, SDK ownership, complexity guard, public smoke, and full
+  Lite suite: 819 / 819 tests, zero skips.
+- Real MiniMax-backed golden, ordinary-memory, multi-agent, negative-transfer,
+  and judgment-calibration product loops.
+- Native zvec ANN contract and write-through behavior, including SQLite truth
+  verification after candidate retrieval.
+- AionisSubstrate, AionisManifest, SDK, CLI, create, MCP, AIFS, and Claude Code
+  package suites.
+- Same-machine pre/post Runtime-only A/B: P50 improved 2.40%; P95 regressed
+  2.69%, within the 10% budget.
+
+No release has been prepared from this change set; release notes remain
+unchanged.
+
 ## v0.3.2 - Runtime Profile Activation Patch
 
 Release date: 2026-06-29

@@ -34,6 +34,23 @@ providers, total loop P50 moves into the 0.5-1.1 second range. Substrate mirror
 adds roughly 12-15 ms P50. Zvec changes candidate generation behavior and storage
 footprint, but does not dominate latency in these small local runs.
 
+## 2026-07-10 Complexity Exit A/B
+
+The complexity-reduction exit review reran the same Runtime-only command in
+the refactored worktree and a clean pre-refactor `ca4725d` worktree under the
+same current machine conditions:
+
+| Revision | Total P50 | Total P95 |
+|---|---:|---:|
+| Pre-refactor `ca4725d` | 79.924 ms | 238.709 ms |
+| Refactored `3060ca1` | 78.004 ms | 245.123 ms |
+| Change | -2.40% | +2.69% |
+
+Both percent changes are within the 10% exit budget. The July 1 absolute
+21.344 / 45.521 ms baseline remains useful historical evidence, but it is not
+the exit comparator: current ambient machine conditions produced much higher
+absolute latency in both worktrees.
+
 ## Summary Matrix
 
 | Configuration | Embedding model | Total P50 | Total P95 | Total P99 | History used | Exposed IDs P50 | Feedback attribution |
