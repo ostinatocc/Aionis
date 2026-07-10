@@ -21,6 +21,10 @@ import { createProductObserveService } from "../product/observe-service.js";
 import { createProductGuideService } from "../product/guide-service.js";
 import { createProductLifecycleService } from "../product/lifecycle-service.js";
 import { createProductMeasureService } from "../product/measure-service.js";
+import {
+  createProductToolFeedbackLearningKernel,
+  createProductToolFeedbackService,
+} from "../product/tool-feedback-service.js";
 import type { ProductServices } from "../product/product-services.js";
 import { registerOperatorSnapshotRoutes } from "../routes/operator-snapshot.js";
 import { buildRuntimeBoundaryInventoryResponse } from "../memory/runtime-boundary-inventory.js";
@@ -662,12 +666,22 @@ function registerProductRoutes(args: ProductFacadeRouteRegistrationArgs) {
 export function createRuntimeProductServices(args: {
   env: Env;
   liteWriteStore: RuntimeLiteWriteStore;
+  liteRecallAccess?: RuntimeLiteRecallAccess | null;
+  embedder?: EmbeddingProvider | null;
+  queryEmbedder?: EmbeddingProvider | null;
   executionTreeStore?: ExecutionTreeStore | null;
   claimLedgerAccess?: ClaimLedgerAccess | null;
   skillCandidateReviewAccess?: SkillCandidateReviewAccess | null;
   memoryWriteService: MemoryWriteRouteService | null;
   handoffRouteService: HandoffRouteService | null;
 }): ProductServices {
+  const toolFeedbackLearningKernel = createProductToolFeedbackLearningKernel({
+    env: args.env,
+    embedder: args.embedder ?? null,
+    queryEmbedder: args.queryEmbedder ?? null,
+    liteRecallAccess: args.liteRecallAccess ?? null,
+    liteWriteStore: args.liteWriteStore,
+  });
   return {
     observe: createProductObserveService({
       defaultTenantId: args.env.MEMORY_TENANT_ID,
@@ -682,6 +696,11 @@ export function createRuntimeProductServices(args: {
       executionTreeStore: args.executionTreeStore ?? null,
       claimLedgerAccess: args.claimLedgerAccess ?? null,
       memoryWrite: args.memoryWriteService,
+    }),
+    toolFeedback: createProductToolFeedbackService({
+      env: args.env,
+      liteWriteStore: args.liteWriteStore,
+      learningKernel: toolFeedbackLearningKernel,
     }),
     lifecycle: createProductLifecycleService({
       env: args.env,

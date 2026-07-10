@@ -13,6 +13,7 @@ import {
   ProductSkillCandidateMaterializeRequest,
   ProductSkillCandidateParams,
   ProductSkillCandidateReviewRequest,
+  ProductToolFeedbackRequest,
   type ProductServiceResult,
   type ProductServices,
 } from "../product/product-services.js";
@@ -180,6 +181,21 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs): void {
 
   app.post("/v1/feedback", async (req: ProductFacadeRequest, reply) => {
     const principal = await requireMemoryPrincipal(req);
+    const feedbackKind = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+      ? (req.body as Record<string, unknown>).feedback_kind
+      : null;
+    if (feedbackKind === "tool_selection") {
+      const parsed = ProductToolFeedbackRequest.parse(
+        withIdentityFromRequest(req, req.body, principal, "tools_feedback"),
+      );
+      return guarded({
+        req,
+        reply,
+        kind: "write",
+        body: parsed,
+        execute: () => services.toolFeedback.execute(parsed),
+      });
+    }
     const body = withIdentityFromRequest(req, req.body, principal, "recall");
     return lifecycle({ req, reply, principal, parsed: productFeedbackRequest(body), surface: "feedback" });
   });

@@ -168,6 +168,9 @@ export async function startAionisRuntime(): Promise<void> {
   const productServices = createRuntimeProductServices({
     env,
     liteWriteStore,
+    liteRecallAccess,
+    embedder,
+    queryEmbedder,
     executionTreeStore,
     claimLedgerAccess,
     skillCandidateReviewAccess,

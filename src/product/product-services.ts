@@ -141,6 +141,31 @@ export const ProductGuideRequest = z.object({
   include_packets: z.boolean().optional(),
 }).strict();
 
+export const ProductToolFeedbackRequest = z.object({
+  feedback_kind: z.literal("tool_selection"),
+  tenant_id: z.string().trim().min(1).optional(),
+  scope: z.string().trim().min(1).optional(),
+  actor: z.string().trim().min(1).optional(),
+  consumer_agent_id: z.string().trim().min(1).optional(),
+  consumer_team_id: z.string().trim().min(1).optional(),
+  guide_trace_id: z.string().trim().min(1),
+  decision_id: z.string().uuid(),
+  run_id: z.string().trim().min(1),
+  selected_tool: z.string().trim().min(1),
+  candidates: z.array(z.string().trim().min(1)).min(1).max(200),
+  outcome: z.enum(["positive", "negative", "neutral"]),
+  context: LooseObject,
+  include_shadow: z.boolean().default(false),
+  rules_limit: z.number().int().positive().max(200).default(50),
+  target: z.enum(["tool", "all"]).default("tool"),
+  note: z.string().trim().min(1).optional(),
+  input_text: z.string().trim().min(1).optional(),
+  input_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  learning_control_review: LooseObject.optional(),
+}).strict().refine((value) => !!value.input_text || !!value.input_sha256, {
+  message: "must set input_text or input_sha256",
+});
+
 export const ProductMemoryAdmissionRequest = z.object({
   tenant_id: z.string().trim().min(1).optional(),
   scope: z.string().trim().min(1).optional(),
@@ -628,6 +653,34 @@ export async function findMemoryNodeSlots(args: {
   }
 }
 
+export async function findGuideExposureLedger(args: {
+  liteWriteStore: LiteWriteStore;
+  env: Env;
+  tenant_id: string;
+  scope: string;
+  guide_trace_id: string;
+  consumerAgentId: string;
+  consumerTeamId: string | null;
+}): Promise<ProductGuideExposureLedger | null> {
+  const found = await memoryFindLite(
+    args.liteWriteStore,
+    {
+      tenant_id: args.tenant_id,
+      scope: args.scope,
+      client_id: args.guide_trace_id,
+      consumer_agent_id: args.consumerAgentId,
+      ...(args.consumerTeamId ? { consumer_team_id: args.consumerTeamId } : {}),
+      include_slots: true,
+      limit: 1,
+    },
+    args.env.MEMORY_SCOPE,
+    args.env.MEMORY_TENANT_ID,
+  );
+  const node = Array.isArray(found.nodes) ? objectValue(found.nodes[0]) : null;
+  const slots = objectValue(node?.slots);
+  return parseGuideExposureLedger(slots?.guide_exposure_v1);
+}
+
 export async function findHistoricalGuideExposureLedgers(args: {
   liteWriteStore: LiteWriteStore;
   env: Env;
@@ -706,6 +759,7 @@ export function productMemoryDecisionOutputs(args: {
 
 export type ProductObserveInput = z.infer<typeof ProductObserveRequest>;
 export type ProductGuideInput = z.infer<typeof ProductGuideRequest>;
+export type ProductToolFeedbackInput = z.infer<typeof ProductToolFeedbackRequest>;
 export type ProductMemoryAdmissionInput = z.infer<typeof ProductMemoryAdmissionRequest>;
 export type ProductDecisionTraceRequestInput = z.infer<typeof ProductDecisionTraceRequest>;
 export type ProductFlightRecorderInput = z.infer<typeof ProductFlightRecorderRequest>;
@@ -803,6 +857,9 @@ export type ProductServices = {
   guide: {
     execute(input: ProductGuideInput, context: ProductGuideExecutionContext): Promise<ProductServiceResult>;
     govern(input: ProductMemoryAdmissionInput): Promise<ProductServiceResult>;
+  };
+  toolFeedback: {
+    execute(input: ProductToolFeedbackInput): Promise<ProductServiceResult>;
   };
   lifecycle: {
     execute(input: ProductForgetInput, surface: ProductLifecycleSurface): Promise<ProductServiceResult>;

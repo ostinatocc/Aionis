@@ -430,6 +430,8 @@ function registerProductFacade(args: {
   env: ReturnType<typeof liteEnv>;
   guards: ReturnType<typeof requestGuards>;
   liteWriteStore?: ReturnType<typeof createLiteWriteStore>;
+  liteRecallAccess?: ReturnType<ReturnType<typeof createLiteRecallStore>["createRecallAccess"]> | null;
+  embedder?: typeof DeterministicEmbeddingProvider | null;
   memoryWriteService?: ReturnType<typeof createMemoryWriteRouteService> | null;
   planningContextService?: MemoryPlanningContextRouteService | null;
   handoffRouteService?: ReturnType<typeof createHandoffRouteService> | null;
@@ -440,6 +442,8 @@ function registerProductFacade(args: {
     services: createRuntimeProductServices({
       env: args.env,
       liteWriteStore: args.liteWriteStore ?? ({} as ReturnType<typeof createLiteWriteStore>),
+      liteRecallAccess: args.liteRecallAccess ?? null,
+      embedder: args.embedder ?? null,
       executionTreeStore: null,
       memoryWriteService: args.memoryWriteService ?? null,
       handoffRouteService: args.handoffRouteService ?? null,
@@ -1106,6 +1110,8 @@ function registerFullProductMemoryApp(args: {
   });
   registerProductFacade({
     ...args,
+    liteRecallAccess: args.liteRecallStore.createRecallAccess(),
+    embedder: routeEmbedder,
     memoryWriteService: createMemoryWriteRouteService({
       env: args.env,
       embedder: routeEmbedder,

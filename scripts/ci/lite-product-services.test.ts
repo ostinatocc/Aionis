@@ -28,6 +28,7 @@ test("product services own product orchestration without Fastify coupling", () =
     "guide-service.ts",
     "lifecycle-service.ts",
     "measure-service.ts",
+    "tool-feedback-service.ts",
     "product-services.ts",
   ];
   for (const fileName of serviceFiles) {
