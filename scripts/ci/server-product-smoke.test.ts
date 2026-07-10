@@ -10,7 +10,13 @@ import { createRuntimeServices } from "../../src/app/runtime-services.ts";
 import { loadEnv, type Env } from "../../src/config.ts";
 import { createLiteExecutionStateStore } from "../../src/execution/state-store.ts";
 import { createLiteExecutionTreeStore } from "../../src/execution/tree-store.ts";
-import { registerApplicationRoutes, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
+import { createHandoffRouteService } from "../../src/routes/handoff.ts";
+import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
+import {
+  createRuntimeProductServices,
+  registerApplicationRoutes,
+  registerRuntimeErrorHandler,
+} from "../../src/server/http-server.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteReplayStore } from "../../src/store/lite-replay-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
@@ -81,6 +87,12 @@ function registerServerProductApp(args: {
   const liteReplayStore = createLiteReplayStore(args.replayPath);
   const executionStateStore = createLiteExecutionStateStore(args.writePath);
   const executionTreeStore = createLiteExecutionTreeStore(args.writePath);
+  const embeddingSurfacePolicy = {
+    provider_configured: true,
+    enabled_surfaces: ["write_auto_embed", "recall_text"],
+    isEnabled: () => true,
+    providerFor: (_surface: unknown, provider: unknown) => provider,
+  } as const;
   const guards = createRequestGuards({
     env: args.env,
     embedder: DeterministicEmbeddingProvider,
@@ -97,18 +109,34 @@ function registerServerProductApp(args: {
     env: args.env,
     embedder: DeterministicEmbeddingProvider,
     queryEmbedder: DeterministicEmbeddingProvider,
-    embeddingSurfacePolicy: {
-      provider_configured: true,
-      enabled_surfaces: ["write_auto_embed", "recall_text"],
-      isEnabled: () => true,
-      providerFor: (_surface, provider) => provider,
-    },
+    embeddingSurfacePolicy: embeddingSurfacePolicy as any,
     liteRecallAccess: liteRecallStore.createRecallAccess(),
     liteReplayAccess: liteReplayStore.createReplayAccess(),
     liteReplayStore,
     liteWriteStore,
     executionStateStore,
     executionTreeStore,
+    productServices: createRuntimeProductServices({
+      env: args.env,
+      liteWriteStore,
+      executionTreeStore,
+      memoryWriteService: createMemoryWriteRouteService({
+        env: args.env,
+        embedder: DeterministicEmbeddingProvider,
+        embeddingSurfacePolicy: embeddingSurfacePolicy as any,
+        liteWriteStore,
+        executionStateStore,
+        executionTreeStore,
+      }),
+      handoffRouteService: createHandoffRouteService({
+        env: args.env,
+        embedder: DeterministicEmbeddingProvider,
+        embeddingSurfacePolicy: embeddingSurfacePolicy as any,
+        liteWriteStore,
+        executionStateStore,
+        executionTreeStore,
+      }),
+    }),
     recallTextEmbedBatcher: { stats: () => null },
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,

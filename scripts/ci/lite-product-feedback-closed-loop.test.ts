@@ -16,7 +16,7 @@ import { registerMemoryFeedbackToolRoutes } from "../../src/routes/memory-feedba
 import { registerLiteMemoryLifecycleRoutes } from "../../src/routes/memory-lifecycle-lite.ts";
 import { createMemoryWriteRouteService, registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
-import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
+import { createRuntimeProductServices, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import {
   applyExecutionTreeOperationV1,
   createExecutionTreeV1,
@@ -85,11 +85,14 @@ function registerProductFacade(args: {
 }) {
   registerProductFacadeRoutes({
     app: args.app,
-    env: args.env,
-    liteWriteStore: args.liteWriteStore,
-    memoryWriteService: args.memoryWriteService ?? null,
+    services: createRuntimeProductServices({
+      env: args.env,
+      liteWriteStore: args.liteWriteStore,
+      executionTreeStore: null,
+      memoryWriteService: args.memoryWriteService ?? null,
+      handoffRouteService: args.handoffRouteService ?? null,
+    }),
     planningContextService: args.planningContextService ?? null,
-    handoffRouteService: args.handoffRouteService ?? null,
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,

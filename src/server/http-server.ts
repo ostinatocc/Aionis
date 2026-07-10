@@ -14,18 +14,22 @@ import {
 } from "../routes/memory-context-runtime.js";
 import { registerMemoryFeedbackToolRoutes } from "../routes/memory-feedback-tools.js";
 import { registerLiteMemoryLifecycleRoutes } from "../routes/memory-lifecycle-lite.js";
-import { createHandoffRouteService, registerHandoffRoutes } from "../routes/handoff.js";
+import { registerHandoffRoutes, type HandoffRouteService } from "../routes/handoff.js";
 import { registerMemoryRecallRoutes } from "../routes/memory-recall.js";
 import { registerMemoryReplayCoreRoutes } from "../routes/memory-replay-core.js";
 import { registerMemoryReplayLearningControlRoutes } from "../routes/memory-replay-learning-control.js";
-import { createMemoryWriteRouteService, registerMemoryWriteRoutes } from "../routes/memory-write.js";
+import { registerMemoryWriteRoutes, type MemoryWriteRouteService } from "../routes/memory-write.js";
 import { registerProductFacadeRoutes } from "../routes/product-facade.js";
+import { createProductObserveService } from "../product/observe-service.js";
+import { createProductGuideService } from "../product/guide-service.js";
+import { createProductLifecycleService } from "../product/lifecycle-service.js";
+import { createProductMeasureService } from "../product/measure-service.js";
+import type { ProductServices } from "../product/product-services.js";
 import { registerOperatorSnapshotRoutes } from "../routes/operator-snapshot.js";
-import { registerRuntimeBoundaryInventoryRoutes } from "../routes/runtime-boundary-inventory.js";
+import { buildRuntimeBoundaryInventoryResponse } from "../memory/runtime-boundary-inventory.js";
 import type { ExecutionStateStore } from "../execution/state-store.js";
 import type { ExecutionTreeStore } from "../execution/tree-store.js";
-import type { ClaimLedgerAccess } from "../store/claim-ledger-access.js";
-import type { SkillCandidateReviewAccess } from "../store/skill-candidate-review-access.js";
+import type { ClaimLedgerAccess, SkillCandidateReviewAccess } from "../store/memory-store.js";
 import { buildLiteRouteMatrix, registerLiteServerOnlyRoutes } from "./lite-runtime-boundary.js";
 import { createErrorResponse, HttpError } from "../util/http.js";
 
@@ -110,6 +114,14 @@ export function registerRuntimeErrorHandler(app: FastifyInstance) {
       details: { contract: "error_v1" },
     }));
   });
+}
+
+export function registerRuntimeBoundaryInventoryRoutes(args: { app: FastifyInstance; env: Env }) {
+  if (args.env.AIONIS_EDITION !== "lite") {
+    throw new Error("aionis-lite runtime boundary inventory routes only support AIONIS_EDITION=lite");
+  }
+  args.app.get("/v1/runtime/boundary-inventory", async (_req: FastifyRequest, reply: FastifyReply) =>
+    reply.code(200).send(buildRuntimeBoundaryInventoryResponse()));
 }
 
 export function logMemoryApiConfig(args: {
@@ -364,6 +376,7 @@ export type RegisterApplicationRoutesArgs = {
   skillCandidateReviewAccess?: SkillCandidateReviewAccess | null;
   executionStateStore: ExecutionStateStore;
   executionTreeStore: ExecutionTreeStore;
+  productServices: ProductServices;
   recallTextEmbedBatcher: unknown;
   requireMemoryPrincipal: (req: FastifyRequest) => Promise<AuthPrincipal | null>;
   withIdentityFromRequest: (
@@ -402,13 +415,8 @@ type ProductFacadeRouteRegistrationArgs = Pick<
   RegisterApplicationRoutesArgs,
   | "app"
   | "env"
-  | "embedder"
-  | "embeddingSurfacePolicy"
   | "liteWriteStore"
-  | "executionStateStore"
-  | "executionTreeStore"
-  | "claimLedgerAccess"
-  | "skillCandidateReviewAccess"
+  | "productServices"
   | "requireMemoryPrincipal"
   | "withIdentityFromRequest"
   | "enforceRateLimit"
@@ -759,27 +767,8 @@ function registerRuntimeKernelRoutes(args: RuntimeKernelRouteRegistrationArgs) {
 function registerProductRoutes(args: ProductFacadeRouteRegistrationArgs) {
   registerProductFacadeRoutes({
     app: args.app,
-    env: args.env,
-    liteWriteStore: args.liteWriteStore,
-    memoryWriteService: createMemoryWriteRouteService({
-      env: args.env,
-      embedder: args.embedder,
-      embeddingSurfacePolicy: args.embeddingSurfacePolicy,
-      liteWriteStore: args.liteWriteStore,
-      executionStateStore: args.executionStateStore,
-      executionTreeStore: args.executionTreeStore,
-    }),
+    services: args.productServices,
     planningContextService: args.planningContextService ?? null,
-    handoffRouteService: createHandoffRouteService({
-      env: args.env,
-      embedder: args.embedder,
-      embeddingSurfacePolicy: args.embeddingSurfacePolicy,
-      liteWriteStore: args.liteWriteStore,
-      executionStateStore: args.executionStateStore,
-      executionTreeStore: args.executionTreeStore,
-    }),
-    claimLedgerAccess: args.claimLedgerAccess ?? null,
-    skillCandidateReviewAccess: args.skillCandidateReviewAccess ?? null,
     requireMemoryPrincipal: args.requireMemoryPrincipal,
     withIdentityFromRequest: args.withIdentityFromRequest,
     enforceRateLimit: args.enforceRateLimit,
@@ -798,6 +787,42 @@ function registerProductRoutes(args: ProductFacadeRouteRegistrationArgs) {
     tenantFromBody: args.tenantFromBody,
     acquireInflightSlot: args.acquireInflightSlot,
   });
+}
+
+export function createRuntimeProductServices(args: {
+  env: Env;
+  liteWriteStore: RuntimeLiteWriteStore;
+  executionTreeStore?: ExecutionTreeStore | null;
+  claimLedgerAccess?: ClaimLedgerAccess | null;
+  skillCandidateReviewAccess?: SkillCandidateReviewAccess | null;
+  memoryWriteService: MemoryWriteRouteService | null;
+  handoffRouteService: HandoffRouteService | null;
+}): ProductServices {
+  return {
+    observe: createProductObserveService({
+      defaultTenantId: args.env.MEMORY_TENANT_ID,
+      defaultScope: args.env.MEMORY_SCOPE,
+      memoryWrite: args.memoryWriteService,
+      handoffStore: args.handoffRouteService,
+      claimLedgerAccess: args.claimLedgerAccess ?? null,
+    }),
+    guide: createProductGuideService({
+      env: args.env,
+      liteWriteStore: args.liteWriteStore,
+      executionTreeStore: args.executionTreeStore ?? null,
+      claimLedgerAccess: args.claimLedgerAccess ?? null,
+      memoryWrite: args.memoryWriteService,
+    }),
+    lifecycle: createProductLifecycleService({
+      env: args.env,
+      liteWriteStore: args.liteWriteStore,
+    }),
+    measure: createProductMeasureService({
+      defaultTenantId: args.env.MEMORY_TENANT_ID,
+      defaultScope: args.env.MEMORY_SCOPE,
+      skillCandidateReviewAccess: args.skillCandidateReviewAccess ?? null,
+    }),
+  };
 }
 
 export function registerApplicationRoutes(args: RegisterApplicationRoutesArgs) {

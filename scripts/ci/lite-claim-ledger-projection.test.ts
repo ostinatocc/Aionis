@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildClaimLedgerProjection } from "../../src/memory/product-output/operator-projections.ts";
 import { AionisClaimLedgerProjectionSchema } from "../../src/memory/product-output-contract.ts";
-import type { ClaimLedgerRow, ClaimLedgerStatus } from "../../src/store/claim-ledger-access.ts";
+import type { ClaimLedgerRow, ClaimLedgerStatus } from "../../src/store/memory-store.ts";
 
 function claimRow(input: {
   claimId: string;

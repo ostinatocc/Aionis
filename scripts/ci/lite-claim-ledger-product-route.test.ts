@@ -13,7 +13,7 @@ import { registerMemoryFeedbackToolRoutes } from "../../src/routes/memory-feedba
 import { registerLiteMemoryLifecycleRoutes } from "../../src/routes/memory-lifecycle-lite.ts";
 import { createMemoryWriteRouteService, registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
 import { createHttpApp, registerBootstrapLifecycle } from "../../src/server/bootstrap.ts";
-import { registerHealthRoute, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
+import { createRuntimeProductServices, registerHealthRoute, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 
@@ -209,24 +209,27 @@ async function setupClaimLedgerProductApp(args: {
   });
   registerProductFacadeRoutes({
     app,
-    env,
-    liteWriteStore: services.liteWriteStore,
-    memoryWriteService: createMemoryWriteRouteService({
+    services: createRuntimeProductServices({
       env,
-      embedder: DeterministicEmbeddingProvider,
       liteWriteStore: services.liteWriteStore,
-      executionStateStore: services.executionStateStore,
       executionTreeStore: services.executionTreeStore,
+      claimLedgerAccess: services.claimLedgerAccess,
+      memoryWriteService: createMemoryWriteRouteService({
+        env,
+        embedder: DeterministicEmbeddingProvider,
+        liteWriteStore: services.liteWriteStore,
+        executionStateStore: services.executionStateStore,
+        executionTreeStore: services.executionTreeStore,
+      }),
+      handoffRouteService: createHandoffRouteService({
+        env,
+        embedder: DeterministicEmbeddingProvider,
+        liteWriteStore: services.liteWriteStore,
+        executionStateStore: services.executionStateStore,
+        executionTreeStore: services.executionTreeStore,
+      }),
     }),
     planningContextService: contextRuntimeRoutes.planningContextService,
-    handoffRouteService: createHandoffRouteService({
-      env,
-      embedder: DeterministicEmbeddingProvider,
-      liteWriteStore: services.liteWriteStore,
-      executionStateStore: services.executionStateStore,
-      executionTreeStore: services.executionTreeStore,
-    }),
-    claimLedgerAccess: services.claimLedgerAccess,
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
     enforceRateLimit: args.productGuardOverrides?.enforceRateLimit ?? guards.enforceRateLimit,

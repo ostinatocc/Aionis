@@ -25,7 +25,7 @@ import { registerMemoryFeedbackToolRoutes } from "../../src/routes/memory-feedba
 import { registerLiteMemoryLifecycleRoutes } from "../../src/routes/memory-lifecycle-lite.ts";
 import { createMemoryWriteRouteService, registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
-import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
+import { createRuntimeProductServices, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteSkillCandidateReviewStore } from "../../src/store/lite-skill-candidate-review-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
@@ -437,12 +437,15 @@ function registerProductFacade(args: {
 }) {
   registerProductFacadeRoutes({
     app: args.app,
-    env: args.env,
-    liteWriteStore: args.liteWriteStore ?? ({} as ReturnType<typeof createLiteWriteStore>),
-    memoryWriteService: args.memoryWriteService ?? null,
+    services: createRuntimeProductServices({
+      env: args.env,
+      liteWriteStore: args.liteWriteStore ?? ({} as ReturnType<typeof createLiteWriteStore>),
+      executionTreeStore: null,
+      memoryWriteService: args.memoryWriteService ?? null,
+      handoffRouteService: args.handoffRouteService ?? null,
+      skillCandidateReviewAccess: args.skillCandidateReviewAccess,
+    }),
     planningContextService: args.planningContextService ?? null,
-    handoffRouteService: args.handoffRouteService ?? null,
-    skillCandidateReviewAccess: args.skillCandidateReviewAccess,
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,

@@ -9,7 +9,7 @@ import { createRequestGuards } from "../../src/app/request-guards.ts";
 import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
 import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
-import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
+import { createRuntimeProductServices, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { createAionisClient } from "../../src/sdk.ts";
 import { deriveExecutionContractFromSlots } from "../../src/memory/execution-contract.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
@@ -134,16 +134,19 @@ function registerSdkRuntimeProductApp(args: {
 
   registerProductFacadeRoutes({
     app: args.app,
-    env: args.env,
-    liteWriteStore: args.liteWriteStore,
-    memoryWriteService: createMemoryWriteRouteService({
+    services: createRuntimeProductServices({
       env: args.env,
-      embedder: DeterministicEmbeddingProvider,
       liteWriteStore: args.liteWriteStore,
-      executionStateStore: null,
+      executionTreeStore: null,
+      memoryWriteService: createMemoryWriteRouteService({
+        env: args.env,
+        embedder: DeterministicEmbeddingProvider,
+        liteWriteStore: args.liteWriteStore,
+        executionStateStore: null,
+      }),
+      handoffRouteService: null,
     }),
     planningContextService: contextRuntimeRoutes.planningContextService,
-    handoffRouteService: null,
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,

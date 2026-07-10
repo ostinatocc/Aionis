@@ -10,7 +10,7 @@ import { createHandoffRouteService } from "../../src/routes/handoff.ts";
 import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
 import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
-import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
+import { createRuntimeProductServices, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { AionisClientError, createAionisClient } from "../../src/sdk.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
@@ -216,22 +216,24 @@ function registerParityRuntime(args: {
 
   registerProductFacadeRoutes({
     app: args.app,
-    env: args.env,
-    liteWriteStore: args.liteWriteStore,
-    memoryWriteService: createMemoryWriteRouteService({
+    services: createRuntimeProductServices({
       env: args.env,
-      embedder: DeterministicEmbeddingProvider,
       liteWriteStore: args.liteWriteStore,
-      executionStateStore: null,
+      executionTreeStore: null,
+      memoryWriteService: createMemoryWriteRouteService({
+        env: args.env,
+        embedder: DeterministicEmbeddingProvider,
+        liteWriteStore: args.liteWriteStore,
+        executionStateStore: null,
+      }),
+      handoffRouteService: createHandoffRouteService({
+        env: args.env,
+        embedder: DeterministicEmbeddingProvider,
+        liteWriteStore: args.liteWriteStore,
+        executionStateStore: null,
+      }),
     }),
     planningContextService: contextRuntimeRoutes.planningContextService,
-    handoffRouteService: createHandoffRouteService({
-      env: args.env,
-      embedder: DeterministicEmbeddingProvider,
-      liteWriteStore: args.liteWriteStore,
-      executionStateStore: null,
-    }),
-    executionTreeStore: null,
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
     enforceRateLimit: guards.enforceRateLimit,

@@ -9,12 +9,15 @@ import { createRequestGuards } from "./app/request-guards.js";
 import { createHttpObservabilityHelpers } from "./app/http-observability.js";
 import {
   logMemoryApiConfig,
+  createRuntimeProductServices,
   registerApplicationRoutes,
   type RegisterApplicationRoutesArgs,
   registerHealthRoute,
   registerRuntimeErrorHandler,
   registerRuntimeRequestHooks,
 } from "./server/http-server.js";
+import { createHandoffRouteService } from "./routes/handoff.js";
+import { createMemoryWriteRouteService } from "./routes/memory-write.js";
 import { createRecallPolicy } from "./app/recall-policy.js";
 import { createRecallTextEmbedRuntime } from "./app/recall-text-embed.js";
 import { createReplayRepairReviewPolicy } from "./app/replay-repair-review-policy.js";
@@ -182,6 +185,31 @@ export async function startAionisRuntime(): Promise<void> {
     buildRecallTrajectory(args as Parameters<typeof buildRecallTrajectory>[0]);
 
   const app = createHttpApp(env);
+  const memoryWriteService = createMemoryWriteRouteService({
+    env,
+    embedder,
+    embeddingSurfacePolicy,
+    liteWriteStore,
+    executionStateStore,
+    executionTreeStore,
+  });
+  const handoffRouteService = createHandoffRouteService({
+    env,
+    embedder,
+    embeddingSurfacePolicy,
+    liteWriteStore,
+    executionStateStore,
+    executionTreeStore,
+  });
+  const productServices = createRuntimeProductServices({
+    env,
+    liteWriteStore,
+    executionTreeStore,
+    claimLedgerAccess,
+    skillCandidateReviewAccess,
+    memoryWriteService,
+    handoffRouteService,
+  });
   const associativeLinkWorker = liteRecallAccess
     ? startLiteAssociativeLinkWorker({
         writeStore: liteWriteStore,
@@ -238,6 +266,7 @@ export async function startAionisRuntime(): Promise<void> {
     skillCandidateReviewAccess,
     executionStateStore,
     executionTreeStore,
+    productServices,
     recallTextEmbedBatcher,
     requireMemoryPrincipal,
     withIdentityFromRequest,

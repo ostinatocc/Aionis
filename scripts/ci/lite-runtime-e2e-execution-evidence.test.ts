@@ -18,7 +18,7 @@ import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
 import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
 import { createMemoryWriteRouteService, registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
-import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
+import { createRuntimeProductServices, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
@@ -200,23 +200,26 @@ function registerRuntimeE2EApp(args: {
 
   registerProductFacadeRoutes({
     app: args.app,
-    env: args.env,
-    liteWriteStore: args.liteWriteStore,
-    memoryWriteService: createMemoryWriteRouteService({
+    services: createRuntimeProductServices({
       env: args.env,
-      embedder: DeterministicEmbeddingProvider,
       liteWriteStore: args.liteWriteStore,
-      executionStateStore: null,
       executionTreeStore: args.executionTreeStore,
+      memoryWriteService: createMemoryWriteRouteService({
+        env: args.env,
+        embedder: DeterministicEmbeddingProvider,
+        liteWriteStore: args.liteWriteStore,
+        executionStateStore: null,
+        executionTreeStore: args.executionTreeStore,
+      }),
+      handoffRouteService: createHandoffRouteService({
+        env: args.env,
+        embedder: DeterministicEmbeddingProvider,
+        liteWriteStore: args.liteWriteStore,
+        executionStateStore: null,
+        executionTreeStore: args.executionTreeStore,
+      }),
     }),
     planningContextService: contextRuntimeRoutes.planningContextService,
-    handoffRouteService: createHandoffRouteService({
-      env: args.env,
-      embedder: DeterministicEmbeddingProvider,
-      liteWriteStore: args.liteWriteStore,
-      executionStateStore: null,
-      executionTreeStore: args.executionTreeStore,
-    }),
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,

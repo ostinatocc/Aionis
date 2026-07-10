@@ -6,7 +6,7 @@ import type {
   SkillCandidateReviewRow,
   SkillCandidateReviewStatus,
   TraceDerivedSkillTrainingCandidate,
-} from "./skill-candidate-review-access.js";
+} from "./memory-store.js";
 import { createSqliteDatabase, type SqliteDatabase } from "./sqlite.js";
 import { createSqliteTransactionRunner } from "./sqlite-transaction-runner.js";
 

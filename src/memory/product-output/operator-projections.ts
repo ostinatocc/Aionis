@@ -37,7 +37,7 @@ import {
 } from "./decision-trace.js";
 import {
   type ClaimLedgerRow,
-} from "../../store/claim-ledger-access.js";
+} from "../../store/memory-store.js";
 
 export type BuildAionisOperatorSnapshotArgs = {
   tenant_id: string;

@@ -8,7 +8,7 @@ import {
   runtimeBoundaryInventoryFiles,
   runtimeBoundaryInventorySummary,
 } from "../../src/memory/runtime-boundary-inventory.ts";
-import { registerRuntimeBoundaryInventoryRoutes } from "../../src/routes/runtime-boundary-inventory.ts";
+import { registerRuntimeBoundaryInventoryRoutes } from "../../src/server/http-server.ts";
 
 function buildEnv() {
   return {
