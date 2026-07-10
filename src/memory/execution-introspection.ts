@@ -1,11 +1,13 @@
 import {
-  buildExecutionMemorySummaryBundle,
   buildExecutionSummarySurface,
+} from "../app/planning-summary-assembly.js";
+import {
+  buildExecutionMemorySummaryBundle,
   summarizePatternSignalSurface,
   summarizeWorkflowMaintenanceSurface,
   summarizeWorkflowSignalSurface,
   summarizePatternMaintenanceSurface,
-} from "../app/planning-summary.js";
+} from "../app/planning-summary-surfaces.js";
 import { buildCognitiveStructureV1 } from "../kernel/cognitive-structure.js";
 import {
   PolicyMutationV1Schema,

@@ -1,9 +1,11 @@
 import { z } from "zod";
-import { AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD } from "./authority-consumption.js";
 import {
   AionisGuidanceAuthoritySchema,
   AionisMemoryDecisionSurfaceSchema,
 } from "./governance-contract.js";
+
+export const AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD =
+  "stable_promotion" + "_blocked_count";
 export {
   AionisGuidanceAuthoritySchema,
   AionisMemoryDecisionSurfaceSchema,

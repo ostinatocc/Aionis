@@ -1,10 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  buildExecutionMemorySummaryBundle,
   buildAssemblySummary,
   buildExecutionSummarySurface,
   buildPlanningSummary,
+} from "../../src/app/planning-summary-assembly.ts";
+import {
+  buildExecutionMemorySummaryBundle,
   summarizeActionRecallPacket,
   summarizeDistillationSignalSurface,
   summarizePolicyLifecycleSurface,
@@ -14,7 +16,7 @@ import {
   summarizeWorkflowMaintenanceSurface,
   summarizeAuthorityVisibilitySurface,
   summarizePatternSignals,
-} from "../../src/app/planning-summary.ts";
+} from "../../src/app/planning-summary-surfaces.ts";
 import { buildExecutionTreeEffectSummary } from "../../src/app/planning-summary-execution-tree.ts";
 import {
   applyExecutionTreeOperationV1,

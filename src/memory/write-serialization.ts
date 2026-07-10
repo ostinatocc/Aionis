@@ -1,5 +1,5 @@
 import { buildAionisUri } from "./uri.js";
-import type { PreparedWrite, WriteResult } from "./write.js";
+import type { PreparedWrite, WriteResult } from "./write-contract.js";
 
 export function buildWriteDiff(
   prepared: PreparedWrite,

@@ -4,10 +4,12 @@ import { buildRecallObservability, collectRecallTrajectoryUriLinks } from "../ap
 import { applyContextOptimizationProfile } from "../app/context-optimization-profile.js";
 import {
   buildAssemblySummary,
-  buildExecutionMemorySummaryBundle,
   buildExecutionSummarySurface,
-  buildExecutionTreeEffectSummary,
   buildPlanningSummary,
+} from "../app/planning-summary-assembly.js";
+import { buildExecutionTreeEffectSummary } from "../app/planning-summary-execution-tree.js";
+import {
+  buildExecutionMemorySummaryBundle,
   summarizeActionRecallPacketSurface,
   summarizeWorkflowSignalSurface,
   summarizeWorkflowLifecycleSurface,
@@ -15,7 +17,7 @@ import {
   summarizePatternLifecycleSurface,
   summarizePatternMaintenanceSurface,
   summarizePatternSignalSurface,
-} from "../app/planning-summary.js";
+} from "../app/planning-summary-surfaces.js";
 import { createEmbeddingSurfacePolicy, type EmbeddingSurfacePolicy } from "../embeddings/surface-policy.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
 import { buildLayeredContextCostSignals } from "../memory/cost-signals.js";

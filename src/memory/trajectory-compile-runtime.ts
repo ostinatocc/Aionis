@@ -13,7 +13,7 @@ import {
 } from "../execution/index.js";
 import {
   buildExecutionContractContextOverlay,
-  buildExecutionContractFromTrajectoryCompile,
+  buildExecutionContractFromProjection,
   projectExecutionContractToRecoveryContract,
 } from "./execution-contract.js";
 import { buildTrajectoryCompileLite } from "./trajectory-compile.js";
@@ -25,6 +25,34 @@ import type {
 } from "./schemas.js";
 
 type MaybeString = string | null | undefined;
+
+export function buildExecutionContractFromTrajectoryCompile(compiled: TrajectoryCompileResponse) {
+  return buildExecutionContractFromProjection({
+    contract_trust: null,
+    task_family: compiled.task_family,
+    task_signature: compiled.task_signature,
+    workflow_signature: compiled.workflow_signature,
+    selected_tool: compiled.contract.likely_tool ?? null,
+    target_files: compiled.contract.target_files,
+    next_action: compiled.contract.next_action,
+    workflow_steps: compiled.contract.workflow_steps,
+    pattern_hints: compiled.contract.pattern_hints,
+    service_lifecycle_constraints: compiled.contract.service_lifecycle_constraints,
+    acceptance_checks: compiled.contract.acceptance_checks,
+    success_invariants: compiled.contract.success_invariants,
+    dependency_requirements: compiled.contract.dependency_requirements,
+    environment_assumptions: compiled.contract.environment_assumptions,
+    must_hold_after_exit: compiled.contract.must_hold_after_exit,
+    external_visibility_requirements: compiled.contract.external_visibility_requirements,
+    provenance: {
+      source_kind: "trajectory_compile",
+      source_summary_version: compiled.summary_version,
+      source_anchor: null,
+      evidence_refs: [],
+      notes: [],
+    },
+  });
+}
 
 function firstString(...values: Array<unknown>): string | null {
   for (const value of values) {

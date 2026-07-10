@@ -16,7 +16,7 @@ import {
   resolveWriteRefId,
   resolveWriteScope,
 } from "./write-shared.js";
-import type { PreparedEdge, PreparedNode } from "./write.js";
+import type { PreparedEdge, PreparedNode } from "./write-contract.js";
 
 type PrepareBatchTenancy = {
   tenant_id: string;

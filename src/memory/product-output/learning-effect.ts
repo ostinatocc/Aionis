@@ -15,9 +15,9 @@ import {
   type AionisTraceDerivedSkillCandidate,
 } from "../product-output-contract.js";
 import {
-  AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD,
   authorityConsumptionStablePromotionBlockedCount,
 } from "../authority-consumption.js";
+import { AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD } from "../product-output-contract.js";
 import {
   ProductActor,
   ProductTask,
