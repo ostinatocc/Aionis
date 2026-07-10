@@ -15,8 +15,6 @@ import {
 import { registerMemoryFeedbackToolRoutes } from "../routes/memory-feedback-tools.js";
 import { registerHandoffRoutes, type HandoffRouteService } from "../routes/handoff.js";
 import { registerMemoryRecallRoutes } from "../routes/memory-recall.js";
-import { registerMemoryReplayCoreRoutes } from "../routes/memory-replay-core.js";
-import { registerMemoryReplayLearningControlRoutes } from "../routes/memory-replay-learning-control.js";
 import type { MemoryWriteRouteService } from "../routes/memory-write.js";
 import { registerProductFacadeRoutes } from "../routes/product-facade.js";
 import { createProductObserveService } from "../product/observe-service.js";
@@ -328,36 +326,24 @@ export function registerHealthRoute(args: {
   });
 }
 
-type MemoryWriteRouteArgs = Parameters<typeof registerMemoryWriteRoutes>[0];
 type HandoffRouteArgs = Parameters<typeof registerHandoffRoutes>[0];
 type MemoryAccessRouteArgs = Parameters<typeof registerMemoryAccessRoutes>[0];
 type MemoryRecallRouteArgs = Parameters<typeof registerMemoryRecallRoutes>[0];
 type MemoryContextRouteArgs = Parameters<typeof registerMemoryContextRuntimeRoutes>[0];
 type MemoryFeedbackRouteArgs = Parameters<typeof registerMemoryFeedbackToolRoutes>[0];
-type MemoryReplayCoreRouteArgs = Parameters<typeof registerMemoryReplayCoreRoutes>[0];
-type MemoryReplayLearningControlRouteArgs = Parameters<typeof registerMemoryReplayLearningControlRoutes>[0];
 
 type RuntimeLiteWriteStore =
-  & NonNullable<MemoryWriteRouteArgs["liteWriteStore"]>
   & HandoffRouteArgs["liteWriteStore"]
   & MemoryAccessRouteArgs["liteWriteStore"]
   & MemoryRecallRouteArgs["liteWriteStore"]
   & MemoryContextRouteArgs["liteWriteStore"]
-  & MemoryFeedbackRouteArgs["liteWriteStore"]
-  & NonNullable<MemoryReplayCoreRouteArgs["liteWriteStore"]>
-  & MemoryReplayLearningControlRouteArgs["liteWriteStore"];
+  & MemoryFeedbackRouteArgs["liteWriteStore"];
 
 type RuntimeLiteRecallAccess =
   & MemoryAccessRouteArgs["liteRecallAccess"]
   & MemoryRecallRouteArgs["liteRecallAccess"]
   & MemoryContextRouteArgs["liteRecallAccess"]
   & MemoryFeedbackRouteArgs["liteRecallAccess"];
-
-type RuntimeLiteReplayAccess = NonNullable<MemoryReplayCoreRouteArgs["liteReplayAccess"]>;
-type RuntimeLiteReplayStore = NonNullable<MemoryReplayCoreRouteArgs["liteReplayStore"]>;
-
-type RuntimeReplayRunOptionsBuilder =
-  & MemoryReplayLearningControlRouteArgs["buildReplayPlaybookRunOptions"];
 
 export type RegisterApplicationRoutesArgs = {
   app: FastifyInstance;
@@ -366,8 +352,6 @@ export type RegisterApplicationRoutesArgs = {
   queryEmbedder: EmbeddingProvider | null;
   embeddingSurfacePolicy: EmbeddingSurfacePolicy;
   liteRecallAccess: RuntimeLiteRecallAccess;
-  liteReplayAccess: RuntimeLiteReplayAccess;
-  liteReplayStore: RuntimeLiteReplayStore;
   liteWriteStore: RuntimeLiteWriteStore;
   claimLedgerAccess?: ClaimLedgerAccess | null;
   skillCandidateReviewAccess?: SkillCandidateReviewAccess | null;
@@ -401,9 +385,6 @@ export type RegisterApplicationRoutesArgs = {
   embedRecallTextQuery: MemoryContextRouteArgs["embedRecallTextQuery"];
   mapRecallTextEmbeddingError: MemoryContextRouteArgs["mapRecallTextEmbeddingError"];
   recordContextAssemblyTelemetryBestEffort: MemoryContextRouteArgs["recordContextAssemblyTelemetryBestEffort"];
-  withReplayRepairReviewDefaults: MemoryReplayLearningControlRouteArgs["withReplayRepairReviewDefaults"];
-  buildReplayRepairReviewOptions: MemoryReplayLearningControlRouteArgs["buildReplayRepairReviewOptions"];
-  buildReplayPlaybookRunOptions: RuntimeReplayRunOptionsBuilder;
 };
 
 type RuntimeBoundaryRouteRegistrationArgs = Pick<RegisterApplicationRoutesArgs, "app" | "env">;
@@ -475,30 +456,9 @@ type RuntimeRecallRouteRegistrationArgs = Pick<
   | "recordContextAssemblyTelemetryBestEffort"
 >;
 
-type RuntimeReplayRouteRegistrationArgs = Pick<
-  RegisterApplicationRoutesArgs,
-  | "app"
-  | "env"
-  | "embedder"
-  | "embeddingSurfacePolicy"
-  | "liteReplayAccess"
-  | "liteReplayStore"
-  | "liteWriteStore"
-  | "requireMemoryPrincipal"
-  | "withIdentityFromRequest"
-  | "enforceRateLimit"
-  | "enforceTenantQuota"
-  | "tenantFromBody"
-  | "acquireInflightSlot"
-  | "withReplayRepairReviewDefaults"
-  | "buildReplayRepairReviewOptions"
-  | "buildReplayPlaybookRunOptions"
->;
-
 type RuntimeKernelRouteRegistrationArgs =
   & RuntimeWriteRouteRegistrationArgs
-  & RuntimeRecallRouteRegistrationArgs
-  & RuntimeReplayRouteRegistrationArgs;
+  & RuntimeRecallRouteRegistrationArgs;
 
 function registerRuntimeBoundaryRoutes(args: RuntimeBoundaryRouteRegistrationArgs) {
   registerRuntimeBoundaryInventoryRoutes({
@@ -668,6 +628,7 @@ function registerRuntimeRecallRoutes(args: RuntimeRecallRouteRegistrationArgs) {
     enforceTenantQuota,
     tenantFromBody,
     acquireInflightSlot,
+    routeExposure: "temporary",
   });
 
   return {
@@ -675,62 +636,9 @@ function registerRuntimeRecallRoutes(args: RuntimeRecallRouteRegistrationArgs) {
   };
 }
 
-function registerRuntimeReplayRoutes(args: RuntimeReplayRouteRegistrationArgs) {
-  const {
-    app,
-    env,
-    embedder,
-    embeddingSurfacePolicy,
-    liteReplayAccess,
-    liteReplayStore,
-    liteWriteStore,
-    requireMemoryPrincipal,
-    withIdentityFromRequest,
-    enforceRateLimit,
-    enforceTenantQuota,
-    tenantFromBody,
-    acquireInflightSlot,
-    withReplayRepairReviewDefaults,
-    buildReplayRepairReviewOptions,
-    buildReplayPlaybookRunOptions,
-  } = args;
-
-  registerMemoryReplayCoreRoutes({
-    app,
-    env,
-    embedder,
-    embeddingSurfacePolicy,
-    liteReplayAccess,
-    liteReplayStore,
-    liteWriteStore,
-    requireMemoryPrincipal,
-    withIdentityFromRequest,
-    enforceRateLimit,
-    enforceTenantQuota,
-    tenantFromBody,
-    acquireInflightSlot,
-  });
-
-  registerMemoryReplayLearningControlRoutes({
-    app,
-    env,
-    liteWriteStore,
-    requireMemoryPrincipal,
-    withIdentityFromRequest,
-    enforceRateLimit,
-    enforceTenantQuota,
-    tenantFromBody,
-    acquireInflightSlot,
-    withReplayRepairReviewDefaults,
-    buildReplayRepairReviewOptions,
-    buildReplayPlaybookRunOptions,
-  });
-
-}
 function registerRuntimeKernelRoutes(args: RuntimeKernelRouteRegistrationArgs) {
   registerRuntimeWriteRoutes(args);
   const recallRoutes = registerRuntimeRecallRoutes(args);
-  registerRuntimeReplayRoutes(args);
   return recallRoutes;
 }
 

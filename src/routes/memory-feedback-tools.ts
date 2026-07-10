@@ -53,6 +53,7 @@ type RegisterMemoryFeedbackToolRoutesArgs = {
   tenantFromBody: (body: unknown) => string;
   acquireInflightSlot: (kind: "write" | "recall") => Promise<InflightGateToken>;
   learningControlRuntimeProviderBuilderOptions?: LiteLearningControlRuntimeProviderBuilderOptions;
+  routeExposure?: "all" | "temporary";
 };
 
 export function registerMemoryFeedbackToolRoutes(args: RegisterMemoryFeedbackToolRoutesArgs) {
@@ -69,6 +70,7 @@ export function registerMemoryFeedbackToolRoutes(args: RegisterMemoryFeedbackToo
     enforceTenantQuota,
     tenantFromBody,
     acquireInflightSlot,
+    routeExposure = "all",
   } = args;
   assertLocalStoreRuntimeEdition(env, "local-store memory-feedback-tools routes");
   const learningControlProviders = buildLiteLearningControlRuntimeProviders(
@@ -116,6 +118,17 @@ export function registerMemoryFeedbackToolRoutes(args: RegisterMemoryFeedbackToo
     withGate?: boolean;
     execute: (body: unknown) => Promise<TResult>;
   }) => {
+    if (
+      routeExposure === "temporary"
+      && ![
+        "/v1/memory/tools/select",
+        "/v1/memory/tools/decision",
+        "/v1/memory/tools/run",
+        "/v1/memory/tools/feedback",
+      ].includes(args.path)
+    ) {
+      return;
+    }
     app.post(args.path, async (req: MemoryFeedbackToolRequest, reply: FastifyReply) => {
       const out = await runFeedbackRoute({
         req,

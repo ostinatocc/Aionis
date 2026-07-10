@@ -251,12 +251,48 @@ test("application registration exposes product routes but not Task-10-replaced i
     "/v1/memory/action/retrieval",
     "/v1/memory/experience/intelligence",
     "/v1/memory/anchors/rehydrate_payload",
+    "/v1/memory/feedback",
+    "/v1/memory/rules/state",
+    "/v1/memory/rules/evaluate",
+    "/v1/memory/tools/runs/list",
+    "/v1/memory/learning-loop/run",
+    "/v1/memory/runtime-maintenance/run",
+    "/v1/memory/runtime-maintenance/immediate",
+    "/v1/memory/runtime-maintenance/daily",
+    "/v1/memory/runtime-maintenance/long-horizon",
+    "/v1/memory/policies/learning-control/apply",
+    "/v1/memory/anchors/suppress",
+    "/v1/memory/anchors/unsuppress",
+    "/v1/memory/patterns/suppress",
+    "/v1/memory/patterns/unsuppress",
+    "/v1/memory/tools/rehydrate_payload",
+    "/v1/memory/replay/run/start",
+    "/v1/memory/replay/step/before",
+    "/v1/memory/replay/step/after",
+    "/v1/memory/replay/run/end",
+    "/v1/memory/replay/runs/get",
+    "/v1/memory/replay/playbooks/compile_from_run",
+    "/v1/memory/replay/playbooks/get",
+    "/v1/memory/replay/playbooks/candidate",
+    "/v1/memory/replay/playbooks/promote",
+    "/v1/memory/replay/playbooks/repair",
+    "/v1/memory/replay/playbooks/repair/review",
+    "/v1/memory/replay/playbooks/run",
+    "/v1/memory/replay/playbooks/dispatch",
   ];
   try {
     assert.equal(app.hasRoute({ method: "POST", url: "/v1/observe" }), true);
     assert.equal(app.hasRoute({ method: "POST", url: "/v1/operator/snapshot" }), true);
     assert.equal(app.hasRoute({ method: "POST", url: "/v1/memory/planning/context" }), true);
     assert.equal(app.hasRoute({ method: "POST", url: "/v1/memory/resolve" }), true);
+    for (const url of [
+      "/v1/memory/tools/select",
+      "/v1/memory/tools/decision",
+      "/v1/memory/tools/run",
+      "/v1/memory/tools/feedback",
+    ]) {
+      assert.equal(app.hasRoute({ method: "POST", url }), true, `${url} remains temporary for Manifest`);
+    }
     for (const url of removedRoutes) {
       assert.equal(app.hasRoute({ method: "POST", url }), false, `${url} must not be registered`);
     }
