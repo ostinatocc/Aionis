@@ -1579,6 +1579,59 @@ function mergeRecallSourceArrays(left: unknown, right: unknown): unknown[] {
   return out;
 }
 
+type ProductMemoryPacketEntry = AionisMemoryPacket["relevant_memories"][number];
+
+function mergeStructuredExecutionControlEntry(
+  base: ProductMemoryPacketEntry,
+  structured: ProductMemoryPacketEntry,
+): ProductMemoryPacketEntry {
+  return {
+    ...base,
+    authority: structured.authority,
+    lifecycle_state: structured.lifecycle_state,
+    target_files: structured.target_files.length > 0 ? structured.target_files : base.target_files,
+    execution_state: structured.execution_state ?? base.execution_state,
+    memory_contract: structured.memory_contract,
+    recall_sources: mergeRecallSourceArrays(
+      base.recall_sources,
+      structured.recall_sources,
+    ) as ProductMemoryPacketEntry["recall_sources"],
+  };
+}
+
+function mergedMemoryPacketLifecycle(args: {
+  entries: ProductMemoryPacketEntry[];
+  base: AionisMemoryPacket["lifecycle"];
+  supplemental: AionisMemoryPacket["lifecycle"];
+}): AionisMemoryPacket["lifecycle"] {
+  const rehydrationHintsById = new Map([
+    ...args.base.rehydration_hints,
+    ...args.supplemental.rehydration_hints,
+  ].map((hint) => [hint.memory_id, hint]));
+  return {
+    used_memory_ids: args.entries
+      .filter((entry) => entry.authority !== "blocked")
+      .map((entry) => entry.memory_id),
+    candidate_memory_ids: args.entries
+      .filter((entry) => entry.authority === "candidate")
+      .map((entry) => entry.memory_id),
+    suppressed_memory_ids: args.entries
+      .filter((entry) => entry.lifecycle_state === "suppressed" || entry.authority === "blocked")
+      .map((entry) => entry.memory_id),
+    archived_memory_ids: args.entries
+      .filter((entry) => entry.lifecycle_state === "archived")
+      .map((entry) => entry.memory_id),
+    rehydration_hints: args.entries
+      .filter((entry) => entry.lifecycle_state === "rehydration_candidate")
+      .map((entry) => rehydrationHintsById.get(entry.memory_id) ?? {
+        memory_id: entry.memory_id,
+        mode: "differential" as const,
+        reason: "Cold memory was relevant enough to recall, but payload should be rehydrated only if needed.",
+        required: false,
+      }),
+  };
+}
+
 function mergeAionisMemoryPackets(
   base: AionisMemoryPacket | null,
   supplemental: AionisMemoryPacket | null,
@@ -1588,17 +1641,13 @@ function mergeAionisMemoryPackets(
 
   const seenMemoryIds = new Set(base.relevant_memories.map((entry) => entry.memory_id));
   const supplementalById = new Map(supplemental.relevant_memories.map((entry) => [entry.memory_id, entry]));
-  let recallSourceChanged = false;
+  let structuredProjectionChanged = false;
   const baseMemoriesWithMergedSources = base.relevant_memories.map((entry) => {
     const duplicate = supplementalById.get(entry.memory_id);
     if (!duplicate) return entry;
-    const recallSources = mergeRecallSourceArrays(entry.recall_sources, duplicate.recall_sources);
-    if (recallSources.length === entry.recall_sources.length) return entry;
-    recallSourceChanged = true;
-    return {
-      ...entry,
-      recall_sources: recallSources,
-    };
+    const merged = mergeStructuredExecutionControlEntry(entry, duplicate);
+    if (stableStringify(merged) !== stableStringify(entry)) structuredProjectionChanged = true;
+    return merged;
   });
   const relevantMemories = [
     ...baseMemoriesWithMergedSources,
@@ -1608,7 +1657,7 @@ function mergeAionisMemoryPackets(
       return true;
     }),
   ];
-  const changed = relevantMemories.length > base.relevant_memories.length || recallSourceChanged;
+  const changed = relevantMemories.length > base.relevant_memories.length || structuredProjectionChanged;
   if (!changed) return { packet: base, changed: false };
 
   const evidenceIds = new Set<string>();
@@ -1639,12 +1688,11 @@ function mergeAionisMemoryPackets(
     || entry.lifecycle_state === "demoted"
     || entry.lifecycle_state === "archived"
   ).length;
-  const rehydrationHints = [
-    ...base.lifecycle.rehydration_hints,
-    ...supplemental.lifecycle.rehydration_hints.filter((hint) =>
-      !base.lifecycle.rehydration_hints.some((existing) => existing.memory_id === hint.memory_id)
-    ),
-  ];
+  const lifecycle = mergedMemoryPacketLifecycle({
+    entries: relevantMemories,
+    base: base.lifecycle,
+    supplemental: supplemental.lifecycle,
+  });
 
   return {
     packet: AionisMemoryPacketSchema.parse({
@@ -1652,31 +1700,13 @@ function mergeAionisMemoryPackets(
       memory_family: memoryFamily,
       relevant_memories: relevantMemories,
       evidence_trail: evidenceTrail,
-      lifecycle: {
-        used_memory_ids: uniqueStrings([
-          ...base.lifecycle.used_memory_ids,
-          ...supplemental.lifecycle.used_memory_ids,
-        ]),
-        candidate_memory_ids: uniqueStrings([
-          ...base.lifecycle.candidate_memory_ids,
-          ...supplemental.lifecycle.candidate_memory_ids,
-        ]),
-        suppressed_memory_ids: uniqueStrings([
-          ...base.lifecycle.suppressed_memory_ids,
-          ...supplemental.lifecycle.suppressed_memory_ids,
-        ]),
-        archived_memory_ids: uniqueStrings([
-          ...base.lifecycle.archived_memory_ids,
-          ...supplemental.lifecycle.archived_memory_ids,
-        ]),
-        rehydration_hints: rehydrationHints,
-      },
+      lifecycle,
       contradiction_warnings: contradictionWarnings,
       forgetting_state: {
         stale_memory_count: staleMemoryCount,
         suppressed_count: relevantMemories.filter((entry) => entry.lifecycle_state === "suppressed").length,
         archived_count: relevantMemories.filter((entry) => entry.lifecycle_state === "archived").length,
-        rehydration_candidate_count: rehydrationHints.length,
+        rehydration_candidate_count: lifecycle.rehydration_hints.length,
       },
       behavior_impact: {
         will_shape_behavior:

@@ -11,6 +11,7 @@ import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts"
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { createAionisClient } from "../../src/sdk.ts";
+import { deriveExecutionContractFromSlots } from "../../src/memory/execution-contract.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
@@ -159,6 +160,24 @@ async function listenLocal(app: ReturnType<typeof Fastify>): Promise<string> {
   return `http://127.0.0.1:${address.port}`;
 }
 
+test("execution contract skips invalid outer trust and preserves valid native trust", () => {
+  const contract = deriveExecutionContractFromSlots({
+    slots: {
+      contract_trust: "accepted",
+      task_signature: "sdk-current-task",
+      execution_native_v1: {
+        execution_kind: "workflow_anchor",
+        summary_kind: "current_state",
+        contract_trust: "advisory",
+        task_signature: "sdk-current-task",
+      },
+    },
+  });
+
+  assert.equal(contract?.contract_trust, "advisory");
+  assert.equal(contract?.task_signature, "sdk-current-task");
+});
+
 test("SDK guideAgentContext over real Runtime HTTP promotes accepted same-workflow execution memory", async () => {
   const app = Fastify();
   const env = liteEnv();
@@ -191,10 +210,10 @@ test("SDK guideAgentContext over real Runtime HTTP promotes accepted same-workfl
       target_files: ["src/current.ts"],
       tool_set: ["edit", "test"],
       continuation_hint: "Continue SDK_CURRENT_TASK_ONLY through src/current.ts.",
-      auto_embed: false,
+      auto_embed: true,
       memory_lane: "private",
       slots: {
-        contract_trust: "advisory",
+        contract_trust: "accepted",
       },
     });
 
@@ -211,7 +230,7 @@ test("SDK guideAgentContext over real Runtime HTTP promotes accepted same-workfl
       target_files: ["src/other.ts"],
       tool_set: ["edit", "test"],
       continuation_hint: "Continue SDK_OTHER_TASK_SUCCESS when the workflow signature matches.",
-      auto_embed: false,
+      auto_embed: true,
       memory_lane: "private",
       slots: {
         contract_trust: "advisory",
@@ -245,6 +264,12 @@ test("SDK guideAgentContext over real Runtime HTTP promotes accepted same-workfl
 
     const guide = result.guide as Record<string, any>;
     const packetMemories = guide.memory_packet?.relevant_memories ?? [];
+    const currentTaskMemory = packetMemories.find((entry: Record<string, unknown>) =>
+      String(entry.summary).includes("SDK_CURRENT_TASK_ONLY")
+    );
+    assert.equal(currentTaskMemory?.authority, "advisory");
+    assert.equal(currentTaskMemory?.memory_contract?.use_policy, "direct_use");
+    assert.equal(currentTaskMemory?.execution_state?.summary_kind, "current_state");
     assert.equal(
       packetMemories.some((entry: Record<string, unknown>) => String(entry.summary).includes("SDK_OTHER_TASK_SUCCESS")),
       true,

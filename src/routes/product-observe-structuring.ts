@@ -348,9 +348,13 @@ function structureExecutionWorkflowNode(node: Record<string, unknown>): Record<s
     ?? normalizeExecutionOutcomeRoleFromValue(node.outcome)
     ?? normalizeExecutionOutcomeRoleFromValue(slots.outcome)
     ?? normalizeExecutionOutcomeRoleFromValue(executionObservation?.outcome);
+  const contractTrust = productContractTrust(slots.contract_trust)
+    ?? productContractTrust(node.contract_trust)
+    ?? "advisory";
 
   slots.summary_kind = productFirstString(slots.summary_kind, "workflow_anchor");
   slots.compression_layer = productFirstString(slots.compression_layer, "L2");
+  slots.contract_trust = contractTrust;
   slots.product_observe_v1 = {
     ...(productRecord(slots.product_observe_v1) ?? {}),
     schema_version: "product_observe_v1",
@@ -365,7 +369,7 @@ function structureExecutionWorkflowNode(node: Record<string, unknown>): Record<s
     ...(executionOutcomeRole ? { execution_outcome_role: executionOutcomeRole } : {}),
     summary_kind: "workflow_anchor",
     compression_layer: "L2",
-    contract_trust: productContractTrust(slots.contract_trust) ?? productContractTrust(node.contract_trust) ?? "advisory",
+    contract_trust: contractTrust,
     task_signature: taskSignature,
     ...(productFirstString(node.task_family, slots.task_family) ? {
       task_family: productFirstString(node.task_family, slots.task_family),

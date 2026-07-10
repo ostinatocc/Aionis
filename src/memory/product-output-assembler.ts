@@ -441,11 +441,15 @@ function verificationSummaryValue(value: unknown): string[] {
     ?? stringValue(record.verifier_status)
     ?? stringValue(record.result)
     ?? stringValue(record.outcome);
-  const summary = stringValue(record.summary)
-    ?? stringValue(record.message)
-    ?? stringValue(record.reason)
-    ?? stringValue(record.failure_reason)
-    ?? stringValue(record.error);
+  const summaries = compactStrings([
+    stringValue(record.summary),
+    ...stringArrayValue(record.summary),
+    ...stringArrayValue(record.verification_summary),
+    stringValue(record.message),
+    stringValue(record.reason),
+    stringValue(record.failure_reason),
+    stringValue(record.error),
+  ]);
   const checks = recordArrayValue(record.checks)
     .flatMap((check) => compactStrings([
       stringValue(check.name),
@@ -454,7 +458,8 @@ function verificationSummaryValue(value: unknown): string[] {
     ]).join(": "));
   const failures = stringArrayValue(record.failures);
   return compactStrings([
-    status && summary ? `${status}: ${summary}` : status ?? summary,
+    status && summaries[0] ? `${status}: ${summaries[0]}` : status,
+    ...(status ? summaries.slice(1) : summaries),
     ...checks,
     ...failures,
   ]);
@@ -463,14 +468,23 @@ function verificationSummaryValue(value: unknown): string[] {
 function artifactHintValue(value: unknown): string[] {
   const direct = stringValue(value);
   if (direct) return [direct];
-  return recordArrayValue(value).flatMap((record) => compactStrings([
-    stringValue(record.path)
-      ?? stringValue(record.file_path)
-      ?? stringValue(record.uri)
-      ?? stringValue(record.name)
-      ?? stringValue(record.id),
-    stringValue(record.summary) ?? stringValue(record.description),
-  ]).join(": "));
+  const record = asRecord(value);
+  const records = record
+    ? [record, ...recordArrayValue(record.artifacts)]
+    : recordArrayValue(value);
+  return compactStrings([
+    ...stringArrayValue(value),
+    ...(record ? stringArrayValue(record.artifact_hints) : []),
+    ...(record ? stringArrayValue(record.paths) : []),
+    ...records.map((entry) => compactStrings([
+      stringValue(entry.path)
+        ?? stringValue(entry.file_path)
+        ?? stringValue(entry.uri)
+        ?? stringValue(entry.name)
+        ?? stringValue(entry.id),
+      stringValue(entry.summary) ?? stringValue(entry.description),
+    ]).join(": ")),
+  ]);
 }
 
 function contractTrustValue(value: unknown): ContractTrust | null {
@@ -882,14 +896,22 @@ function memoryExecutionStateProjection(args: {
     executionContractOutcome?.acceptance_checks,
   ], 8);
   const verificationSummary = boundedExecutionEvidenceStrings([
+    ...verificationSummaryValue(nodeRecord.verification_summary),
     ...verificationSummaryValue(nodeRecord.verification),
+    ...verificationSummaryValue(args.slots?.verification_summary),
     ...verificationSummaryValue(args.slots?.verification),
+    ...verificationSummaryValue(args.contextItem?.verification_summary),
     ...verificationSummaryValue(args.contextItem?.verification),
+    ...verificationSummaryValue(executionNative?.verification_summary),
     ...verificationSummaryValue(executionNative?.verification),
+    ...verificationSummaryValue(executionState?.verification_summary),
     ...verificationSummaryValue(executionState?.verification),
+    ...verificationSummaryValue(executionObservation?.verification_summary),
     ...verificationSummaryValue(executionObservation?.verification),
+    ...verificationSummaryValue(executionPacket?.verification_summary),
     ...verificationSummaryValue(executionPacket?.verification),
     ...verificationSummaryValue(executionPacketOutcome?.verification),
+    ...verificationSummaryValue(executionContract?.verification_summary),
     ...verificationSummaryValue(executionContract?.verification),
     ...verificationSummaryValue(executionContractOutcome?.verification),
   ], 6);
@@ -897,11 +919,24 @@ function memoryExecutionStateProjection(args: {
     ...artifactHintValue(nodeRecord.artifacts),
     ...artifactHintValue(args.slots?.artifacts),
     ...artifactHintValue(args.contextItem?.artifacts),
-    ...artifactHintValue(executionNative?.artifacts),
-    ...artifactHintValue(executionState?.artifacts),
     ...artifactHintValue(executionObservation?.artifacts),
+    ...artifactHintValue(executionState?.artifacts),
+    ...artifactHintValue(executionNative?.artifacts),
     ...artifactHintValue(executionPacket?.artifacts),
     ...artifactHintValue(executionContract?.artifacts),
+    ...artifactHintValue(executionObservation?.verification),
+    ...artifactHintValue(executionState?.verification),
+    ...artifactHintValue(executionNative?.verification),
+    ...artifactHintValue(executionPacket?.verification),
+    ...artifactHintValue(executionContract?.verification),
+    ...artifactHintValue(executionObservation?.artifact_hints),
+    ...artifactHintValue(executionState?.artifact_hints),
+    ...artifactHintValue(executionNative?.artifact_hints),
+    ...artifactHintValue(executionPacket?.artifact_hints),
+    ...artifactHintValue(executionContract?.artifact_hints),
+    ...artifactHintValue(nodeRecord.artifact_hints),
+    ...artifactHintValue(args.slots?.artifact_hints),
+    ...artifactHintValue(args.contextItem?.artifact_hints),
   ], 6);
   const hasExecutionSurface =
     args.domain === "execution"

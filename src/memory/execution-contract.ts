@@ -233,6 +233,14 @@ function firstNonEmptyString(...values: unknown[]): string | null {
   return null;
 }
 
+function firstContractTrust(...values: unknown[]): ContractTrust | null {
+  for (const value of values) {
+    const trust = normalizeContractTrust(value);
+    if (trust) return trust;
+  }
+  return null;
+}
+
 function firstNonEmptyStringList(limit: number, ...values: unknown[]): string[] {
   for (const value of values) {
     const next = stringList(value, limit);
@@ -325,14 +333,14 @@ export function deriveExecutionContractFromSlots(args: {
   const derivedPolicy = asObject(slots.derived_policy_v1);
 
   const projected = buildExecutionContractFromProjection({
-    contract_trust: normalizeContractTrust(firstNonEmptyString(
+    contract_trust: firstContractTrust(
       slots.contract_trust,
       executionNative?.contract_trust,
       anchor?.contract_trust,
       recoveryContract?.contract_trust,
       policyContract?.contract_trust,
       derivedPolicy?.contract_trust,
-    )),
+    ),
     task_family: firstNonEmptyString(
       slots.task_family,
       slots.task_kind,
