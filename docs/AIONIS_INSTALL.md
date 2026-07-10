@@ -103,6 +103,37 @@ Runtime editions:
 | `lite` | Default | Local developer Runtime for local agents, SDK/HTTP integrations, and MCP on the same machine. |
 | `server` | Managed Server path | Remote SDK/MCP endpoint with explicit auth and request controls. Use `AIONIS_EDITION=server`, `AIONIS_MODE=service`, and `MEMORY_AUTH_MODE=api_key`, `jwt`, or `api_key_or_jwt`. |
 
+## Runtime Configuration
+
+Start from the local core posture and add only the components you need. Runtime
+resolves one typed internal profile at startup; there is no separate profile
+name to keep synchronized with the component settings.
+
+| Posture | Required settings | Runtime composition |
+|---|---|---|
+| Local core | Defaults from `.env.example` | SQLite truth store |
+| Local + Zvec | `RECALL_ANN_PROVIDER=zvec` | SQLite plus local ANN candidates |
+| Local + Substrate | `RECALL_SUBSTRATE_SIDECAR_ENABLED=true` | SQLite plus Substrate candidates |
+| Full local | Enable both settings above | SQLite plus both candidate sources |
+| Server development | `AIONIS_EDITION=server`, `AIONIS_MODE=service`, `APP_ENV=dev`, explicit auth | Authenticated development endpoint |
+| Server production | Server settings with `APP_ENV=prod`, request controls, and authority signing keys | Fail-closed managed endpoint |
+
+Explicit advanced values override profile defaults when they are compatible
+with the selected posture. Safety invariants still fail closed: Lite cannot be
+exposed remotely without an explicit opt-in, Server cannot run unauthenticated
+unless the development override is set, and production requires auth, rate
+limits, tenant quotas, and durable authority receipt keys.
+
+The checked-in [`.env.example`](../.env.example) is organized in this order:
+
+1. normal local core settings;
+2. optional embedding, Zvec, and Substrate components;
+3. advanced Server, sandbox, replay, and admission settings.
+
+Settings not shown use validated Runtime defaults. Removed PostgreSQL pool,
+Control Plane telemetry, and dormant tier/compression/consolidation variables
+are not accepted as Runtime configuration in the focused build.
+
 Server production deployments must configure authority receipt signing keys.
 The Runtime signs authority-bearing memory receipts with the active key and
 verifies older receipts by their `key_id`, so keep previous keys in the keyring

@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 import { sealAuthorityReceiptsForPreparedWrite } from "./authority-fixture-helpers.ts";
-import { createRequestGuards } from "../../src/app/request-guards.ts";
+import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { buildPolicyLearningControlContract } from "../../src/memory/evolution-inspect.ts";
 import { buildExecutionContractFromProjection } from "../../src/memory/execution-contract.ts";

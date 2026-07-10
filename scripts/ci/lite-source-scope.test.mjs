@@ -773,7 +773,12 @@ test("lite runtime services do not wire postgres or embedded store constructors"
   for (const symbol of forbiddenSymbols) {
     assert.equal(runtimeServicesFile.includes(symbol), false, `${symbol} should be absent from lite runtime-services`);
   }
-  assert.match(runtimeServicesFile, /assertLocalStoreRuntimeEdition\(env, "local-store runtime services"\)/);
+  assert.match(runtimeServicesFile, /import type \{ RuntimeConfig \} from "\.\.\/config\/runtime-config\.js"/);
+  assert.match(runtimeServicesFile, /export type RuntimeServiceConfig = Pick</);
+  assert.match(runtimeServicesFile, /const \{ runtime, storage, recall, limits, sandbox, providers \} = config/);
+  assert.match(runtimeServicesFile, /assertLocalStoreRuntimeEdition\(runtime, "local-store runtime services"\)/);
+  assert.match(runtimeServicesFile, /createEmbeddingProviders\(providers\.embedding\)/);
+  assert.equal(runtimeServicesFile.includes("process.env"), false, "runtime services should consume resolved config only");
 });
 
 test("request guards keep lite posture while excluding control-plane auth and tenant quota plumbing", () => {
@@ -795,6 +800,11 @@ test("request guards keep lite posture while excluding control-plane auth and te
   assert.match(requestGuardsFile, /aionis-lite request guards only support MEMORY_AUTH_MODE=off/);
   assert.match(requestGuardsFile, /aionis-lite request guards only support TENANT_QUOTA_ENABLED=false/);
   assert.match(requestGuardsFile, /aionis-server request guards require MEMORY_AUTH_MODE=api_key, jwt, or api_key_or_jwt/);
+  assert.match(requestGuardsFile, /const \{ runtime, governance, limits \} = config/);
+  assert.equal(requestGuardsFile.includes("process.env"), false, "request guards should consume resolved config only");
+  assert.match(runtimeEntryFile, /const \{ env, config: runtimeConfig \} = loadRuntimeConfig\(\{ \.\.\.process\.env \}\)/);
+  assert.match(runtimeEntryFile, /createRuntimeServices\(runtimeConfig\)/);
+  assert.match(runtimeEntryFile, /createRequestGuards\(\{\s*config: runtimeConfig,/);
 });
 
 test("lite server does not keep db-backed request telemetry plumbing", () => {
@@ -813,6 +823,7 @@ test("lite server does not keep db-backed request telemetry plumbing", () => {
   assert.equal(httpObservabilityFile.includes("createApiKeyPrincipalResolver"), false);
   assert.equal(httpObservabilityFile.includes("createTenantQuotaResolver"), false);
   assert.equal(httpObservabilityFile.includes("recordControlAuditEvent"), false);
+  assert.equal(httpObservabilityFile.includes("process.env"), false, "HTTP helpers should consume captured Runtime config");
 });
 
 test("lite health surface avoids backend implementation detail fields", () => {

@@ -22,10 +22,10 @@ import { createRecallPolicy } from "./app/recall-policy.js";
 import { createRecallTextEmbedRuntime } from "./app/recall-text-embed.js";
 import { createRuntimeServices } from "./app/runtime-services.js";
 import { startLiteAssociativeLinkWorker } from "./jobs/associative-linking-worker.js";
-import { loadEnv } from "./config.js";
+import { loadRuntimeConfig } from "./config/runtime-config.js";
 
 export async function startAionisRuntime(): Promise<void> {
-  const env = loadEnv();
+  const { env, config: runtimeConfig } = loadRuntimeConfig({ ...process.env });
   const {
     sandboxRemoteAllowedHosts,
     sandboxRemoteAllowedCidrs,
@@ -56,7 +56,7 @@ export async function startAionisRuntime(): Promise<void> {
     embeddingSurfacePolicy,
     recallInflightGate,
     writeInflightGate,
-  } = await createRuntimeServices(env);
+  } = await createRuntimeServices(runtimeConfig);
   const {
     buildRecallAuth,
     acquireInflightSlot,
@@ -67,7 +67,7 @@ export async function startAionisRuntime(): Promise<void> {
     tenantFromBody,
     enforceTenantQuota,
   } = createRequestGuards({
-    env,
+    config: runtimeConfig,
     embedder: queryEmbedder,
     recallLimiter,
     debugEmbedLimiter,
@@ -106,7 +106,7 @@ export async function startAionisRuntime(): Promise<void> {
     resolveRequestApiKeyPrefixForTelemetry,
     recordContextAssemblyTelemetryBestEffort,
   } = createHttpObservabilityHelpers({
-    env,
+    config: runtimeConfig,
   });
   const coerceRecallProfileName = (profile: string): Parameters<typeof resolveExplicitRecallMode>[1] =>
     profile === "strict_edges" || profile === "quality_first" || profile === "lite"
@@ -178,8 +178,8 @@ export async function startAionisRuntime(): Promise<void> {
     ? startLiteAssociativeLinkWorker({
         writeStore: liteWriteStore,
         recallAccess: liteRecallAccess,
-        intervalMs: env.OUTBOX_POLL_INTERVAL_MS,
-        batchSize: env.OUTBOX_BATCH_SIZE,
+        intervalMs: runtimeConfig.storage.OUTBOX_POLL_INTERVAL_MS,
+        batchSize: runtimeConfig.storage.OUTBOX_BATCH_SIZE,
         logger: app.log,
       })
     : null;

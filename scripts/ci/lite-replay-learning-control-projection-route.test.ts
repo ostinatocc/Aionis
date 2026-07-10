@@ -6,7 +6,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
-import { createRequestGuards } from "../../src/app/request-guards.ts";
+import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import { createReplayRepairReviewPolicy } from "../../src/app/replay-repair-review-policy.ts";
 import { createReplayRuntimeOptionBuilders } from "../../src/app/replay-runtime-options.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";

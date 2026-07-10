@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
-import { createRequestGuards } from "../../src/app/request-guards.ts";
+import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 import { sealAuthorityReceiptsForPreparedWrite } from "./authority-fixture-helpers.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";

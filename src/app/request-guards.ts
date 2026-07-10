@@ -1,4 +1,4 @@
-import type { Env } from "../config.js";
+import type { RuntimeConfig } from "../config/runtime-config.js";
 import type { RecallAuth } from "../memory/recall.js";
 import { secretTokensEqual } from "../util/admin_auth.js";
 import { createAuthResolver, type AuthPrincipal } from "../util/auth.js";
@@ -96,7 +96,7 @@ export type IdentityRequestKind =
   | "replay_playbook_dispatch";
 
 type CreateRequestGuardsArgs = {
-  env: Env;
+  config: Pick<RuntimeConfig, "runtime" | "governance" | "limits">;
   embedder: { embed: (texts: string[]) => Promise<number[][]> } | null;
   recallLimiter: Limiter | null;
   debugEmbedLimiter: Limiter | null;
@@ -109,17 +109,17 @@ type CreateRequestGuardsArgs = {
 const TENANT_SLOT_SCAN_MAX_DEPTH = 32;
 const TENANT_SLOT_SCAN_MAX_NODES = 20000;
 
-function assertLiteRequestGuardPosture(env: Env): void {
-  if (env.MEMORY_AUTH_MODE !== "off") {
+function assertLiteRequestGuardPosture(config: Pick<RuntimeConfig, "governance">): void {
+  if (config.governance.MEMORY_AUTH_MODE !== "off") {
     throw new Error("aionis-lite request guards only support MEMORY_AUTH_MODE=off");
   }
-  if (env.TENANT_QUOTA_ENABLED) {
+  if (config.governance.TENANT_QUOTA_ENABLED) {
     throw new Error("aionis-lite request guards only support TENANT_QUOTA_ENABLED=false");
   }
 }
 
-function assertServerRequestGuardPosture(env: Env): void {
-  if (env.MEMORY_AUTH_MODE === "off" && !env.AIONIS_SERVER_ALLOW_AUTH_OFF_FOR_DEV) {
+function assertServerRequestGuardPosture(config: Pick<RuntimeConfig, "runtime" | "governance">): void {
+  if (config.governance.MEMORY_AUTH_MODE === "off" && !config.runtime.AIONIS_SERVER_ALLOW_AUTH_OFF_FOR_DEV) {
     throw new Error("aionis-server request guards require MEMORY_AUTH_MODE=api_key, jwt, or api_key_or_jwt");
   }
 }
@@ -139,9 +139,9 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
-function serverDefaultScopeForPrincipal(env: Env, principal: AuthPrincipal): string {
+function serverDefaultScopeForPrincipal(runtime: RuntimeConfig["runtime"], principal: AuthPrincipal): string {
   if (principal.default_scope && principal.default_scope.trim().length > 0) return principal.default_scope.trim();
-  const configured = env.MEMORY_SCOPE.trim();
+  const configured = runtime.MEMORY_SCOPE.trim();
   if (!configured || configured === "default") return `${principal.tenant_id}/default`;
   if (configured === principal.tenant_id || configured.startsWith(`${principal.tenant_id}/`)) return configured;
   return `${principal.tenant_id}/${configured}`;
@@ -281,7 +281,7 @@ function isReplayWriteIdentityKind(kind: IdentityRequestKind): boolean {
 }
 
 export function createRequestGuards({
-  env,
+  config,
   embedder,
   recallLimiter,
   debugEmbedLimiter,
@@ -290,58 +290,59 @@ export function createRequestGuards({
   recallInflightGate,
   writeInflightGate,
 }: CreateRequestGuardsArgs) {
-  if (env.AIONIS_EDITION === "lite") {
-    assertLiteRequestGuardPosture(env);
+  const { runtime, governance, limits } = config;
+  if (runtime.AIONIS_EDITION === "lite") {
+    assertLiteRequestGuardPosture(config);
   } else {
-    assertServerRequestGuardPosture(env);
+    assertServerRequestGuardPosture(config);
   }
 
   const authResolver = createAuthResolver({
-    mode: env.MEMORY_AUTH_MODE,
-    apiKeysJson: env.MEMORY_API_KEYS_JSON,
-    jwtHs256Secret: env.MEMORY_JWT_HS256_SECRET,
-    jwtClockSkewSec: env.MEMORY_JWT_CLOCK_SKEW_SEC,
-    jwtRequireExp: env.MEMORY_JWT_REQUIRE_EXP,
+    mode: governance.MEMORY_AUTH_MODE,
+    apiKeysJson: governance.MEMORY_API_KEYS_JSON,
+    jwtHs256Secret: governance.MEMORY_JWT_HS256_SECRET,
+    jwtClockSkewSec: governance.MEMORY_JWT_CLOCK_SKEW_SEC,
+    jwtRequireExp: governance.MEMORY_JWT_REQUIRE_EXP,
   });
 
-  const tenantRecallLimiter = env.TENANT_QUOTA_ENABLED
+  const tenantRecallLimiter = governance.TENANT_QUOTA_ENABLED
     ? new TokenBucketLimiter({
-        rate_per_sec: env.TENANT_RECALL_RATE_LIMIT_RPS,
-        burst: env.TENANT_RECALL_RATE_LIMIT_BURST,
-        ttl_ms: env.RATE_LIMIT_TTL_MS,
+        rate_per_sec: limits.TENANT_RECALL_RATE_LIMIT_RPS,
+        burst: limits.TENANT_RECALL_RATE_LIMIT_BURST,
+        ttl_ms: limits.RATE_LIMIT_TTL_MS,
         sweep_every_n: 500,
       })
     : null;
-  const tenantDebugEmbedLimiter = env.TENANT_QUOTA_ENABLED
+  const tenantDebugEmbedLimiter = governance.TENANT_QUOTA_ENABLED
     ? new TokenBucketLimiter({
-        rate_per_sec: env.TENANT_DEBUG_EMBED_RATE_LIMIT_RPS,
-        burst: env.TENANT_DEBUG_EMBED_RATE_LIMIT_BURST,
-        ttl_ms: env.RATE_LIMIT_TTL_MS,
+        rate_per_sec: limits.TENANT_DEBUG_EMBED_RATE_LIMIT_RPS,
+        burst: limits.TENANT_DEBUG_EMBED_RATE_LIMIT_BURST,
+        ttl_ms: limits.RATE_LIMIT_TTL_MS,
         sweep_every_n: 500,
       })
     : null;
-  const tenantWriteLimiter = env.TENANT_QUOTA_ENABLED
+  const tenantWriteLimiter = governance.TENANT_QUOTA_ENABLED
     ? new TokenBucketLimiter({
-        rate_per_sec: env.TENANT_WRITE_RATE_LIMIT_RPS,
-        burst: env.TENANT_WRITE_RATE_LIMIT_BURST,
-        ttl_ms: env.RATE_LIMIT_TTL_MS,
+        rate_per_sec: limits.TENANT_WRITE_RATE_LIMIT_RPS,
+        burst: limits.TENANT_WRITE_RATE_LIMIT_BURST,
+        ttl_ms: limits.RATE_LIMIT_TTL_MS,
         sweep_every_n: 500,
       })
     : null;
-  const tenantRecallTextEmbedLimiter = env.TENANT_QUOTA_ENABLED
+  const tenantRecallTextEmbedLimiter = governance.TENANT_QUOTA_ENABLED
     ? new TokenBucketLimiter({
-        rate_per_sec: env.TENANT_RECALL_TEXT_EMBED_RATE_LIMIT_RPS,
-        burst: env.TENANT_RECALL_TEXT_EMBED_RATE_LIMIT_BURST,
-        ttl_ms: env.RATE_LIMIT_TTL_MS,
+        rate_per_sec: limits.TENANT_RECALL_TEXT_EMBED_RATE_LIMIT_RPS,
+        burst: limits.TENANT_RECALL_TEXT_EMBED_RATE_LIMIT_BURST,
+        ttl_ms: limits.RATE_LIMIT_TTL_MS,
         sweep_every_n: 500,
       })
     : null;
 
-  const trustedProxyCidrs = parseTrustedProxyCidrs(env.TRUSTED_PROXY_CIDRS);
+  const trustedProxyCidrs = parseTrustedProxyCidrs(runtime.TRUSTED_PROXY_CIDRS);
   const requestClientIp = (req: RequestLike): string => {
     const cached = typeof req.aionis_client_ip === "string" ? req.aionis_client_ip : "";
     if (cached) return cached;
-    const ip = env.TRUST_PROXY
+    const ip = runtime.TRUST_PROXY
       ? resolveTrustedClientIp({
           remoteAddress: String(req.raw?.socket?.remoteAddress ?? req.socket?.remoteAddress ?? ""),
           headers: req.headers ?? {},
@@ -356,17 +357,17 @@ export function createRequestGuards({
     if (!wantDebugEmbeddings) return { allow_debug_embeddings: false };
 
     const headerToken = String(req.headers?.["x-admin-token"] ?? "");
-    if (secretTokensEqual(headerToken, env.ADMIN_TOKEN)) return { allow_debug_embeddings: true };
+    if (secretTokensEqual(headerToken, governance.ADMIN_TOKEN)) return { allow_debug_embeddings: true };
 
     const ip = requestClientIp(req);
-    if (!env.ADMIN_TOKEN && env.APP_ENV !== "prod" && isLoopbackIp(ip)) return { allow_debug_embeddings: true };
+    if (!governance.ADMIN_TOKEN && runtime.APP_ENV !== "prod" && isLoopbackIp(ip)) return { allow_debug_embeddings: true };
 
     return { allow_debug_embeddings: false };
   };
 
   const rateLimitKey = (req: RequestLike, category: string): string => {
     const headerToken = String(req.headers?.["x-admin-token"] ?? "");
-    if (secretTokensEqual(headerToken, env.ADMIN_TOKEN)) {
+    if (secretTokensEqual(headerToken, governance.ADMIN_TOKEN)) {
       return `${category}:admin:${sha256Hex(headerToken).slice(0, 16)}`;
     }
     const ip = requestClientIp(req) || "unknown";
@@ -387,7 +388,7 @@ export function createRequestGuards({
   };
 
   const enforceRateLimit = async (req: RequestLike, reply: ReplyWithHeader, kind: RateLimitKind) => {
-    if (!env.RATE_LIMIT_ENABLED) return;
+    if (!limits.RATE_LIMIT_ENABLED) return;
     const limiter =
       kind === "debug_embeddings"
         ? debugEmbedLimiter
@@ -397,13 +398,13 @@ export function createRequestGuards({
     if (!limiter) return;
 
     const ip = requestClientIp(req);
-    if (env.RATE_LIMIT_BYPASS_LOOPBACK && env.APP_ENV !== "prod" && isLoopbackIp(ip)) return;
+    if (limits.RATE_LIMIT_BYPASS_LOOPBACK && runtime.APP_ENV !== "prod" && isLoopbackIp(ip)) return;
 
     const key = rateLimitKey(req, kind);
     let waitedMs = 0;
     let res = limiter.check(key, 1);
-    if (!res.allowed && kind === "write" && env.WRITE_RATE_LIMIT_MAX_WAIT_MS > 0) {
-      waitedMs = Math.min(env.WRITE_RATE_LIMIT_MAX_WAIT_MS, Math.max(1, res.retry_after_ms));
+    if (!res.allowed && kind === "write" && limits.WRITE_RATE_LIMIT_MAX_WAIT_MS > 0) {
+      waitedMs = Math.min(limits.WRITE_RATE_LIMIT_MAX_WAIT_MS, Math.max(1, res.retry_after_ms));
       await sleep(waitedMs);
       res = limiter.check(key, 1);
     }
@@ -424,13 +425,13 @@ export function createRequestGuards({
 
   const enforceRecallTextEmbedQuota = async (req: RequestLike, reply: ReplyWithHeader, tenantId: string) => {
     if (!embedder) return;
-    if (!env.RATE_LIMIT_ENABLED || !recallTextEmbedLimiter) return;
+    if (!limits.RATE_LIMIT_ENABLED || !recallTextEmbedLimiter) return;
 
     const key = rateLimitKey(req, "recall_text_embed");
     let waitedMs = 0;
     let res = recallTextEmbedLimiter.check(key, 1);
-    if (!res.allowed && env.RECALL_TEXT_EMBED_RATE_LIMIT_MAX_WAIT_MS > 0) {
-      waitedMs = Math.min(env.RECALL_TEXT_EMBED_RATE_LIMIT_MAX_WAIT_MS, Math.max(1, res.retry_after_ms));
+    if (!res.allowed && limits.RECALL_TEXT_EMBED_RATE_LIMIT_MAX_WAIT_MS > 0) {
+      waitedMs = Math.min(limits.RECALL_TEXT_EMBED_RATE_LIMIT_MAX_WAIT_MS, Math.max(1, res.retry_after_ms));
       await sleep(waitedMs);
       res = recallTextEmbedLimiter.check(key, 1);
     }
@@ -444,7 +445,7 @@ export function createRequestGuards({
   };
 
   const requireMemoryPrincipal = async (req: RequestLike): Promise<AuthPrincipal | null> => {
-    if (env.MEMORY_AUTH_MODE === "off") return null;
+    if (governance.MEMORY_AUTH_MODE === "off") return null;
     const principal = authResolver.resolve(req.headers ?? {});
     if (principal) return principal;
     throw new HttpError(401, "unauthorized", "missing or invalid memory credentials", {
@@ -464,11 +465,11 @@ export function createRequestGuards({
     const headerTenant = firstHeaderValue(headerTenantRaw);
     const bodyTenant = typeof obj.tenant_id === "string" ? obj.tenant_id.trim() : "";
 
-    if (env.AIONIS_EDITION === "server" && principal) {
+    if (runtime.AIONIS_EDITION === "server" && principal) {
       assertTenantAllowedForPrincipal({ principal, tenantId: headerTenant, source: "x-tenant-id" });
       assertTenantAllowedForPrincipal({ principal, tenantId: bodyTenant, source: "body.tenant_id" });
       assertNoTenantOverrideInSlots({ value: obj, principal });
-      const requestedScope = stringField(obj, "scope") || serverDefaultScopeForPrincipal(env, principal);
+      const requestedScope = stringField(obj, "scope") || serverDefaultScopeForPrincipal(runtime, principal);
       assertScopeAllowedForPrincipal({ principal, scope: requestedScope });
       obj.tenant_id = principal.tenant_id;
       obj.scope = requestedScope;
@@ -489,7 +490,7 @@ export function createRequestGuards({
     }
 
     if (isReplayReadIdentityKind(kind) && !obj.consumer_agent_id) {
-      obj.consumer_agent_id = env.LITE_LOCAL_ACTOR_ID;
+      obj.consumer_agent_id = runtime.LITE_LOCAL_ACTOR_ID;
     }
 
     if (
@@ -502,21 +503,21 @@ export function createRequestGuards({
       )
       && !obj.actor
     ) {
-      obj.actor = env.LITE_LOCAL_ACTOR_ID;
+      obj.actor = runtime.LITE_LOCAL_ACTOR_ID;
     }
 
     if (kind === "write" || kind === "handoff_store" || isReplayWriteIdentityKind(kind)) {
-      if (!obj.actor) obj.actor = env.LITE_LOCAL_ACTOR_ID;
+      if (!obj.actor) obj.actor = runtime.LITE_LOCAL_ACTOR_ID;
       if (!obj.memory_lane) obj.memory_lane = "private";
-      if (!obj.producer_agent_id) obj.producer_agent_id = env.LITE_LOCAL_ACTOR_ID;
-      if (!obj.owner_agent_id && !obj.owner_team_id) obj.owner_agent_id = env.LITE_LOCAL_ACTOR_ID;
+      if (!obj.producer_agent_id) obj.producer_agent_id = runtime.LITE_LOCAL_ACTOR_ID;
+      if (!obj.owner_agent_id && !obj.owner_team_id) obj.owner_agent_id = runtime.LITE_LOCAL_ACTOR_ID;
     }
 
     if (kind === "delegation_records_write") {
-      if (!obj.actor) obj.actor = env.LITE_LOCAL_ACTOR_ID;
+      if (!obj.actor) obj.actor = runtime.LITE_LOCAL_ACTOR_ID;
       if (!obj.memory_lane) obj.memory_lane = "shared";
-      if (!obj.producer_agent_id) obj.producer_agent_id = env.LITE_LOCAL_ACTOR_ID;
-      if (!obj.owner_agent_id && !obj.owner_team_id) obj.owner_agent_id = env.LITE_LOCAL_ACTOR_ID;
+      if (!obj.producer_agent_id) obj.producer_agent_id = runtime.LITE_LOCAL_ACTOR_ID;
+      if (!obj.owner_agent_id && !obj.owner_team_id) obj.owner_agent_id = runtime.LITE_LOCAL_ACTOR_ID;
     }
 
     if (
@@ -529,7 +530,7 @@ export function createRequestGuards({
       || kind === "delegation_records_find"
       || kind === "delegation_records_aggregate"
     ) {
-      if (!obj.consumer_agent_id) obj.consumer_agent_id = env.LITE_LOCAL_ACTOR_ID;
+      if (!obj.consumer_agent_id) obj.consumer_agent_id = runtime.LITE_LOCAL_ACTOR_ID;
     }
 
     if (kind === "rules_evaluate" || kind === "tools_select" || kind === "tools_feedback" || kind === "planning_context" || kind === "context_assemble" || kind === "experience_intelligence") {
@@ -537,8 +538,8 @@ export function createRequestGuards({
       const ctx = ctxRecord ? { ...ctxRecord } : {};
       const agentRecord = asRecord(ctx.agent);
       const agent = agentRecord ? { ...agentRecord } : {};
-      if (!agent.id) agent.id = env.LITE_LOCAL_ACTOR_ID;
-      if (!ctx.agent_id) ctx.agent_id = env.LITE_LOCAL_ACTOR_ID;
+      if (!agent.id) agent.id = runtime.LITE_LOCAL_ACTOR_ID;
+      if (!ctx.agent_id) ctx.agent_id = runtime.LITE_LOCAL_ACTOR_ID;
       if (Object.keys(agent).length > 0) ctx.agent = agent;
       obj.context = ctx;
     }
@@ -552,7 +553,7 @@ export function createRequestGuards({
       const tenantId = record.tenant_id;
       if (typeof tenantId === "string" && tenantId.trim().length > 0) return tenantId.trim();
     }
-    return env.MEMORY_TENANT_ID;
+    return runtime.MEMORY_TENANT_ID;
   };
 
   const scopeFromBody = (body: unknown): string => {
@@ -561,7 +562,7 @@ export function createRequestGuards({
       const scope = record.scope;
       if (typeof scope === "string" && scope.trim().length > 0) return scope.trim();
     }
-    return env.MEMORY_SCOPE;
+    return runtime.MEMORY_SCOPE;
   };
 
   const projectFromBody = (body: unknown): string | null => {
@@ -574,12 +575,12 @@ export function createRequestGuards({
   };
 
   const tenantQuotaKey = (kind: string, tenantId: string): string => {
-    const normalized = tenantId.trim() || env.MEMORY_TENANT_ID;
+    const normalized = tenantId.trim() || runtime.MEMORY_TENANT_ID;
     return `tenant:${kind}:${normalized}`;
   };
 
   const enforceTenantLimiter = async (reply: ReplyWithHeader, kind: TenantQuotaKind | "recall_text_embed", tenantId: string) => {
-    if (!env.TENANT_QUOTA_ENABLED) return;
+    if (!governance.TENANT_QUOTA_ENABLED) return;
     const limiter =
       kind === "debug_embeddings"
         ? tenantDebugEmbedLimiter
@@ -591,9 +592,9 @@ export function createRequestGuards({
     if (!limiter) return;
     const waitLimitMs =
       kind === "write"
-        ? env.TENANT_WRITE_RATE_LIMIT_MAX_WAIT_MS
+        ? limits.TENANT_WRITE_RATE_LIMIT_MAX_WAIT_MS
         : kind === "recall_text_embed"
-          ? env.TENANT_RECALL_TEXT_EMBED_RATE_LIMIT_MAX_WAIT_MS
+          ? limits.TENANT_RECALL_TEXT_EMBED_RATE_LIMIT_MAX_WAIT_MS
           : 0;
     let waitedMs = 0;
     let res = limiter.check(tenantQuotaKey(kind, tenantId), 1);
@@ -605,7 +606,7 @@ export function createRequestGuards({
     if (res.allowed) return;
     reply.header("retry-after", Math.ceil(res.retry_after_ms / 1000));
     throw new HttpError(429, `tenant_quota_exceeded_${kind}`, `tenant quota exceeded (${kind}); retry later`, {
-      tenant_id: tenantId.trim() || env.MEMORY_TENANT_ID,
+      tenant_id: tenantId.trim() || runtime.MEMORY_TENANT_ID,
       retry_after_ms: res.retry_after_ms,
       waited_ms: waitedMs,
     });

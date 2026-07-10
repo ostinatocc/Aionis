@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
-import { createRequestGuards } from "../../src/app/request-guards.ts";
+import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { prepareMemoryWrite, applyMemoryWrite } from "../../src/memory/write.ts";
 import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";

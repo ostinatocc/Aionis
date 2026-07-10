@@ -4,7 +4,7 @@ import { createOpenAIEmbeddingProvider } from "./openai.js";
 import type { EmbeddingProvider } from "./types.js";
 import type { EmbedHttpConfig } from "./http.js";
 
-const ProviderEnvSchema = z.object({
+export const EmbeddingProviderConfigSchema = z.object({
   EMBEDDING_PROVIDER: z.enum(["none", "openai", "minimax", "dashscope"]).default("none"),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_EMBED_BASE_URL: z.string().default("https://api.openai.com/v1"),
@@ -39,8 +39,14 @@ export type EmbeddingProviderBundle = {
   query: EmbeddingProvider | null;
 };
 
-export function createEmbeddingProvidersFromEnv(env: Record<string, string | undefined>): EmbeddingProviderBundle {
-  const parsed = ProviderEnvSchema.parse(env);
+export type EmbeddingProviderConfig = z.infer<typeof EmbeddingProviderConfigSchema>;
+
+export function parseEmbeddingProviderConfig(env: Record<string, string | undefined>): EmbeddingProviderConfig {
+  return EmbeddingProviderConfigSchema.parse(env);
+}
+
+export function createEmbeddingProviders(config: EmbeddingProviderConfig): EmbeddingProviderBundle {
+  const parsed = config;
 
   if (parsed.EMBEDDING_DIM !== 1536) {
     throw new Error(`EMBEDDING_DIM must be 1536; got ${parsed.EMBEDDING_DIM}`);
@@ -111,6 +117,10 @@ export function createEmbeddingProvidersFromEnv(env: Record<string, string | und
     http: httpCfg,
   });
   return { write: provider, query: provider };
+}
+
+export function createEmbeddingProvidersFromEnv(env: Record<string, string | undefined>): EmbeddingProviderBundle {
+  return createEmbeddingProviders(parseEmbeddingProviderConfig(env));
 }
 
 function openAiEmbeddingDimensions(model: string, configured: number | undefined, dim: number): number | undefined {

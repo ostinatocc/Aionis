@@ -1,4 +1,4 @@
-import type { Env } from "../config.js";
+import type { RuntimeConfig } from "../config/runtime-config.js";
 
 type CorsPolicy = {
   allow_origins: string[];
@@ -36,13 +36,6 @@ type HttpRequestLike = {
   aionis_tenant_id?: string;
   aionis_api_key_prefix?: string;
 };
-
-function parseCorsOrigins(raw: string): string[] {
-  return raw
-    .split(",")
-    .map((x) => x.trim())
-    .filter(Boolean);
-}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
@@ -89,12 +82,12 @@ function collectLayeredContextTelemetryRows(layeredContext: unknown): ContextAss
 }
 
 export function createHttpObservabilityHelpers(args: {
-  env: Env;
+  config: Pick<RuntimeConfig, "runtime">;
 }) {
-  const { env } = args;
+  const { runtime } = args.config;
 
-  const corsMemoryAllowOrigins = parseCorsOrigins(process.env.CORS_ALLOW_ORIGINS ?? (env.APP_ENV === "prod" ? "" : "*"));
-  const corsAdminAllowOrigins = parseCorsOrigins(process.env.CORS_ADMIN_ALLOW_ORIGINS ?? "");
+  const corsMemoryAllowOrigins = runtime.cors.memoryAllowOrigins;
+  const corsAdminAllowOrigins = runtime.cors.adminAllowOrigins;
   const corsMemoryAllowHeaders = "content-type,x-api-key,x-tenant-id,authorization,x-request-id";
   const corsMemoryAllowMethods = "GET,POST,OPTIONS";
   const corsAdminAllowHeaders = "content-type,authorization,x-admin-token,x-request-id";
@@ -116,7 +109,7 @@ export function createHttpObservabilityHelpers(args: {
       const isMemoryCorsMethod = method === "POST" || (method === "OPTIONS" && preflightMethod === "POST");
       if (!isMemoryCorsMethod) return null;
       return {
-        allow_origins: corsMemoryAllowOrigins,
+        allow_origins: [...corsMemoryAllowOrigins],
         allow_methods: corsMemoryAllowMethods,
         allow_headers: corsMemoryAllowHeaders,
         expose_headers: "x-request-id",
@@ -129,7 +122,7 @@ export function createHttpObservabilityHelpers(args: {
       const isAdminPreflight = method === "OPTIONS" && corsAdminRouteMethods.has(preflightMethod);
       if (!isAdminCorsMethod && !isAdminPreflight) return null;
       return {
-        allow_origins: corsAdminAllowOrigins,
+        allow_origins: [...corsAdminAllowOrigins],
         allow_methods: corsAdminAllowMethods,
         allow_headers: corsAdminAllowHeaders,
         expose_headers: "x-request-id",
@@ -146,7 +139,7 @@ export function createHttpObservabilityHelpers(args: {
       const s = body.scope;
       if (typeof s === "string" && s.trim().length > 0) return s.trim();
     }
-    return env.MEMORY_SCOPE;
+    return runtime.MEMORY_SCOPE;
   }
 
   function resolveRequestTenantForTelemetry(req: HttpRequestLike): string {
@@ -158,7 +151,7 @@ export function createHttpObservabilityHelpers(args: {
     }
     const headerTenant = typeof req.headers?.["x-tenant-id"] === "string" ? String(req.headers["x-tenant-id"]).trim() : "";
     if (headerTenant) return headerTenant;
-    return env.MEMORY_TENANT_ID;
+    return runtime.MEMORY_TENANT_ID;
   }
 
   function resolveRequestApiKeyPrefixForTelemetry(req: HttpRequestLike): string | null {

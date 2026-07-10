@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import Fastify from "fastify";
-import { createRequestGuards } from "../../src/app/request-guards.ts";
+import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
 import { registerMemoryWriteRoutes } from "./support/register-memory-write-test-route.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";

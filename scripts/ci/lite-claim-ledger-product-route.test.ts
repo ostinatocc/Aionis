@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createRequestGuards } from "../../src/app/request-guards.ts";
+import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import { createRuntimeServices } from "../../src/app/runtime-services.ts";
 import { loadEnv, type Env } from "../../src/config.ts";
+import { createRuntimeConfig } from "../../src/config/runtime-config.ts";
 import { createHandoffRouteService, registerHandoffRoutes } from "../../src/routes/handoff.ts";
 import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
 import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
@@ -71,7 +72,7 @@ async function setupClaimLedgerProductApp(args: {
   const writePath = tmpDbPath("product-write");
   const replayPath = tmpDbPath("product-replay");
   const env = await liteEnv(writePath, replayPath);
-  const services = await createRuntimeServices(env);
+  const services = await createRuntimeServices(createRuntimeConfig(env));
   const app = createHttpApp(env);
   const guards = createRequestGuards({
     env,
@@ -244,7 +245,7 @@ test("claim ledger is wired into Runtime services and health", async () => {
   const writePath = tmpDbPath("write");
   const replayPath = tmpDbPath("replay");
   const env = await liteEnv(writePath, replayPath);
-  const services = await createRuntimeServices(env);
+  const services = await createRuntimeServices(createRuntimeConfig(env));
   const app = createHttpApp(env);
   registerRuntimeErrorHandler(app);
   registerHealthRoute({

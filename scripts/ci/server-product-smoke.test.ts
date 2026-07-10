@@ -5,9 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import Fastify from "fastify";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
-import { createRequestGuards } from "../../src/app/request-guards.ts";
+import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import { createRuntimeServices } from "../../src/app/runtime-services.ts";
 import { loadEnv, type Env } from "../../src/config.ts";
+import { createRuntimeConfig } from "../../src/config/runtime-config.ts";
 import { createLiteExecutionStateStore } from "../../src/execution/state-store.ts";
 import { createLiteExecutionTreeStore } from "../../src/execution/tree-store.ts";
 import { createHandoffRouteService } from "../../src/routes/handoff.ts";
@@ -414,7 +415,7 @@ test("server edition can construct local-store Runtime services", async () => {
   const writePath = tmpDbPath("services-write");
   const replayPath = tmpDbPath("services-replay");
   const env = await serverEnv(writePath, replayPath);
-  const services = await createRuntimeServices(env);
+  const services = await createRuntimeServices(createRuntimeConfig(env));
   try {
     assert.ok(services.liteWriteStore);
     assert.ok(services.liteRecallAccess);

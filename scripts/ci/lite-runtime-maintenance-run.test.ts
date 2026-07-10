@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import Fastify from "fastify";
 import { sealAuthorityReceiptsForPreparedWrite } from "./authority-fixture-helpers.ts";
-import { createRequestGuards } from "../../src/app/request-guards.ts";
+import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { runRuntimeMaintenanceLite } from "../../src/memory/runtime-maintenance.ts";
 import { applyPreparedMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
