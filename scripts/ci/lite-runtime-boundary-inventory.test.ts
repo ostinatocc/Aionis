@@ -395,3 +395,16 @@ test("internal HTTP inventory distinguishes temporary adapters from completed re
     assert.equal(!!entry, row.public_http === "temporary", `${key} registration must match its inventory disposition`);
   }
 });
+
+test("Lite smoke follows public product routes and keeps retired replay HTTP absent", () => {
+  const smoke = fs.readFileSync(path.join(ROOT, "scripts/lite-smoke.sh"), "utf8");
+
+  assert.match(smoke, /post\("\/v1\/observe"/);
+  assert.match(smoke, /post\("\/v1\/guide"/);
+  assert.match(smoke, /retiredReplayRoute\.status !== 404/);
+  assert.equal(
+    /post\("\/v1\/memory\/replay\//.test(smoke),
+    false,
+    "Lite smoke must not depend on removed replay HTTP adapters",
+  );
+});

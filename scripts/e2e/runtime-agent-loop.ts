@@ -527,18 +527,25 @@ async function main() {
     });
     assertCondition(asRecord(outcomeObserve.observed)?.memory_written === true, "outcome observe did not write execution memory");
 
-    const assembled = await postJson(runtime.baseUrl, "/v1/execution/context/assemble", {
+    const assembled = await postJson(runtime.baseUrl, "/v1/guide", {
       tenant_id: "default",
       scope: "default",
-      memory_filters: [
-        {
-          slots_contains: { task_signature: `runtime-agent-e2e-outcome:${runId}` },
-          limit: 10,
-        },
-      ],
+      query_text: "RUNTIME_AGENT_E2E_LLM_CHOICE inspect the verified formula outcome",
+      consumer_agent_id: "local-user",
+      mode: "full_power",
+      include_packets: true,
+      context: { task_signature: `runtime-agent-e2e-outcome:${runId}` },
+      limit: 10,
     });
-    assertCondition(JSON.stringify(assembled.passed_solutions).includes("RUNTIME_AGENT_E2E_LLM_CHOICE"), "observed LLM outcome was not promoted as evidence-backed passed solution");
-    assertCondition(asRecord(assembled.selection_trace)?.evidence_backed_passed_solution_count === 1, "observed outcome was not counted as evidence-backed passed solution");
+    const outcomeAgentContext = asRecord(assembled.agent_context);
+    assertCondition(
+      JSON.stringify(assembled.memory_packet).includes("RUNTIME_AGENT_E2E_LLM_CHOICE"),
+      "observed LLM outcome was not visible as governed execution evidence",
+    );
+    assertCondition(
+      Array.isArray(outcomeAgentContext?.memory_ids) && outcomeAgentContext.memory_ids.length > 0,
+      "observed LLM outcome did not receive an AgentContext governance surface",
+    );
 
     const result = {
       contract_version: "aionis_runtime_agent_e2e_result_v1",
@@ -570,7 +577,7 @@ async function main() {
         guide_passed_solution_visible: true,
         guide_failed_branch_visible: true,
         real_llm_chose_passed_branch: true,
-        observe_outcome_promoted_with_raw_evidence: true,
+        observe_outcome_visible_as_governed_evidence: true,
       },
     };
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

@@ -805,22 +805,20 @@ export function createProductObserveService(
           });
         }
 
-        const routesUsed: string[] = [];
         let write: InternalDispatchResult | null = null;
         if (writePayload) {
           if (!dependencies.memoryWrite) {
-            return productServiceDependencyFailure("/v1/memory/write");
+            return productServiceDependencyFailure("memory_write_service");
           }
           try {
             const committed = await dependencies.memoryWrite.commit(writePayload, {
               executionTreeDefaultDisabled: false,
               startedAt: performance.now(),
             });
-            write = { ok: true, statusCode: 200, path: "/v1/memory/write", body: committed.response };
-            routesUsed.push("/v1/memory/write");
+            write = { ok: true, statusCode: 200, path: "memory_write_service", body: committed.response };
           } catch (error) {
             return productServiceDependencyFailure(
-              "/v1/memory/write",
+              "memory_write_service",
               productServiceFailureFromUnknown(error).statusCode,
             );
           }
@@ -829,7 +827,7 @@ export function createProductObserveService(
         let handoff: InternalDispatchResult | null = null;
         if (handoffPayload) {
           if (!dependencies.handoffStore) {
-            return productServiceDependencyFailure("/v1/handoff/store");
+            return productServiceDependencyFailure("handoff_store_service");
           }
           const handoffRequest = HandoffStoreRequest.parse(handoffPayload);
           try {
@@ -837,11 +835,10 @@ export function createProductObserveService(
               handoffRequest,
               { principal: context.principal },
             );
-            handoff = { ok: true, statusCode: 200, path: "/v1/handoff/store", body: response };
-            routesUsed.push("/v1/handoff/store");
+            handoff = { ok: true, statusCode: 200, path: "handoff_store_service", body: response };
           } catch (error) {
             return productServiceDependencyFailure(
-              "/v1/handoff/store",
+              "handoff_store_service",
               productServiceFailureFromUnknown(error).statusCode,
             );
           }
@@ -878,7 +875,7 @@ export function createProductObserveService(
           memory_write: write?.body ?? null,
           handoff: handoff?.body ?? null,
           source_map: {
-            routes_used: routesUsed,
+            routes_used: ["/v1/observe"],
             internal_surfaces_used: [
               ...(write ? ["memory_write"] : []),
               ...(handoff ? ["handoff_store"] : []),

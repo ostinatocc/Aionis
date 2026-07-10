@@ -360,12 +360,22 @@ function productForgetTarget(parsed: ProductForgetInput): ProductForgetTarget {
   return "archive";
 }
 
-function productForgetRoute(parsed: ProductForgetInput, target: ProductForgetTarget): string {
-  if (parsed.operation === "suppress") return "/v1/memory/anchors/suppress";
-  if (parsed.operation === "unsuppress") return "/v1/memory/anchors/unsuppress";
-  if (parsed.operation === "activate") return "/v1/memory/nodes/activate";
-  if (target === "payload") return "/v1/memory/anchors/rehydrate_payload";
-  return "/v1/memory/archive/rehydrate";
+type ProductLifecycleOperation =
+  | "suppress_anchor"
+  | "unsuppress_anchor"
+  | "activate_memory"
+  | "rehydrate_anchor_payload"
+  | "rehydrate_archive";
+
+function productLifecycleOperation(
+  parsed: ProductForgetInput,
+  target: ProductForgetTarget,
+): ProductLifecycleOperation {
+  if (parsed.operation === "suppress") return "suppress_anchor";
+  if (parsed.operation === "unsuppress") return "unsuppress_anchor";
+  if (parsed.operation === "activate") return "activate_memory";
+  if (target === "payload") return "rehydrate_anchor_payload";
+  return "rehydrate_archive";
 }
 
 function productForgetPayload(
@@ -477,7 +487,6 @@ function productForgetChangedCount(resultBody: unknown, operation: ProductForget
 function productForgetEffect(args: {
   parsed: ProductForgetInput;
   target: ProductForgetTarget;
-  route: string;
   resultBody: unknown;
   guideExposure?: ProductGuideExposureResolution | null;
   unusedExposureObservation?: ProductUnusedExposureObservation | null;
@@ -538,7 +547,7 @@ export function productLifecycleGuardKind(input: ProductForgetInput): "recall" |
 
 async function executeLifecycleMutation(args: {
   dependencies: ProductLifecycleServiceDependencies;
-  route: string;
+  operation: ProductLifecycleOperation;
   payload: unknown;
 }): Promise<unknown> {
   const { env, liteWriteStore } = args.dependencies;
@@ -547,22 +556,22 @@ async function executeLifecycleMutation(args: {
     piiRedaction: env.PII_REDACTION,
     defaultActor: env.LITE_LOCAL_ACTOR_ID,
   };
-  switch (args.route) {
-    case "/v1/memory/anchors/suppress":
+  switch (args.operation) {
+    case "suppress_anchor":
       return liteWriteStore.withTx(() => suppressAnchorLite({
         body: args.payload,
         defaultScope: env.MEMORY_SCOPE,
         defaultTenantId: env.MEMORY_TENANT_ID,
         liteWriteStore,
       }));
-    case "/v1/memory/anchors/unsuppress":
+    case "unsuppress_anchor":
       return liteWriteStore.withTx(() => unsuppressAnchorLite({
         body: args.payload,
         defaultScope: env.MEMORY_SCOPE,
         defaultTenantId: env.MEMORY_TENANT_ID,
         liteWriteStore,
       }));
-    case "/v1/memory/archive/rehydrate":
+    case "rehydrate_archive":
       return liteWriteStore.withTx(() => rehydrateArchiveNodesLite(
         liteWriteStore,
         args.payload,
@@ -570,7 +579,7 @@ async function executeLifecycleMutation(args: {
         env.MEMORY_TENANT_ID,
         writeOptions,
       ));
-    case "/v1/memory/nodes/activate":
+    case "activate_memory":
       return liteWriteStore.withTx(() => activateMemoryNodesLite(
         liteWriteStore,
         args.payload,
@@ -578,7 +587,7 @@ async function executeLifecycleMutation(args: {
         env.MEMORY_TENANT_ID,
         writeOptions,
       ));
-    case "/v1/memory/anchors/rehydrate_payload":
+    case "rehydrate_anchor_payload":
       return rehydrateAnchorPayloadLite(
         liteWriteStore,
         args.payload,
@@ -587,7 +596,7 @@ async function executeLifecycleMutation(args: {
         env.LITE_LOCAL_ACTOR_ID,
       );
     default:
-      throw new Error("unsupported product lifecycle route");
+      throw new Error("unsupported product lifecycle operation");
   }
 }
 
@@ -603,14 +612,14 @@ export function createProductLifecycleService(
           return { ok: false, statusCode: guideExposure.statusCode, body: guideExposure.body };
         }
         const target = productForgetTarget(parsed);
-        const route = productForgetRoute(parsed, target);
+        const operation = productLifecycleOperation(parsed, target);
         const payload = productForgetPayload(parsed, target, guideExposure);
         let resultBody: unknown;
         try {
-          resultBody = await executeLifecycleMutation({ dependencies, route, payload });
+          resultBody = await executeLifecycleMutation({ dependencies, operation, payload });
         } catch (error) {
           return productServiceDependencyFailure(
-            route,
+            `memory_lifecycle_service:${operation}`,
             productServiceFailureFromUnknown(error).statusCode,
           );
         }
@@ -636,7 +645,6 @@ export function createProductLifecycleService(
           forget_effect: productForgetEffect({
             parsed,
             target,
-            route,
             resultBody,
             guideExposure,
             unusedExposureObservation,
@@ -644,7 +652,7 @@ export function createProductLifecycleService(
           }),
           result: resultBody,
           source_map: {
-            routes_used: [...(guideExposure ? ["/v1/memory/find"] : []), route],
+            routes_used: [`/v1/${surface}`],
             internal_surfaces_used: [
               ...(guideExposure ? ["guide_exposure_ledger"] : []),
               ...(unusedExposureObservation ? ["unused_exposure_observation"] : []),

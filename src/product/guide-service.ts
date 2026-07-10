@@ -1838,7 +1838,7 @@ async function persistGuideExposure(args: {
   guideTraceId: string;
 }): Promise<ProductServiceResult> {
   if (!args.dependencies.memoryWrite) {
-    return productServiceDependencyFailure("/v1/memory/write");
+    return productServiceDependencyFailure("memory_write_service");
   }
   const ledger = buildGuideExposureLedger({
     parsed: args.parsed,
@@ -1879,7 +1879,7 @@ async function persistGuideExposure(args: {
     });
   } catch (error) {
     return productServiceDependencyFailure(
-      "/v1/memory/write",
+      "memory_write_service",
       productServiceFailureFromUnknown(error).statusCode,
     );
   }
@@ -1899,7 +1899,7 @@ async function executeProductGuide(args: {
     guideResult = {
       ok: true,
       statusCode: 200,
-      path: "/v1/memory/planning/context",
+      path: "planning_context_service",
       body: await context.planningContext(payload),
     };
   } catch (error) {
@@ -1907,7 +1907,7 @@ async function executeProductGuide(args: {
     guideResult = {
       ok: false,
       statusCode: failure.statusCode,
-      path: "/v1/memory/planning/context",
+      path: "planning_context_service",
       body: failure.body,
     };
   }
@@ -1982,7 +1982,7 @@ async function executeProductGuide(args: {
       });
     } catch (error) {
       return productServiceDependencyFailure(
-        "/v1/execution/context/assemble",
+        "execution_context_service",
         productServiceFailureFromUnknown(error).statusCode,
       );
     }
@@ -2111,13 +2111,10 @@ async function executeProductGuide(args: {
     ...(admissionCandidatePolicyProjection ? { admission_candidate_policy_projection: admissionCandidatePolicyProjection } : {}),
     ...(includePackets ? { memory_packet: memoryPacket, guide_packet: guidePacket } : {}),
     source_map: {
-      routes_used: [
-        "/v1/memory/planning/context",
-        ...(fullPowerRequested ? ["/v1/execution/context/assemble"] : []),
-        "/v1/memory/write",
-      ],
+      routes_used: ["/v1/guide"],
       internal_surfaces_used: [
         ...(planningContextEmbeddingUnavailable ? ["planning_context_embedding_unavailable"] : ["recall"]),
+        "planning_context_service",
         "product_packets",
         "agent_context_compiler",
         ...(agentRole !== "agent" ? ["role_aware_agent_context"] : []),

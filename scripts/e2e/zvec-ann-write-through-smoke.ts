@@ -6,8 +6,9 @@ import path from "node:path";
 import { createRequestGuards } from "../../src/app/request-guards.js";
 import { createRuntimeServices } from "../../src/app/runtime-services.js";
 import { loadEnv, type Env } from "../../src/config.js";
+import { createRuntimeConfig } from "../../src/config/runtime-config.js";
 import { registerMemoryRecallRoutes } from "../../src/routes/memory-recall.js";
-import { registerMemoryWriteRoutes } from "../../src/routes/memory-write.js";
+import { createMemoryWriteRouteService } from "../../src/routes/memory-write.js";
 import { createHttpApp } from "../../src/server/bootstrap.js";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.js";
 import { InflightGate } from "../../src/util/inflight_gate.js";
@@ -75,6 +76,7 @@ async function buildEnv(paths: { writePath: string; replayPath: string; zvecPath
       AUTO_TOPIC_CLUSTER_ON_WRITE: "false",
       WORKFLOW_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: "false",
       RECALL_ANN_PROVIDER: "zvec",
+      RECALL_ENGINE_MODE: "semantic_scan",
       RECALL_ZVEC_PATH: paths.zvecPath,
       RECALL_ANN_REBUILD_ON_START: "false",
       RECALL_ANN_MAX_CANDIDATES: "32",
@@ -140,10 +142,11 @@ async function main(): Promise<void> {
   };
 
   const env = await buildEnv(paths);
-  const services = await createRuntimeServices(env);
+  const runtimeConfig = createRuntimeConfig(env);
+  const services = await createRuntimeServices(runtimeConfig);
   const app = createHttpApp(env);
   const guards = createRequestGuards({
-    env,
+    config: runtimeConfig,
     embedder: DeterministicEmbeddingProvider,
     recallLimiter: services.recallLimiter,
     debugEmbedLimiter: services.debugEmbedLimiter,
@@ -154,17 +157,10 @@ async function main(): Promise<void> {
   });
 
   registerRuntimeErrorHandler(app);
-  registerMemoryWriteRoutes({
-    app,
+  const memoryWriteService = createMemoryWriteRouteService({
     env,
     embedder: DeterministicEmbeddingProvider,
     liteWriteStore: services.liteWriteStore,
-    requireMemoryPrincipal: guards.requireMemoryPrincipal,
-    withIdentityFromRequest: guards.withIdentityFromRequest,
-    enforceRateLimit: guards.enforceRateLimit,
-    enforceTenantQuota: guards.enforceTenantQuota,
-    tenantFromBody: guards.tenantFromBody,
-    acquireInflightSlot: guards.acquireInflightSlot,
     executionStateStore: services.executionStateStore,
     executionTreeStore: services.executionTreeStore,
   });
@@ -200,13 +196,11 @@ async function main(): Promise<void> {
 
   try {
     const write = async (payload: JsonObject): Promise<JsonObject> => {
-      const response = await app.inject({
-        method: "POST",
-        url: "/v1/memory/write",
-        payload,
+      const committed = await memoryWriteService.commit(payload, {
+        executionTreeDefaultDisabled: false,
+        startedAt: performance.now(),
       });
-      assert.equal(response.statusCode, 200, response.body);
-      return response.json() as JsonObject;
+      return committed.response as JsonObject;
     };
 
     const recall = async (): Promise<JsonObject> => {
@@ -300,7 +294,7 @@ async function main(): Promise<void> {
       provider: "zvec",
       rebuild_on_start: false,
       sqlite_truth_source: true,
-      runtime_http_routes: ["/v1/memory/write", "/v1/memory/recall"],
+      runtime_surfaces: ["memory_write_service", "/v1/memory/recall"],
       checks: {
         weak_write_inline_embedding_updated: inlineEmbeddingUpdatedNodes(weakWrite) === 1,
         before_target_uses_ann_without_exact_recovery: stage1(beforeTarget).mode === "ann" && stage1(beforeTarget).exact_recovery_attempted === false,
@@ -329,7 +323,7 @@ async function main(): Promise<void> {
       "",
       `- Provider: \`${report.provider}\``,
       `- Rebuild on start: \`${String(report.rebuild_on_start)}\``,
-      `- Runtime routes: \`${report.runtime_http_routes.join("`, `")}\``,
+      `- Runtime surfaces: \`${report.runtime_surfaces.join("`, `")}\``,
       "",
       "| Check | Result |",
       "|---|---:|",

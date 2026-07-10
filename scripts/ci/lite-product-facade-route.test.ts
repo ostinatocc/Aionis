@@ -490,7 +490,7 @@ test("product facade fails closed instead of injecting an internal memory write 
   assert.equal(body.error, "product_dependency_failed");
   assert.equal(body.message, "A product facade dependency failed.");
   assert.equal(body.details.contract, "error_v1");
-  assert.equal(body.details.surface, "/v1/memory/write");
+  assert.equal(body.details.surface, "memory_write_service");
   assert.equal(body.details.upstream_status, 500);
   assert.equal(body.details.retryable, true);
   assert.equal(fallbackCalled, false);
@@ -597,7 +597,8 @@ test("product guide uses direct planning context service when supplied", async (
     const body = response.json();
 
     assert.equal(response.statusCode, 200);
-    assert.equal(body.source_map.routes_used.includes("/v1/memory/planning/context"), true);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/guide"]);
+    assert.equal(body.source_map.internal_surfaces_used.includes("planning_context_service"), true);
     assert.doesNotMatch(response.payload, /fallback_planning_route_used/);
   } finally {
     await liteWriteStore.close();
@@ -697,7 +698,7 @@ test("product observe sanitizes direct handoff service failures", async () => {
   assert.equal(response.statusCode, 500);
   assert.equal(body.error, "product_dependency_failed");
   assert.equal(body.message, "A product facade dependency failed.");
-  assert.equal(body.details.surface, "/v1/handoff/store");
+  assert.equal(body.details.surface, "handoff_store_service");
   assert.equal(body.details.upstream_status, 500);
   assert.equal(response.payload.includes("SECRET_HANDOFF_SERVICE_STACK"), false);
   assertNoForbiddenProductFields(body);
@@ -752,7 +753,7 @@ test("product lifecycle uses direct archive rehydrate implementation", async () 
 
     assert.equal(response.statusCode, 200, response.payload);
     assert.equal(body.result.rehydrated.moved_nodes, 1);
-    assert.deepEqual(body.source_map.routes_used, ["/v1/memory/archive/rehydrate"]);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/rehydrate"]);
     assert.doesNotMatch(response.payload, /fallback_lifecycle_route_used/);
   } finally {
     await liteWriteStore.close();
@@ -3194,7 +3195,7 @@ test("product guide full_power merges semantic memory with safe execution contex
     const agentContext = guideBody.agent_context;
     assert.equal(agentContext.contract_version, "aionis_agent_context_v1");
     assert.equal(agentContext.history_used, true);
-    assert.equal(guideBody.source_map.routes_used.includes("/v1/execution/context/assemble"), true);
+    assert.deepEqual(guideBody.source_map.routes_used, ["/v1/guide"]);
     assert.equal(guideBody.source_map.internal_surfaces_used.includes("full_power_execution_context"), true);
     assert.equal(guideBody.source_map.internal_surfaces_used.includes("full_power_agent_context_merge"), true);
     assert.equal(agentContext.memory_ids.includes(generalNodeId), true);
@@ -3253,7 +3254,7 @@ test("product guide full_power merges semantic memory with safe execution contex
     const compactAgentContext = compactGuideBody.agent_context;
     assert.equal(compactAgentContext.agent_context_mode, "compact_agent");
     assert.equal(compactAgentContext.task_context_profile, "coding_verifier");
-    assert.equal(compactGuideBody.source_map.routes_used.includes("/v1/execution/context/assemble"), true);
+    assert.deepEqual(compactGuideBody.source_map.routes_used, ["/v1/guide"]);
     assert.equal(compactGuideBody.source_map.internal_surfaces_used.includes("compact_agent_context"), true);
     assert.equal(compactAgentContext.prompt_text.includes("AIONIS_CTX compact_agent"), true);
     assert.equal(compactAgentContext.prompt_text.includes("task coding_verifier:"), true);
@@ -4048,7 +4049,7 @@ test("product observe stores explicit handoff through the product facade", async
     const body = observe.json();
     assert.equal(body.observed.memory_written, false);
     assert.equal(body.observed.handoff_stored, true);
-    assert.deepEqual(body.source_map.routes_used, ["/v1/handoff/store"]);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/observe"]);
     assert.deepEqual(body.source_map.internal_surfaces_used, ["handoff_store"]);
     assert.equal(body.handoff.handoff.anchor, "product-observe-handoff");
     assert.equal(body.handoff.handoff.handoff_kind, "task_handoff");
@@ -4273,7 +4274,7 @@ test("product forget rehydrates archived memory through the product facade", asy
     assert.equal(body.forget_effect.changed_count, 1);
     assert.equal(body.forget_effect.reversible, true);
     assert.deepEqual(body.forget_effect.affected_memory_ids, [nodeId]);
-    assert.deepEqual(body.source_map.routes_used, ["/v1/memory/archive/rehydrate"]);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/forget"]);
     assert.equal(body.result.rehydrated.moved_nodes, 1);
 
     const { rows } = await liteWriteStore.findNodes({
@@ -4374,7 +4375,7 @@ test("product forget rehydrates anchor payload through the product facade", asyn
     assert.equal(body.target, "payload");
     assert.equal(body.forget_effect.anchor_uri, anchorUri);
     assert.equal(body.forget_effect.changed_count, 2);
-    assert.deepEqual(body.source_map.routes_used, ["/v1/memory/anchors/rehydrate_payload"]);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/forget"]);
     assert.equal(body.result.anchor.id, fixture.anchorNodeId);
     assert.equal(body.result.rehydrated.summary.resolved_nodes, 1);
     assert.equal(body.result.rehydrated.summary.resolved_decisions, 1);
@@ -4420,7 +4421,7 @@ test("product forget suppresses and unsuppresses pattern anchors through the pro
     assert.equal(suppressBody.forget_effect.changed_count, 1);
     assert.equal(suppressBody.forget_effect.anchor_kind, "pattern");
     assert.equal(suppressBody.forget_effect.anchor_id, fixture.anchorId);
-    assert.deepEqual(suppressBody.source_map.routes_used, ["/v1/memory/anchors/suppress"]);
+    assert.deepEqual(suppressBody.source_map.routes_used, ["/v1/forget"]);
     assert.equal(suppressBody.result.anchor_kind, "pattern");
     assert.equal(suppressBody.result.node_type, "concept");
     assert.equal(suppressBody.result.operator_override.suppressed, true);
@@ -4456,7 +4457,7 @@ test("product forget suppresses and unsuppresses pattern anchors through the pro
     assert.equal(unsuppressBody.target, "pattern");
     assert.equal(unsuppressBody.forget_effect.changed_count, 1);
     assert.equal(unsuppressBody.forget_effect.anchor_kind, "pattern");
-    assert.deepEqual(unsuppressBody.source_map.routes_used, ["/v1/memory/anchors/unsuppress"]);
+    assert.deepEqual(unsuppressBody.source_map.routes_used, ["/v1/forget"]);
     assert.equal(unsuppressBody.result.anchor_kind, "pattern");
     assert.equal(unsuppressBody.result.node_type, "concept");
     assert.equal(unsuppressBody.result.operator_override.suppressed, false);
@@ -4552,7 +4553,7 @@ test("product forget suppresses workflow anchors from product guidance", async (
     assert.equal(suppressBody.result.node_type, "procedure");
     assert.equal(suppressBody.result.operator_override.suppressed, true);
     assert.equal(suppressBody.forget_effect.anchor_kind, "workflow");
-    assert.deepEqual(suppressBody.source_map.routes_used, ["/v1/memory/anchors/suppress"]);
+    assert.deepEqual(suppressBody.source_map.routes_used, ["/v1/forget"]);
 
     const suppressedGuide = await app.inject({
       method: "POST",
@@ -4596,7 +4597,7 @@ test("product forget suppresses workflow anchors from product guidance", async (
     const unsuppressBody = unsuppress.json();
     assert.equal(unsuppressBody.result.anchor_kind, "workflow");
     assert.equal(unsuppressBody.result.operator_override.suppressed, false);
-    assert.deepEqual(unsuppressBody.source_map.routes_used, ["/v1/memory/anchors/unsuppress"]);
+    assert.deepEqual(unsuppressBody.source_map.routes_used, ["/v1/forget"]);
 
     const restoredGuide = await app.inject({
       method: "POST",
@@ -4679,7 +4680,7 @@ test("product forget records activation feedback through the product facade", as
     assert.equal(body.target, "memory");
     assert.equal(body.forget_effect.changed_count, 1);
     assert.equal(body.forget_effect.reversible, false);
-    assert.deepEqual(body.source_map.routes_used, ["/v1/memory/nodes/activate"]);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/forget"]);
     assert.equal(body.result.activated.updated_nodes, 1);
     assert.equal(body.result.activated.outcome, "positive");
     assert.equal(body.result.activated.activate, true);
@@ -5179,7 +5180,7 @@ test("product guide trace attribution resolves used memories from persisted expo
     });
     assert.equal(feedback.statusCode, 200, feedback.body);
     const feedbackBody = feedback.json();
-    assert.deepEqual(feedbackBody.source_map.routes_used, ["/v1/memory/find", "/v1/memory/nodes/activate"]);
+    assert.deepEqual(feedbackBody.source_map.routes_used, ["/v1/forget"]);
     assert.ok(feedbackBody.source_map.internal_surfaces_used.includes("guide_exposure_ledger"));
     assert.deepEqual(feedbackBody.forget_effect.affected_memory_ids, [usedNodeId]);
     assert.equal(feedbackBody.forget_effect.guide_trace.guide_trace_id, guideBody.guide_trace_id);
@@ -6070,7 +6071,7 @@ test("product feedback alias records activation without exposing forget operatio
     assert.equal(body.forget_effect.changed_count, 1);
     assert.equal(body.forget_effect.reversible, false);
     assert.deepEqual(body.forget_effect.affected_memory_ids, [nodeId]);
-    assert.deepEqual(body.source_map.routes_used, ["/v1/memory/nodes/activate"]);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/feedback"]);
     assert.equal(body.result.activated.updated_nodes, 1);
     assert.equal(body.result.activated.outcome, "positive");
   } finally {
@@ -6133,7 +6134,7 @@ test("product rehydrate alias restores archived memory without exposing forget o
     assert.equal(body.forget_effect.changed_count, 1);
     assert.equal(body.forget_effect.reversible, true);
     assert.deepEqual(body.forget_effect.affected_memory_ids, [nodeId]);
-    assert.deepEqual(body.source_map.routes_used, ["/v1/memory/archive/rehydrate"]);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/rehydrate"]);
     assert.equal(body.result.rehydrated.moved_nodes, 1);
   } finally {
     await app.close();

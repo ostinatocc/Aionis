@@ -302,15 +302,21 @@ function compactAionisAgentView(assembled: Record<string, unknown>): {
   doNotUseCount: number;
   supportingEvidenceCount: number;
 } {
-  const promptText = typeof assembled.prompt_text === "string"
-    ? assembled.prompt_text
+  const agent = asRecord(assembled.agent_context) ?? assembled;
+  const promptText = typeof agent.prompt_text === "string"
+    ? agent.prompt_text
     : JSON.stringify(assembled);
   const trace = asRecord(assembled.selection_trace);
+  const useNowCount = routeArrayCount(agent.use_now) || routeArrayCount(assembled.passed_solutions);
+  const doNotUseCount = routeArrayCount(agent.do_not_use) || routeArrayCount(assembled.failed_branches);
+  const supportingEvidenceCount = routeArrayCount(agent.inspect_before_use)
+    + routeArrayCount(agent.rehydrate_hints)
+    || routeArrayCount(assembled.supporting_evidence);
   const traceLine = [
     "SELECTION_TRACE",
-    `passed_solution_count=${trace?.passed_solution_count ?? "null"}`,
-    `failed_branch_count=${trace?.failed_branch_count ?? "null"}`,
-    `supporting_evidence_count=${trace?.supporting_evidence_count ?? "null"}`,
+    `passed_solution_count=${trace?.passed_solution_count ?? useNowCount}`,
+    `failed_branch_count=${trace?.failed_branch_count ?? doNotUseCount}`,
+    `supporting_evidence_count=${trace?.supporting_evidence_count ?? supportingEvidenceCount}`,
     `memory_consolidation_guard_blocked_count=${trace?.memory_consolidation_guard_blocked_count ?? "null"}`,
     `evidence_backed_passed_solution_count=${trace?.evidence_backed_passed_solution_count ?? "null"}`,
     `evidence_backed_failed_branch_count=${trace?.evidence_backed_failed_branch_count ?? "null"}`,
@@ -324,9 +330,9 @@ function compactAionisAgentView(assembled: Record<string, unknown>): {
   return {
     context: contextText,
     contextChars: contextText.length,
-    useNowCount: routeArrayCount(assembled.passed_solutions),
-    doNotUseCount: routeArrayCount(assembled.failed_branches),
-    supportingEvidenceCount: routeArrayCount(assembled.supporting_evidence),
+    useNowCount,
+    doNotUseCount,
+    supportingEvidenceCount,
   };
 }
 
@@ -446,10 +452,15 @@ async function buildAionisContext(args: {
         },
       },
     });
-    const assembled = await postJson(args.baseUrl, "/v1/execution/context/assemble", {
+    const assembled = await postJson(args.baseUrl, "/v1/guide", {
       tenant_id: "default",
       scope: "default",
-      memory_filters: [{ slots_contains: { task_signature: taskSignature }, limit: 10 }],
+      query_text: "RUNTIME_AGENT_SUITE_SUMMARY_ONLY inspect unverified execution evidence",
+      consumer_agent_id: "local-user",
+      mode: "full_power",
+      include_packets: true,
+      context: { task_signature: taskSignature },
+      limit: 10,
     });
     return compactAionisAgentView(assembled);
   }
@@ -491,17 +502,19 @@ async function buildAionisContext(args: {
   const recoveredTree = asRecord(recovered.execution_tree_v1);
   assertCondition(recoveredTree?.current_summary_node_id === expectedTree.current_summary_node_id, "recover did not return latest execution tree");
 
-  const assembled = await postJson(args.baseUrl, "/v1/execution/context/assemble", {
+  const assembled = await postJson(args.baseUrl, "/v1/guide", {
     tenant_id: "default",
     scope: "default",
+    query_text: args.scenario.task,
     consumer_agent_id: "local-user",
     execution_tree_v1: recovered.execution_tree_v1,
-    include_memory_evidence: false,
-    include_prompt_text: true,
-    prompt_detail: "compact",
+    mode: "full_power",
+    include_packets: true,
+    limit: 10,
   });
-  assertCondition(routeArrayCount(assembled.passed_solutions) > 0, "assemble did not produce passed execution evidence");
-  assertCondition(routeArrayCount(assembled.failed_branches) > 0, "assemble did not produce failed execution evidence");
+  const assembledAgent = asRecord(assembled.agent_context);
+  assertCondition(routeArrayCount(assembledAgent?.use_now) > 0, "guide did not produce passed execution evidence");
+  assertCondition(routeArrayCount(assembledAgent?.do_not_use) > 0, "guide did not produce failed execution evidence");
   return compactAionisAgentView(assembled);
 }
 
@@ -551,15 +564,19 @@ async function observeOutcome(args: {
       },
     },
   });
-  const assembled = await postJson(args.baseUrl, "/v1/execution/context/assemble", {
+  const assembled = await postJson(args.baseUrl, "/v1/guide", {
     tenant_id: "default",
     scope: "default",
-    memory_filters: [{ slots_contains: { task_signature: taskSignature }, limit: 10 }],
+    query_text: `RUNTIME_AGENT_SUITE_OUTCOME ${args.decision.choice}`,
+    consumer_agent_id: "local-user",
+    mode: "full_power",
+    include_packets: true,
+    context: { task_signature: taskSignature },
+    limit: 10,
   });
-  const trace = asRecord(assembled.selection_trace);
-  const evidenceBacked =
-    Number(trace?.evidence_backed_passed_solution_count ?? 0) > 0
-    || Number(trace?.evidence_backed_failed_branch_count ?? 0) > 0;
+  const agent = asRecord(assembled.agent_context);
+  const evidenceBacked = routeArrayCount(agent?.memory_ids) > 0
+    && JSON.stringify(assembled.memory_packet).includes("RUNTIME_AGENT_SUITE_OUTCOME");
   return { observed: true, evidenceBacked };
 }
 

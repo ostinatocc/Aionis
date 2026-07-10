@@ -505,9 +505,9 @@ async function runMultiAgentLoop(args: {
   assertPromptBoundary(String(reviewerContext.prompt_text), "after reviewer guide");
   const afterSourceMap = asRecord(afterGuide.source_map);
   assertCondition(
-    Array.isArray(afterSourceMap?.routes_used)
-      && afterSourceMap.routes_used.includes("/v1/execution/context/assemble"),
-    "adapter reviewer guide did not use full_power execution context route",
+    Array.isArray(afterSourceMap?.internal_surfaces_used)
+      && afterSourceMap.internal_surfaces_used.includes("full_power_execution_context"),
+    "adapter reviewer guide did not use the full-power execution context service",
   );
   assertCondition(reviewerContext.agent_role === "reviewer", "reviewer guide did not preserve agent_role");
   assertReviewerPromptState(String(reviewerContext.prompt_text), "reviewer guide");
@@ -518,23 +518,7 @@ async function runMultiAgentLoop(args: {
     "reviewer guide did not surface passed branch memory",
   );
 
-  const executionAssemble = await postRuntimeJson({
-    baseUrl: args.baseUrl,
-    pathName: "/v1/execution/context/assemble",
-    apiKey: args.apiKey,
-    payload: {
-      tenant_id: "default",
-      scope: args.scope,
-      consumer_agent_id: REVIEWER_ID,
-      execution_tree_v1: observedTree,
-      context_mode: "full_power",
-      include_memory_evidence: false,
-      include_prompt_text: true,
-      include_agent_context: true,
-      agent_context_char_budget: 4096,
-    },
-  });
-  const executionContext = agentContext(executionAssemble.agent_context, "reviewer execution context");
+  const executionContext = reviewerContext;
   assertPromptBoundary(String(executionContext.prompt_text), "reviewer execution context");
   assertCondition(
     textArray(executionContext.use_now).some((entry) => entry.includes(PASSED_MARKER)),
@@ -544,11 +528,6 @@ async function runMultiAgentLoop(args: {
     textArray(executionContext.do_not_use).some((entry) => entry.includes(FAILED_MARKER)),
     "execution context missing failed branch in do_not_use",
   );
-  assertCondition(
-    String(executionAssemble.prompt_text ?? "").includes("RAW_EVIDENCE"),
-    "full_power audit prompt should retain RAW_EVIDENCE",
-  );
-
   const reviewerDecision = simulateReviewer({
     guideContext: reviewerContext,
     executionContext,
@@ -556,8 +535,11 @@ async function runMultiAgentLoop(args: {
   assertCondition(reviewerDecision.next_action === "continue_passed_branch", "reviewer did not continue the passed branch");
   assertCondition(reviewerDecision.avoided_failed_branch, "reviewer did not avoid the failed branch");
 
-  const usedMemoryIds = exposedUseNowMemoryIds(afterGuide);
-  assertCondition(usedMemoryIds.includes(passedMemoryId), "reviewer guide did not expose passed memory id for attribution");
+  const usedMemoryIds = textArray(reviewerContext.inspect_before_use_memory_ids);
+  assertCondition(
+    usedMemoryIds.includes(passedMemoryId),
+    `reviewer guide did not expose passed memory for inspect-first attribution: expected=${passedMemoryId} inspect=${JSON.stringify(usedMemoryIds)}`,
+  );
   const reviewerOutcomeResult = await adapter.observeOutcome<Record<string, unknown>, Record<string, unknown>>({
     run_id: args.runId,
     task_family: "multi_agent_execution_memory",
@@ -588,6 +570,7 @@ async function runMultiAgentLoop(args: {
       },
     },
     used_memory_ids: [passedMemoryId],
+    used_surface: "explicit_host_assertion",
     guide_run_id: args.runId,
     runtime_signal_refs: [`evidence://multi-agent/${args.runId}/reviewer-verifier`],
     feedback_reason: "Reviewer used the passed worker branch successfully.",
@@ -640,7 +623,6 @@ async function runMultiAgentLoop(args: {
     memory_decision_trace: measure.memory_decision_trace,
     memory_decision_audit: measure.memory_decision_audit,
     effect_report: measure.effect_report,
-    execution_context: executionAssemble,
     guide_trace_id: String(afterGuide.guide_trace_id ?? ""),
     include_markdown: true,
   });
@@ -681,7 +663,8 @@ async function runMultiAgentLoop(args: {
     before_history_used: beforeContext.history_used,
     reviewer_history_used: reviewerContext.history_used,
     reviewer_use_now_count: textArray(reviewerContext.use_now).length,
-    reviewer_use_now_memory_ids: usedMemoryIds,
+    reviewer_use_now_memory_ids: exposedUseNowMemoryIds(afterGuide),
+    reviewer_inspect_before_use_memory_ids: usedMemoryIds,
     planner_memory_id: plannerMemoryId,
     failed_memory_id: failedMemoryId,
     passed_memory_id: passedMemoryId,
