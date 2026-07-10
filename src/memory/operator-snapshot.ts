@@ -211,19 +211,39 @@ function failedBranchEntries(executionContext: Record<string, unknown>, agentCon
   return sourceEntriesFromStrings(agentContext?.do_not_use ?? [], "agent_context", "failed", agentContext?.do_not_use_memory_ids ?? []);
 }
 
-function includesAny(text: string, needles: string[]): boolean {
-  const normalized = text.toLowerCase();
-  return needles.some((needle) => needle && normalized.includes(needle.toLowerCase()));
+type OperatorExecutionEntry = AionisOperatorSnapshot["execution_state"]["active_path"]["entries"][number];
+
+function operatorEntryRefs(entry: OperatorExecutionEntry): string[] {
+  const inlineNodeRefs = Array.from(entry.summary.matchAll(/\bnode=([^\s|,]+)/g), (match) => match[1]);
+  return compactStrings([
+    entry.entry_id,
+    ...entry.memory_ids,
+    ...inlineNodeRefs,
+  ], 32);
+}
+
+function normalizedOperatorEntrySummary(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function failedLeakage(args: {
-  useNowText: string;
+  directUseEntries: OperatorExecutionEntry[];
+  directUseMemoryIds: string[];
   failedEntries: AionisOperatorSnapshot["execution_state"]["failed_branches"]["entries"];
 }): boolean {
+  const directUseRefs = new Set(compactStrings([
+    ...args.directUseMemoryIds,
+    ...args.directUseEntries.flatMap(operatorEntryRefs),
+  ], 256));
+  const directUseSummaries = new Set(
+    args.directUseEntries
+      .map((entry) => normalizedOperatorEntrySummary(entry.summary))
+      .filter((summary) => summary.length > 0),
+  );
   return args.failedEntries.some((entry) => {
-    const summary = entry.summary.slice(0, 120);
-    const markerMatch = summary.match(/[A-Z0-9_]*FAILED[A-Z0-9_]*/);
-    return includesAny(args.useNowText, compactStrings([markerMatch?.[0], summary], 2));
+    if (operatorEntryRefs(entry).some((ref) => directUseRefs.has(ref))) return true;
+    const summary = normalizedOperatorEntrySummary(entry.summary);
+    return summary.length > 0 && directUseSummaries.has(summary);
   });
 }
 
@@ -581,9 +601,17 @@ export function buildAionisOperatorSnapshot(args: BuildAionisOperatorSnapshotArg
   const activePathEntries = currentActivePathEntries(executionContext, agent);
   const passedSolutionEntriesValue = passedSolutionEntries(executionContext, agent);
   const failedBranchEntriesValue = failedBranchEntries(executionContext, agent);
-  const useNowText = [...(agent?.use_now ?? []), ...passedSolutionEntriesValue.map((entry) => entry.summary)].join("\n");
+  const directUseEntries = [
+    ...activePathEntries,
+    ...passedSolutionEntriesValue,
+    ...sourceEntriesFromStrings(agent?.use_now ?? [], "agent_context", "direct-use", agent?.use_now_memory_ids ?? []),
+  ];
   const doNotUseText = [...(agent?.do_not_use ?? []), ...failedBranchEntriesValue.map((entry) => entry.summary)].join("\n");
-  const leaked = failedLeakage({ useNowText, failedEntries: failedBranchEntriesValue });
+  const leaked = failedLeakage({
+    directUseEntries,
+    directUseMemoryIds: agent?.use_now_memory_ids ?? [],
+    failedEntries: failedBranchEntriesValue,
+  });
   const failedVisibleInDoNotUse = failedBranchEntriesValue.length > 0 && doNotUseText.trim().length > 0;
   const branchStatus = failedBranchEntriesValue.length === 0 ? "not_applicable" : failedVisibleInDoNotUse && !leaked ? "pass" : "fail";
   const feedbackAttribution = trace?.feedback_attribution;

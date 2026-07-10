@@ -39,7 +39,7 @@ function agentContext() {
     prompt_text: [
       "AIONIS_AGENT_CONTEXT v1",
       "use_now",
-      "- MULTI_AGENT_SNAPSHOT_PASSED continue scoped branch.",
+      "- MULTI_AGENT_SNAPSHOT_PASSED continue scoped branch and avoid MULTI_AGENT_SNAPSHOT_FAILED.",
       "do_not_use",
       "- MULTI_AGENT_SNAPSHOT_FAILED broad retry failed verifier checks.",
     ].join("\n"),
@@ -49,7 +49,7 @@ function agentContext() {
     recommended_posture: "reuse_supported_history",
     authority: "advisory",
     target_files: ["src/current-target.ts"],
-    use_now: ["MULTI_AGENT_SNAPSHOT_PASSED continue scoped branch."],
+    use_now: ["MULTI_AGENT_SNAPSHOT_PASSED continue scoped branch and avoid MULTI_AGENT_SNAPSHOT_FAILED."],
     inspect_before_use: [],
     do_not_use: ["MULTI_AGENT_SNAPSHOT_FAILED broad retry failed verifier checks."],
     memory_ids: ["mem-passed", "mem-failed"],
@@ -262,6 +262,31 @@ test("operator snapshot route reports branch isolation and markdown without muta
   assert.match(body.markdown, /Judgment Calibration/);
   assert.match(body.markdown, /Trace to Procedure/);
   assert.match(body.markdown, /MULTI_AGENT_SNAPSHOT_FAILED/);
+
+  await app.close();
+});
+
+test("operator snapshot route detects a failed branch leaked through structured memory attribution", async () => {
+  const app = registerApp();
+  const leakingAgentContext = agentContext();
+  leakingAgentContext.use_now = ["Continue the scoped branch."];
+  leakingAgentContext.use_now_memory_ids = ["mem-passed", "mem-failed"];
+  const response = await app.inject({
+    method: "POST",
+    url: "/v1/operator/snapshot",
+    payload: {
+      tenant_id: "default",
+      scope: "default",
+      run_id: "run-operator-snapshot-structured-leak",
+      agent_context: leakingAgentContext,
+      execution_context: executionContext(),
+    },
+  });
+
+  assert.equal(response.statusCode, 200);
+  const isolation = response.json().operator_snapshot.execution_state.branch_isolation;
+  assert.equal(isolation.status, "fail");
+  assert.equal(isolation.failed_branch_leaked_to_use_now, true);
 
   await app.close();
 });

@@ -3276,6 +3276,44 @@ test("product guide full_power merges semantic memory with safe execution contex
     assert.equal(compactAgentContext.do_not_use.some((entry: string) => entry.includes("FULL_POWER_GUIDE_FAILED_BRANCH")), true);
     assert.equal(compactAgentContext.prompt_text.includes("RAW_EVIDENCE"), false);
     assert.equal(compactAgentContext.prompt_text.includes("TRACE"), false);
+
+    const feedback = await app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        guide_trace_id: guideBody.guide_trace_id,
+        used_memory_ids: [generalNodeId],
+        run_id: "run:full-power-guide-execution-reference-feedback",
+        outcome: "positive",
+        used_surface: "use_now",
+        verifier_status: "passed",
+        tool_status: "succeeded",
+        runtime_signal_refs: ["verifier:full-power-guide-execution-reference-feedback"],
+        reason: "The persisted guide memory supported the verified continuation.",
+      },
+    });
+    assert.equal(feedback.statusCode, 200, feedback.body);
+
+    const executionNodeIds = new Set(Object.keys(executionTree.nodes));
+    assert.equal(agentContext.memory_ids.some((id: string) => executionNodeIds.has(id)), false);
+    assert.equal(agentContext.use_now_memory_ids.some((id: string) => executionNodeIds.has(id)), false);
+    assert.equal(agentContext.do_not_use_memory_ids.some((id: string) => executionNodeIds.has(id)), false);
+    assert.equal(agentContext.use_now.some((entry: string) => entry.includes(`node=${executionTree.current_summary_node_id}`)), true);
+
+    const exposureRows = await liteWriteStore.findNodes({
+      scope: "default",
+      clientId: guideBody.guide_trace_id,
+      consumerAgentId: "local-user",
+      consumerTeamId: null,
+      limit: 1,
+      offset: 0,
+    });
+    const exposureLedger = exposureRows.rows[0]?.slots.guide_exposure_v1;
+    assert.ok(exposureLedger);
+    assert.equal(exposureLedger.memory_ids.some((id: string) => executionNodeIds.has(id)), false);
+    assert.deepEqual(exposureLedger.memory_ids, agentContext.memory_ids);
   } finally {
     await app.close();
   }

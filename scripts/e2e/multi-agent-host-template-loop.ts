@@ -380,7 +380,10 @@ export async function runMultiAgentHostTemplateLoop(args: {
   );
   assertCondition(operatorSnapshot.runtime_mutation === false, "host operator snapshot must be read-only");
   assertCondition(operatorExecutionState.actionable_history_used === true, "host operator snapshot did not expose actionable history state");
-  assertCondition(operatorBranchIsolation.status === "pass", "host operator snapshot did not prove branch isolation");
+  assertCondition(
+    operatorBranchIsolation.status === "pass",
+    `host operator snapshot did not prove branch isolation: ${JSON.stringify(operatorBranchIsolation)}`,
+  );
   assertCondition(
     operatorBranchIsolation.failed_branch_leaked_to_use_now === false,
     "host operator snapshot reported failed branch leakage into use_now",
