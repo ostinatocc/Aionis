@@ -90,7 +90,7 @@ test("hard invariants stay small and evidence-centered", () => {
 });
 
 test("Lite route capability matrix maps public routes to focused product capabilities", () => {
-  assert.equal(LITE_ROUTE_CAPABILITY_MATRIX_VERSION, "lite_route_capability_matrix_v6");
+  assert.equal(LITE_ROUTE_CAPABILITY_MATRIX_VERSION, "lite_route_capability_matrix_v7");
 
   const capabilityIds = new Set(aionisKernelCapabilityIds());
   const matrix = buildLiteRouteMatrix().route_capability_matrix;

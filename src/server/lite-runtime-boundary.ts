@@ -7,6 +7,7 @@ export type LiteProductEffectId = "history_shaped_future_behavior";
 export type LiteRouteCapabilityMatrixEntry = {
   method: "GET" | "POST";
   path: string;
+  exposure: LiteRouteProductExposure;
   route_group: string;
   capabilities: readonly AionisKernelCapabilityId[];
   product_effects: readonly LiteProductEffectId[];
@@ -22,52 +23,7 @@ export type LiteRouteProductExposure =
   | "internal_control"
   | "operator_support";
 
-export const LITE_ROUTE_CAPABILITY_MATRIX_VERSION = "lite_route_capability_matrix_v6";
-
-const LITE_PRODUCT_ENTRY_ROUTES = new Set([
-  "POST /v1/observe",
-  "POST /v1/guide",
-  "POST /v1/feedback",
-  "POST /v1/rehydrate",
-  "POST /v1/forget",
-  "POST /v1/measure",
-]);
-
-const LITE_INTERNAL_GUIDANCE_ROUTES = new Set([
-  "POST /v1/memory/action/retrieval",
-  "POST /v1/memory/tools/select",
-]);
-
-const LITE_INTERNAL_CONTROL_ROUTES = new Set([
-  "POST /v1/memory/policies/learning-control/apply",
-]);
-
-function routeKey(entry: Pick<LiteRouteCapabilityMatrixEntry, "method" | "path">): string {
-  return `${entry.method} ${entry.path}`;
-}
-
-function classifyLiteRouteProductExposure(entry: LiteRouteCapabilityMatrixEntry): LiteRouteProductExposure {
-  const key = routeKey(entry);
-  if (LITE_PRODUCT_ENTRY_ROUTES.has(key)) return "product_entry";
-  if (LITE_INTERNAL_GUIDANCE_ROUTES.has(key)) return "internal_guidance";
-  if (LITE_INTERNAL_CONTROL_ROUTES.has(key)) return "internal_control";
-  if (entry.surface_kind === "operator_review" || entry.surface_kind === "operator_debug") return "operator_support";
-  if (entry.route_group.startsWith("memory-replay")) return "internal_evidence";
-  if (
-    entry.path === "/v1/memory/trajectory/compile" ||
-    entry.path === "/v1/execution/context/assemble" ||
-    entry.path === "/v1/memory/feedback" ||
-    entry.path === "/v1/memory/tools/decision" ||
-    entry.path === "/v1/memory/tools/run" ||
-    entry.path === "/v1/memory/tools/feedback" ||
-    entry.path.startsWith("/v1/memory/learning-loop/") ||
-    entry.path.startsWith("/v1/memory/runtime-maintenance/") ||
-    entry.path === "/v1/memory/tools/rehydrate_payload"
-  ) {
-    return "internal_evidence";
-  }
-  return "product_support";
-}
+export const LITE_ROUTE_CAPABILITY_MATRIX_VERSION = "lite_route_capability_matrix_v7";
 
 export const LITE_SERVER_ONLY_ROUTE_GROUPS = {
   admin_control: {
@@ -112,7 +68,7 @@ export const LITE_PRODUCT_BOUNDARY = {
 export const LITE_ROUTE_CAPABILITY_MATRIX = [
   {
     method: "POST",
-    path: "/v1/observe",
+    path: "/v1/observe", exposure: "product_entry",
     route_group: "product-facade",
     capabilities: ["continuity", "learning"],
     product_effects: ["history_shaped_future_behavior"],
@@ -121,7 +77,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/guide",
+    path: "/v1/guide", exposure: "product_entry",
     route_group: "product-facade",
     capabilities: ["continuity", "learning", "forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -130,7 +86,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/forget",
+    path: "/v1/forget", exposure: "product_entry",
     route_group: "product-facade",
     capabilities: ["forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -139,7 +95,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/feedback",
+    path: "/v1/feedback", exposure: "product_entry",
     route_group: "product-facade",
     capabilities: ["learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -148,7 +104,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/rehydrate",
+    path: "/v1/rehydrate", exposure: "product_entry",
     route_group: "product-facade",
     capabilities: ["forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -157,7 +113,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/measure",
+    path: "/v1/measure", exposure: "product_entry",
     route_group: "product-facade",
     capabilities: ["continuity", "learning", "forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -166,7 +122,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "GET",
-    path: "/v1/skills/candidates",
+    path: "/v1/skills/candidates", exposure: "operator_support",
     route_group: "product-facade",
     capabilities: ["learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -175,7 +131,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/skills/candidates",
+    path: "/v1/skills/candidates", exposure: "operator_support",
     route_group: "product-facade",
     capabilities: ["learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -184,7 +140,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/skills/candidates/:id/promote",
+    path: "/v1/skills/candidates/:id/promote", exposure: "operator_support",
     route_group: "product-facade",
     capabilities: ["learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -193,7 +149,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/skills/candidates/:id/reject",
+    path: "/v1/skills/candidates/:id/reject", exposure: "operator_support",
     route_group: "product-facade",
     capabilities: ["learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -202,7 +158,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/skills/candidates/:id/materialize",
+    path: "/v1/skills/candidates/:id/materialize", exposure: "operator_support",
     route_group: "product-facade",
     capabilities: ["learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -211,7 +167,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/operator/snapshot",
+    path: "/v1/operator/snapshot", exposure: "operator_support",
     route_group: "product-facade",
     capabilities: ["continuity", "learning", "forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -220,7 +176,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "GET",
-    path: "/v1/operator/authority-effect-audit",
+    path: "/v1/operator/authority-effect-audit", exposure: "operator_support",
     route_group: "product-facade",
     capabilities: ["learning_control"],
     product_effects: [],
@@ -229,7 +185,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/debug/memory-decision-trace",
+    path: "/v1/debug/memory-decision-trace", exposure: "operator_support",
     route_group: "product-facade",
     capabilities: ["learning_control"],
     product_effects: [],
@@ -238,7 +194,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/audit/memory-decision-report",
+    path: "/v1/audit/memory-decision-report", exposure: "operator_support",
     route_group: "product-facade",
     capabilities: ["learning_control"],
     product_effects: [],
@@ -247,7 +203,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "GET",
-    path: "/v1/runtime/boundary-inventory",
+    path: "/v1/runtime/boundary-inventory", exposure: "operator_support",
     route_group: "runtime-boundary-inventory",
     capabilities: ["learning_control"],
     product_effects: [],
@@ -256,7 +212,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/write",
+    path: "/v1/memory/write", exposure: "internal_evidence",
     route_group: "memory-write",
     capabilities: ["continuity", "learning"],
     product_effects: ["history_shaped_future_behavior"],
@@ -265,7 +221,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/handoff/store",
+    path: "/v1/handoff/store", exposure: "product_support",
     route_group: "memory-handoff",
     capabilities: ["continuity", "learning"],
     product_effects: ["history_shaped_future_behavior"],
@@ -274,7 +230,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/handoff/recover",
+    path: "/v1/handoff/recover", exposure: "product_support",
     route_group: "memory-handoff",
     capabilities: ["continuity"],
     product_effects: ["history_shaped_future_behavior"],
@@ -283,7 +239,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/archive/rehydrate",
+    path: "/v1/memory/archive/rehydrate", exposure: "internal_control",
     route_group: "memory-lifecycle-lite",
     capabilities: ["forgetting"],
     product_effects: ["history_shaped_future_behavior"],
@@ -292,7 +248,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/nodes/activate",
+    path: "/v1/memory/nodes/activate", exposure: "internal_control",
     route_group: "memory-lifecycle-lite",
     capabilities: ["forgetting"],
     product_effects: ["history_shaped_future_behavior"],
@@ -301,7 +257,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/recall",
+    path: "/v1/memory/recall", exposure: "internal_guidance",
     route_group: "memory-recall",
     capabilities: ["continuity", "forgetting"],
     product_effects: ["history_shaped_future_behavior"],
@@ -310,7 +266,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/recall_text",
+    path: "/v1/memory/recall_text", exposure: "internal_guidance",
     route_group: "memory-context-runtime",
     capabilities: ["continuity", "forgetting"],
     product_effects: ["history_shaped_future_behavior"],
@@ -319,7 +275,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/planning/context",
+    path: "/v1/memory/planning/context", exposure: "internal_guidance",
     route_group: "memory-context-runtime",
     capabilities: ["continuity", "learning", "forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -328,7 +284,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/context/assemble",
+    path: "/v1/memory/context/assemble", exposure: "internal_guidance",
     route_group: "memory-context-runtime",
     capabilities: ["continuity", "learning", "forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -337,7 +293,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/execution/context/assemble",
+    path: "/v1/execution/context/assemble", exposure: "internal_evidence",
     route_group: "memory-access-partial",
     capabilities: ["continuity", "forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -346,7 +302,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/trajectory/compile",
+    path: "/v1/memory/trajectory/compile", exposure: "internal_evidence",
     route_group: "memory-access-partial",
     capabilities: ["continuity"],
     product_effects: ["history_shaped_future_behavior"],
@@ -355,7 +311,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/delegation/records",
+    path: "/v1/memory/delegation/records", exposure: "internal_evidence",
     route_group: "memory-access-partial",
     capabilities: ["continuity", "learning"],
     product_effects: ["history_shaped_future_behavior"],
@@ -364,7 +320,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/delegation/records/find",
+    path: "/v1/memory/delegation/records/find", exposure: "internal_evidence",
     route_group: "memory-access-partial",
     capabilities: ["continuity", "learning"],
     product_effects: ["history_shaped_future_behavior"],
@@ -373,7 +329,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/delegation/records/aggregate",
+    path: "/v1/memory/delegation/records/aggregate", exposure: "internal_evidence",
     route_group: "memory-access-partial",
     capabilities: ["learning"],
     product_effects: ["history_shaped_future_behavior"],
@@ -382,7 +338,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/find",
+    path: "/v1/memory/find", exposure: "internal_evidence",
     route_group: "memory-access-partial",
     capabilities: ["continuity", "forgetting"],
     product_effects: [],
@@ -391,7 +347,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/continuity/review-pack",
+    path: "/v1/memory/continuity/review-pack", exposure: "internal_evidence",
     route_group: "memory-access-partial",
     capabilities: ["continuity", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -400,7 +356,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/agent/inspect",
+    path: "/v1/memory/agent/inspect", exposure: "internal_evidence",
     route_group: "memory-access-partial",
     capabilities: ["continuity", "learning", "forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -409,7 +365,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/agent/review-pack",
+    path: "/v1/memory/agent/review-pack", exposure: "internal_evidence",
     route_group: "memory-access-partial",
     capabilities: ["continuity", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -418,7 +374,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/agent/resume-pack",
+    path: "/v1/memory/agent/resume-pack", exposure: "internal_guidance",
     route_group: "memory-access-partial",
     capabilities: ["continuity"],
     product_effects: ["history_shaped_future_behavior"],
@@ -427,7 +383,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/agent/handoff-pack",
+    path: "/v1/memory/agent/handoff-pack", exposure: "internal_guidance",
     route_group: "memory-access-partial",
     capabilities: ["continuity"],
     product_effects: ["history_shaped_future_behavior"],
@@ -436,7 +392,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/execution/introspect",
+    path: "/v1/memory/execution/introspect", exposure: "internal_evidence",
     route_group: "memory-access-partial",
     capabilities: ["continuity", "learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -445,7 +401,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/evolution/review-pack",
+    path: "/v1/memory/evolution/review-pack", exposure: "internal_evidence",
     route_group: "memory-access-partial",
     capabilities: ["learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -454,7 +410,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/action/retrieval",
+    path: "/v1/memory/action/retrieval", exposure: "internal_guidance",
     route_group: "memory-access-partial",
     capabilities: ["learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -463,7 +419,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/experience/intelligence",
+    path: "/v1/memory/experience/intelligence", exposure: "internal_guidance",
     route_group: "memory-access-partial",
     capabilities: ["continuity", "learning", "forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -472,7 +428,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/resolve",
+    path: "/v1/memory/resolve", exposure: "product_support",
     route_group: "memory-access-partial",
     capabilities: ["continuity", "forgetting"],
     product_effects: [],
@@ -481,7 +437,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/anchors/rehydrate_payload",
+    path: "/v1/memory/anchors/rehydrate_payload", exposure: "internal_guidance",
     route_group: "memory-access-partial",
     capabilities: ["forgetting"],
     product_effects: ["history_shaped_future_behavior"],
@@ -490,7 +446,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/feedback",
+    path: "/v1/memory/feedback", exposure: "internal_evidence",
     route_group: "memory-feedback-tools",
     capabilities: ["learning"],
     product_effects: ["history_shaped_future_behavior"],
@@ -499,7 +455,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/rules/state",
+    path: "/v1/memory/rules/state", exposure: "internal_evidence",
     route_group: "memory-feedback-tools",
     capabilities: ["learning", "learning_control"],
     product_effects: [],
@@ -508,7 +464,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/rules/evaluate",
+    path: "/v1/memory/rules/evaluate", exposure: "internal_evidence",
     route_group: "memory-feedback-tools",
     capabilities: ["learning_control"],
     product_effects: [],
@@ -517,7 +473,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/tools/select",
+    path: "/v1/memory/tools/select", exposure: "internal_guidance",
     route_group: "memory-feedback-tools",
     capabilities: ["learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -526,7 +482,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/tools/decision",
+    path: "/v1/memory/tools/decision", exposure: "internal_evidence",
     route_group: "memory-feedback-tools",
     capabilities: ["learning"],
     product_effects: ["history_shaped_future_behavior"],
@@ -535,7 +491,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/tools/run",
+    path: "/v1/memory/tools/run", exposure: "internal_evidence",
     route_group: "memory-feedback-tools",
     capabilities: ["learning"],
     product_effects: [],
@@ -544,7 +500,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/tools/runs/list",
+    path: "/v1/memory/tools/runs/list", exposure: "internal_evidence",
     route_group: "memory-feedback-tools",
     capabilities: ["learning"],
     product_effects: [],
@@ -553,7 +509,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/tools/feedback",
+    path: "/v1/memory/tools/feedback", exposure: "internal_evidence",
     route_group: "memory-feedback-tools",
     capabilities: ["learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -562,7 +518,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/learning-loop/run",
+    path: "/v1/memory/learning-loop/run", exposure: "internal_evidence",
     route_group: "memory-feedback-tools",
     capabilities: ["learning", "forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -571,7 +527,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/runtime-maintenance/run",
+    path: "/v1/memory/runtime-maintenance/run", exposure: "internal_evidence",
     route_group: "memory-feedback-tools",
     capabilities: ["learning", "forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -580,7 +536,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/runtime-maintenance/immediate",
+    path: "/v1/memory/runtime-maintenance/immediate", exposure: "internal_evidence",
     route_group: "memory-feedback-tools",
     capabilities: ["learning", "forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -589,7 +545,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/runtime-maintenance/daily",
+    path: "/v1/memory/runtime-maintenance/daily", exposure: "internal_evidence",
     route_group: "memory-feedback-tools",
     capabilities: ["learning", "forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -598,7 +554,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/runtime-maintenance/long-horizon",
+    path: "/v1/memory/runtime-maintenance/long-horizon", exposure: "internal_evidence",
     route_group: "memory-feedback-tools",
     capabilities: ["learning", "forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -607,7 +563,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/policies/learning-control/apply",
+    path: "/v1/memory/policies/learning-control/apply", exposure: "internal_control",
     route_group: "memory-feedback-tools",
     capabilities: ["learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -616,7 +572,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/patterns/suppress",
+    path: "/v1/memory/patterns/suppress", exposure: "internal_control",
     route_group: "memory-feedback-tools",
     capabilities: ["forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -625,7 +581,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/patterns/unsuppress",
+    path: "/v1/memory/patterns/unsuppress", exposure: "internal_control",
     route_group: "memory-feedback-tools",
     capabilities: ["forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -634,7 +590,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/tools/rehydrate_payload",
+    path: "/v1/memory/tools/rehydrate_payload", exposure: "internal_evidence",
     route_group: "memory-feedback-tools",
     capabilities: ["forgetting"],
     product_effects: ["history_shaped_future_behavior"],
@@ -643,7 +599,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/replay/run/start",
+    path: "/v1/memory/replay/run/start", exposure: "internal_evidence",
     route_group: "memory-replay-core",
     capabilities: ["continuity", "learning"],
     product_effects: ["history_shaped_future_behavior"],
@@ -652,7 +608,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/replay/step/before",
+    path: "/v1/memory/replay/step/before", exposure: "internal_evidence",
     route_group: "memory-replay-core",
     capabilities: ["continuity", "learning"],
     product_effects: ["history_shaped_future_behavior"],
@@ -661,7 +617,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/replay/step/after",
+    path: "/v1/memory/replay/step/after", exposure: "internal_evidence",
     route_group: "memory-replay-core",
     capabilities: ["continuity", "learning"],
     product_effects: ["history_shaped_future_behavior"],
@@ -670,7 +626,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/replay/run/end",
+    path: "/v1/memory/replay/run/end", exposure: "internal_evidence",
     route_group: "memory-replay-core",
     capabilities: ["continuity", "learning"],
     product_effects: ["history_shaped_future_behavior"],
@@ -679,7 +635,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/replay/runs/get",
+    path: "/v1/memory/replay/runs/get", exposure: "internal_evidence",
     route_group: "memory-replay-core",
     capabilities: ["continuity", "learning"],
     product_effects: [],
@@ -688,7 +644,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/replay/playbooks/compile_from_run",
+    path: "/v1/memory/replay/playbooks/compile_from_run", exposure: "internal_evidence",
     route_group: "memory-replay-core",
     capabilities: ["learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -697,7 +653,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/replay/playbooks/get",
+    path: "/v1/memory/replay/playbooks/get", exposure: "internal_evidence",
     route_group: "memory-replay-core",
     capabilities: ["learning"],
     product_effects: [],
@@ -706,7 +662,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/replay/playbooks/candidate",
+    path: "/v1/memory/replay/playbooks/candidate", exposure: "internal_evidence",
     route_group: "memory-replay-core",
     capabilities: ["learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -715,7 +671,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/replay/playbooks/promote",
+    path: "/v1/memory/replay/playbooks/promote", exposure: "internal_evidence",
     route_group: "memory-replay-core",
     capabilities: ["learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -724,7 +680,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/replay/playbooks/repair",
+    path: "/v1/memory/replay/playbooks/repair", exposure: "internal_evidence",
     route_group: "memory-replay-core",
     capabilities: ["learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -733,7 +689,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/replay/playbooks/repair/review",
+    path: "/v1/memory/replay/playbooks/repair/review", exposure: "internal_evidence",
     route_group: "memory-replay-learning-control-partial",
     capabilities: ["learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -742,7 +698,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/replay/playbooks/run",
+    path: "/v1/memory/replay/playbooks/run", exposure: "internal_evidence",
     route_group: "memory-replay-learning-control-partial",
     capabilities: ["continuity", "learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -751,7 +707,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/replay/playbooks/dispatch",
+    path: "/v1/memory/replay/playbooks/dispatch", exposure: "internal_evidence",
     route_group: "memory-replay-learning-control-partial",
     capabilities: ["continuity", "learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -772,11 +728,11 @@ export function buildLiteRouteMatrix() {
   return {
     product_boundary: buildLiteProductBoundary(),
     route_capability_matrix_version: LITE_ROUTE_CAPABILITY_MATRIX_VERSION,
-    route_capability_matrix: LITE_ROUTE_CAPABILITY_MATRIX.map((entry) => ({
+    route_capability_matrix: LITE_ROUTE_CAPABILITY_MATRIX.map(({ exposure, ...entry }) => ({
       ...entry,
       capabilities: [...entry.capabilities],
       product_effects: [...entry.product_effects],
-      product_exposure: classifyLiteRouteProductExposure(entry),
+      product_exposure: exposure,
     })),
     kernel_required_routes: [
       "product-facade",
