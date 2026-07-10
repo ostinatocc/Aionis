@@ -220,6 +220,26 @@ test("SDK guideAgentContext over real Runtime HTTP promotes accepted same-workfl
     await client.execution.observeStep({
       agent_id: "sdk-agent",
       role: "worker",
+      run_id: "run-sdk-unrelated",
+      task_id: "task-unrelated",
+      task_signature: "sdk-unrelated-task",
+      workflow_signature: "sdk-unrelated-workflow",
+      title: "SDK unrelated task accepted path",
+      summary: "SDK_UNRELATED_TASK_SUCCESS belongs only to src/unrelated.ts.",
+      outcome: "succeeded",
+      target_files: ["src/unrelated.ts"],
+      tool_set: ["edit", "test"],
+      continuation_hint: "Continue SDK_UNRELATED_TASK_SUCCESS only for the unrelated workflow.",
+      auto_embed: true,
+      memory_lane: "private",
+      slots: {
+        contract_trust: "accepted",
+      },
+    });
+
+    await client.execution.observeStep({
+      agent_id: "sdk-agent",
+      role: "worker",
       run_id: "run-sdk-other",
       task_id: "task-other",
       task_signature: otherTaskSignature,
@@ -290,6 +310,16 @@ test("SDK guideAgentContext over real Runtime HTTP promotes accepted same-workfl
     );
     assert.equal(
       (agentContext.inspect_before_use ?? []).some((entry: string) => entry.includes("SDK_OTHER_TASK_SUCCESS")),
+      false,
+    );
+    assert.equal(
+      (agentContext.use_now ?? []).some((entry: string) => entry.includes("SDK_UNRELATED_TASK_SUCCESS")),
+      false,
+    );
+    assert.equal(
+      (agentContext.route_contract?.active_targets ?? []).some((entry: Record<string, unknown>) =>
+        entry.target === "src/unrelated.ts"
+      ),
       false,
     );
     assert.equal(

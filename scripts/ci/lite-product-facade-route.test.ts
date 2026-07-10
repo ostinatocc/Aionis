@@ -4207,6 +4207,10 @@ test("product forget rehydrates archived memory through the product facade", asy
           title: "Archived workflow for product forget",
           text_summary: "Rehydrate this archived workflow only when the same continuation need returns.",
           confidence: 0.82,
+          slots: {
+            contract_trust: "evidence_only",
+            lifecycle_state: "archived",
+          },
         },
       },
     });
@@ -4305,6 +4309,14 @@ test("product forget rehydrates archived memory through the product facade", asy
       },
     });
     assert.equal(afterGuide.statusCode, 200);
+    const afterGuideBody = afterGuide.json();
+    assert.equal(afterGuideBody.agent_context.use_now_memory_ids.includes(nodeId), false);
+    const rehydratedMemory = afterGuideBody.memory_packet.relevant_memories.find(
+      (entry: Record<string, unknown>) => entry.memory_id === nodeId,
+    );
+    assert.ok(rehydratedMemory);
+    assert.notEqual(rehydratedMemory.authority, "trusted");
+    assert.notEqual(rehydratedMemory.memory_contract?.use_policy, "direct_use");
 
     const measure = await app.inject({
       method: "POST",
