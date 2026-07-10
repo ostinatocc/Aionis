@@ -103,6 +103,28 @@ function registerServerProductApp(args: {
     recallInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 1000 }),
     writeInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 1000 }),
   });
+  const memoryWriteService = createMemoryWriteRouteService({
+    env: args.env,
+    embedder: DeterministicEmbeddingProvider,
+    embeddingSurfacePolicy: embeddingSurfacePolicy as any,
+    liteWriteStore,
+    executionStateStore,
+    executionTreeStore,
+  });
+  const productServices = createRuntimeProductServices({
+    env: args.env,
+    liteWriteStore,
+    executionTreeStore,
+    memoryWriteService,
+    handoffRouteService: createHandoffRouteService({
+      env: args.env,
+      embedder: DeterministicEmbeddingProvider,
+      embeddingSurfacePolicy: embeddingSurfacePolicy as any,
+      liteWriteStore,
+      executionStateStore,
+      executionTreeStore,
+    }),
+  });
   registerRuntimeErrorHandler(args.app);
   registerApplicationRoutes({
     app: args.app,
@@ -116,27 +138,7 @@ function registerServerProductApp(args: {
     liteWriteStore,
     executionStateStore,
     executionTreeStore,
-    productServices: createRuntimeProductServices({
-      env: args.env,
-      liteWriteStore,
-      executionTreeStore,
-      memoryWriteService: createMemoryWriteRouteService({
-        env: args.env,
-        embedder: DeterministicEmbeddingProvider,
-        embeddingSurfacePolicy: embeddingSurfacePolicy as any,
-        liteWriteStore,
-        executionStateStore,
-        executionTreeStore,
-      }),
-      handoffRouteService: createHandoffRouteService({
-        env: args.env,
-        embedder: DeterministicEmbeddingProvider,
-        embeddingSurfacePolicy: embeddingSurfacePolicy as any,
-        liteWriteStore,
-        executionStateStore,
-        executionTreeStore,
-      }),
-    }),
+    productServices,
     recallTextEmbedBatcher: { stats: () => null },
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
@@ -213,8 +215,79 @@ function registerServerProductApp(args: {
       defaultTenantId: args.env.MEMORY_TENANT_ID,
     } as any),
   });
-  return { liteWriteStore, liteRecallStore, liteReplayStore, executionStateStore, executionTreeStore };
+  return {
+    liteWriteStore,
+    liteRecallStore,
+    liteReplayStore,
+    executionStateStore,
+    executionTreeStore,
+    productServices,
+  };
 }
+
+test("application registration exposes product routes but not Task-10-replaced internal memory routes", async () => {
+  const app = Fastify();
+  const writePath = tmpDbPath("route-removal-write");
+  const replayPath = tmpDbPath("route-removal-replay");
+  const env = await serverEnv(writePath, replayPath);
+  const stores = registerServerProductApp({ app, env, writePath, replayPath });
+  const removedRoutes = [
+    "/v1/memory/write",
+    "/v1/memory/archive/rehydrate",
+    "/v1/memory/nodes/activate",
+    "/v1/execution/context/assemble",
+    "/v1/memory/trajectory/compile",
+    "/v1/memory/delegation/records",
+    "/v1/memory/delegation/records/find",
+    "/v1/memory/delegation/records/aggregate",
+    "/v1/memory/find",
+    "/v1/memory/continuity/review-pack",
+    "/v1/memory/agent/inspect",
+    "/v1/memory/agent/review-pack",
+    "/v1/memory/agent/resume-pack",
+    "/v1/memory/agent/handoff-pack",
+    "/v1/memory/execution/introspect",
+    "/v1/memory/evolution/review-pack",
+    "/v1/memory/action/retrieval",
+    "/v1/memory/experience/intelligence",
+    "/v1/memory/anchors/rehydrate_payload",
+  ];
+  try {
+    assert.equal(app.hasRoute({ method: "POST", url: "/v1/observe" }), true);
+    assert.equal(app.hasRoute({ method: "POST", url: "/v1/operator/snapshot" }), true);
+    assert.equal(app.hasRoute({ method: "POST", url: "/v1/memory/planning/context" }), true);
+    assert.equal(app.hasRoute({ method: "POST", url: "/v1/memory/resolve" }), true);
+    for (const url of removedRoutes) {
+      assert.equal(app.hasRoute({ method: "POST", url }), false, `${url} must not be registered`);
+    }
+
+    const unsupported = await app.inject({
+      method: "POST",
+      url: "/v1/memory/find",
+      headers: { "x-api-key": "tenant-a-key" },
+      payload: { tenant_id: "tenant-a", scope: "tenant-a/default", limit: 1 },
+    });
+    assert.equal(unsupported.statusCode, 404, unsupported.body);
+    assert.equal(unsupported.json().error, "Not Found");
+
+    const direct = await stores.productServices.observe.execute({
+      tenant_id: "tenant-a",
+      scope: "tenant-a/default",
+      actor: "agent-a",
+      input_text: "Direct product service remains callable after internal route removal.",
+      auto_embed: false,
+    }, { principal: null });
+    assert.equal(direct.ok, true);
+    assert.equal(direct.statusCode, 200);
+  } finally {
+    await app.close();
+    await stores.executionTreeStore.close();
+    await stores.executionStateStore.close();
+    await stores.liteRecallStore.close();
+    await stores.liteReplayStore.close();
+    await stores.liteWriteStore.close();
+  }
+});
 
 test("server edition product routes require auth and run observe to guide through application registration", async () => {
   const app = Fastify();

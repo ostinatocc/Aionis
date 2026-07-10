@@ -13,12 +13,11 @@ import {
   type MemoryPlanningContextRouteService,
 } from "../routes/memory-context-runtime.js";
 import { registerMemoryFeedbackToolRoutes } from "../routes/memory-feedback-tools.js";
-import { registerLiteMemoryLifecycleRoutes } from "../routes/memory-lifecycle-lite.js";
 import { registerHandoffRoutes, type HandoffRouteService } from "../routes/handoff.js";
 import { registerMemoryRecallRoutes } from "../routes/memory-recall.js";
 import { registerMemoryReplayCoreRoutes } from "../routes/memory-replay-core.js";
 import { registerMemoryReplayLearningControlRoutes } from "../routes/memory-replay-learning-control.js";
-import { registerMemoryWriteRoutes, type MemoryWriteRouteService } from "../routes/memory-write.js";
+import type { MemoryWriteRouteService } from "../routes/memory-write.js";
 import { registerProductFacadeRoutes } from "../routes/product-facade.js";
 import { createProductObserveService } from "../product/observe-service.js";
 import { createProductGuideService } from "../product/guide-service.js";
@@ -332,7 +331,6 @@ export function registerHealthRoute(args: {
 type MemoryWriteRouteArgs = Parameters<typeof registerMemoryWriteRoutes>[0];
 type HandoffRouteArgs = Parameters<typeof registerHandoffRoutes>[0];
 type MemoryAccessRouteArgs = Parameters<typeof registerMemoryAccessRoutes>[0];
-type MemoryLifecycleRouteArgs = Parameters<typeof registerLiteMemoryLifecycleRoutes>[0];
 type MemoryRecallRouteArgs = Parameters<typeof registerMemoryRecallRoutes>[0];
 type MemoryContextRouteArgs = Parameters<typeof registerMemoryContextRuntimeRoutes>[0];
 type MemoryFeedbackRouteArgs = Parameters<typeof registerMemoryFeedbackToolRoutes>[0];
@@ -343,7 +341,6 @@ type RuntimeLiteWriteStore =
   & NonNullable<MemoryWriteRouteArgs["liteWriteStore"]>
   & HandoffRouteArgs["liteWriteStore"]
   & MemoryAccessRouteArgs["liteWriteStore"]
-  & MemoryLifecycleRouteArgs["liteWriteStore"]
   & MemoryRecallRouteArgs["liteWriteStore"]
   & MemoryContextRouteArgs["liteWriteStore"]
   & MemoryFeedbackRouteArgs["liteWriteStore"]
@@ -536,22 +533,6 @@ function registerRuntimeWriteRoutes(args: RuntimeWriteRouteRegistrationArgs) {
     acquireInflightSlot,
   } = args;
 
-  registerMemoryWriteRoutes({
-    app,
-    env,
-    embedder,
-    embeddingSurfacePolicy,
-    liteWriteStore,
-    requireMemoryPrincipal,
-    withIdentityFromRequest,
-    enforceRateLimit,
-    enforceTenantQuota,
-    tenantFromBody,
-    acquireInflightSlot,
-    executionStateStore,
-    executionTreeStore,
-  });
-
   registerHandoffRoutes({
     app,
     env,
@@ -583,18 +564,7 @@ function registerRuntimeWriteRoutes(args: RuntimeWriteRouteRegistrationArgs) {
     enforceTenantQuota,
     tenantFromBody,
     acquireInflightSlot,
-  });
-
-  registerLiteMemoryLifecycleRoutes({
-    app,
-    env,
-    liteWriteStore,
-    requireMemoryPrincipal,
-    withIdentityFromRequest,
-    enforceRateLimit,
-    enforceTenantQuota,
-    tenantFromBody,
-    acquireInflightSlot,
+    routeExposure: "public",
   });
 }
 

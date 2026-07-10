@@ -73,6 +73,7 @@ type RegisterMemoryAccessRoutesArgs = {
   enforceTenantQuota: (req: FastifyRequest, reply: FastifyReply, kind: "write" | "recall", tenantId: string) => Promise<void>;
   tenantFromBody: (body: unknown) => string;
   acquireInflightSlot: (kind: "write" | "recall") => Promise<InflightGateToken>;
+  routeExposure?: "all" | "public";
 };
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -95,6 +96,7 @@ export function registerMemoryAccessRoutes(args: RegisterMemoryAccessRoutesArgs)
     enforceTenantQuota,
     tenantFromBody,
     acquireInflightSlot,
+    routeExposure = "all",
   } = args;
   assertLocalStoreRuntimeEdition(env, "local-store memory-access routes");
   const embeddingSurfacePolicy =
@@ -142,6 +144,7 @@ export function registerMemoryAccessRoutes(args: RegisterMemoryAccessRoutesArgs)
     bodyFactory?: (req: MemoryAccessRequest) => unknown;
     execute: (body: unknown) => Promise<TResult>;
   }) => {
+    if (routeExposure === "public" && args.path !== "/v1/memory/resolve") return;
     const handler = async (req: MemoryAccessRequest, reply: FastifyReply) => {
       const out = await runMemoryAccessRoute({
         req,
