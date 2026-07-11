@@ -173,35 +173,6 @@ function closeRuntime(session: RuntimeSession): void {
   if (session.handle) stopRuntime(session.handle);
 }
 
-async function postRuntimeJson(args: {
-  baseUrl: string;
-  pathName: string;
-  apiKey: string | null;
-  payload: unknown;
-}): Promise<Record<string, unknown>> {
-  const res = await fetch(`${args.baseUrl}${args.pathName}`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...(args.apiKey ? { authorization: `Bearer ${args.apiKey}` } : {}),
-    },
-    body: JSON.stringify(args.payload),
-  });
-  const text = await res.text();
-  let parsed: unknown = null;
-  try {
-    parsed = text ? JSON.parse(text) : null;
-  } catch {
-    parsed = { raw: text };
-  }
-  if (!res.ok) {
-    throw new Error(`${args.pathName} failed with ${res.status}: ${JSON.stringify(parsed)}`);
-  }
-  const record = asRecord(parsed);
-  assertCondition(record, `${args.pathName} returned non-object JSON`);
-  return record;
-}
-
 function nodeIdFromObserve(observeBody: Record<string, unknown>, label: string): string {
   const write = asRecord(observeBody.memory_write);
   const nodes = Array.isArray(write?.nodes) ? write.nodes : [];
@@ -276,9 +247,9 @@ async function runProductLoop(args: {
   assertPromptBoundary(String(beforeContext.prompt_text), "before guide");
   const beforeSourceMap = asRecord(beforeGuide.source_map);
   assertCondition(
-    Array.isArray(beforeSourceMap?.routes_used)
-      && beforeSourceMap.routes_used.includes("/v1/execution/context/assemble"),
-    "SDK default guide did not use full_power execution context route",
+    Array.isArray(beforeSourceMap?.internal_surfaces_used)
+      && beforeSourceMap.internal_surfaces_used.includes("full_power_execution_context"),
+    "SDK default guide did not use the full-power execution context service",
   );
 
   const continuityObserve = await client.observe<Record<string, unknown>>({
@@ -526,21 +497,15 @@ async function runExecutionContextLoop(args: {
     "observe handoff did not expose the latest operation-applied tree",
   );
 
-  const assembled = await postRuntimeJson({
-    baseUrl: args.baseUrl,
-    pathName: "/v1/execution/context/assemble",
-    apiKey: args.apiKey,
-    payload: {
-      tenant_id: "default",
-      scope: args.scope,
-      consumer_agent_id: CONSUMER_AGENT_ID,
-      execution_tree_v1: observedTree,
-      context_mode: "full_power",
-      include_memory_evidence: false,
-      include_prompt_text: true,
-      include_agent_context: true,
-      agent_context_char_budget: 4096,
-    },
+  const assembled = await client.guide<Record<string, unknown>>({
+    mode: "full_power",
+    query_text: "PRODUCT_E2E_TREE_PASSED continue scoped branch and avoid PRODUCT_E2E_TREE_FAILED",
+    consumer_agent_id: CONSUMER_AGENT_ID,
+    agent_role: "reviewer",
+    execution_tree_v1: observedTree,
+    include_packets: true,
+    limit: 8,
+    context_char_budget: 4096,
   });
   const executionContext = agentContext(assembled.agent_context, "execution context assemble");
   const executionPrompt = String(executionContext.prompt_text);
@@ -549,8 +514,6 @@ async function runExecutionContextLoop(args: {
   assertCondition(!executionPrompt.includes("TRACE"), "execution agent prompt leaked TRACE");
   assertCondition(textArray(executionContext.use_now).some((entry) => entry.includes("PRODUCT_E2E_TREE_PASSED")), "execution agent context missing passed branch");
   assertCondition(textArray(executionContext.do_not_use).some((entry) => entry.includes("PRODUCT_E2E_TREE_FAILED")), "execution agent context missing failed branch");
-  assertCondition(String(assembled.prompt_text ?? "").includes("RAW_EVIDENCE"), "audit prompt_text should retain RAW_EVIDENCE in full_power mode");
-  assertCondition(asRecord(assembled.full_power_trace) !== null, "full_power_trace was missing from audit surface");
 
   const fullPowerGuide = await client.guide<Record<string, unknown>>({
     mode: "full_power",
@@ -575,8 +538,8 @@ async function runExecutionContextLoop(args: {
   const fullPowerSourceMap = asRecord(fullPowerGuide.source_map);
   assertCondition(
     Array.isArray(fullPowerSourceMap?.routes_used)
-      && fullPowerSourceMap.routes_used.includes("/v1/execution/context/assemble"),
-    "full-power product guide did not use execution context route",
+      && fullPowerSourceMap.routes_used.includes("/v1/guide"),
+    "full-power product guide did not report its public route",
   );
   assertCondition(
     Array.isArray(fullPowerSourceMap?.internal_surfaces_used)
@@ -589,7 +552,7 @@ async function runExecutionContextLoop(args: {
     use_now_count: textArray(executionContext.use_now).length,
     do_not_use_count: textArray(executionContext.do_not_use).length,
     prompt_chars: executionPrompt.length,
-    audit_prompt_has_raw_evidence: String(assembled.prompt_text ?? "").includes("RAW_EVIDENCE"),
+    agent_prompt_excludes_raw_evidence: !executionPrompt.includes("RAW_EVIDENCE"),
     full_power_guide_use_now_count: textArray(fullPowerGuideContext.use_now).length,
     full_power_guide_do_not_use_count: textArray(fullPowerGuideContext.do_not_use).length,
   };

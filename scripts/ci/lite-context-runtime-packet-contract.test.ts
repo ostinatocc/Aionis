@@ -7,20 +7,20 @@ import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 import { sealAuthorityReceiptsForPreparedWrite } from "./authority-fixture-helpers.ts";
-import { createRequestGuards } from "../../src/app/request-guards.ts";
+import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
-import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
-import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
+import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
+import { createMemoryPlanningContextService } from "../../src/routes/memory-context-runtime.ts";
+import { PLANNING_SERVICE_TEST_PATH, registerPlanningServiceTestAdapter } from "./support/register-planning-service-test-adapter.ts";
 import {
   ActionRetrievalGateSummarySchema,
-  ContextAssembleRouteContractSchema,
   DelegationRecordsWriteResponseSchema,
   HistoryImpactSummarySchema,
   MemoryAnchorV1Schema,
   PlanningContextRouteContractSchema,
 } from "../../src/memory/schemas.ts";
 import { AionisGuidePacketSchema, AionisLearningPacketSchema, AionisMemoryPacketSchema } from "../../src/memory/product-output-contract.ts";
-import { buildExecutionMemorySummaryBundle, summarizePatternSignals } from "../../src/app/planning-summary.ts";
+import { buildExecutionMemorySummaryBundle, summarizePatternSignals } from "../../src/app/planning-summary-surfaces.ts";
 import { updateRuleState } from "../../src/memory/rules.ts";
 import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
@@ -1736,8 +1736,7 @@ function registerContextRuntimeApp(args: {
     tenantFromBody: guards.tenantFromBody,
     acquireInflightSlot: guards.acquireInflightSlot,
   });
-  registerMemoryContextRuntimeRoutes({
-    app: args.app,
+registerPlanningServiceTestAdapter(args.app, createMemoryPlanningContextService({
     env: {
       AIONIS_EDITION: "lite",
       APP_ENV: "test",
@@ -1755,7 +1754,6 @@ function registerContextRuntimeApp(args: {
     embedder: DeterministicEmbeddingProvider,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
-    recallTextEmbedBatcher: { stats: () => null },
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
     enforceRateLimit: guards.enforceRateLimit,
@@ -1820,45 +1818,9 @@ function registerContextRuntimeApp(args: {
       message: "embedding failed",
     }),
     recordContextAssemblyTelemetryBestEffort: async () => {},
-  });
+  }));
 }
 
-test("recall_text returns product MemoryPacket on the public route", async () => {
-  const dbPath = tmpDbPath("recall-text-memory-packet");
-  const app = Fastify();
-  const { liteWriteStore, liteRecallStore } = await seedContextRuntimeFixture(dbPath);
-  try {
-    registerContextRuntimeApp({ app, liteWriteStore, liteRecallStore });
-    const response = await app.inject({
-      method: "POST",
-      url: "/v1/memory/recall_text",
-      payload: {
-        tenant_id: "default",
-        scope: "default",
-        query_text: "recover durable workflow from failed validation",
-        limit: 5,
-        max_nodes: 10,
-        max_edges: 10,
-        ranked_limit: 10,
-      },
-    });
-    assert.equal(response.statusCode, 200);
-    const body = response.json();
-    const memoryPacket = AionisMemoryPacketSchema.parse(body.aionis_memory_packet);
-    assert.equal(memoryPacket.contract_version, "aionis_memory_packet_v1");
-    assert.equal(memoryPacket.tenant_id, "default");
-    assert.equal(memoryPacket.scope, "default");
-    assert.equal(memoryPacket.query.source, "text");
-    assert.ok(memoryPacket.source_map.routes_used.includes("/v1/memory/recall_text"));
-    assert.ok(memoryPacket.relevant_memories.length > 0);
-    assert.ok(!("raw_slots" in memoryPacket));
-  } finally {
-    await app.close();
-    await liteRecallStore.close();
-    await liteWriteStore.close();
-    fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
-  }
-});
 
 test("planning_context returns aligned planner packet, action packet summary, and planner explanation", async () => {
   const dbPath = tmpDbPath("planning-context");
@@ -1868,7 +1830,7 @@ test("planning_context returns aligned planner packet, action packet summary, an
     registerContextRuntimeApp({ app, liteWriteStore, liteRecallStore });
     const response = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -1949,7 +1911,7 @@ test("planning_context returns aligned planner packet, action packet summary, an
     const planningMemoryPacket = AionisMemoryPacketSchema.parse((body as any).recall.aionis_memory_packet);
     assert.equal(planningMemoryPacket.contract_version, "aionis_memory_packet_v1");
     assert.equal(planningMemoryPacket.query.source, "text");
-    assert.ok(planningMemoryPacket.source_map.routes_used.includes("/v1/memory/planning/context"));
+    assert.ok(planningMemoryPacket.source_map.routes_used.includes("/v1/guide"));
     assert.ok(planningMemoryPacket.relevant_memories.length > 0);
     assert.deepEqual(AionisGuidePacketSchema.parse(body.aionis_guide_packet), body.aionis_guide_packet);
     assert.equal(body.aionis_guide_packet.contract_version, "aionis_guide_packet_v1");
@@ -1959,7 +1921,7 @@ test("planning_context returns aligned planner packet, action packet summary, an
     assert.ok(Array.isArray(body.aionis_guide_packet.guidance.workflow_candidates));
     assert.equal(body.aionis_guide_packet.task.run_id ?? null, null);
     assert.equal(body.aionis_guide_packet.task.task_signature, planningContinuityGuidance?.workflow_signature ?? null);
-    assert.ok(body.aionis_guide_packet.source_map.routes_used.includes("/v1/memory/planning/context"));
+    assert.ok(body.aionis_guide_packet.source_map.routes_used.includes("/v1/guide"));
     assert.ok(body.aionis_guide_packet.source_map.omitted_internal_surfaces.includes("raw_find_resolve"));
     assert.deepEqual(AionisLearningPacketSchema.parse(body.aionis_learning_packet), body.aionis_learning_packet);
     assert.equal(body.aionis_learning_packet.contract_version, "aionis_learning_packet_v1");
@@ -1969,7 +1931,7 @@ test("planning_context returns aligned planner packet, action packet summary, an
     assert.equal(body.aionis_learning_packet.posture.source_code_change_allowed, false);
     assert.equal(body.aionis_learning_packet.export_readiness.training_export_ready, false);
     assert.ok(body.aionis_learning_packet.export_readiness.positive_transfer_required);
-    assert.ok(body.aionis_learning_packet.source_map.routes_used.includes("/v1/memory/planning/context"));
+    assert.ok(body.aionis_learning_packet.source_map.routes_used.includes("/v1/guide"));
     assert.ok(body.aionis_learning_packet.candidates.some((candidate: any) => candidate.kind === "workflow"));
     assert.ok(!("continuity_guidance" in body), "default planning_context should not expose the stale top-level continuity_guidance mirror");
     assertActionPacketSummaryMatchesPacket(body.planning_summary.action_packet_summary, body);
@@ -2060,7 +2022,7 @@ test("planning_context applies runtime entropy recall defaults when recall knobs
     registerContextRuntimeApp({ app, liteWriteStore, liteRecallStore });
     const response = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -2178,7 +2140,7 @@ test("planning_context prefers persisted delegation records matched by run_id", 
 
     const response = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -2355,7 +2317,7 @@ test("planning_context debug layered_context projects delegation learning withou
 
     const response = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -2433,7 +2395,7 @@ test("planning_context surfaces collaboration summary from execution packet and 
     registerContextRuntimeApp({ app, liteWriteStore, liteRecallStore });
     const response = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -2680,7 +2642,7 @@ test("planning_context defaults the local consumer identity so private workflow 
     registerContextRuntimeApp({ app, liteWriteStore, liteRecallStore });
     const response = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -2718,7 +2680,7 @@ test("planning_context recommended workflow lines keep source and tools for exec
     registerContextRuntimeApp({ app, liteWriteStore, liteRecallStore });
     const response = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -2740,264 +2702,6 @@ test("planning_context recommended workflow lines keep source and tools for exec
     assert.equal(body.planner_packet.sections.recommended_workflows.length, 1);
     assert.match(body.planner_packet.sections.recommended_workflows[0] ?? "", /source=playbook/);
     assert.match(body.planner_packet.sections.recommended_workflows[0] ?? "", /tools=edit, test/);
-  } finally {
-    await app.close();
-    await liteRecallStore.close();
-    await liteWriteStore.close();
-  }
-});
-
-test("context_assemble returns aligned planner packet, assembly summary, and execution kernel packet summary", async () => {
-  const dbPath = tmpDbPath("context-assemble");
-  const app = Fastify();
-  const { liteWriteStore, liteRecallStore } = await seedContextRuntimeFixture(dbPath);
-  try {
-    registerContextRuntimeApp({ app, liteWriteStore, liteRecallStore });
-    const response = await app.inject({
-      method: "POST",
-      url: "/v1/memory/context/assemble",
-      payload: {
-        tenant_id: "default",
-        scope: "default",
-        query_text: "recover durable workflow from failed validation",
-        context: {
-          task_kind: "workflow_validation_recovery",
-          goal: "recover durable workflow from failed validation",
-          error: {
-            signature: "workflow-validation-mismatch",
-          },
-        },
-        include_rules: true,
-        include_shadow: false,
-        rules_limit: 20,
-        tool_candidates: ["bash", "edit", "test"],
-      },
-    });
-    assert.equal(response.statusCode, 200);
-    const body = ContextAssembleRouteContractSchema.parse(response.json());
-    assertNoStalePlannerMirrors(body as Record<string, unknown>);
-    assert.ok(!("layered_context" in (body as Record<string, unknown>)), "default context_assemble should not expose layered_context");
-    assert.ok(!("operator_projection" in (body as Record<string, unknown>)), "default context_assemble should not expose operator_projection");
-    const assemblyContinuityGuidance = body.assembly_summary.continuity_guidance;
-    assert.equal(assemblyContinuityGuidance?.source_kind, "experience_intelligence");
-    assert.equal(assemblyContinuityGuidance?.history_applied, true);
-    assert.equal(assemblyContinuityGuidance?.contract_trust, "advisory");
-    assert.equal(assemblyContinuityGuidance?.selected_tool, body.assembly_summary.selected_tool);
-    assert.equal(assemblyContinuityGuidance?.task_family ?? null, null);
-    assert.equal(assemblyContinuityGuidance?.workflow_signature, "workflow-validation-recovery-workflow");
-    assert.equal(assemblyContinuityGuidance?.policy_memory_id ?? null, null);
-    assert.equal(assemblyContinuityGuidance?.file_path ?? null, null);
-    assert.equal(assemblyContinuityGuidance?.next_action, "Inspect the current context before starting with edit.");
-    assert.equal(assemblyContinuityGuidance?.execution_contract_v1?.schema_version, "execution_contract_v1");
-    assert.equal(assemblyContinuityGuidance?.execution_contract_v1?.selected_tool, body.assembly_summary.selected_tool);
-    assert.equal(assemblyContinuityGuidance?.execution_contract_v1?.workflow_signature, "workflow-validation-recovery-workflow");
-    assert.equal(body.assembly_summary.action_retrieval_uncertainty?.summary_version, "action_retrieval_uncertainty_v1");
-    assert.ok(body.assembly_summary.action_retrieval_uncertainty?.recommended_actions.includes("inspect_context"));
-    const assemblyActionRetrievalGate = body.assembly_summary.action_retrieval_gate;
-    assert.ok(assemblyActionRetrievalGate);
-    assert.deepEqual(assemblyActionRetrievalGate, {
-      summary_version: "action_retrieval_gate_v1",
-      gate_action: "inspect_context",
-      escalates_task_start: true,
-      confidence: body.assembly_summary.action_retrieval_uncertainty?.confidence ?? 0,
-      primary_reason: body.assembly_summary.action_retrieval_uncertainty?.reasons?.[0] ?? null,
-      recommended_actions: ["inspect_context"],
-      instruction: "Inspect the current context before starting with edit.",
-      rehydration_candidate_count: body.assembly_summary.action_packet_summary.rehydration_candidate_count,
-      preferred_rehydration: null,
-    });
-    assert.deepEqual(
-      ActionRetrievalGateSummarySchema.parse(assemblyActionRetrievalGate),
-      assemblyActionRetrievalGate,
-    );
-    assert.throws(() =>
-      ActionRetrievalGateSummarySchema.parse({
-        ...assemblyActionRetrievalGate,
-        debug_passthrough: true,
-      }),
-    );
-    const assemblyHistoryImpact = body.assembly_summary.history_impact_summary;
-    assert.deepEqual(HistoryImpactSummarySchema.parse(assemblyHistoryImpact), assemblyHistoryImpact);
-    assert.equal(assemblyHistoryImpact.summary_version, "history_impact_summary_v1");
-    assert.equal(assemblyHistoryImpact.history_applied, true);
-    assert.equal(assemblyHistoryImpact.changed_next_run, true);
-    assert.ok(
-      assemblyHistoryImpact.impact_level === "action_shaping"
-        || assemblyHistoryImpact.impact_level === "learning_controlled",
-    );
-    assert.ok(assemblyHistoryImpact.affected_capabilities.includes("learning"));
-    assert.ok(assemblyHistoryImpact.affected_capabilities.includes("learning_control"));
-    assert.ok(assemblyHistoryImpact.next_run_changes.includes("continuity_signal_shaped_by_history"));
-    assert.ok(assemblyHistoryImpact.next_run_changes.includes("learning_control_limited_authority"));
-    assert.equal(assemblyHistoryImpact.learning.stable_workflow_count, body.assembly_summary.workflow_signal_summary.stable_workflow_count);
-    assert.equal(
-      assemblyHistoryImpact.forgetting.differential_rehydration_candidate_count,
-      body.assembly_summary.forgetting_summary.differential_rehydration_candidate_count,
-    );
-    assert.deepEqual(AionisGuidePacketSchema.parse(body.aionis_guide_packet), body.aionis_guide_packet);
-    assert.equal(body.aionis_guide_packet.contract_version, "aionis_guide_packet_v1");
-    assert.equal(body.aionis_guide_packet.tenant_id, body.tenant_id);
-    assert.equal(body.aionis_guide_packet.scope, body.scope);
-    assert.equal(["first", "action"].join("_") in body.aionis_guide_packet.guidance, false);
-    assert.ok(Array.isArray(body.aionis_guide_packet.guidance.workflow_candidates));
-    assert.equal(body.aionis_guide_packet.task.run_id ?? null, null);
-    assert.equal(body.aionis_guide_packet.task.task_signature, assemblyContinuityGuidance?.workflow_signature ?? null);
-    assert.ok(body.aionis_guide_packet.source_map.routes_used.includes("/v1/memory/context/assemble"));
-    assert.ok(body.aionis_guide_packet.source_map.omitted_internal_surfaces.includes("raw_find_resolve"));
-    assert.deepEqual(AionisLearningPacketSchema.parse(body.aionis_learning_packet), body.aionis_learning_packet);
-    assert.equal(body.aionis_learning_packet.contract_version, "aionis_learning_packet_v1");
-    assert.equal(body.aionis_learning_packet.tenant_id, body.tenant_id);
-    assert.equal(body.aionis_learning_packet.scope, body.scope);
-    assert.equal(body.aionis_learning_packet.task.task_signature, assemblyContinuityGuidance?.workflow_signature ?? null);
-    assert.equal(body.aionis_learning_packet.posture.source_code_change_allowed, false);
-    assert.equal(body.aionis_learning_packet.export_readiness.training_export_ready, false);
-    assert.ok(body.aionis_learning_packet.export_readiness.positive_transfer_required);
-    assert.ok(body.aionis_learning_packet.source_map.routes_used.includes("/v1/memory/context/assemble"));
-    assert.ok(body.aionis_learning_packet.candidates.some((candidate: any) => candidate.kind === "workflow"));
-    assert.ok(!("continuity_guidance" in body), "default context_assemble should not expose the stale top-level continuity_guidance mirror");
-    assertActionPacketSummaryMatchesPacket(body.assembly_summary.action_packet_summary, body);
-    assertActionPacketSummaryMatchesPacket(body.execution_kernel.action_packet_summary, body);
-    assertKernelMatchesRouteSurface(body);
-    assert.equal(body.planner_packet.packet_version, "planner_packet_v1");
-    assert.deepEqual(body.planner_packet.sections.recommended_workflows.length, 1);
-    assert.deepEqual(body.planner_packet.sections.candidate_workflows.length, 1);
-    assert.equal(body.workflow_signals.length, 2);
-    assert.equal(body.planner_packet.sections.candidate_patterns.length, body.assembly_summary.action_packet_summary.candidate_pattern_count);
-    assert.deepEqual(body.planner_packet.sections.trusted_patterns.length, 1);
-    assert.equal(body.assembly_summary.action_packet_summary.recommended_workflow_count, 1);
-    assert.equal(body.assembly_summary.action_packet_summary.candidate_workflow_count, 1);
-    assert.equal(body.assembly_summary.workflow_lifecycle_summary.stable_count, body.planner_packet.sections.recommended_workflows.length);
-    assert.equal(body.assembly_summary.workflow_lifecycle_summary.candidate_count, body.planner_packet.sections.candidate_workflows.length);
-    assert.equal(body.assembly_summary.workflow_lifecycle_summary.replay_source_count, 2);
-    assert.equal(body.assembly_summary.workflow_lifecycle_summary.rehydration_ready_count, 1);
-    assert.equal(body.assembly_summary.workflow_lifecycle_summary.promotion_ready_count, 1);
-    assert.equal(body.assembly_summary.workflow_signal_summary.stable_workflow_count, body.planner_packet.sections.recommended_workflows.length);
-    assert.equal(body.assembly_summary.workflow_signal_summary.observing_workflow_count, 0);
-    assert.equal(body.assembly_summary.workflow_signal_summary.promotion_ready_workflow_count, body.planner_packet.sections.candidate_workflows.length);
-    assert.equal(body.assembly_summary.workflow_lifecycle_summary.transition_counts.candidate_observed, 1);
-    assert.equal(body.assembly_summary.workflow_lifecycle_summary.transition_counts.promoted_to_stable, 1);
-    assert.equal(body.assembly_summary.workflow_maintenance_summary.observe_count, 1);
-    assert.equal(body.assembly_summary.workflow_maintenance_summary.retain_count, 1);
-    assert.equal(body.assembly_summary.workflow_maintenance_summary.promote_candidate_count, 1);
-    assert.equal(body.assembly_summary.workflow_maintenance_summary.retain_workflow_count, 1);
-    assert.equal(body.assembly_summary.action_packet_summary.candidate_pattern_count, body.planner_packet.sections.candidate_patterns.length);
-    assert.equal(body.assembly_summary.action_packet_summary.trusted_pattern_count, 1);
-    assert.equal(body.assembly_summary.action_packet_summary.rehydration_candidate_count, body.planner_packet.sections.rehydration_candidates.length);
-    assert.equal(body.assembly_summary.action_packet_summary.supporting_knowledge_count, body.planner_packet.sections.supporting_knowledge.length);
-    assert.equal(body.execution_kernel.action_packet_summary.candidate_pattern_count, body.planner_packet.sections.candidate_patterns.length);
-    assert.equal(body.execution_kernel.workflow_lifecycle_summary.stable_count, body.planner_packet.sections.recommended_workflows.length);
-    assert.equal(body.execution_kernel.workflow_lifecycle_summary.candidate_count, body.planner_packet.sections.candidate_workflows.length);
-    assert.equal(body.execution_kernel.workflow_lifecycle_summary.promotion_ready_count, 1);
-    assert.equal(body.execution_kernel.workflow_signal_summary.stable_workflow_count, body.planner_packet.sections.recommended_workflows.length);
-    assert.equal(body.execution_kernel.workflow_signal_summary.observing_workflow_count, 0);
-    assert.equal(body.execution_kernel.workflow_signal_summary.promotion_ready_workflow_count, body.planner_packet.sections.candidate_workflows.length);
-    assert.equal(body.execution_kernel.workflow_lifecycle_summary.transition_counts.candidate_observed, 1);
-    assert.equal(body.execution_kernel.workflow_maintenance_summary.observe_count, 1);
-    assert.equal(body.execution_kernel.workflow_maintenance_summary.retain_count, 1);
-    assert.equal(body.execution_kernel.workflow_maintenance_summary.promote_candidate_count, 1);
-    assert.equal(body.execution_kernel.action_packet_summary.rehydration_candidate_count, body.planner_packet.sections.rehydration_candidates.length);
-    assert.equal(body.execution_kernel.pattern_signal_summary.trusted_pattern_count, body.planner_packet.sections.trusted_patterns.length);
-    assert.equal(body.execution_kernel.pattern_signal_summary.candidate_pattern_count, body.planner_packet.sections.candidate_patterns.length);
-    assert.equal(body.execution_kernel.pattern_signal_summary.contested_pattern_count, body.planner_packet.sections.contested_patterns.length);
-    assert.equal(body.assembly_summary.pattern_lifecycle_summary.trusted_count, body.planner_packet.sections.trusted_patterns.length);
-    assert.equal(body.assembly_summary.pattern_lifecycle_summary.candidate_count, body.planner_packet.sections.candidate_patterns.length);
-    assert.equal(body.assembly_summary.pattern_lifecycle_summary.contested_count, body.planner_packet.sections.contested_patterns.length);
-    assert.equal(body.assembly_summary.pattern_maintenance_summary.retain_count, body.planner_packet.sections.trusted_patterns.length);
-    assert.equal(body.assembly_summary.pattern_maintenance_summary.observe_count, body.planner_packet.sections.candidate_patterns.length);
-    assert.equal(body.assembly_summary.pattern_maintenance_summary.review_count, body.planner_packet.sections.contested_patterns.length);
-    assert.equal(body.execution_kernel.pattern_lifecycle_summary.trusted_count, body.planner_packet.sections.trusted_patterns.length);
-    assert.equal(body.execution_kernel.pattern_lifecycle_summary.candidate_count, body.planner_packet.sections.candidate_patterns.length);
-    assert.equal(body.execution_kernel.pattern_lifecycle_summary.contested_count, body.planner_packet.sections.contested_patterns.length);
-    assert.equal(body.execution_kernel.pattern_maintenance_summary.retain_count, body.planner_packet.sections.trusted_patterns.length);
-    assert.equal(body.execution_kernel.pattern_maintenance_summary.observe_count, body.planner_packet.sections.candidate_patterns.length);
-    assert.equal(body.execution_kernel.pattern_maintenance_summary.review_count, body.planner_packet.sections.contested_patterns.length);
-    assert.match(body.assembly_summary.planner_explanation, /workflow guidance: Recover workflow validation failure/);
-    assert.match(body.assembly_summary.planner_explanation, /promotion-ready workflow candidates: Replay Episode: Recover workflow validation failure/);
-    assert.match(body.assembly_summary.planner_explanation, /trusted patterns available but not used: edit/);
-    assert.match(body.assembly_summary.planner_explanation, new RegExp(`supporting knowledge appended: ${body.planner_packet.sections.supporting_knowledge.length}`));
-    assert.equal(body.tools.selection_summary.provenance_explanation, "selected tool: edit; candidate patterns visible but not yet trusted: edit");
-  } finally {
-    await app.close();
-    await liteRecallStore.close();
-    await liteWriteStore.close();
-  }
-});
-
-test("context_assemble can still return layered_context when explicitly requested for debug/operator inspection", async () => {
-  const dbPath = tmpDbPath("context-assemble-debug");
-  const app = Fastify();
-  const { liteWriteStore, liteRecallStore } = await seedContextRuntimeFixture(dbPath);
-  try {
-    registerContextRuntimeApp({ app, liteWriteStore, liteRecallStore });
-    const response = await app.inject({
-      method: "POST",
-      url: "/v1/memory/context/assemble",
-      payload: {
-        tenant_id: "default",
-        scope: "default",
-        query_text: "recover durable workflow from failed validation",
-        context: {
-          task_kind: "workflow_validation_recovery",
-          goal: "recover durable workflow from failed validation",
-          error: {
-            signature: "workflow-validation-mismatch",
-          },
-        },
-        include_rules: true,
-        include_shadow: false,
-        rules_limit: 20,
-        tool_candidates: ["bash", "edit", "test"],
-        return_layered_context: true,
-      },
-    });
-    assert.equal(response.statusCode, 200);
-    const body = ContextAssembleRouteContractSchema.parse(response.json()) as Record<string, unknown>;
-    assert.ok("layered_context" in body, "debug/operator context_assemble should expose layered_context when requested");
-    assert.ok("operator_projection" in body, "debug/operator context_assemble should expose operator_projection when requested");
-    assert.equal(body.workflow_signals.length, (body.layered_context as Record<string, unknown>).workflow_signals.length);
-    assert.equal(body.pattern_signals.length, (body.layered_context as Record<string, unknown>).pattern_signals.length);
-    assertDelegationLearningProjection(body, {
-      task_family: "task:workflow_validation_recovery",
-      matched_records: 0,
-      truncated: false,
-      route_role_counts: {},
-      record_outcome_counts: {},
-      recommendation_count: 0,
-      recommendation_kinds: [],
-    });
-    assertOperatorDelegationLearningProjection(body, {
-      task_family: "task:workflow_validation_recovery",
-      matched_records: 0,
-      truncated: false,
-      route_role_counts: {},
-      record_outcome_counts: {},
-      recommendation_count: 0,
-      recommendation_kinds: [],
-    });
-    assertOperatorActionHintProjection(body, {
-      gate_action: "inspect_context",
-      instruction: "Inspect the current context before starting with edit.",
-      tool_route: null,
-      priority: "recommended",
-      contract_trust: "advisory",
-      selected_tool: "edit",
-      file_path: null,
-      task_family: null,
-      workflow_signature: "workflow-validation-recovery-workflow",
-      policy_memory_id: null,
-    });
-    assertExecutionKernelBundle(body as {
-      layered_context: Record<string, unknown>;
-      execution_kernel: {
-        action_packet_summary: unknown;
-        pattern_signal_summary: unknown;
-        workflow_signal_summary: unknown;
-        workflow_lifecycle_summary: unknown;
-        workflow_maintenance_summary: unknown;
-        pattern_lifecycle_summary: unknown;
-        pattern_maintenance_summary: unknown;
-      };
-    });
   } finally {
     await app.close();
     await liteRecallStore.close();

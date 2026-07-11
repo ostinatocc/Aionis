@@ -22,15 +22,10 @@ flowchart TB
   H --> API["Focused Lite HTTP API"]
 
   subgraph APIGroup["Public Runtime Routes"]
-    Write["/v1/memory/write"]
-    Recall["/v1/memory/recall + recall_text"]
-    Context["/v1/memory/planning/context + context/assemble"]
+    Product["observe + guide + feedback + rehydrate + forget + measure"]
     Handoff["/v1/handoff/store + recover"]
-    AgentPack["/v1/memory/agent inspect/review/resume/handoff pack"]
-    Action["/v1/memory/action/retrieval + experience/intelligence"]
-    Lifecycle["/v1/memory/archive/rehydrate + nodes/activate"]
-    Feedback["feedback + tools + rules + patterns + maintenance"]
-    Replay["replay runs + playbooks + learning-control review"]
+    Operator["skills + snapshot + audit + boundary inventory"]
+    Temporary["recall/context eval routes + Manifest tools routes"]
     Boundary["/v1/runtime/boundary-inventory + /health"]
   end
 
@@ -119,7 +114,7 @@ flowchart TB
 | 2 | Tenant/scope isolation | Normalizes `tenant_id`, `scope`, and tenant-derived scope keys. | `src/memory/tenant.ts`, `src/app/request-guards.ts` | Implemented for Lite defaults. | Keep. Product-critical for cross-thread/agent memory. |
 | 3 | Agent identity and memory lane | Supports `producer_agent_id`, `owner_agent_id`, `owner_team_id`, `consumer_agent_id`, `consumer_team_id`, `private/shared`. | `src/app/request-guards.ts`, `src/store/lite-write-store.ts`, `src/store/lite-recall-store.ts` | Implemented structurally; default principal is local actor. | Keep. Must become explicit cross-agent feature. |
 | 4 | Cross-thread / cross-run handoff | Stores resumable execution handoff and recovers execution-ready next action, target files, acceptance checks. | `src/routes/handoff.ts`, `src/memory/handoff.ts`, `src/execution/*` | Implemented and tested. | Promote to core product headline. |
-| 5 | Cross-agent resume/review/handoff packs | Builds agent-facing inspect, review, resume, and handoff packs from continuity + evolution state. | `src/routes/memory-access.ts`, `src/memory/agent-memory-inspect-core.ts` | Implemented; buried in routes. | Promote as product capability. |
+| 5 | Cross-agent resume/review/handoff packs | Builds agent-facing inspect, review, resume, and handoff packs from continuity + evolution state. | `src/memory/agent-memory-inspect-core.ts` | Implemented as typed domain capability; internal HTTP adapters removed. | Promote through product composition. |
 | 6 | Cross-LLM continuity substrate | Runtime packets are structured JSON, not model-specific chat history; provider/model is not required for replaying state. | `src/memory/experience-intelligence.ts`, `src/app/planning-summary.ts`, `src/memory/execution-contract.ts` | Architecture-supported, not sufficiently validated. | Keep, but mark as unproven until cross-provider eval. |
 | 7 | Execution state transitions | Persists revisioned execution state and idempotent transitions. | `src/execution/state-store.ts`, `src/execution/transitions.ts`, `src/execution/types.ts` | Implemented. | Keep. Important for true continuity. |
 | 8 | Execution packet assembly | Builds compact execution packets with active role, stage, constraints, evidence, artifacts. | `src/execution/assemble.ts`, `src/execution/packet.ts`, `src/execution/profiles.ts` | Implemented. | Keep. Should feed external product packet. |
@@ -140,13 +135,13 @@ flowchart TB
 | 23 | Policy mutation loop | Represents policy mutation candidates, evidence, authority effects, adjudication. | `src/kernel/policy-mutation-loop.ts` | Implemented as structured mechanism. | Keep internal. Not user-facing yet. |
 | 24 | Learning-control providers | Supports deterministic/evidence/model/http providers for semantic review. | `src/memory/learning-control-provider*.ts`, `src/app/learning-control-runtime-providers.ts` | Implemented. | Keep, but make provider use advisory/candidate only. |
 | 25 | Authority visibility and consumption | Demotes untrusted authority, reports blocked authority, requires inspection. | `src/memory/authority-*.ts`, `src/kernel/boundary.ts` | Implemented. | Keep. Product value: learned memory cannot silently take over. |
-| 26 | Rule feedback/evaluation | Records/evaluates scoped rule state from feedback. | `src/memory/rules*.ts`, `src/memory/rule-policy.ts`, `src/routes/memory-feedback-tools.ts` | Implemented. | Review. May be too rule-like for product API; keep internal if useful. |
+| 26 | Rule feedback/evaluation | Records/evaluates scoped rule state from feedback. | `src/memory/rules*.ts`, `src/memory/rule-policy.ts`, `src/kernel/learning-kernel.ts` | Implemented as typed domain capability; internal HTTP adapters removed. | Keep internal if useful; do not expose a rule-engine product API. |
 | 27 | Tool selection memory | Selects tools from learned memory, stores decisions/runs/feedback. | `src/memory/tools-*.ts`, `src/memory/tool-*.ts` | Implemented. | Keep if framed as tool preference learning, not hard routing. |
-| 28 | Replay run lifecycle | Records replay run start, step before/after, run end, results. | `src/memory/replay*.ts`, `src/routes/memory-replay-core.ts` | Implemented. | Keep internal as evidence generator. |
-| 29 | Replay playbooks | Compile, inspect, candidate, promote, repair, run, dispatch playbooks through learning control. | `src/memory/replay*.ts`, `src/routes/memory-replay-core.ts`, `src/routes/memory-replay-learning-control.ts` | Implemented. | Keep but product wording should be "workflow reuse", not repair engine. |
-| 30 | Controlled semantic forgetting | Scores retain/demote/archive/review from salience, importance, confidence, feedback, lifecycle. | `src/kernel/forgetting-kernel.ts`, `src/memory/semantic-forgetting.ts` | Implemented. | Core product. |
-| 31 | Archive relocation | Moves low/retired memory to cold archive and preserves payload refs. | `src/kernel/forgetting-kernel.ts`, `src/memory/archive-relocation.ts` | Implemented. | Keep. Key difference from blind deletion. |
-| 32 | Rehydration | Rehydrates archived nodes/anchor payloads on demand with commits and lifecycle metadata. | `src/memory/lifecycle-lite.ts`, `src/memory/rehydrate-anchor.ts`, `src/memory/differential-rehydration.ts` | Implemented. | Core product, but needs better demo. |
+| 28 | Replay run lifecycle | Records replay run start, step before/after, run end, results. | `src/memory/replay*.ts` | Implemented as an internal typed capability; HTTP adapter removed. | Keep internal as evidence generator. |
+| 29 | Replay playbooks | Compile, inspect, candidate, promote, repair, run, dispatch playbooks through learning control. | `src/memory/replay*.ts`, `src/app/replay-*.ts` | Implemented as an internal typed capability; HTTP adapters removed. | Keep but product wording should be "workflow reuse", not repair engine. |
+| 30 | Controlled semantic forgetting | Scores retain/demote/archive/review from salience, importance, confidence, feedback, lifecycle. | `src/kernel/forgetting-kernel.ts` | Implemented. | Core product. |
+| 31 | Archive relocation | Moves low/retired memory to cold archive and preserves payload refs. | `src/kernel/forgetting-kernel.ts` | Implemented. | Keep. Key difference from blind deletion. |
+| 32 | Rehydration | Rehydrates archived nodes/anchor payloads on demand with commits and lifecycle metadata. | `src/kernel/forgetting-kernel.ts`, `src/memory/lifecycle-lite.ts`, `src/memory/rehydrate-anchor.ts` | Implemented. | Core product, but needs better demo. |
 | 33 | Node activation feedback | Records memory use and keeps useful memory warm. | `src/memory/lifecycle-lite.ts`, `src/memory/node-feedback-state.ts` | Implemented. | Keep. Necessary for positive transfer. |
 | 34 | Runtime maintenance | Runs immediate/daily/long-horizon maintenance over learning, forgetting, authority, signal trends. | `src/memory/runtime-maintenance.ts`, `src/kernel/learning-kernel.ts` | Implemented. | Keep internal; expose simple `maintain` later if needed. |
 | 35 | Runtime signal ledger/trends | Aggregates verifier/provider/retry/recovery/token/learning signals and posture recommendations. | `src/memory/runtime-signal-ledger.ts`, `src/memory/runtime-signal-trends.ts` | Implemented. | Keep. Important for dynamic governance. |
@@ -154,7 +149,7 @@ flowchart TB
 | 37 | Runtime entropy profile | Dynamically balances exploration/control, recall breadth, verification depth, promotion threshold, mutation authority. | `src/memory/runtime-entropy-profile.ts`, `src/memory/runtime-entropy-controls.ts` | Implemented. | Keep, but it should control intensity, not become hard task rules. |
 | 38 | Adaptive guidance | Produces decomposed guidance candidates, authority, attribution, uncertainty adjustment. | `src/memory/adaptive-guidance.ts`, `src/memory/schemas.ts` | Implemented. | Keep as candidate producer; avoid hard constraints. |
 | 39 | Cognitive structure | Builds evidence graph, workflow memory, policy memory, forgetting state, authority state. | `src/kernel/cognitive-structure.ts`, `src/memory/execution-introspection.ts` | Implemented. | Keep as introspection/reporting layer. |
-| 40 | Runtime boundary inventory | Reports Lite product boundary and route-to-capability matrix. | `src/server/lite-runtime-boundary.ts`, `src/routes/runtime-boundary-inventory.ts` | Implemented. | Keep, but rename/simplify if product API changes. |
+| 40 | Runtime boundary inventory | Reports Lite product boundary and route-to-capability matrix. | `src/server/lite-runtime-boundary.ts`, `src/server/http-server.ts` | Implemented. | Keep, but rename/simplify if product API changes. |
 | 41 | Embedding providers and surface policy | Supports MiniMax/OpenAI/HTTP embeddings and prevents embeddings on forbidden surfaces. | `src/embeddings/*`, `src/embeddings/surface-policy.ts` | Implemented. | Keep. Product needs clean env docs. |
 | 42 | Local SQLite stores | Write, recall, replay, runtime, execution-state local stores. | `src/store/*` | Implemented. | Keep. This is local-first product base. |
 | 43 | Request guards | Rate limits, inflight gates, quota hooks, identity defaults. | `src/app/request-guards.ts`, `src/util/inflight_gate.ts`, `src/util/ratelimit.ts` | Implemented in Lite posture. | Keep; auth/quota not product-strong yet. |
@@ -171,8 +166,8 @@ flowchart TB
 | 58 | Planning summaries by subdomain | Builds execution, collaboration, routing, instrumentation, forgetting, maintenance, workflow, pattern, policy, authority summaries. | `src/app/planning-summary*.ts` | Implemented. | Keep, but collapse user output to product-readable guide packet. |
 | 59 | Cost and importance dynamics | Computes cost signals and importance dynamics used by learning/forgetting/maintenance. | `src/memory/cost-signals.ts`, `src/memory/importance-dynamics.ts`, `src/kernel/forgetting-kernel.ts` | Implemented. | Keep. Required for controlled forgetting and value measurement. |
 | 60 | Associative linking substrate | Keeps associative candidates and linking config/types for related memory surfaces and write post-commit integration. | `src/jobs/associative-linking-lib.ts`, `src/memory/associative-*.ts` | Active internal substrate. | Keep internal; not a product surface. |
-| 61 | Raw memory find/resolve | Provides low-level find/resolve routes over stored memory. | `src/memory/find.ts`, `src/memory/resolve.ts`, `src/routes/memory-access.ts` | Implemented. | Keep internal/operator only; do not make it the main product API. |
-| 62 | Reviewer packs | Builds continuity/evolution review packs for operator or agent inspection. | `src/memory/reviewer-packs.ts`, `src/routes/memory-access.ts` | Implemented. | Keep as review/support surface. |
+| 61 | Raw memory find/resolve | Provides low-level lookup over stored memory; only resolve retains a stable HTTP support route. | `src/memory/find.ts`, `src/memory/resolve.ts`, `src/routes/memory-access.ts` | Typed find capability retained; find HTTP adapter removed. | Keep internal/operator only; do not make it the main product API. |
+| 62 | Reviewer packs | Builds continuity/evolution review packs for operator or agent inspection. | `src/memory/reviewer-packs.ts` | Implemented as typed domain capability; internal HTTP adapters removed. | Keep behind review/product composition. |
 | 63 | Evolution operators and inspect | Builds evolution review surfaces over candidates, promotions, policy memory, and lifecycle changes. | `src/memory/evolution-operators.ts`, `src/memory/evolution-inspect.ts` | Implemented. | Keep internal; useful for product diagnostics. |
 | 64 | Layer policy | Encodes memory layer treatment and tier/lifecycle behavior. | `src/memory/layer-policy.ts` | Implemented. | Keep. Core to L0-L5 behavior. |
 | 65 | Node execution surface and slot surface | Normalizes execution node/slot surfaces for execution-native memory. | `src/memory/node-execution-surface.ts`, `src/memory/execution-slot-surface.ts` | Implemented. | Keep internal. |
@@ -184,69 +179,19 @@ flowchart TB
 
 ## Complete Route Inventory From Code
 
-This table is generated from current route registration files. It separates product facade candidates from internal and validation support.
+The authoritative route list lives in
+`docs/architecture/AIONIS_RUNTIME_SURFACE_INVENTORY.md`. Task 11 reduced the
+registered matrix from 72 to 27 routes.
 
 The executable route matrix now also emits `product_exposure` so retained internal routes are not mistaken for user-facing product entries.
 
-| Route | Current Function | Boundary |
+| Route category | Count | Boundary |
 |---|---|---|
-| `GET /health` | Runtime health, configured paths, route matrix. | Product support |
-| `GET /v1/runtime/boundary-inventory` | Focused Runtime product/kernel boundary inventory. | Product support |
-| `POST /v1/memory/write` | Write memory nodes, edges, execution-native projections, workflow candidates. | `observe` core |
-| `POST /v1/memory/recall` | Structured recall over scoped memory. | `guide` core |
-| `POST /v1/memory/recall_text` | Text query recall with embedding/ranking/context layers. | `guide` core |
-| `POST /v1/memory/planning/context` | Planning-time memory context and summary. | `guide` core |
-| `POST /v1/memory/context/assemble` | Internal context assembly. | `guide` internal |
-| `POST /v1/handoff/store` | Store handoff/resume execution state. | `observe` core |
-| `POST /v1/handoff/recover` | Recover handoff/resume packet for another run/thread/agent. | `guide` core |
-| `POST /v1/memory/trajectory/compile` | Compile execution trajectory into evidence/workflow surfaces. | `observe` internal |
-| `POST /v1/memory/delegation/records` | Write cross-agent delegation records. | `observe` core |
-| `POST /v1/memory/delegation/records/find` | Find delegation records. | `guide` internal |
-| `POST /v1/memory/delegation/records/aggregate` | Aggregate delegation learning. | `guide` internal |
-| `POST /v1/memory/find` | Low-level memory search. | Internal/operator, not product entry |
-| `POST /v1/memory/continuity/review-pack` | Continuity review pack. | Review support |
-| `POST /v1/memory/agent/inspect` | Agent memory inspect pack. | Review support |
-| `POST /v1/memory/agent/review-pack` | Agent memory review pack. | Review support |
-| `POST /v1/memory/agent/resume-pack` | Agent resume pack. | `guide` core |
-| `POST /v1/memory/agent/handoff-pack` | Agent handoff pack. | `guide` core |
-| `POST /v1/memory/execution/introspect` | Execution memory introspection/cognitive structure. | Review support |
-| `POST /v1/memory/evolution/review-pack` | Evolution/learning review pack. | Review support |
-| `POST /v1/memory/action/retrieval` | Retrieve action/workflow/policy candidates. | `guide` core |
-| `POST /v1/memory/experience/intelligence` | Compose experience intelligence. | `guide` core |
-| `POST /v1/memory/resolve` | Resolve raw memory ids/anchors. | Internal/operator, not product entry |
-| `POST /v1/memory/anchors/rehydrate_payload` | Rehydrate anchor payload. | `forget`/`guide` support |
-| `POST /v1/memory/archive/rehydrate` | Rehydrate archived memory. | `forget` core |
-| `POST /v1/memory/nodes/activate` | Activate/use memory and keep it warm. | `forget` core |
-| `POST /v1/memory/feedback` | Record rule/policy feedback. | `observe` internal |
-| `POST /v1/memory/rules/state` | Apply rule state. | Internal advisory state, not product rule engine |
-| `POST /v1/memory/rules/evaluate` | Evaluate rule policy. | Internal advisory evaluation, not product rule engine |
-| `POST /v1/memory/tools/select` | Select tool using learned memory. | `guide` internal |
-| `POST /v1/memory/tools/decision` | Read a tool decision. | Internal |
-| `POST /v1/memory/tools/run` | Read a tool run. | Internal |
-| `POST /v1/memory/tools/runs/list` | List tool runs. | Internal |
-| `POST /v1/memory/tools/feedback` | Record tool feedback for learning. | `observe` internal |
-| `POST /v1/memory/learning-loop/run` | Run evidence-gated learning loop. | `measure`/internal |
-| `POST /v1/memory/runtime-maintenance/run` | Run maintenance profile. | `measure`/internal |
-| `POST /v1/memory/runtime-maintenance/immediate` | Immediate maintenance. | `measure`/internal |
-| `POST /v1/memory/runtime-maintenance/daily` | Daily maintenance. | `measure`/internal |
-| `POST /v1/memory/runtime-maintenance/long-horizon` | Long-horizon maintenance. | `measure`/internal |
-| `POST /v1/memory/policies/learning-control/apply` | Apply policy learning-control lifecycle decision. | Internal/governance |
-| `POST /v1/memory/patterns/suppress` | Suppress learned pattern. | `forget` core |
-| `POST /v1/memory/patterns/unsuppress` | Unsuppress learned pattern. | `forget` core |
-| `POST /v1/memory/tools/rehydrate_payload` | Rehydrate learned tool/pattern anchor payload. | `forget` support |
-| `POST /v1/memory/replay/run/start` | Start replay/evidence run. | Internal evidence |
-| `POST /v1/memory/replay/step/before` | Record replay before-step. | Internal evidence |
-| `POST /v1/memory/replay/step/after` | Record replay after-step. | Internal evidence |
-| `POST /v1/memory/replay/run/end` | End replay/evidence run. | Internal evidence |
-| `POST /v1/memory/replay/runs/get` | Read replay run. | Internal evidence |
-| `POST /v1/memory/replay/playbooks/compile_from_run` | Compile workflow/playbook from run evidence. | Internal learning |
-| `POST /v1/memory/replay/playbooks/get` | Read playbook. | Internal learning |
-| `POST /v1/memory/replay/playbooks/candidate` | Create/evaluate playbook candidate. | Internal learning |
-| `POST /v1/memory/replay/playbooks/promote` | Promote playbook with gates. | Internal learning |
-| `POST /v1/memory/replay/playbooks/repair` | Record playbook repair evidence. | Internal evidence, not semantic repair product |
-| `POST /v1/memory/replay/playbooks/repair/review` | Learning-control review for repair evidence. | Internal learning-control, not semantic repair product |
-| `POST /v1/memory/replay/playbooks/run` | Run playbook through learning-control surface. | Internal evidence/control |
-| `POST /v1/memory/replay/playbooks/dispatch` | Dispatch playbook through read/dispatch surface. | Internal evidence/control |
+| Product entries | 6 | Required product HTTP |
+| Product support | 3 | Required handoff and memory resolution HTTP |
+| Operator support | 10 | Required review, skill, audit, and boundary HTTP |
+| Runtime eval guidance | 3 | Temporary until eval migration |
+| Manifest context/tools | 5 | Temporary until Manifest migration |
 
 ## Source Module Boundary Map
 
@@ -269,7 +214,7 @@ The executable route matrix now also emits `product_exposure` so retained intern
 | `src/memory/learning-control-*` | Model/evidence/http learning-control review/adjudication operations. | Internal governance; must not become task-specific solver. |
 | `src/memory/policy-*`, `pattern-*`, `authority-*` | Policy/pattern lifecycle, authority gates, suppression, visibility. | Core learning-control substrate. |
 | `src/memory/runtime-*` | Entropy, maintenance, effect, signal ledger/trends, boundary inventory/tool hints. | Internal `measure` and dynamic intervention support. |
-| `src/memory/semantic-forgetting.ts`, `archive-*`, `rehydrate-*`, `lifecycle-*` | Controlled forgetting, archive relocation, rehydration, activation feedback. | Core `forget`. |
+| `src/kernel/forgetting-kernel.ts`, `rehydrate-*`, `lifecycle-*` | Controlled forgetting, archive relocation, rehydration, activation feedback. | Core `forget`. |
 | `src/memory/tools-*`, `tool-*`, `rules-*` | Tool preference memory, tool run records, rule advisory state. | Keep internal/advisory. |
 | `src/memory/sandbox*`, `src/store/sandbox-access.ts` | Internal sandbox/session/run support used by replay execution/backends, without public product route. | Keep internal; not product-facing. |
 | `src/embeddings/*` | Embedding providers and surface policy. | Product support. |
@@ -314,12 +259,12 @@ The executable route matrix now also emits `product_exposure` so retained intern
 
 The internal Runtime can remain rich, but the product should present four verbs:
 
-| Facade Verb | Backing Capabilities | Current Routes To Collapse Behind It |
+| Facade Verb | Backing Capabilities | Typed Backing Mechanisms |
 |---|---|---|
-| `observe` | write execution evidence, trajectory compile, replay step evidence, delegation records, tool runs | `/v1/memory/write`, `/v1/memory/trajectory/compile`, replay run/step routes, tool decision/run routes |
-| `guide` | context assemble, action retrieval, experience intelligence, resume/handoff pack | `/v1/memory/context/assemble`, `/v1/memory/planning/context`, `/v1/memory/action/retrieval`, `/v1/memory/experience/intelligence`, agent packs |
-| `forget` | semantic forgetting, suppress/unsuppress, archive relocation, rehydrate, node activation | `/v1/memory/archive/rehydrate`, `/v1/memory/nodes/activate`, `/v1/memory/patterns/*`, `/v1/memory/tools/rehydrate_payload` |
-| `measure` | runtime effect, promotion quality, runtime signal trends, negative-transfer evidence | effect summaries and runtime maintenance reports |
+| `observe` | write execution evidence, trajectory compile, replay step evidence, delegation records, tool runs | Observe service, memory-write service, handoff service, evidence functions |
+| `guide` | context assemble, action retrieval, experience intelligence, resume/handoff pack | Guide service, canonical compiler, planning and execution evidence assemblers |
+| `forget` | semantic forgetting, suppress/unsuppress, archive relocation, rehydrate, node activation | Lifecycle service and forgetting kernel |
+| `measure` | runtime effect, promotion quality, runtime signal trends, negative-transfer evidence | Measure service, effect summaries, and runtime maintenance functions |
 
 ## Next Evaluation To Recover Original Aionis Value
 

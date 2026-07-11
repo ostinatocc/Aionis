@@ -5,7 +5,7 @@ import {
 } from "./associative-linking-types.js";
 import { selectAssociativeLinkSourceNodeIds } from "./write-shared.js";
 import { buildAssociativeLinkOutboxInsert } from "../jobs/associative-linking-lib.js";
-import type { PreparedWrite, WriteResult } from "./write.js";
+import type { PreparedWrite, WriteResult } from "./write-contract.js";
 
 type PostCommitWriteOptions = {
   associativeLinkOrigin?: AssociativeLinkTriggerOrigin;

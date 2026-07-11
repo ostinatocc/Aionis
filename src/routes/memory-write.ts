@@ -1,4 +1,3 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Env } from "../config.js";
 import { assertLocalStoreRuntimeEdition } from "../app/edition.js";
 import type { ExecutionStateStore } from "../execution/state-store.js";
@@ -23,11 +22,7 @@ import {
 import { commitLitePreparedWriteWithProjection } from "../memory/lite-projected-write-commit.js";
 import { createHttpMemoryLifecycleRelationCandidateProducer } from "../memory/memory-lifecycle-relation-model-producer.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
-import type { AuthPrincipal } from "../util/auth.js";
 import { HttpError } from "../util/http.js";
-import type { InflightGateToken } from "../util/inflight_gate.js";
-
-type MemoryWriteRequest = FastifyRequest<{ Body: unknown }>;
 
 type WriteWarningLike = { code: string; message: string; details?: Record<string, unknown> };
 type LiteInlineEmbeddingResultLike = {
@@ -53,7 +48,7 @@ export type MemoryWriteRouteService = {
   commit: (
     body: unknown,
     options?: {
-      log?: FastifyRequest["log"];
+      log?: { info: (context: unknown, message?: string) => unknown };
       executionTreeDefaultDisabled?: boolean;
       startedAt?: number;
     },
@@ -87,57 +82,6 @@ function resolveWriteScopeTenant(args: {
     scope: args.out.scope ?? args.prepared.scope_public ?? args.env.MEMORY_SCOPE,
     tenantId: args.out.tenant_id ?? args.prepared.tenant_id ?? args.env.MEMORY_TENANT_ID,
   };
-}
-
-export function registerMemoryWriteRoutes(args: {
-  app: FastifyInstance;
-  env: Env;
-  embedder: EmbeddingProvider | null;
-  embeddingSurfacePolicy?: EmbeddingSurfacePolicy;
-  liteWriteStore: LiteWriteStore;
-  requireMemoryPrincipal: (req: FastifyRequest) => Promise<AuthPrincipal | null>;
-  withIdentityFromRequest: (
-    req: FastifyRequest,
-    body: unknown,
-    principal: AuthPrincipal | null,
-    kind: "write",
-  ) => unknown;
-  enforceRateLimit: (req: FastifyRequest, reply: FastifyReply, kind: "write") => Promise<void>;
-  enforceTenantQuota: (req: FastifyRequest, reply: FastifyReply, kind: "write", tenantId: string) => Promise<void>;
-  tenantFromBody: (body: unknown) => string;
-  acquireInflightSlot: (kind: "write") => Promise<InflightGateToken>;
-  executionStateStore?: ExecutionStateStore | null;
-  executionTreeStore?: ExecutionTreeStore | null;
-  learningControlRuntimeProviderBuilderOptions?: LiteLearningControlRuntimeProviderBuilderOptions;
-}) {
-  const service = createMemoryWriteRouteService(args);
-  const {
-    app,
-    requireMemoryPrincipal,
-    withIdentityFromRequest,
-    enforceRateLimit,
-    enforceTenantQuota,
-    tenantFromBody,
-    acquireInflightSlot,
-  } = args;
-  app.post("/v1/memory/write", async (req: MemoryWriteRequest, reply: FastifyReply) => {
-    const t0 = performance.now();
-    const principal = await requireMemoryPrincipal(req);
-    const body = withIdentityFromRequest(req, req.body, principal, "write");
-    await enforceRateLimit(req, reply, "write");
-    await enforceTenantQuota(req, reply, "write", tenantFromBody(body));
-    const gate = await acquireInflightSlot("write");
-    try {
-      const result = await service.commit(body, {
-        log: req.log,
-        executionTreeDefaultDisabled: isExecutionTreeDefaultDisabledRequest(body),
-        startedAt: t0,
-      });
-      return reply.code(200).send(result.response);
-    } finally {
-      gate.release();
-    }
-  });
 }
 
 export function createMemoryWriteRouteService(args: MemoryWriteRouteServiceArgs): MemoryWriteRouteService {
@@ -359,7 +303,7 @@ export function createMemoryWriteRouteService(args: MemoryWriteRouteServiceArgs)
     };
   };
   const finalizeWriteRoute = async (args: {
-    log?: FastifyRequest["log"];
+    log?: { info: (context: unknown, message?: string) => unknown };
     prepared: PreparedWrite;
     executionOverlays: ReturnType<typeof collectExecutionWriteOverlaySlots> | null;
     out: WriteResult;

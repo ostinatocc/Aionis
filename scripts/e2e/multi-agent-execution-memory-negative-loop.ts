@@ -366,24 +366,17 @@ async function runNegativeLoop(args: {
   assertCondition(rejectedFeedback.error === "guide_trace_used_memory_not_exposed", "cross-team attribution was not rejected");
 
   const branchTree = buildBranchSplitTree(args.runId);
-  const executionAssemble = await postRuntimeJson({
-    baseUrl: args.baseUrl,
-    pathName: "/v1/execution/context/assemble",
-    apiKey: args.apiKey,
-    payload: {
-      tenant_id: "default",
-      scope: args.scope,
-      consumer_agent_id: REVIEWER_ALPHA_ID,
-      consumer_team_id: TEAM_ALPHA,
-      execution_tree_v1: branchTree,
-      context_mode: "full_power",
-      include_memory_evidence: false,
-      include_prompt_text: true,
-      include_agent_context: true,
-      agent_context_char_budget: 4096,
-    },
+  const executionGuide = await client.guide<Record<string, unknown>>({
+    query_text: `${PASSED_MARKER} continue the verified branch and avoid ${FAILED_MARKER}`,
+    agent_role: "reviewer",
+    consumer_agent_id: REVIEWER_ALPHA_ID,
+    consumer_team_id: TEAM_ALPHA,
+    execution_tree_v1: branchTree,
+    mode: "full_power",
+    include_packets: true,
+    context_char_budget: 4096,
   });
-  const executionContext = agentContext(executionAssemble.agent_context, "execution context");
+  const executionContext = agentContext(executionGuide.agent_context, "execution context");
   const executionUseNow = textArray(executionContext.use_now).join("\n");
   const executionDoNotUse = textArray(executionContext.do_not_use).join("\n");
   assertCondition(executionUseNow.includes(PASSED_MARKER), "execution context did not surface passed branch in use_now");

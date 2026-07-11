@@ -66,12 +66,11 @@ export const AIONIS_KERNEL_CAPABILITIES = [
       "product_ui_state",
     ],
     primary_runtime_surfaces: [
-      "/v1/memory/planning/context",
-      "/v1/memory/context/assemble",
-      "/v1/execution/context/assemble",
+      "/v1/guide",
       "/v1/handoff/store",
       "/v1/handoff/recover",
-      "/v1/memory/execution/introspect",
+      "service:planning_context",
+      "service:execution_context",
     ],
     success_signals: [
       "resume packet names the current state",
@@ -100,10 +99,11 @@ export const AIONIS_KERNEL_CAPABILITIES = [
       "unverified_authoritative_reuse",
     ],
     primary_runtime_surfaces: [
-      "/v1/memory/replay/run/*",
-      "/v1/memory/replay/playbooks/*",
-      "/v1/memory/tools/feedback",
-      "/v1/memory/tools/select",
+      "service:replay_evidence",
+      "service:replay_playbook",
+      "/v1/guide",
+      "/v1/feedback",
+      "service:learning_kernel",
     ],
     success_signals: [
       "candidate memory stays provisional until gates pass",
@@ -131,9 +131,10 @@ export const AIONIS_KERNEL_CAPABILITIES = [
       "irreversible_loss_without_archive",
     ],
     primary_runtime_surfaces: [
-      "/v1/memory/archive/rehydrate",
-      "/v1/memory/nodes/activate",
-      "/v1/memory/anchors/rehydrate-payload",
+      "/v1/forget",
+      "/v1/rehydrate",
+      "service:memory_lifecycle",
+      "service:anchor_payload_rehydration",
     ],
     success_signals: [
       "contested memory demotes before archive",
@@ -162,10 +163,10 @@ export const AIONIS_KERNEL_CAPABILITIES = [
       "cloud_platform_control",
     ],
     primary_runtime_surfaces: [
-      "/v1/memory/policies/learning-control/apply",
-      "/v1/memory/continuity/review-pack",
-      "/v1/memory/evolution/review-pack",
-      "/v1/runtime/boundary/inventory",
+      "service:learning_control_policy",
+      "service:continuity_review",
+      "service:evolution_review",
+      "/v1/runtime/boundary-inventory",
     ],
     success_signals: [
       "authority requires explicit outcome evidence",

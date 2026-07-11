@@ -32,6 +32,13 @@ a given run:
 | `AIONIS_AGENT_CONTEXT v1` | Runtime | Standard raw HTTP `agent_context.prompt_text`. |
 | `AIONIS_CTX v2` | Runtime | Explicit compact Runtime prompt; SDK final prompt only with `prompt_format: "runtime_compact"`. |
 
+SDK ownership is one-way: Runtime `product-output-contract.ts` owns the HTTP
+AgentContext schema, and the named `public-contracts` region in Runtime
+`src/sdk.ts` owns SDK types plus the prompt-format constant. Standalone
+`aionis-sdk/src/index.ts` owns handwritten client behavior and receives only
+that named contract region during sync. Runtime Core does not import the
+published SDK package.
+
 Execution-scoped memory that reaches the final Agent prompt must be admitted as
 current task execution state: exact `task_signature` evidence or accepted /
 passed same-`workflow_signature` continuation evidence promoted by the route
@@ -58,9 +65,9 @@ themselves direct prompt admission.
 |---|---|---|---|---|---|---|
 | Observe memory and execution evidence | `POST /v1/observe` | `observe()`, `remember()`, `execution.observeStep()` | No | `Primary` | `AionisRuntime-focused/src/routes/product-facade.ts`, `aionis-sdk/src/index.ts` | SDK tests, Runtime product-loop eval |
 | Raw guide | `POST /v1/guide` | `guide()`, `execution.guideForRole()` | Lower-level `agent_context.prompt_text` | `Stable` | `AionisRuntime-focused/src/routes/product-facade.ts`, `aionis-sdk/src/index.ts` | SDK guide tests, Runtime guide e2e |
-| Final SDK Agent context | `POST /v1/guide`, `POST /v1/memory/resolve` | `guideAgentContext()` | `agent_prompt` | `Primary` | `aionis-sdk/src/index.ts:2074`, `AionisRuntime-focused/src/sdk.ts:2074` | `aionis-sdk/test/sdk.test.ts`, `AionisRuntime-focused/scripts/ci/lite-sdk-guide-agent-context.test.ts` |
-| Role-aware final SDK Agent context | `POST /v1/guide`, `POST /v1/memory/resolve` | `execution.guideAgentContextForRole()` | `agent_prompt` | `Primary` | `aionis-sdk/src/index.ts:2389`, `AionisRuntime-focused/src/sdk.ts:2389` | `aionis-sdk/test/sdk.test.ts` |
-| Local execution prompt compiler | N/A | `compileExecutionAgentContext()` | `agent_prompt` | `Advanced` | `aionis-sdk/src/index.ts:2991`, `AionisRuntime-focused/src/sdk.ts:2991` | SDK tests |
+| Final SDK Agent context | `POST /v1/guide`, `POST /v1/memory/resolve` | `guideAgentContext()` | `agent_prompt` | `Primary` | Runtime-owned SDK contract region plus `aionis-sdk/src/index.ts` client behavior | `aionis-sdk/test/sdk.test.ts`, Runtime SDK contract ownership tests |
+| Role-aware final SDK Agent context | `POST /v1/guide`, `POST /v1/memory/resolve` | `execution.guideAgentContextForRole()` | `agent_prompt` | `Primary` | Runtime-owned SDK contract region plus `aionis-sdk/src/index.ts` client behavior | `aionis-sdk/test/sdk.test.ts` |
+| Local execution prompt compiler | N/A | `compileExecutionAgentContext()` | `agent_prompt` | `Advanced` | Runtime-owned prompt contract; standalone SDK compiler implementation | Runtime and standalone SDK tests |
 | Feedback attribution | `POST /v1/feedback` | `feedback()`, `feedbackFromGuide()`, `execution.feedbackFromOutcome()` | No | `Primary` | `AionisRuntime-focused/src/routes/product-facade.ts`, `aionis-sdk/src/index.ts` | SDK tests, feedback governance evals |
 | Measure effect | `POST /v1/measure` | `measure()`, `execution.measureRun()` | No | `Primary` | `AionisRuntime-focused/src/routes/product-facade.ts`, `aionis-sdk/src/index.ts` | SDK tests, product-loop eval |
 | Trace-derived skill candidates | `POST /v1/measure`, skill review routes | `traceDerivedSkillCandidatesFromMeasure()`, `traceDerivedSkillReviewItemsFromMeasure()` | No | `Stable` | `AionisRuntime-focused/src/memory/skill-candidate-*`, `aionis-sdk/src/index.ts` | SDK trace-to-skill verification |
@@ -72,7 +79,7 @@ themselves direct prompt admission.
 
 | Integration | Role | Final Agent output | Current code path | Status | Duplication / gap |
 |---|---|---|---|---|---|
-| `@aionis/sdk` | Primary TypeScript host surface | `guideAgentContext().agent_prompt` | `aionis-sdk/src/index.ts` | `Primary` | None. This is the canonical SDK path. |
+| `@aionis/sdk` | Primary TypeScript host surface | `guideAgentContext().agent_prompt` | `aionis-sdk/src/index.ts` | `Primary` | Runtime owns generated public contracts; the SDK owns handwritten client behavior. |
 | `@aionis/mcp` | MCP tool bridge | `aionis_context.agent_prompt` | `aionis-mcp/src/tools.ts` | `Integration` | Uses `execution.guideAgentContextForRole()` and returns the same SDK AgentContext. |
 | `@aionis/aifs` | File surface for file-reading Agents | `.aionis/guide.md` | `aionis-aifs/src/index.ts` | `Integration` | Uses `guideAgentContext()` or `execution.guideAgentContextForRole()` and writes the SDK `agent_prompt`. |
 | `aionis-claude-code` | Claude Code lifecycle hooks | injected context | `aionis-claude-code/packages/aionis-claude-code/src/index.ts` | `Integration` | Uses `execution.guideAgentContextForRole()` for injected prompt context. |

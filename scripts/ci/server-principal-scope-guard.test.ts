@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { TEST_AUTHORITY_RECEIPT_ENV } from "./authority-fixture-helpers.ts";
-import { createRequestGuards } from "../../src/app/request-guards.ts";
+import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import { loadEnv, type Env } from "../../src/config.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
 import { HttpError } from "../../src/util/http.ts";

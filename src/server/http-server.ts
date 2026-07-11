@@ -9,23 +9,26 @@ import type { AuthPrincipal } from "../util/auth.js";
 import type { InflightGateToken } from "../util/inflight_gate.js";
 import { registerMemoryAccessRoutes } from "../routes/memory-access.js";
 import {
-  registerMemoryContextRuntimeRoutes,
-  type MemoryPlanningContextRouteService,
+  createMemoryPlanningContextService,
+  type MemoryPlanningContextService,
 } from "../routes/memory-context-runtime.js";
-import { registerMemoryFeedbackToolRoutes } from "../routes/memory-feedback-tools.js";
-import { registerLiteMemoryLifecycleRoutes } from "../routes/memory-lifecycle-lite.js";
-import { createHandoffRouteService, registerHandoffRoutes } from "../routes/handoff.js";
-import { registerMemoryRecallRoutes } from "../routes/memory-recall.js";
-import { registerMemoryReplayCoreRoutes } from "../routes/memory-replay-core.js";
-import { registerMemoryReplayLearningControlRoutes } from "../routes/memory-replay-learning-control.js";
-import { createMemoryWriteRouteService, registerMemoryWriteRoutes } from "../routes/memory-write.js";
+import { registerHandoffRoutes, type HandoffRouteService } from "../routes/handoff.js";
+import type { MemoryWriteRouteService } from "../routes/memory-write.js";
 import { registerProductFacadeRoutes } from "../routes/product-facade.js";
+import { createProductObserveService } from "../product/observe-service.js";
+import { createProductGuideService } from "../product/guide-service.js";
+import { createProductLifecycleService } from "../product/lifecycle-service.js";
+import { createProductMeasureService } from "../product/measure-service.js";
+import {
+  createProductToolFeedbackLearningKernel,
+  createProductToolFeedbackService,
+} from "../product/tool-feedback-service.js";
+import type { ProductServices } from "../product/product-services.js";
 import { registerOperatorSnapshotRoutes } from "../routes/operator-snapshot.js";
-import { registerRuntimeBoundaryInventoryRoutes } from "../routes/runtime-boundary-inventory.js";
+import { buildRuntimeBoundaryInventoryResponse } from "../memory/runtime-boundary-inventory.js";
 import type { ExecutionStateStore } from "../execution/state-store.js";
 import type { ExecutionTreeStore } from "../execution/tree-store.js";
-import type { ClaimLedgerAccess } from "../store/claim-ledger-access.js";
-import type { SkillCandidateReviewAccess } from "../store/skill-candidate-review-access.js";
+import type { ClaimLedgerAccess, SkillCandidateReviewAccess } from "../store/memory-store.js";
 import { buildLiteRouteMatrix, registerLiteServerOnlyRoutes } from "./lite-runtime-boundary.js";
 import { createErrorResponse, HttpError } from "../util/http.js";
 
@@ -110,6 +113,14 @@ export function registerRuntimeErrorHandler(app: FastifyInstance) {
       details: { contract: "error_v1" },
     }));
   });
+}
+
+export function registerRuntimeBoundaryInventoryRoutes(args: { app: FastifyInstance; env: Env }) {
+  if (args.env.AIONIS_EDITION !== "lite") {
+    throw new Error("aionis-lite runtime boundary inventory routes only support AIONIS_EDITION=lite");
+  }
+  args.app.get("/v1/runtime/boundary-inventory", async (_req: FastifyRequest, reply: FastifyReply) =>
+    reply.code(200).send(buildRuntimeBoundaryInventoryResponse()));
 }
 
 export function logMemoryApiConfig(args: {
@@ -317,38 +328,16 @@ export function registerHealthRoute(args: {
   });
 }
 
-type MemoryWriteRouteArgs = Parameters<typeof registerMemoryWriteRoutes>[0];
 type HandoffRouteArgs = Parameters<typeof registerHandoffRoutes>[0];
 type MemoryAccessRouteArgs = Parameters<typeof registerMemoryAccessRoutes>[0];
-type MemoryLifecycleRouteArgs = Parameters<typeof registerLiteMemoryLifecycleRoutes>[0];
-type MemoryRecallRouteArgs = Parameters<typeof registerMemoryRecallRoutes>[0];
-type MemoryContextRouteArgs = Parameters<typeof registerMemoryContextRuntimeRoutes>[0];
-type MemoryFeedbackRouteArgs = Parameters<typeof registerMemoryFeedbackToolRoutes>[0];
-type MemoryReplayCoreRouteArgs = Parameters<typeof registerMemoryReplayCoreRoutes>[0];
-type MemoryReplayLearningControlRouteArgs = Parameters<typeof registerMemoryReplayLearningControlRoutes>[0];
+type MemoryContextServiceArgs = Parameters<typeof createMemoryPlanningContextService>[0];
 
 type RuntimeLiteWriteStore =
-  & NonNullable<MemoryWriteRouteArgs["liteWriteStore"]>
   & HandoffRouteArgs["liteWriteStore"]
   & MemoryAccessRouteArgs["liteWriteStore"]
-  & MemoryLifecycleRouteArgs["liteWriteStore"]
-  & MemoryRecallRouteArgs["liteWriteStore"]
-  & MemoryContextRouteArgs["liteWriteStore"]
-  & MemoryFeedbackRouteArgs["liteWriteStore"]
-  & NonNullable<MemoryReplayCoreRouteArgs["liteWriteStore"]>
-  & MemoryReplayLearningControlRouteArgs["liteWriteStore"];
+  & MemoryContextServiceArgs["liteWriteStore"];
 
-type RuntimeLiteRecallAccess =
-  & MemoryAccessRouteArgs["liteRecallAccess"]
-  & MemoryRecallRouteArgs["liteRecallAccess"]
-  & MemoryContextRouteArgs["liteRecallAccess"]
-  & MemoryFeedbackRouteArgs["liteRecallAccess"];
-
-type RuntimeLiteReplayAccess = NonNullable<MemoryReplayCoreRouteArgs["liteReplayAccess"]>;
-type RuntimeLiteReplayStore = NonNullable<MemoryReplayCoreRouteArgs["liteReplayStore"]>;
-
-type RuntimeReplayRunOptionsBuilder =
-  & MemoryReplayLearningControlRouteArgs["buildReplayPlaybookRunOptions"];
+type RuntimeLiteRecallAccess = MemoryContextServiceArgs["liteRecallAccess"];
 
 export type RegisterApplicationRoutesArgs = {
   app: FastifyInstance;
@@ -357,13 +346,12 @@ export type RegisterApplicationRoutesArgs = {
   queryEmbedder: EmbeddingProvider | null;
   embeddingSurfacePolicy: EmbeddingSurfacePolicy;
   liteRecallAccess: RuntimeLiteRecallAccess;
-  liteReplayAccess: RuntimeLiteReplayAccess;
-  liteReplayStore: RuntimeLiteReplayStore;
   liteWriteStore: RuntimeLiteWriteStore;
   claimLedgerAccess?: ClaimLedgerAccess | null;
   skillCandidateReviewAccess?: SkillCandidateReviewAccess | null;
   executionStateStore: ExecutionStateStore;
   executionTreeStore: ExecutionTreeStore;
+  productServices: ProductServices;
   recallTextEmbedBatcher: unknown;
   requireMemoryPrincipal: (req: FastifyRequest) => Promise<AuthPrincipal | null>;
   withIdentityFromRequest: (
@@ -375,25 +363,22 @@ export type RegisterApplicationRoutesArgs = {
   enforceRateLimit: (req: FastifyRequest, reply: FastifyReply, kind: RateLimitKind) => Promise<void>;
   enforceTenantQuota: (req: FastifyRequest, reply: FastifyReply, kind: TenantQuotaKind, tenantId: string) => Promise<void>;
   enforceRecallTextEmbedQuota: (req: FastifyRequest, reply: FastifyReply, tenantId: string) => Promise<void>;
-  buildRecallAuth: MemoryRecallRouteArgs["buildRecallAuth"] & MemoryContextRouteArgs["buildRecallAuth"];
+  buildRecallAuth: MemoryContextServiceArgs["buildRecallAuth"];
   tenantFromBody: (body: unknown) => string;
   acquireInflightSlot: (kind: InflightKind) => Promise<InflightGateToken>;
-  hasExplicitRecallKnobs: MemoryRecallRouteArgs["hasExplicitRecallKnobs"];
-  resolveRecallProfile: MemoryRecallRouteArgs["resolveRecallProfile"] & MemoryContextRouteArgs["resolveRecallProfile"];
-  resolveExplicitRecallMode: MemoryRecallRouteArgs["resolveExplicitRecallMode"] & MemoryContextRouteArgs["resolveExplicitRecallMode"];
-  resolveClassAwareRecallProfile: MemoryContextRouteArgs["resolveClassAwareRecallProfile"];
-  withRecallProfileDefaults: MemoryRecallRouteArgs["withRecallProfileDefaults"] & MemoryContextRouteArgs["withRecallProfileDefaults"];
-  resolveRecallStrategy: MemoryRecallRouteArgs["resolveRecallStrategy"] & MemoryContextRouteArgs["resolveRecallStrategy"];
-  resolveAdaptiveRecallProfile: MemoryRecallRouteArgs["resolveAdaptiveRecallProfile"] & MemoryContextRouteArgs["resolveAdaptiveRecallProfile"];
-  resolveAdaptiveRecallHardCap: MemoryRecallRouteArgs["resolveAdaptiveRecallHardCap"] & MemoryContextRouteArgs["resolveAdaptiveRecallHardCap"];
-  inferRecallStrategyFromKnobs: MemoryRecallRouteArgs["inferRecallStrategyFromKnobs"] & MemoryContextRouteArgs["inferRecallStrategyFromKnobs"];
-  buildRecallTrajectory: MemoryRecallRouteArgs["buildRecallTrajectory"] & MemoryContextRouteArgs["buildRecallTrajectory"];
-  embedRecallTextQuery: MemoryContextRouteArgs["embedRecallTextQuery"];
-  mapRecallTextEmbeddingError: MemoryContextRouteArgs["mapRecallTextEmbeddingError"];
-  recordContextAssemblyTelemetryBestEffort: MemoryContextRouteArgs["recordContextAssemblyTelemetryBestEffort"];
-  withReplayRepairReviewDefaults: MemoryReplayLearningControlRouteArgs["withReplayRepairReviewDefaults"];
-  buildReplayRepairReviewOptions: MemoryReplayLearningControlRouteArgs["buildReplayRepairReviewOptions"];
-  buildReplayPlaybookRunOptions: RuntimeReplayRunOptionsBuilder;
+  hasExplicitRecallKnobs: MemoryContextServiceArgs["hasExplicitRecallKnobs"];
+  resolveRecallProfile: MemoryContextServiceArgs["resolveRecallProfile"];
+  resolveExplicitRecallMode: MemoryContextServiceArgs["resolveExplicitRecallMode"];
+  resolveClassAwareRecallProfile: MemoryContextServiceArgs["resolveClassAwareRecallProfile"];
+  withRecallProfileDefaults: MemoryContextServiceArgs["withRecallProfileDefaults"];
+  resolveRecallStrategy: MemoryContextServiceArgs["resolveRecallStrategy"];
+  resolveAdaptiveRecallProfile: MemoryContextServiceArgs["resolveAdaptiveRecallProfile"];
+  resolveAdaptiveRecallHardCap: MemoryContextServiceArgs["resolveAdaptiveRecallHardCap"];
+  inferRecallStrategyFromKnobs: MemoryContextServiceArgs["inferRecallStrategyFromKnobs"];
+  buildRecallTrajectory: MemoryContextServiceArgs["buildRecallTrajectory"];
+  embedRecallTextQuery: MemoryContextServiceArgs["embedRecallTextQuery"];
+  mapRecallTextEmbeddingError: MemoryContextServiceArgs["mapRecallTextEmbeddingError"];
+  recordContextAssemblyTelemetryBestEffort: MemoryContextServiceArgs["recordContextAssemblyTelemetryBestEffort"];
 };
 
 type RuntimeBoundaryRouteRegistrationArgs = Pick<RegisterApplicationRoutesArgs, "app" | "env">;
@@ -402,13 +387,8 @@ type ProductFacadeRouteRegistrationArgs = Pick<
   RegisterApplicationRoutesArgs,
   | "app"
   | "env"
-  | "embedder"
-  | "embeddingSurfacePolicy"
   | "liteWriteStore"
-  | "executionStateStore"
-  | "executionTreeStore"
-  | "claimLedgerAccess"
-  | "skillCandidateReviewAccess"
+  | "productServices"
   | "requireMemoryPrincipal"
   | "withIdentityFromRequest"
   | "enforceRateLimit"
@@ -416,7 +396,7 @@ type ProductFacadeRouteRegistrationArgs = Pick<
   | "tenantFromBody"
   | "acquireInflightSlot"
 > & {
-  planningContextService?: MemoryPlanningContextRouteService | null;
+  planningContextService?: MemoryPlanningContextService | null;
 };
 
 type RuntimeWriteRouteRegistrationArgs = Pick<
@@ -437,11 +417,9 @@ type RuntimeWriteRouteRegistrationArgs = Pick<
   | "acquireInflightSlot"
 >;
 
-type RuntimeRecallRouteRegistrationArgs = Pick<
+type RuntimePlanningServiceArgs = Pick<
   RegisterApplicationRoutesArgs,
-  | "app"
   | "env"
-  | "embedder"
   | "queryEmbedder"
   | "embeddingSurfacePolicy"
   | "liteWriteStore"
@@ -470,30 +448,9 @@ type RuntimeRecallRouteRegistrationArgs = Pick<
   | "recordContextAssemblyTelemetryBestEffort"
 >;
 
-type RuntimeReplayRouteRegistrationArgs = Pick<
-  RegisterApplicationRoutesArgs,
-  | "app"
-  | "env"
-  | "embedder"
-  | "embeddingSurfacePolicy"
-  | "liteReplayAccess"
-  | "liteReplayStore"
-  | "liteWriteStore"
-  | "requireMemoryPrincipal"
-  | "withIdentityFromRequest"
-  | "enforceRateLimit"
-  | "enforceTenantQuota"
-  | "tenantFromBody"
-  | "acquireInflightSlot"
-  | "withReplayRepairReviewDefaults"
-  | "buildReplayRepairReviewOptions"
-  | "buildReplayPlaybookRunOptions"
->;
-
 type RuntimeKernelRouteRegistrationArgs =
   & RuntimeWriteRouteRegistrationArgs
-  & RuntimeRecallRouteRegistrationArgs
-  & RuntimeReplayRouteRegistrationArgs;
+  & RuntimePlanningServiceArgs;
 
 function registerRuntimeBoundaryRoutes(args: RuntimeBoundaryRouteRegistrationArgs) {
   registerRuntimeBoundaryInventoryRoutes({
@@ -528,22 +485,6 @@ function registerRuntimeWriteRoutes(args: RuntimeWriteRouteRegistrationArgs) {
     acquireInflightSlot,
   } = args;
 
-  registerMemoryWriteRoutes({
-    app,
-    env,
-    embedder,
-    embeddingSurfacePolicy,
-    liteWriteStore,
-    requireMemoryPrincipal,
-    withIdentityFromRequest,
-    enforceRateLimit,
-    enforceTenantQuota,
-    tenantFromBody,
-    acquireInflightSlot,
-    executionStateStore,
-    executionTreeStore,
-  });
-
   registerHandoffRoutes({
     app,
     env,
@@ -563,23 +504,6 @@ function registerRuntimeWriteRoutes(args: RuntimeWriteRouteRegistrationArgs) {
   registerMemoryAccessRoutes({
     app,
     env,
-    embedder,
-    embeddingSurfacePolicy,
-    liteWriteStore,
-    executionStateStore,
-    executionTreeStore,
-    liteRecallAccess,
-    requireMemoryPrincipal,
-    withIdentityFromRequest,
-    enforceRateLimit,
-    enforceTenantQuota,
-    tenantFromBody,
-    acquireInflightSlot,
-  });
-
-  registerLiteMemoryLifecycleRoutes({
-    app,
-    env,
     liteWriteStore,
     requireMemoryPrincipal,
     withIdentityFromRequest,
@@ -590,11 +514,9 @@ function registerRuntimeWriteRoutes(args: RuntimeWriteRouteRegistrationArgs) {
   });
 }
 
-function registerRuntimeRecallRoutes(args: RuntimeRecallRouteRegistrationArgs) {
+function createRuntimePlanningServices(args: RuntimePlanningServiceArgs) {
   const {
-    app,
     env,
-    embedder,
     queryEmbedder,
     embeddingSurfacePolicy,
     liteWriteStore,
@@ -623,37 +545,12 @@ function registerRuntimeRecallRoutes(args: RuntimeRecallRouteRegistrationArgs) {
     recordContextAssemblyTelemetryBestEffort,
   } = args;
 
-  registerMemoryRecallRoutes({
-    app,
-    env,
-    liteRecallAccess,
-    liteWriteStore,
-    requireMemoryPrincipal,
-    withIdentityFromRequest,
-    enforceRateLimit,
-    enforceTenantQuota,
-    tenantFromBody,
-    acquireInflightSlot,
-    hasExplicitRecallKnobs,
-    resolveRecallProfile,
-    resolveExplicitRecallMode,
-    withRecallProfileDefaults,
-    resolveRecallStrategy,
-    resolveAdaptiveRecallProfile,
-    resolveAdaptiveRecallHardCap,
-    inferRecallStrategyFromKnobs,
-    buildRecallTrajectory,
-    buildRecallAuth,
-  });
-
-  const contextRuntimeRoutes = registerMemoryContextRuntimeRoutes({
-    app,
+  const planningContextService = createMemoryPlanningContextService({
     env,
     embedder: queryEmbedder,
     embeddingSurfacePolicy,
     liteWriteStore,
     liteRecallAccess,
-    recallTextEmbedBatcher,
     requireMemoryPrincipal,
     withIdentityFromRequest,
     enforceRateLimit,
@@ -677,109 +574,21 @@ function registerRuntimeRecallRoutes(args: RuntimeRecallRouteRegistrationArgs) {
     recordContextAssemblyTelemetryBestEffort,
   });
 
-  registerMemoryFeedbackToolRoutes({
-    app,
-    env,
-    embedder,
-    queryEmbedder,
-    liteRecallAccess,
-    liteWriteStore,
-    requireMemoryPrincipal,
-    withIdentityFromRequest,
-    enforceRateLimit,
-    enforceTenantQuota,
-    tenantFromBody,
-    acquireInflightSlot,
-  });
-
   return {
-    planningContextService: contextRuntimeRoutes.planningContextService,
+    planningContextService,
   };
 }
 
-function registerRuntimeReplayRoutes(args: RuntimeReplayRouteRegistrationArgs) {
-  const {
-    app,
-    env,
-    embedder,
-    embeddingSurfacePolicy,
-    liteReplayAccess,
-    liteReplayStore,
-    liteWriteStore,
-    requireMemoryPrincipal,
-    withIdentityFromRequest,
-    enforceRateLimit,
-    enforceTenantQuota,
-    tenantFromBody,
-    acquireInflightSlot,
-    withReplayRepairReviewDefaults,
-    buildReplayRepairReviewOptions,
-    buildReplayPlaybookRunOptions,
-  } = args;
-
-  registerMemoryReplayCoreRoutes({
-    app,
-    env,
-    embedder,
-    embeddingSurfacePolicy,
-    liteReplayAccess,
-    liteReplayStore,
-    liteWriteStore,
-    requireMemoryPrincipal,
-    withIdentityFromRequest,
-    enforceRateLimit,
-    enforceTenantQuota,
-    tenantFromBody,
-    acquireInflightSlot,
-  });
-
-  registerMemoryReplayLearningControlRoutes({
-    app,
-    env,
-    liteWriteStore,
-    requireMemoryPrincipal,
-    withIdentityFromRequest,
-    enforceRateLimit,
-    enforceTenantQuota,
-    tenantFromBody,
-    acquireInflightSlot,
-    withReplayRepairReviewDefaults,
-    buildReplayRepairReviewOptions,
-    buildReplayPlaybookRunOptions,
-  });
-
-}
 function registerRuntimeKernelRoutes(args: RuntimeKernelRouteRegistrationArgs) {
   registerRuntimeWriteRoutes(args);
-  const recallRoutes = registerRuntimeRecallRoutes(args);
-  registerRuntimeReplayRoutes(args);
-  return recallRoutes;
+  return createRuntimePlanningServices(args);
 }
 
 function registerProductRoutes(args: ProductFacadeRouteRegistrationArgs) {
   registerProductFacadeRoutes({
     app: args.app,
-    env: args.env,
-    liteWriteStore: args.liteWriteStore,
-    memoryWriteService: createMemoryWriteRouteService({
-      env: args.env,
-      embedder: args.embedder,
-      embeddingSurfacePolicy: args.embeddingSurfacePolicy,
-      liteWriteStore: args.liteWriteStore,
-      executionStateStore: args.executionStateStore,
-      executionTreeStore: args.executionTreeStore,
-    }),
+    services: args.productServices,
     planningContextService: args.planningContextService ?? null,
-    handoffRouteService: createHandoffRouteService({
-      env: args.env,
-      embedder: args.embedder,
-      embeddingSurfacePolicy: args.embeddingSurfacePolicy,
-      liteWriteStore: args.liteWriteStore,
-      executionStateStore: args.executionStateStore,
-      executionTreeStore: args.executionTreeStore,
-    }),
-    claimLedgerAccess: args.claimLedgerAccess ?? null,
-    skillCandidateReviewAccess: args.skillCandidateReviewAccess ?? null,
     requireMemoryPrincipal: args.requireMemoryPrincipal,
     withIdentityFromRequest: args.withIdentityFromRequest,
     enforceRateLimit: args.enforceRateLimit,
@@ -798,6 +607,57 @@ function registerProductRoutes(args: ProductFacadeRouteRegistrationArgs) {
     tenantFromBody: args.tenantFromBody,
     acquireInflightSlot: args.acquireInflightSlot,
   });
+}
+
+export function createRuntimeProductServices(args: {
+  env: Env;
+  liteWriteStore: RuntimeLiteWriteStore;
+  liteRecallAccess?: RuntimeLiteRecallAccess | null;
+  embedder?: EmbeddingProvider | null;
+  queryEmbedder?: EmbeddingProvider | null;
+  executionTreeStore?: ExecutionTreeStore | null;
+  claimLedgerAccess?: ClaimLedgerAccess | null;
+  skillCandidateReviewAccess?: SkillCandidateReviewAccess | null;
+  memoryWriteService: MemoryWriteRouteService | null;
+  handoffRouteService: HandoffRouteService | null;
+}): ProductServices {
+  const toolFeedbackLearningKernel = createProductToolFeedbackLearningKernel({
+    env: args.env,
+    embedder: args.embedder ?? null,
+    queryEmbedder: args.queryEmbedder ?? null,
+    liteRecallAccess: args.liteRecallAccess ?? null,
+    liteWriteStore: args.liteWriteStore,
+  });
+  return {
+    observe: createProductObserveService({
+      defaultTenantId: args.env.MEMORY_TENANT_ID,
+      defaultScope: args.env.MEMORY_SCOPE,
+      memoryWrite: args.memoryWriteService,
+      handoffStore: args.handoffRouteService,
+      claimLedgerAccess: args.claimLedgerAccess ?? null,
+    }),
+    guide: createProductGuideService({
+      env: args.env,
+      liteWriteStore: args.liteWriteStore,
+      executionTreeStore: args.executionTreeStore ?? null,
+      claimLedgerAccess: args.claimLedgerAccess ?? null,
+      memoryWrite: args.memoryWriteService,
+    }),
+    toolFeedback: createProductToolFeedbackService({
+      env: args.env,
+      liteWriteStore: args.liteWriteStore,
+      learningKernel: toolFeedbackLearningKernel,
+    }),
+    lifecycle: createProductLifecycleService({
+      env: args.env,
+      liteWriteStore: args.liteWriteStore,
+    }),
+    measure: createProductMeasureService({
+      defaultTenantId: args.env.MEMORY_TENANT_ID,
+      defaultScope: args.env.MEMORY_SCOPE,
+      skillCandidateReviewAccess: args.skillCandidateReviewAccess ?? null,
+    }),
+  };
 }
 
 export function registerApplicationRoutes(args: RegisterApplicationRoutesArgs) {

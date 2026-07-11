@@ -5,18 +5,20 @@ import os from "node:os";
 import path from "node:path";
 import Fastify from "fastify";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
-import { createRequestGuards } from "../../src/app/request-guards.ts";
+import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import { createHandoffRouteService, registerHandoffRoutes } from "../../src/routes/handoff.ts";
-import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
+import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
 import {
-  registerMemoryContextRuntimeRoutes,
-  type MemoryPlanningContextRouteService,
+  createMemoryPlanningContextService,
+  type MemoryPlanningContextService,
 } from "../../src/routes/memory-context-runtime.ts";
-import { registerMemoryFeedbackToolRoutes } from "../../src/routes/memory-feedback-tools.ts";
-import { registerLiteMemoryLifecycleRoutes } from "../../src/routes/memory-lifecycle-lite.ts";
-import { createMemoryWriteRouteService, registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
+import { registerMemoryFeedbackToolRoutes } from "./support/register-memory-feedback-tool-test-routes.ts";
+import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
+import { registerMemoryWriteRoutes } from "./support/register-memory-write-test-route.ts";
+import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
+import { updateRuleState } from "../../src/memory/rules.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
-import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
+import { createRuntimeProductServices, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import {
   applyExecutionTreeOperationV1,
   createExecutionTreeV1,
@@ -79,17 +81,24 @@ function registerProductFacade(args: {
   env: ReturnType<typeof liteEnv>;
   guards: ReturnType<typeof requestGuards>;
   liteWriteStore: ReturnType<typeof createLiteWriteStore>;
+  liteRecallAccess?: ReturnType<ReturnType<typeof createLiteRecallStore>["createRecallAccess"]> | null;
+  embedder?: typeof DeterministicEmbeddingProvider | null;
   memoryWriteService?: ReturnType<typeof createMemoryWriteRouteService> | null;
-  planningContextService?: MemoryPlanningContextRouteService | null;
+  planningContextService?: MemoryPlanningContextService | null;
   handoffRouteService?: ReturnType<typeof createHandoffRouteService> | null;
 }) {
   registerProductFacadeRoutes({
     app: args.app,
-    env: args.env,
-    liteWriteStore: args.liteWriteStore,
-    memoryWriteService: args.memoryWriteService ?? null,
+    services: createRuntimeProductServices({
+      env: args.env,
+      liteWriteStore: args.liteWriteStore,
+      liteRecallAccess: args.liteRecallAccess ?? null,
+      embedder: args.embedder ?? null,
+      executionTreeStore: null,
+      memoryWriteService: args.memoryWriteService ?? null,
+      handoffRouteService: args.handoffRouteService ?? null,
+    }),
     planningContextService: args.planningContextService ?? null,
-    handoffRouteService: args.handoffRouteService ?? null,
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,
@@ -147,13 +156,11 @@ function registerProductMemoryApp(args: {
     tenantFromBody: args.guards.tenantFromBody,
     acquireInflightSlot: args.guards.acquireInflightSlot,
   });
-  const contextRuntimeRoutes = registerMemoryContextRuntimeRoutes({
-    app: args.app,
+  const contextRuntimeRoutes = createMemoryPlanningContextService({
     env: args.env,
     embedder: DeterministicEmbeddingProvider,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
-    recallTextEmbedBatcher: { stats: () => null },
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,
@@ -206,17 +213,6 @@ function registerProductMemoryApp(args: {
     }),
     recordContextAssemblyTelemetryBestEffort: async () => {},
   });
-  registerLiteMemoryLifecycleRoutes({
-    app: args.app,
-    env: args.env,
-    liteWriteStore: args.liteWriteStore,
-    requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
-    withIdentityFromRequest: args.guards.withIdentityFromRequest as any,
-    enforceRateLimit: args.guards.enforceRateLimit,
-    enforceTenantQuota: args.guards.enforceTenantQuota,
-    tenantFromBody: args.guards.tenantFromBody,
-    acquireInflightSlot: args.guards.acquireInflightSlot,
-  });
   registerMemoryFeedbackToolRoutes({
     app: args.app,
     env: args.env,
@@ -232,13 +228,15 @@ function registerProductMemoryApp(args: {
   });
   registerProductFacade({
     ...args,
+    liteRecallAccess: args.liteRecallStore.createRecallAccess(),
+    embedder: DeterministicEmbeddingProvider,
     memoryWriteService: createMemoryWriteRouteService({
       env: args.env,
       embedder: DeterministicEmbeddingProvider,
       liteWriteStore: args.liteWriteStore,
       executionStateStore: null,
     }),
-    planningContextService: contextRuntimeRoutes.planningContextService,
+    planningContextService: contextRuntimeRoutes,
     handoffRouteService: createHandoffRouteService({
       env: args.env,
       embedder: DeterministicEmbeddingProvider,
@@ -504,6 +502,198 @@ async function slotsForMemory(args: {
   assert.ok(rows[0], `missing memory ${args.memoryId}`);
   return rows[0].slots;
 }
+
+async function guideForToolSelection(args: {
+  app: ReturnType<typeof Fastify>;
+  runId: string;
+}) {
+  const response = await args.app.inject({
+    method: "POST",
+    url: "/v1/guide",
+    payload: {
+      tenant_id: "default",
+      scope: "default",
+      run_id: args.runId,
+      consumer_agent_id: "local-user",
+      query_text: "Choose the safe tool for this verified continuation.",
+      tool_candidates: ["read", "bash"],
+      context: {
+        agent_id: "local-user",
+        task_kind: "product_tool_feedback",
+        task_signature: "product-tool-feedback",
+        goal: "Continue the verified operation with the selected tool.",
+      },
+      include_packets: true,
+    },
+  });
+  assert.equal(response.statusCode, 200, response.body);
+  const guide = response.json();
+  assert.ok(guide.tool_selection);
+  assert.ok(guide.tool_selection.selected_tool);
+  return guide;
+}
+
+function toolFeedbackPayload(guide: Record<string, any>) {
+  return {
+    feedback_kind: "tool_selection",
+    tenant_id: guide.tenant_id,
+    scope: guide.scope,
+    guide_trace_id: guide.guide_trace_id,
+    decision_id: guide.tool_selection.decision_id,
+    run_id: guide.tool_selection.run_id,
+    selected_tool: guide.tool_selection.selected_tool,
+    candidates: guide.tool_selection.candidates,
+    outcome: "positive",
+    context: {
+      agent_id: "local-user",
+      task_kind: "product_tool_feedback",
+      task_signature: "product-tool-feedback",
+      goal: "Continue the verified operation with the selected tool.",
+    },
+    input_text: "The selected tool completed the verified action.",
+  };
+}
+
+async function seedActiveToolFeedbackRule(liteWriteStore: ReturnType<typeof createLiteWriteStore>) {
+  const prepared = await prepareMemoryWrite({
+    tenant_id: "default",
+    scope: "default",
+    actor: "local-user",
+    input_text: "Prefer read for the product tool feedback validation context.",
+    auto_embed: false,
+    memory_lane: "shared",
+    nodes: [{
+      client_id: "rule:product-tool-feedback:prefer-read",
+      type: "rule",
+      title: "Prefer read for product tool feedback",
+      text_summary: "Use read for the product_tool_feedback task kind.",
+      slots: {
+        if: { task_kind: { $eq: "product_tool_feedback" } },
+        then: { tool: { prefer: ["read"] } },
+        exceptions: [],
+        rule_scope: "global",
+      },
+    }],
+    edges: [],
+  }, "default", "default", {
+    maxTextLen: 10_000,
+    piiRedaction: false,
+    allowCrossScopeEdges: false,
+  }, null);
+  const written = await liteWriteStore.withTx(() => applyMemoryWrite(prepared, {
+    maxTextLen: 10_000,
+    piiRedaction: false,
+    allowCrossScopeEdges: false,
+    associativeLinkOrigin: "memory_write",
+    write_access: liteWriteStore,
+  }));
+  const ruleNodeId = written.nodes[0]?.id;
+  assert.ok(ruleNodeId);
+  await liteWriteStore.withTx(() => updateRuleState({
+    tenant_id: "default",
+    scope: "default",
+    actor: "local-user",
+    rule_node_id: ruleNodeId,
+    state: "active",
+    input_text: "Activate the product tool feedback rule.",
+  }, "default", "default", { liteWriteStore }));
+}
+
+test("product feedback attributes tool learning to the persisted guide decision", async () => {
+  const { app, liteWriteStore } = setupProductApp("product-tool-feedback");
+  try {
+    await seedActiveToolFeedbackRule(liteWriteStore);
+    const guide = await guideForToolSelection({ app, runId: "run:product-tool-feedback" });
+    const feedback = await app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: toolFeedbackPayload(guide),
+    });
+    assert.equal(feedback.statusCode, 200, feedback.body);
+    const body = feedback.json();
+    assert.equal(body.contract_version, "aionis_feedback_result_v1");
+    assert.equal(body.product_action, "feedback");
+    assert.equal(body.feedback_kind, "tool_selection");
+    assert.deepEqual(body.tool_selection, guide.tool_selection);
+    assert.equal(body.feedback_result.decision_id, guide.tool_selection.decision_id);
+    assert.equal(body.feedback_result.updated_rules, 1);
+    assert.equal(body.run_lifecycle.run_id, guide.tool_selection.run_id);
+    assert.equal(body.run_lifecycle.lifecycle.status, "feedback_linked");
+    assert.equal(body.run_lifecycle.feedback.total, 1);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/feedback"]);
+    assert.ok(body.source_map.internal_surfaces_used.includes("guide_exposure_ledger"));
+    assert.ok(body.source_map.internal_surfaces_used.includes("tool_feedback_service"));
+    assert.ok(body.source_map.internal_surfaces_used.includes("learning_kernel"));
+  } finally {
+    await app.close();
+  }
+});
+
+test("product feedback accepts the explicit memory discriminator without breaking legacy attribution", async () => {
+  const { app, liteWriteStore } = setupProductApp("product-memory-feedback-discriminator");
+  try {
+    const marker = "AIONIS_MEMORY_FEEDBACK_DISCRIMINATOR";
+    const memoryId = await observeMemory({
+      app,
+      clientId: "memory:feedback-discriminator",
+      title: "Memory feedback discriminator",
+      text: `${marker} retain the verified compact status format.`,
+    });
+    const guide = await guideForMarker({ app, marker });
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: {
+        feedback_kind: "memory",
+        tenant_id: "default",
+        scope: "default",
+        guide_trace_id: guide.guide_trace_id,
+        used_memory_ids: [memoryId],
+        run_id: "run:memory-feedback-discriminator",
+        outcome: "positive",
+        used_surface: "use_now",
+        verifier_status: "passed",
+        tool_status: "succeeded",
+        reason: "Host attributed a verified positive outcome to exposed memory.",
+      },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal((await slotsForMemory({ liteWriteStore, memoryId })).feedback_positive, 1);
+  } finally {
+    await app.close();
+  }
+});
+
+test("product tool feedback rejects forged guide and decision attribution without learning", async () => {
+  const { app, liteWriteStore } = setupProductApp("product-tool-feedback-forgery");
+  try {
+    const guide = await guideForToolSelection({ app, runId: "run:product-tool-feedback-forgery" });
+    const valid = toolFeedbackPayload(guide);
+    const forgedPayloads = [
+      { ...valid, guide_trace_id: "guide_trace:forged" },
+      { ...valid, tenant_id: "forged-tenant" },
+      { ...valid, scope: "forged-scope" },
+      { ...valid, run_id: "run:forged" },
+      { ...valid, decision_id: "decision:forged" },
+      { ...valid, selected_tool: valid.selected_tool === "read" ? "bash" : "read" },
+      { ...valid, candidates: [...valid.candidates].reverse() },
+    ];
+
+    for (const payload of forgedPayloads) {
+      const response = await app.inject({ method: "POST", url: "/v1/feedback", payload });
+      assert.ok([400, 404].includes(response.statusCode), response.body);
+    }
+
+    const feedbackRows = await liteWriteStore.listRuleFeedbackByRun({
+      scope: "default",
+      runId: guide.tool_selection.run_id,
+      limit: 16,
+    });
+    assert.equal(feedbackRows.total, 0);
+  } finally {
+    await app.close();
+  }
+});
 
 test("product feedback closed loop surfaces positive attribution in effect report", async () => {
   const { app, liteWriteStore } = setupProductApp("positive-feedback");

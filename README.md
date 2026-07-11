@@ -95,8 +95,14 @@ Docker users can run the Runtime directly:
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.3
+  ghcr.io/ostinatocc/aionis:v0.3.4
 ```
+
+The container process listens on `0.0.0.0` inside its network namespace so
+Docker port publishing can reach it. The host publish remains
+`127.0.0.1:3001`, so the unauthenticated Lite Runtime is reachable only from
+the local host. Direct host installs keep `AIONIS_LISTEN_HOST=127.0.0.1`; do
+not attach the unauthenticated Lite container to an untrusted shared network.
 
 Then start the local Runtime from the generated checkout:
 

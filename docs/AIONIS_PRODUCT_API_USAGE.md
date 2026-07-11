@@ -326,10 +326,9 @@ npm run -s runtime:e2e:product-loop
 
 The product-loop e2e exercises `observe -> guide -> simulated Agent ->
 feedback -> measure -> admission dataset JSONL export -> snapshot`, and also
-verifies that the advanced
-`/v1/execution/context/assemble` and product `/v1/guide mode=full_power`
-`agent_context` keep passed branches, failed branches, and audit surfaces
-separated.
+verifies that product `/v1/guide mode=full_power` keeps passed branches, failed
+branches, and audit surfaces separated without a lower-level execution HTTP
+route.
 
 The ordinary-memory e2e exercises the general cognitive memory path:
 `observe ordinary memory -> guide -> trace/receipt -> feedback -> measure ->
@@ -693,8 +692,8 @@ integrations use this product path automatically. A host can opt out with
 the per-call SDK option when it wants to send the raw body unchanged.
 
 Full-power guide still returns `agent_context` as the Agent-facing surface. It
-internally combines semantic recall with the safe `agent_context` projection
-from `/v1/execution/context/assemble`, so:
+internally combines semantic recall with the typed execution-evidence assembly
+service, so:
 
 1. ordinary memory can still enter `use_now`
 2. passed execution branches can enter `use_now`
@@ -780,64 +779,13 @@ Example:
 }
 ```
 
-## Advanced Execution Context Assembly
+## Execution Context Through Guide
 
-`POST /v1/execution/context/assemble` is the execution-tree-first context
-surface used by advanced hosts and adapters. Use it when a host already has an
-execution tree, handoff tree id, or explicit execution evidence filters; use
-`/v1/guide` as the standard product guide facade.
-
-Default mode preserves the compact execution evidence contract:
-
-1. `CURRENT_ACTIVE_PATH`
-2. `PASSED_SOLUTIONS`
-3. `FAILED_BRANCHES`
-4. optional supporting evidence and rehydration refs
-
-For full-power Runtime adapters, set `context_mode: "full_power"`. The response
-keeps the existing fields and also exposes:
-
-1. `raw_evidence`
-2. `gated_abstractions`
-3. `full_power_trace`
-
-When `include_prompt_text: true`, the prompt text adds these sections:
-
-1. `RAW_EVIDENCE`
-2. `GATED_ABSTRACTIONS`
-3. `TRACE`
-
-The contract is evidence-first:
-
-1. `PASSED_SOLUTIONS` are reusable only when validated or evidence-backed.
-2. `FAILED_BRANCHES` are counter-evidence and stay out of answer reuse.
-3. `RAW_EVIDENCE` is first-class source material and is separate from passed solutions.
-4. `GATED_ABSTRACTIONS` are advisory and bounded by `applies_when`,
-   `does_not_apply_when`, `counterexamples`, and source episode refs.
-5. Summary-only execution memory remains blocked from promotion by the
-   consolidation guard.
-
-Example:
-
-```json
-{
-  "tenant_id": "default",
-  "scope": "payments-service",
-  "tree_id": "execution-tree:checkout-42",
-  "tree_scope": "aionis://execution/checkout-42",
-  "context_mode": "full_power",
-  "prompt_detail": "full",
-  "include_memory_evidence": true,
-  "memory_filters": [
-    {
-      "slots_contains": {
-        "task_signature": "checkout-migration"
-      },
-      "limit": 20
-    }
-  ]
-}
-```
+The former `/v1/execution/context/assemble` adapter is no longer registered.
+Pass `execution_tree_v1`, execution scope fields, and `mode: "full_power"` to
+`POST /v1/guide`; the Guide service invokes the same typed execution-evidence
+assembler and returns the governed `agent_context`. Raw evidence and internal
+traces remain service/operator data rather than a separate host-facing route.
 
 ## `POST /v1/memory/govern`
 

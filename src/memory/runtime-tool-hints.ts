@@ -26,7 +26,7 @@ type AnchorNodeLike = {
 export type RuntimeToolHint = {
   hint_version: "runtime_tool_hint_v1";
   tool_name: "rehydrate_payload";
-  tool_route: "/v1/memory/tools/rehydrate_payload";
+  tool_route: "/v1/rehydrate";
   anchor: {
     id: string;
     uri: string;
@@ -148,7 +148,7 @@ export function buildRuntimeToolHintsFromAnchorNodes(args: {
       return {
         hint_version: "runtime_tool_hint_v1" as const,
         tool_name: "rehydrate_payload" as const,
-        tool_route: "/v1/memory/tools/rehydrate_payload" as const,
+        tool_route: "/v1/rehydrate" as const,
         anchor: {
           id: node.id,
           uri,

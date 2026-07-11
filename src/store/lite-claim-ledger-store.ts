@@ -7,7 +7,7 @@ import type {
   ClaimLedgerEventRow,
   ClaimLedgerRow,
   ClaimLedgerStatus,
-} from "./claim-ledger-access.js";
+} from "./memory-store.js";
 import { createSqliteDatabase, type SqliteDatabase } from "./sqlite.js";
 import { createSqliteTransactionRunner, type SqliteTransactionRunner } from "./sqlite-transaction-runner.js";
 

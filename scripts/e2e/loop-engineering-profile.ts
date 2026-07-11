@@ -21,7 +21,6 @@ import {
 import {
   closeRuntime,
   openRuntime,
-  postRuntimeJson,
 } from "./multi-agent-execution-memory-loop.ts";
 import { formatE2eError } from "./e2e-error.ts";
 
@@ -398,23 +397,7 @@ async function main() {
       "loop profile next guide did not surface failed iteration as counter-evidence",
     );
 
-    const executionAssemble = await postRuntimeJson({
-      baseUrl: session.baseUrl,
-      pathName: "/v1/execution/context/assemble",
-      apiKey: runtimeApiKey,
-      payload: {
-        tenant_id: "default",
-        scope,
-        consumer_agent_id: AGENT_ID,
-        execution_tree_v1: observedTree,
-        context_mode: "full_power",
-        include_memory_evidence: false,
-        include_prompt_text: true,
-        include_agent_context: true,
-        agent_context_char_budget: 4096,
-      },
-    });
-    const executionContext = agentContext(executionAssemble.agent_context, "loop profile execution context");
+    const executionContext = afterContext;
     const executionPrompt = String(executionContext.prompt_text ?? "");
     assertPromptBoundary(executionPrompt, "loop profile execution context");
     assertCondition(executionContext.actionable_history_used === true, "loop profile execution context did not expose actionable history");

@@ -192,7 +192,7 @@ Code:
 1. `src/kernel/forgetting-kernel.ts`
 2. `src/memory/evolution-operators.ts`
 3. `src/memory/lifecycle-signals.ts`
-4. `src/memory/semantic-forgetting.ts`
+4. `src/kernel/forgetting-kernel.ts`
 
 Lifecycle states:
 

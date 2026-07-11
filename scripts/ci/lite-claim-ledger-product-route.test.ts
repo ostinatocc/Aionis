@@ -3,17 +3,18 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createRequestGuards } from "../../src/app/request-guards.ts";
+import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import { createRuntimeServices } from "../../src/app/runtime-services.ts";
 import { loadEnv, type Env } from "../../src/config.ts";
+import { createRuntimeConfig } from "../../src/config/runtime-config.ts";
 import { createHandoffRouteService, registerHandoffRoutes } from "../../src/routes/handoff.ts";
-import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
-import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
-import { registerMemoryFeedbackToolRoutes } from "../../src/routes/memory-feedback-tools.ts";
-import { registerLiteMemoryLifecycleRoutes } from "../../src/routes/memory-lifecycle-lite.ts";
-import { createMemoryWriteRouteService, registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
+import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
+import { createMemoryPlanningContextService } from "../../src/routes/memory-context-runtime.ts";
+import { registerMemoryFeedbackToolRoutes } from "./support/register-memory-feedback-tool-test-routes.ts";
+import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
+import { registerMemoryWriteRoutes } from "./support/register-memory-write-test-route.ts";
 import { createHttpApp, registerBootstrapLifecycle } from "../../src/server/bootstrap.ts";
-import { registerHealthRoute, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
+import { createRuntimeProductServices, registerHealthRoute, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 
@@ -71,7 +72,7 @@ async function setupClaimLedgerProductApp(args: {
   const writePath = tmpDbPath("product-write");
   const replayPath = tmpDbPath("product-replay");
   const env = await liteEnv(writePath, replayPath);
-  const services = await createRuntimeServices(env);
+  const services = await createRuntimeServices(createRuntimeConfig(env));
   const app = createHttpApp(env);
   const guards = createRequestGuards({
     env,
@@ -124,13 +125,11 @@ async function setupClaimLedgerProductApp(args: {
     tenantFromBody: guards.tenantFromBody,
     acquireInflightSlot: guards.acquireInflightSlot,
   });
-  const contextRuntimeRoutes = registerMemoryContextRuntimeRoutes({
-    app,
+  const contextRuntimeRoutes = createMemoryPlanningContextService({
     env,
     embedder: DeterministicEmbeddingProvider,
     liteWriteStore: services.liteWriteStore,
     liteRecallAccess: services.liteRecallStore.createRecallAccess(),
-    recallTextEmbedBatcher: { stats: () => null },
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
     enforceRateLimit: guards.enforceRateLimit,
@@ -183,17 +182,6 @@ async function setupClaimLedgerProductApp(args: {
     }),
     recordContextAssemblyTelemetryBestEffort: async () => {},
   });
-  registerLiteMemoryLifecycleRoutes({
-    app,
-    env,
-    liteWriteStore: services.liteWriteStore,
-    requireMemoryPrincipal: guards.requireMemoryPrincipal,
-    withIdentityFromRequest: guards.withIdentityFromRequest as any,
-    enforceRateLimit: guards.enforceRateLimit,
-    enforceTenantQuota: guards.enforceTenantQuota,
-    tenantFromBody: guards.tenantFromBody,
-    acquireInflightSlot: guards.acquireInflightSlot,
-  });
   registerMemoryFeedbackToolRoutes({
     app,
     env,
@@ -209,24 +197,27 @@ async function setupClaimLedgerProductApp(args: {
   });
   registerProductFacadeRoutes({
     app,
-    env,
-    liteWriteStore: services.liteWriteStore,
-    memoryWriteService: createMemoryWriteRouteService({
+    services: createRuntimeProductServices({
       env,
-      embedder: DeterministicEmbeddingProvider,
       liteWriteStore: services.liteWriteStore,
-      executionStateStore: services.executionStateStore,
       executionTreeStore: services.executionTreeStore,
+      claimLedgerAccess: services.claimLedgerAccess,
+      memoryWriteService: createMemoryWriteRouteService({
+        env,
+        embedder: DeterministicEmbeddingProvider,
+        liteWriteStore: services.liteWriteStore,
+        executionStateStore: services.executionStateStore,
+        executionTreeStore: services.executionTreeStore,
+      }),
+      handoffRouteService: createHandoffRouteService({
+        env,
+        embedder: DeterministicEmbeddingProvider,
+        liteWriteStore: services.liteWriteStore,
+        executionStateStore: services.executionStateStore,
+        executionTreeStore: services.executionTreeStore,
+      }),
     }),
-    planningContextService: contextRuntimeRoutes.planningContextService,
-    handoffRouteService: createHandoffRouteService({
-      env,
-      embedder: DeterministicEmbeddingProvider,
-      liteWriteStore: services.liteWriteStore,
-      executionStateStore: services.executionStateStore,
-      executionTreeStore: services.executionTreeStore,
-    }),
-    claimLedgerAccess: services.claimLedgerAccess,
+    planningContextService: contextRuntimeRoutes,
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
     enforceRateLimit: args.productGuardOverrides?.enforceRateLimit ?? guards.enforceRateLimit,
@@ -252,7 +243,7 @@ test("claim ledger is wired into Runtime services and health", async () => {
   const writePath = tmpDbPath("write");
   const replayPath = tmpDbPath("replay");
   const env = await liteEnv(writePath, replayPath);
-  const services = await createRuntimeServices(env);
+  const services = await createRuntimeServices(createRuntimeConfig(env));
   const app = createHttpApp(env);
   registerRuntimeErrorHandler(app);
   registerHealthRoute({

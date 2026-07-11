@@ -5,12 +5,13 @@ import os from "node:os";
 import path from "node:path";
 import Fastify from "fastify";
 
-import { createRequestGuards } from "../../src/app/request-guards.ts";
-import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
+import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
+import { createMemoryPlanningContextService } from "../../src/routes/memory-context-runtime.ts";
 import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
-import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
+import { createRuntimeProductServices, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { createAionisClient } from "../../src/sdk.ts";
+import { deriveExecutionContractFromSlots } from "../../src/memory/execution-contract.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
@@ -71,13 +72,11 @@ function registerSdkRuntimeProductApp(args: {
   liteRecallStore: ReturnType<typeof createLiteRecallStore>;
 }) {
   registerRuntimeErrorHandler(args.app);
-  const contextRuntimeRoutes = registerMemoryContextRuntimeRoutes({
-    app: args.app,
+  const contextRuntimeRoutes = createMemoryPlanningContextService({
     env: args.env,
     embedder: DeterministicEmbeddingProvider,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
-    recallTextEmbedBatcher: { stats: () => null },
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,
@@ -133,16 +132,19 @@ function registerSdkRuntimeProductApp(args: {
 
   registerProductFacadeRoutes({
     app: args.app,
-    env: args.env,
-    liteWriteStore: args.liteWriteStore,
-    memoryWriteService: createMemoryWriteRouteService({
+    services: createRuntimeProductServices({
       env: args.env,
-      embedder: DeterministicEmbeddingProvider,
       liteWriteStore: args.liteWriteStore,
-      executionStateStore: null,
+      executionTreeStore: null,
+      memoryWriteService: createMemoryWriteRouteService({
+        env: args.env,
+        embedder: DeterministicEmbeddingProvider,
+        liteWriteStore: args.liteWriteStore,
+        executionStateStore: null,
+      }),
+      handoffRouteService: null,
     }),
-    planningContextService: contextRuntimeRoutes.planningContextService,
-    handoffRouteService: null,
+    planningContextService: contextRuntimeRoutes,
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,
@@ -158,6 +160,24 @@ async function listenLocal(app: ReturnType<typeof Fastify>): Promise<string> {
   assert.ok(address && typeof address === "object");
   return `http://127.0.0.1:${address.port}`;
 }
+
+test("execution contract skips invalid outer trust and preserves valid native trust", () => {
+  const contract = deriveExecutionContractFromSlots({
+    slots: {
+      contract_trust: "accepted",
+      task_signature: "sdk-current-task",
+      execution_native_v1: {
+        execution_kind: "workflow_anchor",
+        summary_kind: "current_state",
+        contract_trust: "advisory",
+        task_signature: "sdk-current-task",
+      },
+    },
+  });
+
+  assert.equal(contract?.contract_trust, "advisory");
+  assert.equal(contract?.task_signature, "sdk-current-task");
+});
 
 test("SDK guideAgentContext over real Runtime HTTP promotes accepted same-workflow execution memory", async () => {
   const app = Fastify();
@@ -191,10 +211,30 @@ test("SDK guideAgentContext over real Runtime HTTP promotes accepted same-workfl
       target_files: ["src/current.ts"],
       tool_set: ["edit", "test"],
       continuation_hint: "Continue SDK_CURRENT_TASK_ONLY through src/current.ts.",
-      auto_embed: false,
+      auto_embed: true,
       memory_lane: "private",
       slots: {
-        contract_trust: "advisory",
+        contract_trust: "accepted",
+      },
+    });
+
+    await client.execution.observeStep({
+      agent_id: "sdk-agent",
+      role: "worker",
+      run_id: "run-sdk-unrelated",
+      task_id: "task-unrelated",
+      task_signature: "sdk-unrelated-task",
+      workflow_signature: "sdk-unrelated-workflow",
+      title: "SDK unrelated task accepted path",
+      summary: "SDK_UNRELATED_TASK_SUCCESS belongs only to src/unrelated.ts.",
+      outcome: "succeeded",
+      target_files: ["src/unrelated.ts"],
+      tool_set: ["edit", "test"],
+      continuation_hint: "Continue SDK_UNRELATED_TASK_SUCCESS only for the unrelated workflow.",
+      auto_embed: true,
+      memory_lane: "private",
+      slots: {
+        contract_trust: "accepted",
       },
     });
 
@@ -211,7 +251,7 @@ test("SDK guideAgentContext over real Runtime HTTP promotes accepted same-workfl
       target_files: ["src/other.ts"],
       tool_set: ["edit", "test"],
       continuation_hint: "Continue SDK_OTHER_TASK_SUCCESS when the workflow signature matches.",
-      auto_embed: false,
+      auto_embed: true,
       memory_lane: "private",
       slots: {
         contract_trust: "advisory",
@@ -245,6 +285,12 @@ test("SDK guideAgentContext over real Runtime HTTP promotes accepted same-workfl
 
     const guide = result.guide as Record<string, any>;
     const packetMemories = guide.memory_packet?.relevant_memories ?? [];
+    const currentTaskMemory = packetMemories.find((entry: Record<string, unknown>) =>
+      String(entry.summary).includes("SDK_CURRENT_TASK_ONLY")
+    );
+    assert.equal(currentTaskMemory?.authority, "advisory");
+    assert.equal(currentTaskMemory?.memory_contract?.use_policy, "direct_use");
+    assert.equal(currentTaskMemory?.execution_state?.summary_kind, "current_state");
     assert.equal(
       packetMemories.some((entry: Record<string, unknown>) => String(entry.summary).includes("SDK_OTHER_TASK_SUCCESS")),
       true,
@@ -265,6 +311,16 @@ test("SDK guideAgentContext over real Runtime HTTP promotes accepted same-workfl
     );
     assert.equal(
       (agentContext.inspect_before_use ?? []).some((entry: string) => entry.includes("SDK_OTHER_TASK_SUCCESS")),
+      false,
+    );
+    assert.equal(
+      (agentContext.use_now ?? []).some((entry: string) => entry.includes("SDK_UNRELATED_TASK_SUCCESS")),
+      false,
+    );
+    assert.equal(
+      (agentContext.route_contract?.active_targets ?? []).some((entry: Record<string, unknown>) =>
+        entry.target === "src/unrelated.ts"
+      ),
       false,
     );
     assert.equal(

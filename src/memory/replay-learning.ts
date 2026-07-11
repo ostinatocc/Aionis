@@ -75,18 +75,6 @@ type ReplayLearningWriteOptions = {
   writeAccess?: WriteStoreAccess | null;
 };
 
-export type ReplayLearningProjectionPayload = {
-  tenant_id: string;
-  scope: string;
-  scope_key: string;
-  actor: string;
-  playbook_id: string;
-  playbook_version: number;
-  source_commit_id: string | null;
-  config: ReplayLearningProjectionResolvedConfig;
-  fault_injection_mode?: "retryable_error" | "fatal_error";
-};
-
 type ExistingReplayLearningRule = {
   rule_node_id: string;
   matcher_fingerprint: string | null;
@@ -275,7 +263,6 @@ export function classifyReplayLearningProjectionError(err: unknown): {
       "replay_learning_invalid_policy_patch",
       "replay_learning_playbook_not_found",
       "replay_learning_playbook_version_not_found",
-      "replay_learning_injected_fatal",
     ]);
     return {
       error_class: fatal.has(err.code) ? "fatal" : "retryable",
@@ -287,99 +274,6 @@ export function classifyReplayLearningProjectionError(err: unknown): {
     return { error_class: "fatal", error_code: "replay_learning_invalid_payload", message };
   }
   return { error_class: "retryable", error_code: "replay_learning_projection_failed", message };
-}
-
-async function loadReplayPlaybookNode(
-  scopeKey: string,
-  playbookId: string,
-  version: number,
-  writeAccess?: WriteStoreAccess | null,
-  consumerAgentId?: string | null,
-  consumerTeamId?: string | null,
-): Promise<{
-  playbook_node_id: string;
-  title: string | null;
-  text_summary: string | null;
-  slots: Record<string, unknown>;
-} | null> {
-  const liteWriteStore = asLiteReplayLearningStore(writeAccess);
-  if (!liteWriteStore) throw new Error("loadReplayPlaybookNode requires lite write store");
-  const { rows } = await liteWriteStore.findNodes({
-    scope: scopeKey,
-    type: "procedure",
-    slotsContains: {
-      replay_kind: "playbook",
-      playbook_id: playbookId,
-      version,
-    },
-    consumerAgentId: consumerAgentId ?? null,
-    consumerTeamId: consumerTeamId ?? null,
-    limit: 1,
-    offset: 0,
-  });
-  const row = rows[0];
-  if (!row) return null;
-  return {
-    playbook_node_id: row.id,
-    title: row.title,
-    text_summary: row.text_summary,
-    slots: asObject(row.slots) ?? {},
-  };
-}
-
-export async function applyReplayLearningProjectionFromPayload(
-  payload: ReplayLearningProjectionPayload,
-  writeOpts: ReplayLearningWriteOptions,
-): Promise<ReplayLearningProjectionResult> {
-  if (process.env.REPLAY_LEARNING_FAULT_INJECTION_ENABLED === "true") {
-    if (payload.fault_injection_mode === "retryable_error") {
-      throw new Error("replay_learning_injected_retryable");
-    }
-    if (payload.fault_injection_mode === "fatal_error") {
-      throw new HttpError(
-        400,
-        "replay_learning_injected_fatal",
-        "replay learning injected fatal fault for smoke validation",
-      );
-    }
-  }
-  const loaded = await loadReplayPlaybookNode(
-    payload.scope_key,
-    payload.playbook_id,
-    payload.playbook_version,
-    writeOpts.writeAccess,
-    payload.actor,
-    null,
-  );
-  if (!loaded) {
-    throw new HttpError(
-      404,
-      "replay_learning_playbook_version_not_found",
-      "replay learning projection source playbook version is not found",
-      {
-        playbook_id: payload.playbook_id,
-        playbook_version: payload.playbook_version,
-        scope: payload.scope,
-      },
-    );
-  }
-  return await applyReplayLearningProjection(
-    {
-      tenant_id: payload.tenant_id,
-      scope: payload.scope,
-      scope_key: payload.scope_key,
-      actor: payload.actor,
-      playbook_id: payload.playbook_id,
-      playbook_version: payload.playbook_version,
-      playbook_node_id: loaded.playbook_node_id,
-      playbook_title: loaded.title,
-      playbook_summary: loaded.text_summary,
-      playbook_slots: loaded.slots,
-      source_commit_id: payload.source_commit_id,
-    },
-    payload.config,
-    writeOpts,
-  );
 }
 
 export async function applyReplayLearningProjection(

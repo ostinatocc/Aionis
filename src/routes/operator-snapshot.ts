@@ -4,7 +4,7 @@ import type { Env } from "../config.js";
 import {
   buildAionisOperatorSnapshot,
   renderAionisOperatorSnapshotMarkdown,
-} from "../memory/operator-snapshot.js";
+} from "../memory/product-output/operator-projections.js";
 import {
   RUNTIME_AUTHORITY_EFFECT_KINDS,
   type RuntimeAuthorityEffectAuditV1,

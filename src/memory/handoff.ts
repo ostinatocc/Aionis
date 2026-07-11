@@ -36,12 +36,12 @@ import {
 } from "../execution/index.js";
 import {
   applyTrajectoryCompileExecutionKernel,
+  buildExecutionContractFromTrajectoryCompile,
   maybeBuildTrajectoryCompile,
   mergeTrajectoryCompileSummary,
 } from "./trajectory-compile-runtime.js";
 import {
   buildExecutionContractFromHandoff,
-  buildExecutionContractFromTrajectoryCompile,
   parseExecutionContract,
   type ExecutionContractV1,
 } from "./execution-contract.js";

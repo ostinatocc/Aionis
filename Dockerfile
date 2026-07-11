@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:22-bookworm-slim AS deps
+FROM node:24-bookworm-slim AS deps
 
 WORKDIR /app
 
@@ -13,7 +13,7 @@ FROM deps AS build
 COPY . .
 RUN npm run -s build
 
-FROM node:22-bookworm-slim AS runtime
+FROM node:24-bookworm-slim AS runtime
 
 WORKDIR /app
 
@@ -22,8 +22,8 @@ ENV NODE_ENV=production \
     AIONIS_EDITION=lite \
     AIONIS_MODE=local \
     APP_ENV=dev \
-    AIONIS_LISTEN_HOST=127.0.0.1 \
-    AIONIS_ALLOW_UNAUTHENTICATED_REMOTE=false \
+    AIONIS_LISTEN_HOST=0.0.0.0 \
+    AIONIS_ALLOW_UNAUTHENTICATED_REMOTE=true \
     MEMORY_AUTH_MODE=off \
     TENANT_QUOTA_ENABLED=false \
     RATE_LIMIT_BYPASS_LOOPBACK=true \

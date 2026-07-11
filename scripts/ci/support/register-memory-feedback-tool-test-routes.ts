@@ -1,27 +1,24 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { assertLocalStoreRuntimeEdition } from "../app/edition.js";
-import type { Env } from "../config.js";
-import type { EmbeddingProvider } from "../embeddings/types.js";
+import { assertLocalStoreRuntimeEdition } from "../../../src/app/edition.ts";
+import type { Env } from "../../../src/config.ts";
+import type { EmbeddingProvider } from "../../../src/embeddings/types.ts";
 import {
   buildLiteLearningControlRuntimeProviders,
   type LiteLearningControlRuntimeProviderBuilderOptions,
-} from "../app/learning-control-runtime-providers.js";
+} from "../../../src/app/learning-control-runtime-providers.ts";
 import {
   createLearningKernel,
   type LiteLearningKernelStore,
-} from "../kernel/learning-kernel.js";
-import type { RecallStoreAccess } from "../store/recall-access.js";
-import type { AuthPrincipal } from "../util/auth.js";
-import type { InflightGateToken } from "../util/inflight_gate.js";
+} from "../../../src/kernel/learning-kernel.ts";
+import type { RecallStoreAccess } from "../../../src/store/recall-access.ts";
+import type { AuthPrincipal } from "../../../src/util/auth.ts";
+import type { InflightGateToken } from "../../../src/util/inflight_gate.ts";
 
 type MemoryFeedbackToolKind =
   | "feedback"
   | "rules_state"
   | "rules_evaluate"
-  | "tools_select"
-  | "tools_decision"
   | "tools_run"
-  | "tools_feedback"
   | "learning_loop_run"
   | "runtime_maintenance_run"
   | "policy_learning_control_apply"
@@ -150,34 +147,10 @@ export function registerMemoryFeedbackToolRoutes(args: RegisterMemoryFeedbackToo
     execute: (body) => learningKernel.evaluateRulePolicy(body),
   });
   registerFeedbackPostRoute({
-    path: "/v1/memory/tools/select",
-    requestKind: "tools_select",
-    inflightKind: "recall",
-    execute: (body) => learningKernel.selectToolWithLearnedMemory(body),
-  });
-  registerFeedbackPostRoute({
-    path: "/v1/memory/tools/decision",
-    requestKind: "tools_decision",
-    inflightKind: "recall",
-    execute: (body) => learningKernel.readToolDecision(body),
-  });
-  registerFeedbackPostRoute({
-    path: "/v1/memory/tools/run",
-    requestKind: "tools_run",
-    inflightKind: "recall",
-    execute: (body) => learningKernel.readToolRun(body),
-  });
-  registerFeedbackPostRoute({
     path: "/v1/memory/tools/runs/list",
     requestKind: "tools_run",
     inflightKind: "recall",
     execute: (body) => learningKernel.listToolRuns(body),
-  });
-  registerFeedbackPostRoute({
-    path: "/v1/memory/tools/feedback",
-    requestKind: "tools_feedback",
-    inflightKind: "write",
-    execute: (body) => learningKernel.recordToolSelectionFeedback(body),
   });
   registerFeedbackPostRoute({
     path: "/v1/memory/learning-loop/run",
@@ -250,4 +223,5 @@ export function registerMemoryFeedbackToolRoutes(args: RegisterMemoryFeedbackToo
     inflightKind: "recall",
     execute: (body) => learningKernel.rehydrateLearnedAnchorPayload(body),
   });
+  return learningKernel;
 }

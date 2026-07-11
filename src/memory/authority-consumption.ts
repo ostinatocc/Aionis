@@ -4,6 +4,7 @@ import {
 } from "./authority-visibility.js";
 import { parseExecutionContract, type ExecutionContractV1 } from "./execution-contract.js";
 import type { ContractTrust } from "./contract-trust.js";
+import { AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD } from "./product-output-contract.js";
 
 export type AuthorityConsumptionStateV1 = {
   state_version: "runtime_authority_consumption_state_v1";
@@ -12,9 +13,6 @@ export type AuthorityConsumptionStateV1 = {
   blocks_promotion_readiness: boolean;
   primary_blocker: string | null;
 };
-
-export const AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD =
-  "stable_promotion" + "_blocked_count";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;

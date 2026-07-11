@@ -45,10 +45,10 @@ import {
 } from "./planning-summary-routing.js";
 import { buildExecutionMemorySummaryBundle } from "./planning-summary-surfaces.js";
 import {
-  AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD,
   authorityConsumptionStablePromotionBlockedCount,
   authorityConsumptionStateFromValue,
 } from "../memory/authority-consumption.js";
+import { AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD } from "../memory/product-output-contract.js";
 import { parseExecutionContract, type ExecutionContractV1 } from "../memory/execution-contract.js";
 import type { ExecutionTreeV1 } from "../execution/index.js";
 

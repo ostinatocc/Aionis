@@ -7,6 +7,7 @@ export type LiteProductEffectId = "history_shaped_future_behavior";
 export type LiteRouteCapabilityMatrixEntry = {
   method: "GET" | "POST";
   path: string;
+  exposure: LiteRouteProductExposure;
   route_group: string;
   capabilities: readonly AionisKernelCapabilityId[];
   product_effects: readonly LiteProductEffectId[];
@@ -22,52 +23,7 @@ export type LiteRouteProductExposure =
   | "internal_control"
   | "operator_support";
 
-export const LITE_ROUTE_CAPABILITY_MATRIX_VERSION = "lite_route_capability_matrix_v6";
-
-const LITE_PRODUCT_ENTRY_ROUTES = new Set([
-  "POST /v1/observe",
-  "POST /v1/guide",
-  "POST /v1/feedback",
-  "POST /v1/rehydrate",
-  "POST /v1/forget",
-  "POST /v1/measure",
-]);
-
-const LITE_INTERNAL_GUIDANCE_ROUTES = new Set([
-  "POST /v1/memory/action/retrieval",
-  "POST /v1/memory/tools/select",
-]);
-
-const LITE_INTERNAL_CONTROL_ROUTES = new Set([
-  "POST /v1/memory/policies/learning-control/apply",
-]);
-
-function routeKey(entry: Pick<LiteRouteCapabilityMatrixEntry, "method" | "path">): string {
-  return `${entry.method} ${entry.path}`;
-}
-
-function classifyLiteRouteProductExposure(entry: LiteRouteCapabilityMatrixEntry): LiteRouteProductExposure {
-  const key = routeKey(entry);
-  if (LITE_PRODUCT_ENTRY_ROUTES.has(key)) return "product_entry";
-  if (LITE_INTERNAL_GUIDANCE_ROUTES.has(key)) return "internal_guidance";
-  if (LITE_INTERNAL_CONTROL_ROUTES.has(key)) return "internal_control";
-  if (entry.surface_kind === "operator_review" || entry.surface_kind === "operator_debug") return "operator_support";
-  if (entry.route_group.startsWith("memory-replay")) return "internal_evidence";
-  if (
-    entry.path === "/v1/memory/trajectory/compile" ||
-    entry.path === "/v1/execution/context/assemble" ||
-    entry.path === "/v1/memory/feedback" ||
-    entry.path === "/v1/memory/tools/decision" ||
-    entry.path === "/v1/memory/tools/run" ||
-    entry.path === "/v1/memory/tools/feedback" ||
-    entry.path.startsWith("/v1/memory/learning-loop/") ||
-    entry.path.startsWith("/v1/memory/runtime-maintenance/") ||
-    entry.path === "/v1/memory/tools/rehydrate_payload"
-  ) {
-    return "internal_evidence";
-  }
-  return "product_support";
-}
+export const LITE_ROUTE_CAPABILITY_MATRIX_VERSION = "lite_route_capability_matrix_v10";
 
 export const LITE_SERVER_ONLY_ROUTE_GROUPS = {
   admin_control: {
@@ -112,7 +68,7 @@ export const LITE_PRODUCT_BOUNDARY = {
 export const LITE_ROUTE_CAPABILITY_MATRIX = [
   {
     method: "POST",
-    path: "/v1/observe",
+    path: "/v1/observe", exposure: "product_entry",
     route_group: "product-facade",
     capabilities: ["continuity", "learning"],
     product_effects: ["history_shaped_future_behavior"],
@@ -121,7 +77,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/guide",
+    path: "/v1/guide", exposure: "product_entry",
     route_group: "product-facade",
     capabilities: ["continuity", "learning", "forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -130,7 +86,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/forget",
+    path: "/v1/forget", exposure: "product_entry",
     route_group: "product-facade",
     capabilities: ["forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -139,7 +95,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/feedback",
+    path: "/v1/feedback", exposure: "product_entry",
     route_group: "product-facade",
     capabilities: ["learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -148,7 +104,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/rehydrate",
+    path: "/v1/rehydrate", exposure: "product_entry",
     route_group: "product-facade",
     capabilities: ["forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -157,7 +113,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/measure",
+    path: "/v1/measure", exposure: "product_entry",
     route_group: "product-facade",
     capabilities: ["continuity", "learning", "forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -166,7 +122,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "GET",
-    path: "/v1/skills/candidates",
+    path: "/v1/skills/candidates", exposure: "operator_support",
     route_group: "product-facade",
     capabilities: ["learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -175,7 +131,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/skills/candidates",
+    path: "/v1/skills/candidates", exposure: "operator_support",
     route_group: "product-facade",
     capabilities: ["learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -184,7 +140,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/skills/candidates/:id/promote",
+    path: "/v1/skills/candidates/:id/promote", exposure: "operator_support",
     route_group: "product-facade",
     capabilities: ["learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -193,7 +149,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/skills/candidates/:id/reject",
+    path: "/v1/skills/candidates/:id/reject", exposure: "operator_support",
     route_group: "product-facade",
     capabilities: ["learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -202,7 +158,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/skills/candidates/:id/materialize",
+    path: "/v1/skills/candidates/:id/materialize", exposure: "operator_support",
     route_group: "product-facade",
     capabilities: ["learning", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -211,7 +167,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/operator/snapshot",
+    path: "/v1/operator/snapshot", exposure: "operator_support",
     route_group: "product-facade",
     capabilities: ["continuity", "learning", "forgetting", "learning_control"],
     product_effects: ["history_shaped_future_behavior"],
@@ -220,7 +176,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "GET",
-    path: "/v1/operator/authority-effect-audit",
+    path: "/v1/operator/authority-effect-audit", exposure: "operator_support",
     route_group: "product-facade",
     capabilities: ["learning_control"],
     product_effects: [],
@@ -229,7 +185,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/debug/memory-decision-trace",
+    path: "/v1/debug/memory-decision-trace", exposure: "operator_support",
     route_group: "product-facade",
     capabilities: ["learning_control"],
     product_effects: [],
@@ -238,7 +194,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/audit/memory-decision-report",
+    path: "/v1/audit/memory-decision-report", exposure: "operator_support",
     route_group: "product-facade",
     capabilities: ["learning_control"],
     product_effects: [],
@@ -247,7 +203,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "GET",
-    path: "/v1/runtime/boundary-inventory",
+    path: "/v1/runtime/boundary-inventory", exposure: "operator_support",
     route_group: "runtime-boundary-inventory",
     capabilities: ["learning_control"],
     product_effects: [],
@@ -256,16 +212,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/write",
-    route_group: "memory-write",
-    capabilities: ["continuity", "learning"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "persist execution evidence, continuity carriers, and learning candidates",
-  },
-  {
-    method: "POST",
-    path: "/v1/handoff/store",
+    path: "/v1/handoff/store", exposure: "product_support",
     route_group: "memory-handoff",
     capabilities: ["continuity", "learning"],
     product_effects: ["history_shaped_future_behavior"],
@@ -274,7 +221,7 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/handoff/recover",
+    path: "/v1/handoff/recover", exposure: "product_support",
     route_group: "memory-handoff",
     capabilities: ["continuity"],
     product_effects: ["history_shaped_future_behavior"],
@@ -283,480 +230,12 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
   },
   {
     method: "POST",
-    path: "/v1/memory/archive/rehydrate",
-    route_group: "memory-lifecycle-lite",
-    capabilities: ["forgetting"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "rehydrate archived memory through learning-control lifecycle state",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/nodes/activate",
-    route_group: "memory-lifecycle-lite",
-    capabilities: ["forgetting"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "record activation feedback so useful memory stays warm",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/recall",
-    route_group: "memory-recall",
-    capabilities: ["continuity", "forgetting"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "retrieve scoped memory with lifecycle, trust, and compaction policy",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/recall_text",
-    route_group: "memory-context-runtime",
-    capabilities: ["continuity", "forgetting"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "embed text recall into the same lifecycle-aware recall path",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/planning/context",
-    route_group: "memory-context-runtime",
-    capabilities: ["continuity", "learning", "forgetting", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "assemble the agent-facing planning packet from continuity, recall, learning, and authority signals",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/context/assemble",
-    route_group: "memory-context-runtime",
-    capabilities: ["continuity", "learning", "forgetting", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "assemble internal context evidence behind the product guide facade",
-  },
-  {
-    method: "POST",
-    path: "/v1/execution/context/assemble",
-    route_group: "memory-access-partial",
-    capabilities: ["continuity", "forgetting", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "assemble execution-tree-first agent context with passed solutions, failed branches, and rehydration references",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/trajectory/compile",
-    route_group: "memory-access-partial",
-    capabilities: ["continuity"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "compile execution trajectory evidence into resumable continuity signals",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/delegation/records",
-    route_group: "memory-access-partial",
-    capabilities: ["continuity", "learning"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "persist delegation evidence that can affect future collaboration context",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/delegation/records/find",
-    route_group: "memory-access-partial",
-    capabilities: ["continuity", "learning"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "operator_review",
-    product_role: "read prior delegation evidence for continuity and learning review",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/delegation/records/aggregate",
-    route_group: "memory-access-partial",
-    capabilities: ["learning"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "operator_review",
-    product_role: "aggregate delegation experience into learning signals",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/find",
-    route_group: "memory-access-partial",
-    capabilities: ["continuity", "forgetting"],
-    product_effects: [],
-    surface_kind: "operator_review",
-    product_role: "inspect scoped memory without creating authority",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/continuity/review-pack",
-    route_group: "memory-access-partial",
-    capabilities: ["continuity", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "operator_review",
-    product_role: "review continuity evidence, rollback requirements, and next execution anchors",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/agent/inspect",
-    route_group: "memory-access-partial",
-    capabilities: ["continuity", "learning", "forgetting", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "operator_review",
-    product_role: "inspect the combined agent memory state without granting new authority",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/agent/review-pack",
-    route_group: "memory-access-partial",
-    capabilities: ["continuity", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "operator_review",
-    product_role: "summarize reviewable memory state for safe agent continuation",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/agent/resume-pack",
-    route_group: "memory-access-partial",
-    capabilities: ["continuity"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "produce a resumable agent packet from prior execution state",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/agent/handoff-pack",
-    route_group: "memory-access-partial",
-    capabilities: ["continuity"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "produce a handoff packet for transfer between agent runs",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/execution/introspect",
-    route_group: "memory-access-partial",
-    capabilities: ["continuity", "learning", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "operator_review",
-    product_role: "inspect execution memory, workflow authority, and policy state",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/evolution/review-pack",
-    route_group: "memory-access-partial",
-    capabilities: ["learning", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "operator_review",
-    product_role: "review learning evolution candidates and authority posture",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/action/retrieval",
-    route_group: "memory-access-partial",
-    capabilities: ["learning", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "retrieve reusable action memory while keeping candidate authority visible",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/experience/intelligence",
-    route_group: "memory-access-partial",
-    capabilities: ["continuity", "learning", "forgetting", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "summarize how prior experience should shape the next run",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/resolve",
+    path: "/v1/memory/resolve", exposure: "product_support",
     route_group: "memory-access-partial",
     capabilities: ["continuity", "forgetting"],
     product_effects: [],
     surface_kind: "operator_review",
     product_role: "resolve memory nodes, edges, commits, or decisions for inspection",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/anchors/rehydrate_payload",
-    route_group: "memory-access-partial",
-    capabilities: ["forgetting"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "rehydrate anchor payloads that forgetting lifecycle kept out of default context",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/feedback",
-    route_group: "memory-feedback-tools",
-    capabilities: ["learning"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "record outcome feedback for future learning decisions",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/rules/state",
-    route_group: "memory-feedback-tools",
-    capabilities: ["learning", "learning_control"],
-    product_effects: [],
-    surface_kind: "operator_review",
-    product_role: "inspect scoped rule state without widening authority",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/rules/evaluate",
-    route_group: "memory-feedback-tools",
-    capabilities: ["learning_control"],
-    product_effects: [],
-    surface_kind: "operator_review",
-    product_role: "evaluate scoped rules as advisory Runtime evidence",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/tools/select",
-    route_group: "memory-feedback-tools",
-    capabilities: ["learning", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "select tools from learned patterns while preserving trust boundaries",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/tools/decision",
-    route_group: "memory-feedback-tools",
-    capabilities: ["learning"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "persist tool decision evidence for later feedback and learning",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/tools/run",
-    route_group: "memory-feedback-tools",
-    capabilities: ["learning"],
-    product_effects: [],
-    surface_kind: "core_runtime",
-    product_role: "record tool run evidence without granting policy authority",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/tools/runs/list",
-    route_group: "memory-feedback-tools",
-    capabilities: ["learning"],
-    product_effects: [],
-    surface_kind: "operator_review",
-    product_role: "inspect recorded tool runs for learning review",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/tools/feedback",
-    route_group: "memory-feedback-tools",
-    capabilities: ["learning", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "turn tool feedback into learning-control learning candidates",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/learning-loop/run",
-    route_group: "memory-feedback-tools",
-    capabilities: ["learning", "forgetting", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "run the evidence-gated learning and forgetting loop",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/runtime-maintenance/run",
-    route_group: "memory-feedback-tools",
-    capabilities: ["learning", "forgetting", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "run maintenance over learning, forgetting, and authority state",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/runtime-maintenance/immediate",
-    route_group: "memory-feedback-tools",
-    capabilities: ["learning", "forgetting", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "run immediate maintenance profile over Runtime memory state",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/runtime-maintenance/daily",
-    route_group: "memory-feedback-tools",
-    capabilities: ["learning", "forgetting", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "run daily maintenance profile over Runtime memory state",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/runtime-maintenance/long-horizon",
-    route_group: "memory-feedback-tools",
-    capabilities: ["learning", "forgetting", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "run long-horizon maintenance profile over Runtime memory state",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/policies/learning-control/apply",
-    route_group: "memory-feedback-tools",
-    capabilities: ["learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "apply learning-control lifecycle changes to policy memory",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/patterns/suppress",
-    route_group: "memory-feedback-tools",
-    capabilities: ["forgetting", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "suppress learned patterns without deleting their evidence",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/patterns/unsuppress",
-    route_group: "memory-feedback-tools",
-    capabilities: ["forgetting", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "reactivate suppressed pattern memory under lifecycle control",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/tools/rehydrate_payload",
-    route_group: "memory-feedback-tools",
-    capabilities: ["forgetting"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "execute the rehydrate-payload tool hint emitted by recall",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/replay/run/start",
-    route_group: "memory-replay-core",
-    capabilities: ["continuity", "learning"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "start a replay run that can become reusable execution evidence",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/replay/step/before",
-    route_group: "memory-replay-core",
-    capabilities: ["continuity", "learning"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "record pre-step replay evidence before tool execution",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/replay/step/after",
-    route_group: "memory-replay-core",
-    capabilities: ["continuity", "learning"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "record post-step replay outcome evidence",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/replay/run/end",
-    route_group: "memory-replay-core",
-    capabilities: ["continuity", "learning"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "finish a replay run and summarize its learning evidence",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/replay/runs/get",
-    route_group: "memory-replay-core",
-    capabilities: ["continuity", "learning"],
-    product_effects: [],
-    surface_kind: "operator_review",
-    product_role: "inspect replay run evidence for learning review",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/replay/playbooks/compile_from_run",
-    route_group: "memory-replay-core",
-    capabilities: ["learning", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "compile successful replay evidence into a learning-control playbook candidate",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/replay/playbooks/get",
-    route_group: "memory-replay-core",
-    capabilities: ["learning"],
-    product_effects: [],
-    surface_kind: "operator_review",
-    product_role: "inspect replay playbook memory",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/replay/playbooks/candidate",
-    route_group: "memory-replay-core",
-    capabilities: ["learning", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "materialize a learning-control playbook candidate",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/replay/playbooks/promote",
-    route_group: "memory-replay-core",
-    capabilities: ["learning", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "promote playbook memory only through learning-control evidence",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/replay/playbooks/repair",
-    route_group: "memory-replay-core",
-    capabilities: ["learning", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "record playbook repair evidence without becoming a semantic repair engine",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/replay/playbooks/repair/review",
-    route_group: "memory-replay-learning-control-partial",
-    capabilities: ["learning", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "operator_review",
-    product_role: "review playbook repair through learning-control before mutation",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/replay/playbooks/run",
-    route_group: "memory-replay-learning-control-partial",
-    capabilities: ["continuity", "learning", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "run a playbook through the learning-control replay path",
-  },
-  {
-    method: "POST",
-    path: "/v1/memory/replay/playbooks/dispatch",
-    route_group: "memory-replay-learning-control-partial",
-    capabilities: ["continuity", "learning", "learning_control"],
-    product_effects: ["history_shaped_future_behavior"],
-    surface_kind: "core_runtime",
-    product_role: "dispatch a learning-control playbook run request",
   },
 ] as const satisfies readonly LiteRouteCapabilityMatrixEntry[];
 
@@ -772,26 +251,19 @@ export function buildLiteRouteMatrix() {
   return {
     product_boundary: buildLiteProductBoundary(),
     route_capability_matrix_version: LITE_ROUTE_CAPABILITY_MATRIX_VERSION,
-    route_capability_matrix: LITE_ROUTE_CAPABILITY_MATRIX.map((entry) => ({
+    route_capability_matrix: LITE_ROUTE_CAPABILITY_MATRIX.map(({ exposure, ...entry }) => ({
       ...entry,
       capabilities: [...entry.capabilities],
       product_effects: [...entry.product_effects],
-      product_exposure: classifyLiteRouteProductExposure(entry),
+      product_exposure: exposure,
     })),
     kernel_required_routes: [
       "product-facade",
-      "memory-write",
       "memory-handoff",
-      "memory-recall",
-      "memory-context-runtime",
       "memory-access-partial",
-      "memory-replay-core",
-      "memory-feedback-tools",
     ],
     optional_routes: [
       "runtime-boundary-inventory",
-      "memory-lifecycle-lite",
-      "memory-replay-learning-control-partial",
     ],
     server_only_route_groups: Object.entries(LITE_SERVER_ONLY_ROUTE_GROUPS).map(([group, value]) => ({
       group,

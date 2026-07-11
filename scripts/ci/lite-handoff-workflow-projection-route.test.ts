@@ -6,13 +6,13 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
-import { createRequestGuards } from "../../src/app/request-guards.ts";
+import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
-import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
-import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
+import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
+import { createMemoryPlanningContextService } from "../../src/routes/memory-context-runtime.ts";
+import { PLANNING_SERVICE_TEST_PATH, registerPlanningServiceTestAdapter } from "./support/register-planning-service-test-adapter.ts";
 import { registerHandoffRoutes } from "../../src/routes/handoff.ts";
 import {
-  ContextAssembleRouteContractSchema,
   ExecutionMemoryIntrospectionResponseSchema,
   ExperienceIntelligenceResponseSchema,
   PlanningContextRouteContractSchema,
@@ -101,13 +101,11 @@ function registerApp(args: {
     executionTreeStore: args.executionTreeStore ?? null,
   });
 
-  registerMemoryContextRuntimeRoutes({
-    app: args.app,
+registerPlanningServiceTestAdapter(args.app, createMemoryPlanningContextService({
     env,
     embedder: DeterministicEmbeddingProvider,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
-    recallTextEmbedBatcher: { stats: () => null },
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
     enforceRateLimit: guards.enforceRateLimit,
@@ -159,7 +157,7 @@ function registerApp(args: {
       message: "embedding failed",
     }),
     recordContextAssemblyTelemetryBestEffort: async () => {},
-  });
+  }));
 
   registerMemoryAccessRoutes({
     app: args.app,
@@ -392,7 +390,7 @@ test("planning/context injects execution tree current branch without promoting f
 
     const planning = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -471,7 +469,7 @@ test("planning/context injects execution tree current branch without promoting f
 
     const assemble = await app.inject({
       method: "POST",
-      url: "/v1/memory/context/assemble",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -486,8 +484,8 @@ test("planning/context injects execution tree current branch without promoting f
       },
     });
     assert.equal(assemble.statusCode, 200, assemble.body);
-    const assembleBody = ContextAssembleRouteContractSchema.parse(assemble.json()) as Record<string, unknown>;
-    const assemblyTreeEffectSummary = (assembleBody.assembly_summary as any).execution_tree_effect_summary;
+    const assembleBody = PlanningContextRouteContractSchema.parse(assemble.json()) as Record<string, unknown>;
+    const assemblyTreeEffectSummary = (assembleBody.planning_summary as any).execution_tree_effect_summary;
     assert.ok(assemblyTreeEffectSummary);
     assert.equal(assemblyTreeEffectSummary.effect_posture, "branch_isolated");
     assert.equal(assemblyTreeEffectSummary.failed_branch_isolated, true);
@@ -969,7 +967,7 @@ test("handoff/store projects workflow memory into planner guidance through the g
 
     const firstPlanning = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -1015,7 +1013,7 @@ test("handoff/store projects workflow memory into planner guidance through the g
 
     const secondPlanning = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -1203,7 +1201,7 @@ test("trajectory-backed handoff promotion preserves recovery compiler fields int
 
     const firstPlanning = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -1288,7 +1286,7 @@ test("trajectory-backed handoff promotion preserves recovery compiler fields int
 
     const secondPlanning = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",

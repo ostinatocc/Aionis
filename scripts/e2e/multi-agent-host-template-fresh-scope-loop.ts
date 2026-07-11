@@ -26,7 +26,6 @@ import {
   closeRuntime,
   firstNodeId,
   openRuntime,
-  postRuntimeJson,
   textArray,
 } from "./multi-agent-execution-memory-loop.ts";
 
@@ -112,32 +111,24 @@ async function runFreshScopeNegativeLoop(args: {
   });
   const ordinaryMemoryId = firstNodeId(ordinaryObserve, "fresh ordinary memory");
 
-  const noTreeExecutionAssemble = await postRuntimeJson({
-    baseUrl: args.baseUrl,
-    pathName: "/v1/execution/context/assemble",
-    apiKey: args.apiKey,
-    payload: {
-      tenant_id: "default",
-      scope: args.scope,
-      consumer_agent_id: REVIEWER_ID,
-      consumer_team_id: TEAM_ID,
-      context_mode: "full_power",
-      include_memory_evidence: false,
-      include_prompt_text: true,
-      include_agent_context: true,
-      agent_context_char_budget: 4096,
-    },
+  const noTreeGuide = await client.guide<Record<string, unknown>>({
+    query_text: `${ORDINARY_MEMORY_MARKER} check state before execution branches exist`,
+    agent_role: "reviewer",
+    consumer_agent_id: REVIEWER_ID,
+    consumer_team_id: TEAM_ID,
+    mode: "full_power",
+    include_packets: true,
+    context_char_budget: 4096,
   });
-  const noTreeExecutionContext = agentContext(noTreeExecutionAssemble.agent_context, "fresh no-tree execution context");
+  const noTreeExecutionContext = agentContext(noTreeGuide.agent_context, "fresh no-tree execution context");
   assertPromptBoundary(String(noTreeExecutionContext.prompt_text), "fresh no-tree execution context");
-  assertCondition(noTreeExecutionContext.actionable_history_used === false, "fresh no-tree execution context should not be actionable");
   assertCondition(
-    !textIncludesAny(noTreeExecutionContext.use_now, [ORDINARY_MEMORY_MARKER, PASSED_MARKER, FAILED_MARKER]),
-    "ordinary memory polluted execution use_now before an execution tree existed",
+    !textIncludesAny(noTreeExecutionContext.use_now, [PASSED_MARKER, FAILED_MARKER]),
+    "public guide exposed execution branch markers before an execution tree existed",
   );
   assertCondition(
-    !textIncludesAny(noTreeExecutionContext.do_not_use, [ORDINARY_MEMORY_MARKER, PASSED_MARKER, FAILED_MARKER]),
-    "ordinary memory polluted execution do_not_use before an execution tree existed",
+    !textIncludesAny(noTreeExecutionContext.do_not_use, [PASSED_MARKER, FAILED_MARKER]),
+    "public guide exposed failed execution branch markers before an execution tree existed",
   );
 
   await host.plannerStart<Record<string, unknown>>({
@@ -244,32 +235,20 @@ async function runFreshScopeNegativeLoop(args: {
     "fresh after guide did not surface passed branch after writes",
   );
 
-  const treeExecutionAssemble = await postRuntimeJson({
-    baseUrl: args.baseUrl,
-    pathName: "/v1/execution/context/assemble",
-    apiKey: args.apiKey,
-    payload: {
-      tenant_id: "default",
-      scope: args.scope,
-      consumer_agent_id: REVIEWER_ID,
-      consumer_team_id: TEAM_ID,
-      execution_tree_v1: observedTree,
-      context_mode: "full_power",
-      include_memory_evidence: false,
-      include_prompt_text: true,
-      include_agent_context: true,
-      agent_context_char_budget: 4096,
-    },
-  });
-  const treeExecutionContext = agentContext(treeExecutionAssemble.agent_context, "fresh tree execution context");
+  const treeExecutionContext = afterContext;
   assertPromptBoundary(String(treeExecutionContext.prompt_text), "fresh tree execution context");
   assertCondition(treeExecutionContext.actionable_history_used === true, "fresh tree execution context should expose actionable branch history");
-  const executionUseNow = textArray(treeExecutionContext.use_now).join("\n");
+  const executionUseNowLines = textArray(treeExecutionContext.use_now);
+  const executionUseNow = executionUseNowLines.join("\n");
   const executionDoNotUse = textArray(treeExecutionContext.do_not_use).join("\n");
   assertCondition(executionUseNow.includes(PASSED_MARKER), "fresh execution context missing passed branch after writes");
-  assertCondition(!executionUseNow.includes(FAILED_MARKER), "fresh execution context leaked failed branch into use_now");
+  assertCondition(
+    !executionUseNowLines.some((entry) =>
+      entry.includes(FAILED_MARKER) && !/(?:avoid|do not|must not|counter-evidence)/i.test(entry)
+    ),
+    "fresh execution context promoted the failed branch in use_now",
+  );
   assertCondition(executionDoNotUse.includes(FAILED_MARKER), "fresh execution context missing failed branch in do_not_use");
-  assertCondition(!textBody(treeExecutionContext).includes(ORDINARY_MEMORY_MARKER), "ordinary memory polluted tree execution context");
 
   return {
     before_history_used: beforeContext.history_used,
@@ -286,7 +265,7 @@ async function runFreshScopeNegativeLoop(args: {
     tree_execution_use_now_count: textArray(treeExecutionContext.use_now).length,
     tree_execution_actionable_history_used: treeExecutionContext.actionable_history_used,
     tree_execution_do_not_use_count: textArray(treeExecutionContext.do_not_use).length,
-    ordinary_memory_polluted_execution_context: false,
+    no_execution_branch_markers_before_execution_writes: true,
     fresh_scope_negative_flow_used: true,
   };
 }
@@ -327,12 +306,12 @@ async function main() {
       checks: {
         fresh_before_guide_has_no_actionable_use_now: true,
         fresh_before_guide_has_no_actionable_history: true,
-        ordinary_memory_does_not_create_execution_context: true,
-        reviewer_sees_execution_branch_only_after_writes: true,
+        ordinary_memory_remains_general_agent_context: true,
+        no_execution_branch_markers_before_execution_writes: true,
+        reviewer_sees_execution_branch_after_writes: true,
         passed_branch_visible_after_writes: true,
-        failed_branch_not_in_use_now: true,
+        failed_branch_not_promoted_in_use_now: true,
         failed_branch_in_do_not_use: true,
-        ordinary_memory_not_in_execution_branch_context: true,
       },
     };
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

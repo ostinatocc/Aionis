@@ -6,31 +6,35 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
-const runtimeVersion = packageJson.version;
-const runtimeTag = `v${runtimeVersion}`;
-const dockerImage = `ghcr.io/ostinatocc/aionis:${runtimeTag}`;
-
-const CURRENT_RELEASE_TRAIN = [
-  { name: "aionis", version: "0.3.8", releaseNotesToken: "aionis@0.3.8" },
-  { name: "@aionis/create", version: "0.3.5", releaseNotesToken: "@aionis/create@0.3.5" },
-  { name: "@aionis/sdk", version: "0.3.10", releaseNotesToken: "@aionis/sdk@0.3.10" },
-  { name: "@aionis/mcp", version: "0.3.5", releaseNotesToken: "@aionis/mcp@0.3.5" },
-  { name: "@aionis/aifs", version: "0.3.2", releaseNotesToken: "@aionis/aifs@0.3.2" },
-  {
-    name: "@aionis/claude-code",
-    releaseDocsArtifact: "`@aionis/claude-code` and Claude Code plugin",
-    version: "0.3.3",
-    releaseNotesToken: "@aionis/claude-code@0.3.3",
-  },
-  {
-    name: "@aionis/substrate",
-    version: "0.1.11",
-    releaseNotesToken: "@aionis/substrate` remains an experimental sidecar/research package at\n`0.1.11`",
-  },
-];
+const PACKAGE_NAMES = {
+  cli: "aionis",
+  create: "@aionis/create",
+  sdk: "@aionis/sdk",
+  mcp: "@aionis/mcp",
+  aifs: "@aionis/aifs",
+  claude_code: "@aionis/claude-code",
+  substrate: "@aionis/substrate",
+  manifest: "@aionis/manifest",
+};
+const RELEASE_STATUSES = new Set(["stable", "candidate", "development"]);
 
 function read(rel) {
   return fs.readFileSync(path.join(ROOT, rel), "utf8");
+}
+
+function readJson(rel) {
+  return JSON.parse(read(rel));
+}
+
+function releaseTrain() {
+  return readJson("release-train.json");
+}
+
+function workspaceRepository(name) {
+  for (const candidate of [path.resolve(ROOT, "..", name), path.resolve(ROOT, "..", "..", name)]) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
 }
 
 function escapeRegExp(value) {
@@ -44,20 +48,82 @@ function assertReleaseTableCell(source, artifact, expectedToken) {
   assert.match(match[1], new RegExp(escapeRegExp(expectedToken)), `${artifact} release table version should include ${expectedToken}`);
 }
 
-test("current release docs stay aligned with the package train", () => {
-  const releaseNotes = read("RELEASE_NOTES.md");
-  const releaseDocs = read("docs/AIONIS_RELEASES.md");
-  const runtimeManifest = JSON.parse(read("runtime-manifest.json"));
+test("release-train.json is the checked-in source for immutable release coordinates", () => {
+  const train = releaseTrain();
 
-  for (const entry of CURRENT_RELEASE_TRAIN) {
-    assert.ok(releaseNotes.includes(entry.releaseNotesToken), `RELEASE_NOTES.md should mention ${entry.releaseNotesToken}`);
-    assertReleaseTableCell(releaseDocs, entry.releaseDocsArtifact ?? `\`${entry.name}\``, `\`${entry.version}\``);
+  assert.equal(train.schema_version, "aionis_release_train_v1");
+  assert.ok(RELEASE_STATUSES.has(train.status), "release status must be stable, candidate, or development");
+  assert.match(train.runtime.version, /^\d+\.\d+\.\d+$/);
+  assert.equal(train.runtime.source_tag, `v${train.runtime.version}`);
+  assert.equal(train.runtime.docker_tag, train.runtime.source_tag);
+  assert.match(train.runtime.docker_image, /^ghcr\.io\//);
+  assert.doesNotMatch(train.runtime.default_installer_ref, /^(main|master|latest|HEAD)$/i);
+  if (train.status === "stable") {
+    assert.equal(train.runtime.default_installer_ref, train.runtime.source_tag);
   }
 
-  assert.ok(releaseNotes.includes(`Runtime source tag \`${runtimeTag}\``), "RELEASE_NOTES.md runtime tag should match package.json version");
-  assert.ok(releaseNotes.includes(`Docker image \`${dockerImage}\``), "RELEASE_NOTES.md Docker image should match package.json version");
-  assertReleaseTableCell(releaseDocs, "GitHub Runtime source", `\`${runtimeTag}\``);
-  assertReleaseTableCell(releaseDocs, "Docker image", `\`${dockerImage}\``);
-  assert.equal(runtimeManifest.release?.version, runtimeVersion, "runtime-manifest release version should match package.json");
-  assert.equal(runtimeManifest.release?.docker_image, "ghcr.io/ostinatocc/aionis", "runtime-manifest Docker repository should stay aligned with release docs");
+  assert.deepEqual(Object.keys(train.packages).sort(), Object.keys(PACKAGE_NAMES).sort());
+  for (const [key, expectedName] of Object.entries(PACKAGE_NAMES)) {
+    assert.equal(train.packages[key].name, expectedName);
+    assert.match(train.packages[key].version, /^\d+\.\d+\.\d+$/);
+  }
+});
+
+test("runtime manifest and package metadata stay aligned with release-train.json", () => {
+  const train = releaseTrain();
+  const runtimeManifest = readJson("runtime-manifest.json");
+
+  assert.equal(packageJson.version, train.runtime.version);
+  assert.equal(runtimeManifest.release?.version, train.runtime.version);
+  assert.equal(runtimeManifest.release?.status, train.status);
+  assert.equal(runtimeManifest.release?.source_tag, train.runtime.source_tag);
+  assert.equal(runtimeManifest.release?.docker_image, train.runtime.docker_image);
+  assert.equal(runtimeManifest.release?.docker_tag, train.runtime.docker_tag);
+  assert.equal(runtimeManifest.release?.default_installer_ref, train.runtime.default_installer_ref);
+});
+
+test("release docs derive all package and Runtime coordinates from release-train.json", () => {
+  const train = releaseTrain();
+  const releaseNotes = read("RELEASE_NOTES.md");
+  const releaseDocs = read("docs/AIONIS_RELEASES.md");
+
+  for (const entry of Object.values(train.packages)) {
+    const token = `${entry.name}@${entry.version}`;
+    assert.ok(releaseNotes.includes(token), `RELEASE_NOTES.md should mention ${token}`);
+    assertReleaseTableCell(releaseDocs, `\`${entry.name}\``, `\`${entry.version}\``);
+  }
+
+  const dockerArtifact = `${train.runtime.docker_image}:${train.runtime.docker_tag}`;
+  assert.ok(releaseNotes.includes(`Release status \`${train.status}\``));
+  assert.ok(releaseNotes.includes(`Runtime source tag \`${train.runtime.source_tag}\``));
+  assert.ok(releaseNotes.includes(`Docker image \`${dockerArtifact}\``));
+  assert.ok(releaseNotes.includes(`Default installer Runtime ref \`${train.runtime.default_installer_ref}\``));
+  assertReleaseTableCell(releaseDocs, "GitHub Runtime source", `\`${train.runtime.source_tag}\``);
+  assertReleaseTableCell(releaseDocs, "Docker image", `\`${dockerArtifact}\``);
+  assertReleaseTableCell(releaseDocs, "Default installer Runtime ref", `\`${train.runtime.default_installer_ref}\``);
+});
+
+const createRepository = workspaceRepository("aionis-create");
+test("workspace @aionis/create default ref matches release-train.json", { skip: !createRepository }, () => {
+  const train = releaseTrain();
+  const createSource = fs.readFileSync(path.join(createRepository, "src/index.ts"), "utf8");
+  assert.ok(
+    createSource.includes(`export const DEFAULT_RUNTIME_REF = "${train.runtime.default_installer_ref}"`),
+    "@aionis/create default Runtime ref must match release-train.json",
+  );
+});
+
+test("release docs publish the Runtime tag before the version-pinned installer", () => {
+  const train = releaseTrain();
+  const runtimeTagCommand = `git tag -a ${train.runtime.source_tag}`;
+  const createPublishDirectory = "cd /Volumes/ziel/new.aionis/aionis-create";
+
+  for (const file of ["RELEASE_NOTES.md", "docs/AIONIS_RELEASES.md"]) {
+    const source = read(file);
+    const tagIndex = source.indexOf(runtimeTagCommand);
+    const createIndex = source.indexOf(createPublishDirectory);
+    assert.notEqual(tagIndex, -1, `${file} must include the Runtime tag command`);
+    assert.notEqual(createIndex, -1, `${file} must include the Create publish directory`);
+    assert.ok(tagIndex < createIndex, `${file} must tag Runtime before publishing Create`);
+  }
 });

@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { PlanningSummary } from "../../src/app/planning-summary.ts";
 import { evaluateAionisEffect } from "../../src/kernel/effect-evaluator.ts";
 import {
@@ -13,6 +16,64 @@ import {
   buildAionisMemoryPacket,
 } from "../../src/memory/product-output-assembler.ts";
 import { compileExecutionAgentContext } from "../../src/sdk.ts";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+test("product output builders have one projection owner and a narrow compatibility facade", () => {
+  const assemblerPath = path.join(ROOT, "src", "memory", "product-output-assembler.ts");
+  const assemblerSource = fs.readFileSync(assemblerPath, "utf8");
+  assert.equal(
+    assemblerSource.split(/\r?\n/).length <= 800,
+    true,
+    "product-output-assembler.ts must remain a <=800-line compatibility facade",
+  );
+  assert.doesNotMatch(
+    assemblerSource,
+    /\bfunction\s+[A-Za-z0-9_]+\s*\(/,
+    "the compatibility facade must not retain projection implementations",
+  );
+
+  const ownership = new Map<string, string[]>([
+    ["memory-packet.ts", ["buildAionisMemoryPacket"]],
+    ["guide-packet.ts", ["buildAionisGuidePacket", "buildAionisGuideBrief"]],
+    ["decision-trace.ts", [
+      "buildAionisMemoryDecisionTrace",
+      "buildAionisMemoryDecisionAuditReport",
+      "buildAionisMemoryUseReceiptFromDecisionTrace",
+      "buildAionisMemoryAdmissionRecordFromDecisionTrace",
+    ]],
+    ["learning-effect.ts", ["buildAionisLearningPacket", "buildAionisEffectReport"]],
+    ["operator-projections.ts", [
+      "buildAionisOperatorSnapshot",
+      "buildAionisAgentFlightRecorderReport",
+      "buildClaimLedgerProjection",
+      "resolveAionisAdmissionCandidatePolicyActiveProjection",
+    ]],
+  ]);
+  for (const [fileName, builders] of ownership) {
+    const sourcePath = path.join(ROOT, "src", "memory", "product-output", fileName);
+    assert.equal(fs.existsSync(sourcePath), true, `${fileName} must own its projection family`);
+    const source = fs.readFileSync(sourcePath, "utf8");
+    for (const builder of builders) {
+      assert.match(source, new RegExp(`\\b(?:function|const)\\s+${builder}\\b`));
+      assert.doesNotMatch(assemblerSource, new RegExp(`\\bfunction\\s+${builder}\\b`));
+    }
+  }
+
+  for (const replacedFile of [
+    "operator-snapshot.ts",
+    "agent-flight-recorder.ts",
+    "claim-ledger-projection.ts",
+    "admission-policy-active-projection.ts",
+    "admission-shadow-policy.ts",
+  ]) {
+    assert.equal(
+      fs.existsSync(path.join(ROOT, "src", "memory", replacedFile)),
+      false,
+      `${replacedFile} must be deleted after its implementation moves`,
+    );
+  }
+});
 
 function planningSummaryFixture(): PlanningSummary {
   return {
@@ -5085,9 +5146,23 @@ test("agent context prioritizes concrete acceptance constraints from accepted ex
             "Verifier reward: 1",
             "Verifier passed tests: render_output; correct_source_layout",
           ],
-          verification: {
-            status: "passed",
-            summary: "accepted build route passed focused verifier",
+          execution_observation_v1: {
+            artifacts: [
+              {
+                path: "/workspace/pkg-root/source/main.c",
+                summary: "Accepted prior file evidence: int main(void) { return 0; }",
+              },
+            ],
+            verification: {
+              summary: [
+                "accepted build route passed focused verifier",
+                "official output layout check passed",
+              ],
+              artifact_hints: [
+                "/workspace/pkg-root/source/main.c",
+                "artifacts/render.tga",
+              ],
+            },
           },
           execution_native_v1: {
             schema_version: "execution_native_v1",
@@ -5134,6 +5209,14 @@ test("agent context prioritizes concrete acceptance constraints from accepted ex
   assert.ok(activeRow?.acceptance_checks.some((entry) => entry.includes("Extracted to `/workspace/pkg-root/` with structure")));
   assert.ok(activeRow?.acceptance_checks.some((entry) => entry.includes("Source downloaded from the official archive")));
   assert.ok((activeRow?.acceptance_checks.length ?? 0) <= 3);
+  assert.deepEqual(activeRow?.verification_summary, [
+    "accepted build route passed focused verifier",
+    "official output layout check passed",
+  ]);
+  assert.deepEqual(activeRow?.artifact_hints, [
+    "/workspace/pkg-root/source/main.c: Accepted prior file evidence: int main(void) { return 0; }",
+    "/workspace/pkg-root/source/main.c",
+  ]);
 
   const compiled = compileExecutionAgentContext({
     guide: {

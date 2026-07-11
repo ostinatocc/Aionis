@@ -6,10 +6,10 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import { sealAuthorityReceiptsForPreparedWrite } from "./authority-fixture-helpers.ts";
-import { createRequestGuards } from "../../src/app/request-guards.ts";
+import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { CognitiveStructureV1Schema } from "../../src/kernel/cognitive-structure.ts";
-import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
+import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
 import { buildExecutionContractFromProjection } from "../../src/memory/execution-contract.ts";
 import {
   DelegationRecordsWriteResponseSchema,

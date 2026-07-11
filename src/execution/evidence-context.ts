@@ -963,6 +963,11 @@ function executionRecordNodeId(record: Record<string, unknown>): string | null {
   return firstString(record.node_id, record.uri, record.id);
 }
 
+function persistedMemoryRecordId(record: Record<string, unknown>): string | null {
+  if (record.source !== "memory") return null;
+  return firstString(record.node_id, record.id);
+}
+
 function executionUseNowLine(
   label: "Current active path" | "Passed solution",
   record: Record<string, unknown>,
@@ -1130,26 +1135,22 @@ function buildExecutionAgentContext(args: {
 
   for (const entry of args.activeCompressed.slice(-1) as Array<Record<string, unknown>>) {
     addAgentLine(useNow, executionUseNowLine("Current active path", entry), 4);
-    const nodeId = executionRecordNodeId(entry);
-    if (nodeId) memoryIds.push(nodeId);
   }
   if (useNow.length === 0) {
     for (const entry of args.activeRaw.slice(-1) as Array<Record<string, unknown>>) {
       addAgentLine(useNow, executionUseNowLine("Current active path", entry), 4);
-      const nodeId = executionRecordNodeId(entry);
-      if (nodeId) memoryIds.push(nodeId);
     }
   }
 
   for (const entry of args.passedSolutions.filter(hasEvidenceBacking).slice(0, 3) as Array<Record<string, unknown>>) {
     addAgentLine(useNow, executionUseNowLine("Passed solution", entry), 5);
-    const nodeId = executionRecordNodeId(entry);
+    const nodeId = persistedMemoryRecordId(entry);
     if (nodeId) memoryIds.push(nodeId);
   }
 
   for (const entry of args.failedBranches.slice(0, 3) as Array<Record<string, unknown>>) {
     addAgentLine(doNotUse, failedBranchLine(entry), 4);
-    const nodeId = executionRecordNodeId(entry);
+    const nodeId = persistedMemoryRecordId(entry);
     if (nodeId) memoryIds.push(nodeId);
   }
 

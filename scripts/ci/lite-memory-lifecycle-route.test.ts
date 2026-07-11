@@ -4,13 +4,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import Fastify from "fastify";
-import { createRequestGuards } from "../../src/app/request-guards.ts";
-import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { prepareMemoryWrite, applyMemoryWrite } from "../../src/memory/write.ts";
-import { registerLiteMemoryLifecycleRoutes } from "../../src/routes/memory-lifecycle-lite.ts";
+import { createProductLifecycleService } from "../../src/product/lifecycle-service.ts";
+import { ProductForgetRequest } from "../../src/product/product-services.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
-import { InflightGate } from "../../src/util/inflight_gate.ts";
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-lifecycle-route-"));
@@ -72,74 +69,44 @@ async function seedLifecycleFixture(store: ReturnType<typeof createLiteWriteStor
   return { archivedNodeId, activatedNodeId };
 }
 
-function buildRequestGuards() {
-  return createRequestGuards({
+function createLifecycleService(store: ReturnType<typeof createLiteWriteStore>) {
+  return createProductLifecycleService({
     env: {
       AIONIS_EDITION: "lite",
-      MEMORY_AUTH_MODE: "off",
-      TENANT_QUOTA_ENABLED: false,
-      LITE_LOCAL_ACTOR_ID: "local-user",
-      MEMORY_TENANT_ID: "default",
       MEMORY_SCOPE: "default",
-      APP_ENV: "test",
-      ADMIN_TOKEN: "",
-      TRUST_PROXY: false,
-      TRUSTED_PROXY_CIDRS: [],
-      RATE_LIMIT_ENABLED: false,
-      RATE_LIMIT_BYPASS_LOOPBACK: false,
-      WRITE_RATE_LIMIT_MAX_WAIT_MS: 0,
+      MEMORY_TENANT_ID: "default",
+      LITE_LOCAL_ACTOR_ID: "local-user",
+      MAX_TEXT_LEN: 10000,
+      PII_REDACTION: false,
     } as any,
-    embedder: null,
-    recallLimiter: null,
-    debugEmbedLimiter: null,
-    writeLimiter: null,
-    recallTextEmbedLimiter: null,
-    recallInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
-    writeInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 100 }),
+    liteWriteStore: store,
   });
 }
 
-test("lite memory lifecycle routes can rehydrate archived nodes into active tiers", async () => {
-  const app = Fastify();
+test("product lifecycle service can rehydrate archived nodes into active tiers", async () => {
   const store = createLiteWriteStore(tmpDbPath("rehydrate"));
   try {
     const fixture = await seedLifecycleFixture(store);
-    const guards = buildRequestGuards();
-    registerRuntimeErrorHandler(app);
-    registerLiteMemoryLifecycleRoutes({
-      app,
-      env: {
-        AIONIS_EDITION: "lite",
-        MEMORY_SCOPE: "default",
-        MEMORY_TENANT_ID: "default",
-        LITE_LOCAL_ACTOR_ID: "local-user",
-        MAX_TEXT_LEN: 10000,
-        PII_REDACTION: false,
-      } as any,
-      liteWriteStore: store,
-      requireMemoryPrincipal: guards.requireMemoryPrincipal,
-      withIdentityFromRequest: guards.withIdentityFromRequest,
-      enforceRateLimit: guards.enforceRateLimit,
-      enforceTenantQuota: guards.enforceTenantQuota,
-      tenantFromBody: guards.tenantFromBody,
-      acquireInflightSlot: guards.acquireInflightSlot,
-    });
-
-    const response = await app.inject({
-      method: "POST",
-      url: "/v1/memory/archive/rehydrate",
-      payload: {
+    const service = createLifecycleService(store);
+    const response = await service.execute(
+      ProductForgetRequest.parse({
+        operation: "rehydrate",
+        target: "archive",
         node_ids: [fixture.archivedNodeId],
         target_tier: "hot",
         reason: "task returned to active queue",
-        input_text: "restore archived workflow for the same repair family",
-      },
-    });
+        payload: {
+          input_text: "restore archived workflow for the same repair family",
+        },
+      }),
+      "rehydrate",
+    );
+    assert.equal(response.ok, true);
     assert.equal(response.statusCode, 200);
-    const body = response.json();
-    assert.equal(body.target_tier, "hot");
-    assert.equal(body.rehydrated.moved_nodes, 1);
-    assert.deepEqual(body.rehydrated.moved_ids, [fixture.archivedNodeId]);
+    const body = response.body as any;
+    assert.equal(body.result.target_tier, "hot");
+    assert.equal(body.result.rehydrated.moved_nodes, 1);
+    assert.deepEqual(body.result.rehydrated.moved_ids, [fixture.archivedNodeId]);
 
     const { rows } = await store.findNodes({
       scope: "default",
@@ -155,54 +122,37 @@ test("lite memory lifecycle routes can rehydrate archived nodes into active tier
     assert.equal(rows[0]?.slots.semantic_forgetting_v1?.current_tier, "hot");
     assert.equal(rows[0]?.slots.archive_relocation_v1?.relocation_state, "none");
   } finally {
-    await app.close();
     await store.close();
   }
 });
 
-test("lite memory lifecycle routes can record activation feedback on nodes", async () => {
-  const app = Fastify();
+test("product lifecycle service can record activation feedback on nodes", async () => {
   const store = createLiteWriteStore(tmpDbPath("activate"));
   try {
     const fixture = await seedLifecycleFixture(store);
-    const guards = buildRequestGuards();
-    registerRuntimeErrorHandler(app);
-    registerLiteMemoryLifecycleRoutes({
-      app,
-      env: {
-        AIONIS_EDITION: "lite",
-        MEMORY_SCOPE: "default",
-        MEMORY_TENANT_ID: "default",
-        LITE_LOCAL_ACTOR_ID: "local-user",
-        MAX_TEXT_LEN: 10000,
-        PII_REDACTION: false,
-      } as any,
-      liteWriteStore: store,
-      requireMemoryPrincipal: guards.requireMemoryPrincipal,
-      withIdentityFromRequest: guards.withIdentityFromRequest,
-      enforceRateLimit: guards.enforceRateLimit,
-      enforceTenantQuota: guards.enforceTenantQuota,
-      tenantFromBody: guards.tenantFromBody,
-      acquireInflightSlot: guards.acquireInflightSlot,
-    });
-
-    const response = await app.inject({
-      method: "POST",
-      url: "/v1/memory/nodes/activate",
-      payload: {
+    const service = createLifecycleService(store);
+    const response = await service.execute(
+      ProductForgetRequest.parse({
+        operation: "activate",
+        target: "memory",
         node_ids: [fixture.activatedNodeId],
         run_id: "run-lifecycle-activate-1",
         outcome: "positive",
+        used_surface: "use_now",
         activate: true,
         reason: "workflow reused successfully",
-        input_text: "confirm successful reuse for the same export fix path",
-      },
-    });
+        payload: {
+          input_text: "confirm successful reuse for the same export fix path",
+        },
+      }),
+      "feedback",
+    );
+    assert.equal(response.ok, true);
     assert.equal(response.statusCode, 200);
-    const body = response.json();
-    assert.equal(body.activated.updated_nodes, 1);
-    assert.equal(body.activated.outcome, "positive");
-    assert.equal(body.activated.activate, true);
+    const body = response.body as any;
+    assert.equal(body.result.activated.updated_nodes, 1);
+    assert.equal(body.result.activated.outcome, "positive");
+    assert.equal(body.result.activated.activate, true);
 
     const { rows } = await store.findNodes({
       scope: "default",
@@ -225,7 +175,6 @@ test("lite memory lifecycle routes can record activation feedback on nodes", asy
     assert.equal(rows[0]?.slots.semantic_forgetting_v1?.action, "retain");
     assert.equal(rows[0]?.slots.archive_relocation_v1?.relocation_state, "none");
   } finally {
-    await app.close();
     await store.close();
   }
 });

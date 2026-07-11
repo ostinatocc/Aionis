@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import Fastify from "fastify";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
-import { createRequestGuards } from "../../src/app/request-guards.ts";
+import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import {
   applyExecutionTreeOperationV1,
   createExecutionTreeV1,
@@ -14,11 +14,12 @@ import {
   type ExecutionTreeV1,
 } from "../../src/execution/index.ts";
 import { createHandoffRouteService, registerHandoffRoutes } from "../../src/routes/handoff.ts";
-import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
-import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
-import { createMemoryWriteRouteService, registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
+import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
+import { createMemoryPlanningContextService } from "../../src/routes/memory-context-runtime.ts";
+import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
+import { registerMemoryWriteRoutes } from "./support/register-memory-write-test-route.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
-import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
+import { createRuntimeProductServices, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
@@ -138,13 +139,11 @@ function registerRuntimeE2EApp(args: {
     executionTreeStore: args.executionTreeStore,
   });
 
-  const contextRuntimeRoutes = registerMemoryContextRuntimeRoutes({
-    app: args.app,
+  const contextRuntimeRoutes = createMemoryPlanningContextService({
     env: args.env,
     embedder: DeterministicEmbeddingProvider,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
-    recallTextEmbedBatcher: { stats: () => null },
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,
@@ -200,23 +199,26 @@ function registerRuntimeE2EApp(args: {
 
   registerProductFacadeRoutes({
     app: args.app,
-    env: args.env,
-    liteWriteStore: args.liteWriteStore,
-    memoryWriteService: createMemoryWriteRouteService({
+    services: createRuntimeProductServices({
       env: args.env,
-      embedder: DeterministicEmbeddingProvider,
       liteWriteStore: args.liteWriteStore,
-      executionStateStore: null,
       executionTreeStore: args.executionTreeStore,
+      memoryWriteService: createMemoryWriteRouteService({
+        env: args.env,
+        embedder: DeterministicEmbeddingProvider,
+        liteWriteStore: args.liteWriteStore,
+        executionStateStore: null,
+        executionTreeStore: args.executionTreeStore,
+      }),
+      handoffRouteService: createHandoffRouteService({
+        env: args.env,
+        embedder: DeterministicEmbeddingProvider,
+        liteWriteStore: args.liteWriteStore,
+        executionStateStore: null,
+        executionTreeStore: args.executionTreeStore,
+      }),
     }),
-    planningContextService: contextRuntimeRoutes.planningContextService,
-    handoffRouteService: createHandoffRouteService({
-      env: args.env,
-      embedder: DeterministicEmbeddingProvider,
-      liteWriteStore: args.liteWriteStore,
-      executionStateStore: null,
-      executionTreeStore: args.executionTreeStore,
-    }),
+    planningContextService: contextRuntimeRoutes,
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,
@@ -403,7 +405,7 @@ test("runtime e2e observes handoff tree operations, recovers latest tree, and gu
     });
 
     assert.equal(observed.observed.handoff_stored, true);
-    assert.deepEqual(observed.source_map.routes_used, ["/v1/handoff/store"]);
+    assert.deepEqual(observed.source_map.routes_used, ["/v1/observe"]);
     const observedTree = observed.handoff.execution_tree_v1;
     assert.equal(observedTree.tree_id, expectedTree.tree_id);
     assert.equal(observedTree.current_summary_node_id, expectedTree.current_summary_node_id);

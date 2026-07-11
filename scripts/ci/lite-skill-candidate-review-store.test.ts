@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createLiteSkillCandidateReviewStore } from "../../src/store/lite-skill-candidate-review-store.ts";
-import type { TraceDerivedSkillTrainingCandidate } from "../../src/store/skill-candidate-review-access.ts";
+import type { TraceDerivedSkillTrainingCandidate } from "../../src/store/memory-store.ts";
 
 function tmpDbPath(name: string): string {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), "aionis-skill-candidate-review-")), `${name}.sqlite`);

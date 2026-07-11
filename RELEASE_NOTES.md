@@ -1,8 +1,8 @@
-# Aionis v0.3 Stable Release Notes
+# Aionis v0.3.4 Release Candidate Notes
 
 Aionis v0.3 is the first stable baseline release train for the public Aionis
-Runtime and integration packages. The Runtime source patch documented here is
-`v0.3.3`; npm packages may carry different `0.3.x` patch numbers because they
+Runtime and integration packages. The Runtime source candidate documented here is
+`v0.3.4`; npm packages may carry different `0.3.x` patch numbers because they
 release from standalone repositories.
 
 ## Headline
@@ -15,21 +15,26 @@ controlled forgetting signals, and rehydrate pointers. It then compiles that
 history into governed Agent context: what to use now, what to inspect first,
 what to keep out of direct use, and what raw evidence can be restored on demand.
 
-## Stable Baseline Package Train
+## v0.3.4 Candidate Package Train
 
-Current public patch versions for the v0.3 train:
+Current release coordinates for the v0.3 train and tracked integrations:
 
+- Release status `candidate`
 - `aionis@0.3.8`
-- `@aionis/create@0.3.5`
-- `@aionis/sdk@0.3.10`
-- `@aionis/mcp@0.3.5`
-- `@aionis/aifs@0.3.2`
-- `@aionis/claude-code@0.3.3`
-- Runtime source tag `v0.3.3`
-- Docker image `ghcr.io/ostinatocc/aionis:v0.3.3`
+- `@aionis/create@0.3.6`
+- `@aionis/sdk@0.3.14`
+- `@aionis/mcp@0.3.7`
+- `@aionis/aifs@0.3.4`
+- `@aionis/claude-code@0.3.5`
+- `@aionis/substrate@0.1.11`
+- `@aionis/manifest@0.1.1`
+- Runtime source tag `v0.3.4`
+- Docker image `ghcr.io/ostinatocc/aionis:v0.3.4`
+- Default installer Runtime ref `v0.3.4`
 
-`@aionis/substrate` remains an experimental sidecar/research package at
-`0.1.11`; it is not part of this stable release train.
+`@aionis/substrate` remains an experimental sidecar/research package and
+`@aionis/manifest` remains a source-distributed advanced integration. Their
+versions are tracked here without making either package Runtime authority.
 
 ## What Ships
 
@@ -87,13 +92,22 @@ Direct Runtime installer:
 npx @aionis/create@latest
 ```
 
+Both setup paths clone the immutable Runtime tag `v0.3.4` by default after the
+candidate is published. Mutable
+development installation is explicit:
+
+```bash
+npx aionis setup --branch main
+# or: npx @aionis/create@latest --branch main
+```
+
 Docker:
 
 ```bash
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.3
+  ghcr.io/ostinatocc/aionis:v0.3.4
 ```
 
 Optional Zvec candidate index:
@@ -128,6 +142,7 @@ AIONIS_FRESH_INSTALL_CREATE_SPEC="@aionis/create@latest" \
 AIONIS_FRESH_INSTALL_SDK_SPEC="@aionis/sdk@latest" \
 AIONIS_FRESH_INSTALL_MCP_SPEC="@aionis/mcp@latest" \
 AIONIS_FRESH_INSTALL_REPO="file:///absolute/path/to/Aionis" \
+AIONIS_FRESH_INSTALL_RUNTIME_REF="main" \
 npm run -s runtime:smoke:fresh-install
 ```
 
@@ -141,35 +156,44 @@ npm run -s runtime:smoke:published-cli
 
 ## Publish Order
 
-Publish packages from standalone repositories in dependency order:
+Publish without creating an installer window that points at a missing Runtime
+tag:
 
 ```bash
-# 1. SDK first
-cd /Volumes/ziel/aionis-sdk
+# 1. Publish the additive SDK contract first.
+cd /Volumes/ziel/new.aionis/aionis-sdk
 npm publish --access public
 
-# 2. Packages that depend on the SDK
-cd /Volumes/ziel/aionis-mcp
-npm publish --access public
-cd /Volumes/ziel/aionis-aifs
-npm publish --access public
-cd /Volumes/ziel/aionis-claude-code/packages/aionis-claude-code
-npm publish --access public
+# 2. After candidate CI, change release status to stable, push Runtime, then
+# create the immutable tag. The tag workflow publishes Docker.
+cd /Volumes/ziel/new.aionis/AionisRuntime-focused
+git push origin main
+git tag -a v0.3.4 -m "Aionis v0.3.4"
+git push origin v0.3.4
+gh release create v0.3.4 \
+  --repo ostinatocc/Aionis \
+  --title "Aionis v0.3.4" \
+  --notes-file docs/releases/v0.3.4.md
 
-# 3. Installer and top-level CLI
-cd /Volumes/ziel/aionis-create
-npm publish --access public
-cd /Volumes/ziel/aionis-cli
+# 3. Only after the Runtime tag and Docker image resolve, publish the installer.
+cd /Volumes/ziel/new.aionis/aionis-create
 npm publish --access public
 ```
 
-Then tag Runtime and publish Docker:
+MCP, AIFS, Claude Code, and the top-level CLI have no source or version change
+in this patch. Their existing compatible dependency ranges do not require a
+republish.
+
+After publication, run the candidate smoke with exact versions:
 
 ```bash
-git tag -a v0.3.3 -m "Aionis v0.3.3"
-git push origin main v0.3.3
-gh release create v0.3.3 \
-  --repo ostinatocc/Aionis \
-  --title "Aionis v0.3.3" \
-  --notes-file docs/releases/v0.3.3.md
+AIONIS_FRESH_INSTALL_CREATE_SPEC="@aionis/create@0.3.6" \
+AIONIS_FRESH_INSTALL_SDK_SPEC="@aionis/sdk@0.3.14" \
+AIONIS_FRESH_INSTALL_MCP_SPEC="@aionis/mcp@0.3.7" \
+AIONIS_FRESH_INSTALL_REPO="https://github.com/ostinatocc/Aionis.git" \
+AIONIS_FRESH_INSTALL_RUNTIME_REF="v0.3.4" \
+npm run -s runtime:smoke:fresh-install
+
+AIONIS_PUBLISHED_CLI_SMOKE_SPEC="aionis@0.3.8" \
+npm run -s runtime:smoke:published-cli
 ```

@@ -14,8 +14,40 @@ import {
   runtimeBoundaryInventoryFiles,
   runtimeBoundaryInventorySummary,
 } from "../../src/memory/runtime-boundary-inventory.ts";
+import {
+  LITE_ROUTE_CAPABILITY_MATRIX,
+  type LiteRouteProductExposure,
+} from "../../src/server/lite-runtime-boundary.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..");
+const HTTP_SURFACE_INVENTORY_PATH = path.join(
+  ROOT,
+  "docs/architecture/AIONIS_RUNTIME_SURFACE_INVENTORY.md",
+);
+const RETIRED_TEMPORARY_ROUTES = [
+  "/v1/memory/recall",
+  "/v1/memory/recall_text",
+  "/v1/memory/planning/context",
+  "/v1/memory/context/assemble",
+  "/v1/memory/tools/select",
+  "/v1/memory/tools/decision",
+  "/v1/memory/tools/run",
+  "/v1/memory/tools/feedback",
+] as const;
+
+function sourceFiles(root: string): string[] {
+  if (!fs.existsSync(root)) return [];
+  const out: string[] = [];
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const absolute = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...sourceFiles(absolute));
+    } else if (/\.(?:ts|js|mjs)$/.test(entry.name)) {
+      out.push(absolute);
+    }
+  }
+  return out;
+}
 
 function sourceIds(source: "authority"): string[] {
   return runtimeBoundaryInventoryEntriesBySource(source)
@@ -207,5 +239,223 @@ test("runtime boundary inventory response contract rejects passthrough fields", 
         ],
       }),
     /Unrecognized key/,
+  );
+});
+
+const EXPOSURES = new Set<LiteRouteProductExposure>([
+  "product_entry",
+  "product_support",
+  "operator_support",
+  "internal_evidence",
+  "internal_guidance",
+  "internal_control",
+]);
+
+const INTERNAL_EXPOSURES = new Set<LiteRouteProductExposure>([
+  "internal_evidence",
+  "internal_guidance",
+  "internal_control",
+]);
+
+const DOCUMENTED_NON_INTERNAL_ROUTES = new Set([
+  "POST /v1/observe",
+  "POST /v1/guide",
+  "POST /v1/feedback",
+  "POST /v1/rehydrate",
+  "POST /v1/forget",
+  "POST /v1/measure",
+  "POST /v1/handoff/store",
+  "POST /v1/handoff/recover",
+  "POST /v1/memory/resolve",
+  "GET /v1/skills/candidates",
+  "POST /v1/skills/candidates",
+  "POST /v1/skills/candidates/:id/promote",
+  "POST /v1/skills/candidates/:id/reject",
+  "POST /v1/skills/candidates/:id/materialize",
+  "POST /v1/operator/snapshot",
+  "GET /v1/operator/authority-effect-audit",
+  "POST /v1/debug/memory-decision-trace",
+  "POST /v1/audit/memory-decision-report",
+  "GET /v1/runtime/boundary-inventory",
+]);
+
+type InventoryRow = {
+  method: string;
+  path: string;
+  exposure: LiteRouteProductExposure;
+  runtime: string;
+  sdk: string;
+  mcp: string;
+  aifs: string;
+  cli_create: string;
+  claude_code: string;
+  manifest: string;
+  substrate: string;
+  docs_eval: string;
+  public_http: string;
+  replacement_service: string;
+  deletion_phase: string;
+};
+
+function stripCode(value: string): string {
+  return value.startsWith("`") && value.endsWith("`") ? value.slice(1, -1) : value;
+}
+
+function readInventoryRows(): InventoryRow[] {
+  const markdown = fs.readFileSync(HTTP_SURFACE_INVENTORY_PATH, "utf8");
+  return markdown
+    .split("\n")
+    .filter((line) => /^\| `(GET|POST)` \|/.test(line))
+    .map((line) => {
+      const cells = line
+        .split("|")
+        .slice(1, -1)
+        .map((cell) => stripCode(cell.trim()));
+      assert.equal(cells.length, 15, `inventory row must have 15 columns: ${line}`);
+      const [
+        method,
+        path,
+        exposure,
+        runtime,
+        sdk,
+        mcp,
+        aifs,
+        cliCreate,
+        claudeCode,
+        manifest,
+        substrate,
+        docsEval,
+        publicHttp,
+        replacementService,
+        deletionPhase,
+      ] = cells;
+      assert.ok(EXPOSURES.has(exposure as LiteRouteProductExposure), `${method} ${path} has invalid exposure`);
+      return {
+        method,
+        path,
+        exposure: exposure as LiteRouteProductExposure,
+        runtime,
+        sdk,
+        mcp,
+        aifs,
+        cli_create: cliCreate,
+        claude_code: claudeCode,
+        manifest,
+        substrate,
+        docs_eval: docsEval,
+        public_http: publicHttp,
+        replacement_service: replacementService,
+        deletion_phase: deletionPhase,
+      };
+    });
+}
+
+test("Lite route matrix declares explicit exposure on every unique route", () => {
+  const routeKeys = new Set<string>();
+
+  for (const rawEntry of LITE_ROUTE_CAPABILITY_MATRIX as readonly unknown[]) {
+    const entry = rawEntry as Record<string, unknown>;
+    const key = `${String(entry.method)} ${String(entry.path)}`;
+    assert.equal(routeKeys.has(key), false, `${key} is duplicated`);
+    routeKeys.add(key);
+    assert.ok(EXPOSURES.has(entry.exposure as LiteRouteProductExposure), `${key} must declare exposure directly`);
+  }
+});
+
+test("surface inventory covers every matrix route and stays aligned with explicit exposure", () => {
+  const rows = readInventoryRows();
+  const activeRows = rows.filter((row) => row.public_http !== "removed");
+  const rowsByKey = new Map(activeRows.map((row) => [`${row.method} ${row.path}`, row]));
+
+  assert.equal(activeRows.length, LITE_ROUTE_CAPABILITY_MATRIX.length);
+  assert.equal(rowsByKey.size, activeRows.length, "active surface inventory must not duplicate route keys");
+
+  for (const entry of LITE_ROUTE_CAPABILITY_MATRIX) {
+    const key = `${entry.method} ${entry.path}`;
+    const row = rowsByKey.get(key);
+    assert.ok(row, `${key} is missing from the surface inventory`);
+    assert.equal(row.exposure, entry.exposure, `${key} exposure differs between code and inventory`);
+    assert.notEqual(row.runtime, "none", `${key} must name its Runtime owner`);
+  }
+});
+
+test("only audited product and operator routes remain non-internal HTTP", () => {
+  const rows = readInventoryRows();
+
+  for (const row of rows) {
+    const key = `${row.method} ${row.path}`;
+    if (INTERNAL_EXPOSURES.has(row.exposure)) {
+      assert.notEqual(row.public_http, "required", `${key} is internal and cannot be required public HTTP`);
+      continue;
+    }
+    assert.ok(DOCUMENTED_NON_INTERNAL_ROUTES.has(key), `${key} is not an audited non-internal route`);
+    assert.equal(row.public_http, "required", `${key} must state that its public HTTP contract is required`);
+    assert.match(row.docs_eval, /^docs:(public|operator)/, `${key} must cite public or operator documentation`);
+  }
+
+  for (const key of DOCUMENTED_NON_INTERNAL_ROUTES) {
+    const entry = LITE_ROUTE_CAPABILITY_MATRIX.find((candidate) => `${candidate.method} ${candidate.path}` === key);
+    assert.ok(entry, `${key} is documented but absent from the route matrix`);
+    assert.equal(INTERNAL_EXPOSURES.has(entry.exposure), false, `${key} must not be classified as internal`);
+  }
+});
+
+test("internal HTTP inventory distinguishes temporary adapters from completed removals", () => {
+  const rows = readInventoryRows();
+  const required = rows.filter((row) => row.public_http === "required");
+  const temporary = rows.filter((row) => row.public_http === "temporary");
+  const removed = rows.filter((row) => row.public_http === "removed");
+
+  assert.equal(required.length, 19);
+  assert.equal(temporary.length, 0);
+  assert.equal(removed.length, 53);
+
+  assert.equal(
+    LITE_ROUTE_CAPABILITY_MATRIX.some((entry) => INTERNAL_EXPOSURES.has(entry.exposure)),
+    false,
+    "active route matrix must not expose internal HTTP adapters",
+  );
+
+  for (const row of rows.filter((candidate) => INTERNAL_EXPOSURES.has(candidate.exposure))) {
+    const key = `${row.method} ${row.path}`;
+    assert.notEqual(row.replacement_service, "none", `${key} must name a typed replacement service`);
+    assert.match(row.deletion_phase, /^Task 11/, `${key} must be owned by the internal HTTP deletion phase`);
+    assert.match(row.public_http, /^(removed|temporary)$/, `${key} has invalid internal HTTP disposition`);
+    const entry = LITE_ROUTE_CAPABILITY_MATRIX.find((candidate) => `${candidate.method} ${candidate.path}` === key);
+    assert.equal(!!entry, row.public_http === "temporary", `${key} registration must match its inventory disposition`);
+  }
+});
+
+test("production and supported integration sources do not reference retired temporary routes", () => {
+  const workspaceRoot = path.resolve(ROOT, "../..");
+  const roots = [
+    path.join(ROOT, "src"),
+    path.join(ROOT, "scripts/e2e"),
+    path.join(workspaceRoot, "AionisManifest/src"),
+    path.join(workspaceRoot, "AionisRuntime-evals/memorydata-slices/scripts"),
+    path.join(workspaceRoot, "AionisRuntime-evals/product-guide-precision/scripts"),
+    path.join(workspaceRoot, "AionisRuntime-evals/product-guide-visibility/scripts"),
+    path.join(workspaceRoot, "AionisRuntime-evals/product-self-learning-loop/scripts"),
+    path.join(workspaceRoot, "AionisRuntime-evals/product-sparse-feedback/scripts"),
+  ];
+
+  for (const file of roots.flatMap(sourceFiles)) {
+    const source = fs.readFileSync(file, "utf8");
+    for (const route of RETIRED_TEMPORARY_ROUTES) {
+      assert.equal(source.includes(route), false, `${file} still references retired route ${route}`);
+    }
+  }
+});
+
+test("Lite smoke follows public product routes and keeps retired replay HTTP absent", () => {
+  const smoke = fs.readFileSync(path.join(ROOT, "scripts/lite-smoke.sh"), "utf8");
+
+  assert.match(smoke, /post\("\/v1\/observe"/);
+  assert.match(smoke, /post\("\/v1\/guide"/);
+  assert.match(smoke, /retiredReplayRoute\.status !== 404/);
+  assert.equal(
+    /post\("\/v1\/memory\/replay\//.test(smoke),
+    false,
+    "Lite smoke must not depend on removed replay HTTP adapters",
   );
 });

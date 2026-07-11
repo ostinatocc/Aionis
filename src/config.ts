@@ -8,10 +8,10 @@ import {
   resolveAuthorityReceiptKeyring,
 } from "./util/authority-receipt-keys.js";
 import { parseTrustedProxyCidrs } from "./util/ip-guard.js";
+import { applyRuntimeProfileDefaults } from "./config/runtime-profiles.js";
 
 const RuntimeModeSchema = z.enum(["local", "service", "cloud"]);
 const EditionSchema = z.enum(["lite", "server"]);
-const AbstractionPolicyProfileSchema = z.enum(["conservative", "balanced", "aggressive"]);
 const InspectBeforeUseModeSchema = z.enum(["shadow", "active"]);
 const AdmissionCandidatePolicyModeSchema = z.enum(["off", "shadow", "active"]);
 const RecallAnnProviderSchema = z.enum(["off", "local", "zvec"]);
@@ -197,9 +197,6 @@ const EnvSchema = z.object({
     .pipe(z.enum(["true", "false"]))
     .transform((v) => v === "true"),
   LITE_INSPECTOR_DIST_PATH: z.string().default(""),
-  DB_POOL_MAX: z.coerce.number().int().positive().max(200).default(30),
-  DB_POOL_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
-  DB_POOL_CONNECTION_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
   PORT: z.coerce.number().int().positive().default(3001),
   MEMORY_SCOPE: z.string().min(1).default("default"),
   MEMORY_TENANT_ID: z.string().min(1).default("default"),
@@ -282,9 +279,6 @@ const EnvSchema = z.object({
   TENANT_WRITE_RATE_LIMIT_RPS: z.coerce.number().positive().default(10),
   TENANT_WRITE_RATE_LIMIT_BURST: z.coerce.number().int().positive().default(20),
   TENANT_WRITE_RATE_LIMIT_MAX_WAIT_MS: z.coerce.number().int().min(0).max(5000).default(300),
-  CONTROL_TENANT_QUOTA_CACHE_TTL_MS: z.coerce.number().int().positive().max(300000).default(30000),
-  CONTROL_TELEMETRY_RETENTION_HOURS: z.coerce.number().int().positive().max(24 * 3650).default(24 * 30),
-  CONTROL_TELEMETRY_PURGE_BATCH_LIMIT: z.coerce.number().int().positive().max(200000).default(20000),
   // Query embedding cache for recall_text (reduces upstream provider RPM pressure).
   RECALL_TEXT_EMBED_CACHE_ENABLED: z
     .string()
@@ -443,8 +437,6 @@ const EnvSchema = z.object({
   SANDBOX_RUN_STALE_AFTER_MS: z.coerce.number().int().positive().max(86400000).default(120000),
   SANDBOX_RUN_RECOVERY_POLL_INTERVAL_MS: z.coerce.number().int().min(0).max(300000).default(15000),
   SANDBOX_RUN_RECOVERY_BATCH_SIZE: z.coerce.number().int().positive().max(10000).default(100),
-  SANDBOX_RETENTION_DAYS: z.coerce.number().int().positive().max(3650).default(30),
-  SANDBOX_RETENTION_BATCH_SIZE: z.coerce.number().int().positive().max(200000).default(10000),
   SANDBOX_TENANT_BUDGET_WINDOW_HOURS: z.coerce.number().int().positive().max(168).default(24),
   SANDBOX_TENANT_BUDGET_POLICY_JSON: z.string().default("{}"),
   // Guided replay emits structured repair requests; semantic patch synthesis stays outside Runtime.
@@ -466,12 +458,6 @@ const EnvSchema = z.object({
   REPLAY_LEARNING_MIN_SUCCESS_RATIO: z.coerce.number().min(0).max(1).default(1),
   REPLAY_LEARNING_MAX_MATCHER_BYTES: z.coerce.number().int().positive().max(1024 * 1024).default(16384),
   REPLAY_LEARNING_MAX_TOOL_PREFER: z.coerce.number().int().positive().max(64).default(8),
-  REPLAY_LEARNING_FAULT_INJECTION_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "false").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
   REPLAY_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: z
     .string()
     .optional()
@@ -526,8 +512,6 @@ const EnvSchema = z.object({
   LEARNING_CONTROL_MODEL_CLIENT_TEMPERATURE: z.coerce.number().min(0).max(1).default(0.1),
   LEARNING_CONTROL_MODEL_CLIENT_OPENAI_EXTRA_BODY_JSON: z.string().default(""),
   EPISODE_GC_TTL_DAYS: z.coerce.number().int().positive().max(3650).default(30),
-  EPISODE_GC_RULE_STABLE_POSITIVE_MIN: z.coerce.number().int().min(1).max(100000).default(10),
-  EPISODE_GC_RULE_STABLE_NEGATIVE_WINDOW_DAYS: z.coerce.number().int().min(1).max(365).default(7),
   // Shadow validation default controls for replay repair-review flows.
   REPLAY_SHADOW_VALIDATE_EXECUTE_TIMEOUT_MS: z.coerce.number().int().positive().max(600000).default(15000),
   REPLAY_SHADOW_VALIDATE_EXECUTE_STOP_ON_FAILURE: z
@@ -566,59 +550,8 @@ const EnvSchema = z.object({
   // Optional tenant/route/scope scoped replay auto-promotion policy map.
   REPLAY_REPAIR_REVIEW_POLICY_JSON: z.string().default("{}"),
 
-  // Abstraction policy profile: coarse operating mode for compression rollup defaults.
-  MEMORY_ABSTRACTION_POLICY_PROFILE: AbstractionPolicyProfileSchema.default("balanced"),
-
   OUTBOX_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(1000),
   OUTBOX_BATCH_SIZE: z.coerce.number().int().positive().max(200).default(20),
-  // Long-term memory tiering policy (Phase 1).
-  MEMORY_TIER_WARM_BELOW: z.coerce.number().min(0).max(1).default(0.35),
-  MEMORY_TIER_COLD_BELOW: z.coerce.number().min(0).max(1).default(0.12),
-  MEMORY_TIER_ARCHIVE_BELOW: z.coerce.number().min(0).max(1).default(0.03),
-  MEMORY_SALIENCE_DECAY_FACTOR: z.coerce.number().min(0.9).max(1).default(0.995),
-  MEMORY_TIER_WARM_INACTIVE_DAYS: z.coerce.number().int().positive().default(14),
-  MEMORY_TIER_COLD_INACTIVE_DAYS: z.coerce.number().int().positive().default(45),
-  MEMORY_TIER_ARCHIVE_INACTIVE_DAYS: z.coerce.number().int().positive().default(120),
-  MEMORY_TIER_MAX_DAILY_MUTATION_RATIO: z.coerce.number().min(0.001).max(1).default(0.05),
-  // Scope-level working-set budgets (Phase 4). 0 disables each budget.
-  MEMORY_SCOPE_HOT_NODE_BUDGET: z.coerce.number().int().min(0).default(0),
-  MEMORY_SCOPE_ACTIVE_NODE_BUDGET: z.coerce.number().int().min(0).default(0), // hot + warm
-  // Adaptive decay (Phase 4): access recency + optional feedback signals.
-  MEMORY_ADAPTIVE_DECAY_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "true").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  MEMORY_ADAPTIVE_RECENT_DAYS: z.coerce.number().int().positive().default(7),
-  MEMORY_ADAPTIVE_RECENT_SCALE: z.coerce.number().min(0.1).max(2).default(0.6),
-  MEMORY_ADAPTIVE_FEEDBACK_POS_STRENGTH: z.coerce.number().min(0).max(1).default(0.5),
-  MEMORY_ADAPTIVE_FEEDBACK_NEG_STRENGTH: z.coerce.number().min(0).max(2).default(1),
-  MEMORY_ADAPTIVE_DECAY_SCALE_MIN: z.coerce.number().min(0.1).max(1).default(0.25),
-  MEMORY_ADAPTIVE_DECAY_SCALE_MAX: z.coerce.number().min(1).max(3).default(2),
-
-  // Compression rollup policy (Phase 2 MVP).
-  MEMORY_COMPRESSION_LOOKBACK_DAYS: z.coerce.number().int().positive().default(30),
-  MEMORY_COMPRESSION_MAX_TOPICS_PER_RUN: z.coerce.number().int().positive().max(500).default(50),
-  MEMORY_COMPRESSION_MAX_EVENTS_PER_TOPIC: z.coerce.number().int().positive().max(100).default(12),
-  MEMORY_COMPRESSION_MAX_TEXT_LEN: z.coerce.number().int().positive().default(1800),
-
-  // Consolidation candidate scoring policy (Phase 3 shadow mode).
-  MEMORY_CONSOLIDATION_MIN_VECTOR_SIM: z.coerce.number().min(0).max(1).default(0.86),
-  MEMORY_CONSOLIDATION_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.82),
-  MEMORY_CONSOLIDATION_MAX_ANCHORS: z.coerce.number().int().positive().max(2000).default(300),
-  MEMORY_CONSOLIDATION_NEIGHBORS_PER_NODE: z.coerce.number().int().positive().max(50).default(8),
-  MEMORY_CONSOLIDATION_MAX_PAIRS: z.coerce.number().int().positive().max(2000).default(200),
-  MEMORY_CONSOLIDATION_REDIRECT_MAX_ALIASES: z.coerce.number().int().positive().max(5000).default(200),
-  MEMORY_CONSOLIDATION_REDIRECT_MAX_EDGES_PER_ALIAS: z.coerce.number().int().positive().max(20000).default(2000),
-  MEMORY_CONSOLIDATION_BLOCK_CONTRADICTORY: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "true").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  MEMORY_CONSOLIDATION_CONFLICT_MIN_SHARED_TOKENS: z.coerce.number().int().positive().max(8).default(1),
-  MEMORY_CONSOLIDATION_CONFLICT_NEGATION_LEXICAL_MIN: z.coerce.number().min(0).max(1).default(0.5),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
@@ -638,105 +571,6 @@ export function parseAdmissionCandidatePolicyProfileRules(raw: string): AionisAd
     throw new Error(`Invalid AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON:\n${msg}`);
   }
   return result.data;
-}
-
-const MODE_PRESETS: Record<z.infer<typeof RuntimeModeSchema>, Record<string, string>> = {
-  local: {
-    APP_ENV: "dev",
-    MEMORY_AUTH_MODE: "off",
-    RATE_LIMIT_ENABLED: "true",
-    RATE_LIMIT_BYPASS_LOOPBACK: "true",
-    TENANT_QUOTA_ENABLED: "true",
-    MEMORY_RECALL_PROFILE: "strict_edges",
-  },
-  service: {
-    APP_ENV: "prod",
-    MEMORY_AUTH_MODE: "api_key",
-    RATE_LIMIT_ENABLED: "true",
-    RATE_LIMIT_BYPASS_LOOPBACK: "false",
-    TENANT_QUOTA_ENABLED: "true",
-    MEMORY_RECALL_PROFILE: "strict_edges",
-  },
-  cloud: {
-    APP_ENV: "prod",
-    MEMORY_AUTH_MODE: "api_key_or_jwt",
-    RATE_LIMIT_ENABLED: "true",
-    RATE_LIMIT_BYPASS_LOOPBACK: "false",
-    TENANT_QUOTA_ENABLED: "true",
-    MEMORY_RECALL_PROFILE: "strict_edges",
-  },
-};
-
-const ABSTRACTION_POLICY_PRESETS: Record<z.infer<typeof AbstractionPolicyProfileSchema>, Record<string, string>> = {
-  conservative: {
-    MEMORY_COMPRESSION_LOOKBACK_DAYS: "14",
-    MEMORY_COMPRESSION_MAX_TOPICS_PER_RUN: "30",
-    MEMORY_COMPRESSION_MAX_EVENTS_PER_TOPIC: "8",
-    MEMORY_COMPRESSION_MAX_TEXT_LEN: "1400",
-  },
-  balanced: {
-    MEMORY_COMPRESSION_LOOKBACK_DAYS: "30",
-    MEMORY_COMPRESSION_MAX_TOPICS_PER_RUN: "50",
-    MEMORY_COMPRESSION_MAX_EVENTS_PER_TOPIC: "12",
-    MEMORY_COMPRESSION_MAX_TEXT_LEN: "1800",
-  },
-  aggressive: {
-    MEMORY_COMPRESSION_LOOKBACK_DAYS: "45",
-    MEMORY_COMPRESSION_MAX_TOPICS_PER_RUN: "100",
-    MEMORY_COMPRESSION_MAX_EVENTS_PER_TOPIC: "20",
-    MEMORY_COMPRESSION_MAX_TEXT_LEN: "2200",
-  },
-};
-
-function withModeDefaults(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = { ...source };
-  const modeInput = String(source.AIONIS_MODE ?? "local").trim().toLowerCase();
-  const modeParsed = RuntimeModeSchema.safeParse(modeInput);
-  if (!modeParsed.success) {
-    return out;
-  }
-  out.AIONIS_MODE = modeParsed.data;
-  const preset = MODE_PRESETS[modeParsed.data];
-  for (const [k, v] of Object.entries(preset)) {
-    const cur = out[k];
-    if (cur === undefined || String(cur).trim().length === 0) out[k] = v;
-  }
-  return out;
-}
-
-function withAbstractionPolicyDefaults(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = { ...source };
-  const profileInput = String(source.MEMORY_ABSTRACTION_POLICY_PROFILE ?? "balanced")
-    .trim()
-    .toLowerCase();
-  const parsed = AbstractionPolicyProfileSchema.safeParse(profileInput);
-  if (!parsed.success) return out;
-  out.MEMORY_ABSTRACTION_POLICY_PROFILE = parsed.data;
-  const preset = ABSTRACTION_POLICY_PRESETS[parsed.data];
-  for (const [k, v] of Object.entries(preset)) {
-    const cur = out[k];
-    if (cur === undefined || String(cur).trim().length === 0) out[k] = v;
-  }
-  return out;
-}
-
-function withEditionDefaults(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = { ...source };
-  const editionInput = String(source.AIONIS_EDITION ?? "lite").trim().toLowerCase();
-  const parsed = EditionSchema.safeParse(editionInput);
-  if (!parsed.success) return out;
-  out.AIONIS_EDITION = parsed.data;
-  if (parsed.data !== "lite") {
-    if (!out.RECALL_ENGINE_MODE || out.RECALL_ENGINE_MODE.trim().length === 0) out.RECALL_ENGINE_MODE = "hybrid";
-    return out;
-  }
-  if (!out.RECALL_ENGINE_MODE || out.RECALL_ENGINE_MODE.trim().length === 0) out.RECALL_ENGINE_MODE = "hybrid";
-  if (!out.AIONIS_MODE || out.AIONIS_MODE.trim().length === 0) out.AIONIS_MODE = "local";
-  out.MEMORY_AUTH_MODE = "off";
-  out.TENANT_QUOTA_ENABLED = "false";
-  out.RATE_LIMIT_BYPASS_LOOPBACK = "true";
-  if (!out.LITE_LOCAL_ACTOR_ID || out.LITE_LOCAL_ACTOR_ID.trim().length === 0) out.LITE_LOCAL_ACTOR_ID = "local-user";
-  return out;
 }
 
 function isLoopbackListenHost(host: string): boolean {
@@ -796,11 +630,8 @@ function validateAuthorityReceiptKeyringPosture(env: Env): void {
   }
 }
 
-export function loadEnv(): Env {
-  const modeApplied = withModeDefaults(process.env);
-  const editionApplied = withEditionDefaults(modeApplied);
-  const applied = withAbstractionPolicyDefaults(editionApplied);
-  const parsed = EnvSchema.safeParse(applied);
+export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
+  const parsed = EnvSchema.safeParse(applyRuntimeProfileDefaults(source));
   if (!parsed.success) {
     const msg = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("\n");
     throw new Error(`Invalid environment:\n${msg}`);

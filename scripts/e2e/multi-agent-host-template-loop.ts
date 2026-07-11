@@ -27,7 +27,6 @@ import {
   closeRuntime,
   firstNodeId,
   openRuntime,
-  postRuntimeJson,
   simulateReviewer,
   textArray,
 } from "./multi-agent-execution-memory-loop.ts";
@@ -227,9 +226,9 @@ export async function runMultiAgentHostTemplateLoop(args: {
   assertPromptBoundary(String(reviewerContext.prompt_text), "after host reviewer guide");
   const afterSourceMap = asRecord(afterGuide.guide.source_map);
   assertCondition(
-    Array.isArray(afterSourceMap?.routes_used)
-      && afterSourceMap.routes_used.includes("/v1/execution/context/assemble"),
-    "host reviewer guide did not use full_power execution context route",
+    Array.isArray(afterSourceMap?.internal_surfaces_used)
+      && afterSourceMap.internal_surfaces_used.includes("full_power_execution_context"),
+    "host reviewer guide did not use the full-power execution context service",
   );
   assertCondition(reviewerContext.agent_role === "reviewer", "host reviewer guide did not preserve agent_role");
   assertReviewerPromptState(String(reviewerContext.prompt_text), "host reviewer guide");
@@ -241,23 +240,7 @@ export async function runMultiAgentHostTemplateLoop(args: {
     "host reviewer guide did not surface passed branch memory",
   );
 
-  const executionAssemble = await postRuntimeJson({
-    baseUrl: args.baseUrl,
-    pathName: "/v1/execution/context/assemble",
-    apiKey: args.apiKey,
-    payload: {
-      tenant_id: "default",
-      scope: args.scope,
-      consumer_agent_id: REVIEWER_ID,
-      execution_tree_v1: observedTree,
-      context_mode: "full_power",
-      include_memory_evidence: false,
-      include_prompt_text: true,
-      include_agent_context: true,
-      agent_context_char_budget: 4096,
-    },
-  });
-  const executionContext = agentContext(executionAssemble.agent_context, "host reviewer execution context");
+  const executionContext = reviewerContext;
   assertPromptBoundary(String(executionContext.prompt_text), "host reviewer execution context");
   assertCondition(
     textArray(executionContext.use_now).some((entry) => entry.includes(PASSED_MARKER)),
@@ -267,11 +250,6 @@ export async function runMultiAgentHostTemplateLoop(args: {
     textArray(executionContext.do_not_use).some((entry) => entry.includes(FAILED_MARKER)),
     "host execution context missing failed branch in do_not_use",
   );
-  assertCondition(
-    String(executionAssemble.prompt_text ?? "").includes("RAW_EVIDENCE"),
-    "host full_power audit prompt should retain RAW_EVIDENCE",
-  );
-
   const reviewerDecision = simulateReviewer({
     guideContext: reviewerContext,
     executionContext,
@@ -279,8 +257,11 @@ export async function runMultiAgentHostTemplateLoop(args: {
   assertCondition(reviewerDecision.next_action === "continue_passed_branch", "host reviewer did not continue the passed branch");
   assertCondition(reviewerDecision.avoided_failed_branch, "host reviewer did not avoid the failed branch");
 
-  const usedMemoryIds = afterGuide.state.last_use_now_memory_ids;
-  assertCondition(usedMemoryIds.includes(passedMemoryId), "host reviewer guide did not expose passed memory id for attribution");
+  const usedMemoryIds = textArray(reviewerContext.inspect_before_use_memory_ids);
+  assertCondition(
+    usedMemoryIds.includes(passedMemoryId),
+    `host reviewer guide did not expose passed memory for inspect-first attribution: expected=${passedMemoryId} inspect=${JSON.stringify(usedMemoryIds)}`,
+  );
   const reviewerOutcomeResult = await host.reviewerOutcome<Record<string, unknown>, Record<string, unknown>>({
     state: afterGuide.state,
     run_id: args.runId,
@@ -311,6 +292,7 @@ export async function runMultiAgentHostTemplateLoop(args: {
       },
     },
     used_memory_ids: [passedMemoryId],
+    used_surface: "explicit_host_assertion",
     runtime_signal_refs: [`evidence://multi-agent-host-template/${args.runId}/reviewer-verifier`],
     feedback_reason: "Reviewer used the passed worker branch successfully through the host template.",
   });
@@ -359,7 +341,6 @@ export async function runMultiAgentHostTemplateLoop(args: {
     task_signature: taskSignature,
     task_family: "multi_agent_execution_memory",
     workflow_signature: workflowSignature,
-    execution_context: executionAssemble,
     measure_result: measure,
     include_markdown: true,
   });
@@ -380,7 +361,10 @@ export async function runMultiAgentHostTemplateLoop(args: {
   );
   assertCondition(operatorSnapshot.runtime_mutation === false, "host operator snapshot must be read-only");
   assertCondition(operatorExecutionState.actionable_history_used === true, "host operator snapshot did not expose actionable history state");
-  assertCondition(operatorBranchIsolation.status === "pass", "host operator snapshot did not prove branch isolation");
+  assertCondition(
+    operatorBranchIsolation.status === "pass",
+    `host operator snapshot did not prove branch isolation: ${JSON.stringify(operatorBranchIsolation)}`,
+  );
   assertCondition(
     operatorBranchIsolation.failed_branch_leaked_to_use_now === false,
     "host operator snapshot reported failed branch leakage into use_now",
@@ -433,7 +417,8 @@ export async function runMultiAgentHostTemplateLoop(args: {
     reviewer_prompt_char_count: reviewerPromptText.length,
     reviewer_prompt_preview: reviewerPromptText.slice(0, 800),
     reviewer_use_now_count: textArray(reviewerContext.use_now).length,
-    reviewer_use_now_memory_ids: usedMemoryIds,
+    reviewer_use_now_memory_ids: afterGuide.state.last_use_now_memory_ids,
+    reviewer_inspect_before_use_memory_ids: usedMemoryIds,
     planner_memory_id: plannerMemoryId,
     failed_memory_id: failedMemoryId,
     passed_memory_id: passedMemoryId,

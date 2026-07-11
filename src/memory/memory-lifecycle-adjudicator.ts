@@ -1,5 +1,7 @@
 import { stableUuid } from "../util/uuid.js";
 
+export type MemoryLifecycleState = "active" | "candidate" | "contested" | "suppressed" | "demoted" | "archived" | "rehydration_candidate" | "unknown";
+
 export type AdjudicableMemoryEntry = {
   memory_id: string;
   title: string | null;
@@ -8,7 +10,7 @@ export type AdjudicableMemoryEntry = {
   authority: "trusted" | "advisory" | "candidate" | "blocked" | "none";
   confidence: number;
   salience: number;
-  lifecycle_state: "active" | "candidate" | "contested" | "suppressed" | "demoted" | "archived" | "rehydration_candidate" | "unknown";
+  lifecycle_state: MemoryLifecycleState;
   scope_hint?: string | null;
   observed_at?: string | null;
   target_files?: string[];
@@ -72,6 +74,25 @@ export type MemoryLifecycleAdjudication = {
   entries: AdjudicableMemoryEntry[];
   relations: MemoryLifecycleRelation[];
 };
+
+export type LifecycleDecisionInput = { blocks_use: boolean; requires_inspection: boolean; requires_rehydrate: boolean; reason_codes: string[] };
+
+export function lifecycleDecisionInputForMemory(args: { lifecycle_state: MemoryLifecycleState; execution_outcome_role?: string | null; transition_kind?: string | null }): LifecycleDecisionInput {
+  const failed = args.execution_outcome_role === "failed_branch" || args.execution_outcome_role === "blocked";
+  const blocksUse = failed || args.lifecycle_state === "suppressed" || args.lifecycle_state === "archived";
+  const requiresRehydrate = !blocksUse && (args.lifecycle_state === "rehydration_candidate" || args.transition_kind === "request_rehydrate");
+  return {
+    blocks_use: blocksUse,
+    requires_inspection: !blocksUse && !requiresRehydrate && ["candidate", "contested", "demoted"].includes(args.lifecycle_state),
+    requires_rehydrate: requiresRehydrate,
+    reason_codes: [
+      `lifecycle_${args.lifecycle_state}`,
+      args.execution_outcome_role === "failed_branch" ? "execution_outcome_failed_branch" : null,
+      args.execution_outcome_role === "blocked" ? "execution_outcome_blocked" : null,
+      args.transition_kind === "request_rehydrate" ? "transition_request_rehydrate" : null,
+    ].filter((value): value is string => value !== null),
+  };
+}
 
 export type MemoryLifecycleEdgeInput = {
   id?: string | null;

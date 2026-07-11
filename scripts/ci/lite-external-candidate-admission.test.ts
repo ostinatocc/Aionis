@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { governExternalMemoryCandidates } from "../../src/memory/external-candidate-admission.ts";
+import { governExternalMemoryCandidates } from "../../src/product/guide-service.ts";
 
 test("external candidate admission routes trusted current memory to use_now", () => {
   const result = governExternalMemoryCandidates({

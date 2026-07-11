@@ -90,7 +90,7 @@ test("hard invariants stay small and evidence-centered", () => {
 });
 
 test("Lite route capability matrix maps public routes to focused product capabilities", () => {
-  assert.equal(LITE_ROUTE_CAPABILITY_MATRIX_VERSION, "lite_route_capability_matrix_v6");
+  assert.equal(LITE_ROUTE_CAPABILITY_MATRIX_VERSION, "lite_route_capability_matrix_v10");
 
   const capabilityIds = new Set(aionisKernelCapabilityIds());
   const matrix = buildLiteRouteMatrix().route_capability_matrix;
@@ -102,66 +102,13 @@ test("Lite route capability matrix maps public routes to focused product capabil
     "GET /v1/skills/candidates",
     "POST /v1/audit/memory-decision-report",
     "POST /v1/debug/memory-decision-trace",
-    "POST /v1/execution/context/assemble",
     "POST /v1/feedback",
     "POST /v1/forget",
     "POST /v1/guide",
     "POST /v1/handoff/recover",
     "POST /v1/handoff/store",
     "POST /v1/measure",
-    "POST /v1/memory/action/retrieval",
-    "POST /v1/memory/agent/handoff-pack",
-    "POST /v1/memory/agent/inspect",
-    "POST /v1/memory/agent/resume-pack",
-    "POST /v1/memory/agent/review-pack",
-    "POST /v1/memory/anchors/rehydrate_payload",
-    "POST /v1/memory/archive/rehydrate",
-    "POST /v1/memory/context/assemble",
-    "POST /v1/memory/continuity/review-pack",
-    "POST /v1/memory/delegation/records",
-    "POST /v1/memory/delegation/records/aggregate",
-    "POST /v1/memory/delegation/records/find",
-    "POST /v1/memory/evolution/review-pack",
-    "POST /v1/memory/execution/introspect",
-    "POST /v1/memory/experience/intelligence",
-    "POST /v1/memory/feedback",
-    "POST /v1/memory/find",
-    "POST /v1/memory/learning-loop/run",
-    "POST /v1/memory/nodes/activate",
-    "POST /v1/memory/patterns/suppress",
-    "POST /v1/memory/patterns/unsuppress",
-    "POST /v1/memory/planning/context",
-    "POST /v1/memory/policies/learning-control/apply",
-    "POST /v1/memory/recall",
-    "POST /v1/memory/recall_text",
-    "POST /v1/memory/replay/playbooks/candidate",
-    "POST /v1/memory/replay/playbooks/compile_from_run",
-    "POST /v1/memory/replay/playbooks/dispatch",
-    "POST /v1/memory/replay/playbooks/get",
-    "POST /v1/memory/replay/playbooks/promote",
-    "POST /v1/memory/replay/playbooks/repair",
-    "POST /v1/memory/replay/playbooks/repair/review",
-    "POST /v1/memory/replay/playbooks/run",
-    "POST /v1/memory/replay/run/end",
-    "POST /v1/memory/replay/run/start",
-    "POST /v1/memory/replay/runs/get",
-    "POST /v1/memory/replay/step/after",
-    "POST /v1/memory/replay/step/before",
     "POST /v1/memory/resolve",
-    "POST /v1/memory/rules/evaluate",
-    "POST /v1/memory/rules/state",
-    "POST /v1/memory/runtime-maintenance/daily",
-    "POST /v1/memory/runtime-maintenance/immediate",
-    "POST /v1/memory/runtime-maintenance/long-horizon",
-    "POST /v1/memory/runtime-maintenance/run",
-    "POST /v1/memory/tools/decision",
-    "POST /v1/memory/tools/feedback",
-    "POST /v1/memory/tools/rehydrate_payload",
-    "POST /v1/memory/tools/run",
-    "POST /v1/memory/tools/runs/list",
-    "POST /v1/memory/tools/select",
-    "POST /v1/memory/trajectory/compile",
-    "POST /v1/memory/write",
     "POST /v1/observe",
     "POST /v1/operator/snapshot",
     "POST /v1/rehydrate",
@@ -221,10 +168,12 @@ test("Lite route capability matrix separates product entries from internal surfa
     assert.notEqual(exposureByRoute.get(route), "product_entry", `${route} must not be presented as a product entry`);
   }
 
-  assert.equal(exposureByRoute.get("POST /v1/memory/action/retrieval"), "internal_guidance");
-  assert.equal(exposureByRoute.get("POST /v1/execution/context/assemble"), "internal_evidence");
-  assert.equal(exposureByRoute.get("POST /v1/memory/replay/playbooks/repair"), "internal_evidence");
-  assert.equal(exposureByRoute.get("POST /v1/memory/policies/learning-control/apply"), "internal_control");
+  assert.equal(
+    Array.from(exposureByRoute.values()).some((exposure) => exposure.startsWith("internal_")),
+    false,
+  );
+  assert.equal(exposureByRoute.get("POST /v1/handoff/recover"), "product_support");
+  assert.equal(exposureByRoute.get("POST /v1/memory/resolve"), "product_support");
   assert.equal(exposureByRoute.get("POST /v1/debug/memory-decision-trace"), "operator_support");
   assert.equal(exposureByRoute.get("POST /v1/audit/memory-decision-report"), "operator_support");
   assert.equal(exposureByRoute.get("GET /v1/operator/authority-effect-audit"), "operator_support");

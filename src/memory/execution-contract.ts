@@ -4,7 +4,6 @@ import {
   type ServiceLifecycleConstraintV1,
 } from "../execution/types.js";
 import { ContractTrustSchema, type ContractTrust } from "./contract-trust.js";
-import { type TrajectoryCompileResponse } from "./schemas.js";
 
 const NullableString = z.string().trim().min(1).nullable().default(null);
 const ContractList = z.array(z.string().trim().min(1)).max(64).default([]);
@@ -233,6 +232,14 @@ function firstNonEmptyString(...values: unknown[]): string | null {
   return null;
 }
 
+function firstContractTrust(...values: unknown[]): ContractTrust | null {
+  for (const value of values) {
+    const trust = normalizeContractTrust(value);
+    if (trust) return trust;
+  }
+  return null;
+}
+
 function firstNonEmptyStringList(limit: number, ...values: unknown[]): string[] {
   for (const value of values) {
     const next = stringList(value, limit);
@@ -325,14 +332,14 @@ export function deriveExecutionContractFromSlots(args: {
   const derivedPolicy = asObject(slots.derived_policy_v1);
 
   const projected = buildExecutionContractFromProjection({
-    contract_trust: normalizeContractTrust(firstNonEmptyString(
+    contract_trust: firstContractTrust(
       slots.contract_trust,
       executionNative?.contract_trust,
       anchor?.contract_trust,
       recoveryContract?.contract_trust,
       policyContract?.contract_trust,
       derivedPolicy?.contract_trust,
-    )),
+    ),
     task_family: firstNonEmptyString(
       slots.task_family,
       slots.task_kind,
@@ -470,34 +477,6 @@ export function deriveExecutionContractFromSlots(args: {
     existing,
     incoming: projected,
     preference: "existing",
-  });
-}
-
-export function buildExecutionContractFromTrajectoryCompile(compiled: TrajectoryCompileResponse): ExecutionContractV1 {
-  return buildExecutionContractFromProjection({
-    contract_trust: null,
-    task_family: compiled.task_family,
-    task_signature: compiled.task_signature,
-    workflow_signature: compiled.workflow_signature,
-    selected_tool: compiled.contract.likely_tool ?? null,
-    target_files: compiled.contract.target_files,
-    next_action: compiled.contract.next_action,
-    workflow_steps: compiled.contract.workflow_steps,
-    pattern_hints: compiled.contract.pattern_hints,
-    service_lifecycle_constraints: compiled.contract.service_lifecycle_constraints,
-    acceptance_checks: compiled.contract.acceptance_checks,
-    success_invariants: compiled.contract.success_invariants,
-    dependency_requirements: compiled.contract.dependency_requirements,
-    environment_assumptions: compiled.contract.environment_assumptions,
-    must_hold_after_exit: compiled.contract.must_hold_after_exit,
-    external_visibility_requirements: compiled.contract.external_visibility_requirements,
-    provenance: {
-      source_kind: "trajectory_compile",
-      source_summary_version: compiled.summary_version,
-      source_anchor: null,
-      evidence_refs: [],
-      notes: [],
-    },
   });
 }
 

@@ -126,7 +126,7 @@ This policy also does not:
 The current implementation anchors are:
 
 - `src/memory/product-output-contract.ts` for candidate and authority schemas.
-- `src/memory/external-candidate-admission.ts` for the external admission
+- `src/product/guide-service.ts` for the external admission
   decision table and reason codes.
 - `src/routes/product-facade.ts` for the `/v1/memory/govern` route schema and
   response shape.

@@ -1,10 +1,19 @@
 import { z } from "zod";
-import { AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD } from "./authority-consumption.js";
+import {
+  AionisGuidanceAuthoritySchema,
+  AionisMemoryDecisionSurfaceSchema,
+} from "./governance-contract.js";
+
+export const AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD =
+  "stable_promotion" + "_blocked_count";
+export {
+  AionisGuidanceAuthoritySchema,
+  AionisMemoryDecisionSurfaceSchema,
+  type AionisGuidanceAuthority,
+  type AionisMemoryDecisionSurface,
+} from "./governance-contract.js";
 
 const ConfidenceSchema = z.number().min(0).max(1);
-
-export const AionisGuidanceAuthoritySchema = z.enum(["trusted", "advisory", "candidate", "blocked", "none"]);
-export type AionisGuidanceAuthority = z.infer<typeof AionisGuidanceAuthoritySchema>;
 
 export const AionisRiskLevelSchema = z.enum(["low", "medium", "high"]);
 export type AionisRiskLevel = z.infer<typeof AionisRiskLevelSchema>;
@@ -833,6 +842,17 @@ export const AionisAgentContextSchema = z
             acceptance_checks: z.array(z.string().min(1).max(512)).default([]),
             verification_summary: z.array(z.string().min(1).max(512)).default([]),
             artifact_hints: z.array(z.string().min(1).max(512)).default([]),
+            execution_state: z
+              .object({
+                summary_kind: z.string().min(1).nullable().default(null),
+                transition_kind: AionisExecutionTransitionKindSchema.nullable().default(null),
+                actor_role: z.string().min(1).nullable().default(null),
+                handoff_target: z.string().min(1).nullable().default(null),
+                next_action_hint: z.string().min(1).nullable().default(null),
+                execution_outcome_role: z.enum(["passed_solution", "failed_branch", "blocked", "unknown"]).nullable().default(null),
+              })
+              .strict()
+              .optional(),
           })
           .strict(),
       )
@@ -883,15 +903,6 @@ export type AionisAgentContext = z.infer<typeof AionisAgentContextSchema>;
 export function parseAionisAgentContext(value: unknown): AionisAgentContext {
   return AionisAgentContextSchema.parse(value);
 }
-
-export const AionisMemoryDecisionSurfaceSchema = z.enum([
-  "use_now",
-  "inspect_before_use",
-  "do_not_use",
-  "rehydrate",
-  "not_agent_facing",
-]);
-export type AionisMemoryDecisionSurface = z.infer<typeof AionisMemoryDecisionSurfaceSchema>;
 
 const AionisMemoryDecisionKindSchema = z.enum([
   "used",

@@ -6,6 +6,10 @@ on:
       - main
   pull_request:
   workflow_dispatch:
+    inputs:
+      sdk_ref:
+        description: "Standalone @aionis/sdk ref used by ownership checks"
+        required: false
 
 permissions:
   contents: read
@@ -19,6 +23,8 @@ jobs:
     name: Runtime checks
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      AIONIS_SDK_REPO: ${{ github.workspace }}/external/aionis-sdk
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,6 +34,26 @@ jobs:
         with:
           node-version: "24"
           cache: npm
+
+      - name: Resolve standalone SDK ref
+        id: sdk-ref
+        env:
+          SDK_REF_OVERRIDE: ${{ inputs.sdk_ref }}
+        run: |
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const releaseTrain = JSON.parse(fs.readFileSync("release-train.json", "utf8"));
+            const candidateRef = `release/sdk-${releaseTrain.packages.sdk.version}`;
+            const fallbackRef = releaseTrain.status === "candidate" ? candidateRef : "main";
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `ref=${process.env.SDK_REF_OVERRIDE || fallbackRef}\n`);
+          '
+
+      - name: Checkout standalone SDK contracts
+        uses: actions/checkout@v4
+        with:
+          repository: ostinatocc/aionis-sdk
+          ref: ${{ steps.sdk-ref.outputs.ref }}
+          path: external/aionis-sdk
 
       - name: Install dependencies
         run: npm ci

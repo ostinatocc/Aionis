@@ -6,7 +6,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
-import { createRequestGuards } from "../../src/app/request-guards.ts";
+import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import {
   applyExecutionTreeOperationV1,
   createExecutionTreeV1,
@@ -17,15 +17,15 @@ import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts"
 import { buildAionisUri } from "../../src/memory/uri.ts";
 import { createHandoffRouteService, registerHandoffRoutes } from "../../src/routes/handoff.ts";
 import {
-  registerMemoryContextRuntimeRoutes,
-  type MemoryPlanningContextRouteService,
+  createMemoryPlanningContextService,
+  type MemoryPlanningContextService,
 } from "../../src/routes/memory-context-runtime.ts";
-import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
-import { registerMemoryFeedbackToolRoutes } from "../../src/routes/memory-feedback-tools.ts";
-import { registerLiteMemoryLifecycleRoutes } from "../../src/routes/memory-lifecycle-lite.ts";
-import { createMemoryWriteRouteService, registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
+import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
+import { registerMemoryFeedbackToolRoutes } from "./support/register-memory-feedback-tool-test-routes.ts";
+import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
+import { registerMemoryWriteRoutes } from "./support/register-memory-write-test-route.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
-import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
+import { createRuntimeProductServices, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteSkillCandidateReviewStore } from "../../src/store/lite-skill-candidate-review-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
@@ -430,19 +430,26 @@ function registerProductFacade(args: {
   env: ReturnType<typeof liteEnv>;
   guards: ReturnType<typeof requestGuards>;
   liteWriteStore?: ReturnType<typeof createLiteWriteStore>;
+  liteRecallAccess?: ReturnType<ReturnType<typeof createLiteRecallStore>["createRecallAccess"]> | null;
+  embedder?: typeof DeterministicEmbeddingProvider | null;
   memoryWriteService?: ReturnType<typeof createMemoryWriteRouteService> | null;
-  planningContextService?: MemoryPlanningContextRouteService | null;
+  planningContextService?: MemoryPlanningContextService | null;
   handoffRouteService?: ReturnType<typeof createHandoffRouteService> | null;
   skillCandidateReviewAccess?: ReturnType<ReturnType<typeof createLiteSkillCandidateReviewStore>["createSkillCandidateReviewAccess"]>;
 }) {
   registerProductFacadeRoutes({
     app: args.app,
-    env: args.env,
-    liteWriteStore: args.liteWriteStore ?? ({} as ReturnType<typeof createLiteWriteStore>),
-    memoryWriteService: args.memoryWriteService ?? null,
+    services: createRuntimeProductServices({
+      env: args.env,
+      liteWriteStore: args.liteWriteStore ?? ({} as ReturnType<typeof createLiteWriteStore>),
+      liteRecallAccess: args.liteRecallAccess ?? null,
+      embedder: args.embedder ?? null,
+      executionTreeStore: null,
+      memoryWriteService: args.memoryWriteService ?? null,
+      handoffRouteService: args.handoffRouteService ?? null,
+      skillCandidateReviewAccess: args.skillCandidateReviewAccess,
+    }),
     planningContextService: args.planningContextService ?? null,
-    handoffRouteService: args.handoffRouteService ?? null,
-    skillCandidateReviewAccess: args.skillCandidateReviewAccess,
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,
@@ -487,7 +494,7 @@ test("product facade fails closed instead of injecting an internal memory write 
   assert.equal(body.error, "product_dependency_failed");
   assert.equal(body.message, "A product facade dependency failed.");
   assert.equal(body.details.contract, "error_v1");
-  assert.equal(body.details.surface, "/v1/memory/write");
+  assert.equal(body.details.surface, "memory_write_service");
   assert.equal(body.details.upstream_status, 500);
   assert.equal(body.details.retryable, true);
   assert.equal(fallbackCalled, false);
@@ -552,7 +559,7 @@ test("product guide uses direct planning context service when supplied", async (
   const guards = requestGuards(env, DeterministicEmbeddingProvider);
   const liteWriteStore = createLiteWriteStore(tmpDbPath("direct-product-guide-planning"));
   try {
-    app.post("/v1/memory/planning/context", async (_req, reply) => {
+    app.post("/__test/forbidden-fallback-planning-route", async (_req, reply) => {
       return reply.code(500).send({
         error: "fallback_planning_route_used",
         message: "product guide should not inject this route when direct planning service is available",
@@ -594,10 +601,91 @@ test("product guide uses direct planning context service when supplied", async (
     const body = response.json();
 
     assert.equal(response.statusCode, 200);
-    assert.equal(body.source_map.routes_used.includes("/v1/memory/planning/context"), true);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/guide"]);
+    assert.equal(body.source_map.internal_surfaces_used.includes("planning_context_service"), true);
     assert.doesNotMatch(response.payload, /fallback_planning_route_used/);
   } finally {
     await liteWriteStore.close();
+  }
+});
+
+test("product guide exposes the persisted tool decision as an attributed receipt", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("product-guide-tool-selection-receipt");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+
+    const guide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        run_id: "run:tool-selection-receipt",
+        consumer_agent_id: "local-user",
+        query_text: "Choose the safe tool for the recovered execution state.",
+        tool_candidates: ["read", "bash"],
+        context: { task_signature: "tool-selection-receipt" },
+        include_packets: true,
+      },
+    });
+    assert.equal(guide.statusCode, 200, guide.body);
+    const body = guide.json();
+    const receipt = objectValue(body.tool_selection, "guide.tool_selection");
+    assert.equal(receipt.contract_version, "aionis_tool_selection_receipt_v1");
+    assert.equal(receipt.run_id, "run:tool-selection-receipt");
+    assert.deepEqual(receipt.candidates, ["read", "bash"]);
+    assert.equal(typeof receipt.decision_id, "string");
+    assert.ok(receipt.decision_id.length > 0);
+    assert.equal(typeof receipt.decision_uri, "string");
+    assert.equal(typeof receipt.policy_sha256, "string");
+    assert.equal(receipt.policy_sha256.length, 64);
+    assert.ok(Array.isArray(receipt.source_rule_ids));
+    assert.equal(typeof receipt.created_at, "string");
+    assert.equal(body.source_map.internal_surfaces_used.includes("tool_selection_receipt"), true);
+
+    const persisted = await liteWriteStore.getExecutionDecision({
+      scope: "default",
+      id: receipt.decision_id,
+    });
+    assert.ok(persisted);
+    assert.equal(receipt.selected_tool, persisted.selected_tool);
+    assert.equal(receipt.run_id, persisted.run_id);
+    assert.equal(receipt.policy_sha256, persisted.policy_sha256);
+    assert.deepEqual(receipt.candidates, persisted.candidates_json);
+    assert.deepEqual(receipt.source_rule_ids, persisted.source_rule_ids ?? []);
+
+    const exposureRows = await liteWriteStore.findNodes({
+      scope: "default",
+      clientId: body.guide_trace_id,
+      consumerAgentId: "local-user",
+      consumerTeamId: null,
+      limit: 1,
+      offset: 0,
+    });
+    const ledger = exposureRows.rows[0]?.slots.guide_exposure_v1;
+    assert.ok(ledger);
+    assert.deepEqual(ledger.tool_selection, receipt);
+
+    const guideWithoutCandidates = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        run_id: "run:without-tool-selection-receipt",
+        consumer_agent_id: "local-user",
+        query_text: "Continue without selecting a tool.",
+      },
+    });
+    assert.equal(guideWithoutCandidates.statusCode, 200, guideWithoutCandidates.body);
+    assert.equal("tool_selection" in guideWithoutCandidates.json(), false);
+  } finally {
+    await app.close();
   }
 });
 
@@ -694,7 +782,7 @@ test("product observe sanitizes direct handoff service failures", async () => {
   assert.equal(response.statusCode, 500);
   assert.equal(body.error, "product_dependency_failed");
   assert.equal(body.message, "A product facade dependency failed.");
-  assert.equal(body.details.surface, "/v1/handoff/store");
+  assert.equal(body.details.surface, "handoff_store_service");
   assert.equal(body.details.upstream_status, 500);
   assert.equal(response.payload.includes("SECRET_HANDOFF_SERVICE_STACK"), false);
   assertNoForbiddenProductFields(body);
@@ -749,7 +837,7 @@ test("product lifecycle uses direct archive rehydrate implementation", async () 
 
     assert.equal(response.statusCode, 200, response.payload);
     assert.equal(body.result.rehydrated.moved_nodes, 1);
-    assert.deepEqual(body.source_map.routes_used, ["/v1/memory/archive/rehydrate"]);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/rehydrate"]);
     assert.doesNotMatch(response.payload, /fallback_lifecycle_route_used/);
   } finally {
     await liteWriteStore.close();
@@ -948,13 +1036,11 @@ function registerFullProductMemoryApp(args: {
     tenantFromBody: args.guards.tenantFromBody,
     acquireInflightSlot: args.guards.acquireInflightSlot,
   });
-  const contextRuntimeRoutes = registerMemoryContextRuntimeRoutes({
-    app: args.app,
+  const contextRuntimeRoutes = createMemoryPlanningContextService({
     env: args.env,
     embedder: routeEmbedder,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
-    recallTextEmbedBatcher: { stats: () => null },
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
     enforceRateLimit: args.guards.enforceRateLimit,
@@ -1007,17 +1093,6 @@ function registerFullProductMemoryApp(args: {
     }),
     recordContextAssemblyTelemetryBestEffort: async () => {},
   });
-  registerLiteMemoryLifecycleRoutes({
-    app: args.app,
-    env: args.env,
-    liteWriteStore: args.liteWriteStore,
-    requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
-    withIdentityFromRequest: args.guards.withIdentityFromRequest as any,
-    enforceRateLimit: args.guards.enforceRateLimit,
-    enforceTenantQuota: args.guards.enforceTenantQuota,
-    tenantFromBody: args.guards.tenantFromBody,
-    acquireInflightSlot: args.guards.acquireInflightSlot,
-  });
   registerMemoryFeedbackToolRoutes({
     app: args.app,
     env: args.env,
@@ -1033,13 +1108,15 @@ function registerFullProductMemoryApp(args: {
   });
   registerProductFacade({
     ...args,
+    liteRecallAccess: args.liteRecallStore.createRecallAccess(),
+    embedder: routeEmbedder,
     memoryWriteService: createMemoryWriteRouteService({
       env: args.env,
       embedder: routeEmbedder,
       liteWriteStore: args.liteWriteStore,
       executionStateStore: null,
     }),
-    planningContextService: contextRuntimeRoutes.planningContextService,
+    planningContextService: contextRuntimeRoutes,
     handoffRouteService: createHandoffRouteService({
       env: args.env,
       embedder: routeEmbedder,
@@ -3202,7 +3279,7 @@ test("product guide full_power merges semantic memory with safe execution contex
     const agentContext = guideBody.agent_context;
     assert.equal(agentContext.contract_version, "aionis_agent_context_v1");
     assert.equal(agentContext.history_used, true);
-    assert.equal(guideBody.source_map.routes_used.includes("/v1/execution/context/assemble"), true);
+    assert.deepEqual(guideBody.source_map.routes_used, ["/v1/guide"]);
     assert.equal(guideBody.source_map.internal_surfaces_used.includes("full_power_execution_context"), true);
     assert.equal(guideBody.source_map.internal_surfaces_used.includes("full_power_agent_context_merge"), true);
     assert.equal(agentContext.memory_ids.includes(generalNodeId), true);
@@ -3261,7 +3338,7 @@ test("product guide full_power merges semantic memory with safe execution contex
     const compactAgentContext = compactGuideBody.agent_context;
     assert.equal(compactAgentContext.agent_context_mode, "compact_agent");
     assert.equal(compactAgentContext.task_context_profile, "coding_verifier");
-    assert.equal(compactGuideBody.source_map.routes_used.includes("/v1/execution/context/assemble"), true);
+    assert.deepEqual(compactGuideBody.source_map.routes_used, ["/v1/guide"]);
     assert.equal(compactGuideBody.source_map.internal_surfaces_used.includes("compact_agent_context"), true);
     assert.equal(compactAgentContext.prompt_text.includes("AIONIS_CTX compact_agent"), true);
     assert.equal(compactAgentContext.prompt_text.includes("task coding_verifier:"), true);
@@ -3276,6 +3353,44 @@ test("product guide full_power merges semantic memory with safe execution contex
     assert.equal(compactAgentContext.do_not_use.some((entry: string) => entry.includes("FULL_POWER_GUIDE_FAILED_BRANCH")), true);
     assert.equal(compactAgentContext.prompt_text.includes("RAW_EVIDENCE"), false);
     assert.equal(compactAgentContext.prompt_text.includes("TRACE"), false);
+
+    const feedback = await app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        guide_trace_id: guideBody.guide_trace_id,
+        used_memory_ids: [generalNodeId],
+        run_id: "run:full-power-guide-execution-reference-feedback",
+        outcome: "positive",
+        used_surface: "use_now",
+        verifier_status: "passed",
+        tool_status: "succeeded",
+        runtime_signal_refs: ["verifier:full-power-guide-execution-reference-feedback"],
+        reason: "The persisted guide memory supported the verified continuation.",
+      },
+    });
+    assert.equal(feedback.statusCode, 200, feedback.body);
+
+    const executionNodeIds = new Set(Object.keys(executionTree.nodes));
+    assert.equal(agentContext.memory_ids.some((id: string) => executionNodeIds.has(id)), false);
+    assert.equal(agentContext.use_now_memory_ids.some((id: string) => executionNodeIds.has(id)), false);
+    assert.equal(agentContext.do_not_use_memory_ids.some((id: string) => executionNodeIds.has(id)), false);
+    assert.equal(agentContext.use_now.some((entry: string) => entry.includes(`node=${executionTree.current_summary_node_id}`)), true);
+
+    const exposureRows = await liteWriteStore.findNodes({
+      scope: "default",
+      clientId: guideBody.guide_trace_id,
+      consumerAgentId: "local-user",
+      consumerTeamId: null,
+      limit: 1,
+      offset: 0,
+    });
+    const exposureLedger = exposureRows.rows[0]?.slots.guide_exposure_v1;
+    assert.ok(exposureLedger);
+    assert.equal(exposureLedger.memory_ids.some((id: string) => executionNodeIds.has(id)), false);
+    assert.deepEqual(exposureLedger.memory_ids, agentContext.memory_ids);
   } finally {
     await app.close();
   }
@@ -4018,7 +4133,7 @@ test("product observe stores explicit handoff through the product facade", async
     const body = observe.json();
     assert.equal(body.observed.memory_written, false);
     assert.equal(body.observed.handoff_stored, true);
-    assert.deepEqual(body.source_map.routes_used, ["/v1/handoff/store"]);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/observe"]);
     assert.deepEqual(body.source_map.internal_surfaces_used, ["handoff_store"]);
     assert.equal(body.handoff.handoff.anchor, "product-observe-handoff");
     assert.equal(body.handoff.handoff.handoff_kind, "task_handoff");
@@ -4169,6 +4284,10 @@ test("product forget rehydrates archived memory through the product facade", asy
           title: "Archived workflow for product forget",
           text_summary: "Rehydrate this archived workflow only when the same continuation need returns.",
           confidence: 0.82,
+          slots: {
+            contract_trust: "evidence_only",
+            lifecycle_state: "archived",
+          },
         },
       },
     });
@@ -4239,7 +4358,7 @@ test("product forget rehydrates archived memory through the product facade", asy
     assert.equal(body.forget_effect.changed_count, 1);
     assert.equal(body.forget_effect.reversible, true);
     assert.deepEqual(body.forget_effect.affected_memory_ids, [nodeId]);
-    assert.deepEqual(body.source_map.routes_used, ["/v1/memory/archive/rehydrate"]);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/forget"]);
     assert.equal(body.result.rehydrated.moved_nodes, 1);
 
     const { rows } = await liteWriteStore.findNodes({
@@ -4267,6 +4386,14 @@ test("product forget rehydrates archived memory through the product facade", asy
       },
     });
     assert.equal(afterGuide.statusCode, 200);
+    const afterGuideBody = afterGuide.json();
+    assert.equal(afterGuideBody.agent_context.use_now_memory_ids.includes(nodeId), false);
+    const rehydratedMemory = afterGuideBody.memory_packet.relevant_memories.find(
+      (entry: Record<string, unknown>) => entry.memory_id === nodeId,
+    );
+    assert.ok(rehydratedMemory);
+    assert.notEqual(rehydratedMemory.authority, "trusted");
+    assert.notEqual(rehydratedMemory.memory_contract?.use_policy, "direct_use");
 
     const measure = await app.inject({
       method: "POST",
@@ -4332,7 +4459,7 @@ test("product forget rehydrates anchor payload through the product facade", asyn
     assert.equal(body.target, "payload");
     assert.equal(body.forget_effect.anchor_uri, anchorUri);
     assert.equal(body.forget_effect.changed_count, 2);
-    assert.deepEqual(body.source_map.routes_used, ["/v1/memory/anchors/rehydrate_payload"]);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/forget"]);
     assert.equal(body.result.anchor.id, fixture.anchorNodeId);
     assert.equal(body.result.rehydrated.summary.resolved_nodes, 1);
     assert.equal(body.result.rehydrated.summary.resolved_decisions, 1);
@@ -4378,7 +4505,7 @@ test("product forget suppresses and unsuppresses pattern anchors through the pro
     assert.equal(suppressBody.forget_effect.changed_count, 1);
     assert.equal(suppressBody.forget_effect.anchor_kind, "pattern");
     assert.equal(suppressBody.forget_effect.anchor_id, fixture.anchorId);
-    assert.deepEqual(suppressBody.source_map.routes_used, ["/v1/memory/anchors/suppress"]);
+    assert.deepEqual(suppressBody.source_map.routes_used, ["/v1/forget"]);
     assert.equal(suppressBody.result.anchor_kind, "pattern");
     assert.equal(suppressBody.result.node_type, "concept");
     assert.equal(suppressBody.result.operator_override.suppressed, true);
@@ -4414,7 +4541,7 @@ test("product forget suppresses and unsuppresses pattern anchors through the pro
     assert.equal(unsuppressBody.target, "pattern");
     assert.equal(unsuppressBody.forget_effect.changed_count, 1);
     assert.equal(unsuppressBody.forget_effect.anchor_kind, "pattern");
-    assert.deepEqual(unsuppressBody.source_map.routes_used, ["/v1/memory/anchors/unsuppress"]);
+    assert.deepEqual(unsuppressBody.source_map.routes_used, ["/v1/forget"]);
     assert.equal(unsuppressBody.result.anchor_kind, "pattern");
     assert.equal(unsuppressBody.result.node_type, "concept");
     assert.equal(unsuppressBody.result.operator_override.suppressed, false);
@@ -4510,7 +4637,7 @@ test("product forget suppresses workflow anchors from product guidance", async (
     assert.equal(suppressBody.result.node_type, "procedure");
     assert.equal(suppressBody.result.operator_override.suppressed, true);
     assert.equal(suppressBody.forget_effect.anchor_kind, "workflow");
-    assert.deepEqual(suppressBody.source_map.routes_used, ["/v1/memory/anchors/suppress"]);
+    assert.deepEqual(suppressBody.source_map.routes_used, ["/v1/forget"]);
 
     const suppressedGuide = await app.inject({
       method: "POST",
@@ -4554,7 +4681,7 @@ test("product forget suppresses workflow anchors from product guidance", async (
     const unsuppressBody = unsuppress.json();
     assert.equal(unsuppressBody.result.anchor_kind, "workflow");
     assert.equal(unsuppressBody.result.operator_override.suppressed, false);
-    assert.deepEqual(unsuppressBody.source_map.routes_used, ["/v1/memory/anchors/unsuppress"]);
+    assert.deepEqual(unsuppressBody.source_map.routes_used, ["/v1/forget"]);
 
     const restoredGuide = await app.inject({
       method: "POST",
@@ -4637,7 +4764,7 @@ test("product forget records activation feedback through the product facade", as
     assert.equal(body.target, "memory");
     assert.equal(body.forget_effect.changed_count, 1);
     assert.equal(body.forget_effect.reversible, false);
-    assert.deepEqual(body.source_map.routes_used, ["/v1/memory/nodes/activate"]);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/forget"]);
     assert.equal(body.result.activated.updated_nodes, 1);
     assert.equal(body.result.activated.outcome, "positive");
     assert.equal(body.result.activated.activate, true);
@@ -5137,7 +5264,7 @@ test("product guide trace attribution resolves used memories from persisted expo
     });
     assert.equal(feedback.statusCode, 200, feedback.body);
     const feedbackBody = feedback.json();
-    assert.deepEqual(feedbackBody.source_map.routes_used, ["/v1/memory/find", "/v1/memory/nodes/activate"]);
+    assert.deepEqual(feedbackBody.source_map.routes_used, ["/v1/forget"]);
     assert.ok(feedbackBody.source_map.internal_surfaces_used.includes("guide_exposure_ledger"));
     assert.deepEqual(feedbackBody.forget_effect.affected_memory_ids, [usedNodeId]);
     assert.equal(feedbackBody.forget_effect.guide_trace.guide_trace_id, guideBody.guide_trace_id);
@@ -6028,7 +6155,7 @@ test("product feedback alias records activation without exposing forget operatio
     assert.equal(body.forget_effect.changed_count, 1);
     assert.equal(body.forget_effect.reversible, false);
     assert.deepEqual(body.forget_effect.affected_memory_ids, [nodeId]);
-    assert.deepEqual(body.source_map.routes_used, ["/v1/memory/nodes/activate"]);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/feedback"]);
     assert.equal(body.result.activated.updated_nodes, 1);
     assert.equal(body.result.activated.outcome, "positive");
   } finally {
@@ -6091,7 +6218,7 @@ test("product rehydrate alias restores archived memory without exposing forget o
     assert.equal(body.forget_effect.changed_count, 1);
     assert.equal(body.forget_effect.reversible, true);
     assert.deepEqual(body.forget_effect.affected_memory_ids, [nodeId]);
-    assert.deepEqual(body.source_map.routes_used, ["/v1/memory/archive/rehydrate"]);
+    assert.deepEqual(body.source_map.routes_used, ["/v1/rehydrate"]);
     assert.equal(body.result.rehydrated.moved_nodes, 1);
   } finally {
     await app.close();

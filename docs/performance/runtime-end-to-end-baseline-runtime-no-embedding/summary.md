@@ -1,6 +1,6 @@
 # Aionis Runtime End-to-End Performance Baseline
 
-Generated: 2026-07-01T04:08:13.787Z
+Generated: 2026-07-10T14:13:30.713Z
 
 This report measures the local Aionis product loop over real HTTP/SDK calls:
 
@@ -16,7 +16,7 @@ Embedding profile: none
 
 | Profile | Iterations | Baseline Guide P50/P95 | Observe P50/P95 | Substrate Sync P50/P95 | After Guide P50/P95 | Feedback P50/P95 | Measure P50/P95 | Total Loop P50/P95 | Prompt chars P50/P95 | Max RSS | SQLite final |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| runtime | 24 | 6.537 / 14.073 ms | 7.216 / 15.084 ms | n/a | 6.845 / 15.193 ms | n/a | 1.211 / 2.098 ms | 21.344 / 45.521 ms | 192 / 192 | 71.75 MB | 5140 KB |
+| runtime | 24 | 23.243 / 52.322 ms | 24.404 / 58.075 ms | n/a | 24.282 / 44.932 ms | n/a | 5.551 / 8.062 ms | 78.004 / 245.123 ms | 192 / 192 | 68.313 MB | 7092 KB |
 
 ## Profile Notes
 

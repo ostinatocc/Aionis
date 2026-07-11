@@ -2393,8 +2393,7 @@ export type PolicyLearningControlContract = z.infer<typeof PolicyLearningControl
 
 export const PolicyLearningControlApplyPayloadSchema = z.object({
   payload_version: z.literal("policy_learning_control_apply_payload_v1"),
-  route: z.literal("/v1/memory/policies/learning-control/apply"),
-  method: z.literal("POST"),
+  service: z.literal("policy_learning_control_service"),
   action: PolicyLearningControlApplyActionSchema,
   policy_memory_id: z.string(),
   selected_tool: z.string().nullable(),

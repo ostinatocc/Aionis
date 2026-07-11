@@ -9,29 +9,27 @@ import { createRequestGuards } from "./app/request-guards.js";
 import { createHttpObservabilityHelpers } from "./app/http-observability.js";
 import {
   logMemoryApiConfig,
+  createRuntimeProductServices,
   registerApplicationRoutes,
   type RegisterApplicationRoutesArgs,
   registerHealthRoute,
   registerRuntimeErrorHandler,
   registerRuntimeRequestHooks,
 } from "./server/http-server.js";
+import { createHandoffRouteService } from "./routes/handoff.js";
+import { createMemoryWriteRouteService } from "./routes/memory-write.js";
 import { createRecallPolicy } from "./app/recall-policy.js";
 import { createRecallTextEmbedRuntime } from "./app/recall-text-embed.js";
-import { createReplayRepairReviewPolicy } from "./app/replay-repair-review-policy.js";
-import { createReplayRuntimeOptionBuilders } from "./app/replay-runtime-options.js";
-import { createSandboxBudgetService } from "./app/sandbox-budget.js";
 import { createRuntimeServices } from "./app/runtime-services.js";
 import { startLiteAssociativeLinkWorker } from "./jobs/associative-linking-worker.js";
-import { loadEnv } from "./config.js";
+import { loadRuntimeConfig } from "./config/runtime-config.js";
 
 export async function startAionisRuntime(): Promise<void> {
-  const env = loadEnv();
+  const { env, config: runtimeConfig } = loadRuntimeConfig({ ...process.env });
   const {
     sandboxRemoteAllowedHosts,
     sandboxRemoteAllowedCidrs,
-    sandboxAllowedCommands,
     store,
-    sandboxStore,
     liteRecallStore,
     liteRecallAccess,
     liteReplayStore,
@@ -58,7 +56,7 @@ export async function startAionisRuntime(): Promise<void> {
     embeddingSurfacePolicy,
     recallInflightGate,
     writeInflightGate,
-  } = await createRuntimeServices(env);
+  } = await createRuntimeServices(runtimeConfig);
   const {
     buildRecallAuth,
     acquireInflightSlot,
@@ -67,10 +65,9 @@ export async function startAionisRuntime(): Promise<void> {
     requireMemoryPrincipal,
     withIdentityFromRequest,
     tenantFromBody,
-    scopeFromBody,
     enforceTenantQuota,
   } = createRequestGuards({
-    env,
+    config: runtimeConfig,
     embedder: queryEmbedder,
     recallLimiter,
     debugEmbedLimiter,
@@ -78,13 +75,6 @@ export async function startAionisRuntime(): Promise<void> {
     recallTextEmbedLimiter,
     recallInflightGate,
     writeInflightGate,
-  });
-  const {
-    enforceSandboxTenantBudget,
-  } = createSandboxBudgetService({
-    env,
-    sandboxTenantBudgetPolicy,
-    usageStore: sandboxStore,
   });
   const {
     globalRecallProfileDefaults,
@@ -109,21 +99,6 @@ export async function startAionisRuntime(): Promise<void> {
     recallTextEmbedBatcher,
   });
   const {
-    buildReplayRepairReviewOptions,
-    buildReplayPlaybookRunOptions,
-  } = createReplayRuntimeOptionBuilders({
-    env,
-    sandboxStore,
-    embedder,
-    embeddingSurfacePolicy,
-    liteWriteStore,
-    liteReplayAccess,
-    liteReplayStore,
-    sandboxAllowedCommands,
-    sandboxExecutor,
-    enforceSandboxTenantBudget,
-  });
-  const {
     resolveCorsAllowOrigin,
     resolveCorsPolicy,
     resolveRequestScopeForTelemetry,
@@ -131,16 +106,8 @@ export async function startAionisRuntime(): Promise<void> {
     resolveRequestApiKeyPrefixForTelemetry,
     recordContextAssemblyTelemetryBestEffort,
   } = createHttpObservabilityHelpers({
-    env,
+    config: runtimeConfig,
   });
-  const {
-    withReplayRepairReviewDefaults,
-  } = createReplayRepairReviewPolicy({
-    env,
-    tenantFromBody,
-    scopeFromBody,
-  });
-
   const coerceRecallProfileName = (profile: string): Parameters<typeof resolveExplicitRecallMode>[1] =>
     profile === "strict_edges" || profile === "quality_first" || profile === "lite"
       ? profile
@@ -182,12 +149,40 @@ export async function startAionisRuntime(): Promise<void> {
     buildRecallTrajectory(args as Parameters<typeof buildRecallTrajectory>[0]);
 
   const app = createHttpApp(env);
+  const memoryWriteService = createMemoryWriteRouteService({
+    env,
+    embedder,
+    embeddingSurfacePolicy,
+    liteWriteStore,
+    executionStateStore,
+    executionTreeStore,
+  });
+  const handoffRouteService = createHandoffRouteService({
+    env,
+    embedder,
+    embeddingSurfacePolicy,
+    liteWriteStore,
+    executionStateStore,
+    executionTreeStore,
+  });
+  const productServices = createRuntimeProductServices({
+    env,
+    liteWriteStore,
+    liteRecallAccess,
+    embedder,
+    queryEmbedder,
+    executionTreeStore,
+    claimLedgerAccess,
+    skillCandidateReviewAccess,
+    memoryWriteService,
+    handoffRouteService,
+  });
   const associativeLinkWorker = liteRecallAccess
     ? startLiteAssociativeLinkWorker({
         writeStore: liteWriteStore,
         recallAccess: liteRecallAccess,
-        intervalMs: env.OUTBOX_POLL_INTERVAL_MS,
-        batchSize: env.OUTBOX_BATCH_SIZE,
+        intervalMs: runtimeConfig.storage.OUTBOX_POLL_INTERVAL_MS,
+        batchSize: runtimeConfig.storage.OUTBOX_BATCH_SIZE,
         logger: app.log,
       })
     : null;
@@ -231,13 +226,12 @@ export async function startAionisRuntime(): Promise<void> {
     queryEmbedder,
     embeddingSurfacePolicy,
     liteRecallAccess,
-    liteReplayAccess,
-    liteReplayStore,
     liteWriteStore,
     claimLedgerAccess,
     skillCandidateReviewAccess,
     executionStateStore,
     executionTreeStore,
+    productServices,
     recallTextEmbedBatcher,
     requireMemoryPrincipal,
     withIdentityFromRequest,
@@ -260,9 +254,6 @@ export async function startAionisRuntime(): Promise<void> {
     embedRecallTextQuery,
     mapRecallTextEmbeddingError,
     recordContextAssemblyTelemetryBestEffort,
-    withReplayRepairReviewDefaults,
-    buildReplayRepairReviewOptions,
-    buildReplayPlaybookRunOptions,
   };
   registerApplicationRoutes(applicationRouteArgs);
 

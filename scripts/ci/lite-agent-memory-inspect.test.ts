@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
-import { createRequestGuards } from "../../src/app/request-guards.ts";
+import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 import { sealAuthorityReceiptsForPreparedWrite } from "./authority-fixture-helpers.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
@@ -19,7 +19,7 @@ import { buildExecutionContractFromProjection } from "../../src/memory/execution
 import { buildHandoffWriteBody } from "../../src/memory/handoff.ts";
 import { MemoryAnchorV1Schema } from "../../src/memory/schemas.ts";
 import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
-import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
+import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";

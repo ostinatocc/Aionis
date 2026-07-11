@@ -6,7 +6,7 @@ import path from "node:path";
 import Fastify from "fastify";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { TrajectoryCompileResponseSchema } from "../../src/memory/schemas.ts";
-import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
+import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 

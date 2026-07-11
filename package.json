@@ -1,7 +1,7 @@
 {
   "name": "aionis-runtime-focused",
   "private": true,
-  "version": "0.3.3",
+  "version": "0.3.4",
   "license": "Apache-2.0",
   "type": "module",
   "description": "Focused Aionis local Runtime kernel for execution continuity, learning control, and controlled forgetting.",
@@ -16,6 +16,8 @@
   "scripts": {
     "sdk:sync": "node scripts/sdk-source.mjs sync",
     "sdk:check": "node scripts/sdk-source.mjs check",
+    "complexity:report": "node scripts/ci/runtime-complexity-budget.mjs",
+    "complexity:check": "node scripts/ci/runtime-complexity-budget.mjs --check docs/architecture/runtime-complexity-budget.json",
     "typecheck": "npx tsc --noEmit",
     "lite:build": "npm run -s typecheck",
     "lite:start": "bash scripts/start-lite.sh",

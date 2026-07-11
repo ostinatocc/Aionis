@@ -1,5 +1,65 @@
 # Changelog
 
+## Unreleased - v0.3.4 Runtime Complexity Reduction
+
+This unreleased change set reduces accidental complexity in the focused
+Runtime while preserving continuity, evidence-gated learning, controlled
+forgetting, negative-transfer blocking, scope isolation, and auditability.
+
+### Added
+
+- One canonical governance decision, AgentContext compiler, and prompt
+  renderer pipeline.
+- Typed Runtime services for internal composition and structural CI budgets
+  for source size, routes, configuration, imports, and SDK ownership.
+- Public-product smoke and real SQLite/HTTP/SDK parity coverage for the
+  simplified Runtime path.
+- A narrow tool-selection receipt on `/v1/guide` and exposure-verified
+  tool-selection feedback through `/v1/feedback`.
+
+### Changed
+
+- Kept Runtime Core as a modular monolith with SQLite as truth and zvec or
+  Substrate as governed candidate sources.
+- Reduced the active route matrix from 72 to 19 entries, environment schema
+  fields from 220 to 177, and import cycles from three to zero.
+- Reduced `product-output-assembler.ts` to a narrow 31-line facade and
+  `product-facade.ts` to a 279-line HTTP adapter.
+- Replaced internal route-to-route composition with typed service calls and
+  aligned Runtime, SDK, smoke, and end-to-end source metadata with the public
+  product surface.
+- Migrated AionisManifest resume and active Runtime eval consumers away from
+  recall/context and tool-learning internal transports.
+- Unified Docker build and runtime stages on Node 24 to match the candidate
+  toolchain and Substrate development dependency floor.
+
+### Removed
+
+- Fifty-three retired internal HTTP adapters from active registration,
+  including the final eight temporary recall/context and tool-learning routes.
+- Sixteen replaced Runtime source modules, including the legacy lifecycle,
+  replay-route, projection, ANN no-op, and access-wrapper implementations.
+- Duplicate AgentContext classification/rendering ownership and Runtime import
+  cycles.
+
+### Verified
+
+- Runtime typecheck, SDK ownership, complexity guard, public smoke, and full
+  Lite suite: 63 / 63 JavaScript checks plus 822 / 822 TypeScript tests, zero
+  skips.
+- Real MiniMax-backed golden, ordinary-memory, multi-agent, negative-transfer,
+  and judgment-calibration product loops.
+- Native zvec ANN contract and write-through behavior, including SQLite truth
+  verification after candidate retrieval.
+- AionisSubstrate, AionisManifest, SDK, CLI, create, MCP, AIFS, and Claude Code
+  package suites.
+- Same-machine pre/post Runtime-only A/B repeated in both execution orders:
+  conservative reversed-order P50 improved 13.77% and P95 improved 0.49%; no
+  regression exceeded the 10% budget.
+
+This change set is prepared as the v0.3.4 release candidate. It has not yet
+been tagged, pushed, or published.
+
 ## v0.3.2 - Runtime Profile Activation Patch
 
 Release date: 2026-06-29

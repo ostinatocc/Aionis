@@ -104,7 +104,7 @@ JS
 
 node - <<'JS' "${BASE_URL}"
 const base = process.argv[2];
-const playbookId = "00000000-0000-0000-0000-000000000781";
+const marker = `LITE_SMOKE_PUBLIC_MEMORY_${Date.now()}`;
 
 async function post(path, body) {
   const res = await fetch(base + path, {
@@ -125,73 +125,44 @@ async function post(path, body) {
   return json;
 }
 
-const runStart = await post("/v1/memory/replay/run/start", {
-  goal: "lite replay smoke",
+const observe = await post("/v1/observe", {
+  tenant_id: "default",
+  scope: "lite-smoke/default",
+  input_text: `${marker}: keep the local Runtime smoke path auditable.`,
+  auto_embed: false,
 });
-const stepBefore = await post("/v1/memory/replay/step/before", {
-  run_id: runStart.run_id,
-  step_index: 1,
-  tool_name: "echo",
-  tool_input: { text: "hello" },
-  preconditions: [],
-  safety_level: "auto_ok",
+const guide = await post("/v1/guide", {
+  tenant_id: "default",
+  scope: "lite-smoke/default",
+  query_text: "Continue the local Runtime smoke check.",
+  include_packets: true,
+  limit: 4,
 });
-await post("/v1/memory/replay/step/after", {
-  run_id: runStart.run_id,
-  step_id: stepBefore.step_id,
-  step_index: 1,
-  status: "success",
-  postconditions: [],
-  artifact_refs: [],
-  repair_applied: false,
-});
-await post("/v1/memory/replay/run/end", {
-  run_id: runStart.run_id,
-  status: "success",
-  summary: "done",
-  success_criteria: {},
-  metrics: {},
-});
-const compile = await post("/v1/memory/replay/playbooks/compile_from_run", {
-  run_id: runStart.run_id,
-  playbook_id: playbookId,
-  matchers: {},
-  risk_profile: "medium",
-  metadata: {},
-});
-const playbookGet = await post("/v1/memory/replay/playbooks/get", {
-  playbook_id: playbookId,
-});
-const promote = await post("/v1/memory/replay/playbooks/promote", {
-  playbook_id: playbookId,
-  target_status: "shadow",
-  note: "lite promote smoke",
-});
-const playbookRun = await post("/v1/memory/replay/playbooks/run", {
-  playbook_id: playbookId,
-  version: promote.to_version,
-  actor: "lite-smoke",
-  mode: "simulate",
-  params: { record_run: true },
-});
-if (compile.version !== 1 || playbookGet.playbook?.version !== 1 || promote.to_version !== 2) {
-  console.error(JSON.stringify({ compile, playbookGet, promote }, null, 2));
-  process.exit(1);
-}
 if (
-  playbookRun.mode !== "simulate"
-  || playbookRun.run?.status !== "success"
-  || playbookRun.summary?.replay_readiness !== "ready"
-  || playbookRun.playbook?.version !== promote.to_version
+  observe?.contract_version !== "aionis_observe_result_v1"
+  || observe?.observed?.memory_written !== true
+  || guide?.contract_version !== "aionis_guide_result_v1"
+  || guide?.agent_context?.contract_version !== "aionis_agent_context_v1"
 ) {
-  console.error(JSON.stringify(playbookRun, null, 2));
+  console.error(JSON.stringify({ observe, guide }, null, 2));
   process.exit(1);
 }
+
+const retiredReplayRoute = await fetch(base + "/v1/memory/replay/run/start", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ goal: "retired public replay route must stay absent" }),
+});
+if (retiredReplayRoute.status !== 404) {
+  console.error(`expected retired replay route to return 404, got ${retiredReplayRoute.status}`);
+  process.exit(1);
+}
+
 console.log(JSON.stringify({
-  replay_playbook_kernel_ok: true,
-  playbook_id: playbookId,
-  playbook_version: promote.to_version,
-  replay_run_id: playbookRun.run.run_id,
-  readiness: playbookRun.summary.replay_readiness,
+  public_product_smoke_ok: true,
+  observe_contract: observe.contract_version,
+  guide_contract: guide.contract_version,
+  agent_context_contract: guide.agent_context.contract_version,
+  retired_replay_http_status: retiredReplayRoute.status,
 }, null, 2));
 JS

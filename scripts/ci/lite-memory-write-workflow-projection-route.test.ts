@@ -6,15 +6,16 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
-import { createRequestGuards } from "../../src/app/request-guards.ts";
+import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import {
   PolicyMutationAdjudicationV1Schema,
   PolicyMutationV1Schema,
 } from "../../src/kernel/policy-mutation-loop.ts";
-import { registerMemoryAccessRoutes } from "../../src/routes/memory-access.ts";
-import { registerMemoryContextRuntimeRoutes } from "../../src/routes/memory-context-runtime.ts";
-import { registerMemoryWriteRoutes } from "../../src/routes/memory-write.ts";
+import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
+import { createMemoryPlanningContextService } from "../../src/routes/memory-context-runtime.ts";
+import { PLANNING_SERVICE_TEST_PATH, registerPlanningServiceTestAdapter } from "./support/register-planning-service-test-adapter.ts";
+import { registerMemoryWriteRoutes } from "./support/register-memory-write-test-route.ts";
 import {
   ExecutionMemoryIntrospectionResponseSchema,
   PlanningContextRouteContractSchema,
@@ -112,13 +113,11 @@ function registerApp(args: {
     executionTreeStore: args.executionTreeStore ?? null,
   });
 
-  registerMemoryContextRuntimeRoutes({
-    app: args.app,
+registerPlanningServiceTestAdapter(args.app, createMemoryPlanningContextService({
     env,
     embedder: DeterministicEmbeddingProvider,
     liteWriteStore: args.liteWriteStore,
     liteRecallAccess: args.liteRecallStore.createRecallAccess(),
-    recallTextEmbedBatcher: { stats: () => null },
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
     enforceRateLimit: guards.enforceRateLimit,
@@ -170,7 +169,7 @@ function registerApp(args: {
       message: "embedding failed",
     }),
     recordContextAssemblyTelemetryBestEffort: async () => {},
-  });
+  }));
 
   registerMemoryAccessRoutes({
     app: args.app,
@@ -470,7 +469,7 @@ async function runtimeVerifierEvidenceFromPlanning(args: {
 }) {
   const response = await args.app.inject({
     method: "POST",
-    url: "/v1/memory/planning/context",
+    url: PLANNING_SERVICE_TEST_PATH,
     payload: {
       tenant_id: "default",
       scope: "default",
@@ -826,7 +825,7 @@ test("memory/write keeps workflow candidates promotion-ready until learning_cont
 
     const firstPlanning = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -908,7 +907,7 @@ test("memory/write keeps workflow candidates promotion-ready until learning_cont
 
     const secondPlanning = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -1116,7 +1115,7 @@ test("memory/write stable workflow learning_control preview evaluates admitted r
 
     const planning = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -1268,7 +1267,7 @@ test("memory/write consumes runtime verifier evidence from planning_context for 
 
     const planning = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -1431,7 +1430,7 @@ test("memory/write stable workflow learning_control blocks promotion when execut
 
     const planning = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -1882,7 +1881,7 @@ test("memory/write also projects packet-only execution continuity writes into wo
 
     const firstPlanning = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -1915,7 +1914,7 @@ test("memory/write also projects packet-only execution continuity writes into wo
 
     const secondPlanning = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -1978,7 +1977,7 @@ test("memory/write projects lightweight handoff-style continuity through the gen
 
     const firstPlanning = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",
@@ -2011,7 +2010,7 @@ test("memory/write projects lightweight handoff-style continuity through the gen
 
     const secondPlanning = await app.inject({
       method: "POST",
-      url: "/v1/memory/planning/context",
+      url: PLANNING_SERVICE_TEST_PATH,
       payload: {
         tenant_id: "default",
         scope: "default",

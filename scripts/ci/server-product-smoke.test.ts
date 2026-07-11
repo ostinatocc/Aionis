@@ -5,12 +5,19 @@ import os from "node:os";
 import path from "node:path";
 import Fastify from "fastify";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
-import { createRequestGuards } from "../../src/app/request-guards.ts";
+import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import { createRuntimeServices } from "../../src/app/runtime-services.ts";
 import { loadEnv, type Env } from "../../src/config.ts";
+import { createRuntimeConfig } from "../../src/config/runtime-config.ts";
 import { createLiteExecutionStateStore } from "../../src/execution/state-store.ts";
 import { createLiteExecutionTreeStore } from "../../src/execution/tree-store.ts";
-import { registerApplicationRoutes, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
+import { createHandoffRouteService } from "../../src/routes/handoff.ts";
+import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
+import {
+  createRuntimeProductServices,
+  registerApplicationRoutes,
+  registerRuntimeErrorHandler,
+} from "../../src/server/http-server.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteReplayStore } from "../../src/store/lite-replay-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
@@ -81,6 +88,12 @@ function registerServerProductApp(args: {
   const liteReplayStore = createLiteReplayStore(args.replayPath);
   const executionStateStore = createLiteExecutionStateStore(args.writePath);
   const executionTreeStore = createLiteExecutionTreeStore(args.writePath);
+  const embeddingSurfacePolicy = {
+    provider_configured: true,
+    enabled_surfaces: ["write_auto_embed", "recall_text"],
+    isEnabled: () => true,
+    providerFor: (_surface: unknown, provider: unknown) => provider,
+  } as const;
   const guards = createRequestGuards({
     env: args.env,
     embedder: DeterministicEmbeddingProvider,
@@ -91,24 +104,42 @@ function registerServerProductApp(args: {
     recallInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 1000 }),
     writeInflightGate: new InflightGate({ maxInflight: 8, maxQueue: 8, queueTimeoutMs: 1000 }),
   });
+  const memoryWriteService = createMemoryWriteRouteService({
+    env: args.env,
+    embedder: DeterministicEmbeddingProvider,
+    embeddingSurfacePolicy: embeddingSurfacePolicy as any,
+    liteWriteStore,
+    executionStateStore,
+    executionTreeStore,
+  });
+  const productServices = createRuntimeProductServices({
+    env: args.env,
+    liteWriteStore,
+    executionTreeStore,
+    memoryWriteService,
+    handoffRouteService: createHandoffRouteService({
+      env: args.env,
+      embedder: DeterministicEmbeddingProvider,
+      embeddingSurfacePolicy: embeddingSurfacePolicy as any,
+      liteWriteStore,
+      executionStateStore,
+      executionTreeStore,
+    }),
+  });
   registerRuntimeErrorHandler(args.app);
   registerApplicationRoutes({
     app: args.app,
     env: args.env,
     embedder: DeterministicEmbeddingProvider,
     queryEmbedder: DeterministicEmbeddingProvider,
-    embeddingSurfacePolicy: {
-      provider_configured: true,
-      enabled_surfaces: ["write_auto_embed", "recall_text"],
-      isEnabled: () => true,
-      providerFor: (_surface, provider) => provider,
-    },
+    embeddingSurfacePolicy: embeddingSurfacePolicy as any,
     liteRecallAccess: liteRecallStore.createRecallAccess(),
     liteReplayAccess: liteReplayStore.createReplayAccess(),
     liteReplayStore,
     liteWriteStore,
     executionStateStore,
     executionTreeStore,
+    productServices,
     recallTextEmbedBatcher: { stats: () => null },
     requireMemoryPrincipal: guards.requireMemoryPrincipal,
     withIdentityFromRequest: guards.withIdentityFromRequest,
@@ -185,8 +216,119 @@ function registerServerProductApp(args: {
       defaultTenantId: args.env.MEMORY_TENANT_ID,
     } as any),
   });
-  return { liteWriteStore, liteRecallStore, liteReplayStore, executionStateStore, executionTreeStore };
+  return {
+    liteWriteStore,
+    liteRecallStore,
+    liteReplayStore,
+    executionStateStore,
+    executionTreeStore,
+    productServices,
+  };
 }
+
+test("application registration exposes product routes but not replaced internal memory routes", async () => {
+  const app = Fastify();
+  const writePath = tmpDbPath("route-removal-write");
+  const replayPath = tmpDbPath("route-removal-replay");
+  const env = await serverEnv(writePath, replayPath);
+  const stores = registerServerProductApp({ app, env, writePath, replayPath });
+  const removedRoutes = [
+    "/v1/memory/recall",
+    "/v1/memory/recall_text",
+    "/v1/memory/planning/context",
+    "/v1/memory/context/assemble",
+    "/v1/memory/tools/select",
+    "/v1/memory/tools/decision",
+    "/v1/memory/tools/run",
+    "/v1/memory/tools/feedback",
+    "/v1/memory/write",
+    "/v1/memory/archive/rehydrate",
+    "/v1/memory/nodes/activate",
+    "/v1/execution/context/assemble",
+    "/v1/memory/trajectory/compile",
+    "/v1/memory/delegation/records",
+    "/v1/memory/delegation/records/find",
+    "/v1/memory/delegation/records/aggregate",
+    "/v1/memory/find",
+    "/v1/memory/continuity/review-pack",
+    "/v1/memory/agent/inspect",
+    "/v1/memory/agent/review-pack",
+    "/v1/memory/agent/resume-pack",
+    "/v1/memory/agent/handoff-pack",
+    "/v1/memory/execution/introspect",
+    "/v1/memory/evolution/review-pack",
+    "/v1/memory/action/retrieval",
+    "/v1/memory/experience/intelligence",
+    "/v1/memory/anchors/rehydrate_payload",
+    "/v1/memory/feedback",
+    "/v1/memory/rules/state",
+    "/v1/memory/rules/evaluate",
+    "/v1/memory/tools/runs/list",
+    "/v1/memory/learning-loop/run",
+    "/v1/memory/runtime-maintenance/run",
+    "/v1/memory/runtime-maintenance/immediate",
+    "/v1/memory/runtime-maintenance/daily",
+    "/v1/memory/runtime-maintenance/long-horizon",
+    "/v1/memory/policies/learning-control/apply",
+    "/v1/memory/anchors/suppress",
+    "/v1/memory/anchors/unsuppress",
+    "/v1/memory/patterns/suppress",
+    "/v1/memory/patterns/unsuppress",
+    "/v1/memory/tools/rehydrate_payload",
+    "/v1/memory/replay/run/start",
+    "/v1/memory/replay/step/before",
+    "/v1/memory/replay/step/after",
+    "/v1/memory/replay/run/end",
+    "/v1/memory/replay/runs/get",
+    "/v1/memory/replay/playbooks/compile_from_run",
+    "/v1/memory/replay/playbooks/get",
+    "/v1/memory/replay/playbooks/candidate",
+    "/v1/memory/replay/playbooks/promote",
+    "/v1/memory/replay/playbooks/repair",
+    "/v1/memory/replay/playbooks/repair/review",
+    "/v1/memory/replay/playbooks/run",
+    "/v1/memory/replay/playbooks/dispatch",
+  ];
+  try {
+    assert.equal(app.hasRoute({ method: "POST", url: "/v1/observe" }), true);
+    assert.equal(app.hasRoute({ method: "POST", url: "/v1/operator/snapshot" }), true);
+    assert.equal(app.hasRoute({ method: "POST", url: "/v1/memory/resolve" }), true);
+    for (const url of removedRoutes) {
+      assert.equal(app.hasRoute({ method: "POST", url }), false, `${url} must not be registered`);
+    }
+
+    for (const url of removedRoutes.slice(0, 8)) {
+      const response = await app.inject({ method: "POST", url, payload: {} });
+      assert.equal(response.statusCode, 404, `${url} must return 404`);
+    }
+
+    const unsupported = await app.inject({
+      method: "POST",
+      url: "/v1/memory/find",
+      headers: { "x-api-key": "tenant-a-key" },
+      payload: { tenant_id: "tenant-a", scope: "tenant-a/default", limit: 1 },
+    });
+    assert.equal(unsupported.statusCode, 404, unsupported.body);
+    assert.equal(unsupported.json().error, "Not Found");
+
+    const direct = await stores.productServices.observe.execute({
+      tenant_id: "tenant-a",
+      scope: "tenant-a/default",
+      actor: "agent-a",
+      input_text: "Direct product service remains callable after internal route removal.",
+      auto_embed: false,
+    }, { principal: null });
+    assert.equal(direct.ok, true);
+    assert.equal(direct.statusCode, 200);
+  } finally {
+    await app.close();
+    await stores.executionTreeStore.close();
+    await stores.executionStateStore.close();
+    await stores.liteRecallStore.close();
+    await stores.liteReplayStore.close();
+    await stores.liteWriteStore.close();
+  }
+});
 
 test("server edition product routes require auth and run observe to guide through application registration", async () => {
   const app = Fastify();
@@ -277,7 +419,7 @@ test("server edition can construct local-store Runtime services", async () => {
   const writePath = tmpDbPath("services-write");
   const replayPath = tmpDbPath("services-replay");
   const env = await serverEnv(writePath, replayPath);
-  const services = await createRuntimeServices(env);
+  const services = await createRuntimeServices(createRuntimeConfig(env));
   try {
     assert.ok(services.liteWriteStore);
     assert.ok(services.liteRecallAccess);
