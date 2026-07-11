@@ -7,9 +7,15 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const SDK_REPO = process.env.AIONIS_SDK_REPO
-  ? path.resolve(process.env.AIONIS_SDK_REPO)
-  : path.resolve(ROOT, "..", "..", "aionis-sdk");
+const SDK_REPO_CANDIDATES = process.env.AIONIS_SDK_REPO
+  ? [path.resolve(process.env.AIONIS_SDK_REPO)]
+  : [
+      path.resolve(ROOT, "..", "aionis-sdk"),
+      path.resolve(ROOT, "..", "..", "aionis-sdk"),
+      path.resolve(ROOT, "..", "..", "new.aionis", "aionis-sdk"),
+    ];
+const SDK_REPO = SDK_REPO_CANDIDATES.find((candidate) => fs.existsSync(path.join(candidate, "package.json")))
+  ?? SDK_REPO_CANDIDATES[0];
 const RUNTIME_SDK = path.join(ROOT, "src", "sdk.ts");
 const DISTRIBUTED_SDK = path.join(SDK_REPO, "src", "index.ts");
 const SDK_SYNC = path.join(ROOT, "scripts", "sdk-source.mjs");
@@ -102,6 +108,14 @@ test("Runtime owns named SDK contract regions instead of the whole client file",
   assert.deepEqual([...runtimeRegions.keys()].sort(), ["public-contracts"]);
   assert.deepEqual([...distributedRegions.keys()].sort(), [...runtimeRegions.keys()].sort());
   for (const [name, body] of runtimeRegions) assert.equal(distributedRegions.get(name), body, `${name} must be generated from Runtime`);
+});
+
+test("Runtime CI checks out the standalone SDK for ownership verification", () => {
+  const workflow = read(path.join(ROOT, ".github", "workflows", "ci.yml"));
+  assert.match(workflow, /sdk_ref:/);
+  assert.match(workflow, /repository: ostinatocc\/aionis-sdk/);
+  assert.match(workflow, /path: external\/aionis-sdk/);
+  assert.match(workflow, /AIONIS_SDK_REPO:.*external\/aionis-sdk/);
 });
 
 test("AgentContext schema and SDK prompt format have one Runtime authority", () => {

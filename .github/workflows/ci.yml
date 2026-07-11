@@ -6,6 +6,11 @@ on:
       - main
   pull_request:
   workflow_dispatch:
+    inputs:
+      sdk_ref:
+        description: "Standalone @aionis/sdk ref used by ownership checks"
+        required: false
+        default: "main"
 
 permissions:
   contents: read
@@ -19,9 +24,18 @@ jobs:
     name: Runtime checks
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      AIONIS_SDK_REPO: ${{ github.workspace }}/external/aionis-sdk
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Checkout standalone SDK contracts
+        uses: actions/checkout@v4
+        with:
+          repository: ostinatocc/aionis-sdk
+          ref: ${{ inputs.sdk_ref || 'main' }}
+          path: external/aionis-sdk
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
