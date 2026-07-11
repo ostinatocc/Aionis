@@ -67,6 +67,8 @@ test("release-train.json is the checked-in source for immutable release coordina
     assert.equal(train.packages[key].name, expectedName);
     assert.match(train.packages[key].version, /^\d+\.\d+\.\d+$/);
   }
+  assert.equal(typeof train.packages.sdk.source_ref, "string");
+  assert.notEqual(train.packages.sdk.source_ref.trim(), "", "SDK source ref must be explicit and non-empty");
 });
 
 test("runtime manifest and package metadata stay aligned with release-train.json", () => {

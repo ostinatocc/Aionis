@@ -67,7 +67,7 @@ Run the local-first Runtime in Docker:
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.4
+  ghcr.io/ostinatocc/aionis:v0.3.5
 ```
 
 Then check readiness:

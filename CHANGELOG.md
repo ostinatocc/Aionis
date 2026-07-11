@@ -1,6 +1,43 @@
 # Changelog
 
-## Unreleased - v0.3.4 Runtime Complexity Reduction
+## Unreleased - v0.3.5 Aggressive Compaction Repair
+
+This patch repairs aggressive AgentContext compaction without changing the
+public Runtime or SDK contract.
+
+### Changed
+
+- Route aggressive standard/full-power guide requests through the canonical
+  compact contract renderer instead of the verbose standard renderer.
+- Keep active, reference-only, blocked, accepted-evidence, and governance
+  surfaces bounded under explicit character budgets.
+- Preserve guide-only target files when the selected current memory does not
+  carry its own target-file projection.
+- Make the Runtime release train declare the exact standalone SDK source ref
+  used by candidate CI instead of inferring an SDK candidate branch from the
+  Runtime release status.
+
+### Verified
+
+- SDK and structural checks: 66 / 66.
+- TypeScript Runtime suite: 818 passed, zero failed, four optional Zvec tests
+  skipped because the native dependency was unavailable on the validation
+  host.
+- The fix reduced mean projected context by 37.18% versus immutable `v0.3.4`
+  and by 14.55% versus the frozen pre-refactor comparator while preserving
+  recall, stale-leak, rehydration, audit, and Memory Firewall outcomes.
+- The 40-case five-arm external context-stability run completed 40 / 40. Aionis
+  retained 40 / 40 accepted direction, zero wrong-branch attention or writes,
+  and zero rediscovery while using 74.82% fewer prompt tokens than Full
+  History. Executable action completion remains a separate inconclusive host
+  behavior gate because every memory arm shifted to cautious rehydration.
+
+This change set is prepared as the v0.3.5 release candidate. It has not yet
+been tagged, pushed, or published.
+
+## v0.3.4 - Runtime Complexity Reduction
+
+Release date: 2026-07-11
 
 This unreleased change set reduces accidental complexity in the focused
 Runtime while preserving continuity, evidence-gated learning, controlled
@@ -57,8 +94,7 @@ forgetting, negative-transfer blocking, scope isolation, and auditability.
   conservative reversed-order P50 improved 13.77% and P95 improved 0.49%; no
   regression exceeded the 10% budget.
 
-This change set is prepared as the v0.3.4 release candidate. It has not yet
-been tagged, pushed, or published.
+This change set shipped as Runtime `v0.3.4`.
 
 ## v0.3.2 - Runtime Profile Activation Patch
 

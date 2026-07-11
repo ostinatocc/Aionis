@@ -43,8 +43,7 @@ jobs:
           node --input-type=module -e '
             import fs from "node:fs";
             const releaseTrain = JSON.parse(fs.readFileSync("release-train.json", "utf8"));
-            const candidateRef = `release/sdk-${releaseTrain.packages.sdk.version}`;
-            const fallbackRef = releaseTrain.status === "candidate" ? candidateRef : "main";
+            const fallbackRef = releaseTrain.packages.sdk.source_ref || "main";
             fs.appendFileSync(process.env.GITHUB_OUTPUT, `ref=${process.env.SDK_REF_OVERRIDE || fallbackRef}\n`);
           '
 
