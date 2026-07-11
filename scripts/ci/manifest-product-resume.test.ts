@@ -20,7 +20,20 @@ import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
 
-const MANIFEST_ROOT = "/Volumes/ziel/new.aionis/AionisManifest";
+const MANIFEST_ROOT_CANDIDATES = process.env.AIONIS_MANIFEST_REPO
+  ? [path.resolve(process.env.AIONIS_MANIFEST_REPO)]
+  : [
+      path.resolve(process.cwd(), "..", "AionisManifest"),
+      path.resolve(process.cwd(), "..", "..", "AionisManifest"),
+      path.resolve(process.cwd(), "..", "..", "new.aionis", "AionisManifest"),
+    ];
+const MANIFEST_ROOT = MANIFEST_ROOT_CANDIDATES.find((candidate) =>
+  fs.existsSync(path.join(candidate, "package.json"))) ?? MANIFEST_ROOT_CANDIDATES[0];
+const MANIFEST_AVAILABLE = fs.existsSync(path.join(MANIFEST_ROOT, "dist", "resume.js"))
+  && fs.existsSync(path.join(MANIFEST_ROOT, "fixtures", "valid-minimal.aionis.md"));
+const MANIFEST_SKIP = process.env.AIONIS_MANIFEST_REPO || MANIFEST_AVAILABLE
+  ? false
+  : "external AionisManifest checkout is not present in Runtime-only CI";
 
 function tmpDbPath(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-manifest-product-resume-"));
@@ -225,7 +238,7 @@ async function seedManifestToolRule(liteWriteStore: ReturnType<typeof createLite
   }, "default", "default", { liteWriteStore }));
 }
 
-test("Manifest resumes through real Runtime guide and attributed feedback product routes", async () => {
+test("Manifest resumes through real Runtime guide and attributed feedback product routes", { skip: MANIFEST_SKIP }, async () => {
   const app = Fastify();
   const dbPath = tmpDbPath();
   const liteWriteStore = createLiteWriteStore(dbPath);
