@@ -1581,6 +1581,8 @@ test("product guide can opt into admission candidate policy active projection", 
         scope: "default",
         query_text: "Continue ADMISSION_ACTIVE_POLICY_ROUTE using current route context.",
         consumer_agent_id: "local-user",
+        context_char_budget: 1200,
+        context_compaction_profile: "aggressive",
         limit: 8,
         include_packets: true,
       },
@@ -1608,6 +1610,9 @@ test("product guide can opt into admission candidate policy active projection", 
       body.agent_context.risk.reasons.includes("admission_candidate_policy_active_projection"),
       true,
     );
+    assert.match(body.agent_context.prompt_text, /AIONIS_CTX v2/);
+    assert.doesNotMatch(body.agent_context.prompt_text, /AIONIS_AGENT_CONTEXT v1/);
+    assert.ok(body.agent_context.prompt_text.length <= 1200);
   } finally {
     await liteWriteStore.close();
     await liteRecallStore.close();
@@ -2986,6 +2991,31 @@ test("product observe turns execution input into recallable execution memory", a
       memory_packet: guideBody.memory_packet,
       guide_packet: guideBody.guide_packet,
     }).length);
+
+    const aggressiveGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        mode: "full_power",
+        query_text: "Recover target file before broad discovery",
+        agent_role: "reviewer",
+        consumer_agent_id: "local-user",
+        tool_candidates: ["read", "edit", "test"],
+        context_char_budget: 1200,
+        context_compaction_profile: "aggressive",
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(aggressiveGuide.statusCode, 200, aggressiveGuide.body);
+    const aggressiveAgentContext = aggressiveGuide.json().agent_context;
+    assert.equal(aggressiveAgentContext.agent_context_mode, "standard");
+    assert.match(aggressiveAgentContext.prompt_text, /AIONIS_CTX v2/);
+    assert.doesNotMatch(aggressiveAgentContext.prompt_text, /AIONIS_AGENT_CONTEXT v1/);
+    assert.ok(aggressiveAgentContext.prompt_text.length <= 1200);
+
     assert.equal(guideBody.memory_packet.memory_family, "execution");
     assert.equal(guideBody.guide_packet.guide_brief.history_used, true);
     assert.equal(guideBody.guide_packet.guide_brief.actionable_history_used, true);

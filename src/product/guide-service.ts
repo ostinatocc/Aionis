@@ -2084,7 +2084,7 @@ async function executeProductGuide(args: {
     claim_projection: claimLedgerProjection,
     render_detail: agentContextMode === "compact_agent"
       ? "compact"
-      : fullPowerExecutionContextMerged || claimLedgerContextProjectionApplied ? "full_power" : "standard",
+      : fullPowerExecutionContextMerged || claimLedgerContextProjectionApplied ? "full_power" : null,
   });
   const guideTraceId = buildGuideTraceId();
   let activeProjectionApplied = false;
