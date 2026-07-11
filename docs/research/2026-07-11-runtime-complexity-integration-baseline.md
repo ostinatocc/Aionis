@@ -43,7 +43,7 @@ fast-forward.
 | Release metadata and Docker binding contracts | Pass; 7/7 tests |
 | Local candidate package entrypoints | Pass with local SDK, MCP, and Create; SDK product loop and MCP stdio loop succeeded |
 | Candidate fresh install | Pass from local Runtime `main`; installer, no-key Runtime startup, MCP context, receipt, and workspace scope succeeded |
-| Docker image build and container health | Pass after a non-destructive Docker Desktop engine restart; image `aionis:release-smoke` built and `/healthz` passed on a loopback-only port |
+| Docker image build and container health | Pass after a non-destructive Docker Desktop engine restart; Node 24 image `aionis:release-smoke` built and `/healthz` passed on a loopback-only port |
 
 The candidate fresh-install smoke now accepts
 `AIONIS_FRESH_INSTALL_RUNTIME_REF`. Without an explicit ref, the installer

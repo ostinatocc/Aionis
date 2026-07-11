@@ -10,6 +10,16 @@ function read(relativePath) {
   return fs.readFileSync(path.join(ROOT, relativePath), "utf8");
 }
 
+test("Docker build and runtime stages use the Node 24 baseline", () => {
+  const dockerfile = read("Dockerfile");
+  const nodeStages = dockerfile.match(/^FROM node:[^\s]+ AS (?:deps|runtime)$/gm) ?? [];
+
+  assert.deepEqual(nodeStages, [
+    "FROM node:24-bookworm-slim AS deps",
+    "FROM node:24-bookworm-slim AS runtime",
+  ]);
+});
+
 test("Docker process listens on the container interface while host publishing stays loopback-only", () => {
   const dockerfile = read("Dockerfile");
   const compose = read("docker-compose.yml");

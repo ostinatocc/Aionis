@@ -30,6 +30,8 @@ forgetting, negative-transfer blocking, scope isolation, and auditability.
   product surface.
 - Migrated AionisManifest resume and active Runtime eval consumers away from
   recall/context and tool-learning internal transports.
+- Unified Docker build and runtime stages on Node 24 to match the candidate
+  toolchain and Substrate development dependency floor.
 
 ### Removed
 
