@@ -95,7 +95,7 @@ Docker users can run the Runtime directly:
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.3
+  ghcr.io/ostinatocc/aionis:v0.3.4
 ```
 
 The container process listens on `0.0.0.0` inside its network namespace so

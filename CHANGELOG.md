@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased - Runtime Complexity Reduction
+## Unreleased - v0.3.4 Runtime Complexity Reduction
 
 This unreleased change set reduces accidental complexity in the focused
 Runtime while preserving continuity, evidence-gated learning, controlled
@@ -55,8 +55,8 @@ forgetting, negative-transfer blocking, scope isolation, and auditability.
   conservative reversed-order P50 improved 13.77% and P95 improved 0.49%; no
   regression exceeded the 10% budget.
 
-No release has been prepared from this change set; release notes remain
-unchanged.
+This change set is prepared as the v0.3.4 release candidate. It has not yet
+been tagged, pushed, or published.
 
 ## v0.3.2 - Runtime Profile Activation Patch
 

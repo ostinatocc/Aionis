@@ -5,19 +5,22 @@ Recorded: 2026-07-11
 ## Status
 
 The complexity-reduction and temporary-transport-removal work is integrated on
-local Runtime `main`. Runtime is a validated release candidate, but it is not
-release-ready until the Docker gate runs and release coordinates are advanced
-from the immutable v0.3.3 train.
+local Runtime `main`. Runtime is a validated v0.3.4 release candidate. The
+Docker build and container-health gate now pass; remote publication remains
+intentionally pending.
 
-No remote push, tag, package version bump, npm publish, Docker publish, or
-GitHub release was performed during this integration.
+No remote push, tag, npm publish, Docker publish, or GitHub release was
+performed during this integration. Candidate package versions were updated
+locally only.
 
 ## Integrated revisions
 
 | Repository | Local revision | Remote posture at record time |
 |---|---|---|
-| Runtime | `0d54490` plus the release-smoke alignment in this baseline commit | local `main` was 38 commits ahead of `origin/main` before this commit |
-| `@aionis/sdk` | `7b631aa` | local `main` is 3 commits ahead of `origin/main` |
+| Runtime | `b0adb47` plus the v0.3.4 candidate preparation commit | local `main` was 39 commits ahead of `origin/main` before candidate preparation |
+| `@aionis/sdk` | `7b631aa` plus the 0.3.14 candidate version commit | local `main` was 3 commits ahead of `origin/main` before candidate preparation |
+| `@aionis/create` | 0.3.6 candidate on `aionis/release-train-pin` | branch has no configured upstream |
+| `@aionis/manifest` | 0.1.1 source candidate | local directory is not a Git repository |
 
 The previous Runtime main-worktree edits are preserved in
 `stash@{0}` with message
@@ -34,11 +37,13 @@ fast-forward.
 | Runtime complexity budget | Pass: 283 modules, 120,748 lines, 19 routes, 177 environment fields, 0 import cycles |
 | Runtime public Lite smoke | Pass |
 | Full Runtime Lite suite at integrated revision | 63/63 JavaScript checks and 822/822 TypeScript tests passed, 0 skips |
-| SDK source ownership and package suite | Pass; 14/14 tests |
+| SDK 0.3.14 source ownership, package suite, and pack | Pass; 14/14 tests and dry-run tarball verified |
+| Create 0.3.6 package suite and pack | Pass; 27/27 tests and dry-run tarball verified |
+| Manifest 0.1.1 package suite and pack | Pass; 9/9 tests and dry-run tarball verified |
 | Release metadata and Docker binding contracts | Pass; 7/7 tests |
 | Local candidate package entrypoints | Pass with local SDK, MCP, and Create; SDK product loop and MCP stdio loop succeeded |
 | Candidate fresh install | Pass from local Runtime `main`; installer, no-key Runtime startup, MCP context, receipt, and workspace scope succeeded |
-| Docker image build and container health | Blocked by local Docker Desktop daemon not responding |
+| Docker image build and container health | Pass after a non-destructive Docker Desktop engine restart; image `aionis:release-smoke` built and `/healthz` passed on a loopback-only port |
 
 The candidate fresh-install smoke now accepts
 `AIONIS_FRESH_INSTALL_RUNTIME_REF`. Without an explicit ref, the installer
@@ -49,30 +54,21 @@ mode does not implicitly select the `runtime_compact` final prompt format.
 
 ## Release blockers and decisions
 
-1. Start or repair Docker Desktop, then run the documented image build,
-   container health check, and cleanup commands.
-2. Choose new immutable release coordinates. The current source cannot be
-   published again as v0.3.3. A compatible patch train such as Runtime v0.3.4
-   and SDK 0.3.14 is plausible, but requires owner approval before editing
-   release metadata.
-3. Push Runtime and SDK only after the version decision and Docker gate.
-4. Decide whether the clean local release branches in CLI, Create, and Claude
+1. Push Runtime, SDK, and Create only after review of the prepared candidate
+   commits.
+2. Decide whether the clean local release branches in CLI and Claude
    Code should be merged/pushed as part of the same train. They currently have
    no configured upstream branch.
-5. Place the Manifest and eval consumer changes under their intended source
+3. Place the Manifest and eval consumer changes under their intended source
    ownership; those local directories are not Git repositories.
-6. After publishing, run the published CLI smoke against the exact new package
+4. After publishing, run the published CLI smoke against the exact new package
    version before announcing the release.
 
 ## Recommended release order
 
-1. Complete Docker candidate verification.
-2. Approve and apply Runtime/SDK version coordinates and release notes.
-3. Re-run release metadata, Runtime smoke, SDK package, and candidate install
-   gates.
-4. Push SDK first, then Runtime and any dependent package changes in the
+1. Review and commit the prepared candidate coordinates.
+2. Push SDK first, then Create, Runtime, and any dependent package changes in the
    documented dependency order.
-5. Run exact-version published-package and CLI smoke tests.
-6. Create immutable tags and release artifacts only after all previous gates
+3. Run exact-version published-package and CLI smoke tests.
+4. Create immutable tags and release artifacts only after all previous gates
    pass.
-

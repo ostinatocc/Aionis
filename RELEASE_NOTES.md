@@ -1,8 +1,8 @@
-# Aionis v0.3 Stable Release Notes
+# Aionis v0.3.4 Release Candidate Notes
 
 Aionis v0.3 is the first stable baseline release train for the public Aionis
-Runtime and integration packages. The Runtime source patch documented here is
-`v0.3.3`; npm packages may carry different `0.3.x` patch numbers because they
+Runtime and integration packages. The Runtime source candidate documented here is
+`v0.3.4`; npm packages may carry different `0.3.x` patch numbers because they
 release from standalone repositories.
 
 ## Headline
@@ -15,22 +15,22 @@ controlled forgetting signals, and rehydrate pointers. It then compiles that
 history into governed Agent context: what to use now, what to inspect first,
 what to keep out of direct use, and what raw evidence can be restored on demand.
 
-## Stable Baseline Package Train
+## v0.3.4 Candidate Package Train
 
 Current release coordinates for the v0.3 train and tracked integrations:
 
-- Release status `stable`
+- Release status `candidate`
 - `aionis@0.3.8`
-- `@aionis/create@0.3.5`
-- `@aionis/sdk@0.3.13`
+- `@aionis/create@0.3.6`
+- `@aionis/sdk@0.3.14`
 - `@aionis/mcp@0.3.7`
 - `@aionis/aifs@0.3.4`
 - `@aionis/claude-code@0.3.5`
 - `@aionis/substrate@0.1.11`
-- `@aionis/manifest@0.1.0`
-- Runtime source tag `v0.3.3`
-- Docker image `ghcr.io/ostinatocc/aionis:v0.3.3`
-- Default installer Runtime ref `v0.3.3`
+- `@aionis/manifest@0.1.1`
+- Runtime source tag `v0.3.4`
+- Docker image `ghcr.io/ostinatocc/aionis:v0.3.4`
+- Default installer Runtime ref `v0.3.4`
 
 `@aionis/substrate` remains an experimental sidecar/research package and
 `@aionis/manifest` remains a source-distributed advanced integration. Their
@@ -92,7 +92,8 @@ Direct Runtime installer:
 npx @aionis/create@latest
 ```
 
-Both setup paths clone the immutable Runtime tag `v0.3.3` by default. Mutable
+Both setup paths clone the immutable Runtime tag `v0.3.4` by default after the
+candidate is published. Mutable
 development installation is explicit:
 
 ```bash
@@ -106,7 +107,7 @@ Docker:
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.3
+  ghcr.io/ostinatocc/aionis:v0.3.4
 ```
 
 Optional Zvec candidate index:
@@ -180,10 +181,10 @@ npm publish --access public
 Then tag Runtime and publish Docker:
 
 ```bash
-git tag -a v0.3.3 -m "Aionis v0.3.3"
-git push origin main v0.3.3
-gh release create v0.3.3 \
+git tag -a v0.3.4 -m "Aionis v0.3.4"
+git push origin main v0.3.4
+gh release create v0.3.4 \
   --repo ostinatocc/Aionis \
-  --title "Aionis v0.3.3" \
-  --notes-file docs/releases/v0.3.3.md
+  --title "Aionis v0.3.4" \
+  --notes-file docs/releases/v0.3.4.md
 ```

@@ -1,12 +1,12 @@
 {
   "schema_version": "aionis_release_train_v1",
-  "status": "stable",
+  "status": "candidate",
   "runtime": {
-    "version": "0.3.3",
-    "source_tag": "v0.3.3",
+    "version": "0.3.4",
+    "source_tag": "v0.3.4",
     "docker_image": "ghcr.io/ostinatocc/aionis",
-    "docker_tag": "v0.3.3",
-    "default_installer_ref": "v0.3.3"
+    "docker_tag": "v0.3.4",
+    "default_installer_ref": "v0.3.4"
   },
   "packages": {
     "cli": {
@@ -15,11 +15,11 @@
     },
     "create": {
       "name": "@aionis/create",
-      "version": "0.3.5"
+      "version": "0.3.6"
     },
     "sdk": {
       "name": "@aionis/sdk",
-      "version": "0.3.13"
+      "version": "0.3.14"
     },
     "mcp": {
       "name": "@aionis/mcp",
@@ -39,7 +39,7 @@
     },
     "manifest": {
       "name": "@aionis/manifest",
-      "version": "0.1.0"
+      "version": "0.1.1"
     }
   }
 }
