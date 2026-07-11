@@ -141,6 +141,7 @@ AIONIS_FRESH_INSTALL_CREATE_SPEC="@aionis/create@latest" \
 AIONIS_FRESH_INSTALL_SDK_SPEC="@aionis/sdk@latest" \
 AIONIS_FRESH_INSTALL_MCP_SPEC="@aionis/mcp@latest" \
 AIONIS_FRESH_INSTALL_REPO="file:///absolute/path/to/Aionis" \
+AIONIS_FRESH_INSTALL_RUNTIME_REF="main" \
 npm run -s runtime:smoke:fresh-install
 ```
 

@@ -82,6 +82,7 @@ function installFreshRuntime(input: {
   tmpRoot: string;
   createSpec: string;
   repoOverride: string | null;
+  runtimeRef: string | null;
 }): { targetDir: string; installerOutput: string } {
   const args = [
     "exec",
@@ -96,6 +97,9 @@ function installFreshRuntime(input: {
   ];
   if (input.repoOverride) {
     args.push("--repo", input.repoOverride);
+  }
+  if (input.runtimeRef) {
+    args.push("--branch", input.runtimeRef);
   }
 
   const installerOutput = run(npmCommand(), args, {
@@ -256,7 +260,12 @@ async function runPublishedMcpContextSmoke(input: {
     });
     const payload = asRecord(context.structuredContent);
     assertCondition(payload?.ok === true, `fresh MCP context failed: ${JSON.stringify(context, null, 2)}`);
-    assertCondition(String(payload.agent_prompt ?? "").includes("AIONIS_CTX"), "fresh MCP context did not return compact AgentContext prompt");
+    const agentPrompt = String(payload.agent_prompt ?? "");
+    const executionContext = asRecord(payload.execution_context);
+    assertCondition(agentPrompt.includes("AIONIS_EXECUTION_AGENT_CONTEXT v1"), "fresh MCP context did not return the default SDK execution contract");
+    assertCondition(!agentPrompt.includes("BASE_AIONIS_CONTEXT"), "fresh MCP context stacked the retired base prompt");
+    assertCondition(agentPrompt.length <= 4_000, "fresh MCP context exceeded max_prompt_chars");
+    assertCondition(executionContext?.prompt_format === "contract", "fresh MCP context did not report the default contract prompt format");
     assertCondition(asRecord(payload.memory_use_receipt)?.contract_version === "aionis_memory_use_receipt_v1", "fresh MCP context missing memory use receipt");
 
     const identityPath = path.join(projectDir, ".aionis", "workspace.json");
@@ -286,8 +295,9 @@ async function main(): Promise<void> {
   const mcpSpec = process.env.AIONIS_FRESH_INSTALL_MCP_SPEC?.trim() || DEFAULT_MCP_SPEC;
   const sdkSpec = process.env.AIONIS_FRESH_INSTALL_SDK_SPEC?.trim() || null;
   const repoOverride = process.env.AIONIS_FRESH_INSTALL_REPO?.trim() || null;
+  const runtimeRef = process.env.AIONIS_FRESH_INSTALL_RUNTIME_REF?.trim() || null;
 
-  const install = installFreshRuntime({ tmpRoot, createSpec, repoOverride });
+  const install = installFreshRuntime({ tmpRoot, createSpec, repoOverride, runtimeRef });
   const installedEnv = readInstalledEnv(install.targetDir);
   assertCondition(installedEnv.EMBEDDING_PROVIDER === "none", `fresh installer should default to EMBEDDING_PROVIDER=none; got ${installedEnv.EMBEDDING_PROVIDER ?? "missing"}`);
 
@@ -307,6 +317,7 @@ async function main(): Promise<void> {
       install: {
         create_spec: createSpec,
         repo_override: repoOverride,
+        runtime_ref: runtimeRef,
         target_dir: install.targetDir,
         embedding_provider: installedEnv.EMBEDDING_PROVIDER,
         installer_output_tail: install.installerOutput.slice(-2_000),
