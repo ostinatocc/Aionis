@@ -29,8 +29,10 @@ public Runtime or SDK contract.
 - The 40-case five-arm external context-stability run completed 40 / 40. Aionis
   retained 40 / 40 accepted direction, zero wrong-branch attention or writes,
   and zero rediscovery while using 74.82% fewer prompt tokens than Full
-  History. Executable action completion remains a separate inconclusive host
-  behavior gate because every memory arm shifted to cautious rehydration.
+  History. Executable action completion remains inconclusive because the run
+  did not freeze the multi-step rehydrate-continuation control even though
+  every memory arm shifted to cautious rehydration; the corrected harness now
+  fingerprints that control together with model and script identity.
 
 This change set is prepared as the v0.3.5 release candidate. It has not yet
 been tagged, pushed, or published.

@@ -10,6 +10,17 @@ Run: `full40-five-arm-v0.3.4-fix-e5cc4dc-2026-07-11`
 - Pending records: 0
 - Run status: complete
 
+## Protocol Qualification
+
+This artifact freezes the manifest and agent script hashes, but the original
+run did not record the multi-step agent environment controls. Inspection of the
+retained decision artifacts shows that `rehydrate` terminated the agent instead
+of continuing as a tool step; `AIONIS_E2E_REHYDRATE_CONTINUES` defaults to
+disabled when it is not explicitly set. The context, direction, safety, and
+token measurements below remain valid same-run evidence. The 0% executable
+action-completion rows are protocol-inconclusive rather than isolated evidence
+of a Runtime or model regression.
+
 ## By Level And Arm
 
 | Level | Arm | Runs | Wrong write rate | Wrong attention rate | Accepted direction rate | Action completion rate | Rediscovery steps | Initial context chars | Prompt tokens | Completion tokens |
