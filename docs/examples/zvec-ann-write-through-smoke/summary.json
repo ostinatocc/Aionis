@@ -1,12 +1,12 @@
 {
   "contract_version": "aionis_zvec_ann_write_through_smoke_v1",
-  "generated_at": "2026-07-10T13:36:35.087Z",
+  "generated_at": "2026-07-11T01:22:41.138Z",
   "provider": "zvec",
   "rebuild_on_start": false,
   "sqlite_truth_source": true,
   "runtime_surfaces": [
     "memory_write_service",
-    "/v1/memory/recall"
+    "memory_recall_service"
   ],
   "checks": {
     "weak_write_inline_embedding_updated": true,

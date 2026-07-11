@@ -1,19 +1,21 @@
 # Aionis Runtime HTTP Surface Inventory
 
-Updated: 2026-07-10  
-Scope: 27 registered routes plus 45 Task 11 removal records
+Updated: 2026-07-11
+Scope: 19 registered routes plus 53 removal records
 
 ## Decision
 
-The Runtime now registers 27 inventoried HTTP routes: 19 audited product,
-stable-support, or operator contracts and 8 temporary internal routes still
-used by Manifest or Runtime evals. Task 11 removed 45 implementation-only HTTP
-adapters while retaining their capabilities behind typed services and domain
-functions.
+The Runtime now registers 19 inventoried HTTP routes: 6 product entries,
+3 stable product-support contracts, and 10 operator-support contracts. Task 11
+removed 45 implementation-only HTTP adapters, and the temporary-transport
+phase removed the final 8 internal routes after migrating Manifest and Runtime
+eval consumers. Their capabilities remain behind product contracts, typed
+services, and domain functions.
 
 This inventory remains the deletion gate and records completed removals.
-AionisManifest currently calls five internal routes directly, and Runtime evals
-call three; those eight routes remain `temporary` until their consumers migrate.
+AionisManifest now uses `/v1/guide` and exposure-verified `/v1/feedback` for
+tool selection and learning. Runtime evals use product contracts or typed
+in-process services. No route remains classified as `temporary`.
 
 ## Audit method
 
@@ -37,9 +39,9 @@ Exposure meanings:
 - `internal_evidence`: records, retrieves, or reviews evidence behind a facade.
 - `internal_control`: mutates lifecycle or learning-control state behind a facade.
 
-`public_http` is `required`, `temporary`, or `removed`. A `temporary` route is
-still required by a current repository caller, but that dependency is assigned
-to Task 11 instead of promoted into the product API.
+`public_http` is `required`, `temporary`, or `removed`. There are currently no
+`temporary` rows; the value remains part of the inventory vocabulary for future
+migration gates and must not be treated as a public-product classification.
 
 ## Complete route inventory
 
@@ -121,10 +123,10 @@ to Task 11 instead of promoted into the product API.
 ## Consequences for the simplification plan
 
 - Keep the 19 required routes behaviorally stable.
-- Keep the 8 temporary routes only until their named Manifest/eval consumers
-  migrate; do not reclassify them as public product API.
-- Do not count direct Manifest use as evidence that tool-learning internals are a
-  public product API. Migrate Manifest first, then remove those HTTP adapters.
+- Keep temporary-route count at zero; do not add compatibility replacements for
+  the eight removed transports.
+- Do not count former Manifest use as evidence that tool-learning internals are
+  a public product API. Manifest now consumes product guide/feedback contracts.
 - Evals must validate product behavior through `observe`, `guide`, `feedback`,
   `rehydrate`, `forget`, and `measure`, or through typed in-process services when
   they explicitly test an internal mechanism.

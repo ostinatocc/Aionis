@@ -51,6 +51,30 @@ Both percent changes are within the 10% exit budget. The July 1 absolute
 the exit comparator: current ambient machine conditions produced much higher
 absolute latency in both worktrees.
 
+## 2026-07-11 Temporary Transport Removal A/B
+
+The temporary-transport exit comparison used the same Runtime-only,
+no-embedding workload in the current worktree and the pre-phase `421ca12`
+checkpoint. Each run used 24 measured iterations after 4 warmups on the same
+darwin arm64 host with Node v24.12.0, disabled rate limits, no LLM calls, and
+Lite SQLite. The order was reversed in a second round to expose order or
+ambient-machine effects.
+
+| Round and order | Revision | Total P50 | Total P95 |
+|---|---|---:|---:|
+| 1, current first | Pre-phase `421ca12` | 181.074 ms | 334.297 ms |
+| 1, current first | Current `1a46455` + verification fix | 92.313 ms | 267.684 ms |
+| 1 change |  | -49.02% | -19.93% |
+| 2, baseline first | Pre-phase `421ca12` | 174.913 ms | 314.186 ms |
+| 2, baseline first | Current `1a46455` + verification fix | 150.824 ms | 312.650 ms |
+| 2 change |  | -13.77% | -0.49% |
+
+Neither order showed a regression. The more conservative reversed-order round
+shows P50 improving 13.77% and P95 effectively flat at -0.49%; therefore the
+phase satisfies the no-more-than-10% regression gate. Absolute timings vary
+substantially between adjacent local runs, so this evidence supports a
+non-regression conclusion rather than a stable throughput claim.
+
 ## Summary Matrix
 
 | Configuration | Embedding model | Total P50 | Total P95 | Total P99 | History used | Exposed IDs P50 | Feedback attribution |

@@ -905,38 +905,17 @@ test("focused runtime does not expose generic memory-sandbox public routes", () 
   assert.equal(serverFile.includes("../routes/memory-sandbox.js"), false);
 });
 
-test("lite memory-feedback-tools routes do not keep alternate store branches", () => {
-  const memoryFeedbackToolsFile = fs.readFileSync(path.join(ROOT, "src", "routes", "memory-feedback-tools.ts"), "utf8");
+test("retired memory-feedback-tools adapter is absent while LearningKernel remains typed", () => {
+  const adapterPath = path.join(ROOT, "src", "routes", "memory-feedback-tools.ts");
   const feedbackFile = fs.readFileSync(path.join(ROOT, "src", "memory", "feedback.ts"), "utf8");
+  const learningKernelFile = fs.readFileSync(path.join(ROOT, "src", "kernel", "learning-kernel.ts"), "utf8");
   const serverFile = fs.readFileSync(path.join(ROOT, "src", "server", "http-server.ts"), "utf8");
-  const forbiddenSymbols = [
-    "type StoreLike",
-    "store.withTx",
-    "store.withClient",
-    "executeStore:",
-    "MemoryFeedbackRunner",
-  ];
-  for (const symbol of forbiddenSymbols) {
-    assert.equal(memoryFeedbackToolsFile.includes(symbol), false, `${symbol} should be absent from lite memory-feedback-tools routes`);
-  }
-  assert.equal(serverFile.includes("registerMemoryFeedbackToolRoutes({\n    app,\n    env,\n    store,"), false, "lite runtime server should not pass store into memory-feedback-tools routes");
-  assert.match(memoryFeedbackToolsFile, /assertLocalStoreRuntimeEdition\(env, "local-store memory-feedback-tools routes"\)/);
-  for (const retainedPath of [
-    "/v1/memory/tools/select",
-    "/v1/memory/tools/decision",
-    "/v1/memory/tools/run",
-    "/v1/memory/tools/feedback",
-  ]) {
-    assert.match(memoryFeedbackToolsFile, new RegExp(retainedPath.replaceAll("/", "\\/")));
-  }
-  for (const retiredPath of [
-    "/v1/memory/feedback",
-    "/v1/memory/rules/state",
-    "/v1/memory/learning-loop/run",
-    "/v1/memory/runtime-maintenance/run",
-  ]) {
-    assert.equal(memoryFeedbackToolsFile.includes(retiredPath), false, `${retiredPath} must not remain in the production adapter`);
-  }
+  assert.equal(fs.existsSync(adapterPath), false);
+  assert.equal(serverFile.includes("registerMemoryFeedbackToolRoutes"), false);
+  assert.equal(serverFile.includes("../routes/memory-feedback-tools.js"), false);
+  assert.match(learningKernelFile, /export function createLearningKernel/);
+  assert.match(learningKernelFile, /selectToolWithLearnedMemory/);
+  assert.match(learningKernelFile, /recordToolSelectionFeedback/);
   assert.match(feedbackFile, /lite_write_store_required/);
 });
 
@@ -975,8 +954,9 @@ test("lite learning helpers do not keep legacy memory SQL branches", () => {
   }
 });
 
-test("lite memory-recall routes do not keep store-client recall plumbing", () => {
-  const memoryRecallFile = fs.readFileSync(path.join(ROOT, "src", "routes", "memory-recall.ts"), "utf8");
+test("retired memory-recall adapter is absent while typed recall remains", () => {
+  const adapterPath = path.join(ROOT, "src", "routes", "memory-recall.ts");
+  const memoryRecallFile = fs.readFileSync(path.join(ROOT, "src", "memory", "recall.ts"), "utf8");
   const serverFile = fs.readFileSync(path.join(ROOT, "src", "server", "http-server.ts"), "utf8");
   const forbiddenSymbols = [
     "type StoreLike",
@@ -987,18 +967,16 @@ test("lite memory-recall routes do not keep store-client recall plumbing", () =>
     EMBEDDED_RUNTIME_SYMBOL,
   ];
   for (const symbol of forbiddenSymbols) {
-    assert.equal(memoryRecallFile.includes(symbol), false, `${symbol} should be absent from lite memory-recall routes`);
+    assert.equal(memoryRecallFile.includes(symbol), false, `${symbol} should be absent from typed memory recall`);
   }
-  assert.equal(serverFile.includes("registerMemoryRecallRoutes({\n    app,\n    env,\n    store,"), false, "lite runtime server should not pass store into memory-recall routes");
-  assert.equal(
-    serverFile.includes(`registerMemoryRecallRoutes({\n    app,\n    env,\n    ${EMBEDDED_RUNTIME_SYMBOL},`),
-    false,
-    "lite runtime server should not pass embedded runtime into memory-recall routes",
-  );
-  assert.match(memoryRecallFile, /assertLocalStoreRuntimeEdition\(env, "local-store memory-recall routes"\)/);
+  assert.equal(fs.existsSync(adapterPath), false);
+  assert.equal(serverFile.includes("registerMemoryRecallRoutes"), false);
+  assert.equal(serverFile.includes("../routes/memory-recall.js"), false);
+  assert.match(memoryRecallFile, /export async function memoryRecallParsed/);
+  assert.match(memoryRecallFile, /memoryRecallParsed requires explicit recall_access/);
 });
 
-test("lite memory-context-runtime routes do not keep store-client recall plumbing", () => {
+test("memory planning context service does not keep store-client recall plumbing", () => {
   const memoryContextRuntimeFile = fs.readFileSync(path.join(ROOT, "src", "routes", "memory-context-runtime.ts"), "utf8");
   const serverFile = fs.readFileSync(path.join(ROOT, "src", "server", "http-server.ts"), "utf8");
   const forbiddenSymbols = [
@@ -1008,10 +986,11 @@ test("lite memory-context-runtime routes do not keep store-client recall plumbin
     "liteModeActive",
   ];
   for (const symbol of forbiddenSymbols) {
-    assert.equal(memoryContextRuntimeFile.includes(symbol), false, `${symbol} should be absent from lite memory-context-runtime routes`);
+    assert.equal(memoryContextRuntimeFile.includes(symbol), false, `${symbol} should be absent from memory planning context service`);
   }
-  assert.equal(serverFile.includes("registerMemoryContextRuntimeRoutes({\n    app,\n    env,\n    store,"), false, "lite runtime server should not pass store into memory-context-runtime routes");
-  assert.match(memoryContextRuntimeFile, /assertLocalStoreRuntimeEdition\(env, "local-store memory-context-runtime routes"\)/);
+  assert.equal(serverFile.includes("registerMemoryContextRuntimeRoutes"), false);
+  assert.match(memoryContextRuntimeFile, /export function createMemoryPlanningContextService/);
+  assert.match(memoryContextRuntimeFile, /assertLocalStoreRuntimeEdition\(env, "local-store memory planning context service"\)/);
 });
 
 test("lite handoff routes do not keep alternate store branches", () => {
