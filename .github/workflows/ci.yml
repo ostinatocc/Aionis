@@ -10,7 +10,6 @@ on:
       sdk_ref:
         description: "Standalone @aionis/sdk ref used by ownership checks"
         required: false
-        default: "main"
 
 permissions:
   contents: read
@@ -30,18 +29,31 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Checkout standalone SDK contracts
-        uses: actions/checkout@v4
-        with:
-          repository: ostinatocc/aionis-sdk
-          ref: ${{ inputs.sdk_ref || 'main' }}
-          path: external/aionis-sdk
-
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "24"
           cache: npm
+
+      - name: Resolve standalone SDK ref
+        id: sdk-ref
+        env:
+          SDK_REF_OVERRIDE: ${{ inputs.sdk_ref }}
+        run: |
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const releaseTrain = JSON.parse(fs.readFileSync("release-train.json", "utf8"));
+            const candidateRef = `release/sdk-${releaseTrain.packages.sdk.version}`;
+            const fallbackRef = releaseTrain.status === "candidate" ? candidateRef : "main";
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `ref=${process.env.SDK_REF_OVERRIDE || fallbackRef}\n`);
+          '
+
+      - name: Checkout standalone SDK contracts
+        uses: actions/checkout@v4
+        with:
+          repository: ostinatocc/aionis-sdk
+          ref: ${{ steps.sdk-ref.outputs.ref }}
+          path: external/aionis-sdk
 
       - name: Install dependencies
         run: npm ci

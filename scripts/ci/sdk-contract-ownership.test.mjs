@@ -113,7 +113,13 @@ test("Runtime owns named SDK contract regions instead of the whole client file",
 test("Runtime CI checks out the standalone SDK for ownership verification", () => {
   const workflow = read(path.join(ROOT, ".github", "workflows", "ci.yml"));
   assert.match(workflow, /sdk_ref:/);
+  assert.doesNotMatch(workflow, /sdk_ref:[\s\S]*?default: "main"/);
+  assert.match(workflow, /id: sdk-ref/);
+  assert.match(workflow, /release-train\.json/);
+  assert.match(workflow, /release\/sdk-\$\{releaseTrain\.packages\.sdk\.version\}/);
+  assert.match(workflow, /releaseTrain\.status === "candidate" \? candidateRef : "main"/);
   assert.match(workflow, /repository: ostinatocc\/aionis-sdk/);
+  assert.match(workflow, /ref: \$\{\{ steps\.sdk-ref\.outputs\.ref \}\}/);
   assert.match(workflow, /path: external\/aionis-sdk/);
   assert.match(workflow, /AIONIS_SDK_REPO:.*external\/aionis-sdk/);
 });
