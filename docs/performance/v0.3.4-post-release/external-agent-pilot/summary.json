@@ -1,0 +1,97 @@
+{
+  "contract_version": "aionis_v0_3_4_external_agent_pilot_v1",
+  "recorded_at": "2026-07-11T07:26:22.032Z",
+  "decision": "positive_pilot_full_regression_inconclusive",
+  "runtime": {
+    "branch": "fix/v0.3.4-aggressive-compaction",
+    "commit": "e5cc4dc",
+    "release_tag_under_remediation": "v0.3.4",
+    "release_commit": "aa04a10a9dc00e3dbe965932eb980704b1e3f6d1"
+  },
+  "configuration": {
+    "manifest": "/Volumes/ziel/new.aionis/AionisRuntime-evals/external-agent-e2e/fixtures/phase1-traps.jsonl",
+    "model_profile": "deepseek-v4-flash-direct",
+    "model": "deepseek-v4-flash",
+    "arms": [
+      "no_memory",
+      "full_history",
+      "aionis"
+    ],
+    "traps": 10,
+    "seed_count": 1,
+    "episode2_source": "evidence",
+    "prompt_mode": "neutral_cross_session_challenge"
+  },
+  "aggregate": {
+    "requested_traps": 10,
+    "completed_traps": 10,
+    "failed_traps": 0,
+    "arm_results": 30
+  },
+  "by_arm": [
+    {
+      "arm": "no_memory",
+      "runs": 10,
+      "accepted_direction_hits": 9,
+      "wrong_branch_action_hits": 1,
+      "rediscovery_steps": 4,
+      "prompt_tokens": 118253,
+      "completion_tokens": 12770,
+      "total_tokens": 131023
+    },
+    {
+      "arm": "full_history",
+      "runs": 10,
+      "accepted_direction_hits": 10,
+      "wrong_branch_action_hits": 0,
+      "rediscovery_steps": 5,
+      "prompt_tokens": 126506,
+      "completion_tokens": 8083,
+      "total_tokens": 134589
+    },
+    {
+      "arm": "aionis",
+      "runs": 10,
+      "accepted_direction_hits": 10,
+      "wrong_branch_action_hits": 0,
+      "rediscovery_steps": 1,
+      "prompt_tokens": 133281,
+      "completion_tokens": 12544,
+      "total_tokens": 145825
+    }
+  ],
+  "aionis_relative_change_percent": {
+    "rediscovery_vs_no_memory": -75.0,
+    "rediscovery_vs_full_history": -80.0,
+    "prompt_tokens_vs_no_memory": 12.7083,
+    "prompt_tokens_vs_full_history": 5.3555,
+    "total_tokens_vs_no_memory": 11.2973,
+    "total_tokens_vs_full_history": 8.3484
+  },
+  "usage": {
+    "prompt_tokens": 378040,
+    "completion_tokens": 33397,
+    "total_tokens": 411437,
+    "prompt_cache_hit_tokens": 6272,
+    "prompt_cache_miss_tokens": 371768,
+    "estimated_cost_usd": 0.0623,
+    "estimate_is_provider_receipt": false
+  },
+  "evidence_contract": {
+    "passed": true,
+    "require_five_arm": false,
+    "require_publishable_artifacts": false,
+    "failures": [],
+    "optional_artifacts_missing": [
+      "failure_buckets.json",
+      "leaderboard.md",
+      "admission_dataset.jsonl"
+    ]
+  },
+  "raw_report": "/Volumes/ziel/new.aionis/AionisRuntime-evals/external-agent-e2e/reports/phase1-v0.3.4-fix-e5cc4dc-2026-07-11",
+  "limitations": [
+    "This pilot does not satisfy the separate 40-case five-arm acceptance gate.",
+    "The historical June 11 Phase 1 run used a different episode source and command/model setup and is not a direct release A/B.",
+    "The result validates the fix candidate, not the immutable v0.3.4 tag."
+  ]
+}

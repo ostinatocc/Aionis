@@ -75,6 +75,27 @@ phase satisfies the no-more-than-10% regression gate. Absolute timings vary
 substantially between adjacent local runs, so this evidence supports a
 non-regression conclusion rather than a stable throughput claim.
 
+## 2026-07-11 v0.3.4 Post-Release A/B
+
+The stable `v0.3.4` tag (`aa04a10`) was compared with frozen pre-refactor
+`ca4725d` in two order-controlled Runtime-only rounds on the same Apple M3,
+Node v24.12.0 host. Each revision used 24 measured iterations after 4 warmups,
+Lite SQLite, disabled rate limits, and no embedding or LLM calls.
+
+| Round and order | Revision | Total P50 | Total P95 | Total P99 |
+|---|---|---:|---:|---:|
+| 1, release first | `v0.3.4` | 93.869 ms | 230.109 ms | 324.766 ms |
+| 1, release first | `ca4725d` | 91.189 ms | 282.455 ms | 303.169 ms |
+| 1 change |  | +2.94% | -18.53% | +7.12% |
+| 2, baseline first | `ca4725d` | 90.691 ms | 251.570 ms | 262.934 ms |
+| 2, baseline first | `v0.3.4` | 89.407 ms | 235.823 ms | 279.848 ms |
+| 2 change |  | -1.42% | -6.26% | +6.43% |
+
+Both orderings pass the 10% P50/P95 regression budget. P99 remains inside 10%
+but is not the committed gate. Maximum RSS changed direction with run order and
+is classified as inconclusive. Full artifacts are under
+`docs/performance/v0.3.4-post-release/`.
+
 ## Summary Matrix
 
 | Configuration | Embedding model | Total P50 | Total P95 | Total P99 | History used | Exposed IDs P50 | Feedback attribution |
