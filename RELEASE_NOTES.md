@@ -1,7 +1,7 @@
-# Aionis v0.3.4 Release Candidate Notes
+# Aionis v0.3.4 Release Notes
 
 Aionis v0.3 is the first stable baseline release train for the public Aionis
-Runtime and integration packages. The Runtime source candidate documented here is
+Runtime and integration packages. The Runtime source release documented here is
 `v0.3.4`; npm packages may carry different `0.3.x` patch numbers because they
 release from standalone repositories.
 
@@ -15,11 +15,11 @@ controlled forgetting signals, and rehydrate pointers. It then compiles that
 history into governed Agent context: what to use now, what to inspect first,
 what to keep out of direct use, and what raw evidence can be restored on demand.
 
-## v0.3.4 Candidate Package Train
+## v0.3.4 Package Train
 
 Current release coordinates for the v0.3 train and tracked integrations:
 
-- Release status `candidate`
+- Release status `stable`
 - `aionis@0.3.8`
 - `@aionis/create@0.3.6`
 - `@aionis/sdk@0.3.14`
@@ -93,7 +93,7 @@ npx @aionis/create@latest
 ```
 
 Both setup paths clone the immutable Runtime tag `v0.3.4` by default after the
-candidate is published. Mutable
+release is published. Mutable
 development installation is explicit:
 
 ```bash
@@ -164,8 +164,8 @@ tag:
 cd /Volumes/ziel/new.aionis/aionis-sdk
 npm publish --access public
 
-# 2. After candidate CI, change release status to stable, push Runtime, then
-# create the immutable tag. The tag workflow publishes Docker.
+# 2. After stable verification, push Runtime, then create the immutable tag.
+# The tag workflow publishes Docker.
 cd /Volumes/ziel/new.aionis/AionisRuntime-focused
 git push origin main
 git tag -a v0.3.4 -m "Aionis v0.3.4"

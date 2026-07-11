@@ -1,18 +1,18 @@
 # Aionis Releases
 
-Status: v0.3.4 release candidate for Runtime, npm packages, Docker, MCP, SDK,
+Status: v0.3.4 stable release for Runtime, npm packages, Docker, MCP, SDK,
 AIFS, native adapter release paths, and tracked source integrations.
 
 ## Current Release Coordinates
 
 | Artifact | Current channel | Purpose |
 |---|---:|---|
-| GitHub Runtime source | `v0.3.4` candidate tag | Runtime source, product APIs, docs, Docker build, and Runtime validation loops. |
-| Docker image | `ghcr.io/ostinatocc/aionis:v0.3.4` candidate | Local-first Runtime container with persistent SQLite state under `/data`. |
+| GitHub Runtime source | `v0.3.4` stable tag | Runtime source, product APIs, docs, Docker build, and Runtime validation loops. |
+| Docker image | `ghcr.io/ostinatocc/aionis:v0.3.4` stable | Local-first Runtime container with persistent SQLite state under `/data`. |
 | Default installer Runtime ref | `v0.3.4` | Immutable Runtime source selected by `aionis setup` and `@aionis/create` when no explicit branch override is supplied. |
 | `aionis` | `0.3.8` npm / [repo](https://github.com/ostinatocc/aionis-cli) | Top-level product CLI. Owns `npx aionis setup`, read-only `doctor`/`health`/`boundary`/`snapshot` inspection, Agent Flight Recorder audit, explicit `forget` lifecycle control, and trace-derived skill candidate review commands. |
-| `@aionis/create` | `0.3.6` candidate / [repo](https://github.com/ostinatocc/aionis-create) | One-command Runtime installer. |
-| `@aionis/sdk` | `0.3.14` candidate / [repo](https://github.com/ostinatocc/aionis-sdk) | TypeScript facade over Aionis product APIs, including canonical `AgentContext.agent_prompt`, trace-derived skill helpers, typed task context profiles, and tool-selection receipts for `/v1/guide`. |
+| `@aionis/create` | `0.3.6` npm / [repo](https://github.com/ostinatocc/aionis-create) | One-command Runtime installer. |
+| `@aionis/sdk` | `0.3.14` npm / [repo](https://github.com/ostinatocc/aionis-sdk) | TypeScript facade over Aionis product APIs, including canonical `AgentContext.agent_prompt`, trace-derived skill helpers, typed task context profiles, and tool-selection receipts for `/v1/guide`. |
 | `@aionis/mcp` | `0.3.7` npm / [repo](https://github.com/ostinatocc/aionis-mcp) | MCP stdio bridge for Claude Code, Cursor, Codex-style tools, and other MCP clients. |
 | `@aionis/aifs` | `0.3.4` npm / [repo](https://github.com/ostinatocc/aionis-aifs) | Aionis File Surface for file-aware Agent context. |
 | `@aionis/claude-code` | `0.3.5` npm / [repo](https://github.com/ostinatocc/aionis-claude-code) | Claude Code lifecycle hooks plus plugin marketplace manifest. |
@@ -22,7 +22,7 @@ AIFS, native adapter release paths, and tracked source integrations.
 Fresh-install verification: [v0.3.0 release verification](./releases/v0.3.0-verification.md).
 Runtime patch notes: [v0.3.4 release notes](./releases/v0.3.4.md).
 
-The SDK `0.3.14` candidate keeps the canonical execution-contract
+The SDK `0.3.14` release keeps the canonical execution-contract
 `AgentContext.agent_prompt`, adds typed tool-selection guide/feedback contracts,
 and preserves structured receipts, command posture, resolved evidence,
 trace-derived skill helpers, and typed `task_context_profile` requests.
@@ -158,7 +158,7 @@ until its default `v0.3.4` Runtime ref and Docker image both resolve:
 cd /Volumes/ziel/new.aionis/aionis-sdk
 npm publish --access public
 
-# 2. Finalize Runtime status as stable, push main, tag, and publish the release.
+# 2. Push stable Runtime main, tag, and publish the release.
 cd /Volumes/ziel/new.aionis/AionisRuntime-focused
 git push origin main
 git tag -a v0.3.4 -m "Aionis v0.3.4"
