@@ -150,15 +150,29 @@ AIONIS_PUBLISHED_CLI_SMOKE_SPEC="aionis@0.3.8" \
 npm run -s runtime:smoke:published-cli
 ```
 
-Create a Runtime release:
+Use this publish order after candidate CI passes. Create must remain unpublished
+until its default `v0.3.4` Runtime ref and Docker image both resolve:
 
 ```bash
+# 1. Publish SDK 0.3.14.
+cd /Volumes/ziel/new.aionis/aionis-sdk
+npm publish --access public
+
+# 2. Finalize Runtime status as stable, push main, tag, and publish the release.
+cd /Volumes/ziel/new.aionis/AionisRuntime-focused
+git push origin main
 git tag -a v0.3.4 -m "Aionis v0.3.4"
-git push origin main v0.3.4
+git push origin v0.3.4
 gh release create v0.3.4 \
   --repo ostinatocc/Aionis \
   --title "Aionis v0.3.4" \
   --notes-file docs/releases/v0.3.4.md
+
+# 3. Verify the tag and image, then publish Create 0.3.6.
+docker pull ghcr.io/ostinatocc/aionis:v0.3.4
+git ls-remote --exit-code --tags origin refs/tags/v0.3.4
+cd /Volumes/ziel/new.aionis/aionis-create
+npm publish --access public
 ```
 
 The Docker workflow publishes:
@@ -167,3 +181,8 @@ The Docker workflow publishes:
 ghcr.io/ostinatocc/aionis:v0.3.4
 ghcr.io/ostinatocc/aionis:latest
 ```
+
+Run exact-version fresh-install and published CLI smoke after SDK, Runtime,
+Docker, and Create are all available. MCP, AIFS, Claude Code, and CLI do not
+require a republish for this patch because their source and compatible SDK
+ranges are unchanged.

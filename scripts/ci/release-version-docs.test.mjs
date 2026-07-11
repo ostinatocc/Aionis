@@ -112,3 +112,18 @@ test("workspace @aionis/create default ref matches release-train.json", { skip: 
     "@aionis/create default Runtime ref must match release-train.json",
   );
 });
+
+test("release docs publish the Runtime tag before the version-pinned installer", () => {
+  const train = releaseTrain();
+  const runtimeTagCommand = `git tag -a ${train.runtime.source_tag}`;
+  const createPublishDirectory = "cd /Volumes/ziel/new.aionis/aionis-create";
+
+  for (const file of ["RELEASE_NOTES.md", "docs/AIONIS_RELEASES.md"]) {
+    const source = read(file);
+    const tagIndex = source.indexOf(runtimeTagCommand);
+    const createIndex = source.indexOf(createPublishDirectory);
+    assert.notEqual(tagIndex, -1, `${file} must include the Runtime tag command`);
+    assert.notEqual(createIndex, -1, `${file} must include the Create publish directory`);
+    assert.ok(tagIndex < createIndex, `${file} must tag Runtime before publishing Create`);
+  }
+});

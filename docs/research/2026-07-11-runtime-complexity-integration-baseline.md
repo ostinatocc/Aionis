@@ -66,9 +66,10 @@ mode does not implicitly select the `runtime_compact` final prompt format.
 
 ## Recommended release order
 
-1. Review and commit the prepared candidate coordinates.
-2. Push SDK first, then Create, Runtime, and any dependent package changes in the
-   documented dependency order.
-3. Run exact-version published-package and CLI smoke tests.
-4. Create immutable tags and release artifacts only after all previous gates
-   pass.
+1. Push review branches and wait for candidate CI.
+2. Publish SDK 0.3.14.
+3. Change Runtime release status from `candidate` to `stable`, push Runtime,
+   create `v0.3.4`, and wait for the Docker image to resolve.
+4. Publish Create 0.3.6 only after the Runtime tag and image are verified.
+5. Run exact-version fresh-install and published CLI smoke tests.
+6. Do not republish unchanged MCP, AIFS, Claude Code, or CLI packages.

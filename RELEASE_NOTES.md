@@ -156,35 +156,44 @@ npm run -s runtime:smoke:published-cli
 
 ## Publish Order
 
-Publish packages from standalone repositories in dependency order:
+Publish without creating an installer window that points at a missing Runtime
+tag:
 
 ```bash
-# 1. SDK first
-cd /Volumes/ziel/aionis-sdk
+# 1. Publish the additive SDK contract first.
+cd /Volumes/ziel/new.aionis/aionis-sdk
 npm publish --access public
 
-# 2. Packages that depend on the SDK
-cd /Volumes/ziel/aionis-mcp
-npm publish --access public
-cd /Volumes/ziel/aionis-aifs
-npm publish --access public
-cd /Volumes/ziel/aionis-claude-code/packages/aionis-claude-code
-npm publish --access public
-
-# 3. Installer and top-level CLI
-cd /Volumes/ziel/aionis-create
-npm publish --access public
-cd /Volumes/ziel/aionis-cli
-npm publish --access public
-```
-
-Then tag Runtime and publish Docker:
-
-```bash
+# 2. After candidate CI, change release status to stable, push Runtime, then
+# create the immutable tag. The tag workflow publishes Docker.
+cd /Volumes/ziel/new.aionis/AionisRuntime-focused
+git push origin main
 git tag -a v0.3.4 -m "Aionis v0.3.4"
-git push origin main v0.3.4
+git push origin v0.3.4
 gh release create v0.3.4 \
   --repo ostinatocc/Aionis \
   --title "Aionis v0.3.4" \
   --notes-file docs/releases/v0.3.4.md
+
+# 3. Only after the Runtime tag and Docker image resolve, publish the installer.
+cd /Volumes/ziel/new.aionis/aionis-create
+npm publish --access public
+```
+
+MCP, AIFS, Claude Code, and the top-level CLI have no source or version change
+in this patch. Their existing compatible dependency ranges do not require a
+republish.
+
+After publication, run the candidate smoke with exact versions:
+
+```bash
+AIONIS_FRESH_INSTALL_CREATE_SPEC="@aionis/create@0.3.6" \
+AIONIS_FRESH_INSTALL_SDK_SPEC="@aionis/sdk@0.3.14" \
+AIONIS_FRESH_INSTALL_MCP_SPEC="@aionis/mcp@0.3.7" \
+AIONIS_FRESH_INSTALL_REPO="https://github.com/ostinatocc/Aionis.git" \
+AIONIS_FRESH_INSTALL_RUNTIME_REF="v0.3.4" \
+npm run -s runtime:smoke:fresh-install
+
+AIONIS_PUBLISHED_CLI_SMOKE_SPEC="aionis@0.3.8" \
+npm run -s runtime:smoke:published-cli
 ```
