@@ -28,6 +28,8 @@ jobs:
     name: Verify exact release candidate
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      AIONIS_SDK_REPO: ${{ github.workspace }}/external/aionis-sdk
     outputs:
       publish_latest: ${{ steps.release-metadata.outputs.publish_latest }}
       runtime_tag: ${{ steps.release-metadata.outputs.runtime_tag }}
@@ -139,8 +141,6 @@ jobs:
           npm run -s sdk:check
           npm run -s complexity:check
           node --test scripts/ci/release-version-docs.test.mjs
-        env:
-          AIONIS_SDK_REPO: ${{ github.workspace }}/external/aionis-sdk
 
       - name: Full Lite test suite
         run: npm run -s lite:test

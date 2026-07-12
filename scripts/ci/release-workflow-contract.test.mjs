@@ -23,12 +23,12 @@ test("Docker release verifies all frozen package repositories before publication
   assert.match(workflow, /--check\s*\\?\s*\n\s*--require-package-roots/);
   assert.match(
     workflow,
-    /^          AIONIS_SDK_REPO: \$\{\{ github\.workspace \}\}\/external\/aionis-sdk$/m,
+    /^      AIONIS_SDK_REPO: \$\{\{ github\.workspace \}\}\/external\/aionis-sdk$/m,
   );
   assert.equal(
     (workflow.match(/^\s+AIONIS_SDK_REPO:/gm) ?? []).length,
     1,
-    "sdk:check must receive its own exact SDK repository variable",
+    "the complete verify job must receive the exact SDK repository variable",
   );
   for (const [key, repository, checkoutPath, envKey] of frozenPackages) {
     assert.ok(workflow.includes(`repository: ${repository}`), `missing ${key} repository checkout`);
