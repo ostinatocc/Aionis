@@ -61,7 +61,7 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
   assert.match(workflow, /release-artifact-gate\.mjs[\s\\]*--check/);
   assert.match(workflow, /github\.event_name == 'workflow_dispatch' && inputs\.publish == true/);
   assert.match(workflow, /npm run -s lite:test/);
-  assert.match(workflow, /runtime:smoke:external-packages/);
+  assert.match(workflow, /external-package-entrypoint-smoke\.ts/);
   assert.match(workflow, /runtime:smoke:fresh-install/);
   assert.match(workflow, /docker-release-smoke\.sh/);
   assert.equal(buildActions.length, 1, "release workflow must perform one container build");
@@ -92,6 +92,48 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
   assert.match(workflow, /provenance: mode=max/);
   assert.match(workflow, /sbom: true/);
   assert.doesNotMatch(workflow, /type=raw,value=latest,enable=\$\{\{ startsWith/);
+});
+
+test("cross-package release gates install tarballs packed from exact checkouts", () => {
+  const workflow = read(".github/workflows/docker.yml");
+  const smoke = read("scripts/e2e/external-package-entrypoint-smoke.ts");
+
+  assert.match(workflow, /name: Checkout dispatch verification harness[\s\S]*ref: \$\{\{ github\.sha \}\}[\s\S]*path: external\/release-harness/);
+  assert.match(workflow, /git -C external\/release-harness rev-parse HEAD/);
+  assert.match(workflow, /git -C external\/release-harness diff --name-only "\$\{EXPECTED_RUNTIME_COMMIT\}" "\$\{actual_harness_commit\}"/);
+  assert.match(workflow, /dispatch harness contains non-verification change/);
+  assert.match(workflow, /^        id: package-artifacts$/m);
+  assert.match(workflow, /npm ci --ignore-scripts/);
+  assert.match(workflow, /npm pack --silent --pack-destination "\$\{PACK_DIR\}"/);
+  assert.match(workflow, /AIONIS_RUNTIME_REPO="\$\{GITHUB_WORKSPACE\}"/);
+  for (const [name, checkout] of [
+    ["sdk", "aionis-sdk"],
+    ["mcp", "aionis-mcp"],
+    ["create", "aionis-create"],
+  ]) {
+    assert.match(
+      workflow,
+      new RegExp(`pack_exact ${name} "\\$\\{GITHUB_WORKSPACE\\}/external/${checkout}"`),
+    );
+    assert.match(
+      workflow,
+      new RegExp(`AIONIS_EXTERNAL_SMOKE_${name === "create" ? "CREATE" : name.toUpperCase()}_SPEC="\\$\\{\\{ steps\\.package-artifacts\\.outputs\\.${name}_spec \\}\\}"`),
+    );
+    assert.match(
+      workflow,
+      new RegExp(`AIONIS_FRESH_INSTALL_${name === "create" ? "CREATE" : name.toUpperCase()}_SPEC="\\$\\{\\{ steps\\.package-artifacts\\.outputs\\.${name}_spec \\}\\}"`),
+    );
+  }
+  assert.match(
+    workflow,
+    /github\.event_name == 'workflow_dispatch' && 'external\/release-harness\/scripts\/e2e\/external-package-entrypoint-smoke\.ts'/,
+  );
+  assert.doesNotMatch(workflow, /AIONIS_(?:EXTERNAL_SMOKE|FRESH_INSTALL)_(?:SDK|MCP|CREATE)_SPEC="\$\{GITHUB_WORKSPACE\}\/external\//);
+  assert.match(smoke, /client\.resolveMemory\(/);
+  assert.match(smoke, /client\.execution\.handoff\(/);
+  assert.match(smoke, /client\.execution\.guideForRole\(/);
+  assert.match(smoke, /planning_context_embedding_unavailable/);
+  assert.match(smoke, /full_power_agent_context_merge/);
 });
 
 test("Docker context excludes external release checkouts", () => {

@@ -111,6 +111,33 @@ jobs:
           ref: ${{ steps.release-metadata.outputs.substrate_ref }}
           path: external/AionisSubstrate
 
+      - name: Checkout dispatch verification harness
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: external/release-harness
+          fetch-depth: 0
+
+      - name: Verify dispatch harness commit
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED_RUNTIME_COMMIT: ${{ steps.release-metadata.outputs.runtime_commit }}
+        run: |
+          set -euo pipefail
+          actual_harness_commit="$(git -C external/release-harness rev-parse HEAD)"
+          test "${actual_harness_commit}" = "${GITHUB_SHA}"
+          while IFS= read -r changed_path; do
+            case "${changed_path}" in
+              .github/workflows/docker.yml|scripts/ci/release-workflow-contract.test.mjs|scripts/e2e/external-package-entrypoint-smoke.ts)
+                ;;
+              *)
+                printf 'dispatch harness contains non-verification change: %s\n' "${changed_path}" >&2
+                exit 1
+                ;;
+            esac
+          done < <(git -C external/release-harness diff --name-only "${EXPECTED_RUNTIME_COMMIT}" "${actual_harness_commit}")
+
       - name: Install dependencies
         run: npm ci
 
@@ -141,6 +168,35 @@ jobs:
           npm run -s sdk:check
           npm run -s complexity:check
           node --test scripts/ci/release-version-docs.test.mjs
+
+      - name: Pack exact SDK, MCP, and installer artifacts
+        id: package-artifacts
+        env:
+          PACK_DIR: ${{ runner.temp }}/aionis-release-packages
+        run: |
+          set -euo pipefail
+          mkdir -p "${PACK_DIR}"
+          pack_exact() {
+            local output_name="$1"
+            local package_dir="$2"
+            (
+              cd "${package_dir}"
+              npm ci --ignore-scripts
+            )
+            local filename
+            filename="$(
+              cd "${package_dir}"
+              AIONIS_RUNTIME_REPO="${GITHUB_WORKSPACE}" \
+                npm pack --silent --pack-destination "${PACK_DIR}" | tail -n 1
+            )"
+            filename="$(basename "${filename}")"
+            test -n "${filename}"
+            test -f "${PACK_DIR}/${filename}"
+            printf '%s_spec=%s/%s\n' "${output_name}" "${PACK_DIR}" "${filename}" >> "${GITHUB_OUTPUT}"
+          }
+          pack_exact sdk "${GITHUB_WORKSPACE}/external/aionis-sdk"
+          pack_exact mcp "${GITHUB_WORKSPACE}/external/aionis-mcp"
+          pack_exact create "${GITHUB_WORKSPACE}/external/aionis-create"
 
       - name: Full Lite test suite
         run: npm run -s lite:test
@@ -178,17 +234,17 @@ jobs:
             exit 1
           }
           AIONIS_BASE_URL=http://127.0.0.1:3210 \
-          AIONIS_EXTERNAL_SMOKE_SDK_SPEC="${GITHUB_WORKSPACE}/external/aionis-sdk" \
-          AIONIS_EXTERNAL_SMOKE_MCP_SPEC="${GITHUB_WORKSPACE}/external/aionis-mcp" \
-          AIONIS_EXTERNAL_SMOKE_CREATE_SPEC="${GITHUB_WORKSPACE}/external/aionis-create" \
-          npm run -s runtime:smoke:external-packages
+          AIONIS_EXTERNAL_SMOKE_SDK_SPEC="${{ steps.package-artifacts.outputs.sdk_spec }}" \
+          AIONIS_EXTERNAL_SMOKE_MCP_SPEC="${{ steps.package-artifacts.outputs.mcp_spec }}" \
+          AIONIS_EXTERNAL_SMOKE_CREATE_SPEC="${{ steps.package-artifacts.outputs.create_spec }}" \
+          npx tsx "${GITHUB_WORKSPACE}/${{ github.event_name == 'workflow_dispatch' && 'external/release-harness/scripts/e2e/external-package-entrypoint-smoke.ts' || 'scripts/e2e/external-package-entrypoint-smoke.ts' }}"
 
       - name: Fresh install from the exact Runtime tag
         if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
         run: |
-          AIONIS_FRESH_INSTALL_CREATE_SPEC="${GITHUB_WORKSPACE}/external/aionis-create" \
-          AIONIS_FRESH_INSTALL_MCP_SPEC="${GITHUB_WORKSPACE}/external/aionis-mcp" \
-          AIONIS_FRESH_INSTALL_SDK_SPEC="${GITHUB_WORKSPACE}/external/aionis-sdk" \
+          AIONIS_FRESH_INSTALL_CREATE_SPEC="${{ steps.package-artifacts.outputs.create_spec }}" \
+          AIONIS_FRESH_INSTALL_MCP_SPEC="${{ steps.package-artifacts.outputs.mcp_spec }}" \
+          AIONIS_FRESH_INSTALL_SDK_SPEC="${{ steps.package-artifacts.outputs.sdk_spec }}" \
           AIONIS_FRESH_INSTALL_REPO="https://github.com/${GITHUB_REPOSITORY}.git" \
           AIONIS_FRESH_INSTALL_RUNTIME_REF="${{ steps.release-metadata.outputs.runtime_tag }}" \
           npm run -s runtime:smoke:fresh-install
