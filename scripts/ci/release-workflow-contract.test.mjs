@@ -62,7 +62,7 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
   assert.match(workflow, /github\.event_name == 'workflow_dispatch' && inputs\.publish == true/);
   assert.match(workflow, /npm run -s lite:test/);
   assert.match(workflow, /external-package-entrypoint-smoke\.ts/);
-  assert.match(workflow, /runtime:smoke:fresh-install/);
+  assert.match(workflow, /fresh-install-smoke\.ts/);
   assert.match(workflow, /docker-release-smoke\.sh/);
   assert.equal(buildActions.length, 1, "release workflow must perform one container build");
   assert.match(workflow, /platforms: linux\/amd64(?:\s|$)/);
@@ -128,12 +128,22 @@ test("cross-package release gates install tarballs packed from exact checkouts",
     workflow,
     /github\.event_name == 'workflow_dispatch' && 'external\/release-harness\/scripts\/e2e\/external-package-entrypoint-smoke\.ts'/,
   );
+  assert.match(
+    workflow,
+    /github\.event_name == 'workflow_dispatch' && 'external\/release-harness\/scripts\/e2e\/fresh-install-smoke\.ts'/,
+  );
+  assert.match(workflow, /node --import tsx src\/index\.ts >"\$\{runtime_log\}" 2>&1 &/);
   assert.doesNotMatch(workflow, /AIONIS_(?:EXTERNAL_SMOKE|FRESH_INSTALL)_(?:SDK|MCP|CREATE)_SPEC="\$\{GITHUB_WORKSPACE\}\/external\//);
   assert.match(smoke, /client\.resolveMemory\(/);
   assert.match(smoke, /client\.execution\.handoff\(/);
   assert.match(smoke, /client\.execution\.guideForRole\(/);
   assert.match(smoke, /planning_context_embedding_unavailable/);
   assert.match(smoke, /full_power_agent_context_merge/);
+  const freshInstallSmoke = read("scripts/e2e/fresh-install-smoke.ts");
+  assert.match(freshInstallSmoke, /spawn\(process\.execPath, \["--import", "tsx", "src\/index\.ts"\]/);
+  assert.match(freshInstallSmoke, /await closeRuntime\(runtime\)/);
+  assert.match(freshInstallSmoke, /child\.once\("close"/);
+  assert.match(freshInstallSmoke, /child\.kill\("SIGKILL"\)/);
 });
 
 test("Docker context excludes external release checkouts", () => {

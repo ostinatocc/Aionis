@@ -14,6 +14,7 @@ import { formatE2eError } from "./e2e-error.ts";
 type RuntimeSession = {
   baseUrl: string;
   child: ChildProcessWithoutNullStreams;
+  closed: Promise<void>;
   logs: string[];
 };
 
@@ -133,7 +134,7 @@ function readInstalledEnv(targetDir: string): Record<string, string> {
 async function openInstalledRuntime(targetDir: string): Promise<RuntimeSession> {
   const port = await findFreePort();
   const logs: string[] = [];
-  const child = spawn(npmCommand(), ["run", "-s", "lite:start"], {
+  const child = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], {
     cwd: targetDir,
     env: {
       ...cleanNoKeyEnv(),
@@ -142,6 +143,9 @@ async function openInstalledRuntime(targetDir: string): Promise<RuntimeSession> 
       EMBEDDING_PROVIDER: "none",
     },
     stdio: ["ignore", "pipe", "pipe"],
+  });
+  const closed = new Promise<void>((resolve) => {
+    child.once("close", () => resolve());
   });
 
   child.stdout.on("data", (chunk) => {
@@ -154,15 +158,16 @@ async function openInstalledRuntime(targetDir: string): Promise<RuntimeSession> 
   });
 
   const baseUrl = `http://127.0.0.1:${port}`;
+  const session = { baseUrl, child, closed, logs };
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) break;
+    if (childExited(child)) break;
     try {
       const res = await fetch(`${baseUrl}/readyz`);
       if (res.ok) {
         const body = await res.json() as unknown;
         assertCondition(asRecord(body)?.ready === true, "fresh Runtime /readyz did not report ready");
-        return { baseUrl, child, logs };
+        return session;
       }
     } catch {
       // wait for startup
@@ -170,12 +175,43 @@ async function openInstalledRuntime(targetDir: string): Promise<RuntimeSession> 
     await sleep(250);
   }
 
-  closeRuntime({ baseUrl, child, logs });
+  await closeRuntime(session);
   throw new Error(`fresh Runtime did not become ready.\n${logs.join("").slice(-6_000)}`);
 }
 
-function closeRuntime(session: RuntimeSession): void {
-  if (session.child.exitCode === null) session.child.kill("SIGTERM");
+function childExited(child: ChildProcessWithoutNullStreams): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+async function waitForRuntimeClose(session: RuntimeSession, timeoutMs: number): Promise<boolean> {
+  return await new Promise((resolve) => {
+    let settled = false;
+    const finish = (closed: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(closed);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    session.closed.then(() => finish(true));
+  });
+}
+
+async function closeRuntime(session: RuntimeSession): Promise<void> {
+  const child = session.child;
+  if (!childExited(child)) {
+    child.kill("SIGTERM");
+  }
+  if (!await waitForRuntimeClose(session, 5_000)) {
+    if (!childExited(child)) {
+      child.kill("SIGKILL");
+    }
+    if (!await waitForRuntimeClose(session, 5_000)) {
+      throw new Error("fresh Runtime process did not close after SIGTERM/SIGKILL");
+    }
+  }
+  child.stdout.destroy();
+  child.stderr.destroy();
 }
 
 async function runPublishedMcpContextSmoke(input: {
@@ -302,6 +338,7 @@ async function main(): Promise<void> {
   assertCondition(installedEnv.EMBEDDING_PROVIDER === "none", `fresh installer should default to EMBEDDING_PROVIDER=none; got ${installedEnv.EMBEDDING_PROVIDER ?? "missing"}`);
 
   const runtime = await openInstalledRuntime(install.targetDir);
+  let result: Record<string, unknown> | null = null;
   try {
     const mcp = await runPublishedMcpContextSmoke({
       tmpRoot,
@@ -311,7 +348,7 @@ async function main(): Promise<void> {
       runId,
     });
 
-    const result = {
+    result = {
       contract_version: "aionis_fresh_install_smoke_v1",
       run_id: `fresh-install-smoke-${runId}`,
       install: {
@@ -339,10 +376,11 @@ async function main(): Promise<void> {
       },
     };
 
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } finally {
-    closeRuntime(runtime);
+    await closeRuntime(runtime);
   }
+  assertCondition(result, "fresh install smoke did not produce a result");
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : "";

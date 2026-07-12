@@ -129,7 +129,7 @@ jobs:
           test "${actual_harness_commit}" = "${GITHUB_SHA}"
           while IFS= read -r changed_path; do
             case "${changed_path}" in
-              .github/workflows/docker.yml|scripts/ci/release-workflow-contract.test.mjs|scripts/e2e/external-package-entrypoint-smoke.ts)
+              .github/workflows/docker.yml|scripts/ci/release-workflow-contract.test.mjs|scripts/e2e/external-package-entrypoint-smoke.ts|scripts/e2e/fresh-install-smoke.ts)
                 ;;
               *)
                 printf 'dispatch harness contains non-verification change: %s\n' "${changed_path}" >&2
@@ -214,7 +214,7 @@ jobs:
           EMBEDDING_PROVIDER=none \
           LITE_WRITE_SQLITE_PATH="${runtime_tmp}/write.sqlite" \
           LITE_REPLAY_SQLITE_PATH="${runtime_tmp}/replay.sqlite" \
-          npm run -s lite:start >"${runtime_log}" 2>&1 &
+          node --import tsx src/index.ts >"${runtime_log}" 2>&1 &
           runtime_pid=$!
           cleanup() {
             kill -TERM "${runtime_pid}" >/dev/null 2>&1 || true
@@ -237,7 +237,7 @@ jobs:
           AIONIS_EXTERNAL_SMOKE_SDK_SPEC="${{ steps.package-artifacts.outputs.sdk_spec }}" \
           AIONIS_EXTERNAL_SMOKE_MCP_SPEC="${{ steps.package-artifacts.outputs.mcp_spec }}" \
           AIONIS_EXTERNAL_SMOKE_CREATE_SPEC="${{ steps.package-artifacts.outputs.create_spec }}" \
-          npx tsx "${GITHUB_WORKSPACE}/${{ github.event_name == 'workflow_dispatch' && 'external/release-harness/scripts/e2e/external-package-entrypoint-smoke.ts' || 'scripts/e2e/external-package-entrypoint-smoke.ts' }}"
+          node --import tsx "${GITHUB_WORKSPACE}/${{ github.event_name == 'workflow_dispatch' && 'external/release-harness/scripts/e2e/external-package-entrypoint-smoke.ts' || 'scripts/e2e/external-package-entrypoint-smoke.ts' }}"
 
       - name: Fresh install from the exact Runtime tag
         if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
@@ -247,7 +247,7 @@ jobs:
           AIONIS_FRESH_INSTALL_SDK_SPEC="${{ steps.package-artifacts.outputs.sdk_spec }}" \
           AIONIS_FRESH_INSTALL_REPO="https://github.com/${GITHUB_REPOSITORY}.git" \
           AIONIS_FRESH_INSTALL_RUNTIME_REF="${{ steps.release-metadata.outputs.runtime_tag }}" \
-          npm run -s runtime:smoke:fresh-install
+          node --import tsx "${GITHUB_WORKSPACE}/${{ github.event_name == 'workflow_dispatch' && 'external/release-harness/scripts/e2e/fresh-install-smoke.ts' || 'scripts/e2e/fresh-install-smoke.ts' }}"
 
   docker:
     name: Build once, verify digest, and promote Docker image
