@@ -43,10 +43,23 @@ rehydrated later, and why each decision was made.
 npx aionis setup
 ```
 
-Current release: **v0.3.x stable baseline**. Use it today as a local Runtime,
-TypeScript SDK, HTTP API, MCP bridge, AIFS file surface, Memory Firewall, Agent
-Flight Recorder, optional Zvec candidate retrieval, and Substrate evidence
-sidecar.
+Current candidate: **v0.3.5 Local Runtime Public Beta**. It is intended for a
+single self-hosted Runtime process with same-host Agent clients. The TypeScript
+SDK, HTTP API, MCP bridge, AIFS file surface, Memory Firewall, Agent Flight
+Recorder, optional Zvec candidate retrieval, and Substrate evidence sidecar are
+available for beta integration and evaluation.
+
+This candidate is not a GA managed service and does not claim multi-instance
+high availability. Lite keeps SQLite as authority; its in-process ANN is rebuilt
+from committed SQLite vectors after restart. Deployments that run several
+Runtime processes need a shared persistent ANN or an explicit cross-instance
+reconciliation design.
+
+The write boundary is crash recoverable: `observe` and direct handoff writes
+accept an `operation_id`, return a durable receipt, and replay that exact receipt
+after an ambiguous network failure. Semantic memory state and durable
+embedding/ANN projection intents commit together. A scheduled projection is not
+the same as completed projection; inspect `/health` for worker and backlog state.
 
 Docs: [docs.aionis.work](https://docs.aionis.work)
 
@@ -931,6 +944,7 @@ Official docs: [https://docs.aionis.work](https://docs.aionis.work)
 |---|---|
 | [AIONIS_INSTALL.md](docs/AIONIS_INSTALL.md) | One-command install path for Runtime plus SDK and MCP packages. |
 | [AIONIS_RELEASES.md](docs/AIONIS_RELEASES.md) | GitHub release, Docker image, npm package, SDK, and MCP artifact map. |
+| [AIONIS_RUNTIME_DATA_OPERATIONS.md](docs/AIONIS_RUNTIME_DATA_OPERATIONS.md) | SQLite preflight, v0.3.4 upgrade, verified backup/restore, and durable projection repair. |
 | [AIONIS_EVIDENCE_INDEX.md](docs/AIONIS_EVIDENCE_INDEX.md) | Current evidence map for context stability, MGBench, compression, MemoryData, performance, and external Agent cases. |
 | [AIONIS_MCP.md](docs/AIONIS_MCP.md) | MCP bridge for Claude Code, Cursor, and other coding-agent clients. |
 | [AIONIS_CLAUDE_CODE_INTEGRATION.md](docs/AIONIS_CLAUDE_CODE_INTEGRATION.md) | Official Claude Code plugin and lifecycle hook integration. |
@@ -989,9 +1003,10 @@ Internal architecture notes live in:
 2. [docs/ARCHITECTURE_BOUNDARY.md](docs/ARCHITECTURE_BOUNDARY.md)
 3. [docs/AIONIS_CAPABILITY_DECISION_MATRIX.md](docs/AIONIS_CAPABILITY_DECISION_MATRIX.md)
 
-Deployment notes: Lite is optimized for local developer machines and same-host
-Agent clients. Managed Server settings add API-key/JWT auth and request
-controls for remote SDK/MCP clients.
+Deployment notes: this Public Beta candidate is optimized for one local Runtime
+process and same-host Agent clients. Server settings add API-key/JWT auth and
+request controls for bounded remote evaluation, but are not a claim of a
+managed, multi-tenant, multi-instance HA service.
 
 ## License
 

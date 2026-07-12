@@ -12,12 +12,18 @@ function read(relativePath) {
 
 test("Docker build and runtime stages use the Node 24 baseline", () => {
   const dockerfile = read("Dockerfile");
-  const nodeStages = dockerfile.match(/^FROM node:[^\s]+ AS (?:deps|runtime)$/gm) ?? [];
+  assert.match(
+    dockerfile,
+    /^# syntax=docker\/dockerfile:1\.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e$/m,
+  );
+  const pinnedNodeImage =
+    "node:24-bookworm-slim@sha256:cb4e8f7c443347358b7875e717c29e27bf9befc8f5a26cf18af3c3dec80e58c5";
 
-  assert.deepEqual(nodeStages, [
-    "FROM node:24-bookworm-slim AS deps",
-    "FROM node:24-bookworm-slim AS runtime",
-  ]);
+  assert.match(dockerfile, new RegExp(`^FROM --platform=\\$BUILDPLATFORM ${pinnedNodeImage.replaceAll(".", "\\.")} AS verify$`, "m"));
+  assert.match(dockerfile, new RegExp(`^FROM ${pinnedNodeImage.replaceAll(".", "\\.")} AS runtime-deps$`, "m"));
+  assert.match(dockerfile, new RegExp(`^FROM ${pinnedNodeImage.replaceAll(".", "\\.")} AS runtime$`, "m"));
+  assert.match(dockerfile, /COPY --from=verify \/tmp\/aionis-build-verified/);
+  assert.match(dockerfile, /COPY --from=runtime-deps --chown=node:node \/app\/node_modules/);
 });
 
 test("Docker process listens on the container interface while host publishing stays loopback-only", () => {

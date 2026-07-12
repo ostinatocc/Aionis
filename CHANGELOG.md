@@ -1,9 +1,26 @@
 # Changelog
 
-## Unreleased - v0.3.5 Aggressive Compaction Repair
+## Unreleased - v0.3.5 Local Runtime Public Beta Candidate
 
-This patch repairs aggressive AgentContext compaction without changing the
-public Runtime or SDK contract.
+This candidate repairs aggressive AgentContext compaction and hardens the
+single-process Local Runtime continuity boundary. It includes public Runtime
+and SDK contract changes; SDK `0.3.15` is the matching client candidate.
+
+### Added
+
+- Durable `operation_id` receipts for `/v1/observe` and direct
+  `/v1/handoff/store`, including exact replay and conflict rejection.
+- `aionis_observe_result_v1` post-commit projection scheduling and
+  `aionis_handoff_store_result_v1` response contracts.
+- Durable embedding generation and ANN reconciliation jobs with leases,
+  generations, CAS completion, retry/dead-letter states, worker health, and
+  startup rebuild of local ANN from SQLite truth.
+- Runtime-owned `/v1/measure` `evidence_assessment`, persisted measurement
+  identity/digest, and explicit reporting of ignored client evidence claims.
+- SQLite preflight, v0.3.4 upgrade, verified backup/restore, full execution
+  history audit, and durable projection repair operations.
+- Immutable source tags paired with exact commits for every package in
+  `release-train.json`; unfrozen Manifest is excluded from this train.
 
 ### Changed
 
@@ -13,29 +30,37 @@ public Runtime or SDK contract.
   surfaces bounded under explicit character budgets.
 - Preserve guide-only target files when the selected current memory does not
   carry its own target-file projection.
-- Make the Runtime release train declare the exact standalone SDK source ref
-  used by candidate CI instead of inferring an SDK candidate branch from the
-  Runtime release status.
+- Commit observe memory, execution state/tree, handoff, claims, operation
+  receipt, and projection intent as one SQLite unit of work.
+- Reject stale execution state/tree snapshots instead of silently restoring old
+  continuity state under a newer revision.
+- Treat manual measure input and caller-provided `sufficient_evidence` or
+  `evidence_ids` as unverified; learning and skill export require Runtime-owned
+  evidence receipts and complete passing kernel metrics.
+- Fail current-schema startup before business DDL when an authority column,
+  primary/unique constraint, or critical scheduler index is missing or altered.
+- Build one digest-pinned `linux/amd64` image, smoke that exact digest, and only
+  then promote the same digest to release tags; arm64 remains outside this train.
 
 ### Verified
 
-- SDK and structural checks: 66 / 66.
-- TypeScript Runtime suite: 818 passed, zero failed, four optional Zvec tests
-  skipped because the native dependency was unavailable on the validation
-  host.
-- The fix reduced mean projected context by 37.18% versus immutable `v0.3.4`
-  and by 14.55% versus the frozen pre-refactor comparator while preserving
-  recall, stale-leak, rehydration, audit, and Memory Firewall outcomes.
-- The 40-case five-arm external context-stability run completed 40 / 40. Aionis
-  retained 40 / 40 accepted direction, zero wrong-branch attention or writes,
-  and zero rediscovery while using 74.82% fewer prompt tokens than Full
-  History. Executable action completion remains inconclusive because the run
-  did not freeze the multi-step rehydrate-continuation control even though
-  every memory arm shifted to cautious rehydration; the corrected harness now
-  fingerprints that control together with model and script identity.
+- Real SQLite/HTTP tests cover atomic rollback, stale snapshots, durable replay,
+  operation-ID conflict, corrupt receipts, and evidence-gate bypass attempts.
+- Real child-process tests crash immediately after commit and recover embedding
+  plus ANN work after restart.
+- Destructive SQLite tests prove continuity/history corruption, broken current
+  schemas, and invalid projection payloads cannot pass verify or backup.
+- Latest pre-freeze Runtime suite: 919 tests, 915 passed, zero failed, and four
+  optional native Zvec tests skipped. Final frozen-ref and release-smoke gates
+  remain required.
+- The compaction repair reduced mean projected context by 37.18% versus
+  immutable `v0.3.4` and by 14.55% versus the frozen pre-refactor comparator
+  while preserving recall, stale-leak, rehydration, audit, and Memory Firewall
+  outcomes.
 
-This change set is prepared as the v0.3.5 release candidate. It has not yet
-been tagged, pushed, or published.
+This change set is a Local Runtime Public Beta candidate. It has not been
+tagged, pushed, or published, and it does not claim a managed multi-tenant or
+multi-instance HA service.
 
 ## v0.3.4 - Runtime Complexity Reduction
 

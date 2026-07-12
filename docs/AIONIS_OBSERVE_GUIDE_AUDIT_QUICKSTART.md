@@ -1,6 +1,6 @@
 # Aionis Observe Guide Audit Quickstart
 
-Status: product quickstart for the focused local Runtime
+Status: product quickstart for the v0.3.5 Local Runtime Public Beta candidate
 
 This quickstart shows the shortest product path:
 
@@ -206,6 +206,7 @@ contradict it.
 curl -sS -X POST "$AIONIS_URL/v1/observe" \
   -H "content-type: application/json" \
   -d '{
+    "operation_id": "observe:quickstart:old-checkout-route",
     "tenant_id": "default",
     "scope": "quickstart",
     "auto_embed": true,
@@ -217,7 +218,7 @@ curl -sS -X POST "$AIONIS_URL/v1/observe" \
       "text_summary": "QUICKSTART_OLD_ROUTE Initial checkout work looked like it belonged in legacy/payments/old-checkout.ts. This was an early working note before later evidence.",
       "confidence": 0.91
     }
-  }'
+  }' | jq '{operation_id, observed, post_commit_projections}'
 ```
 
 ## 2. Observe Correcting Memory
@@ -228,6 +229,7 @@ Write a newer memory that explicitly corrects the old route.
 curl -sS -X POST "$AIONIS_URL/v1/observe" \
   -H "content-type: application/json" \
   -d '{
+    "operation_id": "observe:quickstart:current-checkout-route",
     "tenant_id": "default",
     "scope": "quickstart",
     "auto_embed": true,
@@ -239,8 +241,13 @@ curl -sS -X POST "$AIONIS_URL/v1/observe" \
       "text_summary": "QUICKSTART_CURRENT_ROUTE Later repository evidence corrected the earlier checkout note. The legacy route should be treated as an unverified prior; current checkout work belongs in src/payments/checkout.ts.",
       "confidence": 0.94
     }
-  }'
+  }' | jq '{operation_id, observed, post_commit_projections}'
 ```
+
+Each ID belongs to one logical write. Retry the exact request with the same ID
+after an ambiguous network failure; never reuse it for different content.
+Projection `scheduled` means the durable job exists, not that embedding or ANN
+work completed synchronously.
 
 ## 3. Guide The Agent
 

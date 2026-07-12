@@ -9,6 +9,7 @@ npm-debug.log*
 coverage
 dist
 eval_results
+/external
 *.sqlite
 *.sqlite-*
 AionisDashboard

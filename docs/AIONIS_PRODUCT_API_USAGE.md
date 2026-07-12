@@ -1,11 +1,13 @@
 # Aionis Product API Usage
 
-Status: product API usage guide for the focused Runtime
+Status: product API usage guide for the v0.3.5 Local Runtime Public Beta candidate
 
 This document explains how a host should use the product actions:
 `observe`, `guide`, `feedback`, `measure`, `rehydrate`, and `snapshot`.
 
-It describes the stable product path over the current Runtime implementation.
+It describes the candidate product path over the current Runtime
+implementation. Contract changes in this candidate are carried by SDK
+`0.3.15`; this is a Public Beta contract, not a GA compatibility promise.
 
 For host template wiring and runnable single-agent, multi-agent, and coding
 Agent examples, see [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md).
@@ -40,12 +42,13 @@ For trace-derived skill candidate review and the explicit skill-memory path, see
 
 | Route | Product Action | Caller | Primary Consumer | Main Output |
 |---|---|---|---|---|
-| `POST /v1/observe` | `observe` | Host after real work or memory input | Runtime write path | `observed`, `structured_memory` |
+| `POST /v1/observe` | `observe` | Host after real work or memory input | Runtime write path | durable `operation_id`, `observed`, `post_commit_projections` |
+| `POST /v1/handoff/store` | direct durable handoff | Host that uses the lower-level handoff surface | Runtime handoff/write path | durable `operation_id`, `aionis_handoff_store_result_v1` |
 | `POST /v1/guide` | `guide` | Host before the next Agent run | Agent prompt builder | `agent_context` |
 | `POST /v1/memory/govern` | govern external memory | Host before using Mem0/Zep/vector DB/markdown candidates | Memory admission gateway | `agent_context`, `memory_use_receipt`, optional `memory_admission_records` |
 | `POST /v1/feedback` | `feedback` | Host after the Agent acts | Feedback attribution | `forget_effect` with `operation: "activate"` |
 | `POST /v1/rehydrate` | `rehydrate` | Host when compact context needs original evidence or payload | Payload / archive lifecycle controller | `forget_effect` with `operation: "rehydrate"` |
-| `POST /v1/measure` | `measure` | Host, operator, or product evaluator | Product diagnostics | `effect_report`, optional decision trace and audit |
+| `POST /v1/measure` | `measure` | Host, operator, or product evaluator | Product diagnostics | `evidence_assessment`, `effect_report`, optional decision trace and audit |
 | `POST /v1/skills/candidates` | queue skill candidates | Host or operator after measure | Trace-derived skill review ledger | queued candidate rows |
 | `GET /v1/skills/candidates` | list skill candidates | Host or operator | Trace-derived skill review ledger | pending/promoted/rejected candidate rows |
 | `POST /v1/skills/candidates/:id/promote` | review skill candidate | Operator or host review workflow | Trace-derived skill review ledger | promoted review row |
@@ -110,7 +113,8 @@ For host decisions, distinguish these two fields:
    or anchor payload needs to be expanded.
 6. Call `POST /v1/measure` with before/after guide packets or direct
    observations when the product needs to prove whether history helped or hurt.
-7. Queue trace-derived skill candidates with `POST /v1/skills/candidates` when
+7. Queue trace-derived skill candidates with `POST /v1/skills/candidates` only
+   when `measure.evidence_assessment.eligible_for_skill_export` is true and
    `measure.effect_report.training_candidates` contains reusable execution
    lessons that should enter operator review. Promote or reject each candidate.
    To make a promoted candidate recallable, call
@@ -122,6 +126,46 @@ For host decisions, distinguish these two fields:
 8. Call `POST /v1/operator/snapshot` when a host or operator needs a read-only
    summary of actionable history, feedback attribution, branch isolation, and
    measured effect.
+
+## Durable Writes And Projection Status
+
+Treat `operation_id` as the idempotency key for every logical write attempt.
+Generate it before the first request and reuse it only when retrying the exact
+same effective request:
+
+- `/v1/observe` returns `aionis_observe_result_v1` with the durable
+  `operation_id` and `post_commit_projections`.
+- Direct `/v1/handoff/store` returns `aionis_handoff_store_result_v1` with the
+  durable `operation_id`.
+- A retry with the same ID and same request returns the stored receipt. Reusing
+  the ID for different content returns HTTP `409`.
+- `post_commit_projections.embedding: "scheduled"` and
+  `ann_sync: "scheduled"` mean a durable job was committed; they do not claim
+  that the external embedding provider or ANN side effect has completed.
+
+The semantic write and projection intent share the SQLite transaction. The
+worker may report `pending`, `running`, `retry`, `dead_letter`, or `succeeded`
+jobs under `/health -> lite.stores.write.projections`; worker liveness is under
+`/health -> lite.stores.projection_worker`. Operators should alert on
+`dead_letter`, persistent `retry`, provider mismatch, or legacy pending rows.
+
+This recovery model covers one Lite Runtime process. Its local in-memory ANN is
+rebuilt from committed SQLite vectors at startup. Several Runtime processes
+require a shared persistent ANN or cross-instance reconciliation.
+
+## Measure Evidence Gate
+
+`/v1/measure` computes evidence sufficiency from Runtime-owned receipts. Client
+fields named `sufficient_evidence` and `evidence_ids` remain accepted for wire
+compatibility, but they are claims, not proof, and are exposed only under
+`evidence_assessment.client_claims_ignored`.
+
+Manual observations always have `provenance: "manual_unverified"`,
+`sufficient_evidence: false`, and `eligible_for_skill_export: false`. A measure
+becomes export-eligible only when Runtime verifies the paired guide receipts,
+task/run binding, ordered observations, trusted Runtime verifier receipt,
+linked positive tool feedback, and complete passing kernel metrics. Hosts must
+branch on `evidence_assessment`, never on fields they supplied in the request.
 
 ## SDK Product Path
 
@@ -160,6 +204,7 @@ await aionis.remember({
 });
 
 await aionis.observe({
+  operation_id: "observe:checkout:run-001:recovered-workflow",
   auto_embed: true,
   execution: {
     run_id: "run-001",
@@ -228,9 +273,11 @@ const measure = await aionis.measure(measureInputFromGuideLoop({
   },
   after_guide: guide,
   feedback_result: feedback,
-  sufficient_evidence: true,
-  evidence_ids: ["verifier:run-001"],
 }));
+
+// This short example has no Runtime-verified before/after verifier chain, so it
+// is diagnostic only and cannot export learning or skill candidates.
+console.log(measure.evidence_assessment);
 
 await aionis.snapshot(snapshotInputFromGuideLoop({
   run_id: "run-001",
@@ -257,6 +304,8 @@ compile from a guide or pass selected `agent_context` fields directly. Keep
 `feedbackFromGuide()` validates attribution against the guide exposure ledger,
 while `measureInputFromGuideLoop()` and `snapshotInputFromGuideLoop()` hide the
 internal `product_trace` and operator snapshot wiring from normal app code.
+The measure helper still accepts legacy client evidence claims, but the Runtime
+does not use them to open the evidence gate.
 
 `memoryAdmissionRecordFromGuide()` returns the read-only
 `AionisMemoryAdmissionRecord`: one row per candidate memory with the admission
@@ -395,10 +444,10 @@ Adapter contract version: `aionis_execution_memory_adapter_v1`.
 | Surface | Host Required | Advanced Optional |
 |---|---|---|
 | `createExecutionMemoryAdapter` | `client`; for shared multi-agent memory, `team_id` or per-call `team_id` | `tenant_id`, `scope`, `default_agent_id`, `default_agent_role`, `default_memory_lane`, `default_limit` |
-| `observeRunStart` / `observeStep` | `run_id`, `task_signature`, `agent_id` or `default_agent_id`, `title`, `summary` | `task_family`, `workflow_signature`, `target_files`, `workflow_steps`, `raw_ref`, `evidence_ref`, `slots`, `handoff.execution_tree_v1`, `handoff.execution_tree_operations_v1` |
+| `observeRunStart` / `observeStep` | `run_id`, `task_signature`, `agent_id` or `default_agent_id`, `title`, `summary` | durable `operation_id`, `task_family`, `workflow_signature`, `target_files`, `workflow_steps`, `raw_ref`, `evidence_ref`, `slots`, `handoff.execution_tree_v1`, `handoff.execution_tree_operations_v1` |
 | `guideNext` | `run_id`, `task_signature`, `agent_id` or `default_agent_id`, `query_text` | `context`, `execution_tree_v1`, `tool_candidates`, `limit`, `include_packets`, `mode` |
 | `observeOutcome` | same as `observeStep`; `used_memory_ids` when feedback attribution is wanted | `guide_run_id`, `guide_trace_id`, `runtime_signal_refs`, `feedback_outcome`, `used_surface` |
-| `measureRun` | `run_id`, `task_signature` | `before_guide`, `after_guide`, `forget_result`, `evidence_ids`, `task`, `product_trace` |
+| `measureRun` | `run_id`, `task_signature` | `before_guide`, `after_guide`, `forget_result`, `task`, `product_trace`; legacy evidence claims are reported as ignored |
 | `operatorSnapshotRun` | `run_id`, `task_signature` | `agent_context`, `execution_context`, `measure_result`, `guide_trace_id`, `include_markdown` |
 
 The adapter rejects shared writes or guides without a team boundary. Use

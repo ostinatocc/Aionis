@@ -17,6 +17,10 @@ type SandboxLifecycle = {
   shutdown: () => void;
 };
 
+type AsyncLifecycle = {
+  shutdown: () => Promise<void>;
+};
+
 export function createHttpApp(env: Env) {
   return Fastify({
     logger: true,
@@ -40,6 +44,7 @@ export function registerBootstrapLifecycle(args: {
   liteRecallStore?: CloseableRuntimeStore | null;
   liteReplayStore?: CloseableRuntimeStore | null;
   liteWriteStore?: CloseableRuntimeStore | null;
+  projectionWorker?: AsyncLifecycle | null;
   associativeLinkWorker?: SandboxLifecycle | null;
   liteClaimLedgerStore?: CloseableRuntimeStore | null;
   liteSkillCandidateReviewStore?: CloseableRuntimeStore | null;
@@ -53,6 +58,7 @@ export function registerBootstrapLifecycle(args: {
     liteRecallStore,
     liteReplayStore,
     liteWriteStore,
+    projectionWorker,
     associativeLinkWorker,
     liteClaimLedgerStore,
     liteSkillCandidateReviewStore,
@@ -61,6 +67,7 @@ export function registerBootstrapLifecycle(args: {
   } = args;
   app.addHook("onClose", async () => {
     associativeLinkWorker?.shutdown();
+    if (projectionWorker) await projectionWorker.shutdown();
     sandboxExecutor.shutdown();
     if (executionTreeStore) await executionTreeStore.close();
     if (executionStateStore) await executionStateStore.close();

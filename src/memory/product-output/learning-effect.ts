@@ -576,8 +576,7 @@ function effectExplanation(report: KernelEffectReport, direction: ProductImpactD
 }
 
 export function buildAionisEffectReport(args: BuildAionisEffectReportArgs): AionisEffectReport {
-  const sufficientEvidence = args.comparison?.sufficient_evidence
-    ?? (args.comparison?.mode === "single_run_history_impact" ? false : true);
+  const sufficientEvidence = args.comparison?.sufficient_evidence === true;
   const direction = impactDirection({ report: args.report, sufficientEvidence });
   const changed = sufficientEvidence ? changedFields(args.report) : [];
   const trainingCandidates = buildTrainingCandidates({
@@ -642,10 +641,7 @@ export function buildAionisEffectReport(args: BuildAionisEffectReportArgs): Aion
     confidence_decay_summary: buildEffectConfidenceDecaySummary(args.confidence_decay_review),
     training_candidates: trainingCandidates,
     evidence: {
-      evidence_ids: compactStrings([
-        ...(args.evidence_ids ?? []),
-        ...args.report.kernel_scores.map((score) => `effect_kernel:${score.capability_id}`),
-      ]),
+      evidence_ids: compactStrings(args.evidence_ids ?? []),
       replay_run_ids: [],
       signal_summary_ids: args.report.kernel_scores.flatMap((score) => score.signals),
       promotion_quality_summary_ids: [],

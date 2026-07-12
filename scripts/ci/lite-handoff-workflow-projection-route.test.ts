@@ -18,15 +18,46 @@ import {
   PlanningContextRouteContractSchema,
 } from "../../src/memory/schemas.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
-import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
-import { createLiteExecutionStateStore } from "../../src/execution/state-store.ts";
+import { createLiteWriteStoreFromDatabase } from "../../src/store/lite-write-store.ts";
+import { createLiteExecutionStateStoreFromDatabase } from "../../src/execution/state-store.ts";
+import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
 import {
   applyExecutionTreeOperationV1,
   createExecutionTreeV1,
-  createLiteExecutionTreeStore,
+  createLiteExecutionTreeStoreFromDatabase,
   type ExecutionTreeOperationV1,
 } from "../../src/execution/index.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
+
+const sharedRuntimeDatabases = new Map<string, ReturnType<typeof createLiteRuntimeDatabase>>();
+
+function sharedRuntimeDatabase(dbPath: string) {
+  const existing = sharedRuntimeDatabases.get(dbPath);
+  if (existing) return existing;
+  const created = createLiteRuntimeDatabase(dbPath);
+  sharedRuntimeDatabases.set(dbPath, created);
+  return created;
+}
+
+function createLiteWriteStore(dbPath: string) {
+  return createLiteWriteStoreFromDatabase(sharedRuntimeDatabase(dbPath), { closeDatabaseOnClose: true });
+}
+
+function createLiteExecutionStateStore(dbPath: string) {
+  const database = sharedRuntimeDatabase(dbPath);
+  return createLiteExecutionStateStoreFromDatabase(database.db, {
+    path: database.path,
+    transaction: database.transaction,
+  });
+}
+
+function createLiteExecutionTreeStore(dbPath: string) {
+  const database = sharedRuntimeDatabase(dbPath);
+  return createLiteExecutionTreeStoreFromDatabase(database.db, {
+    path: database.path,
+    transaction: database.transaction,
+  });
+}
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-handoff-workflow-projection-"));
@@ -610,13 +641,16 @@ test("handoff/store persists execution tree operations and recover exposes lates
     assert.equal(storeBody.execution_tree_operations_v1.length, 1);
     assert.equal(executionTreeStore.get(tree.scope, tree.tree_id)?.revision, 2);
 
-    executionTreeStore.applyOperation(handoffTreeOperation({
-      operation_id: "handoff-tree-compress-1",
-      type: "compress",
-      at: "2026-03-21T12:02:00.000Z",
-      title: "branch-aware handoff",
-      summary: "Handoff recovery exposes the latest execution tree store revision.",
-    }));
+    await liteWriteStore.withTx(async () => {
+      executionTreeStore.applyOperation(handoffTreeOperation({
+        operation_id: "handoff-tree-compress-1",
+        expected_revision: 2,
+        type: "compress",
+        at: "2026-03-21T12:02:00.000Z",
+        title: "branch-aware handoff",
+        summary: "Handoff recovery exposes the latest execution tree store revision.",
+      }));
+    });
 
     const recover = await app.inject({
       method: "POST",
@@ -900,7 +934,12 @@ test("handoff/store allows stable anchors to evolve with new execution transitio
     assert.equal(firstStore.statusCode, 200, firstStore.body);
     const firstBody = firstStore.json();
     assert.equal(firstBody.execution_transitions_v1.length, 2);
-    assert.equal(executionStateStore.get("aionis://handoff/resume:stable-anchor-evolves", "handoff-anchor:resume:stable-anchor-evolves")?.revision, 3);
+    const current = executionStateStore.get(
+      "aionis://handoff/resume:stable-anchor-evolves",
+      "handoff-anchor:resume:stable-anchor-evolves",
+    );
+    assert.equal(current?.revision, 3);
+    assert.ok(current);
 
     const evolvedStore = await app.inject({
       method: "POST",
@@ -910,11 +949,22 @@ test("handoff/store allows stable anchors to evolve with new execution transitio
         summary: "Second run captured a narrower verifier failure",
         handoff_text: "Continue from the second run evidence",
         next_action: "Inspect second failure before retrying",
+        execution_state_v1: current.state,
+        execution_transitions_v1: [{
+          transition_id: "stable-anchor-evolves:second-run-hypothesis",
+          state_id: current.state.state_id,
+          scope: current.state.scope,
+          actor_role: "resume",
+          at: "2026-07-12T04:00:00.000Z",
+          expected_revision: current.revision,
+          type: "hypothesis_accepted",
+          hypothesis: "Second run captured a narrower verifier failure",
+        }],
       },
     });
     assert.equal(evolvedStore.statusCode, 200, evolvedStore.body);
     const evolvedBody = evolvedStore.json();
-    assert.equal(evolvedBody.execution_transitions_v1.length, 2);
+    assert.equal(evolvedBody.execution_transitions_v1.length, 1);
     assert.equal(executionStateStore.get("aionis://handoff/resume:stable-anchor-evolves", "handoff-anchor:resume:stable-anchor-evolves")?.revision, 4);
   } finally {
     await app.close();

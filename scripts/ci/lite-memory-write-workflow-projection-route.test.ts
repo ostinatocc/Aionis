@@ -22,14 +22,37 @@ import {
   PromotionEvidenceLedgerV1Schema,
 } from "../../src/memory/schemas.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
-import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
+import { createLiteWriteStoreFromDatabase } from "../../src/store/lite-write-store.ts";
+import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
 import { createSqliteDatabase } from "../../src/store/sqlite.ts";
 import {
   createExecutionTreeV1,
-  createLiteExecutionTreeStore,
+  createLiteExecutionTreeStoreFromDatabase,
   type ExecutionTreeOperationV1,
 } from "../../src/execution/index.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
+
+const sharedRuntimeDatabases = new Map<string, ReturnType<typeof createLiteRuntimeDatabase>>();
+
+function sharedRuntimeDatabase(dbPath: string) {
+  const existing = sharedRuntimeDatabases.get(dbPath);
+  if (existing) return existing;
+  const created = createLiteRuntimeDatabase(dbPath);
+  sharedRuntimeDatabases.set(dbPath, created);
+  return created;
+}
+
+function createLiteWriteStore(dbPath: string) {
+  return createLiteWriteStoreFromDatabase(sharedRuntimeDatabase(dbPath), { closeDatabaseOnClose: true });
+}
+
+function createLiteExecutionTreeStore(dbPath: string) {
+  const database = sharedRuntimeDatabase(dbPath);
+  return createLiteExecutionTreeStoreFromDatabase(database.db, {
+    path: database.path,
+    transaction: database.transaction,
+  });
+}
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-write-workflow-projection-"));

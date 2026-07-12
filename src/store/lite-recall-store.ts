@@ -1040,12 +1040,15 @@ export function createLiteRecallStore(
       embedding_vector_json: string | null;
       embedding_model: string | null;
     }) | undefined;
-    if (!row) return await deleteAnnNode(nodeId, "missing_sqlite_row");
+    // Reconcile from SQLite truth instead of blindly upserting. ANN document ids include
+    // the embedding model, so deleting first is required when a node changes models.
+    await ann.index.delete(nodeId);
+    if (!row) return { action: "deleted", reason: "missing_sqlite_row" };
     if (row.embedding_status !== "ready" || !row.embedding_vector_json || !row.embedding_model) {
-      return await deleteAnnNode(nodeId, "embedding_not_ready");
+      return { action: "deleted", reason: "embedding_not_ready" };
     }
     const item = annVectorRecordFromRow(row as LiteRecallAnnRebuildRow);
-    if (!item) return await deleteAnnNode(nodeId, "invalid_embedding_vector");
+    if (!item) return { action: "deleted", reason: "invalid_embedding_vector" };
     await ann.index.upsert(item.record, item.vector);
     return { action: "upserted" };
   };

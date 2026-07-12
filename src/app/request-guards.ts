@@ -63,6 +63,7 @@ export type IdentityRequestKind =
   | "trajectory_compile"
   | "resolve"
   | "rehydrate_payload"
+  | "product_guide"
   | "recall"
   | "recall_text"
   | "planning_context"
@@ -235,6 +236,65 @@ function assertNoTenantOverrideInSlots(args: {
   }
 }
 
+function assertNoReservedRuntimeWriteClaims(value: unknown): void {
+  const seen = new WeakSet<object>();
+  const stack: Array<{ value: unknown; path: string; insideSlots: boolean; depth: number }> = [
+    { value, path: "", insideSlots: false, depth: 0 },
+  ];
+  let visitedNodes = 0;
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current || !current.value || typeof current.value !== "object") continue;
+    if (current.depth > TENANT_SLOT_SCAN_MAX_DEPTH) {
+      throw new HttpError(400, "request_nesting_too_deep", "request body nesting exceeds the supported limit", {
+        max_depth: TENANT_SLOT_SCAN_MAX_DEPTH,
+        source: current.path,
+      });
+    }
+    if (seen.has(current.value as object)) continue;
+    seen.add(current.value as object);
+    visitedNodes += 1;
+    if (visitedNodes > TENANT_SLOT_SCAN_MAX_NODES) {
+      throw new HttpError(400, "request_body_too_complex", "request body object graph exceeds the supported limit", {
+        max_nodes: TENANT_SLOT_SCAN_MAX_NODES,
+      });
+    }
+    if (Array.isArray(current.value)) {
+      current.value.forEach((child, index) => {
+        if (child && typeof child === "object") {
+          stack.push({
+            value: child,
+            path: current.path ? `${current.path}.${index}` : String(index),
+            insideSlots: current.insideSlots,
+            depth: current.depth + 1,
+          });
+        }
+      });
+      continue;
+    }
+    for (const [key, child] of Object.entries(current.value as Record<string, unknown>)) {
+      const childPath = current.path ? `${current.path}.${key}` : key;
+      const childInsideSlots = current.insideSlots || key === "slots";
+      if (key === "producer_agent_id" && child === "aionis-runtime") {
+        throw new HttpError(400, "reserved_runtime_identity", "aionis-runtime producer identity is reserved for Runtime-owned writes", {
+          source: childPath,
+        });
+      }
+      if (
+        childInsideSlots
+        && (key === "guide_exposure_v1" || key === "product_guide_receipt_v1")
+      ) {
+        throw new HttpError(400, "reserved_runtime_receipt", "Runtime receipt slots cannot be supplied by public writes", {
+          source: childPath,
+        });
+      }
+      if (child && typeof child === "object") {
+        stack.push({ value: child, path: childPath, insideSlots: childInsideSlots, depth: current.depth + 1 });
+      }
+    }
+  }
+}
+
 function isLoopbackIp(ip: string | undefined): boolean {
   if (!ip) return false;
   return ip === "127.0.0.1" || ip === "::1" || ip.startsWith("::ffff:127.0.0.1");
@@ -277,6 +337,19 @@ function isReplayWriteIdentityKind(kind: IdentityRequestKind): boolean {
     || kind === "replay_playbook_repair_review"
     || kind === "replay_playbook_run"
     || kind === "replay_playbook_dispatch"
+  );
+}
+
+function isProductLifecycleIdentityKind(kind: IdentityRequestKind): boolean {
+  return (
+    kind === "activate"
+    || kind === "rehydrate"
+    || kind === "rehydrate_payload"
+    || kind === "feedback"
+    || kind === "anchors_suppress"
+    || kind === "anchors_unsuppress"
+    || kind === "patterns_suppress"
+    || kind === "patterns_unsuppress"
   );
 }
 
@@ -460,6 +533,9 @@ export function createRequestGuards({
     kind: IdentityRequestKind,
   ): unknown => {
     if (!body || typeof body !== "object" || Array.isArray(body)) return body;
+    if (kind === "write" || kind === "handoff_store" || kind === "delegation_records_write") {
+      assertNoReservedRuntimeWriteClaims(body);
+    }
     const obj = { ...(body as Record<string, unknown>) };
     const headerTenantRaw = req.headers?.["x-tenant-id"];
     const headerTenant = firstHeaderValue(headerTenantRaw);
@@ -475,6 +551,77 @@ export function createRequestGuards({
       obj.scope = requestedScope;
       req.aionis_tenant_id = principal.tenant_id;
       req.aionis_scope = requestedScope;
+
+      if (
+        kind === "write"
+        || kind === "handoff_store"
+        || kind === "product_guide"
+        || kind === "feedback"
+        || kind === "tools_feedback"
+        || kind === "resolve"
+        || isProductLifecycleIdentityKind(kind)
+      ) {
+        const principalAgentId = principal.agent_id?.trim() || null;
+        const principalTeamId = principal.team_id?.trim() || null;
+        const principalActorId = principalAgentId ?? principalTeamId;
+        if (!principalActorId) {
+          throw new HttpError(
+            403,
+            "principal_subject_required",
+            "an authenticated agent or team identity is required for attributed product operations",
+          );
+        }
+        if (
+          kind === "product_guide"
+          || kind === "feedback"
+          || kind === "tools_feedback"
+          || kind === "resolve"
+          || isProductLifecycleIdentityKind(kind)
+        ) {
+          obj.consumer_agent_id = principalActorId;
+          if (principalTeamId) obj.consumer_team_id = principalTeamId;
+          else delete obj.consumer_team_id;
+        }
+        if (kind === "product_guide" || kind === "tools_feedback") {
+          const contextRecord = asRecord(obj.context);
+          if (contextRecord) {
+            const agentRecord = asRecord(contextRecord.agent);
+            obj.context = {
+              ...contextRecord,
+              agent_id: principalActorId,
+              agent: {
+                ...(agentRecord ?? {}),
+                id: principalActorId,
+              },
+            };
+          }
+        }
+        if (kind === "write" || kind === "handoff_store") {
+          obj.actor = principalActorId;
+          obj.producer_agent_id = principalAgentId ?? principalActorId;
+          if (principalAgentId) obj.owner_agent_id = principalAgentId;
+          else delete obj.owner_agent_id;
+          if (principalTeamId) obj.owner_team_id = principalTeamId;
+          else delete obj.owner_team_id;
+        }
+        if (kind === "feedback" || kind === "tools_feedback") obj.actor = principalActorId;
+        if (isProductLifecycleIdentityKind(kind)) {
+          obj.actor = principalActorId;
+          const payload = asRecord(obj.payload);
+          if (payload) {
+            const boundPayload: Record<string, unknown> = {
+              ...payload,
+              tenant_id: principal.tenant_id,
+              scope: requestedScope,
+              actor: principalActorId,
+              consumer_agent_id: principalActorId,
+            };
+            if (principalTeamId) boundPayload.consumer_team_id = principalTeamId;
+            else delete boundPayload.consumer_team_id;
+            obj.payload = boundPayload;
+          }
+        }
+      }
     } else {
       if (!bodyTenant && headerTenant) {
         obj.tenant_id = headerTenant;

@@ -155,7 +155,8 @@ curl -sS -X POST "$AIONIS_URL/v1/guide" \
 ## 6. Measure Forgetting Effect
 
 Measure the before/after guide effect and include the suppress result in
-`product_trace.forget_result`.
+`product_trace.forget_result`. This measures lifecycle behavior; it does not
+claim export-grade evidence.
 
 ```bash
 jq -n \
@@ -175,9 +176,7 @@ jq -n \
     product_trace: {
       before_guide: $before[0],
       after_guide: $after[0],
-      forget_result: $suppress[0],
-      sufficient_evidence: true,
-      evidence_ids: ["controlled-forgetting:suppress"]
+      forget_result: $suppress[0]
     }
   }' > /tmp/aionis-forget-measure-payload.json
 
@@ -185,8 +184,12 @@ curl -sS -X POST "$AIONIS_URL/v1/measure" \
   -H "content-type: application/json" \
   -d @/tmp/aionis-forget-measure-payload.json \
   | tee /tmp/aionis-forget-measure.json \
-  | jq '.effect_report.forgetting_effect'
+  | jq '{evidence_assessment, forgetting_effect: .effect_report.forgetting_effect}'
 ```
+
+The Runtime, not the caller, decides evidence sufficiency. Legacy
+`sufficient_evidence` and `evidence_ids` request fields are retained only as
+ignored client claims and cannot produce export-ready learning candidates.
 
 ## 7. Unsuppress After Review
 

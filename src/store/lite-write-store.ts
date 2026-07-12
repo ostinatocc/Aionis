@@ -1,6 +1,3 @@
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-import { AsyncLocalStorage } from "node:async_hooks";
 import type { ExecutionNativeV1 } from "../memory/schemas.js";
 import {
   resolveNodeAnchorKind,
@@ -26,7 +23,17 @@ import type {
 } from "../memory/associative-candidate-store.js";
 import { stableUuid } from "../util/uuid.js";
 import { assertDim } from "../util/vector-literal.js";
-import { createSqliteTransactionRunner } from "./sqlite-transaction-runner.js";
+import { createLiteRuntimeDatabase, type LiteRuntimeDatabase } from "./lite-runtime-database.js";
+import {
+  assertLiteRuntimeSchemaPreflight,
+  recordCurrentLiteRuntimeWriteSchema,
+} from "./lite-runtime-schema.js";
+import {
+  createLiteProjectionOutboxAccess,
+  type LiteProjectionBacklogSnapshot,
+  type LiteProjectionOutboxAccess,
+} from "./lite-projection-outbox.js";
+import type { SqliteTransactionRunner } from "./sqlite-transaction-runner.js";
 import type {
   WriteCommitInsertArgs,
   WriteEdgeUpsertArgs,
@@ -40,7 +47,7 @@ import type {
 } from "./write-access.js";
 import { WRITE_STORE_ACCESS_CAPABILITY_VERSION, writeNodeFingerprint } from "./write-access.js";
 import { memoryNodeVisible } from "./memory-visibility.js";
-import { createSqliteDatabase, ignoreSqliteDuplicateColumnError, type SqliteDatabase } from "./sqlite.js";
+import { ignoreSqliteDuplicateColumnError, type SqliteDatabase } from "./sqlite.js";
 
 type LiteLatestNodeView = {
   id: string;
@@ -200,8 +207,76 @@ export type LiteOutboxEventRow = {
   created_at: string;
 };
 
-export type LiteWriteStore = WriteStoreAccess & {
+export type LiteWriteOperationRow = {
+  tenant_id: string;
+  scope: string;
+  operation_kind: string;
+  operation_id: string;
+  request_sha256: string;
+  receipt_json: string;
+  commit_id: string | null;
+  created_at: string;
+};
+
+export type LiteProductGuideReceiptRow = {
+  tenant_id: string;
+  scope: string;
+  guide_trace_id: string;
+  run_id: string | null;
+  consumer_agent_id: string | null;
+  consumer_team_id: string | null;
+  query_sha256: string;
+  context_sha256: string;
+  ledger_sha256: string;
+  ledger_json: string;
+  commit_id: string;
+  created_at: string;
+};
+
+export type LiteWriteStore = WriteStoreAccess & LiteProjectionOutboxAccess & {
   withTx<T>(fn: () => Promise<T>): Promise<T>;
+  afterCommit(fn: () => Promise<void>): Promise<void>;
+  transactionRunner(): SqliteTransactionRunner;
+  annSyncEnabled(): boolean;
+  getWriteOperation(args: {
+    tenantId: string;
+    scope: string;
+    operationKind: string;
+    operationId: string;
+  }): Promise<LiteWriteOperationRow | null>;
+  insertWriteOperation(args: {
+    tenantId: string;
+    scope: string;
+    operationKind: string;
+    operationId: string;
+    requestSha256: string;
+    receiptJson: string;
+    commitId?: string | null;
+  }): Promise<LiteWriteOperationRow>;
+  insertProductGuideReceipt(args: {
+    tenantId: string;
+    scope: string;
+    guideTraceId: string;
+    runId?: string | null;
+    consumerAgentId?: string | null;
+    consumerTeamId?: string | null;
+    querySha256: string;
+    contextSha256: string;
+    ledgerSha256: string;
+    ledgerJson: string;
+    commitId: string;
+  }): Promise<LiteProductGuideReceiptRow>;
+  getProductGuideReceipt(args: {
+    tenantId: string;
+    scope: string;
+    guideTraceId: string;
+  }): Promise<LiteProductGuideReceiptRow | null>;
+  listProductGuideReceipts(args: {
+    tenantId: string;
+    scope: string;
+    runId?: string | null;
+    limit: number;
+  }): Promise<LiteProductGuideReceiptRow[]>;
   listOperatorScopes(args: {
     tenantId?: string | null;
     defaultTenantId?: string | null;
@@ -405,7 +480,11 @@ export type LiteWriteStore = WriteStoreAccess & {
   }): Promise<LiteOutboxEventRow[]>;
   deleteOutboxEvent(rowId: number): Promise<void>;
   close(): Promise<void>;
-  healthSnapshot(): { path: string; mode: "sqlite_write_v1" };
+  healthSnapshot(): {
+    path: string;
+    mode: "sqlite_write_v1";
+    projections: LiteProjectionBacklogSnapshot;
+  };
 };
 
 export type LiteWriteAnnSync = {
@@ -415,10 +494,11 @@ export type LiteWriteAnnSync = {
 
 export type LiteWriteStoreOptions = {
   annSync?: LiteWriteAnnSync | null;
+  annProjectionEnabled?: boolean;
 };
 
-type LiteWritePostCommitContext = {
-  callbacks: Array<() => Promise<void>>;
+export type LiteWriteStoreFromDatabaseOptions = LiteWriteStoreOptions & {
+  closeDatabaseOnClose?: boolean;
 };
 
 function nowIso(): string {
@@ -927,15 +1007,20 @@ function buildLiteMemoryKeywordSlotsText(slots: Record<string, unknown>): string
 }
 
 export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions = {}): LiteWriteStore {
-  mkdirSync(dirname(path), { recursive: true });
-  const db = createSqliteDatabase(path);
+  const database = createLiteRuntimeDatabase(path);
+  return createLiteWriteStoreFromDatabase(database, { ...opts, closeDatabaseOnClose: true });
+}
+
+export function createLiteWriteStoreFromDatabase(
+  database: LiteRuntimeDatabase,
+  opts: LiteWriteStoreFromDatabaseOptions = {},
+): LiteWriteStore {
+  const { path, db, transaction } = database;
   const annSync = opts.annSync ?? null;
-  const postCommitStorage = new AsyncLocalStorage<LiteWritePostCommitContext>();
-  const transaction = createSqliteTransactionRunner({
-    begin: () => db.exec("BEGIN IMMEDIATE"),
-    commit: () => db.exec("COMMIT"),
-    rollback: () => db.exec("ROLLBACK"),
-  });
+  const annProjectionEnabled = opts.annProjectionEnabled ?? annSync !== null;
+  const closeDatabaseOnClose = opts.closeDatabaseOnClose ?? false;
+
+  assertLiteRuntimeSchemaPreflight(db);
 
   const runAnnSideEffect = async (callback: () => Promise<void>): Promise<void> => {
     try {
@@ -950,12 +1035,7 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
 
   const scheduleAnnSideEffect = async (callback: () => Promise<void>): Promise<void> => {
     if (!annSync) return;
-    const context = postCommitStorage.getStore();
-    if (context) {
-      context.callbacks.push(callback);
-      return;
-    }
-    await runAnnSideEffect(callback);
+    await transaction.afterCommit(() => runAnnSideEffect(callback));
   };
 
   const scheduleAnnNodeSync = async (scope: string, nodeId: string): Promise<void> => {
@@ -966,9 +1046,6 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
     await scheduleAnnSideEffect(() => annSync!.deleteNode(nodeId).then(() => undefined));
   };
 
-  const flushPostCommitSideEffects = async (callbacks: Array<() => Promise<void>>): Promise<void> => {
-    for (const callback of callbacks) await runAnnSideEffect(callback);
-  };
   db.exec(`
     PRAGMA journal_mode = WAL;
 
@@ -1156,6 +1233,40 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
     );
     CREATE INDEX IF NOT EXISTS idx_lite_memory_outbox_scope_commit ON lite_memory_outbox(scope, commit_id);
     CREATE INDEX IF NOT EXISTS idx_lite_memory_outbox_event_created ON lite_memory_outbox(event_type, created_at, row_id);
+
+    CREATE TABLE IF NOT EXISTS lite_runtime_write_operations (
+      tenant_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      operation_kind TEXT NOT NULL,
+      operation_id TEXT NOT NULL,
+      request_sha256 TEXT NOT NULL,
+      receipt_json TEXT NOT NULL,
+      commit_id TEXT,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, scope, operation_kind, operation_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_lite_runtime_write_operations_created
+      ON lite_runtime_write_operations(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS lite_product_guide_receipts (
+      tenant_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      guide_trace_id TEXT NOT NULL,
+      run_id TEXT,
+      consumer_agent_id TEXT,
+      consumer_team_id TEXT,
+      query_sha256 TEXT NOT NULL,
+      context_sha256 TEXT NOT NULL,
+      ledger_sha256 TEXT NOT NULL,
+      ledger_json TEXT NOT NULL,
+      commit_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, scope, guide_trace_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_lite_product_guide_receipts_scope_created
+      ON lite_product_guide_receipts(tenant_id, scope, created_at DESC, guide_trace_id DESC);
+    CREATE INDEX IF NOT EXISTS idx_lite_product_guide_receipts_run_created
+      ON lite_product_guide_receipts(tenant_id, scope, run_id, created_at DESC, guide_trace_id DESC);
 
     CREATE TABLE IF NOT EXISTS lite_memory_execution_decisions (
       id TEXT PRIMARY KEY,
@@ -1397,17 +1508,159 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
 
   rebuildKeywordIndex();
 
+  const projectionOutbox = createLiteProjectionOutboxAccess(database);
+  recordCurrentLiteRuntimeWriteSchema(db);
+
   return {
     capability_version: WRITE_STORE_ACCESS_CAPABILITY_VERSION,
+    ...projectionOutbox,
 
     async withTx<T>(fn: () => Promise<T>): Promise<T> {
-      const existingContext = postCommitStorage.getStore();
-      if (existingContext) return await transaction.run(fn);
+      return await transaction.run(fn);
+    },
 
-      const context: LiteWritePostCommitContext = { callbacks: [] };
-      const out = await postCommitStorage.run(context, () => transaction.run(fn));
-      await flushPostCommitSideEffects(context.callbacks);
-      return out;
+    async afterCommit(fn): Promise<void> {
+      await transaction.afterCommit(fn);
+    },
+
+    transactionRunner(): SqliteTransactionRunner {
+      return transaction;
+    },
+
+    annSyncEnabled(): boolean {
+      return annProjectionEnabled;
+    },
+
+    async getWriteOperation(args): Promise<LiteWriteOperationRow | null> {
+      return await transaction.read(() => (
+        db.prepare(
+          `SELECT tenant_id, scope, operation_kind, operation_id,
+                  request_sha256, receipt_json, commit_id, created_at
+           FROM lite_runtime_write_operations
+           WHERE tenant_id = ?
+             AND scope = ?
+             AND operation_kind = ?
+             AND operation_id = ?`,
+        ).get(
+          args.tenantId,
+          args.scope,
+          args.operationKind,
+          args.operationId,
+        ) as LiteWriteOperationRow | undefined
+      ) ?? null);
+    },
+
+    async insertWriteOperation(args): Promise<LiteWriteOperationRow> {
+      if (!transaction.inTransaction()) {
+        throw new Error("Runtime write operation receipt must be inserted inside the shared Runtime transaction");
+      }
+      const createdAt = nowIso();
+      db.prepare(
+        `INSERT INTO lite_runtime_write_operations
+           (tenant_id, scope, operation_kind, operation_id, request_sha256,
+            receipt_json, commit_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        args.tenantId,
+        args.scope,
+        args.operationKind,
+        args.operationId,
+        args.requestSha256,
+        args.receiptJson,
+        args.commitId ?? null,
+        createdAt,
+      );
+      return {
+        tenant_id: args.tenantId,
+        scope: args.scope,
+        operation_kind: args.operationKind,
+        operation_id: args.operationId,
+        request_sha256: args.requestSha256,
+        receipt_json: args.receiptJson,
+        commit_id: args.commitId ?? null,
+        created_at: createdAt,
+      };
+    },
+
+    async insertProductGuideReceipt(args): Promise<LiteProductGuideReceiptRow> {
+      if (!transaction.inTransaction()) {
+        throw new Error("product guide receipt must be inserted inside the shared Runtime transaction");
+      }
+      const latest = db.prepare(
+        `SELECT created_at
+         FROM lite_product_guide_receipts
+         WHERE tenant_id = ? AND scope = ?
+         ORDER BY created_at DESC, guide_trace_id DESC
+         LIMIT 1`,
+      ).get(args.tenantId, args.scope) as { created_at: string } | undefined;
+      const latestMs = latest ? Date.parse(latest.created_at) : Number.NaN;
+      const createdAt = new Date(Math.max(
+        Date.now(),
+        Number.isFinite(latestMs) ? latestMs + 1 : 0,
+      )).toISOString();
+      db.prepare(
+        `INSERT INTO lite_product_guide_receipts
+           (tenant_id, scope, guide_trace_id, run_id, consumer_agent_id, consumer_team_id,
+            query_sha256, context_sha256, ledger_sha256, ledger_json, commit_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        args.tenantId,
+        args.scope,
+        args.guideTraceId,
+        args.runId ?? null,
+        args.consumerAgentId ?? null,
+        args.consumerTeamId ?? null,
+        args.querySha256,
+        args.contextSha256,
+        args.ledgerSha256,
+        args.ledgerJson,
+        args.commitId,
+        createdAt,
+      );
+      return {
+        tenant_id: args.tenantId,
+        scope: args.scope,
+        guide_trace_id: args.guideTraceId,
+        run_id: args.runId ?? null,
+        consumer_agent_id: args.consumerAgentId ?? null,
+        consumer_team_id: args.consumerTeamId ?? null,
+        query_sha256: args.querySha256,
+        context_sha256: args.contextSha256,
+        ledger_sha256: args.ledgerSha256,
+        ledger_json: args.ledgerJson,
+        commit_id: args.commitId,
+        created_at: createdAt,
+      };
+    },
+
+    async getProductGuideReceipt(args): Promise<LiteProductGuideReceiptRow | null> {
+      return await transaction.read(() => (
+        db.prepare(
+          `SELECT tenant_id, scope, guide_trace_id, run_id, consumer_agent_id, consumer_team_id,
+                  query_sha256, context_sha256, ledger_sha256, ledger_json, commit_id, created_at
+           FROM lite_product_guide_receipts
+           WHERE tenant_id = ? AND scope = ? AND guide_trace_id = ?`,
+        ).get(args.tenantId, args.scope, args.guideTraceId) as LiteProductGuideReceiptRow | undefined
+      ) ?? null);
+    },
+
+    async listProductGuideReceipts(args): Promise<LiteProductGuideReceiptRow[]> {
+      return await transaction.read(() => {
+        const where = ["tenant_id = ?", "scope = ?"];
+        const params: unknown[] = [args.tenantId, args.scope];
+        if (args.runId) {
+          where.push("run_id = ?");
+          params.push(args.runId);
+        }
+        return db.prepare(
+          `SELECT tenant_id, scope, guide_trace_id, run_id, consumer_agent_id, consumer_team_id,
+                  query_sha256, context_sha256, ledger_sha256, ledger_json, commit_id, created_at
+           FROM lite_product_guide_receipts
+           WHERE ${where.join(" AND ")}
+           ORDER BY created_at DESC, guide_trace_id DESC
+           LIMIT ?`,
+        ).all(...params, Math.max(1, Math.min(1000, args.limit))) as LiteProductGuideReceiptRow[];
+      });
     },
 
     async listOperatorScopes(args): Promise<LiteOperatorScopeSummaryRow[]> {
@@ -1457,6 +1710,7 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
     },
 
     async listOperatorGuideExposures(args): Promise<LiteFindNodeRow[]> {
+      return await transaction.read(() => {
       const where = [
         "scope = ?",
         "json_extract(slots_json, '$.guide_exposure_v1.contract_version') = 'aionis_guide_exposure_v1'",
@@ -1477,9 +1731,11 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
          LIMIT ?`,
       ).all(...params, Math.max(1, args.limit)) as LiteMemoryNodeDbRow[];
       return rows.map(decodeLiteFindNodeRow);
+      });
     },
 
     async findNodes(args): Promise<{ rows: LiteFindNodeRow[]; has_more: boolean }> {
+      return await transaction.read(() => {
       const where: string[] = ["scope = ?"];
       const params: unknown[] = [args.scope];
       if (args.id) {
@@ -1535,9 +1791,11 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
         rows: hasMore ? slice.slice(0, args.limit) : slice,
         has_more: hasMore,
       };
+      });
     },
 
     async findExecutionNativeNodes(args): Promise<{ rows: LiteExecutionNativeNodeRow[]; has_more: boolean }> {
+      return await transaction.read(() => {
       const where: string[] = ["i.scope = ?"];
       const params: unknown[] = [args.scope];
       if (args.executionKind) {
@@ -1612,9 +1870,11 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
         rows: hasMore ? decoded.slice(0, args.limit) : decoded,
         has_more: hasMore,
       };
+      });
     },
 
     async findLatestNodeByClientId(scope: string, type: string, clientId: string): Promise<LiteLatestNodeView | null> {
+      return await transaction.read(() => {
       const row = db.prepare(
         `SELECT id
          FROM lite_memory_nodes
@@ -1623,6 +1883,7 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
          LIMIT 1`,
       ).get(scope, type, clientId) as LiteLatestNodeView | undefined;
       return row ?? null;
+      });
     },
 
     async resolveNode(args): Promise<LiteResolveNodeRow | null> {
@@ -1706,6 +1967,7 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
     },
 
     async resolveCommit(args): Promise<LiteResolveCommitRow | null> {
+      return await transaction.read(() => {
       const row = db.prepare(
         `SELECT
            c.id,
@@ -1766,6 +2028,7 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
           )?.count ?? 0,
         ),
       };
+      });
     },
 
     async resolveDecision(args): Promise<LiteResolveDecisionRow | null> {
@@ -2129,6 +2392,7 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
     },
 
     async latestCommit(scope: string): Promise<{ id: string; commit_hash: string } | null> {
+      return await transaction.read(() => {
       const row = db.prepare(
         `SELECT id, commit_hash
          FROM lite_memory_commits
@@ -2137,6 +2401,7 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
          LIMIT 1`,
       ).get(scope) as { id: string; commit_hash: string } | undefined;
       return row ?? null;
+      });
     },
 
     async insertRuleFeedback(args): Promise<void> {
@@ -2168,6 +2433,7 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
       latest_feedback_at: string | null;
       rows: LiteRuleFeedbackRow[];
     }> {
+      return await transaction.read(() => {
       const stats = db.prepare(
         `SELECT
            COUNT(*) AS total,
@@ -2217,6 +2483,7 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
         latest_feedback_at: stats?.latest_feedback_at ?? null,
         rows,
       };
+      });
     },
 
     async updateRuleFeedbackAggregates(args): Promise<LiteRuleCandidateRow[]> {
@@ -2340,6 +2607,7 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
     },
 
     async lifecycleCandidateNodes(scope: string, limit: number): Promise<WriteLifecycleCandidateNodeRow[]> {
+      return await transaction.read(() => {
       const boundedLimit = Math.max(1, Math.min(2000, Math.floor(limit)));
       const rows = db.prepare(`
         SELECT
@@ -2388,6 +2656,7 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
         created_at: row.created_at,
         updated_at: row.created_at,
       }));
+      });
     },
 
     async parentCommitHash(scope: string, parentCommitId: string): Promise<string | null> {
@@ -2423,41 +2692,50 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
     },
 
     async insertNode(args: WriteNodeInsertArgs): Promise<void> {
-      db.prepare(
+      await transaction.run(async () => {
+        db.prepare(
         `INSERT OR IGNORE INTO lite_memory_nodes
           (id, scope, client_id, type, tier, title, text_summary, slots_json, raw_ref, evidence_ref,
            embedding_vector_json, embedding_model, memory_lane, producer_agent_id, owner_agent_id, owner_team_id,
            embedding_status, embedding_last_error, salience, importance, confidence, redaction_version, commit_id, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        args.id,
-        args.scope,
-        args.clientId,
-        args.type,
-        args.tier,
-        args.title,
-        args.textSummary,
-        args.slotsJson,
-        args.rawRef,
-        args.evidenceRef,
-        args.embeddingVector,
-        args.embeddingModel,
-        args.memoryLane,
-        args.producerAgentId,
-        args.ownerAgentId,
-        args.ownerTeamId,
-        args.embeddingStatus,
-        args.embeddingLastError,
-        args.salience,
-        args.importance,
-        args.confidence,
-        args.redactionVersion,
-        args.commitId,
-        nowIso(),
-      );
-      syncExecutionNativeIndexFromNode(args.scope, args.id);
-      syncKeywordIndexFromNode(args.scope, args.id);
-      await scheduleAnnNodeSync(args.scope, args.id);
+        ).run(
+          args.id,
+          args.scope,
+          args.clientId,
+          args.type,
+          args.tier,
+          args.title,
+          args.textSummary,
+          args.slotsJson,
+          args.rawRef,
+          args.evidenceRef,
+          args.embeddingVector,
+          args.embeddingModel,
+          args.memoryLane,
+          args.producerAgentId,
+          args.ownerAgentId,
+          args.ownerTeamId,
+          args.embeddingStatus,
+          args.embeddingLastError,
+          args.salience,
+          args.importance,
+          args.confidence,
+          args.redactionVersion,
+          args.commitId,
+          nowIso(),
+        );
+        syncExecutionNativeIndexFromNode(args.scope, args.id);
+        syncKeywordIndexFromNode(args.scope, args.id);
+        if (annProjectionEnabled) {
+          await projectionOutbox.enqueueAnnProjection({
+            scope: args.scope,
+            nodeId: args.id,
+            sourceCommitId: args.commitId,
+          });
+        }
+        await scheduleAnnNodeSync(args.scope, args.id);
+      });
     },
 
     async insertRuleDef(args: WriteRuleDefInsertArgs): Promise<void> {
@@ -2704,24 +2982,36 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
 
     async setNodeEmbeddingReady(args): Promise<void> {
       assertDim(args.embedding, 1536);
-      db.prepare(
-        `UPDATE lite_memory_nodes
-         SET embedding_vector_json = ?,
-             embedding_model = ?,
-             embedding_status = 'ready',
-             embedding_last_error = NULL
-         WHERE scope = ?
-           AND id = ?`,
-      ).run(
-        stringifyJson(args.embedding),
-        args.embeddingModel,
-        args.scope,
-        args.id,
-      );
-      await scheduleAnnNodeSync(args.scope, args.id);
+      await transaction.run(async () => {
+        db.prepare(
+          `UPDATE lite_memory_nodes
+           SET embedding_vector_json = ?,
+               embedding_model = ?,
+               embedding_status = 'ready',
+               embedding_last_error = NULL
+           WHERE scope = ?
+             AND id = ?`,
+        ).run(
+          stringifyJson(args.embedding),
+          args.embeddingModel,
+          args.scope,
+          args.id,
+        );
+        const node = db.prepare(
+          `SELECT commit_id FROM lite_memory_nodes WHERE scope = ? AND id = ?`,
+        ).get(args.scope, args.id) as { commit_id: string } | undefined;
+        await projectionOutbox.markEmbeddingProjectionSatisfied({
+          scope: args.scope,
+          nodeId: args.id,
+          sourceCommitId: node?.commit_id ?? null,
+          enqueueAnn: annProjectionEnabled,
+        });
+        await scheduleAnnNodeSync(args.scope, args.id);
+      });
     },
 
     async updateNodeAnchorState(args): Promise<LiteFindNodeRow | null> {
+      return await transaction.run(async () => {
       const { rows: existingRows } = await this.findNodes({
         scope: args.scope,
         id: args.id,
@@ -2768,6 +3058,25 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
       ).run(...params);
       syncExecutionNativeIndexFromNode(args.scope, args.id);
       syncKeywordIndexFromNode(args.scope, args.id);
+      const updatedNode = db.prepare(
+        `SELECT commit_id FROM lite_memory_nodes WHERE scope = ? AND id = ?`,
+      ).get(args.scope, args.id) as { commit_id: string } | undefined;
+      const refreshedEmbedText = args.textSummary?.trim() || existing.title?.trim() || "";
+      if (updatedNode && refreshedEmbedText) {
+        await projectionOutbox.refreshEmbeddingProjection({
+          scope: args.scope,
+          nodeId: args.id,
+          sourceCommitId: updatedNode.commit_id,
+          embedText: refreshedEmbedText,
+        });
+      }
+      if (annProjectionEnabled) {
+        await projectionOutbox.enqueueAnnProjection({
+          scope: args.scope,
+          nodeId: args.id,
+          sourceCommitId: updatedNode?.commit_id ?? null,
+        });
+      }
       await scheduleAnnNodeSync(args.scope, args.id);
       const { rows } = await this.findNodes({
         scope: args.scope,
@@ -2776,29 +3085,46 @@ export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions =
         offset: 0,
       });
       return rows[0] ?? null;
+      });
     },
 
     async setNodeEmbeddingFailed(args): Promise<void> {
-      db.prepare(
-        `UPDATE lite_memory_nodes
-         SET embedding_status = 'failed',
-             embedding_last_error = ?
-         WHERE scope = ?
-           AND id = ?`,
-      ).run(
-        args.error,
-        args.scope,
-        args.id,
-      );
-      await scheduleAnnNodeDelete(args.id);
+      await transaction.run(async () => {
+        db.prepare(
+          `UPDATE lite_memory_nodes
+           SET embedding_status = 'failed',
+               embedding_last_error = ?
+           WHERE scope = ?
+             AND id = ?`,
+        ).run(
+          args.error,
+          args.scope,
+          args.id,
+        );
+        const node = db.prepare(
+          `SELECT commit_id FROM lite_memory_nodes WHERE scope = ? AND id = ?`,
+        ).get(args.scope, args.id) as { commit_id: string } | undefined;
+        if (annProjectionEnabled) {
+          await projectionOutbox.enqueueAnnProjection({
+            scope: args.scope,
+            nodeId: args.id,
+            sourceCommitId: node?.commit_id ?? null,
+          });
+        }
+        await scheduleAnnNodeDelete(args.id);
+      });
     },
 
     async close(): Promise<void> {
-      db.close();
+      if (closeDatabaseOnClose) await database.close();
     },
 
     healthSnapshot() {
-      return { path, mode: "sqlite_write_v1" as const };
+      return {
+        path,
+        mode: "sqlite_write_v1" as const,
+        projections: projectionOutbox.projectionBacklogSnapshot(),
+      };
     },
   };
 }

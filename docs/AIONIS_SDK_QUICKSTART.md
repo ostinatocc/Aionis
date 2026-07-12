@@ -1,6 +1,6 @@
 # Aionis SDK Quickstart
 
-Status: developer-facing SDK quickstart for the focused local Runtime
+Status: developer-facing SDK quickstart for the v0.3.5 Local Runtime Public Beta candidate
 
 This quickstart shows the smallest SDK product loop:
 
@@ -142,28 +142,25 @@ const measure = await aionis.measure(measureInputFromGuideLoop({
   },
   after_guide: guide,
   feedback_result: feedback,
-  sufficient_evidence: true,
-  evidence_ids: ["feedback:run-001"],
 }));
 
-const traceSkillCandidates = traceDerivedSkillCandidatesFromMeasure(measure);
-for (const candidate of traceSkillCandidates) {
-  // Review/export only. This payload is not Agent prompt context.
-  console.log(candidate.trace_derived_skill.skill_name);
-}
+// Client evidence claims do not open the export gate. Inspect the Runtime-owned
+// assessment before treating any training candidate as exportable.
+console.log(measure.evidence_assessment);
 
-const traceSkillReviewItems = traceDerivedSkillReviewItemsFromMeasure(measure);
-for (const item of traceSkillReviewItems) {
-  // Compact review queue item. Still read-only and candidate-only.
-  console.log(item.skill_name, item.review_action, item.safety.required_gate);
-}
+if (measure.evidence_assessment.eligible_for_skill_export) {
+  const traceSkillCandidates = traceDerivedSkillCandidatesFromMeasure(measure);
+  for (const candidate of traceSkillCandidates) {
+    // Review/export only. This payload is not Agent prompt context.
+    console.log(candidate.trace_derived_skill.skill_name);
+  }
 
-// After the host queues and promotes a candidate through the review API, the
-// SDK can materialize it into a draft and explicitly commit the recommended
-// observe payload. Materialize itself does not write memory.
-const materialized = await aionis.materializeSkillCandidate("skillcand_...");
-console.log(materialized.draft.contract_version);
-await aionis.observeMaterializedSkillCandidate(materialized);
+  const traceSkillReviewItems = traceDerivedSkillReviewItemsFromMeasure(measure);
+  for (const item of traceSkillReviewItems) {
+    // Compact review queue item. Still read-only and candidate-only.
+    console.log(item.skill_name, item.review_action, item.safety.required_gate);
+  }
+}
 
 const admissionRows = memoryAdmissionDatasetRowsFromRecord(
   measure.memory_decision_trace.admission_record as AionisMemoryAdmissionRecord,
@@ -199,9 +196,10 @@ Agent actually used; it inherits the guide consumer identity when available and
 validates that those IDs were exposed by the guide.
 `measureInputFromGuideLoop()` and `snapshotInputFromGuideLoop()` keep the
 normal product trace and operator snapshot payloads out of handwritten app code.
-`traceDerivedSkillCandidatesFromMeasure()` exposes positive execution traces as
-raw controlled skill candidates. `traceDerivedSkillReviewItemsFromMeasure()`
-projects the same data into compact review queue items. Both remain
+`traceDerivedSkillCandidatesFromMeasure()` exposes Runtime-verified positive
+execution traces as raw controlled skill candidates only after the evidence
+assessment opens the export gate. `traceDerivedSkillReviewItemsFromMeasure()`
+projects the same eligible data into compact review queue items. Both remain
 `agent_prompt_included: false` and `runtime_mutation: false`; later use must
 pass the normal admission and promotion gates.
 

@@ -9,7 +9,7 @@ import { createRequestGuards } from "./support/create-request-guards-test-config
 import {
   applyExecutionTreeOperationV1,
   createExecutionTreeV1,
-  createLiteExecutionTreeStore,
+  createLiteExecutionTreeStoreFromDatabase,
   type ExecutionTreeOperationV1,
   type ExecutionTreeV1,
 } from "../../src/execution/index.ts";
@@ -21,7 +21,8 @@ import { registerMemoryWriteRoutes } from "./support/register-memory-write-test-
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
 import { createRuntimeProductServices, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
-import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
+import { createLiteWriteStoreFromDatabase } from "../../src/store/lite-write-store.ts";
+import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
 
 function tmpDbPath(name: string): string {
@@ -233,9 +234,13 @@ function setupRuntimeE2EApp(name: string) {
   const env = liteEnv();
   const guards = requestGuards(env);
   const dbPath = tmpDbPath(name);
-  const liteWriteStore = createLiteWriteStore(dbPath);
+  const runtimeDatabase = createLiteRuntimeDatabase(dbPath);
+  const liteWriteStore = createLiteWriteStoreFromDatabase(runtimeDatabase, { closeDatabaseOnClose: true });
   const liteRecallStore = createLiteRecallStore(dbPath);
-  const executionTreeStore = createLiteExecutionTreeStore(dbPath);
+  const executionTreeStore = createLiteExecutionTreeStoreFromDatabase(runtimeDatabase.db, {
+    path: runtimeDatabase.path,
+    transaction: runtimeDatabase.transaction,
+  });
   registerRuntimeE2EApp({ app, env, guards, liteWriteStore, liteRecallStore, executionTreeStore });
   return { app, liteWriteStore, liteRecallStore, executionTreeStore };
 }

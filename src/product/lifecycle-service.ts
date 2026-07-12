@@ -23,13 +23,13 @@ import {
   ProductForgetRequest,
   ProductForgetTarget,
   ProductGuideExposureLedger,
+  findGuideExposureLedger,
   findHistoricalGuideExposureLedgers,
   findMemoryNodeSlots,
   finiteNumber,
   guideExposureSurfaceIds,
   nonNegativeInt,
   objectValue,
-  parseGuideExposureLedger,
   productErrorResponse,
   productMemoryDecisionOutputs,
   productServiceDependencyFailure,
@@ -254,21 +254,18 @@ async function resolveGuideExposureForActivation(args: {
   const tenantId = args.parsed.tenant_id ?? args.env.MEMORY_TENANT_ID;
   const scope = args.parsed.scope ?? args.env.MEMORY_SCOPE;
   const actor = args.parsed.actor ?? args.env.LITE_LOCAL_ACTOR_ID;
-  let found: Awaited<ReturnType<typeof memoryFindLite>>;
+  const consumerAgentId = args.parsed.consumer_agent_id ?? actor;
+  let ledger: ProductGuideExposureLedger | null;
   try {
-    found = await memoryFindLite(
-      args.liteWriteStore,
-      {
-        tenant_id: tenantId,
-        scope,
-        client_id: args.parsed.guide_trace_id,
-        consumer_agent_id: actor,
-        include_slots: true,
-        limit: 1,
-      },
-      args.env.MEMORY_SCOPE,
-      args.env.MEMORY_TENANT_ID,
-    );
+    ledger = await findGuideExposureLedger({
+      liteWriteStore: args.liteWriteStore,
+      env: args.env,
+      tenant_id: tenantId,
+      scope,
+      guide_trace_id: args.parsed.guide_trace_id,
+      consumerAgentId,
+      consumerTeamId: args.parsed.consumer_team_id,
+    });
   } catch {
     return {
       ok: false,
@@ -281,9 +278,6 @@ async function resolveGuideExposureForActivation(args: {
       }),
     };
   }
-  const node = Array.isArray(found.nodes) ? objectValue(found.nodes[0]) : null;
-  const slots = objectValue(node?.slots);
-  const ledger = parseGuideExposureLedger(slots?.guide_exposure_v1);
   if (!ledger) {
     return {
       ok: false,
@@ -389,16 +383,18 @@ function productForgetPayload(
   const payload = parsed.payload ?? {};
   const nodeIds = productForgetNodeIds(parsed, guideExposure);
   const clientIds = uniqueStrings(parsed.client_ids ?? []);
-  const scope = stripUndefined({
-    tenant_id: parsed.tenant_id,
-    scope: parsed.scope,
-    actor: parsed.actor,
+  const identity = stripUndefined({
+    tenant_id: parsed.tenant_id ?? payloadString(payload, "tenant_id"),
+    scope: parsed.scope ?? payloadString(payload, "scope"),
+    actor: parsed.actor ?? payloadString(payload, "actor"),
+    consumer_agent_id: parsed.consumer_agent_id ?? payloadString(payload, "consumer_agent_id"),
+    consumer_team_id: parsed.consumer_team_id ?? payloadString(payload, "consumer_team_id"),
   });
   if (parsed.operation === "suppress") {
     const suppressMode = parsed.mode === "hard_freeze" || parsed.mode === "shadow_learn" ? parsed.mode : undefined;
     return stripUndefined({
-      ...scope,
       ...payload,
+      ...identity,
       anchor_id: parsed.anchor_id ?? payloadString(payload, "anchor_id"),
       reason: parsed.reason,
       until: parsed.until ?? payload.until,
@@ -407,21 +403,21 @@ function productForgetPayload(
   }
   if (parsed.operation === "unsuppress") {
     return stripUndefined({
-      ...scope,
       ...payload,
+      ...identity,
       anchor_id: parsed.anchor_id ?? payloadString(payload, "anchor_id"),
       reason: parsed.reason,
     });
   }
   if (parsed.operation === "activate") {
     return stripUndefined({
-      ...scope,
       ...payload,
+      ...identity,
       node_ids: nodeIds.length > 0 ? nodeIds : payload.node_ids,
       client_ids: clientIds.length > 0 ? clientIds : payload.client_ids,
       consumer_team_id: guideExposure?.ok
-        ? guideExposure.ledger.consumer_team_id ?? payload.consumer_team_id
-        : payload.consumer_team_id,
+        ? guideExposure.ledger.consumer_team_id ?? undefined
+        : identity.consumer_team_id,
       run_id: parsed.run_id ?? payload.run_id,
       outcome: parsed.outcome ?? payload.outcome,
       activate: parsed.activate ?? payload.activate,
@@ -440,8 +436,8 @@ function productForgetPayload(
         ? parsed.mode
         : undefined;
     return stripUndefined({
-      ...scope,
       ...payload,
+      ...identity,
       anchor_id: parsed.anchor_id ?? payloadString(payload, "anchor_id"),
       anchor_uri: parsed.anchor_uri ?? payloadString(payload, "anchor_uri"),
       mode: rehydrationMode ?? payload.mode,
@@ -450,8 +446,8 @@ function productForgetPayload(
     });
   }
   return stripUndefined({
-    ...scope,
     ...payload,
+    ...identity,
     node_ids: nodeIds.length > 0 ? nodeIds : payload.node_ids,
     client_ids: clientIds.length > 0 ? clientIds : payload.client_ids,
     target_tier: parsed.target_tier ?? payload.target_tier,

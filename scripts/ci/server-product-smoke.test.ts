@@ -9,8 +9,8 @@ import { createRequestGuards } from "./support/create-request-guards-test-config
 import { createRuntimeServices } from "../../src/app/runtime-services.ts";
 import { loadEnv, type Env } from "../../src/config.ts";
 import { createRuntimeConfig } from "../../src/config/runtime-config.ts";
-import { createLiteExecutionStateStore } from "../../src/execution/state-store.ts";
-import { createLiteExecutionTreeStore } from "../../src/execution/tree-store.ts";
+import { createLiteExecutionStateStoreFromDatabase } from "../../src/execution/state-store.ts";
+import { createLiteExecutionTreeStoreFromDatabase } from "../../src/execution/tree-store.ts";
 import { createHandoffRouteService } from "../../src/routes/handoff.ts";
 import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
 import {
@@ -20,8 +20,11 @@ import {
 } from "../../src/server/http-server.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteReplayStore } from "../../src/store/lite-replay-store.ts";
-import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
+import { createLiteWriteStoreFromDatabase } from "../../src/store/lite-write-store.ts";
+import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
+import { buildAionisUri } from "../../src/memory/uri.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
+import { updateRuleState } from "../../src/memory/rules.ts";
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-server-product-smoke-"));
@@ -63,6 +66,30 @@ async function serverEnv(writePath: string, replayPath: string): Promise<Env> {
           default_scope: "tenant-a/default",
           allowed_scopes: ["tenant-a/default"],
         },
+        "tenant-a-attacker-key": {
+          tenant_id: "tenant-a",
+          agent_id: "agent-b",
+          team_id: "team-b",
+          role: "developer",
+          default_scope: "tenant-a/default",
+          allowed_scopes: ["tenant-a/default"],
+        },
+        "tenant-a-team-key": {
+          tenant_id: "tenant-a",
+          agent_id: null,
+          team_id: "team-c",
+          role: "developer",
+          default_scope: "tenant-a/default",
+          allowed_scopes: ["tenant-a/default"],
+        },
+        "tenant-b-key": {
+          tenant_id: "tenant-b",
+          agent_id: "agent-b",
+          team_id: "team-b",
+          role: "developer",
+          default_scope: "tenant-b/default",
+          allowed_scopes: ["tenant-b/default"],
+        },
       }),
       MEMORY_TENANT_ID: "tenant-a",
       MEMORY_SCOPE: "tenant-a/default",
@@ -83,11 +110,18 @@ function registerServerProductApp(args: {
   writePath: string;
   replayPath: string;
 }) {
-  const liteWriteStore = createLiteWriteStore(args.writePath);
+  const runtimeDatabase = createLiteRuntimeDatabase(args.writePath);
+  const liteWriteStore = createLiteWriteStoreFromDatabase(runtimeDatabase, { closeDatabaseOnClose: true });
   const liteRecallStore = createLiteRecallStore(args.writePath);
   const liteReplayStore = createLiteReplayStore(args.replayPath);
-  const executionStateStore = createLiteExecutionStateStore(args.writePath);
-  const executionTreeStore = createLiteExecutionTreeStore(args.writePath);
+  const executionStateStore = createLiteExecutionStateStoreFromDatabase(runtimeDatabase.db, {
+    path: runtimeDatabase.path,
+    transaction: runtimeDatabase.transaction,
+  });
+  const executionTreeStore = createLiteExecutionTreeStoreFromDatabase(runtimeDatabase.db, {
+    path: runtimeDatabase.path,
+    transaction: runtimeDatabase.transaction,
+  });
   const embeddingSurfacePolicy = {
     provider_configured: true,
     enabled_surfaces: ["write_auto_embed", "recall_text"],
@@ -115,6 +149,9 @@ function registerServerProductApp(args: {
   const productServices = createRuntimeProductServices({
     env: args.env,
     liteWriteStore,
+    liteRecallAccess: liteRecallStore.createRecallAccess(),
+    embedder: DeterministicEmbeddingProvider,
+    queryEmbedder: DeterministicEmbeddingProvider,
     executionTreeStore,
     memoryWriteService,
     handoffRouteService: createHandoffRouteService({
@@ -381,6 +418,615 @@ test("server edition product routes require auth and run observe to guide throug
         entry.domain === "general" && entry.summary === memoryText,
       ),
     );
+  } finally {
+    await app.close();
+    await stores.executionTreeStore.close();
+    await stores.executionStateStore.close();
+    await stores.liteRecallStore.close();
+    await stores.liteReplayStore.close();
+    await stores.liteWriteStore.close();
+  }
+});
+
+test("server product evidence identity is bound to the authenticated principal", async () => {
+  const app = Fastify();
+  const writePath = tmpDbPath("evidence-identity-write");
+  const replayPath = tmpDbPath("evidence-identity-replay");
+  const env = await serverEnv(writePath, replayPath);
+  const stores = registerServerProductApp({ app, env, writePath, replayPath });
+  const victimHeaders = { "x-api-key": "tenant-a-key" };
+  const attackerHeaders = { "x-api-key": "tenant-a-attacker-key" };
+  const teamHeaders = { "x-api-key": "tenant-a-team-key" };
+  try {
+    const marker = "SERVER_PRINCIPAL_EVIDENCE_IDENTITY_MARKER";
+    const observed = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      headers: victimHeaders,
+      payload: {
+        input_text: `${marker} Prefer audited status summaries and choose read first.`,
+        auto_embed: true,
+        memory_lane: "shared",
+        nodes: [
+          {
+            client_id: "memory:server-principal-evidence-identity",
+            type: "concept",
+            tier: "warm",
+            memory_lane: "shared",
+            title: "Server principal evidence identity memory",
+            text_summary: `${marker} Prefer audited status summaries.`,
+            confidence: 0.9,
+          },
+          {
+            client_id: "rule:server-principal-evidence-identity",
+            type: "rule",
+            tier: "warm",
+            memory_lane: "shared",
+            title: "Prefer read for server evidence identity",
+            text_summary: "Use read for the server evidence identity task.",
+            slots: {
+              if: { task_kind: { $eq: "server_evidence_identity" } },
+              then: { tool: { prefer: ["read"] } },
+              exceptions: [],
+              rule_scope: "global",
+            },
+          },
+        ],
+      },
+    });
+    assert.equal(observed.statusCode, 200, observed.body);
+    const observedNodes = observed.json().memory_write.nodes as Array<Record<string, unknown>>;
+    const memoryNodeId = String(observedNodes.find((entry) => entry.client_id === "memory:server-principal-evidence-identity")?.id ?? "");
+    const ruleNodeId = String(observedNodes.find((entry) => entry.client_id === "rule:server-principal-evidence-identity")?.id ?? "");
+    assert.ok(memoryNodeId);
+    assert.ok(ruleNodeId);
+    await stores.liteWriteStore.withTx(() => updateRuleState({
+      tenant_id: "tenant-a",
+      scope: "tenant-a/default",
+      actor: "agent-a",
+      rule_node_id: ruleNodeId,
+      state: "active",
+      input_text: "Activate the server principal evidence identity rule.",
+    }, "tenant-a/default", "tenant-a", { liteWriteStore: stores.liteWriteStore }));
+
+    const teamMarker = "SERVER_TEAM_PRINCIPAL_EVIDENCE_IDENTITY_MARKER";
+    const teamObserved = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      headers: teamHeaders,
+      payload: {
+        input_text: `${teamMarker} Keep team-owned status summaries auditable and choose read first.`,
+        auto_embed: true,
+        memory_lane: "shared",
+        nodes: [
+          {
+            client_id: "memory:server-team-principal-evidence-identity",
+            type: "concept",
+            tier: "warm",
+            memory_lane: "shared",
+            title: "Server team principal evidence identity memory",
+            text_summary: `${teamMarker} Keep team-owned status summaries auditable.`,
+            confidence: 0.9,
+          },
+          {
+            client_id: "rule:server-team-principal-evidence-identity",
+            type: "rule",
+            tier: "warm",
+            memory_lane: "shared",
+            title: "Prefer read for server team evidence identity",
+            text_summary: "Use read for the server team evidence identity task.",
+            slots: {
+              if: { task_kind: { $eq: "server_evidence_identity" } },
+              then: { tool: { prefer: ["read"] } },
+              exceptions: [],
+              rule_scope: "global",
+            },
+          },
+        ],
+      },
+    });
+    assert.equal(teamObserved.statusCode, 200, teamObserved.body);
+    const teamObservedNodes = teamObserved.json().memory_write.nodes as Array<Record<string, unknown>>;
+    const teamMemoryNodeId = String(teamObservedNodes.find((entry) => entry.client_id === "memory:server-team-principal-evidence-identity")?.id ?? "");
+    const teamRuleNodeId = String(teamObservedNodes.find((entry) => entry.client_id === "rule:server-team-principal-evidence-identity")?.id ?? "");
+    assert.ok(teamMemoryNodeId);
+    assert.ok(teamRuleNodeId);
+    await stores.liteWriteStore.withTx(() => updateRuleState({
+      tenant_id: "tenant-a",
+      scope: "tenant-a/default",
+      actor: "team-c",
+      rule_node_id: teamRuleNodeId,
+      state: "active",
+      input_text: "Activate the server team principal evidence identity rule.",
+    }, "tenant-a/default", "tenant-a", { liteWriteStore: stores.liteWriteStore }));
+
+    const guidePayload = {
+      query_text: `${marker} audited status summary`,
+      run_id: "run:server-principal-evidence-identity",
+      consumer_agent_id: "agent-a",
+      consumer_team_id: "team-a",
+      context: {
+        agent_id: "agent-a",
+        task_kind: "server_evidence_identity",
+        task_signature: "server-evidence-identity",
+        goal: "Continue with the authenticated principal's evidence.",
+      },
+      tool_candidates: ["read", "edit"],
+      include_packets: true,
+      limit: 8,
+    };
+    const victimGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      headers: victimHeaders,
+      payload: guidePayload,
+    });
+    assert.equal(victimGuide.statusCode, 200, victimGuide.body);
+    const victimGuideBody = victimGuide.json() as Record<string, any>;
+    assert.equal(victimGuideBody.consumer_agent_id, "agent-a");
+    assert.equal(victimGuideBody.consumer_team_id, "team-a");
+    assert.ok(victimGuideBody.agent_context.memory_ids.includes(memoryNodeId));
+    assert.ok(victimGuideBody.tool_selection);
+
+    const spoofedGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      headers: attackerHeaders,
+      payload: guidePayload,
+    });
+    assert.equal(spoofedGuide.statusCode, 200, spoofedGuide.body);
+    assert.equal(spoofedGuide.json().consumer_agent_id, "agent-b");
+    assert.equal(spoofedGuide.json().consumer_team_id, "team-b");
+
+    const teamGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      headers: teamHeaders,
+      payload: {
+        ...guidePayload,
+        query_text: `${teamMarker} audited status summary`,
+      },
+    });
+    assert.equal(teamGuide.statusCode, 200, teamGuide.body);
+    const teamGuideBody = teamGuide.json() as Record<string, any>;
+    assert.equal(teamGuideBody.consumer_agent_id, "team-c");
+    assert.equal(teamGuideBody.consumer_team_id, "team-c");
+    assert.ok(teamGuideBody.agent_context.memory_ids.includes(teamMemoryNodeId));
+    assert.ok(teamGuideBody.tool_selection);
+
+    const attackerMemoryFeedback = await app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      headers: attackerHeaders,
+      payload: {
+        feedback_kind: "memory",
+        actor: "agent-a",
+        guide_trace_id: victimGuideBody.guide_trace_id,
+        used_memory_ids: [memoryNodeId],
+        run_id: "run:server-principal-evidence-identity",
+        outcome: "positive",
+        used_surface: "use_now",
+        verifier_status: "passed",
+        tool_status: "succeeded",
+        reason: "An attacker must not reuse another principal's guide receipt.",
+      },
+    });
+    assert.equal(attackerMemoryFeedback.statusCode, 400, attackerMemoryFeedback.body);
+    assert.equal(attackerMemoryFeedback.json().error, "guide_trace_not_found");
+
+    const attackerToolFeedback = await app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      headers: attackerHeaders,
+      payload: {
+        feedback_kind: "tool_selection",
+        actor: "agent-a",
+        consumer_agent_id: "agent-a",
+        consumer_team_id: "team-a",
+        guide_trace_id: victimGuideBody.guide_trace_id,
+        decision_id: victimGuideBody.tool_selection.decision_id,
+        run_id: victimGuideBody.tool_selection.run_id,
+        selected_tool: victimGuideBody.tool_selection.selected_tool,
+        candidates: victimGuideBody.tool_selection.candidates,
+        outcome: "positive",
+        context: guidePayload.context,
+        input_text: "An attacker must not attribute tool feedback to another principal.",
+      },
+    });
+    assert.equal(attackerToolFeedback.statusCode, 404, attackerToolFeedback.body);
+    assert.equal(attackerToolFeedback.json().error, "guide_trace_not_found");
+
+    const victimMemoryFeedback = await app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      headers: victimHeaders,
+      payload: {
+        feedback_kind: "memory",
+        actor: "agent-b",
+        guide_trace_id: victimGuideBody.guide_trace_id,
+        used_memory_ids: [memoryNodeId],
+        run_id: "run:server-principal-evidence-identity",
+        outcome: "positive",
+        used_surface: "use_now",
+        verifier_status: "passed",
+        tool_status: "succeeded",
+        reason: "The authenticated consumer used its own exposed memory.",
+      },
+    });
+    assert.equal(victimMemoryFeedback.statusCode, 200, victimMemoryFeedback.body);
+
+    const victimToolFeedback = await app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      headers: victimHeaders,
+      payload: {
+        feedback_kind: "tool_selection",
+        actor: "agent-b",
+        consumer_agent_id: "agent-b",
+        consumer_team_id: "team-b",
+        guide_trace_id: victimGuideBody.guide_trace_id,
+        decision_id: victimGuideBody.tool_selection.decision_id,
+        run_id: victimGuideBody.tool_selection.run_id,
+        selected_tool: victimGuideBody.tool_selection.selected_tool,
+        candidates: victimGuideBody.tool_selection.candidates,
+        outcome: "positive",
+        context: guidePayload.context,
+        input_text: "The authenticated consumer confirms its own tool selection.",
+      },
+    });
+    assert.equal(victimToolFeedback.statusCode, 200, victimToolFeedback.body);
+
+    const teamMemoryFeedback = await app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      headers: teamHeaders,
+      payload: {
+        feedback_kind: "memory",
+        actor: "agent-a",
+        guide_trace_id: teamGuideBody.guide_trace_id,
+        used_memory_ids: [teamMemoryNodeId],
+        run_id: "run:server-principal-evidence-identity",
+        outcome: "positive",
+        used_surface: "use_now",
+        verifier_status: "passed",
+        tool_status: "succeeded",
+        reason: "A team-only principal can use its own bound guide receipt.",
+      },
+    });
+    assert.equal(teamMemoryFeedback.statusCode, 200, teamMemoryFeedback.body);
+
+    const teamToolFeedback = await app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      headers: teamHeaders,
+      payload: {
+        feedback_kind: "tool_selection",
+        actor: "agent-a",
+        consumer_agent_id: "agent-a",
+        consumer_team_id: "team-a",
+        guide_trace_id: teamGuideBody.guide_trace_id,
+        decision_id: teamGuideBody.tool_selection.decision_id,
+        run_id: teamGuideBody.tool_selection.run_id,
+        selected_tool: teamGuideBody.tool_selection.selected_tool,
+        candidates: teamGuideBody.tool_selection.candidates,
+        outcome: "positive",
+        context: guidePayload.context,
+        input_text: "The team-only principal confirms its own tool selection.",
+      },
+    });
+    assert.equal(teamToolFeedback.statusCode, 200, teamToolFeedback.body);
+  } finally {
+    await app.close();
+    await stores.executionTreeStore.close();
+    await stores.executionStateStore.close();
+    await stores.liteRecallStore.close();
+    await stores.liteReplayStore.close();
+    await stores.liteWriteStore.close();
+  }
+});
+
+test("server lifecycle payload identity cannot override the authenticated principal", async () => {
+  const app = Fastify();
+  const writePath = tmpDbPath("lifecycle-principal-payload-write");
+  const replayPath = tmpDbPath("lifecycle-principal-payload-replay");
+  const env = await serverEnv(writePath, replayPath);
+  const stores = registerServerProductApp({ app, env, writePath, replayPath });
+  const victimHeaders = { "x-api-key": "tenant-a-key" };
+  const crossTenantHeaders = { "x-api-key": "tenant-b-key" };
+  const victimIdentity = {
+    tenant_id: "tenant-a",
+    scope: "tenant-a/default",
+    actor: "agent-a",
+    consumer_agent_id: "agent-a",
+    consumer_team_id: "team-a",
+  };
+  const crossTenantIdentity = {
+    tenant_id: "tenant-b",
+    scope: "tenant-b/default",
+    actor: "agent-b",
+    consumer_agent_id: "agent-b",
+    consumer_team_id: "team-b",
+  };
+  try {
+    const observe = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      headers: victimHeaders,
+      payload: {
+        input_text: "Seed private lifecycle memories for authenticated principal isolation.",
+        auto_embed: false,
+        memory_lane: "private",
+        nodes: [
+          {
+            client_id: "workflow:server-lifecycle-principal",
+            type: "procedure",
+            tier: "warm",
+            memory_lane: "private",
+            memory_kind: "execution_workflow",
+            title: "Private authenticated workflow",
+            text_summary: "Read the authenticated continuation before making a private change.",
+            task_signature: "server-lifecycle-principal",
+            workflow_signature: "authenticated-continuation-first",
+            next_action: "Read the authenticated continuation.",
+            tool_set: ["read", "edit", "test"],
+            confidence: 0.9,
+          },
+          {
+            client_id: "memory:server-lifecycle-principal-activate",
+            type: "concept",
+            tier: "warm",
+            memory_lane: "private",
+            memory_kind: "general_memory",
+            title: "Private activation memory",
+            text_summary: "Only the authenticated owner may activate this private memory.",
+            confidence: 0.9,
+          },
+          {
+            client_id: "archive:server-lifecycle-principal",
+            type: "procedure",
+            tier: "archive",
+            memory_lane: "private",
+            memory_kind: "execution_workflow",
+            title: "Private archived workflow",
+            text_summary: "Only the authenticated owner may rehydrate this private workflow.",
+            confidence: 0.9,
+          },
+        ],
+      },
+    });
+    assert.equal(observe.statusCode, 200, observe.body);
+    const observedNodes = observe.json().memory_write.nodes as Array<Record<string, unknown>>;
+    const workflowId = String(observedNodes.find((entry) => entry.client_id === "workflow:server-lifecycle-principal")?.id ?? "");
+    const activationId = String(observedNodes.find((entry) => entry.client_id === "memory:server-lifecycle-principal-activate")?.id ?? "");
+    const archiveId = String(observedNodes.find((entry) => entry.client_id === "archive:server-lifecycle-principal")?.id ?? "");
+    assert.ok(workflowId);
+    assert.ok(activationId);
+    assert.ok(archiveId);
+
+    const attackerSuppress = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      headers: crossTenantHeaders,
+      payload: {
+        operation: "suppress",
+        target: "pattern",
+        anchor_id: workflowId,
+        reason: "A cross-tenant principal must not suppress the victim workflow.",
+        payload: { ...victimIdentity, anchor_id: workflowId },
+      },
+    });
+    assert.equal(attackerSuppress.statusCode, 404, attackerSuppress.body);
+
+    const victimSuppress = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      headers: victimHeaders,
+      payload: {
+        operation: "suppress",
+        target: "pattern",
+        actor: "agent-b",
+        consumer_agent_id: "agent-b",
+        consumer_team_id: "team-b",
+        anchor_id: workflowId,
+        reason: "The authenticated owner suppresses its private workflow.",
+        payload: { ...crossTenantIdentity, anchor_id: workflowId },
+      },
+    });
+    assert.equal(victimSuppress.statusCode, 200, victimSuppress.body);
+    assert.equal(victimSuppress.json().result.operator_override.updated_by, "agent-a");
+    assert.equal(victimSuppress.json().result.tenant_id, "tenant-a");
+    assert.equal(victimSuppress.json().result.scope, "tenant-a/default");
+
+    const attackerUnsuppress = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      headers: crossTenantHeaders,
+      payload: {
+        operation: "unsuppress",
+        target: "pattern",
+        anchor_id: workflowId,
+        reason: "A cross-tenant principal must not unsuppress the victim workflow.",
+        payload: { ...victimIdentity, anchor_id: workflowId },
+      },
+    });
+    assert.equal(attackerUnsuppress.statusCode, 404, attackerUnsuppress.body);
+
+    const stillSuppressed = await stores.liteWriteStore.findNodes({
+      scope: "tenant-a/default",
+      id: workflowId,
+      consumerAgentId: "agent-a",
+      consumerTeamId: "team-a",
+      limit: 1,
+      offset: 0,
+    });
+    assert.equal(stillSuppressed.rows[0]?.slots.operator_override_v1.suppressed, true);
+
+    const victimUnsuppress = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      headers: victimHeaders,
+      payload: {
+        operation: "unsuppress",
+        target: "pattern",
+        actor: "agent-b",
+        consumer_agent_id: "agent-b",
+        consumer_team_id: "team-b",
+        anchor_id: workflowId,
+        reason: "The authenticated owner restores its private workflow.",
+        payload: { ...crossTenantIdentity, anchor_id: workflowId },
+      },
+    });
+    assert.equal(victimUnsuppress.statusCode, 200, victimUnsuppress.body);
+    assert.equal(victimUnsuppress.json().result.operator_override.updated_by, "agent-a");
+
+    const attackerActivate = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      headers: crossTenantHeaders,
+      payload: {
+        operation: "activate",
+        target: "memory",
+        memory_ids: [activationId],
+        run_id: "run:cross-tenant-activation",
+        outcome: "positive",
+        used_surface: "explicit_host_assertion",
+        reason: "A cross-tenant principal must not activate the victim memory.",
+        payload: { ...victimIdentity, node_ids: [activationId] },
+      },
+    });
+    assert.equal(attackerActivate.statusCode, 200, attackerActivate.body);
+    assert.equal(attackerActivate.json().result.activated.updated_nodes, 0);
+
+    const victimActivate = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      headers: victimHeaders,
+      payload: {
+        operation: "activate",
+        target: "memory",
+        actor: "agent-b",
+        consumer_agent_id: "agent-b",
+        consumer_team_id: "team-b",
+        memory_ids: [activationId],
+        run_id: "run:victim-activation",
+        outcome: "positive",
+        used_surface: "explicit_host_assertion",
+        reason: "The authenticated owner activates its private memory.",
+        payload: { ...crossTenantIdentity, node_ids: [activationId] },
+      },
+    });
+    assert.equal(victimActivate.statusCode, 200, victimActivate.body);
+    assert.equal(victimActivate.json().result.activated.updated_nodes, 1);
+
+    const attackerRehydrate = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      headers: crossTenantHeaders,
+      payload: {
+        operation: "rehydrate",
+        target: "archive",
+        memory_ids: [archiveId],
+        target_tier: "hot",
+        reason: "A cross-tenant principal must not rehydrate the victim archive.",
+        payload: { ...victimIdentity, node_ids: [archiveId] },
+      },
+    });
+    assert.equal(attackerRehydrate.statusCode, 200, attackerRehydrate.body);
+    assert.equal(attackerRehydrate.json().result.rehydrated.moved_nodes, 0);
+
+    const victimRehydrate = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      headers: victimHeaders,
+      payload: {
+        operation: "rehydrate",
+        target: "archive",
+        actor: "agent-b",
+        consumer_agent_id: "agent-b",
+        consumer_team_id: "team-b",
+        memory_ids: [archiveId],
+        target_tier: "hot",
+        reason: "The authenticated owner rehydrates its private archive.",
+        payload: { ...crossTenantIdentity, node_ids: [archiveId] },
+      },
+    });
+    assert.equal(victimRehydrate.statusCode, 200, victimRehydrate.body);
+    assert.equal(victimRehydrate.json().result.rehydrated.moved_nodes, 1);
+  } finally {
+    await app.close();
+    await stores.executionTreeStore.close();
+    await stores.executionStateStore.close();
+    await stores.liteRecallStore.close();
+    await stores.liteReplayStore.close();
+    await stores.liteWriteStore.close();
+  }
+});
+
+test("server memory resolve binds private-memory consumer identity to the principal", async () => {
+  const app = Fastify();
+  const writePath = tmpDbPath("resolve-principal-identity-write");
+  const replayPath = tmpDbPath("resolve-principal-identity-replay");
+  const env = await serverEnv(writePath, replayPath);
+  const stores = registerServerProductApp({ app, env, writePath, replayPath });
+  const victimHeaders = { "x-api-key": "tenant-a-key" };
+  const attackerHeaders = { "x-api-key": "tenant-a-attacker-key" };
+  try {
+    const observe = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      headers: victimHeaders,
+      payload: {
+        input_text: "Seed a private memory for resolve principal isolation.",
+        auto_embed: false,
+        memory_lane: "private",
+        memory: {
+          client_id: "memory:server-resolve-principal",
+          type: "concept",
+          tier: "warm",
+          memory_lane: "private",
+          memory_kind: "general_memory",
+          title: "Private resolve memory",
+          text_summary: "Only the authenticated owner may resolve this private node.",
+          confidence: 0.9,
+        },
+      },
+    });
+    assert.equal(observe.statusCode, 200, observe.body);
+    const nodeId = String(observe.json().memory_write.nodes[0]?.id ?? "");
+    assert.ok(nodeId);
+    const uri = buildAionisUri({
+      tenant_id: "tenant-a",
+      scope: "tenant-a/default",
+      type: "concept",
+      id: nodeId,
+    });
+
+    const spoofed = await app.inject({
+      method: "POST",
+      url: "/v1/memory/resolve",
+      headers: attackerHeaders,
+      payload: {
+        uri,
+        consumer_agent_id: "agent-a",
+        consumer_team_id: "team-a",
+        include_slots: true,
+      },
+    });
+    assert.equal(spoofed.statusCode, 404, spoofed.body);
+
+    const resolved = await app.inject({
+      method: "POST",
+      url: "/v1/memory/resolve",
+      headers: victimHeaders,
+      payload: {
+        uri,
+        consumer_agent_id: "agent-b",
+        consumer_team_id: "team-b",
+        include_slots: true,
+      },
+    });
+    assert.equal(resolved.statusCode, 200, resolved.body);
+    assert.equal(resolved.json().node.id, nodeId);
   } finally {
     await app.close();
     await stores.executionTreeStore.close();

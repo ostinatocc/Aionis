@@ -6,41 +6,67 @@
     "source_tag": "v0.3.5",
     "docker_image": "ghcr.io/ostinatocc/aionis",
     "docker_tag": "v0.3.5",
+    "docker_platforms": [
+      "linux/amd64"
+    ],
     "default_installer_ref": "v0.3.5"
   },
   "packages": {
     "cli": {
       "name": "aionis",
-      "version": "0.3.8"
+      "version": "0.3.8",
+      "source_ref": "v0.3.8",
+      "source_commit": "2befe6e9fb7250116250bd4852bfabe75aff542d",
+      "repository": "https://github.com/ostinatocc/aionis-cli.git",
+      "package_path": "."
     },
     "create": {
       "name": "@aionis/create",
-      "version": "0.3.7"
+      "version": "0.3.7",
+      "source_ref": "v0.3.7",
+      "source_commit": "70f98606291a16ce4ded4fc27316f3ccbdbbd194",
+      "repository": "https://github.com/ostinatocc/aionis-create.git",
+      "package_path": "."
     },
     "sdk": {
       "name": "@aionis/sdk",
-      "version": "0.3.14",
-      "source_ref": "main"
+      "version": "0.3.15",
+      "source_ref": "v0.3.15",
+      "source_commit": "c9c5ff84a4091194661f74f880bc6174b8f7a602",
+      "repository": "https://github.com/ostinatocc/aionis-sdk.git",
+      "package_path": "."
     },
     "mcp": {
       "name": "@aionis/mcp",
-      "version": "0.3.7"
+      "version": "0.3.7",
+      "source_ref": "v0.3.7",
+      "source_commit": "5d97344029777f7a49a28afb906f8a664c57e80a",
+      "repository": "https://github.com/ostinatocc/aionis-mcp.git",
+      "package_path": "."
     },
     "aifs": {
       "name": "@aionis/aifs",
-      "version": "0.3.4"
+      "version": "0.3.4",
+      "source_ref": "v0.3.4",
+      "source_commit": "977a0e09768acc0dd79ac68f9f8a5a0ca6bf9562",
+      "repository": "https://github.com/ostinatocc/aionis-aifs.git",
+      "package_path": "."
     },
     "claude_code": {
       "name": "@aionis/claude-code",
-      "version": "0.3.5"
+      "version": "0.3.5",
+      "source_ref": "v0.3.5",
+      "source_commit": "175a0dcd398ff0e8df99e361b150373185acced3",
+      "repository": "https://github.com/ostinatocc/aionis-claude-code.git",
+      "package_path": "packages/aionis-claude-code"
     },
     "substrate": {
       "name": "@aionis/substrate",
-      "version": "0.1.11"
-    },
-    "manifest": {
-      "name": "@aionis/manifest",
-      "version": "0.1.1"
+      "version": "0.1.11",
+      "source_ref": "v0.1.11",
+      "source_commit": "410f6b1ad432f3cf3f8c750f904c09ec8159dc66",
+      "repository": "https://github.com/ostinatocc/AionisSubstrate.git",
+      "package_path": "."
     }
   }
 }

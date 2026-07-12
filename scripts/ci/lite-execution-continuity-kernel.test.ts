@@ -21,6 +21,7 @@ import {
   mergeExecutionPacketStaticBlocks,
   resolveExecutionKernelContext,
 } from "../../src/kernel/execution-continuity-kernel.ts";
+import { HttpError } from "../../src/util/http.ts";
 
 const now = "2026-05-18T00:00:00.000Z";
 
@@ -259,6 +260,100 @@ test("execution continuity kernel persists handoff transitions across reopened L
   }
 });
 
+test("execution continuity kernel preserves a caller-supplied stale expected revision", async () => {
+  const dbPath = tmpDbPath("continuity-caller-cas");
+  const store = createLiteExecutionStateStore(dbPath);
+  const state = sampleState();
+  try {
+    store.initialize(state);
+    store.applyTransition({
+      transition_id: "validation-completed-first",
+      state_id: state.state_id,
+      scope: state.scope,
+      actor_role: "patch",
+      at: "2026-05-18T00:01:00.000Z",
+      expected_revision: 1,
+      type: "validation_completed",
+      validations: ["npm run -s test:focused"],
+    });
+    const currentState = store.get(state.scope, state.state_id)?.state;
+    assert.ok(currentState);
+
+    assert.throws(
+      () => applyExecutionContinuityTransitionsFromSlots({
+        executionStateStore: store,
+        writeSlots: {
+          execution_state_v1: currentState,
+          execution_transitions_v1: [{
+            transition_id: "validation-added-stale",
+            state_id: state.state_id,
+            scope: state.scope,
+            actor_role: "patch",
+            at: "2026-05-18T00:02:00.000Z",
+            expected_revision: 1,
+            type: "validation_added",
+            validations: ["npm run -s typecheck"],
+          }],
+        },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof HttpError);
+        assert.equal(error.statusCode, 409);
+        assert.equal(error.code, "execution_state_revision_conflict");
+        return true;
+      },
+    );
+    assert.equal(store.get(state.scope, state.state_id)?.revision, 2);
+  } finally {
+    await store.close();
+  }
+});
+
+test("execution continuity kernel rejects a stale state snapshot before applying its transitions", async () => {
+  const dbPath = tmpDbPath("continuity-stale-snapshot");
+  const store = createLiteExecutionStateStore(dbPath);
+  const state = sampleState();
+  try {
+    store.initialize(state);
+    store.applyTransition({
+      transition_id: "continuity-stale-snapshot:advance",
+      state_id: state.state_id,
+      scope: state.scope,
+      actor_role: "patch",
+      at: "2026-05-18T00:01:00.000Z",
+      expected_revision: 1,
+      type: "validation_completed",
+      validations: ["npm run -s test:focused"],
+    });
+    assert.throws(
+      () => applyExecutionContinuityTransitionsFromSlots({
+        executionStateStore: store,
+        writeSlots: {
+          execution_state_v1: state,
+          execution_transitions_v1: [{
+            transition_id: "continuity-stale-snapshot:must-not-apply",
+            state_id: state.state_id,
+            scope: state.scope,
+            actor_role: "review",
+            at: "2026-05-18T00:02:00.000Z",
+            expected_revision: 2,
+            type: "validation_added",
+            validations: ["must not apply"],
+          }],
+        },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof HttpError);
+        assert.equal(error.code, "execution_state_snapshot_conflict");
+        return true;
+      },
+    );
+    assert.equal(store.get(state.scope, state.state_id)?.revision, 2);
+  } finally {
+    await store.close();
+  }
+});
+
 test("execution continuity kernel persists execution tree operations from write slots", async () => {
   const dbPath = tmpDbPath("continuity-tree");
   const store = createLiteExecutionTreeStore(dbPath);
@@ -293,6 +388,58 @@ test("execution continuity kernel persists execution tree operations from write 
     assert.equal(stored?.revision, 2);
     assert.equal(stored?.last_operation_type, "grow");
     assert.equal(stored?.tree.nodes[stored.tree.current_raw_node_id]?.content.action, "inspect execution tree slot");
+  } finally {
+    await store.close();
+  }
+});
+
+test("execution continuity kernel rejects a stale tree snapshot before applying its operations", async () => {
+  const dbPath = tmpDbPath("continuity-stale-tree-snapshot");
+  const store = createLiteExecutionTreeStore(dbPath);
+  const tree = createExecutionTreeV1({
+    tree_id: "tree-focused-continuity",
+    scope: "focused-scope",
+    task_brief: "Reject stale tree snapshots before mutation",
+    at: now,
+  });
+  try {
+    store.initialize(tree);
+    store.applyOperation(treeOp({
+      operation_id: "continuity-stale-tree:advance",
+      type: "grow",
+      at: "2026-05-18T00:01:00.000Z",
+      expected_revision: 1,
+      action: "advance canonical tree",
+      observation: "revision two",
+      title: null,
+      tool_name: null,
+      refs: [],
+    }));
+    assert.throws(
+      () => applyExecutionTreeOperationsFromSlots({
+        executionTreeStore: store,
+        writeSlots: {
+          execution_tree_v1: tree,
+          execution_tree_operations_v1: [treeOp({
+            operation_id: "continuity-stale-tree:must-not-apply",
+            type: "grow",
+            at: "2026-05-18T00:02:00.000Z",
+            expected_revision: 2,
+            action: "must not apply",
+            observation: "stale snapshot",
+            title: null,
+            tool_name: null,
+            refs: [],
+          })],
+        },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof HttpError);
+        assert.equal(error.code, "execution_tree_snapshot_conflict");
+        return true;
+      },
+    );
+    assert.equal(store.get(tree.scope, tree.tree_id)?.revision, 2);
   } finally {
     await store.close();
   }

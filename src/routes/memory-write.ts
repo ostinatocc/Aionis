@@ -19,9 +19,14 @@ import {
   type PreparedWrite,
   type WriteResult,
 } from "../memory/write.js";
-import { commitLitePreparedWriteWithProjection } from "../memory/lite-projected-write-commit.js";
+import {
+  completeLiteInlineEmbeddings,
+  persistLitePreparedWrite,
+  prepareLiteProjectedWrite,
+} from "../memory/lite-projected-write-commit.js";
 import { createHttpMemoryLifecycleRelationCandidateProducer } from "../memory/memory-lifecycle-relation-model-producer.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
+import type { SqliteTransactionRunner } from "../store/sqlite-transaction-runner.js";
 import { HttpError } from "../util/http.js";
 
 type WriteWarningLike = { code: string; message: string; details?: Record<string, unknown> };
@@ -44,15 +49,28 @@ export type MemoryWriteRouteServiceResult = {
   liteInlineEmbedding: LiteInlineEmbeddingResultLike;
 };
 
+export type MemoryWriteRouteServiceOptions = {
+  log?: { info: (context: unknown, message?: string) => unknown };
+  executionTreeDefaultDisabled?: boolean;
+  startedAt?: number;
+};
+
+export type MemoryWriteRoutePlan = {
+  prepared: PreparedWrite;
+  executionOverlays: ReturnType<typeof collectExecutionWriteOverlaySlots> | null;
+  executionTreeDefaultDisabled: boolean;
+  startedAt: number;
+  log?: MemoryWriteRouteServiceOptions["log"];
+  projectionBase: { id: string; commit_hash: string } | null;
+};
+
 export type MemoryWriteRouteService = {
-  commit: (
-    body: unknown,
-    options?: {
-      log?: { info: (context: unknown, message?: string) => unknown };
-      executionTreeDefaultDisabled?: boolean;
-      startedAt?: number;
-    },
-  ) => Promise<MemoryWriteRouteServiceResult>;
+  transactionRunner(): SqliteTransactionRunner;
+  prepare(body: unknown, options?: MemoryWriteRouteServiceOptions): Promise<MemoryWriteRoutePlan>;
+  persist(plan: MemoryWriteRoutePlan): Promise<WriteResult>;
+  receipt(plan: MemoryWriteRoutePlan, out: WriteResult): Promise<MemoryWriteRouteServiceResult["response"]>;
+  finalize(plan: MemoryWriteRoutePlan, out: WriteResult): Promise<MemoryWriteRouteServiceResult>;
+  commit(body: unknown, options?: MemoryWriteRouteServiceOptions): Promise<MemoryWriteRouteServiceResult>;
 };
 
 export type MemoryWriteRouteServiceArgs = {
@@ -84,6 +102,13 @@ function resolveWriteScopeTenant(args: {
   };
 }
 
+function sameProjectionBase(
+  left: { id: string; commit_hash: string } | null,
+  right: { id: string; commit_hash: string } | null,
+): boolean {
+  return left?.id === right?.id && left?.commit_hash === right?.commit_hash;
+}
+
 export function createMemoryWriteRouteService(args: MemoryWriteRouteServiceArgs): MemoryWriteRouteService {
   const {
     env,
@@ -93,6 +118,13 @@ export function createMemoryWriteRouteService(args: MemoryWriteRouteServiceArgs)
     executionStateStore,
     executionTreeStore,
   } = args;
+  const atomicRunner = liteWriteStore.transactionRunner();
+  if (executionStateStore && executionStateStore.transactionRunner !== atomicRunner) {
+    throw new Error("memory write execution state store must share the Lite write transaction runner");
+  }
+  if (executionTreeStore && executionTreeStore.transactionRunner !== atomicRunner) {
+    throw new Error("memory write execution tree store must share the Lite write transaction runner");
+  }
   assertLocalStoreRuntimeEdition(env, "local-store memory-write route");
   const embeddingSurfacePolicy =
     embeddingSurfacePolicyArg ?? createEmbeddingSurfacePolicy({ providerConfigured: !!embedder });
@@ -113,48 +145,60 @@ export function createMemoryWriteRouteService(args: MemoryWriteRouteServiceArgs)
             : undefined;
         })()
       : undefined;
-  const runCommittedMemoryWrite = async (args: {
-    prepared: PreparedWrite;
-  }): Promise<{
-    out: WriteResult;
-    liteInlineEmbedding: LiteInlineEmbeddingResultLike;
-  }> => {
-    const { prepared } = args;
-    const committed = await commitLitePreparedWriteWithProjection({
+  const prepareCommittedMemoryWrite = async (prepared: PreparedWrite): Promise<void> => {
+    await prepareLiteProjectedWrite({
       prepared,
       liteWriteStore,
-      embedder: writeEmbedder,
-      inlineEmbeddingTimeoutMs: typeof env.LITE_INLINE_EMBEDDING_TIMEOUT_MS === "number"
-        ? env.LITE_INLINE_EMBEDDING_TIMEOUT_MS
-        : 12_000,
       learningControlReviewProviders: learningControlProviders.workflowProjection,
+      lifecycleRelationCandidateProducer,
+    });
+  };
+  const persistCommittedMemoryWrite = async (prepared: PreparedWrite): Promise<WriteResult> =>
+    persistLitePreparedWrite({
+      prepared,
+      liteWriteStore,
       writeOptions: {
         maxTextLen: env.MAX_TEXT_LEN,
         piiRedaction: env.PII_REDACTION,
         allowCrossScopeEdges: env.ALLOW_CROSS_SCOPE_EDGES,
-        ...(lifecycleRelationCandidateProducer
-          ? { lifecycleRelationCandidateProducer }
-          : {}),
       },
     });
-    if (committed.liteInlineEmbedding?.updated) {
-      committed.out.embedding_backfill = {
+  const completeCommittedMemoryWrite = async (
+    prepared: PreparedWrite,
+    out: WriteResult,
+  ): Promise<LiteInlineEmbeddingResultLike> => {
+    let liteInlineEmbedding: LiteInlineEmbeddingResultLike;
+    try {
+      liteInlineEmbedding = await completeLiteInlineEmbeddings({
+        prepared,
+        embedder: writeEmbedder,
+        liteWriteStore,
+        timeoutMs: typeof env.LITE_INLINE_EMBEDDING_TIMEOUT_MS === "number"
+          ? env.LITE_INLINE_EMBEDDING_TIMEOUT_MS
+          : 12_000,
+      });
+    } catch (error) {
+      process.emitWarning(
+        `Memory write post-commit embedding failed: ${error instanceof Error ? error.message : String(error)}`,
+        { code: "AIONIS_POST_COMMIT_EMBEDDING_FAILED" },
+      );
+      return null;
+    }
+    if (liteInlineEmbedding?.updated) {
+      out.embedding_backfill = {
         completed_inline: true,
-        attempted_nodes: committed.liteInlineEmbedding.attempted,
-        updated_nodes: committed.liteInlineEmbedding.updated,
+        attempted_nodes: liteInlineEmbedding.attempted,
+        updated_nodes: liteInlineEmbedding.updated,
       };
-    } else if ((committed.liteInlineEmbedding?.failed ?? 0) > 0) {
-      committed.out.embedding_backfill = {
+    } else if (liteInlineEmbedding && liteInlineEmbedding.failed > 0) {
+      out.embedding_backfill = {
         failed_inline: true,
-        attempted_nodes: committed.liteInlineEmbedding?.attempted ?? 0,
-        failed_nodes: committed.liteInlineEmbedding?.failed ?? 0,
-        ...(committed.liteInlineEmbedding?.error ? { error: committed.liteInlineEmbedding.error } : {}),
+        attempted_nodes: liteInlineEmbedding.attempted,
+        failed_nodes: liteInlineEmbedding.failed,
+        ...(liteInlineEmbedding.error ? { error: liteInlineEmbedding.error } : {}),
       };
     }
-    return {
-      out: committed.out,
-      liteInlineEmbedding: committed.liteInlineEmbedding,
-    };
+    return liteInlineEmbedding;
   };
   const collectWriteWarnings = (args: {
     out: WriteResult;
@@ -210,23 +254,36 @@ export function createMemoryWriteRouteService(args: MemoryWriteRouteServiceArgs)
     executionTreeDefaultDisabled: boolean;
   }) => {
     if (executionStateStore && args.executionOverlays) {
+      const initializedStates = new Set<string>();
       for (const state of args.executionOverlays.states) {
-        executionStateStore.put(state);
+        const key = `${state.scope}\u0000${state.state_id}`;
+        const existed = executionStateStore.has(state.scope, state.state_id);
+        executionStateStore.initialize(state);
+        if (!existed) initializedStates.add(key);
       }
-      for (const transition of args.executionOverlays.transitions) {
+      for (const parsed of args.executionOverlays.transitions) {
+        const key = `${parsed.scope}\u0000${parsed.state_id}`;
+        const current = executionStateStore.get(parsed.scope, parsed.state_id);
+        const transition = parsed.expected_revision == null && current && initializedStates.has(key)
+          ? { ...parsed, expected_revision: current.revision }
+          : parsed;
         executionStateStore.applyTransition(transition);
       }
     }
     if (executionTreeStore && args.executionOverlays) {
+      const initializedTrees = new Set<string>();
       for (const tree of args.executionOverlays.trees) {
-        const hasOperationsForTree = args.executionOverlays.treeOperations.some(
-          (operation) => operation.scope === tree.scope && operation.tree_id === tree.tree_id,
-        );
-        if (!hasOperationsForTree || !executionTreeStore.has(tree.scope, tree.tree_id)) {
-          executionTreeStore.put(tree);
-        }
+        const key = `${tree.scope}\u0000${tree.tree_id}`;
+        const existed = executionTreeStore.has(tree.scope, tree.tree_id);
+        executionTreeStore.initialize(tree);
+        if (!existed) initializedTrees.add(key);
       }
-      for (const operation of args.executionOverlays.treeOperations) {
+      for (const parsed of args.executionOverlays.treeOperations) {
+        const key = `${parsed.scope}\u0000${parsed.tree_id}`;
+        const current = executionTreeStore.get(parsed.scope, parsed.tree_id);
+        const operation = parsed.expected_revision == null && current && initializedTrees.has(key)
+          ? { ...parsed, expected_revision: current.revision }
+          : parsed;
         executionTreeStore.applyOperation(operation);
       }
       if (!args.executionTreeDefaultDisabled && env.EXECUTION_TREE_DEFAULT_ENABLED !== false) {
@@ -280,9 +337,6 @@ export function createMemoryWriteRouteService(args: MemoryWriteRouteServiceArgs)
       },
       writeEmbedder,
     );
-    const executionOverlays = executionStateStore || executionTreeStore
-      ? collectExecutionWriteOverlaySlots(prepared.nodes)
-      : null;
     if (env.MEMORY_WRITE_REQUIRE_NODES && prepared.nodes.length === 0) {
       throw new HttpError(
         400,
@@ -296,10 +350,23 @@ export function createMemoryWriteRouteService(args: MemoryWriteRouteServiceArgs)
         },
       );
     }
-
+    const projectionBase = await liteWriteStore.latestCommit(prepared.scope);
+    await prepareCommittedMemoryWrite(prepared);
+    const projectionBaseAfter = await liteWriteStore.latestCommit(prepared.scope);
+    if (!sameProjectionBase(projectionBase, projectionBaseAfter)) {
+      throw new HttpError(409, "write_projection_stale", "memory changed while write projection was being prepared", {
+        scope: prepared.scope_public,
+        projection_base_commit_id: projectionBase?.id ?? null,
+        current_commit_id: projectionBaseAfter?.id ?? null,
+        retryable: true,
+      });
+    }
     return {
       prepared,
-      executionOverlays,
+      executionOverlays: executionStateStore || executionTreeStore
+        ? collectExecutionWriteOverlaySlots(prepared.nodes)
+        : null,
+      projectionBase,
     };
   };
   const finalizeWriteRoute = async (args: {
@@ -323,57 +390,115 @@ export function createMemoryWriteRouteService(args: MemoryWriteRouteServiceArgs)
       ...(warnings.length > 0 ? { warnings } : {}),
     };
 
-    await applyWriteSideEffects({
-      prepared: args.prepared,
-      out: args.out,
-      executionOverlays: args.executionOverlays,
-      executionTreeDefaultDisabled: args.executionTreeDefaultDisabled,
-    });
-
     const writeContext = resolveWriteScopeTenant({
       out: args.out,
       prepared: args.prepared,
       env,
     });
-    args.log?.info(
-      {
-        write: buildWriteLogPayload({
-          out: args.out,
-          warnings,
-          scope: writeContext.scope,
-          tenantId: writeContext.tenantId,
-          ms: args.ms,
-        }),
-      },
-      "memory write",
-    );
+    try {
+      args.log?.info(
+        {
+          write: buildWriteLogPayload({
+            out: args.out,
+            warnings,
+            scope: writeContext.scope,
+            tenantId: writeContext.tenantId,
+            ms: args.ms,
+          }),
+        },
+        "memory write",
+      );
+    } catch (error) {
+      process.emitWarning(
+        `Memory write post-commit logging failed: ${error instanceof Error ? error.message : String(error)}`,
+        { code: "AIONIS_MEMORY_WRITE_POST_COMMIT_LOG_FAILED" },
+      );
+    }
 
     return response;
   };
 
-  return {
-    async commit(body: unknown, options: Parameters<MemoryWriteRouteService["commit"]>[1] = {}) {
-      const startedAt = options.startedAt ?? performance.now();
-      const { prepared, executionOverlays } = await prepareWriteRouteState(body);
-      const executionTreeDefaultDisabled =
-        options.executionTreeDefaultDisabled ?? isExecutionTreeDefaultDisabledRequest(body);
-      const { out, liteInlineEmbedding } = await runCommittedMemoryWrite({ prepared });
-      const response = await finalizeWriteRoute({
-        log: options.log,
-        prepared,
-        out,
-        executionOverlays,
-        executionTreeDefaultDisabled,
-        liteInlineEmbedding,
-        ms: performance.now() - startedAt,
+  const prepare = async (
+    body: unknown,
+    options: MemoryWriteRouteServiceOptions = {},
+  ): Promise<MemoryWriteRoutePlan> => {
+    const { prepared, executionOverlays, projectionBase } = await prepareWriteRouteState(body);
+    return {
+      prepared,
+      executionOverlays,
+      executionTreeDefaultDisabled:
+        options.executionTreeDefaultDisabled ?? isExecutionTreeDefaultDisabledRequest(body),
+      startedAt: options.startedAt ?? performance.now(),
+      log: options.log,
+      projectionBase,
+    };
+  };
+  const persist = async (plan: MemoryWriteRoutePlan): Promise<WriteResult> => {
+    if (!liteWriteStore.transactionRunner().inTransaction()) {
+      throw new Error("memory write persist requires the configured atomic write transaction");
+    }
+    const currentProjectionBase = await liteWriteStore.latestCommit(plan.prepared.scope);
+    if (!sameProjectionBase(plan.projectionBase, currentProjectionBase)) {
+      throw new HttpError(409, "write_projection_stale", "memory changed after write projection was prepared", {
+        scope: plan.prepared.scope_public,
+        projection_base_commit_id: plan.projectionBase?.id ?? null,
+        current_commit_id: currentProjectionBase?.id ?? null,
+        retryable: true,
       });
-      return {
-        response,
-        out,
-        prepared,
-        executionOverlays,
-        liteInlineEmbedding,
-      };
+    }
+    const out = await persistCommittedMemoryWrite(plan.prepared);
+    await applyWriteSideEffects({
+      prepared: plan.prepared,
+      out,
+      executionOverlays: plan.executionOverlays,
+      executionTreeDefaultDisabled: plan.executionTreeDefaultDisabled,
+    });
+    return out;
+  };
+  const finalize = async (
+    plan: MemoryWriteRoutePlan,
+    out: WriteResult,
+  ): Promise<MemoryWriteRouteServiceResult> => {
+    const liteInlineEmbedding = await completeCommittedMemoryWrite(plan.prepared, out);
+    const response = await finalizeWriteRoute({
+      log: plan.log,
+      prepared: plan.prepared,
+      out,
+      executionOverlays: plan.executionOverlays,
+      executionTreeDefaultDisabled: plan.executionTreeDefaultDisabled,
+      liteInlineEmbedding,
+      ms: performance.now() - plan.startedAt,
+    });
+    return {
+      response,
+      out,
+      prepared: plan.prepared,
+      executionOverlays: plan.executionOverlays,
+      liteInlineEmbedding,
+    };
+  };
+  const receipt = async (
+    plan: MemoryWriteRoutePlan,
+    out: WriteResult,
+  ): Promise<MemoryWriteRouteServiceResult["response"]> => await finalizeWriteRoute({
+    prepared: plan.prepared,
+    out,
+    executionOverlays: plan.executionOverlays,
+    executionTreeDefaultDisabled: plan.executionTreeDefaultDisabled,
+    liteInlineEmbedding: null,
+    ms: performance.now() - plan.startedAt,
+  });
+
+  return {
+    transactionRunner: () => liteWriteStore.transactionRunner(),
+    prepare,
+    persist,
+    receipt,
+    finalize,
+    async commit(body: unknown, options: MemoryWriteRouteServiceOptions = {}) {
+      const plan = await prepare(body, options);
+      const out = await liteWriteStore.withTx(() => persist(plan));
+      return await finalize(plan, out);
     },
   };
 }

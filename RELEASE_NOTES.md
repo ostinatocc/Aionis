@@ -1,104 +1,125 @@
-# Aionis v0.3.5 Release Candidate Notes
+# Aionis v0.3.5 Local Runtime Public Beta Candidate Notes
 
-Aionis v0.3 is the first stable baseline release train for the public Aionis
-Runtime and integration packages. The Runtime source candidate documented here is
-`v0.3.5`; npm packages may carry different `0.3.x` patch numbers because they
-release from standalone repositories.
+Release status `candidate`.
 
-## Headline
+Runtime `v0.3.5` is the candidate for a single-process, self-hosted Aionis Local
+Runtime. It is not GA, a managed multi-tenant service, or a multi-instance HA
+release. SQLite is the Lite authority; local ANN state is derived and rebuilt
+from committed SQLite vectors after restart.
 
-> Aionis turns long-running agent history into shorter, cleaner, auditable
-> execution context.
+## Candidate Coordinates
 
-Aionis records plans, decisions, validation evidence, outcomes, handoffs,
-controlled forgetting signals, and rehydrate pointers. It then compiles that
-history into governed Agent context: what to use now, what to inspect first,
-what to keep out of direct use, and what raw evidence can be restored on demand.
-
-## v0.3.5 Candidate Package Train
-
-Current release coordinates for the v0.3 train and tracked integrations:
-
-- Release status `candidate`
-- `aionis@0.3.8`
-- `@aionis/create@0.3.7`
-- `@aionis/sdk@0.3.14`
-- `@aionis/mcp@0.3.7`
-- `@aionis/aifs@0.3.4`
-- `@aionis/claude-code@0.3.5`
-- `@aionis/substrate@0.1.11`
-- `@aionis/manifest@0.1.1`
+- `aionis@0.3.8` — planned source ref `v0.3.8`
+- `@aionis/create@0.3.7` — planned source ref `v0.3.7`
+- `@aionis/sdk@0.3.15` — planned source ref `v0.3.15`
+- `@aionis/mcp@0.3.7` — planned source ref `v0.3.7`
+- `@aionis/aifs@0.3.4` — planned source ref `v0.3.4`
+- `@aionis/claude-code@0.3.5` — planned source ref `v0.3.5`
+- `@aionis/substrate@0.1.11` — planned source ref `v0.1.11`
 - Runtime source tag `v0.3.5`
-- Docker image `ghcr.io/ostinatocc/aionis:v0.3.5`
+- Docker image `ghcr.io/ostinatocc/aionis:v0.3.5` (`linux/amd64` only)
 - Default installer Runtime ref `v0.3.5`
 
-`@aionis/substrate` remains an experimental sidecar/research package and
-`@aionis/manifest` remains a source-distributed advanced integration. Their
-versions are tracked here without making either package Runtime authority.
+Each package ref is paired with its exact 40-character source commit in
+`release-train.json`; release verification must prove that the tag resolves to
+that commit before publication. Substrate remains an external evidence
+sidecar. Manifest is intentionally outside this train until it has a verifiable
+source repository and immutable ref.
 
-## What Ships
+`linux/arm64` is intentionally not published by this candidate. It returns to
+the matrix only after the exact arm64 image has its own runtime smoke gate.
 
-### Execution Memory Runtime
+## What Changed
 
-The Runtime owns the state model, product APIs, SQLite fact store, optional Zvec
-ANN candidate sidecar, guide/context compiler, feedback attribution, measure,
-forget, rehydrate, and operator snapshot surfaces.
+### Durable Continuity Writes
 
-### State-Preserving Context Compression
+`POST /v1/observe` now accepts an optional `operation_id` and returns
+`aionis_observe_result_v1`. Memory, execution state/tree, handoff, claims,
+durable receipt, and projection intent share the SQLite transaction. An exact
+retry returns the stored receipt; reusing the ID for different content returns
+HTTP `409`.
 
-Aionis compiles long execution history into a bounded context contract that
-preserves current state, validated routes, rejected evidence, rehydrate
-pointers, and audit receipts without transferring full history by default.
+Direct `POST /v1/handoff/store` provides the same durable replay contract in
+`aionis_handoff_store_result_v1`. Old execution snapshots can no longer replace
+newer continuity state while leaving a contradictory operation history.
 
-### Memory Firewall
+### Crash-Recoverable Embedding And ANN
 
-Aionis can govern internal memory and external memory candidates from Mem0, Zep,
-Supermemory, vector stores, markdown stores, logs, or custom retrieval systems.
-The backend retrieves candidates; Aionis decides whether each candidate is
-admissible for the current agent state.
+Embedding and ANN work is represented by durable leased jobs. Observe reports
+`post_commit_projections.semantic_commit: "committed"` plus `scheduled` or
+`not_requested` embedding/ANN intent. `scheduled` does not mean the provider or
+ANN side effect has already completed.
 
-### Agent Flight Recorder
+The worker uses generation and lease-token CAS, retries recoverable failures,
+dead-letters poison payloads, and exposes backlog plus worker state under
+`/health`. A process killed immediately after commit leaves recoverable work.
+At startup, the local in-memory ANN is rebuilt from SQLite ready vectors.
 
-Every guide/context decision can be traced through admission records, memory-use
-receipts, feedback attribution, and operator snapshots. This gives host teams a
-replayable record of what memory was shown, suppressed, restored, or acted on.
+### Runtime-Owned Evidence Gate
 
-### AIFS, MCP, SDK, CLI, and Native Adapters
+`POST /v1/measure` returns `aionis_measure_result_v1` with
+`evidence_assessment`, measurement identity, digest, and persistence state.
+Manual observations remain `manual_unverified`; caller-supplied
+`sufficient_evidence` and `evidence_ids` are exposed only under
+`client_claims_ignored` and cannot make learning or skills export-ready.
 
-- `npx aionis setup` is the guided product installer; `npx aionis doctor`,
-  `npx aionis health`, `npx aionis boundary`, `npx aionis snapshot`,
-  `npx aionis audit flight-recorder`, `npx aionis forget ...`, and
-  `npx aionis skills ...` provide focused operator entry points for Runtime
-  inspection, lifecycle control, audit replay, and trace-derived skill review.
-- `@aionis/create` installs the Runtime and writes the Runtime `.env`.
-- `@aionis/sdk` is the TypeScript host integration facade.
-- `@aionis/mcp` gives MCP clients a portable Aionis bridge.
-- `@aionis/aifs` mirrors governed context into `.aionis` files for file-aware
-  coding agents.
-- `@aionis/claude-code` provides native Claude Code lifecycle hooks without
-  making Claude Code the only product path.
+Export eligibility requires paired durable guide receipts, correct run/task and
+consumer binding, ordered Runtime effect observations, a trusted Runtime
+verifier receipt, linked positive tool feedback, and complete passing kernel
+metrics. SDK `0.3.15` carries these result contracts.
+
+### SQLite Upgrade And Recovery Operations
+
+`npm run -s runtime:data -- ...` exposes schema preflight, v0.3.4 upgrade,
+verified `VACUUM INTO` backup, restore-to-new-path, projection inspection, and
+repair. Verification reuses the canonical state/tree full-history audit and
+rejects continuity corruption or invalid projection payloads. Current schema
+metadata is accepted only when all Runtime columns, authority constraints, and
+critical indexes match the recorded contract.
+
+### Reproducible Release Artifact
+
+Every package tag is paired with an exact commit and verified from an exact
+checkout. Docker publication builds one digest-pinned `linux/amd64` artifact,
+smokes that same digest, then promotes it to the version tag. External package
+checkouts are excluded from the image context, and `latest` remains disabled
+while the train status is `candidate`.
+
+### Bounded Agent Context
+
+The aggressive AgentContext compaction repair routes standard/full-power guide
+requests through the canonical bounded renderer while preserving active target,
+blocked routes, accepted evidence, rehydrate pointers, and audit boundaries.
+
+## Supported Public Beta Shape
+
+Supported candidate shape:
+
+- one self-hosted Runtime process;
+- local/same-host clients, or bounded authenticated Server-mode evaluation;
+- SQLite authority with optional local or Zvec candidate indexing;
+- SDK, HTTP, MCP, AIFS, Claude Code adapter, CLI, and Create integration.
+
+Not claimed in this candidate:
+
+- managed multi-tenant Server GA;
+- multi-instance HA or cross-process in-memory ANN consistency;
+- automatic cold-storage retention closure;
+- production self-learning without the Runtime-owned verifier/evidence gate.
 
 ## Installation
 
-Recommended first command:
+After publication, the recommended installer selects immutable Runtime
+`v0.3.5`:
 
 ```bash
 npx aionis setup
 ```
 
-Direct Runtime installer:
-
-```bash
-npx @aionis/create@latest
-```
-
-Both setup paths clone the immutable Runtime tag `v0.3.5` by default after the
-candidate is published. Mutable
-development installation is explicit:
+Mutable development installation must be explicit:
 
 ```bash
 npx aionis setup --branch main
-# or: npx @aionis/create@latest --branch main
 ```
 
 Docker:
@@ -110,81 +131,76 @@ docker run --rm \
   ghcr.io/ostinatocc/aionis:v0.3.5
 ```
 
-Optional Zvec candidate index:
+Keep unauthenticated Lite bound to loopback. Server-mode evaluation requires
+API-key/JWT authentication and a service boundary.
 
-```bash
-npx aionis setup --with-zvec-ann
-```
+## Verification Gate
 
-SQLite remains the Runtime fact source. Zvec is a persisted candidate index:
-new and updated memories are synchronized after successful Runtime writes, then
-all candidates still pass through Aionis scope, lifecycle, authority,
-admission, and rehydrate governance before they reach an Agent.
-
-## Verification Checklist
-
-Before publishing this release train, run:
+The most recent pre-freeze full Runtime run recorded 919 tests: 915 passed,
+zero failed, and four optional native Zvec tests skipped. The release still
+requires every check below against frozen refs:
 
 ```bash
 npm run -s typecheck
 npm run -s lite:test
+npm run -s lite:smoke
+npm run -s sdk:check
+npm run -s complexity:check
 npm run -s runtime:smoke:external-packages
 npm run -s runtime:smoke:fresh-install
 npm run -s runtime:smoke:published-cli
-docker build -t aionis:release-smoke .
+docker build --platform linux/amd64 \
+  --iidfile /tmp/aionis-release-smoke.iid \
+  -t aionis:release-smoke .
+bash scripts/ci/docker-release-smoke.sh \
+  "$(cat /tmp/aionis-release-smoke.iid)"
 ```
 
-For pre-publish candidate validation of external packages, pass explicit
-package specs or tarballs:
+For local amd64 emulation on Apple Silicon, the same immutable-image smoke may
+set `AIONIS_DOCKER_SMOKE_ATTEMPTS=360` and
+`AIONIS_DOCKER_SMOKE_HEALTH_TIMEOUT=60s`; native amd64 release CI keeps the
+stricter defaults.
 
-```bash
-AIONIS_FRESH_INSTALL_CREATE_SPEC="@aionis/create@latest" \
-AIONIS_FRESH_INSTALL_SDK_SPEC="@aionis/sdk@latest" \
-AIONIS_FRESH_INSTALL_MCP_SPEC="@aionis/mcp@latest" \
-AIONIS_FRESH_INSTALL_REPO="file:///absolute/path/to/Aionis" \
-AIONIS_FRESH_INSTALL_RUNTIME_REF="main" \
-npm run -s runtime:smoke:fresh-install
-```
-
-After publishing a top-level CLI patch, verify the npm artifact against a real
-Runtime before announcing it:
-
-```bash
-AIONIS_PUBLISHED_CLI_SMOKE_SPEC="aionis@0.3.8" \
-npm run -s runtime:smoke:published-cli
-```
+The candidate test set includes real SQLite/HTTP operation replay and rollback,
+real child-process immediate-post-commit crash recovery, projection lease/CAS
+failure cases, evidence bypass rejection, and continuity snapshot conflicts.
 
 ## Publish Order
 
-Publish without creating an installer window that points at a missing Runtime
-tag:
+Do not create an installer window that points to missing artifacts:
 
 ```bash
-# 1. After stable verification, push Runtime, then create the immutable tag.
-# The tag workflow publishes Docker.
+# 1. Freeze, tag, publish, and smoke SDK 0.3.15.
+cd /Volumes/ziel/new.aionis/aionis-sdk
+git tag -a v0.3.15 -m "@aionis/sdk v0.3.15"
+git push origin v0.3.15
+npm publish --access public
+
+# 2. Push the verified Runtime source, then create its immutable tag.
 cd /Volumes/ziel/new.aionis/AionisRuntime-focused
 git push origin main
 git tag -a v0.3.5 -m "Aionis v0.3.5"
 git push origin v0.3.5
 gh release create v0.3.5 \
   --repo ostinatocc/Aionis \
-  --title "Aionis v0.3.5" \
+  --title "Aionis v0.3.5 Local Runtime Public Beta" \
   --notes-file docs/releases/v0.3.5.md
 
-# 2. Only after the Runtime tag and Docker image resolve, publish the installer.
+# 3. Verify the Runtime tag and linux/amd64 image, then publish Create 0.3.7.
+docker pull ghcr.io/ostinatocc/aionis:v0.3.5
+git ls-remote --exit-code --tags origin refs/tags/v0.3.5
 cd /Volumes/ziel/new.aionis/aionis-create
 npm publish --access public
 ```
 
-MCP, AIFS, Claude Code, and the top-level CLI have no source or version change
-in this patch. Their existing compatible dependency ranges do not require a
-republish.
+The commands are a release runbook, not authorization to create tags in this
+candidate-preparation change.
 
-After publication, run the candidate smoke with exact versions:
+## Exact-Version Post-Publish Smoke
 
 ```bash
 AIONIS_FRESH_INSTALL_CREATE_SPEC="@aionis/create@0.3.7" \
-AIONIS_FRESH_INSTALL_SDK_SPEC="@aionis/sdk@0.3.14" \
+AIONIS_FRESH_INSTALL_SDK_SPEC="@aionis/sdk@0.3.15" \
 AIONIS_FRESH_INSTALL_MCP_SPEC="@aionis/mcp@0.3.7" \
 AIONIS_FRESH_INSTALL_REPO="https://github.com/ostinatocc/Aionis.git" \
 AIONIS_FRESH_INSTALL_RUNTIME_REF="v0.3.5" \
@@ -193,3 +209,6 @@ npm run -s runtime:smoke:fresh-install
 AIONIS_PUBLISHED_CLI_SMOKE_SPEC="aionis@0.3.8" \
 npm run -s runtime:smoke:published-cli
 ```
+
+No package or image is announced until its immutable ref resolves and the
+exact-version smoke passes.

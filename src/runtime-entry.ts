@@ -22,6 +22,7 @@ import { createRecallPolicy } from "./app/recall-policy.js";
 import { createRecallTextEmbedRuntime } from "./app/recall-text-embed.js";
 import { createRuntimeServices } from "./app/runtime-services.js";
 import { startLiteAssociativeLinkWorker } from "./jobs/associative-linking-worker.js";
+import { startLiteProjectionWorker } from "./jobs/lite-projection-worker.js";
 import { loadRuntimeConfig } from "./config/runtime-config.js";
 
 export async function startAionisRuntime(): Promise<void> {
@@ -177,6 +178,19 @@ export async function startAionisRuntime(): Promise<void> {
     memoryWriteService,
     handoffRouteService,
   });
+  const projectionWorker = startLiteProjectionWorker({
+    store: liteWriteStore,
+    embedder: embeddingSurfacePolicy.providerFor("write_auto_embed", embedder),
+    ann: liteWriteStore.annSyncEnabled()
+      ? { reconcileNode: (scope, nodeId) => liteRecallStore.syncAnnNode(scope, nodeId) }
+      : null,
+    annEnabled: liteWriteStore.annSyncEnabled(),
+    intervalMs: runtimeConfig.storage.OUTBOX_POLL_INTERVAL_MS,
+    batchSize: runtimeConfig.storage.OUTBOX_BATCH_SIZE,
+    timeoutMs: env.LITE_INLINE_EMBEDDING_TIMEOUT_MS,
+    logger: app.log,
+  });
+  await projectionWorker.drainOnce();
   const associativeLinkWorker = liteRecallAccess
     ? startLiteAssociativeLinkWorker({
         writeStore: liteWriteStore,
@@ -216,6 +230,7 @@ export async function startAionisRuntime(): Promise<void> {
     executionStateStore,
     executionTreeStore,
     sandboxExecutor,
+    projectionWorker,
     sandboxTenantBudgetPolicy,
     sandboxRemoteAllowedCidrs,
   });
@@ -264,6 +279,7 @@ export async function startAionisRuntime(): Promise<void> {
     liteRecallStore,
     liteReplayStore,
     liteWriteStore,
+    projectionWorker,
     associativeLinkWorker,
     liteClaimLedgerStore,
     liteSkillCandidateReviewStore,

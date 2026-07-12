@@ -17,6 +17,9 @@
     "github_repo": "ostinatocc/Aionis",
     "docker_image": "ghcr.io/ostinatocc/aionis",
     "docker_tag": "v0.3.5",
+    "docker_platforms": [
+      "linux/amd64"
+    ],
     "default_installer_ref": "v0.3.5"
   }
 }

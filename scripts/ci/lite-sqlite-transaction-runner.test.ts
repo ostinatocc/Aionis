@@ -137,6 +137,99 @@ test("sqlite transaction runner releases queue when begin fails", async () => {
   assert.deepEqual(events, ["begin", "begin", "second:start", "commit"]);
 });
 
+test("serialized reads wait until a top-level transaction commits or rolls back", async () => {
+  for (const outcome of ["commit", "rollback"] as const) {
+    const events: string[] = [];
+    const gate = deferred();
+    const started = deferred();
+    const runner = createSqliteTransactionRunner({
+      begin: () => events.push("begin"),
+      commit: () => events.push("commit"),
+      rollback: () => events.push("rollback"),
+    });
+    const mutation = runner.run(async () => {
+      events.push("mutation");
+      started.resolve();
+      await gate.promise;
+      if (outcome === "rollback") throw new Error("rollback requested");
+    });
+    await started.promise;
+    const read = runner.read(() => {
+      events.push("read");
+      return "visible";
+    });
+    await Promise.resolve();
+    assert.deepEqual(events, ["begin", "mutation"]);
+    gate.resolve();
+    if (outcome === "rollback") await assert.rejects(mutation, /rollback requested/);
+    else await mutation;
+    assert.equal(await read, "visible");
+    assert.deepEqual(events, ["begin", "mutation", outcome, "read"]);
+  }
+});
+
+test("post-commit callbacks do not hold the transaction queue", async () => {
+  const events: string[] = [];
+  const callbackGate = deferred();
+  const callbackStarted = deferred();
+  const runner = createSqliteTransactionRunner({
+    begin: () => events.push("begin"),
+    commit: () => events.push("commit"),
+    rollback: () => events.push("rollback"),
+  });
+  const first = runner.run(async () => {
+    await runner.afterCommit(async () => {
+      events.push("callback:start");
+      callbackStarted.resolve();
+      await callbackGate.promise;
+      events.push("callback:end");
+    });
+  });
+  await callbackStarted.promise;
+  const second = await runner.run(async () => {
+    events.push("second");
+    return "second";
+  });
+  assert.equal(second, "second");
+  assert.deepEqual(events, ["begin", "commit", "callback:start", "begin", "second", "commit"]);
+  callbackGate.resolve();
+  await first;
+});
+
+test("a post-commit callback can start another transaction without deadlock", async () => {
+  const events: string[] = [];
+  const runner = createSqliteTransactionRunner({
+    begin: () => events.push("begin"),
+    commit: () => events.push("commit"),
+    rollback: () => events.push("rollback"),
+  });
+  await runner.run(async () => {
+    await runner.afterCommit(async () => {
+      await runner.run(async () => {
+        events.push("callback:transaction");
+      });
+    });
+  });
+  assert.deepEqual(events, ["begin", "commit", "begin", "callback:transaction", "commit"]);
+});
+
+test("a failing post-commit callback does not change committed result", async () => {
+  const events: string[] = [];
+  const runner = createSqliteTransactionRunner({
+    begin: () => events.push("begin"),
+    commit: () => events.push("commit"),
+    rollback: () => events.push("rollback"),
+  });
+  const result = await runner.run(async () => {
+    await runner.afterCommit(async () => {
+      throw new Error("post-commit failure");
+    });
+    return "committed";
+  });
+  assert.equal(result, "committed");
+  assert.deepEqual(events, ["begin", "commit"]);
+});
+
 test("sqlite duplicate-column migration guard rethrows real ALTER failures", () => {
   const db = createSqliteDatabase(tmpDbPath("duplicate-column-guard"));
   try {

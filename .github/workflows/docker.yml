@@ -8,18 +8,178 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
-  docker:
-    name: Build and publish Docker image
+  verify:
+    name: Verify exact release candidate
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      publish_latest: ${{ steps.release-metadata.outputs.publish_latest }}
+    steps:
+      - name: Checkout Runtime
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Read immutable package refs
+        id: release-metadata
+        run: |
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const train = JSON.parse(fs.readFileSync("release-train.json", "utf8"));
+            const output = process.env.GITHUB_OUTPUT;
+            for (const key of ["cli", "create", "sdk", "mcp", "aifs", "claude_code", "substrate"]) {
+              fs.appendFileSync(output, `${key}_ref=${train.packages[key].source_ref}\n`);
+            }
+            fs.appendFileSync(output, `publish_latest=${train.status === "stable"}\n`);
+          '
+
+      - name: Checkout CLI package
+        uses: actions/checkout@v4
+        with:
+          repository: ostinatocc/aionis-cli
+          ref: ${{ steps.release-metadata.outputs.cli_ref }}
+          path: external/aionis-cli
+
+      - name: Checkout installer package
+        uses: actions/checkout@v4
+        with:
+          repository: ostinatocc/aionis-create
+          ref: ${{ steps.release-metadata.outputs.create_ref }}
+          path: external/aionis-create
+
+      - name: Checkout standalone SDK
+        uses: actions/checkout@v4
+        with:
+          repository: ostinatocc/aionis-sdk
+          ref: ${{ steps.release-metadata.outputs.sdk_ref }}
+          path: external/aionis-sdk
+
+      - name: Checkout MCP package
+        uses: actions/checkout@v4
+        with:
+          repository: ostinatocc/aionis-mcp
+          ref: ${{ steps.release-metadata.outputs.mcp_ref }}
+          path: external/aionis-mcp
+
+      - name: Checkout AIFS package
+        uses: actions/checkout@v4
+        with:
+          repository: ostinatocc/aionis-aifs
+          ref: ${{ steps.release-metadata.outputs.aifs_ref }}
+          path: external/aionis-aifs
+
+      - name: Checkout Claude Code package
+        uses: actions/checkout@v4
+        with:
+          repository: ostinatocc/aionis-claude-code
+          ref: ${{ steps.release-metadata.outputs.claude_code_ref }}
+          path: external/aionis-claude-code
+
+      - name: Checkout Substrate package
+        uses: actions/checkout@v4
+        with:
+          repository: ostinatocc/AionisSubstrate
+          ref: ${{ steps.release-metadata.outputs.substrate_ref }}
+          path: external/AionisSubstrate
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify release metadata and exact tag
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            export AIONIS_RELEASE_EXPECTED_TAG="${GITHUB_REF_NAME}"
+          fi
+          node scripts/ci/release-artifact-gate.mjs --check --require-package-roots
+        env:
+          AIONIS_RELEASE_CLI_REPO: ${{ github.workspace }}/external/aionis-cli
+          AIONIS_RELEASE_CREATE_REPO: ${{ github.workspace }}/external/aionis-create
+          AIONIS_RELEASE_SDK_REPO: ${{ github.workspace }}/external/aionis-sdk
+          AIONIS_RELEASE_MCP_REPO: ${{ github.workspace }}/external/aionis-mcp
+          AIONIS_RELEASE_AIFS_REPO: ${{ github.workspace }}/external/aionis-aifs
+          AIONIS_RELEASE_CLAUDE_CODE_REPO: ${{ github.workspace }}/external/aionis-claude-code
+          AIONIS_RELEASE_SUBSTRATE_REPO: ${{ github.workspace }}/external/AionisSubstrate
+
+      - name: Typecheck
+        run: npm run -s typecheck
+
+      - name: SDK and structural gates
+        run: |
+          npm run -s sdk:check
+          npm run -s complexity:check
+          node --test scripts/ci/release-version-docs.test.mjs
+
+      - name: Full Lite test suite
+        run: npm run -s lite:test
+
+      - name: Lite public smoke
+        run: npm run -s lite:smoke
+
+      - name: Cross-package Runtime, SDK, MCP, and installer smoke
+        run: |
+          set -euo pipefail
+          runtime_tmp="$(mktemp -d)"
+          runtime_log="${RUNNER_TEMP}/aionis-cross-package-runtime.log"
+          PORT=3210 \
+          AIONIS_LISTEN_HOST=127.0.0.1 \
+          EMBEDDING_PROVIDER=none \
+          LITE_WRITE_SQLITE_PATH="${runtime_tmp}/write.sqlite" \
+          LITE_REPLAY_SQLITE_PATH="${runtime_tmp}/replay.sqlite" \
+          npm run -s lite:start >"${runtime_log}" 2>&1 &
+          runtime_pid=$!
+          cleanup() {
+            kill -TERM "${runtime_pid}" >/dev/null 2>&1 || true
+            wait "${runtime_pid}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          for _ in $(seq 1 120); do
+            if curl --fail --silent http://127.0.0.1:3210/readyz >/dev/null; then break; fi
+            if ! kill -0 "${runtime_pid}" >/dev/null 2>&1; then
+              cat "${runtime_log}" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:3210/readyz >/dev/null || {
+            cat "${runtime_log}" >&2
+            exit 1
+          }
+          AIONIS_BASE_URL=http://127.0.0.1:3210 \
+          AIONIS_EXTERNAL_SMOKE_SDK_SPEC="${GITHUB_WORKSPACE}/external/aionis-sdk" \
+          AIONIS_EXTERNAL_SMOKE_MCP_SPEC="${GITHUB_WORKSPACE}/external/aionis-mcp" \
+          AIONIS_EXTERNAL_SMOKE_CREATE_SPEC="${GITHUB_WORKSPACE}/external/aionis-create" \
+          npm run -s runtime:smoke:external-packages
+
+      - name: Fresh install from the exact Runtime tag
+        if: github.ref_type == 'tag'
+        run: |
+          AIONIS_FRESH_INSTALL_CREATE_SPEC="${GITHUB_WORKSPACE}/external/aionis-create" \
+          AIONIS_FRESH_INSTALL_MCP_SPEC="${GITHUB_WORKSPACE}/external/aionis-mcp" \
+          AIONIS_FRESH_INSTALL_SDK_SPEC="${GITHUB_WORKSPACE}/external/aionis-sdk" \
+          AIONIS_FRESH_INSTALL_REPO="https://github.com/${GITHUB_REPOSITORY}.git" \
+          AIONIS_FRESH_INSTALL_RUNTIME_REF="${GITHUB_REF_NAME}" \
+          npm run -s runtime:smoke:fresh-install
+
+  docker:
+    name: Build once, verify digest, and promote Docker image
+    needs: verify
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/aionis
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -35,19 +195,62 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/aionis
+          images: ${{ env.REGISTRY_IMAGE }}
+          flavor: latest=false
           tags: |
             type=ref,event=tag
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest,enable=${{ needs.verify.outputs.publish_latest == 'true' }}
 
-      - name: Build and push
+      - name: Build immutable amd64 release artifact
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          platforms: linux/amd64
+          outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
           labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Smoke the exact published digest
+        env:
+          VERIFIED_IMAGE_REF: ${{ env.REGISTRY_IMAGE }}@${{ steps.build.outputs.digest }}
+        run: bash scripts/ci/docker-release-smoke.sh "${VERIFIED_IMAGE_REF}"
+
+      - name: Promote the verified digest to release tags
+        env:
+          VERIFIED_DIGEST: ${{ steps.build.outputs.digest }}
+          RELEASE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${VERIFIED_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "invalid verified image digest: ${VERIFIED_DIGEST}" >&2
+            exit 1
+          fi
+
+          tag_args=()
+          release_tags=()
+          while IFS= read -r tag; do
+            if [[ -n "${tag}" ]]; then
+              tag_args+=(--tag "${tag}")
+              release_tags+=("${tag}")
+            fi
+          done <<< "${RELEASE_TAGS}"
+          if [[ ${#release_tags[@]} -eq 0 ]]; then
+            echo "Docker metadata produced no release tags" >&2
+            exit 1
+          fi
+
+          verified_image="${REGISTRY_IMAGE}@${VERIFIED_DIGEST}"
+          docker buildx imagetools create "${tag_args[@]}" "${verified_image}"
+
+          for tag in "${release_tags[@]}"; do
+            promoted_digest="$(docker buildx imagetools inspect "${tag}" | awk '$1 == "Digest:" { print $2; exit }')"
+            if [[ "${promoted_digest}" != "${VERIFIED_DIGEST}" ]]; then
+              echo "${tag} points to ${promoted_digest}, expected ${VERIFIED_DIGEST}" >&2
+              exit 1
+            fi
+          done

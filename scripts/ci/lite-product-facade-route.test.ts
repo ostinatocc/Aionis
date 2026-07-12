@@ -14,6 +14,7 @@ import {
   type ExecutionTreeV1,
 } from "../../src/execution/index.ts";
 import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
+import { updateRuleState } from "../../src/memory/rules.ts";
 import { buildAionisUri } from "../../src/memory/uri.ts";
 import { createHandoffRouteService, registerHandoffRoutes } from "../../src/routes/handoff.ts";
 import {
@@ -409,6 +410,7 @@ function liteEnv() {
     MEMORY_PLANNING_CONTEXT_OPTIMIZATION_PROFILE_DEFAULT: "balanced",
     MEMORY_CONTEXT_ASSEMBLE_OPTIMIZATION_PROFILE_DEFAULT: "balanced",
     WORKFLOW_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: false,
+    RUNTIME_VERIFIER_EXECUTION_ENABLED: true,
   } as any;
 }
 
@@ -437,11 +439,17 @@ function registerProductFacade(args: {
   handoffRouteService?: ReturnType<typeof createHandoffRouteService> | null;
   skillCandidateReviewAccess?: ReturnType<ReturnType<typeof createLiteSkillCandidateReviewStore>["createSkillCandidateReviewAccess"]>;
 }) {
+  const liteWriteStore = args.liteWriteStore ?? createLiteWriteStore(tmpDbPath("product-facade-dependency"));
+  if (!args.liteWriteStore) {
+    args.app.addHook("onClose", async () => {
+      await liteWriteStore.close();
+    });
+  }
   registerProductFacadeRoutes({
     app: args.app,
     services: createRuntimeProductServices({
       env: args.env,
-      liteWriteStore: args.liteWriteStore ?? ({} as ReturnType<typeof createLiteWriteStore>),
+      liteWriteStore,
       liteRecallAccess: args.liteRecallAccess ?? null,
       embedder: args.embedder ?? null,
       executionTreeStore: null,
@@ -456,6 +464,7 @@ function registerProductFacade(args: {
     enforceTenantQuota: args.guards.enforceTenantQuota,
     tenantFromBody: args.guards.tenantFromBody,
     acquireInflightSlot: args.guards.acquireInflightSlot,
+    adminToken: args.env.ADMIN_TOKEN || "test-admin-token",
   });
 }
 
@@ -490,12 +499,12 @@ test("product facade fails closed instead of injecting an internal memory write 
   });
   const body = response.json();
 
-  assert.equal(response.statusCode, 500);
+  assert.equal(response.statusCode, 503);
   assert.equal(body.error, "product_dependency_failed");
   assert.equal(body.message, "A product facade dependency failed.");
   assert.equal(body.details.contract, "error_v1");
   assert.equal(body.details.surface, "memory_write_service");
-  assert.equal(body.details.upstream_status, 500);
+  assert.equal(body.details.upstream_status, 503);
   assert.equal(body.details.retryable, true);
   assert.equal(fallbackCalled, false);
   assert.equal(body.details.error, undefined);
@@ -746,46 +755,59 @@ test("product observe sanitizes direct handoff service failures", async () => {
   const app = Fastify();
   const env = liteEnv();
   const guards = requestGuards(env);
-  registerRuntimeErrorHandler(app);
-  registerProductFacade({
-    app,
-    env,
-    guards,
-    handoffRouteService: {
-      async store() {
-        throw new Error("SECRET_HANDOFF_SERVICE_STACK should never leave product observe");
+  const liteWriteStore = createLiteWriteStore(tmpDbPath("failed-direct-product-handoff"));
+  try {
+    registerRuntimeErrorHandler(app);
+    registerProductFacade({
+      app,
+      env,
+      guards,
+      liteWriteStore,
+      handoffRouteService: {
+        transactionRunner() {
+          return liteWriteStore.transactionRunner();
+        },
+        async prepareStore() {
+          throw new Error("SECRET_HANDOFF_SERVICE_STACK should never leave product observe");
+        },
+        async store() {
+          throw new Error("SECRET_HANDOFF_SERVICE_STACK should never leave product observe");
+        },
+        async recover() {
+          return {};
+        },
       },
-      async recover() {
-        return {};
-      },
-    },
-  });
+    });
 
-  const response = await app.inject({
-    method: "POST",
-    url: "/v1/observe",
-    payload: {
-      tenant_id: "default",
-      scope: "default",
-      actor: "local-user",
-      handoff: {
-        handoff_kind: "task_handoff",
-        anchor: "failed-direct-product-handoff",
-        title: "Failed direct product handoff service",
-        summary: "Trigger a direct handoff service failure.",
-        handoff_text: "This text should not matter.",
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        actor: "local-user",
+        handoff: {
+          handoff_kind: "task_handoff",
+          anchor: "failed-direct-product-handoff",
+          title: "Failed direct product handoff service",
+          summary: "Trigger a direct handoff service failure.",
+          handoff_text: "This text should not matter.",
+        },
       },
-    },
-  });
-  const body = response.json();
+    });
+    const body = response.json();
 
-  assert.equal(response.statusCode, 500);
-  assert.equal(body.error, "product_dependency_failed");
-  assert.equal(body.message, "A product facade dependency failed.");
-  assert.equal(body.details.surface, "handoff_store_service");
-  assert.equal(body.details.upstream_status, 500);
-  assert.equal(response.payload.includes("SECRET_HANDOFF_SERVICE_STACK"), false);
-  assertNoForbiddenProductFields(body);
+    assert.equal(response.statusCode, 502);
+    assert.equal(body.error, "product_dependency_failed");
+    assert.equal(body.message, "A product facade dependency failed.");
+    assert.equal(body.details.surface, "handoff_store_service");
+    assert.equal(body.details.upstream_status, 502);
+    assert.equal(response.payload.includes("SECRET_HANDOFF_SERVICE_STACK"), false);
+    assertNoForbiddenProductFields(body);
+  } finally {
+    await app.close();
+    await liteWriteStore.close();
+  }
 });
 
 test("product lifecycle uses direct archive rehydrate implementation", async () => {
@@ -868,6 +890,233 @@ async function seedProductFacadeMemory(args: {
     allowCrossScopeEdges: false,
     write_access: args.liteWriteStore,
   }));
+}
+
+async function seedProductMeasureToolRule(liteWriteStore: ReturnType<typeof createLiteWriteStore>) {
+  const clientId = `rule:product-measure:${randomUUID()}`;
+  await seedProductFacadeMemory({
+    liteWriteStore,
+    input_text: "Seed a verified tool-selection rule for product measurement.",
+    nodes: [{
+      client_id: clientId,
+      type: "rule",
+      memory_lane: "shared",
+      title: "Prefer read for verified continuity measurement",
+      text_summary: "Use read first for continuity_recovery measurement runs.",
+      slots: {
+        if: { task_kind: { $eq: "continuity_recovery" } },
+        then: { tool: { prefer: ["read"] } },
+        exceptions: [],
+        rule_scope: "global",
+      },
+    }],
+  });
+  const found = await liteWriteStore.findNodes({
+    scope: "default",
+    clientId,
+    consumerAgentId: "local-user",
+    consumerTeamId: null,
+    limit: 1,
+    offset: 0,
+  });
+  const ruleNodeId = found.rows[0]?.id;
+  assert.ok(ruleNodeId);
+  await liteWriteStore.withTx(() => updateRuleState({
+    tenant_id: "default",
+    scope: "default",
+    actor: "local-user",
+    rule_node_id: ruleNodeId,
+    state: "active",
+    input_text: "Activate the product measurement tool rule.",
+  }, "default", "default", { liteWriteStore }));
+}
+
+async function createPersistedVerifiedMeasurement(args: {
+  app: ReturnType<typeof Fastify>;
+  liteWriteStore: ReturnType<typeof createLiteWriteStore>;
+  suffix: string;
+  afterExecutionStateId?: string;
+  expectSufficient?: boolean;
+}) {
+  const runId = `run:verified-measure:${args.suffix}`;
+  const taskSignature = `verified-measure:${args.suffix}`;
+  const query = `Verified continuity measurement ${args.suffix}`;
+  const context = {
+    agent_id: "local-user",
+    task_kind: "continuity_recovery",
+    task_signature: taskSignature,
+    goal: query,
+  };
+  const executionPacket = {
+    version: 1,
+    state_id: `state:${args.suffix}`,
+    current_stage: "review",
+    active_role: "review",
+    task_brief: query,
+    target_files: [],
+    next_action: "Run the Runtime-owned focused verifier.",
+    hard_constraints: [],
+    accepted_facts: [],
+    rejected_paths: [],
+    pending_validations: ["node -e \"process.exit(0)\""],
+    unresolved_blockers: [],
+    rollback_notes: [],
+    service_lifecycle_constraints: [],
+    review_contract: null,
+    resume_anchor: null,
+    artifact_refs: [],
+    evidence_refs: ["focused-runtime-verifier"],
+  };
+  const afterExecutionPacket = args.afterExecutionStateId
+    ? { ...executionPacket, state_id: args.afterExecutionStateId }
+    : executionPacket;
+  await seedProductMeasureToolRule(args.liteWriteStore);
+  const beforeGuide = await args.app.inject({
+    method: "POST",
+    url: "/v1/guide",
+    payload: {
+      tenant_id: "default",
+      scope: "default",
+      run_id: runId,
+      query_text: query,
+      consumer_agent_id: "local-user",
+      context,
+      execution_packet_v1: executionPacket,
+      tool_candidates: ["read", "edit", "test"],
+      limit: 8,
+      include_packets: true,
+    },
+  });
+  assert.equal(beforeGuide.statusCode, 200, beforeGuide.body);
+  const observed = await args.app.inject({
+    method: "POST",
+    url: "/v1/observe",
+    payload: {
+      tenant_id: "default",
+      scope: "default",
+      auto_embed: true,
+      memory_lane: "private",
+      execution: {
+        run_id: runId,
+        task_id: `task:${args.suffix}`,
+        task_family: "continuity_recovery",
+        task_signature: taskSignature,
+        workflow_signature: `workflow:${args.suffix}`,
+        title: query,
+        summary: `${query} recovered verified state and completed the focused check.`,
+        outcome: "succeeded",
+        workflow_steps: [
+          "Recover the persisted guide state.",
+          "Continue the scoped workflow.",
+          "Run the focused verifier.",
+        ],
+        acceptance_checks: ["focused verifier passed"],
+        continuation_hint: "Continue from the verified guide state.",
+        confidence: 0.95,
+        evidence: [{ ref: `${runId}#verifier`, summary: "Focused verifier passed." }],
+      },
+    },
+  });
+  assert.equal(observed.statusCode, 200, observed.body);
+  const afterGuide = await args.app.inject({
+    method: "POST",
+    url: "/v1/guide",
+    payload: {
+      tenant_id: "default",
+      scope: "default",
+      run_id: runId,
+      query_text: query,
+      consumer_agent_id: "local-user",
+      context,
+      execution_packet_v1: afterExecutionPacket,
+      runtime_verification: {
+        version: 1,
+        mode: "execute",
+        agent_lifecycle_state: "agent_exited",
+        include_pending_validations: true,
+        validation_boundary: "runtime_orchestrator",
+        timeout_ms: 5_000,
+        max_requests: 4,
+        cwd: null,
+        agent_claimed_success: true,
+      },
+      tool_candidates: ["read", "edit", "test"],
+      limit: 8,
+      include_packets: true,
+    },
+  });
+  assert.equal(afterGuide.statusCode, 200, afterGuide.body);
+  const afterGuideBody = afterGuide.json();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const feedback = await args.app.inject({
+    method: "POST",
+    url: "/v1/feedback",
+    payload: {
+      feedback_kind: "tool_selection",
+      tenant_id: "default",
+      scope: "default",
+      guide_trace_id: afterGuideBody.guide_trace_id,
+      decision_id: afterGuideBody.tool_selection.decision_id,
+      run_id: afterGuideBody.tool_selection.run_id,
+      selected_tool: afterGuideBody.tool_selection.selected_tool,
+      candidates: afterGuideBody.tool_selection.candidates,
+      outcome: "positive",
+      context,
+      input_text: "The selected tool completed the verified continuation.",
+    },
+  });
+  assert.equal(feedback.statusCode, 200, feedback.body);
+  const measure = await args.app.inject({
+    method: "POST",
+    url: "/v1/measure",
+    payload: {
+      tenant_id: "default",
+      scope: "default",
+      task: {
+        task_id: `task:${args.suffix}`,
+        run_id: runId,
+        task_signature: taskSignature,
+        task_family: "continuity_recovery",
+      },
+      product_trace: {
+        before_guide: beforeGuide.json(),
+        after_guide: afterGuideBody,
+        sufficient_evidence: false,
+        evidence_ids: ["caller:must-not-control-gate"],
+      },
+    },
+  });
+  assert.equal(measure.statusCode, 200, measure.body);
+  const body = measure.json();
+  const expectSufficient = args.expectSufficient !== false;
+  assert.equal(body.evidence_assessment.status, expectSufficient ? "sufficient" : "insufficient");
+  assert.equal(body.evidence_assessment.provenance, expectSufficient ? "runtime_verified" : "unverified_product_trace");
+  assert.equal(body.evidence_assessment.eligible_for_skill_export, expectSufficient);
+  assert.equal(body.measurement_persisted, true);
+  assert.equal(body.evidence_assessment.runtime_evidence_ids.some((id: string) => id.startsWith("runtime_verification:")), true);
+  assert.equal(body.evidence_assessment.runtime_evidence_ids.some((id: string) => id.startsWith("tool_feedback:")), false);
+  assert.equal(body.evidence_assessment.runtime_evidence_ids.includes("caller:must-not-control-gate"), false);
+  assert.deepEqual(body.effect_report.evidence.evidence_ids, body.evidence_assessment.runtime_evidence_ids);
+  const beforeReceipt = await args.liteWriteStore.getProductGuideReceipt({
+    tenantId: "default",
+    scope: "default",
+    guideTraceId: beforeGuide.json().guide_trace_id,
+  });
+  const afterReceipt = await args.liteWriteStore.getProductGuideReceipt({
+    tenantId: "default",
+    scope: "default",
+    guideTraceId: afterGuideBody.guide_trace_id,
+  });
+  assert.ok(beforeReceipt);
+  assert.ok(afterReceipt);
+  assert.equal(beforeReceipt.context_sha256, afterReceipt.context_sha256);
+  assert.equal(
+    JSON.parse(beforeReceipt.ledger_json).task_binding_sha256
+      === JSON.parse(afterReceipt.ledger_json).task_binding_sha256,
+    expectSufficient,
+  );
+  assert.ok(Date.parse(beforeReceipt.created_at) < Date.parse(afterReceipt.created_at));
+  return body;
 }
 
 async function seedProductPatternAnchor(liteWriteStore: ReturnType<typeof createLiteWriteStore>) {
@@ -1007,6 +1256,7 @@ function registerFullProductMemoryApp(args: {
     enforceTenantQuota: args.guards.enforceTenantQuota,
     tenantFromBody: args.guards.tenantFromBody,
     acquireInflightSlot: args.guards.acquireInflightSlot,
+    adminToken: args.env.ADMIN_TOKEN || "test-admin-token",
     executionStateStore: null,
   });
   registerHandoffRoutes({
@@ -1871,17 +2121,31 @@ test("product measure facade returns a product effect report without external ev
             continuityGuidanceCorrect: false,
             recoveredStateFacts: 1,
             expectedStateFacts: 4,
+            recoveredStateApplicable: true,
+            verifiedFactsCarried: 1,
+            verifiedFactsExpected: 4,
+            verifiedFactsApplicable: true,
           },
           learning: {
             workflowReused: false,
+            stableWorkflowReused: false,
             provisionalMemoriesWritten: 1,
+            trustedPromotions: 0,
+            weakEvidencePromoted: 0,
+            counterEvidenceDemotions: 0,
           },
           forgetting: {
             contextItems: 8,
             usefulContextItems: 2,
             staleMemorySurfaced: 3,
+            staleMemorySuppressed: 0,
+            archivedMemoryRehydratedOnDemand: 0,
+            unnecessaryRehydrations: 0,
+            staleMemoryControlApplicable: true,
+            rehydrationApplicable: false,
           },
           learning_control: {
+            weakEvidenceBlocked: 0,
             authorityRequiresEvidence: true,
             blockedAuthorityVisible: true,
             unverifiedAuthorityApplied: 0,
@@ -1893,12 +2157,18 @@ test("product measure facade returns a product effect report without external ev
             continuityGuidanceCorrect: true,
             recoveredStateFacts: 4,
             expectedStateFacts: 4,
+            recoveredStateApplicable: true,
+            verifiedFactsCarried: 4,
+            verifiedFactsExpected: 4,
+            verifiedFactsApplicable: true,
           },
           learning: {
             workflowReused: true,
             stableWorkflowReused: true,
+            provisionalMemoriesWritten: 0,
             trustedPromotions: 1,
             weakEvidencePromoted: 0,
+            counterEvidenceDemotions: 1,
           },
           forgetting: {
             contextItems: 5,
@@ -1906,6 +2176,9 @@ test("product measure facade returns a product effect report without external ev
             staleMemorySurfaced: 0,
             staleMemorySuppressed: 3,
             archivedMemoryRehydratedOnDemand: 1,
+            unnecessaryRehydrations: 0,
+            staleMemoryControlApplicable: true,
+            rehydrationApplicable: true,
           },
           learning_control: {
             weakEvidenceBlocked: 2,
@@ -1929,6 +2202,10 @@ test("product measure facade returns a product effect report without external ev
       "contract_version",
       "tenant_id",
       "scope",
+      "measurement_id",
+      "measurement_digest",
+      "measurement_persisted",
+      "evidence_assessment",
       "measurement_input",
       "effect_report",
       "kernel_report",
@@ -1956,11 +2233,18 @@ test("product measure facade returns a product effect report without external ev
     ]);
     assert.equal(body.contract_version, "aionis_measure_result_v1");
     assert.equal(body.effect_report.contract_version, "aionis_effect_report_v1");
+    assert.equal(body.evidence_assessment.provenance, "manual_unverified");
+    assert.equal(body.evidence_assessment.sufficient_evidence, false);
+    assert.equal(body.evidence_assessment.eligible_for_skill_export, false);
+    assert.equal(body.evidence_assessment.client_claims_ignored.sufficient_evidence, true);
+    assert.equal(body.effect_report.comparison.sufficient_evidence, false);
+    assert.deepEqual(body.effect_report.evidence.evidence_ids, []);
+    assert.equal(body.effect_report.training_candidates.some((candidate: Record<string, unknown>) => candidate.export_ready === true), false);
     assert.equal(body.effect_report.task.workflow_signature, undefined);
     assert.equal(body.effect_report.confidence_decay_summary.authority_mutation, false);
     assert.equal(body.effect_report.confidence_decay_summary.time_decay_age_threshold_days, 0);
-    assert.equal(body.effect_report.history_impact.impact_direction, "positive");
-    assert.equal(body.effect_report.history_impact.changed_future_behavior, true);
+    assert.equal(body.effect_report.history_impact.impact_direction, "insufficient_evidence");
+    assert.equal(body.effect_report.history_impact.changed_future_behavior, false);
     assert.equal(body.effect_report.quality.negative_transfer_detected, false);
     assert.equal(body.effect_report.feedback_signal_summary.present, false);
     assert.equal(body.effect_report.feedback_signal_summary.source, "not_supplied");
@@ -1974,84 +2258,230 @@ test("product measure facade returns a product effect report without external ev
   }
 });
 
-test("product skills candidates routes queue and review trace-derived skill candidates", async () => {
+test("product measure and skill export fail closed for missing, manual, and forged evidence", async () => {
   const app = Fastify();
   const env = liteEnv();
-  const guards = requestGuards(env);
-  const reviewStore = createLiteSkillCandidateReviewStore(tmpDbPath("skill-candidates"));
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("measure-fail-closed-regressions");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const reviewStore = createLiteSkillCandidateReviewStore(dbPath);
   try {
-    registerRuntimeErrorHandler(app);
-    registerProductFacade({
+    registerFullProductMemoryApp({
       app,
       env,
       guards,
+      liteWriteStore,
+      liteRecallStore,
       skillCandidateReviewAccess: reviewStore.createSkillCandidateReviewAccess(),
     });
 
-    const measure = await app.inject({
+    const mismatchedTaskBinding = await createPersistedVerifiedMeasurement({
+      app,
+      liteWriteStore,
+      suffix: "mismatched-task-binding",
+      afterExecutionStateId: "state:different-task",
+      expectSufficient: false,
+    });
+    assert.ok(mismatchedTaskBinding.evidence_assessment.reasons.includes("guide_receipt_task_binding_mismatch"));
+    const mismatchedEnqueue = await app.inject({
+      method: "POST",
+      url: "/v1/skills/candidates",
+      payload: { measure_result: mismatchedTaskBinding },
+    });
+    assert.equal(mismatchedEnqueue.statusCode, 409);
+    assert.equal(mismatchedEnqueue.json().error, "measurement_not_skill_export_eligible");
+
+    const sparse = await app.inject({
       method: "POST",
       url: "/v1/measure",
       payload: {
-        task: {
-          run_id: "run:skill-candidate-route",
-          task_signature: "skill-candidate-route",
-          task_family: "runtime_learning",
-        },
+        task: { run_id: "run:sparse-manual", task_signature: "sparse-manual" },
         baseline: {
-          continuity: {
-            repeatedDiscoverySteps: 4,
-            continuityGuidanceCorrect: false,
-            recoveredStateFacts: 1,
-            expectedStateFacts: 4,
-          },
-          learning: {
-            workflowReused: false,
-            provisionalMemoriesWritten: 1,
-          },
-          forgetting: {
-            contextItems: 8,
-            usefulContextItems: 2,
-          },
-          learning_control: {
-            authorityRequiresEvidence: true,
-            blockedAuthorityVisible: true,
-            unverifiedAuthorityApplied: 0,
-          },
+          continuity: { repeatedDiscoverySteps: 4, continuityGuidanceCorrect: false },
+          learning: { workflowReused: false },
         },
         aionis: {
-          continuity: {
-            repeatedDiscoverySteps: 1,
-            continuityGuidanceCorrect: true,
-            recoveredStateFacts: 4,
-            expectedStateFacts: 4,
-          },
-          learning: {
-            workflowReused: true,
-            stableWorkflowReused: true,
-            trustedPromotions: 1,
-            weakEvidencePromoted: 0,
-          },
-          forgetting: {
-            contextItems: 4,
-            usefulContextItems: 4,
-            staleMemorySuppressed: 2,
-          },
-          learning_control: {
-            weakEvidenceBlocked: 2,
-            authorityRequiresEvidence: true,
-            blockedAuthorityVisible: true,
-            unverifiedAuthorityApplied: 0,
-          },
+          continuity: { repeatedDiscoverySteps: 0, continuityGuidanceCorrect: true },
+          learning: { workflowReused: true },
         },
-        comparison: {
-          mode: "baseline_vs_aionis",
-          sufficient_evidence: true,
-        },
-        evidence_ids: ["effect-run:skill-candidate-route"],
+        comparison: { mode: "baseline_vs_aionis", sufficient_evidence: true },
+        evidence_ids: ["caller:fake-runtime-evidence"],
+        minEffectDelta: -100,
+        minAionisScore: -100,
       },
     });
-    assert.equal(measure.statusCode, 200);
-    const measureBody = measure.json();
+    assert.equal(sparse.statusCode, 200, sparse.body);
+    const sparseBody = sparse.json();
+    const forgettingKernel = sparseBody.kernel_report.kernel_scores.find((score: Record<string, any>) =>
+      score.capability_id === "forgetting"
+    );
+    assert.ok(forgettingKernel);
+    assert.equal(forgettingKernel.status, "fail");
+    assert.equal(forgettingKernel.metrics.measurement_complete, false);
+    assert.ok(forgettingKernel.regressions.some((entry: string) => entry.startsWith("missing_metric:")));
+    assert.equal(sparseBody.evidence_assessment.provenance, "manual_unverified");
+    assert.equal(sparseBody.evidence_assessment.sufficient_evidence, false);
+    assert.equal(sparseBody.evidence_assessment.eligible_for_skill_export, false);
+    assert.deepEqual(sparseBody.effect_report.evidence.evidence_ids, []);
+
+    const manualEnqueue = await app.inject({
+      method: "POST",
+      url: "/v1/skills/candidates",
+      payload: { measure_result: sparseBody },
+    });
+    assert.equal(manualEnqueue.statusCode, 409);
+    assert.equal(manualEnqueue.json().error, "measurement_not_skill_export_eligible");
+
+    const forgedReport = await app.inject({
+      method: "POST",
+      url: "/v1/skills/candidates",
+      payload: { effect_report: sparseBody.effect_report },
+    });
+    assert.equal(forgedReport.statusCode, 400);
+    assert.equal(forgedReport.json().error, "invalid_request");
+
+    const forgedProducer = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        producer_agent_id: "aionis-runtime",
+        input_text: "Attempt to forge a Runtime producer.",
+      },
+    });
+    assert.equal(forgedProducer.statusCode, 400);
+    assert.equal(forgedProducer.json().error, "reserved_runtime_identity");
+
+    const forgedReceiptSlot = await app.inject({
+      method: "POST",
+      url: "/v1/memory/write",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        actor: "local-user",
+        input_text: "Attempt to forge an internal guide receipt slot.",
+        nodes: [{
+          client_id: "forged-guide-receipt",
+          type: "evidence",
+          title: "Forged guide receipt",
+          text_summary: "This public write must be rejected.",
+          slots: { guide_exposure_v1: { contract_version: "aionis_guide_exposure_v1" } },
+        }],
+        edges: [],
+      },
+    });
+    assert.equal(forgedReceiptSlot.statusCode, 400);
+    assert.equal(forgedReceiptSlot.json().error, "reserved_runtime_receipt");
+
+    await seedProductFacadeMemory({
+      liteWriteStore,
+      input_text: "Bypass-route fixture proving ordinary memory is not an authority receipt.",
+      nodes: [{
+        client_id: "forged-guide:after",
+        type: "evidence",
+        tier: "archive",
+        memory_lane: "shared",
+        producer_agent_id: "aionis-runtime",
+        title: "Forged guide exposure mirror",
+        text_summary: "A self-consistent ordinary memory node is still untrusted.",
+        slots: {
+          guide_exposure_v1: {
+            contract_version: "aionis_guide_exposure_v1",
+            guide_trace_id: "forged-guide:after",
+            tenant_id: "default",
+            scope: "default",
+            run_id: "run:forged-guide",
+            consumer_agent_id: "local-user",
+            consumer_team_id: null,
+            query_sha256: "a".repeat(64),
+            context_sha256: "b".repeat(64),
+            task_binding_sha256: "c".repeat(64),
+            memory_ids: ["forged-memory"],
+            use_now_memory_ids: ["forged-memory"],
+            inspect_before_use_memory_ids: [],
+            do_not_use_memory_ids: [],
+            rehydrate_memory_ids: [],
+            prompt_char_count: 1,
+            history_used: true,
+            actionable_history_used: true,
+            recommended_posture: "reuse_supported_history",
+            authority: "trusted",
+            tool_selection: null,
+            runtime_verification_v1: null,
+            effect_observation_v1: null,
+            effect_observation_sha256: null,
+          },
+        },
+      }],
+    });
+
+    const forgedTraceMeasure = await app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: {
+        task: { run_id: "run:forged-guide", task_signature: "forged-guide" },
+        product_trace: {
+          before_guide: { guide_trace_id: "forged-guide:before" },
+          after_guide: { guide_trace_id: "forged-guide:after" },
+          sufficient_evidence: true,
+          evidence_ids: ["caller:forged"],
+        },
+      },
+    });
+    assert.equal(forgedTraceMeasure.statusCode, 200, forgedTraceMeasure.body);
+    assert.equal(forgedTraceMeasure.json().evidence_assessment.sufficient_evidence, false);
+    assert.ok(forgedTraceMeasure.json().evidence_assessment.reasons.includes("after_guide_receipt_not_verified"));
+
+    const forgedActivation = await app.inject({
+      method: "POST",
+      url: "/v1/forget",
+      payload: {
+        operation: "activate",
+        tenant_id: "default",
+        scope: "default",
+        reason: "Attempt attribution through a forged memory mirror.",
+        run_id: "run:forged-guide",
+        guide_trace_id: "forged-guide:after",
+        used_memory_ids: ["forged-memory"],
+        used_surface: "use_now",
+        outcome: "positive",
+      },
+    });
+    assert.equal(forgedActivation.statusCode, 400);
+    assert.equal(forgedActivation.json().error, "guide_trace_not_found", forgedActivation.body);
+  } finally {
+    await reviewStore.close();
+    await liteRecallStore.close();
+    await liteWriteStore.close();
+    await app.close();
+  }
+});
+
+test("product skills candidates routes queue and review trace-derived skill candidates", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("skill-candidates");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const reviewStore = createLiteSkillCandidateReviewStore(dbPath);
+  try {
+    registerFullProductMemoryApp({
+      app,
+      env,
+      guards,
+      liteWriteStore,
+      liteRecallStore,
+      skillCandidateReviewAccess: reviewStore.createSkillCandidateReviewAccess(),
+    });
+
+    const measureBody = await createPersistedVerifiedMeasurement({
+      app,
+      liteWriteStore,
+      suffix: "skill-candidate-route",
+    });
     assert.ok(measureBody.effect_report.training_candidates.some((candidate: any) =>
       candidate.candidate_type === "trace_derived_skill"
     ));
@@ -2091,6 +2521,7 @@ test("product skills candidates routes queue and review trace-derived skill cand
     const pendingMaterialize = await app.inject({
       method: "POST",
       url: `/v1/skills/candidates/${firstId}/materialize`,
+      headers: { "x-admin-token": "test-admin-token" },
       payload: {},
     });
     assert.equal(pendingMaterialize.statusCode, 409);
@@ -2099,19 +2530,30 @@ test("product skills candidates routes queue and review trace-derived skill cand
     const promoted = await app.inject({
       method: "POST",
       url: `/v1/skills/candidates/${firstId}/promote`,
+      headers: { "x-admin-token": "test-admin-token" },
       payload: {
-        reviewer_id: "operator-1",
         reason: "Strong continuity evidence.",
       },
     });
     assert.equal(promoted.statusCode, 200);
     assert.equal(promoted.json().candidates[0].review_status, "promoted");
+    assert.equal(promoted.json().candidates[0].reviewer_id, "lite-admin-token");
     assert.equal(promoted.json().candidates[0].candidate.trace_derived_skill.authority_state, "candidate");
     assert.equal(promoted.json().safety.memory_runtime_mutation, false);
+
+    const repeatedPromote = await app.inject({
+      method: "POST",
+      url: `/v1/skills/candidates/${firstId}/promote`,
+      headers: { "x-admin-token": "test-admin-token" },
+      payload: { reason: "A terminal review decision cannot be replayed." },
+    });
+    assert.equal(repeatedPromote.statusCode, 409);
+    assert.equal(repeatedPromote.json().error, "skill_candidate_state_conflict");
 
     const materialized = await app.inject({
       method: "POST",
       url: `/v1/skills/candidates/${firstId}/materialize`,
+      headers: { "x-admin-token": "test-admin-token" },
       payload: {},
     });
     assert.equal(materialized.statusCode, 200);
@@ -2131,24 +2573,150 @@ test("product skills candidates routes queue and review trace-derived skill cand
     const rejected = await app.inject({
       method: "POST",
       url: `/v1/skills/candidates/${secondId}/reject`,
+      headers: { "x-admin-token": "test-admin-token" },
       payload: {
-        reviewer_id: "operator-1",
         reason: "Needs more repeated evidence.",
       },
     });
     assert.equal(rejected.statusCode, 200);
     assert.equal(rejected.json().candidates[0].review_status, "rejected");
 
+    const promoteAfterReject = await app.inject({
+      method: "POST",
+      url: `/v1/skills/candidates/${secondId}/promote`,
+      headers: { "x-admin-token": "test-admin-token" },
+      payload: { reason: "Rejected candidates cannot be promoted by a stale transition." },
+    });
+    assert.equal(promoteAfterReject.statusCode, 409);
+    assert.equal(promoteAfterReject.json().error, "skill_candidate_state_conflict");
+
     const rejectedMaterialize = await app.inject({
       method: "POST",
       url: `/v1/skills/candidates/${secondId}/materialize`,
+      headers: { "x-admin-token": "test-admin-token" },
       payload: {},
     });
     assert.equal(rejectedMaterialize.statusCode, 409);
     assert.equal(rejectedMaterialize.json().error, "skill_candidate_not_promoted");
   } finally {
     await reviewStore.close();
+    await liteRecallStore.close();
+    await liteWriteStore.close();
     await app.close();
+  }
+});
+
+test("ordinary principals cannot review or materialize Runtime skill candidates", async () => {
+  const seedApp = Fastify();
+  const lite = liteEnv();
+  const liteGuards = requestGuards(lite, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("skill-candidate-role-gate");
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const reviewStore = createLiteSkillCandidateReviewStore(dbPath);
+  const reviewAccess = reviewStore.createSkillCandidateReviewAccess();
+  const serverApp = Fastify();
+  try {
+    registerFullProductMemoryApp({
+      app: seedApp,
+      env: lite,
+      guards: liteGuards,
+      liteWriteStore,
+      liteRecallStore,
+      skillCandidateReviewAccess: reviewAccess,
+    });
+    const measurement = await createPersistedVerifiedMeasurement({
+      app: seedApp,
+      liteWriteStore,
+      suffix: "ordinary-role-gate",
+    });
+    const queued = await seedApp.inject({
+      method: "POST",
+      url: "/v1/skills/candidates",
+      payload: { measure_result: measurement },
+    });
+    assert.equal(queued.statusCode, 200, queued.body);
+    const candidate = queued.json().candidates.find((entry: Record<string, unknown>) =>
+      entry.label === "positive" && entry.export_ready === true
+    );
+    assert.ok(candidate?.candidate_id);
+
+    const serverEnv = {
+      ...liteEnv(),
+      AIONIS_EDITION: "server",
+      AIONIS_MODE: "service",
+      MEMORY_AUTH_MODE: "api_key",
+      MEMORY_API_KEYS_JSON: JSON.stringify({
+        "developer-key": {
+          tenant_id: "default",
+          agent_id: "developer-agent",
+          role: "developer",
+          default_scope: "default",
+          allowed_scopes: ["default"],
+        },
+        "operator-key": {
+          tenant_id: "default",
+          agent_id: "operator-agent",
+          role: "operator",
+          default_scope: "default",
+          allowed_scopes: ["default"],
+        },
+      }),
+      AIONIS_SERVER_ALLOW_AUTH_OFF_FOR_DEV: false,
+    } as any;
+    const serverGuards = requestGuards(serverEnv, null);
+    registerRuntimeErrorHandler(serverApp);
+    registerProductFacade({
+      app: serverApp,
+      env: serverEnv,
+      guards: serverGuards,
+      liteWriteStore,
+      skillCandidateReviewAccess: reviewAccess,
+    });
+
+    const developerPromote = await serverApp.inject({
+      method: "POST",
+      url: `/v1/skills/candidates/${candidate.candidate_id}/promote`,
+      headers: { "x-api-key": "developer-key" },
+      payload: { reason: "A developer must not cross the review authority boundary." },
+    });
+    assert.equal(developerPromote.statusCode, 403);
+    assert.equal(developerPromote.json().error, "skill_operator_forbidden");
+
+    const developerMaterialize = await serverApp.inject({
+      method: "POST",
+      url: `/v1/skills/candidates/${candidate.candidate_id}/materialize`,
+      headers: { "x-api-key": "developer-key" },
+      payload: {},
+    });
+    assert.equal(developerMaterialize.statusCode, 403);
+    assert.equal(developerMaterialize.json().error, "skill_operator_forbidden");
+
+    const operatorPromote = await serverApp.inject({
+      method: "POST",
+      url: `/v1/skills/candidates/${candidate.candidate_id}/promote`,
+      headers: { "x-api-key": "operator-key" },
+      payload: {
+        reviewer_id: "caller-spoofed-reviewer",
+        reason: "Runtime verifier and server evidence gates passed.",
+      },
+    });
+    assert.equal(operatorPromote.statusCode, 200, operatorPromote.body);
+    assert.equal(operatorPromote.json().candidates[0].reviewer_id, "operator-agent");
+
+    const operatorMaterialize = await serverApp.inject({
+      method: "POST",
+      url: `/v1/skills/candidates/${candidate.candidate_id}/materialize`,
+      headers: { "x-api-key": "operator-key" },
+      payload: {},
+    });
+    assert.equal(operatorMaterialize.statusCode, 200, operatorMaterialize.body);
+  } finally {
+    await serverApp.close();
+    await seedApp.close();
+    await reviewStore.close();
+    await liteRecallStore.close();
+    await liteWriteStore.close();
   }
 });
 
@@ -2159,9 +2727,7 @@ test("trace-derived skill materialize requires explicit observe before guide can
   const dbPath = tmpDbPath("skill-candidate-materialize-loop");
   const liteWriteStore = createLiteWriteStore(dbPath);
   const liteRecallStore = createLiteRecallStore(dbPath);
-  const reviewStore = createLiteSkillCandidateReviewStore(tmpDbPath("skill-candidate-materialize-review"));
-  const queryMarker = "AIONIS_TDS_QUERY_MARKER_7FA4";
-  const stepMarker = "AIONIS_TDS_STEP_MARKER_7FA4";
+  const reviewStore = createLiteSkillCandidateReviewStore(dbPath);
   try {
     registerFullProductMemoryApp({
       app,
@@ -2172,145 +2738,63 @@ test("trace-derived skill materialize requires explicit observe before guide can
       skillCandidateReviewAccess: reviewStore.createSkillCandidateReviewAccess(),
     });
 
-    const beforeGuide = await app.inject({
-      method: "POST",
-      url: "/v1/guide",
-      payload: {
-        tenant_id: "default",
-        scope: "default",
-        query_text: `Continue work that matches ${queryMarker}`,
-        consumer_agent_id: "local-user",
-        tool_candidates: ["read", "edit", "test"],
-        limit: 8,
-        include_packets: true,
-      },
+    const measureBody = await createPersistedVerifiedMeasurement({
+      app,
+      liteWriteStore,
+      suffix: "skill-candidate-materialize-loop",
     });
-    assert.equal(beforeGuide.statusCode, 200);
-    assert.equal(String(beforeGuide.json().agent_context.prompt_text).includes(stepMarker), false);
-
-    const measure = await app.inject({
-      method: "POST",
-      url: "/v1/measure",
-      payload: {
-        task: {
-          run_id: "run:skill-candidate-materialize-loop",
-          task_signature: "skill-candidate-materialize-loop",
-          task_family: "runtime_learning",
-        },
-        baseline: {
-          continuity: {
-            repeatedDiscoverySteps: 4,
-            continuityGuidanceCorrect: false,
-            recoveredStateFacts: 1,
-            expectedStateFacts: 4,
-          },
-          learning: {
-            workflowReused: false,
-            provisionalMemoriesWritten: 1,
-          },
-        },
-        aionis: {
-          continuity: {
-            repeatedDiscoverySteps: 1,
-            continuityGuidanceCorrect: true,
-            recoveredStateFacts: 4,
-            expectedStateFacts: 4,
-          },
-          learning: {
-            workflowReused: true,
-            stableWorkflowReused: true,
-            trustedPromotions: 1,
-            weakEvidencePromoted: 0,
-          },
-        },
-        comparison: {
-          mode: "baseline_vs_aionis",
-          sufficient_evidence: true,
-        },
-        evidence_ids: ["effect-run:skill-candidate-materialize-loop"],
-      },
-    });
-    assert.equal(measure.statusCode, 200);
-    const effectReport = measure.json().effect_report;
-    effectReport.training_candidates = [{
-      candidate_type: "trace_derived_skill",
-      source_ids: ["effect-run:skill-candidate-materialize-loop"],
-      label: "positive",
-      export_ready: true,
-      reason: "Repeated trace evidence shows this procedure improves continuity for the marked workflow.",
-      trace_derived_skill: {
-        contract_version: "aionis_trace_derived_skill_candidate_v1",
-        skill_name: "AIONIS TDS materialized procedure loop",
-        source_trace_ids: ["trace:skill-candidate-materialize-loop"],
-        source_signal_ids: ["signal:continuity-improved"],
-        applies_when: [`Task includes ${queryMarker} and needs reviewed trace reuse.`],
-        does_not_apply_when: ["The task is unrelated to the marked workflow."],
-        procedure_steps: [
-          `Read the existing target before broad discovery and record ${stepMarker}.`,
-          "Apply only the scoped change from the reviewed trace.",
-          "Run the focused verifier before broadening search.",
-        ],
-        target_files: ["src/aionis-tds-materialized-target.ts"],
-        acceptance_checks: [`Focused verifier includes ${stepMarker}.`],
-        failure_counterexamples: ["Do not reuse this procedure when the marker is absent."],
-        evidence_refs: ["effect-run:skill-candidate-materialize-loop"],
-        authority_state: "candidate",
-        promotion_status: "promotion_ready",
-        export_policy: {
-          agent_prompt_included: false,
-          runtime_mutation: false,
-          required_gate: "admission_and_promotion_gate",
-        },
-      },
-    }];
-
     const queued = await app.inject({
       method: "POST",
       url: "/v1/skills/candidates",
       payload: {
-        effect_report: effectReport,
+        measure_result: measureBody,
       },
     });
-    assert.equal(queued.statusCode, 200);
-    const candidateId = queued.json().candidates[0].candidate_id;
-    assert.ok(candidateId);
+    assert.equal(queued.statusCode, 200, queued.body);
+    const candidate = queued.json().candidates.find((entry: Record<string, unknown>) =>
+      entry.label === "positive"
+      && entry.export_ready === true
+      && entry.promotion_status === "promotion_ready"
+    );
+    assert.ok(candidate);
+    const candidateId = candidate.candidate_id;
 
     const promoted = await app.inject({
       method: "POST",
       url: `/v1/skills/candidates/${candidateId}/promote`,
+      headers: { "x-admin-token": "test-admin-token" },
       payload: {
-        reviewer_id: "operator-1",
-        reason: "Procedure is narrow, positive, and verifier-backed.",
+        reason: "Runtime verifier receipt and effect gate passed.",
       },
     });
-    assert.equal(promoted.statusCode, 200);
+    assert.equal(promoted.statusCode, 200, promoted.body);
+
+    const executionRowsBefore = await liteWriteStore.findExecutionNativeNodes({
+      scope: "default",
+      consumerAgentId: "local-user",
+      consumerTeamId: null,
+      limit: 200,
+      offset: 0,
+    });
 
     const materialized = await app.inject({
       method: "POST",
       url: `/v1/skills/candidates/${candidateId}/materialize`,
+      headers: { "x-admin-token": "test-admin-token" },
       payload: {},
     });
-    assert.equal(materialized.statusCode, 200);
+    assert.equal(materialized.statusCode, 200, materialized.body);
     const materializedBody = materialized.json();
     assert.equal(materializedBody.safety.memory_runtime_mutation, false);
     assert.equal(materializedBody.draft.write_policy.requires_observe_commit, true);
-    assert.equal(String(materializedBody.draft.summary).includes(stepMarker), true);
-
-    const afterMaterializeGuide = await app.inject({
-      method: "POST",
-      url: "/v1/guide",
-      payload: {
-        tenant_id: "default",
-        scope: "default",
-        query_text: `Continue work that matches ${queryMarker}`,
-        consumer_agent_id: "local-user",
-        tool_candidates: ["read", "edit", "test"],
-        limit: 8,
-        include_packets: true,
-      },
+    const executionRowsAfterMaterialize = await liteWriteStore.findExecutionNativeNodes({
+      scope: "default",
+      consumerAgentId: "local-user",
+      consumerTeamId: null,
+      limit: 200,
+      offset: 0,
     });
-    assert.equal(afterMaterializeGuide.statusCode, 200);
-    assert.equal(String(afterMaterializeGuide.json().agent_context.prompt_text).includes(stepMarker), false);
+    assert.equal(executionRowsAfterMaterialize.rows.length, executionRowsBefore.rows.length);
 
     const observe = await app.inject({
       method: "POST",
@@ -2321,13 +2805,22 @@ test("trace-derived skill materialize requires explicit observe before guide can
     assert.equal(observe.json().observed.execution_memory_count, 1);
     assert.equal(observe.json().structured_memory.structured_nodes[0].source, "execution");
 
+    const executionRowsAfterObserve = await liteWriteStore.findExecutionNativeNodes({
+      scope: "default",
+      consumerAgentId: "local-user",
+      consumerTeamId: null,
+      limit: 200,
+      offset: 0,
+    });
+    assert.equal(executionRowsAfterObserve.rows.length, executionRowsBefore.rows.length + 1);
+
     const afterObserveGuide = await app.inject({
       method: "POST",
       url: "/v1/guide",
       payload: {
         tenant_id: "default",
         scope: "default",
-        query_text: `Continue work that matches ${queryMarker}`,
+        query_text: materializedBody.draft.skill_name,
         consumer_agent_id: "local-user",
         tool_candidates: ["read", "edit", "test"],
         limit: 8,
@@ -2339,27 +2832,14 @@ test("trace-derived skill materialize requires explicit observe before guide can
     assert.equal(afterObserveBody.agent_context.history_used, true);
     assert.equal(afterObserveBody.agent_context.actionable_history_used, true);
     assert.ok(
-      afterObserveBody.agent_context.use_now.some((entry: string) =>
-        entry.includes(stepMarker)
-      ),
-    );
-    assert.ok(
-      String(afterObserveBody.agent_context.prompt_text).includes(stepMarker),
-    );
-    assert.ok(
-      afterObserveBody.memory_packet.relevant_memories.some((entry: Record<string, unknown>) =>
-        entry.domain === "execution"
-        && entry.memory_type === "execution_memory"
-        && String(entry.summary).includes(stepMarker),
-      ),
-    );
-    assert.ok(
       afterObserveBody.guide_packet.guidance.workflow_candidates.some((entry: Record<string, unknown>) =>
-        String(entry.title).includes("AIONIS TDS materialized procedure loop"),
+        String(entry.title).includes(materializedBody.draft.skill_name),
       ),
     );
   } finally {
     await reviewStore.close();
+    await liteRecallStore.close();
+    await liteWriteStore.close();
     await app.close();
   }
 });
@@ -2391,6 +2871,7 @@ test("product observe turns plain input_text into recallable general memory", as
     assertNoForbiddenProductFields(observeBody);
     assertExactKeys(observeBody, [
       "contract_version",
+      "operation_id",
       "tenant_id",
       "scope",
       "observed",
@@ -2398,6 +2879,7 @@ test("product observe turns plain input_text into recallable general memory", as
       "memory_write",
       "handoff",
       "source_map",
+      "post_commit_projections",
     ]);
     assertExactKeys(observeBody.observed, [
       "memory_written",
@@ -3884,14 +4366,22 @@ test("product measure derives closed-loop effect from guide packets", async () =
     registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
 
     const query = "Recover target file before broad discovery";
+    await seedProductMeasureToolRule(liteWriteStore);
     const beforeGuide = await app.inject({
       method: "POST",
       url: "/v1/guide",
       payload: {
         tenant_id: "default",
         scope: "default",
+        run_id: "run:product-measure-trace",
         query_text: query,
         consumer_agent_id: "local-user",
+        context: {
+          agent_id: "local-user",
+          task_kind: "continuity_recovery",
+          task_signature: "measure-product-trace",
+          goal: query,
+        },
         tool_candidates: ["read", "edit", "test"],
         limit: 8,
         include_packets: true,
@@ -3941,8 +4431,15 @@ test("product measure derives closed-loop effect from guide packets", async () =
       payload: {
         tenant_id: "default",
         scope: "default",
+        run_id: "run:product-measure-trace",
         query_text: query,
         consumer_agent_id: "local-user",
+        context: {
+          agent_id: "local-user",
+          task_kind: "continuity_recovery",
+          task_signature: "measure-product-trace",
+          goal: query,
+        },
         tool_candidates: ["read", "edit", "test"],
         limit: 8,
         include_packets: true,
@@ -3951,6 +4448,30 @@ test("product measure derives closed-loop effect from guide packets", async () =
     assert.equal(afterGuide.statusCode, 200);
     const afterGuideBody = afterGuide.json();
     assert.equal(afterGuideBody.guide_packet.guide_brief.history_used, true);
+
+    const feedback = await app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: {
+        feedback_kind: "tool_selection",
+        tenant_id: "default",
+        scope: "default",
+        guide_trace_id: afterGuideBody.guide_trace_id,
+        decision_id: afterGuideBody.tool_selection.decision_id,
+        run_id: afterGuideBody.tool_selection.run_id,
+        selected_tool: afterGuideBody.tool_selection.selected_tool,
+        candidates: afterGuideBody.tool_selection.candidates,
+        outcome: "positive",
+        context: {
+          agent_id: "local-user",
+          task_kind: "continuity_recovery",
+          task_signature: "measure-product-trace",
+          goal: query,
+        },
+        input_text: "The selected tool completed the verified continuation.",
+      },
+    });
+    assert.equal(feedback.statusCode, 200, feedback.body);
 
     const measure = await app.inject({
       method: "POST",
@@ -3982,10 +4503,17 @@ test("product measure derives closed-loop effect from guide packets", async () =
     assert.ok(
       body.measurement_input.baseline.continuity.repeatedDiscoverySteps
       > body.measurement_input.aionis.continuity.repeatedDiscoverySteps,
+      JSON.stringify({
+        evidence_assessment: body.evidence_assessment,
+        measurement_input: body.measurement_input,
+        kernel_report: body.kernel_report,
+      }),
     );
     assert.ok(body.kernel_report.proof_summary.repeated_discovery_delta > 0);
-    assert.equal(body.effect_report.history_impact.impact_direction, "positive");
-    assert.equal(body.effect_report.history_impact.changed_future_behavior, true);
+    assert.equal(body.effect_report.history_impact.impact_direction, "insufficient_evidence");
+    assert.equal(body.effect_report.history_impact.changed_future_behavior, false);
+    assert.equal(body.evidence_assessment.sufficient_evidence, false);
+    assert.ok(body.evidence_assessment.reasons.includes("trusted_runtime_verification_receipt_missing"));
     assert.equal(body.effect_report.feedback_signal_summary.present, false);
     assert.equal(body.effect_report.feedback_signal_summary.source, "memory_decision_audit");
     assert.equal(body.effect_report.feedback_signal_summary.authority_mutation, false);
@@ -4444,7 +4972,9 @@ test("product forget rehydrates archived memory through the product facade", asy
     const measureBody = measure.json();
     assert.equal(measureBody.measurement_input.source, "product_trace");
     assert.equal(measureBody.measurement_input.aionis.forgetting.archivedMemoryRehydratedOnDemand, 1);
-    assert.ok(measureBody.effect_report.evidence.evidence_ids.includes(`forget:${nodeId}`));
+    assert.equal(measureBody.effect_report.evidence.evidence_ids.includes(`forget:${nodeId}`), false);
+    assert.equal(measureBody.evidence_assessment.sufficient_evidence, false);
+    assert.equal(measureBody.evidence_assessment.client_claims_ignored.evidence_id_count, 1);
   } finally {
     await app.close();
   }

@@ -12,7 +12,15 @@ import {
   type ExecutionTransitionType,
 } from "./transitions.js";
 import { createSqliteDatabase, type SqliteDatabase } from "../store/sqlite.js";
+import { createLiteRuntimeReadDatabase } from "../store/lite-runtime-database.js";
+import type { SqliteTransactionRunner } from "../store/sqlite-transaction-runner.js";
+import { sha256Hex } from "../util/crypto.js";
+import { HttpError } from "../util/http.js";
 import { stableJson } from "../util/stable-json.js";
+import {
+  executionHistoryCorruptError,
+  installExecutionHistoryRevisionInvariant,
+} from "./history-integrity.js";
 
 export const StoredExecutionStateV1Schema = z.object({
   state: ExecutionStateV1Schema,
@@ -28,11 +36,22 @@ export type ExecutionStateStoreHealthSnapshot = {
 };
 
 export type ExecutionStateStore = {
+  readonly transactionRunner: SqliteTransactionRunner | null;
   get(scope: string, stateId: string): StoredExecutionStateV1 | null;
+  initialize(stateInput: ExecutionStateV1): StoredExecutionStateV1;
+  /** @deprecated Use initialize. This method is create-only and never replaces an existing snapshot. */
   put(stateInput: ExecutionStateV1): StoredExecutionStateV1;
   listByScope(scope: string): StoredExecutionStateV1[];
   applyTransition(transitionInput: ExecutionStateTransitionV1): StoredExecutionStateV1;
   has(scope: string, stateId: string): boolean;
+};
+
+export type LiteExecutionStateStoreOptions = {
+  database?: SqliteDatabase;
+  readDatabase?: SqliteDatabase;
+  closeReadDatabaseOnClose?: boolean;
+  transactionMode?: "self_managed" | "external";
+  transaction?: SqliteTransactionRunner;
 };
 
 type LiteExecutionStateRow = {
@@ -44,6 +63,15 @@ type LiteExecutionStateRow = {
 
 type LiteExecutionTransitionRow = {
   transition_json: string;
+  revision: number;
+  transition_type: string;
+  transition_at: string;
+  state_after_json: string;
+};
+
+type StoredExecutionTransitionEvent = {
+  transition: ExecutionStateTransitionV1;
+  after: StoredExecutionStateV1;
 };
 
 function transitionIntent(value: ExecutionStateTransitionV1): Record<string, unknown> {
@@ -57,50 +85,138 @@ function sameTransitionIntent(left: ExecutionStateTransitionV1, right: Execution
   return stableJson(transitionIntent(left)) === stableJson(transitionIntent(right));
 }
 
+function snapshotSha256(value: ExecutionStateV1): string {
+  return sha256Hex(stableJson(value));
+}
+
 export class LiteExecutionStateStore implements ExecutionStateStore {
   private readonly db: SqliteDatabase;
+  private readonly readDb: SqliteDatabase;
+  private readonly ownsDatabase: boolean;
+  private readonly ownsReadDatabase: boolean;
+  private readonly transactionMode: "self_managed" | "external";
+  readonly transactionRunner: SqliteTransactionRunner | null;
 
-  constructor(private readonly path: string) {
+  constructor(private readonly path: string, options: LiteExecutionStateStoreOptions = {}) {
     mkdirSync(dirname(path), { recursive: true });
-    this.db = createSqliteDatabase(path);
-    this.db.exec(`
-      PRAGMA journal_mode = WAL;
+    this.db = options.database ?? createSqliteDatabase(path);
+    this.ownsDatabase = options.database == null;
+    this.transactionMode = options.transactionMode ?? "self_managed";
+    this.transactionRunner = options.transaction ?? null;
+    this.readDb = this.transactionMode === "external"
+      ? options.readDatabase ?? this.db
+      : this.db;
+    this.ownsReadDatabase = this.transactionMode === "external"
+      && options.closeReadDatabaseOnClose === true
+      && options.readDatabase != null
+      && options.readDatabase !== this.db;
+    try {
+      if (
+        this.transactionMode === "external"
+        && (
+          !options.database
+          || !options.readDatabase
+          || options.readDatabase === options.database
+          || !this.transactionRunner
+        )
+      ) {
+        throw new Error(
+          "external execution state transactions require independent SQLite write/read connections and a transaction runner",
+        );
+      }
+      this.db.exec(`
+        PRAGMA journal_mode = WAL;
 
-      CREATE TABLE IF NOT EXISTS lite_execution_states (
-        scope TEXT NOT NULL,
-        state_id TEXT NOT NULL,
-        state_json TEXT NOT NULL,
-        revision INTEGER NOT NULL CHECK (revision > 0),
-        last_transition_type TEXT,
-        last_transition_at TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (scope, state_id)
-      );
-      CREATE INDEX IF NOT EXISTS idx_lite_execution_states_scope_updated
-        ON lite_execution_states(scope, updated_at DESC, state_id);
+        CREATE TABLE IF NOT EXISTS lite_execution_states (
+          scope TEXT NOT NULL,
+          state_id TEXT NOT NULL,
+          state_json TEXT NOT NULL,
+          revision INTEGER NOT NULL CHECK (revision > 0),
+          last_transition_type TEXT,
+          last_transition_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (scope, state_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_lite_execution_states_scope_updated
+          ON lite_execution_states(scope, updated_at DESC, state_id);
 
-      CREATE TABLE IF NOT EXISTS lite_execution_state_transitions (
-        scope TEXT NOT NULL,
-        state_id TEXT NOT NULL,
-        transition_id TEXT NOT NULL,
-        revision INTEGER NOT NULL CHECK (revision > 0),
-        transition_type TEXT NOT NULL,
-        transition_at TEXT NOT NULL,
-        actor_role TEXT NOT NULL,
-        expected_revision INTEGER,
-        transition_json TEXT NOT NULL,
-        state_after_json TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        PRIMARY KEY (scope, state_id, transition_id)
-      );
-      CREATE INDEX IF NOT EXISTS idx_lite_execution_state_transitions_state_revision
-        ON lite_execution_state_transitions(scope, state_id, revision);
-    `);
+        CREATE TABLE IF NOT EXISTS lite_execution_state_transitions (
+          scope TEXT NOT NULL,
+          state_id TEXT NOT NULL,
+          transition_id TEXT NOT NULL,
+          revision INTEGER NOT NULL CHECK (revision > 0),
+          transition_type TEXT NOT NULL,
+          transition_at TEXT NOT NULL,
+          actor_role TEXT NOT NULL,
+          expected_revision INTEGER,
+          transition_json TEXT NOT NULL,
+          state_after_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (scope, state_id, transition_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_lite_execution_state_transitions_state_revision
+          ON lite_execution_state_transitions(scope, state_id, revision);
+      `);
+      installExecutionHistoryRevisionInvariant(this.db, this.path, {
+        resourceKind: "execution_state",
+        projectionTable: "lite_execution_states",
+        eventTable: "lite_execution_state_transitions",
+        resourceIdColumn: "state_id",
+        projectionJsonColumn: "state_json",
+        projectionLastTypeColumn: "last_transition_type",
+        projectionLastAtColumn: "last_transition_at",
+        eventIdColumn: "transition_id",
+        eventTypeColumn: "transition_type",
+        eventAtColumn: "transition_at",
+        eventJsonColumn: "transition_json",
+        eventAfterJsonColumn: "state_after_json",
+        uniqueRevisionIndex: "idx_lite_execution_state_transitions_unique_revision",
+      });
+    } catch (error) {
+      if (this.ownsReadDatabase) {
+        try {
+          this.readDb.close();
+        } catch {
+          // Preserve the initialization failure.
+        }
+      }
+      if (this.ownsDatabase) this.db.close();
+      throw error;
+    }
+  }
+
+  private queryDatabase(): SqliteDatabase {
+    if (this.transactionMode === "external" && !this.transactionRunner?.inTransaction()) {
+      return this.readDb;
+    }
+    return this.db;
+  }
+
+  private mutate<T>(fn: () => T): T {
+    if (this.transactionMode === "external") {
+      if (!this.transactionRunner?.inTransaction()) {
+        throw new HttpError(
+          500,
+          "execution_transaction_required",
+          "execution state mutation requires the owning SQLite transaction",
+        );
+      }
+      return fn();
+    }
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const out = fn();
+      this.db.exec("COMMIT");
+      return out;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   get(scope: string, stateId: string): StoredExecutionStateV1 | null {
-    const row = this.db.prepare<LiteExecutionStateRow>(`
+    const row = this.queryDatabase().prepare<LiteExecutionStateRow>(`
       SELECT state_json, revision, last_transition_type, last_transition_at
       FROM lite_execution_states
       WHERE scope = ? AND state_id = ?
@@ -108,49 +224,71 @@ export class LiteExecutionStateStore implements ExecutionStateStore {
     return row ? rowToStoredExecutionState(row) : null;
   }
 
-  put(stateInput: ExecutionStateV1): StoredExecutionStateV1 {
+  initialize(stateInput: ExecutionStateV1): StoredExecutionStateV1 {
     const state = ExecutionStateV1Schema.parse(stateInput);
-    const existing = this.get(state.scope, state.state_id);
     const next = StoredExecutionStateV1Schema.parse({
       state,
-      revision: existing?.revision ?? 1,
-      last_transition_type: existing?.last_transition_type ?? null,
-      last_transition_at: existing?.last_transition_at ?? null,
+      revision: 1,
+      last_transition_type: null,
+      last_transition_at: null,
     });
-    const now = new Date().toISOString();
-    this.db.prepare(`
-      INSERT INTO lite_execution_states (
-        scope,
-        state_id,
-        state_json,
-        revision,
-        last_transition_type,
-        last_transition_at,
-        created_at,
-        updated_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(scope, state_id) DO UPDATE SET
-        state_json = excluded.state_json,
-        revision = excluded.revision,
-        last_transition_type = excluded.last_transition_type,
-        last_transition_at = excluded.last_transition_at,
-        updated_at = excluded.updated_at
-    `).run(
-      state.scope,
-      state.state_id,
-      JSON.stringify(next.state),
-      next.revision,
-      next.last_transition_type,
-      next.last_transition_at,
-      now,
-      now,
-    );
-    return next;
+    return this.mutate(() => {
+      const now = new Date().toISOString();
+      const inserted = this.db.prepare<{ revision: number }>(`
+        INSERT INTO lite_execution_states (
+          scope,
+          state_id,
+          state_json,
+          revision,
+          last_transition_type,
+          last_transition_at,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(scope, state_id) DO NOTHING
+        RETURNING revision
+      `).get(
+        state.scope,
+        state.state_id,
+        JSON.stringify(next.state),
+        next.revision,
+        next.last_transition_type,
+        next.last_transition_at,
+        now,
+        now,
+      );
+      if (inserted) return next;
+
+      const existing = this.get(state.scope, state.state_id);
+      if (!existing) {
+        throw new Error(`execution state initialization lost existing row: ${state.scope}/${state.state_id}`);
+      }
+      if (stableJson(existing.state) === stableJson(state)) return existing;
+      throw new HttpError(
+        409,
+        "execution_state_snapshot_conflict",
+        "execution state already exists with a different snapshot",
+        {
+          contract: "execution_conflict_v1",
+          resource_kind: "execution_state",
+          scope: state.scope,
+          state_id: state.state_id,
+          current_revision: existing.revision,
+          current_snapshot_sha256: snapshotSha256(existing.state),
+          incoming_snapshot_sha256: snapshotSha256(state),
+          retry_after_reload: true,
+        },
+      );
+    });
+  }
+
+  put(stateInput: ExecutionStateV1): StoredExecutionStateV1 {
+    return this.initialize(stateInput);
   }
 
   listByScope(scope: string): StoredExecutionStateV1[] {
-    const rows = this.db.prepare<LiteExecutionStateRow>(`
+    const rows = this.queryDatabase().prepare<LiteExecutionStateRow>(`
       SELECT state_json, revision, last_transition_type, last_transition_at
       FROM lite_execution_states
       WHERE scope = ?
@@ -159,43 +297,112 @@ export class LiteExecutionStateStore implements ExecutionStateStore {
     return rows.map(rowToStoredExecutionState);
   }
 
-  private getTransition(scope: string, stateId: string, transitionId: string): ExecutionStateTransitionV1 | null {
+  private getTransition(
+    scope: string,
+    stateId: string,
+    transitionId: string,
+  ): StoredExecutionTransitionEvent | null {
     const row = this.db.prepare<LiteExecutionTransitionRow>(`
-      SELECT transition_json
+      SELECT transition_json, revision, transition_type, transition_at, state_after_json
       FROM lite_execution_state_transitions
       WHERE scope = ? AND state_id = ? AND transition_id = ?
     `).get(scope, stateId, transitionId);
-    return row ? ExecutionStateTransitionV1Schema.parse(JSON.parse(row.transition_json)) : null;
+    if (!row) return null;
+    try {
+      return {
+        transition: ExecutionStateTransitionV1Schema.parse(JSON.parse(row.transition_json)),
+        after: StoredExecutionStateV1Schema.parse({
+          state: JSON.parse(row.state_after_json),
+          revision: Number(row.revision),
+          last_transition_type: row.transition_type,
+          last_transition_at: row.transition_at,
+        }),
+      };
+    } catch {
+      throw executionHistoryCorruptError({
+        resourceKind: "execution_state",
+        databasePath: this.path,
+        violations: [{
+          kind: "invalid_transition_event",
+          scope,
+          resource_id: stateId,
+          transition_id: transitionId,
+          revision: Number(row.revision),
+        }],
+      });
+    }
   }
 
   applyTransition(transitionInput: ExecutionStateTransitionV1): StoredExecutionStateV1 {
     const transition = ExecutionStateTransitionV1Schema.parse(transitionInput);
-    const existing = this.get(transition.scope, transition.state_id);
-    if (!existing) {
-      throw new Error(`execution state not found for transition: ${transition.scope}/${transition.state_id}`);
-    }
-    const previousTransition = this.getTransition(transition.scope, transition.state_id, transition.transition_id);
-    if (previousTransition) {
-      if (!sameTransitionIntent(previousTransition, transition)) {
-        throw new Error(`execution state transition id conflict: ${transition.scope}/${transition.state_id}/${transition.transition_id}`);
+    return this.mutate(() => {
+      const existing = this.get(transition.scope, transition.state_id);
+      if (!existing) {
+        throw new Error(`execution state not found for transition: ${transition.scope}/${transition.state_id}`);
       }
-      return existing;
-    }
-    if (transition.expected_revision != null && transition.expected_revision !== existing.revision) {
-      throw new Error(`execution state revision mismatch: expected ${transition.expected_revision}, got ${existing.revision}`);
-    }
+      const previousTransition = this.getTransition(transition.scope, transition.state_id, transition.transition_id);
+      if (previousTransition) {
+        if (!sameTransitionIntent(previousTransition.transition, transition)) {
+          throw new HttpError(
+            409,
+            "execution_transition_id_conflict",
+            "execution state transition id is already bound to a different intent",
+            {
+              contract: "execution_conflict_v1",
+              resource_kind: "execution_state_transition",
+              scope: transition.scope,
+              state_id: transition.state_id,
+              transition_id: transition.transition_id,
+              current_revision: existing.revision,
+              retry_after_reload: false,
+            },
+          );
+        }
+        return previousTransition.after;
+      }
+      if (transition.expected_revision == null) {
+        throw new HttpError(
+          409,
+          "execution_state_expected_revision_required",
+          "expected_revision is required when mutating an existing execution state",
+          {
+            contract: "execution_conflict_v1",
+            resource_kind: "execution_state",
+            scope: transition.scope,
+            state_id: transition.state_id,
+            transition_id: transition.transition_id,
+            current_revision: existing.revision,
+            retry_after_reload: true,
+          },
+        );
+      }
+      if (transition.expected_revision != null && transition.expected_revision !== existing.revision) {
+        throw new HttpError(
+          409,
+          "execution_state_revision_conflict",
+          `execution state revision mismatch: expected ${transition.expected_revision}, got ${existing.revision}`,
+          {
+            contract: "execution_conflict_v1",
+            resource_kind: "execution_state",
+            scope: transition.scope,
+            state_id: transition.state_id,
+            transition_id: transition.transition_id,
+            expected_revision: transition.expected_revision,
+            current_revision: existing.revision,
+            retry_after_reload: true,
+          },
+        );
+      }
 
-    const nextState = applyExecutionStateTransition(existing.state, transition);
-    const next = StoredExecutionStateV1Schema.parse({
-      state: nextState,
-      revision: existing.revision + 1,
-      last_transition_type: transition.type,
-      last_transition_at: transition.at,
-    });
-    const now = new Date().toISOString();
-    this.db.exec("BEGIN IMMEDIATE");
-    try {
-      this.db.prepare(`
+      const nextState = applyExecutionStateTransition(existing.state, transition);
+      const next = StoredExecutionStateV1Schema.parse({
+        state: nextState,
+        revision: existing.revision + 1,
+        last_transition_type: transition.type,
+        last_transition_at: transition.at,
+      });
+      const now = new Date().toISOString();
+      const updated = this.db.prepare<{ revision: number }>(`
         UPDATE lite_execution_states
         SET
           state_json = ?,
@@ -204,7 +411,8 @@ export class LiteExecutionStateStore implements ExecutionStateStore {
           last_transition_at = ?,
           updated_at = ?
         WHERE scope = ? AND state_id = ? AND revision = ?
-      `).run(
+        RETURNING revision
+      `).get(
         JSON.stringify(next.state),
         next.revision,
         next.last_transition_type,
@@ -214,9 +422,23 @@ export class LiteExecutionStateStore implements ExecutionStateStore {
         transition.state_id,
         existing.revision,
       );
-      const updated = this.get(transition.scope, transition.state_id);
       if (!updated || updated.revision !== next.revision) {
-        throw new Error(`execution state concurrent revision update failed for ${transition.scope}/${transition.state_id}`);
+        const current = this.get(transition.scope, transition.state_id);
+        throw new HttpError(
+          409,
+          "execution_state_revision_conflict",
+          "execution state changed before the transition could be committed",
+          {
+            contract: "execution_conflict_v1",
+            resource_kind: "execution_state",
+            scope: transition.scope,
+            state_id: transition.state_id,
+            transition_id: transition.transition_id,
+            expected_revision: existing.revision,
+            current_revision: current?.revision ?? null,
+            retry_after_reload: true,
+          },
+        );
       }
       this.db.prepare(`
         INSERT INTO lite_execution_state_transitions (
@@ -246,16 +468,12 @@ export class LiteExecutionStateStore implements ExecutionStateStore {
         JSON.stringify(next.state),
         now,
       );
-      this.db.exec("COMMIT");
       return next;
-    } catch (error) {
-      this.db.exec("ROLLBACK");
-      throw error;
-    }
+    });
   }
 
   has(scope: string, stateId: string): boolean {
-    const row = this.db.prepare<{ present: number }>(`
+    const row = this.queryDatabase().prepare<{ present: number }>(`
       SELECT 1 AS present
       FROM lite_execution_states
       WHERE scope = ? AND state_id = ?
@@ -265,14 +483,20 @@ export class LiteExecutionStateStore implements ExecutionStateStore {
   }
 
   clear(): void {
-    this.db.exec(`
-      DELETE FROM lite_execution_state_transitions;
-      DELETE FROM lite_execution_states;
-    `);
+    this.mutate(() => {
+      this.db.exec(`
+        DELETE FROM lite_execution_state_transitions;
+        DELETE FROM lite_execution_states;
+      `);
+    });
   }
 
   async close(): Promise<void> {
-    this.db.close();
+    try {
+      if (this.ownsReadDatabase) this.readDb.close();
+    } finally {
+      if (this.ownsDatabase) this.db.close();
+    }
   }
 
   healthSnapshot(): ExecutionStateStoreHealthSnapshot {
@@ -294,6 +518,24 @@ function rowToStoredExecutionState(row: LiteExecutionStateRow): StoredExecutionS
 
 export function createLiteExecutionStateStore(path: string): LiteExecutionStateStore {
   return new LiteExecutionStateStore(path);
+}
+
+export function createLiteExecutionStateStoreFromDatabase(
+  database: SqliteDatabase,
+  options: {
+    path: string;
+    transaction: SqliteTransactionRunner;
+    readDatabase?: SqliteDatabase;
+  },
+): LiteExecutionStateStore {
+  const readDatabase = options.readDatabase ?? createLiteRuntimeReadDatabase(options.path);
+  return new LiteExecutionStateStore(options.path, {
+    database,
+    readDatabase,
+    closeReadDatabaseOnClose: options.readDatabase == null,
+    transaction: options.transaction,
+    transactionMode: "external",
+  });
 }
 
 export function buildStoredExecutionState(

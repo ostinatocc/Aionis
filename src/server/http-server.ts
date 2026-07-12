@@ -29,6 +29,7 @@ import { buildRuntimeBoundaryInventoryResponse } from "../memory/runtime-boundar
 import type { ExecutionStateStore } from "../execution/state-store.js";
 import type { ExecutionTreeStore } from "../execution/tree-store.js";
 import type { ClaimLedgerAccess, SkillCandidateReviewAccess } from "../store/memory-store.js";
+import type { LiteWriteStore } from "../store/lite-write-store.js";
 import { buildLiteRouteMatrix, registerLiteServerOnlyRoutes } from "./lite-runtime-boundary.js";
 import { createErrorResponse, HttpError } from "../util/http.js";
 
@@ -234,6 +235,7 @@ export function registerHealthRoute(args: {
   liteReplayStore?: HealthSnapshotProvider | null;
   liteRecallStore?: { healthSnapshot: () => unknown } | null;
   liteWriteStore?: { healthSnapshot: () => unknown } | null;
+  projectionWorker?: HealthSnapshotProvider | null;
   liteClaimLedgerStore?: { healthSnapshot: () => unknown } | null;
   executionStateStore?: { healthSnapshot: () => unknown } | null;
   executionTreeStore?: { healthSnapshot: () => unknown } | null;
@@ -247,6 +249,7 @@ export function registerHealthRoute(args: {
     liteReplayStore,
     liteRecallStore,
     liteWriteStore,
+    projectionWorker,
     liteClaimLedgerStore,
     executionStateStore,
     executionTreeStore,
@@ -302,6 +305,7 @@ export function registerHealthRoute(args: {
             stores: {
               recall: storeHealthSnapshot(liteRecallStore),
               write: storeHealthSnapshot(liteWriteStore),
+              projection_worker: storeHealthSnapshot(projectionWorker),
               claim_ledger: storeHealthSnapshot(liteClaimLedgerStore),
               execution_state: storeHealthSnapshot(executionStateStore),
               execution_tree: storeHealthSnapshot(executionTreeStore),
@@ -335,7 +339,15 @@ type MemoryContextServiceArgs = Parameters<typeof createMemoryPlanningContextSer
 type RuntimeLiteWriteStore =
   & HandoffRouteArgs["liteWriteStore"]
   & MemoryAccessRouteArgs["liteWriteStore"]
-  & MemoryContextServiceArgs["liteWriteStore"];
+  & MemoryContextServiceArgs["liteWriteStore"]
+  & Pick<LiteWriteStore,
+    | "listOperatorGuideExposures"
+    | "resolveCommit"
+    | "listRuleFeedbackByRun"
+    | "insertProductGuideReceipt"
+    | "getProductGuideReceipt"
+    | "listProductGuideReceipts"
+  >;
 
 type RuntimeLiteRecallAccess = MemoryContextServiceArgs["liteRecallAccess"];
 
@@ -595,6 +607,7 @@ function registerProductRoutes(args: ProductFacadeRouteRegistrationArgs) {
     enforceTenantQuota: args.enforceTenantQuota,
     tenantFromBody: args.tenantFromBody,
     acquireInflightSlot: args.acquireInflightSlot,
+    adminToken: args.env.ADMIN_TOKEN,
   });
   registerOperatorSnapshotRoutes({
     app: args.app,
@@ -634,6 +647,7 @@ export function createRuntimeProductServices(args: {
       defaultScope: args.env.MEMORY_SCOPE,
       memoryWrite: args.memoryWriteService,
       handoffStore: args.handoffRouteService,
+      atomicWrite: args.liteWriteStore,
       claimLedgerAccess: args.claimLedgerAccess ?? null,
     }),
     guide: createProductGuideService({
@@ -656,6 +670,7 @@ export function createRuntimeProductServices(args: {
       defaultTenantId: args.env.MEMORY_TENANT_ID,
       defaultScope: args.env.MEMORY_SCOPE,
       skillCandidateReviewAccess: args.skillCandidateReviewAccess ?? null,
+      runtimeEvidenceStore: args.liteWriteStore,
     }),
   };
 }

@@ -1,19 +1,40 @@
-import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { AionisEffectReportSchema } from "../memory/product-output-contract.js";
 import type {
+  ProductMeasurementRecord,
   SkillCandidateReviewAccess,
   SkillCandidateReviewRow,
   SkillCandidateReviewStatus,
   TraceDerivedSkillTrainingCandidate,
 } from "./memory-store.js";
-import { createSqliteDatabase, type SqliteDatabase } from "./sqlite.js";
+import { productMeasurementDigest, stableJsonDigest } from "./memory-store.js";
+import {
+  createSqliteDatabase,
+  ignoreSqliteDuplicateColumnError,
+  type SqliteDatabase,
+} from "./sqlite.js";
 import { createSqliteTransactionRunner } from "./sqlite-transaction-runner.js";
 
 export type LiteSkillCandidateReviewStore = {
   createSkillCandidateReviewAccess(): SkillCandidateReviewAccess;
   close(): Promise<void>;
-  healthSnapshot(): { path: string; mode: "sqlite_skill_candidate_review_v1" };
+  healthSnapshot(): { path: string; mode: "sqlite_skill_candidate_review_v2" };
+};
+
+type ProductMeasurementDbRecord = {
+  measurement_id: string;
+  tenant_id: string;
+  scope: string;
+  source: ProductMeasurementRecord["source"];
+  measurement_digest: string;
+  effect_report_json: string;
+  eligible_for_skill_export: number;
+  evidence_status: ProductMeasurementRecord["evidence_status"];
+  runtime_evidence_ids_json: string;
+  eligibility_reasons_json: string;
+  created_by: string;
+  created_at: string;
 };
 
 type SkillCandidateReviewRecord = {
@@ -37,6 +58,11 @@ type SkillCandidateReviewRecord = {
   failure_counterexamples_json: string;
   evidence_refs_json: string;
   candidate_json: string;
+  measurement_id: string | null;
+  measurement_digest: string | null;
+  candidate_digest: string;
+  eligible_for_promotion: number;
+  row_version: number;
   reviewer_id: string | null;
   review_reason: string | null;
   created_at: string;
@@ -67,26 +93,38 @@ function parseCandidate(raw: string): TraceDerivedSkillTrainingCandidate {
   return JSON.parse(raw) as TraceDerivedSkillTrainingCandidate;
 }
 
+function measurementFromRecord(record: ProductMeasurementDbRecord): ProductMeasurementRecord {
+  return {
+    measurement_id: record.measurement_id,
+    tenant_id: record.tenant_id,
+    scope: record.scope,
+    source: record.source,
+    measurement_digest: record.measurement_digest,
+    effect_report: AionisEffectReportSchema.parse(JSON.parse(record.effect_report_json)),
+    eligible_for_skill_export: record.eligible_for_skill_export === 1,
+    evidence_status: record.evidence_status,
+    runtime_evidence_ids: parseJsonArray(record.runtime_evidence_ids_json),
+    eligibility_reasons: parseJsonArray(record.eligibility_reasons_json),
+    created_by: record.created_by,
+    created_at: record.created_at,
+  };
+}
+
 function candidateIdFor(args: {
   tenantId: string;
   scope: string;
+  measurementId: string;
+  measurementDigest: string;
+  candidateDigest: string;
   candidate: TraceDerivedSkillTrainingCandidate;
 }): string {
-  const skill = args.candidate.trace_derived_skill;
-  const hash = createHash("sha256")
-    .update(JSON.stringify({
-      tenant_id: args.tenantId,
-      scope: args.scope,
-      contract_version: skill.contract_version,
-      skill_name: skill.skill_name,
-      source_trace_ids: skill.source_trace_ids,
-      source_signal_ids: skill.source_signal_ids,
-      applies_when: skill.applies_when,
-      procedure_steps: skill.procedure_steps,
-      evidence_refs: skill.evidence_refs,
-    }))
-    .digest("hex")
-    .slice(0, 32);
+  const hash = stableJsonDigest({
+    tenant_id: args.tenantId,
+    scope: args.scope,
+    measurement_id: args.measurementId,
+    measurement_digest: args.measurementDigest,
+    candidate_digest: args.candidateDigest,
+  }).slice(0, 32);
   return `skillcand_${hash}`;
 }
 
@@ -112,6 +150,11 @@ function rowFromRecord(record: SkillCandidateReviewRecord): SkillCandidateReview
     failure_counterexamples: parseJsonArray(record.failure_counterexamples_json),
     evidence_refs: parseJsonArray(record.evidence_refs_json),
     candidate: parseCandidate(record.candidate_json),
+    measurement_id: record.measurement_id,
+    measurement_digest: record.measurement_digest,
+    candidate_digest: record.candidate_digest,
+    eligible_for_promotion: record.eligible_for_promotion === 1,
+    row_version: Math.max(1, Math.trunc(record.row_version || 1)),
     reviewer_id: record.reviewer_id,
     review_reason: record.review_reason,
     created_at: record.created_at,
@@ -127,6 +170,24 @@ function normalizeLimit(limit: number): number {
 function migrate(db: SqliteDatabase): void {
   db.exec(`
     PRAGMA journal_mode = WAL;
+
+    CREATE TABLE IF NOT EXISTS lite_product_measurements (
+      measurement_id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      source TEXT NOT NULL,
+      measurement_digest TEXT NOT NULL,
+      effect_report_json TEXT NOT NULL,
+      eligible_for_skill_export INTEGER NOT NULL,
+      evidence_status TEXT NOT NULL,
+      runtime_evidence_ids_json TEXT NOT NULL,
+      eligibility_reasons_json TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_lite_product_measurements_scope_digest
+      ON lite_product_measurements(tenant_id, scope, measurement_id, measurement_digest);
 
     CREATE TABLE IF NOT EXISTS lite_skill_candidate_reviews (
       candidate_id TEXT PRIMARY KEY,
@@ -149,6 +210,11 @@ function migrate(db: SqliteDatabase): void {
       failure_counterexamples_json TEXT NOT NULL,
       evidence_refs_json TEXT NOT NULL,
       candidate_json TEXT NOT NULL,
+      measurement_id TEXT,
+      measurement_digest TEXT,
+      candidate_digest TEXT NOT NULL DEFAULT '',
+      eligible_for_promotion INTEGER NOT NULL DEFAULT 0,
+      row_version INTEGER NOT NULL DEFAULT 1,
       reviewer_id TEXT,
       review_reason TEXT,
       created_at TEXT NOT NULL,
@@ -162,6 +228,21 @@ function migrate(db: SqliteDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_lite_skill_candidate_reviews_scope_updated
       ON lite_skill_candidate_reviews(tenant_id, scope, updated_at DESC);
   `);
+
+  const addedColumns = [
+    "measurement_id TEXT",
+    "measurement_digest TEXT",
+    "candidate_digest TEXT NOT NULL DEFAULT ''",
+    "eligible_for_promotion INTEGER NOT NULL DEFAULT 0",
+    "row_version INTEGER NOT NULL DEFAULT 1",
+  ];
+  for (const column of addedColumns) {
+    try {
+      db.exec(`ALTER TABLE lite_skill_candidate_reviews ADD COLUMN ${column}`);
+    } catch (error) {
+      ignoreSqliteDuplicateColumnError(error);
+    }
+  }
 }
 
 function reviewAccessForDb(db: SqliteDatabase): SkillCandidateReviewAccess {
@@ -176,38 +257,32 @@ function reviewAccessForDb(db: SqliteDatabase): SkillCandidateReviewAccess {
     WHERE tenant_id = ? AND scope = ? AND candidate_id = ?
     LIMIT 1
   `);
+  const getMeasurementStmt = db.prepare<ProductMeasurementDbRecord>(`
+    SELECT * FROM lite_product_measurements
+    WHERE tenant_id = ? AND scope = ? AND measurement_id = ?
+    LIMIT 1
+  `);
+  const insertMeasurementStmt = db.prepare(`
+    INSERT INTO lite_product_measurements (
+      measurement_id, tenant_id, scope, source, measurement_digest,
+      effect_report_json, eligible_for_skill_export, evidence_status,
+      runtime_evidence_ids_json, eligibility_reasons_json, created_by, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
   const insertStmt = db.prepare(`
-    INSERT INTO lite_skill_candidate_reviews (
+    INSERT OR IGNORE INTO lite_skill_candidate_reviews (
       candidate_id, tenant_id, scope, review_status, skill_name, label,
       export_ready, promotion_status, reason, source_ids_json, source_trace_ids_json,
       source_signal_ids_json, applies_when_json, does_not_apply_when_json,
       procedure_steps_json, target_files_json, acceptance_checks_json,
       failure_counterexamples_json, evidence_refs_json, candidate_json,
-      reviewer_id, review_reason, created_at, updated_at, reviewed_at
+      measurement_id, measurement_digest, candidate_digest, eligible_for_promotion,
+      row_version, reviewer_id, review_reason,
+      created_at, updated_at, reviewed_at
     ) VALUES (
-      ?, ?, ?, 'pending_review', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL
+      ?, ?, ?, 'pending_review', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, 1, NULL, NULL, ?, ?, NULL
     )
-  `);
-  const updatePendingStmt = db.prepare(`
-    UPDATE lite_skill_candidate_reviews
-    SET skill_name = ?,
-        label = ?,
-        export_ready = ?,
-        promotion_status = ?,
-        reason = ?,
-        source_ids_json = ?,
-        source_trace_ids_json = ?,
-        source_signal_ids_json = ?,
-        applies_when_json = ?,
-        does_not_apply_when_json = ?,
-        procedure_steps_json = ?,
-        target_files_json = ?,
-        acceptance_checks_json = ?,
-        failure_counterexamples_json = ?,
-        evidence_refs_json = ?,
-        candidate_json = ?,
-        updated_at = ?
-    WHERE tenant_id = ? AND scope = ? AND candidate_id = ? AND review_status = 'pending_review'
   `);
   const listAllStmt = db.prepare<SkillCandidateReviewRecord>(`
     SELECT * FROM lite_skill_candidate_reviews
@@ -221,85 +296,148 @@ function reviewAccessForDb(db: SqliteDatabase): SkillCandidateReviewAccess {
     ORDER BY updated_at DESC, created_at DESC
     LIMIT ?
   `);
-  const reviewStmt = db.prepare(`
+  const promoteStmt = db.prepare(`
     UPDATE lite_skill_candidate_reviews
-    SET review_status = ?,
+    SET review_status = 'promoted',
         reviewer_id = ?,
         review_reason = ?,
         reviewed_at = ?,
-        updated_at = ?
+        updated_at = ?,
+        row_version = row_version + 1
     WHERE tenant_id = ? AND scope = ? AND candidate_id = ?
+      AND review_status = 'pending_review'
+      AND row_version = ?
+      AND eligible_for_promotion = 1
   `);
+  const rejectStmt = db.prepare(`
+    UPDATE lite_skill_candidate_reviews
+    SET review_status = 'rejected',
+        reviewer_id = ?,
+        review_reason = ?,
+        reviewed_at = ?,
+        updated_at = ?,
+        row_version = row_version + 1
+    WHERE tenant_id = ? AND scope = ? AND candidate_id = ?
+      AND review_status = 'pending_review'
+      AND row_version = ?
+  `);
+  function changed(result: unknown): boolean {
+    return Number((result as { changes?: number } | null)?.changes ?? 0) === 1;
+  }
 
   return {
+    async recordMeasurement(args) {
+      return await transaction.run(async () => {
+        if (productMeasurementDigest(args.record) !== args.record.measurement_digest) {
+          throw new Error("measurement digest does not match the persisted measurement envelope");
+        }
+        const existing = getMeasurementStmt.get(
+          args.record.tenant_id,
+          args.record.scope,
+          args.record.measurement_id,
+        ) as ProductMeasurementDbRecord | undefined;
+        if (existing) {
+          const parsed = measurementFromRecord(existing);
+          if (parsed.measurement_digest !== args.record.measurement_digest) {
+            throw new Error("measurement id already exists with a different digest");
+          }
+          return parsed;
+        }
+        insertMeasurementStmt.run(
+          args.record.measurement_id,
+          args.record.tenant_id,
+          args.record.scope,
+          args.record.source,
+          args.record.measurement_digest,
+          jsonColumnValue(args.record.effect_report),
+          args.record.eligible_for_skill_export ? 1 : 0,
+          args.record.evidence_status,
+          jsonColumnValue(args.record.runtime_evidence_ids),
+          jsonColumnValue(args.record.eligibility_reasons),
+          args.record.created_by,
+          args.record.created_at,
+        );
+        const inserted = getMeasurementStmt.get(
+          args.record.tenant_id,
+          args.record.scope,
+          args.record.measurement_id,
+        ) as ProductMeasurementDbRecord | undefined;
+        if (!inserted) throw new Error("measurement persistence failed");
+        return measurementFromRecord(inserted);
+      });
+    },
+
+    async getMeasurement(args) {
+      const row = getMeasurementStmt.get(
+        args.tenantId,
+        args.scope,
+        args.measurementId,
+      ) as ProductMeasurementDbRecord | undefined;
+      return row ? measurementFromRecord(row) : null;
+    },
+
     async enqueueTraceDerivedSkillCandidates(args) {
       return await transaction.run(async () => {
+        const measurementRecord = getMeasurementStmt.get(
+          args.tenantId,
+          args.scope,
+          args.measurementId,
+        ) as ProductMeasurementDbRecord | undefined;
+        if (!measurementRecord || measurementRecord.measurement_digest !== args.measurementDigest) {
+          throw new Error("measurement record is missing or does not match the supplied digest");
+        }
+        const measurement = measurementFromRecord(measurementRecord);
         const rows: SkillCandidateReviewRow[] = [];
         let inserted = 0;
-        let updated = 0;
         const at = args.now ?? nowIso();
         for (const candidate of args.candidates) {
           const skill = candidate.trace_derived_skill;
+          const candidateDigest = stableJsonDigest(candidate);
           const candidateId = candidateIdFor({
             tenantId: args.tenantId,
             scope: args.scope,
+            measurementId: args.measurementId,
+            measurementDigest: args.measurementDigest,
+            candidateDigest,
             candidate,
           });
-          const existing = getByIdStmt.get(args.tenantId, args.scope, candidateId) as SkillCandidateReviewRecord | undefined;
-          if (!existing) {
-            insertStmt.run(
-              candidateId,
-              args.tenantId,
-              args.scope,
-              skill.skill_name,
-              candidate.label,
-              candidate.export_ready ? 1 : 0,
-              skill.promotion_status,
-              candidate.reason,
-              jsonColumnValue(candidate.source_ids),
-              jsonColumnValue(skill.source_trace_ids),
-              jsonColumnValue(skill.source_signal_ids),
-              jsonColumnValue(skill.applies_when),
-              jsonColumnValue(skill.does_not_apply_when),
-              jsonColumnValue(skill.procedure_steps),
-              jsonColumnValue(skill.target_files),
-              jsonColumnValue(skill.acceptance_checks),
-              jsonColumnValue(skill.failure_counterexamples),
-              jsonColumnValue(skill.evidence_refs),
-              jsonColumnValue(candidate),
-              at,
-              at,
-            );
-            inserted += 1;
-          } else if (existing.review_status === "pending_review") {
-            updatePendingStmt.run(
-              skill.skill_name,
-              candidate.label,
-              candidate.export_ready ? 1 : 0,
-              skill.promotion_status,
-              candidate.reason,
-              jsonColumnValue(candidate.source_ids),
-              jsonColumnValue(skill.source_trace_ids),
-              jsonColumnValue(skill.source_signal_ids),
-              jsonColumnValue(skill.applies_when),
-              jsonColumnValue(skill.does_not_apply_when),
-              jsonColumnValue(skill.procedure_steps),
-              jsonColumnValue(skill.target_files),
-              jsonColumnValue(skill.acceptance_checks),
-              jsonColumnValue(skill.failure_counterexamples),
-              jsonColumnValue(skill.evidence_refs),
-              jsonColumnValue(candidate),
-              at,
-              args.tenantId,
-              args.scope,
-              candidateId,
-            );
-            updated += 1;
-          }
+          const eligible = args.eligibleForPromotion
+            && measurement.eligible_for_skill_export
+            && candidate.export_ready
+            && candidate.label === "positive"
+            && skill.promotion_status === "promotion_ready";
+          const result = insertStmt.run(
+            candidateId,
+            args.tenantId,
+            args.scope,
+            skill.skill_name,
+            candidate.label,
+            candidate.export_ready ? 1 : 0,
+            skill.promotion_status,
+            candidate.reason,
+            jsonColumnValue(candidate.source_ids),
+            jsonColumnValue(skill.source_trace_ids),
+            jsonColumnValue(skill.source_signal_ids),
+            jsonColumnValue(skill.applies_when),
+            jsonColumnValue(skill.does_not_apply_when),
+            jsonColumnValue(skill.procedure_steps),
+            jsonColumnValue(skill.target_files),
+            jsonColumnValue(skill.acceptance_checks),
+            jsonColumnValue(skill.failure_counterexamples),
+            jsonColumnValue(skill.evidence_refs),
+            jsonColumnValue(candidate),
+            args.measurementId,
+            args.measurementDigest,
+            candidateDigest,
+            eligible ? 1 : 0,
+            at,
+            at,
+          );
+          if (changed(result)) inserted += 1;
           const row = getByIdStmt.get(args.tenantId, args.scope, candidateId) as SkillCandidateReviewRecord | undefined;
           if (row) rows.push(rowFromRecord(row));
         }
-        return { rows, inserted, updated };
+        return { rows, inserted, updated: 0 };
       });
     },
 
@@ -318,16 +456,18 @@ function reviewAccessForDb(db: SqliteDatabase): SkillCandidateReviewAccess {
 
     async reviewTraceDerivedSkillCandidate(args) {
       const at = args.now ?? nowIso();
-      reviewStmt.run(
-        args.reviewStatus,
-        args.reviewerId ?? null,
-        args.reason ?? null,
+      const statement = args.reviewStatus === "promoted" ? promoteStmt : rejectStmt;
+      const result = statement.run(
+        args.reviewerId,
+        args.reason,
         at,
         at,
         args.tenantId,
         args.scope,
         args.candidateId,
+        args.expectedVersion,
       );
+      if (!changed(result)) return null;
       const row = getByIdStmt.get(args.tenantId, args.scope, args.candidateId) as SkillCandidateReviewRecord | undefined;
       return row ? rowFromRecord(row) : null;
     },
@@ -351,7 +491,7 @@ export function createLiteSkillCandidateReviewStore(path: string): LiteSkillCand
       await access.close();
     },
     healthSnapshot() {
-      return { path, mode: "sqlite_skill_candidate_review_v1" };
+      return { path, mode: "sqlite_skill_candidate_review_v2" };
     },
   };
 }

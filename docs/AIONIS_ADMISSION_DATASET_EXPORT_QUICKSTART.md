@@ -88,9 +88,9 @@ const measure = await aionis.measure(measureInputFromGuideLoop({
   before_guide: beforeGuide,
   after_guide: afterGuide,
   feedback_result: feedback,
-  sufficient_evidence: true,
-  evidence_ids: ["feedback:run-001"],
 }));
+
+console.log(measure.evidence_assessment);
 
 const admissionRecord =
   measure.memory_decision_trace.admission_record as AionisMemoryAdmissionRecord;
@@ -106,6 +106,12 @@ const jsonl = memoryAdmissionDatasetJsonlFromRows(rows);
 // Append jsonl to your host log, object store, warehouse, or audit pipeline.
 process.stdout.write(jsonl);
 ```
+
+Admission-row export is read-only audit export; it does not imply that the
+measurement is eligible for learning or skill export. Client-supplied
+`sufficient_evidence` and `evidence_ids` are ignored by the evidence gate. Only
+Runtime-verified receipts can make
+`measure.evidence_assessment.eligible_for_skill_export` true.
 
 ## What A Row Contains
 

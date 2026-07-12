@@ -14,7 +14,6 @@ const PACKAGE_NAMES = {
   aifs: "@aionis/aifs",
   claude_code: "@aionis/claude-code",
   substrate: "@aionis/substrate",
-  manifest: "@aionis/manifest",
 };
 const RELEASE_STATUSES = new Set(["stable", "candidate", "development"]);
 
@@ -56,6 +55,7 @@ test("release-train.json is the checked-in source for immutable release coordina
   assert.match(train.runtime.version, /^\d+\.\d+\.\d+$/);
   assert.equal(train.runtime.source_tag, `v${train.runtime.version}`);
   assert.equal(train.runtime.docker_tag, train.runtime.source_tag);
+  assert.deepEqual(train.runtime.docker_platforms, ["linux/amd64"]);
   assert.match(train.runtime.docker_image, /^ghcr\.io\//);
   assert.doesNotMatch(train.runtime.default_installer_ref, /^(main|master|latest|HEAD)$/i);
   if (train.status === "stable") {
@@ -66,6 +66,10 @@ test("release-train.json is the checked-in source for immutable release coordina
   for (const [key, expectedName] of Object.entries(PACKAGE_NAMES)) {
     assert.equal(train.packages[key].name, expectedName);
     assert.match(train.packages[key].version, /^\d+\.\d+\.\d+$/);
+    assert.match(train.packages[key].source_commit, /^[a-f0-9]{40}$/i);
+    assert.match(train.packages[key].repository, /^https:\/\/github\.com\//);
+    assert.equal(typeof train.packages[key].package_path, "string");
+    assert.notEqual(train.packages[key].package_path.trim(), "");
   }
   assert.equal(typeof train.packages.sdk.source_ref, "string");
   assert.notEqual(train.packages.sdk.source_ref.trim(), "", "SDK source ref must be explicit and non-empty");
@@ -81,6 +85,7 @@ test("runtime manifest and package metadata stay aligned with release-train.json
   assert.equal(runtimeManifest.release?.source_tag, train.runtime.source_tag);
   assert.equal(runtimeManifest.release?.docker_image, train.runtime.docker_image);
   assert.equal(runtimeManifest.release?.docker_tag, train.runtime.docker_tag);
+  assert.deepEqual(runtimeManifest.release?.docker_platforms, train.runtime.docker_platforms);
   assert.equal(runtimeManifest.release?.default_installer_ref, train.runtime.default_installer_ref);
 });
 

@@ -18,6 +18,7 @@
     "sdk:check": "node scripts/sdk-source.mjs check",
     "complexity:report": "node scripts/ci/runtime-complexity-budget.mjs",
     "complexity:check": "node scripts/ci/runtime-complexity-budget.mjs --check docs/architecture/runtime-complexity-budget.json",
+    "runtime:data": "npx tsx scripts/runtime-data-ops.ts",
     "typecheck": "npx tsc --noEmit",
     "lite:build": "npm run -s typecheck",
     "lite:start": "bash scripts/start-lite.sh",
