@@ -5,6 +5,20 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      release_ref:
+        description: Exact immutable Runtime tag to verify and publish (for example v0.3.5)
+        required: true
+        type: string
+      publish:
+        description: Publish the verified digest to GHCR after every gate passes
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: docker-release-${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref_name }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -16,9 +30,14 @@ jobs:
     timeout-minutes: 45
     outputs:
       publish_latest: ${{ steps.release-metadata.outputs.publish_latest }}
+      runtime_tag: ${{ steps.release-metadata.outputs.runtime_tag }}
+      runtime_commit: ${{ steps.release-metadata.outputs.runtime_commit }}
     steps:
       - name: Checkout Runtime
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref_name }}
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -36,8 +55,10 @@ jobs:
             for (const key of ["cli", "create", "sdk", "mcp", "aifs", "claude_code", "substrate"]) {
               fs.appendFileSync(output, `${key}_ref=${train.packages[key].source_ref}\n`);
             }
+            fs.appendFileSync(output, `runtime_tag=${train.runtime.source_tag}\n`);
             fs.appendFileSync(output, `publish_latest=${train.status === "stable"}\n`);
           '
+          echo "runtime_commit=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
 
       - name: Checkout CLI package
         uses: actions/checkout@v4
@@ -93,11 +114,15 @@ jobs:
 
       - name: Verify release metadata and exact tag
         run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            export AIONIS_RELEASE_EXPECTED_TAG="${GITHUB_REF_NAME}"
-          fi
-          node scripts/ci/release-artifact-gate.mjs --check --require-package-roots
+          set -euo pipefail
+          actual_tag="$(git describe --tags --exact-match HEAD)"
+          test "${actual_tag}" = "${AIONIS_RELEASE_EXPECTED_TAG}"
+          node scripts/ci/release-artifact-gate.mjs \
+            --check \
+            --require-package-roots \
+            --expect-tag "${AIONIS_RELEASE_EXPECTED_TAG}"
         env:
+          AIONIS_RELEASE_EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref_name }}
           AIONIS_RELEASE_CLI_REPO: ${{ github.workspace }}/external/aionis-cli
           AIONIS_RELEASE_CREATE_REPO: ${{ github.workspace }}/external/aionis-create
           AIONIS_RELEASE_SDK_REPO: ${{ github.workspace }}/external/aionis-sdk
@@ -114,6 +139,8 @@ jobs:
           npm run -s sdk:check
           npm run -s complexity:check
           node --test scripts/ci/release-version-docs.test.mjs
+        env:
+          AIONIS_SDK_REPO: ${{ github.workspace }}/external/aionis-sdk
 
       - name: Full Lite test suite
         run: npm run -s lite:test
@@ -157,19 +184,22 @@ jobs:
           npm run -s runtime:smoke:external-packages
 
       - name: Fresh install from the exact Runtime tag
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
         run: |
           AIONIS_FRESH_INSTALL_CREATE_SPEC="${GITHUB_WORKSPACE}/external/aionis-create" \
           AIONIS_FRESH_INSTALL_MCP_SPEC="${GITHUB_WORKSPACE}/external/aionis-mcp" \
           AIONIS_FRESH_INSTALL_SDK_SPEC="${GITHUB_WORKSPACE}/external/aionis-sdk" \
           AIONIS_FRESH_INSTALL_REPO="https://github.com/${GITHUB_REPOSITORY}.git" \
-          AIONIS_FRESH_INSTALL_RUNTIME_REF="${GITHUB_REF_NAME}" \
+          AIONIS_FRESH_INSTALL_RUNTIME_REF="${{ steps.release-metadata.outputs.runtime_tag }}" \
           npm run -s runtime:smoke:fresh-install
 
   docker:
     name: Build once, verify digest, and promote Docker image
     needs: verify
-    if: github.ref_type == 'tag'
+    if: >-
+      needs.verify.result == 'success' &&
+      (github.ref_type == 'tag' ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish == true))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -178,8 +208,18 @@ jobs:
     env:
       REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/aionis
     steps:
-      - name: Checkout
+      - name: Checkout exact Runtime release source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.runtime_tag }}
+
+      - name: Verify Docker source commit
+        env:
+          EXPECTED_RUNTIME_COMMIT: ${{ needs.verify.outputs.runtime_commit }}
+        run: |
+          set -euo pipefail
+          actual_commit="$(git rev-parse HEAD)"
+          test "${actual_commit}" = "${EXPECTED_RUNTIME_COMMIT}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -198,8 +238,11 @@ jobs:
           images: ${{ env.REGISTRY_IMAGE }}
           flavor: latest=false
           tags: |
-            type=ref,event=tag
+            type=raw,value=${{ needs.verify.outputs.runtime_tag }}
             type=raw,value=latest,enable=${{ needs.verify.outputs.publish_latest == 'true' }}
+          labels: |
+            org.opencontainers.image.version=${{ needs.verify.outputs.runtime_tag }}
+            org.opencontainers.image.revision=${{ needs.verify.outputs.runtime_commit }}
 
       - name: Build immutable amd64 release artifact
         id: build
@@ -245,6 +288,15 @@ jobs:
           fi
 
           verified_image="${REGISTRY_IMAGE}@${VERIFIED_DIGEST}"
+
+          for tag in "${release_tags[@]}"; do
+            existing_digest="$(docker buildx imagetools inspect "${tag}" 2>/dev/null | awk '$1 == "Digest:" { print $2; exit }' || true)"
+            if [[ -n "${existing_digest}" && "${existing_digest}" != "${VERIFIED_DIGEST}" ]]; then
+              echo "refusing to replace existing ${tag} digest ${existing_digest} with ${VERIFIED_DIGEST}" >&2
+              exit 1
+            fi
+          done
+
           docker buildx imagetools create "${tag_args[@]}" "${verified_image}"
 
           for tag in "${release_tags[@]}"; do

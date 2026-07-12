@@ -20,7 +20,16 @@ test("Docker release verifies all frozen package repositories before publication
     ["substrate", "ostinatocc/AionisSubstrate", "external/AionisSubstrate", "SUBSTRATE"],
   ];
 
-  assert.match(workflow, /--check --require-package-roots/);
+  assert.match(workflow, /--check\s*\\?\s*\n\s*--require-package-roots/);
+  assert.match(
+    workflow,
+    /^          AIONIS_SDK_REPO: \$\{\{ github\.workspace \}\}\/external\/aionis-sdk$/m,
+  );
+  assert.equal(
+    (workflow.match(/^\s+AIONIS_SDK_REPO:/gm) ?? []).length,
+    1,
+    "sdk:check must receive its own exact SDK repository variable",
+  );
   for (const [key, repository, checkoutPath, envKey] of frozenPackages) {
     assert.ok(workflow.includes(`repository: ${repository}`), `missing ${key} repository checkout`);
     assert.ok(
@@ -41,9 +50,16 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
 
   assert.match(workflow, /^  verify:\s*$/m);
   assert.match(workflow, /^    needs: verify\s*$/m);
+  assert.match(workflow, /release_ref:[\s\S]*required: true[\s\S]*publish:[\s\S]*default: false/);
+  assert.match(workflow, /group: docker-release-/);
+  assert.match(workflow, /ref: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.release_ref \|\| github\.ref_name \}\}/);
+  assert.match(workflow, /--expect-tag "\$\{AIONIS_RELEASE_EXPECTED_TAG\}"/);
+  assert.match(workflow, /runtime_commit: \$\{\{ steps\.release-metadata\.outputs\.runtime_commit \}\}/);
+  assert.match(workflow, /AIONIS_FRESH_INSTALL_RUNTIME_REF="\$\{\{ steps\.release-metadata\.outputs\.runtime_tag \}\}"/);
   assert.match(workflow, /^    permissions:\s*\n      contents: read\s*\n      packages: write$/m);
   assert.doesNotMatch(workflow, /^  packages: write$/m);
-  assert.match(workflow, /release-artifact-gate\.mjs --check/);
+  assert.match(workflow, /release-artifact-gate\.mjs[\s\\]*--check/);
+  assert.match(workflow, /github\.event_name == 'workflow_dispatch' && inputs\.publish == true/);
   assert.match(workflow, /npm run -s lite:test/);
   assert.match(workflow, /runtime:smoke:external-packages/);
   assert.match(workflow, /runtime:smoke:fresh-install/);
@@ -51,6 +67,8 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
   assert.equal(buildActions.length, 1, "release workflow must perform one container build");
   assert.match(workflow, /platforms: linux\/amd64(?:\s|$)/);
   assert.doesNotMatch(workflow, /linux\/arm64/);
+  assert.match(workflow, /ref: \$\{\{ needs\.verify\.outputs\.runtime_tag \}\}/);
+  assert.match(workflow, /test "\$\{actual_commit\}" = "\$\{EXPECTED_RUNTIME_COMMIT\}"/);
   assert.match(
     workflow,
     /outputs: type=image,name=\$\{\{ env\.REGISTRY_IMAGE \}\},push-by-digest=true,name-canonical=true,push=true/,
@@ -60,6 +78,10 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
     /VERIFIED_IMAGE_REF: \$\{\{ env\.REGISTRY_IMAGE \}\}@\$\{\{ steps\.build\.outputs\.digest \}\}/,
   );
   assert.match(workflow, /docker buildx imagetools create/);
+  assert.match(workflow, /type=raw,value=\$\{\{ needs\.verify\.outputs\.runtime_tag \}\}/);
+  assert.doesNotMatch(workflow, /type=ref,event=tag/);
+  assert.match(workflow, /org\.opencontainers\.image\.revision=\$\{\{ needs\.verify\.outputs\.runtime_commit \}\}/);
+  assert.match(workflow, /refusing to replace existing/);
   assert.match(workflow, /promoted_digest[\s\S]*VERIFIED_DIGEST/);
   assert.ok(
     workflow.indexOf("Smoke the exact published digest") <
