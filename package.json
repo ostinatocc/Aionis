@@ -11,7 +11,7 @@
     "url": "https://github.com/ostinatocc/Aionis.git"
   },
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "sdk:sync": "node scripts/sdk-source.mjs sync",

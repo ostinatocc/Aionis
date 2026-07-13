@@ -190,5 +190,5 @@ test("default CI verifies release metadata, SDK ownership, complexity, smoke, an
   assert.match(workflow, /npm run -s sdk:check/);
   assert.match(workflow, /npm run -s complexity:check/);
   assert.match(workflow, /npm run -s lite:smoke/);
-  assert.match(workflow, /node-version: "22\.5\.0"/);
+  assert.match(workflow, /node-version: "22\.13\.0"/);
 });

@@ -20,6 +20,11 @@ const require = createRequire(import.meta.url);
 
 let cachedSqliteModule: SqliteModule | null | undefined;
 
+export function hasSupportedNodeSqliteVersion(version = process.versions.node): boolean {
+  const [major = 0, minor = 0] = version.split(".").map(Number);
+  return major > 22 || (major === 22 && minor >= 13);
+}
+
 function loadSqliteModule(): SqliteModule | null {
   if (cachedSqliteModule !== undefined) return cachedSqliteModule;
   try {
@@ -32,14 +37,15 @@ function loadSqliteModule(): SqliteModule | null {
 }
 
 export function hasNodeSqliteSupport(): boolean {
-  return loadSqliteModule() !== null;
+  return hasSupportedNodeSqliteVersion() && loadSqliteModule() !== null;
 }
 
 export function nodeSqliteSupportError(): Error {
-  return new Error("Lite SQLite requires Node.js with node:sqlite support (Node 22+).");
+  return new Error("Lite SQLite requires Node.js >=22.13.0 with node:sqlite support.");
 }
 
 export function createSqliteDatabase(path: string): SqliteDatabase {
+  if (!hasSupportedNodeSqliteVersion()) throw nodeSqliteSupportError();
   const mod = loadSqliteModule();
   if (!mod) throw nodeSqliteSupportError();
   const db = new mod.DatabaseSync(path);
