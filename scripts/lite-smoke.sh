@@ -133,7 +133,7 @@ console.log(JSON.stringify({
 }, null, 2));
 JS
 
-node - <<'JS' "${BASE_URL}"
+node --input-type=module - <<'JS' "${BASE_URL}"
 const base = process.argv[2];
 const marker = `LITE_SMOKE_PUBLIC_MEMORY_${Date.now()}`;
 

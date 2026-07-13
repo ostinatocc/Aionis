@@ -49,6 +49,7 @@ test("root startup script owns local Runtime env", () => {
 
 test("Lite smoke terminates the direct Runtime process with a bounded fallback", () => {
   const smokeScript = fs.readFileSync(path.join(ROOT, "scripts", "lite-smoke.sh"), "utf8");
+  assert.match(smokeScript, /node --input-type=module - <<'JS' "\$\{BASE_URL\}"/);
   assert.match(smokeScript, /kill -TERM "\$\{PID\}"/);
   assert.match(smokeScript, /kill -KILL "\$\{PID\}"/);
   assert.match(smokeScript, /for _ in \$\(seq 1 50\)/);
