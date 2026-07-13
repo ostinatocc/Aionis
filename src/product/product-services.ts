@@ -1,4 +1,6 @@
+import stableStringify from "fast-json-stable-stringify";
 import { z } from "zod";
+import type { AionisEffectObservation } from "../kernel/effect-evaluator.js";
 import {
   parseAdmissionCandidatePolicyProfileRules,
   type AionisAdmissionCandidatePolicyProfileRule,
@@ -32,6 +34,7 @@ import {
 import { memoryFindLite } from "../memory/find.js";
 import { AionisClaimWriteSchema } from "../memory/claim-ledger-contract.js";
 import type { LiteExecutionNativeNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
+import { sha256Hex } from "../util/crypto.js";
 import type { AuthPrincipal } from "../util/auth.js";
 import { createErrorResponse, HttpError } from "../util/http.js";
 
@@ -60,7 +63,16 @@ const LooseObject = z.record(z.unknown());
 
 const StringList = z.array(z.string().trim().min(1)).max(256).default([]);
 
+const ProductWriteIdentityShape = {
+  actor: z.string().trim().min(1).optional(),
+  memory_lane: z.enum(["private", "shared"]).optional(),
+  producer_agent_id: z.string().trim().min(1).optional(),
+  owner_agent_id: z.string().trim().min(1).optional(),
+  owner_team_id: z.string().trim().min(1).optional(),
+};
+
 export const ProductObserveRequest = z.object({
+  operation_id: z.string().trim().min(1).max(256).optional(),
   tenant_id: z.string().trim().min(1).optional(),
   scope: z.string().trim().min(1).optional(),
   actor: z.string().trim().min(1).optional(),
@@ -186,6 +198,8 @@ export const ProductForgetRequest = z.object({
   tenant_id: z.string().trim().min(1).optional(),
   scope: z.string().trim().min(1).optional(),
   actor: z.string().trim().min(1).optional(),
+  consumer_agent_id: z.string().trim().min(1).optional(),
+  consumer_team_id: z.string().trim().min(1).optional(),
   reason: z.string().trim().min(1),
   memory_ids: z.array(z.string().trim().min(1)).max(200).optional(),
   node_ids: z.array(z.string().trim().min(1)).max(200).optional(),
@@ -294,8 +308,10 @@ const EffectObservationSchema = z.object({
     continuityGuidanceCorrect: z.boolean().optional(),
     recoveredStateFacts: z.number().nonnegative().optional(),
     expectedStateFacts: z.number().nonnegative().optional(),
+    recoveredStateApplicable: z.boolean().optional(),
     verifiedFactsCarried: z.number().nonnegative().optional(),
     verifiedFactsExpected: z.number().nonnegative().optional(),
+    verifiedFactsApplicable: z.boolean().optional(),
   }).strict().optional(),
   learning: z.object({
     workflowReused: z.boolean().optional(),
@@ -312,6 +328,8 @@ const EffectObservationSchema = z.object({
     staleMemorySuppressed: z.number().nonnegative().optional(),
     archivedMemoryRehydratedOnDemand: z.number().nonnegative().optional(),
     unnecessaryRehydrations: z.number().nonnegative().optional(),
+    staleMemoryControlApplicable: z.boolean().optional(),
+    rehydrationApplicable: z.boolean().optional(),
   }).strict().optional(),
   learning_control: z.object({
     weakEvidenceBlocked: z.number().nonnegative().optional(),
@@ -404,6 +422,7 @@ export const ProductFlightRecorderRequest = z.object({
 });
 
 export const ProductMeasureRequest = z.object({
+  ...ProductWriteIdentityShape,
   tenant_id: z.string().trim().min(1).optional(),
   scope: z.string().trim().min(1).optional(),
   task: z.object({
@@ -453,16 +472,31 @@ export const ProductSkillCandidateListQuery = z.object({
 }).strict();
 
 export const ProductSkillCandidateEnqueueRequest = z.object({
+  ...ProductWriteIdentityShape,
   tenant_id: z.string().trim().min(1).optional(),
   scope: z.string().trim().min(1).optional(),
-  effect_report: z.unknown().optional(),
-  measure_result: z.unknown().optional(),
+  measurement_id: z.string().trim().min(1).max(256).optional(),
+  measure_result: z.object({
+    measurement_id: z.string().trim().min(1).max(256),
+    measurement_digest: z.string().regex(/^[a-f0-9]{64}$/),
+  }).passthrough().optional(),
 }).strict().superRefine((value, ctx) => {
-  if (value.effect_report === undefined && value.measure_result === undefined) {
+  if (value.measurement_id === undefined && value.measure_result === undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      path: ["effect_report"],
-      message: "skill candidate enqueue requires effect_report or measure_result",
+      path: ["measurement_id"],
+      message: "skill candidate enqueue requires measurement_id or a Runtime measure_result",
+    });
+  }
+  if (
+    value.measurement_id !== undefined
+    && value.measure_result !== undefined
+    && value.measurement_id !== value.measure_result.measurement_id
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["measurement_id"],
+      message: "measurement_id must match measure_result.measurement_id",
     });
   }
 });
@@ -472,13 +506,15 @@ export const ProductSkillCandidateParams = z.object({
 }).strict();
 
 export const ProductSkillCandidateReviewRequest = z.object({
+  ...ProductWriteIdentityShape,
   tenant_id: z.string().trim().min(1).optional(),
   scope: z.string().trim().min(1).optional(),
   reviewer_id: z.string().trim().min(1).optional(),
-  reason: z.string().trim().min(1).max(2048).optional(),
+  reason: z.string().trim().min(1).max(2048),
 }).strict();
 
 export const ProductSkillCandidateMaterializeRequest = z.object({
+  ...ProductWriteIdentityShape,
   tenant_id: z.string().trim().min(1).optional(),
   scope: z.string().trim().min(1).optional(),
 }).strict();
@@ -521,6 +557,21 @@ export const ProductToolSelectionReceiptSchema = z.object({
 
 export type ProductToolSelectionReceipt = z.infer<typeof ProductToolSelectionReceiptSchema>;
 
+export type ProductRuntimeVerificationReceipt = {
+  contract_version: "aionis_runtime_verification_receipt_v1";
+  run_id: string;
+  requested_mode: "execute";
+  execution_state: "executed" | "partially_executed";
+  result_count: number;
+  authoritative_evidence_ready: boolean;
+  validation_passed: boolean;
+  validation_boundary: "runtime_orchestrator" | "external_verifier";
+  false_confidence_detected: boolean;
+  verifier_ids: string[];
+  evidence_refs: string[];
+  surface_sha256: string;
+};
+
 export type ProductGuideExposureLedger = {
   contract_version: "aionis_guide_exposure_v1";
   guide_trace_id: string;
@@ -531,6 +582,7 @@ export type ProductGuideExposureLedger = {
   consumer_team_id: string | null;
   query_sha256: string;
   context_sha256: string;
+  task_binding_sha256: string;
   memory_ids: string[];
   use_now_memory_ids: string[];
   inspect_before_use_memory_ids: string[];
@@ -542,6 +594,9 @@ export type ProductGuideExposureLedger = {
   recommended_posture: AionisAgentContext["recommended_posture"];
   authority: AionisAgentContext["authority"];
   tool_selection: ProductToolSelectionReceipt | null;
+  runtime_verification_v1: ProductRuntimeVerificationReceipt | null;
+  effect_observation_v1: AionisEffectObservation | null;
+  effect_observation_sha256: string | null;
 };
 
 export function objectValue(value: unknown): Record<string, unknown> | null {
@@ -563,9 +618,12 @@ export function parseGuideExposureLedger(value: unknown): ProductGuideExposureLe
   const scope = typeof record.scope === "string" && record.scope.trim() ? record.scope.trim() : null;
   const querySha = typeof record.query_sha256 === "string" && record.query_sha256.trim() ? record.query_sha256.trim() : null;
   const contextSha = typeof record.context_sha256 === "string" && record.context_sha256.trim() ? record.context_sha256.trim() : null;
+  const taskBindingSha = typeof record.task_binding_sha256 === "string" && /^[a-f0-9]{64}$/.test(record.task_binding_sha256)
+    ? record.task_binding_sha256
+    : null;
   const recommendedPosture = record.recommended_posture;
   const authority = record.authority;
-  if (!guideTraceId || !tenantId || !scope || !querySha || !contextSha) return null;
+  if (!guideTraceId || !tenantId || !scope || !querySha || !contextSha || !taskBindingSha) return null;
   if (
     recommendedPosture !== "reuse_supported_history"
     && recommendedPosture !== "use_as_context"
@@ -584,6 +642,44 @@ export function parseGuideExposureLedger(value: unknown): ProductGuideExposureLe
     ? null
     : ProductToolSelectionReceiptSchema.safeParse(record.tool_selection);
   if (toolSelection !== null && !toolSelection.success) return null;
+  const effectObservation = record.effect_observation_v1 === undefined || record.effect_observation_v1 === null
+    ? null
+    : EffectObservationSchema.safeParse(record.effect_observation_v1);
+  const effectObservationSha = typeof record.effect_observation_sha256 === "string"
+    && /^[a-f0-9]{64}$/.test(record.effect_observation_sha256)
+    ? record.effect_observation_sha256
+    : null;
+  if (effectObservation !== null && !effectObservation.success) return null;
+  const runtimeVerificationRecord = objectValue(record.runtime_verification_v1);
+  const runtimeVerificationRunId = typeof runtimeVerificationRecord?.run_id === "string"
+    && runtimeVerificationRecord.run_id.trim().length > 0
+    ? runtimeVerificationRecord.run_id.trim()
+    : null;
+  const runtimeVerification = runtimeVerificationRecord === null
+    ? null
+    : {
+        contract_version: runtimeVerificationRecord.contract_version,
+        run_id: runtimeVerificationRunId,
+        requested_mode: runtimeVerificationRecord.requested_mode,
+        execution_state: runtimeVerificationRecord.execution_state,
+        result_count: Math.max(0, Math.trunc(Number(runtimeVerificationRecord.result_count) || 0)),
+        authoritative_evidence_ready: runtimeVerificationRecord.authoritative_evidence_ready === true,
+        validation_passed: runtimeVerificationRecord.validation_passed === true,
+        validation_boundary: runtimeVerificationRecord.validation_boundary,
+        false_confidence_detected: runtimeVerificationRecord.false_confidence_detected === true,
+        verifier_ids: stringArrayField(runtimeVerificationRecord.verifier_ids),
+        evidence_refs: stringArrayField(runtimeVerificationRecord.evidence_refs),
+        surface_sha256: runtimeVerificationRecord.surface_sha256,
+      };
+  if (runtimeVerification !== null && (
+    runtimeVerification.contract_version !== "aionis_runtime_verification_receipt_v1"
+    || runtimeVerification.run_id === null
+    || runtimeVerification.requested_mode !== "execute"
+    || (runtimeVerification.execution_state !== "executed" && runtimeVerification.execution_state !== "partially_executed")
+    || (runtimeVerification.validation_boundary !== "runtime_orchestrator" && runtimeVerification.validation_boundary !== "external_verifier")
+    || typeof runtimeVerification.surface_sha256 !== "string"
+    || !/^[a-f0-9]{64}$/.test(runtimeVerification.surface_sha256)
+  )) return null;
   return {
     contract_version: "aionis_guide_exposure_v1",
     guide_trace_id: guideTraceId,
@@ -594,6 +690,7 @@ export function parseGuideExposureLedger(value: unknown): ProductGuideExposureLe
     consumer_team_id: typeof record.consumer_team_id === "string" && record.consumer_team_id.trim() ? record.consumer_team_id.trim() : null,
     query_sha256: querySha,
     context_sha256: contextSha,
+    task_binding_sha256: taskBindingSha,
     memory_ids: stringArrayField(record.memory_ids),
     use_now_memory_ids: stringArrayField(record.use_now_memory_ids),
     inspect_before_use_memory_ids: stringArrayField(record.inspect_before_use_memory_ids),
@@ -605,6 +702,9 @@ export function parseGuideExposureLedger(value: unknown): ProductGuideExposureLe
     recommended_posture: recommendedPosture,
     authority,
     tool_selection: toolSelection === null ? null : toolSelection.data,
+    runtime_verification_v1: runtimeVerification as ProductRuntimeVerificationReceipt | null,
+    effect_observation_v1: effectObservation === null ? null : effectObservation.data,
+    effect_observation_sha256: effectObservationSha,
   };
 }
 
@@ -663,25 +763,33 @@ export async function findGuideExposureLedger(args: {
   scope: string;
   guide_trace_id: string;
   consumerAgentId: string;
-  consumerTeamId: string | null;
+  consumerTeamId?: string | null;
 }): Promise<ProductGuideExposureLedger | null> {
-  const found = await memoryFindLite(
-    args.liteWriteStore,
-    {
-      tenant_id: args.tenant_id,
-      scope: args.scope,
-      client_id: args.guide_trace_id,
-      consumer_agent_id: args.consumerAgentId,
-      ...(args.consumerTeamId ? { consumer_team_id: args.consumerTeamId } : {}),
-      include_slots: true,
-      limit: 1,
-    },
-    args.env.MEMORY_SCOPE,
-    args.env.MEMORY_TENANT_ID,
-  );
-  const node = Array.isArray(found.nodes) ? objectValue(found.nodes[0]) : null;
-  const slots = objectValue(node?.slots);
-  return parseGuideExposureLedger(slots?.guide_exposure_v1);
+  const row = await args.liteWriteStore.getProductGuideReceipt({
+    tenantId: args.tenant_id,
+    scope: args.scope,
+    guideTraceId: args.guide_trace_id,
+  });
+  if (!row || !row.commit_id) return null;
+  let rawLedger: unknown;
+  try {
+    rawLedger = JSON.parse(row.ledger_json);
+  } catch {
+    return null;
+  }
+  if (sha256Hex(stableStringify(rawLedger)) !== row.ledger_sha256) return null;
+  const ledger = parseGuideExposureLedger(rawLedger);
+  if (
+    !ledger
+    || ledger.guide_trace_id !== row.guide_trace_id
+    || ledger.tenant_id !== row.tenant_id
+    || ledger.scope !== row.scope
+    || ledger.query_sha256 !== row.query_sha256
+    || ledger.context_sha256 !== row.context_sha256
+  ) return null;
+  if (ledger.consumer_agent_id !== null && ledger.consumer_agent_id !== args.consumerAgentId) return null;
+  if (args.consumerTeamId !== undefined && ledger.consumer_team_id !== args.consumerTeamId) return null;
+  return ledger;
 }
 
 export async function findHistoricalGuideExposureLedgers(args: {
@@ -692,37 +800,32 @@ export async function findHistoricalGuideExposureLedgers(args: {
   actor: string;
   consumerTeamId: string | null;
 }): Promise<ProductGuideExposureLedger[]> {
-  const ledgerRows: unknown[] = [];
-  for (let offset = 0; offset < 1000; offset += 200) {
-    const ledgersResult = await memoryFindLite(
-      args.liteWriteStore,
-      {
-        tenant_id: args.tenant_id,
-        scope: args.scope,
-        type: "evidence",
-        memory_lane: "shared",
-        consumer_agent_id: args.actor,
-        ...(args.consumerTeamId ? { consumer_team_id: args.consumerTeamId } : {}),
-        include_slots: true,
-        slots_contains: {
-          guide_exposure_v1: {
-            contract_version: "aionis_guide_exposure_v1",
-          },
-        },
-        limit: 200,
-        offset,
-      },
-      args.env.MEMORY_SCOPE,
-      args.env.MEMORY_TENANT_ID,
-    );
-    if (Array.isArray(ledgersResult.nodes)) ledgerRows.push(...ledgersResult.nodes);
-    const page = objectValue(ledgersResult.page);
-    if (page?.has_more !== true) break;
+  const rows = await args.liteWriteStore.listProductGuideReceipts({
+    tenantId: args.tenant_id,
+    scope: args.scope,
+    limit: 1000,
+  });
+  const out: ProductGuideExposureLedger[] = [];
+  for (const row of rows) {
+    let rawLedger: unknown;
+    try {
+      rawLedger = JSON.parse(row.ledger_json);
+    } catch {
+      continue;
+    }
+    if (sha256Hex(stableStringify(rawLedger)) !== row.ledger_sha256) continue;
+    const ledger = parseGuideExposureLedger(rawLedger);
+    if (
+      !ledger
+      || ledger.guide_trace_id !== row.guide_trace_id
+      || ledger.tenant_id !== row.tenant_id
+      || ledger.scope !== row.scope
+      || ledger.consumer_agent_id !== args.actor
+      || ledger.consumer_team_id !== args.consumerTeamId
+    ) continue;
+    out.push(ledger);
   }
-  return ledgerRows
-    .map((row) => parseGuideExposureLedger(objectValue(objectValue(row)?.slots)?.guide_exposure_v1))
-    .filter((entry): entry is ProductGuideExposureLedger => !!entry)
-    .filter((entry) => entry.tenant_id === args.tenant_id && entry.scope === args.scope);
+  return out;
 }
 
 export function finiteNumber(value: unknown): number | null {
@@ -871,7 +974,7 @@ export type ProductServices = {
     flightRecorder(input: ProductFlightRecorderInput): Promise<ProductServiceResult>;
   };
   measure: {
-    execute(input: ProductMeasureRequestInput): Promise<ProductServiceResult>;
+    execute(input: ProductMeasureRequestInput, context: { actorId: string }): Promise<ProductServiceResult>;
     enqueueSkillCandidates(input: ProductSkillCandidateEnqueueInput): Promise<ProductServiceResult>;
     listSkillCandidates(input: ProductSkillCandidateListInput): Promise<ProductServiceResult>;
     reviewSkillCandidate(args: {
@@ -879,10 +982,12 @@ export type ProductServices = {
       input: ProductSkillCandidateReviewInput;
       reviewStatus: "promoted" | "rejected";
       route: string;
+      reviewerId: string;
     }): Promise<ProductServiceResult>;
     materializeSkillCandidate(args: {
       candidateId: string;
       input: ProductSkillCandidateMaterializeInput;
+      actorId: string;
     }): Promise<ProductServiceResult>;
   };
 };

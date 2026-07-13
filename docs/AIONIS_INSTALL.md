@@ -67,7 +67,7 @@ Run the local-first Runtime in Docker:
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.4
+  ghcr.io/ostinatocc/aionis:v0.3.5
 ```
 
 Then check readiness:
@@ -173,9 +173,10 @@ curl http://127.0.0.1:3001/readyz
 package version. `/readyz` returns boolean dependency checks. Neither endpoint
 returns API keys, raw environment values, or local SQLite file paths.
 
-Runtime requirement: Node.js `>=22.5.0` with the built-in experimental
-`node:sqlite` module available. The installer checks both the version and the
-SQLite feature because Lite stores local memory state in SQLite.
+Runtime requirement: Node.js `>=22.13.0` with the built-in `node:sqlite` module
+available. The installer checks both the version and the SQLite feature because
+Lite stores local memory state in SQLite. Earlier Node 22 experimental SQLite
+releases do not provide the row semantics required by the Runtime.
 
 For a non-interactive OpenAI-compatible install:
 
@@ -298,7 +299,7 @@ still accepted when you intentionally want one type for both directions.
 From this repo:
 
 ```bash
-node --version   # must be >= 22.5.0 and include node:sqlite
+node --version   # must be >= 22.13.0 and include node:sqlite
 npm install
 npm run -s typecheck
 npm run -s lite:test

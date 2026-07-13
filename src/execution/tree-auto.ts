@@ -388,13 +388,16 @@ export function applyAutoExecutionTreeFromSlots(args: {
 
   let stored = args.executionTreeStore.get(source.tree.scope, source.tree.tree_id);
   if (!stored) {
-    stored = args.executionTreeStore.put(source.tree);
+    stored = args.executionTreeStore.initialize(source.tree);
   }
 
   const applied: ExecutionTreeOperationV1[] = [];
   const apply = (operation: ExecutionTreeOperationV1) => {
-    stored = args.executionTreeStore!.applyOperation(operation);
-    applied.push(operation);
+    const revisionedOperation = operation.expected_revision == null
+      ? { ...operation, expected_revision: stored!.revision }
+      : operation;
+    stored = args.executionTreeStore!.applyOperation(revisionedOperation);
+    applied.push(revisionedOperation);
     source.tree = stored.tree;
   };
 

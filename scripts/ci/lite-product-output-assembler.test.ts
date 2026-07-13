@@ -4806,15 +4806,28 @@ test("product effect assembler converts evaluator proof into measurable EffectRe
         continuityGuidanceCorrect: false,
         recoveredStateFacts: 1,
         expectedStateFacts: 4,
+        recoveredStateApplicable: true,
+        verifiedFactsCarried: 0,
+        verifiedFactsExpected: 2,
+        verifiedFactsApplicable: true,
       },
       learning: {
         workflowReused: false,
+        stableWorkflowReused: false,
         provisionalMemoriesWritten: 0,
+        trustedPromotions: 0,
+        weakEvidencePromoted: 0,
+        counterEvidenceDemotions: 0,
       },
       forgetting: {
         contextItems: 8,
         usefulContextItems: 3,
         staleMemorySurfaced: 2,
+        staleMemorySuppressed: 0,
+        archivedMemoryRehydratedOnDemand: 0,
+        unnecessaryRehydrations: 0,
+        staleMemoryControlApplicable: true,
+        rehydrationApplicable: false,
       },
       learning_control: {
         weakEvidenceBlocked: 0,
@@ -4829,13 +4842,17 @@ test("product effect assembler converts evaluator proof into measurable EffectRe
         continuityGuidanceCorrect: true,
         recoveredStateFacts: 4,
         expectedStateFacts: 4,
+        recoveredStateApplicable: true,
         verifiedFactsCarried: 2,
         verifiedFactsExpected: 2,
+        verifiedFactsApplicable: true,
       },
       learning: {
         workflowReused: true,
         stableWorkflowReused: true,
+        provisionalMemoriesWritten: 0,
         trustedPromotions: 1,
+        weakEvidencePromoted: 0,
         counterEvidenceDemotions: 1,
       },
       forgetting: {
@@ -4844,6 +4861,9 @@ test("product effect assembler converts evaluator proof into measurable EffectRe
         staleMemorySurfaced: 0,
         staleMemorySuppressed: 2,
         archivedMemoryRehydratedOnDemand: 1,
+        unnecessaryRehydrations: 0,
+        staleMemoryControlApplicable: true,
+        rehydrationApplicable: true,
       },
       learning_control: {
         weakEvidenceBlocked: 1,
@@ -4868,7 +4888,9 @@ test("product effect assembler converts evaluator proof into measurable EffectRe
       mode: "baseline_vs_aionis",
       baseline_run_id: "run-base",
       aionis_run_id: "run-aionis",
+      sufficient_evidence: true,
     },
+    evidence_ids: ["runtime_verification:run-aionis"],
   });
 
   assert.equal(productReport.contract_version, "aionis_effect_report_v1");
@@ -4895,7 +4917,7 @@ test("product effect assembler converts evaluator proof into measurable EffectRe
   assert.equal(traceSkillCandidate.trace_derived_skill?.export_policy.runtime_mutation, false);
   assert.ok(traceSkillCandidate.trace_derived_skill?.applies_when.includes("task_signature:runtime-continuation"));
   assert.ok(traceSkillCandidate.trace_derived_skill?.procedure_steps.some((step) => /verified active path/i.test(step)));
-  assert.ok(productReport.evidence.evidence_ids.includes("effect_kernel:continuity"));
+  assert.deepEqual(productReport.evidence.evidence_ids, ["runtime_verification:run-aionis"]);
 });
 
 test("product effect assembler projects audit feedback signals into product summary without mutation authority", () => {

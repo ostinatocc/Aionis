@@ -458,7 +458,7 @@ export class AionisExecutionMemoryAdapter {
         before_guide: beforeGuide,
         after_guide: afterGuide,
         forget_result: forgetResult,
-        sufficient_evidence: input.sufficient_evidence ?? true,
+        sufficient_evidence: input.sufficient_evidence,
         evidence_ids: input.evidence_ids ?? [],
         ...(input.product_trace ?? {}),
       },

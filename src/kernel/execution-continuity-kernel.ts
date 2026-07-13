@@ -360,15 +360,16 @@ export function applyExecutionContinuityTransitionsFromSlots(args: {
   if (!args.executionStateStore || !executionState) {
     return undefined;
   }
-  let storedState = args.executionStateStore.put(executionState);
   const transitions = readExecutionTransitionsSlot(args.writeSlots);
+  const existingState = args.executionStateStore.get(executionState.scope, executionState.state_id);
+  const initializedHere = !existingState;
+  let storedState = args.executionStateStore.initialize(executionState);
   if (!transitions) return undefined;
   const appliedTransitions: Array<Record<string, unknown>> = [];
   for (const parsed of transitions) {
-    const transition = {
-      ...parsed,
-      expected_revision: storedState.revision,
-    };
+    const transition = parsed.expected_revision == null && initializedHere
+      ? { ...parsed, expected_revision: storedState.revision }
+      : parsed;
     storedState = args.executionStateStore.applyTransition(transition);
     appliedTransitions.push(transition as Record<string, unknown>);
   }
@@ -382,15 +383,20 @@ export function applyExecutionTreeOperationsFromSlots(args: {
   if (!args.executionTreeStore) return undefined;
   const executionTree = readExecutionTreeSlot(args.writeSlots);
   const operations = readExecutionTreeOperationsSlot(args.writeSlots);
-  const hasOperationsForTree = executionTree && operations?.some(
-    (operation) => operation.scope === executionTree.scope && operation.tree_id === executionTree.tree_id,
-  );
-  if (executionTree && (!hasOperationsForTree || !args.executionTreeStore.has(executionTree.scope, executionTree.tree_id))) {
-    args.executionTreeStore.put(executionTree);
+  const initializedTrees = new Set<string>();
+  if (executionTree) {
+    const existed = args.executionTreeStore.has(executionTree.scope, executionTree.tree_id);
+    args.executionTreeStore.initialize(executionTree);
+    if (!existed) initializedTrees.add(`${executionTree.scope}\u0000${executionTree.tree_id}`);
   }
   if (!operations || operations.length === 0) return undefined;
   const appliedOperations: Array<Record<string, unknown>> = [];
-  for (const operation of operations) {
+  for (const parsed of operations) {
+    const key = `${parsed.scope}\u0000${parsed.tree_id}`;
+    const current = args.executionTreeStore.get(parsed.scope, parsed.tree_id);
+    const operation = parsed.expected_revision == null && initializedTrees.has(key) && current
+      ? { ...parsed, expected_revision: current.revision }
+      : parsed;
     args.executionTreeStore.applyOperation(operation);
     appliedOperations.push(operation as Record<string, unknown>);
   }

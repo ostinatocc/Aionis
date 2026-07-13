@@ -21,7 +21,7 @@ const NeverEmbeddingProvider: EmbeddingProvider = {
   },
 };
 
-test("lite projected write commit fails inline embeddings after the configured deadline", async () => {
+test("lite projected write commit durably retries embeddings after the inline deadline", async () => {
   const liteWriteStore = createLiteWriteStore(tmpDbPath("deadline"));
   try {
     const prepared = await prepareMemoryWrite(
@@ -69,7 +69,14 @@ test("lite projected write commit fails inline embeddings after the configured d
     assert.equal(committed.liteInlineEmbedding?.attempted, 1);
     assert.equal(committed.liteInlineEmbedding?.updated, 0);
     assert.equal(committed.liteInlineEmbedding?.failed, 1);
-    assert.match(committed.liteInlineEmbedding?.error ?? "", /inline embedding timed out after 25ms/);
+    assert.match(committed.liteInlineEmbedding?.error ?? "", /durable embedding projection deferred for retry/);
+    const jobs = await liteWriteStore.listProjectionJobs({
+      jobKinds: ["embedding_generate"],
+      limit: 10,
+    });
+    assert.equal(jobs.length, 1);
+    assert.equal(jobs[0]?.status, "retry");
+    assert.match(jobs[0]?.last_error ?? "", /projection_deadline_exceeded:25/);
   } finally {
     await liteWriteStore.close();
   }

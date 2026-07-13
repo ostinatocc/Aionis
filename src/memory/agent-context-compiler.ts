@@ -1946,7 +1946,7 @@ export function applyAionisInspectBeforeUseActiveProjection(
       context: projected,
       profile: {
         mode: projected.agent_context_mode,
-        detail: projected.agent_context_mode === "compact_agent" ? "compact" : "standard",
+        detail: projected.agent_context_mode === "compact_agent" ? "compact" : args.context_compaction_profile === "aggressive" ? "contract" : "standard",
         context_char_budget: args.context_char_budget ?? null,
       },
     }),

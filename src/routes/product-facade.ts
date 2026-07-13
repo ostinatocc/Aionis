@@ -23,6 +23,7 @@ import {
   productRehydrateRequest,
 } from "../product/lifecycle-service.js";
 import type { AuthPrincipal } from "../util/auth.js";
+import { requireAdminTokenHeader } from "../util/admin_auth.js";
 import { HttpError } from "../util/http.js";
 import type { InflightGateToken } from "../util/inflight_gate.js";
 import type { MemoryPlanningContextService } from "./memory-context-runtime.js";
@@ -52,11 +53,36 @@ export type ProductFacadeArgs = {
   ) => Promise<void>;
   tenantFromBody: (body: unknown) => string;
   acquireInflightSlot: (kind: ProductGuardKind) => Promise<InflightGateToken>;
+  adminToken?: string;
 };
 
 function sendProductResult(reply: FastifyReply, result: ProductServiceResult): FastifyReply {
   const statusCode = result.statusCode >= 100 && result.statusCode <= 599 ? result.statusCode : 500;
   return reply.code(statusCode).send(result.body);
+}
+
+function principalActorId(principal: AuthPrincipal | null): string {
+  return principal?.agent_id ?? principal?.team_id ?? "lite-local-actor";
+}
+
+function requireSkillOperator(
+  req: FastifyRequest,
+  principal: AuthPrincipal | null,
+  adminToken: string | undefined,
+): string {
+  if (!principal) {
+    requireAdminTokenHeader(req.headers as Record<string, unknown>, adminToken);
+    return "lite-admin-token";
+  }
+  const role = principal.role?.trim().toLowerCase() ?? "";
+  if (role !== "operator" && role !== "admin") {
+    throw new HttpError(
+      403,
+      "skill_operator_forbidden",
+      "operator or admin role is required for skill candidate review and materialization",
+    );
+  }
+  return principalActorId(principal);
 }
 
 async function runGuarded(args: {
@@ -94,6 +120,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs): void {
     enforceTenantQuota,
     tenantFromBody,
     acquireInflightSlot,
+    adminToken,
   } = args;
 
   const guarded = (input: {
@@ -126,7 +153,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs): void {
 
   app.post("/v1/guide", async (req: ProductFacadeRequest, reply) => {
     const principal = await requireMemoryPrincipal(req);
-    const parsed = ProductGuideRequest.parse(withIdentityFromRequest(req, req.body, principal, "recall"));
+    const parsed = ProductGuideRequest.parse(withIdentityFromRequest(req, req.body, principal, "product_guide"));
     return guarded({
       req,
       reply,
@@ -175,7 +202,15 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs): void {
 
   app.post("/v1/forget", async (req: ProductFacadeRequest, reply) => {
     const principal = await requireMemoryPrincipal(req);
-    const parsed = ProductForgetRequest.parse(withIdentityFromRequest(req, req.body, principal, "anchors_suppress"));
+    const operation = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+      ? (req.body as Record<string, unknown>).operation
+      : null;
+    const parsed = ProductForgetRequest.parse(withIdentityFromRequest(
+      req,
+      req.body,
+      principal,
+      operation === "activate" ? "feedback" : "anchors_suppress",
+    ));
     return lifecycle({ req, reply, principal, parsed, surface: "forget" });
   });
 
@@ -196,7 +231,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs): void {
         execute: () => services.toolFeedback.execute(parsed),
       });
     }
-    const body = withIdentityFromRequest(req, req.body, principal, "recall");
+    const body = withIdentityFromRequest(req, req.body, principal, "feedback");
     return lifecycle({ req, reply, principal, parsed: productFeedbackRequest(body), surface: "feedback" });
   });
 
@@ -233,14 +268,20 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs): void {
 
   app.post("/v1/measure", async (req: ProductFacadeRequest, reply) => {
     const principal = await requireMemoryPrincipal(req);
-    const parsed = ProductMeasureRequest.parse(withIdentityFromRequest(req, req.body, principal, "recall"));
-    return recallRoute({ req, reply, body: parsed, execute: () => services.measure.execute(parsed) });
+    const parsed = ProductMeasureRequest.parse(withIdentityFromRequest(req, req.body, principal, "write"));
+    return guarded({
+      req,
+      reply,
+      kind: "write",
+      body: parsed,
+      execute: () => services.measure.execute(parsed, { actorId: principalActorId(principal) }),
+    });
   });
 
   app.post("/v1/skills/candidates", async (req: ProductFacadeRequest, reply) => {
     const principal = await requireMemoryPrincipal(req);
-    const parsed = ProductSkillCandidateEnqueueRequest.parse(withIdentityFromRequest(req, req.body, principal, "recall"));
-    return recallRoute({ req, reply, body: parsed, execute: () => services.measure.enqueueSkillCandidates(parsed) });
+    const parsed = ProductSkillCandidateEnqueueRequest.parse(withIdentityFromRequest(req, req.body, principal, "write"));
+    return guarded({ req, reply, kind: "write", body: parsed, execute: () => services.measure.enqueueSkillCandidates(parsed) });
   });
 
   app.get("/v1/skills/candidates", async (req: ProductFacadeQueryRequest, reply) => {
@@ -257,19 +298,22 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs): void {
     route: string;
   }) => {
     const principal = await requireMemoryPrincipal(input.req);
+    const reviewerId = requireSkillOperator(input.req, principal, adminToken);
     const params = ProductSkillCandidateParams.parse(input.req.params ?? {});
     const parsed = ProductSkillCandidateReviewRequest.parse(
-      withIdentityFromRequest(input.req, input.req.body ?? {}, principal, "recall"),
+      withIdentityFromRequest(input.req, input.req.body ?? {}, principal, "write"),
     );
-    return recallRoute({
+    return guarded({
       req: input.req,
       reply: input.reply,
+      kind: "write",
       body: parsed,
       execute: () => services.measure.reviewSkillCandidate({
         candidateId: params.id,
         input: parsed,
         reviewStatus: input.reviewStatus,
         route: input.route,
+        reviewerId,
       }),
     });
   };
@@ -281,15 +325,17 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs): void {
 
   app.post("/v1/skills/candidates/:id/materialize", async (req: ProductFacadeParamsRequest, reply) => {
     const principal = await requireMemoryPrincipal(req);
+    const actorId = requireSkillOperator(req, principal, adminToken);
     const params = ProductSkillCandidateParams.parse(req.params ?? {});
     const parsed = ProductSkillCandidateMaterializeRequest.parse(
-      withIdentityFromRequest(req, req.body ?? {}, principal, "recall"),
+      withIdentityFromRequest(req, req.body ?? {}, principal, "write"),
     );
-    return recallRoute({
+    return guarded({
       req,
       reply,
+      kind: "write",
       body: parsed,
-      execute: () => services.measure.materializeSkillCandidate({ candidateId: params.id, input: parsed }),
+      execute: () => services.measure.materializeSkillCandidate({ candidateId: params.id, input: parsed, actorId }),
     });
   });
 }

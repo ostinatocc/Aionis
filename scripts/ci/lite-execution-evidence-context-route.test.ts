@@ -9,15 +9,39 @@ import { registerMemoryAccessRoutes } from "./support/register-memory-access-tes
 import { registerMemoryWriteRoutes } from "./support/register-memory-write-test-route.ts";
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
-import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
+import { createLiteRuntimeDatabase, type LiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
+import { createLiteWriteStoreFromDatabase } from "../../src/store/lite-write-store.ts";
 import {
   applyExecutionTreeOperationV1,
   createExecutionTreeV1,
-  createLiteExecutionTreeStore,
+  createLiteExecutionTreeStoreFromDatabase,
   type ExecutionTreeOperationV1,
   type ExecutionTreeV1,
 } from "../../src/execution/index.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
+
+const sharedRuntimeDatabases = new Map<string, LiteRuntimeDatabase>();
+
+function sharedRuntimeDatabase(dbPath: string): LiteRuntimeDatabase {
+  const existing = sharedRuntimeDatabases.get(dbPath);
+  if (existing) return existing;
+  const created = createLiteRuntimeDatabase(dbPath);
+  sharedRuntimeDatabases.set(dbPath, created);
+  return created;
+}
+
+function createLiteWriteStore(dbPath: string) {
+  return createLiteWriteStoreFromDatabase(sharedRuntimeDatabase(dbPath), { closeDatabaseOnClose: true });
+}
+
+function createLiteExecutionTreeStore(dbPath: string) {
+  const database = sharedRuntimeDatabase(dbPath);
+  return createLiteExecutionTreeStoreFromDatabase(database.db, {
+    path: database.path,
+    readDatabase: database.readDb,
+    transaction: database.transaction,
+  });
+}
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-execution-evidence-context-"));
@@ -214,7 +238,9 @@ test("execution context assemble separates passed solutions, failed branches, an
   const app = Fastify();
   registerApp({ app, liteWriteStore, liteRecallStore, executionTreeStore });
   const tree = buildRevisedTree();
-  executionTreeStore.put(tree);
+  await sharedRuntimeDatabase(dbPath).withTx(async () => {
+    executionTreeStore.put(tree);
+  });
 
   await post(app, "/v1/memory/write", {
     tenant_id: "default",
@@ -369,7 +395,9 @@ test("execution context assemble promotes validated active tree nodes without me
   const app = Fastify();
   registerApp({ app, liteWriteStore, liteRecallStore, executionTreeStore });
   const tree = buildRevisedTree();
-  executionTreeStore.put(tree);
+  await sharedRuntimeDatabase(dbPath).withTx(async () => {
+    executionTreeStore.put(tree);
+  });
 
   const body = await post(app, "/v1/execution/context/assemble", {
     tenant_id: "default",
@@ -562,7 +590,9 @@ test("execution context full_power mode exposes raw evidence, gated abstractions
   const app = Fastify();
   registerApp({ app, liteWriteStore, liteRecallStore, executionTreeStore });
   const tree = buildRevisedTree();
-  executionTreeStore.put(tree);
+  await sharedRuntimeDatabase(dbPath).withTx(async () => {
+    executionTreeStore.put(tree);
+  });
 
   await post(app, "/v1/memory/write", {
     tenant_id: "default",

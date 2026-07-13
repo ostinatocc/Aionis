@@ -21,7 +21,7 @@ const require = createRequire(import.meta.url);
 let cachedSqliteModule: SqliteModule | null | undefined;
 
 function loadSqliteModule(): SqliteModule | null {
-  if (cachedSqliteModule !== undefined) return cachedSqliteModule;
+  if (process.versions.node.localeCompare("22.13.0", undefined, { numeric: true }) < 0 || cachedSqliteModule !== undefined) return cachedSqliteModule ?? null;
   try {
     const mod = require("node:sqlite") as Partial<SqliteModule>;
     cachedSqliteModule = typeof mod.DatabaseSync === "function" ? mod as SqliteModule : null;
@@ -36,7 +36,7 @@ export function hasNodeSqliteSupport(): boolean {
 }
 
 export function nodeSqliteSupportError(): Error {
-  return new Error("Lite SQLite requires Node.js with node:sqlite support (Node 22+).");
+  return new Error("Lite SQLite requires Node.js >=22.13.0 with node:sqlite support.");
 }
 
 export function createSqliteDatabase(path: string): SqliteDatabase {

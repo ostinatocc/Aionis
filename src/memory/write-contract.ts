@@ -67,6 +67,8 @@ export type PreparedWrite = {
   prompt_version: string | null;
   redaction_meta: Record<string, number>;
   auto_embed_effective: boolean;
+  embedding_provider_name: string | null;
+  embedding_provider_dim: number | null;
   force_reembed: boolean;
   nodes: PreparedNode[];
   edges: PreparedEdge[];

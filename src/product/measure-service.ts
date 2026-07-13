@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import stableStringify from "fast-json-stable-stringify";
 import { z } from "zod";
 import {
   evaluateAionisEffect,
@@ -26,11 +28,14 @@ import {
   type AionisProcedureMemoryDraftV1,
 } from "../memory/product-output-contract.js";
 import type {
+  ProductMeasurementRecord,
   SkillCandidateReviewAccess,
   SkillCandidateReviewRow,
   SkillCandidateReviewStatus,
   TraceDerivedSkillTrainingCandidate,
 } from "../store/memory-store.js";
+import { productMeasurementDigest, stableJsonDigest } from "../store/memory-store.js";
+import type { LiteWriteStore } from "../store/lite-write-store.js";
 import {
   ProductForgetInput,
   ProductForgetTarget,
@@ -40,6 +45,7 @@ import {
   ProductSkillCandidateEnqueueRequest,
   finiteNumber,
   objectValue,
+  parseGuideExposureLedger,
   productMemoryDecisionOutputs,
   productServiceFailure,
   productServiceFailureFromUnknown,
@@ -47,6 +53,7 @@ import {
   uniqueStrings,
 } from "./product-services.js";
 import type {
+  ProductGuideExposureLedger,
   ProductMeasureRequestInput,
   ProductServiceResult,
   ProductServices,
@@ -224,8 +231,10 @@ function productMeasureObservationFromGuideSnapshot(args: {
         || recoveredFacts > 0,
       recoveredStateFacts: recoveredFacts,
       expectedStateFacts: productMeasureExpectedCount(snapshot.expected_state_facts, recoveredFacts),
+      recoveredStateApplicable: true,
       verifiedFactsCarried: verifiedFacts,
       verifiedFactsExpected: productMeasureExpectedCount(snapshot.verified_facts_expected, verifiedFacts),
+      verifiedFactsApplicable: true,
     },
     learning: {
       workflowReused: workflowCandidates.length > 0,
@@ -242,6 +251,8 @@ function productMeasureObservationFromGuideSnapshot(args: {
       staleMemorySuppressed: staleSuppressed,
       archivedMemoryRehydratedOnDemand: archivedRehydrated,
       unnecessaryRehydrations: 0,
+      staleMemoryControlApplicable: productMeasureStaleSurfaced(snapshot) + staleSuppressed > 0,
+      rehydrationApplicable: archivedRehydrated > 0,
     },
     learning_control: {
       weakEvidenceBlocked: inspectOrBlockedCount,
@@ -277,12 +288,12 @@ function productMeasureInputs(parsed: ProductMeasureInput): {
       baseline,
       aionis,
       source: "product_trace",
-      evidenceIds: compactProductMeasureEvidenceIds(parsed, trace),
+      evidenceIds: [],
       comparison: {
         mode: parsed.comparison?.mode ?? "observe_only_vs_active",
         baseline_run_id: parsed.comparison?.baseline_run_id ?? null,
         aionis_run_id: parsed.comparison?.aionis_run_id ?? null,
-        sufficient_evidence: parsed.comparison?.sufficient_evidence ?? trace.sufficient_evidence ?? true,
+        sufficient_evidence: false,
       },
     };
   }
@@ -290,17 +301,12 @@ function productMeasureInputs(parsed: ProductMeasureInput): {
     baseline: parsed.baseline as AionisEffectObservation,
     aionis: parsed.aionis as AionisEffectObservation,
     source: "manual_observations",
-    evidenceIds: parsed.evidence_ids ?? [],
-    comparison: parsed.comparison,
+    evidenceIds: [],
+    comparison: {
+      ...(parsed.comparison ?? {}),
+      sufficient_evidence: false,
+    },
   };
-}
-
-function productSkillCandidateEffectReportFromRequest(parsed: z.infer<typeof ProductSkillCandidateEnqueueRequest>): AionisEffectReport {
-  if (parsed.effect_report !== undefined) {
-    return AionisEffectReportSchema.parse(parsed.effect_report);
-  }
-  const measure = objectValue(parsed.measure_result);
-  return AionisEffectReportSchema.parse(measure?.effect_report);
 }
 
 function productTraceDerivedSkillCandidates(report: AionisEffectReport): TraceDerivedSkillTrainingCandidate[] {
@@ -310,6 +316,323 @@ function productTraceDerivedSkillCandidates(report: AionisEffectReport): TraceDe
       && !!skill
       && skill.contract_version === "aionis_trace_derived_skill_candidate_v1";
   });
+}
+
+type ProductMeasureEvidenceStore = Pick<
+  LiteWriteStore,
+  "getProductGuideReceipt" | "listRuleFeedbackByRun"
+>;
+
+function asProductMeasureEvidenceStore(value: ProductMeasureEvidenceStore | null | undefined): ProductMeasureEvidenceStore | null {
+  if (!value) return null;
+  return typeof value.getProductGuideReceipt === "function"
+    && typeof value.listRuleFeedbackByRun === "function"
+    ? value
+    : null;
+}
+
+type ProductMeasureEvidenceAssessment = {
+  status: "sufficient" | "insufficient";
+  sufficient_evidence: boolean;
+  eligible_for_skill_export: boolean;
+  provenance: "runtime_verified" | "manual_unverified" | "unverified_product_trace";
+  runtime_evidence_ids: string[];
+  reasons: string[];
+  client_claims_ignored: {
+    sufficient_evidence: boolean | null;
+    evidence_id_count: number;
+  };
+};
+
+type ProductMeasureEvidenceResolution = ProductMeasureEvidenceAssessment & {
+  verified_observations?: {
+    baseline: AionisEffectObservation;
+    aionis: AionisEffectObservation;
+  };
+  verified_kernel_report?: ReturnType<typeof evaluateAionisEffect>;
+};
+
+type ResolvedGuideReceipt = {
+  ledger: ProductGuideExposureLedger;
+  evidence_id: string;
+  created_at: string;
+};
+
+const PRODUCT_SKILL_EXPORT_MIN_EFFECT_DELTA = 0.1;
+const PRODUCT_SKILL_EXPORT_MIN_AIONIS_SCORE = 0.7;
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function snapshotGuideTraceId(snapshot: ProductMeasureGuideSnapshot | undefined): string | null {
+  return stringValue(objectValue(snapshot)?.guide_trace_id);
+}
+
+function sameStringSet(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  const rightSet = new Set(right);
+  return left.every((entry) => rightSet.has(entry));
+}
+
+function snapshotReceiptMismatchReasons(
+  snapshot: ProductMeasureGuideSnapshot,
+  receipt: ProductGuideExposureLedger,
+): string[] {
+  const reasons: string[] = [];
+  const snapshotRecord = objectValue(snapshot);
+  const context = snapshot.agent_context ?? null;
+  if (stringValue(snapshotRecord?.guide_trace_id) !== receipt.guide_trace_id) reasons.push("guide_trace_id_mismatch");
+  if (stringValue(snapshotRecord?.tenant_id) !== receipt.tenant_id) reasons.push("guide_tenant_mismatch");
+  if (stringValue(snapshotRecord?.scope) !== receipt.scope) reasons.push("guide_scope_mismatch");
+  if (!context) return [...reasons, "agent_context_missing"];
+  if (context.history_used !== receipt.history_used) reasons.push("history_used_mismatch");
+  if (context.actionable_history_used !== receipt.actionable_history_used) reasons.push("actionable_history_used_mismatch");
+  if (context.recommended_posture !== receipt.recommended_posture) reasons.push("recommended_posture_mismatch");
+  if (context.authority !== receipt.authority) reasons.push("authority_mismatch");
+  if (!sameStringSet(context.memory_ids, receipt.memory_ids)) reasons.push("memory_ids_mismatch");
+  if (!sameStringSet(context.use_now_memory_ids, receipt.use_now_memory_ids)) reasons.push("use_now_memory_ids_mismatch");
+  if (!sameStringSet(context.inspect_before_use_memory_ids, receipt.inspect_before_use_memory_ids)) {
+    reasons.push("inspect_before_use_memory_ids_mismatch");
+  }
+  if (!sameStringSet(context.do_not_use_memory_ids, receipt.do_not_use_memory_ids)) {
+    reasons.push("do_not_use_memory_ids_mismatch");
+  }
+  return reasons;
+}
+
+async function resolveGuideReceipt(args: {
+  store: ProductMeasureEvidenceStore;
+  tenantId: string;
+  scope: string;
+  guideTraceId: string;
+}): Promise<ResolvedGuideReceipt | null> {
+  const row = await args.store.getProductGuideReceipt({
+    tenantId: args.tenantId,
+    scope: args.scope,
+    guideTraceId: args.guideTraceId,
+  });
+  if (!row || !row.commit_id) return null;
+  let rawLedger: unknown;
+  try {
+    rawLedger = JSON.parse(row.ledger_json);
+  } catch {
+    return null;
+  }
+  const expectedDigest = sha256Hex(stableStringify(rawLedger));
+  if (expectedDigest !== row.ledger_sha256) return null;
+  const ledger = parseGuideExposureLedger(rawLedger);
+  if (
+    !ledger
+    || ledger.guide_trace_id !== row.guide_trace_id
+    || ledger.tenant_id !== row.tenant_id
+    || ledger.scope !== row.scope
+    || ledger.query_sha256 !== row.query_sha256
+    || ledger.context_sha256 !== row.context_sha256
+  ) return null;
+  return {
+    ledger,
+    evidence_id: `guide_receipt:${ledger.guide_trace_id}:${expectedDigest}`,
+    created_at: row.created_at,
+  };
+}
+
+function insufficientEvidenceAssessment(args: {
+  parsed: ProductMeasureInput;
+  provenance: ProductMeasureEvidenceAssessment["provenance"];
+  reasons: string[];
+  runtimeEvidenceIds?: string[];
+}): ProductMeasureEvidenceAssessment {
+  return {
+    status: "insufficient",
+    sufficient_evidence: false,
+    eligible_for_skill_export: false,
+    provenance: args.provenance,
+    runtime_evidence_ids: args.runtimeEvidenceIds ?? [],
+    reasons: uniqueStrings(args.reasons),
+    client_claims_ignored: {
+      sufficient_evidence: args.parsed.comparison?.sufficient_evidence
+        ?? args.parsed.product_trace?.sufficient_evidence
+        ?? null,
+      evidence_id_count: (args.parsed.evidence_ids?.length ?? 0)
+        + (args.parsed.product_trace?.evidence_ids?.length ?? 0),
+    },
+  };
+}
+
+async function assessProductMeasureEvidence(args: {
+  parsed: ProductMeasureInput;
+  source: "manual_observations" | "product_trace";
+  tenantId: string;
+  scope: string;
+  store: ProductMeasureEvidenceStore | null;
+}): Promise<ProductMeasureEvidenceResolution> {
+  if (args.source === "manual_observations") {
+    return insufficientEvidenceAssessment({
+      parsed: args.parsed,
+      provenance: "manual_unverified",
+      reasons: ["manual_observations_are_not_export_evidence"],
+    });
+  }
+  const trace = args.parsed.product_trace;
+  const runId = stringValue(args.parsed.task?.run_id);
+  const beforeTraceId = snapshotGuideTraceId(trace?.before_guide);
+  const afterTraceId = snapshotGuideTraceId(trace?.after_guide);
+  const initialReasons = [
+    ...(!args.store ? ["runtime_evidence_store_unavailable"] : []),
+    ...(!trace?.before_guide ? ["before_guide_missing"] : []),
+    ...(!beforeTraceId ? ["before_guide_receipt_id_missing"] : []),
+    ...(!afterTraceId ? ["after_guide_receipt_id_missing"] : []),
+    ...(beforeTraceId && afterTraceId && beforeTraceId === afterTraceId ? ["guide_receipts_must_be_distinct"] : []),
+    ...(!runId ? ["task_run_id_missing"] : []),
+  ];
+  if (initialReasons.length > 0 || !args.store || !trace?.before_guide || !beforeTraceId || !afterTraceId || !runId) {
+    return insufficientEvidenceAssessment({
+      parsed: args.parsed,
+      provenance: "unverified_product_trace",
+      reasons: initialReasons,
+    });
+  }
+
+  const [beforeReceipt, afterReceipt] = await Promise.all([
+    resolveGuideReceipt({ store: args.store, tenantId: args.tenantId, scope: args.scope, guideTraceId: beforeTraceId }),
+    resolveGuideReceipt({ store: args.store, tenantId: args.tenantId, scope: args.scope, guideTraceId: afterTraceId }),
+  ]);
+  const runtimeEvidenceIds = uniqueStrings([
+    beforeReceipt?.evidence_id,
+    afterReceipt?.evidence_id,
+  ]);
+  const reasons: string[] = [];
+  if (!beforeReceipt) reasons.push("before_guide_receipt_not_verified");
+  if (!afterReceipt) reasons.push("after_guide_receipt_not_verified");
+  if (!beforeReceipt || !afterReceipt) {
+    return insufficientEvidenceAssessment({
+      parsed: args.parsed,
+      provenance: "unverified_product_trace",
+      reasons,
+      runtimeEvidenceIds,
+    });
+  }
+
+  if (beforeReceipt.ledger.run_id !== runId || afterReceipt.ledger.run_id !== runId) reasons.push("guide_receipt_run_mismatch");
+  if (beforeReceipt.ledger.query_sha256 !== afterReceipt.ledger.query_sha256) reasons.push("guide_receipt_query_mismatch");
+  if (beforeReceipt.ledger.context_sha256 !== afterReceipt.ledger.context_sha256) reasons.push("guide_receipt_context_mismatch");
+  if (beforeReceipt.ledger.task_binding_sha256 !== afterReceipt.ledger.task_binding_sha256) reasons.push("guide_receipt_task_binding_mismatch");
+  if (beforeReceipt.ledger.consumer_agent_id !== afterReceipt.ledger.consumer_agent_id) reasons.push("guide_receipt_consumer_mismatch");
+  if (beforeReceipt.ledger.consumer_team_id !== afterReceipt.ledger.consumer_team_id) reasons.push("guide_receipt_team_mismatch");
+  const beforeCreatedAt = Date.parse(beforeReceipt.created_at);
+  const afterCreatedAt = Date.parse(afterReceipt.created_at);
+  if (!Number.isFinite(beforeCreatedAt) || !Number.isFinite(afterCreatedAt) || beforeCreatedAt >= afterCreatedAt) {
+    reasons.push("guide_receipts_not_strictly_ordered");
+  }
+  reasons.push(...snapshotReceiptMismatchReasons(trace.before_guide, beforeReceipt.ledger).map((entry) => `before:${entry}`));
+  reasons.push(...snapshotReceiptMismatchReasons(trace.after_guide, afterReceipt.ledger).map((entry) => `after:${entry}`));
+  if (!afterReceipt.ledger.actionable_history_used || afterReceipt.ledger.use_now_memory_ids.length === 0) {
+    reasons.push("after_guide_has_no_actionable_runtime_history");
+  }
+  const beforeObservation = beforeReceipt.ledger.effect_observation_v1;
+  const afterObservation = afterReceipt.ledger.effect_observation_v1;
+  const beforeObservationValid = !!beforeObservation
+    && !!beforeReceipt.ledger.effect_observation_sha256
+    && sha256Hex(stableStringify(beforeObservation)) === beforeReceipt.ledger.effect_observation_sha256;
+  const afterObservationValid = !!afterObservation
+    && !!afterReceipt.ledger.effect_observation_sha256
+    && sha256Hex(stableStringify(afterObservation)) === afterReceipt.ledger.effect_observation_sha256;
+  if (!beforeObservationValid) reasons.push("before_effect_observation_digest_mismatch");
+  if (!afterObservationValid) reasons.push("after_effect_observation_digest_mismatch");
+  const toolSelection = afterReceipt.ledger.tool_selection;
+  if (!toolSelection || toolSelection.run_id !== runId) reasons.push("after_guide_tool_selection_receipt_missing");
+
+  const runtimeVerification = afterReceipt.ledger.runtime_verification_v1;
+  if (!runtimeVerification) {
+    reasons.push("trusted_runtime_verification_receipt_missing");
+  } else {
+    if (runtimeVerification.execution_state !== "executed") reasons.push("runtime_verification_not_fully_executed");
+    if (runtimeVerification.result_count <= 0 || runtimeVerification.verifier_ids.length === 0) {
+      reasons.push("runtime_verification_result_missing");
+    }
+    if (!runtimeVerification.authoritative_evidence_ready || !runtimeVerification.validation_passed) {
+      reasons.push("runtime_verification_not_passed");
+    }
+    if (runtimeVerification.validation_boundary !== "runtime_orchestrator") {
+      reasons.push("runtime_verification_boundary_untrusted");
+    }
+    if (runtimeVerification.false_confidence_detected) reasons.push("runtime_verification_false_confidence_detected");
+    if (runtimeVerification.run_id !== runId) reasons.push("runtime_verification_run_binding_mismatch");
+    runtimeEvidenceIds.push(`runtime_verification:${afterReceipt.ledger.guide_trace_id}:${runtimeVerification.surface_sha256}`);
+  }
+
+  const feedback = await args.store.listRuleFeedbackByRun({ scope: args.scope, runId, limit: 200 });
+  const positiveFeedback = toolSelection
+    ? feedback.rows.find((row) =>
+        row.outcome === "positive"
+        && row.source === "tools_feedback"
+        && row.decision_id === toolSelection.decision_id
+      )
+    : null;
+  if (!positiveFeedback) reasons.push("positive_linked_tool_feedback_missing");
+  if (feedback.negative > 0) reasons.push("negative_feedback_present_for_run");
+  if (positiveFeedback) {
+    const feedbackCreatedAt = Date.parse(positiveFeedback.created_at);
+    if (!Number.isFinite(feedbackCreatedAt) || !Number.isFinite(afterCreatedAt) || feedbackCreatedAt <= afterCreatedAt) {
+      reasons.push("tool_feedback_not_after_guide_receipt");
+    }
+  }
+
+  const verifiedKernelReport = beforeObservationValid && afterObservationValid && beforeObservation && afterObservation
+    ? evaluateAionisEffect({
+        baseline: beforeObservation,
+        aionis: afterObservation,
+        minEffectDelta: PRODUCT_SKILL_EXPORT_MIN_EFFECT_DELTA,
+        minAionisScore: PRODUCT_SKILL_EXPORT_MIN_AIONIS_SCORE,
+      })
+    : null;
+  const incompleteKernels = verifiedKernelReport?.kernel_scores.filter((score) =>
+    score.metrics.measurement_complete !== true
+    || score.regressions.some((entry) => entry.startsWith("missing_metric:") || entry.startsWith("unknown_ratio:"))
+  ) ?? [];
+  if (!verifiedKernelReport || incompleteKernels.length > 0) {
+    reasons.push(...incompleteKernels.map((score) => `incomplete_kernel:${score.capability_id}`));
+  }
+  if (!verifiedKernelReport || verifiedKernelReport.status !== "pass") reasons.push("effect_evaluator_not_passed");
+
+  if (reasons.length > 0) {
+    return {
+      ...insufficientEvidenceAssessment({
+      parsed: args.parsed,
+      provenance: "unverified_product_trace",
+      reasons,
+      runtimeEvidenceIds,
+      }),
+      ...(verifiedKernelReport && beforeObservation && afterObservation ? {
+        verified_observations: {
+          baseline: beforeObservation,
+          aionis: afterObservation,
+        },
+        verified_kernel_report: verifiedKernelReport,
+      } : {}),
+    };
+  }
+  return {
+    status: "sufficient",
+    sufficient_evidence: true,
+    eligible_for_skill_export: true,
+    provenance: "runtime_verified",
+    runtime_evidence_ids: uniqueStrings(runtimeEvidenceIds),
+    reasons: ["paired_runtime_guide_receipts_and_runtime_verifier_receipt_verified"],
+    client_claims_ignored: {
+      sufficient_evidence: args.parsed.comparison?.sufficient_evidence
+        ?? args.parsed.product_trace?.sufficient_evidence
+        ?? null,
+      evidence_id_count: (args.parsed.evidence_ids?.length ?? 0)
+        + (args.parsed.product_trace?.evidence_ids?.length ?? 0),
+    },
+    verified_observations: {
+      baseline: beforeObservation!,
+      aionis: afterObservation!,
+    },
+    verified_kernel_report: verifiedKernelReport ?? undefined,
+  };
 }
 
 function productSkillCandidateReviewResponse(args: {
@@ -514,21 +837,52 @@ function productSkillCandidateMaterializeResponse(args: {
   };
 }
 
-function compactProductMeasureEvidenceIds(parsed: ProductMeasureInput, trace: ProductMeasureTraceInput): string[] {
-  return uniqueStrings([
-    ...(parsed.evidence_ids ?? []),
-    ...(trace.evidence_ids ?? []),
-    ...(trace.before_guide?.memory_packet?.lifecycle.used_memory_ids ?? []).map((id) => `before:${id}`),
-    ...(trace.after_guide.memory_packet?.lifecycle.used_memory_ids ?? []).map((id) => `after:${id}`),
-    ...(trace.after_guide.guide_packet?.guidance.workflow_candidates ?? []).map((workflow) => `workflow:${workflow.workflow_id}`),
-    ...(trace.forget_result?.forget_effect?.affected_memory_ids ?? []).map((id) => `forget:${id}`),
-  ]);
+async function validateCandidateMeasurementBinding(args: {
+  access: SkillCandidateReviewAccess;
+  row: SkillCandidateReviewRow;
+}): Promise<{ ok: true; measurement: ProductMeasurementRecord } | { ok: false; reason: string }> {
+  if (!args.row.measurement_id || !args.row.measurement_digest) {
+    return { ok: false, reason: "candidate_has_no_persisted_measurement" };
+  }
+  if (!args.row.eligible_for_promotion) {
+    return { ok: false, reason: "candidate_is_not_eligible_for_promotion" };
+  }
+  const measurement = await args.access.getMeasurement({
+    tenantId: args.row.tenant_id,
+    scope: args.row.scope,
+    measurementId: args.row.measurement_id,
+  });
+  if (!measurement) return { ok: false, reason: "measurement_record_not_found" };
+  if (measurement.measurement_digest !== args.row.measurement_digest) {
+    return { ok: false, reason: "measurement_digest_mismatch" };
+  }
+  if (productMeasurementDigest(measurement) !== measurement.measurement_digest) {
+    return { ok: false, reason: "measurement_record_digest_invalid" };
+  }
+  if (!measurement.eligible_for_skill_export || measurement.evidence_status !== "sufficient") {
+    return { ok: false, reason: "measurement_is_not_export_eligible" };
+  }
+  if (stableJsonDigest(args.row.candidate) !== args.row.candidate_digest) {
+    return { ok: false, reason: "candidate_digest_mismatch" };
+  }
+  const authoritativeCandidate = productTraceDerivedSkillCandidates(measurement.effect_report)
+    .some((candidate) => stableJsonDigest(candidate) === args.row.candidate_digest);
+  if (!authoritativeCandidate) return { ok: false, reason: "candidate_not_present_in_measurement" };
+  if (
+    args.row.label !== "positive"
+    || !args.row.export_ready
+    || args.row.promotion_status !== "promotion_ready"
+  ) {
+    return { ok: false, reason: "candidate_is_not_export_ready_positive_evidence" };
+  }
+  return { ok: true, measurement };
 }
 
 export type ProductMeasureServiceDependencies = {
   defaultTenantId: string;
   defaultScope: string;
   skillCandidateReviewAccess?: SkillCandidateReviewAccess | null;
+  runtimeEvidenceStore?: ProductMeasureEvidenceStore | null;
 };
 
 export function createProductMeasureService(
@@ -536,17 +890,31 @@ export function createProductMeasureService(
 ): ProductServices["measure"] {
   const access = dependencies.skillCandidateReviewAccess ?? null;
   return {
-    async execute(parsed: ProductMeasureRequestInput): Promise<ProductServiceResult> {
+    async execute(parsed: ProductMeasureRequestInput, context): Promise<ProductServiceResult> {
       try {
         const measureInput = productMeasureInputs(parsed);
-        const kernelReport = evaluateAionisEffect({
-          baseline: measureInput.baseline,
-          aionis: measureInput.aionis,
-          minEffectDelta: parsed.minEffectDelta,
-          minAionisScore: parsed.minAionisScore,
-        });
         const tenantId = parsed.tenant_id ?? dependencies.defaultTenantId;
         const scope = parsed.scope ?? dependencies.defaultScope;
+        const evidenceResolution = await assessProductMeasureEvidence({
+          parsed,
+          source: measureInput.source,
+          tenantId,
+          scope,
+          store: asProductMeasureEvidenceStore(dependencies.runtimeEvidenceStore),
+        });
+        const evaluationBaseline = evidenceResolution.verified_observations?.baseline ?? measureInput.baseline;
+        const evaluationAionis = evidenceResolution.verified_observations?.aionis ?? measureInput.aionis;
+        const kernelReport = evidenceResolution.verified_kernel_report ?? evaluateAionisEffect({
+          baseline: evaluationBaseline,
+          aionis: evaluationAionis,
+          minEffectDelta: PRODUCT_SKILL_EXPORT_MIN_EFFECT_DELTA,
+          minAionisScore: PRODUCT_SKILL_EXPORT_MIN_AIONIS_SCORE,
+        });
+        const {
+          verified_observations: _verifiedObservations,
+          verified_kernel_report: _verifiedKernelReport,
+          ...evidenceAssessment
+        } = evidenceResolution;
         const decisionOutputs = parsed.product_trace
           ? productMemoryDecisionOutputs({
               tenant_id: tenantId,
@@ -560,20 +928,52 @@ export function createProductMeasureService(
           scope,
           task: parsed.task,
           report: kernelReport,
-          comparison: measureInput.comparison,
-          evidence_ids: measureInput.evidenceIds,
+          comparison: {
+            ...(measureInput.comparison ?? {}),
+            sufficient_evidence: evidenceAssessment.sufficient_evidence,
+          },
+          evidence_ids: evidenceAssessment.runtime_evidence_ids,
           feedback_signal_review: decisionOutputs?.memoryDecisionAudit.feedback_signal_review ?? null,
         });
+        const parsedEffectReport = AionisEffectReportSchema.parse(effectReport);
+        const measurementId = `measurement:${randomUUID()}`;
+        const measurementRecordWithoutDigest = {
+          measurement_id: measurementId,
+          tenant_id: tenantId,
+          scope,
+          source: measureInput.source,
+          effect_report: parsedEffectReport,
+          eligible_for_skill_export: evidenceAssessment.eligible_for_skill_export,
+          evidence_status: evidenceAssessment.status,
+          runtime_evidence_ids: evidenceAssessment.runtime_evidence_ids,
+          eligibility_reasons: evidenceAssessment.reasons,
+          created_by: context.actorId,
+          created_at: new Date().toISOString(),
+        };
+        const measurementDigest = productMeasurementDigest(measurementRecordWithoutDigest);
+        const measurementRecord: ProductMeasurementRecord = {
+          ...measurementRecordWithoutDigest,
+          measurement_digest: measurementDigest,
+        };
+        let measurementPersisted = false;
+        if (access) {
+          await access.recordMeasurement({ record: measurementRecord });
+          measurementPersisted = true;
+        }
         return productServiceSuccess({
           contract_version: "aionis_measure_result_v1",
           tenant_id: tenantId,
           scope,
+          measurement_id: measurementId,
+          measurement_digest: measurementDigest,
+          measurement_persisted: measurementPersisted,
+          evidence_assessment: evidenceAssessment,
           measurement_input: {
             source: measureInput.source,
-            baseline: measureInput.baseline,
-            aionis: measureInput.aionis,
+            baseline: evaluationBaseline,
+            aionis: evaluationAionis,
           },
-          effect_report: AionisEffectReportSchema.parse(effectReport),
+          effect_report: parsedEffectReport,
           ...(decisionOutputs ? {
             memory_decision_trace: decisionOutputs.memoryDecisionTrace,
             memory_decision_audit: decisionOutputs.memoryDecisionAudit,
@@ -605,15 +1005,72 @@ export function createProductMeasureService(
         });
       }
       try {
-        const report = productSkillCandidateEffectReportFromRequest(parsed);
-        const tenantId = parsed.tenant_id ?? report.tenant_id ?? dependencies.defaultTenantId;
-        const scope = parsed.scope ?? report.scope ?? dependencies.defaultScope;
-        const candidates = productTraceDerivedSkillCandidates(report);
+        const tenantId = parsed.tenant_id ?? dependencies.defaultTenantId;
+        const scope = parsed.scope ?? dependencies.defaultScope;
+        const measurementId = parsed.measurement_id ?? parsed.measure_result?.measurement_id;
+        if (!measurementId) {
+          return productServiceFailure({
+            statusCode: 400,
+            error: "measurement_id_required",
+            message: "a persisted Runtime measurement_id is required to enqueue skill candidates",
+          });
+        }
+        const measurement = await access.getMeasurement({ tenantId, scope, measurementId });
+        if (!measurement) {
+          return productServiceFailure({
+            statusCode: 404,
+            error: "measurement_not_found",
+            message: "measurement_id does not resolve to a persisted Runtime measurement in this tenant/scope",
+            details: { measurement_id: measurementId },
+          });
+        }
+        if (
+          parsed.measure_result
+          && parsed.measure_result.measurement_digest !== measurement.measurement_digest
+        ) {
+          return productServiceFailure({
+            statusCode: 409,
+            error: "measurement_digest_mismatch",
+            message: "measure_result does not match the persisted Runtime measurement",
+            details: { measurement_id: measurementId },
+          });
+        }
+        const suppliedReport = objectValue(parsed.measure_result)?.effect_report;
+        if (
+          suppliedReport !== undefined
+          && stableJsonDigest(suppliedReport) !== stableJsonDigest(measurement.effect_report)
+        ) {
+          return productServiceFailure({
+            statusCode: 409,
+            error: "measurement_report_tampered",
+            message: "measure_result.effect_report differs from the persisted Runtime measurement",
+            details: { measurement_id: measurementId },
+          });
+        }
+        if (
+          productMeasurementDigest(measurement) !== measurement.measurement_digest
+          || !measurement.eligible_for_skill_export
+          || measurement.evidence_status !== "sufficient"
+        ) {
+          return productServiceFailure({
+            statusCode: 409,
+            error: "measurement_not_skill_export_eligible",
+            message: "the persisted measurement does not contain sufficient Runtime-owned outcome evidence",
+            details: {
+              measurement_id: measurementId,
+              evidence_status: measurement.evidence_status,
+              eligibility_reasons: measurement.eligibility_reasons,
+            },
+          });
+        }
+        const candidates = productTraceDerivedSkillCandidates(measurement.effect_report);
         const queued = await access.enqueueTraceDerivedSkillCandidates({
           tenantId,
           scope,
           candidates,
-          source: parsed.measure_result !== undefined ? "measure_result" : "effect_report",
+          measurementId,
+          measurementDigest: measurement.measurement_digest,
+          eligibleForPromotion: true,
         });
         return productServiceSuccess(productSkillCandidateReviewResponse({
           route: "/v1/skills/candidates",
@@ -667,20 +1124,57 @@ export function createProductMeasureService(
       try {
         const tenantId = args.input.tenant_id ?? dependencies.defaultTenantId;
         const scope = args.input.scope ?? dependencies.defaultScope;
-        const row = await access.reviewTraceDerivedSkillCandidate({
+        const current = await access.getTraceDerivedSkillCandidate({
           tenantId,
           scope,
           candidateId: args.candidateId,
-          reviewStatus: args.reviewStatus,
-          reviewerId: args.input.reviewer_id ?? null,
-          reason: args.input.reason ?? null,
         });
-        if (!row) {
+        if (!current) {
           return productServiceFailure({
             statusCode: 404,
             error: "skill_candidate_not_found",
             message: "trace-derived skill candidate was not found in this tenant/scope",
             details: { candidate_id: args.candidateId },
+          });
+        }
+        if (current.review_status !== "pending_review") {
+          return productServiceFailure({
+            statusCode: 409,
+            error: "skill_candidate_state_conflict",
+            message: "trace-derived skill candidate is no longer pending review",
+            details: {
+              candidate_id: args.candidateId,
+              review_status: current.review_status,
+              row_version: current.row_version,
+            },
+          });
+        }
+        if (args.reviewStatus === "promoted") {
+          const binding = await validateCandidateMeasurementBinding({ access, row: current });
+          if (!binding.ok) {
+            return productServiceFailure({
+              statusCode: 409,
+              error: "skill_candidate_ineligible",
+              message: "trace-derived skill candidate is not backed by an eligible persisted Runtime measurement",
+              details: { candidate_id: args.candidateId, reason: binding.reason },
+            });
+          }
+        }
+        const row = await access.reviewTraceDerivedSkillCandidate({
+          tenantId,
+          scope,
+          candidateId: args.candidateId,
+          reviewStatus: args.reviewStatus,
+          reviewerId: args.reviewerId,
+          reason: args.input.reason,
+          expectedVersion: current.row_version,
+        });
+        if (!row) {
+          return productServiceFailure({
+            statusCode: 409,
+            error: "skill_candidate_state_conflict",
+            message: "trace-derived skill candidate changed while the review was being recorded",
+            details: { candidate_id: args.candidateId, expected_version: current.row_version },
           });
         }
         return productServiceSuccess(productSkillCandidateReviewResponse({
@@ -726,16 +1220,15 @@ export function createProductMeasureService(
             details: { candidate_id: args.candidateId, review_status: row.review_status },
           });
         }
-        if (!row.export_ready || row.promotion_status !== "promotion_ready" || row.label !== "positive") {
+        const binding = await validateCandidateMeasurementBinding({ access, row });
+        if (!binding.ok) {
           return productServiceFailure({
             statusCode: 409,
             error: "skill_candidate_not_materializable",
-            message: "trace-derived skill candidate is promoted but is not export-ready positive procedure evidence",
+            message: "trace-derived skill candidate is no longer backed by eligible persisted Runtime evidence",
             details: {
               candidate_id: args.candidateId,
-              export_ready: row.export_ready,
-              promotion_status: row.promotion_status,
-              label: row.label,
+              reason: binding.reason,
             },
           });
         }

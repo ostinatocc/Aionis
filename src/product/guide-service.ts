@@ -11,6 +11,9 @@ import {
 } from "../config.js";
 
 import { sha256Hex } from "../util/crypto.js";
+import type { AionisEffectObservation } from "../kernel/effect-evaluator.js";
+import { RuntimeVerificationSurfaceV1Schema } from "../execution/verification.js";
+import type { MemoryWriteRouteService } from "../routes/memory-write.js";
 
 import {
   buildAionisMemoryPacket,
@@ -87,6 +90,7 @@ import type {
   ProductGuideExecutionContext,
   ProductGuideInput,
   ProductMemoryAdmissionInput,
+  ProductRuntimeVerificationReceipt,
   ProductServiceResult,
   ProductServices,
   ProductToolSelectionReceipt,
@@ -982,14 +986,159 @@ function buildProductToolSelectionReceipt(args: {
   return parsedReceipt.success ? parsedReceipt.data : null;
 }
 
+function buildProductRuntimeVerificationReceipt(args: {
+  guideBody: Record<string, unknown>;
+  runId: string | null;
+}): ProductRuntimeVerificationReceipt | null {
+  if (!args.runId) return null;
+  const executionKernel = objectValue(args.guideBody.execution_kernel);
+  const parsed = RuntimeVerificationSurfaceV1Schema.safeParse(executionKernel?.runtime_verification);
+  if (!parsed.success) return null;
+  const surface = parsed.data;
+  if (
+    surface.requested_mode !== "execute"
+    || (surface.execution_state !== "executed" && surface.execution_state !== "partially_executed")
+    || surface.result_count <= 0
+  ) return null;
+  const trustEvidence = surface.evidence_for_trust_gate;
+  const verifierIds = uniqueStrings(surface.results.map((result) => result.request.verifier_id));
+  if (!trustEvidence || verifierIds.length === 0) return null;
+  return {
+    contract_version: "aionis_runtime_verification_receipt_v1",
+    run_id: args.runId,
+    requested_mode: "execute",
+    execution_state: surface.execution_state,
+    result_count: surface.result_count,
+    authoritative_evidence_ready: surface.summary.authoritative_evidence_ready,
+    validation_passed: trustEvidence.validation_passed === true,
+    validation_boundary: trustEvidence.validation_boundary,
+    false_confidence_detected: trustEvidence.false_confidence_detected,
+    verifier_ids: verifierIds,
+    evidence_refs: uniqueStrings(surface.execution_evidence.flatMap((evidence) => evidence.evidence_refs)),
+    surface_sha256: sha256Hex(stableStringify(surface)),
+  };
+}
+
+function guideEffectObservation(args: {
+  agentContext: AionisAgentContext;
+  memoryPacket: AionisMemoryPacket;
+  guidePacket: AionisGuidePacket;
+}): AionisEffectObservation {
+  const relevantMemories = args.memoryPacket.relevant_memories;
+  const workflows = args.guidePacket.guidance.workflow_candidates;
+  const recoveredFacts = args.guidePacket.proven_facts.length
+    + (args.guidePacket.recovered_state.resumable ? 1 : 0)
+    + args.guidePacket.recovered_state.target_files.length
+    + args.guidePacket.recovered_state.acceptance_checks.length
+    + relevantMemories.length;
+  const verifiedFacts = args.guidePacket.proven_facts.length
+    + args.memoryPacket.evidence_trail.length
+    + args.guidePacket.history_contributions.handoff.source_count
+    + args.guidePacket.history_contributions.replay.source_count;
+  const contextItems = relevantMemories.length
+    + workflows.length
+    + args.guidePacket.proven_facts.length;
+  const usefulContextItems = relevantMemories.filter((memory) =>
+    memory.authority !== "blocked"
+    && memory.lifecycle_state !== "suppressed"
+    && memory.lifecycle_state !== "archived"
+  ).length
+    + workflows.filter((workflow) => workflow.authority !== "blocked").length
+    + args.guidePacket.proven_facts.length;
+  const trustedWorkflows = workflows.filter((workflow) => workflow.authority === "trusted");
+  const staleSurfaced = Math.max(
+    args.memoryPacket.forgetting_state.stale_memory_count,
+    args.memoryPacket.risk.stale_memory_count,
+    args.guidePacket.risk.stale_memory_count,
+  );
+  const staleSuppressed = args.memoryPacket.forgetting_state.suppressed_count
+    + args.guidePacket.memory_lifecycle.suppressed_memory_ids.length
+    + args.guidePacket.guide_brief.do_not_use.length;
+  const weakEvidenceBlocked = args.guidePacket.guide_brief.inspect_before_use.length
+    + args.guidePacket.guide_brief.do_not_use.length
+    + args.guidePacket.risk.blocked_authority_count;
+  const unverifiedAuthorityApplied = trustedWorkflows.filter((workflow) => workflow.evidence_count <= 0).length
+    + (
+      args.guidePacket.guide_brief.authority === "trusted"
+      && args.memoryPacket.evidence_trail.length === 0
+      && args.guidePacket.proven_facts.length === 0
+        ? 1
+        : 0
+    );
+  return {
+    label: "runtime_guide_receipt",
+    continuity: {
+      repeatedDiscoverySteps: args.agentContext.use_now_memory_ids.length > 0
+        ? 0
+        : args.agentContext.memory_ids.length > 0 ? 1 : 4,
+      continuityGuidanceCorrect:
+        args.guidePacket.guide_brief.expected_product_effects.reduces_repeated_discovery === true
+        || recoveredFacts > 0,
+      recoveredStateFacts: recoveredFacts,
+      expectedStateFacts: Math.max(recoveredFacts, 1),
+      recoveredStateApplicable: true,
+      verifiedFactsCarried: verifiedFacts,
+      verifiedFactsExpected: Math.max(verifiedFacts, 1),
+      verifiedFactsApplicable: true,
+    },
+    learning: {
+      workflowReused: workflows.length > 0,
+      stableWorkflowReused: trustedWorkflows.length > 0,
+      provisionalMemoriesWritten: workflows.filter((workflow) =>
+        workflow.authority === "candidate" || workflow.authority === "advisory"
+      ).length,
+      trustedPromotions: trustedWorkflows.length,
+      weakEvidencePromoted: trustedWorkflows.filter((workflow) => workflow.evidence_count <= 0).length,
+      counterEvidenceDemotions: staleSuppressed,
+    },
+    forgetting: {
+      contextItems: Math.max(contextItems, 1),
+      usefulContextItems,
+      staleMemorySurfaced: staleSurfaced,
+      staleMemorySuppressed: staleSuppressed,
+      archivedMemoryRehydratedOnDemand: 0,
+      unnecessaryRehydrations: 0,
+      staleMemoryControlApplicable: staleSurfaced + staleSuppressed > 0,
+      rehydrationApplicable: false,
+    },
+    learning_control: {
+      weakEvidenceBlocked,
+      authorityRequiresEvidence: true,
+      blockedAuthorityVisible: true,
+      unverifiedAuthorityApplied,
+    },
+  };
+}
+
 function buildGuideExposureLedger(args: {
   parsed: z.infer<typeof ProductGuideRequest>;
   tenant_id: string;
   scope: string;
   agentContext: AionisAgentContext;
+  memoryPacket: AionisMemoryPacket | null;
+  guidePacket: AionisGuidePacket | null;
   guideTraceId: string;
   toolSelection: ProductToolSelectionReceipt | null;
+  runtimeVerification: ProductRuntimeVerificationReceipt | null;
 }): ProductGuideExposureLedger {
+  const effectObservation = args.memoryPacket && args.guidePacket
+    ? guideEffectObservation({
+        agentContext: args.agentContext,
+        memoryPacket: args.memoryPacket,
+        guidePacket: args.guidePacket,
+      })
+    : null;
+  const contextRecord = objectValue(args.parsed.context);
+  const stableTaskBinding = {
+    run_id: args.parsed.run_id ?? null,
+    task_id: nestedStringField(contextRecord, "task_id"),
+    task_signature: nestedStringField(contextRecord, "task_signature")
+      ?? nestedStringField(args.parsed.execution_packet_v1, "task_signature")
+      ?? nestedStringField(args.parsed.execution_state_v1, "task_signature"),
+    execution_state_id: nestedStringField(args.parsed.execution_packet_v1, "state_id")
+      ?? nestedStringField(args.parsed.execution_state_v1, "state_id"),
+    query_sha256: sha256Hex(args.parsed.query_text),
+  };
   return {
     contract_version: "aionis_guide_exposure_v1",
     guide_trace_id: args.guideTraceId,
@@ -1000,6 +1149,7 @@ function buildGuideExposureLedger(args: {
     consumer_team_id: args.parsed.consumer_team_id ?? null,
     query_sha256: sha256Hex(args.parsed.query_text),
     context_sha256: sha256Hex(stableStringify(args.parsed.context ?? {})),
+    task_binding_sha256: sha256Hex(stableStringify(stableTaskBinding)),
     memory_ids: args.agentContext.memory_ids,
     use_now_memory_ids: args.agentContext.use_now_memory_ids,
     inspect_before_use_memory_ids: args.agentContext.inspect_before_use_memory_ids,
@@ -1011,6 +1161,9 @@ function buildGuideExposureLedger(args: {
     recommended_posture: args.agentContext.recommended_posture,
     authority: args.agentContext.authority,
     tool_selection: args.toolSelection,
+    runtime_verification_v1: args.runtimeVerification,
+    effect_observation_v1: effectObservation,
+    effect_observation_sha256: effectObservation ? sha256Hex(stableStringify(effectObservation)) : null,
   };
 }
 
@@ -1112,6 +1265,7 @@ async function resolveInspectBeforeUseActiveProjectionIds(args: {
   tenant_id: string;
   scope: string;
   memoryPacket: AionisMemoryPacket | null;
+  guidePacket: AionisGuidePacket | null;
   agentContext: AionisAgentContext;
   guideTraceId: string;
 }): Promise<string[]> {
@@ -1121,8 +1275,11 @@ async function resolveInspectBeforeUseActiveProjectionIds(args: {
     tenant_id: args.tenant_id,
     scope: args.scope,
     agentContext: args.agentContext,
+    memoryPacket: args.memoryPacket,
+    guidePacket: args.guidePacket,
     guideTraceId: args.guideTraceId,
     toolSelection: null,
+    runtimeVerification: null,
   });
   const historicalLedgers = await findHistoricalGuideExposureLedgers({
     liteWriteStore: args.liteWriteStore,
@@ -1867,12 +2024,10 @@ export function governExternalMemoryCandidates(
   };
 }
 
-type ProductGuideMemoryWritePort = {
-  commit(body: unknown, options?: {
-    executionTreeDefaultDisabled?: boolean;
-    startedAt?: number;
-  }): Promise<{ response: unknown }>;
-};
+type ProductGuideMemoryWritePort = Pick<
+  MemoryWriteRouteService,
+  "transactionRunner" | "prepare" | "persist" | "finalize"
+>;
 
 export type ProductGuideServiceDependencies = {
   env: Env;
@@ -1888,8 +2043,11 @@ async function persistGuideExposure(args: {
   tenantId: string;
   scope: string;
   agentContext: AionisAgentContext;
+  memoryPacket: AionisMemoryPacket | null;
+  guidePacket: AionisGuidePacket | null;
   guideTraceId: string;
   toolSelection: ProductToolSelectionReceipt | null;
+  runtimeVerification: ProductRuntimeVerificationReceipt | null;
 }): Promise<ProductServiceResult> {
   if (!args.dependencies.memoryWrite) {
     return productServiceDependencyFailure("memory_write_service");
@@ -1899,38 +2057,65 @@ async function persistGuideExposure(args: {
     tenant_id: args.tenantId,
     scope: args.scope,
     agentContext: args.agentContext,
+    memoryPacket: args.memoryPacket,
+    guidePacket: args.guidePacket,
     guideTraceId: args.guideTraceId,
     toolSelection: args.toolSelection,
+    runtimeVerification: args.runtimeVerification,
   });
-  const ledgerSha = sha256Hex(stableStringify(ledger));
+  const ledgerJson = stableStringify(ledger);
+  const ledgerSha = sha256Hex(ledgerJson);
   try {
-    await args.dependencies.memoryWrite.commit({
-    tenant_id: args.tenantId,
-    scope: args.scope,
-    actor: args.parsed.consumer_agent_id ?? args.dependencies.env.LITE_LOCAL_ACTOR_ID,
-    input_text: `Aionis guide exposure ledger ${args.guideTraceId}`,
-    input_sha256: ledgerSha,
-    auto_embed: false,
-    distill: { enabled: false },
-    nodes: [stripUndefined({
-      client_id: args.guideTraceId,
-      type: "evidence",
-      tier: "archive",
-      memory_lane: "shared",
-      producer_agent_id: "aionis-runtime",
-      owner_agent_id: args.parsed.consumer_agent_id ?? args.dependencies.env.LITE_LOCAL_ACTOR_ID,
-      owner_team_id: args.parsed.consumer_team_id,
-      title: "Guide exposure ledger",
-      text_summary: `Guide exposure ledger ${args.guideTraceId}`,
-      salience: 0,
-      importance: 0,
-      confidence: 1,
-      slots: { guide_exposure_v1: ledger, not_agent_facing: true },
-    })],
-    edges: [],
-  }, {
-    executionTreeDefaultDisabled: false,
-    startedAt: performance.now(),
+    const plan = await args.dependencies.memoryWrite.prepare({
+      tenant_id: args.tenantId,
+      scope: args.scope,
+      actor: args.parsed.consumer_agent_id ?? args.dependencies.env.LITE_LOCAL_ACTOR_ID,
+      input_text: `Aionis guide exposure ledger ${args.guideTraceId}`,
+      input_sha256: ledgerSha,
+      auto_embed: false,
+      distill: { enabled: false },
+      nodes: [stripUndefined({
+        client_id: args.guideTraceId,
+        type: "evidence",
+        tier: "archive",
+        memory_lane: "shared",
+        producer_agent_id: "aionis-runtime",
+        owner_agent_id: args.parsed.consumer_agent_id ?? args.dependencies.env.LITE_LOCAL_ACTOR_ID,
+        owner_team_id: args.parsed.consumer_team_id,
+        title: "Guide exposure ledger",
+        text_summary: `Guide exposure ledger ${args.guideTraceId}`,
+        salience: 0,
+        importance: 0,
+        confidence: 1,
+        slots: { guide_exposure_v1: ledger, not_agent_facing: true },
+      })],
+      edges: [],
+    }, {
+      executionTreeDefaultDisabled: false,
+      startedAt: performance.now(),
+    });
+    const out = await args.dependencies.liteWriteStore.withTx(async () => {
+      const persisted = await args.dependencies.memoryWrite!.persist(plan);
+      await args.dependencies.liteWriteStore.insertProductGuideReceipt({
+        tenantId: args.tenantId,
+        scope: args.scope,
+        guideTraceId: args.guideTraceId,
+        runId: ledger.run_id,
+        consumerAgentId: ledger.consumer_agent_id,
+        consumerTeamId: ledger.consumer_team_id,
+        querySha256: ledger.query_sha256,
+        contextSha256: ledger.context_sha256,
+        ledgerSha256: ledgerSha,
+        ledgerJson,
+        commitId: persisted.commit_id,
+      });
+      return persisted;
+    });
+    await args.dependencies.memoryWrite.finalize(plan, out).catch((error) => {
+      process.emitWarning(
+        `Guide exposure post-commit finalization failed: ${error instanceof Error ? error.message : String(error)}`,
+        { code: "AIONIS_GUIDE_POST_COMMIT_FAILED" },
+      );
     });
   } catch (error) {
     return productServiceDependencyFailure(
@@ -1973,6 +2158,10 @@ async function executeProductGuide(args: {
 
   const guideBody = objectValue(guideResult.body) ?? {};
   const toolSelection = buildProductToolSelectionReceipt({ parsed, guideBody });
+  const runtimeVerification = buildProductRuntimeVerificationReceipt({
+    guideBody,
+    runId: parsed.run_id ?? null,
+  });
   const recall = objectValue(guideBody.recall) ?? {};
   let memoryPacket: AionisMemoryPacket | null = recall.aionis_memory_packet
     ? AionisMemoryPacketSchema.parse(recall.aionis_memory_packet)
@@ -2084,7 +2273,7 @@ async function executeProductGuide(args: {
     claim_projection: claimLedgerProjection,
     render_detail: agentContextMode === "compact_agent"
       ? "compact"
-      : fullPowerExecutionContextMerged || claimLedgerContextProjectionApplied ? "full_power" : "standard",
+      : fullPowerExecutionContextMerged || claimLedgerContextProjectionApplied ? "full_power" : null,
   });
   const guideTraceId = buildGuideTraceId();
   let activeProjectionApplied = false;
@@ -2096,6 +2285,7 @@ async function executeProductGuide(args: {
       tenant_id: tenantId,
       scope,
       memoryPacket,
+      guidePacket,
       agentContext,
       guideTraceId,
     });
@@ -2149,8 +2339,11 @@ async function executeProductGuide(args: {
     tenantId,
     scope,
     agentContext,
+    memoryPacket,
+    guidePacket,
     guideTraceId,
     toolSelection,
+    runtimeVerification,
   });
   if (!exposureWrite.ok) return exposureWrite;
 
@@ -2220,6 +2413,12 @@ async function executeProductGuide(args: {
 export function createProductGuideService(
   dependencies: ProductGuideServiceDependencies,
 ): ProductServices["guide"] {
+  if (
+    dependencies.memoryWrite
+    && dependencies.memoryWrite.transactionRunner() !== dependencies.liteWriteStore.transactionRunner()
+  ) {
+    throw new Error("product guide memory write service must share the guide receipt transaction runner");
+  }
   return {
     async execute(parsed, context) {
       try {

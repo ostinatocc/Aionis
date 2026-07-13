@@ -104,6 +104,8 @@ import {
 } from "@aionis/sdk";
 
 const marker = ${JSON.stringify(SDK_MARKER)};
+const taskFamily = "external_package_entrypoint";
+const taskSignature = "external-package-sdk-smoke:" + (process.env.AIONIS_EXTERNAL_SMOKE_RUN_ID || "external-package-sdk-smoke");
 
 function assertCondition(condition, message) {
   if (!condition) throw new Error(message);
@@ -136,12 +138,20 @@ const client = createAionisClient({
 });
 
 await client.health();
-const beforeGuide = await client.guide({
+const beforeGuide = await client.execution.guideForRole({
+  agent_id: "external-sdk-agent",
+  role: "reviewer",
+  run_id: runId + ":before",
+  task_signature: taskSignature,
+  task_family: taskFamily,
   query_text: marker + " before memory exists",
-  consumer_agent_id: "external-sdk-agent",
-  limit: 4,
+  mode: "full_power",
+  context_mode: "compact_agent",
+  limit: 10,
   include_packets: true,
 });
+const beforeContext = agentContextFromGuide(beforeGuide);
+assertCondition(beforeContext.actionable_history_used === false, "SDK packaged fresh task unexpectedly started with actionable history");
 
 const remembered = await client.remember({
   kind: "project_context",
@@ -154,48 +164,89 @@ const remembered = await client.remember({
   slots: { source: "external_package_smoke" },
 });
 const memoryId = firstNodeId(remembered, "external SDK remember");
-
-const afterGuide = await client.guide({
-  query_text: marker + " continue with packaged SDK",
+const resolvedMemory = await client.resolveMemory({
+  uri: "aionis://default/" + encodeURIComponent(scope) + "/topic/" + encodeURIComponent(memoryId),
   consumer_agent_id: "external-sdk-agent",
-  limit: 6,
+  include_meta: true,
+  include_slots: true,
+});
+const resolvedNode = asRecord(resolvedMemory.node);
+assertCondition(resolvedNode?.id === memoryId, "SDK packaged remember was not synchronously resolvable");
+assertCondition(String(resolvedNode?.text_summary ?? "").includes(marker), "SDK packaged resolved memory missing marker");
+
+const handoff = await client.execution.handoff({
+  operation_id: "external-package-sdk-handoff:" + runId,
+  agent_id: "external-sdk-agent",
+  role: "worker",
+  run_id: runId + ":handoff",
+  task_signature: taskSignature,
+  task_family: taskFamily,
+  memory_lane: "private",
+  title: "External package SDK continuity handoff",
+  summary: marker + ": continue the packaged SDK path from the committed handoff.",
+  handoff_text: marker + ": recover this structured handoff without semantic embeddings.",
+  target_files: ["README.md"],
+  continuation_hint: "Continue the packaged SDK entrypoint smoke.",
+  acceptance_checks: ["structured handoff is exposed in actionable agent context"],
+  evidence_ref: "evidence://external-package-sdk/" + runId + "/handoff",
+});
+const handoffEnvelope = asRecord(handoff.handoff);
+assertCondition(handoffEnvelope, "SDK packaged execution handoff was not stored");
+const storedHandoff = asRecord(handoffEnvelope.handoff);
+const handoffMemoryId = storedHandoff?.id;
+assertCondition(typeof handoffMemoryId === "string" && handoffMemoryId.length > 0, "external SDK handoff did not return node id");
+
+const afterGuide = await client.execution.guideForRole({
+  agent_id: "external-sdk-agent",
+  role: "reviewer",
+  run_id: runId + ":after",
+  task_signature: taskSignature,
+  task_family: taskFamily,
+  query_text: marker + " continue with packaged SDK",
+  mode: "full_power",
+  context_mode: "compact_agent",
+  limit: 10,
   include_packets: true,
 });
 const context = agentContextFromGuide(afterGuide);
 const useNowMemoryIds = textArray(context.use_now_memory_ids);
 const promptText = String(context.prompt_text ?? "");
+const sourceMap = asRecord(afterGuide.source_map);
+const internalSurfaces = textArray(sourceMap?.internal_surfaces_used);
 assertCondition(context.contract_version === "aionis_agent_context_v1", "SDK packaged guide missing agent_context");
 assertCondition(context.actionable_history_used === true, "SDK packaged guide did not use actionable history");
-assertCondition(useNowMemoryIds.includes(memoryId), "SDK packaged guide did not expose remembered memory");
+assertCondition(useNowMemoryIds.includes(handoffMemoryId), "SDK packaged guide did not expose structured handoff memory");
 assertCondition(promptText.includes(marker) || textArray(context.use_now).some((entry) => entry.includes(marker)), "SDK packaged guide missing marker");
+assertCondition(internalSurfaces.includes("planning_context_embedding_unavailable"), "SDK packaged guide did not prove the no-embedding path");
+assertCondition(internalSurfaces.includes("full_power_agent_context_merge"), "SDK packaged guide did not merge structured handoff context");
 
 const feedback = await client.feedback(feedbackFromGuide({
   guide: afterGuide,
   run_id: runId + ":feedback",
   outcome: "positive",
-  reason: "External package SDK smoke used the exposed memory successfully.",
-  used_memory_ids: [memoryId],
+  reason: "External package SDK smoke used the exposed structured handoff successfully.",
+  used_memory_ids: [handoffMemoryId],
 }));
 
 const measure = await client.measure(measureInputFromGuideLoop({
   task: {
     task_id: "task:" + runId,
     run_id: runId,
-    task_signature: "external-package-sdk-smoke",
-    task_family: "external_package_entrypoint",
+    task_signature: taskSignature,
+    task_family: taskFamily,
   },
   before_guide: beforeGuide,
   after_guide: afterGuide,
   feedback_result: feedback,
   sufficient_evidence: true,
-  evidence_ids: ["memory:" + memoryId],
+  evidence_ids: ["memory:" + handoffMemoryId],
 }));
 assertCondition(measure.contract_version === "aionis_measure_result_v1", "SDK packaged measure missing contract");
 
 const snapshot = await client.snapshot(snapshotInputFromGuideLoop({
   run_id: runId,
-  task_signature: "external-package-sdk-smoke",
-  task_family: "external_package_entrypoint",
+  task_signature: taskSignature,
+  task_family: taskFamily,
   guide: afterGuide,
   measure_result: measure,
   include_markdown: false,
@@ -206,8 +257,10 @@ assertCondition(operatorSnapshot?.contract_version === "aionis_operator_snapshot
 process.stdout.write(JSON.stringify({
   ok: true,
   package: "@aionis/sdk",
-  memory_id: memoryId,
+  ordinary_memory_id: memoryId,
+  handoff_memory_id: handoffMemoryId,
   use_now_memory_ids: useNowMemoryIds,
+  internal_surfaces: internalSurfaces,
   measure_contract: measure.contract_version,
   snapshot_contract: operatorSnapshot.contract_version
 }, null, 2) + "\\n");

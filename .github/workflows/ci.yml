@@ -43,8 +43,7 @@ jobs:
           node --input-type=module -e '
             import fs from "node:fs";
             const releaseTrain = JSON.parse(fs.readFileSync("release-train.json", "utf8"));
-            const candidateRef = `release/sdk-${releaseTrain.packages.sdk.version}`;
-            const fallbackRef = releaseTrain.status === "candidate" ? candidateRef : "main";
+            const fallbackRef = releaseTrain.packages.sdk.source_ref || "main";
             fs.appendFileSync(process.env.GITHUB_OUTPUT, `ref=${process.env.SDK_REF_OVERRIDE || fallbackRef}\n`);
           '
 
@@ -61,8 +60,45 @@ jobs:
       - name: Typecheck
         run: npm run -s typecheck
 
+      - name: Release artifact gate
+        run: node scripts/ci/release-artifact-gate.mjs --check
+        env:
+          AIONIS_RELEASE_SDK_REPO: ${{ github.workspace }}/external/aionis-sdk
+
       - name: Release docs version check
         run: node --test scripts/ci/release-version-docs.test.mjs
 
+      - name: Standalone SDK contract check
+        run: npm run -s sdk:check
+
+      - name: Runtime complexity gate
+        run: npm run -s complexity:check
+
       - name: Lite test suite
         run: npm run -s lite:test
+
+      - name: Lite public smoke
+        run: npm run -s lite:smoke
+
+  minimum-node:
+    name: Node 22 minimum compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up minimum supported Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.13.0"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run -s typecheck
+
+      - name: Lite public smoke
+        run: npm run -s lite:smoke

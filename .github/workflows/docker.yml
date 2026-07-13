@@ -5,21 +5,324 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      release_ref:
+        description: Exact immutable Runtime tag to verify and publish (for example v0.3.5)
+        required: true
+        type: string
+      publish:
+        description: Publish the verified digest to GHCR after every gate passes
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: docker-release-${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref_name }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
-  docker:
-    name: Build and publish Docker image
+  verify:
+    name: Verify exact release candidate
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      AIONIS_SDK_REPO: ${{ github.workspace }}/external/aionis-sdk
+    outputs:
+      publish_latest: ${{ steps.release-metadata.outputs.publish_latest }}
+      runtime_tag: ${{ steps.release-metadata.outputs.runtime_tag }}
+      runtime_commit: ${{ steps.release-metadata.outputs.runtime_commit }}
     steps:
-      - name: Checkout
+      - name: Checkout Runtime
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref_name }}
+          fetch-depth: 0
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Read immutable package refs
+        id: release-metadata
+        run: |
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const train = JSON.parse(fs.readFileSync("release-train.json", "utf8"));
+            const output = process.env.GITHUB_OUTPUT;
+            for (const key of ["cli", "create", "sdk", "mcp", "aifs", "claude_code", "substrate"]) {
+              fs.appendFileSync(output, `${key}_ref=${train.packages[key].source_ref}\n`);
+            }
+            fs.appendFileSync(output, `runtime_tag=${train.runtime.source_tag}\n`);
+            fs.appendFileSync(output, `publish_latest=${train.status === "stable"}\n`);
+          '
+          echo "runtime_commit=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout CLI package
+        uses: actions/checkout@v4
+        with:
+          repository: ostinatocc/aionis-cli
+          ref: ${{ steps.release-metadata.outputs.cli_ref }}
+          path: external/aionis-cli
+
+      - name: Checkout installer package
+        uses: actions/checkout@v4
+        with:
+          repository: ostinatocc/aionis-create
+          ref: ${{ steps.release-metadata.outputs.create_ref }}
+          path: external/aionis-create
+
+      - name: Checkout standalone SDK
+        uses: actions/checkout@v4
+        with:
+          repository: ostinatocc/aionis-sdk
+          ref: ${{ steps.release-metadata.outputs.sdk_ref }}
+          path: external/aionis-sdk
+
+      - name: Checkout MCP package
+        uses: actions/checkout@v4
+        with:
+          repository: ostinatocc/aionis-mcp
+          ref: ${{ steps.release-metadata.outputs.mcp_ref }}
+          path: external/aionis-mcp
+
+      - name: Checkout AIFS package
+        uses: actions/checkout@v4
+        with:
+          repository: ostinatocc/aionis-aifs
+          ref: ${{ steps.release-metadata.outputs.aifs_ref }}
+          path: external/aionis-aifs
+
+      - name: Checkout Claude Code package
+        uses: actions/checkout@v4
+        with:
+          repository: ostinatocc/aionis-claude-code
+          ref: ${{ steps.release-metadata.outputs.claude_code_ref }}
+          path: external/aionis-claude-code
+
+      - name: Checkout Substrate package
+        uses: actions/checkout@v4
+        with:
+          repository: ostinatocc/AionisSubstrate
+          ref: ${{ steps.release-metadata.outputs.substrate_ref }}
+          path: external/AionisSubstrate
+
+      - name: Checkout dispatch verification harness
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: external/release-harness
+          fetch-depth: 0
+
+      - name: Verify dispatch harness commit
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED_RUNTIME_COMMIT: ${{ steps.release-metadata.outputs.runtime_commit }}
+        run: |
+          set -euo pipefail
+          actual_harness_commit="$(git -C external/release-harness rev-parse HEAD)"
+          test "${actual_harness_commit}" = "${GITHUB_SHA}"
+          while IFS= read -r changed_path; do
+            case "${changed_path}" in
+              .github/workflows/docker.yml|scripts/ci/release-workflow-contract.test.mjs|scripts/e2e/external-package-entrypoint-smoke.ts|scripts/e2e/fresh-install-smoke.ts)
+                ;;
+              *)
+                printf 'dispatch harness contains non-verification change: %s\n' "${changed_path}" >&2
+                exit 1
+                ;;
+            esac
+          done < <(git -C external/release-harness diff --name-only "${EXPECTED_RUNTIME_COMMIT}" "${actual_harness_commit}")
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify release metadata and exact tag
+        run: |
+          set -euo pipefail
+          actual_tag="$(git describe --tags --exact-match HEAD)"
+          test "${actual_tag}" = "${AIONIS_RELEASE_EXPECTED_TAG}"
+          node scripts/ci/release-artifact-gate.mjs \
+            --check \
+            --require-package-roots \
+            --expect-tag "${AIONIS_RELEASE_EXPECTED_TAG}"
+        env:
+          AIONIS_RELEASE_EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref_name }}
+          AIONIS_RELEASE_CLI_REPO: ${{ github.workspace }}/external/aionis-cli
+          AIONIS_RELEASE_CREATE_REPO: ${{ github.workspace }}/external/aionis-create
+          AIONIS_RELEASE_SDK_REPO: ${{ github.workspace }}/external/aionis-sdk
+          AIONIS_RELEASE_MCP_REPO: ${{ github.workspace }}/external/aionis-mcp
+          AIONIS_RELEASE_AIFS_REPO: ${{ github.workspace }}/external/aionis-aifs
+          AIONIS_RELEASE_CLAUDE_CODE_REPO: ${{ github.workspace }}/external/aionis-claude-code
+          AIONIS_RELEASE_SUBSTRATE_REPO: ${{ github.workspace }}/external/AionisSubstrate
+
+      - name: Typecheck
+        run: npm run -s typecheck
+
+      - name: SDK and structural gates
+        run: |
+          npm run -s sdk:check
+          npm run -s complexity:check
+          node --test scripts/ci/release-version-docs.test.mjs
+
+      - name: Pack exact SDK, MCP, and installer artifacts
+        id: package-artifacts
+        env:
+          PACK_DIR: ${{ runner.temp }}/aionis-release-packages
+        run: |
+          set -euo pipefail
+          mkdir -p "${PACK_DIR}"
+          pack_exact() {
+            local output_name="$1"
+            local package_dir="$2"
+            (
+              cd "${package_dir}"
+              npm ci --ignore-scripts
+            )
+            local filename
+            filename="$(
+              cd "${package_dir}"
+              AIONIS_RUNTIME_REPO="${GITHUB_WORKSPACE}" \
+                npm pack --silent --pack-destination "${PACK_DIR}" | tail -n 1
+            )"
+            filename="$(basename "${filename}")"
+            test -n "${filename}"
+            test -f "${PACK_DIR}/${filename}"
+            printf '%s_spec=%s/%s\n' "${output_name}" "${PACK_DIR}" "${filename}" >> "${GITHUB_OUTPUT}"
+          }
+          pack_exact sdk "${GITHUB_WORKSPACE}/external/aionis-sdk"
+          pack_exact mcp "${GITHUB_WORKSPACE}/external/aionis-mcp"
+          pack_exact create "${GITHUB_WORKSPACE}/external/aionis-create"
+
+      - name: Full Lite test suite
+        run: npm run -s lite:test
+
+      - name: Lite public smoke
+        run: |
+          set -euo pipefail
+          command -v setsid >/dev/null
+
+          smoke_pid=""
+          cleanup_smoke_group() {
+            if [[ -z "${smoke_pid}" ]]; then
+              return 0
+            fi
+
+            kill -TERM -- "-${smoke_pid}" >/dev/null 2>&1 || true
+            for _ in $(seq 1 50); do
+              if ! kill -0 -- "-${smoke_pid}" >/dev/null 2>&1; then
+                smoke_pid=""
+                return 0
+              fi
+              sleep 0.1
+            done
+
+            kill -KILL -- "-${smoke_pid}" >/dev/null 2>&1 || true
+            for _ in $(seq 1 20); do
+              if ! kill -0 -- "-${smoke_pid}" >/dev/null 2>&1; then
+                smoke_pid=""
+                return 0
+              fi
+              sleep 0.1
+            done
+
+            echo "Lite smoke process group ${smoke_pid} did not terminate" >&2
+            return 1
+          }
+
+          trap 'cleanup_smoke_group || true' EXIT
+          setsid npm run -s lite:smoke &
+          smoke_pid=$!
+          if wait "${smoke_pid}"; then
+            smoke_status=0
+          else
+            smoke_status=$?
+          fi
+
+          cleanup_status=0
+          cleanup_smoke_group || cleanup_status=$?
+          trap - EXIT
+          if [[ "${smoke_status}" -ne 0 ]]; then
+            exit "${smoke_status}"
+          fi
+          exit "${cleanup_status}"
+
+      - name: Cross-package Runtime, SDK, MCP, and installer smoke
+        run: |
+          set -euo pipefail
+          runtime_tmp="$(mktemp -d)"
+          runtime_log="${RUNNER_TEMP}/aionis-cross-package-runtime.log"
+          PORT=3210 \
+          AIONIS_LISTEN_HOST=127.0.0.1 \
+          EMBEDDING_PROVIDER=none \
+          LITE_WRITE_SQLITE_PATH="${runtime_tmp}/write.sqlite" \
+          LITE_REPLAY_SQLITE_PATH="${runtime_tmp}/replay.sqlite" \
+          node --import tsx src/index.ts >"${runtime_log}" 2>&1 &
+          runtime_pid=$!
+          cleanup() {
+            kill -TERM "${runtime_pid}" >/dev/null 2>&1 || true
+            wait "${runtime_pid}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          for _ in $(seq 1 120); do
+            if curl --fail --silent http://127.0.0.1:3210/readyz >/dev/null; then break; fi
+            if ! kill -0 "${runtime_pid}" >/dev/null 2>&1; then
+              cat "${runtime_log}" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:3210/readyz >/dev/null || {
+            cat "${runtime_log}" >&2
+            exit 1
+          }
+          AIONIS_BASE_URL=http://127.0.0.1:3210 \
+          AIONIS_EXTERNAL_SMOKE_SDK_SPEC="${{ steps.package-artifacts.outputs.sdk_spec }}" \
+          AIONIS_EXTERNAL_SMOKE_MCP_SPEC="${{ steps.package-artifacts.outputs.mcp_spec }}" \
+          AIONIS_EXTERNAL_SMOKE_CREATE_SPEC="${{ steps.package-artifacts.outputs.create_spec }}" \
+          node --import tsx "${GITHUB_WORKSPACE}/${{ github.event_name == 'workflow_dispatch' && 'external/release-harness/scripts/e2e/external-package-entrypoint-smoke.ts' || 'scripts/e2e/external-package-entrypoint-smoke.ts' }}"
+
+      - name: Fresh install from the exact Runtime tag
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+        run: |
+          AIONIS_FRESH_INSTALL_CREATE_SPEC="${{ steps.package-artifacts.outputs.create_spec }}" \
+          AIONIS_FRESH_INSTALL_MCP_SPEC="${{ steps.package-artifacts.outputs.mcp_spec }}" \
+          AIONIS_FRESH_INSTALL_SDK_SPEC="${{ steps.package-artifacts.outputs.sdk_spec }}" \
+          AIONIS_FRESH_INSTALL_REPO="https://github.com/${GITHUB_REPOSITORY}.git" \
+          AIONIS_FRESH_INSTALL_RUNTIME_REF="${{ steps.release-metadata.outputs.runtime_tag }}" \
+          node --import tsx "${GITHUB_WORKSPACE}/${{ github.event_name == 'workflow_dispatch' && 'external/release-harness/scripts/e2e/fresh-install-smoke.ts' || 'scripts/e2e/fresh-install-smoke.ts' }}"
+
+  docker:
+    name: Build once, verify digest, and promote Docker image
+    needs: verify
+    if: >-
+      needs.verify.result == 'success' &&
+      (github.ref_type == 'tag' ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish == true))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/aionis
+    steps:
+      - name: Checkout exact Runtime release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.runtime_tag }}
+
+      - name: Verify Docker source commit
+        env:
+          EXPECTED_RUNTIME_COMMIT: ${{ needs.verify.outputs.runtime_commit }}
+        run: |
+          set -euo pipefail
+          actual_commit="$(git rev-parse HEAD)"
+          test "${actual_commit}" = "${EXPECTED_RUNTIME_COMMIT}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -35,19 +338,108 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/aionis
+          images: ${{ env.REGISTRY_IMAGE }}
+          flavor: latest=false
           tags: |
-            type=ref,event=tag
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=${{ needs.verify.outputs.runtime_tag }}
+            type=raw,value=latest,enable=${{ needs.verify.outputs.publish_latest == 'true' }}
+          labels: |
+            org.opencontainers.image.version=${{ needs.verify.outputs.runtime_tag }}
+            org.opencontainers.image.revision=${{ needs.verify.outputs.runtime_commit }}
 
-      - name: Build and push
+      - name: Define immutable provenance subject
+        id: build-subject
+        env:
+          RUNTIME_TAG: ${{ needs.verify.outputs.runtime_tag }}
+          RUNTIME_COMMIT: ${{ needs.verify.outputs.runtime_commit }}
+        run: |
+          set -euo pipefail
+          subject_tag="build-${RUNTIME_TAG}-${RUNTIME_COMMIT}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if [[ ! "${subject_tag}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "invalid immutable build subject tag: ${subject_tag}" >&2
+            exit 1
+          fi
+          echo "ref=${REGISTRY_IMAGE}:${subject_tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build immutable amd64 release artifact
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
+          tags: ${{ steps.build-subject.outputs.ref }}
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Verify immutable build subject digest
+        env:
+          BUILD_SUBJECT_REF: ${{ steps.build-subject.outputs.ref }}
+          VERIFIED_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          subject_digest=""
+          for _ in $(seq 1 30); do
+            subject_digest="$(docker buildx imagetools inspect "${BUILD_SUBJECT_REF}" 2>/dev/null | awk '$1 == "Digest:" { print $2; exit }' || true)"
+            if [[ "${subject_digest}" == "${VERIFIED_DIGEST}" ]]; then
+              break
+            fi
+            sleep 1
+          done
+          if [[ "${subject_digest}" != "${VERIFIED_DIGEST}" ]]; then
+            echo "${BUILD_SUBJECT_REF} points to ${subject_digest}, expected ${VERIFIED_DIGEST}" >&2
+            exit 1
+          fi
+
+      - name: Smoke the exact published digest
+        env:
+          VERIFIED_IMAGE_REF: ${{ env.REGISTRY_IMAGE }}@${{ steps.build.outputs.digest }}
+        run: bash scripts/ci/docker-release-smoke.sh "${VERIFIED_IMAGE_REF}"
+
+      - name: Promote the verified digest to release tags
+        env:
+          VERIFIED_DIGEST: ${{ steps.build.outputs.digest }}
+          RELEASE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${VERIFIED_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "invalid verified image digest: ${VERIFIED_DIGEST}" >&2
+            exit 1
+          fi
+
+          tag_args=()
+          release_tags=()
+          while IFS= read -r tag; do
+            if [[ -n "${tag}" ]]; then
+              tag_args+=(--tag "${tag}")
+              release_tags+=("${tag}")
+            fi
+          done <<< "${RELEASE_TAGS}"
+          if [[ ${#release_tags[@]} -eq 0 ]]; then
+            echo "Docker metadata produced no release tags" >&2
+            exit 1
+          fi
+
+          verified_image="${REGISTRY_IMAGE}@${VERIFIED_DIGEST}"
+
+          for tag in "${release_tags[@]}"; do
+            existing_digest="$(docker buildx imagetools inspect "${tag}" 2>/dev/null | awk '$1 == "Digest:" { print $2; exit }' || true)"
+            if [[ -n "${existing_digest}" && "${existing_digest}" != "${VERIFIED_DIGEST}" ]]; then
+              echo "refusing to replace existing ${tag} digest ${existing_digest} with ${VERIFIED_DIGEST}" >&2
+              exit 1
+            fi
+          done
+
+          docker buildx imagetools create "${tag_args[@]}" "${verified_image}"
+
+          for tag in "${release_tags[@]}"; do
+            promoted_digest="$(docker buildx imagetools inspect "${tag}" | awk '$1 == "Digest:" { print $2; exit }')"
+            if [[ "${promoted_digest}" != "${VERIFIED_DIGEST}" ]]; then
+              echo "${tag} points to ${promoted_digest}, expected ${VERIFIED_DIGEST}" >&2
+              exit 1
+            fi
+          done

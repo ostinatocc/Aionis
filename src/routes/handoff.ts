@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import stableStringify from "fast-json-stable-stringify";
 import { assertLocalStoreRuntimeEdition } from "../app/edition.js";
 import type { Env } from "../config.js";
 import { createEmbeddingSurfacePolicy, type EmbeddingSurfacePolicy } from "../embeddings/surface-policy.js";
@@ -9,9 +11,10 @@ import { applyAutoExecutionTreeFromSlots, type AutoExecutionTreeApplyResult } fr
 import { buildLiteLearningControlRuntimeProviders } from "../app/learning-control-runtime-providers.js";
 import {
   readExecutionContinuitySlotFields,
+  readExecutionStateSlot,
+  readExecutionTransitionsSlot,
   readExecutionTreeSlot,
 } from "../memory/execution-slot-surface.js";
-import { applyExecutionContinuityTransitionsFromSlots } from "../kernel/execution-continuity-kernel.js";
 import { applyExecutionTreeOperationsFromSlots } from "../kernel/execution-continuity-kernel.js";
 import {
   resolveNodeAcceptanceChecks,
@@ -23,9 +26,16 @@ import type { HandoffRecoverInput, HandoffStoreInput } from "../memory/schemas.j
 import { applyMemoryWrite, prepareMemoryWrite } from "../memory/write.js";
 import { HandoffRecoverRequest, HandoffStoreRequest } from "../memory/schemas.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
+import type { SqliteTransactionRunner } from "../store/sqlite-transaction-runner.js";
 import type { AuthPrincipal } from "../util/auth.js";
 import type { InflightGateToken } from "../util/inflight_gate.js";
-import { commitLitePreparedWriteWithProjection } from "../memory/lite-projected-write-commit.js";
+import { HttpError } from "../util/http.js";
+import { sha256Hex } from "../util/crypto.js";
+import {
+  completeLiteInlineEmbeddings,
+  persistLitePreparedWrite,
+  prepareLiteProjectedWrite,
+} from "../memory/lite-projected-write-commit.js";
 
 type HandoffRouteKind = "handoff_store" | "handoff_recover";
 
@@ -46,6 +56,38 @@ type HandoffWriteBodyNodeLike = {
 type PreparedHandoffWrite = Awaited<ReturnType<typeof prepareMemoryWrite>>;
 type HandoffWriteResult = Awaited<ReturnType<typeof applyMemoryWrite>>;
 
+const HANDOFF_STORE_OPERATION_KIND = "handoff_store_v1";
+const HANDOFF_STORE_RESULT_CONTRACT_VERSION = "aionis_handoff_store_result_v1";
+
+type HandoffStoreResult = Record<string, unknown> & {
+  contract_version: typeof HANDOFF_STORE_RESULT_CONTRACT_VERSION;
+  operation_id: string;
+  tenant_id: string;
+  scope: string;
+  commit_id: string;
+};
+
+export type HandoffStorePlan = {
+  body: HandoffStoreInput;
+  writeBody: ReturnType<typeof buildHandoffWriteBody>;
+  prepared: PreparedHandoffWrite;
+  internalExecutionTransitions: boolean;
+  projectionPrepared: boolean;
+  projectionBase: { id: string; commit_hash: string } | null;
+};
+
+export type HandoffStoreOptions = {
+  principal?: AuthPrincipal | null;
+  deferProjection?: boolean;
+};
+
+export type PersistedHandoffStore = {
+  out: HandoffWriteResult;
+  appliedExecutionTransitions: Array<Record<string, unknown>> | undefined;
+  appliedExecutionTreeOperations: Array<Record<string, unknown>> | undefined;
+  appliedAutoExecutionTree: AutoExecutionTreeApplyResult | null;
+};
+
 export type HandoffRouteServiceArgs = {
   env: Env;
   embedder: EmbeddingProvider | null;
@@ -56,7 +98,12 @@ export type HandoffRouteServiceArgs = {
 };
 
 export type HandoffRouteService = {
-  store: (body: HandoffStoreInput, options?: { principal?: AuthPrincipal | null }) => Promise<unknown>;
+  transactionRunner(): SqliteTransactionRunner;
+  prepareStore: (body: HandoffStoreInput, options?: HandoffStoreOptions) => Promise<HandoffStorePlan>;
+  persistStore: (plan: HandoffStorePlan) => Promise<PersistedHandoffStore>;
+  receiptStore: (plan: HandoffStorePlan, persisted: PersistedHandoffStore) => unknown;
+  finalizeStore: (plan: HandoffStorePlan, persisted: PersistedHandoffStore) => Promise<unknown>;
+  store: (body: HandoffStoreInput, options?: HandoffStoreOptions) => Promise<unknown>;
   recover: (body: HandoffRecoverInput, options?: { principal?: AuthPrincipal | null }) => Promise<unknown>;
 };
 
@@ -83,6 +130,97 @@ function asSlots(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
+function sameProjectionBase(
+  left: { id: string; commit_hash: string } | null,
+  right: { id: string; commit_hash: string } | null,
+): boolean {
+  return left?.id === right?.id && left?.commit_hash === right?.commit_hash;
+}
+
+function asNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function assertHandoffOperationMatches(args: {
+  operationId: string;
+  requestSha256: string;
+  storedRequestSha256: string;
+}): void {
+  if (args.requestSha256 === args.storedRequestSha256) return;
+  throw new HttpError(
+    409,
+    "handoff_operation_id_conflict",
+    "operation_id was already used for a different handoff/store request",
+    { operation_id: args.operationId },
+  );
+}
+
+function handoffOperationReceiptCorrupt(operationId: string): never {
+  throw new HttpError(
+    500,
+    "handoff_operation_receipt_corrupt",
+    "stored handoff operation receipt is invalid",
+    { operation_id: operationId },
+  );
+}
+
+function parseStoredHandoffReceipt(args: {
+  raw: string;
+  operationId: string;
+  tenantId: string;
+  scope: string;
+  commitId: string | null;
+}): HandoffStoreResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(args.raw);
+  } catch {
+    return handoffOperationReceiptCorrupt(args.operationId);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return handoffOperationReceiptCorrupt(args.operationId);
+  }
+  const receipt = parsed as Record<string, unknown>;
+  if (
+    receipt.contract_version !== HANDOFF_STORE_RESULT_CONTRACT_VERSION
+    || receipt.operation_id !== args.operationId
+    || receipt.tenant_id !== args.tenantId
+    || receipt.scope !== args.scope
+    || !args.commitId
+    || receipt.commit_id !== args.commitId
+  ) {
+    return handoffOperationReceiptCorrupt(args.operationId);
+  }
+  return receipt as HandoffStoreResult;
+}
+
+function applyHandoffExecutionTransitionsFromSlots(args: {
+  executionStateStore?: ExecutionStateStore | null;
+  writeSlots: Record<string, unknown> | null;
+  allowInternalExpectedRevision: boolean;
+}): Array<Record<string, unknown>> | undefined {
+  const executionState = readExecutionStateSlot(args.writeSlots);
+  if (!args.executionStateStore || !executionState) return undefined;
+  const transitions = readExecutionTransitionsSlot(args.writeSlots);
+  const existing = args.executionStateStore.get(executionState.scope, executionState.state_id);
+  const initializedHere = !existing;
+  args.executionStateStore.initialize(executionState);
+  if (!transitions) return undefined;
+
+  const applied: Array<Record<string, unknown>> = [];
+  for (const parsed of transitions) {
+    const current = args.executionStateStore.get(parsed.scope, parsed.state_id);
+    const transition = parsed.expected_revision == null
+      && current
+      && (initializedHere || args.allowInternalExpectedRevision)
+      ? { ...parsed, expected_revision: current.revision }
+      : parsed;
+    args.executionStateStore.applyTransition(transition);
+    applied.push(transition as Record<string, unknown>);
+  }
+  return applied;
+}
+
 export function createHandoffRouteService(args: HandoffRouteServiceArgs): HandoffRouteService {
   const {
     env,
@@ -92,35 +230,111 @@ export function createHandoffRouteService(args: HandoffRouteServiceArgs): Handof
     executionStateStore,
     executionTreeStore,
   } = args;
+  const atomicRunner = liteWriteStore.transactionRunner();
+  if (executionStateStore && executionStateStore.transactionRunner !== atomicRunner) {
+    throw new Error("handoff execution state store must share the Lite write transaction runner");
+  }
+  if (executionTreeStore && executionTreeStore.transactionRunner !== atomicRunner) {
+    throw new Error("handoff execution tree store must share the Lite write transaction runner");
+  }
   assertLocalStoreRuntimeEdition(env, "local-store handoff route service");
   const embeddingSurfacePolicy =
     embeddingSurfacePolicyArg ?? createEmbeddingSurfacePolicy({ providerConfigured: !!embedder });
   const writeEmbedder = embeddingSurfacePolicy.providerFor("write_auto_embed", embedder);
   const learningControlProviders = buildLiteLearningControlRuntimeProviders(env);
-  const buildPrincipalHandoffWriteBody = (body: HandoffStoreInput, principal: AuthPrincipal | null) => {
-    const actorId = typeof body.actor === "string" && body.actor.trim().length > 0 ? body.actor.trim() : null;
-    return buildHandoffWriteBody({
+  const effectiveHandoffStoreBody = (
+    body: HandoffStoreInput,
+    principal: AuthPrincipal | null,
+  ): HandoffStoreInput => {
+    const principalAgentId = asNonEmptyString(principal?.agent_id);
+    const principalTeamId = asNonEmptyString(principal?.team_id);
+    const principalSubjectId = principalAgentId ?? principalTeamId;
+    if (principal && !principalSubjectId) {
+      throw new HttpError(
+        403,
+        "principal_subject_required",
+        "an authenticated agent or team identity is required for attributed handoff operations",
+      );
+    }
+    const actorId = principalSubjectId ?? asNonEmptyString(body.actor);
+    const producerAgentId = principal
+      ? principalAgentId ?? principalSubjectId!
+      : actorId ?? asNonEmptyString(body.producer_agent_id);
+    const ownerAgentId = principal
+      ? principalAgentId
+      : actorId ?? asNonEmptyString(body.owner_agent_id);
+    const ownerTeamId = principal
+      ? principalTeamId
+      : asNonEmptyString(body.owner_team_id);
+    return HandoffStoreRequest.parse({
       ...body,
-      ...(principal?.agent_id ? { producer_agent_id: principal.agent_id } : actorId ? { producer_agent_id: actorId } : {}),
-      ...(principal?.agent_id ? { owner_agent_id: principal.agent_id } : actorId ? { owner_agent_id: actorId } : {}),
-      ...(!principal?.agent_id && principal?.team_id ? { owner_team_id: principal.team_id } : {}),
+      tenant_id: principal?.tenant_id ?? body.tenant_id ?? env.MEMORY_TENANT_ID,
+      scope: body.scope ?? env.MEMORY_SCOPE,
+      actor: actorId ?? undefined,
+      producer_agent_id: producerAgentId ?? undefined,
+      owner_agent_id: ownerAgentId ?? undefined,
+      owner_team_id: ownerTeamId ?? undefined,
     });
   };
-  const runCommittedHandoffWrite = async (prepared: PreparedHandoffWrite): Promise<HandoffWriteResult> =>
-    (
-      await commitLitePreparedWriteWithProjection({
+  const handoffStoreOperationIdentity = (
+    body: HandoffStoreInput,
+    principal: AuthPrincipal | null,
+  ): { operationId: string; requestSha256: string } => {
+    const request = { ...body } as Record<string, unknown>;
+    const suppliedOperationId = asNonEmptyString(request.operation_id);
+    delete request.operation_id;
+    return {
+      operationId: suppliedOperationId ?? `handoff_${randomUUID()}`,
+      requestSha256: sha256Hex(stableStringify({
+        contract_version: "aionis_handoff_store_request_identity_v1",
+        request,
+        principal_binding: principal
+          ? {
+              tenant_id: principal.tenant_id,
+              agent_id: asNonEmptyString(principal.agent_id),
+              team_id: asNonEmptyString(principal.team_id),
+            }
+          : null,
+      })),
+    };
+  };
+  const prepareCommittedHandoffWrite = async (
+    prepared: PreparedHandoffWrite,
+    options: { allowExternalReview: boolean },
+  ): Promise<void> => {
+    await prepareLiteProjectedWrite({
+      prepared,
+      liteWriteStore,
+      learningControlReviewProviders: options.allowExternalReview
+        ? learningControlProviders.workflowProjection
+        : undefined,
+    });
+  };
+  const persistCommittedHandoffWrite = async (prepared: PreparedHandoffWrite): Promise<HandoffWriteResult> =>
+    persistLitePreparedWrite({
+      prepared,
+      liteWriteStore,
+      writeOptions: {
+        maxTextLen: env.MAX_TEXT_LEN,
+        piiRedaction: env.PII_REDACTION,
+        allowCrossScopeEdges: env.ALLOW_CROSS_SCOPE_EDGES,
+        associativeLinkOrigin: "handoff_store",
+      },
+    });
+  const completeCommittedHandoffWrite = async (prepared: PreparedHandoffWrite): Promise<void> => {
+    try {
+      await completeLiteInlineEmbeddings({
         prepared,
-        liteWriteStore,
         embedder: writeEmbedder,
-        learningControlReviewProviders: learningControlProviders.workflowProjection,
-        writeOptions: {
-          maxTextLen: env.MAX_TEXT_LEN,
-          piiRedaction: env.PII_REDACTION,
-          allowCrossScopeEdges: env.ALLOW_CROSS_SCOPE_EDGES,
-          associativeLinkOrigin: "handoff_store",
-        },
-      })
-    ).out;
+        liteWriteStore,
+      });
+    } catch (error) {
+      process.emitWarning(
+        `Handoff post-commit embedding failed: ${error instanceof Error ? error.message : String(error)}`,
+        { code: "AIONIS_POST_COMMIT_EMBEDDING_FAILED" },
+      );
+    }
+  };
   const buildHandoffStoreResponse = (args: {
     body: HandoffStoreInput;
     writeBody: ReturnType<typeof buildHandoffWriteBody>;
@@ -210,10 +424,15 @@ export function createHandoffRouteService(args: HandoffRouteServiceArgs): Handof
       consumerTeamId: principal?.team_id ?? null,
     });
 
-  return {
-    async store(body, options = {}) {
-      const principal = options.principal ?? null;
-      const writeBody = buildPrincipalHandoffWriteBody(body, principal);
+  const prepareStore = async (
+    body: HandoffStoreInput,
+    options: HandoffStoreOptions = {},
+  ): Promise<HandoffStorePlan> => {
+      const effectiveBody = effectiveHandoffStoreBody(body, options.principal ?? null);
+      const internalExecutionTransitions = !Array.isArray(
+        (effectiveBody as HandoffStoreInput & { execution_transitions_v1?: unknown }).execution_transitions_v1,
+      );
+      const writeBody = buildHandoffWriteBody(effectiveBody);
       const prepared = await prepareMemoryWrite(
         writeBody,
         env.MEMORY_SCOPE,
@@ -225,13 +444,55 @@ export function createHandoffRouteService(args: HandoffRouteServiceArgs): Handof
         },
         writeEmbedder,
       );
-      const out = await runCommittedHandoffWrite(prepared);
-
-      const writeNode = firstNode<HandoffWriteBodyNodeLike>(writeBody.nodes);
-      const writeSlots = asSlots(writeNode?.slots);
-      const appliedExecutionTransitions = applyExecutionContinuityTransitionsFromSlots({
+      const projectionBase = options.deferProjection
+        ? null
+        : await liteWriteStore.latestCommit(prepared.scope);
+      if (!options.deferProjection) {
+        await prepareCommittedHandoffWrite(prepared, { allowExternalReview: true });
+        const projectionBaseAfter = await liteWriteStore.latestCommit(prepared.scope);
+        if (!sameProjectionBase(projectionBase, projectionBaseAfter)) {
+          throw new HttpError(409, "write_projection_stale", "memory changed while handoff projection was being prepared", {
+            scope: prepared.scope_public,
+            projection_base_commit_id: projectionBase?.id ?? null,
+            current_commit_id: projectionBaseAfter?.id ?? null,
+            retryable: true,
+          });
+        }
+      }
+      return {
+        body: effectiveBody,
+        writeBody,
+        prepared,
+        internalExecutionTransitions,
+        projectionPrepared: !options.deferProjection,
+        projectionBase,
+      };
+  };
+  const persistStore = async (plan: HandoffStorePlan): Promise<PersistedHandoffStore> => {
+      if (!liteWriteStore.transactionRunner().inTransaction()) {
+        throw new Error("handoff persist requires the configured atomic write transaction");
+      }
+      if (plan.projectionPrepared) {
+        const currentProjectionBase = await liteWriteStore.latestCommit(plan.prepared.scope);
+        if (!sameProjectionBase(plan.projectionBase, currentProjectionBase)) {
+          throw new HttpError(409, "write_projection_stale", "memory changed after handoff projection was prepared", {
+            scope: plan.prepared.scope_public,
+            projection_base_commit_id: plan.projectionBase?.id ?? null,
+            current_commit_id: currentProjectionBase?.id ?? null,
+            retryable: true,
+          });
+        }
+      } else {
+        await prepareCommittedHandoffWrite(plan.prepared, { allowExternalReview: false });
+        plan.projectionPrepared = true;
+      }
+      const preparedNode = firstNode<HandoffWriteBodyNodeLike>(plan.prepared.nodes);
+      const writeSlots = asSlots(preparedNode?.slots);
+      const out = await persistCommittedHandoffWrite(plan.prepared);
+      const appliedExecutionTransitions = applyHandoffExecutionTransitionsFromSlots({
         executionStateStore,
         writeSlots,
+        allowInternalExpectedRevision: plan.internalExecutionTransitions,
       });
       const appliedExecutionTreeOperations = applyExecutionTreeOperationsFromSlots({
         executionTreeStore,
@@ -242,17 +503,123 @@ export function createHandoffRouteService(args: HandoffRouteServiceArgs): Handof
         : applyAutoExecutionTreeFromSlots({
             executionTreeStore,
             slots: writeSlots,
-            title: body.title ?? null,
-            textSummary: body.summary,
+            title: plan.body.title ?? null,
+            textSummary: plan.body.summary,
           });
-      return buildHandoffStoreResponse({
-        body,
-        writeBody,
+      return {
         out,
         appliedExecutionTransitions,
         appliedExecutionTreeOperations,
         appliedAutoExecutionTree,
+      };
+  };
+  const finalizeStore = async (
+    plan: HandoffStorePlan,
+    persisted: PersistedHandoffStore,
+  ): Promise<unknown> => {
+      await completeCommittedHandoffWrite(plan.prepared);
+      return receiptStore(plan, persisted);
+  };
+  const receiptStore = (
+    plan: HandoffStorePlan,
+    persisted: PersistedHandoffStore,
+  ): unknown => buildHandoffStoreResponse({
+        body: plan.body,
+        writeBody: plan.writeBody,
+        ...persisted,
       });
+
+  return {
+    transactionRunner: () => liteWriteStore.transactionRunner(),
+    prepareStore,
+    persistStore,
+    receiptStore,
+    finalizeStore,
+    async store(body, options = {}) {
+      const effectiveBody = effectiveHandoffStoreBody(body, options.principal ?? null);
+      const tenantId = effectiveBody.tenant_id!;
+      const scope = effectiveBody.scope!;
+      const { operationId, requestSha256 } = handoffStoreOperationIdentity(
+        effectiveBody,
+        options.principal ?? null,
+      );
+      const stored = await liteWriteStore.getWriteOperation({
+        tenantId,
+        scope,
+        operationKind: HANDOFF_STORE_OPERATION_KIND,
+        operationId,
+      });
+      if (stored) {
+        assertHandoffOperationMatches({
+          operationId,
+          requestSha256,
+          storedRequestSha256: stored.request_sha256,
+        });
+        return parseStoredHandoffReceipt({
+          raw: stored.receipt_json,
+          operationId,
+          tenantId,
+          scope,
+          commitId: stored.commit_id,
+        });
+      }
+
+      const plan = await prepareStore(effectiveBody, options);
+      const committed = await liteWriteStore.withTx(async () => {
+        const raced = await liteWriteStore.getWriteOperation({
+          tenantId,
+          scope,
+          operationKind: HANDOFF_STORE_OPERATION_KIND,
+          operationId,
+        });
+        if (raced) {
+          assertHandoffOperationMatches({
+            operationId,
+            requestSha256,
+            storedRequestSha256: raced.request_sha256,
+          });
+          return {
+            persisted: null,
+            response: parseStoredHandoffReceipt({
+              raw: raced.receipt_json,
+              operationId,
+              tenantId,
+              scope,
+              commitId: raced.commit_id,
+            }),
+            committedNew: false,
+          } as const;
+        }
+        const persisted = await persistStore(plan);
+        const baseResponse = receiptStore(plan, persisted);
+        if (!baseResponse || typeof baseResponse !== "object" || Array.isArray(baseResponse)) {
+          throw new Error("handoff store response must be an object");
+        }
+        const response: HandoffStoreResult = {
+          ...(baseResponse as Record<string, unknown>),
+          contract_version: HANDOFF_STORE_RESULT_CONTRACT_VERSION,
+          operation_id: operationId,
+          tenant_id: tenantId,
+          scope,
+          commit_id: persisted.out.commit_id,
+        };
+        await liteWriteStore.insertWriteOperation({
+          tenantId,
+          scope,
+          operationKind: HANDOFF_STORE_OPERATION_KIND,
+          operationId,
+          requestSha256,
+          receiptJson: JSON.stringify(response),
+          commitId: persisted.out.commit_id,
+        });
+        return {
+          persisted,
+          response,
+          committedNew: true,
+        } as const;
+      });
+      if (committed.committedNew) await completeCommittedHandoffWrite(plan.prepared);
+      return committed.response;
     },
     async recover(body, options = {}) {
       return runHandoffRecoverForPrincipal(body, options.principal ?? null);

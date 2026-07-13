@@ -34,6 +34,8 @@ const EXPECTED_TOP_LEVEL_KEYS = {
     "handoff",
     "memory_write",
     "observed",
+    "operation_id",
+    "post_commit_projections",
     "scope",
     "source_map",
     "structured_memory",
@@ -65,7 +67,11 @@ const EXPECTED_TOP_LEVEL_KEYS = {
     "contract_version",
     "effect_report",
     "kernel_report",
+    "measurement_digest",
+    "measurement_id",
     "measurement_input",
+    "measurement_persisted",
+    "evidence_assessment",
     "memory_decision_audit",
     "memory_decision_trace",
     "scope",
@@ -522,6 +528,26 @@ async function runProductLoop(baseUrl: string, scope: string) {
   const unexposedMemoryId = firstNodeId(postGuideObserve);
   await assert.rejects(
     () => client.feedback({
+      actor: agentId,
+      guide_trace_id: "guide_trace:missing-simplification-parity",
+      used_memory_ids: [passedMemoryId],
+      run_id: "run-simplification-parity-missing-trace",
+      outcome: "positive",
+      used_surface: "use_now",
+      verifier_status: "passed",
+      tool_status: "succeeded",
+      reason: "A missing or forged guide trace cannot authorize feedback attribution.",
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof AionisClientError);
+      assert.equal(error.status, 400);
+      assert.equal((error.response as JsonRecord).error, "guide_trace_not_found");
+      return true;
+    },
+  );
+  await assert.rejects(
+    () => client.feedback({
+      actor: agentId,
       guide_trace_id: exactGuide.guide_trace_id,
       used_memory_ids: [unexposedMemoryId],
       run_id: "run-simplification-parity-rejected-feedback",
@@ -540,6 +566,7 @@ async function runProductLoop(baseUrl: string, scope: string) {
   );
 
   const feedback = await client.feedback<JsonRecord>({
+    actor: agentId,
     guide_trace_id: exactGuide.guide_trace_id,
     used_memory_ids: [passedMemoryId],
     run_id: "run-simplification-parity-feedback",
@@ -562,17 +589,12 @@ async function runProductLoop(baseUrl: string, scope: string) {
       evidence_ids: [evidenceId],
     },
   });
-  const allowedEvidenceIds = new Set<string>([
-    evidenceId,
-    ...(exactGuide.memory_packet.lifecycle.used_memory_ids ?? []).map((id: string) => `before:${id}`),
-    ...(exactGuide.memory_packet.lifecycle.used_memory_ids ?? []).map((id: string) => `after:${id}`),
-    ...(exactGuide.guide_packet.guidance.workflow_candidates ?? []).map((entry: JsonRecord) => `workflow:${entry.workflow_id}`),
-    ...(feedback.forget_effect.affected_memory_ids ?? []).map((id: string) => `forget:${id}`),
-    ...(measure.kernel_report.kernel_scores ?? []).map((entry: JsonRecord) => `effect_kernel:${entry.capability_id}`),
-  ]);
   const measuredEvidenceIds = measure.effect_report.evidence.evidence_ids as string[];
-  assert.equal(measuredEvidenceIds.length > 0, true);
-  assert.equal(measuredEvidenceIds.every((id) => allowedEvidenceIds.has(id)), true, JSON.stringify(measuredEvidenceIds));
+  assert.deepEqual(measuredEvidenceIds, []);
+  assert.equal(measure.evidence_assessment.sufficient_evidence, false);
+  assert.equal(measure.evidence_assessment.client_claims_ignored.sufficient_evidence, true);
+  assert.equal(measure.evidence_assessment.client_claims_ignored.evidence_id_count, 1);
+  assert.equal(measuredEvidenceIds.includes(evidenceId), false);
   assert.equal(JSON.stringify(measure).includes("SIMPLIFICATION_PARITY_UNAVAILABLE_EVIDENCE"), false);
 
   const suppress = await client.forget<JsonRecord>({

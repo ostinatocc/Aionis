@@ -85,9 +85,9 @@ function commandPostureLine(
 }
 
 function routeLines(context: AionisAgentContext, compact: boolean): string[] {
-  const active = context.route_contract.active_targets.slice(0, 4).map((row) => row.target);
-  const reference = context.route_contract.reference_only_targets.slice(0, 3).map((row) => row.target);
-  const blocked = context.route_contract.blocked_direction_targets.slice(0, 3).map((row) => row.target);
+  const active = context.route_contract.active_targets.slice(0, compact ? 1 : 4).map((row) => row.target);
+  const reference = context.route_contract.reference_only_targets.slice(0, compact ? 1 : 3).map((row) => row.target);
+  const blocked = context.route_contract.blocked_direction_targets.slice(0, compact ? 1 : 3).map((row) => row.target);
   if (active.length === 0 && reference.length === 0 && blocked.length === 0) return [];
   const route = compact
     ? `route ${uniqueStrings([
@@ -214,7 +214,7 @@ function acceptedReferenceLines(context: AionisAgentContext, aliases: Map<string
       ...row.verification_summary,
       ...row.acceptance_checks,
     ]);
-    if (!accepted && evidence.length === 0) continue;
+    if (!accepted) continue;
     for (const value of evidence.slice(0, 2)) {
       lines.push(`accepted: id=${aliases.get(row.memory_id) ?? row.memory_id} ref=1 primary=0 n=${compactText(value, 170)}`);
     }
@@ -268,10 +268,10 @@ function renderContract(context: AionisAgentContext, compact: boolean, compactHe
   const currentLine = directCurrentRow ? directCurrentLine : inspectCurrentRow ? inspectCurrentLine : directCurrentLine;
   const fallbackCurrentId = context.use_now_memory_ids[0] ?? context.inspect_before_use_memory_ids[0];
   const currentId = currentRow?.memory_id ?? fallbackCurrentId;
-  const currentFiles = currentRow?.target_files.length
-    ? ` f=${currentRow.target_files.slice(0, compact ? 1 : 3).join(",")}`
+  const currentFiles = currentRow?.target_files.length || context.target_files.length
+    ? ` f=${(currentRow?.target_files.length ? currentRow.target_files : context.target_files).slice(0, compact ? 1 : 3).join(",")}`
     : "";
-  const currentGate = inspectCurrentRow && !directCurrentRow ? " gate=inspect reference_only=1 primary=0" : "";
+  const currentGate = inspectCurrentRow && !directCurrentRow ? " gate=inspect ref=1 primary=0" : "";
   const currentMeta = executionMeta(context, currentRow);
   const nextAction = currentRow?.execution_state?.next_action_hint;
   const currentContractLine = currentId || currentLine
@@ -305,7 +305,7 @@ function renderContract(context: AionisAgentContext, compact: boolean, compactHe
     row,
     indexedLine(context.inspect_before_use, context.inspect_before_use_memory_ids, row.memory_id),
   ));
-  const avoidLines = avoidRows.slice(0, compact ? 2 : 3).map((row) => rowLine(
+  const avoidLines = avoidRows.slice(0, compact ? 1 : 3).map((row) => rowLine(
     "avoid",
     row,
     indexedLine(context.do_not_use, context.do_not_use_memory_ids, row.memory_id),
@@ -320,7 +320,7 @@ function renderContract(context: AionisAgentContext, compact: boolean, compactHe
   });
   return uniqueStrings([
     compactHeader ? "AIONIS_CTX compact_agent" : "AIONIS_CTX v2",
-    `state r=${context.agent_role} h=${context.history_used ? 1 : 0} a=${context.actionable_history_used ? 1 : 0} p=${postureLabel(context.recommended_posture)} auth=${context.authority} risk=${context.risk.negative_transfer_risk}`,
+    `state r=${context.agent_role} h=${context.history_used ? 1 : 0} a=${context.actionable_history_used ? 1 : 0} p=${postureLabel(context.recommended_posture)} auth=${({ trusted: "trust", advisory: "adv", candidate: "cand", blocked: "block", none: "none" } as const)[context.authority]} risk=${({ high: "hi", medium: "med", low: "low" } as const)[context.risk.negative_transfer_risk]}`,
     taskProfileLine(context.task_context_profile, compact),
     commandPostureLine(context, true, aliases),
     executionPriorityLine(context),
@@ -328,10 +328,9 @@ function renderContract(context: AionisAgentContext, compact: boolean, compactHe
     ...acceptedReferenceLines(context, aliases),
     ...evidenceLines(context, true, aliases),
     context.actionable_history_used
-      ? `next${nextAction ? ` act=${compactText(nextAction, compact ? 90 : 160)}` : ""} actor_role=${context.agent_role}`
+      ? `next${nextAction ? ` act=${compactText(nextAction, compact ? 90 : 160)}` : ""} ${compact ? "role" : "actor_role"}=${context.agent_role}`
       : null,
     compact ? null : `summary ${compactText(context.summary, 160)}`,
-    context.target_files.length > 0 ? `files ${context.target_files.slice(0, compact ? 2 : 6).join(",")}` : null,
     currentContractLine,
     ...procedureLines,
     ...fallbackProcedures,
@@ -376,7 +375,7 @@ export function renderAionisAgentPrompt(input: {
     : input.profile.mode === "compact_agent" || input.profile.detail === "contract"
       ? renderContract(
         input.context,
-        input.profile.mode === "compact_agent",
+        true,
         input.profile.mode === "compact_agent" && input.profile.detail === "compact",
       )
       : renderStandard(input.context);

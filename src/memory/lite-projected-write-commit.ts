@@ -1,8 +1,15 @@
 import type { EmbeddingProvider } from "../embeddings/types.js";
+import { drainLiteProjectionJobs } from "../jobs/lite-projection-worker.js";
+import { sha256Hex } from "../util/crypto.js";
 import type { WriteStoreAccess } from "../store/write-access.js";
+import type { LiteProjectionOutboxAccess } from "../store/lite-projection-outbox.js";
 import type { AssociativeLinkTriggerOrigin } from "./associative-linking-types.js";
 import type { MemoryLifecycleRelationCandidateProducer } from "./memory-lifecycle-adjudicator.js";
-import { applyPreparedMemoryWrite, type PreparedWrite } from "./write.js";
+import {
+  applyPreparedMemoryWrite,
+  prepareMemoryWriteLifecycleRelations,
+  type PreparedWrite,
+} from "./write.js";
 import { projectWorkflowCandidatesFromPreparedWrite } from "./workflow-write-projection.js";
 
 export type LiteWorkflowProjectionStore = {
@@ -28,49 +35,24 @@ export type LiteWorkflowProjectionStore = {
   }) => Promise<{ rows: Array<{ id: string; client_id?: string | null; slots?: Record<string, unknown> }>; has_more: boolean }>;
 };
 
-export type LiteInlineEmbeddingStore = {
+export type LiteInlineEmbeddingStore = Pick<
+  LiteProjectionOutboxAccess,
+  | "claimProjectionJobs"
+  | "completeEmbeddingProjection"
+  | "completeAnnProjection"
+  | "requeueAnnProjectionAfterStaleSideEffect"
+  | "retryProjectionJob"
+  | "deadLetterProjectionJob"
+> & {
   withTx: <T>(fn: () => Promise<T>) => Promise<T>;
   readyEmbeddingNodeIds: (scope: string, ids: string[]) => Promise<Set<string>>;
-  setNodeEmbeddingReady: (args: {
-    scope: string;
-    id: string;
-    embedding: number[];
-    embeddingModel: string;
-  }) => Promise<void>;
-  setNodeEmbeddingFailed: (args: {
-    scope: string;
-    id: string;
-    error: string;
-  }) => Promise<void>;
+  annSyncEnabled: () => boolean;
 };
 
-export type LiteProjectedWriteStore = WriteStoreAccess & LiteWorkflowProjectionStore & LiteInlineEmbeddingStore;
-
-class LiteInlineEmbeddingTimeoutError extends Error {
-  constructor(timeoutMs: number) {
-    super(`inline embedding timed out after ${timeoutMs}ms`);
-    this.name = "LiteInlineEmbeddingTimeoutError";
-  }
-}
-
-async function embedWithDeadline(
-  embedder: EmbeddingProvider,
-  texts: string[],
-  timeoutMs: number | null | undefined,
-): Promise<number[][]> {
-  if (!timeoutMs || !Number.isFinite(timeoutMs) || timeoutMs <= 0) return embedder.embed(texts);
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  try {
-    return await Promise.race([
-      embedder.embed(texts),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new LiteInlineEmbeddingTimeoutError(Math.trunc(timeoutMs))), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
+export type LiteProjectedWriteStore = WriteStoreAccess
+  & LiteWorkflowProjectionStore
+  & LiteInlineEmbeddingStore
+  & Pick<LiteProjectionOutboxAccess, "enqueueEmbeddingProjection">;
 
 async function appendLiteWorkflowProjection(args: {
   prepared: PreparedWrite;
@@ -91,7 +73,7 @@ async function appendLiteWorkflowProjection(args: {
   }
 }
 
-async function completeLiteInlineEmbeddings(args: {
+export async function completeLiteInlineEmbeddings(args: {
   prepared: PreparedWrite;
   embedder: EmbeddingProvider | null;
   liteWriteStore: LiteInlineEmbeddingStore;
@@ -123,62 +105,98 @@ async function completeLiteInlineEmbeddings(args: {
     };
   }
 
-  let vectors: number[][];
-  try {
-    vectors = await embedWithDeadline(embedder, pending.map((node) => node.text), args.timeoutMs);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    await liteWriteStore.withTx(async () => {
-      for (const node of pending) {
-        await liteWriteStore.setNodeEmbeddingFailed({
-          scope: prepared.scope,
-          id: node.id,
-          error: message,
-        });
-      }
-    });
-    return {
-      attempted: pending.length,
-      updated: 0,
-      failed: pending.length,
-      error: message,
-    };
-  }
-  if (vectors.length !== pending.length) {
-    const message = `unexpected embedding count: expected ${pending.length}, got ${vectors.length}`;
-    await liteWriteStore.withTx(async () => {
-      for (const node of pending) {
-        await liteWriteStore.setNodeEmbeddingFailed({
-          scope: prepared.scope,
-          id: node.id,
-          error: message,
-        });
-      }
-    });
-    return {
-      attempted: pending.length,
-      updated: 0,
-      failed: pending.length,
-      error: message,
-    };
-  }
-
-  await liteWriteStore.withTx(async () => {
-    for (let i = 0; i < pending.length; i += 1) {
-      await liteWriteStore.setNodeEmbeddingReady({
-        scope: prepared.scope,
-        id: pending[i].id,
-        embedding: vectors[i] ?? [],
-        embeddingModel: embedder.name,
-      });
-    }
+  const drained = await drainLiteProjectionJobs({
+    store: liteWriteStore,
+    embedder,
+    ann: null,
+    annEnabled: liteWriteStore.annSyncEnabled(),
+    limit: pending.length,
+    jobKinds: ["embedding_generate"],
+    scopes: [prepared.scope],
+    nodeIds: pending.map((node) => node.id),
+    ...(args.timeoutMs ? { timeoutMs: args.timeoutMs } : {}),
   });
+  const readyAfter = await liteWriteStore.readyEmbeddingNodeIds(
+    prepared.scope,
+    pending.map((node) => node.id),
+  );
+  const failed = drained.retried + drained.dead_lettered;
 
   return {
     attempted: pending.length,
-    updated: pending.length,
-    failed: 0,
+    updated: readyAfter.size,
+    failed,
+    ...(failed > 0 ? { error: "durable embedding projection deferred for retry" } : {}),
   };
+}
+
+export async function prepareLiteProjectedWrite(args: {
+  prepared: PreparedWrite;
+  liteWriteStore: LiteProjectedWriteStore;
+  learningControlReviewProviders?: Parameters<typeof projectWorkflowCandidatesFromPreparedWrite>[0]["learningControlReviewProviders"];
+  lifecycleRelationCandidateProducer?: MemoryLifecycleRelationCandidateProducer;
+}): Promise<void> {
+  await appendLiteWorkflowProjection({
+    prepared: args.prepared,
+    liteWriteStore: args.liteWriteStore,
+    learningControlReviewProviders: args.learningControlReviewProviders,
+  });
+  await prepareMemoryWriteLifecycleRelations(
+    args.liteWriteStore,
+    args.prepared,
+    args.lifecycleRelationCandidateProducer,
+  );
+}
+
+export async function persistLitePreparedWrite(args: {
+  prepared: PreparedWrite;
+  liteWriteStore: LiteProjectedWriteStore;
+  writeOptions: {
+    maxTextLen: number;
+    piiRedaction: boolean;
+    allowCrossScopeEdges: boolean;
+    associativeLinkOrigin?: AssociativeLinkTriggerOrigin;
+  };
+}) {
+  return await args.liteWriteStore.withTx(async () => {
+    const result = await applyPreparedMemoryWrite(args.liteWriteStore, args.prepared, args.writeOptions);
+    const planned = args.prepared.nodes.filter((node) => (
+      args.prepared.auto_embed_effective
+      && !node.embedding
+      && typeof node.embed_text === "string"
+      && node.embed_text.trim().length > 0
+    ));
+    if (planned.length === 0) return result;
+
+    const providerName = args.prepared.embedding_provider_name?.trim() ?? "";
+    const providerDim = args.prepared.embedding_provider_dim;
+    if (!providerName || !Number.isInteger(providerDim) || Number(providerDim) <= 0) {
+      throw new Error("durable embedding projection requires a bound provider name and dimension");
+    }
+    for (const node of planned) {
+      const embedText = String(node.embed_text);
+      await args.liteWriteStore.enqueueEmbeddingProjection({
+        scope: args.prepared.scope,
+        nodeId: node.id,
+        sourceCommitId: result.commit_id,
+        payload: {
+          v: 1,
+          tenant_id: args.prepared.tenant_id,
+          scope: args.prepared.scope_public,
+          scope_key: args.prepared.scope,
+          commit_id: result.commit_id,
+          node_id: node.id,
+          embed_text: embedText,
+          embed_text_sha256: sha256Hex(embedText),
+          provider_name: providerName,
+          provider_dim: Number(providerDim),
+          force_reembed: args.prepared.force_reembed,
+          recovery_origin: "semantic_commit",
+        },
+      });
+    }
+    return result;
+  });
 }
 
 export async function commitLitePreparedWriteWithProjection(args: {
@@ -195,22 +213,24 @@ export async function commitLitePreparedWriteWithProjection(args: {
     lifecycleRelationCandidateProducer?: MemoryLifecycleRelationCandidateProducer;
   };
 }) {
-  await appendLiteWorkflowProjection({
+  await prepareLiteProjectedWrite({
     prepared: args.prepared,
     liteWriteStore: args.liteWriteStore,
     learningControlReviewProviders: args.learningControlReviewProviders,
+    lifecycleRelationCandidateProducer: args.writeOptions.lifecycleRelationCandidateProducer,
   });
   const out = await args.liteWriteStore.withTx(() =>
-    applyPreparedMemoryWrite(args.liteWriteStore, args.prepared, {
+    persistLitePreparedWrite({
+      liteWriteStore: args.liteWriteStore,
+      prepared: args.prepared,
+      writeOptions: {
       maxTextLen: args.writeOptions.maxTextLen,
       piiRedaction: args.writeOptions.piiRedaction,
       allowCrossScopeEdges: args.writeOptions.allowCrossScopeEdges,
       ...(args.writeOptions.associativeLinkOrigin
         ? { associativeLinkOrigin: args.writeOptions.associativeLinkOrigin }
         : {}),
-      ...(args.writeOptions.lifecycleRelationCandidateProducer
-        ? { lifecycleRelationCandidateProducer: args.writeOptions.lifecycleRelationCandidateProducer }
-        : {}),
+      },
     }),
   );
   const liteInlineEmbedding = await completeLiteInlineEmbeddings({

@@ -198,7 +198,8 @@ test("SDK guideAgentContext over real Runtime HTTP promotes accepted same-workfl
     const currentTaskSignature = "sdk-current-task";
     const otherTaskSignature = "sdk-other-task";
 
-    await client.execution.observeStep({
+    const currentObservation = await client.execution.observeStep<Record<string, any>>({
+      operation_id: "sdk-runtime-current-observation",
       agent_id: "sdk-agent",
       role: "worker",
       run_id: "run-sdk-current",
@@ -217,6 +218,7 @@ test("SDK guideAgentContext over real Runtime HTTP promotes accepted same-workfl
         contract_trust: "accepted",
       },
     });
+    assert.equal(currentObservation.operation_id, "sdk-runtime-current-observation");
 
     await client.execution.observeStep({
       agent_id: "sdk-agent",

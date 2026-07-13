@@ -149,7 +149,7 @@ test("blocked claims are retired and never live", async () => {
   }
 });
 
-test("duplicate client id is idempotent", async () => {
+test("duplicate client id is idempotent only for identical claim content", async () => {
   const store = createLiteClaimLedgerStore(tmpDbPath("idempotent"));
   const access = store.createClaimLedgerAccess();
   try {
@@ -162,12 +162,39 @@ test("duplicate client id is idempotent", async () => {
     const second = await access.writeClaim({
       scope: "claim-ledger:idempotent",
       tenantId: "public",
-      claim: locationClaim({ clientId: "claim:idempotent", city: "Beijing" }),
+      claim: locationClaim({ clientId: "claim:idempotent", city: "Shanghai" }),
       now: "2026-06-16T02:00:00.000Z",
     });
 
     assert.equal(second.claim_id, first.claim_id);
     assert.equal(second.value_text, "Shanghai");
+    await assert.rejects(
+      access.writeClaim({
+        scope: "claim-ledger:idempotent",
+        tenantId: "public",
+        claim: locationClaim({ clientId: "claim:idempotent", city: "Beijing" }),
+        now: "2026-06-16T03:00:00.000Z",
+      }),
+      (error: unknown) => {
+        assert.equal((error as { statusCode?: number }).statusCode, 409);
+        assert.equal((error as { code?: string }).code, "claim_client_id_conflict");
+        return true;
+      },
+    );
+    await assert.rejects(
+      access.writeClaim({
+        scope: "claim-ledger:idempotent",
+        tenantId: "public",
+        claim: {
+          ...locationClaim({ clientId: "claim:idempotent", city: "Shanghai" }),
+          valid_from: "2026-06-17T00:00:00.000Z",
+        },
+      }),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, "claim_client_id_conflict");
+        return true;
+      },
+    );
     const events = await access.listEvents({ scope: "claim-ledger:idempotent", claimId: first.claim_id, limit: 10 });
     assert.equal(events.rows.length, 1);
   } finally {

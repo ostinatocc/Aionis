@@ -47,14 +47,45 @@ PORT="${PORT:-$(pick_free_port)}"
 BASE_URL="http://127.0.0.1:${PORT}"
 LOG_FILE="${TMP_DIR}/lite-smoke.log"
 
-cleanup() {
-  if [[ -n "${PID:-}" ]]; then
-    kill "${PID}" >/dev/null 2>&1 || true
-    wait "${PID}" >/dev/null 2>&1 || true
+stop_runtime() {
+  if [[ -z "${PID:-}" ]]; then
+    return 0
   fi
+
+  if kill -0 "${PID}" >/dev/null 2>&1; then
+    kill -TERM "${PID}" >/dev/null 2>&1 || true
+    for _ in $(seq 1 50); do
+      if ! kill -0 "${PID}" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.1
+    done
+  fi
+
+  if kill -0 "${PID}" >/dev/null 2>&1; then
+    kill -KILL "${PID}" >/dev/null 2>&1 || true
+  fi
+  wait "${PID}" >/dev/null 2>&1 || true
+  if kill -0 "${PID}" >/dev/null 2>&1; then
+    echo "Lite Runtime process ${PID} did not terminate" >&2
+    return 1
+  fi
+  PID=""
+}
+
+cleanup() {
+  local original_status=$?
+  local cleanup_status=0
+  trap - EXIT
+  set +e
+  stop_runtime || cleanup_status=$?
   if [[ "${CLEANUP_TMP_DIR}" == "1" ]]; then
     rm -rf "${TMP_DIR}" >/dev/null 2>&1 || true
   fi
+  if [[ "${original_status}" -ne 0 ]]; then
+    exit "${original_status}"
+  fi
+  exit "${cleanup_status}"
 }
 trap cleanup EXIT
 
@@ -102,7 +133,7 @@ console.log(JSON.stringify({
 }, null, 2));
 JS
 
-node - <<'JS' "${BASE_URL}"
+node --input-type=module - <<'JS' "${BASE_URL}"
 const base = process.argv[2];
 const marker = `LITE_SMOKE_PUBLIC_MEMORY_${Date.now()}`;
 

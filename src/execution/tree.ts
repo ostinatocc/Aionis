@@ -57,6 +57,7 @@ const BaseExecutionTreeOperationSchema = z.object({
   scope: z.string().trim().min(1),
   actor_role: z.string().trim().min(1).nullable().default(null),
   at: z.string().datetime(),
+  expected_revision: z.number().int().positive().optional(),
 });
 
 export const ExecutionTreeGrowOperationV1Schema = BaseExecutionTreeOperationSchema.extend({

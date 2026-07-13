@@ -13,12 +13,15 @@ test("effect evaluator scores every focused kernel capability", () => {
       continuityGuidanceCorrect: true,
       recoveredStateFacts: 3,
       expectedStateFacts: 3,
+      recoveredStateApplicable: true,
       verifiedFactsCarried: 2,
       verifiedFactsExpected: 2,
+      verifiedFactsApplicable: true,
     },
     learning: {
       workflowReused: true,
       stableWorkflowReused: true,
+      provisionalMemoriesWritten: 0,
       trustedPromotions: 1,
       weakEvidencePromoted: 0,
       counterEvidenceDemotions: 1,
@@ -26,8 +29,12 @@ test("effect evaluator scores every focused kernel capability", () => {
     forgetting: {
       contextItems: 8,
       usefulContextItems: 7,
+      staleMemorySurfaced: 0,
       staleMemorySuppressed: 2,
       archivedMemoryRehydratedOnDemand: 1,
+      unnecessaryRehydrations: 0,
+      staleMemoryControlApplicable: true,
+      rehydrationApplicable: true,
     },
     learning_control: {
       weakEvidenceBlocked: 2,
@@ -49,8 +56,10 @@ test("effect evaluator proves Aionis improves execution behavior over a baseline
         continuityGuidanceCorrect: false,
         recoveredStateFacts: 1,
         expectedStateFacts: 4,
+        recoveredStateApplicable: true,
         verifiedFactsCarried: 0,
         verifiedFactsExpected: 2,
+        verifiedFactsApplicable: true,
       },
       learning: {
         workflowReused: false,
@@ -58,6 +67,7 @@ test("effect evaluator proves Aionis improves execution behavior over a baseline
         provisionalMemoriesWritten: 0,
         trustedPromotions: 0,
         weakEvidencePromoted: 0,
+        counterEvidenceDemotions: 0,
       },
       forgetting: {
         contextItems: 14,
@@ -65,6 +75,9 @@ test("effect evaluator proves Aionis improves execution behavior over a baseline
         staleMemorySurfaced: 3,
         staleMemorySuppressed: 0,
         archivedMemoryRehydratedOnDemand: 0,
+        unnecessaryRehydrations: 0,
+        staleMemoryControlApplicable: true,
+        rehydrationApplicable: false,
       },
       learning_control: {
         weakEvidenceBlocked: 0,
@@ -79,8 +92,10 @@ test("effect evaluator proves Aionis improves execution behavior over a baseline
         continuityGuidanceCorrect: true,
         recoveredStateFacts: 4,
         expectedStateFacts: 4,
+        recoveredStateApplicable: true,
         verifiedFactsCarried: 2,
         verifiedFactsExpected: 2,
+        verifiedFactsApplicable: true,
       },
       learning: {
         workflowReused: true,
@@ -97,6 +112,8 @@ test("effect evaluator proves Aionis improves execution behavior over a baseline
         staleMemorySuppressed: 3,
         archivedMemoryRehydratedOnDemand: 1,
         unnecessaryRehydrations: 0,
+        staleMemoryControlApplicable: true,
+        rehydrationApplicable: true,
       },
       learning_control: {
         weakEvidenceBlocked: 2,
@@ -129,12 +146,15 @@ test("effect evaluator warns when the run is safe but not measurably better", ()
       continuityGuidanceCorrect: true,
       recoveredStateFacts: 3,
       expectedStateFacts: 3,
+      recoveredStateApplicable: true,
       verifiedFactsCarried: 2,
       verifiedFactsExpected: 2,
+      verifiedFactsApplicable: true,
     },
     learning: {
       workflowReused: true,
       stableWorkflowReused: true,
+      provisionalMemoriesWritten: 0,
       trustedPromotions: 1,
       weakEvidencePromoted: 0,
       counterEvidenceDemotions: 1,
@@ -146,6 +166,8 @@ test("effect evaluator warns when the run is safe but not measurably better", ()
       staleMemorySuppressed: 2,
       archivedMemoryRehydratedOnDemand: 1,
       unnecessaryRehydrations: 0,
+      staleMemoryControlApplicable: true,
+      rehydrationApplicable: true,
     },
     learning_control: {
       weakEvidenceBlocked: 1,
@@ -170,10 +192,40 @@ test("effect evaluator warns when the run is safe but not measurably better", ()
 test("effect evaluator fails when weak evidence becomes authority", () => {
   const report = evaluateAionisEffect({
     baseline: {
-      continuity: { repeatedDiscoverySteps: 2 },
-      learning: { workflowReused: false },
-      forgetting: { contextItems: 5, usefulContextItems: 3 },
-      learning_control: { authorityRequiresEvidence: false },
+      continuity: {
+        repeatedDiscoverySteps: 2,
+        continuityGuidanceCorrect: false,
+        recoveredStateFacts: 0,
+        expectedStateFacts: 1,
+        recoveredStateApplicable: true,
+        verifiedFactsCarried: 0,
+        verifiedFactsExpected: 1,
+        verifiedFactsApplicable: true,
+      },
+      learning: {
+        workflowReused: false,
+        stableWorkflowReused: false,
+        provisionalMemoriesWritten: 0,
+        trustedPromotions: 0,
+        weakEvidencePromoted: 0,
+        counterEvidenceDemotions: 0,
+      },
+      forgetting: {
+        contextItems: 5,
+        usefulContextItems: 3,
+        staleMemorySurfaced: 0,
+        staleMemorySuppressed: 0,
+        archivedMemoryRehydratedOnDemand: 0,
+        unnecessaryRehydrations: 0,
+        staleMemoryControlApplicable: false,
+        rehydrationApplicable: false,
+      },
+      learning_control: {
+        weakEvidenceBlocked: 0,
+        authorityRequiresEvidence: false,
+        blockedAuthorityVisible: false,
+        unverifiedAuthorityApplied: 0,
+      },
     },
     aionis: {
       continuity: {
@@ -181,18 +233,28 @@ test("effect evaluator fails when weak evidence becomes authority", () => {
         continuityGuidanceCorrect: true,
         recoveredStateFacts: 2,
         expectedStateFacts: 2,
+        recoveredStateApplicable: true,
         verifiedFactsCarried: 1,
         verifiedFactsExpected: 1,
+        verifiedFactsApplicable: true,
       },
       learning: {
         workflowReused: true,
+        stableWorkflowReused: true,
+        provisionalMemoriesWritten: 0,
         trustedPromotions: 1,
         weakEvidencePromoted: 1,
+        counterEvidenceDemotions: 0,
       },
       forgetting: {
         contextItems: 4,
         usefulContextItems: 4,
         staleMemorySurfaced: 0,
+        staleMemorySuppressed: 0,
+        archivedMemoryRehydratedOnDemand: 0,
+        unnecessaryRehydrations: 0,
+        staleMemoryControlApplicable: false,
+        rehydrationApplicable: false,
       },
       learning_control: {
         weakEvidenceBlocked: 0,
@@ -215,10 +277,40 @@ test("effect evaluator fails when weak evidence becomes authority", () => {
 test("effect evaluator fails when forgetting allows stale context bloat", () => {
   const report = evaluateAionisEffect({
     baseline: {
-      continuity: { repeatedDiscoverySteps: 4 },
-      learning: { workflowReused: false },
-      forgetting: { contextItems: 6, usefulContextItems: 3, staleMemorySurfaced: 2 },
-      learning_control: { authorityRequiresEvidence: false },
+      continuity: {
+        repeatedDiscoverySteps: 4,
+        continuityGuidanceCorrect: false,
+        recoveredStateFacts: 0,
+        expectedStateFacts: 1,
+        recoveredStateApplicable: true,
+        verifiedFactsCarried: 0,
+        verifiedFactsExpected: 1,
+        verifiedFactsApplicable: true,
+      },
+      learning: {
+        workflowReused: false,
+        stableWorkflowReused: false,
+        provisionalMemoriesWritten: 0,
+        trustedPromotions: 0,
+        weakEvidencePromoted: 0,
+        counterEvidenceDemotions: 0,
+      },
+      forgetting: {
+        contextItems: 6,
+        usefulContextItems: 3,
+        staleMemorySurfaced: 2,
+        staleMemorySuppressed: 0,
+        archivedMemoryRehydratedOnDemand: 0,
+        unnecessaryRehydrations: 0,
+        staleMemoryControlApplicable: true,
+        rehydrationApplicable: false,
+      },
+      learning_control: {
+        weakEvidenceBlocked: 0,
+        authorityRequiresEvidence: false,
+        blockedAuthorityVisible: false,
+        unverifiedAuthorityApplied: 0,
+      },
     },
     aionis: {
       continuity: {
@@ -226,12 +318,15 @@ test("effect evaluator fails when forgetting allows stale context bloat", () => 
         continuityGuidanceCorrect: true,
         recoveredStateFacts: 3,
         expectedStateFacts: 3,
+        recoveredStateApplicable: true,
         verifiedFactsCarried: 1,
         verifiedFactsExpected: 1,
+        verifiedFactsApplicable: true,
       },
       learning: {
         workflowReused: true,
         stableWorkflowReused: true,
+        provisionalMemoriesWritten: 0,
         trustedPromotions: 1,
         weakEvidencePromoted: 0,
         counterEvidenceDemotions: 1,
@@ -243,6 +338,8 @@ test("effect evaluator fails when forgetting allows stale context bloat", () => 
         staleMemorySuppressed: 0,
         archivedMemoryRehydratedOnDemand: 0,
         unnecessaryRehydrations: 1,
+        staleMemoryControlApplicable: true,
+        rehydrationApplicable: true,
       },
       learning_control: {
         weakEvidenceBlocked: 1,
@@ -260,4 +357,30 @@ test("effect evaluator fails when forgetting allows stale context bloat", () => 
   assert.ok(forgetting?.regressions.includes("stale_memory_reached_context"));
   assert.ok(forgetting?.regressions.includes("context_precision_low"));
   assert.ok(report.next_actions.includes("improve_context_precision_and_stale_memory_suppression"));
+});
+
+test("effect evaluator fails closed for missing metrics and zero-denominator ratios", () => {
+  const scores = scoreAionisEffectObservation({
+    continuity: {
+      repeatedDiscoverySteps: 0,
+      continuityGuidanceCorrect: true,
+      recoveredStateFacts: 0,
+      expectedStateFacts: 0,
+      recoveredStateApplicable: true,
+      verifiedFactsCarried: 0,
+      verifiedFactsExpected: 0,
+      verifiedFactsApplicable: true,
+    },
+    learning: { workflowReused: true },
+    forgetting: { contextItems: 0, usefulContextItems: 0 },
+    learning_control: { authorityRequiresEvidence: true },
+  });
+  const continuity = scores.find((score) => score.capability_id === "continuity");
+  const forgetting = scores.find((score) => score.capability_id === "forgetting");
+  assert.equal(continuity?.status, "fail");
+  assert.equal(continuity?.metrics.measurement_complete, false);
+  assert.ok(continuity?.regressions.includes("unknown_ratio:recovered_state_facts"));
+  assert.equal(forgetting?.status, "fail");
+  assert.equal(forgetting?.metrics.measurement_complete, false);
+  assert.ok(forgetting?.regressions.some((entry) => entry.startsWith("missing_metric:")));
 });

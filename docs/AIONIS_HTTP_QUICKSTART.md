@@ -1,6 +1,6 @@
 # Aionis HTTP Quickstart
 
-Status: curl-first product quickstart for the focused local Runtime
+Status: curl-first product quickstart for the v0.3.5 Local Runtime Public Beta candidate
 
 This quickstart shows the product loop without the TypeScript SDK:
 
@@ -96,6 +96,7 @@ governs whether it can be used later.
 curl -sS -X POST "$AIONIS_URL/v1/observe" \
   -H "content-type: application/json" \
   -d "{
+    \"operation_id\": \"observe:$AIONIS_SCOPE:http-pref\",
     \"tenant_id\": \"default\",
     \"scope\": \"$AIONIS_SCOPE\",
     \"auto_embed\": true,
@@ -114,8 +115,13 @@ curl -sS -X POST "$AIONIS_URL/v1/observe" \
         \"lifecycle_state\": \"active\"
       }
     }
-  }" | tee /tmp/aionis-observe.json | jq '.observed'
+  }" | tee /tmp/aionis-observe.json | jq '{operation_id, observed, post_commit_projections}'
 ```
+
+Keep the generated `operation_id` with the logical write. If the connection is
+lost, retry the exact request with the same ID to receive the stored receipt.
+Do not reuse that ID for different content. Projection status `scheduled` means
+the durable job committed; inspect `/health` for completion or retry state.
 
 ## 3. Guide After Memory
 
@@ -178,7 +184,9 @@ curl -sS -X POST "$AIONIS_URL/v1/feedback" \
 ## 6. Measure
 
 Measure whether history changed the future context. `product_trace` accepts the
-before guide, after guide, and feedback result.
+before guide, after guide, and feedback result. Do not assert
+`sufficient_evidence` or invent `evidence_ids`: the Runtime derives evidence
+sufficiency from its own durable guide, verifier, and feedback receipts.
 
 ```bash
 jq -n \
@@ -198,9 +206,7 @@ jq -n \
     product_trace: {
       before_guide: $before[0],
       after_guide: $after[0],
-      forget_result: $feedback[0],
-      sufficient_evidence: true,
-      evidence_ids: ["http-quickstart:feedback"]
+      forget_result: $feedback[0]
     }
   }' > /tmp/aionis-measure-payload.json
 
@@ -208,8 +214,13 @@ curl -sS -X POST "$AIONIS_URL/v1/measure" \
   -H "content-type: application/json" \
   -d @/tmp/aionis-measure-payload.json \
   | tee /tmp/aionis-measure.json \
-  | jq '.effect_report.history_impact'
+  | jq '{evidence_assessment, history_impact: .effect_report.history_impact}'
 ```
+
+This framework-free quickstart does not produce a trusted Runtime verifier
+receipt, so it is expected to remain diagnostic and ineligible for skill
+export. Legacy client claims are accepted only for compatibility and reported
+under `evidence_assessment.client_claims_ignored`; they never open the gate.
 
 ## 7. Snapshot
 

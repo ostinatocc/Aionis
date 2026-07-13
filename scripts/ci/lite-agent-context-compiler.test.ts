@@ -151,8 +151,16 @@ test("canonical compiler preserves governance surfaces across standard, full-pow
     task_role_context: { agent_role: "verifier", task_context_profile: "coding_verifier" },
     render_profile: { mode: "compact_agent", detail: "compact", context_char_budget: 4_096 },
   });
+  const contract = compileAionisAgentContext({
+    base_context: baseContext(),
+    governance_decisions: decisions,
+    current_execution_state: null,
+    claim_projection: null,
+    task_role_context: { agent_role: "agent", task_context_profile: "general" },
+    render_profile: { mode: "standard", detail: "contract", context_char_budget: 1_200 },
+  });
 
-  for (const context of [standard, fullPower, compact]) {
+  for (const context of [standard, fullPower, compact, contract]) {
     assert.deepEqual(context.use_now_memory_ids, ["memory-use"]);
     assert.deepEqual(context.inspect_before_use_memory_ids, ["memory-inspect"]);
     assert.deepEqual(context.do_not_use_memory_ids, ["memory-block"]);
@@ -164,6 +172,9 @@ test("canonical compiler preserves governance surfaces across standard, full-pow
   assert.match(fullPower.prompt_text, /multi_agent_handoff/);
   assert.match(compact.prompt_text, /AIONIS_CTX compact_agent/);
   assert.match(compact.prompt_text, /coding_verifier/);
+  assert.match(contract.prompt_text, /AIONIS_CTX v2/);
+  assert.doesNotMatch(contract.prompt_text, /AIONIS_AGENT_CONTEXT v1/);
+  assert.ok(contract.prompt_text.length < standard.prompt_text.length);
 });
 
 test("renderer is deterministic, budget bounded, and cannot reclassify context surfaces", () => {

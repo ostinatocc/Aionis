@@ -7,18 +7,19 @@ import {
   parseAllowedSandboxCommands,
 } from "../memory/sandbox.js";
 import { type RecallStoreCapabilities } from "../store/recall-access.js";
-import { createLiteRecallStore, type LiteRecallStore } from "../store/lite-recall-store.js";
+import { createLiteRecallStore } from "../store/lite-recall-store.js";
 import { createLiteReplayStore } from "../store/lite-replay-store.js";
 import { createLiteRuntimeStore } from "../store/lite-runtime-store.js";
 import { createSandboxStore } from "../store/sandbox-access.js";
-import { createLiteWriteStore } from "../store/lite-write-store.js";
-import { createLiteClaimLedgerStore } from "../store/lite-claim-ledger-store.js";
+import { createLiteWriteStoreFromDatabase } from "../store/lite-write-store.js";
+import { createLiteClaimLedgerStoreFromDatabase } from "../store/lite-claim-ledger-store.js";
+import { createLiteRuntimeDatabase } from "../store/lite-runtime-database.js";
 import { createLiteSkillCandidateReviewStore } from "../store/lite-skill-candidate-review-store.js";
 import { createLocalAnnIndex } from "../store/ann/local-ann-index.js";
 import { createZvecAnnIndex } from "../store/ann/zvec-ann-index.js";
 import { createSubstrateSidecarCandidateProvider } from "../store/substrate-sidecar-recall.js";
-import { createLiteExecutionStateStore } from "../execution/state-store.js";
-import { createLiteExecutionTreeStore } from "../execution/tree-store.js";
+import { createLiteExecutionStateStoreFromDatabase } from "../execution/state-store.js";
+import { createLiteExecutionTreeStoreFromDatabase } from "../execution/tree-store.js";
 import { EmbedQueryBatcher } from "../util/embed_query_batcher.js";
 import { InflightGate } from "../util/inflight_gate.js";
 import { LruTtlCache } from "../util/lru_ttl_cache.js";
@@ -128,30 +129,30 @@ export async function createRuntimeServices(config: RuntimeServiceConfig) {
         path: recall.RECALL_SUBSTRATE_PATH.trim(),
       })
     : null;
-  let annSyncedRecallStore: LiteRecallStore | null = null;
-  const liteWriteStore = createLiteWriteStore(storage.LITE_WRITE_SQLITE_PATH, {
-    annSync: annIndex
-      ? {
-          syncNode: async (scope, nodeId) => {
-            await annSyncedRecallStore?.syncAnnNode(scope, nodeId);
-          },
-          deleteNode: async (nodeId) => {
-            await annSyncedRecallStore?.deleteAnnNode(nodeId);
-          },
-        }
-      : null,
+  const runtimeDatabase = createLiteRuntimeDatabase(storage.LITE_WRITE_SQLITE_PATH);
+  const liteWriteStore = createLiteWriteStoreFromDatabase(runtimeDatabase, {
+    closeDatabaseOnClose: true,
+    annProjectionEnabled: annIndex !== null,
   });
-  const liteClaimLedgerStore = createLiteClaimLedgerStore(storage.LITE_WRITE_SQLITE_PATH);
+  const liteClaimLedgerStore = createLiteClaimLedgerStoreFromDatabase(runtimeDatabase);
   const claimLedgerAccess = liteClaimLedgerStore.createClaimLedgerAccess();
   const liteSkillCandidateReviewStore = createLiteSkillCandidateReviewStore(storage.LITE_WRITE_SQLITE_PATH);
   const skillCandidateReviewAccess = liteSkillCandidateReviewStore.createSkillCandidateReviewAccess();
-  const executionStateStore = createLiteExecutionStateStore(storage.LITE_WRITE_SQLITE_PATH);
-  const executionTreeStore = createLiteExecutionTreeStore(storage.LITE_WRITE_SQLITE_PATH);
+  const executionStateStore = createLiteExecutionStateStoreFromDatabase(runtimeDatabase.db, {
+    path: runtimeDatabase.path,
+    readDatabase: runtimeDatabase.readDb,
+    transaction: runtimeDatabase.transaction,
+  });
+  const executionTreeStore = createLiteExecutionTreeStoreFromDatabase(runtimeDatabase.db, {
+    path: runtimeDatabase.path,
+    readDatabase: runtimeDatabase.readDb,
+    transaction: runtimeDatabase.transaction,
+  });
   const liteRecallStore = createLiteRecallStore(storage.LITE_WRITE_SQLITE_PATH, {
     ann: annIndex
       ? {
           index: annIndex,
-          rebuildOnStart: recall.RECALL_ANN_REBUILD_ON_START,
+          rebuildOnStart: recall.RECALL_ANN_REBUILD_ON_START || recall.RECALL_ANN_PROVIDER === "local",
           maxCandidates: recall.RECALL_ANN_MAX_CANDIDATES,
           sourceReason: recall.RECALL_ANN_PROVIDER === "zvec" ? "zvec_ann_index" : "local_ann_index",
           indexName: recall.RECALL_ANN_PROVIDER === "zvec" ? "aionis_zvec_ann" : "aionis_local_ann",
@@ -167,8 +168,7 @@ export async function createRuntimeServices(config: RuntimeServiceConfig) {
         }
       : null,
   });
-  annSyncedRecallStore = liteRecallStore;
-  if (annIndex && recall.RECALL_ANN_REBUILD_ON_START) {
+  if (annIndex && (recall.RECALL_ANN_REBUILD_ON_START || recall.RECALL_ANN_PROVIDER === "local")) {
     await liteRecallStore.rebuildAnnIndex();
   }
   const liteRecallAccess = liteRecallStore?.createRecallAccess() ?? null;

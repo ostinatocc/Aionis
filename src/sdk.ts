@@ -712,6 +712,31 @@ export type AionisGuideResult<TGuide extends AionisJsonObject = AionisJsonObject
   tool_selection?: AionisToolSelectionReceipt;
 };
 
+export type AionisObserveRequest = AionisJsonObject & {
+  operation_id?: string;
+};
+
+export type AionisObserveResult = AionisJsonObject & {
+  contract_version: "aionis_observe_result_v1";
+  operation_id: string;
+  tenant_id: string;
+  scope: string;
+  observed: AionisJsonObject & {
+    memory_written: boolean;
+    handoff_stored: boolean;
+    claim_count?: number;
+    general_memory_count: number;
+    execution_memory_count: number;
+    auto_text_memory_count: number;
+    execution_observation_count: number;
+  };
+  post_commit_projections: {
+    semantic_commit: "committed";
+    embedding: "scheduled" | "not_requested";
+    ann_sync: "scheduled" | "not_requested";
+  };
+};
+
 export type AionisRememberRequest = AionisJsonObject & {
   text: string;
   kind?: AionisRememberKind;
@@ -740,6 +765,8 @@ export type AionisMemoryFeedbackRequest = AionisJsonObject & {
   outcome: AionisFeedbackOutcome;
   used_surface: AionisFeedbackUsedSurface;
   actor?: string;
+  consumer_agent_id?: string;
+  consumer_team_id?: string;
   guide_trace_id?: string;
   used_memory_ids?: string[];
   memory_ids?: string[];
@@ -964,6 +991,21 @@ export type AionisMeasureResult = AionisJsonObject & {
   contract_version: "aionis_measure_result_v1";
   tenant_id: string;
   scope: string;
+  measurement_id: string;
+  measurement_digest: string;
+  measurement_persisted: boolean;
+  evidence_assessment: {
+    status: "sufficient" | "insufficient";
+    sufficient_evidence: boolean;
+    eligible_for_skill_export: boolean;
+    provenance: "runtime_verified" | "manual_unverified" | "unverified_product_trace";
+    runtime_evidence_ids: string[];
+    reasons: string[];
+    client_claims_ignored: {
+      sufficient_evidence: boolean | null;
+      evidence_id_count: number;
+    };
+  };
   measurement_input: {
     source: string;
     baseline: AionisJsonObject;
@@ -1028,6 +1070,7 @@ export type AionisExecutionAgentRef = {
 };
 
 export type AionisExecutionBaseInput = AionisExecutionRunRef & AionisExecutionAgentRef & {
+  operation_id?: string;
   tenant_id?: string;
   scope?: string;
   memory_lane?: AionisMemoryLane;
@@ -1988,6 +2031,7 @@ function executionObserveBase(input: AionisExecutionBaseInput): AionisJsonObject
   }
   const agentId = executionAgentId(input);
   return stripUndefined({
+    operation_id: input.operation_id,
     auto_embed: input.auto_embed ?? true,
     memory_lane: memoryLane,
     producer_agent_id: agentId,
@@ -2269,7 +2313,7 @@ export class AionisClient {
     this.execution = new AionisExecutionClient(this);
   }
 
-  async observe<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {
+  async observe<T = AionisObserveResult>(body: AionisObserveRequest, options?: AionisRequestOptions): Promise<T> {
     return this.post<T>("/v1/observe", body, options);
   }
 

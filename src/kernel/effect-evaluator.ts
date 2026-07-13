@@ -8,8 +8,10 @@ export type ContinuityEffectObservation = {
   continuityGuidanceCorrect?: boolean;
   recoveredStateFacts?: number;
   expectedStateFacts?: number;
+  recoveredStateApplicable?: boolean;
   verifiedFactsCarried?: number;
   verifiedFactsExpected?: number;
+  verifiedFactsApplicable?: boolean;
 };
 
 export type LearningEffectObservation = {
@@ -28,6 +30,8 @@ export type ForgettingEffectObservation = {
   staleMemorySuppressed?: number;
   archivedMemoryRehydratedOnDemand?: number;
   unnecessaryRehydrations?: number;
+  staleMemoryControlApplicable?: boolean;
+  rehydrationApplicable?: boolean;
 };
 
 export type LearningControlEffectObservation = {
@@ -100,10 +104,10 @@ function nonNegative(value: unknown): number {
   return Math.max(0, parsed);
 }
 
-function ratio(numerator: unknown, denominator: unknown, defaultValue = 0): number {
+function ratioOrUnknown(numerator: unknown, denominator: unknown): number | null {
   const n = nonNegative(numerator);
   const d = nonNegative(denominator);
-  if (d <= 0) return defaultValue;
+  if (d <= 0) return null;
   return clamp01(n / d);
 }
 
@@ -111,10 +115,18 @@ function boolScore(value: unknown): number {
   return value === true ? 1 : 0;
 }
 
-function average(values: number[]): number {
-  const present = values.filter((value) => Number.isFinite(value));
+function average(values: Array<number | null>): number {
+  const present = values.filter((value): value is number => value !== null && Number.isFinite(value));
   if (present.length === 0) return 0;
   return present.reduce((sum, value) => sum + value, 0) / present.length;
+}
+
+function missingMetrics(input: Record<string, unknown>, fields: string[]): string[] {
+  return fields.filter((field) => input[field] === undefined || input[field] === null);
+}
+
+function missingMetricRegressions(fields: string[]): string[] {
+  return fields.map((field) => `missing_metric:${field}`);
 }
 
 function roundScore(value: number): number {
@@ -134,9 +146,32 @@ function statusFromScore(score: number, hardFail = false): EffectStatus {
 
 function scoreContinuity(observation: ContinuityEffectObservation | undefined): EffectKernelScore {
   const input = observation ?? {};
+  const missing = missingMetrics(input as Record<string, unknown>, [
+    "repeatedDiscoverySteps",
+    "continuityGuidanceCorrect",
+    "recoveredStateFacts",
+    "expectedStateFacts",
+    "recoveredStateApplicable",
+    "verifiedFactsCarried",
+    "verifiedFactsExpected",
+    "verifiedFactsApplicable",
+  ]);
   const repeatedDiscoverySteps = nonNegative(input.repeatedDiscoverySteps);
-  const recoveredStateRatio = ratio(input.recoveredStateFacts, input.expectedStateFacts, input.recoveredStateFacts ? 1 : 0);
-  const verifiedFactRatio = ratio(input.verifiedFactsCarried, input.verifiedFactsExpected, input.verifiedFactsCarried ? 1 : 0);
+  const recoveredStateRatio = input.recoveredStateApplicable === false
+    ? null
+    : ratioOrUnknown(input.recoveredStateFacts, input.expectedStateFacts);
+  const verifiedFactRatio = input.verifiedFactsApplicable === false
+    ? null
+    : ratioOrUnknown(input.verifiedFactsCarried, input.verifiedFactsExpected);
+  const invalidNotApplicable = (
+    input.recoveredStateApplicable === false
+    && (nonNegative(input.recoveredStateFacts) > 0 || nonNegative(input.expectedStateFacts) > 0)
+  ) || (
+    input.verifiedFactsApplicable === false
+    && (nonNegative(input.verifiedFactsCarried) > 0 || nonNegative(input.verifiedFactsExpected) > 0)
+  );
+  const unknownRatioCount = Number(input.recoveredStateApplicable !== false && recoveredStateRatio === null)
+    + Number(input.verifiedFactsApplicable !== false && verifiedFactRatio === null);
   const repeatedDiscoveryAvoidance = 1 - clamp01(repeatedDiscoverySteps / 5);
   const score = roundScore(average([
     boolScore(input.continuityGuidanceCorrect),
@@ -145,24 +180,33 @@ function scoreContinuity(observation: ContinuityEffectObservation | undefined): 
     repeatedDiscoveryAvoidance,
   ]));
   const regressions = [
+    ...missingMetricRegressions(missing),
+    ...(input.recoveredStateApplicable !== false && recoveredStateRatio === null ? ["unknown_ratio:recovered_state_facts"] : []),
+    ...(input.verifiedFactsApplicable !== false && verifiedFactRatio === null ? ["unknown_ratio:verified_facts"] : []),
+    ...(invalidNotApplicable ? ["invalid_not_applicable_metric"] : []),
     ...(input.continuityGuidanceCorrect === false ? ["continuity_guidance_wrong"] : []),
     ...(repeatedDiscoverySteps > 2 ? ["repeated_discovery_too_high"] : []),
-    ...(recoveredStateRatio < 0.7 ? ["recovered_state_fact_gap"] : []),
+    ...(recoveredStateRatio !== null && recoveredStateRatio < 0.7 ? ["recovered_state_fact_gap"] : []),
   ];
   return {
     capability_id: "continuity",
     score,
-    status: statusFromScore(score),
+    status: statusFromScore(score, missing.length > 0 || unknownRatioCount > 0 || invalidNotApplicable),
     metrics: {
+      measurement_complete: missing.length === 0 && unknownRatioCount === 0 && !invalidNotApplicable,
+      missing_metric_count: missing.length,
+      unknown_ratio_count: unknownRatioCount,
       continuity_guidance_correct: input.continuityGuidanceCorrect === true,
       repeated_discovery_steps: repeatedDiscoverySteps,
-      recovered_state_fact_ratio: roundScore(recoveredStateRatio),
-      verified_fact_ratio: roundScore(verifiedFactRatio),
+      recovered_state_fact_ratio: recoveredStateRatio === null ? null : roundScore(recoveredStateRatio),
+      recovered_state_applicable: input.recoveredStateApplicable === true,
+      verified_fact_ratio: verifiedFactRatio === null ? null : roundScore(verifiedFactRatio),
+      verified_facts_applicable: input.verifiedFactsApplicable === true,
     },
     signals: [
       ...(input.continuityGuidanceCorrect ? ["continuity_guidance_matches_expected"] : []),
-      ...(recoveredStateRatio >= 0.7 ? ["execution_state_recovered"] : []),
-      ...(verifiedFactRatio >= 0.7 ? ["verified_facts_carried"] : []),
+      ...(recoveredStateRatio !== null && recoveredStateRatio >= 0.7 ? ["execution_state_recovered"] : []),
+      ...(verifiedFactRatio !== null && verifiedFactRatio >= 0.7 ? ["verified_facts_carried"] : []),
     ],
     regressions,
   };
@@ -170,6 +214,14 @@ function scoreContinuity(observation: ContinuityEffectObservation | undefined): 
 
 function scoreLearning(observation: LearningEffectObservation | undefined): EffectKernelScore {
   const input = observation ?? {};
+  const missing = missingMetrics(input as Record<string, unknown>, [
+    "workflowReused",
+    "stableWorkflowReused",
+    "provisionalMemoriesWritten",
+    "trustedPromotions",
+    "weakEvidencePromoted",
+    "counterEvidenceDemotions",
+  ]);
   const weakEvidencePromoted = nonNegative(input.weakEvidencePromoted);
   const trustedPromotions = nonNegative(input.trustedPromotions);
   const provisionalMemoriesWritten = nonNegative(input.provisionalMemoriesWritten);
@@ -189,14 +241,17 @@ function scoreLearning(observation: LearningEffectObservation | undefined): Effe
     counterEvidenceScore,
   ]));
   const regressions = [
+    ...missingMetricRegressions(missing),
     ...(weakEvidencePromoted > 0 ? ["weak_evidence_promoted"] : []),
     ...(workflowReuseScore === 0 ? ["workflow_not_reused"] : []),
   ];
   return {
     capability_id: "learning",
     score,
-    status: statusFromScore(score, weakEvidencePromoted > 0),
+    status: statusFromScore(score, weakEvidencePromoted > 0 || missing.length > 0),
     metrics: {
+      measurement_complete: missing.length === 0,
+      missing_metric_count: missing.length,
       workflow_reused: input.workflowReused === true,
       stable_workflow_reused: input.stableWorkflowReused === true,
       provisional_memories_written: provisionalMemoriesWritten,
@@ -214,50 +269,90 @@ function scoreLearning(observation: LearningEffectObservation | undefined): Effe
   };
 }
 
-function contextPrecision(input: ForgettingEffectObservation): number {
-  return ratio(input.usefulContextItems, input.contextItems, input.contextItems ? 0 : 1);
+function contextPrecision(input: ForgettingEffectObservation): number | null {
+  return ratioOrUnknown(input.usefulContextItems, input.contextItems);
 }
 
 function scoreForgetting(observation: ForgettingEffectObservation | undefined): EffectKernelScore {
   const input = observation ?? {};
+  const missing = missingMetrics(input as Record<string, unknown>, [
+    "contextItems",
+    "usefulContextItems",
+    "staleMemorySurfaced",
+    "staleMemorySuppressed",
+    "archivedMemoryRehydratedOnDemand",
+    "unnecessaryRehydrations",
+    "staleMemoryControlApplicable",
+    "rehydrationApplicable",
+  ]);
   const staleMemorySurfaced = nonNegative(input.staleMemorySurfaced);
   const staleMemorySuppressed = nonNegative(input.staleMemorySuppressed);
   const archivedMemoryRehydratedOnDemand = nonNegative(input.archivedMemoryRehydratedOnDemand);
   const unnecessaryRehydrations = nonNegative(input.unnecessaryRehydrations);
   const precision = contextPrecision(input);
-  const staleControlScore = staleMemorySurfaced > 0
-    ? clamp01(staleMemorySuppressed / (staleMemorySuppressed + staleMemorySurfaced))
-    : 1;
-  const rehydrationScore = unnecessaryRehydrations > 0
-    ? 0
-    : archivedMemoryRehydratedOnDemand > 0
-      ? 1
-      : 0.7;
+  const staleControlDenominator = staleMemorySuppressed + staleMemorySurfaced;
+  const staleControlScore = input.staleMemoryControlApplicable === false
+    ? null
+    : staleControlDenominator > 0
+    ? clamp01(staleMemorySuppressed / staleControlDenominator)
+    : null;
+  const rehydrationEvidenceCount = archivedMemoryRehydratedOnDemand + unnecessaryRehydrations;
+  const rehydrationScore = input.rehydrationApplicable === false
+    ? null
+    : rehydrationEvidenceCount > 0
+    ? unnecessaryRehydrations > 0 ? 0 : 1
+    : null;
+  const invalidNotApplicable = (
+    input.staleMemoryControlApplicable === false && staleControlDenominator > 0
+  ) || (
+    input.rehydrationApplicable === false && rehydrationEvidenceCount > 0
+  );
+  const scoredComponentCount = [precision, staleControlScore, rehydrationScore]
+    .filter((value) => value !== null).length;
+  const expectedComponentCount = 1
+    + Number(input.staleMemoryControlApplicable !== false)
+    + Number(input.rehydrationApplicable !== false);
+  const unknownRatioCount = expectedComponentCount - scoredComponentCount;
   const score = roundScore(average([
     precision,
     staleControlScore,
     rehydrationScore,
   ]));
   const regressions = [
+    ...missingMetricRegressions(missing),
+    ...(input.staleMemoryControlApplicable !== false && staleControlScore === null ? ["unknown_ratio:stale_memory_control"] : []),
+    ...(input.rehydrationApplicable !== false && rehydrationScore === null ? ["unknown_ratio:rehydration_quality"] : []),
+    ...(invalidNotApplicable ? ["invalid_not_applicable_metric"] : []),
     ...(staleMemorySurfaced > 0 ? ["stale_memory_reached_context"] : []),
     ...(unnecessaryRehydrations > 0 ? ["unnecessary_rehydration"] : []),
-    ...(precision < 0.6 ? ["context_precision_low"] : []),
+    ...(precision !== null && precision < 0.6 ? ["context_precision_low"] : []),
   ];
   return {
     capability_id: "forgetting",
     score,
-    status: statusFromScore(score),
+    status: statusFromScore(
+      score,
+      missing.length > 0 || scoredComponentCount === 0 || unknownRatioCount > 0 || invalidNotApplicable,
+    ),
     metrics: {
+      measurement_complete: missing.length === 0 && unknownRatioCount === 0 && !invalidNotApplicable,
+      missing_metric_count: missing.length,
+      unknown_ratio_count: unknownRatioCount,
+      scored_component_count: scoredComponentCount,
       context_items: nonNegative(input.contextItems),
       useful_context_items: nonNegative(input.usefulContextItems),
-      context_precision: roundScore(precision),
+      context_precision: precision === null ? null : roundScore(precision),
+      stale_memory_control_ratio: staleControlScore === null ? null : roundScore(staleControlScore),
+      rehydration_quality: rehydrationScore === null ? null : roundScore(rehydrationScore),
+      stale_memory_control_applicable: input.staleMemoryControlApplicable === true,
+      rehydration_applicable: input.rehydrationApplicable === true,
       stale_memory_surfaced: staleMemorySurfaced,
       stale_memory_suppressed: staleMemorySuppressed,
       archived_memory_rehydrated_on_demand: archivedMemoryRehydratedOnDemand,
       unnecessary_rehydrations: unnecessaryRehydrations,
     },
     signals: [
-      ...(precision >= 0.7 ? ["context_precision_good"] : []),
+      ...(precision !== null && precision >= 0.7 ? ["context_precision_good"] : []),
       ...(staleMemorySuppressed > 0 ? ["stale_memory_suppressed"] : []),
       ...(archivedMemoryRehydratedOnDemand > 0 ? ["archive_rehydrated_on_demand"] : []),
     ],
@@ -267,6 +362,12 @@ function scoreForgetting(observation: ForgettingEffectObservation | undefined): 
 
 function scoreLearningControl(observation: LearningControlEffectObservation | undefined): EffectKernelScore {
   const input = observation ?? {};
+  const missing = missingMetrics(input as Record<string, unknown>, [
+    "weakEvidenceBlocked",
+    "authorityRequiresEvidence",
+    "blockedAuthorityVisible",
+    "unverifiedAuthorityApplied",
+  ]);
   const weakEvidenceBlocked = nonNegative(input.weakEvidenceBlocked);
   const unverifiedAuthorityApplied = nonNegative(input.unverifiedAuthorityApplied);
   const score = roundScore(average([
@@ -276,6 +377,7 @@ function scoreLearningControl(observation: LearningControlEffectObservation | un
     unverifiedAuthorityApplied > 0 ? 0 : 1,
   ]));
   const regressions = [
+    ...missingMetricRegressions(missing),
     ...(unverifiedAuthorityApplied > 0 ? ["unverified_authority_applied"] : []),
     ...(input.authorityRequiresEvidence === false ? ["authority_does_not_require_evidence"] : []),
     ...(input.blockedAuthorityVisible === false ? ["blocked_authority_not_visible"] : []),
@@ -283,8 +385,10 @@ function scoreLearningControl(observation: LearningControlEffectObservation | un
   return {
     capability_id: "learning_control",
     score,
-    status: statusFromScore(score, unverifiedAuthorityApplied > 0),
+    status: statusFromScore(score, unverifiedAuthorityApplied > 0 || missing.length > 0),
     metrics: {
+      measurement_complete: missing.length === 0,
+      missing_metric_count: missing.length,
       weak_evidence_blocked: weakEvidenceBlocked,
       authority_requires_evidence: input.authorityRequiresEvidence === true,
       blocked_authority_visible: input.blockedAuthorityVisible === true,
@@ -390,8 +494,8 @@ export function evaluateAionisEffect(args: AionisEffectEvaluationInput): AionisE
   const repeatedDiscoveryDelta =
     nonNegative(args.baseline.continuity?.repeatedDiscoverySteps)
     - nonNegative(args.aionis.continuity?.repeatedDiscoverySteps);
-  const baselinePrecision = contextPrecision(args.baseline.forgetting ?? {});
-  const aionisPrecision = contextPrecision(args.aionis.forgetting ?? {});
+  const baselinePrecision = contextPrecision(args.baseline.forgetting ?? {}) ?? 0;
+  const aionisPrecision = contextPrecision(args.aionis.forgetting ?? {}) ?? 0;
   const staleMemoryDelta =
     nonNegative(args.baseline.forgetting?.staleMemorySurfaced)
     - nonNegative(args.aionis.forgetting?.staleMemorySurfaced);

@@ -4226,6 +4226,7 @@ export type MemoryResolveInput = z.infer<typeof MemoryResolveRequest>;
 export const HandoffKind = z.enum(["patch_handoff", "review_handoff", "task_handoff"]);
 
 export const HandoffStoreRequest = z.object({
+  operation_id: z.string().trim().min(1).max(256).optional(),
   tenant_id: z.string().min(1).optional(),
   scope: z.string().min(1).optional(),
   actor: z.string().min(1).optional(),

@@ -1,6 +1,6 @@
 # Aionis Quickstart Matrix
 
-Status: public entrypoint selection guide for the focused Runtime
+Status: public entrypoint selection guide for the v0.3.5 Local Runtime Public Beta candidate
 
 Use this matrix to choose the Aionis integration surface for your Agent. Setup
 installs and configures the Runtime first; verification loops are optional.
@@ -90,7 +90,7 @@ surfaces.
 | Raw HTTP | You want the smallest language-neutral contract and explicit request bodies. | You prefer helper functions for feedback attribution, measure input, and snapshot input. |
 | Execution memory adapter | You run multi-agent or long-horizon workflows and need role, team, branch, and handoff state carried consistently. | You only need ordinary preference/fact memory for one Agent. |
 
-## Stable Product Boundary
+## Stable Product Boundary For Public Beta
 
 All quickstarts follow the same contract:
 
@@ -102,6 +102,10 @@ All quickstarts follow the same contract:
 4. Measure and operator snapshot are read-only product surfaces.
 5. Rehydrate expands colder memory or payload only when the host asks for it.
 6. Admission dataset export stays in host/operator logs and excludes raw prompt payload.
+7. Client `sufficient_evidence` and `evidence_ids` are ignored by the measure
+   gate; only Runtime-owned evidence can make learning or skill export-ready.
+8. This candidate supports one Local Runtime process. Multi-instance HA needs
+   shared persistence and cross-instance projection reconciliation.
 
 Focused dataset export guide:
 [AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md](AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md).

@@ -62,7 +62,6 @@ type PrepareWriteOptions = {
 
 export type ApplyPreparedWriteOptions = PrepareWriteOptions & {
   associativeLinkOrigin?: AssociativeLinkTriggerOrigin;
-  lifecycleRelationCandidateProducer?: MemoryLifecycleRelationCandidateProducer;
 };
 
 type ApplyWriteOptions = ApplyPreparedWriteOptions & {
@@ -191,7 +190,7 @@ function edgeKey(edge: Pick<PreparedEdge, "scope" | "type" | "src_id" | "dst_id"
   return `${edge.scope}\0${edge.type}\0${edge.src_id}\0${edge.dst_id}`;
 }
 
-async function appendLifecycleRelationEdges(
+export async function prepareMemoryWriteLifecycleRelations(
   writeAccess: WriteStoreAccess,
   prepared: PreparedWrite,
   producer?: MemoryLifecycleRelationCandidateProducer,
@@ -340,6 +339,8 @@ export async function prepareMemoryWrite(
     prompt_version: parsed.prompt_version ?? null,
     redaction_meta: redactionMeta,
     auto_embed_effective: shouldAutoEmbed,
+    embedding_provider_name: shouldAutoEmbed ? embedder?.name ?? null : null,
+    embedding_provider_dim: shouldAutoEmbed ? embedder?.dim ?? null : null,
     force_reembed: parsed.force_reembed ?? false,
     nodes,
     edges,
@@ -382,7 +383,6 @@ export async function applyPreparedMemoryWrite(
     }
   }
 
-  await appendLifecycleRelationEdges(writeAccess, prepared, opts.lifecycleRelationCandidateProducer);
   assertAuthorityWriteReceipts(nodes);
 
   const referencedExistingIds = Array.from(

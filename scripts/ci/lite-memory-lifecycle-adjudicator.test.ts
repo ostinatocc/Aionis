@@ -8,6 +8,7 @@ import {
   type AdjudicableMemoryEntry,
   type MemoryLifecycleRelationCandidateProducer,
 } from "../../src/memory/memory-lifecycle-adjudicator.ts";
+import { prepareLiteProjectedWrite } from "../../src/memory/lite-projected-write-commit.ts";
 import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
@@ -224,11 +225,15 @@ test("memory write persists only runtime-admitted lifecycle relation candidates"
       piiRedaction: false,
       allowCrossScopeEdges: false,
     }, null);
+    await prepareLiteProjectedWrite({
+      prepared: currentPrepared,
+      liteWriteStore: store,
+      lifecycleRelationCandidateProducer: producer,
+    });
     const result = await store.withTx(() => applyMemoryWrite(currentPrepared, {
       maxTextLen: 10000,
       piiRedaction: false,
       allowCrossScopeEdges: false,
-      lifecycleRelationCandidateProducer: producer,
       write_access: store,
     }));
 

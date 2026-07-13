@@ -411,6 +411,7 @@ test("execution tree store persists operation-applied trees and keeps operation 
     store.put(initial);
     const first = store.applyOperation(op({
       operation_id: "grow-1",
+      expected_revision: 1,
       type: "grow",
       at: "2026-06-08T00:01:00.000Z",
       action: "inspect target files",
@@ -423,6 +424,7 @@ test("execution tree store persists operation-applied trees and keeps operation 
 
     const idempotent = store.applyOperation(op({
       operation_id: "grow-1",
+      expected_revision: 1,
       type: "grow",
       at: "2026-06-08T00:02:00.000Z",
       action: "inspect target files",
@@ -460,6 +462,7 @@ test("execution tree store rejects operation id reuse with a different intent", 
     store.put(initial);
     store.applyOperation(op({
       operation_id: "grow-conflict",
+      expected_revision: 1,
       type: "grow",
       at: "2026-06-08T00:01:00.000Z",
       action: "inspect target files",
@@ -472,6 +475,7 @@ test("execution tree store rejects operation id reuse with a different intent", 
     assert.throws(
       () => store.applyOperation(op({
         operation_id: "grow-conflict",
+        expected_revision: 2,
         type: "grow",
         at: "2026-06-08T00:02:00.000Z",
         action: "patch a different subsystem",
@@ -514,6 +518,7 @@ test("execution tree store keeps identical tree ids isolated by scope", async ()
       scope: scopeA,
       actor_role: "orchestrator",
       operation_id: "shared-grow",
+      expected_revision: 1,
       type: "grow",
       at: "2026-06-08T00:01:00.000Z",
       action: "advance only scope A",

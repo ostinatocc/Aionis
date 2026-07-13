@@ -1,15 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import stableStringify from "fast-json-stable-stringify";
 import { AionisClaimWriteSchema, type AionisClaimWrite } from "../memory/claim-ledger-contract.js";
+import { HttpError } from "../util/http.js";
 import type {
   ClaimLedgerAccess,
   ClaimLedgerEventRow,
   ClaimLedgerRow,
   ClaimLedgerStatus,
 } from "./memory-store.js";
-import { createSqliteDatabase, type SqliteDatabase } from "./sqlite.js";
-import { createSqliteTransactionRunner, type SqliteTransactionRunner } from "./sqlite-transaction-runner.js";
+import { createLiteRuntimeDatabase, type LiteRuntimeDatabase } from "./lite-runtime-database.js";
+import { ignoreSqliteDuplicateColumnError, type SqliteDatabase } from "./sqlite.js";
+import type { SqliteTransactionRunner } from "./sqlite-transaction-runner.js";
 
 export type LiteClaimLedgerStore = {
   createClaimLedgerAccess(): ClaimLedgerAccess;
@@ -59,6 +60,50 @@ function statusForClaim(claim: AionisClaimWrite): ClaimLedgerStatus {
   return "active";
 }
 
+function claimSemanticRequest(claim: AionisClaimWrite): Record<string, unknown> {
+  return {
+    contract_version: claim.contract_version,
+    subject_key: claim.subject_key,
+    predicate: claim.predicate,
+    slot_key: claim.slot_key ?? null,
+    value: claim.value,
+    value_text: claim.value_text ?? null,
+    claim_kind: claim.claim_kind,
+    conflict_policy: claim.conflict_policy,
+    authority: claim.authority,
+    confidence: claim.confidence,
+    valid_from: claim.valid_from ?? null,
+    evidence_refs: claim.evidence_refs,
+    source_memory_id: claim.source_memory_id ?? null,
+    metadata: claim.metadata,
+  };
+}
+
+function claimRequestSha256(claim: AionisClaimWrite): string {
+  return createHash("sha256").update(stableStringify(claimSemanticRequest(claim))).digest("hex");
+}
+
+function existingClaimRequestSha256(row: Record<string, unknown>): string {
+  const claim = AionisClaimWriteSchema.parse({
+    contract_version: "aionis_claim_write_v1",
+    client_id: typeof row.client_id === "string" ? row.client_id : undefined,
+    subject_key: row.subject_key,
+    predicate: row.predicate,
+    slot_key: typeof row.slot_key === "string" ? row.slot_key : undefined,
+    value: JSON.parse(String(row.value_json)),
+    value_text: typeof row.value_text === "string" ? row.value_text : undefined,
+    claim_kind: row.claim_kind,
+    conflict_policy: row.conflict_policy,
+    authority: row.authority,
+    confidence: Number(row.confidence),
+    valid_from: row.valid_from,
+    evidence_refs: JSON.parse(String(row.evidence_refs_json)),
+    source_memory_id: typeof row.source_memory_id === "string" ? row.source_memory_id : undefined,
+    metadata: JSON.parse(String(row.metadata_json)),
+  });
+  return claimRequestSha256(claim);
+}
+
 function rowFromUnknown(row: unknown): ClaimLedgerRow {
   const next = row as ClaimLedgerRow;
   return {
@@ -80,6 +125,7 @@ function migrate(db: SqliteDatabase): void {
       scope TEXT NOT NULL,
       tenant_id TEXT NOT NULL,
       client_id TEXT,
+      request_sha256 TEXT,
       subject_key TEXT NOT NULL,
       predicate TEXT NOT NULL,
       slot_key TEXT,
@@ -127,9 +173,18 @@ function migrate(db: SqliteDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_lite_claim_ledger_events_claim
       ON lite_claim_ledger_events(scope, claim_id, created_at);
   `);
+  try {
+    db.exec("ALTER TABLE lite_claim_ledger_claims ADD COLUMN request_sha256 TEXT");
+  } catch (error) {
+    ignoreSqliteDuplicateColumnError(error);
+  }
 }
 
-function claimAccessForDb(db: SqliteDatabase, transaction: SqliteTransactionRunner): ClaimLedgerAccess {
+function claimAccessForDb(
+  db: SqliteDatabase,
+  transaction: SqliteTransactionRunner,
+  closeAccess?: () => Promise<void>,
+): ClaimLedgerAccess {
   const getByScopeClientStmt = db.prepare(`
     SELECT * FROM lite_claim_ledger_claims
     WHERE tenant_id = ? AND scope = ? AND client_id = ?
@@ -139,6 +194,11 @@ function claimAccessForDb(db: SqliteDatabase, transaction: SqliteTransactionRunn
     SELECT * FROM lite_claim_ledger_claims
     WHERE tenant_id = ? AND scope = ? AND claim_id = ?
     LIMIT 1
+  `);
+  const backfillRequestShaStmt = db.prepare(`
+    UPDATE lite_claim_ledger_claims
+    SET request_sha256 = ?
+    WHERE tenant_id = ? AND scope = ? AND client_id = ? AND request_sha256 IS NULL
   `);
   const supersedableStmt = db.prepare(`
     SELECT * FROM lite_claim_ledger_claims
@@ -160,11 +220,11 @@ function claimAccessForDb(db: SqliteDatabase, transaction: SqliteTransactionRunn
   const insertClaimStmt = db.prepare(`
     INSERT INTO lite_claim_ledger_claims (
       claim_id, scope, tenant_id, client_id, subject_key, predicate, slot_key,
-      value_json, value_text, claim_kind, conflict_policy, authority, confidence,
+      request_sha256, value_json, value_text, claim_kind, conflict_policy, authority, confidence,
       status, valid_from, valid_until, source_memory_id, evidence_refs_json,
       supersedes_claim_ids_json, superseded_by_claim_id, metadata_json, created_at, updated_at
     ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
   `);
   const insertEventStmt = db.prepare(`
@@ -201,16 +261,38 @@ function claimAccessForDb(db: SqliteDatabase, transaction: SqliteTransactionRunn
   }
 
   return {
+    transactionRunner(): SqliteTransactionRunner {
+      return transaction;
+    },
+
     async writeClaim(args: WriteClaimArgs): Promise<ClaimLedgerRow> {
       const parsed = AionisClaimWriteSchema.parse(args.claim);
       const at = args.now ?? nowIso();
       const validFrom = parsed.valid_from ?? at;
       const clientId = parsed.client_id ?? null;
+      const requestSha256 = claimRequestSha256(parsed);
 
       return await transaction.run(async () => {
         if (clientId) {
-          const existing = getByScopeClientStmt.get(args.tenantId, args.scope, clientId);
-          if (existing) return rowFromUnknown(existing);
+          const existing = getByScopeClientStmt.get(args.tenantId, args.scope, clientId) as Record<string, unknown> | undefined;
+          if (existing) {
+            const storedRequestSha256 = typeof existing.request_sha256 === "string"
+              ? existing.request_sha256
+              : existingClaimRequestSha256(existing);
+            if (storedRequestSha256 !== requestSha256) {
+              throw new HttpError(
+                409,
+                "claim_client_id_conflict",
+                "claim client_id was already used for different claim content",
+                { client_id: clientId },
+              );
+            }
+            if (typeof existing.request_sha256 !== "string") {
+              backfillRequestShaStmt.run(requestSha256, args.tenantId, args.scope, clientId);
+              existing.request_sha256 = requestSha256;
+            }
+            return rowFromUnknown(existing);
+          }
         }
 
         const claimId = claimIdFor({ tenantId: args.tenantId, scope: args.scope, clientId });
@@ -240,6 +322,7 @@ function claimAccessForDb(db: SqliteDatabase, transaction: SqliteTransactionRunn
           parsed.subject_key,
           parsed.predicate,
           parsed.slot_key ?? null,
+          requestSha256,
           jsonColumnValue(parsed.value),
           parsed.value_text ?? null,
           parsed.claim_kind,
@@ -278,98 +361,112 @@ function claimAccessForDb(db: SqliteDatabase, transaction: SqliteTransactionRunn
     },
 
     async findLiveClaims(args): Promise<{ rows: ClaimLedgerRow[] }> {
-      const where = ["scope = ?", "status IN ('active', 'contested')", "valid_until IS NULL"];
-      const values: unknown[] = [args.scope];
-      if (args.tenantId) {
-        where.unshift("tenant_id = ?");
-        values.unshift(args.tenantId);
-      }
-      if (args.subjectKey) {
-        where.push("subject_key = ?");
-        values.push(args.subjectKey);
-      }
-      if (args.slotKey) {
-        where.push("slot_key = ?");
-        values.push(args.slotKey);
-      }
-      const rows = db.prepare(`
-        SELECT * FROM lite_claim_ledger_claims
-        WHERE ${where.join(" AND ")}
-        ORDER BY valid_from DESC, created_at DESC
-        LIMIT ?
-      `).all(...values, normalizeLimit(args.limit)).map(rowFromUnknown);
-      return { rows };
+      return await transaction.read(() => {
+        const where = ["scope = ?", "status IN ('active', 'contested')", "valid_until IS NULL"];
+        const values: unknown[] = [args.scope];
+        if (args.tenantId) {
+          where.unshift("tenant_id = ?");
+          values.unshift(args.tenantId);
+        }
+        if (args.subjectKey) {
+          where.push("subject_key = ?");
+          values.push(args.subjectKey);
+        }
+        if (args.slotKey) {
+          where.push("slot_key = ?");
+          values.push(args.slotKey);
+        }
+        const rows = db.prepare(`
+          SELECT * FROM lite_claim_ledger_claims
+          WHERE ${where.join(" AND ")}
+          ORDER BY valid_from DESC, created_at DESC
+          LIMIT ?
+        `).all(...values, normalizeLimit(args.limit)).map(rowFromUnknown);
+        return { rows };
+      });
     },
 
     async findSupersededClaims(args): Promise<{ rows: ClaimLedgerRow[] }> {
-      const where = ["scope = ?", "slot_key = ?", "status = 'superseded'"];
-      const values: unknown[] = [args.scope, args.slotKey];
-      if (args.tenantId) {
-        where.unshift("tenant_id = ?");
-        values.unshift(args.tenantId);
-      }
-      const rows = db.prepare(`
-        SELECT * FROM lite_claim_ledger_claims
-        WHERE ${where.join(" AND ")}
-        ORDER BY valid_until DESC, created_at DESC
-        LIMIT ?
-      `).all(...values, normalizeLimit(args.limit)).map(rowFromUnknown);
-      return { rows };
+      return await transaction.read(() => {
+        const where = ["scope = ?", "slot_key = ?", "status = 'superseded'"];
+        const values: unknown[] = [args.scope, args.slotKey];
+        if (args.tenantId) {
+          where.unshift("tenant_id = ?");
+          values.unshift(args.tenantId);
+        }
+        const rows = db.prepare(`
+          SELECT * FROM lite_claim_ledger_claims
+          WHERE ${where.join(" AND ")}
+          ORDER BY valid_until DESC, created_at DESC
+          LIMIT ?
+        `).all(...values, normalizeLimit(args.limit)).map(rowFromUnknown);
+        return { rows };
+      });
     },
 
     async getClaim(args): Promise<ClaimLedgerRow | null> {
-      const row = args.tenantId
-        ? getByIdStmt.get(args.tenantId, args.scope, args.claimId)
-        : db.prepare(`
-          SELECT * FROM lite_claim_ledger_claims
-          WHERE scope = ? AND claim_id = ?
-          LIMIT 1
-        `).get(args.scope, args.claimId);
-      return row ? rowFromUnknown(row) : null;
+      return await transaction.read(() => {
+        const row = args.tenantId
+          ? getByIdStmt.get(args.tenantId, args.scope, args.claimId)
+          : db.prepare(`
+            SELECT * FROM lite_claim_ledger_claims
+            WHERE scope = ? AND claim_id = ?
+            LIMIT 1
+          `).get(args.scope, args.claimId);
+        return row ? rowFromUnknown(row) : null;
+      });
     },
 
     async listEvents(args): Promise<{ rows: ClaimLedgerEventRow[] }> {
-      const limit = normalizeLimit(args.limit);
-      const where = ["scope = ?"];
-      const values: unknown[] = [args.scope];
-      if (args.tenantId) {
-        where.unshift("tenant_id = ?");
-        values.unshift(args.tenantId);
-      }
-      if (args.claimId) {
-        where.push("claim_id = ?");
-        values.push(args.claimId);
-      }
-      const rows = db.prepare(`
-        SELECT * FROM lite_claim_ledger_events
-        WHERE ${where.join(" AND ")}
-        ORDER BY created_at ASC
-        LIMIT ?
-      `).all(...values, limit).map(eventFromUnknown);
-      return { rows };
+      return await transaction.read(() => {
+        const limit = normalizeLimit(args.limit);
+        const where = ["scope = ?"];
+        const values: unknown[] = [args.scope];
+        if (args.tenantId) {
+          where.unshift("tenant_id = ?");
+          values.unshift(args.tenantId);
+        }
+        if (args.claimId) {
+          where.push("claim_id = ?");
+          values.push(args.claimId);
+        }
+        const rows = db.prepare(`
+          SELECT * FROM lite_claim_ledger_events
+          WHERE ${where.join(" AND ")}
+          ORDER BY created_at ASC
+          LIMIT ?
+        `).all(...values, limit).map(eventFromUnknown);
+        return { rows };
+      });
     },
 
     async close(): Promise<void> {
-      db.close();
+      await closeAccess?.();
     },
   };
 }
 
 export function createLiteClaimLedgerStore(path: string): LiteClaimLedgerStore {
-  mkdirSync(dirname(path), { recursive: true });
-  const db = createSqliteDatabase(path);
+  const database = createLiteRuntimeDatabase(path);
+  return createLiteClaimLedgerStoreFromDatabase(database, { closeDatabaseOnClose: true });
+}
+
+export function createLiteClaimLedgerStoreFromDatabase(
+  database: LiteRuntimeDatabase,
+  options: { closeDatabaseOnClose?: boolean } = {},
+): LiteClaimLedgerStore {
+  const { path, db, transaction } = database;
   migrate(db);
-  const transaction = createSqliteTransactionRunner({
-    begin: () => db.exec("BEGIN IMMEDIATE"),
-    commit: () => db.exec("COMMIT"),
-    rollback: () => db.exec("ROLLBACK"),
-  });
   return {
     createClaimLedgerAccess(): ClaimLedgerAccess {
-      return claimAccessForDb(db, transaction);
+      return claimAccessForDb(
+        db,
+        transaction,
+        options.closeDatabaseOnClose ? () => database.close() : undefined,
+      );
     },
     async close(): Promise<void> {
-      db.close();
+      if (options.closeDatabaseOnClose) await database.close();
     },
     healthSnapshot(): { path: string; mode: "sqlite_claim_ledger_v1" } {
       return { path, mode: "sqlite_claim_ledger_v1" };
