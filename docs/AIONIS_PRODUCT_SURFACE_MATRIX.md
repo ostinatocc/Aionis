@@ -1,6 +1,6 @@
 # Aionis Product Surface Matrix
 
-Updated: 2026-07-09
+Updated: 2026-07-12
 Scope: Runtime product, SDK/API contracts, and public integration boundaries.
 
 This is the engineering maintenance matrix for Aionis public and semi-public
@@ -54,7 +54,7 @@ themselves direct prompt admission.
 | `Primary` | Recommended product path. |
 | `Stable` | Public and supported, but lower-level than the primary path. |
 | `Integration` | Package or plugin that delivers the same Runtime contract to a host. |
-| `Operator-only` | Audit, debug, review, lifecycle, or dashboard surface. |
+| `Operator-only` | Audit, debug, review, lifecycle, or operator-client surface. |
 | `Advanced` | Optional deployment, storage, workflow, or power-user surface. |
 | `Internal` | Runtime support implementation. Do not expose as product surface. |
 | `Do not build` | Explicit non-goal. |
@@ -88,7 +88,10 @@ themselves direct prompt admission.
 | `@aionis/create` | Runtime installer used by CLI | None | `aionis-create/src/index.ts` | `Primary` for install | Supports `--profile full-local` as local option composition. |
 | `@aionis/substrate` | Durable evidence sidecar | None as default prompt | `AionisSubstrate/src`, Runtime sidecar provider | `Advanced` | Must not become Runtime replacement or final prompt interface. |
 | `@aionis/manifest` | Executable workflow / handoff | Handoff evidence, not generic prompt | `AionisManifest/src` | `Advanced` | Must not become default Agent context renderer. |
-| `aionis-dashboard` | Read-only trust window | None | `aionis-dashboard/src` | `Operator-only` | Must remain read-only. |
+
+The current repository and product boundary has no `aionis-dashboard` or other
+Dashboard/control-panel product. Runtime operator APIs may be consumed by the
+CLI or custom read-only tooling without creating another Aionis product surface.
 
 ## Setup Surface
 
@@ -108,8 +111,8 @@ themselves direct prompt admission.
 |---|---|---|---|---|
 | Snapshot | `GET /v1/operator/snapshot` | `snapshot()`, `operatorSnapshot()`, `aionis snapshot` | No | `Operator-only` |
 | Flight Recorder | `POST /v1/audit/flight-recorder` | `flightRecorder()`, `aionis audit flight-recorder` | No | `Operator-only` |
-| Decision trace | `POST /v1/debug/memory-decision-trace` | Dashboard/runtime clients | No | `Operator-only` |
-| Decision report | `POST /v1/audit/memory-decision-report` | Dashboard/runtime clients | No | `Operator-only` |
+| Decision trace | `POST /v1/debug/memory-decision-trace` | Runtime/custom operator clients | No | `Operator-only` |
+| Decision report | `POST /v1/audit/memory-decision-report` | Runtime/custom operator clients | No | `Operator-only` |
 | Skill candidates list/review | `/v1/skills/candidates` routes | `aionis skills ...`, SDK helpers | No | `Operator-only` |
 | Forget/lifecycle | `POST /v1/forget` | `forget()`, `aionis forget ... --commit` | No | `Operator-only` |
 | Health | `GET /health` | `health()`, `aionis health` | No | `Stable` |
@@ -121,10 +124,10 @@ themselves direct prompt admission.
 |---|---|
 | `memory_packet` | Keep in host/operator logs. |
 | `guide_packet` | Keep in host/operator logs. |
-| `memory_decision_trace` | Debug and dashboard only. |
+| `memory_decision_trace` | Debug and operator tooling only. |
 | `memory_decision_audit` | Audit only. |
 | `memory_use_receipt` | Host/operator metadata; not the main prompt. |
-| `operator_snapshot` | Operator/dashboard only. |
+| `operator_snapshot` | Operator clients only. |
 | `flight_recorder` | Audit/replay only. |
 | raw slots, raw payloads, raw embeddings | Do not pass wholesale to Agents. Rehydrate selectively. |
 
@@ -135,7 +138,7 @@ themselves direct prompt admission.
 | Build another SDK final-context method | `guideAgentContext().agent_prompt` and `execution.guideAgentContextForRole().agent_prompt` already exist. |
 | Build another final-Agent-context HTTP endpoint | `/v1/guide -> agent_context.prompt_text` is the lower-level HTTP guide contract; SDK adds the recommended top-level `agent_prompt`. |
 | Make Substrate the Runtime storage authority | Runtime Lite SQLite remains the fact source and admission authority. |
-| Make Dashboard drive Agent behavior | Dashboard is read-only review. |
+| Build a Dashboard/control-panel product | It is outside the current repository and product boundary; use existing CLI, SDK, and read-only operator APIs. |
 | Put benchmark runners into Runtime | Eval workspaces validate product behavior; Runtime must stay product-general. |
 | Make Manifest the default Agent context renderer | Manifest is workflow/handoff, not the main Agent prompt path. |
 
