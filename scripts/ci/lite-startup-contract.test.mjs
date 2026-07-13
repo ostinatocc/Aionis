@@ -11,6 +11,9 @@ function readJson(file) {
 
 test("root scripts start the focused Runtime directly", () => {
   const rootPkg = readJson(path.join(ROOT, "package.json"));
+  const rootLock = readJson(path.join(ROOT, "package-lock.json"));
+  assert.equal(rootPkg.engines.node, ">=22.13.0");
+  assert.equal(rootLock.packages[""].engines.node, ">=22.13.0");
   assert.equal(rootPkg.scripts["lite:build"], "npm run -s typecheck");
   assert.equal(rootPkg.scripts["lite:start"], "bash scripts/start-lite.sh");
   assert.equal(rootPkg.scripts["lite:start:local-process"], "LITE_SANDBOX_PROFILE=local_process_echo bash scripts/start-lite.sh");

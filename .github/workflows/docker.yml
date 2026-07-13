@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       release_ref:
-        description: Exact immutable Runtime tag to verify and publish (for example v0.3.5)
+        description: Exact immutable Runtime tag to verify and publish (for example v0.3.6)
         required: true
         type: string
       publish:

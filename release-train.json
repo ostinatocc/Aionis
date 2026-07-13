@@ -2,14 +2,14 @@
   "schema_version": "aionis_release_train_v1",
   "status": "candidate",
   "runtime": {
-    "version": "0.3.5",
-    "source_tag": "v0.3.5",
+    "version": "0.3.6",
+    "source_tag": "v0.3.6",
     "docker_image": "ghcr.io/ostinatocc/aionis",
-    "docker_tag": "v0.3.5",
+    "docker_tag": "v0.3.6",
     "docker_platforms": [
       "linux/amd64"
     ],
-    "default_installer_ref": "v0.3.5"
+    "default_installer_ref": "v0.3.6"
   },
   "packages": {
     "cli": {
@@ -22,9 +22,9 @@
     },
     "create": {
       "name": "@aionis/create",
-      "version": "0.3.7",
-      "source_ref": "v0.3.7",
-      "source_commit": "70f98606291a16ce4ded4fc27316f3ccbdbbd194",
+      "version": "0.3.8",
+      "source_ref": "v0.3.8",
+      "source_commit": "561d073975a61d750e6266ec672fdea279b15776",
       "repository": "https://github.com/ostinatocc/aionis-create.git",
       "package_path": "."
     },

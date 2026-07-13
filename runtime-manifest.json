@@ -11,15 +11,15 @@
     ]
   },
   "release": {
-    "version": "0.3.5",
+    "version": "0.3.6",
     "status": "candidate",
-    "source_tag": "v0.3.5",
+    "source_tag": "v0.3.6",
     "github_repo": "ostinatocc/Aionis",
     "docker_image": "ghcr.io/ostinatocc/aionis",
-    "docker_tag": "v0.3.5",
+    "docker_tag": "v0.3.6",
     "docker_platforms": [
       "linux/amd64"
     ],
-    "default_installer_ref": "v0.3.5"
+    "default_installer_ref": "v0.3.6"
   }
 }
