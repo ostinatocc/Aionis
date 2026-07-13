@@ -88,4 +88,4 @@ JS
 fi
 
 cd "${ROOT_DIR}"
-exec npx tsx src/index.ts "$@"
+exec node --import tsx src/index.ts "$@"

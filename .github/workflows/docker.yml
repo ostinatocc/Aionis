@@ -202,7 +202,54 @@ jobs:
         run: npm run -s lite:test
 
       - name: Lite public smoke
-        run: npm run -s lite:smoke
+        run: |
+          set -euo pipefail
+          command -v setsid >/dev/null
+
+          smoke_pid=""
+          cleanup_smoke_group() {
+            if [[ -z "${smoke_pid}" ]]; then
+              return 0
+            fi
+
+            kill -TERM -- "-${smoke_pid}" >/dev/null 2>&1 || true
+            for _ in $(seq 1 50); do
+              if ! kill -0 -- "-${smoke_pid}" >/dev/null 2>&1; then
+                smoke_pid=""
+                return 0
+              fi
+              sleep 0.1
+            done
+
+            kill -KILL -- "-${smoke_pid}" >/dev/null 2>&1 || true
+            for _ in $(seq 1 20); do
+              if ! kill -0 -- "-${smoke_pid}" >/dev/null 2>&1; then
+                smoke_pid=""
+                return 0
+              fi
+              sleep 0.1
+            done
+
+            echo "Lite smoke process group ${smoke_pid} did not terminate" >&2
+            return 1
+          }
+
+          trap 'cleanup_smoke_group || true' EXIT
+          setsid npm run -s lite:smoke &
+          smoke_pid=$!
+          if wait "${smoke_pid}"; then
+            smoke_status=0
+          else
+            smoke_status=$?
+          fi
+
+          cleanup_status=0
+          cleanup_smoke_group || cleanup_status=$?
+          trap - EXIT
+          if [[ "${smoke_status}" -ne 0 ]]; then
+            exit "${smoke_status}"
+          fi
+          exit "${cleanup_status}"
 
       - name: Cross-package Runtime, SDK, MCP, and installer smoke
         run: |
@@ -300,6 +347,20 @@ jobs:
             org.opencontainers.image.version=${{ needs.verify.outputs.runtime_tag }}
             org.opencontainers.image.revision=${{ needs.verify.outputs.runtime_commit }}
 
+      - name: Define immutable provenance subject
+        id: build-subject
+        env:
+          RUNTIME_TAG: ${{ needs.verify.outputs.runtime_tag }}
+          RUNTIME_COMMIT: ${{ needs.verify.outputs.runtime_commit }}
+        run: |
+          set -euo pipefail
+          subject_tag="build-${RUNTIME_TAG}-${RUNTIME_COMMIT}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if [[ ! "${subject_tag}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "invalid immutable build subject tag: ${subject_tag}" >&2
+            exit 1
+          fi
+          echo "ref=${REGISTRY_IMAGE}:${subject_tag}" >> "${GITHUB_OUTPUT}"
+
       - name: Build immutable amd64 release artifact
         id: build
         uses: docker/build-push-action@v6
@@ -307,12 +368,32 @@ jobs:
           context: .
           file: ./Dockerfile
           platforms: linux/amd64
-          outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          tags: ${{ steps.build-subject.outputs.ref }}
+          push: true
           labels: ${{ steps.meta.outputs.labels }}
           provenance: mode=max
           sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Verify immutable build subject digest
+        env:
+          BUILD_SUBJECT_REF: ${{ steps.build-subject.outputs.ref }}
+          VERIFIED_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          subject_digest=""
+          for _ in $(seq 1 30); do
+            subject_digest="$(docker buildx imagetools inspect "${BUILD_SUBJECT_REF}" 2>/dev/null | awk '$1 == "Digest:" { print $2; exit }' || true)"
+            if [[ "${subject_digest}" == "${VERIFIED_DIGEST}" ]]; then
+              break
+            fi
+            sleep 1
+          done
+          if [[ "${subject_digest}" != "${VERIFIED_DIGEST}" ]]; then
+            echo "${BUILD_SUBJECT_REF} points to ${subject_digest}, expected ${VERIFIED_DIGEST}" >&2
+            exit 1
+          fi
 
       - name: Smoke the exact published digest
         env:

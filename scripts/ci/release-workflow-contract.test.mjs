@@ -69,9 +69,18 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
   assert.doesNotMatch(workflow, /linux\/arm64/);
   assert.match(workflow, /ref: \$\{\{ needs\.verify\.outputs\.runtime_tag \}\}/);
   assert.match(workflow, /test "\$\{actual_commit\}" = "\$\{EXPECTED_RUNTIME_COMMIT\}"/);
+  assert.match(workflow, /name: Define immutable provenance subject/);
   assert.match(
     workflow,
-    /outputs: type=image,name=\$\{\{ env\.REGISTRY_IMAGE \}\},push-by-digest=true,name-canonical=true,push=true/,
+    /subject_tag="build-\$\{RUNTIME_TAG\}-\$\{RUNTIME_COMMIT\}-\$\{GITHUB_RUN_ID\}-\$\{GITHUB_RUN_ATTEMPT\}"/,
+  );
+  assert.match(workflow, /tags: \$\{\{ steps\.build-subject\.outputs\.ref \}\}/);
+  assert.match(workflow, /push: true/);
+  assert.doesNotMatch(workflow, /push-by-digest=true/);
+  assert.doesNotMatch(
+    workflow,
+    /tags: \$\{\{ steps\.meta\.outputs\.tags \}\}/,
+    "formal release tags must not exist before digest smoke passes",
   );
   assert.match(
     workflow,
@@ -92,6 +101,11 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
   assert.match(workflow, /provenance: mode=max/);
   assert.match(workflow, /sbom: true/);
   assert.doesNotMatch(workflow, /type=raw,value=latest,enable=\$\{\{ startsWith/);
+  assert.ok(
+    workflow.indexOf("Verify immutable build subject digest") <
+      workflow.indexOf("Smoke the exact published digest"),
+    "the immutable provenance subject must resolve to the built digest before smoke",
+  );
 });
 
 test("cross-package release gates install tarballs packed from exact checkouts", () => {
@@ -133,6 +147,9 @@ test("cross-package release gates install tarballs packed from exact checkouts",
     /github\.event_name == 'workflow_dispatch' && 'external\/release-harness\/scripts\/e2e\/fresh-install-smoke\.ts'/,
   );
   assert.match(workflow, /node --import tsx src\/index\.ts >"\$\{runtime_log\}" 2>&1 &/);
+  assert.match(workflow, /setsid npm run -s lite:smoke &/);
+  assert.match(workflow, /kill -TERM -- "-\$\{smoke_pid\}"/);
+  assert.match(workflow, /kill -KILL -- "-\$\{smoke_pid\}"/);
   assert.doesNotMatch(workflow, /AIONIS_(?:EXTERNAL_SMOKE|FRESH_INSTALL)_(?:SDK|MCP|CREATE)_SPEC="\$\{GITHUB_WORKSPACE\}\/external\//);
   assert.match(smoke, /client\.resolveMemory\(/);
   assert.match(smoke, /client\.execution\.handoff\(/);

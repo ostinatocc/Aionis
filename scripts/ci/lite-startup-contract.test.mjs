@@ -38,9 +38,18 @@ test("root startup script owns local Runtime env", () => {
   assert.match(startScript, /local_process_echo/);
   assert.match(startScript, /SANDBOX_ENABLED/);
   assert.match(startScript, /SANDBOX_ADMIN_ONLY/);
-  assert.match(startScript, /npx tsx src\/index\.ts/);
+  assert.match(startScript, /exec node --import tsx src\/index\.ts/);
+  assert.doesNotMatch(startScript, /exec npx tsx/);
   assert.equal(startScript.includes(`apps${"/"}lite`), false);
   assert.equal(startScript.includes(`${"packages"}/`), false);
+});
+
+test("Lite smoke terminates the direct Runtime process with a bounded fallback", () => {
+  const smokeScript = fs.readFileSync(path.join(ROOT, "scripts", "lite-smoke.sh"), "utf8");
+  assert.match(smokeScript, /kill -TERM "\$\{PID\}"/);
+  assert.match(smokeScript, /kill -KILL "\$\{PID\}"/);
+  assert.match(smokeScript, /for _ in \$\(seq 1 50\)/);
+  assert.match(smokeScript, /wait "\$\{PID\}"/);
 });
 
 test(".env.example exposes local Runtime knobs", () => {
