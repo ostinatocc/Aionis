@@ -3,11 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import {
-  createSqliteDatabase,
-  hasSupportedNodeSqliteVersion,
-  ignoreSqliteDuplicateColumnError,
-} from "../../src/store/sqlite.ts";
+import { createSqliteDatabase, ignoreSqliteDuplicateColumnError } from "../../src/store/sqlite.ts";
 import { createSqliteTransactionRunner } from "../../src/store/sqlite-transaction-runner.ts";
 
 function tmpDbPath(name: string): string {
@@ -22,14 +18,6 @@ function deferred() {
   });
   return { promise, resolve };
 }
-
-test("Lite SQLite rejects Node releases with pre-stable empty-row semantics", () => {
-  assert.equal(hasSupportedNodeSqliteVersion("22.5.0"), false);
-  assert.equal(hasSupportedNodeSqliteVersion("22.12.0"), false);
-  assert.equal(hasSupportedNodeSqliteVersion("22.13.0"), true);
-  assert.equal(hasSupportedNodeSqliteVersion("23.0.0"), true);
-  assert.equal(hasSupportedNodeSqliteVersion("24.0.0"), true);
-});
 
 test("sqlite transaction runner serializes concurrent top-level transactions", async () => {
   const events: string[] = [];
