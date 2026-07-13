@@ -23,7 +23,7 @@ export type LiteRouteProductExposure =
   | "internal_control"
   | "operator_support";
 
-export const LITE_ROUTE_CAPABILITY_MATRIX_VERSION = "lite_route_capability_matrix_v10";
+export const LITE_ROUTE_CAPABILITY_MATRIX_VERSION = "lite_route_capability_matrix_v11";
 
 export const LITE_SERVER_ONLY_ROUTE_GROUPS = {
   admin_control: {
@@ -35,7 +35,7 @@ export const LITE_SERVER_ONLY_ROUTE_GROUPS = {
 export const LITE_PRODUCT_BOUNDARY = {
   boundary_version: "lite_product_boundary_v1",
   product_claim: "local_first_cognitive_memory_execution_learning_runtime",
-  release_scope: "v0.1_rc",
+  release_scope: "v0.3_public_beta",
   included_surfaces: [
     "lite-daemon",
     "local-sqlite-memory-stores",
@@ -83,6 +83,15 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
     product_effects: ["history_shaped_future_behavior"],
     surface_kind: "core_runtime",
     product_role: "product facade for compact MemoryPacket and GuidePacket output",
+  },
+  {
+    method: "POST",
+    path: "/v1/memory/govern", exposure: "product_entry",
+    route_group: "product-facade",
+    capabilities: ["forgetting", "learning_control"],
+    product_effects: ["history_shaped_future_behavior"],
+    surface_kind: "core_runtime",
+    product_role: "product facade for governing external memory candidates before they enter Agent context",
   },
   {
     method: "POST",
@@ -200,6 +209,15 @@ export const LITE_ROUTE_CAPABILITY_MATRIX = [
     product_effects: [],
     surface_kind: "operator_debug",
     product_role: "read-only audit report summarizing why memory was used, inspected, blocked, or rehydrated",
+  },
+  {
+    method: "POST",
+    path: "/v1/audit/flight-recorder", exposure: "operator_support",
+    route_group: "product-facade",
+    capabilities: ["continuity", "forgetting", "learning_control"],
+    product_effects: [],
+    surface_kind: "operator_debug",
+    product_role: "read-only incident replay of memory exposed, used, inspected, blocked, or rehydrated for an Agent run",
   },
   {
     method: "GET",

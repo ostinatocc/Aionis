@@ -90,7 +90,7 @@ test("hard invariants stay small and evidence-centered", () => {
 });
 
 test("Lite route capability matrix maps public routes to focused product capabilities", () => {
-  assert.equal(LITE_ROUTE_CAPABILITY_MATRIX_VERSION, "lite_route_capability_matrix_v10");
+  assert.equal(LITE_ROUTE_CAPABILITY_MATRIX_VERSION, "lite_route_capability_matrix_v11");
 
   const capabilityIds = new Set(aionisKernelCapabilityIds());
   const matrix = buildLiteRouteMatrix().route_capability_matrix;
@@ -100,6 +100,7 @@ test("Lite route capability matrix maps public routes to focused product capabil
     "GET /v1/operator/authority-effect-audit",
     "GET /v1/runtime/boundary-inventory",
     "GET /v1/skills/candidates",
+    "POST /v1/audit/flight-recorder",
     "POST /v1/audit/memory-decision-report",
     "POST /v1/debug/memory-decision-trace",
     "POST /v1/feedback",
@@ -108,6 +109,7 @@ test("Lite route capability matrix maps public routes to focused product capabil
     "POST /v1/handoff/recover",
     "POST /v1/handoff/store",
     "POST /v1/measure",
+    "POST /v1/memory/govern",
     "POST /v1/memory/resolve",
     "POST /v1/observe",
     "POST /v1/operator/snapshot",
@@ -146,6 +148,7 @@ test("Lite route capability matrix separates product entries from internal surfa
     "POST /v1/rehydrate",
     "POST /v1/forget",
     "POST /v1/measure",
+    "POST /v1/memory/govern",
   ]) {
     assert.equal(exposureByRoute.get(route), "product_entry", `${route} must stay product-facing`);
   }
@@ -176,6 +179,7 @@ test("Lite route capability matrix separates product entries from internal surfa
   assert.equal(exposureByRoute.get("POST /v1/memory/resolve"), "product_support");
   assert.equal(exposureByRoute.get("POST /v1/debug/memory-decision-trace"), "operator_support");
   assert.equal(exposureByRoute.get("POST /v1/audit/memory-decision-report"), "operator_support");
+  assert.equal(exposureByRoute.get("POST /v1/audit/flight-recorder"), "operator_support");
   assert.equal(exposureByRoute.get("GET /v1/operator/authority-effect-audit"), "operator_support");
   assert.equal(exposureByRoute.get("POST /v1/operator/snapshot"), "operator_support");
 });

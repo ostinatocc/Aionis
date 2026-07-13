@@ -18,6 +18,7 @@ import {
   registerApplicationRoutes,
   registerRuntimeErrorHandler,
 } from "../../src/server/http-server.ts";
+import { LITE_ROUTE_CAPABILITY_MATRIX } from "../../src/server/lite-runtime-boundary.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteReplayStore } from "../../src/store/lite-replay-store.ts";
 import { createLiteWriteStoreFromDatabase } from "../../src/store/lite-write-store.ts";
@@ -94,6 +95,26 @@ async function serverEnv(writePath: string, replayPath: string): Promise<Env> {
       MEMORY_TENANT_ID: "tenant-a",
       MEMORY_SCOPE: "tenant-a/default",
       LITE_LOCAL_ACTOR_ID: "server-local",
+      LITE_WRITE_SQLITE_PATH: writePath,
+      LITE_REPLAY_SQLITE_PATH: replayPath,
+      SANDBOX_ENABLED: "false",
+      RATE_LIMIT_ENABLED: "false",
+      WORKFLOW_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: "false",
+    },
+    () => loadEnv(),
+  );
+}
+
+async function liteEnv(writePath: string, replayPath: string): Promise<Env> {
+  return withIsolatedEnv(
+    {
+      AIONIS_EDITION: "lite",
+      AIONIS_MODE: "local",
+      APP_ENV: "ci",
+      MEMORY_AUTH_MODE: "off",
+      MEMORY_TENANT_ID: "default",
+      MEMORY_SCOPE: "default",
+      LITE_LOCAL_ACTOR_ID: "local-user",
       LITE_WRITE_SQLITE_PATH: writePath,
       LITE_REPLAY_SQLITE_PATH: replayPath,
       SANDBOX_ENABLED: "false",
@@ -262,6 +283,45 @@ function registerServerProductApp(args: {
     productServices,
   };
 }
+
+test("Lite application registration exactly matches the governed route matrix", async () => {
+  const app = Fastify();
+  const registeredRoutes = new Set<string>();
+  app.addHook("onRoute", (route) => {
+    if (!route.url.startsWith("/v1/") || route.url.startsWith("/v1/admin/control")) return;
+    const methods = Array.isArray(route.method) ? route.method : [route.method];
+    for (const method of methods) {
+      if (method === "HEAD" || method === "OPTIONS") continue;
+      registeredRoutes.add(`${method} ${route.url}`);
+    }
+  });
+  const writePath = tmpDbPath("lite-route-inventory-write");
+  const replayPath = tmpDbPath("lite-route-inventory-replay");
+  const env = await liteEnv(writePath, replayPath);
+  const stores = registerServerProductApp({ app, env, writePath, replayPath });
+  try {
+    await app.ready();
+    const expectedRoutes = LITE_ROUTE_CAPABILITY_MATRIX
+      .map((entry) => `${entry.method} ${entry.path}`)
+      .sort();
+    assert.deepEqual([...registeredRoutes].sort(), expectedRoutes);
+    for (const url of [
+      "/v1/operator/workspaces",
+      "/v1/operator/runs",
+      "/v1/operator/runs/:run_id",
+      "/v1/operator/memories/:memory_id",
+    ]) {
+      assert.equal(app.hasRoute({ method: "GET", url }), false, `${url} must remain removed`);
+    }
+  } finally {
+    await app.close();
+    await stores.executionTreeStore.close();
+    await stores.executionStateStore.close();
+    await stores.liteRecallStore.close();
+    await stores.liteReplayStore.close();
+    await stores.liteWriteStore.close();
+  }
+});
 
 test("application registration exposes product routes but not replaced internal memory routes", async () => {
   const app = Fastify();

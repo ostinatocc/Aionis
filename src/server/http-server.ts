@@ -341,7 +341,6 @@ type RuntimeLiteWriteStore =
   & MemoryAccessRouteArgs["liteWriteStore"]
   & MemoryContextServiceArgs["liteWriteStore"]
   & Pick<LiteWriteStore,
-    | "listOperatorGuideExposures"
     | "resolveCommit"
     | "listRuleFeedbackByRun"
     | "insertProductGuideReceipt"

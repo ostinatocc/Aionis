@@ -187,15 +187,6 @@ export type LiteExecutionNativeNodeRow = LiteFindNodeRow & {
   execution_native: ExecutionNativeV1;
 };
 
-export type LiteOperatorScopeSummaryRow = {
-  scope: string;
-  memory_count: number;
-  guide_trace_count: number;
-  run_count: number;
-  actor_count: number;
-  latest_memory_at: string | null;
-};
-
 export type LiteOutboxEventRow = {
   row_id: number;
   scope: string;
@@ -277,17 +268,6 @@ export type LiteWriteStore = WriteStoreAccess & LiteProjectionOutboxAccess & {
     runId?: string | null;
     limit: number;
   }): Promise<LiteProductGuideReceiptRow[]>;
-  listOperatorScopes(args: {
-    tenantId?: string | null;
-    defaultTenantId?: string | null;
-    limit: number;
-  }): Promise<LiteOperatorScopeSummaryRow[]>;
-  listOperatorGuideExposures(args: {
-    scope: string;
-    runId?: string | null;
-    guideTraceId?: string | null;
-    limit: number;
-  }): Promise<LiteFindNodeRow[]>;
   findNodes(args: {
     scope: string;
     id?: string | null;
@@ -1660,77 +1640,6 @@ export function createLiteWriteStoreFromDatabase(
            ORDER BY created_at DESC, guide_trace_id DESC
            LIMIT ?`,
         ).all(...params, Math.max(1, Math.min(1000, args.limit))) as LiteProductGuideReceiptRow[];
-      });
-    },
-
-    async listOperatorScopes(args): Promise<LiteOperatorScopeSummaryRow[]> {
-      const where: string[] = [];
-      const params: unknown[] = [];
-      if (args.tenantId && args.defaultTenantId && args.tenantId !== args.defaultTenantId) {
-        where.push("scope LIKE ?");
-        params.push(`tenant:${args.tenantId}::scope:%`);
-      } else if (args.tenantId && args.defaultTenantId && args.tenantId === args.defaultTenantId) {
-        where.push("scope NOT LIKE 'tenant:%::scope:%'");
-      }
-      const rows = db.prepare(
-        `SELECT
-           scope,
-           COUNT(*) AS memory_count,
-           MAX(created_at) AS latest_memory_at,
-           SUM(CASE
-             WHEN json_extract(slots_json, '$.guide_exposure_v1.contract_version') = 'aionis_guide_exposure_v1'
-             THEN 1 ELSE 0
-           END) AS guide_trace_count,
-           COUNT(DISTINCT COALESCE(
-             json_extract(slots_json, '$.guide_exposure_v1.run_id'),
-             json_extract(slots_json, '$.run_id')
-           )) AS run_count,
-           COUNT(DISTINCT COALESCE(producer_agent_id, owner_agent_id, owner_team_id)) AS actor_count
-         FROM lite_memory_nodes
-         ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
-         GROUP BY scope
-         ORDER BY latest_memory_at DESC, scope ASC
-         LIMIT ?`,
-      ).all(...params, Math.max(1, args.limit)) as Array<{
-        scope: string;
-        memory_count: number;
-        latest_memory_at: string | null;
-        guide_trace_count: number | null;
-        run_count: number | null;
-        actor_count: number | null;
-      }>;
-      return rows.map((row) => ({
-        scope: row.scope,
-        memory_count: Number(row.memory_count ?? 0),
-        guide_trace_count: Number(row.guide_trace_count ?? 0),
-        run_count: Number(row.run_count ?? 0),
-        actor_count: Number(row.actor_count ?? 0),
-        latest_memory_at: row.latest_memory_at ?? null,
-      }));
-    },
-
-    async listOperatorGuideExposures(args): Promise<LiteFindNodeRow[]> {
-      return await transaction.read(() => {
-      const where = [
-        "scope = ?",
-        "json_extract(slots_json, '$.guide_exposure_v1.contract_version') = 'aionis_guide_exposure_v1'",
-      ];
-      const params: unknown[] = [args.scope];
-      if (args.runId) {
-        where.push("json_extract(slots_json, '$.guide_exposure_v1.run_id') = ?");
-        params.push(args.runId);
-      }
-      if (args.guideTraceId) {
-        where.push("json_extract(slots_json, '$.guide_exposure_v1.guide_trace_id') = ?");
-        params.push(args.guideTraceId);
-      }
-      const rows = db.prepare(
-        `${LITE_MEMORY_NODE_SELECT_SQL}
-         WHERE ${where.join(" AND ")}
-         ORDER BY created_at DESC, id DESC
-         LIMIT ?`,
-      ).all(...params, Math.max(1, args.limit)) as LiteMemoryNodeDbRow[];
-      return rows.map(decodeLiteFindNodeRow);
       });
     },
 

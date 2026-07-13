@@ -4,8 +4,8 @@
   "intent": "Structural growth guard only; this file is not Aionis product validation.",
   "thresholds": {
     "source_files": 290,
-    "source_lines": 127407,
-    "route_matrix_entries": 19,
+    "source_lines": 126718,
+    "route_matrix_entries": 21,
     "env_schema_fields": 177,
     "import_cycles": 0,
     "largest_file_lines": 5218
