@@ -38,6 +38,9 @@ test("root startup script owns local Runtime env", () => {
   assert.match(startScript, /local_process_echo/);
   assert.match(startScript, /SANDBOX_ENABLED/);
   assert.match(startScript, /SANDBOX_ADMIN_ONLY/);
+  assert.match(startScript, /node --experimental-sqlite -e/);
+  assert.match(startScript, /NODE_SQLITE_FLAG="--experimental-sqlite"/);
+  assert.match(startScript, /exec node "\$\{NODE_SQLITE_FLAG\}" --import tsx src\/index\.ts/);
   assert.match(startScript, /exec node --import tsx src\/index\.ts/);
   assert.doesNotMatch(startScript, /exec npx tsx/);
   assert.equal(startScript.includes(`apps${"/"}lite`), false);
