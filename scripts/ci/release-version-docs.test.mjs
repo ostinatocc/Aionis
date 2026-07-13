@@ -93,6 +93,12 @@ test("release docs derive all package and Runtime coordinates from release-train
   const train = releaseTrain();
   const releaseNotes = read("RELEASE_NOTES.md");
   const releaseDocs = read("docs/AIONIS_RELEASES.md");
+  const patchNotesPath = `docs/releases/v${train.runtime.version}.md`;
+
+  assert.ok(releaseNotes.includes(`# Aionis v${train.runtime.version}`));
+  assert.ok(releaseDocs.includes(`Status: v${train.runtime.version}`));
+  assert.ok(releaseDocs.includes(`./releases/v${train.runtime.version}.md`));
+  assert.ok(fs.existsSync(path.join(ROOT, patchNotesPath)), `${patchNotesPath} must exist`);
 
   for (const entry of Object.values(train.packages)) {
     const token = `${entry.name}@${entry.version}`;

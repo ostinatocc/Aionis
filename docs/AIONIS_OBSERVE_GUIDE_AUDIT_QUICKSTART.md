@@ -1,6 +1,6 @@
 # Aionis Observe Guide Audit Quickstart
 
-Status: product quickstart for the v0.3.5 Local Runtime Public Beta candidate
+Status: product quickstart for the v0.3.6 Local Runtime Public Beta candidate
 
 This quickstart shows the shortest product path:
 

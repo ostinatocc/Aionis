@@ -1,6 +1,6 @@
 # Aionis Quickstart Matrix
 
-Status: public entrypoint selection guide for the v0.3.5 Local Runtime Public Beta candidate
+Status: public entrypoint selection guide for the v0.3.6 Local Runtime Public Beta candidate
 
 Use this matrix to choose the Aionis integration surface for your Agent. Setup
 installs and configures the Runtime first; verification loops are optional.

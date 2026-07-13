@@ -1,6 +1,33 @@
 # Changelog
 
-## Unreleased - v0.3.5 Local Runtime Public Beta Candidate
+## Unreleased - v0.3.6 Release Integrity Maintenance Candidate
+
+This maintenance candidate preserves the v0.3.5 public contracts and SQLite
+schema while hardening startup compatibility and exact release publication.
+
+### Changed
+
+- Require Node.js `>=22.13.0` for source/local Runtime installs because earlier
+  experimental Node 22 SQLite releases have incompatible empty-row semantics.
+- Start Lite as the direct Node process and use bounded process/process-group
+  cleanup in smoke, fresh-install, and Docker release checks.
+- Build Docker under a unique release/commit/run staging subject, verify and
+  smoke its digest, then promote only that digest to the version tag.
+- Verify exact package checkouts as packed SDK, MCP, and Create artifacts before
+  publication.
+- Remove stale Dashboard/control-panel claims from current product-surface
+  documentation.
+
+### Compatibility
+
+- No HTTP, SDK/MCP, SQLite schema, migration, or durable event-format changes.
+- Existing v0.3.5 data remains compatible.
+- Docker continues to use Node.js 24 and candidate status still leaves
+  `latest` unchanged.
+
+## v0.3.5 - Local Runtime Public Beta Candidate
+
+Release date: 2026-07-12
 
 This candidate repairs aggressive AgentContext compaction and hardens the
 single-process Local Runtime continuity boundary. It includes public Runtime
@@ -58,9 +85,9 @@ and SDK contract changes; SDK `0.3.15` is the matching client candidate.
   while preserving recall, stale-leak, rehydration, audit, and Memory Firewall
   outcomes.
 
-This change set is a Local Runtime Public Beta candidate. It has not been
-tagged, pushed, or published, and it does not claim a managed multi-tenant or
-multi-instance HA service.
+This change set shipped as the immutable Runtime `v0.3.5` Public Beta
+candidate. It does not claim a managed multi-tenant or multi-instance HA
+service.
 
 ## v0.3.4 - Runtime Complexity Reduction
 
