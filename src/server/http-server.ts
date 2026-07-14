@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ZodError } from "zod";
 import { assertLocalStoreRuntimeEdition } from "../app/edition.js";
 import type { Env } from "../config.js";
+import type { RuntimeGovernanceConfig } from "../config/runtime-config.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
 import type { EmbeddingSurfacePolicy } from "../embeddings/surface-policy.js";
 import type { IdentityRequestKind, InflightKind, RateLimitKind, TenantQuotaKind } from "../app/request-guards.js";
@@ -30,6 +31,7 @@ import type { ExecutionStateStore } from "../execution/state-store.js";
 import type { ExecutionTreeStore } from "../execution/tree-store.js";
 import type { ClaimLedgerAccess, SkillCandidateReviewAccess } from "../store/memory-store.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
+import type { LiteLearningEpisodeLedgerAccess } from "../store/lite-learning-episode-ledger.js";
 import { buildLiteRouteMatrix, registerLiteServerOnlyRoutes } from "./lite-runtime-boundary.js";
 import { createErrorResponse, HttpError } from "../util/http.js";
 
@@ -629,6 +631,8 @@ export function createRuntimeProductServices(args: {
   queryEmbedder?: EmbeddingProvider | null;
   executionTreeStore?: ExecutionTreeStore | null;
   claimLedgerAccess?: ClaimLedgerAccess | null;
+  learningEpisodeLedgerAccess?: LiteLearningEpisodeLedgerAccess | null;
+  admissionCandidatePolicyProfileRules?: RuntimeGovernanceConfig["admissionCandidatePolicyProfileRules"];
   skillCandidateReviewAccess?: SkillCandidateReviewAccess | null;
   memoryWriteService: MemoryWriteRouteService | null;
   handoffRouteService: HandoffRouteService | null;
@@ -654,6 +658,8 @@ export function createRuntimeProductServices(args: {
       liteWriteStore: args.liteWriteStore,
       executionTreeStore: args.executionTreeStore ?? null,
       claimLedgerAccess: args.claimLedgerAccess ?? null,
+      learningEpisodeLedgerAccess: args.learningEpisodeLedgerAccess ?? null,
+      admissionCandidatePolicyProfileRules: args.admissionCandidatePolicyProfileRules,
       memoryWrite: args.memoryWriteService,
     }),
     toolFeedback: createProductToolFeedbackService({

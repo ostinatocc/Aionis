@@ -160,6 +160,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs): void {
       kind: "write",
       body: parsed,
       execute: () => services.guide.execute(parsed, {
+        principal,
         planningContext: async (input) => {
           if (!planningContextService) {
             throw new HttpError(

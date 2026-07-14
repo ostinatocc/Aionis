@@ -29,8 +29,17 @@ import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts"
 import { createRuntimeProductServices, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteSkillCandidateReviewStore } from "../../src/store/lite-skill-candidate-review-store.ts";
-import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
+import {
+  createLiteWriteStore,
+  createLiteWriteStoreFromDatabase,
+} from "../../src/store/lite-write-store.ts";
+import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
+import {
+  createLiteLearningEpisodeLedgerAccess,
+  type LiteLearningEpisodeLedgerAccess,
+} from "../../src/store/lite-learning-episode-ledger.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
+import type { AuthPrincipal } from "../../src/util/auth.ts";
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-product-facade-"));
@@ -438,6 +447,8 @@ function registerProductFacade(args: {
   planningContextService?: MemoryPlanningContextService | null;
   handoffRouteService?: ReturnType<typeof createHandoffRouteService> | null;
   skillCandidateReviewAccess?: ReturnType<ReturnType<typeof createLiteSkillCandidateReviewStore>["createSkillCandidateReviewAccess"]>;
+  captureGuidePrincipal?: (principal: AuthPrincipal | null) => void;
+  learningEpisodeLedgerAccess?: LiteLearningEpisodeLedgerAccess | null;
 }) {
   const liteWriteStore = args.liteWriteStore ?? createLiteWriteStore(tmpDbPath("product-facade-dependency"));
   if (!args.liteWriteStore) {
@@ -445,18 +456,27 @@ function registerProductFacade(args: {
       await liteWriteStore.close();
     });
   }
+  const services = createRuntimeProductServices({
+    env: args.env,
+    liteWriteStore,
+    liteRecallAccess: args.liteRecallAccess ?? null,
+    embedder: args.embedder ?? null,
+    executionTreeStore: null,
+    memoryWriteService: args.memoryWriteService ?? null,
+    handoffRouteService: args.handoffRouteService ?? null,
+    skillCandidateReviewAccess: args.skillCandidateReviewAccess,
+    learningEpisodeLedgerAccess: args.learningEpisodeLedgerAccess ?? null,
+  });
+  if (args.captureGuidePrincipal) {
+    const executeGuide = services.guide.execute.bind(services.guide);
+    services.guide.execute = async (input, context) => {
+      args.captureGuidePrincipal!(context.principal);
+      return await executeGuide(input, context);
+    };
+  }
   registerProductFacadeRoutes({
     app: args.app,
-    services: createRuntimeProductServices({
-      env: args.env,
-      liteWriteStore,
-      liteRecallAccess: args.liteRecallAccess ?? null,
-      embedder: args.embedder ?? null,
-      executionTreeStore: null,
-      memoryWriteService: args.memoryWriteService ?? null,
-      handoffRouteService: args.handoffRouteService ?? null,
-      skillCandidateReviewAccess: args.skillCandidateReviewAccess,
-    }),
+    services,
     planningContextService: args.planningContextService ?? null,
     requireMemoryPrincipal: args.guards.requireMemoryPrincipal,
     withIdentityFromRequest: args.guards.withIdentityFromRequest,
@@ -615,6 +635,257 @@ test("product guide uses direct planning context service when supplied", async (
     assert.doesNotMatch(response.payload, /fallback_planning_route_used/);
   } finally {
     await liteWriteStore.close();
+  }
+});
+
+test("product guide collection source boundary accepts strict host envelope and rejects nested authority claims before planning", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const liteWriteStore = createLiteWriteStore(tmpDbPath("product-guide-collection-source-boundary"));
+  let planningCalls = 0;
+  try {
+    registerRuntimeErrorHandler(app);
+    registerProductFacade({
+      app,
+      env,
+      guards,
+      liteWriteStore,
+      memoryWriteService: createMemoryWriteRouteService({
+        env,
+        embedder: DeterministicEmbeddingProvider,
+        liteWriteStore,
+        executionStateStore: null,
+      }),
+      planningContextService: {
+        async assemble() {
+          planningCalls += 1;
+          return { tenant_id: "default", scope: "default", recall: {} };
+        },
+      },
+    });
+    const basePayload = {
+      tenant_id: "default",
+      scope: "default",
+      query_text: "Resolve a guide through the strict collection-source boundary.",
+      host_task_envelope_v1: {
+        contract_version: "host_task_envelope_v1",
+        host_task_id: "host-task-1",
+        collector_id: "collector-1",
+        collector_version: "1.0.0",
+        task_family: "repository_change",
+        task_signature: "task-signature-1",
+        repository_signature: "repository-signature-1",
+        source_task_sha256: "a".repeat(64),
+        source_event_sha256: "b".repeat(64),
+        created_at: "2026-07-14T00:00:00.000Z",
+      },
+    };
+    const accepted = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: basePayload,
+    });
+    assert.equal(accepted.statusCode, 200, accepted.body);
+    assert.equal(planningCalls, 1);
+
+    const spoofedSurfaces = [
+      { context: { deep: { assignment_arm: "candidate" } } },
+      { execution_packet_v1: { deep: { randomization_pair_sha256: "c".repeat(64) } } },
+      { trajectory_hints: [{ collection_class: "eligible_host" }] },
+      { execution_state_v1: { deep: { diagnostic_assignment_seed_sha256: "d".repeat(64) } } },
+    ];
+    for (const spoofed of spoofedSurfaces) {
+      const rejected = await app.inject({
+        method: "POST",
+        url: "/v1/guide",
+        payload: { ...basePayload, ...spoofed },
+      });
+      assert.equal(rejected.statusCode, 400, rejected.body);
+      assert.equal(rejected.json().error, "invalid_request");
+      assert.match(rejected.body, /server-owned learning authority/);
+      assert.equal(planningCalls, 1, "authority spoofing must be rejected before planning");
+    }
+  } finally {
+    await liteWriteStore.close();
+    await app.close();
+  }
+});
+
+test("product guide passes the exact authenticated principal into learning resolution", async () => {
+  const app = Fastify();
+  const env = {
+    ...liteEnv(),
+    AIONIS_EDITION: "server",
+    AIONIS_MODE: "service",
+    MEMORY_AUTH_MODE: "api_key",
+    MEMORY_API_KEYS_JSON: JSON.stringify({
+      "guide-principal-key": {
+        tenant_id: "tenant-guide",
+        agent_id: "agent-guide",
+        team_id: "team-guide",
+        role: "verifier",
+        default_scope: "project-guide",
+        allowed_scopes: ["project-guide", "project-guide-readonly"],
+      },
+    }),
+    AIONIS_SERVER_ALLOW_AUTH_OFF_FOR_DEV: false,
+  } as any;
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const liteWriteStore = createLiteWriteStore(tmpDbPath("product-guide-exact-principal"));
+  let capturedPrincipal: AuthPrincipal | null | undefined;
+  try {
+    registerRuntimeErrorHandler(app);
+    registerProductFacade({
+      app,
+      env,
+      guards,
+      liteWriteStore,
+      captureGuidePrincipal: (principal) => {
+        capturedPrincipal = principal;
+      },
+      memoryWriteService: createMemoryWriteRouteService({
+        env,
+        embedder: DeterministicEmbeddingProvider,
+        liteWriteStore,
+        executionStateStore: null,
+      }),
+      planningContextService: {
+        async assemble() {
+          return { tenant_id: "tenant-guide", scope: "project-guide", recall: {} };
+        },
+      },
+    });
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      headers: { "x-api-key": "guide-principal-key" },
+      payload: { query_text: "Bind this guide to the authenticated collection principal." },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(capturedPrincipal, {
+      tenant_id: "tenant-guide",
+      agent_id: "agent-guide",
+      team_id: "team-guide",
+      role: "verifier",
+      default_scope: "project-guide",
+      allowed_scopes: ["project-guide", "project-guide-readonly"],
+      source: "api_key",
+    });
+  } finally {
+    await liteWriteStore.close();
+    await app.close();
+  }
+});
+
+test("product guide experiment profile fails control without immutable Runtime authority", async () => {
+  const app = Fastify();
+  const env = {
+    ...liteEnv(),
+    AIONIS_ADMISSION_CANDIDATE_POLICY_MODE: "off",
+    AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON: JSON.stringify([{
+      profile_id: "immutable-shadow-profile",
+      mode: "active",
+      scopes: ["default"],
+      experiment: {
+        experiment_id: "admission-candidate-r1",
+        revision: 1,
+        serving_phase: "shadow",
+        evidence_intent: "integrity_only",
+        assignment_design: "diagnostic_hash_v1",
+        candidate_policy_id: "candidate_project_context_closed_loop_inspect",
+        candidate_policy_version: "2026-06-18",
+        candidate_allocation_bps: 5000,
+        gate_policy_id: "gate-policy",
+        gate_policy_version: "v1",
+        required_evidence_series: {
+          offline_paired: "series-offline-v1",
+          production_shadow: "series-production-v1",
+          tool_e2e: "series-tool-v1",
+          runtime_integrity: "series-runtime-v1",
+        },
+        external_execution_policy_ref: { registry_key: "external-execution-v1" },
+        collection_sources: [],
+        safety_pause_mode: "automatic",
+      },
+    }]),
+  } as any;
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const runtimeDatabase = createLiteRuntimeDatabase(tmpDbPath("product-guide-experiment-fail-control"));
+  const liteWriteStore = createLiteWriteStoreFromDatabase(runtimeDatabase, {
+    annProjectionEnabled: false,
+  });
+  const learningEpisodeLedgerAccess = createLiteLearningEpisodeLedgerAccess(runtimeDatabase);
+  try {
+    registerRuntimeErrorHandler(app);
+    registerProductFacade({
+      app,
+      env,
+      guards,
+      liteWriteStore,
+      learningEpisodeLedgerAccess,
+      memoryWriteService: createMemoryWriteRouteService({
+        env,
+        embedder: DeterministicEmbeddingProvider,
+        liteWriteStore,
+        executionStateStore: null,
+      }),
+      planningContextService: {
+        async assemble() {
+          return { tenant_id: "default", scope: "default", recall: {} };
+        },
+      },
+    });
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "Keep immutable learning authority fail-control.",
+        context: {
+          task_family: "repository_change",
+          task_signature: "immutable-shadow-task",
+          repository_signature: "immutable-shadow-repository",
+        },
+      },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    const policy = response.json().source_map.admission_candidate_policy;
+    assert.deepEqual(policy, {
+      mode: "shadow",
+      source: "profile_rule",
+      profile_id: "immutable-shadow-profile",
+      serving_authority: "experiment",
+      serving_arm: "control",
+      enrollment_state: "not_enrolled",
+      promotion_eligible: false,
+      collection_class: "unverified",
+      experiment_id: "admission-candidate-r1",
+      experiment_revision: 1,
+      reason_codes: ["experiment_revision_unprovisioned"],
+    });
+    const forbiddenAuthorityKeys = new Set([
+      "assignment",
+      "assignment_randomness_sha256",
+      "diagnostic_assignment_seed",
+      "diagnostic_assignment_seed_sha256",
+      "confirmatory_assignment_bits",
+      "confirmatory_assignment_bits_sha256",
+    ]);
+    const visit = (value: unknown) => {
+      if (!value || typeof value !== "object") return;
+      if (Array.isArray(value)) return value.forEach(visit);
+      for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+        assert.equal(forbiddenAuthorityKeys.has(key), false, `learning authority secret leaked: ${key}`);
+        visit(child);
+      }
+    };
+    visit(response.json());
+  } finally {
+    await liteWriteStore.close();
+    await runtimeDatabase.close();
+    await app.close();
   }
 });
 

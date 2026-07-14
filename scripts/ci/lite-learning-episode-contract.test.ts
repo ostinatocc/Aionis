@@ -23,6 +23,7 @@ import {
   learningEpisodeId,
   learningEpisodeTrackSummary,
   learningAssignmentUnitSha256,
+  learningCollectionPrincipalSha256,
   learningItemSetDigest,
   learningMemoryNamespaceSha256,
   reconcileCanonicalLearningTaskIdentity,
@@ -573,6 +574,31 @@ test("canonical task reconciliation keeps public/store scope branded and rejects
       { source: "execution_state_v1", task_family: "other-family", task_signature: "task-42", repository_signature: "repo-42" },
     ],
   }));
+});
+
+test("collection principal fingerprints bind stable identity and exclude credential type", () => {
+  const identity = {
+    tenant_id: "tenant-blue",
+    agent_id: "agent-7",
+    team_id: "team-a",
+  };
+  const apiKeyPrincipal = { ...identity, source: "api_key" as const };
+  const jwtPrincipal = { ...identity, source: "jwt" as const };
+  const apiKeyFingerprint = learningCollectionPrincipalSha256(apiKeyPrincipal);
+  const jwtFingerprint = learningCollectionPrincipalSha256(jwtPrincipal);
+
+  assert.equal(
+    apiKeyFingerprint,
+    "aaf539a0a3a31c032908cebf7d2fcdd90101092aa5fca63e14fc2e4159493059",
+  );
+  assert.equal(jwtFingerprint, apiKeyFingerprint);
+  assert.notEqual(learningCollectionPrincipalSha256({ ...identity, tenant_id: "tenant-green" }), apiKeyFingerprint);
+  assert.notEqual(learningCollectionPrincipalSha256({ ...identity, agent_id: "agent-8" }), apiKeyFingerprint);
+  assert.notEqual(learningCollectionPrincipalSha256({ ...identity, team_id: "team-b" }), apiKeyFingerprint);
+  assert.throws(
+    () => learningCollectionPrincipalSha256({ tenant_id: "tenant-blue", agent_id: null, team_id: null }),
+    /requires an agent_id or team_id subject/,
+  );
 });
 
 test("external execution policy requires immutable global attestor and exact role set", () => {

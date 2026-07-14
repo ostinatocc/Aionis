@@ -866,19 +866,49 @@ git commit -m "feat(store): verify and back up learning ledger v3"
 
 ### Task 3.0: Add the immutable experiment resolver before enrolled writes
 
+**Implementation split (2026-07-14):** Task 3.0 is intentionally delivered as
+three fail-closed slices instead of one authority-changing commit:
+
+- **Task 3.0A — declaration and read resolver:** strict immutable profile
+  declarations, stable principal identity, a same-database redacted authority
+  resolver, exact `AuthPrincipal`/host-envelope guide wiring, nested authority
+  claim rejection, and control-only behavior until protected enrolled writes
+  exist. This slice must not expose assignment entropy or claim that an
+  experiment has been provisioned.
+- **Task 3.0B — protected provision command:** the non-HTTP provision workflow,
+  sole-source CSPRNG generation, operation receipts, manifest lineage checks,
+  concurrent exact replay, and applicability-artifact regeneration described
+  below.
+- **Task 3.0C — signed atomic close command:** keyring-backed approval
+  verification plus nonce, closure, full lease release, and operation receipt
+  in one shared write transaction.
+
+Production remains fail-control after 3.0A. The checked-in gate registry is
+still `calibration_pending`, and there is not yet a production external
+execution-policy code registry. Synthetic passed registries are test-only.
+Neither A/A/shadow nor confirmatory production provisioning is claimed by this
+slice; Tasks 3.0B/3.0C remain open.
+
 **Files:**
 
 - Modify: `src/config.ts`
 - Modify: `src/config/runtime-config.ts`
+- Modify: `src/app/runtime-services.ts`
+- Modify: `src/runtime-entry.ts`
+- Modify: `src/server/http-server.ts`
 - Modify: `src/routes/product-facade.ts`
 - Modify: `src/product/product-services.ts`
 - Modify: `src/product/guide-service.ts`
+- Modify: `src/memory/learning-episode-ledger.ts`
+- Modify: `src/store/lite-learning-episode-ledger.ts`
+- Create: `src/memory/learning-experiment-resolver.ts`
 - Modify: `src/memory/learning-authority-approval.ts`
 - Create: `scripts/learning-experiment.ts`
 - Create: `scripts/ci/lite-learning-experiment-cli.test.ts`
 - Test: `scripts/ci/lite-config-posture.test.ts`
 - Test: `scripts/ci/lite-admission-policy-active-projection.test.ts`
 - Test: `scripts/ci/lite-product-facade-route.test.ts`
+- Test: `scripts/ci/lite-learning-experiment-resolver.test.ts`
 
 **Step 1: Write failing configuration tests**
 
@@ -1047,25 +1077,38 @@ a materially different implementation-contract digest. Tests prove close makes
 `status` report `closed` and makes propose/reserve/evaluate plus new eligible
 exposure fail closed while late feedback remains attributable and diagnostic.
 
-**Step 4: Run and commit**
+**Step 4: Run and commit Task 3.0A**
 
 ```bash
-npx tsx --test scripts/ci/lite-config-posture.test.ts
-npx tsx --test scripts/ci/lite-admission-policy-active-projection.test.ts
-npx tsx --test --test-name-pattern="collection source" \
-  scripts/ci/lite-product-facade-route.test.ts
-npx tsx --test scripts/ci/lite-learning-experiment-cli.test.ts
+npx tsx --test scripts/ci/lite-config-posture.test.ts \
+  scripts/ci/lite-runtime-config.test.ts
+npx tsx --test scripts/ci/lite-learning-episode-contract.test.ts \
+  scripts/ci/lite-learning-experiment-resolver.test.ts \
+  scripts/ci/lite-learning-episode-store.test.ts
+npx tsx --test scripts/ci/lite-product-facade-route.test.ts \
+  scripts/ci/lite-product-services.test.ts
 npm run -s typecheck
-git add src/config.ts src/config/runtime-config.ts src/routes/product-facade.ts \
-  src/product/product-services.ts src/product/guide-service.ts \
-  src/memory/learning-authority-approval.ts \
-  scripts/learning-experiment.ts \
+git add src/config.ts src/config/runtime-config.ts \
+  src/app/runtime-services.ts src/runtime-entry.ts src/server/http-server.ts \
+  src/routes/product-facade.ts src/product/product-services.ts \
+  src/product/guide-service.ts src/memory/learning-episode-ledger.ts \
+  src/memory/learning-experiment-resolver.ts \
+  src/store/lite-learning-episode-ledger.ts \
   scripts/ci/lite-config-posture.test.ts \
-  scripts/ci/lite-learning-experiment-cli.test.ts \
-  scripts/ci/lite-admission-policy-active-projection.test.ts \
-  scripts/ci/lite-product-facade-route.test.ts
-git commit -m "feat(learning): resolve immutable experiment revisions"
+  scripts/ci/lite-runtime-config.test.ts \
+  scripts/ci/lite-learning-episode-contract.test.ts \
+  scripts/ci/lite-learning-experiment-resolver.test.ts \
+  scripts/ci/lite-learning-episode-store.test.ts \
+  scripts/ci/lite-product-facade-route.test.ts \
+  scripts/ci/lite-product-services.test.ts \
+  docs/architecture/runtime-complexity-budget.json \
+  docs/plans/2026-07-13-learning-episode-ledger.md
+git commit -m "feat(learning): fail-control immutable experiment resolution"
 ```
+
+Tasks 3.0B and 3.0C add their CLI tests and commit only after their respective
+atomic mutation boundaries are implemented; they are not folded into the 3.0A
+commit merely to satisfy the original monolithic file list.
 
 ### Task 3.1: Add guide operation identity and exact response replay
 

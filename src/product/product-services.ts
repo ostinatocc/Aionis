@@ -33,6 +33,7 @@ import {
 } from "../memory/product-output-contract.js";
 import { memoryFindLite } from "../memory/find.js";
 import { AionisClaimWriteSchema } from "../memory/claim-ledger-contract.js";
+import { HostTaskEnvelopeV1Schema } from "../memory/learning-episode-ledger.js";
 import type { LiteExecutionNativeNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
 import { sha256Hex } from "../util/crypto.js";
 import type { AuthPrincipal } from "../util/auth.js";
@@ -124,6 +125,110 @@ export const ProductObserveRequest = z.object({
   handoff: LooseObject.optional(),
 }).strict();
 
+const ProductGuideServerAuthorityClaimKeys = new Set([
+  "assignment_arm",
+  "assignment_algorithm",
+  "assignment_bucket",
+  "assignment_namespace_sha256",
+  "assignment_randomness_sha256",
+  "assignment_reason_codes",
+  "assigned_arm",
+  "activation_starts_at",
+  "activation_wave_index",
+  "collection_class",
+  "collection_principal_sha256",
+  "collection_source_policy_sha256",
+  "collector_id",
+  "collector_version",
+  "confirmatory_assignment_bits",
+  "confirmatory_assignment_bits_sha256",
+  "confirmatory_attempt_id",
+  "candidate_allocation_bps",
+  "diagnostic_assignment_seed_sha256",
+  "evidence_intent",
+  "experiment_config_sha256",
+  "experiment_id",
+  "experiment_revision",
+  "host_task_envelope_sha256",
+  "memory_namespace_sha256",
+  "matching_covariate_sha256",
+  "namespace_lease_generation",
+  "namespace_lease_id",
+  "namespace_set_sha256",
+  "operation_protection",
+  "profile_rule_sha256",
+  "projection_complete",
+  "promotion_eligible",
+  "pair_member_ordinal",
+  "randomization_pair_sha256",
+  "randomization_pair_manifest_sha256",
+  "hard_boundary_upgrade_count",
+  "index_window_ends_at",
+  "wave_analysis_at",
+  "diagnostic_assignment_seed",
+]);
+
+const ProductGuideUnknownAuthoritySurfaces = [
+  "context",
+  "memory_layer_preference",
+  "execution_state_v1",
+  "execution_packet_v1",
+  "edit_boundary_context",
+  "runtime_verification",
+  "trajectory",
+  "trajectory_hints",
+  "execution_tree_v1",
+] as const;
+
+function rejectNestedProductGuideAuthorityClaims(
+  value: unknown,
+  rootPath: string,
+  context: z.RefinementCtx,
+): void {
+  const stack: Array<{ value: unknown; path: (string | number)[]; depth: number }> = [{
+    value,
+    path: [rootPath],
+    depth: 0,
+  }];
+  const visited = new WeakSet<object>();
+  let visitedNodes = 0;
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current.value === null || typeof current.value !== "object") continue;
+    if (visited.has(current.value)) continue;
+    visited.add(current.value);
+    visitedNodes += 1;
+    if (current.depth > 8 || visitedNodes > 2048) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: current.path,
+        message: "guide context exceeds the bounded authority-claim scan",
+      });
+      return;
+    }
+    if (Array.isArray(current.value)) {
+      current.value.forEach((entry, index) => stack.push({
+        value: entry,
+        path: [...current.path, index],
+        depth: current.depth + 1,
+      }));
+      continue;
+    }
+    for (const [key, entry] of Object.entries(current.value as Record<string, unknown>)) {
+      const path = [...current.path, key];
+      if (ProductGuideServerAuthorityClaimKeys.has(key)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path,
+          message: `${key} is server-owned learning authority`,
+        });
+        continue;
+      }
+      stack.push({ value: entry, path, depth: current.depth + 1 });
+    }
+  }
+}
+
 export const ProductGuideRequest = z.object({
   tenant_id: z.string().trim().min(1).optional(),
   scope: z.string().trim().min(1).optional(),
@@ -153,8 +258,15 @@ export const ProductGuideRequest = z.object({
   trajectory: z.unknown().optional(),
   trajectory_hints: z.unknown().optional(),
   execution_tree_v1: z.unknown().optional(),
+  host_task_envelope_v1: HostTaskEnvelopeV1Schema.optional(),
   include_packets: z.boolean().optional(),
-}).strict();
+}).strict().superRefine((value, context) => {
+  for (const surface of ProductGuideUnknownAuthoritySurfaces) {
+    if (value[surface] !== undefined) {
+      rejectNestedProductGuideAuthorityClaims(value[surface], surface, context);
+    }
+  }
+});
 
 export const ProductToolFeedbackRequest = z.object({
   feedback_kind: z.literal("tool_selection"),
@@ -951,6 +1063,7 @@ export type ProductObserveExecutionContext = {
 };
 
 export type ProductGuideExecutionContext = {
+  principal: AuthPrincipal | null;
   planningContext: (input: ProductGuideInput) => Promise<unknown>;
   applyIdentity: (input: Record<string, unknown>, kind: "execution_context_assemble") => unknown;
 };

@@ -9,6 +9,7 @@ import {
   type AionisAdmissionCandidatePolicyProfileRule,
   type Env,
 } from "../config.js";
+import type { RuntimeGovernanceConfig } from "../config/runtime-config.js";
 
 import { sha256Hex } from "../util/crypto.js";
 import type { AionisEffectObservation } from "../kernel/effect-evaluator.js";
@@ -59,6 +60,7 @@ import {
 import type { ClaimLedgerAccess, ClaimLedgerRow } from "../store/memory-store.js";
 
 import type { LiteExecutionNativeNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
+import type { LiteLearningEpisodeLedgerAccess } from "../store/lite-learning-episode-ledger.js";
 
 import type { ExecutionTreeStore } from "../execution/tree-store.js";
 
@@ -70,6 +72,12 @@ import {
 } from "../memory/agent-context-compiler.js";
 
 import { resolveTenantScope } from "../memory/tenant.js";
+
+import {
+  resolveLearningExperimentForGuide,
+  type LearningExperimentGuideResolution,
+  type LearningExperimentResolverInput,
+} from "../memory/learning-experiment-resolver.js";
 
 import {
   InternalDispatchResult,
@@ -308,6 +316,7 @@ type AdmissionCandidatePolicyGuideModeResolution = {
   mode: "off" | "shadow" | "active";
   source: "global_env" | "profile_rule" | "off";
   profile_id?: string;
+  matched_rule: AionisAdmissionCandidatePolicyProfileRule | null;
 };
 
 function selectorMatches(ruleValues: readonly string[] | undefined, actual: string | null): boolean {
@@ -349,6 +358,7 @@ function admissionCandidatePolicyProfileRuleMatches(args: {
 
 function resolveAdmissionCandidatePolicyGuideMode(args: {
   env: Env;
+  rules: readonly AionisAdmissionCandidatePolicyProfileRule[];
   parsed: z.infer<typeof ProductGuideRequest>;
   scope: string;
   agentRole: AionisAgentRole;
@@ -358,12 +368,10 @@ function resolveAdmissionCandidatePolicyGuideMode(args: {
     return {
       mode: args.env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE,
       source: "global_env",
+      matched_rule: null,
     };
   }
-  const rules = parseAdmissionCandidatePolicyProfileRules(
-    args.env.AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON ?? "[]",
-  );
-  const matched = rules.find((rule) =>
+  const matched = args.rules.find((rule) =>
     admissionCandidatePolicyProfileRuleMatches({
       rule,
       parsed: args.parsed,
@@ -371,11 +379,89 @@ function resolveAdmissionCandidatePolicyGuideMode(args: {
       agentRole: args.agentRole,
     })
   );
-  if (!matched) return { mode: "off", source: "off" };
+  if (!matched) return { mode: "off", source: "off", matched_rule: null };
   return {
     mode: matched.mode,
     source: "profile_rule",
     profile_id: matched.profile_id,
+    matched_rule: matched,
+  };
+}
+
+function unresolvedLearningExperimentGuideResolution(
+  configured: AdmissionCandidatePolicyGuideModeResolution,
+): LearningExperimentGuideResolution {
+  if (configured.source === "global_env") {
+    const active = configured.mode === "active";
+    return {
+      mode: configured.mode,
+      source: "global_env",
+      serving_authority: active ? "fixed_active" : "fixed_shadow",
+      serving_arm: active ? "candidate" : "control",
+      enrollment_state: "not_enrolled",
+      promotion_eligible: false,
+      profile_id: null,
+      experiment_id: null,
+      experiment_revision: null,
+      experiment_config_sha256: null,
+      collection_class: "unverified",
+      assignment: null,
+      reason_codes: [
+        active ? "global_fixed_active_override" : "global_fixed_shadow_override",
+        "promotion_ineligible_non_randomized",
+      ],
+    };
+  }
+  const rule = configured.matched_rule;
+  if (!rule) {
+    return {
+      mode: "off",
+      source: "off",
+      serving_authority: "off",
+      serving_arm: "control",
+      enrollment_state: "not_enrolled",
+      promotion_eligible: false,
+      profile_id: null,
+      experiment_id: null,
+      experiment_revision: null,
+      experiment_config_sha256: null,
+      collection_class: "unverified",
+      assignment: null,
+      reason_codes: ["no_matching_profile"],
+    };
+  }
+  if (!rule.experiment) {
+    const active = rule.mode === "active";
+    return {
+      mode: rule.mode,
+      source: "legacy_profile",
+      serving_authority: active ? "fixed_active" : "fixed_shadow",
+      serving_arm: active ? "candidate" : "control",
+      enrollment_state: "not_enrolled",
+      promotion_eligible: false,
+      profile_id: rule.profile_id,
+      experiment_id: null,
+      experiment_revision: null,
+      experiment_config_sha256: null,
+      collection_class: "unverified",
+      assignment: null,
+      reason_codes: ["legacy_fixed_profile", "promotion_ineligible_non_randomized"],
+    };
+  }
+  return {
+    mode: "shadow",
+    source: "experiment",
+    serving_authority: "experiment",
+    serving_arm: "control",
+    enrollment_state: "not_enrolled",
+    promotion_eligible: false,
+    profile_id: rule.profile_id,
+    experiment_id: rule.experiment.experiment_id,
+    experiment_revision: rule.experiment.revision,
+    experiment_config_sha256: null,
+    collection_class: "unverified",
+    assignment: null,
+    reason_codes: ["experiment_authority_unavailable"],
   };
 }
 
@@ -415,6 +501,56 @@ function productGuideExecutionSignatures(parsed: z.infer<typeof ProductGuideRequ
       nestedStringField(parsed.execution_packet_v1, "workflow_signature"),
       nestedStringField(parsed.execution_state_v1, "workflow_signature"),
     ),
+  };
+}
+
+type ProductGuideLearningTaskSource = LearningExperimentResolverInput["taskSources"][number];
+
+function productGuideLearningTaskSource(
+  source: "context" | "execution_packet_v1" | "execution_state_v1",
+  value: unknown,
+): { source: ProductGuideLearningTaskSource | null; invalid: boolean } {
+  const record = objectValue(value);
+  if (!record) return { source: null, invalid: false };
+  const keys = ["task_family", "task_signature", "repository_signature"] as const;
+  if (!keys.some((key) => Object.prototype.hasOwnProperty.call(record, key))) {
+    return { source: null, invalid: false };
+  }
+  const taskFamily = firstStringValue(record.task_family);
+  const taskSignature = firstStringValue(record.task_signature);
+  const repositorySignature = firstStringValue(record.repository_signature);
+  if (!taskFamily || !taskSignature || !repositorySignature) {
+    return { source: null, invalid: true };
+  }
+  return {
+    source: {
+      source,
+      task_family: taskFamily,
+      task_signature: taskSignature,
+      repository_signature: repositorySignature,
+    },
+    invalid: false,
+  };
+}
+
+function productGuideLearningTaskSources(
+  parsed: z.infer<typeof ProductGuideRequest>,
+): { sources: ProductGuideLearningTaskSource[]; invalid: boolean } {
+  const candidates = [
+    productGuideLearningTaskSource("context", parsed.context),
+    productGuideLearningTaskSource("execution_packet_v1", parsed.execution_packet_v1),
+    productGuideLearningTaskSource("execution_state_v1", parsed.execution_state_v1),
+  ];
+  const sources = candidates.flatMap((candidate) => candidate.source ? [candidate.source] : []);
+  if (parsed.host_task_envelope_v1) {
+    sources.push({
+      source: "host_task_envelope_v1",
+      envelope: parsed.host_task_envelope_v1,
+    });
+  }
+  return {
+    sources,
+    invalid: candidates.some((candidate) => candidate.invalid),
   };
 }
 
@@ -2034,7 +2170,16 @@ export type ProductGuideServiceDependencies = {
   liteWriteStore: LiteWriteStore;
   executionTreeStore?: ExecutionTreeStore | null;
   claimLedgerAccess?: ClaimLedgerAccess | null;
+  learningEpisodeLedgerAccess?: LiteLearningEpisodeLedgerAccess | null;
+  admissionCandidatePolicyProfileRules?: RuntimeGovernanceConfig["admissionCandidatePolicyProfileRules"];
   memoryWrite: ProductGuideMemoryWritePort | null;
+};
+
+type CompiledProductGuideServiceDependencies = Omit<
+  ProductGuideServiceDependencies,
+  "admissionCandidatePolicyProfileRules"
+> & {
+  admissionCandidatePolicyProfileRules: readonly AionisAdmissionCandidatePolicyProfileRule[];
 };
 
 async function persistGuideExposure(args: {
@@ -2127,7 +2272,7 @@ async function persistGuideExposure(args: {
 }
 
 async function executeProductGuide(args: {
-  dependencies: ProductGuideServiceDependencies;
+  dependencies: CompiledProductGuideServiceDependencies;
   parsed: ProductGuideInput;
   context: ProductGuideExecutionContext;
 }): Promise<ProductServiceResult> {
@@ -2170,6 +2315,10 @@ async function executeProductGuide(args: {
     ? projectProductGuideSourceMap(AionisGuidePacketSchema.parse(guideBody.aionis_guide_packet))
     : null;
   const agentRole = productGuideAgentRole(parsed);
+  const authorityTenancy = resolveTenantScope(
+    { tenant_id: parsed.tenant_id, scope: parsed.scope },
+    { defaultTenantId: env.MEMORY_TENANT_ID, defaultScope: env.MEMORY_SCOPE },
+  );
   const tenantId = String(guideBody.tenant_id ?? parsed.tenant_id ?? env.MEMORY_TENANT_ID);
   const scope = String(guideBody.scope ?? parsed.scope ?? env.MEMORY_SCOPE);
   const tenancy = resolveTenantScope(
@@ -2303,12 +2452,50 @@ async function executeProductGuide(args: {
 
   let admissionCandidatePolicyProjection: AionisAdmissionCandidatePolicyActiveProjection | null = null;
   let admissionCandidatePolicyProjectionApplied = false;
-  const admissionCandidatePolicyMode = resolveAdmissionCandidatePolicyGuideMode({
+  const configuredAdmissionCandidatePolicyMode = resolveAdmissionCandidatePolicyGuideMode({
     env,
+    rules: dependencies.admissionCandidatePolicyProfileRules,
     parsed,
-    scope,
+    scope: authorityTenancy.scope,
     agentRole,
   });
+  const learningTaskIdentity = productGuideLearningTaskSources(parsed);
+  let learningExperimentResolution = unresolvedLearningExperimentGuideResolution(
+    configuredAdmissionCandidatePolicyMode,
+  );
+  if (dependencies.learningEpisodeLedgerAccess) {
+    try {
+      learningExperimentResolution = await resolveLearningExperimentForGuide({
+        globalMode: env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE,
+        matchedRule: configuredAdmissionCandidatePolicyMode.matched_rule,
+        principal: context.principal,
+        tenantId: authorityTenancy.tenant_id,
+        publicScope: authorityTenancy.scope,
+        storeScope: authorityTenancy.scope_key,
+        taskSources: learningTaskIdentity.sources,
+        taskIdentityInvalid: learningTaskIdentity.invalid
+          || tenancy.tenant_id !== authorityTenancy.tenant_id
+          || tenancy.scope !== authorityTenancy.scope,
+        // Enrolled writes require the protected operation identity and the
+        // post-projection atomic authority recheck introduced in Task 3.1/3.2.
+        operationProtected: false,
+        projectionComplete: false,
+        now: new Date().toISOString(),
+      }, {
+        ledger: dependencies.learningEpisodeLedgerAccess,
+      });
+    } catch {
+      // The learning path is fail-control: guide still returns its baseline
+      // result and never turns an authority read failure into candidate serving.
+      learningExperimentResolution = unresolvedLearningExperimentGuideResolution(
+        configuredAdmissionCandidatePolicyMode,
+      );
+    }
+  }
+  const admissionCandidatePolicyMode: AdmissionCandidatePolicyGuideModeResolution = {
+    ...configuredAdmissionCandidatePolicyMode,
+    mode: learningExperimentResolution.mode,
+  };
   if (admissionCandidatePolicyMode.mode === "shadow" || admissionCandidatePolicyMode.mode === "active") {
     admissionCandidatePolicyProjection = await resolveAdmissionCandidatePolicyGuideProjection({
       liteWriteStore,
@@ -2405,6 +2592,20 @@ async function executeProductGuide(args: {
         mode: admissionCandidatePolicyMode.mode,
         source: admissionCandidatePolicyMode.source,
         ...(admissionCandidatePolicyMode.profile_id ? { profile_id: admissionCandidatePolicyMode.profile_id } : {}),
+        ...(learningExperimentResolution.source === "experiment" ? {
+          serving_authority: learningExperimentResolution.serving_authority,
+          serving_arm: learningExperimentResolution.serving_arm,
+          enrollment_state: learningExperimentResolution.enrollment_state,
+          promotion_eligible: learningExperimentResolution.promotion_eligible,
+          collection_class: learningExperimentResolution.collection_class,
+          ...(learningExperimentResolution.experiment_id
+            ? { experiment_id: learningExperimentResolution.experiment_id } : {}),
+          ...(learningExperimentResolution.experiment_revision !== null
+            ? { experiment_revision: learningExperimentResolution.experiment_revision } : {}),
+          ...(learningExperimentResolution.experiment_config_sha256
+            ? { experiment_config_sha256: learningExperimentResolution.experiment_config_sha256 } : {}),
+          reason_codes: learningExperimentResolution.reason_codes,
+        } : {}),
       },
     },
   });
@@ -2413,16 +2614,32 @@ async function executeProductGuide(args: {
 export function createProductGuideService(
   dependencies: ProductGuideServiceDependencies,
 ): ProductServices["guide"] {
+  const admissionCandidatePolicyProfileRules = dependencies.admissionCandidatePolicyProfileRules
+    ? dependencies.admissionCandidatePolicyProfileRules as unknown as readonly AionisAdmissionCandidatePolicyProfileRule[]
+    : Object.freeze(parseAdmissionCandidatePolicyProfileRules(
+        dependencies.env.AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON ?? "[]",
+      ));
+  const compiledDependencies: CompiledProductGuideServiceDependencies = {
+    ...dependencies,
+    admissionCandidatePolicyProfileRules,
+  };
   if (
     dependencies.memoryWrite
     && dependencies.memoryWrite.transactionRunner() !== dependencies.liteWriteStore.transactionRunner()
   ) {
     throw new Error("product guide memory write service must share the guide receipt transaction runner");
   }
+  if (
+    dependencies.learningEpisodeLedgerAccess
+    && dependencies.learningEpisodeLedgerAccess.transactionRunner()
+      !== dependencies.liteWriteStore.transactionRunner()
+  ) {
+    throw new Error("product guide learning ledger must share the guide receipt transaction runner");
+  }
   return {
     async execute(parsed, context) {
       try {
-        return await executeProductGuide({ dependencies, parsed, context });
+        return await executeProductGuide({ dependencies: compiledDependencies, parsed, context });
       } catch (error) {
         return productServiceFailureFromUnknown(error);
       }

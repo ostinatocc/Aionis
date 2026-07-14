@@ -165,6 +165,7 @@ test("guide keeps semantic success when post-commit memory finalization fails", 
       query_text: "Return a guide while preserving its committed exposure ledger.",
       consumer_agent_id: "local-user",
     }), {
+      principal: null,
       async planningContext() {
         return { tenant_id: "default", scope: "default", recall: {} };
       },

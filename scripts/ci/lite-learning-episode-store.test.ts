@@ -1895,6 +1895,89 @@ test("confirmatory provisioning atomically freezes 384 pairs and 768 leases with
   }
 });
 
+test("experiment revisions require evidence-intent-specific external inputs", async () => {
+  const temp = tempDatabase("experiment-external-input-intent");
+  const database = createLiteRuntimeDatabase(temp.path);
+  let writeStore: ReturnType<typeof createLiteWriteStoreFromDatabase> | null = null;
+  try {
+    writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
+    const ledger = createLiteLearningEpisodeLedgerAccess(database);
+    const fixture = confirmatoryFixture(await ledger.databaseInstanceId());
+    await database.transaction.run(async () => {
+      await ledger.insertPolicyVersion(fixture.candidate);
+      await ledger.insertPolicyVersion(fixture.gate);
+    });
+
+    const emptyInputs = canonicalJson({});
+    const integrityConfig = canonicalJson({
+      ...(JSON.parse(String(fixture.revision.config_json)) as Record<string, unknown>),
+      required_external_inputs_sha256: emptyInputs.sha256,
+    });
+    const integrityRevision = {
+      ...fixture.revision,
+      experiment_id: "experiment-integrity-only",
+      serving_phase: "shadow",
+      evidence_intent: "integrity_only",
+      eligible_memory_namespace_set_sha256: null,
+      eligible_memory_namespace_count: null,
+      assignment_design: "diagnostic_hash_v1",
+      randomization_pair_manifest_sha256: null,
+      randomization_pair_count: null,
+      activation_schedule_sha256: null,
+      confirmatory_assignment_bits: null,
+      confirmatory_assignment_bit_count: null,
+      confirmatory_assignment_bits_sha256: null,
+      required_external_inputs_sha256: emptyInputs.sha256,
+      required_external_inputs_json: emptyInputs.json,
+      config_sha256: integrityConfig.sha256,
+      config_json: integrityConfig.json,
+    } satisfies LiteLearningAuthorityRow;
+
+    const inserted = await database.transaction.run(
+      async () => await ledger.insertExperimentRevision(integrityRevision),
+    );
+    assert.equal(inserted.replayed, false);
+
+    const integrityWithConfirmatoryInputsConfig = canonicalJson({
+      ...(JSON.parse(String(integrityRevision.config_json)) as Record<string, unknown>),
+      required_external_inputs_sha256: fixture.revision.required_external_inputs_sha256,
+    });
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.insertExperimentRevision({
+        ...integrityRevision,
+        experiment_id: "experiment-integrity-with-external-inputs",
+        required_external_inputs_sha256: fixture.revision.required_external_inputs_sha256,
+        required_external_inputs_json: fixture.revision.required_external_inputs_json,
+        config_sha256: integrityWithConfirmatoryInputsConfig.sha256,
+        config_json: integrityWithConfirmatoryInputsConfig.json,
+      })),
+      /unrecognized key|expected.*never/i,
+    );
+
+    const confirmatoryEmptyConfig = canonicalJson({
+      ...(JSON.parse(String(fixture.revision.config_json)) as Record<string, unknown>),
+      required_external_inputs_sha256: emptyInputs.sha256,
+    });
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.provisionConfirmatorySet({
+        ...fixture,
+        revision: {
+          ...fixture.revision,
+          required_external_inputs_sha256: emptyInputs.sha256,
+          required_external_inputs_json: emptyInputs.json,
+          config_sha256: confirmatoryEmptyConfig.sha256,
+          config_json: confirmatoryEmptyConfig.json,
+        },
+      })),
+      /offline_paired|production_shadow|tool_e2e/,
+    );
+  } finally {
+    await writeStore?.close();
+    await database.close();
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
 test("episode store appends a canonical exposure once and replays it after reopen", async () => {
   const temp = tempDatabase("episode-replay");
   const fixture = legacyExposureFixture();

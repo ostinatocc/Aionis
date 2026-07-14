@@ -14,6 +14,7 @@ import { createSandboxStore } from "../store/sandbox-access.js";
 import { createLiteWriteStoreFromDatabase } from "../store/lite-write-store.js";
 import { createLiteClaimLedgerStoreFromDatabase } from "../store/lite-claim-ledger-store.js";
 import { createLiteRuntimeDatabase } from "../store/lite-runtime-database.js";
+import { createLiteLearningEpisodeLedgerAccess } from "../store/lite-learning-episode-ledger.js";
 import { createLiteSkillCandidateReviewStoreFromDatabase } from "../store/lite-skill-candidate-review-store.js";
 import { createLocalAnnIndex } from "../store/ann/local-ann-index.js";
 import { createZvecAnnIndex } from "../store/ann/zvec-ann-index.js";
@@ -134,6 +135,7 @@ export async function createRuntimeServices(config: RuntimeServiceConfig) {
     closeDatabaseOnClose: true,
     annProjectionEnabled: annIndex !== null,
   });
+  const learningEpisodeLedgerAccess = createLiteLearningEpisodeLedgerAccess(runtimeDatabase);
   const liteClaimLedgerStore = createLiteClaimLedgerStoreFromDatabase(runtimeDatabase);
   const claimLedgerAccess = liteClaimLedgerStore.createClaimLedgerAccess();
   const liteSkillCandidateReviewStore = createLiteSkillCandidateReviewStoreFromDatabase(runtimeDatabase);
@@ -291,6 +293,7 @@ export async function createRuntimeServices(config: RuntimeServiceConfig) {
     liteReplayStore,
     liteReplayAccess,
     liteWriteStore,
+    learningEpisodeLedgerAccess,
     liteClaimLedgerStore,
     claimLedgerAccess,
     liteSkillCandidateReviewStore,

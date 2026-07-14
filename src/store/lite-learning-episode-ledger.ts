@@ -7,7 +7,9 @@ import {
   LearningEpisodeEventWithoutDigestSchema,
   LearningEpisodePayloadV1Schema,
   LearningLedgerItemSchema,
-  RequiredExternalInputsV1Schema,
+  confirmatoryMatchedPairAssignment,
+  diagnosticLearningAssignment,
+  parseLearningRequiredExternalInputs,
   isLearningExposurePromotionEligible,
   hostUseReceiptDigest,
   learningEpisodeEventDigest,
@@ -4117,7 +4119,12 @@ function validateExperimentRevision(db: SqliteDatabase, row: LiteLearningAuthori
     canonicalJson(row.external_execution_policy_json, "external_execution_policy_json"),
   );
   parseRequiredEvidenceSeries(row.required_evidence_series_json);
-  RequiredExternalInputsV1Schema.parse(
+  const evidenceIntent = requiredString(row, "evidence_intent");
+  if (evidenceIntent !== "integrity_only" && evidenceIntent !== "confirmatory") {
+    throw new Error(`Unknown experiment evidence intent: ${evidenceIntent}`);
+  }
+  parseLearningRequiredExternalInputs(
+    evidenceIntent,
     canonicalJson(row.required_external_inputs_json, "required_external_inputs_json"),
   );
   const revisionConfig = canonicalJson(row.config_json, "config_json") as Record<string, unknown>;
@@ -6144,6 +6151,15 @@ export type LiteLearningEpisodeLedgerAccess = {
   transactionRunner(): SqliteTransactionRunner;
   databaseInstanceId(): Promise<string>;
   verifyIntegrity(): Promise<void>;
+  resolveGuideExperimentAuthority(args: {
+    tenantId: string;
+    experimentId: string;
+    experimentRevision: number;
+    taskFamily: string | null;
+    collectionPrincipalSha256: string | null;
+    memoryNamespaceSha256: string;
+    assignmentUnitSha256: string;
+  }): Promise<LiteLearningExperimentAuthorityResolution>;
   insertPolicyVersion(row: LiteLearningAuthorityRow): Promise<{ row: Record<string, unknown>; replayed: boolean }>;
   insertCollectionPrincipalBinding(row: LiteLearningAuthorityRow): Promise<{ row: Record<string, unknown>; replayed: boolean }>;
   insertExperimentRevision(row: LiteLearningAuthorityRow): Promise<{ row: Record<string, unknown>; replayed: boolean }>;
@@ -6188,10 +6204,80 @@ export type LiteLearningEpisodeLedgerAccess = {
   ): Promise<{ row: Record<string, unknown>; replayed: boolean }>;
 };
 
+export type LiteLearningExperimentAuthorityResolution = Readonly<{
+  revision: Readonly<{
+    profile_id: string;
+    profile_rule_sha256: string;
+    serving_phase: "aa" | "shadow" | "active_control";
+    evidence_intent: "integrity_only" | "confirmatory";
+    assignment_design: "diagnostic_hash_v1" | "matched_pair_complete_randomization_v1";
+    candidate_policy_id: string;
+    candidate_policy_version: string;
+    candidate_policy_implementation_sha256: string;
+    candidate_policy_config_sha256: string;
+    candidate_allocation_bps: number;
+    collection_source_policy_sha256: string;
+    gate_policy_id: string;
+    gate_policy_version: string;
+    gate_policy_config_sha256: string;
+    gate_prospective_calibration_sha256: string;
+    required_evidence_series_sha256: string;
+    required_external_inputs_sha256: string;
+    external_execution_policy_sha256: string;
+    safety_pause_mode: "automatic";
+    config_sha256: string;
+    config_bindings: Readonly<{
+      experiment_declaration_sha256: string | null;
+      profile_rule_sha256: string | null;
+      collection_source_policy_sha256: string | null;
+      required_evidence_series_sha256: string | null;
+      external_execution_policy_registry_key: string | null;
+    }>;
+    diagnostic_assignment_seed_sha256: string;
+    confirmatory_assignment_bits_sha256: string | null;
+  }> | null;
+  collection_principal: Readonly<{
+    collection_principal_sha256: string;
+    collection_class: "eligible_host" | "fixture_pilot";
+    collector_id: string;
+    collector_version: string;
+    verifier_policy_sha256: string;
+    binding_sha256: string;
+  }> | null;
+  confirmatory_attempt: Readonly<{
+    confirmatory_attempt_id: string;
+    task_family: string;
+  }> | null;
+  namespace_lease: Readonly<{
+    namespace_lease_id: string;
+    namespace_lease_generation: number;
+    namespace_set_sha256: string;
+    randomization_pair_sha256: string;
+    matching_covariate_sha256: string;
+    pair_member_ordinal: 0 | 1;
+    activation_wave_index: 1 | 2 | 3;
+    activation_starts_at: string;
+    index_window_ends_at: string;
+    wave_analysis_at: string;
+  }> | null;
+  assignment: Readonly<{
+    assignment_authority: "diagnostic_only" | "confirmatory_matched_pair";
+    assignment_algorithm: "diagnostic_sha256_48_mod_10000_v1" | "matched_pair_csprng_bit_v1";
+    assignment_arm: "candidate" | "control";
+    assignment_bucket: number | null;
+    assignment_namespace_sha256: string;
+    assignment_randomness_sha256: string;
+  }> | null;
+  experiment_closed: boolean;
+  active_namespace_lease_conflict: boolean;
+  safety_pause_required: boolean;
+  candidate_authority_actions: readonly ("hold" | "promote" | "pause" | "demote" | "retire")[];
+}>;
+
 export function createLiteLearningEpisodeLedgerAccess(
   database: LiteRuntimeDatabase,
 ): LiteLearningEpisodeLedgerAccess {
-  const { db, transaction } = database;
+  const { db, readDb, transaction } = database;
   assertLiteLearningEpisodeLedgerIntegrity(db);
 
   return {
@@ -6205,6 +6291,312 @@ export function createLiteLearningEpisodeLedgerAccess(
 
     async verifyIntegrity() {
       await transaction.read(() => assertLiteLearningEpisodeLedgerIntegrity(db));
+    },
+
+    async resolveGuideExperimentAuthority(args) {
+      return await transaction.read(() => {
+        readDb.exec("BEGIN");
+        try {
+          const revision = readDb.prepare(
+            `SELECT * FROM lite_learning_experiment_revisions
+             WHERE tenant_id = ? AND experiment_id = ? AND experiment_revision = ?`,
+          ).get(args.tenantId, args.experimentId, args.experimentRevision) as LiteLearningAuthorityRow | undefined;
+          if (!revision) {
+            readDb.exec("COMMIT");
+            return {
+              revision: null,
+              collection_principal: null,
+              confirmatory_attempt: null,
+              namespace_lease: null,
+              assignment: null,
+              experiment_closed: false,
+              active_namespace_lease_conflict: false,
+              safety_pause_required: false,
+              candidate_authority_actions: [],
+            };
+          }
+          validateExperimentRevision(readDb, revision);
+          const revisionConfig = canonicalJson(revision.config_json, "config_json");
+          if (!revisionConfig || typeof revisionConfig !== "object" || Array.isArray(revisionConfig)) {
+            throw new Error("experiment revision config must be a canonical object");
+          }
+          const revisionConfigRecord = revisionConfig as Record<string, unknown>;
+
+          const collectionPrincipal = args.collectionPrincipalSha256 === null
+            ? undefined
+            : readDb.prepare(
+              `SELECT * FROM lite_learning_collection_principal_bindings
+               WHERE tenant_id = ? AND collection_principal_sha256 = ?`,
+            ).get(args.tenantId, args.collectionPrincipalSha256) as LiteLearningAuthorityRow | undefined;
+          if (collectionPrincipal) {
+            assertCanonicalJsonDigest(collectionPrincipal, "verifier_policy_json", "verifier_policy_sha256");
+            parseFrozenHostVerifierPolicy(requiredString(collectionPrincipal, "verifier_policy_json"));
+            if (collectionPrincipal.binding_sha256 !== learningCollectionPrincipalBindingDigest(collectionPrincipal)) {
+              throw new Error("collection principal binding digest mismatch");
+            }
+          }
+
+          const attempt = readDb.prepare(
+            `SELECT * FROM lite_learning_confirmatory_attempts
+             WHERE tenant_id = ? AND experiment_id = ? AND experiment_revision = ?`,
+          ).get(args.tenantId, args.experimentId, args.experimentRevision) as LiteLearningAuthorityRow | undefined;
+          if (attempt) validateConfirmatoryAttempt(readDb, attempt, { exactReplay: true });
+
+          const activeLease = readDb.prepare(
+            `SELECT * FROM lite_learning_namespace_leases
+             WHERE tenant_id = ? AND memory_namespace_sha256 = ? AND status = 'active'`,
+          ).get(args.tenantId, args.memoryNamespaceSha256) as LiteLearningAuthorityRow | undefined;
+          let exactLease: LiteLearningAuthorityRow | null = null;
+          let exactPair: LiteLearningAuthorityRow | null = null;
+          let confirmatoryAssignment: ReturnType<typeof confirmatoryMatchedPairAssignment> | null = null;
+          if (activeLease) {
+            assertExactRowShape("lite_learning_namespace_leases", activeLease);
+            const leaseAttempt = readDb.prepare(
+              `SELECT * FROM lite_learning_confirmatory_attempts
+               WHERE tenant_id = ? AND confirmatory_attempt_id = ?`,
+            ).get(args.tenantId, activeLease.confirmatory_attempt_id) as LiteLearningAuthorityRow | undefined;
+            const leaseRevision = readDb.prepare(
+              `SELECT * FROM lite_learning_experiment_revisions
+               WHERE tenant_id = ? AND experiment_id = ? AND experiment_revision = ?`,
+            ).get(
+              args.tenantId,
+              activeLease.experiment_id,
+              activeLease.experiment_revision,
+            ) as LiteLearningAuthorityRow | undefined;
+            const pair = readDb.prepare(
+              `SELECT * FROM lite_learning_randomization_pairs
+               WHERE tenant_id = ? AND confirmatory_attempt_id = ?
+                 AND randomization_pair_sha256 = ?`,
+            ).get(
+              args.tenantId,
+              activeLease.confirmatory_attempt_id,
+              activeLease.randomization_pair_sha256,
+            ) as LiteLearningAuthorityRow | undefined;
+            if (!leaseAttempt || !leaseRevision || !pair) {
+              throw new Error("active namespace lease authority chain is incomplete");
+            }
+            validateExperimentRevision(readDb, leaseRevision);
+            validateConfirmatoryAttempt(readDb, leaseAttempt, { exactReplay: true });
+            assertExactRowShape("lite_learning_randomization_pairs", pair);
+            if (pair.pair_record_sha256 !== learningRandomizationPairRecordDigest(pair)) {
+              throw new Error("active namespace lease pair digest mismatch");
+            }
+            const memberOrdinal = requiredInteger(activeLease, "pair_member_ordinal");
+            if (memberOrdinal !== 0 && memberOrdinal !== 1) {
+              throw new Error("active namespace lease pair member is invalid");
+            }
+            const memberField = memberOrdinal === 0
+              ? "member_0_memory_namespace_sha256"
+              : "member_1_memory_namespace_sha256";
+            if (pair[memberField] !== args.memoryNamespaceSha256) {
+              throw new Error("active namespace lease pair membership mismatch");
+            }
+            for (const field of [
+              "activation_wave_index",
+              "activation_starts_at",
+              "index_window_ends_at",
+              "wave_analysis_at",
+            ]) {
+              if (!valuesEqual(activeLease[field], pair[field])) {
+                throw new Error(`active namespace lease pair binding mismatch: ${field}`);
+              }
+            }
+            confirmatoryAssignment = confirmatoryMatchedPairAssignment({
+              assignmentRandomBits: requiredBlob(leaseRevision, "confirmatory_assignment_bits"),
+              canonicalPairOrdinal: requiredInteger(pair, "pair_ordinal"),
+              pairMemberOrdinal: memberOrdinal,
+            });
+            if (activeLease.assigned_arm !== confirmatoryAssignment.arm) {
+              throw new Error("active namespace lease arm does not match frozen assignment bits");
+            }
+            const leaseMatchesRevision = activeLease.experiment_id === revision.experiment_id
+              && activeLease.experiment_revision === revision.experiment_revision
+              && attempt !== undefined
+              && activeLease.confirmatory_attempt_id === attempt.confirmatory_attempt_id;
+            if (leaseMatchesRevision) {
+              exactLease = activeLease;
+              exactPair = pair;
+            }
+          }
+
+          const closure = attempt
+            ? readDb.prepare(
+              `SELECT * FROM lite_learning_experiment_closures
+               WHERE tenant_id = ? AND confirmatory_attempt_id = ?`,
+            ).get(args.tenantId, attempt.confirmatory_attempt_id) as LiteLearningAuthorityRow | undefined
+            : undefined;
+          if (closure) validateAuthorityFactReferences(readDb, "lite_learning_experiment_closures", closure);
+
+          const actions = args.taskFamily === null
+            ? []
+            : readDb.prepare(
+              `SELECT authority_action
+               FROM lite_learning_gate_decisions
+               WHERE tenant_id = ? AND task_family = ?
+                 AND candidate_policy_implementation_sha256 = ?
+                 AND authority_action IS NOT NULL
+               ORDER BY row_id`,
+            ).all(
+              args.tenantId,
+              args.taskFamily,
+              revision.candidate_policy_implementation_sha256,
+            ) as Array<{
+              authority_action: "hold" | "promote" | "pause" | "demote" | "retire";
+            }>;
+          const safetyPauseRequired = args.taskFamily !== null && scalarCount(
+            readDb,
+            `SELECT COUNT(*) AS count FROM lite_learning_gate_decisions
+             WHERE tenant_id = ? AND task_family = ?
+               AND candidate_policy_implementation_sha256 = ?
+               AND evidence_verdict = 'pause_required'`,
+            args.tenantId,
+            args.taskFamily,
+            revision.candidate_policy_implementation_sha256,
+          ) > 0;
+
+          const collectionClass = collectionPrincipal?.collection_class === "eligible_host"
+            || collectionPrincipal?.collection_class === "fixture_pilot"
+            ? collectionPrincipal.collection_class
+            : "unverified";
+          const activeLeaseConflict = activeLease !== undefined && exactLease === null;
+          const assignmentNamespace = `lexp_${sha256Text(stableStringify({
+            contract_version: "aionis_learning_assignment_namespace_v1",
+            tenant_id: args.tenantId,
+            experiment_id: args.experimentId,
+            experiment_revision: args.experimentRevision,
+            ...(collectionClass === "fixture_pilot" ? {
+              fixture_collection_class: collectionClass,
+              fixture_collection_principal_sha256: args.collectionPrincipalSha256,
+            } : {}),
+          }))}`;
+          let assignment: LiteLearningExperimentAuthorityResolution["assignment"] = null;
+          if (revision.evidence_intent === "confirmatory" && collectionClass === "eligible_host") {
+            if (exactLease && exactPair && confirmatoryAssignment) {
+              assignment = {
+                assignment_authority: "confirmatory_matched_pair",
+                assignment_algorithm: confirmatoryAssignment.algorithm,
+                assignment_arm: confirmatoryAssignment.arm,
+                assignment_bucket: null,
+                assignment_namespace_sha256: sha256Text(assignmentNamespace),
+                assignment_randomness_sha256: confirmatoryAssignment.assignment_randomness_sha256,
+              };
+            }
+          } else if (!activeLeaseConflict) {
+            const diagnostic = diagnosticLearningAssignment({
+              diagnosticAssignmentSeed: requiredBlob(revision, "diagnostic_assignment_seed"),
+              assignmentNamespace,
+              assignmentUnit: args.assignmentUnitSha256,
+              candidateAllocationBps: requiredInteger(revision, "candidate_allocation_bps"),
+            });
+            assignment = {
+              assignment_authority: "diagnostic_only",
+              assignment_algorithm: diagnostic.algorithm,
+              assignment_arm: diagnostic.arm,
+              assignment_bucket: diagnostic.assignment_bucket,
+              assignment_namespace_sha256: sha256Text(assignmentNamespace),
+              assignment_randomness_sha256: diagnostic.diagnostic_assignment_seed_sha256,
+            };
+          }
+
+          const wave = exactLease ? requiredInteger(exactLease, "activation_wave_index") : null;
+          if (wave !== null && wave !== 1 && wave !== 2 && wave !== 3) {
+            throw new Error("active namespace lease activation wave is invalid");
+          }
+          const member = exactLease ? requiredInteger(exactLease, "pair_member_ordinal") : null;
+          if (member !== null && member !== 0 && member !== 1) {
+            throw new Error("active namespace lease pair member is invalid");
+          }
+          const result: LiteLearningExperimentAuthorityResolution = {
+            revision: {
+              profile_id: requiredString(revision, "profile_id"),
+              profile_rule_sha256: requiredString(revision, "profile_rule_sha256"),
+              serving_phase: revision.serving_phase as "aa" | "shadow" | "active_control",
+              evidence_intent: revision.evidence_intent as "integrity_only" | "confirmatory",
+              assignment_design: revision.assignment_design as "diagnostic_hash_v1" | "matched_pair_complete_randomization_v1",
+              candidate_policy_id: requiredString(revision, "candidate_policy_id"),
+              candidate_policy_version: requiredString(revision, "candidate_policy_version"),
+              candidate_policy_implementation_sha256: requiredString(revision, "candidate_policy_implementation_sha256"),
+              candidate_policy_config_sha256: requiredString(revision, "candidate_policy_config_sha256"),
+              candidate_allocation_bps: requiredInteger(revision, "candidate_allocation_bps"),
+              collection_source_policy_sha256: requiredString(revision, "collection_source_policy_sha256"),
+              gate_policy_id: requiredString(revision, "gate_policy_id"),
+              gate_policy_version: requiredString(revision, "gate_policy_version"),
+              gate_policy_config_sha256: requiredString(revision, "gate_policy_config_sha256"),
+              gate_prospective_calibration_sha256: requiredString(revision, "gate_prospective_calibration_sha256"),
+              required_evidence_series_sha256: requiredString(revision, "required_evidence_series_sha256"),
+              required_external_inputs_sha256: requiredString(revision, "required_external_inputs_sha256"),
+              external_execution_policy_sha256: requiredString(revision, "external_execution_policy_sha256"),
+              safety_pause_mode: "automatic",
+              config_sha256: requiredString(revision, "config_sha256"),
+              config_bindings: Object.freeze({
+                experiment_declaration_sha256:
+                  typeof revisionConfigRecord.experiment_declaration_sha256 === "string"
+                    ? revisionConfigRecord.experiment_declaration_sha256 : null,
+                profile_rule_sha256:
+                  typeof revisionConfigRecord.profile_rule_sha256 === "string"
+                    ? revisionConfigRecord.profile_rule_sha256 : null,
+                collection_source_policy_sha256:
+                  typeof revisionConfigRecord.collection_source_policy_sha256 === "string"
+                    ? revisionConfigRecord.collection_source_policy_sha256 : null,
+                required_evidence_series_sha256:
+                  typeof revisionConfigRecord.required_evidence_series_sha256 === "string"
+                    ? revisionConfigRecord.required_evidence_series_sha256 : null,
+                external_execution_policy_registry_key:
+                  typeof revisionConfigRecord.external_execution_policy_registry_key === "string"
+                    ? revisionConfigRecord.external_execution_policy_registry_key : null,
+              }),
+              diagnostic_assignment_seed_sha256: requiredString(revision, "diagnostic_assignment_seed_sha256"),
+              confirmatory_assignment_bits_sha256: typeof revision.confirmatory_assignment_bits_sha256 === "string"
+                ? revision.confirmatory_assignment_bits_sha256
+                : null,
+            },
+            collection_principal: collectionPrincipal
+              ? {
+                  collection_principal_sha256: requiredString(collectionPrincipal, "collection_principal_sha256"),
+                  collection_class: collectionPrincipal.collection_class as "eligible_host" | "fixture_pilot",
+                  collector_id: requiredString(collectionPrincipal, "collector_id"),
+                  collector_version: requiredString(collectionPrincipal, "collector_version"),
+                  verifier_policy_sha256: requiredString(collectionPrincipal, "verifier_policy_sha256"),
+                  binding_sha256: requiredString(collectionPrincipal, "binding_sha256"),
+                }
+              : null,
+            confirmatory_attempt: attempt
+              ? {
+                  confirmatory_attempt_id: requiredString(attempt, "confirmatory_attempt_id"),
+                  task_family: requiredString(attempt, "task_family"),
+                }
+              : null,
+            namespace_lease: exactLease && exactPair && wave !== null && member !== null
+              ? {
+                  namespace_lease_id: requiredString(exactLease, "namespace_lease_id"),
+                  namespace_lease_generation: requiredInteger(exactLease, "lease_generation"),
+                  namespace_set_sha256: requiredString(exactLease, "namespace_set_sha256"),
+                  randomization_pair_sha256: requiredString(exactLease, "randomization_pair_sha256"),
+                  matching_covariate_sha256: requiredString(exactPair, "matching_covariate_sha256"),
+                  pair_member_ordinal: member,
+                  activation_wave_index: wave,
+                  activation_starts_at: requiredString(exactLease, "activation_starts_at"),
+                  index_window_ends_at: requiredString(exactLease, "index_window_ends_at"),
+                  wave_analysis_at: requiredString(exactLease, "wave_analysis_at"),
+                }
+              : null,
+            assignment,
+            experiment_closed: closure !== undefined,
+            active_namespace_lease_conflict: activeLeaseConflict,
+            safety_pause_required: safetyPauseRequired,
+            candidate_authority_actions: actions.map((row) => row.authority_action),
+          };
+          readDb.exec("COMMIT");
+          return result;
+        } catch (error) {
+          try {
+            readDb.exec("ROLLBACK");
+          } catch {
+            // Preserve the authority resolution failure.
+          }
+          throw error;
+        }
+      });
     },
 
     async insertPolicyVersion(row) {

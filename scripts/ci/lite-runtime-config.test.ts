@@ -34,11 +34,33 @@ test("typed Runtime config resolves the local core posture", () => {
   assert.equal(config.storage.LITE_WRITE_SQLITE_PATH, ".tmp/aionis-lite-write.sqlite");
   assert.equal(config.recall.RECALL_ANN_PROVIDER, "off");
   assert.equal(config.governance.MEMORY_AUTH_MODE, "off");
+  assert.deepEqual(config.governance.admissionCandidatePolicyProfileRules, []);
   assert.equal(config.providers.embedding.EMBEDDING_PROVIDER, "none");
   assert.equal("SANDBOX_ENABLED" in config.runtime, false);
   assert.equal("MEMORY_AUTH_MODE" in config.storage, false);
   assert.equal("RECALL_RATE_LIMIT_RPS" in config.recall, false);
   assert.equal(config.limits.RECALL_RATE_LIMIT_RPS, 10);
+});
+
+test("typed Runtime config compiles and deeply freezes admission profile rules", () => {
+  const { config } = resolve({
+    AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON: JSON.stringify([
+      {
+        profile_id: "frozen-profile",
+        mode: "shadow",
+        task_families: ["frozen-task-family"],
+      },
+    ]),
+  });
+  const rules = config.governance.admissionCandidatePolicyProfileRules;
+  assert.equal(rules[0]?.profile_id, "frozen-profile");
+  assert.equal(Object.isFrozen(rules), true);
+  assert.equal(Object.isFrozen(rules[0]), true);
+  assert.equal(Object.isFrozen(rules[0]?.task_families), true);
+  assert.throws(() => {
+    (rules[0]!.task_families as string[]).push("mutated-task-family");
+  }, TypeError);
+  assert.deepEqual(rules[0]?.task_families, ["frozen-task-family"]);
 });
 
 test("typed Runtime config resolves local Zvec and preserves explicit advanced overrides", () => {

@@ -36,6 +36,7 @@ export async function startAionisRuntime(): Promise<void> {
     liteReplayStore,
     liteReplayAccess,
     liteWriteStore,
+    learningEpisodeLedgerAccess,
     liteClaimLedgerStore,
     claimLedgerAccess,
     liteSkillCandidateReviewStore,
@@ -174,6 +175,9 @@ export async function startAionisRuntime(): Promise<void> {
     queryEmbedder,
     executionTreeStore,
     claimLedgerAccess,
+    learningEpisodeLedgerAccess,
+    admissionCandidatePolicyProfileRules:
+      runtimeConfig.governance.admissionCandidatePolicyProfileRules,
     skillCandidateReviewAccess,
     memoryWriteService,
     handoffRouteService,

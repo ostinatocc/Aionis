@@ -58,6 +58,36 @@ export function learningAssignmentUnitSha256(args: {
   }));
 }
 
+export const CollectionPrincipalIdentityV1Schema = z.object({
+  contract_version: z.literal("aionis_collection_principal_v1"),
+  tenant_id: BoundedIdSchema,
+  agent_id: BoundedIdSchema.nullable(),
+  team_id: BoundedIdSchema.nullable(),
+}).strict().superRefine((value, context) => {
+  if (value.agent_id === null && value.team_id === null) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["agent_id"],
+      message: "Collection principal identity requires an agent_id or team_id subject",
+    });
+  }
+});
+
+export type CollectionPrincipalIdentityV1 = z.infer<typeof CollectionPrincipalIdentityV1Schema>;
+
+export function learningCollectionPrincipalSha256(args: {
+  tenant_id: string;
+  agent_id: string | null;
+  team_id: string | null;
+}): string {
+  return sha256Hex(stableStringify(CollectionPrincipalIdentityV1Schema.parse({
+    contract_version: "aionis_collection_principal_v1",
+    tenant_id: args.tenant_id,
+    agent_id: args.agent_id,
+    team_id: args.team_id,
+  })));
+}
+
 export const HostTaskEnvelopeV1Schema = z.object({
   contract_version: z.literal("host_task_envelope_v1"),
   host_task_id: BoundedIdSchema,
@@ -1029,6 +1059,17 @@ export const RequiredExternalInputsV1Schema = z.object({
   production_shadow: ExternalInputV1Schema,
   tool_e2e: ExternalInputV1Schema,
 }).strict();
+
+export const IntegrityOnlyExternalInputsV1Schema = z.object({}).strict();
+
+export function parseLearningRequiredExternalInputs(
+  evidenceIntent: "integrity_only" | "confirmatory",
+  value: unknown,
+): Record<string, unknown> {
+  return evidenceIntent === "confirmatory"
+    ? RequiredExternalInputsV1Schema.parse(value)
+    : IntegrityOnlyExternalInputsV1Schema.parse(value);
+}
 
 export function externalExecutionPolicyDigest(value: ExternalExecutionPolicyV1): string {
   return sha256Hex(stableStringify(ExternalExecutionPolicyV1Schema.parse(value)));
