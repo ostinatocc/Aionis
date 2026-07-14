@@ -1,5 +1,6 @@
 import {
   admissionCandidatePolicyUsedFieldsForEvaluation,
+  admissionCandidatePolicyVersionForEvaluation,
   decideAdmissionCandidatePolicyActionForEvaluation,
   type AionisAdmissionCandidatePolicyId,
 } from "./admission-candidate-policy-evaluator.js";
@@ -9,6 +10,7 @@ import {
 } from "./admission-dataset-evaluator.js";
 import type { AionisAdmissionDatasetParsedRow } from "./admission-dataset-holdout.js";
 import type { AionisMemoryAdmissionRecordEntry } from "../sdk.js";
+import { AIONIS_ADMISSION_CANDIDATE_POLICY_ID } from "./admission-candidate-policy.js";
 
 type AdmissionAction = AionisMemoryAdmissionRecordEntry["admission_action"];
 
@@ -74,8 +76,7 @@ export type AionisAdmissionShadowPolicyReport = {
   summary: string;
 };
 
-const SHADOW_POLICY_ID: AionisAdmissionCandidatePolicyId = "candidate_project_context_closed_loop_inspect";
-const SHADOW_POLICY_VERSION = "2026-06-18";
+const SHADOW_POLICY_ID: AionisAdmissionCandidatePolicyId = AIONIS_ADMISSION_CANDIDATE_POLICY_ID;
 const FORBIDDEN_DECISION_FIELDS = [
   "outcome_label",
   "feedback_outcome",
@@ -227,7 +228,7 @@ export function evaluateAdmissionShadowPolicyRows(
     agent_prompt_included: false,
     policy: {
       candidate_policy_id: candidatePolicyId,
-      candidate_policy_version: SHADOW_POLICY_VERSION,
+      candidate_policy_version: admissionCandidatePolicyVersionForEvaluation(candidatePolicyId),
       policy_id: policyMetadata(rows, "policy_id"),
       policy_version: policyMetadata(rows, "policy_version"),
       policy_mode: policyMetadata(rows, "policy_mode"),

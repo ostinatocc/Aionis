@@ -24,7 +24,6 @@ import {
   type AionisAgentFlightRecorderReport,
   type AionisClaimLedgerProjectionItem,
   type AionisClaimLedgerProjectionSurface,
-  type AionisMemoryAdmissionClosedLoopEffectState,
   type AionisMemoryAdmissionShadowPolicyReport,
   type AionisMemoryDecisionSurface,
   type AionisMemoryPacket,
@@ -38,6 +37,7 @@ import {
 import {
   type ClaimLedgerRow,
 } from "../../store/memory-store.js";
+import { frozenPriorStateFromRuntimeSlots } from "../learning-episode-ledger.js";
 
 export type BuildAionisOperatorSnapshotArgs = {
   tenant_id: string;
@@ -1513,45 +1513,14 @@ export type AionisAdmissionCandidatePolicyActiveProjection = {
   summary: string;
 };
 
-function nonNegativeInt(value: unknown): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return 0;
-  return Math.max(0, Math.trunc(parsed));
-}
-
-function closedLoopEffectState(args: {
-  supported: number;
-  contradicted: number;
-  rehydrateRequested: number;
-}): AionisMemoryAdmissionClosedLoopEffectState {
-  if (args.supported > 0 && args.contradicted > 0) return "mixed";
-  if (args.contradicted > 0) return "contradicted";
-  if (args.supported > 0) return "supported";
-  if (args.rehydrateRequested > 0) return "rehydrate_requested";
-  return "no_prior";
-}
-
 function runtimePriorStateFromSlots(slots: Record<string, unknown>) {
-  const supported = nonNegativeInt(slots.positive_attributed_use_count);
-  const weakCounterSignalCount = nonNegativeInt(slots.weak_counter_signal_count);
-  const strongCounterSignalCount = nonNegativeInt(slots.strong_counter_signal_count);
-  const contradicted = weakCounterSignalCount + strongCounterSignalCount;
-  const rehydrateRequested = nonNegativeInt(slots.prior_rehydrate_requested_count)
-    + nonNegativeInt(slots.rehydrate_requested_count);
-  const repeatedNegativePosture =
-    contradicted >= 2
-    || slots.feedback_learning_control_posture === "inspect_before_use"
-    || nonNegativeInt(slots.repeated_unused_without_positive_observation_count) >= 2;
+  const prior = frozenPriorStateFromRuntimeSlots(slots);
   return {
-    prior_supported_use_count: supported,
-    prior_contradicted_use_count: contradicted,
-    prior_rehydrate_requested_count: rehydrateRequested,
-    closed_loop_effect_state: closedLoopEffectState({
-      supported,
-      contradicted,
-      rehydrateRequested,
-    }),
-    repeated_negative_posture: repeatedNegativePosture,
+    prior_supported_use_count: prior.prior_supported_use_count,
+    prior_contradicted_use_count: prior.prior_contradicted_use_count,
+    prior_rehydrate_requested_count: prior.prior_rehydrate_requested_count,
+    closed_loop_effect_state: prior.prior_effect_state,
+    repeated_negative_posture: prior.repeated_negative_posture,
   };
 }
 

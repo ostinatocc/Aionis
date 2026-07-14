@@ -9,6 +9,12 @@ import {
   type AionisAdmissionDatasetParsedRow,
 } from "./admission-dataset-holdout.js";
 import type { AionisMemoryAdmissionRecordEntry } from "../sdk.js";
+import {
+  AIONIS_ADMISSION_CANDIDATE_POLICY_ID,
+  AIONIS_ADMISSION_CANDIDATE_POLICY_VERSION,
+  decideAdmissionCandidatePolicyAction,
+  resolveAdmissionCandidatePolicy,
+} from "./admission-candidate-policy.js";
 
 type AdmissionAction = AionisMemoryAdmissionRecordEntry["admission_action"];
 
@@ -18,7 +24,7 @@ export type AionisAdmissionCandidatePolicyId =
   | "candidate_aionis_project_context_only"
   | "candidate_advisory_inspect"
   | "candidate_closed_loop_contradicted_inspect"
-  | "candidate_project_context_closed_loop_inspect";
+  | typeof AIONIS_ADMISSION_CANDIDATE_POLICY_ID;
 
 export type AionisAdmissionCandidatePolicyScore = {
   policy_id: AionisAdmissionCandidatePolicyId;
@@ -134,6 +140,11 @@ const FORBIDDEN_DECISION_FIELDS = [
   "prompt_char_count",
 ];
 
+const ENROLLABLE_CANDIDATE_POLICY = resolveAdmissionCandidatePolicy(
+  AIONIS_ADMISSION_CANDIDATE_POLICY_ID,
+  AIONIS_ADMISSION_CANDIDATE_POLICY_VERSION,
+);
+
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
@@ -212,26 +223,18 @@ const POLICY_DEFINITIONS: PolicyDefinition[] = [
     ),
   },
   {
-    policy_id: "candidate_project_context_closed_loop_inspect",
-    display_name: "Project/execution context + closed-loop inspect-first",
-    description: "Keeps Runtime hard boundaries, direct-uses only Aionis project_context or execution_memory candidates, and downgrades prior-contradicted or repeated-negative candidates to inspect_before_use.",
-    used_fields: [
-      "admission_action",
-      "source_backend",
-      "memory_type",
-      "closed_loop_effect_state",
-      "repeated_negative_posture",
-    ],
-    decide: (row) => preserveHardActions(
-      row,
-      row.source_backend === "aionis"
-        && (row.memory_type === "project_context" || row.memory_type === "execution_memory")
-        && row.closed_loop_effect_state !== "contradicted"
-        && row.closed_loop_effect_state !== "mixed"
-        && !row.repeated_negative_posture
-        ? "use_now"
-        : "inspect_before_use",
-    ),
+    policy_id: AIONIS_ADMISSION_CANDIDATE_POLICY_ID,
+    display_name: ENROLLABLE_CANDIDATE_POLICY.display_name,
+    description: ENROLLABLE_CANDIDATE_POLICY.description,
+    used_fields: [...ENROLLABLE_CANDIDATE_POLICY.config.used_fields],
+    decide: (row) => decideAdmissionCandidatePolicyAction({
+      recorded_action: row.admission_action,
+      memory_origin: row.memory_origin,
+      source_backend: row.source_backend,
+      memory_type: row.memory_type,
+      closed_loop_effect_state: row.closed_loop_effect_state,
+      repeated_negative_posture: row.repeated_negative_posture,
+    }, ENROLLABLE_CANDIDATE_POLICY).action,
   },
 ];
 
@@ -261,6 +264,12 @@ export function decideAdmissionCandidatePolicyActionForEvaluation(
 
 export function admissionCandidatePolicyUsedFieldsForEvaluation(policyId: AionisAdmissionCandidatePolicyId): string[] {
   return [...findPolicyDefinition(policyId).used_fields];
+}
+
+export function admissionCandidatePolicyVersionForEvaluation(policyId: AionisAdmissionCandidatePolicyId): string {
+  return policyId === AIONIS_ADMISSION_CANDIDATE_POLICY_ID
+    ? AIONIS_ADMISSION_CANDIDATE_POLICY_VERSION
+    : "offline-hypothesis-v1";
 }
 
 function roundRate(value: number): number {

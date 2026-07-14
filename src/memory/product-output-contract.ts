@@ -3,6 +3,7 @@ import {
   AionisGuidanceAuthoritySchema,
   AionisMemoryDecisionSurfaceSchema,
 } from "./governance-contract.js";
+import { AIONIS_ADMISSION_CANDIDATE_POLICY_ID } from "./admission-candidate-policy.js";
 
 export const AUTHORITY_STABLE_PROMOTION_BLOCKED_COUNT_FIELD =
   "stable_promotion" + "_blocked_count";
@@ -1305,7 +1306,7 @@ export const AionisMemoryAdmissionShadowPolicyReportSchema = z
   .object({
     contract_version: z.literal("aionis_memory_admission_shadow_policy_report_v1"),
     intended_use: z.literal("admission_policy_shadow_audit"),
-    policy_id: z.literal("candidate_project_context_closed_loop_inspect"),
+    policy_id: z.literal(AIONIS_ADMISSION_CANDIDATE_POLICY_ID),
     policy_version: z.string().min(1),
     mode: z.literal("shadow_only"),
     source: z.enum(["memory_admission_record", "memory_decision_trace", "external_candidate_admission"]),
