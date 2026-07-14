@@ -6,6 +6,7 @@ export const LITE_RUNTIME_WRITE_SCHEMA_VERSION = 2;
 export type LiteRuntimeSchemaClassification =
   | "uninitialized"
   | "legacy_v0_3_4"
+  | "supported_previous_v2"
   | "current"
   | "incompatible";
 
@@ -224,7 +225,7 @@ const CURRENT_REQUIRED_COLUMNS: Record<string, readonly string[]> = {
   ],
 };
 
-type RequiredTableConstraint = {
+export type RequiredTableConstraint = {
   primaryKey: readonly string[];
   uniqueKeys?: ReadonlyArray<readonly string[]>;
 };
@@ -268,12 +269,12 @@ const CURRENT_REQUIRED_CONSTRAINTS: Record<string, RequiredTableConstraint> = {
   },
 };
 
-type RequiredIndexColumn = {
+export type RequiredIndexColumn = {
   name: string;
   descending?: boolean;
 };
 
-type RequiredIndex = {
+export type RequiredIndex = {
   table: string;
   columns: readonly RequiredIndexColumn[];
   unique?: boolean;
@@ -332,6 +333,37 @@ const CURRENT_REQUIRED_INDEXES: Record<string, RequiredIndex> = {
     table: "lite_memory_projection_jobs",
     columns: [{ name: "scope" }, { name: "node_id" }],
   },
+};
+
+export type RequiredTrigger = {
+  table: string;
+  sql: string;
+};
+
+export type LiteRuntimeWriteSchemaContract = {
+  columns: Readonly<Record<string, readonly string[]>>;
+  constraints: Readonly<Record<string, RequiredTableConstraint>>;
+  indexes: Readonly<Record<string, RequiredIndex>>;
+  triggers: Readonly<Record<string, RequiredTrigger>>;
+};
+
+export type LiteRuntimeSchemaInspectionTarget = {
+  currentVersion: number;
+  contracts: Readonly<Record<number, LiteRuntimeWriteSchemaContract>>;
+  supportedPreviousVersions: readonly number[];
+};
+
+export const WRITE_SCHEMA_V2: LiteRuntimeWriteSchemaContract = {
+  columns: CURRENT_REQUIRED_COLUMNS,
+  constraints: CURRENT_REQUIRED_CONSTRAINTS,
+  indexes: CURRENT_REQUIRED_INDEXES,
+  triggers: {},
+};
+
+const ACTIVE_WRITE_SCHEMA_TARGET: LiteRuntimeSchemaInspectionTarget = {
+  currentVersion: LITE_RUNTIME_WRITE_SCHEMA_VERSION,
+  contracts: { [LITE_RUNTIME_WRITE_SCHEMA_VERSION]: WRITE_SCHEMA_V2 },
+  supportedPreviousVersions: [],
 };
 
 function userTables(db: SqliteDatabase): Set<string> {
@@ -396,7 +428,7 @@ function formatColumns(columns: readonly string[]): string {
 function collectConstraintProblems(
   db: SqliteDatabase,
   tables: Set<string>,
-  requirements: Record<string, RequiredTableConstraint>,
+  requirements: Readonly<Record<string, RequiredTableConstraint>>,
 ): string[] {
   const problems: string[] = [];
   for (const [table, requirement] of Object.entries(requirements)) {
@@ -430,7 +462,7 @@ function normalizedSql(value: string): string {
 function collectIndexProblems(
   db: SqliteDatabase,
   tables: Set<string>,
-  requirements: Record<string, RequiredIndex>,
+  requirements: Readonly<Record<string, RequiredIndex>>,
 ): string[] {
   const problems: string[] = [];
   for (const [indexName, requirement] of Object.entries(requirements)) {
@@ -485,22 +517,10 @@ function collectIndexProblems(
   return problems;
 }
 
-function legacyConstraintProblems(db: SqliteDatabase, tables: Set<string>): string[] {
-  return collectConstraintProblems(db, tables, LEGACY_REQUIRED_CONSTRAINTS);
-}
-
-function currentConstraintProblems(db: SqliteDatabase, tables: Set<string>): string[] {
-  return collectConstraintProblems(db, tables, CURRENT_REQUIRED_CONSTRAINTS);
-}
-
-function currentIndexProblems(db: SqliteDatabase, tables: Set<string>): string[] {
-  return collectIndexProblems(db, tables, CURRENT_REQUIRED_INDEXES);
-}
-
 function collectMissing(
   db: SqliteDatabase,
   tables: Set<string>,
-  requirements: Record<string, readonly string[]>,
+  requirements: Readonly<Record<string, readonly string[]>>,
 ): { missingTables: string[]; missingColumns: Record<string, string[]> } {
   const missingTables: string[] = [];
   const missingColumns: Record<string, string[]> = {};
@@ -537,7 +557,33 @@ function detectedComponentVersion(db: SqliteDatabase, tables: Set<string>): numb
   return version;
 }
 
-export function inspectLiteRuntimeSchema(db: SqliteDatabase): LiteRuntimeSchemaReport {
+function assertValidInspectionTarget(target: LiteRuntimeSchemaInspectionTarget): void {
+  if (!Number.isInteger(target.currentVersion) || target.currentVersion < 1) {
+    throw new Error("schema inspection target currentVersion must be a positive integer");
+  }
+  if (!target.contracts[target.currentVersion]) {
+    throw new Error(`schema inspection target is missing contract v${target.currentVersion}`);
+  }
+  const seen = new Set<number>();
+  for (const version of target.supportedPreviousVersions) {
+    if (!Number.isInteger(version) || version < 1 || version >= target.currentVersion) {
+      throw new Error(`invalid supported previous schema version: ${String(version)}`);
+    }
+    if (seen.has(version)) {
+      throw new Error(`duplicate supported previous schema version: ${version}`);
+    }
+    if (!target.contracts[version]) {
+      throw new Error(`schema inspection target is missing contract v${version}`);
+    }
+    seen.add(version);
+  }
+}
+
+export function inspectLiteRuntimeSchemaAgainstTarget(
+  db: SqliteDatabase,
+  target: LiteRuntimeSchemaInspectionTarget,
+): LiteRuntimeSchemaReport {
+  assertValidInspectionTarget(target);
   const tables = userTables(db);
   const problems: string[] = [];
   let detectedVersion: number | null = null;
@@ -547,37 +593,55 @@ export function inspectLiteRuntimeSchema(db: SqliteDatabase): LiteRuntimeSchemaR
     problems.push(error instanceof Error ? error.message : String(error));
   }
 
-  const hasWriteSchema = tables.has("lite_memory_nodes")
-    || tables.has("lite_memory_commits")
-    || tables.has("lite_memory_edges");
-  const legacyMissing = hasWriteSchema
-    ? collectMissing(db, tables, LEGACY_REQUIRED_COLUMNS)
+  const hasWriteSchema = Object.keys(WRITE_SCHEMA_V2.columns).some((table) => tables.has(table));
+  const detectedContract = detectedVersion === null
+    ? hasWriteSchema
+      ? {
+          columns: LEGACY_REQUIRED_COLUMNS,
+          constraints: LEGACY_REQUIRED_CONSTRAINTS,
+          indexes: {},
+          triggers: {},
+        } satisfies LiteRuntimeWriteSchemaContract
+      : null
+    : target.contracts[detectedVersion] ?? null;
+  const selectedMissing = detectedContract
+    ? collectMissing(db, tables, detectedContract.columns)
     : { missingTables: [] as string[], missingColumns: {} as Record<string, string[]> };
-  const currentMissing = detectedVersion === LITE_RUNTIME_WRITE_SCHEMA_VERSION
-    ? collectMissing(db, tables, CURRENT_REQUIRED_COLUMNS)
-    : { missingTables: [] as string[], missingColumns: {} as Record<string, string[]> };
-  const constraintProblems = detectedVersion === LITE_RUNTIME_WRITE_SCHEMA_VERSION
-    ? currentConstraintProblems(db, tables)
-    : hasWriteSchema
-      ? legacyConstraintProblems(db, tables)
-      : [];
-  const indexProblems = detectedVersion === LITE_RUNTIME_WRITE_SCHEMA_VERSION
-    ? currentIndexProblems(db, tables)
+  const constraintProblems = detectedContract
+    ? collectConstraintProblems(db, tables, detectedContract.constraints)
+    : [];
+  const indexProblems = detectedContract
+    ? collectIndexProblems(db, tables, detectedContract.indexes)
     : [];
 
-  if (detectedVersion !== null && detectedVersion > LITE_RUNTIME_WRITE_SCHEMA_VERSION) {
+  if (detectedVersion !== null && detectedVersion > target.currentVersion) {
     problems.push(
-      `database write schema version ${detectedVersion} is newer than supported version ${LITE_RUNTIME_WRITE_SCHEMA_VERSION}`,
+      `database write schema version ${detectedVersion} is newer than supported version ${target.currentVersion}`,
     );
+  }
+  if (
+    detectedVersion !== null
+    && detectedVersion < target.currentVersion
+    && !target.supportedPreviousVersions.includes(detectedVersion)
+  ) {
+    problems.push(
+      `database write schema version ${detectedVersion} is not a supported previous version for target ${target.currentVersion}`,
+    );
+  }
+  if (detectedVersion !== null && detectedVersion <= target.currentVersion && !detectedContract) {
+    problems.push(`database write schema version ${detectedVersion} has no validation contract`);
   }
   if (detectedVersion !== null && !hasWriteSchema) {
     problems.push("schema metadata exists but the write schema is missing");
   }
-  if (legacyMissing.missingTables.length > 0 || Object.keys(legacyMissing.missingColumns).length > 0) {
-    problems.push("existing write schema does not match the supported v0.3.4 baseline");
-  }
-  if (currentMissing.missingTables.length > 0 || Object.keys(currentMissing.missingColumns).length > 0) {
-    problems.push("schema metadata declares current version but required current tables or columns are missing");
+  if (selectedMissing.missingTables.length > 0 || Object.keys(selectedMissing.missingColumns).length > 0) {
+    problems.push(
+      detectedVersion === null
+        ? "existing write schema does not match the supported v0.3.4 baseline"
+        : detectedVersion === target.currentVersion
+          ? "schema metadata declares current version but required current tables or columns are missing"
+          : `schema metadata declares version ${detectedVersion} but its required tables or columns are missing`,
+    );
   }
   if (constraintProblems.length > 0) {
     problems.push("write schema primary or unique constraints do not match the required contract");
@@ -591,30 +655,32 @@ export function inspectLiteRuntimeSchema(db: SqliteDatabase): LiteRuntimeSchemaR
     ? "incompatible"
     : !hasWriteSchema
       ? "uninitialized"
-      : detectedVersion === LITE_RUNTIME_WRITE_SCHEMA_VERSION
+      : detectedVersion === target.currentVersion
         ? "current"
-        : "legacy_v0_3_4";
+        : detectedVersion === 2 && target.supportedPreviousVersions.includes(2)
+          ? "supported_previous_v2"
+          : "legacy_v0_3_4";
 
   return {
     contract_version: "aionis_lite_runtime_schema_report_v1",
     classification,
     component: LITE_RUNTIME_WRITE_SCHEMA_COMPONENT,
     detected_version: detectedVersion,
-    current_version: LITE_RUNTIME_WRITE_SCHEMA_VERSION,
-    upgrade_required: classification === "legacy_v0_3_4" || classification === "uninitialized",
+    current_version: target.currentVersion,
+    upgrade_required: classification === "legacy_v0_3_4"
+      || classification === "supported_previous_v2"
+      || classification === "uninitialized",
     user_table_count: tables.size,
-    missing_tables: Array.from(new Set([
-      ...legacyMissing.missingTables,
-      ...currentMissing.missingTables,
-    ])).sort(),
-    missing_columns: {
-      ...legacyMissing.missingColumns,
-      ...currentMissing.missingColumns,
-    },
+    missing_tables: [...selectedMissing.missingTables].sort(),
+    missing_columns: selectedMissing.missingColumns,
     constraint_problems: constraintProblems,
     index_problems: indexProblems,
     problems,
   };
+}
+
+export function inspectLiteRuntimeSchema(db: SqliteDatabase): LiteRuntimeSchemaReport {
+  return inspectLiteRuntimeSchemaAgainstTarget(db, ACTIVE_WRITE_SCHEMA_TARGET);
 }
 
 export function assertLiteRuntimeSchemaPreflight(db: SqliteDatabase): LiteRuntimeSchemaReport {

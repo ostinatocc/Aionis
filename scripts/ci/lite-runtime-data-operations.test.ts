@@ -25,7 +25,11 @@ import {
   verifyLiteRuntimeDatabase,
 } from "../../src/store/lite-runtime-data-operations.ts";
 import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
-import { inspectLiteRuntimeSchema } from "../../src/store/lite-runtime-schema.ts";
+import {
+  inspectLiteRuntimeSchema,
+  inspectLiteRuntimeSchemaAgainstTarget,
+  WRITE_SCHEMA_V2,
+} from "../../src/store/lite-runtime-schema.ts";
 import { createLiteWriteStore, createLiteWriteStoreFromDatabase } from "../../src/store/lite-write-store.ts";
 import { createSqliteDatabase, type SqliteDatabase } from "../../src/store/sqlite.ts";
 
@@ -303,6 +307,28 @@ function schemaSnapshot(dbPath: string): Array<{
   } finally {
     db.close();
   }
+}
+
+function injectedV3InspectionTarget() {
+  return {
+    currentVersion: 3,
+    contracts: {
+      2: WRITE_SCHEMA_V2,
+      3: {
+        columns: {
+          ...WRITE_SCHEMA_V2.columns,
+          lite_learning_episode_events: ["event_id"],
+        },
+        constraints: {
+          ...WRITE_SCHEMA_V2.constraints,
+          lite_learning_episode_events: { primaryKey: ["event_id"] },
+        },
+        indexes: WRITE_SCHEMA_V2.indexes,
+        triggers: {},
+      },
+    },
+    supportedPreviousVersions: [2],
+  } as const;
 }
 
 test("v0.3.4 SQLite upgrades without changing semantic rows and legacy pending is explicitly repairable", async () => {
@@ -788,6 +814,111 @@ test("projection repair waits for an active SQLite writer and then commits one n
       }
       blocker.close();
     }
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("complete v2 remains current before v3 activation", async () => {
+  const temp = tempDatabase("complete-v2-current");
+  try {
+    const store = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
+    await store.close();
+
+    const db = createSqliteDatabase(temp.path);
+    try {
+      const report = inspectLiteRuntimeSchema(db);
+      assert.equal(report.detected_version, 2);
+      assert.equal(report.current_version, 2);
+      assert.equal(report.classification, "current");
+      assert.equal(report.upgrade_required, false);
+    } finally {
+      db.close();
+    }
+  } finally {
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("damaged v2 authority table is incompatible before migration", async () => {
+  const temp = tempDatabase("damaged-v2-authority");
+  try {
+    const store = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
+    await store.close();
+
+    const db = createSqliteDatabase(temp.path);
+    try {
+      db.exec("DROP INDEX idx_lite_product_guide_receipts_run_created");
+      const beforeInspection = schemaSnapshot(temp.path);
+      const report = inspectLiteRuntimeSchemaAgainstTarget(db, injectedV3InspectionTarget());
+      assert.equal(report.detected_version, 2);
+      assert.equal(report.current_version, 3);
+      assert.equal(report.classification, "incompatible");
+      assert.match(
+        report.index_problems.join("\n"),
+        /missing required index idx_lite_product_guide_receipts_run_created/,
+      );
+      assert.deepEqual(schemaSnapshot(temp.path), beforeInspection);
+    } finally {
+      db.close();
+    }
+  } finally {
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("future schema remains incompatible", () => {
+  const temp = tempDatabase("future-schema-report");
+  try {
+    const db = createSqliteDatabase(temp.path);
+    try {
+      createV034Schema(db);
+      db.exec(`
+        CREATE TABLE lite_runtime_schema_metadata (
+          component TEXT PRIMARY KEY,
+          version INTEGER NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+      db.prepare(
+        "INSERT INTO lite_runtime_schema_metadata (component, version, updated_at) VALUES (?, ?, ?)",
+      ).run("write_projection", 99, "2026-07-01T00:00:00.000Z");
+
+      const report = inspectLiteRuntimeSchema(db);
+      assert.equal(report.detected_version, 99);
+      assert.equal(report.current_version, 2);
+      assert.equal(report.classification, "incompatible");
+      assert.match(report.problems.join("\n"), /newer than supported version 2/);
+    } finally {
+      db.close();
+    }
+  } finally {
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("complete v2 is supported_previous_v2 against an injected v3 target", async () => {
+  const temp = tempDatabase("complete-v2-against-v3");
+  try {
+    const store = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
+    await store.close();
+
+    const db = createSqliteDatabase(temp.path);
+    try {
+      const beforeInspection = schemaSnapshot(temp.path);
+      const report = inspectLiteRuntimeSchemaAgainstTarget(db, injectedV3InspectionTarget());
+      assert.equal(report.detected_version, 2);
+      assert.equal(report.current_version, 3);
+      assert.equal(report.classification, "supported_previous_v2");
+      assert.equal(report.upgrade_required, true);
+      assert.deepEqual(report.missing_tables, []);
+      assert.deepEqual(report.missing_columns, {});
+      assert.deepEqual(report.constraint_problems, []);
+      assert.deepEqual(report.index_problems, []);
+      assert.deepEqual(schemaSnapshot(temp.path), beforeInspection);
+    } finally {
+      db.close();
+    }
+  } finally {
     fs.rmSync(temp.directory, { recursive: true, force: true });
   }
 });
