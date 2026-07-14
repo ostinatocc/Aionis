@@ -168,6 +168,7 @@ export type SkillCandidateReviewRow = {
 };
 
 export type SkillCandidateReviewAccess = {
+  transactionRunner(): SqliteTransactionRunner;
   recordMeasurement(args: {
     record: ProductMeasurementRecord;
   }): Promise<ProductMeasurementRecord>;

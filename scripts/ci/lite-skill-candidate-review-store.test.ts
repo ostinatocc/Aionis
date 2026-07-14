@@ -3,7 +3,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createLiteSkillCandidateReviewStore } from "../../src/store/lite-skill-candidate-review-store.ts";
+import {
+  createLiteSkillCandidateReviewStore,
+  createLiteSkillCandidateReviewStoreFromDatabase,
+  migrateLiteSkillCandidateReviewSchema,
+} from "../../src/store/lite-skill-candidate-review-store.ts";
+import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
+import { createSqliteDatabase } from "../../src/store/sqlite.ts";
 import {
   productMeasurementDigest,
   type ProductMeasurementRecord,
@@ -245,5 +251,91 @@ test("trace-derived skill review store records promote and reject decisions with
     assert.deepEqual(new Set(all.rows.map((row) => row.review_status)), new Set(["promoted", "rejected"]));
   } finally {
     await store.close();
+  }
+});
+
+test("shared skill review factory requires caller-owned schema migration", async () => {
+  const dbPath = tmpDbPath("shared-schema-owner");
+  const database = createLiteRuntimeDatabase(dbPath);
+  try {
+    const before = database.db.prepare(
+      "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+    ).all();
+    assert.throws(
+      () => createLiteSkillCandidateReviewStoreFromDatabase(database),
+      /lite_skill_candidate_review_schema_preflight_failed/,
+    );
+    const after = database.db.prepare(
+      "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+    ).all();
+    assert.deepEqual(after, before);
+  } finally {
+    await database.close();
+    fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+  }
+});
+
+test("shared measurement access joins the Runtime transaction and rolls back sibling writes", async () => {
+  const dbPath = tmpDbPath("shared-transaction");
+  let failBeforeCommit = false;
+  const database = createLiteRuntimeDatabase(dbPath, {
+    faultInjector(phase) {
+      if (failBeforeCommit && phase === "before_commit") {
+        throw new Error("injected shared measurement before_commit failure");
+      }
+    },
+  });
+  let store: ReturnType<typeof createLiteSkillCandidateReviewStoreFromDatabase> | null = null;
+  try {
+    migrateLiteSkillCandidateReviewSchema(database.db);
+    database.db.exec(`
+      CREATE TABLE shared_transaction_sibling (
+        sibling_id TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL
+      );
+    `);
+    store = createLiteSkillCandidateReviewStoreFromDatabase(database);
+    const access = store.createSkillCandidateReviewAccess();
+    assert.equal(access.transactionRunner(), database.transaction);
+
+    const record = measurement([candidate()]);
+    failBeforeCommit = true;
+    await assert.rejects(
+      database.transaction.run(async () => {
+        await access.recordMeasurement({ record });
+        database.db.prepare(
+          "INSERT INTO shared_transaction_sibling (sibling_id, created_at) VALUES (?, ?)",
+        ).run("sibling-before-commit", "2026-06-26T01:00:00.000Z");
+      }),
+      /injected shared measurement before_commit failure/,
+    );
+    failBeforeCommit = false;
+
+    await store.close();
+    store = null;
+    assert.equal(
+      (database.db.prepare("SELECT 1 AS value").get() as { value: number }).value,
+      1,
+      "closing a shared store must not close the caller-owned Runtime database",
+    );
+  } finally {
+    failBeforeCommit = false;
+    await store?.close();
+    await database.close();
+  }
+
+  const reopened = createSqliteDatabase(dbPath);
+  try {
+    const measurementCount = reopened.prepare(
+      "SELECT COUNT(*) AS count FROM lite_product_measurements",
+    ).get() as { count: number };
+    const siblingCount = reopened.prepare(
+      "SELECT COUNT(*) AS count FROM shared_transaction_sibling",
+    ).get() as { count: number };
+    assert.equal(measurementCount.count, 0);
+    assert.equal(siblingCount.count, 0);
+  } finally {
+    reopened.close();
+    fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
   }
 });
