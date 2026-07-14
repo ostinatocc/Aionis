@@ -1,7 +1,13 @@
 import type { SqliteDatabase } from "./sqlite.js";
+import {
+  LITE_LEARNING_LEDGER_REQUIRED_COLUMNS,
+  LITE_LEARNING_LEDGER_REQUIRED_CONSTRAINTS,
+  LITE_LEARNING_LEDGER_REQUIRED_INDEXES,
+  LITE_LEARNING_LEDGER_REQUIRED_TRIGGERS,
+} from "./lite-learning-episode-ledger.js";
 
 export const LITE_RUNTIME_WRITE_SCHEMA_COMPONENT = "write_projection";
-export const LITE_RUNTIME_WRITE_SCHEMA_VERSION = 2;
+export const LITE_RUNTIME_WRITE_SCHEMA_VERSION = 3;
 
 export type LiteRuntimeSchemaClassification =
   | "uninitialized"
@@ -21,7 +27,9 @@ export type LiteRuntimeSchemaReport = {
   missing_tables: string[];
   missing_columns: Record<string, string[]>;
   constraint_problems: string[];
+  table_definition_problems: string[];
   index_problems: string[];
+  trigger_problems: string[];
   problems: string[];
 };
 
@@ -228,6 +236,7 @@ const CURRENT_REQUIRED_COLUMNS: Record<string, readonly string[]> = {
 export type RequiredTableConstraint = {
   primaryKey: readonly string[];
   uniqueKeys?: ReadonlyArray<readonly string[]>;
+  sql?: string;
 };
 
 const LEGACY_REQUIRED_CONSTRAINTS: Record<string, RequiredTableConstraint> = {
@@ -360,10 +369,119 @@ export const WRITE_SCHEMA_V2: LiteRuntimeWriteSchemaContract = {
   triggers: {},
 };
 
+const V3_MEASUREMENT_COLUMNS = [
+  "measurement_id",
+  "tenant_id",
+  "scope",
+  "source",
+  "measurement_digest",
+  "effect_report_json",
+  "eligible_for_skill_export",
+  "evidence_status",
+  "runtime_evidence_ids_json",
+  "eligibility_reasons_json",
+  "created_by",
+  "created_at",
+  "baseline_episode_id",
+  "after_episode_id",
+  "record_sha256",
+] as const;
+
+const V3_SKILL_REVIEW_COLUMNS = [
+  "candidate_id",
+  "tenant_id",
+  "scope",
+  "review_status",
+  "skill_name",
+  "label",
+  "export_ready",
+  "promotion_status",
+  "reason",
+  "source_ids_json",
+  "source_trace_ids_json",
+  "source_signal_ids_json",
+  "applies_when_json",
+  "does_not_apply_when_json",
+  "procedure_steps_json",
+  "target_files_json",
+  "acceptance_checks_json",
+  "failure_counterexamples_json",
+  "evidence_refs_json",
+  "candidate_json",
+  "measurement_id",
+  "measurement_digest",
+  "candidate_digest",
+  "eligible_for_promotion",
+  "row_version",
+  "reviewer_id",
+  "review_reason",
+  "created_at",
+  "updated_at",
+  "reviewed_at",
+] as const;
+
+const V3_LEARNING_CONSTRAINTS = Object.fromEntries(
+  Object.entries(LITE_LEARNING_LEDGER_REQUIRED_CONSTRAINTS).map(([table, requirement]) => [
+    table,
+    {
+      primaryKey: requirement.primaryKey,
+      uniqueKeys: requirement.uniqueKeys,
+      sql: requirement.createTableSql,
+    } satisfies RequiredTableConstraint,
+  ]),
+);
+
+export const WRITE_SCHEMA_V3: LiteRuntimeWriteSchemaContract = {
+  columns: {
+    ...WRITE_SCHEMA_V2.columns,
+    ...LITE_LEARNING_LEDGER_REQUIRED_COLUMNS,
+    lite_product_measurements: V3_MEASUREMENT_COLUMNS,
+    lite_skill_candidate_reviews: V3_SKILL_REVIEW_COLUMNS,
+  },
+  constraints: {
+    ...WRITE_SCHEMA_V2.constraints,
+    ...V3_LEARNING_CONSTRAINTS,
+    lite_product_measurements: { primaryKey: ["measurement_id"] },
+    lite_skill_candidate_reviews: { primaryKey: ["candidate_id"] },
+  },
+  indexes: {
+    ...WRITE_SCHEMA_V2.indexes,
+    ...LITE_LEARNING_LEDGER_REQUIRED_INDEXES,
+    idx_lite_product_measurements_scope_digest: {
+      table: "lite_product_measurements",
+      columns: [
+        { name: "tenant_id" },
+        { name: "scope" },
+        { name: "measurement_id" },
+        { name: "measurement_digest" },
+      ],
+      unique: true,
+    },
+    idx_lite_skill_candidate_reviews_scope_status: {
+      table: "lite_skill_candidate_reviews",
+      columns: [
+        { name: "tenant_id" },
+        { name: "scope" },
+        { name: "review_status" },
+        { name: "updated_at", descending: true },
+      ],
+    },
+    idx_lite_skill_candidate_reviews_scope_updated: {
+      table: "lite_skill_candidate_reviews",
+      columns: [
+        { name: "tenant_id" },
+        { name: "scope" },
+        { name: "updated_at", descending: true },
+      ],
+    },
+  },
+  triggers: LITE_LEARNING_LEDGER_REQUIRED_TRIGGERS,
+};
+
 const ACTIVE_WRITE_SCHEMA_TARGET: LiteRuntimeSchemaInspectionTarget = {
   currentVersion: LITE_RUNTIME_WRITE_SCHEMA_VERSION,
-  contracts: { [LITE_RUNTIME_WRITE_SCHEMA_VERSION]: WRITE_SCHEMA_V2 },
-  supportedPreviousVersions: [],
+  contracts: { 2: WRITE_SCHEMA_V2, 3: WRITE_SCHEMA_V3 },
+  supportedPreviousVersions: [2],
 };
 
 function userTables(db: SqliteDatabase): Set<string> {
@@ -456,7 +574,28 @@ function collectConstraintProblems(
 }
 
 function normalizedSql(value: string): string {
-  return value.trim().toLowerCase().replaceAll(/\s+/g, " ");
+  return value.trim().replace(/;$/u, "").trim().toLowerCase().replaceAll(/\s+/g, " ");
+}
+
+function collectTableDefinitionProblems(
+  db: SqliteDatabase,
+  tables: Set<string>,
+  requirements: Readonly<Record<string, RequiredTableConstraint>>,
+): string[] {
+  const problems: string[] = [];
+  const statement = db.prepare(
+    `SELECT sql
+     FROM sqlite_schema
+     WHERE type = 'table' AND name = ?`,
+  );
+  for (const [table, requirement] of Object.entries(requirements)) {
+    if (!tables.has(table) || !requirement.sql) continue;
+    const row = statement.get(table) as { sql: string | null } | undefined;
+    if (!row?.sql || normalizedSql(row.sql) !== normalizedSql(requirement.sql)) {
+      problems.push(`${table} CREATE TABLE definition does not match the required contract`);
+    }
+  }
+  return problems;
 }
 
 function collectIndexProblems(
@@ -515,6 +654,77 @@ function collectIndexProblems(
     }
   }
   return problems;
+}
+
+function collectTriggerProblems(
+  db: SqliteDatabase,
+  tables: Set<string>,
+  requirements: Readonly<Record<string, RequiredTrigger>>,
+): string[] {
+  const problems: string[] = [];
+  const statement = db.prepare(
+    `SELECT tbl_name AS table_name, sql
+     FROM sqlite_schema
+     WHERE type = 'trigger' AND name = ?`,
+  );
+  for (const [triggerName, requirement] of Object.entries(requirements)) {
+    if (!tables.has(requirement.table)) continue;
+    const row = statement.get(triggerName) as { table_name: string; sql: string | null } | undefined;
+    if (!row) {
+      problems.push(`${requirement.table} is missing required trigger ${triggerName}`);
+      continue;
+    }
+    if (row.table_name !== requirement.table) {
+      problems.push(`${triggerName} table mismatch: expected ${requirement.table}, found ${row.table_name}`);
+      continue;
+    }
+    if (!row.sql || normalizedSql(row.sql) !== normalizedSql(requirement.sql)) {
+      problems.push(`${triggerName} definition does not match the required contract`);
+    }
+  }
+  return problems;
+}
+
+export type LiteRuntimeSchemaContractShapeReport = {
+  missing_tables: string[];
+  missing_columns: Record<string, string[]>;
+  constraint_problems: string[];
+  table_definition_problems: string[];
+  index_problems: string[];
+  trigger_problems: string[];
+};
+
+export function inspectLiteRuntimeSchemaContractShape(
+  db: SqliteDatabase,
+  contract: LiteRuntimeWriteSchemaContract,
+): LiteRuntimeSchemaContractShapeReport {
+  const tables = userTables(db);
+  const missing = collectMissing(db, tables, contract.columns);
+  return {
+    missing_tables: missing.missingTables,
+    missing_columns: missing.missingColumns,
+    constraint_problems: collectConstraintProblems(db, tables, contract.constraints),
+    table_definition_problems: collectTableDefinitionProblems(db, tables, contract.constraints),
+    index_problems: collectIndexProblems(db, tables, contract.indexes),
+    trigger_problems: collectTriggerProblems(db, tables, contract.triggers),
+  };
+}
+
+export function assertLiteRuntimeSchemaContractShape(
+  db: SqliteDatabase,
+  contract: LiteRuntimeWriteSchemaContract,
+): void {
+  const report = inspectLiteRuntimeSchemaContractShape(db, contract);
+  if (
+    report.missing_tables.length > 0
+    || Object.keys(report.missing_columns).length > 0
+    || report.constraint_problems.length > 0
+    || report.table_definition_problems.length > 0
+    || report.index_problems.length > 0
+    || report.trigger_problems.length > 0
+  ) {
+    throw new Error(`lite_runtime_schema_target_shape_failed:${JSON.stringify(report)}`);
+  }
 }
 
 function collectMissing(
@@ -610,9 +820,31 @@ export function inspectLiteRuntimeSchemaAgainstTarget(
   const constraintProblems = detectedContract
     ? collectConstraintProblems(db, tables, detectedContract.constraints)
     : [];
+  const tableDefinitionProblems = detectedContract
+    ? collectTableDefinitionProblems(db, tables, detectedContract.constraints)
+    : [];
   const indexProblems = detectedContract
     ? collectIndexProblems(db, tables, detectedContract.indexes)
     : [];
+  const triggerProblems = detectedContract
+    ? collectTriggerProblems(db, tables, detectedContract.triggers)
+    : [];
+
+  const v3MeasurementLinkColumnsPresent = tables.has("lite_product_measurements")
+    && V3_MEASUREMENT_COLUMNS.slice(-3).some(
+      (column) => tableColumns(db, "lite_product_measurements").has(column),
+    );
+  const v3OnlyObjectsPresent = detectedVersion !== target.currentVersion
+    && target.currentVersion === 3
+    && (
+      Object.keys(LITE_LEARNING_LEDGER_REQUIRED_COLUMNS).some((table) => tables.has(table))
+      || v3MeasurementLinkColumnsPresent
+    );
+  if (v3OnlyObjectsPresent) {
+    problems.push(
+      "schema metadata is older than v3 but v3-only authority tables already exist or v3-only measurement columns are present",
+    );
+  }
 
   if (detectedVersion !== null && detectedVersion > target.currentVersion) {
     problems.push(
@@ -646,8 +878,14 @@ export function inspectLiteRuntimeSchemaAgainstTarget(
   if (constraintProblems.length > 0) {
     problems.push("write schema primary or unique constraints do not match the required contract");
   }
+  if (tableDefinitionProblems.length > 0) {
+    problems.push("current write schema table definitions do not match the required contract");
+  }
   if (indexProblems.length > 0) {
     problems.push("current write schema critical indexes do not match the required contract");
+  }
+  if (triggerProblems.length > 0) {
+    problems.push("current write schema critical triggers do not match the required contract");
   }
 
   const incompatible = problems.length > 0;
@@ -674,7 +912,9 @@ export function inspectLiteRuntimeSchemaAgainstTarget(
     missing_tables: [...selectedMissing.missingTables].sort(),
     missing_columns: selectedMissing.missingColumns,
     constraint_problems: constraintProblems,
+    table_definition_problems: tableDefinitionProblems,
     index_problems: indexProblems,
+    trigger_problems: triggerProblems,
     problems,
   };
 }

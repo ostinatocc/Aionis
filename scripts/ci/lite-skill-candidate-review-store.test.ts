@@ -10,6 +10,7 @@ import {
 } from "../../src/store/lite-skill-candidate-review-store.ts";
 import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
 import { createSqliteDatabase } from "../../src/store/sqlite.ts";
+import { inspectLiteRuntimeSchema } from "../../src/store/lite-runtime-schema.ts";
 import {
   productMeasurementDigest,
   type ProductMeasurementRecord,
@@ -271,6 +272,41 @@ test("shared skill review factory requires caller-owned schema migration", async
     assert.deepEqual(after, before);
   } finally {
     await database.close();
+    fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+  }
+});
+
+test("standalone review schema cannot create or serve a partial v3 measurement shape", async () => {
+  const dbPath = tmpDbPath("standalone-schema-boundary");
+  const store = createLiteSkillCandidateReviewStore(dbPath);
+  await store.close();
+
+  const database = createSqliteDatabase(dbPath);
+  try {
+    const columns = () => (database.prepare(
+      "PRAGMA table_info('lite_product_measurements')",
+    ).all() as Array<{ name: string }>).map((row) => row.name);
+    for (const column of ["baseline_episode_id", "after_episode_id", "record_sha256"]) {
+      assert.equal(columns().includes(column), false, `standalone schema leaked v3 column ${column}`);
+    }
+    assert.equal(inspectLiteRuntimeSchema(database).classification, "uninitialized");
+
+    database.exec("ALTER TABLE lite_product_measurements ADD COLUMN baseline_episode_id TEXT");
+    const report = inspectLiteRuntimeSchema(database);
+    assert.equal(report.classification, "incompatible");
+    assert.match(report.problems.join("\n"), /v3-only measurement columns/);
+  } finally {
+    database.close();
+  }
+
+  const partial = createLiteRuntimeDatabase(dbPath);
+  try {
+    assert.throws(
+      () => createLiteSkillCandidateReviewStoreFromDatabase(partial),
+      /v3 measurement linkage columns exist without write schema metadata v3/,
+    );
+  } finally {
+    await partial.close();
     fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
   }
 });

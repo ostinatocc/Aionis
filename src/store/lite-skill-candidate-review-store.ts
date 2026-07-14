@@ -210,6 +210,12 @@ const REQUIRED_SCHEMA_COLUMNS: Readonly<Record<string, readonly string[]>> = {
   ],
 };
 
+const V3_MEASUREMENT_LINK_COLUMNS = [
+  "baseline_episode_id",
+  "after_episode_id",
+  "record_sha256",
+] as const;
+
 const REQUIRED_SCHEMA_INDEXES: Readonly<Record<string, string>> = {
   idx_lite_product_measurements_scope_digest: "lite_product_measurements",
   idx_lite_skill_candidate_reviews_scope_status: "lite_skill_candidate_reviews",
@@ -245,12 +251,46 @@ function assertLiteSkillCandidateReviewSchema(db: SqliteDatabase): void {
       problems.push(`missing required index ${index} on ${expectedTable}`);
     }
   }
+  const measurementColumns = new Set(
+    (db.prepare("PRAGMA table_info('lite_product_measurements')").all() as Array<{ name: string }>)
+      .map((row) => row.name),
+  );
+  const presentV3LinkColumns = V3_MEASUREMENT_LINK_COLUMNS.filter((column) => measurementColumns.has(column));
+  const metadataColumns = db.prepare("PRAGMA table_info('lite_runtime_schema_metadata')").all() as Array<{
+    name: string;
+  }>;
+  let declaredWriteSchemaVersion: number | null = null;
+  if (metadataColumns.length > 0) {
+    const names = new Set(metadataColumns.map((column) => column.name));
+    if (["component", "version"].every((column) => names.has(column))) {
+      const metadata = db.prepare(
+        `SELECT version FROM lite_runtime_schema_metadata
+         WHERE component = 'write_projection'`,
+      ).get() as { version: unknown } | undefined;
+      if (metadata && Number.isInteger(Number(metadata.version))) {
+        declaredWriteSchemaVersion = Number(metadata.version);
+      }
+    }
+  }
+  if (declaredWriteSchemaVersion !== null && declaredWriteSchemaVersion >= 3) {
+    const missing = V3_MEASUREMENT_LINK_COLUMNS.filter((column) => !measurementColumns.has(column));
+    if (missing.length > 0) {
+      problems.push(`v3 lite_product_measurements missing columns: ${missing.join(", ")}`);
+    }
+  } else if (presentV3LinkColumns.length > 0) {
+    problems.push(
+      `v3 measurement linkage columns exist without write schema metadata v3: ${presentV3LinkColumns.join(", ")}`,
+    );
+  }
   if (problems.length > 0) {
     throw new Error(`lite_skill_candidate_review_schema_preflight_failed:${JSON.stringify(problems)}`);
   }
 }
 
-export function migrateLiteSkillCandidateReviewSchema(db: SqliteDatabase): void {
+export function migrateLiteSkillCandidateReviewSchema(
+  db: SqliteDatabase,
+  options: { includeLearningEpisodeLinks?: boolean } = {},
+): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS lite_product_measurements (
       measurement_id TEXT PRIMARY KEY,
@@ -322,6 +362,20 @@ export function migrateLiteSkillCandidateReviewSchema(db: SqliteDatabase): void 
       db.exec(`ALTER TABLE lite_skill_candidate_reviews ADD COLUMN ${column}`);
     } catch (error) {
       ignoreSqliteDuplicateColumnError(error);
+    }
+  }
+  if (options.includeLearningEpisodeLinks) {
+    const addedMeasurementColumns = [
+      "baseline_episode_id TEXT",
+      "after_episode_id TEXT",
+      "record_sha256 TEXT",
+    ];
+    for (const column of addedMeasurementColumns) {
+      try {
+        db.exec(`ALTER TABLE lite_product_measurements ADD COLUMN ${column}`);
+      } catch (error) {
+        ignoreSqliteDuplicateColumnError(error);
+      }
     }
   }
 }

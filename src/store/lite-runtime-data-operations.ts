@@ -21,6 +21,10 @@ import {
   parseEmbeddingProjectionPayload,
   type LiteProjectionJobRow,
 } from "./lite-projection-outbox.js";
+import {
+  assertLiteLearningEpisodeLedgerIntegrity,
+  assertLiteRuntimeAuthorityIdentity,
+} from "./lite-learning-episode-ledger.js";
 import { createLiteWriteStore } from "./lite-write-store.js";
 import { inspectLiteRuntimeSchema, type LiteRuntimeSchemaReport } from "./lite-runtime-schema.js";
 import { createSqliteDatabase, type SqliteDatabase } from "./sqlite.js";
@@ -38,6 +42,7 @@ export type LiteRuntimeDataVerification = {
   checked_at: string;
   byte_size: number;
   sha256: string;
+  database_instance_id: string | null;
   quick_check: string[];
   foreign_key_violation_count: number;
   schema: LiteRuntimeSchemaReport;
@@ -48,6 +53,11 @@ export type LiteRuntimeDataVerification = {
     projection_jobs: number;
     projection_dead_letters: number;
     legacy_pending_without_job: number;
+    guide_receipts: number;
+    write_operations: number;
+    rule_feedback: number;
+    product_measurements: number;
+    skill_reviews: number;
   };
   integrity_findings: {
     ready_embedding_invalid: number;
@@ -56,6 +66,7 @@ export type LiteRuntimeDataVerification = {
     projection_payload_invalid: number;
     execution_state_history_invalid: number;
     execution_tree_history_invalid: number;
+    learning_episode_ledger_invalid: number;
   };
   execution_history: {
     state: LiteExecutionHistoryVerification;
@@ -70,10 +81,23 @@ export type LiteRuntimeBackupManifest = {
   database_file: string;
   byte_size: number;
   sha256: string;
+  database_instance_id: string | null;
   schema_component: string;
   schema_version: number | null;
   counts: LiteRuntimeDataVerification["counts"];
 };
+
+type LiteRuntimePreservedCounts = Pick<
+  LiteRuntimeDataVerification["counts"],
+  | "commits"
+  | "nodes"
+  | "edges"
+  | "guide_receipts"
+  | "write_operations"
+  | "rule_feedback"
+  | "product_measurements"
+  | "skill_reviews"
+>;
 
 export type LiteRuntimeUpgradeReport = {
   contract_version: "aionis_lite_runtime_upgrade_report_v1";
@@ -81,8 +105,8 @@ export type LiteRuntimeUpgradeReport = {
   before: LiteRuntimeSchemaReport;
   after: LiteRuntimeSchemaReport;
   preserved_counts: {
-    before: Pick<LiteRuntimeDataVerification["counts"], "commits" | "nodes" | "edges">;
-    after: Pick<LiteRuntimeDataVerification["counts"], "commits" | "nodes" | "edges">;
+    before: LiteRuntimePreservedCounts;
+    after: LiteRuntimePreservedCounts;
   };
 };
 
@@ -159,6 +183,11 @@ function semanticCounts(db: SqliteDatabase): LiteRuntimeDataVerification["counts
                    AND job.job_kind = 'embedding_generate'
                )`,
           ),
+    guide_receipts: count("lite_product_guide_receipts"),
+    write_operations: count("lite_runtime_write_operations"),
+    rule_feedback: count("lite_memory_rule_feedback"),
+    product_measurements: count("lite_product_measurements"),
+    skill_reviews: count("lite_skill_candidate_reviews"),
   };
 }
 
@@ -274,12 +303,22 @@ export async function verifyLiteRuntimeDatabase(path: string): Promise<LiteRunti
   let edgeEndpointMissing = 0;
   let projectionPayloadInvalid = 0;
   let executionHistory: LiteRuntimeDataVerification["execution_history"];
+  let databaseInstanceId: string | null = null;
+  let learningEpisodeLedgerInvalid = 0;
   try {
     quickCheck = (db.prepare("PRAGMA quick_check").all() as Array<Record<string, unknown>>)
       .map((row) => String(Object.values(row)[0] ?? ""));
     foreignKeyViolationCount = (db.prepare("PRAGMA foreign_key_check").all() as unknown[]).length;
     schema = inspectLiteRuntimeSchema(db);
     counts = semanticCounts(db);
+    if (schema.classification === "current" && schema.detected_version === 3) {
+      try {
+        databaseInstanceId = assertLiteRuntimeAuthorityIdentity(db);
+        assertLiteLearningEpisodeLedgerIntegrity(db);
+      } catch {
+        learningEpisodeLedgerInvalid = 1;
+      }
+    }
     if (tableExists(db, "lite_memory_nodes")) {
       readyEmbeddingInvalid = scalarCount(
         db,
@@ -329,6 +368,7 @@ export async function verifyLiteRuntimeDatabase(path: string): Promise<LiteRunti
   if (projectionPayloadInvalid > 0) warnings.push("projection_payload_repair_required");
   if (!executionHistory.state.ok) warnings.push("execution_state_history_corrupt");
   if (!executionHistory.tree.ok) warnings.push("execution_tree_history_corrupt");
+  if (learningEpisodeLedgerInvalid > 0) warnings.push("learning_episode_ledger_corrupt");
   const ok = quickCheck.length === 1
     && quickCheck[0] === "ok"
     && foreignKeyViolationCount === 0
@@ -337,6 +377,7 @@ export async function verifyLiteRuntimeDatabase(path: string): Promise<LiteRunti
     && nodeCommitMissing === 0
     && edgeEndpointMissing === 0
     && projectionPayloadInvalid === 0
+    && learningEpisodeLedgerInvalid === 0
     && executionHistory.state.ok
     && executionHistory.tree.ok;
 
@@ -347,6 +388,7 @@ export async function verifyLiteRuntimeDatabase(path: string): Promise<LiteRunti
     checked_at: new Date().toISOString(),
     byte_size: statSync(absolute).size,
     sha256: await sha256File(absolute),
+    database_instance_id: databaseInstanceId,
     quick_check: quickCheck,
     foreign_key_violation_count: foreignKeyViolationCount,
     schema,
@@ -358,6 +400,7 @@ export async function verifyLiteRuntimeDatabase(path: string): Promise<LiteRunti
       projection_payload_invalid: projectionPayloadInvalid,
       execution_state_history_invalid: executionHistory.state.ok ? 0 : 1,
       execution_tree_history_invalid: executionHistory.tree.ok ? 0 : 1,
+      learning_episode_ledger_invalid: learningEpisodeLedgerInvalid,
     },
     execution_history: executionHistory,
     warnings,
@@ -398,6 +441,29 @@ async function assertBackupManifestMatches(path: string): Promise<LiteRuntimeBac
   return manifest;
 }
 
+function assertBackupManifestSemantics(
+  manifest: LiteRuntimeBackupManifest,
+  verification: LiteRuntimeDataVerification,
+): void {
+  const mismatches: string[] = [];
+  if (manifest.schema_component !== verification.schema.component) mismatches.push("schema_component");
+  if (manifest.schema_version !== verification.schema.detected_version) mismatches.push("schema_version");
+  if (manifest.database_instance_id !== verification.database_instance_id) {
+    mismatches.push("database_instance_id");
+  }
+  const expectedCountEntries = Object.entries(verification.counts) as Array<
+    [keyof LiteRuntimeDataVerification["counts"], number]
+  >;
+  if (!manifest.counts
+    || Object.keys(manifest.counts).length !== expectedCountEntries.length
+    || expectedCountEntries.some(([field, expected]) => manifest.counts[field] !== expected)) {
+    mismatches.push("counts");
+  }
+  if (mismatches.length > 0) {
+    throw new Error(`backup_manifest_semantic_mismatch:${mismatches.join(",")}`);
+  }
+}
+
 function vacuumInto(source: SqliteDatabase, destination: string): void {
   source.prepare("VACUUM INTO ?").run(destination);
 }
@@ -433,12 +499,16 @@ export async function backupLiteRuntimeDatabase(args: {
     if (!verification.ok) {
       throw new Error(`backup_database_verification_failed:${JSON.stringify(verification)}`);
     }
+    if (verification.database_instance_id !== sourceVerification.database_instance_id) {
+      throw new Error("backup_database_identity_mismatch");
+    }
     const manifest: LiteRuntimeBackupManifest = {
       contract_version: "aionis_lite_runtime_backup_manifest_v1",
       created_at: new Date().toISOString(),
       database_file: destinationPath.split("/").at(-1) ?? destinationPath,
       byte_size: verification.byte_size,
       sha256: verification.sha256,
+      database_instance_id: verification.database_instance_id,
       schema_component: verification.schema.component,
       schema_version: verification.schema.detected_version,
       counts: verification.counts,
@@ -470,6 +540,7 @@ export async function restoreLiteRuntimeDatabase(args: {
   if (!backupVerification.ok) {
     throw new Error(`backup_database_verification_failed:${JSON.stringify(backupVerification)}`);
   }
+  if (sourceManifest) assertBackupManifestSemantics(sourceManifest, backupVerification);
 
   mkdirSync(dirname(destinationPath), { recursive: true });
   const source = createSqliteDatabase(backupPath);
@@ -485,6 +556,16 @@ export async function restoreLiteRuntimeDatabase(args: {
     const verification = await verifyLiteRuntimeDatabase(destinationPath);
     if (!verification.ok) {
       throw new Error(`restored_database_verification_failed:${JSON.stringify(verification)}`);
+    }
+    if (verification.database_instance_id !== backupVerification.database_instance_id) {
+      throw new Error("restored_database_identity_mismatch");
+    }
+    if (
+      sourceManifest
+      && sourceManifest.database_instance_id !== undefined
+      && verification.database_instance_id !== sourceManifest.database_instance_id
+    ) {
+      throw new Error("restored_database_manifest_identity_mismatch");
     }
     return { source_manifest: sourceManifest, verification };
   } catch (error) {
@@ -507,7 +588,17 @@ export async function upgradeLiteRuntimeDatabase(path: string): Promise<LiteRunt
   }
   const beforeCounts = beforeVerification.counts;
   const afterCounts = afterVerification.counts;
-  for (const key of ["commits", "nodes", "edges"] as const) {
+  const preservedCountKeys = [
+    "commits",
+    "nodes",
+    "edges",
+    "guide_receipts",
+    "write_operations",
+    "rule_feedback",
+    "product_measurements",
+    "skill_reviews",
+  ] as const;
+  for (const key of preservedCountKeys) {
     if (beforeCounts[key] !== afterCounts[key]) {
       throw new Error(`schema_upgrade_changed_semantic_row_count:${key}:${beforeCounts[key]}:${afterCounts[key]}`);
     }
@@ -522,11 +613,21 @@ export async function upgradeLiteRuntimeDatabase(path: string): Promise<LiteRunt
         commits: beforeCounts.commits,
         nodes: beforeCounts.nodes,
         edges: beforeCounts.edges,
+        guide_receipts: beforeCounts.guide_receipts,
+        write_operations: beforeCounts.write_operations,
+        rule_feedback: beforeCounts.rule_feedback,
+        product_measurements: beforeCounts.product_measurements,
+        skill_reviews: beforeCounts.skill_reviews,
       },
       after: {
         commits: afterCounts.commits,
         nodes: afterCounts.nodes,
         edges: afterCounts.edges,
+        guide_receipts: afterCounts.guide_receipts,
+        write_operations: afterCounts.write_operations,
+        rule_feedback: afterCounts.rule_feedback,
+        product_measurements: afterCounts.product_measurements,
+        skill_reviews: afterCounts.skill_reviews,
       },
     },
   };

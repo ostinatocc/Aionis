@@ -27,9 +27,8 @@ import {
 import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
 import {
   inspectLiteRuntimeSchema,
-  inspectLiteRuntimeSchemaAgainstTarget,
-  WRITE_SCHEMA_V2,
 } from "../../src/store/lite-runtime-schema.ts";
+import { LITE_LEARNING_LEDGER_REQUIRED_TABLE_NAMES } from "../../src/store/lite-learning-episode-ledger.ts";
 import { createLiteWriteStore, createLiteWriteStoreFromDatabase } from "../../src/store/lite-write-store.ts";
 import { createSqliteDatabase, type SqliteDatabase } from "../../src/store/sqlite.ts";
 
@@ -309,26 +308,28 @@ function schemaSnapshot(dbPath: string): Array<{
   }
 }
 
-function injectedV3InspectionTarget() {
-  return {
-    currentVersion: 3,
-    contracts: {
-      2: WRITE_SCHEMA_V2,
-      3: {
-        columns: {
-          ...WRITE_SCHEMA_V2.columns,
-          lite_learning_episode_events: ["event_id"],
-        },
-        constraints: {
-          ...WRITE_SCHEMA_V2.constraints,
-          lite_learning_episode_events: { primaryKey: ["event_id"] },
-        },
-        indexes: WRITE_SCHEMA_V2.indexes,
-        triggers: {},
-      },
-    },
-    supportedPreviousVersions: [2],
-  } as const;
+function downgradeCurrentFixtureToV2(dbPath: string): void {
+  const db = createSqliteDatabase(dbPath);
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    for (const table of [...LITE_LEARNING_LEDGER_REQUIRED_TABLE_NAMES].reverse()) {
+      db.exec(`DROP TABLE IF EXISTS ${table}`);
+    }
+    for (const column of ["record_sha256", "after_episode_id", "baseline_episode_id"]) {
+      db.exec(`ALTER TABLE lite_product_measurements DROP COLUMN ${column}`);
+    }
+    db.prepare(
+      `UPDATE lite_runtime_schema_metadata
+       SET version = 2, updated_at = ?
+       WHERE component = 'write_projection'`,
+    ).run("2026-07-13T00:00:00.000Z");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  } finally {
+    db.close();
+  }
 }
 
 test("v0.3.4 SQLite upgrades without changing semantic rows and legacy pending is explicitly repairable", async () => {
@@ -523,6 +524,7 @@ test("VACUUM INTO backup and restore-to-new-path preserve a verified SQLite snap
     assert.equal(backup.verification.counts.nodes, 3);
     assert.equal(fs.existsSync(`${backupPath}.manifest.json`), true);
     assert.equal(backup.manifest.sha256, backup.verification.sha256);
+    assert.match(backup.manifest.database_instance_id ?? "", /^[0-9a-f]{64}$/);
 
     const restoredPath = path.join(temp.directory, "restored", "runtime.sqlite");
     const restored = await restoreLiteRuntimeDatabase({
@@ -531,11 +533,23 @@ test("VACUUM INTO backup and restore-to-new-path preserve a verified SQLite snap
     });
     assert.equal(restored.verification.ok, true);
     assert.deepEqual(restored.verification.counts, backup.verification.counts);
+    assert.equal(restored.verification.database_instance_id, backup.manifest.database_instance_id);
     assert.equal(restored.verification.schema.classification, "current");
     await assert.rejects(
       restoreLiteRuntimeDatabase({ backupPath, destinationPath: restoredPath }),
       /restore destination already exists/,
     );
+
+    const manifestPath = `${backupPath}.manifest.json`;
+    const tamperedManifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+    tamperedManifest.schema_version = 2;
+    fs.writeFileSync(manifestPath, `${JSON.stringify(tamperedManifest, null, 2)}\n`);
+    const tamperedDestination = path.join(temp.directory, "restored", "tampered.sqlite");
+    await assert.rejects(
+      restoreLiteRuntimeDatabase({ backupPath, destinationPath: tamperedDestination }),
+      /backup_manifest_semantic_mismatch:schema_version/,
+    );
+    assert.equal(fs.existsSync(tamperedDestination), false);
   } finally {
     fs.rmSync(temp.directory, { recursive: true, force: true });
   }
@@ -683,7 +697,7 @@ test("verify and backup fail closed on execution projection and event-history co
   });
 });
 
-test("an unversioned database that already has current tables upgrades idempotently", async () => {
+test("an unversioned database with v3-only authority tables fails closed as a hybrid", async () => {
   const temp = tempDatabase("unversioned-current");
   try {
     const db = createSqliteDatabase(temp.path);
@@ -696,15 +710,16 @@ test("an unversioned database that already has current tables upgrades idempoten
     unversioned.exec("DROP TABLE lite_runtime_schema_metadata");
     unversioned.close();
     const before = await verifyLiteRuntimeDatabase(temp.path);
-    assert.equal(before.schema.classification, "legacy_v0_3_4");
+    assert.equal(before.schema.classification, "incompatible");
+    assert.match(before.schema.problems.join("\n"), /v3-only authority tables already exist/);
     assert.equal(before.counts.projection_jobs, 0);
 
-    const upgraded = await upgradeLiteRuntimeDatabase(temp.path);
-    assert.equal(upgraded.after.classification, "current");
-    assert.deepEqual(upgraded.preserved_counts.before, upgraded.preserved_counts.after);
-    const after = await verifyLiteRuntimeDatabase(temp.path);
-    assert.equal(after.counts.projection_jobs, 0);
-    assert.equal(after.counts.nodes, 2);
+    const snapshot = schemaSnapshot(temp.path);
+    await assert.rejects(
+      upgradeLiteRuntimeDatabase(temp.path),
+      /schema_upgrade_preflight_failed/,
+    );
+    assert.deepEqual(schemaSnapshot(temp.path), snapshot);
   } finally {
     fs.rmSync(temp.directory, { recursive: true, force: true });
   }
@@ -818,8 +833,8 @@ test("projection repair waits for an active SQLite writer and then commits one n
   }
 });
 
-test("complete v2 remains current before v3 activation", async () => {
-  const temp = tempDatabase("complete-v2-current");
+test("complete v3 is current after learning-ledger activation", async () => {
+  const temp = tempDatabase("complete-v3-current");
   try {
     const store = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
     await store.close();
@@ -827,8 +842,8 @@ test("complete v2 remains current before v3 activation", async () => {
     const db = createSqliteDatabase(temp.path);
     try {
       const report = inspectLiteRuntimeSchema(db);
-      assert.equal(report.detected_version, 2);
-      assert.equal(report.current_version, 2);
+      assert.equal(report.detected_version, 3);
+      assert.equal(report.current_version, 3);
       assert.equal(report.classification, "current");
       assert.equal(report.upgrade_required, false);
     } finally {
@@ -844,12 +859,13 @@ test("damaged v2 authority table is incompatible before migration", async () => 
   try {
     const store = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
     await store.close();
+    downgradeCurrentFixtureToV2(temp.path);
 
     const db = createSqliteDatabase(temp.path);
     try {
       db.exec("DROP INDEX idx_lite_product_guide_receipts_run_created");
       const beforeInspection = schemaSnapshot(temp.path);
-      const report = inspectLiteRuntimeSchemaAgainstTarget(db, injectedV3InspectionTarget());
+      const report = inspectLiteRuntimeSchema(db);
       assert.equal(report.detected_version, 2);
       assert.equal(report.current_version, 3);
       assert.equal(report.classification, "incompatible");
@@ -885,9 +901,9 @@ test("future schema remains incompatible", () => {
 
       const report = inspectLiteRuntimeSchema(db);
       assert.equal(report.detected_version, 99);
-      assert.equal(report.current_version, 2);
+      assert.equal(report.current_version, 3);
       assert.equal(report.classification, "incompatible");
-      assert.match(report.problems.join("\n"), /newer than supported version 2/);
+      assert.match(report.problems.join("\n"), /newer than supported version 3/);
     } finally {
       db.close();
     }
@@ -896,16 +912,17 @@ test("future schema remains incompatible", () => {
   }
 });
 
-test("complete v2 is supported_previous_v2 against an injected v3 target", async () => {
-  const temp = tempDatabase("complete-v2-against-v3");
+test("complete v2 is supported_previous_v2 against the active v3 target", async () => {
+  const temp = tempDatabase("complete-v2-against-active-v3");
   try {
     const store = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
     await store.close();
+    downgradeCurrentFixtureToV2(temp.path);
 
     const db = createSqliteDatabase(temp.path);
     try {
       const beforeInspection = schemaSnapshot(temp.path);
-      const report = inspectLiteRuntimeSchemaAgainstTarget(db, injectedV3InspectionTarget());
+      const report = inspectLiteRuntimeSchema(db);
       assert.equal(report.detected_version, 2);
       assert.equal(report.current_version, 3);
       assert.equal(report.classification, "supported_previous_v2");
