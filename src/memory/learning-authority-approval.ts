@@ -160,6 +160,7 @@ export const LearningOutcomeRedactedAuthorityProjectionV1Schema = z.object({
   randomization_pair_manifest_sha256: DigestSha256Schema,
   activation_schedule_sha256: DigestSha256Schema,
   collection_source_policy_sha256: DigestSha256Schema,
+  required_evidence_series_sha256: DigestSha256Schema,
   required_artifact_heads_sha256: DigestSha256Schema,
   event_cutoff_row_id: z.number().int().nonnegative(),
   artifact_cutoff_row_id: z.number().int().nonnegative(),
@@ -197,6 +198,7 @@ const LearningLookProposalV1ObjectSchema = z.object({
     (value) => (LEARNING_GATE_CONFIG.checkpoint_indexes as readonly number[]).includes(value),
     "Look index is not registered by the canonical gate policy",
   ),
+  target_cumulative_pair_count: z.number().int().positive(),
   checkpoint_kind: z.enum(["safety_integrity_only", "confirmatory"]),
   cutoff: LearningCutoffV1Schema,
   outcome_redacted_authority_projection: LearningOutcomeRedactedAuthorityProjectionV1Schema,
@@ -204,7 +206,11 @@ const LearningLookProposalV1ObjectSchema = z.object({
 }).strict();
 
 function validateCheckpointKind(
-  value: { look_index: number; checkpoint_kind: "safety_integrity_only" | "confirmatory" },
+  value: {
+    look_index: number;
+    target_cumulative_pair_count: number;
+    checkpoint_kind: "safety_integrity_only" | "confirmatory";
+  },
   context: z.RefinementCtx,
 ): void {
   const position = (LEARNING_GATE_CONFIG.checkpoint_indexes as readonly number[]).indexOf(value.look_index);
@@ -222,6 +228,14 @@ function validateCheckpointKind(
       code: z.ZodIssueCode.custom,
       path: ["checkpoint_kind"],
       message: `Look ${value.look_index} requires checkpoint_kind=${expected}`,
+    });
+  }
+  const expectedTarget = LEARNING_GATE_CONFIG.checkpoint_cumulative_matched_pairs[position];
+  if (value.target_cumulative_pair_count !== expectedTarget) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["target_cumulative_pair_count"],
+      message: `Look ${value.look_index} requires target_cumulative_pair_count=${String(expectedTarget)}`,
     });
   }
 }
@@ -266,20 +280,24 @@ export function learningLookProposalDigest(value: LearningLookProposalV1): strin
   return sha256Hex(stableStringify(LearningLookProposalV1Schema.parse(value)));
 }
 
+export const RUNTIME_INTEGRITY_FINDING_CODES = [
+  "schema_integrity",
+  "runtime_state_integrity",
+  "ledger_chain_integrity",
+  "assignment_integrity",
+  "policy_config_integrity",
+  "source_binding_integrity",
+  "attempt_binding_integrity",
+  "artifact_head_integrity",
+  "cutoff_projection_integrity",
+  "namespace_lease_integrity",
+  "control_plane_integrity",
+  "external_prerequisite_integrity",
+] as const;
+
 const RuntimeIntegrityFindingV1Schema = z.object({
-  code: z.enum([
-    "schema_integrity",
-    "ledger_chain_integrity",
-    "assignment_integrity",
-    "policy_config_integrity",
-    "source_binding_integrity",
-    "attempt_binding_integrity",
-    "artifact_head_integrity",
-    "cutoff_projection_integrity",
-    "namespace_lease_integrity",
-    "external_prerequisite_integrity",
-  ]),
-  severity: z.enum(["info", "warning", "error"]),
+  code: z.enum(RUNTIME_INTEGRITY_FINDING_CODES),
+  severity: z.enum(["info", "error"]),
   count: z.number().int().nonnegative(),
   evidence_sha256: DigestSha256Schema,
 }).strict();
@@ -289,6 +307,8 @@ export const RuntimeIntegrityGateReportV1Schema = LearningLookProposalV1ObjectSc
 }).extend({
   contract_version: z.literal("runtime_integrity_gate_report_v1"),
   proposal_sha256: DigestSha256Schema,
+  verifier_id: z.literal("aionis_lite_learning_ledger_replay"),
+  verifier_version: z.literal(1),
   integrity_status: z.enum(["passed", "failed", "inconclusive"]),
   findings: z.array(RuntimeIntegrityFindingV1Schema).max(64),
 }).strict().superRefine((value, context) => {
@@ -310,6 +330,7 @@ export const RuntimeIntegrityGateReportV1Schema = LearningLookProposalV1ObjectSc
     gate_policy_config_sha256: value.gate_policy_config_sha256,
     gate_policy_implementation_sha256: value.gate_policy_implementation_sha256,
     look_index: value.look_index,
+    target_cumulative_pair_count: value.target_cumulative_pair_count,
     checkpoint_kind: value.checkpoint_kind,
     cutoff: value.cutoff,
     outcome_redacted_authority_projection: value.outcome_redacted_authority_projection,
@@ -322,11 +343,32 @@ export const RuntimeIntegrityGateReportV1Schema = LearningLookProposalV1ObjectSc
       message: "Runtime integrity report is not bound to its canonical outcome-redacted look proposal",
     });
   }
-  if (value.integrity_status === "passed" && value.findings.some((finding) => finding.severity === "error")) {
+  const exactFindingSet = value.findings.length === RUNTIME_INTEGRITY_FINDING_CODES.length
+    && value.findings.every((finding, index) => finding.code === RUNTIME_INTEGRITY_FINDING_CODES[index]);
+  if (!exactFindingSet) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["findings"],
-      message: "Passing Runtime integrity report cannot contain error findings",
+      message: "Runtime integrity report must contain the exact canonical finding set in verifier order",
+    });
+  }
+  for (const [index, finding] of value.findings.entries()) {
+    const expectedSeverity = finding.count === 0 ? "info" : "error";
+    if (finding.severity !== expectedSeverity) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["findings", index, "severity"],
+        message: `Runtime integrity finding severity must be ${expectedSeverity} for count=${String(finding.count)}`,
+      });
+    }
+  }
+  const hasFailure = value.findings.some((finding) => finding.count > 0);
+  if ((value.integrity_status === "passed" && hasFailure)
+    || (value.integrity_status === "failed" && !hasFailure)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["integrity_status"],
+      message: "Runtime integrity status must match the canonical finding counts",
     });
   }
 });

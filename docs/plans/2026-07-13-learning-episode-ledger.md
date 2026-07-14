@@ -714,6 +714,39 @@ git commit -m "refactor(store): share runtime transaction with measurements"
 - Test: `scripts/ci/lite-learning-episode-store.test.ts`
 - Create: `scripts/ci/lite-learning-r1-rehearsal.test.ts`
 
+> Implementation sequencing correction (2026-07-14): the R1 ledger replay,
+> verification posture, backup/restore, proposal-bound Runtime-integrity
+> artifact, and dormant real-process rehearsal are Task 2.4A. The positive
+> external-head projection and operational `runtime-authority-attestor` are
+> Task 8 work because their trust decision requires the Task 8 canonical
+> coverage contract, signed broker receipt verifier, external evidence
+> ingestion receipt, and committed authority-head contract. Until those
+> authorities exist, Runtime keeps signed external facts and both paired
+> external-head flags fail-closed with
+> `learning_external_heads_requires_task8_signed_ingestion`; no structural-only
+> or self-signed substitute is accepted.
+
+Task 2.4A implementation result (2026-07-14): Runtime now replays the complete
+v3 learning ledger into a versioned semantic report, includes learning counts
+in the v2 backup manifest while retaining v1 restore compatibility, and verifies
+the exact copied snapshot rather than a source path that can drift between
+checks. Restore pins one manifest-bound snapshot, publishes it no-clobber with
+file/directory `fsync`, and rechecks bytes, schema, lineage, semantic counts,
+and per-learning-table counts after publication. Runtime-integrity proposals
+must target the smallest unreserved canonical look and, after look 1, require
+the immediate prior persisted evidence evaluation. Persisted reports must use
+the fixed ordered twelve-finding verifier contract; omitted findings, severity-
+to-count disagreement, stale event cutoffs, and dead-letter control state fail the
+artifact. A legal dead letter remains a backup-preserved operational state with
+generic database `ok=true`, but blocks serving, promotion, and a passing
+Runtime-integrity artifact. The CLI writes the digest-identical canonical report
+bytes through an exclusive `0600` temporary file, publishes without overwrite,
+and syncs the containing directory. Outcome-label permutation is proven not to
+change proposal or report bytes. The dormant R1 process rehearsal keeps the
+candidate policy globally off while it migrates populated v2 authority rows,
+starts Runtime, verifies, backs up, restores, restarts, and compares lineage and
+authority-bundle digests.
+
 **Step 1: Add failing corruption and preservation tests**
 
 Cover payload/item/event/receipt/decision digests, complete feedback
@@ -809,18 +842,23 @@ yet; a skipped manual deployment step is not accepted as this proof.
 
 **Step 4: Run and commit**
 
+For Task 2.4A, run the three TypeScript suites and typecheck below; the
+attestor suite and files in the original combined command are intentionally
+activated only with Task 8 signed ingestion.
+
 ```bash
 npx tsx --test scripts/ci/lite-runtime-data-operations.test.ts
 npx tsx --test scripts/ci/lite-learning-episode-store.test.ts
 npx tsx --test scripts/ci/lite-learning-r1-rehearsal.test.ts
-node --test scripts/ci/runtime-authority-attestor.test.mjs
 npm run -s typecheck
-git add src/store/lite-runtime-data-operations.ts scripts/runtime-data-ops.ts \
-  scripts/runtime-authority-attestor.mjs \
+git add src/memory/learning-authority-approval.ts \
+  src/store/lite-learning-episode-ledger.ts \
+  src/store/lite-runtime-data-operations.ts scripts/runtime-data-ops.ts \
+  scripts/ci/lite-learning-episode-contract.test.ts \
   scripts/ci/lite-runtime-data-operations.test.ts \
-  scripts/ci/runtime-authority-attestor.test.mjs \
   scripts/ci/lite-learning-episode-store.test.ts \
-  scripts/ci/lite-learning-r1-rehearsal.test.ts
+  scripts/ci/lite-learning-r1-rehearsal.test.ts \
+  docs/plans/2026-07-13-learning-episode-ledger.md
 git commit -m "feat(store): verify and back up learning ledger v3"
 ```
 

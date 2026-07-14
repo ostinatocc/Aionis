@@ -524,6 +524,7 @@ test("VACUUM INTO backup and restore-to-new-path preserve a verified SQLite snap
     assert.equal(backup.verification.counts.nodes, 3);
     assert.equal(fs.existsSync(`${backupPath}.manifest.json`), true);
     assert.equal(backup.manifest.sha256, backup.verification.sha256);
+    assert.equal(backup.manifest.contract_version, "aionis_lite_runtime_backup_manifest_v2");
     assert.match(backup.manifest.database_instance_id ?? "", /^[0-9a-f]{64}$/);
 
     const restoredPath = path.join(temp.directory, "restored", "runtime.sqlite");
@@ -532,7 +533,13 @@ test("VACUUM INTO backup and restore-to-new-path preserve a verified SQLite snap
       destinationPath: restoredPath,
     });
     assert.equal(restored.verification.ok, true);
+    assert.equal(restored.verification.byte_size, backup.manifest.byte_size);
+    assert.equal(restored.verification.sha256, backup.manifest.sha256);
     assert.deepEqual(restored.verification.counts, backup.verification.counts);
+    assert.deepEqual(
+      restored.verification.learning.replay?.table_counts,
+      backup.manifest.learning_table_counts,
+    );
     assert.equal(restored.verification.database_instance_id, backup.manifest.database_instance_id);
     assert.equal(restored.verification.schema.classification, "current");
     await assert.rejects(
@@ -541,7 +548,55 @@ test("VACUUM INTO backup and restore-to-new-path preserve a verified SQLite snap
     );
 
     const manifestPath = `${backupPath}.manifest.json`;
-    const tamperedManifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+    const currentManifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+    const legacyManifest = structuredClone(currentManifest) as Record<string, unknown>;
+    legacyManifest.contract_version = "aionis_lite_runtime_backup_manifest_v1";
+    delete legacyManifest.learning_table_counts;
+    const legacyCounts = legacyManifest.counts as Record<string, unknown>;
+    for (const field of [
+      "learning_episode_events",
+      "learning_protected_events",
+      "learning_legacy_events",
+      "learning_promotion_eligible_exposures",
+      "learning_control_jobs",
+      "learning_control_dead_letters",
+    ]) delete legacyCounts[field];
+    fs.writeFileSync(manifestPath, `${JSON.stringify(legacyManifest, null, 2)}\n`);
+    const legacyDestination = path.join(temp.directory, "restored", "legacy-manifest.sqlite");
+    const legacyRestored = await restoreLiteRuntimeDatabase({
+      backupPath,
+      destinationPath: legacyDestination,
+    });
+    assert.equal(legacyRestored.verification.ok, true);
+
+    const countDriftManifest = structuredClone(currentManifest) as Record<string, unknown>;
+    const countDriftCounts = countDriftManifest.counts as Record<string, number>;
+    countDriftCounts.nodes = Number(countDriftCounts.nodes) + 1;
+    fs.writeFileSync(manifestPath, `${JSON.stringify(countDriftManifest, null, 2)}\n`);
+    const countDriftDestination = path.join(temp.directory, "restored", "count-drift.sqlite");
+    await assert.rejects(
+      restoreLiteRuntimeDatabase({ backupPath, destinationPath: countDriftDestination }),
+      /backup_manifest_semantic_mismatch:counts/,
+    );
+    assert.equal(fs.existsSync(countDriftDestination), false);
+
+    const learningCountDriftManifest = structuredClone(currentManifest) as Record<string, unknown>;
+    const learningCountDrift = learningCountDriftManifest.learning_table_counts as Record<string, number>;
+    learningCountDrift.lite_learning_episode_events =
+      Number(learningCountDrift.lite_learning_episode_events) + 1;
+    fs.writeFileSync(manifestPath, `${JSON.stringify(learningCountDriftManifest, null, 2)}\n`);
+    const learningCountDriftDestination = path.join(
+      temp.directory,
+      "restored",
+      "learning-count-drift.sqlite",
+    );
+    await assert.rejects(
+      restoreLiteRuntimeDatabase({ backupPath, destinationPath: learningCountDriftDestination }),
+      /backup_manifest_semantic_mismatch:learning_table_counts/,
+    );
+    assert.equal(fs.existsSync(learningCountDriftDestination), false);
+
+    const tamperedManifest = structuredClone(currentManifest) as Record<string, unknown>;
     tamperedManifest.schema_version = 2;
     fs.writeFileSync(manifestPath, `${JSON.stringify(tamperedManifest, null, 2)}\n`);
     const tamperedDestination = path.join(temp.directory, "restored", "tampered.sqlite");
@@ -550,6 +605,83 @@ test("VACUUM INTO backup and restore-to-new-path preserve a verified SQLite snap
       /backup_manifest_semantic_mismatch:schema_version/,
     );
     assert.equal(fs.existsSync(tamperedDestination), false);
+    assert.deepEqual(
+      fs.readdirSync(path.join(temp.directory, "restored"))
+        .filter((entry) => entry.startsWith(".aionis-runtime-restore-")),
+      [],
+    );
+  } finally {
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("restore pins one manifest-bound file handle before the source path drifts", async () => {
+  const temp = tempDatabase("restore-manifest-snapshot-race");
+  try {
+    const db = createSqliteDatabase(temp.path);
+    createV034Schema(db);
+    insertV034Fixture(db);
+    db.close();
+    await upgradeLiteRuntimeDatabase(temp.path);
+    await repairLiteProjectionState({
+      path: temp.path,
+      providerName: "data-ops-test-provider",
+      providerDim: 1536,
+    });
+    const padding = createSqliteDatabase(temp.path);
+    padding.prepare(
+      "UPDATE lite_memory_nodes SET text_summary = ? WHERE id = 'node-recoverable'",
+    ).run("x".repeat(16 * 1024 * 1024));
+    padding.close();
+
+    const backupPath = path.join(temp.directory, "backups", "runtime.backup.sqlite");
+    const backup = await backupLiteRuntimeDatabase({ sourcePath: temp.path, destinationPath: backupPath });
+    const driftPath = path.join(temp.directory, "backups", "runtime.drift.sqlite");
+    fs.copyFileSync(backupPath, driftPath);
+    const drift = createSqliteDatabase(driftPath);
+    insertCommittedNode(drift, {
+      commitId: "commit-after-manifest",
+      commitHash: "commit-hash-after-manifest",
+      nodeId: "node-after-manifest",
+      createdAt: "2026-07-03T00:00:00.000Z",
+    });
+    drift.close();
+
+    const destinationDirectory = path.join(temp.directory, "restored-race");
+    const destinationPath = path.join(destinationDirectory, "runtime.sqlite");
+    const restore = restoreLiteRuntimeDatabase({ backupPath, destinationPath });
+    const deadline = Date.now() + 10_000;
+    let stagedSnapshotObserved = false;
+    while (Date.now() < deadline) {
+      const stagingDirectory = fs.existsSync(destinationDirectory)
+        ? fs.readdirSync(destinationDirectory)
+          .find((entry) => entry.startsWith(".aionis-runtime-restore-"))
+        : undefined;
+      const stagedSnapshot = stagingDirectory
+        ? path.join(destinationDirectory, stagingDirectory, "runtime.sqlite")
+        : null;
+      if (stagedSnapshot && fs.existsSync(stagedSnapshot)
+        && fs.statSync(stagedSnapshot).size >= backup.manifest.byte_size) {
+        stagedSnapshotObserved = true;
+        break;
+      }
+      await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 2));
+    }
+    assert.equal(stagedSnapshotObserved, true, "restore did not expose a complete private snapshot");
+
+    const originalBackupPath = path.join(temp.directory, "backups", "runtime.original.sqlite");
+    fs.renameSync(backupPath, originalBackupPath);
+    fs.renameSync(driftPath, backupPath);
+
+    const restored = await restore;
+    assert.equal(restored.verification.sha256, backup.manifest.sha256);
+    assert.deepEqual(restored.verification.counts, backup.manifest.counts);
+    assert.deepEqual(
+      restored.verification.learning.replay?.table_counts,
+      backup.manifest.learning_table_counts,
+    );
+    const driftVerification = await verifyLiteRuntimeDatabase(backupPath);
+    assert.equal(driftVerification.counts.nodes, backup.manifest.counts.nodes + 1);
   } finally {
     fs.rmSync(temp.directory, { recursive: true, force: true });
   }
@@ -849,6 +981,39 @@ test("complete v3 is current after learning-ledger activation", async () => {
     } finally {
       db.close();
     }
+  } finally {
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("external-head projection flags stay fail-closed until Task 8 signed ingestion exists", async () => {
+  const temp = tempDatabase("external-heads-task8-fence");
+  try {
+    const store = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
+    await store.close();
+    const paired = spawnSync(
+      process.execPath,
+      [
+        "--import", "tsx", DATA_OPS_CLI, "verify", "--db", temp.path,
+        "--learning-external-heads-from-coverage", path.join(temp.directory, "coverage.json"),
+        "--learning-external-heads-out", path.join(temp.directory, "heads.json"),
+      ],
+      { cwd: ROOT, encoding: "utf8" },
+    );
+    assert.equal(paired.status, 1);
+    assert.match(paired.stderr, /learning_external_heads_requires_task8_signed_ingestion/);
+    assert.equal(fs.existsSync(path.join(temp.directory, "heads.json")), false);
+
+    const unpaired = spawnSync(
+      process.execPath,
+      [
+        "--import", "tsx", DATA_OPS_CLI, "verify", "--db", temp.path,
+        "--learning-external-heads-out", path.join(temp.directory, "heads.json"),
+      ],
+      { cwd: ROOT, encoding: "utf8" },
+    );
+    assert.equal(unpaired.status, 1);
+    assert.match(unpaired.stderr, /must be supplied together/);
   } finally {
     fs.rmSync(temp.directory, { recursive: true, force: true });
   }

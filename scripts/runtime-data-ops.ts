@@ -1,5 +1,19 @@
 #!/usr/bin/env node
 
+import { randomBytes } from "node:crypto";
+import {
+  closeSync,
+  fsyncSync,
+  linkSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
+import stableStringify from "fast-json-stable-stringify";
+
 import {
   LITE_PROJECTION_JOB_KINDS,
   type LiteProjectionJobKind,
@@ -14,6 +28,7 @@ import {
   preflightLiteRuntimeDatabase,
   restoreLiteRuntimeDatabase,
   upgradeLiteRuntimeDatabase,
+  verifyLiteRuntimeLearningArtifact,
   verifyLiteRuntimeDatabase,
 } from "../src/store/lite-runtime-data-operations.js";
 
@@ -38,6 +53,7 @@ Usage:
   npx tsx scripts/runtime-data-ops.ts preflight --db PATH
   npx tsx scripts/runtime-data-ops.ts upgrade --db PATH
   npx tsx scripts/runtime-data-ops.ts verify --db PATH
+    [--learning-proposal PATH --learning-artifact-out PATH]
   npx tsx scripts/runtime-data-ops.ts backup --db PATH --out BACKUP_PATH
   npx tsx scripts/runtime-data-ops.ts restore --backup BACKUP_PATH --to NEW_DB_PATH
   npx tsx scripts/runtime-data-ops.ts projection-list --db PATH [filters]
@@ -54,6 +70,10 @@ Projection repair options:
   --legacy-only | --dead-letter-only
   --embedding-only | --ann-only
   --mark-unrecoverable-failed
+
+Learning verification:
+  --learning-proposal PATH and --learning-artifact-out PATH must be supplied together.
+  External-head projection remains fail-closed until Task 8 signed ingestion exists.
 `;
 }
 
@@ -110,6 +130,55 @@ function print(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
+function fsyncDirectory(path: string): void {
+  const descriptor = openSync(path, "r");
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+function writeCanonicalArtifactExclusive(path: string, value: unknown): string {
+  const destination = resolve(path);
+  const directory = dirname(destination);
+  mkdirSync(directory, { recursive: true });
+  const encoded = stableStringify(value);
+  if (Buffer.byteLength(encoded, "utf8") > 512 * 1024) {
+    throw new Error("learning Runtime-integrity artifact exceeds the 512 KiB bound");
+  }
+  const temporary = join(
+    directory,
+    `.${basename(destination)}.${String(process.pid)}.${randomBytes(8).toString("hex")}.tmp`,
+  );
+  let descriptor: number | null = null;
+  let linked = false;
+  let temporaryExists = false;
+  try {
+    descriptor = openSync(temporary, "wx", 0o600);
+    temporaryExists = true;
+    writeFileSync(descriptor, encoded, { encoding: "utf8" });
+    fsyncSync(descriptor);
+    closeSync(descriptor);
+    descriptor = null;
+    linkSync(temporary, destination);
+    linked = true;
+    fsyncDirectory(directory);
+    rmSync(temporary);
+    temporaryExists = false;
+    fsyncDirectory(directory);
+    return destination;
+  } catch (error) {
+    if (linked) rmSync(destination, { force: true });
+    if (temporaryExists) rmSync(temporary, { force: true });
+    if (linked) fsyncDirectory(directory);
+    throw error;
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
+    if (temporaryExists) rmSync(temporary, { force: true });
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   if (args.command === "help" || args.flags.has("help")) {
@@ -127,9 +196,35 @@ async function main(): Promise<void> {
     return;
   }
   if (args.command === "verify") {
-    const report = await verifyLiteRuntimeDatabase(required(args, "db"));
-    print(report);
-    if (!report.ok) process.exitCode = 2;
+    const learningProposalPath = args.values.get("learning-proposal")?.trim();
+    const learningArtifactPath = args.values.get("learning-artifact-out")?.trim();
+    const externalHeadsFromCoverage = args.values.get("learning-external-heads-from-coverage")?.trim();
+    const externalHeadsOut = args.values.get("learning-external-heads-out")?.trim();
+    if (Boolean(externalHeadsFromCoverage) !== Boolean(externalHeadsOut)) {
+      throw new Error(
+        "--learning-external-heads-from-coverage and --learning-external-heads-out must be supplied together",
+      );
+    }
+    if (externalHeadsFromCoverage && externalHeadsOut) {
+      throw new Error("learning_external_heads_requires_task8_signed_ingestion");
+    }
+    if (Boolean(learningProposalPath) !== Boolean(learningArtifactPath)) {
+      throw new Error("--learning-proposal and --learning-artifact-out must be supplied together");
+    }
+    if (learningProposalPath && learningArtifactPath) {
+      const proposal = JSON.parse(readFileSync(resolve(learningProposalPath), "utf8"));
+      const result = await verifyLiteRuntimeLearningArtifact({
+        path: required(args, "db"),
+        proposal,
+      });
+      const artifactPath = writeCanonicalArtifactExclusive(learningArtifactPath, result.report);
+      print({ ...result, artifact_path: artifactPath });
+      if (result.report.integrity_status !== "passed") process.exitCode = 2;
+      return;
+    }
+    const verification = await verifyLiteRuntimeDatabase(required(args, "db"));
+    print(verification);
+    if (!verification.ok) process.exitCode = 2;
     return;
   }
   if (args.command === "backup") {

@@ -50,6 +50,7 @@ import {
   LearningEvidenceEvaluationV1Schema,
   LearningExperimentCloseApprovalV1Schema,
   LearningLookProposalV1Schema,
+  RUNTIME_INTEGRITY_FINDING_CODES,
   RuntimeIntegrityGateReportV1Schema,
   learningAuthorityApprovalDigest,
   learningExperimentCloseApprovalDigest,
@@ -769,6 +770,7 @@ test("look proposal and Runtime integrity report are strict, outcome-redacted, a
     randomization_pair_manifest_sha256: D.d,
     activation_schedule_sha256: D.e,
     collection_source_policy_sha256: D.f,
+    required_evidence_series_sha256: D.e,
     required_artifact_heads_sha256: D.a,
     event_cutoff_row_id: 100,
     artifact_cutoff_row_id: 12,
@@ -792,6 +794,7 @@ test("look proposal and Runtime integrity report are strict, outcome-redacted, a
     gate_policy_config_sha256: D.b,
     gate_policy_implementation_sha256: D.f,
     look_index: 1,
+    target_cumulative_pair_count: 96,
     checkpoint_kind: "safety_integrity_only" as const,
     cutoff: {
       event_row_id: 100,
@@ -825,16 +828,29 @@ test("look proposal and Runtime integrity report are strict, outcome-redacted, a
     gate_policy_config_sha256: proposal.gate_policy_config_sha256,
     gate_policy_implementation_sha256: proposal.gate_policy_implementation_sha256,
     look_index: proposal.look_index,
+    target_cumulative_pair_count: proposal.target_cumulative_pair_count,
     checkpoint_kind: proposal.checkpoint_kind,
     cutoff: proposal.cutoff,
     outcome_redacted_authority_projection: proposal.outcome_redacted_authority_projection,
     outcome_redacted_authority_projection_sha256: proposal.outcome_redacted_authority_projection_sha256,
     proposal_sha256: proposalDigest,
+    verifier_id: "aionis_lite_learning_ledger_replay" as const,
+    verifier_version: 1 as const,
     integrity_status: "passed" as const,
-    findings: [],
+    findings: RUNTIME_INTEGRITY_FINDING_CODES.map((code) => ({
+      code,
+      severity: "info" as const,
+      count: 0,
+      evidence_sha256: D.a,
+    })),
   };
   assert.deepEqual(RuntimeIntegrityGateReportV1Schema.parse(report), report);
   assert.match(runtimeIntegrityGateReportDigest(report), /^[0-9a-f]{64}$/);
   assert.throws(() => RuntimeIntegrityGateReportV1Schema.parse({ ...report, proposal_sha256: D.f }));
+  assert.throws(() => RuntimeIntegrityGateReportV1Schema.parse({ ...report, findings: [] }));
+  assert.throws(() => RuntimeIntegrityGateReportV1Schema.parse({
+    ...report,
+    findings: report.findings.slice().reverse(),
+  }));
   assert.throws(() => RuntimeIntegrityGateReportV1Schema.parse({ ...report, effects: [{ outcome: "negative" }] }));
 });

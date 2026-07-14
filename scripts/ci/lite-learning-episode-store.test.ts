@@ -9,7 +9,9 @@ import test from "node:test";
 import stableStringify from "fast-json-stable-stringify";
 
 import {
+  buildLearningOutcomeRedactedAuthorityProjection,
   createLiteLearningEpisodeLedgerAccess,
+  deriveLiteLearningLookAuthorityContext,
   learningActivationScheduleDigest,
   learningCollectionPrincipalBindingDigest,
   learningConfirmatoryAttemptDigest,
@@ -64,6 +66,7 @@ import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database
 import {
   backupLiteRuntimeDatabase,
   restoreLiteRuntimeDatabase,
+  verifyLiteRuntimeLearningArtifact,
   verifyLiteRuntimeDatabase,
 } from "../../src/store/lite-runtime-data-operations.ts";
 import {
@@ -82,6 +85,8 @@ const MIGRATION_CRASH_CHILD = fileURLToPath(
 const MIGRATION_CHILD = fileURLToPath(
   new URL("./support/lite-learning-v3-migration-child.ts", import.meta.url),
 );
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const DATA_OPS_CLI = path.join(ROOT, "scripts", "runtime-data-ops.ts");
 
 function runMigrationChild(dbPath: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -133,6 +138,25 @@ function sha256(value: string): string {
 function canonicalJson(value: unknown): { json: string; sha256: string } {
   const json = stableStringify(value);
   return { json, sha256: sha256(json) };
+}
+
+function mutateAppendOnlyTable(
+  db: SqliteDatabase,
+  table: keyof typeof LITE_LEARNING_LEDGER_REQUIRED_COLUMNS,
+  mutate: () => void,
+): void {
+  const triggers = Object.entries(LITE_LEARNING_LEDGER_REQUIRED_TRIGGERS)
+    .filter(([, requirement]) => requirement.table === table);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const [name] of triggers) db.exec(`DROP TRIGGER ${name}`);
+    mutate();
+    for (const [, requirement] of triggers) db.exec(requirement.sql);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function policyRow(args: {
@@ -1484,7 +1508,7 @@ test("confirmatory provisioning atomically freezes 384 pairs and 768 leases with
       source_commit_id: "commit-feedback-confirmatory-a",
       host_use_receipt_sha256: receiptSha256,
       runtime_signal_refs: ["runtime-signal-confirmatory-a"],
-      unused_exposure_ids: [],
+      unused_exposure_ids: [exposureEvent.event_id],
     } as const;
     const hostUseReceipt = authorityRow("lite_learning_host_use_receipts", {
       tenant_id: "tenant-a",
@@ -1834,6 +1858,36 @@ test("confirmatory provisioning atomically freezes 384 pairs and 768 leases with
       })),
       /release replay conflict/,
     );
+
+    mutateAppendOnlyTable(database.db, "lite_learning_namespace_leases", () => {
+      database.db.prepare(
+        `UPDATE lite_learning_namespace_leases
+         SET released_at = '2026-08-10T00:00:00.001Z'
+         WHERE namespace_lease_id = ?`,
+      ).run(leaseIds[0]);
+    });
+    const mixedReleaseTimestamp = await verifyLiteRuntimeDatabase(temp.path);
+    assert.equal(mixedReleaseTimestamp.ok, false);
+    assert.equal(mixedReleaseTimestamp.integrity_findings.learning_episode_ledger_invalid, 1);
+    mutateAppendOnlyTable(database.db, "lite_learning_namespace_leases", () => {
+      database.db.prepare(
+        `UPDATE lite_learning_namespace_leases
+         SET released_at = '2026-08-10T00:00:00.000Z'
+         WHERE namespace_lease_id = ?`,
+      ).run(leaseIds[0]);
+    });
+    await ledger.verifyIntegrity();
+
+    mutateAppendOnlyTable(database.db, "lite_learning_episode_events", () => {
+      database.db.prepare(
+        "UPDATE lite_learning_episode_events SET promotion_eligible = 0 WHERE event_id = ?",
+      ).run(exposureEvent.event_id);
+    });
+    const corruptedEligibility = await verifyLiteRuntimeDatabase(temp.path);
+    assert.equal(corruptedEligibility.ok, false);
+    assert.equal(corruptedEligibility.integrity_findings.learning_episode_ledger_invalid, 1);
+    await assert.rejects(writeStore.close(), /lite_learning_integrity_failed:semantic_replay/);
+    writeStore = null;
   } finally {
     await writeStore?.close();
     await database.close();
@@ -1915,7 +1969,80 @@ test("episode store appends a canonical exposure once and replays it after reope
   }
 });
 
-test("feedback children, whole-event supersession, and effect measurement append atomically", async () => {
+test("generic verification and backup replay canonical episode payload, event, item, and eligibility digests", async (t) => {
+  const cases = [
+    {
+      name: "payload digest",
+      table: "lite_learning_episode_events" as const,
+      sql: "UPDATE lite_learning_episode_events SET payload_sha256 = ? WHERE event_id = ?",
+      value: "0".repeat(64),
+    },
+    {
+      name: "event digest",
+      table: "lite_learning_episode_events" as const,
+      sql: "UPDATE lite_learning_episode_events SET event_sha256 = ? WHERE event_id = ?",
+      value: "1".repeat(64),
+    },
+    {
+      name: "item-set digest",
+      table: "lite_learning_episode_events" as const,
+      sql: "UPDATE lite_learning_episode_events SET item_set_sha256 = ? WHERE event_id = ?",
+      value: "2".repeat(64),
+    },
+    {
+      name: "exposure item digest",
+      table: "lite_learning_exposure_items" as const,
+      sql: "UPDATE lite_learning_exposure_items SET item_sha256 = ? WHERE event_id = ?",
+      value: "3".repeat(64),
+    },
+  ];
+
+  for (const corruption of cases) {
+    await t.test(corruption.name, async () => {
+      const temp = tempDatabase(`episode-data-operations-${corruption.name.replaceAll(" ", "-")}`);
+      const fixture = legacyExposureFixture();
+      const backupPath = path.join(temp.directory, "corrupt.backup.sqlite");
+      try {
+        const database = createLiteRuntimeDatabase(temp.path);
+        const writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
+        try {
+          const ledger = createLiteLearningEpisodeLedgerAccess(database);
+          await database.transaction.run(async () => await ledger.appendEpisodeEvent({
+            row: fixture.row,
+            event: fixture.event,
+            payload: fixture.payload,
+            exposureItems: [fixture.item],
+          }));
+        } finally {
+          await writeStore.close();
+          await database.close();
+        }
+
+        const corrupt = createSqliteDatabase(temp.path);
+        try {
+          mutateAppendOnlyTable(corrupt, corruption.table, () => {
+            corrupt.prepare(corruption.sql).run(corruption.value, fixture.event.event_id);
+          });
+        } finally {
+          corrupt.close();
+        }
+
+        const verification = await verifyLiteRuntimeDatabase(temp.path);
+        assert.equal(verification.ok, false);
+        assert.equal(verification.integrity_findings.learning_episode_ledger_invalid, 1);
+        await assert.rejects(
+          backupLiteRuntimeDatabase({ sourcePath: temp.path, destinationPath: backupPath }),
+          /source_database_verification_failed/,
+        );
+        assert.equal(fs.existsSync(backupPath), false);
+      } finally {
+        fs.rmSync(temp.directory, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("feedback and effect rows stay atomic while legal control blockers fail learning artifacts", async () => {
   const temp = tempDatabase("episode-feedback-effect");
   const exposure = legacyExposureFixture();
   const database = createLiteRuntimeDatabase(temp.path);
@@ -1923,6 +2050,12 @@ test("feedback children, whole-event supersession, and effect measurement append
   try {
     writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
     const ledger = createLiteLearningEpisodeLedgerAccess(database);
+    const gateFixture = confirmatoryFixture(await ledger.databaseInstanceId());
+    await database.transaction.run(async () => {
+      await ledger.insertPolicyVersion(gateFixture.candidate);
+      await ledger.insertPolicyVersion(gateFixture.gate);
+      await ledger.provisionConfirmatorySet(gateFixture);
+    });
     await database.transaction.run(async () => await ledger.appendEpisodeEvent({
       row: exposure.row,
       event: exposure.event,
@@ -1940,7 +2073,7 @@ test("feedback children, whole-event supersession, and effect measurement append
       source_commit_id: "commit-feedback-a",
       host_use_receipt_sha256: null,
       runtime_signal_refs: [],
-      unused_exposure_ids: [],
+      unused_exposure_ids: [exposure.event.event_id],
     } as const;
     const feedbackAttributionBase = authorityRow("lite_learning_feedback_attributions", {
       tenant_id: "tenant-a",
@@ -2131,6 +2264,226 @@ test("feedback children, whole-event supersession, and effect measurement append
       payload: effectPayload,
     }));
     assert.equal(effectReplay.replayed, true);
+
+    const controlPayload = canonicalJson({
+      contract_version: "unused_exposure_learning_control_v1",
+      feedback_event_id: feedbackEvent.event_id,
+      exposure_ids: [exposure.event.event_id],
+    });
+    const insertControlJob = database.db.prepare(
+      `INSERT INTO lite_learning_control_jobs
+        (tenant_id, scope, job_id, job_kind, operation_id, source_episode_id,
+         source_feedback_event_id, source_commit_id, payload_sha256, payload_json,
+         status, attempt_count, available_at, lease_owner, lease_expires_at,
+         result_commit_id, last_error_code, created_at, updated_at, completed_at)
+       VALUES (?, ?, ?, 'unused_exposure_learning_control_v1', ?, ?, ?, ?, ?, ?,
+               ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+    );
+    insertControlJob.run(
+      "tenant-a", "scope-a", "control-dead-letter", "control-operation-dead-letter",
+      exposure.episodeId, feedbackEvent.event_id, "commit-feedback-a",
+      controlPayload.sha256, controlPayload.json, "dead_letter", 8,
+      "2026-07-13T04:00:00.000Z", null, null, "retry_exhausted",
+      "2026-07-13T04:00:00.000Z", "2026-07-13T05:00:00.000Z",
+      "2026-07-13T05:00:00.000Z",
+    );
+    insertControlJob.run(
+      "tenant-a", "scope-a", "control-expired-lease", "control-operation-expired-lease",
+      exposure.episodeId, feedbackEvent.event_id, "commit-feedback-a",
+      controlPayload.sha256, controlPayload.json, "leased", 1,
+      "2026-07-13T04:00:00.000Z", "worker-a", "2026-07-13T05:00:00.000Z", null,
+      "2026-07-13T04:00:00.000Z", "2026-07-13T04:30:00.000Z", null,
+    );
+    assert.throws(
+      () => database.db.prepare(
+        `UPDATE lite_learning_control_jobs
+         SET status = 'pending', attempt_count = 8, lease_owner = NULL,
+             lease_expires_at = NULL, last_error_code = NULL, completed_at = NULL
+         WHERE job_id = 'control-dead-letter'`,
+      ).run(),
+      /learning_control_job_update_forbidden/,
+    );
+    assert.throws(
+      () => database.db.prepare(
+        "DELETE FROM lite_learning_control_jobs WHERE job_id = 'control-dead-letter'",
+      ).run(),
+      /learning_control_job_delete_forbidden/,
+    );
+
+    const verification = await verifyLiteRuntimeDatabase(temp.path);
+    assert.equal(verification.ok, true);
+    assert.equal(verification.counts.learning_control_jobs, 2);
+    assert.equal(verification.counts.learning_control_dead_letters, 1);
+    assert.equal(verification.learning.active_serving_blocked, true);
+    assert.equal(verification.learning.promotion_blocked, true);
+    assert.deepEqual(verification.learning.blockers, ["learning_control_dead_letters_present"]);
+    assert.equal(verification.learning.reclaimable_expired_control_job_leases, 1);
+
+    const lookContext = deriveLiteLearningLookAuthorityContext(database.db, {
+      tenantId: "tenant-a",
+      experimentId: String(gateFixture.revision.experiment_id),
+      experimentRevision: Number(gateFixture.revision.experiment_revision),
+      lookIndex: 1,
+    });
+    const proposalBase = {
+      contract_version: "learning_look_proposal_v1" as const,
+      tenant_id: "tenant-a",
+      confirmatory_attempt_id: String(gateFixture.attempt.confirmatory_attempt_id),
+      experiment_id: String(gateFixture.revision.experiment_id),
+      experiment_revision: Number(gateFixture.revision.experiment_revision),
+      experiment_config_sha256: String(gateFixture.revision.config_sha256),
+      task_family: String(gateFixture.attempt.task_family),
+      candidate_policy_id: String(gateFixture.candidate.policy_id),
+      candidate_policy_version: String(gateFixture.candidate.policy_version),
+      candidate_policy_config_sha256: String(gateFixture.candidate.policy_config_sha256),
+      candidate_policy_implementation_sha256:
+        String(gateFixture.candidate.implementation_contract_sha256),
+      gate_policy_id: String(gateFixture.gate.policy_id),
+      gate_policy_version: String(gateFixture.gate.policy_version),
+      gate_policy_config_sha256: String(gateFixture.gate.policy_config_sha256),
+      gate_policy_implementation_sha256:
+        String(gateFixture.gate.implementation_contract_sha256),
+      look_index: 1 as const,
+      target_cumulative_pair_count: lookContext.target_cumulative_pair_count,
+      checkpoint_kind: lookContext.checkpoint_kind,
+      cutoff: lookContext.cutoff,
+    };
+    const outcomeRedactedAuthorityProjection =
+      buildLearningOutcomeRedactedAuthorityProjection(database.db, proposalBase);
+    const proposal = {
+      ...proposalBase,
+      outcome_redacted_authority_projection: outcomeRedactedAuthorityProjection,
+      outcome_redacted_authority_projection_sha256:
+        learningOutcomeRedactedAuthorityProjectionDigest(outcomeRedactedAuthorityProjection),
+    };
+    const learningArtifactVerification = await verifyLiteRuntimeLearningArtifact({
+      path: temp.path,
+      proposal,
+    });
+    assert.equal(learningArtifactVerification.verification.ok, true);
+    assert.equal(learningArtifactVerification.report.integrity_status, "failed");
+    assert.deepEqual(
+      learningArtifactVerification.report.findings
+        .filter((finding) => finding.count > 0)
+        .map((finding) => [finding.code, finding.count, finding.severity]),
+      [["control_plane_integrity", 1, "error"]],
+    );
+
+    const permutedAttributionBase = {
+      ...feedbackAttribution,
+      outcome: "neutral",
+      attribution_strength: "observed_feedback",
+      item_sha256: "0".repeat(64),
+    } satisfies LiteLearningAuthorityRow;
+    const permutedAttribution = {
+      ...permutedAttributionBase,
+      item_sha256: learningFeedbackAttributionItemDigest(permutedAttributionBase),
+    } satisfies LiteLearningAuthorityRow;
+    const permutedFeedbackEvent = {
+      ...feedbackEvent,
+      item_set_sha256: learningFeedbackAttributionSetDigest([permutedAttribution]),
+    } satisfies EventWithoutDigest;
+    const permutedCorrectionEvent = {
+      ...correctionEvent,
+      previous_event_sha256: learningEpisodeEventDigest(permutedFeedbackEvent),
+    } satisfies EventWithoutDigest;
+    const permutedEffectEvent = {
+      ...effectEvent,
+      previous_event_sha256: learningEpisodeEventDigest(permutedCorrectionEvent),
+    } satisfies EventWithoutDigest;
+    mutateAppendOnlyTable(database.db, "lite_learning_feedback_attributions", () => {
+      database.db.prepare(
+        `UPDATE lite_learning_feedback_attributions
+         SET outcome = ?, attribution_strength = ?, item_sha256 = ?
+         WHERE tenant_id = ? AND scope = ? AND event_id = ?
+           AND subject_kind = ? AND subject_id = ?`,
+      ).run(
+        permutedAttribution.outcome,
+        permutedAttribution.attribution_strength,
+        permutedAttribution.item_sha256,
+        permutedAttribution.tenant_id,
+        permutedAttribution.scope,
+        permutedAttribution.event_id,
+        permutedAttribution.subject_kind,
+        permutedAttribution.subject_id,
+      );
+    });
+    mutateAppendOnlyTable(database.db, "lite_learning_episode_events", () => {
+      for (const event of [permutedFeedbackEvent, permutedCorrectionEvent, permutedEffectEvent]) {
+        database.db.prepare(
+          `UPDATE lite_learning_episode_events
+           SET previous_event_sha256 = ?, item_set_sha256 = ?, event_sha256 = ?
+           WHERE tenant_id = ? AND scope = ? AND event_id = ?`,
+        ).run(
+          event.previous_event_sha256,
+          event.item_set_sha256,
+          learningEpisodeEventDigest(event),
+          event.tenant_id,
+          event.scope,
+          event.event_id,
+        );
+      }
+    });
+    assert.equal((await verifyLiteRuntimeDatabase(temp.path)).ok, true);
+    const labelPermutedArtifact = await verifyLiteRuntimeLearningArtifact({
+      path: temp.path,
+      proposal,
+    });
+    assert.deepEqual(labelPermutedArtifact.report, learningArtifactVerification.report);
+    assert.equal(labelPermutedArtifact.report_sha256, learningArtifactVerification.report_sha256);
+
+    const emptyControlPayload = canonicalJson({});
+    mutateAppendOnlyTable(database.db, "lite_learning_control_jobs", () => {
+      database.db.prepare(
+        `UPDATE lite_learning_control_jobs
+         SET payload_json = ?, payload_sha256 = ?
+         WHERE job_id = 'control-expired-lease'`,
+      ).run(emptyControlPayload.json, emptyControlPayload.sha256);
+    });
+    const invalidControlPayload = await verifyLiteRuntimeDatabase(temp.path);
+    assert.equal(invalidControlPayload.ok, false);
+    assert.equal(invalidControlPayload.integrity_findings.learning_episode_ledger_invalid, 1);
+    mutateAppendOnlyTable(database.db, "lite_learning_control_jobs", () => {
+      database.db.prepare(
+        `UPDATE lite_learning_control_jobs
+         SET payload_json = ?, payload_sha256 = ?
+         WHERE job_id = 'control-expired-lease'`,
+      ).run(controlPayload.json, controlPayload.sha256);
+    });
+
+    mutateAppendOnlyTable(database.db, "lite_learning_control_jobs", () => {
+      database.db.prepare(
+        `UPDATE lite_learning_control_jobs
+         SET lease_expires_at = 'zzz'
+         WHERE job_id = 'control-expired-lease'`,
+      ).run();
+    });
+    const invalidControlLeaseTime = await verifyLiteRuntimeDatabase(temp.path);
+    assert.equal(invalidControlLeaseTime.ok, false);
+    assert.equal(invalidControlLeaseTime.integrity_findings.learning_episode_ledger_invalid, 1);
+    mutateAppendOnlyTable(database.db, "lite_learning_control_jobs", () => {
+      database.db.prepare(
+        `UPDATE lite_learning_control_jobs
+         SET lease_expires_at = '2026-07-13T05:00:00.000Z'
+         WHERE job_id = 'control-expired-lease'`,
+      ).run();
+    });
+    assert.equal((await verifyLiteRuntimeDatabase(temp.path)).ok, true);
+
+    const backupPath = path.join(temp.directory, "learning-state.backup.sqlite");
+    const restoredPath = path.join(temp.directory, "learning-state.restored.sqlite");
+    const backup = await backupLiteRuntimeDatabase({
+      sourcePath: temp.path,
+      destinationPath: backupPath,
+    });
+    assert.equal(backup.verification.ok, true);
+    assert.equal(backup.manifest.learning_table_counts?.lite_learning_control_jobs, 2);
+    const restored = await restoreLiteRuntimeDatabase({
+      backupPath,
+      destinationPath: restoredPath,
+    });
+    assert.equal(restored.verification.counts.learning_control_dead_letters, 1);
+    assert.equal(restored.verification.learning.reclaimable_expired_control_job_leases, 1);
     assert.equal(
       (database.db.prepare("SELECT COUNT(*) AS count FROM lite_learning_episode_events").get() as { count: number }).count,
       4,
@@ -2383,53 +2736,17 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
       supersedesDecisionId: string | null;
       supersedesArtifactId: string | null;
     }) => {
-      const analysisAt = args.lookIndex === 1
-        ? "2026-08-03T00:00:00.000Z"
-        : "2026-08-06T00:00:00.000Z";
+      const lookContext = deriveLiteLearningLookAuthorityContext(database.db, {
+        tenantId: "tenant-a",
+        experimentId: String(fixture.revision.experiment_id),
+        experimentRevision: Number(fixture.revision.experiment_revision),
+        lookIndex: args.lookIndex,
+      });
+      const analysisAt = lookContext.cutoff.recorded_at;
       const evidenceScopeSetSha256 = sha256("evidence-scope-confirmatory-a");
-      const artifactRow = database.db.prepare(
-        "SELECT COALESCE(MAX(row_id), 0) + 1 AS row_id FROM lite_learning_evidence_artifacts",
-      ).get() as { row_id: number };
+      const artifactRow = { row_id: lookContext.cutoff.artifact_row_id + 1 };
       const priorArtifactHeads = args.priorArtifactHeads ?? [];
-      const eventCutoff = database.db.prepare(
-        `SELECT row_id, recorded_at
-         FROM lite_learning_episode_events
-         ORDER BY row_id
-         LIMIT 1 OFFSET ?`,
-      ).get(args.lookIndex - 1) as { row_id: number; recorded_at: string };
-      const eventHeadSha256 = sha256(stableStringify(database.db.prepare(
-        `SELECT row_id, tenant_id, scope, event_id, event_sha256
-         FROM lite_learning_episode_events
-         WHERE row_id <= ?
-         ORDER BY row_id`,
-      ).all(eventCutoff.row_id)));
-      const artifactHeadSha256 = sha256(stableStringify(database.db.prepare(
-        `SELECT row_id, tenant_id, artifact_id, report_sha256
-         FROM lite_learning_evidence_artifacts
-         WHERE row_id <= ?
-         ORDER BY row_id`,
-      ).all(artifactRow.row_id - 1)));
-      const outcomeRedactedAuthorityProjection = {
-        contract_version: "learning_outcome_redacted_authority_projection_v1" as const,
-        schema_version: 3 as const,
-        database_instance_id: await ledger.databaseInstanceId(),
-        confirmatory_attempt_sha256: String(fixture.attempt.attempt_sha256),
-        experiment_config_sha256: String(fixture.revision.config_sha256),
-        candidate_policy_config_sha256: String(fixture.candidate.policy_config_sha256),
-        candidate_policy_implementation_sha256: String(fixture.candidate.implementation_contract_sha256),
-        gate_policy_config_sha256: String(fixture.gate.policy_config_sha256),
-        gate_policy_implementation_sha256: String(fixture.gate.implementation_contract_sha256),
-        look_schedule_sha256: learningGateLookScheduleDigest(),
-        randomization_pair_manifest_sha256: String(fixture.revision.randomization_pair_manifest_sha256),
-        activation_schedule_sha256: String(fixture.revision.activation_schedule_sha256),
-        collection_source_policy_sha256: String(fixture.revision.collection_source_policy_sha256),
-        required_artifact_heads_sha256: learningRequiredArtifactHeadsDigest(priorArtifactHeads),
-        event_cutoff_row_id: eventCutoff.row_id,
-        artifact_cutoff_row_id: artifactRow.row_id - 1,
-        event_head_sha256: eventHeadSha256,
-        artifact_head_sha256: artifactHeadSha256,
-      };
-      const proposal = {
+      const proposalBase = {
         contract_version: "learning_look_proposal_v1" as const,
         tenant_id: "tenant-a",
         confirmatory_attempt_id: String(fixture.attempt.confirmatory_attempt_id),
@@ -2446,27 +2763,91 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
         gate_policy_config_sha256: String(fixture.gate.policy_config_sha256),
         gate_policy_implementation_sha256: String(fixture.gate.implementation_contract_sha256),
         look_index: args.lookIndex,
-        checkpoint_kind: args.lookIndex === 1 ? "safety_integrity_only" as const : "confirmatory" as const,
-        cutoff: {
-          event_row_id: eventCutoff.row_id,
-          artifact_row_id: artifactRow.row_id - 1,
-          recorded_at: eventCutoff.recorded_at,
-          event_head_sha256: eventHeadSha256,
-          artifact_head_sha256: artifactHeadSha256,
-        },
+        target_cumulative_pair_count: lookContext.target_cumulative_pair_count,
+        checkpoint_kind: lookContext.checkpoint_kind,
+        cutoff: lookContext.cutoff,
+      };
+      const outcomeRedactedAuthorityProjection =
+        buildLearningOutcomeRedactedAuthorityProjection(database.db, proposalBase);
+      assert.equal(
+        outcomeRedactedAuthorityProjection.required_artifact_heads_sha256,
+        learningRequiredArtifactHeadsDigest(priorArtifactHeads),
+      );
+      const proposal = {
+        ...proposalBase,
         outcome_redacted_authority_projection: outcomeRedactedAuthorityProjection,
         outcome_redacted_authority_projection_sha256:
           learningOutcomeRedactedAuthorityProjectionDigest(outcomeRedactedAuthorityProjection),
       };
       const proposalSha256 = learningLookProposalDigest(proposal);
-      const { contract_version: _proposalContract, ...reportProposal } = proposal;
-      const report = canonicalJson({
-        ...reportProposal,
-        contract_version: "runtime_integrity_gate_report_v1",
-        proposal_sha256: proposalSha256,
-        integrity_status: "passed",
-        findings: [],
+      const generated = await verifyLiteRuntimeLearningArtifact({
+        path: temp.path,
+        proposal,
       });
+      assert.equal(generated.report.integrity_status, "passed");
+      assert.equal(generated.report.proposal_sha256, proposalSha256);
+      const report = canonicalJson(generated.report);
+      if (args.lookIndex === 1) {
+        assert.equal(generated.report.verifier_id, "aionis_lite_learning_ledger_replay");
+        assert.equal(generated.report.verifier_version, 1);
+        assert.equal(generated.report.findings.length, 12);
+        assert.equal(generated.report.findings.every((finding) => finding.count === 0), true);
+
+        const proposalPath = path.join(temp.directory, "look-1.proposal.json");
+        const artifactPath = path.join(temp.directory, "look-1.runtime-integrity.json");
+        fs.writeFileSync(proposalPath, `${stableStringify(proposal)}\n`, { flag: "wx" });
+        const cli = spawnSync(
+          process.execPath,
+          [
+            "--import", "tsx", DATA_OPS_CLI, "verify", "--db", temp.path,
+            "--learning-proposal", proposalPath,
+            "--learning-artifact-out", artifactPath,
+          ],
+          { cwd: ROOT, encoding: "utf8" },
+        );
+        assert.equal(cli.status, 0, cli.stderr);
+        const cliResult = JSON.parse(cli.stdout) as {
+          report_sha256: string;
+          report: Record<string, unknown>;
+          artifact_path: string;
+        };
+        assert.equal(cliResult.report_sha256, generated.report_sha256);
+        assert.deepEqual(cliResult.report, generated.report);
+        assert.equal(cliResult.artifact_path, artifactPath);
+        assert.equal(fs.readFileSync(artifactPath, "utf8"), stableStringify(generated.report));
+
+        const replayToSamePath = spawnSync(
+          process.execPath,
+          [
+            "--import", "tsx", DATA_OPS_CLI, "verify", "--db", temp.path,
+            "--learning-proposal", proposalPath,
+            "--learning-artifact-out", artifactPath,
+          ],
+          { cwd: ROOT, encoding: "utf8" },
+        );
+        assert.equal(replayToSamePath.status, 1);
+        assert.match(replayToSamePath.stderr, /EEXIST/);
+
+        const wrongProjection = {
+          ...proposal.outcome_redacted_authority_projection,
+          database_instance_id: sha256("wrong-runtime-integrity-database"),
+        };
+        const wrongProposal = {
+          ...proposal,
+          outcome_redacted_authority_projection: wrongProjection,
+          outcome_redacted_authority_projection_sha256:
+            learningOutcomeRedactedAuthorityProjectionDigest(wrongProjection),
+        };
+        const rejected = await verifyLiteRuntimeLearningArtifact({
+          path: temp.path,
+          proposal: wrongProposal,
+        });
+        assert.equal(rejected.report.integrity_status, "failed");
+        assert.equal(
+          rejected.report.findings.find((finding) => finding.code === "cutoff_projection_integrity")?.count,
+          1,
+        );
+      }
       const artifact = authorityRow("lite_learning_evidence_artifacts", {
         tenant_id: "tenant-a",
         artifact_id: `runtime-integrity-artifact-${args.lookIndex}`,
@@ -2538,7 +2919,7 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
         look_index: args.lookIndex,
         target_cumulative_pair_count: targetPairCount,
         analysis_at: analysisAt,
-        evidence_cutoff_event_row_id: eventCutoff.row_id,
+        evidence_cutoff_event_row_id: lookContext.cutoff.event_row_id,
         evidence_artifact_cutoff_row_id: artifactRow.row_id,
         candidate_scheduled_namespace_count: targetPairCount,
         control_scheduled_namespace_count: targetPairCount,
@@ -2587,6 +2968,14 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
         const failedReport = canonicalJson({
           ...(JSON.parse(report.json) as Record<string, unknown>),
           integrity_status: "failed",
+          findings: generated.report.findings.map((finding, index) => index === 0
+            ? {
+              ...finding,
+              severity: "error",
+              count: 1,
+              evidence_sha256: sha256("failed-runtime-integrity-finding"),
+            }
+            : finding),
         });
         await assert.rejects(
           database.transaction.run(async () => await ledger.reserveGateLook({
@@ -2613,8 +3002,10 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
           ...wrongTaskReportProposal,
           contract_version: "runtime_integrity_gate_report_v1",
           proposal_sha256: wrongTaskProposalSha256,
+          verifier_id: "aionis_lite_learning_ledger_replay",
+          verifier_version: 1,
           integrity_status: "passed",
-          findings: [],
+          findings: generated.report.findings,
         });
         const wrongTaskArtifact = {
           ...artifact,
@@ -2705,8 +3096,10 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
           ...futureCutoffReportProposal,
           contract_version: "runtime_integrity_gate_report_v1",
           proposal_sha256: futureCutoffProposalSha256,
+          verifier_id: "aionis_lite_learning_ledger_replay",
+          verifier_version: 1,
           integrity_status: "passed",
-          findings: [],
+          findings: generated.report.findings,
         });
         const futureCutoffArtifact = {
           ...artifact,
@@ -2754,6 +3147,65 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
           ).get(futureCutoffReservation.reservation_id) as { count: number }).count,
           0,
         );
+        const staleEventCutoff = Number(proposal.cutoff.event_row_id) - 1;
+        assert.equal(staleEventCutoff >= 1, true);
+        const staleCutoffProjection = {
+          ...outcomeRedactedAuthorityProjection,
+          event_cutoff_row_id: staleEventCutoff,
+        };
+        const staleCutoffProposal = {
+          ...proposal,
+          cutoff: { ...proposal.cutoff, event_row_id: staleEventCutoff },
+          outcome_redacted_authority_projection: staleCutoffProjection,
+          outcome_redacted_authority_projection_sha256:
+            learningOutcomeRedactedAuthorityProjectionDigest(staleCutoffProjection),
+        };
+        const staleCutoffProposalSha256 = learningLookProposalDigest(staleCutoffProposal);
+        const { contract_version: _staleCutoffContract, ...staleCutoffReportProposal } =
+          staleCutoffProposal;
+        const staleCutoffReport = canonicalJson({
+          ...staleCutoffReportProposal,
+          contract_version: "runtime_integrity_gate_report_v1",
+          proposal_sha256: staleCutoffProposalSha256,
+          verifier_id: "aionis_lite_learning_ledger_replay",
+          verifier_version: 1,
+          integrity_status: "passed",
+          findings: generated.report.findings,
+        });
+        const staleCutoffArtifact = {
+          ...artifact,
+          artifact_id: `${String(artifact.artifact_id)}-stale-cutoff`,
+          look_proposal_sha256: staleCutoffProposalSha256,
+          report_sha256: staleCutoffReport.sha256,
+          report_json: staleCutoffReport.json,
+        } satisfies LiteLearningAuthorityRow;
+        const staleCutoffArtifactHead = {
+          ...artifactHead,
+          artifact_id: String(staleCutoffArtifact.artifact_id),
+          report_sha256: String(staleCutoffArtifact.report_sha256),
+        };
+        const staleCutoffReservationBase = {
+          ...reservation,
+          reservation_id: `${String(reservation.reservation_id)}-stale-cutoff`,
+          operation_id: `${String(reservation.operation_id)}-stale-cutoff`,
+          evidence_cutoff_event_row_id: staleEventCutoff,
+          runtime_integrity_artifact_id: staleCutoffArtifact.artifact_id,
+          runtime_integrity_report_sha256: staleCutoffArtifact.report_sha256,
+          required_artifact_heads_sha256:
+            learningRequiredArtifactHeadsDigest([staleCutoffArtifactHead]),
+          reservation_sha256: "0".repeat(64),
+        } satisfies LiteLearningAuthorityRow;
+        const staleCutoffReservation = {
+          ...staleCutoffReservationBase,
+          reservation_sha256: learningGateLookReservationDigest(staleCutoffReservationBase),
+        } satisfies LiteLearningAuthorityRow;
+        await assert.rejects(
+          database.transaction.run(async () => await ledger.reserveGateLook({
+            artifact: staleCutoffArtifact,
+            reservation: staleCutoffReservation,
+          })),
+          /live authority projection mismatch/,
+        );
         const forgedProjection = {
           ...outcomeRedactedAuthorityProjection,
           database_instance_id: sha256("wrong-database-instance"),
@@ -2770,8 +3222,10 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
           ...forgedReportProposal,
           contract_version: "runtime_integrity_gate_report_v1",
           proposal_sha256: forgedProposalSha256,
+          verifier_id: "aionis_lite_learning_ledger_replay",
+          verifier_version: 1,
           integrity_status: "passed",
-          findings: [],
+          findings: generated.report.findings,
         });
         await assert.rejects(
           database.transaction.run(async () => await ledger.reserveGateLook({
@@ -2923,6 +3377,7 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
         artifactHeads: [artifactHead] as const,
         decision,
         memberships: [membership] as const,
+        proposal,
         reservation,
       };
     };
@@ -2933,6 +3388,47 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
       supersedesDecisionId: null,
       supersedesArtifactId: null,
     });
+    const repeatedLook1 = await verifyLiteRuntimeLearningArtifact({
+      path: temp.path,
+      proposal: look1.proposal,
+    });
+    assert.equal(repeatedLook1.report.integrity_status, "failed");
+    assert.equal(
+      repeatedLook1.report.findings.find((finding) => finding.code === "cutoff_projection_integrity")?.count,
+      1,
+    );
+    const prematureLook2Context = deriveLiteLearningLookAuthorityContext(database.db, {
+      tenantId: "tenant-a",
+      experimentId: String(fixture.revision.experiment_id),
+      experimentRevision: Number(fixture.revision.experiment_revision),
+      lookIndex: 2,
+    });
+    const prematureLook2Base = {
+      ...look1.proposal,
+      look_index: 2 as const,
+      target_cumulative_pair_count: prematureLook2Context.target_cumulative_pair_count,
+      checkpoint_kind: prematureLook2Context.checkpoint_kind,
+      cutoff: prematureLook2Context.cutoff,
+    };
+    const prematureLook2Projection = buildLearningOutcomeRedactedAuthorityProjection(
+      database.db,
+      prematureLook2Base,
+    );
+    const prematureLook2Proposal = {
+      ...prematureLook2Base,
+      outcome_redacted_authority_projection: prematureLook2Projection,
+      outcome_redacted_authority_projection_sha256:
+        learningOutcomeRedactedAuthorityProjectionDigest(prematureLook2Projection),
+    };
+    const prematureLook2 = await verifyLiteRuntimeLearningArtifact({
+      path: temp.path,
+      proposal: prematureLook2Proposal,
+    });
+    assert.equal(prematureLook2.report.integrity_status, "failed");
+    assert.equal(
+      prematureLook2.report.findings.find((finding) => finding.code === "cutoff_projection_integrity")?.count,
+      1,
+    );
     await assert.rejects(
       database.transaction.run(async () => await ledger.insertAuthorityFact(
         "lite_learning_gate_decisions",

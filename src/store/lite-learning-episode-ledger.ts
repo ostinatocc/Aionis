@@ -25,9 +25,13 @@ import type { SqliteTransactionRunner } from "./sqlite-transaction-runner.js";
 import {
   LearningAuthorityApprovalV1Schema,
   LearningExperimentCloseApprovalV1Schema,
+  LearningLookProposalV1Schema,
   RuntimeIntegrityGateReportV1Schema,
   learningAuthorityApprovalDigest,
   learningExperimentCloseApprovalDigest,
+  learningOutcomeRedactedAuthorityProjectionDigest,
+  type LearningLookProposalV1,
+  type LearningOutcomeRedactedAuthorityProjectionV1,
 } from "../memory/learning-authority-approval.js";
 import {
   LEARNING_GATE_POLICY_ID,
@@ -1339,6 +1343,33 @@ CREATE INDEX idx_lite_learning_control_jobs_available
 CREATE INDEX idx_lite_learning_control_jobs_lease
   ON lite_learning_control_jobs(lease_expires_at)
   WHERE status = 'leased';
+
+CREATE TRIGGER trg_lite_learning_control_jobs_update
+BEFORE UPDATE ON lite_learning_control_jobs
+WHEN NEW.tenant_id IS NOT OLD.tenant_id
+  OR NEW.scope IS NOT OLD.scope
+  OR NEW.job_id IS NOT OLD.job_id
+  OR NEW.job_kind IS NOT OLD.job_kind
+  OR NEW.operation_id IS NOT OLD.operation_id
+  OR NEW.source_episode_id IS NOT OLD.source_episode_id
+  OR NEW.source_feedback_event_id IS NOT OLD.source_feedback_event_id
+  OR NEW.source_commit_id IS NOT OLD.source_commit_id
+  OR NEW.payload_sha256 IS NOT OLD.payload_sha256
+  OR NEW.payload_json IS NOT OLD.payload_json
+  OR NEW.created_at IS NOT OLD.created_at
+  OR NEW.attempt_count < OLD.attempt_count
+  OR OLD.status IN ('completed', 'dead_letter')
+  OR (OLD.status = 'pending' AND NEW.status NOT IN ('pending', 'leased', 'dead_letter'))
+  OR (OLD.status = 'leased' AND NEW.status NOT IN ('leased', 'pending', 'completed', 'dead_letter'))
+BEGIN
+  SELECT RAISE(ABORT, 'learning_control_job_update_forbidden');
+END;
+
+CREATE TRIGGER trg_lite_learning_control_jobs_delete
+BEFORE DELETE ON lite_learning_control_jobs
+BEGIN
+  SELECT RAISE(ABORT, 'learning_control_job_delete_forbidden');
+END;
 CREATE TABLE lite_learning_external_run_reservations (
   row_id INTEGER PRIMARY KEY AUTOINCREMENT,
   tenant_id TEXT NOT NULL,
@@ -2870,7 +2901,10 @@ export function assertLiteLearningEpisodeLedgerSchemaIntegrity(db: SqliteDatabas
   }
 }
 
-export function assertLiteLearningEpisodeLedgerIntegrity(db: SqliteDatabase): void {
+export function assertLiteLearningEpisodeLedgerIntegrity(
+  db: SqliteDatabase,
+  checkedAt = new Date().toISOString(),
+): LiteLearningEpisodeLedgerReplay {
   assertLiteLearningEpisodeLedgerSchemaIntegrity(db);
   assertLiteRuntimeAuthorityIdentity(db);
 
@@ -2934,7 +2968,8 @@ export function assertLiteLearningEpisodeLedgerIntegrity(db: SqliteDatabase): vo
      HAVING COUNT(DISTINCT status) > 1
         OR COUNT(DISTINCT COALESCE(release_operation_id, '')) > 1
         OR COUNT(DISTINCT COALESCE(release_ref_kind, '')) > 1
-        OR COUNT(DISTINCT COALESCE(release_ref_id, '')) > 1`,
+        OR COUNT(DISTINCT COALESCE(release_ref_id, '')) > 1
+        OR COUNT(DISTINCT COALESCE(released_at, '')) > 1`,
   ).all();
   if (partialRelease.length > 0) {
     throw new Error("lite_learning_integrity_failed:partial_or_mixed_namespace_release");
@@ -2962,14 +2997,30 @@ export function assertLiteLearningEpisodeLedgerIntegrity(db: SqliteDatabase): vo
            WHERE closure.tenant_id = lease.tenant_id
              AND closure.experiment_close_id = lease.release_ref_id
              AND closure.confirmatory_attempt_id = lease.confirmatory_attempt_id
+             AND closure.experiment_id = lease.experiment_id
+             AND closure.experiment_revision = lease.experiment_revision
+             AND closure.namespace_set_sha256 = lease.namespace_set_sha256
          ))
          OR
          (lease.release_ref_kind = 'terminal_authority_adjudication' AND NOT EXISTS (
-           SELECT 1 FROM lite_learning_gate_decisions AS decision
+           SELECT 1
+           FROM lite_learning_gate_decisions AS decision
+           JOIN lite_learning_confirmatory_attempts AS attempt
+             ON attempt.tenant_id = lease.tenant_id
+            AND attempt.confirmatory_attempt_id = lease.confirmatory_attempt_id
            WHERE decision.tenant_id = lease.tenant_id
              AND decision.decision_id = lease.release_ref_id
              AND decision.decision_kind = 'authority_adjudication'
              AND decision.authority_action IN ('promote', 'demote', 'retire')
+             AND decision.task_family = attempt.task_family
+             AND decision.candidate_policy_id = attempt.candidate_policy_id
+             AND decision.candidate_policy_version = attempt.candidate_policy_version
+             AND decision.candidate_policy_implementation_sha256 =
+               attempt.candidate_policy_implementation_sha256
+             AND decision.experiment_id = lease.experiment_id
+             AND decision.experiment_revision = lease.experiment_revision
+             AND decision.gate_policy_id = attempt.gate_policy_id
+             AND decision.gate_policy_version = attempt.gate_policy_version
          ))
        )`,
   );
@@ -3121,6 +3172,12 @@ export function assertLiteLearningEpisodeLedgerIntegrity(db: SqliteDatabase): vo
   );
   if (invalidExternalPrefixes > 0) {
     throw new Error("lite_learning_integrity_failed:invalid_external_fact_prefix");
+  }
+
+  try {
+    return replayLiteLearningEpisodeLedger(db, checkedAt);
+  } catch (error) {
+    throw new Error("lite_learning_integrity_failed:semantic_replay", { cause: error });
   }
 }
 
@@ -3621,14 +3678,360 @@ function selectRequiredGateArtifactHeads(
   return heads;
 }
 
-function learningArtifactHeadDigestAtCutoff(db: SqliteDatabase, cutoffRowId: number): string {
+function learningArtifactHeadDigestAtCutoff(
+  db: SqliteDatabase,
+  cutoffRowId: number,
+  tenantId?: string,
+): string {
   const rows = db.prepare(
     `SELECT row_id, tenant_id, artifact_id, report_sha256
      FROM lite_learning_evidence_artifacts
-     WHERE row_id <= ?
+     WHERE row_id <= ?${tenantId === undefined ? "" : " AND tenant_id = ?"}
      ORDER BY row_id`,
-  ).all(cutoffRowId);
+  ).all(...(tenantId === undefined ? [cutoffRowId] : [cutoffRowId, tenantId]));
   return sha256Text(stableStringify(rows));
+}
+
+function learningOutcomeRedactedEventHeadDigestAtCutoff(
+  db: SqliteDatabase,
+  args: {
+    tenantId: string;
+    experimentId: string;
+    experimentRevision: number;
+    cutoffRowId: number;
+    recordedAt: string;
+  },
+): string {
+  const rows = db.prepare(
+    `SELECT event.row_id, event.tenant_id, event.scope, event.event_id,
+            event.episode_id, event.episode_sequence, event.event_kind,
+            event.source_kind, event.collection_class,
+            event.collection_principal_sha256, event.collector_id,
+            event.collector_version, event.host_task_id,
+            event.host_source_task_sha256, event.host_source_event_sha256,
+            event.host_task_envelope_created_at, event.task_family,
+            event.memory_namespace_sha256, event.namespace_set_sha256,
+            event.namespace_lease_id, event.namespace_lease_generation,
+            event.profile_id, event.experiment_id, event.experiment_revision,
+            event.enrollment_state, event.serving_phase, event.evidence_intent,
+            event.assignment_mode, event.assignment_unit_sha256,
+            event.assignment_namespace_sha256, event.assignment_bucket,
+            event.randomization_pair_sha256, event.matching_covariate_sha256,
+            event.pair_member_ordinal, event.activation_wave_index,
+            event.activation_starts_at, event.index_window_ends_at,
+            event.wave_analysis_at, event.assignment_arm, event.served_arm,
+            event.candidate_policy_id, event.candidate_policy_version,
+            event.projection_complete, event.promotion_eligible, event.recorded_at
+     FROM lite_learning_episode_events AS event
+     WHERE event.tenant_id = ? AND event.row_id <= ?
+       AND event.recorded_at <= ?
+       AND EXISTS (
+         SELECT 1 FROM lite_learning_episode_events AS exposure
+         WHERE exposure.tenant_id = event.tenant_id
+           AND exposure.scope = event.scope
+           AND exposure.episode_id = event.episode_id
+           AND exposure.event_kind = 'exposure_committed'
+           AND exposure.experiment_id = ?
+           AND exposure.experiment_revision = ?
+           AND exposure.recorded_at <= ?
+       )
+     ORDER BY event.row_id`,
+  ).all(
+    args.tenantId,
+    args.cutoffRowId,
+    args.recordedAt,
+    args.experimentId,
+    args.experimentRevision,
+    args.recordedAt,
+  );
+  return sha256Text(stableStringify(rows));
+}
+
+export type LiteLearningLookAuthorityContext = Readonly<{
+  look_index: number;
+  target_cumulative_pair_count: number;
+  checkpoint_kind: "safety_integrity_only" | "confirmatory";
+  cutoff: Readonly<{
+    event_row_id: number;
+    artifact_row_id: number;
+    recorded_at: string;
+    event_head_sha256: string;
+    artifact_head_sha256: string;
+  }>;
+}>;
+
+export function deriveLiteLearningLookAuthorityContext(
+  db: SqliteDatabase,
+  args: {
+    tenantId: string;
+    experimentId: string;
+    experimentRevision: number;
+    lookIndex: number;
+  },
+): LiteLearningLookAuthorityContext {
+  const checkpoint = registeredGateCheckpoints().find((entry) => entry.look_index === args.lookIndex);
+  if (!checkpoint) throw new Error("look index is not registered by the immutable gate policy");
+  const waves = db.prepare(
+    `SELECT pair_row.activation_wave_index, pair_row.wave_analysis_at,
+            COUNT(*) AS pair_count
+     FROM lite_learning_confirmatory_attempts AS attempt
+     JOIN lite_learning_randomization_pairs AS pair_row
+       ON pair_row.tenant_id = attempt.tenant_id
+      AND pair_row.confirmatory_attempt_id = attempt.confirmatory_attempt_id
+     WHERE attempt.tenant_id = ? AND attempt.experiment_id = ?
+       AND attempt.experiment_revision = ?
+     GROUP BY pair_row.activation_wave_index, pair_row.wave_analysis_at
+     ORDER BY pair_row.activation_wave_index`,
+  ).all(args.tenantId, args.experimentId, args.experimentRevision) as Array<{
+    activation_wave_index: number;
+    wave_analysis_at: string;
+    pair_count: number;
+  }>;
+  let cumulative = 0;
+  let analysisAt: string | null = null;
+  for (const wave of waves) {
+    cumulative += Number(wave.pair_count);
+    if (cumulative === checkpoint.target_cumulative_pair_count) {
+      analysisAt = wave.wave_analysis_at;
+      break;
+    }
+  }
+  if (analysisAt === null || !isCanonicalUtcMillis(analysisAt)) {
+    throw new Error("look checkpoint does not resolve to an immutable activation-wave analysis time");
+  }
+  const eventCutoff = db.prepare(
+    `SELECT COALESCE(MAX(row_id), 0) AS row_id
+     FROM lite_learning_episode_events
+     WHERE tenant_id = ? AND recorded_at <= ?`,
+  ).get(
+    args.tenantId,
+    analysisAt,
+  ) as { row_id: number };
+  const artifactCutoff = db.prepare(
+    `SELECT COALESCE(MAX(row_id), 0) AS row_id
+     FROM lite_learning_evidence_artifacts WHERE tenant_id = ?`,
+  ).get(args.tenantId) as { row_id: number };
+  const eventRowId = Number(eventCutoff.row_id);
+  const artifactRowId = Number(artifactCutoff.row_id);
+  return {
+    look_index: checkpoint.look_index,
+    target_cumulative_pair_count: checkpoint.target_cumulative_pair_count,
+    checkpoint_kind: checkpoint.checkpoint_kind,
+    cutoff: {
+      event_row_id: eventRowId,
+      artifact_row_id: artifactRowId,
+      recorded_at: analysisAt,
+      event_head_sha256: learningOutcomeRedactedEventHeadDigestAtCutoff(db, {
+        tenantId: args.tenantId,
+        experimentId: args.experimentId,
+        experimentRevision: args.experimentRevision,
+        cutoffRowId: eventRowId,
+        recordedAt: analysisAt,
+      }),
+      artifact_head_sha256: learningArtifactHeadDigestAtCutoff(db, artifactRowId, args.tenantId),
+    },
+  };
+}
+
+export function buildLearningOutcomeRedactedAuthorityProjection(
+  db: SqliteDatabase,
+  proposal: Pick<
+    LearningLookProposalV1,
+    "tenant_id" | "confirmatory_attempt_id" | "experiment_id" | "experiment_revision"
+    | "experiment_config_sha256" | "candidate_policy_config_sha256"
+    | "candidate_policy_implementation_sha256" | "gate_policy_config_sha256"
+    | "gate_policy_implementation_sha256" | "cutoff"
+  >,
+): LearningOutcomeRedactedAuthorityProjectionV1 {
+  const attempt = db.prepare(
+    `SELECT attempt_sha256 FROM lite_learning_confirmatory_attempts
+     WHERE tenant_id = ? AND confirmatory_attempt_id = ?
+       AND experiment_id = ? AND experiment_revision = ?`,
+  ).get(
+    proposal.tenant_id,
+    proposal.confirmatory_attempt_id,
+    proposal.experiment_id,
+    proposal.experiment_revision,
+  ) as { attempt_sha256: string } | undefined;
+  const revision = db.prepare(
+    `SELECT config_sha256, candidate_policy_config_sha256,
+            candidate_policy_implementation_sha256, gate_policy_config_sha256,
+            randomization_pair_manifest_sha256, activation_schedule_sha256,
+            collection_source_policy_sha256, required_evidence_series_sha256
+     FROM lite_learning_experiment_revisions
+     WHERE tenant_id = ? AND experiment_id = ? AND experiment_revision = ?`,
+  ).get(
+    proposal.tenant_id,
+    proposal.experiment_id,
+    proposal.experiment_revision,
+  ) as Record<string, unknown> | undefined;
+  if (!attempt || !revision) throw new Error("look proposal confirmatory authority is unresolved");
+  const prerequisiteHeads = selectRequiredGateArtifactHeads(db, {
+    tenantId: proposal.tenant_id,
+    experimentId: proposal.experiment_id,
+    experimentRevision: proposal.experiment_revision,
+    artifactCutoffRowId: proposal.cutoff.artifact_row_id,
+  });
+  return {
+    contract_version: "learning_outcome_redacted_authority_projection_v1",
+    schema_version: 3,
+    database_instance_id: assertLiteRuntimeAuthorityIdentity(db),
+    confirmatory_attempt_sha256: attempt.attempt_sha256,
+    experiment_config_sha256: requiredString(revision as LiteLearningAuthorityRow, "config_sha256"),
+    candidate_policy_config_sha256: requiredString(
+      revision as LiteLearningAuthorityRow,
+      "candidate_policy_config_sha256",
+    ),
+    candidate_policy_implementation_sha256: requiredString(
+      revision as LiteLearningAuthorityRow,
+      "candidate_policy_implementation_sha256",
+    ),
+    gate_policy_config_sha256: requiredString(
+      revision as LiteLearningAuthorityRow,
+      "gate_policy_config_sha256",
+    ),
+    gate_policy_implementation_sha256: proposal.gate_policy_implementation_sha256,
+    look_schedule_sha256: learningGateLookScheduleDigest(),
+    randomization_pair_manifest_sha256: requiredString(
+      revision as LiteLearningAuthorityRow,
+      "randomization_pair_manifest_sha256",
+    ),
+    activation_schedule_sha256: requiredString(
+      revision as LiteLearningAuthorityRow,
+      "activation_schedule_sha256",
+    ),
+    collection_source_policy_sha256: requiredString(
+      revision as LiteLearningAuthorityRow,
+      "collection_source_policy_sha256",
+    ),
+    required_evidence_series_sha256: requiredString(
+      revision as LiteLearningAuthorityRow,
+      "required_evidence_series_sha256",
+    ),
+    required_artifact_heads_sha256: learningRequiredArtifactHeadsDigest(prerequisiteHeads),
+    event_cutoff_row_id: proposal.cutoff.event_row_id,
+    artifact_cutoff_row_id: proposal.cutoff.artifact_row_id,
+    event_head_sha256: learningOutcomeRedactedEventHeadDigestAtCutoff(db, {
+      tenantId: proposal.tenant_id,
+      experimentId: proposal.experiment_id,
+      experimentRevision: proposal.experiment_revision,
+      cutoffRowId: proposal.cutoff.event_row_id,
+      recordedAt: proposal.cutoff.recorded_at,
+    }),
+    artifact_head_sha256: learningArtifactHeadDigestAtCutoff(
+      db,
+      proposal.cutoff.artifact_row_id,
+      proposal.tenant_id,
+    ),
+  };
+}
+
+export function assertLearningLookProposalAgainstDatabase(
+  db: SqliteDatabase,
+  input: LearningLookProposalV1,
+): LearningLookProposalV1 {
+  const proposal = LearningLookProposalV1Schema.parse(input);
+  const checkpoints = registeredGateCheckpoints();
+  const reservations = db.prepare(
+    `SELECT look_index, reservation_id
+     FROM lite_learning_gate_look_reservations
+     WHERE tenant_id = ? AND experiment_id = ? AND experiment_revision = ?
+     ORDER BY look_index`,
+  ).all(
+    proposal.tenant_id,
+    proposal.experiment_id,
+    proposal.experiment_revision,
+  ) as Array<{ look_index: number; reservation_id: string }>;
+  const reservationByLook = new Map(
+    reservations.map((reservation) => [Number(reservation.look_index), reservation.reservation_id]),
+  );
+  const nextCheckpoint = checkpoints.find((checkpoint) => !reservationByLook.has(checkpoint.look_index));
+  if (!nextCheckpoint || proposal.look_index !== nextCheckpoint.look_index) {
+    throw new Error("look proposal must target the smallest unreserved canonical next look");
+  }
+  const checkpointPosition = checkpoints.findIndex(
+    (checkpoint) => checkpoint.look_index === proposal.look_index,
+  );
+  if (checkpointPosition > 0) {
+    const previousCheckpoint = checkpoints[checkpointPosition - 1]!;
+    const previousReservationId = reservationByLook.get(previousCheckpoint.look_index);
+    const previousEvaluation = previousReservationId === undefined ? undefined : db.prepare(
+      `SELECT 1 FROM lite_learning_gate_decisions
+       WHERE tenant_id = ? AND experiment_id = ? AND experiment_revision = ?
+         AND decision_kind = 'evidence_evaluation' AND look_index = ?
+         AND look_reservation_id = ?`,
+    ).get(
+      proposal.tenant_id,
+      proposal.experiment_id,
+      proposal.experiment_revision,
+      previousCheckpoint.look_index,
+      previousReservationId,
+    );
+    if (!previousEvaluation) {
+      throw new Error("look proposal requires the immediate prior look evaluation");
+    }
+  }
+  const context = deriveLiteLearningLookAuthorityContext(db, {
+    tenantId: proposal.tenant_id,
+    experimentId: proposal.experiment_id,
+    experimentRevision: proposal.experiment_revision,
+    lookIndex: proposal.look_index,
+  });
+  if (stableStringify(context.cutoff) !== stableStringify(proposal.cutoff)
+    || context.target_cumulative_pair_count !== proposal.target_cumulative_pair_count
+    || context.checkpoint_kind !== proposal.checkpoint_kind) {
+    throw new Error("look proposal cutoff, target, or checkpoint does not match live immutable authority");
+  }
+  const revision = db.prepare(
+    `SELECT config_sha256, candidate_policy_id, candidate_policy_version,
+            candidate_policy_config_sha256, candidate_policy_implementation_sha256,
+            gate_policy_id, gate_policy_version, gate_policy_config_sha256
+     FROM lite_learning_experiment_revisions
+     WHERE tenant_id = ? AND experiment_id = ? AND experiment_revision = ?`,
+  ).get(
+    proposal.tenant_id,
+    proposal.experiment_id,
+    proposal.experiment_revision,
+  ) as Record<string, unknown> | undefined;
+  const attempt = db.prepare(
+    `SELECT confirmatory_attempt_id, task_family FROM lite_learning_confirmatory_attempts
+     WHERE tenant_id = ? AND experiment_id = ? AND experiment_revision = ?`,
+  ).get(
+    proposal.tenant_id,
+    proposal.experiment_id,
+    proposal.experiment_revision,
+  ) as Record<string, unknown> | undefined;
+  const gatePolicy = db.prepare(
+    `SELECT implementation_contract_sha256 FROM lite_learning_policy_versions
+     WHERE tenant_id = ? AND policy_kind = 'gate'
+       AND policy_id = ? AND policy_version = ?`,
+  ).get(
+    proposal.tenant_id,
+    proposal.gate_policy_id,
+    proposal.gate_policy_version,
+  ) as { implementation_contract_sha256: string } | undefined;
+  if (!revision || !attempt || !gatePolicy
+    || attempt.confirmatory_attempt_id !== proposal.confirmatory_attempt_id
+    || attempt.task_family !== proposal.task_family
+    || revision.config_sha256 !== proposal.experiment_config_sha256
+    || revision.candidate_policy_id !== proposal.candidate_policy_id
+    || revision.candidate_policy_version !== proposal.candidate_policy_version
+    || revision.candidate_policy_config_sha256 !== proposal.candidate_policy_config_sha256
+    || revision.candidate_policy_implementation_sha256
+      !== proposal.candidate_policy_implementation_sha256
+    || revision.gate_policy_id !== proposal.gate_policy_id
+    || revision.gate_policy_version !== proposal.gate_policy_version
+    || revision.gate_policy_config_sha256 !== proposal.gate_policy_config_sha256
+    || gatePolicy.implementation_contract_sha256 !== proposal.gate_policy_implementation_sha256) {
+    throw new Error("look proposal policy, revision, attempt, or task-family binding mismatch");
+  }
+  const projection = buildLearningOutcomeRedactedAuthorityProjection(db, proposal);
+  if (stableStringify(projection) !== stableStringify(proposal.outcome_redacted_authority_projection)
+    || learningOutcomeRedactedAuthorityProjectionDigest(projection)
+      !== proposal.outcome_redacted_authority_projection_sha256) {
+    throw new Error("look proposal outcome-redacted authority projection mismatch");
+  }
+  return proposal;
 }
 
 export function learningGateDecisionDigest(row: LiteLearningAuthorityRow): string {
@@ -4620,7 +5023,8 @@ function validateAuthorityFactReferences(
       `SELECT config_sha256, candidate_policy_id, candidate_policy_version,
               candidate_policy_implementation_sha256, candidate_policy_config_sha256,
               gate_policy_id, gate_policy_version, gate_policy_config_sha256,
-              required_evidence_series_json, randomization_pair_manifest_sha256,
+              required_evidence_series_json, required_evidence_series_sha256,
+              randomization_pair_manifest_sha256,
               activation_schedule_sha256, collection_source_policy_sha256
        FROM lite_learning_experiment_revisions
        WHERE tenant_id = ? AND experiment_id = ? AND experiment_revision = ?`,
@@ -4690,11 +5094,14 @@ function validateAuthorityFactReferences(
     ).get(tenantId, row.artifact_id) as { row_id: number } | undefined;
     const previousArtifactRow = (persistedArtifact
       ? db.prepare(
-        "SELECT COALESCE(MAX(row_id), 0) AS row_id FROM lite_learning_evidence_artifacts WHERE row_id < ?",
-      ).get(persistedArtifact.row_id)
+        `SELECT COALESCE(MAX(row_id), 0) AS row_id
+         FROM lite_learning_evidence_artifacts
+         WHERE tenant_id = ? AND row_id < ?`,
+      ).get(tenantId, persistedArtifact.row_id)
       : db.prepare(
-        "SELECT COALESCE(MAX(row_id), 0) AS row_id FROM lite_learning_evidence_artifacts",
-      ).get()) as { row_id: number };
+        `SELECT COALESCE(MAX(row_id), 0) AS row_id
+         FROM lite_learning_evidence_artifacts WHERE tenant_id = ?`,
+      ).get(tenantId)) as { row_id: number };
     const previousArtifactRowId = Number(previousArtifactRow.row_id);
     const prerequisiteHeads = selectRequiredGateArtifactHeads(db, {
       tenantId,
@@ -4706,12 +5113,30 @@ function validateAuthorityFactReferences(
     const currentEventHead = db.prepare(
       "SELECT COALESCE(MAX(row_id), 0) AS row_id FROM lite_learning_episode_events",
     ).get() as { row_id: number };
+    const lookContext = deriveLiteLearningLookAuthorityContext(db, {
+      tenantId,
+      experimentId: requiredString(row, "applicable_experiment_id"),
+      experimentRevision: requiredInteger(row, "applicable_experiment_revision"),
+      lookIndex: requiredInteger(row, "look_index"),
+    });
     if (report.cutoff.event_row_id > Number(currentEventHead.row_id)) {
       throw new Error("Runtime-integrity report cutoff exceeds the current event ledger head");
     }
-    if (report.cutoff.artifact_row_id !== previousArtifactRowId
+    if (report.target_cumulative_pair_count !== lookContext.target_cumulative_pair_count
+      || report.checkpoint_kind !== lookContext.checkpoint_kind
+      || report.cutoff.event_row_id !== lookContext.cutoff.event_row_id
+      || report.cutoff.event_head_sha256 !== lookContext.cutoff.event_head_sha256
+      || report.cutoff.recorded_at !== lookContext.cutoff.recorded_at
+      || report.cutoff.artifact_row_id !== previousArtifactRowId
       || report.cutoff.artifact_head_sha256
-        !== learningArtifactHeadDigestAtCutoff(db, previousArtifactRowId)
+        !== learningArtifactHeadDigestAtCutoff(db, previousArtifactRowId, tenantId)
+      || report.cutoff.event_head_sha256 !== learningOutcomeRedactedEventHeadDigestAtCutoff(db, {
+        tenantId,
+        experimentId: requiredString(row, "applicable_experiment_id"),
+        experimentRevision: requiredInteger(row, "applicable_experiment_revision"),
+        cutoffRowId: report.cutoff.event_row_id,
+        recordedAt: report.cutoff.recorded_at,
+      })
       || projection.database_instance_id !== assertLiteRuntimeAuthorityIdentity(db)
       || projection.confirmatory_attempt_sha256 !== attempt.attempt_sha256
       || projection.experiment_config_sha256 !== revision.config_sha256
@@ -4726,6 +5151,7 @@ function validateAuthorityFactReferences(
         !== revision.randomization_pair_manifest_sha256
       || projection.activation_schedule_sha256 !== revision.activation_schedule_sha256
       || projection.collection_source_policy_sha256 !== revision.collection_source_policy_sha256
+      || projection.required_evidence_series_sha256 !== revision.required_evidence_series_sha256
       || projection.required_artifact_heads_sha256
         !== learningRequiredArtifactHeadsDigest(prerequisiteHeads)) {
       throw new Error("Runtime-integrity report live authority projection mismatch");
@@ -5124,6 +5550,594 @@ function validateGateEvidenceEvaluation(
     || requiredHeadsDigest !== artifactSetDigest) {
     throw new Error("gate evidence artifact-set digest mismatch");
   }
+}
+
+export type LiteLearningEpisodeLedgerReplay = Readonly<{
+  verifier_id: "aionis_lite_learning_ledger_replay";
+  verifier_version: 1;
+  table_counts: Readonly<Record<string, number>>;
+  protected_event_count: number;
+  legacy_event_count: number;
+  promotion_eligible_exposure_count: number;
+  control_job_count: number;
+  control_job_dead_letter_count: number;
+  control_job_expired_lease_count: number;
+}>;
+
+function learningTableRows(
+  db: SqliteDatabase,
+  table: keyof typeof LITE_LEARNING_LEDGER_REQUIRED_COLUMNS,
+  orderBy: string,
+): LiteLearningAuthorityRow[] {
+  const columns = LITE_LEARNING_LEDGER_REQUIRED_COLUMNS[table]
+    .filter((column) => !(AUTO_INCREMENT_COLUMNS[table] ?? []).includes(column));
+  return db.prepare(
+    `SELECT ${columns.join(", ")} FROM ${table} ORDER BY ${orderBy}`,
+  ).all() as LiteLearningAuthorityRow[];
+}
+
+function learningEventFromRow(row: LiteLearningAuthorityRow): EventWithoutDigest {
+  return LearningEpisodeEventWithoutDigestSchema.parse({
+    contract_version: "aionis_learning_episode_event_v1",
+    tenant_id: row.tenant_id,
+    scope: row.scope,
+    event_id: row.event_id,
+    episode_id: row.episode_id,
+    episode_sequence: row.episode_sequence,
+    event_kind: row.event_kind,
+    source_kind: row.source_kind,
+    source_id: row.source_id,
+    source_sha256: row.source_sha256,
+    previous_event_sha256: row.previous_event_sha256,
+    payload_sha256: row.payload_sha256,
+    item_set_sha256: row.item_set_sha256,
+    source_commit_id: row.source_commit_id,
+    supersedes_event_id: row.supersedes_event_id,
+    operation_id: row.operation_id,
+    run_id: row.run_id,
+    collection_class: row.collection_class,
+    recorded_at: row.recorded_at,
+  });
+}
+
+function learningItemFromRow(row: LiteLearningAuthorityRow): LearningLedgerItem {
+  return LearningLedgerItemSchema.parse({
+    memory_id: row.memory_id,
+    decision_completeness: row.decision_completeness,
+    memory_type: row.memory_type,
+    source_backend: row.source_backend,
+    recorded_action: row.recorded_action,
+    candidate_action: row.candidate_action,
+    served_action: row.served_action,
+    policy_changed: row.policy_changed === null ? null : row.policy_changed === 1,
+    hard_boundary_preserved: row.hard_boundary_preserved === null
+      ? null
+      : row.hard_boundary_preserved === 1,
+    prior_supported_use_count: row.prior_supported_use_count,
+    prior_contradicted_use_count: row.prior_contradicted_use_count,
+    prior_rehydrate_requested_count: row.prior_rehydrate_requested_count,
+    prior_effect_state: row.prior_effect_state,
+    repeated_negative_posture: row.repeated_negative_posture === null
+      ? null
+      : row.repeated_negative_posture === 1,
+    learning_track: row.learning_track,
+    track_reason: row.track_reason,
+  });
+}
+
+function validateStoredPolicyAndRevisionRows(db: SqliteDatabase): void {
+  for (const row of learningTableRows(
+    db,
+    "lite_learning_policy_versions",
+    "tenant_id, policy_kind, policy_id, policy_version",
+  )) {
+    assertExactRowShape("lite_learning_policy_versions", row);
+    validatePolicyVersion(row);
+  }
+  for (const row of learningTableRows(
+    db,
+    "lite_learning_collection_principal_bindings",
+    "tenant_id, collection_principal_sha256",
+  )) {
+    assertExactRowShape("lite_learning_collection_principal_bindings", row);
+    assertCanonicalJsonDigest(row, "verifier_policy_json", "verifier_policy_sha256");
+    parseFrozenHostVerifierPolicy(requiredString(row, "verifier_policy_json"));
+    if (row.binding_sha256 !== learningCollectionPrincipalBindingDigest(row)) {
+      throw new Error("collection principal binding digest mismatch");
+    }
+  }
+  for (const row of learningTableRows(
+    db,
+    "lite_learning_experiment_revisions",
+    "tenant_id, experiment_id, experiment_revision",
+  )) {
+    assertExactRowShape("lite_learning_experiment_revisions", row);
+    validateExperimentRevision(db, row);
+  }
+}
+
+function validateStoredConfirmatorySets(db: SqliteDatabase): void {
+  const attempts = learningTableRows(
+    db,
+    "lite_learning_confirmatory_attempts",
+    "tenant_id, confirmatory_attempt_id",
+  );
+  const allPairs = learningTableRows(
+    db,
+    "lite_learning_randomization_pairs",
+    "tenant_id, confirmatory_attempt_id, pair_ordinal",
+  );
+  const allLeases = learningTableRows(
+    db,
+    "lite_learning_namespace_leases",
+    "tenant_id, confirmatory_attempt_id, namespace_lease_id",
+  );
+  const byAttempt = (row: LiteLearningAuthorityRow): string => (
+    `${String(row.tenant_id)}\u0000${String(row.confirmatory_attempt_id)}`
+  );
+  const pairsByAttempt = new Map<string, LiteLearningAuthorityRow[]>();
+  const leasesByAttempt = new Map<string, LiteLearningAuthorityRow[]>();
+  for (const pair of allPairs) {
+    const key = byAttempt(pair);
+    const values = pairsByAttempt.get(key) ?? [];
+    values.push(pair);
+    pairsByAttempt.set(key, values);
+  }
+  for (const lease of allLeases) {
+    const key = byAttempt(lease);
+    const values = leasesByAttempt.get(key) ?? [];
+    values.push(lease);
+    leasesByAttempt.set(key, values);
+  }
+  let pairCount = 0;
+  let leaseCount = 0;
+  for (const attempt of attempts) {
+    assertExactRowShape("lite_learning_confirmatory_attempts", attempt);
+    validateConfirmatoryAttempt(db, attempt, { exactReplay: true });
+    const revision = db.prepare(
+      `SELECT ${LITE_LEARNING_LEDGER_REQUIRED_COLUMNS.lite_learning_experiment_revisions.join(", ")}
+       FROM lite_learning_experiment_revisions
+       WHERE tenant_id = ? AND experiment_id = ? AND experiment_revision = ?`,
+    ).get(
+      attempt.tenant_id,
+      attempt.experiment_id,
+      attempt.experiment_revision,
+    ) as LiteLearningAuthorityRow | undefined;
+    if (!revision) throw new Error("confirmatory attempt revision is unresolved");
+    const attemptKey = byAttempt(attempt);
+    const pairs = pairsByAttempt.get(attemptKey) ?? [];
+    const leases = leasesByAttempt.get(attemptKey) ?? [];
+    pairCount += pairs.length;
+    leaseCount += leases.length;
+    const manifest = validateRandomizationManifest(pairs, attempt);
+    for (const owner of [revision, attempt]) {
+      if (owner.randomization_pair_manifest_sha256 !== manifest.pairManifestSha256
+        || owner.activation_schedule_sha256 !== manifest.activationScheduleSha256) {
+        throw new Error("confirmatory manifest digest mismatch during replay");
+      }
+    }
+    for (const lease of leases) {
+      assertExactRowShape("lite_learning_namespace_leases", lease);
+    }
+    const acquisitionRows = leases.map((lease) => ({
+      ...lease,
+      status: "active",
+      release_operation_id: null,
+      release_ref_kind: null,
+      release_ref_id: null,
+      released_at: null,
+    }));
+    validateNamespaceLeaseSet(db, revision, attempt, pairs, acquisitionRows);
+  }
+  if (pairCount !== allPairs.length || leaseCount !== allLeases.length) {
+    throw new Error("orphan confirmatory pair or namespace lease");
+  }
+}
+
+function validateStoredExposureLease(
+  db: SqliteDatabase,
+  event: EventWithoutDigest,
+  row: LiteLearningAuthorityRow,
+  payload: ExposureCommittedV1,
+): void {
+  if (payload.assignment_algorithm !== "matched_pair_csprng_bit_v1") return;
+  const lease = db.prepare(
+    `SELECT memory_namespace_sha256, namespace_set_sha256, lease_generation,
+            randomization_pair_sha256, pair_member_ordinal, assigned_arm,
+            activation_wave_index, activation_starts_at, index_window_ends_at,
+            wave_analysis_at, confirmatory_attempt_id, experiment_id,
+            experiment_revision, acquired_at, status, released_at
+     FROM lite_learning_namespace_leases
+     WHERE tenant_id = ? AND namespace_lease_id = ?`,
+  ).get(event.tenant_id, payload.namespace_lease_id) as Record<string, unknown> | undefined;
+  const attempt = db.prepare(
+    `SELECT confirmatory_attempt_id
+     FROM lite_learning_confirmatory_attempts
+     WHERE tenant_id = ? AND experiment_id = ? AND experiment_revision = ?`,
+  ).get(event.tenant_id, row.experiment_id, row.experiment_revision) as {
+    confirmatory_attempt_id: string;
+  } | undefined;
+  if (!lease
+    || !attempt
+    || lease.memory_namespace_sha256 !== payload.memory_namespace_sha256
+    || lease.namespace_set_sha256 !== payload.namespace_set_sha256
+    || lease.lease_generation !== payload.namespace_lease_generation
+    || lease.randomization_pair_sha256 !== payload.randomization_pair_sha256
+    || lease.pair_member_ordinal !== payload.pair_member_ordinal
+    || lease.assigned_arm !== payload.assignment_arm
+    || lease.activation_wave_index !== payload.activation_wave_index
+    || lease.activation_starts_at !== payload.activation_starts_at
+    || lease.index_window_ends_at !== payload.index_window_ends_at
+    || lease.wave_analysis_at !== payload.wave_analysis_at
+    || lease.confirmatory_attempt_id !== attempt.confirmatory_attempt_id
+    || lease.experiment_id !== row.experiment_id
+    || lease.experiment_revision !== row.experiment_revision
+    || String(lease.acquired_at) > event.recorded_at
+    || (lease.status !== "active" && lease.status !== "released")
+    || (lease.status === "released"
+      && (lease.released_at === null || String(lease.released_at) < event.recorded_at))
+    || event.recorded_at < String(lease.activation_starts_at)
+    || event.recorded_at > String(lease.index_window_ends_at)) {
+    throw new Error("learning exposure persisted namespace lease binding mismatch");
+  }
+}
+
+function validateStoredEpisodeRows(db: SqliteDatabase): {
+  protectedEventCount: number;
+  legacyEventCount: number;
+  promotionEligibleExposureCount: number;
+} {
+  const rows = learningTableRows(db, "lite_learning_episode_events", "row_id");
+  const allExposureItems = learningTableRows(
+    db,
+    "lite_learning_exposure_items",
+    "tenant_id, scope, event_id, memory_id",
+  );
+  const allFeedbackAttributions = learningTableRows(
+    db,
+    "lite_learning_feedback_attributions",
+    "tenant_id, scope, event_id, subject_kind, subject_id",
+  );
+  const allHostReceipts = learningTableRows(
+    db,
+    "lite_learning_host_use_receipts",
+    "tenant_id, scope, receipt_id",
+  );
+  const childKey = (tenantId: LiteLearningSqlValue, scope: LiteLearningSqlValue, eventId: LiteLearningSqlValue) => (
+    `${String(tenantId)}\u0000${String(scope)}\u0000${String(eventId)}`
+  );
+  const groupRows = (
+    values: readonly LiteLearningAuthorityRow[],
+    eventField: "event_id" | "feedback_event_id",
+  ): Map<string, LiteLearningAuthorityRow[]> => {
+    const grouped = new Map<string, LiteLearningAuthorityRow[]>();
+    for (const value of values) {
+      const key = childKey(value.tenant_id, value.scope, value[eventField]);
+      const rowsForEvent = grouped.get(key) ?? [];
+      rowsForEvent.push(value);
+      grouped.set(key, rowsForEvent);
+    }
+    return grouped;
+  };
+  const exposureItemsByEvent = groupRows(allExposureItems, "event_id");
+  const feedbackAttributionsByEvent = groupRows(allFeedbackAttributions, "event_id");
+  const hostReceiptsByEvent = groupRows(allHostReceipts, "feedback_event_id");
+  const chain = new Map<string, { sequence: number; eventSha256: string }>();
+  const episodeProtection = new Map<string, "protected" | "legacy_unprotected">();
+  const seenEvents = new Map<string, EventWithoutDigest>();
+  const superseded = new Set<string>();
+  let exposureItemCount = 0;
+  let feedbackAttributionCount = 0;
+  let hostReceiptCount = 0;
+  let protectedEventCount = 0;
+  let legacyEventCount = 0;
+  let promotionEligibleExposureCount = 0;
+
+  for (const row of rows) {
+    assertExactRowShape("lite_learning_episode_events", row);
+    const event = learningEventFromRow(row);
+    const payloadJson = requiredString(row, "payload_json");
+    const payloadValue = canonicalJson(payloadJson, "payload_json");
+    if (sha256Text(payloadJson) !== row.payload_sha256) {
+      throw new Error("learning episode payload digest mismatch");
+    }
+    const payload = LearningEpisodePayloadV1Schema.parse(payloadValue);
+    const expectedKind = {
+      aionis_learning_exposure_v1: "exposure_committed",
+      aionis_learning_feedback_v1: "feedback_attributed",
+      aionis_learning_effect_v1: "effect_measured",
+    } as const;
+    if (expectedKind[payload.contract_version] !== event.event_kind) {
+      throw new Error("learning episode payload kind mismatch");
+    }
+    if (row.event_sha256 !== learningEpisodeEventDigest(event)) {
+      throw new Error("learning episode event digest mismatch");
+    }
+    const chainKey = `${event.tenant_id}\u0000${event.scope}\u0000${event.episode_id}`;
+    const prior = chain.get(chainKey);
+    if (event.episode_sequence === 1) {
+      if (prior || event.previous_event_sha256 !== null) {
+        throw new Error("learning episode root chain mismatch");
+      }
+    } else if (!prior
+      || prior.sequence + 1 !== event.episode_sequence
+      || prior.eventSha256 !== event.previous_event_sha256) {
+      throw new Error("learning episode previous-event chain mismatch");
+    }
+    chain.set(chainKey, {
+      sequence: event.episode_sequence,
+      eventSha256: requiredString(row, "event_sha256"),
+    });
+
+    if (event.supersedes_event_id !== null) {
+      const supersessionKey = `${event.tenant_id}\u0000${event.scope}\u0000${event.supersedes_event_id}`;
+      const previous = seenEvents.get(supersessionKey);
+      if (!previous
+        || previous.episode_id !== event.episode_id
+        || previous.event_kind !== "feedback_attributed"
+        || event.event_kind !== "feedback_attributed"
+        || superseded.has(supersessionKey)) {
+        throw new Error("learning feedback supersession chain mismatch");
+      }
+      superseded.add(supersessionKey);
+    }
+    seenEvents.set(`${event.tenant_id}\u0000${event.scope}\u0000${event.event_id}`, event);
+
+    if (payload.contract_version === "aionis_learning_exposure_v1") {
+      const itemRows = exposureItemsByEvent.get(childKey(
+        event.tenant_id,
+        event.scope,
+        event.event_id,
+      )) ?? [];
+      const items = itemRows.map((itemRow) => {
+        assertExactRowShape("lite_learning_exposure_items", itemRow);
+        assertRowBindings(itemRow, {
+          tenant_id: event.tenant_id,
+          scope: event.scope,
+          event_id: event.event_id,
+          episode_id: event.episode_id,
+        }, "learning exposure item");
+        const item = learningItemFromRow(itemRow);
+        if (itemRow.item_sha256 !== sha256Text(stableStringify(item))) {
+          throw new Error("learning exposure item digest mismatch");
+        }
+        return item;
+      });
+      exposureItemCount += items.length;
+      if (row.item_set_sha256 !== learningItemSetDigest(items)) {
+        throw new Error("learning exposure item-set digest mismatch");
+      }
+      validateExposureBindings(db, row, payload, items);
+      validateStoredExposureLease(db, event, row, payload);
+      if (Number(row.promotion_eligible) !== (isLearningExposurePromotionEligible(payload) ? 1 : 0)) {
+        throw new Error("learning exposure promotion eligibility cache mismatch");
+      }
+      if (row.promotion_eligible === 1) promotionEligibleExposureCount += 1;
+      episodeProtection.set(chainKey, payload.operation_protection);
+      if (payload.operation_protection === "protected") protectedEventCount += 1;
+      else legacyEventCount += 1;
+    } else if (payload.contract_version === "aionis_learning_feedback_v1") {
+      const key = childKey(event.tenant_id, event.scope, event.event_id);
+      const attributions = feedbackAttributionsByEvent.get(key) ?? [];
+      const receipts = hostReceiptsByEvent.get(key) ?? [];
+      if (receipts.length > 1) throw new Error("learning feedback has multiple host-use receipts");
+      if (episodeProtection.get(chainKey) !== payload.operation_protection) {
+        throw new Error("learning feedback operation protection does not match its exposure episode");
+      }
+      validateFeedbackChildren(db, event, row, payload, attributions, receipts[0] ?? null);
+      feedbackAttributionCount += attributions.length;
+      hostReceiptCount += receipts.length;
+      if (payload.operation_protection === "protected") protectedEventCount += 1;
+      else legacyEventCount += 1;
+    } else {
+      validateEffectMeasurement(db, event, payload);
+      const protection = episodeProtection.get(chainKey);
+      if (!protection) throw new Error("learning effect has no exposure protection authority");
+      if (protection === "protected") protectedEventCount += 1;
+      else legacyEventCount += 1;
+    }
+  }
+
+  if (exposureItemCount !== allExposureItems.length
+    || feedbackAttributionCount !== allFeedbackAttributions.length
+    || hostReceiptCount !== allHostReceipts.length) {
+    throw new Error("orphan learning episode child row");
+  }
+
+  const invalidHostAliases = scalarCount(
+    db,
+    `SELECT COUNT(*) AS count
+     FROM lite_learning_episode_events AS left_row
+     JOIN lite_learning_episode_events AS right_row
+       ON right_row.row_id > left_row.row_id
+      AND right_row.tenant_id = left_row.tenant_id
+      AND right_row.experiment_id = left_row.experiment_id
+      AND right_row.experiment_revision = left_row.experiment_revision
+      AND right_row.event_kind = 'exposure_committed'
+      AND right_row.collection_class = 'eligible_host'
+     WHERE left_row.event_kind = 'exposure_committed'
+       AND left_row.collection_class = 'eligible_host'
+       AND ((right_row.host_task_id = left_row.host_task_id AND (
+         right_row.host_source_task_sha256 IS NOT left_row.host_source_task_sha256
+         OR right_row.task_family IS NOT left_row.task_family
+         OR right_row.task_signature_sha256 IS NOT left_row.task_signature_sha256
+         OR right_row.repo_signature_sha256 IS NOT left_row.repo_signature_sha256
+         OR right_row.memory_namespace_sha256 IS NOT left_row.memory_namespace_sha256
+         OR right_row.collector_id IS NOT left_row.collector_id
+         OR right_row.collector_version IS NOT left_row.collector_version
+       )) OR (
+         right_row.host_source_task_sha256 = left_row.host_source_task_sha256
+         AND right_row.host_task_id <> left_row.host_task_id
+       ))`,
+  );
+  if (invalidHostAliases > 0) throw new Error("learning host-task source alias mismatch");
+  return { protectedEventCount, legacyEventCount, promotionEligibleExposureCount };
+}
+
+function validateStoredControlJobs(
+  db: SqliteDatabase,
+  checkedAt: string,
+): { count: number; deadLetters: number; expiredLeases: number } {
+  if (!isCanonicalUtcMillis(checkedAt)) throw new Error("learning ledger checkedAt must be canonical UTC milliseconds");
+  const jobs = learningTableRows(db, "lite_learning_control_jobs", "row_id");
+  let deadLetters = 0;
+  let expiredLeases = 0;
+  for (const job of jobs) {
+    assertExactRowShape("lite_learning_control_jobs", job);
+    assertCanonicalJsonDigest(job, "payload_json", "payload_sha256");
+    const payloadValue = canonicalJson(job.payload_json, "lite_learning_control_jobs.payload_json");
+    if (!payloadValue || typeof payloadValue !== "object" || Array.isArray(payloadValue)) {
+      throw new Error("learning control job payload must be the exact canonical object");
+    }
+    const payload = payloadValue as Record<string, unknown>;
+    const payloadKeys = Object.keys(payload).sort();
+    if (stableStringify(payloadKeys)
+      !== stableStringify(["contract_version", "exposure_ids", "feedback_event_id"])) {
+      throw new Error("learning control job payload must be the exact canonical object");
+    }
+    const exposureIds = payload.exposure_ids;
+    if (payload.contract_version !== "unused_exposure_learning_control_v1"
+      || payload.feedback_event_id !== job.source_feedback_event_id
+      || !Array.isArray(exposureIds)
+      || exposureIds.length < 1
+      || exposureIds.length > 96
+      || exposureIds.some((value) => typeof value !== "string" || value.length < 1 || value.length > 256)
+      || new Set(exposureIds).size !== exposureIds.length) {
+      throw new Error("learning control job payload semantic binding mismatch");
+    }
+    const source = db.prepare(
+      `SELECT episode_id, source_commit_id, payload_json, recorded_at
+       FROM lite_learning_episode_events
+       WHERE tenant_id = ? AND scope = ? AND event_id = ?
+         AND event_kind = 'feedback_attributed'`,
+    ).get(job.tenant_id, job.scope, job.source_feedback_event_id) as Record<string, unknown> | undefined;
+    if (!source
+      || source.episode_id !== job.source_episode_id
+      || source.source_commit_id !== job.source_commit_id) {
+      throw new Error("learning control job source feedback binding mismatch");
+    }
+    const sourcePayload = LearningEpisodePayloadV1Schema.parse(canonicalJson(
+      source.payload_json as string,
+      "learning control source feedback payload",
+    ));
+    if (sourcePayload.contract_version !== "aionis_learning_feedback_v1"
+      || stableStringify([...sourcePayload.unused_exposure_ids].sort())
+        !== stableStringify([...(exposureIds as string[])].sort())) {
+      throw new Error("learning control job exposure set does not match its source feedback");
+    }
+    for (const exposureId of exposureIds as string[]) {
+      if (!db.prepare(
+        `SELECT 1 FROM lite_learning_episode_events
+         WHERE tenant_id = ? AND scope = ? AND event_id = ?
+           AND event_kind = 'exposure_committed'`,
+      ).get(job.tenant_id, job.scope, exposureId)) {
+        throw new Error("learning control job references an unresolved exposure event");
+      }
+    }
+    const createdAt = requiredString(job, "created_at");
+    const updatedAt = requiredString(job, "updated_at");
+    const availableAt = requiredString(job, "available_at");
+    if (String(source.recorded_at) > createdAt
+      || createdAt > availableAt
+      || createdAt > updatedAt
+      || (job.lease_expires_at !== null && updatedAt >= String(job.lease_expires_at))
+      || (job.completed_at !== null
+        && (createdAt > String(job.completed_at) || String(job.completed_at) > updatedAt))) {
+      throw new Error("learning control job lifecycle timestamp order mismatch");
+    }
+    if (job.status === "dead_letter") deadLetters += 1;
+    if (job.status === "leased" && requiredString(job, "lease_expires_at") < checkedAt) {
+      expiredLeases += 1;
+    }
+  }
+  return { count: jobs.length, deadLetters, expiredLeases };
+}
+
+function validateStoredAuthorityRows(db: SqliteDatabase): void {
+  const membershipsByDecision = new Map<string, LiteLearningAuthorityRow[]>();
+  for (const membership of learningTableRows(
+    db,
+    "lite_learning_gate_artifact_memberships",
+    "tenant_id, decision_id, artifact_role, role_ordinal, artifact_id",
+  )) {
+    const key = `${String(membership.tenant_id)}\u0000${String(membership.decision_id)}`;
+    const rows = membershipsByDecision.get(key) ?? [];
+    rows.push(membership);
+    membershipsByDecision.set(key, rows);
+  }
+  for (const table of [
+    "lite_learning_experiment_closures",
+    "lite_learning_external_run_reservations",
+    "lite_learning_external_ticket_consumptions",
+    "lite_learning_evidence_artifacts",
+    "lite_learning_gate_look_reservations",
+    "lite_learning_gate_decisions",
+  ] as const) {
+    const orderBy = table === "lite_learning_evidence_artifacts"
+      || table === "lite_learning_gate_look_reservations"
+      || table === "lite_learning_gate_decisions"
+      ? "row_id"
+      : LITE_LEARNING_LEDGER_REQUIRED_COLUMNS[table].slice(0, 2).join(", ");
+    for (const row of learningTableRows(db, table, orderBy)) {
+      assertExactRowShape(table, row);
+      if (table === "lite_learning_evidence_artifacts" && row.artifact_kind !== "runtime_integrity_gate") {
+        continue;
+      }
+      if (table === "lite_learning_gate_decisions") {
+        assertCanonicalJsonDigest(row, "evidence_summary_json", "evidence_summary_sha256");
+        if (row.decision_sha256 !== learningGateDecisionDigest(row)) {
+          throw new Error("gate decision digest mismatch");
+        }
+        if (row.decision_kind === "evidence_evaluation") {
+          const memberships = membershipsByDecision.get(
+            `${String(row.tenant_id)}\u0000${String(row.decision_id)}`,
+          ) ?? [];
+          validateGateEvidenceEvaluation(db, row, memberships);
+          continue;
+        }
+      }
+      validateAuthorityFactReferences(db, table, row);
+    }
+  }
+  const orphanMemberships = scalarCount(
+    db,
+    `SELECT COUNT(*) AS count
+     FROM lite_learning_gate_artifact_memberships AS membership
+     WHERE NOT EXISTS (
+       SELECT 1 FROM lite_learning_gate_decisions AS decision
+       WHERE decision.tenant_id = membership.tenant_id
+         AND decision.decision_id = membership.decision_id
+         AND decision.decision_kind = 'evidence_evaluation'
+     )`,
+  );
+  if (orphanMemberships > 0) throw new Error("orphan gate artifact membership");
+}
+
+export function replayLiteLearningEpisodeLedger(
+  db: SqliteDatabase,
+  checkedAt: string,
+): LiteLearningEpisodeLedgerReplay {
+  if (!isCanonicalUtcMillis(checkedAt)) throw new Error("checkedAt must be a canonical UTC millisecond timestamp");
+  validateStoredPolicyAndRevisionRows(db);
+  validateStoredConfirmatorySets(db);
+  const episodes = validateStoredEpisodeRows(db);
+  const jobs = validateStoredControlJobs(db, checkedAt);
+  validateStoredAuthorityRows(db);
+  const tableCounts = Object.fromEntries(LITE_LEARNING_LEDGER_REQUIRED_TABLE_NAMES.map((table) => [
+    table,
+    scalarCount(db, `SELECT COUNT(*) AS count FROM ${table}`),
+  ]));
+  return {
+    verifier_id: "aionis_lite_learning_ledger_replay",
+    verifier_version: 1,
+    table_counts: tableCounts,
+    protected_event_count: episodes.protectedEventCount,
+    legacy_event_count: episodes.legacyEventCount,
+    promotion_eligible_exposure_count: episodes.promotionEligibleExposureCount,
+    control_job_count: jobs.count,
+    control_job_dead_letter_count: jobs.deadLetters,
+    control_job_expired_lease_count: jobs.expiredLeases,
+  };
 }
 
 export type LiteLearningEpisodeLedgerAccess = {
@@ -5557,6 +6571,10 @@ export function createLiteLearningEpisodeLedgerAccess(
           reservation: existingReservation,
           replayed: true,
         };
+      }
+      const liveReplay = assertLiteLearningEpisodeLedgerIntegrity(db);
+      if (liveReplay.control_job_dead_letter_count > 0) {
+        throw new Error("learning control dead letters block a new gate look reservation");
       }
       const savepoint = "lite_learning_reserve_gate_look";
       db.exec(`SAVEPOINT ${savepoint}`);
