@@ -14,7 +14,7 @@ import { createSandboxStore } from "../store/sandbox-access.js";
 import { createLiteWriteStoreFromDatabase } from "../store/lite-write-store.js";
 import { createLiteClaimLedgerStoreFromDatabase } from "../store/lite-claim-ledger-store.js";
 import { createLiteRuntimeDatabase } from "../store/lite-runtime-database.js";
-import { createLiteSkillCandidateReviewStore } from "../store/lite-skill-candidate-review-store.js";
+import { createLiteSkillCandidateReviewStoreFromDatabase } from "../store/lite-skill-candidate-review-store.js";
 import { createLocalAnnIndex } from "../store/ann/local-ann-index.js";
 import { createZvecAnnIndex } from "../store/ann/zvec-ann-index.js";
 import { createSubstrateSidecarCandidateProvider } from "../store/substrate-sidecar-recall.js";
@@ -136,7 +136,7 @@ export async function createRuntimeServices(config: RuntimeServiceConfig) {
   });
   const liteClaimLedgerStore = createLiteClaimLedgerStoreFromDatabase(runtimeDatabase);
   const claimLedgerAccess = liteClaimLedgerStore.createClaimLedgerAccess();
-  const liteSkillCandidateReviewStore = createLiteSkillCandidateReviewStore(storage.LITE_WRITE_SQLITE_PATH);
+  const liteSkillCandidateReviewStore = createLiteSkillCandidateReviewStoreFromDatabase(runtimeDatabase);
   const skillCandidateReviewAccess = liteSkillCandidateReviewStore.createSkillCandidateReviewAccess();
   const executionStateStore = createLiteExecutionStateStoreFromDatabase(runtimeDatabase.db, {
     path: runtimeDatabase.path,

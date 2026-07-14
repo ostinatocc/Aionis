@@ -3,13 +3,17 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createRuntimeServices } from "../../src/app/runtime-services.ts";
+import { loadEnv, type Env } from "../../src/config.ts";
+import { createRuntimeConfig } from "../../src/config/runtime-config.ts";
+import { LITE_LEARNING_LEDGER_REQUIRED_TABLE_NAMES } from "../../src/store/lite-learning-episode-ledger.ts";
 import {
   createLiteSkillCandidateReviewStore,
   createLiteSkillCandidateReviewStoreFromDatabase,
-  migrateLiteSkillCandidateReviewSchema,
 } from "../../src/store/lite-skill-candidate-review-store.ts";
 import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
-import { createSqliteDatabase } from "../../src/store/sqlite.ts";
+import { createLiteWriteStore, createLiteWriteStoreFromDatabase } from "../../src/store/lite-write-store.ts";
+import { createSqliteDatabase, type SqliteDatabase } from "../../src/store/sqlite.ts";
 import { inspectLiteRuntimeSchema } from "../../src/store/lite-runtime-schema.ts";
 import {
   productMeasurementDigest,
@@ -21,6 +25,98 @@ import { evaluateAionisEffect } from "../../src/kernel/effect-evaluator.ts";
 
 function tmpDbPath(name: string): string {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), "aionis-skill-candidate-review-")), `${name}.sqlite`);
+}
+
+async function withIsolatedEnv<T>(
+  overrides: Record<string, string | undefined>,
+  fn: () => Promise<T> | T,
+): Promise<T> {
+  const previous = process.env;
+  const next: NodeJS.ProcessEnv = {
+    PATH: previous.PATH ?? "",
+    HOME: previous.HOME ?? "",
+    TMPDIR: previous.TMPDIR ?? "",
+    USER: previous.USER ?? "",
+  };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value !== undefined) next[key] = value;
+  }
+  process.env = next;
+  try {
+    return await fn();
+  } finally {
+    process.env = previous;
+  }
+}
+
+async function runtimeAssemblyEnv(writePath: string, replayPath: string): Promise<Env> {
+  return await withIsolatedEnv(
+    {
+      AIONIS_EDITION: "lite",
+      AIONIS_MODE: "local",
+      APP_ENV: "ci",
+      MEMORY_AUTH_MODE: "off",
+      MEMORY_TENANT_ID: "measurement-assembly-tenant",
+      MEMORY_SCOPE: "measurement-assembly/default",
+      LITE_LOCAL_ACTOR_ID: "measurement-assembly-local",
+      LITE_WRITE_SQLITE_PATH: writePath,
+      LITE_REPLAY_SQLITE_PATH: replayPath,
+      SANDBOX_ENABLED: "false",
+      RATE_LIMIT_ENABLED: "false",
+      RECALL_ANN_PROVIDER: "off",
+      RECALL_SUBSTRATE_SIDECAR_ENABLED: "false",
+      WORKFLOW_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: "false",
+    },
+    () => loadEnv(),
+  );
+}
+
+type RuntimeServices = Awaited<ReturnType<typeof createRuntimeServices>>;
+
+async function closeRuntimeServices(services: RuntimeServices): Promise<void> {
+  services.sandboxExecutor.shutdown();
+  await services.executionTreeStore.close();
+  await services.executionStateStore.close();
+  await services.liteSkillCandidateReviewStore.close();
+  await services.liteClaimLedgerStore.close();
+  await services.liteRecallStore.close();
+  await services.liteReplayStore?.close();
+  await services.liteWriteStore.close();
+  await services.store.close();
+}
+
+async function createCompleteV2RuntimeFixture(dbPath: string): Promise<void> {
+  const initialized = createLiteWriteStore(dbPath, { annProjectionEnabled: false });
+  await initialized.close();
+
+  const db = createSqliteDatabase(dbPath);
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    for (const table of [...LITE_LEARNING_LEDGER_REQUIRED_TABLE_NAMES].reverse()) {
+      db.exec(`DROP TABLE IF EXISTS ${table}`);
+    }
+    for (const column of ["record_sha256", "after_episode_id", "baseline_episode_id"]) {
+      db.exec(`ALTER TABLE lite_product_measurements DROP COLUMN ${column}`);
+    }
+    db.prepare(
+      `UPDATE lite_runtime_schema_metadata
+       SET version = 2, updated_at = ?
+       WHERE component = 'write_projection'`,
+    ).run("2026-07-14T00:00:00.000Z");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  } finally {
+    db.close();
+  }
+
+  const classified = createSqliteDatabase(dbPath);
+  try {
+    assert.equal(inspectLiteRuntimeSchema(classified).classification, "supported_previous_v2");
+  } finally {
+    classified.close();
+  }
 }
 
 function candidate(input: { skillName?: string; sourceTraceId?: string } = {}): TraceDerivedSkillTrainingCandidate {
@@ -255,6 +351,38 @@ test("trace-derived skill review store records promote and reject decisions with
   }
 });
 
+test("normal Runtime assembly shares the main write transaction for fresh and upgraded v2 databases", async (t) => {
+  for (const fixture of ["fresh", "v2"] as const) {
+    await t.test(fixture, async () => {
+      const writePath = tmpDbPath(`runtime-assembly-${fixture}-write`);
+      const replayPath = tmpDbPath(`runtime-assembly-${fixture}-replay`);
+      if (fixture === "v2") await createCompleteV2RuntimeFixture(writePath);
+      const env = await runtimeAssemblyEnv(writePath, replayPath);
+      let services: RuntimeServices | null = null;
+      try {
+        services = await createRuntimeServices(createRuntimeConfig(env));
+        assert.equal(
+          services.skillCandidateReviewAccess.transactionRunner(),
+          services.liteWriteStore.transactionRunner(),
+          "measurement/review access must not open an independent Runtime writer",
+        );
+        const schemaDb = createSqliteDatabase(writePath);
+        try {
+          const report = inspectLiteRuntimeSchema(schemaDb);
+          assert.equal(report.classification, "current");
+          assert.equal(report.detected_version, 3);
+        } finally {
+          schemaDb.close();
+        }
+      } finally {
+        if (services) await closeRuntimeServices(services);
+        fs.rmSync(path.dirname(writePath), { recursive: true, force: true });
+        fs.rmSync(path.dirname(replayPath), { recursive: true, force: true });
+      }
+    });
+  }
+});
+
 test("shared skill review factory requires caller-owned schema migration", async () => {
   const dbPath = tmpDbPath("shared-schema-owner");
   const database = createLiteRuntimeDatabase(dbPath);
@@ -271,6 +399,72 @@ test("shared skill review factory requires caller-owned schema migration", async
     ).all();
     assert.deepEqual(after, before);
   } finally {
+    await database.close();
+    fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+  }
+});
+
+test("shared skill review factory performs no DDL after central v3 preflight", async () => {
+  const dbPath = tmpDbPath("shared-no-post-preflight-ddl");
+  const database = createLiteRuntimeDatabase(dbPath);
+  const writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
+  let store: ReturnType<typeof createLiteSkillCandidateReviewStoreFromDatabase> | null = null;
+  try {
+    const schemaVersionBefore = database.db.prepare(
+      "PRAGMA schema_version",
+    ).get() as { schema_version: number };
+    const schemaBefore = database.db.prepare(
+      `SELECT type, name, tbl_name AS table_name, sql
+       FROM sqlite_schema
+       WHERE name NOT LIKE 'sqlite_%'
+       ORDER BY type, name`,
+    ).all();
+    const observedDdl: string[] = [];
+    const rejectDdl = (sql: string): void => {
+      if (/^\s*(?:ALTER|CREATE|DROP)\b/iu.test(sql)) {
+        observedDdl.push(sql);
+        throw new Error(`unexpected shared-factory DDL: ${sql}`);
+      }
+    };
+    const ddlGuardDb: SqliteDatabase = {
+      exec(sql) {
+        rejectDdl(sql);
+        return database.db.exec(sql);
+      },
+      prepare<T = any>(sql: string) {
+        rejectDdl(sql);
+        return database.db.prepare<T>(sql);
+      },
+      close() {
+        throw new Error("shared factory must not close the caller-owned SQLite connection");
+      },
+    };
+    store = createLiteSkillCandidateReviewStoreFromDatabase({ ...database, db: ddlGuardDb });
+    assert.deepEqual(observedDdl, []);
+    assert.deepEqual(
+      database.db.prepare("PRAGMA schema_version").get(),
+      schemaVersionBefore,
+    );
+    assert.deepEqual(
+      database.db.prepare(
+        `SELECT type, name, tbl_name AS table_name, sql
+         FROM sqlite_schema
+         WHERE name NOT LIKE 'sqlite_%'
+         ORDER BY type, name`,
+      ).all(),
+      schemaBefore,
+    );
+
+    await store.close();
+    store = null;
+    assert.equal(
+      (database.db.prepare("SELECT 1 AS value").get() as { value: number }).value,
+      1,
+      "closing a shared review store must not close the Runtime database",
+    );
+  } finally {
+    await store?.close();
+    await writeStore.close();
     await database.close();
     fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
   }
@@ -322,26 +516,29 @@ test("shared measurement access joins the Runtime transaction and rolls back sib
     },
   });
   let store: ReturnType<typeof createLiteSkillCandidateReviewStoreFromDatabase> | null = null;
+  let writeStore: ReturnType<typeof createLiteWriteStoreFromDatabase> | null = null;
   try {
-    migrateLiteSkillCandidateReviewSchema(database.db);
-    database.db.exec(`
-      CREATE TABLE shared_transaction_sibling (
-        sibling_id TEXT PRIMARY KEY,
-        created_at TEXT NOT NULL
-      );
-    `);
+    writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
+    const runtimeWriteStore = writeStore;
     store = createLiteSkillCandidateReviewStoreFromDatabase(database);
     const access = store.createSkillCandidateReviewAccess();
     assert.equal(access.transactionRunner(), database.transaction);
+    assert.equal(access.transactionRunner(), runtimeWriteStore.transactionRunner());
 
     const record = measurement([candidate()]);
     failBeforeCommit = true;
     await assert.rejects(
-      database.transaction.run(async () => {
+      runtimeWriteStore.withTx(async () => {
         await access.recordMeasurement({ record });
-        database.db.prepare(
-          "INSERT INTO shared_transaction_sibling (sibling_id, created_at) VALUES (?, ?)",
-        ).run("sibling-before-commit", "2026-06-26T01:00:00.000Z");
+        await runtimeWriteStore.insertWriteOperation({
+          tenantId: "tenant-a",
+          scope: "scope-a",
+          operationKind: "shared_measurement_uow_test",
+          operationId: "measurement-operation-before-commit",
+          requestSha256: "a".repeat(64),
+          receiptJson: JSON.stringify({ status: "must_rollback" }),
+          commitId: null,
+        });
       }),
       /injected shared measurement before_commit failure/,
     );
@@ -357,6 +554,7 @@ test("shared measurement access joins the Runtime transaction and rolls back sib
   } finally {
     failBeforeCommit = false;
     await store?.close();
+    await writeStore?.close();
     await database.close();
   }
 
@@ -366,7 +564,7 @@ test("shared measurement access joins the Runtime transaction and rolls back sib
       "SELECT COUNT(*) AS count FROM lite_product_measurements",
     ).get() as { count: number };
     const siblingCount = reopened.prepare(
-      "SELECT COUNT(*) AS count FROM shared_transaction_sibling",
+      "SELECT COUNT(*) AS count FROM lite_runtime_write_operations",
     ).get() as { count: number };
     assert.equal(measurementCount.count, 0);
     assert.equal(siblingCount.count, 0);
