@@ -927,6 +927,11 @@ type LinuxAclEntryKind =
   | "unparseable"
   | "verifier_failure";
 
+type ParsedLinuxDefaultAclEntry = Readonly<{
+  tag: "user" | "group" | "mask" | "other";
+  qualifier: string | null;
+}>;
+
 const LINUX_ACL_DIAGNOSTIC_PRIORITY: readonly LinuxAclEntryKind[] = [
   "default",
   "named_user",
@@ -973,12 +978,47 @@ function linuxAclTrustError(
 
 function classifyRejectedLinuxAclEntry(entry: string): LinuxAclEntryKind {
   if (/^#\s*flags:/u.test(entry)) return "flags";
-  if (/^default:/u.test(entry)) return "default";
   if (/^mask::/u.test(entry)) return "mask";
   if (/^user:[^:]+:/u.test(entry)) return "named_user";
   if (/^group:[^:]+:/u.test(entry)) return "named_group";
   if (/\s+#effective:/u.test(entry)) return "effective_comment";
   return "unparseable";
+}
+
+function parseLinuxDefaultAclEntry(
+  entry: string,
+): ParsedLinuxDefaultAclEntry | null {
+  const match = /^default:(user|group|mask|other):([^:]*):([r-][w-][x-])$/u
+    .exec(entry);
+  if (!match) return null;
+  const tag = match[1] as ParsedLinuxDefaultAclEntry["tag"];
+  const rawQualifier = match[2]!;
+  if (tag === "mask" || tag === "other") {
+    return rawQualifier.length === 0 ? { tag, qualifier: null } : null;
+  }
+  if (rawQualifier.length === 0) return { tag, qualifier: null };
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(rawQualifier)) return null;
+  return { tag, qualifier: rawQualifier };
+}
+
+function isCompleteLinuxDefaultAcl(entries: readonly string[]): boolean {
+  const parsed = entries.map(parseLinuxDefaultAclEntry);
+  if (parsed.some((entry) => entry === null)) return false;
+  const complete = parsed as ParsedLinuxDefaultAclEntry[];
+  const keys = new Set<string>();
+  for (const entry of complete) {
+    const key = `${entry.tag}:${entry.qualifier ?? ""}`;
+    if (keys.has(key)) return false;
+    keys.add(key);
+  }
+  const namedEntryCount = complete.filter(
+    (entry) => entry.qualifier !== null,
+  ).length;
+  const hasMask = keys.has("mask:");
+  return keys.has("user:")
+    && keys.has("group:")
+    && keys.has("other:")
+    && (namedEntryCount === 0 || hasMask);
 }
 
 function assertLinuxBasicAccessControlList(
@@ -989,7 +1029,7 @@ function assertLinuxBasicAccessControlList(
   for (const executable of ["/usr/bin/getfacl", "/bin/getfacl"] as const) {
     const candidate = spawnSync(
       executable,
-      ["-c", "-p", "-n", "--", path],
+      ["-c", "-E", "-p", "-n", "--", path],
       {
         encoding: "utf8",
         timeout: 5_000,
@@ -1025,8 +1065,13 @@ function assertLinuxBasicAccessControlList(
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
   const baseAcl = new Map<"user" | "group" | "other", string>();
+  const defaultAclEntries: string[] = [];
   const rejectedKinds = new Set<LinuxAclEntryKind>();
   for (const entry of entries) {
+    if (entry.startsWith("default:")) {
+      defaultAclEntries.push(entry);
+      continue;
+    }
     const match = /^(user|group|other)::([r-][w-][x-])$/u.exec(entry);
     if (!match) {
       rejectedKinds.add(classifyRejectedLinuxAclEntry(entry));
@@ -1039,6 +1084,14 @@ function assertLinuxBasicAccessControlList(
     }
     baseAcl.set(baseKind, match[2]!);
   }
+  if (defaultAclEntries.length > 0
+    && (context.object !== "ancestor"
+      || !isCompleteLinuxDefaultAcl(defaultAclEntries))) {
+    rejectedKinds.add("default");
+  }
+  // A complete default ACL affects only children created directly beneath an
+  // ancestor. Protected close creates SQLite sidecars in the already existing
+  // direct parent, whose access and default ACLs remain checked fail-closed.
   if (rejectedKinds.size > 0) {
     const entryKind = LINUX_ACL_DIAGNOSTIC_PRIORITY.find(
       (candidate) => rejectedKinds.has(candidate),

@@ -935,15 +935,20 @@ no WAL/SHM sidecars on a quiescent database; an already-live, trusted WAL/SHM
 pair is read through SQLite's normal read-only WAL view. The protected writer
 performs no migration or journal-mode change before revalidation. The database
 and direct parent must be owned by the service UID. Every canonical ancestor to
-the filesystem root must be owned by that UID or root, and the database, every
-ancestor, and every existing `-wal`/`-shm`/`-journal` sidecar must grant no
-group/other write authority or ACL-delegated authority. Restrictive macOS
-deny-only ACLs remain valid; additive POSIX ACLs and macOS allow entries are
-rejected. Sidecars must be current-UID regular non-symlink files; WAL/SHM must
+the filesystem root must be owned by that UID or root, and the database, direct
+parent, every ancestor, and every existing `-wal`/`-shm`/`-journal` sidecar must
+grant no group/other write authority. Access ACL delegation is rejected at
+every level. The direct parent's default ACL is also rejected because it can be
+inherited by a newly created WAL/SHM/journal; a complete, syntactically valid
+default ACL on an already-existing non-direct ancestor is accepted because the
+close path creates no child there. Restrictive macOS deny-only ACLs remain
+valid; additive POSIX access ACLs and macOS allow entries are rejected. Sidecars
+must be current-UID regular non-symlink files; WAL/SHM must
 exist as a pair and any rollback journal requires recovery before close. ACL
 verification itself is fail-closed. Linux requires the `acl` package's fixed-path
-`getfacl` verifier; missing tooling, stderr, unknown output, named/default/mask
-ACLs, or a base ACL that disagrees with `stat.mode` are all rejected. The
+`getfacl` verifier; missing tooling, stderr, unknown output, named/mask access
+ACLs, direct-parent default ACLs, malformed ancestor default ACLs, or a base
+access ACL that disagrees with `stat.mode` are all rejected. The
 container and Ubuntu CI install that dependency explicitly. The service UID and root are the explicit local-filesystem trust
 boundary; a same-UID actor already has Runtime database authority. As required
 by Runtime's SQLite WAL posture, this boundary covers locally enforced POSIX

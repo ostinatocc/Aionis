@@ -242,6 +242,19 @@ function closingFilesystemDiagnostic(
   };
 }
 
+function delegatedLinuxUid(): number {
+  const serviceUid = typeof process.getuid === "function" ? process.getuid() : -1;
+  return serviceUid === 65_534 ? 65_533 : 65_534;
+}
+
+function delegatingLinuxDefaultAcl(uid: number): string {
+  return `d:u::rwx,d:u:${String(uid)}:r-x,d:g::---,d:m::r-x,d:o::---`;
+}
+
+function baseLinuxDefaultAcl(): string {
+  return "d:u::rwx,d:g::---,d:o::---";
+}
+
 function closer(
   runtime: ConfirmatoryFixtureRuntime,
   options: Readonly<{
@@ -1387,6 +1400,225 @@ test("macOS write ACL fails protected close without any close mutation", {
   }
 });
 
+test("Linux default ACL on a non-direct ancestor does not block protected close", {
+  skip: process.platform !== "linux",
+  timeout: 60_000,
+}, async () => {
+  const temp = tempDatabase("ancestor-default-acl");
+  const aclAncestor = path.join(temp.directory, "acl-ancestor");
+  const directParent = path.join(aclAncestor, "runtime-owner-only");
+  const databasePath = path.join(directParent, "runtime.sqlite");
+  const { spawnSync } = await import("node:child_process");
+  let accessAclInstalled = false;
+  let defaultAclInstalled = false;
+  fs.mkdirSync(directParent, { recursive: true, mode: 0o700 });
+  fs.chmodSync(aclAncestor, 0o700);
+  fs.chmodSync(directParent, 0o700);
+  try {
+    const setup = openCloseRuntime(databasePath);
+    let fixture: ConfirmatoryProvisionedFixture;
+    try {
+      fixture = await provisionConfirmatoryFixture(setup);
+    } finally {
+      await setup.close();
+    }
+    const databaseBytesBefore = fs.readFileSync(databasePath);
+    const delegatedUid = delegatedLinuxUid();
+    const addAccessAcl = spawnSync(
+      "/usr/bin/setfacl",
+      ["-m", `u:${String(delegatedUid)}:---`, aclAncestor],
+      { encoding: "utf8", timeout: 5_000 },
+    );
+    assert.equal(
+      addAccessAcl.error,
+      undefined,
+      "Linux protected-close tests require the acl package",
+    );
+    assert.equal(addAccessAcl.status, 0, addAccessAcl.stderr);
+    accessAclInstalled = true;
+    const rejectedTimes = liveCloseAuthorizationTimes();
+    const rejectedOperationId = "confirmatory-close-ancestor-access-acl-rejected";
+    const rejectedAuthorization = createSignedCloseAuthorization(fixture, {
+      authority_operation_id: rejectedOperationId,
+      authorization_nonce: closeNonce(rejectedOperationId),
+      authorization_issued_at: rejectedTimes.issuedAt,
+      authorization_expires_at: rejectedTimes.expiresAt,
+    });
+    const restoreRejectedEnvironment = installCloseProcessEnvironment();
+    try {
+      const { closeLiteLearningExperiment } = await import(
+        "../../src/store/lite-learning-experiment-closing.js"
+      );
+      await assert.rejects(
+        closeLiteLearningExperiment({
+          path: databasePath,
+          ...closeInput(fixture, rejectedAuthorization),
+        }),
+        closingFilesystemDiagnostic("ancestor", "named_user", [
+          aclAncestor,
+          String(delegatedUid),
+          "---",
+        ]),
+      );
+    } finally {
+      restoreRejectedEnvironment();
+    }
+    assert.deepEqual(fs.readFileSync(databasePath), databaseBytesBefore);
+    const removeAccessAcl = spawnSync("/usr/bin/setfacl", ["-b", aclAncestor], {
+      encoding: "utf8",
+      timeout: 5_000,
+    });
+    assert.equal(removeAccessAcl.error, undefined);
+    assert.equal(removeAccessAcl.status, 0, removeAccessAcl.stderr);
+    accessAclInstalled = false;
+    const rejectedReopened = openCloseRuntime(databasePath);
+    try {
+      assertNoCloseMutation(rejectedReopened);
+      await closeLedger(rejectedReopened).verifyIntegrity();
+    } finally {
+      await rejectedReopened.close();
+    }
+
+    const addAcl = spawnSync(
+      "/usr/bin/setfacl",
+      ["-m", delegatingLinuxDefaultAcl(delegatedUid), aclAncestor],
+      { encoding: "utf8", timeout: 5_000 },
+    );
+    assert.equal(addAcl.error, undefined, "Linux protected-close tests require the acl package");
+    assert.equal(addAcl.status, 0, addAcl.stderr);
+    defaultAclInstalled = true;
+    assert.equal(fs.statSync(aclAncestor).mode & 0o022, 0);
+
+    const times = liveCloseAuthorizationTimes();
+    const operationId = "confirmatory-close-ancestor-default-acl-accepted";
+    const authorization = createSignedCloseAuthorization(fixture, {
+      authority_operation_id: operationId,
+      authorization_nonce: closeNonce(operationId),
+      authorization_issued_at: times.issuedAt,
+      authorization_expires_at: times.expiresAt,
+    });
+    const restoreEnvironment = installCloseProcessEnvironment();
+    try {
+      const { closeLiteLearningExperiment } = await import(
+        "../../src/store/lite-learning-experiment-closing.js"
+      );
+      const result = await closeLiteLearningExperiment({
+        path: databasePath,
+        ...closeInput(fixture, authorization),
+      });
+      assert.equal(result.replayed, false);
+      assert.equal(result.receipt.status, "closed");
+    } finally {
+      restoreEnvironment();
+    }
+
+    const reopened = openCloseRuntime(databasePath);
+    try {
+      assert.equal(count(reopened, "lite_learning_experiment_closures"), 1);
+      assert.equal(count(reopened, "lite_learning_namespace_leases", "status = 'released'"), 768);
+      await closeLedger(reopened).verifyIntegrity();
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    if (accessAclInstalled && fs.existsSync(aclAncestor)) {
+      spawnSync("/usr/bin/setfacl", ["-b", aclAncestor], { timeout: 5_000 });
+    }
+    if (defaultAclInstalled && fs.existsSync(aclAncestor)) {
+      spawnSync("/usr/bin/setfacl", ["-k", aclAncestor], { timeout: 5_000 });
+    }
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("Linux base and extended default ACLs on the database parent remain rejected", {
+  skip: process.platform !== "linux",
+  timeout: 60_000,
+}, async () => {
+  const temp = tempDatabase("direct-parent-default-acl");
+  const { spawnSync } = await import("node:child_process");
+  let defaultAclInstalled = false;
+  try {
+    const setup = openCloseRuntime(temp.path);
+    let fixture: ConfirmatoryProvisionedFixture;
+    try {
+      fixture = await provisionConfirmatoryFixture(setup);
+    } finally {
+      await setup.close();
+    }
+    const databaseBytesBefore = fs.readFileSync(temp.path);
+    const delegatedUid = delegatedLinuxUid();
+    for (const [label, acl] of [
+      ["base", baseLinuxDefaultAcl()],
+      ["extended", delegatingLinuxDefaultAcl(delegatedUid)],
+    ] as const) {
+      const addAcl = spawnSync(
+        "/usr/bin/setfacl",
+        ["-m", acl, temp.directory],
+        { encoding: "utf8", timeout: 5_000 },
+      );
+      assert.equal(
+        addAcl.error,
+        undefined,
+        "Linux protected-close tests require the acl package",
+      );
+      assert.equal(addAcl.status, 0, addAcl.stderr);
+      defaultAclInstalled = true;
+      assert.equal(fs.statSync(temp.directory).mode & 0o022, 0);
+
+      const times = liveCloseAuthorizationTimes();
+      const operationId = `confirmatory-close-direct-parent-${label}-default-rejected`;
+      const authorization = createSignedCloseAuthorization(fixture, {
+        authority_operation_id: operationId,
+        authorization_nonce: closeNonce(operationId),
+        authorization_issued_at: times.issuedAt,
+        authorization_expires_at: times.expiresAt,
+      });
+      const restoreEnvironment = installCloseProcessEnvironment();
+      try {
+        const { closeLiteLearningExperiment } = await import(
+          "../../src/store/lite-learning-experiment-closing.js"
+        );
+        await assert.rejects(
+          closeLiteLearningExperiment({
+            path: temp.path,
+            ...closeInput(fixture, authorization),
+          }),
+          closingFilesystemDiagnostic("direct_parent", "default", [
+            temp.directory,
+            String(delegatedUid),
+            "r-x",
+          ]),
+        );
+      } finally {
+        restoreEnvironment();
+      }
+
+      assert.deepEqual(fs.readFileSync(temp.path), databaseBytesBefore);
+      const removeAcl = spawnSync("/usr/bin/setfacl", ["-k", temp.directory], {
+        encoding: "utf8",
+        timeout: 5_000,
+      });
+      assert.equal(removeAcl.error, undefined);
+      assert.equal(removeAcl.status, 0, removeAcl.stderr);
+      defaultAclInstalled = false;
+    }
+
+    const reopened = openCloseRuntime(temp.path);
+    try {
+      assertNoCloseMutation(reopened);
+      await closeLedger(reopened).verifyIntegrity();
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    if (defaultAclInstalled && fs.existsSync(temp.directory)) {
+      spawnSync("/usr/bin/setfacl", ["-k", temp.directory], { timeout: 5_000 });
+    }
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
 test("Linux extended ACL fails protected close even when mode has no write bit", {
   skip: process.platform !== "linux",
   timeout: 60_000,
@@ -1403,8 +1635,7 @@ test("Linux extended ACL fails protected close even when mode has no write bit",
       await setup.close();
     }
     const databaseBytesBefore = fs.readFileSync(temp.path);
-    const serviceUid = typeof process.getuid === "function" ? process.getuid() : -1;
-    const delegatedUid = serviceUid === 65_534 ? 65_533 : 65_534;
+    const delegatedUid = delegatedLinuxUid();
     const addAcl = spawnSync(
       "/usr/bin/setfacl",
       ["-m", `u:${String(delegatedUid)}:r--`, temp.path],

@@ -180,9 +180,12 @@ releases do not provide the row semantics required by the Runtime.
 
 The protected, non-HTTP learning-experiment `close` command also requires a
 verifiable local filesystem boundary. On Linux, install the distribution's
-`acl` package so `/usr/bin/getfacl` is present; missing or non-basic ACL evidence
-fails closed. The published container already includes this package. Normal
-Runtime HTTP startup does not invoke the close command or this verifier.
+`acl` package so `/usr/bin/getfacl` is present; missing or unverifiable ACL
+evidence, delegated access ACLs, and a default ACL on the database's direct
+parent fail closed. A complete default ACL on an already-existing non-direct
+ancestor is accepted because protected close creates no child there. The
+published container already includes this package. Normal Runtime HTTP startup
+does not invoke the close command or this verifier.
 
 For a non-interactive OpenAI-compatible install:
 
