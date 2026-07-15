@@ -910,6 +910,34 @@ type TrustedSqliteSidecarState = Readonly<{
   rollbackJournalPresent: boolean;
 }>;
 
+type FilesystemAclInspectionContext = Readonly<{
+  object: "database" | "sidecar" | "direct_parent" | "ancestor";
+}>;
+
+type LinuxAclEntryKind =
+  | "default"
+  | "duplicate_base"
+  | "effective_comment"
+  | "flags"
+  | "incomplete_base"
+  | "mask"
+  | "mode_mismatch"
+  | "named_group"
+  | "named_user"
+  | "unparseable"
+  | "verifier_failure";
+
+const LINUX_ACL_DIAGNOSTIC_PRIORITY: readonly LinuxAclEntryKind[] = [
+  "default",
+  "named_user",
+  "named_group",
+  "mask",
+  "flags",
+  "duplicate_base",
+  "effective_comment",
+  "unparseable",
+] as const;
+
 function filesystemTrustError(message: string): never {
   closingError(
     "learning_experiment_close_database_filesystem_untrusted",
@@ -933,7 +961,30 @@ const ACL_INSPECTION_ENV = {
   PATH: "/usr/bin:/bin",
 } as const;
 
-function assertLinuxBasicAccessControlList(path: string): void {
+function linuxAclTrustError(
+  context: FilesystemAclInspectionContext,
+  entryKind: LinuxAclEntryKind,
+  message: string,
+): never {
+  filesystemTrustError(
+    `${message} [object=${context.object} entry_kind=${entryKind}]`,
+  );
+}
+
+function classifyRejectedLinuxAclEntry(entry: string): LinuxAclEntryKind {
+  if (/^#\s*flags:/u.test(entry)) return "flags";
+  if (/^default:/u.test(entry)) return "default";
+  if (/^mask::/u.test(entry)) return "mask";
+  if (/^user:[^:]+:/u.test(entry)) return "named_user";
+  if (/^group:[^:]+:/u.test(entry)) return "named_group";
+  if (/\s+#effective:/u.test(entry)) return "effective_comment";
+  return "unparseable";
+}
+
+function assertLinuxBasicAccessControlList(
+  path: string,
+  context: FilesystemAclInspectionContext,
+): void {
   let inspected: ReturnType<typeof spawnSync> | null = null;
   for (const executable of ["/usr/bin/getfacl", "/bin/getfacl"] as const) {
     const candidate = spawnSync(
@@ -963,7 +1014,9 @@ function assertLinuxBasicAccessControlList(path: string): void {
     || typeof inspected.stderr !== "string"
     || inspected.stderr.trim().length !== 0
     || inspected.stdout.includes("\ufffd")) {
-    filesystemTrustError(
+    linuxAclTrustError(
+      context,
+      "verifier_failure",
       "protected close requires a working Linux getfacl verifier",
     );
   }
@@ -972,17 +1025,34 @@ function assertLinuxBasicAccessControlList(path: string): void {
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
   const baseAcl = new Map<"user" | "group" | "other", string>();
+  const rejectedKinds = new Set<LinuxAclEntryKind>();
   for (const entry of entries) {
     const match = /^(user|group|other)::([r-][w-][x-])$/u.exec(entry);
-    if (!match || baseAcl.has(match[1] as "user" | "group" | "other")) {
-      filesystemTrustError(
-        "protected close rejects non-basic Linux filesystem ACLs",
-      );
+    if (!match) {
+      rejectedKinds.add(classifyRejectedLinuxAclEntry(entry));
+      continue;
     }
-    baseAcl.set(match[1] as "user" | "group" | "other", match[2]!);
+    const baseKind = match[1] as "user" | "group" | "other";
+    if (baseAcl.has(baseKind)) {
+      rejectedKinds.add("duplicate_base");
+      continue;
+    }
+    baseAcl.set(baseKind, match[2]!);
+  }
+  if (rejectedKinds.size > 0) {
+    const entryKind = LINUX_ACL_DIAGNOSTIC_PRIORITY.find(
+      (candidate) => rejectedKinds.has(candidate),
+    ) ?? "unparseable";
+    linuxAclTrustError(
+      context,
+      entryKind,
+      "protected close rejects non-basic Linux filesystem ACLs",
+    );
   }
   if (baseAcl.size !== 3) {
-    filesystemTrustError(
+    linuxAclTrustError(
+      context,
+      "incomplete_base",
       "protected close received an incomplete Linux filesystem ACL",
     );
   }
@@ -993,7 +1063,9 @@ function assertLinuxBasicAccessControlList(path: string): void {
   if (baseAcl.get("user") !== permissionText(0o400, 0o200, 0o100)
     || baseAcl.get("group") !== permissionText(0o040, 0o020, 0o010)
     || baseAcl.get("other") !== permissionText(0o004, 0o002, 0o001)) {
-    filesystemTrustError(
+    linuxAclTrustError(
+      context,
+      "mode_mismatch",
       "protected close received a Linux ACL that contradicts filesystem mode",
     );
   }
@@ -1045,9 +1117,12 @@ function assertDarwinNoDelegatedAccessControlList(path: string): void {
   }
 }
 
-function assertNoDelegatedAccessControlList(path: string): void {
+function assertNoDelegatedAccessControlList(
+  path: string,
+  context: FilesystemAclInspectionContext,
+): void {
   if (process.platform === "linux") {
-    assertLinuxBasicAccessControlList(path);
+    assertLinuxBasicAccessControlList(path, context);
     return;
   }
   if (process.platform === "darwin") {
@@ -1075,7 +1150,10 @@ function assertTrustedDirectoryChain(
         "protected close requires a current-user parent and a non-writable current-user/root ancestor chain",
       );
     }
-    assertNoDelegatedAccessControlList(directory);
+    assertNoDelegatedAccessControlList(
+      directory,
+      { object: directParent ? "direct_parent" : "ancestor" },
+    );
     const parent = dirname(directory);
     if (parent === directory) break;
     directory = parent;
@@ -1096,7 +1174,7 @@ function assertTrustedOwnedRegularFile(
       `protected close requires every SQLite ${kind} to be a current-user regular file without group/other write authority`,
     );
   }
-  assertNoDelegatedAccessControlList(path);
+  assertNoDelegatedAccessControlList(path, { object: kind });
 }
 
 function inspectTrustedSqliteSidecars(

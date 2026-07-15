@@ -218,6 +218,30 @@ function closingCode(expectedCode: string) {
   };
 }
 
+function closingFilesystemDiagnostic(
+  expectedObject: "database" | "sidecar" | "direct_parent" | "ancestor",
+  expectedEntryKind: "default" | "duplicate_base" | "effective_comment" | "flags"
+    | "incomplete_base" | "mask" | "mode_mismatch" | "named_group" | "named_user"
+    | "unparseable" | "verifier_failure",
+  forbiddenMessageFragments: readonly string[] = [],
+) {
+  return (error: unknown): boolean => {
+    assert.ok(error instanceof LearningExperimentClosingError);
+    assert.equal(error.code, "learning_experiment_close_database_filesystem_untrusted");
+    assert.equal(
+      error.message.endsWith(
+        `[object=${expectedObject} entry_kind=${expectedEntryKind}]`,
+      ),
+      true,
+      `unexpected protected-close ACL diagnostic: ${error.message}`,
+    );
+    for (const fragment of forbiddenMessageFragments) {
+      assert.equal(error.message.includes(fragment), false);
+    }
+    return true;
+  };
+}
+
 function closer(
   runtime: ConfirmatoryFixtureRuntime,
   options: Readonly<{
@@ -1409,7 +1433,11 @@ test("Linux extended ACL fails protected close even when mode has no write bit",
           path: temp.path,
           ...closeInput(fixture, authorization),
         }),
-        closingCode("learning_experiment_close_database_filesystem_untrusted"),
+        closingFilesystemDiagnostic("database", "named_user", [
+          temp.path,
+          String(delegatedUid),
+          "r--",
+        ]),
       );
     } finally {
       restoreEnvironment();
