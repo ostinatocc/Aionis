@@ -2,6 +2,8 @@ import {
   LearningExperimentProvisioningError,
   createLiteLearningExperimentProvisioner,
 } from "../../../src/store/lite-learning-experiment-provisioning.js";
+import type { SqliteTransactionRunOptions } from
+  "../../../src/store/sqlite-transaction-runner.js";
 import {
   CONFIRMATORY_DEFAULT_TENANT_ID,
   CONFIRMATORY_NOW,
@@ -11,23 +13,79 @@ import {
   sha256,
 } from "./learning-experiment-confirmatory-fixture.js";
 
-type ParentCommand = Readonly<{ type: "go" }>;
+type ParentCommand = Readonly<{
+  type: "go" | "release_lock";
+}>;
+
+type ChildRole = "holder" | "contender";
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 const databasePath = process.argv[2];
 const childIndexRaw = process.argv[3];
-if (!databasePath || !childIndexRaw || !process.send) {
-  throw new Error("confirmatory provision child requires DB path, child index, and IPC");
+const roleRaw = process.argv[4];
+if (!databasePath || !childIndexRaw || !roleRaw || !process.send) {
+  throw new Error("confirmatory provision child requires DB path, child index, role, and IPC");
 }
 const childIndex = Number(childIndexRaw);
 if (!Number.isInteger(childIndex) || childIndex < 0 || childIndex > 255) {
   throw new Error("confirmatory provision child index must be one byte");
 }
+if (roleRaw !== "holder" && roleRaw !== "contender") {
+  throw new Error("confirmatory provision child role must be holder or contender");
+}
+const role: ChildRole = roleRaw;
 
-const runtime = openConfirmatoryFixtureRuntime(databasePath);
+const startGate = deferred();
+const releaseLockGate = deferred();
+process.on("message", (message: ParentCommand) => {
+  if (!message || typeof message !== "object") return;
+  if (message.type === "go") startGate.resolve();
+  if (message.type === "release_lock") releaseLockGate.resolve();
+});
+
+let heldBeforeCommit = false;
+const runtime = openConfirmatoryFixtureRuntime(databasePath, {
+  faultInjector: async (phase) => {
+    if (role !== "holder" || phase !== "before_commit" || heldBeforeCommit) return;
+    heldBeforeCommit = true;
+    process.send?.({ type: "lock_held", childIndex });
+    await releaseLockGate.promise;
+  },
+});
+if (role === "contender") {
+  // Compress the production 5-second busy window while preserving a real
+  // SQLite BEGIN IMMEDIATE timeout. The parent holds the winner beyond this
+  // complete window, so a one-shot BEGIN deterministically fails.
+  runtime.database.db.exec("PRAGMA busy_timeout = 250");
+}
 const entropySizes: number[] = [];
+let transactionAttemptingSent = false;
+const writeStore = role === "holder"
+  ? runtime.writeStore
+  : {
+      getWriteOperation: runtime.writeStore.getWriteOperation.bind(runtime.writeStore),
+      insertWriteOperation: runtime.writeStore.insertWriteOperation.bind(runtime.writeStore),
+      async withTx<T>(
+        fn: () => Promise<T>,
+        options?: SqliteTransactionRunOptions,
+      ): Promise<T> {
+        if (!transactionAttemptingSent) {
+          transactionAttemptingSent = true;
+          process.send?.({ type: "transaction_attempting", childIndex });
+        }
+        return await runtime.writeStore.withTx(fn, options);
+      },
+    };
 const provisioner = createLiteLearningExperimentProvisioner({
   database: runtime.database,
-  writeStore: runtime.writeStore,
+  writeStore,
   dependencies: {
     registry: createConfirmatoryPassedRegistry(),
     defaultTenantId: CONFIRMATORY_DEFAULT_TENANT_ID,
@@ -44,17 +102,18 @@ const provisioner = createLiteLearningExperimentProvisioner({
 process.send({ type: "ready", childIndex });
 
 try {
-  await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("confirmatory child start barrier timed out")), 20_000);
-    process.once("message", (message: ParentCommand) => {
-      clearTimeout(timeout);
-      if (!message || message.type !== "go") {
-        reject(new Error("confirmatory child received an invalid start command"));
-        return;
-      }
-      resolve();
-    });
+  let rejectStartTimeout!: (error: Error) => void;
+  const startTimeoutPromise = new Promise<never>((_, reject) => {
+    rejectStartTimeout = reject;
   });
+  const startTimeout = setTimeout(() => {
+    rejectStartTimeout(new Error("confirmatory child start barrier timed out"));
+  }, 20_000);
+  try {
+    await Promise.race([startGate.promise, startTimeoutPromise]);
+  } finally {
+    clearTimeout(startTimeout);
+  }
   const result = await provisioner.provision(createConfirmatoryProvisionInput());
   await runtime.close();
   process.send({

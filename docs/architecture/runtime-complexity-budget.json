@@ -1,10 +1,10 @@
 {
   "schema_version": "aionis_runtime_complexity_budget_v1",
-  "baseline_commit": "17487ea7d1f53083b5882cbbc0403376529a6121",
-  "intent": "Structural growth guard only; the exact Task 4.1 Step 4 rebaseline adds the durable unused-exposure learning-control queue and worker without changing routes, environment fields, or the zero-cycle allowance.",
+  "baseline_commit": "f1764bb8f7cd57c350592c4d79d951f0abcf4ec4",
+  "intent": "Structural growth guard only; the exact confirmatory provisioning hardening rebaseline adds BEGIN-only bounded SQLITE_BUSY retry without changing source-file, route, environment-field, largest-file, or zero-cycle allowances.",
   "thresholds": {
     "source_files": 315,
-    "source_lines": 151616,
+    "source_lines": 151677,
     "route_matrix_entries": 21,
     "env_schema_fields": 177,
     "import_cycles": 0,

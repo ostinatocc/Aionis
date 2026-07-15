@@ -85,6 +85,14 @@ export const LEARNING_EXPERIMENT_PROVISION_OPERATION_KIND =
 export const LEARNING_EXPERIMENT_PROVISION_AUTHORITY_SCOPE =
   "learning-experiment-authority-v1" as const;
 
+const CONFIRMATORY_PROVISION_BEGIN_BUSY_RETRY = {
+  // Runtime connections already wait five seconds inside each SQLite BEGIN.
+  // Six attempts keep confirmatory provisioning bounded to roughly 30 seconds
+  // without changing the connection-wide busy_timeout for unrelated writes.
+  maxAttempts: 6,
+  delayMs: 25,
+} as const;
+
 type ProvisioningGatePolicyRegistryEntry = Readonly<{
   policy_id: string;
   policy_version: string;
@@ -1741,7 +1749,9 @@ export function createLiteLearningExperimentProvisioner(args: {
           applicabilityManifestJson: stableStringify(manifest),
           replayed: false,
         };
-      });
+      }, derivedConfirmatory === null
+        ? undefined
+        : { beginBusyRetry: CONFIRMATORY_PROVISION_BEGIN_BUSY_RETRY });
     },
 
     async regenerateApplicabilityManifest(input) {

@@ -689,14 +689,20 @@ type RaceChildFailure = Readonly<{
 
 type RaceChildResult = RaceChildSuccess | RaceChildFailure;
 
-function startRaceChild(databasePath: string, childIndex: number): Readonly<{
+function startRaceChild(
+  databasePath: string,
+  childIndex: number,
+  role: "holder" | "contender",
+): Readonly<{
   child: ChildProcess;
   ready: Promise<void>;
+  lockHeld: Promise<void>;
+  transactionAttempting: Promise<void>;
   result: Promise<RaceChildResult>;
   exited: Promise<number | null>;
   stderr(): string;
 }> {
-  const child = fork(CHILD_PATH, [databasePath, String(childIndex)], {
+  const child = fork(CHILD_PATH, [databasePath, String(childIndex), role], {
     cwd: process.cwd(),
     execArgv: ["--import", "tsx"],
     stdio: ["ignore", "pipe", "pipe", "ipc"],
@@ -706,9 +712,15 @@ function startRaceChild(databasePath: string, childIndex: number): Readonly<{
     stderr += String(chunk);
   });
   let readySettled = false;
+  let lockHeldSettled = false;
+  let transactionAttemptingSettled = false;
   let resultSettled = false;
   let resolveReady!: () => void;
   let rejectReady!: (error: Error) => void;
+  let resolveLockHeld!: () => void;
+  let rejectLockHeld!: (error: Error) => void;
+  let resolveTransactionAttempting!: () => void;
+  let rejectTransactionAttempting!: (error: Error) => void;
   let resolveResult!: (result: RaceChildResult) => void;
   let rejectResult!: (error: Error) => void;
   const ready = new Promise<void>((resolve, reject) => {
@@ -719,12 +731,38 @@ function startRaceChild(databasePath: string, childIndex: number): Readonly<{
     resolveResult = resolve;
     rejectResult = reject;
   });
+  const lockHeld = new Promise<void>((resolve, reject) => {
+    resolveLockHeld = resolve;
+    rejectLockHeld = reject;
+  });
+  const transactionAttempting = new Promise<void>((resolve, reject) => {
+    resolveTransactionAttempting = resolve;
+    rejectTransactionAttempting = reject;
+  });
+  if (role === "contender") {
+    lockHeldSettled = true;
+    resolveLockHeld();
+  } else {
+    transactionAttemptingSettled = true;
+    resolveTransactionAttempting();
+  }
   child.on("message", (message: unknown) => {
     if (!message || typeof message !== "object") return;
     const record = message as Record<string, unknown>;
     if (record.type === "ready" && record.childIndex === childIndex && !readySettled) {
       readySettled = true;
       resolveReady();
+      return;
+    }
+    if (record.type === "lock_held" && record.childIndex === childIndex && !lockHeldSettled) {
+      lockHeldSettled = true;
+      resolveLockHeld();
+      return;
+    }
+    if (record.type === "transaction_attempting"
+      && record.childIndex === childIndex && !transactionAttemptingSettled) {
+      transactionAttemptingSettled = true;
+      resolveTransactionAttempting();
       return;
     }
     if (record.type === "result" && !resultSettled) {
@@ -741,6 +779,14 @@ function startRaceChild(databasePath: string, childIndex: number): Readonly<{
       resultSettled = true;
       rejectResult(error);
     }
+    if (!lockHeldSettled) {
+      lockHeldSettled = true;
+      rejectLockHeld(error);
+    }
+    if (!transactionAttemptingSettled) {
+      transactionAttemptingSettled = true;
+      rejectTransactionAttempting(error);
+    }
   });
   const exited = new Promise<number | null>((resolve) => {
     child.on("exit", (code) => {
@@ -752,13 +798,31 @@ function startRaceChild(databasePath: string, childIndex: number): Readonly<{
         resultSettled = true;
         rejectResult(new Error(`race child ${String(childIndex)} exited before result: ${stderr}`));
       }
+      if (!lockHeldSettled) {
+        lockHeldSettled = true;
+        rejectLockHeld(new Error(`race child ${String(childIndex)} exited before holding lock: ${stderr}`));
+      }
+      if (!transactionAttemptingSettled) {
+        transactionAttemptingSettled = true;
+        rejectTransactionAttempting(
+          new Error(`race child ${String(childIndex)} exited before transaction attempt: ${stderr}`),
+        );
+      }
       resolve(code);
     });
   });
-  return { child, ready, result, exited, stderr: () => stderr };
+  return {
+    child,
+    ready,
+    lockHeld,
+    transactionAttempting,
+    result,
+    exited,
+    stderr: () => stderr,
+  };
 }
 
-test("two real child processes serialize one confirmatory fresh write and one exact replay", {
+test("confirmatory provisioning retries after one complete real SQLite busy window", {
   timeout: 60_000,
 }, async () => {
   const temp = tempDatabase("process-race");
@@ -772,27 +836,31 @@ test("two real child processes serialize one confirmatory fresh write and one ex
       await setup.close();
     }
 
-    left = startRaceChild(temp.path, 0);
-    right = startRaceChild(temp.path, 1);
+    left = startRaceChild(temp.path, 0, "holder");
+    right = startRaceChild(temp.path, 1, "contender");
     await Promise.all([left.ready, right.ready]);
     left.child.send({ type: "go" });
+    await left.lockHeld;
     right.child.send({ type: "go" });
+    await right.transactionAttempting;
+    const releaseTimer = setTimeout(() => {
+      left?.child.send({ type: "release_lock" });
+    }, 600);
     const results = await Promise.all([left.result, right.result]);
+    clearTimeout(releaseTimer);
     const exitCodes = await Promise.all([left.exited, right.exited]);
     assert.deepEqual(exitCodes, [0, 0], `child stderr: ${left.stderr()} ${right.stderr()}`);
     for (const result of results) {
       assert.equal(result.ok, true, result.ok ? undefined : result.message);
     }
     const successes = results as RaceChildSuccess[];
-    assert.deepEqual(successes.map((result) => result.replayed).sort(), [false, true]);
+    assert.equal(successes[0]!.replayed, false);
+    assert.equal(successes[1]!.replayed, true);
     assert.equal(successes[0]!.receiptSha256, successes[1]!.receiptSha256);
-    assert.deepEqual(
-      successes.map((result) => result.entropySizes.join(",")).sort(),
-      ["", "32,48"],
-    );
+    assert.deepEqual(successes[0]!.entropySizes, [32, 48]);
+    assert.deepEqual(successes[1]!.entropySizes, []);
 
-    const fresh = successes.find((result) => !result.replayed);
-    assert.ok(fresh);
+    const fresh = successes[0]!;
     const reopened = openConfirmatoryFixtureRuntime(temp.path);
     try {
       assertConfirmatoryAuthorityCounts(reopened);
