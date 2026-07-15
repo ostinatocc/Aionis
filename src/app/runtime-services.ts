@@ -14,7 +14,12 @@ import { createSandboxStore } from "../store/sandbox-access.js";
 import { createLiteWriteStoreFromDatabase } from "../store/lite-write-store.js";
 import { createLiteClaimLedgerStoreFromDatabase } from "../store/lite-claim-ledger-store.js";
 import { createLiteRuntimeDatabase } from "../store/lite-runtime-database.js";
-import { createLiteSkillCandidateReviewStore } from "../store/lite-skill-candidate-review-store.js";
+import { createLiteLearningEpisodeLedgerAccess } from "../store/lite-learning-episode-ledger.js";
+import {
+  LiteTenantScopeAuthorityError,
+  ensureLiteTenantScopeEncodingAnchor,
+} from "../store/lite-tenant-scope-authority.js";
+import { createLiteSkillCandidateReviewStoreFromDatabase } from "../store/lite-skill-candidate-review-store.js";
 import { createLocalAnnIndex } from "../store/ann/local-ann-index.js";
 import { createZvecAnnIndex } from "../store/ann/zvec-ann-index.js";
 import { createSubstrateSidecarCandidateProvider } from "../store/substrate-sidecar-recall.js";
@@ -134,9 +139,32 @@ export async function createRuntimeServices(config: RuntimeServiceConfig) {
     closeDatabaseOnClose: true,
     annProjectionEnabled: annIndex !== null,
   });
+  const learningEpisodeLedgerAccess = createLiteLearningEpisodeLedgerAccess(runtimeDatabase);
+  try {
+    await liteWriteStore.withTx(async () => {
+      ensureLiteTenantScopeEncodingAnchor(
+        runtimeDatabase.db,
+        runtimeDatabase.transaction,
+        runtime.MEMORY_TENANT_ID,
+      );
+    });
+  } catch (error) {
+    if (!(error instanceof LiteTenantScopeAuthorityError)
+      || error.code !== "lite_tenant_scope_anchor_missing_for_existing_unprefixed_memory") {
+      await Promise.allSettled([
+        liteWriteStore.close(),
+        liteReplayStore?.close() ?? Promise.resolve(),
+        store.close(),
+      ]);
+      throw error;
+    }
+    // A legacy database cannot safely infer who owns its unprefixed scopes.
+    // Keep the Runtime available, but leave confirmatory provisioning fail-closed
+    // until an explicit offline migration establishes the immutable anchor.
+  }
   const liteClaimLedgerStore = createLiteClaimLedgerStoreFromDatabase(runtimeDatabase);
   const claimLedgerAccess = liteClaimLedgerStore.createClaimLedgerAccess();
-  const liteSkillCandidateReviewStore = createLiteSkillCandidateReviewStore(storage.LITE_WRITE_SQLITE_PATH);
+  const liteSkillCandidateReviewStore = createLiteSkillCandidateReviewStoreFromDatabase(runtimeDatabase);
   const skillCandidateReviewAccess = liteSkillCandidateReviewStore.createSkillCandidateReviewAccess();
   const executionStateStore = createLiteExecutionStateStoreFromDatabase(runtimeDatabase.db, {
     path: runtimeDatabase.path,
@@ -291,6 +319,7 @@ export async function createRuntimeServices(config: RuntimeServiceConfig) {
     liteReplayStore,
     liteReplayAccess,
     liteWriteStore,
+    learningEpisodeLedgerAccess,
     liteClaimLedgerStore,
     claimLedgerAccess,
     liteSkillCandidateReviewStore,

@@ -1,5 +1,3 @@
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 import { AionisEffectReportSchema } from "../memory/product-output-contract.js";
 import type {
   ProductMeasurementRecord,
@@ -9,12 +7,8 @@ import type {
   TraceDerivedSkillTrainingCandidate,
 } from "./memory-store.js";
 import { productMeasurementDigest, stableJsonDigest } from "./memory-store.js";
-import {
-  createSqliteDatabase,
-  ignoreSqliteDuplicateColumnError,
-  type SqliteDatabase,
-} from "./sqlite.js";
-import { createSqliteTransactionRunner } from "./sqlite-transaction-runner.js";
+import { createLiteRuntimeDatabase, type LiteRuntimeDatabase } from "./lite-runtime-database.js";
+import { ignoreSqliteDuplicateColumnError, type SqliteDatabase } from "./sqlite.js";
 
 export type LiteSkillCandidateReviewStore = {
   createSkillCandidateReviewAccess(): SkillCandidateReviewAccess;
@@ -167,10 +161,137 @@ function normalizeLimit(limit: number): number {
   return Number.isFinite(limit) && limit > 0 ? Math.min(500, Math.trunc(limit)) : 50;
 }
 
-function migrate(db: SqliteDatabase): void {
-  db.exec(`
-    PRAGMA journal_mode = WAL;
+const REQUIRED_SCHEMA_COLUMNS: Readonly<Record<string, readonly string[]>> = {
+  lite_product_measurements: [
+    "measurement_id",
+    "tenant_id",
+    "scope",
+    "source",
+    "measurement_digest",
+    "effect_report_json",
+    "eligible_for_skill_export",
+    "evidence_status",
+    "runtime_evidence_ids_json",
+    "eligibility_reasons_json",
+    "created_by",
+    "created_at",
+  ],
+  lite_skill_candidate_reviews: [
+    "candidate_id",
+    "tenant_id",
+    "scope",
+    "review_status",
+    "skill_name",
+    "label",
+    "export_ready",
+    "promotion_status",
+    "reason",
+    "source_ids_json",
+    "source_trace_ids_json",
+    "source_signal_ids_json",
+    "applies_when_json",
+    "does_not_apply_when_json",
+    "procedure_steps_json",
+    "target_files_json",
+    "acceptance_checks_json",
+    "failure_counterexamples_json",
+    "evidence_refs_json",
+    "candidate_json",
+    "measurement_id",
+    "measurement_digest",
+    "candidate_digest",
+    "eligible_for_promotion",
+    "row_version",
+    "reviewer_id",
+    "review_reason",
+    "created_at",
+    "updated_at",
+    "reviewed_at",
+  ],
+};
 
+const V3_MEASUREMENT_LINK_COLUMNS = [
+  "baseline_episode_id",
+  "after_episode_id",
+  "record_sha256",
+] as const;
+
+const REQUIRED_SCHEMA_INDEXES: Readonly<Record<string, string>> = {
+  idx_lite_product_measurements_scope_digest: "lite_product_measurements",
+  idx_lite_skill_candidate_reviews_scope_status: "lite_skill_candidate_reviews",
+  idx_lite_skill_candidate_reviews_scope_updated: "lite_skill_candidate_reviews",
+};
+
+function assertLiteSkillCandidateReviewSchema(db: SqliteDatabase): void {
+  const problems: string[] = [];
+  for (const [table, requiredColumns] of Object.entries(REQUIRED_SCHEMA_COLUMNS)) {
+    const rows = db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string; pk: number }>;
+    if (rows.length === 0) {
+      problems.push(`missing table ${table}`);
+      continue;
+    }
+    const columns = new Set(rows.map((row) => row.name));
+    const missing = requiredColumns.filter((column) => !columns.has(column));
+    if (missing.length > 0) problems.push(`${table} missing columns: ${missing.join(", ")}`);
+    const primaryKey = rows
+      .filter((row) => row.pk > 0)
+      .sort((left, right) => left.pk - right.pk)
+      .map((row) => row.name);
+    const expectedPrimaryKey = table === "lite_product_measurements" ? "measurement_id" : "candidate_id";
+    if (primaryKey.length !== 1 || primaryKey[0] !== expectedPrimaryKey) {
+      problems.push(`${table} primary key must be (${expectedPrimaryKey})`);
+    }
+  }
+  const indexStmt = db.prepare(
+    "SELECT tbl_name AS table_name FROM sqlite_schema WHERE type = 'index' AND name = ?",
+  );
+  for (const [index, expectedTable] of Object.entries(REQUIRED_SCHEMA_INDEXES)) {
+    const row = indexStmt.get(index) as { table_name: string } | undefined;
+    if (!row || row.table_name !== expectedTable) {
+      problems.push(`missing required index ${index} on ${expectedTable}`);
+    }
+  }
+  const measurementColumns = new Set(
+    (db.prepare("PRAGMA table_info('lite_product_measurements')").all() as Array<{ name: string }>)
+      .map((row) => row.name),
+  );
+  const presentV3LinkColumns = V3_MEASUREMENT_LINK_COLUMNS.filter((column) => measurementColumns.has(column));
+  const metadataColumns = db.prepare("PRAGMA table_info('lite_runtime_schema_metadata')").all() as Array<{
+    name: string;
+  }>;
+  let declaredWriteSchemaVersion: number | null = null;
+  if (metadataColumns.length > 0) {
+    const names = new Set(metadataColumns.map((column) => column.name));
+    if (["component", "version"].every((column) => names.has(column))) {
+      const metadata = db.prepare(
+        `SELECT version FROM lite_runtime_schema_metadata
+         WHERE component = 'write_projection'`,
+      ).get() as { version: unknown } | undefined;
+      if (metadata && Number.isInteger(Number(metadata.version))) {
+        declaredWriteSchemaVersion = Number(metadata.version);
+      }
+    }
+  }
+  if (declaredWriteSchemaVersion !== null && declaredWriteSchemaVersion >= 3) {
+    const missing = V3_MEASUREMENT_LINK_COLUMNS.filter((column) => !measurementColumns.has(column));
+    if (missing.length > 0) {
+      problems.push(`v3 lite_product_measurements missing columns: ${missing.join(", ")}`);
+    }
+  } else if (presentV3LinkColumns.length > 0) {
+    problems.push(
+      `v3 measurement linkage columns exist without write schema metadata v3: ${presentV3LinkColumns.join(", ")}`,
+    );
+  }
+  if (problems.length > 0) {
+    throw new Error(`lite_skill_candidate_review_schema_preflight_failed:${JSON.stringify(problems)}`);
+  }
+}
+
+export function migrateLiteSkillCandidateReviewSchema(
+  db: SqliteDatabase,
+  options: { includeLearningEpisodeLinks?: boolean } = {},
+): void {
+  db.exec(`
     CREATE TABLE IF NOT EXISTS lite_product_measurements (
       measurement_id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL,
@@ -243,14 +364,27 @@ function migrate(db: SqliteDatabase): void {
       ignoreSqliteDuplicateColumnError(error);
     }
   }
+  if (options.includeLearningEpisodeLinks) {
+    const addedMeasurementColumns = [
+      "baseline_episode_id TEXT",
+      "after_episode_id TEXT",
+      "record_sha256 TEXT",
+    ];
+    for (const column of addedMeasurementColumns) {
+      try {
+        db.exec(`ALTER TABLE lite_product_measurements ADD COLUMN ${column}`);
+      } catch (error) {
+        ignoreSqliteDuplicateColumnError(error);
+      }
+    }
+  }
 }
 
-function reviewAccessForDb(db: SqliteDatabase): SkillCandidateReviewAccess {
-  const transaction = createSqliteTransactionRunner({
-    begin: () => db.exec("BEGIN IMMEDIATE"),
-    commit: () => db.exec("COMMIT"),
-    rollback: () => db.exec("ROLLBACK"),
-  });
+function reviewAccessForDb(
+  database: LiteRuntimeDatabase,
+  closeAccess?: () => Promise<void>,
+): SkillCandidateReviewAccess {
+  const { db, transaction } = database;
 
   const getByIdStmt = db.prepare<SkillCandidateReviewRecord>(`
     SELECT * FROM lite_skill_candidate_reviews
@@ -326,6 +460,10 @@ function reviewAccessForDb(db: SqliteDatabase): SkillCandidateReviewAccess {
   }
 
   return {
+    transactionRunner() {
+      return transaction;
+    },
+
     async recordMeasurement(args) {
       return await transaction.run(async () => {
         if (productMeasurementDigest(args.record) !== args.record.measurement_digest) {
@@ -368,12 +506,14 @@ function reviewAccessForDb(db: SqliteDatabase): SkillCandidateReviewAccess {
     },
 
     async getMeasurement(args) {
-      const row = getMeasurementStmt.get(
-        args.tenantId,
-        args.scope,
-        args.measurementId,
-      ) as ProductMeasurementDbRecord | undefined;
-      return row ? measurementFromRecord(row) : null;
+      return await transaction.read(() => {
+        const row = getMeasurementStmt.get(
+          args.tenantId,
+          args.scope,
+          args.measurementId,
+        ) as ProductMeasurementDbRecord | undefined;
+        return row ? measurementFromRecord(row) : null;
+      });
     },
 
     async enqueueTraceDerivedSkillCandidates(args) {
@@ -442,53 +582,73 @@ function reviewAccessForDb(db: SqliteDatabase): SkillCandidateReviewAccess {
     },
 
     async listTraceDerivedSkillCandidates(args) {
-      const limit = normalizeLimit(args.limit);
-      const rows = args.reviewStatus && args.reviewStatus !== "all"
-        ? listByStatusStmt.all(args.tenantId, args.scope, args.reviewStatus, limit)
-        : listAllStmt.all(args.tenantId, args.scope, limit);
-      return { rows: rows.map(rowFromRecord) };
+      return await transaction.read(() => {
+        const limit = normalizeLimit(args.limit);
+        const rows = args.reviewStatus && args.reviewStatus !== "all"
+          ? listByStatusStmt.all(args.tenantId, args.scope, args.reviewStatus, limit)
+          : listAllStmt.all(args.tenantId, args.scope, limit);
+        return { rows: rows.map(rowFromRecord) };
+      });
     },
 
     async getTraceDerivedSkillCandidate(args) {
-      const row = getByIdStmt.get(args.tenantId, args.scope, args.candidateId) as SkillCandidateReviewRecord | undefined;
-      return row ? rowFromRecord(row) : null;
+      return await transaction.read(() => {
+        const row = getByIdStmt.get(args.tenantId, args.scope, args.candidateId) as SkillCandidateReviewRecord | undefined;
+        return row ? rowFromRecord(row) : null;
+      });
     },
 
     async reviewTraceDerivedSkillCandidate(args) {
-      const at = args.now ?? nowIso();
-      const statement = args.reviewStatus === "promoted" ? promoteStmt : rejectStmt;
-      const result = statement.run(
-        args.reviewerId,
-        args.reason,
-        at,
-        at,
-        args.tenantId,
-        args.scope,
-        args.candidateId,
-        args.expectedVersion,
-      );
-      if (!changed(result)) return null;
-      const row = getByIdStmt.get(args.tenantId, args.scope, args.candidateId) as SkillCandidateReviewRecord | undefined;
-      return row ? rowFromRecord(row) : null;
+      return await transaction.run(async () => {
+        const at = args.now ?? nowIso();
+        const statement = args.reviewStatus === "promoted" ? promoteStmt : rejectStmt;
+        const result = statement.run(
+          args.reviewerId,
+          args.reason,
+          at,
+          at,
+          args.tenantId,
+          args.scope,
+          args.candidateId,
+          args.expectedVersion,
+        );
+        if (!changed(result)) return null;
+        const row = getByIdStmt.get(args.tenantId, args.scope, args.candidateId) as SkillCandidateReviewRecord | undefined;
+        return row ? rowFromRecord(row) : null;
+      });
     },
 
     async close() {
-      db.close();
+      await closeAccess?.();
     },
   };
 }
 
 export function createLiteSkillCandidateReviewStore(path: string): LiteSkillCandidateReviewStore {
-  mkdirSync(dirname(path), { recursive: true });
-  const db = createSqliteDatabase(path);
-  migrate(db);
-  const access = reviewAccessForDb(db);
+  const database = createLiteRuntimeDatabase(path);
+  try {
+    migrateLiteSkillCandidateReviewSchema(database.db);
+    return createLiteSkillCandidateReviewStoreFromDatabase(database, { closeDatabaseOnClose: true });
+  } catch (error) {
+    void database.close();
+    throw error;
+  }
+}
+
+export function createLiteSkillCandidateReviewStoreFromDatabase(
+  database: LiteRuntimeDatabase,
+  options: { closeDatabaseOnClose?: boolean } = {},
+): LiteSkillCandidateReviewStore {
+  const { path, db } = database;
+  assertLiteSkillCandidateReviewSchema(db);
+  const closeDatabase = options.closeDatabaseOnClose ? () => database.close() : undefined;
+  const access = reviewAccessForDb(database, closeDatabase);
   return {
     createSkillCandidateReviewAccess() {
       return access;
     },
     async close() {
-      await access.close();
+      if (options.closeDatabaseOnClose) await database.close();
     },
     healthSnapshot() {
       return { path, mode: "sqlite_skill_candidate_review_v2" };

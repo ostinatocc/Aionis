@@ -1,5 +1,11 @@
-import type { Env } from "../config.js";
-import { loadEnv } from "../config.js";
+import type {
+  AionisAdmissionCandidatePolicyProfileRule,
+  Env,
+} from "../config.js";
+import {
+  loadEnv,
+  parseAdmissionCandidatePolicyProfileRules,
+} from "../config.js";
 import {
   parseEmbeddingProviderConfig,
   type EmbeddingProviderConfig,
@@ -90,7 +96,16 @@ export type RuntimeIdentityConfig = Readonly<Pick<Env, RuntimeIdentityEnvKeys>> 
 };
 export type RuntimeStorageConfig = Readonly<Pick<Env, RuntimeStorageEnvKeys>>;
 export type RuntimeRecallConfig = Readonly<Pick<Env, RuntimeRecallEnvKeys>>;
-export type RuntimeGovernanceConfig = Readonly<Pick<Env, RuntimeGovernanceEnvKeys>>;
+type DeepReadonly<T> = T extends (...args: never[]) => unknown
+  ? T
+  : T extends readonly (infer U)[]
+    ? readonly DeepReadonly<U>[]
+    : T extends object
+      ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
+      : T;
+export type RuntimeGovernanceConfig = Readonly<Pick<Env, RuntimeGovernanceEnvKeys>> & {
+  readonly admissionCandidatePolicyProfileRules: readonly DeepReadonly<AionisAdmissionCandidatePolicyProfileRule>[];
+};
 export type RuntimeLimitConfig = Readonly<Pick<Env, RuntimeLimitEnvKeys>>;
 export type RuntimeSandboxConfig = Readonly<Pick<Env, RuntimeSandboxEnvKeys>>;
 export type RuntimeReplayConfig = Readonly<Pick<Env, RuntimeReplayEnvKeys>>;
@@ -117,6 +132,14 @@ function pickSection<T extends object>(
   return Object.freeze(Object.fromEntries(
     Object.entries(env).filter(([key]) => include(key as StringKey<Env>)),
   )) as T;
+}
+
+function deepFreeze<T>(value: T): DeepReadonly<T> {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value as DeepReadonly<T>;
 }
 
 function hasPrefix(key: string, prefixes: readonly string[]): boolean {
@@ -184,6 +207,13 @@ export function createRuntimeConfig(
       adminAllowOrigins: parseCsv(providerSource.CORS_ADMIN_ALLOW_ORIGINS ?? ""),
     }),
   });
+  const governance = deepFreeze({
+    ...pickSection<Pick<Env, RuntimeGovernanceEnvKeys>>(env, (key) =>
+      GOVERNANCE_KEYS.has(key as RuntimeGovernanceEnvKeys)),
+    admissionCandidatePolicyProfileRules: parseAdmissionCandidatePolicyProfileRules(
+      env.AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON ?? "[]",
+    ),
+  });
   return Object.freeze({
     runtime,
     storage: pickSection<RuntimeStorageConfig>(env, (key) => STORAGE_KEYS.has(key as RuntimeStorageEnvKeys)),
@@ -193,8 +223,7 @@ export function createRuntimeConfig(
         key.startsWith("RECALL_")
         && !hasPrefix(key, ["RECALL_RATE_LIMIT_", "RECALL_TEXT_EMBED_RATE_LIMIT_"])
       )),
-    governance: pickSection<RuntimeGovernanceConfig>(env, (key) =>
-      GOVERNANCE_KEYS.has(key as RuntimeGovernanceEnvKeys)),
+    governance,
     limits: pickSection<RuntimeLimitConfig>(env, (key) =>
       key === "MAX_TEXT_LEN"
       || hasPrefix(key, [

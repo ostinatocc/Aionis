@@ -418,6 +418,10 @@ function summarizeToolConflicts(explain: unknown): string[] {
   return out;
 }
 
+export type DeferredToolsSelectDecision = Parameters<LiteWriteStore["insertExecutionDecision"]>[0] & {
+  createdAt: string;
+};
+
 export async function selectTools(
   body: unknown,
   defaultScope: string,
@@ -427,6 +431,7 @@ export async function selectTools(
     recallAccess?: RecallStoreAccess | null;
     embedder?: EmbeddingProvider | null;
     persistDecision?: boolean;
+    onDecisionPrepared?: (decision: DeferredToolsSelectDecision) => void;
   } = {},
 ): Promise<ToolsSelectRouteContract> {
   const parsed = ToolsSelectRequest.parse(body);
@@ -544,22 +549,28 @@ export async function selectTools(
     skipped_suppressed_pattern_affinity_levels: uniqueStrings(suppressedPatterns.map((pattern) => pattern.affinity_level), 8),
     ...(parsed.include_shadow ? { shadow_tool_conflicts_summary } : {}),
   };
+  const decisionWrite = {
+    id: decision_id,
+    scope: tenancy.scope_key,
+    decisionKind: "tools_select" as const,
+    runId: parsed.run_id ?? null,
+    selectedTool: selection.selected ?? null,
+    candidatesJson: selection.candidates,
+    contextSha256: context_sha256,
+    policySha256: policy_sha256,
+    sourceRuleIds: source_rule_ids,
+    metadataJson: decisionMetadata,
+    commitId: null,
+  };
   const decisionRes: { id: string; created_at: string | null } = opts.persistDecision === false
-    ? { id: decision_id, created_at: null }
+    ? (() => {
+        if (!opts.onDecisionPrepared) return { id: decision_id, created_at: null };
+        const createdAt = new Date().toISOString();
+        opts.onDecisionPrepared({ ...decisionWrite, createdAt });
+        return { id: decision_id, created_at: createdAt };
+      })()
     : opts.liteWriteStore
-      ? await opts.liteWriteStore.insertExecutionDecision({
-        id: decision_id,
-        scope: tenancy.scope_key,
-        decisionKind: "tools_select",
-        runId: parsed.run_id ?? null,
-        selectedTool: selection.selected ?? null,
-        candidatesJson: selection.candidates,
-        contextSha256: context_sha256,
-        policySha256: policy_sha256,
-        sourceRuleIds: source_rule_ids,
-        metadataJson: decisionMetadata,
-        commitId: null,
-      })
+      ? await opts.liteWriteStore.insertExecutionDecision(decisionWrite)
       : (() => {
         throw new Error("selectTools decision persistence requires liteWriteStore");
       })();

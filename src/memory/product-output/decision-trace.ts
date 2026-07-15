@@ -39,6 +39,16 @@ import {
   stringValue,
   textMatchesMemoryEntry,
 } from "./memory-packet.js";
+import {
+  AIONIS_ADMISSION_CANDIDATE_POLICY_ID,
+  AIONIS_ADMISSION_CANDIDATE_POLICY_VERSION,
+  decideAdmissionCandidatePolicyAction,
+  resolveAdmissionCandidatePolicy,
+} from "../admission-candidate-policy.js";
+import {
+  classifyLearningTrack,
+  type FrozenPriorState,
+} from "../learning-episode-ledger.js";
 
 type FeedbackAttributionDetail = NonNullable<AionisMemoryDecisionTrace["memory_decisions"][number]["feedback_detail"]>;
 
@@ -2108,17 +2118,16 @@ export function buildAionisMemoryDecisionAuditReport(
   });
 }
 
-export const AIONIS_ADMISSION_SHADOW_POLICY_ID = "candidate_project_context_closed_loop_inspect";
+export const AIONIS_ADMISSION_SHADOW_POLICY_ID = AIONIS_ADMISSION_CANDIDATE_POLICY_ID;
 
-export const AIONIS_ADMISSION_SHADOW_POLICY_VERSION = "2026-06-18";
+export const AIONIS_ADMISSION_SHADOW_POLICY_VERSION = AIONIS_ADMISSION_CANDIDATE_POLICY_VERSION;
 
-const SHADOW_USED_FIELDS = [
-  "admission_action",
-  "source_backend",
-  "memory_type",
-  "closed_loop_effect_state",
-  "repeated_negative_posture",
-];
+const SHADOW_POLICY = resolveAdmissionCandidatePolicy(
+  AIONIS_ADMISSION_SHADOW_POLICY_ID,
+  AIONIS_ADMISSION_SHADOW_POLICY_VERSION,
+);
+
+const SHADOW_USED_FIELDS = [...SHADOW_POLICY.config.used_fields];
 
 type ShadowPolicyReportSource =
   | "memory_admission_record"
@@ -2160,55 +2169,37 @@ function shadowNonNegativeIntegerValue(value: number | null | undefined): number
   return Number.isInteger(value) && typeof value === "number" && value > 0 ? value : 0;
 }
 
+function frozenPriorStateForEntry(entry: AionisMemoryAdmissionShadowPolicyEntryInput): FrozenPriorState {
+  return {
+    prior_supported_use_count: shadowNonNegativeIntegerValue(entry.prior_supported_use_count),
+    prior_contradicted_use_count: shadowNonNegativeIntegerValue(entry.prior_contradicted_use_count),
+    prior_rehydrate_requested_count: shadowNonNegativeIntegerValue(entry.prior_rehydrate_requested_count),
+    prior_effect_state: closedLoopEffectStateValue(entry),
+    repeated_negative_posture: entry.repeated_negative_posture === true,
+  };
+}
+
+function candidateDecisionForEntry(entry: AionisMemoryAdmissionShadowPolicyEntryInput) {
+  return decideAdmissionCandidatePolicyAction({
+    recorded_action: entry.recorded_action,
+    memory_origin: entry.memory_origin,
+    source_backend: entry.source_backend,
+    memory_type: entry.memory_type,
+    closed_loop_effect_state: entry.closed_loop_effect_state,
+    repeated_negative_posture: entry.repeated_negative_posture,
+  }, SHADOW_POLICY);
+}
+
 function priorStateAvailable(entry: AionisMemoryAdmissionShadowPolicyEntryInput): boolean {
-  return shadowNonNegativeIntegerValue(entry.prior_supported_use_count) > 0
-    || shadowNonNegativeIntegerValue(entry.prior_contradicted_use_count) > 0
-    || shadowNonNegativeIntegerValue(entry.prior_rehydrate_requested_count) > 0
-    || closedLoopEffectStateValue(entry) !== "no_prior"
-    || entry.repeated_negative_posture === true;
-}
-
-function directUseCandidateMemoryType(entry: AionisMemoryAdmissionShadowPolicyEntryInput): boolean {
-  return entry.memory_type === "project_context" || entry.memory_type === "execution_memory";
-}
-
-function shadowActionForEntry(entry: AionisMemoryAdmissionShadowPolicyEntryInput): AionisMemoryDecisionSurface {
-  if (entry.recorded_action !== "use_now") return entry.recorded_action;
-  const backend = sourceBackendValue(entry);
-  const closedLoopEffectState = closedLoopEffectStateValue(entry);
-  const admitsDirectUse =
-    backend === "aionis"
-    && directUseCandidateMemoryType(entry)
-    && closedLoopEffectState !== "contradicted"
-    && closedLoopEffectState !== "mixed"
-    && entry.repeated_negative_posture !== true;
-  return admitsDirectUse ? "use_now" : "inspect_before_use";
-}
-
-function shadowReasonCodes(
-  entry: AionisMemoryAdmissionShadowPolicyEntryInput,
-  shadowAction: AionisMemoryDecisionSurface,
-): string[] {
-  if (entry.recorded_action !== "use_now") {
-    return ["hard_boundary_preserved", `recorded_action:${entry.recorded_action}`];
-  }
-  if (shadowAction === "use_now") return ["aionis_project_or_execution_context_shadow_use_now"];
-  const reasons: string[] = [];
-  if (sourceBackendValue(entry) !== "aionis") reasons.push("non_aionis_backend_shadow_inspect");
-  if (!directUseCandidateMemoryType(entry)) reasons.push("non_project_or_execution_memory_shadow_inspect");
-  const closedLoopEffectState = closedLoopEffectStateValue(entry);
-  if (closedLoopEffectState === "contradicted" || closedLoopEffectState === "mixed") {
-    reasons.push("closed_loop_counter_signal_shadow_inspect");
-  }
-  if (entry.repeated_negative_posture === true) reasons.push("repeated_negative_posture_shadow_inspect");
-  return reasons.length > 0 ? reasons : ["candidate_policy_shadow_inspect"];
+  return classifyLearningTrack(frozenPriorStateForEntry(entry)).track === "exploit";
 }
 
 export function buildAionisMemoryAdmissionShadowPolicyReport(
   input: AionisMemoryAdmissionShadowPolicyReportInput,
 ): AionisMemoryAdmissionShadowPolicyReport {
   const decisions = input.entries.slice(0, 96).map((entry) => {
-    const shadowAction = shadowActionForEntry(entry);
+    const candidateDecision = candidateDecisionForEntry(entry);
+    const shadowAction = candidateDecision.action as AionisMemoryDecisionSurface;
     return {
       memory_id: entry.memory_id,
       title: entry.title ?? null,
@@ -2222,7 +2213,7 @@ export function buildAionisMemoryAdmissionShadowPolicyReport(
       repeated_negative_posture: entry.repeated_negative_posture === true,
       prior_state_available: priorStateAvailable(entry),
       used_fields: SHADOW_USED_FIELDS,
-      reason_codes: shadowReasonCodes(entry, shadowAction),
+      reason_codes: candidateDecision.reason_codes,
     };
   });
   const policyChangedMemoryIds = decisions

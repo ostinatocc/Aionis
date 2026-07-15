@@ -18,10 +18,12 @@ import {
   registerApplicationRoutes,
   registerRuntimeErrorHandler,
 } from "../../src/server/http-server.ts";
+import { LITE_ROUTE_CAPABILITY_MATRIX } from "../../src/server/lite-runtime-boundary.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteReplayStore } from "../../src/store/lite-replay-store.ts";
 import { createLiteWriteStoreFromDatabase } from "../../src/store/lite-write-store.ts";
 import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
+import { LiteTenantScopeAuthorityError } from "../../src/store/lite-tenant-scope-authority.ts";
 import { buildAionisUri } from "../../src/memory/uri.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
 import { updateRuleState } from "../../src/memory/rules.ts";
@@ -102,6 +104,57 @@ async function serverEnv(writePath: string, replayPath: string): Promise<Env> {
     },
     () => loadEnv(),
   );
+}
+
+async function liteEnv(writePath: string, replayPath: string): Promise<Env> {
+  return withIsolatedEnv(
+    {
+      AIONIS_EDITION: "lite",
+      AIONIS_MODE: "local",
+      APP_ENV: "ci",
+      MEMORY_AUTH_MODE: "off",
+      MEMORY_TENANT_ID: "default",
+      MEMORY_SCOPE: "default",
+      LITE_LOCAL_ACTOR_ID: "local-user",
+      LITE_WRITE_SQLITE_PATH: writePath,
+      LITE_REPLAY_SQLITE_PATH: replayPath,
+      SANDBOX_ENABLED: "false",
+      RATE_LIMIT_ENABLED: "false",
+      WORKFLOW_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: "false",
+    },
+    () => loadEnv(),
+  );
+}
+
+async function closeConstructedRuntimeServices(
+  services: Awaited<ReturnType<typeof createRuntimeServices>>,
+): Promise<void> {
+  await services.executionTreeStore.close();
+  await services.executionStateStore.close();
+  await services.liteClaimLedgerStore.close();
+  await services.liteRecallStore.close();
+  await services.liteReplayStore.close();
+  await services.liteWriteStore.close();
+  services.sandboxExecutor.shutdown();
+  await services.store.close();
+}
+
+async function tenantScopeAnchorRows(databasePath: string): Promise<Array<{
+  tenant_id: string;
+  policy_config_sha256: string;
+}>> {
+  const database = createLiteRuntimeDatabase(databasePath);
+  try {
+    return database.db.prepare(
+      `SELECT tenant_id, policy_config_sha256
+       FROM lite_learning_policy_versions
+       WHERE policy_id = 'aionis.runtime.tenant_scope_encoding_anchor'
+         AND policy_version = 'v1'
+       ORDER BY tenant_id`,
+    ).all() as Array<{ tenant_id: string; policy_config_sha256: string }>;
+  } finally {
+    await database.close();
+  }
 }
 
 function registerServerProductApp(args: {
@@ -262,6 +315,45 @@ function registerServerProductApp(args: {
     productServices,
   };
 }
+
+test("Lite application registration exactly matches the governed route matrix", async () => {
+  const app = Fastify();
+  const registeredRoutes = new Set<string>();
+  app.addHook("onRoute", (route) => {
+    if (!route.url.startsWith("/v1/") || route.url.startsWith("/v1/admin/control")) return;
+    const methods = Array.isArray(route.method) ? route.method : [route.method];
+    for (const method of methods) {
+      if (method === "HEAD" || method === "OPTIONS") continue;
+      registeredRoutes.add(`${method} ${route.url}`);
+    }
+  });
+  const writePath = tmpDbPath("lite-route-inventory-write");
+  const replayPath = tmpDbPath("lite-route-inventory-replay");
+  const env = await liteEnv(writePath, replayPath);
+  const stores = registerServerProductApp({ app, env, writePath, replayPath });
+  try {
+    await app.ready();
+    const expectedRoutes = LITE_ROUTE_CAPABILITY_MATRIX
+      .map((entry) => `${entry.method} ${entry.path}`)
+      .sort();
+    assert.deepEqual([...registeredRoutes].sort(), expectedRoutes);
+    for (const url of [
+      "/v1/operator/workspaces",
+      "/v1/operator/runs",
+      "/v1/operator/runs/:run_id",
+      "/v1/operator/memories/:memory_id",
+    ]) {
+      assert.equal(app.hasRoute({ method: "GET", url }), false, `${url} must remain removed`);
+    }
+  } finally {
+    await app.close();
+    await stores.executionTreeStore.close();
+    await stores.executionStateStore.close();
+    await stores.liteRecallStore.close();
+    await stores.liteReplayStore.close();
+    await stores.liteWriteStore.close();
+  }
+});
 
 test("application registration exposes product routes but not replaced internal memory routes", async () => {
   const app = Fastify();
@@ -1082,6 +1174,70 @@ test("server edition can construct local-store Runtime services", async () => {
     services.sandboxExecutor.shutdown();
     await services.store.close();
   }
+});
+
+test("Runtime services establish one tenant-scope anchor, replay it, and reject default-tenant drift", async () => {
+  const writePath = tmpDbPath("tenant-anchor-services-write");
+  const replayPath = tmpDbPath("tenant-anchor-services-replay");
+  const tenantAEnv = await serverEnv(writePath, replayPath);
+  const first = await createRuntimeServices(createRuntimeConfig(tenantAEnv));
+  await closeConstructedRuntimeServices(first);
+  const firstRows = await tenantScopeAnchorRows(writePath);
+  assert.equal(firstRows.length, 1);
+  assert.equal(firstRows[0]?.tenant_id, "tenant-a");
+
+  const reopened = await createRuntimeServices(createRuntimeConfig(tenantAEnv));
+  await closeConstructedRuntimeServices(reopened);
+  assert.deepEqual(await tenantScopeAnchorRows(writePath), firstRows);
+
+  const tenantBEnv: Env = {
+    ...tenantAEnv,
+    MEMORY_TENANT_ID: "tenant-b",
+    MEMORY_SCOPE: "tenant-b/default",
+  };
+  await assert.rejects(
+    createRuntimeServices(createRuntimeConfig(tenantBEnv)),
+    (error: unknown) => {
+      assert.ok(error instanceof LiteTenantScopeAuthorityError);
+      assert.equal(error.code, "lite_tenant_scope_anchor_mismatch");
+      return true;
+    },
+  );
+  assert.deepEqual(await tenantScopeAnchorRows(writePath), firstRows);
+});
+
+test("Runtime services keep a legacy unanchored database available without claiming raw scopes", async () => {
+  const writePath = tmpDbPath("tenant-anchor-legacy-write");
+  const replayPath = tmpDbPath("tenant-anchor-legacy-replay");
+  const database = createLiteRuntimeDatabase(writePath);
+  const writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
+  try {
+    await writeStore.withTx(async () => {
+      await writeStore.insertCommit({
+        scope: "legacy-unprefixed-scope",
+        parentCommitId: null,
+        inputSha256: "1".repeat(64),
+        diffJson: "{}",
+        actor: "legacy-memory-writer",
+        modelVersion: null,
+        promptVersion: null,
+        commitHash: "2".repeat(64),
+      });
+    });
+  } finally {
+    await writeStore.close();
+    await database.close();
+  }
+
+  const env = await serverEnv(writePath, replayPath);
+  const services = await createRuntimeServices(createRuntimeConfig(env));
+  try {
+    assert.ok(services.liteWriteStore);
+    assert.deepEqual(await tenantScopeAnchorRows(writePath), []);
+  } finally {
+    await closeConstructedRuntimeServices(services);
+  }
+  assert.deepEqual(await tenantScopeAnchorRows(writePath), []);
 });
 
 test("server edition serves product routes over a real HTTP listener", async () => {

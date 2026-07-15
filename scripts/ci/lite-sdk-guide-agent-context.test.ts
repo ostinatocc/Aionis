@@ -4,6 +4,19 @@ import { createAionisClient } from "../../src/sdk.ts";
 
 const INSPECT_ID = "11111111-1111-4111-8111-111111111111";
 const REHYDRATE_ID = "22222222-2222-4222-8222-222222222222";
+const GUIDE_OPERATION_ID = "sdk-guide-agent-context-operation";
+const GUIDE_HOST_TASK_ENVELOPE = {
+  contract_version: "host_task_envelope_v1",
+  host_task_id: "sdk-guide-agent-context-task",
+  collector_id: "sdk-test-collector",
+  collector_version: "1.0.0",
+  task_family: "sdk-guide-agent-context",
+  task_signature: "sdk-guide-agent-context-task-signature",
+  repository_signature: "sdk-guide-agent-context-repository-signature",
+  source_task_sha256: "3".repeat(64),
+  source_event_sha256: "4".repeat(64),
+  created_at: "2026-07-14T00:00:00.000Z",
+} as const;
 
 test("SDK guideAgentContext renders execution contract and resolved evidence by default", async () => {
   const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
@@ -15,6 +28,7 @@ test("SDK guideAgentContext renders execution contract and resolved evidence by 
       return new Response(JSON.stringify({
         tenant_id: "tenant-a",
         scope: "scope-a",
+        operation_id: body.operation_id,
         guide_trace_id: "guide-trace-a",
         agent_context: {
           contract_version: "aionis_agent_context_v1",
@@ -64,6 +78,8 @@ test("SDK guideAgentContext renders execution contract and resolved evidence by 
     query_text: "Continue with exact evidence.",
     consumer_agent_id: "worker-a",
     consumer_team_id: "team-a",
+    operation_id: GUIDE_OPERATION_ID,
+    host_task_envelope_v1: GUIDE_HOST_TASK_ENVELOPE,
   }, undefined, {
     max_prompt_chars: 20_000,
   });
@@ -76,6 +92,13 @@ test("SDK guideAgentContext renders execution contract and resolved evidence by 
     "http://127.0.0.1:3001/v1/memory/resolve",
   ]);
   assert.equal(calls[0]?.body.mode, "full_power");
+  assert.equal(calls[0]?.body.operation_id, GUIDE_OPERATION_ID);
+  assert.deepEqual(calls[0]?.body.host_task_envelope_v1, GUIDE_HOST_TASK_ENVELOPE);
+  assert.equal((result.guide as Record<string, unknown>).operation_id, GUIDE_OPERATION_ID);
+  for (const resolveCall of calls.slice(1)) {
+    assert.equal(Object.hasOwn(resolveCall.body, "operation_id"), false);
+    assert.equal(Object.hasOwn(resolveCall.body, "host_task_envelope_v1"), false);
+  }
   assert.equal(calls[1]?.body.include_slots, true);
   assert.equal(calls[1]?.body.include_meta, true);
   assert.match(String(calls[1]?.body.uri), /aionis:\/\/tenant-a\/scope-a\/event\//);

@@ -23,11 +23,25 @@ import type {
 } from "../memory/associative-candidate-store.js";
 import { stableUuid } from "../util/uuid.js";
 import { assertDim } from "../util/vector-literal.js";
+import type { AuthorityReceiptResolvedKeyring } from
+  "../util/authority-receipt-keys.js";
 import { createLiteRuntimeDatabase, type LiteRuntimeDatabase } from "./lite-runtime-database.js";
 import {
   assertLiteRuntimeSchemaPreflight,
+  assertLiteRuntimeSchemaContractShape,
+  inspectLiteRuntimeSchema,
+  LITE_RUNTIME_WRITE_SCHEMA_VERSION,
   recordCurrentLiteRuntimeWriteSchema,
+  WRITE_SCHEMA_V4,
 } from "./lite-runtime-schema.js";
+import {
+  assertLiteLearningEpisodeLedgerIntegrity,
+  migrateLiteLearningEpisodeLedgerSchema,
+  migrateLiteRuntimeAuthorityIdentity,
+} from "./lite-learning-episode-ledger.js";
+import { migrateLiteLearningEpisodeLedgerV3ToV4 } from
+  "./lite-learning-schema-migration.js";
+import { migrateLiteSkillCandidateReviewSchema } from "./lite-skill-candidate-review-store.js";
 import {
   createLiteProjectionOutboxAccess,
   type LiteProjectionBacklogSnapshot,
@@ -79,6 +93,22 @@ export type LiteFindNodeRow = {
   topic_state: string | null;
   member_count: number | null;
 };
+
+export type LiteGuideLearningPriorStateResolution =
+  | {
+      status: "resolved";
+      memory_id: string;
+      node_type: string;
+      slots: Record<string, unknown>;
+    }
+  | {
+      status: "memory_node_missing";
+      memory_id: string;
+    }
+  | {
+      status: "memory_visibility_mismatch";
+      memory_id: string;
+    };
 
 export type LiteResolveNodeRow = LiteFindNodeRow & {
   commit_scope: string | null;
@@ -187,15 +217,6 @@ export type LiteExecutionNativeNodeRow = LiteFindNodeRow & {
   execution_native: ExecutionNativeV1;
 };
 
-export type LiteOperatorScopeSummaryRow = {
-  scope: string;
-  memory_count: number;
-  guide_trace_count: number;
-  run_count: number;
-  actor_count: number;
-  latest_memory_at: string | null;
-};
-
 export type LiteOutboxEventRow = {
   row_id: number;
   scope: string;
@@ -277,17 +298,6 @@ export type LiteWriteStore = WriteStoreAccess & LiteProjectionOutboxAccess & {
     runId?: string | null;
     limit: number;
   }): Promise<LiteProductGuideReceiptRow[]>;
-  listOperatorScopes(args: {
-    tenantId?: string | null;
-    defaultTenantId?: string | null;
-    limit: number;
-  }): Promise<LiteOperatorScopeSummaryRow[]>;
-  listOperatorGuideExposures(args: {
-    scope: string;
-    runId?: string | null;
-    guideTraceId?: string | null;
-    limit: number;
-  }): Promise<LiteFindNodeRow[]>;
   findNodes(args: {
     scope: string;
     id?: string | null;
@@ -303,6 +313,12 @@ export type LiteWriteStore = WriteStoreAccess & LiteProjectionOutboxAccess & {
     limit: number;
     offset: number;
   }): Promise<{ rows: LiteFindNodeRow[]; has_more: boolean }>;
+  resolveGuideLearningPriorStates(args: {
+    scope: string;
+    memoryIds: readonly string[];
+    consumerAgentId?: string | null;
+    consumerTeamId?: string | null;
+  }): Promise<Map<string, LiteGuideLearningPriorStateResolution>>;
   findExecutionNativeNodes(args: {
     scope: string;
     executionKind?: "distilled_evidence" | "distilled_fact" | "workflow_candidate" | "workflow_anchor" | "pattern_anchor" | "execution_native" | null;
@@ -381,6 +397,7 @@ export type LiteWriteStore = WriteStoreAccess & LiteProjectionOutboxAccess & {
     sourceRuleIds: string[];
     metadataJson: Record<string, unknown>;
     commitId: string | null;
+    createdAt?: string;
   }): Promise<{ id: string; created_at: string }>;
   getExecutionDecision(args: {
     scope: string;
@@ -495,7 +512,18 @@ export type LiteWriteAnnSync = {
 export type LiteWriteStoreOptions = {
   annSync?: LiteWriteAnnSync | null;
   annProjectionEnabled?: boolean;
+  schemaMigrationFaultInjector?: (phase: LiteWriteSchemaMigrationPhase) => void;
+  authorityReceiptKeyring?: AuthorityReceiptResolvedKeyring;
 };
+
+export type LiteWriteSchemaMigrationPhase =
+  | "after_v2_structures"
+  | "after_shared_measurement_structures"
+  | "after_authority_identity"
+  | "after_learning_ledger_structures"
+  | "after_v3_shape_verification"
+  | "before_metadata_update"
+  | "after_metadata_update_before_commit";
 
 export type LiteWriteStoreFromDatabaseOptions = LiteWriteStoreOptions & {
   closeDatabaseOnClose?: boolean;
@@ -585,6 +613,32 @@ type LiteMemoryNodeDbRow = {
   created_at: string;
   commit_id: string | null;
 };
+
+type LiteGuideLearningPriorNodeDbRow = {
+  id: string;
+  type: string;
+  slots_json: string;
+  memory_lane: "private" | "shared";
+  owner_agent_id: string | null;
+  owner_team_id: string | null;
+};
+
+// Keep the fixed scope parameter plus the ID placeholders comfortably below
+// SQLite builds that retain the historical 999-variable default.
+const LITE_GUIDE_LEARNING_PRIOR_QUERY_CHUNK_SIZE = 400;
+
+function parseGuideLearningPriorSlots(row: LiteGuideLearningPriorNodeDbRow): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(row.slots_json);
+  } catch {
+    throw new Error(`lite_guide_learning_prior_slots_invalid:${row.id}`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`lite_guide_learning_prior_slots_invalid:${row.id}`);
+  }
+  return parsed as Record<string, unknown>;
+}
 
 const LITE_EXECUTION_DECISION_SELECT_SQL = `SELECT
    id,
@@ -1006,9 +1060,75 @@ function buildLiteMemoryKeywordSlotsText(slots: Record<string, unknown>): string
   return Array.from(new Set(out.map((value) => value.trim()).filter(Boolean))).join("\n");
 }
 
+const SCHEMA_MIGRATION_PRESERVATION_TABLES = [
+  "lite_memory_commits",
+  "lite_memory_nodes",
+  "lite_memory_edges",
+  "lite_product_guide_receipts",
+  "lite_runtime_write_operations",
+  "lite_memory_rule_feedback",
+  "lite_product_measurements",
+  "lite_skill_candidate_reviews",
+] as const;
+
+function sqlitePragmaValue(db: SqliteDatabase, name: string): unknown {
+  const row = db.prepare(`PRAGMA ${name}`).get() as Record<string, unknown> | undefined;
+  return row ? Object.values(row)[0] : undefined;
+}
+
+function prepareLiteRuntimeWriteConnection(db: SqliteDatabase): void {
+  db.exec(`
+    PRAGMA journal_mode = WAL;
+    PRAGMA synchronous = FULL;
+    PRAGMA foreign_keys = ON;
+    PRAGMA busy_timeout = 5000;
+  `);
+  const journalMode = String(sqlitePragmaValue(db, "journal_mode") ?? "").toLowerCase();
+  const synchronous = Number(sqlitePragmaValue(db, "synchronous"));
+  const foreignKeys = Number(sqlitePragmaValue(db, "foreign_keys"));
+  if (journalMode !== "wal" || synchronous !== 2 || foreignKeys !== 1) {
+    throw new Error(
+      `lite_runtime_sqlite_pragma_verification_failed:${JSON.stringify({ journalMode, synchronous, foreignKeys })}`,
+    );
+  }
+}
+
+function tableExists(db: SqliteDatabase, table: string): boolean {
+  return !!db.prepare(
+    "SELECT 1 AS present FROM sqlite_schema WHERE type = 'table' AND name = ?",
+  ).get(table);
+}
+
+function migrationPreservationCounts(db: SqliteDatabase): Record<string, number> {
+  return Object.fromEntries(SCHEMA_MIGRATION_PRESERVATION_TABLES.map((table) => [
+    table,
+    tableExists(db, table)
+      ? Number((db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count)
+      : 0,
+  ]));
+}
+
+function assertMigrationPreservedRows(
+  before: Readonly<Record<string, number>>,
+  after: Readonly<Record<string, number>>,
+): void {
+  for (const table of SCHEMA_MIGRATION_PRESERVATION_TABLES) {
+    if ((before[table] ?? 0) !== (after[table] ?? 0)) {
+      throw new Error(
+        `lite_runtime_schema_migration_row_count_changed:${table}:${before[table] ?? 0}:${after[table] ?? 0}`,
+      );
+    }
+  }
+}
+
 export function createLiteWriteStore(path: string, opts: LiteWriteStoreOptions = {}): LiteWriteStore {
   const database = createLiteRuntimeDatabase(path);
-  return createLiteWriteStoreFromDatabase(database, { ...opts, closeDatabaseOnClose: true });
+  try {
+    return createLiteWriteStoreFromDatabase(database, { ...opts, closeDatabaseOnClose: true });
+  } catch (error) {
+    void database.close();
+    throw error;
+  }
 }
 
 export function createLiteWriteStoreFromDatabase(
@@ -1019,8 +1139,60 @@ export function createLiteWriteStoreFromDatabase(
   const annSync = opts.annSync ?? null;
   const annProjectionEnabled = opts.annProjectionEnabled ?? annSync !== null;
   const closeDatabaseOnClose = opts.closeDatabaseOnClose ?? false;
+  const learningIntegrityOptions = {
+    authorityReceiptKeyring: opts.authorityReceiptKeyring,
+  };
 
-  assertLiteRuntimeSchemaPreflight(db);
+  const initialSchema = assertLiteRuntimeSchemaPreflight(db);
+  prepareLiteRuntimeWriteConnection(db);
+  let schemaMigrationOpen = false;
+  let migrationSourceVersion: number | null = null;
+  let migrationBeforeCounts: Record<string, number> | null = null;
+  if (initialSchema.classification !== "current") {
+    db.exec("BEGIN IMMEDIATE");
+    schemaMigrationOpen = true;
+    try {
+      const lockedSchema = assertLiteRuntimeSchemaPreflight(db);
+      if (lockedSchema.classification === "current") {
+        assertLiteLearningEpisodeLedgerIntegrity(
+          db,
+          new Date().toISOString(),
+          learningIntegrityOptions,
+        );
+        db.exec("COMMIT");
+        schemaMigrationOpen = false;
+      } else {
+        migrationSourceVersion = lockedSchema.detected_version;
+        migrationBeforeCounts = migrationPreservationCounts(db);
+      }
+    } catch (error) {
+      if (schemaMigrationOpen) {
+        try {
+          db.exec("ROLLBACK");
+        } finally {
+          schemaMigrationOpen = false;
+        }
+      }
+      throw error;
+    }
+  } else {
+    assertLiteLearningEpisodeLedgerIntegrity(
+      db,
+      new Date().toISOString(),
+      learningIntegrityOptions,
+    );
+  }
+
+  const rollbackSchemaMigration = (error: unknown): never => {
+    if (schemaMigrationOpen) {
+      try {
+        db.exec("ROLLBACK");
+      } finally {
+        schemaMigrationOpen = false;
+      }
+    }
+    throw error;
+  };
 
   const runAnnSideEffect = async (callback: () => Promise<void>): Promise<void> => {
     try {
@@ -1046,9 +1218,9 @@ export function createLiteWriteStoreFromDatabase(
     await scheduleAnnSideEffect(() => annSync!.deleteNode(nodeId).then(() => undefined));
   };
 
-  db.exec(`
-    PRAGMA journal_mode = WAL;
-
+  if (schemaMigrationOpen && migrationSourceVersion !== 3) {
+    try {
+      db.exec(`
     CREATE TABLE IF NOT EXISTS lite_memory_commits (
       id TEXT PRIMARY KEY,
       scope TEXT NOT NULL,
@@ -1305,7 +1477,7 @@ export function createLiteWriteStoreFromDatabase(
       ON lite_memory_rule_feedback(scope, run_id, created_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_lite_memory_rule_feedback_scope_rule_created
       ON lite_memory_rule_feedback(scope, rule_node_id, created_at DESC, id DESC);
-  `);
+      `);
   try {
     db.exec("ALTER TABLE lite_memory_rule_defs ADD COLUMN positive_count INTEGER NOT NULL DEFAULT 0");
   } catch (err) {
@@ -1343,7 +1515,7 @@ export function createLiteWriteStoreFromDatabase(
       ignoreSqliteDuplicateColumnError(err);
     }
   }
-  db.exec(`
+      db.exec(`
     CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_family_created
       ON lite_memory_execution_native_index(scope, task_family, created_at DESC, node_id DESC);
     CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_repo_created
@@ -1354,7 +1526,11 @@ export function createLiteWriteStoreFromDatabase(
       ON lite_memory_execution_native_index(scope, verification_signature, created_at DESC, node_id DESC);
     CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_acceptance_created
       ON lite_memory_execution_native_index(scope, acceptance_check_signature, created_at DESC, node_id DESC);
-  `);
+      `);
+    } catch (error) {
+      rollbackSchemaMigration(error);
+    }
+  }
 
   const deleteExecutionNativeIndexRow = (scope: string, nodeId: string): void => {
     db.prepare(
@@ -1493,8 +1669,6 @@ export function createLiteWriteStoreFromDatabase(
     }
   };
 
-  rebuildExecutionNativeIndex();
-
   const rebuildKeywordIndex = (): void => {
     db.prepare("DELETE FROM lite_memory_keyword_index").run();
     const rows = db.prepare(
@@ -1506,11 +1680,58 @@ export function createLiteWriteStoreFromDatabase(
     }
   };
 
-  rebuildKeywordIndex();
+  let projectionOutbox!: ReturnType<typeof createLiteProjectionOutboxAccess>;
+  try {
+    rebuildExecutionNativeIndex();
+    rebuildKeywordIndex();
 
-  const projectionOutbox = createLiteProjectionOutboxAccess(database);
-  recordCurrentLiteRuntimeWriteSchema(db);
+    projectionOutbox = createLiteProjectionOutboxAccess(database);
+    if (schemaMigrationOpen) {
+      if (migrationSourceVersion === 3) {
+        migrateLiteLearningEpisodeLedgerV3ToV4(db);
+        opts.schemaMigrationFaultInjector?.("after_learning_ledger_structures");
+      } else {
+        opts.schemaMigrationFaultInjector?.("after_v2_structures");
 
+        migrateLiteSkillCandidateReviewSchema(db, { includeLearningEpisodeLinks: true });
+        opts.schemaMigrationFaultInjector?.("after_shared_measurement_structures");
+
+        migrateLiteRuntimeAuthorityIdentity(db);
+        opts.schemaMigrationFaultInjector?.("after_authority_identity");
+
+        migrateLiteLearningEpisodeLedgerSchema(db);
+        opts.schemaMigrationFaultInjector?.("after_learning_ledger_structures");
+      }
+
+      assertLiteRuntimeSchemaContractShape(db, WRITE_SCHEMA_V4);
+      assertMigrationPreservedRows(
+        migrationBeforeCounts ?? {},
+        migrationPreservationCounts(db),
+      );
+      opts.schemaMigrationFaultInjector?.("after_v3_shape_verification");
+      opts.schemaMigrationFaultInjector?.("before_metadata_update");
+
+      recordCurrentLiteRuntimeWriteSchema(db);
+      opts.schemaMigrationFaultInjector?.("after_metadata_update_before_commit");
+
+      const migratedSchema = inspectLiteRuntimeSchema(db);
+      if (migratedSchema.classification !== "current"
+        || migratedSchema.detected_version !== LITE_RUNTIME_WRITE_SCHEMA_VERSION) {
+        throw new Error(`lite_runtime_schema_migration_verification_failed:${JSON.stringify(migratedSchema)}`);
+      }
+      assertLiteLearningEpisodeLedgerIntegrity(
+        db,
+        new Date().toISOString(),
+        learningIntegrityOptions,
+      );
+      db.exec("COMMIT");
+      schemaMigrationOpen = false;
+    }
+  } catch (error) {
+    rollbackSchemaMigration(error);
+  }
+
+  let writeStoreClosed = false;
   return {
     capability_version: WRITE_STORE_ACCESS_CAPABILITY_VERSION,
     ...projectionOutbox,
@@ -1663,74 +1884,53 @@ export function createLiteWriteStoreFromDatabase(
       });
     },
 
-    async listOperatorScopes(args): Promise<LiteOperatorScopeSummaryRow[]> {
-      const where: string[] = [];
-      const params: unknown[] = [];
-      if (args.tenantId && args.defaultTenantId && args.tenantId !== args.defaultTenantId) {
-        where.push("scope LIKE ?");
-        params.push(`tenant:${args.tenantId}::scope:%`);
-      } else if (args.tenantId && args.defaultTenantId && args.tenantId === args.defaultTenantId) {
-        where.push("scope NOT LIKE 'tenant:%::scope:%'");
-      }
-      const rows = db.prepare(
-        `SELECT
-           scope,
-           COUNT(*) AS memory_count,
-           MAX(created_at) AS latest_memory_at,
-           SUM(CASE
-             WHEN json_extract(slots_json, '$.guide_exposure_v1.contract_version') = 'aionis_guide_exposure_v1'
-             THEN 1 ELSE 0
-           END) AS guide_trace_count,
-           COUNT(DISTINCT COALESCE(
-             json_extract(slots_json, '$.guide_exposure_v1.run_id'),
-             json_extract(slots_json, '$.run_id')
-           )) AS run_count,
-           COUNT(DISTINCT COALESCE(producer_agent_id, owner_agent_id, owner_team_id)) AS actor_count
-         FROM lite_memory_nodes
-         ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
-         GROUP BY scope
-         ORDER BY latest_memory_at DESC, scope ASC
-         LIMIT ?`,
-      ).all(...params, Math.max(1, args.limit)) as Array<{
-        scope: string;
-        memory_count: number;
-        latest_memory_at: string | null;
-        guide_trace_count: number | null;
-        run_count: number | null;
-        actor_count: number | null;
-      }>;
-      return rows.map((row) => ({
-        scope: row.scope,
-        memory_count: Number(row.memory_count ?? 0),
-        guide_trace_count: Number(row.guide_trace_count ?? 0),
-        run_count: Number(row.run_count ?? 0),
-        actor_count: Number(row.actor_count ?? 0),
-        latest_memory_at: row.latest_memory_at ?? null,
-      }));
-    },
-
-    async listOperatorGuideExposures(args): Promise<LiteFindNodeRow[]> {
+    async resolveGuideLearningPriorStates(args): Promise<Map<string, LiteGuideLearningPriorStateResolution>> {
       return await transaction.read(() => {
-      const where = [
-        "scope = ?",
-        "json_extract(slots_json, '$.guide_exposure_v1.contract_version') = 'aionis_guide_exposure_v1'",
-      ];
-      const params: unknown[] = [args.scope];
-      if (args.runId) {
-        where.push("json_extract(slots_json, '$.guide_exposure_v1.run_id') = ?");
-        params.push(args.runId);
-      }
-      if (args.guideTraceId) {
-        where.push("json_extract(slots_json, '$.guide_exposure_v1.guide_trace_id') = ?");
-        params.push(args.guideTraceId);
-      }
-      const rows = db.prepare(
-        `${LITE_MEMORY_NODE_SELECT_SQL}
-         WHERE ${where.join(" AND ")}
-         ORDER BY created_at DESC, id DESC
-         LIMIT ?`,
-      ).all(...params, Math.max(1, args.limit)) as LiteMemoryNodeDbRow[];
-      return rows.map(decodeLiteFindNodeRow);
+        const memoryIds: string[] = [];
+        const seen = new Set<string>();
+        for (const memoryId of args.memoryIds) {
+          if (typeof memoryId !== "string" || memoryId.trim().length === 0) {
+            throw new Error("lite_guide_learning_prior_memory_id_required");
+          }
+          if (seen.has(memoryId)) continue;
+          seen.add(memoryId);
+          memoryIds.push(memoryId);
+        }
+
+        const rowsByMemoryId = new Map<string, LiteGuideLearningPriorNodeDbRow>();
+        for (let offset = 0; offset < memoryIds.length; offset += LITE_GUIDE_LEARNING_PRIOR_QUERY_CHUNK_SIZE) {
+          const chunk = memoryIds.slice(offset, offset + LITE_GUIDE_LEARNING_PRIOR_QUERY_CHUNK_SIZE);
+          const placeholders = chunk.map(() => "?").join(",");
+          const rows = db.prepare(
+            `SELECT id, type, slots_json, memory_lane, owner_agent_id, owner_team_id
+             FROM lite_memory_nodes
+             WHERE scope = ?
+               AND id IN (${placeholders})`,
+          ).all(args.scope, ...chunk) as LiteGuideLearningPriorNodeDbRow[];
+          for (const row of rows) rowsByMemoryId.set(row.id, row);
+        }
+
+        const consumerAgentId = args.consumerAgentId ?? null;
+        const consumerTeamId = args.consumerTeamId ?? null;
+        const resolutions = new Map<string, LiteGuideLearningPriorStateResolution>();
+        for (const memoryId of memoryIds) {
+          const row = rowsByMemoryId.get(memoryId);
+          if (!row) {
+            resolutions.set(memoryId, { status: "memory_node_missing", memory_id: memoryId });
+            continue;
+          }
+          if (!nodeVisible(row, consumerAgentId, consumerTeamId)) {
+            resolutions.set(memoryId, { status: "memory_visibility_mismatch", memory_id: memoryId });
+            continue;
+          }
+          resolutions.set(memoryId, {
+            status: "resolved",
+            memory_id: memoryId,
+            node_type: row.type,
+            slots: parseGuideLearningPriorSlots(row),
+          });
+        }
+        return resolutions;
       });
     },
 
@@ -2221,7 +2421,7 @@ export function createLiteWriteStoreFromDatabase(
     },
 
     async insertExecutionDecision(args): Promise<{ id: string; created_at: string }> {
-      const createdAt = nowIso();
+      const createdAt = args.createdAt ?? nowIso();
       db.prepare(
         `INSERT OR REPLACE INTO lite_memory_execution_decisions
           (id, scope, decision_kind, run_id, selected_tool, candidates_json, context_sha256, policy_sha256,
@@ -3116,7 +3316,24 @@ export function createLiteWriteStoreFromDatabase(
     },
 
     async close(): Promise<void> {
-      if (closeDatabaseOnClose) await database.close();
+      if (writeStoreClosed) return;
+      let integrityError: unknown = null;
+      try {
+        await transaction.read(() => assertLiteLearningEpisodeLedgerIntegrity(
+          db,
+          new Date().toISOString(),
+          learningIntegrityOptions,
+        ));
+      } catch (error) {
+        integrityError = error;
+      } finally {
+        if (closeDatabaseOnClose) {
+          await database.close();
+          writeStoreClosed = true;
+        }
+      }
+      if (integrityError !== null) throw integrityError;
+      writeStoreClosed = true;
     },
 
     healthSnapshot() {

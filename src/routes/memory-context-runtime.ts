@@ -62,7 +62,10 @@ import {
 } from "../kernel/execution-continuity-kernel.js";
 import { buildExecutionMemoryIntrospectionLite } from "../memory/execution-introspection.js";
 import { evaluateRules } from "../memory/rules-evaluate.js";
-import { selectTools } from "../memory/tools-select.js";
+import {
+  selectTools,
+  type DeferredToolsSelectDecision,
+} from "../memory/tools-select.js";
 import { estimateTokenCountFromText } from "../memory/context.js";
 import { assembleLayeredContext, extractPlannerPacketSurface } from "../memory/context-orchestrator.js";
 import {
@@ -89,9 +92,19 @@ export type MemoryPlanningContextService = {
       body?: unknown;
       principal?: AuthPrincipal | null;
       principalAlreadyChecked?: boolean;
+      deferToolDecisionPersistence?: boolean;
     },
   ) => Promise<unknown>;
 };
+
+export const DEFERRED_PLANNING_TOOL_DECISION = Symbol("aionis.deferred_planning_tool_decision");
+
+export function deferredPlanningToolDecision(value: unknown): DeferredToolsSelectDecision | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return (value as { [DEFERRED_PLANNING_TOOL_DECISION]?: DeferredToolsSelectDecision })[
+    DEFERRED_PLANNING_TOOL_DECISION
+  ] ?? null;
+}
 type ExecutionContinuityStaticBlockLike = ReturnType<typeof executionPacketToStaticBlocks>[number];
 type ContextRuntimeRecallKnobs = {
   limit: number;
@@ -1132,6 +1145,8 @@ export function createMemoryPlanningContextService(args: {
     recallParsed: ParsedMemoryRecall;
     parsed: ParsedPlanningContext;
     context: unknown;
+    deferDecisionPersistence: boolean;
+    onDecisionPrepared: (decision: DeferredToolsSelectDecision) => void;
   }): Promise<ToolSelectionLike | null> => {
     if (!Array.isArray(args.parsed.tool_candidates) || args.parsed.tool_candidates.length === 0) {
       return null;
@@ -1147,6 +1162,8 @@ export function createMemoryPlanningContextService(args: {
         recallAccess: liteRecallAccess,
         embedder,
         liteWriteStore,
+        persistDecision: args.deferDecisionPersistence ? false : undefined,
+        onDecisionPrepared: args.deferDecisionPersistence ? args.onDecisionPrepared : undefined,
       },
     );
   };
@@ -1735,6 +1752,7 @@ export function createMemoryPlanningContextService(args: {
 
     const t0 = performance.now();
     const timings: Record<string, number> = {};
+    let deferredToolDecision: DeferredToolsSelectDecision | null = null;
     const preparedRequest = await prepareSurfaceRequest({
       req,
       requestKind: "planning_context",
@@ -1852,6 +1870,13 @@ export function createMemoryPlanningContextService(args: {
             recallParsed,
             parsed,
             context: planningExecutionContext,
+            deferDecisionPersistence: options.deferToolDecisionPersistence === true,
+            onDecisionPrepared(decision) {
+              if (deferredToolDecision) {
+                throw new Error("planning context prepared more than one tool decision");
+              }
+              deferredToolDecision = decision;
+            },
           });
           return { recall, rules, tools };
         },
@@ -2024,7 +2049,7 @@ export function createMemoryPlanningContextService(args: {
       selectionPolicy: recallOut?.context?.selection_policy ?? null,
     });
 
-    return {
+    const result = {
       tenant_id: tenantIdOut,
       scope: recallOut.scope,
       execution_kernel: buildExecutionKernelResponse(
@@ -2077,6 +2102,15 @@ export function createMemoryPlanningContextService(args: {
       layered_context: layeredContext,
       cost_signals: costSignals,
     };
+    if (deferredToolDecision) {
+      Object.defineProperty(result, DEFERRED_PLANNING_TOOL_DECISION, {
+        value: deferredToolDecision,
+        enumerable: false,
+        configurable: false,
+        writable: false,
+      });
+    }
+    return result;
   };
   const planningContextService: MemoryPlanningContextService = {
     assemble: assemblePlanningContext,

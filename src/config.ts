@@ -1,12 +1,26 @@
 import { isIP } from "node:net";
+import stableStringify from "fast-json-stable-stringify";
 import { z } from "zod";
 import { parseEmbeddingEnabledSurfacesJson } from "./embeddings/surface-policy.js";
+import {
+  AIONIS_ADMISSION_CANDIDATE_POLICY_ID,
+  AIONIS_ADMISSION_CANDIDATE_POLICY_VERSION,
+} from "./memory/admission-candidate-policy.js";
+import {
+  LEARNING_GATE_POLICY_ID,
+  LEARNING_GATE_POLICY_VERSION,
+} from "./memory/learning-gate-policy.js";
+import {
+  IntegrityOnlyExternalInputsV1Schema,
+  RequiredExternalInputsV1Schema,
+} from "./memory/learning-episode-ledger.js";
 import {
   AUTHORITY_RECEIPT_HMAC_ACTIVE_KEY_ID_ENV,
   AUTHORITY_RECEIPT_HMAC_KEYS_JSON_ENV,
   AUTHORITY_RECEIPT_HMAC_SECRET_ENV,
   resolveAuthorityReceiptKeyring,
 } from "./util/authority-receipt-keys.js";
+import { sha256Hex } from "./util/crypto.js";
 import { parseTrustedProxyCidrs } from "./util/ip-guard.js";
 import { applyRuntimeProfileDefaults } from "./config/runtime-profiles.js";
 
@@ -16,6 +30,202 @@ const InspectBeforeUseModeSchema = z.enum(["shadow", "active"]);
 const AdmissionCandidatePolicyModeSchema = z.enum(["off", "shadow", "active"]);
 const RecallAnnProviderSchema = z.enum(["off", "local", "zvec"]);
 const RecallEngineModeSchema = z.enum(["semantic_scan", "hybrid"]);
+
+const BoundedLearningIdSchema = z.string().trim().min(1).max(256);
+const LearningDigestSha256Schema = z.string().regex(/^[0-9a-f]{64}$/);
+const AdmissionExperimentVerifierVersionSchema = z.string().trim().min(1).superRefine((value, ctx) => {
+  if (Buffer.byteLength(value, "utf8") > 120) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "verifier version must be bounded to 120 UTF-8 bytes",
+    });
+  }
+});
+
+const ExactBoundedLearningIdSchema = z.string().superRefine((value, ctx) => {
+  if (value.length === 0 || value !== value.trim() || Buffer.byteLength(value, "utf8") > 256) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "expected exact bounded UTF-8 identifier",
+    });
+  }
+});
+
+const ExactExternalInputV1Schema = z.object({
+  immutable_input_manifest_sha256: LearningDigestSha256Schema,
+  retry_policy_sha256: LearningDigestSha256Schema,
+  planned_run_id: ExactBoundedLearningIdSchema,
+}).strict();
+
+const AdmissionExperimentRequiredExternalInputsSchema = z.intersection(
+  RequiredExternalInputsV1Schema,
+  z.object({
+    offline_paired: ExactExternalInputV1Schema,
+    production_shadow: ExactExternalInputV1Schema,
+    tool_e2e: ExactExternalInputV1Schema,
+  }).strict(),
+).superRefine((inputs, ctx) => {
+  const runIds = [
+    inputs.offline_paired.planned_run_id,
+    inputs.production_shadow.planned_run_id,
+    inputs.tool_e2e.planned_run_id,
+  ];
+  if (new Set(runIds).size !== runIds.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["tool_e2e", "planned_run_id"],
+      message: "external input planned_run_id values must be unique",
+    });
+  }
+});
+
+function canonicalUtf8Order(values: readonly string[]): string[] {
+  return [...values].sort((left, right) => Buffer.compare(
+    Buffer.from(left, "utf8"),
+    Buffer.from(right, "utf8"),
+  ));
+}
+
+const AdmissionExperimentEvidenceSeriesSchema = z.object({
+  offline_paired: BoundedLearningIdSchema,
+  production_shadow: BoundedLearningIdSchema,
+  tool_e2e: BoundedLearningIdSchema,
+  runtime_integrity: BoundedLearningIdSchema,
+}).strict().superRefine((series, ctx) => {
+  if (new Set(Object.values(series)).size !== 4) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "required evidence series IDs must be distinct",
+    });
+  }
+});
+
+const AdmissionExperimentVerifierSchema = z.object({
+  kind: z.enum(["instrumented_agent_trace", "deterministic_scorer"]),
+  version: AdmissionExperimentVerifierVersionSchema,
+  config_sha256: LearningDigestSha256Schema,
+}).strict();
+
+const AdmissionExperimentCollectionSourceSchema = z.object({
+  principal_sha256: LearningDigestSha256Schema,
+  class: z.enum(["eligible_host", "fixture_pilot"]),
+  collector_id: BoundedLearningIdSchema,
+  collector_version: z.string().trim().min(1).max(120),
+  verifier_policy_sha256: LearningDigestSha256Schema,
+  allowed_verifiers: z.array(AdmissionExperimentVerifierSchema).min(1).max(32),
+}).strict().superRefine((source, ctx) => {
+  const verifierKeys = source.allowed_verifiers.map((verifier) =>
+    `${verifier.kind}\u0000${verifier.version}\u0000${verifier.config_sha256}`
+  );
+  if (new Set(verifierKeys).size !== verifierKeys.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["allowed_verifiers"],
+      message: "allowed verifier tuples must be unique",
+    });
+  }
+  if (stableStringify(verifierKeys) !== stableStringify(canonicalUtf8Order(verifierKeys))) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["allowed_verifiers"],
+      message: "allowed verifier tuples must use canonical UTF-8 key order",
+    });
+  }
+  const expectedDigest = sha256Hex(stableStringify({
+    allowed_verifiers: source.allowed_verifiers,
+  }));
+  if (source.verifier_policy_sha256 !== expectedDigest) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["verifier_policy_sha256"],
+      message: "verifier policy digest does not bind the exact allowed verifier list",
+    });
+  }
+});
+
+const AdmissionCandidatePolicyExperimentSchema = z.object({
+  experiment_id: BoundedLearningIdSchema,
+  revision: z.number().int().positive(),
+  serving_phase: z.enum(["aa", "shadow", "active_control"]),
+  evidence_intent: z.enum(["integrity_only", "confirmatory"]),
+  assignment_design: z.enum([
+    "diagnostic_hash_v1",
+    "matched_pair_complete_randomization_v1",
+  ]),
+  candidate_policy_id: z.literal(AIONIS_ADMISSION_CANDIDATE_POLICY_ID),
+  candidate_policy_version: z.literal(AIONIS_ADMISSION_CANDIDATE_POLICY_VERSION),
+  candidate_allocation_bps: z.number().int().min(1_000).max(9_000),
+  gate_policy_id: z.literal(LEARNING_GATE_POLICY_ID),
+  gate_policy_version: z.literal(LEARNING_GATE_POLICY_VERSION),
+  required_evidence_series: AdmissionExperimentEvidenceSeriesSchema,
+  required_external_inputs: z.union([
+    IntegrityOnlyExternalInputsV1Schema,
+    AdmissionExperimentRequiredExternalInputsSchema,
+  ]).default({}),
+  external_execution_policy_ref: z.object({
+    registry_key: z.literal("external-execution-v1"),
+  }).strict(),
+  collection_sources: z.array(AdmissionExperimentCollectionSourceSchema).max(100).default([]),
+  safety_pause_mode: z.literal("automatic"),
+}).strict().superRefine((experiment, ctx) => {
+  const integrityOnly = experiment.serving_phase === "aa" || experiment.serving_phase === "shadow";
+  const expectedEvidenceIntent = integrityOnly ? "integrity_only" : "confirmatory";
+  if (experiment.evidence_intent !== expectedEvidenceIntent) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["evidence_intent"],
+      message: `${experiment.serving_phase} requires evidence_intent=${expectedEvidenceIntent}`,
+    });
+  }
+  const expectedAssignment = integrityOnly
+    ? "diagnostic_hash_v1"
+    : "matched_pair_complete_randomization_v1";
+  if (experiment.assignment_design !== expectedAssignment) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["assignment_design"],
+      message: `${experiment.serving_phase} requires assignment_design=${expectedAssignment}`,
+    });
+  }
+  if (experiment.serving_phase === "active_control" && experiment.candidate_allocation_bps !== 5_000) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["candidate_allocation_bps"],
+      message: "active_control requires candidate_allocation_bps=5000",
+    });
+  }
+  const externalInputKeys = Object.keys(experiment.required_external_inputs);
+  if (integrityOnly && externalInputKeys.length !== 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["required_external_inputs"],
+      message: "integrity-only experiments require the canonical empty external input mapping",
+    });
+  }
+  if (!integrityOnly && externalInputKeys.length !== 3) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["required_external_inputs"],
+      message: "confirmatory experiments require all three preregistered external input roles",
+    });
+  }
+  const principalFingerprints = experiment.collection_sources.map((source) => source.principal_sha256);
+  if (new Set(principalFingerprints).size !== principalFingerprints.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["collection_sources"],
+      message: "collection sources contain a duplicate principal fingerprint",
+    });
+  }
+  if (stableStringify(principalFingerprints)
+    !== stableStringify(canonicalUtf8Order(principalFingerprints))) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["collection_sources"],
+      message: "collection sources must use canonical principal fingerprint order",
+    });
+  }
+});
 
 const AdmissionCandidatePolicyProfileRuleSchema = z.object({
   profile_id: z.string().trim().min(1).max(120),
@@ -27,6 +237,7 @@ const AdmissionCandidatePolicyProfileRuleSchema = z.object({
   agent_roles: z.array(z.enum(["agent", "planner", "worker", "verifier", "reviewer"])).max(16).optional(),
   context_modes: z.array(z.enum(["standard", "full_power", "compact_agent"])).max(16).optional(),
   guide_modes: z.array(z.enum(["standard", "full_power"])).max(16).optional(),
+  experiment: AdmissionCandidatePolicyExperimentSchema.optional(),
 }).strict().superRefine((rule, ctx) => {
   const selectorCount = [
     rule.scopes,
@@ -44,9 +255,38 @@ const AdmissionCandidatePolicyProfileRuleSchema = z.object({
       path: ["profile_id"],
     });
   }
+  if (rule.mode === "shadow" && rule.experiment?.serving_phase === "active_control") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "profile mode=shadow is an authority ceiling and rejects serving_phase=active_control",
+      path: ["experiment", "serving_phase"],
+    });
+  }
 });
 
-const AdmissionCandidatePolicyProfileRulesSchema = z.array(AdmissionCandidatePolicyProfileRuleSchema).max(100);
+const AdmissionCandidatePolicyProfileRulesSchema = z.array(AdmissionCandidatePolicyProfileRuleSchema).max(100)
+  .superRefine((rules, ctx) => {
+    const immutableRevisionConfigs = new Map<string, string>();
+    for (const [index, rule] of rules.entries()) {
+      if (!rule.experiment) continue;
+      const revisionKey = `${rule.experiment.experiment_id}\u0000${rule.experiment.revision}`;
+      // One authority revision freezes exactly one profile/rule digest, not
+      // merely the nested experiment declaration. Reusing it under another
+      // selector or profile would create a configuration that can never match
+      // the persisted revision authority.
+      const canonicalConfig = stableStringify(rule);
+      const prior = immutableRevisionConfigs.get(revisionKey);
+      if (prior !== undefined && prior !== canonicalConfig) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index, "experiment"],
+          message: `experiment revision configuration drift: ${rule.experiment.experiment_id}@${rule.experiment.revision}`,
+        });
+      } else {
+        immutableRevisionConfigs.set(revisionKey, canonicalConfig);
+      }
+    }
+  });
 
 function sandboxRemoteHostAllowed(hostname: string, allowlist: string[]): boolean {
   const host = hostname.trim().toLowerCase();
@@ -555,7 +795,22 @@ const EnvSchema = z.object({
 });
 
 export type Env = z.infer<typeof EnvSchema>;
+export type AionisAdmissionCandidatePolicyExperiment = z.infer<
+  typeof AdmissionCandidatePolicyExperimentSchema
+>;
 export type AionisAdmissionCandidatePolicyProfileRule = z.infer<typeof AdmissionCandidatePolicyProfileRuleSchema>;
+
+export function admissionCandidatePolicyExperimentDeclarationDigest(
+  experiment: AionisAdmissionCandidatePolicyExperiment,
+): string {
+  return sha256Hex(stableStringify(AdmissionCandidatePolicyExperimentSchema.parse(experiment)));
+}
+
+export function admissionCandidatePolicyProfileRuleDigest(
+  rule: AionisAdmissionCandidatePolicyProfileRule,
+): string {
+  return sha256Hex(stableStringify(AdmissionCandidatePolicyProfileRuleSchema.parse(rule)));
+}
 
 export function parseAdmissionCandidatePolicyProfileRules(raw: string): AionisAdmissionCandidatePolicyProfileRule[] {
   let parsed: unknown;

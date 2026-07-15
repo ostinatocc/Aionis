@@ -34,6 +34,12 @@ const RETIRED_TEMPORARY_ROUTES = [
   "/v1/memory/tools/run",
   "/v1/memory/tools/feedback",
 ] as const;
+const REMOVED_OPERATOR_BROWSER_ROUTES = [
+  "/v1/operator/workspaces",
+  "/v1/operator/runs",
+  "/v1/operator/runs/:run_id",
+  "/v1/operator/memories/:memory_id",
+] as const;
 
 function sourceFiles(root: string): string[] {
   if (!fs.existsSync(root)) return [];
@@ -260,6 +266,7 @@ const INTERNAL_EXPOSURES = new Set<LiteRouteProductExposure>([
 const DOCUMENTED_NON_INTERNAL_ROUTES = new Set([
   "POST /v1/observe",
   "POST /v1/guide",
+  "POST /v1/memory/govern",
   "POST /v1/feedback",
   "POST /v1/rehydrate",
   "POST /v1/forget",
@@ -276,6 +283,7 @@ const DOCUMENTED_NON_INTERNAL_ROUTES = new Set([
   "GET /v1/operator/authority-effect-audit",
   "POST /v1/debug/memory-decision-trace",
   "POST /v1/audit/memory-decision-report",
+  "POST /v1/audit/flight-recorder",
   "GET /v1/runtime/boundary-inventory",
 ]);
 
@@ -388,6 +396,14 @@ test("only audited product and operator routes remain non-internal HTTP", () => 
       assert.notEqual(row.public_http, "required", `${key} is internal and cannot be required public HTTP`);
       continue;
     }
+    if (row.public_http === "removed") {
+      assert.equal(
+        LITE_ROUTE_CAPABILITY_MATRIX.some((entry) => `${entry.method} ${entry.path}` === key),
+        false,
+        `${key} is removed and cannot remain in the active route matrix`,
+      );
+      continue;
+    }
     assert.ok(DOCUMENTED_NON_INTERNAL_ROUTES.has(key), `${key} is not an audited non-internal route`);
     assert.equal(row.public_http, "required", `${key} must state that its public HTTP contract is required`);
     assert.match(row.docs_eval, /^docs:(public|operator)/, `${key} must cite public or operator documentation`);
@@ -406,9 +422,9 @@ test("internal HTTP inventory distinguishes temporary adapters from completed re
   const temporary = rows.filter((row) => row.public_http === "temporary");
   const removed = rows.filter((row) => row.public_http === "removed");
 
-  assert.equal(required.length, 19);
+  assert.equal(required.length, 21);
   assert.equal(temporary.length, 0);
-  assert.equal(removed.length, 53);
+  assert.equal(removed.length, 57);
 
   assert.equal(
     LITE_ROUTE_CAPABILITY_MATRIX.some((entry) => INTERNAL_EXPOSURES.has(entry.exposure)),
@@ -441,7 +457,7 @@ test("production and supported integration sources do not reference retired temp
 
   for (const file of roots.flatMap(sourceFiles)) {
     const source = fs.readFileSync(file, "utf8");
-    for (const route of RETIRED_TEMPORARY_ROUTES) {
+    for (const route of [...RETIRED_TEMPORARY_ROUTES, ...REMOVED_OPERATOR_BROWSER_ROUTES]) {
       assert.equal(source.includes(route), false, `${file} still references retired route ${route}`);
     }
   }

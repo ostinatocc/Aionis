@@ -11,6 +11,7 @@ import {
   type AionisAdmissionDatasetParsedRow,
 } from "./admission-dataset-holdout.js";
 import type { AionisMemoryAdmissionRecordEntry } from "../sdk.js";
+import { classifyLearningTrack } from "./learning-episode-ledger.js";
 
 type AdmissionAction = AionisMemoryAdmissionRecordEntry["admission_action"];
 
@@ -242,11 +243,13 @@ function roundRate(value: number): number {
 
 function hasClosedLoopPrior(row: AionisAdmissionDatasetParsedRow | null): boolean {
   if (!row) return false;
-  return row.prior_supported_use_count > 0
-    || row.prior_contradicted_use_count > 0
-    || row.prior_rehydrate_requested_count > 0
-    || row.closed_loop_effect_state !== "no_prior"
-    || row.repeated_negative_posture;
+  return classifyLearningTrack({
+    prior_supported_use_count: row.prior_supported_use_count,
+    prior_contradicted_use_count: row.prior_contradicted_use_count,
+    prior_rehydrate_requested_count: row.prior_rehydrate_requested_count,
+    prior_effect_state: row.closed_loop_effect_state,
+    repeated_negative_posture: row.repeated_negative_posture,
+  }).track === "exploit";
 }
 
 function selectedPriorBucket(row: AionisAdmissionDatasetParsedRow | null): AionisAdmissionRealAgentSelectedPriorBucket {

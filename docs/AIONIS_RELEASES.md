@@ -1,6 +1,6 @@
 # Aionis Releases
 
-Status: v0.3.6 Local Runtime Public Beta candidate.
+Status: v0.3.7 Local Runtime Public Beta candidate.
 
 This train targets one self-hosted Runtime process. It is not GA, a managed
 multi-tenant service, or a multi-instance HA release. Release tags are
@@ -11,12 +11,12 @@ a tag.
 
 | Artifact | Current channel | Immutable source ref | Purpose |
 |---|---:|---:|---|
-| GitHub Runtime source | `v0.3.6` candidate tag | `v0.3.6` | Runtime source, product APIs, docs, Docker build, and validation loops. |
-| Docker image | `ghcr.io/ostinatocc/aionis:v0.3.6` candidate | Runtime `v0.3.6` | Verified `linux/amd64` Local Runtime image with persistent SQLite state under `/data`. |
-| Default installer Runtime ref | `v0.3.6` | `v0.3.6` | Immutable source selected by the installer. |
+| GitHub Runtime source | `v0.3.7` candidate tag | `v0.3.7` | Runtime source, product APIs, docs, Docker build, and validation loops. |
+| Docker image | `ghcr.io/ostinatocc/aionis:v0.3.7` candidate | Runtime `v0.3.7` | Verified `linux/amd64` Local Runtime image with persistent SQLite state under `/data`. |
+| Default installer Runtime ref | `v0.3.6` | `v0.3.6` | Last immutable Runtime selected by the currently frozen installer. |
 | `aionis` | `0.3.8` npm candidate | `v0.3.8` | Top-level setup and operator CLI. |
-| `@aionis/create` | `0.3.8` candidate | `v0.3.8` | One-command Runtime installer pinned to Runtime v0.3.6. |
-| `@aionis/sdk` | `0.3.15` candidate | `v0.3.15` | Typed AgentContext, durable write receipts, projection scheduling, and evidence assessment. |
+| `@aionis/create` | `0.3.8` candidate | `v0.3.8` | One-command Runtime installer; its default remains Runtime v0.3.6 during this candidate. |
+| `@aionis/sdk` | `0.3.16` candidate | `v0.3.16` | Protected guide identity plus canonical host-task and host-use receipt contracts. |
 | `@aionis/mcp` | `0.3.7` candidate | `v0.3.7` | MCP stdio bridge for compatible clients. |
 | `@aionis/aifs` | `0.3.4` candidate | `v0.3.4` | Governed file surface for file-aware Agents. |
 | `@aionis/claude-code` | `0.3.5` candidate | `v0.3.5` | Claude Code lifecycle hooks and plugin metadata. |
@@ -24,31 +24,36 @@ a tag.
 
 Every package ref above is paired with an exact 40-character source commit in
 `release-train.json`. Before publication, each tag must resolve to that commit
-and pass cross-package checkout. Manifest remains outside the train until it
-has a verifiable source repository and immutable ref.
+and pass cross-package checkout. The SDK `v0.3.16` tag must be reachable before
+Runtime CI can verify this train.
 
 The candidate publishes only `linux/amd64`. `linux/arm64` remains outside the
 matrix until that exact platform has its own runtime smoke gate. Candidate
 status also means Docker `latest` is not moved.
 
-Runtime patch notes: [v0.3.6 release notes](./releases/v0.3.6.md).
+Runtime patch notes: [v0.3.7 release notes](./releases/v0.3.7.md).
 
-## v0.3.6 Maintenance Scope
+## v0.3.7 Candidate Scope
 
-v0.3.6 keeps the v0.3.5 HTTP, SDK/MCP, SQLite schema, and durable event
-contracts. It changes release integrity and the supported source-install floor:
+v0.3.7 establishes a fail-closed evidence substrate for learning without
+turning learning on globally:
 
-- Lite and fresh-install smoke use bounded direct-process cleanup;
-- Linux Docker release smoke owns and cleans its process group;
-- provenance uses a unique build/commit/run staging subject rather than
-  `latest`;
-- one verified digest is smoked before promotion to the version tag;
-- exact package checkouts are packed and exercised as real artifacts;
-- source/local Runtime and Create installs require Node.js `>=22.13.0` because
-  earlier experimental Node 22 SQLite releases have incompatible empty-row
-  semantics.
+- append-only learning episode authority and atomic v3-to-v4 migration;
+- protected experiment provisioning, exact replay, safety stop, and close;
+- protected guide operation identity with atomic exposure/item persistence;
+- strict host-task and host-use receipt roots;
+- atomic direct-memory feedback attribution bound to the exact served surface;
+- independently derived attribution strength and restart tamper detection;
+- SDK builders/parsers and a bounded host-adapter conformance command.
 
-Docker continues to use Node.js 24. No data migration is required from v0.3.5.
+Legacy unprotected calls remain compatible but cannot become formal learning
+evidence. Global candidate serving remains off. The production external policy
+registry is not registered and the gate remains `calibration_pending`.
+
+Task 4.1 Step 4 is not part of this checkpoint: the queue authority/schema is
+reserved and integrity-checked, but no production direct-feedback enqueue or
+lease/retry/dead-letter worker consumes it yet. Repeated-unused remains
+observation-only and does not mutate memory posture.
 
 ## Supported Deployment Shape
 
@@ -64,7 +69,7 @@ to an untrusted network.
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.6
+  ghcr.io/ostinatocc/aionis:v0.3.7
 ```
 
 ```bash
@@ -83,40 +88,46 @@ authentication and a service boundary; it is not a managed-service claim.
 npm run -s typecheck
 npm run -s lite:test
 npm run -s lite:smoke
-npm run -s sdk:check
+npm run -s sdk:check -- --sdk-repo /Volumes/ziel/new.aionis/aionis-sdk
 npm run -s complexity:check
-node scripts/ci/release-artifact-gate.mjs --check --expect-tag v0.3.6
+AIONIS_RELEASE_SDK_REPO=/Volumes/ziel/new.aionis/aionis-sdk \
+  node scripts/ci/release-artifact-gate.mjs --check --expect-tag v0.3.7
 npm run -s runtime:smoke:external-packages
 npm run -s runtime:smoke:fresh-install
 npm run -s runtime:smoke:published-cli
 docker build --platform linux/amd64 \
-  --iidfile /tmp/aionis-v0.3.6.iid \
-  -t aionis:v0.3.6-smoke .
+  --iidfile /tmp/aionis-v0.3.7.iid \
+  -t aionis:v0.3.7-smoke .
 bash scripts/ci/docker-release-smoke.sh \
-  "$(cat /tmp/aionis-v0.3.6.iid)"
+  "$(cat /tmp/aionis-v0.3.7.iid)"
 ```
 
-The gate includes real SQLite/HTTP transaction tests, immediate-post-commit
-crash recovery, exact package checkout, and digest-pinned Docker smoke. Mocks
-are not release evidence.
+The gate includes real SQLite/HTTP transaction tests, exact package checkout,
+restart integrity, and digest-pinned Docker smoke. Mocks are not release
+evidence.
 
 ## Publish Order
 
-Create remains unpublished until Runtime `v0.3.6` and its verified Docker
-digest resolve:
+SDK must resolve before Runtime CI consumes its frozen coordinate. The default
+installer remains on v0.3.6 until a separately reviewed installer update:
 
 ```bash
-# 1. Merge the verified Runtime release commit and create the immutable tag.
-cd /Volumes/ziel/new.aionis/AionisRuntime-focused
+# 1. Publish the verified SDK commit and immutable tag.
+cd /Volumes/ziel/new.aionis/aionis-sdk
 git push origin main
-git tag -a v0.3.6 -m "Aionis v0.3.6"
-git push origin v0.3.6
+git push origin v0.3.16
 
-# 2. Wait for Docker publication and verify the immutable Runtime artifact.
-git ls-remote --exit-code --tags origin refs/tags/v0.3.6
-docker pull ghcr.io/ostinatocc/aionis:v0.3.6
+# 2. Merge the verified Runtime release commit and create its immutable tag.
+cd /Volumes/ziel/new.aionis/AionisRuntime-focused
+git push origin release/v0.3.7
+git tag -a v0.3.7 -m "Aionis v0.3.7"
+git push origin v0.3.7
 
-# 3. Publish the already frozen version-pinned installer.
+# 3. Verify the Runtime artifact before changing installer defaults.
+git ls-remote --exit-code --tags origin refs/tags/v0.3.7
+docker pull ghcr.io/ostinatocc/aionis:v0.3.7
+
+# 4. Publish a separately frozen installer only after Runtime verification.
 cd /Volumes/ziel/new.aionis/aionis-create
 npm publish --access public
 ```
@@ -128,10 +139,10 @@ publication by itself.
 
 ```bash
 AIONIS_FRESH_INSTALL_CREATE_SPEC="@aionis/create@0.3.8" \
-AIONIS_FRESH_INSTALL_SDK_SPEC="@aionis/sdk@0.3.15" \
+AIONIS_FRESH_INSTALL_SDK_SPEC="@aionis/sdk@0.3.16" \
 AIONIS_FRESH_INSTALL_MCP_SPEC="@aionis/mcp@0.3.7" \
 AIONIS_FRESH_INSTALL_REPO="https://github.com/ostinatocc/Aionis.git" \
-AIONIS_FRESH_INSTALL_RUNTIME_REF="v0.3.6" \
+AIONIS_FRESH_INSTALL_RUNTIME_REF="v0.3.7" \
 npm run -s runtime:smoke:fresh-install
 
 AIONIS_PUBLISHED_CLI_SMOKE_SPEC="aionis@0.3.8" \
@@ -143,5 +154,6 @@ refs resolve and the exact-version smoke passes.
 
 ## Release History
 
-- [v0.3.6 maintenance candidate](./releases/v0.3.6.md)
+- [v0.3.7 evidence-gated learning candidate](./releases/v0.3.7.md)
+- [v0.3.6 release-integrity candidate](./releases/v0.3.6.md)
 - [v0.3.5 continuity and evidence candidate](./releases/v0.3.5.md)

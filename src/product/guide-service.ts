@@ -5,15 +5,20 @@ import stableStringify from "fast-json-stable-stringify";
 import { z } from "zod";
 
 import {
+  admissionCandidatePolicyProfileRuleDigest,
   parseAdmissionCandidatePolicyProfileRules,
   type AionisAdmissionCandidatePolicyProfileRule,
   type Env,
 } from "../config.js";
+import type { RuntimeGovernanceConfig } from "../config/runtime-config.js";
 
 import { sha256Hex } from "../util/crypto.js";
+import { HttpError } from "../util/http.js";
 import type { AionisEffectObservation } from "../kernel/effect-evaluator.js";
 import { RuntimeVerificationSurfaceV1Schema } from "../execution/verification.js";
 import type { MemoryWriteRouteService } from "../routes/memory-write.js";
+import { deferredPlanningToolDecision } from "../routes/memory-context-runtime.js";
+import type { DeferredToolsSelectDecision } from "../memory/tools-select.js";
 
 import {
   buildAionisMemoryPacket,
@@ -29,10 +34,13 @@ import {
 import {
   AIONIS_ADMISSION_CANDIDATE_POLICY_ACTIVE_PROJECTION_REASON,
   buildAionisAgentFlightRecorderReport,
+  buildAionisAdmissionCandidatePolicyActiveProjectionFromDecisionSet,
   buildAionisOperatorSnapshot,
   buildClaimLedgerProjection,
-  resolveAionisAdmissionCandidatePolicyActiveProjection,
+  resolveAionisGuideLearningDecisionSet,
   type AionisAdmissionCandidatePolicyActiveProjection,
+  type AionisGuideLearningDecisionSet,
+  type AionisGuideLearningPriorStateResolution,
 } from "../memory/product-output/operator-projections.js";
 
 import {
@@ -59,6 +67,11 @@ import {
 import type { ClaimLedgerAccess, ClaimLedgerRow } from "../store/memory-store.js";
 
 import type { LiteExecutionNativeNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
+import type { LiteLearningEpisodeLedgerAccess } from "../store/lite-learning-episode-ledger.js";
+import {
+  buildLiteGuideExposureEventRow,
+  type LiteGuideExposureExperimentBinding,
+} from "../store/lite-learning-guide-exposure.js";
 
 import type { ExecutionTreeStore } from "../execution/tree-store.js";
 
@@ -70,6 +83,28 @@ import {
 } from "../memory/agent-context-compiler.js";
 
 import { resolveTenantScope } from "../memory/tenant.js";
+
+import {
+  learningCollectionSourcePolicyProjection,
+  resolveLearningExperimentForGuide,
+  type LearningExperimentGuideResolution,
+  type LearningExperimentResolverRegistry,
+  type LearningExperimentResolverInput,
+} from "../memory/learning-experiment-resolver.js";
+
+import {
+  ExposureCommittedV1Schema,
+  asStoreScope,
+  hostTaskEnvelopeDigest,
+  learningCollectionPrincipalSha256,
+  learningDecisionSurfaceDigest,
+  learningEpisodeId,
+  learningItemSetDigest,
+  learningMemoryNamespaceSha256,
+  type EventWithoutDigest,
+  type ExposureCommittedV1,
+  type LearningLedgerItem,
+} from "../memory/learning-episode-ledger.js";
 
 import {
   InternalDispatchResult,
@@ -308,6 +343,7 @@ type AdmissionCandidatePolicyGuideModeResolution = {
   mode: "off" | "shadow" | "active";
   source: "global_env" | "profile_rule" | "off";
   profile_id?: string;
+  matched_rule: AionisAdmissionCandidatePolicyProfileRule | null;
 };
 
 function selectorMatches(ruleValues: readonly string[] | undefined, actual: string | null): boolean {
@@ -349,6 +385,7 @@ function admissionCandidatePolicyProfileRuleMatches(args: {
 
 function resolveAdmissionCandidatePolicyGuideMode(args: {
   env: Env;
+  rules: readonly AionisAdmissionCandidatePolicyProfileRule[];
   parsed: z.infer<typeof ProductGuideRequest>;
   scope: string;
   agentRole: AionisAgentRole;
@@ -358,12 +395,10 @@ function resolveAdmissionCandidatePolicyGuideMode(args: {
     return {
       mode: args.env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE,
       source: "global_env",
+      matched_rule: null,
     };
   }
-  const rules = parseAdmissionCandidatePolicyProfileRules(
-    args.env.AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON ?? "[]",
-  );
-  const matched = rules.find((rule) =>
+  const matched = args.rules.find((rule) =>
     admissionCandidatePolicyProfileRuleMatches({
       rule,
       parsed: args.parsed,
@@ -371,11 +406,89 @@ function resolveAdmissionCandidatePolicyGuideMode(args: {
       agentRole: args.agentRole,
     })
   );
-  if (!matched) return { mode: "off", source: "off" };
+  if (!matched) return { mode: "off", source: "off", matched_rule: null };
   return {
     mode: matched.mode,
     source: "profile_rule",
     profile_id: matched.profile_id,
+    matched_rule: matched,
+  };
+}
+
+function unresolvedLearningExperimentGuideResolution(
+  configured: AdmissionCandidatePolicyGuideModeResolution,
+): LearningExperimentGuideResolution {
+  if (configured.source === "global_env") {
+    const active = configured.mode === "active";
+    return {
+      mode: configured.mode,
+      source: "global_env",
+      serving_authority: active ? "fixed_active" : "fixed_shadow",
+      serving_arm: active ? "candidate" : "control",
+      enrollment_state: "not_enrolled",
+      promotion_eligible: false,
+      profile_id: null,
+      experiment_id: null,
+      experiment_revision: null,
+      experiment_config_sha256: null,
+      collection_class: "unverified",
+      assignment: null,
+      reason_codes: [
+        active ? "global_fixed_active_override" : "global_fixed_shadow_override",
+        "promotion_ineligible_non_randomized",
+      ],
+    };
+  }
+  const rule = configured.matched_rule;
+  if (!rule) {
+    return {
+      mode: "off",
+      source: "off",
+      serving_authority: "off",
+      serving_arm: "control",
+      enrollment_state: "not_enrolled",
+      promotion_eligible: false,
+      profile_id: null,
+      experiment_id: null,
+      experiment_revision: null,
+      experiment_config_sha256: null,
+      collection_class: "unverified",
+      assignment: null,
+      reason_codes: ["no_matching_profile"],
+    };
+  }
+  if (!rule.experiment) {
+    const active = rule.mode === "active";
+    return {
+      mode: rule.mode,
+      source: "legacy_profile",
+      serving_authority: active ? "fixed_active" : "fixed_shadow",
+      serving_arm: active ? "candidate" : "control",
+      enrollment_state: "not_enrolled",
+      promotion_eligible: false,
+      profile_id: rule.profile_id,
+      experiment_id: null,
+      experiment_revision: null,
+      experiment_config_sha256: null,
+      collection_class: "unverified",
+      assignment: null,
+      reason_codes: ["legacy_fixed_profile", "promotion_ineligible_non_randomized"],
+    };
+  }
+  return {
+    mode: "shadow",
+    source: "experiment",
+    serving_authority: "experiment",
+    serving_arm: "control",
+    enrollment_state: "not_enrolled",
+    promotion_eligible: false,
+    profile_id: rule.profile_id,
+    experiment_id: rule.experiment.experiment_id,
+    experiment_revision: rule.experiment.revision,
+    experiment_config_sha256: null,
+    collection_class: "unverified",
+    assignment: null,
+    reason_codes: ["experiment_authority_unavailable"],
   };
 }
 
@@ -415,6 +528,56 @@ function productGuideExecutionSignatures(parsed: z.infer<typeof ProductGuideRequ
       nestedStringField(parsed.execution_packet_v1, "workflow_signature"),
       nestedStringField(parsed.execution_state_v1, "workflow_signature"),
     ),
+  };
+}
+
+type ProductGuideLearningTaskSource = LearningExperimentResolverInput["taskSources"][number];
+
+function productGuideLearningTaskSource(
+  source: "context" | "execution_packet_v1" | "execution_state_v1",
+  value: unknown,
+): { source: ProductGuideLearningTaskSource | null; invalid: boolean } {
+  const record = objectValue(value);
+  if (!record) return { source: null, invalid: false };
+  const keys = ["task_family", "task_signature", "repository_signature"] as const;
+  if (!keys.some((key) => Object.prototype.hasOwnProperty.call(record, key))) {
+    return { source: null, invalid: false };
+  }
+  const taskFamily = firstStringValue(record.task_family);
+  const taskSignature = firstStringValue(record.task_signature);
+  const repositorySignature = firstStringValue(record.repository_signature);
+  if (!taskFamily || !taskSignature || !repositorySignature) {
+    return { source: null, invalid: true };
+  }
+  return {
+    source: {
+      source,
+      task_family: taskFamily,
+      task_signature: taskSignature,
+      repository_signature: repositorySignature,
+    },
+    invalid: false,
+  };
+}
+
+function productGuideLearningTaskSources(
+  parsed: z.infer<typeof ProductGuideRequest>,
+): { sources: ProductGuideLearningTaskSource[]; invalid: boolean } {
+  const candidates = [
+    productGuideLearningTaskSource("context", parsed.context),
+    productGuideLearningTaskSource("execution_packet_v1", parsed.execution_packet_v1),
+    productGuideLearningTaskSource("execution_state_v1", parsed.execution_state_v1),
+  ];
+  const sources = candidates.flatMap((candidate) => candidate.source ? [candidate.source] : []);
+  if (parsed.host_task_envelope_v1) {
+    sources.push({
+      source: "host_task_envelope_v1",
+      envelope: parsed.host_task_envelope_v1,
+    });
+  }
+  return {
+    sources,
+    invalid: candidates.some((candidate) => candidate.invalid),
   };
 }
 
@@ -1311,46 +1474,35 @@ async function resolveInspectBeforeUseActiveProjectionIds(args: {
   return uniqueStrings([...repeatedUnusedIds, ...timeDecayIds]);
 }
 
-async function resolveAdmissionCandidatePolicyGuideProjection(args: {
+async function resolveGuideLearningDecisionSet(args: {
   liteWriteStore: LiteWriteStore;
   env: Env;
   parsed: z.infer<typeof ProductGuideRequest>;
-  tenant_id: string;
-  scope: string;
+  storeScope: string;
   memoryPacket: AionisMemoryPacket | null;
   agentContext: AionisAgentContext;
-  mode: "shadow" | "active";
-}): Promise<AionisAdmissionCandidatePolicyActiveProjection | null> {
-  const currentUseNowIds = uniqueStrings(args.agentContext.use_now_memory_ids);
-  if (!args.memoryPacket) return null;
+}): Promise<AionisGuideLearningDecisionSet> {
+  const memoryIds = (args.memoryPacket?.relevant_memories ?? []).map((entry) => entry.memory_id);
   const actor = args.parsed.consumer_agent_id ?? args.env.LITE_LOCAL_ACTOR_ID;
-  const slotByMemoryId = new Map<string, Record<string, unknown>>();
-  for (const memoryId of currentUseNowIds) {
-    try {
-      slotByMemoryId.set(
-        memoryId,
-        await findMemoryNodeSlots({
-          liteWriteStore: args.liteWriteStore,
-          env: args.env,
-          tenant_id: args.tenant_id,
-          scope: args.scope,
-          memory_id: memoryId,
-          actor,
-          consumerTeamId: args.parsed.consumer_team_id ?? null,
-        }),
-      );
-    } catch {
-      slotByMemoryId.set(memoryId, {});
-    }
+  let priorByMemoryId: ReadonlyMap<string, AionisGuideLearningPriorStateResolution>;
+  try {
+    priorByMemoryId = await args.liteWriteStore.resolveGuideLearningPriorStates({
+      scope: args.storeScope,
+      memoryIds,
+      consumerAgentId: actor,
+      consumerTeamId: args.parsed.consumer_team_id ?? null,
+    });
+  } catch {
+    priorByMemoryId = new Map(uniqueStrings(memoryIds).map((memoryId) => [memoryId, {
+      status: "prior_state_lookup_failed" as const,
+      memory_id: memoryId,
+    }]));
   }
-  const projection = resolveAionisAdmissionCandidatePolicyActiveProjection({
+  return resolveAionisGuideLearningDecisionSet({
     agent_context: args.agentContext,
     memory_packet: args.memoryPacket,
-    slot_by_memory_id: slotByMemoryId,
-    mode: args.mode,
+    prior_by_memory_id: priorByMemoryId,
   });
-  if (projection.hard_boundary_upgrade_count > 0) return null;
-  return projection;
 }
 
 export type AionisMemoryAdmissionGatewayMode = "standard" | "strict" | "firewall";
@@ -2029,111 +2181,638 @@ type ProductGuideMemoryWritePort = Pick<
   "transactionRunner" | "prepare" | "persist" | "finalize"
 >;
 
+const PRODUCT_GUIDE_OPERATION_KIND = "product_guide_v1";
+const PRODUCT_GUIDE_OPERATION_RECEIPT_MAX_BYTES = 2 * 1024 * 1024;
+
+type ProductGuideOperationIdentity = Readonly<{
+  tenantId: string;
+  scope: string;
+  operationId: string;
+  requestSha256: string;
+}>;
+
+function productGuideOperationIdentity(args: {
+  parsed: ProductGuideInput;
+  tenantId: string;
+  scope: string;
+}): ProductGuideOperationIdentity | null {
+  if (!args.parsed.operation_id) return null;
+  return {
+    tenantId: args.tenantId,
+    scope: args.scope,
+    operationId: args.parsed.operation_id,
+    requestSha256: productGuideRequestSha256(args),
+  };
+}
+
+function productGuideRequestSha256(args: {
+  parsed: ProductGuideInput;
+  tenantId: string;
+  scope: string;
+}): string {
+  const normalizedRequest: Record<string, unknown> = {
+    ...args.parsed,
+    tenant_id: args.tenantId,
+    scope: args.scope,
+    context: args.parsed.context ?? {},
+  };
+  delete normalizedRequest.operation_id;
+  return sha256Hex(stableStringify(stripUndefined(normalizedRequest)));
+}
+
+function assertProductGuideOperationMatches(args: {
+  identity: ProductGuideOperationIdentity;
+  storedRequestSha256: string;
+}): void {
+  if (args.identity.requestSha256 === args.storedRequestSha256) return;
+  throw new HttpError(
+    409,
+    "learning_episode_operation_conflict",
+    "operation_id was already used for a different guide request",
+    { operation_id: args.identity.operationId },
+  );
+}
+
+function parseStoredProductGuideOperationResult(args: {
+  identity: ProductGuideOperationIdentity;
+  receiptJson: string;
+}): ProductServiceResult {
+  if (Buffer.byteLength(args.receiptJson, "utf8") > PRODUCT_GUIDE_OPERATION_RECEIPT_MAX_BYTES) {
+    throw new HttpError(500, "protected_guide_receipt_invalid", "stored protected guide receipt is invalid");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(args.receiptJson);
+  } catch {
+    throw new HttpError(500, "protected_guide_receipt_invalid", "stored protected guide receipt is invalid");
+  }
+  if (stableStringify(parsed) !== args.receiptJson) {
+    throw new HttpError(500, "protected_guide_receipt_invalid", "stored protected guide receipt is not canonical");
+  }
+  const result = objectValue(parsed);
+  const body = objectValue(result?.body);
+  if (
+    result?.ok !== true
+    || result.statusCode !== 200
+    || body?.contract_version !== "aionis_guide_result_v1"
+    || body.operation_id !== args.identity.operationId
+    || body.tenant_id !== args.identity.tenantId
+    || body.scope !== args.identity.scope
+    || typeof body.guide_trace_id !== "string"
+    || body.guide_trace_id.length === 0
+  ) {
+    throw new HttpError(500, "protected_guide_receipt_invalid", "stored protected guide receipt is invalid");
+  }
+  return parsed as ProductServiceResult;
+}
+
 export type ProductGuideServiceDependencies = {
   env: Env;
   liteWriteStore: LiteWriteStore;
   executionTreeStore?: ExecutionTreeStore | null;
   claimLedgerAccess?: ClaimLedgerAccess | null;
+  learningEpisodeLedgerAccess?: LiteLearningEpisodeLedgerAccess | null;
+  learningExperimentResolverRegistry?: LearningExperimentResolverRegistry;
+  admissionCandidatePolicyProfileRules?: RuntimeGovernanceConfig["admissionCandidatePolicyProfileRules"];
   memoryWrite: ProductGuideMemoryWritePort | null;
 };
+
+type CompiledProductGuideServiceDependencies = Omit<
+  ProductGuideServiceDependencies,
+  "admissionCandidatePolicyProfileRules"
+> & {
+  admissionCandidatePolicyProfileRules: readonly AionisAdmissionCandidatePolicyProfileRule[];
+};
+
+type GuideLearningDecisionSetForPersistence = Readonly<{
+  projection_complete: boolean;
+  projection_incomplete_reason_codes: readonly string[];
+  relevant_memory_ids: readonly string[];
+  control_items: readonly LearningLedgerItem[];
+  candidate_items: readonly LearningLedgerItem[];
+}>;
+
+type ProductGuidePersistenceBranch = Readonly<{
+  agentContext: AionisAgentContext;
+  result: ProductServiceResult;
+  receiptJson: string | null;
+  exposureItems: readonly LearningLedgerItem[];
+  servedArm: "control" | "candidate";
+  learningResolution: LearningExperimentGuideResolution;
+}>;
+
+function canonicalLearningReasonCodes(values: readonly string[]): string[] {
+  return [...new Set(values)].sort((left, right) =>
+    Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"))
+  );
+}
+
+function guideCollectionPrincipalSha256(args: {
+  principal: ProductGuideExecutionContext["principal"];
+  tenantId: string;
+}): string | null {
+  if (!args.principal || args.principal.tenant_id !== args.tenantId) return null;
+  try {
+    return learningCollectionPrincipalSha256({
+      tenant_id: args.principal.tenant_id,
+      agent_id: args.principal.agent_id,
+      team_id: args.principal.team_id,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function buildGuideLearningExposurePayload(args: {
+  parsed: ProductGuideInput;
+  principal: ProductGuideExecutionContext["principal"];
+  tenantId: string;
+  storeScope: string;
+  guideTraceId: string;
+  guideReceiptSha256: string;
+  guideCommitId: string;
+  requestSha256: string;
+  matchedRule: AionisAdmissionCandidatePolicyProfileRule | null;
+  resolution: LearningExperimentGuideResolution;
+  decisionSet: GuideLearningDecisionSetForPersistence;
+  exposureItems: readonly LearningLedgerItem[];
+  servedArm: "control" | "candidate";
+}): { payload: ExposureCommittedV1; experiment: LiteGuideExposureExperimentBinding | null } {
+  const experiment = args.matchedRule?.experiment ?? null;
+  const revisionBound = args.resolution.source === "experiment"
+    && experiment !== null
+    && args.resolution.experiment_config_sha256 !== null
+    && args.resolution.experiment_id === experiment.experiment_id
+    && args.resolution.experiment_revision === experiment.revision;
+  const principalSha256 = guideCollectionPrincipalSha256({
+    principal: args.principal,
+    tenantId: args.tenantId,
+  });
+  const declaredSource = revisionBound && principalSha256 !== null
+    ? experiment.collection_sources.find((source) => source.principal_sha256 === principalSha256) ?? null
+    : null;
+  const collectionClass = declaredSource
+    && declaredSource.class === args.resolution.collection_class
+      ? declaredSource.class
+      : "unverified";
+  const hostEnvelope = collectionClass === "eligible_host"
+    ? args.parsed.host_task_envelope_v1 ?? null
+    : null;
+  const assignment = revisionBound ? args.resolution.assignment : null;
+  const lease = assignment?.assignment_algorithm === "matched_pair_csprng_bit_v1"
+    ? args.resolution.namespace_lease ?? null
+    : null;
+  const recordedSurfaceSha256 = learningDecisionSurfaceDigest(args.exposureItems
+    .filter((item) => item.decision_completeness === "complete")
+    .map((item) => ({ memory_id: item.memory_id, action: item.recorded_action! })));
+  const candidateSurfaceSha256 = learningDecisionSurfaceDigest(args.exposureItems
+    .filter((item) => item.decision_completeness === "complete")
+    .map((item) => ({ memory_id: item.memory_id, action: item.candidate_action! })));
+  const servedSurfaceSha256 = learningDecisionSurfaceDigest(args.exposureItems
+    .filter((item) => item.decision_completeness === "complete")
+    .map((item) => ({ memory_id: item.memory_id, action: item.served_action })));
+  const hardBoundaryUpgradeCount = args.exposureItems.filter((item) =>
+    item.decision_completeness === "complete"
+    && item.recorded_action !== "use_now"
+    && item.candidate_action === "use_now"
+  ).length;
+  const payload = ExposureCommittedV1Schema.parse({
+    contract_version: "aionis_learning_exposure_v1",
+    guide_trace_id: args.guideTraceId,
+    guide_receipt_sha256: args.guideReceiptSha256,
+    guide_commit_id: args.guideCommitId,
+    request_sha256: args.requestSha256,
+    operation_protection: args.parsed.operation_id ? "protected" : "legacy_unprotected",
+    collection_class: collectionClass,
+    collection_principal_sha256: collectionClass === "unverified" ? null : principalSha256,
+    collection_source_policy_sha256: revisionBound
+      ? sha256Hex(stableStringify(learningCollectionSourcePolicyProjection(experiment)))
+      : null,
+    collector_id: collectionClass === "unverified" ? null : declaredSource!.collector_id,
+    collector_version: collectionClass === "unverified" ? null : declaredSource!.collector_version,
+    host_task_id: hostEnvelope?.host_task_id ?? null,
+    host_task_envelope: hostEnvelope,
+    host_task_envelope_sha256: hostEnvelope ? hostTaskEnvelopeDigest(hostEnvelope) : null,
+    profile_rule_sha256: revisionBound
+      ? admissionCandidatePolicyProfileRuleDigest(args.matchedRule!)
+      : null,
+    experiment_config_sha256: revisionBound ? args.resolution.experiment_config_sha256 : null,
+    evidence_intent: revisionBound ? experiment.evidence_intent : null,
+    memory_namespace_sha256: learningMemoryNamespaceSha256(asStoreScope(args.storeScope)),
+    namespace_set_sha256: lease?.namespace_set_sha256 ?? null,
+    namespace_lease_id: lease?.namespace_lease_id ?? null,
+    namespace_lease_generation: lease?.namespace_lease_generation ?? null,
+    assignment_reason_codes: canonicalLearningReasonCodes(args.resolution.reason_codes),
+    assignment_algorithm: assignment?.assignment_algorithm ?? "none",
+    assignment_namespace_sha256: assignment?.assignment_namespace_sha256 ?? null,
+    candidate_allocation_bps: assignment ? experiment!.candidate_allocation_bps : null,
+    assignment_bucket: assignment?.assignment_bucket ?? null,
+    randomization_pair_sha256: lease?.randomization_pair_sha256 ?? null,
+    matching_covariate_sha256: lease?.matching_covariate_sha256 ?? null,
+    pair_member_ordinal: lease?.pair_member_ordinal ?? null,
+    activation_wave_index: lease?.activation_wave_index ?? null,
+    activation_starts_at: lease?.activation_starts_at ?? null,
+    index_window_ends_at: lease?.index_window_ends_at ?? null,
+    wave_analysis_at: lease?.wave_analysis_at ?? null,
+    assignment_arm: assignment?.assignment_arm ?? "not_enrolled",
+    served_arm: args.servedArm,
+    relevant_memory_ids: [...args.decisionSet.relevant_memory_ids].sort((left, right) =>
+      Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"))
+    ),
+    recorded_surface_sha256: recordedSurfaceSha256,
+    candidate_surface_sha256: candidateSurfaceSha256,
+    served_surface_sha256: servedSurfaceSha256,
+    projection_complete: args.decisionSet.projection_complete,
+    projection_incomplete_reason_codes: canonicalLearningReasonCodes(
+      args.decisionSet.projection_incomplete_reason_codes,
+    ),
+    hard_boundary_upgrade_count: hardBoundaryUpgradeCount,
+  });
+  return {
+    payload,
+    experiment: revisionBound ? {
+      profileId: args.matchedRule!.profile_id,
+      experimentId: experiment.experiment_id,
+      experimentRevision: experiment.revision,
+      enrollmentState: args.resolution.enrollment_state === "enrolled" ? "enrolled" : "not_enrolled",
+      servingPhase: experiment.serving_phase,
+      candidatePolicyId: experiment.candidate_policy_id,
+      candidatePolicyVersion: experiment.candidate_policy_version,
+    } : null,
+  };
+}
+
+function sameLearningExperimentResolution(
+  expected: LearningExperimentGuideResolution,
+  actual: LearningExperimentGuideResolution,
+): boolean {
+  return expected.source === "experiment"
+    && actual.source === "experiment"
+    && stableStringify(actual) === stableStringify(expected);
+}
+
+function hasMatchedPairLearningBinding(resolution: LearningExperimentGuideResolution): boolean {
+  return resolution.assignment?.assignment_algorithm === "matched_pair_csprng_bit_v1"
+    && resolution.namespace_lease !== null;
+}
+
+const UNSAFE_LEARNING_EXPOSURE_RECHECK_REASONS = new Set([
+  "experiment_authority_read_failed",
+  "namespace_actively_leased_elsewhere",
+  "collection_principal_binding_drift",
+  "collection_principal_not_in_revision",
+  "confirmatory_attempt_or_lease_unresolved",
+]);
+
+const NON_APPENDABLE_LEARNING_EXPOSURE_RECHECK_REASONS = new Set([
+  "experiment_closed",
+  "frozen_assignment_unresolved",
+  "candidate_implementation_demoted",
+  "candidate_implementation_retired",
+]);
+
+function learningExposureRecheckUnsafe(resolution: LearningExperimentGuideResolution): boolean {
+  return resolution.reason_codes.some((reason) =>
+    UNSAFE_LEARNING_EXPOSURE_RECHECK_REASONS.has(reason)
+  );
+}
+
+function learningExposureAppendSuppressed(
+  resolution: LearningExperimentGuideResolution,
+): boolean {
+  return resolution.reason_codes.some((reason) =>
+    NON_APPENDABLE_LEARNING_EXPOSURE_RECHECK_REASONS.has(reason)
+  );
+}
+
+function forceLearningExperimentControl(
+  resolution: LearningExperimentGuideResolution,
+  reasonCodes: readonly string[],
+): LearningExperimentGuideResolution {
+  return {
+    ...resolution,
+    mode: "shadow",
+    serving_arm: "control",
+    promotion_eligible: false,
+    reason_codes: [...reasonCodes],
+  };
+}
 
 async function persistGuideExposure(args: {
   dependencies: ProductGuideServiceDependencies;
   parsed: ProductGuideInput;
+  principal: ProductGuideExecutionContext["principal"];
   tenantId: string;
   scope: string;
-  agentContext: AionisAgentContext;
+  storeScope: string;
   memoryPacket: AionisMemoryPacket | null;
   guidePacket: AionisGuidePacket | null;
   guideTraceId: string;
   toolSelection: ProductToolSelectionReceipt | null;
   runtimeVerification: ProductRuntimeVerificationReceipt | null;
+  deferredToolDecision: DeferredToolsSelectDecision | null;
+  operationIdentity: ProductGuideOperationIdentity | null;
+  matchedRule: AionisAdmissionCandidatePolicyProfileRule | null;
+  decisionSet: GuideLearningDecisionSetForPersistence;
+  controlBranch: ProductGuidePersistenceBranch;
+  authorityChangedControlBranch: ProductGuidePersistenceBranch;
+  candidateBranch: ProductGuidePersistenceBranch | null;
+  experimentResolverInput: LearningExperimentResolverInput | null;
 }): Promise<ProductServiceResult> {
   if (!args.dependencies.memoryWrite) {
     return productServiceDependencyFailure("memory_write_service");
   }
-  const ledger = buildGuideExposureLedger({
-    parsed: args.parsed,
-    tenant_id: args.tenantId,
-    scope: args.scope,
-    agentContext: args.agentContext,
-    memoryPacket: args.memoryPacket,
-    guidePacket: args.guidePacket,
-    guideTraceId: args.guideTraceId,
-    toolSelection: args.toolSelection,
-    runtimeVerification: args.runtimeVerification,
-  });
-  const ledgerJson = stableStringify(ledger);
-  const ledgerSha = sha256Hex(ledgerJson);
   try {
-    const plan = await args.dependencies.memoryWrite.prepare({
-      tenant_id: args.tenantId,
-      scope: args.scope,
-      actor: args.parsed.consumer_agent_id ?? args.dependencies.env.LITE_LOCAL_ACTOR_ID,
-      input_text: `Aionis guide exposure ledger ${args.guideTraceId}`,
-      input_sha256: ledgerSha,
-      auto_embed: false,
-      distill: { enabled: false },
-      nodes: [stripUndefined({
-        client_id: args.guideTraceId,
-        type: "evidence",
-        tier: "archive",
-        memory_lane: "shared",
-        producer_agent_id: "aionis-runtime",
-        owner_agent_id: args.parsed.consumer_agent_id ?? args.dependencies.env.LITE_LOCAL_ACTOR_ID,
-        owner_team_id: args.parsed.consumer_team_id,
-        title: "Guide exposure ledger",
-        text_summary: `Guide exposure ledger ${args.guideTraceId}`,
-        salience: 0,
-        importance: 0,
-        confidence: 1,
-        slots: { guide_exposure_v1: ledger, not_agent_facing: true },
-      })],
-      edges: [],
-    }, {
-      executionTreeDefaultDisabled: false,
-      startedAt: performance.now(),
-    });
+    const prepareBranch = async (branch: ProductGuidePersistenceBranch) => {
+      const ledger = buildGuideExposureLedger({
+        parsed: args.parsed,
+        tenant_id: args.tenantId,
+        scope: args.scope,
+        agentContext: branch.agentContext,
+        memoryPacket: args.memoryPacket,
+        guidePacket: args.guidePacket,
+        guideTraceId: args.guideTraceId,
+        toolSelection: args.toolSelection,
+        runtimeVerification: args.runtimeVerification,
+      });
+      const ledgerJson = stableStringify(ledger);
+      const ledgerSha = sha256Hex(ledgerJson);
+      const plan = await args.dependencies.memoryWrite!.prepare({
+        tenant_id: args.tenantId,
+        scope: args.scope,
+        actor: args.parsed.consumer_agent_id ?? args.dependencies.env.LITE_LOCAL_ACTOR_ID,
+        input_text: `Aionis guide exposure ledger ${args.guideTraceId}`,
+        input_sha256: ledgerSha,
+        auto_embed: false,
+        distill: { enabled: false },
+        nodes: [stripUndefined({
+          client_id: args.guideTraceId,
+          type: "evidence",
+          tier: "archive",
+          memory_lane: "shared",
+          producer_agent_id: "aionis-runtime",
+          owner_agent_id: args.parsed.consumer_agent_id ?? args.dependencies.env.LITE_LOCAL_ACTOR_ID,
+          owner_team_id: args.parsed.consumer_team_id,
+          title: "Guide exposure ledger",
+          text_summary: `Guide exposure ledger ${args.guideTraceId}`,
+          salience: 0,
+          importance: 0,
+          confidence: 1,
+          slots: { guide_exposure_v1: ledger, not_agent_facing: true },
+        })],
+        edges: [],
+      }, {
+        executionTreeDefaultDisabled: false,
+        startedAt: performance.now(),
+      });
+      return { branch, ledger, ledgerJson, ledgerSha, plan };
+    };
+    const controlPrepared = await prepareBranch(args.controlBranch);
+    const authorityChangedControlPrepared = {
+      ...controlPrepared,
+      branch: args.authorityChangedControlBranch,
+    };
+    const candidatePrepared = args.candidateBranch
+      ? await prepareBranch(args.candidateBranch)
+      : null;
+    const requiresMatchedPairBinding = args.matchedRule?.experiment?.evidence_intent === "confirmatory"
+      && args.matchedRule.experiment.assignment_design === "matched_pair_complete_randomization_v1";
     const out = await args.dependencies.liteWriteStore.withTx(async () => {
-      const persisted = await args.dependencies.memoryWrite!.persist(plan);
+      if (args.operationIdentity) {
+        const raced = await args.dependencies.liteWriteStore.getWriteOperation({
+          tenantId: args.operationIdentity.tenantId,
+          scope: args.operationIdentity.scope,
+          operationKind: PRODUCT_GUIDE_OPERATION_KIND,
+          operationId: args.operationIdentity.operationId,
+        });
+        if (raced) {
+          assertProductGuideOperationMatches({
+            identity: args.operationIdentity,
+            storedRequestSha256: raced.request_sha256,
+          });
+          return {
+            committedNew: false,
+            result: parseStoredProductGuideOperationResult({
+              identity: args.operationIdentity,
+              receiptJson: raced.receipt_json,
+            }),
+          } as const;
+        }
+      }
+      const recordedAt = new Date().toISOString();
+      const planned = candidatePrepared ?? controlPrepared;
+      let selected = planned;
+      let committedResolution = selected.branch.learningResolution;
+      let persistLearningExposure = true;
+      if (planned.branch.learningResolution.source === "experiment") {
+        let rechecked: LearningExperimentGuideResolution | null = null;
+        if (args.experimentResolverInput && args.dependencies.learningEpisodeLedgerAccess) {
+          try {
+            rechecked = await resolveLearningExperimentForGuide({
+              ...args.experimentResolverInput,
+              now: recordedAt,
+            }, {
+              ledger: args.dependencies.learningEpisodeLedgerAccess,
+              registry: args.dependencies.learningExperimentResolverRegistry,
+            });
+          } catch {
+            rechecked = null;
+          }
+        }
+        if (rechecked && !learningExposureRecheckUnsafe(rechecked) && sameLearningExperimentResolution(
+          planned.branch.learningResolution,
+          rechecked,
+        )) {
+          committedResolution = rechecked;
+          if (learningExposureAppendSuppressed(rechecked)) {
+            persistLearningExposure = false;
+          }
+        } else {
+          selected = authorityChangedControlPrepared;
+          if (rechecked && learningExposureAppendSuppressed(rechecked)) {
+            committedResolution = rechecked;
+            persistLearningExposure = false;
+          } else {
+            const currentBindingTrusted = rechecked !== null
+              && !learningExposureRecheckUnsafe(rechecked) && (
+              !hasMatchedPairLearningBinding(planned.branch.learningResolution)
+              || hasMatchedPairLearningBinding(rechecked)
+            );
+            if (!currentBindingTrusted || !rechecked) {
+              persistLearningExposure = false;
+            } else if (rechecked.serving_arm === "control" && !rechecked.promotion_eligible) {
+              committedResolution = rechecked;
+            } else {
+              committedResolution = forceLearningExperimentControl(
+                rechecked,
+                ["experiment_authority_changed_before_commit"],
+              );
+            }
+          }
+        }
+        if (requiresMatchedPairBinding && !hasMatchedPairLearningBinding(committedResolution)) {
+          persistLearningExposure = false;
+        }
+      }
+      const persisted = await args.dependencies.memoryWrite!.persist(selected.plan);
+      if (args.deferredToolDecision) {
+        await args.dependencies.liteWriteStore.insertExecutionDecision(args.deferredToolDecision);
+      }
       await args.dependencies.liteWriteStore.insertProductGuideReceipt({
         tenantId: args.tenantId,
         scope: args.scope,
         guideTraceId: args.guideTraceId,
-        runId: ledger.run_id,
-        consumerAgentId: ledger.consumer_agent_id,
-        consumerTeamId: ledger.consumer_team_id,
-        querySha256: ledger.query_sha256,
-        contextSha256: ledger.context_sha256,
-        ledgerSha256: ledgerSha,
-        ledgerJson,
+        runId: selected.ledger.run_id,
+        consumerAgentId: selected.ledger.consumer_agent_id,
+        consumerTeamId: selected.ledger.consumer_team_id,
+        querySha256: selected.ledger.query_sha256,
+        contextSha256: selected.ledger.context_sha256,
+        ledgerSha256: selected.ledgerSha,
+        ledgerJson: selected.ledgerJson,
         commitId: persisted.commit_id,
       });
-      return persisted;
+      if (args.operationIdentity) {
+        if (!selected.branch.receiptJson) {
+          throw new Error("protected guide operation receipt was not prepared");
+        }
+        await args.dependencies.liteWriteStore.insertWriteOperation({
+          tenantId: args.operationIdentity.tenantId,
+          scope: args.operationIdentity.scope,
+          operationKind: PRODUCT_GUIDE_OPERATION_KIND,
+          operationId: args.operationIdentity.operationId,
+          requestSha256: args.operationIdentity.requestSha256,
+          receiptJson: selected.branch.receiptJson,
+          commitId: persisted.commit_id,
+        });
+      }
+      if (args.dependencies.learningEpisodeLedgerAccess && persistLearningExposure) {
+        const exposure = buildGuideLearningExposurePayload({
+          parsed: args.parsed,
+          principal: args.principal,
+          tenantId: args.tenantId,
+          storeScope: args.storeScope,
+          guideTraceId: args.guideTraceId,
+          guideReceiptSha256: selected.ledgerSha,
+          guideCommitId: persisted.commit_id,
+          requestSha256: productGuideRequestSha256({
+            parsed: args.parsed,
+            tenantId: args.tenantId,
+            scope: args.scope,
+          }),
+          matchedRule: args.matchedRule,
+          resolution: committedResolution,
+          decisionSet: args.decisionSet,
+          exposureItems: selected.branch.exposureItems,
+          servedArm: selected.branch.servedArm,
+        });
+        const payloadJson = stableStringify(exposure.payload);
+        const event: EventWithoutDigest = {
+          contract_version: "aionis_learning_episode_event_v1",
+          tenant_id: args.tenantId,
+          scope: args.scope,
+          event_id: `lexposure_${sha256Hex(stableStringify({
+            tenant_id: args.tenantId,
+            scope: args.scope,
+            guide_trace_id: args.guideTraceId,
+          }))}`,
+          episode_id: learningEpisodeId({
+            tenantId: args.tenantId,
+            scope: args.scope,
+            guideTraceId: args.guideTraceId,
+          }),
+          episode_sequence: 1,
+          event_kind: "exposure_committed",
+          source_kind: "guide_receipt",
+          source_id: args.guideTraceId,
+          source_sha256: selected.ledgerSha,
+          previous_event_sha256: null,
+          payload_sha256: sha256Hex(payloadJson),
+          item_set_sha256: learningItemSetDigest(selected.branch.exposureItems),
+          source_commit_id: persisted.commit_id,
+          supersedes_event_id: null,
+          operation_id: args.operationIdentity?.operationId ?? null,
+          run_id: args.parsed.run_id ?? null,
+          collection_class: exposure.payload.collection_class,
+          recorded_at: recordedAt,
+        };
+        await args.dependencies.learningEpisodeLedgerAccess.appendEpisodeEvent({
+          row: buildLiteGuideExposureEventRow({
+            event,
+            payload: exposure.payload,
+            exposureItems: selected.branch.exposureItems,
+            experiment: exposure.experiment,
+          }),
+          event,
+          payload: exposure.payload,
+          exposureItems: selected.branch.exposureItems,
+        });
+      }
+      return {
+        committedNew: true,
+        result: selected.branch.result,
+        persisted,
+        plan: selected.plan,
+      } as const;
     });
-    await args.dependencies.memoryWrite.finalize(plan, out).catch((error) => {
-      process.emitWarning(
-        `Guide exposure post-commit finalization failed: ${error instanceof Error ? error.message : String(error)}`,
-        { code: "AIONIS_GUIDE_POST_COMMIT_FAILED" },
-      );
-    });
+    if (out.committedNew) {
+      await args.dependencies.memoryWrite.finalize(out.plan, out.persisted).catch((error) => {
+        process.emitWarning(
+          `Guide exposure post-commit finalization failed: ${error instanceof Error ? error.message : String(error)}`,
+          { code: "AIONIS_GUIDE_POST_COMMIT_FAILED" },
+        );
+      });
+    }
+    return out.result;
   } catch (error) {
+    if (error instanceof HttpError) throw error;
     return productServiceDependencyFailure(
       "memory_write_service",
       productServiceFailureFromUnknown(error).statusCode,
     );
   }
-  return productServiceSuccess(null);
 }
 
 async function executeProductGuide(args: {
-  dependencies: ProductGuideServiceDependencies;
+  dependencies: CompiledProductGuideServiceDependencies;
   parsed: ProductGuideInput;
   context: ProductGuideExecutionContext;
 }): Promise<ProductServiceResult> {
   const { dependencies, parsed, context } = args;
   const { env, liteWriteStore, executionTreeStore, claimLedgerAccess } = dependencies;
-  const payload: ProductGuideInput = { ...parsed, context: parsed.context ?? {} };
+  const authorityTenancy = resolveTenantScope(
+    { tenant_id: parsed.tenant_id, scope: parsed.scope },
+    { defaultTenantId: env.MEMORY_TENANT_ID, defaultScope: env.MEMORY_SCOPE },
+  );
+  const operationIdentity = productGuideOperationIdentity({
+    parsed,
+    tenantId: authorityTenancy.tenant_id,
+    scope: authorityTenancy.scope,
+  });
+  if (operationIdentity) {
+    const stored = await liteWriteStore.getWriteOperation({
+      tenantId: operationIdentity.tenantId,
+      scope: operationIdentity.scope,
+      operationKind: PRODUCT_GUIDE_OPERATION_KIND,
+      operationId: operationIdentity.operationId,
+    });
+    if (stored) {
+      assertProductGuideOperationMatches({
+        identity: operationIdentity,
+        storedRequestSha256: stored.request_sha256,
+      });
+      return parseStoredProductGuideOperationResult({
+        identity: operationIdentity,
+        receiptJson: stored.receipt_json,
+      });
+    }
+  }
+  const payload: ProductGuideInput = {
+    ...parsed,
+    tenant_id: authorityTenancy.tenant_id,
+    scope: authorityTenancy.scope,
+    context: parsed.context ?? {},
+  };
+  delete payload.operation_id;
   let guideResult: InternalDispatchResult;
   try {
     guideResult = {
@@ -2157,7 +2836,25 @@ async function executeProductGuide(args: {
   }
 
   const guideBody = objectValue(guideResult.body) ?? {};
+  const deferredToolDecision = deferredPlanningToolDecision(guideResult.body);
   const toolSelection = buildProductToolSelectionReceipt({ parsed, guideBody });
+  if (deferredToolDecision && !operationIdentity) {
+    return productServiceDependencyFailure("planning_context_service", 500);
+  }
+  if (operationIdentity && toolSelection && !deferredToolDecision) {
+    return productServiceDependencyFailure("planning_context_service", 500);
+  }
+  if (deferredToolDecision && toolSelection && (
+    deferredToolDecision.id !== toolSelection.decision_id
+    || deferredToolDecision.runId !== toolSelection.run_id
+    || deferredToolDecision.selectedTool !== toolSelection.selected_tool
+    || deferredToolDecision.policySha256 !== toolSelection.policy_sha256
+    || deferredToolDecision.createdAt !== toolSelection.created_at
+    || stableStringify(deferredToolDecision.candidatesJson) !== stableStringify(toolSelection.candidates)
+    || stableStringify(deferredToolDecision.sourceRuleIds) !== stableStringify(toolSelection.source_rule_ids)
+  )) {
+    return productServiceDependencyFailure("planning_context_service", 500);
+  }
   const runtimeVerification = buildProductRuntimeVerificationReceipt({
     guideBody,
     runId: parsed.run_id ?? null,
@@ -2170,8 +2867,11 @@ async function executeProductGuide(args: {
     ? projectProductGuideSourceMap(AionisGuidePacketSchema.parse(guideBody.aionis_guide_packet))
     : null;
   const agentRole = productGuideAgentRole(parsed);
-  const tenantId = String(guideBody.tenant_id ?? parsed.tenant_id ?? env.MEMORY_TENANT_ID);
-  const scope = String(guideBody.scope ?? parsed.scope ?? env.MEMORY_SCOPE);
+  const tenantId = String(guideBody.tenant_id ?? authorityTenancy.tenant_id);
+  const scope = String(guideBody.scope ?? authorityTenancy.scope);
+  if (tenantId !== authorityTenancy.tenant_id || scope !== authorityTenancy.scope) {
+    return productServiceDependencyFailure("planning_context_service", 502);
+  }
   const tenancy = resolveTenantScope(
     { tenant_id: tenantId, scope },
     { defaultTenantId: env.MEMORY_TENANT_ID, defaultScope: env.MEMORY_SCOPE },
@@ -2301,128 +3001,292 @@ async function executeProductGuide(args: {
     agentContext = projectedContext;
   }
 
-  let admissionCandidatePolicyProjection: AionisAdmissionCandidatePolicyActiveProjection | null = null;
-  let admissionCandidatePolicyProjectionApplied = false;
-  const admissionCandidatePolicyMode = resolveAdmissionCandidatePolicyGuideMode({
+  const configuredAdmissionCandidatePolicyMode = resolveAdmissionCandidatePolicyGuideMode({
     env,
+    rules: dependencies.admissionCandidatePolicyProfileRules,
     parsed,
-    scope,
+    scope: authorityTenancy.scope,
     agentRole,
   });
-  if (admissionCandidatePolicyMode.mode === "shadow" || admissionCandidatePolicyMode.mode === "active") {
-    admissionCandidatePolicyProjection = await resolveAdmissionCandidatePolicyGuideProjection({
-      liteWriteStore,
-      env,
-      parsed,
-      tenant_id: tenantId,
-      scope,
-      memoryPacket,
-      agentContext,
-      mode: admissionCandidatePolicyMode.mode,
-    });
-    if (admissionCandidatePolicyMode.mode === "active" && admissionCandidatePolicyProjection) {
-      const projectedContext = applyAionisInspectBeforeUseActiveProjection({
-        agent_context: agentContext,
+  const recordedAgentContext = agentContext;
+  const guideLearningDecisionSet = await resolveGuideLearningDecisionSet({
+    liteWriteStore,
+    env,
+    parsed,
+    storeScope: tenancy.scope_key,
+    memoryPacket,
+    agentContext: recordedAgentContext,
+  });
+  const learningTaskIdentity = productGuideLearningTaskSources(parsed);
+  const experimentResolverInput: LearningExperimentResolverInput = {
+    globalMode: env.AIONIS_ADMISSION_CANDIDATE_POLICY_MODE,
+    matchedRule: configuredAdmissionCandidatePolicyMode.matched_rule,
+    principal: context.principal,
+    tenantId: authorityTenancy.tenant_id,
+    publicScope: authorityTenancy.scope,
+    storeScope: authorityTenancy.scope_key,
+    taskSources: learningTaskIdentity.sources,
+    taskIdentityInvalid: learningTaskIdentity.invalid
+      || tenancy.tenant_id !== authorityTenancy.tenant_id
+      || tenancy.scope !== authorityTenancy.scope,
+    operationProtected: operationIdentity !== null,
+    projectionComplete: guideLearningDecisionSet.projection_complete,
+    now: new Date().toISOString(),
+  };
+  let learningExperimentResolution = unresolvedLearningExperimentGuideResolution(
+    configuredAdmissionCandidatePolicyMode,
+  );
+  if (dependencies.learningEpisodeLedgerAccess) {
+    try {
+      learningExperimentResolution = await resolveLearningExperimentForGuide(experimentResolverInput, {
+        ledger: dependencies.learningEpisodeLedgerAccess,
+        registry: dependencies.learningExperimentResolverRegistry,
+      });
+    } catch {
+      // The learning path is fail-control: guide still returns its baseline
+      // result and never turns an authority read failure into candidate serving.
+      learningExperimentResolution = unresolvedLearningExperimentGuideResolution(
+        configuredAdmissionCandidatePolicyMode,
+      );
+    }
+  }
+  const admissionCandidatePolicyMode: AdmissionCandidatePolicyGuideModeResolution = {
+    ...configuredAdmissionCandidatePolicyMode,
+    mode: learningExperimentResolution.mode,
+  };
+  const candidateMayServe = admissionCandidatePolicyMode.mode === "active"
+    && guideLearningDecisionSet.projection_complete;
+  const candidateAgentContext = candidateMayServe
+    ? applyAionisInspectBeforeUseActiveProjection({
+        agent_context: recordedAgentContext,
         memory_packet: memoryPacket,
-        candidate_memory_ids: admissionCandidatePolicyProjection.downgraded_memory_ids,
+        candidate_memory_ids: guideLearningDecisionSet.full_downgraded_memory_ids,
         reason: AIONIS_ADMISSION_CANDIDATE_POLICY_ACTIVE_PROJECTION_REASON,
         context_char_budget: taskContextProfilePolicy.contextCharBudget,
         context_compaction_profile: parsed.context_compaction_profile ?? parsed.context_optimization_profile ?? null,
+      })
+    : recordedAgentContext;
+  const admissionCandidatePolicyProjectionApplied = candidateMayServe
+    && candidateAgentContext !== recordedAgentContext;
+  const projectionVisible = admissionCandidatePolicyMode.mode === "shadow"
+    || admissionCandidatePolicyMode.mode === "active";
+  const controlProjection = projectionVisible
+    ? buildAionisAdmissionCandidatePolicyActiveProjectionFromDecisionSet({
+        decision_set: guideLearningDecisionSet,
+        mode: "shadow",
+      })
+    : null;
+  const candidateProjection = candidateMayServe
+    ? buildAionisAdmissionCandidatePolicyActiveProjectionFromDecisionSet({
+        decision_set: guideLearningDecisionSet,
+        mode: "active",
+      })
+    : null;
+  const controlLearningResolution: LearningExperimentGuideResolution = candidateMayServe
+    ? {
+        ...learningExperimentResolution,
+        mode: "shadow",
+        serving_arm: "control",
+        promotion_eligible: false,
+        reason_codes: ["experiment_authority_changed_before_commit"],
+      }
+    : learningExperimentResolution;
+  const includePackets = parsed.include_packets === true;
+  const memoryContractVisible = productGuideMemoryContractVisible(memoryPacket);
+  const buildPersistenceBranch = (branchArgs: {
+    branchAgentContext: AionisAgentContext;
+    branchProjection: AionisAdmissionCandidatePolicyActiveProjection | null;
+    branchProjectionApplied: boolean;
+    branchResolution: LearningExperimentGuideResolution;
+    exposureItems: readonly LearningLedgerItem[];
+    servedArm: "control" | "candidate";
+  }): ProductGuidePersistenceBranch => {
+    const branchMode: AdmissionCandidatePolicyGuideModeResolution = {
+      ...admissionCandidatePolicyMode,
+      mode: branchArgs.branchResolution.mode,
+    };
+    const premiseFirewallVisible = productGuidePremiseFirewallVisible(branchArgs.branchAgentContext);
+    const result = productServiceSuccess({
+      contract_version: "aionis_guide_result_v1",
+      ...(operationIdentity ? { operation_id: operationIdentity.operationId } : {}),
+      tenant_id: tenantId,
+      scope,
+      consumer_agent_id: parsed.consumer_agent_id ?? env.LITE_LOCAL_ACTOR_ID,
+      ...(parsed.consumer_team_id ? { consumer_team_id: parsed.consumer_team_id } : {}),
+      guide_trace_id: guideTraceId,
+      agent_context: branchArgs.branchAgentContext,
+      ...(toolSelection ? { tool_selection: toolSelection } : {}),
+      ...(claimLedgerProjection ? { claim_ledger_projection: claimLedgerProjection } : {}),
+      ...(branchArgs.branchProjection
+        ? { admission_candidate_policy_projection: branchArgs.branchProjection } : {}),
+      ...(includePackets ? { memory_packet: memoryPacket, guide_packet: guidePacket } : {}),
+      source_map: {
+        routes_used: ["/v1/guide"],
+        internal_surfaces_used: [
+          ...(planningContextEmbeddingUnavailable ? ["planning_context_embedding_unavailable"] : ["recall"]),
+          "planning_context_service",
+          ...(toolSelection ? ["tool_selection_receipt"] : []),
+          "product_packets",
+          "agent_context_compiler",
+          ...(agentRole !== "agent" ? ["role_aware_agent_context"] : []),
+          ...(fullPowerRequested ? ["full_power_execution_context"] : []),
+          ...(fullPowerStructuredMemoryMerged ? ["full_power_structured_execution_recall"] : []),
+          ...(fullPowerExecutionContextMerged ? ["full_power_agent_context_merge"] : []),
+          ...(claimLedgerProjection ? ["claim_ledger_projection"] : []),
+          ...(claimLedgerContextProjectionApplied ? ["claim_ledger_agent_context_projection"] : []),
+          ...(agentContextMode === "compact_agent" ? ["compact_agent_context"] : []),
+          ...(activeProjectionApplied ? ["inspect_before_use_active_projection"] : []),
+          ...(branchArgs.branchProjection && branchMode.mode === "shadow"
+            ? ["admission_candidate_policy_shadow_projection"] : []),
+          ...(branchArgs.branchProjectionApplied ? ["admission_candidate_policy_active_projection"] : []),
+          ...(branchArgs.branchProjection && branchMode.source === "profile_rule"
+            ? [`admission_candidate_policy_profile_${branchMode.mode}_projection`] : []),
+          ...(memoryContractVisible ? ["memory_contract"] : []),
+          ...(premiseFirewallVisible ? ["premise_firewall"] : []),
+          "guide_exposure_ledger",
+        ],
+        omitted_internal_surfaces: [
+          "internal_planning_details",
+          "internal_learning_diagnostics",
+          "internal_execution_recommendation_details",
+          "internal_cost_diagnostics",
+          ...(fullPowerRequested ? [
+            "full_power_execution_prompt_text",
+            "full_power_raw_evidence",
+            "full_power_gated_abstractions",
+            "full_power_trace",
+          ] : []),
+          ...(includePackets ? [] : ["memory_packet", "guide_packet"]),
+          ...(planningContextEmbeddingUnavailable ? ["semantic_planning_recall"] : []),
+        ],
+        admission_candidate_policy: {
+          mode: branchMode.mode,
+          source: branchMode.source,
+          ...(branchMode.profile_id ? { profile_id: branchMode.profile_id } : {}),
+          ...(branchArgs.branchResolution.source === "experiment" ? {
+            serving_authority: branchArgs.branchResolution.serving_authority,
+            serving_arm: branchArgs.branchResolution.serving_arm,
+            enrollment_state: branchArgs.branchResolution.enrollment_state,
+            promotion_eligible: branchArgs.branchResolution.promotion_eligible,
+            collection_class: branchArgs.branchResolution.collection_class,
+            ...(branchArgs.branchResolution.experiment_id
+              ? { experiment_id: branchArgs.branchResolution.experiment_id } : {}),
+            ...(branchArgs.branchResolution.experiment_revision !== null
+              ? { experiment_revision: branchArgs.branchResolution.experiment_revision } : {}),
+            ...(branchArgs.branchResolution.experiment_config_sha256
+              ? { experiment_config_sha256: branchArgs.branchResolution.experiment_config_sha256 } : {}),
+            reason_codes: branchArgs.branchResolution.reason_codes,
+          } : {}),
+        },
+      },
+    });
+    let receiptJson: string | null = null;
+    let canonicalResult: ProductServiceResult = result;
+    if (operationIdentity) {
+      receiptJson = stableStringify(result);
+      if (Buffer.byteLength(receiptJson, "utf8") > PRODUCT_GUIDE_OPERATION_RECEIPT_MAX_BYTES) {
+        throw new HttpError(
+          413,
+          "protected_guide_response_too_large",
+          "protected guide response exceeds the canonical receipt size limit",
+          { max_bytes: PRODUCT_GUIDE_OPERATION_RECEIPT_MAX_BYTES },
+        );
+      }
+      canonicalResult = parseStoredProductGuideOperationResult({
+        identity: operationIdentity,
+        receiptJson,
       });
-      admissionCandidatePolicyProjectionApplied = projectedContext !== agentContext;
-      agentContext = projectedContext;
     }
-  }
-  const exposureWrite = await persistGuideExposure({
+    return {
+      agentContext: branchArgs.branchAgentContext,
+      result: canonicalResult,
+      receiptJson,
+      exposureItems: branchArgs.exposureItems,
+      servedArm: branchArgs.servedArm,
+      learningResolution: branchArgs.branchResolution,
+    };
+  };
+  const controlBranch = buildPersistenceBranch({
+    branchAgentContext: recordedAgentContext,
+    branchProjection: controlProjection,
+    branchProjectionApplied: false,
+    branchResolution: controlLearningResolution,
+    exposureItems: guideLearningDecisionSet.control_items,
+    servedArm: "control",
+  });
+  const authorityChangedControlBranch = buildPersistenceBranch({
+    branchAgentContext: recordedAgentContext,
+    branchProjection: controlProjection,
+    branchProjectionApplied: false,
+    branchResolution: forceLearningExperimentControl(
+      learningExperimentResolution,
+      ["experiment_authority_changed_before_commit"],
+    ),
+    exposureItems: guideLearningDecisionSet.control_items,
+    servedArm: "control",
+  });
+  const candidateBranch = candidateMayServe ? buildPersistenceBranch({
+    branchAgentContext: candidateAgentContext,
+    branchProjection: candidateProjection,
+    branchProjectionApplied: admissionCandidatePolicyProjectionApplied,
+    branchResolution: learningExperimentResolution,
+    exposureItems: guideLearningDecisionSet.candidate_items,
+    servedArm: "candidate",
+  }) : null;
+  return await persistGuideExposure({
     dependencies,
     parsed,
+    principal: context.principal,
     tenantId,
     scope,
-    agentContext,
+    storeScope: tenancy.scope_key,
     memoryPacket,
     guidePacket,
     guideTraceId,
     toolSelection,
     runtimeVerification,
-  });
-  if (!exposureWrite.ok) return exposureWrite;
-
-  const includePackets = parsed.include_packets === true;
-  const premiseFirewallVisible = productGuidePremiseFirewallVisible(agentContext);
-  const memoryContractVisible = productGuideMemoryContractVisible(memoryPacket);
-  return productServiceSuccess({
-    contract_version: "aionis_guide_result_v1",
-    tenant_id: tenantId,
-    scope,
-    consumer_agent_id: parsed.consumer_agent_id ?? env.LITE_LOCAL_ACTOR_ID,
-    ...(parsed.consumer_team_id ? { consumer_team_id: parsed.consumer_team_id } : {}),
-    guide_trace_id: guideTraceId,
-    agent_context: agentContext,
-    ...(toolSelection ? { tool_selection: toolSelection } : {}),
-    ...(claimLedgerProjection ? { claim_ledger_projection: claimLedgerProjection } : {}),
-    ...(admissionCandidatePolicyProjection ? { admission_candidate_policy_projection: admissionCandidatePolicyProjection } : {}),
-    ...(includePackets ? { memory_packet: memoryPacket, guide_packet: guidePacket } : {}),
-    source_map: {
-      routes_used: ["/v1/guide"],
-      internal_surfaces_used: [
-        ...(planningContextEmbeddingUnavailable ? ["planning_context_embedding_unavailable"] : ["recall"]),
-        "planning_context_service",
-        ...(toolSelection ? ["tool_selection_receipt"] : []),
-        "product_packets",
-        "agent_context_compiler",
-        ...(agentRole !== "agent" ? ["role_aware_agent_context"] : []),
-        ...(fullPowerRequested ? ["full_power_execution_context"] : []),
-        ...(fullPowerStructuredMemoryMerged ? ["full_power_structured_execution_recall"] : []),
-        ...(fullPowerExecutionContextMerged ? ["full_power_agent_context_merge"] : []),
-        ...(claimLedgerProjection ? ["claim_ledger_projection"] : []),
-        ...(claimLedgerContextProjectionApplied ? ["claim_ledger_agent_context_projection"] : []),
-        ...(agentContextMode === "compact_agent" ? ["compact_agent_context"] : []),
-        ...(activeProjectionApplied ? ["inspect_before_use_active_projection"] : []),
-        ...(admissionCandidatePolicyProjection && admissionCandidatePolicyMode.mode === "shadow"
-          ? ["admission_candidate_policy_shadow_projection"] : []),
-        ...(admissionCandidatePolicyProjectionApplied ? ["admission_candidate_policy_active_projection"] : []),
-        ...(admissionCandidatePolicyProjection && admissionCandidatePolicyMode.source === "profile_rule"
-          ? [`admission_candidate_policy_profile_${admissionCandidatePolicyMode.mode}_projection`] : []),
-        ...(memoryContractVisible ? ["memory_contract"] : []),
-        ...(premiseFirewallVisible ? ["premise_firewall"] : []),
-        "guide_exposure_ledger",
-      ],
-      omitted_internal_surfaces: [
-        "internal_planning_details",
-        "internal_learning_diagnostics",
-        "internal_execution_recommendation_details",
-        "internal_cost_diagnostics",
-        ...(fullPowerRequested ? [
-          "full_power_execution_prompt_text",
-          "full_power_raw_evidence",
-          "full_power_gated_abstractions",
-          "full_power_trace",
-        ] : []),
-        ...(includePackets ? [] : ["memory_packet", "guide_packet"]),
-        ...(planningContextEmbeddingUnavailable ? ["semantic_planning_recall"] : []),
-      ],
-      admission_candidate_policy: {
-        mode: admissionCandidatePolicyMode.mode,
-        source: admissionCandidatePolicyMode.source,
-        ...(admissionCandidatePolicyMode.profile_id ? { profile_id: admissionCandidatePolicyMode.profile_id } : {}),
-      },
-    },
+    deferredToolDecision,
+    operationIdentity,
+    matchedRule: configuredAdmissionCandidatePolicyMode.matched_rule,
+    decisionSet: guideLearningDecisionSet,
+    controlBranch,
+    authorityChangedControlBranch,
+    candidateBranch,
+    experimentResolverInput: dependencies.learningEpisodeLedgerAccess
+      ? experimentResolverInput
+      : null,
   });
 }
 
 export function createProductGuideService(
   dependencies: ProductGuideServiceDependencies,
 ): ProductServices["guide"] {
+  const admissionCandidatePolicyProfileRules = dependencies.admissionCandidatePolicyProfileRules
+    ? dependencies.admissionCandidatePolicyProfileRules as unknown as readonly AionisAdmissionCandidatePolicyProfileRule[]
+    : Object.freeze(parseAdmissionCandidatePolicyProfileRules(
+        dependencies.env.AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON ?? "[]",
+      ));
+  const compiledDependencies: CompiledProductGuideServiceDependencies = {
+    ...dependencies,
+    admissionCandidatePolicyProfileRules,
+  };
   if (
     dependencies.memoryWrite
     && dependencies.memoryWrite.transactionRunner() !== dependencies.liteWriteStore.transactionRunner()
   ) {
     throw new Error("product guide memory write service must share the guide receipt transaction runner");
   }
+  if (
+    dependencies.learningEpisodeLedgerAccess
+    && dependencies.learningEpisodeLedgerAccess.transactionRunner()
+      !== dependencies.liteWriteStore.transactionRunner()
+  ) {
+    throw new Error("product guide learning ledger must share the guide receipt transaction runner");
+  }
   return {
     async execute(parsed, context) {
       try {
-        return await executeProductGuide({ dependencies, parsed, context });
+        return await executeProductGuide({ dependencies: compiledDependencies, parsed, context });
       } catch (error) {
         return productServiceFailureFromUnknown(error);
       }

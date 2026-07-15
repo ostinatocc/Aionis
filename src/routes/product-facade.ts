@@ -160,6 +160,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs): void {
       kind: "write",
       body: parsed,
       execute: () => services.guide.execute(parsed, {
+        principal,
         planningContext: async (input) => {
           if (!planningContextService) {
             throw new HttpError(
@@ -173,6 +174,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs): void {
             body: input,
             principal,
             principalAlreadyChecked: true,
+            deferToolDecisionPersistence: parsed.operation_id !== undefined,
           });
         },
         applyIdentity: (input, kind) => withIdentityFromRequest(req, input, principal, kind),
@@ -197,7 +199,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs): void {
     reply: input.reply,
     kind: productLifecycleGuardKind(input.parsed),
     body: input.parsed,
-    execute: () => services.lifecycle.execute(input.parsed, input.surface),
+    execute: () => services.lifecycle.execute(input.parsed, input.surface, { principal: input.principal }),
   });
 
   app.post("/v1/forget", async (req: ProductFacadeRequest, reply) => {

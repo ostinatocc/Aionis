@@ -1,3 +1,5 @@
+import stableStringify from "fast-json-stable-stringify";
+
 import {
   parseAdmissionCandidatePolicyProfileRules,
   type AionisAdmissionCandidatePolicyProfileRule,
@@ -5,9 +7,12 @@ import {
 } from "../config.js";
 import {
   activateMemoryNodesLite,
-  applyUnusedExposureLearningControlLite,
   rehydrateArchiveNodesLite,
 } from "../memory/lifecycle-lite.js";
+import {
+  learningCollectionPrincipalSha256,
+  learningEpisodeId,
+} from "../memory/learning-episode-ledger.js";
 import { memoryFindLite } from "../memory/find.js";
 import { suppressAnchorLite, unsuppressAnchorLite } from "../memory/pattern-operator-override.js";
 import { rehydrateAnchorPayloadLite } from "../memory/rehydrate-anchor.js";
@@ -16,6 +21,17 @@ import {
   buildAionisOperatorSnapshot,
 } from "../memory/product-output/operator-projections.js";
 import type { LiteExecutionNativeNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
+import {
+  appendLiteLearningFeedback,
+  buildLiteLearningFeedbackAppend,
+  liteLearningFeedbackEventId,
+} from "../store/lite-learning-feedback.js";
+import type { LiteLearningFeedbackSource } from "../store/lite-learning-feedback-source.js";
+import { appendBoundaryLearningSafetyStop } from "../store/lite-learning-safety-stop.js";
+import type { LiteLearningEpisodeLedgerAccess } from "../store/lite-learning-episode-ledger.js";
+import { sha256Hex } from "../util/crypto.js";
+import type { AuthPrincipal } from "../util/auth.js";
+import { HttpError } from "../util/http.js";
 import {
   ProductDecisionTraceRequest,
   ProductFlightRecorderRequest,
@@ -27,6 +43,7 @@ import {
   findHistoricalGuideExposureLedgers,
   findMemoryNodeSlots,
   finiteNumber,
+  guideExposureServedMemoryIds,
   guideExposureSurfaceIds,
   nonNegativeInt,
   objectValue,
@@ -43,6 +60,7 @@ import type {
   ProductDecisionTraceRequestInput,
   ProductFlightRecorderInput,
   ProductLifecycleSurface,
+  ProductLifecycleExecutionContext,
   ProductServiceResult,
   ProductServices,
 } from "./product-services.js";
@@ -116,7 +134,10 @@ type ProductGuideExposureResolution =
     body: Record<string, unknown>;
   };
 
-type ProductFeedbackLearningControlPersistence = Awaited<ReturnType<typeof applyUnusedExposureLearningControlLite>>;
+type ProductLearningAttributionStatus =
+  | "not_attributed"
+  | "legacy_unverified"
+  | "verified_host_receipt";
 
 async function buildUnusedExposureObservation(args: {
   liteWriteStore: LiteWriteStore;
@@ -207,44 +228,6 @@ async function buildUnusedExposureObservation(args: {
   };
 }
 
-async function persistUnusedExposureLearningControl(args: {
-  liteWriteStore: LiteWriteStore;
-  env: Env;
-  parsed: ProductForgetInput;
-  guideExposure: Extract<ProductGuideExposureResolution, { ok: true }>;
-  unusedExposureObservation: ProductUnusedExposureObservation;
-}): Promise<ProductFeedbackLearningControlPersistence | null> {
-  const candidates = args.unusedExposureObservation.memory_stats.filter((entry) =>
-    entry.repeated_without_positive_attribution
-    && entry.positive_attributed_use_count === 0
-  );
-  if (candidates.length === 0) return null;
-
-  const result = await args.liteWriteStore.withTx(() =>
-    applyUnusedExposureLearningControlLite(
-      args.liteWriteStore,
-      {
-        tenant_id: args.guideExposure.ledger.tenant_id,
-        scope: args.guideExposure.ledger.scope,
-        actor: args.guideExposure.ledger.consumer_agent_id ?? args.parsed.actor ?? args.env.LITE_LOCAL_ACTOR_ID,
-        consumer_team_id: args.guideExposure.ledger.consumer_team_id,
-        run_id: args.parsed.run_id ?? null,
-        guide_trace_id: args.guideExposure.ledger.guide_trace_id,
-        reason: "Repeated guide exposure without positive host attribution should be inspected before direct reuse.",
-        memory_stats: candidates,
-      },
-      args.env.MEMORY_SCOPE,
-      args.env.MEMORY_TENANT_ID,
-      {
-        maxTextLen: args.env.MAX_TEXT_LEN,
-        piiRedaction: args.env.PII_REDACTION,
-        defaultActor: args.env.LITE_LOCAL_ACTOR_ID,
-      },
-    )
-  );
-  return result.changed_count > 0 ? result : null;
-}
-
 async function resolveGuideExposureForActivation(args: {
   liteWriteStore: LiteWriteStore;
   parsed: ProductForgetInput;
@@ -296,7 +279,7 @@ async function resolveGuideExposureForActivation(args: {
     ...(args.parsed.memory_ids ?? []),
     ...(args.parsed.node_ids ?? []),
   ]);
-  const exposed = new Set(ledger.memory_ids);
+  const exposed = guideExposureServedMemoryIds(ledger);
   const notExposed = requestedUsedMemoryIds.filter((id) => !exposed.has(id));
   if (notExposed.length > 0) {
     return {
@@ -379,6 +362,12 @@ function productForgetPayload(
   parsed: ProductForgetInput,
   target: ProductForgetTarget,
   guideExposure?: ProductGuideExposureResolution | null,
+  feedback?: Readonly<{
+    episodeId: string;
+    recordedAt: string;
+    boundaryIgnoredMemoryIds: readonly string[];
+    verifiedHostReceipt: boolean;
+  }> | null,
 ): Record<string, unknown> {
   const payload = parsed.payload ?? {};
   const nodeIds = productForgetNodeIds(parsed, guideExposure);
@@ -418,6 +407,12 @@ function productForgetPayload(
       consumer_team_id: guideExposure?.ok
         ? guideExposure.ledger.consumer_team_id ?? undefined
         : identity.consumer_team_id,
+      guide_trace_id: feedback ? parsed.guide_trace_id : undefined,
+      learning_episode_id: feedback?.episodeId,
+      feedback_operation_id: parsed.operation_id,
+      feedback_recorded_at: feedback?.recordedAt,
+      boundary_ignored_memory_ids: feedback?.boundaryIgnoredMemoryIds,
+      verified_host_receipt: feedback?.verifiedHostReceipt,
       run_id: parsed.run_id ?? payload.run_id,
       outcome: parsed.outcome ?? payload.outcome,
       activate: parsed.activate ?? payload.activate,
@@ -489,7 +484,10 @@ function productForgetEffect(args: {
   resultBody: unknown;
   guideExposure?: ProductGuideExposureResolution | null;
   unusedExposureObservation?: ProductUnusedExposureObservation | null;
-  feedbackLearningControlPersistence?: ProductFeedbackLearningControlPersistence | null;
+  feedbackLearningControlPersistence?: unknown;
+  learningAttributionStatus?: ProductLearningAttributionStatus;
+  learningEpisodeId?: string | null;
+  learningFeedbackEventId?: string | null;
 }) {
   const nodeIds = productForgetNodeIds(args.parsed, args.guideExposure);
   const changedCount = productForgetChangedCount(args.resultBody, args.parsed.operation, args.target);
@@ -504,6 +502,9 @@ function productForgetEffect(args: {
     reason: args.parsed.reason,
     changed_count: changedCount,
     reversible: args.parsed.operation !== "activate",
+    learning_attribution_status: args.parsed.operation === "activate"
+      ? args.learningAttributionStatus ?? "not_attributed"
+      : undefined,
     affected_memory_ids: nodeIds,
     affected_client_ids: uniqueStrings(args.parsed.client_ids ?? []),
     guide_trace: args.parsed.operation === "activate" && args.guideExposure?.ok ? {
@@ -522,6 +523,8 @@ function productForgetEffect(args: {
       feedback_learning_control: args.feedbackLearningControlPersistence ?? undefined,
     } : undefined,
     attribution: args.parsed.operation === "activate" ? stripUndefined({
+      learning_episode_id: args.learningEpisodeId ?? undefined,
+      learning_feedback_event_id: args.learningFeedbackEventId ?? undefined,
       run_id: args.parsed.run_id,
       outcome: args.parsed.outcome,
       used_surface: args.parsed.used_surface,
@@ -534,10 +537,411 @@ function productForgetEffect(args: {
   };
 }
 
+const PRODUCT_FEEDBACK_OPERATION_KIND = "product_feedback_v1";
+const PRODUCT_FEEDBACK_OPERATION_RECEIPT_MAX_BYTES = 2 * 1024 * 1024;
+
+type ProductFeedbackOperationIdentity = Readonly<{
+  tenantId: string;
+  scope: string;
+  operationId: string;
+  requestSha256: string;
+  surface: ProductLifecycleSurface;
+}>;
+
+function productFeedbackOperationIdentity(args: {
+  parsed: ProductForgetInput;
+  surface: ProductLifecycleSurface;
+  env: Env;
+}): ProductFeedbackOperationIdentity | null {
+  if (args.parsed.operation !== "activate" || !args.parsed.operation_id) return null;
+  const tenantId = args.parsed.tenant_id ?? args.env.MEMORY_TENANT_ID;
+  const scope = args.parsed.scope ?? args.env.MEMORY_SCOPE;
+  const normalized: Record<string, unknown> = {
+    ...args.parsed,
+    tenant_id: tenantId,
+    scope,
+    route_surface: args.surface,
+  };
+  delete normalized.operation_id;
+  return {
+    tenantId,
+    scope,
+    operationId: args.parsed.operation_id,
+    requestSha256: sha256Hex(stableStringify(stripUndefined(normalized))),
+    surface: args.surface,
+  };
+}
+
+function assertFeedbackOperationMatches(
+  identity: ProductFeedbackOperationIdentity,
+  storedRequestSha256: string,
+): void {
+  if (identity.requestSha256 === storedRequestSha256) return;
+  throw new HttpError(
+    409,
+    "learning_episode_operation_conflict",
+    "operation_id was already used for a different feedback request",
+    { operation_id: identity.operationId },
+  );
+}
+
+function parseStoredFeedbackResult(
+  identity: ProductFeedbackOperationIdentity,
+  receiptJson: string,
+): ProductServiceResult {
+  if (Buffer.byteLength(receiptJson, "utf8") > PRODUCT_FEEDBACK_OPERATION_RECEIPT_MAX_BYTES) {
+    throw new HttpError(500, "protected_feedback_receipt_invalid", "stored feedback receipt is invalid");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(receiptJson);
+  } catch {
+    throw new HttpError(500, "protected_feedback_receipt_invalid", "stored feedback receipt is invalid");
+  }
+  if (stableStringify(parsed) !== receiptJson) {
+    throw new HttpError(500, "protected_feedback_receipt_invalid", "stored feedback receipt is not canonical");
+  }
+  const result = objectValue(parsed);
+  const body = objectValue(result?.body);
+  if (result?.ok !== true
+    || result.statusCode !== 200
+    || body?.contract_version !== productLifecycleContractVersion(identity.surface)
+    || body.operation_id !== identity.operationId
+    || body.tenant_id !== identity.tenantId
+    || body.scope !== identity.scope
+    || typeof body.learning_attribution_status !== "string") {
+    throw new HttpError(500, "protected_feedback_receipt_invalid", "stored feedback receipt is invalid");
+  }
+  return parsed as ProductServiceResult;
+}
+
+function boundaryIgnoredMemoryIds(args: {
+  parsed: ProductForgetInput;
+  source: LiteLearningFeedbackSource;
+  usedMemoryIds: readonly string[];
+}): string[] {
+  const receiptSurfaces = new Map(
+    args.parsed.host_use_receipt_v1?.items.map((item) => [item.memory_id, item.used_surface]) ?? [],
+  );
+  const exposureById = new Map(args.source.items.map((item) => [item.memory_id, item]));
+  const missing = args.usedMemoryIds.filter((memoryId) => !exposureById.has(memoryId));
+  if (missing.length > 0) {
+    throw new HttpError(
+      400,
+      "guide_trace_used_memory_not_exposure_item",
+      "feedback subjects must be exact items from the persisted learning exposure",
+      { guide_trace_id: args.parsed.guide_trace_id, not_exposed_memory_ids: missing },
+    );
+  }
+  return args.usedMemoryIds.filter((memoryId) => {
+    const reported = receiptSurfaces.get(memoryId) ?? args.parsed.used_surface;
+    const comparableReported = reported === "explicit_host_assertion" ? "use_now" : reported;
+    return exposureById.get(memoryId)!.served_action !== comparableReported;
+  });
+}
+
+function validateFormalFeedbackAuthority(args: {
+  parsed: ProductForgetInput;
+  source: LiteLearningFeedbackSource;
+  principal: AuthPrincipal | null;
+  tenantId: string;
+}): void {
+  const receipt = args.parsed.host_use_receipt_v1;
+  if (!receipt) return;
+  if (receipt.episode_id !== args.source.event.episode_id
+    || receipt.guide_trace_id !== args.source.payload.guide_trace_id
+    || receipt.operation_id !== args.parsed.operation_id
+    || receipt.run_id !== args.parsed.run_id) {
+    throw new HttpError(400, "host_use_receipt_identity_mismatch", "host-use receipt identity does not match the source exposure");
+  }
+  if (!args.principal || args.principal.tenant_id !== args.tenantId) {
+    throw new HttpError(403, "host_use_receipt_principal_mismatch", "verified host feedback requires the original authenticated principal");
+  }
+  let principalSha256: string;
+  try {
+    principalSha256 = learningCollectionPrincipalSha256({
+      tenant_id: args.principal.tenant_id,
+      agent_id: args.principal.agent_id,
+      team_id: args.principal.team_id,
+    });
+  } catch {
+    throw new HttpError(403, "host_use_receipt_principal_mismatch", "verified host feedback requires a bounded principal identity");
+  }
+  if (principalSha256 !== args.source.eventRow.collection_principal_sha256
+    || receipt.host_task_id !== args.source.eventRow.host_task_id
+    || receipt.host_task_envelope_sha256 !== args.source.eventRow.host_task_envelope_sha256
+    || receipt.collector_id !== args.source.eventRow.collector_id
+    || receipt.collector_version !== args.source.eventRow.collector_version) {
+    throw new HttpError(403, "host_use_receipt_principal_mismatch", "host-use receipt does not match the exposure authority");
+  }
+}
+
 export type ProductLifecycleServiceDependencies = {
   env: Env;
   liteWriteStore: LiteWriteStore;
+  learningEpisodeLedgerAccess?: LiteLearningEpisodeLedgerAccess | null;
 };
+
+function lifecycleSuccessResult(args: {
+  env: Env;
+  parsed: ProductForgetInput;
+  surface: ProductLifecycleSurface;
+  target: ProductForgetTarget;
+  resultBody: unknown;
+  guideExposure?: ProductGuideExposureResolution | null;
+  unusedExposureObservation?: ProductUnusedExposureObservation | null;
+  learningAttributionStatus?: ProductLearningAttributionStatus;
+  learningEpisodeId?: string | null;
+  learningFeedbackEventId?: string | null;
+}): ProductServiceResult {
+  return productServiceSuccess({
+    contract_version: productLifecycleContractVersion(args.surface),
+    tenant_id: args.parsed.tenant_id ?? args.env.MEMORY_TENANT_ID,
+    scope: args.parsed.scope ?? args.env.MEMORY_SCOPE,
+    ...(args.parsed.operation_id ? { operation_id: args.parsed.operation_id } : {}),
+    ...(args.parsed.operation === "activate" ? {
+      learning_attribution_status: args.learningAttributionStatus ?? "not_attributed",
+      learning_episode_id: args.learningEpisodeId ?? null,
+      learning_feedback_event_id: args.learningFeedbackEventId ?? null,
+    } : {}),
+    ...(args.surface !== "forget" ? { product_action: args.surface } : {}),
+    operation: args.parsed.operation,
+    target: args.target,
+    forget_effect: productForgetEffect({
+      parsed: args.parsed,
+      target: args.target,
+      resultBody: args.resultBody,
+      guideExposure: args.guideExposure,
+      unusedExposureObservation: args.unusedExposureObservation,
+      learningAttributionStatus: args.learningAttributionStatus,
+      learningEpisodeId: args.learningEpisodeId,
+      learningFeedbackEventId: args.learningFeedbackEventId,
+    }),
+    result: args.resultBody,
+    source_map: {
+      routes_used: [`/v1/${args.surface}`],
+      internal_surfaces_used: [
+        ...(args.guideExposure ? ["guide_exposure_ledger"] : []),
+        ...(args.unusedExposureObservation ? ["unused_exposure_observation"] : []),
+        ...(args.learningFeedbackEventId ? ["learning_episode_feedback_attribution"] : []),
+        args.target === "payload" ? "anchor_payload_rehydration" : "memory_lifecycle",
+        args.parsed.operation === "suppress" || args.parsed.operation === "unsuppress"
+          ? "learning_control"
+          : "controlled_forgetting",
+      ],
+      omitted_internal_surfaces: ["raw_memory_rows", "raw_slots", "internal_route_schema"],
+    },
+  });
+}
+
+async function executeDirectFeedback(args: {
+  dependencies: ProductLifecycleServiceDependencies;
+  parsed: ProductForgetInput;
+  surface: ProductLifecycleSurface;
+  context: ProductLifecycleExecutionContext;
+}): Promise<ProductServiceResult> {
+  const { env, liteWriteStore, learningEpisodeLedgerAccess } = args.dependencies;
+  const identity = productFeedbackOperationIdentity({ parsed: args.parsed, surface: args.surface, env });
+  if (identity) {
+    const stored = await liteWriteStore.getWriteOperation({
+      tenantId: identity.tenantId,
+      scope: identity.scope,
+      operationKind: PRODUCT_FEEDBACK_OPERATION_KIND,
+      operationId: identity.operationId,
+    });
+    if (stored) {
+      assertFeedbackOperationMatches(identity, stored.request_sha256);
+      return parseStoredFeedbackResult(identity, stored.receipt_json);
+    }
+  }
+  try {
+    return await liteWriteStore.withTx(async () => {
+    if (identity) {
+      const raced = await liteWriteStore.getWriteOperation({
+        tenantId: identity.tenantId,
+        scope: identity.scope,
+        operationKind: PRODUCT_FEEDBACK_OPERATION_KIND,
+        operationId: identity.operationId,
+      });
+      if (raced) {
+        assertFeedbackOperationMatches(identity, raced.request_sha256);
+        return parseStoredFeedbackResult(identity, raced.receipt_json);
+      }
+    }
+    const guideExposure = await resolveGuideExposureForActivation({ liteWriteStore, parsed: args.parsed, env });
+    if (guideExposure && !guideExposure.ok) {
+      return { ok: false, statusCode: guideExposure.statusCode, body: guideExposure.body };
+    }
+    const tenantId = args.parsed.tenant_id ?? env.MEMORY_TENANT_ID;
+    const scope = args.parsed.scope ?? env.MEMORY_SCOPE;
+    const source = args.parsed.guide_trace_id && learningEpisodeLedgerAccess
+      ? await learningEpisodeLedgerAccess.resolveFeedbackSource({
+          tenantId,
+          scope,
+          guideTraceId: args.parsed.guide_trace_id,
+        })
+      : null;
+    if (args.parsed.host_use_receipt_v1 && !source) {
+      throw new HttpError(
+        400,
+        "host_use_receipt_source_exposure_missing",
+        "verified host feedback requires its persisted learning exposure",
+      );
+    }
+    const usedMemoryIds = productForgetNodeIds(args.parsed, guideExposure);
+    const boundaryIds = source
+      ? boundaryIgnoredMemoryIds({ parsed: args.parsed, source, usedMemoryIds })
+      : [];
+    if (args.parsed.host_use_receipt_v1 && boundaryIds.length > 0) {
+      throw new HttpError(
+        400,
+        "host_use_receipt_served_surface_mismatch",
+        "verified host receipt subjects must match the exact served exposure surface",
+        { memory_ids: boundaryIds },
+      );
+    }
+    if (source) {
+      validateFormalFeedbackAuthority({
+        parsed: args.parsed,
+        source,
+        principal: args.context.principal,
+        tenantId,
+      });
+    }
+    const recordedAt = new Date().toISOString();
+    const target = productForgetTarget(args.parsed);
+    const payload = productForgetPayload(args.parsed, target, guideExposure, source ? {
+      episodeId: source.event.episode_id,
+      recordedAt,
+      boundaryIgnoredMemoryIds: boundaryIds,
+      verifiedHostReceipt: args.parsed.host_use_receipt_v1 !== undefined,
+    } : null);
+    const resultBody = await activateMemoryNodesLite(
+      liteWriteStore,
+      payload,
+      env.MEMORY_SCOPE,
+      env.MEMORY_TENANT_ID,
+      {
+        maxTextLen: env.MAX_TEXT_LEN,
+        piiRedaction: env.PII_REDACTION,
+        defaultActor: env.LITE_LOCAL_ACTOR_ID,
+      },
+    );
+    const result = objectValue(resultBody);
+    const sourceCommitId = typeof result?.commit_id === "string" ? result.commit_id : null;
+    const requireSourceCommitId = (): string => {
+      if (!sourceCommitId) throw new Error("feedback activation did not produce a source commit");
+      return sourceCommitId;
+    };
+    if (source) requireSourceCommitId();
+    const feedbackEventId = source && learningEpisodeLedgerAccess
+      ? liteLearningFeedbackEventId({
+          tenantId: source.event.tenant_id,
+          scope: source.event.scope,
+          operationId: args.parsed.operation_id ?? null,
+          sourceCommitId: requireSourceCommitId(),
+        })
+      : null;
+    const learningAttributionStatus: ProductLearningAttributionStatus = source
+      ? (args.parsed.host_use_receipt_v1 ? "verified_host_receipt" : "legacy_unverified")
+      : "not_attributed";
+    const unusedExposureObservation = guideExposure?.ok
+      ? await buildUnusedExposureObservation({ liteWriteStore, env, parsed: args.parsed, guideExposure })
+      : null;
+    const response = lifecycleSuccessResult({
+      env,
+      parsed: args.parsed,
+      surface: args.surface,
+      target,
+      resultBody,
+      guideExposure,
+      unusedExposureObservation,
+      learningAttributionStatus,
+      learningEpisodeId: source?.event.episode_id ?? null,
+      learningFeedbackEventId: feedbackEventId,
+    });
+    const receiptJson = identity ? stableStringify(response) : null;
+    if (receiptJson !== null
+      && Buffer.byteLength(receiptJson, "utf8") > PRODUCT_FEEDBACK_OPERATION_RECEIPT_MAX_BYTES) {
+      throw new HttpError(
+        413,
+        "protected_feedback_response_too_large",
+        "protected feedback response exceeds the canonical receipt size limit",
+        { max_bytes: PRODUCT_FEEDBACK_OPERATION_RECEIPT_MAX_BYTES },
+      );
+    }
+    if (source && learningEpisodeLedgerAccess) {
+      const append = buildLiteLearningFeedbackAppend({
+        source,
+        operationId: args.parsed.operation_id ?? null,
+        runId: args.parsed.run_id!,
+        sourceCommitId: requireSourceCommitId(),
+        requestSha256: identity?.requestSha256 ?? sha256Hex(stableStringify(stripUndefined({
+          ...args.parsed,
+          tenant_id: tenantId,
+          scope,
+          route_surface: args.surface,
+        }))),
+        operationReceiptSha256: receiptJson === null ? null : sha256Hex(receiptJson),
+        outcome: args.parsed.outcome!,
+        usedSurface: args.parsed.used_surface!,
+        verifierStatus: args.parsed.verifier_status === "unknown"
+          ? null
+          : args.parsed.verifier_status ?? null,
+        toolStatus: args.parsed.tool_status ?? null,
+        runtimeSignalRefs: args.parsed.runtime_signal_refs ?? [],
+        usedMemoryIds,
+        recordedAt,
+        hostUseReceipt: args.parsed.host_use_receipt_v1 ?? null,
+      });
+      if (append.event.event_id !== feedbackEventId) {
+        throw new Error("learning feedback event identity diverged from its protected response");
+      }
+      const appendResult = await appendLiteLearningFeedback(learningEpisodeLedgerAccess, append);
+      const feedbackEventRowId = Number(appendResult.row.row_id);
+      if (!Number.isSafeInteger(feedbackEventRowId) || feedbackEventRowId < 1) {
+        throw new Error("learning feedback append did not return its durable event row");
+      }
+      await appendBoundaryLearningSafetyStop({
+        ledger: learningEpisodeLedgerAccess,
+        liteWriteStore,
+        source,
+        feedback: append,
+        feedbackEventRowId,
+        boundaryIgnoredMemoryIds: append.boundaryIgnoredMemoryIds,
+        sourceCommitId: requireSourceCommitId(),
+        recordedAt,
+      });
+    }
+    if (identity) {
+      await liteWriteStore.insertWriteOperation({
+        tenantId: identity.tenantId,
+        scope: identity.scope,
+        operationKind: PRODUCT_FEEDBACK_OPERATION_KIND,
+        operationId: identity.operationId,
+        requestSha256: identity.requestSha256,
+        receiptJson: receiptJson!,
+        commitId: sourceCommitId,
+      });
+    }
+    return response;
+    });
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    if (/UNIQUE constraint failed: lite_learning_host_use_receipts|learning_authority_replay_conflict:lite_learning_host_use_receipts/u.test(message)) {
+      throw new HttpError(
+        409,
+        "host_use_receipt_conflict",
+        "host-use receipt identity was already consumed by another feedback operation",
+      );
+    }
+    if (/host-use receipt|host_use_receipt|learning feedback subject|feedback attribution/u.test(message)) {
+      throw new HttpError(400, "invalid_host_use_receipt", "host-use receipt validation failed");
+    }
+    throw error;
+  }
+}
 
 export function productLifecycleGuardKind(input: ProductForgetInput): "recall" | "write" {
   const target = productForgetTarget(input);
@@ -603,16 +1007,19 @@ export function createProductLifecycleService(
   dependencies: ProductLifecycleServiceDependencies,
 ): ProductServices["lifecycle"] {
   const { env, liteWriteStore } = dependencies;
+  if (dependencies.learningEpisodeLedgerAccess
+    && dependencies.learningEpisodeLedgerAccess.transactionRunner() !== liteWriteStore.transactionRunner()) {
+    throw new Error("memory feedback ledger and write store must share one Runtime transaction runner");
+  }
   return {
-    async execute(parsed, surface): Promise<ProductServiceResult> {
+    async execute(parsed, surface, context): Promise<ProductServiceResult> {
       try {
-        const guideExposure = await resolveGuideExposureForActivation({ liteWriteStore, parsed, env });
-        if (guideExposure && !guideExposure.ok) {
-          return { ok: false, statusCode: guideExposure.statusCode, body: guideExposure.body };
+        if (parsed.operation === "activate") {
+          return await executeDirectFeedback({ dependencies, parsed, surface, context });
         }
         const target = productForgetTarget(parsed);
         const operation = productLifecycleOperation(parsed, target);
-        const payload = productForgetPayload(parsed, target, guideExposure);
+        const payload = productForgetPayload(parsed, target);
         let resultBody: unknown;
         try {
           resultBody = await executeLifecycleMutation({ dependencies, operation, payload });
@@ -622,46 +1029,7 @@ export function createProductLifecycleService(
             productServiceFailureFromUnknown(error).statusCode,
           );
         }
-        const unusedExposureObservation = guideExposure?.ok
-          ? await buildUnusedExposureObservation({ liteWriteStore, env, parsed, guideExposure })
-          : null;
-        const feedbackLearningControlPersistence = guideExposure?.ok && unusedExposureObservation
-          ? await persistUnusedExposureLearningControl({
-              liteWriteStore,
-              env,
-              parsed,
-              guideExposure,
-              unusedExposureObservation,
-            })
-          : null;
-        return productServiceSuccess({
-          contract_version: productLifecycleContractVersion(surface),
-          tenant_id: parsed.tenant_id ?? env.MEMORY_TENANT_ID,
-          scope: parsed.scope ?? env.MEMORY_SCOPE,
-          ...(surface !== "forget" ? { product_action: surface } : {}),
-          operation: parsed.operation,
-          target,
-          forget_effect: productForgetEffect({
-            parsed,
-            target,
-            resultBody,
-            guideExposure,
-            unusedExposureObservation,
-            feedbackLearningControlPersistence,
-          }),
-          result: resultBody,
-          source_map: {
-            routes_used: [`/v1/${surface}`],
-            internal_surfaces_used: [
-              ...(guideExposure ? ["guide_exposure_ledger"] : []),
-              ...(unusedExposureObservation ? ["unused_exposure_observation"] : []),
-              ...(feedbackLearningControlPersistence ? ["feedback_learning_control_persistence"] : []),
-              target === "payload" ? "anchor_payload_rehydration" : "memory_lifecycle",
-              parsed.operation === "suppress" || parsed.operation === "unsuppress" ? "learning_control" : "controlled_forgetting",
-            ],
-            omitted_internal_surfaces: ["raw_memory_rows", "raw_slots", "internal_route_schema"],
-          },
-        });
+        return lifecycleSuccessResult({ env, parsed, surface, target, resultBody });
       } catch (error) {
         return productServiceFailureFromUnknown(error);
       }

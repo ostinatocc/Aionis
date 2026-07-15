@@ -1,13 +1,13 @@
 # Aionis Product API Usage
 
-Status: product API usage guide for the v0.3.6 Local Runtime Public Beta candidate
+Status: product API usage guide for the v0.3.7 Local Runtime Public Beta candidate
 
 This document explains how a host should use the product actions:
 `observe`, `guide`, `feedback`, `measure`, `rehydrate`, and `snapshot`.
 
 It describes the candidate product path over the current Runtime
 implementation. Contract changes in this candidate are carried by SDK
-`0.3.15`; this is a Public Beta contract, not a GA compatibility promise.
+`0.3.16`; this is a Public Beta contract, not a GA compatibility promise.
 
 For host template wiring and runnable single-agent, multi-agent, and coding
 Agent examples, see [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md).

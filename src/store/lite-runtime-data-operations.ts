@@ -1,9 +1,14 @@
 import { createHash } from "node:crypto";
 import {
+  closeSync,
   createReadStream,
+  createWriteStream,
   existsSync,
+  fsyncSync,
+  linkSync,
   mkdtempSync,
   mkdirSync,
+  openSync,
   readFileSync,
   rmSync,
   statSync,
@@ -11,6 +16,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { pipeline } from "node:stream/promises";
+import stableStringify from "fast-json-stable-stringify";
 
 import { createLiteExecutionStateStore } from "../execution/state-store.js";
 import { createLiteExecutionTreeStore } from "../execution/tree-store.js";
@@ -21,8 +28,27 @@ import {
   parseEmbeddingProjectionPayload,
   type LiteProjectionJobRow,
 } from "./lite-projection-outbox.js";
+import {
+  assertLearningLookProposalAgainstDatabase,
+  assertLiteLearningEpisodeLedgerIntegrity,
+  assertLiteRuntimeAuthorityIdentity,
+  type LiteLearningEpisodeLedgerReplay,
+} from "./lite-learning-episode-ledger.js";
+import {
+  LearningLookProposalV1Schema,
+  RUNTIME_INTEGRITY_FINDING_CODES,
+  RuntimeIntegrityGateReportV1Schema,
+  learningLookProposalDigest,
+  runtimeIntegrityGateReportDigest,
+  type LearningLookProposalV1,
+  type RuntimeIntegrityGateReportV1,
+} from "../memory/learning-authority-approval.js";
 import { createLiteWriteStore } from "./lite-write-store.js";
-import { inspectLiteRuntimeSchema, type LiteRuntimeSchemaReport } from "./lite-runtime-schema.js";
+import {
+  inspectLiteRuntimeSchema,
+  LITE_RUNTIME_WRITE_SCHEMA_VERSION,
+  type LiteRuntimeSchemaReport,
+} from "./lite-runtime-schema.js";
 import { createSqliteDatabase, type SqliteDatabase } from "./sqlite.js";
 
 export type LiteExecutionHistoryVerification = {
@@ -38,6 +64,7 @@ export type LiteRuntimeDataVerification = {
   checked_at: string;
   byte_size: number;
   sha256: string;
+  database_instance_id: string | null;
   quick_check: string[];
   foreign_key_violation_count: number;
   schema: LiteRuntimeSchemaReport;
@@ -48,6 +75,17 @@ export type LiteRuntimeDataVerification = {
     projection_jobs: number;
     projection_dead_letters: number;
     legacy_pending_without_job: number;
+    guide_receipts: number;
+    write_operations: number;
+    rule_feedback: number;
+    product_measurements: number;
+    skill_reviews: number;
+    learning_episode_events: number;
+    learning_protected_events: number;
+    learning_legacy_events: number;
+    learning_promotion_eligible_exposures: number;
+    learning_control_jobs: number;
+    learning_control_dead_letters: number;
   };
   integrity_findings: {
     ready_embedding_invalid: number;
@@ -56,24 +94,49 @@ export type LiteRuntimeDataVerification = {
     projection_payload_invalid: number;
     execution_state_history_invalid: number;
     execution_tree_history_invalid: number;
+    learning_episode_ledger_invalid: number;
   };
   execution_history: {
     state: LiteExecutionHistoryVerification;
     tree: LiteExecutionHistoryVerification;
   };
+  learning: {
+    replay: LiteLearningEpisodeLedgerReplay | null;
+    active_serving_blocked: boolean;
+    promotion_blocked: boolean;
+    blockers: string[];
+    reclaimable_expired_control_job_leases: number;
+    integrity_error: string | null;
+  };
   warnings: string[];
 };
 
 export type LiteRuntimeBackupManifest = {
-  contract_version: "aionis_lite_runtime_backup_manifest_v1";
+  contract_version:
+    | "aionis_lite_runtime_backup_manifest_v1"
+    | "aionis_lite_runtime_backup_manifest_v2";
   created_at: string;
   database_file: string;
   byte_size: number;
   sha256: string;
+  database_instance_id: string | null;
   schema_component: string;
   schema_version: number | null;
   counts: LiteRuntimeDataVerification["counts"];
+  learning_table_counts?: Readonly<Record<string, number>> | null;
 };
+
+type LiteRuntimePreservedCounts = Pick<
+  LiteRuntimeDataVerification["counts"],
+  | "commits"
+  | "nodes"
+  | "edges"
+  | "guide_receipts"
+  | "write_operations"
+  | "rule_feedback"
+  | "product_measurements"
+  | "skill_reviews"
+>;
 
 export type LiteRuntimeUpgradeReport = {
   contract_version: "aionis_lite_runtime_upgrade_report_v1";
@@ -81,8 +144,8 @@ export type LiteRuntimeUpgradeReport = {
   before: LiteRuntimeSchemaReport;
   after: LiteRuntimeSchemaReport;
   preserved_counts: {
-    before: Pick<LiteRuntimeDataVerification["counts"], "commits" | "nodes" | "edges">;
-    after: Pick<LiteRuntimeDataVerification["counts"], "commits" | "nodes" | "edges">;
+    before: LiteRuntimePreservedCounts;
+    after: LiteRuntimePreservedCounts;
   };
 };
 
@@ -122,12 +185,17 @@ function scalarCount(db: SqliteDatabase, sql: string, ...params: unknown[]): num
   return Number(row?.count ?? 0);
 }
 
-function semanticCounts(db: SqliteDatabase): LiteRuntimeDataVerification["counts"] {
+function semanticCounts(
+  db: SqliteDatabase,
+  learningReplay: LiteLearningEpisodeLedgerReplay | null = null,
+): LiteRuntimeDataVerification["counts"] {
   const count = (table: string): number => tableExists(db, table)
     ? scalarCount(db, `SELECT COUNT(*) AS count FROM ${table}`)
     : 0;
   const projectionTableExists = tableExists(db, "lite_memory_projection_jobs");
   const projectionJobs = projectionTableExists ? count("lite_memory_projection_jobs") : 0;
+  const learningEventTableExists = tableExists(db, "lite_learning_episode_events");
+  const learningControlJobTableExists = tableExists(db, "lite_learning_control_jobs");
   return {
     commits: count("lite_memory_commits"),
     nodes: count("lite_memory_nodes"),
@@ -159,6 +227,48 @@ function semanticCounts(db: SqliteDatabase): LiteRuntimeDataVerification["counts
                    AND job.job_kind = 'embedding_generate'
                )`,
           ),
+    guide_receipts: count("lite_product_guide_receipts"),
+    write_operations: count("lite_runtime_write_operations"),
+    rule_feedback: count("lite_memory_rule_feedback"),
+    product_measurements: count("lite_product_measurements"),
+    skill_reviews: count("lite_skill_candidate_reviews"),
+    learning_episode_events: learningEventTableExists
+      ? count("lite_learning_episode_events")
+      : 0,
+    learning_protected_events: learningReplay?.protected_event_count
+      ?? (learningEventTableExists
+        ? scalarCount(
+            db,
+            `SELECT COUNT(*) AS count FROM lite_learning_episode_events
+             WHERE json_extract(payload_json, '$.operation_protection') = 'protected'`,
+          )
+        : 0),
+    learning_legacy_events: learningReplay?.legacy_event_count
+      ?? (learningEventTableExists
+        ? scalarCount(
+            db,
+            `SELECT COUNT(*) AS count FROM lite_learning_episode_events
+             WHERE json_extract(payload_json, '$.operation_protection') = 'legacy_unprotected'`,
+          )
+        : 0),
+    learning_promotion_eligible_exposures: learningReplay?.promotion_eligible_exposure_count
+      ?? (learningEventTableExists
+        ? scalarCount(
+            db,
+            `SELECT COUNT(*) AS count FROM lite_learning_episode_events
+             WHERE event_kind = 'exposure_committed' AND promotion_eligible = 1`,
+          )
+        : 0),
+    learning_control_jobs: learningControlJobTableExists
+      ? count("lite_learning_control_jobs")
+      : 0,
+    learning_control_dead_letters: learningReplay?.control_job_dead_letter_count
+      ?? (learningControlJobTableExists
+        ? scalarCount(
+            db,
+            "SELECT COUNT(*) AS count FROM lite_learning_control_jobs WHERE status = 'dead_letter'",
+          )
+        : 0),
   };
 }
 
@@ -222,6 +332,19 @@ function historyAuditFailure(error: unknown): LiteExecutionHistoryVerification {
   };
 }
 
+function errorChainMessage(error: unknown): string {
+  const messages: string[] = [];
+  const seen = new Set<unknown>();
+  let current = error;
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current);
+    messages.push(current.message);
+    current = current.cause;
+  }
+  if (messages.length > 0) return messages.join(": ");
+  return String(error);
+}
+
 async function auditExecutionHistoryWithRuntimeStores(
   source: SqliteDatabase,
 ): Promise<LiteRuntimeDataVerification["execution_history"]> {
@@ -264,6 +387,7 @@ async function auditExecutionHistoryWithRuntimeStores(
 
 export async function verifyLiteRuntimeDatabase(path: string): Promise<LiteRuntimeDataVerification> {
   const absolute = assertReadableDatabasePath(path);
+  const checkedAt = new Date().toISOString();
   const db = createSqliteDatabase(absolute);
   let quickCheck: string[];
   let foreignKeyViolationCount: number;
@@ -274,12 +398,26 @@ export async function verifyLiteRuntimeDatabase(path: string): Promise<LiteRunti
   let edgeEndpointMissing = 0;
   let projectionPayloadInvalid = 0;
   let executionHistory: LiteRuntimeDataVerification["execution_history"];
+  let databaseInstanceId: string | null = null;
+  let learningEpisodeLedgerInvalid = 0;
+  let learningReplay: LiteLearningEpisodeLedgerReplay | null = null;
+  let learningIntegrityError: string | null = null;
   try {
     quickCheck = (db.prepare("PRAGMA quick_check").all() as Array<Record<string, unknown>>)
       .map((row) => String(Object.values(row)[0] ?? ""));
     foreignKeyViolationCount = (db.prepare("PRAGMA foreign_key_check").all() as unknown[]).length;
     schema = inspectLiteRuntimeSchema(db);
-    counts = semanticCounts(db);
+    if (schema.classification === "current"
+      && schema.detected_version === LITE_RUNTIME_WRITE_SCHEMA_VERSION) {
+      try {
+        databaseInstanceId = assertLiteRuntimeAuthorityIdentity(db);
+        learningReplay = assertLiteLearningEpisodeLedgerIntegrity(db, checkedAt);
+      } catch (error) {
+        learningEpisodeLedgerInvalid = 1;
+        learningIntegrityError = errorChainMessage(error);
+      }
+    }
+    counts = semanticCounts(db, learningReplay);
     if (tableExists(db, "lite_memory_nodes")) {
       readyEmbeddingInvalid = scalarCount(
         db,
@@ -329,6 +467,14 @@ export async function verifyLiteRuntimeDatabase(path: string): Promise<LiteRunti
   if (projectionPayloadInvalid > 0) warnings.push("projection_payload_repair_required");
   if (!executionHistory.state.ok) warnings.push("execution_state_history_corrupt");
   if (!executionHistory.tree.ok) warnings.push("execution_tree_history_corrupt");
+  if (learningEpisodeLedgerInvalid > 0) warnings.push("learning_episode_ledger_corrupt");
+  const learningBlockers = counts.learning_control_dead_letters > 0
+    ? ["learning_control_dead_letters_present"]
+    : [];
+  if (counts.learning_control_dead_letters > 0) warnings.push("learning_control_dead_letters_present");
+  if ((learningReplay?.control_job_expired_lease_count ?? 0) > 0) {
+    warnings.push("learning_control_expired_leases_reclaimable");
+  }
   const ok = quickCheck.length === 1
     && quickCheck[0] === "ok"
     && foreignKeyViolationCount === 0
@@ -337,6 +483,7 @@ export async function verifyLiteRuntimeDatabase(path: string): Promise<LiteRunti
     && nodeCommitMissing === 0
     && edgeEndpointMissing === 0
     && projectionPayloadInvalid === 0
+    && learningEpisodeLedgerInvalid === 0
     && executionHistory.state.ok
     && executionHistory.tree.ok;
 
@@ -344,9 +491,10 @@ export async function verifyLiteRuntimeDatabase(path: string): Promise<LiteRunti
     contract_version: "aionis_lite_runtime_data_verification_v1",
     path: absolute,
     ok,
-    checked_at: new Date().toISOString(),
+    checked_at: checkedAt,
     byte_size: statSync(absolute).size,
     sha256: await sha256File(absolute),
+    database_instance_id: databaseInstanceId,
     quick_check: quickCheck,
     foreign_key_violation_count: foreignKeyViolationCount,
     schema,
@@ -358,10 +506,150 @@ export async function verifyLiteRuntimeDatabase(path: string): Promise<LiteRunti
       projection_payload_invalid: projectionPayloadInvalid,
       execution_state_history_invalid: executionHistory.state.ok ? 0 : 1,
       execution_tree_history_invalid: executionHistory.tree.ok ? 0 : 1,
+      learning_episode_ledger_invalid: learningEpisodeLedgerInvalid,
     },
     execution_history: executionHistory,
+    learning: {
+      replay: learningReplay,
+      active_serving_blocked: learningBlockers.length > 0,
+      promotion_blocked: learningBlockers.length > 0,
+      blockers: learningBlockers,
+      reclaimable_expired_control_job_leases:
+        learningReplay?.control_job_expired_lease_count ?? 0,
+      integrity_error: learningIntegrityError,
+    },
     warnings,
   };
+}
+
+export type LiteRuntimeLearningArtifactVerification = Readonly<{
+  verification: LiteRuntimeDataVerification;
+  proposal: LearningLookProposalV1;
+  report: RuntimeIntegrityGateReportV1;
+  report_sha256: string;
+}>;
+
+function runtimeIntegrityFindingEvidenceSha256(
+  code: string,
+  count: number,
+  evidenceContext: string,
+): string {
+  return createHash("sha256").update(stableStringify({
+    contract_version: "runtime_integrity_finding_evidence_v1",
+    verifier_id: "aionis_lite_learning_ledger_replay",
+    verifier_version: 1,
+    code,
+    count,
+    evidence_context_sha256: createHash("sha256").update(evidenceContext).digest("hex"),
+  })).digest("hex");
+}
+
+export async function verifyLiteRuntimeLearningArtifact(args: {
+  path: string;
+  proposal: unknown;
+}): Promise<LiteRuntimeLearningArtifactVerification> {
+  const proposal = LearningLookProposalV1Schema.parse(args.proposal);
+  const sourcePath = assertReadableDatabasePath(args.path);
+  const snapshotDirectory = mkdtempSync(join(tmpdir(), "aionis-learning-integrity-snapshot-"));
+  const snapshotPath = join(snapshotDirectory, "runtime.sqlite");
+  try {
+    const source = createSqliteDatabase(sourcePath);
+    try {
+      vacuumInto(source, snapshotPath);
+    } finally {
+      source.close();
+    }
+    const snapshotVerification = await verifyLiteRuntimeDatabase(snapshotPath);
+    const verification: LiteRuntimeDataVerification = {
+      ...snapshotVerification,
+      path: sourcePath,
+    };
+    let proposalIntegrityError: string | null = null;
+    if (verification.schema.classification === "current"
+      && verification.schema.detected_version === LITE_RUNTIME_WRITE_SCHEMA_VERSION) {
+      const db = createSqliteDatabase(snapshotPath);
+      try {
+        assertLearningLookProposalAgainstDatabase(db, proposal);
+      } catch (error) {
+        proposalIntegrityError = errorChainMessage(error);
+      } finally {
+        db.close();
+      }
+    } else {
+      proposalIntegrityError = "look proposal requires the current Runtime authority schema";
+    }
+
+    const schemaCount = verification.quick_check.filter((value) => value !== "ok").length
+      + verification.foreign_key_violation_count
+      + (verification.schema.classification === "current" ? 0 : 1);
+    const learningError = verification.learning.integrity_error ?? "";
+    const proposalError = proposalIntegrityError ?? "";
+    const findingCounts: Record<(typeof RUNTIME_INTEGRITY_FINDING_CODES)[number], number> = {
+      schema_integrity: schemaCount,
+      runtime_state_integrity:
+        verification.integrity_findings.ready_embedding_invalid
+        + verification.integrity_findings.node_commit_missing
+        + verification.integrity_findings.edge_endpoint_missing
+        + verification.integrity_findings.projection_payload_invalid
+        + verification.integrity_findings.execution_state_history_invalid
+        + verification.integrity_findings.execution_tree_history_invalid,
+      ledger_chain_integrity: verification.integrity_findings.learning_episode_ledger_invalid,
+      assignment_integrity: /assignment|pair|arm|wave/u.test(learningError) ? 1 : 0,
+      policy_config_integrity: /policy|revision binding/u.test(`${learningError} ${proposalError}`) ? 1 : 0,
+      source_binding_integrity: /source|receipt|principal|collector/u.test(learningError) ? 1 : 0,
+      attempt_binding_integrity: /attempt|confirmatory/u.test(`${learningError} ${proposalError}`) ? 1 : 0,
+      artifact_head_integrity: /artifact/u.test(`${learningError} ${proposalError}`) ? 1 : 0,
+      cutoff_projection_integrity: proposalIntegrityError === null ? 0 : 1,
+      namespace_lease_integrity: /namespace|lease|generation/u.test(learningError) ? 1 : 0,
+      control_plane_integrity: verification.counts.learning_control_dead_letters,
+      external_prerequisite_integrity: /external|Task 8|unverified_external/u.test(learningError) ? 1 : 0,
+    };
+    const proposalSha256 = learningLookProposalDigest(proposal);
+    const evidenceContext = stableStringify({
+      contract_version: "runtime_integrity_finding_context_v1",
+      database_instance_id: verification.database_instance_id,
+      schema_component: verification.schema.component,
+      schema_version: verification.schema.detected_version,
+      proposal_sha256: proposalSha256,
+      outcome_redacted_authority_projection_sha256:
+        proposal.outcome_redacted_authority_projection_sha256,
+      integrity_findings: verification.integrity_findings,
+      learning_blockers: verification.learning.blockers,
+      learning_table_counts: verification.learning.replay?.table_counts ?? null,
+    });
+    const findings = RUNTIME_INTEGRITY_FINDING_CODES.map((code) => ({
+      code,
+      count: findingCounts[code],
+      severity: findingCounts[code] > 0 ? "error" as const : "info" as const,
+      evidence_sha256: runtimeIntegrityFindingEvidenceSha256(
+        code,
+        findingCounts[code],
+        evidenceContext,
+      ),
+    }));
+    const passed = verification.ok
+      && !verification.learning.promotion_blocked
+      && proposalIntegrityError === null
+      && findings.every((finding) => finding.count === 0);
+    const { contract_version: _proposalContractVersion, ...proposalBody } = proposal;
+    const report = RuntimeIntegrityGateReportV1Schema.parse({
+      ...proposalBody,
+      contract_version: "runtime_integrity_gate_report_v1",
+      proposal_sha256: proposalSha256,
+      verifier_id: "aionis_lite_learning_ledger_replay",
+      verifier_version: 1,
+      integrity_status: passed ? "passed" : "failed",
+      findings,
+    });
+    return {
+      verification,
+      proposal,
+      report,
+      report_sha256: runtimeIntegrityGateReportDigest(report),
+    };
+  } finally {
+    rmSync(snapshotDirectory, { recursive: true, force: true });
+  }
 }
 
 function manifestPath(databasePath: string): string {
@@ -373,7 +661,8 @@ function readBackupManifest(path: string): LiteRuntimeBackupManifest | null {
   if (!existsSync(sidecar)) return null;
   const parsed = JSON.parse(readFileSync(sidecar, "utf8")) as Partial<LiteRuntimeBackupManifest>;
   if (
-    parsed.contract_version !== "aionis_lite_runtime_backup_manifest_v1"
+    (parsed.contract_version !== "aionis_lite_runtime_backup_manifest_v1"
+      && parsed.contract_version !== "aionis_lite_runtime_backup_manifest_v2")
     || typeof parsed.sha256 !== "string"
     || typeof parsed.byte_size !== "number"
   ) {
@@ -382,11 +671,20 @@ function readBackupManifest(path: string): LiteRuntimeBackupManifest | null {
   return parsed as LiteRuntimeBackupManifest;
 }
 
-async function assertBackupManifestMatches(path: string): Promise<LiteRuntimeBackupManifest | null> {
-  const manifest = readBackupManifest(path);
-  if (!manifest) return null;
-  const actualSize = statSync(path).size;
-  const actualSha = await sha256File(path);
+async function copyManifestBoundBackupSnapshot(
+  sourcePath: string,
+  snapshotPath: string,
+  manifest: LiteRuntimeBackupManifest,
+): Promise<void> {
+  const hash = createHash("sha256");
+  let actualSize = 0;
+  const source = createReadStream(sourcePath);
+  source.on("data", (chunk: string | Buffer) => {
+    actualSize += typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.byteLength;
+    hash.update(chunk);
+  });
+  await pipeline(source, createWriteStream(snapshotPath, { flags: "wx" }));
+  const actualSha = hash.digest("hex");
   if (manifest.byte_size !== actualSize || manifest.sha256 !== actualSha) {
     throw new Error(`backup_manifest_mismatch:${JSON.stringify({
       expected_size: manifest.byte_size,
@@ -395,7 +693,73 @@ async function assertBackupManifestMatches(path: string): Promise<LiteRuntimeBac
       actual_sha256: actualSha,
     })}`);
   }
-  return manifest;
+}
+
+function assertBackupManifestSemantics(
+  manifest: LiteRuntimeBackupManifest,
+  verification: LiteRuntimeDataVerification,
+): void {
+  const mismatches: string[] = [];
+  if (manifest.schema_component !== verification.schema.component) mismatches.push("schema_component");
+  if (manifest.schema_version !== verification.schema.detected_version) mismatches.push("schema_version");
+  if (manifest.database_instance_id !== verification.database_instance_id) {
+    mismatches.push("database_instance_id");
+  }
+  const expectedCountEntries = Object.entries(verification.counts) as Array<
+    [keyof LiteRuntimeDataVerification["counts"], number]
+  >;
+  const manifestCountEntries = Object.entries(manifest.counts ?? {}) as Array<
+    [keyof LiteRuntimeDataVerification["counts"], number]
+  >;
+  const countMismatch = manifest.contract_version === "aionis_lite_runtime_backup_manifest_v2"
+    ? manifestCountEntries.length !== expectedCountEntries.length
+      || expectedCountEntries.some(([field, expected]) => manifest.counts[field] !== expected)
+    : manifestCountEntries.length === 0
+      || manifestCountEntries.some(([field, expected]) => verification.counts[field] !== expected);
+  if (countMismatch) {
+    mismatches.push("counts");
+  }
+  const expectedLearningTableCounts = verification.learning.replay?.table_counts ?? null;
+  if (manifest.contract_version === "aionis_lite_runtime_backup_manifest_v2"
+    && stableStringify(manifest.learning_table_counts ?? null)
+      !== stableStringify(expectedLearningTableCounts)) {
+    mismatches.push("learning_table_counts");
+  }
+  if (mismatches.length > 0) {
+    throw new Error(`backup_manifest_semantic_mismatch:${mismatches.join(",")}`);
+  }
+}
+
+function assertRestoredSnapshotMatches(
+  snapshot: LiteRuntimeDataVerification,
+  restored: LiteRuntimeDataVerification,
+): void {
+  const mismatches: string[] = [];
+  if (snapshot.byte_size !== restored.byte_size) mismatches.push("byte_size");
+  if (snapshot.sha256 !== restored.sha256) mismatches.push("sha256");
+  if (snapshot.schema.component !== restored.schema.component) mismatches.push("schema_component");
+  if (snapshot.schema.detected_version !== restored.schema.detected_version) {
+    mismatches.push("schema_version");
+  }
+  if (stableStringify(snapshot.counts) !== stableStringify(restored.counts)) {
+    mismatches.push("counts");
+  }
+  if (stableStringify(snapshot.learning.replay?.table_counts ?? null)
+    !== stableStringify(restored.learning.replay?.table_counts ?? null)) {
+    mismatches.push("learning_table_counts");
+  }
+  if (mismatches.length > 0) {
+    throw new Error(`restored_database_snapshot_mismatch:${mismatches.join(",")}`);
+  }
+}
+
+function fsyncPath(path: string): void {
+  const descriptor = openSync(path, "r");
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 function vacuumInto(source: SqliteDatabase, destination: string): void {
@@ -413,10 +777,6 @@ export async function backupLiteRuntimeDatabase(args: {
     throw new Error(`backup destination already exists: ${destinationPath}`);
   }
 
-  const sourceVerification = await verifyLiteRuntimeDatabase(sourcePath);
-  if (!sourceVerification.ok) {
-    throw new Error(`source_database_verification_failed:${JSON.stringify(sourceVerification)}`);
-  }
   mkdirSync(dirname(destinationPath), { recursive: true });
   const source = createSqliteDatabase(sourcePath);
   try {
@@ -431,19 +791,24 @@ export async function backupLiteRuntimeDatabase(args: {
   try {
     const verification = await verifyLiteRuntimeDatabase(destinationPath);
     if (!verification.ok) {
-      throw new Error(`backup_database_verification_failed:${JSON.stringify(verification)}`);
+      throw new Error(`source_database_verification_failed:${JSON.stringify(verification)}`);
     }
     const manifest: LiteRuntimeBackupManifest = {
-      contract_version: "aionis_lite_runtime_backup_manifest_v1",
+      contract_version: "aionis_lite_runtime_backup_manifest_v2",
       created_at: new Date().toISOString(),
       database_file: destinationPath.split("/").at(-1) ?? destinationPath,
       byte_size: verification.byte_size,
       sha256: verification.sha256,
+      database_instance_id: verification.database_instance_id,
       schema_component: verification.schema.component,
       schema_version: verification.schema.detected_version,
       counts: verification.counts,
+      learning_table_counts: verification.learning.replay?.table_counts ?? null,
     };
     writeFileSync(manifestPath(destinationPath), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
+    fsyncPath(destinationPath);
+    fsyncPath(manifestPath(destinationPath));
+    fsyncPath(dirname(destinationPath));
     return { manifest, verification };
   } catch (error) {
     rmSync(destinationPath, { force: true });
@@ -465,31 +830,58 @@ export async function restoreLiteRuntimeDatabase(args: {
   if (existsSync(destinationPath)) {
     throw new Error(`restore destination already exists; restore only targets a new path: ${destinationPath}`);
   }
-  const sourceManifest = await assertBackupManifestMatches(backupPath);
-  const backupVerification = await verifyLiteRuntimeDatabase(backupPath);
-  if (!backupVerification.ok) {
-    throw new Error(`backup_database_verification_failed:${JSON.stringify(backupVerification)}`);
-  }
+  const sourceManifest = readBackupManifest(backupPath);
+  const destinationDirectory = dirname(destinationPath);
+  mkdirSync(destinationDirectory, { recursive: true });
+  const stagingDirectory = mkdtempSync(join(destinationDirectory, ".aionis-runtime-restore-"));
+  const snapshotPath = join(stagingDirectory, "runtime.sqlite");
+  try {
+    if (sourceManifest) {
+      await copyManifestBoundBackupSnapshot(backupPath, snapshotPath, sourceManifest);
+    } else {
+      const source = createSqliteDatabase(backupPath);
+      try {
+        vacuumInto(source, snapshotPath);
+      } finally {
+        source.close();
+      }
+    }
+    const backupVerification = await verifyLiteRuntimeDatabase(snapshotPath);
+    if (!backupVerification.ok) {
+      throw new Error(`backup_database_verification_failed:${JSON.stringify(backupVerification)}`);
+    }
+    if (sourceManifest) assertBackupManifestSemantics(sourceManifest, backupVerification);
 
-  mkdirSync(dirname(destinationPath), { recursive: true });
-  const source = createSqliteDatabase(backupPath);
-  try {
-    vacuumInto(source, destinationPath);
-  } catch (error) {
-    rmSync(destinationPath, { force: true });
-    throw error;
-  } finally {
-    source.close();
-  }
-  try {
+    // The staging directory lives beside the destination, so this hard-link
+    // publishes the exact verified inode without reopening the mutable source
+    // path and fails atomically if another creator won the destination race.
+    // Sync the file before publishing it, then sync the containing directory so
+    // a successful restore is durable across a crash after this function returns.
+    fsyncPath(snapshotPath);
+    linkSync(snapshotPath, destinationPath);
+    fsyncPath(destinationDirectory);
     const verification = await verifyLiteRuntimeDatabase(destinationPath);
     if (!verification.ok) {
       throw new Error(`restored_database_verification_failed:${JSON.stringify(verification)}`);
     }
+    if (verification.database_instance_id !== backupVerification.database_instance_id) {
+      throw new Error("restored_database_identity_mismatch");
+    }
+    if (
+      sourceManifest
+      && sourceManifest.database_instance_id !== undefined
+      && verification.database_instance_id !== sourceManifest.database_instance_id
+    ) {
+      throw new Error("restored_database_manifest_identity_mismatch");
+    }
+    assertRestoredSnapshotMatches(backupVerification, verification);
+    if (sourceManifest) assertBackupManifestSemantics(sourceManifest, verification);
     return { source_manifest: sourceManifest, verification };
   } catch (error) {
     rmSync(destinationPath, { force: true });
     throw error;
+  } finally {
+    rmSync(stagingDirectory, { recursive: true, force: true });
   }
 }
 
@@ -507,7 +899,17 @@ export async function upgradeLiteRuntimeDatabase(path: string): Promise<LiteRunt
   }
   const beforeCounts = beforeVerification.counts;
   const afterCounts = afterVerification.counts;
-  for (const key of ["commits", "nodes", "edges"] as const) {
+  const preservedCountKeys = [
+    "commits",
+    "nodes",
+    "edges",
+    "guide_receipts",
+    "write_operations",
+    "rule_feedback",
+    "product_measurements",
+    "skill_reviews",
+  ] as const;
+  for (const key of preservedCountKeys) {
     if (beforeCounts[key] !== afterCounts[key]) {
       throw new Error(`schema_upgrade_changed_semantic_row_count:${key}:${beforeCounts[key]}:${afterCounts[key]}`);
     }
@@ -522,11 +924,21 @@ export async function upgradeLiteRuntimeDatabase(path: string): Promise<LiteRunt
         commits: beforeCounts.commits,
         nodes: beforeCounts.nodes,
         edges: beforeCounts.edges,
+        guide_receipts: beforeCounts.guide_receipts,
+        write_operations: beforeCounts.write_operations,
+        rule_feedback: beforeCounts.rule_feedback,
+        product_measurements: beforeCounts.product_measurements,
+        skill_reviews: beforeCounts.skill_reviews,
       },
       after: {
         commits: afterCounts.commits,
         nodes: afterCounts.nodes,
         edges: afterCounts.edges,
+        guide_receipts: afterCounts.guide_receipts,
+        write_operations: afterCounts.write_operations,
+        rule_feedback: afterCounts.rule_feedback,
+        product_measurements: afterCounts.product_measurements,
+        skill_reviews: afterCounts.skill_reviews,
       },
     },
   };

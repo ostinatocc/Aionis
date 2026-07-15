@@ -22,6 +22,12 @@ function uniqStrings(values: string[]): string[] {
   return Array.from(new Set(values));
 }
 
+function canonicalStrings(values: string[]): string[] {
+  return uniqStrings(values).sort((left, right) =>
+    Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"))
+  );
+}
+
 function normalizeMaybeRedact(input: string | undefined, opts: LifecycleOptions): string | undefined {
   if (!input) return input;
   const normalized = normalizeText(input, opts.maxTextLen);
@@ -35,7 +41,9 @@ function nonNegativeInt(value: unknown): number {
 }
 
 function stringList(values: string[] | null | undefined): string[] {
-  return uniqStrings((values ?? []).map((value) => value.trim()).filter((value) => value.length > 0)).slice(0, 32);
+  return canonicalStrings(
+    (values ?? []).map((value) => value.trim()).filter((value) => value.length > 0),
+  ).slice(0, 32);
 }
 
 type UnusedExposureLearningControlStat = {
@@ -480,7 +488,7 @@ export async function activateMemoryNodesLite(
   const scope = tenancy.scope_key;
   const actor = parsed.actor ?? opts.defaultActor;
   const consumerTeamId = parsed.consumer_team_id ?? null;
-  const startedAt = new Date().toISOString();
+  const startedAt = parsed.feedback_recorded_at ?? new Date().toISOString();
   const reason = normalizeMaybeRedact(parsed.reason, opts) ?? null;
   const inputText = normalizeMaybeRedact(parsed.input_text, opts);
   const inputSha = parsed.input_sha256 ?? sha256Hex(inputText ?? "");
@@ -519,6 +527,18 @@ export async function activateMemoryNodesLite(
     };
   }
 
+  const runtimeSignalRefs = stringList(parsed.runtime_signal_refs ?? null);
+  const verifierStatus = parsed.verifier_status === "unknown"
+    ? null
+    : parsed.verifier_status ?? null;
+  const boundaryIgnoredIds = canonicalStrings(parsed.boundary_ignored_memory_ids ?? []);
+  const boundaryIgnoredMemoryIds = new Set(boundaryIgnoredIds);
+  const feedbackSubjects = [...foundRows]
+    .sort((left, right) => Buffer.compare(Buffer.from(left.id, "utf8"), Buffer.from(right.id, "utf8")))
+    .map((row) => ({
+      memory_id: row.id,
+      boundary_ignored: boundaryIgnoredMemoryIds.has(row.id),
+    }));
   const parent = await liteWriteStore.latestCommit(scope);
   const diff = {
     job: "nodes_activate",
@@ -526,8 +546,20 @@ export async function activateMemoryNodesLite(
     scope,
     actor,
     run_id: parsed.run_id ?? null,
+    guide_trace_id: parsed.guide_trace_id ?? null,
+    learning_episode_id: parsed.learning_episode_id ?? null,
+    feedback_operation_id: parsed.feedback_operation_id ?? null,
     outcome: parsed.outcome,
     activate: parsed.activate,
+    feedback: {
+      used_surface: parsed.used_surface ?? null,
+      verifier_status: verifierStatus,
+      tool_status: parsed.tool_status ?? null,
+      runtime_signal_refs: runtimeSignalRefs,
+      boundary_ignored_memory_ids: boundaryIgnoredIds,
+      verified_host_receipt: parsed.verified_host_receipt ?? false,
+      subjects: feedbackSubjects,
+    },
     reason,
     requested: {
       node_ids: requestedNodeIds,
@@ -571,28 +603,37 @@ export async function activateMemoryNodesLite(
         source: "nodes_activate",
         timestamp: startedAt,
         used_surface: parsed.used_surface ?? null,
-        verifier_status: parsed.verifier_status ?? null,
+        verifier_status: verifierStatus,
         tool_status: parsed.tool_status ?? null,
-        runtime_signal_refs: parsed.runtime_signal_refs ?? null,
+        runtime_signal_refs: runtimeSignalRefs,
+        boundary_ignored: boundaryIgnoredMemoryIds.has(row.id),
+        verified_host_receipt: parsed.verified_host_receipt ?? false,
       },
     });
     const nextSlots: Record<string, unknown> = {
       ...nextState.slots,
+      last_feedback_guide_trace_id: parsed.guide_trace_id ?? null,
+      last_feedback_episode_id: parsed.learning_episode_id ?? null,
+      last_feedback_operation_id: parsed.feedback_operation_id ?? null,
     };
     if (parsed.activate) {
       nextSlots.last_activated_at = startedAt;
     }
     feedbackAttributions.push({
       memory_id: row.id,
+      guide_trace_id: parsed.guide_trace_id ?? null,
+      learning_episode_id: parsed.learning_episode_id ?? null,
+      feedback_operation_id: parsed.feedback_operation_id ?? null,
       run_id: parsed.run_id ?? null,
       outcome: parsed.outcome,
       used_surface: parsed.used_surface ?? null,
-      verifier_status: parsed.verifier_status ?? null,
+      verifier_status: verifierStatus,
       tool_status: parsed.tool_status ?? null,
-      runtime_signal_refs: stringList(parsed.runtime_signal_refs ?? null),
+      runtime_signal_refs: runtimeSignalRefs,
       attribution_strength: typeof nextSlots.last_feedback_attribution_strength === "string"
         ? nextSlots.last_feedback_attribution_strength
         : null,
+      boundary_outcome: boundaryIgnoredMemoryIds.has(row.id) ? "boundary_ignored" : "aligned",
       feedback_positive: nonNegativeInt(nextSlots.feedback_positive),
       feedback_negative: nonNegativeInt(nextSlots.feedback_negative),
       weak_counter_signal_count: nonNegativeInt(nextSlots.weak_counter_signal_count),
@@ -637,6 +678,9 @@ export async function activateMemoryNodesLite(
       missing_node_ids: missingNodeIds,
       missing_client_ids: missingClientIds,
       updated_ids: foundRows.map((row) => row.id),
+      guide_trace_id: parsed.guide_trace_id ?? null,
+      learning_episode_id: parsed.learning_episode_id ?? null,
+      feedback_operation_id: parsed.feedback_operation_id ?? null,
       outcome: parsed.outcome,
       activate: parsed.activate,
       feedback_attributions: feedbackAttributions,

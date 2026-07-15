@@ -55,6 +55,9 @@ const EXPECTED_TOP_LEVEL_KEYS = {
   feedback: [
     "contract_version",
     "forget_effect",
+    "learning_attribution_status",
+    "learning_episode_id",
+    "learning_feedback_event_id",
     "operation",
     "product_action",
     "result",

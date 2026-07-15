@@ -3,11 +3,11 @@
   "baseline_commit": "10d9e4f90efb243b25cd156ed1ada5683d5a79c0",
   "intent": "Structural growth guard only; this file is not Aionis product validation.",
   "thresholds": {
-    "source_files": 290,
-    "source_lines": 127407,
-    "route_matrix_entries": 19,
+    "source_files": 313,
+    "source_lines": 148887,
+    "route_matrix_entries": 21,
     "env_schema_fields": 177,
     "import_cycles": 0,
-    "largest_file_lines": 5218
+    "largest_file_lines": 7129
   }
 }

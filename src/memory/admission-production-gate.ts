@@ -1,6 +1,7 @@
 import { parseAdmissionDatasetJsonl } from "./admission-dataset-evaluator.js";
 import type { AionisAdmissionDatasetParsedRow } from "./admission-dataset-holdout.js";
 import type { AionisAdmissionCandidatePolicyEvaluationReport } from "./admission-candidate-policy-evaluator.js";
+import { AIONIS_ADMISSION_CANDIDATE_POLICY_ID } from "./admission-candidate-policy.js";
 
 export type AionisAdmissionProductionGateThresholds = {
   min_rows: number;
@@ -527,7 +528,7 @@ export function evaluateAdmissionProductionGate(
       && onlineProjection.runtime_mutation_count === 0,
     no_hard_boundary_upgrade: fieldIntegrityPass(inputIntegrity, "hard_boundary_upgrade_count")
       && onlineProjection.hard_boundary_upgrade_count === 0,
-    candidate_policy_selected: candidatePolicy.selected_policy_id === "candidate_project_context_closed_loop_inspect",
+    candidate_policy_selected: candidatePolicy.selected_policy_id === AIONIS_ADMISSION_CANDIDATE_POLICY_ID,
     candidate_policy_manual_review_eligible: candidatePolicy.eligible_for_manual_review === true,
     candidate_policy_no_hard_boundary_regression: candidatePolicy.no_hard_boundary_regression === true,
     candidate_policy_no_negative_regression: candidatePolicy.no_negative_use_count_regression === true,

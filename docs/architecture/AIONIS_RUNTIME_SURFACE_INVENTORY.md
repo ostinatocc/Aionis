@@ -49,6 +49,7 @@ migration gates and must not be treated as a public-product classification.
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `POST` | `/v1/observe` | `product_entry` | `routes/product-facade.ts` | `observe, remember, execution.*` | `SDK indirect` | `none` | `CLI skill materialize commit; Create prints flow only` | `SDK indirect` | `none` | `Claude flow indirect` | `docs:public+eval` | `required` | `none` | `retain` |
 | `POST` | `/v1/guide` | `product_entry` | `routes/product-facade.ts` | `guide, guideAgentContext, execution.*` | `SDK indirect` | `SDK indirect` | `Create prints flow only` | `SDK indirect` | `none` | `Claude flow indirect` | `docs:public+eval` | `required` | `none` | `retain` |
+| `POST` | `/v1/memory/govern` | `product_entry` | `routes/product-facade.ts` | `governMemory, governMem0SearchResults` | `SDK indirect` | `none` | `none` | `none` | `none` | `external admission parity` | `docs:public+eval` | `required` | `none` | `retain` |
 | `POST` | `/v1/forget` | `product_entry` | `routes/product-facade.ts` | `forget` | `none` | `none` | `CLI forget` | `none` | `none` | `none` | `docs:public+eval` | `required` | `none` | `retain` |
 | `POST` | `/v1/feedback` | `product_entry` | `routes/product-facade.ts` | `feedback, execution.feedbackFromOutcome` | `SDK indirect` | `none` | `Create prints flow only` | `none` | `none` | `real-flow script` | `docs:public+eval` | `required` | `none` | `retain` |
 | `POST` | `/v1/rehydrate` | `product_entry` | `routes/product-facade.ts` | `rehydrate` | `none` | `none` | `none` | `none` | `none` | `none` | `docs:public` | `required` | `none` | `retain` |
@@ -59,9 +60,14 @@ migration gates and must not be treated as a public-product classification.
 | `POST` | `/v1/skills/candidates/:id/reject` | `operator_support` | `routes/product-facade.ts` | `none` | `none` | `none` | `CLI skills reject` | `none` | `none` | `none` | `docs:operator` | `required` | `none` | `retain` |
 | `POST` | `/v1/skills/candidates/:id/materialize` | `operator_support` | `routes/product-facade.ts` | `materializeSkillCandidate` | `none` | `none` | `CLI skills materialize` | `none` | `none` | `none` | `docs:operator` | `required` | `none` | `retain` |
 | `POST` | `/v1/operator/snapshot` | `operator_support` | `routes/operator-snapshot.ts` | `snapshot, operatorSnapshot` | `SDK indirect` | `SDK indirect` | `CLI snapshot` | `none` | `none` | `none` | `docs:operator+eval` | `required` | `none` | `retain` |
+| `GET` | `/v1/operator/workspaces` | `operator_support` | `routes/operator-snapshot.ts` | `none` | `none` | `none` | `none` | `none` | `none` | `none` | `docs:architecture` | `removed` | `none` | `Focused route audit` |
+| `GET` | `/v1/operator/runs` | `operator_support` | `routes/operator-snapshot.ts` | `none` | `none` | `none` | `none` | `none` | `none` | `none` | `docs:architecture` | `removed` | `none` | `Focused route audit` |
+| `GET` | `/v1/operator/runs/:run_id` | `operator_support` | `routes/operator-snapshot.ts` | `none` | `none` | `none` | `none` | `none` | `none` | `none` | `docs:architecture` | `removed` | `none` | `Focused route audit` |
+| `GET` | `/v1/operator/memories/:memory_id` | `operator_support` | `routes/operator-snapshot.ts` | `none` | `none` | `none` | `none` | `none` | `none` | `none` | `docs:architecture` | `removed` | `none` | `Focused route audit` |
 | `GET` | `/v1/operator/authority-effect-audit` | `operator_support` | `routes/operator-snapshot.ts` | `none` | `none` | `none` | `none` | `none` | `none` | `none` | `docs:operator` | `required` | `none` | `retain` |
 | `POST` | `/v1/debug/memory-decision-trace` | `operator_support` | `routes/product-facade.ts` | `none` | `none` | `none` | `none` | `none` | `none` | `none` | `docs:operator+eval` | `required` | `none` | `retain` |
 | `POST` | `/v1/audit/memory-decision-report` | `operator_support` | `routes/product-facade.ts` | `none` | `none` | `none` | `none` | `none` | `none` | `none` | `docs:operator` | `required` | `none` | `retain` |
+| `POST` | `/v1/audit/flight-recorder` | `operator_support` | `routes/product-facade.ts` | `flightRecorder` | `none` | `none` | `CLI audit flight-recorder` | `none` | `none` | `none` | `docs:operator+eval` | `required` | `none` | `retain` |
 | `GET` | `/v1/runtime/boundary-inventory` | `operator_support` | `server/http-server.ts` | `none` | `none` | `none` | `CLI boundary and doctor` | `none` | `none` | `none` | `docs:operator` | `required` | `none` | `retain` |
 | `POST` | `/v1/memory/write` | `internal_evidence` | `routes/memory-write.ts` | `none` | `none` | `none` | `none` | `none` | `none` | `none` | `docs:architecture` | `removed` | `MemoryWriteRouteService.commit` | `Task 11 removed` |
 | `POST` | `/v1/handoff/store` | `product_support` | `routes/handoff.ts` | `none` | `none` | `none` | `none` | `none` | `publish.ts` | `none` | `docs:public+eval` | `required` | `none` | `retain` |
@@ -122,7 +128,7 @@ migration gates and must not be treated as a public-product classification.
 
 ## Consequences for the simplification plan
 
-- Keep the 19 required routes behaviorally stable.
+- Keep the 21 required routes behaviorally stable.
 - Keep temporary-route count at zero; do not add compatibility replacements for
   the eight removed transports.
 - Do not count former Manifest use as evidence that tool-learning internals are

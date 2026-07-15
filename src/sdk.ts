@@ -3,6 +3,8 @@
 
 // <aionis-runtime-owned:public-contracts>
 
+import { createHash } from "node:crypto";
+
 export type AionisJsonObject = Record<string, unknown>;
 
 export type AionisGuideMode = "standard" | "full_power";
@@ -679,7 +681,63 @@ export type AionisGuideRequestOptions = AionisRequestOptions & {
   guide_mode?: AionisGuideMode | null;
 };
 
+export type AionisHostTaskEnvelopeV1 = {
+  contract_version: "host_task_envelope_v1";
+  host_task_id: string;
+  collector_id: string;
+  collector_version: string;
+  task_family: string;
+  task_signature: string;
+  repository_signature: string;
+  source_task_sha256: string;
+  source_event_sha256: string;
+  created_at: string;
+};
+
+export type AionisHostUseReceiptSurface = "use_now" | "inspect_before_use" | "do_not_use";
+export type AionisHostUseReceiptActionOutcome =
+  | "accepted_completed"
+  | "accepted_incomplete"
+  | "rejected"
+  | "not_applicable";
+export type AionisHostUseReceiptVerifierKind = "instrumented_agent_trace" | "deterministic_scorer";
+
+export type AionisHostUseReceiptItemV1 = {
+  memory_id: string;
+  used_surface: AionisHostUseReceiptSurface;
+  outcome: AionisFeedbackOutcome;
+  action_outcome: AionisHostUseReceiptActionOutcome;
+  verifier_kind: AionisHostUseReceiptVerifierKind;
+  verifier_version: string;
+  verifier_config_sha256: string;
+  verifier_status: "passed";
+  content_evidence_sha256: string;
+  evidence_ref_sha256: string;
+};
+
+export type AionisHostUseReceiptV1Body = {
+  contract_version: "host_use_receipt_v1";
+  receipt_id: string;
+  guide_trace_id: string;
+  episode_id: string;
+  operation_id: string;
+  run_id: string;
+  host_task_id: string;
+  host_task_envelope_sha256: string;
+  collector_id: string;
+  collector_version: string;
+  host_trace_sha256: string;
+  observed_at: string;
+  items: AionisHostUseReceiptItemV1[];
+};
+
+export type AionisHostUseReceiptV1 = AionisHostUseReceiptV1Body & {
+  receipt_sha256: string;
+};
+
 export type AionisGuideRequest = AionisJsonObject & {
+  operation_id?: string;
+  host_task_envelope_v1?: AionisHostTaskEnvelopeV1;
   query_text: string;
   mode?: AionisGuideMode;
   context_mode?: AionisGuideContextMode;
@@ -709,6 +767,7 @@ export type AionisToolSelectionReceipt = {
 };
 
 export type AionisGuideResult<TGuide extends AionisJsonObject = AionisJsonObject> = TGuide & {
+  operation_id?: string;
   tool_selection?: AionisToolSelectionReceipt;
 };
 
@@ -760,6 +819,8 @@ export type AionisRememberRequest = AionisJsonObject & {
 
 export type AionisMemoryFeedbackRequest = AionisJsonObject & {
   feedback_kind?: "memory";
+  operation_id?: string;
+  host_use_receipt_v1?: AionisHostUseReceiptV1;
   reason: string;
   run_id: string;
   outcome: AionisFeedbackOutcome;
@@ -1020,6 +1081,8 @@ export type AionisMeasureResult = AionisJsonObject & {
 
 export type AionisFeedbackFromGuideInput = {
   guide: unknown;
+  operation_id?: string;
+  host_use_receipt_v1?: AionisHostUseReceiptV1;
   reason: string;
   run_id: string;
   outcome: AionisFeedbackOutcome;
@@ -1169,6 +1232,8 @@ export type AionisExecutionHandoffInput = AionisExecutionStepInput & {
 };
 
 export type AionisExecutionGuideForRoleInput = AionisExecutionRunRef & AionisExecutionAgentRef & {
+  operation_id?: string;
+  host_task_envelope_v1?: AionisHostTaskEnvelopeV1;
   tenant_id?: string;
   scope?: string;
   query_text: string;
@@ -1190,6 +1255,8 @@ export type AionisExecutionGuideForRoleInput = AionisExecutionRunRef & AionisExe
 export type AionisExecutionOutcomeInput = AionisExecutionStepInput & {
   guide?: unknown;
   guide_trace_id?: string;
+  feedback_operation_id?: string;
+  host_use_receipt_v1?: AionisHostUseReceiptV1;
   used_memory_ids?: string[];
   feedback?: boolean;
   feedback_outcome?: AionisFeedbackOutcome;
@@ -2638,6 +2705,10 @@ export class AionisExecutionClient {
       context_compaction_profile: input.context_compaction_profile,
       context_optimization_profile: input.context_optimization_profile,
       ...(input.guide ?? {}),
+      ...(input.operation_id !== undefined ? { operation_id: input.operation_id } : {}),
+      ...(input.host_task_envelope_v1 !== undefined
+        ? { host_task_envelope_v1: input.host_task_envelope_v1 }
+        : {}),
       ...(input.task_context_profile ? { task_context_profile: input.task_context_profile } : {}),
     }, {
       ...executionScopeOptions(input),
@@ -2675,6 +2746,10 @@ export class AionisExecutionClient {
       context_compaction_profile: input.context_compaction_profile,
       context_optimization_profile: input.context_optimization_profile,
       ...(input.guide ?? {}),
+      ...(input.operation_id !== undefined ? { operation_id: input.operation_id } : {}),
+      ...(input.host_task_envelope_v1 !== undefined
+        ? { host_task_envelope_v1: input.host_task_envelope_v1 }
+        : {}),
       ...(input.task_context_profile ? { task_context_profile: input.task_context_profile } : {}),
     }, {
       ...executionScopeOptions(input),
@@ -2704,17 +2779,27 @@ export class AionisExecutionClient {
     options?: AionisRequestOptions,
   ): Promise<T | null> {
     const usedMemoryIds = input.used_memory_ids ?? [];
+    if (input.host_use_receipt_v1 && usedMemoryIds.length === 0) {
+      throw new Error("Aionis execution formal feedback requires used_memory_ids matching the host-use receipt");
+    }
+    if (input.host_use_receipt_v1 && !input.guide) {
+      throw new Error("Aionis execution host-use receipt feedback requires the source guide response");
+    }
     if (usedMemoryIds.length === 0) return null;
     if (input.guide) {
       return this.client.feedback<T>(feedbackFromGuide({
         guide: input.guide,
+        operation_id: input.feedback_operation_id,
+        host_use_receipt_v1: input.host_use_receipt_v1,
         reason: input.feedback_reason ?? input.summary,
         run_id: input.run_id,
         outcome: executionFeedbackOutcome(input),
         used_memory_ids: usedMemoryIds,
-        used_surface: input.used_surface ?? "use_now",
+        used_surface: input.used_surface,
         actor: input.agent_id,
-        verifier_status: executionVerifierStatus(input),
+        verifier_status: input.host_use_receipt_v1
+          ? input.verifier_status ?? "passed"
+          : executionVerifierStatus(input),
         tool_status: executionToolStatus(input),
         runtime_signal_refs: input.runtime_signal_refs,
       }), {
@@ -2725,6 +2810,7 @@ export class AionisExecutionClient {
     if (!input.guide_trace_id) return null;
     return this.client.feedback<T>({
       target: "memory",
+      operation_id: input.feedback_operation_id,
       reason: input.feedback_reason ?? input.summary,
       run_id: input.run_id,
       outcome: executionFeedbackOutcome(input),
@@ -3471,6 +3557,327 @@ export function optionalContextMemoryIdsFromGuide(guide: unknown): string[] {
   return commandPostureMemoryIdsFromGuide(guide, "optional_context");
 }
 
+// <aionis-runtime-owned:host-receipt-helpers>
+
+const SDK_HOST_TASK_ENVELOPE_FIELDS = [
+  "contract_version",
+  "host_task_id",
+  "collector_id",
+  "collector_version",
+  "task_family",
+  "task_signature",
+  "repository_signature",
+  "source_task_sha256",
+  "source_event_sha256",
+  "created_at",
+] as const;
+
+const SDK_HOST_USE_RECEIPT_ITEM_FIELDS = [
+  "memory_id",
+  "used_surface",
+  "outcome",
+  "action_outcome",
+  "verifier_kind",
+  "verifier_version",
+  "verifier_config_sha256",
+  "verifier_status",
+  "content_evidence_sha256",
+  "evidence_ref_sha256",
+] as const;
+
+const SDK_HOST_USE_RECEIPT_BODY_FIELDS = [
+  "contract_version",
+  "receipt_id",
+  "guide_trace_id",
+  "episode_id",
+  "operation_id",
+  "run_id",
+  "host_task_id",
+  "host_task_envelope_sha256",
+  "collector_id",
+  "collector_version",
+  "host_trace_sha256",
+  "observed_at",
+  "items",
+] as const;
+
+const SDK_HOST_USE_RECEIPT_FIELDS = [
+  ...SDK_HOST_USE_RECEIPT_BODY_FIELDS,
+  "receipt_sha256",
+] as const;
+
+function sdkContractRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function sdkAssertExactFields(
+  value: Record<string, unknown>,
+  fields: readonly string[],
+  label: string,
+): void {
+  const allowed = new Set(fields);
+  const unexpected = Object.keys(value).find((field) => !allowed.has(field));
+  if (unexpected) throw new Error(`${label} has unexpected field ${unexpected}`);
+}
+
+function sdkBoundedString(value: unknown, maxLength: number, label: string): string {
+  if (typeof value !== "string") throw new Error(`${label} must be a string`);
+  const canonical = value.trim();
+  if (canonical.length === 0 || canonical.length > maxLength) {
+    throw new Error(`${label} must contain 1-${maxLength} characters after trimming`);
+  }
+  return canonical;
+}
+
+function sdkUtf8BoundedString(value: unknown, maxBytes: number, label: string): string {
+  const canonical = sdkBoundedString(value, maxBytes, label);
+  if (Buffer.byteLength(canonical, "utf8") > maxBytes) {
+    throw new Error(`${label} must contain 1-${maxBytes} UTF-8 bytes after trimming`);
+  }
+  return canonical;
+}
+
+function sdkDigestSha256(value: unknown, label: string): string {
+  if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value)) {
+    throw new Error(`${label} must be a lowercase SHA-256 digest`);
+  }
+  return value;
+}
+
+function sdkEpisodeId(value: unknown, label: string): string {
+  if (typeof value !== "string" || !/^lep_[0-9a-f]{64}$/.test(value)) {
+    throw new Error(`${label} must be a canonical learning episode id`);
+  }
+  return value;
+}
+
+function sdkCanonicalUtcTimestamp(value: unknown, label: string): string {
+  if (
+    typeof value !== "string"
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+    || !Number.isFinite(Date.parse(value))
+    || new Date(value).toISOString() !== value
+  ) {
+    throw new Error(`${label} must be a canonical UTC timestamp with millisecond precision`);
+  }
+  return value;
+}
+
+function sdkEnumValue<const T extends readonly string[]>(
+  value: unknown,
+  allowed: T,
+  label: string,
+): T[number] {
+  if (typeof value !== "string" || !(allowed as readonly string[]).includes(value)) {
+    throw new Error(`${label} must be one of ${allowed.join(", ")}`);
+  }
+  return value as T[number];
+}
+
+function sdkCompareUtf8(left: string, right: string): number {
+  return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
+}
+
+function sdkCanonicalJson(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+  if (typeof value === "number" && Number.isFinite(value)) return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((entry) => sdkCanonicalJson(entry)).join(",")}]`;
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${sdkCanonicalJson(record[key])}`)
+      .join(",")}}`;
+  }
+  throw new Error("SDK canonical JSON accepts only finite JSON values");
+}
+
+function sdkCanonicalSha256(value: unknown): string {
+  return createHash("sha256").update(sdkCanonicalJson(value)).digest("hex");
+}
+
+export function parseHostTaskEnvelopeV1(value: unknown): AionisHostTaskEnvelopeV1 {
+  const record = sdkContractRecord(value, "host_task_envelope_v1");
+  sdkAssertExactFields(record, SDK_HOST_TASK_ENVELOPE_FIELDS, "host_task_envelope_v1");
+  return {
+    contract_version: sdkEnumValue(record.contract_version, ["host_task_envelope_v1"] as const, "contract_version"),
+    host_task_id: sdkBoundedString(record.host_task_id, 256, "host_task_id"),
+    collector_id: sdkBoundedString(record.collector_id, 256, "collector_id"),
+    collector_version: sdkBoundedString(record.collector_version, 120, "collector_version"),
+    task_family: sdkBoundedString(record.task_family, 120, "task_family"),
+    task_signature: sdkBoundedString(record.task_signature, 256, "task_signature"),
+    repository_signature: sdkBoundedString(record.repository_signature, 256, "repository_signature"),
+    source_task_sha256: sdkDigestSha256(record.source_task_sha256, "source_task_sha256"),
+    source_event_sha256: sdkDigestSha256(record.source_event_sha256, "source_event_sha256"),
+    created_at: sdkCanonicalUtcTimestamp(record.created_at, "created_at"),
+  };
+}
+
+export function buildHostTaskEnvelopeV1(value: unknown): AionisHostTaskEnvelopeV1 {
+  return parseHostTaskEnvelopeV1(value);
+}
+
+export function hostTaskEnvelopeDigest(value: AionisHostTaskEnvelopeV1): string {
+  return sdkCanonicalSha256(parseHostTaskEnvelopeV1(value));
+}
+
+function sdkParseHostUseReceiptItemV1(value: unknown): AionisHostUseReceiptItemV1 {
+  const record = sdkContractRecord(value, "host_use_receipt_v1.items[]");
+  sdkAssertExactFields(record, SDK_HOST_USE_RECEIPT_ITEM_FIELDS, "host_use_receipt_v1.items[]");
+  return {
+    memory_id: sdkBoundedString(record.memory_id, 256, "items[].memory_id"),
+    used_surface: sdkEnumValue(
+      record.used_surface,
+      ["use_now", "inspect_before_use", "do_not_use"] as const,
+      "items[].used_surface",
+    ),
+    outcome: sdkEnumValue(record.outcome, ["positive", "negative", "neutral"] as const, "items[].outcome"),
+    action_outcome: sdkEnumValue(
+      record.action_outcome,
+      ["accepted_completed", "accepted_incomplete", "rejected", "not_applicable"] as const,
+      "items[].action_outcome",
+    ),
+    verifier_kind: sdkEnumValue(
+      record.verifier_kind,
+      ["instrumented_agent_trace", "deterministic_scorer"] as const,
+      "items[].verifier_kind",
+    ),
+    verifier_version: sdkUtf8BoundedString(record.verifier_version, 120, "items[].verifier_version"),
+    verifier_config_sha256: sdkDigestSha256(
+      record.verifier_config_sha256,
+      "items[].verifier_config_sha256",
+    ),
+    verifier_status: sdkEnumValue(record.verifier_status, ["passed"] as const, "items[].verifier_status"),
+    content_evidence_sha256: sdkDigestSha256(
+      record.content_evidence_sha256,
+      "items[].content_evidence_sha256",
+    ),
+    evidence_ref_sha256: sdkDigestSha256(record.evidence_ref_sha256, "items[].evidence_ref_sha256"),
+  };
+}
+
+function sdkValidateCanonicalReceiptItems(items: readonly AionisHostUseReceiptItemV1[]): void {
+  const seen = new Set<string>();
+  let previousMemoryId: string | null = null;
+  for (const item of items) {
+    if (seen.has(item.memory_id)) {
+      throw new Error(`Duplicate host-use receipt memory_id: ${item.memory_id}`);
+    }
+    if (previousMemoryId !== null && sdkCompareUtf8(previousMemoryId, item.memory_id) >= 0) {
+      throw new Error("Host-use receipt items must be unique and sorted by UTF-8 memory_id bytes");
+    }
+    seen.add(item.memory_id);
+    previousMemoryId = item.memory_id;
+  }
+}
+
+function sdkParseHostUseReceiptV1Body(
+  value: unknown,
+  canonicalizeItems: boolean,
+): AionisHostUseReceiptV1Body {
+  const record = sdkContractRecord(value, "host_use_receipt_v1 body");
+  sdkAssertExactFields(record, SDK_HOST_USE_RECEIPT_BODY_FIELDS, "host_use_receipt_v1 body");
+  if (!Array.isArray(record.items) || record.items.length < 1 || record.items.length > 96) {
+    throw new Error("host_use_receipt_v1.items must contain 1-96 entries");
+  }
+  const parsedItems = record.items.map((item) => sdkParseHostUseReceiptItemV1(item));
+  const items = canonicalizeItems
+    ? [...parsedItems].sort((left, right) => sdkCompareUtf8(left.memory_id, right.memory_id))
+    : parsedItems;
+  sdkValidateCanonicalReceiptItems(items);
+  return {
+    contract_version: sdkEnumValue(record.contract_version, ["host_use_receipt_v1"] as const, "contract_version"),
+    receipt_id: sdkBoundedString(record.receipt_id, 256, "receipt_id"),
+    guide_trace_id: sdkBoundedString(record.guide_trace_id, 256, "guide_trace_id"),
+    episode_id: sdkEpisodeId(record.episode_id, "episode_id"),
+    operation_id: sdkBoundedString(record.operation_id, 256, "operation_id"),
+    run_id: sdkBoundedString(record.run_id, 256, "run_id"),
+    host_task_id: sdkBoundedString(record.host_task_id, 256, "host_task_id"),
+    host_task_envelope_sha256: sdkDigestSha256(
+      record.host_task_envelope_sha256,
+      "host_task_envelope_sha256",
+    ),
+    collector_id: sdkBoundedString(record.collector_id, 256, "collector_id"),
+    collector_version: sdkBoundedString(record.collector_version, 120, "collector_version"),
+    host_trace_sha256: sdkDigestSha256(record.host_trace_sha256, "host_trace_sha256"),
+    observed_at: sdkCanonicalUtcTimestamp(record.observed_at, "observed_at"),
+    items,
+  };
+}
+
+export function hostUseReceiptDigest(value: AionisHostUseReceiptV1Body): string {
+  return sdkCanonicalSha256(sdkParseHostUseReceiptV1Body(value, false));
+}
+
+export function buildHostUseReceiptV1(value: unknown): AionisHostUseReceiptV1 {
+  const body = sdkParseHostUseReceiptV1Body(value, true);
+  return {
+    ...body,
+    receipt_sha256: sdkCanonicalSha256(body),
+  };
+}
+
+export function parseHostUseReceiptV1(value: unknown): AionisHostUseReceiptV1 {
+  const record = sdkContractRecord(value, "host_use_receipt_v1");
+  sdkAssertExactFields(record, SDK_HOST_USE_RECEIPT_FIELDS, "host_use_receipt_v1");
+  const { receipt_sha256: rawReceiptSha256, ...rawBody } = record;
+  const body = sdkParseHostUseReceiptV1Body(rawBody, false);
+  const receiptSha256 = sdkDigestSha256(rawReceiptSha256, "receipt_sha256");
+  if (receiptSha256 !== sdkCanonicalSha256(body)) {
+    throw new Error("Host-use receipt digest does not match its canonical body");
+  }
+  return { ...body, receipt_sha256: receiptSha256 };
+}
+
+function sdkLearningEpisodeId(tenantId: unknown, scope: unknown, guideTraceId: string): string {
+  return `lep_${sdkCanonicalSha256({
+    tenant_id: sdkBoundedString(tenantId, 256, "guide.tenant_id"),
+    scope: sdkBoundedString(scope, 256, "guide.scope"),
+    guide_trace_id: sdkBoundedString(guideTraceId, 256, "guide.guide_trace_id"),
+  })}`;
+}
+
+function sdkFormalFeedbackMemoryIds(inputMemoryIds: readonly string[], receiptMemoryIds: readonly string[]): string[] {
+  const normalized = inputMemoryIds.map((memoryId) => sdkBoundedString(memoryId, 256, "used_memory_ids[]"));
+  if (new Set(normalized).size !== normalized.length) {
+    throw new Error("Formal host-use feedback does not allow duplicate used_memory_ids");
+  }
+  const sorted = [...normalized].sort(sdkCompareUtf8);
+  if (
+    sorted.length !== receiptMemoryIds.length
+    || sorted.some((memoryId, index) => memoryId !== receiptMemoryIds[index])
+  ) {
+    throw new Error("used_memory_ids must exactly match the canonical host-use receipt item set");
+  }
+  return [...receiptMemoryIds];
+}
+
+function sdkAssertExactServedSurface(
+  guide: unknown,
+  memoryIds: readonly string[],
+  expectedSurface: AionisHostUseReceiptSurface,
+): void {
+  const context = asRecord(agentContextFromGuide(guide));
+  const served: Record<AionisHostUseReceiptSurface, Set<string>> = {
+    use_now: new Set(stringArray(context?.use_now_memory_ids)),
+    inspect_before_use: new Set(stringArray(context?.inspect_before_use_memory_ids)),
+    do_not_use: new Set(stringArray(context?.do_not_use_memory_ids)),
+  };
+  const surfaces = Object.keys(served) as AionisHostUseReceiptSurface[];
+  for (const memoryId of memoryIds) {
+    const matches = surfaces.filter((surface) => served[surface].has(memoryId));
+    if (matches.length !== 1 || matches[0] !== expectedSurface) {
+      throw new Error(
+        `Host-use receipt memory ${memoryId} must belong to the exact served surface ${expectedSurface}`,
+      );
+    }
+  }
+}
+
 export function feedbackFromGuide(input: AionisFeedbackFromGuideInput): AionisFeedbackRequest {
   const guide = asRecord(input.guide);
   const guideTraceId = guide?.guide_trace_id;
@@ -3480,12 +3887,71 @@ export function feedbackFromGuide(input: AionisFeedbackFromGuideInput): AionisFe
   if (input.used_memory_ids.length === 0) {
     throw new Error("feedbackFromGuide requires at least one host-used memory id");
   }
+  if (input.host_use_receipt_v1) {
+    const receipt = parseHostUseReceiptV1(input.host_use_receipt_v1);
+    const formalGuideTraceId = sdkBoundedString(guideTraceId, 256, "guide.guide_trace_id");
+    const runId = sdkBoundedString(input.run_id, 256, "feedbackFromGuide run_id");
+    const operationId = sdkBoundedString(
+      input.operation_id,
+      256,
+      "feedbackFromGuide operation_id for host_use_receipt_v1",
+    );
+    if (operationId !== receipt.operation_id) {
+      throw new Error("feedbackFromGuide operation_id must match host_use_receipt_v1.operation_id");
+    }
+    if (formalGuideTraceId !== receipt.guide_trace_id) {
+      throw new Error("feedbackFromGuide guide_trace_id must match host_use_receipt_v1.guide_trace_id");
+    }
+    if (runId !== receipt.run_id) {
+      throw new Error("feedbackFromGuide run_id must match host_use_receipt_v1.run_id");
+    }
+    const expectedEpisodeId = sdkLearningEpisodeId(guide?.tenant_id, guide?.scope, formalGuideTraceId);
+    if (receipt.episode_id !== expectedEpisodeId) {
+      throw new Error("feedbackFromGuide host_use_receipt_v1.episode_id does not match the guide identity");
+    }
+    const outcomes = new Set(receipt.items.map((item) => item.outcome));
+    const surfaces = new Set(receipt.items.map((item) => item.used_surface));
+    if (outcomes.size !== 1 || surfaces.size !== 1) {
+      throw new Error("Formal feedback requires homogeneous receipt outcome and used_surface values");
+    }
+    const receiptOutcome = receipt.items[0]!.outcome;
+    const receiptSurface = receipt.items[0]!.used_surface;
+    if (input.outcome !== receiptOutcome) {
+      throw new Error("feedbackFromGuide outcome must match the homogeneous host-use receipt outcome");
+    }
+    if (input.used_surface !== undefined && input.used_surface !== receiptSurface) {
+      throw new Error("feedbackFromGuide used_surface must match the homogeneous host-use receipt used_surface");
+    }
+    if (input.verifier_status !== undefined && input.verifier_status !== "passed") {
+      throw new Error("feedbackFromGuide host_use_receipt_v1 requires verifier_status passed");
+    }
+    const receiptMemoryIds = receipt.items.map((item) => item.memory_id);
+    const usedMemoryIds = sdkFormalFeedbackMemoryIds(input.used_memory_ids, receiptMemoryIds);
+    sdkAssertExactServedSurface(input.guide, usedMemoryIds, receiptSurface);
+    return stripUndefined({
+      operation_id: operationId,
+      host_use_receipt_v1: receipt,
+      reason: input.reason,
+      run_id: receipt.run_id,
+      outcome: receiptOutcome,
+      used_surface: receiptSurface,
+      actor: input.actor ?? actorFromGuide(input.guide),
+      guide_trace_id: receipt.guide_trace_id,
+      used_memory_ids: usedMemoryIds,
+      verifier_status: "passed",
+      tool_status: input.tool_status,
+      runtime_signal_refs: input.runtime_signal_refs,
+    }) as AionisFeedbackRequest;
+  }
   const exposedMemoryIds = new Set(memoryIdsFromGuide(input.guide));
   const unexposed = input.used_memory_ids.filter((id) => !exposedMemoryIds.has(id));
   if (unexposed.length > 0) {
     throw new Error(`feedbackFromGuide received memory ids not exposed by guide: ${unexposed.join(", ")}`);
   }
   return stripUndefined({
+    operation_id: input.operation_id === undefined
+      ? undefined
+      : sdkBoundedString(input.operation_id, 256, "feedbackFromGuide operation_id"),
     reason: input.reason,
     run_id: input.run_id,
     outcome: input.outcome,
@@ -3498,6 +3964,8 @@ export function feedbackFromGuide(input: AionisFeedbackFromGuideInput): AionisFe
     runtime_signal_refs: input.runtime_signal_refs,
   }) as AionisFeedbackRequest;
 }
+
+// </aionis-runtime-owned:host-receipt-helpers>
 
 export function measureInputFromGuideLoop(input: AionisMeasureFromGuideLoopInput): AionisJsonObject {
   return stripUndefined({
