@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased - Task 4.1 Step 4 Durable Learning Control
+## v0.3.9 - Durable Learning Control Candidate
+
+Release date: 2026-07-15
 
 This mainline checkpoint turns formal unused-exposure feedback into durable,
 restart-safe learning-control work without moving posture mutation into the HTTP
@@ -28,6 +30,18 @@ feedback transaction.
   from `BEGIN IMMEDIATE` within a fixed six-attempt budget. The locked replay
   check still runs before entropy, while transaction-body and commit failures
   remain single-attempt and fail closed.
+
+### Compatibility
+
+- Runtime stays on the existing SQLite v4 authority schema; no migration,
+  route, or environment-contract change is introduced by this candidate.
+- v0.3.8 data upgrades forward and historical feedback without queue
+  provenance remains readable, but a database containing new v0.3.9
+  queue-provenance events must not be downgraded to v0.3.8.
+- External npm package coordinates remain frozen. This private Runtime source
+  release publishes only the immutable source tag and `linux/amd64` image.
+- Global admission-candidate serving remains off, and later promotion phases
+  remain outside this candidate.
 
 ## v0.3.7 - Evidence-Gated Learning Candidate
 

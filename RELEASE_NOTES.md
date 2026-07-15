@@ -1,93 +1,83 @@
-# Aionis v0.3.8 Exact Guide-Feedback Attribution Candidate Notes
+# Aionis v0.3.9 Durable Learning Control Candidate Notes
 
 Release status `candidate`.
 
-Runtime `v0.3.8` is the corrective Local Runtime Public Beta candidate after
-the immutable `v0.3.7` tag. It keeps the evidence-gated learning substrate and
-closes the boundary between memory visible for continuity and memory proven to
-have been used. It does not enable autonomous learning globally.
-
-`v0.3.7` failed its cross-package external smoke before Docker image build: the
-old smoke attempted to submit a context-only handoff as learning feedback and
-Runtime correctly rejected it. No Runtime GitHub Release or
-`ghcr.io/ostinatocc/aionis:v0.3.7` image was published. The tag stays immutable;
-`v0.3.8` replaces it.
+Runtime `v0.3.9` turns the formal unused-exposure learning-control path into
+durable, restart-safe Runtime work and hardens confirmatory provisioning under
+real SQLite writer contention. It preserves the evidence-gated learning
+boundary: feedback does not synchronously mutate memory posture, and global
+admission-candidate serving remains off.
 
 ## Candidate Coordinates
 
 - `aionis@0.3.8` — immutable source ref `v0.3.8`
 - `@aionis/create@0.3.8` — immutable source ref `v0.3.8`
-- `@aionis/sdk@0.3.17` — planned immutable source ref `v0.3.17`
+- `@aionis/sdk@0.3.17` — frozen immutable source commit recorded in `release-train.json`
 - `@aionis/mcp@0.3.7` — immutable source ref `v0.3.7`
 - `@aionis/aifs@0.3.4` — immutable source ref `v0.3.4`
 - `@aionis/claude-code@0.3.5` — immutable source ref `v0.3.5`
 - `@aionis/substrate@0.1.11` — immutable source ref `v0.1.11`
-- Runtime source tag `v0.3.8`
-- Docker image `ghcr.io/ostinatocc/aionis:v0.3.8` (`linux/amd64` only)
+- Runtime source tag `v0.3.9`
+- Docker image `ghcr.io/ostinatocc/aionis:v0.3.9` (`linux/amd64` only)
 - Default installer Runtime ref `v0.3.6`
 
-Every package ref is paired with its exact 40-character source commit in
-`release-train.json`. The default installer remains on immutable `v0.3.6`.
-Candidate status does not move Docker `latest`.
+The Runtime root package is private release metadata, not an npm publication.
+All external package versions remain frozen. Release CI verifies the exact
+compatibility source refs recorded in `release-train.json`; this Runtime-only
+patch does not republish or re-attest the historical npm registry provenance of
+those unchanged packages. Candidate status does not move Docker `latest`.
 
-## Corrective Contract
+## Durable Learning-Control Work
 
-### Persisted Attribution Projection
+Formal guide-attributed feedback now writes its feedback facts and one
+deterministic unused-exposure job in the same SQLite transaction. The product
+response reports only `learning_control_status: queued|already_completed`; it
+does not claim that the memory posture changed during the HTTP request.
 
-`POST /v1/guide` now returns host-only `feedback_attribution_v1` from a
-post-append database readback inside the guide transaction. `status: available`
-contains exact persisted item IDs, served surfaces, canonical episode/event
-identity, and projection digests. `status: unavailable` fails closed when no
-learning exposure was persisted.
+The Runtime worker:
 
-AgentContext remains the Agent visibility and continuity surface. Its memory
-IDs are useful for trace correlation, but are neither proof of use nor feedback
-authority. Context-only handoffs cannot be promoted into learning evidence.
+- claims jobs with lease-owner and lease-token fencing;
+- reclaims expired work after restart and prevents stale workers from
+  completing a newer lease;
+- recomputes repeated-unused evidence and positive attribution from SQLite
+  truth before applying any posture change;
+- commits the inspect-before-use change, canonical audit commit, protected
+  operation receipt, and job completion atomically;
+- retries recoverable failures with a bounded deterministic schedule and at
+  most eight execution attempts;
+- retains exhausted jobs as dead letters and atomically safety-pauses enrolled
+  candidates before terminalization;
+- exposes worker and backlog state through health/readiness surfaces and waits
+  for an in-flight drain during Runtime shutdown.
 
-### Strict SDK Feedback
+Historical feedback without the v0.3.9 queue-provenance marker remains valid
+and readable but is not retroactively enqueued.
 
-`@aionis/sdk@0.3.17` requires the complete source guide. It parses and validates
-`feedback_attribution_v1`, accepts only host-observed IDs that match exact
-persisted items, derives the served surface, and rejects context-only, unknown,
-mixed-surface, rehydrate-only, and explicit-assertion fallback paths. A missing
-or unavailable projection requires a fresh compatible guide.
+## Confirmatory SQLite Contention Hardening
 
-Non-neutral feedback on `inspect_before_use` or `do_not_use` requires a
-canonical verified `host_use_receipt_v1`. Formal receipts must agree with both
-the guide attribution envelope and the protected operation/episode/run/item
-identity.
+Confirmatory experiment provisioning now has a bounded retry policy scoped
+only to `BEGIN IMMEDIATE` acquisition. A `SQLITE_BUSY` begin failure may retry
+within a fixed six-attempt budget; transaction-body, commit, and rollback
+failures remain single-attempt and fail closed.
 
-### Host Integration And Release Smoke
-
-Host templates retain visible IDs for correlation but no longer copy
-`last_use_now_memory_ids` into outcome feedback. The host must provide exact IDs
-from an instrumented Agent/host trace. The external package smoke exercises the
-same rule against a real Runtime in both embedding-available and unavailable
-modes. The available path proves the exact persisted embedding model, 1536-d
-query execution, semantic/ANN provenance, and formal feedback; the unavailable
-path preserves the context-only rejection regression. Provider credentials are
-stripped from every installed external package process.
-
-### Existing Evidence-Gated Learning Authority
-
-The append-only episode ledger, atomic exposure/feedback persistence,
-protected experiment lifecycle, v3-to-v4 migration, operation receipts,
-restart integrity, route governance, and 21-route matrix remain intact from
-the evidence-gated learning candidate.
+The contender stays inside the same per-connection critical section. After the
+winning writer commits, the locked operation-receipt check returns the stored
+byte-identical result before either the 32-byte seed or 48-byte assignment
+entropy source is invoked.
 
 ## Safety And Compatibility
 
-- Global admission-candidate serving remains off by default.
-- Legacy unprotected feedback remains compatibility-only and cannot enter
-  formal gate coverage.
-- Cached guide responses without `feedback_attribution_v1` must be refreshed;
-  SDK feedback does not fall back to AgentContext.
-- No route is removed. Raw HTTP feedback continues to reload persisted exposure
-  by `guide_trace_id` and validates the exact item/surface pair.
-- The supported deployment remains one self-hosted Runtime process; managed
+- v0.3.8 SQLite data upgrades forward on the existing v4 authority schema; no
+  DDL migration is introduced. After v0.3.9 writes a formal feedback event with
+  queue provenance, downgrading that database to v0.3.8 is unsupported.
+- The governed HTTP surface remains 21 routes and the environment schema
+  remains 177 fields.
+- No external package coordinate changes in this Runtime-only patch.
+- Global admission-candidate serving remains disabled by default.
+- Production external policy registration and later promotion phases remain
+  outside this candidate.
+- The supported deployment remains one self-hosted Runtime process. Managed
   multi-tenant GA and multi-instance HA are not claimed.
-- The durable learning-control queue/worker and later promotion phases remain
-  outside this checkpoint.
 
 ## Verification Gate
 
@@ -97,48 +87,73 @@ npm run -s lite:test
 npm run -s lite:smoke
 npm run -s sdk:check -- --sdk-repo /Volumes/ziel/new.aionis/aionis-sdk
 npm run -s complexity:check
-node --test scripts/ci/release-version-docs.test.mjs
-AIONIS_RELEASE_SDK_REPO=/Volumes/ziel/new.aionis/aionis-sdk \
-  node scripts/ci/release-artifact-gate.mjs --check --expect-tag v0.3.8
-npm run -s runtime:smoke:external-packages
-npm run -s runtime:smoke:fresh-install
-npm run -s runtime:smoke:published-cli
+node --test \
+  scripts/ci/release-version-docs.test.mjs \
+  scripts/ci/release-artifact-gate.test.mjs \
+  scripts/ci/release-workflow-contract.test.mjs
+node scripts/ci/release-artifact-gate.mjs --check --expect-tag v0.3.9
+# Against an already-running EMBEDDING_PROVIDER=none Runtime:
+AIONIS_BASE_URL="http://127.0.0.1:3210" \
+AIONIS_EXTERNAL_SMOKE_SDK_SPEC="@aionis/sdk@0.3.17" \
+AIONIS_EXTERNAL_SMOKE_MCP_SPEC="@aionis/mcp@0.3.7" \
+AIONIS_EXTERNAL_SMOKE_CREATE_SPEC="@aionis/create@0.3.8" \
+AIONIS_EXTERNAL_SMOKE_EMBEDDING_EXPECTATION=unavailable \
+  npm run -s runtime:smoke:external-packages
+AIONIS_PUBLISHED_CLI_SMOKE_SPEC="aionis@0.3.8" \
+  npm run -s runtime:smoke:published-cli
 docker build --platform linux/amd64 \
-  --iidfile /tmp/aionis-v0.3.8.iid \
-  -t aionis:v0.3.8-smoke .
+  --iidfile /tmp/aionis-v0.3.9.iid \
+  -t aionis:v0.3.9-smoke .
 bash scripts/ci/docker-release-smoke.sh \
-  "$(cat /tmp/aionis-v0.3.8.iid)"
+  "$(cat /tmp/aionis-v0.3.9.iid)"
 ```
+
+The tag-triggered release workflow additionally checks out every external package at the
+exact ref in `release-train.json`, verifies its recorded commit, packs the SDK,
+MCP, and Create repositories into real tarballs, and runs the cross-package
+and fresh-install smokes against those artifacts and Runtime `v0.3.9`.
+An embedding-available release run is additional evidence: inject the provider
+credential only into the Runtime process, keep the same exact package specs,
+and require `dashscope:text-embedding-v4` with 1536-dimensional query evidence.
+Never place the credential in this repository, release notes, or child package
+processes.
 
 ## Publish Order
 
-The SDK commit and tag must be remotely resolvable before Runtime CI checks the
-frozen package coordinate:
+This is a Runtime source and Docker release. It does not publish an npm Runtime
+package or republish any frozen external package.
 
 ```bash
-# 1. Merge and push the verified SDK commit, then publish its immutable tag.
-cd /Volumes/ziel/new.aionis/aionis-sdk
-git push origin main
-git tag -a v0.3.17 -m "@aionis/sdk v0.3.17"
-git push origin v0.3.17
-
-# 2. Publish the exact SDK package only after source/tag verification.
-npm publish --access public
-
-# 3. Merge the verified Runtime release commit, then tag the merged main commit.
+# 1. Merge the verified release commit, then synchronize and verify main.
 cd /Volumes/ziel/new.aionis/AionisRuntime-focused
-git push origin release/v0.3.8
-git tag -a v0.3.8 -m "Aionis v0.3.8"
-git push origin v0.3.8
+git fetch origin main --tags
+git switch main
+git pull --ff-only origin main
+test -z "$(git status --porcelain)"
+test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+test "$(node -p 'require("./package.json").version')" = "0.3.9"
 
-# 4. Verify the tag-triggered Runtime image.
-git ls-remote --exit-code --tags origin refs/tags/v0.3.8
-docker pull ghcr.io/ostinatocc/aionis:v0.3.8
+# Tag the verified remote-main commit explicitly, never the release branch HEAD.
+MAIN_COMMIT="$(git rev-parse origin/main)"
+# Wait until required CI for this exact main commit is green before tagging.
+git tag -a v0.3.9 "$MAIN_COMMIT" -m "Aionis v0.3.9"
+test "$(git rev-parse 'v0.3.9^{}')" = "$MAIN_COMMIT"
+git push origin v0.3.9
+
+# 2. Wait for the tag-triggered Docker workflow and verify the artifact.
+git ls-remote --exit-code --tags origin refs/tags/v0.3.9
+docker pull --platform linux/amd64 ghcr.io/ostinatocc/aionis:v0.3.9
+
+# 3. Create the GitHub release only after the immutable image verifies.
+gh release create v0.3.9 \
+  --repo ostinatocc/Aionis \
+  --title "Aionis v0.3.9 Durable Learning Control Candidate" \
+  --notes-file docs/releases/v0.3.9.md
 ```
 
 Do not republish `@aionis/create@0.3.8`; it is already frozen and its default
-Runtime remains `v0.3.6`. A future installer default change requires a new
-installer version.
+Runtime remains `v0.3.6`. Do not republish the CLI, SDK, MCP, AIFS, Claude Code,
+or Substrate coordinates for this Runtime-only patch.
 
 ## Exact-Version Post-Publish Smoke
 
@@ -147,12 +162,13 @@ AIONIS_FRESH_INSTALL_CREATE_SPEC="@aionis/create@0.3.8" \
 AIONIS_FRESH_INSTALL_SDK_SPEC="@aionis/sdk@0.3.17" \
 AIONIS_FRESH_INSTALL_MCP_SPEC="@aionis/mcp@0.3.7" \
 AIONIS_FRESH_INSTALL_REPO="https://github.com/ostinatocc/Aionis.git" \
-AIONIS_FRESH_INSTALL_RUNTIME_REF="v0.3.8" \
+AIONIS_FRESH_INSTALL_RUNTIME_REF="v0.3.9" \
 npm run -s runtime:smoke:fresh-install
 
 AIONIS_PUBLISHED_CLI_SMOKE_SPEC="aionis@0.3.8" \
 npm run -s runtime:smoke:published-cli
 ```
 
-No package, image, or Public Beta announcement is complete until its immutable
-ref resolves and the exact-version smoke passes.
+No image or Public Beta announcement is complete until the immutable Runtime
+tag resolves, the tagged Docker workflow passes, and the exact-version smoke
+succeeds.

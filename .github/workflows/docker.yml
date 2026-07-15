@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       release_ref:
-        description: Exact immutable Runtime tag to verify and publish (for example v0.3.8)
+        description: Exact immutable Runtime tag to verify and publish (for example v0.3.9)
         required: true
         type: string
       publish:
@@ -40,6 +40,20 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref_name }}
           fetch-depth: 0
+
+      - name: Verify release commit is on main first-parent history
+        run: |
+          set -euo pipefail
+          release_commit="$(git rev-parse 'HEAD^{commit}')"
+          git fetch --no-tags origin \
+            '+refs/heads/main:refs/remotes/origin/main'
+          main_commit="$(git rev-parse 'refs/remotes/origin/main^{commit}')"
+          if ! git rev-list --first-parent "${main_commit}" | \
+            grep -F -x "${release_commit}" >/dev/null; then
+            printf 'release commit %s is not on the origin/main first-parent history at %s\n' \
+              "${release_commit}" "${main_commit}" >&2
+            exit 1
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

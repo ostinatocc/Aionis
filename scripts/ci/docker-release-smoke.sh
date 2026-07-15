@@ -71,11 +71,65 @@ fi
 
 docker exec "${CONTAINER_NAME}" node --input-type=module -e '
 const base = "http://127.0.0.1:" + (process.env.PORT || "3001");
+const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+const isCanonicalTimestamp = (value) => {
+  if (typeof value !== "string") return false;
+  try {
+    return new Date(value).toISOString() === value;
+  } catch {
+    return false;
+  }
+};
+const fail = (message, value) => {
+  throw new Error(message + ": " + JSON.stringify(value));
+};
 const health = await fetch(base + "/healthz");
 if (!health.ok || (await health.json()).ok !== true) throw new Error("healthz failed");
 const ready = await fetch(base + "/readyz");
 const readyBody = await ready.json();
 if (!ready.ok || readyBody.ready !== true) throw new Error("readyz failed");
+if (!isRecord(readyBody.checks)
+  || !hasOwn(readyBody.checks, "learning_control_worker")
+  || readyBody.checks.learning_control_worker !== true) {
+  fail("readyz learning-control worker check failed", readyBody);
+}
+const runtimeHealth = await fetch(base + "/health");
+const runtimeHealthBody = await runtimeHealth.json();
+const learningControl = runtimeHealthBody?.lite?.stores?.learning_control_worker;
+if (!runtimeHealth.ok
+  || runtimeHealthBody.ok !== true
+  || !isRecord(learningControl)) {
+  fail("health missing learning-control worker", runtimeHealthBody);
+}
+if (typeof learningControl.running !== "boolean"
+  || learningControl.closed !== false
+  || learningControl.last_error_code !== null) {
+  fail("learning-control worker is unhealthy", learningControl);
+}
+if (!isCanonicalTimestamp(learningControl.last_started_at)
+  || !isCanonicalTimestamp(learningControl.last_succeeded_at)
+  || !isRecord(learningControl.last_drain)) {
+  fail("learning-control startup drain did not succeed", learningControl);
+}
+const learningControlBacklog = learningControl.backlog;
+if (!isRecord(learningControlBacklog)) {
+  fail("learning-control backlog missing", learningControl);
+}
+for (const field of ["pending", "leased", "expired_leases", "completed", "dead_letter", "exhausted"]) {
+  if (!Number.isSafeInteger(learningControlBacklog[field]) || learningControlBacklog[field] < 0) {
+    fail("invalid learning-control backlog field " + field, learningControlBacklog);
+  }
+}
+for (const field of ["oldest_available_at", "oldest_lease_expiry"]) {
+  if (learningControlBacklog[field] !== null
+    && !isCanonicalTimestamp(learningControlBacklog[field])) {
+    fail("invalid learning-control backlog timestamp " + field, learningControlBacklog);
+  }
+}
+if (learningControlBacklog.exhausted !== 0) {
+  fail("learning-control terminalization is exhausted", learningControlBacklog);
+}
 const observe = await fetch(base + "/v1/observe", {
   method: "POST",
   headers: { "content-type": "application/json" },
@@ -106,6 +160,11 @@ process.stdout.write(JSON.stringify({
   ok: true,
   health: true,
   ready: true,
+  learning_control_worker: {
+    ready: true,
+    last_succeeded_at: learningControl.last_succeeded_at,
+    backlog: learningControlBacklog
+  },
   observe_contract: observeBody.contract_version,
   durable_replay: true
 }) + "\n");

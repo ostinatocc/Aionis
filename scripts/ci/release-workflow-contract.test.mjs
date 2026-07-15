@@ -53,6 +53,11 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
   assert.match(workflow, /release_ref:[\s\S]*required: true[\s\S]*publish:[\s\S]*default: false/);
   assert.match(workflow, /group: docker-release-/);
   assert.match(workflow, /ref: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.release_ref \|\| github\.ref_name \}\}/);
+  assert.match(workflow, /name: Verify release commit is on main first-parent history/);
+  assert.match(workflow, /\+refs\/heads\/main:refs\/remotes\/origin\/main/);
+  assert.match(workflow, /git rev-list --first-parent "\$\{main_commit\}"/);
+  assert.match(workflow, /grep -F -x "\$\{release_commit\}"/);
+  assert.doesNotMatch(workflow, /git merge-base --is-ancestor/);
   assert.match(workflow, /--expect-tag "\$\{AIONIS_RELEASE_EXPECTED_TAG\}"/);
   assert.match(workflow, /runtime_commit: \$\{\{ steps\.release-metadata\.outputs\.runtime_commit \}\}/);
   assert.match(workflow, /AIONIS_FRESH_INSTALL_RUNTIME_REF="\$\{\{ steps\.release-metadata\.outputs\.runtime_tag \}\}"/);
@@ -92,6 +97,11 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
   assert.match(workflow, /org\.opencontainers\.image\.revision=\$\{\{ needs\.verify\.outputs\.runtime_commit \}\}/);
   assert.match(workflow, /refusing to replace existing/);
   assert.match(workflow, /promoted_digest[\s\S]*VERIFIED_DIGEST/);
+  assert.ok(
+    workflow.indexOf("Verify release commit is on main first-parent history") <
+      workflow.indexOf("Read immutable package refs"),
+    "the release tag must be proven merged before release metadata is trusted",
+  );
   assert.ok(
     workflow.indexOf("Smoke the exact published digest") <
       workflow.indexOf("Promote the verified digest to release tags"),
@@ -176,6 +186,12 @@ test("release smoke rejects mutable image tags before invoking Docker", () => {
   assert.match(smokeScript, /AIONIS_DOCKER_SMOKE_ATTEMPTS:-90/);
   assert.match(smokeScript, /AIONIS_DOCKER_SMOKE_HEALTH_TIMEOUT:-5s/);
   assert.match(smokeScript, /--health-timeout "\$\{HEALTH_TIMEOUT\}"/);
+  assert.match(smokeScript, /base \+ "\/health"/);
+  assert.match(smokeScript, /hasOwn\(readyBody\.checks, "learning_control_worker"\)/);
+  assert.match(smokeScript, /runtimeHealthBody\?\.lite\?\.stores\?\.learning_control_worker/);
+  assert.match(smokeScript, /learningControl\.last_succeeded_at/);
+  assert.match(smokeScript, /\["pending", "leased", "expired_leases", "completed", "dead_letter", "exhausted"\]/);
+  assert.match(smokeScript, /learningControlBacklog\.exhausted !== 0/);
 
   const result = spawnSync("bash", ["scripts/ci/docker-release-smoke.sh", "aionis:mutable"], {
     cwd: ROOT,
