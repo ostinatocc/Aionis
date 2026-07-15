@@ -30,7 +30,7 @@ export type LlmConfig = {
 };
 
 export type EmbeddingConfig = {
-  provider: "minimax" | "openai";
+  provider: "minimax" | "openai" | "dashscope";
 };
 
 type AgentDecision = {
@@ -84,10 +84,18 @@ export function requireLlmConfig(): LlmConfig {
 
 export function requireEmbeddingConfig(): EmbeddingConfig {
   const explicit = process.env.AIONIS_AGENT_E2E_EMBEDDING_PROVIDER?.trim() || process.env.EMBEDDING_PROVIDER?.trim();
-  const provider = explicit || (process.env.MINIMAX_API_KEY?.trim() ? "minimax" : process.env.OPENAI_API_KEY?.trim() ? "openai" : "");
-  if (provider !== "minimax" && provider !== "openai") {
+  const provider = explicit || (
+    process.env.MINIMAX_API_KEY?.trim()
+      ? "minimax"
+      : process.env.DASHSCOPE_API_KEY?.trim()
+        ? "dashscope"
+        : process.env.OPENAI_API_KEY?.trim()
+          ? "openai"
+          : ""
+  );
+  if (provider !== "minimax" && provider !== "openai" && provider !== "dashscope") {
     throw new Error(
-      "runtime-agent-loop requires a real embedding provider for /v1/guide. Set MINIMAX_API_KEY, OPENAI_API_KEY, or EMBEDDING_PROVIDER=minimax|openai with the matching key.",
+      "runtime-agent-loop requires a real embedding provider for /v1/guide. Set MINIMAX_API_KEY, DASHSCOPE_API_KEY, OPENAI_API_KEY, or EMBEDDING_PROVIDER=minimax|dashscope|openai with the matching key.",
     );
   }
   if (provider === "minimax" && !process.env.MINIMAX_API_KEY?.trim()) {
@@ -95,6 +103,9 @@ export function requireEmbeddingConfig(): EmbeddingConfig {
   }
   if (provider === "openai" && !process.env.OPENAI_API_KEY?.trim()) {
     throw new Error("runtime-agent-loop requires OPENAI_API_KEY when using EMBEDDING_PROVIDER=openai.");
+  }
+  if (provider === "dashscope" && !process.env.DASHSCOPE_API_KEY?.trim()) {
+    throw new Error("runtime-agent-loop requires DASHSCOPE_API_KEY when using EMBEDDING_PROVIDER=dashscope.");
   }
   return { provider };
 }

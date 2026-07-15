@@ -66,7 +66,7 @@ surfaces.
 
 | Product Proof | Run this | Verifies |
 |---|---|---|
-| External package smoke | `npm run -s runtime:smoke:external-packages` | Installs published or env-selected `@aionis/sdk`, `@aionis/mcp`, and `@aionis/create` package specs into a temporary external project, then verifies SDK, MCP stdio, and CLI entrypoints against a real Runtime. |
+| External package smoke | `npm run -s runtime:smoke:external-packages` | Installs published or env-selected `@aionis/sdk`, `@aionis/mcp`, and `@aionis/create` package specs into a temporary external project, then verifies SDK, MCP stdio, and CLI entrypoints against a real Runtime. Embedding-available mode proves the exact persisted model, 1536-d query, and semantic/ANN provenance; unavailable mode proves structured continuity plus context-only feedback rejection. Provider keys are stripped from external package child processes. |
 | Published fresh install smoke | `npm run -s runtime:smoke:fresh-install` | Uses `@aionis/create@latest` from npm to install a clean Runtime, verifies no-key startup with `EMBEDDING_PROVIDER=none`, then runs `@aionis/mcp@latest` through `aionis_record_step -> aionis_context`. |
 | Published CLI operator smoke | `npm run -s runtime:smoke:published-cli` | Installs the published `aionis` CLI package into a temporary project, starts a real isolated Runtime, then verifies `health`, `boundary`, `doctor`, `snapshot`, Agent Flight Recorder audit, and non-mutating `forget` preview. |
 | Zvec ANN scale diagnostic | `npm run -s recall:ann:scale` | Compares bounded SQLite scan, local in-memory ANN, and optional Zvec sidecar on a low-salience semantic needle. Verifies candidate coverage without changing admission/governance semantics. |

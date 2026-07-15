@@ -62,7 +62,11 @@ identity.
 Host templates retain visible IDs for correlation but no longer copy
 `last_use_now_memory_ids` into outcome feedback. The host must provide exact IDs
 from an instrumented Agent/host trace. The external package smoke exercises the
-same rule against a real Runtime and verifies the context-only rejection.
+same rule against a real Runtime in both embedding-available and unavailable
+modes. The available path proves the exact persisted embedding model, 1536-d
+query execution, semantic/ANN provenance, and formal feedback; the unavailable
+path preserves the context-only rejection regression. Provider credentials are
+stripped from every installed external package process.
 
 ### Existing Evidence-Gated Learning Authority
 

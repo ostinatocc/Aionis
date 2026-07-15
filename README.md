@@ -565,6 +565,13 @@ verifies the SDK product loop, the MCP stdio tool path, and the installer/MCP
 CLI entrypoints against a real Runtime. Override the package specs with
 `AIONIS_EXTERNAL_SMOKE_SDK_SPEC`, `AIONIS_EXTERNAL_SMOKE_MCP_SPEC`, and
 `AIONIS_EXTERNAL_SMOKE_CREATE_SPEC` when validating prerelease tarballs.
+When the target Runtime is external, set
+`AIONIS_EXTERNAL_SMOKE_EMBEDDING_EXPECTATION=available|unavailable`. Available
+mode also requires `AIONIS_EXTERNAL_SMOKE_EXPECTED_EMBEDDING_MODEL` and proves
+ready write embeddings, the exact model, 1536-dimensional planning queries,
+and semantic/ANN recall provenance through both SDK and MCP entrypoints.
+Provider API keys are removed from npm-install, SDK, MCP, and CLI child
+environments; only a Runtime process that the harness starts may inherit them.
 
 Not sure which entrypoint to use? See the
 [quickstart matrix](docs/AIONIS_QUICKSTART_MATRIX.md).
