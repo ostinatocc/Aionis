@@ -262,8 +262,11 @@ async function main() {
       ? [passedMemoryId]
       : compiled.use_now_memory_ids.includes(planMemoryId)
         ? [planMemoryId]
-        : compiled.use_now_memory_ids.slice(0, 1);
-    assertCondition(usedMemoryIds.length > 0, "plan asset guide did not expose a use_now memory id for attribution");
+        : [];
+    assertCondition(
+      usedMemoryIds.length > 0,
+      "simulated worker trace did not dereference the accepted plan/passed memory",
+    );
 
     const feedback = await aionis.execution.feedbackFromOutcome<Record<string, unknown>>({
       agent_id: "worker-cheap-model",

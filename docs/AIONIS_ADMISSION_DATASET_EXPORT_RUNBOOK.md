@@ -82,6 +82,10 @@ The current SDK derives conservative labels:
 
 Do not treat a successful task as proof that every exposed memory was useful.
 Only `agent_used=true` with host feedback should become attributed use.
+`unused_exposed` and the corresponding rates are admission-visibility metrics
+derived from `prompt_included`; they are not proof of a persisted learning
+exposure and cannot authorize feedback. Strict SDK feedback separately requires
+an exact item/surface match in the source guide's `feedback_attribution_v1`.
 
 ## File Layout
 

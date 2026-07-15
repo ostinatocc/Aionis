@@ -43,6 +43,7 @@ Aionis owns state governance:
 | Memory tier | `hot`, `warm`, `cold`, `archive` | demote/archive/rehydrate/review actions | tier helpers in `evolution-operators` | context selection, archive relocation, rehydration |
 | Workflow promotion | `candidate`, `stable` | execution write projection, replay evidence, promotion review | workflow promotion learning-control gate | workflow anchors, replay playbooks, guide workflow candidates |
 | Pattern credibility | `candidate`, `trusted`, `contested` | tool/use feedback, counter-evidence, revalidation | pattern trust and learning-control gates | tool preferences, policy/pattern memory |
+| Learning episode authority | exposure committed, feedback attributed, effect measured | persisted guide exposure plus verified feedback/measurement | append-only episode/source-link integrity | SQLite episode ledger, `feedback_attribution_v1`, gate inputs |
 | Learning control | review/admissibility/effect/apply trace stages | semantic review, admissibility result, policy effect | `deriveControlledStateRaisePreview` and runtime apply gate | decision trace, learning packet, effect report |
 | Operator projection | read-only claims and readiness summaries | current state surfaces | operator snapshot builder | `operator_snapshot`, memory receipt, trace-to-procedure |
 
@@ -292,6 +293,9 @@ Important boundary:
 3. `agent_context.do_not_use` carries failed/stale/blocked counter-evidence.
 4. raw rows, raw slots, decision traces, receipts, and operator snapshots do not
    enter the Agent prompt by default.
+5. AgentContext memory IDs mean “visible to the Agent,” not “actually used.”
+6. Host-only `feedback_attribution_v1` projects exact persisted exposure items
+   and surfaces; host instrumentation supplies the actual-use IDs.
 
 Product output:
 
@@ -303,6 +307,11 @@ Product output:
 6. `AionisMemoryDecisionTrace`
 7. `AionisMemoryUseReceipt`
 8. `AionisOperatorSnapshot`
+
+The complete guide response is therefore split deliberately: AgentContext is
+the continuity/visibility surface, while `feedback_attribution_v1` is the
+persisted attribution eligibility surface. Neither alone proves actual use.
+Feedback requires host-observed IDs that match the latter exactly.
 
 ## Operator State Projections
 
@@ -335,7 +344,9 @@ flowchart TD
   Continuity --> Guide["Guide Context Compilation"]
   Recall --> Guide
   Guide --> AgentContext["agent_context"]
+  Guide --> Attribution["feedback_attribution_v1"]
   AgentContext --> Host
+  Attribution --> Host
   Host --> Feedback["outcome feedback"]
   Feedback --> DecisionTrace["Memory Decision Trace"]
   Feedback --> LearningControl["Learning Control Gates"]

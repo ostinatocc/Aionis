@@ -147,6 +147,7 @@ test("cross-package release gates install tarballs packed from exact checkouts",
     /github\.event_name == 'workflow_dispatch' && 'external\/release-harness\/scripts\/e2e\/fresh-install-smoke\.ts'/,
   );
   assert.match(workflow, /node --import tsx src\/index\.ts >"\$\{runtime_log\}" 2>&1 &/);
+  assert.match(workflow, /AIONIS_EXTERNAL_SMOKE_EMBEDDING_EXPECTATION=unavailable/);
   assert.match(workflow, /setsid npm run -s lite:smoke &/);
   assert.match(workflow, /kill -TERM -- "-\$\{smoke_pid\}"/);
   assert.match(workflow, /kill -KILL -- "-\$\{smoke_pid\}"/);

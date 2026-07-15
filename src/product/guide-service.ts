@@ -68,6 +68,7 @@ import type { ClaimLedgerAccess, ClaimLedgerRow } from "../store/memory-store.js
 
 import type { LiteExecutionNativeNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
 import type { LiteLearningEpisodeLedgerAccess } from "../store/lite-learning-episode-ledger.js";
+import type { LiteLearningFeedbackSource } from "../store/lite-learning-feedback-source.js";
 import {
   buildLiteGuideExposureEventRow,
   type LiteGuideExposureExperimentBinding,
@@ -2263,6 +2264,22 @@ function parseStoredProductGuideOperationResult(args: {
   ) {
     throw new HttpError(500, "protected_guide_receipt_invalid", "stored protected guide receipt is invalid");
   }
+  if (body.feedback_attribution_v1 !== undefined) {
+    try {
+      assertStoredGuideFeedbackAttribution({
+        value: body.feedback_attribution_v1,
+        tenantId: args.identity.tenantId,
+        scope: args.identity.scope,
+        guideTraceId: body.guide_trace_id,
+      });
+    } catch {
+      throw new HttpError(
+        500,
+        "protected_guide_receipt_invalid",
+        "stored protected guide receipt is invalid",
+      );
+    }
+  }
   return parsed as ProductServiceResult;
 }
 
@@ -2300,6 +2317,197 @@ type ProductGuidePersistenceBranch = Readonly<{
   servedArm: "control" | "candidate";
   learningResolution: LearningExperimentGuideResolution;
 }>;
+
+type GuideFeedbackAttributionItemV1 = Readonly<{
+  memory_id: string;
+  served_surface: LearningLedgerItem["served_action"];
+}>;
+
+type GuideFeedbackAttributionAvailableV1 = Readonly<{
+  contract_version: "aionis_guide_feedback_attribution_v1";
+  status: "available";
+  guide_trace_id: string;
+  episode_id: string;
+  exposure_event_id: string;
+  item_set_sha256: string;
+  served_surface_sha256: string;
+  projection_complete: boolean;
+  projection_incomplete_reason_codes: readonly string[];
+  items: readonly GuideFeedbackAttributionItemV1[];
+}>;
+
+type GuideFeedbackAttributionUnavailableV1 = Readonly<{
+  contract_version: "aionis_guide_feedback_attribution_v1";
+  status: "unavailable";
+  guide_trace_id: string;
+  reason_code: "learning_exposure_not_persisted";
+}>;
+
+type GuideFeedbackAttributionV1 =
+  | GuideFeedbackAttributionAvailableV1
+  | GuideFeedbackAttributionUnavailableV1;
+
+const GuideFeedbackAttributionItemV1Schema = z.object({
+  memory_id: z.string().trim().min(1).max(256),
+  served_surface: z.enum(["use_now", "inspect_before_use", "do_not_use", "rehydrate"]),
+}).strict();
+
+const GuideFeedbackAttributionV1Schema = z.discriminatedUnion("status", [
+  z.object({
+    contract_version: z.literal("aionis_guide_feedback_attribution_v1"),
+    status: z.literal("available"),
+    guide_trace_id: z.string().trim().min(1).max(256),
+    episode_id: z.string().regex(/^lep_[0-9a-f]{64}$/),
+    exposure_event_id: z.string().regex(/^lexposure_[0-9a-f]{64}$/),
+    item_set_sha256: z.string().regex(/^[0-9a-f]{64}$/),
+    served_surface_sha256: z.string().regex(/^[0-9a-f]{64}$/),
+    projection_complete: z.boolean(),
+    projection_incomplete_reason_codes: z.array(z.string().trim().min(1).max(120)).max(32),
+    items: z.array(GuideFeedbackAttributionItemV1Schema).max(200),
+  }).strict(),
+  z.object({
+    contract_version: z.literal("aionis_guide_feedback_attribution_v1"),
+    status: z.literal("unavailable"),
+    guide_trace_id: z.string().trim().min(1).max(256),
+    reason_code: z.literal("learning_exposure_not_persisted"),
+  }).strict(),
+]);
+
+function assertStoredGuideFeedbackAttribution(args: {
+  value: unknown;
+  tenantId: string;
+  scope: string;
+  guideTraceId: string;
+}): void {
+  const attribution = GuideFeedbackAttributionV1Schema.parse(args.value);
+  if (attribution.guide_trace_id !== args.guideTraceId) {
+    throw new Error("guide feedback attribution identity mismatch");
+  }
+  if (attribution.status === "unavailable") return;
+  const identity = guideLearningExposureIdentity({
+    tenantId: args.tenantId,
+    scope: args.scope,
+    guideTraceId: args.guideTraceId,
+  });
+  if (attribution.episode_id !== identity.episodeId
+    || attribution.exposure_event_id !== identity.eventId) {
+    throw new Error("guide feedback attribution episode identity mismatch");
+  }
+  const itemIds = attribution.items.map((item) => item.memory_id);
+  const sortedItemIds = [...itemIds].sort((left, right) =>
+    Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"))
+  );
+  if (new Set(itemIds).size !== itemIds.length
+    || itemIds.some((memoryId, index) => memoryId !== sortedItemIds[index])) {
+    throw new Error("guide feedback attribution items are not canonical");
+  }
+  if (attribution.served_surface_sha256 !== learningDecisionSurfaceDigest(
+    attribution.items.map((item) => ({
+      memory_id: item.memory_id,
+      action: item.served_surface,
+    })),
+  )) {
+    throw new Error("guide feedback attribution surface digest mismatch");
+  }
+  const canonicalReasons = canonicalLearningReasonCodes(
+    attribution.projection_incomplete_reason_codes,
+  );
+  if (canonicalReasons.length !== attribution.projection_incomplete_reason_codes.length
+    || canonicalReasons.some(
+      (reason, index) => reason !== attribution.projection_incomplete_reason_codes[index],
+    )
+    || attribution.projection_complete === (canonicalReasons.length > 0)) {
+    throw new Error("guide feedback attribution completeness is not canonical");
+  }
+}
+
+function guideLearningExposureIdentity(args: {
+  tenantId: string;
+  scope: string;
+  guideTraceId: string;
+}): { episodeId: string; eventId: string } {
+  return {
+    episodeId: learningEpisodeId(args),
+    eventId: `lexposure_${sha256Hex(stableStringify({
+      tenant_id: args.tenantId,
+      scope: args.scope,
+      guide_trace_id: args.guideTraceId,
+    }))}`,
+  };
+}
+
+function buildGuideFeedbackAttribution(args: {
+  guideTraceId: string;
+  persistedSource: LiteLearningFeedbackSource | null;
+}): GuideFeedbackAttributionV1 {
+  if (!args.persistedSource) {
+    return {
+      contract_version: "aionis_guide_feedback_attribution_v1",
+      status: "unavailable",
+      guide_trace_id: args.guideTraceId,
+      reason_code: "learning_exposure_not_persisted",
+    };
+  }
+  const items = args.persistedSource.items
+    .filter((item) => item.decision_completeness === "complete")
+    .map((item) => ({
+      memory_id: item.memory_id,
+      served_surface: item.served_action,
+    }))
+    .sort((left, right) =>
+      Buffer.compare(Buffer.from(left.memory_id, "utf8"), Buffer.from(right.memory_id, "utf8"))
+    );
+  return {
+    contract_version: "aionis_guide_feedback_attribution_v1",
+    status: "available",
+    guide_trace_id: args.guideTraceId,
+    episode_id: args.persistedSource.event.episode_id,
+    exposure_event_id: args.persistedSource.event.event_id,
+    item_set_sha256: args.persistedSource.event.item_set_sha256,
+    served_surface_sha256: args.persistedSource.payload.served_surface_sha256,
+    projection_complete: args.persistedSource.payload.projection_complete,
+    projection_incomplete_reason_codes: canonicalLearningReasonCodes(
+      args.persistedSource.payload.projection_incomplete_reason_codes,
+    ),
+    items,
+  };
+}
+
+function finalizeProductGuidePersistenceBranch(args: {
+  branch: ProductGuidePersistenceBranch;
+  feedbackAttribution: GuideFeedbackAttributionV1;
+  operationIdentity: ProductGuideOperationIdentity | null;
+}): ProductGuidePersistenceBranch {
+  if (!args.branch.result.ok) {
+    throw new Error("guide persistence branch must contain a successful product result");
+  }
+  const body = objectValue(args.branch.result.body);
+  if (!body) throw new Error("guide persistence branch result body must be an object");
+  const result = productServiceSuccess({
+    ...body,
+    feedback_attribution_v1: args.feedbackAttribution,
+  }, args.branch.result.statusCode);
+  if (!args.operationIdentity) {
+    return { ...args.branch, result, receiptJson: null };
+  }
+  const receiptJson = stableStringify(result);
+  if (Buffer.byteLength(receiptJson, "utf8") > PRODUCT_GUIDE_OPERATION_RECEIPT_MAX_BYTES) {
+    throw new HttpError(
+      413,
+      "protected_guide_response_too_large",
+      "protected guide response exceeds the canonical receipt size limit",
+      { max_bytes: PRODUCT_GUIDE_OPERATION_RECEIPT_MAX_BYTES },
+    );
+  }
+  return {
+    ...args.branch,
+    result: parseStoredProductGuideOperationResult({
+      identity: args.operationIdentity,
+      receiptJson,
+    }),
+    receiptJson,
+  };
+}
 
 function canonicalLearningReasonCodes(values: readonly string[]): string[] {
   return [...new Set(values)].sort((left, right) =>
@@ -2654,6 +2862,9 @@ async function persistGuideExposure(args: {
           persistLearningExposure = false;
         }
       }
+      const exposureWillPersist = Boolean(
+        args.dependencies.learningEpisodeLedgerAccess && persistLearningExposure,
+      );
       const persisted = await args.dependencies.memoryWrite!.persist(selected.plan);
       if (args.deferredToolDecision) {
         await args.dependencies.liteWriteStore.insertExecutionDecision(args.deferredToolDecision);
@@ -2671,21 +2882,8 @@ async function persistGuideExposure(args: {
         ledgerJson: selected.ledgerJson,
         commitId: persisted.commit_id,
       });
-      if (args.operationIdentity) {
-        if (!selected.branch.receiptJson) {
-          throw new Error("protected guide operation receipt was not prepared");
-        }
-        await args.dependencies.liteWriteStore.insertWriteOperation({
-          tenantId: args.operationIdentity.tenantId,
-          scope: args.operationIdentity.scope,
-          operationKind: PRODUCT_GUIDE_OPERATION_KIND,
-          operationId: args.operationIdentity.operationId,
-          requestSha256: args.operationIdentity.requestSha256,
-          receiptJson: selected.branch.receiptJson,
-          commitId: persisted.commit_id,
-        });
-      }
-      if (args.dependencies.learningEpisodeLedgerAccess && persistLearningExposure) {
+      let feedbackSource: LiteLearningFeedbackSource | null = null;
+      if (args.dependencies.learningEpisodeLedgerAccess && exposureWillPersist) {
         const exposure = buildGuideLearningExposurePayload({
           parsed: args.parsed,
           principal: args.principal,
@@ -2706,20 +2904,17 @@ async function persistGuideExposure(args: {
           servedArm: selected.branch.servedArm,
         });
         const payloadJson = stableStringify(exposure.payload);
+        const exposureIdentity = guideLearningExposureIdentity({
+          tenantId: args.tenantId,
+          scope: args.scope,
+          guideTraceId: args.guideTraceId,
+        });
         const event: EventWithoutDigest = {
           contract_version: "aionis_learning_episode_event_v1",
           tenant_id: args.tenantId,
           scope: args.scope,
-          event_id: `lexposure_${sha256Hex(stableStringify({
-            tenant_id: args.tenantId,
-            scope: args.scope,
-            guide_trace_id: args.guideTraceId,
-          }))}`,
-          episode_id: learningEpisodeId({
-            tenantId: args.tenantId,
-            scope: args.scope,
-            guideTraceId: args.guideTraceId,
-          }),
+          event_id: exposureIdentity.eventId,
+          episode_id: exposureIdentity.episodeId,
           episode_sequence: 1,
           event_kind: "exposure_committed",
           source_kind: "guide_receipt",
@@ -2745,6 +2940,41 @@ async function persistGuideExposure(args: {
           event,
           payload: exposure.payload,
           exposureItems: selected.branch.exposureItems,
+        });
+        feedbackSource = await args.dependencies.learningEpisodeLedgerAccess.resolveFeedbackSource({
+          tenantId: args.tenantId,
+          scope: args.scope,
+          guideTraceId: args.guideTraceId,
+        });
+        if (!feedbackSource
+          || feedbackSource.event.event_id !== exposureIdentity.eventId
+          || feedbackSource.event.episode_id !== exposureIdentity.episodeId) {
+          throw new Error("persisted guide feedback source could not be resolved exactly");
+        }
+      }
+      selected = {
+        ...selected,
+        branch: finalizeProductGuidePersistenceBranch({
+          branch: selected.branch,
+          feedbackAttribution: buildGuideFeedbackAttribution({
+            guideTraceId: args.guideTraceId,
+            persistedSource: feedbackSource,
+          }),
+          operationIdentity: args.operationIdentity,
+        }),
+      };
+      if (args.operationIdentity) {
+        if (!selected.branch.receiptJson) {
+          throw new Error("protected guide operation receipt was not prepared");
+        }
+        await args.dependencies.liteWriteStore.insertWriteOperation({
+          tenantId: args.operationIdentity.tenantId,
+          scope: args.operationIdentity.scope,
+          operationKind: PRODUCT_GUIDE_OPERATION_KIND,
+          operationId: args.operationIdentity.operationId,
+          requestSha256: args.operationIdentity.requestSha256,
+          receiptJson: selected.branch.receiptJson,
+          commitId: persisted.commit_id,
         });
       }
       return {
@@ -3144,6 +3374,7 @@ async function executeProductGuide(args: {
           ...(memoryContractVisible ? ["memory_contract"] : []),
           ...(premiseFirewallVisible ? ["premise_firewall"] : []),
           "guide_exposure_ledger",
+          "learning_feedback_attribution",
         ],
         omitted_internal_surfaces: [
           "internal_planning_details",
@@ -3180,27 +3411,19 @@ async function executeProductGuide(args: {
         },
       },
     });
-    let receiptJson: string | null = null;
-    let canonicalResult: ProductServiceResult = result;
-    if (operationIdentity) {
-      receiptJson = stableStringify(result);
-      if (Buffer.byteLength(receiptJson, "utf8") > PRODUCT_GUIDE_OPERATION_RECEIPT_MAX_BYTES) {
-        throw new HttpError(
-          413,
-          "protected_guide_response_too_large",
-          "protected guide response exceeds the canonical receipt size limit",
-          { max_bytes: PRODUCT_GUIDE_OPERATION_RECEIPT_MAX_BYTES },
-        );
-      }
-      canonicalResult = parseStoredProductGuideOperationResult({
-        identity: operationIdentity,
-        receiptJson,
-      });
+    if (operationIdentity
+      && Buffer.byteLength(stableStringify(result), "utf8") > PRODUCT_GUIDE_OPERATION_RECEIPT_MAX_BYTES) {
+      throw new HttpError(
+        413,
+        "protected_guide_response_too_large",
+        "protected guide response exceeds the canonical receipt size limit",
+        { max_bytes: PRODUCT_GUIDE_OPERATION_RECEIPT_MAX_BYTES },
+      );
     }
     return {
       agentContext: branchArgs.branchAgentContext,
-      result: canonicalResult,
-      receiptJson,
+      result,
+      receiptJson: null,
       exposureItems: branchArgs.exposureItems,
       servedArm: branchArgs.servedArm,
       learningResolution: branchArgs.branchResolution,

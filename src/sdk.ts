@@ -735,6 +735,62 @@ export type AionisHostUseReceiptV1 = AionisHostUseReceiptV1Body & {
   receipt_sha256: string;
 };
 
+export type AionisGuideFeedbackAttributionSurface =
+  | AionisHostUseReceiptSurface
+  | "rehydrate";
+
+export type AionisGuideFeedbackAttributionItemV1 = {
+  memory_id: string;
+  served_surface: AionisGuideFeedbackAttributionSurface;
+};
+
+export type AionisGuideFeedbackAttributionAvailableV1 = {
+  contract_version: "aionis_guide_feedback_attribution_v1";
+  status: "available";
+  guide_trace_id: string;
+  episode_id: string;
+  exposure_event_id: string;
+  item_set_sha256: string;
+  served_surface_sha256: string;
+  projection_complete: boolean;
+  projection_incomplete_reason_codes: string[];
+  items: AionisGuideFeedbackAttributionItemV1[];
+};
+
+export type AionisGuideFeedbackAttributionUnavailableV1 = {
+  contract_version: "aionis_guide_feedback_attribution_v1";
+  status: "unavailable";
+  guide_trace_id: string;
+  reason_code: "learning_exposure_not_persisted";
+};
+
+export type AionisGuideFeedbackAttributionV1 =
+  | AionisGuideFeedbackAttributionAvailableV1
+  | AionisGuideFeedbackAttributionUnavailableV1;
+
+export type AionisGuideFeedbackErrorCode =
+  | "guide_feedback_attribution_missing"
+  | "guide_feedback_attribution_invalid"
+  | "guide_feedback_attribution_unavailable"
+  | "guide_feedback_context_only_memory"
+  | "guide_feedback_unknown_memory"
+  | "guide_feedback_duplicate_memory"
+  | "guide_feedback_mixed_served_surfaces"
+  | "guide_feedback_served_surface_mismatch"
+  | "guide_feedback_rehydrate_not_feedbackable"
+  | "guide_feedback_explicit_assertion_not_exact"
+  | "guide_feedback_host_receipt_required";
+
+export class AionisGuideFeedbackError extends Error {
+  readonly code: AionisGuideFeedbackErrorCode;
+
+  constructor(code: AionisGuideFeedbackErrorCode, message: string) {
+    super(`${code}: ${message}`);
+    this.name = "AionisGuideFeedbackError";
+    this.code = code;
+  }
+}
+
 export type AionisGuideRequest = AionisJsonObject & {
   operation_id?: string;
   host_task_envelope_v1?: AionisHostTaskEnvelopeV1;
@@ -769,6 +825,7 @@ export type AionisToolSelectionReceipt = {
 export type AionisGuideResult<TGuide extends AionisJsonObject = AionisJsonObject> = TGuide & {
   operation_id?: string;
   tool_selection?: AionisToolSelectionReceipt;
+  feedback_attribution_v1?: AionisGuideFeedbackAttributionV1;
 };
 
 export type AionisObserveRequest = AionisJsonObject & {
@@ -1254,6 +1311,7 @@ export type AionisExecutionGuideForRoleInput = AionisExecutionRunRef & AionisExe
 
 export type AionisExecutionOutcomeInput = AionisExecutionStepInput & {
   guide?: unknown;
+  /** @deprecated Pass the complete source guide; guide_trace_id alone cannot authorize feedback. */
   guide_trace_id?: string;
   feedback_operation_id?: string;
   host_use_receipt_v1?: AionisHostUseReceiptV1;
@@ -2786,42 +2844,28 @@ export class AionisExecutionClient {
       throw new Error("Aionis execution host-use receipt feedback requires the source guide response");
     }
     if (usedMemoryIds.length === 0) return null;
-    if (input.guide) {
-      return this.client.feedback<T>(feedbackFromGuide({
-        guide: input.guide,
-        operation_id: input.feedback_operation_id,
-        host_use_receipt_v1: input.host_use_receipt_v1,
-        reason: input.feedback_reason ?? input.summary,
-        run_id: input.run_id,
-        outcome: executionFeedbackOutcome(input),
-        used_memory_ids: usedMemoryIds,
-        used_surface: input.used_surface,
-        actor: input.agent_id,
-        verifier_status: input.host_use_receipt_v1
-          ? input.verifier_status ?? "passed"
-          : executionVerifierStatus(input),
-        tool_status: executionToolStatus(input),
-        runtime_signal_refs: input.runtime_signal_refs,
-      }), {
-        ...executionScopeOptions(input),
-        ...(options ?? {}),
-      });
+    if (!input.guide) {
+      throw new AionisGuideFeedbackError(
+        "guide_feedback_attribution_missing",
+        "Aionis execution feedback requires the source guide response with feedback_attribution_v1",
+      );
     }
-    if (!input.guide_trace_id) return null;
-    return this.client.feedback<T>({
-      target: "memory",
+    return this.client.feedback<T>(feedbackFromGuide({
+      guide: input.guide,
       operation_id: input.feedback_operation_id,
+      host_use_receipt_v1: input.host_use_receipt_v1,
       reason: input.feedback_reason ?? input.summary,
       run_id: input.run_id,
       outcome: executionFeedbackOutcome(input),
-      used_surface: input.used_surface ?? "use_now",
-      actor: input.agent_id,
-      guide_trace_id: input.guide_trace_id,
       used_memory_ids: usedMemoryIds,
-      verifier_status: executionVerifierStatus(input),
+      used_surface: input.used_surface,
+      actor: input.agent_id,
+      verifier_status: input.host_use_receipt_v1
+        ? input.verifier_status ?? "passed"
+        : executionVerifierStatus(input),
       tool_status: executionToolStatus(input),
       runtime_signal_refs: input.runtime_signal_refs,
-    }, {
+    }), {
       ...executionScopeOptions(input),
       ...(options ?? {}),
     });
@@ -3559,6 +3603,31 @@ export function optionalContextMemoryIdsFromGuide(guide: unknown): string[] {
 
 // <aionis-runtime-owned:host-receipt-helpers>
 
+const SDK_GUIDE_FEEDBACK_ATTRIBUTION_AVAILABLE_FIELDS = [
+  "contract_version",
+  "status",
+  "guide_trace_id",
+  "episode_id",
+  "exposure_event_id",
+  "item_set_sha256",
+  "served_surface_sha256",
+  "projection_complete",
+  "projection_incomplete_reason_codes",
+  "items",
+] as const;
+
+const SDK_GUIDE_FEEDBACK_ATTRIBUTION_UNAVAILABLE_FIELDS = [
+  "contract_version",
+  "status",
+  "guide_trace_id",
+  "reason_code",
+] as const;
+
+const SDK_GUIDE_FEEDBACK_ATTRIBUTION_ITEM_FIELDS = [
+  "memory_id",
+  "served_surface",
+] as const;
+
 const SDK_HOST_TASK_ENVELOPE_FIELDS = [
   "contract_version",
   "host_task_id",
@@ -3654,6 +3723,13 @@ function sdkEpisodeId(value: unknown, label: string): string {
   return value;
 }
 
+function sdkExposureEventId(value: unknown, label: string): string {
+  if (typeof value !== "string" || !/^lexposure_[0-9a-f]{64}$/.test(value)) {
+    throw new Error(`${label} must be a canonical learning exposure event id`);
+  }
+  return value;
+}
+
 function sdkCanonicalUtcTimestamp(value: unknown, label: string): string {
   if (
     typeof value !== "string"
@@ -3698,6 +3774,137 @@ function sdkCanonicalJson(value: unknown): string {
 
 function sdkCanonicalSha256(value: unknown): string {
   return createHash("sha256").update(sdkCanonicalJson(value)).digest("hex");
+}
+
+function sdkCanonicalReasonCodes(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > 32) {
+    throw new Error(
+      "feedback_attribution_v1.projection_incomplete_reason_codes must contain 0-32 entries",
+    );
+  }
+  const reasons = value.map((reason) => sdkBoundedString(
+    reason,
+    120,
+    "feedback_attribution_v1.projection_incomplete_reason_codes[]",
+  ));
+  if (new Set(reasons).size !== reasons.length) {
+    throw new Error("feedback_attribution_v1 reason codes must be unique");
+  }
+  const canonical = [...reasons].sort(sdkCompareUtf8);
+  if (canonical.some((reason, index) => reason !== reasons[index])) {
+    throw new Error("feedback_attribution_v1 reason codes must be sorted by UTF-8 bytes");
+  }
+  return reasons;
+}
+
+function sdkParseGuideFeedbackAttributionItemV1(
+  value: unknown,
+): AionisGuideFeedbackAttributionItemV1 {
+  const record = sdkContractRecord(value, "feedback_attribution_v1.items[]");
+  sdkAssertExactFields(
+    record,
+    SDK_GUIDE_FEEDBACK_ATTRIBUTION_ITEM_FIELDS,
+    "feedback_attribution_v1.items[]",
+  );
+  return {
+    memory_id: sdkBoundedString(record.memory_id, 256, "feedback_attribution_v1.items[].memory_id"),
+    served_surface: sdkEnumValue(
+      record.served_surface,
+      ["use_now", "inspect_before_use", "do_not_use", "rehydrate"] as const,
+      "feedback_attribution_v1.items[].served_surface",
+    ),
+  };
+}
+
+export function parseGuideFeedbackAttributionV1(
+  value: unknown,
+): AionisGuideFeedbackAttributionV1 {
+  const record = sdkContractRecord(value, "feedback_attribution_v1");
+  const contractVersion = sdkEnumValue(
+    record.contract_version,
+    ["aionis_guide_feedback_attribution_v1"] as const,
+    "feedback_attribution_v1.contract_version",
+  );
+  const status = sdkEnumValue(
+    record.status,
+    ["available", "unavailable"] as const,
+    "feedback_attribution_v1.status",
+  );
+  const guideTraceId = sdkBoundedString(
+    record.guide_trace_id,
+    256,
+    "feedback_attribution_v1.guide_trace_id",
+  );
+  if (status === "unavailable") {
+    sdkAssertExactFields(
+      record,
+      SDK_GUIDE_FEEDBACK_ATTRIBUTION_UNAVAILABLE_FIELDS,
+      "feedback_attribution_v1",
+    );
+    return {
+      contract_version: contractVersion,
+      status,
+      guide_trace_id: guideTraceId,
+      reason_code: sdkEnumValue(
+        record.reason_code,
+        ["learning_exposure_not_persisted"] as const,
+        "feedback_attribution_v1.reason_code",
+      ),
+    };
+  }
+  sdkAssertExactFields(
+    record,
+    SDK_GUIDE_FEEDBACK_ATTRIBUTION_AVAILABLE_FIELDS,
+    "feedback_attribution_v1",
+  );
+  if (!Array.isArray(record.items) || record.items.length > 200) {
+    throw new Error("feedback_attribution_v1.items must contain 0-200 entries");
+  }
+  const items = record.items.map((item) => sdkParseGuideFeedbackAttributionItemV1(item));
+  const ids = items.map((item) => item.memory_id);
+  if (new Set(ids).size !== ids.length) {
+    throw new Error("feedback_attribution_v1 items must have unique memory_id values");
+  }
+  if (ids.some((memoryId, index) => index > 0 && sdkCompareUtf8(ids[index - 1]!, memoryId) >= 0)) {
+    throw new Error("feedback_attribution_v1 items must be sorted by UTF-8 memory_id bytes");
+  }
+  const servedSurfaceSha256 = sdkDigestSha256(
+    record.served_surface_sha256,
+    "feedback_attribution_v1.served_surface_sha256",
+  );
+  const expectedServedSurfaceSha256 = sdkCanonicalSha256(items.map((item) => ({
+    memory_id: item.memory_id,
+    action: item.served_surface,
+  })));
+  if (servedSurfaceSha256 !== expectedServedSurfaceSha256) {
+    throw new Error("feedback_attribution_v1 served surface digest does not match its canonical items");
+  }
+  const projectionComplete = record.projection_complete;
+  if (typeof projectionComplete !== "boolean") {
+    throw new Error("feedback_attribution_v1.projection_complete must be a boolean");
+  }
+  const reasonCodes = sdkCanonicalReasonCodes(record.projection_incomplete_reason_codes);
+  if (projectionComplete === (reasonCodes.length > 0)) {
+    throw new Error("feedback_attribution_v1 completeness and reason codes are inconsistent");
+  }
+  return {
+    contract_version: contractVersion,
+    status,
+    guide_trace_id: guideTraceId,
+    episode_id: sdkEpisodeId(record.episode_id, "feedback_attribution_v1.episode_id"),
+    exposure_event_id: sdkExposureEventId(
+      record.exposure_event_id,
+      "feedback_attribution_v1.exposure_event_id",
+    ),
+    item_set_sha256: sdkDigestSha256(
+      record.item_set_sha256,
+      "feedback_attribution_v1.item_set_sha256",
+    ),
+    served_surface_sha256: servedSurfaceSha256,
+    projection_complete: projectionComplete,
+    projection_incomplete_reason_codes: reasonCodes,
+    items,
+  };
 }
 
 export function parseHostTaskEnvelopeV1(value: unknown): AionisHostTaskEnvelopeV1 {
@@ -3841,6 +4048,47 @@ function sdkLearningEpisodeId(tenantId: unknown, scope: unknown, guideTraceId: s
   })}`;
 }
 
+function sdkLearningExposureEventId(tenantId: unknown, scope: unknown, guideTraceId: string): string {
+  return `lexposure_${sdkCanonicalSha256({
+    tenant_id: sdkBoundedString(tenantId, 256, "guide.tenant_id"),
+    scope: sdkBoundedString(scope, 256, "guide.scope"),
+    guide_trace_id: sdkBoundedString(guideTraceId, 256, "guide.guide_trace_id"),
+  })}`;
+}
+
+export function feedbackAttributionFromGuide(guide: unknown): AionisGuideFeedbackAttributionV1 {
+  const record = asRecord(guide);
+  if (record?.feedback_attribution_v1 === undefined) {
+    throw new AionisGuideFeedbackError(
+      "guide_feedback_attribution_missing",
+      "guide response has no feedback_attribution_v1; request a new guide from a compatible Runtime",
+    );
+  }
+  try {
+    const attribution = parseGuideFeedbackAttributionV1(record.feedback_attribution_v1);
+    const guideTraceId = sdkBoundedString(record.guide_trace_id, 256, "guide.guide_trace_id");
+    if (attribution.guide_trace_id !== guideTraceId) {
+      throw new Error("feedback_attribution_v1 guide_trace_id does not match the guide");
+    }
+    if (attribution.status === "available") {
+      const expectedEpisodeId = sdkLearningEpisodeId(record.tenant_id, record.scope, guideTraceId);
+      const expectedEventId = sdkLearningExposureEventId(record.tenant_id, record.scope, guideTraceId);
+      if (attribution.episode_id !== expectedEpisodeId) {
+        throw new Error("feedback_attribution_v1 episode_id does not match the guide identity");
+      }
+      if (attribution.exposure_event_id !== expectedEventId) {
+        throw new Error("feedback_attribution_v1 exposure_event_id does not match the guide identity");
+      }
+    }
+    return attribution;
+  } catch (error) {
+    throw new AionisGuideFeedbackError(
+      "guide_feedback_attribution_invalid",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
 function sdkFormalFeedbackMemoryIds(inputMemoryIds: readonly string[], receiptMemoryIds: readonly string[]): string[] {
   const normalized = inputMemoryIds.map((memoryId) => sdkBoundedString(memoryId, 256, "used_memory_ids[]"));
   if (new Set(normalized).size !== normalized.length) {
@@ -3856,26 +4104,67 @@ function sdkFormalFeedbackMemoryIds(inputMemoryIds: readonly string[], receiptMe
   return [...receiptMemoryIds];
 }
 
-function sdkAssertExactServedSurface(
+function sdkResolveExactFeedbackSurface(
   guide: unknown,
   memoryIds: readonly string[],
-  expectedSurface: AionisHostUseReceiptSurface,
-): void {
-  const context = asRecord(agentContextFromGuide(guide));
-  const served: Record<AionisHostUseReceiptSurface, Set<string>> = {
-    use_now: new Set(stringArray(context?.use_now_memory_ids)),
-    inspect_before_use: new Set(stringArray(context?.inspect_before_use_memory_ids)),
-    do_not_use: new Set(stringArray(context?.do_not_use_memory_ids)),
-  };
-  const surfaces = Object.keys(served) as AionisHostUseReceiptSurface[];
-  for (const memoryId of memoryIds) {
-    const matches = surfaces.filter((surface) => served[surface].has(memoryId));
-    if (matches.length !== 1 || matches[0] !== expectedSurface) {
-      throw new Error(
-        `Host-use receipt memory ${memoryId} must belong to the exact served surface ${expectedSurface}`,
+  requestedSurface: AionisFeedbackUsedSurface | undefined,
+): AionisHostUseReceiptSurface {
+  const attribution = feedbackAttributionFromGuide(guide);
+  if (attribution.status !== "available") {
+    throw new AionisGuideFeedbackError(
+      "guide_feedback_attribution_unavailable",
+      `Runtime did not persist a learning exposure for this guide (${attribution.reason_code})`,
+    );
+  }
+  const attributable = new Map(attribution.items.map((item) => [item.memory_id, item.served_surface]));
+  const missing = memoryIds.filter((memoryId) => !attributable.has(memoryId));
+  if (missing.length > 0) {
+    let visible = new Set<string>();
+    try {
+      visible = new Set(memoryIdsFromGuide(guide));
+    } catch {
+      // Agent context is diagnostic only. Missing or malformed context must not
+      // replace the stable attribution error or become an authorization source.
+    }
+    const contextOnly = missing.filter((memoryId) => visible.has(memoryId));
+    if (contextOnly.length === missing.length) {
+      throw new AionisGuideFeedbackError(
+        "guide_feedback_context_only_memory",
+        `memory ids are visible only in agent context, not in the persisted learning exposure: ${contextOnly.join(", ")}`,
       );
     }
+    throw new AionisGuideFeedbackError(
+      "guide_feedback_unknown_memory",
+      `memory ids are not attributable by the persisted guide exposure: ${missing.join(", ")}`,
+    );
   }
+  const surfaces = new Set(memoryIds.map((memoryId) => attributable.get(memoryId)!));
+  if (surfaces.size !== 1) {
+    throw new AionisGuideFeedbackError(
+      "guide_feedback_mixed_served_surfaces",
+      "one feedback request may reference only one persisted served surface",
+    );
+  }
+  const servedSurface = [...surfaces][0]!;
+  if (servedSurface === "rehydrate") {
+    throw new AionisGuideFeedbackError(
+      "guide_feedback_rehydrate_not_feedbackable",
+      "rehydrate the memory and request a new guide before submitting use feedback",
+    );
+  }
+  if (requestedSurface === "explicit_host_assertion") {
+    throw new AionisGuideFeedbackError(
+      "guide_feedback_explicit_assertion_not_exact",
+      "feedbackFromGuide accepts only the exact served surface signed by the guide",
+    );
+  }
+  if (requestedSurface !== undefined && requestedSurface !== servedSurface) {
+    throw new AionisGuideFeedbackError(
+      "guide_feedback_served_surface_mismatch",
+      `requested surface ${requestedSurface} does not match persisted served surface ${servedSurface}`,
+    );
+  }
+  return servedSurface;
 }
 
 export function feedbackFromGuide(input: AionisFeedbackFromGuideInput): AionisFeedbackRequest {
@@ -3927,7 +4216,7 @@ export function feedbackFromGuide(input: AionisFeedbackFromGuideInput): AionisFe
     }
     const receiptMemoryIds = receipt.items.map((item) => item.memory_id);
     const usedMemoryIds = sdkFormalFeedbackMemoryIds(input.used_memory_ids, receiptMemoryIds);
-    sdkAssertExactServedSurface(input.guide, usedMemoryIds, receiptSurface);
+    sdkResolveExactFeedbackSurface(input.guide, usedMemoryIds, receiptSurface);
     return stripUndefined({
       operation_id: operationId,
       host_use_receipt_v1: receipt,
@@ -3943,10 +4232,22 @@ export function feedbackFromGuide(input: AionisFeedbackFromGuideInput): AionisFe
       runtime_signal_refs: input.runtime_signal_refs,
     }) as AionisFeedbackRequest;
   }
-  const exposedMemoryIds = new Set(memoryIdsFromGuide(input.guide));
-  const unexposed = input.used_memory_ids.filter((id) => !exposedMemoryIds.has(id));
-  if (unexposed.length > 0) {
-    throw new Error(`feedbackFromGuide received memory ids not exposed by guide: ${unexposed.join(", ")}`);
+  const usedMemoryIds = input.used_memory_ids.map((memoryId) =>
+    sdkBoundedString(memoryId, 256, "feedbackFromGuide used_memory_ids[]")
+  );
+  if (new Set(usedMemoryIds).size !== usedMemoryIds.length) {
+    throw new AionisGuideFeedbackError(
+      "guide_feedback_duplicate_memory",
+      "feedbackFromGuide does not allow duplicate used_memory_ids",
+    );
+  }
+  usedMemoryIds.sort(sdkCompareUtf8);
+  const usedSurface = sdkResolveExactFeedbackSurface(input.guide, usedMemoryIds, input.used_surface);
+  if (input.outcome !== "neutral" && usedSurface !== "use_now") {
+    throw new AionisGuideFeedbackError(
+      "guide_feedback_host_receipt_required",
+      `non-neutral ${usedSurface} feedback requires a verified host-use receipt`,
+    );
   }
   return stripUndefined({
     operation_id: input.operation_id === undefined
@@ -3955,10 +4256,10 @@ export function feedbackFromGuide(input: AionisFeedbackFromGuideInput): AionisFe
     reason: input.reason,
     run_id: input.run_id,
     outcome: input.outcome,
-    used_surface: input.used_surface ?? "use_now",
+    used_surface: usedSurface,
     actor: input.actor ?? actorFromGuide(input.guide),
     guide_trace_id: guideTraceId,
-    used_memory_ids: input.used_memory_ids,
+    used_memory_ids: usedMemoryIds,
     verifier_status: input.verifier_status,
     tool_status: input.tool_status,
     runtime_signal_refs: input.runtime_signal_refs,

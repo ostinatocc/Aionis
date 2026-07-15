@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import stableStringify from "fast-json-stable-stringify";
 import {
   AionisClient,
   AionisClientError,
+  AionisGuideFeedbackError,
   activeRouteTargetsFromGuide,
   agentContextFromGuide,
   agentPromptFromGuide,
@@ -14,12 +16,14 @@ import {
   commandPostureMemoryIdsFromGuide,
   createAionisClient,
   evidenceSourcesFromGuide,
+  feedbackAttributionFromGuide,
   feedbackFromGuide,
   hostTaskEnvelopeDigest,
   hostUseReceiptDigest,
   mustNotMemoryIdsFromGuide,
   measureInputFromGuideLoop,
   memoryIdsFromGuide,
+  parseGuideFeedbackAttributionV1,
   parseHostTaskEnvelopeV1,
   parseHostUseReceiptV1,
   pendingArtifactTargetsFromGuide,
@@ -32,8 +36,10 @@ import {
 import {
   hostTaskEnvelopeDigest as coreHostTaskEnvelopeDigest,
   hostUseReceiptDigest as coreHostUseReceiptDigest,
+  learningDecisionSurfaceDigest,
   learningEpisodeId,
 } from "../../src/memory/learning-episode-ledger.js";
+import { sha256Hex } from "../../src/util/crypto.js";
 
 const GUIDE_HOST_TASK_ENVELOPE = {
   contract_version: "host_task_envelope_v1",
@@ -55,6 +61,43 @@ const SDK_RECEIPT_DIGESTS = {
   trace: "6".repeat(64),
 } as const;
 
+function sdkGuideFeedbackAttribution(args: {
+  tenantId: string;
+  scope: string;
+  guideTraceId: string;
+  items: Array<{
+    memory_id: string;
+    served_surface: "use_now" | "inspect_before_use" | "do_not_use" | "rehydrate";
+  }>;
+}) {
+  const items = [...args.items].sort((left, right) =>
+    Buffer.compare(Buffer.from(left.memory_id, "utf8"), Buffer.from(right.memory_id, "utf8"))
+  );
+  return {
+    contract_version: "aionis_guide_feedback_attribution_v1" as const,
+    status: "available" as const,
+    guide_trace_id: args.guideTraceId,
+    episode_id: learningEpisodeId({
+      tenantId: args.tenantId,
+      scope: args.scope,
+      guideTraceId: args.guideTraceId,
+    }),
+    exposure_event_id: `lexposure_${sha256Hex(stableStringify({
+      tenant_id: args.tenantId,
+      scope: args.scope,
+      guide_trace_id: args.guideTraceId,
+    }))}`,
+    item_set_sha256: sha256Hex(stableStringify(items)),
+    served_surface_sha256: learningDecisionSurfaceDigest(items.map((item) => ({
+      memory_id: item.memory_id,
+      action: item.served_surface,
+    }))),
+    projection_complete: true,
+    projection_incomplete_reason_codes: [],
+    items,
+  };
+}
+
 function sdkReceiptItem(memoryId: string, overrides: Record<string, unknown> = {}) {
   return {
     memory_id: memoryId,
@@ -69,6 +112,14 @@ function sdkReceiptItem(memoryId: string, overrides: Record<string, unknown> = {
     evidence_ref_sha256: SDK_RECEIPT_DIGESTS.evidence,
     ...overrides,
   };
+}
+
+function assertGuideFeedbackError(code: string, action: () => unknown): void {
+  assert.throws(action, (error: unknown) => {
+    assert.ok(error instanceof AionisGuideFeedbackError);
+    assert.equal(error.code, code);
+    return true;
+  });
 }
 
 function sdkReceiptBody(items = [sdkReceiptItem("memory-b"), sdkReceiptItem("memory-a")]) {
@@ -387,6 +438,16 @@ test("feedbackFromGuide binds protected homogeneous receipts to the exact served
     tenant_id: "tenant-sdk",
     scope: "scope-sdk",
     guide_trace_id: "sdk-guide-receipt-1",
+    feedback_attribution_v1: sdkGuideFeedbackAttribution({
+      tenantId: "tenant-sdk",
+      scope: "scope-sdk",
+      guideTraceId: "sdk-guide-receipt-1",
+      items: [
+        { memory_id: "memory-a", served_surface: "inspect_before_use" },
+        { memory_id: "memory-b", served_surface: "inspect_before_use" },
+        { memory_id: "memory-control", served_surface: "use_now" },
+      ],
+    }),
     agent_context: {
       contract_version: "aionis_agent_context_v1",
       memory_ids: ["memory-a", "memory-b", "memory-control"],
@@ -411,6 +472,11 @@ test("feedbackFromGuide binds protected homogeneous receipts to the exact served
   assert.equal(feedback.verifier_status, "passed");
   assert.deepEqual(feedback.used_memory_ids, ["memory-a", "memory-b"]);
   assert.deepEqual(feedback.host_use_receipt_v1, receipt);
+  assert.deepEqual(
+    parseGuideFeedbackAttributionV1(guide.feedback_attribution_v1),
+    guide.feedback_attribution_v1,
+  );
+  assert.deepEqual(feedbackAttributionFromGuide(guide), guide.feedback_attribution_v1);
 
   assert.throws(
     () => feedbackFromGuide({
@@ -437,15 +503,36 @@ test("feedbackFromGuide binds protected homogeneous receipts to the exact served
     }),
     /used_surface must match/,
   );
+  assert.equal(feedbackFromGuide({
+    guide: {
+      ...guide,
+      agent_context: {
+        ...guide.agent_context,
+        use_now_memory_ids: ["memory-b", "memory-control"],
+        inspect_before_use_memory_ids: ["memory-a"],
+      },
+    },
+    operation_id: "sdk-feedback-operation-1",
+    host_use_receipt_v1: receipt,
+    reason: "Persisted attribution remains authoritative over agent-context drift.",
+    run_id: "sdk-run-receipt-1",
+    outcome: "positive",
+    used_memory_ids: ["memory-a", "memory-b"],
+  }).used_surface, "inspect_before_use");
   assert.throws(
     () => feedbackFromGuide({
       guide: {
         ...guide,
-        agent_context: {
-          ...guide.agent_context,
-          use_now_memory_ids: ["memory-b", "memory-control"],
-          inspect_before_use_memory_ids: ["memory-a"],
-        },
+        feedback_attribution_v1: sdkGuideFeedbackAttribution({
+          tenantId: "tenant-sdk",
+          scope: "scope-sdk",
+          guideTraceId: "sdk-guide-receipt-1",
+          items: [
+            { memory_id: "memory-a", served_surface: "use_now" },
+            { memory_id: "memory-b", served_surface: "use_now" },
+            { memory_id: "memory-control", served_surface: "use_now" },
+          ],
+        }),
       },
       operation_id: "sdk-feedback-operation-1",
       host_use_receipt_v1: receipt,
@@ -454,7 +541,7 @@ test("feedbackFromGuide binds protected homogeneous receipts to the exact served
       outcome: "positive",
       used_memory_ids: ["memory-a", "memory-b"],
     }),
-    /exact served surface inspect_before_use/,
+    /guide_feedback_served_surface_mismatch/,
   );
   const heterogeneousReceipt = buildHostUseReceiptV1(sdkReceiptBody([
     sdkReceiptItem("memory-a"),
@@ -604,7 +691,20 @@ test("agent prompt helpers expose only agent_context from guide responses", () =
 
 test("SDK product-loop helpers keep guide feedback attribution explicit", () => {
   const guide = {
+    tenant_id: "tenant-product-loop",
+    scope: "scope-product-loop",
     guide_trace_id: "guide-product-loop",
+    feedback_attribution_v1: sdkGuideFeedbackAttribution({
+      tenantId: "tenant-product-loop",
+      scope: "scope-product-loop",
+      guideTraceId: "guide-product-loop",
+      items: [
+        { memory_id: "mem-1", served_surface: "use_now" },
+        { memory_id: "mem-2", served_surface: "inspect_before_use" },
+        { memory_id: "mem-3", served_surface: "do_not_use" },
+        { memory_id: "mem-4", served_surface: "rehydrate" },
+      ],
+    }),
     agent_context: {
       contract_version: "aionis_agent_context_v1",
       prompt_text: "AIONIS_CTX v2\ncurrent: n=Use scoped memory.",
@@ -725,7 +825,8 @@ test("SDK product-loop helpers keep guide feedback attribution explicit", () => 
     verifier_status: "passed",
     tool_status: "succeeded",
   });
-  assert.throws(
+  assertGuideFeedbackError(
+    "guide_feedback_unknown_memory",
     () => feedbackFromGuide({
       guide,
       reason: "Bad attribution.",
@@ -733,7 +834,166 @@ test("SDK product-loop helpers keep guide feedback attribution explicit", () => 
       outcome: "positive",
       used_memory_ids: ["mem-not-shown"],
     }),
-    /not exposed by guide/,
+  );
+});
+
+test("SDK guide feedback helpers fail closed on every non-exact attribution path", () => {
+  const tenantId = "tenant-sdk-strict";
+  const scope = "scope-sdk-strict";
+  const guideTraceId = "guide-sdk-strict";
+  const attribution = sdkGuideFeedbackAttribution({
+    tenantId,
+    scope,
+    guideTraceId,
+    items: [
+      { memory_id: "mem-inspect", served_surface: "inspect_before_use" },
+      { memory_id: "mem-rehydrate", served_surface: "rehydrate" },
+      { memory_id: "mem-use", served_surface: "use_now" },
+    ],
+  });
+  const guide = {
+    tenant_id: tenantId,
+    scope,
+    guide_trace_id: guideTraceId,
+    feedback_attribution_v1: attribution,
+    agent_context: {
+      contract_version: "aionis_agent_context_v1",
+      memory_ids: ["mem-context-only", "mem-inspect", "mem-use"],
+      use_now_memory_ids: ["mem-context-only", "mem-use"],
+      inspect_before_use_memory_ids: ["mem-inspect"],
+      do_not_use_memory_ids: [],
+      rehydrate_hints: [{ memory_id: "mem-rehydrate", reason: "Needs expansion." }],
+    },
+  };
+  const feedback = (overrides: Record<string, unknown> = {}) => feedbackFromGuide({
+    guide,
+    reason: "Strict attribution test.",
+    run_id: "run-sdk-strict",
+    outcome: "positive",
+    used_memory_ids: ["mem-use"],
+    ...overrides,
+  } as any);
+
+  assert.equal(feedback().used_surface, "use_now");
+  assertGuideFeedbackError(
+    "guide_feedback_attribution_missing",
+    () => feedback({ guide: { ...guide, feedback_attribution_v1: undefined } }),
+  );
+  assertGuideFeedbackError(
+    "guide_feedback_attribution_unavailable",
+    () => feedback({
+      guide: {
+        ...guide,
+        feedback_attribution_v1: {
+          contract_version: "aionis_guide_feedback_attribution_v1",
+          status: "unavailable",
+          guide_trace_id: guideTraceId,
+          reason_code: "learning_exposure_not_persisted",
+        },
+      },
+    }),
+  );
+  assertGuideFeedbackError(
+    "guide_feedback_context_only_memory",
+    () => feedback({ used_memory_ids: ["mem-context-only"] }),
+  );
+  assertGuideFeedbackError(
+    "guide_feedback_unknown_memory",
+    () => feedback({ used_memory_ids: ["mem-never-served"] }),
+  );
+  assertGuideFeedbackError(
+    "guide_feedback_unknown_memory",
+    () => feedback({
+      guide: { ...guide, agent_context: undefined },
+      used_memory_ids: ["mem-never-served"],
+    }),
+  );
+  assertGuideFeedbackError(
+    "guide_feedback_unknown_memory",
+    () => feedback({ used_memory_ids: ["mem-context-only", "mem-never-served"] }),
+  );
+  assertGuideFeedbackError(
+    "guide_feedback_duplicate_memory",
+    () => feedback({ used_memory_ids: ["mem-use", "mem-use"] }),
+  );
+  assertGuideFeedbackError(
+    "guide_feedback_mixed_served_surfaces",
+    () => feedback({ used_memory_ids: ["mem-use", "mem-inspect"] }),
+  );
+  assertGuideFeedbackError(
+    "guide_feedback_rehydrate_not_feedbackable",
+    () => feedback({ used_memory_ids: ["mem-rehydrate"] }),
+  );
+  assertGuideFeedbackError(
+    "guide_feedback_explicit_assertion_not_exact",
+    () => feedback({ used_surface: "explicit_host_assertion" }),
+  );
+  assertGuideFeedbackError(
+    "guide_feedback_served_surface_mismatch",
+    () => feedback({ used_surface: "inspect_before_use" }),
+  );
+  assertGuideFeedbackError(
+    "guide_feedback_host_receipt_required",
+    () => feedback({ used_memory_ids: ["mem-inspect"] }),
+  );
+  assert.equal(feedback({
+    outcome: "neutral",
+    used_memory_ids: ["mem-inspect"],
+  }).used_surface, "inspect_before_use");
+  assertGuideFeedbackError(
+    "guide_feedback_attribution_invalid",
+    () => feedback({
+      guide: {
+        ...guide,
+        feedback_attribution_v1: {
+          ...attribution,
+          served_surface_sha256: "f".repeat(64),
+        },
+      },
+    }),
+  );
+  assertGuideFeedbackError(
+    "guide_feedback_attribution_invalid",
+    () => feedback({
+      guide: {
+        ...guide,
+        feedback_attribution_v1: {
+          ...attribution,
+          projection_complete: false,
+          projection_incomplete_reason_codes: Array.from(
+            { length: 33 },
+            (_, index) => `reason-${String(index).padStart(2, "0")}`,
+          ),
+        },
+      },
+    }),
+  );
+
+  const incompleteAttribution = {
+    ...sdkGuideFeedbackAttribution({
+      tenantId,
+      scope,
+      guideTraceId,
+      items: [{ memory_id: "mem-use", served_surface: "use_now" }],
+    }),
+    projection_complete: false,
+    projection_incomplete_reason_codes: ["recorded_surface_item_omitted"],
+  };
+  assert.equal(feedback({
+    guide: { ...guide, feedback_attribution_v1: incompleteAttribution },
+  }).used_surface, "use_now");
+
+  const emptyIncompleteAttribution = {
+    ...sdkGuideFeedbackAttribution({ tenantId, scope, guideTraceId, items: [] }),
+    projection_complete: false,
+    projection_incomplete_reason_codes: ["recorded_surface_item_omitted"],
+  };
+  assertGuideFeedbackError(
+    "guide_feedback_context_only_memory",
+    () => feedback({
+      guide: { ...guide, feedback_attribution_v1: emptyIncompleteAttribution },
+      used_memory_ids: ["mem-context-only"],
+    }),
   );
 });
 

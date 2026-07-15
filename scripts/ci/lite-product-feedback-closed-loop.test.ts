@@ -886,6 +886,36 @@ test("protected memory feedback replays one canonical mutation and rejects a cha
       operationId: "guide:protected-feedback-replay",
     });
     assert.ok(guide.agent_context.memory_ids.includes(memoryId));
+    const feedbackSource = await fixture.liteWriteStore.withTx(() =>
+      fixture.learningEpisodeLedgerAccess.resolveFeedbackSource({
+        tenantId: "default",
+        scope: "default",
+        guideTraceId: guide.guide_trace_id,
+      })
+    );
+    assert.ok(feedbackSource);
+    assert.deepEqual(guide.feedback_attribution_v1, {
+      contract_version: "aionis_guide_feedback_attribution_v1",
+      status: "available",
+      guide_trace_id: guide.guide_trace_id,
+      episode_id: feedbackSource.event.episode_id,
+      exposure_event_id: feedbackSource.event.event_id,
+      item_set_sha256: feedbackSource.event.item_set_sha256,
+      served_surface_sha256: feedbackSource.payload.served_surface_sha256,
+      projection_complete: feedbackSource.payload.projection_complete,
+      projection_incomplete_reason_codes:
+        feedbackSource.payload.projection_incomplete_reason_codes,
+      items: feedbackSource.items.map((item) => ({
+        memory_id: item.memory_id,
+        served_surface: item.served_action,
+      })),
+    });
+    assert.equal(
+      guide.feedback_attribution_v1.items.some(
+        (item: { memory_id: string }) => item.memory_id === memoryId,
+      ),
+      true,
+    );
     assert.equal(
       scalarCount(
         fixture.runtimeDatabase,
@@ -1035,6 +1065,28 @@ test("formal feedback requires an exact source exposure item, not only legacy gu
     } | undefined;
     assert.ok(exposure);
     assert.equal(exposure.projection_complete, 0);
+    const feedbackSource = await fixture.liteWriteStore.withTx(() =>
+      fixture.learningEpisodeLedgerAccess.resolveFeedbackSource({
+        tenantId: "default",
+        scope: "default",
+        guideTraceId: guide.guide_trace_id,
+      })
+    );
+    assert.ok(feedbackSource);
+    assert.equal(guide.feedback_attribution_v1.status, "available");
+    assert.equal(guide.feedback_attribution_v1.exposure_event_id, exposure.event_id);
+    assert.equal(guide.feedback_attribution_v1.episode_id, exposure.episode_id);
+    assert.equal(guide.feedback_attribution_v1.item_set_sha256, feedbackSource.event.item_set_sha256);
+    assert.equal(
+      guide.feedback_attribution_v1.served_surface_sha256,
+      feedbackSource.payload.served_surface_sha256,
+    );
+    assert.equal(guide.feedback_attribution_v1.projection_complete, false);
+    assert.deepEqual(
+      guide.feedback_attribution_v1.projection_incomplete_reason_codes,
+      feedbackSource.payload.projection_incomplete_reason_codes,
+    );
+    assert.deepEqual(guide.feedback_attribution_v1.items, []);
     assert.equal(
       scalarCount(
         fixture.runtimeDatabase,
@@ -1064,7 +1116,8 @@ test("formal feedback requires an exact source exposure item, not only legacy gu
       },
     });
     assert.equal(rejected.statusCode, 400, rejected.body);
-    assert.match(String(rejected.json().error), /exposure|not_exposed/u);
+    assert.equal(rejected.json().error, "guide_trace_used_memory_not_exposure_item");
+    assert.deepEqual(rejected.json().details?.not_exposed_memory_ids, [memoryId]);
 
     const { rows } = await fixture.liteWriteStore.findNodes({
       scope: "default",
@@ -1083,6 +1136,125 @@ test("formal feedback requires an exact source exposure item, not only legacy gu
       ),
       0,
     );
+    assert.equal(
+      scalarCount(
+        fixture.runtimeDatabase,
+        "SELECT COUNT(*) AS count FROM lite_runtime_write_operations WHERE operation_id = ?",
+        operationId,
+      ),
+      0,
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("full-power continuity handoff remains context-only when it is absent from the persisted learning exposure", async () => {
+  const planningContextService = {
+    async assemble() {
+      return {
+        tenant_id: "default",
+        scope: "default",
+        recall: {},
+      };
+    },
+  } as MemoryPlanningContextService;
+  const fixture = setupLearningProductApp({
+    name: "full-power-handoff-context-only-feedback",
+    planningContextService,
+  });
+  try {
+    const marker = "AIONIS_FULL_POWER_HANDOFF_CONTEXT_ONLY_MARKER";
+    const taskFamily = "full_power_handoff_context_only";
+    const taskSignature = "full-power-handoff-context-only-task";
+    const observed = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        operation_id: "observe:full-power-handoff-context-only",
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: false,
+        handoff: {
+          actor: "local-user",
+          producer_agent_id: "local-user",
+          owner_agent_id: "local-user",
+          memory_lane: "private",
+          anchor: "full-power-handoff-context-only:run:local-user",
+          handoff_kind: "task_handoff",
+          task_family: taskFamily,
+          task_signature: taskSignature,
+          title: `Continuity handoff ${marker}`,
+          summary: `${marker} must remain available to the next agent.`,
+          handoff_text: `${marker} continue from the committed continuity state.`,
+          target_files: ["README.md"],
+          next_action: "Continue the continuity-only path.",
+          acceptance_checks: ["handoff is visible without becoming a learning exposure item"],
+        },
+      },
+    });
+    assert.equal(observed.statusCode, 200, observed.body);
+    const handoffMemoryId = observed.json().handoff?.handoff?.id;
+    assert.equal(typeof handoffMemoryId, "string");
+
+    const guideResponse = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        operation_id: "guide:full-power-handoff-context-only",
+        tenant_id: "default",
+        scope: "default",
+        run_id: "run:full-power-handoff-context-only:guide",
+        consumer_agent_id: "local-user",
+        query_text: `${marker} continue`,
+        mode: "full_power",
+        context_mode: "compact_agent",
+        context: {
+          task_family: taskFamily,
+          task_signature: taskSignature,
+        },
+        limit: 8,
+        include_packets: true,
+      },
+    });
+    assert.equal(guideResponse.statusCode, 200, guideResponse.body);
+    const guide = guideResponse.json();
+    assert.ok(guide.agent_context.use_now_memory_ids.includes(handoffMemoryId));
+    assert.equal(guide.feedback_attribution_v1.status, "available");
+    assert.equal(guide.feedback_attribution_v1.projection_complete, false);
+    assert.ok(
+      guide.feedback_attribution_v1.projection_incomplete_reason_codes.includes(
+        "recorded_surface_item_omitted",
+      ),
+    );
+    assert.equal(
+      guide.feedback_attribution_v1.items.some(
+        (item: { memory_id: string }) => item.memory_id === handoffMemoryId,
+      ),
+      false,
+    );
+
+    const operationId = "feedback:full-power-handoff-context-only";
+    const rejected = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: {
+        operation_id: operationId,
+        tenant_id: "default",
+        scope: "default",
+        guide_trace_id: guide.guide_trace_id,
+        used_memory_ids: [handoffMemoryId],
+        run_id: "run:full-power-handoff-context-only:feedback",
+        outcome: "positive",
+        used_surface: "use_now",
+        verifier_status: "passed",
+        tool_status: "succeeded",
+        reason: "Continuity visibility alone must not authorize formal learning feedback.",
+      },
+    });
+    assert.equal(rejected.statusCode, 400, rejected.body);
+    assert.equal(rejected.json().error, "guide_trace_used_memory_not_exposure_item");
+    assert.deepEqual(rejected.json().details?.not_exposed_memory_ids, [handoffMemoryId]);
     assert.equal(
       scalarCount(
         fixture.runtimeDatabase,

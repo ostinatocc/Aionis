@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       release_ref:
-        description: Exact immutable Runtime tag to verify and publish (for example v0.3.7)
+        description: Exact immutable Runtime tag to verify and publish (for example v0.3.8)
         required: true
         type: string
       publish:
@@ -286,6 +286,7 @@ jobs:
             exit 1
           }
           AIONIS_BASE_URL=http://127.0.0.1:3210 \
+          AIONIS_EXTERNAL_SMOKE_EMBEDDING_EXPECTATION=unavailable \
           AIONIS_EXTERNAL_SMOKE_SDK_SPEC="${{ steps.package-artifacts.outputs.sdk_spec }}" \
           AIONIS_EXTERNAL_SMOKE_MCP_SPEC="${{ steps.package-artifacts.outputs.mcp_spec }}" \
           AIONIS_EXTERNAL_SMOKE_CREATE_SPEC="${{ steps.package-artifacts.outputs.create_spec }}" \

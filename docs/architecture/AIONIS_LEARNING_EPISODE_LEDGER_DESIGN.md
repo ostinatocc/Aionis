@@ -133,6 +133,22 @@ without a strict host receipt may append `legacy_unverified` attribution.
 Existing verifier status `unknown` normalizes to SQL `NULL`; only strict receipt
 verification can persist `passed`.
 
+The public guide compatibility boundary is explicit:
+
+- `feedback_attribution_v1.status = available` is constructed only from
+  post-append database readback and contains the exact persisted item/surface
+  projection for that guide.
+- `status = unavailable` means no learning exposure authority was persisted;
+  feedback helpers must fail closed.
+- `agent_context` is a continuity and visibility projection. Its IDs are not
+  feedback authority and cannot be used as an eligibility fallback.
+- SDK feedback requires the complete source guide. A cached guide without this
+  envelope must be refreshed, not reconstructed from AgentContext.
+- Actual use remains a host observation. A persisted exposure item that was not
+  used is observationally unused, never implicit negative feedback.
+- Non-neutral inspect/do-not-use attribution requires a verified canonical host
+  receipt; rehydrate-only items and mixed surfaces are not direct feedback.
+
 The existing scope-authorized flight recorder returns episode-local facts plus
 only a gate decision ID, verdict, scope-set digest, and authority status. It
 never expands cross-scope cohort members or per-scope statistics through a

@@ -169,8 +169,9 @@ as continuation, `avoid_failed_branch` as counter-evidence only, and
 same line may use short labels such as `tr=accept_handoff`, `act=...`,
 `role=...`, and `to=...`. The current `agent_role` matches the handoff target
 when `tr=accept_handoff`, but the lifecycle gate still applies. Full memory IDs
-remain in `agent_context` structured fields, so hosts can attribute memory use
-without making the Agent prompt carry UUIDs.
+remain in `agent_context` structured fields for trace correlation without
+making the Agent prompt carry UUIDs. They do not authorize feedback; SDK hosts
+keep the complete guide and submit only IDs observed in the Agent/host trace.
 
 Hosts that need a shorter Agent prompt can request
 `context_mode: "compact_agent"` on `/v1/guide`, SDK `guideAgentContext()`, SDK
@@ -229,7 +230,7 @@ Aionis visibility depends on producer, owner, consumer, team, and lane.
 | Team-private memory | `memory_lane: "private"` | `owner_team_id` on writes; `consumer_team_id` on guide | Visible only inside that team, but not scope-wide shared memory. |
 | Scope-wide shared memory | `memory_lane: "shared"` without `owner_team_id` | `producer_agent_id` recommended | Visible within the scope. |
 | Multi-Agent team memory | `memory_lane: "shared"` with `owner_team_id` | `owner_team_id` on writes; `consumer_team_id` on guide | Planner, worker, verifier, and reviewer share memory inside one team. |
-| Feedback attribution | Any | `guide_trace_id`, `used_memory_ids`, `run_id`, `outcome`, `used_surface` | Aionis attributes feedback only to memory exposed by that guide and reported as used. |
+| Feedback attribution | Any | complete guide for SDK, or `guide_trace_id`; exact host-observed `used_memory_ids`, `run_id`, `outcome`, `used_surface` | Aionis attributes feedback only to exact persisted guide items the instrumented host reported as used. |
 
 Recommended identity setup:
 
@@ -237,8 +238,9 @@ Recommended identity setup:
 2. Use team-private or team-owned shared memory when multiple Agents in one team
    must read the same handoff.
 3. Report feedback for memory IDs the host knows were used.
-4. Keep `guide_trace_id` and `last_use_now_memory_ids` in host state for
-   attribution and audit.
+4. Keep the complete guide and `feedback_attribution_v1` in host state for SDK
+   attribution. Keep `guide_trace_id` and visible IDs for correlation/audit;
+   visible IDs alone do not prove actual use.
 
 ## Adapter Path
 

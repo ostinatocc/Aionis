@@ -1,15 +1,33 @@
+// Runtime v0.3.8 / SDK v0.3.17
 import {
   compileExecutionAgentContext,
   createAionisClient,
+  feedbackAttributionFromGuide,
+  type AionisGuideFeedbackAttributionV1,
 } from "@aionis/sdk";
 
 type MinimalGuide = {
+  tenant_id: string;
+  scope: string;
   guide_trace_id: string;
+  feedback_attribution_v1: AionisGuideFeedbackAttributionV1;
   agent_context: {
     prompt_text: string;
     use_now_memory_ids?: string[];
   };
 };
+
+type InstrumentedAgentResult = {
+  status: "succeeded";
+  used_memory_ids: string[];
+};
+
+async function runInstrumentedAgent(agentPrompt: string): Promise<InstrumentedAgentResult> {
+  // Replace this stub with the host's Agent runner. Populate used_memory_ids
+  // only from instrumented Agent/tool events. Empty means no use was verified.
+  void agentPrompt;
+  return { status: "succeeded", used_memory_ids: [] };
+}
 
 const runId = `minimal-agent-${Date.now()}`;
 const taskSignature = "minimal-agent-demo";
@@ -60,29 +78,38 @@ const context = compileExecutionAgentContext({
   budget_profile: "balanced",
 });
 
-// Your host runs the Agent here with context.agent_prompt.
-const agentResult = {
-  status: "succeeded" as const,
-  used_memory_ids: guide.agent_context.use_now_memory_ids?.slice(0, 1) ?? [],
-};
+// AgentContext IDs describe visibility/correlation only. They are not proof of
+// actual use and do not authorize feedback.
+const feedbackAttribution = feedbackAttributionFromGuide(guide);
+const agentResult = await runInstrumentedAgent(context.agent_prompt);
 
-const feedback = await aionis.execution.feedbackFromOutcome({
-  agent_id: "agent-1",
-  run_id: runId,
-  task_signature: taskSignature,
-  title: "Agent completed the next step",
-  summary: "The Agent used Aionis context to continue the current path.",
-  outcome: agentResult.status,
-  guide,
-  used_memory_ids: agentResult.used_memory_ids,
-});
+let feedback: unknown = null;
+if (agentResult.used_memory_ids.length > 0) {
+  if (feedbackAttribution.status !== "available") {
+    throw new Error(
+      `Feedback attribution is unavailable (${feedbackAttribution.reason_code}); `
+      + "request a new guide instead of falling back to agent_context IDs.",
+    );
+  }
+
+  feedback = await aionis.execution.feedbackFromOutcome({
+    agent_id: "agent-1",
+    run_id: runId,
+    task_signature: taskSignature,
+    title: "Agent completed the next step",
+    summary: "Host instrumentation verified use of Aionis memory.",
+    outcome: agentResult.status,
+    guide,
+    used_memory_ids: agentResult.used_memory_ids,
+  });
+}
 
 const measure = await aionis.execution.measureRun({
   run_id: runId,
   task_signature: taskSignature,
   after_guide: guide,
   feedback_result: feedback,
-  sufficient_evidence: true,
+  sufficient_evidence: agentResult.used_memory_ids.length > 0,
 });
 
 const snapshot = await aionis.execution.snapshotRun({
@@ -96,6 +123,7 @@ const snapshot = await aionis.execution.snapshotRun({
 console.log(JSON.stringify({
   prompt_preview: context.agent_prompt.slice(0, 500),
   execution_context_contract: context.contract_version,
+  feedback_attribution_status: feedbackAttribution.status,
   memory_use_receipt_visible: context.memory_use_receipt.contract_version === "aionis_memory_use_receipt_v1",
   used_memory_ids: agentResult.used_memory_ids,
   snapshot_visible: !!snapshot,

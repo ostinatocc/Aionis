@@ -382,7 +382,6 @@ export function createGenericAgentHostTemplate(
         ...effective,
         guide_run_id: effective.guide_run_id ?? state?.guide_run_id,
         guide_trace_id: effective.guide_trace_id ?? state?.last_guide_trace_id,
-        used_memory_ids: effective.used_memory_ids ?? state?.last_use_now_memory_ids,
       });
       return {
         outcome,

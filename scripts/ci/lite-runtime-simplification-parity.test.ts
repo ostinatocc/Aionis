@@ -45,6 +45,7 @@ const EXPECTED_TOP_LEVEL_KEYS = {
     "agent_context",
     "consumer_agent_id",
     "contract_version",
+    "feedback_attribution_v1",
     "guide_packet",
     "guide_trace_id",
     "memory_packet",

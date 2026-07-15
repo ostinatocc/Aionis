@@ -1,10 +1,10 @@
 {
   "schema_version": "aionis_runtime_complexity_budget_v1",
   "baseline_commit": "10d9e4f90efb243b25cd156ed1ada5683d5a79c0",
-  "intent": "Structural growth guard only; this file is not Aionis product validation.",
+  "intent": "Structural growth guard only; the exact v0.3.8 rebaseline covers persisted guide-feedback attribution and adds no source files, routes, environment fields, cycles, or larger maximum file.",
   "thresholds": {
     "source_files": 313,
-    "source_lines": 148887,
+    "source_lines": 149410,
     "route_matrix_entries": 21,
     "env_schema_fields": 177,
     "import_cycles": 0,

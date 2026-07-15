@@ -1,6 +1,6 @@
 # Aionis Quickstart Matrix
 
-Status: public entrypoint selection guide for the v0.3.7 Local Runtime Public Beta candidate
+Status: public entrypoint selection guide for the v0.3.8 Local Runtime Public Beta candidate
 
 Use this matrix to choose the Aionis integration surface for your Agent. Setup
 installs and configures the Runtime first; verification loops are optional.
@@ -52,7 +52,7 @@ normal Aionis admission/governance path still decides `use_now`,
 
 | Flow | Proves | Best For | Output |
 |---|---|---|---|
-| SDK verification | Ordinary preference and project memory become compact Agent context; feedback is attributed to IDs exposed by the guide; admission dataset JSONL export is produced; measure and snapshot stay read-only. | Single-Agent product integration and SDK users. | [sdk-quickstart-result.json](examples/sdk-quickstart-result.json) |
+| SDK verification | Ordinary preference and project memory become compact Agent context; host-observed actual-use IDs are verified against persisted guide attribution; admission dataset JSONL export is produced; measure and snapshot stay read-only. | Single-Agent product integration and SDK users. | [sdk-quickstart-result.json](examples/sdk-quickstart-result.json) |
 | Claude Code lifecycle integration | The official plugin installs lifecycle hooks plus MCP so Claude Code receives governed context and records execution evidence automatically. | Claude Code users who want project-scoped execution memory across sessions. | [AIONIS_CLAUDE_CODE_INTEGRATION.md](AIONIS_CLAUDE_CODE_INTEGRATION.md) |
 | HTTP verification | The public HTTP product surface works without SDK helpers; raw `guide_trace_id + used_memory_ids` attribution works; `/v1/rehydrate` can restore archived memory. | Backend services, non-TypeScript hosts, curl/API validation. | [http-quickstart-result.json](examples/http-quickstart-result.json) |
 | Multi-agent verification | Planner, worker, verifier, and reviewer can share execution memory; reviewer continues the passed branch and avoids the failed branch. | Multi-Agent execution memory, handoff, branch isolation. | [multi-agent-quickstart-result.json](examples/multi-agent-quickstart-result.json) |
@@ -66,7 +66,7 @@ surfaces.
 
 | Product Proof | Run this | Verifies |
 |---|---|---|
-| External package smoke | `npm run -s runtime:smoke:external-packages` | Installs published or env-selected `@aionis/sdk`, `@aionis/mcp`, and `@aionis/create` package specs into a temporary external project, then verifies SDK, MCP stdio, and CLI entrypoints against a real Runtime. |
+| External package smoke | `npm run -s runtime:smoke:external-packages` | Installs published or env-selected `@aionis/sdk`, `@aionis/mcp`, and `@aionis/create` package specs into a temporary external project, then verifies SDK, MCP stdio, and CLI entrypoints against a real Runtime. Embedding-available mode proves the exact persisted model, 1536-d query, and semantic/ANN provenance; unavailable mode proves structured continuity plus context-only feedback rejection. Provider keys are stripped from external package child processes. |
 | Published fresh install smoke | `npm run -s runtime:smoke:fresh-install` | Uses `@aionis/create@latest` from npm to install a clean Runtime, verifies no-key startup with `EMBEDDING_PROVIDER=none`, then runs `@aionis/mcp@latest` through `aionis_record_step -> aionis_context`. |
 | Published CLI operator smoke | `npm run -s runtime:smoke:published-cli` | Installs the published `aionis` CLI package into a temporary project, starts a real isolated Runtime, then verifies `health`, `boundary`, `doctor`, `snapshot`, Agent Flight Recorder audit, and non-mutating `forget` preview. |
 | Zvec ANN scale diagnostic | `npm run -s recall:ann:scale` | Compares bounded SQLite scan, local in-memory ANN, and optional Zvec sidecar on a low-salience semantic needle. Verifies candidate coverage without changing admission/governance semantics. |

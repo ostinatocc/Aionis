@@ -111,6 +111,7 @@ test("release artifact gate binds an exact package tag, commit, and checkout", (
     "-c", "user.email=release-test@example.invalid",
     "commit", "--quiet", "-m", "frozen package",
   ]);
+  train.packages.sdk.source_ref = `v${train.packages.sdk.version}`;
   git(sdkRoot, ["tag", train.packages.sdk.source_ref]);
   train.packages.sdk.source_commit = git(sdkRoot, ["rev-parse", "HEAD"]);
   fs.writeFileSync(trainPath, `${JSON.stringify(train, null, 2)}\n`);
@@ -121,4 +122,34 @@ test("release artifact gate binds an exact package tag, commit, and checkout", (
     requirePackageRoots: true,
   });
   assert.equal(result.package_source_commits.sdk, train.packages.sdk.source_commit);
+});
+
+test("release artifact gate binds an exact package commit ref and checkout", () => {
+  const target = copyReleaseMetadata();
+  const trainPath = path.join(target, "release-train.json");
+  const train = JSON.parse(fs.readFileSync(trainPath, "utf8"));
+  train.packages = { sdk: train.packages.sdk };
+
+  const sdkRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-release-sdk-commit-git-"));
+  fs.writeFileSync(path.join(sdkRoot, "package.json"), JSON.stringify({
+    name: train.packages.sdk.name,
+    version: train.packages.sdk.version,
+  }));
+  git(sdkRoot, ["init", "--quiet"]);
+  git(sdkRoot, ["add", "package.json"]);
+  git(sdkRoot, [
+    "-c", "user.name=Aionis Release Test",
+    "-c", "user.email=release-test@example.invalid",
+    "commit", "--quiet", "-m", "frozen package commit",
+  ]);
+  train.packages.sdk.source_commit = git(sdkRoot, ["rev-parse", "HEAD"]);
+  train.packages.sdk.source_ref = train.packages.sdk.source_commit;
+  fs.writeFileSync(trainPath, `${JSON.stringify(train, null, 2)}\n`);
+
+  const result = evaluateReleaseArtifactGate({
+    root: target,
+    packageRoots: { sdk: sdkRoot },
+    requirePackageRoots: true,
+  });
+  assert.equal(result.package_source_refs.sdk, train.packages.sdk.source_commit);
 });

@@ -588,8 +588,11 @@ async function main() {
       ...(handoffMemoryId ? [handoffMemoryId] : []),
       plannerMemoryId,
     ].filter((id) => compiled.use_now_memory_ids.includes(id));
-    const usedMemoryIds = attributionIds.length > 0 ? attributionIds : compiled.use_now_memory_ids.slice(0, 2);
-    assertCondition(usedMemoryIds.length > 0, "long-flow guide did not expose memory ids for feedback attribution");
+    const usedMemoryIds = attributionIds;
+    assertCondition(
+      usedMemoryIds.length > 0,
+      "simulated Agent trace did not dereference a recognized long-flow memory",
+    );
 
     const feedback = await aionis.execution.feedbackFromOutcome<Record<string, unknown>>({
       agent_id: "worker-new-session",

@@ -113,6 +113,11 @@ async function runSingleAgentHostTemplateLoop(args: {
     ],
   });
   const firstOrdinaryMemoryId = firstNodeId(ordinaryObserve, "single-agent ordinary memory");
+  const ordinaryWrite = asRecord(ordinaryObserve.memory_write);
+  const ordinaryMemoryIds = (Array.isArray(ordinaryWrite?.nodes) ? ordinaryWrite.nodes : [])
+    .map((node) => asRecord(node)?.id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+  assertCondition(ordinaryMemoryIds.length === 2, "single-agent observe did not return both instrumented memories");
 
   const guided = await host.beforeRun<Record<string, unknown>>({
     state: freshGuide.state,
@@ -154,8 +159,13 @@ async function runSingleAgentHostTemplateLoop(args: {
     textArray(guidedContext.use_now).some((entry) => entry.includes(ORDINARY_FACT_MARKER)),
     "single-agent guide missing ordinary fact in use_now",
   );
-  const usedMemoryIds = guided.state.last_use_now_memory_ids;
-  assertCondition(usedMemoryIds.includes(firstOrdinaryMemoryId), "single-agent guide did not expose ordinary memory id for attribution");
+  const usedMemoryIds = ordinaryMemoryIds.filter((memoryId) =>
+    guided.state.last_use_now_memory_ids.includes(memoryId)
+  );
+  assertCondition(
+    usedMemoryIds.length === ordinaryMemoryIds.length,
+    "instrumented Agent trace used memories that were not on the persisted use_now surface",
+  );
 
   const finished = await host.afterRun<Record<string, unknown>, Record<string, unknown>>({
     state: guided.state,

@@ -9,7 +9,8 @@ by Aionis when multiple Agents share execution memory.
 
 Aionis is a multi-Agent execution memory backend. It records what Agents did,
 controls which memory is visible to a later Agent, compiles branch-aware
-context, and attributes feedback to the memory that was actually exposed.
+context, and attributes feedback only to exact persisted guide items the host
+observed as actually used.
 
 Aionis does not schedule Agents and does not own host orchestration. The host
 decides which Agent acts next.
@@ -109,7 +110,7 @@ Conflict handling is evidence-driven:
 | failed execution branch | stays out of `use_now` and can appear as `do_not_use` or counter-evidence |
 | stale or superseded memory | demoted or kept out of direct use when lifecycle evidence exists |
 | contested memory | kept out of direct use until inspected or resolved |
-| verifier/reviewer feedback | attribution can strengthen or weaken future use of exposed memory |
+| verifier/reviewer feedback | exact persisted items reported as used can strengthen or weaken future use; visibility alone has no feedback effect |
 | missing active target | host should create, restore, rehydrate, or report conflict before falling back |
 | unknown authority | defaults to inspect-before-use rather than direct use |
 

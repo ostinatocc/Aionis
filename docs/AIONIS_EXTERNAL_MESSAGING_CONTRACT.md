@@ -11,8 +11,8 @@ across sessions, agents, devices, and model switches.
 
 Aionis is an execution memory Runtime. It records evidence from agent work,
 governs which memories can influence the next action, compiles admitted state
-into compact context, attributes feedback to the memories that were exposed,
-and preserves an audit trail for operators.
+into compact context, attributes feedback to exact persisted guide items the
+host observed as actually used, and preserves an audit trail for operators.
 
 ## Product Pillars
 

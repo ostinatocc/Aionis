@@ -139,6 +139,8 @@ test("AgentContext schema and SDK prompt format have one Runtime authority", () 
   assert.match(contractRegion, /export type AionisToolSelectionReceipt =/);
   assert.match(contractRegion, /contract_version: "aionis_tool_selection_receipt_v1"/);
   assert.match(contractRegion, /export type AionisMemoryFeedbackRequest =/);
+  assert.match(contractRegion, /export type AionisGuideFeedbackAttributionV1 =/);
+  assert.match(contractRegion, /feedback_attribution_v1\?: AionisGuideFeedbackAttributionV1/);
   assert.match(contractRegion, /feedback_kind\?: "memory"/);
   assert.match(contractRegion, /export type AionisToolSelectionFeedbackRequest =/);
   assert.match(contractRegion, /feedback_kind: "tool_selection"/);
@@ -146,6 +148,8 @@ test("AgentContext schema and SDK prompt format have one Runtime authority", () 
     contractRegion,
     /export type AionisFeedbackRequest = AionisMemoryFeedbackRequest \| AionisToolSelectionFeedbackRequest/,
   );
+  const helperRegion = runtimeOwnedRegions(runtimeSource).get("host-receipt-helpers") ?? "";
+  assert.match(helperRegion, /export function feedbackAttributionFromGuide\(/);
   assert.equal((runtimeSource.match(/AIONIS_EXECUTION_AGENT_CONTEXT v1/g) ?? []).length, 1);
   assert.equal((distributedSource.match(/AIONIS_EXECUTION_AGENT_CONTEXT v1/g) ?? []).length, 1);
   assert.match(runtimeSource, /const promptContract = AIONIS_EXECUTION_AGENT_CONTEXT_PROMPT_CONTRACT/);

@@ -8,7 +8,11 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { asRecord, assertCondition } from "./runtime-agent-loop.ts";
-import { closeRuntime, openRuntime } from "./multi-agent-execution-memory-loop.ts";
+import {
+  closeRuntime,
+  openRuntime,
+  type RuntimeSession,
+} from "./multi-agent-execution-memory-loop.ts";
 import { formatE2eError } from "./e2e-error.ts";
 
 type ExternalPackageInstall = {
@@ -19,11 +23,21 @@ type ExternalPackageInstall = {
   createSpec: string;
 };
 
+type ExternalSmokeEmbeddingExpectation = "available" | "unavailable";
+
 const SDK_MARKER = "EXTERNAL_PACKAGE_SMOKE_SDK_MEMORY";
 const MCP_MARKER = "EXTERNAL_PACKAGE_SMOKE_MCP_MEMORY";
 const DEFAULT_SDK_SPEC = "@aionis/sdk@latest";
 const DEFAULT_MCP_SPEC = "@aionis/mcp@latest";
 const DEFAULT_CREATE_SPEC = "@aionis/create@latest";
+const EXTERNAL_PACKAGE_SECRET_ENV_KEYS = new Set([
+  "AIONIS_AGENT_E2E_API_KEY",
+  "DASHSCOPE_API_KEY",
+  "DEEPSEEK_API_KEY",
+  "MINIMAX_API_KEY",
+  "OPENAI_API_KEY",
+  "OPENROUTER_API_KEY",
+]);
 
 function run(command: string, args: string[], options: {
   cwd: string;
@@ -58,6 +72,61 @@ function packageSpecFromEnv(envName: string, fallback: string): string {
   return process.env[envName]?.trim() || fallback;
 }
 
+function externalPackageChildEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && !EXTERNAL_PACKAGE_SECRET_ENV_KEYS.has(key)) env[key] = value;
+  }
+  return env;
+}
+
+function embeddingExpectationForSession(
+  session: RuntimeSession,
+): ExternalSmokeEmbeddingExpectation {
+  const explicit = process.env.AIONIS_EXTERNAL_SMOKE_EMBEDDING_EXPECTATION?.trim();
+  if (explicit) {
+    if (explicit === "available" || explicit === "unavailable") return explicit;
+    throw new Error(
+      "AIONIS_EXTERNAL_SMOKE_EMBEDDING_EXPECTATION must be available or unavailable",
+    );
+  }
+  if (session.embedding) return "available";
+  const provider = process.env.EMBEDDING_PROVIDER?.trim().toLowerCase();
+  if (provider === "none") return "unavailable";
+  if (provider === "openai" || provider === "minimax" || provider === "dashscope") {
+    return "available";
+  }
+  throw new Error(
+    "external Runtime smoke requires AIONIS_EXTERNAL_SMOKE_EMBEDDING_EXPECTATION=available|unavailable",
+  );
+}
+
+function expectedEmbeddingModelForSession(
+  session: RuntimeSession,
+  expectation: ExternalSmokeEmbeddingExpectation,
+): string | null {
+  if (expectation === "unavailable") return null;
+  const explicit = process.env.AIONIS_EXTERNAL_SMOKE_EXPECTED_EMBEDDING_MODEL?.trim();
+  if (explicit) return explicit;
+  const provider = session.embedding?.provider ?? process.env.EMBEDDING_PROVIDER?.trim();
+  if (provider === "dashscope") {
+    return `dashscope:${process.env.DASHSCOPE_EMBEDDING_MODEL?.trim() || "text-embedding-v4"}`;
+  }
+  if (provider === "openai") {
+    return `openai:${process.env.OPENAI_EMBEDDING_MODEL?.trim() || "text-embedding-3-small"}`;
+  }
+  if (provider === "minimax") {
+    const model = process.env.MINIMAX_EMBED_MODEL?.trim() || "embo-01";
+    const type = process.env.MINIMAX_EMBED_DB_TYPE?.trim()
+      || process.env.MINIMAX_EMBED_TYPE?.trim()
+      || "db";
+    return `minimax:${model}:${type}`;
+  }
+  throw new Error(
+    "embedding-available external Runtime smoke requires AIONIS_EXTERNAL_SMOKE_EXPECTED_EMBEDDING_MODEL",
+  );
+}
+
 function prepareExternalInstall(): ExternalPackageInstall {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-external-package-smoke-"));
   const appDir = path.join(tmpRoot, "external-app");
@@ -85,6 +154,7 @@ function prepareExternalInstall(): ExternalPackageInstall {
     createSpec,
   ], {
     cwd: appDir,
+    env: externalPackageChildEnv(),
     label: "external npm install",
     maxOutputChars: 10_000,
   });
@@ -98,6 +168,7 @@ function writeExternalSdkSmoke(appDir: string): string {
 import {
   agentContextFromGuide,
   createAionisClient,
+  feedbackAttributionFromGuide,
   feedbackFromGuide,
   measureInputFromGuideLoop,
   snapshotInputFromGuideLoop
@@ -129,6 +200,15 @@ function firstNodeId(observeBody, label) {
 
 const baseUrl = process.env.AIONIS_EXTERNAL_SMOKE_BASE_URL;
 assertCondition(baseUrl, "AIONIS_EXTERNAL_SMOKE_BASE_URL is required");
+const embeddingExpectation = process.env.AIONIS_EXTERNAL_SMOKE_EMBEDDING_EXPECTATION;
+assertCondition(
+  embeddingExpectation === "available" || embeddingExpectation === "unavailable",
+  "AIONIS_EXTERNAL_SMOKE_EMBEDDING_EXPECTATION must be available or unavailable",
+);
+const expectedEmbeddingModel = process.env.AIONIS_EXTERNAL_SMOKE_EXPECTED_EMBEDDING_MODEL || null;
+if (embeddingExpectation === "available") {
+  assertCondition(expectedEmbeddingModel, "expected embedding model is required for available mode");
+}
 const scope = process.env.AIONIS_EXTERNAL_SMOKE_SCOPE || "external-package-smoke-sdk";
 const runId = process.env.AIONIS_EXTERNAL_SMOKE_RUN_ID || "external-package-smoke-sdk";
 const client = createAionisClient({
@@ -173,9 +253,17 @@ const resolvedMemory = await client.resolveMemory({
 const resolvedNode = asRecord(resolvedMemory.node);
 assertCondition(resolvedNode?.id === memoryId, "SDK packaged remember was not synchronously resolvable");
 assertCondition(String(resolvedNode?.text_summary ?? "").includes(marker), "SDK packaged resolved memory missing marker");
+if (embeddingExpectation === "available") {
+  assertCondition(resolvedNode?.embedding_status === "ready", "SDK packaged memory embedding was not ready");
+  assertCondition(
+    resolvedNode?.embedding_model === expectedEmbeddingModel,
+    "SDK packaged memory used unexpected embedding model: " + String(resolvedNode?.embedding_model ?? "missing"),
+  );
+}
 
 const handoff = await client.execution.handoff({
   operation_id: "external-package-sdk-handoff:" + runId,
+  auto_embed: false,
   agent_id: "external-sdk-agent",
   role: "worker",
   run_id: runId + ":handoff",
@@ -209,24 +297,129 @@ const afterGuide = await client.execution.guideForRole({
   include_packets: true,
 });
 const context = agentContextFromGuide(afterGuide);
+const visibleMemoryIds = textArray(context.memory_ids);
 const useNowMemoryIds = textArray(context.use_now_memory_ids);
+const inspectBeforeUseMemoryIds = textArray(context.inspect_before_use_memory_ids);
+const doNotUseMemoryIds = textArray(context.do_not_use_memory_ids);
 const promptText = String(context.prompt_text ?? "");
 const sourceMap = asRecord(afterGuide.source_map);
 const internalSurfaces = textArray(sourceMap?.internal_surfaces_used);
+const memoryPacket = asRecord(afterGuide.memory_packet);
+const memoryPacketQuery = asRecord(memoryPacket?.query);
+const relevantMemories = Array.isArray(memoryPacket?.relevant_memories)
+  ? memoryPacket.relevant_memories.map((entry) => asRecord(entry)).filter(Boolean)
+  : [];
+const ordinaryPacketMemory = relevantMemories.find((entry) => entry.memory_id === memoryId) || null;
+const ordinaryRecallSources = Array.isArray(ordinaryPacketMemory?.recall_sources)
+  ? ordinaryPacketMemory.recall_sources.map((entry) => asRecord(entry)).filter(Boolean)
+  : [];
+const ordinaryEmbeddingRecallSources = ordinaryRecallSources.filter((source) =>
+  source.kind === "ann"
+    || (source.kind === "semantic" && textArray(source.matched_fields).includes("embedding_vector_json"))
+);
+const ordinaryRecallSourceKinds = ordinaryRecallSources
+  .map((source) => source.kind)
+  .filter((kind) => typeof kind === "string");
 assertCondition(context.contract_version === "aionis_agent_context_v1", "SDK packaged guide missing agent_context");
 assertCondition(context.actionable_history_used === true, "SDK packaged guide did not use actionable history");
-assertCondition(useNowMemoryIds.includes(handoffMemoryId), "SDK packaged guide did not expose structured handoff memory");
+assertCondition(
+  visibleMemoryIds.includes(handoffMemoryId)
+    && (useNowMemoryIds.includes(handoffMemoryId) || inspectBeforeUseMemoryIds.includes(handoffMemoryId)),
+  "SDK packaged guide did not expose structured handoff memory: " + JSON.stringify({
+    handoff_memory_id: handoffMemoryId,
+    use_now_memory_ids: useNowMemoryIds,
+    inspect_before_use_memory_ids: inspectBeforeUseMemoryIds,
+    do_not_use_memory_ids: doNotUseMemoryIds,
+    memory_ids: visibleMemoryIds,
+    rehydrate_hints: context.rehydrate_hints,
+    source_map: sourceMap,
+  }),
+);
 assertCondition(promptText.includes(marker) || textArray(context.use_now).some((entry) => entry.includes(marker)), "SDK packaged guide missing marker");
-assertCondition(internalSurfaces.includes("planning_context_embedding_unavailable"), "SDK packaged guide did not prove the no-embedding path");
+const embeddingUnavailable = internalSurfaces.includes("planning_context_embedding_unavailable");
+if (embeddingExpectation === "available") {
+  assertCondition(!embeddingUnavailable, "SDK packaged guide unexpectedly used the no-embedding path");
+  assertCondition(internalSurfaces.includes("recall"), "SDK packaged guide did not prove semantic recall");
+  assertCondition(
+    memoryPacketQuery?.source === "text",
+    "SDK packaged planning query did not preserve its public text-source contract",
+  );
+  assertCondition(memoryPacketQuery?.embedding_dims === 1536, "SDK packaged guide query did not use 1536 dimensions");
+  assertCondition(
+    visibleMemoryIds.includes(memoryId),
+    "SDK packaged guide did not semantically recover the embedded ordinary memory",
+  );
+  assertCondition(
+    ordinaryEmbeddingRecallSources.length > 0,
+    "SDK packaged ordinary memory lacked semantic/ANN recall provenance",
+  );
+} else {
+  assertCondition(embeddingUnavailable, "SDK packaged guide did not prove the no-embedding path");
+}
 assertCondition(internalSurfaces.includes("full_power_agent_context_merge"), "SDK packaged guide did not merge structured handoff context");
 
-const feedback = await client.feedback(feedbackFromGuide({
-  guide: afterGuide,
-  run_id: runId + ":feedback",
-  outcome: "positive",
-  reason: "External package SDK smoke used the exposed structured handoff successfully.",
-  used_memory_ids: [handoffMemoryId],
-}));
+const feedbackAttribution = feedbackAttributionFromGuide(afterGuide);
+assertCondition(feedbackAttribution.status === "available", "SDK packaged guide missing persisted feedback attribution");
+const attributedMemoryIds = feedbackAttribution.items.map((item) => item.memory_id);
+if (embeddingExpectation === "available") {
+  assertCondition(
+    attributedMemoryIds.includes(memoryId),
+    "semantically recovered ordinary memory did not enter persisted feedback attribution",
+  );
+} else {
+  assertCondition(
+    !attributedMemoryIds.includes(memoryId),
+    "ordinary memory unexpectedly entered attribution without semantic recall",
+  );
+}
+const handoffFeedbackAttributable = attributedMemoryIds.includes(handoffMemoryId);
+if (embeddingExpectation === "unavailable") {
+  assertCondition(
+    !handoffFeedbackAttributable,
+    "no-embedding continuity handoff unexpectedly entered the learning exposure",
+  );
+}
+let feedbackRejectionCode = null;
+let handoffFeedbackRequest = null;
+try {
+  handoffFeedbackRequest = feedbackFromGuide({
+    guide: afterGuide,
+    run_id: runId + ":feedback",
+    outcome: "neutral",
+    reason: "Formal feedback authority must follow the persisted guide exposure exactly.",
+    used_memory_ids: [handoffMemoryId],
+  });
+} catch (error) {
+  feedbackRejectionCode = error && typeof error === "object" && "code" in error
+    ? String(error.code)
+    : null;
+}
+if (handoffFeedbackAttributable) {
+  assertCondition(
+    handoffFeedbackRequest && feedbackRejectionCode === null,
+    "SDK packaged helper rejected a handoff that the persisted exposure attributed",
+  );
+} else {
+  assertCondition(
+    feedbackRejectionCode === "guide_feedback_context_only_memory",
+    "SDK packaged helper did not reject context-only handoff attribution locally",
+  );
+}
+
+let semanticFeedback = null;
+if (embeddingExpectation === "available") {
+  semanticFeedback = await client.feedback(feedbackFromGuide({
+    guide: afterGuide,
+    run_id: runId + ":semantic-feedback",
+    outcome: "neutral",
+    reason: "External package smoke verified exact persisted attribution for semantic recall.",
+    used_memory_ids: [memoryId],
+  }));
+  assertCondition(
+    asRecord(semanticFeedback)?.contract_version === "aionis_feedback_result_v1",
+    "SDK packaged semantic feedback returned an unexpected contract",
+  );
+}
 
 const measure = await client.measure(measureInputFromGuideLoop({
   task: {
@@ -237,9 +430,9 @@ const measure = await client.measure(measureInputFromGuideLoop({
   },
   before_guide: beforeGuide,
   after_guide: afterGuide,
-  feedback_result: feedback,
-  sufficient_evidence: true,
-  evidence_ids: ["memory:" + handoffMemoryId],
+  feedback_result: semanticFeedback,
+  sufficient_evidence: false,
+  evidence_ids: [],
 }));
 assertCondition(measure.contract_version === "aionis_measure_result_v1", "SDK packaged measure missing contract");
 
@@ -259,7 +452,21 @@ process.stdout.write(JSON.stringify({
   package: "@aionis/sdk",
   ordinary_memory_id: memoryId,
   handoff_memory_id: handoffMemoryId,
+  embedding_expectation: embeddingExpectation,
+  embedding_status: resolvedNode?.embedding_status ?? null,
+  embedding_model: resolvedNode?.embedding_model ?? null,
+  query_source: memoryPacketQuery?.source ?? null,
+  query_embedding_dims: memoryPacketQuery?.embedding_dims ?? null,
+  semantic_memory_recovered: visibleMemoryIds.includes(memoryId),
+  ordinary_memory_recall_source_kinds: ordinaryRecallSourceKinds,
+  visible_memory_ids: visibleMemoryIds,
   use_now_memory_ids: useNowMemoryIds,
+  inspect_before_use_memory_ids: inspectBeforeUseMemoryIds,
+  feedback_attribution_item_ids: attributedMemoryIds,
+  handoff_feedback_attributable: handoffFeedbackAttributable,
+  handoff_feedback_request_surface: handoffFeedbackRequest?.used_surface ?? null,
+  feedback_rejection_code: feedbackRejectionCode,
+  semantic_feedback_contract: asRecord(semanticFeedback)?.contract_version ?? null,
   internal_surfaces: internalSurfaces,
   measure_contract: measure.contract_version,
   snapshot_contract: operatorSnapshot.contract_version
@@ -268,13 +475,23 @@ process.stdout.write(JSON.stringify({
   return scriptPath;
 }
 
-function runExternalSdkSmoke(appDir: string, baseUrl: string, runId: string): Record<string, unknown> {
+function runExternalSdkSmoke(
+  appDir: string,
+  baseUrl: string,
+  runId: string,
+  embeddingExpectation: ExternalSmokeEmbeddingExpectation,
+  expectedEmbeddingModel: string | null,
+): Record<string, unknown> {
   const script = writeExternalSdkSmoke(appDir);
   const output = run(process.execPath, [script], {
     cwd: appDir,
     env: {
-      ...process.env,
+      ...externalPackageChildEnv(),
       AIONIS_EXTERNAL_SMOKE_BASE_URL: baseUrl,
+      AIONIS_EXTERNAL_SMOKE_EMBEDDING_EXPECTATION: embeddingExpectation,
+      ...(expectedEmbeddingModel
+        ? { AIONIS_EXTERNAL_SMOKE_EXPECTED_EMBEDDING_MODEL: expectedEmbeddingModel }
+        : {}),
       AIONIS_EXTERNAL_SMOKE_SCOPE: `external-package-smoke:sdk:${runId}`,
       AIONIS_EXTERNAL_SMOKE_RUN_ID: `external-package-sdk-${runId}`,
     },
@@ -284,7 +501,12 @@ function runExternalSdkSmoke(appDir: string, baseUrl: string, runId: string): Re
   return JSON.parse(output.trim()) as Record<string, unknown>;
 }
 
-async function runExternalMcpSmoke(appDir: string, baseUrl: string, runId: string): Promise<Record<string, unknown>> {
+async function runExternalMcpSmoke(
+  appDir: string,
+  baseUrl: string,
+  runId: string,
+  embeddingExpectation: ExternalSmokeEmbeddingExpectation,
+): Promise<Record<string, unknown>> {
   const mcpMain = path.join(appDir, "node_modules", "@aionis", "mcp", "dist", "index.js");
   assertCondition(fs.existsSync(mcpMain), "@aionis/mcp dist entrypoint missing after install");
 
@@ -300,6 +522,7 @@ async function runExternalMcpSmoke(appDir: string, baseUrl: string, runId: strin
       "--scope",
       `external-package-smoke:mcp:${runId}`,
     ],
+    env: externalPackageChildEnv(),
   });
 
   await client.connect(transport);
@@ -349,6 +572,15 @@ async function runExternalMcpSmoke(appDir: string, baseUrl: string, runId: strin
     });
     const rememberPayload = asRecord(remember.structuredContent);
     assertCondition(rememberPayload?.ok === true, "MCP package remember tool failed");
+    const rememberedBody = asRecord(rememberPayload?.remembered);
+    const rememberedWrite = asRecord(rememberedBody?.memory_write);
+    const rememberedNodes = Array.isArray(rememberedWrite?.nodes) ? rememberedWrite.nodes : [];
+    const rememberedNode = asRecord(rememberedNodes[0]);
+    const rememberedMemoryId = rememberedNode?.id;
+    assertCondition(
+      typeof rememberedMemoryId === "string" && rememberedMemoryId.length > 0,
+      "MCP package remember did not return a memory id",
+    );
 
     const context = await client.callTool({
       name: "aionis_context",
@@ -369,6 +601,36 @@ async function runExternalMcpSmoke(appDir: string, baseUrl: string, runId: strin
     assertCondition(String(contextPayload.agent_prompt ?? "").includes("AIONIS_EXECUTION_AGENT_CONTEXT"), "MCP package context did not compile execution prompt");
     const memoryUseReceipt = asRecord(contextPayload.memory_use_receipt);
     assertCondition(memoryUseReceipt?.contract_version === "aionis_memory_use_receipt_v1", "MCP package context missing memory use receipt");
+    const guide = asRecord(contextPayload.guide);
+    const memoryPacket = asRecord(guide?.memory_packet);
+    const query = asRecord(memoryPacket?.query);
+    const relevantMemories = Array.isArray(memoryPacket?.relevant_memories)
+      ? memoryPacket.relevant_memories.map((entry) => asRecord(entry)).filter(Boolean)
+      : [];
+    const rememberedPacketMemory = relevantMemories.find(
+      (entry) => entry.memory_id === rememberedMemoryId,
+    ) ?? null;
+    const recallSources = Array.isArray(rememberedPacketMemory?.recall_sources)
+      ? rememberedPacketMemory.recall_sources.map((entry) => asRecord(entry)).filter(Boolean)
+      : [];
+    const embeddingRecallSources = recallSources.filter((source) => {
+      const matchedFields = Array.isArray(source.matched_fields)
+        ? source.matched_fields.filter((field) => typeof field === "string")
+        : [];
+      return source.kind === "ann"
+        || (source.kind === "semantic" && matchedFields.includes("embedding_vector_json"));
+    });
+    if (embeddingExpectation === "available") {
+      assertCondition(
+        query?.source === "text",
+        "MCP package planning query did not preserve its public text-source contract",
+      );
+      assertCondition(query?.embedding_dims === 1536, "MCP package guide query did not use 1536 dimensions");
+      assertCondition(
+        embeddingRecallSources.length > 0,
+        "MCP package remembered memory lacked semantic/ANN recall provenance",
+      );
+    }
 
     const measure = await client.callTool({
       name: "aionis_measure",
@@ -390,7 +652,14 @@ async function runExternalMcpSmoke(appDir: string, baseUrl: string, runId: strin
     return {
       ok: true,
       package: "@aionis/mcp",
+      remembered_memory_id: rememberedMemoryId,
       tools: toolNames,
+      embedding_expectation: embeddingExpectation,
+      query_source: query?.source ?? null,
+      query_embedding_dims: query?.embedding_dims ?? null,
+      remembered_memory_recall_source_kinds: recallSources
+        .map((source) => source.kind)
+        .filter((kind) => typeof kind === "string"),
       context_contract: asRecord(contextPayload.execution_context)?.contract_version,
       receipt_contract: memoryUseReceipt.contract_version,
       measure_contract: measureResult.contract_version,
@@ -408,10 +677,12 @@ function runCliEntrypointChecks(appDir: string): Record<string, unknown> {
 
   const createHelp = run(createBin, ["--help"], {
     cwd: appDir,
+    env: externalPackageChildEnv(),
     label: "@aionis/create --help",
   });
   const mcpHelp = run(mcpBin, ["--help"], {
     cwd: appDir,
+    env: externalPackageChildEnv(),
     label: "@aionis/mcp --help",
   });
 
@@ -431,9 +702,25 @@ async function main() {
   const install = prepareExternalInstall();
   const session = await openRuntime();
   try {
+    const embeddingExpectation = embeddingExpectationForSession(session);
+    const expectedEmbeddingModel = expectedEmbeddingModelForSession(
+      session,
+      embeddingExpectation,
+    );
     const cli = runCliEntrypointChecks(install.appDir);
-    const sdk = runExternalSdkSmoke(install.appDir, session.baseUrl, runId);
-    const mcp = await runExternalMcpSmoke(install.appDir, session.baseUrl, runId);
+    const sdk = runExternalSdkSmoke(
+      install.appDir,
+      session.baseUrl,
+      runId,
+      embeddingExpectation,
+      expectedEmbeddingModel,
+    );
+    const mcp = await runExternalMcpSmoke(
+      install.appDir,
+      session.baseUrl,
+      runId,
+      embeddingExpectation,
+    );
 
     const result = {
       contract_version: "aionis_external_package_entrypoint_smoke_v1",
@@ -442,6 +729,8 @@ async function main() {
         mode: session.mode,
         base_url: session.baseUrl,
         embedding_provider: session.embedding?.provider ?? "external_runtime",
+        embedding_expectation: embeddingExpectation,
+        expected_embedding_model: expectedEmbeddingModel,
       },
       package_install: {
         app_dir: install.appDir,
