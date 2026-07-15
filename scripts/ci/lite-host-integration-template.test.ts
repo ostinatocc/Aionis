@@ -177,6 +177,7 @@ test("generic host template persists guide state and wires outcome feedback", as
     title: "Generic template outcome",
     summary: "Agent used guided memory successfully.",
     outcome: "succeeded",
+    used_memory_ids: ["memory-template-1"],
   });
   assert.equal(finished.state.last_outcome, "succeeded");
 
@@ -215,6 +216,37 @@ test("generic host template persists guide state and wires outcome feedback", as
   assert.equal(snapshotCall.body.guide_trace_id, "guide-template-1");
   assert.deepEqual(snapshotCall.body.agent_context, guided.agent_context);
   assert.deepEqual(snapshotCall.body.effect_report, { history_impact: { impact_direction: "positive" } });
+});
+
+test("generic host template never promotes visible guide memory into actual-use feedback", async () => {
+  const calls: RecordedCall[] = [];
+  const adapter = createExecutionMemoryAdapter({
+    client: recordingClient(calls),
+    tenant_id: "tenant-template",
+    scope: "scope-template",
+    team_id: "team-template",
+    default_agent_id: "agent-template",
+  });
+  const host = createGenericAgentHostTemplate(adapter);
+
+  const guided = await host.beforeRun({
+    run_id: "run-template-no-use",
+    task_signature: "generic-template-no-use",
+    query_text: "Expose memory without claiming it was used.",
+  });
+  assert.deepEqual(guided.state.last_use_now_memory_ids, ["memory-template-1"]);
+
+  const finished = await host.afterRun({
+    state: guided.state,
+    run_id: "run-template-no-use-outcome",
+    task_signature: "generic-template-no-use",
+    title: "Generic template outcome without use evidence",
+    summary: "The host did not observe a memory dereference.",
+    outcome: "succeeded",
+  });
+
+  assert.equal(finished.outcome.feedback, null);
+  assert.equal(calls.some((call) => call.method === "forget"), false);
 });
 
 test("multi-agent host template fixes planner worker verifier reviewer roles", async () => {
@@ -275,6 +307,7 @@ test("multi-agent host template fixes planner worker verifier reviewer roles", a
     title: "Reviewer outcome",
     summary: "Reviewer used the active path.",
     outcome: "succeeded",
+    used_memory_ids: ["memory-template-1"],
   });
 
   const reviewerGuideCall = calls.find((call) => call.method === "guide");
@@ -317,6 +350,7 @@ test("coding host template carries repository context and patch feedback", async
     summary: "Patch changed only the checkout target and tests passed.",
     outcome: "passed",
     changed_files: ["src/checkout.ts"],
+    used_memory_ids: ["memory-template-1"],
   });
 
   const guideCall = calls.find((call) => call.method === "guide");

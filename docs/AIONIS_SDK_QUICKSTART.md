@@ -1,6 +1,7 @@
 # Aionis SDK Quickstart
 
-Status: developer-facing SDK quickstart for the v0.3.7 Local Runtime Public Beta candidate
+Status: developer-facing quickstart for Runtime v0.3.8 and SDK v0.3.17
+(Local Runtime Public Beta candidate)
 
 This quickstart shows the smallest SDK product loop:
 
@@ -80,6 +81,7 @@ on a random port.
 ```ts
 import {
   createAionisClient,
+  feedbackAttributionFromGuide,
   feedbackFromGuide,
   memoryAdmissionDatasetJsonlFromRows,
   memoryAdmissionDatasetRowsFromRecord,
@@ -87,6 +89,7 @@ import {
   snapshotInputFromGuideLoop,
   traceDerivedSkillCandidatesFromMeasure,
   traceDerivedSkillReviewItemsFromMeasure,
+  type AionisGuideFeedbackAttributionV1,
   type AionisMemoryAdmissionRecord,
 } from "@aionis/sdk";
 
@@ -105,7 +108,10 @@ await aionis.remember({
 });
 
 const context = await aionis.execution.guideAgentContextForRole<{
+  tenant_id: string;
+  scope: string;
   guide_trace_id: string;
+  feedback_attribution_v1: AionisGuideFeedbackAttributionV1;
   agent_context: {
     prompt_text: string;
     use_now_memory_ids: string[];
@@ -123,15 +129,28 @@ const context = await aionis.execution.guideAgentContextForRole<{
 
 const guide = context.guide;
 
-// Your host runs the Agent with context.agent_prompt.
+// Your host runs the Agent with context.agent_prompt. Instrument the Agent/tool
+// execution so this result contains only memory IDs that were actually used.
+const agentResult = await runInstrumentedAgent(context.agent_prompt);
 
-const feedback = await aionis.feedback(feedbackFromGuide({
-  guide,
-  reason: "Agent used the exposed memory successfully.",
-  run_id: "run-001",
-  outcome: "positive",
-  used_memory_ids: guide.agent_context.use_now_memory_ids.slice(0, 1),
-}));
+let feedback: unknown = null;
+if (agentResult.used_memory_ids.length > 0) {
+  const attribution = feedbackAttributionFromGuide(guide);
+  if (attribution.status !== "available") {
+    throw new Error(
+      `Feedback attribution is unavailable (${attribution.reason_code}); `
+      + "request a new guide instead of falling back to agent_context IDs.",
+    );
+  }
+
+  feedback = await aionis.feedback(feedbackFromGuide({
+    guide,
+    reason: "Host instrumentation verified successful memory use.",
+    run_id: "run-001",
+    outcome: "positive",
+    used_memory_ids: agentResult.used_memory_ids,
+  }));
+}
 
 const measure = await aionis.measure(measureInputFromGuideLoop({
   task: {
@@ -185,15 +204,20 @@ await aionis.snapshot(snapshotInputFromGuideLoop({
 
 For coding and multi-agent hosts, give `context.agent_prompt` from
 `guideAgentContext()` or `execution.guideAgentContextForRole()` to the Agent.
-Keep `guide_trace_id`, `use_now_memory_ids`, and
-`context.compiled_context.memory_use_receipt` in host state for
-attribution and audit. Packets, traces, admission records, raw rows, and raw
-slots are host/operator surfaces.
+Keep the complete guide response, including top-level
+`feedback_attribution_v1`, plus `guide_trace_id`, AgentContext ID lists, and
+`context.compiled_context.memory_use_receipt` in host state for correlation and
+audit. AgentContext IDs describe visibility only; they are neither actual-use
+evidence nor feedback authorization. Packets, traces, admission records, raw
+rows, and raw slots are host/operator surfaces.
 For a focused JSONL export path, see
 [AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md](AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md).
-`feedbackFromGuide()` still requires the host to provide the memory IDs the
-Agent actually used; it inherits the guide consumer identity when available and
-validates that those IDs were exposed by the guide.
+`feedbackFromGuide()` requires the complete source guide and the memory IDs
+reported as actually used by an instrumented host Agent/tool trace. It inherits
+the guide consumer identity when available, validates the IDs against the
+persisted `feedback_attribution_v1`, and derives their served surface. If the
+host reports zero used IDs, do not submit feedback. If attribution is
+unavailable, request a new guide; never fall back to AgentContext IDs.
 `measureInputFromGuideLoop()` and `snapshotInputFromGuideLoop()` keep the
 normal product trace and operator snapshot payloads out of handwritten app code.
 `traceDerivedSkillCandidatesFromMeasure()` exposes Runtime-verified positive
@@ -273,19 +297,31 @@ const context = await aionis.execution.guideAgentContextForRole({
   budget_profile: "balanced",
 });
 
-// Your host runs the Agent with context.agent_prompt.
+// Your host runs the Agent with context.agent_prompt. The result comes from
+// instrumented Agent/tool execution, never from agent_context ID lists.
+const agentResult = await runInstrumentedAgent(context.agent_prompt);
 const guide = context.guide;
 
-const feedback = await aionis.execution.feedbackFromOutcome({
-  agent_id: "reviewer-1",
-  run_id: "run-001",
-  task_signature: "checkout-migration",
-  title: "Reviewer continued branch",
-  summary: "Reviewer used the current execution memory.",
-  outcome: "succeeded",
-  guide,
-  used_memory_ids: guide.agent_context.use_now_memory_ids.slice(0, 1),
-});
+if (agentResult.used_memory_ids.length > 0) {
+  const attribution = feedbackAttributionFromGuide(guide);
+  if (attribution.status !== "available") {
+    throw new Error(
+      `Feedback attribution is unavailable (${attribution.reason_code}); `
+      + "request a new guide instead of falling back to agent_context IDs.",
+    );
+  }
+
+  await aionis.execution.feedbackFromOutcome({
+    agent_id: "reviewer-1",
+    run_id: "run-001",
+    task_signature: "checkout-migration",
+    title: "Reviewer continued branch",
+    summary: "Host instrumentation verified use of current execution memory.",
+    outcome: agentResult.status,
+    guide,
+    used_memory_ids: agentResult.used_memory_ids,
+  });
+}
 ```
 
 For a complete minimal loop, see
@@ -301,7 +337,8 @@ JSON showing:
 3. `remember(kind: "project_context")` creates ordinary project memory
 4. `guideAgentContext()` returns SDK `agent_prompt` plus the underlying guide
 5. `compiled_context` exposes route and receipt metadata for host/operator logic
-6. `feedback()` attributes outcome only to memory exposed by that guide trace
+6. `feedback()` attributes outcome only to host-instrumented actual-use IDs
+   authorized by the guide's persisted `feedback_attribution_v1`
 7. `measure()` reports whether history changed the future context
 8. admission dataset JSONL export is produced without prompt payload
 9. `snapshot()` exposes read-only memory use receipt, admission record, and effect state

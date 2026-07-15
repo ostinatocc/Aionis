@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
+import stableStringify from "fast-json-stable-stringify";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 import { createRequestGuards } from "./support/create-request-guards-test-config.ts";
 import {
@@ -1057,6 +1058,60 @@ test("guide operation replays the exact response and rejects changed content bef
     assert.equal(conflict.json().error, "learning_episode_operation_conflict");
     assert.equal(fixture.planningCalls(), 1, "an operation conflict must return before planning");
     assert.deepEqual(fixture.counts(), afterFirst);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("guide operation rejects a canonical replay receipt with a corrupted feedback attribution", async () => {
+  const fixture = openGuideOperationRouteFixture({
+    name: "guide-operation-corrupt-feedback-attribution",
+  });
+  const operationId = "guide-operation-corrupt-feedback-attribution-1";
+  const payload = {
+    operation_id: operationId,
+    tenant_id: "default",
+    scope: "default",
+    consumer_agent_id: "local-user",
+    query_text: "Reject a protected guide receipt whose feedback attribution root was corrupted.",
+    context: { task_signature: "guide-operation-corrupt-feedback-attribution" },
+  };
+  try {
+    const first = await fixture.app.inject({ method: "POST", url: "/v1/guide", payload });
+    assert.equal(first.statusCode, 200, first.body);
+    assert.equal(first.json().feedback_attribution_v1.status, "available");
+    assert.equal(fixture.planningCalls(), 1);
+
+    const stored = fixture.runtimeDatabase.db.prepare<{
+      receipt_json: string;
+    }>(
+      `SELECT receipt_json
+       FROM lite_runtime_write_operations
+       WHERE tenant_id = ? AND scope = ?
+         AND operation_kind = ? AND operation_id = ?`,
+    ).get("default", "default", PRODUCT_GUIDE_OPERATION_KIND, operationId);
+    assert.ok(stored);
+    const corrupted = JSON.parse(stored.receipt_json) as {
+      body: { feedback_attribution_v1: { served_surface_sha256: string } };
+    };
+    corrupted.body.feedback_attribution_v1.served_surface_sha256 = "f".repeat(64);
+    fixture.runtimeDatabase.db.prepare(
+      `UPDATE lite_runtime_write_operations
+       SET receipt_json = ?
+       WHERE tenant_id = ? AND scope = ?
+         AND operation_kind = ? AND operation_id = ?`,
+    ).run(
+      stableStringify(corrupted),
+      "default",
+      "default",
+      PRODUCT_GUIDE_OPERATION_KIND,
+      operationId,
+    );
+
+    const replay = await fixture.app.inject({ method: "POST", url: "/v1/guide", payload });
+    assert.equal(replay.statusCode, 500, replay.body);
+    assert.equal(replay.json().error, "protected_guide_receipt_invalid");
+    assert.equal(fixture.planningCalls(), 1, "an invalid stored receipt must fail before planning");
   } finally {
     await fixture.close();
   }
@@ -4258,6 +4313,7 @@ test("product observe turns execution input into recallable execution memory", a
       "consumer_agent_id",
       "guide_trace_id",
       "agent_context",
+      "feedback_attribution_v1",
       "memory_packet",
       "guide_packet",
       "source_map",
@@ -4403,6 +4459,7 @@ test("product observe turns execution input into recallable execution memory", a
       "consumer_agent_id",
       "guide_trace_id",
       "agent_context",
+      "feedback_attribution_v1",
       "source_map",
     ]);
     assert.equal("memory_packet" in compactBody, false);
@@ -5291,6 +5348,9 @@ test("product measure derives closed-loop effect from guide packets", async () =
       },
     });
     assert.equal(observe.statusCode, 200);
+    const observedMemoryIds = observe.json().memory_write.nodes
+      .map((node: Record<string, unknown>) => node.id)
+      .filter((id: unknown): id is string => typeof id === "string" && id.length > 0);
 
     const afterGuide = await app.inject({
       method: "POST",
@@ -5474,6 +5534,11 @@ test("product measure derives closed-loop effect from guide packets", async () =
       agent_prompt_included: false,
       runtime_mutation: false,
     };
+    assert.equal(afterGuideBody.feedback_attribution_v1.status, "unavailable");
+    const instrumentedUsedMemoryId = observedMemoryIds.find(
+      (memoryId: string) => afterGuideBody.agent_context.use_now_memory_ids.includes(memoryId),
+    );
+    assert.ok(instrumentedUsedMemoryId, "flight recorder fixture requires one observed memory used by the host trace");
 
     const flightRecorder = await app.inject({
       method: "POST",
@@ -5492,7 +5557,7 @@ test("product measure derives closed-loop effect from guide packets", async () =
         feedback_result: {
           run_id: "run:product-measure-trace",
           outcome: "positive",
-          used_memory_ids: afterGuideBody.agent_context.use_now_memory_ids.slice(0, 1),
+          used_memory_ids: [instrumentedUsedMemoryId],
         },
       },
     });

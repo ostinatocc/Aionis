@@ -1,13 +1,13 @@
 # Aionis Product API Usage
 
-Status: product API usage guide for the v0.3.7 Local Runtime Public Beta candidate
+Status: product API usage guide for the v0.3.8 Local Runtime Public Beta candidate
 
 This document explains how a host should use the product actions:
 `observe`, `guide`, `feedback`, `measure`, `rehydrate`, and `snapshot`.
 
 It describes the candidate product path over the current Runtime
 implementation. Contract changes in this candidate are carried by SDK
-`0.3.16`; this is a Public Beta contract, not a GA compatibility promise.
+`0.3.17`; this is a Public Beta contract, not a GA compatibility promise.
 
 For host template wiring and runnable single-agent, multi-agent, and coding
 Agent examples, see [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md).
@@ -106,9 +106,11 @@ For host decisions, distinguish these two fields:
 3. Pass SDK `agent_prompt` to the Agent. If integrating directly over HTTP, pass
    only `agent_context.prompt_text` or selected `agent_context` fields. Never
    append `agent_context.prompt_text` to SDK `agent_prompt`.
-4. Call SDK `feedback()` or raw `POST /v1/feedback` after the Agent acts.
-   Include `guide_trace_id`, `used_memory_ids`, `run_id`, `outcome`, and
-   `used_surface`.
+4. After the Agent acts, SDK hosts pass the complete source guide plus
+   host-observed `used_memory_ids` to `feedbackFromGuide()`; the helper derives
+   the exact persisted served surface. Raw HTTP hosts pass `guide_trace_id`,
+   `used_memory_ids`, `run_id`, `outcome`, and `used_surface`, and Runtime
+   reloads the persisted exposure before accepting attribution.
 5. Call SDK `rehydrate()` or raw `POST /v1/rehydrate` when an archived memory
    or anchor payload needs to be expanded.
 6. Call `POST /v1/measure` with before/after guide packets or direct
@@ -180,6 +182,7 @@ control.
 import {
   compileExecutionAgentContext,
   createAionisClient,
+  feedbackAttributionFromGuide,
   feedbackFromGuide,
   memoryAdmissionDatasetJsonlFromGuide,
   memoryAdmissionRecordFromGuide,
@@ -219,6 +222,7 @@ await aionis.observe({
 
 const guide = await aionis.execution.guideForRole<{
   guide_trace_id: string;
+  feedback_attribution_v1: unknown;
   agent_context: {
     prompt_text: string;
     use_now_memory_ids: string[];
@@ -254,15 +258,22 @@ const admissionDatasetJsonl = memoryAdmissionDatasetJsonlFromGuide(guide, {
   task_signature: "checkout-continuation",
 });
 
-const feedback = await aionis.feedback(feedbackFromGuide({
-  guide,
-  reason: "Agent used the exposed checkout continuation successfully.",
-  run_id: "run-001",
-  outcome: "positive",
-  used_memory_ids: guide.agent_context.use_now_memory_ids.slice(0, 1),
-  verifier_status: "passed",
-  tool_status: "succeeded",
-}));
+const attribution = feedbackAttributionFromGuide(guide);
+if (attribution.status !== "available") {
+  throw new Error("Request a new guide before submitting learning feedback.");
+}
+const agentResult = await runYourInstrumentedAgent(agentContext.agent_prompt);
+const feedback = agentResult.used_memory_ids.length === 0
+  ? null
+  : await aionis.feedback(feedbackFromGuide({
+      guide,
+      reason: "The host observed these persisted guide items being used.",
+      run_id: "run-001",
+      outcome: "positive",
+      used_memory_ids: agentResult.used_memory_ids,
+      verifier_status: "passed",
+      tool_status: "succeeded",
+    }));
 
 const measure = await aionis.measure(measureInputFromGuideLoop({
   task: {
@@ -301,9 +312,12 @@ For coding and multi-agent hosts, the Agent should receive SDK
 compile from a guide or pass selected `agent_context` fields directly. Keep
 `memory_packet`, `guide_packet`, `memory_decision_trace`, `memory_decision_audit`,
 `memory_admission_record`, and raw rows on host/operator surfaces by default.
-`feedbackFromGuide()` validates attribution against the guide exposure ledger,
-while `measureInputFromGuideLoop()` and `snapshotInputFromGuideLoop()` hide the
-internal `product_trace` and operator snapshot wiring from normal app code.
+`feedbackFromGuide()` requires the complete source guide. It validates
+host-observed IDs against exact persisted `feedback_attribution_v1` items,
+rejects context-only, unknown, mixed-surface, and rehydrate-only attribution,
+and derives the served surface. `measureInputFromGuideLoop()` and
+`snapshotInputFromGuideLoop()` hide the internal `product_trace` and operator
+snapshot wiring from normal app code.
 The measure helper still accepts legacy client evidence claims, but the Runtime
 does not use them to open the evidence gate.
 
@@ -425,9 +439,11 @@ Use these identity rules:
 6. Put role hints such as `planner`, `worker`, `verifier`, or `reviewer` in
    top-level `agent_role` on `/v1/guide`. Legacy `context.agent_role` is still
    accepted as a compatibility fallback.
-7. After the Agent acts, call SDK `feedback()` or raw `POST /v1/feedback` with
-   `actor`, `guide_trace_id`, `used_memory_ids`, `run_id`, `outcome`, and
-   `used_surface` so feedback is attributed only to memory actually used.
+7. After the Agent acts, give SDK `feedbackFromGuide()` the complete source
+   guide and IDs taken from the instrumented Agent/host trace. Raw HTTP hosts
+   send `actor`, `guide_trace_id`, `used_memory_ids`, `run_id`, `outcome`, and
+   `used_surface`. AgentContext IDs are visibility metadata, not actual-use
+   evidence or attribution authority.
    For `guide_trace_id` feedback, Aionis inherits the guide ledger's
    `consumer_team_id` when activating team-owned shared memory.
 
@@ -458,8 +474,9 @@ The adapter rejects shared writes or guides without a team boundary. Use
 
 Hosts that want a ready-to-wire lifecycle should use the host integration
 templates on top of `createExecutionMemoryAdapter`. These templates preserve
-host state across hooks so the next hook can attribute feedback to the exact
-guide trace and `use_now` memories the Agent saw.
+guide trace and visibility state across hooks. The host must still pass exact
+trace-derived `used_memory_ids` to the outcome hook; the template never promotes
+all visible `use_now` memories into actual-use feedback.
 
 Template contract version: `aionis_host_integration_template_v1`.
 
@@ -562,6 +579,10 @@ const guide = await memory.guideNext<{
   query_text: "Continue the passed checkout branch and avoid failed legacy patches.",
 });
 
+const reviewerResult = await runYourInstrumentedAgent(
+  guide.agent_context.prompt_text,
+);
+
 await memory.observeOutcome({
   run_id: "reviewer-run-001",
   guide_run_id: "checkout-run-001",
@@ -571,7 +592,7 @@ await memory.observeOutcome({
   title: "Reviewer continued passed checkout branch",
   summary: "Reviewer used Aionis context and avoided the failed branch.",
   outcome: "succeeded",
-  used_memory_ids: guide.agent_context.use_now_memory_ids,
+  used_memory_ids: reviewerResult.used_memory_ids,
 });
 ```
 
@@ -599,7 +620,8 @@ The negative e2e validates the safety contract:
 1. scope-wide shared memory remains visible
 2. team-owned shared memory stays inside `consumer_team_id`
 3. private Agent memory stays inside `consumer_agent_id`
-4. `guide_trace_id` feedback rejects memory IDs not exposed by that guide
+4. `guide_trace_id` feedback rejects IDs absent from the exact persisted guide
+   exposure, including IDs visible only in AgentContext
 5. failed execution branches stay out of `use_now`
 
 ## `POST /v1/observe`
@@ -676,6 +698,7 @@ required for normal product use.
 | `guide_trace_id` | Host / measure / audit | Stable id for the persisted guide exposure ledger. Pass it back during feedback attribution. |
 | `consumer_agent_id` / `consumer_team_id` | Host / SDK helper | Consumer identity used for private/team memory visibility and feedback attribution. `consumer_team_id` is present only when supplied. |
 | `agent_context` | Agent / host prompt builder | Default product output. |
+| `feedback_attribution_v1` | Host / SDK helper | Exact persisted feedback items and their served surfaces. `status: unavailable` blocks `feedbackFromGuide()`; this host-only field is never Agent prompt content. |
 | `memory_packet` | Host / measure / audit | Returned only with `include_packets: true`. |
 | `guide_packet` | Host / measure / audit | Returned only with `include_packets: true`. |
 | `source_map` | Developer | Routes and omitted internal surfaces. |
@@ -710,10 +733,11 @@ instead of a free-form summary while preserving Runtime admission.
 Keep `memory_packet`, `guide_packet`, `memory_decision_trace`,
 `memory_decision_audit`, raw rows, and raw slots on host/operator surfaces by
 default.
-Keep `guide_trace_id` and the guide consumer identity in the host run record.
-They let Aionis later know exactly which memories were exposed by that guide
-call and which private/team memory boundary should receive feedback
-attribution.
+Keep the complete source guide, including `guide_trace_id`,
+`feedback_attribution_v1`, and consumer identity, in the host run record. Raw
+HTTP Runtime feedback uses the trace ID to reload the persisted ledger; the SDK
+helper also requires the immutable attribution envelope. AgentContext memory
+IDs may be retained for trace correlation, but cannot authorize feedback.
 
 ### Example
 
@@ -1096,8 +1120,8 @@ used. This is the normal product path after `guide -> agent action`.
 | `reason` | Yes | Why this feedback is being recorded. |
 | `run_id` | Yes | The concrete run that used the memory. |
 | `outcome` | Yes | `positive`, `negative`, or `neutral`. |
-| `used_surface` | Yes | `use_now` or `explicit_host_assertion` is required for non-neutral feedback. |
-| `guide_trace_id` + `used_memory_ids` | Preferred | Lets Aionis verify attribution against the exact guide exposure ledger. |
+| `used_surface` | Yes | Raw API surface claim. Non-neutral `inspect_before_use` or `do_not_use` requires a verified `host_use_receipt_v1`; ordinary SDK helpers derive the exact persisted surface and do not accept `explicit_host_assertion`. |
+| `guide_trace_id` + `used_memory_ids` | Preferred | Lets Aionis verify attribution against exact persisted exposure items and served surfaces. AgentContext-only IDs are rejected. |
 | `memory_ids` / `node_ids` | Conditional | Direct attribution when the host already has precise memory IDs. |
 | `verifier_status` / `tool_status` / `runtime_signal_refs` | No | Optional evidence for stronger positive or negative feedback. |
 
@@ -1163,11 +1187,11 @@ explicit lifecycle control.
 | `reason` | Yes | Why this lifecycle action is being taken. |
 | `target` | No | `memory`, `archive`, `payload`, or `pattern`. |
 | `memory_ids` / `node_ids` / `client_ids` | Conditional | Required for memory activation and many rehydrate operations. |
-| `guide_trace_id` + `used_memory_ids` | Conditional | Preferred for feedback attribution after `/v1/guide`; Aionis verifies the used ids were exposed by that guide. |
+| `guide_trace_id` + `used_memory_ids` | Conditional | Preferred for feedback attribution after `/v1/guide`; Aionis verifies exact persisted exposure items and served surfaces. AgentContext-only IDs are rejected. |
 | `anchor_id` / `anchor_uri` | Conditional | Required for pattern suppression or payload rehydration. |
 | `run_id` | Conditional | Required for `activate` so feedback can be attributed to a real run. |
 | `outcome` | Conditional | Required for `activate`; `positive`, `negative`, or `neutral`. |
-| `used_surface` | Conditional | Required for `activate`; `use_now` or `explicit_host_assertion` is required for non-neutral feedback. |
+| `used_surface` | Conditional | Required for `activate`. Non-neutral `inspect_before_use` or `do_not_use` requires a verified host-use receipt; `explicit_host_assertion` is a raw advanced-host assertion and is not synthesized by the SDK helper. |
 | `verifier_status` | No | Optional run evidence: `passed`, `failed`, `not_run`, or `unknown`. |
 | `tool_status` | No | Optional run evidence: `succeeded`, `failed`, `not_run`, or `unknown`. |
 | `runtime_signal_refs` | No | Optional ids for concrete runtime/verifier/tool failure signals supporting the attribution. |
@@ -1192,11 +1216,12 @@ this is the attribution gate that prevents Aionis from blaming every recalled
 memory for a run outcome.
 
 Prefer passing `guide_trace_id` from `/v1/guide` plus `used_memory_ids`. Aionis
-will load the persisted guide exposure ledger, reject ids that were not exposed
-by that guide, and record exposed-but-unused ids as unattributed rather than
-blaming them for the run outcome. Direct `memory_ids` remain accepted when the
-host already has a precise attribution source, but `guide_trace_id` is the
-product path for normal guide-to-feedback loops.
+loads the persisted guide exposure ledger, rejects IDs that are not exact
+persisted exposure items—including context-only IDs—and records persisted but
+unused items as unattributed rather than blaming them for the run outcome.
+Direct `memory_ids` remain accepted when the host already has a precise
+attribution source, but `guide_trace_id` is the product path for normal
+guide-to-feedback loops.
 
 A single negative outcome without aligned verifier/tool/runtime evidence is
 stored as a weak counter-signal. Authority changes require repeated weak

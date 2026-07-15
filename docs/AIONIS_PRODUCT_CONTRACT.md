@@ -139,7 +139,7 @@ The full scope, lane, team, and identity contract is
 | `memory_lane: "shared"` with `owner_team_id` | Team-visible execution memory for planner/worker/verifier/reviewer handoff. |
 | `agent_role` | Product-level role hint such as `planner`, `worker`, `verifier`, or `reviewer`; legacy `context.agent_role` remains accepted as a compatibility fallback. |
 | `execution_tree_v1` | Branch-aware state: current path, passed branches, failed branches, and revisions. |
-| `guide_trace_id` + `used_memory_ids` | Feedback attribution path after an Agent actually uses recalled memory. Attribution is limited to memory IDs exposed by that guide. |
+| complete guide (SDK) or `guide_trace_id` (raw HTTP) + host-observed `used_memory_ids` | Feedback attribution path after an Agent actually uses recalled memory. Attribution is limited to exact persisted guide items and served surfaces. |
 
 Role-specific prompt building should start from Aionis `agent_context`.
 Aionis returns `agent_context.agent_role`, adds a role focus line to
@@ -299,6 +299,7 @@ Default output:
 | Field | Product Meaning |
 |---|---|
 | `agent_context` | Short Agent-facing context with summary, authority, risk, target files, use/inspect/do-not-use lists, command posture, memory IDs, and rehydration hints. |
+| `feedback_attribution_v1` | Host-only projection of the exact persisted guide exposure items and served surfaces eligible for feedback. `status: unavailable` blocks SDK guide feedback. |
 
 Optional audit output:
 
@@ -322,8 +323,10 @@ operator surfaces. Only the safe merged `agent_context` reaches the Agent.
 Compact Agent context is an Agent-facing rendering choice on the same governed
 memory decision path. When requested, `agent_context.agent_context_mode` is
 `compact_agent`; the prompt may start with `AIONIS_CTX compact_agent`, while
-the governed memory buckets, attribution IDs, lifecycle decisions, and audit
-surfaces stay aligned with the standard guide result.
+the governed memory buckets, visibility IDs, lifecycle decisions, and audit
+surfaces stay aligned with the standard guide result. Visibility IDs in
+AgentContext support correlation; they are not actual-use evidence or feedback
+authority.
 
 Decision trace and audit surfaces are separate operator/debug outputs. The usage boundary is defined in [AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md](AIONIS_AGENT_CONTEXT_AND_AUDIT_SURFACES.md): Agents consume `agent_context`; developers inspect `memory_decision_trace` and `memory_decision_audit`.
 
@@ -331,7 +334,8 @@ Generated `memory_decision_trace` and `operator_snapshot` outputs include
 `memory_use_receipt`, a compact read-only receipt of the memory IDs exposed as
 `use_now`, `inspect_before_use`, `do_not_use`, or `rehydrate`, plus feedback
 attribution and risk flags. It is a host/operator audit surface paired with the
-Agent-facing `agent_context`.
+Agent-facing `agent_context`; it does not replace the persisted
+`feedback_attribution_v1` authority or host execution instrumentation.
 
 Generated `memory_decision_trace`, `memory_decision_audit`, and
 `operator_snapshot` outputs also include `judgment_calibration_summary`, a
@@ -360,9 +364,13 @@ paths.
 ## Feedback, Rehydrate, And Forget Input Contract
 
 `POST /v1/feedback` is the normal HTTP product entry for attributing run
-outcomes to memory actually exposed by a guide. It maps to controlled
-activation feedback internally while callers use the product-level feedback
-shape.
+outcomes to exact persisted guide items the host observed as actually used. Raw
+HTTP callers provide `guide_trace_id`, used IDs, and served surface so Runtime
+can reload and verify the persisted exposure. SDK callers keep the complete
+source guide and use `feedbackFromGuide()`, which validates
+`feedback_attribution_v1` and derives the exact surface. AgentContext-only IDs
+are rejected. It maps to controlled activation feedback internally while
+callers use the product-level feedback shape.
 
 `POST /v1/rehydrate` is the normal HTTP product entry for expanding archived
 memory or anchor payload on demand. It maps to controlled rehydration internally

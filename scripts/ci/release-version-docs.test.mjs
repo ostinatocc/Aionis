@@ -126,17 +126,19 @@ test("workspace @aionis/create default ref matches release-train.json", { skip: 
   );
 });
 
-test("release docs publish the Runtime tag before the version-pinned installer", () => {
+test("release docs tag Runtime and explicitly hold the already-frozen installer", () => {
   const train = releaseTrain();
   const runtimeTagCommand = `git tag -a ${train.runtime.source_tag}`;
-  const createPublishDirectory = "cd /Volumes/ziel/new.aionis/aionis-create";
+  const frozenInstallerMarker = `Do not republish \`${train.packages.create.name}@${train.packages.create.version}\``;
 
   for (const file of ["RELEASE_NOTES.md", "docs/AIONIS_RELEASES.md"]) {
     const source = read(file);
-    const tagIndex = source.indexOf(runtimeTagCommand);
-    const createIndex = source.indexOf(createPublishDirectory);
-    assert.notEqual(tagIndex, -1, `${file} must include the Runtime tag command`);
-    assert.notEqual(createIndex, -1, `${file} must include the Create publish directory`);
-    assert.ok(tagIndex < createIndex, `${file} must tag Runtime before publishing Create`);
+    assert.ok(source.includes(runtimeTagCommand), `${file} must include the Runtime tag command`);
+    assert.ok(source.includes(frozenInstallerMarker), `${file} must explicitly hold the frozen Create package`);
+    assert.doesNotMatch(
+      source,
+      /cd \/Volumes\/ziel\/new\.aionis\/aionis-create[\s\S]{0,160}npm publish/,
+      `${file} must not instruct operators to republish the frozen Create package`,
+    );
   }
 });

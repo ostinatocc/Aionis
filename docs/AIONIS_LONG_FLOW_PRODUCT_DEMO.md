@@ -74,7 +74,8 @@ The demo fails fast if any of these product contracts regress:
 - missing follow-up target is treated as pending work
 - failed route is not direct-used
 - simulated next Agent continues the active route
-- feedback is attributed to exposed memory ids
+- feedback is attributed only to recognized persisted guide items the simulated
+  host trace reports as used
 - `measure` reports changed future behavior
 - Flight Recorder excludes prompt payload while remaining replayable
 

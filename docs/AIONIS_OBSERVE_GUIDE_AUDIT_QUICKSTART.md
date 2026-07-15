@@ -1,6 +1,6 @@
 # Aionis Observe Guide Audit Quickstart
 
-Status: product quickstart for the v0.3.7 Local Runtime Public Beta candidate
+Status: product quickstart for the v0.3.8 Local Runtime Public Beta candidate
 
 This quickstart shows the shortest product path:
 
@@ -145,7 +145,8 @@ These scripts verify the full host contract:
 2. ordinary private memory guides a single Agent only when owner/consumer
    identity is aligned
 3. shared team memory guides multi-agent roles inside the team boundary
-4. feedback attribution uses `guide_trace_id` and exposed `use_now` memory IDs
+4. feedback attribution uses `guide_trace_id` plus IDs the instrumented host
+   observed as used and Runtime verifies against persisted guide exposure
 5. `measure` reports history impact
 6. operator snapshot remains read-only and operator-facing
 
@@ -167,7 +168,8 @@ returns a bounded JSON summary with:
 1. whether the fresh guide had actionable history
 2. whether the reviewer guide used actionable execution memory
 3. prompt contract version, prompt size, and prompt preview
-4. exposed `use_now` memory IDs for attribution
+4. visible `use_now` IDs for correlation plus exact host-observed IDs used for
+   attribution
 5. failed-branch isolation status
 6. memory use receipt, feedback attribution, effect, and trace-to-procedure
    operator surfaces

@@ -17,7 +17,7 @@ observe -> guide -> agent action -> feedback -> measure -> snapshot
 | `observe` | Store real memory, execution evidence, outcomes, and handoff state. | Structured memory, execution-native metadata, lifecycle candidates. |
 | `guide` | Recall, adjudicate, and compile governed context. | `agent_context`, optional packets, memory use receipt, decision trace. |
 | `agent action` | Host runs the Agent with only the compiled context. | Host-owned action and tool evidence. |
-| `feedback` | Attribute outcomes to memory IDs that were actually exposed and used. | Feedback attribution, activation or negative evidence. |
+| `feedback` | Attribute outcomes to exact persisted guide items the host observed as actually used. | Feedback attribution, activation or negative evidence. |
 | `measure` | Compare before/after context and summarize memory effect. | Effect report, calibration, audit surfaces. |
 | `snapshot` | Expose read-only operator state. | Branch isolation, memory use, feedback, trace-to-procedure readiness. |
 
@@ -200,8 +200,9 @@ context compiler and only changes the Agent-facing prompt rendering.
 ## Feedback, Measurement, and Learning Control
 
 Aionis does not blindly promote memory just because it was recalled. Feedback is
-attributed only when the host reports that an exposed memory ID was actually
-used in a run.
+attributed only when the host reports actual use and the ID/surface matches the
+persisted guide attribution projection. AgentContext visibility alone is not
+feedback authority.
 
 Measurement stays read-only:
 

@@ -473,6 +473,11 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   );
   const quickstartMatrix = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_QUICKSTART_MATRIX.md"), "utf8");
   const sdkQuickstart = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_SDK_QUICKSTART.md"), "utf8");
+  const admissionQuickstart = fs.readFileSync(
+    path.join(ROOT, "docs", "AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md"),
+    "utf8",
+  );
+  const stateModel = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_STATE_MODEL.md"), "utf8");
   const httpQuickstart = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_HTTP_QUICKSTART.md"), "utf8");
   const forgetQuickstart = fs.readFileSync(path.join(ROOT, "docs", "AIONIS_CONTROLLED_FORGETTING_QUICKSTART.md"), "utf8");
   const minimalAgentExample = fs.readFileSync(path.join(ROOT, "docs", "examples", "minimal-agent.ts"), "utf8");
@@ -510,8 +515,16 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(apiUsage, /`rehydrate\(\)` posts to `\/v1\/rehydrate`/);
   assert.match(apiUsage, /`snapshot\(\)` is a\s+short alias for `\/v1\/operator\/snapshot`/);
   assert.match(apiUsage, /feedbackFromGuide\(\)/);
+  assert.match(apiUsage, /feedback_attribution_v1/);
   assert.match(apiUsage, /measureInputFromGuideLoop\(\)/);
   assert.match(apiUsage, /snapshotInputFromGuideLoop\(\)/);
+  assert.match(productContract, /feedback_attribution_v1/);
+  assert.match(stateModel, /feedback_attribution_v1/);
+  assert.doesNotMatch(
+    `${readme}\n${apiUsage}\n${sdkQuickstart}\n${admissionQuickstart}\n${minimalAgentExample}`,
+    /use_now_memory_ids\s*\.slice\s*\(/,
+    "public feedback examples must use host-observed actual-use ids",
+  );
   assert.match(productContract, /`POST \/v1\/feedback` is the normal HTTP product entry/);
   assert.match(productContract, /Forget is a core Aionis capability/);
   assert.match(productContract, /`POST \/v1\/forget` is the explicit lifecycle-control API/);

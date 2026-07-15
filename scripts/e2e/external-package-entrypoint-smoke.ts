@@ -98,6 +98,7 @@ function writeExternalSdkSmoke(appDir: string): string {
 import {
   agentContextFromGuide,
   createAionisClient,
+  feedbackAttributionFromGuide,
   feedbackFromGuide,
   measureInputFromGuideLoop,
   snapshotInputFromGuideLoop
@@ -176,6 +177,7 @@ assertCondition(String(resolvedNode?.text_summary ?? "").includes(marker), "SDK 
 
 const handoff = await client.execution.handoff({
   operation_id: "external-package-sdk-handoff:" + runId,
+  auto_embed: false,
   agent_id: "external-sdk-agent",
   role: "worker",
   run_id: runId + ":handoff",
@@ -209,24 +211,56 @@ const afterGuide = await client.execution.guideForRole({
   include_packets: true,
 });
 const context = agentContextFromGuide(afterGuide);
+const visibleMemoryIds = textArray(context.memory_ids);
 const useNowMemoryIds = textArray(context.use_now_memory_ids);
+const inspectBeforeUseMemoryIds = textArray(context.inspect_before_use_memory_ids);
+const doNotUseMemoryIds = textArray(context.do_not_use_memory_ids);
 const promptText = String(context.prompt_text ?? "");
 const sourceMap = asRecord(afterGuide.source_map);
 const internalSurfaces = textArray(sourceMap?.internal_surfaces_used);
 assertCondition(context.contract_version === "aionis_agent_context_v1", "SDK packaged guide missing agent_context");
 assertCondition(context.actionable_history_used === true, "SDK packaged guide did not use actionable history");
-assertCondition(useNowMemoryIds.includes(handoffMemoryId), "SDK packaged guide did not expose structured handoff memory");
+assertCondition(
+  visibleMemoryIds.includes(handoffMemoryId)
+    && (useNowMemoryIds.includes(handoffMemoryId) || inspectBeforeUseMemoryIds.includes(handoffMemoryId)),
+  "SDK packaged guide did not expose structured handoff memory: " + JSON.stringify({
+    handoff_memory_id: handoffMemoryId,
+    use_now_memory_ids: useNowMemoryIds,
+    inspect_before_use_memory_ids: inspectBeforeUseMemoryIds,
+    do_not_use_memory_ids: doNotUseMemoryIds,
+    memory_ids: visibleMemoryIds,
+    rehydrate_hints: context.rehydrate_hints,
+    source_map: sourceMap,
+  }),
+);
 assertCondition(promptText.includes(marker) || textArray(context.use_now).some((entry) => entry.includes(marker)), "SDK packaged guide missing marker");
 assertCondition(internalSurfaces.includes("planning_context_embedding_unavailable"), "SDK packaged guide did not prove the no-embedding path");
 assertCondition(internalSurfaces.includes("full_power_agent_context_merge"), "SDK packaged guide did not merge structured handoff context");
 
-const feedback = await client.feedback(feedbackFromGuide({
-  guide: afterGuide,
-  run_id: runId + ":feedback",
-  outcome: "positive",
-  reason: "External package SDK smoke used the exposed structured handoff successfully.",
-  used_memory_ids: [handoffMemoryId],
-}));
+const feedbackAttribution = feedbackAttributionFromGuide(afterGuide);
+assertCondition(feedbackAttribution.status === "available", "SDK packaged guide missing persisted feedback attribution");
+assertCondition(
+  !feedbackAttribution.items.some((item) => item.memory_id === handoffMemoryId),
+  "continuity-only handoff unexpectedly entered the admission-learning exposure",
+);
+let feedbackRejectionCode = null;
+try {
+  feedbackFromGuide({
+    guide: afterGuide,
+    run_id: runId + ":feedback",
+    outcome: "positive",
+    reason: "Continuity visibility alone must not authorize formal learning feedback.",
+    used_memory_ids: [handoffMemoryId],
+  });
+} catch (error) {
+  feedbackRejectionCode = error && typeof error === "object" && "code" in error
+    ? String(error.code)
+    : null;
+}
+assertCondition(
+  feedbackRejectionCode === "guide_feedback_context_only_memory",
+  "SDK packaged helper did not reject context-only handoff attribution locally",
+);
 
 const measure = await client.measure(measureInputFromGuideLoop({
   task: {
@@ -237,9 +271,9 @@ const measure = await client.measure(measureInputFromGuideLoop({
   },
   before_guide: beforeGuide,
   after_guide: afterGuide,
-  feedback_result: feedback,
-  sufficient_evidence: true,
-  evidence_ids: ["memory:" + handoffMemoryId],
+  feedback_result: null,
+  sufficient_evidence: false,
+  evidence_ids: [],
 }));
 assertCondition(measure.contract_version === "aionis_measure_result_v1", "SDK packaged measure missing contract");
 
@@ -259,7 +293,11 @@ process.stdout.write(JSON.stringify({
   package: "@aionis/sdk",
   ordinary_memory_id: memoryId,
   handoff_memory_id: handoffMemoryId,
+  visible_memory_ids: visibleMemoryIds,
   use_now_memory_ids: useNowMemoryIds,
+  inspect_before_use_memory_ids: inspectBeforeUseMemoryIds,
+  feedback_attribution_item_ids: feedbackAttribution.items.map((item) => item.memory_id),
+  feedback_rejection_code: feedbackRejectionCode,
   internal_surfaces: internalSurfaces,
   measure_contract: measure.contract_version,
   snapshot_contract: operatorSnapshot.contract_version

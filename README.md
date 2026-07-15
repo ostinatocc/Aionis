@@ -43,11 +43,11 @@ rehydrated later, and why each decision was made.
 npx aionis setup
 ```
 
-Current candidate: **v0.3.7 Local Runtime Public Beta**. It is intended for a
-single self-hosted Runtime process with same-host Agent clients. The TypeScript
-SDK, HTTP API, MCP bridge, AIFS file surface, Memory Firewall, Agent Flight
-Recorder, optional Zvec candidate retrieval, and Substrate evidence sidecar are
-available for beta integration and evaluation.
+Current candidate: **Runtime v0.3.8 / SDK v0.3.17** (Local Runtime Public Beta).
+It is intended for a single self-hosted Runtime process with same-host Agent
+clients. The TypeScript SDK, HTTP API, MCP bridge, AIFS file surface, Memory
+Firewall, Agent Flight Recorder, optional Zvec candidate retrieval, and
+Substrate evidence sidecar are available for beta integration and evaluation.
 
 This candidate is not a GA managed service and does not claim multi-instance
 high availability. Lite keeps SQLite as authority; its in-process ANN is rebuilt
@@ -108,7 +108,7 @@ Docker users can run the Runtime directly:
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.7
+  ghcr.io/ostinatocc/aionis:v0.3.8
 ```
 
 The container process listens on `0.0.0.0` inside its network namespace so
@@ -292,7 +292,7 @@ flowchart LR
   Guide --> Compiler
   Govern --> Compiler
 
-  Compiler --> AgentContext["Agent Context\nshort + external + attributable"]
+  Compiler --> AgentContext["Agent Context\nshort + external + governed"]
   Compiler --> Receipt["Memory Use Receipt\nwhy used or suppressed"]
   Compiler --> Operator["Operator Snapshot\nbranch isolation + audit"]
 
@@ -484,7 +484,8 @@ The SDK verification flow runs a real local Runtime and verifies:
 1. a fresh guide starts without actionable history
 2. ordinary preference and project memory become reusable context
 3. the SDK compiles external execution memory into a contract-style Agent prompt
-4. feedback is attributed to the exact memory IDs exposed by the guide
+4. feedback is attributed only to exact memory IDs reported as used by host
+   instrumentation and authorized by the guide's persisted exposure
 5. `measure` reports whether history changed future context
 6. admission dataset JSONL export is produced without prompt payload
 7. operator audit surfaces remain read-only
@@ -634,7 +635,7 @@ BLOCKED_DIRECTION_TARGETS
 - failed broad search branch
 ```
 
-The structured context also carries memory IDs for attribution:
+The structured context also carries memory IDs for visibility and correlation:
 
 ```ts
 type AgentContext = {
@@ -653,14 +654,18 @@ type AgentContext = {
 Give the Agent SDK `agent_prompt`. Direct HTTP hosts may pass only
 `agent_context.prompt_text` or selected `agent_context` fields. Keep packets,
 traces, receipts, raw slots, and operator snapshots for host logs and
-observability.
+observability. Every `agent_context.*_memory_ids` list says what the Agent could
+see on that surface. It is not evidence that the Agent actually used a memory,
+and it is not feedback authorization.
 
 ## SDK Usage
 
 ```ts
 import {
   createAionisClient,
+  feedbackAttributionFromGuide,
   feedbackFromGuide,
+  type AionisGuideFeedbackAttributionV1,
 } from "@aionis/sdk";
 
 const aionis = createAionisClient({
@@ -678,7 +683,10 @@ await aionis.remember({
 });
 
 const context = await aionis.execution.guideAgentContextForRole<{
+  tenant_id: string;
+  scope: string;
   guide_trace_id: string;
+  feedback_attribution_v1: AionisGuideFeedbackAttributionV1;
   agent_context: {
     prompt_text: string;
     agent_context_mode: "standard" | "compact_agent";
@@ -693,20 +701,37 @@ const context = await aionis.execution.guideAgentContextForRole<{
   include_packets: true,
 });
 
-// Your host runs the Agent with context.agent_prompt.
+// Your host runs the Agent with context.agent_prompt. This result must come
+// from instrumented Agent/tool execution, not from agent_context ID lists.
+const agentResult = await runInstrumentedAgent(context.agent_prompt);
 
-await aionis.feedback(feedbackFromGuide({
-  guide: context.guide,
-  reason: "Agent used the exposed memory successfully.",
-  run_id: "run-001",
-  outcome: "positive",
-  used_memory_ids: context.guide.agent_context.use_now_memory_ids.slice(0, 1),
-}));
+// Zero verified-use IDs means no feedback request.
+if (agentResult.used_memory_ids.length > 0) {
+  const attribution = feedbackAttributionFromGuide(context.guide);
+  if (attribution.status !== "available") {
+    throw new Error(
+      `Feedback attribution is unavailable (${attribution.reason_code}); `
+      + "request a new guide instead of falling back to agent_context IDs.",
+    );
+  }
+
+  await aionis.feedback(feedbackFromGuide({
+    guide: context.guide,
+    reason: "Host instrumentation verified successful memory use.",
+    run_id: "run-001",
+    outcome: "positive",
+    used_memory_ids: agentResult.used_memory_ids,
+  }));
+}
 ```
 
-`feedbackFromGuide()` inherits the guide consumer identity when available, so
-private Agent memory feedback is attributed to the same Agent that received the
-guide. Your host still supplies only the memory IDs the Agent actually used.
+`feedbackFromGuide()` requires the complete source guide, including its valid
+top-level `feedback_attribution_v1`. It inherits the guide consumer identity
+when available, validates host-instrumented actual-use IDs against the persisted
+exposure, and derives the served surface from that exposure. AgentContext IDs
+cannot substitute for either actual-use evidence or authorization. If the host
+reports no used IDs, do not submit feedback. If attribution is unavailable,
+request a new guide; there is no AgentContext fallback.
 
 Full SDK guide: [docs/AIONIS_SDK_QUICKSTART.md](docs/AIONIS_SDK_QUICKSTART.md).
 
@@ -883,7 +908,7 @@ Host integration guide:
 | Agent Context | The governed prompt contract given to the Agent. |
 | Memory Lifecycle | The external state of memory: active, candidate, contested, suppressed, demoted, archived, or rehydrated. |
 | Memory Use Receipt | A read-only record of which memories were used, inspected, blocked, or requested for rehydration. |
-| Feedback Attribution | Feedback is applied only to memory IDs actually exposed by a guide and reported as used. |
+| Feedback Attribution | Feedback is applied only to host-instrumented actual-use IDs that exactly match the guide's persisted `feedback_attribution_v1`; AgentContext visibility alone does not qualify. |
 | Operator Snapshot | Read-only observability for branch isolation, memory use, measured effect, and trace-to-procedure readiness. |
 
 ## When To Use Aionis
@@ -913,7 +938,7 @@ observe -> guide -> agent action -> feedback -> measure -> snapshot
 | `observe` | Write real memory, execution evidence, outcomes, or handoff state. |
 | `guide` | Compile external memory into Agent-facing context. |
 | `agent action` | Your host runs the Agent with only the compiled context. |
-| `feedback` | Attribute the outcome to the memories actually used. |
+| `feedback` | Attribute the outcome to host-instrumented memory use authorized by the guide's persisted exposure. |
 | `forget` | Explicitly suppress, unsuppress, archive, or restore memory lifecycle state. |
 | `measure` | Check whether history helped, hurt, or lacked enough evidence. |
 | `snapshot` | Inspect memory use, branch isolation, and effect without mutating Runtime state. |

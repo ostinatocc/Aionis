@@ -1,6 +1,6 @@
 # Aionis Quickstart Matrix
 
-Status: public entrypoint selection guide for the v0.3.7 Local Runtime Public Beta candidate
+Status: public entrypoint selection guide for the v0.3.8 Local Runtime Public Beta candidate
 
 Use this matrix to choose the Aionis integration surface for your Agent. Setup
 installs and configures the Runtime first; verification loops are optional.
@@ -52,7 +52,7 @@ normal Aionis admission/governance path still decides `use_now`,
 
 | Flow | Proves | Best For | Output |
 |---|---|---|---|
-| SDK verification | Ordinary preference and project memory become compact Agent context; feedback is attributed to IDs exposed by the guide; admission dataset JSONL export is produced; measure and snapshot stay read-only. | Single-Agent product integration and SDK users. | [sdk-quickstart-result.json](examples/sdk-quickstart-result.json) |
+| SDK verification | Ordinary preference and project memory become compact Agent context; host-observed actual-use IDs are verified against persisted guide attribution; admission dataset JSONL export is produced; measure and snapshot stay read-only. | Single-Agent product integration and SDK users. | [sdk-quickstart-result.json](examples/sdk-quickstart-result.json) |
 | Claude Code lifecycle integration | The official plugin installs lifecycle hooks plus MCP so Claude Code receives governed context and records execution evidence automatically. | Claude Code users who want project-scoped execution memory across sessions. | [AIONIS_CLAUDE_CODE_INTEGRATION.md](AIONIS_CLAUDE_CODE_INTEGRATION.md) |
 | HTTP verification | The public HTTP product surface works without SDK helpers; raw `guide_trace_id + used_memory_ids` attribution works; `/v1/rehydrate` can restore archived memory. | Backend services, non-TypeScript hosts, curl/API validation. | [http-quickstart-result.json](examples/http-quickstart-result.json) |
 | Multi-agent verification | Planner, worker, verifier, and reviewer can share execution memory; reviewer continues the passed branch and avoids the failed branch. | Multi-Agent execution memory, handoff, branch isolation. | [multi-agent-quickstart-result.json](examples/multi-agent-quickstart-result.json) |

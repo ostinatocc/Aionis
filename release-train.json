@@ -2,10 +2,10 @@
   "schema_version": "aionis_release_train_v1",
   "status": "candidate",
   "runtime": {
-    "version": "0.3.7",
-    "source_tag": "v0.3.7",
+    "version": "0.3.8",
+    "source_tag": "v0.3.8",
     "docker_image": "ghcr.io/ostinatocc/aionis",
-    "docker_tag": "v0.3.7",
+    "docker_tag": "v0.3.8",
     "docker_platforms": [
       "linux/amd64"
     ],
@@ -30,9 +30,9 @@
     },
     "sdk": {
       "name": "@aionis/sdk",
-      "version": "0.3.16",
-      "source_ref": "v0.3.16",
-      "source_commit": "534f0553cc161bd5131362e597af5563cc953ae2",
+      "version": "0.3.17",
+      "source_ref": "6d4f8d96a57f9f88a34b7bd406cbe069ad46f86d",
+      "source_commit": "6d4f8d96a57f9f88a34b7bd406cbe069ad46f86d",
       "repository": "https://github.com/ostinatocc/aionis-sdk.git",
       "package_path": "."
     },

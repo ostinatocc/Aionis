@@ -1,6 +1,7 @@
 # Aionis Admission Dataset Export Quickstart
 
-Status: SDK-side read-only export path for memory admission audit rows
+Status: SDK v0.3.17 read-only export path for Runtime v0.3.8 memory admission
+audit rows
 
 This quickstart shows how to turn a real Aionis guide/feedback/measure loop
 into JSONL rows that a host can append to logs or a data lake.
@@ -20,7 +21,7 @@ that is when Aionis can join:
 - candidate memory
 - admission action
 - prompt exposure
-- host-attributed use
+- host-instrumented actual use
 - outcome
 - reason codes and evidence IDs
 
@@ -29,10 +30,12 @@ that is when Aionis can join:
 ```ts
 import {
   createAionisClient,
+  feedbackAttributionFromGuide,
   feedbackFromGuide,
   memoryAdmissionDatasetJsonlFromRows,
   memoryAdmissionDatasetRowsFromRecord,
   measureInputFromGuideLoop,
+  type AionisGuideFeedbackAttributionV1,
   type AionisMemoryAdmissionRecord,
 } from "@aionis/sdk";
 
@@ -57,7 +60,12 @@ const beforeGuide = await aionis.guide({
 });
 
 const afterGuide = await aionis.guide<{
+  tenant_id: string;
+  scope: string;
+  guide_trace_id: string;
+  feedback_attribution_v1: AionisGuideFeedbackAttributionV1;
   agent_context: {
+    prompt_text: string;
     use_now_memory_ids: string[];
   };
 }>({
@@ -67,16 +75,29 @@ const afterGuide = await aionis.guide<{
 });
 
 // Prefer guideAgentContext().agent_prompt for real Agent runs.
-// This raw guide example keeps afterGuide.agent_context fields for attribution.
-// Keep the memory IDs in host state for feedback attribution.
+// This raw guide example still retains the complete guide response, including
+// feedback_attribution_v1. AgentContext IDs are visibility/correlation data;
+// they are not actual-use evidence or feedback authorization.
+const agentResult = await runInstrumentedAgent(afterGuide.agent_context.prompt_text);
 
-const feedback = await aionis.feedback(feedbackFromGuide({
-  guide: afterGuide,
-  reason: "Agent used the exposed checkout integration memory.",
-  run_id: "run-001",
-  outcome: "positive",
-  used_memory_ids: afterGuide.agent_context.use_now_memory_ids.slice(0, 1),
-}));
+let feedback: unknown = null;
+if (agentResult.used_memory_ids.length > 0) {
+  const attribution = feedbackAttributionFromGuide(afterGuide);
+  if (attribution.status !== "available") {
+    throw new Error(
+      `Feedback attribution is unavailable (${attribution.reason_code}); `
+      + "request a new guide instead of falling back to agent_context IDs.",
+    );
+  }
+
+  feedback = await aionis.feedback(feedbackFromGuide({
+    guide: afterGuide,
+    reason: "Host instrumentation verified use of checkout integration memory.",
+    run_id: "run-001",
+    outcome: "positive",
+    used_memory_ids: agentResult.used_memory_ids,
+  }));
+}
 
 const measure = await aionis.measure(measureInputFromGuideLoop({
   task: {
@@ -140,6 +161,12 @@ Each JSONL row uses `aionis_memory_admission_dataset_row_v1` and contains:
 | `blocked_or_suppressed` | Memory was routed to `do_not_use`. |
 | `rehydrate_requested` | Memory required raw evidence recovery before exact use. |
 | `not_agent_facing` | Memory stayed out of the Agent-facing surface. |
+
+`unused_exposed` is an admission-dataset visibility label derived from
+`prompt_included`; it is not feedback authority and does not imply that a
+learning exposure item was persisted. Feedback eligibility comes only from the
+guide's `feedback_attribution_v1`. A context-only row may be useful for audit,
+but must never be converted into direct feedback.
 
 ## What It Excludes
 
