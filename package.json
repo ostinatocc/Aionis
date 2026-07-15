@@ -1,7 +1,7 @@
 {
   "name": "aionis-runtime-focused",
   "private": true,
-  "version": "0.3.8",
+  "version": "0.3.9",
   "license": "Apache-2.0",
   "type": "module",
   "description": "Focused Aionis local Runtime kernel for execution continuity, learning control, and controlled forgetting.",

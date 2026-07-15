@@ -2,10 +2,10 @@
   "schema_version": "aionis_release_train_v1",
   "status": "candidate",
   "runtime": {
-    "version": "0.3.8",
-    "source_tag": "v0.3.8",
+    "version": "0.3.9",
+    "source_tag": "v0.3.9",
     "docker_image": "ghcr.io/ostinatocc/aionis",
-    "docker_tag": "v0.3.8",
+    "docker_tag": "v0.3.9",
     "docker_platforms": [
       "linux/amd64"
     ],

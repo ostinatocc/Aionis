@@ -134,6 +134,12 @@ test("release docs tag Runtime and explicitly hold the already-frozen installer"
   for (const file of ["RELEASE_NOTES.md", "docs/AIONIS_RELEASES.md"]) {
     const source = read(file);
     assert.ok(source.includes(runtimeTagCommand), `${file} must include the Runtime tag command`);
+    assert.ok(source.includes("git fetch origin main --tags"), `${file} must refresh origin/main before tagging`);
+    assert.ok(source.includes("git switch main"), `${file} must leave the release branch before tagging`);
+    assert.ok(
+      source.includes(`${runtimeTagCommand} "$MAIN_COMMIT"`),
+      `${file} must tag the verified origin/main commit explicitly`,
+    );
     assert.ok(source.includes(frozenInstallerMarker), `${file} must explicitly hold the frozen Create package`);
     assert.doesNotMatch(
       source,

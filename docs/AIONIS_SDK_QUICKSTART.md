@@ -1,6 +1,6 @@
 # Aionis SDK Quickstart
 
-Status: developer-facing quickstart for Runtime v0.3.8 and SDK v0.3.17
+Status: developer-facing quickstart for Runtime v0.3.9 and SDK v0.3.17
 (Local Runtime Public Beta candidate)
 
 This quickstart shows the smallest SDK product loop:
