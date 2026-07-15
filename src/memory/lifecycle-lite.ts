@@ -62,6 +62,11 @@ export type ApplyUnusedExposureLearningControlLiteArgs = {
   guide_trace_id?: string | null;
   reason?: string | null;
   input_sha256?: string | null;
+  recorded_at?: string | null;
+  job_id?: string | null;
+  source_episode_id?: string | null;
+  source_feedback_event_id?: string | null;
+  evidence_cutoff_event_row_id?: number | null;
   memory_stats: UnusedExposureLearningControlStat[];
 };
 
@@ -299,7 +304,7 @@ export async function applyUnusedExposureLearningControlLite(
   const scope = tenancy.scope_key;
   const actor = input.actor ?? opts.defaultActor;
   const consumerTeamId = input.consumer_team_id ?? null;
-  const startedAt = new Date().toISOString();
+  const startedAt = input.recorded_at ?? new Date().toISOString();
   const reason =
     normalizeMaybeRedact(input.reason ?? undefined, opts)
     ?? "Repeated guide exposure without positive host attribution crossed the inspect-before-use learning control gate.";
@@ -319,23 +324,6 @@ export async function applyUnusedExposureLearningControlLite(
     && nonNegativeInt(entry.positive_attributed_use_count) === 0
   );
   const requestedNodeIds = uniqStrings(candidateStats.map((entry) => entry.memory_id.toLowerCase()));
-  if (requestedNodeIds.length === 0) {
-    return {
-      contract_version: "aionis_feedback_learning_control_persistence_v1",
-      mode: "inspect_before_use_persistence",
-      posture: "inspect_before_use",
-      memory_state_mutation: false,
-      authority_mutation: false,
-      changed_count: 0,
-      changed_memory_ids: [] as string[],
-      skipped_positive_attribution_memory_ids: [] as string[],
-      missing_node_ids: [] as string[],
-      commit_id: null as string | null,
-      commit_hash: null as string | null,
-      reason: "No repeated-unused-without-positive memory crossed the persistence gate.",
-    };
-  }
-
   const statById = new Map(candidateStats.map((entry) => [entry.memory_id.toLowerCase(), entry]));
   const { resolvedNodeIds, foundRows, missingNodeIds } = await resolveLifecycleNodes({
     liteWriteStore,
@@ -362,28 +350,13 @@ export async function applyUnusedExposureLearningControlLite(
     rowsToUpdate.push(row);
   }
 
-  if (rowsToUpdate.length === 0) {
-    return {
-      contract_version: "aionis_feedback_learning_control_persistence_v1",
-      mode: "inspect_before_use_persistence",
-      posture: "inspect_before_use",
-      memory_state_mutation: false,
-      authority_mutation: false,
-      changed_count: 0,
-      changed_memory_ids: [] as string[],
-      skipped_positive_attribution_memory_ids: skippedPositive,
-      missing_node_ids: missingNodeIds,
-      commit_id: null as string | null,
-      commit_hash: null as string | null,
-      reason: skippedPositive.length > 0
-        ? "Positive host attribution blocked repeated-unused learning control persistence."
-        : "No candidate memory rows were available for learning control persistence.",
-    };
-  }
-
   const parent = await liteWriteStore.latestCommit(scope);
   const diff = {
     job: "feedback_learning_control_inspect_before_use",
+    learning_control_job_id: input.job_id ?? null,
+    source_episode_id: input.source_episode_id ?? null,
+    source_feedback_event_id: input.source_feedback_event_id ?? null,
+    evidence_cutoff_event_row_id: input.evidence_cutoff_event_row_id ?? null,
     started_at: startedAt,
     scope,
     actor,
@@ -461,7 +434,7 @@ export async function applyUnusedExposureLearningControlLite(
     contract_version: "aionis_feedback_learning_control_persistence_v1",
     mode: "inspect_before_use_persistence",
     posture: "inspect_before_use",
-    memory_state_mutation: true,
+    memory_state_mutation: rowsToUpdate.length > 0,
     authority_mutation: false,
     changed_count: rowsToUpdate.length,
     changed_memory_ids: rowsToUpdate.map((row) => row.id),
@@ -469,7 +442,11 @@ export async function applyUnusedExposureLearningControlLite(
     missing_node_ids: missingNodeIds,
     commit_id: commitId,
     commit_hash: commitHash,
-    reason: "Repeated exposure without positive host attribution persisted an inspect-before-use memory posture.",
+    reason: rowsToUpdate.length > 0
+      ? "Repeated exposure without positive host attribution persisted an inspect-before-use memory posture."
+      : skippedPositive.length > 0
+        ? "Positive host attribution blocked repeated-unused learning control persistence."
+        : "No repeated-unused-without-positive memory crossed the persistence gate.",
   };
 }
 

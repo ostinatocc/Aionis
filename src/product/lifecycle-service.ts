@@ -29,6 +29,7 @@ import {
 import type { LiteLearningFeedbackSource } from "../store/lite-learning-feedback-source.js";
 import { appendBoundaryLearningSafetyStop } from "../store/lite-learning-safety-stop.js";
 import type { LiteLearningEpisodeLedgerAccess } from "../store/lite-learning-episode-ledger.js";
+import type { LiteLearningControlJobAccess } from "../store/lite-learning-control-jobs.js";
 import { sha256Hex } from "../util/crypto.js";
 import type { AuthPrincipal } from "../util/auth.js";
 import { HttpError } from "../util/http.js";
@@ -680,6 +681,7 @@ export type ProductLifecycleServiceDependencies = {
   env: Env;
   liteWriteStore: LiteWriteStore;
   learningEpisodeLedgerAccess?: LiteLearningEpisodeLedgerAccess | null;
+  learningControlJobAccess?: LiteLearningControlJobAccess | null;
 };
 
 function lifecycleSuccessResult(args: {
@@ -693,6 +695,7 @@ function lifecycleSuccessResult(args: {
   learningAttributionStatus?: ProductLearningAttributionStatus;
   learningEpisodeId?: string | null;
   learningFeedbackEventId?: string | null;
+  feedbackLearningControlPersistence?: unknown;
 }): ProductServiceResult {
   return productServiceSuccess({
     contract_version: productLifecycleContractVersion(args.surface),
@@ -716,6 +719,7 @@ function lifecycleSuccessResult(args: {
       learningAttributionStatus: args.learningAttributionStatus,
       learningEpisodeId: args.learningEpisodeId,
       learningFeedbackEventId: args.learningFeedbackEventId,
+      feedbackLearningControlPersistence: args.feedbackLearningControlPersistence,
     }),
     result: args.resultBody,
     source_map: {
@@ -740,7 +744,7 @@ async function executeDirectFeedback(args: {
   surface: ProductLifecycleSurface;
   context: ProductLifecycleExecutionContext;
 }): Promise<ProductServiceResult> {
-  const { env, liteWriteStore, learningEpisodeLedgerAccess } = args.dependencies;
+  const { env, liteWriteStore, learningEpisodeLedgerAccess, learningControlJobAccess } = args.dependencies;
   const identity = productFeedbackOperationIdentity({ parsed: args.parsed, surface: args.surface, env });
   if (identity) {
     const stored = await liteWriteStore.getWriteOperation({
@@ -848,7 +852,10 @@ async function executeDirectFeedback(args: {
     const unusedExposureObservation = guideExposure?.ok
       ? await buildUnusedExposureObservation({ liteWriteStore, env, parsed: args.parsed, guideExposure })
       : null;
-    const response = lifecycleSuccessResult({
+    const learningControlWillQueue = source?.items.some((item) => !usedMemoryIds.includes(item.memory_id)) === true;
+    const responseForLearningControlStatus = (
+      learningControlStatus: "queued" | "already_completed" | null,
+    ) => lifecycleSuccessResult({
       env,
       parsed: args.parsed,
       surface: args.surface,
@@ -859,8 +866,12 @@ async function executeDirectFeedback(args: {
       learningAttributionStatus,
       learningEpisodeId: source?.event.episode_id ?? null,
       learningFeedbackEventId: feedbackEventId,
+      feedbackLearningControlPersistence: learningControlStatus === null
+        ? null
+        : { learning_control_status: learningControlStatus },
     });
-    const receiptJson = identity ? stableStringify(response) : null;
+    let response = responseForLearningControlStatus(learningControlWillQueue ? "queued" : null);
+    let receiptJson = identity ? stableStringify(response) : null;
     if (receiptJson !== null
       && Buffer.byteLength(receiptJson, "utf8") > PRODUCT_FEEDBACK_OPERATION_RECEIPT_MAX_BYTES) {
       throw new HttpError(
@@ -901,6 +912,27 @@ async function executeDirectFeedback(args: {
       const feedbackEventRowId = Number(appendResult.row.row_id);
       if (!Number.isSafeInteger(feedbackEventRowId) || feedbackEventRowId < 1) {
         throw new Error("learning feedback append did not return its durable event row");
+      }
+      if (append.payload.unused_exposure_ids.length > 0) {
+        if (!learningControlJobAccess) {
+          throw new Error("learning feedback requires the durable learning-control queue");
+        }
+        const queued = await learningControlJobAccess.enqueueUnusedExposureLearningControlJob({
+          tenantId: append.event.tenant_id,
+          scope: append.event.scope,
+          sourceEpisodeId: append.event.episode_id,
+          sourceFeedbackEventId: append.event.event_id,
+          sourceCommitId: requireSourceCommitId(),
+          exposureIds: append.payload.unused_exposure_ids,
+          enqueuedAt: append.event.recorded_at,
+        });
+        if (identity && queued.status !== "queued") {
+          throw new Error("protected feedback cannot rewrite its canonical learning-control queue receipt");
+        }
+        if (!identity && queued.status !== "queued") {
+          response = responseForLearningControlStatus(queued.status);
+          receiptJson = null;
+        }
       }
       await appendBoundaryLearningSafetyStop({
         ledger: learningEpisodeLedgerAccess,
@@ -1010,6 +1042,10 @@ export function createProductLifecycleService(
   if (dependencies.learningEpisodeLedgerAccess
     && dependencies.learningEpisodeLedgerAccess.transactionRunner() !== liteWriteStore.transactionRunner()) {
     throw new Error("memory feedback ledger and write store must share one Runtime transaction runner");
+  }
+  if (dependencies.learningControlJobAccess
+    && dependencies.learningControlJobAccess.transactionRunner() !== liteWriteStore.transactionRunner()) {
+    throw new Error("memory feedback learning-control queue and write store must share one Runtime transaction runner");
   }
   return {
     async execute(parsed, surface, context): Promise<ProductServiceResult> {

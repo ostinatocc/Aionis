@@ -32,6 +32,7 @@ import type { ExecutionTreeStore } from "../execution/tree-store.js";
 import type { ClaimLedgerAccess, SkillCandidateReviewAccess } from "../store/memory-store.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
 import type { LiteLearningEpisodeLedgerAccess } from "../store/lite-learning-episode-ledger.js";
+import type { LiteLearningControlJobAccess } from "../store/lite-learning-control-jobs.js";
 import { buildLiteRouteMatrix, registerLiteServerOnlyRoutes } from "./lite-runtime-boundary.js";
 import { createErrorResponse, HttpError } from "../util/http.js";
 
@@ -74,6 +75,21 @@ function readinessCheck(provider?: HealthSnapshotProvider | null): boolean {
   try {
     provider.healthSnapshot();
     return true;
+  } catch {
+    return false;
+  }
+}
+
+function learningControlReadinessCheck(provider: HealthSnapshotProvider): boolean {
+  try {
+    const snapshot = provider.healthSnapshot();
+    if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return false;
+    const record = snapshot as Record<string, unknown>;
+    if (record.closed !== false || record.last_error_code !== null) return false;
+    const backlog = record.backlog;
+    if (!backlog || typeof backlog !== "object" || Array.isArray(backlog)) return false;
+    const exhausted = (backlog as Record<string, unknown>).exhausted;
+    return typeof exhausted === "number" && Number.isSafeInteger(exhausted) && exhausted === 0;
   } catch {
     return false;
   }
@@ -238,6 +254,7 @@ export function registerHealthRoute(args: {
   liteRecallStore?: { healthSnapshot: () => unknown } | null;
   liteWriteStore?: { healthSnapshot: () => unknown } | null;
   projectionWorker?: HealthSnapshotProvider | null;
+  learningControlWorker?: HealthSnapshotProvider | null;
   liteClaimLedgerStore?: { healthSnapshot: () => unknown } | null;
   executionStateStore?: { healthSnapshot: () => unknown } | null;
   executionTreeStore?: { healthSnapshot: () => unknown } | null;
@@ -252,6 +269,7 @@ export function registerHealthRoute(args: {
     liteRecallStore,
     liteWriteStore,
     projectionWorker,
+    learningControlWorker,
     liteClaimLedgerStore,
     executionStateStore,
     executionTreeStore,
@@ -271,6 +289,9 @@ export function registerHealthRoute(args: {
       execution_tree_store: readinessCheck(executionTreeStore),
       replay_store: readinessCheck(liteReplayStore),
       sandbox: readinessCheck(sandboxExecutor),
+      ...(learningControlWorker
+        ? { learning_control_worker: learningControlReadinessCheck(learningControlWorker) }
+        : {}),
     };
     const ready = Object.values(checks).every((ok) => ok === true);
     return reply.code(ready ? 200 : 503).send({
@@ -308,6 +329,7 @@ export function registerHealthRoute(args: {
               recall: storeHealthSnapshot(liteRecallStore),
               write: storeHealthSnapshot(liteWriteStore),
               projection_worker: storeHealthSnapshot(projectionWorker),
+              learning_control_worker: storeHealthSnapshot(learningControlWorker),
               claim_ledger: storeHealthSnapshot(liteClaimLedgerStore),
               execution_state: storeHealthSnapshot(executionStateStore),
               execution_tree: storeHealthSnapshot(executionTreeStore),
@@ -632,6 +654,7 @@ export function createRuntimeProductServices(args: {
   executionTreeStore?: ExecutionTreeStore | null;
   claimLedgerAccess?: ClaimLedgerAccess | null;
   learningEpisodeLedgerAccess?: LiteLearningEpisodeLedgerAccess | null;
+  learningControlJobAccess?: LiteLearningControlJobAccess | null;
   admissionCandidatePolicyProfileRules?: RuntimeGovernanceConfig["admissionCandidatePolicyProfileRules"];
   skillCandidateReviewAccess?: SkillCandidateReviewAccess | null;
   memoryWriteService: MemoryWriteRouteService | null;
@@ -671,6 +694,7 @@ export function createRuntimeProductServices(args: {
       env: args.env,
       liteWriteStore: args.liteWriteStore,
       learningEpisodeLedgerAccess: args.learningEpisodeLedgerAccess ?? null,
+      learningControlJobAccess: args.learningControlJobAccess ?? null,
     }),
     measure: createProductMeasureService({
       defaultTenantId: args.env.MEMORY_TENANT_ID,

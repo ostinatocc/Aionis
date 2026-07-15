@@ -37,6 +37,7 @@ const ALLOWED_JOB_FILES = [
   "associative-linking-lib.ts",
   "associative-linking-worker.ts",
   "lite-projection-worker.ts",
+  "unused-exposure-learning-control-worker.ts",
 ];
 
 const BOUNDED_STABLE_JSON_SOURCE_DIRS = [
@@ -98,12 +99,24 @@ test("lite repo keeps only kernel-linked job helpers", () => {
   assert.equal(fs.existsSync(path.join(jobsDir, "fixtures")), false, "src/jobs/fixtures should be absent in lite repo");
 });
 
-test("generic lite outbox stays reserved for associative linking while durable projections use their own queue", () => {
+test("generic lite outbox stays reserved for associative linking while durable projections and learning control use their own queues", () => {
   const writeAccessFile = fs.readFileSync(path.join(ROOT, "src", "store", "write-access.ts"), "utf8");
   const writePostCommitFile = fs.readFileSync(path.join(ROOT, "src", "memory", "write-post-commit.ts"), "utf8");
   const runtimeEntryFile = fs.readFileSync(path.join(ROOT, "src", "runtime-entry.ts"), "utf8");
   const workerFile = fs.readFileSync(path.join(ROOT, "src", "jobs", "associative-linking-worker.ts"), "utf8");
   const projectionStoreFile = fs.readFileSync(path.join(ROOT, "src", "store", "lite-projection-outbox.ts"), "utf8");
+  const learningControlStoreFile = fs.readFileSync(
+    path.join(ROOT, "src", "store", "lite-learning-control-jobs.ts"),
+    "utf8",
+  );
+  const learningControlWorkerFile = fs.readFileSync(
+    path.join(ROOT, "src", "jobs", "unused-exposure-learning-control-worker.ts"),
+    "utf8",
+  );
+  const learningEpisodeLedgerFile = fs.readFileSync(
+    path.join(ROOT, "src", "store", "lite-learning-episode-ledger.ts"),
+    "utf8",
+  );
   const removedOutboxEvents = [
     "embed" + "_nodes",
     "topic" + "_cluster",
@@ -119,8 +132,15 @@ test("generic lite outbox stays reserved for associative linking while durable p
   assert.match(workerFile, /eventType: "associative_link"/);
   assert.match(runtimeEntryFile, /startLiteAssociativeLinkWorker/);
   assert.match(runtimeEntryFile, /startLiteProjectionWorker/);
+  assert.match(runtimeEntryFile, /startUnusedExposureLearningControlWorker/);
   assert.match(projectionStoreFile, /lite_memory_projection_jobs/);
   assert.equal(projectionStoreFile.includes("lite_memory_outbox"), false);
+  assert.match(learningEpisodeLedgerFile, /CREATE TABLE lite_learning_control_jobs/);
+  assert.match(learningControlStoreFile, /lite_learning_control_jobs/);
+  assert.match(learningControlStoreFile, /claimLearningControlJobs/);
+  assert.match(learningControlWorkerFile, /claimLearningControlJobs/);
+  assert.equal(learningControlStoreFile.includes("lite_memory_outbox"), false);
+  assert.equal(learningControlWorkerFile.includes("lite_memory_outbox"), false);
 });
 
 test("focused repo keeps Runtime source only and does not vendor adapter package sources", () => {

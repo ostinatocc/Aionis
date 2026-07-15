@@ -42,6 +42,10 @@ import {
   type LiteLearningGateArtifactSetMember,
 } from "../../src/store/lite-learning-episode-ledger.ts";
 import {
+  buildUnusedExposureLearningControlJob,
+  learningControlOperationRequestSha256,
+} from "../../src/store/lite-learning-control-jobs.ts";
+import {
   LITE_LEARNING_V3_ELIGIBLE_ACTIVE_LEASE_TRIGGER_SQL,
   migrateLiteLearningEpisodeLedgerV3ToV4,
 } from
@@ -4261,6 +4265,148 @@ test("generic verification and backup replay canonical episode payload, event, i
   }
 });
 
+test("markerless historical unused feedback reopens without a synthesized control job", async () => {
+  const temp = tempDatabase("markerless-unused-feedback-compatibility");
+  const baseExposure = legacyExposureFixture();
+  const unusedItem: LearningLedgerItem = {
+    ...baseExposure.item,
+    memory_id: "memory-unused-markerless",
+  };
+  const exposurePayload: ExposureCommittedV1 = {
+    ...baseExposure.payload,
+    relevant_memory_ids: [baseExposure.item.memory_id, unusedItem.memory_id],
+  };
+  const exposurePayloadEncoded = canonicalJson(exposurePayload);
+  const exposureEvent: EventWithoutDigest = {
+    ...baseExposure.event,
+    payload_sha256: exposurePayloadEncoded.sha256,
+    item_set_sha256: learningItemSetDigest([baseExposure.item, unusedItem]),
+  };
+  const exposure = {
+    ...baseExposure,
+    payload: exposurePayload,
+    event: exposureEvent,
+    row: {
+      ...baseExposure.row,
+      event_sha256: learningEpisodeEventDigest(exposureEvent),
+      payload_sha256: exposurePayloadEncoded.sha256,
+      payload_json: exposurePayloadEncoded.json,
+      item_set_sha256: exposureEvent.item_set_sha256,
+    },
+  };
+  const database = createLiteRuntimeDatabase(temp.path);
+  let writeStore: ReturnType<typeof createLiteWriteStoreFromDatabase> | null = null;
+  try {
+    writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
+    const ledger = createLiteLearningEpisodeLedgerAccess(database);
+    await database.transaction.run(async () => await ledger.appendEpisodeEvent({
+      row: exposure.row,
+      event: exposure.event,
+      payload: exposure.payload,
+      exposureItems: [exposure.item, unusedItem],
+    }));
+    const payload = {
+      contract_version: "aionis_learning_feedback_v1",
+      feedback_kind: "memory",
+      guide_trace_id: "guide-a",
+      request_sha256: "c".repeat(64),
+      operation_protection: "legacy_unprotected",
+      operation_receipt_sha256: null,
+      run_id: "run-markerless-feedback",
+      source_commit_id: "commit-markerless-feedback",
+      host_use_receipt_sha256: null,
+      runtime_signal_refs: [],
+      unused_exposure_ids: [exposure.event.event_id],
+    } as const;
+    const attributionBase = authorityRow("lite_learning_feedback_attributions", {
+      tenant_id: "tenant-a",
+      scope: "scope-a",
+      event_id: "event-markerless-feedback",
+      episode_id: exposure.episodeId,
+      subject_kind: "memory",
+      subject_id: "memory-a",
+      outcome: "negative",
+      action_outcome: null,
+      used_surface: "inspect_before_use",
+      exposure_action: "inspect_before_use",
+      boundary_outcome: "aligned",
+      attribution_strength: "weak_counter_signal",
+      evidence_class: "legacy_unverified",
+      host_use_receipt_id: null,
+      host_use_receipt_sha256: null,
+      receipt_item_sha256: null,
+      host_task_envelope_sha256: null,
+      collection_principal_sha256: null,
+      collector_id: null,
+      collector_version: null,
+      content_evidence_sha256: null,
+      verifier_kind: null,
+      verifier_version: null,
+      verifier_config_sha256: null,
+      verifier_status: null,
+      tool_status: null,
+      runtime_signal_refs_sha256: null,
+      item_sha256: "0".repeat(64),
+    });
+    const attribution = {
+      ...attributionBase,
+      item_sha256: learningFeedbackAttributionItemDigest(attributionBase),
+    } satisfies LiteLearningAuthorityRow;
+    const encoded = canonicalJson(payload);
+    const event: EventWithoutDigest = {
+      contract_version: "aionis_learning_episode_event_v1",
+      tenant_id: "tenant-a",
+      scope: "scope-a",
+      event_id: "event-markerless-feedback",
+      episode_id: exposure.episodeId,
+      episode_sequence: 2,
+      event_kind: "feedback_attributed",
+      source_kind: "memory_feedback_operation",
+      source_id: "feedback-operation-markerless",
+      source_sha256: sha256("feedback-source-markerless"),
+      previous_event_sha256: learningEpisodeEventDigest(exposure.event),
+      payload_sha256: encoded.sha256,
+      item_set_sha256: learningFeedbackAttributionSetDigest([attribution]),
+      source_commit_id: "commit-markerless-feedback",
+      supersedes_event_id: null,
+      operation_id: "feedback-operation-markerless",
+      run_id: "run-markerless-feedback",
+      collection_class: "unverified",
+      recorded_at: "2026-07-13T01:00:00.000Z",
+    };
+    await database.transaction.run(async () => await ledger.appendEpisodeEvent({
+      row: episodeEventRow(event, payload),
+      event,
+      payload,
+      feedbackAttributions: [attribution],
+    }));
+    assert.equal(Number((database.db.prepare(
+      "SELECT COUNT(*) AS count FROM lite_learning_control_jobs",
+    ).get() as { count: number }).count), 0);
+    await ledger.verifyIntegrity();
+    await writeStore.close();
+    writeStore = null;
+    await database.close();
+
+    const reopened = createLiteRuntimeDatabase(temp.path);
+    try {
+      await createLiteLearningEpisodeLedgerAccess(reopened).verifyIntegrity();
+      assert.equal(Number((reopened.db.prepare(
+        "SELECT COUNT(*) AS count FROM lite_learning_control_jobs",
+      ).get() as { count: number }).count), 0);
+    } finally {
+      await reopened.close();
+    }
+    const verification = await verifyLiteRuntimeDatabase(temp.path);
+    assert.equal(verification.ok, true);
+    assert.equal(verification.counts.learning_control_jobs, 0);
+  } finally {
+    if (writeStore) await writeStore.close();
+    await database.close();
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
 test("feedback and effect rows stay atomic while legal control blockers fail learning artifacts", async () => {
   const temp = tempDatabase("episode-feedback-effect");
   const exposure = legacyExposureFixture();
@@ -4294,6 +4440,7 @@ test("feedback and effect rows stay atomic while legal control blockers fail lea
       host_use_receipt_sha256: null,
       runtime_signal_refs: [],
       unused_exposure_ids: [exposure.event.event_id],
+      learning_control_queue_contract: "unused_exposure_learning_control_v1",
     } as const;
     const feedbackAttributionBase = authorityRow("lite_learning_feedback_attributions", {
       tenant_id: "tenant-a",
@@ -4495,10 +4642,23 @@ test("feedback and effect rows stay atomic while legal control blockers fail lea
     }));
     assert.equal(effectReplay.replayed, true);
 
-    const controlPayload = canonicalJson({
-      contract_version: "unused_exposure_learning_control_v1",
-      feedback_event_id: feedbackEvent.event_id,
-      exposure_ids: [exposure.event.event_id],
+    const deadLetterControl = buildUnusedExposureLearningControlJob({
+      tenantId: "tenant-a",
+      scope: "scope-a",
+      sourceEpisodeId: exposure.episodeId,
+      sourceFeedbackEventId: feedbackEvent.event_id,
+      sourceCommitId: "commit-feedback-a",
+      exposureIds: [exposure.event.event_id],
+      enqueuedAt: feedbackEvent.recorded_at,
+    });
+    const expiredLeaseControl = buildUnusedExposureLearningControlJob({
+      tenantId: "tenant-a",
+      scope: "scope-a",
+      sourceEpisodeId: exposure.episodeId,
+      sourceFeedbackEventId: correctionEvent.event_id,
+      sourceCommitId: "commit-feedback-a",
+      exposureIds: [exposure.event.event_id],
+      enqueuedAt: correctionEvent.recorded_at,
     });
     const insertControlJob = database.db.prepare(
       `INSERT INTO lite_learning_control_jobs
@@ -4510,33 +4670,72 @@ test("feedback and effect rows stay atomic while legal control blockers fail lea
                ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
     );
     insertControlJob.run(
-      "tenant-a", "scope-a", "control-dead-letter", "control-operation-dead-letter",
-      exposure.episodeId, feedbackEvent.event_id, "commit-feedback-a",
-      controlPayload.sha256, controlPayload.json, "dead_letter", 8,
+      deadLetterControl.tenant_id, deadLetterControl.scope, deadLetterControl.job_id,
+      deadLetterControl.operation_id, deadLetterControl.source_episode_id,
+      deadLetterControl.source_feedback_event_id, deadLetterControl.source_commit_id,
+      deadLetterControl.payload_sha256, deadLetterControl.payload_json, "dead_letter", 8,
       "2026-07-13T04:00:00.000Z", null, null, "retry_exhausted",
-      "2026-07-13T04:00:00.000Z", "2026-07-13T05:00:00.000Z",
+      deadLetterControl.created_at, "2026-07-13T05:00:00.000Z",
       "2026-07-13T05:00:00.000Z",
     );
     insertControlJob.run(
-      "tenant-a", "scope-a", "control-expired-lease", "control-operation-expired-lease",
-      exposure.episodeId, feedbackEvent.event_id, "commit-feedback-a",
-      controlPayload.sha256, controlPayload.json, "leased", 1,
+      expiredLeaseControl.tenant_id, expiredLeaseControl.scope, expiredLeaseControl.job_id,
+      expiredLeaseControl.operation_id, expiredLeaseControl.source_episode_id,
+      expiredLeaseControl.source_feedback_event_id, expiredLeaseControl.source_commit_id,
+      expiredLeaseControl.payload_sha256, expiredLeaseControl.payload_json, "leased", 1,
       "2026-07-13T04:00:00.000Z", "worker-a", "2026-07-13T05:00:00.000Z", null,
-      "2026-07-13T04:00:00.000Z", "2026-07-13T04:30:00.000Z", null,
+      expiredLeaseControl.created_at, "2026-07-13T04:30:00.000Z", null,
+    );
+    const deadLetterJob = database.db.prepare(
+      "SELECT * FROM lite_learning_control_jobs WHERE job_id = ?",
+    ).get(deadLetterControl.job_id) as Record<string, any>;
+    const deadLetterReceipt = {
+      contract_version: "unused_exposure_learning_control_operation_receipt_v1",
+      status: "dead_letter",
+      tenant_id: deadLetterJob.tenant_id,
+      scope: deadLetterJob.scope,
+      job_id: deadLetterJob.job_id,
+      operation_kind: "unused_exposure_learning_control_v1",
+      operation_id: deadLetterJob.operation_id,
+      source_episode_id: deadLetterJob.source_episode_id,
+      source_feedback_event_id: deadLetterJob.source_feedback_event_id,
+      source_commit_id: deadLetterJob.source_commit_id,
+      payload_sha256: deadLetterJob.payload_sha256,
+      attempt_count: deadLetterJob.attempt_count,
+      result_commit_id: null,
+      changed_memory_ids: [],
+      skipped_positive_attribution_memory_ids: [],
+      missing_node_ids: [],
+      last_error_code: deadLetterJob.last_error_code,
+      completed_at: deadLetterJob.completed_at,
+    };
+    database.db.prepare(
+      `INSERT INTO lite_runtime_write_operations
+        (tenant_id, scope, operation_kind, operation_id, request_sha256,
+         receipt_json, commit_id, created_at)
+       VALUES (?, ?, 'unused_exposure_learning_control_v1', ?, ?, ?, ?, ?)`,
+    ).run(
+      deadLetterJob.tenant_id,
+      deadLetterJob.scope,
+      deadLetterJob.operation_id,
+      learningControlOperationRequestSha256(deadLetterJob as any),
+      stableStringify(deadLetterReceipt),
+      deadLetterJob.source_commit_id,
+      deadLetterJob.completed_at,
     );
     assert.throws(
       () => database.db.prepare(
         `UPDATE lite_learning_control_jobs
          SET status = 'pending', attempt_count = 8, lease_owner = NULL,
              lease_expires_at = NULL, last_error_code = NULL, completed_at = NULL
-         WHERE job_id = 'control-dead-letter'`,
-      ).run(),
+         WHERE job_id = ?`,
+      ).run(deadLetterControl.job_id),
       /learning_control_job_update_forbidden/,
     );
     assert.throws(
       () => database.db.prepare(
-        "DELETE FROM lite_learning_control_jobs WHERE job_id = 'control-dead-letter'",
-      ).run(),
+        "DELETE FROM lite_learning_control_jobs WHERE job_id = ?",
+      ).run(deadLetterControl.job_id),
       /learning_control_job_delete_forbidden/,
     );
 
@@ -4667,8 +4866,8 @@ test("feedback and effect rows stay atomic while legal control blockers fail lea
       database.db.prepare(
         `UPDATE lite_learning_control_jobs
          SET payload_json = ?, payload_sha256 = ?
-         WHERE job_id = 'control-expired-lease'`,
-      ).run(emptyControlPayload.json, emptyControlPayload.sha256);
+         WHERE job_id = ?`,
+      ).run(emptyControlPayload.json, emptyControlPayload.sha256, expiredLeaseControl.job_id);
     });
     const invalidControlPayload = await verifyLiteRuntimeDatabase(temp.path);
     assert.equal(invalidControlPayload.ok, false);
@@ -4677,16 +4876,20 @@ test("feedback and effect rows stay atomic while legal control blockers fail lea
       database.db.prepare(
         `UPDATE lite_learning_control_jobs
          SET payload_json = ?, payload_sha256 = ?
-         WHERE job_id = 'control-expired-lease'`,
-      ).run(controlPayload.json, controlPayload.sha256);
+         WHERE job_id = ?`,
+      ).run(
+        expiredLeaseControl.payload_json,
+        expiredLeaseControl.payload_sha256,
+        expiredLeaseControl.job_id,
+      );
     });
 
     mutateAppendOnlyTable(database.db, "lite_learning_control_jobs", () => {
       database.db.prepare(
         `UPDATE lite_learning_control_jobs
          SET lease_expires_at = 'zzz'
-         WHERE job_id = 'control-expired-lease'`,
-      ).run();
+         WHERE job_id = ?`,
+      ).run(expiredLeaseControl.job_id);
     });
     const invalidControlLeaseTime = await verifyLiteRuntimeDatabase(temp.path);
     assert.equal(invalidControlLeaseTime.ok, false);
@@ -4695,8 +4898,33 @@ test("feedback and effect rows stay atomic while legal control blockers fail lea
       database.db.prepare(
         `UPDATE lite_learning_control_jobs
          SET lease_expires_at = '2026-07-13T05:00:00.000Z'
-         WHERE job_id = 'control-expired-lease'`,
-      ).run();
+         WHERE job_id = ?`,
+      ).run(expiredLeaseControl.job_id);
+    });
+    assert.equal((await verifyLiteRuntimeDatabase(temp.path)).ok, true);
+
+    mutateAppendOnlyTable(database.db, "lite_learning_control_jobs", () => {
+      database.db.prepare(
+        `UPDATE lite_learning_control_jobs
+         SET status = 'pending', attempt_count = 8,
+             available_at = '2026-07-13T05:00:00.000Z',
+             lease_owner = NULL, lease_expires_at = NULL,
+             last_error_code = 'retry_exhausted'
+         WHERE job_id = ?`,
+      ).run(expiredLeaseControl.job_id);
+    });
+    const invalidPendingExhaustedJob = await verifyLiteRuntimeDatabase(temp.path);
+    assert.equal(invalidPendingExhaustedJob.ok, false);
+    assert.equal(invalidPendingExhaustedJob.integrity_findings.learning_episode_ledger_invalid, 1);
+    mutateAppendOnlyTable(database.db, "lite_learning_control_jobs", () => {
+      database.db.prepare(
+        `UPDATE lite_learning_control_jobs
+         SET status = 'leased', attempt_count = 1,
+             available_at = '2026-07-13T04:00:00.000Z',
+             lease_owner = 'worker-a', lease_expires_at = '2026-07-13T05:00:00.000Z',
+             last_error_code = NULL
+         WHERE job_id = ?`,
+      ).run(expiredLeaseControl.job_id);
     });
     assert.equal((await verifyLiteRuntimeDatabase(temp.path)).ok, true);
 

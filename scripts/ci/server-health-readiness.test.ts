@@ -29,7 +29,11 @@ function store(path: string, mode = "sqlite_write_v1") {
   };
 }
 
-function registerTestHealthRoute(env: Env, failingStore = false) {
+function registerTestHealthRoute(
+  env: Env,
+  failingStore = false,
+  learningControlSnapshot?: unknown,
+) {
   const app = Fastify();
   const provider = failingStore
     ? { healthSnapshot: () => { throw new Error("database path /tmp/secret.sqlite failed"); } }
@@ -42,6 +46,9 @@ function registerTestHealthRoute(env: Env, failingStore = false) {
     executionStateStore: provider,
     executionTreeStore: provider,
     liteReplayStore: provider,
+    ...(learningControlSnapshot === undefined
+      ? {}
+      : { learningControlWorker: { healthSnapshot: () => learningControlSnapshot } }),
     sandboxExecutor: {
       healthSnapshot: () => ({ enabled: false, mode: "disabled" }),
     },
@@ -107,4 +114,44 @@ test("/readyz returns 503 when a readiness dependency throws and redacts details
   assert.doesNotMatch(response.body, /secret\.sqlite/);
   assert.doesNotMatch(response.body, /database path/);
   await app.close();
+});
+
+test("/readyz tolerates ordinary learning backlog but fails closed on exhausted terminalization", async () => {
+  const healthyBacklog = registerTestHealthRoute(serverEnv(), false, {
+    running: false,
+    closed: false,
+    last_error_code: null,
+    backlog: {
+      pending: 7,
+      leased: 1,
+      expired_leases: 1,
+      completed: 11,
+      dead_letter: 3,
+      exhausted: 0,
+    },
+  });
+  const healthy = await healthyBacklog.inject({ method: "GET", url: "/readyz" });
+  assert.equal(healthy.statusCode, 200, healthy.body);
+  assert.equal(healthy.json().checks.learning_control_worker, true);
+  await healthyBacklog.close();
+
+  const exhaustedBacklog = registerTestHealthRoute(serverEnv(), false, {
+    running: false,
+    closed: false,
+    last_error_code: null,
+    last_terminalization_error_code: "learning_control_terminalization_safety_pause_failed",
+    backlog: {
+      pending: 0,
+      leased: 1,
+      expired_leases: 0,
+      completed: 11,
+      dead_letter: 3,
+      exhausted: 1,
+    },
+  });
+  const exhausted = await exhaustedBacklog.inject({ method: "GET", url: "/readyz" });
+  assert.equal(exhausted.statusCode, 503, exhausted.body);
+  assert.equal(exhausted.json().checks.learning_control_worker, false);
+  assert.doesNotMatch(exhausted.body, /safety_pause_failed/u);
+  await exhaustedBacklog.close();
 });

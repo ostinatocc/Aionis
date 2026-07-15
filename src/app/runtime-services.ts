@@ -15,6 +15,7 @@ import { createLiteWriteStoreFromDatabase } from "../store/lite-write-store.js";
 import { createLiteClaimLedgerStoreFromDatabase } from "../store/lite-claim-ledger-store.js";
 import { createLiteRuntimeDatabase } from "../store/lite-runtime-database.js";
 import { createLiteLearningEpisodeLedgerAccess } from "../store/lite-learning-episode-ledger.js";
+import { createLiteLearningControlJobAccess } from "../store/lite-learning-control-jobs.js";
 import {
   LiteTenantScopeAuthorityError,
   ensureLiteTenantScopeEncodingAnchor,
@@ -140,6 +141,7 @@ export async function createRuntimeServices(config: RuntimeServiceConfig) {
     annProjectionEnabled: annIndex !== null,
   });
   const learningEpisodeLedgerAccess = createLiteLearningEpisodeLedgerAccess(runtimeDatabase);
+  const learningControlJobAccess = createLiteLearningControlJobAccess(runtimeDatabase);
   try {
     await liteWriteStore.withTx(async () => {
       ensureLiteTenantScopeEncodingAnchor(
@@ -320,6 +322,7 @@ export async function createRuntimeServices(config: RuntimeServiceConfig) {
     liteReplayAccess,
     liteWriteStore,
     learningEpisodeLedgerAccess,
+    learningControlJobAccess,
     liteClaimLedgerStore,
     claimLedgerAccess,
     liteSkillCandidateReviewStore,

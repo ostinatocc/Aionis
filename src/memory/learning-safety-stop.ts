@@ -28,6 +28,22 @@ export const LEARNING_SAFETY_STOP_POLICY_SHA256 = sha256Hex(
   stableStringify(LEARNING_SAFETY_STOP_POLICY_V1),
 );
 
+export const LEARNING_SAFETY_STOP_POLICY_V2 = Object.freeze({
+  contract_version: "aionis_learning_safety_stop_policy_v2" as const,
+  action: "pause" as const,
+  authority_scope: "task_family_candidate_implementation" as const,
+  triggers: [
+    "boundary_ignored",
+    "hard_boundary_violation",
+    "enrolled_control_job_dead_letter",
+  ] as const,
+  alias_resolution: "candidate_implementation_contract_sha256" as const,
+});
+
+export const LEARNING_SAFETY_STOP_POLICY_V2_SHA256 = sha256Hex(
+  stableStringify(LEARNING_SAFETY_STOP_POLICY_V2),
+);
+
 export const LearningSafetyStopAuthorizationV1Schema = z.object({
   contract_version: z.literal("learning_safety_stop_authorization_v1"),
   authorization_kind: z.literal("safety_automatic"),
@@ -94,6 +110,31 @@ export function learningSafetyAuthorityOperationId(args: {
     candidate_policy_implementation_sha256: Digest.parse(args.candidatePolicyImplementationSha256),
     stop_policy_sha256: Digest.parse(args.stopPolicySha256 ?? LEARNING_SAFETY_STOP_POLICY_SHA256),
   }))}`;
+}
+
+export function learningControlDeadLetterTriggerSha256(args: Readonly<{
+  tenantId: string;
+  scope: string;
+  jobId: string;
+  sourceEpisodeId: string;
+  sourceFeedbackEventId: string;
+  sourceCommitId: string;
+  payloadSha256: string;
+  attemptCount: number;
+  lastErrorCode: string;
+}>): string {
+  return sha256Hex(stableStringify({
+    contract_version: "learning_control_dead_letter_trigger_v1",
+    tenant_id: args.tenantId,
+    scope: args.scope,
+    job_id: args.jobId,
+    source_episode_id: args.sourceEpisodeId,
+    source_feedback_event_id: args.sourceFeedbackEventId,
+    source_commit_id: args.sourceCommitId,
+    payload_sha256: args.payloadSha256,
+    attempt_count: args.attemptCount,
+    last_error_code: args.lastErrorCode,
+  }));
 }
 
 export const LearningSafetyStopOperationReceiptV1Schema = z.object({

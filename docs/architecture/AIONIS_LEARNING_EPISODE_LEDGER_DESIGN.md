@@ -1,6 +1,6 @@
 # Aionis Learning Episode Ledger and Evidence-Gated Learning Design
 
-Status: proposed implementation design; episode granularity accepted
+Status: implemented through Task 4.1 Step 4; later evidence and promotion phases remain proposed
 
 Date: 2026-07-13
 
@@ -40,14 +40,14 @@ frozen per memory item; an episode may therefore be `mixed` when summarized.
   `/v1/audit/flight-recorder` surface.
 - Do not create arm-specific copies of all Runtime memory state in v1.
 
-## 3. Current-code findings that constrain the design
+## 3. Baseline code findings that constrained the design
 
 | Current implementation | Consequence |
 |---|---|
 | Guide applies candidate projection before persisting the final `agentContext` in `src/product/guide-service.ts`. | The current guide ledger cannot reconstruct recorded, candidate, and served actions. |
 | `ProductGuideExposureLedger` stores final memory surfaces and a task-binding hash, but not policy/profile/experiment/arm metadata. | Exposure policy facts must be captured before the response-only projection is discarded. |
 | Memory activation validates `guide_trace_id`, then omits it from the payload passed to `activateMemoryNodesLite`. | Node counters cannot prove which guide caused feedback. |
-| Repeated-unused control is persisted after the activation transaction. | Attribution mutation and its learning-control consequence can diverge on failure. |
+| Before Task 4.1 Step 4, repeated-unused control was persisted after the activation transaction. | Resolved: formal feedback now atomically enqueues durable work, and the worker owns the later atomic posture/audit completion. |
 | Product tool feedback validates the guide receipt, but `recordToolSelectionFeedback` does not receive `guide_trace_id`. | Tool feedback cannot be joined back to an episode. |
 | `learning-kernel.ts` calls `toolSelectionFeedback` without a shared outer transaction. | Tool feedback commit, aggregates, pattern/policy writes, and episode facts can partially persist. |
 | Measurement/skill review opens a second SQLite write connection to the same path. | Measurement and `effect_measured` cannot be atomic until the store shares `LiteRuntimeDatabase`. |
@@ -2285,14 +2285,15 @@ The feedback transaction inserts `pending`. A worker leases with bounded retry,
 applies inspect-first posture under the deterministic operation ID, and marks
 `completed` in the same shared transaction as the memory commit and operation
 receipt. Crash/reopen safely reclaims an expired lease. Invalid payload or
-exhausted retry becomes retained `dead_letter`, a safety finding that blocks
-active candidate serving and promotion until resolved; jobs are never silently
-deleted. For an enrolled source episode, the terminal transition and a
+exhausted retry is retained. Successful safety terminalization moves it to
+`dead_letter`, a finding that blocks active candidate serving and promotion;
+if pause/authority persistence fails, it remains leased/deferred and Runtime
+readiness fails closed. Jobs are never silently deleted. For an enrolled source episode, the terminal transition and a
 candidate-implementation `safety_stop/pause` row commits together using facts reloaded
 from that exposure, so guide observes the existing authority fold rather than
 polling queue state. The row is keyed by the resolved candidate implementation,
 not only its ID/version alias. If the safety row cannot commit, the job does not become a
-dead letter and remains retryable. A structurally valid dead letter remains
+dead letter and remains retained for terminalization retry. A structurally valid dead letter remains
 backup-eligible so failure state is not lost. Only schema, digest, or reference
 corruption blocks backup.
 

@@ -1,13 +1,13 @@
 {
   "schema_version": "aionis_runtime_complexity_budget_v1",
-  "baseline_commit": "10d9e4f90efb243b25cd156ed1ada5683d5a79c0",
-  "intent": "Structural growth guard only; the exact v0.3.8 rebaseline covers persisted guide-feedback attribution and adds no source files, routes, environment fields, cycles, or larger maximum file.",
+  "baseline_commit": "17487ea7d1f53083b5882cbbc0403376529a6121",
+  "intent": "Structural growth guard only; the exact Task 4.1 Step 4 rebaseline adds the durable unused-exposure learning-control queue and worker without changing routes, environment fields, or the zero-cycle allowance.",
   "thresholds": {
-    "source_files": 313,
-    "source_lines": 149410,
+    "source_files": 315,
+    "source_lines": 151616,
     "route_matrix_entries": 21,
     "env_schema_fields": 177,
     "import_cycles": 0,
-    "largest_file_lines": 7129
+    "largest_file_lines": 7206
   }
 }

@@ -1,6 +1,31 @@
 # Changelog
 
-## Unreleased - v0.3.7 Evidence-Gated Learning Candidate
+## Unreleased - Task 4.1 Step 4 Durable Learning Control
+
+This mainline checkpoint turns formal unused-exposure feedback into durable,
+restart-safe learning-control work without moving posture mutation into the HTTP
+feedback transaction.
+
+### Added
+
+- A dedicated `lite_learning_control_jobs` queue with deterministic enqueue,
+  lease fencing, bounded retry, retained dead letters, integrity verification,
+  backlog health, and startup/shutdown worker lifecycle.
+- Worker-side repeated-unused recomputation at the source feedback cutoff and
+  consumer cohort, followed by one atomic audit commit, operation receipt, and
+  completed transition. Enrolled terminal failures atomically create an
+  independent learning-gate safety pause before dead-lettering.
+
+### Changed
+
+- Formal guide-attributed feedback now enqueues unused-exposure work in the
+  same SQLite transaction as the feedback episode facts. The product response
+  reports only `learning_control_status: queued|already_completed`; it does not
+  claim that posture changed synchronously.
+- Historical feedback without the Step 4 queue-provenance marker remains
+  restart-compatible but is not retroactively enqueued.
+
+## v0.3.7 - Evidence-Gated Learning Candidate
 
 This candidate adds protected append-only authority for learning episodes,
 experiment lifecycle, guide exposure, and direct memory feedback attribution.
@@ -32,11 +57,12 @@ mature autonomous-learning loop.
 - Keep the real 21-route surface and all newly tracked source files inside
   structural governance.
 
-### Deferred
+### Deferred at v0.3.7
 
-- The learning-control job schema is reserved and integrity-checked, but Task
-  4.1 Step 4 production enqueue, leasing, retry/dead-letter worker, and Runtime
-  lifecycle wiring are not included. Repeated-unused remains read-only.
+- At the v0.3.7 checkpoint, the learning-control job schema was reserved and
+  integrity-checked, but Task 4.1 Step 4 production enqueue, leasing,
+  retry/dead-letter worker, and Runtime lifecycle wiring were not included.
+  Repeated-unused was read-only at that immutable checkpoint.
 - Production external execution remains unregistered, the gate remains
   `calibration_pending`, and later tool-feedback, measurement-binding, and
   gate/promotion phases remain disabled.
