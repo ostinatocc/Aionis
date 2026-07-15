@@ -47,7 +47,10 @@ import {
   type LiteProjectionBacklogSnapshot,
   type LiteProjectionOutboxAccess,
 } from "./lite-projection-outbox.js";
-import type { SqliteTransactionRunner } from "./sqlite-transaction-runner.js";
+import type {
+  SqliteTransactionRunner,
+  SqliteTransactionRunOptions,
+} from "./sqlite-transaction-runner.js";
 import type {
   WriteCommitInsertArgs,
   WriteEdgeUpsertArgs,
@@ -255,7 +258,7 @@ export type LiteProductGuideReceiptRow = {
 };
 
 export type LiteWriteStore = WriteStoreAccess & LiteProjectionOutboxAccess & {
-  withTx<T>(fn: () => Promise<T>): Promise<T>;
+  withTx<T>(fn: () => Promise<T>, options?: SqliteTransactionRunOptions): Promise<T>;
   afterCommit(fn: () => Promise<void>): Promise<void>;
   transactionRunner(): SqliteTransactionRunner;
   annSyncEnabled(): boolean;
@@ -1736,8 +1739,8 @@ export function createLiteWriteStoreFromDatabase(
     capability_version: WRITE_STORE_ACCESS_CAPABILITY_VERSION,
     ...projectionOutbox,
 
-    async withTx<T>(fn: () => Promise<T>): Promise<T> {
-      return await transaction.run(fn);
+    async withTx<T>(fn: () => Promise<T>, options?: SqliteTransactionRunOptions): Promise<T> {
+      return await transaction.run(fn, options);
     },
 
     async afterCommit(fn): Promise<void> {

@@ -24,6 +24,10 @@ feedback transaction.
   claim that posture changed synchronously.
 - Historical feedback without the Step 4 queue-provenance marker remains
   restart-compatible but is not retroactively enqueued.
+- Confirmatory experiment provisioning now retries only `SQLITE_BUSY` failures
+  from `BEGIN IMMEDIATE` within a fixed six-attempt budget. The locked replay
+  check still runs before entropy, while transaction-body and commit failures
+  remain single-attempt and fail closed.
 
 ## v0.3.7 - Evidence-Gated Learning Candidate
 

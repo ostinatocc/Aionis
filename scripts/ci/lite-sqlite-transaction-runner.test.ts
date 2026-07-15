@@ -19,6 +19,18 @@ function deferred() {
   return { promise, resolve };
 }
 
+function sqliteBusyError(): Error & {
+  code: "ERR_SQLITE_ERROR";
+  errcode: 5;
+  errstr: "database is locked";
+} {
+  return Object.assign(new Error("database is locked"), {
+    code: "ERR_SQLITE_ERROR" as const,
+    errcode: 5 as const,
+    errstr: "database is locked" as const,
+  });
+}
+
 test("sqlite transaction runner serializes concurrent top-level transactions", async () => {
   const events: string[] = [];
   const runner = createSqliteTransactionRunner({
@@ -135,6 +147,84 @@ test("sqlite transaction runner releases queue when begin fails", async () => {
 
   assert.equal(out, "second");
   assert.deepEqual(events, ["begin", "begin", "second:start", "commit"]);
+});
+
+test("sqlite transaction runner retries only SQLITE_BUSY failures from BEGIN", async () => {
+  const events: string[] = [];
+  let beginAttempts = 0;
+  const runner = createSqliteTransactionRunner({
+    begin: () => {
+      beginAttempts += 1;
+      events.push(`begin:${String(beginAttempts)}`);
+      if (beginAttempts < 3) throw sqliteBusyError();
+    },
+    commit: () => events.push("commit"),
+    rollback: () => events.push("rollback"),
+    onPhase: (phase) => events.push(phase),
+  });
+
+  const out = await runner.run(async () => {
+    events.push("body");
+    return "committed";
+  }, {
+    beginBusyRetry: { maxAttempts: 3, delayMs: 0 },
+  });
+
+  assert.equal(out, "committed");
+  assert.deepEqual(events, [
+    "begin:1",
+    "begin:2",
+    "begin:3",
+    "after_begin",
+    "body",
+    "before_commit",
+    "commit",
+    "after_commit",
+  ]);
+});
+
+test("sqlite transaction runner preserves the final SQLITE_BUSY after BEGIN budget exhaustion", async () => {
+  const busy = sqliteBusyError();
+  const events: string[] = [];
+  const runner = createSqliteTransactionRunner({
+    begin: () => {
+      events.push("begin");
+      throw busy;
+    },
+    commit: () => events.push("commit"),
+    rollback: () => events.push("rollback"),
+  });
+
+  await assert.rejects(
+    runner.run(async () => {
+      events.push("body");
+    }, {
+      beginBusyRetry: { maxAttempts: 3, delayMs: 0 },
+    }),
+    (error: unknown) => error === busy,
+  );
+  assert.deepEqual(events, ["begin", "begin", "begin"]);
+});
+
+test("sqlite transaction runner never retries SQLITE_BUSY from the transaction body", async () => {
+  const busy = sqliteBusyError();
+  const events: string[] = [];
+  const runner = createSqliteTransactionRunner({
+    begin: () => events.push("begin"),
+    commit: () => events.push("commit"),
+    rollback: () => events.push("rollback"),
+  });
+
+  await assert.rejects(
+    runner.run(async () => {
+      events.push("body");
+      throw busy;
+    }, {
+      beginBusyRetry: { maxAttempts: 6, delayMs: 0 },
+    }),
+    (error: unknown) => error === busy,
+  );
+  assert.deepEqual(events, ["begin", "body", "rollback"]);
 });
 
 test("serialized reads wait until a top-level transaction commits or rolls back", async () => {

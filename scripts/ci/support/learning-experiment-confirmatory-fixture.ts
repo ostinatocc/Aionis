@@ -35,6 +35,7 @@ import {
 import {
   createLiteRuntimeDatabase,
   type LiteRuntimeDatabase,
+  type LiteRuntimeDatabaseFaultInjector,
 } from "../../../src/store/lite-runtime-database.js";
 import { ensureLiteTenantScopeEncodingAnchor } from
   "../../../src/store/lite-tenant-scope-authority.js";
@@ -300,8 +301,11 @@ export type ConfirmatoryFixtureRuntime = Readonly<{
   close(): Promise<void>;
 }>;
 
-export function openConfirmatoryFixtureRuntime(databasePath: string): ConfirmatoryFixtureRuntime {
-  const database = createLiteRuntimeDatabase(databasePath);
+export function openConfirmatoryFixtureRuntime(
+  databasePath: string,
+  options: { faultInjector?: LiteRuntimeDatabaseFaultInjector } = {},
+): ConfirmatoryFixtureRuntime {
+  const database = createLiteRuntimeDatabase(databasePath, options);
   const writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
   return {
     database,
