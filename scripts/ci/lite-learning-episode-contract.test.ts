@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import test from "node:test";
+import stableStringify from "fast-json-stable-stringify";
 import {
   EffectMeasuredV1Schema,
   ExposureCommittedV1Schema,
@@ -10,6 +11,7 @@ import {
   HostUseReceiptV1Schema,
   LearningLedgerItemSchema,
   RequiredExternalInputsV1Schema,
+  assertLearningExposureDecisionBindings,
   asPublicScope,
   asStoreScope,
   classifyLearningTrack,
@@ -24,6 +26,7 @@ import {
   learningEpisodeTrackSummary,
   learningAssignmentUnitSha256,
   learningCollectionPrincipalSha256,
+  learningDecisionSurfaceDigest,
   learningItemSetDigest,
   learningMemoryNamespaceSha256,
   reconcileCanonicalLearningTaskIdentity,
@@ -58,7 +61,31 @@ import {
   learningLookProposalDigest,
   learningOutcomeRedactedAuthorityProjectionDigest,
   runtimeIntegrityGateReportDigest,
+  type LearningExperimentCloseApprovalV1,
 } from "../../src/memory/learning-authority-approval.js";
+import {
+  LEARNING_EXPERIMENT_CLOSE_APPROVAL_HMAC_DOMAIN,
+  LEARNING_EXPERIMENT_CLOSE_MAX_TTL_MS,
+  LEARNING_EXPERIMENT_CLOSE_RECEIPT_ATTESTATION_HMAC_DOMAIN,
+  LearningExperimentCloseAuthorizationEnvelopeV1Schema,
+  LearningExperimentCloseReceiptBodyV1Schema,
+  LearningExperimentCloseReceiptV1Schema,
+  learningExperimentCloseApprovalMac,
+  learningExperimentCloseId,
+  learningExperimentCloseRequestDigest,
+  learningExperimentCloseReceiptAttestationMac,
+  learningExperimentLeaseMembershipDigest,
+  splitLearningExperimentCloseAuthorization,
+  verifyLearningExperimentCloseApprovalMac,
+  verifyLearningExperimentCloseApprovalMacSignature,
+  verifyLearningExperimentCloseReceiptAttestation,
+  type LearningExperimentCloseAuthorizationEnvelopeV1,
+  type LearningExperimentLeaseMembershipEntryV1,
+} from "../../src/memory/learning-experiment-closing.js";
+import {
+  learningConfirmatoryNamespaceLeaseMembershipDigest,
+  type LearningExperimentConfirmatoryCohortPairV1,
+} from "../../src/memory/learning-experiment-provisioning.js";
 
 const D = {
   a: "a".repeat(64),
@@ -69,6 +96,102 @@ const D = {
   f: "f".repeat(64),
 };
 const NOW = "2026-07-14T08:00:00.000Z";
+const CLOSE_NONCE = Buffer.from("0123456789abcdef", "utf8").toString("base64url");
+
+function digestText(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function closeApproval(
+  overrides: Partial<LearningExperimentCloseApprovalV1> = {},
+): LearningExperimentCloseApprovalV1 {
+  return {
+    contract_version: "learning_experiment_close_approval_v1",
+    authorization_kind: "experiment_close",
+    action: "close_experiment",
+    runtime_authority_lineage_sha256: D.f,
+    tenant_id: "tenant-blue",
+    task_family: "repository_change",
+    confirmatory_attempt_id: "attempt-42",
+    confirmatory_attempt_sha256: D.e,
+    experiment_id: "experiment-42",
+    experiment_revision: 1,
+    experiment_config_sha256: D.f,
+    namespace_set_sha256: D.a,
+    close_reason: "operator_stop",
+    candidate_policy_implementation_sha256: D.b,
+    gate_policy_implementation_sha256: D.c,
+    authority_scope: "learning-experiment-authority-v1",
+    authority_operation_kind: "learning_experiment_close_v1",
+    authority_operation_id: "close-operation-42",
+    approved_by: "operator@example.com",
+    authorization_key_id: "authority-key-1",
+    authorization_nonce: CLOSE_NONCE,
+    authorization_issued_at: NOW,
+    authorization_expires_at: "2026-07-14T09:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function closeAuthorization(
+  approval: LearningExperimentCloseApprovalV1,
+  key: string | Uint8Array,
+): LearningExperimentCloseAuthorizationEnvelopeV1 {
+  return {
+    contract_version: "learning_experiment_close_authorization_envelope_v1",
+    approval,
+    authorization_mac: learningExperimentCloseApprovalMac(approval, key),
+  };
+}
+
+function closeLeaseMembership(): {
+  entries: LearningExperimentLeaseMembershipEntryV1[];
+  pairs: LearningExperimentConfirmatoryCohortPairV1[];
+} {
+  const pairHashes = Array.from({ length: 384 }, (_, index) => digestText(`close-pair:${index}`)).sort();
+  const entries: LearningExperimentLeaseMembershipEntryV1[] = [];
+  const pairs: LearningExperimentConfirmatoryCohortPairV1[] = pairHashes.map(
+    (randomizationPairSha256, pairOrdinal) => {
+      const activationWaveIndex = pairOrdinal < 96 ? 1 : pairOrdinal < 192 ? 2 : 3;
+      const waveTimes = activationWaveIndex === 1
+        ? ["2026-07-15T00:00:00.000Z", "2026-07-16T00:00:00.000Z", "2026-07-17T00:00:00.000Z"]
+        : activationWaveIndex === 2
+          ? ["2026-07-18T00:00:00.000Z", "2026-07-19T00:00:00.000Z", "2026-07-20T00:00:00.000Z"]
+          : ["2026-07-21T00:00:00.000Z", "2026-07-22T00:00:00.000Z", "2026-07-23T00:00:00.000Z"];
+      const members = ([0, 1] as const).map((pairMemberOrdinal) => {
+        const rawLeaseId = `lns_${digestText(`close-lease:${pairOrdinal}:${pairMemberOrdinal}`)}`;
+        const memoryNamespaceSha256 = digestText(`close-namespace:${pairOrdinal}:${pairMemberOrdinal}`);
+        entries.push({
+          pair_ordinal: pairOrdinal,
+          randomization_pair_sha256: randomizationPairSha256,
+          pair_member_ordinal: pairMemberOrdinal,
+          memory_namespace_sha256: memoryNamespaceSha256,
+          namespace_lease_id: rawLeaseId,
+          namespace_lease_generation: 1,
+          activation_wave_index: activationWaveIndex,
+        });
+        return {
+          pair_member_ordinal: pairMemberOrdinal,
+          memory_namespace_sha256: memoryNamespaceSha256,
+          namespace_lease_id_sha256: digestText(rawLeaseId),
+          namespace_lease_generation: 1,
+        };
+      }) as LearningExperimentConfirmatoryCohortPairV1["members"];
+      return {
+        pair_ordinal: pairOrdinal,
+        randomization_pair_sha256: randomizationPairSha256,
+        pair_record_sha256: digestText(`close-pair-record:${pairOrdinal}`),
+        matching_covariate_sha256: digestText(`close-covariate:${pairOrdinal}`),
+        activation_wave_index: activationWaveIndex,
+        activation_starts_at: waveTimes[0]!,
+        index_window_ends_at: waveTimes[1]!,
+        wave_analysis_at: waveTimes[2]!,
+        members,
+      };
+    },
+  );
+  return { entries, pairs };
+}
 
 function hostTaskEnvelope() {
   return {
@@ -195,6 +318,23 @@ test("strict host envelope and receipt bind collector, episode, operation, verif
   assert.equal(receipt.receipt_sha256, hostUseReceiptDigest(body));
   assert.throws(() => HostUseReceiptV1Schema.parse({ ...receipt, receipt_sha256: D.a }));
   assert.throws(() => HostUseReceiptV1Schema.parse({ ...receipt, secret: "never-persist-me" }));
+  const verifierVersionBody = (version: string) => ({
+    ...body,
+    items: [{ ...body.items[0]!, verifier_version: version }],
+  });
+  const boundedVerifierBody = verifierVersionBody("界".repeat(40));
+  assert.doesNotThrow(() => HostUseReceiptV1Schema.parse({
+    ...boundedVerifierBody,
+    receipt_sha256: hostUseReceiptDigest(boundedVerifierBody),
+  }));
+  const oversizedVerifierBody = verifierVersionBody("界".repeat(41));
+  assert.throws(
+    () => HostUseReceiptV1Schema.parse({
+      ...oversizedVerifierBody,
+      receipt_sha256: D.a,
+    }),
+    /120 UTF-8 bytes/i,
+  );
   assert.throws(() => HostUseReceiptV1Schema.parse({
     ...receipt,
     items: [...body.items, { ...body.items[0] }],
@@ -233,7 +373,7 @@ test("exposure, feedback, and effect payloads are strict, bounded, and legacy is
     namespace_set_sha256: D.b,
     namespace_lease_id: "lease-42",
     namespace_lease_generation: 1,
-    assignment_reason_codes: ["eligible_host_matched_pair"],
+    assignment_reason_codes: ["candidate_arm_served", "confirmatory_active_lease"],
     assignment_algorithm: "matched_pair_csprng_bit_v1" as const,
     assignment_namespace_sha256: D.c,
     candidate_allocation_bps: 5000,
@@ -246,14 +386,32 @@ test("exposure, feedback, and effect payloads are strict, bounded, and legacy is
     index_window_ends_at: "2026-07-15T08:00:00.000Z",
     wave_analysis_at: "2026-07-16T08:00:00.000Z",
     assignment_arm: "candidate" as const,
+    served_arm: "candidate" as const,
+    relevant_memory_ids: ["memory-42"],
     recorded_surface_sha256: D.a,
     candidate_surface_sha256: D.b,
     served_surface_sha256: D.c,
     projection_complete: true,
+    projection_incomplete_reason_codes: [],
     hard_boundary_upgrade_count: 0,
   };
   assert.deepEqual(ExposureCommittedV1Schema.parse(exposure), exposure);
   assert.equal(isLearningExposurePromotionEligible(exposure), true);
+  assert.equal(isLearningExposurePromotionEligible({
+    ...exposure,
+    assignment_arm: "control",
+    served_arm: "control",
+    assignment_reason_codes: ["confirmatory_active_lease", "control_arm_served"],
+  }), true);
+  assert.equal(isLearningExposurePromotionEligible({ ...exposure, served_arm: "control" }), false);
+  assert.equal(isLearningExposurePromotionEligible({
+    ...exposure,
+    assignment_reason_codes: ["candidate_arm_served", "confirmatory_active_lease", "safety_pause_required"],
+  }), false);
+  assert.equal(isLearningExposurePromotionEligible({
+    ...exposure,
+    assignment_reason_codes: ["external_prerequisite_roots_unavailable"],
+  }), false);
   assert.equal(isLearningExposurePromotionEligible({ ...exposure, operation_protection: "legacy_unprotected" }), false);
   assert.equal(isLearningExposurePromotionEligible({ ...exposure, collection_class: "fixture_pilot" }), false);
   assert.throws(() => ExposureCommittedV1Schema.parse({ ...exposure, collection_class: "fixture_pilot" }));
@@ -268,10 +426,48 @@ test("exposure, feedback, and effect payloads are strict, bounded, and legacy is
   }));
   assert.throws(() => ExposureCommittedV1Schema.parse({
     ...exposure,
+    projection_complete: false,
+    projection_incomplete_reason_codes: ["prior_state_lookup_failed"],
+  }));
+  assert.throws(() => ExposureCommittedV1Schema.parse({
+    ...exposure,
     activation_starts_at: "2026-07-17T08:00:00.000Z",
   }));
   assert.throws(() => ExposureCommittedV1Schema.parse({ ...exposure, assignment_reason_codes: Array(33).fill("x") }));
   assert.throws(() => ExposureCommittedV1Schema.parse({ ...exposure, extra_outcome: "positive" }));
+
+  const item = completeItem("memory-42", {
+    candidate_action: "inspect_before_use",
+    served_action: "inspect_before_use",
+    policy_changed: true,
+  });
+  const boundExposure = ExposureCommittedV1Schema.parse({
+    ...exposure,
+    recorded_surface_sha256: learningDecisionSurfaceDigest([{
+      memory_id: item.memory_id,
+      action: item.recorded_action,
+    }]),
+    candidate_surface_sha256: learningDecisionSurfaceDigest([{
+      memory_id: item.memory_id,
+      action: item.candidate_action,
+    }]),
+    served_surface_sha256: learningDecisionSurfaceDigest([{
+      memory_id: item.memory_id,
+      action: item.served_action,
+    }]),
+  });
+  assert.doesNotThrow(() => assertLearningExposureDecisionBindings(boundExposure, [item]));
+  assert.throws(
+    () => assertLearningExposureDecisionBindings({
+      ...boundExposure,
+      candidate_surface_sha256: D.f,
+    }, [item]),
+    /surface digest mismatch/,
+  );
+  assert.throws(
+    () => assertLearningExposureDecisionBindings({ ...boundExposure, served_arm: "control" }, [item]),
+    /served action does not match/,
+  );
 
   assert.doesNotThrow(() => FeedbackAttributedV1Schema.parse({
     contract_version: "aionis_learning_feedback_v1",
@@ -279,6 +475,7 @@ test("exposure, feedback, and effect payloads are strict, bounded, and legacy is
     guide_trace_id: "guide-42",
     request_sha256: D.a,
     operation_protection: "protected",
+    operation_receipt_sha256: D.c,
     run_id: "run-42",
     source_commit_id: "commit-feedback-42",
     host_use_receipt_sha256: D.b,
@@ -755,30 +952,205 @@ test("authority and experiment-close approvals have distinct bounded action doma
   assert.throws(() => LearningAuthorityApprovalV1Schema.parse({ ...authority, action: "close" }));
   assert.throws(() => LearningAuthorityApprovalV1Schema.parse({ ...authority, secret: "not-allowed" }));
 
-  const close = {
-    contract_version: "learning_experiment_close_approval_v1" as const,
-    authorization_kind: "experiment_close" as const,
-    action: "close_experiment" as const,
-    tenant_id: "tenant-blue",
-    confirmatory_attempt_id: "attempt-42",
-    experiment_id: "experiment-42",
-    experiment_revision: 1,
-    namespace_set_sha256: D.a,
-    close_reason: "operator_stop" as const,
-    candidate_policy_implementation_sha256: D.b,
-    gate_policy_implementation_sha256: D.c,
-    authority_scope: "learning:repository_change:" + D.a,
-    authority_operation_kind: "learning_experiment_close_v1" as const,
-    authority_operation_id: "close-operation-42",
-    approved_by: "operator@example.com",
-    authorization_key_id: "authority-key-1",
-    authorization_nonce: "nonce-close-42",
-    authorization_expires_at: "2026-07-14T09:00:00.000Z",
-  };
+  const close = closeApproval();
   assert.deepEqual(LearningExperimentCloseApprovalV1Schema.parse(close), close);
   assert.match(learningExperimentCloseApprovalDigest(close), /^[0-9a-f]{64}$/);
   assert.notEqual(learningExperimentCloseApprovalDigest(close), learningAuthorityApprovalDigest(authority));
   assert.throws(() => LearningExperimentCloseApprovalV1Schema.parse({ ...close, action: "promote" }));
+  assert.throws(() => LearningExperimentCloseApprovalV1Schema.parse({
+    ...close,
+    task_family: "界".repeat(41),
+  }));
+  assert.throws(() => LearningExperimentCloseApprovalV1Schema.parse({
+    ...close,
+    authority_scope: "learning:repository_change:" + D.a,
+  }));
+  assert.throws(() => LearningExperimentCloseApprovalV1Schema.parse({
+    ...close,
+    authorization_key_id: "authority key 1",
+  }));
+  assert.throws(() => LearningExperimentCloseApprovalV1Schema.parse({
+    ...close,
+    authorization_nonce: "nonce-close-42",
+  }));
+  assert.throws(() => LearningExperimentCloseApprovalV1Schema.parse({
+    ...close,
+    authorization_issued_at: "2026-07-14T09:00:00.000Z",
+  }));
+  assert.throws(() => LearningExperimentCloseApprovalV1Schema.parse({
+    ...close,
+    authorization_expires_at: "2026-07-14T09:00:00.001Z",
+  }));
+  assert.equal(LEARNING_EXPERIMENT_CLOSE_MAX_TTL_MS, 3_600_000);
+});
+
+test("experiment-close envelope uses domain-separated stable HMAC with strict freshness and tamper rejection", () => {
+  const approval = closeApproval();
+  const key = Buffer.from("0123456789abcdef0123456789abcdef", "utf8");
+  const independentMac = createHmac("sha256", key).update(Buffer.concat([
+    Buffer.from(LEARNING_EXPERIMENT_CLOSE_APPROVAL_HMAC_DOMAIN, "utf8"),
+    Buffer.from([0]),
+    Buffer.from(stableStringify(approval), "utf8"),
+  ])).digest("base64url");
+  assert.equal(independentMac, "KkbhWlok_ZouhSi4Y8OjtX_VEKbn0Np7pRTeYftUCoQ");
+  assert.equal(learningExperimentCloseApprovalMac(approval, key), independentMac);
+
+  const authorization = {
+    contract_version: "learning_experiment_close_authorization_envelope_v1" as const,
+    approval,
+    authorization_mac: independentMac,
+  };
+  assert.deepEqual(LearningExperimentCloseAuthorizationEnvelopeV1Schema.parse(authorization), authorization);
+  const verification = verifyLearningExperimentCloseApprovalMac({
+    authorization,
+    key,
+    expected_authorization_key_id: approval.authorization_key_id,
+    verified_at: "2026-07-14T08:30:00.000Z",
+  });
+  assert.equal(verification.ok, true);
+  if (!verification.ok) assert.fail(verification.reason);
+  assert.equal(verification.authorization.authorization_sha256, learningExperimentCloseApprovalDigest(approval));
+  assert.equal(verification.authorization.authorization_mac, independentMac);
+  assert.match(verification.authorization.authorization_mac_sha256, /^[0-9a-f]{64}$/u);
+
+  const tampered = {
+    ...authorization,
+    approval: { ...approval, close_reason: "safety_abort" as const },
+  };
+  assert.deepEqual(verifyLearningExperimentCloseApprovalMac({
+    authorization: tampered,
+    key,
+    expected_authorization_key_id: approval.authorization_key_id,
+    verified_at: "2026-07-14T08:30:00.000Z",
+  }), { ok: false, reason: "authorization_mac_mismatch" });
+  assert.deepEqual(verifyLearningExperimentCloseApprovalMac({
+    authorization,
+    key,
+    expected_authorization_key_id: "other-key",
+    verified_at: "2026-07-14T08:30:00.000Z",
+  }), { ok: false, reason: "authorization_key_id_mismatch" });
+  assert.deepEqual(verifyLearningExperimentCloseApprovalMac({
+    authorization,
+    key,
+    expected_authorization_key_id: approval.authorization_key_id,
+    verified_at: approval.authorization_expires_at,
+  }), { ok: false, reason: "authorization_expired" });
+  assert.equal(verifyLearningExperimentCloseApprovalMacSignature({
+    authorization,
+    key,
+    expected_authorization_key_id: approval.authorization_key_id,
+  }).ok, true, "durable signature verification must remain valid after admission expiry");
+  assert.throws(() => LearningExperimentCloseAuthorizationEnvelopeV1Schema.parse({
+    ...authorization,
+    authorization_mac: `${independentMac}=`,
+  }));
+});
+
+test("experiment-close request, identity, 768 lease projection, and receipt are deterministically bound", () => {
+  const approval = closeApproval();
+  const key = Buffer.from("0123456789abcdef0123456789abcdef", "utf8");
+  const authorization = closeAuthorization(approval, key);
+  const split = splitLearningExperimentCloseAuthorization(authorization);
+  const requestSha256 = learningExperimentCloseRequestDigest({
+    actor: "experiment-closer",
+    authorization,
+  });
+  const experimentCloseId = learningExperimentCloseId(authorization);
+  assert.match(requestSha256, /^[0-9a-f]{64}$/u);
+  assert.match(experimentCloseId, /^lxc_[0-9a-f]{64}$/u);
+  assert.notEqual(
+    requestSha256,
+    learningExperimentCloseRequestDigest({ actor: "different-actor", authorization }),
+  );
+  assert.notEqual(
+    experimentCloseId,
+    learningExperimentCloseId(closeApproval({ authority_operation_id: "close-operation-43" })),
+  );
+
+  const membership = closeLeaseMembership();
+  const namespaceLeaseMembershipSha256 = learningExperimentLeaseMembershipDigest(membership.entries);
+  assert.equal(
+    namespaceLeaseMembershipSha256,
+    learningConfirmatoryNamespaceLeaseMembershipDigest(membership.pairs),
+  );
+  assert.throws(() => learningExperimentLeaseMembershipDigest(membership.entries.slice(1)));
+  assert.throws(() => learningExperimentLeaseMembershipDigest([
+    membership.entries[1]!,
+    membership.entries[0]!,
+    ...membership.entries.slice(2),
+  ]));
+
+  const receiptBody = LearningExperimentCloseReceiptBodyV1Schema.parse({
+    contract_version: "aionis_learning_experiment_close_receipt_v1" as const,
+    operation_kind: approval.authority_operation_kind,
+    operation_id: approval.authority_operation_id,
+    request_sha256: requestSha256,
+    tenant_id: approval.tenant_id,
+    authority_scope: approval.authority_scope,
+    runtime_authority_lineage_sha256: approval.runtime_authority_lineage_sha256,
+    actor: "experiment-closer",
+    status: "closed" as const,
+    authorization_sha256: split.authorization_sha256,
+    authorization_mac_sha256: split.authorization_mac_sha256,
+    authorization_key_id: approval.authorization_key_id,
+    authorization_nonce: approval.authorization_nonce,
+    approved_by: approval.approved_by,
+    authorization_issued_at: approval.authorization_issued_at,
+    authorization_expires_at: approval.authorization_expires_at,
+    task_family: approval.task_family,
+    confirmatory_attempt_id: approval.confirmatory_attempt_id,
+    confirmatory_attempt_sha256: approval.confirmatory_attempt_sha256,
+    experiment_id: approval.experiment_id,
+    experiment_revision: approval.experiment_revision,
+    experiment_config_sha256: approval.experiment_config_sha256,
+    namespace_set_sha256: approval.namespace_set_sha256,
+    candidate_policy_implementation_sha256: approval.candidate_policy_implementation_sha256,
+    gate_policy_implementation_sha256: approval.gate_policy_implementation_sha256,
+    experiment_close_id: experimentCloseId,
+    close_reason: approval.close_reason,
+    sealed_event_head_row_id: 42,
+    close_sha256: D.d,
+    closed_at: "2026-07-14T08:30:00.000Z",
+    namespace_lease_membership_sha256: namespaceLeaseMembershipSha256,
+    namespace_lease_count: 768 as const,
+    release_operation_id: approval.authority_operation_id,
+    release_ref_kind: "experiment_close" as const,
+    release_ref_id: experimentCloseId,
+    released_at: "2026-07-14T08:30:00.000Z",
+  });
+  const receipt = {
+    ...receiptBody,
+    receipt_attestation_key_id: approval.authorization_key_id,
+    receipt_attestation_mac: learningExperimentCloseReceiptAttestationMac(
+      receiptBody,
+      approval.authorization_key_id,
+      key,
+    ),
+  };
+  assert.deepEqual(LearningExperimentCloseReceiptV1Schema.parse(receipt), receipt);
+  assert.equal(verifyLearningExperimentCloseReceiptAttestation({
+    receipt,
+    key,
+    expected_receipt_attestation_key_id: approval.authorization_key_id,
+  }).ok, true);
+  assert.equal(verifyLearningExperimentCloseReceiptAttestation({
+    receipt: { ...receipt, receipt_attestation_key_id: "same-secret-alias-key" },
+    key,
+    expected_receipt_attestation_key_id: "same-secret-alias-key",
+  }).ok, false, "attestation key attribution must be inside the HMAC payload");
+  assert.equal(
+    LEARNING_EXPERIMENT_CLOSE_RECEIPT_ATTESTATION_HMAC_DOMAIN,
+    "aionis.learning-experiment-close-receipt-attestation.hmac.v1",
+  );
+  assert.throws(() => LearningExperimentCloseReceiptV1Schema.parse({
+    ...receipt,
+    actor: "changed-actor",
+  }));
+  assert.throws(() => LearningExperimentCloseReceiptV1Schema.parse({
+    ...receipt,
+    release_ref_id: `lxc_${D.a}`,
+  }));
+  assert.throws(() => LearningExperimentCloseReceiptV1Schema.parse({ ...receipt, extra: true }));
 });
 
 test("look proposal and Runtime integrity report are strict, outcome-redacted, and digest-bound", () => {

@@ -17,6 +17,12 @@ import {
   type LearningExperimentResolverRegistry,
 } from "../../src/memory/learning-experiment-resolver.ts";
 import {
+  createLearningExternalExecutionPolicyRegistry,
+  createLearningExternalExecutionPolicyRegistryEntry,
+  LEARNING_EXTERNAL_EXECUTION_POLICY_KEY,
+  PRODUCTION_LEARNING_EXTERNAL_EXECUTION_POLICY_REGISTRY,
+} from "../../src/memory/learning-external-execution-policy.ts";
+import {
   learningCollectionPrincipalSha256,
 } from "../../src/memory/learning-episode-ledger.ts";
 import {
@@ -184,7 +190,34 @@ test("immutable experiment resolver replays diagnostic assignment without exposi
       ...gate.config,
       prospective_calibration_artifact_sha256: gateCalibration.sha256,
     });
-    const externalPolicy = canonical(externalExecutionPolicy(await ledger.databaseInstanceId()));
+    const databaseInstanceId = await ledger.databaseInstanceId();
+    const externalPolicyEntry = createLearningExternalExecutionPolicyRegistryEntry({
+      registryKey: LEARNING_EXTERNAL_EXECUTION_POLICY_KEY,
+      databaseInstanceId,
+      policy: externalExecutionPolicy(databaseInstanceId),
+    });
+    const externalPolicyRegistry = createLearningExternalExecutionPolicyRegistry([
+      externalPolicyEntry,
+    ]);
+    const externalPolicy = canonical(externalPolicyEntry.policy);
+    assert.equal(externalPolicyEntry.policy_sha256, externalPolicy.sha256);
+    assert.equal(externalPolicyEntry.database_instance_id, databaseInstanceId);
+    assert.equal(Object.isFrozen(externalPolicyEntry.policy), true);
+    assert.equal(Object.isFrozen(externalPolicyEntry.policy.roles), true);
+    assert.equal(externalPolicyRegistry.registry_status, "registered");
+    assert.deepEqual(externalPolicyRegistry.resolve({
+      registryKey: LEARNING_EXTERNAL_EXECUTION_POLICY_KEY,
+      databaseInstanceId,
+    }), externalPolicyEntry);
+    assert.equal(externalPolicyRegistry.resolve({
+      registryKey: LEARNING_EXTERNAL_EXECUTION_POLICY_KEY,
+      databaseInstanceId: "f".repeat(64),
+    }), null);
+    assert.equal(PRODUCTION_LEARNING_EXTERNAL_EXECUTION_POLICY_REGISTRY.registry_status, "unregistered");
+    assert.equal(PRODUCTION_LEARNING_EXTERNAL_EXECUTION_POLICY_REGISTRY.resolve({
+      registryKey: LEARNING_EXTERNAL_EXECUTION_POLICY_KEY,
+      databaseInstanceId,
+    }), null);
     const sourcePolicy = canonical(learningCollectionSourcePolicyProjection(rule.experiment));
     const evidenceSeries = canonical(rule.experiment.required_evidence_series);
     const externalInputs = canonical({});
@@ -299,7 +332,11 @@ test("immutable experiment resolver replays diagnostic assignment without exposi
         implementation_contract_sha256: gate.implementation_contract_sha256,
         prospective_calibration_artifact_sha256: gateCalibration.sha256,
       }),
-      resolveExternalExecutionPolicySha256: () => externalPolicy.sha256,
+      resolveExternalExecutionPolicy: (registryKey, resolvedDatabaseInstanceId) =>
+        externalPolicyRegistry.resolve({
+          registryKey,
+          databaseInstanceId: resolvedDatabaseInstanceId,
+        }),
     };
     const envelope = {
       contract_version: "host_task_envelope_v1" as const,
@@ -358,6 +395,50 @@ test("immutable experiment resolver replays diagnostic assignment without exposi
       stableStringify(first),
       /diagnostic_assignment_seed|confirmatory_assignment_bits|assignment_random_bits/,
     );
+    assert.doesNotMatch(
+      stableStringify(first),
+      /runtime_authority_attestor|runner_principal_sha256|broker_binary_sha256/,
+    );
+
+    const unprotected = await resolveLearningExperimentForGuide(
+      { ...baseInput, operationProtected: false, principal: apiKeyPrincipal },
+      { ledger, registry: resolverRegistry },
+    );
+    assert.equal(unprotected.serving_arm, "control");
+    assert.equal(unprotected.promotion_eligible, false);
+    assert.deepEqual(unprotected.reason_codes, ["protected_operation_required"]);
+
+    const wrongCandidateRegistry: LearningExperimentResolverRegistry = {
+      ...resolverRegistry,
+      resolveCandidatePolicy: () => ({
+        ...candidate,
+        policy_id: "wrong-candidate-policy",
+      }),
+    };
+    const wrongCandidate = await resolveLearningExperimentForGuide(
+      { ...baseInput, principal: apiKeyPrincipal },
+      { ledger, registry: wrongCandidateRegistry },
+    );
+    assert.equal(wrongCandidate.serving_arm, "control");
+    assert.deepEqual(wrongCandidate.reason_codes, ["experiment_policy_registry_unresolved"]);
+
+    const canonicalExternalEntry = externalPolicyRegistry.resolve({
+      registryKey: "external-execution-v1",
+      databaseInstanceId: await ledger.databaseInstanceId(),
+    })!;
+    const wrongExternalDigestRegistry: LearningExperimentResolverRegistry = {
+      ...resolverRegistry,
+      resolveExternalExecutionPolicy: () => ({
+        ...canonicalExternalEntry,
+        policy_sha256: "f".repeat(64),
+      }),
+    };
+    const wrongExternalDigest = await resolveLearningExperimentForGuide(
+      { ...baseInput, principal: apiKeyPrincipal },
+      { ledger, registry: wrongExternalDigestRegistry },
+    );
+    assert.equal(wrongExternalDigest.serving_arm, "control");
+    assert.deepEqual(wrongExternalDigest.reason_codes, ["experiment_policy_registry_unresolved"]);
 
     const productionFailControl = await resolveLearningExperimentForGuide(
       { ...baseInput, principal: apiKeyPrincipal },
@@ -385,6 +466,26 @@ test("immutable experiment resolver replays diagnostic assignment without exposi
     );
     assert.equal(drift.serving_arm, "control");
     assert.deepEqual(drift.reason_codes, ["experiment_revision_config_drift"]);
+
+    const otherFamilyEnvelope = { ...envelope, task_family: "other_task_family" };
+    const taskFamilyDrift = await resolveLearningExperimentForGuide(
+      {
+        ...baseInput,
+        principal: apiKeyPrincipal,
+        taskSources: [
+          {
+            source: "context" as const,
+            task_family: otherFamilyEnvelope.task_family,
+            task_signature: otherFamilyEnvelope.task_signature,
+            repository_signature: otherFamilyEnvelope.repository_signature,
+          },
+          { source: "host_task_envelope_v1" as const, envelope: otherFamilyEnvelope },
+        ],
+      },
+      { ledger, registry: resolverRegistry },
+    );
+    assert.equal(taskFamilyDrift.serving_arm, "control");
+    assert.deepEqual(taskFamilyDrift.reason_codes, ["experiment_revision_config_drift"]);
 
     await writeStore.close();
     await database.close();

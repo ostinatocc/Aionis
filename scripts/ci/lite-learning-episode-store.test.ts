@@ -7,15 +7,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import stableStringify from "fast-json-stable-stringify";
+import { stableUuid } from "../../src/util/uuid.ts";
 
 import {
+  assertLiteLearningEpisodeLedgerSchemaIntegrity,
+  assertLiteLearningEpisodeLedgerIntegrity,
+  assertLearningLookProposalAgainstDatabase,
   buildLearningOutcomeRedactedAuthorityProjection,
   createLiteLearningEpisodeLedgerAccess,
   deriveLiteLearningLookAuthorityContext,
   learningActivationScheduleDigest,
   learningCollectionPrincipalBindingDigest,
   learningConfirmatoryAttemptDigest,
-  learningExperimentClosureRecordDigest,
   learningExternalRunReservationDigest,
   learningExternalTicketConsumptionDigest,
   learningFeedbackAttributionItemDigest,
@@ -26,6 +29,7 @@ import {
   learningGateLookScheduleDigest,
   learningGateLookReservationDigest,
   learningHostUseReceiptItemSetDigest,
+  learningRandomizationPairIdentityDigest,
   learningRandomizationPairManifestDigest,
   learningRandomizationPairRecordDigest,
   learningRequiredArtifactHeadsDigest,
@@ -38,8 +42,15 @@ import {
   type LiteLearningGateArtifactSetMember,
 } from "../../src/store/lite-learning-episode-ledger.ts";
 import {
+  LITE_LEARNING_V3_ELIGIBLE_ACTIVE_LEASE_TRIGGER_SQL,
+  migrateLiteLearningEpisodeLedgerV3ToV4,
+} from
+  "../../src/store/lite-learning-schema-migration.ts";
+import { normalizeSqliteSchemaSql } from "../../src/store/sqlite-schema-sql.ts";
+import {
   learningEpisodeEventDigest,
   learningEpisodeId,
+  learningDecisionSurfaceDigest,
   learningItemSetDigest,
   hostTaskEnvelopeDigest,
   hostUseReceiptDigest,
@@ -49,9 +60,15 @@ import {
   type LearningLedgerItem,
 } from "../../src/memory/learning-episode-ledger.ts";
 import {
+  LearningExperimentCloseApprovalV1Schema,
   learningLookProposalDigest,
   learningOutcomeRedactedAuthorityProjectionDigest,
 } from "../../src/memory/learning-authority-approval.ts";
+import {
+  LearningExperimentCloseAuthorizationEnvelopeV1Schema,
+  learningExperimentCloseApprovalMac,
+} from "../../src/memory/learning-experiment-closing.ts";
+import { AionisAgentContextSchema } from "../../src/memory/product-output-contract.ts";
 import {
   AIONIS_ADMISSION_CANDIDATE_POLICY_ID,
   AIONIS_ADMISSION_CANDIDATE_POLICY_VERSION,
@@ -63,6 +80,8 @@ import {
   resolveLearningGatePolicy,
 } from "../../src/memory/learning-gate-policy.ts";
 import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
+import { createLiteLearningExperimentCloser } from
+  "../../src/store/lite-learning-experiment-closing.ts";
 import {
   backupLiteRuntimeDatabase,
   restoreLiteRuntimeDatabase,
@@ -87,6 +106,21 @@ const MIGRATION_CHILD = fileURLToPath(
 );
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DATA_OPS_CLI = path.join(ROOT, "scripts", "runtime-data-ops.ts");
+const STORE_CLOSE_KEY_ID = "operator-key-v1";
+const STORE_CLOSE_KEY = Buffer.from(
+  "store-close-fixture-key-material-32-bytes-minimum",
+  "utf8",
+);
+
+function storeCloseKeyring() {
+  return {
+    activeKeyId: STORE_CLOSE_KEY_ID,
+    keys: new Map([[STORE_CLOSE_KEY_ID, STORE_CLOSE_KEY]]),
+    configured: true,
+    ephemeral: false,
+    source: "keyring" as const,
+  };
+}
 
 function runMigrationChild(dbPath: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -129,6 +163,41 @@ function userSchemaNames(db: SqliteDatabase, type: "table" | "index" | "trigger"
 function tableColumns(db: SqliteDatabase, table: string): string[] {
   return (db.prepare(`PRAGMA table_info('${table.replaceAll("'", "''")}')`).all() as Array<{ name: string }>)
     .map((row) => row.name);
+}
+
+const normalizeSchemaSql = normalizeSqliteSchemaSql;
+
+function downgradeCurrentFixtureToLegacyV3(
+  dbPath: string,
+  triggerSql = LITE_LEARNING_V3_ELIGIBLE_ACTIVE_LEASE_TRIGGER_SQL,
+): void {
+  const db = createSqliteDatabase(dbPath);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec("DROP TRIGGER trg_lite_learning_eligible_active_lease");
+    db.exec(triggerSql);
+    const metadataUpdate = db.prepare(
+      `UPDATE lite_runtime_schema_metadata
+       SET version = 3, updated_at = ?
+       WHERE component = 'write_projection'`,
+    ).run("2026-07-14T00:00:00.000Z");
+    assert.equal(Number(metadataUpdate.changes ?? 0), 1);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  } finally {
+    db.close();
+  }
+}
+
+function legacyV3ActiveLeaseTriggerWithExteriorFormatting(): string {
+  return LITE_LEARNING_V3_ELIGIBLE_ACTIVE_LEASE_TRIGGER_SQL
+    .replace("CREATE TRIGGER", "create   trigger")
+    .replace("BEFORE INSERT ON", "before\n  insert   on")
+    .replace("WHEN NEW.event_kind", "when\n  NEW.event_kind")
+    .replace("\nBEGIN\n", "\n  begin\n")
+    .replace("\nEND;", "\nend;");
 }
 
 function sha256(value: string): string {
@@ -198,6 +267,19 @@ function authorityRow(
       .map((column) => [column, null]),
   );
   return Object.assign(row, values) as LiteLearningAuthorityRow;
+}
+
+function insertAuthorityRowDirect(
+  db: SqliteDatabase,
+  table: keyof typeof LITE_LEARNING_LEDGER_REQUIRED_COLUMNS,
+  row: LiteLearningAuthorityRow,
+): void {
+  const columns = LITE_LEARNING_LEDGER_REQUIRED_COLUMNS[table]
+    .filter((column) => column !== "row_id");
+  db.prepare(
+    `INSERT INTO ${table} (${columns.join(", ")})
+     VALUES (${columns.map(() => "?").join(", ")})`,
+  ).run(...columns.map((column) => row[column]));
 }
 
 function externalExecutionPolicy(databaseInstanceId: string) {
@@ -295,11 +377,28 @@ function confirmatoryFixture(databaseInstanceId: string) {
     prospective_calibration_json: gateCalibration.json,
     created_at: "2026-07-13T00:00:00.000Z",
   } as const;
-  const pairSeeds = Array.from({ length: 384 }, (_, index) => ({
-    pairHash: sha256(`confirmatory-pair:${index}`),
-    member0: sha256(`confirmatory-namespace:${index}:0`),
-    member1: sha256(`confirmatory-namespace:${index}:1`),
-  })).sort((left, right) => left.pairHash.localeCompare(right.pairHash));
+  const pairSeeds = Array.from({ length: 384 }, (_, index) => {
+    const member0 = sha256(`confirmatory-namespace:${index}:0`);
+    const member1 = sha256(`confirmatory-namespace:${index}:1`);
+    const matching = canonicalJson({
+      contract_version: "test-matching-covariate-v1",
+      host_adapter: "adapter-v1",
+      model_route: "route-v1",
+      region: "test-region",
+      workload_stratum: `stratum-${index % 8}`,
+    });
+    return {
+      pairHash: learningRandomizationPairIdentityDigest({
+        tenant_id: "tenant-a",
+        member_0_memory_namespace_sha256: member0,
+        member_1_memory_namespace_sha256: member1,
+        matching_covariate_sha256: matching.sha256,
+      }),
+      member0,
+      member1,
+      matching,
+    };
+  }).sort((left, right) => left.pairHash.localeCompare(right.pairHash));
   const namespaces = pairSeeds.flatMap((pair) => [pair.member0, pair.member1]).sort();
   const namespaceSetSha256 = sha256(stableStringify(namespaces));
   const confirmatoryAttemptId = "attempt-confirmatory";
@@ -312,13 +411,6 @@ function confirmatoryFixture(databaseInstanceId: string) {
       : wave === 2
         ? ["2026-08-04T00:00:00.000Z", "2026-08-05T00:00:00.000Z", "2026-08-06T00:00:00.000Z"]
         : ["2026-08-07T00:00:00.000Z", "2026-08-08T00:00:00.000Z", "2026-08-09T00:00:00.000Z"];
-    const matching = canonicalJson({
-      contract_version: "test-matching-covariate-v1",
-      host_adapter: "adapter-v1",
-      model_route: "route-v1",
-      region: "test-region",
-      workload_stratum: `stratum-${ordinal % 8}`,
-    });
     const pairBase = authorityRow("lite_learning_randomization_pairs", {
       tenant_id: "tenant-a",
       confirmatory_attempt_id: confirmatoryAttemptId,
@@ -326,8 +418,8 @@ function confirmatoryFixture(databaseInstanceId: string) {
       pair_ordinal: ordinal,
       member_0_memory_namespace_sha256: seed.member0,
       member_1_memory_namespace_sha256: seed.member1,
-      matching_covariate_sha256: matching.sha256,
-      matching_covariate_json: matching.json,
+      matching_covariate_sha256: seed.matching.sha256,
+      matching_covariate_json: seed.matching.json,
       activation_wave_index: wave,
       activation_starts_at: times[0]!,
       index_window_ends_at: times[1]!,
@@ -373,6 +465,8 @@ function confirmatoryFixture(databaseInstanceId: string) {
   const config = canonicalJson({
     contract_version: "test-confirmatory-config-v1",
     task_family: "runtime-learning",
+    provision_operation_id_sha256: sha256("operation-provision-confirmatory"),
+    provisioning_actor_sha256: sha256("test-provisioner"),
     collection_source_policy_sha256: sourcePolicy.sha256,
     external_execution_policy_sha256: externalPolicy.sha256,
     gate_prospective_calibration_sha256: gate.prospective_calibration_sha256,
@@ -483,7 +577,65 @@ function confirmatoryFixture(databaseInstanceId: string) {
       released_at: null,
     });
   }));
-  return { candidate, gate, revision, attempt, pairs, leases, namespaceSetSha256 };
+  return {
+    candidate,
+    gate,
+    revision,
+    attempt,
+    pairs,
+    leases,
+    namespaceSetSha256,
+    databaseInstanceId,
+  };
+}
+
+function experimentClosureFixture(args: {
+  fixture: ReturnType<typeof confirmatoryFixture>;
+  operationId: string;
+  nonce: string;
+  createdAt: string;
+}) {
+  const key = STORE_CLOSE_KEY;
+  const authorizationNonce = createHash("sha256")
+    .update(args.nonce)
+    .digest()
+    .subarray(0, 16)
+    .toString("base64url");
+  const authorizationExpiresAt = new Date(
+    new Date(args.createdAt).getTime() + 30 * 60 * 1000,
+  ).toISOString();
+  const approval = LearningExperimentCloseApprovalV1Schema.parse({
+    contract_version: "learning_experiment_close_approval_v1",
+    authorization_kind: "experiment_close",
+    action: "close_experiment",
+    runtime_authority_lineage_sha256: sha256(args.fixture.databaseInstanceId),
+    tenant_id: "tenant-a",
+    task_family: args.fixture.attempt.task_family,
+    confirmatory_attempt_id: args.fixture.attempt.confirmatory_attempt_id,
+    confirmatory_attempt_sha256: args.fixture.attempt.attempt_sha256,
+    experiment_id: args.fixture.revision.experiment_id,
+    experiment_revision: args.fixture.revision.experiment_revision,
+    experiment_config_sha256: args.fixture.revision.config_sha256,
+    namespace_set_sha256: args.fixture.namespaceSetSha256,
+    close_reason: "evidence_complete",
+    candidate_policy_implementation_sha256:
+      args.fixture.candidate.implementation_contract_sha256,
+    gate_policy_implementation_sha256: args.fixture.gate.implementation_contract_sha256,
+    authority_scope: "learning-experiment-authority-v1",
+    authority_operation_kind: "learning_experiment_close_v1",
+    authority_operation_id: args.operationId,
+    approved_by: "test-operator",
+    authorization_key_id: STORE_CLOSE_KEY_ID,
+    authorization_nonce: authorizationNonce,
+    authorization_issued_at: args.createdAt,
+    authorization_expires_at: authorizationExpiresAt,
+  });
+  const authorization = LearningExperimentCloseAuthorizationEnvelopeV1Schema.parse({
+    contract_version: "learning_experiment_close_authorization_envelope_v1",
+    approval,
+    authorization_mac: learningExperimentCloseApprovalMac(approval, key),
+  });
+  return { approval, authorization, key };
 }
 
 function emptyEventRow(): Record<string, string | number | Uint8Array | null> {
@@ -593,10 +745,13 @@ function legacyExposureFixture() {
     index_window_ends_at: null,
     wave_analysis_at: null,
     assignment_arm: "not_enrolled",
+    served_arm: "control",
+    relevant_memory_ids: ["memory-a"],
     recorded_surface_sha256: "1".repeat(64),
     candidate_surface_sha256: "1".repeat(64),
     served_surface_sha256: "1".repeat(64),
     projection_complete: false,
+    projection_incomplete_reason_codes: ["legacy_served_only"],
     hard_boundary_upgrade_count: 0,
   };
   const payloadEncoding = canonicalJson(payload);
@@ -654,6 +809,338 @@ function legacyExposureFixture() {
     recorded_at: event.recorded_at,
   });
   return { episodeId, event, item, payload, row };
+}
+
+function legacyExposureProbe(args: {
+  suffix: string;
+  memoryNamespaceSha256?: string | null;
+  sourceCommitId?: string;
+  memoryId?: string;
+  collectionClass?: ExposureCommittedV1["collection_class"];
+  evidenceIntent?: ExposureCommittedV1["evidence_intent"];
+  operationProtection?: ExposureCommittedV1["operation_protection"];
+  rowOverrides?: Record<string, string | number | Uint8Array | null>;
+}) {
+  const base = legacyExposureFixture();
+  const guideTraceId = `guide-probe-${args.suffix}`;
+  const sourceCommitId = args.sourceCommitId ?? `commit-probe-${args.suffix}`;
+  const memoryId = args.memoryId ?? `memory-probe-${args.suffix}`;
+  const memoryNamespaceSha256 = args.memoryNamespaceSha256 ?? null;
+  const collectionClass = args.collectionClass ?? "unverified";
+  const payload: ExposureCommittedV1 = {
+    ...base.payload,
+    guide_trace_id: guideTraceId,
+    guide_receipt_sha256: sha256(`guide-receipt-probe:${args.suffix}`),
+    guide_commit_id: sourceCommitId,
+    request_sha256: sha256(`request-probe:${args.suffix}`),
+    operation_protection: args.operationProtection ?? "legacy_unprotected",
+    collection_class: collectionClass,
+    evidence_intent: args.evidenceIntent ?? null,
+    memory_namespace_sha256: memoryNamespaceSha256,
+    relevant_memory_ids: [memoryId],
+  };
+  const item: LearningLedgerItem = {
+    ...base.item,
+    memory_id: memoryId,
+  };
+  const encoded = canonicalJson(payload);
+  const event: EventWithoutDigest = {
+    ...base.event,
+    scope: `scope-probe-${args.suffix}`,
+    event_id: `event-probe-${args.suffix}`,
+    episode_id: learningEpisodeId({
+      tenantId: "tenant-a",
+      scope: `scope-probe-${args.suffix}`,
+      guideTraceId,
+    }),
+    source_id: guideTraceId,
+    source_sha256: payload.guide_receipt_sha256,
+    payload_sha256: encoded.sha256,
+    item_set_sha256: learningItemSetDigest([item]),
+    source_commit_id: sourceCommitId,
+    operation_id: payload.operation_protection === "protected"
+      ? `operation-probe-${args.suffix}`
+      : null,
+    collection_class: collectionClass,
+  };
+  const row = episodeEventRow(event, payload, {
+    memory_namespace_sha256: memoryNamespaceSha256,
+    assignment_unit_sha256: memoryNamespaceSha256 === null
+      ? null
+      : sha256(stableStringify({
+        tenant_id: "tenant-a",
+        memory_namespace_sha256: memoryNamespaceSha256,
+      })),
+    evidence_intent: payload.evidence_intent,
+    ...args.rowOverrides,
+  });
+  return { event, item, payload, row };
+}
+
+function confirmatoryPreTreatmentMembers(prefix: string) {
+  return Array.from({ length: 768 }, (_, index) => {
+    const storeScopeKey = `tenant:tenant-a::scope:${prefix}-${String(index).padStart(3, "0")}`;
+    const memoryNamespaceSha256 = sha256(storeScopeKey);
+    return {
+      storeScopeKey,
+      memoryNamespaceSha256,
+      assignmentUnitSha256: sha256(stableStringify({
+        tenant_id: "tenant-a",
+        memory_namespace_sha256: memoryNamespaceSha256,
+      })),
+    };
+  });
+}
+
+function seedPriorCommit(
+  db: SqliteDatabase,
+  args: { id: string; scope: string; createdAt?: string },
+): void {
+  db.prepare(
+    `INSERT INTO lite_memory_commits
+      (id, scope, parent_commit_id, input_sha256, diff_json, actor,
+       model_version, prompt_version, commit_hash, created_at)
+     VALUES (?, ?, NULL, ?, '{}', 'pre-treatment-test', NULL, NULL, ?, ?)`,
+  ).run(
+    args.id,
+    args.scope,
+    sha256(`input:${args.id}`),
+    sha256(`commit:${args.id}`),
+    args.createdAt ?? "2026-07-12T00:00:00.000Z",
+  );
+}
+
+function seedPriorNode(
+  db: SqliteDatabase,
+  args: { id: string; scope: string; commitId: string; slots?: unknown; createdAt?: string },
+): void {
+  db.prepare(
+    `INSERT INTO lite_memory_nodes
+      (id, scope, client_id, type, tier, title, text_summary, slots_json,
+       raw_ref, evidence_ref, embedding_vector_json, embedding_model,
+       memory_lane, producer_agent_id, owner_agent_id, owner_team_id,
+       embedding_status, embedding_last_error, salience, importance, confidence,
+       redaction_version, commit_id, created_at)
+     VALUES (?, ?, NULL, 'experience', 'hot', 'Prior node', 'Prior production state', ?,
+             NULL, NULL, NULL, NULL, 'shared', 'pre-treatment-test',
+             'pre-treatment-test', NULL, 'pending', NULL, 0.5, 0.5, 0.5,
+             1, ?, ?)`,
+  ).run(
+    args.id,
+    args.scope,
+    stableStringify(args.slots ?? { source: "ordinary_production_prior" }),
+    args.commitId,
+    args.createdAt ?? "2026-07-12T00:00:00.000Z",
+  );
+}
+
+function promotionEligibleGuideRootMaterial(args: {
+  tenantId: string;
+  scope: string;
+  guideTraceId: string;
+  runId: string | null;
+  item: Extract<LearningLedgerItem, { decision_completeness: "complete" }>;
+  memoryIds?: string[];
+}) {
+  const recordedMemoryIds = [args.item.memory_id];
+  const exposedMemoryIds = args.memoryIds ?? [];
+  const servedUseNowIds = args.item.served_action === "use_now" ? recordedMemoryIds : [];
+  const servedInspectIds = args.item.served_action === "inspect_before_use" ? recordedMemoryIds : [];
+  const servedDoNotUseIds = args.item.served_action === "do_not_use" ? recordedMemoryIds : [];
+  const servedRehydrateIds = args.item.served_action === "rehydrate" ? recordedMemoryIds : [];
+  const promptText = `Formal guide context for ${args.item.memory_id}`;
+  const querySha256 = sha256(`query:${args.guideTraceId}`);
+  const contextSha256 = sha256(`context:${args.guideTraceId}`);
+  const agentContext = AionisAgentContextSchema.parse({
+    contract_version: "aionis_agent_context_v1",
+    tenant_id: args.tenantId,
+    scope: args.scope,
+    prompt_text: promptText,
+    summary: `Formal guide context for ${args.item.memory_id}`,
+    history_used: true,
+    actionable_history_used: true,
+    recommended_posture: args.item.served_action === "use_now"
+      ? "reuse_supported_history"
+      : args.item.served_action === "inspect_before_use"
+        ? "inspect_before_use"
+        : args.item.served_action === "rehydrate"
+          ? "rehydrate_before_use"
+          : "ignore_history",
+    authority: "advisory",
+    memory_ids: exposedMemoryIds,
+    use_now_memory_ids: servedUseNowIds,
+    inspect_before_use_memory_ids: servedInspectIds,
+    do_not_use_memory_ids: servedDoNotUseIds,
+    rehydrate_hints: servedRehydrateIds.map((memoryId) => ({
+      memory_id: memoryId,
+      reason: "Formal fixture requires archived evidence before use.",
+      required: true,
+    })),
+    risk: {
+      negative_transfer_risk: "low",
+      blocked_authority_count: servedDoNotUseIds.length,
+      stale_memory_count: 0,
+      reasons: [],
+    },
+    evidence_refs: {
+      memory_ids: exposedMemoryIds,
+      workflow_ids: [],
+      evidence_count: recordedMemoryIds.length,
+    },
+  });
+  const ledger = {
+    contract_version: "aionis_guide_exposure_v1",
+    guide_trace_id: args.guideTraceId,
+    tenant_id: args.tenantId,
+    scope: args.scope,
+    run_id: args.runId,
+    consumer_agent_id: "formal-guide-agent",
+    consumer_team_id: null,
+    query_sha256: querySha256,
+    context_sha256: contextSha256,
+    task_binding_sha256: sha256(`task-binding:${args.guideTraceId}`),
+    memory_ids: agentContext.memory_ids,
+    use_now_memory_ids: servedUseNowIds,
+    inspect_before_use_memory_ids: servedInspectIds,
+    do_not_use_memory_ids: servedDoNotUseIds,
+    rehydrate_memory_ids: servedRehydrateIds,
+    prompt_char_count: promptText.length,
+    history_used: true,
+    actionable_history_used: true,
+    recommended_posture: agentContext.recommended_posture,
+    authority: agentContext.authority,
+    tool_selection: null,
+    runtime_verification_v1: null,
+    effect_observation_v1: null,
+    effect_observation_sha256: null,
+  } as const;
+  const ledgerJson = stableStringify(ledger);
+  return {
+    contextSha256,
+    ledger,
+    ledgerJson,
+    ledgerSha256: sha256(ledgerJson),
+    promptText,
+    querySha256,
+    agentContext,
+  } as const;
+}
+
+function insertPromotionEligibleGuideRoots(
+  db: SqliteDatabase,
+  args: {
+    event: EventWithoutDigest;
+    payload: ExposureCommittedV1;
+    row: LiteLearningAuthorityRow;
+    item: Extract<LearningLedgerItem, { decision_completeness: "complete" }>;
+    rootItem?: Extract<LearningLedgerItem, { decision_completeness: "complete" }>;
+    rootMemoryIds?: string[];
+    commitScope: string;
+    operationRequestSha256?: string;
+  },
+): void {
+  const material = promotionEligibleGuideRootMaterial({
+    tenantId: args.event.tenant_id,
+    scope: args.event.scope,
+    guideTraceId: args.payload.guide_trace_id,
+    runId: args.event.run_id,
+    item: args.rootItem ?? args.item,
+    memoryIds: args.rootMemoryIds,
+  });
+  const { agentContext, contextSha256, ledger, ledgerJson, querySha256 } = material;
+  assert.equal(material.ledgerSha256, args.payload.guide_receipt_sha256);
+  db.prepare(
+    `INSERT INTO lite_memory_commits
+      (id, scope, parent_commit_id, input_sha256, diff_json, actor,
+       model_version, prompt_version, commit_hash, created_at)
+     VALUES (?, ?, NULL, ?, ?, 'aionis-runtime', NULL, NULL, ?, ?)`,
+  ).run(
+    args.payload.guide_commit_id,
+    args.commitScope,
+    args.payload.guide_receipt_sha256,
+    stableStringify({ guide_trace_id: args.payload.guide_trace_id }),
+    sha256(`commit:${args.payload.guide_commit_id}`),
+    args.event.recorded_at,
+  );
+  db.prepare(
+    `INSERT INTO lite_memory_nodes
+      (id, scope, client_id, type, tier, title, text_summary, slots_json,
+       raw_ref, evidence_ref, embedding_vector_json, embedding_model,
+       memory_lane, producer_agent_id, owner_agent_id, owner_team_id,
+       embedding_status, embedding_last_error, salience, importance, confidence,
+       redaction_version, commit_id, created_at)
+     VALUES (?, ?, ?, 'evidence', 'archive', 'Guide exposure ledger', ?, ?,
+             NULL, NULL, NULL, NULL, 'shared', 'aionis-runtime',
+             'formal-guide-agent', NULL, 'pending', NULL, 0, 0, 1,
+             1, ?, ?)`,
+  ).run(
+    `node-${args.payload.guide_trace_id}`,
+    args.commitScope,
+    args.payload.guide_trace_id,
+    `Guide exposure ledger ${args.payload.guide_trace_id}`,
+    JSON.stringify({ guide_exposure_v1: ledger, not_agent_facing: true }),
+    args.payload.guide_commit_id,
+    args.event.recorded_at,
+  );
+  db.prepare(
+    `INSERT INTO lite_product_guide_receipts
+      (tenant_id, scope, guide_trace_id, run_id, consumer_agent_id, consumer_team_id,
+       query_sha256, context_sha256, ledger_sha256, ledger_json, commit_id, created_at)
+     VALUES (?, ?, ?, ?, 'formal-guide-agent', NULL, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    args.event.tenant_id,
+    args.event.scope,
+    args.payload.guide_trace_id,
+    args.event.run_id,
+    querySha256,
+    contextSha256,
+    args.payload.guide_receipt_sha256,
+    ledgerJson,
+    args.payload.guide_commit_id,
+    args.event.recorded_at,
+  );
+  const operationReceipt = stableStringify({
+    ok: true,
+    statusCode: 200,
+    body: {
+      contract_version: "aionis_guide_result_v1",
+      operation_id: args.event.operation_id,
+      tenant_id: args.event.tenant_id,
+      scope: args.event.scope,
+      guide_trace_id: args.payload.guide_trace_id,
+      agent_context: agentContext,
+      source_map: {
+        admission_candidate_policy: {
+          mode: args.payload.served_arm === "candidate" ? "active" : "shadow",
+          source: "profile_rule",
+          profile_id: args.row.profile_id,
+          serving_authority: "experiment",
+          serving_arm: args.payload.served_arm,
+          enrollment_state: "enrolled",
+          promotion_eligible: true,
+          collection_class: "eligible_host",
+          experiment_id: args.row.experiment_id,
+          experiment_revision: args.row.experiment_revision,
+          experiment_config_sha256: args.payload.experiment_config_sha256,
+          reason_codes: args.payload.assignment_reason_codes,
+        },
+      },
+    },
+  });
+  db.prepare(
+    `INSERT INTO lite_runtime_write_operations
+      (tenant_id, scope, operation_kind, operation_id, request_sha256,
+       receipt_json, commit_id, created_at)
+     VALUES (?, ?, 'product_guide_v1', ?, ?, ?, ?, ?)`,
+  ).run(
+    args.event.tenant_id,
+    args.event.scope,
+    args.event.operation_id,
+    args.operationRequestSha256 ?? args.payload.request_sha256,
+    operationReceipt,
+    args.payload.guide_commit_id,
+    args.event.recorded_at,
+  );
 }
 
 async function createV2Fixture(dbPath: string): Promise<void> {
@@ -777,18 +1264,45 @@ test("gate artifact-set digest is the narrow role/ordinal/series/artifact/report
   );
 });
 
-test("fresh Runtime initialization atomically installs the complete v3 learning schema", async () => {
-  const temp = tempDatabase("fresh-v3");
+test("randomization pair identity is server-derived from tenant, unordered members, and matching covariates", () => {
+  const member0 = sha256("pair-identity-member-0");
+  const member1 = sha256("pair-identity-member-1");
+  const matchingCovariateSha256 = sha256("pair-identity-matching");
+  const base: LiteLearningAuthorityRow = {
+    tenant_id: "tenant-a",
+    member_0_memory_namespace_sha256: member0,
+    member_1_memory_namespace_sha256: member1,
+    matching_covariate_sha256: matchingCovariateSha256,
+    pair_ordinal: 7,
+    assigned_arm: "candidate",
+  };
+  const identity = learningRandomizationPairIdentityDigest(base);
+  assert.equal(identity, learningRandomizationPairIdentityDigest({
+    ...base,
+    member_0_memory_namespace_sha256: member1,
+    member_1_memory_namespace_sha256: member0,
+    pair_ordinal: 301,
+    assigned_arm: "control",
+  }));
+  assert.notEqual(identity, learningRandomizationPairIdentityDigest({ ...base, tenant_id: "tenant-b" }));
+  assert.notEqual(identity, learningRandomizationPairIdentityDigest({
+    ...base,
+    matching_covariate_sha256: sha256("pair-identity-other-matching"),
+  }));
+});
+
+test("fresh Runtime initialization atomically installs the current v4 learning schema", async () => {
+  const temp = tempDatabase("fresh-v4");
   try {
     const store = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
     await store.close();
 
     const db = createSqliteDatabase(temp.path);
     try {
-      assert.equal(LITE_RUNTIME_WRITE_SCHEMA_VERSION, 3);
+      assert.equal(LITE_RUNTIME_WRITE_SCHEMA_VERSION, 4);
       const report = inspectLiteRuntimeSchema(db);
       assert.equal(report.classification, "current");
-      assert.equal(report.detected_version, 3);
+      assert.equal(report.detected_version, 4);
       assert.deepEqual(report.missing_tables, []);
       assert.deepEqual(report.missing_columns, {});
       assert.deepEqual(report.constraint_problems, []);
@@ -797,15 +1311,15 @@ test("fresh Runtime initialization atomically installs the complete v3 learning 
 
       const tables = new Set(userSchemaNames(db, "table"));
       for (const table of LITE_LEARNING_LEDGER_REQUIRED_TABLE_NAMES) {
-        assert.equal(tables.has(table), true, `missing v3 table ${table}`);
+        assert.equal(tables.has(table), true, `missing current table ${table}`);
       }
       const indexes = new Set(userSchemaNames(db, "index"));
       for (const index of LITE_LEARNING_LEDGER_REQUIRED_INDEX_NAMES) {
-        assert.equal(indexes.has(index), true, `missing v3 index ${index}`);
+        assert.equal(indexes.has(index), true, `missing current index ${index}`);
       }
       const triggers = new Set(userSchemaNames(db, "trigger"));
       for (const trigger of LITE_LEARNING_LEDGER_REQUIRED_TRIGGER_NAMES) {
-        assert.equal(triggers.has(trigger), true, `missing v3 trigger ${trigger}`);
+        assert.equal(triggers.has(trigger), true, `missing current trigger ${trigger}`);
       }
 
       assert.deepEqual(
@@ -827,7 +1341,471 @@ test("fresh Runtime initialization atomically installs the complete v3 learning 
   }
 });
 
-test("v3 database-lineage identity is immutable and stable across reopen", async () => {
+test("schema SQL normalization preserves quoted literal bytes", () => {
+  const expected = "CREATE TRIGGER sample BEFORE UPDATE ON records BEGIN SELECT RAISE(ABORT, 'owner''s active lease'); END;";
+  const exteriorVariant = "create   trigger sample before update on records begin select raise(abort, 'owner''s active lease'); end";
+  assert.equal(normalizeSqliteSchemaSql(exteriorVariant), normalizeSqliteSchemaSql(expected));
+  assert.notEqual(
+    normalizeSqliteSchemaSql(expected.replace("owner''s", "OWNER''s")),
+    normalizeSqliteSchemaSql(expected),
+  );
+  assert.notEqual(
+    normalizeSqliteSchemaSql(expected.replace("active lease", "active  lease")),
+    normalizeSqliteSchemaSql(expected),
+  );
+});
+
+test("schema SQL normalization follows SQLite whitespace, case, and comment boundaries", () => {
+  assert.equal(
+    normalizeSqliteSchemaSql("SELECT\t*\fFROM\r\nlease"),
+    normalizeSqliteSchemaSql("select * from lease"),
+  );
+  assert.notEqual(
+    normalizeSqliteSchemaSql("SELECT * FROM lease AS row"),
+    normalizeSqliteSchemaSql("SELECT * FROM lease\u00a0AS row"),
+  );
+  assert.notEqual(
+    normalizeSqliteSchemaSql("SELECT * FROM lease AS row"),
+    normalizeSqliteSchemaSql("SELECT * FROM lease\u000bAS row"),
+  );
+  assert.notEqual(
+    normalizeSqliteSchemaSql("SELECT NEW.event_kind"),
+    normalizeSqliteSchemaSql("SELECT NEW.event_\u212Aind"),
+  );
+  assert.notEqual(
+    normalizeSqliteSchemaSql("SELECT 1 -- boundary\n + 2"),
+    normalizeSqliteSchemaSql("SELECT 1 -- boundary + 2\n"),
+  );
+  assert.notEqual(
+    normalizeSqliteSchemaSql("SELECT 1 -- boundary\r + 2\n"),
+    normalizeSqliteSchemaSql("SELECT 1 -- boundary\r\n + 2"),
+  );
+});
+
+test("legacy v3 trigger with legal exterior formatting still migrates from sqlite_schema", async () => {
+  const temp = tempDatabase("v3-active-lease-exterior-formatting");
+  try {
+    const initialized = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
+    await initialized.close();
+    const formattedLegacySql = legacyV3ActiveLeaseTriggerWithExteriorFormatting();
+    assert.notEqual(formattedLegacySql, LITE_LEARNING_V3_ELIGIBLE_ACTIVE_LEASE_TRIGGER_SQL);
+    downgradeCurrentFixtureToLegacyV3(temp.path, formattedLegacySql);
+
+    const before = createSqliteDatabase(temp.path);
+    try {
+      const stored = before.prepare(
+        `SELECT sql FROM sqlite_schema
+         WHERE type = 'trigger' AND name = 'trg_lite_learning_eligible_active_lease'`,
+      ).get() as { sql: string };
+      assert.equal(
+        normalizeSqliteSchemaSql(stored.sql),
+        normalizeSqliteSchemaSql(LITE_LEARNING_V3_ELIGIBLE_ACTIVE_LEASE_TRIGGER_SQL),
+      );
+      assert.equal(inspectLiteRuntimeSchema(before).classification, "supported_previous_v3");
+    } finally {
+      before.close();
+    }
+
+    const migrated = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
+    await migrated.close();
+    const after = createSqliteDatabase(temp.path);
+    try {
+      assert.equal(inspectLiteRuntimeSchema(after).classification, "current");
+    } finally {
+      after.close();
+    }
+  } finally {
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("v3-to-v4 migration rejects a real active-lease literal-case tamper", async () => {
+  const temp = tempDatabase("v3-active-lease-literal-case-tamper");
+  try {
+    const initialized = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
+    await initialized.close();
+    downgradeCurrentFixtureToLegacyV3(temp.path);
+
+    const tamperedSql = LITE_LEARNING_V3_ELIGIBLE_ACTIVE_LEASE_TRIGGER_SQL.replace(
+      "NEW.collection_class = 'eligible_host'",
+      "NEW.collection_class = 'ELIGIBLE_HOST'",
+    );
+    assert.notEqual(tamperedSql, LITE_LEARNING_V3_ELIGIBLE_ACTIVE_LEASE_TRIGGER_SQL);
+    const corrupting = createSqliteDatabase(temp.path);
+    corrupting.exec("DROP TRIGGER trg_lite_learning_eligible_active_lease");
+    corrupting.exec(tamperedSql);
+    assert.equal(inspectLiteRuntimeSchema(corrupting).classification, "incompatible");
+    corrupting.exec("BEGIN IMMEDIATE");
+    try {
+      assert.throws(
+        () => migrateLiteLearningEpisodeLedgerV3ToV4(corrupting),
+        /lite_runtime_v3_to_v4_active_lease_trigger_precondition_failed/,
+      );
+    } finally {
+      corrupting.exec("ROLLBACK");
+      corrupting.close();
+    }
+
+    assert.throws(
+      () => createLiteWriteStore(temp.path, { annProjectionEnabled: false }),
+      /lite_runtime_schema_preflight_failed/,
+    );
+    const unchanged = createSqliteDatabase(temp.path);
+    try {
+      assert.equal(
+        (unchanged.prepare(
+          "SELECT version FROM lite_runtime_schema_metadata WHERE component = 'write_projection'",
+        ).get() as { version: number }).version,
+        3,
+      );
+      const stored = unchanged.prepare(
+        `SELECT sql FROM sqlite_schema
+         WHERE type = 'trigger' AND name = 'trg_lite_learning_eligible_active_lease'`,
+      ).get() as { sql: string };
+      assert.notEqual(
+        normalizeSqliteSchemaSql(stored.sql),
+        normalizeSqliteSchemaSql(LITE_LEARNING_V3_ELIGIBLE_ACTIVE_LEASE_TRIGGER_SQL),
+      );
+      assert.match(stored.sql, /'ELIGIBLE_HOST'/);
+    } finally {
+      unchanged.close();
+    }
+  } finally {
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("schema contract and ledger integrity reject real literal-whitespace tampering", async () => {
+  const temp = tempDatabase("schema-literal-whitespace-tamper");
+  try {
+    const initialized = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
+    await initialized.close();
+    const triggerName = "lite_runtime_authority_identity_no_update";
+    const expected = LITE_LEARNING_LEDGER_REQUIRED_TRIGGERS[triggerName];
+    assert.ok(expected);
+    const tamperedSql = expected.sql.replace(
+      "'lite_runtime_authority_identity is append-only'",
+      "'lite_runtime_authority_identity  is append-only'",
+    );
+    assert.notEqual(tamperedSql, expected.sql);
+
+    const corrupting = createSqliteDatabase(temp.path);
+    corrupting.exec(`DROP TRIGGER ${triggerName}`);
+    corrupting.exec(tamperedSql);
+    const stored = corrupting.prepare(
+      "SELECT sql FROM sqlite_schema WHERE type = 'trigger' AND name = ?",
+    ).get(triggerName) as { sql: string };
+    assert.match(stored.sql, /identity {2}is append-only/);
+    const report = inspectLiteRuntimeSchema(corrupting);
+    assert.equal(report.classification, "incompatible");
+    assert.match(report.trigger_problems.join("\n"), /definition does not match/);
+    assert.throws(
+      () => assertLiteLearningEpisodeLedgerSchemaIntegrity(corrupting),
+      /definition mismatch/,
+    );
+    corrupting.close();
+
+    assert.throws(
+      () => createLiteWriteStore(temp.path, { annProjectionEnabled: false }),
+      /lite_runtime_schema_preflight_failed/,
+    );
+  } finally {
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("schema contract rejects real SQLite non-ASCII lexical tampering", async (t) => {
+  for (const corruption of [
+    {
+      name: "non-breaking-space-identifier",
+      from: "FROM lite_learning_namespace_leases AS lease",
+      to: "FROM lite_learning_namespace_leases\u00a0AS lease",
+    },
+    {
+      name: "unicode-case-fold-identifier",
+      from: "NEW.event_kind",
+      to: "NEW.event_\u212Aind",
+    },
+  ] as const) {
+    await t.test(corruption.name, async () => {
+      const temp = tempDatabase(`schema-${corruption.name}`);
+      try {
+        const initialized = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
+        await initialized.close();
+        const triggerName = "trg_lite_learning_eligible_active_lease";
+        const expected = LITE_LEARNING_LEDGER_REQUIRED_TRIGGERS[triggerName];
+        assert.ok(expected);
+        const tamperedSql = expected.sql.replace(corruption.from, corruption.to);
+        assert.notEqual(tamperedSql, expected.sql);
+
+        const corrupting = createSqliteDatabase(temp.path);
+        corrupting.exec(`DROP TRIGGER ${triggerName}`);
+        corrupting.exec(tamperedSql);
+        const stored = corrupting.prepare(
+          "SELECT sql FROM sqlite_schema WHERE type = 'trigger' AND name = ?",
+        ).get(triggerName) as { sql: string };
+        assert.ok(stored.sql.includes(corruption.to));
+        const report = inspectLiteRuntimeSchema(corrupting);
+        assert.equal(report.classification, "incompatible");
+        assert.match(report.trigger_problems.join("\n"), /definition does not match/);
+        assert.throws(
+          () => assertLiteLearningEpisodeLedgerSchemaIntegrity(corrupting),
+          /definition mismatch/,
+        );
+        corrupting.close();
+
+        assert.throws(
+          () => createLiteWriteStore(temp.path, { annProjectionEnabled: false }),
+          /lite_runtime_schema_preflight_failed/,
+        );
+      } finally {
+        fs.rmSync(temp.directory, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("schema preflight rejects a real partial-index predicate comment spoof", async () => {
+  const temp = tempDatabase("schema-partial-index-comment-spoof");
+  try {
+    const initialized = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
+    await initialized.close();
+    const indexName = "idx_lite_learning_namespace_one_active_lease";
+    const corrupting = createSqliteDatabase(temp.path);
+    corrupting.exec(`DROP INDEX ${indexName}`);
+    corrupting.exec(`
+      CREATE UNIQUE INDEX ${indexName}
+      ON lite_learning_namespace_leases(tenant_id, memory_namespace_sha256)WHERE status='ACTIVE'
+      -- where status = 'active'
+    `);
+    const stored = corrupting.prepare(
+      "SELECT sql FROM sqlite_schema WHERE type = 'index' AND name = ?",
+    ).get(indexName) as { sql: string };
+    assert.match(stored.sql, /\)WHERE status='ACTIVE'/);
+    assert.match(stored.sql, /-- where status = 'active'/);
+    const report = inspectLiteRuntimeSchema(corrupting);
+    assert.equal(report.classification, "incompatible");
+    assert.match(report.index_problems.join("\n"), /predicate mismatch/);
+    assert.throws(
+      () => assertLiteLearningEpisodeLedgerSchemaIntegrity(corrupting),
+      /index idx_lite_learning_namespace_one_active_lease definition mismatch/,
+    );
+    corrupting.close();
+
+    assert.throws(
+      () => createLiteWriteStore(temp.path, { annProjectionEnabled: false }),
+      /lite_runtime_schema_preflight_failed/,
+    );
+  } finally {
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("exact legacy v3 active-lease trigger migrates atomically to v4 on reopen", async () => {
+  const temp = tempDatabase("v3-active-lease-trigger-upgrade");
+  try {
+    const initialized = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
+    await initialized.close();
+    const seeded = createSqliteDatabase(temp.path);
+    seeded.prepare(
+      `INSERT INTO lite_memory_commits
+       (id, scope, parent_commit_id, input_sha256, diff_json, actor,
+        model_version, prompt_version, commit_hash, created_at)
+       VALUES (?, ?, NULL, ?, '{}', ?, NULL, NULL, ?, ?)`,
+    ).run(
+      "commit-v3-trigger-migration",
+      "scope-v3-trigger-migration",
+      sha256("input-v3-trigger-migration"),
+      "migration-test",
+      sha256("commit-v3-trigger-migration"),
+      "2026-07-14T00:00:00.000Z",
+    );
+    const identityBefore = (seeded.prepare(
+      "SELECT database_instance_id FROM lite_runtime_authority_identity WHERE singleton = 1",
+    ).get() as { database_instance_id: string }).database_instance_id;
+    seeded.close();
+    downgradeCurrentFixtureToLegacyV3(temp.path);
+
+    const before = createSqliteDatabase(temp.path);
+    try {
+      const report = inspectLiteRuntimeSchema(before);
+      assert.equal(report.classification, "supported_previous_v3");
+      assert.equal(report.detected_version, 3);
+      assert.equal(report.current_version, 4);
+      assert.equal(report.upgrade_required, true);
+      const trigger = before.prepare(
+        `SELECT sql FROM sqlite_schema
+         WHERE type = 'trigger' AND name = 'trg_lite_learning_eligible_active_lease'`,
+      ).get() as { sql: string };
+      assert.equal(
+        normalizeSchemaSql(trigger.sql),
+        normalizeSchemaSql(LITE_LEARNING_V3_ELIGIBLE_ACTIVE_LEASE_TRIGGER_SQL),
+      );
+    } finally {
+      before.close();
+    }
+
+    const migrated = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
+    await migrated.close();
+    const after = createSqliteDatabase(temp.path);
+    try {
+      const report = inspectLiteRuntimeSchema(after);
+      assert.equal(report.classification, "current");
+      assert.equal(report.detected_version, 4);
+      assert.equal(report.upgrade_required, false);
+      const trigger = after.prepare(
+        `SELECT sql FROM sqlite_schema
+         WHERE type = 'trigger' AND name = 'trg_lite_learning_eligible_active_lease'`,
+      ).get() as { sql: string };
+      assert.equal(
+        normalizeSchemaSql(trigger.sql),
+        normalizeSchemaSql(
+          LITE_LEARNING_LEDGER_REQUIRED_TRIGGERS.trg_lite_learning_eligible_active_lease.sql,
+        ),
+      );
+      assert.equal(
+        (after.prepare(
+          "SELECT COUNT(*) AS count FROM lite_memory_commits WHERE id = 'commit-v3-trigger-migration'",
+        ).get() as { count: number }).count,
+        1,
+      );
+      assert.equal(
+        (after.prepare(
+          "SELECT database_instance_id FROM lite_runtime_authority_identity WHERE singleton = 1",
+        ).get() as { database_instance_id: string }).database_instance_id,
+        identityBefore,
+      );
+    } finally {
+      after.close();
+    }
+
+    const idempotent = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
+    await idempotent.close();
+    const reopened = createSqliteDatabase(temp.path);
+    try {
+      assert.equal(inspectLiteRuntimeSchema(reopened).classification, "current");
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("v3-to-v4 migration rejects missing or substituted active-lease triggers", async (t) => {
+  for (const corruption of ["missing", "substituted"] as const) {
+    await t.test(corruption, async () => {
+      const temp = tempDatabase(`v3-trigger-${corruption}`);
+      try {
+        const initialized = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
+        await initialized.close();
+        downgradeCurrentFixtureToLegacyV3(temp.path);
+        const corrupting = createSqliteDatabase(temp.path);
+        corrupting.exec("DROP TRIGGER trg_lite_learning_eligible_active_lease");
+        if (corruption === "substituted") {
+          corrupting.exec(`
+            CREATE TRIGGER trg_lite_learning_eligible_active_lease
+            BEFORE INSERT ON lite_learning_episode_events
+            BEGIN
+              SELECT RAISE(ABORT, 'substituted trigger must not be repaired');
+            END;
+          `);
+        }
+        const corruptSql = corruption === "substituted"
+          ? (corrupting.prepare(
+              `SELECT sql FROM sqlite_schema
+               WHERE type = 'trigger' AND name = 'trg_lite_learning_eligible_active_lease'`,
+            ).get() as { sql: string }).sql
+          : null;
+        const report = inspectLiteRuntimeSchema(corrupting);
+        assert.equal(report.classification, "incompatible");
+        assert.match(report.trigger_problems.join("\n"), corruption === "missing"
+          ? /missing required trigger/
+          : /definition does not match/);
+        corrupting.close();
+
+        assert.throws(
+          () => createLiteWriteStore(temp.path, { annProjectionEnabled: false }),
+          /lite_runtime_schema_preflight_failed/,
+        );
+        const unchanged = createSqliteDatabase(temp.path);
+        try {
+          assert.equal(
+            (unchanged.prepare(
+              "SELECT version FROM lite_runtime_schema_metadata WHERE component = 'write_projection'",
+            ).get() as { version: number }).version,
+            3,
+          );
+          const row = unchanged.prepare(
+            `SELECT sql FROM sqlite_schema
+             WHERE type = 'trigger' AND name = 'trg_lite_learning_eligible_active_lease'`,
+          ).get() as { sql: string } | undefined;
+          assert.equal(row?.sql ?? null, corruptSql);
+        } finally {
+          unchanged.close();
+        }
+      } finally {
+        fs.rmSync(temp.directory, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("process death cannot expose a partial v3-to-v4 trigger migration", async () => {
+  const temp = tempDatabase("v3-trigger-kill-rollback");
+  try {
+    const initialized = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
+    await initialized.close();
+    downgradeCurrentFixtureToLegacyV3(temp.path);
+
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--import", "tsx", MIGRATION_CRASH_CHILD, temp.path,
+        "after_metadata_update_before_commit",
+      ],
+      { cwd: ROOT, encoding: "utf8" },
+    );
+    assert.equal(child.status, null, child.stderr || child.stdout);
+    assert.equal(child.signal, "SIGKILL");
+
+    const rolledBack = createSqliteDatabase(temp.path);
+    try {
+      const report = inspectLiteRuntimeSchema(rolledBack);
+      assert.equal(report.classification, "supported_previous_v3");
+      assert.equal(report.detected_version, 3);
+      const trigger = rolledBack.prepare(
+        `SELECT sql FROM sqlite_schema
+         WHERE type = 'trigger' AND name = 'trg_lite_learning_eligible_active_lease'`,
+      ).get() as { sql: string };
+      assert.equal(
+        normalizeSchemaSql(trigger.sql),
+        normalizeSchemaSql(LITE_LEARNING_V3_ELIGIBLE_ACTIVE_LEASE_TRIGGER_SQL),
+      );
+    } finally {
+      rolledBack.close();
+    }
+
+    const retry = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
+    await retry.close();
+    const current = createSqliteDatabase(temp.path);
+    try {
+      assert.equal(inspectLiteRuntimeSchema(current).classification, "current");
+      assert.equal(
+        (current.prepare(
+          "SELECT version FROM lite_runtime_schema_metadata WHERE component = 'write_projection'",
+        ).get() as { version: number }).version,
+        4,
+      );
+    } finally {
+      current.close();
+    }
+  } finally {
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("database-lineage identity is immutable and stable across current-schema reopen", async () => {
   const temp = tempDatabase("identity");
   try {
     const store = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
@@ -966,7 +1944,7 @@ test("structural ledger corruption fails closed on access, reopen, verify, backu
   }
 });
 
-test("v2-to-v3 migration preserves all eight authority and semantic row families", async () => {
+test("v2-to-v4 migration preserves all eight authority and semantic row families", async () => {
   const temp = tempDatabase("preservation");
   try {
     await createV2Fixture(temp.path);
@@ -1011,7 +1989,7 @@ test("v2-to-v3 migration preserves all eight authority and semantic row families
   }
 });
 
-test("v2-to-v3 migration fault rolls back every DDL group and metadata update", async () => {
+test("v2-to-v4 migration fault rolls back every DDL group and metadata update", async () => {
   const temp = tempDatabase("fault-rollback");
   try {
     await createV2Fixture(temp.path);
@@ -1031,11 +2009,11 @@ test("v2-to-v3 migration fault rolls back every DDL group and metadata update", 
           annProjectionEnabled: false,
           schemaMigrationFaultInjector(phase) {
             if (phase === "before_metadata_update") {
-              throw new Error("injected v3 migration failure before metadata");
+              throw new Error("injected v4 migration failure before metadata");
             }
           },
         }),
-        /injected v3 migration failure before metadata/,
+        /injected v4 migration failure before metadata/,
       );
     } finally {
       await database.close();
@@ -1146,13 +2124,18 @@ test("policy-version store is transaction-bound, canonical, immutable, and confl
   }
 });
 
-test("confirmatory provisioning atomically freezes 384 pairs and 768 leases with exact release", async () => {
+test("confirmatory provisioning freezes its cohort while protected close authority stays non-generic", async () => {
   const temp = tempDatabase("confirmatory-ledger");
   const database = createLiteRuntimeDatabase(temp.path);
   let writeStore: ReturnType<typeof createLiteWriteStoreFromDatabase> | null = null;
   try {
-    writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
-    const ledger = createLiteLearningEpisodeLedgerAccess(database);
+    writeStore = createLiteWriteStoreFromDatabase(database, {
+      annProjectionEnabled: false,
+      authorityReceiptKeyring: storeCloseKeyring(),
+    });
+    const ledger = createLiteLearningEpisodeLedgerAccess(database, {
+      authorityReceiptKeyring: storeCloseKeyring(),
+    });
     const fixture = confirmatoryFixture(await ledger.databaseInstanceId());
     await database.transaction.run(async () => {
       await ledger.insertPolicyVersion(fixture.candidate);
@@ -1173,6 +2156,23 @@ test("confirmatory provisioning atomically freezes 384 pairs and 768 leases with
         },
       })),
       /exact four-role map/,
+    );
+
+    const forgedIdentityPairBase = {
+      ...fixture.pairs[0]!,
+      member_0_memory_namespace_sha256: sha256("forged-pair-member"),
+      pair_record_sha256: "0".repeat(64),
+    } satisfies LiteLearningAuthorityRow;
+    const forgedIdentityPair = {
+      ...forgedIdentityPairBase,
+      pair_record_sha256: learningRandomizationPairRecordDigest(forgedIdentityPairBase),
+    } satisfies LiteLearningAuthorityRow;
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.provisionConfirmatorySet({
+        ...fixture,
+        pairs: [forgedIdentityPair, ...fixture.pairs.slice(1)],
+      })),
+      /randomization pair identity digest mismatch/,
     );
 
     const forgedPair = {
@@ -1244,10 +2244,85 @@ test("confirmatory provisioning atomically freezes 384 pairs and 768 leases with
       0,
     );
 
+    const wrongOperationConfig = canonicalJson({
+      ...(JSON.parse(String(fixture.revision.config_json)) as Record<string, unknown>),
+      provision_operation_id_sha256: sha256("different-provision-operation"),
+    });
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.provisionConfirmatorySet({
+        ...fixture,
+        revision: {
+          ...fixture.revision,
+          config_sha256: wrongOperationConfig.sha256,
+          config_json: wrongOperationConfig.json,
+        },
+      })),
+      /protected operation binding mismatch/,
+    );
+
+    const wrongActorAttemptBase = {
+      ...fixture.attempt,
+      created_by: "different-provisioner",
+      attempt_sha256: "0".repeat(64),
+    } satisfies LiteLearningAuthorityRow;
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.provisionConfirmatorySet({
+        ...fixture,
+        attempt: {
+          ...wrongActorAttemptBase,
+          attempt_sha256: learningConfirmatoryAttemptDigest(wrongActorAttemptBase),
+        },
+      })),
+      /provisioning actor binding mismatch/,
+    );
+
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.provisionConfirmatorySet({
+        ...fixture,
+        leases: fixture.leases.map((lease) => ({
+          ...lease,
+          acquired_at: "2026-07-13T00:00:01.000Z",
+        })),
+      })),
+      /one protected provision timestamp/,
+    );
+
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.provisionConfirmatorySet({
+        ...fixture,
+        revision: {
+          ...fixture.revision,
+          created_at: "2026-07-13T00:00:01.000Z",
+        },
+      })),
+      /one protected provision timestamp/,
+    );
+
     const inserted = await database.transaction.run(
       async () => await ledger.provisionConfirmatorySet(fixture),
     );
     assert.equal(inserted.replayed, false);
+    const leasedPreTreatmentMembers = Array.from({ length: 384 }, (_, index) => [0, 1].map((member) => {
+      const storeScopeKey = `confirmatory-namespace:${index}:${member}`;
+      const memoryNamespaceSha256 = sha256(storeScopeKey);
+      return {
+        storeScopeKey,
+        memoryNamespaceSha256,
+        assignmentUnitSha256: sha256(stableStringify({
+          tenant_id: "tenant-a",
+          memory_namespace_sha256: memoryNamespaceSha256,
+        })),
+      };
+    })).flat();
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.scanConfirmatoryPreTreatmentLineage({
+        tenantId: "tenant-a",
+        experimentId: "experiment-competing-confirmatory",
+        experimentRevision: 1,
+        members: leasedPreTreatmentMembers,
+      })),
+      /learning_confirmatory_pre_treatment_lineage_conflict:active_namespace_lease/,
+    );
     assert.equal(
       (database.db.prepare("SELECT COUNT(*) AS count FROM lite_learning_randomization_pairs").get() as { count: number }).count,
       384,
@@ -1335,10 +2410,18 @@ test("confirmatory provisioning atomically freezes 384 pairs and 768 leases with
     const recordedAt = new Date(
       new Date(String(candidateLease.activation_starts_at)).getTime() + 12 * 60 * 60 * 1000,
     ).toISOString();
+    const exposureRunId = "run-confirmatory-a";
+    const guideRoot = promotionEligibleGuideRootMaterial({
+      tenantId: "tenant-a",
+      scope: "scope-confirmatory-a",
+      guideTraceId,
+      runId: exposureRunId,
+      item: exposureItem,
+    });
     const exposurePayload: ExposureCommittedV1 = {
       contract_version: "aionis_learning_exposure_v1",
       guide_trace_id: guideTraceId,
-      guide_receipt_sha256: sha256("guide-receipt-confirmatory-a"),
+      guide_receipt_sha256: guideRoot.ledgerSha256,
       guide_commit_id: "commit-confirmatory-a",
       request_sha256: sha256("guide-request-confirmatory-a"),
       operation_protection: "protected",
@@ -1357,7 +2440,7 @@ test("confirmatory provisioning atomically freezes 384 pairs and 768 leases with
       namespace_set_sha256: fixture.namespaceSetSha256,
       namespace_lease_id: String(candidateLease.namespace_lease_id),
       namespace_lease_generation: Number(candidateLease.lease_generation),
-      assignment_reason_codes: ["confirmatory_active_lease"],
+      assignment_reason_codes: ["candidate_arm_served", "confirmatory_active_lease"],
       assignment_algorithm: "matched_pair_csprng_bit_v1",
       assignment_namespace_sha256: sha256("confirmatory-assignment-namespace-a"),
       candidate_allocation_bps: 5000,
@@ -1370,10 +2453,22 @@ test("confirmatory provisioning atomically freezes 384 pairs and 768 leases with
       index_window_ends_at: String(candidateLease.index_window_ends_at),
       wave_analysis_at: String(candidateLease.wave_analysis_at),
       assignment_arm: "candidate",
-      recorded_surface_sha256: sha256("recorded-surface-confirmatory-a"),
-      candidate_surface_sha256: sha256("candidate-surface-confirmatory-a"),
-      served_surface_sha256: sha256("candidate-surface-confirmatory-a"),
+      served_arm: "candidate",
+      relevant_memory_ids: [exposureItem.memory_id],
+      recorded_surface_sha256: learningDecisionSurfaceDigest([{
+        memory_id: exposureItem.memory_id,
+        action: exposureItem.recorded_action,
+      }]),
+      candidate_surface_sha256: learningDecisionSurfaceDigest([{
+        memory_id: exposureItem.memory_id,
+        action: exposureItem.candidate_action,
+      }]),
+      served_surface_sha256: learningDecisionSurfaceDigest([{
+        memory_id: exposureItem.memory_id,
+        action: exposureItem.served_action,
+      }]),
       projection_complete: true,
+      projection_incomplete_reason_codes: [],
       hard_boundary_upgrade_count: 0,
     };
     const exposurePayloadEncoded = canonicalJson(exposurePayload);
@@ -1394,11 +2489,11 @@ test("confirmatory provisioning atomically freezes 384 pairs and 768 leases with
       source_commit_id: exposurePayload.guide_commit_id,
       supersedes_event_id: null,
       operation_id: "operation-guide-confirmatory-a",
-      run_id: "run-confirmatory-a",
+      run_id: exposureRunId,
       collection_class: "eligible_host",
       recorded_at: recordedAt,
     };
-    const exposureRow = episodeEventRow(exposureEvent, exposurePayload, {
+    const exposureRowBindings = {
       collection_principal_sha256: principalBinding.collection_principal_sha256,
       collector_id: hostEnvelope.collector_id,
       collector_version: hostEnvelope.collector_version,
@@ -1442,7 +2537,225 @@ test("confirmatory provisioning atomically freezes 384 pairs and 768 leases with
       predecision_track: "explore",
       projection_complete: 1,
       promotion_eligible: 1,
+    } satisfies Record<string, string | number | Uint8Array | null>;
+    const exposureRow = episodeEventRow(exposureEvent, exposurePayload, exposureRowBindings);
+    const activeStoreScope = Array.from({ length: 384 }, (_, index) => [
+      `confirmatory-namespace:${index}:0`,
+      `confirmatory-namespace:${index}:1`,
+    ]).flat().find((scope) => sha256(scope) === candidateLease.memory_namespace_sha256);
+    assert.ok(activeStoreScope);
+    await database.transaction.run(async () => {
+      seedPriorCommit(database.db, {
+        id: "commit-active-lease-probe",
+        scope: activeStoreScope,
+      });
+      seedPriorNode(database.db, {
+        id: "memory-active-lease-probe",
+        scope: activeStoreScope,
+        commitId: "commit-active-lease-probe",
+      });
     });
+    const activeLeaseProbes = [
+      legacyExposureProbe({
+        suffix: "active-unverified-direct",
+        memoryNamespaceSha256: String(candidateLease.memory_namespace_sha256),
+      }),
+      legacyExposureProbe({
+        suffix: "active-fixture-direct",
+        memoryNamespaceSha256: String(candidateLease.memory_namespace_sha256),
+        collectionClass: "fixture_pilot",
+      }),
+      legacyExposureProbe({
+        suffix: "active-aa-direct",
+        memoryNamespaceSha256: String(candidateLease.memory_namespace_sha256),
+        collectionClass: "eligible_host",
+        evidenceIntent: "integrity_only",
+        operationProtection: "protected",
+        rowOverrides: {
+          enrollment_state: "enrolled",
+          serving_phase: "aa",
+          experiment_id: "experiment-aa-probe",
+          experiment_revision: 1,
+        },
+      }),
+      legacyExposureProbe({
+        suffix: "active-other-experiment-direct",
+        memoryNamespaceSha256: String(candidateLease.memory_namespace_sha256),
+        collectionClass: "eligible_host",
+        evidenceIntent: "confirmatory",
+        operationProtection: "protected",
+        rowOverrides: {
+          enrollment_state: "enrolled",
+          serving_phase: "active_control",
+          experiment_id: "other-confirmatory-experiment",
+          experiment_revision: 1,
+        },
+      }),
+      legacyExposureProbe({
+        suffix: "active-source-commit",
+        sourceCommitId: "commit-active-lease-probe",
+      }),
+      legacyExposureProbe({
+        suffix: "active-item-node",
+        memoryId: "memory-active-lease-probe",
+      }),
+    ];
+    for (const probe of activeLeaseProbes) {
+      await assert.rejects(
+        database.transaction.run(async () => await ledger.appendEpisodeEvent({
+          row: probe.row,
+          event: probe.event,
+          payload: probe.payload,
+          exposureItems: [probe.item],
+        })),
+        /learning_active_namespace_lease_isolation_violation/,
+      );
+    }
+    const windowBoundaryExposure = (
+      suffix: string,
+      boundaryRecordedAt: string,
+      servedArm: "control" | "candidate",
+    ) => {
+      const item: Extract<LearningLedgerItem, { decision_completeness: "complete" }> = servedArm === "candidate"
+        ? exposureItem
+        : {
+            ...exposureItem,
+            served_action: exposureItem.recorded_action!,
+          };
+      const guideTraceId = `guide-confirmatory-${suffix}`;
+      const scope = `scope-confirmatory-${suffix}`;
+      const runId = `run-confirmatory-${suffix}`;
+      const guideRoot = promotionEligibleGuideRootMaterial({
+        tenantId: "tenant-a",
+        scope,
+        guideTraceId,
+        runId,
+        item,
+      });
+      const boundaryHostEnvelope = {
+        ...hostEnvelope,
+        host_task_id: `host-task-confirmatory-${suffix}`,
+        source_task_sha256: sha256(`source-task-confirmatory-${suffix}`),
+        source_event_sha256: sha256(`source-event-confirmatory-${suffix}`),
+      };
+      const payload: ExposureCommittedV1 = {
+        ...exposurePayload,
+        guide_trace_id: guideTraceId,
+        guide_receipt_sha256: servedArm === "candidate"
+          ? guideRoot.ledgerSha256
+          : sha256(`guide-receipt-confirmatory-${suffix}`),
+        guide_commit_id: `commit-confirmatory-${suffix}`,
+        request_sha256: sha256(`guide-request-confirmatory-${suffix}`),
+        host_task_id: boundaryHostEnvelope.host_task_id,
+        host_task_envelope: boundaryHostEnvelope,
+        host_task_envelope_sha256: hostTaskEnvelopeDigest(boundaryHostEnvelope),
+        assignment_reason_codes: servedArm === "candidate"
+          ? ["candidate_arm_served", "confirmatory_active_lease"]
+          : ["confirmatory_activation_window_inactive"],
+        served_arm: servedArm,
+        served_surface_sha256: learningDecisionSurfaceDigest([{
+          memory_id: item.memory_id,
+          action: item.served_action,
+        }]),
+      };
+      const encoded = canonicalJson(payload);
+      const event: EventWithoutDigest = {
+        ...exposureEvent,
+        scope,
+        event_id: `event-confirmatory-${suffix}`,
+        episode_id: learningEpisodeId({ tenantId: "tenant-a", scope, guideTraceId }),
+        source_id: guideTraceId,
+        source_sha256: payload.guide_receipt_sha256,
+        payload_sha256: encoded.sha256,
+        item_set_sha256: learningItemSetDigest([item]),
+        source_commit_id: payload.guide_commit_id,
+        operation_id: `operation-guide-confirmatory-${suffix}`,
+        run_id: runId,
+        recorded_at: boundaryRecordedAt,
+      };
+      return {
+        event,
+        item,
+        payload,
+        row: episodeEventRow(event, payload, {
+          ...exposureRowBindings,
+          host_task_id: boundaryHostEnvelope.host_task_id,
+          host_source_task_sha256: boundaryHostEnvelope.source_task_sha256,
+          host_source_event_sha256: boundaryHostEnvelope.source_event_sha256,
+          host_task_envelope_sha256: payload.host_task_envelope_sha256,
+          served_arm: servedArm,
+          policy_affected: servedArm === "candidate" ? 1 : 0,
+          predecision_track: servedArm === "candidate" ? "explore" : "unaffected",
+          promotion_eligible: servedArm === "candidate" ? 1 : 0,
+        }),
+      };
+    };
+    const beforeActivation = new Date(
+      new Date(String(candidateLease.activation_starts_at)).getTime() - 60 * 60 * 1000,
+    ).toISOString();
+    const afterIndexWindow = new Date(
+      new Date(String(candidateLease.index_window_ends_at)).getTime() + 60 * 60 * 1000,
+    ).toISOString();
+    for (const boundary of [
+      windowBoundaryExposure("early-control", beforeActivation, "control"),
+      windowBoundaryExposure("late-control", afterIndexWindow, "control"),
+    ]) {
+      await database.transaction.run(async () => await ledger.appendEpisodeEvent({
+        row: boundary.row,
+        event: boundary.event,
+        payload: boundary.payload,
+        exposureItems: [boundary.item],
+      }));
+    }
+    await ledger.verifyIntegrity();
+    const earlyCandidate = windowBoundaryExposure("early-candidate", beforeActivation, "candidate");
+    await assert.rejects(
+      database.transaction.run(async () => {
+        insertPromotionEligibleGuideRoots(database.db, {
+          event: earlyCandidate.event,
+          payload: earlyCandidate.payload,
+          row: earlyCandidate.row,
+          item: earlyCandidate.item,
+          commitScope: activeStoreScope,
+        });
+        return await ledger.appendEpisodeEvent({
+          row: earlyCandidate.row,
+          event: earlyCandidate.event,
+          payload: earlyCandidate.payload,
+          exposureItems: [earlyCandidate.item],
+        });
+      }),
+      /learning_active_namespace_lease_isolation_violation/,
+    );
+    const inWindowFallbackCandidate = windowBoundaryExposure(
+      "in-window-fallback-candidate",
+      recordedAt,
+      "candidate",
+    );
+    const inWindowFallbackPayload: ExposureCommittedV1 = {
+      ...inWindowFallbackCandidate.payload,
+      assignment_reason_codes: ["safety_pause_required"],
+    };
+    const inWindowFallbackEncoding = canonicalJson(inWindowFallbackPayload);
+    const inWindowFallbackEvent: EventWithoutDigest = {
+      ...inWindowFallbackCandidate.event,
+      payload_sha256: inWindowFallbackEncoding.sha256,
+    };
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.appendEpisodeEvent({
+        row: {
+          ...inWindowFallbackCandidate.row,
+          event_sha256: learningEpisodeEventDigest(inWindowFallbackEvent),
+          payload_sha256: inWindowFallbackEncoding.sha256,
+          payload_json: inWindowFallbackEncoding.json,
+          promotion_eligible: 0,
+        },
+        event: inWindowFallbackEvent,
+        payload: inWindowFallbackPayload,
+        exposureItems: [inWindowFallbackCandidate.item],
+      })),
+      /learning_active_namespace_lease_isolation_violation/,
+    );
     await assert.rejects(
       database.transaction.run(async () => await ledger.appendEpisodeEvent({
         row: { ...exposureRow, memory_namespace_sha256: sha256("wrong-namespace") },
@@ -1452,12 +2765,385 @@ test("confirmatory provisioning atomically freezes 384 pairs and 768 leases with
       })),
       /learning exposure row mismatch: memory_namespace_sha256/,
     );
-    await database.transaction.run(async () => await ledger.appendEpisodeEvent({
-      row: exposureRow,
-      event: exposureEvent,
-      payload: exposurePayload,
-      exposureItems: [exposureItem],
-    }));
+    const substitutedRootItem = {
+      ...exposureItem,
+      memory_id: "memory-confirmatory-substituted-root",
+    } satisfies Extract<LearningLedgerItem, { decision_completeness: "complete" }>;
+    const substitutedGuideTraceId = "guide-confirmatory-substituted-root";
+    const substitutedScope = "scope-confirmatory-substituted-root";
+    const substitutedRunId = "run-confirmatory-substituted-root";
+    const substitutedRoot = promotionEligibleGuideRootMaterial({
+      tenantId: "tenant-a",
+      scope: substitutedScope,
+      guideTraceId: substitutedGuideTraceId,
+      runId: substitutedRunId,
+      item: substitutedRootItem,
+    });
+    const substitutedPayload: ExposureCommittedV1 = {
+      ...exposurePayload,
+      guide_trace_id: substitutedGuideTraceId,
+      guide_receipt_sha256: substitutedRoot.ledgerSha256,
+      guide_commit_id: "commit-confirmatory-substituted-root",
+      request_sha256: sha256("guide-request-confirmatory-substituted-root"),
+    };
+    const substitutedPayloadEncoding = canonicalJson(substitutedPayload);
+    const substitutedEvent: EventWithoutDigest = {
+      ...exposureEvent,
+      scope: substitutedScope,
+      event_id: "event-confirmatory-substituted-root",
+      episode_id: learningEpisodeId({
+        tenantId: "tenant-a",
+        scope: substitutedScope,
+        guideTraceId: substitutedGuideTraceId,
+      }),
+      source_id: substitutedGuideTraceId,
+      source_sha256: substitutedPayload.guide_receipt_sha256,
+      payload_sha256: substitutedPayloadEncoding.sha256,
+      source_commit_id: substitutedPayload.guide_commit_id,
+      operation_id: "operation-guide-confirmatory-substituted-root",
+      run_id: substitutedRunId,
+    };
+    const substitutedRow = episodeEventRow(
+      substitutedEvent,
+      substitutedPayload,
+      exposureRowBindings,
+    );
+    await assert.rejects(
+      database.transaction.run(async () => {
+        insertPromotionEligibleGuideRoots(database.db, {
+          event: substitutedEvent,
+          payload: substitutedPayload,
+          row: substitutedRow,
+          item: exposureItem,
+          rootItem: substitutedRootItem,
+          commitScope: activeStoreScope,
+        });
+        return await ledger.appendEpisodeEvent({
+          row: substitutedRow,
+          event: substitutedEvent,
+          payload: substitutedPayload,
+          exposureItems: [exposureItem],
+        });
+      }),
+      /learning_promotion_eligible_guide_root_mismatch:guide_served_surface_membership/,
+    );
+    const outsideMemoryId = "memory-confirmatory-outside-served-surface";
+    const outsideGuideTraceId = "guide-confirmatory-outside-served-surface";
+    const outsideScope = "scope-confirmatory-outside-served-surface";
+    const outsideRunId = "run-confirmatory-outside-served-surface";
+    const outsideRoot = promotionEligibleGuideRootMaterial({
+      tenantId: "tenant-a",
+      scope: outsideScope,
+      guideTraceId: outsideGuideTraceId,
+      runId: outsideRunId,
+      item: exposureItem,
+      memoryIds: [outsideMemoryId],
+    });
+    const outsidePayload: ExposureCommittedV1 = {
+      ...exposurePayload,
+      guide_trace_id: outsideGuideTraceId,
+      guide_receipt_sha256: outsideRoot.ledgerSha256,
+      guide_commit_id: "commit-confirmatory-outside-served-surface",
+      request_sha256: sha256("guide-request-confirmatory-outside-served-surface"),
+    };
+    const outsidePayloadEncoding = canonicalJson(outsidePayload);
+    const outsideEvent: EventWithoutDigest = {
+      ...exposureEvent,
+      scope: outsideScope,
+      event_id: "event-confirmatory-outside-served-surface",
+      episode_id: learningEpisodeId({
+        tenantId: "tenant-a",
+        scope: outsideScope,
+        guideTraceId: outsideGuideTraceId,
+      }),
+      source_id: outsideGuideTraceId,
+      source_sha256: outsidePayload.guide_receipt_sha256,
+      payload_sha256: outsidePayloadEncoding.sha256,
+      source_commit_id: outsidePayload.guide_commit_id,
+      operation_id: "operation-guide-confirmatory-outside-served-surface",
+      run_id: outsideRunId,
+    };
+    const outsideRow = episodeEventRow(outsideEvent, outsidePayload, exposureRowBindings);
+    await assert.rejects(
+      database.transaction.run(async () => {
+        insertPromotionEligibleGuideRoots(database.db, {
+          event: outsideEvent,
+          payload: outsidePayload,
+          row: outsideRow,
+          item: exposureItem,
+          rootMemoryIds: [outsideMemoryId],
+          commitScope: activeStoreScope,
+        });
+        return await ledger.appendEpisodeEvent({
+          row: outsideRow,
+          event: outsideEvent,
+          payload: outsidePayload,
+          exposureItems: [exposureItem],
+        });
+      }),
+      /learning_promotion_eligible_guide_root_mismatch:guide_memory_membership/,
+    );
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.appendEpisodeEvent({
+        row: exposureRow,
+        event: exposureEvent,
+        payload: exposurePayload,
+        exposureItems: [exposureItem],
+      })),
+      /learning_promotion_eligible_guide_root_mismatch:guide_receipt_binding/,
+    );
+    await assert.rejects(
+      database.transaction.run(async () => {
+        insertPromotionEligibleGuideRoots(database.db, {
+          event: exposureEvent,
+          payload: exposurePayload,
+          row: exposureRow,
+          item: exposureItem,
+          commitScope: "forged-guide-root-scope",
+        });
+        return await ledger.appendEpisodeEvent({
+          row: exposureRow,
+          event: exposureEvent,
+          payload: exposurePayload,
+          exposureItems: [exposureItem],
+        });
+      }),
+      /learning_promotion_eligible_guide_root_mismatch:memory_commit_namespace_binding/,
+    );
+    await assert.rejects(
+      database.transaction.run(async () => {
+        insertPromotionEligibleGuideRoots(database.db, {
+          event: exposureEvent,
+          payload: exposurePayload,
+          row: exposureRow,
+          item: exposureItem,
+          commitScope: activeStoreScope,
+          operationRequestSha256: sha256("forged-guide-operation-request"),
+        });
+        return await ledger.appendEpisodeEvent({
+          row: exposureRow,
+          event: exposureEvent,
+          payload: exposurePayload,
+          exposureItems: [exposureItem],
+        });
+      }),
+      /learning_promotion_eligible_guide_root_mismatch:protected_operation_binding/,
+    );
+    assert.equal(
+      (database.db.prepare(
+        "SELECT COUNT(*) AS count FROM lite_product_guide_receipts WHERE guide_trace_id = ?",
+      ).get(guideTraceId) as { count: number }).count,
+      0,
+    );
+    const insertedExposure = await database.transaction.run(async () => {
+      insertPromotionEligibleGuideRoots(database.db, {
+        event: exposureEvent,
+        payload: exposurePayload,
+        row: exposureRow,
+        item: exposureItem,
+        commitScope: activeStoreScope,
+      });
+      return await ledger.appendEpisodeEvent({
+        row: exposureRow,
+        event: exposureEvent,
+        payload: exposurePayload,
+        exposureItems: [exposureItem],
+      });
+    });
+    assert.equal(insertedExposure.replayed, false);
+    const compactRootLedger = JSON.parse(String((database.db.prepare(
+      `SELECT ledger_json FROM lite_product_guide_receipts
+       WHERE tenant_id = ? AND scope = ? AND guide_trace_id = ?`,
+    ).get(
+      exposureEvent.tenant_id,
+      exposureEvent.scope,
+      exposurePayload.guide_trace_id,
+    ) as { ledger_json: string }).ledger_json)) as { memory_ids: string[] };
+    assert.deepEqual(compactRootLedger.memory_ids, []);
+    await ledger.verifyIntegrity();
+    const rootedExposureVerification = await verifyLiteRuntimeDatabase(temp.path);
+    assert.equal(rootedExposureVerification.ok, true);
+    assert.equal(rootedExposureVerification.integrity_findings.learning_episode_ledger_invalid, 0);
+    const substitutedRestartRoot = promotionEligibleGuideRootMaterial({
+      tenantId: exposureEvent.tenant_id,
+      scope: exposureEvent.scope,
+      guideTraceId: exposurePayload.guide_trace_id,
+      runId: exposureEvent.run_id,
+      item: substitutedRootItem,
+    });
+    const originalRootRows = {
+      guideReceipt: database.db.prepare(
+        `SELECT ledger_sha256, ledger_json FROM lite_product_guide_receipts
+         WHERE tenant_id = ? AND scope = ? AND guide_trace_id = ?`,
+      ).get(
+        exposureEvent.tenant_id,
+        exposureEvent.scope,
+        exposurePayload.guide_trace_id,
+      ) as { ledger_sha256: string; ledger_json: string },
+      commit: database.db.prepare(
+        "SELECT input_sha256 FROM lite_memory_commits WHERE id = ?",
+      ).get(exposurePayload.guide_commit_id) as { input_sha256: string },
+      node: database.db.prepare(
+        "SELECT slots_json FROM lite_memory_nodes WHERE commit_id = ? AND client_id = ?",
+      ).get(
+        exposurePayload.guide_commit_id,
+        exposurePayload.guide_trace_id,
+      ) as { slots_json: string },
+      operation: database.db.prepare(
+        `SELECT receipt_json FROM lite_runtime_write_operations
+         WHERE tenant_id = ? AND scope = ? AND operation_kind = 'product_guide_v1' AND operation_id = ?`,
+      ).get(
+        exposureEvent.tenant_id,
+        exposureEvent.scope,
+        exposureEvent.operation_id,
+      ) as { receipt_json: string },
+    };
+    const substitutedOperationReceipt = JSON.parse(
+      originalRootRows.operation.receipt_json,
+    ) as { body: Record<string, unknown> };
+    substitutedOperationReceipt.body.agent_context = substitutedRestartRoot.agentContext;
+    const substitutedRestartPayload: ExposureCommittedV1 = {
+      ...exposurePayload,
+      guide_receipt_sha256: substitutedRestartRoot.ledgerSha256,
+    };
+    const substitutedRestartPayloadEncoding = canonicalJson(substitutedRestartPayload);
+    const substitutedRestartEvent: EventWithoutDigest = {
+      ...exposureEvent,
+      source_sha256: substitutedRestartRoot.ledgerSha256,
+      payload_sha256: substitutedRestartPayloadEncoding.sha256,
+    };
+    database.db.exec("DROP TRIGGER trg_lite_learning_episode_events_update");
+    database.db.prepare(
+      `UPDATE lite_product_guide_receipts SET ledger_sha256 = ?, ledger_json = ?
+       WHERE tenant_id = ? AND scope = ? AND guide_trace_id = ?`,
+    ).run(
+      substitutedRestartRoot.ledgerSha256,
+      substitutedRestartRoot.ledgerJson,
+      exposureEvent.tenant_id,
+      exposureEvent.scope,
+      exposurePayload.guide_trace_id,
+    );
+    database.db.prepare("UPDATE lite_memory_commits SET input_sha256 = ? WHERE id = ?").run(
+      substitutedRestartRoot.ledgerSha256,
+      exposurePayload.guide_commit_id,
+    );
+    database.db.prepare(
+      "UPDATE lite_memory_nodes SET slots_json = ? WHERE commit_id = ? AND client_id = ?",
+    ).run(
+      JSON.stringify({
+        guide_exposure_v1: substitutedRestartRoot.ledger,
+        not_agent_facing: true,
+      }),
+      exposurePayload.guide_commit_id,
+      exposurePayload.guide_trace_id,
+    );
+    database.db.prepare(
+      `UPDATE lite_runtime_write_operations SET receipt_json = ?
+       WHERE tenant_id = ? AND scope = ? AND operation_kind = 'product_guide_v1' AND operation_id = ?`,
+    ).run(
+      stableStringify(substitutedOperationReceipt),
+      exposureEvent.tenant_id,
+      exposureEvent.scope,
+      exposureEvent.operation_id,
+    );
+    database.db.prepare(
+      `UPDATE lite_learning_episode_events
+       SET source_sha256 = ?, payload_sha256 = ?, payload_json = ?, event_sha256 = ?
+       WHERE tenant_id = ? AND scope = ? AND event_id = ?`,
+    ).run(
+      substitutedRestartRoot.ledgerSha256,
+      substitutedRestartPayloadEncoding.sha256,
+      substitutedRestartPayloadEncoding.json,
+      learningEpisodeEventDigest(substitutedRestartEvent),
+      exposureEvent.tenant_id,
+      exposureEvent.scope,
+      exposureEvent.event_id,
+    );
+    database.db.exec(LITE_LEARNING_LEDGER_REQUIRED_TRIGGERS.trg_lite_learning_episode_events_update!.sql);
+    await assert.rejects(
+      ledger.verifyIntegrity(),
+      (error: unknown) => {
+        assert.match(
+          String((error as { cause?: unknown }).cause),
+          /learning_promotion_eligible_guide_root_mismatch:guide_served_surface_membership/,
+        );
+        return true;
+      },
+    );
+    const substitutedSurfaceVerification = await verifyLiteRuntimeDatabase(temp.path);
+    assert.equal(substitutedSurfaceVerification.ok, false);
+    assert.equal(substitutedSurfaceVerification.integrity_findings.learning_episode_ledger_invalid, 1);
+    database.db.exec("DROP TRIGGER trg_lite_learning_episode_events_update");
+    database.db.prepare(
+      `UPDATE lite_product_guide_receipts SET ledger_sha256 = ?, ledger_json = ?
+       WHERE tenant_id = ? AND scope = ? AND guide_trace_id = ?`,
+    ).run(
+      originalRootRows.guideReceipt.ledger_sha256,
+      originalRootRows.guideReceipt.ledger_json,
+      exposureEvent.tenant_id,
+      exposureEvent.scope,
+      exposurePayload.guide_trace_id,
+    );
+    database.db.prepare("UPDATE lite_memory_commits SET input_sha256 = ? WHERE id = ?").run(
+      originalRootRows.commit.input_sha256,
+      exposurePayload.guide_commit_id,
+    );
+    database.db.prepare(
+      "UPDATE lite_memory_nodes SET slots_json = ? WHERE commit_id = ? AND client_id = ?",
+    ).run(
+      originalRootRows.node.slots_json,
+      exposurePayload.guide_commit_id,
+      exposurePayload.guide_trace_id,
+    );
+    database.db.prepare(
+      `UPDATE lite_runtime_write_operations SET receipt_json = ?
+       WHERE tenant_id = ? AND scope = ? AND operation_kind = 'product_guide_v1' AND operation_id = ?`,
+    ).run(
+      originalRootRows.operation.receipt_json,
+      exposureEvent.tenant_id,
+      exposureEvent.scope,
+      exposureEvent.operation_id,
+    );
+    database.db.prepare(
+      `UPDATE lite_learning_episode_events
+       SET source_sha256 = ?, payload_sha256 = ?, payload_json = ?, event_sha256 = ?
+       WHERE tenant_id = ? AND scope = ? AND event_id = ?`,
+    ).run(
+      exposureEvent.source_sha256,
+      exposureEvent.payload_sha256,
+      exposurePayloadEncoded.json,
+      learningEpisodeEventDigest(exposureEvent),
+      exposureEvent.tenant_id,
+      exposureEvent.scope,
+      exposureEvent.event_id,
+    );
+    database.db.exec(LITE_LEARNING_LEDGER_REQUIRED_TRIGGERS.trg_lite_learning_episode_events_update!.sql);
+    const feedbackVerification = await verifyLiteRuntimeDatabase(temp.path);
+    assert.equal(feedbackVerification.ok, true, String(feedbackVerification.learning.integrity_error));
+    database.db.prepare(
+      `UPDATE lite_runtime_write_operations
+       SET request_sha256 = ?
+       WHERE tenant_id = ? AND scope = ? AND operation_kind = 'product_guide_v1' AND operation_id = ?`,
+    ).run(
+      sha256("forged-restart-guide-operation-request"),
+      exposureEvent.tenant_id,
+      exposureEvent.scope,
+      exposureEvent.operation_id,
+    );
+    const forgedRootVerification = await verifyLiteRuntimeDatabase(temp.path);
+    assert.equal(forgedRootVerification.ok, false);
+    assert.equal(forgedRootVerification.integrity_findings.learning_episode_ledger_invalid, 1);
+    database.db.prepare(
+      `UPDATE lite_runtime_write_operations
+       SET request_sha256 = ?
+       WHERE tenant_id = ? AND scope = ? AND operation_kind = 'product_guide_v1' AND operation_id = ?`,
+    ).run(
+      exposurePayload.request_sha256,
+      exposureEvent.tenant_id,
+      exposureEvent.scope,
+      exposureEvent.operation_id,
+    );
+    assert.equal((await verifyLiteRuntimeDatabase(temp.path)).ok, true);
     const exposureReplay = await database.transaction.run(async () => await ledger.appendEpisodeEvent({
       row: exposureRow,
       event: exposureEvent,
@@ -1498,16 +3184,154 @@ test("confirmatory provisioning atomically freezes 384 pairs and 768 leases with
       items: [receiptItem],
     };
     const receiptSha256 = hostUseReceiptDigest(receiptBody);
+    const closedAt = new Date(new Date(afterIndexWindow).getTime() + 30_000).toISOString();
+    const feedbackRecordedAt = new Date(new Date(closedAt).getTime() + 60_000).toISOString();
+    const feedbackRuntimeSignalRefs = ["runtime-signal-confirmatory-a"];
+    const feedbackCommitParent = database.db.prepare(
+      `SELECT id, commit_hash FROM lite_memory_commits
+       WHERE scope = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+    ).get(activeStoreScope) as { id: string; commit_hash: string } | undefined;
+    assert.ok(feedbackCommitParent);
+    const feedbackCommitInputSha256 = sha256("feedback-input-confirmatory-a");
+    const feedbackCommitDiff = {
+      job: "nodes_activate",
+      started_at: feedbackRecordedAt,
+      scope: activeStoreScope,
+      actor: "formal-guide-agent",
+      run_id: receiptBody.run_id,
+      guide_trace_id: guideTraceId,
+      learning_episode_id: episodeId,
+      feedback_operation_id: receiptBody.operation_id,
+      outcome: receiptItem.outcome,
+      activate: true,
+      feedback: {
+        used_surface: receiptItem.used_surface,
+        verifier_status: receiptItem.verifier_status,
+        tool_status: null,
+        runtime_signal_refs: feedbackRuntimeSignalRefs,
+        boundary_ignored_memory_ids: [],
+        verified_host_receipt: true,
+        subjects: [{ memory_id: exposureItem.memory_id, boundary_ignored: false }],
+      },
+      reason: "Confirmatory host receipt feedback.",
+      requested: { node_ids: [exposureItem.memory_id], client_ids: [] },
+      resolved_by_client: [],
+      found_node_ids: [exposureItem.memory_id],
+      missing_node_ids: [],
+      missing_client_ids: [],
+    };
+    const feedbackCommitDiffJson = stableStringify(feedbackCommitDiff);
+    const feedbackCommitHash = sha256(stableStringify({
+      parentHash: feedbackCommitParent.commit_hash,
+      inputSha: feedbackCommitInputSha256,
+      diffSha: sha256(feedbackCommitDiffJson),
+      scope: activeStoreScope,
+      actor: feedbackCommitDiff.actor,
+      kind: "nodes_activate",
+    }));
+    const feedbackCommitId = stableUuid(`lite:commit:${feedbackCommitHash}`);
+    const insertFeedbackCommit = () => {
+      database.db.prepare(
+        `INSERT INTO lite_memory_commits
+          (id, scope, parent_commit_id, input_sha256, diff_json, actor,
+           model_version, prompt_version, commit_hash, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+      ).run(
+        feedbackCommitId,
+        activeStoreScope,
+        feedbackCommitParent.id,
+        feedbackCommitInputSha256,
+        feedbackCommitDiffJson,
+        feedbackCommitDiff.actor,
+        feedbackCommitHash,
+        feedbackRecordedAt,
+      );
+    };
+    const feedbackOperationReceipt = stableStringify({
+      body: {
+        contract_version: "aionis_feedback_result_v1",
+        tenant_id: exposureEvent.tenant_id,
+        scope: exposureEvent.scope,
+        operation_id: receiptBody.operation_id,
+        learning_attribution_status: "verified_host_receipt",
+        learning_episode_id: episodeId,
+        learning_feedback_event_id: "event-confirmatory-feedback-a",
+        product_action: "feedback",
+        operation: "activate",
+        target: "memory",
+        forget_effect: {
+          action: "activate",
+          target: "memory",
+          reason: feedbackCommitDiff.reason,
+          changed_count: 1,
+          reversible: false,
+          learning_attribution_status: "verified_host_receipt",
+          affected_memory_ids: [exposureItem.memory_id],
+          affected_client_ids: [],
+          attribution: {
+            learning_episode_id: episodeId,
+            learning_feedback_event_id: "event-confirmatory-feedback-a",
+            run_id: receiptBody.run_id,
+            outcome: receiptItem.outcome,
+            used_surface: receiptItem.used_surface,
+            verifier_status: receiptItem.verifier_status,
+            runtime_signal_refs: feedbackRuntimeSignalRefs,
+          },
+        },
+        result: {
+          scope: exposureEvent.scope,
+          tenant_id: exposureEvent.tenant_id,
+          commit_id: feedbackCommitId,
+          commit_hash: feedbackCommitHash,
+          activated: {
+            requested_node_ids: 1,
+            requested_client_ids: 0,
+            resolved_node_ids: 1,
+            found_nodes: 1,
+            updated_nodes: 1,
+            missing_node_ids: [],
+            missing_client_ids: [],
+            updated_ids: [exposureItem.memory_id],
+            guide_trace_id: guideTraceId,
+            learning_episode_id: episodeId,
+            feedback_operation_id: receiptBody.operation_id,
+            outcome: receiptItem.outcome,
+            activate: true,
+            feedback_attributions: [{
+              memory_id: exposureItem.memory_id,
+              guide_trace_id: guideTraceId,
+              learning_episode_id: episodeId,
+              feedback_operation_id: receiptBody.operation_id,
+              run_id: receiptBody.run_id,
+              outcome: receiptItem.outcome,
+              used_surface: receiptItem.used_surface,
+              verifier_status: receiptItem.verifier_status,
+              tool_status: null,
+              runtime_signal_refs: feedbackRuntimeSignalRefs,
+              attribution_strength: "positive_attribution",
+              boundary_outcome: "aligned",
+              feedback_positive: 1,
+              feedback_negative: 0,
+              weak_counter_signal_count: 0,
+              strong_counter_signal_count: 0,
+            }],
+          },
+        },
+      },
+      ok: true,
+      statusCode: 200,
+    });
     const feedbackPayload = {
       contract_version: "aionis_learning_feedback_v1",
       feedback_kind: "memory",
       guide_trace_id: guideTraceId,
       request_sha256: sha256("feedback-request-confirmatory-a"),
       operation_protection: "protected",
+      operation_receipt_sha256: sha256(feedbackOperationReceipt),
       run_id: receiptBody.run_id,
-      source_commit_id: "commit-feedback-confirmatory-a",
+      source_commit_id: feedbackCommitId,
       host_use_receipt_sha256: receiptSha256,
-      runtime_signal_refs: ["runtime-signal-confirmatory-a"],
+      runtime_signal_refs: feedbackRuntimeSignalRefs,
       unused_exposure_ids: [exposureEvent.event_id],
     } as const;
     const hostUseReceipt = authorityRow("lite_learning_host_use_receipts", {
@@ -1525,7 +3349,7 @@ test("confirmatory provisioning atomically freezes 384 pairs and 768 leases with
       collector_version: receiptBody.collector_version,
       host_trace_sha256: receiptBody.host_trace_sha256,
       observed_at: receiptBody.observed_at,
-      received_at: new Date(new Date(recordedAt).getTime() + 60_000).toISOString(),
+      received_at: feedbackRecordedAt,
       item_count: 1,
       item_set_sha256: learningHostUseReceiptItemSetDigest(receiptBody.items),
       receipt_sha256: receiptSha256,
@@ -1577,7 +3401,7 @@ test("confirmatory provisioning atomically freezes 384 pairs and 768 leases with
       event_kind: "feedback_attributed",
       source_kind: "memory_feedback_operation",
       source_id: receiptBody.operation_id,
-      source_sha256: receiptSha256,
+      source_sha256: feedbackPayload.request_sha256,
       previous_event_sha256: learningEpisodeEventDigest(exposureEvent),
       payload_sha256: feedbackPayloadEncoded.sha256,
       item_set_sha256: learningFeedbackAttributionSetDigest([feedbackAttribution]),
@@ -1589,11 +3413,8 @@ test("confirmatory provisioning atomically freezes 384 pairs and 768 leases with
       recorded_at: String(hostUseReceipt.received_at),
     };
     const feedbackRow = episodeEventRow(feedbackEvent, feedbackPayload, {
-      collection_principal_sha256: principalBinding.collection_principal_sha256,
-      collector_id: receiptBody.collector_id,
-      collector_version: receiptBody.collector_version,
-      host_task_id: receiptBody.host_task_id,
-      host_task_envelope_sha256: receiptBody.host_task_envelope_sha256,
+      ...exposureRowBindings,
+      promotion_eligible: 0,
     });
     const unapprovedReceiptItem = {
       ...receiptItem,
@@ -1628,7 +3449,7 @@ test("confirmatory provisioning atomically freezes 384 pairs and 768 leases with
     const unapprovedFeedbackPayloadEncoded = canonicalJson(unapprovedFeedbackPayload);
     const unapprovedFeedbackEvent: EventWithoutDigest = {
       ...feedbackEvent,
-      source_sha256: unapprovedReceiptSha256,
+      source_sha256: unapprovedFeedbackPayload.request_sha256,
       payload_sha256: unapprovedFeedbackPayloadEncoded.sha256,
       item_set_sha256: learningFeedbackAttributionSetDigest([unapprovedAttribution]),
     };
@@ -1636,31 +3457,187 @@ test("confirmatory provisioning atomically freezes 384 pairs and 768 leases with
       unapprovedFeedbackEvent,
       unapprovedFeedbackPayload,
       {
-        collection_principal_sha256: principalBinding.collection_principal_sha256,
-        collector_id: receiptBody.collector_id,
-        collector_version: receiptBody.collector_version,
-        host_task_id: receiptBody.host_task_id,
-        host_task_envelope_sha256: receiptBody.host_task_envelope_sha256,
+        ...exposureRowBindings,
+        promotion_eligible: 0,
       },
     );
     await assert.rejects(
-      database.transaction.run(async () => await ledger.appendEpisodeEvent({
-        row: unapprovedFeedbackRow,
-        event: unapprovedFeedbackEvent,
-        payload: unapprovedFeedbackPayload,
-        feedbackAttributions: [unapprovedAttribution],
-        hostUseReceipt: unapprovedHostUseReceipt,
-      })),
+      database.transaction.run(async () => {
+        insertFeedbackCommit();
+        return await ledger.appendEpisodeEvent({
+          row: unapprovedFeedbackRow,
+          event: unapprovedFeedbackEvent,
+          payload: unapprovedFeedbackPayload,
+          feedbackAttributions: [unapprovedAttribution],
+          hostUseReceipt: unapprovedHostUseReceipt,
+        });
+      }),
       /host-use receipt verifier is not in the frozen principal policy/,
     );
-    const feedbackInserted = await database.transaction.run(async () => await ledger.appendEpisodeEvent({
-      row: feedbackRow,
-      event: feedbackEvent,
-      payload: feedbackPayload,
-      feedbackAttributions: [feedbackAttribution],
-      hostUseReceipt,
-    }));
+
+    const closeAuthority = experimentClosureFixture({
+      fixture,
+      operationId: "operation-close-confirmatory",
+      nonce: "nonce-close-confirmatory",
+      createdAt: closedAt,
+    });
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.insertAuthorityFact(
+        "lite_learning_authorization_nonces",
+        {} as LiteLearningAuthorityRow,
+      )),
+      /authorization nonces require a protected signed-authority workflow/,
+    );
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.insertAuthorityFact(
+        "lite_learning_experiment_closures",
+        {} as LiteLearningAuthorityRow,
+      )),
+      /experiment closures require the protected Task 3\.0C close workflow/,
+    );
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.releaseNamespaceLeaseSet({
+        tenantId: "tenant-a",
+        confirmatoryAttemptId: String(fixture.attempt.confirmatory_attempt_id),
+        releaseOperationId: "operation-close-confirmatory",
+        releaseRefKind: "experiment_close" as never,
+        releaseRefId: "close-confirmatory",
+        releasedAt: closedAt,
+        expectedLeaseIds: [],
+      })),
+      /experiment-close lease release requires the protected Task 3\.0C close workflow/,
+    );
+    assert.equal(
+      (database.db.prepare(
+        "SELECT COUNT(*) AS count FROM lite_learning_authorization_nonces",
+      ).get() as { count: number }).count,
+      0,
+    );
+    assert.equal(
+      (database.db.prepare(
+        "SELECT COUNT(*) AS count FROM lite_learning_experiment_closures",
+      ).get() as { count: number }).count,
+      0,
+    );
+    assert.equal(
+      (database.db.prepare(
+        "SELECT COUNT(*) AS count FROM lite_learning_namespace_leases WHERE status = 'active'",
+      ).get() as { count: number }).count,
+      768,
+    );
+
+    const closer = createLiteLearningExperimentCloser({
+      database,
+      writeStore,
+      dependencies: {
+        now: () => closedAt,
+        resolveKeyring: storeCloseKeyring,
+      },
+    });
+    const closeResult = await closer.close({
+      tenantId: "tenant-a",
+      actor: "test-operator",
+      operationId: closeAuthority.approval.authority_operation_id,
+      authorization: closeAuthority.authorization,
+      experimentId: String(fixture.revision.experiment_id),
+      experimentRevision: Number(fixture.revision.experiment_revision),
+    });
+    assert.equal(closeResult.replayed, false);
+
+    const exposureReplayAfterClose = await database.transaction.run(
+      async () => await ledger.appendEpisodeEvent({
+        row: exposureRow,
+        event: exposureEvent,
+        payload: exposurePayload,
+        exposureItems: [exposureItem],
+      }),
+    );
+    assert.equal(exposureReplayAfterClose.replayed, true);
+
+    const closedGuideTraceId = "guide-confirmatory-after-close";
+    const closedRunId = "run-confirmatory-after-close";
+    const closedGuideRoot = promotionEligibleGuideRootMaterial({
+      tenantId: exposureEvent.tenant_id,
+      scope: exposureEvent.scope,
+      guideTraceId: closedGuideTraceId,
+      runId: closedRunId,
+      item: exposureItem,
+    });
+    const closedExposurePayload = {
+      ...exposurePayload,
+      guide_trace_id: closedGuideTraceId,
+      guide_receipt_sha256: closedGuideRoot.ledgerSha256,
+      guide_commit_id: "commit-confirmatory-after-close",
+      request_sha256: sha256("guide-request-confirmatory-after-close"),
+    } satisfies ExposureCommittedV1;
+    const closedExposurePayloadEncoded = canonicalJson(closedExposurePayload);
+    const closedExposureEvent: EventWithoutDigest = {
+      ...exposureEvent,
+      event_id: "event-confirmatory-exposure-after-close",
+      episode_id: learningEpisodeId({
+        tenantId: "tenant-a",
+        scope: exposureEvent.scope,
+        guideTraceId: closedGuideTraceId,
+      }),
+      source_id: closedGuideTraceId,
+      source_sha256: closedExposurePayload.guide_receipt_sha256,
+      payload_sha256: closedExposurePayloadEncoded.sha256,
+      source_commit_id: closedExposurePayload.guide_commit_id,
+      operation_id: "operation-guide-confirmatory-after-close",
+      run_id: closedRunId,
+      recorded_at: new Date(new Date(closedAt).getTime() + 1).toISOString(),
+    };
+    const closedExposureRow = episodeEventRow(
+      closedExposureEvent,
+      closedExposurePayload,
+      exposureRowBindings,
+    );
+    await assert.rejects(
+      database.transaction.run(async () => {
+        insertPromotionEligibleGuideRoots(database.db, {
+          event: closedExposureEvent,
+          payload: closedExposurePayload,
+          row: closedExposureRow,
+          item: exposureItem,
+          commitScope: activeStoreScope,
+        });
+        return await ledger.appendEpisodeEvent({
+          row: closedExposureRow,
+          event: closedExposureEvent,
+          payload: closedExposurePayload,
+          exposureItems: [exposureItem],
+        });
+      }),
+      /learning_experiment_closed:promotion_eligible_exposure/,
+    );
+    const feedbackInserted = await database.transaction.run(async () => {
+      insertFeedbackCommit();
+      const appended = await ledger.appendEpisodeEvent({
+        row: feedbackRow,
+        event: feedbackEvent,
+        payload: feedbackPayload,
+        feedbackAttributions: [feedbackAttribution],
+        hostUseReceipt,
+      });
+      await writeStore!.insertWriteOperation({
+        tenantId: feedbackEvent.tenant_id,
+        scope: feedbackEvent.scope,
+        operationKind: "product_feedback_v1",
+        operationId: String(feedbackEvent.operation_id),
+        requestSha256: feedbackPayload.request_sha256,
+        receiptJson: feedbackOperationReceipt,
+        commitId: feedbackPayload.source_commit_id,
+      });
+      return appended;
+    });
     assert.equal(feedbackInserted.replayed, false);
+    assert.ok(String(feedbackRow.recorded_at) > closedAt);
+    assert.equal((database.db.prepare(
+      "SELECT COUNT(*) AS count FROM lite_learning_experiment_closures WHERE experiment_id = ?",
+    ).get(fixture.revision.experiment_id) as { count: number }).count, 1);
+    assert.equal((database.db.prepare(
+      "SELECT COUNT(*) AS count FROM lite_learning_namespace_leases WHERE confirmatory_attempt_id = ? AND status = 'active'",
+    ).get(fixture.attempt.confirmatory_attempt_id) as { count: number }).count, 0);
     const feedbackReplay = await database.transaction.run(async () => await ledger.appendEpisodeEvent({
       row: feedbackRow,
       event: feedbackEvent,
@@ -1669,7 +3646,75 @@ test("confirmatory provisioning atomically freezes 384 pairs and 768 leases with
       hostUseReceipt,
     }));
     assert.equal(feedbackReplay.replayed, true);
+    const storeForCorruption = writeStore;
+    writeStore = null;
+    const verifyClosedFeedback = () => assertLiteLearningEpisodeLedgerIntegrity(
+      database.db,
+      feedbackRecordedAt,
+      { authorityReceiptKeyring: storeCloseKeyring() },
+    );
+    assert.doesNotThrow(verifyClosedFeedback);
 
+    const persistedFeedbackOperation = database.db.prepare(
+      `SELECT tenant_id, scope, operation_kind, operation_id, request_sha256,
+              receipt_json, commit_id, created_at
+       FROM lite_runtime_write_operations
+       WHERE operation_kind = 'product_feedback_v1' AND operation_id = ?`,
+    ).get(feedbackEvent.operation_id) as Record<string, string> | undefined;
+    assert.ok(persistedFeedbackOperation);
+    database.db.prepare(
+      `DELETE FROM lite_runtime_write_operations
+       WHERE operation_kind = 'product_feedback_v1' AND operation_id = ?`,
+    ).run(feedbackEvent.operation_id);
+    assert.throws(verifyClosedFeedback, /feedback_operation_receipt/u);
+    database.db.prepare(
+      `INSERT INTO lite_runtime_write_operations
+        (tenant_id, scope, operation_kind, operation_id, request_sha256,
+         receipt_json, commit_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      persistedFeedbackOperation.tenant_id,
+      persistedFeedbackOperation.scope,
+      persistedFeedbackOperation.operation_kind,
+      persistedFeedbackOperation.operation_id,
+      persistedFeedbackOperation.request_sha256,
+      persistedFeedbackOperation.receipt_json,
+      persistedFeedbackOperation.commit_id,
+      persistedFeedbackOperation.created_at,
+    );
+    assert.doesNotThrow(verifyClosedFeedback);
+
+    mutateAppendOnlyTable(database.db, "lite_learning_host_use_receipts", () => {
+      database.db.prepare(
+        "UPDATE lite_learning_host_use_receipts SET received_at = ? WHERE receipt_id = ?",
+      ).run(new Date(new Date(feedbackRecordedAt).getTime() + 1).toISOString(), receiptBody.receipt_id);
+    });
+    let mismatchedReceiptTime: (Error & { cause?: unknown }) | null = null;
+    try {
+      verifyClosedFeedback();
+    } catch (error) {
+      mismatchedReceiptTime = error as Error & { cause?: unknown };
+    }
+    assert.ok(mismatchedReceiptTime);
+    assert.match(String(mismatchedReceiptTime), /lite_learning_integrity_failed:semantic_replay/u);
+    assert.match(String(mismatchedReceiptTime.cause), /host-use receipt|received_at/u);
+    mutateAppendOnlyTable(database.db, "lite_learning_host_use_receipts", () => {
+      database.db.prepare(
+        "UPDATE lite_learning_host_use_receipts SET received_at = ? WHERE receipt_id = ?",
+      ).run(feedbackRecordedAt, receiptBody.receipt_id);
+    });
+    assert.equal((database.db.prepare(
+      "SELECT received_at FROM lite_learning_host_use_receipts WHERE receipt_id = ?",
+    ).get(receiptBody.receipt_id) as { received_at: string }).received_at, feedbackRecordedAt);
+    const reopenedAfterReceiptRestore = createSqliteDatabase(temp.path);
+    try {
+      assert.equal((reopenedAfterReceiptRestore.prepare(
+        "SELECT received_at FROM lite_learning_host_use_receipts WHERE receipt_id = ?",
+      ).get(receiptBody.receipt_id) as { received_at: string }).received_at, feedbackRecordedAt);
+    } finally {
+      reopenedAfterReceiptRestore.close();
+    }
+    assert.doesNotThrow(verifyClosedFeedback);
     const alias = policyRow({
       kind: "candidate",
       id: "candidate-confirmatory-alias",
@@ -1740,144 +3785,22 @@ test("confirmatory provisioning atomically freezes 384 pairs and 768 leases with
       0,
     );
 
-    const leaseIds = fixture.leases.map((lease) => String(lease.namespace_lease_id));
-    await assert.rejects(
-      database.transaction.run(async () => await ledger.releaseNamespaceLeaseSet({
-        tenantId: "tenant-a",
-        confirmatoryAttemptId: String(fixture.attempt.confirmatory_attempt_id),
-        releaseOperationId: "operation-release-confirmatory",
-        releaseRefKind: "experiment_close",
-        releaseRefId: "close-confirmatory",
-        releasedAt: "2026-08-10T00:00:00.000Z",
-        expectedLeaseIds: leaseIds.slice(1),
-      })),
-      /exact complete 768-member set/,
-    );
-    await assert.rejects(
-      database.transaction.run(async () => await ledger.releaseNamespaceLeaseSet({
-        tenantId: "tenant-a",
-        confirmatoryAttemptId: String(fixture.attempt.confirmatory_attempt_id),
-        releaseOperationId: "operation-release-confirmatory",
-        releaseRefKind: "experiment_close",
-        releaseRefId: "close-confirmatory",
-        releasedAt: "2026-08-10T00:00:00.000Z",
-        expectedLeaseIds: leaseIds,
-      })),
-      /authority reference is unresolved/,
-    );
-
-    const approval = canonicalJson({
-      contract_version: "learning_experiment_close_approval_v1",
-      authorization_kind: "experiment_close",
-      action: "close_experiment",
-      tenant_id: "tenant-a",
-      confirmatory_attempt_id: fixture.attempt.confirmatory_attempt_id,
-      experiment_id: fixture.revision.experiment_id,
-      experiment_revision: fixture.revision.experiment_revision,
-      namespace_set_sha256: fixture.namespaceSetSha256,
-      close_reason: "evidence_complete",
-      candidate_policy_implementation_sha256: fixture.candidate.implementation_contract_sha256,
-      gate_policy_implementation_sha256: fixture.gate.implementation_contract_sha256,
-      authority_scope: "tenant-a/runtime-learning/experiment-confirmatory/1",
-      authority_operation_kind: "learning_experiment_close_v1",
-      authority_operation_id: "operation-close-confirmatory",
-      approved_by: "test-operator",
-      authorization_key_id: "operator-key-v1",
-      authorization_nonce: "nonce-close-confirmatory",
-      authorization_expires_at: "2026-08-11T00:00:00.000Z",
-    });
-    const closureBase = authorityRow("lite_learning_experiment_closures", {
-      tenant_id: "tenant-a",
-      experiment_close_id: "close-confirmatory",
-      confirmatory_attempt_id: fixture.attempt.confirmatory_attempt_id,
-      experiment_id: fixture.revision.experiment_id,
-      experiment_revision: fixture.revision.experiment_revision,
-      namespace_set_sha256: fixture.namespaceSetSha256,
-      sealed_event_head_row_id: 1,
-      close_reason: "evidence_complete",
-      authorization_sha256: approval.sha256,
-      authorization_payload_json: approval.json,
-      authorization_mac: "test-verified-mac",
-      authorization_nonce: "nonce-close-confirmatory",
-      authorization_expires_at: "2026-08-11T00:00:00.000Z",
-      authorization_key_id: "operator-key-v1",
-      approved_by: "test-operator",
-      authority_operation_id: "operation-close-confirmatory",
-      authority_operation_scope: "tenant-a/runtime-learning/experiment-confirmatory/1",
-      authority_operation_kind: "learning_experiment_close_v1",
-      close_sha256: "0".repeat(64),
-      created_by: "test-operator",
-      created_at: "2026-08-10T00:00:00.000Z",
-    });
-    const closure = {
-      ...closureBase,
-      close_sha256: learningExperimentClosureRecordDigest(closureBase),
-    } satisfies LiteLearningAuthorityRow;
-    const nonce = authorityRow("lite_learning_authorization_nonces", {
-      tenant_id: "tenant-a",
-      authorization_key_id: "operator-key-v1",
-      authorization_nonce: "nonce-close-confirmatory",
-      authorization_kind: "experiment_close",
-      authority_ref_id: "close-confirmatory",
-      authorization_sha256: approval.sha256,
-      created_at: "2026-08-10T00:00:00.000Z",
-    });
-    await database.transaction.run(async () => {
-      await ledger.insertAuthorityFact("lite_learning_authorization_nonces", nonce);
-      await ledger.insertAuthorityFact("lite_learning_experiment_closures", closure);
-    });
-    const released = await database.transaction.run(async () => await ledger.releaseNamespaceLeaseSet({
-      tenantId: "tenant-a",
-      confirmatoryAttemptId: String(fixture.attempt.confirmatory_attempt_id),
-      releaseOperationId: "operation-release-confirmatory",
-      releaseRefKind: "experiment_close",
-      releaseRefId: "close-confirmatory",
-      releasedAt: "2026-08-10T00:00:00.000Z",
-      expectedLeaseIds: leaseIds,
-    }));
-    assert.equal(released, 768);
-    const releaseReplay = await database.transaction.run(async () => await ledger.releaseNamespaceLeaseSet({
-      tenantId: "tenant-a",
-      confirmatoryAttemptId: String(fixture.attempt.confirmatory_attempt_id),
-      releaseOperationId: "operation-release-confirmatory",
-      releaseRefKind: "experiment_close",
-      releaseRefId: "close-confirmatory",
-      releasedAt: "2026-08-10T00:00:00.000Z",
-      expectedLeaseIds: leaseIds,
-    }));
-    assert.equal(releaseReplay, 0);
-    await assert.rejects(
-      database.transaction.run(async () => await ledger.releaseNamespaceLeaseSet({
-        tenantId: "tenant-a",
-        confirmatoryAttemptId: String(fixture.attempt.confirmatory_attempt_id),
-        releaseOperationId: "operation-release-changed",
-        releaseRefKind: "experiment_close",
-        releaseRefId: "close-confirmatory",
-        releasedAt: "2026-08-10T00:00:00.000Z",
-        expectedLeaseIds: leaseIds,
-      })),
-      /release replay conflict/,
-    );
-
-    mutateAppendOnlyTable(database.db, "lite_learning_namespace_leases", () => {
-      database.db.prepare(
-        `UPDATE lite_learning_namespace_leases
-         SET released_at = '2026-08-10T00:00:00.001Z'
-         WHERE namespace_lease_id = ?`,
-      ).run(leaseIds[0]);
-    });
-    const mixedReleaseTimestamp = await verifyLiteRuntimeDatabase(temp.path);
-    assert.equal(mixedReleaseTimestamp.ok, false);
-    assert.equal(mixedReleaseTimestamp.integrity_findings.learning_episode_ledger_invalid, 1);
-    mutateAppendOnlyTable(database.db, "lite_learning_namespace_leases", () => {
-      database.db.prepare(
-        `UPDATE lite_learning_namespace_leases
-         SET released_at = '2026-08-10T00:00:00.000Z'
-         WHERE namespace_lease_id = ?`,
-      ).run(leaseIds[0]);
-    });
+    assert.equal((database.db.prepare(
+      "SELECT received_at FROM lite_learning_host_use_receipts WHERE receipt_id = ?",
+    ).get(receiptBody.receipt_id) as { received_at: string }).received_at, feedbackRecordedAt);
+    assert.equal((database.db.prepare(
+      "SELECT recorded_at FROM lite_learning_episode_events WHERE event_id = ?",
+    ).get(feedbackEvent.event_id) as { recorded_at: string }).recorded_at, feedbackRecordedAt);
+    assert.equal((database.db.prepare(
+      `SELECT COUNT(*) AS count
+       FROM lite_learning_host_use_receipts AS receipt
+       JOIN lite_learning_episode_events AS event
+         ON event.tenant_id = receipt.tenant_id
+        AND event.scope = receipt.scope
+        AND event.event_id = receipt.feedback_event_id
+       WHERE receipt.received_at <> event.recorded_at`,
+    ).get() as { count: number }).count, 0);
     await ledger.verifyIntegrity();
-
     mutateAppendOnlyTable(database.db, "lite_learning_episode_events", () => {
       database.db.prepare(
         "UPDATE lite_learning_episode_events SET promotion_eligible = 0 WHERE event_id = ?",
@@ -1886,12 +3809,225 @@ test("confirmatory provisioning atomically freezes 384 pairs and 768 leases with
     const corruptedEligibility = await verifyLiteRuntimeDatabase(temp.path);
     assert.equal(corruptedEligibility.ok, false);
     assert.equal(corruptedEligibility.integrity_findings.learning_episode_ledger_invalid, 1);
-    await assert.rejects(writeStore.close(), /lite_learning_integrity_failed:semantic_replay/);
-    writeStore = null;
+    await assert.rejects(storeForCorruption.close(), /lite_learning_integrity_failed:semantic_replay/);
   } finally {
     await writeStore?.close();
     await database.close();
     fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("confirmatory pre-treatment lineage scan is transaction-only, canonical, bounded, and allows ordinary priors", async () => {
+  const temp = tempDatabase("confirmatory-pre-treatment-snapshot");
+  const database = createLiteRuntimeDatabase(temp.path);
+  let writeStore: ReturnType<typeof createLiteWriteStoreFromDatabase> | null = null;
+  try {
+    writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
+    const ledger = createLiteLearningEpisodeLedgerAccess(database);
+    const members = confirmatoryPreTreatmentMembers("ordinary-prior");
+    const scanArgs = {
+      tenantId: "tenant-a",
+      experimentId: "experiment-pre-treatment",
+      experimentRevision: 1,
+      members,
+    } as const;
+    await assert.rejects(
+      ledger.scanConfirmatoryPreTreatmentLineage(scanArgs),
+      /shared Runtime transaction/,
+    );
+
+    const snapshot = await database.transaction.run(async () => {
+      await assert.rejects(
+        ledger.scanConfirmatoryPreTreatmentLineage(scanArgs),
+        /learning_confirmatory_pre_treatment_lineage_conflict:unknown_existing_scope/,
+      );
+      for (const [index, member] of members.entries()) {
+        seedPriorCommit(database.db, {
+          id: `commit-ordinary-prior-${index}`,
+          scope: member.storeScopeKey,
+        });
+      }
+      seedPriorNode(database.db, {
+        id: "memory-ordinary-prior",
+        scope: members[0]!.storeScopeKey,
+        commitId: "commit-ordinary-prior-0",
+      });
+      const first = await ledger.scanConfirmatoryPreTreatmentLineage(scanArgs);
+      const replay = await ledger.scanConfirmatoryPreTreatmentLineage({
+        ...scanArgs,
+        members: [...members].reverse(),
+      });
+      assert.deepEqual(replay, first);
+      return first;
+    });
+    assert.equal(snapshot.member_count, 768);
+    assert.equal(snapshot.members.length, 768);
+    assert.equal(snapshot.prior_memory_node_count, 1);
+    assert.equal(snapshot.prior_memory_commit_count, 768);
+    const prior = snapshot.members.find(
+      (member) => member.memory_namespace_sha256 === members[0]!.memoryNamespaceSha256,
+    );
+    assert.equal(prior?.prior_memory_node_count, 1);
+    assert.equal(prior?.prior_memory_commit_count, 1);
+    assert.match(snapshot.snapshot_sha256, /^[0-9a-f]{64}$/u);
+    assert.match(snapshot.prior_memory_node_head_sha256, /^[0-9a-f]{64}$/u);
+    assert.match(snapshot.prior_memory_commit_head_sha256, /^[0-9a-f]{64}$/u);
+    assert.equal("storeScopeKey" in snapshot.members[0]!, false);
+
+    await database.transaction.run(async () => {
+      await assert.rejects(
+        ledger.scanConfirmatoryPreTreatmentLineage({
+          ...scanArgs,
+          members: [
+            { ...members[0]!, memoryNamespaceSha256: sha256("wrong-memory-namespace") },
+            ...members.slice(1),
+          ],
+        }),
+        /memory namespace mapping mismatch/,
+      );
+      const crossTenantScope = "tenant:tenant-b::scope:cross-tenant";
+      const crossTenantNamespace = sha256(crossTenantScope);
+      await assert.rejects(
+        ledger.scanConfirmatoryPreTreatmentLineage({
+          ...scanArgs,
+          members: [
+            {
+              storeScopeKey: crossTenantScope,
+              memoryNamespaceSha256: crossTenantNamespace,
+              assignmentUnitSha256: sha256(stableStringify({
+                tenant_id: "tenant-a",
+                memory_namespace_sha256: crossTenantNamespace,
+              })),
+            },
+            ...members.slice(1),
+          ],
+        }),
+        /store scope tenant binding mismatch/,
+      );
+      const oversizedScope = "x".repeat(257);
+      const oversizedNamespace = sha256(oversizedScope);
+      await assert.rejects(
+        ledger.scanConfirmatoryPreTreatmentLineage({
+          ...scanArgs,
+          members: [
+            {
+              storeScopeKey: oversizedScope,
+              memoryNamespaceSha256: oversizedNamespace,
+              assignmentUnitSha256: sha256(stableStringify({
+                tenant_id: "tenant-a",
+                memory_namespace_sha256: oversizedNamespace,
+              })),
+            },
+            ...members.slice(1),
+          ],
+        }),
+        /store scope must be exact and bounded/,
+      );
+    });
+  } finally {
+    await writeStore?.close();
+    await database.close();
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("confirmatory pre-treatment lineage scan rejects every historical experiment and guide lineage path", async (t) => {
+  const cases = [
+    "direct_exposure",
+    "exposure_source_commit",
+    "exposure_item_node",
+    "legacy_guide_receipt_commit",
+    "legacy_guide_node",
+  ] as const;
+  for (const conflictKind of cases) {
+    await t.test(conflictKind, async () => {
+      const temp = tempDatabase(`pre-treatment-${conflictKind}`);
+      const database = createLiteRuntimeDatabase(temp.path);
+      let writeStore: ReturnType<typeof createLiteWriteStoreFromDatabase> | null = null;
+      try {
+        writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
+        const ledger = createLiteLearningEpisodeLedgerAccess(database);
+        const members = confirmatoryPreTreatmentMembers(conflictKind);
+        const scope = members[0]!.storeScopeKey;
+        await database.transaction.run(async () => {
+          if (conflictKind === "direct_exposure") {
+            const probe = legacyExposureProbe({
+              suffix: `lineage-${conflictKind}`,
+              memoryNamespaceSha256: members[0]!.memoryNamespaceSha256,
+            });
+            await ledger.appendEpisodeEvent({
+              row: probe.row,
+              event: probe.event,
+              payload: probe.payload,
+              exposureItems: [probe.item],
+            });
+          } else if (conflictKind === "exposure_source_commit") {
+            seedPriorCommit(database.db, { id: "commit-lineage-source", scope });
+            const probe = legacyExposureProbe({
+              suffix: `lineage-${conflictKind}`,
+              sourceCommitId: "commit-lineage-source",
+            });
+            await ledger.appendEpisodeEvent({
+              row: probe.row,
+              event: probe.event,
+              payload: probe.payload,
+              exposureItems: [probe.item],
+            });
+          } else if (conflictKind === "exposure_item_node") {
+            seedPriorCommit(database.db, { id: "commit-lineage-item", scope });
+            seedPriorNode(database.db, {
+              id: "memory-lineage-item",
+              scope,
+              commitId: "commit-lineage-item",
+            });
+            const probe = legacyExposureProbe({
+              suffix: `lineage-${conflictKind}`,
+              memoryId: "memory-lineage-item",
+            });
+            await ledger.appendEpisodeEvent({
+              row: probe.row,
+              event: probe.event,
+              payload: probe.payload,
+              exposureItems: [probe.item],
+            });
+          } else if (conflictKind === "legacy_guide_receipt_commit") {
+            seedPriorCommit(database.db, { id: "commit-lineage-guide", scope });
+            database.db.prepare(
+              `INSERT INTO lite_product_guide_receipts
+                (tenant_id, scope, guide_trace_id, run_id, consumer_agent_id,
+                 consumer_team_id, query_sha256, context_sha256, ledger_sha256,
+                 ledger_json, commit_id, created_at)
+               VALUES ('tenant-a', 'receipt-scope', 'guide-lineage-receipt',
+                       'run-lineage-receipt', 'agent-lineage-receipt', NULL,
+                       ?, ?, ?, '{}', 'commit-lineage-guide',
+                       '2026-07-12T00:00:00.000Z')`,
+            ).run(sha256("guide-query"), sha256("guide-context"), sha256("guide-ledger"));
+          } else {
+            seedPriorCommit(database.db, { id: "commit-lineage-guide-node", scope });
+            seedPriorNode(database.db, {
+              id: "memory-lineage-guide-node",
+              scope,
+              commitId: "commit-lineage-guide-node",
+              slots: { guide_exposure_v1: { guide_trace_id: "legacy-guide-node" } },
+            });
+          }
+        });
+
+        await assert.rejects(
+          database.transaction.run(async () => await ledger.scanConfirmatoryPreTreatmentLineage({
+            tenantId: "tenant-a",
+            experimentId: "experiment-pre-treatment",
+            experimentRevision: 1,
+            members,
+          })),
+          new RegExp(`learning_confirmatory_pre_treatment_lineage_conflict:${conflictKind}`),
+        );
+      } finally {
+        await writeStore?.close();
+        await database.close();
+        fs.rmSync(temp.directory, { recursive: true, force: true });
+      }
+    });
   }
 });
 
@@ -2152,6 +4288,7 @@ test("feedback and effect rows stay atomic while legal control blockers fail lea
       guide_trace_id: "guide-a",
       request_sha256: "c".repeat(64),
       operation_protection: "legacy_unprotected",
+      operation_receipt_sha256: null,
       run_id: "run-feedback-a",
       source_commit_id: "commit-feedback-a",
       host_use_receipt_sha256: null,
@@ -2215,6 +4352,16 @@ test("feedback and effect rows stay atomic while legal control blockers fail lea
       recorded_at: "2026-07-13T01:00:00.000Z",
     };
     const feedbackRow = episodeEventRow(feedbackEvent, feedbackPayload);
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.appendEpisodeEvent({
+        row: feedbackRow,
+        event: feedbackEvent,
+        payload: feedbackPayload,
+        feedbackAttributions: [feedbackAttribution],
+        hostUseReceipt: authorityRow("lite_learning_host_use_receipts", {}),
+      })),
+      /legacy and tool feedback cannot persist a host receipt header/,
+    );
     const feedbackInserted = await database.transaction.run(async () => await ledger.appendEpisodeEvent({
       row: feedbackRow,
       event: feedbackEvent,
@@ -2763,8 +4910,13 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
   const database = createLiteRuntimeDatabase(temp.path);
   let writeStore: ReturnType<typeof createLiteWriteStoreFromDatabase> | null = null;
   try {
-    writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
-    const ledger = createLiteLearningEpisodeLedgerAccess(database);
+    writeStore = createLiteWriteStoreFromDatabase(database, {
+      annProjectionEnabled: false,
+      authorityReceiptKeyring: storeCloseKeyring(),
+    });
+    const ledger = createLiteLearningEpisodeLedgerAccess(database, {
+      authorityReceiptKeyring: storeCloseKeyring(),
+    });
     const fixture = confirmatoryFixture(await ledger.databaseInstanceId());
     await database.transaction.run(async () => {
       await ledger.insertPolicyVersion(fixture.candidate);
@@ -2788,6 +4940,7 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
       guide_receipt_sha256: sha256("guide-gate-cutoff-b"),
       guide_commit_id: "commit-gate-cutoff-b",
       request_sha256: sha256("request-gate-cutoff-b"),
+      relevant_memory_ids: [secondItem.memory_id],
     } satisfies ExposureCommittedV1;
     const secondPayloadEncoded = canonicalJson(secondPayload);
     const secondEvent: EventWithoutDigest = {
@@ -3635,6 +5788,71 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
       }))),
       /immediate prior look/,
     );
+
+    const closedAt = "2026-08-10T00:00:00.000Z";
+    const closeAuthority = experimentClosureFixture({
+      fixture,
+      operationId: "operation-close-gate-series",
+      nonce: "nonce-close-gate-series",
+      createdAt: closedAt,
+    });
+    const closer = createLiteLearningExperimentCloser({
+      database,
+      writeStore,
+      dependencies: {
+        now: () => closedAt,
+        resolveKeyring: storeCloseKeyring,
+      },
+    });
+    await closer.close({
+      tenantId: "tenant-a",
+      actor: "test-operator",
+      operationId: closeAuthority.approval.authority_operation_id,
+      authorization: closeAuthority.authorization,
+      experimentId: String(fixture.revision.experiment_id),
+      experimentRevision: Number(fixture.revision.experiment_revision),
+    });
+
+    assert.throws(
+      () => assertLearningLookProposalAgainstDatabase(database.db, look2.proposal),
+      /learning_experiment_closed:gate_look_proposal/,
+    );
+    const closedArtifact = {
+      ...look2.artifact,
+      artifact_id: "runtime-integrity-artifact-after-close",
+    } satisfies LiteLearningAuthorityRow;
+    const closedReservationBase = {
+      ...look2.reservation,
+      reservation_id: "look-reservation-after-close",
+      operation_id: "operation-look-reservation-after-close",
+      runtime_integrity_artifact_id: closedArtifact.artifact_id,
+      reservation_sha256: "0".repeat(64),
+    } satisfies LiteLearningAuthorityRow;
+    const closedReservation = {
+      ...closedReservationBase,
+      reservation_sha256: learningGateLookReservationDigest(closedReservationBase),
+    } satisfies LiteLearningAuthorityRow;
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.reserveGateLook({
+        artifact: closedArtifact,
+        reservation: closedReservation,
+      })),
+      /learning_experiment_closed:gate_look_reservation/,
+    );
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.insertGateEvidenceEvaluation(
+        rebindDecision(look2, { decision_id: "decision-after-close" }),
+      )),
+      /learning_experiment_closed:gate_evidence_evaluation/,
+    );
+
+    const look2ReservationReplay = await database.transaction.run(
+      async () => await ledger.reserveGateLook({
+        artifact: look2.artifact,
+        reservation: look2.reservation,
+      }),
+    );
+    assert.equal(look2ReservationReplay.replayed, true);
     const look2Replay = await database.transaction.run(
       async () => await ledger.insertGateEvidenceEvaluation(look2),
     );
@@ -3713,7 +5931,7 @@ test("v3 preflight rejects missing or substituted immutable triggers before repa
   }
 });
 
-test("every v3 schema fault phase leaves a complete v2 database", async (t) => {
+test("every v4 schema fault phase leaves a complete v2 database", async (t) => {
   const phases = [
     "after_v2_structures",
     "after_shared_measurement_structures",
@@ -3763,7 +5981,7 @@ test("every v3 schema fault phase leaves a complete v2 database", async (t) => {
   }
 });
 
-test("a real process kill cannot expose DDL or metadata from an uncommitted v3 migration", async (t) => {
+test("a real process kill cannot expose DDL or metadata from an uncommitted v4 migration", async (t) => {
   for (const phase of ["before_metadata_update", "after_metadata_update_before_commit"] as const) {
     await t.test(phase, async () => {
       const temp = tempDatabase(`kill-${phase}`);
@@ -3807,7 +6025,7 @@ test("a real process kill cannot expose DDL or metadata from an uncommitted v3 m
   }
 });
 
-test("concurrent v2-to-v3 openers converge on one committed lineage identity", async () => {
+test("concurrent v2-to-v4 openers converge on one committed lineage identity", async () => {
   const temp = tempDatabase("concurrent-migration");
   try {
     await createV2Fixture(temp.path);

@@ -35,6 +35,11 @@ jobs:
           node-version: "24"
           cache: npm
 
+      - name: Install protected-close ACL verifier
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends acl
+
       - name: Resolve standalone SDK ref
         id: sdk-ref
         env:

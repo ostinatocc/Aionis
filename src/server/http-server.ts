@@ -670,6 +670,7 @@ export function createRuntimeProductServices(args: {
     lifecycle: createProductLifecycleService({
       env: args.env,
       liteWriteStore: args.liteWriteStore,
+      learningEpisodeLedgerAccess: args.learningEpisodeLedgerAccess ?? null,
     }),
     measure: createProductMeasureService({
       defaultTenantId: args.env.MEMORY_TENANT_ID,

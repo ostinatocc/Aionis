@@ -1,6 +1,6 @@
 # Aionis HTTP Quickstart
 
-Status: curl-first product quickstart for the v0.3.6 Local Runtime Public Beta candidate
+Status: curl-first product quickstart for the v0.3.7 Local Runtime Public Beta candidate
 
 This quickstart shows the product loop without the TypeScript SDK:
 

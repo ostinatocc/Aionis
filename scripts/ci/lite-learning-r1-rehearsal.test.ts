@@ -481,7 +481,7 @@ test("dormant R1 explicitly migrates, verifies, backs up, restores, and replays 
     const upgrade = await runDataOps<LiteRuntimeUpgradeReport>(["upgrade", "--db", runtimePath]);
     assert.equal(upgrade.before.classification, "supported_previous_v2");
     assert.equal(upgrade.after.classification, "current");
-    assert.equal(upgrade.after.detected_version, 3);
+    assert.equal(upgrade.after.detected_version, 4);
     assert.deepEqual(upgrade.preserved_counts.before, preservedVerificationCounts(v2Snapshot));
     assert.deepEqual(upgrade.preserved_counts.after, preservedVerificationCounts(v2Snapshot));
     const migratedSnapshot = protectedSnapshot(runtimePath, v2Snapshot.columns);
@@ -495,7 +495,7 @@ test("dormant R1 explicitly migrates, verifies, backs up, restores, and replays 
     });
     const liveVerification = await runDataOps<LiteRuntimeDataVerification>(["verify", "--db", runtimePath]);
     assert.equal(liveVerification.ok, true);
-    assert.equal(liveVerification.schema.detected_version, 3);
+    assert.equal(liveVerification.schema.detected_version, 4);
     assert.match(liveVerification.database_instance_id ?? "", /^[0-9a-f]{64}$/);
     assert.deepEqual(
       preservedVerificationCounts(protectedSnapshot(runtimePath, v2Snapshot.columns)),

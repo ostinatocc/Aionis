@@ -17,6 +17,14 @@ const LEARNING_GATE_CONFIG = LEARNING_GATE_POLICY.config;
 
 const BoundedIdSchema = z.string().trim().min(1).max(256);
 const BoundedKindSchema = z.string().trim().min(1).max(120);
+const HostVerifierVersionSchema = z.string().trim().min(1).superRefine((value, context) => {
+  if (Buffer.byteLength(value, "utf8") > 120) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Host verifier version must be bounded to 120 UTF-8 bytes",
+    });
+  }
+});
 const DigestSha256Schema = z.string().regex(/^[0-9a-f]{64}$/);
 const EpisodeIdSchema = z.string().regex(/^lep_[0-9a-f]{64}$/);
 export const CanonicalLearningUtcTimestampSchema = z.string()
@@ -25,6 +33,7 @@ export const CanonicalLearningUtcTimestampSchema = z.string()
 const NullableDigestSchema = DigestSha256Schema.nullable();
 const NullableCanonicalUtcMillisSchema = CanonicalLearningUtcTimestampSchema.nullable();
 const LearningActionSchema = z.enum(["use_now", "inspect_before_use", "do_not_use", "rehydrate"]);
+export type LearningAction = z.infer<typeof LearningActionSchema>;
 const PriorEffectStateSchema = z.enum([
   "no_prior",
   "supported",
@@ -36,12 +45,25 @@ const PriorEffectStateSchema = z.enum([
 export type PublicScope = string & { readonly __kind: "public_scope" };
 export type StoreScope = string & { readonly __kind: "store_scope" };
 
+export const LEARNING_STORE_SCOPE_MAX_UTF8_BYTES = 256;
+
+const ExactLearningStoreScopeSchema = z.string().superRefine((value, context) => {
+  if (value.length === 0
+    || value !== value.trim()
+    || Buffer.byteLength(value, "utf8") > LEARNING_STORE_SCOPE_MAX_UTF8_BYTES) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Expected an exact store scope bounded to 256 UTF-8 bytes",
+    });
+  }
+});
+
 export function asPublicScope(value: string): PublicScope {
   return BoundedIdSchema.parse(value) as PublicScope;
 }
 
 export function asStoreScope(value: string): StoreScope {
-  return BoundedIdSchema.parse(value) as StoreScope;
+  return ExactLearningStoreScopeSchema.parse(value) as StoreScope;
 }
 
 export function learningMemoryNamespaceSha256(storeScope: StoreScope): string {
@@ -118,7 +140,7 @@ const HostUseReceiptItemV1Schema = z.object({
     "not_applicable",
   ]),
   verifier_kind: z.enum(["instrumented_agent_trace", "deterministic_scorer"]),
-  verifier_version: BoundedKindSchema,
+  verifier_version: HostVerifierVersionSchema,
   verifier_config_sha256: DigestSha256Schema,
   verifier_status: z.literal("passed"),
   content_evidence_sha256: DigestSha256Schema,
@@ -239,10 +261,13 @@ const ExposureCommittedV1ObjectSchema = z.object({
   index_window_ends_at: NullableCanonicalUtcMillisSchema,
   wave_analysis_at: NullableCanonicalUtcMillisSchema,
   assignment_arm: z.enum(["control", "candidate", "not_enrolled"]),
+  served_arm: z.enum(["control", "candidate"]),
+  relevant_memory_ids: z.array(BoundedIdSchema).max(256),
   recorded_surface_sha256: DigestSha256Schema,
   candidate_surface_sha256: DigestSha256Schema,
   served_surface_sha256: DigestSha256Schema,
   projection_complete: z.boolean(),
+  projection_incomplete_reason_codes: z.array(BoundedKindSchema).max(32),
   hard_boundary_upgrade_count: z.number().int().nonnegative(),
 }).strict();
 
@@ -268,6 +293,37 @@ function validateExposureCommittedV1(
     }
   } else if (value.host_task_envelope_sha256 !== null) {
     issue("host_task_envelope_sha256", "Envelope digest requires a persisted envelope");
+  }
+
+  for (const [field, values] of [
+    ["assignment_reason_codes", value.assignment_reason_codes],
+    ["relevant_memory_ids", value.relevant_memory_ids],
+    ["projection_incomplete_reason_codes", value.projection_incomplete_reason_codes],
+  ] as const) {
+    if (new Set(values).size !== values.length) {
+      issue(field, `${field} must contain unique values`);
+    }
+    const sorted = [...values].sort((left, right) =>
+      Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"))
+    );
+    if (values.some((entry, index) => entry !== sorted[index])) {
+      issue(field, `${field} must use canonical UTF-8 byte ordering`);
+    }
+  }
+  if (value.projection_complete && value.projection_incomplete_reason_codes.length > 0) {
+    issue(
+      "projection_incomplete_reason_codes",
+      "A complete projection cannot retain incomplete reason codes",
+    );
+  }
+  if (!value.projection_complete && value.projection_incomplete_reason_codes.length === 0) {
+    issue(
+      "projection_incomplete_reason_codes",
+      "An incomplete projection requires at least one stable reason code",
+    );
+  }
+  if (!value.projection_complete && value.served_arm === "candidate") {
+    issue("served_arm", "An incomplete projection cannot serve the candidate arm");
   }
 
   if (value.assignment_algorithm === "matched_pair_csprng_bit_v1") {
@@ -371,6 +427,7 @@ const FeedbackAttributedV1ObjectSchema = z.object({
   guide_trace_id: BoundedIdSchema,
   request_sha256: DigestSha256Schema,
   operation_protection: z.enum(["protected", "legacy_unprotected"]),
+  operation_receipt_sha256: NullableDigestSchema.optional(),
   run_id: BoundedIdSchema,
   source_commit_id: BoundedIdSchema,
   host_use_receipt_sha256: NullableDigestSchema,
@@ -387,6 +444,15 @@ function validateFeedbackAttributedV1(
       context.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: `${field} must be unique` });
     }
   }
+  if ((value.operation_protection === "protected")
+    ? typeof value.operation_receipt_sha256 !== "string"
+    : value.operation_receipt_sha256 !== null && value.operation_receipt_sha256 !== undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["operation_receipt_sha256"],
+      message: "protected feedback requires one exact route operation receipt digest",
+    });
+  }
 }
 
 export const FeedbackAttributedV1Schema = FeedbackAttributedV1ObjectSchema.superRefine(
@@ -394,6 +460,25 @@ export const FeedbackAttributedV1Schema = FeedbackAttributedV1ObjectSchema.super
 );
 
 export type FeedbackAttributedV1 = z.infer<typeof FeedbackAttributedV1Schema>;
+
+export function assertMemoryFeedbackOperationBinding(
+  event: EventWithoutDigest,
+  payload: FeedbackAttributedV1,
+): void {
+  if (payload.feedback_kind !== "memory") return;
+  if (event.source_kind !== "memory_feedback_operation"
+    || event.run_id !== payload.run_id
+    || event.source_commit_id !== payload.source_commit_id) {
+    throw new Error("memory feedback event identity does not match its canonical payload");
+  }
+  if (payload.operation_protection === "protected" && (
+    event.operation_id === null
+    || event.source_id !== event.operation_id
+    || event.source_sha256 !== payload.request_sha256
+  )) {
+    throw new Error("protected memory feedback is not bound to its operation request digest");
+  }
+}
 
 const EffectMeasuredV1ObjectSchema = z.object({
   contract_version: z.literal("aionis_learning_effect_v1"),
@@ -593,6 +678,23 @@ export const LearningLedgerItemSchema = z.union([
 ]);
 export type LearningLedgerItem = z.infer<typeof LearningLedgerItemSchema>;
 
+export function learningDecisionSurfaceDigest(
+  surface: readonly Readonly<{ memory_id: string; action: LearningAction }>[],
+): string {
+  const parsed = surface.map((entry) => ({
+    memory_id: BoundedIdSchema.parse(entry.memory_id),
+    action: LearningActionSchema.parse(entry.action),
+  }));
+  const ids = parsed.map((entry) => entry.memory_id);
+  if (new Set(ids).size !== ids.length) {
+    throw new Error("Learning decision surface contains duplicate memory_id values");
+  }
+  const sorted = [...parsed].sort((left, right) =>
+    Buffer.compare(Buffer.from(left.memory_id, "utf8"), Buffer.from(right.memory_id, "utf8"))
+  );
+  return sha256Hex(stableStringify(sorted));
+}
+
 export function learningItemSetDigest(items: readonly LearningLedgerItem[]): string {
   const parsed = items.map((item) => LearningLedgerItemSchema.parse(item));
   const ids = parsed.map((item) => item.memory_id);
@@ -601,6 +703,58 @@ export function learningItemSetDigest(items: readonly LearningLedgerItem[]): str
     Buffer.compare(Buffer.from(left.memory_id, "utf8"), Buffer.from(right.memory_id, "utf8"))
   );
   return sha256Hex(stableStringify(sorted));
+}
+
+export function assertLearningExposureDecisionBindings(
+  payload: ExposureCommittedV1,
+  items: readonly LearningLedgerItem[],
+): void {
+  const itemMemoryIds = items.map((item) => item.memory_id).sort((left, right) =>
+    Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"))
+  );
+  const relevantMemoryIdSet = new Set(payload.relevant_memory_ids);
+  if (itemMemoryIds.some((memoryId) => !relevantMemoryIdSet.has(memoryId))) {
+    throw new Error("learning exposure item is outside the declared relevant-memory set");
+  }
+  const hasLegacyItems = items.some((item) => item.decision_completeness === "legacy_served_only");
+  if (payload.projection_complete && (
+    hasLegacyItems
+    || itemMemoryIds.length !== payload.relevant_memory_ids.length
+    || itemMemoryIds.some((memoryId, index) => memoryId !== payload.relevant_memory_ids[index])
+  )) {
+    throw new Error("complete learning exposure must exactly cover the relevant-memory set");
+  }
+  if (hasLegacyItems) {
+    if (!payload.projection_incomplete_reason_codes.includes("legacy_served_only")) {
+      throw new Error("legacy learning exposure requires its stable incomplete reason");
+    }
+    return;
+  }
+  const completeItems = items.filter((item) => item.decision_completeness === "complete");
+  const surfaceDigest = (action: "recorded_action" | "candidate_action" | "served_action") =>
+    learningDecisionSurfaceDigest(completeItems.map((item) => ({
+      memory_id: item.memory_id,
+      action: item[action],
+    })));
+  if (payload.recorded_surface_sha256 !== surfaceDigest("recorded_action")
+    || payload.candidate_surface_sha256 !== surfaceDigest("candidate_action")
+    || payload.served_surface_sha256 !== surfaceDigest("served_action")) {
+    throw new Error("learning exposure surface digest mismatch");
+  }
+  const hardBoundaryUpgradeCount = completeItems.filter((item) =>
+    item.recorded_action !== "use_now" && item.candidate_action === "use_now"
+  ).length;
+  if (payload.hard_boundary_upgrade_count !== hardBoundaryUpgradeCount) {
+    throw new Error("learning exposure hard-boundary count mismatch");
+  }
+  for (const item of completeItems) {
+    const expectedServedAction = payload.served_arm === "candidate"
+      ? item.candidate_action
+      : item.recorded_action;
+    if (item.served_action !== expectedServedAction) {
+      throw new Error("learning exposure served action does not match the explicit served arm");
+    }
+  }
 }
 
 export function learningEpisodeTrackSummary(
@@ -823,6 +977,9 @@ export function isLearningExposurePromotionEligible(rawExposure: ExposureCommitt
   const parsed = ExposureCommittedV1Schema.safeParse(rawExposure);
   if (!parsed.success) return false;
   const exposure = parsed.data;
+  const servingReason = exposure.served_arm === "candidate"
+    ? "candidate_arm_served"
+    : "control_arm_served";
   return exposure.operation_protection === "protected"
     && exposure.collection_class === "eligible_host"
     && exposure.collection_principal_sha256 !== null
@@ -839,6 +996,10 @@ export function isLearningExposurePromotionEligible(rawExposure: ExposureCommitt
     && exposure.assignment_algorithm === "matched_pair_csprng_bit_v1"
     && exposure.assignment_namespace_sha256 !== null
     && exposure.assignment_arm !== "not_enrolled"
+    && exposure.served_arm === exposure.assignment_arm
+    && exposure.assignment_reason_codes.length === 2
+    && exposure.assignment_reason_codes.includes("confirmatory_active_lease")
+    && exposure.assignment_reason_codes.includes(servingReason)
     && exposure.projection_complete
     && exposure.hard_boundary_upgrade_count === 0;
 }

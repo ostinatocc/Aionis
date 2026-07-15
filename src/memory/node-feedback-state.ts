@@ -5,8 +5,16 @@ export type NodeFeedbackSource = "rule_feedback" | "tools_feedback" | "nodes_act
 export type NodeFeedbackUsedSurface = "use_now" | "inspect_before_use" | "do_not_use" | "explicit_host_assertion";
 export type NodeFeedbackVerifierStatus = "passed" | "failed" | "not_run" | "unknown";
 export type NodeFeedbackToolStatus = "succeeded" | "failed" | "not_run" | "unknown";
+export type NodeFeedbackAttributionStrength =
+  | "observed_feedback"
+  | "positive_attribution"
+  | "weak_counter_signal"
+  | "strong_counter_signal";
 export type NodeFeedbackLearningControlPosture = "inspect_before_use";
-export type NodeFeedbackLearningControlSource = "repeated_unused_without_positive_attribution";
+export type NodeFeedbackLearningControlSource =
+  | "repeated_unused_without_positive_attribution"
+  | "strong_counter_signal"
+  | "boundary_ignored";
 
 export type FeedbackNodeSnapshot = {
   id: string;
@@ -32,6 +40,8 @@ type MergeNodeFeedbackSlotsArgs = {
   verifier_status?: NodeFeedbackVerifierStatus | null;
   tool_status?: NodeFeedbackToolStatus | null;
   runtime_signal_refs?: string[] | null;
+  boundary_ignored?: boolean;
+  verified_host_receipt?: boolean;
 };
 
 type ComputeFeedbackUpdatedNodeStateArgs = {
@@ -73,7 +83,7 @@ function normalizeReason(value: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function normalizeStringList(values: string[] | null | undefined): string[] {
+function normalizeStringList(values: readonly string[] | null | undefined): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const value of values ?? []) {
@@ -89,14 +99,37 @@ function isDirectAttributionSurface(surface: NodeFeedbackUsedSurface | null | un
   return surface === "use_now" || surface === "explicit_host_assertion";
 }
 
+function isAttributedUse(args: MergeNodeFeedbackSlotsArgs): boolean {
+  return isDirectAttributionSurface(args.used_surface)
+    || (args.verified_host_receipt === true && args.used_surface === "inspect_before_use");
+}
+
 function hasAlignedFailureSignal(args: {
   verifier_status?: NodeFeedbackVerifierStatus | null;
   tool_status?: NodeFeedbackToolStatus | null;
-  runtime_signal_refs?: string[] | null;
+  runtime_signal_refs?: readonly string[] | null;
 }): boolean {
   return args.verifier_status === "failed"
     || args.tool_status === "failed"
     || normalizeStringList(args.runtime_signal_refs).length > 0;
+}
+
+export function resolveNodeFeedbackAttributionStrength(args: {
+  outcome: NodeFeedbackOutcome;
+  used_surface?: NodeFeedbackUsedSurface | null;
+  verified_host_receipt?: boolean;
+  verifier_status?: NodeFeedbackVerifierStatus | null;
+  tool_status?: NodeFeedbackToolStatus | null;
+  runtime_signal_refs?: readonly string[] | null;
+}): NodeFeedbackAttributionStrength {
+  const directlyAttributed = isDirectAttributionSurface(args.used_surface);
+  const attributedUse = directlyAttributed
+    || (args.verified_host_receipt === true && args.used_surface === "inspect_before_use");
+  if (args.outcome === "positive" && attributedUse) return "positive_attribution";
+  if (args.outcome !== "negative" || !directlyAttributed) return "observed_feedback";
+  return args.verified_host_receipt === true || hasAlignedFailureSignal(args)
+    ? "strong_counter_signal"
+    : "weak_counter_signal";
 }
 
 export function shouldActivateNodeOnFeedback(outcome: NodeFeedbackOutcome): boolean {
@@ -112,16 +145,18 @@ export function mergeNodeFeedbackSlots(args: MergeNodeFeedbackSlotsArgs): Record
   const negInc = args.outcome === "negative" ? 1 : 0;
   const qualitySignal = args.outcome === "positive" ? 1 : args.outcome === "negative" ? -1 : 0;
   const runtimeSignalRefs = normalizeStringList(args.runtime_signal_refs);
-  const directlyAttributed = isDirectAttributionSurface(args.used_surface);
-  const strongCounterSignal =
-    args.outcome === "negative"
-    && directlyAttributed
-    && hasAlignedFailureSignal({
-      verifier_status: args.verifier_status,
-      tool_status: args.tool_status,
-      runtime_signal_refs: runtimeSignalRefs,
-    });
-  const weakCounterSignal = args.outcome === "negative" && directlyAttributed && !strongCounterSignal;
+  const verifierStatus = args.verifier_status === "unknown" ? null : args.verifier_status ?? null;
+  const attributedUse = isAttributedUse(args);
+  const attributionStrength = resolveNodeFeedbackAttributionStrength({
+    outcome: args.outcome,
+    used_surface: args.used_surface,
+    verified_host_receipt: args.verified_host_receipt,
+    verifier_status: verifierStatus,
+    tool_status: args.tool_status,
+    runtime_signal_refs: runtimeSignalRefs,
+  });
+  const strongCounterSignal = attributionStrength === "strong_counter_signal";
+  const weakCounterSignal = attributionStrength === "weak_counter_signal";
 
   const nextPos = prevPos + posInc;
   const nextNeg = prevNeg + negInc;
@@ -140,30 +175,36 @@ export function mergeNodeFeedbackSlots(args: MergeNodeFeedbackSlotsArgs): Record
   slots.last_feedback_input_sha256 = args.input_sha256;
   slots.last_feedback_source = args.source;
   slots.last_feedback_used_surface = args.used_surface ?? null;
-  slots.last_feedback_verifier_status = args.verifier_status ?? null;
+  slots.last_feedback_verifier_status = verifierStatus;
   slots.last_feedback_tool_status = args.tool_status ?? null;
   slots.last_feedback_runtime_signal_refs = runtimeSignalRefs;
-  slots.attributed_use_count = asNonNegativeInt(slots.attributed_use_count) + (directlyAttributed ? 1 : 0);
+  slots.attributed_use_count = asNonNegativeInt(slots.attributed_use_count) + (attributedUse ? 1 : 0);
   slots.positive_attributed_use_count =
-    asNonNegativeInt(slots.positive_attributed_use_count) + (args.outcome === "positive" && directlyAttributed ? 1 : 0);
+    asNonNegativeInt(slots.positive_attributed_use_count) + (args.outcome === "positive" && attributedUse ? 1 : 0);
   slots.weak_counter_signal_count =
     asNonNegativeInt(slots.weak_counter_signal_count) + (weakCounterSignal ? 1 : 0);
   slots.strong_counter_signal_count =
     asNonNegativeInt(slots.strong_counter_signal_count) + (strongCounterSignal ? 1 : 0);
-  slots.last_feedback_attribution_strength = strongCounterSignal
-    ? "strong_counter_signal"
-    : weakCounterSignal
-      ? "weak_counter_signal"
-      : args.outcome === "positive" && directlyAttributed
-        ? "positive_attribution"
-        : "observed_feedback";
-  if (args.outcome === "positive" && directlyAttributed) {
+  slots.last_feedback_attribution_strength = attributionStrength;
+  if (args.outcome === "positive" && attributedUse) {
     delete slots.feedback_learning_control_posture;
     delete slots.feedback_learning_control_source;
     delete slots.feedback_learning_control_reason;
     slots.feedback_learning_control_cleared_at = args.timestamp;
     slots.feedback_learning_control_cleared_reason = "positive_attribution";
     slots.feedback_learning_control_cleared_run_id = args.run_id ?? null;
+  }
+  if (strongCounterSignal || args.boundary_ignored === true) {
+    slots.feedback_learning_control_posture = "inspect_before_use";
+    slots.feedback_learning_control_source = args.boundary_ignored === true
+      ? "boundary_ignored"
+      : "strong_counter_signal";
+    slots.feedback_learning_control_at = args.timestamp;
+    slots.feedback_learning_control_run_id = args.run_id ?? null;
+    slots.feedback_learning_control_reason = args.boundary_ignored === true
+      ? "Host reported direct use outside the served memory boundary."
+      : "Verified direct-use feedback produced a strong counter-signal.";
+    slots.feedback_learning_control_input_sha256 = args.input_sha256;
   }
   return slots;
 }

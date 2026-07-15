@@ -1,80 +1,107 @@
-# Aionis v0.3.6 Local Runtime Public Beta Candidate Notes
+# Aionis v0.3.7 Evidence-Gated Learning Candidate Notes
 
 Release status `candidate`.
 
-Runtime `v0.3.6` is a release-integrity maintenance candidate for the
-single-process, self-hosted Aionis Local Runtime. It hardens startup and the
-release pipeline without changing Aionis memory, continuity, AgentContext,
-HTTP, SDK/MCP, or persistence contracts.
+Runtime `v0.3.7` is the next single-process, self-hosted Aionis Local Runtime
+candidate after the immutable `v0.3.6` release. It adds the protected evidence
+substrate for learning episodes, experiment lifecycle, guide exposure, and
+memory feedback attribution. It does not enable autonomous learning globally.
 
 ## Candidate Coordinates
 
 - `aionis@0.3.8` — immutable source ref `v0.3.8`
 - `@aionis/create@0.3.8` — immutable source ref `v0.3.8`
-- `@aionis/sdk@0.3.15` — immutable source ref `v0.3.15`
+- `@aionis/sdk@0.3.16` — immutable source ref `v0.3.16`
 - `@aionis/mcp@0.3.7` — immutable source ref `v0.3.7`
 - `@aionis/aifs@0.3.4` — immutable source ref `v0.3.4`
 - `@aionis/claude-code@0.3.5` — immutable source ref `v0.3.5`
 - `@aionis/substrate@0.1.11` — immutable source ref `v0.1.11`
-- Runtime source tag `v0.3.6`
-- Docker image `ghcr.io/ostinatocc/aionis:v0.3.6` (`linux/amd64` only)
+- Runtime source tag `v0.3.7`
+- Docker image `ghcr.io/ostinatocc/aionis:v0.3.7` (`linux/amd64` only)
 - Default installer Runtime ref `v0.3.6`
 
 Every package ref is paired with its exact 40-character source commit in
-`release-train.json`. The train remains `candidate`, so Docker `latest` is not
-moved. Manifest remains outside this train until it has a verifiable source
-repository and immutable ref.
+`release-train.json`. The default installer remains on immutable `v0.3.6`
+until the new candidate and its package train have passed publication gates.
+Candidate status does not move Docker `latest`.
 
 ## Highlights
 
-### Clean Runtime Shutdown In Release Jobs
+### Append-Only Learning Authority
 
-Lite starts the Runtime as the direct Node process. Smoke and fresh-install
-checks use bounded `SIGTERM` then `SIGKILL` cleanup, while Docker release jobs
-also own and clean the Linux process group. GitHub Actions no longer has to
-terminate a leaked Runtime or loader child process after a successful check.
+The Runtime now owns append-only learning episode events, per-memory exposure
+and attribution rows, experiment revisions, namespace leases, safety-stop
+authority, and operation receipts in the main SQLite transaction domain.
+Current v3 databases migrate atomically to schema v4 only after the complete
+source authority shape passes preflight. Restart verification, backup, and
+restore reject mixed, damaged, or drifted authority state.
 
-### Accurate, Immutable Docker Provenance
+### Protected Experiment Lifecycle
 
-The image is built under a unique
-`build-v0.3.6-<commit>-<run>-<attempt>` staging subject. Its digest is verified
-and smoked before that same digest is promoted to `v0.3.6`. Publication refuses
-to overwrite an existing version tag with a different digest, and provenance
-no longer presents `latest` as the build subject.
+Non-HTTP provisioning and close commands accept strict reviewed inputs and
+tenant/scope anchors. Provisioning uses OS CSPRNG assignment and atomically
+freezes 384 matched pairs with 768 namespace leases. Exact retries replay the
+same result. Close requires a bounded HMAC approval and Runtime receipt
+attestation, seals the attempt, and releases the complete lease set in one
+transaction. Database, sidecar, ancestor ownership, mode, and ACL checks fail
+closed.
 
-### Stronger Exact-Release Gates
+### Atomic Guide Exposure
 
-Docker publication verifies the exact Runtime tag and every pinned package
-source ref. SDK, MCP, and installer checkouts are packed as real tarballs, then
-cross-package and fresh-install checks run against those artifacts. Manual
-workflow recovery remains limited to verification-only harness changes.
+`POST /v1/guide` accepts an optional caller-supplied `operation_id`. Protected
+requests provide exact replay after concurrency or a lost response, reject
+content drift, and enforce the 2 MiB receipt bound. Memory/tool decisions, the
+guide receipt, exposure event/items, and operation receipt share the same
+transaction and source commit.
 
-### End-To-End Fresh Install
+### Evidence-Bound Memory Feedback
 
-The release gate installs from the exact Runtime tag, starts without an
-embedding key, exercises packaged SDK/MCP entrypoints plus continuity handoff
-and context paths, and waits for the temporary Runtime to close cleanly.
+Direct memory feedback accepts a protected feedback operation plus
+`host_use_receipt_v1`. The Runtime inherits provenance from the source exposure,
+checks each subject against its exact served and used surface, derives
+attribution strength from immutable receipt roots, and atomically commits the
+activation, feedback event, item attribution, receipt roots, counters, safety
+pause, and gate-authority receipt. Restart validation independently derives the
+same facts and rejects tampering.
 
-### Node.js 22.13+ Baseline
+Legacy feedback remains compatible, but is classified as
+`legacy_unverified`/`not_attributed` and cannot enter formal gate coverage.
 
-Source and local installs require Node.js `>=22.13.0`. Earlier Node 22
-experimental SQLite builds are rejected because their empty-row behavior does
-not provide the semantics required by Runtime existence checks. CI runs the
-public smoke on the minimum supported version. The Docker image continues to
-use Node.js 24.
+### SDK And Host Conformance
 
-### Documentation Cleanup
+`@aionis/sdk@0.3.16` adds strict builders, parsers, and digests for
+`host_task_envelope_v1` and `host_use_receipt_v1`, and preserves protected
+guide/feedback operation identity through direct and role-aware helpers. A
+read-only host-adapter conformance command emits a bounded canonical `0600`
+result and rejects secrets or raw content.
 
-Install guidance now states the real Node floor. Product-surface documentation
-no longer describes a Dashboard or control-panel product that is outside the
-current Aionis repository and release boundary.
+### Release And Route Integrity
+
+The real 21-route HTTP surface remains covered by route governance. Linux
+container and CI images include `acl` so protected experiment close can verify
+fixed-path access controls. The complexity budget is measured after all new
+source files are tracked rather than against a partial worktree.
+
+## Safety Posture And Deferred Work
+
+- Global admission-candidate serving remains off by default.
+- The production external-execution-policy registry remains unregistered and
+  the checked-in gate remains `calibration_pending`; this candidate does not
+  automatically start confirmatory or active-control traffic.
+- The durable learning-control queue schema and integrity checks are reserved,
+  but Task 4.1 Step 4 production enqueue, lease/retry/dead-letter worker, and
+  Runtime lifecycle wiring are not included yet. Repeated-unused observations
+  remain read-only and do not become negative feedback or change posture.
+- Tool-feedback atomic refactoring, measurement episode binding, and later
+  gate/promotion phases are outside this checkpoint.
 
 ## Compatibility
 
-- No HTTP API or SDK/MCP contract changes.
-- No SQLite schema, migration, or durable event-format changes.
-- Existing v0.3.5 SQLite data remains compatible.
-- Source/local installs must use Node.js `>=22.13.0`.
+- Existing unprotected guide and feedback calls remain accepted.
+- HTTP and SDK contracts add optional protected identity/evidence fields; no
+  existing route is removed.
+- Complete v3 authority databases migrate atomically to v4. Damaged, mixed, or
+  future schemas fail closed instead of being repaired opportunistically.
 - The supported deployment shape remains one self-hosted Runtime process;
   multi-instance HA and managed multi-tenant Server GA are not claimed.
 
@@ -84,36 +111,42 @@ current Aionis repository and release boundary.
 npm run -s typecheck
 npm run -s lite:test
 npm run -s lite:smoke
-npm run -s sdk:check
+npm run -s sdk:check -- --sdk-repo /Volumes/ziel/new.aionis/aionis-sdk
 npm run -s complexity:check
-node scripts/ci/release-artifact-gate.mjs --check --expect-tag v0.3.6
+AIONIS_RELEASE_SDK_REPO=/Volumes/ziel/new.aionis/aionis-sdk \
+  node scripts/ci/release-artifact-gate.mjs --check --expect-tag v0.3.7
 npm run -s runtime:smoke:external-packages
 npm run -s runtime:smoke:fresh-install
 npm run -s runtime:smoke:published-cli
 docker build --platform linux/amd64 \
-  --iidfile /tmp/aionis-v0.3.6.iid \
-  -t aionis:v0.3.6-smoke .
+  --iidfile /tmp/aionis-v0.3.7.iid \
+  -t aionis:v0.3.7-smoke .
 bash scripts/ci/docker-release-smoke.sh \
-  "$(cat /tmp/aionis-v0.3.6.iid)"
+  "$(cat /tmp/aionis-v0.3.7.iid)"
 ```
 
 ## Publish Order
 
-Create remains unpublished until the Runtime tag and verified Docker digest
-resolve:
+The SDK commit and tag must be remotely resolvable before Runtime CI can check
+the frozen package coordinate:
 
 ```bash
-# 1. Merge the verified Runtime release commit, then create the immutable tag.
-cd /Volumes/ziel/new.aionis/AionisRuntime-focused
+# 1. Publish the already verified SDK commit and immutable tag.
+cd /Volumes/ziel/new.aionis/aionis-sdk
 git push origin main
-git tag -a v0.3.6 -m "Aionis v0.3.6"
-git push origin v0.3.6
+git push origin v0.3.16
 
-# 2. Wait for the Docker workflow and verify the immutable artifact.
-git ls-remote --exit-code --tags origin refs/tags/v0.3.6
-docker pull ghcr.io/ostinatocc/aionis:v0.3.6
+# 2. Merge the verified Runtime release commit, then create its immutable tag.
+cd /Volumes/ziel/new.aionis/AionisRuntime-focused
+git push origin release/v0.3.7
+git tag -a v0.3.7 -m "Aionis v0.3.7"
+git push origin v0.3.7
 
-# 3. Publish the already frozen installer only after Runtime verification.
+# 3. Verify the Runtime image before changing installer defaults.
+git ls-remote --exit-code --tags origin refs/tags/v0.3.7
+docker pull ghcr.io/ostinatocc/aionis:v0.3.7
+
+# 4. Publish a separately frozen installer only after Runtime verification.
 cd /Volumes/ziel/new.aionis/aionis-create
 npm publish --access public
 ```
@@ -122,10 +155,10 @@ npm publish --access public
 
 ```bash
 AIONIS_FRESH_INSTALL_CREATE_SPEC="@aionis/create@0.3.8" \
-AIONIS_FRESH_INSTALL_SDK_SPEC="@aionis/sdk@0.3.15" \
+AIONIS_FRESH_INSTALL_SDK_SPEC="@aionis/sdk@0.3.16" \
 AIONIS_FRESH_INSTALL_MCP_SPEC="@aionis/mcp@0.3.7" \
 AIONIS_FRESH_INSTALL_REPO="https://github.com/ostinatocc/Aionis.git" \
-AIONIS_FRESH_INSTALL_RUNTIME_REF="v0.3.6" \
+AIONIS_FRESH_INSTALL_RUNTIME_REF="v0.3.7" \
 npm run -s runtime:smoke:fresh-install
 
 AIONIS_PUBLISHED_CLI_SMOKE_SPEC="aionis@0.3.8" \

@@ -8,14 +8,20 @@ import {
   agentPromptFromGuide,
   blockedDirectionRouteTargetsFromGuide,
   blockedRoutesFromGuide,
+  buildHostTaskEnvelopeV1,
+  buildHostUseReceiptV1,
   commandPostureFromGuide,
   commandPostureMemoryIdsFromGuide,
   createAionisClient,
   evidenceSourcesFromGuide,
   feedbackFromGuide,
+  hostTaskEnvelopeDigest,
+  hostUseReceiptDigest,
   mustNotMemoryIdsFromGuide,
   measureInputFromGuideLoop,
   memoryIdsFromGuide,
+  parseHostTaskEnvelopeV1,
+  parseHostUseReceiptV1,
   pendingArtifactTargetsFromGuide,
   planAssetObserveEvents,
   referenceOnlyRouteTargetsFromGuide,
@@ -23,6 +29,69 @@ import {
   shouldContinueMemoryIdsFromGuide,
   snapshotInputFromGuideLoop,
 } from "../../src/sdk.ts";
+import {
+  hostTaskEnvelopeDigest as coreHostTaskEnvelopeDigest,
+  hostUseReceiptDigest as coreHostUseReceiptDigest,
+  learningEpisodeId,
+} from "../../src/memory/learning-episode-ledger.js";
+
+const GUIDE_HOST_TASK_ENVELOPE = {
+  contract_version: "host_task_envelope_v1",
+  host_task_id: "sdk-guide-protected-task",
+  collector_id: "sdk-test-collector",
+  collector_version: "1.0.0",
+  task_family: "sdk-guide",
+  task_signature: "sdk-guide-protected-task-signature",
+  repository_signature: "sdk-guide-repository-signature",
+  source_task_sha256: "1".repeat(64),
+  source_event_sha256: "2".repeat(64),
+  created_at: "2026-07-14T00:00:00.000Z",
+} as const;
+
+const SDK_RECEIPT_DIGESTS = {
+  config: "3".repeat(64),
+  content: "4".repeat(64),
+  evidence: "5".repeat(64),
+  trace: "6".repeat(64),
+} as const;
+
+function sdkReceiptItem(memoryId: string, overrides: Record<string, unknown> = {}) {
+  return {
+    memory_id: memoryId,
+    used_surface: "inspect_before_use" as const,
+    outcome: "positive" as const,
+    action_outcome: "accepted_completed" as const,
+    verifier_kind: "instrumented_agent_trace" as const,
+    verifier_version: "1.0.0",
+    verifier_config_sha256: SDK_RECEIPT_DIGESTS.config,
+    verifier_status: "passed" as const,
+    content_evidence_sha256: SDK_RECEIPT_DIGESTS.content,
+    evidence_ref_sha256: SDK_RECEIPT_DIGESTS.evidence,
+    ...overrides,
+  };
+}
+
+function sdkReceiptBody(items = [sdkReceiptItem("memory-b"), sdkReceiptItem("memory-a")]) {
+  return {
+    contract_version: "host_use_receipt_v1" as const,
+    receipt_id: "sdk-receipt-1",
+    guide_trace_id: "sdk-guide-receipt-1",
+    episode_id: learningEpisodeId({
+      tenantId: "tenant-sdk",
+      scope: "scope-sdk",
+      guideTraceId: "sdk-guide-receipt-1",
+    }),
+    operation_id: "sdk-feedback-operation-1",
+    run_id: "sdk-run-receipt-1",
+    host_task_id: GUIDE_HOST_TASK_ENVELOPE.host_task_id,
+    host_task_envelope_sha256: coreHostTaskEnvelopeDigest(GUIDE_HOST_TASK_ENVELOPE),
+    collector_id: GUIDE_HOST_TASK_ENVELOPE.collector_id,
+    collector_version: GUIDE_HOST_TASK_ENVELOPE.collector_version,
+    host_trace_sha256: SDK_RECEIPT_DIGESTS.trace,
+    observed_at: "2026-07-14T00:01:00.000Z",
+    items,
+  };
+}
 
 test("AionisClient wraps the product facade APIs with scope defaults", async () => {
   const calls: Array<{ url: string; init: RequestInit }> = [];
@@ -175,6 +244,234 @@ test("AionisClient defaults guide to full_power and allows explicit guide mode c
   assert.equal(calls[4]?.mode, "standard");
   assert.equal(calls[5]?.mode, undefined);
   assert.equal(calls[6]?.mode, "standard");
+});
+
+test("SDK guide and role helpers preserve protected guide identity without upgrading legacy calls", async () => {
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const fakeFetch: typeof fetch = async (input, init) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    calls.push({ url: String(input), body });
+    return new Response(JSON.stringify({
+      contract_version: "aionis_guide_result_v1",
+      tenant_id: "tenant-sdk",
+      scope: "scope-sdk",
+      operation_id: body.operation_id ?? null,
+      guide_trace_id: `guide-${calls.length}`,
+      agent_context: {
+        contract_version: "aionis_agent_context_v1",
+        prompt_text: "AIONIS_CTX v2\ncurrent: note=protected SDK guide",
+        memory_ids: [],
+      },
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const client = createAionisClient({
+    baseUrl: "http://127.0.0.1:3001",
+    tenant_id: "tenant-sdk",
+    scope: "scope-sdk",
+    fetchImpl: fakeFetch,
+  });
+
+  await client.guide({
+    query_text: "Direct protected guide.",
+    operation_id: "sdk-guide-direct-operation",
+    host_task_envelope_v1: GUIDE_HOST_TASK_ENVELOPE,
+  });
+  await client.execution.guideForRole({
+    run_id: "sdk-role-run",
+    task_signature: GUIDE_HOST_TASK_ENVELOPE.task_signature,
+    task_family: GUIDE_HOST_TASK_ENVELOPE.task_family,
+    workflow_signature: "sdk-role-workflow",
+    query_text: "Protected guide for a worker role.",
+    agent_id: "worker-sdk",
+    role: "worker",
+    operation_id: "sdk-guide-role-operation",
+    host_task_envelope_v1: GUIDE_HOST_TASK_ENVELOPE,
+    guide: { operation_id: "sdk-guide-role-escape-must-not-override" },
+  });
+  await client.execution.guideAgentContextForRole({
+    run_id: "sdk-role-context-run",
+    task_signature: GUIDE_HOST_TASK_ENVELOPE.task_signature,
+    task_family: GUIDE_HOST_TASK_ENVELOPE.task_family,
+    workflow_signature: "sdk-role-context-workflow",
+    query_text: "Protected agent context for a verifier role.",
+    agent_id: "verifier-sdk",
+    role: "verifier",
+    operation_id: "sdk-guide-role-context-operation",
+    host_task_envelope_v1: GUIDE_HOST_TASK_ENVELOPE,
+  }, undefined, {
+    prompt_format: "runtime_compact",
+  });
+  await client.execution.guideForRole({
+    run_id: "sdk-role-escape-run",
+    task_signature: "sdk-role-escape-signature",
+    task_family: "sdk-guide",
+    query_text: "Preserve the existing guide escape hatch.",
+    agent_id: "worker-sdk",
+    role: "worker",
+    guide: {
+      operation_id: "sdk-guide-role-escape-operation",
+      host_task_envelope_v1: GUIDE_HOST_TASK_ENVELOPE,
+    },
+  });
+  await client.guide({ query_text: "Legacy unprotected guide." });
+
+  assert.deepEqual(calls.map((call) => call.url), [
+    "http://127.0.0.1:3001/v1/guide",
+    "http://127.0.0.1:3001/v1/guide",
+    "http://127.0.0.1:3001/v1/guide",
+    "http://127.0.0.1:3001/v1/guide",
+    "http://127.0.0.1:3001/v1/guide",
+  ]);
+  assert.equal(calls[0]?.body.operation_id, "sdk-guide-direct-operation");
+  assert.deepEqual(calls[0]?.body.host_task_envelope_v1, GUIDE_HOST_TASK_ENVELOPE);
+  assert.equal(calls[1]?.body.operation_id, "sdk-guide-role-operation");
+  assert.deepEqual(calls[1]?.body.host_task_envelope_v1, GUIDE_HOST_TASK_ENVELOPE);
+  assert.equal(calls[2]?.body.operation_id, "sdk-guide-role-context-operation");
+  assert.deepEqual(calls[2]?.body.host_task_envelope_v1, GUIDE_HOST_TASK_ENVELOPE);
+  assert.equal(calls[3]?.body.operation_id, "sdk-guide-role-escape-operation");
+  assert.deepEqual(calls[3]?.body.host_task_envelope_v1, GUIDE_HOST_TASK_ENVELOPE);
+  assert.equal(Object.hasOwn(calls[4]?.body ?? {}, "operation_id"), false);
+  assert.equal(Object.hasOwn(calls[4]?.body ?? {}, "host_task_envelope_v1"), false);
+});
+
+test("SDK strict host envelope and receipt contracts match Runtime canonical digests", () => {
+  const envelope = buildHostTaskEnvelopeV1(GUIDE_HOST_TASK_ENVELOPE);
+  assert.deepEqual(parseHostTaskEnvelopeV1(envelope), GUIDE_HOST_TASK_ENVELOPE);
+  assert.equal(hostTaskEnvelopeDigest(envelope), coreHostTaskEnvelopeDigest(GUIDE_HOST_TASK_ENVELOPE));
+  assert.throws(
+    () => parseHostTaskEnvelopeV1({ ...envelope, assignment_arm: "candidate" }),
+    /unexpected field assignment_arm/,
+  );
+  assert.throws(
+    () => parseHostTaskEnvelopeV1({ ...envelope, created_at: "2026-07-14T00:00:00Z" }),
+    /canonical UTC timestamp/,
+  );
+
+  const receipt = buildHostUseReceiptV1(sdkReceiptBody());
+  assert.deepEqual(receipt.items.map((item) => item.memory_id), ["memory-a", "memory-b"]);
+  const { receipt_sha256: receiptSha256, ...receiptBody } = receipt;
+  assert.equal(receiptSha256, hostUseReceiptDigest(receiptBody));
+  assert.equal(receiptSha256, coreHostUseReceiptDigest(receiptBody));
+  assert.deepEqual(parseHostUseReceiptV1(receipt), receipt);
+  assert.throws(
+    () => parseHostUseReceiptV1({ ...receipt, receipt_sha256: "7".repeat(64) }),
+    /digest does not match/,
+  );
+  assert.throws(
+    () => parseHostUseReceiptV1({ ...receipt, raw_host_trace: "must-never-cross-the-contract" }),
+    /unexpected field raw_host_trace/,
+  );
+  assert.throws(
+    () => hostUseReceiptDigest({ ...receiptBody, items: [...receiptBody.items].reverse() }),
+    /sorted by UTF-8 memory_id bytes/,
+  );
+  assert.doesNotThrow(() => buildHostUseReceiptV1(sdkReceiptBody([
+    sdkReceiptItem("memory-a", { verifier_version: "界".repeat(40) }),
+    sdkReceiptItem("memory-b", { verifier_version: "界".repeat(40) }),
+  ])));
+  assert.throws(
+    () => buildHostUseReceiptV1(sdkReceiptBody([
+      sdkReceiptItem("memory-a", { verifier_version: "界".repeat(41) }),
+      sdkReceiptItem("memory-b", { verifier_version: "界".repeat(41) }),
+    ])),
+    /120 UTF-8 bytes/i,
+  );
+});
+
+test("feedbackFromGuide binds protected homogeneous receipts to the exact served surface", () => {
+  const guide = {
+    contract_version: "aionis_guide_result_v1",
+    tenant_id: "tenant-sdk",
+    scope: "scope-sdk",
+    guide_trace_id: "sdk-guide-receipt-1",
+    agent_context: {
+      contract_version: "aionis_agent_context_v1",
+      memory_ids: ["memory-a", "memory-b", "memory-control"],
+      use_now_memory_ids: ["memory-control"],
+      inspect_before_use_memory_ids: ["memory-a", "memory-b"],
+      do_not_use_memory_ids: [],
+    },
+  };
+  const receipt = buildHostUseReceiptV1(sdkReceiptBody());
+  const feedback = feedbackFromGuide({
+    guide,
+    operation_id: "sdk-feedback-operation-1",
+    host_use_receipt_v1: receipt,
+    reason: "The instrumented host inspected and used the served evidence.",
+    run_id: "sdk-run-receipt-1",
+    outcome: "positive",
+    used_memory_ids: ["memory-b", "memory-a"],
+  });
+
+  assert.equal(feedback.operation_id, "sdk-feedback-operation-1");
+  assert.equal(feedback.used_surface, "inspect_before_use");
+  assert.equal(feedback.verifier_status, "passed");
+  assert.deepEqual(feedback.used_memory_ids, ["memory-a", "memory-b"]);
+  assert.deepEqual(feedback.host_use_receipt_v1, receipt);
+
+  assert.throws(
+    () => feedbackFromGuide({
+      guide,
+      operation_id: "different-feedback-operation",
+      host_use_receipt_v1: receipt,
+      reason: "Wrong operation binding.",
+      run_id: "sdk-run-receipt-1",
+      outcome: "positive",
+      used_memory_ids: ["memory-a", "memory-b"],
+    }),
+    /operation_id must match/,
+  );
+  assert.throws(
+    () => feedbackFromGuide({
+      guide,
+      operation_id: "sdk-feedback-operation-1",
+      host_use_receipt_v1: receipt,
+      reason: "Wrong exact served surface.",
+      run_id: "sdk-run-receipt-1",
+      outcome: "positive",
+      used_surface: "use_now",
+      used_memory_ids: ["memory-a", "memory-b"],
+    }),
+    /used_surface must match/,
+  );
+  assert.throws(
+    () => feedbackFromGuide({
+      guide: {
+        ...guide,
+        agent_context: {
+          ...guide.agent_context,
+          use_now_memory_ids: ["memory-b", "memory-control"],
+          inspect_before_use_memory_ids: ["memory-a"],
+        },
+      },
+      operation_id: "sdk-feedback-operation-1",
+      host_use_receipt_v1: receipt,
+      reason: "The receipt surface must match the guide's served surface.",
+      run_id: "sdk-run-receipt-1",
+      outcome: "positive",
+      used_memory_ids: ["memory-a", "memory-b"],
+    }),
+    /exact served surface inspect_before_use/,
+  );
+  const heterogeneousReceipt = buildHostUseReceiptV1(sdkReceiptBody([
+    sdkReceiptItem("memory-a"),
+    sdkReceiptItem("memory-b", { outcome: "negative" }),
+  ]));
+  assert.throws(
+    () => feedbackFromGuide({
+      guide,
+      operation_id: "sdk-feedback-operation-1",
+      host_use_receipt_v1: heterogeneousReceipt,
+      reason: "Mixed evidence cannot become one feedback operation.",
+      run_id: "sdk-run-receipt-1",
+      outcome: "positive",
+      used_memory_ids: ["memory-a", "memory-b"],
+    }),
+    /homogeneous receipt outcome and used_surface/,
+  );
 });
 
 test("AionisClient remember writes ordinary memory through observe", async () => {

@@ -4652,6 +4652,11 @@ export const MemoryNodesActivateRequest = z
     scope: z.string().min(1).optional(),
     actor: z.string().min(1).optional(),
     consumer_team_id: z.string().min(1).optional(),
+    guide_trace_id: z.string().min(1).max(256).optional(),
+    learning_episode_id: z.string().min(1).max(256).optional(),
+    feedback_operation_id: z.string().min(1).max(256).optional(),
+    feedback_recorded_at: z.string().datetime().optional(),
+    verified_host_receipt: z.boolean().optional(),
     node_ids: z.array(UUID).min(1).max(200).optional(),
     client_ids: z.array(z.string().min(1)).min(1).max(200).optional(),
     run_id: z.string().min(1).optional(),
@@ -4664,6 +4669,7 @@ export const MemoryNodesActivateRequest = z
     verifier_status: z.enum(["passed", "failed", "not_run", "unknown"]).optional(),
     tool_status: z.enum(["succeeded", "failed", "not_run", "unknown"]).optional(),
     runtime_signal_refs: z.array(z.string().min(1)).max(32).optional(),
+    boundary_ignored_memory_ids: z.array(UUID).max(200).optional(),
   })
   .refine((v) => (v.node_ids?.length ?? 0) > 0 || (v.client_ids?.length ?? 0) > 0, {
     message: "must set node_ids or client_ids",

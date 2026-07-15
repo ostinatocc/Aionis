@@ -43,7 +43,7 @@ rehydrated later, and why each decision was made.
 npx aionis setup
 ```
 
-Current candidate: **v0.3.6 Local Runtime Public Beta**. It is intended for a
+Current candidate: **v0.3.7 Local Runtime Public Beta**. It is intended for a
 single self-hosted Runtime process with same-host Agent clients. The TypeScript
 SDK, HTTP API, MCP bridge, AIFS file surface, Memory Firewall, Agent Flight
 Recorder, optional Zvec candidate retrieval, and Substrate evidence sidecar are
@@ -108,7 +108,7 @@ Docker users can run the Runtime directly:
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.6
+  ghcr.io/ostinatocc/aionis:v0.3.7
 ```
 
 The container process listens on `0.0.0.0` inside its network namespace so

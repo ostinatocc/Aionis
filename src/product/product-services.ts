@@ -33,7 +33,10 @@ import {
 } from "../memory/product-output-contract.js";
 import { memoryFindLite } from "../memory/find.js";
 import { AionisClaimWriteSchema } from "../memory/claim-ledger-contract.js";
-import { HostTaskEnvelopeV1Schema } from "../memory/learning-episode-ledger.js";
+import {
+  HostTaskEnvelopeV1Schema,
+  HostUseReceiptV1Schema,
+} from "../memory/learning-episode-ledger.js";
 import type { LiteExecutionNativeNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
 import { sha256Hex } from "../util/crypto.js";
 import type { AuthPrincipal } from "../util/auth.js";
@@ -230,6 +233,7 @@ function rejectNestedProductGuideAuthorityClaims(
 }
 
 export const ProductGuideRequest = z.object({
+  operation_id: z.string().trim().min(1).max(256).optional(),
   tenant_id: z.string().trim().min(1).optional(),
   scope: z.string().trim().min(1).optional(),
   query_text: z.string().trim().min(1),
@@ -312,6 +316,7 @@ export const ProductForgetRequest = z.object({
   actor: z.string().trim().min(1).optional(),
   consumer_agent_id: z.string().trim().min(1).optional(),
   consumer_team_id: z.string().trim().min(1).optional(),
+  operation_id: z.string().trim().min(1).max(256).optional(),
   reason: z.string().trim().min(1),
   memory_ids: z.array(z.string().trim().min(1)).max(200).optional(),
   node_ids: z.array(z.string().trim().min(1)).max(200).optional(),
@@ -328,6 +333,7 @@ export const ProductForgetRequest = z.object({
   verifier_status: z.enum(["passed", "failed", "not_run", "unknown"]).optional(),
   tool_status: z.enum(["succeeded", "failed", "not_run", "unknown"]).optional(),
   runtime_signal_refs: z.array(z.string().trim().min(1)).max(32).optional(),
+  host_use_receipt_v1: HostUseReceiptV1Schema.optional(),
   mode: z.enum(["shadow_learn", "hard_freeze", "summary_only", "partial", "full", "differential"]).optional(),
   until: z.string().datetime().optional(),
   include_linked_decisions: z.boolean().optional(),
@@ -341,6 +347,13 @@ export const ProductForgetRequest = z.object({
   const payloadAnchorId = typeof value.payload?.anchor_id === "string" && value.payload.anchor_id.trim().length > 0;
   const payloadAnchorUri = typeof value.payload?.anchor_uri === "string" && value.payload.anchor_uri.trim().length > 0;
   const anchorPresent = !!value.anchor_id || !!value.anchor_uri || payloadAnchorId || payloadAnchorUri;
+  if (value.operation !== "activate" && (value.operation_id || value.host_use_receipt_v1)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: [value.host_use_receipt_v1 ? "host_use_receipt_v1" : "operation_id"],
+      message: "feedback operation identity and host-use receipts are accepted only for activate",
+    });
+  }
   if ((value.operation === "suppress" || value.operation === "unsuppress") && !value.anchor_id && !payloadAnchorId) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -397,12 +410,86 @@ export const ProductForgetRequest = z.object({
     && value.used_surface
     && value.used_surface !== "use_now"
     && value.used_surface !== "explicit_host_assertion"
+    && !value.host_use_receipt_v1
   ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["used_surface"],
       message: "non-neutral activation feedback requires use_now or explicit_host_assertion attribution",
     });
+  }
+  if (value.operation === "activate" && value.host_use_receipt_v1) {
+    const receipt = value.host_use_receipt_v1;
+    if (!value.operation_id || value.operation_id !== receipt.operation_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["operation_id"],
+        message: "host_use_receipt_v1 requires its exact protected operation_id",
+      });
+    }
+    if (!value.guide_trace_id || value.guide_trace_id !== receipt.guide_trace_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["guide_trace_id"],
+        message: "host_use_receipt_v1 guide_trace_id must match the feedback request",
+      });
+    }
+    if (!value.run_id || value.run_id !== receipt.run_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["run_id"],
+        message: "host_use_receipt_v1 run_id must match the feedback request",
+      });
+    }
+    if ((value.memory_ids?.length ?? 0) > 0 || (value.node_ids?.length ?? 0) > 0 || (value.client_ids?.length ?? 0) > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["used_memory_ids"],
+        message: "host_use_receipt_v1 feedback accepts only the exact used_memory_ids subject set",
+      });
+    }
+    const suppliedRequestIds = value.used_memory_ids ?? [];
+    if (new Set(suppliedRequestIds).size !== suppliedRequestIds.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["used_memory_ids"],
+        message: "host_use_receipt_v1 feedback does not allow duplicate subjects",
+      });
+    }
+    const requestIds = [...new Set(suppliedRequestIds)].sort((left, right) =>
+      Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"))
+    );
+    const receiptIds = receipt.items.map((item) => item.memory_id);
+    if (stableStringify(requestIds) !== stableStringify(receiptIds)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["used_memory_ids"],
+        message: "used_memory_ids must exactly match the canonical host-use receipt item set",
+      });
+    }
+    const outcomes = new Set(receipt.items.map((item) => item.outcome));
+    const surfaces = new Set(receipt.items.map((item) => item.used_surface));
+    if (outcomes.size !== 1 || surfaces.size !== 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["host_use_receipt_v1", "items"],
+        message: "one feedback operation requires homogeneous receipt outcome and used_surface values",
+      });
+    }
+    if (receipt.items[0]?.outcome !== value.outcome || receipt.items[0]?.used_surface !== value.used_surface) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["host_use_receipt_v1", "items"],
+        message: "host-use receipt outcome and used_surface must match the feedback request",
+      });
+    }
+    if (value.verifier_status !== "passed") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["verifier_status"],
+        message: "host_use_receipt_v1 feedback requires verifier_status passed",
+      });
+    }
   }
   if (value.operation === "rehydrate" && memoryIdCount === 0 && !anchorPresent) {
     ctx.addIssue({
@@ -837,6 +924,23 @@ export function guideExposureSurfaceIds(ledger: ProductGuideExposureLedger, surf
   return new Set(ledger[surface]);
 }
 
+export function guideExposureServedMemoryIds(ledger: Pick<
+  ProductGuideExposureLedger,
+  | "memory_ids"
+  | "use_now_memory_ids"
+  | "inspect_before_use_memory_ids"
+  | "do_not_use_memory_ids"
+  | "rehydrate_memory_ids"
+>): Set<string> {
+  return new Set([
+    ...ledger.memory_ids,
+    ...ledger.use_now_memory_ids,
+    ...ledger.inspect_before_use_memory_ids,
+    ...ledger.do_not_use_memory_ids,
+    ...ledger.rehydrate_memory_ids,
+  ]);
+}
+
 export async function findMemoryNodeSlots(args: {
   liteWriteStore: LiteWriteStore;
   env: Env;
@@ -1068,6 +1172,10 @@ export type ProductGuideExecutionContext = {
   applyIdentity: (input: Record<string, unknown>, kind: "execution_context_assemble") => unknown;
 };
 
+export type ProductLifecycleExecutionContext = {
+  principal: AuthPrincipal | null;
+};
+
 export type ProductServices = {
   observe: {
     guardOrder(input: ProductObserveInput): "guards_first" | "inflight_first";
@@ -1081,7 +1189,11 @@ export type ProductServices = {
     execute(input: ProductToolFeedbackInput): Promise<ProductServiceResult>;
   };
   lifecycle: {
-    execute(input: ProductForgetInput, surface: ProductLifecycleSurface): Promise<ProductServiceResult>;
+    execute(
+      input: ProductForgetInput,
+      surface: ProductLifecycleSurface,
+      context: ProductLifecycleExecutionContext,
+    ): Promise<ProductServiceResult>;
     decisionTrace(input: ProductDecisionTraceRequestInput): Promise<ProductServiceResult>;
     decisionAudit(input: ProductDecisionTraceRequestInput): Promise<ProductServiceResult>;
     flightRecorder(input: ProductFlightRecorderInput): Promise<ProductServiceResult>;

@@ -23,19 +23,24 @@ import type {
 } from "../memory/associative-candidate-store.js";
 import { stableUuid } from "../util/uuid.js";
 import { assertDim } from "../util/vector-literal.js";
+import type { AuthorityReceiptResolvedKeyring } from
+  "../util/authority-receipt-keys.js";
 import { createLiteRuntimeDatabase, type LiteRuntimeDatabase } from "./lite-runtime-database.js";
 import {
   assertLiteRuntimeSchemaPreflight,
   assertLiteRuntimeSchemaContractShape,
   inspectLiteRuntimeSchema,
+  LITE_RUNTIME_WRITE_SCHEMA_VERSION,
   recordCurrentLiteRuntimeWriteSchema,
-  WRITE_SCHEMA_V3,
+  WRITE_SCHEMA_V4,
 } from "./lite-runtime-schema.js";
 import {
   assertLiteLearningEpisodeLedgerIntegrity,
   migrateLiteLearningEpisodeLedgerSchema,
   migrateLiteRuntimeAuthorityIdentity,
 } from "./lite-learning-episode-ledger.js";
+import { migrateLiteLearningEpisodeLedgerV3ToV4 } from
+  "./lite-learning-schema-migration.js";
 import { migrateLiteSkillCandidateReviewSchema } from "./lite-skill-candidate-review-store.js";
 import {
   createLiteProjectionOutboxAccess,
@@ -88,6 +93,22 @@ export type LiteFindNodeRow = {
   topic_state: string | null;
   member_count: number | null;
 };
+
+export type LiteGuideLearningPriorStateResolution =
+  | {
+      status: "resolved";
+      memory_id: string;
+      node_type: string;
+      slots: Record<string, unknown>;
+    }
+  | {
+      status: "memory_node_missing";
+      memory_id: string;
+    }
+  | {
+      status: "memory_visibility_mismatch";
+      memory_id: string;
+    };
 
 export type LiteResolveNodeRow = LiteFindNodeRow & {
   commit_scope: string | null;
@@ -292,6 +313,12 @@ export type LiteWriteStore = WriteStoreAccess & LiteProjectionOutboxAccess & {
     limit: number;
     offset: number;
   }): Promise<{ rows: LiteFindNodeRow[]; has_more: boolean }>;
+  resolveGuideLearningPriorStates(args: {
+    scope: string;
+    memoryIds: readonly string[];
+    consumerAgentId?: string | null;
+    consumerTeamId?: string | null;
+  }): Promise<Map<string, LiteGuideLearningPriorStateResolution>>;
   findExecutionNativeNodes(args: {
     scope: string;
     executionKind?: "distilled_evidence" | "distilled_fact" | "workflow_candidate" | "workflow_anchor" | "pattern_anchor" | "execution_native" | null;
@@ -370,6 +397,7 @@ export type LiteWriteStore = WriteStoreAccess & LiteProjectionOutboxAccess & {
     sourceRuleIds: string[];
     metadataJson: Record<string, unknown>;
     commitId: string | null;
+    createdAt?: string;
   }): Promise<{ id: string; created_at: string }>;
   getExecutionDecision(args: {
     scope: string;
@@ -485,6 +513,7 @@ export type LiteWriteStoreOptions = {
   annSync?: LiteWriteAnnSync | null;
   annProjectionEnabled?: boolean;
   schemaMigrationFaultInjector?: (phase: LiteWriteSchemaMigrationPhase) => void;
+  authorityReceiptKeyring?: AuthorityReceiptResolvedKeyring;
 };
 
 export type LiteWriteSchemaMigrationPhase =
@@ -584,6 +613,32 @@ type LiteMemoryNodeDbRow = {
   created_at: string;
   commit_id: string | null;
 };
+
+type LiteGuideLearningPriorNodeDbRow = {
+  id: string;
+  type: string;
+  slots_json: string;
+  memory_lane: "private" | "shared";
+  owner_agent_id: string | null;
+  owner_team_id: string | null;
+};
+
+// Keep the fixed scope parameter plus the ID placeholders comfortably below
+// SQLite builds that retain the historical 999-variable default.
+const LITE_GUIDE_LEARNING_PRIOR_QUERY_CHUNK_SIZE = 400;
+
+function parseGuideLearningPriorSlots(row: LiteGuideLearningPriorNodeDbRow): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(row.slots_json);
+  } catch {
+    throw new Error(`lite_guide_learning_prior_slots_invalid:${row.id}`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`lite_guide_learning_prior_slots_invalid:${row.id}`);
+  }
+  return parsed as Record<string, unknown>;
+}
 
 const LITE_EXECUTION_DECISION_SELECT_SQL = `SELECT
    id,
@@ -1005,7 +1060,7 @@ function buildLiteMemoryKeywordSlotsText(slots: Record<string, unknown>): string
   return Array.from(new Set(out.map((value) => value.trim()).filter(Boolean))).join("\n");
 }
 
-const V3_PRESERVATION_TABLES = [
+const SCHEMA_MIGRATION_PRESERVATION_TABLES = [
   "lite_memory_commits",
   "lite_memory_nodes",
   "lite_memory_edges",
@@ -1045,7 +1100,7 @@ function tableExists(db: SqliteDatabase, table: string): boolean {
 }
 
 function migrationPreservationCounts(db: SqliteDatabase): Record<string, number> {
-  return Object.fromEntries(V3_PRESERVATION_TABLES.map((table) => [
+  return Object.fromEntries(SCHEMA_MIGRATION_PRESERVATION_TABLES.map((table) => [
     table,
     tableExists(db, table)
       ? Number((db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count)
@@ -1057,10 +1112,10 @@ function assertMigrationPreservedRows(
   before: Readonly<Record<string, number>>,
   after: Readonly<Record<string, number>>,
 ): void {
-  for (const table of V3_PRESERVATION_TABLES) {
+  for (const table of SCHEMA_MIGRATION_PRESERVATION_TABLES) {
     if ((before[table] ?? 0) !== (after[table] ?? 0)) {
       throw new Error(
-        `lite_runtime_v3_migration_row_count_changed:${table}:${before[table] ?? 0}:${after[table] ?? 0}`,
+        `lite_runtime_schema_migration_row_count_changed:${table}:${before[table] ?? 0}:${after[table] ?? 0}`,
       );
     }
   }
@@ -1084,10 +1139,14 @@ export function createLiteWriteStoreFromDatabase(
   const annSync = opts.annSync ?? null;
   const annProjectionEnabled = opts.annProjectionEnabled ?? annSync !== null;
   const closeDatabaseOnClose = opts.closeDatabaseOnClose ?? false;
+  const learningIntegrityOptions = {
+    authorityReceiptKeyring: opts.authorityReceiptKeyring,
+  };
 
   const initialSchema = assertLiteRuntimeSchemaPreflight(db);
   prepareLiteRuntimeWriteConnection(db);
   let schemaMigrationOpen = false;
+  let migrationSourceVersion: number | null = null;
   let migrationBeforeCounts: Record<string, number> | null = null;
   if (initialSchema.classification !== "current") {
     db.exec("BEGIN IMMEDIATE");
@@ -1095,10 +1154,15 @@ export function createLiteWriteStoreFromDatabase(
     try {
       const lockedSchema = assertLiteRuntimeSchemaPreflight(db);
       if (lockedSchema.classification === "current") {
-        assertLiteLearningEpisodeLedgerIntegrity(db);
+        assertLiteLearningEpisodeLedgerIntegrity(
+          db,
+          new Date().toISOString(),
+          learningIntegrityOptions,
+        );
         db.exec("COMMIT");
         schemaMigrationOpen = false;
       } else {
+        migrationSourceVersion = lockedSchema.detected_version;
         migrationBeforeCounts = migrationPreservationCounts(db);
       }
     } catch (error) {
@@ -1112,7 +1176,11 @@ export function createLiteWriteStoreFromDatabase(
       throw error;
     }
   } else {
-    assertLiteLearningEpisodeLedgerIntegrity(db);
+    assertLiteLearningEpisodeLedgerIntegrity(
+      db,
+      new Date().toISOString(),
+      learningIntegrityOptions,
+    );
   }
 
   const rollbackSchemaMigration = (error: unknown): never => {
@@ -1150,7 +1218,7 @@ export function createLiteWriteStoreFromDatabase(
     await scheduleAnnSideEffect(() => annSync!.deleteNode(nodeId).then(() => undefined));
   };
 
-  if (schemaMigrationOpen) {
+  if (schemaMigrationOpen && migrationSourceVersion !== 3) {
     try {
       db.exec(`
     CREATE TABLE IF NOT EXISTS lite_memory_commits (
@@ -1619,18 +1687,23 @@ export function createLiteWriteStoreFromDatabase(
 
     projectionOutbox = createLiteProjectionOutboxAccess(database);
     if (schemaMigrationOpen) {
-      opts.schemaMigrationFaultInjector?.("after_v2_structures");
+      if (migrationSourceVersion === 3) {
+        migrateLiteLearningEpisodeLedgerV3ToV4(db);
+        opts.schemaMigrationFaultInjector?.("after_learning_ledger_structures");
+      } else {
+        opts.schemaMigrationFaultInjector?.("after_v2_structures");
 
-      migrateLiteSkillCandidateReviewSchema(db, { includeLearningEpisodeLinks: true });
-      opts.schemaMigrationFaultInjector?.("after_shared_measurement_structures");
+        migrateLiteSkillCandidateReviewSchema(db, { includeLearningEpisodeLinks: true });
+        opts.schemaMigrationFaultInjector?.("after_shared_measurement_structures");
 
-      migrateLiteRuntimeAuthorityIdentity(db);
-      opts.schemaMigrationFaultInjector?.("after_authority_identity");
+        migrateLiteRuntimeAuthorityIdentity(db);
+        opts.schemaMigrationFaultInjector?.("after_authority_identity");
 
-      migrateLiteLearningEpisodeLedgerSchema(db);
-      opts.schemaMigrationFaultInjector?.("after_learning_ledger_structures");
+        migrateLiteLearningEpisodeLedgerSchema(db);
+        opts.schemaMigrationFaultInjector?.("after_learning_ledger_structures");
+      }
 
-      assertLiteRuntimeSchemaContractShape(db, WRITE_SCHEMA_V3);
+      assertLiteRuntimeSchemaContractShape(db, WRITE_SCHEMA_V4);
       assertMigrationPreservedRows(
         migrationBeforeCounts ?? {},
         migrationPreservationCounts(db),
@@ -1642,10 +1715,15 @@ export function createLiteWriteStoreFromDatabase(
       opts.schemaMigrationFaultInjector?.("after_metadata_update_before_commit");
 
       const migratedSchema = inspectLiteRuntimeSchema(db);
-      if (migratedSchema.classification !== "current" || migratedSchema.detected_version !== 3) {
-        throw new Error(`lite_runtime_v3_migration_verification_failed:${JSON.stringify(migratedSchema)}`);
+      if (migratedSchema.classification !== "current"
+        || migratedSchema.detected_version !== LITE_RUNTIME_WRITE_SCHEMA_VERSION) {
+        throw new Error(`lite_runtime_schema_migration_verification_failed:${JSON.stringify(migratedSchema)}`);
       }
-      assertLiteLearningEpisodeLedgerIntegrity(db);
+      assertLiteLearningEpisodeLedgerIntegrity(
+        db,
+        new Date().toISOString(),
+        learningIntegrityOptions,
+      );
       db.exec("COMMIT");
       schemaMigrationOpen = false;
     }
@@ -1803,6 +1881,56 @@ export function createLiteWriteStoreFromDatabase(
            ORDER BY created_at DESC, guide_trace_id DESC
            LIMIT ?`,
         ).all(...params, Math.max(1, Math.min(1000, args.limit))) as LiteProductGuideReceiptRow[];
+      });
+    },
+
+    async resolveGuideLearningPriorStates(args): Promise<Map<string, LiteGuideLearningPriorStateResolution>> {
+      return await transaction.read(() => {
+        const memoryIds: string[] = [];
+        const seen = new Set<string>();
+        for (const memoryId of args.memoryIds) {
+          if (typeof memoryId !== "string" || memoryId.trim().length === 0) {
+            throw new Error("lite_guide_learning_prior_memory_id_required");
+          }
+          if (seen.has(memoryId)) continue;
+          seen.add(memoryId);
+          memoryIds.push(memoryId);
+        }
+
+        const rowsByMemoryId = new Map<string, LiteGuideLearningPriorNodeDbRow>();
+        for (let offset = 0; offset < memoryIds.length; offset += LITE_GUIDE_LEARNING_PRIOR_QUERY_CHUNK_SIZE) {
+          const chunk = memoryIds.slice(offset, offset + LITE_GUIDE_LEARNING_PRIOR_QUERY_CHUNK_SIZE);
+          const placeholders = chunk.map(() => "?").join(",");
+          const rows = db.prepare(
+            `SELECT id, type, slots_json, memory_lane, owner_agent_id, owner_team_id
+             FROM lite_memory_nodes
+             WHERE scope = ?
+               AND id IN (${placeholders})`,
+          ).all(args.scope, ...chunk) as LiteGuideLearningPriorNodeDbRow[];
+          for (const row of rows) rowsByMemoryId.set(row.id, row);
+        }
+
+        const consumerAgentId = args.consumerAgentId ?? null;
+        const consumerTeamId = args.consumerTeamId ?? null;
+        const resolutions = new Map<string, LiteGuideLearningPriorStateResolution>();
+        for (const memoryId of memoryIds) {
+          const row = rowsByMemoryId.get(memoryId);
+          if (!row) {
+            resolutions.set(memoryId, { status: "memory_node_missing", memory_id: memoryId });
+            continue;
+          }
+          if (!nodeVisible(row, consumerAgentId, consumerTeamId)) {
+            resolutions.set(memoryId, { status: "memory_visibility_mismatch", memory_id: memoryId });
+            continue;
+          }
+          resolutions.set(memoryId, {
+            status: "resolved",
+            memory_id: memoryId,
+            node_type: row.type,
+            slots: parseGuideLearningPriorSlots(row),
+          });
+        }
+        return resolutions;
       });
     },
 
@@ -2293,7 +2421,7 @@ export function createLiteWriteStoreFromDatabase(
     },
 
     async insertExecutionDecision(args): Promise<{ id: string; created_at: string }> {
-      const createdAt = nowIso();
+      const createdAt = args.createdAt ?? nowIso();
       db.prepare(
         `INSERT OR REPLACE INTO lite_memory_execution_decisions
           (id, scope, decision_kind, run_id, selected_tool, candidates_json, context_sha256, policy_sha256,
@@ -3191,7 +3319,11 @@ export function createLiteWriteStoreFromDatabase(
       if (writeStoreClosed) return;
       let integrityError: unknown = null;
       try {
-        await transaction.read(() => assertLiteLearningEpisodeLedgerIntegrity(db));
+        await transaction.read(() => assertLiteLearningEpisodeLedgerIntegrity(
+          db,
+          new Date().toISOString(),
+          learningIntegrityOptions,
+        ));
       } catch (error) {
         integrityError = error;
       } finally {

@@ -11,6 +11,10 @@ import {
   LEARNING_GATE_POLICY_VERSION,
 } from "./memory/learning-gate-policy.js";
 import {
+  IntegrityOnlyExternalInputsV1Schema,
+  RequiredExternalInputsV1Schema,
+} from "./memory/learning-episode-ledger.js";
+import {
   AUTHORITY_RECEIPT_HMAC_ACTIVE_KEY_ID_ENV,
   AUTHORITY_RECEIPT_HMAC_KEYS_JSON_ENV,
   AUTHORITY_RECEIPT_HMAC_SECRET_ENV,
@@ -29,6 +33,51 @@ const RecallEngineModeSchema = z.enum(["semantic_scan", "hybrid"]);
 
 const BoundedLearningIdSchema = z.string().trim().min(1).max(256);
 const LearningDigestSha256Schema = z.string().regex(/^[0-9a-f]{64}$/);
+const AdmissionExperimentVerifierVersionSchema = z.string().trim().min(1).superRefine((value, ctx) => {
+  if (Buffer.byteLength(value, "utf8") > 120) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "verifier version must be bounded to 120 UTF-8 bytes",
+    });
+  }
+});
+
+const ExactBoundedLearningIdSchema = z.string().superRefine((value, ctx) => {
+  if (value.length === 0 || value !== value.trim() || Buffer.byteLength(value, "utf8") > 256) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "expected exact bounded UTF-8 identifier",
+    });
+  }
+});
+
+const ExactExternalInputV1Schema = z.object({
+  immutable_input_manifest_sha256: LearningDigestSha256Schema,
+  retry_policy_sha256: LearningDigestSha256Schema,
+  planned_run_id: ExactBoundedLearningIdSchema,
+}).strict();
+
+const AdmissionExperimentRequiredExternalInputsSchema = z.intersection(
+  RequiredExternalInputsV1Schema,
+  z.object({
+    offline_paired: ExactExternalInputV1Schema,
+    production_shadow: ExactExternalInputV1Schema,
+    tool_e2e: ExactExternalInputV1Schema,
+  }).strict(),
+).superRefine((inputs, ctx) => {
+  const runIds = [
+    inputs.offline_paired.planned_run_id,
+    inputs.production_shadow.planned_run_id,
+    inputs.tool_e2e.planned_run_id,
+  ];
+  if (new Set(runIds).size !== runIds.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["tool_e2e", "planned_run_id"],
+      message: "external input planned_run_id values must be unique",
+    });
+  }
+});
 
 function canonicalUtf8Order(values: readonly string[]): string[] {
   return [...values].sort((left, right) => Buffer.compare(
@@ -53,7 +102,7 @@ const AdmissionExperimentEvidenceSeriesSchema = z.object({
 
 const AdmissionExperimentVerifierSchema = z.object({
   kind: z.enum(["instrumented_agent_trace", "deterministic_scorer"]),
-  version: z.string().trim().min(1).max(120),
+  version: AdmissionExperimentVerifierVersionSchema,
   config_sha256: LearningDigestSha256Schema,
 }).strict();
 
@@ -109,6 +158,10 @@ const AdmissionCandidatePolicyExperimentSchema = z.object({
   gate_policy_id: z.literal(LEARNING_GATE_POLICY_ID),
   gate_policy_version: z.literal(LEARNING_GATE_POLICY_VERSION),
   required_evidence_series: AdmissionExperimentEvidenceSeriesSchema,
+  required_external_inputs: z.union([
+    IntegrityOnlyExternalInputsV1Schema,
+    AdmissionExperimentRequiredExternalInputsSchema,
+  ]).default({}),
   external_execution_policy_ref: z.object({
     registry_key: z.literal("external-execution-v1"),
   }).strict(),
@@ -139,6 +192,21 @@ const AdmissionCandidatePolicyExperimentSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ["candidate_allocation_bps"],
       message: "active_control requires candidate_allocation_bps=5000",
+    });
+  }
+  const externalInputKeys = Object.keys(experiment.required_external_inputs);
+  if (integrityOnly && externalInputKeys.length !== 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["required_external_inputs"],
+      message: "integrity-only experiments require the canonical empty external input mapping",
+    });
+  }
+  if (!integrityOnly && externalInputKeys.length !== 3) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["required_external_inputs"],
+      message: "confirmatory experiments require all three preregistered external input roles",
     });
   }
   const principalFingerprints = experiment.collection_sources.map((source) => source.principal_sha256);

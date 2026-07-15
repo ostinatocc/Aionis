@@ -370,7 +370,7 @@ test("normal Runtime assembly shares the main write transaction for fresh and up
         try {
           const report = inspectLiteRuntimeSchema(schemaDb);
           assert.equal(report.classification, "current");
-          assert.equal(report.detected_version, 3);
+          assert.equal(report.detected_version, 4);
         } finally {
           schemaDb.close();
         }
@@ -404,7 +404,7 @@ test("shared skill review factory requires caller-owned schema migration", async
   }
 });
 
-test("shared skill review factory performs no DDL after central v3 preflight", async () => {
+test("shared skill review factory performs no DDL after central current-schema preflight", async () => {
   const dbPath = tmpDbPath("shared-no-post-preflight-ddl");
   const database = createLiteRuntimeDatabase(dbPath);
   const writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });

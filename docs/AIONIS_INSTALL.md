@@ -67,7 +67,7 @@ Run the local-first Runtime in Docker:
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.6
+  ghcr.io/ostinatocc/aionis:v0.3.7
 ```
 
 Then check readiness:
@@ -177,6 +177,12 @@ Runtime requirement: Node.js `>=22.13.0` with the built-in `node:sqlite` module
 available. The installer checks both the version and the SQLite feature because
 Lite stores local memory state in SQLite. Earlier Node 22 experimental SQLite
 releases do not provide the row semantics required by the Runtime.
+
+The protected, non-HTTP learning-experiment `close` command also requires a
+verifiable local filesystem boundary. On Linux, install the distribution's
+`acl` package so `/usr/bin/getfacl` is present; missing or non-basic ACL evidence
+fails closed. The published container already includes this package. Normal
+Runtime HTTP startup does not invoke the close command or this verifier.
 
 For a non-interactive OpenAI-compatible install:
 

@@ -1,6 +1,49 @@
 # Changelog
 
-## Unreleased - v0.3.6 Release Integrity Maintenance Candidate
+## Unreleased - v0.3.7 Evidence-Gated Learning Candidate
+
+This candidate adds protected append-only authority for learning episodes,
+experiment lifecycle, guide exposure, and direct memory feedback attribution.
+Global candidate serving remains off and this checkpoint does not claim a
+mature autonomous-learning loop.
+
+### Added
+
+- SQLite v4 learning authority for experiments, namespace leases, episode
+  events, exposure items, feedback attributions, safety stops, operation
+  receipts, and reserved learning-control jobs.
+- Protected experiment provision/close commands with exact replay, reviewed
+  configuration, OS-CSPRNG matched-pair assignment, bounded HMAC approval,
+  Runtime receipt attestation, and atomic lease release.
+- Protected guide and direct-feedback operation identity, strict host task/use
+  receipts, per-subject surface and evidence binding, and restart-time
+  derivation of attribution strength.
+- `@aionis/sdk@0.3.16` host receipt builders/parsers/digests and protected
+  identity forwarding, plus a bounded read-only host conformance command.
+
+### Changed
+
+- Migrate a complete v3 authority database atomically to v4 and fail closed on
+  damaged, mixed, future, or receipt-drifted state.
+- Commit guide receipt/exposure and direct-memory activation/attribution facts
+  in their respective shared SQLite transactions.
+- Classify legacy feedback as unverified and promotion-ineligible while
+  retaining request compatibility.
+- Keep the real 21-route surface and all newly tracked source files inside
+  structural governance.
+
+### Deferred
+
+- The learning-control job schema is reserved and integrity-checked, but Task
+  4.1 Step 4 production enqueue, leasing, retry/dead-letter worker, and Runtime
+  lifecycle wiring are not included. Repeated-unused remains read-only.
+- Production external execution remains unregistered, the gate remains
+  `calibration_pending`, and later tool-feedback, measurement-binding, and
+  gate/promotion phases remain disabled.
+
+## v0.3.6 - Release Integrity Maintenance Candidate
+
+Release date: 2026-07-13
 
 This maintenance candidate preserves the v0.3.5 public contracts and SQLite
 schema while hardening startup compatibility and exact release publication.

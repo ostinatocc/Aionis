@@ -37,7 +37,21 @@ import {
 import {
   type ClaimLedgerRow,
 } from "../../store/memory-store.js";
-import { frozenPriorStateFromRuntimeSlots } from "../learning-episode-ledger.js";
+import {
+  classifyLearningTrack,
+  frozenPriorStateFromRuntimeSlots,
+  learningDecisionSurfaceDigest,
+  LearningLedgerItemSchema,
+  type FrozenPriorState,
+  type LearningLedgerItem,
+  type LearningTrackReason,
+} from "../learning-episode-ledger.js";
+import {
+  decideAdmissionCandidatePolicyAction,
+  resolveAdmissionCandidatePolicy,
+  AIONIS_ADMISSION_CANDIDATE_POLICY_ID,
+  AIONIS_ADMISSION_CANDIDATE_POLICY_VERSION,
+} from "../admission-candidate-policy.js";
 
 export type BuildAionisOperatorSnapshotArgs = {
   tenant_id: string;
@@ -1497,6 +1511,90 @@ type MemoryPacketEntry = AionisMemoryPacket["relevant_memories"][number];
 
 type RuntimeSlotMap = ReadonlyMap<string, Record<string, unknown>>;
 
+export type AionisGuideLearningAction = Exclude<AionisMemoryDecisionSurface, "not_agent_facing">;
+
+export type AionisGuideLearningPriorStateResolution =
+  | {
+      status: "resolved";
+      memory_id: string;
+      node_type?: string;
+      slots: Record<string, unknown>;
+    }
+  | {
+      status: "memory_node_missing";
+      memory_id: string;
+    }
+  | {
+      status: "memory_visibility_mismatch";
+      memory_id: string;
+    }
+  | {
+      status: "prior_state_lookup_failed";
+      memory_id: string;
+    };
+
+export type AionisGuideLearningProjectionIncompleteReasonCode =
+  | "duplicate_relevant_memory_id"
+  | "duplicate_recorded_surface_memory_id"
+  | "recorded_surface_conflict"
+  | "recorded_surface_item_omitted"
+  | "relevant_memory_not_agent_facing"
+  | "prior_state_result_omitted"
+  | "memory_node_missing"
+  | "memory_visibility_mismatch"
+  | "prior_state_lookup_failed"
+  | "unsupported_prior_resolution"
+  | "unsupported_candidate_decision";
+
+export type AionisGuideLearningProjectionIncompleteReason = {
+  code: AionisGuideLearningProjectionIncompleteReasonCode;
+  memory_id: string;
+};
+
+export type AionisGuideLearningLedgerItem = Extract<
+  LearningLedgerItem,
+  { decision_completeness: "complete" }
+>;
+
+export type AionisGuideLearningDecision = {
+  memory_id: string;
+  title: string | null;
+  memory_type: MemoryPacketEntry["memory_type"];
+  source_backend: "aionis";
+  decision_completeness: "complete" | "incomplete";
+  incomplete_reason_codes: AionisGuideLearningProjectionIncompleteReasonCode[];
+  recorded_action: AionisMemoryDecisionSurface;
+  candidate_action: AionisGuideLearningAction | null;
+  control_served_action: AionisMemoryDecisionSurface;
+  candidate_served_action: AionisGuideLearningAction | null;
+  frozen_prior_state: FrozenPriorState | null;
+  learning_track: "explore" | "exploit" | null;
+  track_reason: Exclude<LearningTrackReason, "legacy_unclassified"> | null;
+  policy_changed: boolean | null;
+  hard_boundary_preserved: boolean | null;
+  candidate_reason_codes: string[];
+};
+
+export type AionisGuideLearningDecisionSet = {
+  contract_version: "aionis_guide_learning_decision_set_v1";
+  relevant_memory_ids: string[];
+  relevant_memory_occurrence_count: number;
+  recorded_surface_memory_ids: string[];
+  decision_count: number;
+  complete_decision_count: number;
+  projection_complete: boolean;
+  projection_incomplete_reason_codes: AionisGuideLearningProjectionIncompleteReasonCode[];
+  projection_incomplete_reasons: AionisGuideLearningProjectionIncompleteReason[];
+  decisions: AionisGuideLearningDecision[];
+  control_items: AionisGuideLearningLedgerItem[];
+  candidate_items: AionisGuideLearningLedgerItem[];
+  recorded_surface_sha256: string | null;
+  candidate_surface_sha256: string | null;
+  control_served_surface_sha256: string | null;
+  candidate_served_surface_sha256: string | null;
+  full_downgraded_memory_ids: string[];
+};
+
 export const AIONIS_ADMISSION_CANDIDATE_POLICY_ACTIVE_PROJECTION_REASON =
   "admission_candidate_policy_active_projection";
 
@@ -1510,58 +1608,391 @@ export type AionisAdmissionCandidatePolicyActiveProjection = {
   shadow_policy_report: AionisMemoryAdmissionShadowPolicyReport;
   downgraded_memory_ids: string[];
   hard_boundary_upgrade_count: number;
+  projection_complete: boolean;
+  projection_incomplete_reason_codes: AionisGuideLearningProjectionIncompleteReasonCode[];
+  relevant_memory_count: number;
+  full_decision_count: number;
+  displayable_decision_count: number;
+  displayed_decision_count: number;
+  display_truncated: boolean;
+  full_downgraded_memory_count: number;
   summary: string;
 };
 
-function runtimePriorStateFromSlots(slots: Record<string, unknown>) {
-  const prior = frozenPriorStateFromRuntimeSlots(slots);
+const GUIDE_LEARNING_ACTIONS = new Set<AionisMemoryDecisionSurface>([
+  "use_now",
+  "inspect_before_use",
+  "do_not_use",
+  "rehydrate",
+]);
+
+const GUIDE_LEARNING_CANDIDATE_POLICY = resolveAdmissionCandidatePolicy(
+  AIONIS_ADMISSION_CANDIDATE_POLICY_ID,
+  AIONIS_ADMISSION_CANDIDATE_POLICY_VERSION,
+);
+
+function isGuideLearningAction(
+  action: AionisMemoryDecisionSurface,
+): action is AionisGuideLearningAction {
+  return GUIDE_LEARNING_ACTIONS.has(action);
+}
+
+function isSlotsRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function pushUnique<T>(values: T[], value: T): void {
+  if (!values.includes(value)) values.push(value);
+}
+
+type RecordedSurfaceMemberships = Map<string, Map<AionisGuideLearningAction, number>>;
+
+function recordedSurfaceMemberships(agentContext: AionisAgentContext): RecordedSurfaceMemberships {
+  const memberships: RecordedSurfaceMemberships = new Map();
+  const add = (memoryId: string, action: AionisGuideLearningAction): void => {
+    const byAction = memberships.get(memoryId) ?? new Map<AionisGuideLearningAction, number>();
+    byAction.set(action, (byAction.get(action) ?? 0) + 1);
+    memberships.set(memoryId, byAction);
+  };
+  for (const memoryId of agentContext.use_now_memory_ids) add(memoryId, "use_now");
+  for (const memoryId of agentContext.inspect_before_use_memory_ids) add(memoryId, "inspect_before_use");
+  for (const memoryId of agentContext.do_not_use_memory_ids) add(memoryId, "do_not_use");
+  for (const hint of agentContext.rehydrate_hints) add(hint.memory_id, "rehydrate");
+  return memberships;
+}
+
+function legacyPriorResolutions(
+  memoryPacket: AionisMemoryPacket | null,
+  slotByMemoryId: RuntimeSlotMap,
+): ReadonlyMap<string, AionisGuideLearningPriorStateResolution> {
+  const resolutions = new Map<string, AionisGuideLearningPriorStateResolution>();
+  for (const entry of memoryPacket?.relevant_memories ?? []) {
+    if (!slotByMemoryId.has(entry.memory_id)) continue;
+    resolutions.set(entry.memory_id, {
+      status: "resolved",
+      memory_id: entry.memory_id,
+      node_type: entry.memory_type,
+      slots: slotByMemoryId.get(entry.memory_id)!,
+    });
+  }
+  return resolutions;
+}
+
+function completeLearningLedgerItem(args: {
+  entry: MemoryPacketEntry;
+  recordedAction: AionisGuideLearningAction;
+  candidateAction: AionisGuideLearningAction;
+  servedAction: AionisGuideLearningAction;
+  prior: FrozenPriorState;
+  learningTrack: "explore" | "exploit";
+  trackReason: Exclude<LearningTrackReason, "legacy_unclassified">;
+  policyChanged: boolean;
+  hardBoundaryPreserved: boolean;
+}): AionisGuideLearningLedgerItem {
+  return LearningLedgerItemSchema.parse({
+    decision_completeness: "complete",
+    memory_id: args.entry.memory_id,
+    memory_type: args.entry.memory_type,
+    source_backend: "aionis",
+    recorded_action: args.recordedAction,
+    candidate_action: args.candidateAction,
+    served_action: args.servedAction,
+    policy_changed: args.policyChanged,
+    hard_boundary_preserved: args.hardBoundaryPreserved,
+    prior_supported_use_count: args.prior.prior_supported_use_count,
+    prior_contradicted_use_count: args.prior.prior_contradicted_use_count,
+    prior_rehydrate_requested_count: args.prior.prior_rehydrate_requested_count,
+    prior_effect_state: args.prior.prior_effect_state,
+    repeated_negative_posture: args.prior.repeated_negative_posture,
+    learning_track: args.learningTrack,
+    track_reason: args.trackReason,
+  }) as AionisGuideLearningLedgerItem;
+}
+
+function learningSurfaceDigest(
+  items: readonly AionisGuideLearningLedgerItem[],
+  action: "recorded_action" | "candidate_action" | "served_action",
+): string {
+  return learningDecisionSurfaceDigest(items.map((item) => ({
+    memory_id: item.memory_id,
+    action: item[action],
+  })));
+}
+
+export function resolveAionisGuideLearningDecisionSet(args: {
+  agent_context: AionisAgentContext;
+  memory_packet: AionisMemoryPacket | null;
+  prior_by_memory_id: ReadonlyMap<string, AionisGuideLearningPriorStateResolution>;
+}): AionisGuideLearningDecisionSet {
+  const packetEntries = args.memory_packet?.relevant_memories ?? [];
+  const entryByMemoryId = new Map<string, MemoryPacketEntry>();
+  const occurrenceCountByMemoryId = new Map<string, number>();
+  const relevantMemoryIds: string[] = [];
+  for (const entry of packetEntries) {
+    occurrenceCountByMemoryId.set(entry.memory_id, (occurrenceCountByMemoryId.get(entry.memory_id) ?? 0) + 1);
+    if (entryByMemoryId.has(entry.memory_id)) continue;
+    entryByMemoryId.set(entry.memory_id, entry);
+    relevantMemoryIds.push(entry.memory_id);
+  }
+
+  const memberships = recordedSurfaceMemberships(args.agent_context);
+  const recordedSurfaceMemoryIds = Array.from(memberships.keys());
+  const projectionReasons: AionisGuideLearningProjectionIncompleteReason[] = [];
+  const projectionReasonKeys = new Set<string>();
+  const addProjectionReason = (
+    code: AionisGuideLearningProjectionIncompleteReasonCode,
+    memoryId: string,
+  ): void => {
+    const key = `${code}\u0000${memoryId}`;
+    if (projectionReasonKeys.has(key)) return;
+    projectionReasonKeys.add(key);
+    projectionReasons.push({ code, memory_id: memoryId });
+  };
+
+  for (const memoryId of recordedSurfaceMemoryIds) {
+    if (!entryByMemoryId.has(memoryId)) addProjectionReason("recorded_surface_item_omitted", memoryId);
+  }
+
+  const decisions: AionisGuideLearningDecision[] = [];
+  const controlItems: AionisGuideLearningLedgerItem[] = [];
+  const candidateItems: AionisGuideLearningLedgerItem[] = [];
+  for (const memoryId of relevantMemoryIds) {
+    const entry = entryByMemoryId.get(memoryId)!;
+    const incompleteReasonCodes: AionisGuideLearningProjectionIncompleteReasonCode[] = [];
+    const addDecisionReason = (code: AionisGuideLearningProjectionIncompleteReasonCode): void => {
+      pushUnique(incompleteReasonCodes, code);
+      addProjectionReason(code, memoryId);
+    };
+
+    if ((occurrenceCountByMemoryId.get(memoryId) ?? 0) > 1) {
+      addDecisionReason("duplicate_relevant_memory_id");
+    }
+
+    const byAction = memberships.get(memoryId);
+    const recordedActions = byAction ? Array.from(byAction.keys()) : [];
+    if (recordedActions.length === 0) addDecisionReason("relevant_memory_not_agent_facing");
+    if (recordedActions.length > 1) addDecisionReason("recorded_surface_conflict");
+    if (byAction && Array.from(byAction.values()).some((count) => count > 1)) {
+      addDecisionReason("duplicate_recorded_surface_memory_id");
+    }
+    const recordedAction: AionisMemoryDecisionSurface = recordedActions.length === 1
+      ? recordedActions[0]!
+      : "not_agent_facing";
+
+    let prior: FrozenPriorState | null = null;
+    const rawResolution = args.prior_by_memory_id.get(memoryId) as unknown;
+    if (!rawResolution || typeof rawResolution !== "object" || Array.isArray(rawResolution)) {
+      addDecisionReason("prior_state_result_omitted");
+    } else {
+      const resolution = rawResolution as Record<string, unknown>;
+      if (resolution.memory_id !== memoryId) {
+        addDecisionReason("unsupported_prior_resolution");
+      } else if (resolution.status === "resolved") {
+        if (!isSlotsRecord(resolution.slots)) {
+          addDecisionReason("unsupported_prior_resolution");
+        } else {
+          prior = frozenPriorStateFromRuntimeSlots(resolution.slots);
+        }
+      } else if (resolution.status === "memory_node_missing") {
+        addDecisionReason("memory_node_missing");
+      } else if (resolution.status === "memory_visibility_mismatch") {
+        addDecisionReason("memory_visibility_mismatch");
+      } else if (resolution.status === "prior_state_lookup_failed") {
+        addDecisionReason("prior_state_lookup_failed");
+      } else {
+        addDecisionReason("unsupported_prior_resolution");
+      }
+    }
+
+    let candidateAction: AionisGuideLearningAction | null = null;
+    let candidateReasonCodes: string[] = [];
+    let policyChanged: boolean | null = null;
+    let hardBoundaryPreserved: boolean | null = null;
+    let learningTrack: "explore" | "exploit" | null = null;
+    let trackReason: Exclude<LearningTrackReason, "legacy_unclassified"> | null = null;
+    if (prior) {
+      const classified = classifyLearningTrack(prior);
+      learningTrack = classified.track;
+      trackReason = classified.reason;
+    }
+    if (prior && isGuideLearningAction(recordedAction)) {
+      try {
+        const candidate = decideAdmissionCandidatePolicyAction({
+          recorded_action: recordedAction,
+          memory_origin: "aionis",
+          source_backend: "aionis",
+          memory_type: entry.memory_type,
+          closed_loop_effect_state: prior.prior_effect_state,
+          repeated_negative_posture: prior.repeated_negative_posture,
+        }, GUIDE_LEARNING_CANDIDATE_POLICY);
+        if (!isGuideLearningAction(candidate.action)) {
+          addDecisionReason("unsupported_candidate_decision");
+        } else {
+          candidateAction = candidate.action;
+          candidateReasonCodes = [...candidate.reason_codes];
+          policyChanged = candidate.policy_changed;
+          hardBoundaryPreserved = candidate.hard_boundary_preserved;
+        }
+      } catch {
+        addDecisionReason("unsupported_candidate_decision");
+      }
+    }
+
+    let decisionComplete = false;
+    if (
+      incompleteReasonCodes.length === 0
+      && isGuideLearningAction(recordedAction)
+      && candidateAction !== null
+      && prior !== null
+      && learningTrack !== null
+      && trackReason !== null
+      && policyChanged !== null
+      && hardBoundaryPreserved !== null
+    ) {
+      decisionComplete = true;
+      controlItems.push(completeLearningLedgerItem({
+        entry,
+        recordedAction,
+        candidateAction,
+        servedAction: recordedAction,
+        prior,
+        learningTrack,
+        trackReason,
+        policyChanged,
+        hardBoundaryPreserved,
+      }));
+      candidateItems.push(completeLearningLedgerItem({
+        entry,
+        recordedAction,
+        candidateAction,
+        servedAction: candidateAction,
+        prior,
+        learningTrack,
+        trackReason,
+        policyChanged,
+        hardBoundaryPreserved,
+      }));
+    }
+
+    decisions.push({
+      memory_id: memoryId,
+      title: entry.title,
+      memory_type: entry.memory_type,
+      source_backend: "aionis",
+      decision_completeness: decisionComplete ? "complete" : "incomplete",
+      incomplete_reason_codes: incompleteReasonCodes,
+      recorded_action: recordedAction,
+      candidate_action: candidateAction,
+      control_served_action: recordedAction,
+      candidate_served_action: candidateAction,
+      frozen_prior_state: prior,
+      learning_track: learningTrack,
+      track_reason: trackReason,
+      policy_changed: policyChanged,
+      hard_boundary_preserved: hardBoundaryPreserved,
+      candidate_reason_codes: candidateReasonCodes,
+    });
+  }
+
+  const projectionComplete = projectionReasons.length === 0
+    && controlItems.length === relevantMemoryIds.length
+    && candidateItems.length === relevantMemoryIds.length;
+  const projectionIncompleteReasonCodes: AionisGuideLearningProjectionIncompleteReasonCode[] = [];
+  for (const reason of projectionReasons) pushUnique(projectionIncompleteReasonCodes, reason.code);
+  const fullDowngradedMemoryIds = decisions
+    .filter((decision) =>
+      decision.recorded_action === "use_now"
+      && decision.candidate_action === "inspect_before_use"
+    )
+    .map((decision) => decision.memory_id);
+
   return {
-    prior_supported_use_count: prior.prior_supported_use_count,
-    prior_contradicted_use_count: prior.prior_contradicted_use_count,
-    prior_rehydrate_requested_count: prior.prior_rehydrate_requested_count,
-    closed_loop_effect_state: prior.prior_effect_state,
-    repeated_negative_posture: prior.repeated_negative_posture,
+    contract_version: "aionis_guide_learning_decision_set_v1",
+    relevant_memory_ids: relevantMemoryIds,
+    relevant_memory_occurrence_count: packetEntries.length,
+    recorded_surface_memory_ids: recordedSurfaceMemoryIds,
+    decision_count: decisions.length,
+    complete_decision_count: controlItems.length,
+    projection_complete: projectionComplete,
+    projection_incomplete_reason_codes: projectionIncompleteReasonCodes,
+    projection_incomplete_reasons: projectionReasons,
+    decisions,
+    control_items: controlItems,
+    candidate_items: candidateItems,
+    recorded_surface_sha256: projectionComplete ? learningSurfaceDigest(controlItems, "recorded_action") : null,
+    candidate_surface_sha256: projectionComplete ? learningSurfaceDigest(candidateItems, "candidate_action") : null,
+    control_served_surface_sha256: projectionComplete ? learningSurfaceDigest(controlItems, "served_action") : null,
+    candidate_served_surface_sha256: projectionComplete ? learningSurfaceDigest(candidateItems, "served_action") : null,
+    full_downgraded_memory_ids: fullDowngradedMemoryIds,
   };
 }
 
-function surfaceForEntry(args: {
-  entry: MemoryPacketEntry;
-  useNowIds: ReadonlySet<string>;
-  inspectBeforeUseIds: ReadonlySet<string>;
-  doNotUseIds: ReadonlySet<string>;
-  rehydrateIds: ReadonlySet<string>;
-}): AionisMemoryDecisionSurface {
-  if (args.useNowIds.has(args.entry.memory_id)) return "use_now";
-  if (args.inspectBeforeUseIds.has(args.entry.memory_id)) return "inspect_before_use";
-  if (args.doNotUseIds.has(args.entry.memory_id)) return "do_not_use";
-  if (args.rehydrateIds.has(args.entry.memory_id)) return "rehydrate";
-  return "not_agent_facing";
+function shadowReportEntriesFromLearningDecisionSet(
+  decisionSet: AionisGuideLearningDecisionSet,
+): AionisMemoryAdmissionShadowPolicyReportInput["entries"] {
+  return decisionSet.decisions.flatMap((decision) => {
+    if (!decision.frozen_prior_state || !isGuideLearningAction(decision.recorded_action)) return [];
+    return [{
+      memory_id: decision.memory_id,
+      title: decision.title,
+      memory_origin: "aionis" as const,
+      source_backend: decision.source_backend,
+      memory_type: decision.memory_type,
+      recorded_action: decision.recorded_action,
+      prior_supported_use_count: decision.frozen_prior_state.prior_supported_use_count,
+      prior_contradicted_use_count: decision.frozen_prior_state.prior_contradicted_use_count,
+      prior_rehydrate_requested_count: decision.frozen_prior_state.prior_rehydrate_requested_count,
+      closed_loop_effect_state: decision.frozen_prior_state.prior_effect_state,
+      repeated_negative_posture: decision.frozen_prior_state.repeated_negative_posture,
+    }];
+  });
 }
 
-function shadowEntryForMemory(args: {
-  entry: MemoryPacketEntry;
-  agentContext: AionisAgentContext;
-  slotByMemoryId: RuntimeSlotMap;
-}): AionisMemoryAdmissionShadowPolicyReportInput["entries"][number] {
-  const useNowIds = new Set(args.agentContext.use_now_memory_ids);
-  const inspectBeforeUseIds = new Set(args.agentContext.inspect_before_use_memory_ids);
-  const doNotUseIds = new Set(args.agentContext.do_not_use_memory_ids);
-  const rehydrateIds = new Set(args.agentContext.rehydrate_hints.map((hint) => hint.memory_id));
-  const slots = args.slotByMemoryId.get(args.entry.memory_id) ?? {};
+export function buildAionisAdmissionCandidatePolicyActiveProjectionFromDecisionSet(args: {
+  decision_set: AionisGuideLearningDecisionSet;
+  mode?: "shadow" | "active" | null;
+}): AionisAdmissionCandidatePolicyActiveProjection {
+  const mode = args.mode === "shadow" ? "shadow" : "active";
+  const displayableEntries = shadowReportEntriesFromLearningDecisionSet(args.decision_set);
+  const report = buildAionisMemoryAdmissionShadowPolicyReport({
+    source: "memory_decision_trace",
+    entries: displayableEntries,
+  });
+  const candidateActionByMemoryId = new Map(
+    args.decision_set.decisions.map((decision) => [decision.memory_id, decision.candidate_action]),
+  );
+  for (const decision of report.decisions) {
+    if (candidateActionByMemoryId.get(decision.memory_id) !== decision.shadow_action) {
+      throw new Error(`guide_learning_shadow_projection_mismatch:${decision.memory_id}`);
+    }
+  }
+  const candidateMayServe = mode === "active" && args.decision_set.projection_complete;
+  const downgradedMemoryIds = args.decision_set.projection_complete
+    ? [...report.downgraded_memory_ids]
+    : [];
+  const displayTruncated = displayableEntries.length > report.decisions.length;
+  const incompleteSummary = args.decision_set.projection_complete
+    ? ""
+    : ` Candidate serving is withheld because the full learning projection is incomplete (${args.decision_set.projection_incomplete_reason_codes.join(", ")}).`;
   return {
-    memory_id: args.entry.memory_id,
-    title: args.entry.title,
-    memory_origin: "aionis",
-    source_backend: "aionis",
-    memory_type: args.entry.memory_type,
-    recorded_action: surfaceForEntry({
-      entry: args.entry,
-      useNowIds,
-      inspectBeforeUseIds,
-      doNotUseIds,
-      rehydrateIds,
-    }),
-    ...runtimePriorStateFromSlots(slots),
+    contract_version: "aionis_admission_candidate_policy_guide_projection_v1",
+    intended_use: mode === "active" ? "guide_active_projection_gate" : "guide_shadow_projection_audit",
+    mode,
+    agent_prompt_included: candidateMayServe,
+    runtime_mutation: false,
+    authority_mutation: false,
+    shadow_policy_report: report,
+    downgraded_memory_ids: downgradedMemoryIds,
+    hard_boundary_upgrade_count: report.hard_boundary_upgrade_count,
+    projection_complete: args.decision_set.projection_complete,
+    projection_incomplete_reason_codes: [...args.decision_set.projection_incomplete_reason_codes],
+    relevant_memory_count: args.decision_set.relevant_memory_ids.length,
+    full_decision_count: args.decision_set.decision_count,
+    displayable_decision_count: displayableEntries.length,
+    displayed_decision_count: report.decisions.length,
+    display_truncated: displayTruncated,
+    full_downgraded_memory_count: args.decision_set.full_downgraded_memory_ids.length,
+    summary: `Candidate admission policy would downgrade ${args.decision_set.full_downgraded_memory_ids.length} current use_now memories to inspect_before_use without mutating stored memory state.${incompleteSummary}`,
   };
 }
 
@@ -1569,34 +2000,18 @@ export function resolveAionisAdmissionCandidatePolicyActiveProjection(args: {
   agent_context: AionisAgentContext;
   memory_packet: AionisMemoryPacket | null;
   slot_by_memory_id?: RuntimeSlotMap | null;
+  prior_by_memory_id?: ReadonlyMap<string, AionisGuideLearningPriorStateResolution> | null;
   mode?: "shadow" | "active" | null;
 }): AionisAdmissionCandidatePolicyActiveProjection {
-  const mode = args.mode === "shadow" ? "shadow" : "active";
   const slotByMemoryId = args.slot_by_memory_id ?? new Map<string, Record<string, unknown>>();
-  const report = buildAionisMemoryAdmissionShadowPolicyReport({
-    source: "memory_decision_trace",
-    entries: (args.memory_packet?.relevant_memories ?? []).map((entry) =>
-      shadowEntryForMemory({
-        entry,
-        agentContext: args.agent_context,
-        slotByMemoryId,
-      })
-    ),
+  const decisionSet = resolveAionisGuideLearningDecisionSet({
+    agent_context: args.agent_context,
+    memory_packet: args.memory_packet,
+    prior_by_memory_id: args.prior_by_memory_id
+      ?? legacyPriorResolutions(args.memory_packet, slotByMemoryId),
   });
-  const currentUseNowIds = new Set(args.agent_context.use_now_memory_ids);
-  const downgradedMemoryIds = report.downgraded_memory_ids.filter((memoryId) =>
-    currentUseNowIds.has(memoryId)
-  );
-  return {
-    contract_version: "aionis_admission_candidate_policy_guide_projection_v1",
-    intended_use: mode === "active" ? "guide_active_projection_gate" : "guide_shadow_projection_audit",
-    mode,
-    agent_prompt_included: mode === "active",
-    runtime_mutation: false,
-    authority_mutation: false,
-    shadow_policy_report: report,
-    downgraded_memory_ids: downgradedMemoryIds,
-    hard_boundary_upgrade_count: report.hard_boundary_upgrade_count,
-    summary: `Candidate admission policy would downgrade ${downgradedMemoryIds.length} current use_now memories to inspect_before_use without mutating stored memory state.`,
-  };
+  return buildAionisAdmissionCandidatePolicyActiveProjectionFromDecisionSet({
+    decision_set: decisionSet,
+    mode: args.mode,
+  });
 }

@@ -23,6 +23,12 @@ FROM node:24-bookworm-slim@sha256:cb4e8f7c443347358b7875e717c29e27bf9befc8f5a26c
 
 WORKDIR /app
 
+# Protected learning-experiment close fails closed unless Linux ACL state can
+# be verified independently of stat.mode or a particular `ls` implementation.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends acl \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV NODE_ENV=production \
     npm_config_update_notifier=false \
     AIONIS_EDITION=lite \

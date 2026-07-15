@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       release_ref:
-        description: Exact immutable Runtime tag to verify and publish (for example v0.3.6)
+        description: Exact immutable Runtime tag to verify and publish (for example v0.3.7)
         required: true
         type: string
       publish:
@@ -137,6 +137,11 @@ jobs:
                 ;;
             esac
           done < <(git -C external/release-harness diff --name-only "${EXPECTED_RUNTIME_COMMIT}" "${actual_harness_commit}")
+
+      - name: Install protected-close ACL verifier
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends acl
 
       - name: Install dependencies
         run: npm ci

@@ -5,14 +5,18 @@ import {
   LITE_LEARNING_LEDGER_REQUIRED_INDEXES,
   LITE_LEARNING_LEDGER_REQUIRED_TRIGGERS,
 } from "./lite-learning-episode-ledger.js";
+import { LITE_LEARNING_LEDGER_V3_REQUIRED_TRIGGERS } from
+  "./lite-learning-schema-migration.js";
+import { normalizeSqliteSchemaSql } from "./sqlite-schema-sql.js";
 
 export const LITE_RUNTIME_WRITE_SCHEMA_COMPONENT = "write_projection";
-export const LITE_RUNTIME_WRITE_SCHEMA_VERSION = 3;
+export const LITE_RUNTIME_WRITE_SCHEMA_VERSION = 4;
 
 export type LiteRuntimeSchemaClassification =
   | "uninitialized"
   | "legacy_v0_3_4"
   | "supported_previous_v2"
+  | "supported_previous_v3"
   | "current"
   | "incompatible";
 
@@ -289,6 +293,7 @@ export type RequiredIndex = {
   unique?: boolean;
   partial?: boolean;
   predicate?: string;
+  sql?: string;
 };
 
 const CURRENT_REQUIRED_INDEXES: Record<string, RequiredIndex> = {
@@ -337,6 +342,9 @@ const CURRENT_REQUIRED_INDEXES: Record<string, RequiredIndex> = {
     columns: [{ name: "lease_expires_at" }],
     partial: true,
     predicate: "status = 'running'",
+    sql: `CREATE INDEX idx_lite_memory_projection_jobs_lease
+      ON lite_memory_projection_jobs(lease_expires_at)
+      WHERE status = 'running'`,
   },
   idx_lite_memory_projection_jobs_scope_node: {
     table: "lite_memory_projection_jobs",
@@ -475,13 +483,21 @@ export const WRITE_SCHEMA_V3: LiteRuntimeWriteSchemaContract = {
       ],
     },
   },
+  triggers: LITE_LEARNING_LEDGER_V3_REQUIRED_TRIGGERS,
+};
+
+// Schema v4 is a deliberately narrow contract revision: all v3 tables,
+// constraints, and indexes remain unchanged while the active-lease trigger
+// gains the explicit formal-serving versus fail-control split.
+export const WRITE_SCHEMA_V4: LiteRuntimeWriteSchemaContract = {
+  ...WRITE_SCHEMA_V3,
   triggers: LITE_LEARNING_LEDGER_REQUIRED_TRIGGERS,
 };
 
 const ACTIVE_WRITE_SCHEMA_TARGET: LiteRuntimeSchemaInspectionTarget = {
   currentVersion: LITE_RUNTIME_WRITE_SCHEMA_VERSION,
-  contracts: { 2: WRITE_SCHEMA_V2, 3: WRITE_SCHEMA_V3 },
-  supportedPreviousVersions: [2],
+  contracts: { 2: WRITE_SCHEMA_V2, 3: WRITE_SCHEMA_V3, 4: WRITE_SCHEMA_V4 },
+  supportedPreviousVersions: [2, 3],
 };
 
 function userTables(db: SqliteDatabase): Set<string> {
@@ -573,10 +589,6 @@ function collectConstraintProblems(
   return problems;
 }
 
-function normalizedSql(value: string): string {
-  return value.trim().replace(/;$/u, "").trim().toLowerCase().replaceAll(/\s+/g, " ");
-}
-
 function collectTableDefinitionProblems(
   db: SqliteDatabase,
   tables: Set<string>,
@@ -591,7 +603,7 @@ function collectTableDefinitionProblems(
   for (const [table, requirement] of Object.entries(requirements)) {
     if (!tables.has(table) || !requirement.sql) continue;
     const row = statement.get(table) as { sql: string | null } | undefined;
-    if (!row?.sql || normalizedSql(row.sql) !== normalizedSql(requirement.sql)) {
+    if (!row?.sql || normalizeSqliteSchemaSql(row.sql) !== normalizeSqliteSchemaSql(requirement.sql)) {
       problems.push(`${table} CREATE TABLE definition does not match the required contract`);
     }
   }
@@ -639,18 +651,20 @@ function collectIndexProblems(
       );
     }
 
-    if (requirement.predicate) {
+    if (requirement.sql) {
       const schemaRow = db.prepare(
         `SELECT sql
          FROM sqlite_schema
          WHERE type = 'index' AND name = ?`,
       ).get(indexName) as { sql: string | null } | undefined;
-      const actualSql = schemaRow?.sql ? normalizedSql(schemaRow.sql) : "";
-      const whereOffset = actualSql.indexOf(" where ");
-      const actualPredicate = whereOffset >= 0 ? actualSql.slice(whereOffset + " where ".length) : "";
-      if (actualPredicate !== normalizedSql(requirement.predicate)) {
-        problems.push(`${indexName} predicate mismatch: expected WHERE ${requirement.predicate}`);
+      if (!schemaRow?.sql
+        || normalizeSqliteSchemaSql(schemaRow.sql) !== normalizeSqliteSchemaSql(requirement.sql)) {
+        problems.push(requirement.predicate
+          ? `${indexName} predicate mismatch: expected WHERE ${requirement.predicate}`
+          : `${indexName} definition does not match the required contract`);
       }
+    } else if (requirement.predicate) {
+      problems.push(`${indexName} predicate contract is missing its full SQL definition`);
     }
   }
   return problems;
@@ -678,7 +692,7 @@ function collectTriggerProblems(
       problems.push(`${triggerName} table mismatch: expected ${requirement.table}, found ${row.table_name}`);
       continue;
     }
-    if (!row.sql || normalizedSql(row.sql) !== normalizedSql(requirement.sql)) {
+    if (!row.sql || normalizeSqliteSchemaSql(row.sql) !== normalizeSqliteSchemaSql(requirement.sql)) {
       problems.push(`${triggerName} definition does not match the required contract`);
     }
   }
@@ -834,8 +848,8 @@ export function inspectLiteRuntimeSchemaAgainstTarget(
     && V3_MEASUREMENT_COLUMNS.slice(-3).some(
       (column) => tableColumns(db, "lite_product_measurements").has(column),
     );
-  const v3OnlyObjectsPresent = detectedVersion !== target.currentVersion
-    && target.currentVersion === 3
+  const v3OnlyObjectsPresent = (detectedVersion ?? 0) < 3
+    && target.currentVersion >= 3
     && (
       Object.keys(LITE_LEARNING_LEDGER_REQUIRED_COLUMNS).some((table) => tables.has(table))
       || v3MeasurementLinkColumnsPresent
@@ -895,6 +909,8 @@ export function inspectLiteRuntimeSchemaAgainstTarget(
       ? "uninitialized"
       : detectedVersion === target.currentVersion
         ? "current"
+        : detectedVersion === 3 && target.supportedPreviousVersions.includes(3)
+          ? "supported_previous_v3"
         : detectedVersion === 2 && target.supportedPreviousVersions.includes(2)
           ? "supported_previous_v2"
           : "legacy_v0_3_4";
@@ -907,6 +923,7 @@ export function inspectLiteRuntimeSchemaAgainstTarget(
     current_version: target.currentVersion,
     upgrade_required: classification === "legacy_v0_3_4"
       || classification === "supported_previous_v2"
+      || classification === "supported_previous_v3"
       || classification === "uninitialized",
     user_table_count: tables.size,
     missing_tables: [...selectedMissing.missingTables].sort(),

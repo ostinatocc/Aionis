@@ -12,8 +12,13 @@ import {
   resolveLearningGatePolicy,
 } from "./learning-gate-policy.js";
 import {
+  PRODUCTION_LEARNING_EXTERNAL_EXECUTION_POLICY_REGISTRY,
+  type LearningExternalExecutionPolicyRegistryEntry,
+} from "./learning-external-execution-policy.js";
+import {
   asPublicScope,
   asStoreScope,
+  externalExecutionPolicyDigest,
   learningAssignmentUnitSha256,
   learningCollectionPrincipalSha256,
   learningMemoryNamespaceSha256,
@@ -51,17 +56,21 @@ export type LearningExperimentResolverRegistry = Readonly<{
     implementation_contract_sha256: string;
     prospective_calibration_artifact_sha256: string | null;
   }>;
-  resolveExternalExecutionPolicySha256: (registryKey: string) => string | null;
+  resolveExternalExecutionPolicy: (
+    registryKey: string,
+    databaseInstanceId: string,
+  ) => LearningExternalExecutionPolicyRegistryEntry | null;
 }>;
 
 export const PRODUCTION_LEARNING_EXPERIMENT_RESOLVER_REGISTRY: LearningExperimentResolverRegistry = {
   resolveCandidatePolicy: (policyId, policyVersion) =>
     resolveAdmissionCandidatePolicy(policyId, policyVersion),
   resolveGatePolicy: (policyId, policyVersion) => resolveLearningGatePolicy(policyId, policyVersion),
-  // Deployment-specific runner, broker, launcher, key, and DB-lineage bindings do
-  // not yet have a production code registry. Keeping this unresolved is the
-  // deliberate fail-control posture until provisioning installs that authority.
-  resolveExternalExecutionPolicySha256: () => null,
+  resolveExternalExecutionPolicy: (registryKey, databaseInstanceId) =>
+    PRODUCTION_LEARNING_EXTERNAL_EXECUTION_POLICY_REGISTRY.resolve({
+      registryKey,
+      databaseInstanceId,
+    }),
 };
 
 export type LearningExperimentGuideResolution = Readonly<{
@@ -77,6 +86,7 @@ export type LearningExperimentGuideResolution = Readonly<{
   experiment_config_sha256: string | null;
   collection_class: "eligible_host" | "fixture_pilot" | "unverified";
   assignment: LiteLearningExperimentAuthorityResolution["assignment"];
+  namespace_lease?: LiteLearningExperimentAuthorityResolution["namespace_lease"];
   reason_codes: readonly string[];
 }>;
 
@@ -95,7 +105,10 @@ export type LearningExperimentResolverInput = Readonly<{
 }>;
 
 type LearningExperimentResolverDependencies = Readonly<{
-  ledger: Pick<LiteLearningEpisodeLedgerAccess, "resolveGuideExperimentAuthority">;
+  ledger: Pick<
+    LiteLearningEpisodeLedgerAccess,
+    "databaseInstanceId" | "resolveGuideExperimentAuthority"
+  >;
   registry?: LearningExperimentResolverRegistry;
 }>;
 
@@ -110,6 +123,8 @@ function controlResolution(args: {
   experimentConfigSha256?: string | null;
   collectionClass?: LearningExperimentGuideResolution["collection_class"];
   enrollmentState?: LearningExperimentGuideResolution["enrollment_state"];
+  assignment?: LiteLearningExperimentAuthorityResolution["assignment"];
+  namespaceLease?: LiteLearningExperimentAuthorityResolution["namespace_lease"];
   reasons: readonly string[];
 }): LearningExperimentGuideResolution {
   return {
@@ -124,7 +139,8 @@ function controlResolution(args: {
     experiment_revision: args.experimentRevision ?? null,
     experiment_config_sha256: args.experimentConfigSha256 ?? null,
     collection_class: args.collectionClass ?? "unverified",
-    assignment: null,
+    assignment: args.assignment ?? null,
+    namespace_lease: args.namespaceLease ?? null,
     reason_codes: [...args.reasons],
   };
 }
@@ -176,6 +192,8 @@ function revisionMatchesDeclaration(args: {
   rule: AionisAdmissionCandidatePolicyProfileRule;
   authority: LiteLearningExperimentAuthorityResolution;
   registry: LearningExperimentResolverRegistry;
+  databaseInstanceId: string;
+  taskFamily: string;
 }): { matches: boolean; reason: string } {
   const experiment = args.rule.experiment!;
   const revision = args.authority.revision;
@@ -190,23 +208,36 @@ function revisionMatchesDeclaration(args: {
 
   let candidate: ReturnType<LearningExperimentResolverRegistry["resolveCandidatePolicy"]>;
   let gate: ReturnType<LearningExperimentResolverRegistry["resolveGatePolicy"]>;
-  let externalPolicySha256: string | null;
+  let externalPolicy: LearningExternalExecutionPolicyRegistryEntry | null;
   try {
     candidate = args.registry.resolveCandidatePolicy(
       experiment.candidate_policy_id,
       experiment.candidate_policy_version,
     );
     gate = args.registry.resolveGatePolicy(experiment.gate_policy_id, experiment.gate_policy_version);
-    externalPolicySha256 = args.registry.resolveExternalExecutionPolicySha256(
+    externalPolicy = args.registry.resolveExternalExecutionPolicy(
       experiment.external_execution_policy_ref.registry_key,
+      args.databaseInstanceId,
     );
+    if (candidate.policy_id !== experiment.candidate_policy_id
+      || candidate.policy_version !== experiment.candidate_policy_version
+      || gate.policy_id !== experiment.gate_policy_id
+      || gate.policy_version !== experiment.gate_policy_version
+      || (externalPolicy !== null
+        && (externalPolicy.registry_key !== experiment.external_execution_policy_ref.registry_key
+          || externalPolicy.database_instance_id !== args.databaseInstanceId
+          || externalPolicy.policy.runtime_authority_attestor.expected_database_instance_id
+            !== args.databaseInstanceId
+          || externalExecutionPolicyDigest(externalPolicy.policy) !== externalPolicy.policy_sha256))) {
+      throw new Error("learning experiment policy registry tuple mismatch");
+    }
   } catch {
     return { matches: false, reason: "experiment_policy_registry_unresolved" };
   }
   if (gate.registry_status !== "registered" || gate.prospective_calibration_artifact_sha256 === null) {
     return { matches: false, reason: "gate_prospective_calibration_unregistered" };
   }
-  if (externalPolicySha256 === null) {
+  if (externalPolicy === null) {
     return { matches: false, reason: "external_execution_policy_registry_unresolved" };
   }
 
@@ -214,6 +245,7 @@ function revisionMatchesDeclaration(args: {
   const declarationSha256 = admissionCandidatePolicyExperimentDeclarationDigest(experiment);
   const sourcePolicySha256 = digest(learningCollectionSourcePolicyProjection(experiment));
   const evidenceSeriesSha256 = digest(experiment.required_evidence_series);
+  const requiredExternalInputsSha256 = digest(experiment.required_external_inputs);
   const config = revision.config_bindings;
   const exact = revision.profile_id === args.rule.profile_id
     && revision.profile_rule_sha256 === profileRuleSha256
@@ -231,8 +263,10 @@ function revisionMatchesDeclaration(args: {
     && revision.gate_policy_config_sha256 === gate.policy_config_sha256
     && revision.gate_prospective_calibration_sha256 === gate.prospective_calibration_artifact_sha256
     && revision.required_evidence_series_sha256 === evidenceSeriesSha256
-    && revision.external_execution_policy_sha256 === externalPolicySha256
+    && revision.required_external_inputs_sha256 === requiredExternalInputsSha256
+    && revision.external_execution_policy_sha256 === externalPolicy.policy_sha256
     && revision.safety_pause_mode === "automatic"
+    && config.task_family === args.taskFamily
     && config.experiment_declaration_sha256 === declarationSha256
     && config.profile_rule_sha256 === profileRuleSha256
     && config.collection_source_policy_sha256 === sourcePolicySha256
@@ -332,7 +366,9 @@ export async function resolveLearningExperimentForGuide(
     storeScope: taskIdentity.store_scope,
   });
   let authority: LiteLearningExperimentAuthorityResolution;
+  let databaseInstanceId: string;
   try {
+    databaseInstanceId = await dependencies.ledger.databaseInstanceId();
     authority = await dependencies.ledger.resolveGuideExperimentAuthority({
       tenantId: input.tenantId,
       experimentId: experiment.experiment_id,
@@ -346,7 +382,13 @@ export async function resolveLearningExperimentForGuide(
     return controlResolution({ ...base, reasons: ["experiment_authority_read_failed"] });
   }
   const registry = dependencies.registry ?? PRODUCTION_LEARNING_EXPERIMENT_RESOLVER_REGISTRY;
-  const revisionMatch = revisionMatchesDeclaration({ rule, authority, registry });
+  const revisionMatch = revisionMatchesDeclaration({
+    rule,
+    authority,
+    registry,
+    databaseInstanceId,
+    taskFamily: taskIdentity.task_family,
+  });
   if (!revisionMatch.matches) {
     return controlResolution({
       ...base,
@@ -368,21 +410,41 @@ export async function resolveLearningExperimentForGuide(
   if (!declaredSource && authority.collection_principal) {
     return controlResolution({ ...base, reasons: ["collection_principal_not_in_revision"] });
   }
+  const confirmatoryEligible = experiment.evidence_intent === "confirmatory"
+    && collectionClass === "eligible_host";
+  const resolvedAssignmentBinding = authority.assignment?.assignment_algorithm
+    === "diagnostic_sha256_48_mod_10000_v1"
+    ? {
+        enrollmentState: "diagnostic" as const,
+        assignment: authority.assignment,
+      }
+    : confirmatoryEligible
+      && authority.assignment?.assignment_algorithm === "matched_pair_csprng_bit_v1"
+      && authority.namespace_lease !== null
+      && authority.confirmatory_attempt?.task_family === taskIdentity.task_family
+      ? {
+          enrollmentState: "enrolled" as const,
+          assignment: authority.assignment,
+          namespaceLease: authority.namespace_lease,
+        }
+      : {};
   const safetyReason = strongestSafetyReason(authority);
-  if (safetyReason) {
-    return controlResolution({
-      ...base,
-      experimentConfigSha256: authority.revision!.config_sha256,
-      collectionClass,
-      reasons: [safetyReason],
-    });
-  }
   if (authority.experiment_closed) {
     return controlResolution({
       ...base,
       experimentConfigSha256: authority.revision!.config_sha256,
       collectionClass,
-      reasons: ["experiment_closed"],
+      ...resolvedAssignmentBinding,
+      reasons: [...(safetyReason ? [safetyReason] : []), "experiment_closed"],
+    });
+  }
+  if (safetyReason) {
+    return controlResolution({
+      ...base,
+      experimentConfigSha256: authority.revision!.config_sha256,
+      collectionClass,
+      ...resolvedAssignmentBinding,
+      reasons: [safetyReason],
     });
   }
   if (authority.active_namespace_lease_conflict) {
@@ -398,6 +460,7 @@ export async function resolveLearningExperimentForGuide(
       ...base,
       experimentConfigSha256: authority.revision!.config_sha256,
       collectionClass,
+      ...resolvedAssignmentBinding,
       reasons: [
         ...(input.operationProtected ? [] : ["protected_operation_required"]),
         ...(input.projectionComplete ? [] : ["complete_projection_required"]),
@@ -413,8 +476,6 @@ export async function resolveLearningExperimentForGuide(
     });
   }
 
-  const confirmatoryEligible = experiment.evidence_intent === "confirmatory"
-    && collectionClass === "eligible_host";
   if (confirmatoryEligible) {
     const lease = authority.namespace_lease;
     const attempt = authority.confirmatory_attempt;
@@ -431,6 +492,7 @@ export async function resolveLearningExperimentForGuide(
         ...base,
         experimentConfigSha256: authority.revision!.config_sha256,
         collectionClass,
+        ...resolvedAssignmentBinding,
         reasons: ["confirmatory_activation_window_inactive"],
       });
     }
@@ -438,6 +500,20 @@ export async function resolveLearningExperimentForGuide(
 
   const phaseServesCandidate = experiment.serving_phase === "active_control"
     && authority.assignment.assignment_arm === "candidate";
+  if (confirmatoryEligible) {
+    return controlResolution({
+      ...base,
+      experimentConfigSha256: authority.revision!.config_sha256,
+      collectionClass,
+      enrollmentState: "enrolled",
+      assignment: authority.assignment,
+      namespaceLease: authority.namespace_lease,
+      reasons: [
+        "external_prerequisite_roots_unavailable",
+        phaseServesCandidate ? "candidate_arm_failed_control" : "control_arm_observation_deferred",
+      ],
+    });
+  }
   return {
     mode: phaseServesCandidate ? "active" : "shadow",
     source: "experiment",
@@ -451,6 +527,7 @@ export async function resolveLearningExperimentForGuide(
     experiment_config_sha256: authority.revision!.config_sha256,
     collection_class: collectionClass,
     assignment: authority.assignment,
+    namespace_lease: authority.namespace_lease,
     reason_codes: [
       confirmatoryEligible ? "confirmatory_active_lease" : "diagnostic_assignment",
       phaseServesCandidate ? "candidate_arm_served" : "control_arm_served",

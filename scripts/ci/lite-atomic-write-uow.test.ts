@@ -14,10 +14,14 @@ import {
   createLiteExecutionTreeStoreFromDatabase,
 } from "../../src/execution/tree-store.ts";
 import { createExecutionTreeV1 } from "../../src/execution/tree.ts";
+import { buildAionisMemoryPacket } from "../../src/memory/product-output/memory-packet.ts";
+import { createProductGuideService } from "../../src/product/guide-service.ts";
 import { createProductObserveService } from "../../src/product/observe-service.ts";
+import { ProductGuideRequest } from "../../src/product/product-services.ts";
 import { createHandoffRouteService } from "../../src/routes/handoff.ts";
 import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
 import { createLiteClaimLedgerStoreFromDatabase } from "../../src/store/lite-claim-ledger-store.ts";
+import { createLiteLearningEpisodeLedgerAccess } from "../../src/store/lite-learning-episode-ledger.ts";
 import {
   createLiteRuntimeDatabase,
   type LiteRuntimeDatabaseFaultInjector,
@@ -42,6 +46,9 @@ function atomicEnv() {
     MEMORY_WRITE_REQUIRE_NODES: false,
     MEMORY_LIFECYCLE_RELATION_HTTP_MODEL_PROVIDER_ENABLED: false,
     WORKFLOW_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: false,
+    AIONIS_INSPECT_BEFORE_USE_MODE: "off",
+    AIONIS_ADMISSION_CANDIDATE_POLICY_MODE: "off",
+    AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON: "[]",
     EXECUTION_TREE_DEFAULT_ENABLED: true,
     LITE_INLINE_EMBEDDING_TIMEOUT_MS: 1_000,
   } as any;
@@ -59,6 +66,7 @@ function openAtomicRuntime(
   });
   const claimStore = createLiteClaimLedgerStoreFromDatabase(database);
   const claimLedgerAccess = claimStore.createClaimLedgerAccess();
+  const learningEpisodeLedgerAccess = createLiteLearningEpisodeLedgerAccess(database);
   const executionStateStore = createLiteExecutionStateStoreFromDatabase(database.db, {
     path: database.path,
     transaction: database.transaction,
@@ -90,12 +98,22 @@ function openAtomicRuntime(
     atomicWrite: writeStore,
     claimLedgerAccess,
   });
+  const guide = createProductGuideService({
+    env,
+    liteWriteStore: writeStore,
+    executionTreeStore,
+    claimLedgerAccess,
+    learningEpisodeLedgerAccess,
+    memoryWrite,
+  });
   return {
     observe,
+    guide,
     memoryWrite,
     handoffStore,
     writeStore,
     claimLedgerAccess,
+    learningEpisodeLedgerAccess,
     executionStateStore,
     executionTreeStore,
     async close() {
@@ -234,6 +252,9 @@ function tableCounts(dbPath: string): Record<string, number> {
       "lite_execution_state_transitions",
       "lite_execution_trees",
       "lite_execution_tree_operations",
+      "lite_product_guide_receipts",
+      "lite_learning_episode_events",
+      "lite_learning_exposure_items",
       "lite_runtime_write_operations",
     ];
     const counts = Object.fromEntries(tables.map((table) => {
@@ -273,6 +294,75 @@ function tableCounts(dbPath: string): Record<string, number> {
     db.close();
   }
 }
+
+type GuideLearningAtomicCounts = Readonly<{
+  guide_memory_commits: number;
+  guide_memory_nodes: number;
+  guide_receipts: number;
+  learning_episode_events: number;
+  learning_exposure_items: number;
+  guide_operation_receipts: number;
+}>;
+
+function guideLearningAtomicCounts(
+  dbPath: string,
+  operationId: string,
+): GuideLearningAtomicCounts {
+  const db = createSqliteDatabase(dbPath);
+  try {
+    const count = (sql: string, ...params: unknown[]): number => {
+      const row = db.prepare<{ count: number }>(sql).get(...params);
+      return Number(row.count);
+    };
+    const guideNodeWhere = "json_type(slots_json, '$.guide_exposure_v1') = 'object'";
+    return {
+      guide_memory_commits: count(
+        `SELECT COUNT(DISTINCT commit_id) AS count
+         FROM lite_memory_nodes
+         WHERE ${guideNodeWhere}`,
+      ),
+      guide_memory_nodes: count(
+        `SELECT COUNT(*) AS count
+         FROM lite_memory_nodes
+         WHERE ${guideNodeWhere}`,
+      ),
+      guide_receipts: count("SELECT COUNT(*) AS count FROM lite_product_guide_receipts"),
+      learning_episode_events: count(
+        `SELECT COUNT(*) AS count
+         FROM lite_learning_episode_events
+         WHERE event_kind = 'exposure_committed' AND operation_id = ?`,
+        operationId,
+      ),
+      learning_exposure_items: count(
+        `SELECT COUNT(*) AS count
+         FROM lite_learning_exposure_items AS item
+         JOIN lite_learning_episode_events AS event
+           ON event.tenant_id = item.tenant_id
+          AND event.scope = item.scope
+          AND event.event_id = item.event_id
+         WHERE event.event_kind = 'exposure_committed' AND event.operation_id = ?`,
+        operationId,
+      ),
+      guide_operation_receipts: count(
+        `SELECT COUNT(*) AS count
+         FROM lite_runtime_write_operations
+         WHERE operation_kind = 'product_guide_v1' AND operation_id = ?`,
+        operationId,
+      ),
+    };
+  } finally {
+    db.close();
+  }
+}
+
+const ZERO_GUIDE_LEARNING_ATOMIC_COUNTS: GuideLearningAtomicCounts = {
+  guide_memory_commits: 0,
+  guide_memory_nodes: 0,
+  guide_receipts: 0,
+  learning_episode_events: 0,
+  learning_exposure_items: 0,
+  guide_operation_receipts: 0,
+};
 
 test("a downstream claim conflict rolls back memory, handoff, execution, claims, and receipt", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-atomic-domain-fault-"));
@@ -324,6 +414,188 @@ test("a before-commit SQLite fault leaves no earlier mutation visible after reop
     assert.equal(count, 0, `${table} must remain empty after injected fault and reopen`);
   }
   fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test("guide learning exposure rows commit atomically with memory and operation receipts", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-guide-learning-atomic-"));
+  const dbPath = path.join(directory, "runtime.sqlite");
+  const operationId = "guide-learning-atomic-1";
+  let seededMemoryId = "";
+  try {
+    const seedRuntime = openAtomicRuntime(dbPath);
+    try {
+      const seeded = await seedRuntime.memoryWrite.commit({
+        tenant_id: "default",
+        scope: "default",
+        actor: "local-user",
+        input_text: "Seed one real prior memory for atomic guide learning evidence.",
+        auto_embed: false,
+        nodes: [{
+          client_id: "guide-learning-atomic-prior-memory",
+          type: "concept",
+          tier: "warm",
+          memory_lane: "shared",
+          producer_agent_id: "local-user",
+          owner_agent_id: "local-user",
+          title: "Prior supported atomic guide memory",
+          text_summary: "The guide learning unit of work must preserve this supported prior state.",
+          confidence: 0.95,
+          salience: 0.9,
+          slots: { positive_attributed_use_count: 2 },
+        }],
+        edges: [],
+      });
+      const seededNode = seeded.out.nodes[0];
+      assert.ok(seededNode);
+      seededMemoryId = seededNode.id;
+    } finally {
+      await seedRuntime.close();
+    }
+
+    const memoryPacket = buildAionisMemoryPacket({
+      tenant_id: "default",
+      scope: "default",
+      query: {
+        source: "text",
+        intent: "commit one atomic learning exposure",
+      },
+      nodes: [{
+        id: seededMemoryId,
+        type: "concept",
+        tier: "warm",
+        title: "Prior supported atomic guide memory",
+        text_summary: "The guide learning unit of work must preserve this supported prior state.",
+        slots: { positive_attributed_use_count: 2 },
+        confidence: 0.95,
+        salience: 0.9,
+        created_at: "2026-07-14T00:00:00.000Z",
+      }],
+    });
+    const guideInput = ProductGuideRequest.parse({
+      operation_id: operationId,
+      tenant_id: "default",
+      scope: "default",
+      run_id: "run-guide-learning-atomic-1",
+      consumer_agent_id: "local-user",
+      query_text: "Persist the protected guide response and its learning exposure atomically.",
+      context: {
+        task_family: "atomic_learning_uow",
+        task_signature: "atomic-learning-uow-guide",
+        repository_signature: "aionis-runtime-focused",
+      },
+    });
+    const executeGuide = async (runtime: ReturnType<typeof openAtomicRuntime>) =>
+      await runtime.guide.execute(guideInput, {
+        principal: null,
+        planningContext: async () => ({
+          tenant_id: "default",
+          scope: "default",
+          recall: { aionis_memory_packet: memoryPacket },
+        }),
+        applyIdentity: (input) => input,
+      });
+
+    let injected = false;
+    const faultRuntime = openAtomicRuntime(dbPath, (phase) => {
+      if (phase === "before_commit" && !injected) {
+        injected = true;
+        throw new Error("injected guide learning before-commit fault");
+      }
+    });
+    try {
+      const failed = await executeGuide(faultRuntime);
+      assert.equal(failed.ok, false);
+      assert.equal(failed.statusCode, 500);
+      assert.equal(injected, true);
+    } finally {
+      await faultRuntime.close();
+    }
+    assert.deepEqual(
+      guideLearningAtomicCounts(dbPath, operationId),
+      ZERO_GUIDE_LEARNING_ATOMIC_COUNTS,
+      "the injected guide transaction must leave no guide, learning, or operation mutation",
+    );
+
+    let successBody: Record<string, unknown> | null = null;
+    const healthyRuntime = openAtomicRuntime(dbPath);
+    try {
+      const succeeded = await executeGuide(healthyRuntime);
+      assert.equal(succeeded.ok, true);
+      assert.equal(succeeded.statusCode, 200);
+      successBody = succeeded.body as Record<string, unknown>;
+    } finally {
+      await healthyRuntime.close();
+    }
+
+    assert.deepEqual(guideLearningAtomicCounts(dbPath, operationId), {
+      guide_memory_commits: 1,
+      guide_memory_nodes: 1,
+      guide_receipts: 1,
+      learning_episode_events: 1,
+      learning_exposure_items: 1,
+      guide_operation_receipts: 1,
+    });
+
+    const db = createSqliteDatabase(dbPath);
+    try {
+      const linkage = db.prepare<{
+        guide_trace_id: string;
+        guide_commit_id: string;
+        operation_commit_id: string;
+        episode_commit_id: string;
+        operation_id: string;
+        projection_complete: number;
+        promotion_eligible: number;
+        memory_id: string;
+        prior_supported_use_count: number;
+        learning_track: string;
+        track_reason: string;
+      }>(`
+        SELECT guide.guide_trace_id,
+               guide.commit_id AS guide_commit_id,
+               operation.commit_id AS operation_commit_id,
+               event.source_commit_id AS episode_commit_id,
+               event.operation_id,
+               event.projection_complete,
+               event.promotion_eligible,
+               item.memory_id,
+               item.prior_supported_use_count,
+               item.learning_track,
+               item.track_reason
+        FROM lite_runtime_write_operations AS operation
+        JOIN lite_product_guide_receipts AS guide
+          ON guide.tenant_id = operation.tenant_id
+         AND guide.scope = operation.scope
+         AND guide.commit_id = operation.commit_id
+        JOIN lite_learning_episode_events AS event
+          ON event.tenant_id = guide.tenant_id
+         AND event.scope = guide.scope
+         AND event.source_kind = 'guide_receipt'
+         AND event.source_id = guide.guide_trace_id
+        JOIN lite_learning_exposure_items AS item
+          ON item.tenant_id = event.tenant_id
+         AND item.scope = event.scope
+         AND item.event_id = event.event_id
+        WHERE operation.operation_kind = 'product_guide_v1'
+          AND operation.operation_id = ?
+      `).get(operationId);
+      assert.ok(linkage);
+      assert.equal(linkage.guide_trace_id, successBody?.guide_trace_id);
+      assert.equal(linkage.guide_commit_id, linkage.operation_commit_id);
+      assert.equal(linkage.guide_commit_id, linkage.episode_commit_id);
+      assert.equal(linkage.operation_id, operationId);
+      assert.equal(linkage.projection_complete, 1);
+      assert.equal(linkage.promotion_eligible, 0);
+      assert.equal(linkage.memory_id, seededMemoryId);
+      assert.equal(linkage.prior_supported_use_count, 2);
+      assert.equal(linkage.learning_track, "exploit");
+      assert.equal(linkage.track_reason, "prior_supported");
+    } finally {
+      db.close();
+    }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("observe operation receipt is stable across close/reopen and conflicts on content reuse", async () => {

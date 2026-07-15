@@ -965,8 +965,8 @@ test("projection repair waits for an active SQLite writer and then commits one n
   }
 });
 
-test("complete v3 is current after learning-ledger activation", async () => {
-  const temp = tempDatabase("complete-v3-current");
+test("complete v4 is current after active-lease trigger migration", async () => {
+  const temp = tempDatabase("complete-v4-current");
   try {
     const store = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
     await store.close();
@@ -974,8 +974,8 @@ test("complete v3 is current after learning-ledger activation", async () => {
     const db = createSqliteDatabase(temp.path);
     try {
       const report = inspectLiteRuntimeSchema(db);
-      assert.equal(report.detected_version, 3);
-      assert.equal(report.current_version, 3);
+      assert.equal(report.detected_version, 4);
+      assert.equal(report.current_version, 4);
       assert.equal(report.classification, "current");
       assert.equal(report.upgrade_required, false);
     } finally {
@@ -1032,7 +1032,7 @@ test("damaged v2 authority table is incompatible before migration", async () => 
       const beforeInspection = schemaSnapshot(temp.path);
       const report = inspectLiteRuntimeSchema(db);
       assert.equal(report.detected_version, 2);
-      assert.equal(report.current_version, 3);
+      assert.equal(report.current_version, 4);
       assert.equal(report.classification, "incompatible");
       assert.match(
         report.index_problems.join("\n"),
@@ -1066,9 +1066,9 @@ test("future schema remains incompatible", () => {
 
       const report = inspectLiteRuntimeSchema(db);
       assert.equal(report.detected_version, 99);
-      assert.equal(report.current_version, 3);
+      assert.equal(report.current_version, 4);
       assert.equal(report.classification, "incompatible");
-      assert.match(report.problems.join("\n"), /newer than supported version 3/);
+      assert.match(report.problems.join("\n"), /newer than supported version 4/);
     } finally {
       db.close();
     }
@@ -1077,8 +1077,8 @@ test("future schema remains incompatible", () => {
   }
 });
 
-test("complete v2 is supported_previous_v2 against the active v3 target", async () => {
-  const temp = tempDatabase("complete-v2-against-active-v3");
+test("complete v2 is supported_previous_v2 against the active v4 target", async () => {
+  const temp = tempDatabase("complete-v2-against-active-v4");
   try {
     const store = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
     await store.close();
@@ -1089,7 +1089,7 @@ test("complete v2 is supported_previous_v2 against the active v3 target", async 
       const beforeInspection = schemaSnapshot(temp.path);
       const report = inspectLiteRuntimeSchema(db);
       assert.equal(report.detected_version, 2);
-      assert.equal(report.current_version, 3);
+      assert.equal(report.current_version, 4);
       assert.equal(report.classification, "supported_previous_v2");
       assert.equal(report.upgrade_required, true);
       assert.deepEqual(report.missing_tables, []);

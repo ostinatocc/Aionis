@@ -488,6 +488,200 @@ function registerProductFacade(args: {
   });
 }
 
+const PRODUCT_GUIDE_OPERATION_KIND = "product_guide_v1";
+
+type GuideOperationMutationCounts = Readonly<{
+  memory_commits: number;
+  memory_nodes: number;
+  execution_decisions: number;
+  guide_receipts: number;
+  write_operations: number;
+  learning_episode_events: number;
+  learning_exposure_items: number;
+}>;
+
+function guideOperationMutationCounts(
+  runtimeDatabase: ReturnType<typeof createLiteRuntimeDatabase>,
+): GuideOperationMutationCounts {
+  const count = (sql: string, ...params: unknown[]): number => {
+    const row = runtimeDatabase.readDb.prepare<{ count: number }>(sql).get(...params);
+    return Number(row.count);
+  };
+  return {
+    memory_commits: count("SELECT COUNT(*) AS count FROM lite_memory_commits"),
+    memory_nodes: count("SELECT COUNT(*) AS count FROM lite_memory_nodes"),
+    execution_decisions: count("SELECT COUNT(*) AS count FROM lite_memory_execution_decisions"),
+    guide_receipts: count("SELECT COUNT(*) AS count FROM lite_product_guide_receipts"),
+    write_operations: count(
+      "SELECT COUNT(*) AS count FROM lite_runtime_write_operations WHERE operation_kind = ?",
+      PRODUCT_GUIDE_OPERATION_KIND,
+    ),
+    learning_episode_events: count("SELECT COUNT(*) AS count FROM lite_learning_episode_events"),
+    learning_exposure_items: count("SELECT COUNT(*) AS count FROM lite_learning_exposure_items"),
+  };
+}
+
+function createTwoPartyGuidePlanningBarrier(): () => Promise<void> {
+  let arrivals = 0;
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return async () => {
+    arrivals += 1;
+    if (arrivals === 2) release();
+    await released;
+  };
+}
+
+function oversizedGuidePlanningBody(): Record<string, unknown> {
+  const oversizedSummary = "界".repeat(Math.ceil(((2 * 1024 * 1024) + 4096) / 3));
+  assert.ok(Buffer.byteLength(oversizedSummary, "utf8") > 2 * 1024 * 1024);
+  return {
+    tenant_id: "default",
+    scope: "default",
+    recall: {
+      aionis_memory_packet: {
+        contract_version: "aionis_memory_packet_v1",
+        tenant_id: "default",
+        scope: "default",
+        actor: {
+          consumer_agent_id: "local-user",
+          consumer_team_id: null,
+          producer_agent_ids: ["aionis-runtime"],
+        },
+        query: {
+          source: "text",
+          intent: "exercise the protected guide response byte bound",
+          embedding_dims: null,
+        },
+        memory_family: "general_cognitive",
+        relevant_memories: [{
+          memory_id: "oversized-guide-memory",
+          title: "Oversized protected guide response",
+          summary: oversizedSummary,
+          memory_type: "fact",
+          domain: "general",
+          source_layer: "L2",
+          authority: "advisory",
+          confidence: 0.9,
+          salience: 0.9,
+          lifecycle_state: "active",
+          evidence_ids: ["oversized-guide-evidence"],
+          observed_at: null,
+          target_files: [],
+          recall_sources: [],
+        }],
+        evidence_trail: [{
+          evidence_id: "oversized-guide-evidence",
+          memory_id: "oversized-guide-memory",
+          source: "node",
+          relation: "direct_match",
+          reason: "The file-backed route fixture supplied one valid governed memory packet.",
+        }],
+        lifecycle: {
+          used_memory_ids: ["oversized-guide-memory"],
+          candidate_memory_ids: [],
+          suppressed_memory_ids: [],
+          archived_memory_ids: [],
+          rehydration_hints: [],
+        },
+        contradiction_warnings: [],
+        forgetting_state: {
+          stale_memory_count: 0,
+          suppressed_count: 0,
+          archived_count: 0,
+          rehydration_candidate_count: 0,
+        },
+        behavior_impact: {
+          will_shape_behavior: true,
+          changed_fields: ["relevant_memories"],
+          expected_effects: ["fact_recall"],
+          explanation: "The governed packet contributes one relevant memory.",
+        },
+        risk: {
+          negative_transfer_risk: "low",
+          contradiction_count: 0,
+          low_confidence_count: 0,
+          stale_memory_count: 0,
+          reasons: [],
+        },
+        source_map: {
+          routes_used: ["/v1/guide"],
+          internal_surfaces_used: ["route_test_fixture"],
+          omitted_internal_surfaces: [],
+        },
+      },
+    },
+  };
+}
+
+function openGuideOperationRouteFixture(args: {
+  name: string;
+  dbPath?: string;
+  removeOnClose?: boolean;
+  planningBody?: () => Record<string, unknown>;
+  beforePlanning?: () => Promise<void>;
+}) {
+  const dbPath = args.dbPath ?? tmpDbPath(args.name);
+  const runtimeDatabase = createLiteRuntimeDatabase(dbPath);
+  const liteWriteStore = createLiteWriteStoreFromDatabase(runtimeDatabase, {
+    annProjectionEnabled: false,
+  });
+  const learningEpisodeLedgerAccess = createLiteLearningEpisodeLedgerAccess(runtimeDatabase);
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  let planningCalls = 0;
+  registerRuntimeErrorHandler(app);
+  registerProductFacade({
+    app,
+    env,
+    guards,
+    liteWriteStore,
+    learningEpisodeLedgerAccess,
+    memoryWriteService: createMemoryWriteRouteService({
+      env,
+      embedder: DeterministicEmbeddingProvider,
+      liteWriteStore,
+      executionStateStore: null,
+    }),
+    planningContextService: {
+      async assemble() {
+        planningCalls += 1;
+        await args.beforePlanning?.();
+        return args.planningBody?.() ?? {
+          tenant_id: "default",
+          scope: "default",
+          recall: {},
+        };
+      },
+    },
+  });
+  return {
+    app,
+    runtimeDatabase,
+    liteWriteStore,
+    dbPath,
+    planningCalls: () => planningCalls,
+    counts: () => guideOperationMutationCounts(runtimeDatabase),
+    async close() {
+      try {
+        await app.close();
+      } finally {
+        try {
+          await liteWriteStore.close();
+        } finally {
+          await runtimeDatabase.close();
+          if (args.removeOnClose !== false) {
+            fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+          }
+        }
+      }
+    },
+  };
+}
+
 test("product facade fails closed instead of injecting an internal memory write route", async () => {
   const app = Fastify();
   const env = liteEnv();
@@ -778,6 +972,357 @@ test("product guide passes the exact authenticated principal into learning resol
   }
 });
 
+test("guide operation replays the exact response and rejects changed content before planning", async () => {
+  const fixture = openGuideOperationRouteFixture({ name: "guide-operation-exact-replay" });
+  const normalizedOperationId = "guide-operation-exact-replay-1";
+  const payload = {
+    operation_id: `  ${normalizedOperationId}  `,
+    tenant_id: "default",
+    scope: "default",
+    run_id: "run:guide-operation-exact-replay",
+    consumer_agent_id: "local-user",
+    query_text: "Return one durable protected guide response.",
+    context: {
+      task_signature: "guide-operation-exact-replay",
+      nested: { second: 2, first: 1 },
+    },
+  };
+  try {
+    const first = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload,
+    });
+    assert.equal(first.statusCode, 200, first.body);
+    assert.equal(fixture.planningCalls(), 1);
+    const firstBody = first.json();
+    assert.equal(firstBody.operation_id, normalizedOperationId);
+    const afterFirst = fixture.counts();
+    assert.equal(afterFirst.memory_commits, 1);
+    assert.equal(afterFirst.memory_nodes, 1);
+    assert.equal(afterFirst.guide_receipts, 1);
+    assert.equal(afterFirst.learning_episode_events, 1);
+    assert.equal(afterFirst.learning_exposure_items, 0);
+    assert.equal(afterFirst.write_operations, 1);
+
+    const stored = fixture.runtimeDatabase.readDb.prepare<{
+      request_sha256: string;
+      receipt_json: string;
+    }>(
+      `SELECT request_sha256, receipt_json
+       FROM lite_runtime_write_operations
+       WHERE tenant_id = ? AND scope = ?
+         AND operation_kind = ? AND operation_id = ?`,
+    ).get(
+      "default",
+      "default",
+      PRODUCT_GUIDE_OPERATION_KIND,
+      normalizedOperationId,
+    );
+    assert.ok(stored);
+    assert.match(stored.request_sha256, /^[a-f0-9]{64}$/);
+    const storedResult = JSON.parse(stored.receipt_json);
+    assert.equal(storedResult.ok, true);
+    assert.equal(storedResult.statusCode, 200);
+    assert.deepEqual(storedResult.body, firstBody);
+
+    const replay = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        ...payload,
+        operation_id: normalizedOperationId,
+        context: {
+          nested: { first: 1, second: 2 },
+          task_signature: "guide-operation-exact-replay",
+        },
+      },
+    });
+    assert.equal(replay.statusCode, 200, replay.body);
+    assert.equal(replay.body, first.body);
+    assert.equal(replay.json().guide_trace_id, firstBody.guide_trace_id);
+    assert.deepEqual(replay.json().agent_context, firstBody.agent_context);
+    assert.equal(fixture.planningCalls(), 1, "an exact replay must return before planning");
+    assert.deepEqual(fixture.counts(), afterFirst);
+
+    const conflict = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        ...payload,
+        query_text: "Changed intent under the same protected operation identity.",
+      },
+    });
+    assert.equal(conflict.statusCode, 409, conflict.body);
+    assert.equal(conflict.json().error, "learning_episode_operation_conflict");
+    assert.equal(fixture.planningCalls(), 1, "an operation conflict must return before planning");
+    assert.deepEqual(fixture.counts(), afterFirst);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("guide operation replays a commit whose first HTTP response was lost", async () => {
+  const dbPath = tmpDbPath("guide-operation-commit-before-response");
+  const firstFixture = openGuideOperationRouteFixture({
+    name: "guide-operation-commit-before-response-first",
+    dbPath,
+    removeOnClose: false,
+  });
+  let firstFixtureClosed = false;
+  let restartedFixture: ReturnType<typeof openGuideOperationRouteFixture> | null = null;
+  const operationId = "guide-operation-commit-before-response-1";
+  let rejectFirstSuccess = true;
+  firstFixture.app.addHook("onSend", async (request, reply, payload) => {
+    if (request.url === "/v1/guide" && reply.statusCode === 200 && rejectFirstSuccess) {
+      rejectFirstSuccess = false;
+      throw new Error("simulated transport loss after the guide transaction committed");
+    }
+    return payload;
+  });
+  const payload = {
+    operation_id: operationId,
+    tenant_id: "default",
+    scope: "default",
+    consumer_agent_id: "local-user",
+    query_text: "Persist once even if the first HTTP response is lost.",
+    context: { task_signature: "guide-operation-commit-before-response" },
+  };
+  try {
+    const lost = await firstFixture.app.inject({ method: "POST", url: "/v1/guide", payload });
+    assert.equal(lost.statusCode, 500, lost.body);
+    assert.equal(firstFixture.planningCalls(), 1);
+    const afterLostResponse = firstFixture.counts();
+    assert.equal(afterLostResponse.memory_commits, 1);
+    assert.equal(afterLostResponse.memory_nodes, 1);
+    assert.equal(afterLostResponse.guide_receipts, 1);
+    assert.equal(afterLostResponse.learning_episode_events, 1);
+    assert.equal(afterLostResponse.learning_exposure_items, 0);
+    assert.equal(afterLostResponse.write_operations, 1);
+
+    const stored = firstFixture.runtimeDatabase.readDb.prepare<{ receipt_json: string }>(
+      `SELECT receipt_json
+       FROM lite_runtime_write_operations
+       WHERE tenant_id = ? AND scope = ?
+         AND operation_kind = ? AND operation_id = ?`,
+    ).get("default", "default", PRODUCT_GUIDE_OPERATION_KIND, operationId);
+    assert.ok(stored);
+    const storedResult = JSON.parse(stored.receipt_json);
+
+    await firstFixture.close();
+    firstFixtureClosed = true;
+    restartedFixture = openGuideOperationRouteFixture({
+      name: "guide-operation-commit-before-response-restart",
+      dbPath,
+      planningBody() {
+        throw new Error("restarted exact replay must not call planning");
+      },
+    });
+    const retry = await restartedFixture.app.inject({ method: "POST", url: "/v1/guide", payload });
+    assert.equal(retry.statusCode, 200, retry.body);
+    assert.equal(retry.body, JSON.stringify(storedResult.body));
+    assert.equal(restartedFixture.planningCalls(), 0, "the restarted retry must replay before planning");
+    assert.deepEqual(restartedFixture.counts(), afterLostResponse);
+  } finally {
+    if (restartedFixture) {
+      await restartedFixture.close();
+    } else {
+      if (!firstFixtureClosed) await firstFixture.close();
+      fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+    }
+  }
+});
+
+test("concurrent guide operation requests use the transaction recheck to commit one response", async () => {
+  const fixture = openGuideOperationRouteFixture({
+    name: "guide-operation-concurrent-recheck",
+    beforePlanning: createTwoPartyGuidePlanningBarrier(),
+  });
+  const payload = {
+    operation_id: "guide-operation-concurrent-recheck-1",
+    tenant_id: "default",
+    scope: "default",
+    consumer_agent_id: "local-user",
+    query_text: "Concurrently request one canonical protected guide.",
+    context: { task_signature: "guide-operation-concurrent-recheck" },
+  };
+  try {
+    const [left, right] = await Promise.all([
+      fixture.app.inject({ method: "POST", url: "/v1/guide", payload }),
+      fixture.app.inject({ method: "POST", url: "/v1/guide", payload }),
+    ]);
+    assert.equal(left.statusCode, 200, left.body);
+    assert.equal(right.statusCode, 200, right.body);
+    assert.equal(left.body, right.body);
+    assert.equal(left.json().guide_trace_id, right.json().guide_trace_id);
+    assert.deepEqual(left.json().agent_context, right.json().agent_context);
+    assert.equal(
+      fixture.planningCalls(),
+      2,
+      "both concurrent requests intentionally pass the pre-planning read before either commits",
+    );
+    const counts = fixture.counts();
+    assert.equal(counts.memory_commits, 1);
+    assert.equal(counts.memory_nodes, 1);
+    assert.equal(counts.guide_receipts, 1);
+    assert.equal(counts.learning_episode_events, 1);
+    assert.equal(counts.learning_exposure_items, 0);
+    assert.equal(counts.write_operations, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("protected guide operation rejects a canonical response above 2 MiB with zero mutation", async () => {
+  const fixture = openGuideOperationRouteFixture({
+    name: "guide-operation-response-too-large",
+    planningBody: oversizedGuidePlanningBody,
+  });
+  const before = fixture.counts();
+  try {
+    const response = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        operation_id: "guide-operation-response-too-large-1",
+        tenant_id: "default",
+        scope: "default",
+        consumer_agent_id: "local-user",
+        query_text: "Exercise the UTF-8 protected response bound.",
+        include_packets: true,
+      },
+    });
+    assert.equal(response.statusCode, 413, response.body);
+    assert.equal(response.json().error, "protected_guide_response_too_large");
+    assert.equal(fixture.planningCalls(), 1);
+    assert.deepEqual(fixture.counts(), before);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("concurrent protected guide operations atomically persist one real planning tool decision", async () => {
+  const dbPath = tmpDbPath("guide-operation-real-tool-decision-concurrency");
+  const runtimeDatabase = createLiteRuntimeDatabase(dbPath);
+  const liteWriteStore = createLiteWriteStoreFromDatabase(runtimeDatabase, { annProjectionEnabled: false });
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const planningBarrier = createTwoPartyGuidePlanningBarrier();
+  try {
+    registerFullProductMemoryApp({
+      app,
+      env,
+      guards,
+      liteWriteStore,
+      liteRecallStore,
+      decoratePlanningContextService(service) {
+        return {
+          async assemble(...args) {
+            await planningBarrier();
+            return await service.assemble(...args);
+          },
+        };
+      },
+    });
+    const payload = {
+      operation_id: "guide-operation-real-tool-decision-concurrency-1",
+      tenant_id: "default",
+      scope: "default",
+      run_id: "run:guide-operation-real-tool-decision-concurrency",
+      consumer_agent_id: "local-user",
+      query_text: "Select one tool and atomically protect the concurrent guide response.",
+      tool_candidates: ["read", "bash"],
+      context: { task_signature: "guide-operation-real-tool-decision-concurrency" },
+    };
+    const [left, right] = await Promise.all([
+      app.inject({ method: "POST", url: "/v1/guide", payload }),
+      app.inject({ method: "POST", url: "/v1/guide", payload }),
+    ]);
+    assert.equal(left.statusCode, 200, left.body);
+    assert.equal(right.statusCode, 200, right.body);
+    assert.equal(left.body, right.body);
+    const receipt = objectValue(left.json().tool_selection, "protected guide tool_selection");
+    const counts = guideOperationMutationCounts(runtimeDatabase);
+    assert.equal(counts.memory_commits, 1);
+    assert.equal(counts.memory_nodes, 1);
+    assert.equal(counts.execution_decisions, 1);
+    assert.equal(counts.guide_receipts, 1);
+    assert.equal(counts.write_operations, 1);
+    const persisted = await liteWriteStore.getExecutionDecision({
+      scope: "default",
+      id: receipt.decision_id,
+    });
+    assert.ok(persisted);
+    assert.equal(persisted.created_at, receipt.created_at);
+    assert.equal(persisted.policy_sha256, receipt.policy_sha256);
+  } finally {
+    await app.close();
+    await liteRecallStore.close();
+    await liteWriteStore.close();
+    await runtimeDatabase.close();
+    fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+  }
+});
+
+test("protected guide operation rolls back a real prepared tool decision when oversized", async () => {
+  const dbPath = tmpDbPath("guide-operation-real-tool-decision-too-large");
+  const runtimeDatabase = createLiteRuntimeDatabase(dbPath);
+  const liteWriteStore = createLiteWriteStoreFromDatabase(runtimeDatabase, { annProjectionEnabled: false });
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  try {
+    registerFullProductMemoryApp({
+      app,
+      env,
+      guards,
+      liteWriteStore,
+      liteRecallStore,
+      decoratePlanningContextService(service) {
+        return {
+          async assemble(...args) {
+            const result = await service.assemble(...args);
+            assert.ok(result && typeof result === "object" && !Array.isArray(result));
+            const body = result as Record<string, any>;
+            const oversized = oversizedGuidePlanningBody() as Record<string, any>;
+            assert.ok(body.recall && typeof body.recall === "object");
+            body.recall.aionis_memory_packet = oversized.recall.aionis_memory_packet;
+            return result;
+          },
+        };
+      },
+    });
+    const before = guideOperationMutationCounts(runtimeDatabase);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        operation_id: "guide-operation-real-tool-decision-too-large-1",
+        tenant_id: "default",
+        scope: "default",
+        run_id: "run:guide-operation-real-tool-decision-too-large",
+        consumer_agent_id: "local-user",
+        query_text: "Reject the oversized response without persisting its selected tool.",
+        tool_candidates: ["read", "bash"],
+        include_packets: true,
+        context: { task_signature: "guide-operation-real-tool-decision-too-large" },
+      },
+    });
+    assert.equal(response.statusCode, 413, response.body);
+    assert.equal(response.json().error, "protected_guide_response_too_large");
+    assert.deepEqual(guideOperationMutationCounts(runtimeDatabase), before);
+  } finally {
+    await app.close();
+    await liteRecallStore.close();
+    await liteWriteStore.close();
+    await runtimeDatabase.close();
+    fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+  }
+});
+
 test("product guide experiment profile fails control without immutable Runtime authority", async () => {
   const app = Fastify();
   const env = {
@@ -815,7 +1360,17 @@ test("product guide experiment profile fails control without immutable Runtime a
   const liteWriteStore = createLiteWriteStoreFromDatabase(runtimeDatabase, {
     annProjectionEnabled: false,
   });
-  const learningEpisodeLedgerAccess = createLiteLearningEpisodeLedgerAccess(runtimeDatabase);
+  const baseLearningEpisodeLedgerAccess = createLiteLearningEpisodeLedgerAccess(runtimeDatabase);
+  let authorityReadCount = 0;
+  let failAuthorityReads = false;
+  const learningEpisodeLedgerAccess: LiteLearningEpisodeLedgerAccess = {
+    ...baseLearningEpisodeLedgerAccess,
+    async resolveGuideExperimentAuthority(args) {
+      authorityReadCount += 1;
+      if (failAuthorityReads) throw new Error("injected authority read failure");
+      return await baseLearningEpisodeLedgerAccess.resolveGuideExperimentAuthority(args);
+    },
+  };
   try {
     registerRuntimeErrorHandler(app);
     registerProductFacade({
@@ -865,6 +1420,7 @@ test("product guide experiment profile fails control without immutable Runtime a
       experiment_revision: 1,
       reason_codes: ["experiment_revision_unprovisioned"],
     });
+    assert.equal(authorityReadCount, 2, "experiment control must recheck authority inside the write transaction");
     const forbiddenAuthorityKeys = new Set([
       "assignment",
       "assignment_randomness_sha256",
@@ -882,6 +1438,43 @@ test("product guide experiment profile fails control without immutable Runtime a
       }
     };
     visit(response.json());
+    const eventCountBeforeReadFailure = Number((runtimeDatabase.readDb.prepare(
+      "SELECT COUNT(*) AS count FROM lite_learning_episode_events",
+    ).get() as { count: number }).count);
+    failAuthorityReads = true;
+    const readFailure = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        query_text: "Fail control when experiment authority cannot be rechecked.",
+        context: {
+          task_family: "repository_change",
+          task_signature: "immutable-shadow-task-read-failure",
+          repository_signature: "immutable-shadow-repository",
+        },
+      },
+    });
+    assert.equal(readFailure.statusCode, 200, readFailure.body);
+    assert.equal(
+      readFailure.json().source_map.admission_candidate_policy.reason_codes[0],
+      "experiment_authority_changed_before_commit",
+    );
+    assert.equal(authorityReadCount, 4);
+    assert.equal(Number((runtimeDatabase.readDb.prepare(
+      "SELECT COUNT(*) AS count FROM lite_learning_episode_events",
+    ).get() as { count: number }).count), eventCountBeforeReadFailure);
+    const legacyOperationCount = runtimeDatabase.readDb.prepare<{ count: number }>(
+      `SELECT COUNT(*) AS count
+       FROM lite_runtime_write_operations
+       WHERE operation_kind = ?`,
+    ).get(PRODUCT_GUIDE_OPERATION_KIND);
+    assert.equal(
+      Number(legacyOperationCount.count),
+      0,
+      "a compatible guide without operation_id must not claim protected replay identity",
+    );
   } finally {
     await liteWriteStore.close();
     await runtimeDatabase.close();
@@ -1513,6 +2106,7 @@ function registerFullProductMemoryApp(args: {
   liteRecallStore: ReturnType<typeof createLiteRecallStore>;
   embedder?: typeof DeterministicEmbeddingProvider | null;
   skillCandidateReviewAccess?: ReturnType<ReturnType<typeof createLiteSkillCandidateReviewStore>["createSkillCandidateReviewAccess"]>;
+  decoratePlanningContextService?: (service: MemoryPlanningContextService) => MemoryPlanningContextService;
 }) {
   const routeEmbedder = args.embedder === undefined ? DeterministicEmbeddingProvider : args.embedder;
   registerRuntimeErrorHandler(args.app);
@@ -1637,7 +2231,9 @@ function registerFullProductMemoryApp(args: {
       liteWriteStore: args.liteWriteStore,
       executionStateStore: null,
     }),
-    planningContextService: contextRuntimeRoutes,
+    planningContextService: args.decoratePlanningContextService
+      ? args.decoratePlanningContextService(contextRuntimeRoutes)
+      : contextRuntimeRoutes,
     handoffRouteService: createHandoffRouteService({
       env: args.env,
       embedder: routeEmbedder,
@@ -6130,9 +6726,11 @@ test("product guide trace attribution resolves used memories from persisted expo
     assert.equal(unusedExposureStat.exposure_count, 2);
     assert.equal(unusedExposureStat.positive_attributed_use_count, 0);
     assert.equal(unusedExposureStat.repeated_without_positive_attribution, true);
-    assert.equal(feedbackBody.forget_effect.guide_trace.feedback_learning_control.contract_version, "aionis_feedback_learning_control_persistence_v1");
-    assert.equal(feedbackBody.forget_effect.guide_trace.feedback_learning_control.mode, "inspect_before_use_persistence");
-    assert.deepEqual(feedbackBody.forget_effect.guide_trace.feedback_learning_control.changed_memory_ids, [unusedNodeId]);
+    assert.equal(
+      feedbackBody.forget_effect.guide_trace.feedback_learning_control,
+      undefined,
+      "Steps 1-3 keep repeated-unused evidence read-only until the Step 4 queue consumer runs",
+    );
 
     const usedAfterFeedback = await liteWriteStore.findNodes({
       scope: "default",
@@ -6156,8 +6754,8 @@ test("product guide trace attribution resolves used memories from persisted expo
     assert.equal(unusedAfterFeedback.rows[0]?.slots.feedback_negative, undefined);
     assert.equal(unusedAfterFeedback.rows[0]?.slots.unused_exposure_observation, undefined);
     assert.equal(unusedAfterFeedback.rows[0]?.slots.repeated_unattributed_memory_ids, undefined);
-    assert.equal(unusedAfterFeedback.rows[0]?.slots.feedback_learning_control_posture, "inspect_before_use");
-    assert.equal(unusedAfterFeedback.rows[0]?.slots.feedback_learning_control_source, "repeated_unused_without_positive_attribution");
+    assert.equal(unusedAfterFeedback.rows[0]?.slots.feedback_learning_control_posture, undefined);
+    assert.equal(unusedAfterFeedback.rows[0]?.slots.feedback_learning_control_source, undefined);
 
     const afterGuide = await app.inject({
       method: "POST",
@@ -6219,7 +6817,7 @@ test("product guide trace attribution resolves used memories from persisted expo
     const usedDecision = trace.memory_decisions.find((entry: Record<string, unknown>) => entry.memory_id === usedNodeId);
     assert.equal(usedDecision.feedback_detail.threshold_state, "weak_below_threshold");
     const unusedDecision = trace.memory_decisions.find((entry: Record<string, unknown>) => entry.memory_id === unusedNodeId);
-    assert.equal(unusedDecision.agent_surface, "inspect_before_use");
+    assert.equal(unusedDecision.agent_surface, "use_now");
     assert.equal(unusedDecision.feedback_detail, null);
   } finally {
     await app.close();

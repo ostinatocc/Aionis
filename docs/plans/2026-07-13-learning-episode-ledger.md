@@ -883,11 +883,85 @@ three fail-closed slices instead of one authority-changing commit:
   verification plus nonce, closure, full lease release, and operation receipt
   in one shared write transaction.
 
-Production remains fail-control after 3.0A. The checked-in gate registry is
-still `calibration_pending`, and there is not yet a production external
-execution-policy code registry. Synthetic passed registries are test-only.
-Neither A/A/shadow nor confirmatory production provisioning is claimed by this
-slice; Tasks 3.0B/3.0C remain open.
+**Task 3.0B implementation split (2026-07-14):** the protected provision
+workflow is itself delivered in two fail-closed slices:
+
+- **Task 3.0B-1 — provision authority foundation:** strict integrity-only
+  profile/task parsing, a full immutable external-execution-policy registry
+  contract, a tenant-wide protected operation receipt, double-checked exact
+  replay, an independent 32-byte diagnostic OS-CSPRNG draw inside the shared
+  `BEGIN IMMEDIATE`, atomic candidate/gate/principal/revision registration, and
+  DB-regenerated secret-scanned applicability output. Production remains
+  blocked by the checked-in pending gate and unregistered external policy;
+  only an explicitly injected checked-in test registry exercises success.
+- **Task 3.0B-2 — confirmatory atomic provision:** reviewed external inputs and
+  memory-namespace manifest, pre-treatment lineage scan, exactly 384 persisted
+  pairs/768 leases, an independent 48-byte MSB-first assignment vector, wave
+  and attempt bindings, concurrent process replay, and full confirmatory
+  applicability membership.
+
+**Task 3.0B completion (2026-07-14):** both slices are implemented. The B2
+boundary freezes strict reviewed inputs, requires 768 existing clean store
+scopes, derives pair/attempt/lease identities server-side, draws independent
+32-byte diagnostic and 48-byte confirmatory randomness only after the locked
+lineage checks, and atomically persists the full 384-pair/768-lease authority
+set plus its DB-regenerated applicability receipt. Real two-process tests prove
+one fresh writer, one exact replay, and exactly one `[32,48]` entropy trace.
+The canonical store-scope contract is one shared 256 UTF-8-byte limit, including
+the non-default-tenant prefix, and the CLI rejects an overflowing reviewed
+manifest before opening the database. A DB-lineage-bound, append-only
+tenant-scope encoding anchor prevents `MEMORY_TENANT_ID` drift from reassigning
+legacy unprefixed scopes. New empty databases establish the anchor before memory
+writes; a legacy database that already contains unprefixed memory without an
+anchor remains available but confirmatory provisioning fails closed until an
+explicit offline ownership migration/attestation is completed.
+Completing Task 3.0B does not authorize confirmatory or production traffic.
+
+**Task 3.0C completion (2026-07-14):** the protected non-HTTP close workflow is
+implemented against the actual B2 authority model. A strict, maximum-one-hour
+approval binds Runtime lineage, task family, confirmatory attempt and digest,
+revision/config, exact namespace set, both implementation contracts, operation,
+reason, nonce, issuer, and key. Fresh close verifies that HMAC under a configured
+non-ephemeral keyring, then the Runtime active key adds a second domain-separated
+HMAC attestation over the complete close receipt. This permits removal of a
+retired approval key while keeping restart verification and exact replay
+cryptographically closed, provided the receipt-attestation key remains in the
+keyring; a missing attestation key is an integrity failure, never a structural
+fallback. The attestation authenticates its own key ID as well as the receipt.
+The production wrapper accepts only an existing current-v3 database, opens it
+with SQLite `mode=rw` (never create), holds an `O_NOFOLLOW` descriptor, and
+pins canonical realpath/device/inode. Its immutable read-only preflight creates
+no WAL/SHM sidecars on a quiescent database; an already-live, trusted WAL/SHM
+pair is read through SQLite's normal read-only WAL view. The protected writer
+performs no migration or journal-mode change before revalidation. The database
+and direct parent must be owned by the service UID. Every canonical ancestor to
+the filesystem root must be owned by that UID or root, and the database, every
+ancestor, and every existing `-wal`/`-shm`/`-journal` sidecar must grant no
+group/other write authority or ACL-delegated authority. Restrictive macOS
+deny-only ACLs remain valid; additive POSIX ACLs and macOS allow entries are
+rejected. Sidecars must be current-UID regular non-symlink files; WAL/SHM must
+exist as a pair and any rollback journal requires recovery before close. ACL
+verification itself is fail-closed. Linux requires the `acl` package's fixed-path
+`getfacl` verifier; missing tooling, stderr, unknown output, named/default/mask
+ACLs, or a base ACL that disagrees with `stat.mode` are all rejected. The
+container and Ubuntu CI install that dependency explicitly. The service UID and root are the explicit local-filesystem trust
+boundary; a same-UID actor already has Runtime database authority. As required
+by Runtime's SQLite WAL posture, this boundary covers locally enforced POSIX
+filesystems only; operator-controlled FUSE and remote NFS/CIFS mounts are not a
+supported close target. All authority
+and filesystem checks run again under the shared `BEGIN IMMEDIATE`, including
+any WAL/SHM pair created while acquiring the write lock. Nonce, append-only closure, protected operation
+receipt, and one uniform release of all 768 leases commit or roll back together.
+Restart, tamper, fault-injection, real CLI, and same/different-operation
+two-process tests cover this boundary. Fresh proposal, reservation, evaluation,
+and promotion-eligible exposure fail after close; exact historical replay and
+late attributed feedback remain available.
+
+All three Task 3.0 slices are now implemented. Production nevertheless remains
+fail-control: the checked-in gate registry is still `calibration_pending`, and
+there is not yet a production external execution-policy code registry.
+Synthetic passed registries are test-only. Neither A/A/shadow nor confirmatory
+production traffic is authorized or claimed by this implementation.
 
 **Files:**
 
@@ -975,8 +1049,13 @@ finite manifest of 384 pairs/768 existing
 host-adapter, provider/model route, region, workload stratum, matching digest,
 and activation wave/times; wildcard, dynamic, duplicate, unknown, cross-tenant,
 unmatched, or post-outcome entries are rejected. It persists all 384 canonical
-pair rows including bounded matching-covariate JSON/digests. Every revision
-draws and persists an independent 32-byte diagnostic assignment seed. Inside a
+pair rows including bounded matching-covariate JSON/digests. The current
+default-tenant scope encoding must match the database's
+append-only Runtime-lineage anchor; an unanchored legacy database with existing
+unprefixed memory is never auto-claimed. Public scopes and their fully encoded
+store keys share the exact 256 UTF-8-byte bound.
+Every revision draws and persists an independent 32-byte diagnostic assignment
+seed. Inside a
 confirmatory `BEGIN IMMEDIATE`, it separately draws exactly 48 bytes from the operating-system CSPRNG,
 maps the 384 bits MSB-first to pairs sorted by pair hash, and assigns exactly one
 candidate and one control per bit. It stores the BLOB plus digest and never
@@ -1066,7 +1145,8 @@ It verifies the bounded HMAC-approved `LearningExperimentCloseApprovalV1`,
 recomputes attempt/revision/namespace membership and the current event head,
 then claims the global `lite_learning_authorization_nonces` row, inserts the
 append-only closure and protected `learning_experiment_close_v1` operation
-receipt, and releases the entire lease set in one `BEGIN IMMEDIATE`. Nonce,
+receipt, attests that receipt with the configured active Runtime authority key,
+and releases the entire lease set in one `BEGIN IMMEDIATE`. Nonce,
 closure, receipt, and every lease transition commit or roll back together. The closure seals eligible evidence for that
 attempt; late feedback remains attributable/safety-relevant but diagnostic.
 Exact retry replays; invalid/replayed nonce, changed approval, partial release,
@@ -1076,6 +1156,9 @@ authority transaction. A later acquisition requires a new lease generation and
 a materially different implementation-contract digest. Tests prove close makes
 `status` report `closed` and makes propose/reserve/evaluate plus new eligible
 exposure fail closed while late feedback remains attributable and diagnostic.
+The approval key may rotate out after a successful close only when the
+receipt-attestation key remains retained; losing that verification key makes
+historical close integrity and replay fail closed.
 
 **Step 4: Run and commit Task 3.0A**
 
@@ -1110,17 +1193,37 @@ Tasks 3.0B and 3.0C add their CLI tests and commit only after their respective
 atomic mutation boundaries are implemented; they are not folded into the 3.0A
 commit merely to satisfy the original monolithic file list.
 
+For completed Task 3.0B/3.0C, run the protected provisioning, confirmatory and
+close multi-process suites, resolver/store close semantics, configuration
+posture, and typecheck:
+
+```bash
+npx tsx --test scripts/ci/lite-learning-experiment-cli.test.ts \
+  scripts/ci/lite-learning-experiment-confirmatory.test.ts \
+  scripts/ci/lite-learning-experiment-close.test.ts \
+  scripts/ci/lite-learning-experiment-resolver.test.ts \
+  scripts/ci/lite-learning-episode-store.test.ts
+npx tsx --test scripts/ci/lite-config-posture.test.ts \
+  scripts/ci/lite-runtime-config.test.ts
+npm run -s typecheck
+```
+
 ### Task 3.1: Add guide operation identity and exact response replay
 
 **Files:**
 
 - Modify: `src/product/product-services.ts`
 - Modify: `src/product/guide-service.ts`
+- Modify: `src/routes/memory-context-runtime.ts`
+- Modify: `src/memory/tools-select.ts`
 - Modify: `src/store/lite-write-store.ts`
 - Modify: `src/sdk.ts`
+- Sync/modify: `../aionis-sdk/src/index.ts`
 - Test: `scripts/ci/lite-product-facade-route.test.ts`
+- Test: `scripts/ci/lite-learning-experiment-resolver.test.ts`
 - Test: `scripts/ci/lite-sdk-client.test.ts`
 - Test: `scripts/ci/lite-sdk-guide-agent-context.test.ts`
+- Test: `../aionis-sdk/test/sdk.test.ts`
 
 **Step 1: Write failing route tests**
 
@@ -1181,14 +1284,39 @@ npm run -s typecheck
 
 Expected: PASS.
 
+**Task 3.1 completion (2026-07-14):** caller-supplied guide operation IDs now
+bind the normalized, identity-resolved request to one canonical
+`product_guide_v1` response. The service performs an indexed replay/conflict
+read before planning and a second read under the shared `BEGIN IMMEDIATE`
+transaction before persisting the exposure node, tool decision, guide receipt,
+and operation receipt. Fresh and replayed HTTP responses are both parsed from
+the same canonical JSON, survive a lost first response plus database reopen,
+and retain the same guide trace and agent context. Protected responses above
+2 MiB fail before any Runtime persistence; real planning tool decisions are
+prepared outside the transaction and persist only for the winning under-limit
+operation. Missing operation IDs remain compatible, write no protected receipt,
+and cannot satisfy experiment enrollment; projection remains deliberately
+incomplete until Task 3.2. Runtime and standalone SDK guide/role helpers expose
+and preserve the operation ID and strict versioned host-task envelope, while
+legacy calls never receive an SDK-generated operation identity.
+
 ### Task 3.2: Persist experiment, exposure event, and items with the guide receipt
 
 **Files:**
 
 - Modify: `src/product/guide-service.ts`
+- Modify: `src/memory/learning-episode-ledger.ts`
+- Modify: `src/memory/learning-experiment-resolver.ts`
 - Modify: `src/memory/product-output/operator-projections.ts`
+- Modify: `src/store/lite-learning-confirmatory-authority.ts`
 - Modify: `src/store/lite-learning-episode-ledger.ts`
+- Create: `src/store/lite-learning-guide-exposure.ts`
+- Modify: `src/store/lite-write-store.ts`
 - Test: `scripts/ci/lite-atomic-write-uow.test.ts`
+- Test: `scripts/ci/lite-admission-policy-active-projection.test.ts`
+- Test: `scripts/ci/lite-learning-episode-contract.test.ts`
+- Test: `scripts/ci/lite-learning-episode-store.test.ts`
+- Test: `scripts/ci/lite-product-facade-route.test.ts`
 
 **Step 1: Add a failing atomic-unit test**
 
@@ -1275,6 +1403,96 @@ git add src/product/product-services.ts src/product/guide-service.ts \
   scripts/ci/lite-sdk-guide-agent-context.test.ts
 git commit -m "feat(guide): persist protected learning exposures"
 ```
+
+**Task 3.2 completion (2026-07-14):** guide now freezes the complete recorded,
+candidate, and served decision set before candidate projection, batch-loads prior
+state for the full relevant-memory set, and keeps missing, invisible, failed, and
+omitted prior decisions as distinct fail-control reasons. The 96-item bound is
+display-only; enrolled ledger membership and its recorded/candidate/served
+surface digests are unbounded up to the contract limit. Exposure payloads carry
+an explicit served arm, canonical relevant-memory membership, projection
+completeness reasons, and the exact frozen prior/track fields for every item.
+
+Protected guide persistence now prepares canonical candidate, control, and
+authority-changed control receipts before opening the shared write transaction.
+Inside that transaction it repeats operation replay detection, re-reads
+experiment/safety/lease authority with the same server `recorded_at` later used
+by the event, and permits only monotonic serving: an unchanged resolution keeps
+its prepared arm; every drift selects control. Memory commit/node, deferred tool
+decision, guide receipt, exposure event/items, and operation receipt commit or
+roll back together. An unsafe authority recheck failure or active-lease identity
+conflict still returns the prepared baseline control response but deliberately
+adds no learning exposure rather than reusing a stale lease. A closed experiment
+or unresolved frozen assignment follows the same terminal no-append rule: the
+baseline guide response, memory commit, guide receipt, and protected operation
+receipt remain auditable, but no unbound event is appended to the former
+matched-pair namespace. Exact replay and a lost first response return the
+original canonical receipt without duplicating any row.
+
+That terminal rule is structural rather than dependent on reason ordering: a
+confirmatory matched-pair profile without its exact active assignment and lease
+cannot append an exposure after close, lease release, demotion, or retirement,
+including when authority changes between the pre-read and `BEGIN`. A safety
+pause with the exact active lease still records a bound served-control exposure;
+pause followed by close/release does not. Integrity-only diagnostics remain
+appendable and promotion-ineligible, so the terminal guard does not erase the
+evidence needed to explain a fail-control decision.
+
+Promotion-eligible guide events now require database-verifiable source roots,
+not merely payload hashes. The append path and restart semantic replay both bind
+the exact guide receipt and canonical ledger, memory commit input digest, the
+commit scope's memory-namespace digest, one Runtime evidence node carrying that
+ledger, and the protected `product_guide_v1` operation receipt with matching
+request, commit, policy, arm, and agent surface. Guide persistence writes the
+protected operation receipt before the learning event in the same transaction,
+so missing, forged, mismatched, or later-corrupted roots fail closed while a
+downstream event failure still rolls every root back.
+
+The root proof also binds the served surface itself. The four served action
+arrays must be mutually exclusive; their union must exactly equal both the
+payload relevant-memory set and the persisted episode-item set; and every item
+must carry the action of the array that served it. The canonical guide ledger
+and operation agent context share one exact `memory_ids` projection, which may
+be a legitimate compact subset of that served union but can never contain an ID
+outside it. Append-time validation and restart replay enforce the same relation,
+closing both cross-surface substitution and post-commit root-tampering paths.
+
+Promotion eligibility is now positive-authorized rather than inferred from the
+absence of known blockers: only the exact `confirmatory_active_lease` plus
+matching served-arm success tuple can enter formal evidence. SQLite triggers,
+append-time isolation, and restart replay enforce two mutually exclusive lanes:
+an in-window promotion-eligible formal arm, or an explicit served-control,
+promotion-ineligible fallback. Early and late exact-bound requests therefore
+persist auditable control exposures, while a candidate-shaped fallback is
+rejected even inside the activation window.
+
+Because this task strengthens the existing active-lease trigger, the Runtime
+write schema is versioned as v4. An existing v3 database upgrades only when its
+complete v3 contract, including the exact legacy trigger, is intact. The trigger
+replacement, v4 shape and semantic checks, preservation counts, and metadata
+update share one `BEGIN IMMEDIATE` transaction. Missing, substituted, hybrid, or
+partially migrated triggers remain incompatible; process death exposes either
+the complete old v3 authority or the complete new v4 authority, never a mixed
+state.
+
+Schema identity checks use a shared SQLite-aware SQL normalizer across runtime
+preflight, migration, and ledger restart verification. It ignores only legal
+exterior formatting and SQLite whitespace outside tokens, folds ASCII keywords
+only, and preserves quoted literals, identifiers, comments, and token
+boundaries. Table, index, partial-index, and trigger definitions are compared as
+complete statements, so literal edits, Unicode lookalikes, non-SQLite
+whitespace, or a fake `WHERE` hidden in a comment cannot be normalized into a
+valid v3 or v4 contract.
+
+The three preregistered external passing roots are intentionally not fabricated
+in this task. Current generic authority insertion cannot legally establish the
+signed claim, supervisor-binding, termination, and result lineage required for
+restart verification, and the production external-policy registry remains
+unregistered. Consequently an `eligible_host` `active_control` assignment stays
+fail-control with `external_prerequisite_roots_unavailable` until the protected
+Task 8 ingestion and restart-verifier workflow exists. Fixture-pilot diagnostic
+traffic remains available and promotion-ineligible; direct SQL is not an
+accepted substitute for the missing authority chain.
 
 ## Phase 4: Atomic memory feedback attribution
 

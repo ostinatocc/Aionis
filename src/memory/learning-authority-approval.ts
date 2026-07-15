@@ -23,6 +23,50 @@ const BoundedKindSchema = z.string().trim().min(1).max(120);
 const AuthorityScopeSchema = z.string().trim().min(1).max(512);
 const DigestSha256Schema = z.string().regex(/^[0-9a-f]{64}$/);
 
+function exactUtf8TextSchema(maxBytes: number, label: string) {
+  return z.string().superRefine((value, context) => {
+    if (value.length === 0
+      || value !== value.trim()
+      || Buffer.byteLength(value, "utf8") > maxBytes
+      || Buffer.from(value, "utf8").toString("utf8") !== value
+      || /[\u0000-\u001f\u007f]/u.test(value)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${label} must be exact control-free UTF-8 text bounded to ${String(maxBytes)} bytes`,
+      });
+    }
+  });
+}
+
+const ExactCloseIdSchema = exactUtf8TextSchema(256, "Close approval identifier");
+const ExactCloseKindSchema = exactUtf8TextSchema(120, "Close approval kind");
+const ExactCloseTenantIdSchema = z.string().regex(
+  /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u,
+  "Close approval tenant ID is invalid",
+);
+const CloseAuthorizationKeyIdSchema = z.string().regex(
+  /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/u,
+  "Close approval key ID must match the Runtime authority keyring syntax",
+);
+const CloseAuthorizationNonceSchema = z.string().regex(
+  /^[A-Za-z0-9_-]{22,128}$/u,
+  "Close approval nonce must be bounded canonical base64url text",
+).superRefine((value, context) => {
+  const decoded = Buffer.from(value, "base64url");
+  if (decoded.length < 16
+    || decoded.length > 96
+    || decoded.toString("base64url") !== value) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Close approval nonce must canonically encode 16 to 96 bytes",
+    });
+  }
+});
+
+export const LEARNING_EXPERIMENT_AUTHORITY_SCOPE = "learning-experiment-authority-v1" as const;
+export const LEARNING_EXPERIMENT_CLOSE_OPERATION_KIND = "learning_experiment_close_v1" as const;
+export const LEARNING_EXPERIMENT_CLOSE_MAX_TTL_MS = 3_600_000;
+
 export const LearningEvidenceEvaluationV1Schema = z.object({
   contract_version: z.literal("learning_evidence_evaluation_v1"),
   decision_kind: z.literal("evidence_evaluation"),
@@ -115,22 +159,43 @@ export const LearningExperimentCloseApprovalV1Schema = z.object({
   contract_version: z.literal("learning_experiment_close_approval_v1"),
   authorization_kind: z.literal("experiment_close"),
   action: z.literal("close_experiment"),
-  tenant_id: BoundedIdSchema,
-  confirmatory_attempt_id: BoundedIdSchema,
-  experiment_id: BoundedIdSchema,
-  experiment_revision: z.number().int().positive(),
+  runtime_authority_lineage_sha256: DigestSha256Schema,
+  tenant_id: ExactCloseTenantIdSchema,
+  task_family: ExactCloseKindSchema,
+  confirmatory_attempt_id: ExactCloseIdSchema,
+  confirmatory_attempt_sha256: DigestSha256Schema,
+  experiment_id: ExactCloseIdSchema,
+  experiment_revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  experiment_config_sha256: DigestSha256Schema,
   namespace_set_sha256: DigestSha256Schema,
   close_reason: z.enum(["operator_stop", "safety_abort", "rollout_expired", "evidence_complete"]),
   candidate_policy_implementation_sha256: DigestSha256Schema,
   gate_policy_implementation_sha256: DigestSha256Schema,
-  authority_scope: AuthorityScopeSchema,
-  authority_operation_kind: z.literal("learning_experiment_close_v1"),
-  authority_operation_id: BoundedIdSchema,
-  approved_by: BoundedIdSchema,
-  authorization_key_id: BoundedIdSchema,
-  authorization_nonce: BoundedIdSchema,
+  authority_scope: z.literal(LEARNING_EXPERIMENT_AUTHORITY_SCOPE),
+  authority_operation_kind: z.literal(LEARNING_EXPERIMENT_CLOSE_OPERATION_KIND),
+  authority_operation_id: ExactCloseIdSchema,
+  approved_by: ExactCloseIdSchema,
+  authorization_key_id: CloseAuthorizationKeyIdSchema,
+  authorization_nonce: CloseAuthorizationNonceSchema,
+  authorization_issued_at: CanonicalLearningUtcTimestampSchema,
   authorization_expires_at: CanonicalLearningUtcTimestampSchema,
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (!(value.authorization_issued_at < value.authorization_expires_at)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["authorization_expires_at"],
+      message: "Close approval expiry must be strictly after issuance",
+    });
+  }
+  if (Date.parse(value.authorization_expires_at) - Date.parse(value.authorization_issued_at)
+      > LEARNING_EXPERIMENT_CLOSE_MAX_TTL_MS) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["authorization_expires_at"],
+      message: "Close approval lifetime must not exceed 3600 seconds",
+    });
+  }
+});
 
 export type LearningExperimentCloseApprovalV1 = z.infer<typeof LearningExperimentCloseApprovalV1Schema>;
 

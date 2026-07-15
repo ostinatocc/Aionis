@@ -26,6 +26,16 @@ test("Docker build and runtime stages use the Node 24 baseline", () => {
   assert.match(dockerfile, /COPY --from=runtime-deps --chown=node:node \/app\/node_modules/);
 });
 
+test("Linux Runtime and CI install the protected-close ACL verifier", () => {
+  const dockerfile = read("Dockerfile");
+  const ci = read(".github/workflows/ci.yml");
+  const dockerCi = read(".github/workflows/docker.yml");
+
+  assert.match(dockerfile, /apt-get install -y --no-install-recommends acl/);
+  assert.match(ci, /sudo apt-get install --yes --no-install-recommends acl/);
+  assert.match(dockerCi, /sudo apt-get install --yes --no-install-recommends acl/);
+});
+
 test("Docker process listens on the container interface while host publishing stays loopback-only", () => {
   const dockerfile = read("Dockerfile");
   const compose = read("docker-compose.yml");

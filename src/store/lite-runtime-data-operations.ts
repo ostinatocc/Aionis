@@ -44,7 +44,11 @@ import {
   type RuntimeIntegrityGateReportV1,
 } from "../memory/learning-authority-approval.js";
 import { createLiteWriteStore } from "./lite-write-store.js";
-import { inspectLiteRuntimeSchema, type LiteRuntimeSchemaReport } from "./lite-runtime-schema.js";
+import {
+  inspectLiteRuntimeSchema,
+  LITE_RUNTIME_WRITE_SCHEMA_VERSION,
+  type LiteRuntimeSchemaReport,
+} from "./lite-runtime-schema.js";
 import { createSqliteDatabase, type SqliteDatabase } from "./sqlite.js";
 
 export type LiteExecutionHistoryVerification = {
@@ -403,7 +407,8 @@ export async function verifyLiteRuntimeDatabase(path: string): Promise<LiteRunti
       .map((row) => String(Object.values(row)[0] ?? ""));
     foreignKeyViolationCount = (db.prepare("PRAGMA foreign_key_check").all() as unknown[]).length;
     schema = inspectLiteRuntimeSchema(db);
-    if (schema.classification === "current" && schema.detected_version === 3) {
+    if (schema.classification === "current"
+      && schema.detected_version === LITE_RUNTIME_WRITE_SCHEMA_VERSION) {
       try {
         databaseInstanceId = assertLiteRuntimeAuthorityIdentity(db);
         learningReplay = assertLiteLearningEpisodeLedgerIntegrity(db, checkedAt);
@@ -561,7 +566,7 @@ export async function verifyLiteRuntimeLearningArtifact(args: {
     };
     let proposalIntegrityError: string | null = null;
     if (verification.schema.classification === "current"
-      && verification.schema.detected_version === 3) {
+      && verification.schema.detected_version === LITE_RUNTIME_WRITE_SCHEMA_VERSION) {
       const db = createSqliteDatabase(snapshotPath);
       try {
         assertLearningLookProposalAgainstDatabase(db, proposal);
@@ -571,7 +576,7 @@ export async function verifyLiteRuntimeLearningArtifact(args: {
         db.close();
       }
     } else {
-      proposalIntegrityError = "look proposal requires a current v3 Runtime authority";
+      proposalIntegrityError = "look proposal requires the current Runtime authority schema";
     }
 
     const schemaCount = verification.quick_check.filter((value) => value !== "ok").length
