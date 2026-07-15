@@ -1418,7 +1418,7 @@ route itself has `memory_runtime_mutation: false`.
 | `learning_effect` | learning loop, promotion evidence, authority gates | `src/memory/learning-loop.ts`, `src/memory/promotion-evidence-ledger.ts`, `src/memory/authority-*.ts` |
 | `forgetting_effect` | semantic forgetting, archive, rehydrate, activation | `src/kernel/forgetting-kernel.ts`, `src/memory/lifecycle-lite.ts` |
 | `feedback_signal_summary` | product-level read-only feedback signal summary | `src/memory/product-output-assembler.ts`, `memory_decision_audit.feedback_signal_review` |
-| `feedback_learning_control` | `/v1/feedback` or advanced `/v1/forget activate` persistence result for repeated-unused-without-positive inspect-before-use posture | `src/routes/product-facade.ts`, `src/memory/lifecycle-lite.ts`, `src/memory/node-feedback-state.ts` |
+| `feedback_learning_control` | Formal `/v1/feedback` or advanced `/v1/forget activate` durable enqueue result (`learning_control_status: queued\|already_completed`); never a synchronous posture-change claim. Legacy feedback without an episode-ledger source omits it. | `src/product/lifecycle-service.ts`, `src/store/lite-learning-control-jobs.ts`, `src/jobs/unused-exposure-learning-control-worker.ts` |
 | `inspect_before_use_shadow_delta` | disabled preview of confidence-decay candidates that would move to inspect-before-use | `src/memory/product-output-assembler.ts`, `memory_decision_trace.inspect_before_use_shadow_delta` |
 | `training_candidates` | execution evidence, handoff, replay, promotion/demotion, forgetting, trace-derived skill candidates | `src/memory/execution-evidence.ts`, `src/memory/handoff.ts`, `src/memory/replay*.ts`, `src/memory/promotion-quality-summary.ts`, `src/memory/product-output-assembler.ts` |
 | `evidence` | replay, runtime signals, promotion quality | `src/memory/replay*.ts`, `src/memory/runtime-signal-*.ts`, `src/memory/promotion-quality-summary.ts` |
@@ -1432,7 +1432,7 @@ route itself has `memory_runtime_mutation: false`.
 | blocked authority and demotion reasons | model/provider marketing claims |
 | forgetting and rehydration effects | raw tool logs unless referenced by evidence id |
 | feedback signal ids with `authority_mutation: false` | treating a report summary as a downgrade or promotion trigger |
-| `feedback_learning_control_posture=inspect_before_use` only after repeated-unused-without-positive gate passes | converting unused exposure into suppression, archive, deletion, or task-specific behavior |
+| `feedback_learning_control_posture=inspect_before_use` only after the durable worker recomputes and atomically completes the repeated-unused-without-positive gate | treating `queued` as synchronous posture change, or converting unused exposure into suppression, archive, deletion, or task-specific behavior |
 | disabled inspect-before-use deltas with `enabled: false` | claiming automatic downgrade or prompt behavior |
 | training candidate labels | actual LoRA training execution |
 | `trace_derived_skill` candidates and procedure drafts with `agent_prompt_included: false` and `runtime_mutation: false` | turning one positive trace into an automatic skill, rule, or direct-use instruction |

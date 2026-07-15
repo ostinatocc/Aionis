@@ -433,6 +433,7 @@ const FeedbackAttributedV1ObjectSchema = z.object({
   host_use_receipt_sha256: NullableDigestSchema,
   runtime_signal_refs: z.array(BoundedIdSchema).max(96),
   unused_exposure_ids: z.array(BoundedIdSchema).max(96),
+  learning_control_queue_contract: z.literal("unused_exposure_learning_control_v1").optional(),
 }).strict();
 
 function validateFeedbackAttributedV1(
@@ -451,6 +452,14 @@ function validateFeedbackAttributedV1(
       code: z.ZodIssueCode.custom,
       path: ["operation_receipt_sha256"],
       message: "protected feedback requires one exact route operation receipt digest",
+    });
+  }
+  if (value.learning_control_queue_contract
+    && (value.feedback_kind !== "memory" || value.unused_exposure_ids.length === 0)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["learning_control_queue_contract"],
+      message: "learning-control queue provenance requires memory feedback with an unused exposure",
     });
   }
 }

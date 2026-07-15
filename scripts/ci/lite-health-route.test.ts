@@ -32,6 +32,22 @@ test("/health redacts local store paths from public health snapshots", async () 
     executionStateStore: store,
     executionTreeStore: store,
     liteReplayStore: store,
+    learningControlWorker: {
+      healthSnapshot: () => ({
+        running: false,
+        closed: false,
+        last_error_code: null,
+        last_terminalization_error_code: null,
+        backlog: {
+          pending: 2,
+          leased: 0,
+          expired_leases: 0,
+          completed: 4,
+          dead_letter: 1,
+          exhausted: 0,
+        },
+      }),
+    },
     sandboxExecutor: {
       healthSnapshot: () => ({ enabled: false, mode: "disabled" }),
     },
@@ -49,12 +65,20 @@ test("/health redacts local store paths from public health snapshots", async () 
           path_configured?: boolean;
           mode?: string;
         };
+        learning_control_worker: {
+          closed: boolean;
+          backlog: { pending: number; dead_letter: number; exhausted: number };
+        };
       };
     };
   };
   assert.equal(body.lite.stores.write.mode, "sqlite_write_v1");
   assert.equal(body.lite.stores.write.path, undefined);
   assert.equal(body.lite.stores.write.path_configured, true);
+  assert.equal(body.lite.stores.learning_control_worker.closed, false);
+  assert.equal(body.lite.stores.learning_control_worker.backlog.pending, 2);
+  assert.equal(body.lite.stores.learning_control_worker.backlog.dead_letter, 1);
+  assert.equal(body.lite.stores.learning_control_worker.backlog.exhausted, 0);
   assert.doesNotMatch(response.body, /aionis-secret/);
   assert.doesNotMatch(response.body, /aionis-lite-write\.sqlite/);
 

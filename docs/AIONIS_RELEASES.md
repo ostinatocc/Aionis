@@ -52,9 +52,13 @@ v0.3.8 preserves the v0.3.7 evidence substrate and closes a feedback boundary:
 - external package smoke verifies the same contract against a real Runtime.
 
 Global candidate serving remains off. The production external policy registry
-is not registered and the gate remains `calibration_pending`. Durable
-learning-control queue/worker processing and later promotion phases are outside
-this checkpoint.
+is not registered and the gate remains `calibration_pending`. The immutable
+v0.3.8 candidate predates Task 4.1 Step 4. Current post-v0.3.8 mainline now
+atomically enqueues formal unused-exposure feedback, reports
+`learning_control_status: queued|already_completed`, and processes it through a
+leased retry/dead-letter Runtime worker. Historical feedback without the Step 4
+queue-provenance marker is not retroactively enqueued. Later promotion phases remain outside
+the released candidate.
 
 The immutable `v0.3.7` tag failed cross-package smoke before Docker image build
 because the old smoke submitted a continuity-only handoff as learning feedback.

@@ -193,6 +193,9 @@ export function buildLiteLearningFeedbackAppend(args: Readonly<{
     return base;
   });
   const receiptSha256 = receiptBody ? hostUseReceiptDigest(receiptBody) : null;
+  const unusedExposureIds = args.source.items.some((item) => !usedMemoryIds.includes(item.memory_id))
+    ? [args.source.event.event_id]
+    : [];
   const payload = FeedbackAttributedV1Schema.parse({
     contract_version: "aionis_learning_feedback_v1",
     feedback_kind: "memory",
@@ -204,9 +207,10 @@ export function buildLiteLearningFeedbackAppend(args: Readonly<{
     source_commit_id: args.sourceCommitId,
     host_use_receipt_sha256: receiptSha256,
     runtime_signal_refs: runtimeSignalRefs,
-    unused_exposure_ids: args.source.items.some((item) => !usedMemoryIds.includes(item.memory_id))
-      ? [args.source.event.event_id]
-      : [],
+    unused_exposure_ids: unusedExposureIds,
+    ...(unusedExposureIds.length > 0
+      ? { learning_control_queue_contract: "unused_exposure_learning_control_v1" }
+      : {}),
   });
   const event: EventWithoutDigest = {
     contract_version: "aionis_learning_episode_event_v1",

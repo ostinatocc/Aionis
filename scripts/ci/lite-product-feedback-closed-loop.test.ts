@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import stableStringify from "fast-json-stable-stringify";
 import {
@@ -31,6 +33,8 @@ import {
   LearningEpisodeEventWithoutDigestSchema,
   type HostUseReceiptV1Body,
 } from "../../src/memory/learning-episode-ledger.ts";
+import { LearningMemoryNamespaceManifestV1Schema } from
+  "../../src/memory/learning-experiment-provisioning.ts";
 import { ProductGuideRequest, guideExposureServedMemoryIds } from "../../src/product/product-services.ts";
 import { createProductGuideService } from "../../src/product/guide-service.ts";
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
@@ -48,6 +52,10 @@ import {
   LITE_LEARNING_LEDGER_REQUIRED_TRIGGERS,
   type LiteLearningEpisodeLedgerAccess,
 } from "../../src/store/lite-learning-episode-ledger.ts";
+import {
+  createLiteLearningControlJobAccess,
+  type LiteLearningControlJobAccess,
+} from "../../src/store/lite-learning-control-jobs.ts";
 import type { LiteLearningAuthorityRow } from "../../src/store/lite-learning-confirmatory-authority.ts";
 import { createLiteLearningExperimentProvisioner } from "../../src/store/lite-learning-experiment-provisioning.ts";
 import {
@@ -60,11 +68,19 @@ import {
   createLiteWriteStoreFromDatabase,
 } from "../../src/store/lite-write-store.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
+import {
+  drainUnusedExposureLearningControlJobs,
+  startUnusedExposureLearningControlWorker,
+} from "../../src/jobs/unused-exposure-learning-control-worker.ts";
 import type { AuthPrincipal } from "../../src/util/auth.ts";
 import {
+  CONFIRMATORY_TENANT_ID,
   CONFIRMATORY_TASK_FAMILY,
+  createConfirmatoryNamespaceManifest,
   createConfirmatoryPassedRegistry,
   createConfirmatoryProfile,
+  createConfirmatoryProvisionInput,
+  provisionConfirmatoryFixture,
   sha256,
 } from "./support/learning-experiment-confirmatory-fixture.ts";
 
@@ -127,6 +143,7 @@ function registerProductFacade(args: {
   planningContextService?: MemoryPlanningContextService | null;
   handoffRouteService?: ReturnType<typeof createHandoffRouteService> | null;
   learningEpisodeLedgerAccess?: LiteLearningEpisodeLedgerAccess | null;
+  learningControlJobAccess?: LiteLearningControlJobAccess | null;
   admissionCandidatePolicyProfileRules?: readonly AionisAdmissionCandidatePolicyProfileRule[];
 }) {
   registerProductFacadeRoutes({
@@ -140,6 +157,7 @@ function registerProductFacade(args: {
       memoryWriteService: args.memoryWriteService ?? null,
       handoffRouteService: args.handoffRouteService ?? null,
       learningEpisodeLedgerAccess: args.learningEpisodeLedgerAccess ?? null,
+      learningControlJobAccess: args.learningControlJobAccess ?? null,
       admissionCandidatePolicyProfileRules: args.admissionCandidatePolicyProfileRules,
     }),
     planningContextService: args.planningContextService ?? null,
@@ -159,6 +177,7 @@ function registerProductMemoryApp(args: {
   liteWriteStore: ReturnType<typeof createLiteWriteStore>;
   liteRecallStore: ReturnType<typeof createLiteRecallStore>;
   learningEpisodeLedgerAccess?: LiteLearningEpisodeLedgerAccess | null;
+  learningControlJobAccess?: LiteLearningControlJobAccess | null;
   planningContextService?: MemoryPlanningContextService | null;
   admissionCandidatePolicyProfileRules?: readonly AionisAdmissionCandidatePolicyProfileRule[];
 }) {
@@ -327,6 +346,7 @@ function setupLearningProductApp(args: {
     annProjectionEnabled: false,
   });
   const learningEpisodeLedgerAccess = createLiteLearningEpisodeLedgerAccess(runtimeDatabase);
+  const learningControlJobAccess = createLiteLearningControlJobAccess(runtimeDatabase);
   const liteRecallStore = createLiteRecallStore(dbPath);
   registerProductMemoryApp({
     app,
@@ -335,6 +355,7 @@ function setupLearningProductApp(args: {
     liteWriteStore,
     liteRecallStore,
     learningEpisodeLedgerAccess,
+    learningControlJobAccess,
     planningContextService: args.planningContextService,
     admissionCandidatePolicyProfileRules: args.admissionCandidatePolicyProfileRules,
   });
@@ -345,6 +366,7 @@ function setupLearningProductApp(args: {
     runtimeDatabase,
     liteWriteStore,
     learningEpisodeLedgerAccess,
+    learningControlJobAccess,
     async close() {
       try {
         await app.close();
@@ -437,12 +459,79 @@ function eligibleHostDiagnosticProfile(
   return profile;
 }
 
+function eligibleHostConfirmatoryProfile(
+  principal: AuthPrincipal,
+): AionisAdmissionCandidatePolicyProfileRule {
+  const base = createConfirmatoryProfile();
+  assert.ok(base.experiment);
+  const collectionSource = base.experiment.collection_sources[0];
+  assert.ok(collectionSource);
+  const [profile] = parseAdmissionCandidatePolicyProfileRules(stableStringify([{
+    ...base,
+    collection_sources: undefined,
+    experiment: {
+      ...base.experiment,
+      collection_sources: [{
+        ...collectionSource,
+        principal_sha256: learningCollectionPrincipalSha256({
+          tenant_id: principal.tenant_id,
+          agent_id: principal.agent_id,
+          team_id: principal.team_id,
+        }),
+      }],
+    },
+  }]));
+  assert.ok(profile?.experiment);
+  return profile;
+}
+
 async function prepareEligibleHostFeedbackScenario(args: {
   name: string;
   confidence: number;
+  includeUnusedMemory?: boolean;
+  enrolled?: boolean;
 }) {
-  const principal = eligibleHostPrincipal();
-  const profile = eligibleHostDiagnosticProfile(principal);
+  const namespaceManifest = args.enrolled
+    ? LearningMemoryNamespaceManifestV1Schema.parse((() => {
+      const base = createConfirmatoryNamespaceManifest();
+      return {
+        ...base,
+        pairs: base.pairs.map((pair) => {
+          const wave = pair.activation.activation_wave_index;
+          const times = wave === 1
+            ? ["2026-07-14T09:01:00.000Z", "2090-01-01T00:00:00.000Z", "2091-01-01T00:00:00.000Z"]
+            : wave === 2
+              ? ["2092-01-01T00:00:00.000Z", "2093-01-01T00:00:00.000Z", "2094-01-01T00:00:00.000Z"]
+              : ["2095-01-01T00:00:00.000Z", "2096-01-01T00:00:00.000Z", "2097-01-01T00:00:00.000Z"];
+          return {
+            ...pair,
+            activation: {
+              ...pair.activation,
+              activation_starts_at: times[0],
+              index_window_ends_at: times[1],
+              wave_analysis_at: times[2],
+            },
+          };
+        }),
+      };
+    })())
+    : null;
+  const enrolledScope = namespaceManifest?.pairs[0]?.members[0]?.public_scope;
+  if (args.enrolled && !enrolledScope) throw new Error("confirmatory namespace fixture is empty");
+  const principal = args.enrolled
+    ? {
+      tenant_id: CONFIRMATORY_TENANT_ID,
+      agent_id: "eligible-host-enrolled-agent",
+      team_id: null,
+      role: "verifier" as const,
+      default_scope: enrolledScope!,
+      allowed_scopes: [enrolledScope!],
+      source: "api_key" as const,
+    }
+    : eligibleHostPrincipal();
+  const profile = args.enrolled
+    ? eligibleHostConfirmatoryProfile(principal)
+    : eligibleHostDiagnosticProfile(principal);
   assert.ok(profile.experiment);
   const apiKey = `eligible-host-${args.name}-key`;
   const intruderApiKey = `eligible-host-${args.name}-intruder-key`;
@@ -471,57 +560,108 @@ async function prepareEligibleHostFeedbackScenario(args: {
         },
       }),
       AIONIS_SERVER_ALLOW_AUTH_OFF_FOR_DEV: false,
+      MEMORY_SCOPE: principal.default_scope,
+      LITE_LOCAL_ACTOR_ID: principal.agent_id,
     },
     admissionCandidatePolicyProfileRules: [profile],
   });
   try {
-    const provisioned = await createLiteLearningExperimentProvisioner({
-      database: fixture.runtimeDatabase,
-      writeStore: fixture.liteWriteStore,
-      ledger: fixture.learningEpisodeLedgerAccess,
-      dependencies: {
-        registry: createConfirmatoryPassedRegistry(),
-        now: () => "2026-07-15T02:00:00.000Z",
-        randomBytes: (size) => Uint8Array.from(
-          { length: size },
-          (_, index) => (0x51 + index) & 0xff,
-        ),
-      },
-    }).provision({
-      tenantId: principal.tenant_id,
-      actor: `${args.name}-provisioner`,
-      operationId: `${args.name}-provision-operation`,
-      profileRule: profile,
-      taskFamily: CONFIRMATORY_TASK_FAMILY,
-      experimentId: profile.experiment.experiment_id,
-      experimentRevision: profile.experiment.revision,
-    });
-    assert.equal(provisioned.replayed, false);
+    if (args.enrolled) {
+      assert.ok(namespaceManifest);
+      const provisioned = await provisionConfirmatoryFixture({
+        database: fixture.runtimeDatabase,
+        writeStore: fixture.liteWriteStore,
+        close: fixture.close,
+      }, {
+        input: createConfirmatoryProvisionInput({
+          tenantId: principal.tenant_id,
+          actor: `${args.name}-provisioner`,
+          operationId: `${args.name}-provision-operation`,
+          profileRule: profile,
+          taskFamily: CONFIRMATORY_TASK_FAMILY,
+          experimentId: profile.experiment.experiment_id,
+          experimentRevision: profile.experiment.revision,
+          memoryNamespaceManifest: namespaceManifest,
+        }),
+      });
+      assert.equal(provisioned.provisionResult.replayed, false);
+    } else {
+      const provisioned = await createLiteLearningExperimentProvisioner({
+        database: fixture.runtimeDatabase,
+        writeStore: fixture.liteWriteStore,
+        ledger: fixture.learningEpisodeLedgerAccess,
+        dependencies: {
+          registry: createConfirmatoryPassedRegistry(),
+          now: () => "2026-07-15T02:00:00.000Z",
+          randomBytes: (size) => Uint8Array.from(
+            { length: size },
+            (_, index) => (0x51 + index) & 0xff,
+          ),
+        },
+      }).provision({
+        tenantId: principal.tenant_id,
+        actor: `${args.name}-provisioner`,
+        operationId: `${args.name}-provision-operation`,
+        profileRule: profile,
+        taskFamily: CONFIRMATORY_TASK_FAMILY,
+        experimentId: profile.experiment.experiment_id,
+        experimentRevision: profile.experiment.revision,
+      });
+      assert.equal(provisioned.replayed, false);
+    }
 
     const marker = `AIONIS_${args.name.replaceAll("-", "_").toUpperCase()}_MARKER`;
     const memoryId = await observeMemory({
       app: fixture.app,
       headers,
+      tenantId: principal.tenant_id,
+      scope: principal.default_scope,
       clientId: `memory:${args.name}`,
       title: `Eligible host ${args.name}`,
       text: `${marker} Preserve strict host feedback authority.`,
       confidence: args.confidence,
     });
+    const unusedMemoryId = args.includeUnusedMemory
+      ? await observeMemory({
+        app: fixture.app,
+        headers,
+        tenantId: principal.tenant_id,
+        scope: principal.default_scope,
+        clientId: `memory:${args.name}:unused`,
+        title: `Eligible host ${args.name} unused`,
+        text: `${marker} This second memory remains unused by the host.`,
+        confidence: args.confidence,
+      })
+      : null;
+    const packetNodes = [{
+      id: memoryId,
+      type: "concept" as const,
+      tier: "warm" as const,
+      title: `Eligible host ${args.name}`,
+      text_summary: `${marker} Preserve strict host feedback authority.`,
+      slots: {},
+      confidence: args.confidence,
+      salience: 0.85,
+      created_at: "2026-07-15T02:01:00.000Z",
+    }];
+    if (unusedMemoryId) {
+      packetNodes.push({
+        id: unusedMemoryId,
+        type: "concept",
+        tier: "warm",
+        title: `Eligible host ${args.name} unused`,
+        text_summary: `${marker} This second memory remains unused by the host.`,
+        slots: {},
+        confidence: args.confidence,
+        salience: 0.84,
+        created_at: "2026-07-15T02:01:00.000Z",
+      });
+    }
     const packet = buildAionisMemoryPacket({
       tenant_id: principal.tenant_id,
       scope: principal.default_scope,
       query: { source: "text", intent: `eligible host ${args.name}` },
-      nodes: [{
-        id: memoryId,
-        type: "concept",
-        tier: "warm",
-        title: `Eligible host ${args.name}`,
-        text_summary: `${marker} Preserve strict host feedback authority.`,
-        slots: {},
-        confidence: args.confidence,
-        salience: 0.85,
-        created_at: "2026-07-15T02:01:00.000Z",
-      }],
+      nodes: packetNodes,
     });
     const collectionSource = profile.experiment.collection_sources[0];
     assert.ok(collectionSource);
@@ -579,6 +719,7 @@ async function prepareEligibleHostFeedbackScenario(args: {
     assert.equal(guideResult.ok, true, JSON.stringify(guideResult));
     const guide = guideResult.body as Record<string, any>;
     assert.ok(guide.agent_context.memory_ids.includes(memoryId));
+    if (unusedMemoryId) assert.ok(guide.agent_context.memory_ids.includes(unusedMemoryId));
     const exposure = fixture.runtimeDatabase.db.prepare(
       `SELECT event.event_id, event.episode_id, event.collection_class,
               event.collection_principal_sha256, event.host_task_envelope_sha256,
@@ -610,6 +751,7 @@ async function prepareEligibleHostFeedbackScenario(args: {
       intruderHeaders,
       marker,
       memoryId,
+      unusedMemoryId,
       packet,
       collectionSource,
       taskSignature,
@@ -693,14 +835,16 @@ async function observeMemory(args: {
   text: string;
   confidence?: number;
   headers?: Record<string, string>;
+  tenantId?: string;
+  scope?: string;
 }): Promise<string> {
   const response = await args.app.inject({
     method: "POST",
     url: "/v1/observe",
     headers: args.headers,
     payload: {
-      tenant_id: "default",
-      scope: "default",
+      tenant_id: args.tenantId ?? "default",
+      scope: args.scope ?? "default",
       auto_embed: true,
       input_text: args.text,
       memory: {
@@ -998,6 +1142,622 @@ test("protected memory feedback replays one canonical mutation and rejects a cha
     );
   } finally {
     await fixture.close();
+  }
+});
+
+test("formal feedback atomically enqueues one deterministic unused-exposure control job", async () => {
+  const fixture = setupLearningProductApp({ name: "unused-exposure-control-enqueue" });
+  try {
+    const marker = "AIONIS_UNUSED_CONTROL_ENQUEUE_MARKER";
+    const usedMemoryId = await observeMemory({
+      app: fixture.app,
+      clientId: "memory:unused-control:used",
+      title: "Unused-control used memory",
+      text: `${marker} The host will explicitly use this memory.`,
+    });
+    const unusedMemoryId = await observeMemory({
+      app: fixture.app,
+      clientId: "memory:unused-control:unused",
+      title: "Unused-control unused memory",
+      text: `${marker} The host will repeatedly leave this memory unused.`,
+    });
+    const firstGuide = await guideForMarker({
+      app: fixture.app,
+      marker,
+      operationId: "guide:unused-control:first",
+    });
+    const secondGuide = await guideForMarker({
+      app: fixture.app,
+      marker,
+      operationId: "guide:unused-control:second",
+    });
+    for (const guide of [firstGuide, secondGuide]) {
+      assert.ok(guide.agent_context.memory_ids.includes(usedMemoryId));
+      assert.ok(guide.agent_context.memory_ids.includes(unusedMemoryId));
+    }
+
+    const payload = {
+      operation_id: "feedback:unused-control:enqueue",
+      tenant_id: "default",
+      scope: "default",
+      guide_trace_id: secondGuide.guide_trace_id,
+      used_memory_ids: [usedMemoryId],
+      run_id: "run:unused-control:enqueue",
+      outcome: "positive",
+      used_surface: "use_now",
+      verifier_status: "unknown",
+      tool_status: "unknown",
+      reason: "Use one memory and durably schedule maintenance for the other exposure.",
+    };
+    const beforeFault = {
+      commits: scalarCount(fixture.runtimeDatabase, "SELECT COUNT(*) AS count FROM lite_memory_commits"),
+      feedback: scalarCount(
+        fixture.runtimeDatabase,
+        "SELECT COUNT(*) AS count FROM lite_learning_episode_events WHERE event_kind = 'feedback_attributed'",
+      ),
+      operations: scalarCount(
+        fixture.runtimeDatabase,
+        "SELECT COUNT(*) AS count FROM lite_runtime_write_operations WHERE operation_kind = 'product_feedback_v1'",
+      ),
+    };
+    fixture.runtimeDatabase.db.exec(
+      `CREATE TEMP TRIGGER reject_learning_control_enqueue
+       BEFORE INSERT ON lite_learning_control_jobs
+       BEGIN
+         SELECT RAISE(ABORT, 'injected_learning_control_enqueue_failure');
+       END`,
+    );
+    const enqueueFailed = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload,
+    });
+    assert.equal(enqueueFailed.statusCode, 500, enqueueFailed.body);
+    assert.equal(
+      scalarCount(fixture.runtimeDatabase, "SELECT COUNT(*) AS count FROM lite_memory_commits"),
+      beforeFault.commits,
+    );
+    assert.equal(
+      scalarCount(
+        fixture.runtimeDatabase,
+        "SELECT COUNT(*) AS count FROM lite_learning_episode_events WHERE event_kind = 'feedback_attributed'",
+      ),
+      beforeFault.feedback,
+    );
+    assert.equal(
+      scalarCount(
+        fixture.runtimeDatabase,
+        "SELECT COUNT(*) AS count FROM lite_runtime_write_operations WHERE operation_kind = 'product_feedback_v1'",
+      ),
+      beforeFault.operations,
+    );
+    assert.equal((await fixture.learningControlJobAccess.listLearningControlJobs()).length, 0);
+    fixture.runtimeDatabase.db.exec("DROP TRIGGER reject_learning_control_enqueue");
+
+    const accepted = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload,
+    });
+    assert.equal(accepted.statusCode, 200, accepted.body);
+    assert.deepEqual(
+      accepted.json().forget_effect.guide_trace.feedback_learning_control,
+      { learning_control_status: "queued" },
+    );
+
+    const jobs = await fixture.learningControlJobAccess.listLearningControlJobs();
+    assert.equal(jobs.length, 1);
+    const job = jobs[0]!;
+    assert.equal(job.status, "pending");
+    assert.equal(job.attempt_count, 0);
+    assert.equal(job.source_feedback_event_id, accepted.json().learning_feedback_event_id);
+    assert.deepEqual(JSON.parse(job.payload_json), {
+      contract_version: "unused_exposure_learning_control_v1",
+      exposure_ids: [fixture.runtimeDatabase.db.prepare(
+        `SELECT event_id FROM lite_learning_episode_events
+         WHERE tenant_id = 'default' AND scope = 'default'
+           AND source_id = ? AND event_kind = 'exposure_committed'`,
+      ).get(secondGuide.guide_trace_id)!.event_id],
+      feedback_event_id: accepted.json().learning_feedback_event_id,
+    });
+    assert.equal(
+      (await slotsForMemory({ liteWriteStore: fixture.liteWriteStore, memoryId: unusedMemoryId }))
+        .feedback_learning_control_posture,
+      undefined,
+    );
+
+    const replay = await fixture.app.inject({ method: "POST", url: "/v1/feedback", payload });
+    assert.equal(replay.statusCode, 200, replay.body);
+    assert.deepEqual(replay.json(), accepted.json());
+    assert.equal((await fixture.learningControlJobAccess.listLearningControlJobs()).length, 1);
+
+    const firstClaimAt = new Date(new Date(job.created_at).getTime() + 1_000);
+    const [firstClaim] = await fixture.learningControlJobAccess.claimLearningControlJobs({
+      leaseOwner: "learning-control-test-worker-a",
+      leaseMs: 1_000,
+      limit: 1,
+      now: firstClaimAt,
+    });
+    assert.ok(firstClaim);
+    assert.equal(firstClaim.attempt_count, 1);
+    assert.equal((await fixture.learningControlJobAccess.claimLearningControlJobs({
+      leaseOwner: "learning-control-test-worker-b",
+      leaseMs: 1_000,
+      limit: 1,
+      now: new Date(firstClaimAt.getTime() + 500),
+    })).length, 0);
+    const reclaimAt = new Date(firstClaimAt.getTime() + 1_001);
+    const [reclaimed] = await fixture.learningControlJobAccess.claimLearningControlJobs({
+      leaseOwner: "learning-control-test-worker-b",
+      leaseMs: 1_000,
+      limit: 1,
+      now: reclaimAt,
+    });
+    assert.ok(reclaimed);
+    assert.equal(reclaimed.attempt_count, 2);
+    const staleMutationAt = new Date(reclaimAt.getTime() + 1);
+    const staleCompleted = await fixture.liteWriteStore.withTx(async () =>
+      await fixture.learningControlJobAccess.completeLearningControlJobInTx({
+        claim: firstClaim,
+        resultCommitId: "stale-claim-result-commit",
+        completedAt: staleMutationAt.toISOString(),
+      })
+    );
+    assert.equal(staleCompleted, false);
+    const staleDeadLetter = await fixture.liteWriteStore.withTx(async () =>
+      await fixture.learningControlJobAccess.deadLetterLearningControlJobInTx({
+        claim: firstClaim,
+        errorCode: "stale_claim_must_not_dead_letter",
+        completedAt: staleMutationAt.toISOString(),
+      })
+    );
+    assert.equal(staleDeadLetter, false);
+    assert.equal(await fixture.learningControlJobAccess.retryLearningControlJob({
+      claim: firstClaim,
+      errorCode: "stale_claim_must_not_retry",
+      now: staleMutationAt,
+      retryAt: new Date(staleMutationAt.getTime() + 1_000),
+    }), "stale_claim");
+    assert.equal(await fixture.learningControlJobAccess.retryLearningControlJob({
+      claim: reclaimed,
+      errorCode: "test_requeue_after_lease_reclaim",
+      now: staleMutationAt,
+      retryAt: new Date(staleMutationAt.getTime() + 1_000),
+    }), "retried");
+
+    const drained = await drainUnusedExposureLearningControlJobs({
+      access: fixture.learningControlJobAccess,
+      ledger: fixture.learningEpisodeLedgerAccess,
+      writeStore: fixture.liteWriteStore,
+      env: fixture.env,
+      limit: 8,
+      now: () => new Date(staleMutationAt.getTime() + 2_000),
+    });
+    assert.deepEqual(drained, {
+      claimed: 1,
+      completed: 1,
+      no_op: 0,
+      retried: 0,
+      terminalization_deferred: 0,
+      last_terminalization_error_code: null,
+      dead_lettered: 0,
+      safety_paused: 0,
+      stale_claims: 0,
+    });
+    const completedJobs = await fixture.learningControlJobAccess.listLearningControlJobs();
+    assert.equal(completedJobs[0]?.status, "completed");
+    assert.ok(completedJobs[0]?.result_commit_id);
+    assert.equal(
+      (await slotsForMemory({ liteWriteStore: fixture.liteWriteStore, memoryId: unusedMemoryId }))
+        .feedback_learning_control_posture,
+      "inspect_before_use",
+    );
+    assert.equal(
+      scalarCount(
+        fixture.runtimeDatabase,
+        `SELECT COUNT(*) AS count FROM lite_runtime_write_operations
+         WHERE operation_kind = 'unused_exposure_learning_control_v1'`,
+      ),
+      1,
+    );
+    const duplicateDrain = await drainUnusedExposureLearningControlJobs({
+      access: fixture.learningControlJobAccess,
+      ledger: fixture.learningEpisodeLedgerAccess,
+      writeStore: fixture.liteWriteStore,
+      env: fixture.env,
+      limit: 8,
+    });
+    assert.equal(duplicateDrain.claimed, 0);
+    const replayAfterCompletion = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload,
+    });
+    assert.equal(replayAfterCompletion.statusCode, 200, replayAfterCompletion.body);
+    assert.deepEqual(replayAfterCompletion.json(), accepted.json());
+    const verified = await verifyLiteRuntimeDatabase(fixture.dbPath);
+    assert.equal(verified.ok, true);
+  } finally {
+    fixture.runtimeDatabase.db.exec("DROP TRIGGER IF EXISTS reject_learning_control_enqueue");
+    await fixture.close();
+  }
+});
+
+test("pre-Step4 protected markerless feedback reopens without a synthetic control job", async () => {
+  const fixture = setupLearningProductApp({ name: "protected-markerless-feedback-compatibility" });
+  let closed = false;
+  try {
+    const marker = "AIONIS_PROTECTED_MARKERLESS_COMPATIBILITY";
+    const usedMemoryId = await observeMemory({
+      app: fixture.app,
+      clientId: "memory:protected-markerless:used",
+      title: "Protected markerless used memory",
+      text: `${marker} This memory is used by the historical protected response.`,
+    });
+    await observeMemory({
+      app: fixture.app,
+      clientId: "memory:protected-markerless:unused",
+      title: "Protected markerless unused memory",
+      text: `${marker} This memory remains unused in the historical response.`,
+    });
+    const guide = await guideForMarker({
+      app: fixture.app,
+      marker,
+      operationId: "guide:protected-markerless",
+    });
+    const operationId = "feedback:protected-markerless";
+    const accepted = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: {
+        operation_id: operationId,
+        tenant_id: "default",
+        scope: "default",
+        guide_trace_id: guide.guide_trace_id,
+        used_memory_ids: [usedMemoryId],
+        run_id: "run:protected-markerless",
+        outcome: "positive",
+        used_surface: "use_now",
+        verifier_status: "unknown",
+        tool_status: "unknown",
+        reason: "Create the current protected shape before projecting it to the pre-Step4 disk contract.",
+      },
+    });
+    assert.equal(accepted.statusCode, 200, accepted.body);
+    assert.equal((await fixture.learningControlJobAccess.listLearningControlJobs()).length, 1);
+    const event = fixture.runtimeDatabase.db.prepare(
+      `SELECT * FROM lite_learning_episode_events
+       WHERE event_kind = 'feedback_attributed' AND operation_id = ?`,
+    ).get(operationId) as Record<string, any> | undefined;
+    const operation = fixture.runtimeDatabase.db.prepare(
+      `SELECT receipt_json FROM lite_runtime_write_operations
+       WHERE operation_kind = 'product_feedback_v1' AND operation_id = ?`,
+    ).get(operationId) as { receipt_json: string } | undefined;
+    assert.ok(event);
+    assert.ok(operation);
+    const currentPayload = JSON.parse(event.payload_json) as Record<string, any>;
+    assert.equal(currentPayload.learning_control_queue_contract,
+      "unused_exposure_learning_control_v1");
+    assert.ok(currentPayload.unused_exposure_ids.length > 0);
+    const { learning_control_queue_contract: _queueContract, ...markerlessPayloadBase } = currentPayload;
+    const currentReceipt = JSON.parse(operation.receipt_json) as Record<string, any>;
+    const currentEffect = currentReceipt.body.forget_effect as Record<string, any>;
+    const currentGuideTrace = currentEffect.guide_trace as Record<string, any>;
+    const { feedback_learning_control: _learningControl, ...historicalGuideTrace } = currentGuideTrace;
+    const historicalReceiptJson = stableStringify({
+      ...currentReceipt,
+      body: {
+        ...currentReceipt.body,
+        forget_effect: {
+          ...currentEffect,
+          guide_trace: historicalGuideTrace,
+        },
+      },
+    });
+    const markerlessPayload = {
+      ...markerlessPayloadBase,
+      operation_receipt_sha256: sha256(historicalReceiptJson),
+    };
+    const markerlessPayloadJson = stableStringify(markerlessPayload);
+    const markerlessPayloadSha256 = sha256(markerlessPayloadJson);
+    const markerlessEvent = LearningEpisodeEventWithoutDigestSchema.parse({
+      contract_version: "aionis_learning_episode_event_v1",
+      tenant_id: event.tenant_id,
+      scope: event.scope,
+      event_id: event.event_id,
+      episode_id: event.episode_id,
+      episode_sequence: event.episode_sequence,
+      event_kind: event.event_kind,
+      source_kind: event.source_kind,
+      source_id: event.source_id,
+      source_sha256: event.source_sha256,
+      previous_event_sha256: event.previous_event_sha256,
+      payload_sha256: markerlessPayloadSha256,
+      item_set_sha256: event.item_set_sha256,
+      source_commit_id: event.source_commit_id,
+      supersedes_event_id: event.supersedes_event_id,
+      operation_id: event.operation_id,
+      run_id: event.run_id,
+      collection_class: event.collection_class,
+      recorded_at: event.recorded_at,
+    });
+    fixture.runtimeDatabase.db.exec("BEGIN IMMEDIATE");
+    try {
+      fixture.runtimeDatabase.db.exec("DROP TRIGGER trg_lite_learning_episode_events_update");
+      fixture.runtimeDatabase.db.exec("DROP TRIGGER trg_lite_learning_control_jobs_delete");
+      fixture.runtimeDatabase.db.prepare(
+        `UPDATE lite_runtime_write_operations SET receipt_json = ?
+         WHERE operation_kind = 'product_feedback_v1' AND operation_id = ?`,
+      ).run(historicalReceiptJson, operationId);
+      fixture.runtimeDatabase.db.prepare(
+        `UPDATE lite_learning_episode_events
+         SET payload_sha256 = ?, payload_json = ?, event_sha256 = ?
+         WHERE event_id = ?`,
+      ).run(
+        markerlessPayloadSha256,
+        markerlessPayloadJson,
+        learningEpisodeEventDigest(markerlessEvent),
+        event.event_id,
+      );
+      fixture.runtimeDatabase.db.prepare(
+        "DELETE FROM lite_learning_control_jobs WHERE source_feedback_event_id = ?",
+      ).run(event.event_id);
+      fixture.runtimeDatabase.db.exec(
+        LITE_LEARNING_LEDGER_REQUIRED_TRIGGERS.trg_lite_learning_episode_events_update!.sql,
+      );
+      fixture.runtimeDatabase.db.exec(
+        LITE_LEARNING_LEDGER_REQUIRED_TRIGGERS.trg_lite_learning_control_jobs_delete!.sql,
+      );
+      fixture.runtimeDatabase.db.exec("COMMIT");
+    } catch (error) {
+      fixture.runtimeDatabase.db.exec("ROLLBACK");
+      throw error;
+    }
+    assert.equal((await fixture.learningControlJobAccess.listLearningControlJobs()).length, 0);
+    assert.equal((await verifyLiteRuntimeDatabase(fixture.dbPath)).ok, true);
+
+    await fixture.close();
+    closed = true;
+    const reopened = createLiteRuntimeDatabase(fixture.dbPath);
+    try {
+      await createLiteLearningEpisodeLedgerAccess(reopened).verifyIntegrity();
+      assert.equal((await createLiteLearningControlJobAccess(reopened).listLearningControlJobs()).length, 0);
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    if (!closed) await fixture.close();
+  }
+});
+
+test("learning-control resumes after enqueue restart and stays exact after post-commit process loss", async () => {
+  const fixture = setupLearningProductApp({ name: "unused-exposure-control-process-loss" });
+  let fixtureClosed = false;
+  let reopenedDatabase: LiteRuntimeDatabase | null = null;
+  let reopenedWriteStore: ReturnType<typeof createLiteWriteStoreFromDatabase> | null = null;
+  try {
+    const marker = "AIONIS_UNUSED_CONTROL_PROCESS_LOSS_MARKER";
+    const usedMemoryId = await observeMemory({
+      app: fixture.app,
+      clientId: "memory:unused-control:process-loss:used",
+      title: "Process-loss used memory",
+      text: `${marker} This memory is explicitly reused by the host.`,
+    });
+    const unusedMemoryId = await observeMemory({
+      app: fixture.app,
+      clientId: "memory:unused-control:process-loss:unused",
+      title: "Process-loss unused memory",
+      text: `${marker} This memory is repeatedly exposed but left unused.`,
+    });
+    await guideForMarker({
+      app: fixture.app,
+      marker,
+      operationId: "guide:unused-control:process-loss:first",
+    });
+    const sourceGuide = await guideForMarker({
+      app: fixture.app,
+      marker,
+      operationId: "guide:unused-control:process-loss:second",
+    });
+    assert.ok(sourceGuide.agent_context.memory_ids.includes(usedMemoryId));
+    assert.ok(sourceGuide.agent_context.memory_ids.includes(unusedMemoryId));
+
+    const feedback = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: {
+        operation_id: "feedback:unused-control:process-loss",
+        tenant_id: "default",
+        scope: "default",
+        guide_trace_id: sourceGuide.guide_trace_id,
+        used_memory_ids: [usedMemoryId],
+        run_id: "run:unused-control:process-loss",
+        outcome: "positive",
+        used_surface: "use_now",
+        verifier_status: "unknown",
+        tool_status: "unknown",
+        reason: "Durably queue maintenance for the unused exposure before the process exits.",
+      },
+    });
+    assert.equal(feedback.statusCode, 200, feedback.body);
+    assert.deepEqual(
+      feedback.json().forget_effect.guide_trace.feedback_learning_control,
+      { learning_control_status: "queued" },
+    );
+    const [queued] = await fixture.learningControlJobAccess.listLearningControlJobs();
+    assert.ok(queued);
+    assert.equal(queued.status, "pending");
+
+    // Close the request-side Runtime first: the durable job must survive a real reopen
+    // before any learning mutation has happened.
+    await fixture.close();
+    fixtureClosed = true;
+    const childPath = fileURLToPath(new URL(
+      "./support/learning-control-post-commit-crash-child.ts",
+      import.meta.url,
+    ));
+    const claimCrashed = spawnSync(
+      process.execPath,
+      ["--import", "tsx", childPath, fixture.dbPath, "after_claim"],
+      { encoding: "utf8", timeout: 30_000 },
+    );
+    assert.equal(
+      claimCrashed.status,
+      74,
+      `child status=${claimCrashed.status}\nstdout=${claimCrashed.stdout}\nstderr=${claimCrashed.stderr}`,
+    );
+
+    const claimDatabase = createLiteRuntimeDatabase(fixture.dbPath);
+    const claimWriteStore = createLiteWriteStoreFromDatabase(claimDatabase, {
+      annProjectionEnabled: false,
+    });
+    try {
+      const claimAccess = createLiteLearningControlJobAccess(claimDatabase);
+      const [leased] = await claimAccess.listLearningControlJobs();
+      assert.ok(leased);
+      assert.equal(leased.status, "leased");
+      assert.equal(leased.attempt_count, 1);
+      assert.ok(leased.lease_expires_at);
+      assert.equal(
+        scalarCount(
+          claimDatabase,
+          `SELECT COUNT(*) AS count FROM lite_runtime_write_operations
+           WHERE operation_kind = 'unused_exposure_learning_control_v1'`,
+        ),
+        0,
+      );
+      assert.equal(
+        (await slotsForMemory({ liteWriteStore: claimWriteStore, memoryId: unusedMemoryId }))
+          .feedback_learning_control_posture,
+        undefined,
+      );
+      const beforeLeaseExpiry = new Date(new Date(leased.lease_expires_at).getTime() - 1);
+      assert.equal((await claimAccess.claimLearningControlJobs({
+        leaseOwner: "learning-control-before-expiry-probe",
+        leaseMs: 1_000,
+        limit: 1,
+        now: beforeLeaseExpiry,
+      })).length, 0);
+    } finally {
+      await claimWriteStore.close();
+      await claimDatabase.close();
+    }
+
+    const completionCrashed = spawnSync(
+      process.execPath,
+      ["--import", "tsx", childPath, fixture.dbPath, "after_complete"],
+      { encoding: "utf8", timeout: 30_000 },
+    );
+    assert.equal(
+      completionCrashed.status,
+      75,
+      `child status=${completionCrashed.status}\nstdout=${completionCrashed.stdout}\nstderr=${completionCrashed.stderr}`,
+    );
+
+    // The second child exits on the completion transaction's after-commit hook,
+    // before drainOnce can observe success. Reopening must reveal one complete bundle.
+    reopenedDatabase = createLiteRuntimeDatabase(fixture.dbPath);
+    reopenedWriteStore = createLiteWriteStoreFromDatabase(reopenedDatabase, {
+      annProjectionEnabled: false,
+    });
+    const reopenedAccess = createLiteLearningControlJobAccess(reopenedDatabase);
+    const reopenedLedger = createLiteLearningEpisodeLedgerAccess(reopenedDatabase);
+    const [completed] = await reopenedAccess.listLearningControlJobs();
+    assert.ok(completed);
+    assert.equal(completed.job_id, queued.job_id);
+    assert.equal(completed.status, "completed");
+    assert.ok(completed.result_commit_id);
+    assert.equal(
+      scalarCount(
+        reopenedDatabase,
+        `SELECT COUNT(*) AS count FROM lite_runtime_write_operations
+         WHERE operation_kind = 'unused_exposure_learning_control_v1'
+           AND operation_id = ?`,
+        completed.operation_id,
+      ),
+      1,
+    );
+    assert.equal(
+      (await slotsForMemory({ liteWriteStore: reopenedWriteStore, memoryId: unusedMemoryId }))
+        .feedback_learning_control_posture,
+      "inspect_before_use",
+    );
+
+    const duplicateDrain = await drainUnusedExposureLearningControlJobs({
+      access: reopenedAccess,
+      ledger: reopenedLedger,
+      writeStore: reopenedWriteStore,
+      env: fixture.env,
+      limit: 8,
+    });
+    assert.equal(duplicateDrain.claimed, 0);
+    assert.equal(
+      scalarCount(
+        reopenedDatabase,
+        `SELECT COUNT(*) AS count FROM lite_runtime_write_operations
+         WHERE operation_kind = 'unused_exposure_learning_control_v1'
+           AND operation_id = ?`,
+        completed.operation_id,
+      ),
+      1,
+    );
+    assert.equal((await verifyLiteRuntimeDatabase(fixture.dbPath)).ok, true);
+
+    const auditCommit = reopenedDatabase.db.prepare(
+      "SELECT diff_json, commit_hash FROM lite_memory_commits WHERE id = ?",
+    ).get(completed.result_commit_id) as { diff_json: string; commit_hash: string } | undefined;
+    const auditOperation = reopenedDatabase.db.prepare(
+      `SELECT receipt_json FROM lite_runtime_write_operations
+       WHERE operation_kind = 'unused_exposure_learning_control_v1'
+         AND operation_id = ?`,
+    ).get(completed.operation_id) as { receipt_json: string } | undefined;
+    assert.ok(auditCommit);
+    assert.ok(auditOperation);
+    const originalDiff = JSON.parse(auditCommit.diff_json) as Record<string, any>;
+    const originalReceipt = JSON.parse(auditOperation.receipt_json) as Record<string, any>;
+    reopenedDatabase.db.prepare(
+      "UPDATE lite_memory_commits SET diff_json = ? WHERE id = ?",
+    ).run(stableStringify({ ...originalDiff, reason: "forged learning-control reason" }), completed.result_commit_id);
+    const forgedReason = await verifyLiteRuntimeDatabase(fixture.dbPath);
+    assert.equal(forgedReason.ok, false);
+    assert.match(String(forgedReason.learning.integrity_error), /learning_control_result_commit_binding/u);
+    reopenedDatabase.db.prepare(
+      "UPDATE lite_memory_commits SET diff_json = ? WHERE id = ?",
+    ).run(auditCommit.diff_json, completed.result_commit_id);
+
+    const outsiderMemoryId = "memory-outside-source-exposure";
+    reopenedDatabase.db.prepare(
+      "UPDATE lite_memory_commits SET diff_json = ? WHERE id = ?",
+    ).run(stableStringify({
+      ...originalDiff,
+      requested_node_ids: [...originalDiff.requested_node_ids, outsiderMemoryId],
+      resolved_node_ids: [...originalDiff.resolved_node_ids, outsiderMemoryId],
+      applied_node_ids: [...originalDiff.applied_node_ids, outsiderMemoryId],
+    }), completed.result_commit_id);
+    reopenedDatabase.db.prepare(
+      `UPDATE lite_runtime_write_operations SET receipt_json = ?
+       WHERE operation_kind = 'unused_exposure_learning_control_v1'
+         AND operation_id = ?`,
+    ).run(stableStringify({
+      ...originalReceipt,
+      changed_memory_ids: [...originalReceipt.changed_memory_ids, outsiderMemoryId],
+    }), completed.operation_id);
+    const forgedPartition = await verifyLiteRuntimeDatabase(fixture.dbPath);
+    assert.equal(forgedPartition.ok, false);
+    assert.match(String(forgedPartition.learning.integrity_error), /learning_control_result_commit_binding/u);
+    reopenedDatabase.db.prepare(
+      "UPDATE lite_memory_commits SET diff_json = ?, commit_hash = ? WHERE id = ?",
+    ).run(auditCommit.diff_json, auditCommit.commit_hash, completed.result_commit_id);
+    reopenedDatabase.db.prepare(
+      `UPDATE lite_runtime_write_operations SET receipt_json = ?
+       WHERE operation_kind = 'unused_exposure_learning_control_v1'
+         AND operation_id = ?`,
+    ).run(auditOperation.receipt_json, completed.operation_id);
+    assert.equal((await verifyLiteRuntimeDatabase(fixture.dbPath)).ok, true);
+  } finally {
+    if (reopenedWriteStore) await reopenedWriteStore.close();
+    if (reopenedDatabase) await reopenedDatabase.close();
+    if (!fixtureClosed) await fixture.close();
   }
 });
 
@@ -2243,6 +3003,332 @@ test("strict host-use receipt persists verified evidence while receipt identity 
   }
 });
 
+test("enrolled learning-control dead letter atomically pauses candidate authority and next guide", async () => {
+  const scenario = await prepareEligibleHostFeedbackScenario({
+    name: "eligible-host-control-dead-letter",
+    confidence: 0.9,
+    includeUnusedMemory: true,
+    enrolled: true,
+  });
+  const sourceGuideReceipt = scenario.runtimeDatabase.db.prepare(
+    `SELECT ledger_sha256 FROM lite_product_guide_receipts
+     WHERE tenant_id = ? AND scope = ? AND guide_trace_id = ?`,
+  ).get(
+    scenario.principal.tenant_id,
+    scenario.principal.default_scope,
+    scenario.guide.guide_trace_id,
+  ) as { ledger_sha256: string } | undefined;
+  assert.ok(sourceGuideReceipt);
+  try {
+    assert.ok(scenario.unusedMemoryId);
+    assert.equal(scenario.exposure.served_action, "use_now");
+    const enrollment = scenario.runtimeDatabase.db.prepare(
+      `SELECT enrollment_state FROM lite_learning_episode_events
+       WHERE tenant_id = ? AND scope = ? AND event_id = ?`,
+    ).get(
+      scenario.principal.tenant_id,
+      scenario.principal.default_scope,
+      scenario.exposure.event_id,
+    ) as { enrollment_state: string } | undefined;
+    assert.equal(enrollment?.enrollment_state, "enrolled");
+
+    const operationId = "feedback:eligible-host-control-dead-letter";
+    const runId = "run:eligible-host-control-dead-letter";
+    const receipt = buildEligibleHostUseReceipt({ scenario, operationId, runId });
+    const accepted = await scenario.app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      headers: scenario.headers,
+      payload: {
+        operation_id: operationId,
+        tenant_id: scenario.principal.tenant_id,
+        scope: scenario.principal.default_scope,
+        guide_trace_id: scenario.guide.guide_trace_id,
+        used_memory_ids: [scenario.memoryId],
+        run_id: runId,
+        outcome: "positive",
+        used_surface: "use_now",
+        verifier_status: "passed",
+        tool_status: "succeeded",
+        host_use_receipt_v1: receipt,
+        reason: "Use one enrolled exposure and durably queue control for the unused item.",
+      },
+    });
+    assert.equal(accepted.statusCode, 200, accepted.body);
+    assert.equal(accepted.json().learning_attribution_status, "verified_host_receipt");
+    assert.deepEqual(
+      accepted.json().forget_effect.guide_trace.feedback_learning_control,
+      { learning_control_status: "queued" },
+    );
+    const [queued] = await scenario.learningControlJobAccess.listLearningControlJobs();
+    assert.ok(queued);
+    assert.equal(queued.status, "pending");
+
+    // Force a permanent, source-local validation failure. The dead-letter safety
+    // bundle intentionally resolves authority from the immutable episode source,
+    // so it does not depend on this corrupted operational guide receipt.
+    scenario.runtimeDatabase.db.prepare(
+      `UPDATE lite_product_guide_receipts SET ledger_sha256 = ?
+       WHERE tenant_id = ? AND scope = ? AND guide_trace_id = ?`,
+    ).run(
+      "0".repeat(64),
+      scenario.principal.tenant_id,
+      scenario.principal.default_scope,
+      scenario.guide.guide_trace_id,
+    );
+    scenario.runtimeDatabase.db.exec(
+      `CREATE TEMP TRIGGER reject_control_job_authority_receipt
+       BEFORE INSERT ON lite_runtime_write_operations
+       WHEN NEW.operation_kind = 'learning_gate_authority_v1'
+       BEGIN
+         SELECT RAISE(ABORT, 'injected_control_job_authority_receipt_failure');
+       END`,
+    );
+    const firstDrainAt = new Date(new Date(queued.created_at).getTime() + 1_000);
+    const rolledBack = await drainUnusedExposureLearningControlJobs({
+      access: scenario.learningControlJobAccess,
+      ledger: scenario.learningEpisodeLedgerAccess,
+      writeStore: scenario.liteWriteStore,
+      env: scenario.env,
+      limit: 1,
+      now: () => firstDrainAt,
+    });
+    assert.deepEqual(rolledBack, {
+      claimed: 1,
+      completed: 0,
+      no_op: 0,
+      retried: 1,
+      terminalization_deferred: 0,
+      last_terminalization_error_code: null,
+      dead_lettered: 0,
+      safety_paused: 0,
+      stale_claims: 0,
+    });
+    assert.equal(
+      scalarCount(
+        scenario.runtimeDatabase,
+        `SELECT COUNT(*) AS count FROM lite_runtime_write_operations
+         WHERE operation_kind = 'unused_exposure_learning_control_v1'`,
+      ),
+      0,
+    );
+    assert.equal(
+      scalarCount(
+        scenario.runtimeDatabase,
+        `SELECT COUNT(*) AS count FROM lite_learning_gate_decisions
+         WHERE trigger_ref_kind = 'control_job' AND trigger_ref_id = ?`,
+        queued.job_id,
+      ),
+      0,
+    );
+    const [retryable] = await scenario.learningControlJobAccess.listLearningControlJobs();
+    assert.equal(retryable?.status, "pending");
+    assert.equal(retryable?.attempt_count, 1);
+    assert.equal(retryable?.last_error_code, "learning_control_guide_receipt_invalid");
+
+    for (let attempt = 2; attempt <= 7; attempt += 1) {
+      const retryAt = new Date(firstDrainAt.getTime() + attempt * 10 * 60_000);
+      const retried = await drainUnusedExposureLearningControlJobs({
+        access: scenario.learningControlJobAccess,
+        ledger: scenario.learningEpisodeLedgerAccess,
+        writeStore: scenario.liteWriteStore,
+        env: scenario.env,
+        limit: 1,
+        now: () => retryAt,
+      });
+      assert.equal(retried.claimed, 1);
+      assert.equal(retried.retried, 1);
+      assert.equal(retried.terminalization_deferred, 0);
+      const [pending] = await scenario.learningControlJobAccess.listLearningControlJobs();
+      assert.equal(pending?.status, "pending");
+      assert.equal(pending?.attempt_count, attempt);
+      assert.equal(pending?.last_error_code, "learning_control_guide_receipt_invalid");
+    }
+    const exhaustedAttemptAt = new Date(firstDrainAt.getTime() + 80 * 60_000);
+    const exhaustedWorker = startUnusedExposureLearningControlWorker({
+      access: scenario.learningControlJobAccess,
+      ledger: scenario.learningEpisodeLedgerAccess,
+      writeStore: scenario.liteWriteStore,
+      env: scenario.env,
+      intervalMs: 60_000,
+      batchSize: 1,
+      now: () => exhaustedAttemptAt,
+    });
+    const deferred = await exhaustedWorker.drainOnce();
+    assert.deepEqual(deferred, {
+      claimed: 1,
+      completed: 0,
+      no_op: 0,
+      retried: 0,
+      terminalization_deferred: 1,
+      last_terminalization_error_code: "learning_control_terminalization_safety_pause_failed",
+      dead_lettered: 0,
+      safety_paused: 0,
+      stale_claims: 0,
+    });
+    const exhaustedHealth = exhaustedWorker.healthSnapshot();
+    assert.equal(exhaustedHealth.closed, false);
+    assert.equal(exhaustedHealth.last_error_code, null);
+    assert.equal(exhaustedHealth.last_terminalization_error_code,
+      "learning_control_terminalization_safety_pause_failed");
+    assert.equal(exhaustedHealth.last_drain?.terminalization_deferred, 1);
+    assert.equal(exhaustedHealth.backlog?.exhausted, 1);
+    await exhaustedWorker.shutdown();
+    assert.equal(exhaustedWorker.healthSnapshot().closed, true);
+    const [exhausted] = await scenario.learningControlJobAccess.listLearningControlJobs();
+    assert.equal(exhausted?.status, "leased");
+    assert.equal(exhausted?.attempt_count, 8);
+    assert.equal(exhausted?.last_error_code, "learning_control_guide_receipt_invalid");
+    assert.ok(exhausted?.lease_expires_at);
+    const exhaustedBacklog = await scenario.learningControlJobAccess.learningControlBacklogSnapshot(
+      exhaustedAttemptAt,
+    );
+    assert.equal(exhaustedBacklog.exhausted, 1);
+    assert.equal(exhaustedBacklog.dead_letter, 0);
+    assert.equal(
+      scalarCount(
+        scenario.runtimeDatabase,
+        `SELECT COUNT(*) AS count FROM lite_runtime_write_operations
+         WHERE operation_kind IN ('unused_exposure_learning_control_v1', 'learning_gate_authority_v1')`,
+      ),
+      0,
+    );
+    assert.equal(
+      scalarCount(
+        scenario.runtimeDatabase,
+        `SELECT COUNT(*) AS count FROM lite_learning_gate_decisions
+         WHERE trigger_ref_kind = 'control_job' AND trigger_ref_id = ?`,
+        queued.job_id,
+      ),
+      0,
+    );
+
+    scenario.runtimeDatabase.db.exec("DROP TRIGGER reject_control_job_authority_receipt");
+    const terminalDrainAt = new Date(new Date(exhausted.lease_expires_at).getTime() + 1);
+    const terminalized = await drainUnusedExposureLearningControlJobs({
+      access: scenario.learningControlJobAccess,
+      ledger: scenario.learningEpisodeLedgerAccess,
+      writeStore: scenario.liteWriteStore,
+      env: scenario.env,
+      limit: 1,
+      now: () => terminalDrainAt,
+    });
+    assert.deepEqual(terminalized, {
+      claimed: 1,
+      completed: 0,
+      no_op: 0,
+      retried: 0,
+      terminalization_deferred: 0,
+      last_terminalization_error_code: null,
+      dead_lettered: 1,
+      safety_paused: 1,
+      stale_claims: 0,
+    });
+
+    scenario.runtimeDatabase.db.prepare(
+      `UPDATE lite_product_guide_receipts SET ledger_sha256 = ?
+       WHERE tenant_id = ? AND scope = ? AND guide_trace_id = ?`,
+    ).run(
+      sourceGuideReceipt.ledger_sha256,
+      scenario.principal.tenant_id,
+      scenario.principal.default_scope,
+      scenario.guide.guide_trace_id,
+    );
+    const [deadLetter] = await scenario.learningControlJobAccess.listLearningControlJobs();
+    assert.equal(deadLetter?.status, "dead_letter");
+    assert.equal(deadLetter?.last_error_code, "learning_control_guide_receipt_invalid");
+    const workerOperation = scenario.runtimeDatabase.db.prepare(
+      `SELECT operation_id, receipt_json, commit_id
+       FROM lite_runtime_write_operations
+       WHERE operation_kind = 'unused_exposure_learning_control_v1'`,
+    ).get() as { operation_id: string; receipt_json: string; commit_id: string } | undefined;
+    assert.ok(workerOperation);
+    assert.equal(workerOperation.operation_id, queued.operation_id);
+    const workerReceipt = JSON.parse(workerOperation.receipt_json) as Record<string, unknown>;
+    assert.equal(workerReceipt.status, "dead_letter");
+    assert.equal(workerReceipt.job_id, queued.job_id);
+    assert.equal(workerReceipt.result_commit_id, null);
+    const safety = scenario.runtimeDatabase.db.prepare(
+      `SELECT decision_id, authority_operation_id, authority_operation_kind,
+              trigger_ref_id, trigger_episode_id, source_commit_id
+       FROM lite_learning_gate_decisions
+       WHERE trigger_ref_kind = 'control_job' AND trigger_ref_id = ?`,
+    ).get(queued.job_id) as Record<string, unknown> | undefined;
+    assert.ok(safety);
+    assert.equal(safety.trigger_episode_id, scenario.exposure.episode_id);
+    assert.equal(safety.authority_operation_kind, "learning_gate_authority_v1");
+    assert.notEqual(safety.authority_operation_id, queued.operation_id);
+    const authorityOperation = scenario.runtimeDatabase.db.prepare(
+      `SELECT operation_id, receipt_json, commit_id
+       FROM lite_runtime_write_operations
+       WHERE operation_kind = 'learning_gate_authority_v1'
+         AND operation_id = ?`,
+    ).get(safety.authority_operation_id) as Record<string, unknown> | undefined;
+    assert.ok(authorityOperation);
+    assert.equal(authorityOperation.commit_id, safety.source_commit_id);
+    const authorityReceipt = JSON.parse(String(authorityOperation.receipt_json));
+    assert.equal(authorityReceipt.trigger_ref_kind, "control_job");
+    assert.equal(authorityReceipt.trigger_ref_id, queued.job_id);
+    assert.equal((await verifyLiteRuntimeDatabase(scenario.dbPath)).ok, true);
+
+    const nextEnvelope = {
+      ...scenario.envelope,
+      source_event_sha256: sha256("eligible-host-control-dead-letter-next-source-event"),
+      created_at: "2026-07-15T02:04:00.000Z",
+    };
+    const nextResult = await scenario.guideService.execute(ProductGuideRequest.parse({
+      operation_id: "guide:eligible-host-control-dead-letter:after-stop",
+      tenant_id: scenario.principal.tenant_id,
+      scope: scenario.principal.default_scope,
+      run_id: "run:eligible-host-control-dead-letter:after-stop",
+      consumer_agent_id: scenario.principal.agent_id,
+      query_text: `${scenario.marker} next status update memory`,
+      context: {
+        task_family: CONFIRMATORY_TASK_FAMILY,
+        task_signature: scenario.taskSignature,
+        repository_signature: scenario.repositorySignature,
+      },
+      host_task_envelope_v1: nextEnvelope,
+      include_packets: true,
+      limit: 8,
+    }), {
+      principal: scenario.principal,
+      planningContext: async () => ({
+        tenant_id: scenario.principal.tenant_id,
+        scope: scenario.principal.default_scope,
+        recall: { aionis_memory_packet: scenario.packet },
+      }),
+      applyIdentity: (value) => value,
+    });
+    assert.equal(nextResult.ok, true, JSON.stringify(nextResult));
+    const nextGuide = nextResult.body as Record<string, any>;
+    const policy = nextGuide.source_map.admission_candidate_policy;
+    assert.equal(policy.serving_arm, "control");
+    assert.equal(policy.promotion_eligible, false);
+    assert.deepEqual(policy.reason_codes, ["candidate_implementation_paused"]);
+    const nextExposure = scenario.runtimeDatabase.db.prepare(
+      `SELECT served_arm, promotion_eligible
+       FROM lite_learning_episode_events
+       WHERE event_kind = 'exposure_committed' AND source_id = ?`,
+    ).get(nextGuide.guide_trace_id) as Record<string, unknown> | undefined;
+    assert.ok(nextExposure);
+    assert.equal(nextExposure.served_arm, "control");
+    assert.equal(nextExposure.promotion_eligible, 0);
+  } finally {
+    scenario.runtimeDatabase.db.exec("DROP TRIGGER IF EXISTS reject_control_job_authority_receipt");
+    scenario.runtimeDatabase.db.prepare(
+      `UPDATE lite_product_guide_receipts SET ledger_sha256 = ?
+       WHERE tenant_id = ? AND scope = ? AND guide_trace_id = ?`,
+    ).run(
+      sourceGuideReceipt.ledger_sha256,
+      scenario.principal.tenant_id,
+      scenario.principal.default_scope,
+      scenario.guide.guide_trace_id,
+    );
+    await scenario.close();
+  }
+});
+
 test("eligible-host boundary feedback appends safety pause authority and restart verification fails closed on receipt tamper", async () => {
   const scenario = await prepareEligibleHostFeedbackScenario({
     name: "eligible-host-boundary-pause",
@@ -3099,7 +4185,7 @@ test("product feedback closed loop moves repeated weak negative to inspect-befor
   }
 });
 
-test("product feedback records repeated-unused evidence without synchronously mutating learning posture", async () => {
+test("legacy feedback records repeated-unused evidence without enqueueing formal learning control", async () => {
   const { app, liteWriteStore } = setupProductApp("repeated-unused-exposure");
   try {
     const marker = "AIONIS_CLOSED_LOOP_UNUSED";
@@ -3145,7 +4231,7 @@ test("product feedback records repeated-unused evidence without synchronously mu
     assert.equal(
       feedback.forget_effect.guide_trace.feedback_learning_control,
       undefined,
-      "Steps 1-3 must not perform the Step 4 queue consumer's posture mutation inside the feedback transaction",
+      "The legacy path has no formal episode-ledger source and must not expose a durable enqueue result",
     );
     const unusedStats = unusedObservation.memory_stats.find((entry: Record<string, any>) =>
       entry.memory_id === unusedMemoryId
@@ -3230,7 +4316,7 @@ test("product feedback records repeated-unused evidence without synchronously mu
   }
 });
 
-test("product guide leaves repeated-unused posture unchanged until the Step 4 queue is consumed", async () => {
+test("legacy guide and feedback leave repeated-unused posture unchanged without a formal learning ledger", async () => {
   const { app, liteWriteStore } = setupProductApp("persisted-repeated-unused-exposure");
   try {
     const marker = "AIONIS_ACTIVE_REPEATED_UNUSED";
@@ -3291,7 +4377,7 @@ test("product guide leaves repeated-unused posture unchanged until the Step 4 qu
   }
 });
 
-test("negative attributed use does not synchronously turn a different repeated-unused memory into posture", async () => {
+test("legacy negative attribution does not enqueue posture control for a different repeated-unused memory", async () => {
   const { app, liteWriteStore } = setupProductApp("persisted-repeated-unused-negative-used-boundary");
   try {
     const marker = "AIONIS_ACTIVE_REPEATED_UNUSED_NEGATIVE_USED";

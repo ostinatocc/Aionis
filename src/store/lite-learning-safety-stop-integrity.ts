@@ -2,11 +2,14 @@ import stableStringify from "fast-json-stable-stringify";
 
 import {
   LEARNING_SAFETY_STOP_POLICY_SHA256,
+  LEARNING_SAFETY_STOP_POLICY_V2_SHA256,
   LearningSafetyStopAuthorizationV1Schema,
   LearningSafetyStopOperationReceiptV1Schema,
   learningSafetyAuthorityOperationId,
   learningSafetyAuthorityScope,
   learningSafetyStopAuthorizationDigest,
+  learningControlDeadLetterTriggerSha256,
+  learningSafetyEvidenceScopeSetDigest,
 } from "../memory/learning-safety-stop.js";
 import { FeedbackAttributedV1Schema, type FeedbackAttributedV1 } from "../memory/learning-episode-ledger.js";
 import {
@@ -453,6 +456,17 @@ function assertFeedbackAuthorityProvenance(db: SqliteDatabase): void {
         || responseAttribution.used_surface !== attributions[0]?.used_surface) {
         throw new Error("lite_learning_integrity_failed:feedback_operation_receipt_binding");
       }
+      if (payload.learning_control_queue_contract === "unused_exposure_learning_control_v1") {
+        const guideTrace = effect.guide_trace as Row | undefined;
+        const learningControl = exactObject(
+          guideTrace?.feedback_learning_control,
+          ["learning_control_status"],
+          "feedback_operation_receipt_learning_control",
+        );
+        if (learningControl.learning_control_status !== "queued") {
+          throw new Error("lite_learning_integrity_failed:feedback_operation_receipt_learning_control_status");
+        }
+      }
       sameStringSet(activated.updated_ids, attributions.map((row) => requiredString(row, "subject_id")),
         "feedback_operation_receipt_updated_subjects");
       sameStringSet(effect.affected_memory_ids, attributions.map((row) => requiredString(row, "subject_id")),
@@ -524,9 +538,12 @@ export function assertLiteLearningSafetyStopBundlesIntegrity(db: SqliteDatabase)
       parseCanonical(authorizationJson, "safety_stop_authorization"),
     );
     const authorizationSha256 = learningSafetyStopAuthorizationDigest(authorization);
+    const expectedStopPolicySha256 = authorization.trigger_ref_kind === "control_job"
+      ? LEARNING_SAFETY_STOP_POLICY_V2_SHA256
+      : LEARNING_SAFETY_STOP_POLICY_SHA256;
     if (authorizationSha256 !== decision.authorization_sha256
       || decision.decision_sha256 !== decisionDigest(decision)
-      || authorization.stop_policy_sha256 !== LEARNING_SAFETY_STOP_POLICY_SHA256) {
+      || authorization.stop_policy_sha256 !== expectedStopPolicySha256) {
       throw new Error("lite_learning_integrity_failed:safety_stop_authorization_digest");
     }
     const expectedScope = learningSafetyAuthorityScope({
@@ -568,35 +585,102 @@ export function assertLiteLearningSafetyStopBundlesIntegrity(db: SqliteDatabase)
       || decision.authority_scope !== "task_family_candidate_implementation") {
       throw new Error("lite_learning_integrity_failed:safety_stop_authority_binding");
     }
-    const trigger = db.prepare(
-      `SELECT row_id, event_sha256, episode_id, source_commit_id
-       FROM lite_learning_episode_events
-       WHERE tenant_id = ? AND event_id = ? AND event_kind = 'feedback_attributed'`,
-    ).get(authorization.tenant_id, authorization.trigger_ref_id) as Row | undefined;
-    const boundaryRows = trigger ? db.prepare(
-      `SELECT subject_id FROM lite_learning_feedback_attributions
-       WHERE tenant_id = ? AND event_id = ? AND boundary_outcome = 'boundary_ignored'
-       ORDER BY subject_id`,
-    ).all(authorization.tenant_id, authorization.trigger_ref_id) as Row[] : [];
-    if (!trigger
-      || trigger.event_sha256 !== authorization.trigger_sha256
-      || trigger.episode_id !== authorization.trigger_episode_id
-      || trigger.source_commit_id !== authorization.source_commit_id
-      || Number(trigger.row_id) !== Number(decision.evidence_cutoff_event_row_id)
-      || boundaryRows.length === 0) {
-      throw new Error("lite_learning_integrity_failed:safety_stop_trigger_binding");
-    }
     const summaryJson = requiredString(decision, "evidence_summary_json");
     const summary = parseCanonical(summaryJson, "safety_stop_summary") as Row;
-    const boundaryIds = boundaryRows.map((row) => requiredString(row, "subject_id"));
-    if (sha256Hex(summaryJson) !== decision.evidence_summary_sha256
-      || summary.contract_version !== "learning_boundary_safety_summary_v1"
-      || summary.boundary_outcome !== "boundary_ignored"
-      || stableStringify(summary.boundary_ignored_memory_ids) !== stableStringify(boundaryIds)
-      || summary.trigger_ref_id !== authorization.trigger_ref_id
-      || summary.trigger_sha256 !== authorization.trigger_sha256
-      || summary.stop_policy_sha256 !== authorization.stop_policy_sha256) {
+    if (sha256Hex(summaryJson) !== decision.evidence_summary_sha256) {
       throw new Error("lite_learning_integrity_failed:safety_stop_summary_binding");
+    }
+    if (authorization.trigger_ref_kind === "episode_feedback") {
+      const trigger = db.prepare(
+        `SELECT row_id, event_sha256, episode_id, source_commit_id
+         FROM lite_learning_episode_events
+         WHERE tenant_id = ? AND event_id = ? AND event_kind = 'feedback_attributed'`,
+      ).get(authorization.tenant_id, authorization.trigger_ref_id) as Row | undefined;
+      const boundaryRows = trigger ? db.prepare(
+        `SELECT subject_id FROM lite_learning_feedback_attributions
+         WHERE tenant_id = ? AND event_id = ? AND boundary_outcome = 'boundary_ignored'
+         ORDER BY subject_id`,
+      ).all(authorization.tenant_id, authorization.trigger_ref_id) as Row[] : [];
+      if (!trigger
+        || trigger.event_sha256 !== authorization.trigger_sha256
+        || trigger.episode_id !== authorization.trigger_episode_id
+        || trigger.source_commit_id !== authorization.source_commit_id
+        || Number(trigger.row_id) !== Number(decision.evidence_cutoff_event_row_id)
+        || boundaryRows.length === 0) {
+        throw new Error("lite_learning_integrity_failed:safety_stop_trigger_binding");
+      }
+      const boundaryIds = boundaryRows.map((row) => requiredString(row, "subject_id"));
+      if (summary.contract_version !== "learning_boundary_safety_summary_v1"
+        || summary.boundary_outcome !== "boundary_ignored"
+        || stableStringify(summary.boundary_ignored_memory_ids) !== stableStringify(boundaryIds)
+        || summary.trigger_ref_kind !== "episode_feedback"
+        || summary.trigger_ref_id !== authorization.trigger_ref_id
+        || summary.trigger_sha256 !== authorization.trigger_sha256
+        || summary.stop_policy_sha256 !== authorization.stop_policy_sha256) {
+        throw new Error("lite_learning_integrity_failed:safety_stop_summary_binding");
+      }
+    } else if (authorization.trigger_ref_kind === "control_job") {
+      const job = db.prepare(
+        `SELECT * FROM lite_learning_control_jobs
+         WHERE tenant_id = ? AND job_id = ? AND status = 'dead_letter'`,
+      ).get(authorization.tenant_id, authorization.trigger_ref_id) as Row | undefined;
+      const feedback = job ? db.prepare(
+        `SELECT row_id, episode_id, source_commit_id FROM lite_learning_episode_events
+         WHERE tenant_id = ? AND scope = ? AND event_id = ?
+           AND event_kind = 'feedback_attributed'`,
+      ).get(job.tenant_id, job.scope, job.source_feedback_event_id) as Row | undefined : undefined;
+      const exposure = job ? db.prepare(
+        `SELECT source_id, enrollment_state, candidate_policy_id, candidate_policy_version,
+                experiment_id, experiment_revision
+         FROM lite_learning_episode_events
+         WHERE tenant_id = ? AND scope = ? AND episode_id = ?
+           AND event_kind = 'exposure_committed'`,
+      ).get(job.tenant_id, job.scope, job.source_episode_id) as Row | undefined : undefined;
+      const expectedTriggerSha256 = job ? learningControlDeadLetterTriggerSha256({
+        tenantId: requiredString(job, "tenant_id"),
+        scope: requiredString(job, "scope"),
+        jobId: requiredString(job, "job_id"),
+        sourceEpisodeId: requiredString(job, "source_episode_id"),
+        sourceFeedbackEventId: requiredString(job, "source_feedback_event_id"),
+        sourceCommitId: requiredString(job, "source_commit_id"),
+        payloadSha256: requiredString(job, "payload_sha256"),
+        attemptCount: nonNegativeInteger(job.attempt_count, "control_job_attempt_count"),
+        lastErrorCode: requiredString(job, "last_error_code"),
+      }) : null;
+      if (!job || !feedback || !exposure
+        || exposure.enrollment_state !== "enrolled"
+        || feedback.episode_id !== job.source_episode_id
+        || feedback.source_commit_id !== job.source_commit_id
+        || exposure.candidate_policy_id !== authorization.candidate_policy_id
+        || exposure.candidate_policy_version !== authorization.candidate_policy_version
+        || exposure.experiment_id !== authorization.experiment_id
+        || Number(exposure.experiment_revision) !== authorization.experiment_revision
+        || authorization.trigger_episode_id !== job.source_episode_id
+        || authorization.trigger_sha256 !== expectedTriggerSha256
+        || authorization.source_commit_id !== job.source_commit_id
+        || authorization.evidence_scope_set_sha256
+          !== learningSafetyEvidenceScopeSetDigest([requiredString(job, "scope")])
+        || Number(feedback.row_id) !== Number(decision.evidence_cutoff_event_row_id)
+        || decision.evidence_cohort_sha256
+          !== sha256Hex(stableStringify([job.job_id, job.payload_sha256]))) {
+        throw new Error("lite_learning_integrity_failed:safety_stop_control_job_binding");
+      }
+      if (summary.contract_version !== "learning_control_dead_letter_safety_summary_v1"
+        || summary.job_id !== job.job_id
+        || summary.source_episode_id !== job.source_episode_id
+        || summary.source_feedback_event_id !== job.source_feedback_event_id
+        || summary.source_commit_id !== job.source_commit_id
+        || summary.payload_sha256 !== job.payload_sha256
+        || Number(summary.attempt_count) !== Number(job.attempt_count)
+        || summary.last_error_code !== job.last_error_code
+        || summary.trigger_ref_kind !== "control_job"
+        || summary.trigger_ref_id !== job.job_id
+        || summary.trigger_sha256 !== expectedTriggerSha256
+        || summary.stop_policy_sha256 !== authorization.stop_policy_sha256) {
+        throw new Error("lite_learning_integrity_failed:safety_stop_summary_binding");
+      }
+    } else {
+      throw new Error("lite_learning_integrity_failed:safety_stop_trigger_kind_unsupported");
     }
     const revision = db.prepare(
       `SELECT config_sha256, candidate_policy_id, candidate_policy_version,
@@ -650,6 +734,28 @@ export function assertLiteLearningSafetyStopBundlesIntegrity(db: SqliteDatabase)
       || receipt.source_commit_id !== authorization.source_commit_id) {
       throw new Error("lite_learning_integrity_failed:safety_stop_receipt_binding");
     }
+  }
+  const enrolledDeadLettersWithoutOneStop = db.prepare(
+    `SELECT COUNT(*) AS count
+     FROM lite_learning_control_jobs AS job
+     WHERE job.status = 'dead_letter'
+       AND EXISTS (
+         SELECT 1 FROM lite_learning_episode_events AS exposure
+         WHERE exposure.tenant_id = job.tenant_id AND exposure.scope = job.scope
+           AND exposure.episode_id = job.source_episode_id
+           AND exposure.event_kind = 'exposure_committed'
+           AND exposure.enrollment_state = 'enrolled'
+       )
+       AND (
+         SELECT COUNT(*) FROM lite_learning_gate_decisions AS decision
+         WHERE decision.tenant_id = job.tenant_id
+           AND decision.decision_kind = 'safety_stop'
+           AND decision.trigger_ref_kind = 'control_job'
+           AND decision.trigger_ref_id = job.job_id
+       ) <> 1`,
+  ).get() as { count: number };
+  if (Number(enrolledDeadLettersWithoutOneStop.count) !== 0) {
+    throw new Error("lite_learning_integrity_failed:enrolled_control_dead_letter_safety_stop_missing");
   }
   const orphans = db.prepare(
     `SELECT COUNT(*) AS count FROM lite_runtime_write_operations AS operation

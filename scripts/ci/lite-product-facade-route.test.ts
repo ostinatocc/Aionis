@@ -6630,7 +6630,7 @@ test("product guide feedback loop requires repeated weak negative attribution be
   }
 });
 
-test("product guide trace attribution resolves used memories from persisted exposure ledger", async () => {
+test("legacy product guide trace attribution resolves used memories without enqueueing formal learning control", async () => {
   const app = Fastify();
   const env = liteEnv();
   const guards = requestGuards(env, DeterministicEmbeddingProvider);
@@ -6794,7 +6794,7 @@ test("product guide trace attribution resolves used memories from persisted expo
     assert.equal(
       feedbackBody.forget_effect.guide_trace.feedback_learning_control,
       undefined,
-      "Steps 1-3 keep repeated-unused evidence read-only until the Step 4 queue consumer runs",
+      "The legacy guide-exposure path has no formal episode-ledger source and must not enqueue learning control",
     );
 
     const usedAfterFeedback = await liteWriteStore.findNodes({

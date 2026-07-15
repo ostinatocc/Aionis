@@ -1301,12 +1301,21 @@ dedicated lifecycle paths.
 memories that were shown across multiple guide traces but not host-marked as
 used in the current activation, and separately lists the subset with no positive
 attributed use recorded. The observation object is still read-only evidence for
-product debugging. When the repeated-unused-without-positive gate passes,
-`forget_effect.guide_trace.feedback_learning_control` records the separate persistence
-action that set `feedback_learning_control_posture=inspect_before_use` on the affected
-memory ids. This is direct-reuse control until the Agent or host
-inspects/revalidates the memory. A later positive attributed use clears this
-feedback-learning control posture.
+product debugging. When formal guide-attributed feedback contains unused
+exposure, its episode facts and deterministic durable control job commit in one
+SQLite transaction. `forget_effect.guide_trace.feedback_learning_control`
+reports only `learning_control_status: queued|already_completed`; it does not
+claim that `feedback_learning_control_posture` changed synchronously. The
+Runtime worker leases the job, recomputes repeated-unused-without-positive facts
+at the source feedback cutoff for the same consumer cohort, and atomically
+writes its audit commit, operation receipt, posture effect or legal no-op, and
+terminal job state. Exhausted jobs remain retained. Successful safety
+terminalization moves them to `dead_letter` with an independent pause for
+enrolled sources; if pause/authority persistence fails, the exhausted lease is
+deferred and readiness fails closed. Historical markerless feedback is not
+retroactively enqueued and omits `feedback_learning_control`.
+An applied posture is direct-reuse control until the Agent or host
+inspects/revalidates the memory. A later positive attributed use clears it.
 `sparse_feedback_signal_summary` rolls positive attribution, weak/strong
 counter-signals, and repeated unused exposure into one read-only debug summary.
 It sets `authority_mutation: false` to make the boundary explicit.

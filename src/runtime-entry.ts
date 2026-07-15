@@ -23,6 +23,7 @@ import { createRecallTextEmbedRuntime } from "./app/recall-text-embed.js";
 import { createRuntimeServices } from "./app/runtime-services.js";
 import { startLiteAssociativeLinkWorker } from "./jobs/associative-linking-worker.js";
 import { startLiteProjectionWorker } from "./jobs/lite-projection-worker.js";
+import { startUnusedExposureLearningControlWorker } from "./jobs/unused-exposure-learning-control-worker.js";
 import { loadRuntimeConfig } from "./config/runtime-config.js";
 
 export async function startAionisRuntime(): Promise<void> {
@@ -37,6 +38,7 @@ export async function startAionisRuntime(): Promise<void> {
     liteReplayAccess,
     liteWriteStore,
     learningEpisodeLedgerAccess,
+    learningControlJobAccess,
     liteClaimLedgerStore,
     claimLedgerAccess,
     liteSkillCandidateReviewStore,
@@ -176,6 +178,7 @@ export async function startAionisRuntime(): Promise<void> {
     executionTreeStore,
     claimLedgerAccess,
     learningEpisodeLedgerAccess,
+    learningControlJobAccess,
     admissionCandidatePolicyProfileRules:
       runtimeConfig.governance.admissionCandidatePolicyProfileRules,
     skillCandidateReviewAccess,
@@ -195,6 +198,16 @@ export async function startAionisRuntime(): Promise<void> {
     logger: app.log,
   });
   await projectionWorker.drainOnce();
+  const learningControlWorker = startUnusedExposureLearningControlWorker({
+    access: learningControlJobAccess,
+    ledger: learningEpisodeLedgerAccess,
+    writeStore: liteWriteStore,
+    env,
+    intervalMs: runtimeConfig.storage.OUTBOX_POLL_INTERVAL_MS,
+    batchSize: runtimeConfig.storage.OUTBOX_BATCH_SIZE,
+    logger: app.log,
+  });
+  await learningControlWorker.drainOnce();
   const associativeLinkWorker = liteRecallAccess
     ? startLiteAssociativeLinkWorker({
         writeStore: liteWriteStore,
@@ -235,6 +248,7 @@ export async function startAionisRuntime(): Promise<void> {
     executionTreeStore,
     sandboxExecutor,
     projectionWorker,
+    learningControlWorker,
     sandboxTenantBudgetPolicy,
     sandboxRemoteAllowedCidrs,
   });
@@ -284,6 +298,7 @@ export async function startAionisRuntime(): Promise<void> {
     liteReplayStore,
     liteWriteStore,
     projectionWorker,
+    learningControlWorker,
     associativeLinkWorker,
     liteClaimLedgerStore,
     liteSkillCandidateReviewStore,

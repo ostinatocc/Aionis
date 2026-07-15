@@ -51,6 +51,12 @@ import {
 import { assertLiteTenantScopeEncodingAnchorSetIntegrity } from "./lite-tenant-scope-authority.js";
 import { assertLiteLearningExperimentCloseBundlesIntegrity } from "./lite-learning-experiment-close-integrity.js";
 import { assertLiteLearningFeedbackExposureProvenance, assertLiteLearningSafetyStopBundlesIntegrity } from "./lite-learning-safety-stop-integrity.js";
+import {
+  UnusedExposureLearningControlPayloadSchema,
+  assertLiteLearningControlJobOperationIntegrity,
+  assertNoOrphanLiteLearningControlOperations,
+  buildUnusedExposureLearningControlJob,
+} from "./lite-learning-control-jobs.js";
 import { resolveLiteLearningFeedbackSource } from "./lite-learning-feedback-source.js";
 import { assertPromotionEligibleGuideExposureRoots } from "./lite-learning-guide-root-authority.js";
 import { normalizeSqliteSchemaSql } from "./sqlite-schema-sql.js";
@@ -6011,14 +6017,10 @@ function validateStoredControlJobs(
       !== stableStringify(["contract_version", "exposure_ids", "feedback_event_id"])) {
       throw new Error("learning control job payload must be the exact canonical object");
     }
-    const exposureIds = payload.exposure_ids;
-    if (payload.contract_version !== "unused_exposure_learning_control_v1"
-      || payload.feedback_event_id !== job.source_feedback_event_id
-      || !Array.isArray(exposureIds)
-      || exposureIds.length < 1
-      || exposureIds.length > 96
-      || exposureIds.some((value) => typeof value !== "string" || value.length < 1 || value.length > 256)
-      || new Set(exposureIds).size !== exposureIds.length) {
+    const parsedPayload = UnusedExposureLearningControlPayloadSchema.safeParse(payload);
+    const exposureIds = parsedPayload.success ? parsedPayload.data.exposure_ids : null;
+    if (!parsedPayload.success
+      || payload.feedback_event_id !== job.source_feedback_event_id) {
       throw new Error("learning control job payload semantic binding mismatch");
     }
     const source = db.prepare(
@@ -6026,7 +6028,7 @@ function validateStoredControlJobs(
        FROM lite_learning_episode_events
        WHERE tenant_id = ? AND scope = ? AND event_id = ?
          AND event_kind = 'feedback_attributed'`,
-    ).get(job.tenant_id, job.scope, job.source_feedback_event_id) as Record<string, unknown> | undefined;
+    ).get(job.tenant_id, job.scope, job.source_feedback_event_id) as LiteLearningAuthorityRow | undefined;
     if (!source
       || source.episode_id !== job.source_episode_id
       || source.source_commit_id !== job.source_commit_id) {
@@ -6037,35 +6039,110 @@ function validateStoredControlJobs(
       "learning control source feedback payload",
     ));
     if (sourcePayload.contract_version !== "aionis_learning_feedback_v1"
+      || sourcePayload.feedback_kind !== "memory"
+      || sourcePayload.learning_control_queue_contract !== "unused_exposure_learning_control_v1"
       || stableStringify([...sourcePayload.unused_exposure_ids].sort())
-        !== stableStringify([...(exposureIds as string[])].sort())) {
+        !== stableStringify([...(exposureIds ?? [])].sort())) {
       throw new Error("learning control job exposure set does not match its source feedback");
     }
-    for (const exposureId of exposureIds as string[]) {
-      if (!db.prepare(
-        `SELECT 1 FROM lite_learning_episode_events
-         WHERE tenant_id = ? AND scope = ? AND event_id = ?
-           AND event_kind = 'exposure_committed'`,
-      ).get(job.tenant_id, job.scope, exposureId)) {
-        throw new Error("learning control job references an unresolved exposure event");
+    const sourceExposures = db.prepare(
+      `SELECT event_id FROM lite_learning_episode_events
+       WHERE tenant_id = ? AND scope = ? AND episode_id = ?
+         AND event_kind = 'exposure_committed'
+       ORDER BY event_id`,
+    ).all(job.tenant_id, job.scope, job.source_episode_id) as Array<{ event_id: string }>;
+    if (sourceExposures.length !== 1
+      || stableStringify(exposureIds) !== stableStringify([sourceExposures[0]!.event_id])) {
+      throw new Error("learning control job must reference exactly its source episode exposure");
+    }
+    const expected = buildUnusedExposureLearningControlJob({
+      tenantId: requiredString(job, "tenant_id"),
+      scope: requiredString(job, "scope"),
+      sourceEpisodeId: requiredString(job, "source_episode_id"),
+      sourceFeedbackEventId: requiredString(job, "source_feedback_event_id"),
+      sourceCommitId: requiredString(job, "source_commit_id"),
+      exposureIds: exposureIds ?? [],
+      enqueuedAt: requiredString(source, "recorded_at"),
+    });
+    for (const field of [
+      "tenant_id", "scope", "job_id", "job_kind", "operation_id", "source_episode_id",
+      "source_feedback_event_id", "source_commit_id", "payload_sha256", "payload_json", "created_at",
+    ] as const) {
+      if (job[field] !== expected[field]) {
+        throw new Error(`learning control deterministic job binding mismatch: ${field}`);
       }
     }
     const createdAt = requiredString(job, "created_at");
     const updatedAt = requiredString(job, "updated_at");
     const availableAt = requiredString(job, "available_at");
+    const attemptCount = Number(job.attempt_count);
+    const status = requiredString(job, "status");
+    const leaseExpiresAt = job.lease_expires_at === null
+      ? null
+      : requiredString(job, "lease_expires_at");
+    const completedAt = job.completed_at === null
+      ? null
+      : requiredString(job, "completed_at");
+    if (!Number.isSafeInteger(attemptCount) || attemptCount < 0 || attemptCount > 8
+      || !isCanonicalUtcMillis(createdAt)
+      || !isCanonicalUtcMillis(updatedAt)
+      || !isCanonicalUtcMillis(availableAt)
+      || (leaseExpiresAt !== null && !isCanonicalUtcMillis(leaseExpiresAt))
+      || (completedAt !== null && !isCanonicalUtcMillis(completedAt))) {
+      throw new Error("learning control job lifecycle encoding mismatch");
+    }
+    const stateAttemptValid = status === "pending"
+      ? attemptCount < 8
+        && (attemptCount === 0 ? job.last_error_code === null : typeof job.last_error_code === "string")
+      : status === "leased"
+        ? attemptCount >= 1 && leaseExpiresAt !== null
+        : (status === "completed" || status === "dead_letter")
+          ? attemptCount >= 1 && completedAt !== null
+          : false;
+    if (!stateAttemptValid) {
+      throw new Error("learning control job attempt state mismatch");
+    }
     if (String(source.recorded_at) > createdAt
       || createdAt > availableAt
       || createdAt > updatedAt
-      || (job.lease_expires_at !== null && updatedAt >= String(job.lease_expires_at))
-      || (job.completed_at !== null
-        && (createdAt > String(job.completed_at) || String(job.completed_at) > updatedAt))) {
+      || (status === "pending" && availableAt < updatedAt)
+      || (status !== "pending" && availableAt > updatedAt)
+      || (leaseExpiresAt !== null && updatedAt >= leaseExpiresAt)
+      || (completedAt !== null && (createdAt > completedAt || completedAt > updatedAt))) {
       throw new Error("learning control job lifecycle timestamp order mismatch");
     }
     if (job.status === "dead_letter") deadLetters += 1;
     if (job.status === "leased" && requiredString(job, "lease_expires_at") < checkedAt) {
       expiredLeases += 1;
     }
+    assertLiteLearningControlJobOperationIntegrity(db, job);
   }
+  const feedbackSources = db.prepare(
+    `SELECT tenant_id, scope, event_id, payload_json
+     FROM lite_learning_episode_events
+     WHERE event_kind = 'feedback_attributed'
+     ORDER BY tenant_id, scope, row_id`,
+  ).all() as LiteLearningAuthorityRow[];
+  for (const source of feedbackSources) {
+    const payload = LearningEpisodePayloadV1Schema.parse(canonicalJson(
+      requiredString(source, "payload_json"),
+      "learning control feedback queue source payload",
+    ));
+    if (payload.contract_version !== "aionis_learning_feedback_v1"
+      || payload.learning_control_queue_contract !== "unused_exposure_learning_control_v1") continue;
+    const jobCount = scalarCount(
+      db,
+      `SELECT COUNT(*) AS count FROM lite_learning_control_jobs
+       WHERE tenant_id = ? AND scope = ? AND source_feedback_event_id = ?`,
+      source.tenant_id,
+      source.scope,
+      source.event_id,
+    );
+    if (jobCount !== 1) {
+      throw new Error("learning feedback with unused exposure requires exactly one durable control job");
+    }
+  }
+  assertNoOrphanLiteLearningControlOperations(db);
   return { count: jobs.length, deadLetters, expiredLeases };
 }
 
