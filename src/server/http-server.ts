@@ -689,6 +689,7 @@ export function createRuntimeProductServices(args: {
       env: args.env,
       liteWriteStore: args.liteWriteStore,
       learningKernel: toolFeedbackLearningKernel,
+      learningEpisodeLedgerAccess: args.learningEpisodeLedgerAccess ?? null,
     }),
     lifecycle: createProductLifecycleService({
       env: args.env,

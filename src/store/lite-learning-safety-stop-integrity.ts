@@ -20,6 +20,12 @@ import {
   type NodeFeedbackUsedSurface,
   type NodeFeedbackVerifierStatus,
 } from "../memory/node-feedback-state.js";
+import {
+  ToolRuleEvaluationProvenanceSchema,
+  type ToolRuleEvaluationProvenance,
+} from "../memory/tool-rule-evaluation-provenance.js";
+import { buildToolsRunLifecycleSummary } from "../memory/tools-lifecycle-summary.js";
+import { buildAionisUri } from "../memory/uri.js";
 import { sha256Hex } from "../util/crypto.js";
 import { stableUuid } from "../util/uuid.js";
 import type { SqliteDatabase } from "./sqlite.js";
@@ -86,6 +92,13 @@ function exactObject(value: unknown, fields: readonly string[], errorCode: strin
   return row;
 }
 
+function requiredObject(value: unknown, errorCode: string): Row {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`lite_learning_integrity_failed:${errorCode}_object`);
+  }
+  return value as Row;
+}
+
 function stringArray(value: unknown, errorCode: string): string[] {
   if (!Array.isArray(value)
     || value.some((item) => typeof item !== "string" || item.length === 0)
@@ -133,6 +146,85 @@ function sameStringSet(actual: unknown, expected: readonly string[], errorCode: 
   if (stableStringify(canonicalStrings(values)) !== stableStringify(canonicalStrings(expected))) {
     throw new Error(`lite_learning_integrity_failed:${errorCode}`);
   }
+}
+
+function parseJson(raw: string, errorCode: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error(`lite_learning_integrity_failed:${errorCode}_json`);
+  }
+}
+
+function expectedToolFeedbackAttributionStrength(
+  outcome: "positive" | "negative" | "neutral",
+): "observed_feedback" | "positive_attribution" | "strong_counter_signal" {
+  if (outcome === "positive") return "positive_attribution";
+  if (outcome === "negative") return "strong_counter_signal";
+  return "observed_feedback";
+}
+
+function isToolPolicyPath(path: string): boolean {
+  return path === "tool" || path.startsWith("tool.");
+}
+
+function toolRuleEvaluationProvenance(args: {
+  decision: Row;
+  decisionSourceRuleIds: readonly string[];
+  guideToolSelection: Row;
+}): ToolRuleEvaluationProvenance | null {
+  const metadata = requiredObject(
+    parseJson(
+      requiredString(args.decision, "metadata_json"),
+      "tool_feedback_decision_metadata",
+    ),
+    "tool_feedback_decision_metadata",
+  );
+  const rawProvenance = metadata.tool_rule_evaluation_provenance_v1;
+  const provenanceDeclared = rawProvenance !== undefined;
+  const contextDeclared = args.guideToolSelection.context_sha256 !== undefined;
+  const digestDeclared = args.guideToolSelection.rule_evaluation_sha256 !== undefined;
+  if (!provenanceDeclared && !contextDeclared && !digestDeclared) return null;
+  if (!provenanceDeclared || !contextDeclared || !digestDeclared) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_rule_evaluation_provenance_binding");
+  }
+  const parsed = ToolRuleEvaluationProvenanceSchema.safeParse(
+    rawProvenance,
+  );
+  if (!parsed.success) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_rule_evaluation_provenance");
+  }
+  const provenance = parsed.data;
+  const activeRuleIds = provenance.active_sources.map((source) => source.rule_node_id);
+  const allRuleIds = activeRuleIds.concat(
+    provenance.shadow_sources.map((source) => source.rule_node_id),
+  );
+  if (new Set(allRuleIds).size !== allRuleIds.length
+    || provenance.effective_context_sha256 !== args.decision.context_sha256
+    || provenance.policy_sha256 !== args.decision.policy_sha256
+    || args.guideToolSelection.context_sha256 !== args.decision.context_sha256
+    || args.guideToolSelection.rule_evaluation_sha256 !== provenance.provenance_sha256) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_rule_evaluation_provenance_binding");
+  }
+  sameStringSet(
+    args.decisionSourceRuleIds,
+    activeRuleIds,
+    "tool_feedback_rule_evaluation_provenance_active_sources",
+  );
+  return provenance;
+}
+
+function expectedToolFeedbackRuleIds(
+  provenance: ToolRuleEvaluationProvenance,
+  target: "tool" | "all",
+  includeShadow: boolean,
+): string[] {
+  const sources = provenance.active_sources.concat(
+    includeShadow ? provenance.shadow_sources : [],
+  );
+  return sources
+    .filter((source) => target === "all" || source.touched_paths.some(isToolPolicyPath))
+    .map((source) => source.rule_node_id);
 }
 
 function protectedFeedbackCommitRoot(args: {
@@ -314,6 +406,252 @@ function protectedFeedbackCommitRoot(args: {
   return { commit, diff, feedback, subjectIds, expectedAttributionStrength };
 }
 
+function toolFeedbackCommitRoot(args: {
+  db: SqliteDatabase;
+  event: Row;
+  payload: FeedbackAttributedV1;
+  attributions: readonly Row[];
+}): {
+  attribution: Row;
+  commit: Row;
+  feedback: Row;
+  decision: Row;
+  guideToolSelection: Row;
+  ruleEvaluationProvenance: ToolRuleEvaluationProvenance | null;
+} {
+  const { db, event, payload, attributions } = args;
+  if (payload.feedback_kind !== "tool_selection"
+    || event.source_kind !== "tool_feedback_operation"
+    || attributions.length !== 1) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_root_shape");
+  }
+  const attribution = attributions[0]!;
+  const outcome = requiredEnum(
+    attribution.outcome,
+    ["positive", "negative", "neutral"] as const,
+    "tool_feedback_attribution_outcome",
+  );
+  if (attribution.subject_kind !== "tool_decision"
+    || attribution.action_outcome !== null
+    || attribution.used_surface !== null
+    || attribution.exposure_action !== null
+    || attribution.boundary_outcome !== "not_applicable"
+    || attribution.attribution_strength !== expectedToolFeedbackAttributionStrength(outcome)
+    || attribution.evidence_class !== "tool_decision"
+    || attribution.host_use_receipt_id !== null
+    || attribution.host_use_receipt_sha256 !== null
+    || attribution.receipt_item_sha256 !== null
+    || attribution.host_task_envelope_sha256 !== null
+    || attribution.collection_principal_sha256 !== null
+    || attribution.collector_id !== null
+    || attribution.collector_version !== null
+    || attribution.content_evidence_sha256 !== null
+    || attribution.verifier_kind !== null
+    || attribution.verifier_version !== null
+    || attribution.verifier_config_sha256 !== null
+    || attribution.verifier_status !== null
+    || attribution.tool_status !== null
+    || attribution.runtime_signal_refs_sha256 !== null) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_attribution_shape");
+  }
+  const decisionId = requiredString(attribution, "subject_id");
+  const commit = db.prepare(
+    `SELECT id, scope, parent_commit_id, input_sha256, diff_json, actor,
+            model_version, prompt_version, commit_hash, created_at
+     FROM lite_memory_commits WHERE id = ?`,
+  ).get(event.source_commit_id) as Row | undefined;
+  if (!commit
+    || commit.id !== event.source_commit_id
+    || typeof commit.scope !== "string"
+    || typeof commit.actor !== "string"
+    || typeof commit.diff_json !== "string"
+    || typeof commit.input_sha256 !== "string"
+    || !/^[a-f0-9]{64}$/u.test(commit.input_sha256)
+    || typeof commit.commit_hash !== "string"
+    || !/^[a-f0-9]{64}$/u.test(commit.commit_hash)
+    || commit.model_version !== null
+    || commit.prompt_version !== null
+    || event.memory_namespace_sha256 !== sha256Hex(commit.scope)) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit");
+  }
+  const diff = parseJson(commit.diff_json, "tool_feedback_source_commit_diff") as Row;
+  const feedbackRows = diff && typeof diff === "object" && !Array.isArray(diff)
+    ? diff.tool_feedback
+    : null;
+  if (!Array.isArray(feedbackRows) || feedbackRows.length !== 1) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_diff");
+  }
+  const rootedFeedback = feedbackRows[0] as Row;
+  if (!rootedFeedback || typeof rootedFeedback !== "object" || Array.isArray(rootedFeedback)
+    || rootedFeedback.decision_id !== decisionId
+    || rootedFeedback.run_id !== payload.run_id
+    || rootedFeedback.outcome !== outcome) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_inputs");
+  }
+  let parentHash = "";
+  if (commit.parent_commit_id !== null) {
+    const parent = db.prepare(
+      `SELECT commit_hash FROM lite_memory_commits WHERE id = ? AND scope = ?`,
+    ).get(commit.parent_commit_id, commit.scope) as Row | undefined;
+    if (!parent || typeof parent.commit_hash !== "string" || !/^[a-f0-9]{64}$/u.test(parent.commit_hash)) {
+      throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_parent");
+    }
+    parentHash = parent.commit_hash;
+  }
+  const expectedCommitHash = sha256Hex(stableStringify({
+    parentHash,
+    inputSha: commit.input_sha256,
+    diffSha: sha256Hex(stableStringify(diff)),
+    scope: commit.scope,
+    actor: commit.actor,
+    kind: "tool_feedback",
+  }));
+  if (commit.commit_hash !== expectedCommitHash
+    || commit.id !== stableUuid(`lite:commit:${expectedCommitHash}`)) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_hash");
+  }
+  const decision = db.prepare(
+    `SELECT id, scope, decision_kind, run_id, selected_tool, candidates_json,
+            context_sha256, policy_sha256, source_rule_ids_json, metadata_json,
+            commit_id, created_at
+     FROM lite_memory_execution_decisions WHERE id = ?`,
+  ).get(decisionId) as Row | undefined;
+  if (!decision
+    || decision.decision_kind !== "tools_select"
+    || decision.run_id !== payload.run_id
+    || decision.scope !== commit.scope) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_decision_binding");
+  }
+  const latestDecisionFeedback = db.prepare(
+    `SELECT feedback.source_commit_id
+     FROM lite_learning_feedback_attributions AS attribution
+     JOIN lite_learning_episode_events AS feedback
+       ON feedback.tenant_id = attribution.tenant_id
+      AND feedback.scope = attribution.scope
+      AND feedback.event_id = attribution.event_id
+     WHERE attribution.tenant_id = ? AND attribution.scope = ?
+       AND attribution.subject_kind = 'tool_decision'
+       AND attribution.subject_id = ?
+     ORDER BY feedback.row_id DESC
+     LIMIT 1`,
+  ).get(event.tenant_id, event.scope, decisionId) as Row | undefined;
+  const currentEventPersisted = db.prepare(
+    `SELECT 1 AS present
+     FROM lite_learning_episode_events
+     WHERE tenant_id = ? AND scope = ? AND event_id = ?`,
+  ).get(event.tenant_id, event.scope, event.event_id) as Row | undefined;
+  const expectedDecisionHead = currentEventPersisted
+    ? latestDecisionFeedback?.source_commit_id
+    : event.source_commit_id;
+  if (typeof expectedDecisionHead !== "string"
+    || decision.commit_id !== expectedDecisionHead) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_decision_head");
+  }
+  const guideReceipt = db.prepare(
+    `SELECT ledger_sha256, ledger_json, commit_id
+     FROM lite_product_guide_receipts
+     WHERE tenant_id = ? AND scope = ? AND guide_trace_id = ?`,
+  ).get(event.tenant_id, event.scope, payload.guide_trace_id) as Row | undefined;
+  const guideLedgerJson = guideReceipt ? requiredString(guideReceipt, "ledger_json") : null;
+  if (!guideReceipt || guideLedgerJson === null
+    || sha256Hex(guideLedgerJson) !== guideReceipt.ledger_sha256) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_guide_receipt");
+  }
+  const guideLedger = parseCanonical(
+    guideLedgerJson,
+    "tool_feedback_guide_ledger",
+  ) as Row;
+  const guideToolSelection = guideLedger.tool_selection as Row | undefined;
+  const decisionCandidates = stringArray(
+    parseCanonical(
+      requiredString(decision, "candidates_json"),
+      "tool_feedback_decision_candidates",
+    ),
+    "tool_feedback_decision_candidates",
+  );
+  const feedbackCandidates = stringArray(
+    rootedFeedback.candidates,
+    "tool_feedback_source_commit_candidates",
+  );
+  const feedbackRuleNodeIds = stringArray(
+    rootedFeedback.rule_node_ids,
+    "tool_feedback_source_commit_rule_node_ids",
+  );
+  const decisionSourceRuleIds = stringArray(
+    parseCanonical(
+      requiredString(decision, "source_rule_ids_json"),
+      "tool_feedback_decision_source_rule_ids",
+    ),
+    "tool_feedback_decision_source_rule_ids",
+  );
+  const guideSourceRuleIds = stringArray(
+    guideToolSelection?.source_rule_ids,
+    "tool_feedback_guide_source_rule_ids",
+  );
+  const feedbackTarget = requiredEnum(
+    rootedFeedback.target,
+    ["tool", "all"] as const,
+    "tool_feedback_source_commit_target",
+  );
+  const decisionSourceRuleIdSet = new Set(decisionSourceRuleIds);
+  if (!guideToolSelection
+    || typeof guideToolSelection !== "object"
+    || Array.isArray(guideToolSelection)
+    || guideToolSelection.contract_version !== "aionis_tool_selection_receipt_v1"
+    || guideToolSelection.decision_id !== decisionId
+    || guideToolSelection.run_id !== payload.run_id
+    || guideToolSelection.selected_tool !== decision.selected_tool
+    || stableStringify(guideToolSelection.candidates) !== stableStringify(decisionCandidates)
+    || guideToolSelection.policy_sha256 !== decision.policy_sha256
+    || stableStringify(guideSourceRuleIds) !== stableStringify(decisionSourceRuleIds)
+    || rootedFeedback.selected_tool !== decision.selected_tool
+    || stableStringify(feedbackCandidates) !== stableStringify(decisionCandidates)
+    || !["provided", "inferred", "created_from_feedback"].includes(
+      String(rootedFeedback.decision_link_mode),
+    )
+    || new Set(feedbackRuleNodeIds).size !== feedbackRuleNodeIds.length) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_guide_decision_binding");
+  }
+  const ruleEvaluationProvenance = toolRuleEvaluationProvenance({
+    decision,
+    decisionSourceRuleIds,
+    guideToolSelection,
+  });
+  if (ruleEvaluationProvenance) {
+    const feedbackIncludeShadow = rootedFeedback.include_shadow;
+    if (typeof feedbackIncludeShadow !== "boolean"
+      || (feedbackIncludeShadow && !ruleEvaluationProvenance.include_shadow)) {
+      throw new Error("lite_learning_integrity_failed:tool_feedback_rule_evaluation_shadow_binding");
+    }
+    sameStringSet(
+      guideSourceRuleIds,
+      ruleEvaluationProvenance.active_sources.map((source) => source.rule_node_id),
+      "tool_feedback_guide_rule_evaluation_sources",
+    );
+    sameStringSet(
+      feedbackRuleNodeIds,
+      expectedToolFeedbackRuleIds(
+        ruleEvaluationProvenance,
+        feedbackTarget,
+        feedbackIncludeShadow,
+      ),
+      "tool_feedback_rule_evaluation_attribution",
+    );
+  } else if (feedbackRuleNodeIds.some((ruleNodeId) => !decisionSourceRuleIdSet.has(ruleNodeId))
+    || (feedbackTarget === "all"
+      && stableStringify(feedbackRuleNodeIds) !== stableStringify(decisionSourceRuleIds))) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_guide_decision_binding");
+  }
+  return {
+    attribution,
+    commit,
+    feedback: rootedFeedback,
+    decision,
+    guideToolSelection,
+    ruleEvaluationProvenance,
+  };
+}
+
 export function assertLiteLearningFeedbackExposureProvenance(
   db: SqliteDatabase,
   event: Row,
@@ -322,15 +660,19 @@ export function assertLiteLearningFeedbackExposureProvenance(
   feedbackHostUseReceipt?: Row | null,
 ): {
   routeBound: boolean;
+  routeKind: "memory" | "tool_selection" | null;
   protectedRoot: ReturnType<typeof protectedFeedbackCommitRoot> | null;
+  toolRoot: ReturnType<typeof toolFeedbackCommitRoot> | null;
 } {
   const exposure = db.prepare(
     `SELECT * FROM lite_learning_episode_events
      WHERE tenant_id = ? AND scope = ? AND episode_id = ?
        AND event_kind = 'exposure_committed'`,
   ).get(event.tenant_id, event.scope, event.episode_id) as Row | undefined;
-  const routeBound = payload.feedback_kind === "memory"
-    && payload.operation_protection === "protected";
+  const routeKind = payload.operation_protection === "protected"
+    ? payload.feedback_kind
+    : null;
+  const routeBound = routeKind !== null;
   const driftedField = exposure
     ? (routeBound ? ROUTE_FEEDBACK_INHERITED_FIELDS : FEEDBACK_INHERITED_FIELDS)
       .find((field) => exposure[field] !== event[field])
@@ -342,7 +684,7 @@ export function assertLiteLearningFeedbackExposureProvenance(
     throw new Error(`lite_learning_integrity_failed:feedback_exposure_provenance:${driftedField ?? "identity"}`);
   }
   let protectedRoot: ReturnType<typeof protectedFeedbackCommitRoot> | null = null;
-  if (routeBound) {
+  if (routeKind === "memory") {
     const attributions = feedbackAttributions ?? db.prepare(
       `SELECT * FROM lite_learning_feedback_attributions
        WHERE tenant_id = ? AND scope = ? AND event_id = ?
@@ -356,7 +698,317 @@ export function assertLiteLearningFeedbackExposureProvenance(
       : feedbackHostUseReceipt;
     protectedRoot = protectedFeedbackCommitRoot({ db, event, payload, attributions, hostUseReceipt });
   }
-  return { routeBound, protectedRoot };
+  const toolRoot = payload.feedback_kind === "tool_selection"
+    ? toolFeedbackCommitRoot({
+        db,
+        event,
+        payload,
+        attributions: feedbackAttributions ?? db.prepare(
+          `SELECT * FROM lite_learning_feedback_attributions
+           WHERE tenant_id = ? AND scope = ? AND event_id = ?
+           ORDER BY subject_kind, subject_id`,
+        ).all(event.tenant_id, event.scope, event.event_id) as Row[],
+      })
+    : null;
+  return { routeBound, routeKind, protectedRoot, toolRoot };
+}
+
+function assertProtectedToolFeedbackOperationReceipt(args: {
+  db: SqliteDatabase;
+  event: Row;
+  payload: FeedbackAttributedV1;
+  root: NonNullable<ReturnType<typeof toolFeedbackCommitRoot>>;
+}): void {
+  const { db, event, payload, root } = args;
+  const operation = db.prepare(
+    `SELECT request_sha256, receipt_json, commit_id
+     FROM lite_runtime_write_operations
+     WHERE tenant_id = ? AND scope = ? AND operation_kind = 'product_feedback_v1'
+       AND operation_id = ?`,
+  ).get(event.tenant_id, event.scope, event.operation_id) as Row | undefined;
+  const receiptJson = operation ? requiredString(operation, "receipt_json") : null;
+  if (!operation
+    || operation.request_sha256 !== payload.request_sha256
+    || operation.commit_id !== event.source_commit_id
+    || receiptJson === null
+    || sha256Hex(receiptJson) !== payload.operation_receipt_sha256) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_operation_receipt");
+  }
+  const result = requiredObject(
+    parseCanonical(receiptJson, "tool_feedback_operation_receipt"),
+    "tool_feedback_operation_receipt",
+  );
+  const body = requiredObject(result.body, "tool_feedback_operation_receipt_body");
+  const feedbackResult = requiredObject(
+    body.feedback_result,
+    "tool_feedback_operation_receipt_result",
+  );
+  const toolSelection = requiredObject(
+    body.tool_selection,
+    "tool_feedback_operation_receipt_selection",
+  );
+  const runLifecycle = requiredObject(
+    body.run_lifecycle,
+    "tool_feedback_operation_receipt_run",
+  );
+  const sourceMap = requiredObject(
+    body.source_map,
+    "tool_feedback_operation_receipt_source_map",
+  );
+  const rootedRuleNodeIds = stringArray(
+    root.feedback.rule_node_ids,
+    "tool_feedback_operation_receipt_root_rules",
+  );
+  const responseRuleNodeIds = stringArray(
+    feedbackResult.rule_node_ids,
+    "tool_feedback_operation_receipt_result_rules",
+  );
+  const responseRoutes = stringArray(
+    sourceMap.routes_used,
+    "tool_feedback_operation_receipt_routes",
+  );
+  const responseSurfaces = stringArray(
+    sourceMap.internal_surfaces_used,
+    "tool_feedback_operation_receipt_surfaces",
+  );
+  if (result.ok !== true
+    || result.statusCode !== 200
+    || body.contract_version !== "aionis_feedback_result_v1"
+    || body.product_action !== "feedback"
+    || body.feedback_kind !== "tool_selection"
+    || body.operation_id !== event.operation_id
+    || body.tenant_id !== event.tenant_id
+    || body.scope !== event.scope
+    || body.learning_attribution_status !== "tool_decision"
+    || body.learning_episode_id !== event.episode_id
+    || body.learning_feedback_event_id !== event.event_id
+    || stableStringify(toolSelection) !== stableStringify(root.guideToolSelection)
+    || feedbackResult.ok !== true
+    || feedbackResult.tenant_id !== event.tenant_id
+    || feedbackResult.scope !== event.scope
+    || feedbackResult.commit_id !== event.source_commit_id
+    || feedbackResult.commit_hash !== root.commit.commit_hash
+    || feedbackResult.commit_uri !== buildAionisUri({
+      tenant_id: requiredString(event, "tenant_id"),
+      scope: requiredString(event, "scope"),
+      type: "commit",
+      id: requiredString(root.commit, "id"),
+    })
+    || feedbackResult.decision_id !== root.decision.id
+    || feedbackResult.decision_uri !== buildAionisUri({
+      tenant_id: requiredString(event, "tenant_id"),
+      scope: requiredString(event, "scope"),
+      type: "decision",
+      id: requiredString(root.decision, "id"),
+    })
+    || feedbackResult.decision_link_mode !== root.feedback.decision_link_mode
+    || feedbackResult.decision_policy_sha256 !== root.decision.policy_sha256
+    || feedbackResult.updated_rules !== rootedRuleNodeIds.length
+    || stableStringify(responseRuleNodeIds) !== stableStringify(rootedRuleNodeIds)
+    || !responseRoutes.includes("/v1/feedback")
+    || !responseSurfaces.includes("learning_episode_feedback_attribution")) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_operation_receipt_binding");
+  }
+
+  const rootedFeedbackRows = db.prepare(
+    `SELECT rule_node_id, run_id, outcome, source, decision_id, commit_id
+     FROM lite_memory_rule_feedback
+     WHERE scope = ? AND decision_id = ? AND commit_id = ?
+     ORDER BY rule_node_id, id`,
+  ).all(root.commit.scope, root.decision.id, event.source_commit_id) as Row[];
+  if (rootedFeedbackRows.length !== rootedRuleNodeIds.length
+    || rootedFeedbackRows.some((row) => row.run_id !== payload.run_id
+      || row.outcome !== root.attribution.outcome
+      || row.source !== "tools_feedback"
+      || row.decision_id !== root.decision.id
+      || row.commit_id !== event.source_commit_id)
+    || stableStringify(rootedFeedbackRows.map((row) => row.rule_node_id).sort())
+      !== stableStringify([...rootedRuleNodeIds].sort())) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_rule_feedback_root");
+  }
+
+  const decisionRowidCutoff = payload.run_lifecycle_decision_rowid_cutoff;
+  const feedbackRowidCutoff = payload.run_lifecycle_feedback_rowid_cutoff;
+  if (!Number.isSafeInteger(decisionRowidCutoff) || Number(decisionRowidCutoff) < 1
+    || !Number.isSafeInteger(feedbackRowidCutoff) || Number(feedbackRowidCutoff) < 0) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_operation_receipt_run_cutoff");
+  }
+  const decisionStats = db.prepare(
+    `SELECT COUNT(*) AS count, MAX(created_at) AS latest_created_at,
+            COALESCE(MAX(rowid), 0) AS rowid_cutoff
+     FROM lite_memory_execution_decisions
+     WHERE scope = ? AND run_id = ? AND rowid <= ?`,
+  ).get(root.commit.scope, payload.run_id, decisionRowidCutoff) as Row;
+  const decisionRows = db.prepare(
+    `SELECT id, decision_kind, run_id, selected_tool, candidates_json,
+            context_sha256, policy_sha256, source_rule_ids_json, metadata_json,
+            commit_id, created_at
+     FROM lite_memory_execution_decisions
+     WHERE scope = ? AND run_id = ? AND rowid <= ?
+     ORDER BY created_at DESC, id DESC
+     LIMIT 10`,
+  ).all(root.commit.scope, payload.run_id, decisionRowidCutoff) as Row[];
+  const responseDecisions = runLifecycle.decisions;
+  if (!Array.isArray(responseDecisions)
+    || responseDecisions.length !== decisionRows.length) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_operation_receipt_decisions");
+  }
+  for (let index = 0; index < decisionRows.length; index += 1) {
+    const decisionRow = decisionRows[index]!;
+    const responseDecision = exactObject(
+      responseDecisions[index],
+      [
+        "decision_id", "decision_uri", "decision_kind", "run_id", "selected_tool",
+        "candidates", "context_sha256", "policy_sha256", "source_rule_ids", "metadata",
+        "created_at", "commit_id", "commit_uri",
+      ],
+      "tool_feedback_operation_receipt_decision",
+    );
+    const decisionId = requiredString(decisionRow, "id");
+    const decisionCandidates = parseJson(
+      requiredString(decisionRow, "candidates_json"),
+      "tool_feedback_operation_receipt_decision_candidates",
+    );
+    const decisionSourceRules = parseJson(
+      requiredString(decisionRow, "source_rule_ids_json"),
+      "tool_feedback_operation_receipt_decision_rules",
+    );
+    const decisionMetadata = parseJson(
+      requiredString(decisionRow, "metadata_json"),
+      "tool_feedback_operation_receipt_decision_metadata",
+    );
+    const historicalFeedback = db.prepare(
+      `SELECT feedback.source_commit_id
+       FROM lite_learning_feedback_attributions AS attribution
+       JOIN lite_learning_episode_events AS feedback
+         ON feedback.tenant_id = attribution.tenant_id
+        AND feedback.scope = attribution.scope
+        AND feedback.event_id = attribution.event_id
+       WHERE attribution.tenant_id = ? AND attribution.scope = ?
+         AND attribution.subject_kind = 'tool_decision'
+         AND attribution.subject_id = ?
+         AND feedback.row_id <= ?
+       ORDER BY feedback.row_id DESC
+       LIMIT 1`,
+    ).get(
+      event.tenant_id,
+      event.scope,
+      decisionId,
+      event.row_id,
+    ) as Row | undefined;
+    const receiptCommitId = responseDecision.commit_id;
+    const receiptCommitUri = responseDecision.commit_uri;
+    if (responseDecision.decision_id !== decisionId
+      || responseDecision.decision_uri !== buildAionisUri({
+        tenant_id: requiredString(event, "tenant_id"),
+        scope: requiredString(event, "scope"),
+        type: "decision",
+        id: decisionId,
+      })
+      || responseDecision.decision_kind !== decisionRow.decision_kind
+      || responseDecision.run_id !== decisionRow.run_id
+      || responseDecision.selected_tool !== decisionRow.selected_tool
+      || stableStringify(responseDecision.candidates) !== stableStringify(decisionCandidates)
+      || responseDecision.context_sha256 !== decisionRow.context_sha256
+      || responseDecision.policy_sha256 !== decisionRow.policy_sha256
+      || stableStringify(responseDecision.source_rule_ids) !== stableStringify(decisionSourceRules)
+      || stableStringify(responseDecision.metadata) !== stableStringify(decisionMetadata)
+      || responseDecision.created_at !== decisionRow.created_at
+      || (historicalFeedback && receiptCommitId !== historicalFeedback.source_commit_id)
+      || (receiptCommitId === null ? receiptCommitUri !== null : (
+        typeof receiptCommitId !== "string"
+        || receiptCommitUri !== buildAionisUri({
+          tenant_id: requiredString(event, "tenant_id"),
+          scope: requiredString(event, "scope"),
+          type: "commit",
+          id: receiptCommitId,
+        })
+      ))) {
+      throw new Error("lite_learning_integrity_failed:tool_feedback_operation_receipt_decision_binding");
+    }
+    if (typeof receiptCommitId === "string") {
+      const receiptCommit = db.prepare(
+        "SELECT 1 AS present FROM lite_memory_commits WHERE id = ? AND scope = ?",
+      ).get(receiptCommitId, root.commit.scope) as Row | undefined;
+      if (!receiptCommit) {
+        throw new Error("lite_learning_integrity_failed:tool_feedback_operation_receipt_decision_commit");
+      }
+    }
+  }
+
+  const feedbackStats = db.prepare(
+    `SELECT COUNT(*) AS total,
+            SUM(CASE WHEN outcome = 'positive' THEN 1 ELSE 0 END) AS positive,
+            SUM(CASE WHEN outcome = 'negative' THEN 1 ELSE 0 END) AS negative,
+            SUM(CASE WHEN outcome = 'neutral' THEN 1 ELSE 0 END) AS neutral,
+            SUM(CASE WHEN decision_id IS NOT NULL THEN 1 ELSE 0 END) AS linked_decision_count,
+            SUM(CASE WHEN source = 'tools_feedback' THEN 1 ELSE 0 END) AS tools_feedback_count,
+            MAX(created_at) AS latest_feedback_at,
+            COALESCE(MAX(rowid), 0) AS rowid_cutoff
+     FROM lite_memory_rule_feedback
+     WHERE scope = ? AND run_id = ? AND rowid <= ?`,
+  ).get(root.commit.scope, payload.run_id, feedbackRowidCutoff) as Row;
+  const recentFeedback = db.prepare(
+    `SELECT id, scope, rule_node_id, run_id, outcome, note, source,
+            decision_id, commit_id, created_at
+     FROM lite_memory_rule_feedback
+     WHERE scope = ? AND run_id = ? AND rowid <= ?
+     ORDER BY created_at DESC, id DESC
+     LIMIT 50`,
+  ).all(root.commit.scope, payload.run_id, feedbackRowidCutoff) as Row[];
+  const lifecycle = requiredObject(
+    runLifecycle.lifecycle,
+    "tool_feedback_operation_receipt_lifecycle",
+  );
+  const responseFeedback = requiredObject(
+    runLifecycle.feedback,
+    "tool_feedback_operation_receipt_run_feedback",
+  );
+  const responseByOutcome = requiredObject(
+    responseFeedback.by_outcome,
+    "tool_feedback_operation_receipt_run_feedback_outcome",
+  );
+  const decisionCount = Number(decisionStats.count ?? 0);
+  const feedbackTotal = Number(feedbackStats.total ?? 0);
+  const positive = Number(feedbackStats.positive ?? 0);
+  const negative = Number(feedbackStats.negative ?? 0);
+  const neutral = Number(feedbackStats.neutral ?? 0);
+  const linkedDecisionCount = Number(feedbackStats.linked_decision_count ?? 0);
+  const toolsFeedbackCount = Number(feedbackStats.tools_feedback_count ?? 0);
+  const lifecycleStatus = feedbackTotal > 0 ? "feedback_linked" : "decision_recorded";
+  if (runLifecycle.tenant_id !== event.tenant_id
+    || runLifecycle.scope !== event.scope
+    || runLifecycle.run_id !== payload.run_id
+    || lifecycle.status !== lifecycleStatus
+    || lifecycle.decision_count !== decisionCount
+    || lifecycle.latest_decision_at !== (decisionStats.latest_created_at ?? null)
+    || Number(decisionStats.rowid_cutoff) !== decisionRowidCutoff
+    || lifecycle.latest_feedback_at !== (feedbackStats.latest_feedback_at ?? null)
+    || responseFeedback.total !== feedbackTotal
+    || responseByOutcome.positive !== positive
+    || responseByOutcome.negative !== negative
+    || responseByOutcome.neutral !== neutral
+    || positive + negative + neutral !== feedbackTotal
+    || responseFeedback.linked_decision_count !== linkedDecisionCount
+    || responseFeedback.tools_feedback_count !== toolsFeedbackCount
+    || Number(feedbackStats.rowid_cutoff) !== feedbackRowidCutoff
+    || stableStringify(responseFeedback.recent) !== stableStringify(recentFeedback)) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_operation_receipt_run_binding");
+  }
+  const expectedLifecycleSummary = buildToolsRunLifecycleSummary({
+    run_id: payload.run_id,
+    lifecycle: {
+      status: lifecycleStatus,
+      decision_count: decisionCount,
+      latest_decision_at: decisionStats.latest_created_at as string | null,
+      latest_feedback_at: feedbackStats.latest_feedback_at as string | null,
+    },
+    decisions: responseDecisions,
+    feedback: responseFeedback,
+  });
+  if (stableStringify(runLifecycle.lifecycle_summary) !== stableStringify(expectedLifecycleSummary)) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_operation_receipt_run_summary");
+  }
 }
 
 function assertFeedbackAuthorityProvenance(db: SqliteDatabase): void {
@@ -371,7 +1023,17 @@ function assertFeedbackAuthorityProvenance(db: SqliteDatabase): void {
       payloadJson,
       "feedback_authority_payload",
     ));
-    const { routeBound, protectedRoot } = assertLiteLearningFeedbackExposureProvenance(db, event, payload);
+    const { routeKind, protectedRoot, toolRoot } =
+      assertLiteLearningFeedbackExposureProvenance(db, event, payload);
+    if (payload.feedback_kind === "tool_selection") {
+      if (toolRoot === null) {
+        throw new Error("lite_learning_integrity_failed:tool_feedback_root_missing");
+      }
+      if (routeKind === "tool_selection") {
+        assertProtectedToolFeedbackOperationReceipt({ db, event, payload, root: toolRoot });
+      }
+      continue;
+    }
     const attributions = db.prepare(
       `SELECT attribution.*, item.served_action
        FROM lite_learning_feedback_attributions AS attribution
@@ -398,7 +1060,7 @@ function assertFeedbackAuthorityProvenance(db: SqliteDatabase): void {
         throw new Error("lite_learning_integrity_failed:feedback_served_surface_provenance");
       }
     }
-    if (routeBound) {
+    if (routeKind === "memory") {
       const operation = db.prepare(
         `SELECT request_sha256, receipt_json, commit_id
          FROM lite_runtime_write_operations

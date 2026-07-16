@@ -6,6 +6,11 @@ import { resolveTenantScope } from "./tenant.js";
 import type { LiteRuleCandidateRow, LiteWriteStore } from "../store/lite-write-store.js";
 import { memoryNodeVisible } from "../store/memory-visibility.js";
 import { buildRulesEvaluationSummary } from "./tools-lifecycle-summary.js";
+import {
+  buildToolRuleEvaluationSource,
+  resolveToolRuleRankControls,
+  type ToolRuleEvaluationSource,
+} from "./tool-rule-evaluation-provenance.js";
 
 type RuleRow = {
   rule_node_id: string;
@@ -42,17 +47,6 @@ type EvaluateRulesOptions = {
 
 function isPlainObject(v: any): v is Record<string, any> {
   return !!v && typeof v === "object" && !Array.isArray(v);
-}
-
-function clampInt(v: number, lo: number, hi: number, defaultValue: number): number {
-  if (!Number.isFinite(v)) return defaultValue;
-  const n = Math.trunc(v);
-  return Math.max(lo, Math.min(hi, n));
-}
-
-function clampNum(v: number, lo: number, hi: number, defaultValue: number): number {
-  if (!Number.isFinite(v)) return defaultValue;
-  return Math.max(lo, Math.min(hi, v));
 }
 
 function collectConditionPaths(pattern: any, prefix = "", out?: Set<string>): Set<string> {
@@ -99,12 +93,7 @@ function collectConditionPaths(pattern: any, prefix = "", out?: Set<string>): Se
 function readRuleRankMeta(row: Pick<RuleRow, "if_json" | "positive_count" | "negative_count" | "rule_slots">): RuleRankMeta {
   const evidence = Number(row.positive_count ?? 0) - Number(row.negative_count ?? 0);
   const slots = row.rule_slots ?? {};
-  const meta = isPlainObject(slots?.rule_meta) ? slots.rule_meta : {};
-
-  const priorityRaw = Number(meta?.priority ?? slots?.priority ?? 0);
-  const weightRaw = Number(meta?.weight ?? slots?.weight ?? 1);
-  const priority = clampInt(priorityRaw, -100, 100, 0);
-  const weight = clampNum(weightRaw, 0, 2, 1);
+  const { priority, weight } = resolveToolRuleRankControls(slots);
 
   const conditionPaths = Array.from(collectConditionPaths(row.if_json)).sort();
   const specificity = conditionPaths.length;
@@ -513,8 +502,20 @@ export async function evaluateRulesAppliedOnly(
   const laneStatus = laneEnforcementStatus(ctxAgentId, ctxTeamId);
   const rows = await loadRuleRows(scope, params.limit, opts.liteWriteStore);
 
-  const activeForMerge: Array<{ rule_node_id: string; commit_id: string; rank: RuleRankMeta; then_patch: PolicyPatch }> = [];
-  const shadowForMerge: Array<{ rule_node_id: string; commit_id: string; rank: RuleRankMeta; then_patch: PolicyPatch }> = [];
+  const activeForMerge: Array<{
+    rule_node_id: string;
+    commit_id: string;
+    rank: RuleRankMeta;
+    then_patch: PolicyPatch;
+    provenance_source: ToolRuleEvaluationSource;
+  }> = [];
+  const shadowForMerge: Array<{
+    rule_node_id: string;
+    commit_id: string;
+    rank: RuleRankMeta;
+    then_patch: PolicyPatch;
+    provenance_source: ToolRuleEvaluationSource;
+  }> = [];
   const enforceLane = laneStatus.applied;
   let skipped_invalid_then = 0;
   const invalid_then_sample: Array<{ rule_node_id: string; state: string; commit_id: string }> = [];
@@ -554,9 +555,22 @@ export async function evaluateRulesAppliedOnly(
     }
 
     const rank = readRuleRankMeta(r);
-    if (r.state === "active") activeForMerge.push({ rule_node_id: r.rule_node_id, commit_id: r.rule_commit_id, rank, then_patch });
+    const provenanceSource = buildToolRuleEvaluationSource(r);
+    if (r.state === "active") activeForMerge.push({
+      rule_node_id: r.rule_node_id,
+      commit_id: r.rule_commit_id,
+      rank,
+      then_patch,
+      provenance_source: provenanceSource,
+    });
     else if (r.state === "shadow" && params.include_shadow)
-      shadowForMerge.push({ rule_node_id: r.rule_node_id, commit_id: r.rule_commit_id, rank, then_patch });
+      shadowForMerge.push({
+        rule_node_id: r.rule_node_id,
+        commit_id: r.rule_commit_id,
+        rank,
+        then_patch,
+        provenance_source: provenanceSource,
+      });
   }
 
   const activeMerge = activeForMerge
@@ -665,6 +679,10 @@ export async function evaluateRulesAppliedOnly(
             shadow_tool_explain: toolShadow.explain,
           }
         : {}),
+    },
+    rule_evaluation_sources: {
+      active_sources: activeForMerge.map((rule) => rule.provenance_source),
+      shadow_sources: shadowForMerge.map((rule) => rule.provenance_source),
     },
   };
 }

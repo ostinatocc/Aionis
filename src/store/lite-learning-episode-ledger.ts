@@ -5,7 +5,7 @@ import {
   ExternalExecutionPolicyV1Schema, HostUseReceiptV1BodySchema,
   LearningEpisodeEventWithoutDigestSchema, LearningEpisodePayloadV1Schema,
   LearningLedgerItemSchema,
-  assertLearningExposureDecisionBindings, assertMemoryFeedbackOperationBinding,
+  assertFeedbackOperationBinding, assertLearningExposureDecisionBindings,
   confirmatoryMatchedPairAssignment, diagnosticLearningAssignment,
   parseLearningRequiredExternalInputs,
   isLearningExposurePromotionEligible,
@@ -4589,7 +4589,7 @@ function validateFeedbackChildren(
   attributions: readonly LiteLearningAuthorityRow[],
   hostUseReceipt: LiteLearningAuthorityRow | null,
 ): void {
-  assertMemoryFeedbackOperationBinding(event, payload);
+  assertFeedbackOperationBinding(event, payload);
   if (attributions.length === 0 || attributions.length > 512) {
     throw new Error("feedback events require a bounded non-empty complete attribution set");
   }

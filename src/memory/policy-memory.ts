@@ -41,12 +41,17 @@ import {
   resolveNodeTaskSignature,
   resolveNodeWorkflowSignature,
 } from "./node-execution-surface.js";
-import { applyPreparedMemoryWrite, prepareMemoryWrite } from "./write.js";
+import {
+  completeLiteInlineEmbeddings,
+  persistLitePreparedWrite,
+  type LiteProjectedWriteStore,
+} from "./lite-projected-write-commit.js";
+import { applyPreparedMemoryWrite, prepareMemoryWrite, type PreparedWrite } from "./write.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
 import type { WriteStoreAccess } from "../store/write-access.js";
 
-type ExistingPolicyMemoryNode = {
+export type ExistingPolicyMemoryNode = {
   id: string;
   client_id: string | null;
   title: string | null;
@@ -82,7 +87,7 @@ type WritePolicyMemorySnapshotOptions = {
   allowCrossScopeEdges?: boolean;
   embedder: EmbeddingProvider | null;
   writeAccess: WriteStoreAccess;
-  liteWriteStore?: Pick<LiteWriteStore, "findNodes" | "updateNodeAnchorState"> | null;
+  liteWriteStore?: LiteWriteStore | null;
 };
 
 export type PolicyMemorySnapshotWriteResult = {
@@ -90,6 +95,40 @@ export type PolicyMemorySnapshotWriteResult = {
   client_id: string;
   policy_memory_signature: string;
   policy_contract: PolicyContract;
+};
+
+export type PreparedPolicyMemorySnapshot = {
+  scope: string;
+  feedback_commit_id: string;
+  expected_existing_sha256: string | null;
+  update: {
+    id: string;
+    client_id: string | null;
+    slots: Record<string, unknown>;
+    text_summary: string;
+    salience: number;
+    importance: number;
+    confidence: number;
+  } | null;
+  prepared_write: PreparedWrite | null;
+  prospective_node: ExistingPolicyMemoryNode;
+  result: PolicyMemorySnapshotWriteResult;
+};
+
+export type PreparedPolicyMemoryFeedback = {
+  scope: string;
+  commit_id: string;
+  expected_nodes: Array<{ id: string; sha256: string }>;
+  updates: Array<{
+    id: string;
+    client_id: string | null;
+    slots: Record<string, unknown>;
+    text_summary: string;
+    salience: number;
+    importance: number;
+    confidence: number;
+  }>;
+  result: PolicyMemoryFeedbackUpdateResult | null;
 };
 
 export type PolicyMemoryFeedbackUpdateArgs = {
@@ -528,6 +567,10 @@ async function findExistingPolicyMemoryLite(
     importance: row.importance,
     confidence: row.confidence,
   };
+}
+
+function existingPolicyMemorySha256(node: ExistingPolicyMemoryNode | null): string | null {
+  return node ? sha256Hex(stableStringify(node)) : null;
 }
 
 async function loadPolicyMemoryNodeLite(
@@ -1009,6 +1052,118 @@ export async function applyPolicyMemoryFeedbackLite(
   });
 }
 
+export async function preparePolicyMemoryFeedbackLite(
+  liteWriteStore: Pick<LiteWriteStore, "findNodes">,
+  args: PolicyMemoryFeedbackUpdateArgs,
+  options: { materialized_snapshot?: PreparedPolicyMemorySnapshot | null } = {},
+): Promise<PreparedPolicyMemoryFeedback> {
+  const storedNodes = await listPolicyMemoryLite(liteWriteStore, args.scope, args.selected_tool);
+  const prospectiveNode = options.materialized_snapshot?.prospective_node ?? null;
+  const nodes = prospectiveNode
+    ? [
+        ...storedNodes.filter((node) => (
+          node.id !== prospectiveNode.id
+          && (!prospectiveNode.client_id || node.client_id !== prospectiveNode.client_id)
+        )),
+        prospectiveNode,
+      ]
+    : storedNodes;
+  const matched = nodes
+    .map((node) => ({
+      node,
+      score: scorePolicyMemoryMatch(node, {
+        selectedTool: args.selected_tool,
+        taskSignature: firstString(args.task_signature),
+        errorSignature: firstString(args.error_signature),
+        workflowSignature: firstString(args.workflow_signature),
+      }),
+    }))
+    .filter((entry) => entry.score >= 0)
+    .sort((a, b) => b.score - a.score)
+    .map((entry) => entry.node);
+  const updates: PreparedPolicyMemoryFeedback["updates"] = [];
+  const result = matched.length === 0
+    ? null
+    : await applyPolicyMemoryFeedbackToNodes({
+        tenantId: args.tenant_id,
+        scope: args.scope,
+        nodes: matched,
+        outcome: args.outcome,
+        runId: args.run_id ?? null,
+        reason: args.reason ?? null,
+        inputSha256: args.input_sha256,
+        feedbackAt: args.feedback_at,
+        updateNode: async (node, next) => {
+          updates.push({
+            id: node.id,
+            client_id: node.client_id,
+            slots: next.slots,
+            text_summary: next.textSummary,
+            salience: next.salience,
+            importance: next.importance,
+            confidence: next.confidence,
+          });
+        },
+      });
+  const prospectiveId = prospectiveNode?.id ?? null;
+  const matchedIds = new Set(matched.map((node) => node.id));
+  return {
+    scope: args.scope,
+    commit_id: args.commit_id,
+    expected_nodes: storedNodes
+      .filter((node) => matchedIds.has(node.id) && node.id !== prospectiveId)
+      .map((node) => ({ id: node.id, sha256: existingPolicyMemorySha256(node)! })),
+    updates,
+    result,
+  };
+}
+
+export async function persistPreparedPolicyMemoryFeedback(
+  prepared: PreparedPolicyMemoryFeedback,
+  liteWriteStore: Pick<LiteWriteStore, "findNodes" | "updateNodeAnchorState">,
+): Promise<PolicyMemoryFeedbackUpdateResult | null> {
+  for (const expected of prepared.expected_nodes) {
+    const { rows } = await liteWriteStore.findNodes({
+      scope: prepared.scope,
+      id: expected.id,
+      type: "concept",
+      limit: 1,
+      offset: 0,
+    });
+    const row = rows[0];
+    const current: ExistingPolicyMemoryNode | null = row
+      ? {
+          id: row.id,
+          client_id: row.client_id,
+          title: row.title,
+          text_summary: row.text_summary,
+          slots: row.slots,
+          tier: row.tier,
+          salience: row.salience,
+          importance: row.importance,
+          confidence: row.confidence,
+        }
+      : null;
+    if (existingPolicyMemorySha256(current) !== expected.sha256) {
+      throw new Error("policy_memory_feedback_prepare_conflict");
+    }
+  }
+  for (const update of prepared.updates) {
+    await updateExistingPolicyMemoryLite(liteWriteStore, {
+      scope: prepared.scope,
+      id: update.id,
+      clientId: update.client_id,
+      slots: update.slots,
+      textSummary: update.text_summary,
+      salience: update.salience,
+      importance: update.importance,
+      confidence: update.confidence,
+      commitId: prepared.commit_id,
+    });
+  }
+  return prepared.result;
+}
+
 function requireMatchingLivePolicyContract(args: {
   action: PolicyLearningControlApplyAction;
   nodeId: string;
@@ -1348,10 +1503,10 @@ export async function applyPolicyMemoryLearningControlLite(
   });
 }
 
-export async function writePolicyMemorySnapshot(
+export async function preparePolicyMemorySnapshot(
   args: WritePolicyMemorySnapshotArgs,
   opts: WritePolicyMemorySnapshotOptions,
-): Promise<PolicyMemorySnapshotWriteResult> {
+): Promise<PreparedPolicyMemorySnapshot> {
   const parsedContract = PolicyContractSchema.parse({
     ...args.policy_contract,
     materialization_state: "persisted",
@@ -1427,25 +1582,37 @@ export async function writePolicyMemorySnapshot(
   });
 
   if (existingNode && opts.liteWriteStore) {
-    await updateExistingPolicyMemoryLite(opts.liteWriteStore, {
-      scope: args.scope,
-      id: existingNode.id,
-      clientId: existingNode.client_id,
-      slots: lifecycle.slots,
-      textSummary: summary,
-      salience: lifecycle.salience,
-      importance: lifecycle.importance,
-      confidence: lifecycle.confidence,
-      commitId: args.feedback_commit_id,
-    });
     return {
-      node_id: existingNode.id,
-      client_id: clientId,
-      policy_memory_signature: policyMemorySignature,
-      policy_contract: PolicyContractSchema.parse({
-        ...nextContract,
-        policy_memory_id: existingNode.id,
-      }),
+      scope: args.scope,
+      feedback_commit_id: args.feedback_commit_id,
+      expected_existing_sha256: existingPolicyMemorySha256(existingNode),
+      update: {
+        id: existingNode.id,
+        client_id: existingNode.client_id,
+        slots: lifecycle.slots,
+        text_summary: summary,
+        salience: lifecycle.salience,
+        importance: lifecycle.importance,
+        confidence: lifecycle.confidence,
+      },
+      prepared_write: null,
+      prospective_node: {
+        ...existingNode,
+        text_summary: summary,
+        slots: lifecycle.slots,
+        salience: lifecycle.salience,
+        importance: lifecycle.importance,
+        confidence: lifecycle.confidence,
+      },
+      result: {
+        node_id: existingNode.id,
+        client_id: clientId,
+        policy_memory_signature: policyMemorySignature,
+        policy_contract: PolicyContractSchema.parse({
+          ...nextContract,
+          policy_memory_id: existingNode.id,
+        }),
+      },
     };
   }
 
@@ -1479,8 +1646,8 @@ export async function writePolicyMemorySnapshot(
       piiRedaction: opts.piiRedaction,
       allowCrossScopeEdges: opts.allowCrossScopeEdges ?? false,
     },
-	    opts.embedder,
-	  );
+    opts.embedder,
+  );
   const preparedPolicyNode = prepared.nodes[0];
   if (preparedPolicyNode) {
     preparedPolicyNode.slots = sealPolicyAuthoritySlots({
@@ -1491,30 +1658,128 @@ export async function writePolicyMemorySnapshot(
       issuedAt: materializedAt,
     });
   }
-	  if (opts.embedder) {
-    const planned = prepared.nodes.filter((node) => !node.embedding && typeof node.embed_text === "string" && node.embed_text.trim());
-    if (planned.length > 0) {
+  return {
+    scope: args.scope,
+    feedback_commit_id: args.feedback_commit_id,
+    expected_existing_sha256: null,
+    update: null,
+    prepared_write: prepared,
+    prospective_node: {
+      id: prepared.nodes[0]!.id,
+      client_id: prepared.nodes[0]!.client_id ?? null,
+      title: prepared.nodes[0]!.title ?? null,
+      text_summary: prepared.nodes[0]!.text_summary ?? null,
+      slots: prepared.nodes[0]!.slots,
+      tier: prepared.nodes[0]!.tier ?? "warm",
+      salience: prepared.nodes[0]!.salience ?? lifecycle.salience,
+      importance: prepared.nodes[0]!.importance ?? lifecycle.importance,
+      confidence: prepared.nodes[0]!.confidence ?? lifecycle.confidence,
+    },
+    result: {
+      node_id: prepared.nodes[0]!.id,
+      client_id: clientId,
+      policy_memory_signature: policyMemorySignature,
+      policy_contract: PolicyContractSchema.parse({
+        ...nextContract,
+        policy_memory_id: prepared.nodes[0]!.id,
+      }),
+    },
+  };
+}
+
+export async function persistPreparedPolicyMemorySnapshot(
+  prepared: PreparedPolicyMemorySnapshot,
+  opts: {
+    liteWriteStore: LiteProjectedWriteStore & Pick<LiteWriteStore, "findNodes" | "updateNodeAnchorState">;
+    maxTextLen: number;
+    piiRedaction: boolean;
+    allowCrossScopeEdges?: boolean;
+  },
+): Promise<PolicyMemorySnapshotWriteResult> {
+  const current = await findExistingPolicyMemoryLite(
+    opts.liteWriteStore,
+    prepared.scope,
+    prepared.result.client_id,
+  );
+  if (existingPolicyMemorySha256(current) !== prepared.expected_existing_sha256) {
+    throw new Error("policy_memory_snapshot_prepare_conflict");
+  }
+  if (prepared.update) {
+    await updateExistingPolicyMemoryLite(opts.liteWriteStore, {
+      scope: prepared.scope,
+      id: prepared.update.id,
+      clientId: prepared.update.client_id,
+      slots: prepared.update.slots,
+      textSummary: prepared.update.text_summary,
+      salience: prepared.update.salience,
+      importance: prepared.update.importance,
+      confidence: prepared.update.confidence,
+      commitId: prepared.feedback_commit_id,
+    });
+  } else if (prepared.prepared_write) {
+    await persistLitePreparedWrite({
+      prepared: prepared.prepared_write,
+      liteWriteStore: opts.liteWriteStore,
+      writeOptions: {
+        maxTextLen: opts.maxTextLen,
+        piiRedaction: opts.piiRedaction,
+        allowCrossScopeEdges: opts.allowCrossScopeEdges ?? false,
+        associativeLinkOrigin: "memory_write",
+      },
+    });
+  }
+  return prepared.result;
+}
+
+export async function writePolicyMemorySnapshot(
+  args: WritePolicyMemorySnapshotArgs,
+  opts: WritePolicyMemorySnapshotOptions,
+): Promise<PolicyMemorySnapshotWriteResult> {
+  const liteWriteStore = opts.liteWriteStore ?? null;
+  if (liteWriteStore && opts.writeAccess !== liteWriteStore) {
+    throw new Error("policy memory write authorities must share one Lite store");
+  }
+  if (liteWriteStore?.transactionRunner().inTransaction()) {
+    throw new Error("writePolicyMemorySnapshot must be entered outside a transaction");
+  }
+  const prepared = await preparePolicyMemorySnapshot(args, opts);
+  if (!liteWriteStore) {
+    const write = prepared.prepared_write;
+    if (!write) throw new Error("policy memory generic write plan is missing");
+    const planned = write.nodes.filter((node) => (
+      !node.embedding && typeof node.embed_text === "string" && node.embed_text.trim().length > 0
+    ));
+    if (opts.embedder && planned.length > 0) {
       const vectors = await opts.embedder.embed(planned.map((node) => String(node.embed_text)));
-      for (let i = 0; i < planned.length; i += 1) {
-        planned[i].embedding = vectors[i] ?? planned[i].embedding;
-        planned[i].embedding_model = opts.embedder.name;
+      for (let index = 0; index < planned.length; index += 1) {
+        planned[index]!.embedding = vectors[index] ?? planned[index]!.embedding;
+        planned[index]!.embedding_model = opts.embedder.name;
       }
     }
+    const out = await applyPreparedMemoryWrite(opts.writeAccess, write, {
+      maxTextLen: opts.maxTextLen,
+      piiRedaction: opts.piiRedaction,
+      allowCrossScopeEdges: opts.allowCrossScopeEdges ?? false,
+      associativeLinkOrigin: "memory_write",
+    });
+    const nodeId = out.nodes[0]!.id;
+    return {
+      ...prepared.result,
+      node_id: nodeId,
+      policy_contract: PolicyContractSchema.parse({
+        ...prepared.result.policy_contract,
+        policy_memory_id: nodeId,
+      }),
+    };
   }
-  const out = await applyPreparedMemoryWrite(opts.writeAccess, prepared, {
+  const result = await liteWriteStore.withTx(() => persistPreparedPolicyMemorySnapshot(prepared, {
+    liteWriteStore,
     maxTextLen: opts.maxTextLen,
     piiRedaction: opts.piiRedaction,
-    allowCrossScopeEdges: opts.allowCrossScopeEdges ?? false,
-    associativeLinkOrigin: "memory_write",
-  });
-  const nodeId = out.nodes[0]!.id;
-  return {
-    node_id: nodeId,
-    client_id: clientId,
-    policy_memory_signature: policyMemorySignature,
-    policy_contract: PolicyContractSchema.parse({
-      ...nextContract,
-      policy_memory_id: nodeId,
-    }),
-  };
+    allowCrossScopeEdges: opts.allowCrossScopeEdges,
+  }));
+  if (prepared.prepared_write) {
+    await completeLiteInlineEmbeddings({ prepared: prepared.prepared_write, embedder: opts.embedder, liteWriteStore });
+  }
+  return result;
 }

@@ -66,6 +66,20 @@ export function liteLearningFeedbackEventId(args: Readonly<{
   }))}`;
 }
 
+export function liteToolFeedbackEventId(args: Readonly<{
+  tenantId: string;
+  scope: string;
+  operationId: string | null;
+  sourceCommitId: string;
+}>): string {
+  return `lfeedback_${sha256Hex(stableStringify({
+    tenant_id: args.tenantId,
+    scope: args.scope,
+    source_kind: "tool_feedback_operation",
+    source_id: args.operationId ?? args.sourceCommitId,
+  }))}`;
+}
+
 function buildFeedbackEventRow(args: {
   source: LiteLearningFeedbackSource;
   event: EventWithoutDigest;
@@ -262,6 +276,117 @@ export function buildLiteLearningFeedbackAppend(args: Readonly<{
     attributions,
     hostUseReceipt,
     boundaryIgnoredMemoryIds,
+  };
+}
+
+function toolFeedbackAttributionStrength(
+  outcome: FeedbackOutcome,
+): "observed_feedback" | "positive_attribution" | "strong_counter_signal" {
+  if (outcome === "positive") return "positive_attribution";
+  if (outcome === "negative") return "strong_counter_signal";
+  return "observed_feedback";
+}
+
+export function buildLiteToolFeedbackAppend(args: Readonly<{
+  source: LiteLearningFeedbackSource;
+  operationId: string | null;
+  runId: string;
+  sourceCommitId: string;
+  requestSha256: string;
+  operationReceiptSha256: string | null;
+  runLifecycleRowidCutoffs: {
+    decision_rowid_cutoff: number;
+    feedback_rowid_cutoff: number;
+  } | null;
+  decisionId: string;
+  outcome: FeedbackOutcome;
+  recordedAt: string;
+}>): LiteLearningFeedbackAppend {
+  const sourceId = args.operationId ?? args.sourceCommitId;
+  const eventId = liteToolFeedbackEventId({
+    tenantId: args.source.event.tenant_id,
+    scope: args.source.event.scope,
+    operationId: args.operationId,
+    sourceCommitId: args.sourceCommitId,
+  });
+  const attribution = emptyAuthorityRow("lite_learning_feedback_attributions");
+  Object.assign(attribution, {
+    tenant_id: args.source.event.tenant_id,
+    scope: args.source.event.scope,
+    event_id: eventId,
+    episode_id: args.source.event.episode_id,
+    subject_kind: "tool_decision",
+    subject_id: args.decisionId,
+    outcome: args.outcome,
+    action_outcome: null,
+    used_surface: null,
+    exposure_action: null,
+    boundary_outcome: "not_applicable",
+    attribution_strength: toolFeedbackAttributionStrength(args.outcome),
+    evidence_class: "tool_decision",
+    host_use_receipt_id: null,
+    host_use_receipt_sha256: null,
+    receipt_item_sha256: null,
+    host_task_envelope_sha256: null,
+    collection_principal_sha256: null,
+    collector_id: null,
+    collector_version: null,
+    content_evidence_sha256: null,
+    verifier_kind: null,
+    verifier_version: null,
+    verifier_config_sha256: null,
+    verifier_status: null,
+    tool_status: null,
+    runtime_signal_refs_sha256: null,
+    item_sha256: "0".repeat(64),
+  });
+  attribution.item_sha256 = learningFeedbackAttributionItemDigest(attribution);
+  const attributions = [attribution] as const;
+  const payload = FeedbackAttributedV1Schema.parse({
+    contract_version: "aionis_learning_feedback_v1",
+    feedback_kind: "tool_selection",
+    guide_trace_id: args.source.payload.guide_trace_id,
+    request_sha256: args.requestSha256,
+    operation_protection: args.operationId ? "protected" : "legacy_unprotected",
+    operation_receipt_sha256: args.operationReceiptSha256,
+    run_id: args.runId,
+    source_commit_id: args.sourceCommitId,
+    ...(args.runLifecycleRowidCutoffs ? {
+      run_lifecycle_decision_rowid_cutoff: args.runLifecycleRowidCutoffs.decision_rowid_cutoff,
+      run_lifecycle_feedback_rowid_cutoff: args.runLifecycleRowidCutoffs.feedback_rowid_cutoff,
+    } : {}),
+    host_use_receipt_sha256: null,
+    runtime_signal_refs: [],
+    unused_exposure_ids: [],
+  });
+  const event: EventWithoutDigest = {
+    contract_version: "aionis_learning_episode_event_v1",
+    tenant_id: args.source.event.tenant_id,
+    scope: args.source.event.scope,
+    event_id: eventId,
+    episode_id: args.source.event.episode_id,
+    episode_sequence: args.source.headSequence + 1,
+    event_kind: "feedback_attributed",
+    source_kind: "tool_feedback_operation",
+    source_id: sourceId,
+    source_sha256: args.requestSha256,
+    previous_event_sha256: args.source.headEventSha256,
+    payload_sha256: sha256Hex(stableStringify(payload)),
+    item_set_sha256: learningFeedbackAttributionSetDigest(attributions),
+    source_commit_id: args.sourceCommitId,
+    supersedes_event_id: null,
+    operation_id: args.operationId,
+    run_id: args.runId,
+    collection_class: args.source.event.collection_class,
+    recorded_at: args.recordedAt,
+  };
+  return {
+    event,
+    eventRow: buildFeedbackEventRow({ source: args.source, event, payload }),
+    payload,
+    attributions,
+    hostUseReceipt: null,
+    boundaryIgnoredMemoryIds: [],
   };
 }
 

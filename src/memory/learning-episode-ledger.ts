@@ -430,6 +430,8 @@ const FeedbackAttributedV1ObjectSchema = z.object({
   operation_receipt_sha256: NullableDigestSchema.optional(),
   run_id: BoundedIdSchema,
   source_commit_id: BoundedIdSchema,
+  run_lifecycle_decision_rowid_cutoff: z.number().int().nonnegative().optional(),
+  run_lifecycle_feedback_rowid_cutoff: z.number().int().nonnegative().optional(),
   host_use_receipt_sha256: NullableDigestSchema,
   runtime_signal_refs: z.array(BoundedIdSchema).max(96),
   unused_exposure_ids: z.array(BoundedIdSchema).max(96),
@@ -462,6 +464,24 @@ function validateFeedbackAttributedV1(
       message: "learning-control queue provenance requires memory feedback with an unused exposure",
     });
   }
+  const hasRunLifecycleCutoffs = value.run_lifecycle_decision_rowid_cutoff !== undefined
+    && value.run_lifecycle_feedback_rowid_cutoff !== undefined;
+  if (value.feedback_kind === "tool_selection" && value.operation_protection === "protected") {
+    if (!hasRunLifecycleCutoffs || value.run_lifecycle_decision_rowid_cutoff === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["run_lifecycle_decision_rowid_cutoff"],
+        message: "protected tool feedback requires exact run lifecycle row cutoffs",
+      });
+    }
+  } else if (value.run_lifecycle_decision_rowid_cutoff !== undefined
+    || value.run_lifecycle_feedback_rowid_cutoff !== undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["run_lifecycle_decision_rowid_cutoff"],
+      message: "run lifecycle row cutoffs are reserved for protected tool feedback",
+    });
+  }
 }
 
 export const FeedbackAttributedV1Schema = FeedbackAttributedV1ObjectSchema.superRefine(
@@ -470,22 +490,47 @@ export const FeedbackAttributedV1Schema = FeedbackAttributedV1ObjectSchema.super
 
 export type FeedbackAttributedV1 = z.infer<typeof FeedbackAttributedV1Schema>;
 
-export function assertMemoryFeedbackOperationBinding(
+export function assertFeedbackOperationBinding(
   event: EventWithoutDigest,
   payload: FeedbackAttributedV1,
 ): void {
-  if (payload.feedback_kind !== "memory") return;
-  if (event.source_kind !== "memory_feedback_operation"
-    || event.run_id !== payload.run_id
-    || event.source_commit_id !== payload.source_commit_id) {
-    throw new Error("memory feedback event identity does not match its canonical payload");
+  if (payload.feedback_kind === "memory") {
+    if (event.source_kind !== "memory_feedback_operation"
+      || event.run_id !== payload.run_id
+      || event.source_commit_id !== payload.source_commit_id) {
+      throw new Error("memory feedback event identity does not match its canonical payload");
+    }
+    if (payload.operation_protection === "protected" && (
+      event.operation_id === null
+      || event.source_id !== event.operation_id
+      || event.source_sha256 !== payload.request_sha256
+    )) {
+      throw new Error("protected memory feedback is not bound to its operation request digest");
+    }
+    return;
   }
-  if (payload.operation_protection === "protected" && (
-    event.operation_id === null
-    || event.source_id !== event.operation_id
-    || event.source_sha256 !== payload.request_sha256
-  )) {
-    throw new Error("protected memory feedback is not bound to its operation request digest");
+  if (event.source_kind !== "tool_feedback_operation"
+    || event.event_kind !== "feedback_attributed"
+    || event.run_id !== payload.run_id
+    || event.source_commit_id !== payload.source_commit_id
+    || payload.host_use_receipt_sha256 !== null
+    || payload.runtime_signal_refs.length !== 0
+    || payload.unused_exposure_ids.length !== 0
+    || payload.learning_control_queue_contract !== undefined) {
+    throw new Error("tool feedback event identity does not match its canonical payload");
+  }
+  if (payload.operation_protection === "protected") {
+    if (event.operation_id === null
+      || event.source_id !== event.operation_id
+      || event.source_sha256 !== payload.request_sha256) {
+      throw new Error("protected tool feedback is not bound to its operation request digest");
+    }
+    return;
+  }
+  if (event.operation_id !== null
+    || event.source_id !== payload.source_commit_id
+    || event.source_sha256 !== payload.request_sha256) {
+    throw new Error("legacy tool feedback has invalid source identity");
   }
 }
 

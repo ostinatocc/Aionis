@@ -274,6 +274,7 @@ export const ProductGuideRequest = z.object({
 
 export const ProductToolFeedbackRequest = z.object({
   feedback_kind: z.literal("tool_selection"),
+  operation_id: z.string().trim().min(1).max(256).optional(),
   tenant_id: z.string().trim().min(1).optional(),
   scope: z.string().trim().min(1).optional(),
   actor: z.string().trim().min(1).optional(),
@@ -749,7 +750,9 @@ export const ProductToolSelectionReceiptSchema = z.object({
   run_id: z.string().trim().min(1),
   selected_tool: z.string().trim().min(1).nullable(),
   candidates: z.array(z.string().trim().min(1)).min(1).max(256),
+  context_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   policy_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  rule_evaluation_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   source_rule_ids: z.array(z.string().trim().min(1)).max(256),
   created_at: z.string().trim().min(1),
 }).strict();

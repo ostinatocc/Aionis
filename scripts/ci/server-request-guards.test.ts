@@ -196,6 +196,13 @@ test("lite auth-off request guards preserve explicit product actor and context i
   assert.equal(guide.context.agent_id, "local-context-agent");
   assert.equal(guide.context.agent.id, "local-nested-agent");
 
+  const guideWithFlatContext = guards.withIdentityFromRequest(req, {
+    consumer_agent_id: "local-explicit-agent",
+    context: { agent_id: "local-context-agent" },
+  }, null, "product_guide") as Record<string, any>;
+  assert.equal(guideWithFlatContext.context.agent_id, "local-context-agent");
+  assert.equal(guideWithFlatContext.context.agent.id, env.LITE_LOCAL_ACTOR_ID);
+
   const feedback = guards.withIdentityFromRequest(req, {
     actor: "local-explicit-actor",
     consumer_agent_id: "local-explicit-agent",
@@ -204,6 +211,7 @@ test("lite auth-off request guards preserve explicit product actor and context i
   assert.equal(feedback.actor, "local-explicit-actor");
   assert.equal(feedback.consumer_agent_id, "local-explicit-agent");
   assert.equal(feedback.context.agent_id, "local-context-agent");
+  assert.equal(feedback.context.agent.id, env.LITE_LOCAL_ACTOR_ID);
 });
 
 test("server request guards allow auth-off only under explicit development posture", async () => {

@@ -19,6 +19,7 @@ import { RuntimeVerificationSurfaceV1Schema } from "../execution/verification.js
 import type { MemoryWriteRouteService } from "../routes/memory-write.js";
 import { deferredPlanningToolDecision } from "../routes/memory-context-runtime.js";
 import type { DeferredToolsSelectDecision } from "../memory/tools-select.js";
+import { readToolRuleEvaluationProvenance } from "../memory/tool-rule-evaluation-provenance.js";
 
 import {
   buildAionisMemoryPacket,
@@ -1134,6 +1135,14 @@ function buildProductToolSelectionReceipt(args: {
     (Array.isArray(decision.source_rule_ids) ? decision.source_rule_ids : [])
       .map((entry) => typeof entry === "string" ? entry : null),
   );
+  const contextSha256 = typeof decision.context_sha256 === "string" && /^[a-f0-9]{64}$/.test(decision.context_sha256)
+    ? decision.context_sha256
+    : null;
+  const ruleEvaluationSha256 = typeof decision.rule_evaluation_sha256 === "string"
+    && /^[a-f0-9]{64}$/.test(decision.rule_evaluation_sha256)
+    ? decision.rule_evaluation_sha256
+    : null;
+  if (!contextSha256 || !ruleEvaluationSha256) return null;
   const parsedReceipt = ProductToolSelectionReceiptSchema.safeParse({
     contract_version: "aionis_tool_selection_receipt_v1",
     decision_id: decision.decision_id,
@@ -1143,7 +1152,9 @@ function buildProductToolSelectionReceipt(args: {
       ? decision.selected_tool.trim()
       : null,
     candidates,
+    context_sha256: contextSha256,
     policy_sha256: decision.policy_sha256,
+    rule_evaluation_sha256: ruleEvaluationSha256,
     source_rule_ids: sourceRuleIds,
     created_at: decision.created_at,
   });
@@ -3068,17 +3079,26 @@ async function executeProductGuide(args: {
   const guideBody = objectValue(guideResult.body) ?? {};
   const deferredToolDecision = deferredPlanningToolDecision(guideResult.body);
   const toolSelection = buildProductToolSelectionReceipt({ parsed, guideBody });
+  const deferredRuleEvaluationProvenance = deferredToolDecision
+    ? readToolRuleEvaluationProvenance(deferredToolDecision.metadataJson)
+    : null;
   if (deferredToolDecision && !operationIdentity) {
     return productServiceDependencyFailure("planning_context_service", 500);
   }
   if (operationIdentity && toolSelection && !deferredToolDecision) {
     return productServiceDependencyFailure("planning_context_service", 500);
   }
+  if (deferredToolDecision && !toolSelection) {
+    return productServiceDependencyFailure("planning_context_service", 500);
+  }
   if (deferredToolDecision && toolSelection && (
-    deferredToolDecision.id !== toolSelection.decision_id
+    !deferredRuleEvaluationProvenance
+    || deferredToolDecision.id !== toolSelection.decision_id
     || deferredToolDecision.runId !== toolSelection.run_id
     || deferredToolDecision.selectedTool !== toolSelection.selected_tool
+    || deferredToolDecision.contextSha256 !== toolSelection.context_sha256
     || deferredToolDecision.policySha256 !== toolSelection.policy_sha256
+    || deferredRuleEvaluationProvenance.provenance_sha256 !== toolSelection.rule_evaluation_sha256
     || deferredToolDecision.createdAt !== toolSelection.created_at
     || stableStringify(deferredToolDecision.candidatesJson) !== stableStringify(toolSelection.candidates)
     || stableStringify(deferredToolDecision.sourceRuleIds) !== stableStringify(toolSelection.source_rule_ids)

@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import stableStringify from "fast-json-stable-stringify";
 import { sha256Hex } from "../util/crypto.js";
-import { badRequest } from "../util/http.js";
+import { stableUuid } from "../util/uuid.js";
+import { badRequest, HttpError } from "../util/http.js";
 import { normalizeText } from "../util/normalize.js";
 import { redactPII } from "../util/redaction.js";
 import {
@@ -40,8 +41,19 @@ import { buildPolicyMaterializationSurface } from "./policy-materialization-surf
 import { evaluateRulesAppliedOnly } from "./rules-evaluate.js";
 import { resolveTenantScope } from "./tenant.js";
 import { buildAionisUri, parseAionisUri } from "./uri.js";
-import { writeToolsDecisionPatternAnchor } from "./tools-pattern-anchor.js";
-import { applyPolicyMemoryFeedbackLite, writePolicyMemorySnapshot } from "./policy-memory.js";
+import {
+  persistPreparedToolsDecisionPatternAnchor,
+  prepareToolsDecisionPatternAnchor,
+  type PreparedToolsDecisionPatternAnchor,
+} from "./tools-pattern-anchor.js";
+import {
+  persistPreparedPolicyMemoryFeedback,
+  persistPreparedPolicyMemorySnapshot,
+  preparePolicyMemoryFeedbackLite,
+  preparePolicyMemorySnapshot,
+  type PreparedPolicyMemoryFeedback,
+  type PreparedPolicyMemorySnapshot,
+} from "./policy-memory.js";
 import { normalizeContractTrust as normalizeContractTrustValue } from "./contract-trust.js";
 import { extractExecutionEvidenceFromSlots } from "./execution-evidence.js";
 import {
@@ -58,6 +70,14 @@ import type { LiteRuleCandidateRow, LiteWriteStore } from "../store/lite-write-s
 import type { EmbeddingProvider } from "../embeddings/types.js";
 import type { RecallStoreAccess } from "../store/recall-access.js";
 import type { WriteStoreAccess } from "../store/write-access.js";
+import { completeLiteInlineEmbeddings } from "./lite-projected-write-commit.js";
+import type { PreparedWrite } from "./write.js";
+import {
+  buildToolRuleEvaluationSource,
+  readToolRuleEvaluationProvenance,
+  type ToolRuleEvaluationProvenance,
+  type ToolRuleEvaluationSource,
+} from "./tool-rule-evaluation-provenance.js";
 
 export { buildMaterializationContextFromFeedback } from "../kernel/learning-decision-kernel.js";
 
@@ -69,20 +89,7 @@ type FeedbackOptions = {
     form_pattern?: FormPatternLearningControlReviewProvider | null;
   };
   recallAccess?: RecallStoreAccess | null;
-  liteWriteStore?: Pick<
-    LiteWriteStore,
-    | "findExecutionDecisionForFeedback"
-    | "getExecutionDecision"
-    | "insertExecutionDecision"
-    | "findNodes"
-    | "latestCommit"
-    | "insertCommit"
-    | "insertRuleFeedback"
-    | "updateNodeAnchorState"
-    | "updateExecutionDecisionLink"
-    | "updateRuleFeedbackAggregates"
-    | "listRuleCandidates"
-  > | null;
+  liteWriteStore?: LiteWriteStore | null;
 };
 
 type DecisionRow = {
@@ -93,6 +100,8 @@ type DecisionRow = {
   candidates_json: any;
   context_sha256: string;
   policy_sha256: string;
+  source_rule_ids: string[];
+  metadata_json: Record<string, unknown>;
   created_at: string;
   commit_id: string | null;
 };
@@ -104,6 +113,10 @@ function isToolTouched(paths: string[]): boolean {
     if (p === "tool" || p.startsWith("tool.")) return true;
   }
   return false;
+}
+
+function sameRuleIds(left: readonly string[], right: readonly string[]): boolean {
+  return stableStringify([...new Set(left)].sort()) === stableStringify([...new Set(right)].sort());
 }
 
 function normalizeToolName(v: string): string {
@@ -280,7 +293,12 @@ function mergeWorkflowFeedbackIntoPolicySurfaces(args: {
   };
 }
 
-async function materializeLitePolicyMemoryFromFeedback(args: {
+type PreparedFeedbackPolicyMaterialization = {
+  prepared: PreparedPolicyMemorySnapshot;
+  response: NonNullable<ToolsFeedbackResponse["policy_memory"]>;
+};
+
+async function prepareLitePolicyMemoryFromFeedback(args: {
   parsed: ToolsFeedbackInput;
   tenancy: { tenant_id: string; scope: string };
   actor: string;
@@ -294,7 +312,8 @@ async function materializeLitePolicyMemoryFromFeedback(args: {
   defaultScope: string;
   defaultTenantId: string;
   opts: FeedbackOptions;
-}): Promise<ToolsFeedbackResponse["policy_memory"] | null> {
+  prospectivePattern?: PreparedToolsDecisionPatternAnchor | null;
+}): Promise<PreparedFeedbackPolicyMaterialization | null> {
   if (!args.opts.liteWriteStore) return null;
   const contractTrust = resolveFeedbackContractTrustForMaterialization(args.parsed.context);
   if (!shouldMaterializePolicyMemoryFromContractTrust(contractTrust)) return null;
@@ -327,7 +346,7 @@ async function materializeLitePolicyMemoryFromFeedback(args: {
     reorder_candidates: true,
     workflow_limit: 8,
   });
-  const introspection = await buildExecutionMemoryIntrospectionLite(
+  const baseIntrospection = await buildExecutionMemoryIntrospectionLite(
     args.opts.liteWriteStore as LiteWriteStore,
     {
       tenant_id: args.tenancy.tenant_id,
@@ -340,6 +359,44 @@ async function materializeLitePolicyMemoryFromFeedback(args: {
     args.defaultTenantId,
     consumerAgentId ?? null,
   );
+  const prospectivePattern = args.prospectivePattern?.result ?? null;
+  const prospectivePatternSlots = args.prospectivePattern?.update?.slots
+    ?? args.prospectivePattern?.prepared_write?.nodes[0]?.slots
+    ?? null;
+  const prospectivePatternEntry = prospectivePattern
+    ? {
+        anchor_id: prospectivePattern.node_id,
+        anchor_level: prospectivePattern.anchor.anchor_level,
+        selected_tool: prospectivePattern.anchor.selected_tool,
+        task_family: prospectivePattern.anchor.task_family ?? null,
+        pattern_state: prospectivePattern.anchor.pattern_state ?? "provisional",
+        credibility_state: prospectivePattern.anchor.credibility_state ?? "candidate",
+        trusted: (prospectivePattern.anchor.credibility_state ?? "candidate") === "trusted",
+        summary: prospectivePattern.anchor.summary,
+        contract_trust: prospectivePattern.anchor.contract_trust ?? null,
+        execution_contract_v1: prospectivePatternSlots?.execution_contract_v1 ?? null,
+        confidence: args.prospectivePattern?.update?.confidence
+          ?? args.prospectivePattern?.prepared_write?.nodes[0]?.confidence
+          ?? null,
+      }
+    : null;
+  const introspection = prospectivePatternEntry
+    ? {
+        ...baseIntrospection,
+        trusted_patterns: [
+          ...(Array.isArray(baseIntrospection.trusted_patterns)
+            ? baseIntrospection.trusted_patterns.filter((entry) => entry.anchor_id !== prospectivePatternEntry.anchor_id)
+            : []),
+          ...(prospectivePatternEntry.trusted ? [prospectivePatternEntry] : []),
+        ],
+        contested_patterns: [
+          ...(Array.isArray(baseIntrospection.contested_patterns)
+            ? baseIntrospection.contested_patterns.filter((entry) => entry.anchor_id !== prospectivePatternEntry.anchor_id)
+            : []),
+          ...(prospectivePatternEntry.credibility_state === "contested" ? [prospectivePatternEntry] : []),
+        ],
+      }
+    : baseIntrospection;
   const trustedPatternAnchorIds = (Array.isArray(introspection.trusted_patterns) ? introspection.trusted_patterns : [])
     .filter((entry) => nullableString((entry as Record<string, unknown>)?.selected_tool) === args.selectedTool)
     .map((entry) => nullableString((entry as Record<string, unknown>)?.anchor_id))
@@ -348,6 +405,14 @@ async function materializeLitePolicyMemoryFromFeedback(args: {
     .filter((entry) => nullableString((entry as Record<string, unknown>)?.selected_tool) === args.selectedTool)
     .map((entry) => nullableString((entry as Record<string, unknown>)?.anchor_id))
     .filter((value): value is string => typeof value === "string" && value.length > 0);
+  if (prospectivePattern?.anchor.selected_tool === args.selectedTool) {
+    const target = (prospectivePattern.anchor.credibility_state ?? "candidate") === "contested"
+      ? contestedPatternAnchorIds
+      : (prospectivePattern.anchor.pattern_state ?? "provisional") === "stable"
+        ? trustedPatternAnchorIds
+        : null;
+    if (target && !target.includes(prospectivePattern.node_id)) target.push(prospectivePattern.node_id);
+  }
   const tools = {
     tenant_id: args.tenancy.tenant_id,
     scope: args.tenancy.scope,
@@ -424,7 +489,7 @@ async function materializeLitePolicyMemoryFromFeedback(args: {
     ...(executionEvidence ? { execution_evidence_v1: executionEvidence } : {}),
   });
 
-  const persisted = await writePolicyMemorySnapshot({
+  const prepared = await preparePolicyMemorySnapshot({
     tenant_id: args.tenancy.tenant_id,
     scope: args.tenancy.scope,
     actor: args.actor,
@@ -447,20 +512,23 @@ async function materializeLitePolicyMemoryFromFeedback(args: {
   });
 
   return {
-    node_id: persisted.node_id,
+    prepared,
+    response: {
+    node_id: prepared.result.node_id,
     node_uri: buildAionisUri({
       tenant_id: args.tenancy.tenant_id,
       scope: args.tenancy.scope,
       type: "concept",
-      id: persisted.node_id,
+      id: prepared.result.node_id,
     }),
-    client_id: persisted.client_id,
-    policy_memory_signature: persisted.policy_memory_signature,
-    selected_tool: persisted.policy_contract.selected_tool,
-    policy_state: persisted.policy_contract.policy_state,
-    policy_memory_state: persisted.policy_contract.policy_memory_state,
-    activation_mode: persisted.policy_contract.activation_mode,
-    policy_contract: persisted.policy_contract,
+    client_id: prepared.result.client_id,
+    policy_memory_signature: prepared.result.policy_memory_signature,
+    selected_tool: prepared.result.policy_contract.selected_tool,
+    policy_state: prepared.result.policy_contract.policy_state,
+    policy_memory_state: prepared.result.policy_contract.policy_memory_state,
+    activation_mode: prepared.result.policy_contract.activation_mode,
+    policy_contract: prepared.result.policy_contract,
+    },
   };
 }
 
@@ -501,9 +569,15 @@ async function buildToolsFeedbackFormPatternLearningControlPreview(args: {
 
   const input = MemoryFormPatternRequest.parse({
     source_node_ids: sourceNodeIds,
-    task_signature: nullableString(args.anchor.task_signature),
-    error_signature: nullableString(args.anchor.error_signature),
-    pattern_signature: nullableString(args.anchor.pattern_signature),
+    ...(nullableString(args.anchor.task_signature)
+      ? { task_signature: nullableString(args.anchor.task_signature)! }
+      : {}),
+    ...(nullableString(args.anchor.error_signature)
+      ? { error_signature: nullableString(args.anchor.error_signature)! }
+      : {}),
+    ...(nullableString(args.anchor.pattern_signature)
+      ? { pattern_signature: nullableString(args.anchor.pattern_signature)! }
+      : {}),
     input_text: args.inputText ?? args.anchor.summary ?? "form pattern from tools feedback",
     input_sha256: args.inputSha256,
   });
@@ -578,13 +652,158 @@ function assertDecisionCompatible(
   }
 }
 
-export async function toolSelectionFeedback(
+function decisionRowSha256(decision: DecisionRow | null): string | null {
+  return decision ? sha256Hex(stableStringify(decision)) : null;
+}
+
+function sourceRuleIdsFromEvaluation(
+  provenance: ToolRuleEvaluationProvenance,
+  includeShadow: boolean,
+  target: "tool" | "all",
+): string[] {
+  const sources = includeShadow
+    ? [...provenance.active_sources, ...provenance.shadow_sources]
+    : provenance.active_sources;
+  return uniqueRuleIds(
+    sources
+      .filter((source) => target === "all" || isToolTouched(source.touched_paths))
+      .map((source) => source.rule_node_id),
+  );
+}
+
+async function findToolRuleEvaluationDrift(
+  provenance: ToolRuleEvaluationProvenance,
+  attributedRuleNodeIds: readonly string[],
+  scope: string,
+  liteWriteStore: LiteWriteStore,
+): Promise<{ rule_node_id: string; reason: string } | null> {
+  const attributedRuleNodeIdSet = new Set(attributedRuleNodeIds);
+  const provenanceSources = [...provenance.active_sources, ...provenance.shadow_sources];
+  const provenanceSourceById = new Map(provenanceSources.map((source) => [source.rule_node_id, source]));
+  const missingRuleNodeId = [...attributedRuleNodeIdSet]
+    .find((ruleNodeId) => !provenanceSourceById.has(ruleNodeId));
+  if (missingRuleNodeId) return { rule_node_id: missingRuleNodeId, reason: "rule_not_in_served_provenance" };
+  const expectedSources = provenanceSources.filter((source) => attributedRuleNodeIdSet.has(source.rule_node_id));
+  for (const expected of expectedSources) {
+    const row = await liteWriteStore.getRuleDef(scope, expected.rule_node_id);
+    if (!row) return { rule_node_id: expected.rule_node_id, reason: "rule_missing" };
+    let current: ToolRuleEvaluationSource;
+    try {
+      current = buildToolRuleEvaluationSource(row);
+    } catch {
+      return { rule_node_id: expected.rule_node_id, reason: "rule_invalid" };
+    }
+    if (stableStringify(current) !== stableStringify(expected)) {
+      return { rule_node_id: expected.rule_node_id, reason: "rule_changed" };
+    }
+  }
+  return null;
+}
+
+type PreparedDecisionPlan = {
+  expected_sha256: string | null;
+  create: boolean;
+  decision_link_mode: "provided" | "inferred" | "created_from_feedback";
+  before: DecisionRow | null;
+  after: DecisionRow;
+};
+
+type PreparedRuleFeedbackInsert = {
+  id: string;
+  rule_node_id: string;
+};
+
+export type PreparedToolSelectionFeedback = {
+  schema_version: "prepared_tool_selection_feedback_v1";
+  parsed: ToolsFeedbackInput;
+  default_scope: string;
+  default_tenant_id: string;
+  tenant_id: string;
+  scope: string;
+  scope_key: string;
+  actor: string;
+  normalized_candidates: string[];
+  selected_tool: string;
+  input_text: string | null;
+  input_sha256: string;
+  note: string | null;
+  workflow_feedback_target: WorkflowFeedbackTarget;
+  source_rule_ids: string[];
+  rules_applied_sha256: string;
+  served_rule_evaluation: ToolRuleEvaluationProvenance | null;
+  context_sha256: string;
+  policy_sha256: string;
+  decision: PreparedDecisionPlan;
+  parent_commit_id: string | null;
+  parent_commit_hash: string;
+  commit_id: string;
+  commit_hash: string;
+  commit_diff_json: string;
+  feedback_created_at: string;
+  rule_feedback: PreparedRuleFeedbackInsert[];
+  pattern: PreparedToolsDecisionPatternAnchor | null;
+  policy_snapshot: PreparedPolicyMemorySnapshot | null;
+  policy_feedback: PreparedPolicyMemoryFeedback | null;
+  policy_materialized_response: ToolsFeedbackResponse["policy_memory"] | null;
+  learning_control_preview: ToolsFeedbackLearningControlPreview | null;
+};
+
+export type ToolSelectionFeedbackFinalizePlan = {
+  prepared_writes: PreparedWrite[];
+};
+
+export type PersistedToolSelectionFeedback = {
+  response: ToolsFeedbackResponse;
+  run_id: string | null;
+  decision_id: string;
+  commit_id: string;
+  commit_hash: string;
+  finalize_plan: ToolSelectionFeedbackFinalizePlan;
+};
+
+export type ToolSelectionFeedbackFinalizeResult = {
+  embeddings: Array<{
+    attempted: number;
+    updated: number;
+    failed: number;
+    error?: string;
+  }>;
+};
+
+function patternResponse(
+  prepared: PreparedToolsDecisionPatternAnchor | null,
+  tenantId: string,
+  scope: string,
+): ToolsFeedbackResponse["pattern_anchor"] | null {
+  if (!prepared) return null;
+  const out = prepared.result;
+  return {
+    node_id: out.node_id,
+    node_uri: buildAionisUri({
+      tenant_id: tenantId,
+      scope,
+      type: "concept",
+      id: out.node_id,
+    }),
+    client_id: out.client_id,
+    pattern_signature: out.pattern_signature,
+    anchor_kind: "pattern",
+    anchor_level: "L3",
+    pattern_state: out.anchor.pattern_state ?? "provisional",
+    credibility_state: out.anchor.credibility_state ?? "candidate",
+    maintenance: out.anchor.maintenance ?? undefined,
+    promotion: out.anchor.promotion ?? undefined,
+    promotion_evidence_ledger_v1: out.anchor.promotion_evidence_ledger_v1 ?? undefined,
+  };
+}
+
+export async function prepareToolSelectionFeedback(
   _client: null,
   body: unknown,
   defaultScope: string,
   defaultTenantId: string,
   opts: FeedbackOptions,
-) {
+): Promise<PreparedToolSelectionFeedback> {
   const parsed = ToolsFeedbackRequest.parse(body);
   const tenancy = resolveTenantScope(
     { scope: parsed.scope, tenant_id: parsed.tenant_id },
@@ -617,276 +836,323 @@ export async function toolSelectionFeedback(
     }
     linkedDecisionId = uriParts.id;
   }
+
+  const liteWriteStore = opts.liteWriteStore;
+  if (!liteWriteStore) throw new Error("prepareToolSelectionFeedback requires lite write store");
+
   const actor = parsed.actor ?? "system";
   const normalizedCandidates = normalizeToolCandidates(parsed.candidates);
   const selectedTool = normalizeToolName(parsed.selected_tool);
-
   const inputText = parsed.input_text ? normalizeText(parsed.input_text, opts.maxTextLen) : undefined;
   const redactedInput = opts.piiRedaction && inputText ? redactPII(inputText).text : inputText;
   const inputSha = parsed.input_sha256 ?? sha256Hex(redactedInput!);
-
   const noteNorm = parsed.note ? normalizeText(parsed.note, opts.maxTextLen) : undefined;
   const note = opts.piiRedaction && noteNorm ? redactPII(noteNorm).text : noteNorm;
   const workflowFeedbackTarget = extractWorkflowFeedbackTarget(parsed.context);
-  const liteWriteStore = opts.liteWriteStore;
-  if (!liteWriteStore) {
-    throw new Error("toolSelectionFeedback requires lite write store");
+
+  const rawContextSha256 = hashExecutionContext(parsed.context);
+  let decisionBefore: DecisionRow | null = linkedDecisionId
+    ? await liteWriteStore.getExecutionDecision({ scope, id: linkedDecisionId })
+    : null;
+  let decisionLinkMode: PreparedDecisionPlan["decision_link_mode"] = linkedDecisionId ? "provided" : "inferred";
+  if (linkedDecisionId && !decisionBefore) {
+    badRequest("decision_not_found_in_scope", "decision_id was not found in this scope", {
+      decision_id: linkedDecisionId,
+      scope: tenancy.scope,
+      tenant_id: tenancy.tenant_id,
+    });
   }
 
-  // Re-evaluate rules for attribution to avoid trusting client-provided sources.
-  const rules = await evaluateRulesAppliedOnly({
-    scope: tenancy.scope,
-    tenant_id: parsed.tenant_id,
-    default_tenant_id: defaultTenantId,
-    context: parsed.context,
-    include_shadow: parsed.include_shadow,
-    limit: parsed.rules_limit,
-  }, {
-    liteWriteStore: liteWriteStore ?? null,
-  });
+  const servedBindingRequested = parsed.guide_rule_evaluation_sha256 !== undefined
+    || parsed.guide_context_sha256 !== undefined;
+  let servedRuleEvaluation: ToolRuleEvaluationProvenance | null = null;
+  let activeSources: Array<{
+    rule_node_id: string;
+    state: "active" | "shadow";
+    commit_id: string;
+    touched_paths: string[];
+  }>;
+  let shadowSources: typeof activeSources;
+  let contextSha256: string;
+  let policySha256: string;
+  let rulesAppliedSha256: string;
 
-  const activeSources: Array<{ rule_node_id: string; state: "active" | "shadow"; commit_id: string; touched_paths: string[] }> =
-    ((rules.applied as any)?.sources as any[]) ?? [];
-  const shadowSources: Array<{ rule_node_id: string; state: "active" | "shadow"; commit_id: string; touched_paths: string[] }> =
-    parsed.include_shadow ? (((rules.applied as any)?.shadow_sources as any[]) ?? []) : [];
-  const sources: Array<{ rule_node_id: string; state: "active" | "shadow"; commit_id: string; touched_paths: string[] }> = [
-    ...activeSources,
-    ...shadowSources,
-  ];
-
-  const targetRuleIds = sources
-    .filter((s) => parsed.target === "all" || isToolTouched(s.touched_paths ?? []))
-    .filter((s) => (parsed.include_shadow ? true : s.state === "active"))
-    .map((s) => s.rule_node_id);
-
-  const uniq = uniqueRuleIds(targetRuleIds);
-  const learningDecision = decideToolsFeedbackLearning({
-    context: parsed.context,
-    outcome: parsed.outcome,
-    sourceRuleIds: uniq,
-    workflowFeedbackTarget,
-  });
-
-  const contextSha256 = hashExecutionContext(parsed.context);
-  const policySha256 = hashPolicy((rules.applied as any)?.policy ?? {});
-  const candidatesJson = JSON.stringify(normalizedCandidates);
-  let patternAnchor: NonNullable<ToolsFeedbackResponse["pattern_anchor"]> | null = null;
-  let policyMemory: ToolsFeedbackResponse["policy_memory"] | null = null;
-  let learningControlPreview: ToolsFeedbackLearningControlPreview | null = null;
-
-  {
-    let decision = linkedDecisionId
-      ? await liteWriteStore.getExecutionDecision({ scope, id: linkedDecisionId })
-      : await liteWriteStore.findExecutionDecisionForFeedback({
-          scope,
-          runId: parsed.run_id ?? null,
-          selectedTool,
-          candidatesJson: normalizedCandidates,
-          contextSha256,
-        });
-    let decision_link_mode: "provided" | "inferred" | "created_from_feedback" = linkedDecisionId ? "provided" : "inferred";
-
-    if (linkedDecisionId && !decision) {
-      badRequest("decision_not_found_in_scope", "decision_id was not found in this scope", {
-        decision_id: linkedDecisionId,
-        scope: tenancy.scope,
-        tenant_id: tenancy.tenant_id,
+  if (servedBindingRequested) {
+    if (!decisionBefore
+      || !parsed.guide_rule_evaluation_sha256
+      || !parsed.guide_context_sha256
+      || !parsed.guide_policy_sha256
+      || !parsed.guide_source_rule_ids) {
+      throw new HttpError(
+        409,
+        "guide_tool_selection_provenance_unavailable",
+        "the served tool decision does not expose complete rule evaluation provenance",
+        { guide_trace_id: parsed.guide_trace_id ?? null },
+      );
+    }
+    servedRuleEvaluation = readToolRuleEvaluationProvenance(decisionBefore.metadata_json);
+    if (!servedRuleEvaluation) {
+      throw new HttpError(
+        409,
+        "guide_tool_selection_provenance_unavailable",
+        "the served tool decision does not expose complete rule evaluation provenance",
+        { guide_trace_id: parsed.guide_trace_id ?? null, decision_id: decisionBefore.id },
+      );
+    }
+    const activeRuleIds = uniqueRuleIds(
+      servedRuleEvaluation.active_sources.map((source) => source.rule_node_id),
+    );
+    const guideRuleIds = uniqueRuleIds(parsed.guide_source_rule_ids);
+    const provenanceMismatch = servedRuleEvaluation.provenance_sha256 !== parsed.guide_rule_evaluation_sha256
+      || servedRuleEvaluation.effective_context_sha256 !== parsed.guide_context_sha256
+      || servedRuleEvaluation.policy_sha256 !== parsed.guide_policy_sha256
+      || decisionBefore.context_sha256 !== servedRuleEvaluation.effective_context_sha256
+      || decisionBefore.policy_sha256 !== servedRuleEvaluation.policy_sha256
+      || !sameRuleIds(decisionBefore.source_rule_ids, activeRuleIds)
+      || !sameRuleIds(guideRuleIds, activeRuleIds)
+      || (parsed.include_shadow && !servedRuleEvaluation.include_shadow);
+    if (provenanceMismatch) {
+      throw new HttpError(409, "guide_tool_selection_mismatch", "tool feedback no longer matches the served guide selection", {
+        guide_trace_id: parsed.guide_trace_id ?? null,
+        reason: "rule_evaluation_provenance_mismatch",
       });
     }
-
-    if (!decision) {
-      const created = await liteWriteStore.insertExecutionDecision({
-        id: randomUUID(),
+    const drift = await findToolRuleEvaluationDrift(
+      servedRuleEvaluation,
+      sourceRuleIdsFromEvaluation(servedRuleEvaluation, parsed.include_shadow, parsed.target),
+      scope,
+      liteWriteStore,
+    );
+    if (drift) {
+      throw new HttpError(409, "guide_tool_selection_mismatch", "tool feedback no longer matches the served guide selection", {
+        guide_trace_id: parsed.guide_trace_id ?? null,
+        reason: drift.reason,
+        rule_node_id: drift.rule_node_id,
+      });
+    }
+    activeSources = servedRuleEvaluation.active_sources;
+    shadowSources = parsed.include_shadow ? servedRuleEvaluation.shadow_sources : [];
+    contextSha256 = servedRuleEvaluation.effective_context_sha256;
+    policySha256 = servedRuleEvaluation.policy_sha256;
+    rulesAppliedSha256 = servedRuleEvaluation.provenance_sha256;
+  } else {
+    const rules = await evaluateRulesAppliedOnly({
+      scope: tenancy.scope,
+      tenant_id: parsed.tenant_id,
+      default_tenant_id: defaultTenantId,
+      context: parsed.context,
+      include_shadow: parsed.include_shadow,
+      limit: parsed.rules_limit,
+    }, { liteWriteStore });
+    activeSources = ((rules.applied as any)?.sources as typeof activeSources) ?? [];
+    shadowSources = parsed.include_shadow
+      ? (((rules.applied as any)?.shadow_sources as typeof shadowSources) ?? [])
+      : [];
+    contextSha256 = rawContextSha256;
+    policySha256 = hashPolicy((rules.applied as any)?.policy ?? {});
+    rulesAppliedSha256 = sha256Hex(stableStringify(rules.applied));
+    if (!decisionBefore) {
+      decisionBefore = await liteWriteStore.findExecutionDecisionForFeedback({
         scope,
-        decisionKind: "tools_select",
         runId: parsed.run_id ?? null,
         selectedTool,
         candidatesJson: normalizedCandidates,
         contextSha256,
-        policySha256,
-        sourceRuleIds: uniq,
-        metadataJson: { source: "feedback_derived" },
-        commitId: null,
       });
-      decision = await liteWriteStore.getExecutionDecision({ scope, id: created.id });
-      decision_link_mode = "created_from_feedback";
     }
+  }
 
-    assertDecisionCompatible(decision!, parsed, normalizedCandidates);
+  const decisionSourceRuleIds = uniqueRuleIds(activeSources.map((source) => source.rule_node_id));
+  const sourceRuleIds = servedRuleEvaluation
+    ? sourceRuleIdsFromEvaluation(servedRuleEvaluation, parsed.include_shadow, parsed.target)
+    : uniqueRuleIds(
+        [...activeSources, ...shadowSources]
+          .filter((source) => parsed.target === "all" || isToolTouched(source.touched_paths ?? []))
+          .filter((source) => (parsed.include_shadow ? true : source.state === "active"))
+          .map((source) => source.rule_node_id),
+      );
+  const learningDecision = decideToolsFeedbackLearning({
+    context: parsed.context,
+    outcome: parsed.outcome,
+    sourceRuleIds,
+    workflowFeedbackTarget,
+  });
 
-    if (parsed.run_id && !decision!.run_id) {
-      decision = await liteWriteStore.updateExecutionDecisionLink({
-        scope,
-        id: decision!.id,
-        runId: parsed.run_id,
-      });
-      assertDecisionCompatible(decision!, parsed, normalizedCandidates);
-    }
-
-    const parent = await liteWriteStore.latestCommit(scope);
-    const parentHash = parent?.commit_hash ?? "";
-    const parentId = parent?.id ?? null;
-    const diff = {
-      tool_feedback: [
-        {
-          decision_id: decision!.id,
-          decision_link_mode,
-          run_id: parsed.run_id ?? null,
-          outcome: parsed.outcome,
-          selected_tool: selectedTool,
-          candidates: normalizedCandidates,
-          rule_node_ids: uniq,
-          target: parsed.target,
-        },
-      ],
+  const createDecision = !decisionBefore;
+  if (!decisionBefore) {
+    decisionLinkMode = "created_from_feedback";
+    decisionBefore = {
+      id: randomUUID(),
+      scope,
+      run_id: parsed.run_id ?? null,
+      selected_tool: selectedTool,
+      candidates_json: normalizedCandidates,
+      context_sha256: contextSha256,
+      policy_sha256: policySha256,
+      source_rule_ids: decisionSourceRuleIds,
+      metadata_json: { source: "feedback_derived" },
+      created_at: new Date().toISOString(),
+      commit_id: null,
     };
-    const diffSha = sha256Hex(stableStringify(diff));
-    const commitHash = sha256Hex(stableStringify({ parentHash, inputSha, diffSha, scope, actor, kind: "tool_feedback" }));
-    const commit_id = await liteWriteStore.insertCommit({
-      scope,
-      parentCommitId: parentId,
-      inputSha256: inputSha,
-      diffJson: JSON.stringify(diff),
-      actor,
-      modelVersion: null,
-      promptVersion: null,
-      commitHash,
+  }
+  const plannedDecision = decisionBefore;
+  assertDecisionCompatible(plannedDecision, parsed, normalizedCandidates);
+  const guideSourceRuleIds = parsed.guide_source_rule_ids
+    ? uniqueRuleIds(parsed.guide_source_rule_ids)
+    : null;
+  const guideSourceRuleIdSet = guideSourceRuleIds ? new Set(guideSourceRuleIds) : null;
+  const allowedGuideRuleIdSet = servedRuleEvaluation
+    ? new Set([
+        ...servedRuleEvaluation.active_sources,
+        ...(parsed.include_shadow ? servedRuleEvaluation.shadow_sources : []),
+      ].map((source) => source.rule_node_id))
+    : guideSourceRuleIdSet;
+  const attributedRulesOutsideGuide = allowedGuideRuleIdSet
+    ? sourceRuleIds.filter((ruleNodeId) => !allowedGuideRuleIdSet.has(ruleNodeId))
+    : [];
+  const guidePolicyMismatch = parsed.guide_policy_sha256
+    ? plannedDecision.policy_sha256 !== parsed.guide_policy_sha256
+      || policySha256 !== parsed.guide_policy_sha256
+    : false;
+  const guideRuleMismatch = guideSourceRuleIds
+    ? !sameRuleIds(plannedDecision.source_rule_ids, guideSourceRuleIds)
+      || !sameRuleIds(decisionSourceRuleIds, guideSourceRuleIds)
+      || attributedRulesOutsideGuide.length > 0
+      || (!servedRuleEvaluation && parsed.target === "all"
+        && !sameRuleIds(sourceRuleIds, guideSourceRuleIds))
+    : false;
+  if (guidePolicyMismatch || guideRuleMismatch) {
+    throw new HttpError(409, "guide_tool_selection_mismatch", "tool feedback no longer matches the served guide selection", {
+      guide_trace_id: parsed.guide_trace_id ?? null,
+      policy_mismatch: guidePolicyMismatch,
+      source_rule_ids_mismatch: guideRuleMismatch,
+      guide_policy_sha256: parsed.guide_policy_sha256 ?? null,
+      decision_policy_sha256: plannedDecision.policy_sha256,
+      evaluated_policy_sha256: policySha256,
+      guide_source_rule_ids: guideSourceRuleIds,
+      decision_source_rule_ids: plannedDecision.source_rule_ids,
+      evaluated_decision_source_rule_ids: decisionSourceRuleIds,
+      attributed_source_rule_ids: sourceRuleIds,
+      attributed_rules_outside_guide: attributedRulesOutsideGuide,
     });
+  }
+  const decisionAfterRun: DecisionRow = {
+    ...plannedDecision,
+    run_id: parsed.run_id ?? plannedDecision.run_id,
+  };
 
-    decision = await liteWriteStore.updateExecutionDecisionLink({
-      scope,
-      id: decision!.id,
-      commitId: commit_id,
-    });
-
-    const feedbackCreatedAt = new Date().toISOString();
-    for (const rule_node_id of uniq) {
-      await liteWriteStore.insertRuleFeedback({
-        id: randomUUID(),
-        scope,
-        ruleNodeId: rule_node_id,
-        runId: parsed.run_id ?? null,
-        outcome: parsed.outcome,
-        note: note ?? null,
-        source: "tools_feedback",
-        decisionId: decision!.id,
-        commitId: commit_id,
-        createdAt: feedbackCreatedAt,
-      });
-    }
-    await liteWriteStore.updateRuleFeedbackAggregates({
-      scope,
+  const parent = await liteWriteStore.latestCommit(scope);
+  const parentCommitHash = parent?.commit_hash ?? "";
+  const parentCommitId = parent?.id ?? null;
+  const diff = {
+    tool_feedback: [{
+      decision_id: decisionAfterRun.id,
+      decision_link_mode: decisionLinkMode,
+      run_id: parsed.run_id ?? null,
       outcome: parsed.outcome,
-      ruleNodeIds: uniq,
-    });
+      selected_tool: selectedTool,
+      candidates: normalizedCandidates,
+      rule_node_ids: sourceRuleIds,
+      target: parsed.target,
+      include_shadow: parsed.include_shadow,
+    }],
+  };
+  const commitDiffJson = JSON.stringify(diff);
+  const diffSha = sha256Hex(stableStringify(diff));
+  const commitHash = sha256Hex(stableStringify({
+    parentHash: parentCommitHash,
+    inputSha,
+    diffSha,
+    scope,
+    actor,
+    kind: "tool_feedback",
+  }));
+  const commitId = stableUuid(`lite:commit:${commitHash}`);
+  const decisionAfter: DecisionRow = { ...decisionAfterRun, commit_id: commitId };
+  const feedbackCreatedAt = new Date().toISOString();
 
-    const patternFeedbackOutcome = parsed.outcome === "positive" || parsed.outcome === "negative"
-      ? parsed.outcome
-      : null;
-    if (patternFeedbackOutcome && learningDecision.shouldWritePatternAnchor) {
-      let anchorOut = await writeToolsDecisionPatternAnchor({
-        tenant_id: tenancy.tenant_id,
-        scope: tenancy.scope,
-        actor,
-        input_text: redactedInput ?? null,
-        input_sha256: inputSha,
-        note: note ?? null,
-        context: parsed.context,
-        selected_tool: selectedTool,
-        candidates: normalizedCandidates,
-        source_rule_ids: uniq,
-        decision: decision!,
-        feedback_commit_id: commit_id,
-        feedback_outcome: patternFeedbackOutcome,
-        learning_control_pattern_state_override: null,
-      }, {
-        defaultScope,
-        defaultTenantId,
-        maxTextLen: opts.maxTextLen,
-        piiRedaction: opts.piiRedaction,
-        embedder: opts.embedder ?? null,
-        writeAccess: liteWriteStore as unknown as WriteStoreAccess,
-        liteWriteStore: liteWriteStore ?? null,
+  let pattern: PreparedToolsDecisionPatternAnchor | null = null;
+  let learningControlPreview: ToolsFeedbackLearningControlPreview | null = null;
+  const patternFeedbackOutcome = parsed.outcome === "positive" || parsed.outcome === "negative"
+    ? parsed.outcome
+    : null;
+  if (patternFeedbackOutcome && learningDecision.shouldWritePatternAnchor) {
+    const patternArgs = {
+      tenant_id: tenancy.tenant_id,
+      scope: tenancy.scope,
+      actor,
+      input_text: redactedInput ?? null,
+      input_sha256: inputSha,
+      note: note ?? null,
+      context: parsed.context,
+      selected_tool: selectedTool,
+      candidates: normalizedCandidates,
+      source_rule_ids: sourceRuleIds,
+      decision: decisionAfter,
+      feedback_commit_id: commitId,
+      feedback_outcome: patternFeedbackOutcome,
+    } as const;
+    pattern = await prepareToolsDecisionPatternAnchor({
+      ...patternArgs,
+      learning_control_pattern_state_override: null,
+    }, {
+      defaultScope,
+      defaultTenantId,
+      maxTextLen: opts.maxTextLen,
+      piiRedaction: opts.piiRedaction,
+      embedder: opts.embedder ?? null,
+      writeAccess: liteWriteStore,
+      liteWriteStore,
+    });
+    if (pattern) {
+      learningControlPreview = await buildToolsFeedbackFormPatternLearningControlPreview({
+        liteWriteStore,
+        scope,
+        inputText: redactedInput ?? null,
+        inputSha256: inputSha,
+        sourceRuleIds,
+        anchor: pattern.result.anchor,
+        learningControlReview: parsed.learning_control_review?.form_pattern ?? null,
+        reviewProvider: opts.learningControlReviewProviders?.form_pattern ?? undefined,
       });
-      if (anchorOut) {
-        learningControlPreview = await buildToolsFeedbackFormPatternLearningControlPreview({
-          liteWriteStore: liteWriteStore,
-          scope,
-          inputText: redactedInput ?? null,
-          inputSha256: inputSha,
-          sourceRuleIds: uniq,
-          anchor: anchorOut.anchor,
-          learningControlReview: parsed.learning_control_review?.form_pattern ?? null,
-          reviewProvider: opts.learningControlReviewProviders?.form_pattern ?? undefined,
+      if (parsed.learning_control_review?.form_pattern?.review_result && !learningControlPreview) {
+        badRequest(
+          "form_pattern_learning_control_preview_unavailable",
+          "form_pattern learning_control review requires at least two source nodes",
+          { source_rule_count: sourceRuleIds.length },
+        );
+      }
+      const formPatternPreview = learningControlPreview?.form_pattern ?? null;
+      const applyGate = deriveControlledStateRaiseRuntimeApply({
+        policyEffect: formPatternPreview?.policy_effect ?? null,
+        effectiveState: formPatternPreview?.policy_effect?.effective_pattern_state,
+        appliedState: "stable",
+      });
+      if (formPatternPreview && applyGate.runtimeApplyRequested && applyGate.controlledOverrideState) {
+        pattern = await prepareToolsDecisionPatternAnchor({
+          ...patternArgs,
+          learning_control_pattern_state_override: applyGate.controlledOverrideState,
+        }, {
+          defaultScope,
+          defaultTenantId,
+          maxTextLen: opts.maxTextLen,
+          piiRedaction: opts.piiRedaction,
+          embedder: opts.embedder ?? null,
+          writeAccess: liteWriteStore,
+          liteWriteStore,
         });
-        if (parsed.learning_control_review?.form_pattern?.review_result && !learningControlPreview) {
-          badRequest("form_pattern_learning_control_preview_unavailable", "form_pattern learning_control review requires at least two source nodes", {
-            source_rule_count: uniq.length,
-          });
+        if (pattern) {
+          formPatternPreview.decision_trace.runtime_apply_changed_pattern_state =
+            (pattern.result.anchor.pattern_state ?? "provisional") === "stable";
+          formPatternPreview.decision_trace.stage_order =
+            appendLearningControlRuntimePolicyAppliedStage(formPatternPreview.decision_trace.stage_order);
         }
-        const formPatternPreview = learningControlPreview?.form_pattern ?? null;
-        const applyGate = deriveControlledStateRaiseRuntimeApply({
-          policyEffect: formPatternPreview?.policy_effect ?? null,
-          effectiveState: formPatternPreview?.policy_effect?.effective_pattern_state,
-          appliedState: "stable",
-        });
-        if (formPatternPreview && applyGate.runtimeApplyRequested && applyGate.controlledOverrideState) {
-          const applied = await writeToolsDecisionPatternAnchor({
-            tenant_id: tenancy.tenant_id,
-            scope: tenancy.scope,
-            actor,
-            input_text: redactedInput ?? null,
-            input_sha256: inputSha,
-            note: note ?? null,
-            context: parsed.context,
-            selected_tool: selectedTool,
-            candidates: normalizedCandidates,
-            source_rule_ids: uniq,
-            decision: decision!,
-            feedback_commit_id: commit_id,
-            feedback_outcome: patternFeedbackOutcome,
-            learning_control_pattern_state_override: applyGate.controlledOverrideState,
-          }, {
-            defaultScope,
-            defaultTenantId,
-            maxTextLen: opts.maxTextLen,
-            piiRedaction: opts.piiRedaction,
-            embedder: opts.embedder ?? null,
-            writeAccess: liteWriteStore as unknown as WriteStoreAccess,
-            liteWriteStore: liteWriteStore ?? null,
-          });
-          if (applied) {
-            anchorOut = applied;
-            formPatternPreview.decision_trace.runtime_apply_changed_pattern_state =
-              (anchorOut.anchor.pattern_state ?? "provisional") === "stable";
-            const nextStageOrder: ToolsFeedbackFormPatternLearningControlDecisionTrace["stage_order"] =
-              appendLearningControlRuntimePolicyAppliedStage(formPatternPreview.decision_trace.stage_order);
-            formPatternPreview.decision_trace.stage_order = nextStageOrder;
-          }
-        }
-        patternAnchor = {
-          node_id: anchorOut.node_id,
-          node_uri: buildAionisUri({
-            tenant_id: tenancy.tenant_id,
-            scope: tenancy.scope,
-            type: "concept",
-            id: anchorOut.node_id,
-          }),
-          client_id: anchorOut.client_id,
-          pattern_signature: anchorOut.pattern_signature,
-          anchor_kind: "pattern",
-          anchor_level: "L3",
-          pattern_state: anchorOut.anchor.pattern_state ?? "provisional",
-          credibility_state: anchorOut.anchor.credibility_state ?? "candidate",
-          maintenance: anchorOut.anchor.maintenance ?? undefined,
-          promotion: anchorOut.anchor.promotion ?? undefined,
-          promotion_evidence_ledger_v1: anchorOut.anchor.promotion_evidence_ledger_v1 ?? undefined,
-        };
       }
     }
+  }
 
-    if (parsed.outcome === "positive") {
-      const materializedPolicyMemory = await materializeLitePolicyMemoryFromFeedback({
+  const materializedPolicy = parsed.outcome === "positive"
+    ? await prepareLitePolicyMemoryFromFeedback({
         parsed,
         tenancy,
         actor,
@@ -896,12 +1162,15 @@ export async function toolSelectionFeedback(
         selectedTool,
         normalizedCandidates,
         workflowFeedbackTarget,
-        commitId: commit_id,
+        commitId,
         defaultScope,
         defaultTenantId,
         opts,
-      });
-      policyMemory = await applyPolicyMemoryFeedbackLite(liteWriteStore, {
+        prospectivePattern: pattern,
+      })
+    : null;
+  const policyFeedback = parsed.outcome === "positive" || parsed.outcome === "negative"
+    ? await preparePolicyMemoryFeedbackLite(liteWriteStore, {
         tenant_id: tenancy.tenant_id,
         scope: tenancy.scope,
         selected_tool: selectedTool,
@@ -912,52 +1181,311 @@ export async function toolSelectionFeedback(
         run_id: parsed.run_id ?? null,
         reason: note ?? null,
         input_sha256: inputSha,
-        commit_id,
+        commit_id: commitId,
         feedback_at: feedbackCreatedAt,
-      }) ?? materializedPolicyMemory;
-    } else if (parsed.outcome === "negative") {
-      policyMemory = await applyPolicyMemoryFeedbackLite(liteWriteStore, {
-        tenant_id: tenancy.tenant_id,
-        scope: tenancy.scope,
-        selected_tool: selectedTool,
-        task_signature: workflowFeedbackTarget.taskSignature,
-        error_signature: workflowFeedbackTarget.errorSignature,
-        workflow_signature: workflowFeedbackTarget.workflowSignature,
-        outcome: parsed.outcome,
-        run_id: parsed.run_id ?? null,
-        reason: note ?? null,
-        input_sha256: inputSha,
-        commit_id,
-        feedback_at: feedbackCreatedAt,
+      }, {
+        materialized_snapshot: materializedPolicy?.prepared ?? null,
+      })
+    : null;
+
+  return {
+    schema_version: "prepared_tool_selection_feedback_v1",
+    parsed,
+    default_scope: defaultScope,
+    default_tenant_id: defaultTenantId,
+    tenant_id: tenancy.tenant_id,
+    scope: tenancy.scope,
+    scope_key: scope,
+    actor,
+    normalized_candidates: normalizedCandidates,
+    selected_tool: selectedTool,
+    input_text: redactedInput ?? null,
+    input_sha256: inputSha,
+    note: note ?? null,
+    workflow_feedback_target: workflowFeedbackTarget,
+    source_rule_ids: sourceRuleIds,
+    rules_applied_sha256: rulesAppliedSha256,
+    served_rule_evaluation: servedRuleEvaluation,
+    context_sha256: contextSha256,
+    policy_sha256: policySha256,
+    decision: {
+      expected_sha256: createDecision ? null : decisionRowSha256(plannedDecision),
+      create: createDecision,
+      decision_link_mode: decisionLinkMode,
+      before: createDecision ? null : plannedDecision,
+      after: decisionAfter,
+    },
+    parent_commit_id: parentCommitId,
+    parent_commit_hash: parentCommitHash,
+    commit_id: commitId,
+    commit_hash: commitHash,
+    commit_diff_json: commitDiffJson,
+    feedback_created_at: feedbackCreatedAt,
+    rule_feedback: sourceRuleIds.map((ruleNodeId) => ({
+      id: randomUUID(),
+      rule_node_id: ruleNodeId,
+    })),
+    pattern,
+    policy_snapshot: materializedPolicy?.prepared ?? null,
+    policy_feedback: policyFeedback,
+    policy_materialized_response: materializedPolicy?.response ?? null,
+    learning_control_preview: learningControlPreview,
+  };
+}
+
+async function assertPreparedToolFeedbackStillCurrent(
+  prepared: PreparedToolSelectionFeedback,
+  liteWriteStore: LiteWriteStore,
+): Promise<void> {
+  if (prepared.served_rule_evaluation) {
+    const drift = await findToolRuleEvaluationDrift(
+      prepared.served_rule_evaluation,
+      prepared.source_rule_ids,
+      prepared.scope_key,
+      liteWriteStore,
+    );
+    if (drift) {
+      throw new HttpError(409, "tool_feedback_prepare_conflict", "tool feedback rule attribution changed after prepare", {
+        reason: drift.reason,
+        rule_node_id: drift.rule_node_id,
       });
     }
-
-    return ToolsFeedbackResponseSchema.parse({
-      ok: true,
-      scope: tenancy.scope,
-      tenant_id: tenancy.tenant_id,
-      updated_rules: uniq.length,
-      rule_node_ids: uniq,
-      commit_id,
-      commit_uri: buildAionisUri({
-        tenant_id: tenancy.tenant_id,
-        scope: tenancy.scope,
-        type: "commit",
-        id: commit_id,
-      }),
-      commit_hash: commitHash,
-      decision_id: decision!.id,
-      decision_uri: buildAionisUri({
-        tenant_id: tenancy.tenant_id,
-        scope: tenancy.scope,
-        type: "decision",
-        id: decision!.id,
-      }),
-      decision_link_mode,
-      decision_policy_sha256: decision!.policy_sha256,
-      pattern_anchor: patternAnchor,
-      policy_memory: policyMemory,
-      learning_control_preview: learningControlPreview,
-    } satisfies ToolsFeedbackResponse);
+  } else {
+    const currentRules = await evaluateRulesAppliedOnly({
+      scope: prepared.scope,
+      tenant_id: prepared.parsed.tenant_id,
+      default_tenant_id: prepared.default_tenant_id,
+      context: prepared.parsed.context,
+      include_shadow: prepared.parsed.include_shadow,
+      limit: prepared.parsed.rules_limit,
+    }, { liteWriteStore });
+    if (sha256Hex(stableStringify(currentRules.applied)) !== prepared.rules_applied_sha256) {
+      throw new HttpError(409, "tool_feedback_prepare_conflict", "tool feedback rule attribution changed after prepare", {
+        reason: "rule_attribution_changed",
+      });
+    }
   }
+
+  const latest = await liteWriteStore.latestCommit(prepared.scope_key);
+  if ((latest?.id ?? null) !== prepared.parent_commit_id
+    || (latest?.commit_hash ?? "") !== prepared.parent_commit_hash) {
+    throw new HttpError(409, "tool_feedback_prepare_conflict", "tool feedback parent commit changed after prepare", {
+      reason: "parent_commit_changed",
+    });
+  }
+
+  const currentDecision = await liteWriteStore.getExecutionDecision({
+    scope: prepared.scope_key,
+    id: prepared.decision.after.id,
+  });
+  if (decisionRowSha256(currentDecision) !== prepared.decision.expected_sha256) {
+    throw new HttpError(409, "tool_feedback_prepare_conflict", "tool feedback decision changed after prepare", {
+      reason: "decision_changed",
+      decision_id: prepared.decision.after.id,
+    });
+  }
+  if (prepared.decision.create) {
+    const inferred = await liteWriteStore.findExecutionDecisionForFeedback({
+      scope: prepared.scope_key,
+      runId: prepared.parsed.run_id ?? null,
+      selectedTool: prepared.selected_tool,
+      candidatesJson: prepared.normalized_candidates,
+      contextSha256: prepared.context_sha256,
+    });
+    if (inferred) {
+      throw new HttpError(409, "tool_feedback_prepare_conflict", "a matching tool decision appeared after prepare", {
+        reason: "inferred_decision_appeared",
+        decision_id: inferred.id,
+      });
+    }
+  }
+}
+
+function rethrowPreparedMutationConflict(error: unknown): never {
+  const reason = error instanceof Error ? error.message : String(error);
+  if (reason.endsWith("_prepare_conflict")) {
+    throw new HttpError(409, "tool_feedback_prepare_conflict", "tool feedback memory state changed after prepare", {
+      reason,
+    });
+  }
+  throw error;
+}
+
+export async function persistToolSelectionFeedback(
+  prepared: PreparedToolSelectionFeedback,
+  opts: FeedbackOptions,
+): Promise<PersistedToolSelectionFeedback> {
+  const liteWriteStore = opts.liteWriteStore;
+  if (!liteWriteStore) throw new Error("persistToolSelectionFeedback requires lite write store");
+  if (!liteWriteStore.transactionRunner().inTransaction()) {
+    throw new Error("persistToolSelectionFeedback requires an active shared transaction");
+  }
+  await assertPreparedToolFeedbackStillCurrent(prepared, liteWriteStore);
+
+  let decision = prepared.decision.after;
+  if (prepared.decision.create) {
+    await liteWriteStore.insertExecutionDecision({
+      id: decision.id,
+      scope: prepared.scope_key,
+      decisionKind: "tools_select",
+      runId: decision.run_id,
+      selectedTool: decision.selected_tool,
+      candidatesJson: decision.candidates_json,
+      contextSha256: decision.context_sha256,
+      policySha256: decision.policy_sha256,
+      sourceRuleIds: decision.source_rule_ids,
+      metadataJson: decision.metadata_json,
+      commitId: null,
+      createdAt: decision.created_at,
+    });
+  } else if (prepared.parsed.run_id && !prepared.decision.before?.run_id) {
+    const linked = await liteWriteStore.updateExecutionDecisionLink({
+      scope: prepared.scope_key,
+      id: decision.id,
+      runId: prepared.parsed.run_id,
+    });
+    if (!linked) throw new Error("tool_feedback_decision_link_failed");
+    decision = linked;
+  }
+
+  const commitId = await liteWriteStore.insertCommit({
+    scope: prepared.scope_key,
+    parentCommitId: prepared.parent_commit_id,
+    inputSha256: prepared.input_sha256,
+    diffJson: prepared.commit_diff_json,
+    actor: prepared.actor,
+    modelVersion: null,
+    promptVersion: null,
+    commitHash: prepared.commit_hash,
+  });
+  if (commitId !== prepared.commit_id) throw new Error("tool_feedback_commit_id_mismatch");
+
+  const committedDecision = await liteWriteStore.updateExecutionDecisionLink({
+    scope: prepared.scope_key,
+    id: decision.id,
+    commitId,
+  });
+  if (!committedDecision) throw new Error("tool_feedback_decision_commit_link_failed");
+  decision = committedDecision;
+  for (const feedback of prepared.rule_feedback) {
+    await liteWriteStore.insertRuleFeedback({
+      id: feedback.id,
+      scope: prepared.scope_key,
+      ruleNodeId: feedback.rule_node_id,
+      runId: prepared.parsed.run_id ?? null,
+      outcome: prepared.parsed.outcome,
+      note: prepared.note,
+      source: "tools_feedback",
+      decisionId: decision.id,
+      commitId,
+      createdAt: prepared.feedback_created_at,
+    });
+  }
+  await liteWriteStore.updateRuleFeedbackAggregates({
+    scope: prepared.scope_key,
+    outcome: prepared.parsed.outcome,
+    ruleNodeIds: prepared.source_rule_ids,
+  });
+
+  try {
+    if (prepared.pattern) {
+      await persistPreparedToolsDecisionPatternAnchor(prepared.pattern, {
+        liteWriteStore,
+        maxTextLen: opts.maxTextLen,
+        piiRedaction: opts.piiRedaction,
+      });
+    }
+    if (prepared.policy_snapshot) {
+      await persistPreparedPolicyMemorySnapshot(prepared.policy_snapshot, {
+        liteWriteStore,
+        maxTextLen: opts.maxTextLen,
+        piiRedaction: opts.piiRedaction,
+      });
+    }
+    if (prepared.policy_feedback) {
+      await persistPreparedPolicyMemoryFeedback(prepared.policy_feedback, liteWriteStore);
+    }
+  } catch (error) {
+    rethrowPreparedMutationConflict(error);
+  }
+
+  const response = ToolsFeedbackResponseSchema.parse({
+    ok: true,
+    scope: prepared.scope,
+    tenant_id: prepared.tenant_id,
+    updated_rules: prepared.source_rule_ids.length,
+    rule_node_ids: prepared.source_rule_ids,
+    commit_id: commitId,
+    commit_uri: buildAionisUri({
+      tenant_id: prepared.tenant_id,
+      scope: prepared.scope,
+      type: "commit",
+      id: commitId,
+    }),
+    commit_hash: prepared.commit_hash,
+    decision_id: decision.id,
+    decision_uri: buildAionisUri({
+      tenant_id: prepared.tenant_id,
+      scope: prepared.scope,
+      type: "decision",
+      id: decision.id,
+    }),
+    decision_link_mode: prepared.decision.decision_link_mode,
+    decision_policy_sha256: decision.policy_sha256,
+    pattern_anchor: patternResponse(prepared.pattern, prepared.tenant_id, prepared.scope),
+    policy_memory: prepared.policy_feedback?.result ?? prepared.policy_materialized_response,
+    learning_control_preview: prepared.learning_control_preview,
+  } satisfies ToolsFeedbackResponse);
+
+  const preparedWrites = [
+    prepared.pattern?.prepared_write ?? null,
+    prepared.policy_snapshot?.prepared_write ?? null,
+  ].filter((entry): entry is PreparedWrite => entry !== null);
+  return {
+    response,
+    run_id: prepared.parsed.run_id ?? null,
+    decision_id: decision.id,
+    commit_id: commitId,
+    commit_hash: prepared.commit_hash,
+    finalize_plan: { prepared_writes: preparedWrites },
+  };
+}
+
+export async function finalizeToolSelectionFeedback(
+  persisted: PersistedToolSelectionFeedback,
+  opts: FeedbackOptions,
+): Promise<ToolSelectionFeedbackFinalizeResult> {
+  const liteWriteStore = opts.liteWriteStore;
+  if (!liteWriteStore) throw new Error("finalizeToolSelectionFeedback requires lite write store");
+  if (liteWriteStore.transactionRunner().inTransaction()) {
+    throw new Error("finalizeToolSelectionFeedback must run after commit");
+  }
+  const embeddings: ToolSelectionFeedbackFinalizeResult["embeddings"] = [];
+  for (const preparedWrite of persisted.finalize_plan.prepared_writes) {
+    const result = await completeLiteInlineEmbeddings({
+      prepared: preparedWrite,
+      embedder: opts.embedder ?? null,
+      liteWriteStore,
+    });
+    if (result) embeddings.push(result);
+  }
+  return { embeddings };
+}
+
+export async function toolSelectionFeedback(
+  client: null,
+  body: unknown,
+  defaultScope: string,
+  defaultTenantId: string,
+  opts: FeedbackOptions,
+): Promise<ToolsFeedbackResponse> {
+  const liteWriteStore = opts.liteWriteStore;
+  if (!liteWriteStore) throw new Error("toolSelectionFeedback requires lite write store");
+  if (liteWriteStore.transactionRunner().inTransaction()) {
+    throw new Error("toolSelectionFeedback must be entered outside a transaction so prepare can run before BEGIN");
+  }
+  const prepared = await prepareToolSelectionFeedback(client, body, defaultScope, defaultTenantId, opts);
+  const persisted = await liteWriteStore.withTx(() => persistToolSelectionFeedback(prepared, opts));
+  await finalizeToolSelectionFeedback(persisted, opts);
+  return persisted.response;
 }

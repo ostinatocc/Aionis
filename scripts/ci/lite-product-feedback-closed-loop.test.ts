@@ -328,6 +328,7 @@ function setupProductApp(name: string, overrides: Partial<ReturnType<typeof lite
 
 function setupLearningProductApp(args: {
   name: string;
+  dbPath?: string;
   overrides?: Partial<ReturnType<typeof liteEnv>>;
   planningContextService?: MemoryPlanningContextService | null;
   admissionCandidatePolicyProfileRules?: readonly AionisAdmissionCandidatePolicyProfileRule[];
@@ -340,7 +341,7 @@ function setupLearningProductApp(args: {
     ...(args.overrides ?? {}),
   };
   const guards = requestGuards(env);
-  const dbPath = tmpDbPath(args.name);
+  const dbPath = args.dbPath ?? tmpDbPath(args.name);
   const runtimeDatabase = createLiteRuntimeDatabase(dbPath);
   const liteWriteStore = createLiteWriteStoreFromDatabase(runtimeDatabase, {
     annProjectionEnabled: false,
@@ -3699,11 +3700,13 @@ async function slotsForMemory(args: {
 async function guideForToolSelection(args: {
   app: ReturnType<typeof Fastify>;
   runId: string;
+  operationId?: string;
 }) {
   const response = await args.app.inject({
     method: "POST",
     url: "/v1/guide",
     payload: {
+      ...(args.operationId ? { operation_id: args.operationId } : {}),
       tenant_id: "default",
       scope: "default",
       run_id: args.runId,
@@ -3726,9 +3729,10 @@ async function guideForToolSelection(args: {
   return guide;
 }
 
-function toolFeedbackPayload(guide: Record<string, any>) {
+function toolFeedbackPayload(guide: Record<string, any>, operationId?: string) {
   return {
     feedback_kind: "tool_selection",
+    ...(operationId ? { operation_id: operationId } : {}),
     tenant_id: guide.tenant_id,
     scope: guide.scope,
     guide_trace_id: guide.guide_trace_id,
@@ -3747,7 +3751,17 @@ function toolFeedbackPayload(guide: Record<string, any>) {
   };
 }
 
-async function seedActiveToolFeedbackRule(liteWriteStore: ReturnType<typeof createLiteWriteStore>) {
+async function seedToolFeedbackRule(
+  liteWriteStore: ReturnType<typeof createLiteWriteStore>,
+  options: {
+    clientId?: string;
+    state?: "active" | "shadow";
+    preferredTool?: string;
+  } = {},
+): Promise<string> {
+  const clientId = options.clientId ?? "rule:product-tool-feedback:prefer-read";
+  const state = options.state ?? "active";
+  const preferredTool = options.preferredTool ?? "read";
   const prepared = await prepareMemoryWrite({
     tenant_id: "default",
     scope: "default",
@@ -3756,13 +3770,13 @@ async function seedActiveToolFeedbackRule(liteWriteStore: ReturnType<typeof crea
     auto_embed: false,
     memory_lane: "shared",
     nodes: [{
-      client_id: "rule:product-tool-feedback:prefer-read",
+      client_id: clientId,
       type: "rule",
       title: "Prefer read for product tool feedback",
       text_summary: "Use read for the product_tool_feedback task kind.",
       slots: {
         if: { task_kind: { $eq: "product_tool_feedback" } },
-        then: { tool: { prefer: ["read"] } },
+        then: { tool: { prefer: [preferredTool] } },
         exceptions: [],
         rule_scope: "global",
       },
@@ -3787,15 +3801,138 @@ async function seedActiveToolFeedbackRule(liteWriteStore: ReturnType<typeof crea
     scope: "default",
     actor: "local-user",
     rule_node_id: ruleNodeId,
-    state: "active",
+    state,
     input_text: "Activate the product tool feedback rule.",
   }, "default", "default", { liteWriteStore }));
+  return ruleNodeId;
+}
+
+async function seedRuntimeVerificationToolRule(
+  liteWriteStore: ReturnType<typeof createLiteWriteStore>,
+): Promise<string> {
+  const clientId = "rule:product-tool-feedback:runtime-verification";
+  const prepared = await prepareMemoryWrite({
+    tenant_id: "default",
+    scope: "default",
+    actor: "local-user",
+    input_text: "Prefer read after Runtime verification produces authoritative evidence.",
+    auto_embed: false,
+    memory_lane: "shared",
+    nodes: [{
+      client_id: clientId,
+      type: "rule",
+      title: "Prefer read after Runtime verification",
+      text_summary: "Use read after Runtime verification evidence is authoritative.",
+      slots: {
+        if: {
+          execution_result_summary: {
+            runtime_verification_v1: {
+              authoritative_evidence_ready: { $eq: true },
+            },
+          },
+        },
+        then: { tool: { prefer: ["read"] } },
+        exceptions: [],
+        rule_scope: "global",
+        state: "draft",
+      },
+    }],
+    edges: [],
+  }, "default", "default", {
+    maxTextLen: 10_000,
+    piiRedaction: false,
+    allowCrossScopeEdges: false,
+  }, null);
+  const written = await liteWriteStore.withTx(() => applyMemoryWrite(prepared, {
+    maxTextLen: 10_000,
+    piiRedaction: false,
+    allowCrossScopeEdges: false,
+    associativeLinkOrigin: "memory_write",
+    write_access: liteWriteStore,
+  }));
+  const ruleNodeId = written.nodes[0]?.id;
+  assert.ok(ruleNodeId);
+  await liteWriteStore.withTx(() => updateRuleState({
+    tenant_id: "default",
+    scope: "default",
+    actor: "local-user",
+    rule_node_id: ruleNodeId,
+    state: "active",
+    input_text: "Activate the Runtime-verification tool rule.",
+  }, "default", "default", { liteWriteStore }));
+  return ruleNodeId;
+}
+
+async function seedMixedTargetToolFeedbackRules(
+  liteWriteStore: ReturnType<typeof createLiteWriteStore>,
+) {
+  const prepared = await prepareMemoryWrite({
+    tenant_id: "default",
+    scope: "default",
+    actor: "local-user",
+    input_text: "Seed one tool rule and one output rule for provenance-scoped feedback.",
+    auto_embed: false,
+    memory_lane: "shared",
+    nodes: [{
+      client_id: "rule:product-tool-feedback:mixed:tool",
+      type: "rule",
+      title: "Prefer read for mixed provenance feedback",
+      text_summary: "Use read for the product_tool_feedback task kind.",
+      slots: {
+        if: { task_kind: { $eq: "product_tool_feedback" } },
+        then: { tool: { prefer: ["read"] } },
+        exceptions: [],
+        rule_scope: "global",
+      },
+    }, {
+      client_id: "rule:product-tool-feedback:mixed:output",
+      type: "rule",
+      title: "Use JSON for mixed provenance feedback",
+      text_summary: "Use JSON output for the product_tool_feedback task kind.",
+      slots: {
+        if: { task_kind: { $eq: "product_tool_feedback" } },
+        then: { output: { format: "json" } },
+        exceptions: [],
+        rule_scope: "global",
+      },
+    }],
+    edges: [],
+  }, "default", "default", {
+    maxTextLen: 10_000,
+    piiRedaction: false,
+    allowCrossScopeEdges: false,
+  }, null);
+  const written = await liteWriteStore.withTx(() => applyMemoryWrite(prepared, {
+    maxTextLen: 10_000,
+    piiRedaction: false,
+    allowCrossScopeEdges: false,
+    associativeLinkOrigin: "memory_write",
+    write_access: liteWriteStore,
+  }));
+  const toolRuleNodeId = written.nodes[0]?.id;
+  const outputRuleNodeId = written.nodes[1]?.id;
+  assert.ok(toolRuleNodeId);
+  assert.ok(outputRuleNodeId);
+  for (const [ruleNodeId, label] of [
+    [toolRuleNodeId, "tool"],
+    [outputRuleNodeId, "output"],
+  ] as const) {
+    await liteWriteStore.withTx(() => updateRuleState({
+      tenant_id: "default",
+      scope: "default",
+      actor: "local-user",
+      rule_node_id: ruleNodeId,
+      state: "active",
+      input_text: `Activate the mixed provenance ${label} rule.`,
+    }, "default", "default", { liteWriteStore }));
+  }
+  return { toolRuleNodeId, outputRuleNodeId };
 }
 
 test("product feedback attributes tool learning to the persisted guide decision", async () => {
   const { app, liteWriteStore } = setupProductApp("product-tool-feedback");
   try {
-    await seedActiveToolFeedbackRule(liteWriteStore);
+    await seedToolFeedbackRule(liteWriteStore);
     const guide = await guideForToolSelection({ app, runId: "run:product-tool-feedback" });
     const feedback = await app.inject({
       method: "POST",
@@ -3819,6 +3956,568 @@ test("product feedback attributes tool learning to the persisted guide decision"
     assert.ok(body.source_map.internal_surfaces_used.includes("learning_kernel"));
   } finally {
     await app.close();
+  }
+});
+
+test("tool feedback reuses Runtime-derived guide context without asking the caller to forge it", async () => {
+  const { app, liteWriteStore } = setupProductApp("product-tool-feedback-runtime-context", {
+    RUNTIME_VERIFIER_EXECUTION_ENABLED: true,
+  });
+  try {
+    const ruleNodeId = await seedRuntimeVerificationToolRule(liteWriteStore);
+    const context = {
+      agent_id: "local-user",
+      task_kind: "product_tool_feedback",
+      task_signature: "product-tool-feedback-runtime-context",
+      goal: "Continue with the tool selected under Runtime verification posture.",
+    };
+    const runId = "run:product-tool-feedback-runtime-context";
+    const guideResponse = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        run_id: runId,
+        consumer_agent_id: "local-user",
+        query_text: "Choose the tool while Runtime verification remains planned.",
+        context,
+        execution_packet_v1: {
+          version: 1,
+          state_id: "state:product-tool-feedback-runtime-context",
+          current_stage: "review",
+          active_role: "review",
+          task_brief: "Review the Runtime-derived tool decision.",
+          target_files: [],
+          next_action: "Inspect the selected tool.",
+          hard_constraints: [],
+          accepted_facts: [],
+          rejected_paths: [],
+          pending_validations: ["node -e \"process.exit(0)\""],
+          unresolved_blockers: [],
+          rollback_notes: [],
+          service_lifecycle_constraints: [],
+          review_contract: null,
+          resume_anchor: null,
+          artifact_refs: [],
+          evidence_refs: [],
+        },
+        runtime_verification: {
+          version: 1,
+          mode: "execute",
+          agent_lifecycle_state: "agent_exited",
+          include_pending_validations: true,
+          validation_boundary: "runtime_orchestrator",
+          timeout_ms: 5_000,
+          max_requests: 4,
+          cwd: null,
+          agent_claimed_success: true,
+        },
+        tool_candidates: ["read", "bash"],
+        include_packets: true,
+      },
+    });
+    assert.equal(guideResponse.statusCode, 200, guideResponse.body);
+    const guide = guideResponse.json();
+    assert.ok(guide.tool_selection.source_rule_ids.includes(ruleNodeId));
+
+    const feedback = await app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: {
+        ...toolFeedbackPayload(guide),
+        context,
+      },
+    });
+    assert.equal(feedback.statusCode, 200, feedback.body);
+    assert.deepEqual(feedback.json().feedback_result.rule_node_ids, [ruleNodeId]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("tool feedback attributes served shadow rules without mixing them into active decision provenance", async () => {
+  const fixture = setupLearningProductApp({ name: "product-tool-feedback-shadow-provenance" });
+  const { app, liteWriteStore } = fixture;
+  try {
+    const activeRuleId = await seedToolFeedbackRule(liteWriteStore, {
+      clientId: "rule:product-tool-feedback:shadow-provenance:active",
+      state: "active",
+      preferredTool: "read",
+    });
+    const shadowRuleId = await seedToolFeedbackRule(liteWriteStore, {
+      clientId: "rule:product-tool-feedback:shadow-provenance:shadow",
+      state: "shadow",
+      preferredTool: "bash",
+    });
+    const runId = "run:product-tool-feedback-shadow-provenance";
+    const guideResponse = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        operation_id: "guide:product-tool-feedback-shadow-provenance",
+        tenant_id: "default",
+        scope: "default",
+        run_id: runId,
+        consumer_agent_id: "local-user",
+        query_text: "Choose a tool with shadow diagnostics enabled.",
+        tool_candidates: ["read", "bash"],
+        context: {
+          agent_id: "local-user",
+          task_kind: "product_tool_feedback",
+          task_signature: "product-tool-feedback-shadow-provenance",
+          goal: "Attribute active and shadow tool evidence separately.",
+        },
+        include_shadow: true,
+        include_packets: true,
+      },
+    });
+    assert.equal(guideResponse.statusCode, 200, guideResponse.body);
+    const guide = guideResponse.json();
+    assert.deepEqual(guide.tool_selection.source_rule_ids, [activeRuleId]);
+
+    const activeOnlyFeedback = await app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: {
+        ...toolFeedbackPayload(
+          guide,
+          "feedback:product-tool-feedback-shadow-provenance:active-only",
+        ),
+        context: {
+          agent_id: "local-user",
+          task_kind: "product_tool_feedback",
+          task_signature: "product-tool-feedback-shadow-provenance",
+          goal: "Attribute active and shadow tool evidence separately.",
+        },
+      },
+    });
+    assert.equal(activeOnlyFeedback.statusCode, 200, activeOnlyFeedback.body);
+    assert.deepEqual(activeOnlyFeedback.json().feedback_result.rule_node_ids, [activeRuleId]);
+
+    const shadowFeedback = await app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: {
+        ...toolFeedbackPayload(guide),
+        context: {
+          agent_id: "local-user",
+          task_kind: "product_tool_feedback",
+          task_signature: "product-tool-feedback-shadow-provenance",
+          goal: "Attribute active and shadow tool evidence separately.",
+        },
+        include_shadow: true,
+      },
+    });
+    assert.equal(shadowFeedback.statusCode, 200, shadowFeedback.body);
+    assert.deepEqual(
+      [...shadowFeedback.json().feedback_result.rule_node_ids].sort(),
+      [activeRuleId, shadowRuleId].sort(),
+    );
+
+    await liteWriteStore.withTx(() => updateRuleState({
+      tenant_id: "default",
+      scope: "default",
+      actor: "local-user",
+      rule_node_id: shadowRuleId,
+      state: "disabled",
+      input_text: "Disable the diagnostic shadow rule after it was served.",
+    }, "default", "default", { liteWriteStore }));
+    const activeAfterShadowChange = await app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: {
+        ...toolFeedbackPayload(
+          guide,
+          "feedback:product-tool-feedback-shadow-provenance:active-after-shadow-change",
+        ),
+        context: {
+          agent_id: "local-user",
+          task_kind: "product_tool_feedback",
+          task_signature: "product-tool-feedback-shadow-provenance",
+          goal: "Attribute active and shadow tool evidence separately.",
+        },
+      },
+    });
+    assert.equal(activeAfterShadowChange.statusCode, 200, activeAfterShadowChange.body);
+    assert.deepEqual(activeAfterShadowChange.json().feedback_result.rule_node_ids, [activeRuleId]);
+    assert.equal((await verifyLiteRuntimeDatabase(fixture.dbPath)).ok, true);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("protected tool feedback preserves full guide provenance while attributing only tool rules by default", async () => {
+  const fixture = setupLearningProductApp({ name: "protected-product-tool-feedback-mixed-provenance" });
+  try {
+    const { toolRuleNodeId, outputRuleNodeId } = await seedMixedTargetToolFeedbackRules(
+      fixture.liteWriteStore,
+    );
+    const expectedGuideRuleIds = [toolRuleNodeId, outputRuleNodeId].sort();
+    const guide = await guideForToolSelection({
+      app: fixture.app,
+      runId: "run:protected-product-tool-feedback-mixed-provenance",
+      operationId: "guide:protected-product-tool-feedback-mixed-provenance",
+    });
+    assert.deepEqual([...guide.tool_selection.source_rule_ids].sort(), expectedGuideRuleIds);
+
+    const guideReceipt = fixture.runtimeDatabase.db.prepare(
+      `SELECT ledger_json FROM lite_product_guide_receipts
+       WHERE guide_trace_id = ?`,
+    ).get(guide.guide_trace_id) as { ledger_json: string } | undefined;
+    assert.ok(guideReceipt);
+    const persistedGuideLedger = JSON.parse(guideReceipt.ledger_json) as Record<string, any>;
+    assert.deepEqual(
+      [...persistedGuideLedger.tool_selection.source_rule_ids].sort(),
+      expectedGuideRuleIds,
+    );
+
+    const decisionBeforeFeedback = fixture.runtimeDatabase.db.prepare(
+      `SELECT source_rule_ids_json, metadata_json
+       FROM lite_memory_execution_decisions WHERE id = ?`,
+    ).get(guide.tool_selection.decision_id) as {
+      source_rule_ids_json: string;
+      metadata_json: string;
+    } | undefined;
+    assert.ok(decisionBeforeFeedback);
+    assert.deepEqual(
+      [...JSON.parse(decisionBeforeFeedback.source_rule_ids_json)].sort(),
+      expectedGuideRuleIds,
+    );
+
+    const operationId = "feedback:protected-product-tool-feedback-mixed-provenance";
+    const feedback = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: toolFeedbackPayload(guide, operationId),
+    });
+    assert.equal(feedback.statusCode, 200, feedback.body);
+    const body = feedback.json();
+    assert.equal(body.operation_id, operationId);
+    assert.equal(body.learning_attribution_status, "tool_decision");
+    assert.equal(body.feedback_result.updated_rules, 1);
+    assert.deepEqual(body.feedback_result.rule_node_ids, [toolRuleNodeId]);
+
+    const decisionAfterFeedback = fixture.runtimeDatabase.db.prepare(
+      `SELECT source_rule_ids_json, metadata_json
+       FROM lite_memory_execution_decisions WHERE id = ?`,
+    ).get(guide.tool_selection.decision_id) as {
+      source_rule_ids_json: string;
+      metadata_json: string;
+    } | undefined;
+    assert.ok(decisionAfterFeedback);
+    assert.deepEqual(
+      [...JSON.parse(decisionAfterFeedback.source_rule_ids_json)].sort(),
+      expectedGuideRuleIds,
+    );
+
+    const commit = fixture.runtimeDatabase.db.prepare(
+      `SELECT diff_json FROM lite_memory_commits WHERE id = ?`,
+    ).get(body.feedback_result.commit_id) as { diff_json: string } | undefined;
+    assert.ok(commit);
+    const commitDiff = JSON.parse(commit.diff_json) as Record<string, any>;
+    assert.deepEqual(commitDiff.tool_feedback[0].rule_node_ids, [toolRuleNodeId]);
+
+    const ruleFeedbackRows = fixture.runtimeDatabase.db.prepare(
+      `SELECT rule_node_id, source, decision_id
+       FROM lite_memory_rule_feedback
+       WHERE commit_id = ?
+       ORDER BY rule_node_id`,
+    ).all(body.feedback_result.commit_id) as Array<Record<string, unknown>>;
+    assert.deepEqual(ruleFeedbackRows.map((row) => ({ ...row })), [{
+      rule_node_id: toolRuleNodeId,
+      source: "tools_feedback",
+      decision_id: guide.tool_selection.decision_id,
+    }]);
+    assert.equal(ruleFeedbackRows.some((row) => row.rule_node_id === outputRuleNodeId), false);
+    assert.equal((await verifyLiteRuntimeDatabase(fixture.dbPath)).ok, true);
+
+    fixture.runtimeDatabase.db.prepare(
+      "UPDATE lite_memory_execution_decisions SET source_rule_ids_json = ? WHERE id = ?",
+    ).run(stableStringify([toolRuleNodeId]), guide.tool_selection.decision_id);
+    assert.equal(
+      (await verifyLiteRuntimeDatabase(fixture.dbPath)).ok,
+      false,
+      "restart integrity must reject decision provenance that diverges from the served guide",
+    );
+    fixture.runtimeDatabase.db.prepare(
+      "UPDATE lite_memory_execution_decisions SET source_rule_ids_json = ? WHERE id = ?",
+    ).run(decisionAfterFeedback.source_rule_ids_json, guide.tool_selection.decision_id);
+    assert.equal((await verifyLiteRuntimeDatabase(fixture.dbPath)).ok, true);
+
+    const originalMetadata = JSON.parse(decisionAfterFeedback.metadata_json) as Record<string, any>;
+    const invalidProvenanceMetadata = structuredClone(originalMetadata);
+    invalidProvenanceMetadata.tool_rule_evaluation_provenance_v1.active_sources[0].row_sha256 = "0".repeat(64);
+    fixture.runtimeDatabase.db.prepare(
+      "UPDATE lite_memory_execution_decisions SET metadata_json = ? WHERE id = ?",
+    ).run(stableStringify(invalidProvenanceMetadata), guide.tool_selection.decision_id);
+    const invalidProvenance = await verifyLiteRuntimeDatabase(fixture.dbPath);
+    assert.equal(invalidProvenance.ok, false);
+    assert.match(
+      String(invalidProvenance.learning.integrity_error),
+      /tool_feedback_rule_evaluation_provenance/u,
+    );
+
+    const reboundProvenanceMetadata = structuredClone(originalMetadata);
+    const reboundProvenance = reboundProvenanceMetadata.tool_rule_evaluation_provenance_v1;
+    reboundProvenance.rules_limit = reboundProvenance.rules_limit === 200
+      ? reboundProvenance.rules_limit - 1
+      : reboundProvenance.rules_limit + 1;
+    const { provenance_sha256: _originalProvenanceSha256, ...reboundProvenanceBody } = reboundProvenance;
+    reboundProvenance.provenance_sha256 = sha256(stableStringify(reboundProvenanceBody));
+    fixture.runtimeDatabase.db.prepare(
+      "UPDATE lite_memory_execution_decisions SET metadata_json = ? WHERE id = ?",
+    ).run(stableStringify(reboundProvenanceMetadata), guide.tool_selection.decision_id);
+    const reboundProvenanceVerification = await verifyLiteRuntimeDatabase(fixture.dbPath);
+    assert.equal(reboundProvenanceVerification.ok, false);
+    assert.match(
+      String(reboundProvenanceVerification.learning.integrity_error),
+      /tool_feedback_rule_evaluation_provenance_binding/u,
+    );
+
+    fixture.runtimeDatabase.db.prepare(
+      "UPDATE lite_memory_execution_decisions SET metadata_json = ? WHERE id = ?",
+    ).run(decisionAfterFeedback.metadata_json, guide.tool_selection.decision_id);
+    assert.equal((await verifyLiteRuntimeDatabase(fixture.dbPath)).ok, true);
+
+    await fixture.liteWriteStore.withTx(() => updateRuleState({
+      tenant_id: "default",
+      scope: "default",
+      actor: "local-user",
+      rule_node_id: toolRuleNodeId,
+      state: "shadow",
+      input_text: "Move the served rule to shadow after its historical decision was recorded.",
+    }, "default", "default", { liteWriteStore: fixture.liteWriteStore }));
+    assert.equal(
+      (await verifyLiteRuntimeDatabase(fixture.dbPath)).ok,
+      true,
+      "restart integrity must validate the served snapshot without pinning the current rule row",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("protected tool feedback atomically binds the guide episode, decision attribution, and exact replay receipt", async () => {
+  const fixture = setupLearningProductApp({ name: "protected-product-tool-feedback" });
+  try {
+    await seedToolFeedbackRule(fixture.liteWriteStore);
+    const guide = await guideForToolSelection({
+      app: fixture.app,
+      runId: "run:protected-product-tool-feedback",
+      operationId: "guide:protected-product-tool-feedback",
+    });
+    const operationId = "feedback:protected-product-tool-feedback";
+    const payload = toolFeedbackPayload(guide, operationId);
+    const feedback = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload,
+    });
+    assert.equal(feedback.statusCode, 200, feedback.body);
+    const firstBody = feedback.json();
+    assert.equal(firstBody.operation_id, operationId);
+    assert.equal(firstBody.learning_attribution_status, "tool_decision");
+    assert.equal(typeof firstBody.learning_episode_id, "string");
+    assert.equal(typeof firstBody.learning_feedback_event_id, "string");
+    assert.equal(firstBody.run_lifecycle.lifecycle.status, "feedback_linked");
+    assert.equal(firstBody.run_lifecycle.feedback.total, 1);
+
+    const exposure = fixture.runtimeDatabase.db.prepare(
+      `SELECT * FROM lite_learning_episode_events
+       WHERE event_kind = 'exposure_committed' AND source_id = ?`,
+    ).get(guide.guide_trace_id) as Record<string, unknown> | undefined;
+    assert.ok(exposure);
+    const event = fixture.runtimeDatabase.db.prepare(
+      `SELECT * FROM lite_learning_episode_events
+       WHERE event_id = ? AND event_kind = 'feedback_attributed'`,
+    ).get(firstBody.learning_feedback_event_id) as Record<string, unknown> | undefined;
+    assert.ok(event);
+    assert.equal(event.source_kind, "tool_feedback_operation");
+    assert.equal(event.source_id, operationId);
+    assert.equal(event.operation_id, operationId);
+    assert.equal(event.run_id, guide.tool_selection.run_id);
+    assert.equal(event.episode_id, firstBody.learning_episode_id);
+    for (const field of [
+      "collection_class", "collection_principal_sha256", "collector_id", "collector_version",
+      "host_task_id", "host_task_envelope_sha256", "task_family", "experiment_id",
+      "experiment_revision", "serving_phase", "evidence_intent", "assignment_arm", "served_arm",
+    ] as const) {
+      assert.equal(event[field], exposure[field], `tool feedback must inherit ${field}`);
+    }
+
+    const attribution = fixture.runtimeDatabase.db.prepare(
+      `SELECT * FROM lite_learning_feedback_attributions WHERE event_id = ?`,
+    ).get(firstBody.learning_feedback_event_id) as Record<string, unknown> | undefined;
+    assert.ok(attribution);
+    assert.equal(attribution.subject_kind, "tool_decision");
+    assert.equal(attribution.subject_id, guide.tool_selection.decision_id);
+    assert.equal(attribution.used_surface, null);
+    assert.equal(attribution.exposure_action, null);
+    assert.equal(attribution.boundary_outcome, "not_applicable");
+    assert.equal(attribution.evidence_class, "tool_decision");
+    assert.equal(attribution.host_use_receipt_id, null);
+    assert.equal(attribution.host_use_receipt_sha256, null);
+    assert.equal(attribution.receipt_item_sha256, null);
+    assert.equal(attribution.verifier_kind, null);
+    assert.equal(attribution.verifier_status, null);
+
+    const operation = fixture.runtimeDatabase.db.prepare(
+      `SELECT request_sha256, receipt_json, commit_id
+       FROM lite_runtime_write_operations
+       WHERE operation_kind = 'product_feedback_v1' AND operation_id = ?`,
+    ).get(operationId) as Record<string, unknown> | undefined;
+    assert.ok(operation);
+    assert.equal(operation.commit_id, event.source_commit_id);
+    assert.deepEqual(JSON.parse(String(operation.receipt_json)), {
+      ok: true,
+      statusCode: 200,
+      body: firstBody,
+    });
+    assert.equal(stableStringify(JSON.parse(String(operation.receipt_json))), operation.receipt_json);
+
+    const replay = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload,
+    });
+    assert.equal(replay.statusCode, 200, replay.body);
+    assert.deepEqual(replay.json(), firstBody);
+    assert.equal(scalarCount(
+      fixture.runtimeDatabase,
+      "SELECT COUNT(*) AS count FROM lite_learning_episode_events WHERE event_kind = 'feedback_attributed' AND operation_id = ?",
+      operationId,
+    ), 1);
+    assert.equal(scalarCount(
+      fixture.runtimeDatabase,
+      "SELECT COUNT(*) AS count FROM lite_runtime_write_operations WHERE operation_kind = 'product_feedback_v1' AND operation_id = ?",
+      operationId,
+    ), 1);
+
+    const conflict = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: { ...payload, note: "This is different feedback content." },
+    });
+    assert.equal(conflict.statusCode, 409, conflict.body);
+    assert.equal(conflict.json().error, "learning_episode_operation_conflict");
+    assert.equal((await verifyLiteRuntimeDatabase(fixture.dbPath)).ok, true);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("same-millisecond protected tool feedback operations remain distinct and exactly replayable after restart", async (t) => {
+  const dbPath = tmpDbPath("protected-product-tool-feedback-same-millisecond");
+  const fixture = setupLearningProductApp({
+    name: "protected-product-tool-feedback-same-millisecond",
+    dbPath,
+  });
+  let fixtureClosed = false;
+  let reopened: ReturnType<typeof setupLearningProductApp> | null = null;
+  try {
+    await seedToolFeedbackRule(fixture.liteWriteStore);
+    const guide = await guideForToolSelection({
+      app: fixture.app,
+      runId: "run:protected-product-tool-feedback-same-millisecond",
+      operationId: "guide:protected-product-tool-feedback-same-millisecond",
+    });
+    const firstOperationId = "feedback:protected-product-tool-feedback-same-millisecond:first";
+    const secondOperationId = "feedback:protected-product-tool-feedback-same-millisecond:second";
+    const firstPayload = toolFeedbackPayload(guide, firstOperationId);
+    const secondPayload = toolFeedbackPayload(guide, secondOperationId);
+    const frozenNow = Date.now();
+    const frozenRecordedAt = new Date(frozenNow).toISOString();
+    let firstBody: Record<string, any> | null = null;
+    let secondBody: Record<string, any> | null = null;
+    t.mock.timers.enable({ apis: ["Date"], now: frozenNow });
+    try {
+      const first = await fixture.app.inject({
+        method: "POST",
+        url: "/v1/feedback",
+        payload: firstPayload,
+      });
+      assert.equal(first.statusCode, 200, first.body);
+      firstBody = first.json();
+
+      const second = await fixture.app.inject({
+        method: "POST",
+        url: "/v1/feedback",
+        payload: secondPayload,
+      });
+      assert.equal(second.statusCode, 200, second.body);
+      secondBody = second.json();
+    } finally {
+      t.mock.timers.reset();
+    }
+    assert.ok(firstBody);
+    assert.ok(secondBody);
+    assert.equal(firstBody.operation_id, firstOperationId);
+    assert.equal(secondBody.operation_id, secondOperationId);
+    assert.notEqual(firstBody.learning_feedback_event_id, secondBody.learning_feedback_event_id);
+    assert.notEqual(firstBody.feedback_result.commit_id, secondBody.feedback_result.commit_id);
+    assert.equal(firstBody.run_lifecycle.feedback.total, 1);
+    assert.equal(secondBody.run_lifecycle.feedback.total, 2);
+
+    const feedbackEvents = fixture.runtimeDatabase.db.prepare(
+      `SELECT operation_id, event_id, episode_sequence, recorded_at
+       FROM lite_learning_episode_events
+       WHERE event_kind = 'feedback_attributed'
+         AND operation_id IN (?, ?)
+       ORDER BY episode_sequence`,
+    ).all(firstOperationId, secondOperationId) as Array<Record<string, unknown>>;
+    assert.deepEqual(feedbackEvents.map((row) => ({ ...row })), [{
+      operation_id: firstOperationId,
+      event_id: firstBody.learning_feedback_event_id,
+      episode_sequence: 2,
+      recorded_at: frozenRecordedAt,
+    }, {
+      operation_id: secondOperationId,
+      event_id: secondBody.learning_feedback_event_id,
+      episode_sequence: 3,
+      recorded_at: frozenRecordedAt,
+    }]);
+
+    await fixture.close();
+    fixtureClosed = true;
+    assert.equal((await verifyLiteRuntimeDatabase(dbPath)).ok, true);
+
+    reopened = setupLearningProductApp({
+      name: "protected-product-tool-feedback-same-millisecond-reopened",
+      dbPath,
+    });
+    const secondReplay = await reopened.app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: secondPayload,
+    });
+    assert.equal(secondReplay.statusCode, 200, secondReplay.body);
+    assert.deepEqual(secondReplay.json(), secondBody);
+
+    const firstReplay = await reopened.app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: firstPayload,
+    });
+    assert.equal(firstReplay.statusCode, 200, firstReplay.body);
+    assert.deepEqual(firstReplay.json(), firstBody);
+    assert.equal(scalarCount(
+      reopened.runtimeDatabase,
+      `SELECT COUNT(*) AS count FROM lite_learning_episode_events
+       WHERE event_kind = 'feedback_attributed' AND run_id = ?`,
+      guide.tool_selection.run_id,
+    ), 2);
+    assert.equal(scalarCount(
+      reopened.runtimeDatabase,
+      `SELECT COUNT(*) AS count FROM lite_runtime_write_operations
+       WHERE operation_kind = 'product_feedback_v1' AND operation_id IN (?, ?)`,
+      firstOperationId,
+      secondOperationId,
+    ), 2);
+    assert.equal((await verifyLiteRuntimeDatabase(dbPath)).ok, true);
+  } finally {
+    if (reopened) await reopened.close();
+    if (!fixtureClosed) await fixture.close();
   }
 });
 
@@ -3870,6 +4569,7 @@ test("product tool feedback rejects forged guide and decision attribution withou
       { ...valid, decision_id: "decision:forged" },
       { ...valid, selected_tool: valid.selected_tool === "read" ? "bash" : "read" },
       { ...valid, candidates: [...valid.candidates].reverse() },
+      { ...valid, context: { ...valid.context, goal: "Forge a different learning context." } },
     ];
 
     for (const payload of forgedPayloads) {

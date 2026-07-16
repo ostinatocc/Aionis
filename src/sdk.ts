@@ -817,7 +817,9 @@ export type AionisToolSelectionReceipt = {
   run_id: string;
   selected_tool: string | null;
   candidates: string[];
+  context_sha256?: string;
   policy_sha256: string;
+  rule_evaluation_sha256?: string;
   source_rule_ids: string[];
   created_at: string;
 };
@@ -897,6 +899,7 @@ export type AionisMemoryFeedbackRequest = AionisJsonObject & {
 
 export type AionisToolSelectionFeedbackRequest = AionisJsonObject & {
   feedback_kind: "tool_selection";
+  operation_id?: string;
   guide_trace_id: string;
   decision_id: string;
   run_id: string;

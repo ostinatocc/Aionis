@@ -3,8 +3,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import stableStringify from "fast-json-stable-stringify";
 
 import type { EmbeddingProvider } from "../../src/embeddings/types.ts";
+import { createLearningKernel, type LearningKernelControlProviders } from "../../src/kernel/learning-kernel.ts";
+import { createEvidenceFormPatternLearningControlReviewProvider } from "../../src/memory/learning-control-provider-evidence.ts";
 import {
   createLiteExecutionStateStore,
   createLiteExecutionStateStoreFromDatabase,
@@ -14,14 +17,19 @@ import {
   createLiteExecutionTreeStoreFromDatabase,
 } from "../../src/execution/tree-store.ts";
 import { createExecutionTreeV1 } from "../../src/execution/tree.ts";
+import { updateRuleState } from "../../src/memory/rules.ts";
+import { selectTools, type DeferredToolsSelectDecision } from "../../src/memory/tools-select.ts";
 import { buildAionisMemoryPacket } from "../../src/memory/product-output/memory-packet.ts";
 import { createProductGuideService } from "../../src/product/guide-service.ts";
 import { createProductObserveService } from "../../src/product/observe-service.ts";
 import { ProductGuideRequest } from "../../src/product/product-services.ts";
+import { createProductToolFeedbackService } from "../../src/product/tool-feedback-service.ts";
 import { createHandoffRouteService } from "../../src/routes/handoff.ts";
+import { DEFERRED_PLANNING_TOOL_DECISION } from "../../src/routes/memory-context-runtime.ts";
 import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
 import { createLiteClaimLedgerStoreFromDatabase } from "../../src/store/lite-claim-ledger-store.ts";
 import { createLiteLearningEpisodeLedgerAccess } from "../../src/store/lite-learning-episode-ledger.ts";
+import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import {
   createLiteRuntimeDatabase,
   type LiteRuntimeDatabaseFaultInjector,
@@ -32,6 +40,7 @@ import {
   type LiteWriteAnnSync,
 } from "../../src/store/lite-write-store.ts";
 import { createSqliteDatabase } from "../../src/store/sqlite.ts";
+import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 
 function atomicEnv() {
   return {
@@ -57,13 +66,20 @@ function atomicEnv() {
 function openAtomicRuntime(
   dbPath: string,
   faultInjector?: LiteRuntimeDatabaseFaultInjector,
-  options: { embedder?: EmbeddingProvider | null; annSync?: LiteWriteAnnSync | null } = {},
+  options: {
+    embedder?: EmbeddingProvider | null;
+    annSync?: LiteWriteAnnSync | null;
+    annProjectionEnabled?: boolean;
+    learningControlProviders?: LearningKernelControlProviders;
+  } = {},
 ) {
   const database = createLiteRuntimeDatabase(dbPath, { faultInjector });
   const writeStore = createLiteWriteStoreFromDatabase(database, {
     closeDatabaseOnClose: true,
     annSync: options.annSync ?? null,
+    annProjectionEnabled: options.annProjectionEnabled,
   });
+  const recallStore = createLiteRecallStore(dbPath);
   const claimStore = createLiteClaimLedgerStoreFromDatabase(database);
   const claimLedgerAccess = claimStore.createClaimLedgerAccess();
   const learningEpisodeLedgerAccess = createLiteLearningEpisodeLedgerAccess(database);
@@ -106,9 +122,27 @@ function openAtomicRuntime(
     learningEpisodeLedgerAccess,
     memoryWrite,
   });
+  const learningKernel = createLearningKernel({
+    env,
+    embedder: options.embedder ?? null,
+    queryEmbedder: options.embedder ?? null,
+    liteRecallAccess: recallStore.createRecallAccess(),
+    liteWriteStore: writeStore,
+    learningControlProviders: options.learningControlProviders,
+  });
+  const toolFeedback = createProductToolFeedbackService({
+    env,
+    liteWriteStore: writeStore,
+    learningKernel,
+    learningEpisodeLedgerAccess,
+  } as any);
   return {
+    database,
     observe,
     guide,
+    toolFeedback,
+    learningKernel,
+    learningEpisodeLedgerAccess,
     memoryWrite,
     handoffStore,
     writeStore,
@@ -117,10 +151,14 @@ function openAtomicRuntime(
     executionStateStore,
     executionTreeStore,
     async close() {
-      await executionTreeStore.close();
-      await executionStateStore.close();
-      await claimStore.close();
-      await writeStore.close();
+      try {
+        await recallStore.close();
+      } finally {
+        await executionTreeStore.close();
+        await executionStateStore.close();
+        await claimStore.close();
+        await writeStore.close();
+      }
     },
   };
 }
@@ -364,6 +402,236 @@ const ZERO_GUIDE_LEARNING_ATOMIC_COUNTS: GuideLearningAtomicCounts = {
   guide_operation_receipts: 0,
 };
 
+function atomicToolFeedbackContext(): Record<string, unknown> {
+  return {
+    agent_id: "local-user",
+    task_kind: "atomic_tool_feedback",
+    task_family: "atomic_tool_feedback",
+    task_signature: "atomic-tool-feedback-uow",
+    error_signature: "atomic-tool-feedback-partial-commit",
+    workflow_signature: "workflow:atomic-tool-feedback-uow",
+    contract_trust: "advisory",
+    goal: "Persist one complete tool-learning feedback unit or none of it.",
+    target_files: ["src/product/tool-feedback-service.ts"],
+    next_action: "Keep tool feedback, episode attribution, and replay receipt atomic.",
+    workflow_steps: [
+      "Validate the protected guide decision.",
+      "Persist the tool-learning unit of work.",
+      "Replay the exact stored product result.",
+    ],
+    pattern_hints: ["atomic_tool_feedback"],
+  };
+}
+
+async function seedAtomicToolFeedbackRules(
+  runtime: ReturnType<typeof openAtomicRuntime>,
+): Promise<string[]> {
+  const seeded = await runtime.memoryWrite.commit({
+    tenant_id: "default",
+    scope: "default",
+    actor: "local-user",
+    input_text: "Seed two real rules so tool feedback writes aggregates, pattern, policy, and review state.",
+    auto_embed: false,
+    memory_lane: "shared",
+    nodes: [0, 1].map((index) => ({
+      client_id: `atomic-tool-feedback-rule-${index + 1}`,
+      type: "rule",
+      tier: "warm",
+      title: `Atomic tool feedback rule ${index + 1}`,
+      text_summary: "Prefer read for the atomic tool feedback integration context.",
+      slots: {
+        if: { task_kind: { $eq: "atomic_tool_feedback" } },
+        then: { tool: { prefer: ["read"] } },
+        exceptions: [],
+        rule_scope: "global",
+      },
+    })),
+    edges: [],
+  });
+  const ruleNodeIds = seeded.out.nodes.map((node) => node.id);
+  assert.equal(ruleNodeIds.length, 2);
+  await runtime.writeStore.withTx(async () => {
+    for (const [index, ruleNodeId] of ruleNodeIds.entries()) {
+      await updateRuleState({
+        tenant_id: "default",
+        scope: "default",
+        actor: "local-user",
+        rule_node_id: ruleNodeId,
+        state: "active",
+        input_text: `Activate atomic tool feedback rule ${index + 1}.`,
+      }, "default", "default", { liteWriteStore: runtime.writeStore });
+    }
+  });
+  return ruleNodeIds;
+}
+
+async function createAtomicProtectedToolGuide(
+  runtime: ReturnType<typeof openAtomicRuntime>,
+  args: { operationId: string; runId: string },
+): Promise<Record<string, any>> {
+  const context = atomicToolFeedbackContext();
+  let deferredDecision: DeferredToolsSelectDecision | null = null;
+  const tools = await selectTools({
+    tenant_id: "default",
+    scope: "default",
+    run_id: args.runId,
+    context,
+    candidates: ["read", "bash"],
+    include_shadow: false,
+    rules_limit: 20,
+    strict: true,
+    reorder_candidates: false,
+  }, "default", "default", {
+    liteWriteStore: runtime.writeStore,
+    persistDecision: false,
+    onDecisionPrepared(decision) {
+      deferredDecision = decision;
+    },
+  });
+  assert.ok(deferredDecision);
+  const packet = buildAionisMemoryPacket({
+    tenant_id: "default",
+    scope: "default",
+    query: { source: "text", intent: "atomic protected tool feedback" },
+    nodes: [],
+  });
+  const planningContext = {
+    tenant_id: "default",
+    scope: "default",
+    recall: { aionis_memory_packet: packet },
+    tools,
+    [DEFERRED_PLANNING_TOOL_DECISION]: deferredDecision,
+  };
+  const result = await runtime.guide.execute(ProductGuideRequest.parse({
+    operation_id: args.operationId,
+    tenant_id: "default",
+    scope: "default",
+    run_id: args.runId,
+    consumer_agent_id: "local-user",
+    query_text: "Choose the safe tool for one atomic feedback transaction.",
+    context,
+    tool_candidates: ["read", "bash"],
+    include_packets: true,
+  }), {
+    principal: null,
+    planningContext: async () => planningContext,
+    applyIdentity: (input) => input,
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  const guide = result.body as Record<string, any>;
+  assert.ok(guide.tool_selection);
+  assert.equal(guide.tool_selection.run_id, args.runId);
+  return guide;
+}
+
+type AtomicToolFeedbackSnapshot = Readonly<{
+  commit_count: number;
+  rule_feedback_rows: string;
+  rule_aggregate_rows: string;
+  decision_row: string;
+  pattern_rows: string;
+  policy_rows: string;
+  feedback_event_rows: string;
+  feedback_attribution_rows: string;
+  write_operation_rows: string;
+  projection_job_rows: string;
+}>;
+
+function atomicToolFeedbackSnapshot(args: {
+  dbPath: string;
+  ruleNodeIds: readonly string[];
+  decisionId: string;
+  operationId: string;
+}): AtomicToolFeedbackSnapshot {
+  const db = createSqliteDatabase(args.dbPath);
+  try {
+    const rows = (sql: string, ...params: unknown[]): string => stableStringify(
+      db.prepare<Record<string, unknown>>(sql).all(...params),
+    );
+    const count = Number((db.prepare<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM lite_memory_commits",
+    ).get()).count);
+    const rulePlaceholders = args.ruleNodeIds.map(() => "?").join(", ");
+    return {
+      commit_count: count,
+      rule_feedback_rows: rows(
+        `SELECT scope, rule_node_id, run_id, outcome, source, decision_id, commit_id
+         FROM lite_memory_rule_feedback
+         WHERE decision_id = ?
+         ORDER BY rule_node_id, id`,
+        args.decisionId,
+      ),
+      rule_aggregate_rows: rows(
+        `SELECT rule_node_id, positive_count, negative_count, commit_id, updated_at
+         FROM lite_memory_rule_defs
+         WHERE rule_node_id IN (${rulePlaceholders})
+         ORDER BY rule_node_id`,
+        ...args.ruleNodeIds,
+      ),
+      decision_row: rows(
+        `SELECT id, scope, decision_kind, run_id, selected_tool, candidates_json,
+                context_sha256, policy_sha256, source_rule_ids_json, metadata_json,
+                commit_id, created_at
+         FROM lite_memory_execution_decisions
+         WHERE id = ?`,
+        args.decisionId,
+      ),
+      pattern_rows: rows(
+        `SELECT id, client_id, commit_id, slots_json, embedding_status,
+                embedding_model, embedding_last_error
+         FROM lite_memory_nodes
+         WHERE json_extract(slots_json, '$.summary_kind') = 'pattern_anchor'
+         ORDER BY id`,
+      ),
+      policy_rows: rows(
+        `SELECT id, client_id, commit_id, slots_json, embedding_status,
+                embedding_model, embedding_last_error
+         FROM lite_memory_nodes
+         WHERE json_extract(slots_json, '$.summary_kind') = 'policy_memory'
+         ORDER BY id`,
+      ),
+      feedback_event_rows: rows(
+        `SELECT event_id, episode_id, episode_sequence, event_kind, source_kind,
+                source_id, source_sha256, event_sha256, payload_sha256, payload_json,
+                item_set_sha256, source_commit_id, operation_id, run_id,
+                collection_class, promotion_eligible, recorded_at
+         FROM lite_learning_episode_events
+         WHERE event_kind = 'feedback_attributed' AND operation_id = ?
+         ORDER BY event_id`,
+        args.operationId,
+      ),
+      feedback_attribution_rows: rows(
+        `SELECT attribution.*
+         FROM lite_learning_feedback_attributions AS attribution
+         JOIN lite_learning_episode_events AS event
+           ON event.tenant_id = attribution.tenant_id
+          AND event.scope = attribution.scope
+          AND event.event_id = attribution.event_id
+         WHERE event.operation_id = ?
+         ORDER BY attribution.subject_kind, attribution.subject_id`,
+        args.operationId,
+      ),
+      write_operation_rows: rows(
+        `SELECT tenant_id, scope, operation_kind, operation_id, request_sha256,
+                receipt_json, commit_id, created_at
+         FROM lite_runtime_write_operations
+         WHERE operation_id = ?
+         ORDER BY operation_kind`,
+        args.operationId,
+      ),
+      projection_job_rows: rows(
+        `SELECT scope, node_id, job_kind, source_commit_id, status, generation,
+                attempt_count, available_at, lease_owner, lease_expires_at,
+                last_error, created_at, updated_at
+         FROM lite_memory_projection_jobs
+         ORDER BY scope, node_id, job_kind`,
+      ),
+    };
+  } finally {
+    db.close();
+  }
+}
+
 test("a downstream claim conflict rolls back memory, handoff, execution, claims, and receipt", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-atomic-domain-fault-"));
   const dbPath = path.join(directory, "runtime.sqlite");
@@ -590,6 +858,305 @@ test("guide learning exposure rows commit atomically with memory and operation r
       assert.equal(linkage.prior_supported_use_count, 2);
       assert.equal(linkage.learning_track, "exploit");
       assert.equal(linkage.track_reason, "prior_supported");
+    } finally {
+      db.close();
+    }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a before-commit tool feedback fault leaves no partial learning, episode, receipt, or projection state", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-tool-feedback-atomic-fault-"));
+  const dbPath = path.join(directory, "runtime.sqlite");
+  const guideOperationId = "guide-tool-feedback-atomic-fault-1";
+  const feedbackOperationId = "feedback-tool-feedback-atomic-fault-1";
+  const runId = "run-tool-feedback-atomic-fault-1";
+  let ruleNodeIds: string[] = [];
+  let guide: Record<string, any> | null = null;
+  try {
+    const seedRuntime = openAtomicRuntime(dbPath, undefined, {
+      embedder: DeterministicEmbeddingProvider,
+      annProjectionEnabled: true,
+    });
+    try {
+      ruleNodeIds = await seedAtomicToolFeedbackRules(seedRuntime);
+      guide = await createAtomicProtectedToolGuide(seedRuntime, {
+        operationId: guideOperationId,
+        runId,
+      });
+      assert.deepEqual(
+        [...guide.tool_selection.source_rule_ids].sort(),
+        [...ruleNodeIds].sort(),
+      );
+    } finally {
+      await seedRuntime.close();
+    }
+    assert.ok(guide);
+    const decisionId = String(guide.tool_selection.decision_id);
+    const feedbackInput = {
+      feedback_kind: "tool_selection",
+      operation_id: feedbackOperationId,
+      tenant_id: "default",
+      scope: "default",
+      actor: "local-user",
+      consumer_agent_id: "local-user",
+      guide_trace_id: guide.guide_trace_id,
+      decision_id: decisionId,
+      run_id: runId,
+      selected_tool: guide.tool_selection.selected_tool,
+      candidates: guide.tool_selection.candidates,
+      outcome: "positive",
+      context: atomicToolFeedbackContext(),
+      include_shadow: false,
+      rules_limit: 20,
+      target: "tool",
+      note: "The selected tool completed the protected atomic feedback workflow.",
+      input_text: "The selected tool completed the protected atomic feedback workflow.",
+    };
+    const baseline = atomicToolFeedbackSnapshot({
+      dbPath,
+      ruleNodeIds,
+      decisionId,
+      operationId: feedbackOperationId,
+    });
+
+    let activeReviewTransaction: ReturnType<typeof openAtomicRuntime>["database"]["transaction"] | null = null;
+    let reviewCalls = 0;
+    const evidenceReviewProvider = createEvidenceFormPatternLearningControlReviewProvider({
+      confidence: 0.89,
+      reason: "Two independent rules support one durable atomic tool feedback pattern.",
+    });
+    const outsideTransactionLearningControlProviders: LearningKernelControlProviders = {
+      toolsFeedback: {
+        form_pattern: {
+          async resolveReviewResult(args) {
+            assert.ok(activeReviewTransaction, "the Runtime transaction runner must be available before review");
+            assert.equal(
+              activeReviewTransaction.inTransaction(),
+              false,
+              "tool feedback review must complete before the atomic SQLite transaction begins",
+            );
+            reviewCalls += 1;
+            return await evidenceReviewProvider.resolveReviewResult(args);
+          },
+        },
+      },
+    };
+
+    let injected = false;
+    const faultPhases: string[] = [];
+    const faultRuntime = openAtomicRuntime(dbPath, (phase) => {
+      faultPhases.push(phase);
+      if (phase === "before_commit" && !injected) {
+        injected = true;
+        throw new Error("injected tool feedback before-commit fault");
+      }
+    }, {
+      embedder: DeterministicEmbeddingProvider,
+      annProjectionEnabled: true,
+      learningControlProviders: outsideTransactionLearningControlProviders,
+    });
+    activeReviewTransaction = faultRuntime.database.transaction;
+    let kernelFailure: { method: string; error: unknown } | null = null;
+    const faultKernel = faultRuntime.learningKernel as any;
+    for (const method of [
+      "prepareToolSelectionFeedback",
+      "persistToolSelectionFeedback",
+      "readToolRun",
+      "finalizeToolSelectionFeedback",
+    ]) {
+      const realMethod = faultKernel[method].bind(faultKernel);
+      faultKernel[method] = async (...args: unknown[]) => {
+        try {
+          return await realMethod(...args);
+        } catch (error) {
+          kernelFailure = { method, error };
+          throw error;
+        }
+      };
+    }
+    let ledgerFailure: { method: string; error: unknown } | null = null;
+    const faultLedger = faultRuntime.learningEpisodeLedgerAccess as any;
+    for (const method of ["resolveFeedbackSource", "appendEpisodeEvent"]) {
+      const realMethod = faultLedger[method].bind(faultLedger);
+      faultLedger[method] = async (...args: unknown[]) => {
+        try {
+          return await realMethod(...args);
+        } catch (error) {
+          ledgerFailure = { method, error };
+          throw error;
+        }
+      };
+    }
+    let failed: Awaited<ReturnType<typeof faultRuntime.toolFeedback.execute>>;
+    try {
+      failed = await faultRuntime.toolFeedback.execute(feedbackInput as any);
+    } finally {
+      await faultRuntime.close();
+    }
+    const afterFault = atomicToolFeedbackSnapshot({
+      dbPath,
+      ruleNodeIds,
+      decisionId,
+      operationId: feedbackOperationId,
+    });
+    assert.equal(
+      injected,
+      true,
+      `tool feedback must reach before_commit: ${JSON.stringify({
+        failed,
+        faultPhases,
+        kernelFailure: kernelFailure
+          ? { method: kernelFailure.method, error: String(kernelFailure.error) }
+          : null,
+        ledgerFailure: ledgerFailure
+          ? { method: ledgerFailure.method, error: String(ledgerFailure.error) }
+          : null,
+      })}`,
+    );
+    assert.equal(failed.ok, false);
+    assert.equal(failed.statusCode, 500);
+    assert.deepEqual(
+      afterFault,
+      baseline,
+      "the failed tool feedback transaction must not leak any learning or projection prefix",
+    );
+
+    let healthyTransaction: ReturnType<typeof openAtomicRuntime>["database"]["transaction"] | null = null;
+    let embeddingCalls = 0;
+    const outsideTransactionEmbedder: EmbeddingProvider = {
+      ...DeterministicEmbeddingProvider,
+      name: "deterministic:atomic-tool-feedback",
+      async embed(texts) {
+        assert.ok(healthyTransaction, "the Runtime transaction runner must be available before embedding");
+        assert.equal(
+          healthyTransaction.inTransaction(),
+          false,
+          "tool feedback embedding must complete before the atomic SQLite transaction begins",
+        );
+        embeddingCalls += 1;
+        return DeterministicEmbeddingProvider.embed(texts);
+      },
+    };
+    const healthyRuntime = openAtomicRuntime(dbPath, undefined, {
+      embedder: outsideTransactionEmbedder,
+      annProjectionEnabled: true,
+      learningControlProviders: outsideTransactionLearningControlProviders,
+    });
+    healthyTransaction = healthyRuntime.database.transaction;
+    activeReviewTransaction = healthyRuntime.database.transaction;
+    let succeeded: Awaited<ReturnType<typeof healthyRuntime.toolFeedback.execute>>;
+    try {
+      succeeded = await healthyRuntime.toolFeedback.execute(feedbackInput as any);
+      assert.equal(succeeded.ok, true, JSON.stringify(succeeded));
+      assert.equal(succeeded.statusCode, 200);
+      const body = succeeded.body as Record<string, any>;
+      assert.equal(body.operation_id, feedbackOperationId);
+      assert.equal(body.feedback_result.decision_id, decisionId);
+      assert.equal(body.feedback_result.updated_rules, 2);
+      assert.ok(body.feedback_result.pattern_anchor);
+      assert.ok(body.feedback_result.policy_memory);
+      assert.equal(body.run_lifecycle.lifecycle.status, "feedback_linked");
+      assert.equal(body.run_lifecycle.feedback.total, 2);
+      assert.ok(embeddingCalls > 0, "the healthy path must exercise real embedding preparation");
+      assert.ok(reviewCalls >= 2, "fault and healthy paths must exercise real evidence review preparation");
+
+      const committed = atomicToolFeedbackSnapshot({
+        dbPath,
+        ruleNodeIds,
+        decisionId,
+        operationId: feedbackOperationId,
+      });
+      assert.ok(committed.commit_count > baseline.commit_count);
+      assert.notEqual(committed.rule_feedback_rows, baseline.rule_feedback_rows);
+      assert.notEqual(committed.rule_aggregate_rows, baseline.rule_aggregate_rows);
+      assert.notEqual(committed.decision_row, baseline.decision_row);
+      assert.notEqual(committed.pattern_rows, baseline.pattern_rows);
+      assert.notEqual(committed.policy_rows, baseline.policy_rows);
+      assert.notEqual(committed.feedback_event_rows, baseline.feedback_event_rows);
+      assert.notEqual(committed.feedback_attribution_rows, baseline.feedback_attribution_rows);
+      assert.notEqual(committed.write_operation_rows, baseline.write_operation_rows);
+      assert.notEqual(committed.projection_job_rows, baseline.projection_job_rows);
+
+      const replayCalls = {
+        prepare: 0,
+        persist: 0,
+        read: 0,
+        finalize: 0,
+      };
+      const replayKernel = healthyRuntime.learningKernel as any;
+      replayKernel.prepareToolSelectionFeedback = async () => {
+        replayCalls.prepare += 1;
+        throw new Error("prepare must not run for an exact tool feedback replay");
+      };
+      replayKernel.persistToolSelectionFeedback = async () => {
+        replayCalls.persist += 1;
+        throw new Error("persist must not run for an exact tool feedback replay");
+      };
+      replayKernel.readToolRun = async () => {
+        replayCalls.read += 1;
+        throw new Error("run lifecycle reads must not run for an exact tool feedback replay");
+      };
+      replayKernel.finalizeToolSelectionFeedback = async () => {
+        replayCalls.finalize += 1;
+        throw new Error("finalize must not run for an exact tool feedback replay");
+      };
+      const embeddingCallsBeforeReplay = embeddingCalls;
+      const reviewCallsBeforeReplay = reviewCalls;
+      const replayed = await healthyRuntime.toolFeedback.execute(feedbackInput as any);
+      assert.deepEqual(replayed, succeeded);
+      assert.deepEqual(replayCalls, {
+        prepare: 0,
+        persist: 0,
+        read: 0,
+        finalize: 0,
+      });
+      assert.equal(embeddingCalls, embeddingCallsBeforeReplay);
+      assert.equal(reviewCalls, reviewCallsBeforeReplay);
+      assert.deepEqual(
+        atomicToolFeedbackSnapshot({
+          dbPath,
+          ruleNodeIds,
+          decisionId,
+          operationId: feedbackOperationId,
+        }),
+        committed,
+        "exact operation replay must not mutate any learning, episode, receipt, or projection row",
+      );
+    } finally {
+      await healthyRuntime.close();
+    }
+
+    const db = createSqliteDatabase(dbPath);
+    try {
+      const attribution = db.prepare<Record<string, unknown>>(
+        `SELECT attribution.*
+         FROM lite_learning_feedback_attributions AS attribution
+         JOIN lite_learning_episode_events AS event
+           ON event.tenant_id = attribution.tenant_id
+          AND event.scope = attribution.scope
+          AND event.event_id = attribution.event_id
+         WHERE event.operation_id = ?`,
+      ).get(feedbackOperationId);
+      assert.ok(attribution);
+      assert.equal(attribution.subject_kind, "tool_decision");
+      assert.equal(attribution.subject_id, decisionId);
+      assert.equal(attribution.outcome, "positive");
+      assert.equal(attribution.attribution_strength, "positive_attribution");
+      assert.equal(attribution.evidence_class, "tool_decision");
+      assert.equal(attribution.action_outcome, null);
+      assert.equal(attribution.used_surface, null);
+      assert.equal(attribution.exposure_action, null);
+      assert.equal(attribution.boundary_outcome, "not_applicable");
+      assert.equal(attribution.host_use_receipt_id, null);
+      assert.equal(attribution.host_use_receipt_sha256, null);
+      assert.equal(attribution.receipt_item_sha256, null);
+      assert.equal(attribution.content_evidence_sha256, null);
+      assert.equal(attribution.verifier_kind, null);
+      assert.equal(attribution.verifier_version, null);
+      assert.equal(attribution.verifier_config_sha256, null);
+      assert.equal(attribution.verifier_status, null);
     } finally {
       db.close();
     }
